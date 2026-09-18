@@ -2656,10 +2656,17 @@ async fn compute_reverse_batch_set_delete_set_yields_delete_property() {
 /// limit must still compute its reverses. Before chunking, each per-op
 /// `edit_block` subquery in `fetch_prior_text_batch` bound 5 params, so
 /// any batch over `floor(999 / 5) = 199` ops blew past the conservative
-/// limit (and over 32766/5 ≈ 6553 the real one). 400 edits exercise the
-/// chunk boundary several times over and assert no "too many SQL
-/// variables" error — i.e. each executed UNION-ALL statement stays under
-/// the bind cap while results remain aligned to input order.
+/// limit (and over 32766/5 ≈ 6553 the real one). 501 edits exercise the
+/// chunk boundary several times over and assert no error — i.e. each
+/// executed UNION-ALL statement stays within SQLite's limits while
+/// results remain aligned to input order.
+///
+/// Why 501 and not 400: the limit that actually bites is
+/// `SQLITE_MAX_COMPOUND_SELECT` (500), not the bind cap, because each
+/// helper emits one `UNION ALL SELECT` term per op. At 400 ops a chunk
+/// size of `MAX_SQL_PARAMS * BINDS_PER_OP` still yields one statement of
+/// 400 terms and prepares fine; at 501 it fails with "too many terms in
+/// compound SELECT". `MAX_REVERT_OPS` is 1000, so 501 is legal input.
 #[tokio::test]
 async fn compute_reverse_batch_chunks_large_edit_batch_c5() {
     use agaric_engine::reverse::{compute_reverse_batch, get_op_records_batch};
@@ -2688,9 +2695,9 @@ async fn compute_reverse_batch_chunks_large_edit_batch_c5() {
     )
     .await;
 
-    // 400 sequential edits on the SAME block — comfortably over the
-    // old ~199-op (5-bind) single-statement ceiling.
-    const N_EDITS: usize = 400;
+    // 501 sequential edits on the SAME block — over the old ~199-op
+    // (5-bind) single-statement ceiling, and over SQLITE_MAX_COMPOUND_SELECT.
+    const N_EDITS: usize = 501;
     let mut op_refs: Vec<agaric_store::op::OpRef> = Vec::with_capacity(N_EDITS);
     for i in 0..N_EDITS {
         let rec = append_op(
@@ -2717,7 +2724,7 @@ async fn compute_reverse_batch_chunks_large_edit_batch_c5() {
     // #2020: per-op `Result`s — every edit is reversible, so unwrap each.
     let batched: Vec<OpPayload> = compute_reverse_batch(&pool, &records)
         .await
-        .expect("C5: batched reverse of 400 edits must not overflow the SQL bind limit")
+        .expect("C5: batched reverse of 501 edits must not overflow SQLite's limits")
         .into_iter()
         .map(|r| r.expect("every edit in this batch is reversible"))
         .collect();
@@ -3542,13 +3549,19 @@ async fn reverse_delete_attachment_tie_breaks_on_device_id_3646() {
 // property and attachment helpers the `chunk_no * chunk_size` base was dead
 // weight: collapse it to 0 and every one-chunk fixture still passed.
 //
-// The three tests below drive one group past its own chunk boundary and assert
+// The four tests below drive one group past its own chunk boundary and assert
 // PER INDEX against a prior that is DISTINCT for every op, so a reverse built
 // from a neighbour's prior — or from no prior at all — cannot pass.
+//
+// Each is sized at 501, not at its own chunk width, because the ceiling that
+// makes a WRONG chunk size fail is `SQLITE_MAX_COMPOUND_SELECT` (500): every
+// helper emits one `UNION ALL SELECT` term per op, so a chunk size wide enough
+// to hold 501 ops in one statement fails to prepare with "too many terms in
+// compound SELECT". `MAX_REVERT_OPS` is 1000, so 501 is legal input.
 // ---------------------------------------------------------------------------
 
 /// `fetch_prior_position_batch` chunks at `MAX_SQL_PARAMS / 7` = 142 ops, so
-/// 200 moves span two chunks. One block moved 200 times in a row: every op's
+/// 501 moves span four chunks. One block moved 501 times in a row: every op's
 /// prior slot is its predecessor's, so the expected position is different at
 /// every index.
 #[tokio::test]
@@ -3575,7 +3588,7 @@ async fn compute_reverse_batch_move_group_stays_aligned_across_chunks_4656() {
     )
     .await;
 
-    const N_MOVES: usize = 200;
+    const N_MOVES: usize = 501;
     let mut op_refs: Vec<OpRef> = Vec::with_capacity(N_MOVES);
     for i in 0..N_MOVES {
         let pos = i64::try_from(i + 2).expect("fixture index fits i64");
@@ -3620,7 +3633,7 @@ async fn compute_reverse_batch_move_group_stays_aligned_across_chunks_4656() {
 }
 
 /// `fetch_prior_property_batch` chunks at `MAX_SQL_PARAMS / 8` = 124 ops, so
-/// 200 `set_property` ops span two chunks. One block, one key, a distinct
+/// 501 `set_property` ops span five chunks. One block, one key, a distinct
 /// value at every step: the reverse of step `i` must restore step `i - 1`'s
 /// value.
 #[tokio::test]
@@ -3647,7 +3660,7 @@ async fn compute_reverse_batch_property_group_stays_aligned_across_chunks_4656()
     // Seed value, so the FIRST batched op also has a prior to roll back to.
     append_op(&pool, set_op("v0".into()), next_ts(&mut ts)).await;
 
-    const N_SETS: usize = 200;
+    const N_SETS: usize = 501;
     let mut op_refs: Vec<OpRef> = Vec::with_capacity(N_SETS);
     for i in 1..=N_SETS {
         let rec = append_op(&pool, set_op(format!("v{i}")), next_ts(&mut ts)).await;
@@ -3682,7 +3695,7 @@ async fn compute_reverse_batch_property_group_stays_aligned_across_chunks_4656()
 }
 
 /// `fetch_prior_attachment_batch` chunks at `MAX_SQL_PARAMS / 7` = 142 ops, so
-/// 200 `delete_attachment` ops span two chunks. Add/delete pairs on one id,
+/// 501 `delete_attachment` ops span four chunks. Add/delete pairs on one id,
 /// each add carrying a distinct `size_bytes` — the one reconstructed field
 /// nothing adopts from the delete payload, so it identifies which prior
 /// `add_attachment` the reverse was built from.
@@ -3697,7 +3710,7 @@ async fn compute_reverse_batch_attachment_group_stays_aligned_across_chunks_4656
         FIXED_TS + *ts * 60_000
     };
 
-    const N_DELETES: usize = 200;
+    const N_DELETES: usize = 501;
     let mut op_refs: Vec<OpRef> = Vec::with_capacity(N_DELETES);
     for i in 0..N_DELETES {
         let size = i64::try_from(i + 1).expect("fixture index fits i64");
@@ -3754,6 +3767,96 @@ async fn compute_reverse_batch_attachment_group_stays_aligned_across_chunks_4656
                  (NonReversible)"
             ),
             other => panic!("reverse #{i} should be AddAttachment, got {other:?}"),
+        }
+    }
+}
+
+/// `fetch_prev_edit_rows_batch` chunks at `MAX_SQL_PARAMS / 3` = 333 ops, so
+/// 501 edits span two chunks. Every edit here carries a `prev_edit`, so the
+/// CAUSAL pointer path resolves every prior text — the reverse of the shape
+/// `compute_reverse_batch_chunks_large_edit_batch_c5` drives, which carries no
+/// pointer and therefore never reaches this helper's chunk loop at all.
+///
+/// Every SECOND edit points back at the root `create_block` rather than at its
+/// predecessor, so the pointer's answer and the timestamp scan's disagree at
+/// those positions. Without that skew a lost pointer is invisible: the fallback
+/// would hand back the same text the pointer would have.
+#[tokio::test]
+async fn compute_reverse_batch_prev_edit_group_stays_aligned_across_chunks_4656() {
+    let (pool, _dir) = test_pool().await;
+    let bid = BlockId::test_id("CHUNK_PREV");
+    let mut ts = 0i64;
+    let next_ts = |ts: &mut i64| -> i64 {
+        *ts += 1;
+        FIXED_TS + *ts * 60_000
+    };
+
+    let root = append_op(
+        &pool,
+        OpPayload::CreateBlock(CreateBlockPayload {
+            block_id: bid.clone(),
+            block_type: "content".into(),
+            parent_id: None,
+            position: Some(1),
+            index: None,
+            content: "v0".into(),
+        }),
+        next_ts(&mut ts),
+    )
+    .await;
+
+    const N_EDITS: usize = 501;
+    let root_ref = (root.device_id, root.seq);
+    let mut predecessor = root_ref.clone();
+    let mut op_refs: Vec<OpRef> = Vec::with_capacity(N_EDITS);
+    for i in 1..=N_EDITS {
+        let target = if i % 2 == 0 {
+            root_ref.clone()
+        } else {
+            predecessor.clone()
+        };
+        let rec = append_op(
+            &pool,
+            OpPayload::EditBlock(EditBlockPayload {
+                block_id: bid.clone(),
+                to_text: format!("v{i}"),
+                prev_edit: Some(target),
+            }),
+            next_ts(&mut ts),
+        )
+        .await;
+        predecessor = (rec.device_id.clone(), rec.seq);
+        op_refs.push(OpRef {
+            device_id: rec.device_id,
+            seq: rec.seq,
+        });
+    }
+
+    let records = get_op_records_batch(&pool, &op_refs).await.unwrap();
+    let batched: Vec<OpPayload> = compute_reverse_batch(&pool, &records)
+        .await
+        .expect("every edit in this batch resolves its prev_edit pointer")
+        .into_iter()
+        .map(|r| r.expect("every edit in this batch is reversible"))
+        .collect();
+    assert_eq!(batched.len(), N_EDITS, "one reverse per input op, in order");
+
+    for (k, rev) in batched.iter().enumerate() {
+        // Edit `k + 1` points at the root on even steps, at its predecessor
+        // ("v{k}", which is also what the timestamp scan would answer) on odd.
+        let expected = if (k + 1) % 2 == 0 {
+            "v0".to_string()
+        } else {
+            format!("v{k}")
+        };
+        match rev {
+            OpPayload::EditBlock(p) => assert_eq!(
+                p.to_text, expected,
+                "#4656: reverse #{k} must restore the text the op ITS OWN \
+                 prev_edit names — a pointer lost at a chunk boundary falls \
+                 back to the timestamp scan and answers 'v{k}'"
+            ),
+            other => panic!("reverse #{k} should be EditBlock, got {other:?}"),
         }
     }
 }
@@ -3895,6 +3998,29 @@ async fn reject_replicated_targets_refuses_a_replicated_revert_target_2549() {
         err.to_string().contains("rrt-remote"),
         "#2549: the rejection must name the offending op, got {err}"
     );
+}
+
+/// #4656: the revert-target guard chunks at `MAX_SQL_PARAMS / 2` = 499 refs
+/// because its OR-of-pairs predicate is depth-limited by
+/// `SQLITE_MAX_EXPR_DEPTH` (1000), not by the bind cap. `MAX_REVERT_OPS` is
+/// 1000, so a 1000-ref revert is legal input; a chunk size wide enough to hold
+/// it in one statement makes that statement too deep to parse, and every
+/// revert of a large page dies with a raw database error.
+///
+/// The refs need not exist — the guard only looks for `is_replicated = 1`
+/// rows — so this costs no fixture.
+#[tokio::test]
+async fn reject_replicated_targets_chunks_a_max_size_revert_4656() {
+    let (pool, _dir) = test_pool().await;
+    let refs: Vec<OpRef> = (1..=1000)
+        .map(|seq| OpRef {
+            device_id: TEST_DEVICE.to_string(),
+            seq,
+        })
+        .collect();
+    reject_replicated_targets(&pool, &refs)
+        .await
+        .expect("a MAX_REVERT_OPS-sized guard check must chunk, not overflow SQLite");
 }
 
 /// #4656: the two halves of the non-reversible contract are predicates the

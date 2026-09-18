@@ -117,6 +117,13 @@ use agaric_store::op_log::OpRecord;
 // same conservative `SQLITE_MAX_VARIABLE_NUMBER` floor the snapshot
 // `batch_insert_snapshot_rows!` chunker uses) — well under the real
 // 3.32+ limit of 32766, so the chunked statements never overflow.
+//
+// Binds are not the tightest constraint on the five widths below: each of their
+// helpers emits one `UNION ALL SELECT` term per op, so its chunk size must also
+// stay under `SQLITE_MAX_COMPOUND_SELECT` (500). Every division lands there
+// today; raising `MAX_SQL_PARAMS` toward that 32766 headroom would not, and the
+// helpers would stop preparing at 501 ops — legal input, since `MAX_REVERT_OPS`
+// is 1000.
 const TEXT_BINDS_PER_OP: usize = 7;
 const POSITION_BINDS_PER_OP: usize = 7;
 const PROPERTY_BINDS_PER_OP: usize = 8;
@@ -471,10 +478,7 @@ async fn fetch_prev_edit_rows_batch(
         }
         let rows: Vec<(i64, String, String)> = qb.build_query_as().fetch_all(pool).await?;
         for (i, op_type, payload) in rows {
-            let i = i as usize;
-            if i < out.len() {
-                out[i] = Some((op_type, payload));
-            }
+            out[i as usize] = Some((op_type, payload));
         }
     }
     Ok(out)
@@ -600,10 +604,7 @@ async fn fetch_prior_text_batch(
         }
         let rows: Vec<(i64, String, String)> = qb.build_query_as().fetch_all(pool).await?;
         for (i, op_type, payload) in rows {
-            let i = i as usize;
-            if i < out.len() {
-                out[i] = Some((op_type, payload));
-            }
+            out[i as usize] = Some((op_type, payload));
         }
     }
     Ok(out)
@@ -656,10 +657,7 @@ async fn fetch_prior_position_batch(
         }
         let rows: Vec<(i64, String, String)> = qb.build_query_as().fetch_all(pool).await?;
         for (i, op_type, payload) in rows {
-            let i = i as usize;
-            if i < out.len() {
-                out[i] = Some((op_type, payload));
-            }
+            out[i as usize] = Some((op_type, payload));
         }
     }
     Ok(out)
@@ -742,13 +740,10 @@ async fn fetch_prior_property_batch(
         }
         let rows: Vec<(i64, String, String)> = qb.build_query_as().fetch_all(pool).await?;
         for (i, op_type, payload) in rows {
-            let i = i as usize;
-            if i < out.len() {
-                // #181: only a `set_property` carries a prior value; a
-                // `delete_property` means the property was absent → None.
-                if op_type == "set_property" {
-                    out[i] = Some(payload);
-                }
+            // #181: only a `set_property` carries a prior value; a
+            // `delete_property` means the property was absent → None.
+            if op_type == "set_property" {
+                out[i as usize] = Some(payload);
             }
         }
     }
@@ -803,10 +798,7 @@ async fn fetch_prior_attachment_batch(
         }
         let rows: Vec<(i64, String)> = qb.build_query_as().fetch_all(pool).await?;
         for (i, payload) in rows {
-            let i = i as usize;
-            if i < out.len() {
-                out[i] = Some(payload);
-            }
+            out[i as usize] = Some(payload);
         }
     }
     Ok(out)
@@ -1120,19 +1112,16 @@ pub async fn get_op_records_batch(
         let rows: Vec<Row> = qb.build_query_as().fetch_all(pool).await?;
         for (idx, device_id, seq, parent_seqs, hash, op_type, payload, created_at, block_id) in rows
         {
-            let i = idx as usize;
-            if i < out.len() {
-                out[i] = Some(OpRecord {
-                    device_id,
-                    seq,
-                    parent_seqs,
-                    hash,
-                    op_type,
-                    payload,
-                    created_at,
-                    block_id,
-                });
-            }
+            out[idx as usize] = Some(OpRecord {
+                device_id,
+                seq,
+                parent_seqs,
+                hash,
+                op_type,
+                payload,
+                created_at,
+                block_id,
+            });
         }
     }
     let mut result: Vec<OpRecord> = Vec::with_capacity(refs.len());
@@ -1158,7 +1147,8 @@ pub async fn get_op_records_batch(
 ///
 /// Bounded by `MAX_REVERT_OPS` at the caller; chunked at
 /// `MAX_SQL_PARAMS / 2` (`device_id` + `seq` per ref) so the OR-of-pairs
-/// predicate never overflows SQLite's bind limit.
+/// predicate stays inside `SQLITE_MAX_EXPR_DEPTH` (1000) — the limit that
+/// actually bites here, one level per OR term, long before the bind cap does.
 pub async fn reject_replicated_targets(
     pool: &SqlitePool,
     refs: &[agaric_store::op::OpRef],
