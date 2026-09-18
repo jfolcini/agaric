@@ -111,6 +111,71 @@
         "priority": null,
         "scheduled_date": null,
         "todo_state": null
+      },
+      {
+        "block_type": "page",
+        "content": "ärger",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B9",
+        "page_id": "B9",
+        "parent_id": null,
+        "position": 5,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "page",
+        "content": "Ärger",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B10",
+        "page_id": "B10",
+        "parent_id": null,
+        "position": 6,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "page",
+        "content": "Zebra",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B11",
+        "page_id": "B11",
+        "parent_id": null,
+        "position": 7,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "page",
+        "content": "ｱ",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B12",
+        "page_id": "B12",
+        "parent_id": null,
+        "position": 8,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "page",
+        "content": "🍎",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B13",
+        "page_id": "B13",
+        "parent_id": null,
+        "position": 9,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
       }
     ],
     "op_log_digest": {
@@ -222,7 +287,7 @@
       "error": null,
       "has_more": null,
       "name": "pages_all_in_space",
-      "rows": ["B1", "B8", "B2"],
+      "rows": ["B1", "B8", "B2", "B11", "B10", "B9", "B12", "B13"],
       "total_count": null
     },
     {
@@ -238,7 +303,7 @@
       "error": null,
       "has_more": null,
       "name": "pages_empty_tag_filter_is_unfiltered",
-      "rows": ["B1", "B8", "B2"],
+      "rows": ["B1", "B8", "B2", "B11", "B10", "B9", "B12", "B13"],
       "total_count": null
     },
     {
@@ -384,7 +449,7 @@
         }
       },
       "command": "list_all_pages_in_space",
-      "comment": "Every LIVE page in the space in case-insensitive content order (Home, proj, Template Alpha); the deleted S3 is out.",
+      "comment": "Every LIVE page in the space, `ORDER BY COALESCE(b.content,'') COLLATE NOCASE ASC, b.id ASC`; the deleted `Zeta Draft` is out. The five added titles make both halves of NOCASE load-bearing. The fold is ASCII-ONLY, so `Zebra` folds to `zebra` (`7A`) and leads both umlauts, and `Ärger` (`C3 84`) and `ärger` (`C3 A4`) stay APART and in that order; a `toLowerCase()` fold makes them equal and leaves their order to the raw ULID tiebreak, which is not comparable across the stacks. The compare is a UTF-8 BYTE memcmp, so `ｱ` (`EF BD B1`) precedes `🍎` (`F0 9F 8D 8E`); a UTF-16 code-unit compare puts the apple's `D83C` first and a `localeCompare` files both umlauts up beside `Home`. The seed order is `Home, Template Alpha, proj, ärger, Ärger, Zebra, ｱ, 🍎`, which is none of those, so a handler that dropped the sort reddens too.",
       "name": "pages_all_in_space"
     },
     {
@@ -480,6 +545,41 @@
         "id": "S8",
         "parent_id": null,
         "position": 4
+      },
+      {
+        "block_type": "page",
+        "content": "ärger",
+        "id": "S9",
+        "parent_id": null,
+        "position": 5
+      },
+      {
+        "block_type": "page",
+        "content": "Ärger",
+        "id": "S10",
+        "parent_id": null,
+        "position": 6
+      },
+      {
+        "block_type": "page",
+        "content": "Zebra",
+        "id": "S11",
+        "parent_id": null,
+        "position": 7
+      },
+      {
+        "block_type": "page",
+        "content": "ｱ",
+        "id": "S12",
+        "parent_id": null,
+        "position": 8
+      },
+      {
+        "block_type": "page",
+        "content": "🍎",
+        "id": "S13",
+        "parent_id": null,
+        "position": 9
       }
     ],
     "properties": [],

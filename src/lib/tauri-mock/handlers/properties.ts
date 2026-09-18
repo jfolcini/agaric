@@ -10,12 +10,12 @@
  */
 
 import { NON_DELETABLE_PROPERTIES } from '@/lib/property-save-utils'
+import { compareUtf8Bytes } from '@/lib/sqlite-collation'
 import {
   type TypedHandlers,
   appErrorRejection,
   assertValidReservedPropertyValue,
   assertValidSetPropertyValue,
-  compareBinary,
   notFoundRejection,
   returnEmptyPage,
   validationRejection,
@@ -401,7 +401,7 @@ export const propertiesHandlers = {
       }
     }
     return [...counts.entries()]
-      .toSorted((x, y) => y[1] - x[1] || compareBinary(x[0], y[0]))
+      .toSorted((x, y) => y[1] - x[1] || compareUtf8Bytes(x[0], y[0]))
       .map(([key]) => key)
   },
 
@@ -419,7 +419,7 @@ export const propertiesHandlers = {
       counts.set(value, (counts.get(value) ?? 0) + 1)
     }
     return [...counts.entries()]
-      .toSorted((x, y) => y[1] - x[1] || compareBinary(x[0], y[0]))
+      .toSorted((x, y) => y[1] - x[1] || compareUtf8Bytes(x[0], y[0]))
       .map(([value]) => value)
   },
 
@@ -640,7 +640,7 @@ export const propertiesHandlers = {
     // mock's own, and the two differ as soon as defs are declared out of
     // alphabetical order.
     items: [...propertyDefs.values()].toSorted((a, b) =>
-      compareBinary(a['key'] as string, b['key'] as string),
+      compareUtf8Bytes(a['key'] as string, b['key'] as string),
     ),
     next_cursor: null,
     has_more: false,

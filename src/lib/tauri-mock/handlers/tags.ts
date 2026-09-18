@@ -9,10 +9,10 @@
  * store.
  */
 
+import { compareUtf8Bytes, foldAsciiUppercase } from '@/lib/sqlite-collation'
 import {
   type TagExprNode,
   type TypedHandlers,
-  compareBinary,
   refInclusiveTags,
   validationRejection,
 } from '@/lib/tauri-mock/handlers/shared'
@@ -75,7 +75,7 @@ function tagCacheRows(): TagCacheRow[] {
       updated_at: new Date().toISOString(),
     })
   }
-  rows.sort((x, y) => compareBinary(x.name, y.name))
+  rows.sort((x, y) => compareUtf8Bytes(x.name, y.name))
   return rows
 }
 
@@ -183,14 +183,14 @@ function evalTagQuery(
   const spaceId = scope?.kind === 'active' ? (scope.space_id ?? null) : null
 
   const prefixTagIds = (prefix: string): Set<string> => {
-    const lp = prefix.toLowerCase()
+    const lp = foldAsciiUppercase(prefix)
     const ids = new Set<string>()
     for (const [, b] of blocks) {
       if (
         b['block_type'] === 'tag' &&
         !b['deleted_at'] &&
         typeof b['content'] === 'string' &&
-        (b['content'] as string).toLowerCase().startsWith(lp)
+        foldAsciiUppercase(b['content'] as string).startsWith(lp)
       ) {
         ids.add(b['id'] as string)
       }
@@ -357,18 +357,22 @@ export const tagsHandlers = {
       )
     }
     const effectiveLimit = limit ?? MAX_TAGS_PREFIX
-    const folded = prefix.toLowerCase()
+    const asciiFolded = foldAsciiUppercase(prefix)
     const cache = tagCacheRows()
     const rows = cache
-      .filter((r) => r.name.toLowerCase().startsWith(folded))
+      .filter((r) => foldAsciiUppercase(r.name).startsWith(asciiFolded))
       .slice(0, effectiveLimit)
     if (prefix !== '') {
+      // The exact match keeps `toLowerCase`: the backend falls back from the
+      // ASCII-only NOCASE index to `normalize_tag_name`'s full-Unicode fold
+      // (#1990), so a non-ASCII case-variant resolves here too.
+      const folded = prefix.toLowerCase()
       // `cache` is in BINARY name order, so the first fold-equal row is the
       // one `exact_match_nocase`'s `ORDER BY name LIMIT 1` picks.
       const exact = cache.find((r) => r.name.toLowerCase() === folded)
       if (exact && !rows.some((r) => r.tag_id === exact.tag_id)) {
         if (rows.length >= effectiveLimit) rows.pop()
-        const at = rows.findIndex((r) => r.name >= exact.name)
+        const at = rows.findIndex((r) => compareUtf8Bytes(r.name, exact.name) >= 0)
         rows.splice(at === -1 ? rows.length : at, 0, exact)
       }
     }

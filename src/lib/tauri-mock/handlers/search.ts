@@ -12,6 +12,7 @@
 import { base64UrlToUtf8, isBase64UrlNoPad, utf8ToBase64Url } from '@/lib/base64url'
 import { asciiLowercase, pageGlobFilterMatches } from '@/lib/search-query/glob-validate'
 import { isIsoDate } from '@/lib/search-query/is-iso-date'
+import { compareUtf8Bytes } from '@/lib/sqlite-collation'
 import {
   buildPageMetaRow,
   deriveLinkEdges,
@@ -896,9 +897,7 @@ function compareSortValue(a: SortValue, b: SortValue, desc: boolean): number {
   if (typeof a === 'number' && typeof b === 'number') {
     cmp = a - b
   } else {
-    const as = String(a)
-    const bs = String(b)
-    cmp = as < bs ? -1 : as > bs ? 1 : 0
+    cmp = compareUtf8Bytes(String(a), String(b))
   }
   return desc ? -cmp : cmp
 }
@@ -981,9 +980,7 @@ function compareCursorValue(
   if (a.t !== 'Text' && b.t !== 'Text') {
     cmp = a.v - b.v
   } else {
-    const as = String(a.v)
-    const bs = String(b.v)
-    cmp = as < bs ? -1 : as > bs ? 1 : 0
+    cmp = compareUtf8Bytes(String(a.v), String(b.v))
   }
   return desc ? -cmp : cmp
 }

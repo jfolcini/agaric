@@ -19,7 +19,7 @@
 import { utf8ToBase64Url } from '@/lib/base64url'
 import type { AppError, PageResponse, commands } from '@/lib/bindings'
 import { asciiLowercase, pageGlobFilterMatches } from '@/lib/search-query/glob-validate'
-import { compareNocase, compareUtf8Bytes } from '@/lib/sqlite-collation'
+import { compareNocase, compareUtf8Bytes, foldAsciiUppercase } from '@/lib/sqlite-collation'
 import { TASK_STATES } from '@/lib/task-states'
 import {
   type MockLinkEdge,
@@ -651,11 +651,6 @@ export function propertyValueColumn(
       return null
     }
   }
-}
-
-/** SQLite's BINARY collation on TEXT: a code-unit compare, never `localeCompare`. */
-export function compareBinary(a: string, b: string): number {
-  return a < b ? -1 : a > b ? 1 : 0
 }
 
 /** Ordered comparison for `Lt`/`Gt`/`Lte`/`Gte` — numeric for a `value_num`
@@ -1352,12 +1347,12 @@ export function fbqPropertyFilterMatches(
 export function fbqResolvePrefixTagIds(prefixes: string[]): string[] {
   const out: string[] = []
   for (const prefix of prefixes) {
-    const lp = prefix.toLowerCase()
+    const lp = foldAsciiUppercase(prefix)
     for (const [, blk] of blocks) {
       if (
         blk['block_type'] === 'tag' &&
         !blk['deleted_at'] &&
-        ((blk['content'] as string) ?? '').toLowerCase().startsWith(lp)
+        foldAsciiUppercase((blk['content'] as string) ?? '').startsWith(lp)
       ) {
         out.push(blk['id'] as string)
       }

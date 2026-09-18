@@ -54,6 +54,32 @@
         "priority": null,
         "scheduled_date": null,
         "todo_state": null
+      },
+      {
+        "block_type": "page",
+        "content": "Alias Zoo",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B5",
+        "page_id": "B5",
+        "parent_id": null,
+        "position": 5,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "page",
+        "content": "Umlaut Upper",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B6",
+        "page_id": "B6",
+        "parent_id": null,
+        "position": 6,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
       }
     ],
     "op_log_digest": {
@@ -151,6 +177,54 @@
       "has_more": null,
       "name": "prefix_global_scope_case_folded",
       "rows": ["B1#alias=Roadmap#title=Planning"],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": null,
+      "name": "aliases_nocase_folds_ascii_only_then_memcmps_utf8",
+      "rows": ["q-Öl", "q-äl", "Zebra", "Öl", "ärger", "ｱ", "🍎"],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": null,
+      "name": "resolve_ascii_fold_keeps_the_two_umlaut_spellings_apart",
+      "rows": ["B6#title=Umlaut Upper"],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": null,
+      "name": "resolve_reaches_the_lower_spelling_through_its_own_row",
+      "rows": ["B5#title=Alias Zoo"],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": null,
+      "name": "prefix_ascii_fold_reaches_one_spelling_at_a_time",
+      "rows": ["B6#alias=Ärger#title=Umlaut Upper"],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": null,
+      "name": "prefix_lower_spelling_is_the_other_arm",
+      "rows": ["B5#alias=ärger#title=Alias Zoo"],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": null,
+      "name": "prefix_length_tie_breaks_on_the_nocase_collation",
+      "rows": ["B5#alias=q-Öl#title=Alias Zoo", "B5#alias=q-äl#title=Alias Zoo"],
       "total_count": null
     }
   ],
@@ -272,6 +346,69 @@
       "command": "list_page_aliases_by_prefix",
       "comment": "`road` matches the alias stored as `Roadmap` under `Global`: the LIKE is case-insensitive in the other direction too (lowercase query, capitalized row), and the unscoped branch answers the same rows the seed's one space holds.",
       "name": "prefix_global_scope_case_folded"
+    },
+    {
+      "args": {
+        "pageId": "S5"
+      },
+      "command": "get_page_aliases",
+      "comment": "`ORDER BY alias` under the column's NOCASE collation, on seven aliases picked so BOTH halves of that collation are load-bearing. NOCASE folds `A`-`Z` and NOTHING else, then memcmps UTF-8 BYTES. So: `q-Öl` (`C3 96`) before `q-äl` (`C3 A4`), `Zebra` folded to `z` (`7A`) before both umlauts, `Öl` before `ärger`, and the halfwidth katakana `ｱ` (`EF BD B1`) before the apple `🍎` (`F0 9F 8D 8E`). A `toLowerCase()` fold turns `Ö` into `ö` (`C3 B6`) and REVERSES both Ö/ä pairs; a UTF-16 code-unit compare puts the apple's leading surrogate `D83C` below `FF71` and REVERSES the katakana/apple pair. The seed order is `ärger, Öl, Zebra, q-Öl, q-äl, ｱ, 🍎`, which is none of the three, so dropping the sort reddens too.",
+      "name": "aliases_nocase_folds_ascii_only_then_memcmps_utf8"
+    },
+    {
+      "args": {
+        "alias": "Ärger",
+        "scope": {
+          "kind": "global"
+        }
+      },
+      "command": "resolve_page_by_alias",
+      "comment": "`UNIQUE(alias COLLATE NOCASE)` folds ASCII only, so `Ärger` (S6) and `ärger` (S5) are two rows, and `= 'Ärger' COLLATE NOCASE` reaches exactly one of them. S5 is seeded FIRST, so a resolver that folds through `toLowerCase` merges the pair and answers S5 with the wrong title.",
+      "name": "resolve_ascii_fold_keeps_the_two_umlaut_spellings_apart"
+    },
+    {
+      "args": {
+        "alias": "ärger",
+        "scope": {
+          "kind": "global"
+        }
+      },
+      "command": "resolve_page_by_alias",
+      "comment": "The other arm of the pair above, so neither spelling is pinned alone: `ärger` answers S5. Both arms matter — a resolver that answered S5 for everything would pass this one and fail the step above.",
+      "name": "resolve_reaches_the_lower_spelling_through_its_own_row"
+    },
+    {
+      "args": {
+        "prefix": "Ärg",
+        "scope": {
+          "kind": "global"
+        }
+      },
+      "command": "list_page_aliases_by_prefix",
+      "comment": "`LIKE '%Ärg%' COLLATE NOCASE` folds `A`-`Z` only, so the capital-Ä query reaches S6's `Ärger` and NOT S5's `ärger`. A `toLowerCase` fold answers both rows.",
+      "name": "prefix_ascii_fold_reaches_one_spelling_at_a_time"
+    },
+    {
+      "args": {
+        "prefix": "ärg",
+        "scope": {
+          "kind": "global"
+        }
+      },
+      "command": "list_page_aliases_by_prefix",
+      "comment": "The lowercase arm: S5's `ärger` alone. Paired with the step above so neither arm is a half-covered match.",
+      "name": "prefix_lower_spelling_is_the_other_arm"
+    },
+    {
+      "args": {
+        "prefix": "q-",
+        "scope": {
+          "kind": "global"
+        }
+      },
+      "command": "list_page_aliases_by_prefix",
+      "comment": "`ORDER BY length(alias), alias` — two four-character aliases, so the length key ties and the tiebreak IS the NOCASE collation: `q-Öl` (`C3 96`) before `q-äl` (`C3 A4`). A `toLowerCase` fold makes it `q-öl` (`C3 B6`) and answers the other order. Deliberately ASCII-lengthed: `length()` counts characters in SQLite and UTF-16 units in JS, so an astral alias here would redden on the LENGTH key instead of the collation.",
+      "name": "prefix_length_tie_breaks_on_the_nocase_collation"
     }
   ],
   "seed": {
@@ -303,6 +440,20 @@
         "id": "S4",
         "parent_id": null,
         "position": 4
+      },
+      {
+        "block_type": "page",
+        "content": "Alias Zoo",
+        "id": "S5",
+        "parent_id": null,
+        "position": 5
+      },
+      {
+        "block_type": "page",
+        "content": "Umlaut Upper",
+        "id": "S6",
+        "parent_id": null,
+        "position": 6
       }
     ],
     "page_aliases": [
@@ -333,6 +484,38 @@
       {
         "alias": "old-plan",
         "page_id": "S3"
+      },
+      {
+        "alias": "ärger",
+        "page_id": "S5"
+      },
+      {
+        "alias": "Öl",
+        "page_id": "S5"
+      },
+      {
+        "alias": "Zebra",
+        "page_id": "S5"
+      },
+      {
+        "alias": "q-Öl",
+        "page_id": "S5"
+      },
+      {
+        "alias": "q-äl",
+        "page_id": "S5"
+      },
+      {
+        "alias": "ｱ",
+        "page_id": "S5"
+      },
+      {
+        "alias": "🍎",
+        "page_id": "S5"
+      },
+      {
+        "alias": "Ärger",
+        "page_id": "S6"
       }
     ],
     "properties": [],

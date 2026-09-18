@@ -54,6 +54,19 @@
         "priority": null,
         "scheduled_date": null,
         "todo_state": null
+      },
+      {
+        "block_type": "page",
+        "content": "Umlauts",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B5",
+        "page_id": "B5",
+        "parent_id": null,
+        "position": 4,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
       }
     ],
     "op_log_digest": {
@@ -81,6 +94,16 @@
       "error": "not_found",
       "name": "refuses_a_non_page_id",
       "returns": []
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "in_call_dedup_is_the_ascii_fold_not_a_unicode_one",
+      "returns": [
+        "set_page_aliases#inserted=Ärger",
+        "set_page_aliases#inserted=ärger",
+        "set_page_aliases#inserted=ARGER"
+      ]
     }
   ],
   "expected_queries": [
@@ -123,6 +146,14 @@
       "name": "trimmed_alias_is_what_resolves",
       "rows": ["B1#title=Planning"],
       "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": null,
+      "name": "both_umlaut_spellings_read_back_in_nocase_order",
+      "rows": ["ARGER", "Ärger", "ärger"],
+      "total_count": null
     }
   ],
   "name": "page_alias_writes",
@@ -156,6 +187,16 @@
       "comment": "S4 is a `content` block, not a `page`. The probe is `block_type = 'page' AND deleted_at IS NULL`, so this is `NotFound` and nothing is written — the step below shows `orphan` reached no page. The mock accepted it and filed the aliases under a non-page id.",
       "expect_error": "not_found",
       "name": "refuses_a_non_page_id",
+      "via": "command"
+    },
+    {
+      "args": {
+        "aliases": ["Ärger", "ärger", "ARGER", "arger"],
+        "pageId": "S5"
+      },
+      "command": "set_page_aliases",
+      "comment": "Four entries, three rows. The in-call dedup is nothing but `INSERT OR IGNORE` against `UNIQUE(alias COLLATE NOCASE)`, and NOCASE folds `A`-`Z` only: `Ärger` and `ärger` are DIFFERENT rows and both land, while `arger` collides with the `ARGER` this same call just took. The answer is `Ärger`, `ärger`, `ARGER` — in the order given. A dedup keyed on `toLowerCase()` merges the umlaut pair and answers two entries.",
+      "name": "in_call_dedup_is_the_ascii_fold_not_a_unicode_one",
       "via": "command"
     }
   ],
@@ -206,6 +247,14 @@
       "command": "resolve_page_by_alias",
       "comment": "The trimmed form is the row: `SPACED` matches it under the NOCASE index and answers S1. A mock that stored `  spaced  ` verbatim misses, because the padding is part of the stored text and no collation folds it away.",
       "name": "trimmed_alias_is_what_resolves"
+    },
+    {
+      "args": {
+        "pageId": "S5"
+      },
+      "command": "get_page_aliases",
+      "comment": "The three rows the op above wrote, `ORDER BY alias` NOCASE: `ARGER` folds to `arger` (`61`) and leads, then `Ärger` (`C3 84`), then `ärger` (`C3 A4`). Re-read rather than echoed — the op's return is the write's answer, this is the table's.",
+      "name": "both_umlaut_spellings_read_back_in_nocase_order"
     }
   ],
   "seed": {
@@ -237,6 +286,13 @@
         "id": "S4",
         "parent_id": "S1",
         "position": 1
+      },
+      {
+        "block_type": "page",
+        "content": "Umlauts",
+        "id": "S5",
+        "parent_id": null,
+        "position": 4
       }
     ],
     "page_aliases": [

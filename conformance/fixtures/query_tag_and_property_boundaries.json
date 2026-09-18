@@ -15,6 +15,10 @@
         "tag_id": "B10"
       },
       {
+        "block_id": "B3",
+        "tag_id": "B12"
+      },
+      {
         "block_id": "B4",
         "tag_id": "B11"
       },
@@ -170,10 +174,23 @@
         "priority": null,
         "scheduled_date": null,
         "todo_state": null
+      },
+      {
+        "block_type": "tag",
+        "content": "Ärger",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B12",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 9,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
       }
     ],
     "op_log_digest": {
-      "count": 18,
+      "count": 19,
       "ops": [
         {
           "op_type": "add_tag"
@@ -238,6 +255,9 @@
         },
         {
           "op_type": "set_todo_state"
+        },
+        {
+          "op_type": "add_tag"
         }
       ]
     },
@@ -476,7 +496,8 @@
         "B8#parent_id=B7#page_id=B7#position=1#deleted_at=null",
         "B9#parent_id=B1#page_id=B1#position=6#deleted_at=null",
         "B10#parent_id=B1#page_id=B1#position=7#deleted_at=null",
-        "B11#parent_id=B1#page_id=B1#position=8#deleted_at=null"
+        "B11#parent_id=B1#page_id=B1#position=8#deleted_at=null",
+        "B12#parent_id=B1#page_id=B1#position=9#deleted_at=null"
       ],
       "total_count": null
     },
@@ -578,7 +599,8 @@
         "B6#parent_id=B1#page_id=B1#position=5#deleted_at=null",
         "B9#parent_id=B1#page_id=B1#position=6#deleted_at=null",
         "B10#parent_id=B1#page_id=B1#position=7#deleted_at=null",
-        "B11#parent_id=B1#page_id=B1#position=8#deleted_at=null"
+        "B11#parent_id=B1#page_id=B1#position=8#deleted_at=null",
+        "B12#parent_id=B1#page_id=B1#position=9#deleted_at=null"
       ],
       "total_count": null
     },
@@ -588,6 +610,38 @@
       "has_more": false,
       "name": "expr_and_of_nothing_is_empty",
       "rows": [],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "prefix_leaf_like_folds_ascii_only",
+      "rows": ["B3#parent_id=B1#page_id=B1#position=2#deleted_at=null"],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "prefix_leaf_lower_umlaut_reaches_nothing",
+      "rows": [],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "expr_prefix_leaf_lower_umlaut_reaches_nothing",
+      "rows": [],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "expr_prefix_leaf_upper_umlaut_reaches_s3",
+      "rows": ["B3#parent_id=B1#page_id=B1#position=2#deleted_at=null"],
       "total_count": null
     }
   ],
@@ -754,6 +808,13 @@
         }
       },
       "command": "set_property"
+    },
+    {
+      "args": {
+        "blockId": "S3",
+        "tagId": "S13"
+      },
+      "command": "add_tag"
     }
   ],
   "queries": [
@@ -1210,6 +1271,70 @@
       "comment": "`And` over no children is the EMPTY set (`resolve.rs`), not the identity of intersection; a mock built on `[].every()` returns every live block.",
       "expect_empty": true,
       "name": "expr_and_of_nothing_is_empty"
+    },
+    {
+      "args": {
+        "limit": 100,
+        "mode": "or",
+        "prefixes": ["Ärg"],
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        },
+        "tagIds": []
+      },
+      "command": "query_by_tags",
+      "comment": "A `Prefix` leaf compiles to `tc.name LIKE 'Ärg%'` (`prefix_leaf_subquery_body`). The capital-Ä prefix reaches `Ärger`, whose one holder is S3.",
+      "name": "prefix_leaf_like_folds_ascii_only"
+    },
+    {
+      "args": {
+        "limit": 100,
+        "mode": "or",
+        "prefixes": ["är"],
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        },
+        "tagIds": []
+      },
+      "command": "query_by_tags",
+      "comment": "The discriminating arm: LIKE folds `A`-`Z` only, so `är%` does not reach `Ärger` and the leaf selects no tag at all. A prefix resolver that folds through `toLowerCase()` answers S3 here. Empty on purpose; non-vacuous because the arm above serves a row through the same command.",
+      "expect_empty": true,
+      "name": "prefix_leaf_lower_umlaut_reaches_nothing"
+    },
+    {
+      "args": {
+        "expr": {
+          "type": "Prefix",
+          "value": "är"
+        },
+        "limit": 100,
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
+      },
+      "command": "query_by_tag_expr",
+      "comment": "The same ASCII-only fold through the EXPRESSION compiler rather than the flat `prefixes` list — a second code path in the mock (`evalTagQuery`'s `prefixTagIds`), pinned beside the `Ärg` arm below so it is not a half-covered pair.",
+      "expect_empty": true,
+      "name": "expr_prefix_leaf_lower_umlaut_reaches_nothing"
+    },
+    {
+      "args": {
+        "expr": {
+          "type": "Prefix",
+          "value": "Ärg"
+        },
+        "limit": 100,
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
+      },
+      "command": "query_by_tag_expr",
+      "comment": "The other arm of the expression pair: `Ärg%` reaches `Ärger` and answers its holder S3.",
+      "name": "expr_prefix_leaf_upper_umlaut_reaches_s3"
     }
   ],
   "seed": {
@@ -1290,6 +1415,13 @@
         "id": "S12",
         "parent_id": "S1",
         "position": 8
+      },
+      {
+        "block_type": "tag",
+        "content": "Ärger",
+        "id": "S13",
+        "parent_id": "S1",
+        "position": 9
       }
     ],
     "properties": [],
