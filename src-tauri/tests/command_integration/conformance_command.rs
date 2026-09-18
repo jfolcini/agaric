@@ -218,6 +218,12 @@ const RETURN_SHAPE: &[(&str, &str, &[&str], &[&str])] = &[
     // anything READS is the `unpaired_by_peer_at_ms` clear across `peer_refs`,
     // so the `list_peer_refs` step beside it is the observation.
     ("confirm_pairing", HEADED_ID_KEY, &[], &[]),
+    // #5057 — the HOST half, and the attrs are empty for a different reason
+    // than the unit returns above: `PairingInfo` HAS two fields and neither is
+    // nameable. `passphrase` is `generate_passphrase()`, minted fresh per
+    // stack, and `qr_svg` is rendered from it. The write anything READS is the
+    // same `unpaired_by_peer_at_ms` clear, observed by the step beside it.
+    ("start_pairing", HEADED_ID_KEY, &[], &[]),
     // #5057 — the two space CREATORS answer with the new block's id, which
     // `relabel_token` maps to its canonical label like any other id-valued
     // attribute, so the return names WHICH block was made rather than a
@@ -569,6 +575,29 @@ pub(super) async fn apply_op_via_command(
                     None,
                 )
                 .await,
+            )
+        }
+        // The host half, with the same two constructed collaborators — plus a
+        // published endpoint advert, which is NOT decoration. `start_pairing_
+        // armed` waits on `SyncScheduler::await_local_endpoint` before it
+        // renders the QR, and its budget is five seconds of REAL time on this
+        // module's multi-thread runtime (no `start_paused`). A freshly
+        // `new()`ed scheduler has published nothing, so without this the
+        // conformance run would sit out the whole budget on every replay.
+        // Publishing first makes the wait return on its first `borrow`, and
+        // the advert is invisible to the fixture: it only feeds the QR
+        // payload, and neither `PairingInfo` field is projected.
+        "start_pairing" => {
+            let pairing_state = std::sync::Mutex::new(None);
+            let scheduler = agaric_sync::sync_scheduler::SyncScheduler::new();
+            scheduler.publish_local_endpoint(agaric_sync::sync_scheduler::LocalEndpointAdvert {
+                device_id: "conformance-host".to_string(),
+                endpoint_id: "conformance-endpoint".to_string(),
+                addrs: Vec::new(),
+            });
+            to_json(
+                start_pairing_armed_inner(pool, &pairing_state, &scheduler, "conformance-host")
+                    .await,
             )
         }
         // An alias is the caller's own text, so `aliases` takes no label
@@ -975,7 +1004,7 @@ mod tests {
     /// vice versa, and the count is the one this module claims — so a
     /// mutating command cannot join one table without the other, and cannot
     /// join at all without this number moving.
-    const MUTATING_ARM_COUNT: usize = 36;
+    const MUTATING_ARM_COUNT: usize = 37;
 
     #[test]
     fn the_dispatcher_and_the_return_shape_table_name_the_same_commands() {

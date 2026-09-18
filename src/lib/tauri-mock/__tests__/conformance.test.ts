@@ -323,6 +323,12 @@ const SNAPSHOT_OPS_INERT: ReadonlyMap<string, string> = new Map<string, string>(
       'nothing it does is expressible there; the `list_peer_refs` step carries ' +
       'the claim',
   ],
+  [
+    'pairing_start',
+    'the host half writes the same two tables as `pairing_confirm` and appends ' +
+      'no op either, so nothing it does is expressible in the five arrays; the ' +
+      '`list_peer_refs` step carries the claim',
+  ],
 ])
 
 /**

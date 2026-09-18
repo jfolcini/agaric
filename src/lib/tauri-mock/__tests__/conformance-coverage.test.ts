@@ -281,10 +281,11 @@ const NO_FIXTURE_ALLOWLIST: Readonly<Record<string, string>> = {
   // ── Sync / pairing / peer registry (transient transport / device metadata) ──
   start_sync: 'sync transport session; no durable domain state to snapshot',
   cancel_sync: 'sync transport session; no durable domain state to snapshot',
-  start_pairing: 'pairing transport session; no durable domain state to snapshot',
-  // #5057 pinned `confirm_pairing` (`pairing_confirm.json`). Its waiver named
-  // both writes and then judged them together; they differ. The marker is
-  // unobservable, the `peer_refs` unpaired-flag clear is not.
+  // #5057 pinned BOTH halves of pairing — `confirm_pairing`
+  // (`pairing_confirm.json`) and `start_pairing` (`pairing_start.json`). Each
+  // waiver named two writes and then judged them together; they differ. The
+  // pending-pairing marker is unobservable, the `peer_refs` unpaired-flag
+  // clear is not.
   // #3493 — cancel now deletes the pending-pairing marker (an `app_settings`
   // row), so this is no longer "no durable state". It stays excluded because
   // the marker is the ONLY thing it writes and nothing reads it — the
@@ -569,7 +570,6 @@ const NO_DOMAIN_STATE_MUTATING: ReadonlySet<string> = new Set([
   // Transport sessions only — these hold no durable row anywhere.
   'start_sync',
   'cancel_sync',
-  'start_pairing',
   // Observability / runtime toggles — no persistent domain state.
   'log_frontend',
   'ingest_otel_spans',
