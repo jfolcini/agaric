@@ -24,6 +24,7 @@ import {
   refreshDescendantPageIds,
   renumberSiblings,
   restoreCohort,
+  spaceRootGroup,
   validationRejection,
 } from '@/lib/tauri-mock/handlers/shared'
 import {
@@ -1371,6 +1372,17 @@ export const blocksHandlers = {
     if (inputIds.length === 0) {
       throw validationRejection('block_ids list cannot be empty')
     }
+    // `require_live_space_in_tx` runs ONCE, before any per-block write: the
+    // target must be a LIVE block flagged `is_space = 'true'`. The per-block
+    // leniency below covers a dead BLOCK id, never a bad TARGET.
+    const target = blocks.get(spaceId)
+    if (
+      !target ||
+      target['deleted_at'] ||
+      properties.get(spaceId)?.get('is_space')?.['value_text'] !== 'true'
+    ) {
+      throw validationRejection(`block '${spaceId}' is not a live space`)
+    }
     let count = 0
     for (const blockId of inputIds) {
       const b = blocks.get(blockId)
@@ -1407,6 +1419,32 @@ export const blocksHandlers = {
       // ?`), but every mock reader of `space_id` reads it on a page or
       // top-level tag row, so the descendant stamp has no reader here.
       b['space_id'] = spaceId
+      // The `space` write routes through `apply_op_projected` → the `space` arm
+      // of `loro_apply.rs` → `hydrate_page_subtree_into_engine`, which ends in
+      // `projection::reproject_dense_positions`: the DESTINATION space's root
+      // group is dense-renumbered, and the arriving block lands FIRST in it.
+      //
+      // First, not last, because the engine orders that group by each node's
+      // LEGACY POSITION META paired with its block id, and the two sides of the
+      // comparison are on different scales. A block already in the space was
+      // seeded with the `position` it held at CREATION, which `create_block_in_tx`
+      // appended over the whole `parent_id IS NULL` set — every space and every
+      // page in one count, so it grows with the graph. An ARRIVING block is
+      // seeded with its per-space dense rank, which is small. The small key wins.
+      // A contrived case where it does not (an arriving block ranked below the
+      // destination's oldest member, or two arrivals whose ids order against
+      // their ranks) is not modelled here; `spaces_lifecycle.json` pins the
+      // single-block move this rule covers.
+      //
+      // The SOURCE group is deliberately left alone: only the destination doc
+      // is hydrated, so the vacated rank stays a hole on both stacks.
+      if ((b['parent_id'] as string | null) === null) {
+        const group = spaceRootGroup(spaceId).filter((id) => id !== blockId)
+        ;[blockId, ...group].forEach((id, i) => {
+          const row = blocks.get(id)
+          if (row) row['position'] = i + 1
+        })
+      }
       pushOp('set_property', {
         block_id: blockId,
         key: 'space',

@@ -1,5 +1,5 @@
 {
-  "description": "#5057 — the two space CREATORS, both previously waived as \"outside the single-space conformance snapshot scope\". They are not: the snapshot projection excludes exactly one block, the harness's own test space (`FROM blocks WHERE id <> ?`), and filters nothing by space. A space is an ordinary top-level page row in `blocks`, and its `is_space` / `accent_color` writes are ordinary rows in `properties`. The fixture therefore needs no second-space TOKEN either: it CREATES the space it then writes into and names it `C1`, the same created-block convention every other arg uses.\n\nWhat the single-space limit really was is the #891 SQL/Loro parity guard, which resolved every block against `TEST_SPACE_ID`'s engine doc. A space is not a member of itself — `ensure_test_space` leaves the harness space's `space_id` NULL and `create_space_inner` ends with `hydrate_space_block_into_own_engine` — so a created space was present in SQL and absent from the one doc the guard looked in, and the fixture failed on presence before any assertion ran. The guard now resolves each block's doc as `space_id`, or the block's own id when it is itself a space.\n\nWhat the snapshot still cannot show is the space ASSIGNMENT: `create_page_in_space` writes `blocks.space_id`, a column the projection does not carry, and the mock's mirror `space` property is skipped on the TS side for exactly that reason. So it is pinned by its RETURN plus the page block it does put in the snapshot.\n\nThe mock divergence this found: `create_space` hardcoded `position: 0`, where the backend assigns a real sibling rank.\n\nNOT pinned here: `move_blocks_to_space`. Writing the `space` property re-ranks the destination space's top-level group (moving `S2` into the new space renumbered it and pushed both created blocks down by one), and the mock does not MAINTAIN per-space root positions: `insertAtSlotAndRenumber(null, …)` re-flattens the whole cross-space group, so any fixture mixing a root create with a space write diverges. A count-only pin would pass while the tree diverged.\n\n`list_spaces` IS pinned here, by the query step below. What stood in the way was the two stacks' space BOOTSTRAPS, not their snapshots: `ensure_test_space` writes no `is_space` property, so `list_spaces_inner`'s `INNER JOIN block_properties ... key = 'is_space'` never sees the harness space, while the mock PREPENDED a hardcoded `Personal` row that no block backed. Only the mock half had to move. The prepend is gone and `seedBlocks` now lays `SPACE_PERSONAL` down as a real page block carrying `is_space = 'true'`, so the browser preview keeps its Personal row and the mock lists only block-backed spaces the way the backend does. That seed is irrelevant to this fixture — `clearMock` wipes it before the ops run — so both stacks enter with zero spaces and the only rows either can list are the two the `create_space` ops make. Their names are chosen so a locale compare and SQLite's BINARY collation order them differently — the ordering `SpaceSwitcher`'s `Ctrl+1`..`Ctrl+9` hotkeys ride.",
+  "description": "#5057 — the two space CREATORS, both previously waived as \"outside the single-space conformance snapshot scope\". They are not: the snapshot projection excludes exactly one block, the harness's own test space (`FROM blocks WHERE id <> ?`), and filters nothing by space. A space is an ordinary top-level page row in `blocks`, and its `is_space` / `accent_color` writes are ordinary rows in `properties`. The fixture therefore needs no second-space TOKEN either: it CREATES the space it then writes into and names it `C1`, the same created-block convention every other arg uses.\n\nWhat the single-space limit really was is the #891 SQL/Loro parity guard, which resolved every block against `TEST_SPACE_ID`'s engine doc. A space is not a member of itself — `ensure_test_space` leaves the harness space's `space_id` NULL and `create_space_inner` ends with `hydrate_space_block_into_own_engine` — so a created space was present in SQL and absent from the one doc the guard looked in, and the fixture failed on presence before any assertion ran. The guard now resolves each block's doc as `space_id`, or the block's own id when it is itself a space.\n\nWhat the snapshot still cannot show is the space ASSIGNMENT: `create_page_in_space` writes `blocks.space_id`, a column the projection does not carry, and the mock's mirror `space` property is skipped on the TS side for exactly that reason. So it is pinned by its RETURN plus the page block it does put in the snapshot.\n\nThe mock divergence this found: `create_space` hardcoded `position: 0`, where the backend assigns a real sibling rank.\n\n`move_blocks_to_space` IS pinned here, by the op below. Writing the `space` property routes through `apply_op_projected` → `hydrate_page_subtree_into_engine` → `projection::reproject_dense_positions`, which RE-RANKS the DESTINATION space's root sibling group — positions are dense per space, not across `parent_id = NULL`. `position` is in the snapshot, so that renumber is exactly what the fixture compares, and the mock diverged on it: the handler wrote the property row and stamped `blocks.space_id` but assigned no rank at all, leaving the arriving page on the rank it held in the space it left. (The retired waiver blamed `insertAtSlotAndRenumber(null, …)` re-flattening the cross-space group. This handler never called it.) The move is also observed on the READ path by the `list_all_pages_in_space` step: the seed page it takes out of the harness space stops being listed there. Two refusals ride along — an empty id list, and a target that is a live page but not a space.\n\nWhere the arriving page LANDS is the part worth stating, because it is first, not last. The engine orders a root group by each node's legacy `position` meta paired with its block id, and the two sides are on different scales: a node already in the space was seeded with the `position` it held at CREATION, which `create_block_in_tx` appended over the whole `parent_id IS NULL` set (every space and every page in one count, so it grows with the graph), while an ARRIVING node is seeded with its small per-space dense rank. The small key wins, so `Drafts` comes out at 1 and `inbox` — a space ranks in its own group — is pushed to 2. The mock mirrors THAT rule, not an append; the contrived cases it does not model are named at its call site.\n\nWhat the harness cannot spell is the move's destination as a READ: a query step's args expand only `$SPACE` and `S<n>` (`expand_query_args`), never the `C<n>` label that names an op-created space, and query steps all run AFTER the ops, so there is no \"before\" leg either. The destination group is pinned by the snapshot instead, which is where `position` lives anyway.\n\n`list_spaces` IS pinned here, by the query step below. What stood in the way was the two stacks' space BOOTSTRAPS, not their snapshots: `ensure_test_space` writes no `is_space` property, so `list_spaces_inner`'s `INNER JOIN block_properties ... key = 'is_space'` never sees the harness space, while the mock PREPENDED a hardcoded `Personal` row that no block backed. Only the mock half had to move. The prepend is gone and `seedBlocks` now lays `SPACE_PERSONAL` down as a real page block carrying `is_space = 'true'`, so the browser preview keeps its Personal row and the mock lists only block-backed spaces the way the backend does. That seed is irrelevant to this fixture — `clearMock` wipes it before the ops run — so both stacks enter with zero spaces and the only rows either can list are the two the `create_space` ops make. Their names are chosen so a locale compare and SQLite's BINARY collation order them differently — the ordering `SpaceSwitcher`'s `Ctrl+1`..`Ctrl+9` hotkeys ride.",
   "expected": {
     "block_tags": [],
     "blocks": [
@@ -44,7 +44,7 @@
       },
       {
         "block_type": "page",
-        "content": "Work",
+        "content": "Drafts",
         "deleted_at": null,
         "due_date": null,
         "id": "B4",
@@ -57,11 +57,24 @@
       },
       {
         "block_type": "page",
-        "content": "Roadmap",
+        "content": "Work",
         "deleted_at": null,
         "due_date": null,
         "id": "B5",
         "page_id": "B5",
+        "parent_id": null,
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "page",
+        "content": "Roadmap",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B6",
+        "page_id": "B6",
         "parent_id": null,
         "position": 2,
         "priority": null,
@@ -73,17 +86,17 @@
         "content": "inbox",
         "deleted_at": null,
         "due_date": null,
-        "id": "B6",
-        "page_id": "B6",
+        "id": "B7",
+        "page_id": "B7",
         "parent_id": null,
-        "position": 1,
+        "position": 2,
         "priority": null,
         "scheduled_date": null,
         "todo_state": null
       }
     ],
     "op_log_digest": {
-      "count": 7,
+      "count": 8,
       "ops": [
         {
           "op_type": "create_block"
@@ -109,25 +122,29 @@
         {
           "key": "is_space",
           "op_type": "set_property"
+        },
+        {
+          "key": "space",
+          "op_type": "set_property"
         }
       ]
     },
     "page_links": [],
     "properties": [
       {
-        "block_id": "B4",
+        "block_id": "B5",
         "key": "accent_color",
         "value": "accent-violet",
         "value_type": "Text"
       },
       {
-        "block_id": "B4",
+        "block_id": "B5",
         "key": "is_space",
         "value": "true",
         "value_type": "Text"
       },
       {
-        "block_id": "B6",
+        "block_id": "B7",
         "key": "is_space",
         "value": "true",
         "value_type": "Text"
@@ -139,25 +156,43 @@
       "code": null,
       "error": null,
       "name": "creates_a_page_block_and_flags_it",
-      "returns": ["create_space#space_id=B4"]
+      "returns": ["create_space#space_id=B5"]
     },
     {
       "code": null,
       "error": null,
       "name": "creates_a_root_page_in_the_new_space",
-      "returns": ["create_page_in_space#page_id=B5"]
+      "returns": ["create_page_in_space#page_id=B6"]
     },
     {
       "code": null,
       "error": null,
       "name": "an_existing_title_resolves_instead_of_creating",
-      "returns": ["create_page_in_space#page_id=B5"]
+      "returns": ["create_page_in_space#page_id=B6"]
     },
     {
       "code": null,
       "error": null,
       "name": "a_second_space_whose_name_discriminates_the_collations",
-      "returns": ["create_space#space_id=B6"]
+      "returns": ["create_space#space_id=B7"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "moves_a_seed_page_into_the_second_space",
+      "returns": ["move_blocks_to_space#moved=1"]
+    },
+    {
+      "code": null,
+      "error": "validation",
+      "name": "an_empty_block_list_is_refused",
+      "returns": []
+    },
+    {
+      "code": null,
+      "error": "validation",
+      "name": "a_target_that_is_not_a_space_is_refused",
+      "returns": []
     }
   ],
   "expected_queries": [
@@ -166,7 +201,15 @@
       "error": null,
       "has_more": null,
       "name": "the_created_spaces_list_in_binary_collation_order",
-      "rows": ["B4#name=Work#accent_color=accent-violet", "B6#name=inbox#accent_color=null"],
+      "rows": ["B5#name=Work#accent_color=accent-violet", "B7#name=inbox#accent_color=null"],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": null,
+      "name": "the_harness_space_no_longer_lists_the_moved_page",
+      "rows": ["B2", "B7", "B1", "B5"],
       "total_count": null
     }
   ],
@@ -213,14 +256,57 @@
       "comment": "A SECOND space, named so that the two collations disagree: `ORDER BY COALESCE(content,'') ASC` is SQLite BINARY, which puts `Work` (`W` = 0x57) before `inbox` (`i` = 0x69), while a locale compare puts `inbox` first. The query step below therefore reddens for a mock that sorts with `localeCompare`. No accent, so the row also shows the `LEFT JOIN` miss as a null.",
       "name": "a_second_space_whose_name_discriminates_the_collations",
       "via": "command"
+    },
+    {
+      "args": {
+        "blockIds": ["S4"],
+        "spaceId": "C3"
+      },
+      "command": "move_blocks_to_space",
+      "comment": "The move: the seed page `S4`, rank 3 in the harness space, into the second created space. The `space` write is projected through `hydrate_page_subtree_into_engine`, which ends in `reproject_dense_positions` over the DESTINATION space's root group — `S4` comes out at rank 1 and pushes `inbox` itself to 2 (see the description for why the arrival sorts first). 3 → 1 is the renumber the mock had to start maintaining. The SOURCE group is not reprojected: the two remaining seed pages keep 1 and 2 with the vacated rank 3 left as a hole.",
+      "name": "moves_a_seed_page_into_the_second_space",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockIds": [],
+        "spaceId": "C3"
+      },
+      "command": "move_blocks_to_space",
+      "comment": "`block_ids list cannot be empty`, refused before the tx opens: an empty selection is a caller error, not a zero-count no-op.",
+      "expect_error": "validation",
+      "name": "an_empty_block_list_is_refused",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockIds": ["S1"],
+        "spaceId": "S1"
+      },
+      "command": "move_blocks_to_space",
+      "comment": "`require_live_space_in_tx` runs ONCE, before any per-block write: `S1` is a live page carrying no `is_space = 'true'`, so the whole batch aborts. Per-block leniency covers a dead BLOCK id (skipped), never a bad TARGET.",
+      "expect_error": "validation",
+      "name": "a_target_that_is_not_a_space_is_refused",
+      "via": "command"
     }
   ],
   "queries": [
     {
       "args": {},
       "command": "list_spaces",
-      "comment": "The registry after the two `create_space` ops, with each row's name and accent riding as attributes because the id alone cannot see either property write. Two things are pinned. WHICH rows: `B5` is a page IN a space and must not appear, and a mock that prepends a space no block backs answers a longer list. Their ORDER: `ORDER BY COALESCE(content,'') ASC, id ASC` is SQLite BINARY, so `Work` precedes `inbox`; a locale compare answers the other order.",
+      "comment": "The registry after the two `create_space` ops, with each row's name and accent riding as attributes because the id alone cannot see either property write. Two things are pinned. WHICH rows: `B6` (`Roadmap`) is a page IN a space and must not appear, and neither does `B4` (`Drafts`), the page the move put in one, and a mock that prepends a space no block backs answers a longer list. Their ORDER: `ORDER BY COALESCE(content,'') ASC, id ASC` is SQLite BINARY, so `Work` precedes `inbox`; a locale compare answers the other order.",
       "name": "the_created_spaces_list_in_binary_collation_order"
+    },
+    {
+      "args": {
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
+      },
+      "command": "list_all_pages_in_space",
+      "comment": "The harness space after the move, and the read half of the pin: `Drafts` was seeded into it and is gone, because `move_blocks_to_space` rewrote its membership. What remains is the two other seed pages plus the two `create_space` blocks — `create_space_inner` leaves a space's own `space_id` NULL, so the harness's post-op `assign_all_to_test_space` (and `stampMockSpace`, its mirror) defaults both into this space on BOTH stacks. The four titles are plain ASCII whose `COLLATE NOCASE` order and the mock's case-folded compare agree, so the step pins membership, not a collation.",
+      "name": "the_harness_space_no_longer_lists_the_moved_page"
     }
   ],
   "seed": {
@@ -245,6 +331,13 @@
         "id": "S3",
         "parent_id": "S1",
         "position": 1
+      },
+      {
+        "block_type": "page",
+        "content": "Drafts",
+        "id": "S4",
+        "parent_id": null,
+        "position": 3
       }
     ],
     "properties": [],

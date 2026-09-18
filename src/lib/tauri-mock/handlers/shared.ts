@@ -1121,6 +1121,34 @@ export function buildPageMetaRow(
 }
 
 /**
+ * Ids of the ROOT sibling group `spaceId` owns, in `position` order.
+ *
+ * At the root the group is per SPACE, not the whole `parent_id = NULL` set:
+ * each space's tree is its own Loro doc, so two spaces each have a block at
+ * rank 1. A block's space is `blocks.space_id`, except for a block that IS a
+ * space — not a member of itself — which ranks in its own group.
+ *
+ * One grouping rule, two callers: `nextDenseRank` (where a new root block
+ * lands) and `move_blocks_to_space` (which re-ranks the whole group).
+ */
+export function spaceRootGroup(spaceId: string | null): string[] {
+  const group: Array<Record<string, unknown>> = []
+  for (const b of blocks.values()) {
+    if ((b['parent_id'] as string | null) !== null) continue
+    const owner = (b['space_id'] as string | null | undefined) ?? (b['id'] as string)
+    if (owner !== spaceId) continue
+    group.push(b)
+  }
+  group.sort((x, y) => {
+    const px = (x['position'] as number | null) ?? Number.MAX_SAFE_INTEGER
+    const py = (y['position'] as number | null) ?? Number.MAX_SAFE_INTEGER
+    if (px !== py) return px - py
+    return (x['id'] as string).localeCompare(y['id'] as string)
+  })
+  return group.map((b) => b['id'] as string)
+}
+
+/**
  * #400 — assign dense 1-based `position` to every child of `parentId`, in
  * their current sort order, so the mock mirrors the backend's dense-rank
  * semantics (`position ASC, id ASC`, no gaps, no collisions).

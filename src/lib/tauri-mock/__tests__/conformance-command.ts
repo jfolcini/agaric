@@ -191,6 +191,10 @@ const RETURN_SHAPE: Readonly<Record<string, ReturnShape>> = {
   // relabel maps to its canonical label like any other id-valued attribute.
   create_space: { idKey: HEADED_ID_KEY, attrs: ['space_id'], lists: [] },
   create_page_in_space: { idKey: HEADED_ID_KEY, attrs: ['page_id'], lists: [] },
+  // #5057 — the batch mover answers with a bare count, so its single
+  // attribute names the scalar. The count is narrower than the input list: an
+  // id that no longer resolves to a live block is skipped, not refused.
+  move_blocks_to_space: { idKey: HEADED_ID_KEY, attrs: ['moved'], lists: [] },
 }
 
 /** Mirror of `project_return`: the row token, then one arrow per list element. */

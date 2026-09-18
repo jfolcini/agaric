@@ -233,6 +233,11 @@ const RETURN_SHAPE: &[(&str, &str, &[&str], &[&str])] = &[
     // snapshot says what was written.
     ("create_space", HEADED_ID_KEY, &["space_id"], &[]),
     ("create_page_in_space", HEADED_ID_KEY, &["page_id"], &[]),
+    // #5057 — the batch MOVER answers with a bare `i64` like the three
+    // counters above, so its single attribute names the scalar. The count is
+    // narrower than the input list: an id that no longer resolves to a live
+    // block is skipped, not refused.
+    ("move_blocks_to_space", HEADED_ID_KEY, &["moved"], &[]),
 ];
 
 fn to_json<T: Serialize>(outcome: Result<T, AppError>) -> Result<Value, AppError> {
@@ -643,6 +648,16 @@ pub(super) async fn apply_op_via_command(
             )
             .await,
         ),
+        "move_blocks_to_space" => to_json(
+            move_blocks_to_space_inner(
+                pool,
+                DEV,
+                mat,
+                block_ids(),
+                arg_label_id("spaceId").expect("spaceId"),
+            )
+            .await,
+        ),
         "create_blocks_batch" => {
             to_json(create_blocks_batch_inner(pool, DEV, mat, block_specs()).await)
         }
@@ -1004,7 +1019,7 @@ mod tests {
     /// vice versa, and the count is the one this module claims — so a
     /// mutating command cannot join one table without the other, and cannot
     /// join at all without this number moving.
-    const MUTATING_ARM_COUNT: usize = 37;
+    const MUTATING_ARM_COUNT: usize = 38;
 
     #[test]
     fn the_dispatcher_and_the_return_shape_table_name_the_same_commands() {
