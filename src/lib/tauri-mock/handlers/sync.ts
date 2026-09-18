@@ -159,10 +159,21 @@ export const syncHandlers = {
   },
   get_device_id: () => 'mock-device-id-0000',
 
-  start_pairing: () => ({
-    passphrase: 'alpha bravo charlie delta',
-    qr_svg: '<svg></svg>',
-  }),
+  start_pairing: () => {
+    // #4297/#5057 — the HOST half is a pairing act too, so it makes the same
+    // durable write the joiner's `confirm_pairing` does below:
+    // `clear_unpaired_by_peer_all` drops the "this peer says we are not
+    // paired" flag from EVERY row, because neither role has a peer id yet.
+    // The mock wrote nothing at all, so a host that armed pairing in dev or
+    // E2E kept prompting to re-pair straight after the user did.
+    for (const row of peerRefs.values()) row['unpaired_by_peer_at_ms'] = null
+    // Deliberately NOT arming `pairingPeerReveal`. The host's peer does arrive
+    // by TOFU as well, but a reveal only materializes on the THIRD
+    // `list_peer_refs` read (`PAIRING_PEER_REVEAL_READS`), so the one-read
+    // fixture beside this cannot tell an armed reveal from an unarmed one.
+    // Leaving it unarmed keeps the mock from asserting a claim nothing tests.
+    return { passphrase: 'alpha bravo charlie delta', qr_svg: '<svg></svg>' }
+  },
   confirm_pairing: () => {
     // #3469 — arms this device's local proof, exactly as the backend does.
     // In particular it does not pin a peer: the real TOFU pin happens later,
