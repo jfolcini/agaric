@@ -5962,4 +5962,247 @@ mod tests {
         assert_eq!(plan.apply_order, vec![0, 1, 2]);
         assert!(plan.group_target_parent.is_empty());
     }
+
+    // -----------------------------------------------------------------
+    // Reversing a `move_block` has to reconstruct the slot it came from, so
+    // `find_prior_position` scans for an earlier local `move_block` /
+    // `create_block` and refuses `NotFound` when the log holds none. A group
+    // reverts with `skip_non_reversible = false`, so one such refusal rolls
+    // the whole group back.
+    //
+    // #5057 read that refusal as a defect in the group's op ENUMERATION. It
+    // is not: an empty group answers `Ok(vec![])`, so a `NotFound` can only
+    // come from reverse computation. The pair below pins both arms of the one
+    // variable that decides it, because pinning only the refusal would leave
+    // the reader with the same wrong hypothesis.
+    // -----------------------------------------------------------------
+
+    /// Seed a page with two children and append `move_block` + `delete_block`
+    /// on the first child, 1 ms apart, on one device.
+    ///
+    /// `with_create_op` controls the ONE variable under test: whether a
+    /// `create_block` op for the moved block exists in the log at all (a
+    /// second earlier than the move, so the 10 ms coalescing window cannot
+    /// swallow it into the group).
+    async fn seed_move_then_delete(pool: &SqlitePool, with_create_op: bool) -> (BlockId, BlockId) {
+        use agaric_store::op::{DeleteBlockPayload, MoveBlockPayload};
+
+        let page_id = BlockId::test_id("PG5057");
+        let child_id = BlockId::test_id("CH5057");
+        let sib_id = BlockId::test_id("SB5057");
+
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, position) VALUES (?, 'page', 'P', 0)",
+        )
+        .bind(page_id.as_str())
+        .execute(pool)
+        .await
+        .unwrap();
+        for (id, pos) in [(&child_id, 1_i64), (&sib_id, 2_i64)] {
+            sqlx::query(
+                "INSERT INTO blocks (id, parent_id, block_type, content, position) \
+                 VALUES (?, ?, 'content', 'v1', ?)",
+            )
+            .bind(id.as_str())
+            .bind(page_id.as_str())
+            .bind(pos)
+            .execute(pool)
+            .await
+            .unwrap();
+        }
+
+        if with_create_op {
+            let create = OpPayload::CreateBlock(CreateBlockPayload {
+                block_id: child_id.clone(),
+                block_type: "content".into(),
+                parent_id: Some(page_id.clone()),
+                position: None,
+                index: Some(0),
+                content: "v1".into(),
+            });
+            append_local_op_at(pool, DEV, create, FIXED_TS - 1000)
+                .await
+                .unwrap();
+        }
+
+        let mv = OpPayload::MoveBlock(MoveBlockPayload {
+            block_id: child_id.clone(),
+            new_parent_id: Some(page_id.clone()),
+            new_position: 2,
+            new_index: Some(1),
+        });
+        append_local_op_at(pool, DEV, mv, FIXED_TS).await.unwrap();
+
+        let del = OpPayload::DeleteBlock(DeleteBlockPayload {
+            block_id: child_id.clone(),
+        });
+        append_local_op_at(pool, DEV, del, FIXED_TS + 1)
+            .await
+            .unwrap();
+        sqlx::query("UPDATE blocks SET deleted_at = ? WHERE id = ?")
+            .bind(FIXED_TS + 1)
+            .bind(child_id.as_str())
+            .execute(pool)
+            .await
+            .unwrap();
+
+        (page_id, child_id)
+    }
+
+    /// #5057 probe 1: reproduce the reported shape — `move_block` +
+    /// `delete_block`, no `create_block` op for the moved block.
+    ///
+    /// Pins where the failure comes from: the enumeration carries both ops,
+    /// the group refuses on the MOVE's missing prior placement, and
+    /// `undo_page_op` refuses the move identically at depth 1 while succeeding
+    /// at depth 0 (which addresses the delete, not the move).
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn undo_group_refuses_a_move_with_no_prior_placement() {
+        let (pool, _dir) = test_pool().await;
+        let (page_id, _child_id) = seed_move_then_delete(&pool, false).await;
+
+        // The enumeration is NOT what drops the ops: it carries both.
+        let group = find_undo_group_inner(&pool, page_id.as_str(), 0, 10)
+            .await
+            .unwrap();
+        assert_eq!(
+            group, 2,
+            "#5057: the group enumeration carries BOTH the move_block and the \
+             delete_block; it is not the `page_blocks` scoping clause that drops \
+             them"
+        );
+
+        let mat = Materializer::new(pool.clone());
+        let grp_err = undo_page_group_inner(&pool, DEV, &mat, page_id.to_string(), 0, 10)
+            .await
+            .expect_err("the group must refuse while the move has no prior placement");
+        assert!(
+            matches!(&grp_err, AppError::NotFound(m) if m.contains("no prior position found")),
+            "#5057: the refusal is the reverse-payload builder's missing prior \
+             placement, not an enumeration miss; got {grp_err:?}"
+        );
+
+        // Depth 0 addresses the DELETE only — which is why the single-op path
+        // looked healthy on "the same ops".
+        let d0 = undo_page_op_inner(&pool, DEV, &mat, page_id.to_string(), 0)
+            .await
+            .expect("depth 0 reverses the delete_block, which needs no prior context");
+        assert_eq!(d0.reversed_op_type, "delete_block");
+        mat.shutdown();
+
+        // Depth 1 addresses the MOVE, and fails identically — so the divergence
+        // is the op the group additionally covers, not the group's enumeration.
+        let (pool2, _dir2) = test_pool().await;
+        let (page2, _c2) = seed_move_then_delete(&pool2, false).await;
+        let mat2 = Materializer::new(pool2.clone());
+        let d1_err = undo_page_op_inner(&pool2, DEV, &mat2, page2.to_string(), 1)
+            .await
+            .expect_err("the single-op path refuses the move for the same reason");
+        assert!(
+            matches!(&d1_err, AppError::NotFound(m) if m.contains("no prior position found")),
+            "got {d1_err:?}"
+        );
+        mat2.shutdown();
+    }
+
+    /// The SAME two-op group, with a `create_block` op present so the move has
+    /// a prior placement to reconstruct — the other arm of the one variable.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn undo_group_reverses_a_move_with_a_prior_placement() {
+        let (pool, _dir) = test_pool().await;
+        let (page_id, _child_id) = seed_move_then_delete(&pool, true).await;
+
+        let group = find_undo_group_inner(&pool, page_id.as_str(), 0, 10)
+            .await
+            .unwrap();
+        assert_eq!(group, 2, "same two-op group as the failing probe");
+
+        let mat = Materializer::new(pool.clone());
+        let results = undo_page_group_inner(&pool, DEV, &mat, page_id.to_string(), 0, 10)
+            .await
+            .expect(
+                "#5057: with a create_block to reconstruct from, the very same \
+                     move_block + delete_block group undoes cleanly",
+            );
+        let reversed: Vec<&str> = results
+            .iter()
+            .map(|r| r.reversed_op_type.as_str())
+            .collect();
+        assert_eq!(reversed, vec!["delete_block", "move_block"]);
+        mat.shutdown();
+    }
+
+    /// A group whose reverses need no placement lookup at all: `create_block`
+    /// reverses to a bare delete, and `set_property` with no prior value
+    /// reverses to `DeleteProperty` rather than refusing.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn undo_group_reverses_ops_that_need_no_prior_placement() {
+        use agaric_store::op::SetPropertyPayload;
+
+        let (pool, _dir) = test_pool().await;
+        let page_id = BlockId::test_id("PG5057B");
+        let child_id = BlockId::test_id("CH5057B");
+
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, position) VALUES (?, 'page', 'P', 0)",
+        )
+        .bind(page_id.as_str())
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO blocks (id, parent_id, block_type, content, position) \
+             VALUES (?, ?, 'content', 'v1', 1)",
+        )
+        .bind(child_id.as_str())
+        .bind(page_id.as_str())
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let create = OpPayload::CreateBlock(CreateBlockPayload {
+            block_id: child_id.clone(),
+            block_type: "content".into(),
+            parent_id: Some(page_id.clone()),
+            position: None,
+            index: Some(0),
+            content: "v1".into(),
+        });
+        append_local_op_at(&pool, DEV, create, FIXED_TS)
+            .await
+            .unwrap();
+        let sp = OpPayload::SetProperty(SetPropertyPayload {
+            block_id: child_id.clone(),
+            key: "custom-k".into(),
+            value_text: Some("v".into()),
+            value_num: None,
+            value_date: None,
+            value_ref: None,
+            value_bool: None,
+        });
+        append_local_op_at(&pool, DEV, sp, FIXED_TS + 1)
+            .await
+            .unwrap();
+
+        let group = find_undo_group_inner(&pool, page_id.as_str(), 0, 10)
+            .await
+            .unwrap();
+        assert_eq!(group, 2, "control group is create_block + set_property");
+
+        let mat = Materializer::new(pool.clone());
+        let results = undo_page_group_inner(&pool, DEV, &mat, page_id.to_string(), 0, 10)
+            .await
+            .expect("the control group undoes cleanly");
+        let reversed: Vec<&str> = results
+            .iter()
+            .map(|r| r.reversed_op_type.as_str())
+            .collect();
+        assert_eq!(
+            reversed,
+            vec!["set_property", "create_block"],
+            "#5057: neither reverse needs a prior-placement lookup — which is the \
+             whole reason this shape succeeded where move_block did not"
+        );
+        mat.shutdown();
+    }
 }
