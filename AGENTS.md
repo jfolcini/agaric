@@ -225,10 +225,11 @@ node scripts/run-mutation.mjs <module>       # frontend — SCORES ARE MEANINGLE
 cd src-tauri && cargo mutants --workspace    # Rust; --workspace is mandatory
 ```
 
-The frontend lane reports every mutant as survived on every module, because
+The frontend lane reports effectively every mutant as survived — all but the
+static ones, which Stryker runs in a fresh process — because
 `@stryker-mutator/vitest-runner` cannot re-run tests under vitest 5 and there is
-no published fix (#5101). Do not triage its survivors. The Rust lane is
-unaffected.
+no published fix (#5101). A non-zero score is not evidence it is working. Do not
+triage its survivors. The Rust lane is unaffected.
 
 Three test shapes that look like coverage and are not: the vacuous assertion (restates a precondition the test set up), the unreachable condition (a branch that cannot be taken; delete the code), and the half-covered pair (one arm of a symmetric property pinned, the other open, including a guard body tested without its call site). Ask of every test: *what production change would redden this?*
 

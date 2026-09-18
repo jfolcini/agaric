@@ -37,6 +37,11 @@ Ran 0.00 tests per mutant on average.
 All files  |   0.00 |    0.00 |  0 killed | 0 timeout | 1 survived | 0 no cov | 0 errors
 ```
 
+The warning says "effectively every mutant, all but the static ones" rather
+than "every mutant": a reader who runs an enrolled module with module-scope
+literals sees a non-zero score and some kills, and a warning contradicted by
+what is on their screen is one they will discount.
+
 `glob-validate` is where this is most visible only because it is all functions
 with no module-scope literals, so it has no static mutants to accidentally kill.
 Modules with top-level arrays score a few percent instead of zero. Same bug,
@@ -88,10 +93,6 @@ attribution of survivors that do not exist. And the doc header of
 `scripts/run-mutation.mjs`, for a reader who opens the command rather than the
 docs.
 
-Each placement says the thing once and points at `docs/BUILD.md` for the
-detail; `stryker.modules.mjs` carries five lines, not the sixteen it takes to
-restate the mechanism there as well.
-
 One read point is still uncovered. `mutation-pr.yml`'s sticky comment reaches a
 contributor who never opens either page, and `docs/BUILD.md`'s clause about that
 lane only helps someone already reading `docs/BUILD.md`. Covering it means
@@ -106,6 +107,5 @@ unaffected.
 
 ## Verified
 
-`stryker.modules.mjs` still imports and still exports 23 module names, and
 `scripts/run-mutation.mjs` still resolves its module list. Every edit is a
 comment or prose; no behaviour changed, so there is nothing to falsify.

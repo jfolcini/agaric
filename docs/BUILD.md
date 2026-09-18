@@ -174,20 +174,22 @@ npm run mutation -- tokenize filters-model   # only named modules
 
 `#886` — [StrykerJS](https://stryker-mutator.io/) mutation testing, scoped to a handful of pure/deterministic frontend libs (see `stryker.modules.mjs` for the exact list) — never components or Tauri IPC. It mutates each source line (flip a `&&` to `||`, drop a branch, swap a string literal, …) and checks whether the test suite actually notices; a "survived" mutant is a gap in assertion *strength*, not line coverage — coverage can be high while the tests never distinguish the mutated behaviour from the original.
 
-Each module runs in its own Stryker invocation, scoped to run ONLY that module's own test file(s) — `stryker.modules.mjs` holds the mapping, and `stryker.config.mjs` / `stryker.vitest.config.mjs` explain why (vitest's default "related" test-selection resolves through barrel re-exports like `search-query/index.ts` and drags in a large set of unrelated component tests otherwise). Reports land in `reports/mutation/<module>/mutation.html` (gitignored).
+> **The frontend lane's numbers are currently meaningless (#5101).** Effectively
+> every mutant is reported as survived — all but the static ones, which Stryker
+> runs in a fresh process — because `@stryker-mutator/vitest-runner` cannot
+> re-run tests under vitest 5 and there is no published fix. A non-zero score
+> is not evidence the lane is working. Do not write a test to kill a survivor it
+> reports, and do not read a low score as a weak suite; that applies to the
+> per-PR sticky comment and to the auto-filed tracking issues below as much as
+> to a local run. The Rust lane is unaffected.
 
-> **The frontend lane's numbers are currently meaningless (#5101).** Every mutant on
-> every module is reported as survived, because `@stryker-mutator/vitest-runner`
-> cannot re-run tests under vitest 5 and there is no published fix. Do not write a
-> test to kill a survivor it reports, and do not read a low score as a weak suite —
-> that applies to the per-PR sticky comment and to the auto-filed tracking issues
-> below as much as to a local run. The Rust lane is unaffected.
+Each module runs in its own Stryker invocation, scoped to run ONLY that module's own test file(s) — `stryker.modules.mjs` holds the mapping, and `stryker.config.mjs` / `stryker.vitest.config.mjs` explain why (vitest's default "related" test-selection resolves through barrel re-exports like `search-query/index.ts` and drags in a large set of unrelated component tests otherwise). Reports land in `reports/mutation/<module>/mutation.html` (gitignored).
 
 `#3350` — the module set is chosen by RISK, not by convenience: code that reorders or renumbers the user's blocks, parses untrusted input, or rewrites text. A survivor in `page-blocks-move` means the tests would not notice the outline being silently scrambled; a survivor in a presentational helper means very little, which is why presentational code is not enrolled. Every candidate is MEASURED before enrolment (mutant count from `npx stryker run --dryRunOnly`, wall-clock and survivor count from a real single-module run) and the modules that were measured and *rejected* are listed, with their numbers and the reason, at the bottom of `stryker.modules.mjs`. Read that list before adding one more.
 
 A module may set `setup: true` to load `src/test-setup.ts` (needed by anything tested through the global Tauri IPC mock). It is per-module and not the default: it roughly quadruples the per-mutant test-run cost, which is most of what the rejected list is about.
 
-`#3350` also adds a **diff-scoped per-PR lane** (`.github/workflows/mutation-pr.yml`). `scripts/select-mutation-modules.mjs` maps the PR's diff onto the enrolled modules, the lane mutates only those (capped, so a repo-wide rename cannot turn it into the full sweep), and posts one sticky, non-blocking PR comment. It is not a required check and must never become one: equivalent mutants are undecidable in general and can never be killed, so a mutation gate carries permanent unactionable red. Its purpose is attribution — a survivor reported on the PR that caused it, while the author is still in context — not enforcement. (While #5101 is open, the survivors it attributes are phantom; see the note above.) Most PRs select nothing and the lane does nothing.
+`#3350` also adds a **diff-scoped per-PR lane** (`.github/workflows/mutation-pr.yml`). `scripts/select-mutation-modules.mjs` maps the PR's diff onto the enrolled modules, the lane mutates only those (capped, so a repo-wide rename cannot turn it into the full sweep), and posts one sticky, non-blocking PR comment. It is not a required check and must never become one: equivalent mutants are undecidable in general and can never be killed, so a mutation gate carries permanent unactionable red. Its purpose is attribution — a survivor reported on the PR that caused it, while the author is still in context — not enforcement. Most PRs select nothing and the lane does nothing.
 
 This is a **nightly-only, non-gating** lane (`mutants-frontend` job in `.github/workflows/scheduled-deep-checks.yml`) — surviving mutants are triage signal for occasional audits, not a merge gate. See issue #886 for the full evaluation and rationale.
 
