@@ -439,8 +439,13 @@ const READ_NO_QUERY_ALLOWLIST: Readonly<Record<string, string>> = {
     'returns a rendered markdown `String`; the query projection binds canonical ' +
     'block-id rows, so it has nothing to compare',
 
-  // ── Registries outside the conformance snapshot scope ──
-  list_spaces: 'space registry outside the single-space conformance snapshot scope',
+  // ── Spaces ──
+  // Nothing is waived here. #5057 pinned `list_spaces` as a query step in
+  // `spaces_lifecycle.json`, next to the `create_space` that mints the row it
+  // lists. Its waiver read "space registry outside the single-space
+  // conformance snapshot scope" — the phrase the doc block on
+  // `PINNING_BLOCKED_READ` names as the wrong reason — and what actually stood
+  // in the way was the mock PREPENDING a `Personal` row that no block backed.
 
   // ── Process / environment / telemetry status (no domain state) ──
   collect_bug_report_metadata: 'no domain state — host + build metadata',
@@ -674,19 +679,19 @@ const NOT_YET_PINNED_MUTATING: readonly string[] = [
  * The read leg's debt, and it is NOT zero. Each of these is waived because the
  * snapshot or the query harness is too narrow, which a widening fixes — and
  * each has a mutating counterpart already counted as debt above:
- * `list_spaces` against `create_space` / `create_page_in_space` /
- * `move_blocks_to_space`, and `export_page_markdown` against `import_markdown` /
- * `import_bibliography` (the query projection binds row sets and cannot compare
- * a rendered `String`).
+ * `export_page_markdown` against `import_markdown` / `import_bibliography` (the
+ * query projection binds row sets and cannot compare a rendered `String`).
  *
  * Pinning the write is most of the work for the read, so #5057 burns these down
  * by table rather than by command. Drafts came off this list that way: one
  * fixture drives all five commands, the four writers through the command leg
  * and `list_drafts` as the read that observes what they left behind. So did
  * op-log maintenance: `op_log_compaction.json` drives `compact_op_log_cmd` and
- * reads `get_compaction_status` afterwards.
+ * reads `get_compaction_status` afterwards. And so did `list_spaces`, riding
+ * `spaces_lifecycle.json`'s `create_space` — which is what the #5056 check
+ * below predicted would happen.
  */
-const NOT_YET_PINNED_READ: readonly string[] = ['export_page_markdown', 'list_spaces']
+const NOT_YET_PINNED_READ: readonly string[] = ['export_page_markdown']
 
 /**
  * #5056 — the check that makes the read-leg classification falsifiable instead
@@ -702,10 +707,12 @@ const NOT_YET_PINNED_READ: readonly string[] = ['export_page_markdown', 'list_sp
  * cannot be in different halves. If `create_space` is debt, the snapshot can
  * widen to carry spaces, and `list_spaces` is debt too.
  *
- * A rename needs no check here: every name below is a key of
- * `NO_FIXTURE_ALLOWLIST` or `READ_NO_QUERY_ALLOWLIST`, and both already assert
- * their keys exist in `bindings.ts`, so a rename reds there first and nearer
- * the stale entry.
+ * A rename needs no check here: every name below that is still waived is a key
+ * of `NO_FIXTURE_ALLOWLIST` or `READ_NO_QUERY_ALLOWLIST`, and both already
+ * assert their keys exist in `bindings.ts`, so a rename reds there first and
+ * nearer the stale entry. A name that has since been PINNED — `list_spaces`,
+ * #5057 — stays listed so re-waiving it as blocked still reddens, and a rename
+ * reds on its fixture step instead.
  */
 const READ_WRITE_TABLE_PAIRS: Readonly<
   Record<string, { readonly reads: readonly string[]; readonly writes: readonly string[] }>

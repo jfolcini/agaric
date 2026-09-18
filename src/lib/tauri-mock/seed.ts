@@ -713,6 +713,44 @@ export function seedBlocks(): void {
     created_at: new Date().toISOString(),
   })
 
+  // -- The canonical "Personal" space --
+  // #5057 — a space is an ordinary top-level page block flagged
+  // `is_space='true'`; `list_spaces` used to prepend this row as a literal
+  // no block backed, which is the one artefact that kept the command
+  // unpinnable against the backend. It carries no `space`/`space_id`: a
+  // space is not a member of itself (the backend leaves a space block's
+  // `space_id` NULL), so it stays out of every space-scoped page listing.
+  blocks.set('SPACE_PERSONAL', makeBlock('SPACE_PERSONAL', 'page', 'Personal', null, 6))
+  properties.set(
+    'SPACE_PERSONAL',
+    new Map([
+      [
+        'is_space',
+        {
+          block_id: 'SPACE_PERSONAL',
+          key: 'is_space',
+          value_text: 'true',
+          value_num: null,
+          value_date: null,
+          value_ref: null,
+          value_bool: null,
+        },
+      ],
+      [
+        'accent_color',
+        {
+          block_id: 'SPACE_PERSONAL',
+          key: 'accent_color',
+          value_text: 'accent-emerald',
+          value_num: null,
+          value_date: null,
+          value_ref: null,
+          value_bool: null,
+        },
+      ],
+    ]),
+  )
+
   // -- Seed page aliases --
   pageAliases.set(SEED_IDS.PAGE_GETTING_STARTED, ['gs', 'getting-started'])
   pageAliases.set(SEED_IDS.PAGE_PROJECTS, ['proj'])

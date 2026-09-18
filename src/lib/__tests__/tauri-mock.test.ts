@@ -75,14 +75,17 @@ describe('seed data', () => {
     const result = invoke('list_blocks', { blockType: 'page' }) as {
       items: Record<string, unknown>[]
     }
-    expect(result.items).toHaveLength(6)
+    expect(result.items).toHaveLength(7)
     const titles = result.items.map((b) => b['content'])
     expect(titles).toContain('Getting Started')
     expect(titles).toContain('Quick Notes')
     expect(titles).toContain('Projects')
     expect(titles).toContain('Meetings')
     expect(titles).toContain('Meeting Notes Template')
-    // The 6th seed page is the dynamic daily page (YYYY-MM-DD).
+    // #5057 — the canonical space is an ordinary page block now, not a row
+    // `list_spaces` invented, so it is one of the pages `list_blocks` serves.
+    expect(titles).toContain('Personal')
+    // The 7th seed page is the dynamic daily page (YYYY-MM-DD).
     expect(titles.some((t) => /^\d{4}-\d{2}-\d{2}$/.test(t as string))).toBe(true)
   })
 
