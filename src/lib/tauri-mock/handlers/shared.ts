@@ -1143,6 +1143,27 @@ export function spaceRootGroup(spaceId: string | null): Array<Record<string, unk
 }
 
 /**
+ * `ORDER BY position ASC, id ASC` over block rows — the sibling order both the
+ * backend's dense-rank projection and the engine's `legacy_slot` pair use.
+ *
+ * The id tiebreak is UTF-8 bytes, the collation both of those apply, where `_`
+ * (0x5F) sorts after `X` (0x58). `localeCompare` is an ICU collation and files
+ * punctuation first, so it disagrees: `SPACE_PERSONAL` before `SPACEX`, not
+ * after. Real ids are ULIDs
+ * (`[0-9A-Z]`), where the two coincide, so only the dev seed and hand-written
+ * fixtures can tell them apart.
+ */
+export function comparePositionThenId(
+  x: Record<string, unknown>,
+  y: Record<string, unknown>,
+): number {
+  const px = (x['position'] as number | null) ?? Number.MAX_SAFE_INTEGER
+  const py = (y['position'] as number | null) ?? Number.MAX_SAFE_INTEGER
+  if (px !== py) return px - py
+  return compareUtf8Bytes(x['id'] as string, y['id'] as string)
+}
+
+/**
  * #400 — assign dense 1-based `position` to every child of `parentId`, in
  * their current sort order, so the mock mirrors the backend's dense-rank
  * semantics (`position ASC, id ASC`, no gaps, no collisions).
@@ -1159,12 +1180,7 @@ export function spaceRootGroup(spaceId: string | null): Array<Record<string, unk
  */
 export function renumberSiblings(parentId: string | null): void {
   const siblings = [...blocks.values()].filter((b) => (b['parent_id'] ?? null) === parentId)
-  siblings.sort((x, y) => {
-    const px = (x['position'] as number | null) ?? Number.MAX_SAFE_INTEGER
-    const py = (y['position'] as number | null) ?? Number.MAX_SAFE_INTEGER
-    if (px !== py) return px - py
-    return (x['id'] as string).localeCompare(y['id'] as string)
-  })
+  siblings.sort(comparePositionThenId)
   siblings.forEach((b, i) => {
     b['position'] = i + 1
   })
@@ -1195,12 +1211,7 @@ export function insertAtSlotAndRenumber(
   const others = [...blocks.values()].filter(
     (b) => (b['parent_id'] ?? null) === parentId && b['id'] !== blockId,
   )
-  others.sort((x, y) => {
-    const px = (x['position'] as number | null) ?? Number.MAX_SAFE_INTEGER
-    const py = (y['position'] as number | null) ?? Number.MAX_SAFE_INTEGER
-    if (px !== py) return px - py
-    return (x['id'] as string).localeCompare(y['id'] as string)
-  })
+  others.sort(comparePositionThenId)
   // `slot` is a LIVE-sibling slot, and resolving it is a SEPARATE question from
   // how the group is then densified. The backend's `LoroEngine::live_tree_slot`
   // (#400) walks the whole ordered group — tombstones included — and stops at
