@@ -1121,7 +1121,8 @@ export function buildPageMetaRow(
 }
 
 /**
- * Ids of the ROOT sibling group `spaceId` owns, in `position` order.
+ * The ROOT sibling group `spaceId` owns, in `position` order. The block ROWS,
+ * not their ids: `move_blocks_to_space` re-ranks them in place.
  *
  * At the root the group is per SPACE, not the whole `parent_id = NULL` set:
  * each space's tree is its own Loro doc, so two spaces each have a block at
@@ -1131,7 +1132,7 @@ export function buildPageMetaRow(
  * One grouping rule, two callers: `nextDenseRank` (where a new root block
  * lands) and `move_blocks_to_space` (which re-ranks the whole group).
  */
-export function spaceRootGroup(spaceId: string | null): string[] {
+export function spaceRootGroup(spaceId: string | null): Array<Record<string, unknown>> {
   const group: Array<Record<string, unknown>> = []
   for (const b of blocks.values()) {
     if ((b['parent_id'] as string | null) !== null) continue
@@ -1145,7 +1146,7 @@ export function spaceRootGroup(spaceId: string | null): string[] {
     if (px !== py) return px - py
     return (x['id'] as string).localeCompare(y['id'] as string)
   })
-  return group.map((b) => b['id'] as string)
+  return group
 }
 
 /**

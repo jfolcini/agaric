@@ -1384,6 +1384,8 @@ export const blocksHandlers = {
       throw validationRejection(`block '${spaceId}' is not a live space`)
     }
     let count = 0
+    // Root arrivals, re-ranked in ONE pass after the loop (see below).
+    const arrivedAtRoot = new Set<string>()
     for (const blockId of inputIds) {
       const b = blocks.get(blockId)
       if (!b || b['deleted_at']) continue
@@ -1419,32 +1421,7 @@ export const blocksHandlers = {
       // ?`), but every mock reader of `space_id` reads it on a page or
       // top-level tag row, so the descendant stamp has no reader here.
       b['space_id'] = spaceId
-      // The `space` write routes through `apply_op_projected` → the `space` arm
-      // of `loro_apply.rs` → `hydrate_page_subtree_into_engine`, which ends in
-      // `projection::reproject_dense_positions`: the DESTINATION space's root
-      // group is dense-renumbered, and the arriving block lands FIRST in it.
-      //
-      // First, not last, because the engine orders that group by each node's
-      // LEGACY POSITION META paired with its block id, and the two sides of the
-      // comparison are on different scales. A block already in the space was
-      // seeded with the `position` it held at CREATION, which `create_block_in_tx`
-      // appended over the whole `parent_id IS NULL` set — every space and every
-      // page in one count, so it grows with the graph. An ARRIVING block is
-      // seeded with its per-space dense rank, which is small. The small key wins.
-      // A contrived case where it does not (an arriving block ranked below the
-      // destination's oldest member, or two arrivals whose ids order against
-      // their ranks) is not modelled here; `spaces_lifecycle.json` pins the
-      // single-block move this rule covers.
-      //
-      // The SOURCE group is deliberately left alone: only the destination doc
-      // is hydrated, so the vacated rank stays a hole on both stacks.
-      if ((b['parent_id'] as string | null) === null) {
-        const group = spaceRootGroup(spaceId).filter((id) => id !== blockId)
-        ;[blockId, ...group].forEach((id, i) => {
-          const row = blocks.get(id)
-          if (row) row['position'] = i + 1
-        })
-      }
+      if ((b['parent_id'] as string | null) === null) arrivedAtRoot.add(blockId)
       pushOp('set_property', {
         block_id: blockId,
         key: 'space',
@@ -1455,6 +1432,48 @@ export const blocksHandlers = {
         from_value: fromValue,
       })
       count++
+    }
+    // The `space` write routes through `apply_op_projected` → the `space` arm of
+    // `loro_apply.rs` → `hydrate_page_subtree_into_engine`, which ends in
+    // `projection::reproject_dense_positions`: the DESTINATION space's root group
+    // is dense-renumbered, and the arrivals land FIRST in it, in the order they
+    // RANKED in the space they left.
+    //
+    // First, not last, because the engine orders that group by each node's LEGACY
+    // POSITION META paired with its block id, and the two sides of the comparison
+    // are on different scales. A block already in the space was seeded with the
+    // `position` it held at CREATION, which `create_block_in_tx` appended over the
+    // whole `parent_id IS NULL` set — every space and every page in one count, so
+    // it grows with the graph. An ARRIVING block is seeded with its per-space
+    // dense rank, which is small. The small key wins.
+    //
+    // Among the arrivals that same comparison decides, and it decides on the meta
+    // alone: `hydrate_page_subtree_into_engine` runs once per block and seeds each
+    // with the `position` it still holds in the space it is leaving — the source
+    // group is never reprojected, so those are distinct and `legacy_slot`'s
+    // `(position, block_id)` tiebreak on the id never fires. A multi-block move is
+    // therefore ordered by source rank, not by the caller's list order and not by
+    // id. Re-ranking inside the loop above made each arrival prepend over the one
+    // before it and handed back the list REVERSED (#5057 review); one pass here
+    // does not.
+    //
+    // Two cases this does not model. An arrival whose source rank exceeds a
+    // resident's creation position sorts among the residents rather than ahead of
+    // them — a destination that has already received a move is how to get there.
+    // And two arrivals that left DIFFERENT spaces holding the same rank do reach
+    // the id tiebreak.
+    //
+    // The SOURCE group is deliberately left alone: only the destination doc is
+    // hydrated, so the vacated rank stays a hole on both stacks. That hole is
+    // benign at the end of a group and stale in front of a survivor (#5100);
+    // the mock matches the backend either way.
+    if (arrivedAtRoot.size > 0) {
+      const group = spaceRootGroup(spaceId)
+      const arriving = group.filter((row) => arrivedAtRoot.has(row['id'] as string))
+      const resident = group.filter((row) => !arrivedAtRoot.has(row['id'] as string))
+      ;[...arriving, ...resident].forEach((row, i) => {
+        row['position'] = i + 1
+      })
     }
     return count
   },

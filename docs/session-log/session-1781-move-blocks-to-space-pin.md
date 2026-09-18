@@ -10,25 +10,43 @@ list is done. What remains in `NOT_YET_PINNED_MUTATING` is
 The brief for this work said to re-rank the destination by `nextDenseRank`'s
 rule — append. The backend does the opposite, and the fixture is what
 established it: moving `Drafts` into `inbox` gave `Drafts` rank 1 and pushed the
-space block itself to 2.
+space block itself to 2. Why, in full, is derived once at the mock's call site
+(`move_blocks_to_space` in `src/lib/tauri-mock/handlers/blocks.ts`); it predicts
+three separate backend-authored runs exactly, which is why a model is written
+down there rather than the observation alone.
 
-The cause is a scale mismatch in `legacy_slot`. A root group orders by
-`(legacy position meta, block_id)`, and the two sides of a move are measured
-differently. A block already in the space carries the position it held when it
-was created, and `create_block_in_tx` with no position appends across the whole
-`parent_id IS NULL` set — every space and every page in one count, so the
-numbers there are large. An arriving block is seeded by
-`hydrate_page_subtree_into_engine` with its small per-space dense rank. Small
-key wins, so the arrival prepends.
+## A multi-block move is deterministic, and this session had that wrong
 
-That model predicts three separate backend-authored runs exactly, which is why
-it is written down rather than the observation alone.
+The first pass drove a *single*-block move on the belief that a multi-block
+move's order came out of raw id comparisons — emergent, and not something to
+encode as contract. That belief was wrong, and the mock shipped a real defect
+behind it: the handler re-ranked the destination inside its per-block loop, so
+each arrival prepended over the one before it and `[A, B]` came back as `B, A`.
+That is the ordinary multi-select move from `PageBrowserBatchToolbar`, not an
+exotic case.
 
-The mock mirrors it, and its call site names the two cases it does **not**
-model: an arrival whose rank falls below the destination's oldest member, and
-two arrivals whose ids order against their ranks. The fixture therefore drives
-a *single*-block move — a multi-block move's order depends on raw id
-comparisons that would be encoded as contract while being emergent.
+The ids never decide. `hydrate_page_subtree_into_engine` runs once per moved
+block and seeds each with the `position` it still holds in the space it is
+leaving; the source group is never reprojected, so within one source space those
+are distinct and `legacy_slot`'s `(position, block_id)` tiebreak on the id never
+fires. A multi-block move arrives in SOURCE RANK order. `spaces_lifecycle.json`
+now pins that with a THREE-block step, because two cannot: the fix moved the
+ordering out of the per-block loop into one pass after it, so "iterate the
+caller's list instead" is the regression the fix itself invites, and with two
+arrivals the listing that catches the old reversal is exactly the listing a
+list-order handler also gets right. Three arrivals separate all four candidate
+orders — rank, id, listed, and listed-reversed — and each of the three wrong
+rules was shown red against a copy.
+
+The source group is never reprojected, so the arrivals have to be a SUFFIX of
+it: moving a page out of the MIDDLE strands every later sibling's
+`blocks.position` above its dense rank in the source doc, which the #891 parity
+guard fails the fixture on. That is a backend staleness, filed as #5100, and it
+is why the multi-block step runs before the single-block one.
+
+The two cases still not modelled are named at that call site: an arrival whose
+source rank exceeds a resident's creation position, and two arrivals from
+different source spaces holding the same rank.
 
 ## Two things the brief got wrong about the fixture
 
