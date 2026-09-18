@@ -168,7 +168,7 @@ RS_SCRIPT_RE='^scripts/(setup-dev-db|check-sqlx-cache-drift|test-related-rust)\.
 #   check-test-file-naming.sh   -> hook `test-file-naming`  (dropped when HAS_TS=0)
 #
 # The TS list also carries every script a `src/**/*.test.ts` imports or
-# spawns (the six `check-*.mjs` guards with unit tests in `src/__tests__/`,
+# spawns (the seven `check-*.mjs` guards with unit tests in `src/__tests__/`,
 # and `scripts/lib/js-scanner.mjs`): their tests run only in Phase C, so a
 # guard-only edit must flip HAS_TS or its own tests never execute. Mirrors
 # `_validate.yml`'s `frontend_re`; add to both when a script gains a test.
@@ -177,7 +177,7 @@ RS_SCRIPT_RE='^scripts/(setup-dev-db|check-sqlx-cache-drift|test-related-rust)\.
 # cargo-audit-guard.sh used to be covered by self-test hooks outside every
 # skip list; #4556 Phase 2 deleted those, so they get shellcheck alone here.
 HOOK_OWNER_RS_RE='^scripts/check-unsafe-allowlist\.sh$'
-HOOK_OWNER_TS_RE='^scripts/check-(axe-presence|test-file-naming)\.sh$|^scripts/check-(bare-icon-buttons|import-cycles|store-layering|migrations-strict|mutants-scope|stryker-modules)\.mjs$|^scripts/lib/js-scanner\.mjs$'
+HOOK_OWNER_TS_RE='^scripts/check-(axe-presence|test-file-naming)\.sh$|^scripts/check-(bare-icon-buttons|import-cycles|store-layering|migrations-strict|mutants-scope|mutation-reports|stryker-modules)\.mjs$|^scripts/lib/js-scanner\.mjs$'
 
 # ── Node dependency preflight (#3656) ──────────────────────────────
 # A `git worktree add` checkout has no `node_modules` — it is not a
