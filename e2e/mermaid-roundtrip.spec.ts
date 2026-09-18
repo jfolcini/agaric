@@ -197,8 +197,9 @@ test.describe('Mermaid diagram round-trip (#1438)', () => {
    * These run on the DESKTOP user agent (this file's default). The freeze itself
    * is UA-gated, but the node-view identity asserted here is not, so asserting
    * it once on desktop covers both. That the mermaid React node view SURVIVES
-   * the mobile UA — it did not, until #4315 gave it an `ignoreMutation` — is a
-   * separate assertion, made where the gate lives: `mobile-editor.spec.ts`.
+   * the mobile UA — it did not before #4315, and since `@tiptap/core` 3.31.3
+   * it does so on the vendored default alone (#5059) — is a separate assertion,
+   * made where the gate lives: `mobile-editor.spec.ts`.
    */
   test('switching a code block to mermaid and back swaps the node view each way', async ({
     page,

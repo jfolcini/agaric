@@ -67,7 +67,6 @@ import { TaskPaste } from '@/editor/extensions/task-paste'
 import { Underline } from '@/editor/extensions/underline'
 import { notifyUnknownNodeTypeToast } from '@/editor/markdown-serialize-toast'
 import { parse, serialize } from '@/editor/markdown-serializer'
-import { ignoreReactNodeViewChrome } from '@/editor/node-view-mutations'
 import { cleanupOrphanedPopups } from '@/editor/suggestion-renderer'
 import type { PickerItem } from '@/editor/SuggestionList'
 import { toggleCodeBlockSafely } from '@/editor/toggle-code-block-safely'
@@ -335,10 +334,9 @@ export const CodeBlockWithShortcut = CodeBlockLowlight.extend({
   //
   // FIXED UPSTREAM in @tiptap/core 3.31.3, which narrowed that branch to
   // `this.contentDOM.contains(target)`. React chrome is inside `dom` and
-  // outside `contentDOM`, so it no longer reaches the branch at all. Mermaid
-  // still overrides `ignoreMutation` (see below), but on 3.31.3 that override
-  // answers what the narrowed default already answers — it is kept pending the
-  // decision in #5059, not because it is known to be load-bearing.
+  // outside `contentDOM`, so it no longer reaches the branch at all, and #5059
+  // deleted the `ignoreMutation` override mermaid used to carry: it answered
+  // what the narrowed default already answers, for every input.
   //
   // Non-mermaid therefore uses a plain DOM node view, built from the node SPEC
   // rather than hand-copied from `renderHTML` (#4316 — see `renderFromSpec`).
@@ -408,17 +406,6 @@ export const CodeBlockWithShortcut = CodeBlockLowlight.extend({
         if (oldNode !== newNode) updateProps()
         return true
       },
-      // #4315 — mermaid is the one language still on a React node view, i.e.
-      // still in the configuration that froze the app, and measurement (see
-      // `e2e/mobile-editor.spec.ts`) showed it DID freeze: the block never
-      // materialised and React bailed out with "Maximum update depth exceeded".
-      //
-      // #4353 — the mechanism, the reason it is user-agent-gated, and the reason
-      // a LEAF React node view (image, math) is not exposed to it all live in
-      // `node-view-mutations.ts`. `codeBlock` is the only NON-leaf React node
-      // view in the app, so it is the only one for which this option is even
-      // consulted — tiptap answers a leaf view `true` before reading it.
-      ignoreMutation: ignoreReactNodeViewChrome,
     })
 
     return (props) => {

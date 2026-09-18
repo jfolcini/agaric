@@ -1,37 +1,29 @@
 /**
- * #4353 — the mobile React-node-view freeze, pinned end to end.
+ * #4353 — React node views and `@tiptap/core`'s default `ignoreMutation`.
  *
- * #4315 established the mechanism: `@tiptap/core`'s default
- * `NodeView.ignoreMutation` carried a branch that, on an iOS/Android user agent
- * with the editor focused, did NOT ignore a `childList` mutation anywhere
- * inside the node view's `dom` — not merely inside `contentDOM`. React rewriting
- * its own subtree therefore read back as a user edit, prosemirror-view flushed
- * it, the flush re-rendered the node view, and the cycle never terminated.
+ * The freeze this file is named after is fixed upstream. Up to 3.31.0 the
+ * default's mobile branch tested `this.dom.contains(mutation.target)`, so on an
+ * iOS/Android UA with the editor focused a `childList` mutation anywhere inside
+ * a node view's `dom` was read back as a user edit. A React node view rewrites
+ * its own subtree on every render, prosemirror-view flushed those writes, the
+ * flush re-rendered the node view, and the cycle never terminated (#4312,
+ * #4315). 3.31.3 narrowed the check to `this.contentDOM.contains(target)`, in
+ * both `NodeView` and `MarkView`. React chrome lives inside `dom` and outside
+ * `contentDOM`, so it no longer reaches the branch.
  *
- * FIXED UPSTREAM in `@tiptap/core@3.31.3`, which narrowed that branch's
- * containment test from `this.dom.contains(target)` to
- * `this.contentDOM.contains(target)` — in both `NodeView` and `MarkView`. React
- * chrome lives inside `dom` and outside `contentDOM`, so it no longer reaches
- * the branch at all. This suite caught the change rather than being told about
- * it: the two tests that pinned the pre-fix answers went red on the bump, which
- * is exactly what point (3) below exists to do, in the direction nobody plans
- * for. They now pin the fixed shape — a chrome mutation is ignored — and a
- * revert to the `dom`-wide check reddens them again.
+ * The narrowing also made the branch unobservable: its guard is now the same
+ * predicate as the trailing `contentDOM.contains(target)` rule, so its `return
+ * false` is only ever reachable where that rule returns `false` anyway. #5059
+ * enumerated the real prototype over the (target, mutation type,
+ * contentEditable, leaf/atom, UA, focused) space and found UA and focus change
+ * no answer at all — which is why `ignoreReactNodeViewChrome` and the React
+ * mark-view ratchet were both deleted there. Nothing below asserts that a user
+ * agent changes an answer; the one test that forces a mobile UA does so to
+ * enter the branch, so that a revert to the `dom`-wide check inverts it.
  *
- * The narrowing also made the branch UNOBSERVABLE, which is not obvious and is
- * why two tests were deleted on the bump rather than repointed. Its guard is
- * now the same predicate as the trailing `contentDOM.contains(target)` rule, so
- * its `return false` is only ever reachable where that rule returns `false`
- * anyway. Enumerating the real prototype over every (target, mutation type,
- * contentEditable, isAtom, UA, focused) combination confirms UA and focus
- * change no answer at all. Anything asserted "because the freeze was UA-gated"
- * is therefore vacuous on 3.31.3, and no input separates "branch narrowed" from
- * "branch deleted outright".
- *
- * The obvious reading of that is "every React node view in the app is exposed",
- * and it is wrong — but only because of two guards ABOVE the branch, in a
- * vendored file, which nothing in this repo owns. This file makes the whole
- * chain fail loudly instead of being re-derived:
+ * What this file still pins is the classification underneath, because whether
+ * prosemirror-view reads a given node view's DOM at all is decided by a
+ * structural rule nothing in this repo owns:
  *
  *   1. Every `ReactNodeViewRenderer` call site is enumerated, and a new one
  *      cannot be added without landing in the table here. The enumeration is a
@@ -39,41 +31,26 @@
  *      as the shapes it refuses — see `findCallSites` and the "reaches
  *      `ReactNodeViewRenderer` only by calling it" test for what is closed and
  *      what is still open.
- *   2. Each call site's node type is asserted leaf/atom or neither, because that
- *      is the entire reason three of the four are safe.
- *   3. tiptap's two short-circuits — `if (!this.dom || !this.contentDOM) return
- *      true` and `if (this.node.isLeaf || this.node.isAtom) return true` — are
- *      asserted against the real vendored prototype, so a `@tiptap/core` bump
- *      that drops one reddens this suite rather than silently re-arming the
- *      freeze. The first also fires BEFORE `options.ignoreMutation` is
- *      consulted, which is why the override is not handed to a leaf node view.
- *   4. The branch is reproduced against the real prototype under a mobile user
- *      agent: chrome is ignored, a `contentDOM` mutation is not. What that pins
- *      is the TARGET, not the branch — see the unobservability note above for
- *      what it cannot pin. `ignoreReactNodeViewChrome` is asserted alongside
- *      and still short-circuits ahead of the branch, but since 3.31.3 it is no
- *      longer compensating for an upstream defect: it answers `true` where the
- *      default now also answers `true`, for every shape this suite covers.
- *      Whether to keep it is a judgement this file does not make; it is
- *      recorded here so nobody re-derives it as load-bearing from prose that
- *      has stopped being true.
- *   5. React MARK views are ratcheted separately (#4516 review note 1). Marks
- *      are the one class (1)–(4) do not cover, and the more dangerous one: a
- *      mark has no `isLeaf`/`isAtom`, so `MarkView.ignoreMutation` has no guard
- *      (2) to reach, and `ReactMarkView` builds its content host
- *      unconditionally, so guard (1) never fires either. `REACT_MARK_VIEWS` is
- *      empty because `src/` has none — the tests fail the moment one appears.
+ *   2. Each call site's node type is asserted leaf/atom or neither, against a
+ *      schema built from the real extensions rather than their specs.
+ *   3. tiptap's `if (this.node.isLeaf || this.node.isAtom) return true`
+ *      short-circuit is asserted against the real vendored prototype, so a
+ *      `@tiptap/core` bump that drops it reddens this suite rather than
+ *      silently changing which mutations prosemirror re-reads. Its sibling,
+ *      `if (!this.dom || !this.contentDOM) return true`, is deliberately NOT
+ *      pinned: `ReactNodeView.contentDOM` returns `null` exactly when the node
+ *      `isLeaf`, and a leaf `isAtom`, so the leaf/atom guard answers every
+ *      input the same way. The one thing that separated them was firing above
+ *      the `options.ignoreMutation` consultation, and #5059 deleted the last
+ *      override there was to order against. A test for it passes with the
+ *      guard reconstructed away — verified, not assumed.
+ *   4. The mobile branch's containment test is pinned by its TARGET: chrome is
+ *      ignored, a `contentDOM` mutation is not. A revert to the `dom`-wide
+ *      check reddens the first arm — which is how the 3.31.3 change was caught
+ *      in #5045 rather than read about.
  *
- * Version note: the snippet #4353 quotes is `MarkView`'s copy of the method,
- * as it stood before 3.31.3. `NodeView`'s (the one React node views run,
- * upstream NodeView.ts, not a path in this repo) carries guard (2) as well,
- * which `MarkView`'s does not — so the blast radius was smaller than the issue
- * assumed. Everything here reads
- * the real `NodeView.prototype` / `MarkView.prototype`, not a transcription of
- * either; the difference between them is asserted differentially, by handing
- * ONE `this` to both.
- *
- * The behaviour on a real mobile UA, with the editor genuinely focused, is
+ * Everything here reads the real `NodeView.prototype`, not a transcription of
+ * it. The behaviour on a real mobile UA, with the editor genuinely focused, is
  * covered by `e2e/mobile-editor.spec.ts`; this file covers the structure that
  * behaviour depends on.
  */
@@ -82,7 +59,7 @@ import { readFileSync } from 'node:fs'
 import { readdirSync } from 'node:fs'
 import { join, relative, resolve } from 'node:path'
 
-import { getSchema, MarkView, NodeView } from '@tiptap/core'
+import { getSchema, NodeView } from '@tiptap/core'
 import Document from '@tiptap/extension-document'
 import Paragraph from '@tiptap/extension-paragraph'
 import Text from '@tiptap/extension-text'
@@ -91,11 +68,13 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { Image } from '@/editor/extensions/image'
 import { MathBlock, MathInline } from '@/editor/extensions/math'
-import { ignoreReactNodeViewChrome } from '@/editor/node-view-mutations'
 import { CodeBlockWithShortcut } from '@/editor/use-roving-editor'
 
 const REPO_ROOT = resolve(import.meta.dirname, '..', '..', '..')
 const SRC = join(REPO_ROOT, 'src')
+
+/** The one renderer that mounts a React node view; see `findCallSites`. */
+const RENDERER = 'ReactNodeViewRenderer'
 
 interface NodeViewEntry {
   file: string
@@ -107,24 +86,19 @@ interface NodeViewEntry {
   why: string
 }
 
-/** A node view reaches the mobile branch only if BOTH guards let it through. */
-function isExposed(entry: NodeViewEntry): boolean {
-  return !entry.isLeaf && !entry.isAtom
-}
-
 /**
- * Every `ReactNodeViewRenderer` call site in `src/`, and the reason each one is
- * or is not exposed to the freeze. The enumeration test below fails on a call
- * site that is missing from this table, so a node view added later cannot
- * silently inherit the hazard — it has to be classified first.
+ * Every `ReactNodeViewRenderer` call site in `src/`, and what tiptap's default
+ * `ignoreMutation` does with each one. The enumeration test below fails on a
+ * call site that is missing from this table, so a node view added later has to
+ * be classified rather than inheriting whatever the vendored default does.
  *
  * `isLeaf` / `isAtom` are not style notes, they are the discriminator:
  * `@tiptap/react`'s `ReactNodeView` only builds a `contentDOMElement` when
- * `!node.isLeaf`, and its `contentDOM` getter returns `null` for a leaf — which
- * tiptap's guard (1) turns into "ignore everything" on the FIRST line of
- * `ignoreMutation`, above the `options.ignoreMutation` consultation. Guard (2)
- * catches an atom that does declare content. Only a node that is neither
- * reaches the mobile branch and needs the override.
+ * `!node.isLeaf`, and its `contentDOM` getter returns `null` for a leaf — so a
+ * leaf node view has no content hole to read, and tiptap's `isLeaf || isAtom`
+ * guard answers "ignore everything" for it and for any atom that does declare
+ * content. Only a node that is neither has a live content hole whose mutations
+ * prosemirror-view re-reads.
  */
 const REACT_NODE_VIEWS: Record<string, NodeViewEntry> = {
   ImageNodeView: {
@@ -132,7 +106,7 @@ const REACT_NODE_VIEWS: Record<string, NodeViewEntry> = {
     node: 'image',
     isLeaf: true,
     isAtom: true,
-    why: '`image` declares no `content` — the src/alt live in attrs — so contentDOM is null and tiptap ignores every mutation before the mobile branch.',
+    why: '`image` declares no `content` — the src/alt live in attrs — so it is a leaf atom with a null contentDOM and tiptap ignores every mutation on it.',
   },
   MathInlineNodeView: {
     file: 'src/editor/extensions/math.ts',
@@ -153,7 +127,7 @@ const REACT_NODE_VIEWS: Record<string, NodeViewEntry> = {
     node: 'codeBlock',
     isLeaf: false,
     isAtom: false,
-    why: '`codeBlock` has a text content hole that React owns, so both guards pass it through to the mobile branch — this is the one that froze, and the one that needs the override.',
+    why: '`codeBlock` has a text content hole that React owns, so both guards pass it through and mutations inside that hole are read as the content edits they are — this is the one that froze.',
   },
 }
 
@@ -178,7 +152,7 @@ interface SourceFile {
 }
 
 /**
- * Every non-test `.ts`/`.tsx` source under `src/`, read once and shared by all
+ * Every non-test `.ts`/`.tsx` source under `src/`, read once and shared by both
  * the scanners below so the corpus they judge is provably the same one.
  */
 function readSources(): SourceFile[] {
@@ -191,12 +165,11 @@ function readSources(): SourceFile[] {
 }
 
 /**
- * Slice the argument list of the `<renderer>(` call starting at `openParen`, by
- * balancing parentheses. Used to ask whether the call passes an
- * `ignoreMutation` option without depending on how the object literal is
- * formatted.
+ * Slice the argument list of the `ReactNodeViewRenderer(` call starting at
+ * `openParen`, by balancing parentheses. Used to name the component a call site
+ * mounts without depending on how the call is formatted.
  */
-function callArguments(src: string, openParen: number, renderer: string): string {
+function callArguments(src: string, openParen: number): string {
   let depth = 0
   for (let i = openParen; i < src.length; i++) {
     const ch = src[i]
@@ -206,18 +179,16 @@ function callArguments(src: string, openParen: number, renderer: string): string
       if (depth === 0) return src.slice(openParen + 1, i)
     }
   }
-  throw new Error(`unbalanced parentheses after ${renderer}(`)
+  throw new Error(`unbalanced parentheses after ${RENDERER}(`)
 }
 
 interface CallSite {
   component: string
   file: string
-  args: string
 }
 
 /**
- * Every `<renderer>(Component…)` call in `files` — `ReactNodeViewRenderer` for
- * the node-view table, `ReactMarkViewRenderer` for the mark-view one.
+ * Every `ReactNodeViewRenderer(Component…)` call in `files`.
  *
  * This is a text scan, not a resolved-symbol search: Serena/tsserver cannot index
  * `node_modules`, so there is no reference search on the declaration to lean on.
@@ -229,21 +200,17 @@ interface CallSite {
  * with the whole table still green. A `tiptapReact.ReactNodeViewRenderer(X)`
  * member call IS matched here, because the regex anchors on the identifier and
  * the `(` rather than on the import.
- *
- * Parameterised over both the renderer name and the corpus so the mark-view
- * ratchet runs the SAME scanner, and so both can be pointed at a synthetic
- * source to prove they are capable of finding anything at all.
  */
-function findCallSites(renderer: string, files: SourceFile[]): CallSite[] {
+function findCallSites(files: SourceFile[]): CallSite[] {
   const sites: CallSite[] = []
   for (const { file, src } of files) {
-    const re = new RegExp(String.raw`${renderer}\s*(?:<[^>]*>)?\s*\(`, 'g')
+    const re = new RegExp(String.raw`${RENDERER}\s*(?:<[^>]*>)?\s*\(`, 'g')
     let m: RegExpExecArray | null
     while ((m = re.exec(src)) !== null) {
       const openParen = m.index + m[0].length - 1
-      const args = callArguments(src, openParen, renderer)
+      const args = callArguments(src, openParen)
       const component = (args.match(/^\s*([A-Za-z_$][\w$]*)/)?.[1] ?? '').trim()
-      sites.push({ component, file, args })
+      sites.push({ component, file })
     }
   }
   return sites
@@ -272,8 +239,8 @@ interface IdentifierEscape {
 }
 
 /**
- * Occurrences of the identifier `renderer` in `files` that are neither a call
- * nor a plain, UNALIASED named-import specifier.
+ * Occurrences of `ReactNodeViewRenderer` in `files` that are neither a call nor
+ * a plain, UNALIASED named-import specifier.
  *
  * This is the half of the ratchet that makes the call-site scan trustworthy.
  * The scan can only recognise the literal spelling `ReactNodeViewRenderer(`, so
@@ -298,18 +265,18 @@ interface IdentifierEscape {
  * calling the renderer at all. Those are deliberate evasions rather than the
  * ordinary way a node view gets added, and the e2e specs remain the backstop.
  */
-function findIdentifierEscapes(renderer: string, files: SourceFile[]): IdentifierEscape[] {
+function findIdentifierEscapes(files: SourceFile[]): IdentifierEscape[] {
   const escapes: IdentifierEscape[] = []
   for (const { file, src } of files) {
     // Indices of the two shapes that are allowed to mention the identifier.
     const allowed = new Set<number>()
-    for (const call of src.matchAll(new RegExp(String.raw`${renderer}\s*(?:<[^>]*>)?\s*\(`, 'g'))) {
+    for (const call of src.matchAll(new RegExp(String.raw`${RENDERER}\s*(?:<[^>]*>)?\s*\(`, 'g'))) {
       allowed.add(call.index)
     }
     for (const clause of src.matchAll(/import\s*(?:type\s*)?\{([^}]*)\}/g)) {
       const body = clause[1] ?? ''
       const bodyStart = clause.index + clause[0].indexOf('{') + 1
-      for (const spec of body.matchAll(identifier(renderer))) {
+      for (const spec of body.matchAll(identifier(RENDERER))) {
         // `ReactNodeViewRenderer as R` is deliberately NOT allowed: the alias is
         // a spelling the call-site scan cannot see.
         if (/^\s*as\b/.test(body.slice(spec.index + spec[0].length))) continue
@@ -317,7 +284,7 @@ function findIdentifierEscapes(renderer: string, files: SourceFile[]): Identifie
       }
     }
 
-    for (const use of src.matchAll(identifier(renderer))) {
+    for (const use of src.matchAll(identifier(RENDERER))) {
       if (allowed.has(use.index) || isInComment(src, use.index)) continue
       escapes.push({
         file,
@@ -341,7 +308,7 @@ const schema = getSchema([
 const SOURCES = readSources()
 
 describe('#4353 — every React node view call site is classified', () => {
-  const sites = findCallSites('ReactNodeViewRenderer', SOURCES)
+  const sites = findCallSites(SOURCES)
 
   it('finds the call sites at all (a zero-length scan would pass every check below)', () => {
     expect(sites.length).toBeGreaterThan(0)
@@ -350,7 +317,7 @@ describe('#4353 — every React node view call site is classified', () => {
   it('reaches `ReactNodeViewRenderer` only by calling it — no alias, no captured reference', () => {
     // Without this, the scan above is defeated by one `as` in an import and the
     // rest of this suite stays green around an unclassified node view.
-    expect(findIdentifierEscapes('ReactNodeViewRenderer', SOURCES)).toEqual([])
+    expect(findIdentifierEscapes(SOURCES)).toEqual([])
   })
 
   it('enumerates exactly the call sites recorded in REACT_NODE_VIEWS', () => {
@@ -363,29 +330,9 @@ describe('#4353 — every React node view call site is classified', () => {
       expect(REACT_NODE_VIEWS[site.component]?.file).toBe(site.file)
     }
   })
-
-  it('passes `ignoreMutation` at every EXPOSED call site, and at no protected one', () => {
-    for (const site of sites) {
-      const entry = REACT_NODE_VIEWS[site.component]
-      expect(entry, `unclassified call site: ${site.component}`).toBeDefined()
-      // A leaf/atom call site must NOT carry the option: tiptap never consults
-      // it there, so it would read as protection that is not doing anything.
-      expect(site.args.includes('ignoreMutation'), site.component).toBe(
-        entry !== undefined && isExposed(entry),
-      )
-    }
-  })
-
-  it('routes the exposed call site through the SHARED helper, not a hand-copied body', () => {
-    for (const site of sites) {
-      const entry = REACT_NODE_VIEWS[site.component]
-      if (entry === undefined || !isExposed(entry)) continue
-      expect(site.args, site.component).toContain('ignoreMutation: ignoreReactNodeViewChrome')
-    }
-  })
 })
 
-describe('#4353 — leaf/atom is what makes a React node view safe', () => {
+describe('#4353 — leaf/atom decides whether tiptap reads a node view at all', () => {
   it.each(Object.entries(REACT_NODE_VIEWS))(
     '%s: node type leaf/atom classification matches the table',
     (_component, entry) => {
@@ -395,12 +342,6 @@ describe('#4353 — leaf/atom is what makes a React node view safe', () => {
       expect(type?.isAtom, entry.why).toBe(entry.isAtom)
     },
   )
-
-  it('covers both classes (a table that drifted all-atom would make the override untested)', () => {
-    const exposure = Object.values(REACT_NODE_VIEWS).map(isExposed)
-    expect(exposure).toContain(true)
-    expect(exposure).toContain(false)
-  })
 })
 
 // --- The vendored contract the classification above rests on -----------------
@@ -464,29 +405,7 @@ afterEach(() => {
 })
 
 describe('#4353 — @tiptap/core default ignoreMutation (vendored contract)', () => {
-  it('guard (1): answers `true` when contentDOM is null WITHOUT consulting options.ignoreMutation', () => {
-    useMobileUserAgent()
-    const { dom, chrome } = buildNodeViewDom()
-    const override = vi.fn(() => false)
-    const self: IgnoreMutationSelf = {
-      dom,
-      contentDOM: null,
-      // A leaf node view is what produces `contentDOM === null` in
-      // `@tiptap/react`; the guard itself only reads `contentDOM`.
-      node: { isLeaf: true, isAtom: true },
-      options: { ignoreMutation: override },
-      editor: { isFocused: true },
-    }
-
-    // This is the first of the two reasons `image` / `math_inline` /
-    // `math_block` are safe, AND the reason giving them the override would be
-    // dead code: the option is never read.
-    expect(defaultIgnoreMutation.call(self, childListMutation(chrome))).toBe(true)
-    expect(override).not.toHaveBeenCalled()
-  })
-
-  it('guard (2): answers `true` for an atom that DOES have a contentDOM', () => {
-    useMobileUserAgent()
+  it('the leaf/atom guard answers `true` for an atom that DOES have a contentDOM', () => {
     const { dom, contentHost } = buildNodeViewDom()
     const self: IgnoreMutationSelf = {
       dom,
@@ -496,39 +415,23 @@ describe('#4353 — @tiptap/core default ignoreMutation (vendored contract)', ()
       editor: { isFocused: true },
     }
 
+    // No user agent is forced: the guard fires above the mobile branch, and
+    // 3.31.3 left no input where the UA changes an answer.
+    //
     // Targeted at the CONTENT host, not the chrome. Since 3.31.3 a chrome
     // mutation answers `true` whatever `isLeaf`/`isAtom` say — it falls through
     // to the trailing `return true` — so a chrome target here would pass with
-    // guard (2) deleted and pin nothing. A contentDOM target answers `true`
-    // only because guard (2) fires; without it the trailing
+    // the guard deleted and pin nothing. A contentDOM target answers `true`
+    // only because the guard fires; without it the trailing
     // `contentDOM.contains(target)` rule returns `false`.
     //
     // No React node view in this app is in this configuration today; the guard
-    // is asserted so the table's `isAtom` column means something if one appears.
+    // is asserted so the table's `isAtom` column means something if one
+    // appears, and so a bump that drops it cannot pass silently.
     expect(defaultIgnoreMutation.call(self, childListMutation(contentHost))).toBe(true)
   })
 
-  it('DOES consult options.ignoreMutation for an exposed view, before the mobile branch', () => {
-    useMobileUserAgent()
-    const { dom, contentHost } = buildNodeViewDom()
-    const override = vi.fn(() => true)
-    const self: IgnoreMutationSelf = {
-      dom,
-      contentDOM: contentHost,
-      node: EXPOSED_NODE,
-      options: { ignoreMutation: override },
-      editor: { isFocused: true },
-    }
-
-    // Targeted at the CONTENT host so the VALUE pins the ordering too. With a
-    // chrome target the default answers `true` whether or not the option is
-    // consulted, leaving `toHaveBeenCalledTimes` to carry the test alone; a
-    // contentDOM target answers `false` unconsulted and `true` consulted.
-    expect(defaultIgnoreMutation.call(self, childListMutation(contentHost))).toBe(true)
-    expect(override).toHaveBeenCalledTimes(1)
-  })
-
-  it('mobile branch reaches contentDOM mutations only — both arms (#4353 fixed upstream in 3.31.3)', () => {
+  it('reads contentDOM mutations only — both arms (#4353 fixed upstream in 3.31.3)', () => {
     useMobileUserAgent()
     const { dom, contentHost, chrome } = buildNodeViewDom()
     const self: IgnoreMutationSelf = {
@@ -539,334 +442,17 @@ describe('#4353 — @tiptap/core default ignoreMutation (vendored contract)', ()
       editor: { isFocused: true },
     }
 
-    // THE FIX. Up to 3.31.0 this branch tested `this.dom.contains(target)`, so
-    // React chrome — inside `dom`, outside `contentDOM` — answered `false`
+    // THE FIX. Up to 3.31.0 the mobile branch tested `this.dom.contains(target)`,
+    // so React chrome — inside `dom`, outside `contentDOM` — answered `false`
     // ("re-read / re-parse this"), React's own write fed back into
     // prosemirror-view, and that was the freeze. 3.31.3 narrowed the check to
     // `this.contentDOM.contains(target)`, so chrome now falls through to the
-    // trailing `return true` and is ignored.
+    // trailing `return true` and is ignored. A revert reddens this line.
     expect(defaultIgnoreMutation.call(self, childListMutation(chrome))).toBe(true)
 
     // The content-host arm, for contrast: a mutation genuinely inside
-    // `contentDOM` still answers `false`. Note what this does NOT prove — it
-    // does not separate "branch narrowed" from "branch deleted outright",
-    // because the trailing `contentDOM.contains(target)` rule returns `false`
-    // for this input either way. Nothing can separate those two: on 3.31.3 the
-    // branch's guard is the same predicate as that trailing rule, so its
-    // `return false` is only ever reachable where the trailing rule also
-    // returns `false`. The branch is now unobservable, and the pair below is
-    // what is actually pinned: the target, not the branch.
+    // `contentDOM` still answers `false`, which is what makes the code block's
+    // text hole editable at all.
     expect(defaultIgnoreMutation.call(self, childListMutation(contentHost))).toBe(false)
-
-    // The override still answers `true` for the chrome mutation, and still
-    // short-circuits ahead of the branch (the test above this one). It is no
-    // longer compensating for the upstream defect — see the file header.
-    expect(ignoreReactNodeViewChrome({ mutation: childListMutation(chrome) })).toBe(true)
-  })
-
-  // DELETED on the 3.31.3 bump: two tests asserted that the same chrome
-  // mutation is ignored on a desktop UA, and on mobile while unfocused — the
-  // UA-gating and focus-gating that made the freeze conditional. Enumerating
-  // the real prototype over every (target, type, contentEditable, isAtom, UA,
-  // focused) combination shows UA and focus now change NO answer, because the
-  // narrowed branch is unobservable. Both tests passed for a reason unrelated
-  // to the variable in their name and could not be made to fail. They pinned
-  // behaviour that stopped existing.
-})
-
-describe('ignoreReactNodeViewChrome', () => {
-  it('does not ignore a selection change (prosemirror must re-read it)', () => {
-    const { contentHost } = buildNodeViewDom()
-    const mutation = { type: 'selection', target: contentHost } as unknown as ViewMutationRecord
-    expect(ignoreReactNodeViewChrome({ mutation })).toBe(false)
-  })
-
-  it('does not ignore a content edit inside the content hole', () => {
-    const { contentHost } = buildNodeViewDom()
-    const inner = document.createElement('span')
-    contentHost.append(inner)
-    expect(ignoreReactNodeViewChrome({ mutation: childListMutation(inner) })).toBe(false)
-  })
-
-  it('does not ignore a childList mutation on the content host itself', () => {
-    const { contentHost } = buildNodeViewDom()
-    expect(ignoreReactNodeViewChrome({ mutation: childListMutation(contentHost) })).toBe(false)
-  })
-
-  it('ignores an attribute write on the content host (React re-rendering the wrapper)', () => {
-    const { contentHost } = buildNodeViewDom()
-    const mutation = {
-      type: 'attributes',
-      target: contentHost,
-      attributeName: 'class',
-    } as unknown as ViewMutationRecord
-    expect(ignoreReactNodeViewChrome({ mutation })).toBe(true)
-  })
-
-  it('ignores chrome outside the content hole', () => {
-    const { chrome } = buildNodeViewDom()
-    expect(ignoreReactNodeViewChrome({ mutation: childListMutation(chrome) })).toBe(true)
-  })
-
-  it('resolves a text-node target through its parent element', () => {
-    const { contentHost, chrome } = buildNodeViewDom()
-    const insideText = document.createTextNode('code')
-    contentHost.append(insideText)
-    const outsideText = document.createTextNode('chrome')
-    chrome.append(outsideText)
-
-    expect(ignoreReactNodeViewChrome({ mutation: childListMutation(insideText) })).toBe(false)
-    expect(ignoreReactNodeViewChrome({ mutation: childListMutation(outsideText) })).toBe(true)
-  })
-})
-
-// --- React MARK views: the class the node-view ratchet above does NOT cover --
-
-/**
- * #4516 review note 1 — the enumeration above ratchets `ReactNodeViewRenderer`
- * only, and a React MARK view is the one class its "cannot be added without
- * landing in the table" property misses.
- *
- * Marks are not merely an untested corner of the same mechanism, they are the
- * WORSE case. `MarkView.prototype.ignoreMutation` (asserted below, not
- * transcribed) carries guard (1) but has no guard (2) at all — a mark has no
- * `isLeaf`/`isAtom` to check — and `@tiptap/react`'s `ReactMarkView` builds its
- * `contentDOMElement` unconditionally, so guard (1) never fires either. Every
- * React mark view therefore reaches the mobile branch. Where three of the four
- * node views are protected by the schema, NO mark view is: the override is the
- * only thing between one and the freeze.
- *
- * `src/` has zero mark views today, so this table is empty on purpose. It is a
- * ratchet, not a record: the tests below fail the moment a mark view appears
- * anywhere in `src/` — by `ReactMarkViewRenderer` or by a bare `addMarkView` —
- * and cannot be made green except by classifying it here.
- */
-interface MarkViewEntry {
-  file: string
-  /** The mark type name, as declared by the extension mounting this view. */
-  mark: string
-  /**
-   * The attribute selector that identifies THIS mark view's ProseMirror content
-   * hole, for whatever `ignoreMutation` it passes.
-   *
-   * Required because the obvious move — reusing `ignoreReactNodeViewChrome` —
-   * is wrong here and quietly so: that helper matches
-   * `[data-node-view-content-react]`, tiptap stamps a React mark view's content
-   * host with `data-mark-view-content`, and `closest()` finding nothing is the
-   * helper's "React chrome, ignore it" answer. It would swallow every real edit
-   * inside the mark. Pinned by the last test in this file.
-   */
-  contentHostSelector: string
-  why: string
-}
-
-const REACT_MARK_VIEWS: Record<string, MarkViewEntry> = {}
-
-/** The node-view content host `ignoreReactNodeViewChrome` recognises. */
-const NODE_VIEW_CONTENT_HOST = '[data-node-view-content-react]'
-
-/**
- * Files under `src/` that declare an `addMarkView`, the extension hook every
- * mark view — React-rendered or hand-built — has to go through to be mounted.
- *
- * Scanned in addition to `ReactMarkViewRenderer` because the renderer is only
- * the common way to build one: `addMarkView: () => new SomeMarkView(...)` never
- * mentions the identifier and would slip past the call-site scan entirely.
- *
- * What stays open, and is accepted, mirrors the node-view scan: reaching the
- * hook without writing its name, or a mark view mounted from outside `src/`.
- */
-function findAddMarkViewSites(files: SourceFile[]): string[] {
-  const hits: string[] = []
-  for (const { file, src } of files) {
-    for (const use of src.matchAll(/\baddMarkView\b/g)) {
-      if (isInComment(src, use.index)) continue
-      hits.push(file)
-    }
-  }
-  return [...new Set(hits)].toSorted()
-}
-
-/**
- * A synthetic mark view, used ONLY to prove the scanners above are capable of
- * finding one. Every real-corpus assertion in this section compares against an
- * empty table, and an empty expectation is satisfied by a scanner that has
- * quietly stopped working — the exact failure `finds the call sites at all`
- * guards against for node views. This fixture is fed through the SAME
- * functions the real corpus goes through.
- */
-const MARK_VIEW_PROBE: SourceFile = {
-  file: 'src/editor/extensions/__probe__.ts',
-  src: [
-    `import { ReactMarkViewRenderer } from '@tiptap/react'`,
-    `export const Probe = Mark.create({`,
-    `  addMarkView() {`,
-    `    return ReactMarkViewRenderer(ProbeMarkView)`,
-    `  },`,
-    `})`,
-  ].join('\n'),
-}
-
-describe('#4516 follow-up — every React MARK view is classified', () => {
-  const sites = findCallSites('ReactMarkViewRenderer', SOURCES)
-
-  it('the scanners can actually see a mark view (an empty table makes every check below vacuous otherwise)', () => {
-    const probeSites = findCallSites('ReactMarkViewRenderer', [MARK_VIEW_PROBE])
-    expect(probeSites.map((s) => s.component)).toEqual(['ProbeMarkView'])
-    expect(probeSites[0]?.file).toBe(MARK_VIEW_PROBE.file)
-    expect(findAddMarkViewSites([MARK_VIEW_PROBE])).toEqual([MARK_VIEW_PROBE.file])
-    // …and the escape scan, on the shape that defeats the call-site scan.
-    const aliased: SourceFile = {
-      file: MARK_VIEW_PROBE.file,
-      src: `import { ReactMarkViewRenderer as R } from '@tiptap/react'\nconst v = R(ProbeMarkView)\n`,
-    }
-    expect(findIdentifierEscapes('ReactMarkViewRenderer', [aliased])).not.toEqual([])
-    // The probe is a string, not a file: it must not be in the real corpus.
-    expect(SOURCES.some((s) => s.file === MARK_VIEW_PROBE.file)).toBe(false)
-  })
-
-  it('enumerates exactly the mark views recorded in REACT_MARK_VIEWS', () => {
-    const found = [...new Set(sites.map((s) => s.component))].toSorted()
-    expect(found).toEqual(Object.keys(REACT_MARK_VIEWS).toSorted())
-  })
-
-  it('records each mark view call site in the file it actually lives in', () => {
-    for (const site of sites) {
-      expect(REACT_MARK_VIEWS[site.component]?.file).toBe(site.file)
-    }
-  })
-
-  it('reaches `ReactMarkViewRenderer` only by calling it — no alias, no captured reference', () => {
-    expect(findIdentifierEscapes('ReactMarkViewRenderer', SOURCES)).toEqual([])
-  })
-
-  it('declares `addMarkView` only in files the table names', () => {
-    const declared = [...new Set(Object.values(REACT_MARK_VIEWS).map((e) => e.file))].toSorted()
-    expect(findAddMarkViewSites(SOURCES)).toEqual(declared)
-  })
-
-  it('passes `ignoreMutation` at EVERY mark view call site — none of them is protected by the schema', () => {
-    for (const site of sites) {
-      const entry = REACT_MARK_VIEWS[site.component]
-      expect(entry, `unclassified mark view call site: ${site.component}`).toBeDefined()
-      // Unconditional, unlike the node-view assertion: there is no leaf/atom
-      // escape for a mark, so an override is the only protection there is.
-      expect(site.args.includes('ignoreMutation'), site.component).toBe(true)
-    }
-  })
-
-  it('reuses `ignoreReactNodeViewChrome` only where the content host is the node-view one', () => {
-    for (const site of sites) {
-      const entry = REACT_MARK_VIEWS[site.component]
-      if (entry === undefined) continue
-      if (entry.contentHostSelector === NODE_VIEW_CONTENT_HOST) continue
-      expect(
-        site.args,
-        `${site.component} pastes a helper that cannot see its content hole`,
-      ).not.toContain('ignoreReactNodeViewChrome')
-    }
-  })
-})
-
-/** A React MARK view's DOM: tiptap stamps the content host `data-mark-view-content`. */
-function buildMarkViewDom(): { dom: HTMLElement; contentHost: HTMLElement; chrome: HTMLElement } {
-  const dom = document.createElement('span')
-  const contentHost = document.createElement('span')
-  contentHost.setAttribute('data-mark-view-content', '')
-  const chrome = document.createElement('span')
-  dom.append(contentHost, chrome)
-  return { dom, contentHost, chrome }
-}
-
-interface MarkIgnoreMutationSelf {
-  dom: HTMLElement | null
-  contentDOM: HTMLElement | null
-  /**
-   * Present only so the differential test below can hand `MarkView` the very
-   * `this` a `NodeView` would refuse on — a real mark view has no `node`.
-   */
-  node?: { isLeaf: boolean; isAtom: boolean }
-  options: { ignoreMutation: ((props: { mutation: ViewMutationRecord }) => boolean) | null }
-  editor: { isFocused: boolean }
-}
-
-/** tiptap's real `MarkView` default, invoked against a hand-built `this`. */
-function defaultMarkIgnoreMutation(
-  this: MarkIgnoreMutationSelf,
-  mutation: ViewMutationRecord,
-): boolean {
-  return (
-    MarkView.prototype.ignoreMutation as unknown as (
-      this: MarkIgnoreMutationSelf,
-      mutation: ViewMutationRecord,
-    ) => boolean
-  ).call(this, mutation)
-}
-
-describe('#4516 follow-up — @tiptap/core MarkView.ignoreMutation (vendored contract)', () => {
-  it('has NO leaf/atom guard: the same `this` a NodeView ignores, a MarkView does not', () => {
-    useMobileUserAgent()
-    // `chrome` is deliberately not destructured: since 3.31.3 narrowed the
-    // mobile branch to `contentDOM`, a chrome mutation reaches neither
-    // prototype's branch and cannot show the differential (see below).
-    const { dom, contentHost } = buildMarkViewDom()
-    // One object, handed to both prototypes. `isLeaf`/`isAtom` are set to the
-    // values that make NodeView bail at guard (2); MarkView has no such guard
-    // to reach, which is the whole claim — asserted differentially against the
-    // real vendored functions rather than transcribed from the source.
-    const self: MarkIgnoreMutationSelf = {
-      dom,
-      contentDOM: contentHost,
-      node: { isLeaf: true, isAtom: true },
-      options: { ignoreMutation: null },
-      editor: { isFocused: true },
-    }
-    // Targeted at the CONTENT host, not the chrome: since 3.31.3 narrowed the
-    // mobile branch to `contentDOM`, a chrome mutation is ignored by both
-    // prototypes and the differential would be invisible. This target still
-    // reaches the branch, so the leaf/atom guard is the only thing that can
-    // separate the two answers — which is the claim.
-    const mutation = childListMutation(contentHost)
-
-    expect(defaultIgnoreMutation.call(self as unknown as IgnoreMutationSelf, mutation)).toBe(true)
-    // `false` = "re-read / re-parse this". That is the freeze, on a mark view
-    // that the node-view table would have classified as protected.
-    expect(defaultMarkIgnoreMutation.call(self, mutation)).toBe(false)
-  })
-
-  it('consults options.ignoreMutation, so an override is the only protection a mark view has', () => {
-    useMobileUserAgent()
-    const { dom, contentHost } = buildMarkViewDom()
-    const override = vi.fn(() => true)
-    const self: MarkIgnoreMutationSelf = {
-      dom,
-      contentDOM: contentHost,
-      options: { ignoreMutation: override },
-      editor: { isFocused: true },
-    }
-
-    // Content host, not chrome, for the reason given on the NodeView twin: it
-    // makes the returned value discriminate instead of only the call count.
-    expect(defaultMarkIgnoreMutation.call(self, childListMutation(contentHost))).toBe(true)
-    expect(override).toHaveBeenCalledTimes(1)
-  })
-
-  it('`ignoreReactNodeViewChrome` is NOT a drop-in: it swallows a real edit inside a mark content hole', () => {
-    const { contentHost } = buildMarkViewDom()
-    const inner = document.createElement('span')
-    contentHost.append(inner)
-    const mutation = childListMutation(inner)
-
-    // The correct answer for a content edit is `false` (prosemirror must read
-    // it) — which is exactly what the helper returns for the NODE view shape.
-    // Here `closest('[data-node-view-content-react]')` finds nothing, the
-    // helper reads that as "React chrome", and answers `true`: ignore it.
-    // Pasting it onto a mark view therefore does not merely fail to protect,
-    // it drops the mark's edits. Hence `MarkViewEntry.contentHostSelector`.
-    expect(ignoreReactNodeViewChrome({ mutation })).toBe(true)
-    const nodeShaped = buildNodeViewDom()
-    const nodeInner = document.createElement('span')
-    nodeShaped.contentHost.append(nodeInner)
-    expect(ignoreReactNodeViewChrome({ mutation: childListMutation(nodeInner) })).toBe(false)
   })
 })
