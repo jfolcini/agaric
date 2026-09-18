@@ -118,7 +118,6 @@ function readOctalField(block: Uint8Array, offset: number, length: number): numb
     if (c === undefined || c === 0 || c === 0x20) continue
     str += String.fromCharCode(c)
   }
-  if (str.length === 0) return 0
   const value = Number.parseInt(str, 8)
   return Number.isNaN(value) ? 0 : value
 }
@@ -196,7 +195,7 @@ function unserialize(text: string): JoplinItem | null {
   // Drop trailing blank lines (a file-final newline) so the from-bottom walk
   // starts on the last metadata line rather than mistaking a trailing empty
   // line for the metadata/content separator.
-  while (lines.length > 0 && (lines.at(-1) ?? '').trim() === '') lines.pop()
+  while (lines.at(-1)?.trim() === '') lines.pop()
   const props: Record<string, string> = {}
   let readingProps = true
   let separatorIndex = -1
@@ -231,7 +230,7 @@ function unserialize(text: string): JoplinItem | null {
 /** Strip leading blank lines and trailing whitespace from a note body. */
 function normalizeBody(lines: string[]): string {
   let start = 0
-  while (start < lines.length && (lines[start] ?? '').trim() === '') start++
+  while (lines[start]?.trim() === '') start++
   return lines.slice(start).join('\n').replace(/\s+$/, '')
 }
 
@@ -264,7 +263,8 @@ function mimeToExt(mime: string): string {
     'video/mp4': 'mp4',
     'text/plain': 'txt',
   }
-  if (mime in known) return known[mime] ?? 'bin'
+  const mapped = known[mime]
+  if (mapped !== undefined) return mapped
   const sub = (mime.split('/')[1] ?? '').replace(/[^a-z0-9]+/gi, '').toLowerCase()
   return sub.length > 0 && sub.length <= 5 ? sub : 'bin'
 }
