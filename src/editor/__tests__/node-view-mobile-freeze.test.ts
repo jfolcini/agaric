@@ -164,24 +164,6 @@ function readSources(): SourceFile[] {
     }))
 }
 
-/**
- * Slice the argument list of the `ReactNodeViewRenderer(` call starting at
- * `openParen`, by balancing parentheses. Used to name the component a call site
- * mounts without depending on how the call is formatted.
- */
-function callArguments(src: string, openParen: number): string {
-  let depth = 0
-  for (let i = openParen; i < src.length; i++) {
-    const ch = src[i]
-    if (ch === '(') depth++
-    else if (ch === ')') {
-      depth--
-      if (depth === 0) return src.slice(openParen + 1, i)
-    }
-  }
-  throw new Error(`unbalanced parentheses after ${RENDERER}(`)
-}
-
 interface CallSite {
   component: string
   file: string
@@ -208,8 +190,9 @@ function findCallSites(files: SourceFile[]): CallSite[] {
     let m: RegExpExecArray | null
     while ((m = re.exec(src)) !== null) {
       const openParen = m.index + m[0].length - 1
-      const args = callArguments(src, openParen)
-      const component = (args.match(/^\s*([A-Za-z_$][\w$]*)/)?.[1] ?? '').trim()
+      // The component is the first identifier after the `(`, whatever follows it.
+      const rest = src.slice(openParen + 1)
+      const component = (rest.match(/^\s*([A-Za-z_$][\w$]*)/)?.[1] ?? '').trim()
       sites.push({ component, file })
     }
   }
