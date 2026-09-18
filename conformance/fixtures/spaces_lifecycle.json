@@ -361,7 +361,7 @@
     {
       "args": {},
       "command": "list_spaces",
-      "comment": "The registry after the two `create_space` ops, with each row's name and accent riding as attributes because the id alone cannot see either property write. Two things are pinned. WHICH rows: `B6` (`Roadmap`) is a page IN a space and must not appear, and neither does `B4` (`Drafts`), the page the move put in one, and a mock that prepends a space no block backs answers a longer list. Their ORDER: `ORDER BY COALESCE(content,'') ASC, id ASC` is SQLite BINARY, so `Work` precedes `inbox`; a locale compare answers the other order.",
+      "comment": "The registry after the two `create_space` ops, with each row's name and accent riding as attributes because the id alone cannot see either property write. Two things are pinned. WHICH rows: `B9` (`Roadmap`) is a page IN a space and must not appear, and neither does `B4` (`Drafts`), the page the move put in one, and a mock that prepends a space no block backs answers a longer list. Their ORDER: `ORDER BY COALESCE(content,'') ASC, id ASC` is SQLite BINARY, so `Work` precedes `inbox`; a locale compare answers the other order.",
       "name": "the_created_spaces_list_in_binary_collation_order"
     },
     {

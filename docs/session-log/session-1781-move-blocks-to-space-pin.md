@@ -44,9 +44,11 @@ it: moving a page out of the MIDDLE strands every later sibling's
 guard fails the fixture on. That is a backend staleness, filed as #5100, and it
 is why the multi-block step runs before the single-block one.
 
-The two cases still not modelled are named at that call site: an arrival whose
-source rank exceeds a resident's creation position, and two arrivals from
-different source spaces holding the same rank.
+One case is still not modelled, and the call site names it: an arrival whose
+source rank exceeds a resident's creation position sorts among the residents
+rather than ahead of them. Two arrivals from different source spaces holding the
+same rank looked like a second such case and is not one — the comparator breaks
+that tie on the id bytes, which is what `legacy_slot` does.
 
 ## Two things the brief got wrong about the fixture
 
