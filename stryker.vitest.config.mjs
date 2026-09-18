@@ -25,7 +25,34 @@ if (!mod) {
   )
 }
 
+// #5101 — `@stryker-mutator/vitest-runner@10.0.0` selects the tests to run
+// per mutant with a `testNamePattern` regex built from suite and test names
+// joined by ' ', but vitest 5 matches that regex against names joined by
+// ' > ' (upstream stryker-js#6210). Every test was skipped and each mutant
+// was reported survived. Vitest calls this hook after `project.config` is
+// created and before Stryker assigns the pattern, so the setter widens each
+// space to accept either joiner (a superset of the covering tests, never a
+// subset). Delete once the Stryker pin moves past stryker-js#6214.
+const widenTestNamePattern = {
+  name: 'stryker-vitest5-test-name-pattern',
+  configureVitest({ project }) {
+    let pattern = project.config.testNamePattern
+    Object.defineProperty(project.config, 'testNamePattern', {
+      enumerable: true,
+      configurable: true,
+      get: () => pattern,
+      set: (value) => {
+        pattern =
+          value instanceof RegExp
+            ? new RegExp(value.source.replaceAll(' ', '(?: > | )'), value.flags)
+            : value
+      },
+    })
+  },
+}
+
 export default defineConfig({
+  plugins: [widenTestNamePattern],
   test: {
     // Pure, deterministic libs only (see `stryker.modules.mjs`) — none of
     // them render components or talk Tauri IPC, so skip

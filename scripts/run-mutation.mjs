@@ -1,11 +1,6 @@
 /**
  * #886 — driver for Stryker mutation testing.
  *
- * #5101: the scores this produces are currently meaningless — effectively every
- * mutant is reported as survived, all but the static ones. A non-zero score is
- * not evidence it is working. Do not triage them. See `docs/BUILD.md` §
- * "Mutation testing (nightly)".
- *
  * Stryker mutates exactly one module per run (see `stryker.config.mjs` /
  * `stryker.vitest.config.mjs`), because per-module test scoping — running
  * ONLY the mutated module's own test file(s), never vitest's dependency-graph

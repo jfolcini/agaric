@@ -31,7 +31,11 @@
 //       "a module silently dropped out" case), or
 //   (c) the total mutant count (Killed + Timeout + Survived + NoCoverage)
 //       across all reports is zero (the direct analogue of the Rust lane's
-//       `total_mutants == 0` check).
+//       `total_mutants == 0` check), or
+//   (d) a module counted mutants and not one was Killed or Timeout (#5101:
+//       the runner ran zero tests per mutant and reported every one
+//       survived; static mutants still died in a fresh process, so the
+//       check is per module, never the sweep total).
 //
 // Usage:
 //   node scripts/check-mutation-reports.mjs [--reports-dir reports/mutation]
@@ -89,13 +93,20 @@ export function analyzeReports({ reportsDir, moduleNames }) {
       continue
     }
     let counted = 0
+    let killed = 0
     for (const entry of Object.values(report.files ?? {})) {
       for (const mutant of entry.mutants ?? []) {
         if (COUNTED_STATUSES.has(mutant.status)) counted++
+        if (mutant.status === 'Killed' || mutant.status === 'Timeout') killed++
       }
     }
+    if (counted > 0 && killed === 0) {
+      problems.push(
+        `module \`${mod}\` counted ${counted} mutant(s) and not one was Killed or Timeout. A module whose tests kill nothing is a runner that executed no tests, not a weak suite (#5101).`,
+      )
+    }
     totalMutants += counted
-    perModule.push({ module: mod, mutants: counted, ok: true })
+    perModule.push({ module: mod, mutants: counted, ok: killed > 0 })
   }
 
   if (totalMutants === 0 && problems.length === 0) {
