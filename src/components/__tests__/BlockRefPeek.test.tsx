@@ -18,6 +18,7 @@ import { mockInvokeCommands } from '@/__tests__/helpers/invoke'
 import type { BlockRow } from '@/lib/bindings'
 import { normalizeBlockRefTitle } from '@/lib/block-title'
 import { logger } from '@/lib/logger'
+import { CLOSE_ALL_OVERLAYS_EVENT } from '@/lib/overlay-events'
 import { queryClient } from '@/lib/query-client'
 import { useSpaceStore } from '@/stores/space'
 
@@ -203,6 +204,43 @@ describe('BlockRefPeek', () => {
       expect(screen.queryByTestId('ref-peek')).not.toBeInTheDocument()
     })
     expect(chip).toHaveFocus()
+  })
+
+  // #5086 — the app shell's `closeOverlays` handler consumes Escape and
+  // broadcasts `CLOSE_ALL_OVERLAYS_EVENT` instead. Registering the stand-in
+  // BEFORE the peek is what makes `defaultPrevented` swallow the raw key, so
+  // only the broadcast can still close the peek — the shape of the defect,
+  // which a suite of bare chips could never see.
+  it('dismisses when the app shell intercepts Escape and broadcasts instead', async () => {
+    const user = userEvent.setup()
+    function appShellCloseOverlays(e: KeyboardEvent): void {
+      if (e.key !== 'Escape') return
+      e.preventDefault()
+      window.dispatchEvent(new CustomEvent(CLOSE_ALL_OVERLAYS_EVENT))
+    }
+    window.addEventListener('keydown', appShellCloseOverlays)
+    try {
+      render(<Chips ids={[TARGET]} />)
+
+      const chip = chipFor(TARGET)
+      chip.focus()
+      await user.keyboard('{Alt>}{ArrowDown}{/Alt}')
+      const peek = await screen.findByTestId('ref-peek')
+      await waitFor(() => {
+        expect(peek).toHaveFocus()
+      })
+      expect(chip.getAttribute('aria-expanded')).toBe('true')
+
+      await user.keyboard('{Escape}')
+      await waitFor(() => {
+        expect(screen.queryByTestId('ref-peek')).not.toBeInTheDocument()
+      })
+      expect(chip).toHaveFocus()
+      expect(chip.getAttribute('aria-expanded')).toBe('false')
+      expect(chip.hasAttribute('data-peek-title-parked')).toBe(false)
+    } finally {
+      window.removeEventListener('keydown', appShellCloseOverlays)
+    }
   })
 
   // The peek's `Open` is the chip's own click handler. A chip rendered
