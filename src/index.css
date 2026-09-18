@@ -1525,6 +1525,13 @@
   .tag-ref-chip:focus-visible,
   .block-ref-chip:focus-visible {
     @apply outline-solid ring-ring;
+    /* The width belongs to this (0,2,0) selector, not to the accessibility
+       block's bare `:focus-visible`: that rule is (0,1,0), exactly tying
+       `.ref-chip-anchor`'s permanent 2px, so a FOCUSED anchor chip outweighed
+       an unfocused one only because it is written later in this file. Focus
+       must outrank `.ref-chip-anchor` on specificity, not on source order —
+       otherwise moving either rule silently re-opens #5076/#5082. */
+    outline-width: 3px;
   }
 }
 
