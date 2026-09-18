@@ -77,15 +77,16 @@ it is re-rendered weekly. `mutation-pr.yml` posts the same class of finding as a
 sticky comment on a contributor's own PR.
 
 So the warning had to reach where the numbers are read, not only where the
-command is documented. Five places: a `WHY` block above `MODULES` in
-`stryker.modules.mjs`; a line in `AGENTS.md` § "Acceptance is falsification",
-where the command is recommended, made on explicit maintainer instruction; a
-blockquote in `docs/BUILD.md` § "Mutation testing (nightly)", which is the recipe
-`AGENTS.md` sends people to and which still described a survivor as "a gap in
-assertion *strength*"; and a clause on that page's per-PR-lane paragraph, whose
-stated purpose is attribution of survivors that do not exist; and the doc header
-of `scripts/run-mutation.mjs`, the command both of those pages name, for a
-reader who opens the script rather than the docs.
+command is documented, without spreading so far that #5101's eventual fix has
+to hunt every copy — a warning left behind after the lane works again is a doc
+that lies. Three files. `AGENTS.md` § "Acceptance is falsification", where the
+command is recommended, on explicit maintainer instruction. `docs/BUILD.md` §
+"Mutation testing (nightly)", the recipe `AGENTS.md` sends people to, which
+still described a survivor as "a gap in assertion *strength*" — a blockquote
+there, plus a clause on the per-PR-lane paragraph whose stated purpose is
+attribution of survivors that do not exist. And the doc header of
+`scripts/run-mutation.mjs`, for a reader who opens the command rather than the
+docs.
 
 Each placement says the thing once and points at `docs/BUILD.md` for the
 detail; `stryker.modules.mjs` carries five lines, not the sixteen it takes to
@@ -105,6 +106,6 @@ unaffected.
 
 ## Verified
 
-`stryker.modules.mjs` still imports and still exports 23 module names. Both
-edits are comments and prose; no behaviour changed, so there is nothing to
-falsify.
+`stryker.modules.mjs` still imports and still exports 23 module names, and
+`scripts/run-mutation.mjs` still resolves its module list. Every edit is a
+comment or prose; no behaviour changed, so there is nothing to falsify.

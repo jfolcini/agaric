@@ -43,12 +43,6 @@
  * as it is.
  */
 
-/**
- * #5101 — every score this file produces is currently meaningless: the vitest
- * runner cannot re-run tests under vitest 5, so nothing but a static mutant is
- * ever killed. Do not triage a survivor from it. Detail:
- * `docs/BUILD.md` § "Mutation testing (nightly)".
- */
 export const MODULES = {
   tokenize: {
     src: 'src/lib/search-query/tokenize.ts',
