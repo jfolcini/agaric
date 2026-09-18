@@ -265,11 +265,6 @@ const NO_FIXTURE_ALLOWLIST: Readonly<Record<string, string>> = {
   // ── Sync / pairing / peer registry (transient transport / device metadata) ──
   start_sync: 'sync transport session; no durable domain state to snapshot',
   cancel_sync: 'sync transport session; no durable domain state to snapshot',
-  // #5057 pinned BOTH halves of pairing — `confirm_pairing`
-  // (`pairing_confirm.json`) and `start_pairing` (`pairing_start.json`). Each
-  // waiver named two writes and then judged them together; they differ. The
-  // pending-pairing marker is unobservable, the `peer_refs` unpaired-flag
-  // clear is not.
   // #3493 — cancel now deletes the pending-pairing marker (an `app_settings`
   // row), so this is no longer "no durable state". It stays excluded because
   // the marker is the ONLY thing it writes and nothing reads it — the
@@ -439,14 +434,6 @@ const READ_NO_QUERY_ALLOWLIST: Readonly<Record<string, string>> = {
   export_page_markdown:
     'returns a rendered markdown `String`; the query projection binds canonical ' +
     'block-id rows, so it has nothing to compare',
-
-  // ── Spaces ──
-  // Nothing is waived here. #5057 pinned `list_spaces` as a query step in
-  // `spaces_lifecycle.json`, next to the `create_space` that mints the row it
-  // lists. Its waiver read "space registry outside the single-space
-  // conformance snapshot scope" — the phrase the doc block on
-  // `PINNING_BLOCKED_READ` names as the wrong reason — and what actually stood
-  // in the way was the mock PREPENDING a `Personal` row that no block backed.
 
   // ── Process / environment / telemetry status (no domain state) ──
   collect_bug_report_metadata: 'no domain state — host + build metadata',
