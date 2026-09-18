@@ -39,6 +39,28 @@ function spaceRow(blockId: string, spaceId: string): Record<string, unknown> {
   }
 }
 
+/** A live space block, the shape `require_live_space_in_tx` demands. */
+function seedSpace(spaceId: string, name: string, position: number): void {
+  blocks.set(spaceId, makeBlock(spaceId, 'page', name, null, position))
+  properties.set(
+    spaceId,
+    new Map([
+      [
+        'is_space',
+        {
+          block_id: spaceId,
+          key: 'is_space',
+          value_text: 'true',
+          value_num: null,
+          value_date: null,
+          value_ref: null,
+          value_bool: null,
+        },
+      ],
+    ]),
+  )
+}
+
 /** A page living in SPACE_A, both ways the mock records membership. */
 function seedPageInSpaceA(): void {
   blocks.clear()
@@ -46,6 +68,11 @@ function seedPageInSpaceA(): void {
   blockTags.clear()
   propertyDefs.clear()
   opLog.length = 0
+
+  // Both spaces are real blocks: `move_blocks_to_space` validates its TARGET
+  // once, up front, exactly as the backend does.
+  seedSpace(SPACE_A, 'Space A', 1)
+  seedSpace(SPACE_B, 'Space B', 1)
 
   const row = makeBlock(PAGE, 'page', 'Test Page', null, 0)
   row['space_id'] = SPACE_A

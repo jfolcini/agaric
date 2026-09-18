@@ -10,6 +10,7 @@
  */
 
 import { base64UrlToUtf8, isBase64UrlNoPad, utf8ToBase64Url } from '@/lib/base64url'
+import { compareUtf8Bytes } from '@/lib/sqlite-collation'
 import {
   type TypedHandlers,
   appErrorRejection,
@@ -24,6 +25,7 @@ import {
   refreshDescendantPageIds,
   renumberSiblings,
   restoreCohort,
+  spaceRootGroup,
   validationRejection,
 } from '@/lib/tauri-mock/handlers/shared'
 import {
@@ -1371,7 +1373,20 @@ export const blocksHandlers = {
     if (inputIds.length === 0) {
       throw validationRejection('block_ids list cannot be empty')
     }
+    // `require_live_space_in_tx` runs ONCE, before any per-block write: the
+    // target must be a LIVE block flagged `is_space = 'true'`. The per-block
+    // leniency below covers a dead BLOCK id, never a bad TARGET.
+    const target = blocks.get(spaceId)
+    if (
+      !target ||
+      target['deleted_at'] ||
+      properties.get(spaceId)?.get('is_space')?.['value_text'] !== 'true'
+    ) {
+      throw validationRejection(`block '${spaceId}' is not a live space`)
+    }
     let count = 0
+    // Root arrivals, re-ranked in ONE pass after the loop (see below).
+    const arrivedAtRoot = new Set<string>()
     for (const blockId of inputIds) {
       const b = blocks.get(blockId)
       if (!b || b['deleted_at']) continue
@@ -1407,6 +1422,7 @@ export const blocksHandlers = {
       // ?`), but every mock reader of `space_id` reads it on a page or
       // top-level tag row, so the descendant stamp has no reader here.
       b['space_id'] = spaceId
+      if ((b['parent_id'] as string | null) === null) arrivedAtRoot.add(blockId)
       pushOp('set_property', {
         block_id: blockId,
         key: 'space',
@@ -1417,6 +1433,51 @@ export const blocksHandlers = {
         from_value: fromValue,
       })
       count++
+    }
+    // Arrivals land FIRST in the destination's root group, in the order they
+    // RANKED in the space they left.
+    //
+    // The engine orders that group by each node's legacy position meta paired
+    // with its block id, and the two sides are on different scales. A resident
+    // carries the `position` it held at CREATION, which `create_block_in_tx`
+    // appended over the whole `parent_id IS NULL` set — every space and every
+    // page in one count — while an arrival is seeded with its small per-space
+    // rank. The small key wins, so arrivals go first; among themselves they keep
+    // source rank, because the source group is never reprojected and their metas
+    // are therefore still distinct. Re-ranking inside the loop above made each
+    // arrival prepend over the last and handed back the list REVERSED
+    // (#5057 review); one pass here does not.
+    //
+    // Where this parts company with the backend, stated as the rule rather than
+    // a list of cases, because every list of cases here has been too short:
+    // arrivals go FIRST unconditionally, while the backend merely compares metas.
+    // So the two disagree whenever a resident's meta is BELOW an arrival's — and
+    // residents can hold small metas. `reproject_dense_positions` rewrites
+    // `blocks.position` and never the Loro `FIELD_POSITION` that `legacy_slot`
+    // reads, so a meta is whatever its block was seeded with and never moves: a
+    // space keeps its creation rank, and a block that arrived in an EARLIER move
+    // keeps the source rank it came in with. Two ordinary moves into one space
+    // are enough to show it (#5099 review). Matching that needs a shadow meta per
+    // block, which is more machinery than the mock earns.
+    //
+    // The SOURCE group is deliberately left alone: only the destination doc is
+    // hydrated, so the vacated rank stays a hole on both stacks — benign at the
+    // end of a group, stale in front of a survivor (#5100). The mock matches the
+    // backend either way.
+    if (arrivedAtRoot.size > 0) {
+      // `(position, id-bytes)` is exactly `legacy_slot`'s `(sib_pos, sib_id)`, so
+      // two arrivals that left DIFFERENT spaces holding the same rank break their
+      // tie the way the engine does.
+      const group = spaceRootGroup(spaceId).toSorted((x, y) => {
+        const px = (x['position'] as number | null) ?? Number.MAX_SAFE_INTEGER
+        const py = (y['position'] as number | null) ?? Number.MAX_SAFE_INTEGER
+        return px !== py ? px - py : compareUtf8Bytes(x['id'] as string, y['id'] as string)
+      })
+      const arriving = group.filter((row) => arrivedAtRoot.has(row['id'] as string))
+      const resident = group.filter((row) => !arrivedAtRoot.has(row['id'] as string))
+      ;[...arriving, ...resident].forEach((row, i) => {
+        row['position'] = i + 1
+      })
     }
     return count
   },

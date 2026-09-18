@@ -23,6 +23,7 @@ import {
   metaRowMatchesFilter,
   notFoundRejection,
   sortDiscriminator,
+  spaceRootGroup,
   validationRejection,
 } from '@/lib/tauri-mock/handlers/shared'
 import {
@@ -69,25 +70,18 @@ function listPagesWithMetadataLimit(raw: unknown): number {
  * Positions are DENSE and 1-BASED (`insertAtSlotAndRenumber`), and a
  * SOFT-DELETED sibling keeps its slot (#4669, #419), so tombstones count.
  *
- * At the ROOT the group is also per SPACE, not the whole `parent_id = NULL`
- * set: each space's tree is its own Loro doc, so two spaces each have a block
- * at rank 1. A block's space is `blocks.space_id`, except for a block that IS a
- * space — not a member of itself — which ranks in its own group. That is why a
- * new space comes out at 1 and the first page created inside it at 2.
+ * At the ROOT the group is also per SPACE ({@link spaceRootGroup}), not the
+ * whole `parent_id = NULL` set. That is why a new space comes out at 1 and the
+ * first page created inside it at 2.
  *
  * The rank survives only until the next ROOT renumber: `insertAtSlotAndRenumber(null, …)`
  * densifies the whole cross-space `parent_id = null` group and overwrites it.
- * Nothing in the mock maintains per-space root positions, which is the debt the
- * `move_blocks_to_space` waiver states.
  */
 function nextDenseRank(parentId: string | null, spaceId: string | null): number {
+  if (parentId === null) return spaceRootGroup(spaceId).length + 1
   let siblings = 0
   for (const b of blocks.values()) {
     if ((b['parent_id'] as string | null) !== parentId) continue
-    if (parentId === null) {
-      const owner = (b['space_id'] as string | null | undefined) ?? (b['id'] as string)
-      if (owner !== spaceId) continue
-    }
     siblings += 1
   }
   return siblings + 1

@@ -234,15 +234,6 @@ const READ_ONLY_CACHE_WRITERS: Readonly<Record<string, string>> = {
  * later gains a fixture (delete the redundant entry) or leaves `bindings.ts`.
  */
 const NO_FIXTURE_ALLOWLIST: Readonly<Record<string, string>> = {
-  // ── Pages / spaces / property definitions ──
-  move_blocks_to_space:
-    "writing the `space` property RE-RANKS the destination space's root sibling group — " +
-    'positions are dense per space, not across `parent_id = NULL` — and the mock does not ' +
-    'MAINTAIN per-space root positions: `insertAtSlotAndRenumber(null, …)` re-flattens the ' +
-    'whole cross-space group, so any fixture mixing a root create with a space write ' +
-    'diverges, not just this command. A count-only pin would pass while the tree diverged ' +
-    '(#5057)',
-
   // ── Link metadata cache (#3332) ──
   // Classified read-only by its `fetch_` verb until #3332; it takes
   // `State<'_, WritePool>` and `fetch_link_metadata_inner` upserts into the
@@ -432,8 +423,10 @@ const READ_NO_QUERY_ALLOWLIST: Readonly<Record<string, string>> = {
     'selected by an `op_log` `(historical_created_at, historical_seq)` point — an op ' +
     'coordinate each stack generates independently, not fixture-expressible',
   export_page_markdown:
-    'returns a rendered markdown `String`; the query projection binds canonical ' +
-    'block-id rows, so it has nothing to compare',
+    'the obstacle is the TOKEN GRAMMAR, not the projection: a bare-scalar rows location ' +
+    'exists and a string attribute passes through verbatim, but conformance_query.rs (via ' +
+    'attr_value) refuses a rendered attribute containing `#` or `->` — its own token ' +
+    'separators — and a markdown export opens `# Title`. Debt, owned by #5071',
 
   // ── Process / environment / telemetry status (no domain state) ──
   collect_bug_report_metadata: 'no domain state — host + build metadata',
@@ -656,11 +649,7 @@ const PINNING_BLOCKED_MUTATING: ReadonlySet<string> = new Set([
  * ratchet exists to make visible. Both directions now name the command in the
  * diff — pin one and delete its line here, waive one and add it.
  */
-const NOT_YET_PINNED_MUTATING: readonly string[] = [
-  'import_bibliography',
-  'import_markdown',
-  'move_blocks_to_space',
-]
+const NOT_YET_PINNED_MUTATING: readonly string[] = ['import_bibliography', 'import_markdown']
 
 /**
  * The read leg's debt, and it is NOT zero. Each of these is waived because the
