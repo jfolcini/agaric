@@ -10,8 +10,8 @@
  *    (`agaric-store/src/pagination/mod.rs:271-276`) is
  *    `c.position.unwrap_or(NULL_POSITION_SENTINEL)` — it ACCEPTS the cursor
  *    and pages from the sentinel. `list_agenda_range`'s own bind
- *    (`pagination/agenda.rs:100`) does the same for its `deleted_at`-slotted
- *    lead.
+ *    (`src-tauri/agaric-store/src/pagination/agenda.rs:110`) does the same for
+ *    its `deleted_at`-slotted lead.
  *  - Note 5: `decodeBlocksCursor` decoded through `base64UrlToUtf8`, which
  *    rewrites `-`/`_` and re-pads before calling `atob` — and `atob` itself
  *    tolerates the STANDARD base64 alphabet (`+`, `/`) and `=` padding. The

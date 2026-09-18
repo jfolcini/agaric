@@ -50,6 +50,17 @@ import process from 'node:process'
 export const DEFAULT_REPORTS_DIR = 'reports/mutation'
 const DEFAULT_TITLE = '## StrykerJS mutation testing (frontend, #886)'
 
+// #5101 — the runner cannot re-run tests under vitest 5, so every mutant but a
+// static one is reported as survived whatever the tests do. The banner heads
+// every comment because the numbers below it are the ones a contributor acts
+// on. Delete it, and the reference in `docs/BUILD.md`, when #5101 closes.
+const BROKEN_LANE_BANNER =
+  '> **These numbers are currently meaningless (#5101).** Effectively every ' +
+  'mutant is reported as survived — all but the static ones — because ' +
+  '`@stryker-mutator/vitest-runner` cannot re-run tests under vitest 5. Do not ' +
+  'write a test to kill a survivor listed here. See `docs/BUILD.md` § "Mutation ' +
+  'testing (nightly)".'
+
 /**
  * Reads one module's `mutation.json` into counts plus a survivor list.
  * Returns a row whose `state` is `'ok'`, `'no report'` or `'unreadable'`.
@@ -140,7 +151,7 @@ export function renderMutationSummary({
   reportsDir = DEFAULT_REPORTS_DIR,
   title = DEFAULT_TITLE,
 } = {}) {
-  const lines = [title, '']
+  const lines = [title, '', BROKEN_LANE_BANNER, '']
   const unreadable = []
 
   const render = () => {

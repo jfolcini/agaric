@@ -55,11 +55,6 @@
     "reason": "Pre-existing at the #4184 partially-rooted-citation widening; not yet fixed."
   },
   {
-    "file": "src/lib/tauri-mock/__tests__/blocks-cursor-strictness.test.ts",
-    "ref": "pagination/agenda.rs:100",
-    "reason": "Pre-existing at the #4184 partially-rooted-citation widening; not yet fixed."
-  },
-  {
     "file": "src/lib/tauri-mock/__tests__/bulk-pages-history-order.test.ts",
     "ref": "agaric-store/src/pagination/history.rs:180,222",
     "reason": "Pre-existing at the #4184 partially-rooted-citation widening; not yet fixed."

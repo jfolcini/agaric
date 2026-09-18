@@ -363,21 +363,17 @@ function slotSentinel(slot: CursorSlot): number | null {
  * absent from `slots` below). And a payload MISSING a slot this branch reads is
  * also accepted, not refused: `position_keyset_binds`
  * (`agaric-store/src/pagination/mod.rs:271-276`), `list_agenda_range`'s own
- * bind (`src-tauri/agaric-store/src/pagination/agenda.rs:110`) and both history
- * queries' `c.seq.unwrap_or(0)`
- * all `unwrap_or` a missing slot to a SENTINEL rather than reject the cursor, so
- * the query pages from that sentinel key instead of refusing the request.
- * Rejecting a missing slot here made the mock STRICTER than production in the
- * opposite direction from the one this harness exists to close (#3942 review
- * note 3). The `deleted_at` slot carries a different column on each branch
- * that reads it, so one sentinel can only match one of them, and it matches
- * the grouped-backlink reader — the only branch either stack MINTS a cursor
- * without the slot from, where `Cursor::for_group(_, None)` means a titleless
- * group. The rest are unreachable and left open: `pagination::list_trash`
- * REFUSES a cursor without it (`cursor missing deleted_at for trash query`)
- * and so do `pagination::list_page_history` and `list_block_history` (`cursor
- * missing created_at for history query`), while `list_agenda_range` binds `""`
- * (`src-tauri/agaric-store/src/pagination/agenda.rs:110`) where this decodes `null`.
+ * bind (`src-tauri/agaric-store/src/pagination/agenda.rs:110`) and both
+ * history queries' `c.seq.unwrap_or(0)` all `unwrap_or` a missing slot to a
+ * SENTINEL rather than reject the cursor, so the query pages from that
+ * sentinel key instead of refusing the request. Rejecting a missing slot here
+ * made the mock STRICTER than production in the opposite direction from the
+ * one this harness exists to close (#3942 review note 3).
+ *
+ * The `deleted_at` sentinel matches the grouped-backlink reader, the only
+ * branch either stack MINTS a slotless cursor from — `Cursor::for_group(_,
+ * None)`, a titleless group. The other three refuse such a cursor or never
+ * mint one.
  *
  * A MISSING `version` is accepted as 1, exactly as `Cursor::decode` accepts a
  * pre-versioning cursor; any other version is rejected.
