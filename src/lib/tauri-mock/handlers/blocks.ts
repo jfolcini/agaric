@@ -10,6 +10,7 @@
  */
 
 import { base64UrlToUtf8, isBase64UrlNoPad, utf8ToBase64Url } from '@/lib/base64url'
+import { compareUtf8Bytes } from '@/lib/sqlite-collation'
 import {
   type TypedHandlers,
   appErrorRejection,
@@ -198,11 +199,17 @@ function keysetPosition(row: Record<string, unknown>): number {
  * Every branch's key ends in `id` because every backend `ORDER BY` here does:
  * a keyset page over a non-total order can duplicate or skip a row across the
  * boundary, so the tiebreak is what makes the cursor sound rather than tidy.
+ *
+ * A `null` component is a SQL `NULL` that sorts LAST — the grouped-backlink
+ * `page_title` of a titleless page (`cmp_group`'s `Some < None`).
  */
-export type SortKey = readonly (string | number)[]
+export type SortKey = readonly (string | number | null)[]
 
 /** Lexicographic compare of two {@link SortKey}s, component by component. Each
- *  position holds the same column on both sides, so the types line up. */
+ *  position holds the same column on both sides, so the types line up. Strings
+ *  compare as SQLite's `BINARY` collation does, by UTF-8 bytes (#5098): the
+ *  backend's `cmp_group` is a Rust `str` compare, and JS `<` ranks an astral
+ *  title BEFORE a `U+E000`-`U+FFFF` one where the bytes rank it after. */
 function compareSortKeys(x: SortKey, y: SortKey): number {
   const width = Math.max(x.length, y.length)
   for (let i = 0; i < width; i++) {
@@ -210,9 +217,13 @@ function compareSortKeys(x: SortKey, y: SortKey): number {
     const b = y[i]
     if (a === undefined) return b === undefined ? 0 : -1
     if (b === undefined) return 1
+    if (a === null || b === null) {
+      if (a === b) continue
+      return a === null ? 1 : -1
+    }
     if (a === b) continue
     if (typeof a === 'number' && typeof b === 'number') return a - b
-    return String(a) < String(b) ? -1 : 1
+    return compareUtf8Bytes(String(a), String(b))
   }
   return 0
 }
@@ -319,7 +330,9 @@ const BLOCKS_CURSOR_VERSION = 1
 function encodeBlocksCursor(key: SortKey, slots: readonly CursorSlot[]): string {
   const payload: Record<string, unknown> = { id: String(key.at(-1) ?? '') }
   slots.forEach((slot, i) => {
-    payload[slot] = key[i]
+    // Every `Cursor` slot is `#[serde(skip_serializing_if = "Option::is_none")]`,
+    // so a NULL component is an ABSENT key on the backend, not a null one.
+    if (key[i] !== null) payload[slot] = key[i]
   })
   payload['version'] = BLOCKS_CURSOR_VERSION
   return utf8ToBase64Url(JSON.stringify(payload))
@@ -327,10 +340,12 @@ function encodeBlocksCursor(key: SortKey, slots: readonly CursorSlot[]): string 
 
 /** The value a bind function falls back to when a cursor omits `slot` — see
  *  {@link decodeBlocksCursor} for why a missing slot is a sentinel, not a
- *  refusal. `seq` mirrors `c.seq.unwrap_or(0)` in both history queries. */
-function slotSentinel(slot: CursorSlot): string | number {
+ *  refusal, and which branch each sentinel is chosen for. `seq` mirrors
+ *  `c.seq.unwrap_or(0)` in both history queries; `deleted_at` is the `None`
+ *  that sorts a titleless group last. */
+function slotSentinel(slot: CursorSlot): number | null {
   if (slot === 'position') return NULL_POSITION_SENTINEL
-  return slot === 'seq' ? 0 : ''
+  return slot === 'seq' ? 0 : null
 }
 
 /**
@@ -348,17 +363,21 @@ function slotSentinel(slot: CursorSlot): string | number {
  * absent from `slots` below). And a payload MISSING a slot this branch reads is
  * also accepted, not refused: `position_keyset_binds`
  * (`agaric-store/src/pagination/mod.rs:271-276`), `list_agenda_range`'s own
- * bind (`pagination/agenda.rs:100`) and both history queries' `c.seq.unwrap_or(0)`
+ * bind (`src-tauri/agaric-store/src/pagination/agenda.rs:110`) and both history
+ * queries' `c.seq.unwrap_or(0)`
  * all `unwrap_or` a missing slot to a SENTINEL rather than reject the cursor, so
  * the query pages from that sentinel key instead of refusing the request.
  * Rejecting a missing slot here made the mock STRICTER than production in the
  * opposite direction from the one this harness exists to close (#3942 review
- * note 3). The `deleted_at` slot is the exception, on all three queries that
- * read it: `pagination::list_trash` REFUSES a cursor without it (`cursor
- * missing deleted_at for trash query`) and so do `pagination::list_page_history`
- * and `list_block_history` (`cursor missing created_at for history query`),
- * where this decodes `['', …]` and serves from the sentinel. Neither stack
- * mints such a cursor, so the gap is unreachable and left open.
+ * note 3). The `deleted_at` slot carries a different column on each branch
+ * that reads it, so one sentinel can only match one of them, and it matches
+ * the grouped-backlink reader — the only branch either stack MINTS a cursor
+ * without the slot from, where `Cursor::for_group(_, None)` means a titleless
+ * group. The rest are unreachable and left open: `pagination::list_trash`
+ * REFUSES a cursor without it (`cursor missing deleted_at for trash query`)
+ * and so do `pagination::list_page_history` and `list_block_history` (`cursor
+ * missing created_at for history query`), while `list_agenda_range` binds `""`
+ * (`src-tauri/agaric-store/src/pagination/agenda.rs:110`) where this decodes `null`.
  *
  * A MISSING `version` is accepted as 1, exactly as `Cursor::decode` accepts a
  * pre-versioning cursor; any other version is rejected.
@@ -388,7 +407,7 @@ function decodeBlocksCursor(raw: unknown, slots: readonly CursorSlot[]): SortKey
   if (version !== BLOCKS_CURSOR_VERSION) return invalid()
   const id = obj['id']
   if (typeof id !== 'string') return invalid()
-  const key: (string | number)[] = []
+  const key: (string | number | null)[] = []
   for (const slot of slots) {
     const value = obj[slot]
     // Absent or explicit `null` — the backend's `#[serde(default)]` Option
@@ -537,7 +556,7 @@ export const blocksHandlers = {
         cursor,
         null,
         // `list_agenda_range` stashes its `ac.date` in the backend `Cursor`'s
-        // `deleted_at` slot (`pagination/agenda.rs`'s
+        // `deleted_at` slot (`src-tauri/agaric-store/src/pagination/agenda.rs`'s
         // `Cursor::for_id_and_deleted_at`) — a documented slot REUSE, not a
         // tombstone.
         ['deleted_at'],
