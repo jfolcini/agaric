@@ -180,8 +180,8 @@ npm run mutation -- tokenize filters-model   # only named modules
 > re-run tests under vitest 5 and there is no published fix. A non-zero score
 > is not evidence the lane is working. Do not write a test to kill a survivor it
 > reports, and do not read a low score as a weak suite; that applies to the
-> per-PR sticky comment and to the auto-filed tracking issues below as much as
-> to a local run. The Rust lane is unaffected.
+> per-PR sticky comment and to the auto-filed tracking issues as much as to a
+> local run. The Rust lane is unaffected.
 
 Each module runs in its own Stryker invocation, scoped to run ONLY that module's own test file(s) — `stryker.modules.mjs` holds the mapping, and `stryker.config.mjs` / `stryker.vitest.config.mjs` explain why (vitest's default "related" test-selection resolves through barrel re-exports like `search-query/index.ts` and drags in a large set of unrelated component tests otherwise). Reports land in `reports/mutation/<module>/mutation.html` (gitignored).
 

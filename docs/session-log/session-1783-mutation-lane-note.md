@@ -87,15 +87,15 @@ to hunt every copy — a warning left behind after the lane works again is a doc
 that lies. Three files. `AGENTS.md` § "Acceptance is falsification", where the
 command is recommended, on explicit maintainer instruction. `docs/BUILD.md` §
 "Mutation testing (nightly)", the recipe `AGENTS.md` sends people to, which
-still described a survivor as "a gap in assertion *strength*" — a blockquote
-there, plus a clause on the per-PR-lane paragraph whose stated purpose is
-attribution of survivors that do not exist. And the doc header of
+still described a survivor as "a gap in assertion *strength*": a blockquote
+sits directly under that sentence, and says the warning covers the per-PR
+sticky comment and the auto-filed issues too. And the doc header of
 `scripts/run-mutation.mjs`, for a reader who opens the command rather than the
 docs.
 
 One read point is still uncovered. `mutation-pr.yml`'s sticky comment reaches a
-contributor who never opens either page, and `docs/BUILD.md`'s clause about that
-lane only helps someone already reading `docs/BUILD.md`. Covering it means
+contributor who never opens either page, and a blockquote naming that lane only
+helps someone already reading `docs/BUILD.md`. Covering it means
 changing `render-mutation-summary.mjs`, which is a behaviour change rather than
 documentation, so it is left with the auto-filed issues for the maintainer.
 
