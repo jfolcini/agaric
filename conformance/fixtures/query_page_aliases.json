@@ -184,7 +184,7 @@
       "error": null,
       "has_more": null,
       "name": "aliases_nocase_folds_ascii_only_then_memcmps_utf8",
-      "rows": ["q-Öl", "q-äl", "Zebra", "Öl", "ärger", "ｱ", "🍎"],
+      "rows": ["q-Öl", "q-äl", "z-ab", "z-🍎", "Zebra", "Öl", "ärger", "ｱ", "🍎"],
       "total_count": null
     },
     {
@@ -225,6 +225,14 @@
       "has_more": null,
       "name": "prefix_length_tie_breaks_on_the_nocase_collation",
       "rows": ["B5#alias=q-Öl#title=Alias Zoo", "B5#alias=q-äl#title=Alias Zoo"],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": null,
+      "name": "prefix_length_counts_characters_not_code_units",
+      "rows": ["B5#alias=z-🍎#title=Alias Zoo", "B5#alias=z-ab#title=Alias Zoo"],
       "total_count": null
     }
   ],
@@ -409,6 +417,17 @@
       "command": "list_page_aliases_by_prefix",
       "comment": "`ORDER BY length(alias), alias` — two four-character aliases, so the length key ties and the tiebreak IS the NOCASE collation: `q-Öl` (`C3 96`) before `q-äl` (`C3 A4`). A `toLowerCase` fold makes it `q-öl` (`C3 B6`) and answers the other order. Deliberately ASCII-lengthed: `length()` counts characters in SQLite and UTF-16 units in JS, so an astral alias here would redden on the LENGTH key instead of the collation.",
       "name": "prefix_length_tie_breaks_on_the_nocase_collation"
+    },
+    {
+      "args": {
+        "prefix": "z-",
+        "scope": {
+          "kind": "global"
+        }
+      },
+      "command": "list_page_aliases_by_prefix",
+      "comment": "`ORDER BY length(pa.alias), pa.alias` — and SQLite's `length()` counts CHARACTERS, not UTF-16 code units. `z-🍎` is THREE characters and four units; `z-ab` is four and four. So the length key separates them for SQLite and TIES them for a `String.length` mock, which then falls to the NOCASE compare and puts `z-ab` first. Unlike the `q-` pair above, this one deliberately confounds length with collation, because the length key is what it exists to pin. Seed order is `z-ab, z-🍎`, i.e. the wrong answer, so a handler that dropped the sort reddens too.",
+      "name": "prefix_length_counts_characters_not_code_units"
     }
   ],
   "seed": {
@@ -516,6 +535,14 @@
       {
         "alias": "Ärger",
         "page_id": "S6"
+      },
+      {
+        "alias": "z-ab",
+        "page_id": "S5"
+      },
+      {
+        "alias": "z-🍎",
+        "page_id": "S5"
       }
     ],
     "properties": [],

@@ -20,7 +20,7 @@ of them for `compareMetaRows`. `compareBinary` — `a < b ? -1 : a > b ? 1 : 0`
 wrong the moment an astral character appears. It is deleted, its five call
 sites point at the faithful helper, and no third helper was added.
 
-That is the rung the ladder stops at, and the sweep nearly walked past it.
+The codebase already did it; that is where the ladder stops.
 
 ## What is pinned, and by what
 
@@ -65,12 +65,11 @@ touched. `npx oxfmt --write conformance/fixtures/` takes it back to exactly the
 intended files with no content change anywhere else. The churn is formatting,
 not corruption, and the answer is the formatter rather than a revert.
 
-## Two more the review would not let stand
+## Two more, fixed on evidence
 
-The first pass reported three further divergences and left all three, on the
-grounds that nothing pinned them. Review pushed back on two, each with a
-concrete failing input, which is the bar — so they are fixed here rather than
-carried.
+Three further divergences were reported and left on the grounds that nothing
+pinned them. Two of the three have a concrete failing input, which is the bar a
+finding has to clear, so they are fixed rather than carried.
 
 `textCompare`'s ordered arms in `links.ts` folded for `Contains` and
 `StartsWith` while comparing with a raw `<` four lines above, and
@@ -83,9 +82,16 @@ because its numeric arm must stay numeric.
 counts characters and JS counts UTF-16 units: an alias of three characters
 containing an astral one measures four, so it tied with a four-character alias
 instead of leading it, and the `[[` picker ordered differently in dev and e2e
-than in the app. Spreading to code points closes it. A real divergence, and not
-a collation one — the fixture deliberately uses a same-length pair so the two
-cannot be confounded.
+than in the app. `Array.from` counts code points instead — not a spread, which
+oxlint refuses on a string for splitting grapheme clusters, a unit SQLite does
+not count either.
+
+Review then caught that the fix was unfalsifiable: the existing length step uses
+same-length aliases on purpose, so reverting it left the suite green. It now has
+a step of its own over `z-🍎` (three characters, four units) against `z-ab`
+(four and four) — the one place the fixture confounds length with collation
+deliberately, because the length key is what it exists to pin. Seeded
+wrong-answer-first, so a dropped sort reddens too.
 
 `compareSortKeys` in `blocks.ts` stays. It compares by code unit where the
 backend's `cmp_group` is a Rust byte compare, but fixing it means replacing the
