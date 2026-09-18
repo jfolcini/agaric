@@ -363,7 +363,7 @@ function slotSentinel(slot: CursorSlot): string | number | null {
  * absent from `slots` below). And a payload MISSING a slot this branch reads is
  * also accepted, not refused: `position_keyset_binds`
  * (`agaric-store/src/pagination/mod.rs:271-276`), `list_agenda_range`'s own
- * bind (`src-tauri/agaric-store/src/pagination/agenda.rs:100`) and both history queries' `c.seq.unwrap_or(0)`
+ * bind (`src-tauri/agaric-store/src/pagination/agenda.rs:110`) and both history queries' `c.seq.unwrap_or(0)`
  * all `unwrap_or` a missing slot to a SENTINEL rather than reject the cursor, so
  * the query pages from that sentinel key instead of refusing the request.
  * Rejecting a missing slot here made the mock STRICTER than production in the
