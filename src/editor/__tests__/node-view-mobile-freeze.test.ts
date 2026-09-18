@@ -79,9 +79,13 @@ const RENDERER = 'ReactNodeViewRenderer'
 interface NodeViewEntry {
   file: string
   node: string
-  /** `node.isLeaf` — no `content` in the schema. Drives tiptap's guard (1). */
+  /**
+   * `node.isLeaf` — no `content` in the schema, so `@tiptap/react` builds it no
+   * content host and the default's null-`contentDOM` guard answers first.
+   */
   isLeaf: boolean
-  /** `node.isAtom` — `isLeaf || spec.atom`. Drives tiptap's guard (2). */
+  /** `node.isAtom` — `isLeaf || spec.atom`; the other half of tiptap's
+   * `isLeaf || isAtom` short-circuit. */
   isAtom: boolean
   why: string
 }
@@ -338,7 +342,7 @@ interface IgnoreMutationSelf {
 }
 
 /** The `this` of a node view that is neither leaf nor atom — i.e. `codeBlock`. */
-const EXPOSED_NODE = { isLeaf: false, isAtom: false }
+const NON_LEAF_NODE = { isLeaf: false, isAtom: false }
 
 /** tiptap's real default, invoked against a hand-built `this`. */
 function defaultIgnoreMutation(this: IgnoreMutationSelf, mutation: ViewMutationRecord): boolean {
@@ -420,7 +424,7 @@ describe('#4353 — @tiptap/core default ignoreMutation (vendored contract)', ()
     const self: IgnoreMutationSelf = {
       dom,
       contentDOM: contentHost,
-      node: EXPOSED_NODE,
+      node: NON_LEAF_NODE,
       options: { ignoreMutation: null },
       editor: { isFocused: true },
     }

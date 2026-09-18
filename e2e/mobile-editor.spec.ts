@@ -252,16 +252,14 @@ test.describe('Mobile editor (iPhone 13 viewport)', () => {
    * `CodeBlockWithShortcut` rendered every language through a React node view.
    * A React node view rewrites its own subtree on re-render; prosemirror-view
    * recorded those mutations and flushed, the flush re-rendered the node view,
-   * and the cycle never terminated. The UA gate was @tiptap/core's default
-   * `NodeView.ignoreMutation`: up to 3.31.0, on iOS/Android with the editor
-   * focused, it did NOT ignore a childList mutation anywhere inside the node
-   * view's `dom` as long as every changed node was contentEditable, so React's
-   * own writes were read back as user edits. Desktop skipped that branch and
-   * ignored everything outside `contentDOM` — it created the same block in
-   * ~80 ms. (#4315 located this; the earlier reading, which blamed
-   * `browser.android`/`browser.ios` selection paths inside prosemirror-view,
-   * was wrong. 3.31.3 narrowed the branch to `contentDOM` and closed it
-   * upstream; this test is the regression pin, not a live workaround.)
+   * and the cycle never terminated. The gate was @tiptap/core's default
+   * `NodeView.ignoreMutation`; the mechanism and its user-agent dependence are
+   * in `src/editor/__tests__/node-view-mobile-freeze.test.ts`, which pins them.
+   * Desktop skipped that branch and created the same block in ~80 ms. (#4315
+   * located this; the earlier reading, which blamed `browser.android` /
+   * `browser.ios` selection paths inside prosemirror-view, was wrong. 3.31.3
+   * closed it upstream, so this test is the regression pin, not a live
+   * workaround.)
    *
    * The block never appeared and the whole app stopped responding (still dead
    * after three minutes), so this asserts the `<pre>` actually materialises.
