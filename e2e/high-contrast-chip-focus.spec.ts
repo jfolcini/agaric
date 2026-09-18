@@ -109,6 +109,31 @@ test.describe('High-contrast focus on reference chips', () => {
     expect(focused.ring).toBe(await opaqueRing(page))
   })
 
+  /**
+   * The anchor chip is the one element wearing BOTH cues, so it is the only
+   * place the two outline rules meet: `.ref-chip-anchor`'s permanent 2px is
+   * (0,1,0) and so is the accessibility block's bare `:focus-visible`. The
+   * chip rule re-states the focused width at (0,2,0) so specificity, not the
+   * order these rules happen to sit in `index.css`, decides which wins.
+   */
+  test('focus outweighs the anchor outline on the anchor chip itself', async ({ page }) => {
+    await openPage(page, 'Getting Started')
+    const anchor = page.locator(REFERENCES).getByTestId('block-link-chip')
+    await expect(anchor).toBeVisible()
+    await page.emulateMedia({ contrast: 'more' })
+
+    const unfocused = await paintOf(anchor)
+    expect(unfocused.focusVisible).toBe(false)
+    expect(unfocused.outlineWidth).toBe('2px')
+
+    await page.locator('body').click({ position: { x: 2, y: 2 } })
+    await tabTo(page, anchor)
+    const focused = await paintOf(anchor)
+    expect(focused.focusVisible).toBe(true)
+    expect(focused.outlineStyle).toBe('solid')
+    expect(focused.outlineWidth).toBe('3px')
+  })
+
   test('the default-mode focus ring is untouched', async ({ page }) => {
     await openPage(page, 'Getting Started')
     const chip = bodyChip(page)

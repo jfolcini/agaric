@@ -695,6 +695,9 @@ const STORE_INTERNAL_WRITER = 'src/stores/resolve.ts'
  * Listed rather than simply absent, because the enumeration guard's failure
  * message promises a matrix row, and a silent omission is exactly how the
  * newest seed writer got in without one.
+ *
+ * The list only shrinks: an entry whose seed writes all have matrix rows is
+ * failed as stale, so a closed gap cannot keep a waiver alive.
  */
 const SEED_WRITERS_WITHOUT_MATRIX_ROW: ReadonlySet<string> = new Set([
   'src/components/TrashView.tsx',
@@ -823,16 +826,23 @@ describe('writer enumeration — the denominator, checked', () => {
     expect(readFileSync(STORE_INTERNAL_WRITER, 'utf8')).toContain('resolveStoreTitle')
   })
 
-  it('gives every declared SEED writer a matrix row, or names it as a known gap', () => {
-    const matrixSources = new Set(WRITERS.map((w) => w.source))
-    const unpinned = Object.entries(DECLARED_WRITERS)
-      .filter(([file, d]) => d.kind === 'seed' && !matrixSources.has(file))
+  it('gives every declared SEED writer a matrix row per seed write, or names it as a known gap', () => {
+    // Counted, for the same reason the gate check above is: a file that
+    // already has a matrix row would otherwise absorb a SECOND seed writer
+    // unnoticed — `use-block-resolve.ts` holds three of them today.
+    const matrixRows = (file: string): number => WRITERS.filter((w) => w.source === file).length
+    const gaps = Object.entries(DECLARED_WRITERS)
+      .filter(([file, d]) => d.kind === 'seed' && matrixRows(file) < (d.seedWrites ?? d.writes))
       .map(([file]) => file)
-      .filter((file) => !SEED_WRITERS_WITHOUT_MATRIX_ROW.has(file))
-      .toSorted()
+
     expect(
-      unpinned,
-      'A seed writer has no row in WRITERS, so nothing pins the VALUE it stores — only that it calls the gate. Give it a matrix row, or list it in SEED_WRITERS_WITHOUT_MATRIX_ROW, whose docblock says what that leaves uncovered.',
+      gaps.filter((f) => !SEED_WRITERS_WITHOUT_MATRIX_ROW.has(f)).toSorted(),
+      'A seed writer has no row in WRITERS, so nothing pins the VALUE it stores — only that it calls the gate. Give it a matrix row per seed write, or list it in SEED_WRITERS_WITHOUT_MATRIX_ROW, whose docblock says what that leaves uncovered.',
+    ).toEqual([])
+
+    expect(
+      [...SEED_WRITERS_WITHOUT_MATRIX_ROW].filter((f) => !gaps.includes(f)).toSorted(),
+      'This file is waived but no longer a gap — every seed write it declares has a matrix row now (or it is no longer a declared seed writer). Remove it from SEED_WRITERS_WITHOUT_MATRIX_ROW.',
     ).toEqual([])
   })
 
