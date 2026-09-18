@@ -1448,12 +1448,17 @@ export const blocksHandlers = {
     // arrival prepend over the last and handed back the list REVERSED
     // (#5057 review); one pass here does not.
     //
-    // One case this does not model: an arrival whose source rank exceeds a
-    // resident's creation position sorts AMONG the residents. It needs no prior
-    // move — `reproject_dense_positions` rewrites `blocks.position` and never the
-    // Loro `FIELD_POSITION` that `legacy_slot` reads, so a space keeps its
-    // creation meta forever, and a source space that outgrew the root count at
-    // the destination's creation is enough (#5099 review).
+    // Where this parts company with the backend, stated as the rule rather than
+    // a list of cases, because every list of cases here has been too short:
+    // arrivals go FIRST unconditionally, while the backend merely compares metas.
+    // So the two disagree whenever a resident's meta is BELOW an arrival's — and
+    // residents can hold small metas. `reproject_dense_positions` rewrites
+    // `blocks.position` and never the Loro `FIELD_POSITION` that `legacy_slot`
+    // reads, so a meta is whatever its block was seeded with and never moves: a
+    // space keeps its creation rank, and a block that arrived in an EARLIER move
+    // keeps the source rank it came in with. Two ordinary moves into one space
+    // are enough to show it (#5099 review). Matching that needs a shadow meta per
+    // block, which is more machinery than the mock earns.
     //
     // The SOURCE group is deliberately left alone: only the destination doc is
     // hydrated, so the vacated rank stays a hole on both stacks — benign at the
