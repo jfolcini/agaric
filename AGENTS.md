@@ -221,9 +221,14 @@ Maintainer only. `scripts/release.sh <version>` runs the preflight, the local re
 A test that cannot fail covers nothing. Before calling a test done, break the code it covers, see it go red, restore. Falsify against a copy (`cp f /tmp/f.bak`, mutate, run, restore, `cmp`), never in place: stubs left by an interrupted run have shipped (#4287, #4018, #4204). Run `git diff` before your final message. Where mutation testing reaches the code, a killed mutant is the strongest form:
 
 ```bash
-node scripts/run-mutation.mjs <module>       # frontend
+node scripts/run-mutation.mjs <module>       # frontend — SCORES ARE MEANINGLESS, see below
 cd src-tauri && cargo mutants --workspace    # Rust; --workspace is mandatory
 ```
+
+The frontend lane reports every mutant as survived on every module, because
+`@stryker-mutator/vitest-runner` cannot re-run tests under vitest 5 and there is
+no published fix (#5101). Do not triage its survivors. The Rust lane is
+unaffected.
 
 Three test shapes that look like coverage and are not: the vacuous assertion (restates a precondition the test set up), the unreachable condition (a branch that cannot be taken; delete the code), and the half-covered pair (one arm of a symmetric property pinned, the other open, including a guard body tested without its call site). Ask of every test: *what production change would redden this?*
 

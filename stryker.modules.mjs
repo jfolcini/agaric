@@ -43,6 +43,22 @@
  * as it is.
  */
 
+/**
+ * #5101 — every score this file produces is currently meaningless. Do not
+ * triage a survivor from it, and do not "fix" a module because it reads 0%.
+ *
+ * `@stryker-mutator/vitest-runner` resets its reused vitest context with
+ * `ctx.state.filesMap.clear()`; vitest 5 reworked that state, so `ctx.start()`
+ * no longer re-collects and every run after the first executes ZERO tests
+ * (`Ran 0.00 tests per mutant on average`). Only static mutants, which get a
+ * fresh process, are ever killed — so a module of pure functions like
+ * `glob-validate` reads a clean 0%, while one with module-scope literals reads
+ * a few percent. Same bug, different denominators.
+ *
+ * 10.0.0 is the newest published runner and its peer range is a permissive
+ * `>=2.0.0`, so `npm ci` never complained. The lane is wrapped in `|| true`
+ * with no `thresholds.break`, so nothing has ever gated wrongly on it.
+ */
 export const MODULES = {
   tokenize: {
     src: 'src/lib/search-query/tokenize.ts',
