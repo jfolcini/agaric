@@ -147,20 +147,18 @@ function reactNodeViewWrapper(page: Page) {
 }
 
 /**
- * Assert that BOTH conditions gating the freeze hold *right now* (#4353).
+ * Assert that BOTH conditions that gated the freeze hold *right now* (#4353).
  *
  * A node view test that never actually met these would pass for the same reason
- * a node view that never mounted would: vacuously. tiptap's default
- * `NodeView.ignoreMutation` only reaches its dangerous branch when
- * `(isiOS() || isAndroid()) && this.editor.isFocused`, so a spec claiming "this
- * node view does not freeze on mobile" has to show both were true while the node
- * view was on screen.
+ * a node view that never mounted would: vacuously. The freeze reached tiptap's
+ * dangerous `ignoreMutation` branch only when `(isiOS() || isAndroid()) &&
+ * this.editor.isFocused`, so a spec claiming "this node view does not freeze on
+ * mobile" has to show both were true while the node view was on screen —
+ * Playwright's mobile emulation is a configuration, not a guarantee that the
+ * page reads as mobile or that the caret ever landed.
  *
  * The two predicates are transcribed from `@tiptap/core`'s `isiOS.ts` /
  * `isAndroid.ts` — they cannot be imported into `page.evaluate`.
- *
- * Since @tiptap/core 3.31.3 narrowed the branch to `contentDOM`, React chrome
- * no longer reaches it; whether the override still earns its place is #5059.
  *
  * `editor.isFocused` is `view.hasFocus()`, i.e. the ProseMirror contenteditable
  * owns the document's active element — which is what is checked here.
@@ -193,9 +191,9 @@ async function expectMobileFreezeConditions(page: Page): Promise<void> {
  * Its absence is the browser-observable form of the reason a leaf node view is
  * safe: `@tiptap/react` builds no `contentDOMElement` when `node.isLeaf`, its
  * `contentDOM` getter returns `null`, and tiptap's default `ignoreMutation`
- * answers "ignore" on its first line — above both the `options.ignoreMutation`
- * consultation and the mobile branch. Asserting count 0 here is what makes
- * "image/math did not freeze" a structural claim rather than a lucky run.
+ * short-circuits to "ignore" before it reaches the mobile branch. Asserting
+ * count 0 here is what makes "image/math did not freeze" a structural claim
+ * rather than a lucky run.
  */
 function reactContentHost(nodeView: ReturnType<Page['locator']>) {
   return nodeView.locator('[data-node-view-content-react]')
@@ -254,14 +252,14 @@ test.describe('Mobile editor (iPhone 13 viewport)', () => {
    * `CodeBlockWithShortcut` rendered every language through a React node view.
    * A React node view rewrites its own subtree on re-render; prosemirror-view
    * recorded those mutations and flushed, the flush re-rendered the node view,
-   * and the cycle never terminated. The UA gate is @tiptap/core's default
-   * `NodeView.ignoreMutation`: on iOS/Android with the editor focused it does
-   * NOT ignore a childList mutation anywhere inside the node view's `dom` as
-   * long as every changed node is contentEditable, so React's own writes are
-   * read back as user edits. Desktop skips that branch and ignores everything
-   * outside `contentDOM` — it created the same block in ~80 ms. (#4315 located
-   * this; the earlier reading, which blamed `browser.android`/`browser.ios`
-   * selection paths inside prosemirror-view, was wrong.)
+   * and the cycle never terminated. The gate was @tiptap/core's default
+   * `NodeView.ignoreMutation`; the mechanism and its user-agent dependence are
+   * in `src/editor/__tests__/node-view-mobile-freeze.test.ts`, which pins them.
+   * Desktop skipped that branch and created the same block in ~80 ms. (#4315
+   * located this; the earlier reading, which blamed `browser.android` /
+   * `browser.ios` selection paths inside prosemirror-view, was wrong. 3.31.3
+   * closed it upstream, so this test is the regression pin, not a live
+   * workaround.)
    *
    * The block never appeared and the whole app stopped responding (still dead
    * after three minutes), so this asserts the `<pre>` actually materialises.
@@ -358,10 +356,9 @@ test.describe('Mobile editor (iPhone 13 viewport)', () => {
 
     // #4353 — the discriminator, asserted positively here and negatively in the
     // image/math tests below: `codeBlock` is NOT a leaf, so tiptap DOES build a
-    // React content host for it, its `contentDOM` is non-null, and its
-    // `ignoreMutation` option is therefore consulted. This is the one node view
-    // in the app that reaches the mobile branch — the reason it needs the
-    // override, and the reason the leaf node views do not.
+    // React content host for it and its `contentDOM` is non-null. It is the one
+    // node view in the app whose DOM prosemirror-view reads at all, which is why
+    // it is the one that froze and the leaf node views never could.
     await expect(reactContentHost(page.getByTestId('mermaid-node-view'))).not.toHaveCount(0)
     await expectMobileFreezeConditions(page)
 
