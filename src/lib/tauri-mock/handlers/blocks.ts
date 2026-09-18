@@ -10,6 +10,7 @@
  */
 
 import { base64UrlToUtf8, isBase64UrlNoPad, utf8ToBase64Url } from '@/lib/base64url'
+import { compareUtf8Bytes } from '@/lib/sqlite-collation'
 import {
   type TypedHandlers,
   appErrorRejection,
@@ -24,7 +25,7 @@ import {
   refreshDescendantPageIds,
   renumberSiblings,
   restoreCohort,
-  spaceRootGroupOrdered,
+  spaceRootGroup,
   validationRejection,
 } from '@/lib/tauri-mock/handlers/shared'
 import {
@@ -1433,45 +1434,40 @@ export const blocksHandlers = {
       })
       count++
     }
-    // The `space` write routes through `apply_op_projected` → the `space` arm of
-    // `loro_apply.rs` → `hydrate_page_subtree_into_engine`, which ends in
-    // `projection::reproject_dense_positions`: the DESTINATION space's root group
-    // is dense-renumbered, and the arrivals land FIRST in it, in the order they
+    // Arrivals land FIRST in the destination's root group, in the order they
     // RANKED in the space they left.
     //
-    // First, not last, because the engine orders that group by each node's LEGACY
-    // POSITION META paired with its block id, and the two sides of the comparison
-    // are on different scales. A block already in the space was seeded with the
-    // `position` it held at CREATION, which `create_block_in_tx` appended over the
-    // whole `parent_id IS NULL` set — every space and every page in one count, so
-    // it grows with the graph. An ARRIVING block is seeded with its per-space
-    // dense rank, which is small. The small key wins.
+    // The engine orders that group by each node's legacy position meta paired
+    // with its block id, and the two sides are on different scales. A resident
+    // carries the `position` it held at CREATION, which `create_block_in_tx`
+    // appended over the whole `parent_id IS NULL` set — every space and every
+    // page in one count — while an arrival is seeded with its small per-space
+    // rank. The small key wins, so arrivals go first; among themselves they keep
+    // source rank, because the source group is never reprojected and their metas
+    // are therefore still distinct. Re-ranking inside the loop above made each
+    // arrival prepend over the last and handed back the list REVERSED
+    // (#5057 review); one pass here does not.
     //
-    // Among the arrivals that same comparison decides, and it decides on the meta
-    // alone: `hydrate_page_subtree_into_engine` runs once per block and seeds each
-    // with the `position` it still holds in the space it is leaving — the source
-    // group is never reprojected, so those are distinct and `legacy_slot`'s
-    // `(position, block_id)` tiebreak on the id never fires. A multi-block move is
-    // therefore ordered by source rank, not by the caller's list order and not by
-    // id. Re-ranking inside the loop above made each arrival prepend over the one
-    // before it and handed back the list REVERSED (#5057 review); one pass here
-    // does not.
-    //
-    // Two cases this does not model. An arrival whose source rank exceeds a
-    // resident's creation position sorts among the residents rather than ahead of
-    // them, and that needs no prior move to reach: `reproject_dense_positions`
-    // rewrites `blocks.position` and never the Loro `FIELD_POSITION` that
-    // `legacy_slot` reads, so a space keeps its CREATION meta however often it is
-    // reprojected. A source space that has outgrown the root count at the
-    // destination's creation is enough (#5099 review). And two arrivals that left
-    // DIFFERENT spaces holding the same rank do reach the id tiebreak.
+    // One case this does not model: an arrival whose source rank exceeds a
+    // resident's creation position sorts AMONG the residents. It needs no prior
+    // move — `reproject_dense_positions` rewrites `blocks.position` and never the
+    // Loro `FIELD_POSITION` that `legacy_slot` reads, so a space keeps its
+    // creation meta forever, and a source space that outgrew the root count at
+    // the destination's creation is enough (#5099 review).
     //
     // The SOURCE group is deliberately left alone: only the destination doc is
-    // hydrated, so the vacated rank stays a hole on both stacks. That hole is
-    // benign at the end of a group and stale in front of a survivor (#5100);
-    // the mock matches the backend either way.
+    // hydrated, so the vacated rank stays a hole on both stacks — benign at the
+    // end of a group, stale in front of a survivor (#5100). The mock matches the
+    // backend either way.
     if (arrivedAtRoot.size > 0) {
-      const group = spaceRootGroupOrdered(spaceId)
+      // `(position, id-bytes)` is exactly `legacy_slot`'s `(sib_pos, sib_id)`, so
+      // two arrivals that left DIFFERENT spaces holding the same rank break their
+      // tie the way the engine does.
+      const group = spaceRootGroup(spaceId).toSorted((x, y) => {
+        const px = (x['position'] as number | null) ?? Number.MAX_SAFE_INTEGER
+        const py = (y['position'] as number | null) ?? Number.MAX_SAFE_INTEGER
+        return px !== py ? px - py : compareUtf8Bytes(x['id'] as string, y['id'] as string)
+      })
       const arriving = group.filter((row) => arrivedAtRoot.has(row['id'] as string))
       const resident = group.filter((row) => !arrivedAtRoot.has(row['id'] as string))
       ;[...arriving, ...resident].forEach((row, i) => {
