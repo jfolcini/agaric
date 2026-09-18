@@ -93,6 +93,13 @@ sticky comment and the auto-filed issues too. And the doc header of
 `scripts/run-mutation.mjs`, for a reader who opens the command rather than the
 docs.
 
+`docs/BUILD.md` also told the reader, ten lines under the blockquote, that
+"surviving mutants are triage signal for occasional audits" — the instruction
+this change exists to withdraw. That sentence carries the caveat now.
+`src/__tests__/AGENTS.md` lists the command too and is deliberately left alone:
+a fourth copy is a fourth thing to delete when #5101 closes, and the two pages
+that explain the lane already carry it.
+
 One read point is still uncovered. `mutation-pr.yml`'s sticky comment reaches a
 contributor who never opens either page, and a blockquote naming that lane only
 helps someone already reading `docs/BUILD.md`. Covering it means
