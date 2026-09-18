@@ -67,8 +67,7 @@ partial bump either.
 Nothing has ever gated wrongly on this: `scheduled-deep-checks.yml` wraps the
 lane in `|| true` and there is no `thresholds.break`.
 
-The first draft said the cost falls entirely on whoever goes looking at the
-numbers. Review caught that, and it was wrong rather than merely soft.
+The cost does not fall only on whoever goes looking at the numbers.
 `scripts/file-mutation-survivors.mjs` runs once per mutants lane, the frontend
 lane among them, and keeps a rolling tracking issue plus one child per area. The
 phantom survivors are therefore *pushed* at people: **#3766** ("Mutation
@@ -88,10 +87,9 @@ stated purpose is attribution of survivors that do not exist; and the doc header
 of `scripts/run-mutation.mjs`, the command both of those pages name, for a
 reader who opens the script rather than the docs.
 
-The first `stryker.modules.mjs` block ran to sixteen lines and restated the
-`docs/BUILD.md` text before adding the peer-range and denominator archaeology
-this log already carries. Review called it under "Say it once" and was right:
-it is five lines now, and points at `docs/BUILD.md` for the rest.
+Each placement says the thing once and points at `docs/BUILD.md` for the
+detail; `stryker.modules.mjs` carries five lines, not the sixteen it takes to
+restate the mechanism there as well.
 
 One read point is still uncovered. `mutation-pr.yml`'s sticky comment reaches a
 contributor who never opens either page, and `docs/BUILD.md`'s clause about that
