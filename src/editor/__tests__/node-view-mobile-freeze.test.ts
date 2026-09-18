@@ -330,12 +330,9 @@ interface IgnoreMutationSelf {
   dom: HTMLElement | null
   contentDOM: HTMLElement | null
   node: { isLeaf: boolean; isAtom: boolean }
-  options: { ignoreMutation: ((props: { mutation: ViewMutationRecord }) => boolean) | null }
+  options: { ignoreMutation: null }
   editor: { isFocused: boolean }
 }
-
-/** The `this` of a node view that is neither leaf nor atom — i.e. `codeBlock`. */
-const NON_LEAF_NODE = { isLeaf: false, isAtom: false }
 
 /** tiptap's real default, invoked against a hand-built `this`. */
 function defaultIgnoreMutation(this: IgnoreMutationSelf, mutation: ViewMutationRecord): boolean {
@@ -417,7 +414,7 @@ describe('#4353 — @tiptap/core default ignoreMutation (vendored contract)', ()
     const self: IgnoreMutationSelf = {
       dom,
       contentDOM: contentHost,
-      node: NON_LEAF_NODE,
+      node: { isLeaf: false, isAtom: false },
       options: { ignoreMutation: null },
       editor: { isFocused: true },
     }

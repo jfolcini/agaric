@@ -1,5 +1,5 @@
 /**
- * Four probes for mock sites the conformance fixtures do not reach.
+ * Probes for mock sites the conformance fixtures do not reach.
  *
  * SQLite's `BINARY` collation memcmps UTF-8 BYTES where JS `<` compares
  * UTF-16 CODE UNITS, and `COLLATE NOCASE` / `LIKE` fold ASCII `A`-`Z` only
@@ -24,11 +24,20 @@
  * folded); `ｱ` (U+FF71, EF BD B1) and `🍎` (U+1F34E, F0 9F 8D 8E) for the
  * byte compare, where UTF-16 code units put the apple first (its leading
  * surrogate D83C is below FF71).
+ *
+ * The sibling-rank probes below are out of fixture reach for a different
+ * reason: `comparePositionThenId`'s `(position, id)` tiebreak is the mock's own
+ * ordering, and every id a fixture or a real database holds is a ULID
+ * (`[0-9A-Z]`, invariant 8), where a byte compare and an ICU one coincide. Only
+ * the dev seed's `SPACE_PERSONAL` tells them apart — against `SPACEX`, where
+ * `_` (0x5F) sorts AFTER `X` in bytes and before it under ICU, which files
+ * punctuation first.
  */
 
 import { beforeEach, describe, expect, it } from 'vitest'
 
 import { dispatch } from '@/lib/tauri-mock/handlers'
+import { insertAtSlotAndRenumber, renumberSiblings } from '@/lib/tauri-mock/handlers/shared'
 import { blockTags, blocks, makeBlock, properties } from '@/lib/tauri-mock/seed'
 
 import { clearMock, id, setSpace } from './mock-store-helpers'
@@ -144,5 +153,34 @@ describe('BINARY memcmps UTF-8 bytes, not UTF-16 code units', () => {
 
     // `ORDER BY pc.title` (`query/engine.rs`), `pages_cache.title` is BINARY.
     expect(rows.map((r) => r['content'])).toEqual([KATAKANA, APPLE])
+  })
+})
+
+describe('the sibling rank tiebreak is BINARY, not ICU', () => {
+  /** Both at one `position`, seeded in the ICU order so a dropped sort reddens too. */
+  function tiedPair(): void {
+    blocks.set('SPACE_PERSONAL', makeBlock('SPACE_PERSONAL', 'page', 'Personal', null, 5))
+    blocks.set('SPACEX', makeBlock('SPACEX', 'page', 'Space X', null, 5))
+  }
+
+  it('renumberSiblings ranks SPACEX above SPACE_PERSONAL', () => {
+    tiedPair()
+
+    renumberSiblings(null)
+
+    // `reproject_dense_positions` orders `position ASC, id ASC` under BINARY.
+    expect(blocks.get('SPACEX')?.['position']).toBe(1)
+    expect(blocks.get('SPACE_PERSONAL')?.['position']).toBe(2)
+  })
+
+  it('insertAtSlotAndRenumber pre-ranks the others the same way', () => {
+    tiedPair()
+    blocks.set(id('M1'), makeBlock(id('M1'), 'page', 'Moved', null, 9))
+
+    insertAtSlotAndRenumber(null, id('M1'), 0)
+
+    expect(blocks.get(id('M1'))?.['position']).toBe(1)
+    expect(blocks.get('SPACEX')?.['position']).toBe(2)
+    expect(blocks.get('SPACE_PERSONAL')?.['position']).toBe(3)
   })
 })

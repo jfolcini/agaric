@@ -135,6 +135,8 @@ export const pagesHandlers = {
       if (spaceProp?.['value_ref'] !== spaceId) continue
       items.push(b)
     }
+    // `datePattern` admits only `NNNN-NN-NN`, so every compare resolves on a
+    // digit pair — where ICU and SQLite's BINARY agree and `localeCompare` is safe.
     items.sort((x, y) =>
       ((x['content'] as string) ?? '').localeCompare((y['content'] as string) ?? ''),
     )
