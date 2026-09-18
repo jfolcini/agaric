@@ -80,17 +80,6 @@ function listPagesWithMetadataLimit(raw: unknown): number {
  * Nothing in the mock maintains per-space root positions, which is the debt the
  * `move_blocks_to_space` waiver states.
  */
-/**
- * SQLite's `length()` counts CHARACTERS; `String.length` counts UTF-16 units,
- * so an alias carrying an astral character measures longer in JS and sorts
- * after one SQLite puts it before.
- */
-function charLength(s: string): number {
-  let n = 0
-  for (const _ of s) n += 1
-  return n
-}
-
 function nextDenseRank(parentId: string | null, spaceId: string | null): number {
   let siblings = 0
   for (const b of blocks.values()) {
@@ -655,8 +644,12 @@ export const pagesHandlers = {
         }
       }
     }
-    // `ORDER BY length(pa.alias), pa.alias` — the alias column is NOCASE.
-    rows.sort((x, y) => charLength(x[1]) - charLength(y[1]) || compareNocase(x[1], y[1]))
+    // `ORDER BY length(pa.alias), pa.alias` — the alias column is NOCASE, and
+    // SQLite's `length()` counts CHARACTERS where `String.length` counts UTF-16
+    // units, so an astral character would otherwise measure one longer.
+    rows.sort(
+      (x, y) => Array.from(x[1]).length - Array.from(y[1]).length || compareNocase(x[1], y[1]),
+    )
     return rows.slice(0, limit)
   },
 
