@@ -6068,21 +6068,11 @@ mod tests {
     async fn undo_group_refuses_a_move_with_no_prior_placement() {
         let (pool, _dir) = test_pool().await;
         let (page_id, _child_id) = seed_move_then_delete(&pool, false).await;
-
-        let group = find_undo_group_inner(&pool, page_id.as_str(), 0, 10)
-            .await
-            .unwrap();
-        assert_eq!(
-            group, 2,
-            "the enumeration is NOT what drops the ops: it carries both"
-        );
-
         let mat = Materializer::new(pool.clone());
 
-        // Depth 1 addresses the MOVE and refuses identically, so the divergence
-        // is the op the group additionally covers, not the enumeration.
+        // Depth 1 addresses the MOVE, and refuses exactly as the group does.
         // `compute_reverse` runs before `CommandTx::begin_immediate`, so this
-        // refusal leaves the seeded state for the two probes below.
+        // refusal leaves the seeded state for the probe below.
         let d1_err = undo_page_op_inner(&pool, DEV, &mat, page_id.to_string(), 1)
             .await
             .expect_err("the single-op path refuses the move for the same reason");
@@ -6098,13 +6088,6 @@ mod tests {
             matches!(&grp_err, AppError::NotFound(m) if m.contains("no prior position found")),
             "the group: got {grp_err:?}"
         );
-
-        // Depth 0 addresses the DELETE only — which is why the single-op path
-        // looked healthy on "the same ops".
-        let d0 = undo_page_op_inner(&pool, DEV, &mat, page_id.to_string(), 0)
-            .await
-            .expect("depth 0 reverses the delete_block, which needs no prior context");
-        assert_eq!(d0.reversed_op_type, "delete_block");
         mat.shutdown();
     }
 

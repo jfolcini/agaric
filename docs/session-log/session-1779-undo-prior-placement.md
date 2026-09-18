@@ -62,22 +62,12 @@ this thread two comments. They were renamed out of their investigation names
 and their header rewritten: they shipped as a diagnosis harness and now
 describe a contract.
 
-Review took the pair further, and the sharper finding was not the one the
-review named. It flagged that the success arm asserted only the reversed op
-TYPES, so an undo restoring the block to the wrong slot would still pass. True,
-but the seed underneath was worse: it appended the `move_block` op without ever
-applying it to `blocks`, so the row never left its original slot and even a
-correct placement assertion would have been satisfied by an undo that did
-nothing at all. The seed now applies the move, two constants name the before
-and after slot, and the assertion re-queries `parent_id` / `position` /
-`deleted_at` after the group undo. Shown to fail on its own: perturbing the
-expected slot reddens the placement assertion in a run where the op-type
-assertion has already passed.
-
-A third test went the other way. It pinned that a `create_block` +
-`set_property` group needs no placement lookup, which `agaric-engine`'s
-`reverse_first_set_property_produces_delete_property` and the #4247 group test
-already cover between them, so it was deleted rather than kept for symmetry.
+A placement assertion is what makes the success arm mean anything, and it needs
+a seed that actually moves the row: appending the `move_block` op without
+applying it leaves the block at its original slot, where an undo that does
+nothing still looks correct. The seed applies the move, two constants name the
+slot before and after, and the arm re-queries `parent_id` / `position` /
+`deleted_at` after the undo.
 
 ## One residual, already documented
 
