@@ -234,22 +234,6 @@ const READ_ONLY_CACHE_WRITERS: Readonly<Record<string, string>> = {
  * later gains a fixture (delete the redundant entry) or leaves `bindings.ts`.
  */
 const NO_FIXTURE_ALLOWLIST: Readonly<Record<string, string>> = {
-  // ── Op-log time-travel (op-log rewrite) ──
-  // #5057 retired this section entirely: the seven undo/redo/revert commands
-  // are driven by fixtures through the `On` op-ref label, and
-  // `compact_op_log_cmd` by `op_log_compaction.json`. Its waiver read "op-log
-  // maintenance; rewrites history, not blocks/props/tags", which the snapshot's
-  // own `op_log_digest` contradicted — the log is what compaction acts on and
-  // what the digest compares.
-
-  // ── Attachments ──
-  // #5057 retired this section too. `add_attachment_with_bytes` is driven by
-  // `attachment_add_bytes.json`; its waiver blamed the blob for the wrong half.
-  // The stack-local `fs_path` / `content_hash` / `id` are real, and that fixture
-  // pins none of them — it pins the four fields the caller supplies, the
-  // validation the mock had none of, and the row's removal when the add is
-  // undone, which is observable because only the seeded row is left.
-
   // ── Pages / spaces / property definitions ──
   move_blocks_to_space:
     "writing the `space` property RE-RANKS the destination space's root sibling group — " +

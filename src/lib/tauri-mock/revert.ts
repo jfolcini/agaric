@@ -315,8 +315,8 @@ function revertLifecycleCohort(opType: string, blocks: Blocks, blockId: string):
  * rather than built from `appErrorRejection`, which lives in
  * `handlers/shared.ts` — that module imports this one.
  */
-function nonReversibleRejection(opType: string): Error & AppError {
-  const message = `Non-reversible operation: ${opType} cannot be undone`
+function nonReversibleRejection(): Error & AppError {
+  const message = 'Non-reversible operation: delete_attachment cannot be undone'
   return Object.assign(new Error(message), { kind: 'non_reversible' as const, message })
 }
 
@@ -348,7 +348,7 @@ export function reconstructAddAttachment(
       o.op_type === 'add_attachment' &&
       (JSON.parse(o.payload) as Record<string, unknown>)['attachment_id'] === attachmentId,
   )
-  if (!original) throw nonReversibleRejection('delete_attachment')
+  if (!original) throw nonReversibleRejection()
   const add = JSON.parse(original.payload) as Record<string, unknown>
   return {
     attachment_id: attachmentId,
