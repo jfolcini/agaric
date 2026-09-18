@@ -377,24 +377,24 @@ export const pagesHandlers = {
     return { items, next_cursor: null, has_more: false, total_count: null }
   },
 
-  // A mock vault always exposes a single canonical "Personal" space — the
-  // matching id used across the unit tests in `App.test.tsx`,
-  // `PageHeader.test.tsx`, etc. This keeps the space store hydrated and
-  // `currentSpaceId` non-null so page-creation flows (Ctrl+N, the
-  // PageBrowser input, the `[[` picker) don't bail out at the
-  // `if (!isReady || currentSpaceId == null) return` guard in `App.tsx`.
+  // Every space is a block carrying `is_space='true'` — the canonical
+  // "Personal" space included, which `seedBlocks` lays down as an ordinary
+  // page block so the space store hydrates and `currentSpaceId` is non-null
+  // for the page-creation flows (Ctrl+N, the PageBrowser input, the `[[`
+  // picker) guarded by `if (!isReady || currentSpaceId == null) return` in
+  // `App.tsx`.
   //
-  // #2684 — ALSO scan `blocks` for any block carrying `is_space='true'`
-  // (written by `create_space` below) so a space created during a test
-  // actually shows up on the NEXT `list_spaces` call. Before this, the
-  // handler was a hardcoded one-element array — `create_space` silently
-  // produced an unreachable space (the SpaceSwitcher / Manage-spaces
-  // dialog never learned it existed, so no e2e spec could ever exercise a
-  // second space). Sorted alphabetically by name, matching the real
-  // backend's `list_spaces_inner` ordering — `SpaceSwitcher`'s
-  // `Ctrl+1`..`Ctrl+9` digit-hotkey contract depends on this order.
+  // #5057 — "Personal" used to be PREPENDED here as a literal row no block
+  // backed, so the mock listed one space the backend could not and the two
+  // stacks' `list_spaces` differed by that artefact alone. Projecting only
+  // block-backed spaces is what lets `spaces_lifecycle.json` pin this
+  // command.
+  //
+  // Sorted alphabetically by name, matching the real backend's
+  // `list_spaces_inner` ordering — `SpaceSwitcher`'s `Ctrl+1`..`Ctrl+9`
+  // digit-hotkey contract depends on this order.
   list_spaces: () => {
-    const created = [...blocks.values()]
+    const rows = [...blocks.values()]
       .filter(
         (b) =>
           !b['deleted_at'] &&
@@ -409,10 +409,6 @@ export const pagesHandlers = {
             | null
             | undefined) ?? null,
       }))
-    const rows = [
-      { id: 'SPACE_PERSONAL', name: 'Personal', accent_color: 'accent-emerald' },
-      ...created,
-    ]
     rows.sort((x, y) => x.name.localeCompare(y.name))
     return rows
   },

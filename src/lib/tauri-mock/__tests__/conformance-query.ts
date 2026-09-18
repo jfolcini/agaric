@@ -597,6 +597,15 @@ const WIRE: Readonly<Record<string, WireShape>> = {
     hasMoreKey: null,
     totalKey: null,
   },
+  // #5057 — bare `Vec<SpaceRow>`, no envelope. `name` and `accent_color` ride
+  // as attributes because the id alone cannot see either property write, and
+  // both are what `create_space` puts on the block.
+  list_spaces: {
+    rows: { kind: 'bare-array' },
+    token: { kind: 'id', idKey: 'id', attrKeys: ['name', 'accent_color'] },
+    hasMoreKey: null,
+    totalKey: null,
+  },
   list_all_pages_in_space: {
     rows: { kind: 'bare-array' },
     token: ID_TOKEN,

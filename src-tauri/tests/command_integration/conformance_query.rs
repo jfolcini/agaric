@@ -1342,6 +1342,31 @@ async fn run_step(pool: &SqlitePool, args: &StepArgs<'_>) -> Result<RawResult, A
                 next_cursor: None,
             }
         }
+        // ── The space registry (#5057) ──
+        //
+        // Bare `Vec<SpaceRow>`, no envelope. `name` and `accent_color` ride as
+        // attributes because the id alone cannot see either property write,
+        // and both are what `create_space` puts on the block. Read-phase
+        // purity: `list_spaces_inner` is one `query_as!` SELECT over `blocks`
+        // + `block_properties` and writes nothing, so it adds no table to
+        // `derived_cache_digest`.
+        "list_spaces" => {
+            let rows = list_spaces_inner(pool).await?;
+            let v = serde_json::to_value(&rows).expect("serialize Vec<SpaceRow>");
+            RawResult {
+                rows: v
+                    .as_array()
+                    .map(|a| {
+                        a.iter()
+                            .map(|r| row_token(r, "id", &["name", "accent_color"]))
+                            .collect()
+                    })
+                    .unwrap_or_default(),
+                has_more: None,
+                total_count: None,
+                next_cursor: None,
+            }
+        }
         // ── Tag and property listings (#3827, the four listing commands) ──
         "list_all_tags_in_space" => {
             let scope: SpaceScope = arg_req(args, "scope");
@@ -2664,7 +2689,11 @@ pub(super) mod reader_delegation_tests {
     // `op_log` (`commands/compaction.rs`). The table's writers are
     // `append_local_op_in_tx` on every command path and `compact_op_log_cmd`,
     // neither a read arm. Writer set unchanged.
-    const SWEPT_ARM_COUNT: usize = 52;
+    // #5057 wired `list_spaces`: one `query_as!` SELECT over `blocks` joined
+    // to `block_properties` (`commands/spaces.rs`). The `is_space` /
+    // `accent_color` rows it reads are written by `create_space` and
+    // `set_property`, neither a read arm. Writer set unchanged.
+    const SWEPT_ARM_COUNT: usize = 53;
 
     /// #3833 item 8 — the WRITE sweep, recorded where its conclusion is cited.
     ///
