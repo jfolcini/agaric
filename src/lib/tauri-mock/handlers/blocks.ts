@@ -1440,8 +1440,32 @@ export const blocksHandlers = {
       // fans the column out over the page group (`WHERE id = ? OR page_id =
       // ?`), but every mock reader of `space_id` reads it on a page or
       // top-level tag row, so the descendant stamp has no reader here.
+      const fromSpace = (b['space_id'] as string | null | undefined) ?? null
       b['space_id'] = spaceId
-      if ((b['parent_id'] as string | null) === null) arrivedAtRoot.add(blockId)
+      if ((b['parent_id'] as string | null) === null) {
+        arrivedAtRoot.add(blockId)
+        // #5100: the backend purges the block from the doc of the space it left
+        // and reprojects that group's dense ranks PER BLOCK, so a survivor that
+        // sat behind it moves up one — and the next arrival from that group
+        // departs carrying its shifted rank. Unstamped roots stand in for the
+        // conformance harness space, whose snapshot leg never `stampMockSpace`s;
+        // spaces are left out of that stand-in because each ranks in its own
+        // group, never in another's.
+        if (fromSpace !== spaceId) {
+          const left =
+            fromSpace === null
+              ? [...blocks.values()].filter(
+                  (row) =>
+                    (row['parent_id'] as string | null) === null &&
+                    ((row['space_id'] as string | null | undefined) ?? null) === null &&
+                    properties.get(row['id'] as string)?.get('is_space')?.['value_text'] !== 'true',
+                )
+              : spaceRootGroup(fromSpace)
+          left.toSorted(comparePositionThenId).forEach((row, i) => {
+            row['position'] = i + 1
+          })
+        }
+      }
       pushOp('set_property', {
         block_id: blockId,
         key: 'space',
@@ -1457,20 +1481,14 @@ export const blocksHandlers = {
     // each node's legacy position meta, and an arrival's meta is the small
     // per-space rank it was seeded with while a resident's is the `position`
     // `create_block_in_tx` appended over the whole `parent_id IS NULL` set.
-    // Among themselves arrivals keep source rank, the source group never being
-    // reprojected and their metas therefore still distinct. This is where the
-    // mock parts company with the backend, which merely compares metas: the two
-    // disagree once a resident's meta falls BELOW an arrival's, which two
-    // ordinary moves into one space are enough to produce, because
+    // Among themselves arrivals keep the rank each held when it departed. This
+    // is where the mock parts company with the backend, which merely compares
+    // metas: the two disagree once a resident's meta falls BELOW an arrival's,
+    // which two ordinary moves into one space are enough to produce, because
     // `reproject_dense_positions` rewrites `blocks.position` and never the Loro
     // `FIELD_POSITION` that `legacy_slot` reads, so a meta stays whatever its
     // block was seeded with. Matching that needs a shadow meta per block, more
     // machinery than the mock earns (#5099).
-    //
-    // The SOURCE group is deliberately left alone: only the destination doc is
-    // hydrated, so the vacated rank stays a hole on both stacks — benign at the
-    // end of a group, stale in front of a survivor (#5100). The mock matches the
-    // backend either way.
     if (arrivedAtRoot.size > 0) {
       // `comparePositionThenId` is exactly `legacy_slot`'s `(sib_pos, sib_id)`,
       // so two arrivals that left DIFFERENT spaces holding the same rank break
