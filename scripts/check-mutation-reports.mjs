@@ -31,7 +31,9 @@
 //       "a module silently dropped out" case), or
 //   (c) the total mutant count (Killed + Timeout + Survived + NoCoverage)
 //       across all reports is zero (the direct analogue of the Rust lane's
-//       `total_mutants == 0` check).
+//       `total_mutants == 0` check), or
+//   (d) mutants were counted but none was killed or timed out (#5101: the
+//       runner ran zero tests per mutant and reported every one survived).
 //
 // Usage:
 //   node scripts/check-mutation-reports.mjs [--reports-dir reports/mutation]
@@ -61,6 +63,7 @@ export function analyzeReports({ reportsDir, moduleNames }) {
   const problems = []
   const perModule = []
   let totalMutants = 0
+  let totalKilled = 0
 
   if (!existsSync(reportsDir)) {
     problems.push(
@@ -92,6 +95,7 @@ export function analyzeReports({ reportsDir, moduleNames }) {
     for (const entry of Object.values(report.files ?? {})) {
       for (const mutant of entry.mutants ?? []) {
         if (COUNTED_STATUSES.has(mutant.status)) counted++
+        if (mutant.status === 'Killed' || mutant.status === 'Timeout') totalKilled++
       }
     }
     totalMutants += counted
@@ -101,6 +105,12 @@ export function analyzeReports({ reportsDir, moduleNames }) {
   if (totalMutants === 0 && problems.length === 0) {
     problems.push(
       `every module reported, but the total mutant count across all reports is ZERO (Killed + Timeout + Survived + NoCoverage). This is the frontend analogue of the Rust lane's \`total_mutants == 0\` #3057 false-green: reports exist, the job is green, and nothing was actually mutation-tested (#3330).`,
+    )
+  }
+
+  if (totalMutants > 0 && totalKilled === 0) {
+    problems.push(
+      `${totalMutants} mutant(s) reported and not one was Killed or Timeout. A suite that kills nothing across every module is a runner that executed no tests, not a weak suite (#5101).`,
     )
   }
 
