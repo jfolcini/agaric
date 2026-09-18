@@ -140,11 +140,6 @@
     "reason": "Pre-existing at the #4184 partially-rooted-citation widening; not yet fixed."
   },
   {
-    "file": "src/lib/tauri-mock/handlers/blocks.ts",
-    "ref": "pagination/agenda.rs:100",
-    "reason": "Pre-existing at the #4184 partially-rooted-citation widening; not yet fixed."
-  },
-  {
     "file": "src/lib/tauri-mock/handlers/links.ts",
     "ref": "agaric-store/src/backlink/filters.rs:381-421",
     "reason": "Newly VISIBLE at the #4220 inline-code-span pairing fix, not newly written. The old line-scoped span regex could not pair a backtick span across a newline, so a citation that shares a line with the CLOSE of a multi-line span \u2014 or that follows a span too short for the 2-character minimum \u2014 was mispaired and never reached the candidate list at all. Pre-existing; not yet fixed."

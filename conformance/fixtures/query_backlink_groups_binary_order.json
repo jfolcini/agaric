@@ -1,0 +1,239 @@
+{
+  "description": "#5098 — group titles order by UTF-8 BYTES, as `cmp_group`'s `str` compare does, not by the UTF-16 code units JS `<` compares. The two spellings DISAGREE on this seed and only on a pair like it: 'ｱ' half-width katakana (U+FF71, EF BD B1) and '🍎' red apple (U+1F34E, F0 9F 8D 8E). Bytes rank the katakana first (EF < F0); code units rank the apple first, because its leading surrogate D83C is below FF71. The mock's `compareSortKeys` used JS `<` and served the apple group first. Pages are seeded apple-first so the code-unit answer is also the insertion order, and a handler that dropped the sort entirely reddens too. The titleless half of the same comparator is not reachable from here — a fixture seed's content is `unwrap_or(\"\")`, so no seed can make `blocks.content` NULL; it is pinned in `conformance-query-backlink-groups.test.ts`.",
+  "expected": {
+    "block_tags": [],
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Target",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B1",
+        "page_id": "B1",
+        "parent_id": null,
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "page",
+        "content": "🍎",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B2",
+        "page_id": "B2",
+        "parent_id": null,
+        "position": 2,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "links to [[000000000000000000000000S1]]",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B3",
+        "page_id": "B2",
+        "parent_id": "B2",
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "page",
+        "content": "ｱ",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B4",
+        "page_id": "B4",
+        "parent_id": null,
+        "position": 3,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "links to [[000000000000000000000000S1]]",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B5",
+        "page_id": "B4",
+        "parent_id": "B4",
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      }
+    ],
+    "op_log_digest": {
+      "count": 2,
+      "ops": [
+        {
+          "op_type": "edit_block"
+        },
+        {
+          "op_type": "edit_block"
+        }
+      ]
+    },
+    "page_links": [
+      {
+        "kind": "page_link",
+        "source_id": "B3",
+        "source_page_id": "B2",
+        "target_id": "B1"
+      },
+      {
+        "kind": "page_link",
+        "source_id": "B5",
+        "source_page_id": "B4",
+        "target_id": "B1"
+      }
+    ],
+    "properties": []
+  },
+  "expected_queries": [
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "grouped_by_byte_order",
+      "rows": [
+        "B4#page_title=ｱ#truncated=false",
+        "B4->B5#parent_id=B4#page_id=B4#position=1#deleted_at=null",
+        "B2#page_title=🍎#truncated=false",
+        "B2->B3#parent_id=B2#page_id=B2#position=1#deleted_at=null",
+        "filtered#count=2#truncated=false"
+      ],
+      "total_count": 2
+    },
+    {
+      "cursor": "v1:{deleted_at,id}",
+      "error": null,
+      "has_more": true,
+      "name": "byte_order_page_1",
+      "rows": [
+        "B4#page_title=ｱ#truncated=false",
+        "B4->B5#parent_id=B4#page_id=B4#position=1#deleted_at=null",
+        "filtered#count=2#truncated=false"
+      ],
+      "total_count": 2
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "byte_order_page_2",
+      "rows": [
+        "B2#page_title=🍎#truncated=false",
+        "B2->B3#parent_id=B2#page_id=B2#position=1#deleted_at=null",
+        "filtered#count=0#truncated=false"
+      ],
+      "total_count": 0
+    }
+  ],
+  "name": "query_backlink_groups_binary_order",
+  "ops": [
+    {
+      "args": {
+        "blockId": "S3",
+        "toText": "links to [[000000000000000000000000S1]]"
+      },
+      "command": "edit_block"
+    },
+    {
+      "args": {
+        "blockId": "S5",
+        "toText": "links to [[000000000000000000000000S1]]"
+      },
+      "command": "edit_block"
+    }
+  ],
+  "queries": [
+    {
+      "args": {
+        "blockId": "S1",
+        "limit": 10,
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
+      },
+      "command": "list_backlinks_grouped",
+      "comment": "Both groups on one page, in `cmp_group` order: the katakana title before the apple one. Under JS `<` the apple comes first, which is also the seed order.",
+      "name": "grouped_by_byte_order"
+    },
+    {
+      "args": {
+        "blockId": "S1",
+        "limit": 1,
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
+      },
+      "command": "list_backlinks_grouped",
+      "comment": "The keyset resume compares the cursor's `page_title` the same way the sort does, so the first group is the katakana one and the cursor carries that title in the `deleted_at` slot.",
+      "name": "byte_order_page_1"
+    },
+    {
+      "args": {
+        "blockId": "S1",
+        "limit": 1,
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
+      },
+      "command": "list_backlinks_grouped",
+      "comment": "Resumes on `(page_title, page_id) > cursor` and serves the apple group, not the katakana one again. Counts are 0 on a cursor page (#2201 item 1b).",
+      "cursor_from": "byte_order_page_1",
+      "name": "byte_order_page_2"
+    }
+  ],
+  "seed": {
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Target",
+        "id": "S1",
+        "parent_id": null,
+        "position": 1
+      },
+      {
+        "block_type": "page",
+        "content": "🍎",
+        "id": "S2",
+        "parent_id": null,
+        "position": 2
+      },
+      {
+        "block_type": "content",
+        "content": "placeholder",
+        "id": "S3",
+        "parent_id": "S2",
+        "position": 1
+      },
+      {
+        "block_type": "page",
+        "content": "ｱ",
+        "id": "S4",
+        "parent_id": null,
+        "position": 3
+      },
+      {
+        "block_type": "content",
+        "content": "placeholder",
+        "id": "S5",
+        "parent_id": "S4",
+        "position": 1
+      }
+    ],
+    "properties": [],
+    "tags": []
+  }
+}

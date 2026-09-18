@@ -199,9 +199,8 @@ describe('runQuerySteps records the grouped backlink payload', () => {
     })
   })
 
-  // `blocks.content` is nullable and `cmp_group` sorts a `None` title LAST; a
-  // cursor slot minted as `null` would decode to `''` and sort FIRST, re-serving
-  // the group. The sentinel has to survive the round trip.
+  // `blocks.content` is nullable and `cmp_group` sorts a `None` title LAST,
+  // which the mock's key carries as a `null` component (#5098).
   it('sorts a titleless source page last and pages past it', async () => {
     const NAMELESS = id('NON')
     const C7 = id('C7')
@@ -237,6 +236,57 @@ describe('runQuerySteps records the grouped backlink payload', () => {
         `${NAMELESS}#page_title=null#truncated=false`,
         `${NAMELESS}->${C7}#parent_id=${NAMELESS}#page_id=${NAMELESS}#position=1#deleted_at=null`,
         'filtered#count=3#truncated=false',
+      ],
+      has_more: false,
+    })
+  })
+
+  // The cursor minted ON a titleless group carries no `page_title` key at all:
+  // `Cursor.deleted_at` is `skip_serializing_if = "Option::is_none"`, so it
+  // decodes back to the `None` that sorts last. Decode it as `''` instead and
+  // it sorts FIRST, so page 2 re-serves the group the cursor came from. No
+  // conformance fixture reaches this: `insert_seed_block` seeds content as
+  // `unwrap_or("")`, so no seed can make `blocks.content` NULL.
+  it('mints a page_title-less cursor on a titleless group and pages past it', async () => {
+    const N1 = id('N1')
+    const N2 = id('N2')
+    const C7 = id('C7')
+    const C8 = id('C8')
+    blocks.set(N1, makeBlock(N1, 'page', null, null, 4))
+    blocks.set(C7, makeBlock(C7, 'content', 'a third Target mention', N1, 1))
+    blocks.set(N2, makeBlock(N2, 'page', null, null, 5))
+    blocks.set(C8, makeBlock(C8, 'content', 'a fourth Target mention', N2, 1))
+    stampMockSpace()
+
+    const out = await runQuerySteps(
+      [
+        {
+          name: 'page_1',
+          command: 'list_unlinked_references',
+          args: { pageId: TARGET, limit: 3, scope },
+        },
+        {
+          name: 'page_2',
+          command: 'list_unlinked_references',
+          args: { pageId: TARGET, limit: 3, scope },
+          cursor_from: 'page_1',
+        },
+      ],
+      new Map(),
+    )
+
+    expect(out[0]?.rows.filter((r) => !r.includes('->'))).toEqual([
+      `${ALPHA}#page_title=Alpha#truncated=false`,
+      `${ZULU}#page_title=Zulu#truncated=false`,
+      `${N1}#page_title=null#truncated=false`,
+      'filtered#count=4#truncated=false',
+    ])
+    expect(out[0]).toMatchObject({ has_more: true, cursor: 'v1:{id}' })
+    expect(out[1]).toMatchObject({
+      rows: [
+        `${N2}#page_title=null#truncated=false`,
+        `${N2}->${C8}#parent_id=${N2}#page_id=${N2}#position=1#deleted_at=null`,
+        'filtered#count=4#truncated=false',
       ],
       has_more: false,
     })

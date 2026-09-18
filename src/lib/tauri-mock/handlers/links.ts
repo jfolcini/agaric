@@ -125,15 +125,6 @@ function applyBacklinkFilters(
 }
 
 /**
- * `cmp_group` sorts a `None` title LAST. A sort key cannot hold `null`, and a
- * cursor slot minted as `null` decodes back to the `''` sentinel, which sorts
- * FIRST and would re-serve the group on the next page — so a titleless group
- * carries a string above every title instead, and the same keyset compare
- * orders it last and round-trips it through the cursor.
- */
-const TITLELESS_SORTS_LAST = '\uFFFF'
-
-/**
  * The `GroupedBacklinkResponse` both grouped readers answer with, built the
  * way `eval_backlink_query_grouped` and `eval_unlinked_references` build
  * theirs (`agaric-store/src/backlink/grouped.rs`).
@@ -200,7 +191,9 @@ function groupedBacklinkResponse(
   }))
   const page = paginateKeyset(
     groups,
-    (g) => [(g['page_title'] as string | null) ?? TITLELESS_SORTS_LAST, g['page_id'] as string],
+    // `cmp_group` sorts a `None` title LAST, which the `null` component of a
+    // `SortKey` is, through the cursor as well.
+    (g) => [g['page_title'] as string | null, g['page_id'] as string],
     limit,
     a['cursor'],
     null,
