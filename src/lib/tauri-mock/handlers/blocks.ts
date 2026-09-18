@@ -1387,9 +1387,6 @@ export const blocksHandlers = {
     let count = 0
     // Root arrivals, re-ranked in ONE pass after the loop (see below).
     const arrivedAtRoot = new Set<string>()
-    // `(position, id-bytes)` is exactly `legacy_slot`'s `(sib_pos, sib_id)`, so
-    // two arrivals that left DIFFERENT spaces holding the same rank break their
-    // tie the way the engine does.
     for (const blockId of inputIds) {
       const b = blocks.get(blockId)
       if (!b || b['deleted_at']) continue
