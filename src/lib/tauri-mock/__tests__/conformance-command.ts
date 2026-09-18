@@ -177,6 +177,11 @@ const RETURN_SHAPE: Readonly<Record<string, ReturnShape>> = {
   // #5057 — the joiner half of pairing answers `()`; the `list_peer_refs` step
   // beside it observes the `unpaired_by_peer_at_ms` clear.
   confirm_pairing: { idKey: HEADED_ID_KEY, attrs: [], lists: [] },
+  // #5057 — the host half, empty for a different reason: `PairingInfo` HAS two
+  // fields and neither is nameable — `passphrase` is generated per stack and
+  // `qr_svg` is rendered from it. The `list_peer_refs` step beside it observes
+  // the same `unpaired_by_peer_at_ms` clear.
+  start_pairing: { idKey: HEADED_ID_KEY, attrs: [], lists: [] },
   // #5057 — `page_aliases` is outside the snapshot's five arrays too, so a
   // `get_page_aliases` step observes the table. The RETURN is its own
   // evidence: a LIST OF BARE STRINGS naming the rows actually INSERTED, which
