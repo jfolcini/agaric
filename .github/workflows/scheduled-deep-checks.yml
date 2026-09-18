@@ -1776,9 +1776,9 @@ jobs:
         #
         # This step fails ONLY on lane liveness — a missing reports root, a
         # module that produced no/invalid `mutation.json`, a zero total
-        # mutant count, or zero kills across every module (#5101) — never on
-        # mutation SCORE, which stays pure triage signal per the lane's whole
-        # design.
+        # mutant count, or a module with mutants and not one kill (#5101) —
+        # never on mutation SCORE, which stays pure triage signal per the
+        # lane's whole design.
         if: always()
         run: node scripts/check-mutation-reports.mjs --reports-dir reports/mutation
 

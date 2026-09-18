@@ -41,10 +41,15 @@ Measured before and after, same commit, same machine:
 
 The #3330 liveness guard keys on mutant count, which this failure leaves
 intact, so it passes a sweep in which the runner ran nothing. The guard now
-also fails a sweep in which no mutant was Killed or Timeout. A suite that
-kills nothing across twenty-three modules is a runner that ran no tests, not a
-weak suite. `src/__tests__/check-mutation-reports.test.ts` pins both arms;
-stubbing the check out turns the failing-sweep case red.
+also fails any module that counted mutants and killed none. Per module, not
+the sweep total: static mutants still died in the fresh process Stryker gives
+them, so modules with module-scope literals scored a few percent during the
+outage and the total was never zero; `glob-validate`, all functions, went to
+0 of 307. `src/__tests__/check-mutation-reports.test.ts` pins both arms,
+including that mixed sweep; stubbing the check out turns them red.
+
+Review caught the first draft of this checking the sweep total, which would
+have stayed green on the real data.
 
 ## What #5103 left behind
 
