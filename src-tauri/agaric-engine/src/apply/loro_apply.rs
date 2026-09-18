@@ -347,13 +347,30 @@ pub async fn apply_set_property_via_loro(
             // (which additionally runs the SQL purge cascade): the SQL rows must
             // SURVIVE — they now belong to the new space — so only the OLD doc's
             // CRDT membership is removed here.
+            //
+            // #5100: the purge closes a gap in the OLD doc's sibling group, so
+            // every survivor that sat behind the departed block drops one dense
+            // rank there. Reproject that group's `blocks.position` in the same
+            // tx, exactly as the destination group is reprojected by the
+            // hydration below; otherwise SQL keeps the pre-move ranks and the
+            // #891 SQL/Loro parity guard fails on the first survivor. A block
+            // absent from the old engine (projected SQL-only) has no group
+            // there to reproject.
             if let Some(old_space) = old_space.filter(|old| *old != new_space) {
-                let mut guard =
-                    state
-                        .registry
-                        .for_space_recording(&old_space, device_id, &state.revert)?;
-                guard.engine_mut().apply_purge_block(p.block_id.as_str())?;
-                drop(guard);
+                let old_siblings = {
+                    let mut guard =
+                        state
+                            .registry
+                            .for_space_recording(&old_space, device_id, &state.revert)?;
+                    let engine = guard.engine_mut();
+                    let old_parent = engine.read_block(p.block_id.as_str())?.map(|s| s.parent_id);
+                    engine.apply_purge_block(p.block_id.as_str())?;
+                    match old_parent {
+                        Some(parent) => engine.children_ordered_block_ids(parent.as_deref())?,
+                        None => Vec::new(),
+                    }
+                };
+                projection::reproject_dense_positions(conn, &old_siblings).await?;
             }
             hydrate_page_subtree_into_engine(conn, state, device_id, &p.block_id, &new_space)
                 .await?;
