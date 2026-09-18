@@ -56,6 +56,17 @@ function bySyncedAtDesc(a: Record<string, unknown>, b: Record<string, unknown>):
   return sb - sa
 }
 
+// #4297/#5057 — a pairing act, in EITHER role, makes the same durable write:
+// `clear_unpaired_by_peer_all` drops the "this peer says we are not paired"
+// flag from EVERY row, because neither role has a peer id at this point. The
+// mock wrote nothing at all, so a device that had recorded a refusal kept
+// prompting to re-pair straight after the user paired. The backend models it
+// as one helper behind both call sites too
+// (`clear_unpaired_flags_on_pairing_act`, agaric-sync/src/pairing.rs).
+function clearUnpairedFlagsOnPairingAct(): void {
+  for (const row of peerRefs.values()) row['unpaired_by_peer_at_ms'] = null
+}
+
 // #3463 — the mock used to accept ANY passphrase (`confirm_pairing:
 // returnUndefined`), an unconditional no-op success that hid the real bug
 // (the FE unconditionally started a competing pairing session on every
@@ -160,13 +171,8 @@ export const syncHandlers = {
   get_device_id: () => 'mock-device-id-0000',
 
   start_pairing: () => {
-    // #4297/#5057 — the HOST half is a pairing act too, so it makes the same
-    // durable write the joiner's `confirm_pairing` does below:
-    // `clear_unpaired_by_peer_all` drops the "this peer says we are not
-    // paired" flag from EVERY row, because neither role has a peer id yet.
-    // The mock wrote nothing at all, so a host that armed pairing in dev or
-    // E2E kept prompting to re-pair straight after the user did.
-    for (const row of peerRefs.values()) row['unpaired_by_peer_at_ms'] = null
+    // #5057 — the HOST half is a pairing act too.
+    clearUnpairedFlagsOnPairingAct()
     // Deliberately NOT arming `pairingPeerReveal`. The host's peer does arrive
     // by TOFU as well, but a reveal only materializes on the THIRD
     // `list_peer_refs` read (`PAIRING_PEER_REVEAL_READS`), so the one-read
@@ -182,13 +188,8 @@ export const syncHandlers = {
     // than inserting the row here) is what keeps the mock from re-asserting
     // the very claim #3469 deletes — see `PAIRING_PEER_REVEAL_READS`.
     pairingPeerReveal.readsRemaining = PAIRING_PEER_REVEAL_READS
-    // #4297/#5057 — and the one durable write anything READS:
-    // `clear_unpaired_by_peer_all` drops the "this peer says we are not
-    // paired" flag from EVERY row on a pairing act, because neither role has
-    // a peer id at this point. The mock left the flags standing, so a device
-    // list that had recorded a refusal kept prompting to re-pair after the
-    // user just did.
-    for (const row of peerRefs.values()) row['unpaired_by_peer_at_ms'] = null
+    // #4297 — and the one durable write anything READS.
+    clearUnpairedFlagsOnPairingAct()
   },
   cancel_pairing: () => {
     // #3493 — cancelling disarms this device's pending-pairing marker on

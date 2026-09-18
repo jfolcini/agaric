@@ -15,6 +15,7 @@ import {
   type TypedHandlers,
   appErrorRejection,
   buildPageMetaRow,
+  compareBinary,
   compareMetaRows,
   deriveLinkEdges,
   encodeNextCursor,
@@ -390,9 +391,13 @@ export const pagesHandlers = {
   // block-backed spaces is what lets `spaces_lifecycle.json` pin this
   // command.
   //
-  // Sorted alphabetically by name, matching the real backend's
-  // `list_spaces_inner` ordering — `SpaceSwitcher`'s `Ctrl+1`..`Ctrl+9`
-  // digit-hotkey contract depends on this order.
+  // Sorted by name then id, matching the real backend's `list_spaces_inner`
+  // `ORDER BY COALESCE(content,'') ASC, id ASC` — SQLite's BINARY collation,
+  // so `compareBinary`, never `localeCompare`. The two disagree on ordinary
+  // mixed-case names, not just ties (`Banana` before `apple` binary, after it
+  // by locale), and `SpaceSwitcher`'s `Ctrl+1`..`Ctrl+9` digit-hotkey contract
+  // rides this order — under `localeCompare` a digit selected a different
+  // space in dev and E2E than it does in the real app.
   list_spaces: () => {
     const rows = [...blocks.values()]
       .filter(
@@ -409,7 +414,7 @@ export const pagesHandlers = {
             | null
             | undefined) ?? null,
       }))
-    rows.sort((x, y) => x.name.localeCompare(y.name))
+    rows.sort((x, y) => compareBinary(x.name, y.name) || compareBinary(x.id, y.id))
     return rows
   },
 
