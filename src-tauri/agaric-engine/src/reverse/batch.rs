@@ -1146,9 +1146,10 @@ pub async fn get_op_records_batch(
 /// error before any reverse is computed or applied.
 ///
 /// Bounded by `MAX_REVERT_OPS` at the caller; chunked at
-/// `MAX_SQL_PARAMS / 2` (`device_id` + `seq` per ref) so the OR-of-pairs
-/// predicate stays inside `SQLITE_MAX_EXPR_DEPTH` (1000) — the limit that
-/// actually bites here, one level per OR term, long before the bind cap does.
+/// `MAX_SQL_PARAMS / 2` (`device_id` + `seq` per ref). The divisor is the bind
+/// width, but the limit that actually bites is `SQLITE_MAX_EXPR_DEPTH` (1000),
+/// one level per OR term: a 499-ref chunk binds 998 of `MAX_SQL_PARAMS`' 999
+/// and nests 499 deep, so neither has slack to spare here.
 pub async fn reject_replicated_targets(
     pool: &SqlitePool,
     refs: &[agaric_store::op::OpRef],

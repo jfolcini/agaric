@@ -3771,18 +3771,22 @@ async fn compute_reverse_batch_attachment_group_stays_aligned_across_chunks_4656
     }
 }
 
-/// `fetch_prev_edit_rows_batch` chunks at `MAX_SQL_PARAMS / 3` = 333 ops, so
-/// 501 edits span two chunks. Every edit here carries a `prev_edit`, so the
-/// CAUSAL pointer path resolves every prior text — the reverse of the shape
+/// Every edit here carries a `prev_edit`, so the CAUSAL pointer path resolves
+/// every prior text — the reverse of the shape
 /// `compute_reverse_batch_chunks_large_edit_batch_c5` drives, which carries no
-/// pointer and therefore never reaches this helper's chunk loop at all.
+/// pointer and therefore never reaches this helper at all.
+///
+/// 501 edits keeps the compound-SELECT bound this file's sibling tests pin, but
+/// alignment is NOT what this one can lose: unlike the five `fetch_prior_*`
+/// helpers, `fetch_prev_edit_rows_batch` stores the GLOBAL `pos` in `wanted`
+/// before chunking, so it has no per-chunk base to get wrong.
 ///
 /// Every SECOND edit points back at the root `create_block` rather than at its
 /// predecessor, so the pointer's answer and the timestamp scan's disagree at
 /// those positions. Without that skew a lost pointer is invisible: the fallback
 /// would hand back the same text the pointer would have.
 #[tokio::test]
-async fn compute_reverse_batch_prev_edit_group_stays_aligned_across_chunks_4656() {
+async fn compute_reverse_batch_prev_edit_group_resolves_its_own_prev_edit_pointer_4656() {
     let (pool, _dir) = test_pool().await;
     let bid = BlockId::test_id("CHUNK_PREV");
     let mut ts = 0i64;
@@ -4012,10 +4016,14 @@ async fn reject_replicated_targets_refuses_a_replicated_revert_target_2549() {
 ///
 /// Chunking is only half the contract: every chunk must also still be
 /// SEARCHED. `..._refuses_a_replicated_revert_target_2549` pins the rejection
-/// on a batch that fits in one chunk, so without the tail assertion below a
-/// loop that stopped after the first chunk would pass both tests, and a revert
-/// of a large page would silently apply the inverse of a never-applied audit
-/// op — the #2549 corruption, on exactly the inputs chunking exists for.
+/// on a batch that fits in one chunk, so without the offender below a loop that
+/// stopped after the first chunk would pass both tests, and a revert of a large
+/// page would silently apply the inverse of a never-applied audit op — the
+/// #2549 corruption, on exactly the inputs chunking exists for.
+///
+/// One call covers both halves. A chunk too wide to parse raises the SQLite
+/// limit error instead of the rejection, which `expect_err` would swallow and
+/// the `contains` assertion catches.
 #[tokio::test]
 async fn reject_replicated_targets_chunks_a_max_size_revert_4656() {
     let (pool, _dir) = test_pool().await;
@@ -4025,9 +4033,6 @@ async fn reject_replicated_targets_chunks_a_max_size_revert_4656() {
             seq,
         })
         .collect();
-    reject_replicated_targets(&pool, &refs)
-        .await
-        .expect("a MAX_REVERT_OPS-sized guard check must chunk, not overflow SQLite");
 
     // Index 1000 of 1001 refs — the THIRD chunk at a width of 499.
     let audit = append_replicated_op(
