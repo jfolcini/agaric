@@ -4007,12 +4007,19 @@ async fn reject_replicated_targets_refuses_a_replicated_revert_target_2549() {
 /// it in one statement makes that statement too deep to parse, and every
 /// revert of a large page dies with a raw database error.
 ///
-/// The refs need not exist — the guard only looks for `is_replicated = 1`
-/// rows — so this costs no fixture.
+/// The local refs need not exist — the guard only looks for
+/// `is_replicated = 1` rows — so the one replicated op is the whole fixture.
+///
+/// Chunking is only half the contract: every chunk must also still be
+/// SEARCHED. `..._refuses_a_replicated_revert_target_2549` pins the rejection
+/// on a batch that fits in one chunk, so without the tail assertion below a
+/// loop that stopped after the first chunk would pass both tests, and a revert
+/// of a large page would silently apply the inverse of a never-applied audit
+/// op — the #2549 corruption, on exactly the inputs chunking exists for.
 #[tokio::test]
 async fn reject_replicated_targets_chunks_a_max_size_revert_4656() {
     let (pool, _dir) = test_pool().await;
-    let refs: Vec<OpRef> = (1..=1000)
+    let mut refs: Vec<OpRef> = (1..=1000)
         .map(|seq| OpRef {
             device_id: TEST_DEVICE.to_string(),
             seq,
@@ -4021,6 +4028,34 @@ async fn reject_replicated_targets_chunks_a_max_size_revert_4656() {
     reject_replicated_targets(&pool, &refs)
         .await
         .expect("a MAX_REVERT_OPS-sized guard check must chunk, not overflow SQLite");
+
+    // Index 1000 of 1001 refs — the THIRD chunk at a width of 499.
+    let audit = append_replicated_op(
+        &pool,
+        "rrt-tail",
+        1,
+        OpPayload::CreateBlock(CreateBlockPayload {
+            block_id: BlockId::test_id("BLK_RRT_TAIL"),
+            block_type: "content".into(),
+            parent_id: None,
+            position: Some(1),
+            index: None,
+            content: "foreign".into(),
+        }),
+        FIXED_TS,
+    )
+    .await;
+    refs.push(OpRef {
+        device_id: audit.device_id,
+        seq: audit.seq,
+    });
+    let err = reject_replicated_targets(&pool, &refs)
+        .await
+        .expect_err("a replicated target past the first chunk must still be rejected");
+    assert!(
+        err.to_string().contains("rrt-tail"),
+        "#4656: the rejection must name the offending op, got {err}"
+    );
 }
 
 /// #4656: the two halves of the non-reversible contract are predicates the
