@@ -1,4 +1,4 @@
-# Session 1789 — mutation-survivor triage: the chunk ceiling nobody had measured
+# Session 1791 — mutation-survivor triage: the chunk ceiling nobody had measured
 
 Set out to work the open mutation-testing issues: #4690 (rust, 27 survivors across
 #4652 `snapshot.rs`, #4653 `sync.rs`, #4656 `reverse/batch.rs`) and #4691 (frontend,
