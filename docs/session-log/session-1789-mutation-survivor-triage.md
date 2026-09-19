@@ -62,7 +62,19 @@ already covers. The two that remain are compiler-mandated totality under
 
 ## Corrected in review
 
-Two claims did not survive checking. The builder's hand-back called the batch.rs
+`reject_replicated_targets_chunks_a_max_size_revert_4656` shipped as a half-covered
+pair and was fixed before the PR. It asserted only that 1000 refs do not blow a SQLite
+limit — chunking built, never chunking *searched*. The only test pinning the rejection
+uses 2 refs, i.e. chunk 0, so the guard body was pinned at chunk 0 and the multi-chunk
+call site only for "does not error". A loop that stopped after the first chunk would
+pass both: `refs.chunks(chunk_size).take(1)` survived the pair, proven. The live
+consequence is the #2549 corruption on exactly the inputs chunking exists for — a
+revert of >499 ops whose replicated audit op sits past index 499 is accepted, and the
+inverse of an op that was never applied locally gets written. The test now appends a
+replicated op at index 1000 of 1001, the third chunk at width 499, and asserts the
+rejection names it.
+
+Two other claims did not survive checking. The builder's hand-back called the batch.rs
 exposure "real and shipped"; it is latent, as above, and the PR body says so. And the
 rewritten `ACCEPTED GAPS` header in the jex-import tests asserted that `unserialize`'s
 blank-line and no-colon branches were equally unpinnable — measurement showed the
@@ -80,6 +92,8 @@ worse finding.
 
 ## Verified
 
+- `cargo nextest run --workspace` — 6355 passed, 0 failed, 13 skipped, 443 s.
+- `SQLX_OFFLINE=true cargo check --workspace` — all seven members, zero warnings.
 - `cargo nextest run --workspace -E 'package(agaric-engine)'` — 1038 passed, 0 skipped
   (baseline 1036), 95.8 s against 99.5 s before, so 200 -> 501 cost nothing measurable.
 - `cargo nextest run -p agaric -E 'test(revert) + test(reverse) + test(undo) +
