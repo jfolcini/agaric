@@ -1151,7 +1151,7 @@ pub async fn get_op_records_batch(
 /// `SQLITE_MAX_EXPR_DEPTH` (1000) is why the cap cannot simply be raised: one
 /// level per OR term, so the predicate stops parsing near 997 refs, long before
 /// SQLite's real 32766-bind limit would matter. At 499 the depth budget is
-/// still half unused; it binds this only once the param cap moves.
+/// still half unused, so depth constrains nothing until the param cap moves.
 pub async fn reject_replicated_targets(
     pool: &SqlitePool,
     refs: &[agaric_store::op::OpRef],

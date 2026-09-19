@@ -4006,12 +4006,12 @@ async fn reject_replicated_targets_refuses_a_replicated_revert_target_2549() {
     );
 }
 
-/// #4656: the revert-target guard chunks at `MAX_SQL_PARAMS / 2` = 499 refs
-/// because its OR-of-pairs predicate is depth-limited by
-/// `SQLITE_MAX_EXPR_DEPTH` (1000), not by the bind cap. `MAX_REVERT_OPS` is
-/// 1000, so a 1000-ref revert is legal input; a chunk size wide enough to hold
-/// it in one statement makes that statement too deep to parse, and every
-/// revert of a large page dies with a raw database error.
+/// #4656: the revert-target guard chunks at `MAX_SQL_PARAMS / 2` = 499 refs —
+/// the param cap forces that, since each ref binds two and 499 spends 998 of the
+/// 999. `MAX_REVERT_OPS` is 1000, so a 1000-ref revert is legal input; a chunk
+/// wide enough to hold it in one statement nests past `SQLITE_MAX_EXPR_DEPTH`
+/// (1000), one level per OR term, and every revert of a large page dies with a
+/// raw database error.
 ///
 /// The local refs need not exist — the guard only looks for
 /// `is_replicated = 1` rows — so the one replicated op is the whole fixture.
