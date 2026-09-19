@@ -3776,10 +3776,12 @@ async fn compute_reverse_batch_attachment_group_stays_aligned_across_chunks_4656
 /// `compute_reverse_batch_chunks_large_edit_batch_c5` drives, which carries no
 /// pointer and therefore never reaches this helper at all.
 ///
-/// 501 edits keeps the compound-SELECT bound this file's sibling tests pin, but
-/// alignment is NOT what this one can lose: unlike the five `fetch_prior_*`
-/// helpers, `fetch_prev_edit_rows_batch` stores the GLOBAL `pos` in `wanted`
-/// before chunking, so it has no per-chunk base to get wrong.
+/// `fetch_prev_edit_rows_batch` chunks at `MAX_SQL_PARAMS / 3` = 333 ops, so
+/// 501 edits span two chunks and clear the 500-term compound-SELECT bound this
+/// file's sibling tests pin — that is where the constant comes from. Alignment
+/// is NOT what this one can lose, though: unlike the five `fetch_prior_*`
+/// helpers, it stores the GLOBAL `pos` in `wanted` before chunking, so it has
+/// no per-chunk base to get wrong.
 ///
 /// Every SECOND edit points back at the root `create_block` rather than at its
 /// predecessor, so the pointer's answer and the timestamp scan's disagree at

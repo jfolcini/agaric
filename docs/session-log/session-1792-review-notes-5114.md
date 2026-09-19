@@ -37,6 +37,21 @@ the other five, because there is no `base` to zero, and had to inject a differen
 mutation. What the test does earn is the pointer-vs-timestamp skew, which the
 rewritten doc now says instead.
 
+The first attempt at that doc sentence inverted it, and #5115's own review caught
+it. It said `SQLITE_MAX_EXPR_DEPTH` was "the limit that actually bites" and that
+neither limit had slack to spare. The numbers say otherwise: a 499-ref chunk
+binds 998 of 999 — at the cap — while nesting 499 OR terms against a budget that
+runs to roughly 997, half unused. So the param cap is what forces 499, and the
+depth limit is why that cap cannot simply be raised. In the one comment this
+session exists to make precise, that was the same inversion it was fixing;
+fixed in place rather than deferred, since a follow-up about text this change
+itself added is churn.
+
+Trimming the prev-edit test's doc also dropped a true fact worth keeping — that
+`fetch_prev_edit_rows_batch` chunks at `MAX_SQL_PARAMS / 3` = 333, which is
+where the 501 comes from. Restored alongside the alignment correction, so the
+next reader does not have to re-derive it from `OP_RECORD_BINDS_PER_OP`.
+
 ## Verified
 
 - `cargo nextest run --workspace -E 'test(reject_replicated_targets) +
