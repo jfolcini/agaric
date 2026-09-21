@@ -65,7 +65,7 @@ iroh = "=1.1.0"
 # with iroh: two independent caret ranges can drift apart and resolve two
 # incompatible `n0-error` copies, at which point the `e!` macro stops
 # type-checking. That cost a build cycle during the spike.
-iroh-dns = "=1.1.0"
+iroh-dns = "=1.3.0"
 # `iroh-mdns-address-lookup` — LAN discovery (`swarm-discovery` mDNS) as an iroh
 # address lookup; `mdns::attach` adds it to the bound endpoint (#3464). A caret
 # range, not a pin: it is a satellite of the pinned `iroh`, resolved against
