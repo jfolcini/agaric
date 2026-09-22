@@ -60,6 +60,9 @@ export function InternetRelaySetting(): React.ReactElement {
         logger.warn('InternetRelaySetting', 'saving the relay setting failed', undefined, err)
         notify.error(t('device.internetRelaySaveFailed'))
         setSettings(previous)
+        // The rollback is a guess at the stored row; a load still in flight
+        // knows it, so let that one through again.
+        savedRef.current = false
       }
     },
     [settings, t],

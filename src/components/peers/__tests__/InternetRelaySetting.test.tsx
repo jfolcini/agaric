@@ -118,6 +118,28 @@ describe('InternetRelaySetting', () => {
     expect(screen.getByTestId('internet-relay-switch')).toHaveAttribute('aria-checked', 'true')
   })
 
+  it('a load that resolves after a rejected save corrects the rollback', async () => {
+    const user = userEvent.setup()
+    stored = { enabled: true }
+    let resolveLoad: (value: unknown) => void = () => {}
+    mockGetSettings.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveLoad = resolve
+        }),
+    )
+    mockSetSettings.mockRejectedValue(new Error('disk full'))
+    render(<InternetRelaySetting />)
+    await user.click(screen.getByTestId('internet-relay-switch'))
+    await waitFor(() => {
+      expect(toast.error).toHaveBeenCalledWith('Failed to save the internet fallback setting')
+    })
+    resolveLoad(ok({ enabled: true }))
+    await waitFor(() => {
+      expect(screen.getByTestId('internet-relay-switch')).toHaveAttribute('aria-checked', 'true')
+    })
+  })
+
   it('a rejected save toasts and rolls the switch back', async () => {
     const user = userEvent.setup()
     mockSetSettings.mockRejectedValue(new Error('disk full'))

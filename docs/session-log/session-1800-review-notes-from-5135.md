@@ -37,3 +37,12 @@ silently, and every CI lane is ubuntu-24.04, so the Windows arm is compiled,
 not run. That is the reach the `#[cfg(windows)]` test it replaced had, and a
 `panic!` on an unset variable would make the test about the box rather than
 the function.
+
+**The rollback's guard (#5138 note, from the reviewer's pass on this PR).**
+The `savedRef` from the first note was never cleared when the save failed, so
+on the error path it suppressed the very load that used to correct the
+rollback: stored on, save rejects, UI rolls back to off, the late load's
+`true` is dropped. One line resets it in the catch. Pinned by a test that
+rejects the save under a still-pending load and then resolves the load;
+falsified by deleting the reset line (the switch stays `"false"`), restore
+verified with `cmp`.
