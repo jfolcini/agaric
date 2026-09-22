@@ -89,13 +89,17 @@ docs PR forever. That is now written where the filter is. Promotion has to drop
 the filter and skip inside the job, or route the lane through `detect-changes`
 and the `validate-all` fail-closed aggregate, which exists for exactly this.
 
-Item 3 is untouched, and it is now half stale. `AGENTS.md` rule 4 ends "Until
+Item 3 went half stale the moment this landed. `AGENTS.md` rule 4 ended "Until
 #4671 lands, that lane is `schedule` + `workflow_dispatch` only, so pair the
-spec with one that runs per-PR". The trigger clause is false as of this change;
-the instruction it carries is not, because the lane still gates nothing and so
-still cannot guard the PR that reintroduces a bug. So the sentence needs
-rewording rather than deleting — and that file is edited only with maintainer
-approval, which this session did not have for it. Flagged, not done.
+spec with one that runs per-PR". The trigger clause is now false; the
+instruction it carries is not, because the lane still gates nothing and so
+still cannot stop a reintroduction from merging. So it wanted rewording rather
+than deleting, and it says that instead — with maintainer approval, asked for
+because that file requires it. `e2e-tauri/AGENTS.md` had the same problem,
+presenting `gh workflow run` as the only way to reach CI.
+
+The caveat does not disappear until the lane is a required context, which is
+the half of item 2 that remains.
 
 ## What the three have in common
 
