@@ -1,31 +1,31 @@
 /**
- * Pins React's own `useEffectEvent` republish behaviour per fiber tag, because
- * the #4377 refactor depends on it and it is not documented anywhere.
+ * Pins React's `useEffectEvent` republish behaviour per fiber tag, because the
+ * #4377 refactor depends on it and it is not documented anywhere.
  *
  * An effect event's implementation is republished from the commit phase, in
  * `commitBeforeMutationEffectsOnFiber` (`react-dom-client.development.js`).
- * That switch drains `fiber.updateQueue.events` for `FunctionComponent`, then
- * falls through `case ForwardRef: case SimpleMemoComponent: break` — draining
- * nothing. On those two tags the implementation captured at MOUNT is the one
- * every later call dispatches to, for the life of the component. No warning is
- * emitted, and no lint rule catches it: `react-hooks/rules-of-hooks` polices
- * where an effect event is *called*, never which fiber owns it.
+ * Through React 19.2 that switch drained `fiber.updateQueue.events` for
+ * `FunctionComponent` only, then fell through `case ForwardRef: case
+ * SimpleMemoComponent: break` — draining nothing. On those two tags the
+ * implementation captured at MOUNT was the one every later call dispatched to,
+ * for the life of the component, with no warning and no lint rule to catch it.
  *
- * The four cases below are the whole decision surface:
+ * React 19.3 closed that gap: all four wrappers below republish. The cases are
+ * still the whole decision surface, so they stay pinned — a React regression
+ * (or a downgrade) that reopens the gap reddens here rather than silently
+ * freezing a callback:
  *
  * | wrapper                  | fiber tag             | republished? |
  * |--------------------------|-----------------------|--------------|
  * | none                     | FunctionComponent     | yes          |
- * | `memo(Fn)`               | SimpleMemoComponent   | NO           |
+ * | `memo(Fn)`               | SimpleMemoComponent   | yes (19.3)   |
  * | `memo(Fn, compare)`      | MemoComponent (+ an   | yes          |
  * |                          | inner FunctionComp.)  |              |
- * | `forwardRef(Fn)`         | ForwardRef            | NO           |
+ * | `forwardRef(Fn)`         | ForwardRef            | yes (19.3)   |
  *
- * This test asserts what React ACTUALLY does today, stale cases included, so a
- * React upgrade that fixes it fails here and tells us the companion guard
- * (`effect-event-fiber-owner.test.ts`) can be relaxed. `DaySection` — the site
- * that hit this for real — is `memo(DaySectionInner)` and therefore uses the
- * `useLayoutEffect` mirror instead; see
+ * With the gap closed, the companion guard (`effect-event-fiber-owner.test.ts`)
+ * and the `useLayoutEffect` mirror `DaySection` uses in its place are no longer
+ * load-bearing; both are kept until someone deliberately retires them, see
  * `docs/architecture/frontend.md § Latest-value mirrors`.
  */
 
@@ -78,7 +78,7 @@ function observedCalls(Component: React.ComponentType<ProbeProps>): string[] {
   return calls
 }
 
-describe('useEffectEvent republish by fiber tag (React 19.2)', () => {
+describe('useEffectEvent republish by fiber tag (React 19.3)', () => {
   it('republishes on a plain function component', () => {
     expect(observedCalls(PlainProbe)).toEqual(['FIRST', 'SECOND'])
   })
@@ -87,12 +87,11 @@ describe('useEffectEvent republish by fiber tag (React 19.2)', () => {
     expect(observedCalls(MemoWithCompareProbe)).toEqual(['FIRST', 'SECOND'])
   })
 
-  it('does NOT republish under memo(Fn) — SimpleMemoComponent stays frozen at mount', () => {
-    // If this ever reads ['FIRST', 'SECOND'], React has fixed the gap.
-    expect(observedCalls(MemoProbe)).toEqual(['FIRST', 'FIRST'])
+  it('republishes under memo(Fn) — SimpleMemoComponent, fixed in React 19.3', () => {
+    expect(observedCalls(MemoProbe)).toEqual(['FIRST', 'SECOND'])
   })
 
-  it('does NOT republish under forwardRef(Fn) — ForwardRef stays frozen at mount', () => {
-    expect(observedCalls(ForwardRefProbe)).toEqual(['FIRST', 'FIRST'])
+  it('republishes under forwardRef(Fn) — ForwardRef, fixed in React 19.3', () => {
+    expect(observedCalls(ForwardRefProbe)).toEqual(['FIRST', 'SECOND'])
   })
 })
