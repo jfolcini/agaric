@@ -1806,14 +1806,10 @@ fn redact_log(contents: &str, ctx: &RedactionContext<'_>, format: LineFormat) ->
 /// callers must treat the absence as "no home replacement" rather than
 /// fabricating a path.
 ///
-/// `std::env::home_dir()` consults the platform-canonical source on every OS
-/// (verified against the pinned 1.95 toolchain's source, #5060):
-/// - **Unix:** `$HOME` when set and non-empty, else `getpwuid_r`.
-/// - **Windows:** `USERPROFILE` when set and non-empty, else
-///   `GetUserProfileDirectoryW`. A `$HOME`-only implementation once returned
-///   `None` here and leaked `C:\Users\<name>\…` paths into bug-report ZIP
-///   exports destined for public GitHub issues; std's pre-1.85 `$HOME` reading
-///   on Windows is what kept `dirs` here, and 1.85 retired it.
+/// The platform's profile directory: `$HOME` then `getpwuid_r` on Unix,
+/// `USERPROFILE` then `GetUserProfileDirectoryW` on Windows. A `$HOME`-only
+/// reading leaked `C:\Users\<name>\…` into public bug reports once; the test
+/// below pins the variable each platform must honour.
 fn home_dir_string() -> Option<String> {
     std::env::home_dir()
         .map(|p| p.to_string_lossy().into_owned())

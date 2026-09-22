@@ -153,11 +153,12 @@ impl Resolver for RecordingResolver {
 ///
 /// # The three layers, and why each is load-bearing
 ///
-/// 1. **No relay transport.** `RelayMode::Disabled` and `clear_relay_transports()`
-///    are the same operation in the pinned iroh (1.1.0): each `retain`-removes every
-///    `TransportConfig::Relay` from the builder. Under [`presets::Minimal`] there is
-///    none to remove — `Builder::empty` seeds only the two default IP transports — so
-///    both calls are belt-and-braces against a preset change, not the mechanism.
+/// 1. **No relay transport.** `RelayMode::Disabled` `retain`-removes every
+///    `TransportConfig::Relay` from the builder (the same operation as
+///    `clear_relay_transports()` in the pinned iroh 1.1.0). Under
+///    [`presets::Minimal`] there is none to remove — `Builder::empty` seeds only the
+///    two default IP transports — so the call states the posture; the guard
+///    `lan_only_endpoint_never_looks_for_a_relay` is what enforces it.
 /// 2. **No address-lookup services.** Built from [`presets::Minimal`], which sets only
 ///    the mandatory crypto provider. Building from `N0` or `N0DisableRelay` instead
 ///    would install `PkarrPublisher::n0_dns()`, `PkarrResolver::n0_dns()` and
@@ -333,7 +334,6 @@ fn confined_builder(
         return Err(LanBindError::BindAddressNotPrivate { bind });
     }
     Endpoint::builder(presets::Minimal)
-        .clear_relay_transports()
         .relay_mode(relay)
         .clear_address_lookup()
         .clear_ip_transports()

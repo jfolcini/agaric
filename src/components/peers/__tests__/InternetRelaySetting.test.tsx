@@ -13,7 +13,7 @@
  *  - `axe(container)` a11y audit returns zero violations.
  */
 
-import { render, screen, waitFor } from '@testing-library/react'
+import { act, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { toast } from 'sonner'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -94,6 +94,62 @@ describe('InternetRelaySetting', () => {
       expect(stored).toEqual({ enabled: true })
     })
     expect(screen.getByTestId('internet-relay-switch')).toHaveAttribute('aria-checked', 'true')
+  })
+
+  /** A mocked load the test resolves by hand; `settled` is the promise the
+   *  component awaits, so `await act(() => settled)` is a real barrier. */
+  function deferredLoad() {
+    let resolve: (value: unknown) => void = () => {}
+    const settled = new Promise((r) => {
+      resolve = r
+    })
+    mockGetSettings.mockImplementationOnce(() => settled)
+    return { resolve, settled }
+  }
+
+  it('a toggle made before the initial load resolves is not overwritten by it', async () => {
+    const user = userEvent.setup()
+    const load = deferredLoad()
+    render(<InternetRelaySetting />)
+    await user.click(screen.getByTestId('internet-relay-switch'))
+    await waitFor(() => {
+      expect(stored).toEqual({ enabled: true })
+    })
+    await act(async () => {
+      load.resolve(ok({ enabled: false }))
+      await load.settled
+    })
+    expect(screen.getByTestId('internet-relay-switch')).toHaveAttribute('aria-checked', 'true')
+  })
+
+  it('a save rejected after the initial load landed rolls back to the row, not the guess', async () => {
+    const user = userEvent.setup()
+    stored = { enabled: true }
+    const load = deferredLoad()
+    let rejectSave: (reason: unknown) => void = () => {}
+    mockSetSettings.mockImplementationOnce(
+      () =>
+        new Promise((_resolve, reject) => {
+          rejectSave = reject
+        }),
+    )
+    render(<InternetRelaySetting />)
+    // Click while the load is pending (the default shows off), let the load
+    // land suppressed, then fail the save: the rollback must read the row.
+    await user.click(screen.getByTestId('internet-relay-switch'))
+    await act(async () => {
+      load.resolve(ok({ enabled: true }))
+      await load.settled
+    })
+    await act(async () => {
+      rejectSave(new Error('disk full'))
+    })
+    await waitFor(() => {
+      expect(toast.error).toHaveBeenCalledWith('Failed to save the internet fallback setting')
+    })
+    await waitFor(() => {
+      expect(screen.getByTestId('internet-relay-switch')).toHaveAttribute('aria-checked', 'true')
+    })
   })
 
   it('a rejected save toasts and rolls the switch back', async () => {

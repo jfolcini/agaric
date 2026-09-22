@@ -12,7 +12,7 @@
  */
 
 import type React from 'react'
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { ToggleRow } from '@/components/ui/toggle-row'
@@ -28,40 +28,52 @@ const DEFAULT_SETTINGS: SyncRelaySettings = { enabled: false }
 export function InternetRelaySetting(): React.ReactElement {
   const { t } = useTranslation()
   const [settings, setSettings] = useState<SyncRelaySettings>(DEFAULT_SETTINGS)
+  // The switch is live before the initial load resolves. A save in that window
+  // is the newer fact, so a load that lands afterwards must not overwrite it
+  // (#5135 review: the row was persisted on while the UI showed off).
+  const savedRef = useRef(false)
+
+  /** The stored row, or `null` once its failure has been reported. */
+  const readStored = useCallback(async (): Promise<SyncRelaySettings | null> => {
+    try {
+      return unwrap(await commands.getSyncRelaySettings())
+    } catch (err) {
+      logger.warn('InternetRelaySetting', 'loading the relay setting failed', undefined, err)
+      notify.error(t('device.internetRelayLoadFailed'))
+      return null
+    }
+  }, [t])
 
   useEffect(() => {
     let cancelled = false
-    void (async () => {
-      try {
-        const loaded = unwrap(await commands.getSyncRelaySettings())
-        if (!cancelled) setSettings(loaded)
-      } catch (err) {
-        logger.warn('InternetRelaySetting', 'loading the relay setting failed', undefined, err)
-        notify.error(t('device.internetRelayLoadFailed'))
-      }
-    })()
+    void readStored().then((loaded) => {
+      if (loaded && !cancelled && !savedRef.current) setSettings(loaded)
+    })
     return () => {
       cancelled = true
     }
-  }, [t])
+  }, [readStored])
 
   const save = useCallback(
     async (next: SyncRelaySettings) => {
       const previous = settings
+      savedRef.current = true
       setSettings(next)
       try {
         unwrap(await commands.setSyncRelaySettings(next))
       } catch (err) {
         logger.warn('InternetRelaySetting', 'saving the relay setting failed', undefined, err)
         notify.error(t('device.internetRelaySaveFailed'))
-        setSettings(previous)
+        // `previous` is a guess at the row: the initial load may have landed
+        // (and been suppressed) meanwhile. Re-read rather than guess.
+        setSettings((await readStored()) ?? previous)
       }
     },
-    [settings, t],
+    [readStored, settings, t],
   )
 
   return (
-    <div className="internet-relay-setting mb-4" data-testid="internet-relay-setting">
+    <div className="mb-4">
       <ToggleRow
         id="internet-relay-enabled"
         label={t('device.internetRelayLabel')}
