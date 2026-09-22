@@ -33,7 +33,11 @@ import { announce } from '@/lib/announcer'
 import type { PropertyDefinition, PropertyRow } from '@/lib/bindings'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
-import { buildInitParams, NON_DELETABLE_PROPERTIES } from '@/lib/property-save-utils'
+import {
+  buildInitParams,
+  DRAFT_ROW_VALUE_TYPES,
+  NON_DELETABLE_PROPERTIES,
+} from '@/lib/property-save-utils'
 import { BUILTIN_PROPERTY_ICONS, formatPropertyName } from '@/lib/property-utils'
 import { reportIpcError } from '@/lib/report-ipc-error'
 import { type PageBlockState, usePageBlockStore, usePageBlockStoreApi } from '@/stores/page-blocks'
@@ -214,12 +218,12 @@ export function BlockPropertyDrawer({
   const handleAddFromDef = useCallback(
     async (def: PropertyDefinition) => {
       if (!blockId) return
-      // #2656 — text/select properties have no valid empty initializer: the
-      // backend rejects an empty `value_text` and, for select, any value
+      // #2656 — text/select/url properties have no valid empty initializer:
+      // the backend rejects an empty `value_text` and, for select, any value
       // outside the definition's options. Add a local draft row for value
       // entry instead of persisting an invalid placeholder; it writes on the
       // first non-empty save (see handleSaveField).
-      if (def.value_type === 'text' || def.value_type === 'select') {
+      if (DRAFT_ROW_VALUE_TYPES.has(def.value_type)) {
         setDraftKeys((prev) => {
           if (prev.has(def.key)) return prev
           const next = new Set(prev)

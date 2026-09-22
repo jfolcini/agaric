@@ -653,6 +653,53 @@ describe('PagePropertyTable add property flow', () => {
     // …without ever init-persisting an empty `value_text`.
     expect(mockedInvoke).not.toHaveBeenCalledWith('set_property', expect.anything())
   })
+  // #4710 — `url` is text on the wire, so it shares text's "no valid empty
+  // initializer": the create-def flow must open a draft row, never
+  // init-persist `value_text: ''` (which the backend refuses).
+  it('"Create definition" flow with the url type adds a draft row (no empty set_property)', async () => {
+    const user = userEvent.setup()
+    const props: PropertyRow[] = []
+    const defs: PropertyDefinition[] = []
+
+    stubInvoke({
+      get_properties: () => [...props],
+      list_property_defs: () => defsPage([...defs]),
+      create_property_def: (args) => {
+        const newDef = makeDef(args['key'] as string, args['valueType'] as string)
+        defs.push(newDef)
+        return newDef
+      },
+      set_property: () => setPropertyResult,
+    })
+
+    render(<PagePropertyTable pageId="PAGE_1" forceExpanded />)
+
+    await waitFor(() => {
+      expect(screen.getByLabelText(t('pageProperty.searchLabel'))).toBeInTheDocument()
+    })
+    await user.type(screen.getByLabelText(t('pageProperty.searchLabel')), 'homepage')
+    await waitFor(() => {
+      expect(screen.getByText(/Create "homepage"/)).toBeInTheDocument()
+    })
+    await user.click(screen.getByText(/Create "homepage"/))
+    await user.selectOptions(await screen.findByLabelText(t('pageProperty.valueTypeLabel')), 'url')
+    await user.click(screen.getByRole('button', { name: /create definition/i }))
+
+    await waitFor(() => {
+      expect(mockedInvoke).toHaveBeenCalledWith('create_property_def', {
+        key: 'homepage',
+        valueType: 'url',
+        options: null,
+      })
+    })
+    await waitFor(() => {
+      expect(
+        screen.getByLabelText(t('pageProperty.valueLabel', { key: 'homepage' })),
+      ).toBeInTheDocument()
+    })
+    expect(mockedInvoke).not.toHaveBeenCalledWith('set_property', expect.anything())
+  })
+
   it('shows ref option in the property type dropdown', async () => {
     const user = userEvent.setup()
     const props: PropertyRow[] = []

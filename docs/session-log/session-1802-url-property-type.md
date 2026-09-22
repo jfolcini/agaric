@@ -46,3 +46,17 @@ conformance); full frontend suite in two shards, 838 files, 19,303 passed,
 51 skipped, 1 expected fail; mock conformance, coverage and drift suites 976
 passed; `oxlint`, `oxfmt`, `tsc -b`, the migration-coverage and
 migration→mock guards green. The push verifier runs the full Rust suite.
+
+**The reviewer's blocker, and why every check above missed it.** Adding a
+`url` property from either add path failed with a toast and no row: the
+three add sites short-circuit to a local draft row only for `text` and
+`select` (the backend refuses an empty `value_text`), and `url` fell through
+to an empty init `set_property`. The definition was creatable and then
+unusable. The three literal conditions are now one exported
+`DRAFT_ROW_VALUE_TYPES` set, and a `PagePropertyTable` test drives the
+create-def flow with `url` and asserts a draft row and no `set_property`;
+dropping `url` from the set reddens it. Nothing earlier could have caught
+it: the chip tests render a value that already exists, the conformance
+fixture sets a non-empty value, and no test walked the add flow with a new
+type. The same push trims the value before `openUrl`, since the parser
+tolerates surrounding whitespace and the shell plugin's URL scope does not.

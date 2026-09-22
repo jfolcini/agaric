@@ -87,6 +87,14 @@ export const COLUMN_BACKED_PROPERTY_KEYS = new Set([
 const DEFINABLE_VALUE_TYPES = new Set(['text', 'number', 'date', 'select', 'ref', 'boolean', 'url'])
 
 /**
+ * Types with no valid empty initializer: the backend refuses an empty
+ * `value_text` (and, for `select`, any value outside the options), so adding
+ * one opens a local draft row instead of init-persisting a placeholder
+ * (#2656, #2792, #2804). `url` is text on the wire, so it is one of them.
+ */
+export const DRAFT_ROW_VALUE_TYPES: ReadonlySet<string> = new Set(['text', 'select', 'url'])
+
+/**
  * The `property_definitions` row a KEY RENAME should carry over to the new
  * key, or `null` when there is nothing safe to carry (#4010).
  *

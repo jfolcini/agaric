@@ -117,7 +117,9 @@ export function PropertyChip({
         // `StaticBlock.handleOuterClick` focuses the block on any bubbled
         // click; opening a link must not move the roving editor there.
         e.stopPropagation()
-        void openUrl(value)
+        // The predicate tolerates surrounding whitespace (the URL parser strips
+        // it); the shell plugin's URL scope does not.
+        void openUrl(value.trim())
       }}
     >
       <ExternalLink aria-hidden="true" />
