@@ -23,9 +23,10 @@
  * |                          | inner FunctionComp.)  |              |
  * | `forwardRef(Fn)`         | ForwardRef            | yes (19.3)   |
  *
- * With the gap closed, the companion guard (`effect-event-fiber-owner.test.ts`)
- * and the `useLayoutEffect` mirror `DaySection` uses in its place are no longer
- * load-bearing; both are kept until someone deliberately retires them, see
+ * This file is what the rest of the codebase leans on: the companion guard that
+ * kept effect events out of `memo()`/`forwardRef()` components is gone, and
+ * `DaySection` uses a plain `useEffectEvent` again, so a React regression here
+ * is the thing that would silently freeze those callbacks at mount. See
  * `docs/architecture/frontend.md § Latest-value mirrors`.
  */
 
