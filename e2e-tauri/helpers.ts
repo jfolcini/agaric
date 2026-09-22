@@ -240,22 +240,25 @@ export async function openJournalBlockEditor(): Promise<void> {
     // count check and the index check are the same check.
     const statics = await $$('[data-testid="block-static"]').getElements()
     const lastStatic = statics.at(-1)
-    // `null` = no static at all. The fallback fails closed on anything but the
-    // empty seed block: clicking a static that already holds text would hand
-    // `typeMarkerVerified` a non-empty editor, which its retry clears.
-    const lastText = lastStatic === undefined ? null : (await lastStatic.getText()).trim()
-    if (lastStatic !== undefined && lastText === '') {
+    // The fallback fails closed on anything but the empty seed block: clicking
+    // a static that already holds text would hand `typeMarkerVerified` a
+    // non-empty editor, which its retry clears. "Empty" is the `.block-placeholder`
+    // span `StaticBlock` renders in place of content, NOT empty text: that span
+    // holds the visible "Type / for commands..." hint, so a text check reads the
+    // seed block as non-empty and the fallback never fires (run 35750968153).
+    if (lastStatic !== undefined && (await lastStatic.$('.block-placeholder').isExisting())) {
       await lastStatic.click()
       await $(editorSelector).waitForDisplayed({ timeout: ACTION_TIMEOUT })
     } else {
       // 10 s is the virgin-vault fast path, not a verdict: the CTA can simply
       // be slow under CI load. Keep waiting, then say exactly what was seen.
+      const seen = lastStatic === undefined ? 'absent' : JSON.stringify(await lastStatic.getText())
       await $(editorSelector).waitForDisplayed({
         timeout: ACTION_TIMEOUT,
         timeoutMsg:
           'openJournalBlockEditor: Add-block CTA clicked but no block editor appeared; last ' +
-          `block-static is ${lastText === null ? 'absent' : JSON.stringify(lastText)}, not the ` +
-          'empty virgin-vault seed block, so the click-the-last-static fallback does not apply',
+          `block-static is ${seen}, not the empty virgin-vault seed block, so the ` +
+          'click-the-last-static fallback does not apply',
       })
     }
   }
