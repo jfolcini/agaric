@@ -15,28 +15,43 @@
  *    binaries, collision disambiguation) and the item/tar-header shapes a
  *    hand-written export hits but a well-formed one does not (#4816),
  *  - where the tar scan starts and stops, the notebook chain a note hangs off,
- *    and the exact bytes `jexNoteToMarkdown` hands the markdown importer.
+ *    and the exact bytes `jexNoteToMarkdown` hands the markdown importer,
+ *  - how a header's numeric field is padded, and which item kinds a resource's
+ *    vault name may come from.
  *
  * ACCEPTED GAPS (#4816, re-swept in #4691). What survives mutation here is
- * equivalent, not untested — five shapes, none of them worth a test:
- *  - the operand of a `??` the type system demands and the code cannot reach
- *    (`lines[i] ?? ''`, `.pop() ?? ''`): deleting either is a `tsc` error;
+ * equivalent, not untested — seven shapes, none of them worth a test:
+ *  - an operand or a narrowing the type system demands and the code cannot
+ *    reach (`lines[i] ?? ''`, `.pop() ?? ''`, `c === undefined`,
+ *    `cp !== undefined`): deleting one is a `tsc` error;
  *  - a normalization applied twice — `parseJoplinTime`'s `.trim()` on a value
- *    `unserialize` already trimmed, `resolveFolderPath`'s on an already-trimmed
- *    notebook title, `readOctalField`'s NUL/space skip that `Number.parseInt`
- *    tolerates anyway;
- *  - a value tested twice — `meta?.mime && meta.mime.length > 0`, the
- *    `current.length > 0` ahead of a `folders.get` that misses anyway,
- *    `separatorIndex >= 0` ahead of a `slice(0, 0)` that is already `[]`;
- *  - a guard whose failure is unobservable: an entry keyed `''` (every
- *    `id.length > 0` site) is never looked up, because every lookup key is a
- *    32-hex ref or a tar member name; likewise a member with an empty name,
- *    whose `fullName` matches neither `resources/` nor `<id>.md`;
+ *    `unserialize` already trimmed, and the blank check in front of it that
+ *    `Date.parse` answers with `NaN` anyway; `resolveFolderPath`'s trim of an
+ *    already-trimmed notebook title;
+ *  - a value tested twice — `meta?.mime` / `meta?.ext` re-checked with
+ *    `.length > 0` behind the falsy test, the `current.length > 0` ahead of a
+ *    `folders.get` that misses anyway, `separatorIndex >= 0` ahead of a
+ *    `slice(0, 0)` that is already `[]`;
+ *  - a guard whose failure nothing reads: `props['']`, the `id.length > 0` in
+ *    `classifyItems` and `parseJex`, and an `id`/`parent_id` that falls back
+ *    all key a map that is only ever read by lookup, and every lookup key is a
+ *    32-hex ref; a member with an empty name matches neither `resources/` nor
+ *    `<id>.md`; a `resources/` member whose base holds a further `/` takes a
+ *    key no sanitized title can equal. `splitMembers`' `id.length > 0` is NOT
+ *    one of them — its map is iterated, so a `''` key does claim a vault path,
+ *    which is what the `resources/.png` test pins;
  *  - `unserialize`'s blank-line branch, whose separator index may run one line
  *    late: the only line that joins `contentLines` is the blank one, and
  *    `normalizeBody` strips it. Its no-colon sibling is not equivalent —
  *    shifting that index drops a real body line, and the `key: value` boundary
- *    test reddens.
+ *    test reddens;
+ *  - `readTar` walking `offset - BLOCK`: reading on into a trailing partial
+ *    header yields no member either way, because that member's data would
+ *    start past the end of the archive. The comparison beside it is pinned —
+ *    tightening `<=` to `<` reddens the last-block test;
+ *  - a rewrite of a string that produces the same string — dropping the `+`
+ *    from `mimeToExt`'s global character-class replace, and rewriting its
+ *    `?? ''`, which like any other over-long subtype ends at `bin`.
  */
 
 import { describe, expect, it } from 'vitest'
@@ -61,18 +76,24 @@ interface TarMember {
   prefix?: string
   /** USTAR type-flag byte (offset 156); defaults to `'0'` (regular file). */
   typeflag?: number
+  /**
+   * Raw 12-byte size field (offset 124), for a header that pads its octal
+   * digits unusually; defaults to the conventional zero-padded, NUL-terminated
+   * encoding of `data.length`.
+   */
+  sizeField?: string
 }
 
 /** Build a minimal-but-valid USTAR archive from `{ name, data }` members. */
 function buildTar(members: TarMember[]): Uint8Array {
   const blocks: Uint8Array[] = []
-  for (const { name, data, prefix, typeflag } of members) {
+  for (const { name, data, prefix, typeflag, sizeField } of members) {
     const header = new Uint8Array(512)
     header.set(enc.encode(name).subarray(0, 100), 0)
     header.set(enc.encode('0000644\0'), 100) // mode
     header.set(enc.encode('0000000\0'), 108) // uid
     header.set(enc.encode('0000000\0'), 116) // gid
-    header.set(enc.encode(octalField(data.length, 12)), 124) // size
+    header.set(enc.encode(sizeField ?? octalField(data.length, 12)), 124) // size
     header.set(enc.encode('00000000000\0'), 136) // mtime
     header[156] = typeflag ?? 0x30 // typeflag '0' (regular file)
     header.set(enc.encode('ustar\0'), 257)
@@ -493,6 +514,44 @@ describe('parseJex resource naming', () => {
     ])
   })
 
+  it('ignores a resource member whose name is an extension and no id', () => {
+    // `resources/.png` carries no id for a `:/<32-hex>` ref to reach, so it is
+    // no resource at all — and it must not claim `.png` ahead of the resource
+    // that a note does embed, whose bytes would then land at a renamed path.
+    const id = '8d'.repeat(16)
+    const archive = buildTar([
+      itemMember(
+        EMBEDDER_ID,
+        joplinItem(`Embedder\n\n![r](:/${id})`, { id: EMBEDDER_ID, parent_id: '', type_: '1' }),
+      ),
+      { name: 'resources/.png', data: new Uint8Array([0]) },
+      itemMember(
+        id,
+        joplinItem('.png', { id, mime: 'image/png', file_extension: 'png', type_: '4' }),
+      ),
+      { name: `resources/${id}.png`, data: HELLO_BYTES },
+    ])
+    expect(parseJex(archive).notes[0]?.markdown).toBe('![r](.png)')
+  })
+
+  it('takes a resource name only from a `type_: 4` item', () => {
+    // Tags and note-tag links carry a title line too. Reading one as resource
+    // metadata would let it name a vault file; the tag here shares the
+    // resource's id, so that shows.
+    const shared = 'bd'.repeat(16)
+    const noteId = 'ce'.repeat(16)
+    const archive = buildTar([
+      itemMember(
+        noteId,
+        joplinItem(`Tagged\n\n![r](:/${shared})`, { id: noteId, parent_id: '', type_: '1' }),
+      ),
+      itemMember(shared, joplinItem('holiday', { id: shared, type_: '5' })),
+      { name: `resources/${shared}.png`, data: HELLO_BYTES },
+    ])
+    const { notes } = parseJex(archive)
+    expect(notes[0]?.attachments.map((a) => a.path)).toEqual([`${shared}.png`])
+  })
+
   it('ships one attachment per distinct resource however often a note embeds it', () => {
     const first = '8a'.repeat(16)
     const second = '9b'.repeat(16)
@@ -631,6 +690,27 @@ describe('parseJex malformed item and header shapes', () => {
     )
     const archive = buildTar([{ ...item, typeflag: 0x00 }])
     expect(parseJex(archive).notes.map((n) => n.title)).toEqual(['Old Format'])
+  })
+
+  it('takes the octal digits of a size field however it is padded', () => {
+    // A USTAR numeric field is octal digits inside a fixed 12 bytes, padded
+    // with NULs and/or spaces. A pad byte read as part of the number instead of
+    // stepped over cuts the size short — at these two placements, to zero — and
+    // a member whose size reads as zero hands over no bytes at all: the note
+    // disappears from the import rather than arriving.
+    const padded = (id: string, title: string, pad: (digits: string) => string): TarMember => {
+      const data = enc.encode(joplinItem(title, { id, parent_id: '', type_: '1' }))
+      return { name: `${id}.md`, data, sizeField: pad(data.length.toString(8)) }
+    }
+    const archive = buildTar([
+      // Right-aligned digits, NUL-padded rather than zero-padded on the left.
+      padded('1e'.repeat(16), 'Nul Padded', (d) => `${'\0'.repeat(11 - d.length)}${d}\0`),
+      // A space sitting inside the leading zero padding.
+      padded('2e'.repeat(16), 'Space Padded', (d) => `000 ${d.padStart(7, '0')}\0`),
+    ])
+    const { notes, skipped } = parseJex(archive)
+    expect(notes.map((n) => n.title)).toEqual(['Nul Padded', 'Space Padded'])
+    expect(skipped).toBe(0)
   })
 })
 
