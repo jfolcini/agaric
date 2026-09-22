@@ -182,7 +182,7 @@ The non-obvious ones — duplicates of rules stated above are intentionally omit
 - **Hover-reveal buttons block clicks underneath** when `opacity-0` — toggle `pointer-events-{none,auto}` on every visibility trigger.
 - **DnD mobile sensor.** The long-press delay is deliberate. Don't switch mobile to the distance sensor — every scroll would become a drag.
 - **Map merge order.** `new Map([...stale, ...fresh])` — fresh must spread last so it wins on conflict.
-- **Property type initialisation must be type-aware.** Use `buildInitParams()` in `property-save-utils.ts`. Sending `valueText: ''` for a number / date / ref / select property silently fails.
+- **Property type initialisation must be type-aware.** Use `buildInitParams()` in `property-save-utils.ts`. It returns `null` for the `DRAFT_ROW_VALUE_TYPES` (text / select / url), which have no valid empty initializer, so the caller opens a draft row instead of sending `valueText: ''`, which the backend refuses.
 - **Filters use names, not ULIDs.** Resolve via `TagValuePicker` / `queryTag()`.
 - **SVG interactive elements need explicit keyboard support.** `tabindex="0"`, `role="button"`, `keydown` handlers for Enter / Space. For touch, add an invisible larger hit area.
 - **Dynamic `aria-label` on toggle buttons.** Expand/collapse icons change meaning; the label must reflect the current state.
