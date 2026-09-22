@@ -26,7 +26,7 @@ export interface UsePropertyDefForEditReturn {
   setRefSearch: (search: string) => void
   /**
    * The value type of the property definition currently being edited
-   * (`'text' | 'number' | 'date' | 'select' | 'ref' | 'boolean'`), or `null`
+   * (`'text' | 'number' | 'date' | 'select' | 'ref' | 'boolean' | 'url'`), or `null`
    * when no type has been resolved *for the current key* — i.e. nothing is
    * being edited, or the `getPropertyDef(editingProp.key)` lookup is still in
    * flight. A lookup that MISSES resolves to `'text'`, not `null`; `null`

@@ -270,7 +270,7 @@ export function BlockPropertyDrawer({
   )
 
   // #2656 — save wrapper for editable value rows. For a not-yet-persisted
-  // DRAFT (text/select) row, an empty value means "nothing entered": drop the
+  // DRAFT (text/select/url) row, an empty value means "nothing entered": drop the
   // draft locally without a backend call (an empty `value_text` would be
   // rejected). A non-empty value clears the draft flag and persists via the
   // shared save hook (the reload then replaces the draft with the stored row).
