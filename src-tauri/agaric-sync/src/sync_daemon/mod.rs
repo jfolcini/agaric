@@ -414,6 +414,9 @@ impl SyncDaemon {
             event_sink,
             cancel,
             lifecycle: LifecycleHooks::default(),
+            // Test entry point (production goes through the `_with_lifecycle`
+            // variant); the internet fallback (#4549) is an app-level setting.
+            internet_relay: false,
         })
         .await
     }
@@ -581,6 +584,9 @@ impl SyncDaemon {
             event_sink,
             cancel,
             lifecycle: LifecycleHooks::default(),
+            // Test entry point (production goes through the `_with_lifecycle`
+            // variant); the internet fallback (#4549) is an app-level setting.
+            internet_relay: false,
         })
         .await
     }

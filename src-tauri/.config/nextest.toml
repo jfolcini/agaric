@@ -52,6 +52,13 @@ filter = 'binary_id(agaric-sync) and test(=transport::endpoint::tests::lan_only_
 platform = { host = 'cfg(unix)' }
 setup = "iroh-no-proxy-unix"
 
+# #4549 — the relay guard's positive half is the same relay-hostname lookup the
+# control above relies on, so it gets the same bypass.
+[[profile.default.scripts]]
+filter = 'binary_id(agaric-sync) and test(=transport::endpoint::tests::relay_endpoint_resolves_only_the_pinned_relay)'
+platform = { host = 'cfg(unix)' }
+setup = "iroh-no-proxy-unix"
+
 [[profile.default.scripts]]
 filter = 'binary_id(agaric-sync) and test(=transport::endpoint::tests::lan_only_endpoint_resolves_no_hostnames)'
 platform = { host = 'cfg(windows)' }
@@ -59,6 +66,11 @@ setup = "iroh-no-proxy-windows"
 
 [[profile.default.scripts]]
 filter = 'binary_id(agaric-sync) and test(=transport::endpoint::tests::lan_only_endpoint_never_looks_for_a_relay)'
+platform = { host = 'cfg(windows)' }
+setup = "iroh-no-proxy-windows"
+
+[[profile.default.scripts]]
+filter = 'binary_id(agaric-sync) and test(=transport::endpoint::tests::relay_endpoint_resolves_only_the_pinned_relay)'
 platform = { host = 'cfg(windows)' }
 setup = "iroh-no-proxy-windows"
 

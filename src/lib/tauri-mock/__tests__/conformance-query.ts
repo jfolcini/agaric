@@ -397,6 +397,14 @@ const REMINDER_SETTINGS_TOKEN = {
   attrKeys: ['enabled', 'time'],
 } as const
 
+/** The `SyncRelaySettings` struct (#4549): no id, so a fixed head. MUST match
+ *  the `get_sync_relay_settings` arm in the Rust twin. */
+const SYNC_RELAY_SETTINGS_TOKEN = {
+  kind: 'headed',
+  head: 'sync_relay_settings',
+  attrKeys: ['enabled'],
+} as const
+
 /** The `CompactionStatus` struct (#5057): no id, so a fixed head.
  *  `oldest_op_date` is deliberately absent — it is `MIN(op_log.created_at)`,
  *  a clock read during the replay. MUST match the `get_compaction_status` arm
@@ -712,6 +720,13 @@ const WIRE: Readonly<Record<string, WireShape>> = {
   get_reminder_settings: {
     rows: { kind: 'bare-row' },
     token: REMINDER_SETTINGS_TOKEN,
+    hasMoreKey: null,
+    totalKey: null,
+  },
+  // #4549 — same shape as the reminder pair, one `app_settings` row.
+  get_sync_relay_settings: {
+    rows: { kind: 'bare-row' },
+    token: SYNC_RELAY_SETTINGS_TOKEN,
     hasMoreKey: null,
     totalKey: null,
   },

@@ -481,6 +481,7 @@ mod tests {
             &[],
             DnsResolver::default(),
             iroh::SecretKey::generate(),
+            None,
         )
         .await
         .expect("a loopback /8 sync service binds");
@@ -510,6 +511,7 @@ mod tests {
                 &decision.host_addrs(),
                 DnsResolver::default(),
                 iroh::SecretKey::generate(),
+                None,
             )
             .await
             .expect("endpoint binds");

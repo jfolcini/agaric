@@ -174,10 +174,12 @@ pub use spaces::{
     create_space_inner, list_spaces, list_spaces_inner, list_spaces_registry_inner,
 };
 pub use sync_cmds::{
-    cancel_pairing, cancel_pairing_inner, cancel_sync, cancel_sync_inner, confirm_pairing,
-    confirm_pairing_inner, delete_peer_ref, delete_peer_ref_inner, get_bind_exposure_status,
-    get_device_id, get_device_id_inner, get_mdns_status, get_os_network_block_status,
-    list_peer_refs, list_peer_refs_inner, set_peer_address, set_peer_address_inner, start_pairing,
+    SyncRelaySettings, cancel_pairing, cancel_pairing_inner, cancel_sync, cancel_sync_inner,
+    confirm_pairing, confirm_pairing_inner, delete_peer_ref, delete_peer_ref_inner,
+    get_bind_exposure_status, get_device_id, get_device_id_inner, get_mdns_status,
+    get_os_network_block_status, get_sync_relay_settings, get_sync_relay_settings_inner,
+    list_peer_refs, list_peer_refs_inner, set_peer_address, set_peer_address_inner,
+    set_sync_relay_settings, set_sync_relay_settings_inner, start_pairing,
     start_pairing_armed_inner, start_pairing_inner, start_sync, start_sync_inner, update_peer_name,
     update_peer_name_inner,
 };

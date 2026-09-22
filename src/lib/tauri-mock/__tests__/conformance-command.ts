@@ -156,6 +156,8 @@ const RETURN_SHAPE: Readonly<Record<string, ReturnShape>> = {
   update_peer_name: { idKey: HEADED_ID_KEY, attrs: [], lists: [] },
   set_peer_address: { idKey: HEADED_ID_KEY, attrs: [], lists: [] },
   set_reminder_settings: { idKey: HEADED_ID_KEY, attrs: [], lists: [] },
+  // #4549 — one `app_settings` row, observed by `get_sync_relay_settings`.
+  set_sync_relay_settings: { idKey: HEADED_ID_KEY, attrs: [], lists: [] },
   delete_property_def: { idKey: HEADED_ID_KEY, attrs: [], lists: [] },
   // #5057 — the two attachment writers that need no blob. `attachments` is
   // outside the snapshot's five arrays, so `list_attachments` observes them.

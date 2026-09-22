@@ -195,6 +195,7 @@ impl ServiceHarness {
             &[],
             DnsResolver::custom(RecordingResolver::new()),
             SecretKey::generate(),
+            None,
         )
         .await
         .expect("a loopback /8 sync service binds");
