@@ -33,7 +33,7 @@ npx vitest run -t "splitBlock" # one name pattern
 
 npm run test:e2e               # playwright — builds and serves the app itself
 npm run test:e2e:ui            # playwright interactive UI
-npm run test:e2e-tauri         # WebdriverIO against the real Tauri binary (weekly CI)
+npm run test:e2e-tauri         # WebdriverIO against the real Tauri binary (per-PR + weekly CI, gates nothing)
 npm run test:e2e-android       # adb against a CONNECTED device — manual, never run by CI
 npm run mutation               # Stryker mutation run (stryker.config.mjs)
 ```

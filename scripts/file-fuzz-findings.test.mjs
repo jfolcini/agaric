@@ -17,7 +17,7 @@ import {
   allTargetsClean,
   buildFindings,
   buildIssueBody,
-  isRunShapeFinding,
+  isRetestedEachRun,
   main,
   parseKnownDetails,
   parseKnownFindings,
@@ -80,11 +80,14 @@ void test('every target passing is the only shape that counts as clean', () => {
 })
 
 /** Drives `main` in dry-run against a temp result dir, returning its stdout lines. */
-function runMain({ statuses, jobStatus, knownIds = [], knownBody }) {
+function runMain({ statuses, jobStatus, knownIds = [], knownBody, logs = {} }) {
   const dir = mkdtempSync(join(tmpdir(), 'fuzz-findings-test-'))
   writeFileSync(join(dir, 'targets.txt'), `${Object.keys(statuses).join('\n')}\n`)
   for (const [target, status] of Object.entries(statuses)) {
     writeFileSync(join(dir, `${target}.status`), `${status}\n`)
+  }
+  for (const [target, log] of Object.entries(logs)) {
+    writeFileSync(join(dir, `${target}.log`), log)
   }
   // An EMPTY `knownIds` writes no file at all: `--known-body-file` reads a
   // missing path as "no tracking issue yet", which is the shape that decides
@@ -152,18 +155,21 @@ void test('a clean run whose issue tracks only a live finding leaves it untouche
   assert.ok(!lines.some((l) => l.includes('would CLOSE') || l.includes('would CLEAR')))
 })
 
-void test('only findings about the run are ones a clean run disproves', () => {
-  assert.equal(isRunShapeFinding('[not-run] fts_strip: target never executed'), true)
+void test('a run re-tests the run-shape and build claims, and no other kind', () => {
+  assert.equal(isRetestedEachRun('[not-run] fts_strip: target never executed'), true)
   assert.equal(
-    isRunShapeFinding('[lane] fuzz job ended as "failure" and produced no result artifact'),
+    isRetestedEachRun('[lane] fuzz job ended as "failure" and produced no result artifact'),
     true,
   )
+  // Compiled from scratch every week, so a run that reported any status for the
+  // target has re-answered this.
+  assert.equal(isRetestedEachRun("[build] fts_strip: error[E0463]: can't find crate"), true)
   // A reproducer lives in `artifacts/` and is never re-executed, so a quiet
   // run is not evidence the bug is gone.
-  assert.equal(isRunShapeFinding('[crash] html_parse: crash-abc123'), false)
-  assert.equal(isRunShapeFinding("[build] fts_strip: error[E0463]: can't find crate"), false)
-  assert.equal(isRunShapeFinding('[timeout] import_parse: timeout-abc123'), false)
-  assert.equal(isRunShapeFinding('[failed] deeplink_parse: exited non-zero'), false)
+  assert.equal(isRetestedEachRun('[crash] html_parse: crash-abc123'), false)
+  assert.equal(isRetestedEachRun('[timeout] import_parse: timeout-abc123'), false)
+  // An unrecognised status says nothing either way; retained conservatively.
+  assert.equal(isRetestedEachRun('[failed] deeplink_parse: exited non-zero'), false)
 })
 
 void test('a clean run with no tracking issue at all never reaches the close', () => {
@@ -265,4 +271,100 @@ void test('parseKnownDetails reads a body without details as empty rather than t
   assert.equal(parseKnownDetails('### Details\n\n_Details omitted (too long)._').size, 0)
   assert.equal(parseKnownDetails('').size, 0)
   assert.equal(parseKnownDetails(undefined).size, 0)
+})
+
+// The update path is the tracked set's other write, and it used to rewrite the
+// block with this run's findings alone — so any week with a new finding dropped
+// every earlier `[crash]`, its reproduce command and its excerpt, silently.
+
+void test('a new finding does not drop the crash this run said nothing about', () => {
+  const detail =
+    'Reproducer `src-tauri/fuzz/artifacts/html_parse/crash-abc123`.\n\n==1== ERROR: libFuzzer: deadly signal'
+  const known = buildIssueBody({
+    all: [CRASH_ID],
+    newOnes: [],
+    resolvedOnes: [],
+    byId: new Map([[CRASH_ID, { id: CRASH_ID, detail }]]),
+  })
+  const body = dryRunBody(
+    runMain({
+      statuses: { fts_strip: 'not_run', html_parse: 'ok' },
+      jobStatus: 'failure',
+      knownBody: known,
+    }),
+  )
+  assert.deepEqual([...parseKnownFindings(body)], [CRASH_ID, LOST_ID].toSorted())
+  assert.ok(body.includes(detail), `the retained crash lost its reproducer:\n${body}`)
+  // "Resolved since last run" names what left the block, so a retained line is
+  // not one of them.
+  assert.ok(!body.includes('### Resolved since last run'), `crash reported resolved:\n${body}`)
+})
+
+void test('a [not-run] line the run disproved leaves the block as a new finding lands', () => {
+  // The other arm: `fts_strip` ran, so its line is the one claim this run did
+  // settle, and it must go — a stale id is a dedup key that swallows its own
+  // recurrence (#5112).
+  const body = dryRunBody(
+    runMain({
+      statuses: { fts_strip: 'ok', html_parse: 'crashed' },
+      jobStatus: 'failure',
+      knownIds: [LOST_ID],
+    }),
+  )
+  assert.deepEqual([...parseKnownFindings(body)], ['[crash] html_parse: reproducer not captured'])
+  assert.ok(
+    body.includes('### Resolved since last run (1)') && body.includes(LOST_ID),
+    `the dropped line must be reported as resolved:\n${body}`,
+  )
+})
+
+void test('a build error the next run did not reproduce leaves the block', () => {
+  // Week 1 files E0432. Week 2 the import is fixed and a different error lands,
+  // so the target re-answered its own build claim: E0432 must go, or week 3's
+  // recurrence hits it as a dedup key and reports nothing (#5112's shape, in
+  // the one category the reproducer argument does not cover).
+  const E0432 = '[build] html_parse: error[E0432]: unresolved import `foo`'
+  const week2 = dryRunBody(
+    runMain({
+      statuses: { fts_strip: 'ok', html_parse: 'build_failed' },
+      jobStatus: 'failure',
+      logs: { html_parse: 'error[E0599]: no method named `bar`\n' },
+      knownIds: [E0432],
+    }),
+  )
+  assert.deepEqual(
+    [...parseKnownFindings(week2)],
+    ['[build] html_parse: error[E0599]: no method named `bar`'],
+    `E0432 should have left the block:\n${week2}`,
+  )
+
+  // Week 3: E0432 recurs against a block that no longer holds it, so it is new.
+  const week3 = runMain({
+    statuses: { fts_strip: 'ok', html_parse: 'build_failed' },
+    jobStatus: 'failure',
+    logs: { html_parse: 'error[E0432]: unresolved import `foo`\n' },
+    knownIds: [...parseKnownFindings(week2)],
+  })
+  assert.ok(
+    week3.some((l) => l.startsWith('[dry-run] new findings: 1,')),
+    `the recurrence must be reported, got:\n${week3.join('\n')}`,
+  )
+  assert.ok(week3[week3.indexOf('[dry-run] --- new-finding comment ---') + 1].includes(E0432))
+})
+
+void test('a cancelled run clears nothing, because it disproved nothing', () => {
+  // The `allTargetsClean` gate on the clear/close branch, which nothing else
+  // pins: #5110 has `buildFindings` suppress a cancelled run's `not_run`
+  // findings, so `[not-run] fts_strip` is absent from `current` for a reason
+  // that is not evidence. Without the gate it reads as resolved and is cleared.
+  const lines = runMain({
+    statuses: { fts_strip: 'not_run', html_parse: 'not_run' },
+    jobStatus: 'cancelled',
+    knownIds: [LOST_ID, CRASH_ID],
+  })
+  assert.ok(
+    lines.some((l) => l.startsWith('no new fuzz findings')),
+    `expected a no-op, got:\n${lines.join('\n')}`,
+  )
+  assert.ok(!lines.some((l) => l.includes('would CLEAR') || l.includes('would CLOSE')))
 })

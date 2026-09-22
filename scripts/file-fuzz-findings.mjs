@@ -374,10 +374,10 @@ const DETAIL_BLOCK =
 
 /**
  * The details `renderDetails` wrote for each tracked finding, read back out of a
- * tracking-issue body. A clean run that clears only part of the tracked set
- * (#5112) rewrites the body around ids it found nothing about, so this is the
- * only surviving copy of a retained `[crash]`'s reproduce command and log
- * excerpt. Values are finding-shaped, so the map is a `byId` as it stands.
+ * tracking-issue body. Every write rewrites the body around ids this run found
+ * nothing about (#5112), so this is the only surviving copy of a retained
+ * `[crash]`'s reproduce command and log excerpt. Values are finding-shaped, so
+ * the map is a `byId` as it stands.
  *
  * A body whose details section either clamp dropped simply matches nothing.
  */
@@ -393,14 +393,29 @@ export function parseKnownDetails(body) {
 }
 
 /**
+ * This run's findings merged INTO the tracked set, never replacing it: `all` is
+ * the script's only cross-run memory, and a run that did not reproduce a
+ * `[crash]` has not disproved it (`isRetestedEachRun`). `resolvedOnes` is what
+ * actually left the block. `knownById` carries a retained finding's details
+ * forward, since this run saw nothing to describe it with.
+ *
  * @param {{ id: string }[]} current
  * @param {Set<string>} known
+ * @param {Map<string, { id: string, detail: string }>} knownById
  */
-export function diffFindings(current, known) {
-  const byId = new Map(current.map((f) => [f.id, f]))
-  const newOnes = [...byId.keys()].filter((id) => !known.has(id)).toSorted()
-  const resolvedOnes = [...known].filter((id) => !byId.has(id)).toSorted()
-  return { newOnes, resolvedOnes, all: [...byId.keys()].toSorted(), byId }
+export function diffFindings(current, known, knownById) {
+  const byId = new Map([...knownById, ...current.map((f) => [f.id, f])])
+  const currentIds = new Set(current.map((f) => f.id))
+  // Absent from `current` does not always mean settled — see `buildFindings` on
+  // a cancelled run — so the clear/close branch gates on `allTargetsClean`.
+  const retained = [...known].filter((id) => !isRetestedEachRun(id))
+  const all = new Set([...currentIds, ...retained])
+  return {
+    newOnes: [...currentIds].filter((id) => !known.has(id)).toSorted(),
+    resolvedOnes: [...known].filter((id) => !all.has(id)).toSorted(),
+    all: [...all].toSorted(),
+    byId,
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -593,16 +608,22 @@ export function allTargetsClean(results) {
 }
 
 /**
- * Findings a clean run disproves: `[not-run]` and `[lane]` are claims about the
- * run, which every target executing and passing negates. The rest are claims
- * about the code, and a quiet run is no evidence against one — libFuzzer saves a
- * reproducer under `artifacts/`, not into the corpus, so the next run never
- * re-executes it and a `[crash]` can go quiet with the bug intact.
+ * Whether a run re-tests this claim, and so settles it by not re-filing it.
+ * `[not-run]` and `[lane]` are claims about the run itself; `[build]` joins them
+ * because every target is COMPILED from scratch each week, so a build error is
+ * re-derived rather than remembered. `[crash]` and `[timeout]` are not — a
+ * reproducer lives under `artifacts/`, not in the corpus, so the next run never
+ * re-executes it and a `[crash]` can go quiet with the bug intact. `[failed]`
+ * is an unrecognised status, retained on the conservative side.
+ *
+ * Per KIND, not per target: a `[build]` line for a target that ended `not_run`
+ * is cleared by a run that never rebuilt it, and re-filed by the next one that
+ * does.
  *
  * @param {string} id
  */
-export function isRunShapeFinding(id) {
-  return id.startsWith('[not-run] ') || id.startsWith('[lane] ')
+export function isRetestedEachRun(id) {
+  return id.startsWith('[not-run] ') || id.startsWith('[lane] ') || id.startsWith('[build] ')
 }
 
 /**
@@ -622,9 +643,9 @@ export function isRunShapeFinding(id) {
  * key, so a stale `[not-run] fts_strip: …` line left in the block would swallow
  * the identical id from a future run that genuinely lost that target.
  *
- * Scoped to the findings a clean run actually disproves (`isRunShapeFinding`);
- * a tracked `[crash]` or `[build]` line keeps the issue open, because closing on
- * one would announce a bug as fixed and put the record somewhere nobody
+ * Scoped to the findings a clean run actually disproves (`isRetestedEachRun`);
+ * a tracked `[crash]` or `[timeout]` line keeps the issue open, because closing
+ * on one would announce a bug as fixed and put the record somewhere nobody
  * re-reads. That mixed set is `clearDisprovedFindings`'.
  */
 function closeResolvedIssue({ args, repo, existingIssue, resolvedOnes, results, runUrl }) {
@@ -663,27 +684,23 @@ function closeResolvedIssue({ args, repo, existingIssue, resolvedOnes, results, 
  *
  * Body only: no comment, no close. A line the run disproved is not a finding,
  * and nobody needs a notification about one going away.
- *
- * The details come from the OLD body, because a clean run produced no findings
- * of its own: a retained `[crash]` whose reproduce command and log excerpt were
- * not carried forward would keep its line and silently lose everything a human
- * reading it needs.
  */
 function clearDisprovedFindings({
   args,
   repo,
   existingIssue,
-  retained,
+  all,
   disproved,
+  byId,
   results,
   runUrl,
 }) {
-  const summary = `${disproved.length} finding(s) disproved by a clean run and cleared: ${disproved.join(', ')}; ${retained.length} still tracked`
+  const summary = `${disproved.length} finding(s) disproved by a clean run and cleared: ${disproved.join(', ')}; ${all.length} still tracked`
   const body = buildIssueBody({
-    all: retained,
+    all,
     newOnes: [],
     resolvedOnes: disproved,
-    byId: parseKnownDetails(existingIssue.body),
+    byId,
     results,
     runUrl,
   })
@@ -827,18 +844,31 @@ export function main(argv = process.argv.slice(2)) {
   }
 
   const known = parseKnownFindings(existingIssue?.body)
-  const { newOnes, resolvedOnes, all, byId } = diffFindings(current, known)
+  const { newOnes, resolvedOnes, all, byId } = diffFindings(
+    current,
+    known,
+    parseKnownDetails(existingIssue?.body),
+  )
 
   if (newOnes.length === 0) {
     // No `current.length === 0` here: every target reporting `ok` already means
     // `buildFindings` returned nothing, so the check could never fail.
-    const disproved = allTargetsClean(results) ? resolvedOnes.filter(isRunShapeFinding) : []
-    if (disproved.length > 0) {
-      const retained = resolvedOnes.filter((id) => !isRunShapeFinding(id))
-      if (retained.length === 0) {
+    if (allTargetsClean(results) && resolvedOnes.length > 0) {
+      // `all` is the retained set: a clean run has no findings of its own, so
+      // `diffFindings` filled it with exactly the known lines it did not disprove.
+      if (all.length === 0) {
         closeResolvedIssue({ args, repo, existingIssue, resolvedOnes, results, runUrl })
       } else {
-        clearDisprovedFindings({ args, repo, existingIssue, retained, disproved, results, runUrl })
+        clearDisprovedFindings({
+          args,
+          repo,
+          existingIssue,
+          all,
+          disproved: resolvedOnes,
+          byId,
+          results,
+          runUrl,
+        })
       }
       return
     }
