@@ -104,6 +104,33 @@ presenting `gh workflow run` as the only way to reach CI.
 The caveat does not disappear until the lane is a required context, which is
 the half of item 2 that remains.
 
+## The sweep's own follow-up
+
+Seven non-blocking notes across the three PRs, batched into one PR rather than
+seven pushes onto approved green branches. Four were the same note — the
+reviewer flagged over-commenting on every PR of this sweep, which makes it one
+finding about how these CI comments get written, not three slips. The audit
+wrapper's header argued at length against the two options from #5089 that are
+not in the tree, which is the clearest form of the mistake: a file explaining a
+decision instead of itself.
+
+One was not a comment. `diffFindings` wrote the marker block as this run's
+findings alone, so the next run with any new finding dropped every tracked
+`[crash]` — the same defect this session had just fixed on the clean-run path,
+sitting in the other write path all along. Fixing it had a trap worth recording:
+once `resolvedOnes` stops carrying the non-run-shape ids, the clean-run branch's
+own derivation of its retained set yields empty, and that branch then CLOSES an
+issue holding a live crash. Two guards, each correct alone, wrong together. The
+test #5112 shipped catches it, which is the argument for having written it.
+
+That fix stops short of one case, deliberately. A run that is neither clean nor
+carrying a new finding writes nothing, so a settled `[not-run]` can persist
+through it. Closing that means replacing the `allTargetsClean` gate — and that
+gate is what stops a CANCELLED run from clearing a `[not-run]` line nothing
+disproved, because #5110 has `buildFindings` suppress those exact findings on a
+cancellation. The same cancelling-guards shape pointing the other way, so it was
+left alone rather than opportunistically widened.
+
 ## What the three have in common
 
 Each carried a comment that had become false about its own behaviour —
