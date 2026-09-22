@@ -1185,7 +1185,7 @@ async fn reproject_property_row_from_engine(
                 "boolean" => value_bool = Some(i64::from(s == "true")),
                 "date" => value_date = Some(s.as_str()),
                 "ref" => value_ref = Some(s.as_str()),
-                // "select" | "text" | anything unrecognised → text column.
+                // "select" | "text" | "url" | anything unrecognised → text column.
                 _ => value_text = Some(s.as_str()),
             }
         }

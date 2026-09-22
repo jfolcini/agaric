@@ -400,6 +400,34 @@ describe('AddPropertyPopover', () => {
     expect(onCreateDef).toHaveBeenCalledWith('newfield', 'text')
   })
 
+  // #4710 — a `url` definition is declared from this popover; the selected
+  // type has to reach `onCreateDef` verbatim or the definition lands as text.
+  it('creates a url definition through onCreateDef', async () => {
+    const user = userEvent.setup()
+    const onCreateDef = vi.fn()
+    render(
+      <AddPropertyPopover
+        definitions={[]}
+        onAdd={vi.fn()}
+        supportCreateDef
+        onCreateDef={onCreateDef}
+        open
+        onOpenChange={vi.fn()}
+      />,
+    )
+
+    await waitFor(() => {
+      expect(screen.getByLabelText('Search definitions')).toBeInTheDocument()
+    })
+    await user.type(screen.getByLabelText('Search definitions'), 'homepage')
+    await user.click(screen.getByText(/Create "homepage"/))
+
+    await user.selectOptions(await screen.findByLabelText('Value type'), 'url')
+    await user.click(screen.getByRole('button', { name: /create definition/i }))
+
+    expect(onCreateDef).toHaveBeenCalledWith('homepage', 'url')
+  })
+
   it('displays formatted property names', async () => {
     const defs = [makeDef('created_at', 'date'), makeDef('my_custom_prop', 'text')]
     render(<AddPropertyPopover definitions={defs} onAdd={vi.fn()} open onOpenChange={vi.fn()} />)

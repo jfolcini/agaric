@@ -13,6 +13,7 @@ Every block in Agaric can carry typed properties. Some properties are built in (
 | **Boolean** | Toggle. |
 | **Select** | Pick one of a fixed list of options; the option list lives on the property definition (edit via the property drawer). |
 | **Ref** | Reference to another page; resolved by ULID so renames don't break it. |
+| **URL** | Declares that a key holds a link. Stored and edited as text — that is all the engine enforces. Opening is decided by the value, not the declaration: any property value that parses as `http`, `https` or `mailto` gets an open-link control on its inline chip, whatever its declared type. |
 
 Properties are defined once (key + type + optional configuration like select options); thereafter you can set the property on any block via the **Property Drawer**, the slash menu, or by typing `key::` inline in the editor.
 

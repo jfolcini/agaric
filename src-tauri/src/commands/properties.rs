@@ -1299,10 +1299,10 @@ fn validate_property_def_shape(
     // Validate value_type
     if !matches!(
         value_type,
-        "text" | "number" | "date" | "select" | "ref" | "boolean"
+        "text" | "number" | "date" | "select" | "ref" | "boolean" | "url"
     ) {
         return Err(AppError::validation(format!(
-            "invalid value_type '{value_type}': must be text, number, date, select, ref, or boolean"
+            "invalid value_type '{value_type}': must be text, number, date, select, ref, boolean, or url"
         )));
     }
     // Validate options: required for select, forbidden for others
@@ -1352,6 +1352,8 @@ fn declared_type_admits_shape(value_type: &str, shape: &str) -> bool {
         "number" => shape == "number",
         "date" => shape == "date",
         "boolean" => shape == "boolean",
+        // A url is text with a link rendering, never a block reference.
+        "url" => shape == "text",
         _ => true,
     }
 }
@@ -2399,17 +2401,19 @@ mod declared_type_admits_shape_tests {
     /// "number"          => payload.value_num.is_some(),
     /// "date"            => payload.value_date.is_some(),
     /// "boolean"         => payload.value_bool.is_some(),
+    /// "url"             => payload.value_text.is_some(),
     /// ```
     ///
     /// Anything not listed for a type must be REFUSED — that half is the
     /// one that keeps #4382 shut, and the half falsification found open.
-    const MATRIX: [(&str, &[&str]); 6] = [
+    const MATRIX: [(&str, &[&str]); 7] = [
         ("text", &["text", "ref"]),
         ("select", &["text", "ref"]),
         ("ref", &["ref"]),
         ("number", &["number"]),
         ("date", &["date"]),
         ("boolean", &["boolean"]),
+        ("url", &["text"]),
     ];
 
     #[test]
@@ -2435,7 +2439,7 @@ mod declared_type_admits_shape_tests {
     /// `_ => true`, so a declared type the engine does not constrain
     /// conflicts with nothing — but it is fail-OPEN for any type the engine
     /// DOES constrain. The only way a *declarable* type reaches it is a
-    /// seventh `value_type` added to [`validate_property_def_shape`] and not
+    /// eighth `value_type` added to [`validate_property_def_shape`] and not
     /// to [`declared_type_admits_shape`].
     ///
     /// A named arm always refuses at least one shape; the catch-all refuses
@@ -2463,7 +2467,7 @@ mod declared_type_admits_shape_tests {
         }
     }
 
-    /// The other direction of staleness: a seventh declarable `value_type`
+    /// The other direction of staleness: an eighth declarable `value_type`
     /// that never reaches [`MATRIX`], and so is never asked the question
     /// above.
     ///
@@ -2481,7 +2485,7 @@ mod declared_type_admits_shape_tests {
         };
         assert_eq!(
             message,
-            "invalid value_type 'septenary': must be text, number, date, select, ref, or boolean",
+            "invalid value_type 'septenary': must be text, number, date, select, ref, boolean, or url",
             "the declarable-type set changed. Every type `validate_property_def_shape` accepts \
              needs a row in this module's MATRIX and a named arm in \
              `declared_type_admits_shape` — otherwise it falls through to the `_ => true` \

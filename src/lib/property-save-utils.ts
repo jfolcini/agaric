@@ -83,8 +83,16 @@ export const COLUMN_BACKED_PROPERTY_KEYS = new Set([
   'space',
 ])
 
-/** The six `value_type`s `create_property_def_inner` accepts. */
-const DEFINABLE_VALUE_TYPES = new Set(['text', 'number', 'date', 'select', 'ref', 'boolean'])
+/** The seven `value_type`s `create_property_def_inner` accepts. */
+const DEFINABLE_VALUE_TYPES = new Set(['text', 'number', 'date', 'select', 'ref', 'boolean', 'url'])
+
+/**
+ * Types with no valid empty initializer: the backend refuses an empty
+ * `value_text` (and, for `select`, any value outside the options), so adding
+ * one opens a local draft row instead of init-persisting a placeholder
+ * (#2656, #2792, #2804). `url` is text on the wire, so it is one of them.
+ */
+export const DRAFT_ROW_VALUE_TYPES: ReadonlySet<string> = new Set(['text', 'select', 'url'])
 
 /**
  * The `property_definitions` row a KEY RENAME should carry over to the new
@@ -126,6 +134,10 @@ export function carriedRenameDefinition(
       case 'text':
       case 'select': {
         return hasText || hasRef
+      }
+      // A URL is text, never a block reference — hence no `hasRef` arm.
+      case 'url': {
+        return hasText
       }
       case 'ref': {
         return hasRef
@@ -255,7 +267,8 @@ export function buildInitParams(
       return { blockId, key: def.key, valueDate: getTodayString() }
     }
     case 'text':
-    case 'select': {
+    case 'select':
+    case 'url': {
       return { blockId, key: def.key, valueText: '' }
     }
     case 'ref': {

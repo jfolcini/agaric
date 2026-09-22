@@ -39,7 +39,7 @@ import { LOCKED_PROPERTY_OPTIONS, NON_DELETABLE_PROPERTIES } from '@/lib/propert
 import { formatPropertyName } from '@/lib/property-utils'
 import { reportIpcError, reportIpcErrorWithReason } from '@/lib/report-ipc-error'
 
-const VALUE_TYPES = ['text', 'number', 'date', 'select', 'ref'] as const
+const VALUE_TYPES = ['text', 'number', 'date', 'select', 'ref', 'url'] as const
 
 export function PropertyDefinitionsList(): React.ReactElement {
   const { t } = useTranslation()

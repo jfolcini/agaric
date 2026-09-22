@@ -66,7 +66,15 @@ function setReservedColumnProperty(
 }
 
 /** The `value_type` vocabulary `validate_property_def_shape` matches on. */
-const PROPERTY_DEF_VALUE_TYPES = new Set(['text', 'number', 'date', 'select', 'ref', 'boolean'])
+const PROPERTY_DEF_VALUE_TYPES = new Set([
+  'text',
+  'number',
+  'date',
+  'select',
+  'ref',
+  'boolean',
+  'url',
+])
 
 /** `serde_json::from_str::<Vec<String>>`: anything but an array of strings is refused. */
 function parsePropertyDefOptions(options: string): string[] {
@@ -98,7 +106,7 @@ function validatePropertyDefShape(key: string, valueType: string, options: strin
   }
   if (!PROPERTY_DEF_VALUE_TYPES.has(valueType)) {
     throw validationRejection(
-      `invalid value_type '${valueType}': must be text, number, date, select, ref, or boolean`,
+      `invalid value_type '${valueType}': must be text, number, date, select, ref, boolean, or url`,
     )
   }
   if (valueType === 'select') {

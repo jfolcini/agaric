@@ -8,11 +8,13 @@
  *    preserves `scheme://`, `mailto:`, and `tel:` as-is, and returns
  *    `null` for empty / blocked input.
  *  - Round-trip: `isAllowedUrl(normalizeUrl(raw))` for a happy-path host.
+ *  - `isLinkablePropertyUrl` linkifies only parseable http/https/mailto
+ *    values, so a `url` property holding anything else stays plain text.
  */
 
 import { describe, expect, it } from 'vitest'
 
-import { isAllowedUrl, normalizeUrl } from '@/lib/url-validation'
+import { isAllowedUrl, isLinkablePropertyUrl, normalizeUrl } from '@/lib/url-validation'
 
 describe('isAllowedUrl', () => {
   it.each([
@@ -133,5 +135,36 @@ describe('normalizeUrl', () => {
     const normalised = normalizeUrl('  example.com/path  ')
     expect(normalised).toBe('https://example.com/path')
     expect(normalised && isAllowedUrl(normalised)).toBe(true)
+  })
+})
+
+// #4710 — `url` property values are stored verbatim (nothing is validated on
+// write), so this predicate is the only thing between stored text and a
+// clickable link in the property chip.
+describe('isLinkablePropertyUrl', () => {
+  it.each([
+    ['https://example.com'],
+    ['http://example.com/path?q=1#frag'],
+    ['HTTPS://EXAMPLE.COM'],
+    ['mailto:user@example.com'],
+    ['  https://example.com  '],
+  ])('linkifies %s', (value) => {
+    expect(isLinkablePropertyUrl(value)).toBe(true)
+  })
+
+  it.each([
+    ['notaurl'],
+    [''],
+    ['   '],
+    ['example.com'],
+    ['/relative/path'],
+    ['javascript:alert(1)'],
+    ['JavaScript:alert(1)'],
+    ['data:text/html,<script>alert(1)</script>'],
+    ['file:///etc/passwd'],
+    ['tel:+1234567890'],
+    ['ftp://files.example.com/readme.txt'],
+  ])('leaves %s as plain text', (value) => {
+    expect(isLinkablePropertyUrl(value)).toBe(false)
   })
 })

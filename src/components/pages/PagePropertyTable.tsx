@@ -21,7 +21,11 @@ import type { PropertyDefinition, PropertyRow } from '@/lib/bindings'
 import { commands } from '@/lib/bindings'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
-import { buildInitParams, NON_DELETABLE_PROPERTIES } from '@/lib/property-save-utils'
+import {
+  buildInitParams,
+  DRAFT_ROW_VALUE_TYPES,
+  NON_DELETABLE_PROPERTIES,
+} from '@/lib/property-save-utils'
 import { reportIpcError, reportIpcErrorWithReason } from '@/lib/report-ipc-error'
 
 // Properties designed for task blocks (content blocks with todo_state).
@@ -197,7 +201,7 @@ export function PagePropertyTable({ pageId, forceExpanded }: PagePropertyTablePr
   const handleAddFromDef = useCallback(
     async (def: PropertyDefinition) => {
       // #2792 — mirrors `BlockPropertyDrawer.handleAddFromDef` (#2656).
-      if (def.value_type === 'text' || def.value_type === 'select') {
+      if (DRAFT_ROW_VALUE_TYPES.has(def.value_type)) {
         addDraftRow(def)
         return
       }
@@ -229,9 +233,9 @@ export function PagePropertyTable({ pageId, forceExpanded }: PagePropertyTablePr
         const newDef = unwrap(await commands.createPropertyDef(key, valueType, null))
         setDefinitions((prev) => [...prev, newDef])
         // #2804 — same rationale as `handleAddFromDef`: a brand-new
-        // text/select def has no valid empty initializer, so add a draft
+        // text/select/url def has no valid empty initializer, so add a draft
         // row instead of init-persisting an empty `value_text`.
-        if (newDef.value_type === 'text' || newDef.value_type === 'select') {
+        if (DRAFT_ROW_VALUE_TYPES.has(newDef.value_type)) {
           addDraftRow(newDef)
           return
         }

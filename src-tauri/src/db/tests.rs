@@ -6618,3 +6618,94 @@ async fn block_links_0119_kind_derives_from_content_4551() {
          `((X))` present → block_ref (also when `[[X]]` is present too), otherwise page_link"
     );
 }
+
+/// #4710 — 0120 recreates `property_definitions` to widen the `value_type`
+/// CHECK. Every pre-existing declaration survives the copy, the table stays
+/// STRICT, `url` becomes insertable, and the set stays closed.
+#[tokio::test]
+async fn property_definitions_0120_allow_url_preserves_rows_and_admits_url_4710() {
+    let (pool, _dir) = unmigrated_pool().await;
+    apply_migrations_through(&pool, 0, 119).await;
+
+    sqlx::query(
+        "INSERT INTO property_definitions (key, value_type, options, created_at) VALUES \
+             ('k4710_text', 'text', NULL, '2026-01-01T00:00:00Z'), \
+             ('k4710_select', 'select', '[\"a\",\"b\"]', '2026-01-01T00:00:00Z'), \
+             ('k4710_bool', 'boolean', NULL, '2026-01-01T00:00:00Z')",
+    )
+    .execute(&pool)
+    .await
+    .expect("seed pre-0120 declarations");
+    sqlx::query(
+        "INSERT INTO property_definitions (key, value_type, options, created_at) \
+         VALUES ('k4710_early', 'url', NULL, '2026-01-01T00:00:00Z')",
+    )
+    .execute(&pool)
+    .await
+    .expect_err("pre-0120 the CHECK must refuse 'url'");
+    let before: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM property_definitions")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+
+    apply_migrations_to_head(&pool, 119).await;
+
+    let after: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM property_definitions")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(after, before, "0120 copies every row, seeds included");
+    let seeded: Vec<(String, String, Option<String>, String)> = sqlx::query_as(
+        "SELECT key, value_type, options, created_at FROM property_definitions \
+         WHERE key LIKE 'k4710_%' ORDER BY key",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        seeded,
+        vec![
+            (
+                "k4710_bool".to_owned(),
+                "boolean".to_owned(),
+                None,
+                "2026-01-01T00:00:00Z".to_owned()
+            ),
+            (
+                "k4710_select".to_owned(),
+                "select".to_owned(),
+                Some("[\"a\",\"b\"]".to_owned()),
+                "2026-01-01T00:00:00Z".to_owned()
+            ),
+            (
+                "k4710_text".to_owned(),
+                "text".to_owned(),
+                None,
+                "2026-01-01T00:00:00Z".to_owned()
+            ),
+        ],
+        "every column survives 0120 verbatim"
+    );
+    let strict: i64 = sqlx::query_scalar(
+        "SELECT strict FROM pragma_table_list WHERE name = 'property_definitions'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(strict, 1, "0120 keeps property_definitions STRICT (0043)");
+
+    sqlx::query(
+        "INSERT INTO property_definitions (key, value_type, options, created_at) \
+         VALUES ('k4710_url', 'url', NULL, '2026-01-01T00:00:00Z')",
+    )
+    .execute(&pool)
+    .await
+    .expect("0120 admits 'url'");
+    sqlx::query(
+        "INSERT INTO property_definitions (key, value_type, options, created_at) \
+         VALUES ('k4710_colour', 'colour', NULL, '2026-01-01T00:00:00Z')",
+    )
+    .execute(&pool)
+    .await
+    .expect_err("0120 keeps the value_type set closed");
+}

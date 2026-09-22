@@ -412,6 +412,9 @@ describe('PropertyDefinitionsList', () => {
     expect(typeSelect).toBeDefined()
     const optionValues = Array.from(typeSelect?.options ?? []).map((o) => o.value)
     expect(optionValues).toContain('ref')
+    // #4710 — a `url` definition is declarable from Settings too, not only
+    // from the page property table's Add-property popover.
+    expect(optionValues).toContain('url')
   })
 
   it('hides delete button on built-in properties and shows Built-in badge', async () => {
