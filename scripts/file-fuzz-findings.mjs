@@ -395,7 +395,7 @@ export function parseKnownDetails(body) {
 /**
  * This run's findings merged INTO the tracked set, never replacing it: `all` is
  * the script's only cross-run memory, and a run that did not reproduce a
- * `[crash]` has not disproved it (`isRunShapeFinding`). `resolvedOnes` is what
+ * `[crash]` has not disproved it (`isRetestedEachRun`). `resolvedOnes` is what
  * actually left the block. `knownById` carries a retained finding's details
  * forward, since this run saw nothing to describe it with.
  *
@@ -406,11 +406,12 @@ export function parseKnownDetails(body) {
 export function diffFindings(current, known, knownById) {
   const byId = new Map([...knownById, ...current.map((f) => [f.id, f])])
   const currentIds = new Set(current.map((f) => f.id))
-  // A cancelled run drops a tracked `[not-run]` it did not settle: #5110 has
-  // `buildFindings` suppress those rather than re-file them, so the id is
-  // absent from `current` for two different reasons. The next non-cancelled
-  // run re-files it, which is why this is not worth a job-status parameter.
-  const retained = [...known].filter((id) => !isRunShapeFinding(id))
+  // A cancelled run drops a retested line it did not settle: #5110 has
+  // `buildFindings` suppress `not_run` rather than re-file it, and a target cut
+  // short never re-answered its build claim either, so the id is absent from
+  // `current` for two different reasons. The next non-cancelled run re-files
+  // it, which is why this is not worth a job-status parameter.
+  const retained = [...known].filter((id) => !isRetestedEachRun(id))
   const all = new Set([...currentIds, ...retained])
   return {
     newOnes: [...currentIds].filter((id) => !known.has(id)).toSorted(),
@@ -610,16 +611,21 @@ export function allTargetsClean(results) {
 }
 
 /**
- * Findings a clean run disproves: `[not-run]` and `[lane]` are claims about the
- * run, which every target executing and passing negates. The rest are claims
- * about the code, and a quiet run is no evidence against one — libFuzzer saves a
- * reproducer under `artifacts/`, not into the corpus, so the next run never
- * re-executes it and a `[crash]` can go quiet with the bug intact.
+ * Whether a run re-tests this claim, and so settles it by not re-filing it.
+ * `[not-run]` and `[lane]` are claims about the run itself. `[build]` belongs
+ * with them because every target is COMPILED from scratch each week: a target
+ * that got as far as reporting any status has re-answered its own build claim,
+ * and a different error next week is a different finding.
+ *
+ * `[crash]` and `[timeout]` do not, and that is the whole asymmetry — libFuzzer
+ * saves a reproducer under `artifacts/`, not into the corpus, so the next run
+ * never re-executes it and the bug can go quiet with the bug intact. `[failed]`
+ * is an unrecognised status, so it is retained on the conservative side.
  *
  * @param {string} id
  */
-export function isRunShapeFinding(id) {
-  return id.startsWith('[not-run] ') || id.startsWith('[lane] ')
+export function isRetestedEachRun(id) {
+  return id.startsWith('[not-run] ') || id.startsWith('[lane] ') || id.startsWith('[build] ')
 }
 
 /**
@@ -639,9 +645,9 @@ export function isRunShapeFinding(id) {
  * key, so a stale `[not-run] fts_strip: …` line left in the block would swallow
  * the identical id from a future run that genuinely lost that target.
  *
- * Scoped to the findings a clean run actually disproves (`isRunShapeFinding`);
- * a tracked `[crash]` or `[build]` line keeps the issue open, because closing on
- * one would announce a bug as fixed and put the record somewhere nobody
+ * Scoped to the findings a clean run actually disproves (`isRetestedEachRun`);
+ * a tracked `[crash]` or `[timeout]` line keeps the issue open, because closing
+ * on one would announce a bug as fixed and put the record somewhere nobody
  * re-reads. That mixed set is `clearDisprovedFindings`'.
  */
 function closeResolvedIssue({ args, repo, existingIssue, resolvedOnes, results, runUrl }) {
