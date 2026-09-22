@@ -1462,10 +1462,7 @@ verbose = true
 # pre-commit-stage only), so CI must invoke it explicitly with
 # `--hook-stage pre-push npm-audit` (see .github/workflows/_validate.yml);
 # `npm audit signatures` there is a different, warn-only provenance check.
-# That CI step is blocking and feeds the required `validate-all` context, so
-# the same registry round-trip gates every merge: the wrapper retries with
-# backoff (#5089) so a single `ECONNRESET` no longer reds `main`, while a real
-# advisory still fails every attempt and blocks.
+# That CI step is blocking, so the wrapper retries with backoff (#5089).
 # WHY: known-vulnerable npm dependencies — standard toolchain lane (#817, #1087)
 [[repos]]
 repo = "local"

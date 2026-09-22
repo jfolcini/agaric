@@ -9,10 +9,6 @@
 # (`branch-protection-assert.yml` pins those to `dco` + `validate-all`) — so a
 # red run here never blocks a merge; it remains a high-fidelity canary.
 #
-# Promoting it to a REQUIRED context is a separate change on purpose: #4671
-# sequences per-PR first so real per-PR flake and queue cost are observed
-# before merges depend on them.
-#
 # Unlike the Playwright `e2e/` suite (which drives the app in headless Chromium
 # against the JS Tauri mock), this lane builds the REAL Agaric debug binary and
 # drives it in a real WebKitWebView via `tauri-driver`, exercising the genuine
@@ -103,11 +99,6 @@ on:
     # `index.html`, the vite config, the `tsconfig*.json` projects `tsc -b`
     # walks, and `package*.json`.
     #
-    # It leans narrow because a miss costs nothing new — a regression this lane
-    # stays silent on is found by the Monday cron, which is today's behaviour —
-    # while a false start costs ~20 min of runner time on the commonest kind of
-    # PR here. That asymmetry flips the day this lane gates merges.
-    #
     # This filter and a REQUIRED context cannot coexist: a `paths`-skipped
     # workflow produces no check run at all, and branch protection waits
     # forever on an absent one. Adding this lane to the ruleset while this
@@ -118,6 +109,8 @@ on:
       - 'e2e-tauri/**'
       - 'wdio.conf.ts'
       - 'index.html'
+      # Copied verbatim into `dist/`, so the real binary serves it.
+      - 'public/**'
       - 'vite.config.ts'
       - 'tsconfig*.json'
       - 'package.json'
