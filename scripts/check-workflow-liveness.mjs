@@ -506,10 +506,13 @@ export function newestCompletedRunId({ runs, workflow, excludeRunId }) {
  * The run a lane is judged on: the newest COMPLETED one, skipping a
  * `cancelled` run that a newer run supersedes. GitHub keeps one pending run
  * per concurrency group and cancels the older pending one when a newer trigger
- * queues, so on a busy merge day `ci.yml`'s `main` runs conclude `cancelled`
- * by design and the newer run is the verdict (#3388). A cancelled run with
- * nothing newer is still judged as cancelled: nothing followed it. Shared by
- * `classifyWorkflow` and `newestCompletedRunId` so the two cannot disagree.
+ * queues, so a superseded run concludes `cancelled` by design and the newer
+ * run is the verdict (#3388). That applies to every lane whose group is keyed
+ * by ref — `ci.yml` on a PR ref, `codeql.yml`, `scorecard.yml` — but no longer
+ * to `ci.yml` on `main`, whose group is keyed per commit precisely so merges
+ * cannot evict each other's verdicts. A cancelled run with nothing newer is
+ * still judged as cancelled: nothing followed it. Shared by `classifyWorkflow`
+ * and `newestCompletedRunId` so the two cannot disagree.
  */
 function judgedRun(ordered) {
   return ordered.find(

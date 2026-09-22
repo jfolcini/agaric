@@ -40,13 +40,29 @@ on:
 # cancelled by the next merge. A break introduced by merge #2 and masked in
 # merge #5's tree would never have been attributed to anything.
 #
-# So: cancel on PR refs, never on `main`. The cost this reinstates is the one
-# the original note described — N back-to-back merges burn N full main runs —
-# and it buys a completed verdict per merged commit, which is what makes a red
-# main attributable to the merge that caused it. Push-mode CI is not a merge
-# gate either way: `validate-all` and `dco` still gate the PR.
+# So: cancel on PR refs, never on `main`. Push-mode CI is not a merge gate
+# either way — `validate-all` and `dco` still gate the PR — but a completed
+# verdict per merged commit is what makes a red main attributable to the merge
+# that caused it.
+#
+# ─── Why `cancel-in-progress: false` was not enough ─────────────────────────
+#
+# It only protects the RUNNING run. A concurrency group holds at most ONE
+# pending run, so a third push evicts the second before it ever starts — and an
+# evicted run is `cancelled` with zero jobs, indistinguishable at a glance from
+# a run that was cancelled for cause. Measured on 2026-09-22, all three on
+# `main`: `e26dc1ae` started 08:48:18 and was still running; `5090cb91b` queued
+# 09:15:20; `d49aaa59d` arrived 09:22:33 and `5090cb91b` was cancelled having
+# dispatched nothing. That is #3672 again, one layer down, and the paragraph
+# above claimed it was fixed.
+#
+# The group therefore has to be per-COMMIT on `main`, not per-ref: runs that
+# share no group cannot evict each other, whatever `cancel-in-progress` says.
+# The cost is the one the note above already accepted — N back-to-back merges
+# burn N full main runs — except now they run rather than queue behind one
+# slot. PR refs keep the per-ref group, where superseding is the point.
 concurrency:
-  group: ci-${{ github.ref }}
+  group: ${{ github.ref == 'refs/heads/main' && format('ci-main-{0}', github.sha) || format('ci-{0}', github.ref) }}
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 # Default to read-only for the workflow's GITHUB_TOKEN. Individual jobs do
