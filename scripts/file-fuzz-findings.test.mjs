@@ -13,7 +13,15 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
 
-import { allTargetsClean, buildFindings, isRunShapeFinding, main } from './file-fuzz-findings.mjs'
+import {
+  allTargetsClean,
+  buildFindings,
+  buildIssueBody,
+  isRunShapeFinding,
+  main,
+  parseKnownDetails,
+  parseKnownFindings,
+} from './file-fuzz-findings.mjs'
 
 /** A `parseTargetResults` row. */
 const row = (target, status, extra = {}) => ({
@@ -72,7 +80,7 @@ void test('every target passing is the only shape that counts as clean', () => {
 })
 
 /** Drives `main` in dry-run against a temp result dir, returning its stdout lines. */
-function runMain({ statuses, jobStatus, knownIds }) {
+function runMain({ statuses, jobStatus, knownIds = [], knownBody }) {
   const dir = mkdtempSync(join(tmpdir(), 'fuzz-findings-test-'))
   writeFileSync(join(dir, 'targets.txt'), `${Object.keys(statuses).join('\n')}\n`)
   for (const [target, status] of Object.entries(statuses)) {
@@ -82,18 +90,18 @@ function runMain({ statuses, jobStatus, knownIds }) {
   // missing path as "no tracking issue yet", which is the shape that decides
   // whether `closeResolvedIssue` can ever see a null issue.
   const knownFile = join(dir, 'known.md')
-  if (knownIds.length > 0) {
-    writeFileSync(
-      knownFile,
-      [
-        '<!-- fuzz-findings:begin -->',
-        '```',
-        ...knownIds,
-        '```',
-        '<!-- fuzz-findings:end -->',
-      ].join('\n'),
-    )
-  }
+  const body =
+    knownBody ??
+    (knownIds.length > 0
+      ? [
+          '<!-- fuzz-findings:begin -->',
+          '```',
+          ...knownIds,
+          '```',
+          '<!-- fuzz-findings:end -->',
+        ].join('\n')
+      : '')
+  if (body) writeFileSync(knownFile, body)
   const lines = []
   const original = console.log
   console.log = (...args) => lines.push(args.join(' '))
@@ -129,19 +137,19 @@ void test('a clean run closes a tracking issue whose findings have all resolved'
   )
 })
 
-void test('a clean run whose issue still tracks a live finding does not close it', () => {
+void test('a clean run whose issue tracks only a live finding leaves it untouched', () => {
   // The other arm: `html_parse` passed, but the crash line is still tracked and
-  // this run says nothing about it, so the issue stays open and untouched.
+  // this run says nothing about it — nothing to close, nothing to clear.
   const lines = runMain({
     statuses: { fts_strip: 'ok', html_parse: 'ok' },
     jobStatus: 'success',
-    knownIds: [...NOT_RUN_IDS, '[crash] deeplink_parse: crash-deadbeef'],
+    knownIds: ['[crash] deeplink_parse: crash-deadbeef'],
   })
   assert.ok(
     lines.some((l) => l.startsWith('no new fuzz findings')),
     `expected a no-op, got:\n${lines.join('\n')}`,
   )
-  assert.ok(!lines.some((l) => l.includes('would CLOSE')))
+  assert.ok(!lines.some((l) => l.includes('would CLOSE') || l.includes('would CLEAR')))
 })
 
 void test('only findings about the run are ones a clean run disproves', () => {
@@ -168,4 +176,93 @@ void test('a clean run with no tracking issue at all never reaches the close', (
     lines.some((l) => l.startsWith('no new fuzz findings')),
     `expected a no-op, got:\n${lines.join('\n')}`,
   )
+})
+
+// #5112 — a clean run disproves the run-shape lines in a MIXED set too. Leaving
+// them in the block was not inert: a finding id is the dedup key, so the stale
+// line swallowed the identical id from the next run that genuinely lost that
+// target, which reported nothing at all.
+
+const CRASH_ID = '[crash] html_parse: crash-abc123'
+const LOST_ID = '[not-run] fts_strip: target never executed'
+
+/** The body `main` printed under its dry-run header (one `console.log` arg). */
+const dryRunBody = (lines) => lines[lines.indexOf('[dry-run] --- issue body ---') + 1]
+
+void test('a clean run clears a disproved line from a mixed set, leaving the rest tracked', () => {
+  const cleared = runMain({
+    statuses: { fts_strip: 'ok', html_parse: 'ok' },
+    jobStatus: 'success',
+    knownIds: [LOST_ID, CRASH_ID],
+  })
+  assert.ok(
+    !cleared.some((l) => l.includes('would CLOSE')),
+    `a tracked crash must keep the issue open, got:\n${cleared.join('\n')}`,
+  )
+  const body = dryRunBody(cleared)
+  assert.deepEqual([...parseKnownFindings(body)], [CRASH_ID])
+
+  // The run #5112 is about: `fts_strip` is genuinely lost to a job-level timeout
+  // and regenerates the identical id. Cleared, it is new again; left in the
+  // block, this run reported nothing.
+  const lost = runMain({
+    statuses: { fts_strip: 'not_run', html_parse: 'ok' },
+    jobStatus: 'failure',
+    knownBody: body,
+  })
+  assert.ok(
+    lost.some((l) => l.startsWith('[dry-run] new findings: 1,')),
+    `expected the lost target to be reported as new, got:\n${lost.join('\n')}`,
+  )
+  assert.ok(lost[lost.indexOf('[dry-run] --- new-finding comment ---') + 1].includes(LOST_ID))
+})
+
+void test('a retained finding keeps its reproduce command across the clear', () => {
+  const detail =
+    'Reproducer `src-tauri/fuzz/artifacts/html_parse/crash-abc123` (…then `cargo +nightly fuzz run html_parse artifacts/html_parse/crash-abc123`).\n\n==1== ERROR: libFuzzer: deadly signal'
+  const known = buildIssueBody({
+    all: [CRASH_ID, LOST_ID].toSorted(),
+    newOnes: [],
+    resolvedOnes: [],
+    byId: new Map([[CRASH_ID, { id: CRASH_ID, detail }]]),
+  })
+  const body = dryRunBody(
+    runMain({
+      statuses: { fts_strip: 'ok', html_parse: 'ok' },
+      jobStatus: 'success',
+      knownBody: known,
+    }),
+  )
+  assert.deepEqual([...parseKnownFindings(body)], [CRASH_ID])
+  // This run found nothing, so the old body is the only copy of the one part of
+  // the issue a human needs.
+  assert.ok(body.includes(`<code>${CRASH_ID}</code>`), `details header lost:\n${body}`)
+  assert.ok(body.includes(detail), `details lost from the rewritten body:\n${body}`)
+})
+
+void test('parseKnownDetails round-trips the details buildIssueBody rendered', () => {
+  const angled = '[failed] fts_strip: panicked at <unknown>'
+  const entries = [
+    [angled, { id: angled, detail: 'first\nsecond' }],
+    [CRASH_ID, { id: CRASH_ID, detail: 'repro line\n\nlog tail' }],
+  ]
+  const body = buildIssueBody({
+    all: [angled, CRASH_ID, LOST_ID].toSorted(),
+    newOnes: [],
+    resolvedOnes: [],
+    byId: new Map(entries),
+  })
+  const parsed = parseKnownDetails(body)
+  for (const [id, finding] of entries) assert.deepEqual(parsed.get(id), finding)
+  // LOST_ID had no detail to render, so it has none to read back.
+  assert.equal(parsed.size, 2)
+})
+
+void test('parseKnownDetails reads a body without details as empty rather than throwing', () => {
+  const rendered = buildIssueBody({ all: [CRASH_ID], newOnes: [], resolvedOnes: [] })
+  assert.equal(parseKnownDetails(rendered).size, 0)
+  // What the two body clamps leave behind, and the no-issue-yet case.
+  assert.equal(parseKnownDetails('### Details\n\n_Details omitted (too long)._').size, 0)
+  assert.equal(parseKnownDetails('').size, 0)
+  assert.equal(parseKnownDetails(undefined).size, 0)
 })
