@@ -1337,16 +1337,16 @@ describe('downloadBlob', () => {
     // Snapshot the anchor's state AT CLICK TIME — afterwards it is detached
     // again, so `attached` can only be observed from inside the click.
     const clicks: { tag: string; href: string; download: string; attached: boolean }[] = []
-    const clickSpy = vi
-      .spyOn(HTMLAnchorElement.prototype, 'click')
-      .mockImplementation(function (this: HTMLAnchorElement) {
-        clicks.push({
-          tag: this.tagName,
-          href: this.getAttribute('href') ?? '',
-          download: this.getAttribute('download') ?? '',
-          attached: document.body.contains(this),
-        })
+    const clickSpy = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(function (
+      this: HTMLAnchorElement,
+    ) {
+      clicks.push({
+        tag: this.tagName,
+        href: this.getAttribute('href') ?? '',
+        download: this.getAttribute('download') ?? '',
+        attached: document.body.contains(this),
       })
+    })
 
     try {
       const blob = new Blob(['zip bytes'])
