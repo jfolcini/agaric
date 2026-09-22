@@ -89,9 +89,13 @@ docs PR forever. That is now written where the filter is. Promotion has to drop
 the filter and skip inside the job, or route the lane through `detect-changes`
 and the `validate-all` fail-closed aggregate, which exists for exactly this.
 
-Item 3 is untouched. `AGENTS.md`'s "Until #4671 lands, that lane is `schedule` +
-`workflow_dispatch` only" is still true, and removing it early would make the
-file wrong.
+Item 3 is untouched, and it is now half stale. `AGENTS.md` rule 4 ends "Until
+#4671 lands, that lane is `schedule` + `workflow_dispatch` only, so pair the
+spec with one that runs per-PR". The trigger clause is false as of this change;
+the instruction it carries is not, because the lane still gates nothing and so
+still cannot guard the PR that reintroduces a bug. So the sentence needs
+rewording rather than deleting — and that file is edited only with maintainer
+approval, which this session did not have for it. Flagged, not done.
 
 ## What the three have in common
 
