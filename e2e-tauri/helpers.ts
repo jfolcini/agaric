@@ -200,6 +200,11 @@ export function blockStaticByMarker(marker: string) {
  * selector matches only the first label ("Add your first block" does not contain
  * the substring "Add block"), which is why the virgin-vault first session
  * (#3078 / session-949) timed out. The XPath union below matches either CTA.
+ *
+ * The click-the-last-static fallback applies ONLY to the virgin-vault seed
+ * block, and its precondition is that the last static is EMPTY: run 35740700662
+ * took it on a page that already had content, handed the previous block's text
+ * to `typeMarkerVerified`, and its retry select-all-deleted it.
  */
 export async function openJournalBlockEditor(): Promise<void> {
   const addBlock = $(
@@ -235,13 +240,24 @@ export async function openJournalBlockEditor(): Promise<void> {
     // count check and the index check are the same check.
     const statics = await $$('[data-testid="block-static"]').getElements()
     const lastStatic = statics.at(-1)
-    if (lastStatic === undefined) {
-      throw new Error(
-        'openJournalBlockEditor: neither a focused block editor nor any block-static appeared after the Add-block CTA',
-      )
+    // `null` = no static at all. The fallback fails closed on anything but the
+    // empty seed block: clicking a static that already holds text would hand
+    // `typeMarkerVerified` a non-empty editor, which its retry clears.
+    const lastText = lastStatic === undefined ? null : (await lastStatic.getText()).trim()
+    if (lastStatic !== undefined && lastText === '') {
+      await lastStatic.click()
+      await $(editorSelector).waitForDisplayed({ timeout: ACTION_TIMEOUT })
+    } else {
+      // 10 s is the virgin-vault fast path, not a verdict: the CTA can simply
+      // be slow under CI load. Keep waiting, then say exactly what was seen.
+      await $(editorSelector).waitForDisplayed({
+        timeout: ACTION_TIMEOUT,
+        timeoutMsg:
+          'openJournalBlockEditor: Add-block CTA clicked but no block editor appeared; last ' +
+          `block-static is ${lastText === null ? 'absent' : JSON.stringify(lastText)}, not the ` +
+          'empty virgin-vault seed block, so the click-the-last-static fallback does not apply',
+      })
     }
-    await lastStatic.click()
-    await $(editorSelector).waitForDisplayed({ timeout: ACTION_TIMEOUT })
   }
   await $(editorSelector).click()
 }
@@ -371,6 +387,16 @@ async function typeVerified(
  */
 export async function addBlockWithMarker(marker: string, readBackTimeout?: number): Promise<void> {
   await openJournalBlockEditor()
+  // Fail loudly HERE rather than corrupting a block: `typeMarkerVerified`'s
+  // retry clears the editor with select-all + delete (run 35740700662).
+  const opened = $('[data-testid="block-editor"] [contenteditable="true"]')
+  const existing = (await opened.getText()).trim()
+  if (existing !== '') {
+    throw new Error(
+      `addBlockWithMarker: the editor already holds ${JSON.stringify(existing)} before typing ` +
+        `${JSON.stringify(marker)} — typing here would destroy it on the first read-back retry`,
+    )
+  }
   await typeMarkerVerified(marker, readBackTimeout)
   await browser.keys(['Enter'])
   await browser.keys(['Escape'])
