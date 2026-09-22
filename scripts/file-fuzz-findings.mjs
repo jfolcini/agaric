@@ -403,9 +403,13 @@ export function parseKnownDetails(body) {
  * @param {Set<string>} known
  * @param {Map<string, { id: string, detail: string }>} knownById
  */
-export function diffFindings(current, known, knownById = new Map()) {
+export function diffFindings(current, known, knownById) {
   const byId = new Map([...knownById, ...current.map((f) => [f.id, f])])
   const currentIds = new Set(current.map((f) => f.id))
+  // A cancelled run drops a tracked `[not-run]` it did not settle: #5110 has
+  // `buildFindings` suppress those rather than re-file them, so the id is
+  // absent from `current` for two different reasons. The next non-cancelled
+  // run re-files it, which is why this is not worth a job-status parameter.
   const retained = [...known].filter((id) => !isRunShapeFinding(id))
   const all = new Set([...currentIds, ...retained])
   return {
@@ -681,15 +685,15 @@ function clearDisprovedFindings({
   args,
   repo,
   existingIssue,
-  retained,
+  all,
   disproved,
   byId,
   results,
   runUrl,
 }) {
-  const summary = `${disproved.length} finding(s) disproved by a clean run and cleared: ${disproved.join(', ')}; ${retained.length} still tracked`
+  const summary = `${disproved.length} finding(s) disproved by a clean run and cleared: ${disproved.join(', ')}; ${all.length} still tracked`
   const body = buildIssueBody({
-    all: retained,
+    all,
     newOnes: [],
     resolvedOnes: disproved,
     byId,
@@ -856,7 +860,7 @@ export function main(argv = process.argv.slice(2)) {
           args,
           repo,
           existingIssue,
-          retained: all,
+          all,
           disproved,
           byId,
           results,
