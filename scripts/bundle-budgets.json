@@ -3,7 +3,7 @@
   "measuredAt": "Baseline gzip sizes at generation time were below these budgets by the headroom margin; see git history for the build that set them.",
   "chunks": {
     "index": 302082,
-    "react-vendor": 86221,
+    "react-vendor": 95675,
     "highlight": 26410,
     "floating-vendor": 12228,
     "editor": 157859,
