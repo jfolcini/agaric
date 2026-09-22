@@ -149,8 +149,8 @@ pub fn typed_property_args_for_registry_value(
             _ => (Some(value), None, None, None, None),
         },
         Some("date") => (None, None, Some(value), None, None),
-        // text / select / ref / unknown declared type, or no definition at
-        // all: fall back to the reserved-key-aware string routing (`ref` is
+        // text / select / ref / url / unknown declared type, or no definition
+        // at all: fall back to the reserved-key-aware string routing (`ref` is
         // overridden by the caller with a title→ULID reverse lookup).
         _ => typed_property_args_for_string_value(key, value),
     }
@@ -548,6 +548,7 @@ fn validate_declared_type(
         "number" => payload.value_num.is_some(),
         "date" => payload.value_date.is_some(),
         "boolean" => payload.value_bool.is_some(),
+        "url" => payload.value_text.is_some(),
         _ => true,
     };
     if !type_matches {
@@ -1392,6 +1393,32 @@ mod validate_property_value_tests {
         match err {
             AppError::Validation { message: msg, .. } => assert!(
                 msg.contains("expects type 'boolean'") && msg.contains("got 'text'"),
+                "unexpected message: {msg}"
+            ),
+            other => panic!("expected AppError::Validation, got {other:?}"),
+        }
+    }
+
+    // --- url-typed declarations (#4710) ------------------------------------
+
+    #[test]
+    fn validate_property_value_url_with_text_payload_succeeds() {
+        let mut p = empty_payload("homepage");
+        p.value_text = Some("https://example.com/a".into());
+        let d = decl("url", None);
+        validate_property_value(&p, Some(&d)).expect("url/text should pass");
+    }
+
+    #[test]
+    fn validate_property_value_url_with_number_payload_rejects() {
+        let mut p = empty_payload("homepage");
+        p.value_num = Some(3.0);
+        let d = decl("url", None);
+        let err = validate_property_value(&p, Some(&d))
+            .expect_err("url decl + number payload must reject");
+        match err {
+            AppError::Validation { message: msg, .. } => assert!(
+                msg.contains("expects type 'url'") && msg.contains("got 'number'"),
                 "unexpected message: {msg}"
             ),
             other => panic!("expected AppError::Validation, got {other:?}"),

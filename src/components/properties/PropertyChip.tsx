@@ -1,8 +1,12 @@
+import { ExternalLink } from 'lucide-react'
 import type React from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { badgeVariants } from '@/components/ui/badge'
+import { IconButton } from '@/components/ui/icon-button'
+import { openUrl } from '@/lib/open-url'
 import { BUILTIN_PROPERTY_ICONS, formatPropertyName } from '@/lib/property-utils'
+import { isLinkablePropertyUrl } from '@/lib/url-validation'
 import { cn } from '@/lib/utils'
 
 interface PropertyChipProps {
@@ -29,6 +33,12 @@ interface PropertyChipProps {
  * Focus ring: the wrapper carries a `focus-within` ring so tabbing into
  * either inner button lights up the whole pill instead of two overlapping
  * rings.
+ *
+ * URL values: a value that parses as http/https/mailto gets a trailing
+ * open-link control. The decision is made on the VALUE, not on the key's
+ * declared `url` type — a chip carries no property definition, and fetching
+ * one per chip would cost an IPC per rendered property. The value zone itself
+ * stays the edit trigger, so a URL property is still editable from the chip.
  *
  * Chrome: the pill shares the design-system Badge primitive's chrome via
  * `badgeVariants()` (#1678) — base flex/shape/size tokens come from Badge so
@@ -94,6 +104,26 @@ export function PropertyChip({
     <span className="property-chip-value">{value}</span>
   )
 
+  const openLinkLabel = t('pageProperty.openLinkLabel', { url: value })
+  const openLink = isLinkablePropertyUrl(value) ? (
+    <IconButton
+      size="icon-xs"
+      variant="ghost"
+      tooltip={openLinkLabel}
+      ariaLabel={openLinkLabel}
+      // #1498: keep editor focus on click (see the key-label note above).
+      onMouseDown={(e) => e.preventDefault()}
+      onClick={(e) => {
+        // `StaticBlock.handleOuterClick` focuses the block on any bubbled
+        // click; opening a link must not move the roving editor there.
+        e.stopPropagation()
+        void openUrl(value)
+      }}
+    >
+      <ExternalLink aria-hidden="true" />
+    </IconButton>
+  ) : null
+
   return (
     <div
       // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- generic labelled grouping; the suggested tags (fieldset/details/hgroup/optgroup) carry unwanted semantics and would break the inline-flex chip layout
@@ -118,6 +148,7 @@ export function PropertyChip({
     >
       {keyLabel}
       {valueNode}
+      {openLink}
     </div>
   )
 }

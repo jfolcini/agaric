@@ -168,6 +168,13 @@ describe('buildInitParams', () => {
     expect(result).toEqual({ blockId: 'B1', key: 'due', valueDate: getTodayString() })
   })
 
+  // #4710 — a `url` value is stored in `value_text`, so a freshly-added one
+  // initializes exactly like text.
+  it('returns valueText empty string for url type', () => {
+    const result = buildInitParams('B1', makeDef('homepage', 'url'))
+    expect(result).toEqual({ blockId: 'B1', key: 'homepage', valueText: '' })
+  })
+
   it('returns valueRef null for ref type', () => {
     const result = buildInitParams('B1', makeDef('parent', 'ref'))
     expect(result).toEqual({ blockId: 'B1', key: 'parent', valueRef: null })
@@ -352,6 +359,21 @@ describe('carriedRenameDefinition', () => {
     expect(
       carriedRenameDefinition({ value_type: 'text', options: null }, row({ value_text: 'hi' })),
     ).toEqual({ valueType: 'text', options: null })
+  })
+
+  // #4710 — `url` is text-only: unlike `text`/`select` the engine's matrix has
+  // no ref arm for it, so a url declaration over a bare `value_ref` row would
+  // make the engine reject the rename's own write.
+  it('carries a url declaration over text, never over a bare ref', () => {
+    expect(
+      carriedRenameDefinition(
+        { value_type: 'url', options: null },
+        row({ value_text: 'https://example.com' }),
+      ),
+    ).toEqual({ valueType: 'url', options: null })
+    expect(
+      carriedRenameDefinition({ value_type: 'url', options: null }, row({ value_ref: 'B2' })),
+    ).toBeNull()
   })
 
   it('carries select options, which the definition is not creatable without', () => {

@@ -83,8 +83,8 @@ export const COLUMN_BACKED_PROPERTY_KEYS = new Set([
   'space',
 ])
 
-/** The six `value_type`s `create_property_def_inner` accepts. */
-const DEFINABLE_VALUE_TYPES = new Set(['text', 'number', 'date', 'select', 'ref', 'boolean'])
+/** The seven `value_type`s `create_property_def_inner` accepts. */
+const DEFINABLE_VALUE_TYPES = new Set(['text', 'number', 'date', 'select', 'ref', 'boolean', 'url'])
 
 /**
  * The `property_definitions` row a KEY RENAME should carry over to the new
@@ -126,6 +126,10 @@ export function carriedRenameDefinition(
       case 'text':
       case 'select': {
         return hasText || hasRef
+      }
+      // A URL is text, never a block reference — hence no `hasRef` arm.
+      case 'url': {
+        return hasText
       }
       case 'ref': {
         return hasRef
@@ -255,7 +259,8 @@ export function buildInitParams(
       return { blockId, key: def.key, valueDate: getTodayString() }
     }
     case 'text':
-    case 'select': {
+    case 'select':
+    case 'url': {
       return { blockId, key: def.key, valueText: '' }
     }
     case 'ref': {

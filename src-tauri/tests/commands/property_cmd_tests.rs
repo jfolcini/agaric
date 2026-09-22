@@ -8885,6 +8885,65 @@ async fn create_property_def_admits_stored_refs_under_text_4399() {
     mat.shutdown();
 }
 
+/// #4710 — the `url` arm of `declared_type_admits_shape`: a url is stored as
+/// text, so declaring `url` over stored text is safe and over a stored number
+/// is the #4382 trap.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn create_property_def_url_admits_stored_text_and_refuses_stored_number_4710() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    block_with_text_property(&pool, &mat, "a note", "homepage", "https://example.com/a").await;
+    let counted = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "counted".into(),
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    mat.flush_background().await.unwrap();
+    set_property_inner(
+        &pool,
+        DEV,
+        &mat,
+        counted.id.as_str().into(),
+        "hits".into(),
+        None,
+        Some(3.0),
+        None,
+        None,
+        None,
+        None,
+    )
+    .await
+    .expect("an undeclared key must accept a number");
+    mat.flush_background().await.unwrap();
+
+    let refused = create_property_def_inner(&pool, "hits".into(), "url".into(), None).await;
+    assert!(
+        matches!(refused, Err(AppError::Validation { message: ref msg, .. })
+            if msg.contains("cannot declare property 'hits' as 'url'")
+                && msg.contains("1 stored as number")),
+        "declaring `url` over a stored number must be refused, got {refused:?}"
+    );
+    assert_eq!(
+        def_type_of(&pool, "hits").await,
+        None,
+        "a refused `url` declaration must write nothing"
+    );
+
+    let def = create_property_def_inner(&pool, "homepage".into(), "url".into(), None)
+        .await
+        .expect("`url` admits a stored `value_text`");
+    assert_eq!(def.value_type, "url");
+
+    mat.shutdown();
+}
+
 /// #4399 — the `ref` and `boolean` arms, which nothing else covers.
 ///
 /// Rewriting BOTH to `shape == "…" || shape == "text"` — the fail-OPEN

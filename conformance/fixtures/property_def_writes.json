@@ -1,5 +1,5 @@
 {
-  "description": "#3830 — the two `property_definitions` WRITERS that answer with the row, driven through the command leg (`via: \"command\"`; neither appends an op, so the op log stays empty and `expected` carries only the seeded page). Pins `create_property_def`'s shape validation (bad value_type, bad key) and its INSERT OR IGNORE idempotency — a second create for the same key keeps the FIRST declaration, value_type and all — plus `update_property_def_options`' non-empty-JSON-array check, its select-type-only guard (the seeded text `note`) and its NotFound on an unknown key. Read back through the `list_property_defs` / `get_property_def` steps pinned by #4939. NOT pinned here: `conflicting_existing_values` (the #4399 probe that refuses a declaration which would orphan values the vault already holds under that key) — the mock has no equivalent, and the seed deliberately declares no `block_properties` row under either key. Re-author `expected` / `expected_ops` / `expected_queries` via CONFORMANCE_UPDATE=1.",
+  "description": "#3830 — the two `property_definitions` WRITERS that answer with the row, driven through the command leg (`via: \"command\"`; neither appends an op, so the op log stays empty and `expected` carries only the seeded page). Pins `create_property_def`'s shape validation (bad value_type, bad key) and its INSERT OR IGNORE idempotency — a second create for the same key keeps the FIRST declaration, value_type and all — plus `update_property_def_options`' non-empty-JSON-array check, its select-type-only guard (the seeded text `note`) and its NotFound on an unknown key. Read back through the `list_property_defs` / `get_property_def` steps pinned by #4939. NOT pinned here: `conflicting_existing_values` (the #4399 probe that refuses a declaration which would orphan values the vault already holds under that key) — the mock has no equivalent, and the seed deliberately declares no `block_properties` row under either key. #4710 adds the `url` declaration and a value under it. Re-author `expected` / `expected_ops` / `expected_queries` via CONFORMANCE_UPDATE=1.",
   "expected": {
     "block_tags": [],
     "blocks": [
@@ -18,16 +18,26 @@
       }
     ],
     "op_log_digest": {
-      "count": 1,
+      "count": 2,
       "ops": [
         {
           "key": "note",
+          "op_type": "set_property"
+        },
+        {
+          "key": "homepage",
           "op_type": "set_property"
         }
       ]
     },
     "page_links": [],
     "properties": [
+      {
+        "block_id": "B1",
+        "key": "homepage",
+        "value": "https://example.com/a",
+        "value_type": "Text"
+      },
       {
         "block_id": "B1",
         "key": "note",
@@ -60,6 +70,12 @@
       "error": "validation",
       "name": "create_def_bad_key_rejects",
       "returns": []
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "create_url_def",
+      "returns": ["homepage#value_type=url#options=null"]
     },
     {
       "code": null,
@@ -116,7 +132,7 @@
       "error": null,
       "has_more": false,
       "name": "registry_after_writes",
-      "rows": ["note#value_type=text#options=null"],
+      "rows": ["homepage#value_type=url#options=null", "note#value_type=text#options=null"],
       "total_count": null
     },
     {
@@ -159,7 +175,7 @@
         "valueType": "colour"
       },
       "command": "create_property_def",
-      "comment": "validate_property_def_shape refuses a value_type outside text/number/date/select/ref/boolean.",
+      "comment": "validate_property_def_shape refuses a value_type outside text/number/date/select/ref/boolean/url.",
       "expect_error": "validation",
       "name": "create_def_bad_value_type_rejects",
       "via": "command"
@@ -175,6 +191,28 @@
       "expect_error": "validation",
       "name": "create_def_bad_key_rejects",
       "via": "command"
+    },
+    {
+      "args": {
+        "key": "homepage",
+        "options": null,
+        "valueType": "url"
+      },
+      "command": "create_property_def",
+      "comment": "#4710 — `url` is in the closed set (migration 0120). No options: a url is text with a link rendering.",
+      "name": "create_url_def",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockId": "S1",
+        "key": "homepage",
+        "value": {
+          "value_text": "https://example.com/a"
+        }
+      },
+      "command": "set_property",
+      "comment": "#4710 — under a `url` declaration the value lands in value_text, so the snapshot reads it back as Text. The engine refuses any other slot (`validate_property_value_url_with_number_payload_rejects`); the replay leg appends ops without that validator and `set_property` has no command-leg arm, so the refusal is pinned there rather than here."
     },
     {
       "args": {

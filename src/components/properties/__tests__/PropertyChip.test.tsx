@@ -1,9 +1,13 @@
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
 import { PropertyChip } from '@/components/properties/PropertyChip'
+import { openUrl } from '@/lib/open-url'
+
+vi.mock('@/lib/open-url', () => ({ openUrl: vi.fn().mockResolvedValue(true) }))
+const mockedOpenUrl = vi.mocked(openUrl)
 
 describe('PropertyChip', () => {
   it('renders key and value text', () => {
@@ -330,5 +334,83 @@ describe('PropertyChip', () => {
     const valueButton = screen.getByRole('button', { name: 'Effort: 2h' })
     expect(keyButton.className).toContain('focus-ring-visible')
     expect(valueButton.className).toContain('focus-ring-visible')
+  })
+
+  // #4710 — a property value that parses as http/https/mailto gets a trailing
+  // open-link control. The decision is made on the VALUE: chips carry no
+  // property definition, so the declared `url` type is not visible here.
+  describe('open-link control', () => {
+    beforeEach(() => {
+      mockedOpenUrl.mockClear()
+    })
+
+    it('opens the url and leaves the value editor closed', async () => {
+      const user = userEvent.setup()
+      const onClick = vi.fn()
+      render(<PropertyChip propKey="homepage" value="https://example.com" onClick={onClick} />)
+
+      await user.click(screen.getByRole('button', { name: 'Open https://example.com' }))
+
+      expect(mockedOpenUrl).toHaveBeenCalledWith('https://example.com')
+      expect(onClick).not.toHaveBeenCalled()
+    })
+
+    it('keeps the value zone itself as the edit trigger', async () => {
+      const user = userEvent.setup()
+      const onClick = vi.fn()
+      render(<PropertyChip propKey="homepage" value="https://example.com" onClick={onClick} />)
+
+      await user.click(screen.getByRole('button', { name: 'Homepage: https://example.com' }))
+
+      expect(onClick).toHaveBeenCalledTimes(1)
+      expect(mockedOpenUrl).not.toHaveBeenCalled()
+    })
+
+    it('opens the url from the keyboard', async () => {
+      const user = userEvent.setup()
+      render(<PropertyChip propKey="homepage" value="https://example.com" />)
+
+      const control = screen.getByRole('button', { name: 'Open https://example.com' })
+      control.focus()
+      await user.keyboard('{Enter}')
+
+      expect(mockedOpenUrl).toHaveBeenCalledWith('https://example.com')
+    })
+
+    it('does not let the open-link click reach the surrounding row', async () => {
+      const user = userEvent.setup()
+      const onRowClick = vi.fn()
+      render(
+        // oxlint-disable-next-line jsx-a11y/no-static-element-interactions, jsx-a11y/click-events-have-key-events -- stand-in for the block row's click surface; the assertion is about propagation, not this wrapper's own a11y
+        <div onClick={onRowClick}>
+          <PropertyChip propKey="homepage" value="https://example.com" />
+        </div>,
+      )
+
+      await user.click(screen.getByRole('button', { name: 'Open https://example.com' }))
+
+      expect(mockedOpenUrl).toHaveBeenCalledWith('https://example.com')
+      expect(onRowClick).not.toHaveBeenCalled()
+    })
+
+    it.each([['notaurl'], ['javascript:alert(1)'], ['example.com']])(
+      'renders no open-link control for %s',
+      (value) => {
+        render(<PropertyChip propKey="homepage" value={value} onClick={vi.fn()} />)
+
+        expect(screen.queryByRole('button', { name: /^Open / })).not.toBeInTheDocument()
+        expect(screen.getByText(value)).toBeInTheDocument()
+      },
+    )
+
+    it('has no a11y violations rendering the open-link control', async () => {
+      const { container } = render(
+        <PropertyChip propKey="homepage" value="https://example.com" onClick={vi.fn()} />,
+      )
+
+      await waitFor(async () => {
+        expect(await axe(container)).toHaveNoViolations()
+      })
+    })
   })
 })

@@ -124,3 +124,4 @@
 0117_agenda_cache_date_source_index.sql
 0118_sweep_unindexable_fts_rows.sql
 0119_block_links_kind.sql
+0120_property_definitions_allow_url.sql

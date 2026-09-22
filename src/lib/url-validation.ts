@@ -66,3 +66,23 @@ export function normalizeUrl(raw: string): string | null {
   if (/^(mailto|tel):/i.test(trimmed)) return trimmed
   return `https://${trimmed}`
 }
+
+/**
+ * Whether a `url`-typed property value should render as a clickable link.
+ *
+ * `url` property values are stored verbatim — nothing is validated on write —
+ * so the render sink decides. The scheme ALLOWLIST here subsumes
+ * {@link isAllowedUrl}'s denylist rather than composing with it: a
+ * `javascript:`/`data:`/`file:` value, and a scheme-obfuscating
+ * `java\tscript:` one, both parse to a protocol outside the three allowed.
+ *
+ * Anything else — a relative path, free text, `tel:`, an unparseable string —
+ * is false, and the caller renders the value as plain text.
+ */
+export function isLinkablePropertyUrl(value: string): boolean {
+  try {
+    return /^(https?|mailto):$/.test(new URL(value).protocol)
+  } catch {
+    return false
+  }
+}
