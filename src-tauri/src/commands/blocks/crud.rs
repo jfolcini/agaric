@@ -405,17 +405,6 @@ pub async fn edit_block_inner(
     // binds for sqlx/format!.
     let block_id = block_id.into_string();
 
-    // Validate content length BEFORE taking the writer lock or fetching any row.
-    // Content length is a pure function of the input needing no DB state, so an
-    // over-length payload is rejected without acquiring the IMMEDIATE writer lock
-    // or doing the wasted existence fetch (fail fast on the input).
-    if to_text.len() > MAX_CONTENT_LENGTH {
-        return Err(AppError::validation(format!(
-            "content length {} exceeds maximum {MAX_CONTENT_LENGTH}",
-            to_text.len()
-        )));
-    }
-
     // F02: Begin IMMEDIATE transaction for atomic validation + op_log + blocks write.
     // All reads (block existence, prev_edit lookup) happen inside the tx
     // to prevent TOCTOU races (a concurrent delete_block could soft-delete
@@ -427,6 +416,44 @@ pub async fn edit_block_inner(
     // #2604 — arm rollback-safe engine apply: if this tx aborts after the
     // in-place `apply_op_projected` engine mutation below, the engine is rewound.
     tx.arm_engine_rollback(materializer.loro_state());
+    let row = edit_block_in_tx(
+        &mut tx,
+        materializer.loro_state(),
+        device_id,
+        block_id,
+        to_text,
+    )
+    .await?;
+    tx.commit_and_dispatch(materializer).await?;
+    Ok(row)
+}
+
+/// Apply ONE edit inside an already-open [`CommandTx`], WITHOUT committing.
+///
+/// Extracted from [`edit_block_inner`] (#5140) so a multi-op command can run
+/// an edit inside ITS transaction with identical validation, op-log append,
+/// engine apply and background enqueue. The caller owns the transaction
+/// lifecycle (BEGIN / arm / COMMIT); this helper only enqueues the op via
+/// `enqueue_edit_background` so the caller's single `commit_and_dispatch`
+/// drains every enqueued op in FIFO order.
+#[instrument(skip(tx, state, device_id, to_text), err)]
+pub(crate) async fn edit_block_in_tx(
+    tx: &mut CommandTx,
+    state: &agaric_engine::loro::shared::LoroState,
+    device_id: &str,
+    block_id: String,
+    to_text: String,
+) -> Result<BlockRow, AppError> {
+    // Validate content length BEFORE fetching any row. Content length is a
+    // pure function of the input needing no DB state, so an over-length
+    // payload is rejected without the wasted existence fetch (fail fast on
+    // the input).
+    if to_text.len() > MAX_CONTENT_LENGTH {
+        return Err(AppError::validation(format!(
+            "content length {} exceeds maximum {MAX_CONTENT_LENGTH}",
+            to_text.len()
+        )));
+    }
 
     // 1. Validate block exists and is not deleted (inside tx = TOCTOU-safe)
     let existing: Option<BlockRow> = sqlx::query_as!(
@@ -434,13 +461,13 @@ pub async fn edit_block_inner(
         r#"SELECT id as "id!: agaric_core::ulid::BlockId", block_type, content, parent_id as "parent_id: agaric_core::ulid::BlockId", position, deleted_at, todo_state, priority, due_date, scheduled_date, page_id as "page_id: agaric_core::ulid::BlockId" FROM blocks WHERE id = ? AND deleted_at IS NULL"#,
         block_id
     )
-    .fetch_optional(&mut **tx)
+    .fetch_optional(&mut ***tx)
     .await?;
 
     let existing = existing
         .ok_or_else(|| AppError::NotFound(format!("block '{block_id}' (not found or deleted)")))?;
     if existing.block_type == "page" {
-        reject_duplicate_page_title(&mut tx, &block_id, &to_text).await?;
+        reject_duplicate_page_title(tx, &block_id, &to_text).await?;
     }
     let block_type = existing.block_type;
     let parent_id = existing.parent_id;
@@ -449,13 +476,13 @@ pub async fn edit_block_inner(
     // 2. Find prev_edit inside transaction (delegates to the shared
     //    helper — same query also used by `flush_draft_inner`; see
     // (b)).
-    let prev_edit = find_prev_edit_in_tx(&mut tx, &block_id).await?;
+    let prev_edit = find_prev_edit_in_tx(tx, &block_id).await?;
 
     // Referential cross-space integrity: reject an edit that
     // introduces `[[ULID]]` / `#[ULID]` tokens pointing at a block in a
     // different space than this one.
     agaric_store::cross_space_validation::validate_content_cross_space_refs(
-        &mut tx,
+        tx,
         &BlockId::from_trusted(&block_id),
         &to_text,
     )
@@ -470,7 +497,7 @@ pub async fn edit_block_inner(
     };
 
     let op_record = op_log::append_local_op_in_tx(
-        &mut tx,
+        tx,
         device_id,
         OpPayload::EditBlock(edit_payload.clone()),
         crate::db::now_ms(),
@@ -498,12 +525,11 @@ pub async fn edit_block_inner(
     // crash. `apply_op_projected` borrows `&op_record` here, BEFORE the
     // `Arc::new(op_record)` move below. The returned `ApplyEffects` is empty for
     // Edit (LOCAL edit runs no post-commit cohort fan-out), so it is discarded.
-    crate::materializer::apply_op_projected(&mut tx, &op_record, materializer.loro_state(), false)
-        .await?;
+    crate::materializer::apply_op_projected(tx, &op_record, state, false).await?;
 
-    // 5. Commit + dispatch edit background cache tasks (fire-and-forget).
-    //    The `block_type` hint restricts the rebuild fan-out so content
-    //    blocks skip tags/pages cache work.
+    // 5. Enqueue edit background cache tasks for the caller's commit
+    //    (fire-and-forget). The `block_type` hint restricts the rebuild
+    //    fan-out so content blocks skip tags/pages cache work.
     //
     // Wrap once in `Arc` so the dispatch queue borrows
     //    the record by refcount (atomic increment) rather than
@@ -516,7 +542,6 @@ pub async fn edit_block_inner(
     // but NOT that page-level rollup — so this enqueue must NOT be pruned as
     // redundant. Pinned by `local_edit_page_link_cache_converges_local_matches_remote_2397`.
     tx.enqueue_edit_background(Arc::clone(&op_record), block_type.clone());
-    tx.commit_and_dispatch(materializer).await?;
 
     // 6. Return response
     Ok(BlockRow {
@@ -659,10 +684,6 @@ pub async fn delete_block_inner(
     // owned String form for sqlx binds / format! below.
     let block_id = block_id.into_string();
 
-    let payload = OpPayload::DeleteBlock(DeleteBlockPayload {
-        block_id: BlockId::from_trusted(&block_id),
-    });
-
     // Single IMMEDIATE transaction: validation + op_log + cascade soft-delete.
     // BEGIN IMMEDIATE eagerly acquires the write lock, preventing
     // SQLITE_BUSY_SNAPSHOT and fixing the TOCTOU window between validation
@@ -675,7 +696,81 @@ pub async fn delete_block_inner(
     // #2604 — rollback-safe engine apply (rewind on tx abort).
     tx.arm_engine_rollback(materializer.loro_state());
 
-    let block_type = verify_deletable_in_tx(&mut tx, &block_id).await?;
+    let deleted = delete_block_in_tx(
+        &mut tx,
+        materializer.loro_state(),
+        device_id,
+        block_id.clone(),
+    )
+    .await?;
+    tx.commit_and_dispatch(materializer).await?;
+
+    // #2344 NEW post-commit engine cohort fan-out — the LOCAL counterpart of
+    // the `dispatch_delete_descendants` call `apply_op` runs after ITS commit.
+    // The in-tx engine apply above (`apply_delete_block_via_loro`) reached only
+    // the SEED; the per-space Loro `apply_delete_block` is per-block-id, so the
+    // DESCENDANT deletes never reach the engine without this fan-out (SQL would
+    // report them deleted while the engine still shows them alive). Drives the
+    // captured cohort (seed + descendants) onto the per-space engine using the
+    // space id captured PRE-UPDATE (post-delete `resolve_block_space` returns
+    // None for the now-tombstoned rows). Infallible / log-only, mirroring
+    // `apply_op`'s call shape exactly (args, await, no `?`).
+    crate::materializer::dispatch_delete_descendants(
+        &deleted.op_record,
+        &deleted.effects.deleted_cohort,
+        deleted.effects.delete_space_id.as_ref(),
+        materializer.loro_state(),
+    )
+    .await;
+    // #4733 POST-COMMIT FTS removal for the same cohort. `commit_and_dispatch`
+    // enqueued a `RemoveFtsBlock` for the SEED alone (`invalidations_for_op`
+    // never sees the cohort), so every descendant kept its `fts_blocks` row
+    // until the next full rebuild. Same list the soft-delete consumed, same
+    // site argument as the #4285 link repair on the restore path.
+    crate::materializer::remove_deleted_cohort_fts(pool, &deleted.effects.deleted_cohort).await;
+
+    Ok(DeleteResponse {
+        block_id,
+        deleted_at: deleted.deleted_at,
+        // The cohort INCLUDES the seed (depth-0 anchor of `collect_delete_cohort`'s
+        // active CTE), so its length equals the old cascade UPDATE's
+        // `rows_affected()` exactly — the same set of rows the UPDATE touched.
+        descendants_affected: deleted.effects.deleted_cohort.len() as u64,
+        // #4523 — the PAGE subset of that same cohort; see above.
+        affected_page_ids: deleted.affected_page_ids,
+    })
+}
+
+/// What [`delete_block_in_tx`] hands its caller for the post-commit fan-out
+/// and the response.
+pub(crate) struct DeleteInTx {
+    pub(crate) op_record: Arc<op_log::OpRecord>,
+    pub(crate) effects: agaric_engine::apply::kernel::ApplyEffects,
+    pub(crate) affected_page_ids: Vec<String>,
+    pub(crate) deleted_at: i64,
+}
+
+/// Soft-delete ONE block (cascade) inside an already-open [`CommandTx`],
+/// WITHOUT committing.
+///
+/// Extracted from [`delete_block_inner`] (#5140) so a multi-op command can run
+/// a delete inside ITS transaction with identical validation, op-log append,
+/// engine apply and background enqueue. The caller owns the transaction
+/// lifecycle (BEGIN / arm / COMMIT) and, after its commit, runs the engine
+/// cohort fan-out and FTS removal on the returned [`DeleteInTx`]; this helper
+/// only enqueues the op via `enqueue_lifecycle_background`.
+#[instrument(skip(tx, state, device_id), err)]
+pub(crate) async fn delete_block_in_tx(
+    tx: &mut CommandTx,
+    state: &agaric_engine::loro::shared::LoroState,
+    device_id: &str,
+    block_id: String,
+) -> Result<DeleteInTx, AppError> {
+    let payload = OpPayload::DeleteBlock(DeleteBlockPayload {
+        block_id: BlockId::from_trusted(&block_id),
+    });
+
+    let block_type = verify_deletable_in_tx(tx, &block_id).await?;
 
     // Single timestamp for both op_log and blocks — reverse_delete_block uses
     // record.created_at as deleted_at_ref, so they must match exactly.
@@ -691,7 +786,7 @@ pub async fn delete_block_inner(
     let now = crate::db::next_delete_ms();
 
     // Append to op_log within transaction
-    let op_record = op_log::append_local_op_in_tx(&mut tx, device_id, payload, now).await?;
+    let op_record = op_log::append_local_op_in_tx(tx, device_id, payload, now).await?;
 
     // #2344/#2325 route the just-appended `op_record` through the SINGLE
     // collapsed apply-projection entry point (`apply_op_projected`), IN this
@@ -712,17 +807,11 @@ pub async fn delete_block_inner(
     // `apply_op_projected` borrows `&op_record` here, BEFORE the `Arc::new`
     // move below. The returned `ApplyEffects` carries the pre-UPDATE
     // `deleted_cohort` (seed + descendants) and the pre-UPDATE `delete_space_id`
-    // for the post-commit engine fan-out below. The #1582/#2268 depth-cap
+    // for the caller's post-commit engine fan-out. The #1582/#2268 depth-cap
     // saturation warn that used to live here now runs (still gated on the
     // cascade's affected-row count >= SATURATION_PROBE_MIN_ROWS) inside
     // `project_delete_block_to_sql`, so it also covers the sql_only/replay paths.
-    let effects = crate::materializer::apply_op_projected(
-        &mut tx,
-        &op_record,
-        materializer.loro_state(),
-        false,
-    )
-    .await?;
+    let effects = crate::materializer::apply_op_projected(tx, &op_record, state, false).await?;
 
     // #4523 — the PAGE subset of the cohort we just tombstoned, reported back
     // so the caller can evict exactly those rows from the `[[` picker's
@@ -731,7 +820,7 @@ pub async fn delete_block_inner(
     // list read here is the SAME list the soft-delete consumed, not a second
     // walk that could drift from it. `effects.deleted_cohort` is
     // `collect_delete_cohort`'s pre-UPDATE capture, which
-    // `descendants_affected` two dozen lines below already reports the length
+    // `descendants_affected` in the response already reports the length
     // of as "the same set of rows the UPDATE touched" — so this adds no new
     // assumption about the cascade, it only reads a different column off the
     // set the response already describes.
@@ -750,7 +839,7 @@ pub async fn delete_block_inner(
              AND block_type = 'page'"#,
         cohort_json,
     )
-    .fetch_all(&mut **tx)
+    .fetch_all(&mut ***tx)
     .await?;
 
     // #2042: `pages_cache.{child_block_count,inbound_link_count}` for the pages
@@ -762,50 +851,22 @@ pub async fn delete_block_inner(
     // the background drain (eventual consistency, same model as the link
     // caches that already rebuild on this path).
 
-    // Commit + fire-and-forget background cache dispatch. #2037 pt2: thread
-    // the block's type so the materializer narrows the rebuild fan-out for a
-    // content-block delete (the page/tag-scoped caches can't change).
+    // Enqueue the fire-and-forget background cache dispatch for the caller's
+    // commit. #2037 pt2: thread the block's type so the materializer narrows
+    // the rebuild fan-out for a content-block delete (the page/tag-scoped
+    // caches can't change).
     //
     // Wrap once in `Arc` so the dispatch queue borrows the record by refcount
     // (atomic increment) rather than deep-cloning the owned `String` payloads,
-    // AND the post-commit cohort fan-out below can still reference it.
+    // AND the caller's post-commit cohort fan-out can still reference it.
     let op_record = Arc::new(op_record);
     tx.enqueue_lifecycle_background(Arc::clone(&op_record), block_type);
-    tx.commit_and_dispatch(materializer).await?;
 
-    // #2344 NEW post-commit engine cohort fan-out — the LOCAL counterpart of
-    // the `dispatch_delete_descendants` call `apply_op` runs after ITS commit.
-    // The in-tx engine apply above (`apply_delete_block_via_loro`) reached only
-    // the SEED; the per-space Loro `apply_delete_block` is per-block-id, so the
-    // DESCENDANT deletes never reach the engine without this fan-out (SQL would
-    // report them deleted while the engine still shows them alive). Drives the
-    // captured cohort (seed + descendants) onto the per-space engine using the
-    // space id captured PRE-UPDATE (post-delete `resolve_block_space` returns
-    // None for the now-tombstoned rows). Infallible / log-only, mirroring
-    // `apply_op`'s call shape exactly (args, await, no `?`).
-    crate::materializer::dispatch_delete_descendants(
-        &op_record,
-        &effects.deleted_cohort,
-        effects.delete_space_id.as_ref(),
-        materializer.loro_state(),
-    )
-    .await;
-    // #4733 POST-COMMIT FTS removal for the same cohort. `commit_and_dispatch`
-    // enqueued a `RemoveFtsBlock` for the SEED alone (`invalidations_for_op`
-    // never sees the cohort), so every descendant kept its `fts_blocks` row
-    // until the next full rebuild. Same list the soft-delete consumed, same
-    // site argument as the #4285 link repair on the restore path.
-    crate::materializer::remove_deleted_cohort_fts(pool, &effects.deleted_cohort).await;
-
-    Ok(DeleteResponse {
-        block_id,
-        deleted_at: now,
-        // The cohort INCLUDES the seed (depth-0 anchor of `collect_delete_cohort`'s
-        // active CTE), so its length equals the old cascade UPDATE's
-        // `rows_affected()` exactly — the same set of rows the UPDATE touched.
-        descendants_affected: effects.deleted_cohort.len() as u64,
-        // #4523 — the PAGE subset of that same cohort; see above.
+    Ok(DeleteInTx {
+        op_record,
+        effects,
         affected_page_ids,
+        deleted_at: now,
     })
 }
 

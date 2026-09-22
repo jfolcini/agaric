@@ -222,7 +222,7 @@ async fn validate_move_in_tx(
 /// See [`move_block_inner`]'s original inline body for the full rationale on
 /// each step; the comments are preserved verbatim below.
 #[instrument(skip(tx, state, device_id), err)]
-async fn move_block_in_tx(
+pub(crate) async fn move_block_in_tx(
     tx: &mut CommandTx,
     state: &agaric_engine::loro::shared::LoroState,
     device_id: &str,
