@@ -1,12 +1,11 @@
-# Session 1800 — review notes from #5135
+# Session 1800 — review notes from #5135 and #5137
 
 The sweep's follow-up PR, per the batch-issues skill: the reviewer's
 non-blocking notes on an approved, green PR never delay its merge and never
 get a push onto the approved branch; they land together afterwards, off fresh
 `main`, as one review round for the sweep instead of one per PR. This sweep
 merged one PR (#5135, the opt-in sync internet fallback), so this is its three
-notes. #5137 (dropping `dirs`) is still in CI and its notes, if any, will get
-their own sweep.
+notes, plus #5137's (dropping `dirs`), which merged while this PR was open.
 
 **The load race in `InternetRelaySetting` (#5135 note 1).** The switch is
 live before the initial `getSyncRelaySettings` resolves, so a click in that
@@ -26,3 +25,15 @@ All 26 endpoint guards green after the deletion.
 
 **The wrapper `className` and `data-testid` (note 3).** Matched no stylesheet
 and no test. `<div className="mb-4">` is the whole wrapper.
+
+**`home_dir_string`'s doc comment (#5137 note 1).** It carried toolchain
+archaeology — which release retired which reading, what `dirs` used to call —
+that session-1799 already records in full. Cut to the behaviour a caller needs
+and the variable the test pins.
+
+**The test's early return when the variable is unset (#5137 note 2).** No
+change. The premise is right: on a box with no `$HOME` the test stands down
+silently, and every CI lane is ubuntu-24.04, so the Windows arm is compiled,
+not run. That is the reach the `#[cfg(windows)]` test it replaced had, and a
+`panic!` on an unset variable would make the test about the box rather than
+the function.
