@@ -1,4 +1,4 @@
-# Session 1796 — the opt-in internet fallback for sync (#4549)
+# Session 1798 — the opt-in internet fallback for sync (#4549)
 
 The reported case is a daily one: a phone on an enterprise VPN whose tunnel
 captured the home LAN's unicast but not its multicast, so the desktop kept
