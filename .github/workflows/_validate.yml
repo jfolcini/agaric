@@ -742,6 +742,7 @@ jobs:
           scripts/pr-diff-base.test.mjs
           scripts/check-workflow-liveness.test.mjs
           scripts/file-fuzz-findings.test.mjs
+          scripts/npm-audit-retry.test.mjs
 
       - name: Verify npm package provenance signatures
         # Requires Node 22.5+; rejects packages whose registry-side Sigstore
