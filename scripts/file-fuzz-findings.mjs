@@ -613,9 +613,15 @@ export function allTargetsClean(results) {
 /**
  * Whether a run re-tests this claim, and so settles it by not re-filing it.
  * `[not-run]` and `[lane]` are claims about the run itself. `[build]` belongs
- * with them because every target is COMPILED from scratch each week: a target
- * that got as far as reporting any status has re-answered its own build claim,
- * and a different error next week is a different finding.
+ * with them because every target is COMPILED from scratch each week, so a build
+ * error is re-derived rather than remembered, and a different error next week
+ * is a different finding.
+ *
+ * The classification is per-KIND, not per-target, so it claims slightly more
+ * than a cut-short run established: a `[build]` line for a target that ended
+ * `not_run` is announced resolved by a run that never rebuilt it. Noise, not
+ * loss — the next run that reaches that target re-files it with a comment — and
+ * narrowing it would mean threading this run's per-target statuses in here.
  *
  * `[crash]` and `[timeout]` do not, and that is the whole asymmetry — libFuzzer
  * saves a reproducer under `artifacts/`, not into the corpus, so the next run
@@ -855,8 +861,7 @@ export function main(argv = process.argv.slice(2)) {
   if (newOnes.length === 0) {
     // No `current.length === 0` here: every target reporting `ok` already means
     // `buildFindings` returned nothing, so the check could never fail.
-    const disproved = allTargetsClean(results) ? resolvedOnes : []
-    if (disproved.length > 0) {
+    if (allTargetsClean(results) && resolvedOnes.length > 0) {
       // `all` is the retained set: a clean run has no findings of its own, so
       // `diffFindings` filled it with exactly the known lines it did not disprove.
       if (all.length === 0) {
@@ -867,7 +872,7 @@ export function main(argv = process.argv.slice(2)) {
           repo,
           existingIssue,
           all,
-          disproved,
+          disproved: resolvedOnes,
           byId,
           results,
           runUrl,

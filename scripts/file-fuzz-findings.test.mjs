@@ -351,3 +351,20 @@ void test('a build error the next run did not reproduce leaves the block', () =>
   )
   assert.ok(week3[week3.indexOf('[dry-run] --- new-finding comment ---') + 1].includes(E0432))
 })
+
+void test('a cancelled run clears nothing, because it disproved nothing', () => {
+  // The `allTargetsClean` gate on the clear/close branch, which nothing else
+  // pins: #5110 has `buildFindings` suppress a cancelled run's `not_run`
+  // findings, so `[not-run] fts_strip` is absent from `current` for a reason
+  // that is not evidence. Without the gate it reads as resolved and is cleared.
+  const lines = runMain({
+    statuses: { fts_strip: 'not_run', html_parse: 'not_run' },
+    jobStatus: 'cancelled',
+    knownIds: [LOST_ID, CRASH_ID],
+  })
+  assert.ok(
+    lines.some((l) => l.startsWith('no new fuzz findings')),
+    `expected a no-op, got:\n${lines.join('\n')}`,
+  )
+  assert.ok(!lines.some((l) => l.includes('would CLEAR') || l.includes('would CLOSE')))
+})
