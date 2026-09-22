@@ -374,10 +374,10 @@ const DETAIL_BLOCK =
 
 /**
  * The details `renderDetails` wrote for each tracked finding, read back out of a
- * tracking-issue body. A clean run that clears only part of the tracked set
- * (#5112) rewrites the body around ids it found nothing about, so this is the
- * only surviving copy of a retained `[crash]`'s reproduce command and log
- * excerpt. Values are finding-shaped, so the map is a `byId` as it stands.
+ * tracking-issue body. Every write rewrites the body around ids this run found
+ * nothing about (#5112), so this is the only surviving copy of a retained
+ * `[crash]`'s reproduce command and log excerpt. Values are finding-shaped, so
+ * the map is a `byId` as it stands.
  *
  * A body whose details section either clamp dropped simply matches nothing.
  */
@@ -393,14 +393,27 @@ export function parseKnownDetails(body) {
 }
 
 /**
+ * This run's findings merged INTO the tracked set, never replacing it: `all` is
+ * the script's only cross-run memory, and a run that did not reproduce a
+ * `[crash]` has not disproved it (`isRunShapeFinding`). `resolvedOnes` is what
+ * actually left the block. `knownById` carries a retained finding's details
+ * forward, since this run saw nothing to describe it with.
+ *
  * @param {{ id: string }[]} current
  * @param {Set<string>} known
+ * @param {Map<string, { id: string, detail: string }>} knownById
  */
-export function diffFindings(current, known) {
-  const byId = new Map(current.map((f) => [f.id, f]))
-  const newOnes = [...byId.keys()].filter((id) => !known.has(id)).toSorted()
-  const resolvedOnes = [...known].filter((id) => !byId.has(id)).toSorted()
-  return { newOnes, resolvedOnes, all: [...byId.keys()].toSorted(), byId }
+export function diffFindings(current, known, knownById = new Map()) {
+  const byId = new Map([...knownById, ...current.map((f) => [f.id, f])])
+  const currentIds = new Set(current.map((f) => f.id))
+  const retained = [...known].filter((id) => !isRunShapeFinding(id))
+  const all = new Set([...currentIds, ...retained])
+  return {
+    newOnes: [...currentIds].filter((id) => !known.has(id)).toSorted(),
+    resolvedOnes: [...known].filter((id) => !all.has(id)).toSorted(),
+    all: [...all].toSorted(),
+    byId,
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -663,11 +676,6 @@ function closeResolvedIssue({ args, repo, existingIssue, resolvedOnes, results, 
  *
  * Body only: no comment, no close. A line the run disproved is not a finding,
  * and nobody needs a notification about one going away.
- *
- * The details come from the OLD body, because a clean run produced no findings
- * of its own: a retained `[crash]` whose reproduce command and log excerpt were
- * not carried forward would keep its line and silently lose everything a human
- * reading it needs.
  */
 function clearDisprovedFindings({
   args,
@@ -675,6 +683,7 @@ function clearDisprovedFindings({
   existingIssue,
   retained,
   disproved,
+  byId,
   results,
   runUrl,
 }) {
@@ -683,7 +692,7 @@ function clearDisprovedFindings({
     all: retained,
     newOnes: [],
     resolvedOnes: disproved,
-    byId: parseKnownDetails(existingIssue.body),
+    byId,
     results,
     runUrl,
   })
@@ -827,18 +836,32 @@ export function main(argv = process.argv.slice(2)) {
   }
 
   const known = parseKnownFindings(existingIssue?.body)
-  const { newOnes, resolvedOnes, all, byId } = diffFindings(current, known)
+  const { newOnes, resolvedOnes, all, byId } = diffFindings(
+    current,
+    known,
+    parseKnownDetails(existingIssue?.body),
+  )
 
   if (newOnes.length === 0) {
     // No `current.length === 0` here: every target reporting `ok` already means
     // `buildFindings` returned nothing, so the check could never fail.
-    const disproved = allTargetsClean(results) ? resolvedOnes.filter(isRunShapeFinding) : []
+    const disproved = allTargetsClean(results) ? resolvedOnes : []
     if (disproved.length > 0) {
-      const retained = resolvedOnes.filter((id) => !isRunShapeFinding(id))
-      if (retained.length === 0) {
+      // `all` is the retained set: a clean run has no findings of its own, so
+      // `diffFindings` filled it with exactly the known lines it did not disprove.
+      if (all.length === 0) {
         closeResolvedIssue({ args, repo, existingIssue, resolvedOnes, results, runUrl })
       } else {
-        clearDisprovedFindings({ args, repo, existingIssue, retained, disproved, results, runUrl })
+        clearDisprovedFindings({
+          args,
+          repo,
+          existingIssue,
+          retained: all,
+          disproved,
+          byId,
+          results,
+          runUrl,
+        })
       }
       return
     }

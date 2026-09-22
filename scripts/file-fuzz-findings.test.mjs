@@ -266,3 +266,48 @@ void test('parseKnownDetails reads a body without details as empty rather than t
   assert.equal(parseKnownDetails('').size, 0)
   assert.equal(parseKnownDetails(undefined).size, 0)
 })
+
+// The update path is the tracked set's other write, and it used to rewrite the
+// block with this run's findings alone — so any week with a new finding dropped
+// every earlier `[crash]`, its reproduce command and its excerpt, silently.
+
+void test('a new finding does not drop the crash this run said nothing about', () => {
+  const detail =
+    'Reproducer `src-tauri/fuzz/artifacts/html_parse/crash-abc123`.\n\n==1== ERROR: libFuzzer: deadly signal'
+  const known = buildIssueBody({
+    all: [CRASH_ID],
+    newOnes: [],
+    resolvedOnes: [],
+    byId: new Map([[CRASH_ID, { id: CRASH_ID, detail }]]),
+  })
+  const body = dryRunBody(
+    runMain({
+      statuses: { fts_strip: 'not_run', html_parse: 'ok' },
+      jobStatus: 'failure',
+      knownBody: known,
+    }),
+  )
+  assert.deepEqual([...parseKnownFindings(body)], [CRASH_ID, LOST_ID].toSorted())
+  assert.ok(body.includes(detail), `the retained crash lost its reproducer:\n${body}`)
+  // "Resolved since last run" names what left the block, so a retained line is
+  // not one of them.
+  assert.ok(!body.includes('### Resolved since last run'), `crash reported resolved:\n${body}`)
+})
+
+void test('a [not-run] line the run disproved leaves the block as a new finding lands', () => {
+  // The other arm: `fts_strip` ran, so its line is the one claim this run did
+  // settle, and it must go — a stale id is a dedup key that swallows its own
+  // recurrence (#5112).
+  const body = dryRunBody(
+    runMain({
+      statuses: { fts_strip: 'ok', html_parse: 'crashed' },
+      jobStatus: 'failure',
+      knownIds: [LOST_ID],
+    }),
+  )
+  assert.deepEqual([...parseKnownFindings(body)], ['[crash] html_parse: reproducer not captured'])
+  assert.ok(
+    body.includes('### Resolved since last run (1)') && body.includes(LOST_ID),
+    `the dropped line must be reported as resolved:\n${body}`,
+  )
+})
