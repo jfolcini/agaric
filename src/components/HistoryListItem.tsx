@@ -220,19 +220,18 @@ function HistoryListItemInner({
           </Tooltip>
         )}
       </div>
-      {isExpanded &&
-        diffSpans != null && (
-          // oxlint-disable-next-line jsx-a11y/interactive-supports-focus -- gridcell focus is delegated to inner controls
-          <div
-            // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- gridcell in an aria grid; <td> requires table ancestry and breaks the flex layout
-            role="gridcell"
-            className="diff-container mt-2 w-full"
-            onClick={(e) => e.stopPropagation()}
-            onKeyDown={(e) => e.stopPropagation()}
-          >
-            <DiffDisplay spans={diffSpans} />
-          </div>
-        )}
+      {isExpanded && diffSpans != null && (
+        // oxlint-disable-next-line jsx-a11y/interactive-supports-focus -- gridcell focus is delegated to inner controls
+        <div
+          // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- gridcell in an aria grid; <td> requires table ancestry and breaks the flex layout
+          role="gridcell"
+          className="diff-container mt-2 w-full"
+          onClick={(e) => e.stopPropagation()}
+          onKeyDown={(e) => e.stopPropagation()}
+        >
+          <DiffDisplay spans={diffSpans} />
+        </div>
+      )}
     </div>
   )
 }

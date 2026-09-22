@@ -91,15 +91,14 @@ export function BlockDndOverlay({
   return (
     <>
       {/* SR announcement for DnD projected drop position + subtree size */}
-      {activeId &&
-        projected && (
-          // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- intentional SR-only live region (aria-live/atomic); native <output> has implicit aria-live differences and an "Output" semantic role
-          <div role="status" aria-live="polite" aria-atomic="true" className="sr-only">
-            {isSubtree
-              ? t('blockTree.dnd.movingSubtree', { count, depth: projected.depth })
-              : t('blockTree.dnd.moving', { depth: projected.depth })}
-          </div>
-        )}
+      {activeId && projected && (
+        // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- intentional SR-only live region (aria-live/atomic); native <output> has implicit aria-live differences and an "Output" semantic role
+        <div role="status" aria-live="polite" aria-atomic="true" className="sr-only">
+          {isSubtree
+            ? t('blockTree.dnd.movingSubtree', { count, depth: projected.depth })
+            : t('blockTree.dnd.moving', { depth: projected.depth })}
+        </div>
+      )}
       {/* Drag overlay: a translucent ghost of the dragged row follows the
           cursor at the projected indent (Notion/Logseq style). For a subtree
           drag we add a small count badge so the user knows how much is moving

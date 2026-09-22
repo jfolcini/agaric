@@ -134,18 +134,17 @@ export function QueryResultList({
                   title
                 )}
               </span>
-              {pageTitle &&
-                block.parent_id && (
-                  // #4737 — plain text, not `PageLink`: a `role="option"` may
-                  // not contain a focusable widget (axe `nested-interactive`),
-                  // and `PageLink`'s link role was never reachable from this
-                  // listbox's roving `tabIndex={-1}` rows anyway. The row's own
-                  // click/Enter handler already opens this same page via
-                  // `handleBlockNavigation`, so the target stays reachable.
-                  <span className="shrink-0 text-xs text-muted-foreground/60 truncate max-w-[120px]">
-                    {pageTitle}
-                  </span>
-                )}
+              {pageTitle && block.parent_id && (
+                // #4737 — plain text, not `PageLink`: a `role="option"` may
+                // not contain a focusable widget (axe `nested-interactive`),
+                // and `PageLink`'s link role was never reachable from this
+                // listbox's roving `tabIndex={-1}` rows anyway. The row's own
+                // click/Enter handler already opens this same page via
+                // `handleBlockNavigation`, so the target stays reachable.
+                <span className="shrink-0 text-xs text-muted-foreground/60 truncate max-w-[120px]">
+                  {pageTitle}
+                </span>
+              )}
             </div>
           </div>
         )
