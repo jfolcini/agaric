@@ -58,7 +58,7 @@ use crate::sync_constants::CONNECT_TIMEOUT;
 use crate::sync_daemon::lan_interface::BindDecision;
 use crate::sync_events::{SyncEvent, SyncEventSink};
 use iroh::endpoint::{Connection, RecvStream, SendStream};
-use iroh::{Endpoint, EndpointAddr, SecretKey};
+use iroh::{Endpoint, EndpointAddr, RelayUrl, SecretKey};
 use iroh_dns::dns::DnsResolver;
 use iroh_mdns_address_lookup::{DiscoveryEvent, MdnsAddressLookup};
 use n0_future::StreamExt;
@@ -141,6 +141,13 @@ pub struct SyncDaemonContext {
     pub event_sink: Arc<dyn SyncEventSink>,
     pub cancel: Arc<AtomicBool>,
     pub lifecycle: LifecycleHooks,
+    /// The opt-in internet fallback (#4549): `true` binds the endpoint with iroh's
+    /// relay transport against
+    /// [`internet_relay_url`](crate::transport::endpoint::internet_relay_url) and
+    /// names that relay in every
+    /// dial. Read from `app_settings` once, when the daemon is started, so a change
+    /// takes effect at the next app launch.
+    pub internet_relay: bool,
 }
 
 // ---------------------------------------------------------------------------
@@ -242,15 +249,7 @@ struct BoundEndpoint {
 }
 
 /// Bind the LAN-only QUIC endpoint, start accepting on it, and attach mDNS discovery.
-async fn bring_up_endpoint(
-    pool: &SqlitePool,
-    device_id: &str,
-    materializer: &Arc<dyn ApplyHost>,
-    scheduler: &Arc<SyncScheduler>,
-    endpoint_secret: SecretKey,
-    event_sink: &Arc<dyn SyncEventSink>,
-    cancel: &Arc<AtomicBool>,
-) -> Result<BoundEndpoint, AppError> {
+async fn bring_up_endpoint(ctx: &SyncDaemonContext) -> Result<BoundEndpoint, AppError> {
     // 1. Bind the LAN-only QUIC endpoint (responder mode — #615, #78).
     //
     // One endpoint serves both roles: it accepts here and `try_sync_with_peer` dials
@@ -293,7 +292,9 @@ async fn bring_up_endpoint(
             prefix_len,
             &host_addrs,
             DnsResolver::default(),
-            endpoint_secret,
+            ctx.endpoint_secret.clone(),
+            ctx.internet_relay
+                .then(crate::transport::endpoint::internet_relay_url),
         )
         .await
         .map_err(|e| AppError::InvalidOperation(format!("[sync_daemon] sync endpoint: {e}")))?,
@@ -308,7 +309,7 @@ async fn bring_up_endpoint(
     // 1b. Tell the user, not just the log, when that bind is internet-facing
     //     (#3864). Emitted here rather than beside the decision because the port
     //     only exists once the endpoint is up — the bind requests port 0.
-    handle_internet_facing_bind(&bind_decision, port, event_sink);
+    handle_internet_facing_bind(&bind_decision, port, &ctx.event_sink);
 
     // 1c. Publish where a peer can dial us, so the pairing QR can carry it and a
     //     first-ever pair stops depending on multicast (#4037).
@@ -320,20 +321,21 @@ async fn bring_up_endpoint(
     //     address the endpoint bound, because a record naming an unbound address
     //     is indistinguishable from a sleeping device) a QR candidate that leads
     //     nowhere is refused in under a millisecond, not a dial budget.
-    scheduler.publish_local_endpoint(crate::sync_scheduler::LocalEndpointAdvert {
-        device_id: device_id.to_owned(),
-        endpoint_id: endpoint_id.to_string(),
-        addrs: service.addr().ip_addrs().copied().collect(),
-    });
+    ctx.scheduler
+        .publish_local_endpoint(crate::sync_scheduler::LocalEndpointAdvert {
+            device_id: ctx.device_id.clone(),
+            endpoint_id: endpoint_id.to_string(),
+            addrs: service.addr().ip_addrs().copied().collect(),
+        });
 
     let accept_task = spawn_accept_loop(
         &service,
-        pool,
-        device_id,
-        materializer,
-        scheduler,
-        event_sink,
-        cancel,
+        &ctx.pool,
+        &ctx.device_id,
+        &ctx.materializer,
+        &ctx.scheduler,
+        &ctx.event_sink,
+        &ctx.cancel,
     );
 
     // 2. LAN discovery over mDNS (graceful fallback — BUG-38, session-log session 406).
@@ -358,8 +360,8 @@ async fn bring_up_endpoint(
     // event, so the only signals are its own `tracing` output and Android's
     // `onBlockedStatusChanged` monitor `run_daemon` installs before this call.
     let mdns = handle_mdns_init_result(
-        crate::mdns::attach(service.endpoint(), device_id),
-        event_sink,
+        crate::mdns::attach(service.endpoint(), &ctx.device_id),
+        &ctx.event_sink,
     );
     let mdns_events: n0_future::boxed::BoxStream<DiscoveryEvent> = match &mdns {
         Some(lookup) => {
@@ -426,6 +428,7 @@ async fn run_change_round(
         let event_sink = ctx.event_sink.clone();
         let cancel = cancel.clone();
         let task_endpoint = ctx.endpoint.clone();
+        let task_relay_url = ctx.relay_url.cloned();
         let refs_for_task = refs.clone();
         // Read before the spawn: `discovered` is the loop's, and the
         // task takes ownership of `peer`. A round member resolved
@@ -442,6 +445,7 @@ async fn run_change_round(
                 cancel: &cancel,
                 endpoint: &task_endpoint,
                 bind_prefix_len,
+                relay_url: task_relay_url.as_ref(),
             };
             let was_cancelled = try_sync_with_peer(&ctx, &peer, &refs_for_task, seen_at).await;
             (peer.device_id, was_cancelled)
@@ -672,23 +676,12 @@ async fn run_daemon(
     shutdown_notify: Arc<Notify>,
     mut discovered: DiscoveredPeers,
 ) -> Result<(), AppError> {
-    let SyncDaemonContext {
-        pool,
-        device_id,
-        materializer,
-        scheduler,
-        endpoint_secret,
-        event_sink,
-        cancel,
-        lifecycle,
-    } = ctx;
-
     // #3852: register for the OS's own statement about this uid's firewall
     // status before anything tries to use the network, so a block that is
     // already in force is reported rather than inferred from the silence that
     // follows. Off Android `start_monitor` is a no-op; the sink installation is
     // unconditional so the reporting path is identical on every platform.
-    super::android_network_block::install_event_sink(event_sink.clone());
+    super::android_network_block::install_event_sink(ctx.event_sink.clone());
     super::android_network_block::start_monitor();
 
     let BoundEndpoint {
@@ -697,16 +690,19 @@ async fn run_daemon(
         accept_task,
         mdns,
         mut mdns_events,
-    } = bring_up_endpoint(
-        &pool,
-        &device_id,
-        &materializer,
-        &scheduler,
-        endpoint_secret,
-        &event_sink,
-        &cancel,
-    )
-    .await?;
+    } = bring_up_endpoint(&ctx).await?;
+
+    let SyncDaemonContext {
+        pool,
+        device_id,
+        materializer,
+        scheduler,
+        endpoint_secret: _,
+        event_sink,
+        cancel,
+        lifecycle,
+        internet_relay: _,
+    } = ctx;
 
     let ctx = SyncSessionContext {
         pool: &pool,
@@ -717,6 +713,7 @@ async fn run_daemon(
         cancel: &cancel,
         endpoint: service.endpoint(),
         bind_prefix_len: Some(prefix_len),
+        relay_url: service.relay_url(),
     };
     run_select_loop(
         &ctx,
@@ -1055,6 +1052,9 @@ pub struct SyncSessionContext<'a> {
     /// prefix to give and must not be made to invent one. `None` makes the probe
     /// `Inconclusive`, never a guess.
     pub bind_prefix_len: Option<u8>,
+    /// The relay the endpoint was bound with (#4549), named in every dial so iroh has
+    /// a path when the peer's direct addresses are unreachable. `None` is LAN-only.
+    pub relay_url: Option<&'a RelayUrl>,
 }
 
 // ---------------------------------------------------------------------------
@@ -1854,6 +1854,14 @@ async fn connect_to_peer(
     let mut addr = EndpointAddr::new(endpoint_id);
     for ip in &peer.addresses {
         addr = addr.with_ip_addr(std::net::SocketAddr::new(*ip, peer.port));
+    }
+    // #4549: with address lookup cleared, the relay goes in here or nowhere — iroh's
+    // `connect` contract is that a dial with unreachable direct addresses and no
+    // relay URL fails. The direct path is still preferred whenever it completes; the
+    // relay is classified a backup path and carries the connection only when no IP
+    // path does.
+    if let Some(relay) = ctx.relay_url {
+        addr = addr.with_relay_url(relay.clone());
     }
     // Bounded, because iroh's own dial budget is ~30 s and this runs while holding the
     // per-peer lock and a slot in the round's `JoinSet`.

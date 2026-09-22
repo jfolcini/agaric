@@ -182,6 +182,9 @@ const RETURN_SHAPE: &[(&str, &str, &[&str], &[&str])] = &[
     ("update_peer_name", HEADED_ID_KEY, &[], &[]),
     ("set_peer_address", HEADED_ID_KEY, &[], &[]),
     ("set_reminder_settings", HEADED_ID_KEY, &[], &[]),
+    // #4549 — same shape: one `app_settings` row, observed by the
+    // `get_sync_relay_settings` step that follows.
+    ("set_sync_relay_settings", HEADED_ID_KEY, &[], &[]),
     ("delete_property_def", HEADED_ID_KEY, &[], &[]),
     // #5057 — the two attachment writers that need no blob. Both answer `()`,
     // and `attachments` is outside the snapshot's five arrays, so the
@@ -442,6 +445,17 @@ pub(super) async fn apply_op_via_command(
                             panic!("conformance op '{command}' is missing arg 'settings.time'")
                         })
                         .to_owned(),
+                },
+            )
+            .await,
+        ),
+        "set_sync_relay_settings" => to_json(
+            set_sync_relay_settings_inner(
+                pool,
+                agaric_lib::commands::SyncRelaySettings {
+                    enabled: args["settings"]["enabled"].as_bool().unwrap_or_else(|| {
+                        panic!("conformance op '{command}' is missing arg 'settings.enabled'")
+                    }),
                 },
             )
             .await,
@@ -1019,7 +1033,7 @@ mod tests {
     /// vice versa, and the count is the one this module claims — so a
     /// mutating command cannot join one table without the other, and cannot
     /// join at all without this number moving.
-    const MUTATING_ARM_COUNT: usize = 38;
+    const MUTATING_ARM_COUNT: usize = 39;
 
     #[test]
     fn the_dispatcher_and_the_return_shape_table_name_the_same_commands() {

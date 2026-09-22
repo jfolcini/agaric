@@ -207,6 +207,9 @@ macro_rules! agaric_commands {
             // transition, so a pairing dialog reopened during one continuous
             // block gets no event however early it subscribes.
             $crate::commands::sync_cmds::get_os_network_block_status,
+            // #4549 — the opt-in internet fallback (relay) preference.
+            $crate::commands::sync_cmds::get_sync_relay_settings,
+            $crate::commands::sync_cmds::set_sync_relay_settings,
             // Batch count commands (#604)
             $crate::commands::agenda::count_agenda_batch_by_source,
             $crate::commands::queries::count_backlinks_batch,
@@ -2160,6 +2163,16 @@ fn wire_sync_daemon(w: SyncDaemonWiring) {
     // wake notify into the daemon loop so its periodic resync
     // tick short-circuits while the app is backgrounded.
     tauri::async_runtime::spawn(async move {
+        // #4549: read once, here, so the setting takes effect at the next app
+        // launch — the endpoint binds exactly once per daemon. A read failure
+        // keeps the LAN-only default rather than stopping sync.
+        let internet_relay = match commands::get_sync_relay_settings_inner(&w.pool).await {
+            Ok(settings) => settings.enabled,
+            Err(e) => {
+                tracing::warn!(error = %e, "reading the sync relay setting failed; staying LAN-only");
+                false
+            }
+        };
         match agaric_sync::sync_daemon::SyncDaemon::start_if_peers_exist_with_lifecycle(
             agaric_sync::sync_daemon::SyncDaemonContext {
                 pool: w.pool,
@@ -2173,6 +2186,7 @@ fn wire_sync_daemon(w: SyncDaemonWiring) {
                 event_sink: w.sink,
                 cancel: w.cancel_flag,
                 lifecycle: w.lifecycle,
+                internet_relay,
             },
         )
         .await

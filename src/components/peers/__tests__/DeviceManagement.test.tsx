@@ -171,6 +171,7 @@ function mockInvokeByCommand(handlers: TypedInvokeHandlers = {}) {
   stubInvoke(mockedInvoke, {
     get_mdns_status: () => ({ disabled: false, reason: null }),
     get_bind_exposure_status: () => ({ internet_facing: null }),
+    get_sync_relay_settings: () => ({ enabled: false }),
     ...handlers,
   })
 }

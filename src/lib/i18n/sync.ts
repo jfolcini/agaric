@@ -151,6 +151,17 @@ export const sync: Record<string, string> = {
   'device.internetFacingBindAck': 'Got it',
   'device.internetFacingBindAckLabel':
     'Acknowledge this sync address; the notice returns if the address changes',
+  // #4549 — the opt-in internet fallback. The description carries the whole
+  // cost of the choice, because the setting IS that choice: what the relay
+  // can and cannot see, that both devices need it, and that it takes effect
+  // at the next launch (the endpoint binds once per daemon; there is no
+  // restart command). The word "relay" is deliberately absent — "connection
+  // server" says what it does to someone who has never heard of one.
+  'device.internetRelayLabel': 'Local network, with an internet fallback',
+  'device.internetRelayDescription':
+    "If your devices can't reach each other directly — a VPN or a restrictive network is in the way — sync goes through a connection server on the internet instead. Your notes stay encrypted end to end and the server cannot read them, but it does see which of your devices are talking and how much data moves. Agaric still uses your local network whenever it works. Turn this on for both devices; it takes effect the next time Agaric starts.",
+  'device.internetRelayLoadFailed': 'Failed to load the internet fallback setting',
+  'device.internetRelaySaveFailed': 'Failed to save the internet fallback setting',
   'device.noAddress': 'No address',
   'device.editAddressLabel': 'Edit address for {{name}}',
   'device.renameDeviceLabel': 'Rename device {{name}}',

@@ -1496,6 +1496,22 @@ async fn run_step(pool: &SqlitePool, args: &StepArgs<'_>) -> Result<RawResult, A
         // `seed.app_settings` / `seed.peer_refs` sections put the same rows on
         // both stacks (see `replay_fixture`). Both arms call what the shipped
         // command calls.
+        //
+        // #4549 — same shape as the reminder pair: one `app_settings` row,
+        // `'1'` = on, projected as a bare struct under a fixed head.
+        "get_sync_relay_settings" => {
+            let settings = get_sync_relay_settings_inner(pool).await?;
+            let v = serde_json::to_value(settings).expect("serialize SyncRelaySettings");
+            RawResult {
+                rows: vec![format!(
+                    "sync_relay_settings#enabled={}",
+                    attr_value("enabled", v.get("enabled")),
+                )],
+                has_more: None,
+                total_count: None,
+                next_cursor: None,
+            }
+        }
         "get_reminder_settings" => {
             let settings = agaric_lib::reminders::get_settings(pool).await?;
             // A bare struct with no id: the whole answer IS the single token,
@@ -2671,6 +2687,10 @@ pub(super) mod reader_delegation_tests {
     // SELECT over `app_settings` (`reminders::get_settings`). The table's
     // reminder writer is `set_reminder_settings`, not a read arm. Writer set
     // unchanged.
+    // #4549 (sync relay setting) wired `get_sync_relay_settings`: one
+    // `query_scalar!` SELECT over `app_settings`
+    // (`commands/sync_cmds.rs`). The row's writer is
+    // `set_sync_relay_settings`, not a read arm. Writer set unchanged.
     // #3830 (peer refs) wired `list_peer_refs`: one `query_as!` SELECT over
     // `peer_refs` (`peer_refs::list_peer_refs`). The table's writers are the
     // pairing / sync-session paths and the peer commands, none a read arm.
@@ -2693,7 +2713,7 @@ pub(super) mod reader_delegation_tests {
     // to `block_properties` (`commands/spaces.rs`). The `is_space` /
     // `accent_color` rows it reads are written by `create_space` and
     // `set_property`, neither a read arm. Writer set unchanged.
-    const SWEPT_ARM_COUNT: usize = 53;
+    const SWEPT_ARM_COUNT: usize = 54;
 
     /// #3833 item 8 — the WRITE sweep, recorded where its conclusion is cited.
     ///

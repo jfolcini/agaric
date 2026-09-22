@@ -16,7 +16,10 @@ import {
   returnUndefined,
   validationRejection,
 } from '@/lib/tauri-mock/handlers/shared'
-import { fakeId, pairingPeerReveal, peerRefs } from '@/lib/tauri-mock/seed'
+import { appSettings, fakeId, pairingPeerReveal, peerRefs } from '@/lib/tauri-mock/seed'
+
+/** #4549 — the `app_settings` key `get_sync_relay_settings_inner` reads; `'1'` = on. */
+const INTERNET_RELAY_KEY = 'sync.internet_relay'
 
 // #3469 (review) — how many `list_peer_refs` reads must elapse after a
 // `confirm_pairing` before the mock materializes the pinned peer row.
@@ -234,6 +237,19 @@ export const syncHandlers = {
   // said nothing about gives: not blocked, and therefore no banner key.
   get_os_network_block_status: () => ({ blocked: false, reason_key: null }),
 
+  // Mirrors `get_sync_relay_settings_inner` / `set_sync_relay_settings_inner`
+  // (#4549): one device-local `app_settings` row, off by default. Read through
+  // the `appSettings` map so a fixture's `seed.app_settings` reaches it.
+  get_sync_relay_settings: () => ({
+    enabled: appSettings.get(INTERNET_RELAY_KEY) === '1',
+  }),
+
+  set_sync_relay_settings: (args) => {
+    const a = args as { settings?: { enabled?: unknown } }
+    appSettings.set(INTERNET_RELAY_KEY, a.settings?.enabled === true ? '1' : '0')
+    return undefined
+  },
+
   // ---------------------------------------------------------------------------
   // Task properties (todo/priority/due/scheduled)
   // ---------------------------------------------------------------------------
@@ -344,6 +360,8 @@ export const syncHandlers = {
   | 'get_mdns_status'
   | 'get_bind_exposure_status'
   | 'get_os_network_block_status'
+  | 'get_sync_relay_settings'
+  | 'set_sync_relay_settings'
   | 'update_peer_name'
   | 'set_peer_address'
   | 'get_mcp_status'

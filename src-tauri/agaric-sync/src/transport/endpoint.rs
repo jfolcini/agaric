@@ -6,6 +6,13 @@
 //! findings behind it are recorded on #78 and in plan #3464. Living here, inside a
 //! workspace member, the guard runs under `cargo nextest run --workspace` — which is
 //! the whole point of moving it.
+//!
+//! `lan_with_relay_with_host_addrs` (#4549) is the one opt-in departure: the same
+//! confined endpoint with iroh's relay transport enabled against a single pinned
+//! relay, so a LAN a VPN tunnel has captured (unicast swallowed, multicast still
+//! escaping) still has a path. Its guard asserts that the relay's hostname is the
+//! *only* name the endpoint ever resolves; the `lan_only` guards are unchanged and
+//! serve as its negative control.
 
 use std::{
     net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
@@ -13,7 +20,7 @@ use std::{
 };
 
 use iroh::{
-    Endpoint, RelayMode,
+    Endpoint, RelayMap, RelayMode, RelayUrl,
     endpoint::{BindOpts, Builder, InvalidSocketAddr, presets},
 };
 use iroh_dns::dns::{BoxIter, DnsError, DnsResolver, Resolver, TxtRecordData};
@@ -146,9 +153,11 @@ impl Resolver for RecordingResolver {
 ///
 /// # The three layers, and why each is load-bearing
 ///
-/// 1. **No relay transport.** `clear_relay_transports()` removes the transport
-///    outright, which is strictly stronger than `RelayMode::Disabled` — that only
-///    empties the relay map while the transport remains constructed.
+/// 1. **No relay transport.** `RelayMode::Disabled` and `clear_relay_transports()`
+///    are the same operation in the pinned iroh (1.1.0): each `retain`-removes every
+///    `TransportConfig::Relay` from the builder. Under [`presets::Minimal`] there is
+///    none to remove — `Builder::empty` seeds only the two default IP transports — so
+///    both calls are belt-and-braces against a preset change, not the mechanism.
 /// 2. **No address-lookup services.** Built from [`presets::Minimal`], which sets only
 ///    the mandatory crypto provider. Building from `N0` or `N0DisableRelay` instead
 ///    would install `PkarrPublisher::n0_dns()`, `PkarrResolver::n0_dns()` and
@@ -234,6 +243,62 @@ pub(crate) fn lan_only_with_host_addrs(
     resolver: DnsResolver,
     host_addrs: &[IpAddr],
 ) -> Result<Builder, LanBindError> {
+    confined_builder(bind, prefix_len, resolver, host_addrs, RelayMode::Disabled)
+}
+
+/// The relay the opt-in internet fallback pins (#4549): n0's NA-east production relay.
+///
+/// One URL on every device, rather than iroh's four-relay default map, because with
+/// address lookup cleared nothing tells a dialer which relay its peer is *on*: a relay
+/// forwards only to endpoints connected to it, and iroh keeps a single home relay per
+/// endpoint. A one-entry map makes both ends share that home relay by construction,
+/// and the dial site names the same URL in the [`iroh::EndpointAddr`] it connects to.
+#[must_use]
+pub fn internet_relay_url() -> RelayUrl {
+    iroh::defaults::prod::default_na_east_relay().url
+}
+
+/// [`lan_only_with_host_addrs`] with iroh's relay transport enabled against `relay`
+/// (#4549).
+///
+/// Layers 2 and 3 are untouched — the body is [`confined_builder`], shared with
+/// `lan_only`, and the only difference is the [`RelayMode`] it is handed. The relay
+/// client is its own transport: a TCP connection to the relay, upgraded from HTTPS,
+/// that rides the OS default route rather than the bound UDP socket. That is what
+/// makes it reach past a captured LAN, and also what layer 3 never confined, because
+/// there was no relay to confine.
+///
+/// Two consequences the setting's copy has to carry: the connection to `relay` is
+/// held open for as long as the endpoint lives (iroh never idles out its home relay),
+/// so enabling this creates a standing connection to a third party, and a relay
+/// forwards only to endpoints connected to it, so **both** devices must enable it.
+///
+/// # Errors
+/// As [`lan_only`].
+pub(crate) fn lan_with_relay_with_host_addrs(
+    bind: SocketAddr,
+    prefix_len: u8,
+    resolver: DnsResolver,
+    host_addrs: &[IpAddr],
+    relay: RelayUrl,
+) -> Result<Builder, LanBindError> {
+    confined_builder(
+        bind,
+        prefix_len,
+        resolver,
+        host_addrs,
+        RelayMode::Custom(RelayMap::from(relay)),
+    )
+}
+
+/// The confined endpoint both constructors share; `relay` is the only knob.
+fn confined_builder(
+    bind: SocketAddr,
+    prefix_len: u8,
+    resolver: DnsResolver,
+    host_addrs: &[IpAddr],
+    relay: RelayMode,
+) -> Result<Builder, LanBindError> {
     // Layer 3 confines egress by longest-prefix match over the bound sockets. A prefix
     // that covers more than a LAN does not confine anything — at /0 every destination on
     // the internet matches this socket, so the third layer silently becomes a no-op
@@ -268,8 +333,8 @@ pub(crate) fn lan_only_with_host_addrs(
         return Err(LanBindError::BindAddressNotPrivate { bind });
     }
     Endpoint::builder(presets::Minimal)
-        .relay_mode(RelayMode::Disabled)
         .clear_relay_transports()
+        .relay_mode(relay)
         .clear_address_lookup()
         .clear_ip_transports()
         .dns_resolver(resolver)
@@ -732,6 +797,79 @@ mod tests {
             relays.is_empty(),
             "LAN-only endpoint looked up {} relay hostname(s): {relays:?}",
             relays.len()
+        );
+    }
+
+    // -- Guard 2b (#4549): the relay constructor resolves the pinned relay, and
+    //    nothing else ---------------------------------------------------------
+    //
+    // The positive half is what makes the negative half evidence: the relay
+    // hostname must show up, or "no other name was queried" is satisfied by an
+    // endpoint that queried nothing. The negative half is measured across a
+    // keyed-only dial, because that is where a reacquired address-lookup service
+    // shows itself: n0's pkarr and DNS resolvers query on `connect`, not at bind
+    // (a relay-enabled publisher waits for its relay, which never resolves here).
+    // Forced red by swapping `presets::Minimal` for `presets::N0` in
+    // `confined_builder` AND dropping its `clear_address_lookup()`: `dns.iroh.link`
+    // and the `_iroh.<key>` lookup names appear beside the relay's. Either change
+    // alone leaves it green — `Minimal` installs no lookup service, and the clear
+    // removes the ones `N0` installs — which is what "belt-and-braces" means.
+
+    fn relay_builder(recorder: &RecordingResolver) -> Builder {
+        lan_with_relay_with_host_addrs(
+            lan_bind(),
+            LAN_PREFIX,
+            DnsResolver::custom(recorder.clone()),
+            &[],
+            internet_relay_url(),
+        )
+        .expect("loopback /8 is a valid LAN bind")
+    }
+
+    #[tokio::test]
+    async fn relay_endpoint_resolves_only_the_pinned_relay() {
+        let recorder = RecordingResolver::new();
+        let endpoint = relay_builder(&recorder)
+            .bind()
+            .await
+            .expect("endpoint binds");
+        let deadline = tokio::time::Instant::now() + CONTROL_DEADLINE;
+        while relay_queries(&recorder.queries()).is_empty()
+            && tokio::time::Instant::now() < deadline
+        {
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+        // A peer nothing knows how to reach: no addresses, no relay URL. Under this
+        // configuration the dial has nothing to resolve and fails on its own; a
+        // lookup service would resolve the key through n0 first.
+        let stranger = iroh::SecretKey::generate().public();
+        let _ = tokio::time::timeout(
+            SETTLE,
+            endpoint.connect(iroh::EndpointAddr::new(stranger), TEST_ALPN),
+        )
+        .await;
+        let queries = recorder.queries();
+        endpoint.close().await;
+
+        assert!(
+            !relay_queries(&queries).is_empty(),
+            "the relay endpoint never looked up its relay, so the assertion below \
+             would pass vacuously. Saw: {queries:?}"
+        );
+        let pinned = internet_relay_url();
+        let pinned_host = pinned
+            .host_str()
+            .expect("the pinned relay URL names a host")
+            .trim_end_matches('.');
+        let strangers: Vec<&String> = queries
+            .iter()
+            .filter(|query| !is_domain_or_subdomain(query, pinned_host))
+            .collect();
+        assert!(
+            strangers.is_empty(),
+            "the relay endpoint looked up {} name(s) other than {pinned_host}: \
+             {strangers:?} — an address-lookup service has been reacquired",
+            strangers.len()
         );
     }
 

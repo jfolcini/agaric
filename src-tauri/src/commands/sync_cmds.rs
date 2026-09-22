@@ -5,6 +5,8 @@ use std::sync::{Arc, Mutex};
 
 use sqlx::SqlitePool;
 
+use serde::{Deserialize, Serialize};
+use specta::Type;
 use tauri::State;
 use tracing::instrument;
 
@@ -111,6 +113,61 @@ fn validate_host_port(address: &str) -> Result<(), AppError> {
     if port == 0 {
         return Err(invalid());
     }
+    Ok(())
+}
+
+/// `app_settings` key: `'1'` when the opt-in internet fallback is on (#4549),
+/// anything else off. Read by the daemon once at start, so a change takes
+/// effect at the next app launch.
+const INTERNET_RELAY_KEY: &str = "sync.internet_relay";
+
+/// The device-local sync relay preference (#4549), stored in `app_settings`
+/// so the daemon can read it at bind time without the webview.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct SyncRelaySettings {
+    /// Off by default: a fresh install never talks to a relay until the user
+    /// opts in from Settings → Sync & Devices.
+    pub enabled: bool,
+}
+
+/// Read the sync relay preference; an absent row reads as off.
+#[instrument(skip(pool), err)]
+pub async fn get_sync_relay_settings_inner(
+    pool: &SqlitePool,
+) -> Result<SyncRelaySettings, AppError> {
+    let value = sqlx::query_scalar!(
+        "SELECT value FROM app_settings WHERE key = ?",
+        INTERNET_RELAY_KEY
+    )
+    .fetch_optional(pool)
+    .await?;
+    Ok(SyncRelaySettings {
+        enabled: value.as_deref() == Some("1"),
+    })
+}
+
+/// Persist the sync relay preference. The daemon picks it up at the next app
+/// launch; the setting's copy says so.
+#[instrument(skip(pool), err)]
+pub async fn set_sync_relay_settings_inner(
+    pool: &SqlitePool,
+    settings: SyncRelaySettings,
+) -> Result<(), AppError> {
+    let now = crate::db::now_ms();
+    let enabled = if settings.enabled { "1" } else { "0" };
+    sqlx::query!(
+        "INSERT INTO app_settings (key, value, updated_at)
+         VALUES (?, ?, ?)
+         ON CONFLICT(key) DO UPDATE SET
+             value = excluded.value,
+             updated_at = excluded.updated_at",
+        INTERNET_RELAY_KEY,
+        enabled,
+        now,
+    )
+    .execute(pool)
+    .await?;
     Ok(())
 }
 
@@ -571,6 +628,29 @@ pub async fn get_bind_exposure_status(
     Ok(guard.clone())
 }
 
+/// Tauri command: read the device-local sync relay preference (#4549).
+#[tauri::command]
+#[specta::specta]
+pub async fn get_sync_relay_settings(
+    pool: State<'_, ReadPool>,
+) -> Result<SyncRelaySettings, AppError> {
+    get_sync_relay_settings_inner(&pool.0)
+        .await
+        .map_err(sanitize_internal_error)
+}
+
+/// Tauri command: persist the device-local sync relay preference (#4549).
+#[tauri::command]
+#[specta::specta]
+pub async fn set_sync_relay_settings(
+    pool: State<'_, WritePool>,
+    settings: SyncRelaySettings,
+) -> Result<(), AppError> {
+    set_sync_relay_settings_inner(&pool.0, settings)
+        .await
+        .map_err(sanitize_internal_error)
+}
+
 /// Tauri command: return whether the OS is blocking this app's traffic **right
 /// now** (#4035).
 ///
@@ -593,6 +673,50 @@ pub async fn get_bind_exposure_status(
 #[specta::specta]
 pub fn get_os_network_block_status() -> Result<OsNetworkBlockStatus, AppError> {
     Ok(agaric_sync::sync_daemon::android_network_block::current_status())
+}
+
+#[cfg(test)]
+mod relay_settings_tests {
+    use super::{SyncRelaySettings, get_sync_relay_settings_inner, set_sync_relay_settings_inner};
+    use tempfile::TempDir;
+
+    #[tokio::test]
+    async fn a_fresh_install_reads_off_and_a_write_round_trips() {
+        let dir = TempDir::new().unwrap();
+        let pool = crate::db::init_pool(&dir.path().join("test.db"))
+            .await
+            .unwrap();
+
+        assert_eq!(
+            get_sync_relay_settings_inner(&pool).await.unwrap(),
+            SyncRelaySettings { enabled: false },
+            "no row is off: a fresh install never talks to a relay"
+        );
+
+        set_sync_relay_settings_inner(&pool, SyncRelaySettings { enabled: true })
+            .await
+            .unwrap();
+        assert_eq!(
+            get_sync_relay_settings_inner(&pool).await.unwrap(),
+            SyncRelaySettings { enabled: true }
+        );
+
+        // Off stores '0' rather than deleting the row, and reads back as off.
+        set_sync_relay_settings_inner(&pool, SyncRelaySettings { enabled: false })
+            .await
+            .unwrap();
+        assert_eq!(
+            get_sync_relay_settings_inner(&pool).await.unwrap(),
+            SyncRelaySettings { enabled: false }
+        );
+        let rows: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM app_settings WHERE key = 'sync.internet_relay'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(rows, 1);
+    }
 }
 
 #[cfg(test)]

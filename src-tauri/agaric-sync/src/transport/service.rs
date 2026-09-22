@@ -106,7 +106,7 @@ use std::{
 };
 
 use iroh::{
-    Endpoint, EndpointAddr, EndpointId, SecretKey,
+    Endpoint, EndpointAddr, EndpointId, RelayUrl, SecretKey,
     endpoint::{BindError, Connection, Incoming, RecvStream, SendStream},
 };
 use iroh_dns::dns::DnsResolver;
@@ -115,7 +115,9 @@ use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 use agaric_core::error::AppError;
 
 use crate::sync_constants::MAX_CONCURRENT_RESPONDER_SESSIONS;
-use crate::transport::endpoint::{LanBindError, lan_only_with_host_addrs};
+use crate::transport::endpoint::{
+    LanBindError, lan_only_with_host_addrs, lan_with_relay_with_host_addrs,
+};
 
 /// The ALPN every Agaric sync connection negotiates.
 ///
@@ -205,6 +207,10 @@ const FIRST_FRAME_TIMEOUT: Duration = Duration::from_secs(180);
 #[derive(Debug)]
 pub struct SyncService {
     endpoint: Endpoint,
+    /// The relay the endpoint was bound with, if the internet fallback is on (#4549).
+    /// The dial site names it in every `EndpointAddr`, because with address lookup
+    /// cleared nothing else tells iroh which relay the peer is reachable through.
+    relay_url: Option<RelayUrl>,
     /// Sized [`MAX_CONCURRENT_RESPONDER_SESSIONS`]. `Arc` because the permits outlive
     /// [`SyncService::accept`] — they travel into [`InboundSession`] and are released
     /// by its `Drop`.
@@ -485,6 +491,12 @@ impl SyncService {
     /// loopback. Pass the list the bind address came from; `&[]` vouches for nothing,
     /// which refuses a publicly-routable bind and admits any other.
     ///
+    /// # `relay` (#4549)
+    ///
+    /// `Some` enables iroh's relay transport against that one relay, on top of the
+    /// same confined endpoint (`transport::endpoint::lan_with_relay_with_host_addrs`);
+    /// `None` is the LAN-only posture. Read back through [`Self::relay_url`].
+    ///
     /// # Errors
     /// [`ServiceBindError::Configuration`] if the address or prefix cannot support the
     /// LAN-only posture; [`ServiceBindError::Socket`] if iroh cannot bind.
@@ -494,8 +506,15 @@ impl SyncService {
         host_addrs: &[IpAddr],
         resolver: DnsResolver,
         secret: SecretKey,
+        relay: Option<RelayUrl>,
     ) -> Result<Self, ServiceBindError> {
-        let endpoint = lan_only_with_host_addrs(bind, prefix_len, resolver, host_addrs)?
+        let builder = match &relay {
+            Some(url) => {
+                lan_with_relay_with_host_addrs(bind, prefix_len, resolver, host_addrs, url.clone())?
+            }
+            None => lan_only_with_host_addrs(bind, prefix_len, resolver, host_addrs)?,
+        };
+        let endpoint = builder
             // Without this the endpoint mints a fresh identity on every bind, which is
             // harmless for a test that dials itself and fatal for anything that stores
             // an `EndpointId` — see [`identity`](super::identity).
@@ -506,6 +525,7 @@ impl SyncService {
 
         Ok(Self {
             endpoint,
+            relay_url: relay,
             limiter: Arc::new(Semaphore::new(MAX_CONCURRENT_RESPONDER_SESSIONS)),
             setup_timeout: CONNECTION_SETUP_TIMEOUT,
             first_frame_timeout: FIRST_FRAME_TIMEOUT,
@@ -546,6 +566,12 @@ impl SyncService {
     #[must_use]
     pub fn endpoint_id(&self) -> EndpointId {
         self.endpoint.id()
+    }
+
+    /// The relay this service was bound with, `None` under the LAN-only posture (#4549).
+    #[must_use]
+    pub fn relay_url(&self) -> Option<&RelayUrl> {
+        self.relay_url.as_ref()
     }
 
     /// The endpoint itself, so an initiator dials from the same socket we accept on.
@@ -728,6 +754,7 @@ mod tests {
             &[],
             DnsResolver::custom(recorder.clone()),
             SecretKey::generate(),
+            None,
         )
         .await
         .expect("a loopback /8 sync service binds")
@@ -1309,6 +1336,7 @@ mod tests {
             &[],
             DnsResolver::custom(RecordingResolver::new()),
             SecretKey::generate(),
+            None,
         )
         .await
         .map(|_| ())
@@ -1381,6 +1409,7 @@ mod tests {
             &[unheld.ip()],
             DnsResolver::custom(RecordingResolver::new()),
             SecretKey::generate(),
+            None,
         )
         .await
         .map(|_| ())
@@ -1397,6 +1426,7 @@ mod tests {
             &[],
             DnsResolver::custom(RecordingResolver::new()),
             SecretKey::generate(),
+            None,
         )
         .await
         .map(|_| ())
@@ -1428,6 +1458,7 @@ mod tests {
             &[],
             DnsResolver::custom(RecordingResolver::new()),
             SecretKey::generate(),
+            None,
         )
         .await
         .map(|_| ())

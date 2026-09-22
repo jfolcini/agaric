@@ -20,6 +20,7 @@ import { ListViewState } from '@/components/common/ListViewState'
 import { PairingDialog } from '@/components/dialogs/PairingDialog'
 import { RenameDialog } from '@/components/dialogs/RenameDialog'
 import { UnpairConfirmDialog } from '@/components/dialogs/UnpairConfirmDialog'
+import { InternetRelaySetting } from '@/components/peers/InternetRelaySetting'
 import { PeerListItem } from '@/components/peers/PeerListItem'
 import { LoadingSkeleton } from '@/components/rendering/LoadingSkeleton'
 import { Button } from '@/components/ui/button'
@@ -351,6 +352,10 @@ export function DeviceManagement(): React.ReactElement {
                 <Globe className="inline h-3 w-3 mr-1 align-text-bottom" />
                 {t('status.manualIpHint')}
               </p>
+
+              {/* #4549 — the opt-in internet fallback, above the peers list so
+                  a user whose sync is failing finds it without scrolling. */}
+              <InternetRelaySetting />
 
               {/* Pair New Device button */}
               <Button
