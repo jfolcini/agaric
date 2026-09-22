@@ -232,23 +232,25 @@ enforces the boundary at error level: calling an effect event from a
 judgement call. A value read during render is out of scope too — an effect
 event throws if called while rendering.
 
-**One trap the linter does not catch: which fiber owns the effect event.**
-React 19.2 republishes an effect event's implementation in
-`commitBeforeMutationEffectsOnFiber`, which drains `updateQueue.events` for
-`FunctionComponent` and then falls through `case ForwardRef: case
-SimpleMemoComponent: break` — draining nothing. So an effect event owned by a
-`memo(Fn)` component (React downgrades a compare-less `memo` to a single
-`SimpleMemoComponent` fiber) or by `forwardRef(Fn)` is **frozen at mount
-forever**, silently. `memo(Fn, compare)` is fine — it renders a separate inner
-function fiber. This is not theoretical: `DaySection` is `memo(DaySectionInner)`
-and an effect event there reported viewport entry into the mount-time
-`useDayMountWindow` closure, so an evicted day would never have remounted. It
-uses the layout-effect mirror below instead. Two tests hold the line —
-`src/__tests__/effect-event-fiber-tags.test.tsx` pins React's actual behaviour
-per fiber tag (and fails if a React upgrade fixes it), and
-`src/__tests__/effect-event-fiber-owner.test.ts` fails if any component that
-owns an effect event — directly or through a chain of hooks — becomes
-`memo()`/`forwardRef()` wrapped.
+**Which fiber owns the effect event used to matter; since React 19.3 it does
+not.** Through 19.2, `commitBeforeMutationEffectsOnFiber` drained
+`updateQueue.events` for `FunctionComponent` and then fell through `case
+ForwardRef: case SimpleMemoComponent: break` — draining nothing. An effect event
+owned by a `memo(Fn)` component (React downgrades a compare-less `memo` to a
+single `SimpleMemoComponent` fiber) or by `forwardRef(Fn)` was therefore
+**frozen at mount forever**, silently. That was not theoretical: `DaySection` is
+`memo(DaySectionInner)`, and an effect event there reported viewport entry into
+the mount-time `useDayMountWindow` closure, so an evicted day would never have
+remounted. It carried a layout-effect mirror instead for as long as the gap
+existed.
+
+React 19.3 republishes on all four fiber tags, `package.json` requires
+`^19.3.0`, and `DaySection` is a plain `useEffectEvent` again. The guard that
+kept effect events out of wrapped components is deleted rather than kept as a
+habit. What remains is
+`src/__tests__/effect-event-fiber-tags.test.tsx`, which pins all four tags as
+republishing — it is now the only thing standing between a React regression and
+a silently frozen callback, so it reddens on a downgrade or a re-break.
 
 **Otherwise write the mirror from a `useLayoutEffect` with no dependency array.**
 Not `useEffect`, and the difference is load-bearing rather than stylistic:
