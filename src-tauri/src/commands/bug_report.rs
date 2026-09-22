@@ -1806,15 +1806,16 @@ fn redact_log(contents: &str, ctx: &RedactionContext<'_>, format: LineFormat) ->
 /// callers must treat the absence as "no home replacement" rather than
 /// fabricating a path.
 ///
-/// Uses `dirs::home_dir()` so that the platform-canonical source is
-/// consulted on every OS:
-/// - **Unix:** `$HOME` (with `/etc/passwd` fallback)
-/// - **Windows:** `USERPROFILE` (and the `SHGetKnownFolderPath` API as a
-///   fallback). The previous `$HOME`-only implementation silently returned
-///   `None` on Windows, leaking `C:\Users\<name>\…` paths into bug-report
-///   ZIP exports destined for public GitHub issues.
+/// `std::env::home_dir()` consults the platform-canonical source on every OS
+/// (verified against the pinned 1.95 toolchain's source, #5060):
+/// - **Unix:** `$HOME` when set and non-empty, else `getpwuid_r`.
+/// - **Windows:** `USERPROFILE` when set and non-empty, else
+///   `GetUserProfileDirectoryW`. A `$HOME`-only implementation once returned
+///   `None` here and leaked `C:\Users\<name>\…` paths into bug-report ZIP
+///   exports destined for public GitHub issues; std's pre-1.85 `$HOME` reading
+///   on Windows is what kept `dirs` here, and 1.85 retired it.
 fn home_dir_string() -> Option<String> {
-    dirs::home_dir()
+    std::env::home_dir()
         .map(|p| p.to_string_lossy().into_owned())
         .filter(|s| !s.is_empty())
 }
@@ -5580,54 +5581,25 @@ mod tests {
 
     // -- home_dir_string ------------------------------------------
 
-    /// On Linux/macOS the standard CI environments set `$HOME`, so
-    /// `dirs::home_dir()` resolves and `home_dir_string()` returns Some.
-    /// Headless container CIs that strip `$HOME` would force `dirs` to
-    /// fall back to `/etc/passwd`; if even that fails we treat absence as
-    /// "no home replacement" rather than failing the test (matching the
-    /// production "no home replacement" semantics the function documents).
-    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    /// The redaction home is the profile directory the platform's own
+    /// variable names — `USERPROFILE` on Windows, `$HOME` elsewhere — so a
+    /// `$HOME`-only reading on Windows (what leaked `C:\Users\<name>\…` into
+    /// public bug reports) reddens here. Pinned against the variable, not
+    /// against the library that reads it: a mirror of `std::env::home_dir()`
+    /// would restate the implementation. Every CI runner sets the variable;
+    /// on a box that strips it std falls back to the account database and
+    /// there is nothing to compare against, so the test stands down.
     #[test]
-    fn home_dir_string_returns_some_when_dirs_resolves() {
-        if let Some(expected) = dirs::home_dir() {
-            let got = home_dir_string();
-            assert_eq!(
-                got.as_deref(),
-                Some(expected.to_string_lossy().as_ref()),
-                "home_dir_string must mirror dirs::home_dir() when it resolves"
-            );
-            assert!(
-                got.as_deref().is_some_and(|s| !s.is_empty()),
-                "home_dir_string must filter out empty strings"
-            );
-        } else {
-            // Container CI without HOME and no /etc/passwd entry — accept
-            // None as the documented "no home replacement" outcome.
-            assert!(
-                home_dir_string().is_none(),
-                "home_dir_string must return None when dirs::home_dir() fails"
-            );
-        }
-    }
-
-    /// On Windows, `dirs::home_dir()` resolves through `USERPROFILE`
-    /// (and the `SHGetKnownFolderPath` API as a fallback), not `$HOME`.
-    /// The previous `std::env::var("HOME")` implementation would silently
-    /// return `None` here, leaking `C:\Users\<name>\…` into bug-report ZIPs.
-    #[cfg(windows)]
-    #[test]
-    fn home_dir_string_resolves_on_windows_via_userprofile() {
-        let expected = dirs::home_dir().expect(
-            "Windows: dirs::home_dir() must resolve via USERPROFILE on developer/CI machines",
-        );
-        let got = home_dir_string()
-            .expect("home_dir_string must return Some on Windows when USERPROFILE is set");
+    fn home_dir_string_is_the_platform_profile_variable() {
+        let var = if cfg!(windows) { "USERPROFILE" } else { "HOME" };
+        let Some(expected) = std::env::var_os(var).filter(|v| !v.is_empty()) else {
+            return;
+        };
         assert_eq!(
-            got,
-            expected.to_string_lossy().into_owned(),
-            "home_dir_string must mirror dirs::home_dir() on Windows"
+            home_dir_string().as_deref(),
+            Some(expected.to_string_lossy().as_ref()),
+            "home_dir_string must be {var}"
         );
-        assert!(!got.is_empty(), "home_dir_string must filter empty strings");
     }
 
     // =================================================================

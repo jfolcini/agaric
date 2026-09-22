@@ -293,7 +293,6 @@ tauri-plugin-deep-link = "2"
 # parse inbound `agaric://…` strings without depending on transitive
 # resolution of an indirect dependency.
 url = "2"
-dirs = { version = "7.0.0", default-features = false }
 
 # Official Rust MCP SDK — the canonical MCP transport/dispatch layer.
 # Hard (non-optional) dependency as of the rmcp migration (#693): the
