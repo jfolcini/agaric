@@ -5,20 +5,17 @@ something defensible and reporting something false about it.
 
 ## The red that was already fixed
 
-`#3388` and `#3394` were both open on `scheduled-deep-checks` → `full-suite` →
-`full-suite-prek`. The failing hook was `zizmor`, twelve `ref-version-mismatch`
-findings — one per `dtolnay/rust-toolchain` call site — because that action's
-`v1` tag had moved off the pinned hash. (Six is the number of upstream commits
-between the two hashes, which session-1793 also records; this log said six
-findings at first, which was the two crossed.)
+`#3388` and `#3394` are both open on `scheduled-deep-checks` → `full-suite` →
+`full-suite-prek`, and neither describes anything broken now. The cause was the
+`dtolnay/rust-toolchain` pin drift session-1793 records; #5116 moved the pin
+about five hours after that run, and `prek run --all-files zizmor` passes on
+`main` today. Both issues are rolling and self-closing, so Monday's scheduled
+run clears them.
 
-That run was on `d43b1f878`; #5116 moved the pin about five hours later, and
-`prek run --all-files zizmor` passes on `main` today. Both issues are rolling
-and self-closing, so Monday's scheduled run clears them. Nothing to do — worth
-recording only because the obvious reading of two open red tracking issues is
-that something is broken now, and it is not.
+Worth recording only because the obvious reading of two open red tracking
+issues is that something is broken now.
 
-## A clean fuzz run that cleared nothing (#5112)
+## A clean fuzz run that cleared nothing (#5112, PR #5132)
 
 #5111 taught the fuzz filer to clear the tracked block on a clean run, but only
 when *every* known finding was run-shape. The guard was right — libFuzzer writes
@@ -48,7 +45,7 @@ no-op needing a comment to say why.
 Falsified six ways against a copy, including putting the bug back and replaying
 the issue's own reproduction to watch the swallow happen.
 
-## One ECONNRESET, every PR blocked (#5089)
+## One ECONNRESET, every PR blocked (#5089, PR #5131)
 
 `better-npm-audit audit` is one network round-trip to the registry advisory
 endpoint. `prek.toml` already said, in writing, that this was too flaky for the
@@ -68,7 +65,7 @@ The issue offered two larger options — move the check to a scheduled lane, or
 pin an offline advisory set. Both trade advisory latency or new machinery for
 stability. This one trades nothing, which is why it was the one taken.
 
-## The lane with no second implementation, finally on the PR path (#4671, item 2)
+## The lane with no second implementation, finally on the PR path (#4671 item 2, PR #5133)
 
 `e2e-tauri` is the only place the real backend meets the real frontend. It ran
 weekly and gated nothing, while 120 mock-backed Playwright specs gated every PR.
@@ -104,7 +101,7 @@ presenting `gh workflow run` as the only way to reach CI.
 The caveat does not disappear until the lane is a required context, which is
 the half of item 2 that remains.
 
-## The sweep's own follow-up
+## The sweep's own follow-up (PR #5136)
 
 Seven non-blocking notes across the three PRs, batched into one PR rather than
 seven pushes onto approved green branches. Four were the same note — the
