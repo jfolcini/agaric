@@ -12,7 +12,7 @@
  */
 
 import type React from 'react'
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { ToggleRow } from '@/components/ui/toggle-row'
@@ -28,13 +28,17 @@ const DEFAULT_SETTINGS: SyncRelaySettings = { enabled: false }
 export function InternetRelaySetting(): React.ReactElement {
   const { t } = useTranslation()
   const [settings, setSettings] = useState<SyncRelaySettings>(DEFAULT_SETTINGS)
+  // The switch is live before the initial load resolves. A save in that window
+  // is the newer fact, so a load that lands afterwards must not overwrite it
+  // (#5135 review: the row was persisted on while the UI showed off).
+  const savedRef = useRef(false)
 
   useEffect(() => {
     let cancelled = false
     void (async () => {
       try {
         const loaded = unwrap(await commands.getSyncRelaySettings())
-        if (!cancelled) setSettings(loaded)
+        if (!cancelled && !savedRef.current) setSettings(loaded)
       } catch (err) {
         logger.warn('InternetRelaySetting', 'loading the relay setting failed', undefined, err)
         notify.error(t('device.internetRelayLoadFailed'))
@@ -48,6 +52,7 @@ export function InternetRelaySetting(): React.ReactElement {
   const save = useCallback(
     async (next: SyncRelaySettings) => {
       const previous = settings
+      savedRef.current = true
       setSettings(next)
       try {
         unwrap(await commands.setSyncRelaySettings(next))
@@ -61,7 +66,7 @@ export function InternetRelaySetting(): React.ReactElement {
   )
 
   return (
-    <div className="internet-relay-setting mb-4" data-testid="internet-relay-setting">
+    <div className="mb-4">
       <ToggleRow
         id="internet-relay-enabled"
         label={t('device.internetRelayLabel')}

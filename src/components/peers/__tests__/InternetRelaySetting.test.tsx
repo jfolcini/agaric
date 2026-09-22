@@ -96,6 +96,28 @@ describe('InternetRelaySetting', () => {
     expect(screen.getByTestId('internet-relay-switch')).toHaveAttribute('aria-checked', 'true')
   })
 
+  it('a toggle made before the initial load resolves is not overwritten by it', async () => {
+    const user = userEvent.setup()
+    let resolveLoad: (value: unknown) => void = () => {}
+    mockGetSettings.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveLoad = resolve
+        }),
+    )
+    render(<InternetRelaySetting />)
+    await user.click(screen.getByTestId('internet-relay-switch'))
+    await waitFor(() => {
+      expect(stored).toEqual({ enabled: true })
+    })
+    resolveLoad(ok({ enabled: false }))
+    // Give the late load every chance to apply before asserting it did not.
+    await waitFor(() => {
+      expect(mockGetSettings).toHaveBeenCalledTimes(1)
+    })
+    expect(screen.getByTestId('internet-relay-switch')).toHaveAttribute('aria-checked', 'true')
+  })
+
   it('a rejected save toasts and rolls the switch back', async () => {
     const user = userEvent.setup()
     mockSetSettings.mockRejectedValue(new Error('disk full'))
