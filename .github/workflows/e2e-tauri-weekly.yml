@@ -67,11 +67,8 @@
 # (see `e2e/AGENTS.md`).
 # =============================================================================
 
-# The FILE stays `e2e-tauri-weekly.yml`: `scripts/check-workflow-liveness.mjs`
-# keys its watchdog entry on that exact filename. The display name drops
-# "weekly", which stopped being true when the `pull_request` trigger landed;
-# nothing keys on it (everything in the repo that resolves this workflow does
-# so by filename).
+# The display name drops "weekly", which stopped being true here. The FILENAME
+# does not: `check-workflow-liveness.mjs` keys its watchdog entry on it.
 name: e2e-tauri
 
 on:
@@ -111,16 +108,10 @@ on:
     # while a false start costs ~20 min of runner time on the commonest kind of
     # PR here. That asymmetry flips the day this lane gates merges.
     #
-    # ─── A `paths:` filter and a REQUIRED context cannot coexist ─────────────
-    # A workflow that `paths:` skips produces NO check run at all — not a
-    # neutral one, not a skipped one, nothing. Branch protection cannot
-    # distinguish an absent required context from a passing one and simply
-    # waits, so every docs PR would block forever. Whoever promotes this lane
-    # per #4671 must therefore drop the filter and skip INSIDE the job, or
-    # route the lane through `_validate.yml`'s `detect-changes` +
-    # `validate-all` fail-closed aggregate, which exists for precisely this.
-    # Adding the name to the ruleset while this block stands is the one change
-    # that must not happen.
+    # This filter and a REQUIRED context cannot coexist: a `paths`-skipped
+    # workflow produces no check run at all, and branch protection waits
+    # forever on an absent one. Adding this lane to the ruleset while this
+    # block stands is the one change that must not happen — see #4671.
     paths:
       - 'src/**'
       - 'src-tauri/**'
@@ -143,13 +134,8 @@ on:
       # jobs that use the same composites. Starting a native build to re-learn
       # it would be pure waste.
 
-# Per-REF. A new push to a PR supersedes that PR's own in-flight run and
-# nothing else: PR runs carry `refs/pull/<n>/merge` while cron and dispatch
-# runs carry `refs/heads/main`, so PR traffic can neither cancel nor evict a
-# scheduled run. `ci.yml`'s #3672 defect — back-to-back merges evicting each
-# other's post-merge verdict out of a single per-ref group on `main`, since a
-# group holds at most one PENDING run — has no analogue here: this lane has no
-# `push:` trigger, so at most one cron run a week reaches that ref.
+# Per-REF, so a new push supersedes only that PR's own in-flight run: PR runs
+# carry `refs/pull/<n>/merge` and cron runs `refs/heads/main`, disjoint groups.
 concurrency:
   group: e2e-tauri-weekly-${{ github.ref }}
   cancel-in-progress: true

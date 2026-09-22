@@ -5,7 +5,7 @@
 ## Running
 
 ```sh
-gh workflow run e2e-tauri-weekly.yml --ref <branch>     # CI (the usual way; ~17 min; cron Mondays 02:43 UTC)
+gh workflow run e2e-tauri-weekly.yml --ref <branch>     # off a PR: ~20 min; also runs per-PR (gating nothing) and Mondays 02:43 UTC
 gh run list --workflow e2e-tauri-weekly.yml --branch <branch> --limit 3
 ```
 
