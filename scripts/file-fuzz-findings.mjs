@@ -367,6 +367,31 @@ export function parseKnownFindings(body) {
   )
 }
 
+// Reverses one `renderDetails` block. The detail is fenced, so the closing
+// fence is pinned to `</details>` — a ``` inside a log excerpt does not end it.
+const DETAIL_BLOCK =
+  /<details><summary><code>(.*?)<\/code><\/summary>\n\n```\n([\s\S]*?)\n```\n<\/details>/g
+
+/**
+ * The details `renderDetails` wrote for each tracked finding, read back out of a
+ * tracking-issue body. A clean run that clears only part of the tracked set
+ * (#5112) rewrites the body around ids it found nothing about, so this is the
+ * only surviving copy of a retained `[crash]`'s reproduce command and log
+ * excerpt. Values are finding-shaped, so the map is a `byId` as it stands.
+ *
+ * A body whose details section either clamp dropped simply matches nothing.
+ */
+export function parseKnownDetails(body) {
+  /** @type {Map<string, { id: string, detail: string }>} */
+  const byId = new Map()
+  if (!body) return byId
+  for (const [, escapedId, detail] of body.matchAll(DETAIL_BLOCK)) {
+    const id = escapedId.replaceAll('&lt;', '<')
+    byId.set(id, { id, detail })
+  }
+  return byId
+}
+
 /**
  * @param {{ id: string }[]} current
  * @param {Set<string>} known
@@ -427,7 +452,14 @@ export function buildStatusSummary(results) {
   return lines
 }
 
-export function buildIssueBody({ all, newOnes, resolvedOnes, byId, results = [], runUrl }) {
+export function buildIssueBody({
+  all,
+  newOnes,
+  resolvedOnes,
+  byId = new Map(),
+  results = [],
+  runUrl,
+}) {
   const intro = [
     'This issue tracks findings from the weekly `fuzz` lane in `scheduled-deep-checks.yml` (#3169) — build failures, crash reproducers, per-input timeouts, and targets that never ran. It is filed and updated automatically by `scripts/file-fuzz-findings.mjs` — **do not rename the title**, the filing script matches on it verbatim to find this issue instead of opening a new one.',
     '',
@@ -591,17 +623,17 @@ export function isRunShapeFinding(id) {
  * the identical id from a future run that genuinely lost that target.
  *
  * Scoped to the findings a clean run actually disproves (`isRunShapeFinding`);
- * a tracked `[crash]` or `[build]` line keeps the issue open and the whole set
- * in the block, because closing on one would announce a bug as fixed and put
- * the record somewhere nobody re-reads.
+ * a tracked `[crash]` or `[build]` line keeps the issue open, because closing on
+ * one would announce a bug as fixed and put the record somewhere nobody
+ * re-reads. That mixed set is `clearDisprovedFindings`'.
  */
-function closeResolvedIssue({ args, repo, existingIssue, resolvedOnes, byId, results, runUrl }) {
+function closeResolvedIssue({ args, repo, existingIssue, resolvedOnes, results, runUrl }) {
   const summary = `${resolvedOnes.length} previously-known finding(s) resolved and none remain: ${resolvedOnes.join(', ')}`
   if (existingIssue.state === 'CLOSED') {
     console.log(`${summary} — tracking issue already closed, nothing to do`)
     return
   }
-  const body = buildIssueBody({ all: [], newOnes: [], resolvedOnes, byId, results, runUrl })
+  const body = buildIssueBody({ all: [], newOnes: [], resolvedOnes, results, runUrl })
   if (args.dryRun) {
     console.log(`[dry-run] would CLOSE issue #${existingIssue.number}: ${summary}`)
     console.log('[dry-run] --- issue body ---')
@@ -620,6 +652,56 @@ function closeResolvedIssue({ args, repo, existingIssue, resolvedOnes, byId, res
     stdio: 'inherit',
   })
   console.log(`closed tracking issue #${existingIssue.number} — ${summary}`)
+}
+
+/**
+ * Same clean run, mixed tracked set (#5112): drop the run-shape lines it
+ * disproved, keep the rest, leave the issue OPEN. Before this the whole set
+ * stayed, and since a finding id is the dedup key, the stale
+ * `[not-run] fts_strip: …` then swallowed the identical id from the next run
+ * that genuinely lost that target — no line, no warning, a target gone.
+ *
+ * Body only: no comment, no close. A line the run disproved is not a finding,
+ * and nobody needs a notification about one going away.
+ *
+ * The details come from the OLD body, because a clean run produced no findings
+ * of its own: a retained `[crash]` whose reproduce command and log excerpt were
+ * not carried forward would keep its line and silently lose everything a human
+ * reading it needs.
+ */
+function clearDisprovedFindings({
+  args,
+  repo,
+  existingIssue,
+  retained,
+  disproved,
+  results,
+  runUrl,
+}) {
+  const summary = `${disproved.length} finding(s) disproved by a clean run and cleared: ${disproved.join(', ')}; ${retained.length} still tracked`
+  const body = buildIssueBody({
+    all: retained,
+    newOnes: [],
+    resolvedOnes: disproved,
+    byId: parseKnownDetails(existingIssue.body),
+    results,
+    runUrl,
+  })
+  if (args.dryRun) {
+    console.log(`[dry-run] would CLEAR from issue #${existingIssue.number}: ${summary}`)
+    console.log('[dry-run] --- issue body ---')
+    console.log(body)
+    return
+  }
+  if (!repo) throw new Error('--repo (or $GITHUB_REPOSITORY) is required to update the issue')
+  withTempFile(body, (bodyFile) => {
+    execFileSync(
+      'gh',
+      ['issue', 'edit', String(existingIssue.number), '--repo', repo, '--body-file', bodyFile],
+      { stdio: 'inherit' },
+    )
+  })
+  console.log(`updated tracking issue #${existingIssue.number} — ${summary}`)
 }
 
 function withTempFile(content, fn) {
@@ -750,12 +832,14 @@ export function main(argv = process.argv.slice(2)) {
   if (newOnes.length === 0) {
     // No `current.length === 0` here: every target reporting `ok` already means
     // `buildFindings` returned nothing, so the check could never fail.
-    if (
-      allTargetsClean(results) &&
-      resolvedOnes.length > 0 &&
-      resolvedOnes.every(isRunShapeFinding)
-    ) {
-      closeResolvedIssue({ args, repo, existingIssue, resolvedOnes, byId, results, runUrl })
+    const disproved = allTargetsClean(results) ? resolvedOnes.filter(isRunShapeFinding) : []
+    if (disproved.length > 0) {
+      const retained = resolvedOnes.filter((id) => !isRunShapeFinding(id))
+      if (retained.length === 0) {
+        closeResolvedIssue({ args, repo, existingIssue, resolvedOnes, results, runUrl })
+      } else {
+        clearDisprovedFindings({ args, repo, existingIssue, retained, disproved, results, runUrl })
+      }
       return
     }
     console.log('no new fuzz findings — no-op (tracking issue left untouched)')
