@@ -146,14 +146,11 @@ describe('buildInitParams', () => {
     created_at: '2026-01-01T00:00:00Z',
   })
 
-  it('returns valueText empty string for text type', () => {
-    const result = buildInitParams('B1', makeDef('author', 'text'))
-    expect(result).toEqual({ blockId: 'B1', key: 'author', valueText: '' })
-  })
-
-  it('returns valueText empty string for select type', () => {
-    const result = buildInitParams('B1', makeDef('status', 'select'))
-    expect(result).toEqual({ blockId: 'B1', key: 'status', valueText: '' })
+  // The draft-row types have no valid initializer: an arm returning
+  // `valueText: ''` here is the empty init the backend refuses, which is how
+  // a `url` property was declarable but never addable (#5142).
+  it.each(['text', 'select', 'url'])('returns null for the draft-row type %s', (valueType) => {
+    expect(buildInitParams('B1', makeDef('k', valueType))).toBeNull()
   })
 
   it('returns valueNum 0 for number type', () => {
@@ -166,13 +163,6 @@ describe('buildInitParams', () => {
     // negative-offset timezones get tomorrow's date by default.
     const result = buildInitParams('B1', makeDef('due', 'date'))
     expect(result).toEqual({ blockId: 'B1', key: 'due', valueDate: getTodayString() })
-  })
-
-  // #4710 — a `url` value is stored in `value_text`, so a freshly-added one
-  // initializes exactly like text.
-  it('returns valueText empty string for url type', () => {
-    const result = buildInitParams('B1', makeDef('homepage', 'url'))
-    expect(result).toEqual({ blockId: 'B1', key: 'homepage', valueText: '' })
   })
 
   it('returns valueRef null for ref type', () => {

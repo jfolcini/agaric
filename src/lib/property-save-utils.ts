@@ -250,7 +250,9 @@ export async function renameMayDeclareKey(newKey: string): Promise<boolean> {
  * Build the type-appropriate `setProperty` params for initializing a
  * newly-added property.  Ref properties are initialized with a null
  * ref — the UI shows the page picker immediately so the user can
- * select a target.
+ * select a target. The `DRAFT_ROW_VALUE_TYPES` have no valid initializer
+ * and answer `null`: every caller opens a draft row for them first, and
+ * an empty `value_text` here would be the init the backend refuses.
  */
 export function buildInitParams(
   blockId: string,
@@ -265,11 +267,6 @@ export function buildInitParams(
       // everywhere else); `toISOString()` would be UTC → off-by-one for
       // users in negative-offset timezones.
       return { blockId, key: def.key, valueDate: getTodayString() }
-    }
-    case 'text':
-    case 'select':
-    case 'url': {
-      return { blockId, key: def.key, valueText: '' }
     }
     case 'ref': {
       return { blockId, key: def.key, valueRef: null }
