@@ -38,11 +38,16 @@ not run. That is the reach the `#[cfg(windows)]` test it replaced had, and a
 `panic!` on an unset variable would make the test about the box rather than
 the function.
 
-**The rollback's guard (#5138 note, from the reviewer's pass on this PR).**
-The `savedRef` from the first note was never cleared when the save failed, so
-on the error path it suppressed the very load that used to correct the
-rollback: stored on, save rejects, UI rolls back to off, the late load's
-`true` is dropped. One line resets it in the catch. Pinned by a test that
-rejects the save under a still-pending load and then resolves the load;
-falsified by deleting the reset line (the switch stays `"false"`), restore
-verified with `cmp`.
+**The rollback on a failed save (#5138, two reviewer passes on this PR).**
+The `savedRef` from the first note suppressed the initial load on the error
+path too, and resetting it in the catch only covered one ordering: if the
+load had already landed (suppressed) before the save rejected, the catch's
+`previous` was a stale guess and the UI showed off while the row said on.
+The catch now re-reads the row instead of guessing, which retires the reset:
+`readStored` serves both the mount effect and the rollback. Pinned by one
+test per ordering; each falsified against a copy (rolling back to `previous`
+reddens the after-load case, dropping the `savedRef` guard reddens the
+before-load case), restore verified with `cmp`. The reviewer's second point,
+that the first race test's barrier was a no-op `waitFor` on a call count
+already satisfied: both tests now `await act(() => settled)` on the very
+promise the component awaits.

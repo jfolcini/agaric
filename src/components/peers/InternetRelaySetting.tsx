@@ -33,21 +33,26 @@ export function InternetRelaySetting(): React.ReactElement {
   // (#5135 review: the row was persisted on while the UI showed off).
   const savedRef = useRef(false)
 
+  /** The stored row, or `null` once its failure has been reported. */
+  const readStored = useCallback(async (): Promise<SyncRelaySettings | null> => {
+    try {
+      return unwrap(await commands.getSyncRelaySettings())
+    } catch (err) {
+      logger.warn('InternetRelaySetting', 'loading the relay setting failed', undefined, err)
+      notify.error(t('device.internetRelayLoadFailed'))
+      return null
+    }
+  }, [t])
+
   useEffect(() => {
     let cancelled = false
-    void (async () => {
-      try {
-        const loaded = unwrap(await commands.getSyncRelaySettings())
-        if (!cancelled && !savedRef.current) setSettings(loaded)
-      } catch (err) {
-        logger.warn('InternetRelaySetting', 'loading the relay setting failed', undefined, err)
-        notify.error(t('device.internetRelayLoadFailed'))
-      }
-    })()
+    void readStored().then((loaded) => {
+      if (loaded && !cancelled && !savedRef.current) setSettings(loaded)
+    })
     return () => {
       cancelled = true
     }
-  }, [t])
+  }, [readStored])
 
   const save = useCallback(
     async (next: SyncRelaySettings) => {
@@ -59,13 +64,12 @@ export function InternetRelaySetting(): React.ReactElement {
       } catch (err) {
         logger.warn('InternetRelaySetting', 'saving the relay setting failed', undefined, err)
         notify.error(t('device.internetRelaySaveFailed'))
-        setSettings(previous)
-        // The rollback is a guess at the stored row; a load still in flight
-        // knows it, so let that one through again.
-        savedRef.current = false
+        // `previous` is a guess at the row: the initial load may have landed
+        // (and been suppressed) meanwhile. Re-read rather than guess.
+        setSettings((await readStored()) ?? previous)
       }
     },
-    [settings, t],
+    [readStored, settings, t],
   )
 
   return (
