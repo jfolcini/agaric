@@ -406,11 +406,8 @@ export function parseKnownDetails(body) {
 export function diffFindings(current, known, knownById) {
   const byId = new Map([...knownById, ...current.map((f) => [f.id, f])])
   const currentIds = new Set(current.map((f) => f.id))
-  // A cancelled run drops a retested line it did not settle: #5110 has
-  // `buildFindings` suppress `not_run` rather than re-file it, and a target cut
-  // short never re-answered its build claim either, so the id is absent from
-  // `current` for two different reasons. The next non-cancelled run re-files
-  // it, which is why this is not worth a job-status parameter.
+  // Absent from `current` does not always mean settled — see `buildFindings` on
+  // a cancelled run — so the clear/close branch gates on `allTargetsClean`.
   const retained = [...known].filter((id) => !isRetestedEachRun(id))
   const all = new Set([...currentIds, ...retained])
   return {
@@ -612,21 +609,16 @@ export function allTargetsClean(results) {
 
 /**
  * Whether a run re-tests this claim, and so settles it by not re-filing it.
- * `[not-run]` and `[lane]` are claims about the run itself. `[build]` belongs
- * with them because every target is COMPILED from scratch each week, so a build
- * error is re-derived rather than remembered, and a different error next week
- * is a different finding.
+ * `[not-run]` and `[lane]` are claims about the run itself; `[build]` joins them
+ * because every target is COMPILED from scratch each week, so a build error is
+ * re-derived rather than remembered. `[crash]` and `[timeout]` are not — a
+ * reproducer lives under `artifacts/`, not in the corpus, so the next run never
+ * re-executes it and a `[crash]` can go quiet with the bug intact. `[failed]`
+ * is an unrecognised status, retained on the conservative side.
  *
- * The classification is per-KIND, not per-target, so it claims slightly more
- * than a cut-short run established: a `[build]` line for a target that ended
- * `not_run` is announced resolved by a run that never rebuilt it. Noise, not
- * loss — the next run that reaches that target re-files it with a comment — and
- * narrowing it would mean threading this run's per-target statuses in here.
- *
- * `[crash]` and `[timeout]` do not, and that is the whole asymmetry — libFuzzer
- * saves a reproducer under `artifacts/`, not into the corpus, so the next run
- * never re-executes it and the bug can go quiet with the bug intact. `[failed]`
- * is an unrecognised status, so it is retained on the conservative side.
+ * Per KIND, not per target: a `[build]` line for a target that ended `not_run`
+ * is cleared by a run that never rebuilt it, and re-filed by the next one that
+ * does.
  *
  * @param {string} id
  */
