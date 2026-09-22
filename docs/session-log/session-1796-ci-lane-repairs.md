@@ -6,8 +6,11 @@ something defensible and reporting something false about it.
 ## The red that was already fixed
 
 `#3388` and `#3394` were both open on `scheduled-deep-checks` → `full-suite` →
-`full-suite-prek`. The failing hook was `zizmor`, six `ref-version-mismatch`
-findings: `dtolnay/rust-toolchain`'s `v1` tag had moved off the pinned hash.
+`full-suite-prek`. The failing hook was `zizmor`, twelve `ref-version-mismatch`
+findings — one per `dtolnay/rust-toolchain` call site — because that action's
+`v1` tag had moved off the pinned hash. (Six is the number of upstream commits
+between the two hashes, which session-1793 also records; this log said six
+findings at first, which was the two crossed.)
 
 That run was on `d43b1f878`; #5116 moved the pin about five hours later, and
 `prek run --all-files zizmor` passes on `main` today. Both issues are rolling
@@ -68,7 +71,7 @@ stability. This one trades nothing, which is why it was the one taken.
 ## The lane with no second implementation, finally on the PR path (#4671, item 2)
 
 `e2e-tauri` is the only place the real backend meets the real frontend. It ran
-weekly and gated nothing, while 118 mock-backed Playwright specs gated every PR.
+weekly and gated nothing, while 120 mock-backed Playwright specs gated every PR.
 
 The issue sequenced the repair — widen, watch for flake, then promote — and set
 an evidence gate of three consecutive green runs of the widened lane with at
