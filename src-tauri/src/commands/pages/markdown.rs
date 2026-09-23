@@ -791,7 +791,7 @@ fn frontmatter_row_value(prop: &FrontmatterRow, ref_titles: &HashMap<String, Str
 /// them is exactly this set. Grouping it also keeps the ordering guarantee
 /// visible — every field is read inside one `BEGIN DEFERRED` snapshot, so the
 /// renderer cannot observe a half-updated vault.
-pub struct PageExportData {
+struct PageExportData {
     page: BlockRow,
     descendants: Vec<BlockRow>,
     attachments_by_block: HashMap<String, Vec<(String, String)>>,
@@ -1160,7 +1160,7 @@ fn render_page_markdown(page_id: &str, data: &PageExportData) -> String {
 
 /// The page as the one markdown buffer source mode edits (#5140): its block
 /// tree alone. The title, frontmatter and page attachments have their own UIs.
-pub fn render_page_source(data: &PageExportData) -> String {
+fn render_page_source(data: &PageExportData) -> String {
     let mut output = String::new();
     render_block_tree(&mut output, data.page.id.as_str(), data, RenderMode::Source);
     output
@@ -1920,16 +1920,7 @@ pub async fn export_page_markdown_inner(
     // resolution and property reads all execute against `&mut *tx`, so
     // they cannot interleave with a concurrent writer's commit.
     let mut tx = pool.begin().await?;
-
-    let page = load_page_row(&mut tx, page_id).await?;
-    let descendants = load_descendants(&mut tx, page_id).await?;
-    let attachments_by_block = load_attachments(&mut tx, page_id, &descendants).await?;
-    let refs = resolve_references(&mut tx, page_id, &descendants).await?;
-    let properties = load_page_properties(&mut tx, page_id).await?;
-    let descendant = load_descendant_properties(&mut tx, &descendants).await?;
-    let ref_titles =
-        resolve_property_ref_titles(&mut tx, &properties, &descendant.properties).await?;
-    let (aliases, tag_names_fm) = load_frontmatter_lists(&mut tx, page_id).await?;
+    let data = load_page_export_data(&mut tx, page_id).await?;
 
     // #660 — all reads are done; release the snapshot tx. A read-only
     // `BEGIN DEFERRED` tx takes no writer lock, so the `commit` here is
@@ -1941,7 +1932,41 @@ pub async fn export_page_markdown_inner(
     // 5. Render. The read half above is the only thing that touches the
     //    database; everything below is a pure function of what it resolved
     //    (#4639).
-    let data = PageExportData {
+    Ok(render_page_markdown(page_id, &data))
+}
+
+/// The page's source-mode markdown buffer (#5140): its block tree as
+/// `render_page_source` writes it. The page and tag names it may write are
+/// resolved in the same read snapshot as the content.
+///
+/// # Errors
+///
+/// As [`export_page_markdown_inner`].
+#[instrument(skip(pool), err)]
+pub async fn get_page_source_inner(pool: &SqlitePool, page_id: &str) -> Result<String, AppError> {
+    BlockId::from_string(page_id)?;
+    let mut tx = pool.begin().await?;
+    let mut data = load_page_export_data(&mut tx, page_id).await?;
+    data.name_snapshot = load_name_snapshot(&mut tx, &data).await?;
+    tx.commit().await?;
+    Ok(render_page_source(&data))
+}
+
+/// Steps 1-4b: every read an export makes, through the caller's snapshot.
+/// The name snapshot is left empty; only source mode reads it.
+async fn load_page_export_data(
+    conn: &mut sqlx::SqliteConnection,
+    page_id: &str,
+) -> Result<PageExportData, AppError> {
+    let page = load_page_row(conn, page_id).await?;
+    let descendants = load_descendants(conn, page_id).await?;
+    let attachments_by_block = load_attachments(conn, page_id, &descendants).await?;
+    let refs = resolve_references(conn, page_id, &descendants).await?;
+    let properties = load_page_properties(conn, page_id).await?;
+    let descendant = load_descendant_properties(conn, &descendants).await?;
+    let ref_titles = resolve_property_ref_titles(conn, &properties, &descendant.properties).await?;
+    let (aliases, tag_names_fm) = load_frontmatter_lists(conn, page_id).await?;
+    Ok(PageExportData {
         page,
         descendants,
         attachments_by_block,
@@ -1956,8 +1981,25 @@ pub async fn export_page_markdown_inner(
         aliases,
         tag_names_fm,
         name_snapshot: NameSnapshot::default(),
+    })
+}
+
+/// What the importer would resolve the page's referenced names against: its
+/// space's pages with those titles and its space's tags. A page in no space
+/// gets the empty snapshot, so every name stays raw.
+async fn load_name_snapshot(
+    conn: &mut sqlx::SqliteConnection,
+    data: &PageExportData,
+) -> Result<NameSnapshot, AppError> {
+    let Some(space) = agaric_store::space::resolve_block_space(&mut *conn, &data.page.id).await?
+    else {
+        return Ok(NameSnapshot::default());
     };
-    Ok(render_page_markdown(page_id, &data))
+    let titles: Vec<String> = data.page_titles.values().cloned().collect();
+    Ok(NameSnapshot {
+        page_ids_by_title: snapshot_page_link_matches(conn, space.as_str(), &titles).await?,
+        tag_id_by_norm: snapshot_tags_by_norm(conn, space.as_str()).await?,
+    })
 }
 
 /// #2961 — sanitize an attachment's `filename` for use as markdown link
@@ -3011,7 +3053,7 @@ fn deferred_anchor(
 /// anchor-only link like `[[#heading]]` has an EMPTY base and contributes no
 /// lookup target (it never resolves/creates a page).
 async fn snapshot_page_link_matches(
-    tx: &mut CommandTx,
+    conn: &mut sqlx::SqliteConnection,
     space_id: &str,
     link_names: &[String],
 ) -> Result<HashMap<String, Vec<String>>, AppError> {
@@ -3045,7 +3087,7 @@ async fn snapshot_page_link_matches(
         space_id,
         names_json,
     )
-    .fetch_all(&mut ***tx)
+    .fetch_all(&mut *conn)
     .await?;
     let mut map: HashMap<String, Vec<String>> = HashMap::new();
     for r in rows {
@@ -3261,7 +3303,7 @@ async fn resolve_inbound_page_links(
 /// `normalize_tag_name`) already merges. Tag count is bounded by the user's
 /// vocabulary, so the snapshot is cheap.
 async fn snapshot_tags_by_norm(
-    tx: &mut CommandTx,
+    conn: &mut sqlx::SqliteConnection,
     space_id: &str,
 ) -> Result<HashMap<String, String>, AppError> {
     let rows = sqlx::query!(
@@ -3273,7 +3315,7 @@ async fn snapshot_tags_by_norm(
                ORDER BY id ASC"#,
         space_id,
     )
-    .fetch_all(&mut ***tx)
+    .fetch_all(&mut *conn)
     .await?;
     let mut map: HashMap<String, String> = HashMap::new();
     for r in rows {
@@ -4625,6 +4667,18 @@ pub async fn export_page_markdown(
     page_id: PageId,
 ) -> Result<String, AppError> {
     export_page_markdown_inner(&read_pool.0, page_id.as_str())
+        .await
+        .map_err(sanitize_internal_error)
+}
+
+/// Tauri command: render a page as its source-mode markdown buffer. Delegates to [`get_page_source_inner`].
+#[tauri::command]
+#[specta::specta]
+pub async fn get_page_source(
+    read_pool: State<'_, ReadPool>,
+    page_id: PageId,
+) -> Result<String, AppError> {
+    get_page_source_inner(&read_pool.0, page_id.as_str())
         .await
         .map_err(sanitize_internal_error)
 }

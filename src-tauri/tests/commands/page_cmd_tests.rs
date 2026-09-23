@@ -2648,6 +2648,118 @@ async fn export_page_markdown_inner_with_malformed_id_returns_ulid_error() {
 }
 
 // ======================================================================
+// get_page_source — the page's source-mode buffer (#5140)
+// ======================================================================
+
+const SOURCE_PAGE: &str = "01J5140SRCPAGE000000000001";
+const SOURCE_BLOCK: &str = "01J5140C0NTENT000000000001";
+const SOURCE_TARGET: &str = "01J5140TARGET0000000000001";
+const SOURCE_PROJECT: &str = "01J5140PR0JECT000000000001";
+const SOURCE_PROJECT_TWIN: &str = "01J5140PR0JECT000000000002";
+const SOURCE_WORK: &str = "01J5140WRKTAG0000000000001";
+
+/// A page in the test space holding a block with `content` and a `target`
+/// block after it, plus the in-space page "Project" and tag "work".
+async fn seed_source_page(pool: &SqlitePool, content: &str) {
+    ensure_test_space(pool).await;
+    insert_block(pool, SOURCE_PAGE, "page", "Source", None, Some(1)).await;
+    insert_block(
+        pool,
+        SOURCE_BLOCK,
+        "content",
+        content,
+        Some(SOURCE_PAGE),
+        Some(1),
+    )
+    .await;
+    insert_block(
+        pool,
+        SOURCE_TARGET,
+        "content",
+        "target",
+        Some(SOURCE_PAGE),
+        Some(2),
+    )
+    .await;
+    insert_block(pool, SOURCE_PROJECT, "page", "Project", None, Some(2)).await;
+    insert_block(pool, SOURCE_WORK, "tag", "work", None, Some(1)).await;
+    for id in [SOURCE_PAGE, SOURCE_PROJECT, SOURCE_WORK] {
+        assign_to_space(pool, id, TEST_SPACE_ID).await;
+    }
+}
+
+/// The names come from the page's space in the database: with no names
+/// loaded, both would stay raw ids.
+#[tokio::test]
+async fn get_page_source_writes_in_space_names() {
+    let (pool, _dir) = test_pool().await;
+    seed_source_page(
+        &pool,
+        &format!("see [[{SOURCE_PROJECT}]] #[{SOURCE_WORK}] (({SOURCE_TARGET}))"),
+    )
+    .await;
+
+    let md = get_page_source_inner(&pool, SOURCE_PAGE).await.unwrap();
+
+    assert_eq!(
+        md,
+        format!(
+            "- see [[Project]] #work (({SOURCE_TARGET})) ^{SOURCE_BLOCK}\n- target ^{SOURCE_TARGET}\n"
+        ),
+        "in-space page and tag names must replace their ids; a block ref stays raw"
+    );
+}
+
+#[tokio::test]
+async fn get_page_source_keeps_a_title_two_in_space_pages_share_raw() {
+    let (pool, _dir) = test_pool().await;
+    let content = format!("see [[{SOURCE_PROJECT}]]");
+    seed_source_page(&pool, &content).await;
+    insert_block(&pool, SOURCE_PROJECT_TWIN, "page", "Project", None, Some(3)).await;
+    assign_to_space(&pool, SOURCE_PROJECT_TWIN, TEST_SPACE_ID).await;
+
+    let md = get_page_source_inner(&pool, SOURCE_PAGE).await.unwrap();
+
+    assert_eq!(
+        md,
+        format!("- {content} ^{SOURCE_BLOCK}\n- target ^{SOURCE_TARGET}\n"),
+        "an ambiguous title would read back to neither page, so the id must stay raw"
+    );
+}
+
+#[tokio::test]
+async fn get_page_source_of_a_content_block_returns_validation() {
+    let (pool, _dir) = test_pool().await;
+    seed_source_page(&pool, "text").await;
+
+    let result = get_page_source_inner(&pool, SOURCE_BLOCK).await;
+
+    assert!(
+        matches!(result, Err(AppError::Validation { .. })),
+        "a non-page block id must return AppError::Validation, got: {result:?}"
+    );
+}
+
+#[tokio::test]
+async fn get_page_source_of_a_soft_deleted_page_returns_not_found() {
+    let (pool, _dir) = test_pool().await;
+    seed_source_page(&pool, "text").await;
+    sqlx::query("UPDATE blocks SET deleted_at = ? WHERE id = ?")
+        .bind(FIXED_TS)
+        .bind(SOURCE_PAGE)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let result = get_page_source_inner(&pool, SOURCE_PAGE).await;
+
+    assert!(
+        matches!(result, Err(AppError::NotFound(_))),
+        "a soft-deleted page must return AppError::NotFound, got: {result:?}"
+    );
+}
+
+// ======================================================================
 // import_markdown — Logseq/Markdown import (#660)
 // ======================================================================
 

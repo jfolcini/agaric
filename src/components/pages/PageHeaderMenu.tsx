@@ -2,6 +2,7 @@ import {
   BookTemplate,
   Download,
   ExternalLink,
+  FileCode,
   FolderOutput,
   LayoutTemplate,
   Link,
@@ -43,6 +44,7 @@ export interface PageHeaderMenuProps {
   onToggleTemplate: () => void
   onToggleJournalTemplate: () => void
   onExport: () => void
+  onViewSource: () => void
   onDeleteRequest: () => void
   onOpenInNewTab?: (() => void) | undefined
   /**
@@ -75,6 +77,7 @@ export function PageHeaderMenu({
   onToggleTemplate,
   onToggleJournalTemplate,
   onExport,
+  onViewSource,
   onDeleteRequest,
   onOpenInNewTab,
   isSpaceBlock = false,
@@ -114,6 +117,7 @@ export function PageHeaderMenu({
     'toggleTemplate',
     'toggleJournalTemplate',
     'export',
+    'viewSource',
     ...(showMoveEntry ? ['moveTo'] : []),
     'delete',
   ]
@@ -332,6 +336,15 @@ export function PageHeaderMenu({
             <span className="ml-auto text-xs text-muted-foreground">
               {getShortcutKeys('exportPageMarkdown')}
             </span>
+          </button>
+          <button
+            type="button"
+            className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-sm hover:bg-accent touch-target focus-ring-visible"
+            onClick={onViewSource}
+            {...menuItemProps('viewSource')}
+          >
+            <FileCode className="h-3.5 w-3.5" />
+            {t('pageHeader.viewMarkdown')}
           </button>
           {showMoveEntry && (
             <>

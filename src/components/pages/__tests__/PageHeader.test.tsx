@@ -26,6 +26,7 @@ import { PageHeader } from '@/components/pages/PageHeader'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import type { AppError } from '@/lib/app-error'
 import { writeText } from '@/lib/clipboard'
+import { t } from '@/lib/i18n'
 import { useNavigationStore } from '@/stores/navigation'
 import { createPageBlockStore, PageBlockContext, type PageBlockState } from '@/stores/page-blocks'
 import { useResolveStore } from '@/stores/resolve'
@@ -84,6 +85,7 @@ vi.mock('lucide-react', () => ({
   Clock: () => <svg data-testid="clock-icon" />,
   Download: () => <svg data-testid="download-icon" />,
   ExternalLink: () => <svg data-testid="external-link-icon" />,
+  FileCode: () => <svg data-testid="file-code-icon" />,
   FolderOutput: () => <svg data-testid="folder-output-icon" />,
   Info: () => <svg data-testid="info-icon" />,
   LayoutTemplate: (props: Record<string, unknown>) => (
@@ -1889,6 +1891,29 @@ describe('PageHeader export flushes the active draft first (#2969)', () => {
     })
     expect(mockedFlushActiveDraft).toHaveBeenCalled()
     expect(order).toEqual(['flush', 'export'])
+  })
+})
+
+// ── View as Markdown (#5140) ───────────────────────────────────────
+
+describe('PageHeader View as Markdown', () => {
+  it('opens the source dialog with the page buffer from the kebab menu', async () => {
+    const user = userEvent.setup()
+    const buffer = '- first ^01J0000000000000000000000A\n  - child ^01J0000000000000000000000B\n'
+    const baseImpl = mockedInvoke.getMockImplementation()
+    mockedInvoke.mockImplementation(async (cmd: string, args?: InvokeArgs) => {
+      if (cmd === 'get_page_source') return buffer
+      return baseImpl?.(cmd, args)
+    })
+
+    renderPageHeader(<PageHeader pageId="PAGE_1" title="Test Page" />)
+
+    await user.click(screen.getByRole('button', { name: /page actions/i }))
+    await user.click(await screen.findByRole('menuitem', { name: t('pageHeader.viewMarkdown') }))
+
+    const dialog = await screen.findByRole('dialog', { name: t('pageSource.title') })
+    expect((await within(dialog).findByTestId('page-source-content')).textContent).toBe(buffer)
+    expect(mockedInvoke).toHaveBeenCalledWith('get_page_source', { pageId: 'PAGE_1' })
   })
 })
 

@@ -427,6 +427,11 @@ const READ_NO_QUERY_ALLOWLIST: Readonly<Record<string, string>> = {
     'exists and a string attribute passes through verbatim, but conformance_query.rs (via ' +
     'attr_value) refuses a rendered attribute containing `#` or `->` — its own token ' +
     'separators — and a markdown export opens `# Title`. Debt, owned by #5071',
+  get_page_source:
+    'pinning it needs a TS port of commands/pages/markdown.rs (via render_page_source) in the ' +
+    'mock — the TS copy of the page grammar #5140 exists to delete — and conformance_query.rs ' +
+    '(via attr_value) refuses the `#` every tag renders to; an out-of-band comparison is the ' +
+    '#5071 question. Debt, owned by #5071',
 
   // ── Process / environment / telemetry status (no domain state) ──
   collect_bug_report_metadata: 'no domain state — host + build metadata',
@@ -655,8 +660,9 @@ const NOT_YET_PINNED_MUTATING: readonly string[] = ['import_bibliography', 'impo
  * The read leg's debt, and it is NOT zero. Each of these is waived because the
  * snapshot or the query harness is too narrow, which a widening fixes — and
  * each has a mutating counterpart already counted as debt above:
- * `export_page_markdown` against `import_markdown` / `import_bibliography` (the
- * query projection binds row sets and cannot compare a rendered `String`).
+ * `export_page_markdown` and `get_page_source` against `import_markdown` /
+ * `import_bibliography` (the query projection binds row sets and cannot compare
+ * a rendered `String`).
  *
  * Pinning the write is most of the work for the read, so #5057 burns these down
  * by table rather than by command. Drafts came off this list that way: one
@@ -667,7 +673,7 @@ const NOT_YET_PINNED_MUTATING: readonly string[] = ['import_bibliography', 'impo
  * `spaces_lifecycle.json`'s `create_space` — which is what the #5056 check
  * below predicted would happen.
  */
-const NOT_YET_PINNED_READ: readonly string[] = ['export_page_markdown']
+const NOT_YET_PINNED_READ: readonly string[] = ['export_page_markdown', 'get_page_source']
 
 /**
  * #5056 — the check that makes the read-leg classification falsifiable instead
@@ -698,7 +704,7 @@ const READ_WRITE_TABLE_PAIRS: Readonly<
     writes: ['create_space', 'create_page_in_space', 'move_blocks_to_space'],
   },
   'markdown import/export': {
-    reads: ['export_page_markdown'],
+    reads: ['export_page_markdown', 'get_page_source'],
     writes: ['import_markdown', 'import_bibliography'],
   },
 }

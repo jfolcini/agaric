@@ -18,6 +18,7 @@ import { PageHeaderMenu } from '@/components/pages/PageHeaderMenu'
 import { PageOutline } from '@/components/pages/PageOutline'
 import { PagePropertyTable } from '@/components/pages/PagePropertyTable'
 import { PageQuickActions } from '@/components/pages/PageQuickActions'
+import { PageSourceDialog } from '@/components/pages/PageSourceDialog'
 import { PageTagSection } from '@/components/pages/PageTagSection'
 import { PageTitleEditor } from '@/components/pages/PageTitleEditor'
 import { Breadcrumb, type BreadcrumbCrumb } from '@/components/ui/breadcrumb'
@@ -175,6 +176,7 @@ export function PageHeader({ pageId, title, onBack }: PageHeaderProps) {
   // `requestDelete()` so only ONE `ConfirmDialog` ever mounts.
   const [kebabOpen, setKebabOpen] = useState(false)
   const [forcePropertyExpanded, setForcePropertyExpanded] = useState(false)
+  const [sourceOpen, setSourceOpen] = useState(false)
 
   // --- Template + space metadata (extracted to `usePageTemplateMeta`) ---
   // The hook loads the four property-derived bits the kebab menu needs
@@ -281,6 +283,11 @@ export function PageHeader({ pageId, title, onBack }: PageHeaderProps) {
   const handleKebabAddProperty = useCallback(() => {
     setForcePropertyExpanded(true)
     setKebabOpen(false)
+  }, [])
+
+  const handleViewSource = useCallback(() => {
+    setKebabOpen(false)
+    setSourceOpen(true)
   }, [])
 
   const handleOpenInNewTab = useCallback(() => {
@@ -562,6 +569,7 @@ export function PageHeader({ pageId, title, onBack }: PageHeaderProps) {
               onToggleTemplate={handleToggleTemplate}
               onToggleJournalTemplate={handleToggleJournalTemplate}
               onExport={handleExport}
+              onViewSource={handleViewSource}
               onDeleteRequest={handleRequestDelete}
               onOpenInNewTab={handleOpenInNewTab}
               isSpaceBlock={isSpaceBlock}
@@ -632,6 +640,8 @@ export function PageHeader({ pageId, title, onBack }: PageHeaderProps) {
         onOpenChange={setEmojiPickerOpen}
         onSelect={handleTitleEmojiSelect}
       />
+
+      <PageSourceDialog pageId={pageId} open={sourceOpen} onOpenChange={setSourceOpen} />
     </>
   )
 }
