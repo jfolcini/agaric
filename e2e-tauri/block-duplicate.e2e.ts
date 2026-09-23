@@ -79,19 +79,22 @@ describe('Agaric real-backend Duplicate (#5140 Phase 3a)', () => {
     })
 
     await reopenTheNewPage()
-    await browser.waitUntil(async () => (await blockStaticsByMarker(SECOND)).length === 2, {
+    // A row is `sortable-block` whether it renders static or holds the editor,
+    // which the re-opened page may hand back to the original.
+    const rowsHoldingSecond = () => $$(`[data-testid="sortable-block"]*=${SECOND}`).getElements()
+    await browser.waitUntil(async () => (await rowsHoldingSecond()).length === 2, {
       timeout: NAV_TIMEOUT,
       timeoutMsg: 'the re-opened page does not hold two copies of the code block',
     })
     // Exactly the original and ONE copy, each a single code block with both
     // lines: the old outline paste left a row per line beside them.
-    const rows = await $$('[data-testid="block-static"]').getElements()
+    const rows = await $$('[data-testid="sortable-block"]').getElements()
     expect(rows.length).toBe(2)
     for (const row of rows) {
       const text = await row.getText()
       expect(text).toContain(FIRST)
       expect(text).toContain(SECOND)
-      await expect(row.$('pre code')).toBeExisting()
+      await expect(row.$('pre')).toBeExisting()
     }
   })
 })
