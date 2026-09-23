@@ -2,7 +2,7 @@
 // mutating command, and the store seeds the REAL undo store with them. The
 // sibling suites mock `@/stores/undo`, so this one reads the stack back.
 import { invoke } from '@tauri-apps/api/core'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { StoreApi } from 'zustand'
 
 import { makeBlock, makeBlockRow } from '@/__tests__/fixtures'
@@ -10,7 +10,7 @@ import { type CommandReturns, strictInvokeFallback, stubInvoke } from '@/__tests
 import type { BlockRow, OpRef } from '@/lib/bindings'
 import { createPageBlockStore, type PageBlockState } from '@/stores/page-blocks'
 import { useSpaceStore } from '@/stores/space'
-import { useUndoStore } from '@/stores/undo'
+import { UNDO_GROUP_WINDOW_MS, useUndoStore } from '@/stores/undo'
 
 const mockedInvoke = vi.mocked(invoke)
 
@@ -27,6 +27,10 @@ describe('#5140 batch commands seed the undo stack with their op_refs', () => {
     useUndoStore.setState({ pages: new Map() })
     vi.clearAllMocks()
     mockedInvoke.mockImplementation(strictInvokeFallback)
+  })
+
+  afterEach(() => {
+    vi.restoreAllMocks()
   })
 
   it('moveBlocks: the undo entry carries the move_blocks_batch response op_refs', async () => {
@@ -59,13 +63,15 @@ describe('#5140 batch commands seed the undo stack with their op_refs', () => {
     expect(page?.undoStack[0]?.refs).toEqual(refs)
   })
 
-  it('pasteBlocks: ONE undo entry carries the refs of every depth level, in append order', async () => {
-    const anchor = makeBlock({ id: 'A', parent_id: 'PAGE_1', position: 0 })
-    store.setState({ blocks: [anchor] })
+  /** Every batch lands past the undo store's grouping window. */
+  function stubSlowPasteBatches(anchor: BlockRow) {
+    let clock = Date.now()
+    vi.spyOn(Date, 'now').mockImplementation(() => clock)
     let seq = 0
     let created = 0
     stubInvoke(mockedInvoke, {
       create_blocks_batch: (args) => {
+        clock += UNDO_GROUP_WINDOW_MS + 1
         const specs = ((args as { specs?: unknown }).specs ?? []) as Array<{
           content: string
           parentId: string | null
@@ -84,6 +90,12 @@ describe('#5140 batch commands seed the undo stack with their op_refs', () => {
       },
       load_page_subtree: () => subtreeResp([anchor]),
     })
+  }
+
+  it('pasteBlocks: ONE undo entry carries the refs of every depth level, in append order', async () => {
+    const anchor = makeBlock({ id: 'A', parent_id: 'PAGE_1', position: 0 })
+    store.setState({ blocks: [anchor] })
+    stubSlowPasteBatches(anchor)
 
     // Two depth levels → two batches: `parent` + `two` at level 0, `child` at level 1.
     await store.getState().pasteBlocks('A', 'parent\n  child\ntwo')
@@ -94,6 +106,21 @@ describe('#5140 batch commands seed the undo stack with their op_refs', () => {
       { device_id: 'dev1', seq: 1 },
       { device_id: 'dev1', seq: 2 },
       { device_id: 'dev1', seq: 3 },
+    ])
+  })
+
+  it('pasteBlocks: two pastes stay two undo entries', async () => {
+    const anchor = makeBlock({ id: 'A', parent_id: 'PAGE_1', position: 0 })
+    store.setState({ blocks: [anchor] })
+    stubSlowPasteBatches(anchor)
+
+    await store.getState().pasteBlocks('A', 'one')
+    await store.getState().pasteBlocks('A', 'two')
+
+    const page = useUndoStore.getState().pages.get('PAGE_1')
+    expect(page?.undoStack.map((entry) => entry.refs)).toEqual([
+      [{ device_id: 'dev1', seq: 2 }],
+      [{ device_id: 'dev1', seq: 1 }],
     ])
   })
 

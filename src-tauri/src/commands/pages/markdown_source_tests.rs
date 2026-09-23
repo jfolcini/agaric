@@ -7,8 +7,6 @@
 //! - a `\r` in content (line splitting takes it as a line ending);
 //! - a custom property value with surrounding whitespace or a newline (a
 //!   `key:: value` line is one trimmed line);
-//! - a fence with no closing delimiter in its block (the fence stays open over
-//!   the blocks after it);
 //! - tabs as bullet indentation in a hand-edited buffer (depth counts spaces).
 
 use std::collections::BTreeMap;
@@ -91,7 +89,7 @@ fn arb_ref_id() -> impl Strategy<Value = &'static str> {
 }
 
 /// One word of prose. No backtick, so a fence only ever comes from
-/// [`arb_fence`], which closes what it opens.
+/// [`arb_fence`].
 fn arb_word() -> impl Strategy<Value = String> {
     prop_oneof![
         "[a-z0-9]{1,5}",
@@ -138,8 +136,9 @@ fn arb_line() -> impl Strategy<Value = String> {
     ]
 }
 
-/// A fenced code block: its body holds blank lines, indentation, and lines
-/// that outside a fence would be a bullet or a property.
+/// A fenced code block, sometimes left open: its body holds blank lines,
+/// indentation, and lines that outside a fence would be a bullet or a
+/// property, or that read as an anchor line.
 fn arb_fence() -> impl Strategy<Value = Vec<String>> {
     let body_line = prop_oneof![
         Just(String::new()),
@@ -148,14 +147,19 @@ fn arb_fence() -> impl Strategy<Value = Vec<String>> {
         Just("key:: v".to_string()),
         Just("[ ] x".to_string()),
         Just("\\- x".to_string()),
+        r" ?\\{0,2}\^01J0000000000000000000ANCH",
     ];
     let lang = prop_oneof![Just(""), Just("sh")];
-    (lang, prop::collection::vec(body_line, 0..4)).prop_map(|(lang, body)| {
-        let mut lines = vec![format!("```{lang}")];
-        lines.extend(body);
-        lines.push("```".to_string());
-        lines
-    })
+    (lang, prop::collection::vec(body_line, 0..4), any::<bool>()).prop_map(
+        |(lang, body, closed)| {
+            let mut lines = vec![format!("```{lang}")];
+            lines.extend(body);
+            if closed {
+                lines.push("```".to_string());
+            }
+            lines
+        },
+    )
 }
 
 fn arb_content() -> impl Strategy<Value = String> {
@@ -393,6 +397,30 @@ fn source_buffer_snapshot() {
         vec![("01J0000000000000000000ATT1".into(), "receipt.pdf".into())],
     );
     insta::assert_snapshot!(render_page_source(&data));
+}
+
+/// A block that leaves its fence open gets its anchor on a line of its own,
+/// which ends the fence before the child.
+#[test]
+fn an_open_fence_ends_at_its_blocks_anchor_line() {
+    const A: &str = "01J0000000000000000000000A";
+    const B: &str = "01J0000000000000000000000B";
+    let data = page_data(vec![row(A, PAGE, 1, "````"), row(B, A, 1, "B")]);
+    assert_eq!(
+        render_page_source(&data),
+        format!("- ````\n  ^{A}\n  - B ^{B}\n")
+    );
+}
+
+/// `key::` is text, and with the anchor after it would be a property line.
+#[test]
+fn a_last_line_the_anchor_makes_property_shaped_reads_back_as_text() {
+    const A: &str = "01J0000000000000000000000A";
+    let md = render_page_source(&page_data(vec![row(A, PAGE, 1, "a\nkey::")]));
+    let block = &import::parse_source_outline(&md).blocks[0];
+    assert_eq!(block.content, "a\nkey::", "md:\n{md}");
+    assert_eq!(block.block_anchor.as_deref(), Some(A), "md:\n{md}");
+    assert!(block.properties.is_empty(), "md:\n{md}");
 }
 
 const PROJECT: &str = "01J00000000000000000PAGEP1";

@@ -416,7 +416,7 @@ describe('PageBlockStore', () => {
         await store.getState().pasteBlocks('A', 'one\ntwo')
 
         expect(mockOnNewAction).toHaveBeenCalledTimes(1)
-        expect(mockOnNewAction).toHaveBeenCalledWith('PAGE_1', REFS)
+        expect(mockOnNewAction).toHaveBeenCalledWith('PAGE_1', REFS, 'paste:CID_1')
       })
     })
   })
