@@ -81,7 +81,7 @@ function notifyUndoNewAction(
 ): void {
   if (rootParentId && undoable) {
     const { onNewAction } = useUndoStore.getState()
-    // Only forward `coalesceKey` when set (content edits) so the existing
+    // Only forward `coalesceKey` when set (content edits, paste) so the existing
     // call shape for every other action is unchanged (#2600).
     if (coalesceKey !== undefined) onNewAction(rootParentId, opRefs, coalesceKey)
     else onNewAction(rootParentId, opRefs)
@@ -1195,6 +1195,7 @@ export function createReducers({
 
       // parsed-index → created block id (filled as each depth level lands).
       const createdIds: string[] = Array.from<string>({ length: effective.length })
+      const pasteUndoKey = `paste:${newBlockId()}`
       try {
         for (let level = 0; level <= maxDepth; level += 1) {
           const indicesAtLevel: number[] = []
@@ -1233,11 +1234,11 @@ export function createReducers({
             const row = created.blocks[k]
             if (idx != null && row != null) createdIds[idx] = row.id
           }
-          // Per level, not per paste: the capture window still coalesces a
-          // normal paste into one entry, the ref cap splits one too large for
-          // a single `undo_ops`, and a later level's failure leaves this one
-          // undoable.
-          notifyUndoNewAction(rootParentId, created.op_refs)
+          // Per level, not per paste: the paste's own key joins its levels into
+          // one entry however long each level's IPC takes, the ref cap splits
+          // one too large for a single `undo_ops`, and a later level's failure
+          // leaves this one undoable.
+          notifyUndoNewAction(rootParentId, created.op_refs, pasteUndoKey)
         }
         // Structural insert across N blocks — reload for the authoritative
         // flattened order (mirrors `moveBlocks` / `moveToParent`).
