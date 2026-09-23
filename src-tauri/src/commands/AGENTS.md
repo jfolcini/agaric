@@ -66,7 +66,7 @@ tx.commit_and_dispatch(&materializer).await?;
 
 ### `_in_tx` variants
 
-A command needed both standalone and inside a larger tx (e.g. a `bootstrap_*` path) gets `do_thing_in_tx(tx, …)` (no commit, returns its effects) and `do_thing_inner(pool, …)` wrapping it in its own `CommandTx`. Do not duplicate the logic.
+A command needed both standalone and inside a larger tx (e.g. a `bootstrap_*` path) gets `do_thing_in_tx(tx, …)` (no commit, returns its effects) and `do_thing_inner(pool, …)` wrapping it in its own `CommandTx`. Do not duplicate the logic. An `_in_tx` helper that applies to the engine assumes its caller called `CommandTx::arm_engine_rollback` right after BEGIN; unarmed, a rollback leaves the engine ahead of SQLite (#2604).
 
 `create_block_in_tx` (`src-tauri/agaric-engine/src/block_ops.rs`) takes a trailing `client_id: Option<BlockId>`: `None` mints a server ULID; `Some(id)` (optimistic create via `create_block_inner_with_id`) is used verbatim if it is a valid ULID and collides with no live or tombstoned row, else `AppError::Ulid` / `AppError::Conflict`. Never fall back to a generated id — the frontend already spliced the block in under the client id.
 

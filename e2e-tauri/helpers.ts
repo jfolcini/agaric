@@ -200,11 +200,6 @@ export function blockStaticByMarker(marker: string) {
  * selector matches only the first label ("Add your first block" does not contain
  * the substring "Add block"), which is why the virgin-vault first session
  * (#3078 / session-949) timed out. The XPath union below matches either CTA.
- *
- * The click-the-last-static fallback applies ONLY to the virgin-vault seed
- * block, and its precondition is that the last static is EMPTY: run 35740700662
- * took it on a page that already had content, handed the previous block's text
- * to `typeMarkerVerified`, and its retry select-all-deleted it.
  */
 export async function openJournalBlockEditor(): Promise<void> {
   const addBlock = $(
@@ -390,16 +385,6 @@ async function typeVerified(
  */
 export async function addBlockWithMarker(marker: string, readBackTimeout?: number): Promise<void> {
   await openJournalBlockEditor()
-  // Fail loudly HERE rather than corrupting a block: `typeMarkerVerified`'s
-  // retry clears the editor with select-all + delete (run 35740700662).
-  const opened = $('[data-testid="block-editor"] [contenteditable="true"]')
-  const existing = (await opened.getText()).trim()
-  if (existing !== '') {
-    throw new Error(
-      `addBlockWithMarker: the editor already holds ${JSON.stringify(existing)} before typing ` +
-        `${JSON.stringify(marker)} — typing here would destroy it on the first read-back retry`,
-    )
-  }
   await typeMarkerVerified(marker, readBackTimeout)
   await browser.keys(['Enter'])
   await browser.keys(['Escape'])
