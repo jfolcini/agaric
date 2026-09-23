@@ -958,7 +958,7 @@ fn export_block_text(content: &str, id: &str, data: &PageExportData) -> String {
     stamp_block_anchor_marker(resolved, id, &data.same_page_ref_targets)
 }
 
-/// A block's bullet as source mode writes it, with its own `^ID` at the end.
+/// A block's bullet as source mode writes it, with its own `^ID`.
 ///
 /// Whether a name may replace an id depends on whether the parser will read
 /// the block as code, which the bullet's fence tracking decides; so the raw
@@ -974,15 +974,8 @@ fn push_source_bullet(
     let id = block.id.as_str();
     let content = block.content.as_deref().unwrap_or("");
     let start = output.len();
-    let raw = append_block_anchor(content, id);
-    let is_code = push_block_bullet(
-        output,
-        indent,
-        list_marker,
-        task_marker,
-        &raw,
-        RenderMode::Source,
-    );
+    let is_code =
+        push_anchored_source_bullet(output, indent, list_marker, task_marker, content, id);
     let named = humanise_refs_for_source(
         content,
         is_code,
@@ -992,16 +985,47 @@ fn push_source_bullet(
     );
     if let Some(named) = named {
         output.truncate(start);
-        let named = append_block_anchor(&named, id);
+        push_anchored_source_bullet(output, indent, list_marker, task_marker, &named, id);
+    }
+}
+
+/// `content` as a source bullet with `^id` at the end of its last line or,
+/// when that line is code, on a line of its own, which the parser reads as
+/// the end of any fence the block leaves open. Returns whether any line is
+/// code.
+fn push_anchored_source_bullet(
+    output: &mut String,
+    indent: &str,
+    list_marker: &str,
+    task_marker: &str,
+    content: &str,
+    id: &str,
+) -> bool {
+    let start = output.len();
+    let code = push_block_bullet(
+        output,
+        indent,
+        list_marker,
+        task_marker,
+        content,
+        RenderMode::Source,
+    );
+    if code.last {
+        output.push_str(&format!("{indent}  ^{id}\n"));
+    } else {
+        // Rewritten rather than appended to: the marker can change the last
+        // line's escape (`key::` becomes the property line `key:: ^ID`).
+        output.truncate(start);
         push_block_bullet(
             output,
             indent,
             list_marker,
             task_marker,
-            &named,
+            &format!("{content} ^{id}"),
             RenderMode::Source,
         );
     }
+    code.any
 }
 
 /// The `---` YAML frontmatter block, emitted only when the page carries
@@ -2086,7 +2110,9 @@ fn list_marker_for(
 ///
 /// Lines inside a fenced code block (```` ``` ````) are emitted verbatim: the
 /// importer's #2725 fence guard folds them without an escape, and code must not
-/// gain stray backslashes.
+/// gain stray backslashes. The one exception is source mode's
+/// [`import::needs_anchor_line_escape`], for a code line the parser would read
+/// as the anchor line that ends a fence.
 ///
 /// #4552 slice 4 — `list_marker` (from [`list_marker_for`]) is the block's
 /// `listStyle` marker, written between the outline `- ` and the first line:
@@ -2095,8 +2121,7 @@ fn list_marker_for(
 /// block does not write is backslash-escaped ([`first_line_needs_escape`]),
 /// the first-line analogue of the continuation-line escape above.
 ///
-/// Returns whether any line is code, as the parser's fence tracking will see
-/// it.
+/// Returns which lines are code, as the parser's fence tracking will see them.
 fn push_block_bullet(
     output: &mut String,
     indent: &str,
@@ -2104,7 +2129,7 @@ fn push_block_bullet(
     task_marker: &str,
     resolved: &str,
     mode: RenderMode,
-) -> bool {
+) -> CodeLines {
     use super::markdown_yaml::content_line_is_ambiguous;
     let is_fence_delimiter = match mode {
         RenderMode::Export => import::is_fence_delimiter,
@@ -2134,25 +2159,40 @@ fn push_block_bullet(
     // included, with the importer's own probe: an escaped ```` \- ``` ```` opens
     // no fence there, so it must open none here either.
     let mut in_fence = is_fence_delimiter(&output[line_start..], false);
-    let mut is_code = in_fence;
+    let mut code = CodeLines {
+        any: in_fence,
+        last: in_fence,
+    };
     output.push('\n');
 
     let cont_indent = format!("{indent}  ");
     for line in lines {
         let line_start = output.len();
         output.push_str(&cont_indent);
-        if !in_fence && content_line_is_ambiguous(line) {
+        let needs_escape = if in_fence {
+            mode == RenderMode::Source && import::needs_anchor_line_escape(line)
+        } else {
+            content_line_is_ambiguous(line)
+        };
+        if needs_escape {
             output.push('\\');
         }
         output.push_str(line);
         let is_delimiter = is_fence_delimiter(&output[line_start..], in_fence);
-        is_code |= in_fence || is_delimiter;
+        code.last = in_fence || is_delimiter;
+        code.any |= code.last;
         if is_delimiter {
             in_fence = !in_fence;
         }
         output.push('\n');
     }
-    is_code
+    code
+}
+
+/// Which lines of a written bullet the parser reads as code.
+struct CodeLines {
+    any: bool,
+    last: bool,
 }
 
 /// `true` when a block's first line needs a leading `\` to read back as text

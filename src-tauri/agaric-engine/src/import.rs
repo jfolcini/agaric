@@ -296,6 +296,26 @@ fn split_block_task_marker(text: &str) -> (Option<&'static str>, &str) {
     }
 }
 
+/// A source buffer's anchor line: `^` and a ULID, alone on the line.
+static ANCHOR_LINE_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^\^[0-9A-HJKMNP-TV-Z]{26}$").expect("invalid anchor-line regex"));
+
+/// `true` when Source mode must backslash-escape `line`, a code line, so it
+/// does not read back as the anchor line that ends its block's fence. It looks
+/// past leading whitespace and backslashes, as [`needs_list_marker_escape`]
+/// does, so the escape is injective.
+pub fn needs_anchor_line_escape(line: &str) -> bool {
+    ANCHOR_LINE_RE.is_match(line.trim_start_matches(|c: char| c.is_whitespace() || c == '\\'))
+}
+
+/// A source code line with the escape [`needs_anchor_line_escape`] asks for,
+/// if any, removed.
+fn unescape_code_line(text: &str) -> &str {
+    text.strip_prefix('\\')
+        .filter(|rest| needs_anchor_line_escape(rest))
+        .unwrap_or(text)
+}
+
 /// A bullet's text split into its markers and the block's own text: the
 /// `listStyle` its list marker implies and, in Source mode, the `todo_state`
 /// of the checkbox after it.
@@ -1007,6 +1027,12 @@ fn parse_block_lines(
         let depth = indent / 2;
 
         fence.close_unbalanced_at(trimmed, depth, lines_iter.clone());
+        // A source buffer writes the anchor of a block that ends in code on a
+        // line of its own, so a fence the block leaves open ends there instead
+        // of swallowing the lines after it.
+        if mode == ParseMode::Source && fence.open && ANCHOR_LINE_RE.is_match(trimmed) {
+            fence = FenceState::default();
+        }
         // Probed after the recovery, which may have just closed the fence.
         let is_fence_delim = fence_delimiter(trimmed, fence.open, mode);
 
@@ -1213,8 +1239,12 @@ fn append_source_line(last: &mut ParsedBlock, blank_run: &[&str], line: &str, li
         last.content.push_str(dedent(blank, width));
     }
     last.content.push('\n');
-    last.content
-        .push_str(unescape_continuation(dedent(line, width), line_is_code));
+    let text = dedent(line, width);
+    last.content.push_str(if line_is_code {
+        unescape_code_line(text)
+    } else {
+        unescape_continuation(text, false)
+    });
     if line_is_code {
         last.is_code = true;
     }
@@ -4109,6 +4139,42 @@ mod tests_source_outline_5140 {
         assert_eq!(block.block_anchor.as_deref(), Some("A1"));
         assert_eq!(todo_state_of(block), Some("TODO"));
         assert!(block.is_code);
+    }
+
+    const ID_A: &str = "01J0000000000000000000000A";
+    const ID_B: &str = "01J0000000000000000000000B";
+
+    /// A block that leaves its fence open has its anchor on a line of its own,
+    /// which ends the fence: the child after it is a block.
+    #[test]
+    fn an_anchor_line_ends_an_open_fence() {
+        let out = parse_source_outline(&format!("- ````\n  ^{ID_A}\n  - B ^{ID_B}\n"));
+        assert_eq!(out.blocks.len(), 2, "{:?}", out.blocks);
+        assert_eq!(out.blocks[0].content, "````");
+        assert_eq!(out.blocks[0].block_anchor.as_deref(), Some(ID_A));
+        assert_eq!(out.blocks[1].depth, 1);
+        assert_eq!(out.blocks[1].content, "B");
+        assert_eq!(out.blocks[1].block_anchor.as_deref(), Some(ID_B));
+    }
+
+    #[test]
+    fn a_property_line_after_an_open_fence_is_a_property() {
+        let out = parse_source_outline(&format!("- ```sh\n  echo\n  ^{ID_A}\n  lang:: sh\n"));
+        assert_eq!(out.blocks.len(), 1, "{:?}", out.blocks);
+        let block = &out.blocks[0];
+        assert_eq!(block.content, "```sh\necho");
+        assert_eq!(block.block_anchor.as_deref(), Some(ID_A));
+        assert_eq!(block.properties, [("lang".to_string(), "sh".to_string())]);
+    }
+
+    /// An escaped anchor-shaped code line is code: it loses its escape and
+    /// leaves the fence open, so the `- x` after it is code too.
+    #[test]
+    fn an_escaped_anchor_line_is_code() {
+        let out = parse_source_outline(&format!("- ```\n  \\^{ID_B}\n  - x\n  ^{ID_A}\n"));
+        assert_eq!(out.blocks.len(), 1, "{:?}", out.blocks);
+        assert_eq!(out.blocks[0].content, format!("```\n^{ID_B}\n- x"));
+        assert_eq!(out.blocks[0].block_anchor.as_deref(), Some(ID_A));
     }
 
     /// The checkbox is source mode's alone: an imported file's `[ ]` is text.
