@@ -240,6 +240,79 @@ pub fn split_block_list_marker(text: &str) -> (Option<&'static str>, &str) {
     }
 }
 
+/// The `todo_state` each Source-mode checkbox stands for (#5140). The alphabet
+/// is the frontend's (`TASK_MARKER_TO_STATE` in `src/lib/task-states.ts`); the
+/// first character listed for a state is the one the renderer writes.
+const TASK_MARKERS: [(char, &str); 5] = [
+    (' ', "TODO"),
+    ('x', "DONE"),
+    ('X', "DONE"),
+    ('/', "DOING"),
+    ('-', "CANCELLED"),
+];
+
+/// The checkbox character Source mode writes for `todo_state`, or `None` for a
+/// state outside the alphabet, which stays a `todo_state::` property line.
+pub fn task_marker_for(todo_state: &str) -> Option<char> {
+    TASK_MARKERS
+        .iter()
+        .find(|(_, state)| *state == todo_state)
+        .map(|(marker, _)| *marker)
+}
+
+/// Split a leading `[c] ` checkbox, or a bare `[c]` that is the whole text, off
+/// `text`, returning the `todo_state` it stands for and the rest.
+fn split_task_marker(text: &str) -> Option<(&'static str, &str)> {
+    let mut chars = text.strip_prefix('[')?.chars();
+    let marker = chars.next()?;
+    let after = chars.as_str().strip_prefix(']')?;
+    let &(_, state) = TASK_MARKERS.iter().find(|(c, _)| *c == marker)?;
+    if after.is_empty() {
+        return Some((state, after));
+    }
+    after.strip_prefix(' ').map(|rest| (state, rest))
+}
+
+/// `true` when Source mode must backslash-escape `text`, the first line of a
+/// block that writes no checkbox, so it does not read back as one. It looks
+/// past a leading run of backslashes, as [`needs_list_marker_escape`] does, so
+/// the escape is injective.
+pub fn needs_task_marker_escape(text: &str) -> bool {
+    split_task_marker(text.trim_start_matches('\\')).is_some()
+}
+
+/// Source mode's checkbox counterpart of [`split_block_list_marker`], applied
+/// to the text after the list marker: the `todo_state` a checkbox stands for,
+/// and the text with the checkbox, or one escape, removed.
+fn split_block_task_marker(text: &str) -> (Option<&'static str>, &str) {
+    if let Some(rest) = text.strip_prefix('\\')
+        && needs_task_marker_escape(rest)
+    {
+        return (None, rest);
+    }
+    match split_task_marker(text) {
+        Some((state, rest)) => (Some(state), rest),
+        None => (None, text),
+    }
+}
+
+/// A bullet's text split into its markers and the block's own text: the
+/// `listStyle` its list marker implies and, in Source mode, the `todo_state`
+/// of the checkbox after it.
+fn split_bullet_markers(
+    text: &str,
+    mode: ParseMode,
+) -> (Option<&'static str>, Option<&'static str>, &str) {
+    let (list_style, text) = split_block_list_marker(text);
+    match mode {
+        ParseMode::Import => (list_style, None, text),
+        ParseMode::Source => {
+            let (todo_state, text) = split_block_task_marker(text);
+            (list_style, todo_state, text)
+        }
+    }
+}
+
 /// `true` when `line` is a code-fence delimiter: backticks opening the line
 /// itself or the body of its `- ` bullet. The exporter tracks fences with this
 /// same probe, applied to each line as written, so the two sides agree on
@@ -250,6 +323,17 @@ pub fn split_block_list_marker(text: &str) -> (Option<&'static str>, &str) {
 /// opens one too. Inside a fence the list marker is not looked past: a marker
 /// only ever precedes a block's first line, so ```` - - ``` ```` there is code.
 pub fn is_fence_delimiter(line: &str, fence_open: bool) -> bool {
+    fence_delimiter(line, fence_open, ParseMode::Import)
+}
+
+/// [`is_fence_delimiter`] for a Source-mode buffer, where a bullet's first line
+/// may carry a checkbox before its text: a task whose content is a code block
+/// opens its fence on that line.
+pub fn is_source_fence_delimiter(line: &str, fence_open: bool) -> bool {
+    fence_delimiter(line, fence_open, ParseMode::Source)
+}
+
+fn fence_delimiter(line: &str, fence_open: bool, mode: ParseMode) -> bool {
     let trimmed = line.trim_start();
     let Some(body) = trimmed.strip_prefix("- ") else {
         return trimmed.starts_with("```");
@@ -257,7 +341,7 @@ pub fn is_fence_delimiter(line: &str, fence_open: bool) -> bool {
     if fence_open {
         body.starts_with("```")
     } else {
-        split_block_list_marker(body).1.starts_with("```")
+        split_bullet_markers(body, mode).2.starts_with("```")
     }
 }
 
@@ -656,12 +740,8 @@ pub fn parse_logseq_markdown(content: &str) -> ParseOutput {
         &mut frontmatter_warnings,
     );
 
-    let (mut blocks, ends_in_code, mut lossy) = parse_block_lines(&normalized);
-    extract_block_anchors(&mut blocks, &ends_in_code);
-    lossy.clamped = clamp_block_depths(&mut blocks);
-
     let mut warnings = frontmatter_warnings;
-    lossy.push_warnings(&mut warnings);
+    let blocks = parse_outline(&normalized, ParseMode::Import, &mut warnings);
 
     ParseOutput {
         blocks,
@@ -669,6 +749,47 @@ pub fn parse_logseq_markdown(content: &str) -> ParseOutput {
         frontmatter_list_items,
         warnings,
     }
+}
+
+/// Parse a source-mode buffer (#5140) back into the blocks it was rendered
+/// from. Where [`parse_logseq_markdown`] normalises a file from another tool,
+/// this keeps what the renderer wrote: `((ULID))` refs, spacing, a block's
+/// interior blank lines and the indentation of its continuation lines. It also
+/// reads a checkbox after the list marker as the block's `todo_state`. A buffer
+/// has no frontmatter, so none is looked for.
+pub fn parse_source_outline(content: &str) -> ParseOutput {
+    let normalized = content.replace("\r\n", "\n").replace('\r', "\n");
+    let mut warnings = Vec::new();
+    let blocks = parse_outline(&normalized, ParseMode::Source, &mut warnings);
+    ParseOutput {
+        blocks,
+        frontmatter: Vec::new(),
+        frontmatter_list_items: std::collections::HashMap::new(),
+        warnings,
+    }
+}
+
+/// The two readings of the outline grammar. Import normalises a file written
+/// by another tool; Source reads back the buffer source mode renders and must
+/// return exactly the tree it was rendered from.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ParseMode {
+    Import,
+    Source,
+}
+
+/// The block scan both modes share: lines into blocks, then anchors, then the
+/// depth clamp, appending one warning per lossy transform to `warnings`.
+fn parse_outline(
+    normalized: &str,
+    mode: ParseMode,
+    warnings: &mut Vec<String>,
+) -> Vec<ParsedBlock> {
+    let (mut blocks, ends_in_code, mut lossy) = parse_block_lines(normalized, mode);
+    extract_block_anchors(&mut blocks, &ends_in_code, mode);
+    lossy.clamped = clamp_block_depths(&mut blocks);
+    lossy.push_warnings(warnings);
+    blocks
 }
 
 /// Counts of the lossy / silently-corrected transforms [`parse_block_lines`]
@@ -847,11 +968,18 @@ impl FenceState {
 /// Alongside each block it returns whether the block's last content line was
 /// code, which decides whether a trailing `^id` on it is an anchor
 /// ([`extract_block_anchors`]).
-fn parse_block_lines(normalized: &str) -> (Vec<ParsedBlock>, Vec<bool>, LossyCounts) {
+fn parse_block_lines(
+    normalized: &str,
+    mode: ParseMode,
+) -> (Vec<ParsedBlock>, Vec<bool>, LossyCounts) {
     let mut blocks: Vec<ParsedBlock> = Vec::new();
     let mut ends_in_code: Vec<bool> = Vec::new();
     let mut lossy = LossyCounts::default();
     let mut fence = FenceState::default();
+    // Source mode keeps a block's interior blank lines. Whether a blank line is
+    // interior is known only at the next non-blank line: a continuation line
+    // takes the run, a bullet or property line drops it.
+    let mut blank_run: Vec<&str> = Vec::new();
     // #1921 — iterate `normalized.lines()` directly instead of collecting into
     // a `Vec<&str>`. The scan only ever reads the CURRENT line in document
     // order, so a streaming iterator is a drop-in that avoids the intermediate
@@ -866,8 +994,10 @@ fn parse_block_lines(normalized: &str) -> (Vec<ParsedBlock>, Vec<bool>, LossyCou
     while let Some(line) = lines_iter.next() {
         let trimmed = line.trim_start();
 
-        // Skip empty lines
         if trimmed.is_empty() {
+            if mode == ParseMode::Source {
+                blank_run.push(line);
+            }
             continue;
         }
 
@@ -878,7 +1008,7 @@ fn parse_block_lines(normalized: &str) -> (Vec<ParsedBlock>, Vec<bool>, LossyCou
 
         fence.close_unbalanced_at(trimmed, depth, lines_iter.clone());
         // Probed after the recovery, which may have just closed the fence.
-        let is_fence_delim = is_fence_delimiter(trimmed, fence.open);
+        let is_fence_delim = fence_delimiter(trimmed, fence.open, mode);
 
         // The delimiter line is itself part of the code region (`line_is_code`
         // is true on both the opening and closing fence), and every line
@@ -908,16 +1038,16 @@ fn parse_block_lines(normalized: &str) -> (Vec<ParsedBlock>, Vec<bool>, LossyCou
         // empty list item) — it must spawn its own empty block, not fold into
         // the previous block's content as a continuation line. Handle both the
         // `- text` and the bare `-` forms here.
-        if !in_code_body && trimmed == "-" {
-            blocks.push(ParsedBlock {
-                content: String::new(),
-                depth,
-                properties: Vec::new(),
-                is_code: line_is_code,
-                block_anchor: None,
-            });
-        } else if !in_code_body && let Some(text) = trimmed.strip_prefix("- ") {
-            lossy.stripped_refs += push_bullet_block(&mut blocks, text, depth, line_is_code);
+        let bullet_text = if in_code_body {
+            None
+        } else if trimmed == "-" {
+            Some("")
+        } else {
+            trimmed.strip_prefix("- ")
+        };
+        if let Some(text) = bullet_text {
+            lossy.stripped_refs += push_bullet_block(&mut blocks, text, depth, line_is_code, mode);
+            ends_in_code.push(line_is_code);
         } else if !line_is_code
             && let Some((key_candidate, value)) = trimmed
                 .split_once(":: ")
@@ -932,14 +1062,17 @@ fn parse_block_lines(normalized: &str) -> (Vec<ParsedBlock>, Vec<bool>, LossyCou
             // the content-block branch when the LHS is not a valid key.
             attach_property_line(&mut blocks, key_candidate, value, depth, &mut lossy);
         } else if let Some(last) = blocks.last_mut() {
-            lossy.stripped_refs += append_continuation_line(last, trimmed, line_is_code);
-            if let Some(tail) = ends_in_code.last_mut() {
-                *tail = line_is_code;
+            match mode {
+                ParseMode::Import => {
+                    lossy.stripped_refs += append_continuation_line(last, trimmed, line_is_code);
+                }
+                ParseMode::Source => append_source_line(last, &blank_run, line, line_is_code),
             }
+            ends_in_code[blocks.len() - 1] = line_is_code;
         } else {
             // Non-list, non-property line with no preceding block (file starts
             // with bare text) -- treat as a standalone depth-0 content block.
-            let (cleaned, removed) = strip_block_refs_counted(trimmed);
+            let (cleaned, removed) = clean_text(trimmed, mode);
             lossy.stripped_refs += removed;
             blocks.push(ParsedBlock {
                 content: cleaned,
@@ -948,21 +1081,24 @@ fn parse_block_lines(normalized: &str) -> (Vec<ParsedBlock>, Vec<bool>, LossyCou
                 is_code: line_is_code,
                 block_anchor: None,
             });
+            ends_in_code.push(line_is_code);
         }
-        ends_in_code.resize(blocks.len(), line_is_code);
+        blank_run.clear();
     }
 
     (blocks, ends_in_code, lossy)
 }
 
 /// Push a `- text` bullet as a new block: the leading list marker (if any)
-/// becomes a `listStyle` property (#4552) and `((uuid))` block references are
+/// becomes a `listStyle` property (#4552), in Source mode a checkbox after it
+/// becomes `todo_state`, and on import `((uuid))` block references are
 /// stripped to plain text. Returns how many references were stripped.
 fn push_bullet_block(
     blocks: &mut Vec<ParsedBlock>,
     text: &str,
     depth: usize,
     line_is_code: bool,
+    mode: ParseMode,
 ) -> usize {
     // #4552 slice 4 — a SECOND list marker right after the outline bullet is
     // the block's `listStyle`, not its content: the exporter writes `- - foo` /
@@ -971,12 +1107,15 @@ fn push_bullet_block(
     // property row and keep `blocks.content` bare — the marker is a
     // document-assembly concern, not a block-content one. The literal ordinal
     // is discarded; export re-derives it positionally.
-    let (list_style, text) = split_block_list_marker(text);
+    let (list_style, todo_state, text) = split_bullet_markers(text, mode);
     let mut properties: Vec<(String, String)> = Vec::new();
     if let Some(style) = list_style {
         properties.push((LIST_STYLE_KEY.to_string(), style.to_string()));
     }
-    let (cleaned, removed) = strip_block_refs_counted(text);
+    if let Some(state) = todo_state {
+        properties.push(("todo_state".to_string(), state.to_string()));
+    }
+    let (cleaned, removed) = clean_text(text, mode);
     blocks.push(ParsedBlock {
         content: cleaned,
         depth,
@@ -988,6 +1127,16 @@ fn push_bullet_block(
         block_anchor: None,
     });
     removed
+}
+
+/// A line's text as its block keeps it, and how many `((uuid))` references
+/// were stripped: an import normalises it ([`strip_block_refs_counted`]), a
+/// source buffer keeps it as written.
+fn clean_text(text: &str, mode: ParseMode) -> (String, usize) {
+    match mode {
+        ParseMode::Import => strip_block_refs_counted(text),
+        ParseMode::Source => (text.to_string(), 0),
+    }
 }
 
 /// Attach a `key:: value` body property to the block that *indentation* says
@@ -1036,39 +1185,7 @@ fn attach_property_line(
 /// multi-line bullet bodies. Returns how many `((uuid))` references were
 /// stripped from it.
 fn append_continuation_line(last: &mut ParsedBlock, trimmed: &str, line_is_code: bool) -> usize {
-    // #2716 — reverse the exporter's continuation-line escape: a NON-code
-    // continuation line the exporter had to guard (it opens a bullet or matches
-    // `key:: value`) was emitted with a single leading `\` so it would land
-    // HERE (folded) instead of spawning a block / property. Strip that one
-    // backslash — but ONLY when the escaped payload really is such an
-    // ambiguous line, so an ordinary continuation line that legitimately begins
-    // with `\` (e.g. a LaTeX command) is preserved verbatim. Skipped inside a
-    // code fence (`line_is_code`): code is emitted verbatim and must keep its
-    // backslashes intact.
-    let unescaped = if !line_is_code
-        && let Some(rest) = trimmed.strip_prefix('\\')
-        && {
-            // The exporter escapes based on the line's TRIMMED shape
-            // (`content_line_is_ambiguous`) and anchors the `\` BEFORE the
-            // continuation line's own leading whitespace, so an INDENTED
-            // ambiguous line reaches here as `\<ws><token>` (`  - sub` → wire
-            // `  \  - sub`, `trimmed` = `\  - sub`). Match the same TRIMMED
-            // shape — otherwise the untrimmed `rest.starts_with("- ")` misses
-            // it and the `\` leaks into the folded content as a spurious
-            // character. (Interior indentation itself is still normalised away
-            // downstream by `strip_block_refs_counted`'s trim, exactly as it is
-            // for a non-ambiguous indented continuation line; the point of the
-            // un-escape is only to strip the escape marker, never to inject
-            // one.) Further backslashes are looked past too, as the exporter
-            // does, so a line written as `\- x` comes back with its backslash.
-            let body = rest.trim_start_matches(|c: char| c.is_whitespace() || c == '\\');
-            is_bullet_line(body) || line_is_property_shaped(body)
-        } {
-        rest
-    } else {
-        trimmed
-    };
-    let (cleaned, removed) = strip_block_refs_counted(unescaped);
+    let (cleaned, removed) = strip_block_refs_counted(unescape_continuation(trimmed, line_is_code));
     // #1924 — a continuation line inside a fence makes the owning block code
     // (e.g. the fenced body lines that follow a `- ```rust` bullet, and the
     // closing ```` ``` ```` delimiter line). Once a block is flagged code it
@@ -1085,6 +1202,67 @@ fn append_continuation_line(last: &mut ParsedBlock, trimmed: &str, line_is_code:
     removed
 }
 
+/// A source buffer's continuation line (#5140): only its bullet's own
+/// indentation, `(depth + 1) * 2` spaces, is removed, so code keeps its
+/// indentation and prose its spacing. The blank lines before it are interior
+/// to the block and are kept the same way.
+fn append_source_line(last: &mut ParsedBlock, blank_run: &[&str], line: &str, line_is_code: bool) {
+    let width = (last.depth + 1) * 2;
+    for blank in blank_run {
+        last.content.push('\n');
+        last.content.push_str(dedent(blank, width));
+    }
+    last.content.push('\n');
+    last.content
+        .push_str(unescape_continuation(dedent(line, width), line_is_code));
+    if line_is_code {
+        last.is_code = true;
+    }
+}
+
+/// `line` less up to `width` leading spaces.
+fn dedent(line: &str, width: usize) -> &str {
+    let spaces = line.bytes().take(width).take_while(|&b| b == b' ').count();
+    &line[spaces..]
+}
+
+/// A continuation line's text with the exporter's escape, if any, removed.
+fn unescape_continuation(text: &str, line_is_code: bool) -> &str {
+    // #2716 — reverse the exporter's continuation-line escape: a NON-code
+    // continuation line the exporter had to guard (it opens a bullet or matches
+    // `key:: value`) was emitted with a single leading `\` so it would land
+    // HERE (folded) instead of spawning a block / property. Strip that one
+    // backslash — but ONLY when the escaped payload really is such an
+    // ambiguous line, so an ordinary continuation line that legitimately begins
+    // with `\` (e.g. a LaTeX command) is preserved verbatim. Skipped inside a
+    // code fence (`line_is_code`): code is emitted verbatim and must keep its
+    // backslashes intact.
+    if !line_is_code
+        && let Some(rest) = text.strip_prefix('\\')
+        && {
+            // The exporter escapes based on the line's TRIMMED shape
+            // (`content_line_is_ambiguous`) and anchors the `\` BEFORE the
+            // continuation line's own leading whitespace, so an INDENTED
+            // ambiguous line reaches here as `\<ws><token>` (`  - sub` → wire
+            // `  \  - sub`, `trimmed` = `\  - sub`). Match the same TRIMMED
+            // shape — otherwise the untrimmed `rest.starts_with("- ")` misses
+            // it and the `\` leaks into the folded content as a spurious
+            // character. (On import, interior indentation itself is still
+            // normalised away downstream by `strip_block_refs_counted`'s trim,
+            // exactly as it is for a non-ambiguous indented continuation line;
+            // the point of the un-escape is only to strip the escape marker,
+            // never to inject one.) Further backslashes are looked past too, as the exporter
+            // does, so a line written as `\- x` comes back with its backslash.
+            let body = rest.trim_start_matches(|c: char| c.is_whitespace() || c == '\\');
+            is_bullet_line(body) || line_is_property_shaped(body)
+        }
+    {
+        rest
+    } else {
+        text
+    }
+}
+
 /// #2510 — strip a trailing Obsidian block-anchor marker (`^block-id`) off
 /// each block's now-FULLY-assembled content, recording it in
 /// [`ParsedBlock::block_anchor`]. Runs as a POST-pass over the scanned blocks
@@ -1094,12 +1272,16 @@ fn append_continuation_line(last: &mut ParsedBlock, trimmed: &str, line_is_code:
 /// content line was code is skipped: a `^something` on a fence line or inside
 /// a fence is code, not an Obsidian anchor. That is why the exporter puts a
 /// code block's anchor on its own line after the closing fence.
-fn extract_block_anchors(blocks: &mut [ParsedBlock], ends_in_code: &[bool]) {
+fn extract_block_anchors(blocks: &mut [ParsedBlock], ends_in_code: &[bool], mode: ParseMode) {
     for (block, &ends_in_code) in blocks.iter_mut().zip(ends_in_code) {
         if ends_in_code {
             continue;
         }
-        if let (stripped, Some(anchor)) = strip_block_anchor_marker(&block.content) {
+        let strip = match mode {
+            ParseMode::Import => strip_block_anchor_marker,
+            ParseMode::Source => strip_written_anchor_marker,
+        };
+        if let (stripped, Some(anchor)) = strip(&block.content) {
             block.content = stripped;
             block.block_anchor = Some(anchor);
         }
@@ -1734,12 +1916,23 @@ static OBSIDIAN_BLOCK_ANCHOR_RE: LazyLock<Regex> = LazyLock::new(|| {
 /// ALSO stripped here — the same accepted tradeoff #1282 documents for a page
 /// title that legitimately contains `#` (e.g. `[[C# Notes]]`).
 fn strip_block_anchor_marker(content: &str) -> (String, Option<String>) {
+    match strip_written_anchor_marker(content) {
+        (stripped, Some(id)) => (stripped.trim_end().to_string(), Some(id)),
+        unmarked => unmarked,
+    }
+}
+
+/// [`strip_block_anchor_marker`] for a source buffer, which removes only the
+/// matched separator and marker: the renderer wrote exactly one separator, so
+/// whitespace the block itself ends with is content.
+fn strip_written_anchor_marker(content: &str) -> (String, Option<String>) {
     match OBSIDIAN_BLOCK_ANCHOR_RE.captures(content) {
         Some(caps) => {
             let whole = caps.get(0).expect("group 0 always present");
-            let id = caps[1].to_string();
-            let stripped = content[..whole.start()].trim_end().to_string();
-            (stripped, Some(id))
+            (
+                content[..whole.start()].to_string(),
+                Some(caps[1].to_string()),
+            )
         }
         None => (content.to_string(), None),
     }
@@ -3801,5 +3994,172 @@ mod tests_list_style_4552 {
             assert_eq!(style_of(block), Some(style), "{md:?}");
             assert!(block.is_code, "{md:?}");
         }
+    }
+}
+
+/// #5140 — the source-mode reading of the outline grammar. The app crate's
+/// render→parse proptest is the oracle for the whole buffer; these pin each
+/// rule on its own.
+#[cfg(test)]
+mod tests_source_outline_5140 {
+    use super::{
+        needs_task_marker_escape, parse_logseq_markdown, parse_source_outline,
+        split_block_task_marker, split_task_marker, task_marker_for,
+    };
+
+    fn todo_state_of(block: &super::ParsedBlock) -> Option<&str> {
+        block
+            .properties
+            .iter()
+            .rev()
+            .find(|(k, _)| k == "todo_state")
+            .map(|(_, v)| v.as_str())
+    }
+
+    #[test]
+    fn block_refs_and_spacing_are_kept() {
+        let out = parse_source_outline("- a  ((01ARZ3NDEKTSV4RRFFQ69G5FAV))  b  ^X1\n");
+        assert_eq!(
+            out.blocks[0].content,
+            "a  ((01ARZ3NDEKTSV4RRFFQ69G5FAV))  b "
+        );
+        assert_eq!(out.blocks[0].block_anchor.as_deref(), Some("X1"));
+    }
+
+    #[test]
+    fn interior_blank_lines_are_kept_and_trailing_ones_dropped() {
+        let out = parse_source_outline("- a\n\n    \n  b\n  b2\n\n- c\n  key:: v\n\n");
+        let contents: Vec<&str> = out.blocks.iter().map(|b| b.content.as_str()).collect();
+        assert_eq!(contents, ["a\n\n  \nb\nb2", "c"]);
+    }
+
+    /// A continuation line loses exactly its bullet's indentation, so a code
+    /// line keeps its own.
+    #[test]
+    fn a_continuation_line_loses_only_its_bullet_indentation() {
+        let out = parse_source_outline("- ```\n      indented\n  ```\n  - x\n       y\n");
+        assert_eq!(out.blocks[0].content, "```\n    indented\n```");
+        assert_eq!(out.blocks[1].content, "x\n   y");
+    }
+
+    #[test]
+    fn an_empty_first_line_keeps_its_newline() {
+        let out = parse_source_outline("- \n  b\n");
+        assert_eq!(out.blocks[0].content, "\nb");
+    }
+
+    #[test]
+    fn a_checkbox_is_read_as_todo_state() {
+        for (md, state, content) in [
+            ("- [ ] a", "TODO", "a"),
+            ("- [x] a", "DONE", "a"),
+            ("- [X] a", "DONE", "a"),
+            ("- [/] a", "DOING", "a"),
+            ("- [-] a", "CANCELLED", "a"),
+            ("- [ ]", "TODO", ""),
+        ] {
+            let block = &parse_source_outline(md).blocks[0];
+            assert_eq!(todo_state_of(block), Some(state), "{md:?}");
+            assert_eq!(block.content, content, "{md:?}");
+        }
+    }
+
+    /// The checkbox follows the list marker; before it, it is text.
+    #[test]
+    fn a_checkbox_follows_the_list_marker() {
+        let block = &parse_source_outline("- 1. [x] a").blocks[0];
+        assert_eq!(
+            block.properties,
+            [
+                ("listStyle".to_string(), "ordered".to_string()),
+                ("todo_state".to_string(), "DONE".to_string()),
+            ]
+        );
+        assert_eq!(block.content, "a");
+
+        let block = &parse_source_outline("- [x] 1. a").blocks[0];
+        assert_eq!(todo_state_of(block), Some("DONE"));
+        assert_eq!(block.content, "1. a");
+    }
+
+    #[test]
+    fn an_explicit_todo_state_line_wins_over_the_checkbox() {
+        let block = &parse_source_outline("- [ ] a\n  todo_state:: WAITING\n").blocks[0];
+        assert_eq!(todo_state_of(block), Some("WAITING"));
+    }
+
+    /// A checkbox is read only at the start of a bullet's first line.
+    #[test]
+    fn a_checkbox_in_code_or_a_continuation_line_is_text() {
+        let out = parse_source_outline("- ```\n  - [ ] a\n  ```\n- b\n  [x] c\n");
+        assert_eq!(out.blocks.len(), 2, "{:?}", out.blocks);
+        assert_eq!(out.blocks[0].content, "```\n- [ ] a\n```");
+        assert_eq!(out.blocks[1].content, "b\n[x] c");
+        assert!(out.blocks.iter().all(|b| todo_state_of(b).is_none()));
+    }
+
+    /// A task whose content is a code block opens its fence on the bullet
+    /// line, so the `- x` inside stays code.
+    #[test]
+    fn a_task_whose_content_is_code_opens_its_fence() {
+        let out = parse_source_outline("- [ ] ```sh\n  - x\n  ```\n  ^A1\n");
+        assert_eq!(out.blocks.len(), 1, "{:?}", out.blocks);
+        let block = &out.blocks[0];
+        assert_eq!(block.content, "```sh\n- x\n```");
+        assert_eq!(block.block_anchor.as_deref(), Some("A1"));
+        assert_eq!(todo_state_of(block), Some("TODO"));
+        assert!(block.is_code);
+    }
+
+    /// The checkbox is source mode's alone: an imported file's `[ ]` is text.
+    #[test]
+    fn an_import_reads_no_checkbox() {
+        let block = &parse_logseq_markdown("- [ ] a").blocks[0];
+        assert_eq!(block.content, "[ ] a");
+        assert!(block.properties.is_empty());
+    }
+
+    #[test]
+    fn task_marker_escape_then_unescape_is_the_identity() {
+        for text in [
+            "[ ] a",
+            "[x]",
+            "[X] a",
+            "[-] a",
+            "\\[ ] a",
+            "\\\\[/] a",
+            "[?] a",
+            "[ ]x",
+            "plain",
+            "",
+            "\\",
+            "\\alpha",
+        ] {
+            let wire = if needs_task_marker_escape(text) {
+                format!("\\{text}")
+            } else {
+                text.to_string()
+            };
+            assert_eq!(
+                split_block_task_marker(&wire),
+                (None, text),
+                "wire {wire:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn checkbox_grammar_boundaries() {
+        for text in ["[ ]x", "[?] a", "[] a", "[ ", "[xx] a", " [ ] a"] {
+            assert_eq!(split_task_marker(text), None, "{text:?}");
+            assert!(!needs_task_marker_escape(text), "{text:?}");
+        }
+        assert_eq!(split_task_marker("[ ] "), Some(("TODO", "")));
+        assert_eq!(split_task_marker("[/]"), Some(("DOING", "")));
+        let written: Vec<Option<char>> = ["TODO", "DONE", "DOING", "CANCELLED", "WAITING"]
+            .into_iter()
+            .map(task_marker_for)
+            .collect();
+        assert_eq!(written, [Some(' '), Some('x'), Some('/'), Some('-'), None]);
     }
 }

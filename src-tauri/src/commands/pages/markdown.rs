@@ -560,10 +560,35 @@ fn resolve_ulids_for_export(
     page_titles: &HashMap<String, String>,
     block_refs: &HashMap<String, String>,
 ) -> String {
+    let result = humanise_tag_and_page_refs(content, tag_names, page_titles);
+
+    // #2963 — Replace ((ULID)) block references with the precomputed
+    // human-readable, roundtrip-safe token (same-page `[[#^ULID]]` /
+    // cross-page `[[Page#^ULID]]`), falling back to a clearly-marked literal
+    // for a dangling target rather than leaking an opaque `((ULID))` that no
+    // external tool renders and that the importer would strip on re-import.
+    agaric_store::cache::BLOCK_REF_RE
+        .replace_all(&result, |caps: &regex::Captures| {
+            let ulid = &caps[1];
+            block_refs
+                .get(ulid)
+                .cloned()
+                .unwrap_or_else(|| "(unresolved block reference)".to_string())
+        })
+        .into_owned()
+}
+
+/// Replace `#[ULID]` with `#tagname` and `[[ULID]]` with `[[Page Title]]`; an
+/// id missing from its map stays raw.
+fn humanise_tag_and_page_refs(
+    content: &str,
+    tag_names: &HashMap<String, String>,
+    page_titles: &HashMap<String, String>,
+) -> String {
     // #1920 — `agaric_store::cache` is the canonical definition site for both regexes;
     // `agaric_store::fts::strip` imports them for FTS stripping. Reference the
     // canonical cache path here rather than going through `fts`.
-    use agaric_store::cache::{BLOCK_REF_RE, PAGE_LINK_RE, TAG_REF_RE};
+    use agaric_store::cache::{PAGE_LINK_RE, TAG_REF_RE};
 
     // Replace #[ULID] → #tagname. A tag whose name contains whitespace is
     // emitted in the `#[[multi word]]` form (#1924/#1950) so it survives a
@@ -585,7 +610,7 @@ fn resolve_ulids_for_export(
         .into_owned();
 
     // Replace [[ULID]] → [[Page Title]]
-    let result = PAGE_LINK_RE
+    PAGE_LINK_RE
         .replace_all(&result, |caps: &regex::Captures| {
             let ulid = &caps[1];
             if let Some(title) = page_titles.get(ulid) {
@@ -594,22 +619,82 @@ fn resolve_ulids_for_export(
                 format!("[[{ulid}]]") // Keep original if not found
             }
         })
-        .into_owned();
-
-    // #2963 — Replace ((ULID)) block references with the precomputed
-    // human-readable, roundtrip-safe token (same-page `[[#^ULID]]` /
-    // cross-page `[[Page#^ULID]]`), falling back to a clearly-marked literal
-    // for a dangling target rather than leaking an opaque `((ULID))` that no
-    // external tool renders and that the importer would strip on re-import.
-    BLOCK_REF_RE
-        .replace_all(&result, |caps: &regex::Captures| {
-            let ulid = &caps[1];
-            block_refs
-                .get(ulid)
-                .cloned()
-                .unwrap_or_else(|| "(unresolved block reference)".to_string())
-        })
         .into_owned()
+}
+
+/// `content` with its tag and page ids replaced by names, when the importer
+/// would resolve every name back to the id it replaced; `None` when there is
+/// no name to write or one would not come back, and the block goes out raw.
+///
+/// The check runs the importer's own name collection and rewrite over the
+/// named text, with `is_code` as the parser will read the block; only the
+/// resolution comes from `names` instead of the database, and nothing is
+/// created. A name can be unique and still not come back: `[[C# Notes]]` reads
+/// as a link to `C` with an anchor, and `#v1.2` as the tag `v1`.
+fn humanise_refs_for_source(
+    content: &str,
+    is_code: bool,
+    tag_names: &HashMap<String, String>,
+    page_titles: &HashMap<String, String>,
+    names: &NameSnapshot,
+) -> Option<String> {
+    let named = humanise_tag_and_page_refs(content, tag_names, page_titles);
+    if named == content {
+        return None;
+    }
+    let block = import::ParsedBlock {
+        content: named,
+        depth: 0,
+        properties: Vec::new(),
+        is_code,
+        block_anchor: None,
+    };
+    let blocks = std::slice::from_ref(&block);
+    let page_links = names.page_links(collect_inbound_page_link_names(blocks));
+    let tags = names.tags(collect_inbound_tag_names(blocks));
+    let internalised = rewrite_block_content_for_import(&block, &page_links, &tags);
+    (internalised == content).then_some(block.content)
+}
+
+/// The in-space names the importer resolves against, as its snapshots read
+/// them: each page title with at most its two smallest ids
+/// (`snapshot_page_link_matches`), and each normalised tag name with its
+/// smallest-id tag (`snapshot_tags_by_norm`, #1990).
+#[derive(Default)]
+struct NameSnapshot {
+    page_ids_by_title: HashMap<String, Vec<String>>,
+    tag_id_by_norm: HashMap<String, String>,
+}
+
+impl NameSnapshot {
+    /// What the importer's page-link pass would map each name to without
+    /// creating a page: the one in-space page with that title, for a name
+    /// with no `#` anchor.
+    fn page_links(&self, names: Vec<String>) -> HashMap<String, String> {
+        let mut links = HashMap::new();
+        for name in names {
+            let (base, anchor) = split_wikilink_anchor(&name);
+            if let (None, Some([id])) =
+                (anchor, self.page_ids_by_title.get(base).map(Vec::as_slice))
+            {
+                links.insert(name.clone(), id.clone());
+            }
+        }
+        links
+    }
+
+    /// What the importer's tag pass would map each name to without creating
+    /// a tag: the winner for its normalised name.
+    fn tags(&self, names: Vec<String>) -> HashMap<String, String> {
+        names
+            .into_iter()
+            .filter_map(|name| {
+                let norm = agaric_core::tag_norm::normalize_tag_name(&name);
+                let id = self.tag_id_by_norm.get(&norm)?.clone();
+                Some((name, id))
+            })
+            .collect()
+    }
 }
 
 /// #2963 — append an Obsidian `^<block-ulid>` block-anchor marker to a block's
@@ -625,9 +710,6 @@ fn resolve_ulids_for_export(
 /// satisfies the importer's `^[A-Za-z0-9-]+` anchor grammar and is guaranteed
 /// unique, so it is a stable document-local key linking the reference to its
 /// target.
-///
-/// A block ending on a fence line gets the marker on a line of its own: on the
-/// fence line the importer reads it as code and never strips it.
 fn stamp_block_anchor_marker(
     resolved: String,
     block_id: &str,
@@ -636,7 +718,16 @@ fn stamp_block_anchor_marker(
     if !same_page_ref_targets.contains(block_id) {
         return resolved;
     }
-    let last_line = resolved.rsplit('\n').next().unwrap_or_default();
+    append_block_anchor(&resolved, block_id)
+}
+
+/// `resolved` with the `^<block_id>` marker at its end. A block ending on a
+/// fence line gets the marker on a line of its own: on the fence line the
+/// importer reads it as code and never strips it.
+fn append_block_anchor(resolved: &str, block_id: &str) -> String {
+    let last_line = resolved
+        .rsplit_once('\n')
+        .map_or(resolved, |(_, line)| line);
     let ends_on_closing_fence = import::is_fence_delimiter(last_line, true);
     let separator = if ends_on_closing_fence { '\n' } else { ' ' };
     format!("{resolved}{separator}^{block_id}")
@@ -700,7 +791,7 @@ fn frontmatter_row_value(prop: &FrontmatterRow, ref_titles: &HashMap<String, Str
 /// them is exactly this set. Grouping it also keeps the ordering guarantee
 /// visible — every field is read inside one `BEGIN DEFERRED` snapshot, so the
 /// renderer cannot observe a half-updated vault.
-struct PageExportData {
+pub struct PageExportData {
     page: BlockRow,
     descendants: Vec<BlockRow>,
     attachments_by_block: HashMap<String, Vec<(String, String)>>,
@@ -714,6 +805,20 @@ struct PageExportData {
     properties: Vec<FrontmatterRow>,
     aliases: Vec<String>,
     tag_names_fm: Vec<String>,
+    /// Read by source mode only, to decide which names it may write.
+    name_snapshot: NameSnapshot,
+}
+
+/// The two renderings of a page's block tree. `Export` writes a file for other
+/// tools: ids become names and links, and only a block a same-page ref points
+/// at carries an anchor. `Source` writes the buffer source mode edits (#5140),
+/// which `import::parse_source_outline` reads back as exactly this tree: every
+/// block carries its `^ID`, ids stay raw unless a name reads back to the same
+/// id, and a task's state is a checkbox.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum RenderMode {
+    Export,
+    Source,
 }
 
 /// Emits one block as `<indent>- <content>` — the *exact* shape
@@ -721,22 +826,20 @@ struct PageExportData {
 /// the `- ` prefix and nesting depth from leading-spaces / 2 (#1916).
 ///
 /// Below the bullet: the reserved-column task metadata, the block's custom
-/// `key:: value` properties, and its non-inline attachments, each indented one
-/// level further. The orphan safety net renders a stray through this same path
-/// at depth 0, so a stray and a walked block cannot drift apart.
+/// `key:: value` properties, and, in an export, its non-inline attachments,
+/// each indented one level further. The orphan safety net renders a stray
+/// through this same path at depth 0, so a stray and a walked block cannot
+/// drift apart.
 fn render_block(
     output: &mut String,
     block: &BlockRow,
     depth: usize,
     data: &PageExportData,
     list_ordinals: &HashMap<String, usize>,
+    mode: RenderMode,
 ) {
     let PageExportData {
         attachments_by_block,
-        tag_names,
-        page_titles,
-        block_ref_replacement,
-        same_page_ref_targets,
         descendant_properties,
         list_styles,
         ref_titles,
@@ -745,17 +848,25 @@ fn render_block(
     let id = block.id.clone().into_string();
     let indent = "  ".repeat(depth);
     let content = block.content.as_deref().unwrap_or("");
-    let resolved = resolve_ulids_for_export(content, tag_names, page_titles, block_ref_replacement);
-    // #2968 — rewrite structured `{{query v2:…}}` payloads to the readable,
-    // roundtrip-safe `v2n:` names form (resolving embedded tag/page ULIDs).
-    let resolved = super::inline_query_md::rewrite_inline_queries_for_export(
-        &resolved,
-        tag_names,
-        page_titles,
-    );
-    let resolved = stamp_block_anchor_marker(resolved, &id, same_page_ref_targets);
     let list_marker = list_marker_for(&id, list_styles, list_ordinals);
-    push_block_bullet(output, &indent, &list_marker, &resolved);
+    let task_marker = match mode {
+        RenderMode::Export => String::new(),
+        RenderMode::Source => block
+            .todo_state
+            .as_deref()
+            .and_then(import::task_marker_for)
+            .map(|marker| format!("[{marker}] "))
+            .unwrap_or_default(),
+    };
+    match mode {
+        RenderMode::Export => {
+            let resolved = export_block_text(content, &id, data);
+            push_block_bullet(output, &indent, &list_marker, "", &resolved, mode);
+        }
+        RenderMode::Source => {
+            push_source_bullet(output, block, &indent, &list_marker, &task_marker, data);
+        }
+    }
 
     // #1916 — task metadata (TODO/DONE state, priority, scheduled/due
     // dates) lives in the reserved `blocks` columns, not in
@@ -766,10 +877,15 @@ fn render_block(
     // line to its owning block, and the apply path routes the reserved
     // keys `todo_state` / `priority` / `due_date` / `scheduled_date` into
     // their columns via `typed_property_args_for_string_value`). No new
-    // syntax is invented — these are ordinary Logseq property lines.
+    // syntax is invented — these are ordinary Logseq property lines. A state
+    // already written as a checkbox is not written twice.
     let prop_indent = "  ".repeat(depth + 1);
+    let todo_state = block
+        .todo_state
+        .as_deref()
+        .filter(|_| task_marker.is_empty());
     for (key, value) in [
-        ("todo_state", block.todo_state.as_deref()),
+        ("todo_state", todo_state),
         ("priority", block.priority.as_deref()),
         ("scheduled_date", block.scheduled_date.as_deref()),
         ("due_date", block.due_date.as_deref()),
@@ -787,7 +903,13 @@ fn render_block(
     // no new syntax, just the previously-missing emission for the
     // escape-hatch custom-property case. `descendant_properties` was
     // batch-read once for the whole subtree, so this is a HashMap lookup,
-    // not a per-block query.
+    // not a per-block query. Source mode writes a ref-typed value as its raw
+    // id, which is what the value is.
+    let no_titles = HashMap::new();
+    let ref_titles = match mode {
+        RenderMode::Export => ref_titles,
+        RenderMode::Source => &no_titles,
+    };
     if let Some(props) = descendant_properties.get(&id) {
         for prop in props {
             let value = frontmatter_row_value(prop, ref_titles);
@@ -801,8 +923,11 @@ fn render_block(
     // in `content` — that's an inline image, already rendered above by
     // `resolve_ulids_for_export`/`push_block_bullet` — so only
     // genuine file attachments (PDFs/docs/images with no inline token)
-    // get a line here.
-    if let Some(atts) = attachments_by_block.get(&id) {
+    // get a line here. Source mode has no attachment lines: attachments
+    // have their own UI.
+    if mode == RenderMode::Export
+        && let Some(atts) = attachments_by_block.get(&id)
+    {
         for (att_id, filename) in atts {
             if content.contains(&format!("attachment:{att_id}")) {
                 continue;
@@ -810,6 +935,72 @@ fn render_block(
             let label = attachment_link_label(filename);
             output.push_str(&format!("{prop_indent}- [{label}](attachment:{att_id})\n"));
         }
+    }
+}
+
+/// A block's content as an export writes it: tag, page and block ids resolved
+/// to names and links, inline queries made readable, and an anchor when a
+/// same-page ref points at the block.
+fn export_block_text(content: &str, id: &str, data: &PageExportData) -> String {
+    let resolved = resolve_ulids_for_export(
+        content,
+        &data.tag_names,
+        &data.page_titles,
+        &data.block_ref_replacement,
+    );
+    // #2968 — rewrite structured `{{query v2:…}}` payloads to the readable,
+    // roundtrip-safe `v2n:` names form (resolving embedded tag/page ULIDs).
+    let resolved = super::inline_query_md::rewrite_inline_queries_for_export(
+        &resolved,
+        &data.tag_names,
+        &data.page_titles,
+    );
+    stamp_block_anchor_marker(resolved, id, &data.same_page_ref_targets)
+}
+
+/// A block's bullet as source mode writes it, with its own `^ID` at the end.
+///
+/// Whether a name may replace an id depends on whether the parser will read
+/// the block as code, which the bullet's fence tracking decides; so the raw
+/// bullet is written first, and rewritten with names when they read back.
+fn push_source_bullet(
+    output: &mut String,
+    block: &BlockRow,
+    indent: &str,
+    list_marker: &str,
+    task_marker: &str,
+    data: &PageExportData,
+) {
+    let id = block.id.as_str();
+    let content = block.content.as_deref().unwrap_or("");
+    let start = output.len();
+    let raw = append_block_anchor(content, id);
+    let is_code = push_block_bullet(
+        output,
+        indent,
+        list_marker,
+        task_marker,
+        &raw,
+        RenderMode::Source,
+    );
+    let named = humanise_refs_for_source(
+        content,
+        is_code,
+        &data.tag_names,
+        &data.page_titles,
+        &data.name_snapshot,
+    );
+    if let Some(named) = named {
+        output.truncate(start);
+        let named = append_block_anchor(&named, id);
+        push_block_bullet(
+            output,
+            indent,
+            list_marker,
+            task_marker,
+            &named,
+            RenderMode::Source,
+        );
     }
 }
 
@@ -963,7 +1154,21 @@ fn render_page_markdown(page_id: &str, data: &PageExportData) -> String {
 
     render_frontmatter(&mut output, data);
     render_page_attachments(&mut output, page_id, data);
+    render_block_tree(&mut output, page_id, data, RenderMode::Export);
+    output
+}
 
+/// The page as the one markdown buffer source mode edits (#5140): its block
+/// tree alone. The title, frontmatter and page attachments have their own UIs.
+pub fn render_page_source(data: &PageExportData) -> String {
+    let mut output = String::new();
+    render_block_tree(&mut output, data.page.id.as_str(), data, RenderMode::Source);
+    output
+}
+
+/// Every descendant of `page_id`, depth-first in sibling order, each through
+/// [`render_block`].
+fn render_block_tree(output: &mut String, page_id: &str, data: &PageExportData, mode: RenderMode) {
     let children_by_parent = group_children_by_parent(page_id, &data.descendants);
     // #4552 slice 4 — positional ordinals for `ordered` blocks. Computed HERE,
     // once `children_by_parent` is grouped and sibling-sorted, because an
@@ -990,7 +1195,7 @@ fn render_page_markdown(page_id: &str, data: &PageExportData) -> String {
         if !visited.insert(id.clone()) {
             continue;
         }
-        render_block(&mut output, block, depth, data, &list_ordinals);
+        render_block(output, block, depth, data, &list_ordinals, mode);
 
         // Push this block's children (reversed so they pop in sibling order)
         // at depth + 1.
@@ -1011,10 +1216,8 @@ fn render_page_markdown(page_id: &str, data: &PageExportData) -> String {
         if visited.contains(&id) {
             continue;
         }
-        render_block(&mut output, block, 0, data, &list_ordinals);
+        render_block(output, block, 0, data, &list_ordinals, mode);
     }
-
-    output
 }
 
 /// Step 1 of the export read half: the page row, refused unless it is an
@@ -1752,6 +1955,7 @@ pub async fn export_page_markdown_inner(
         properties,
         aliases,
         tag_names_fm,
+        name_snapshot: NameSnapshot::default(),
     };
     Ok(render_page_markdown(page_id, &data))
 }
@@ -1844,42 +2048,51 @@ fn list_marker_for(
 ///
 /// #4552 slice 4 — `list_marker` (from [`list_marker_for`]) is the block's
 /// `listStyle` marker, written between the outline `- ` and the first line:
-/// `""`, `"- "`, or `"<n>. "`. When it is EMPTY, a first line that would
-/// itself read as a marker is backslash-escaped, the first-line analogue of
-/// the continuation-line escape above.
-fn push_block_bullet(output: &mut String, indent: &str, list_marker: &str, resolved: &str) {
+/// `""`, `"- "`, or `"<n>. "`. In source mode `task_marker` (`"[x] "`, or
+/// `""`) follows it. A first line that would itself read as a marker the
+/// block does not write is backslash-escaped ([`first_line_needs_escape`]),
+/// the first-line analogue of the continuation-line escape above.
+///
+/// Returns whether any line is code, as the parser's fence tracking will see
+/// it.
+fn push_block_bullet(
+    output: &mut String,
+    indent: &str,
+    list_marker: &str,
+    task_marker: &str,
+    resolved: &str,
+    mode: RenderMode,
+) -> bool {
     use super::markdown_yaml::content_line_is_ambiguous;
+    let is_fence_delimiter = match mode {
+        RenderMode::Export => import::is_fence_delimiter,
+        RenderMode::Source => import::is_source_fence_delimiter,
+    };
 
     let mut lines = resolved.split('\n');
     let first = lines.next().unwrap_or("");
     let line_start = output.len();
     output.push_str(indent);
     output.push_str("- ");
-    if list_marker.is_empty() {
-        // #4552 slice 4 — this block has no `listStyle`, so a first line that
-        // itself OPENS a list marker must be escaped: unescaped, `- - foo`
-        // would re-import as a `bullet` block whose text is `foo` instead of a
-        // plain block whose text is `- foo`. `\- ` / `\1. ` is the same
-        // escape shape the TS serializer uses for a paragraph
-        // (`docs/architecture/list-ergonomics.md`), and
-        // `import::split_block_list_marker` reverses it.
-        if import::needs_list_marker_escape(first) {
+    let markers = format!("{list_marker}{task_marker}");
+    if first.is_empty() {
+        // An EMPTY first line after a marker: emit the bare marker (`- -`,
+        // `- 1.`, `- [ ]`) rather than a line with trailing whitespace. Both
+        // forms re-import identically, but only this one is a byte-level
+        // fixpoint.
+        output.push_str(markers.trim_end());
+    } else {
+        output.push_str(&markers);
+        if first_line_needs_escape(first, list_marker, task_marker, mode) {
             output.push('\\');
         }
-        output.push_str(first);
-    } else if first.is_empty() {
-        // A styled but EMPTY block: emit the bare marker (`- -`, `- 1.`)
-        // rather than a line with trailing whitespace. Both forms re-import
-        // identically, but only this one is a byte-level fixpoint.
-        output.push_str(list_marker.trim_end());
-    } else {
-        output.push_str(list_marker);
         output.push_str(first);
     }
     // Fences are tracked over each line as written, escape and marker
     // included, with the importer's own probe: an escaped ```` \- ``` ```` opens
     // no fence there, so it must open none here either.
-    let mut in_fence = import::is_fence_delimiter(&output[line_start..], false);
+    let mut in_fence = is_fence_delimiter(&output[line_start..], false);
+    let mut is_code = in_fence;
     output.push('\n');
 
     let cont_indent = format!("{indent}  ");
@@ -1890,11 +2103,38 @@ fn push_block_bullet(output: &mut String, indent: &str, list_marker: &str, resol
             output.push('\\');
         }
         output.push_str(line);
-        if import::is_fence_delimiter(&output[line_start..], in_fence) {
+        let is_delimiter = is_fence_delimiter(&output[line_start..], in_fence);
+        is_code |= in_fence || is_delimiter;
+        if is_delimiter {
             in_fence = !in_fence;
         }
         output.push('\n');
     }
+    is_code
+}
+
+/// `true` when a block's first line needs a leading `\` to read back as text
+/// rather than as a marker the block does not write.
+///
+/// #4552 slice 4 — a block with no `listStyle` whose first line itself OPENS a
+/// list marker must be escaped: unescaped, `- - foo` would re-import as a
+/// `bullet` block whose text is `foo` instead of a plain block whose text is
+/// `- foo`. `\- ` / `\1. ` is the same escape shape the TS serializer uses for
+/// a paragraph (`docs/architecture/list-ergonomics.md`), and
+/// `import::split_block_list_marker` reverses it. Source mode escapes a
+/// checkbox the same way, after any list marker; after a checkbox the parser
+/// reads no further marker, so nothing needs escaping.
+fn first_line_needs_escape(
+    first: &str,
+    list_marker: &str,
+    task_marker: &str,
+    mode: RenderMode,
+) -> bool {
+    if !task_marker.is_empty() {
+        return false;
+    }
+    (list_marker.is_empty() && import::needs_list_marker_escape(first))
+        || (mode == RenderMode::Source && import::needs_task_marker_escape(first))
 }
 
 /// #2724 — count how many attachment INGEST ATTEMPTS will read each vault file,
@@ -4438,6 +4678,10 @@ pub async fn import_markdown(
     .await
     .map_err(sanitize_internal_error)
 }
+
+#[cfg(test)]
+#[path = "markdown_source_tests.rs"]
+mod source_tests;
 
 #[cfg(test)]
 mod tests {
