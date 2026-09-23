@@ -26,8 +26,12 @@ export const commands = {
 	 *  `insertTemplateBlocksFromString` into one round-trip and one
 	 *  writer-lock window. A 10-line template that previously fired 10
 	 *  IPCs now fires 1.
+	 * 
+	 *  #5140: the response carries the produced op refs (`WithOps`, one per
+	 *  appended op in append order) so the frontend undo stack can address the
+	 *  batch by exact ref, as for [`create_block`].
 	 */
-	createBlocksBatch: (specs: CreateBlockSpec[]) => typedError<BlockRow[], AppError>(__TAURI_INVOKE("create_blocks_batch", { specs })),
+	createBlocksBatch: (specs: CreateBlockSpec[]) => typedError<WithOps<CreatedBlocks>, AppError>(__TAURI_INVOKE("create_blocks_batch", { specs })),
 	/**
 	 *  Tauri command: edit a block's content. Delegates to [`edit_block_inner`].
 	 *  #2468: the response carries the produced op ref(s) — see [`create_block`].
@@ -89,8 +93,11 @@ export const commands = {
 	 *  `new_parent_id` (a real block id, or `None` for top-level) as ONE contiguous
 	 *  run at base position `new_index` (0-based, counted over the target parent's
 	 *  non-selected children — Refs #914 / Closes #2305).
+	 * 
+	 *  #5140: the response carries the produced op refs (`WithOps`, one per
+	 *  moved root in input order) — see [`move_block`].
 	 */
-	moveBlocksBatch: (blockIds: string[], newParentId: string | null, newIndex: number) => typedError<MoveResponse[], AppError>(__TAURI_INVOKE("move_blocks_batch", { blockIds, newParentId, newIndex })),
+	moveBlocksBatch: (blockIds: string[], newParentId: string | null, newIndex: number) => typedError<WithOps<MovedBlocks>, AppError>(__TAURI_INVOKE("move_blocks_batch", { blockIds, newParentId, newIndex })),
 	/**
 	 *  Tauri command: list blocks with filtering and pagination. Delegates to [`list_blocks_inner`].
 	 * 
@@ -1805,6 +1812,16 @@ export type CreateBlockSpec = {
 	properties?: { [key in string]: string },
 };
 
+/**
+ *  Reply of [`create_blocks_batch`]. `#[serde(flatten)]` cannot wrap a
+ *  `Vec`, so the list rides under a key and [`WithOps`] puts `op_refs`
+ *  beside it (#5140).
+ */
+export type CreatedBlocks = {
+	/**  One row per spec, in input order. */
+	blocks: BlockRow[],
+};
+
 /**  The calendar granularity of a [`GroupKey::DateBucket`]. */
 export type DateBucketUnit = 
 /**  One bucket per calendar day, rendered `YYYY-MM-DD`. */
@@ -2657,6 +2674,12 @@ export type MoveResponse = {
 	block_id: string,
 	new_parent_id: string | null,
 	new_position: number,
+};
+
+/**  Reply of [`move_blocks_batch`]; same envelope as [`CreatedBlocks`]. */
+export type MovedBlocks = {
+	/**  One row per moved root, in input order. */
+	moves: MoveResponse[],
 };
 
 /**

@@ -2,7 +2,7 @@ import { invoke } from '@tauri-apps/api/core'
 import { es } from 'date-fns/locale'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { makeBlockRow } from '@/__tests__/fixtures'
+import { makeBlockRow, withOps } from '@/__tests__/fixtures'
 import {
   type CommandReturns,
   mockInvokeCommands,
@@ -122,10 +122,13 @@ describe('insertTemplateBlocks', () => {
       }),
       // create_blocks_batch → both blocks created in one IPC, returned
       // in input order.
-      create_blocks_batch: () => [
-        makeBlockRow({ id: 'NEW1', content: '## Attendees' }),
-        makeBlockRow({ id: 'NEW2', content: '## Agenda' }),
-      ],
+      create_blocks_batch: () =>
+        withOps({
+          blocks: [
+            makeBlockRow({ id: 'NEW1', content: '## Attendees' }),
+            makeBlockRow({ id: 'NEW2', content: '## Agenda' }),
+          ],
+        }),
     })
 
     const ids = await insertTemplateBlocks('TMPL', 'PARENT', 'SPACE_TEST')
@@ -182,9 +185,12 @@ describe('insertTemplateBlocks', () => {
       }),
       create_blocks_batch: () => {
         batchLevel += 1
-        return batchLevel === 1
-          ? [makeBlockRow({ id: 'NEW_A', content: 'Heading A' })]
-          : [makeBlockRow({ id: 'NEW_B', content: 'Sub-bullet B' })]
+        return withOps({
+          blocks:
+            batchLevel === 1
+              ? [makeBlockRow({ id: 'NEW_A', content: 'Heading A' })]
+              : [makeBlockRow({ id: 'NEW_B', content: 'Sub-bullet B' })],
+        })
       },
     })
 
@@ -237,7 +243,8 @@ describe('insertTemplateBlocks', () => {
       }),
       create_blocks_batch: () => {
         batchLevel += 1
-        if (batchLevel === 1) return [makeBlockRow({ id: 'NEW_A', content: 'A' })]
+        if (batchLevel === 1)
+          return withOps({ blocks: [makeBlockRow({ id: 'NEW_A', content: 'A' })] })
         throw new Error('batch insert failed')
       },
     })
@@ -285,10 +292,13 @@ describe('insertTemplateBlocks — {{ }} variable substitution (#1442)', () => {
         total: 2,
       }),
       // create_blocks_batch → echoes content back in input order.
-      create_blocks_batch: () => [
-        makeBlockRow({ id: 'NEW1', content: `Due: ${today}` }),
-        makeBlockRow({ id: 'NEW2', content: 'For Weekly Review' }),
-      ],
+      create_blocks_batch: () =>
+        withOps({
+          blocks: [
+            makeBlockRow({ id: 'NEW1', content: `Due: ${today}` }),
+            makeBlockRow({ id: 'NEW2', content: 'For Weekly Review' }),
+          ],
+        }),
     })
 
     const ids = await insertTemplateBlocks('TMPL', 'PARENT', 'SPACE_TEST', {
@@ -313,10 +323,13 @@ describe('insertTemplateBlocks — {{ }} variable substitution (#1442)', () => {
         truncated: false,
         total: 2,
       }),
-      create_blocks_batch: () => [
-        makeBlockRow({ id: 'NEW_A', content: 'first' }),
-        makeBlockRow({ id: 'NEW_B', content: 'here' }),
-      ],
+      create_blocks_batch: () =>
+        withOps({
+          blocks: [
+            makeBlockRow({ id: 'NEW_A', content: 'first' }),
+            makeBlockRow({ id: 'NEW_B', content: 'here' }),
+          ],
+        }),
     })
 
     let cursorBlockId: string | null = null
@@ -796,10 +809,13 @@ describe('insertTemplateBlocksFromString', () => {
     // `create_blocks_batch` IPC. The previous N `create_block` IPCs
     // are gone.
     stubTemplates({
-      create_blocks_batch: () => [
-        makeBlockRow({ id: 'NEW1', content: 'Morning standup' }),
-        makeBlockRow({ id: 'NEW2', content: 'TODOs' }),
-      ],
+      create_blocks_batch: () =>
+        withOps({
+          blocks: [
+            makeBlockRow({ id: 'NEW1', content: 'Morning standup' }),
+            makeBlockRow({ id: 'NEW2', content: 'TODOs' }),
+          ],
+        }),
     })
 
     const ids = await insertTemplateBlocksFromString('Morning standup\nTODOs', 'PARENT')
@@ -829,10 +845,13 @@ describe('insertTemplateBlocksFromString', () => {
 
   it('expands template variables on each line', async () => {
     stubTemplates({
-      create_blocks_batch: () => [
-        makeBlockRow({ id: 'NEW1', content: '' }),
-        makeBlockRow({ id: 'NEW2', content: '' }),
-      ],
+      create_blocks_batch: () =>
+        withOps({
+          blocks: [
+            makeBlockRow({ id: 'NEW1', content: '' }),
+            makeBlockRow({ id: 'NEW2', content: '' }),
+          ],
+        }),
     })
 
     const now = new Date()
@@ -854,10 +873,13 @@ describe('insertTemplateBlocksFromString', () => {
 
   it('skips blank lines and surrounding whitespace', async () => {
     stubTemplates({
-      create_blocks_batch: () => [
-        makeBlockRow({ id: 'NEW1', content: 'A' }),
-        makeBlockRow({ id: 'NEW2', content: 'B' }),
-      ],
+      create_blocks_batch: () =>
+        withOps({
+          blocks: [
+            makeBlockRow({ id: 'NEW1', content: 'A' }),
+            makeBlockRow({ id: 'NEW2', content: 'B' }),
+          ],
+        }),
     })
 
     // Leading blank, trailing blank, internal blank line, whitespace-only line.

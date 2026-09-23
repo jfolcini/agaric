@@ -695,6 +695,9 @@ pub async fn move_blocks_batch_inner(
 /// `new_parent_id` (a real block id, or `None` for top-level) as ONE contiguous
 /// run at base position `new_index` (0-based, counted over the target parent's
 /// non-selected children — Refs #914 / Closes #2305).
+///
+/// #5140: the response carries the produced op refs (`WithOps`, one per
+/// moved root in input order) — see [`move_block`].
 #[tauri::command]
 #[specta::specta]
 pub async fn move_blocks_batch(
@@ -702,15 +705,19 @@ pub async fn move_blocks_batch(
     block_ids: Vec<String>,
     new_parent_id: Option<String>,
     new_index: i64,
-) -> Result<Vec<MoveResponse>, AppError> {
-    move_blocks_batch_inner(
-        ctx.pool(),
-        ctx.device_id(),
-        ctx.materializer(),
-        block_ids.into_iter().map(Into::into).collect(),
-        new_parent_id.map(Into::into),
-        new_index,
-    )
+) -> Result<WithOps<MovedBlocks>, AppError> {
+    capture_op_refs(async {
+        move_blocks_batch_inner(
+            ctx.pool(),
+            ctx.device_id(),
+            ctx.materializer(),
+            block_ids.into_iter().map(Into::into).collect(),
+            new_parent_id.map(Into::into),
+            new_index,
+        )
+        .await
+        .map(|moves| MovedBlocks { moves })
+    })
     .await
     .map_err(sanitize_internal_error)
 }

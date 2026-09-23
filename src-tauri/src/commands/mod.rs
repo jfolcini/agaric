@@ -432,7 +432,11 @@ pub struct WithOps<T> {
 /// this command appended — a concurrent writer (another command, an MCP
 /// tool) cannot leak refs in, and "latest op" is never consulted. On error
 /// the captured refs are discarded along with the failed transaction.
-pub(crate) async fn capture_op_refs<T, F>(fut: F) -> Result<WithOps<T>, AppError>
+///
+/// `pub` so the integration tests can run an `_inner` under the exact
+/// capture the `#[tauri::command]` wrapper uses (the wrapper itself needs
+/// `State`).
+pub async fn capture_op_refs<T, F>(fut: F) -> Result<WithOps<T>, AppError>
 where
     F: std::future::Future<Output = Result<T, AppError>>,
 {
@@ -553,6 +557,22 @@ pub struct MoveResponse {
     pub block_id: String,
     pub new_parent_id: Option<String>,
     pub new_position: i64,
+}
+
+/// Reply of [`create_blocks_batch`]. `#[serde(flatten)]` cannot wrap a
+/// `Vec`, so the list rides under a key and [`WithOps`] puts `op_refs`
+/// beside it (#5140).
+#[derive(Debug, Clone, Serialize, Type)]
+pub struct CreatedBlocks {
+    /// One row per spec, in input order.
+    pub blocks: Vec<BlockRow>,
+}
+
+/// Reply of [`move_blocks_batch`]; same envelope as [`CreatedBlocks`].
+#[derive(Debug, Clone, Serialize, Type)]
+pub struct MovedBlocks {
+    /// One row per moved root, in input order.
+    pub moves: Vec<MoveResponse>,
 }
 
 #[derive(Debug, Clone, Serialize, Type)]

@@ -757,7 +757,8 @@ export const blocksHandlers = {
   // backend wraps the whole batch in one IMMEDIATE transaction; the
   // mock here is sequential (good enough for the FE shape — atomicity
   // is exercised by the Rust tests). Returns the created BlockRows in
-  // INPUT ORDER so callers can map template-line index → block id.
+  // INPUT ORDER so callers can map template-line index → block id, plus
+  // one op ref per appended op in append order (#5140).
   create_blocks_batch: (args) => {
     const a = args as Record<string, unknown>
     const specs = (a['specs'] as Array<Record<string, unknown>>) ?? []
@@ -765,6 +766,7 @@ export const blocksHandlers = {
       throw validationRejection('specs list cannot be empty')
     }
     const out: Record<string, unknown>[] = []
+    const opRefs: Array<{ device_id: string; seq: number }> = []
     for (const spec of specs) {
       const id = fakeId()
       const parentId = (spec['parentId'] as string | null) ?? null
@@ -809,13 +811,14 @@ export const blocksHandlers = {
         specPosition == null ? Number.MAX_SAFE_INTEGER : specPosition - 1,
       )
       const position = row['position'] as number
-      pushOp('create_block', {
+      const createOp = pushOp('create_block', {
         block_id: id,
         content: row['content'],
         parent_id: parentId,
         block_type: blockType,
         position,
       })
+      opRefs.push({ device_id: createOp.device_id, seq: createOp.seq })
       // Apply any per-spec properties (mirrors `set_property_in_tx`
       // dispatch — reserved keys land on the block row, others go to
       // the properties map).
@@ -849,7 +852,7 @@ export const blocksHandlers = {
             value_bool: null,
           })
         }
-        pushOp('set_property', {
+        const propOp = pushOp('set_property', {
           block_id: id,
           key,
           value_text: value,
@@ -857,10 +860,11 @@ export const blocksHandlers = {
           value_date: null,
           value_ref: null,
         })
+        opRefs.push({ device_id: propOp.device_id, seq: propOp.seq })
       }
       out.push(row)
     }
-    return out
+    return { blocks: out, op_refs: opRefs }
   },
 
   // ---------------------------------------------------------------------------
@@ -1286,8 +1290,8 @@ export const blocksHandlers = {
   // (0-based, counted over the non-selected siblings) — a remove-then-splice,
   // matching the Rust backend's engine ground truth. Emits one `move_block` op
   // per block (wire format unchanged) and returns one MoveResponse per moved root
-  // in input order. Throws (rolling the whole batch back, mock-side) on an empty
-  // list or a missing block. Semantic parity with `move_blocks_batch_inner`
+  // in input order plus one op ref per op (#5140). Throws (rolling the whole
+  // batch back, mock-side) on an empty list or a missing block. Semantic parity with `move_blocks_batch_inner`
   // (#2463) — keep this splice in lockstep with the backend loop.
   move_blocks_batch: (args) => {
     const a = args as Record<string, unknown>
@@ -1365,18 +1369,20 @@ export const blocksHandlers = {
     for (const sp of sourceParents) renumberSiblings(sp)
 
     const out: Array<{ block_id: string; new_parent_id: string | null; new_position: number }> = []
+    const opRefs: Array<{ device_id: string; seq: number }> = []
     for (const blockId of blockIds) {
       const newPosition = (blocks.get(blockId) as Record<string, unknown>)['position'] as number
-      pushOp('move_block', {
+      const op = pushOp('move_block', {
         block_id: blockId,
         new_parent_id: newParentId,
         new_position: newPosition,
         old_parent_id: oldParentOf.get(blockId) ?? null,
         old_position: oldPositionOf.get(blockId) ?? 0,
       })
+      opRefs.push({ device_id: op.device_id, seq: op.seq })
       out.push({ block_id: blockId, new_parent_id: newParentId, new_position: newPosition })
     }
-    return out
+    return { moves: out, op_refs: opRefs }
   },
 
   // ---------------------------------------------------------------------------

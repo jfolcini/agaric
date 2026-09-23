@@ -61,11 +61,8 @@ import { useUndoStore } from '@/stores/undo'
  *
  * #2468 — `opRefs` threads the mutation response's `op_refs` (the exact op-log
  * refs the command appended) into the undo store so Ctrl+Z is ref-addressed.
- * The two batch commands (`moveBlocksBatch` in `moveBlocks`,
- * `createBlocksBatch` in `pasteBlocks`) do not surface refs yet — their call
- * sites omit `opRefs`, pushing a positional-fallback undo entry (documented
- * fallback; `undoPageGroup` semantics unchanged for those flows). The
- * conditional forward keeps the ref-less call shape identical to pre-#2468.
+ * Every command this store calls surfaces refs (#5140 brought the two batch
+ * commands in line), so the argument is required here.
  *
  * #4729 — `options.undoable = false` keeps the GRAPH half (the mutation really
  * did change the link topology, so the cache must still be invalidated) while
@@ -78,7 +75,7 @@ import { useUndoStore } from '@/stores/undo'
  */
 function notifyUndoNewAction(
   rootParentId: string | null,
-  opRefs?: OpRef[],
+  opRefs: OpRef[],
   coalesceKey?: string,
   { undoable = true }: { undoable?: boolean } = {},
 ): void {
@@ -86,9 +83,8 @@ function notifyUndoNewAction(
     const { onNewAction } = useUndoStore.getState()
     // Only forward `coalesceKey` when set (content edits) so the existing
     // call shape for every other action is unchanged (#2600).
-    if (opRefs && coalesceKey !== undefined) onNewAction(rootParentId, opRefs, coalesceKey)
-    else if (opRefs) onNewAction(rootParentId, opRefs)
-    else onNewAction(rootParentId)
+    if (coalesceKey !== undefined) onNewAction(rootParentId, opRefs, coalesceKey)
+    else onNewAction(rootParentId, opRefs)
   }
   recordGraphStructureChange()
 }
@@ -744,7 +740,7 @@ export function createReducers({
         // `reconcileBatchMove` returns null to request a reconciling reload.
         let needsReload = false
         set((state) => {
-          const next = reconcileBatchMove(state, resp, ordered, newParentId, newIndex)
+          const next = reconcileBatchMove(state, resp.moves, ordered, newParentId, newIndex)
           if (!next) {
             needsReload = true
             return {}
@@ -752,11 +748,7 @@ export function createReducers({
           return { blocks: next, blocksById: buildBlocksById(next) }
         })
         if (needsReload) await get().load()
-        // #2468 — `move_blocks_batch` does not surface `op_refs` yet, so this
-        // flow keeps the positional undo fallback: no refs are threaded and
-        // the undo store records a ref-less entry that `undoPageGroup`
-        // reverts by depth/window (pre-#2468 behavior, documented fallback).
-        notifyUndoNewAction(rootParentId)
+        notifyUndoNewAction(rootParentId, resp.op_refs)
       } catch (err) {
         logger.error('page-blocks', 'Failed to move blocks', { ids, newParentId, newIndex }, err)
         notify.error(i18n.t('error.moveBlockFailed'))
@@ -1204,6 +1196,7 @@ export function createReducers({
 
       // parsed-index → created block id (filled as each depth level lands).
       const createdIds: string[] = Array.from<string>({ length: effective.length })
+      const opRefs: OpRef[] = []
       try {
         for (let level = 0; level <= maxDepth; level += 1) {
           const indicesAtLevel: number[] = []
@@ -1237,19 +1230,18 @@ export function createReducers({
           const created = await retryOnPoolBusy(() =>
             commands.createBlocksBatch(specs).then(unwrap),
           )
+          opRefs.push(...created.op_refs)
           for (let k = 0; k < indicesAtLevel.length; k += 1) {
             const idx = indicesAtLevel[k]
-            const row = created[k]
+            const row = created.blocks[k]
             if (idx != null && row != null) createdIds[idx] = row.id
           }
         }
         // Structural insert across N blocks — reload for the authoritative
         // flattened order (mirrors `moveBlocks` / `moveToParent`).
         await get().load()
-        // #2468 — `create_blocks_batch` does not surface `op_refs` yet, so
-        // paste keeps the positional undo fallback (ref-less entry →
-        // `undoPageGroup` by depth/window; documented fallback).
-        notifyUndoNewAction(rootParentId)
+        // One undo entry for the whole paste: the refs of every level's batch.
+        notifyUndoNewAction(rootParentId, opRefs)
         return createdIds.filter((id): id is string => typeof id === 'string')
       } catch (err) {
         logger.error('page-blocks', 'Failed to paste blocks', { anchorBlockId }, err)

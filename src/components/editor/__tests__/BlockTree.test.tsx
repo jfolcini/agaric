@@ -461,7 +461,7 @@ const BLOCK_TREE_DEFAULTS: TypedInvokeHandlers = {
         parent_id: (args['parentId'] as string | null) ?? null,
       }),
     ),
-  create_blocks_batch: () => [],
+  create_blocks_batch: () => withOps({ blocks: [] }),
   edit_block: echoEditBlock,
   delete_block: (args) => deleteResp(argBlockId(args)),
   delete_blocks_by_ids: (args) => ({
@@ -475,7 +475,7 @@ const BLOCK_TREE_DEFAULTS: TypedInvokeHandlers = {
       (args['newParentId'] as string | null) ?? null,
       Number(args['newIndex'] ?? 0),
     ),
-  move_blocks_batch: () => [],
+  move_blocks_batch: () => withOps({ moves: [] }),
   set_property: (args) => withOps(makeBlockRow({ id: argBlockId(args) })),
   delete_property: (args) =>
     withOps({ block_id: argBlockId(args), key: String((args['key'] as string | undefined) ?? '') }),
@@ -3823,7 +3823,8 @@ describe('BlockTree handleMergeWithPrev', () => {
     // authoritative response lets the store reconcile surgically, so there is
     // no post-move reload for this stub to answer differently.
     stubBlockTree({
-      move_blocks_batch: () => [{ block_id: 'B1', new_parent_id: 'A', new_position: 1 }],
+      move_blocks_batch: () =>
+        withOps({ moves: [{ block_id: 'B1', new_parent_id: 'A', new_position: 1 }] }),
       load_page_subtree: () => ({
         blocks: [
           { ...makeBlock(tree[0]), parent_id: 'PAGE_1', position: 0 },

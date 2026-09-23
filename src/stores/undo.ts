@@ -12,8 +12,7 @@
  *
  * The old positional path (`undoPageGroup(pageId, depth, windowMs)`) is kept
  * as the DOCUMENTED FALLBACK, used only where refs are unavailable:
- *   - actions whose commands do not surface refs yet (`move_blocks_batch`,
- *     `create_blocks_batch`, and any un-migrated single command) — their
+ *   - actions whose call sites do not thread refs — their
  *     `onNewAction(pageId)` call pushes a ref-less fallback entry;
  *   - history that predates FE tracking (empty undo stack: ops from before
  *     the page entry existed, e.g. a previous app session).
@@ -121,8 +120,8 @@ export interface UndoStackEntry {
   /**
    * The op refs this action group appended, in APPEND order (oldest-first;
    * `undo()` submits them newest-first). `null` marks a POSITIONAL-FALLBACK
-   * entry — the action's command does not surface refs (batch move/create,
-   * un-migrated commands), so undoing it goes through `undoPageGroup`.
+   * entry — the call site did not thread refs (see the module doc), so
+   * undoing it goes through `undoPageGroup`.
    */
   refs: OpRef[] | null
   /**
@@ -811,8 +810,8 @@ export const useUndoStore = create<UndoStore>((set, get) => {
         }))
 
         // #2468 — ref-addressed when the captured entry carries refs;
-        // positional fallback for ref-less entries (batch commands) and for
-        // pre-tracking history (empty stack).
+        // positional fallback for ref-less entries and for pre-tracking
+        // history (empty stack).
         if (top && top.refs !== null && top.refs.length > 0) {
           return await undoByRefs(pageId, top)
         }

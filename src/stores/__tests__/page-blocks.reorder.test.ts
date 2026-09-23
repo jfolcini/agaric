@@ -13,7 +13,7 @@ import {
   strictInvokeFallback,
   stubInvoke,
 } from '@/__tests__/helpers/invoke'
-import type { BlockRow } from '@/lib/bindings'
+import type { BlockRow, OpRef } from '@/lib/bindings'
 import { logger } from '@/lib/logger'
 import { _resetPrefetchPageSubtreeForTest } from '@/lib/prefetch-page-subtree'
 import { createPageBlockStore, type PageBlockState } from '@/stores/page-blocks'
@@ -804,9 +804,16 @@ describe('PageBlockStore', () => {
     function reloaded() {
       return mockedInvoke.mock.calls.some(([cmd]) => cmd === 'load_page_subtree')
     }
+    /** One op ref per moved root, as the backend mints them (#5140). */
+    function batchRefs(ids: string[]): OpRef[] {
+      return ids.map((_, i) => ({ device_id: 'dev1', seq: i + 1 }))
+    }
     /** Build an authoritative batch response echoing the requested parent. */
     function batchResp(ids: string[], parentId: string | null) {
-      return ids.map((id, i) => ({ block_id: id, new_parent_id: parentId, new_position: i + 1 }))
+      return {
+        op_refs: batchRefs(ids),
+        moves: ids.map((id, i) => ({ block_id: id, new_parent_id: parentId, new_position: i + 1 })),
+      }
     }
 
     it('issues ONE move_blocks_batch IPC and reconciles WITHOUT a full load()', async () => {
@@ -835,7 +842,8 @@ describe('PageBlockStore', () => {
       expect(store.getState().blocks.map((b) => b.id)).toEqual(['C', 'D', 'A', 'B'])
       // blocksById stays in lockstep with the flat array.
       expect([...store.getState().blocksById.keys()].toSorted()).toEqual(['A', 'B', 'C', 'D'])
-      expect(mockOnNewAction).toHaveBeenCalledWith('PAGE_1')
+      // #5140 — the batch response's refs seed the undo entry.
+      expect(mockOnNewAction).toHaveBeenCalledWith('PAGE_1', batchRefs(['A', 'B']))
     })
 
     it('lands a CONTIGUOUS run for an INTERLEAVED same-parent selection', async () => {
@@ -1096,7 +1104,10 @@ describe('PageBlockStore', () => {
       // Backend reparented A somewhere other than the requested 'PAGE_1' → a
       // local splice would diverge, so `reconcileBatchMove` requests a reload.
       stubInvoke(mockedInvoke, {
-        move_blocks_batch: () => [{ block_id: 'A', new_parent_id: 'ELSEWHERE', new_position: 1 }],
+        move_blocks_batch: () => ({
+          op_refs: batchRefs(['A']),
+          moves: [{ block_id: 'A', new_parent_id: 'ELSEWHERE', new_position: 1 }],
+        }),
         load_page_subtree: () =>
           subtreeResp([makeBlock({ id: 'B', parent_id: 'PAGE_1', position: 1 })]),
       })
@@ -1104,7 +1115,7 @@ describe('PageBlockStore', () => {
       await store.getState().moveBlocks(['A'], 'PAGE_1', 0)
 
       expect(reloaded()).toBe(true)
-      expect(mockOnNewAction).toHaveBeenCalledWith('PAGE_1')
+      expect(mockOnNewAction).toHaveBeenCalledWith('PAGE_1', batchRefs(['A']))
     })
 
     // #3759 EQUIVALENCE LEDGER — `reconcileBatchMove` mutants that survive by
