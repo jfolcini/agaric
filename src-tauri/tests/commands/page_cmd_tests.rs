@@ -2760,6 +2760,847 @@ async fn get_page_source_of_a_soft_deleted_page_returns_not_found() {
 }
 
 // ======================================================================
+// duplicate_block — a block and its subtree copied by one command (#5140)
+// ======================================================================
+
+/// A page in the test space, made through the commands so the engine holds
+/// the tree the SQL does.
+async fn dup_page(pool: &SqlitePool, mat: &Materializer, title: &str) -> BlockId {
+    ensure_test_space(pool).await;
+    mark_block_as_space(pool, TEST_SPACE_ID).await;
+    create_page_in_space_inner(pool, DEV, mat, None, title.into(), TEST_SPACE_ID.into())
+        .await
+        .unwrap()
+}
+
+/// A content block appended under `parent`.
+async fn dup_child(
+    pool: &SqlitePool,
+    mat: &Materializer,
+    parent: &BlockId,
+    content: &str,
+) -> BlockId {
+    create_block_inner(
+        pool,
+        DEV,
+        mat,
+        "content".into(),
+        content.into(),
+        Some(parent.clone()),
+        None,
+    )
+    .await
+    .unwrap()
+    .id
+}
+
+async fn duplicate(pool: &SqlitePool, mat: &Materializer, id: &BlockId) -> Vec<BlockRow> {
+    let rows = duplicate_block_inner(pool, DEV, mat, id.clone())
+        .await
+        .unwrap();
+    settle(mat).await;
+    rows
+}
+
+/// `parent`'s live children in sibling order, as `(id, content)`.
+async fn dup_children(pool: &SqlitePool, parent: &BlockId) -> Vec<(String, String)> {
+    sqlx::query_as(
+        "SELECT id, content FROM blocks WHERE parent_id = ? AND deleted_at IS NULL \
+         ORDER BY position, id",
+    )
+    .bind(parent.as_str())
+    .fetch_all(pool)
+    .await
+    .unwrap()
+}
+
+/// A block's task columns and its property rows, bar the two lifecycle stamps,
+/// one string each.
+async fn dup_storage(pool: &SqlitePool, id: &BlockId) -> Vec<String> {
+    let (todo, priority, scheduled, due): (
+        Option<String>,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+    ) = sqlx::query_as(
+        "SELECT todo_state, priority, scheduled_date, due_date FROM blocks WHERE id = ?",
+    )
+    .bind(id.as_str())
+    .fetch_one(pool)
+    .await
+    .unwrap();
+    let mut out = vec![format!(
+        "columns todo={todo:?} priority={priority:?} scheduled={scheduled:?} due={due:?}"
+    )];
+    let rows: Vec<PropertyRow> = sqlx::query_as(
+        "SELECT key, value_text, value_num, value_date, value_ref, value_bool \
+         FROM block_properties WHERE block_id = ? AND key NOT IN ('created_at', 'completed_at') \
+         ORDER BY key",
+    )
+    .bind(id.as_str())
+    .fetch_all(pool)
+    .await
+    .unwrap();
+    for row in rows {
+        out.push(format!(
+            "{} text={:?} num={:?} date={:?} ref={:?} bool={:?}",
+            row.key, row.value_text, row.value_num, row.value_date, row.value_ref, row.value_bool
+        ));
+    }
+    out
+}
+
+/// The `created_at` and `completed_at` rows a block carries, as `key=date`.
+async fn dup_stamps(pool: &SqlitePool, id: &BlockId) -> Vec<String> {
+    let rows: Vec<(String, Option<String>)> = sqlx::query_as(
+        "SELECT key, value_date FROM block_properties \
+         WHERE block_id = ? AND key IN ('created_at', 'completed_at') ORDER BY key",
+    )
+    .bind(id.as_str())
+    .fetch_all(pool)
+    .await
+    .unwrap();
+    rows.into_iter()
+        .map(|(key, date)| format!("{key}={}", date.unwrap_or_default()))
+        .collect()
+}
+
+async fn dup_counts(pool: &SqlitePool) -> (i64, i64) {
+    let blocks: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM blocks")
+        .fetch_one(pool)
+        .await
+        .unwrap();
+    let ops: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM op_log")
+        .fetch_one(pool)
+        .await
+        .unwrap();
+    (blocks, ops)
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn duplicate_block_copies_a_closed_fence_as_one_block() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let page = dup_page(&pool, &mat, "Dup").await;
+    let content = "```js\nfirst line\nsecond line\n```";
+    let original = dup_child(&pool, &mat, &page, content).await;
+
+    let rows = duplicate(&pool, &mat, &original).await;
+
+    assert_eq!(
+        rows.len(),
+        1,
+        "a fenced block is one block, not one per line"
+    );
+    assert_eq!(
+        rows[0].content.as_deref(),
+        Some(content),
+        "the copy's content is the original's, byte for byte"
+    );
+    assert_eq!(
+        dup_children(&pool, &page).await,
+        vec![
+            (original.clone().into_string(), content.to_owned()),
+            (rows[0].id.clone().into_string(), content.to_owned()),
+        ],
+        "the page holds the original and its one copy"
+    );
+}
+
+/// An unterminated fence ends at its block's anchor line in the source
+/// buffer, so the block's child is still a block.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn duplicate_block_keeps_the_child_of_an_unterminated_fence_a_block() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let page = dup_page(&pool, &mat, "Dup").await;
+    let original = dup_child(&pool, &mat, &page, "```sh\necho").await;
+    dup_child(&pool, &mat, &original, "inside the open fence").await;
+
+    let rows = duplicate(&pool, &mat, &original).await;
+
+    let shape: Vec<(Option<String>, Option<String>)> = rows
+        .iter()
+        .map(|r| {
+            (
+                r.parent_id.clone().map(BlockId::into_string),
+                r.content.clone(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        shape,
+        vec![
+            (
+                Some(page.clone().into_string()),
+                Some("```sh\necho".to_owned())
+            ),
+            (
+                Some(rows[0].id.clone().into_string()),
+                Some("inside the open fence".to_owned())
+            ),
+        ],
+        "the open fence stays one block and its child is copied under the copy"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn duplicate_block_lands_right_after_the_original_with_its_children_in_order() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let page = dup_page(&pool, &mat, "Dup").await;
+    let a = dup_child(&pool, &mat, &page, "a").await;
+    let a1 = dup_child(&pool, &mat, &a, "a1").await;
+    dup_child(&pool, &mat, &a1, "a1x").await;
+    dup_child(&pool, &mat, &a, "a2").await;
+    let b = dup_child(&pool, &mat, &page, "b").await;
+    let c = dup_child(&pool, &mat, &page, "c").await;
+
+    let rows = duplicate(&pool, &mat, &a).await;
+
+    let copy = rows[0].id.clone();
+    assert_eq!(
+        dup_children(&pool, &page).await,
+        vec![
+            (a.into_string(), "a".to_owned()),
+            (copy.clone().into_string(), "a".to_owned()),
+            (b.into_string(), "b".to_owned()),
+            (c.into_string(), "c".to_owned()),
+        ],
+        "the copy sits right after the original; the following siblings shift down"
+    );
+    let order: Vec<(String, Option<String>)> = rows
+        .iter()
+        .map(|r| {
+            (
+                r.content.clone().unwrap_or_default(),
+                r.parent_id.clone().map(BlockId::into_string),
+            )
+        })
+        .collect();
+    assert_eq!(
+        order,
+        vec![
+            ("a".to_owned(), Some(page.clone().into_string())),
+            ("a1".to_owned(), Some(copy.clone().into_string())),
+            ("a1x".to_owned(), Some(rows[1].id.clone().into_string())),
+            ("a2".to_owned(), Some(copy.clone().into_string())),
+        ],
+        "the rows are the root copy, then its descendants depth-first"
+    );
+    let copied_children: Vec<String> = dup_children(&pool, &copy)
+        .await
+        .into_iter()
+        .map(|(_, content)| content)
+        .collect();
+    assert_eq!(
+        copied_children,
+        vec!["a1", "a2"],
+        "the copy's children keep their order"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn duplicate_block_carries_each_task_state() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let page = dup_page(&pool, &mat, "Dup").await;
+    for state in ["TODO", "DOING", "DONE", "CANCELLED"] {
+        let original = dup_child(&pool, &mat, &page, state).await;
+        set_todo_state_inner(
+            &pool,
+            DEV,
+            &mat,
+            original.as_str().into(),
+            Some(state.into()),
+        )
+        .await
+        .unwrap();
+        settle(&mat).await;
+
+        let rows = duplicate(&pool, &mat, &original).await;
+
+        assert_eq!(
+            dup_storage(&pool, &rows[0].id).await,
+            vec![format!(
+                "columns todo={:?} priority=None scheduled=None due=None",
+                Some(state)
+            )],
+            "a {state} copy carries its state, and nothing else"
+        );
+    }
+}
+
+/// Everything the source buffer writes lands where the original keeps it:
+/// the task columns in `blocks`, the list style and the custom properties in
+/// `block_properties`, each declared type in its own column.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn duplicate_block_carries_task_columns_list_style_and_typed_properties() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let page = dup_page(&pool, &mat, "Dup").await;
+    for (key, value_type, options) in [
+        ("estimate", "number", None),
+        ("billable", "boolean", None),
+        ("review_on", "date", None),
+        ("stage", "select", Some(r#"["draft","final"]"#)),
+    ] {
+        create_property_def_inner(
+            &pool,
+            key.into(),
+            value_type.into(),
+            options.map(Into::into),
+        )
+        .await
+        .unwrap();
+    }
+    for style in ["bullet", "ordered"] {
+        let original = dup_child(&pool, &mat, &page, style).await;
+        let id = || original.as_str().into();
+        set_todo_state_inner(&pool, DEV, &mat, id(), Some("DOING".into()))
+            .await
+            .unwrap();
+        set_priority_inner(&pool, DEV, &mat, id(), Some("2".into()))
+            .await
+            .unwrap();
+        set_scheduled_date_inner(&pool, DEV, &mat, id(), Some("2026-02-01".into()))
+            .await
+            .unwrap();
+        set_due_date_inner(&pool, DEV, &mat, id(), Some("2026-03-01".into()))
+            .await
+            .unwrap();
+        for (key, text, num, date, boolean) in [
+            ("listStyle", Some(style), None, None, None),
+            ("estimate", None, Some(3.5), None, None),
+            ("billable", None, None, None, Some(true)),
+            ("review_on", None, None, Some("2026-04-01"), None),
+            ("stage", Some("final"), None, None, None),
+            ("note", Some("free text"), None, None, None),
+        ] {
+            set_property_inner(
+                &pool,
+                DEV,
+                &mat,
+                id(),
+                key.into(),
+                text.map(Into::into),
+                num,
+                date.map(Into::into),
+                None,
+                boolean,
+                None,
+            )
+            .await
+            .unwrap();
+        }
+        settle(&mat).await;
+        let expected = vec![
+            r#"columns todo=Some("DOING") priority=Some("2") scheduled=Some("2026-02-01") due=Some("2026-03-01")"#.to_owned(),
+            "billable text=None num=None date=None ref=None bool=Some(1)".to_owned(),
+            "estimate text=None num=Some(3.5) date=None ref=None bool=None".to_owned(),
+            format!("listStyle text={:?} num=None date=None ref=None bool=None", Some(style)),
+            r#"note text=Some("free text") num=None date=None ref=None bool=None"#.to_owned(),
+            r#"review_on text=None num=None date=Some("2026-04-01") ref=None bool=None"#.to_owned(),
+            r#"stage text=Some("final") num=None date=None ref=None bool=None"#.to_owned(),
+        ];
+        assert_eq!(dup_storage(&pool, &original).await, expected, "seed");
+
+        let rows = duplicate(&pool, &mat, &original).await;
+
+        assert_eq!(
+            dup_storage(&pool, &rows[0].id).await,
+            expected,
+            "a {style} copy carries every column and property in the original's storage"
+        );
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn duplicate_block_points_a_declared_ref_at_the_original_target() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let page = dup_page(&pool, &mat, "Dup").await;
+    create_property_def_inner(&pool, "reviewer".into(), "ref".into(), None)
+        .await
+        .unwrap();
+    let target = dup_child(&pool, &mat, &page, "the reviewer").await;
+    let original = dup_child(&pool, &mat, &page, "points at the reviewer").await;
+    set_property_inner(
+        &pool,
+        DEV,
+        &mat,
+        original.as_str().into(),
+        "reviewer".into(),
+        None,
+        None,
+        None,
+        Some(target.clone().into_string()),
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    let rows = duplicate(&pool, &mat, &original).await;
+
+    assert_eq!(
+        dup_storage(&pool, &rows[0].id).await,
+        vec![
+            "columns todo=None priority=None scheduled=None due=None".to_owned(),
+            format!(
+                "reviewer text=None num=None date=None ref={:?} bool=None",
+                Some(target.as_str())
+            ),
+        ],
+        "a declared ref is copied as a reference to the same target"
+    );
+}
+
+/// A value accepted when it was written is copied even if its key no longer
+/// offers it: narrowed priority levels or a retired select option must not
+/// make Duplicate fail.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn duplicate_block_copies_a_value_its_key_no_longer_offers() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let page = dup_page(&pool, &mat, "Dup").await;
+    create_property_def_inner(
+        &pool,
+        "stage".into(),
+        "select".into(),
+        Some(r#"["draft","final"]"#.into()),
+    )
+    .await
+    .unwrap();
+    let original = dup_child(&pool, &mat, &page, "narrowed").await;
+    for (key, value) in [("priority", "3"), ("stage", "final")] {
+        set_property_inner(
+            &pool,
+            DEV,
+            &mat,
+            original.as_str().into(),
+            key.into(),
+            Some(value.into()),
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+    }
+    update_property_def_options_inner(&pool, "priority".into(), r#"["1","2"]"#.into())
+        .await
+        .unwrap();
+    update_property_def_options_inner(&pool, "stage".into(), r#"["draft"]"#.into())
+        .await
+        .unwrap();
+    settle(&mat).await;
+
+    let rows = duplicate(&pool, &mat, &original).await;
+
+    assert_eq!(
+        dup_storage(&pool, &rows[0].id).await,
+        vec![
+            r#"columns todo=None priority=Some("3") scheduled=None due=None"#.to_owned(),
+            r#"stage text=Some("final") num=None date=None ref=None bool=None"#.to_owned(),
+        ],
+        "the copy keeps the values its keys have since stopped offering"
+    );
+}
+
+/// A property value with a line break doesn't survive the source grammar: it
+/// would read back as more content or as another block. Duplicate refuses
+/// rather than write a mangled copy.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn duplicate_block_refuses_a_value_the_grammar_cannot_carry() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let page = dup_page(&pool, &mat, "Dup").await;
+    for value in ["a\nb", "a\n- b"] {
+        let original = dup_child(&pool, &mat, &page, "has a two-line note").await;
+        set_property_inner(
+            &pool,
+            DEV,
+            &mat,
+            original.as_str().into(),
+            "note".into(),
+            Some(value.into()),
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        settle(&mat).await;
+        let before = dup_counts(&pool).await;
+
+        let result = duplicate_block_inner(&pool, DEV, &mat, original).await;
+
+        assert!(
+            matches!(result, Err(AppError::Validation { .. })),
+            "a note of {value:?} is refused, got {result:?}"
+        );
+        assert_eq!(
+            dup_counts(&pool).await,
+            before,
+            "nothing is written for {value:?}"
+        );
+    }
+}
+
+/// Duplicate writes no names: a source buffer with the page's name snapshot
+/// would turn these ids into `[[Project]]` and `#work`.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn duplicate_block_keeps_raw_refs_raw() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let page = dup_page(&pool, &mat, "Dup").await;
+    let project = dup_page(&pool, &mat, "Project").await;
+    insert_block(&pool, SOURCE_WORK, "tag", "work", None, Some(1)).await;
+    assign_to_space(&pool, SOURCE_WORK, TEST_SPACE_ID).await;
+    let target = dup_child(&pool, &mat, &page, "target").await;
+    let content = format!("see [[{project}]] #[{SOURCE_WORK}] (({target}))");
+    let original = dup_child(&pool, &mat, &page, &content).await;
+    let named = get_page_source_inner(&pool, page.as_str()).await.unwrap();
+    assert!(
+        named.contains("see [[Project]] #work"),
+        "seed: the page's own source buffer writes the names, got {named:?}"
+    );
+
+    let rows = duplicate(&pool, &mat, &original).await;
+
+    assert_eq!(
+        rows[0].content.as_deref(),
+        Some(content.as_str()),
+        "the copy's refs stay the raw ids the original holds"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn duplicate_block_keeps_content_that_reads_as_markers_literal() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let page = dup_page(&pool, &mat, "Dup").await;
+    for content in [
+        "ends in a word ^note",
+        "[ ] x",
+        "- x",
+        "1. x",
+        "k:: v",
+        "first\n[ ] x\n- x\nk:: v",
+    ] {
+        let original = dup_child(&pool, &mat, &page, content).await;
+
+        let rows = duplicate(&pool, &mat, &original).await;
+
+        assert_eq!(rows.len(), 1, "{content:?} is one block");
+        assert_eq!(
+            rows[0].content.as_deref(),
+            Some(content),
+            "{content:?} is copied verbatim"
+        );
+        assert_eq!(
+            dup_storage(&pool, &rows[0].id).await,
+            vec!["columns todo=None priority=None scheduled=None due=None".to_owned()],
+            "{content:?} is text: the copy gains no task state, list style or property"
+        );
+    }
+}
+
+/// A copy is a new task, so it gets the stamp a new task gets (#5074).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn duplicate_block_stamps_a_done_copy_completed_and_a_todo_copy_created() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let page = dup_page(&pool, &mat, "Dup").await;
+    let today = chrono::Local::now().format("%Y-%m-%d").to_string();
+    for (state, stamp) in [("DONE", "completed_at"), ("TODO", "created_at")] {
+        let original = dup_child(&pool, &mat, &page, state).await;
+        set_todo_state_inner(
+            &pool,
+            DEV,
+            &mat,
+            original.as_str().into(),
+            Some(state.into()),
+        )
+        .await
+        .unwrap();
+        settle(&mat).await;
+
+        let rows = duplicate(&pool, &mat, &original).await;
+
+        assert_eq!(
+            dup_stamps(&pool, &rows[0].id).await,
+            vec![format!("{stamp}={today}")],
+            "a {state} copy is stamped {stamp} today, and with nothing else"
+        );
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn duplicate_block_does_not_copy_a_nested_page() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let page = dup_page(&pool, &mat, "Dup").await;
+    let original = dup_child(&pool, &mat, &page, "holds a page").await;
+    dup_child(&pool, &mat, &original, "content child").await;
+    let nested = create_page_in_space_inner(
+        &pool,
+        DEV,
+        &mat,
+        Some(original.clone().into_string()),
+        "Nested".into(),
+        TEST_SPACE_ID.into(),
+    )
+    .await
+    .unwrap();
+    dup_child(&pool, &mat, &nested, "under the nested page").await;
+    settle(&mat).await;
+
+    let rows = duplicate(&pool, &mat, &original).await;
+
+    let contents: Vec<String> = rows
+        .iter()
+        .map(|r| r.content.clone().unwrap_or_default())
+        .collect();
+    assert_eq!(
+        contents,
+        vec!["holds a page", "content child"],
+        "the nested page and its child are not copied"
+    );
+    let copied_children: Vec<String> = dup_children(&pool, &rows[0].id)
+        .await
+        .into_iter()
+        .map(|(_, content)| content)
+        .collect();
+    assert_eq!(
+        copied_children,
+        vec!["content child"],
+        "the copy holds only the content child"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn duplicate_block_op_refs_undo_the_whole_copy() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let page = dup_page(&pool, &mat, "Dup").await;
+    let original = dup_child(&pool, &mat, &page, "task").await;
+    let child = dup_child(&pool, &mat, &original, "child").await;
+    set_todo_state_inner(
+        &pool,
+        DEV,
+        &mat,
+        original.as_str().into(),
+        Some("DONE".into()),
+    )
+    .await
+    .unwrap();
+    set_property_inner(
+        &pool,
+        DEV,
+        &mat,
+        child.as_str().into(),
+        "listStyle".into(),
+        Some("bullet".into()),
+        None,
+        None,
+        None,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    let resp = capture_op_refs(async {
+        duplicate_block_inner(&pool, DEV, &mat, original.clone())
+            .await
+            .map(|blocks| CreatedBlocks { blocks })
+    })
+    .await
+    .unwrap();
+    settle(&mat).await;
+    assert_eq!(
+        resp.op_refs.len(),
+        5,
+        "two creates, todo_state, completed_at, and the child's listStyle"
+    );
+
+    undo_ops_inner(&pool, DEV, &mat, resp.op_refs.clone())
+        .await
+        .unwrap();
+    settle(&mat).await;
+
+    let live_copies: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM blocks WHERE id IN (SELECT value FROM json_each(?)) \
+         AND deleted_at IS NULL",
+    )
+    .bind(
+        serde_json::to_string(
+            &resp
+                .inner
+                .blocks
+                .iter()
+                .map(|b| b.id.as_str())
+                .collect::<Vec<_>>(),
+        )
+        .unwrap(),
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(live_copies, 0, "undoing the refs removes every copy");
+    assert_eq!(
+        dup_children(&pool, &page).await,
+        vec![(original.into_string(), "task".to_owned())],
+        "the original is all that is left"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn duplicate_block_refusals() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let page = dup_page(&pool, &mat, "Dup").await;
+    let trashed = dup_child(&pool, &mat, &page, "trashed").await;
+    delete_block_inner(&pool, DEV, &mat, trashed.clone())
+        .await
+        .unwrap();
+    settle(&mat).await;
+
+    let unknown = duplicate_block_inner(&pool, DEV, &mat, BlockId::new()).await;
+    assert!(
+        matches!(unknown, Err(AppError::NotFound(_))),
+        "an unknown id is NotFound, got {unknown:?}"
+    );
+    let soft_deleted = duplicate_block_inner(&pool, DEV, &mat, trashed).await;
+    assert!(
+        matches!(soft_deleted, Err(AppError::Validation { .. })),
+        "a trashed block is refused as Validation, got {soft_deleted:?}"
+    );
+    let a_page = duplicate_block_inner(&pool, DEV, &mat, page).await;
+    assert!(
+        matches!(a_page, Err(AppError::Validation { .. })),
+        "a page is not a content block, got {a_page:?}"
+    );
+}
+
+/// 334 tasks under one root: 335 creates, 334 `todo_state` writes and 334
+/// `created_at` stamps, 1003 ops. Blocks alone, or blocks and properties,
+/// stay under the cap; only the full count is over it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn duplicate_block_over_one_undo_of_ops_is_refused_and_writes_nothing() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let page = dup_page(&pool, &mat, "Dup").await;
+    let original = dup_child(&pool, &mat, &page, "many tasks").await;
+    let specs: Vec<CreateBlockSpec> = (0..334)
+        .map(|i| CreateBlockSpec {
+            block_type: "content".into(),
+            content: format!("task {i}"),
+            parent_id: Some(original.clone()),
+            position: None,
+            properties: [("todo_state".to_owned(), "TODO".to_owned())].into(),
+        })
+        .collect();
+    create_blocks_batch_inner(&pool, DEV, &mat, specs)
+        .await
+        .unwrap();
+    settle(&mat).await;
+    let before = dup_counts(&pool).await;
+
+    let result = duplicate_block_inner(&pool, DEV, &mat, original).await;
+
+    assert!(
+        matches!(result, Err(AppError::Validation { .. })),
+        "1003 ops is more than one undo reverts, got {result:?}"
+    );
+    assert_eq!(
+        dup_counts(&pool).await,
+        before,
+        "a refused copy writes nothing"
+    );
+}
+
+/// Children of `parent` in the test space's engine.
+fn dup_engine_children(mat: &Materializer, parent: &BlockId) -> Vec<String> {
+    let space = SpaceId::from_trusted(TEST_SPACE_ID);
+    let mut guard = mat
+        .loro_state()
+        .registry
+        .for_space(&space, DEV)
+        .expect("for_space");
+    guard
+        .engine_mut()
+        .children_ordered_block_ids(Some(parent.as_str()))
+        .expect("children_ordered_block_ids")
+}
+
+/// A tree already past `MAX_BLOCK_DEPTH` (here by a row written under the
+/// deepest legal block) cannot be copied: the copy is refused at the block
+/// that would land too deep, after the ones above it were applied, and the
+/// transaction and the engine both roll back.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn duplicate_block_past_the_depth_limit_writes_nothing() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let page = dup_page(&pool, &mat, "Dup").await;
+    let top = dup_child(&pool, &mat, &page, "depth 1").await;
+    let root = dup_child(&pool, &mat, &top, "depth 2").await;
+    let mut deepest = root.clone();
+    for depth in 3..=MAX_BLOCK_DEPTH {
+        deepest = dup_child(&pool, &mat, &deepest, &format!("depth {depth}")).await;
+    }
+    let too_deep = "01J5140DEEP000000000000001";
+    insert_block(
+        &pool,
+        too_deep,
+        "content",
+        "too deep",
+        Some(deepest.as_str()),
+        Some(1),
+    )
+    .await;
+    sqlx::query("UPDATE blocks SET page_id = ?, space_id = ? WHERE id = ?")
+        .bind(page.as_str())
+        .bind(TEST_SPACE_ID)
+        .bind(too_deep)
+        .execute(&pool)
+        .await
+        .unwrap();
+    settle(&mat).await;
+    assert_eq!(
+        dup_engine_children(&mat, &top),
+        vec![root.clone().into_string()],
+        "seed: the engine holds the tree"
+    );
+    let before = dup_counts(&pool).await;
+
+    let result = duplicate_block_inner(&pool, DEV, &mat, root.clone()).await;
+
+    assert!(
+        matches!(result, Err(AppError::Validation { .. })),
+        "a copy nested past the limit is refused, got {result:?}"
+    );
+    assert_eq!(
+        dup_counts(&pool).await,
+        before,
+        "the refused copy wrote nothing"
+    );
+    assert_eq!(
+        dup_engine_children(&mat, &top),
+        vec![root.into_string()],
+        "the engine rolled back the copies it had applied"
+    );
+}
+
+// ======================================================================
 // import_markdown — Logseq/Markdown import (#660)
 // ======================================================================
 

@@ -31,9 +31,8 @@
  * string). The line-oriented {@link outlineToIndentedMarkdown} therefore encodes
  * a block's internal newlines as a {@link NEWLINE_SENTINEL} so the outline keeps
  * its one-line-per-block invariant; `parseIndentedMarkdown` decodes the sentinel
- * back to `\n` per block (a no-op for single-line blocks, so the copy/duplicate
- * outline paths are unaffected). Anything still not recognised contributes its
- * text only.
+ * back to `\n` per block (a no-op for single-line blocks, so the copy outline
+ * path is unaffected). Anything still not recognised contributes its text only.
  *
  * Security: the HTML is UNTRUSTED and there is no sanitizer in the paste path,
  * so the Turndown instance must be built via {@link createInlineTurndown},

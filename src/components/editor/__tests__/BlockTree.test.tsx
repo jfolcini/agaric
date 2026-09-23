@@ -414,6 +414,7 @@ import {
   type TypedInvokeHandlers,
 } from '@/__tests__/helpers/invoke'
 import { BlockTree } from '@/components/editor/BlockTree'
+import { registerActiveDraftFlush } from '@/lib/active-draft-flush'
 import { announce } from '@/lib/announcer'
 import type { BlockRow } from '@/lib/bindings'
 import { processCheckboxSyntax } from '@/lib/block-utils'
@@ -4168,32 +4169,62 @@ describe('BlockTree Turn-into / Duplicate flush the dirty focused editor', () =>
     expect(mockMount).not.toHaveBeenCalledWith('b1', '# hello world')
   })
 
-  it('Duplicate copies the LIVE editor content of the focused block', async () => {
-    pageStore.setState({ blocks: [makeBlock({ id: 'b1', content: 'draft' })], loading: false })
+  // #5140 Phase 3a — the backend copies the STORED rows, so the pending editor
+  // commit must land before `duplicate_block` runs. The stubbed backend copies
+  // whatever `edit_block` last stored, and that write is held open.
+  it('Duplicate lands the pending editor commit before duplicate_block copies the stored block', async () => {
+    const original = makeBlockRow({ id: 'b1', content: 'draft', parent_id: 'PAGE_1', position: 1 })
+    pageStore.setState({ blocks: [makeBlock({ ...original })], loading: false })
     useBlockStore.setState({ focusedBlockId: 'b1' })
     mockActiveBlockId = 'b1'
-    mockUnmountReturn = 'draft v2' // flush captures the live doc
-    mockGetMarkdownReturn = 'draft v2'
-
-    renderBlockTree()
-    await waitFor(() => {
-      expect(capturedBlockActions?.onDuplicate).toBeDefined()
+    let stored = 'draft'
+    let copy: BlockRow | null = null
+    const editLanded = deferred<void>()
+    stubBlockTree({
+      edit_block: async (args) => {
+        await editLanded.promise
+        stored = args['toText'] as string
+        return echoEditBlock(args)
+      },
+      duplicate_block: () => {
+        copy = makeBlockRow({ id: 'b1-copy', content: stored, parent_id: 'PAGE_1', position: 2 })
+        return withOps({ blocks: [copy] })
+      },
+      load_page_subtree: () => {
+        const rows = [{ ...original, content: stored }, ...(copy ? [copy] : [])]
+        return { blocks: rows, truncated: false, total: rows.length }
+      },
     })
-
-    await act(async () => {
-      capturedBlockActions?.onDuplicate?.('b1')
+    // Stands in for `useDebouncedContentCommit`'s registration: the live
+    // editor holds 'draft v2', the store still 'draft'.
+    const unregister = registerActiveDraftFlush('b1', async () => {
+      await pageStore.getState().edit('b1', 'draft v2')
     })
+    try {
+      renderBlockTree()
+      await waitFor(() => {
+        expect(capturedBlockActions?.onDuplicate).toBeDefined()
+      })
 
-    // The duplicate is created from the flushed live content, not the stale
-    // store snapshot 'draft'.
-    await waitFor(() => {
-      const call = mockedInvoke.mock.calls.find((c) => c[0] === 'create_blocks_batch')
-      expect(call).toBeDefined()
-      expect(JSON.stringify(call?.[1])).toContain('draft v2')
-      expect(JSON.stringify(call?.[1])).not.toContain('"draft"')
-    })
-    // The original stays open for editing (capture → flush → remount).
-    expect(mockMount).toHaveBeenCalledWith('b1', 'draft v2')
+      act(() => {
+        capturedBlockActions?.onDuplicate?.('b1')
+      })
+      await waitFor(() => {
+        expect(mockedInvoke.mock.calls.map((c) => c[0])).toContain('edit_block')
+      })
+      expect(mockedInvoke.mock.calls.map((c) => c[0])).not.toContain('duplicate_block')
+
+      await act(async () => {
+        editLanded.resolve()
+      })
+
+      await waitFor(() => {
+        expect(pageStore.getState().blocksById.get('b1-copy')?.content).toBe('draft v2')
+      })
+      expect(pageStore.getState().blocks.map((b) => b.id)).toEqual(['b1', 'b1-copy'])
+    } finally {
+      unregister()
+    }
   })
 })
 

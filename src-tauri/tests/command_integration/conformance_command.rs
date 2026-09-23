@@ -175,6 +175,14 @@ const RETURN_SHAPE: &[(&str, &str, &[&str], &[&str])] = &[
         &["new_parent_id", "new_position"],
         &[],
     ),
+    // #5140 — the same row list as `create_blocks_batch`: the root copy, then
+    // its descendants depth-first, so the order is pinned with the rows.
+    (
+        "duplicate_block",
+        "id",
+        &["block_type", "content", "parent_id", "position"],
+        &[],
+    ),
     // #5057 — five writers whose table is OUTSIDE the snapshot's five arrays
     // (`peer_refs`, `app_settings`, `property_definitions`), so what they wrote
     // is pinned by the read that follows them in the same fixture rather than
@@ -677,6 +685,7 @@ pub(super) async fn apply_op_via_command(
         "create_blocks_batch" => {
             to_json(create_blocks_batch_inner(pool, DEV, mat, block_specs()).await)
         }
+        "duplicate_block" => to_json(duplicate_block_inner(pool, DEV, mat, block_id()).await),
         "move_blocks_batch" => to_json(
             move_blocks_batch_inner(
                 pool,
@@ -1035,7 +1044,7 @@ mod tests {
     /// vice versa, and the count is the one this module claims — so a
     /// mutating command cannot join one table without the other, and cannot
     /// join at all without this number moving.
-    const MUTATING_ARM_COUNT: usize = 39;
+    const MUTATING_ARM_COUNT: usize = 40;
 
     #[test]
     fn the_dispatcher_and_the_return_shape_table_name_the_same_commands() {

@@ -306,9 +306,7 @@ export function useBlockTreeKeyboardShortcuts(options: UseBlockTreeKeyboardShort
         // the cache directly (composed against the active space, mirroring
         // `useBlockResolve.resolveBlockTitle`) and return `undefined` on a miss
         // so a dangling/uncached ULID falls back to its opaque token instead of
-        // the store's `[[xxxx…]]` placeholder. The internal copy→paste paths
-        // (duplicate) call `serializeBlockSubtree` WITHOUT a resolver, keeping
-        // their content ULID-canonical for re-import.
+        // the store's `[[xxxx…]]` placeholder.
         const resolveCache = useResolveStore.getState().cache
         const spaceId = useSpaceStore.getState().currentSpaceId
         const markdown = serializeBlockSubtree(

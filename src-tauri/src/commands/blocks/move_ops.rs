@@ -450,7 +450,7 @@ pub async fn move_block(
 /// top-level blocks when `parent_id` is `None`. Read ONCE per batch; every
 /// per-member slot is computed against this immutable snapshot. Runtime query
 /// (no sqlx macro) so no `.sqlx` cache entry is needed.
-async fn ordered_live_children(
+pub(crate) async fn ordered_live_children(
     tx: &mut CommandTx,
     parent_id: Option<&str>,
 ) -> Result<Vec<String>, AppError> {

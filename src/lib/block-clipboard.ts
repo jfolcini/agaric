@@ -32,8 +32,8 @@ export const INDENT_UNIT = 2
  *
  * `U+0000` (NUL) never legitimately appears in pasted clipboard text or in the
  * outline our copy/serialize path emits, so the decode is a NO-OP for every
- * existing caller (block copy, duplicate, context-menu paste) — only the
- * HTML-paste multi-line blocks carry it.
+ * existing caller (block copy, context-menu paste) — only the HTML-paste
+ * multi-line blocks carry it.
  */
 export const OUTLINE_NEWLINE_SENTINEL = '\u0000'
 
@@ -123,9 +123,9 @@ export function humanizeRefTokens(content: string, resolve: RefResolver): string
 /**
  * A canonical 26-char Crockford-base32 ULID (uppercase). Used to recognise a
  * reference token that is ALREADY in internal/canonical form so the import
- * resolver leaves it untouched (an internal duplicate→paste round-trip serializes
- * `[[ULID]]`/`#[ULID]` with NO humanize resolver, so its tokens carry ULIDs, not
- * names — they must NOT be treated as a page/tag NAME to look up).
+ * resolver leaves it untouched (a copied reference that missed the resolve cache
+ * keeps its `[[ULID]]`/`#[ULID]` token — it must NOT be treated as a page/tag
+ * NAME to look up).
  */
 const ULID_BODY_RE = /^[0-9A-Z]{26}$/
 
@@ -452,8 +452,8 @@ export interface RefInternalizers {
  * had been left eager, which both minted a page for quoted syntax and pasted
  * the resulting ULID into the user's code.
  *
- * A token already in canonical form (`[[ULID]]`, `#[ULID]`) is left untouched so
- * an internal duplicate→paste round-trip stays ULID-canonical. A name the
+ * A token already in canonical form (`[[ULID]]`, `#[ULID]`) is left untouched, so
+ * a pasted canonical reference keeps pointing at its target. A name the
  * resolver returns `null` for (unresolvable / ambiguous duplicate title /
  * creation failure) is left as its original plain-text token — nothing is
  * dropped and no exception escapes (the caller's resolver owns error handling).
@@ -658,10 +658,8 @@ export interface ParsedBlock {
  * `humanize` (#1440) — optional reference renderer. When supplied, each block's
  * content has its opaque-ULID reference tokens rewritten to human-readable
  * names (`[[Page Name]]` / `#tag` / `((Name))`) via {@link humanizeRefTokens},
- * matching what page-export emits. This is for the SYSTEM-CLIPBOARD copy path
- * only; the internal copy→paste round-trips (duplicate, context-menu paste)
- * call WITHOUT it so block content stays ULID-canonical for re-import. Omitting
- * it preserves the original verbatim-content behaviour exactly.
+ * matching what page-export emits, for the SYSTEM-CLIPBOARD copy path. Omitting
+ * it emits each block's content verbatim.
  */
 export function serializeBlockSubtree(
   items: FlatBlock[],

@@ -83,9 +83,9 @@ import { useLazyRovingEditor } from '@/hooks/useLazyRovingEditor'
 import { useTagClickHandler } from '@/hooks/useRichContentCallbacks'
 import { useViewportObserver } from '@/hooks/useViewportObserver'
 import { useViewportWindow } from '@/hooks/useViewportWindow'
+import { flushActiveDraft } from '@/lib/active-draft-flush'
 import { unwrap } from '@/lib/app-error'
 import { commands } from '@/lib/bindings'
-import { serializeBlockSubtree } from '@/lib/block-clipboard'
 import type { NavigateToPageFn } from '@/lib/block-events'
 import type { BlockTypeToken } from '@/lib/block-type-convert'
 import { convertBlockContent } from '@/lib/block-type-convert'
@@ -823,37 +823,16 @@ export function BlockTree({
     [pageStore, load, handleFlush, t],
   )
 
-  // #976 (item 13) — Duplicate a block + its subtree, inserting the copy
-  // immediately after the original at the same depth. This reuses the existing
-  // copy/paste-outline store ops (`serializeBlockSubtree` → `pasteBlocks`)
-  // rather than introducing a new clone op: serialize just this block's subtree
-  // to indented markdown, then paste it anchored on the original (paste inserts
-  // after the anchor at the anchor's depth). No new store op is required.
+  // #976 (item 13) / #5140 — Duplicate a block + its subtree, inserting the
+  // copy right after the original at the same depth. The chord and the
+  // context-menu row fire with the editor still mounted, and the backend copies
+  // the STORED rows, so the pending content commit lands first.
   const handleDuplicate = useCallback(
     async (blockId: string) => {
-      // Same staleness seam as handleTurnInto: the duplicate chord and the
-      // context-menu row fire with the editor still mounted, so serializing
-      // the store snapshot would copy stale content. Capture → flush →
-      // remount (the handleIndent pattern) so the copy carries the live text
-      // and the original stays open for editing.
-      const re = rovingEditorRef.current
-      if (re?.activeBlockId === blockId) {
-        const live = re.getMarkdown?.() ?? ''
-        handleFlush()
-        re.mount(blockId, live)
-      }
-      const state = pageStore.getState()
-      if (!state.blocksById.has(blockId)) return
-      const markdown = serializeBlockSubtree(state.blocks, [blockId])
-      if (markdown.length === 0) return
-      try {
-        await state.pasteBlocks(blockId, markdown)
-      } catch (err) {
-        logger.error('BlockTree', 'Failed to duplicate block', { blockId }, err)
-        notify.error(t('blockTree.duplicateFailed'))
-      }
+      await flushActiveDraft()
+      await pageStore.getState().duplicateBlock(blockId)
     },
-    [pageStore, handleFlush, t],
+    [pageStore],
   )
 
   // ── Scroll container ref (for auto-scroll during drag) ──────────────

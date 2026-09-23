@@ -150,6 +150,14 @@ export interface PageBlockState {
   pasteBlocks: (anchorBlockId: string, markdown: string) => Promise<string[]>
 
   /**
+   * #976 item 13 / #5140 — copy `blockId` and its content subtree right after
+   * the original, as one `duplicate_block` command and one undo entry, then
+   * reload the tree. Resolves the created ids, root first (empty when the
+   * block is not on this page or the command failed, which toasts).
+   */
+  duplicateBlock: (blockId: string) => Promise<string[]>
+
+  /**
    * Append a single backend-returned `BlockRow` to the
    * in-memory flat tree at depth 0 (top-level child of this page).
    *

@@ -8,7 +8,7 @@ import { invoke } from '@tauri-apps/api/core'
 import { renderHook, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { makeBlock } from '@/__tests__/fixtures'
+import { makeBlockRow } from '@/__tests__/fixtures'
 import { makeSyntheticCtx } from '@/components/block-tree/use-block-slash-commands/__tests__/test-utils'
 import { useSlashCommandStructural } from '@/components/block-tree/use-block-slash-commands/useSlashCommandStructural'
 import { registerActiveDraftFlush } from '@/lib/active-draft-flush'
@@ -17,6 +17,7 @@ import {
   getGraphStructureKey,
 } from '@/lib/graph-structure-events'
 import { setListStyle } from '@/lib/list-style'
+import { useSpaceStore } from '@/stores/space'
 import { useUndoStore } from '@/stores/undo'
 
 vi.mock('@/lib/announcer', () => ({ announce: vi.fn() }))
@@ -259,49 +260,66 @@ describe('useSlashCommandStructural — list, divider (#4552 slice 2)', () => {
 })
 
 describe('useSlashCommandStructural — duplicate (#976 item 13)', () => {
-  it('/duplicate clones the block + subtree via pasteBlocks anchored on the block', async () => {
-    const { result } = renderHook(() => useSlashCommandStructural())
-    const { ctx, pageStore } = makeSyntheticCtx()
-    // Anchor the focused block plus one child so the serialized subtree is
-    // non-empty (a leaf-only page would still serialize the single block).
-    pageStore.setState({
-      blocks: [
-        makeBlock({ id: 'BLOCK_1', content: 'parent', parent_id: 'PAGE_1' }),
-        makeBlock({ id: 'BLOCK_2', content: 'child', parent_id: 'BLOCK_1' }),
-      ],
-    })
-    const pasteBlocks = vi.fn(async (_anchorId: string, _markdown: string) => [] as string[])
-    pageStore.setState({ pasteBlocks })
-
-    await result.current.exact['duplicate']?.(ctx, { id: 'duplicate', label: 'Duplicate' })
-
-    expect(pasteBlocks).toHaveBeenCalledTimes(1)
-    // Anchored on the focused block; the serialized subtree is the same
-    // indented-markdown the context-menu Duplicate row + Ctrl+Shift+J binding
-    // feed to pasteBlocks.
-    expect(pasteBlocks).toHaveBeenCalledWith('BLOCK_1', expect.stringContaining('parent'))
-  })
-
-  // #4577 — same family as `handleListStyle` above: `/duplicate` builds the
-  // clone from `serializeBlockSubtree(state.blocks, …)`, i.e. the STORE, so the
-  // flush has to land BEFORE the serialize. Asserting the markdown handed to
-  // `pasteBlocks` (not a call order) is what proves it: a flush that ran after
-  // the serialize would still copy the pre-typing content.
-  it('flushes the pending in-editor content before serializing the subtree (#4577)', async () => {
+  /**
+   * A backend that copies whatever `edit_block` last stored for BLOCK_1 and
+   * serves both rows back through `load_page_subtree`, so each test reads the
+   * copy out of the reloaded store.
+   */
+  function stubDuplicateBackend(initial: string): void {
+    let stored = initial
+    let copied: string | null = null
+    const row = (id: string, content: string, position: number) =>
+      makeBlockRow({ id, content, parent_id: 'PAGE_1', position })
     mockedInvoke.mockImplementation(async (cmd: string, args?: unknown) => {
+      const a = (args ?? {}) as Record<string, unknown>
       if (cmd === 'edit_block') {
+        stored = a['toText'] as string
+        return { id: 'BLOCK_1', content: stored, op_refs: [{ device_id: 'dev1', seq: 5 }] }
+      }
+      if (cmd === 'duplicate_block') {
+        copied = stored
         return {
-          id: 'BLOCK_1',
-          content: (args as { toText: string }).toText,
-          op_refs: [{ device_id: 'dev1', seq: 5 }],
+          op_refs: [{ device_id: 'dev1', seq: 6 }],
+          blocks: [row('BLOCK_1_COPY', copied, 2)],
         }
+      }
+      if (cmd === 'load_page_subtree') {
+        const rows = [
+          row('BLOCK_1', stored, 1),
+          ...(copied === null ? [] : [row('BLOCK_1_COPY', copied, 2)]),
+        ]
+        return { blocks: rows, truncated: false, total: rows.length }
       }
       return undefined
     })
+  }
+
+  beforeEach(() => {
+    useSpaceStore.setState({ currentSpaceId: 'SPACE_TEST' })
+  })
+
+  it('/duplicate copies the block through duplicate_block and reloads the copy', async () => {
+    stubDuplicateBackend('hello')
     const { result } = renderHook(() => useSlashCommandStructural())
     const { ctx, pageStore } = makeSyntheticCtx()
-    const pasteBlocks = vi.fn(async (_anchorId: string, _markdown: string) => [] as string[])
-    pageStore.setState({ pasteBlocks })
+
+    await result.current.exact['duplicate']?.(ctx, { id: 'duplicate', label: 'Duplicate' })
+
+    expect(mockedInvoke).toHaveBeenCalledWith('duplicate_block', { blockId: 'BLOCK_1' })
+    expect(pageStore.getState().blocks.map((b) => [b.id, b.content])).toEqual([
+      ['BLOCK_1', 'hello'],
+      ['BLOCK_1_COPY', 'hello'],
+    ])
+  })
+
+  // #4577 — same family as `handleListStyle` above: the backend copies the
+  // STORED row, so the flush has to land BEFORE `duplicate_block` runs. The
+  // copy's content (not a call order) is what proves it: a flush that ran
+  // after the command would still copy the pre-typing content.
+  it('flushes the pending in-editor content before duplicating (#4577)', async () => {
+    stubDuplicateBackend('hello')
+    const { result } = renderHook(() => useSlashCommandStructural())
+    const { ctx, pageStore } = makeSyntheticCtx()
     // Stands in for `useDebouncedContentCommit`'s registration (the synthetic
     // ctx has no live TipTap instance) — same bridge, same store `edit`.
     const unregister = registerActiveDraftFlush('BLOCK_1', async () => {
@@ -313,21 +331,21 @@ describe('useSlashCommandStructural — duplicate (#976 item 13)', () => {
       unregister()
     }
 
-    expect(pasteBlocks).toHaveBeenCalledWith(
-      'BLOCK_1',
-      expect.stringContaining('typed but uncommitted'),
+    expect(pageStore.getState().blocksById.get('BLOCK_1_COPY')?.content).toBe(
+      'typed but uncommitted',
     )
   })
 
-  it('/duplicate is a no-op when the focused block is gone (no pasteBlocks)', async () => {
+  it('/duplicate is a no-op when the focused block is gone (no IPC)', async () => {
+    stubDuplicateBackend('hello')
     const { result } = renderHook(() => useSlashCommandStructural())
     const { ctx, pageStore } = makeSyntheticCtx()
-    const pasteBlocks = vi.fn(async (_anchorId: string, _markdown: string) => [] as string[])
-    pageStore.setState({ blocks: [], pasteBlocks })
+    pageStore.setState({ blocks: [] })
 
     await result.current.exact['duplicate']?.(ctx, { id: 'duplicate', label: 'Duplicate' })
 
-    expect(pasteBlocks).not.toHaveBeenCalled()
+    expect(mockedInvoke).not.toHaveBeenCalled()
+    expect(pageStore.getState().blocks).toEqual([])
   })
 })
 

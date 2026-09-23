@@ -10,6 +10,8 @@
  */
 
 import { base64UrlToUtf8, isBase64UrlNoPad, utf8ToBase64Url } from '@/lib/base64url'
+import { INLINE_PROPERTY_RESERVED_KEYS } from '@/lib/inline-property-parse'
+import { LIST_STYLE_KEY } from '@/lib/list-style'
 import { compareUtf8Bytes } from '@/lib/sqlite-collation'
 import {
   type TypedHandlers,
@@ -501,6 +503,99 @@ function agendaRangeDate(
   return candidates.length === 0 ? null : (candidates.toSorted()[0] as string)
 }
 
+// ---------------------------------------------------------------------------
+// #5140 Phase 3a — `duplicate_block`
+// ---------------------------------------------------------------------------
+
+type OpRefs = Array<{ device_id: string; seq: number }>
+
+/** The column-backed keys a copy carries, in the order the backend writes them. */
+const DUPLICATED_COLUMNS = ['todo_state', 'priority', 'scheduled_date', 'due_date'] as const
+
+/**
+ * `rootId` and its live descendants in pre-order, children by
+ * `(position, id)`. A nested page is not content, so neither it nor anything
+ * under it is copied.
+ */
+function duplicateSubtree(rootId: string): Record<string, unknown>[] {
+  const out: Record<string, unknown>[] = []
+  const visit = (row: Record<string, unknown>): void => {
+    out.push(row)
+    const children = [...blocks.values()]
+      .filter(
+        (b) =>
+          b['parent_id'] === row['id'] && b['deleted_at'] == null && b['block_type'] !== 'page',
+      )
+      .toSorted(comparePositionThenId)
+    for (const child of children) visit(child)
+  }
+  const root = blocks.get(rootId)
+  if (root) visit(root)
+  return out
+}
+
+/**
+ * Create a copy of `src` under `parentId` at the 0-based live `slot`, then
+ * write its carried properties: `listStyle`, the four columns, then every other
+ * key in byte order. Each appended op's ref lands in `opRefs`.
+ */
+function duplicateRow(
+  src: Record<string, unknown>,
+  parentId: string | null,
+  slot: number,
+  opRefs: OpRefs,
+): Record<string, unknown> {
+  const id = fakeId()
+  const row: Record<string, unknown> = {
+    id,
+    block_type: 'content',
+    content: (src['content'] as string | null) ?? null,
+    parent_id: parentId,
+    page_id: (src['page_id'] as string | null) ?? null,
+    position: 0,
+    deleted_at: null,
+    todo_state: null,
+    priority: null,
+    due_date: null,
+    scheduled_date: null,
+  }
+  blocks.set(id, row)
+  insertAtSlotAndRenumber(parentId, id, slot)
+  const record = (op: { device_id: string; seq: number }): void => {
+    opRefs.push({ device_id: op.device_id, seq: op.seq })
+  }
+  record(
+    pushOp('create_block', {
+      block_id: id,
+      content: row['content'],
+      parent_id: parentId,
+      block_type: 'content',
+      position: row['position'],
+    }),
+  )
+  const srcProps = properties.get(src['id'] as string) ?? new Map<string, Record<string, unknown>>()
+  const copyProperty = (key: string): void => {
+    const prop = srcProps.get(key)
+    if (prop == null) return
+    if (!properties.has(id)) properties.set(id, new Map())
+    properties.get(id)?.set(key, 'block_id' in prop ? { ...prop, block_id: id } : { ...prop })
+    record(pushOp('set_property', { block_id: id, key, from_value: null }))
+  }
+  copyProperty(LIST_STYLE_KEY)
+  for (const column of DUPLICATED_COLUMNS) {
+    if (src[column] == null) continue
+    row[column] = src[column]
+    record(pushOp('set_property', { block_id: id, key: column, from_value: null }))
+  }
+  const customKeys = [...srcProps.keys()]
+    // The reserved keys the backend's source render leaves out: they
+    // describe the original (its space, timestamps, recurrence, template).
+    .filter((key) => key !== LIST_STYLE_KEY && !INLINE_PROPERTY_RESERVED_KEYS.has(key))
+    .toSorted(compareUtf8Bytes)
+  for (const key of customKeys) copyProperty(key)
+  return row
+}
+
 export const blocksHandlers = {
   // #3870 — mirrors `list_blocks_inner`'s DISPATCH CHAIN, not a conjunction of
   // filters: exactly one branch runs, and each brings its own `ORDER BY` and
@@ -863,6 +958,46 @@ export const blocksHandlers = {
         opRefs.push({ device_id: propOp.device_id, seq: propOp.seq })
       }
       out.push(row)
+    }
+    return { blocks: out, op_refs: opRefs }
+  },
+
+  // #5140 Phase 3a — copy a content block and its content subtree right after
+  // the original: rows, not markdown, so a multi-line block stays one block and
+  // the copy keeps its task columns and properties. Returns every created row,
+  // root first, then its descendants in pre-order. The refusals mirror
+  // `verify_active_in_tx`: an unknown id is `not_found`, a trashed one
+  // `validation`.
+  duplicate_block: (args) => {
+    const blockId = (args as Record<string, unknown>)['blockId'] as string
+    const src = blocks.get(blockId)
+    if (!src) throw notFoundRejection(`block '${blockId}' does not exist`)
+    if (src['deleted_at'] != null) {
+      throw validationRejection(`block '${blockId}' has been soft-deleted`)
+    }
+    if (src['block_type'] !== 'content') {
+      throw validationRejection(
+        `only a content block can be duplicated, not a '${String(src['block_type'])}'`,
+      )
+    }
+    const parentId = (src['parent_id'] as string | null) ?? null
+    const liveSiblings = [...blocks.values()]
+      .filter((b) => (b['parent_id'] ?? null) === parentId && b['deleted_at'] == null)
+      .toSorted(comparePositionThenId)
+    const rootSlot = liveSiblings.findIndex((b) => b['id'] === blockId) + 1
+    const opRefs: OpRefs = []
+    const copyIdOf = new Map<string, string>()
+    const out: Record<string, unknown>[] = []
+    for (const source of duplicateSubtree(blockId)) {
+      const isRoot = source['id'] === blockId
+      const copy = duplicateRow(
+        source,
+        isRoot ? parentId : (copyIdOf.get(source['parent_id'] as string) ?? null),
+        isRoot ? rootSlot : Number.MAX_SAFE_INTEGER,
+        opRefs,
+      )
+      copyIdOf.set(source['id'] as string, copy['id'] as string)
+      out.push(copy)
     }
     return { blocks: out, op_refs: opRefs }
   },
@@ -1677,6 +1812,7 @@ export const blocksHandlers = {
   | 'list_trash'
   | 'create_block'
   | 'create_blocks_batch'
+  | 'duplicate_block'
   | 'edit_block'
   | 'delete_block'
   | 'delete_blocks_by_ids'

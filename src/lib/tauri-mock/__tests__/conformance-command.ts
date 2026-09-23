@@ -157,6 +157,14 @@ const RETURN_SHAPE: Readonly<Record<string, ReturnShape>> = {
     lists: [],
     rows: 'moves',
   },
+  // #5140 Phase 3a — the same row list as `create_blocks_batch`: the root copy,
+  // then its descendants in pre-order, so the order is pinned with the rows.
+  duplicate_block: {
+    idKey: 'id',
+    attrs: ['block_type', 'content', 'parent_id', 'position'],
+    lists: [],
+    rows: 'blocks',
+  },
   // #5057 — five writers whose table is OUTSIDE the snapshot's five arrays
   // (`peer_refs`, `app_settings`, `property_definitions`), so what they wrote is
   // pinned by the read that follows them in the same fixture rather than by the

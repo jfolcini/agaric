@@ -22,7 +22,6 @@ import type {
 import type { PickerItem } from '@/editor/SuggestionList'
 import { toggleCodeBlockSafely } from '@/editor/toggle-code-block-safely'
 import { flushActiveDraft } from '@/lib/active-draft-flush'
-import { serializeBlockSubtree } from '@/lib/block-clipboard'
 import { convertBlockContent, turnIdToBlockType } from '@/lib/block-type-convert'
 import { EMBED_TOKEN_PREFIX } from '@/lib/embed-token'
 import { listStyleForBlockType, setListStyle } from '@/lib/list-style'
@@ -108,32 +107,19 @@ async function handleDivider(ctx: SlashCommandContext): Promise<void> {
 }
 
 /**
- * #976 (item 13) — `/duplicate` clones the current block + its subtree and
- * inserts the copy right after the original at the same depth. Reuses the exact
- * `serializeBlockSubtree` → `pasteBlocks` path the context-menu "Duplicate" row
- * (`BlockTree.handleDuplicate`) and the `duplicateBlock` keyboard binding fire —
- * no separate clone op.
+ * #976 (item 13) / #5140 — `/duplicate` copies the current block + its subtree
+ * right after the original at the same depth, through the same store action the
+ * context-menu "Duplicate" row (`BlockTree.handleDuplicate`) and the
+ * `duplicateBlock` keyboard binding use.
  *
- * #4577 — the clone is serialized from the STORE, so it needs the same
+ * #4577 — the backend copies the STORED rows, so it needs the same
  * `flushActiveDraft()` the property-writing handlers take (see
  * {@link handleListStyle}): without it, duplicating inside the commit debounce
  * copies the block's pre-typing content.
  */
 async function handleDuplicate(ctx: SlashCommandContext): Promise<void> {
   await flushActiveDraft()
-  const state = ctx.pageStore.getState()
-  if (!state.blocksById.has(ctx.blockId)) return
-  const markdown = serializeBlockSubtree(state.blocks, [ctx.blockId])
-  if (markdown.length === 0) return
-  try {
-    await state.pasteBlocks(ctx.blockId, markdown)
-  } catch (err) {
-    logger.error('useSlashCommandStructural', 'Failed to duplicate block', {
-      blockId: ctx.blockId,
-      error: err,
-    })
-    notify.error(ctx.t('blockTree.duplicateFailed'))
-  }
+  await ctx.pageStore.getState().duplicateBlock(ctx.blockId)
 }
 
 function handleTable(ctx: SlashCommandContext, id: string, withHeaderRow = true): void {

@@ -1,0 +1,570 @@
+{
+  "description": "#5140 Phase 3a — `duplicate_block` copies a content block and its content subtree as ROWS, right after the original. A fenced block stays ONE block whether or not its fence is closed (the markdown round-trip it replaced split on every newline), the open-fence block's child travels with it while the page nested in the same subtree does not, and the copy carries the ref-typed property with its target, the task columns and the list style. The returns pin every created row, root first then its descendants in pre-order, with the root one slot after the original. Seed: S1 (Home) > S2 (closed fence), S3 (open fence) > [S4 (child), S5 (nested page) > S6], S7 (carries a ref to S9), S8 (DONE task), S9 (ref target) > S11 (purged by an op), S10 (trashed by an op). Re-author `expected` / `expected_ops` via CONFORMANCE_UPDATE=1.",
+  "expected": {
+    "block_tags": [],
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Home",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B1",
+        "page_id": "B1",
+        "parent_id": null,
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "```js\nfirst line\nsecond line\n```",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B2",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "```sh\necho",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B3",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 3,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "inside the open fence",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B4",
+        "page_id": "B1",
+        "parent_id": "B3",
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "page",
+        "content": "Nested page",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B5",
+        "page_id": "B5",
+        "parent_id": "B3",
+        "position": 2,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "under the nested page",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B6",
+        "page_id": "B5",
+        "parent_id": "B5",
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "points at the reviewer",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B7",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 5,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "finished work",
+        "deleted_at": null,
+        "due_date": "2026-03-01",
+        "id": "B8",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 7,
+        "priority": "2",
+        "scheduled_date": null,
+        "todo_state": "DONE"
+      },
+      {
+        "block_type": "content",
+        "content": "the reviewer",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B9",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 9,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "thrown away",
+        "deleted_at": "DELETED",
+        "due_date": null,
+        "id": "B10",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 10,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "```js\nfirst line\nsecond line\n```",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B12",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 2,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "```sh\necho",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B13",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 4,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "inside the open fence",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B14",
+        "page_id": "B1",
+        "parent_id": "B13",
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "points at the reviewer",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B15",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 6,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "finished work",
+        "deleted_at": null,
+        "due_date": "2026-03-01",
+        "id": "B16",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 8,
+        "priority": "2",
+        "scheduled_date": null,
+        "todo_state": "DONE"
+      }
+    ],
+    "op_log_digest": {
+      "count": 18,
+      "ops": [
+        {
+          "key": "reviewer",
+          "op_type": "set_property"
+        },
+        {
+          "op_type": "set_todo_state"
+        },
+        {
+          "op_type": "set_priority"
+        },
+        {
+          "op_type": "set_due_date"
+        },
+        {
+          "key": "listStyle",
+          "op_type": "set_property"
+        },
+        {
+          "op_type": "delete_block"
+        },
+        {
+          "op_type": "delete_block"
+        },
+        {
+          "op_type": "purge_block"
+        },
+        {
+          "op_type": "create_block"
+        },
+        {
+          "op_type": "create_block"
+        },
+        {
+          "op_type": "create_block"
+        },
+        {
+          "op_type": "create_block"
+        },
+        {
+          "key": "reviewer",
+          "op_type": "set_property"
+        },
+        {
+          "op_type": "create_block"
+        },
+        {
+          "key": "listStyle",
+          "op_type": "set_property"
+        },
+        {
+          "op_type": "set_todo_state"
+        },
+        {
+          "op_type": "set_priority"
+        },
+        {
+          "op_type": "set_due_date"
+        }
+      ]
+    },
+    "page_links": [],
+    "properties": [
+      {
+        "block_id": "B7",
+        "key": "reviewer",
+        "value": "B9",
+        "value_type": "Ref"
+      },
+      {
+        "block_id": "B8",
+        "key": "listStyle",
+        "value": "ordered",
+        "value_type": "Text"
+      },
+      {
+        "block_id": "B15",
+        "key": "reviewer",
+        "value": "B9",
+        "value_type": "Ref"
+      },
+      {
+        "block_id": "B16",
+        "key": "listStyle",
+        "value": "ordered",
+        "value_type": "Text"
+      }
+    ]
+  },
+  "expected_ops": [
+    {
+      "code": null,
+      "error": null,
+      "name": "define_a_ref_property",
+      "returns": ["reviewer#value_type=ref#options=null"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "duplicate_a_closed_fence",
+      "returns": [
+        "B12#block_type=content#content=```js\nfirst line\nsecond line\n```#parent_id=B1#position=2"
+      ]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "duplicate_an_open_fence_with_its_child",
+      "returns": [
+        "B13#block_type=content#content=```sh\necho#parent_id=B1#position=4",
+        "B14#block_type=content#content=inside the open fence#parent_id=B13#position=1"
+      ]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "duplicate_keeps_a_ref_property",
+      "returns": ["B15#block_type=content#content=points at the reviewer#parent_id=B1#position=6"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "duplicate_keeps_task_columns_and_list_style",
+      "returns": ["B16#block_type=content#content=finished work#parent_id=B1#position=8"]
+    },
+    {
+      "code": null,
+      "error": "not_found",
+      "name": "duplicate_an_unknown_id_is_not_found",
+      "returns": []
+    },
+    {
+      "code": null,
+      "error": "validation",
+      "name": "duplicate_a_page_is_refused",
+      "returns": []
+    },
+    {
+      "code": null,
+      "error": "validation",
+      "name": "duplicate_a_trashed_block_is_refused",
+      "returns": []
+    }
+  ],
+  "name": "duplicate_block",
+  "ops": [
+    {
+      "args": {
+        "key": "reviewer",
+        "options": null,
+        "valueType": "ref"
+      },
+      "command": "create_property_def",
+      "comment": "A ref-typed definition, so the property S7 carries is a reference whose target must survive the copy.",
+      "name": "define_a_ref_property",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockId": "S7",
+        "key": "reviewer",
+        "value": {
+          "value_ref": "S9"
+        }
+      },
+      "command": "set_property"
+    },
+    {
+      "args": {
+        "blockId": "S8",
+        "state": "DONE"
+      },
+      "command": "set_todo_state"
+    },
+    {
+      "args": {
+        "blockId": "S8",
+        "level": "2"
+      },
+      "command": "set_priority"
+    },
+    {
+      "args": {
+        "blockId": "S8",
+        "date": "2026-03-01"
+      },
+      "command": "set_due_date"
+    },
+    {
+      "args": {
+        "blockId": "S8",
+        "key": "listStyle",
+        "value": {
+          "value_text": "ordered"
+        }
+      },
+      "command": "set_property"
+    },
+    {
+      "args": {
+        "blockId": "S10"
+      },
+      "command": "delete_block"
+    },
+    {
+      "args": {
+        "blockId": "S11"
+      },
+      "command": "delete_block"
+    },
+    {
+      "args": {
+        "blockId": "S11"
+      },
+      "command": "purge_block"
+    },
+    {
+      "args": {
+        "blockId": "S2"
+      },
+      "command": "duplicate_block",
+      "comment": "A closed two-line fence comes back as ONE row with the content verbatim, one slot after the original.",
+      "name": "duplicate_a_closed_fence",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockId": "S3"
+      },
+      "command": "duplicate_block",
+      "comment": "An unterminated fence is still one block, and its content child is copied under the copy. The nested page S5 (and S6 under it) is not content, so it is not copied: the return is two rows, not four.",
+      "name": "duplicate_an_open_fence_with_its_child",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockId": "S7"
+      },
+      "command": "duplicate_block",
+      "comment": "The copy carries the ref-typed property, pointing at the ORIGINAL target S9; the snapshot's properties pin it.",
+      "name": "duplicate_keeps_a_ref_property",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockId": "S8"
+      },
+      "command": "duplicate_block",
+      "comment": "The copy keeps todo_state, priority and due_date (the snapshot's block columns) and listStyle (its properties); the digest pins the order they are written in.",
+      "name": "duplicate_keeps_task_columns_and_list_style",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockId": "S11"
+      },
+      "command": "duplicate_block",
+      "comment": "S11 was purged above, so its id names no block. It is S9's only child, so the purge leaves no sibling group gapped.",
+      "expect_error": "not_found",
+      "name": "duplicate_an_unknown_id_is_not_found",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockId": "S1"
+      },
+      "command": "duplicate_block",
+      "comment": "A page is not a content block, so it cannot be duplicated as one.",
+      "expect_error": "validation",
+      "name": "duplicate_a_page_is_refused",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockId": "S10"
+      },
+      "command": "duplicate_block",
+      "comment": "A trashed block is refused, as `verify_active_in_tx` refuses a soft-deleted row.",
+      "expect_error": "validation",
+      "name": "duplicate_a_trashed_block_is_refused",
+      "via": "command"
+    }
+  ],
+  "seed": {
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Home",
+        "id": "S1",
+        "parent_id": null,
+        "position": 1
+      },
+      {
+        "block_type": "content",
+        "content": "```js\nfirst line\nsecond line\n```",
+        "id": "S2",
+        "parent_id": "S1",
+        "position": 1
+      },
+      {
+        "block_type": "content",
+        "content": "```sh\necho",
+        "id": "S3",
+        "parent_id": "S1",
+        "position": 2
+      },
+      {
+        "block_type": "content",
+        "content": "inside the open fence",
+        "id": "S4",
+        "parent_id": "S3",
+        "position": 1
+      },
+      {
+        "block_type": "page",
+        "content": "Nested page",
+        "id": "S5",
+        "parent_id": "S3",
+        "position": 2
+      },
+      {
+        "block_type": "content",
+        "content": "under the nested page",
+        "id": "S6",
+        "parent_id": "S5",
+        "position": 1
+      },
+      {
+        "block_type": "content",
+        "content": "points at the reviewer",
+        "id": "S7",
+        "parent_id": "S1",
+        "position": 3
+      },
+      {
+        "block_type": "content",
+        "content": "finished work",
+        "id": "S8",
+        "parent_id": "S1",
+        "position": 4
+      },
+      {
+        "block_type": "content",
+        "content": "the reviewer",
+        "id": "S9",
+        "parent_id": "S1",
+        "position": 5
+      },
+      {
+        "block_type": "content",
+        "content": "thrown away",
+        "id": "S10",
+        "parent_id": "S1",
+        "position": 6
+      },
+      {
+        "block_type": "content",
+        "content": "purged",
+        "id": "S11",
+        "parent_id": "S9",
+        "position": 1
+      }
+    ],
+    "properties": [],
+    "tags": []
+  }
+}
