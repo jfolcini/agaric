@@ -283,8 +283,7 @@ export function useBlockMultiSelect({
           const removed = new Set(ids)
           // #2041 — one shared `id → index` map for the whole selection, so
           // each root's descendant walk is an O(1) lookup instead of its own
-          // `findIndex` scan over `s.blocks` (matches `serializeBlockSubtree`
-          // in `src/lib/block-clipboard.ts`).
+          // `findIndex` scan over `s.blocks`.
           const indexById = buildIndexById(s.blocks)
           for (const id of ids) {
             for (const descendantId of getDragDescendants(s.blocks, id, indexById)) {

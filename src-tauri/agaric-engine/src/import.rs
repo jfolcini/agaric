@@ -789,6 +789,37 @@ pub fn parse_source_outline(content: &str) -> ParseOutput {
     }
 }
 
+/// Clipboard text as blocks (#5140). Text whose first non-blank line is a
+/// bullet is an outline, read as a source buffer is. Any other text is one
+/// block per non-blank line, the line less its indentation, nested by that
+/// indentation, with nothing on it read as a marker or a property.
+pub fn parse_pasted_text(text: &str) -> Vec<ParsedBlock> {
+    let text = text.replace("\r\n", "\n").replace('\r', "\n");
+    let first_line = text
+        .lines()
+        .map(str::trim_start)
+        .find(|line| !line.is_empty());
+    if first_line.is_some_and(is_bullet_line) {
+        return parse_source_outline(&text).blocks;
+    }
+    text.lines()
+        .filter(|line| !line.trim_start().is_empty())
+        .map(|line| pasted_block(line.trim_start().to_string(), indent_columns(line) / 2))
+        .collect()
+}
+
+/// A pasted block holding `content` as it comes, at `depth`. Like an imported
+/// block, it is code when a line of it is a fence line.
+pub fn pasted_block(content: String, depth: usize) -> ParsedBlock {
+    ParsedBlock {
+        is_code: content.lines().any(|line| is_fence_delimiter(line, false)),
+        content,
+        depth,
+        properties: Vec::new(),
+        block_anchor: None,
+    }
+}
+
 /// The two readings of the outline grammar. Import normalises a file written
 /// by another tool; Source reads back the buffer source mode renders and must
 /// return exactly the tree it was rendered from.
@@ -1021,10 +1052,9 @@ fn parse_block_lines(
             continue;
         }
 
-        // Calculate indentation (number of leading spaces / 2). Computed ahead
-        // of the fence handling (#2866) so `depth` is available to it.
-        let indent = line.len() - trimmed.len();
-        let depth = indent / 2;
+        // Calculate indentation (leading columns / 2). Computed ahead of the
+        // fence handling (#2866) so `depth` is available to it.
+        let depth = indent_columns(line) / 2;
 
         fence.close_unbalanced_at(trimmed, depth, lines_iter.clone());
         // A source buffer writes the anchor of a block that ends in code on a
@@ -1250,10 +1280,30 @@ fn append_source_line(last: &mut ParsedBlock, blank_run: &[&str], line: &str, li
     }
 }
 
-/// `line` less up to `width` leading spaces.
+/// `line` less up to `width` columns of leading spaces and tabs.
 fn dedent(line: &str, width: usize) -> &str {
-    let spaces = line.bytes().take(width).take_while(|&b| b == b' ').count();
-    &line[spaces..]
+    let mut columns = 0;
+    let mut cut = 0;
+    for byte in line.bytes() {
+        columns += match byte {
+            b' ' => 1,
+            b'\t' => 2,
+            _ => break,
+        };
+        if columns > width {
+            break;
+        }
+        cut += 1;
+    }
+    &line[cut..]
+}
+
+/// The columns `line`'s indentation spans. A tab counts as two, one level, so
+/// a hand-typed tab-indented outline nests; an import has already turned its
+/// tabs into two spaces each.
+fn indent_columns(line: &str) -> usize {
+    let indent = &line[..line.len() - line.trim_start().len()];
+    indent.len() + indent.matches('\t').count()
 }
 
 /// A continuation line's text with the exporter's escape, if any, removed.
@@ -4227,5 +4277,89 @@ mod tests_source_outline_5140 {
             .map(task_marker_for)
             .collect();
         assert_eq!(written, [Some(' '), Some('x'), Some('/'), Some('-'), None]);
+    }
+}
+
+#[cfg(test)]
+mod tests_pasted_text_5140 {
+    use super::{parse_pasted_text, parse_source_outline, pasted_block};
+
+    /// `(depth, content, properties)` of a block.
+    type Shape = (usize, String, Vec<(String, String)>);
+
+    fn shape(text: &str) -> Vec<Shape> {
+        parse_pasted_text(text)
+            .into_iter()
+            .map(|b| (b.depth, b.content, b.properties))
+            .collect()
+    }
+
+    #[test]
+    fn text_opening_with_a_bullet_is_an_outline() {
+        assert_eq!(
+            shape("\n\n- [x] a\n  more\n  - b\n    key:: v\n"),
+            [
+                (
+                    0,
+                    "a\nmore".to_string(),
+                    vec![("todo_state".to_string(), "DONE".to_string())]
+                ),
+                (
+                    1,
+                    "b".to_string(),
+                    vec![("key".to_string(), "v".to_string())]
+                ),
+            ]
+        );
+    }
+
+    /// Nothing on a plain line is a marker or a property, and each keeps its
+    /// indentation as its depth, a tab counting as one level.
+    #[test]
+    fn other_text_is_one_block_per_line_nested_by_indentation() {
+        assert_eq!(
+            shape("first\n  - second\n\n\t[x] third\n    key:: v\r\n"),
+            [
+                (0, "first".to_string(), vec![]),
+                (1, "- second".to_string(), vec![]),
+                (1, "[x] third".to_string(), vec![]),
+                (2, "key:: v".to_string(), vec![]),
+            ]
+        );
+    }
+
+    /// A continuation line loses its bullet's indentation in columns, so a
+    /// tab past it is content.
+    #[test]
+    fn a_tab_indented_outline_nests() {
+        assert_eq!(
+            shape("- a\n\t- b\n\t\t- c\n\t\t  more\n\t\t\t\tdeeper\n"),
+            [
+                (0, "a".to_string(), vec![]),
+                (1, "b".to_string(), vec![]),
+                (2, "c\nmore\n\tdeeper".to_string(), vec![]),
+            ]
+        );
+    }
+
+    /// A tab inside a code line is the code's own: only the bullet's
+    /// indentation, written in spaces, is removed.
+    #[test]
+    fn a_tab_after_the_bullet_indentation_is_content() {
+        let out = parse_source_outline("- ```\n  \tindented\n  ```\n");
+        assert_eq!(out.blocks[0].content, "```\n\tindented\n```");
+    }
+
+    #[test]
+    fn empty_or_blank_text_is_no_block() {
+        assert!(parse_pasted_text("").is_empty());
+        assert!(parse_pasted_text(" \n\t\n").is_empty());
+    }
+
+    #[test]
+    fn a_pasted_block_with_a_fence_line_is_code() {
+        assert!(pasted_block("```js\nx".to_string(), 0).is_code);
+        assert!(pasted_block("a\n  ```".to_string(), 0).is_code);
+        assert!(!pasted_block("a `b` c".to_string(), 0).is_code);
     }
 }

@@ -9,10 +9,19 @@
  *   (a) a destroyed view is never dispatched against (no throw, no dispatch);
  *   (b) multi-block content threads the paste-time `targetBlockId` so the
  *       receiver can reject a paste whose focus has since moved.
+ * They also pin which plain-text pastes `handlePaste` routes to the block path
+ * (#5140).
  */
 
+import { Editor } from '@tiptap/core'
+import { CodeBlockLowlight } from '@tiptap/extension-code-block-lowlight'
+import Document from '@tiptap/extension-document'
+import Text from '@tiptap/extension-text'
 import type { EditorView } from '@tiptap/pm/view'
+import { common, createLowlight } from 'lowlight'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+
+import { TaskParagraph } from '@/editor/extensions/task-paragraph'
 
 const dispatchBlockEvent = vi.fn()
 
@@ -34,7 +43,6 @@ vi.mock('@/stores/blocks', () => ({
 
 // Lazy-loaded inside convertAndInsert; control their output per test.
 const htmlBodyToOutline = vi.fn()
-const outlineToIndentedMarkdown = vi.fn()
 
 vi.mock('@/editor/inline-turndown', () => ({
   createInlineTurndown: () => ({ inline: (el: Element) => el.textContent ?? '' }),
@@ -42,7 +50,6 @@ vi.mock('@/editor/inline-turndown', () => ({
 
 vi.mock('@/editor/html-to-blocks', () => ({
   htmlBodyToOutline: (...args: unknown[]) => htmlBodyToOutline(...args),
-  outlineToIndentedMarkdown: (...args: unknown[]) => outlineToIndentedMarkdown(...args),
 }))
 
 afterEach(() => {
@@ -132,7 +139,6 @@ describe('convertAndInsert — destroyed-view guard (#2033)', () => {
       { content: 'one', depth: 0 },
       { content: 'two', depth: 0 },
     ])
-    outlineToIndentedMarkdown.mockReturnValue('one\ntwo')
 
     await expect(
       convertAndInsert(
@@ -229,16 +235,16 @@ describe('convertAndInsert — single-inline focus-handoff guard (#2454)', () =>
 })
 
 describe('convertAndInsert — captured paste target (#2033)', () => {
-  it('threads the captured targetBlockId in the PASTE_HTML_BLOCKS payload', async () => {
+  it('sends the converted blocks, with the captured targetBlockId, as a PASTE_BLOCKS payload', async () => {
     const { convertAndInsert } = await loadModule()
     const view = makeView(false)
 
-    // Two top-level blocks → routes through the block-paste path.
-    htmlBodyToOutline.mockReturnValue([
-      { content: 'one', depth: 0 },
-      { content: 'two', depth: 0 },
-    ])
-    outlineToIndentedMarkdown.mockReturnValue('one\ntwo')
+    // A multi-line block and a nested one → routes through the block-paste path.
+    const blocks = [
+      { content: '```js\nconst a = 1\n```', depth: 0 },
+      { content: '- two', depth: 1 },
+    ]
+    htmlBodyToOutline.mockReturnValue(blocks)
 
     await convertAndInsert(
       view as unknown as EditorView,
@@ -247,8 +253,8 @@ describe('convertAndInsert — captured paste target (#2033)', () => {
       'BLOCK_A',
     )
 
-    expect(dispatchBlockEvent).toHaveBeenCalledWith('PASTE_HTML_BLOCKS', {
-      markdown: 'one\ntwo',
+    expect(dispatchBlockEvent).toHaveBeenCalledWith('PASTE_BLOCKS', {
+      input: { kind: 'blocks', blocks },
       targetBlockId: 'BLOCK_A',
     })
     // Block content must never be force-inserted into the editor view.
@@ -259,16 +265,16 @@ describe('convertAndInsert — captured paste target (#2033)', () => {
     const { convertAndInsert } = await loadModule()
     const view = makeView(false)
 
-    htmlBodyToOutline.mockReturnValue([
+    const blocks = [
       { content: 'one', depth: 0 },
       { content: 'two', depth: 0 },
-    ])
-    outlineToIndentedMarkdown.mockReturnValue('one\ntwo')
+    ]
+    htmlBodyToOutline.mockReturnValue(blocks)
 
     await convertAndInsert(view as unknown as EditorView, '<p>one</p><p>two</p>', 'one\ntwo', null)
 
-    expect(dispatchBlockEvent).toHaveBeenCalledWith('PASTE_HTML_BLOCKS', {
-      markdown: 'one\ntwo',
+    expect(dispatchBlockEvent).toHaveBeenCalledWith('PASTE_BLOCKS', {
+      input: { kind: 'blocks', blocks },
       targetBlockId: null,
     })
   })
@@ -315,5 +321,115 @@ describe('convertAndInsert — precomputed body plumbing (#3277)', () => {
     const [bodyArg] = htmlBodyToOutline.mock.calls[0] as [unknown, unknown]
     expect(bodyArg).not.toEqual({ marker: 'precomputed-body' })
     expect(bodyArg).toBeTruthy()
+  })
+})
+
+// #5140 — with no usable HTML, plain text that opens with a list item is
+// pasted as blocks (`paste_blocks` parses it), not into the editor, where
+// ProseMirror would escape its markers into literal text. A lone task line is
+// `TaskPaste`'s.
+describe('handlePaste — a pasted outline goes to the block path (#5140)', () => {
+  const lowlight = createLowlight(common)
+  let editor: Editor | null = null
+
+  afterEach(() => {
+    editor?.destroy()
+    editor = null
+  })
+
+  async function build(content: object): Promise<Editor> {
+    const { HtmlPaste } = await loadModule()
+    return new Editor({
+      element: document.createElement('div'),
+      extensions: [
+        Document,
+        TaskParagraph,
+        Text,
+        CodeBlockLowlight.configure({ lowlight }),
+        HtmlPaste,
+      ],
+      content,
+    })
+  }
+
+  const EMPTY_PARAGRAPH = { type: 'doc', content: [{ type: 'paragraph' }] }
+
+  /** Fire the handlePaste chain with a text/plain payload (and optional HTML). */
+  function paste(ed: Editor, plain: string, html?: string): boolean {
+    const data = new DataTransfer()
+    data.setData('text/plain', plain)
+    if (html !== undefined) data.setData('text/html', html)
+    const event = new ClipboardEvent('paste', { clipboardData: data })
+    return (
+      ed.view.someProp('handlePaste', (fn) =>
+        fn(ed.view, event, ed.view.state.selection.content()),
+      ) ?? false
+    )
+  }
+
+  it.each([
+    ['our own copy of a parent and child', '- parent\n  - child\n'],
+    ['our own copy of one block', '- only one\n'],
+    ['a single bullet with trailing blank lines', '- only one\n\n  \n'],
+    ['a task with a child', '- [ ] buy milk\n  - oat'],
+    ['an indented first bullet', '  - a\n  - b'],
+    ['a bullet list with a blank line between items', '- a\n\n- b'],
+    ['an empty block with a child', '-\n  - child'],
+  ])('routes %s as text', async (_name, text) => {
+    mockFocusedBlockId = 'BLOCK_A'
+    editor = await build(EMPTY_PARAGRAPH)
+
+    expect(paste(editor, text)).toBe(true)
+
+    expect(dispatchBlockEvent).toHaveBeenCalledTimes(1)
+    expect(dispatchBlockEvent).toHaveBeenCalledWith('PASTE_BLOCKS', {
+      input: { kind: 'text', text },
+      targetBlockId: 'BLOCK_A',
+    })
+    // Nothing lands in the editor itself.
+    expect(editor.state.doc.textContent).toBe('')
+  })
+
+  it('routes an outline when the HTML beside it is unusable (a bare wrapper)', async () => {
+    editor = await build(EMPTY_PARAGRAPH)
+    const html = '<html><body><!--StartFragment--><!--EndFragment--></body></html>'
+
+    expect(paste(editor, '- a\n- b', html)).toBe(true)
+
+    expect(dispatchBlockEvent).toHaveBeenCalledWith('PASTE_BLOCKS', {
+      input: { kind: 'text', text: '- a\n- b' },
+      targetBlockId: null,
+    })
+  })
+
+  it.each([
+    ['a single task line (TaskPaste owns it)', '- [ ] buy milk'],
+    ['a single task line with trailing blank lines', '- [x] done\n\n'],
+    ['plain lines', 'first line\nsecond line'],
+    ['plain first line, then a bullet', 'intro\n- a\n- b'],
+    ['a dash with no space', '-a\n-b'],
+    ['a lone dash', '-'],
+    // The backend reads only `- ` as a bullet, so these would land as
+    // literal one-line blocks: they keep the default paste.
+    ['a `*` list', '* a\n* b'],
+    ['a `+` list', '+ a\n+ b'],
+    ['a numbered list', '1. one\n2. two'],
+  ])('leaves %s to the other paste handlers', async (_name, text) => {
+    editor = await build(EMPTY_PARAGRAPH)
+
+    expect(paste(editor, text)).toBe(false)
+
+    expect(dispatchBlockEvent).not.toHaveBeenCalled()
+  })
+
+  it('keeps an outline pasted inside a code block literal', async () => {
+    editor = await build({
+      type: 'doc',
+      content: [{ type: 'codeBlock', attrs: { language: 'js' } }],
+    })
+
+    expect(paste(editor, '- a\n- b')).toBe(false)
+
+    expect(dispatchBlockEvent).not.toHaveBeenCalled()
   })
 })

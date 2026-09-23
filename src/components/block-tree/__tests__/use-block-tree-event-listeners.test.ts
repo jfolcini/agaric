@@ -21,6 +21,7 @@ import { useBlockProperties } from '@/components/block-tree/use-block-properties
 import type { UseBlockTreeEventListenersOptions } from '@/components/block-tree/use-block-tree-event-listeners'
 import { useBlockTreeEventListeners } from '@/components/block-tree/use-block-tree-event-listeners'
 import type { RovingEditorHandle } from '@/editor/use-roving-editor'
+import type { PasteInput } from '@/lib/bindings'
 import { __resetBlockCommandBus } from '@/lib/block-command-bus'
 import { dispatchBlockEvent } from '@/lib/block-events'
 import { setListStyle } from '@/lib/list-style'
@@ -430,12 +431,14 @@ describe('useBlockTreeEventListeners', () => {
     })
   })
 
-  // #2033 — the editor's HTML-paste handler converts the clipboard HTML
-  // ASYNCHRONOUSLY, then routes multi-block content through the bus. It captures
-  // the focused block id at paste time as `detail.targetBlockId`; the receiver
-  // must reject the paste when focus has since moved, rather than dumping the
-  // content into whatever block is focused at resolution time.
-  describe('PASTE_HTML_BLOCKS captured-target guard (#2033)', () => {
+  // #2033 — the editor's paste handler converts clipboard HTML ASYNCHRONOUSLY,
+  // then routes multi-block content through the bus. It captures the focused
+  // block id at paste time as `detail.targetBlockId`; the receiver must reject
+  // the paste when focus has since moved, rather than dumping the content into
+  // whatever block is focused at resolution time.
+  describe('PASTE_BLOCKS captured-target guard (#2033)', () => {
+    const INPUT: PasteInput = { kind: 'blocks', blocks: [{ content: 'a', depth: 0 }] }
+
     function pasteOpts() {
       const pasteBlocks = vi.fn().mockResolvedValue(undefined)
       const blocksById = new Map([['BLOCK_1', { id: 'BLOCK_1', content: '' }]])
@@ -454,9 +457,9 @@ describe('useBlockTreeEventListeners', () => {
       const { opts, pasteBlocks } = pasteOpts()
       renderHook(() => useBlockTreeEventListeners(opts))
 
-      dispatchBlockEvent('PASTE_HTML_BLOCKS', { markdown: 'a\nb', targetBlockId: 'BLOCK_1' })
+      dispatchBlockEvent('PASTE_BLOCKS', { input: INPUT, targetBlockId: 'BLOCK_1' })
 
-      expect(pasteBlocks).toHaveBeenCalledWith('BLOCK_1', 'a\nb')
+      expect(pasteBlocks).toHaveBeenCalledWith('BLOCK_1', INPUT)
     })
 
     it('no-ops (does NOT paste into the wrong block) when focus moved since paste', () => {
@@ -464,7 +467,7 @@ describe('useBlockTreeEventListeners', () => {
       renderHook(() => useBlockTreeEventListeners(opts))
 
       // Paste was claimed while OTHER_BLOCK was focused, but focus is now BLOCK_1.
-      dispatchBlockEvent('PASTE_HTML_BLOCKS', { markdown: 'a\nb', targetBlockId: 'OTHER_BLOCK' })
+      dispatchBlockEvent('PASTE_BLOCKS', { input: INPUT, targetBlockId: 'OTHER_BLOCK' })
 
       expect(pasteBlocks).not.toHaveBeenCalled()
     })
@@ -473,9 +476,9 @@ describe('useBlockTreeEventListeners', () => {
       const { opts, pasteBlocks } = pasteOpts()
       renderHook(() => useBlockTreeEventListeners(opts))
 
-      dispatchBlockEvent('PASTE_HTML_BLOCKS', { markdown: 'a\nb', targetBlockId: null })
+      dispatchBlockEvent('PASTE_BLOCKS', { input: INPUT, targetBlockId: null })
 
-      expect(pasteBlocks).toHaveBeenCalledWith('BLOCK_1', 'a\nb')
+      expect(pasteBlocks).toHaveBeenCalledWith('BLOCK_1', INPUT)
     })
   })
 

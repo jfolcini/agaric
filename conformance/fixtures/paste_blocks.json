@@ -1,0 +1,433 @@
+{
+  "description": "#5140 Phase 3b — `paste_blocks` parses clipboard text (or takes HTML-paste blocks) and creates the blocks right after the anchor, in one transaction. Covers only what the tauri mock models: an outline whose bullet carries a continuation line and a nested child; two top-level bullets landing in order at the anchor's slot + 1 + k, ahead of the anchor's later siblings; text that does not open with a bullet, taken as one block per line nested by indentation; a `blocks` input whose two-line block stays ONE block and whose depth-1 entry nests under it; and the refusals. Names, task markers and property lines are left to the Rust tests, so no content here carries `[[`, `#` or `::`. The returns pin every created row in document order. Seed: S1 (Home) > S2 (the anchor), S3, S4 > S5 (purged by an op). Re-author `expected` / `expected_ops` via CONFORMANCE_UPDATE=1.",
+  "expected": {
+    "block_tags": [],
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Home",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B1",
+        "page_id": "B1",
+        "parent_id": null,
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "the anchor",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B2",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "plain lines land after this",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B3",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 5,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "blocks land after this",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B4",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 8,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "parent\na continuation line",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B6",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 4,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "child",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B7",
+        "page_id": "B1",
+        "parent_id": "B6",
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "one",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B8",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 2,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "two",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B9",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 3,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "first line",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B10",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 6,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "indented under it",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B11",
+        "page_id": "B1",
+        "parent_id": "B10",
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "second line",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B12",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 7,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "```js\nconst a = 1\nconst b = 2\n```",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B13",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 9,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "under the code",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B14",
+        "page_id": "B1",
+        "parent_id": "B13",
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      }
+    ],
+    "op_log_digest": {
+      "count": 11,
+      "ops": [
+        {
+          "op_type": "delete_block"
+        },
+        {
+          "op_type": "purge_block"
+        },
+        {
+          "op_type": "create_block"
+        },
+        {
+          "op_type": "create_block"
+        },
+        {
+          "op_type": "create_block"
+        },
+        {
+          "op_type": "create_block"
+        },
+        {
+          "op_type": "create_block"
+        },
+        {
+          "op_type": "create_block"
+        },
+        {
+          "op_type": "create_block"
+        },
+        {
+          "op_type": "create_block"
+        },
+        {
+          "op_type": "create_block"
+        }
+      ]
+    },
+    "page_links": [],
+    "properties": []
+  },
+  "expected_ops": [
+    {
+      "code": null,
+      "error": null,
+      "name": "paste_an_outline_with_a_continuation_line_and_a_child",
+      "returns": [
+        "B6#block_type=content#content=parent\na continuation line#parent_id=B1#position=2",
+        "B7#block_type=content#content=child#parent_id=B6#position=1"
+      ]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "paste_two_top_level_blocks_in_order_after_the_anchor",
+      "returns": [
+        "B8#block_type=content#content=one#parent_id=B1#position=2",
+        "B9#block_type=content#content=two#parent_id=B1#position=3"
+      ]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "paste_plain_lines_nested_by_indentation",
+      "returns": [
+        "B10#block_type=content#content=first line#parent_id=B1#position=6",
+        "B11#block_type=content#content=indented under it#parent_id=B10#position=1",
+        "B12#block_type=content#content=second line#parent_id=B1#position=7"
+      ]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "paste_blocks_input_keeps_a_multi_line_block_whole",
+      "returns": [
+        "B13#block_type=content#content=```js\nconst a = 1\nconst b = 2\n```#parent_id=B1#position=9",
+        "B14#block_type=content#content=under the code#parent_id=B13#position=1"
+      ]
+    },
+    {
+      "code": null,
+      "error": "not_found",
+      "name": "paste_after_an_unknown_anchor_is_not_found",
+      "returns": []
+    },
+    {
+      "code": null,
+      "error": "validation",
+      "name": "paste_after_a_page_is_refused",
+      "returns": []
+    },
+    {
+      "code": null,
+      "error": "validation",
+      "name": "paste_of_empty_text_is_refused",
+      "returns": []
+    }
+  ],
+  "name": "paste_blocks",
+  "ops": [
+    {
+      "args": {
+        "blockId": "S5"
+      },
+      "command": "delete_block"
+    },
+    {
+      "args": {
+        "blockId": "S5"
+      },
+      "command": "purge_block"
+    },
+    {
+      "args": {
+        "anchorBlockId": "S2",
+        "input": {
+          "kind": "text",
+          "text": "- parent\n  a continuation line\n  - child\n"
+        }
+      },
+      "command": "paste_blocks",
+      "comment": "An outline: the continuation line joins its bullet's content, the indented bullet nests under it, and the parent lands one slot after the anchor.",
+      "name": "paste_an_outline_with_a_continuation_line_and_a_child",
+      "via": "command"
+    },
+    {
+      "args": {
+        "anchorBlockId": "S2",
+        "input": {
+          "kind": "text",
+          "text": "- one\n- two"
+        }
+      },
+      "command": "paste_blocks",
+      "comment": "Two top-level bullets land in order right after the anchor, ahead of the parent the previous paste put there.",
+      "name": "paste_two_top_level_blocks_in_order_after_the_anchor",
+      "via": "command"
+    },
+    {
+      "args": {
+        "anchorBlockId": "S3",
+        "input": {
+          "kind": "text",
+          "text": "first line\n  indented under it\nsecond line"
+        }
+      },
+      "command": "paste_blocks",
+      "comment": "Text that does not open with a bullet is one block per non-blank line, at its indentation: the indented line nests under the one before it.",
+      "name": "paste_plain_lines_nested_by_indentation",
+      "via": "command"
+    },
+    {
+      "args": {
+        "anchorBlockId": "S4",
+        "input": {
+          "blocks": [
+            {
+              "content": "```js\nconst a = 1\nconst b = 2\n```",
+              "depth": 0
+            },
+            {
+              "content": "under the code",
+              "depth": 1
+            }
+          ],
+          "kind": "blocks"
+        }
+      },
+      "command": "paste_blocks",
+      "comment": "HTML-paste blocks are created verbatim: the two-line code block stays ONE block, and the depth-1 entry nests under it.",
+      "name": "paste_blocks_input_keeps_a_multi_line_block_whole",
+      "via": "command"
+    },
+    {
+      "args": {
+        "anchorBlockId": "S5",
+        "input": {
+          "kind": "text",
+          "text": "- x"
+        }
+      },
+      "command": "paste_blocks",
+      "comment": "S5 was purged above, so its id names no block. It is S4's only child, so the purge leaves no sibling group gapped.",
+      "expect_error": "not_found",
+      "name": "paste_after_an_unknown_anchor_is_not_found",
+      "via": "command"
+    },
+    {
+      "args": {
+        "anchorBlockId": "S1",
+        "input": {
+          "kind": "text",
+          "text": "- x"
+        }
+      },
+      "command": "paste_blocks",
+      "comment": "A page is not a content block, so nothing can be pasted after it as its sibling.",
+      "expect_error": "validation",
+      "name": "paste_after_a_page_is_refused",
+      "via": "command"
+    },
+    {
+      "args": {
+        "anchorBlockId": "S2",
+        "input": {
+          "kind": "text",
+          "text": ""
+        }
+      },
+      "command": "paste_blocks",
+      "comment": "Empty text has nothing to paste.",
+      "expect_error": "validation",
+      "name": "paste_of_empty_text_is_refused",
+      "via": "command"
+    }
+  ],
+  "seed": {
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Home",
+        "id": "S1",
+        "parent_id": null,
+        "position": 1
+      },
+      {
+        "block_type": "content",
+        "content": "the anchor",
+        "id": "S2",
+        "parent_id": "S1",
+        "position": 1
+      },
+      {
+        "block_type": "content",
+        "content": "plain lines land after this",
+        "id": "S3",
+        "parent_id": "S1",
+        "position": 2
+      },
+      {
+        "block_type": "content",
+        "content": "blocks land after this",
+        "id": "S4",
+        "parent_id": "S1",
+        "position": 3
+      },
+      {
+        "block_type": "content",
+        "content": "purged",
+        "id": "S5",
+        "parent_id": "S4",
+        "position": 1
+      }
+    ],
+    "properties": [],
+    "tags": []
+  }
+}

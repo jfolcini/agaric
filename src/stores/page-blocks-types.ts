@@ -7,7 +7,7 @@
  * import (core imports the reducers; the reducers reference the state type).
  */
 
-import type { BlockRow } from '@/lib/bindings'
+import type { BlockRow, PasteInput } from '@/lib/bindings'
 import type { FlatBlock } from '@/lib/tree-utils'
 
 export type { FlatBlock }
@@ -135,19 +135,14 @@ export interface PageBlockState {
   moveDown: (blockId: string) => Promise<boolean>
 
   /**
-   * #913 — paste an indented-markdown outline as a real block subtree after
-   * the `anchorBlockId`. The parsed top-level blocks land as SIBLINGS of the
-   * anchor (right after it), with nested lines materialized as descendants,
-   * preserving the outline's structure.
-   *
-   * If `markdown` parses to nothing recognizable (empty / whitespace-only), a
-   * single content block is created from the raw text instead of throwing —
-   * paste should never be a silent no-op when the clipboard held text. Routes
-   * through `createBlocksBatch` (one IPC per depth level, like
-   * `insertTemplateBlocks`) and then reloads the tree. Resolves the ids of all
-   * created blocks (empty array on failure or when the anchor vanished).
+   * #913 / #5140 — paste clipboard text or HTML-paste blocks right after
+   * `anchorBlockId`, as one `paste_blocks` command and one undo entry, then
+   * reload the tree. The backend parses the text, lands the top-level blocks
+   * as siblings after the anchor and nests the rest under them. Resolves the
+   * pasted content ids in document order (empty when the anchor is not on this
+   * page or the command failed, which toasts).
    */
-  pasteBlocks: (anchorBlockId: string, markdown: string) => Promise<string[]>
+  pasteBlocks: (anchorBlockId: string, input: PasteInput) => Promise<string[]>
 
   /**
    * #976 item 13 / #5140 — copy `blockId` and its content subtree right after

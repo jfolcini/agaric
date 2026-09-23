@@ -23,14 +23,17 @@
  *  - a11y: axe audit passes
  */
 
+import { invoke } from '@tauri-apps/api/core'
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { toast } from 'sonner'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
+import { stubInvoke } from '@/__tests__/helpers/invoke'
 import type { BlockActions } from '@/components/block-tree/use-block-actions'
 import { BlockContextMenu, type BlockContextMenuProps } from '@/components/editor/BlockContextMenu'
+import { registerActiveDraftFlush } from '@/lib/active-draft-flush'
 import { writeText } from '@/lib/clipboard'
 import { t } from '@/lib/i18n'
 import { resetAllShortcuts, setCustomShortcut } from '@/lib/keyboard-config'
@@ -899,7 +902,8 @@ describe('BlockContextMenu', () => {
 
   // ── Error paths ───────────────────────────────────────────────────
   //
-  // BlockContextMenu has no invoke calls.  The only async operation that can
+  // The menu's only IPC is the content-copy rows' `get_blocks_source` (its
+  // rejection path is in that suite, below). The other async operation that can
   // fail is computePosition from @floating-ui/dom, called in a useEffect with
   // .then() but no .catch().  When it fails, setComputedPos is never called
   // and the menu gracefully stays at the initial `position` prop.
@@ -1973,10 +1977,11 @@ describe('BlockContextMenu store-driven bulk mode (#1018)', () => {
 })
 
 // ── Content copy (block / subtree / selection) ───────────────────────────────
-// The three rows serialize real markdown through `serializeBlockSubtree`, so
-// they need the containing page's flat blocks — i.e. a `PageBlockContext`.
-// Without one the menu falls back to the empty page store and the rows are
-// absent (asserted below), which is why the rest of this suite is unaffected.
+// The three rows copy what the backend renders (`get_blocks_source`) for ids
+// on the containing page, so they need that page's flat blocks — i.e. a
+// `PageBlockContext`. Without one the menu falls back to the empty page store
+// and the rows are absent (asserted below), which is why the rest of this suite
+// is unaffected.
 describe('BlockContextMenu — copy content', () => {
   // ROOT
   //   └─ BLOCK_01 ("parent")
@@ -1989,6 +1994,7 @@ describe('BlockContextMenu — copy content', () => {
     { id: 'CHILD_2', content: 'child two', parent_id: 'BLOCK_01', position: 1, depth: 1 },
     { id: 'SIBLING', content: 'sibling', parent_id: null, position: 1, depth: 0 },
   ]
+  const SOURCE = '- parent\n'
 
   function renderWithBlocks(
     overrides: MenuOverrides = {},
@@ -2001,31 +2007,52 @@ describe('BlockContextMenu — copy content', () => {
     ))
   }
 
+  /** `get_blocks_source` answers `text`, recording each request in `log`. */
+  function stubSource(text: string | Error = SOURCE, log: unknown[] = []): unknown[] {
+    stubInvoke(vi.mocked(invoke), {
+      get_blocks_source: (args) => {
+        log.push(args)
+        return text instanceof Error ? Promise.reject(text) : text
+      },
+    })
+    return log
+  }
+
   it('omits the content-copy rows with no page store above the menu', () => {
     renderMenu()
     expect(screen.queryByText(t('contextMenu.copyBlockContent'))).not.toBeInTheDocument()
     expect(screen.queryByText(t('contextMenu.copySubtreeContent'))).not.toBeInTheDocument()
   })
 
-  it('copies ONLY the block\'s own markdown for "Copy block content"', async () => {
+  it('"Copy block content" flushes the draft, then copies the block WITHOUT its children', async () => {
     const user = userEvent.setup()
+    const log: unknown[] = []
+    const unregister = registerActiveDraftFlush('BLOCK_01', async () => {
+      log.push('flush')
+    })
+    stubSource(SOURCE, log)
     renderWithBlocks()
 
-    await user.click(screen.getByText(t('contextMenu.copyBlockContent')))
+    try {
+      await user.click(screen.getByText(t('contextMenu.copyBlockContent')))
+      await waitFor(() => expect(mockedWriteText).toHaveBeenCalledWith(SOURCE))
+    } finally {
+      unregister()
+    }
 
-    await waitFor(() => expect(mockedWriteText).toHaveBeenCalledWith('parent'))
+    expect(log).toEqual(['flush', { blockIds: ['BLOCK_01'], withChildren: false }])
     expect(toast.success).toHaveBeenCalledWith(t('contextMenu.blockContentCopied'))
   })
 
-  it('copies the block AND its descendants, indented, for "Copy subtree content"', async () => {
+  it('"Copy subtree content" copies the block WITH its children', async () => {
     const user = userEvent.setup()
+    const requests = stubSource()
     renderWithBlocks()
 
     await user.click(screen.getByText(t('contextMenu.copySubtreeContent')))
 
-    await waitFor(() =>
-      expect(mockedWriteText).toHaveBeenCalledWith('parent\n  child one\n  child two'),
-    )
+    await waitFor(() => expect(mockedWriteText).toHaveBeenCalledWith(SOURCE))
+    expect(requests).toEqual([{ blockIds: ['BLOCK_01'], withChildren: true }])
     expect(toast.success).toHaveBeenCalledWith(t('contextMenu.subtreeContentCopied'))
   })
 
@@ -2041,34 +2068,33 @@ describe('BlockContextMenu — copy content', () => {
     expect(screen.queryByText(t('contextMenu.copySelectionContent'))).not.toBeInTheDocument()
   })
 
-  it('copies every selected root for "Copy selection"', async () => {
+  it('"Copy selection" copies every selected block on this page WITH its children', async () => {
     const user = userEvent.setup()
-    renderWithBlocks({ selectedBlockIds: ['BLOCK_01', 'SIBLING'] })
+    const requests = stubSource()
+    renderWithBlocks({ selectedBlockIds: ['BLOCK_01', 'ELSEWHERE', 'SIBLING'] })
 
     await user.click(screen.getByText(t('contextMenu.copySelectionContent')))
 
-    // BLOCK_01 travels with its subtree; SIBLING follows in document order.
-    await waitFor(() =>
-      expect(mockedWriteText).toHaveBeenCalledWith('parent\n  child one\n  child two\nsibling'),
-    )
+    await waitFor(() => expect(mockedWriteText).toHaveBeenCalledWith(SOURCE))
+    // `ELSEWHERE` is not on this page, so it is not asked for.
+    expect(requests).toEqual([{ blockIds: ['BLOCK_01', 'SIBLING'], withChildren: true }])
     expect(toast.success).toHaveBeenCalledWith(t('contextMenu.selectionContentCopied'))
   })
 
-  it('de-duplicates a selection that nests a descendant under a selected ancestor', async () => {
+  it('"Copy selection" sends only the selection roots (a selected child travels with its parent)', async () => {
     const user = userEvent.setup()
-    // CHILD_1 is inside BLOCK_01: `computeSelectionRoots` collapses it, so the
-    // subtree is emitted exactly once rather than twice.
-    renderWithBlocks({ selectedBlockIds: ['BLOCK_01', 'CHILD_1'] })
+    const requests = stubSource()
+    renderWithBlocks({ selectedBlockIds: ['CHILD_1', 'BLOCK_01'] })
 
     await user.click(screen.getByText(t('contextMenu.copySelectionContent')))
 
-    await waitFor(() =>
-      expect(mockedWriteText).toHaveBeenCalledWith('parent\n  child one\n  child two'),
-    )
+    await waitFor(() => expect(mockedWriteText).toHaveBeenCalledWith(SOURCE))
+    expect(requests).toEqual([{ blockIds: ['BLOCK_01'], withChildren: true }])
   })
 
   it('toasts an error when the clipboard write rejects', async () => {
     const user = userEvent.setup()
+    stubSource()
     mockedWriteText.mockRejectedValueOnce(new Error('clipboard unavailable'))
     renderWithBlocks()
 
@@ -2077,5 +2103,44 @@ describe('BlockContextMenu — copy content', () => {
     await waitFor(() =>
       expect(toast.error).toHaveBeenCalledWith(t('contextMenu.copyContentFailed')),
     )
+    expect(toast.success).not.toHaveBeenCalled()
+  })
+
+  it('toasts and logs, writing nothing, when the backend render rejects', async () => {
+    const user = userEvent.setup()
+    const errorSpy = vi.spyOn(logger, 'error').mockImplementation(() => {})
+    const failure = new Error('pool closed')
+    stubSource(failure)
+    renderWithBlocks()
+
+    try {
+      await user.click(screen.getByText(t('contextMenu.copySubtreeContent')))
+
+      await waitFor(() =>
+        expect(toast.error).toHaveBeenCalledWith(t('contextMenu.copyContentFailed')),
+      )
+      expect(errorSpy).toHaveBeenCalledWith(
+        'BlockContextMenu',
+        'Failed to copy content to clipboard',
+        { blockId: 'BLOCK_01' },
+        failure,
+      )
+    } finally {
+      errorSpy.mockRestore()
+    }
+    expect(mockedWriteText).not.toHaveBeenCalled()
+  })
+
+  it('reports an empty render as a failure instead of clearing the clipboard', async () => {
+    const user = userEvent.setup()
+    stubSource('')
+    renderWithBlocks()
+
+    await user.click(screen.getByText(t('contextMenu.copyBlockContent')))
+
+    await waitFor(() =>
+      expect(toast.error).toHaveBeenCalledWith(t('contextMenu.copyContentFailed')),
+    )
+    expect(mockedWriteText).not.toHaveBeenCalled()
   })
 })

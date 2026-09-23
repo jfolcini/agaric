@@ -10,6 +10,7 @@
  */
 
 import { base64UrlToUtf8, isBase64UrlNoPad, utf8ToBase64Url } from '@/lib/base64url'
+import type { PasteInput } from '@/lib/bindings'
 import { INLINE_PROPERTY_RESERVED_KEYS } from '@/lib/inline-property-parse'
 import { LIST_STYLE_KEY } from '@/lib/list-style'
 import { compareUtf8Bytes } from '@/lib/sqlite-collation'
@@ -596,6 +597,121 @@ function duplicateRow(
   return row
 }
 
+// ---------------------------------------------------------------------------
+// #5140 Phase 3b — `paste_blocks`
+// ---------------------------------------------------------------------------
+
+interface PlannedPaste {
+  content: string
+  depth: number
+}
+
+/** `import::is_bullet_line`: `- text`, or the bare `-` of an empty bullet. */
+function isBulletLine(trimmed: string): boolean {
+  return trimmed === '-' || trimmed.startsWith('- ')
+}
+
+/** Indentation depth, two columns per level and a tab counting as one level. */
+function indentDepth(line: string): number {
+  let columns = 0
+  for (const ch of line) {
+    if (ch === ' ') columns += 1
+    else if (ch === '\t') columns += 2
+    else break
+  }
+  return Math.floor(columns / 2)
+}
+
+/**
+ * Remove up to `width` columns of leading spaces and tabs, a tab counting as
+ * two, as the backend's `dedent` does.
+ */
+function dedent(line: string, width: number): string {
+  let columns = 0
+  let cut = 0
+  for (const ch of line) {
+    if (ch === ' ') columns += 1
+    else if (ch === '\t') columns += 2
+    else break
+    if (columns > width) break
+    cut += 1
+  }
+  return line.slice(cut)
+}
+
+/**
+ * DELIBERATE APPROXIMATION of `import::parse_pasted_text`. Text whose first
+ * non-blank line is a bullet is an outline: each bullet starts a block at its
+ * indentation, and the lines under it — interior blank lines included — join
+ * its content with the bullet's own indentation removed. Any other text is one
+ * block per non-blank line, at its indentation. Code fences, list markers,
+ * task checkboxes, property lines, escapes and anchors are not modelled.
+ */
+function parsePastedText(text: string): PlannedPaste[] {
+  const lines = text.replace(/\r\n?/g, '\n').split('\n')
+  const firstLine = lines.find((line) => line.trim() !== '')
+  if (firstLine === undefined) return []
+  const out: PlannedPaste[] = []
+  if (!isBulletLine(firstLine.trimStart())) {
+    for (const line of lines) {
+      if (line.trim() === '') continue
+      out.push({ content: line.trimStart(), depth: indentDepth(line) })
+    }
+    return out
+  }
+  let blankLines = 0
+  for (const line of lines) {
+    const trimmed = line.trimStart()
+    if (trimmed === '') {
+      blankLines += 1
+      continue
+    }
+    const last = out.at(-1)
+    if (isBulletLine(trimmed)) {
+      out.push({ content: trimmed.slice(2), depth: indentDepth(line) })
+    } else if (last) {
+      last.content += `${'\n'.repeat(blankLines + 1)}${dedent(line, (last.depth + 1) * 2)}`
+    }
+    blankLines = 0
+  }
+  return out
+}
+
+/** Create one pasted content row under `parentId` at the live `slot`. */
+function pasteRow(
+  content: string,
+  parentId: string | null,
+  pageId: string | null,
+  slot: number,
+  opRefs: OpRefs,
+): Record<string, unknown> {
+  const id = fakeId()
+  const row: Record<string, unknown> = {
+    id,
+    block_type: 'content',
+    content,
+    parent_id: parentId,
+    page_id: pageId,
+    position: 0,
+    deleted_at: null,
+    todo_state: null,
+    priority: null,
+    due_date: null,
+    scheduled_date: null,
+  }
+  blocks.set(id, row)
+  insertAtSlotAndRenumber(parentId, id, slot)
+  const op = pushOp('create_block', {
+    block_id: id,
+    content,
+    parent_id: parentId,
+    block_type: 'content',
+    position: row['position'],
+  })
+  opRefs.push({ device_id: op.device_id, seq: op.seq })
+  return row
+}
+
 export const blocksHandlers = {
   // #3870 — mirrors `list_blocks_inner`'s DISPATCH CHAIN, not a conjunction of
   // filters: exactly one branch runs, and each brings its own `ORDER BY` and
@@ -998,6 +1114,51 @@ export const blocksHandlers = {
       )
       copyIdOf.set(source['id'] as string, copy['id'] as string)
       out.push(copy)
+    }
+    return { blocks: out, op_refs: opRefs }
+  },
+
+  // #5140 Phase 3b — paste clipboard text or HTML-paste blocks right after the
+  // anchor: the k-th top-level block at the anchor's slot + 1 + k, deeper ones
+  // under the block the outline nests them in. Returns the created rows in
+  // document order. The backend also resolves `[[Title]]` / `#tag` names
+  // (reporting the pages and tags it creates ahead of the content rows), reads
+  // task markers and property lines, and refuses an over-deep or oversized
+  // paste; the mock models none of that, so tests must not rely on it for them.
+  paste_blocks: (args) => {
+    const a = args as Record<string, unknown>
+    const anchorId = a['anchorBlockId'] as string
+    const input = a['input'] as PasteInput
+    const anchor = blocks.get(anchorId)
+    if (!anchor) throw notFoundRejection(`block '${anchorId}' does not exist`)
+    if (anchor['deleted_at'] != null) {
+      throw validationRejection(`block '${anchorId}' has been soft-deleted`)
+    }
+    if (anchor['block_type'] !== 'content') {
+      throw validationRejection(
+        `can only paste after a content block, not a '${String(anchor['block_type'])}'`,
+      )
+    }
+    const planned = input.kind === 'text' ? parsePastedText(input.text) : input.blocks
+    if (planned.length === 0) throw validationRejection('nothing to paste')
+    const parentId = (anchor['parent_id'] as string | null) ?? null
+    const pageId = (anchor['page_id'] as string | null) ?? null
+    const liveSiblings = [...blocks.values()]
+      .filter((b) => (b['parent_id'] ?? null) === parentId && b['deleted_at'] == null)
+      .toSorted(comparePositionThenId)
+    const firstSlot = liveSiblings.findIndex((b) => b['id'] === anchorId) + 1
+    const opRefs: OpRefs = []
+    const out: Record<string, unknown>[] = []
+    const open: Array<{ depth: number; id: string }> = []
+    let topLevel = 0
+    for (const block of planned) {
+      while ((open.at(-1)?.depth ?? -1) >= block.depth) open.pop()
+      const parent = open.at(-1)
+      const row = parent
+        ? pasteRow(block.content, parent.id, pageId, Number.MAX_SAFE_INTEGER, opRefs)
+        : pasteRow(block.content, parentId, pageId, firstSlot + topLevel++, opRefs)
+      open.push({ depth: block.depth, id: row['id'] as string })
+      out.push(row)
     }
     return { blocks: out, op_refs: opRefs }
   },
@@ -1813,6 +1974,7 @@ export const blocksHandlers = {
   | 'create_block'
   | 'create_blocks_batch'
   | 'duplicate_block'
+  | 'paste_blocks'
   | 'edit_block'
   | 'delete_block'
   | 'delete_blocks_by_ids'

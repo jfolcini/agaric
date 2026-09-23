@@ -17,7 +17,9 @@ import { useEffect } from 'react'
 import type { StoreApi } from 'zustand'
 
 import type { DatePickerMode } from '@/components/block-tree/use-block-date-picker'
-import { serializeBlockSubtree } from '@/lib/block-clipboard'
+import { flushActiveDraft } from '@/lib/active-draft-flush'
+import { unwrap } from '@/lib/app-error'
+import { commands } from '@/lib/bindings'
 import { readText, writeText } from '@/lib/clipboard'
 import { t } from '@/lib/i18n'
 import { matchesShortcutBinding } from '@/lib/keyboard-config'
@@ -33,8 +35,6 @@ import type { MountedIds, SelectAllScopeIds } from '@/lib/zoom-scope'
 import { useBlockStore } from '@/stores/blocks'
 import type { PageBlockState } from '@/stores/page-blocks'
 import { addOwnedBlockListener, storeOwnsBlock } from '@/stores/page-blocks'
-import { keyFor, useResolveStore } from '@/stores/resolve'
-import { useSpaceStore } from '@/stores/space'
 
 export interface UseBlockTreeKeyboardShortcutsOptions {
   focusedBlockId: string | null
@@ -103,6 +103,19 @@ export interface UseBlockTreeKeyboardShortcutsOptions {
   zoomToRoot: () => void
   /** Zoom into the given block (D1, #217 — keyboard zoom-in). */
   zoomIn: (blockId: string) => void
+}
+
+/**
+ * Put `ids` and their subtrees on the system clipboard as the backend renders
+ * them. The backend reads committed rows, so the focused block's pending edit
+ * is flushed first. Resolves `false` when there was nothing to copy.
+ */
+async function copySelection(ids: string[]): Promise<boolean> {
+  await flushActiveDraft()
+  const text = unwrap(await commands.getBlocksSource(ids, true))
+  if (text.length === 0) return false
+  await writeText(text)
+  return true
 }
 
 export function useBlockTreeKeyboardShortcuts(options: UseBlockTreeKeyboardShortcutsOptions): void {
@@ -262,8 +275,9 @@ export function useBlockTreeKeyboardShortcuts(options: UseBlockTreeKeyboardShort
   }, [focusedBlockId, pageStore, selectedBlockIds, toggleSelected])
 
   // ── Keyboard shortcuts: block cut / copy / paste (#913) ─────────────
-  // Copy/cut serialize the SELECTION ROOTS (+ subtrees) to indented markdown
-  // on the system clipboard; paste reverses it into a real block subtree after
+  // Copy/cut put the SELECTION ROOTS (+ subtrees) on the system clipboard as
+  // the backend renders them (`get_blocks_source`); paste hands the clipboard
+  // text to `paste_blocks`, which parses it back into a block subtree after
   // the anchor block. These operate on BLOCK SELECTIONS only, so they must NOT
   // fire (or `preventDefault`) when a roving editor is focused — the browser's
   // native text copy/cut/paste owns those keystrokes inside an editor.
@@ -299,40 +313,24 @@ export function useBlockTreeKeyboardShortcuts(options: UseBlockTreeKeyboardShort
         // through without claiming the chord.
         const ownedSelected = selectedBlockIds.filter((id) => state.blocksById.has(id))
         if (ownedSelected.length === 0) return
-        // #1440 — render internal references human-readably for the SYSTEM
-        // clipboard (`[[Page Name]]` / `#tag` / `((Name))`), reusing the same
-        // title/tag source page-export uses: the global resolve cache
-        // (`useResolveStore`, populated on boot + as pages/tags load). We read
-        // the cache directly (composed against the active space, mirroring
-        // `useBlockResolve.resolveBlockTitle`) and return `undefined` on a miss
-        // so a dangling/uncached ULID falls back to its opaque token instead of
-        // the store's `[[xxxx…]]` placeholder.
-        const resolveCache = useResolveStore.getState().cache
-        const spaceId = useSpaceStore.getState().currentSpaceId
-        const markdown = serializeBlockSubtree(
-          state.blocks,
-          ownedSelected,
-          (ulid) => resolveCache.get(keyFor(spaceId, ulid))?.title,
-        )
-        if (markdown.length === 0) return
         e.preventDefault()
-        // Cut removal is gated on the clipboard write RESOLVING: deleting the
-        // blocks before the content reached the clipboard would be silent
-        // destruction (and a later paste would insert stale clipboard data).
-        void writeText(markdown)
-          .then(() => {
-            if (!isCut) return
-            // Remove only the selection ROOTS — `remove()` cascades each
-            // subtree, so a nested selected descendant travels with its
-            // ancestor and must NOT be deleted independently (avoids a
-            // redundant IPC on an already-cascaded id). `clearSelected`
-            // resets the now-stale set.
-            const roots = computeSelectionRoots(state.blocks, ownedSelected)
+        // Only the selection ROOTS: a nested selected descendant travels with
+        // its ancestor, both on the clipboard (`with_children`) and through
+        // cut's cascading `remove()`. Sending every selected id would also trip
+        // the backend's id-list cap on a large Select All.
+        const roots = computeSelectionRoots(state.blocks, ownedSelected)
+        void copySelection(roots)
+          .then((copied) => {
+            // Cut removal is gated on the clipboard write RESOLVING: deleting
+            // the blocks before the content reached the clipboard would be
+            // silent destruction (and a later paste would insert stale data).
+            if (!copied || !isCut) return
+            // `clearSelected` resets the now-stale set.
             for (const id of roots) void state.remove(id)
             clearSelected()
           })
           .catch((err) => {
-            logger.warn('block-clipboard', 'copy writeText failed', undefined, err)
+            logger.warn('block-clipboard', 'copy failed', undefined, err)
             notify.error(t('palette.copyFailed'))
           })
         return
@@ -347,7 +345,7 @@ export function useBlockTreeKeyboardShortcuts(options: UseBlockTreeKeyboardShort
       void readText()
         .then((text) => {
           if (text.length === 0) return
-          return state.pasteBlocks(anchorId, text)
+          return state.pasteBlocks(anchorId, { kind: 'text', text })
         })
         .catch((err) => {
           // `pasteBlocks` toasts its own failures; this catch fires only when

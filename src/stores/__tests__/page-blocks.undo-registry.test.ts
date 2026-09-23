@@ -389,34 +389,21 @@ describe('PageBlockStore', () => {
         expect(mockOnNewAction).toHaveBeenCalledWith('PAGE_1', REFS)
       })
 
-      it('pasteBlocks (batch create) forwards the create_blocks_batch response op_refs', async () => {
+      it('pasteBlocks forwards the paste_blocks response op_refs, with no coalesce key', async () => {
         const anchor = makeBlock({ id: 'A', parent_id: 'PAGE_1', position: 0 })
         store.setState({ blocks: [anchor] })
         stubInvoke(mockedInvoke, {
-          create_blocks_batch: (args) => {
-            const specs = ((args as { specs?: unknown }).specs ?? []) as Array<{
-              content: string
-              parentId: string | null
-            }>
-            return {
-              op_refs: REFS,
-              blocks: specs.map((s, i) =>
-                makeBlockRow({
-                  id: `NEW${i}`,
-                  content: s.content,
-                  parent_id: s.parentId,
-                  position: null,
-                }),
-              ),
-            }
-          },
+          paste_blocks: () => ({
+            op_refs: REFS,
+            blocks: [makeBlockRow({ id: 'NEW0', content: 'one', parent_id: 'PAGE_1' })],
+          }),
           load_page_subtree: () => subtreeResp([anchor]),
         })
 
-        await store.getState().pasteBlocks('A', 'one\ntwo')
+        await store.getState().pasteBlocks('A', { kind: 'text', text: 'one' })
 
         expect(mockOnNewAction).toHaveBeenCalledTimes(1)
-        expect(mockOnNewAction).toHaveBeenCalledWith('PAGE_1', REFS, 'paste:CID_1')
+        expect(mockOnNewAction).toHaveBeenCalledWith('PAGE_1', REFS)
       })
     })
   })

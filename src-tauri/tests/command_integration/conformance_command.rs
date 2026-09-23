@@ -183,6 +183,14 @@ const RETURN_SHAPE: &[(&str, &str, &[&str], &[&str])] = &[
         &["block_type", "content", "parent_id", "position"],
         &[],
     ),
+    // #5140 — the same row list again: the pages and tags the paste created,
+    // then the pasted blocks in document order.
+    (
+        "paste_blocks",
+        "id",
+        &["block_type", "content", "parent_id", "position"],
+        &[],
+    ),
     // #5057 — five writers whose table is OUTSIDE the snapshot's five arrays
     // (`peer_refs`, `app_settings`, `property_definitions`), so what they wrote
     // is pinned by the read that follows them in the same fixture rather than
@@ -686,6 +694,25 @@ pub(super) async fn apply_op_via_command(
             to_json(create_blocks_batch_inner(pool, DEV, mat, block_specs()).await)
         }
         "duplicate_block" => to_json(duplicate_block_inner(pool, DEV, mat, block_id()).await),
+        // `input` is the caller's own text or blocks, so it takes no label
+        // expansion; only the anchor is a label.
+        "paste_blocks" => to_json(
+            paste_blocks_inner(
+                pool,
+                DEV,
+                mat,
+                BlockId::from(
+                    arg_label_id("anchorBlockId")
+                        .expect("anchorBlockId")
+                        .as_str(),
+                ),
+                serde_json::from_value(arg("input").cloned().unwrap_or_else(|| {
+                    panic!("conformance op '{command}' is missing arg 'input'")
+                }))
+                .unwrap_or_else(|e| panic!("conformance op '{command}': input: {e}")),
+            )
+            .await,
+        ),
         "move_blocks_batch" => to_json(
             move_blocks_batch_inner(
                 pool,
@@ -1044,7 +1071,7 @@ mod tests {
     /// vice versa, and the count is the one this module claims — so a
     /// mutating command cannot join one table without the other, and cannot
     /// join at all without this number moving.
-    const MUTATING_ARM_COUNT: usize = 40;
+    const MUTATING_ARM_COUNT: usize = 41;
 
     #[test]
     fn the_dispatcher_and_the_return_shape_table_name_the_same_commands() {

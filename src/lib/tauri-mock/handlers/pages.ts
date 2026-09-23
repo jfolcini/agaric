@@ -695,6 +695,50 @@ export const pagesHandlers = {
     return md
   },
 
+  // DELIBERATE APPROXIMATION of `get_blocks_source` (#5140 Phase 3b), the
+  // clipboard copy: each root as `- first line`, its further lines indented
+  // under the bullet, and with `withChildren` its live content descendants
+  // two columns deeper per level. No anchors, list markers, task checkboxes,
+  // property lines or humanised names — the Rust tests own that grammar, as
+  // for `get_page_source` above. Like the backend, the page is the first live
+  // content id's, other ids are skipped, and an id under a selected ancestor
+  // travels with that ancestor instead of being a root of its own.
+  get_blocks_source: (args) => {
+    const a = args as Record<string, unknown>
+    const ids = (a['blockIds'] as string[] | undefined) ?? []
+    const withChildren = a['withChildren'] === true
+    const liveContent = (id: string): Record<string, unknown> | null => {
+      const row = blocks.get(id)
+      return row && !row['deleted_at'] && row['block_type'] === 'content' ? row : null
+    }
+    const first = ids.map(liveContent).find((row) => row != null)
+    if (!first) return ''
+    const pageId = first['page_id']
+    const selected = new Set(ids.filter((id) => liveContent(id)?.['page_id'] === pageId))
+    const liveChildren = (parentId: string): Record<string, unknown>[] =>
+      [...blocks.values()]
+        .filter((b) => b['parent_id'] === parentId && !b['deleted_at'])
+        .toSorted(comparePositionThenId)
+    let md = ''
+    const renderBlock = (row: Record<string, unknown>, depth: number): void => {
+      const [head, ...rest] = ((row['content'] as string | null) ?? '').split('\n')
+      md += `${'  '.repeat(depth)}- ${head}\n`
+      for (const line of rest) md += line === '' ? '\n' : `${'  '.repeat(depth + 1)}${line}\n`
+      if (!withChildren) return
+      for (const child of liveChildren(row['id'] as string)) {
+        if (child['block_type'] === 'content') renderBlock(child, depth + 1)
+      }
+    }
+    const findRoots = (parentId: string): void => {
+      for (const child of liveChildren(parentId)) {
+        if (selected.has(child['id'] as string)) renderBlock(child, 0)
+        else findRoots(child['id'] as string)
+      }
+    }
+    findRoots(pageId as string)
+    return md
+  },
+
   // ---------------------------------------------------------------------------
   // Markdown import (#660)
   // ---------------------------------------------------------------------------
@@ -953,6 +997,7 @@ export const pagesHandlers = {
   | 'list_page_aliases_by_prefix'
   | 'export_page_markdown'
   | 'get_page_source'
+  | 'get_blocks_source'
   | 'import_markdown'
   | 'import_bibliography'
 >

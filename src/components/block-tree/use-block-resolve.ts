@@ -92,20 +92,20 @@ export interface UseBlockResolveReturn {
    *     reached five of the sites below and the binding the other four.
    *     That wrapper is gone; every site now calls
    *     `commands.createPageInSpace` directly, so a single reference query
-   *     on the binding is complete. There are NINE creation sites outside
-   *     `onCreatePage`: eight do not register, one does
+   *     on the binding is complete. There are EIGHT creation sites outside
+   *     `onCreatePage`: seven do not register, one does
    *     (`src/components/block-tree/use-block-date-picker.ts:180`, the #4319 site above).
-   *  2. THE EIGHT CANNOT REGISTER — they did not forget to.
+   *  2. THE SEVEN CANNOT REGISTER — they did not forget to.
    *     `useBlockResolve()` has exactly one caller
-   *     (`src/components/editor/BlockTree.tsx:498`), and every one of the eight sits above or
+   *     (`src/components/editor/BlockTree.tsx:498`), and every one of the seven sits above or
    *     beside `BlockTree`: ancestors (`useJournalBlockCreation` via
    *     `JournalPage`/`StreamView`, `App.tsx`, `useAppKeyboardShortcuts`),
    *     sibling subtrees with no BlockTree at all (`usePageCreation` in
    *     PageBrowser, `TemplatesView`), or module-level functions with no
-   *     hook context by construction (`palette-commands.ts`,
-   *     `WelcomeModal`'s `ensureSamplePage`, and `src/lib/paste-internalize.ts:110`
-   *     — the closest analogue to `onCreatePage` in the codebase, and the
-   *     one every prior enumeration missed). The journal also mounts one
+   *     hook context by construction (`palette-commands.ts` and
+   *     `WelcomeModal`'s `ensureSamplePage`). A paste's `[[Name]]` now creates
+   *     its page in the backend's `paste_blocks` (#5140), which the paste
+   *     reducer announces on the name-change bus. The journal also mounts one
    *     BlockTree PER DAY PANEL, so several `pagesListRef` caches coexist:
    *     there is no single cache to register into.
    *  3. THE IMPACT CEILING, which is NOT uniform across the two readers.

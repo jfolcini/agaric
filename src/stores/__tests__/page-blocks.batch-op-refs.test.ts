@@ -1,16 +1,16 @@
-// #5140 — the two batch block commands carry `op_refs` like every other
-// mutating command, and the store seeds the REAL undo store with them. The
-// sibling suites mock `@/stores/undo`, so this one reads the stack back.
+// #5140 — the batch move command carries `op_refs` like every other mutating
+// command, and the store seeds the REAL undo store with them. The sibling
+// suites mock `@/stores/undo`, so this one reads the stack back.
 import { invoke } from '@tauri-apps/api/core'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { StoreApi } from 'zustand'
 
-import { makeBlock, makeBlockRow } from '@/__tests__/fixtures'
+import { makeBlock } from '@/__tests__/fixtures'
 import { type CommandReturns, strictInvokeFallback, stubInvoke } from '@/__tests__/helpers/invoke'
 import type { BlockRow, OpRef } from '@/lib/bindings'
 import { createPageBlockStore, type PageBlockState } from '@/stores/page-blocks'
 import { useSpaceStore } from '@/stores/space'
-import { UNDO_GROUP_WINDOW_MS, useUndoStore } from '@/stores/undo'
+import { useUndoStore } from '@/stores/undo'
 
 const mockedInvoke = vi.mocked(invoke)
 
@@ -20,7 +20,7 @@ function subtreeResp(blocks: BlockRow[]): CommandReturns['load_page_subtree'] {
 
 let store: StoreApi<PageBlockState>
 
-describe('#5140 batch commands seed the undo stack with their op_refs', () => {
+describe('#5140 the batch move seeds the undo stack with its op_refs', () => {
   beforeEach(() => {
     store = createPageBlockStore('PAGE_1')
     useSpaceStore.setState({ currentSpaceId: 'SPACE_TEST' })
@@ -61,89 +61,5 @@ describe('#5140 batch commands seed the undo stack with their op_refs', () => {
     const page = useUndoStore.getState().pages.get('PAGE_1')
     expect(page?.undoStack).toHaveLength(1)
     expect(page?.undoStack[0]?.refs).toEqual(refs)
-  })
-
-  /** Every batch lands past the undo store's grouping window. */
-  function stubSlowPasteBatches(anchor: BlockRow) {
-    let clock = Date.now()
-    vi.spyOn(Date, 'now').mockImplementation(() => clock)
-    let seq = 0
-    let created = 0
-    stubInvoke(mockedInvoke, {
-      create_blocks_batch: (args) => {
-        clock += UNDO_GROUP_WINDOW_MS + 1
-        const specs = ((args as { specs?: unknown }).specs ?? []) as Array<{
-          content: string
-          parentId: string | null
-        }>
-        return {
-          op_refs: specs.map(() => ({ device_id: 'dev1', seq: ++seq })),
-          blocks: specs.map((s) =>
-            makeBlockRow({
-              id: `NEW${created++}`,
-              content: s.content,
-              parent_id: s.parentId,
-              position: null,
-            }),
-          ),
-        }
-      },
-      load_page_subtree: () => subtreeResp([anchor]),
-    })
-  }
-
-  it('pasteBlocks: ONE undo entry carries the refs of every depth level, in append order', async () => {
-    const anchor = makeBlock({ id: 'A', parent_id: 'PAGE_1', position: 0 })
-    store.setState({ blocks: [anchor] })
-    stubSlowPasteBatches(anchor)
-
-    // Two depth levels → two batches: `parent` + `two` at level 0, `child` at level 1.
-    await store.getState().pasteBlocks('A', 'parent\n  child\ntwo')
-
-    const page = useUndoStore.getState().pages.get('PAGE_1')
-    expect(page?.undoStack).toHaveLength(1)
-    expect(page?.undoStack[0]?.refs).toEqual([
-      { device_id: 'dev1', seq: 1 },
-      { device_id: 'dev1', seq: 2 },
-      { device_id: 'dev1', seq: 3 },
-    ])
-  })
-
-  it('pasteBlocks: two pastes stay two undo entries', async () => {
-    const anchor = makeBlock({ id: 'A', parent_id: 'PAGE_1', position: 0 })
-    store.setState({ blocks: [anchor] })
-    stubSlowPasteBatches(anchor)
-
-    await store.getState().pasteBlocks('A', 'one')
-    await store.getState().pasteBlocks('A', 'two')
-
-    const page = useUndoStore.getState().pages.get('PAGE_1')
-    expect(page?.undoStack.map((entry) => entry.refs)).toEqual([
-      [{ device_id: 'dev1', seq: 2 }],
-      [{ device_id: 'dev1', seq: 1 }],
-    ])
-  })
-
-  it('pasteBlocks: a later level failing leaves the earlier level undoable', async () => {
-    const anchor = makeBlock({ id: 'A', parent_id: 'PAGE_1', position: 0 })
-    store.setState({ blocks: [anchor] })
-    let calls = 0
-    stubInvoke(mockedInvoke, {
-      create_blocks_batch: () => {
-        calls += 1
-        if (calls > 1) throw new Error('level 1 failed')
-        return {
-          op_refs: [{ device_id: 'dev1', seq: 1 }],
-          blocks: [makeBlockRow({ id: 'NEW0', content: 'parent', parent_id: 'PAGE_1' })],
-        }
-      },
-      load_page_subtree: () => subtreeResp([anchor]),
-    })
-
-    await store.getState().pasteBlocks('A', 'parent\n  child')
-
-    const page = useUndoStore.getState().pages.get('PAGE_1')
-    expect(page?.undoStack).toHaveLength(1)
-    expect(page?.undoStack[0]?.refs).toEqual([{ device_id: 'dev1', seq: 1 }])
   })
 })

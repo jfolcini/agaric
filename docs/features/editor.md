@@ -105,3 +105,4 @@ See [pickers-and-slash.md](pickers-and-slash.md) for the trigger characters and 
 - **Markdown shortcuts don't trigger after the cursor moves to a non-start position.** `#` at the start of an empty block becomes a heading; mid-paragraph it stays literal.
 - **`Ctrl+Z` inside the editor undoes typing.** `Ctrl+Z` outside the editor (i.e. when you've clicked away) undoes the previous page-level operation (block create / delete / move / etc.). The two undo stacks are intentionally separate.
 - **Paste of a URL only creates a link when text is selected.** Otherwise it inserts the URL as plain text. Use the LinkEditPopover for a no-text link.
+- **Pasting an outline into a block pastes blocks.** Text whose first line is a `-` bullet followed by a space, such as copied blocks, lands as blocks after the one you are in, keeping its nesting. A single task line, and any other text, pastes into the block as before.

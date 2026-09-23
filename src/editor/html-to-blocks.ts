@@ -3,10 +3,8 @@
  *
  * Pasting from a web page (or another rich editor) puts an HTML fragment on the
  * clipboard under `text/html`. This module walks that fragment and emits the
- * INDENTED-MARKDOWN outline our block store already understands
- * (`parseIndentedMarkdown` → `pasteBlocks`, `src/lib/block-clipboard.ts`): one
- * block per block-level element, children indented {@link INDENT_UNIT} spaces
- * per level.
+ * blocks `pasteBlocks` creates (`{ kind: 'blocks' }`, #5140): one block per
+ * block-level element, each with its nesting depth.
  *
  * The walk is deliberately a DOM walk rather than a single `turndown(html)`
  * call: Turndown emits a multi-line markdown document (lists on their own
@@ -14,8 +12,8 @@
  * SINGLE-LINE markdown — one block per heading / paragraph / list item. So we
  * split the document into blocks ourselves and run Turndown only on each
  * element's INLINE content (bold/italic/code/strike/links). The block STRUCTURE
- * (which line, how deeply nested) is expressed by the outline indentation, which
- * `pasteBlocks` turns into real parent/child blocks.
+ * (which line, how deeply nested) is each block's depth, which `pasteBlocks`
+ * turns into real parent/child blocks.
  *
  * MVP scope (#1439): headings (`h1`–`h6`), paragraphs, lists (`ul`/`ol`, incl.
  * nesting), links, and the `bold`/`italic`/`code`/`strike` inline marks.
@@ -26,13 +24,10 @@
  * → `>`-prefixed lines (the parser's callout/blockquote construct); a `<ul>`
  * whose items hold `<input type=checkbox>` → `- [ ]` / `- [x]` task blocks.
  *
- * Tables and code fences are MULTI-LINE markdown but must each stay ONE block
- * (the parser builds a single `table` / `codeBlock` node from the multi-line
- * string). The line-oriented {@link outlineToIndentedMarkdown} therefore encodes
- * a block's internal newlines as a {@link NEWLINE_SENTINEL} so the outline keeps
- * its one-line-per-block invariant; `parseIndentedMarkdown` decodes the sentinel
- * back to `\n` per block (a no-op for single-line blocks, so the copy outline
- * path is unaffected). Anything still not recognised contributes its text only.
+ * Tables and code fences are MULTI-LINE markdown but each stays ONE block (the
+ * parser builds a single `table` / `codeBlock` node from the multi-line
+ * string); a block's content travels verbatim, newlines included. Anything
+ * still not recognised contributes its text only.
  *
  * Security: the HTML is UNTRUSTED and there is no sanitizer in the paste path,
  * so the Turndown instance must be built via {@link createInlineTurndown},
@@ -42,7 +37,6 @@
  */
 
 import { isValidHttpUrl } from '@/editor/extensions/external-link'
-import { INDENT_UNIT, OUTLINE_NEWLINE_SENTINEL } from '@/lib/block-clipboard'
 
 /**
  * Converts one element's INLINE content to single-line Agaric markdown
@@ -459,23 +453,4 @@ export function htmlBodyToOutline(body: ParentNode, inline: InlineToMarkdown): O
   const out: OutlineBlock[] = []
   walkChildren(body, 0, inline, out)
   return out
-}
-
-/**
- * Render an {@link OutlineBlock} list as the indented-markdown outline string
- * `parseIndentedMarkdown` consumes: `INDENT_UNIT` spaces per depth level.
- *
- * A block whose content is itself MULTI-LINE (a table or fenced code block —
- * Phase 2) would otherwise be shredded by the line-oriented outline, so its
- * internal newlines are encoded as {@link OUTLINE_NEWLINE_SENTINEL};
- * `parseIndentedMarkdown` decodes them back to `\n` per block. Single-line
- * blocks contain no sentinel and are unaffected.
- */
-export function outlineToIndentedMarkdown(blocks: readonly OutlineBlock[]): string {
-  return blocks
-    .map(
-      (b) =>
-        ' '.repeat(INDENT_UNIT * b.depth) + b.content.replaceAll('\n', OUTLINE_NEWLINE_SENTINEL),
-    )
-    .join('\n')
 }

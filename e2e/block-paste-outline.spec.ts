@@ -1,10 +1,7 @@
 import {
   blurEditors,
-  clearInvokeCalls,
   expect,
   focusBlock,
-  getInvokeCalls,
-  installIpcRecorder,
   openPage,
   readClipboard,
   reopenPage,
@@ -19,8 +16,8 @@ import {
  * `useBlockTreeKeyboardShortcuts`, but across the whole e2e suite NOTHING
  * exercises the full UI → store → IPC pipeline for copy/paste. This spec drives
  * the REAL keyboard shortcuts (Ctrl+C / Ctrl+V in block-select mode) and the
- * REAL system clipboard (granted via `context.grantPermissions`) — NOT the
- * store methods directly — covering:
+ * clipboard plugin IPC (the mock's in-memory clipboard, read back through
+ * `readClipboard`) — NOT the store methods directly — covering:
  *
  *   1. copy a flat multi-select outline, paste → siblings in document order;
  *   2. copy a nested parent+child outline, paste → hierarchy reconstructed;
@@ -34,8 +31,8 @@ import {
  * Seed: "Getting Started" → GS_1…GS_5. We assert on the plain-text seed blocks
  * (GS_1 "Welcome to Agaric…", GS_3 "Create new blocks…") and on structural
  * parent_id linkage from the authoritative mock store, avoiding any dependence
- * on the markdown-bearing blocks (GS_2 link / GS_5 bold). The copy serializer
- * round-trips block content verbatim, so a pasted copy renders the same text.
+ * on the markdown-bearing blocks (GS_2 link / GS_5 bold). A copy pastes back
+ * with its content verbatim, so a pasted copy renders the same text.
  */
 
 const PAGE = 'Getting Started'
@@ -53,6 +50,50 @@ async function blockIds(page: import('@playwright/test').Page): Promise<string[]
 /** Count rows whose visible text contains `token`. */
 function rowsWithText(page: import('@playwright/test').Page, token: string) {
   return page.locator('[data-testid="sortable-block"]').filter({ hasText: token })
+}
+
+const PAGE_ID = '00000000000000000000PAGE01'
+const GS1 = '0000000000000000000BLOCK01'
+const GS3 = '0000000000000000000BLOCK03'
+const GS5 = '0000000000000000000BLOCK05'
+const FENCED = '```\nfirst line\nsecond line\n```'
+const CHILD_TEXT = 'a child that travels with its parent'
+
+interface Row {
+  id: string
+  content: string | null
+}
+
+function ipc<T>(page: import('@playwright/test').Page, cmd: string, args: unknown): Promise<T> {
+  return page.evaluate(
+    ({ c, a }) => {
+      const invoke = (
+        window as unknown as {
+          __TAURI_INTERNALS__: { invoke: (c: string, a?: unknown) => Promise<unknown> }
+        }
+      ).__TAURI_INTERNALS__.invoke
+      return invoke(c, a)
+    },
+    { c: cmd, a: args },
+  ) as Promise<T>
+}
+
+async function childrenOf(page: import('@playwright/test').Page, parentId: string) {
+  const resp = await ipc<{ items: Row[] }>(page, 'list_blocks', {
+    request: { parentId, limit: 100 },
+  })
+  return resp.items
+}
+
+/** Dispatch a native paste of `text/plain` onto the live editor. */
+async function pasteText(editor: import('@playwright/test').Locator, text: string) {
+  await editor.evaluate((el, value) => {
+    const data = new DataTransfer()
+    data.setData('text/plain', value)
+    el.dispatchEvent(
+      new ClipboardEvent('paste', { clipboardData: data, bubbles: true, cancelable: true }),
+    )
+  }, text)
 }
 
 /** Ctrl+Click a block's static surface (by id) to toggle it into the selection. */
@@ -119,9 +160,9 @@ test.describe('Copy/paste block outline (keyboard + system clipboard, #913)', ()
   test('copies a nested parent+child outline and reconstructs the hierarchy on paste', async ({
     page,
   }) => {
-    await installIpcRecorder(page)
     const ids = await blockIds(page)
     const gs1 = ids[0] as string
+    const gs2 = ids[1] as string
 
     // Build nesting: indent GS_2 (index 1) under GS_1 (index 0) → GS_1 is a
     // parent, GS_2 its child.
@@ -134,48 +175,30 @@ test.describe('Copy/paste block outline (keyboard + system clipboard, #913)', ()
         .locator('[data-testid="collapse-toggle"]'),
     ).toBeVisible()
 
-    // Copy the PARENT only — the subtree serializer carries the child too. The
-    // clipboard must hold the INDENTED outline (child on a deeper-indented line),
-    // proving the copy serialized the subtree structure, not just the parent.
+    // Copy the PARENT only — the copy carries the child too. The clipboard
+    // must hold the INDENTED outline (child on a deeper-indented line),
+    // proving the copy rendered the subtree structure, not just the parent.
     await blurEditors(page)
     await ctrlSelectById(page, gs1)
     await expect(page.getByTestId('batch-toolbar')).toContainText('1')
     await page.keyboard.press('Control+c')
     await expect.poll(() => readClipboard(page)).toContain(GS1_TEXT)
-    const clip = await readClipboard(page)
-    const lines = clip.split('\n')
+    const lines = (await readClipboard(page)).trimEnd().split('\n')
     // Two lines: the parent at column 0, the child indented beneath it.
-    expect(lines.length).toBeGreaterThanOrEqual(2)
+    expect(lines).toHaveLength(2)
     expect(lines[0]?.startsWith(' ')).toBe(false) // parent flush-left
     expect((lines[1] ?? '').startsWith(' ')).toBe(true) // child indented
 
-    // Paste, recording the create IPCs so we can prove the hierarchy is
-    // RECONSTRUCTED (not flattened): paste materializes the outline level by
-    // level, so the child's batch must carry a `parentId` equal to the id of
-    // the freshly-created parent block returned by the first batch.
-    await clearInvokeCalls(page)
+    // Paste, then read the backend back: the pasted parent's copy carries a
+    // copy of the child, so the hierarchy was RECONSTRUCTED, not flattened.
     await page.keyboard.press('Control+v')
     await expect.poll(async () => await rowsWithText(page, GS1_TEXT).count()).toBe(2)
-
-    const batches = (await getInvokeCalls(page, 'create_blocks_batch')) as Array<{
-      specs: Array<{ content: string; parentId: string | null }>
-    }>
-    // First batch creates the top-level parent (the GS_1 copy) under the PAGE.
-    // A LATER batch creates the child whose `parentId` points at a block that
-    // is NEITHER an original block NOR the page — i.e. the freshly-created
-    // parent from the first batch. That linkage IS the reconstructed hierarchy.
-    const known = new Set<string>([...ids, gs1, '00000000000000000000PAGE01'])
-    const allSpecs = batches.flatMap((b) => b.specs)
-    const parentSpec = batches[0]?.specs.find((s) => s.content.includes(GS1_TEXT))
-    expect(parentSpec).toBeDefined()
-    // The top-level parent is created under the page (the outline's root level).
-    expect(parentSpec?.parentId).toBe('00000000000000000000PAGE01')
-    // The child nests under a NEWLY-created block (not the page, not an
-    // original): that block can only be the cloned parent.
-    const childSpec = allSpecs.find((s) => s.parentId !== null && !known.has(s.parentId))
-    expect(childSpec).toBeDefined()
-    expect(childSpec?.content).not.toContain(GS1_TEXT) // it's the child, not the parent
-    expect(childSpec?.parentId).not.toBe('00000000000000000000PAGE01')
+    const topLevel = await childrenOf(page, PAGE_ID)
+    const copy = topLevel.find((r) => r.id !== gs1 && r.content?.includes(GS1_TEXT))
+    const gs2Content = (await childrenOf(page, gs1)).find((r) => r.id === gs2)?.content
+    const copyChildren = await childrenOf(page, copy?.id ?? '')
+    expect(copyChildren.map((r) => r.content)).toEqual([gs2Content])
+    expect(copyChildren[0]?.id).not.toBe(gs2)
   })
 
   test('paste anchors on the LAST selected block (insert lands immediately after it)', async ({
@@ -255,7 +278,7 @@ test.describe('Copy/paste block outline (keyboard + system clipboard, #913)', ()
     await page.keyboard.press('Control+v')
     // With its anchor deleted and the selection pruned on reopen, the paste is a
     // graceful NO-OP: it issues no IPC and mutates nothing (verified: zero
-    // `create_blocks_batch` calls, GS_1 stays at one row). There is therefore no
+    // `paste_blocks` calls, GS_1 stays at one row). There is therefore no
     // positive "settled" observable to poll on — GS_1's single row is the
     // untouched ORIGINAL, so a `GS1_TEXT >= 1` poll would be trivially true at
     // t=0 and assert nothing. What this test guards is the NEGATIVE invariant: a
@@ -270,5 +293,77 @@ test.describe('Copy/paste block outline (keyboard + system clipboard, #913)', ()
     await expect(rowsWithText(page, GS1_TEXT)).toHaveCount(1)
     // GS_3's text never reappears from a rogue paste anchored on the dead block.
     await expect(rowsWithText(page, GS3_TEXT)).toHaveCount(0)
+  })
+})
+
+// #5140 Phase 3b — copy renders the outline in the backend's source grammar
+// (`get_blocks_source`) and paste parses it back there (`paste_blocks`), so a
+// multi-line block stays one block and a copied subtree stays nested wherever
+// it is pasted. Every assertion reads the mock backend back.
+
+test.describe('Copy/paste through the source grammar (#5140 Phase 3b)', () => {
+  test.beforeEach(async ({ context, page }) => {
+    await context.grantPermissions(['clipboard-read', 'clipboard-write'])
+    await waitForBoot(page)
+  })
+
+  test('Ctrl+C then Ctrl+V of a two-line fenced code block pastes ONE block with identical content', async ({
+    page,
+  }) => {
+    await ipc(page, 'edit_block', { blockId: GS1, toText: FENCED })
+    await openPage(page, PAGE)
+    const before = await childrenOf(page, PAGE_ID)
+
+    await blurEditors(page)
+    await ctrlSelectById(page, GS1)
+    await page.keyboard.press('Control+c')
+    await expect.poll(() => readClipboard(page)).toContain('second line')
+    await page.keyboard.press('Control+v')
+
+    await expect
+      .poll(async () => (await childrenOf(page, PAGE_ID)).length)
+      .toBeGreaterThan(before.length)
+    const after = await childrenOf(page, PAGE_ID)
+    expect(after).toHaveLength(before.length + 1)
+    const copy = after[after.findIndex((r) => r.id === GS1) + 1]
+    expect(copy?.id).not.toBe(GS1)
+    expect(copy?.content).toBe(FENCED)
+    expect(await childrenOf(page, copy?.id ?? '')).toEqual([])
+  })
+
+  test('a copied parent and child pasted into an empty editor stays nested', async ({ page }) => {
+    await ipc(page, 'create_block', {
+      blockType: 'content',
+      content: CHILD_TEXT,
+      parentId: GS3,
+      index: null,
+      scope: { kind: 'global' },
+      blockId: null,
+    })
+    await openPage(page, PAGE)
+    const gs3Content = (await childrenOf(page, PAGE_ID)).find((r) => r.id === GS3)?.content
+
+    await blurEditors(page)
+    await ctrlSelectById(page, GS3)
+    await page.keyboard.press('Control+c')
+    await expect.poll(() => readClipboard(page)).toContain(CHILD_TEXT)
+    const clip = await readClipboard(page)
+
+    // A fresh empty block after GS_1, focused, receives the OS paste.
+    const first = await focusBlock(page, 0)
+    await first.press('End')
+    await first.press('Enter')
+    const live = page.locator('[data-testid="block-editor"] [contenteditable="true"]')
+    await expect(live.locator('p.is-editor-empty')).toBeVisible()
+    await pasteText(live, clip)
+    // Leave by clicking another block: a blur commits whatever the paste left
+    // in the editor (Escape would discard it).
+    await page.locator(`[data-testid="block-static"][data-block-id="${GS5}"]`).click()
+
+    const copies = async () =>
+      (await childrenOf(page, PAGE_ID)).filter((r) => r.content === gs3Content && r.id !== GS3)
+    await expect.poll(async () => (await copies()).length).toBe(1)
+    const copy = (await copies())[0]
+    expect((await childrenOf(page, copy?.id ?? '')).map((r) => r.content)).toEqual([CHILD_TEXT])
   })
 })

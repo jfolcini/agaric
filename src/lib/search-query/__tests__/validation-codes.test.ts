@@ -37,9 +37,7 @@ const BINDINGS_PATH = path.resolve(import.meta.dirname, '..', '..', 'bindings.ts
  * `ValidationCode` union in `bindings.ts`.
  *
  * The union is a TYPE, so it evaporates at runtime and vitest cannot enumerate
- * it by importing it — hence the source read. That is the same technique the
- * repo's other cross-language parity tests use (see
- * `src/lib/__tests__/page-link-re-parity.test.ts`).
+ * it by importing it — hence the source read.
  *
  * The extraction is deliberately strict rather than a lenient scan: a parser
  * that silently returned FEWER members than the generator emitted would make

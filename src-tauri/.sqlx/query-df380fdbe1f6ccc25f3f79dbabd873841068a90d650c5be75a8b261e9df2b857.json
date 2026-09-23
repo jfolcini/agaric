@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT b.page_id AS \"page_id!: String\"\n             FROM json_each(?1) je\n             JOIN blocks b ON b.id = je.value\n            WHERE b.deleted_at IS NULL\n              AND b.block_type = 'content'\n              AND b.page_id IS NOT NULL\n            ORDER BY je.key\n            LIMIT 1",
+  "describe": {
+    "columns": [
+      {
+        "name": "page_id!: String",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "blocks",
+            "name": "page_id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      true
+    ]
+  },
+  "hash": "df380fdbe1f6ccc25f3f79dbabd873841068a90d650c5be75a8b261e9df2b857"
+}

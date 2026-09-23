@@ -118,8 +118,7 @@ describe('SLASH_COMMANDS catalog', () => {
     expect(turn?.icon).toBeDefined()
   })
 
-  // #976 (item 13) — the `/duplicate` slash entry that fires the
-  // serialize-subtree → pasteBlocks duplicate path.
+  // #976 (item 13) — the `/duplicate` slash entry (`duplicate_block`, #5140).
   it('registers the /duplicate command in the structure group', () => {
     const dup = SLASH_COMMANDS.find((c) => c.id === 'duplicate')
     expect(dup).toBeDefined()

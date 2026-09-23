@@ -38,6 +38,7 @@ import {
 import type { SlashCommandContext } from '@/components/block-tree/use-block-slash-commands/types'
 import type { RovingEditorHandle } from '@/editor/use-roving-editor'
 import { unwrap } from '@/lib/app-error'
+import type { PasteInput } from '@/lib/bindings'
 import { commands } from '@/lib/bindings'
 import { type BlockCommandHandler, registerBlockCommandTarget } from '@/lib/block-command-bus'
 import {
@@ -248,25 +249,23 @@ export function useBlockTreeEventListeners(options: UseBlockTreeEventListenersOp
       })()
     }
 
-    // #1439 — converted clipboard-HTML outline. The editor's HTML-paste handler
-    // emits the indented-markdown outline (`detail.markdown`); materialize it as
-    // real blocks via `pasteBlocks`, anchored on the focused block (`blockId` is
-    // the focused, owned block — the bus only routes here when this tree's store
-    // owns the focus). The outline lands AFTER the anchor (siblings/children),
-    // exactly like the keyboard/context-menu outline paste.
-    const onPasteHtmlBlocks: BlockCommandHandler = (blockId, detail) => {
-      const payload = detail as { markdown?: string; targetBlockId?: string | null } | undefined
-      const markdown = payload?.markdown
-      if (!markdown) return
-      // #2033 — the editor's HTML-paste handler captures the focused block id
+    // #1439 / #5140 — a paste the editor routed to the block path: converted
+    // clipboard HTML or a pasted outline (`detail.input`). Materialize it via
+    // `pasteBlocks`, anchored on the focused block (`blockId` is the focused,
+    // owned block — the bus only routes here when this tree's store owns the
+    // focus). The blocks land AFTER the anchor, exactly like the keyboard paste.
+    const onPasteBlocks: BlockCommandHandler = (blockId, detail) => {
+      const payload = detail as { input?: PasteInput; targetBlockId?: string | null } | undefined
+      const input = payload?.input
+      if (!input) return
+      // #2033 — the editor's paste handler captures the focused block id
       // synchronously at paste time and threads it as `targetBlockId`. The
-      // conversion is async, so focus may have moved by the time the bus routes
-      // this command. If the resolved (now-focused) block no longer matches the
-      // captured target, no-op rather than dumping structured content into the
-      // wrong block. (`targetBlockId` is omitted only by older/test payloads, in
-      // which case we keep the prior behaviour.)
+      // HTML conversion is async, so focus may have moved by the time the bus
+      // routes this command. If the resolved (now-focused) block no longer
+      // matches the captured target, no-op rather than dumping structured
+      // content into the wrong block.
       if (payload?.targetBlockId != null && payload.targetBlockId !== blockId) {
-        logger.warn('BlockTree', 'Discarding HTML paste: focus moved since paste', {
+        logger.warn('BlockTree', 'Discarding paste: focus moved since paste', {
           targetBlockId: payload.targetBlockId,
           blockId,
         })
@@ -274,15 +273,15 @@ export function useBlockTreeEventListeners(options: UseBlockTreeEventListenersOp
       }
       void pageStore
         .getState()
-        .pasteBlocks(blockId, markdown)
+        .pasteBlocks(blockId, input)
         .catch((err: unknown) => {
-          logger.error('BlockTree', 'Failed to paste HTML blocks', { blockId }, err)
+          logger.error('BlockTree', 'Failed to paste blocks', { blockId }, err)
           notify.error(t('error.pasteBlocksFailed'))
         })
     }
 
     return registerBlockCommandTarget(pageStore, {
-      PASTE_HTML_BLOCKS: onPasteHtmlBlocks,
+      PASTE_BLOCKS: onPasteBlocks,
       DISCARD_BLOCK_EDIT: onDiscard,
       CYCLE_PRIORITY: onCyclePriority,
       SET_PRIORITY_1: setPriorityHandler('1'),
