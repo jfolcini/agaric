@@ -616,7 +616,7 @@ fn resolve_ulids_for_export(
 /// resolved export content when that block is the TARGET of a same-page
 /// `((ULID))` reference elsewhere in the export.
 ///
-/// The marker lands at the very end of the block's content — its bullet line —
+/// The marker lands at the very end of the block's content — its last line —
 /// which is exactly where the importer's `strip_block_anchor_marker` reads it
 /// back into `ParsedBlock::block_anchor`, so the matching `[[#^<ULID>]]` link
 /// (emitted by [`resolve_ulids_for_export`]) resolves to a real `((<new
@@ -625,16 +625,21 @@ fn resolve_ulids_for_export(
 /// satisfies the importer's `^[A-Za-z0-9-]+` anchor grammar and is guaranteed
 /// unique, so it is a stable document-local key linking the reference to its
 /// target.
+///
+/// A block ending on a fence line gets the marker on a line of its own: on the
+/// fence line the importer reads it as code and never strips it.
 fn stamp_block_anchor_marker(
     resolved: String,
     block_id: &str,
     same_page_ref_targets: &std::collections::HashSet<String>,
 ) -> String {
-    if same_page_ref_targets.contains(block_id) {
-        format!("{resolved} ^{block_id}")
-    } else {
-        resolved
+    if !same_page_ref_targets.contains(block_id) {
+        return resolved;
     }
+    let last_line = resolved.rsplit('\n').next().unwrap_or_default();
+    let ends_on_closing_fence = import::is_fence_delimiter(last_line, true);
+    let separator = if ends_on_closing_fence { '\n' } else { ' ' };
+    format!("{resolved}{separator}^{block_id}")
 }
 
 /// One projected `block_properties` row destined for the exported YAML
@@ -1751,16 +1756,6 @@ pub async fn export_page_markdown_inner(
     Ok(render_page_markdown(page_id, &data))
 }
 
-/// `true` when `line` is a fenced-code delimiter (three-or-more backticks),
-/// tolerating a leading `- ` bullet marker — mirrors the fence probe in
-/// `import::parse_logseq_markdown` so the exporter and importer agree on where
-/// a code fence opens/closes. Used by [`push_block_bullet`] to suppress the
-/// continuation-line escape inside code (#2716/#2725).
-fn is_fence_delimiter(line: &str) -> bool {
-    let t = line.trim_start();
-    t.strip_prefix("- ").unwrap_or(t).starts_with("```")
-}
-
 /// #2961 — sanitize an attachment's `filename` for use as markdown link
 /// TEXT (the `[label]` half of `[label](attachment:<id>)`).
 ///
@@ -1857,6 +1852,7 @@ fn push_block_bullet(output: &mut String, indent: &str, list_marker: &str, resol
 
     let mut lines = resolved.split('\n');
     let first = lines.next().unwrap_or("");
+    let line_start = output.len();
     output.push_str(indent);
     output.push_str("- ");
     if list_marker.is_empty() {
@@ -1880,22 +1876,24 @@ fn push_block_bullet(output: &mut String, indent: &str, list_marker: &str, resol
         output.push_str(list_marker);
         output.push_str(first);
     }
+    // Fences are tracked over each line as written, escape and marker
+    // included, with the importer's own probe: an escaped ```` \- ``` ```` opens
+    // no fence there, so it must open none here either.
+    let mut in_fence = import::is_fence_delimiter(&output[line_start..], false);
     output.push('\n');
 
-    // The first line can itself open a fence (`- ```rust`); track the state so
-    // continuation lines inside code are emitted verbatim.
-    let mut in_fence = is_fence_delimiter(first);
     let cont_indent = format!("{indent}  ");
     for line in lines {
+        let line_start = output.len();
         output.push_str(&cont_indent);
         if !in_fence && content_line_is_ambiguous(line) {
             output.push('\\');
         }
         output.push_str(line);
-        output.push('\n');
-        if is_fence_delimiter(line) {
+        if import::is_fence_delimiter(&output[line_start..], in_fence) {
             in_fence = !in_fence;
         }
+        output.push('\n');
     }
 }
 

@@ -51,8 +51,8 @@ pub struct ParsedBlock {
     /// marker, stripped out of `content` by the post-parse pass
     /// `extract_block_anchors` (private, so not linked). `None` for the
     /// overwhelming majority of
-    /// blocks (no trailing marker, or the block is `is_code`, which is never
-    /// scanned). Consumed by `commands::pages::markdown` to resolve an
+    /// blocks (no trailing marker, or the marker sits on a code line).
+    /// Consumed by `commands::pages::markdown` to resolve an
     /// Obsidian `[[Page#^block-id]]` / `[[#^block-id]]` wiki-link to the
     /// OWNING block (a real Agaric `((ULID))` block-ref) instead of only the
     /// page (#1282's fallback).
@@ -237,6 +237,27 @@ pub fn split_block_list_marker(text: &str) -> (Option<&'static str>, &str) {
     match split_list_marker(text) {
         Some((style, rest)) => (Some(style), rest),
         None => (None, text),
+    }
+}
+
+/// `true` when `line` is a code-fence delimiter: backticks opening the line
+/// itself or the body of its `- ` bullet. The exporter tracks fences with this
+/// same probe, applied to each line as written, so the two sides agree on
+/// where code starts and ends.
+///
+/// Opening a fence, a bullet counts when the text it imports as starts with
+/// the backticks, so a list-styled code block (`- - ```sh`, `- 1. ```sh`)
+/// opens one too. Inside a fence the list marker is not looked past: a marker
+/// only ever precedes a block's first line, so ```` - - ``` ```` there is code.
+pub fn is_fence_delimiter(line: &str, fence_open: bool) -> bool {
+    let trimmed = line.trim_start();
+    let Some(body) = trimmed.strip_prefix("- ") else {
+        return trimmed.starts_with("```");
+    };
+    if fence_open {
+        body.starts_with("```")
+    } else {
+        split_block_list_marker(body).1.starts_with("```")
     }
 }
 
@@ -635,8 +656,8 @@ pub fn parse_logseq_markdown(content: &str) -> ParseOutput {
         &mut frontmatter_warnings,
     );
 
-    let (mut blocks, mut lossy) = parse_block_lines(&normalized);
-    extract_block_anchors(&mut blocks);
+    let (mut blocks, ends_in_code, mut lossy) = parse_block_lines(&normalized);
+    extract_block_anchors(&mut blocks, &ends_in_code);
     lossy.clamped = clamp_block_depths(&mut blocks);
 
     let mut warnings = frontmatter_warnings;
@@ -730,13 +751,12 @@ fn is_bullet_line(trimmed: &str) -> bool {
     trimmed == "-" || trimmed.starts_with("- ")
 }
 
-/// Document-global fenced-code state for the line scan (#1924). A line whose
-/// trimmed text begins with three or more backticks is a fence delimiter; it
-/// toggles the fence, and the delimiter line plus every line until the closing
-/// delimiter is treated as code. This is intentionally a single-fence-char
-/// (`` ` ``) heuristic — full code-fence import handling (tilde fences,
-/// language hints, indented fences, verbatim preservation) is separate,
-/// out-of-scope work.
+/// Document-global fenced-code state for the line scan (#1924). An
+/// [`is_fence_delimiter`] line toggles the fence, and the delimiter line plus
+/// every line until the closing delimiter is treated as code. This is
+/// intentionally a single-fence-char (`` ` ``) heuristic — full code-fence
+/// import handling (tilde fences, language hints, indented fences, verbatim
+/// preservation) is separate, out-of-scope work.
 #[derive(Default)]
 struct FenceState {
     open: bool,
@@ -761,17 +781,15 @@ impl FenceState {
     ///
     /// `rest` is the scan's own line iterator, cloned so this can peek — see
     /// the ambiguity note inside.
-    fn close_unbalanced_at(
-        &mut self,
-        trimmed: &str,
-        depth: usize,
-        is_fence_delim: bool,
-        rest: std::str::Lines<'_>,
-    ) {
+    fn close_unbalanced_at(&mut self, trimmed: &str, depth: usize, rest: std::str::Lines<'_>) {
         let Some(open_depth) = self.open_depth else {
             return;
         };
-        if !self.open || is_fence_delim || !is_bullet_line(trimmed) || depth > open_depth {
+        if !self.open
+            || is_fence_delimiter(trimmed, self.open)
+            || !is_bullet_line(trimmed)
+            || depth > open_depth
+        {
             return;
         }
         // Regression guard against #2725: a bullet-shaped line at (or above)
@@ -825,8 +843,13 @@ impl FenceState {
 
 /// Scan already-normalized, frontmatter-free markdown into blocks, collecting
 /// the lossy-transform counters [`parse_logseq_markdown`] turns into warnings.
-fn parse_block_lines(normalized: &str) -> (Vec<ParsedBlock>, LossyCounts) {
+///
+/// Alongside each block it returns whether the block's last content line was
+/// code, which decides whether a trailing `^id` on it is an anchor
+/// ([`extract_block_anchors`]).
+fn parse_block_lines(normalized: &str) -> (Vec<ParsedBlock>, Vec<bool>, LossyCounts) {
     let mut blocks: Vec<ParsedBlock> = Vec::new();
+    let mut ends_in_code: Vec<bool> = Vec::new();
     let mut lossy = LossyCounts::default();
     let mut fence = FenceState::default();
     // #1921 — iterate `normalized.lines()` directly instead of collecting into
@@ -848,19 +871,14 @@ fn parse_block_lines(normalized: &str) -> (Vec<ParsedBlock>, LossyCounts) {
             continue;
         }
 
-        // #1924 — fence-delimiter detection. A fence delimiter may appear
-        // either standalone (a bare ```` ``` ```` continuation line) OR as the
-        // body of a list bullet (`- ```rust`), so probe both shapes: strip a
-        // leading `- ` bullet marker before the backtick test.
-        let fence_probe = trimmed.strip_prefix("- ").unwrap_or(trimmed);
-        let is_fence_delim = fence_probe.starts_with("```");
-
         // Calculate indentation (number of leading spaces / 2). Computed ahead
         // of the fence handling (#2866) so `depth` is available to it.
         let indent = line.len() - trimmed.len();
         let depth = indent / 2;
 
-        fence.close_unbalanced_at(trimmed, depth, is_fence_delim, lines_iter.clone());
+        fence.close_unbalanced_at(trimmed, depth, lines_iter.clone());
+        // Probed after the recovery, which may have just closed the fence.
+        let is_fence_delim = is_fence_delimiter(trimmed, fence.open);
 
         // The delimiter line is itself part of the code region (`line_is_code`
         // is true on both the opening and closing fence), and every line
@@ -915,6 +933,9 @@ fn parse_block_lines(normalized: &str) -> (Vec<ParsedBlock>, LossyCounts) {
             attach_property_line(&mut blocks, key_candidate, value, depth, &mut lossy);
         } else if let Some(last) = blocks.last_mut() {
             lossy.stripped_refs += append_continuation_line(last, trimmed, line_is_code);
+            if let Some(tail) = ends_in_code.last_mut() {
+                *tail = line_is_code;
+            }
         } else {
             // Non-list, non-property line with no preceding block (file starts
             // with bare text) -- treat as a standalone depth-0 content block.
@@ -928,9 +949,10 @@ fn parse_block_lines(normalized: &str) -> (Vec<ParsedBlock>, LossyCounts) {
                 block_anchor: None,
             });
         }
+        ends_in_code.resize(blocks.len(), line_is_code);
     }
 
-    (blocks, lossy)
+    (blocks, ends_in_code, lossy)
 }
 
 /// Push a `- text` bullet as a new block: the leading list marker (if any)
@@ -1037,8 +1059,9 @@ fn append_continuation_line(last: &mut ParsedBlock, trimmed: &str, line_is_code:
             // downstream by `strip_block_refs_counted`'s trim, exactly as it is
             // for a non-ambiguous indented continuation line; the point of the
             // un-escape is only to strip the escape marker, never to inject
-            // one.)
-            let body = rest.trim_start();
+            // one.) Further backslashes are looked past too, as the exporter
+            // does, so a line written as `\- x` comes back with its backslash.
+            let body = rest.trim_start_matches(|c: char| c.is_whitespace() || c == '\\');
             is_bullet_line(body) || line_is_property_shaped(body)
         } {
         rest
@@ -1067,12 +1090,13 @@ fn append_continuation_line(last: &mut ParsedBlock, trimmed: &str, line_is_code:
 /// [`ParsedBlock::block_anchor`]. Runs as a POST-pass over the scanned blocks
 /// (not inline during the line-by-line scan) because the marker sits at the
 /// end of the WHOLE block, and a block's content is only fully assembled once
-/// every continuation line (#682) has been appended to it. `is_code` blocks
-/// are skipped — a fenced code sample ending in `^something` is code, not an
-/// Obsidian anchor.
-fn extract_block_anchors(blocks: &mut [ParsedBlock]) {
-    for block in blocks {
-        if block.is_code {
+/// every continuation line (#682) has been appended to it. A block whose last
+/// content line was code is skipped: a `^something` on a fence line or inside
+/// a fence is code, not an Obsidian anchor. That is why the exporter puts a
+/// code block's anchor on its own line after the closing fence.
+fn extract_block_anchors(blocks: &mut [ParsedBlock], ends_in_code: &[bool]) {
+    for (block, &ends_in_code) in blocks.iter_mut().zip(ends_in_code) {
+        if ends_in_code {
             continue;
         }
         if let (stripped, Some(anchor)) = strip_block_anchor_marker(&block.content) {
@@ -2225,8 +2249,8 @@ bare line ((jkl-012)) too";
     /// #2510 — `parse_logseq_markdown` strips a bullet's trailing block-anchor
     /// marker into `ParsedBlock::block_anchor`, leaves a block with no marker
     /// at `None`, applies to a multi-line (#682 continuation) block only at
-    /// its FINAL assembled line, and skips an `is_code` block entirely (a
-    /// fenced sample ending in `^tag` stays literal, not stripped).
+    /// its FINAL assembled line, and leaves a `^tag` inside a fenced sample
+    /// literal.
     #[test]
     fn parse_logseq_markdown_extracts_block_anchor_2510() {
         let md = "\
@@ -2264,6 +2288,22 @@ bare line ((jkl-012)) too";
             code_block.content
         );
         assert_eq!(code_block.block_anchor, None);
+    }
+
+    /// A code block's anchor is read only from a line outside the fence, which
+    /// is where the exporter puts it. On the closing fence itself, or inside a
+    /// fence that never closes, a trailing `^id` is code.
+    #[test]
+    fn a_code_block_anchor_is_read_only_outside_the_fence() {
+        let out = parse_logseq_markdown("- ```sh\n  echo hi\n  ```\n  ^abc");
+        assert_eq!(out.blocks[0].content, "```sh\necho hi\n```");
+        assert_eq!(out.blocks[0].block_anchor.as_deref(), Some("abc"));
+
+        for md in ["- ```sh\n  echo hi\n  ``` ^abc", "- ```sh\n  echo hi ^abc"] {
+            let out = parse_logseq_markdown(md);
+            assert_eq!(out.blocks[0].block_anchor, None, "{md:?}");
+            assert!(out.blocks[0].content.ends_with(" ^abc"), "{md:?}");
+        }
     }
 
     /// #1921 — `strip_block_refs_counted` fast-paths must preserve EXACT
@@ -3743,5 +3783,23 @@ mod tests_list_style_4552 {
             "fenced content stays verbatim; got {:?}",
             out.blocks[0].content
         );
+    }
+
+    /// A list-styled block whose content is a code block opens the fence just
+    /// as a plain one does, so the `- x` inside it stays code instead of
+    /// becoming a child block.
+    #[test]
+    fn a_list_styled_fence_opens_a_code_block() {
+        for (md, style) in [
+            ("- - ```sh\n  - x\n  ```\n", LIST_STYLE_BULLET),
+            ("- 1. ```sh\n  - x\n  ```\n", LIST_STYLE_ORDERED),
+        ] {
+            let out = parse_logseq_markdown(md);
+            assert_eq!(out.blocks.len(), 1, "{md:?}: got {:?}", out.blocks);
+            let block = &out.blocks[0];
+            assert_eq!(block.content, "```sh\n- x\n```", "{md:?}");
+            assert_eq!(style_of(block), Some(style), "{md:?}");
+            assert!(block.is_code, "{md:?}");
+        }
     }
 }

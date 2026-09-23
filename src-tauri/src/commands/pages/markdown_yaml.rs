@@ -186,8 +186,11 @@ fn looks_like_property_line(line: &str) -> bool {
 /// (outside code fences) so `import::parse_logseq_markdown` folds it as literal
 /// continuation instead of spawning a new block / property; the importer's
 /// continuation branch reverses the escape. Shared by the two export-side bugs.
+///
+/// Leading backslashes are looked past, as the importer's un-escape does, so
+/// `\- x` is escaped again rather than losing its backslash on the way back.
 pub(crate) fn content_line_is_ambiguous(line: &str) -> bool {
-    let t = line.trim_start();
+    let t = line.trim_start_matches(|c: char| c.is_whitespace() || c == '\\');
     t == "-" || t.starts_with("- ") || looks_like_property_line(t)
 }
 
@@ -305,7 +308,7 @@ mod tests {
 
     /// #2716 — `content_line_is_ambiguous` flags exactly the continuation
     /// lines the importer would misclassify (bullets + `key:: value`
-    /// properties), and nothing else.
+    /// properties) or un-escape, and nothing else.
     #[test]
     fn content_line_is_ambiguous_2716() {
         assert!(content_line_is_ambiguous("- looks like a bullet"));
@@ -313,11 +316,16 @@ mod tests {
         assert!(content_line_is_ambiguous("  - indented bullet"));
         assert!(content_line_is_ambiguous("key:: value"));
         assert!(content_line_is_ambiguous("todo_state:: TODO"));
+        // Backslash-led: the importer strips one backslash off these, so they
+        // are escaped again to come back unchanged.
+        assert!(content_line_is_ambiguous("\\- already escaped"));
+        assert!(content_line_is_ambiguous("\\\\ - two backslashes"));
+        assert!(content_line_is_ambiguous("\\key:: value"));
         // Not ambiguous: plain prose, a mid-line colon-colon that isn't a
-        // valid key, an already-escaped bullet.
+        // valid key, a backslash that guards nothing.
         assert!(!content_line_is_ambiguous("just prose"));
         assert!(!content_line_is_ambiguous("see http://x :: y")); // key has spaces
-        assert!(!content_line_is_ambiguous("\\- already escaped"));
+        assert!(!content_line_is_ambiguous("\\alpha"));
         assert!(!content_line_is_ambiguous("dash-in-middle - here"));
     }
 
