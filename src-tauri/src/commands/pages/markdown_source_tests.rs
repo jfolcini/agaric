@@ -1,13 +1,14 @@
 //! Source mode (#5140): `render_page_source` writes a page's block tree as one
 //! markdown buffer, and `import::parse_source_outline` must read it back as
-//! exactly that tree, or a save with no edits would not be a no-op.
+//! exactly that tree, or a save with no edits would not be a no-op. A
+//! clipboard copy (`render_clipboard_source`) must read back as a paste
+//! (`import::parse_pasted_text`) reads it, as the same tree less the anchors.
 //!
-//! The render→parse proptest is the oracle. Known source-mode limits, which
-//! its generator excludes:
+//! The render→parse proptests are the oracle. Known source-mode limits, which
+//! their generator excludes:
 //! - a `\r` in content (line splitting takes it as a line ending);
 //! - a custom property value with surrounding whitespace or a newline (a
-//!   `key:: value` line is one trimmed line);
-//! - tabs as bullet indentation in a hand-edited buffer (depth counts spaces).
+//!   `key:: value` line is one trimmed line).
 
 use std::collections::BTreeMap;
 
@@ -345,20 +346,46 @@ fn build_page(forest: &[BlockSpec]) -> (PageExportData, Vec<Expected>) {
     (data, expected)
 }
 
+/// `parsed` is `expected` block by block, anchors included when `anchored`.
+fn check_read_back(
+    md: &str,
+    parsed: &[import::ParsedBlock],
+    expected: &[Expected],
+    anchored: bool,
+) -> Result<(), TestCaseError> {
+    prop_assert_eq!(parsed.len(), expected.len(), "md:\n{}", md);
+    for (block, (depth, content, id, properties)) in parsed.iter().zip(expected) {
+        prop_assert_eq!(block.depth, *depth, "md:\n{}", md);
+        prop_assert_eq!(&block.content, content, "md:\n{}", md);
+        if anchored {
+            prop_assert_eq!(
+                block.block_anchor.as_deref(),
+                Some(id.as_str()),
+                "md:\n{}",
+                md
+            );
+        }
+        let read_back: BTreeMap<String, String> = block.properties.iter().cloned().collect();
+        prop_assert_eq!(&read_back, properties, "md:\n{}", md);
+    }
+    Ok(())
+}
+
 proptest! {
     #[test]
     fn a_source_buffer_reads_back_as_the_tree_it_was_rendered_from(forest in arb_forest()) {
         let (data, expected) = build_page(&forest);
         let md = render_page_source(&data);
-        let parsed = import::parse_source_outline(&md).blocks;
-        prop_assert_eq!(parsed.len(), expected.len(), "md:\n{}", md);
-        for (block, (depth, content, id, properties)) in parsed.iter().zip(&expected) {
-            prop_assert_eq!(block.depth, *depth, "md:\n{}", md);
-            prop_assert_eq!(&block.content, content, "md:\n{}", md);
-            prop_assert_eq!(block.block_anchor.as_deref(), Some(id.as_str()), "md:\n{}", md);
-            let read_back: BTreeMap<String, String> = block.properties.iter().cloned().collect();
-            prop_assert_eq!(&read_back, properties, "md:\n{}", md);
-        }
+        check_read_back(&md, &import::parse_source_outline(&md).blocks, &expected, true)?;
+    }
+
+    /// Every block selected, so each root carries its subtree.
+    #[test]
+    fn a_clipboard_copy_pastes_back_as_the_tree_it_was_rendered_from(forest in arb_forest()) {
+        let (data, expected) = build_page(&forest);
+        let ids: Vec<String> = expected.iter().map(|(_, _, id, _)| id.clone()).collect();
+        let md = render_clipboard_source(&data, &ids, true).unwrap();
+        check_read_back(&md, &import::parse_pasted_text(&md), &expected, false)?;
     }
 }
 
@@ -409,6 +436,48 @@ fn an_open_fence_ends_at_its_blocks_anchor_line() {
     assert_eq!(
         render_page_source(&data),
         format!("- ````\n  ^{A}\n  - B ^{B}\n")
+    );
+}
+
+/// A copy writes no `^ID` a block reads back without, so a plain subtree has
+/// none.
+#[test]
+fn a_clipboard_copy_of_a_plain_subtree_has_no_anchor() {
+    const A: &str = "01J0000000000000000000000A";
+    const B: &str = "01J0000000000000000000000B";
+    const C: &str = "01J0000000000000000000000C";
+    let mut child = row(B, A, 1, "child");
+    child.todo_state = Some("DONE".into());
+    let data = page_data(vec![
+        row(A, PAGE, 1, "parent\nsecond line"),
+        child,
+        row(C, PAGE, 2, "sibling"),
+    ]);
+    assert_eq!(
+        render_clipboard_source(&data, &[A.into(), C.into()], true).unwrap(),
+        "- parent\n  second line\n  - [x] child\n- sibling\n"
+    );
+}
+
+/// The blocks that would read back as something else without their `^ID`
+/// keep it: one leaving a fence open, whose anchor line ends the fence before
+/// its child, one ending in ` ^word`, and one ending in a blank line.
+#[test]
+fn a_clipboard_copy_keeps_the_anchors_blocks_need_to_read_back() {
+    const A: &str = "01J0000000000000000000000A";
+    const B: &str = "01J0000000000000000000000B";
+    const C: &str = "01J0000000000000000000000C";
+    const D: &str = "01J0000000000000000000000D";
+    let data = page_data(vec![
+        row(A, PAGE, 1, "````"),
+        row(B, A, 1, "B"),
+        row(C, PAGE, 2, "ends in ^word"),
+        row(D, PAGE, 3, "ends in a blank line\n"),
+    ]);
+    let ids = [A.into(), C.into(), D.into()];
+    assert_eq!(
+        render_clipboard_source(&data, &ids, true).unwrap(),
+        format!("- ````\n  ^{A}\n  - B\n- ends in ^word ^{C}\n- ends in a blank line\n   ^{D}\n")
     );
 }
 

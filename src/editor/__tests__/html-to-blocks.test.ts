@@ -3,33 +3,23 @@
  *
  * Drives the REAL Turndown configuration (`createInlineTurndown`) through the
  * DOM walk (`htmlBodyToOutline`) so the assertions cover the production
- * conversion, then verifies the emitted indented markdown re-parses into the
- * expected block tree (structure + inline marks) via the same
- * `parseIndentedMarkdown` + `parse` the paste path uses.
+ * conversion, then verifies each emitted block — which `paste_blocks` creates
+ * verbatim (`{ kind: 'blocks' }`, #5140) — re-parses into the expected node via
+ * the editor's `parse`.
  */
 
 import { describe, expect, it } from 'vitest'
 
 import { parseUsableHtmlBody } from '@/editor/extensions/html-paste'
-import {
-  htmlBodyToOutline,
-  type OutlineBlock,
-  outlineToIndentedMarkdown,
-} from '@/editor/html-to-blocks'
+import { htmlBodyToOutline, type OutlineBlock } from '@/editor/html-to-blocks'
 import { createInlineTurndown } from '@/editor/inline-turndown'
 import { parse } from '@/editor/markdown-serializer'
-import { parseIndentedMarkdown } from '@/lib/block-clipboard'
 
 /** Convert an HTML fragment to the outline blocks via the real Turndown config. */
 function convert(html: string): OutlineBlock[] {
   const body = new DOMParser().parseFromString(html, 'text/html').body
   const { inline } = createInlineTurndown()
   return htmlBodyToOutline(body, inline)
-}
-
-/** Convert to the indented-markdown outline string the paste path emits. */
-function convertToMarkdown(html: string): string {
-  return outlineToIndentedMarkdown(convert(html))
 }
 
 // #4008 note 2 — these used to drive `isUsableHtml`, a boolean wrapper that
@@ -204,20 +194,17 @@ describe('security guards', () => {
   })
 })
 
-describe('outline → indented markdown → block tree', () => {
-  it('round-trips a nested list into the expected parent/child block tree', () => {
-    const html = '<ul><li>parent<ul><li>child</li></ul></li></ul>'
-    const markdown = convertToMarkdown(html)
-    expect(markdown).toBe('- parent\n  - child')
-
-    const parsed = parseIndentedMarkdown(markdown)
-    expect(parsed).toHaveLength(2)
-    expect(parsed[0]).toEqual({ content: '- parent', parentIndex: null })
-    expect(parsed[1]).toEqual({ content: '- child', parentIndex: 0 })
+describe('outline → pasted blocks', () => {
+  it('gives a nested list its parent/child depths', () => {
+    expect(convert('<ul><li>parent<ul><li>child</li></ul></li></ul>')).toEqual([
+      { content: '- parent', depth: 0 },
+      { content: '- child', depth: 1 },
+    ])
   })
 
   it('emits a heading whose content re-parses to a heading node', () => {
-    const markdown = convertToMarkdown('<h2>Hello <b>bold</b></h2>')
+    const [heading] = convert('<h2>Hello <b>bold</b></h2>')
+    const markdown = heading?.content ?? ''
     expect(markdown).toBe('## Hello **bold**')
     const doc = parse(markdown)
     const block = doc.content?.[0]
@@ -226,8 +213,7 @@ describe('outline → indented markdown → block tree', () => {
   })
 
   it('emits a paragraph whose marks survive a re-parse', () => {
-    const markdown = convertToMarkdown('<p>a <b>b</b> c</p>')
-    const doc = parse(markdown)
+    const doc = parse(convert('<p>a <b>b</b> c</p>')[0]?.content ?? '')
     const inline = doc.content?.[0]?.content ?? []
     // The bold run carries the bold mark.
     const bold = inline.find((n) => n.type === 'text' && (n as { text?: string }).text === 'b') as
@@ -240,18 +226,12 @@ describe('outline → indented markdown → block tree', () => {
 // ── #1439 Phase 2: tables, code fences, images, blockquotes, task lists ───────
 
 /**
- * Drive a single fragment through the FULL paste path — DOM walk → indented
- * markdown (with the multi-line-block newline encoding) → `parseIndentedMarkdown`
- * (decode) → per-block `parse` — and return the parsed block specs with each
- * block's content reparsed to its top-level node. Mirrors what `pasteBlocks`
- * does so the assertions cover the real round-trip, not just the converter.
+ * Drive a single fragment through the paste path — DOM walk → the blocks
+ * `paste_blocks` creates verbatim → per-block `parse` — and return each block's
+ * content with its reparsed top-level node.
  */
 function pasteRoundTrip(html: string): { content: string; node: ReturnType<typeof parse> }[] {
-  const markdown = convertToMarkdown(html)
-  return parseIndentedMarkdown(markdown).map((b) => ({
-    content: b.content,
-    node: parse(b.content),
-  }))
+  return convert(html).map((b) => ({ content: b.content, node: parse(b.content) }))
 }
 
 describe('htmlBodyToOutline — tables (Phase 2)', () => {
@@ -453,24 +433,12 @@ describe('htmlBodyToOutline — task lists (Phase 2)', () => {
   })
 })
 
-describe('outline newline encoding (Phase 2)', () => {
-  it('round-trips a multi-line block as ONE block without shredding it', () => {
+describe('multi-line blocks (Phase 2)', () => {
+  it('keeps a multi-line table as ONE block with its newlines', () => {
     const html = '<table><tr><td>a</td><td>b</td></tr><tr><td>c</td><td>d</td></tr></table>'
-    const markdown = convertToMarkdown(html)
-    // The encoded outline is a SINGLE line (no real newlines between block rows).
-    expect(markdown.split('\n')).toHaveLength(1)
-    // Decoding restores the real newlines into one block's content.
-    const parsed = parseIndentedMarkdown(markdown)
-    expect(parsed).toHaveLength(1)
-    expect(parsed[0]?.content.split('\n').length).toBeGreaterThan(1)
-  })
-
-  it('leaves single-line block content untouched (no sentinel present)', () => {
-    const parsed = parseIndentedMarkdown('plain one-liner\n  child line')
-    expect(parsed).toEqual([
-      { content: 'plain one-liner', parentIndex: null },
-      { content: 'child line', parentIndex: 0 },
-    ])
+    const blocks = convert(html)
+    expect(blocks).toHaveLength(1)
+    expect(blocks[0]?.content.split('\n')).toHaveLength(3)
   })
 })
 

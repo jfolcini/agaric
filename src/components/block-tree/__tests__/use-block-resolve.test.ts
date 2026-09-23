@@ -4552,10 +4552,10 @@ describe('picker name caches — rename & delete invalidation (#4007)', () => {
 // before its create/rename/remove, and a space switch clears both caches —
 // which is why this was safe in practice for as long as it was. But neither
 // of those is structural: a create whose captured-space read and emit
-// straddle a switch (`paste-internalize.ts`'s multi-block paste is the
-// widest window — it captures `spaceId` once and reuses it for the whole
-// paste) can still land, post-switch, on an already-re-warmed cache for the
-// NEW space. `NameChange` now carries `spaceId`, and the subscriber drops
+// straddle a switch (a paste is the widest window — its created pages are
+// reported only when the command replies) can still land, post-switch, on an
+// already-re-warmed cache for the NEW space. `NameChange` now carries
+// `spaceId`, and the subscriber drops
 // any event whose `spaceId` does not match the space it is live-showing,
 // before the #4008 latch guard.
 //
@@ -6121,7 +6121,7 @@ describe("registerCreatedPage — the date picker's route into the page cache (#
 // holds a `useBlockResolve()` return value — which, in this app, means a
 // site inside `BlockTree`. Nine of the ten page-creation sites are not: the
 // sidebar, the palette, the `createNewPage` chord, the Pages view form,
-// Templates, the journal, paste-internalize and the welcome modal all create
+// Templates, the journal, a paste and the welcome modal all create
 // pages from module scope or from a component with no `BlockTree` under it.
 // #4338 gives them the bus instead.
 //

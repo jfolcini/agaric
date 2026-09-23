@@ -5,6 +5,8 @@
 
 use std::collections::{HashMap, HashSet};
 
+use serde::Deserialize;
+use specta::Type;
 use sqlx::SqlitePool;
 use tracing::instrument;
 
@@ -86,14 +88,11 @@ fn check_attachment_budget(file_count: usize, total_bytes: u64) -> Result<(), Ap
 /// untouched (it is already an internal `[[ULID]]` ref) — the resolver checks
 /// the captured body against [`agaric_store::cache::PAGE_LINK_RE`] before rewriting.
 ///
-/// #1920 — this Rust regex (`\[\[([^\]\n]+?)\]\]`) is the CANONICAL source for
-/// the inbound wiki-link grammar. It is mirrored byte-for-byte by the frontend
-/// `HUMAN_PAGE_LINK_RE` in `src/lib/block-clipboard.ts` (the paste path,
-/// #1484). The two implement the SAME rule — `[[Page]]` → ULID,
-/// create-if-missing, ambiguous duplicate titles stay plain text — so any
-/// change to the pattern MUST be made in both. A cross-language parity test
-/// over a shared fixture pins them together (`page_link_re_parity_*` here and
-/// `page-link-re-parity.test.ts` in the frontend).
+/// #1920 — this regex (`\[\[([^\]\n]+?)\]\]`) is the one source of the inbound
+/// wiki-link grammar. Import and paste ([`paste_blocks_inner`], #1484) both
+/// resolve through it: `[[Page]]` → ULID, create-if-missing, ambiguous
+/// duplicate titles stay plain text. `page_link_re_parity_*` pins it over the
+/// fixture `conformance/reference-tokens.vectors.json`.
 static HUMAN_PAGE_LINK_RE: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
     regex::Regex::new(r"\[\[([^\]\n]+?)\]\]").expect("invalid human page-link regex")
 });
@@ -103,8 +102,7 @@ static HUMAN_PAGE_LINK_RE: std::sync::LazyLock<regex::Regex> = std::sync::LazyLo
 /// group 2 is the tag NAME — a run of `[\p{L}\p{N}_]` then
 /// `[\p{L}\p{N}\p{M}_/-]*` (Unicode letters/digits/underscore plus combining
 /// marks, with `/` and `-` allowed after the first char for nested +
-/// hyphenated tags). This mirrors the frontend `HUMAN_TAG_RE` in
-/// `src/lib/block-clipboard.ts` byte-for-byte.
+/// hyphenated tags).
 ///
 /// The leading boundary `(^|[^\p{L}\p{N}\p{M}_])` prevents matching
 /// `# heading` (the `#` is followed by a space, not a name char), `word#frag`
@@ -384,10 +382,7 @@ fn is_in_span(pos: usize, spans: &[(usize, usize)]) -> bool {
 /// literal `#` in a page NAME (`[[Project #alpha]]`). Collecting it would mint a
 /// spurious tag and rewriting it would corrupt the token into
 /// `[[Project #[ULID]]]`. Both tag passes therefore skip any bare-tag match
-/// whose `#` falls in one of these ranges — the exact rule the frontend paste
-/// path applies (`replaceRefs`' `[[ ]]` span guard in
-/// `src/lib/block-clipboard.ts`), which is why the two agreed on
-/// `[[Project #alpha]]` only after #3598.
+/// whose `#` falls in one of these ranges.
 ///
 /// ORDERING: these offsets are valid ONLY for the string they were computed
 /// from. `rewrite_inbound_tags` MUST recompute them after its multi-word pass,
@@ -408,14 +403,13 @@ fn human_page_link_spans(content: &str) -> Vec<(usize, usize)> {
 ///   * bare/nested/hyphenated `#tag` (`HUMAN_TAG_RE`, group 2 is the name), and
 ///   * multi-word `#[[Tag With Space]]` (`HUMAN_MULTIWORD_TAG_RE`, group 1).
 ///
-/// #3599 — CANONICAL RULE, shared with the frontend paste path: a `#tag` inside
-/// a PROTECTED span is never resolved and never rewritten. The protected spans
+/// #3599 — CANONICAL RULE, for import and paste alike: a `#tag` inside a
+/// PROTECTED span is never resolved and never rewritten. The protected spans
 /// are (a) fenced code — a block flagged `is_code` is skipped entirely here,
 /// (b) inline-code spans (`` `...` ``) within a non-code block, and (c) the body
 /// of a `[[...]]` wiki-link token (see [`human_page_link_spans`]). "Never
 /// resolved" is the load-bearing half: skipping in COLLECTION as well as in the
-/// rewrite is what keeps the resolver SIDE EFFECTS (create-if-missing) equal
-/// across the two implementations, not merely the rendered output.
+/// rewrite is what keeps a protected name from creating a tag it never links.
 /// Canonical `#[ULID]` refs never match `HUMAN_TAG_RE` (the char after `#` is
 /// `[`, not a name char), so they are not collected. The multi-word form is
 /// scanned FIRST and its byte ranges are excluded from the bare scan so a
@@ -809,16 +803,19 @@ struct PageExportData {
     name_snapshot: NameSnapshot,
 }
 
-/// The two renderings of a page's block tree. `Export` writes a file for other
+/// The renderings of a page's block tree. `Export` writes a file for other
 /// tools: ids become names and links, and only a block a same-page ref points
 /// at carries an anchor. `Source` writes the buffer source mode edits (#5140),
 /// which `import::parse_source_outline` reads back as exactly this tree: every
 /// block carries its `^ID`, ids stay raw unless a name reads back to the same
-/// id, and a task's state is a checkbox.
+/// id, and a task's state is a checkbox. `Clipboard` is `Source` for text
+/// that leaves the app: a block carries its `^ID` only when it would not read
+/// back without it.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum RenderMode {
     Export,
     Source,
+    Clipboard,
 }
 
 /// Emits one block as `<indent>- <content>` — the *exact* shape
@@ -849,22 +846,22 @@ fn render_block(
     let indent = "  ".repeat(depth);
     let content = block.content.as_deref().unwrap_or("");
     let list_marker = list_marker_for(&id, list_styles, list_ordinals);
-    let task_marker = match mode {
-        RenderMode::Export => String::new(),
-        RenderMode::Source => block
-            .todo_state
-            .as_deref()
-            .and_then(import::task_marker_for)
-            .map(|marker| format!("[{marker}] "))
-            .unwrap_or_default(),
-    };
+    let task_marker = source_task_marker(block, mode);
     match mode {
         RenderMode::Export => {
             let resolved = export_block_text(content, &id, data);
             push_block_bullet(output, &indent, &list_marker, "", &resolved, mode);
         }
-        RenderMode::Source => {
-            push_source_bullet(output, block, &indent, &list_marker, &task_marker, data);
+        RenderMode::Source | RenderMode::Clipboard => {
+            push_source_bullet(
+                output,
+                block,
+                &indent,
+                &list_marker,
+                &task_marker,
+                data,
+                mode,
+            );
         }
     }
 
@@ -908,7 +905,7 @@ fn render_block(
     let no_titles = HashMap::new();
     let ref_titles = match mode {
         RenderMode::Export => ref_titles,
-        RenderMode::Source => &no_titles,
+        RenderMode::Source | RenderMode::Clipboard => &no_titles,
     };
     if let Some(props) = descendant_properties.get(&id) {
         for prop in props {
@@ -938,6 +935,20 @@ fn render_block(
     }
 }
 
+/// The checkbox a source bullet writes for the block's task state: none in an
+/// export, or for a state outside the checkbox alphabet.
+fn source_task_marker(block: &BlockRow, mode: RenderMode) -> String {
+    if mode == RenderMode::Export {
+        return String::new();
+    }
+    block
+        .todo_state
+        .as_deref()
+        .and_then(import::task_marker_for)
+        .map(|marker| format!("[{marker}] "))
+        .unwrap_or_default()
+}
+
 /// A block's content as an export writes it: tag, page and block ids resolved
 /// to names and links, inline queries made readable, and an anchor when a
 /// same-page ref points at the block.
@@ -958,7 +969,8 @@ fn export_block_text(content: &str, id: &str, data: &PageExportData) -> String {
     stamp_block_anchor_marker(resolved, id, &data.same_page_ref_targets)
 }
 
-/// A block's bullet as source mode writes it, with its own `^ID`.
+/// A block's bullet as source mode writes it, with its own `^ID`, or as the
+/// clipboard does.
 ///
 /// Whether a name may replace an id depends on whether the parser will read
 /// the block as code, which the bullet's fence tracking decides; so the raw
@@ -970,6 +982,7 @@ fn push_source_bullet(
     list_marker: &str,
     task_marker: &str,
     data: &PageExportData,
+    mode: RenderMode,
 ) {
     let id = block.id.as_str();
     let content = block.content.as_deref().unwrap_or("");
@@ -983,10 +996,45 @@ fn push_source_bullet(
         &data.page_titles,
         &data.name_snapshot,
     );
-    if let Some(named) = named {
-        output.truncate(start);
-        push_anchored_source_bullet(output, indent, list_marker, task_marker, &named, id);
+    if mode == RenderMode::Source && named.is_none() {
+        return;
     }
+    output.truncate(start);
+    let text = named.as_deref().unwrap_or(content);
+    if mode == RenderMode::Clipboard {
+        push_clipboard_bullet(output, indent, list_marker, task_marker, text, id);
+    } else {
+        push_anchored_source_bullet(output, indent, list_marker, task_marker, text, id);
+    }
+}
+
+/// `content` as a source bullet without its `^id`, unless the bullet needs it
+/// to read back: when the block leaves a fence open, which the anchor line
+/// ends, or when the bullet alone reads back as other content, as one ending
+/// in ` ^word` or in a blank line does.
+fn push_clipboard_bullet(
+    output: &mut String,
+    indent: &str,
+    list_marker: &str,
+    task_marker: &str,
+    content: &str,
+    id: &str,
+) {
+    let start = output.len();
+    let code = push_block_bullet(
+        output,
+        indent,
+        list_marker,
+        task_marker,
+        content,
+        RenderMode::Source,
+    );
+    let read_back = import::parse_source_outline(&output[start..]).blocks;
+    if !code.open && matches!(read_back.as_slice(), [block] if block.content == content) {
+        return;
+    }
+    output.truncate(start);
+    push_anchored_source_bullet(output, indent, list_marker, task_marker, content, id);
 }
 
 /// `content` as a source bullet with `^id` at the end of its last line or,
@@ -2021,6 +2069,104 @@ pub async fn get_page_source_inner(pool: &SqlitePool, page_id: &str) -> Result<S
     Ok(render_page_source(&data))
 }
 
+/// The blocks `block_ids` names as the clipboard carries them (#5140): the
+/// page's source buffer for just those blocks, each with its subtree unless
+/// `with_children` is false, in document order, and with a `^ID` only where a
+/// block needs one to read back. The page is the first live content block's;
+/// an id that is not a live content block of that page is skipped, and so is
+/// one under another selected block, which carries it. Nothing to copy is `""`.
+///
+/// # Errors
+///
+/// - [`AppError::Validation`] — more ids than one batch takes, or a copied
+///   block holds a property value with a line break, which would paste back
+///   as other content
+#[instrument(skip(pool, block_ids), err)]
+pub async fn get_blocks_source_inner(
+    pool: &SqlitePool,
+    block_ids: Vec<BlockId>,
+    with_children: bool,
+) -> Result<String, AppError> {
+    crate::commands::ensure_batch_within_cap("block_ids", block_ids.len())?;
+    let ids: Vec<String> = block_ids.into_iter().map(BlockId::into_string).collect();
+    let ids_json = serde_json::to_string(&ids)?;
+    let mut tx = pool.begin().await?;
+    let page_id = sqlx::query_scalar!(
+        r#"SELECT b.page_id AS "page_id!: String"
+             FROM json_each(?1) je
+             JOIN blocks b ON b.id = je.value
+            WHERE b.deleted_at IS NULL
+              AND b.block_type = 'content'
+              AND b.page_id IS NOT NULL
+            ORDER BY je.key
+            LIMIT 1"#,
+        ids_json,
+    )
+    .fetch_optional(&mut *tx)
+    .await?;
+    let Some(page_id) = page_id else {
+        return Ok(String::new());
+    };
+    let mut data = load_page_export_data(&mut tx, &page_id).await?;
+    data.name_snapshot = load_name_snapshot(&mut tx, &data).await?;
+    tx.commit().await?;
+    render_clipboard_source(&data, &ids, with_children)
+}
+
+/// The selected blocks of `data`'s page no other selected block holds, in
+/// document order, each at depth 0, with its subtree when `with_children`.
+/// Refused when a rendered block holds a property value with a line break:
+/// its `key:: value` line would read back as content or another block.
+fn render_clipboard_source(
+    data: &PageExportData,
+    selected: &[String],
+    with_children: bool,
+) -> Result<String, AppError> {
+    let children_by_parent = group_children_by_parent(data.page.id.as_str(), &data.descendants);
+    let list_ordinals = compute_list_ordinals(&children_by_parent, &data.list_styles);
+    let selected: HashSet<&str> = selected.iter().map(String::as_str).collect();
+    let mut roots = Vec::new();
+    let mut stack: Vec<&BlockRow> = children_by_parent
+        .get(data.page.id.as_str())
+        .map_or(Vec::new(), |kids| kids.iter().rev().copied().collect());
+    while let Some(block) = stack.pop() {
+        if selected.contains(block.id.as_str()) {
+            roots.push(block);
+        } else if let Some(kids) = children_by_parent.get(block.id.as_str()) {
+            stack.extend(kids.iter().rev());
+        }
+    }
+    let no_children = HashMap::new();
+    let children = if with_children {
+        &children_by_parent
+    } else {
+        &no_children
+    };
+    let mut output = String::new();
+    let rendered = render_subtrees(
+        &mut output,
+        &roots,
+        children,
+        &list_ordinals,
+        data,
+        RenderMode::Clipboard,
+    );
+    let no_titles = HashMap::new();
+    let multiline = rendered.iter().find(|id| {
+        data.descendant_properties.get(*id).is_some_and(|props| {
+            props
+                .iter()
+                .any(|prop| frontmatter_row_value(prop, &no_titles).contains(['\n', '\r']))
+        })
+    });
+    if let Some(id) = multiline {
+        return Err(AppError::validation(format!(
+            "block '{id}' holds a property value with a line break, which copy cannot carry"
+        )));
+    }
+    Ok(output)
+}
+
 /// Copy a content block and its content subtree to right after the original
 /// (#5140), as one transaction and so one undo. The subtree is rendered as a
 /// source buffer and parsed back, so the copy carries what that buffer
@@ -2072,8 +2218,6 @@ pub async fn duplicate_block_inner(
             "block '{block_id}' holds a value Duplicate cannot copy"
         )));
     }
-    crate::commands::ensure_batch_within_cap("duplicate ops", planned_ops(&parsed.blocks))?;
-
     let parent_id = root.parent_id.map(BlockId::into_string);
     let siblings =
         super::super::blocks::move_ops::ordered_live_children(&mut tx, parent_id.as_deref())
@@ -2084,7 +2228,7 @@ pub async fn duplicate_block_inner(
         .map(|slot| i64::try_from(slot + 1).unwrap_or(i64::MAX));
     // Boxed: inline, the copy loop's future makes this one too large for the
     // stack (`clippy::large_futures`).
-    let created = Box::pin(create_duplicate_blocks(
+    let created = Box::pin(create_parsed_blocks(
         &mut tx,
         materializer,
         device_id,
@@ -2095,6 +2239,139 @@ pub async fn duplicate_block_inner(
     .await?;
     tx.commit_and_dispatch(materializer).await?;
     Ok(created)
+}
+
+/// What a paste carries: clipboard text, or blocks already split.
+#[derive(Debug, Clone, Deserialize, Type)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum PasteInput {
+    Text { text: String },
+    Blocks { blocks: Vec<PastedBlock> },
+}
+
+/// One pasted block: its content verbatim and its depth under the paste.
+#[derive(Debug, Clone, Deserialize, Type)]
+pub struct PastedBlock {
+    pub content: String,
+    pub depth: u32,
+}
+
+impl PasteInput {
+    fn into_blocks(self) -> Vec<import::ParsedBlock> {
+        match self {
+            Self::Text { text } => import::parse_pasted_text(&text),
+            Self::Blocks { blocks } => blocks
+                .into_iter()
+                .map(|block| import::pasted_block(block.content, block.depth as usize))
+                .collect(),
+        }
+    }
+}
+
+/// Paste `input` right after the anchor block (#5140), as one transaction and
+/// so one undo. Text is read by [`import::parse_pasted_text`]; each of
+/// `blocks` is one block as it comes. A page link or tag written as a name is
+/// resolved in the anchor's space as an import resolves it, creating the page
+/// or tag when no name there matches; ids and block refs stay as written, and
+/// an `^anchor` in the text never pairs with a block. The top-level blocks
+/// land in order right after the anchor among its siblings, each deeper one
+/// under its parsed parent, with its task state, priority, dates, list style
+/// and properties. Returns the pages and tags the names created, then the
+/// pasted blocks in document order.
+///
+/// # Errors
+///
+/// - [`AppError::Ulid`] — `anchor_block_id` is not a ULID
+/// - [`AppError::NotFound`] — no block has that id
+/// - [`AppError::Validation`] — the input holds no block, the anchor is
+///   soft-deleted or not a content block, the paste would append more ops
+///   than one undo reverts, or a block would be nested past `MAX_BLOCK_DEPTH`
+#[instrument(skip(pool, device_id, materializer, input), err)]
+pub async fn paste_blocks_inner(
+    pool: &SqlitePool,
+    device_id: &str,
+    materializer: &Materializer,
+    anchor_block_id: BlockId,
+    input: PasteInput,
+) -> Result<Vec<BlockRow>, AppError> {
+    let anchor_id = BlockId::from_string(anchor_block_id.into_string())?;
+    let mut blocks = input.into_blocks();
+    if blocks.is_empty() {
+        return Err(AppError::validation("there is nothing to paste".into()));
+    }
+    let mut tx = CommandTx::begin_immediate(pool, "paste_blocks").await?;
+    // #2604 — rollback-safe engine apply (rewind on tx abort).
+    tx.arm_engine_rollback(materializer.loro_state());
+    let anchor =
+        agaric_engine::block_ops::fetch_live_block_in_tx(&mut tx, anchor_id.as_str()).await?;
+    if anchor.block_type != "content" {
+        return Err(AppError::validation(format!(
+            "blocks can only be pasted after a content block, not a '{}'",
+            anchor.block_type
+        )));
+    }
+    // Both passes are boxed for the reason `duplicate_block_inner` gives.
+    let (mut tx, mut created) = Box::pin(resolve_pasted_names(
+        tx,
+        materializer,
+        device_id,
+        &anchor,
+        &mut blocks,
+    ))
+    .await?;
+    let parent_id = anchor.parent_id.map(BlockId::into_string);
+    let siblings =
+        super::super::blocks::move_ops::ordered_live_children(&mut tx, parent_id.as_deref())
+            .await?;
+    let index = siblings
+        .iter()
+        .position(|id| id == anchor_id.as_str())
+        .map(|slot| i64::try_from(slot + 1).unwrap_or(i64::MAX));
+    let pasted = Box::pin(create_parsed_blocks(
+        &mut tx,
+        materializer,
+        device_id,
+        parent_id,
+        index,
+        &blocks,
+    ))
+    .await?;
+    tx.commit_and_dispatch(materializer).await?;
+    created.extend(pasted);
+    Ok(created)
+}
+
+/// Resolve the page links and tags `blocks` write as names in `anchor`'s
+/// space, creating what no name there matches, and write each block's content
+/// with their ids. Returns the pages and tags created. With no space, every
+/// name stays text.
+async fn resolve_pasted_names(
+    mut tx: CommandTx,
+    materializer: &Materializer,
+    device_id: &str,
+    anchor: &BlockRow,
+    blocks: &mut [import::ParsedBlock],
+) -> Result<(CommandTx, Vec<BlockRow>), AppError> {
+    let Some(space) = agaric_store::space::resolve_block_space(&mut **tx, &anchor.id).await? else {
+        return Ok((tx, Vec::new()));
+    };
+    // What an ambiguous name left as text reports; a paste has no summary to
+    // show it in.
+    let mut warnings = Vec::new();
+    let mut names = NameCtx {
+        materializer,
+        device_id,
+        space_id: space.as_str(),
+        page_id: anchor.page_id.as_ref().map_or("", BlockId::as_str),
+        warnings: &mut warnings,
+        created: Vec::new(),
+    };
+    let (tx, links) = resolve_inbound_page_links(&mut names, tx, blocks).await?;
+    let (tx, _, tag_tokens, _) = resolve_inbound_tags(&mut names, tx, blocks).await?;
+    for block in blocks.iter_mut() {
+        block.content = rewrite_block_content_for_import(block, &links.page_links, &tag_tokens);
+    }
+    Ok((tx, names.created))
 }
 
 /// The `todo_state` a parsed block carries, from its checkbox or a property
@@ -2108,24 +2385,12 @@ fn parsed_todo_state(block: &import::ParsedBlock) -> Option<&str> {
         .map(|(_, value)| value.as_str())
 }
 
-/// The ops a duplicate appends: a create per block, a write per property, and
-/// the one stamp `write_todo_timestamp_transitions_in_tx` gives a new task
-/// (`created_at` for TODO and DOING, `completed_at` for DONE).
-fn planned_ops(blocks: &[import::ParsedBlock]) -> usize {
-    blocks
-        .iter()
-        .map(|block| {
-            let stamps = matches!(parsed_todo_state(block), Some("TODO" | "DOING" | "DONE"));
-            1 + block.properties.len() + usize::from(stamps)
-        })
-        .sum()
-}
-
-/// Create the parsed copy: the depth-0 block at `index` among `parent_id`'s
-/// children, each deeper block appended under its parsed parent. A block's
-/// properties and task stamp are written right after it, so its ops stay
-/// together in the log.
-async fn create_duplicate_blocks(
+/// Create parsed blocks: the k-th depth-0 block at `index + k` among
+/// `parent_id`'s children, each deeper block appended under its parsed parent.
+/// A block's properties and task stamp are written right after it, so its ops
+/// stay together in the log. Refused, and so rolled back, the moment the
+/// transaction holds more ops than one undo reverts.
+async fn create_parsed_blocks(
     tx: &mut CommandTx,
     materializer: &Materializer,
     device_id: &str,
@@ -2135,13 +2400,17 @@ async fn create_duplicate_blocks(
 ) -> Result<Vec<BlockRow>, AppError> {
     let mut created = Vec::with_capacity(blocks.len());
     let mut open: Vec<(usize, String)> = Vec::new();
+    let mut top_level: i64 = 0;
     for block in blocks {
         while open.last().is_some_and(|(depth, _)| *depth >= block.depth) {
             open.pop();
         }
-        let (parent, slot) = match open.last() {
-            Some((_, id)) => (Some(id.clone()), None),
-            None => (parent_id.clone(), index),
+        let (parent, slot) = if let Some((_, id)) = open.last() {
+            (Some(id.clone()), None)
+        } else {
+            let slot = index.map(|i| i.saturating_add(top_level));
+            top_level += 1;
+            (parent_id.clone(), slot)
         };
         let (row, op) = create_block_in_tx(
             tx,
@@ -2168,6 +2437,7 @@ async fn create_duplicate_blocks(
             )
             .await?;
         }
+        crate::commands::ensure_batch_within_cap("ops", tx.pending_len())?;
         open.push((block.depth, id));
         created.push(row);
     }
@@ -2331,7 +2601,7 @@ fn push_block_bullet(
     use super::markdown_yaml::content_line_is_ambiguous;
     let is_fence_delimiter = match mode {
         RenderMode::Export => import::is_fence_delimiter,
-        RenderMode::Source => import::is_source_fence_delimiter,
+        RenderMode::Source | RenderMode::Clipboard => import::is_source_fence_delimiter,
     };
 
     let mut lines = resolved.split('\n');
@@ -2360,6 +2630,7 @@ fn push_block_bullet(
     let mut code = CodeLines {
         any: in_fence,
         last: in_fence,
+        open: false,
     };
     output.push('\n');
 
@@ -2368,7 +2639,7 @@ fn push_block_bullet(
         let line_start = output.len();
         output.push_str(&cont_indent);
         let needs_escape = if in_fence {
-            mode == RenderMode::Source && import::needs_anchor_line_escape(line)
+            mode != RenderMode::Export && import::needs_anchor_line_escape(line)
         } else {
             content_line_is_ambiguous(line)
         };
@@ -2384,13 +2655,16 @@ fn push_block_bullet(
         }
         output.push('\n');
     }
+    code.open = in_fence;
     code
 }
 
-/// Which lines of a written bullet the parser reads as code.
+/// Which lines of a written bullet the parser reads as code, and whether the
+/// bullet leaves a fence open.
 struct CodeLines {
     any: bool,
     last: bool,
+    open: bool,
 }
 
 /// `true` when a block's first line needs a leading `\` to read back as text
@@ -2414,7 +2688,7 @@ fn first_line_needs_escape(
         return false;
     }
     (list_marker.is_empty() && import::needs_list_marker_escape(first))
-        || (mode == RenderMode::Source && import::needs_task_marker_escape(first))
+        || (mode != RenderMode::Export && import::needs_task_marker_escape(first))
 }
 
 /// #2724 — count how many attachment INGEST ATTEMPTS will read each vault file,
@@ -2873,11 +3147,12 @@ async fn resolve_document_refs(
     let tx = apply_frontmatter_properties(ctx, tx, parse_output, counters).await?;
 
     // #1446 Part B / #1921 — inbound `[[Page Name]]` wiki-link resolution pre-pass.
-    let (tx, links) = resolve_inbound_page_links(ctx, tx, parse_output).await?;
+    let (tx, links) =
+        resolve_inbound_page_links(&mut ctx.name_ctx(), tx, &parse_output.blocks).await?;
 
     // #1924 / #1950 — inbound inline-tag resolution pre-pass.
     let (tx, mut resolved_tag_norm, tag_tokens, existing_tag_by_norm) =
-        resolve_inbound_tags(ctx, tx, parse_output).await?;
+        resolve_inbound_tags(&mut ctx.name_ctx(), tx, &parse_output.blocks).await?;
 
     // #2722 — frontmatter `tags:` → real page→tag associations.
     let tx = apply_frontmatter_tags(
@@ -2922,6 +3197,35 @@ struct ImportCtx<'a> {
     /// Parse-time + apply-time diagnostics, accumulated across every phase and
     /// returned in the final [`ImportResult`].
     warnings: Vec<String>,
+}
+
+impl ImportCtx<'_> {
+    /// The name passes' view of this import: its page, in its space.
+    fn name_ctx(&mut self) -> NameCtx<'_> {
+        NameCtx {
+            materializer: self.materializer,
+            device_id: self.device_id,
+            space_id: &self.space_id,
+            page_id: &self.page_id,
+            warnings: &mut self.warnings,
+            created: Vec::new(),
+        }
+    }
+}
+
+/// What the name passes ([`resolve_inbound_page_links`],
+/// [`resolve_inbound_tags`]) need to resolve names in one space, creating a
+/// page or tag no name there matches: import and paste each build one.
+struct NameCtx<'a> {
+    materializer: &'a Materializer,
+    device_id: &'a str,
+    space_id: &'a str,
+    /// The page the names are written into: a link to it with a `#` anchor
+    /// points into the text being written, not at the page.
+    page_id: &'a str,
+    warnings: &'a mut Vec<String>,
+    /// The pages and tags the passes created, in creation order.
+    created: Vec<BlockRow>,
 }
 
 /// The running totals an import accumulates across its phases (`properties_set`
@@ -3349,7 +3653,7 @@ async fn snapshot_page_link_matches(
 /// tokens sharing one base (`[[Page#h1]]`, `[[Page#h2]]`) resolve to the SAME
 /// page and create it AT MOST once.
 async fn resolve_or_create_link_target(
-    ctx: &mut ImportCtx<'_>,
+    ctx: &mut NameCtx<'_>,
     tx: &mut CommandTx,
     base: String,
     name: &str,
@@ -3389,9 +3693,10 @@ async fn resolve_or_create_link_target(
                 ctx.materializer,
                 ctx.device_id,
                 new_page_id.clone(),
-                &ctx.space_id,
+                ctx.space_id,
             )
             .await?;
+            ctx.created.push(new_page);
             resolved_base_links.insert(base, new_page_id.clone());
             Ok(Some(new_page_id))
         }
@@ -3422,12 +3727,12 @@ async fn resolve_or_create_link_target(
 /// resolves to a DIFFERENT, already-existing page) is out of scope for this
 /// slice and falls through to the #1282 dropped-anchor page-link behaviour.
 async fn resolve_link_names(
-    ctx: &mut ImportCtx<'_>,
+    ctx: &mut NameCtx<'_>,
     mut tx: CommandTx,
     link_names: Vec<String>,
     link_matches: &HashMap<String, Vec<String>>,
 ) -> Result<(CommandTx, InboundLinks), AppError> {
-    let page_id = ctx.page_id.clone();
+    let page_id = ctx.page_id;
     let mut links = InboundLinks::default();
     let mut resolved_base_links: HashMap<String, String> = HashMap::new();
     // #1282 — count of DISTINCT full tokens whose `#…` sub-anchor was dropped to
@@ -3506,8 +3811,8 @@ async fn resolve_link_names(
 /// alongside the importing page itself (before the block loop opens a new
 /// chunk).
 ///
-/// Resolution mirrors the paste path (#1484) duplicate-title rule, scoped to
-/// the import's OWN space:
+/// Resolution follows the #1484 duplicate-title rule, scoped to the name
+/// context's space:
 ///   * exactly one same-space page with that title → link to it,
 ///   * none                                        → create the page + link,
 ///   * more than one (ambiguous)                   → leave plain text.
@@ -3515,19 +3820,17 @@ async fn resolve_link_names(
 /// A name we cannot resolve or create is simply absent from the map, so the
 /// rewrite leaves its original `[[Name]]` token untouched — nothing is lost.
 async fn resolve_inbound_page_links(
-    ctx: &mut ImportCtx<'_>,
+    ctx: &mut NameCtx<'_>,
     mut tx: CommandTx,
-    parse_output: &import::ParseOutput,
+    blocks: &[import::ParsedBlock],
 ) -> Result<(CommandTx, InboundLinks), AppError> {
-    let mut link_names = collect_inbound_page_link_names(&parse_output.blocks);
+    let mut link_names = collect_inbound_page_link_names(blocks);
     // #2968 — also resolve/create the PAGE names referenced by structured
     // `{{query v2n:…}}` inline queries, so a query's page/structural refs remap
     // to this vault's page ids (create-if-missing) on re-import, exactly like an
     // inbound `[[Page]]` link.
-    link_names.extend(super::inline_query_md::query_page_names(
-        &parse_output.blocks,
-    ));
-    let link_matches = snapshot_page_link_matches(&mut tx, &ctx.space_id, &link_names).await?;
+    link_names.extend(super::inline_query_md::query_page_names(blocks));
+    let link_matches = snapshot_page_link_matches(&mut tx, ctx.space_id, &link_names).await?;
     resolve_link_names(ctx, tx, link_names, &link_matches).await
 }
 
@@ -3572,9 +3875,9 @@ async fn snapshot_tags_by_norm(
 /// per-pass tag state reused by the block loop and the frontmatter-tag pass.
 #[allow(clippy::type_complexity)]
 async fn resolve_inbound_tags(
-    ctx: &mut ImportCtx<'_>,
+    ctx: &mut NameCtx<'_>,
     mut tx: CommandTx,
-    parse_output: &import::ParseOutput,
+    blocks: &[import::ParsedBlock],
 ) -> Result<
     (
         CommandTx,
@@ -3586,13 +3889,11 @@ async fn resolve_inbound_tags(
 > {
     let materializer = ctx.materializer;
     let device_id = ctx.device_id;
-    let space_id = ctx.space_id.clone();
-    let warnings = &mut ctx.warnings;
+    let space_id = ctx.space_id;
     // #1924 / #1950 — resolve inbound inline tags (`#tag` and `#[[Tag With
     // Space]]`) to internal `#[ULID]` refs, creating any missing tag block
-    // (resolve-or-create). This mirrors the wiki-link pre-pass above and the
-    // frontend paste path (`buildImportRefInternalizers().tag` in
-    // `src/stores/page-blocks.ts`): resolve a tag by its NORMALIZED name
+    // (resolve-or-create). This mirrors the wiki-link pre-pass above: resolve a
+    // tag by its NORMALIZED name
     // (`tag_norm::normalize_tag_name` — the engine's tag identity key) else
     // create a new `block_type='tag'` block whose content is the display name,
     // and return its ULID. NO explicit `block_tags` association is written:
@@ -3607,23 +3908,21 @@ async fn resolve_inbound_tags(
     // ORIGINAL token name so the per-block rewrite can map each literal token
     // back to its ULID. A creation failure degrades gracefully: the token is
     // absent from `resolved_tag_tokens`, so the rewrite leaves it literal and a
-    // warning is recorded (mirroring the page-link / paste degrade behavior).
+    // warning is recorded (mirroring the page-link degrade behavior).
     //
     // FRONTMATTER `tags:` is intentionally NOT processed here — converting a
     // frontmatter `tags:` array into tag links is blocked on #1917 typed arrays
     // and is out of scope for #1924/#1950.
     let mut resolved_tag_norm: HashMap<String, String> = HashMap::new();
     let mut resolved_tag_tokens: HashMap<String, String> = HashMap::new();
-    let existing_tag_by_norm = snapshot_tags_by_norm(&mut tx, &space_id).await?;
+    let existing_tag_by_norm = snapshot_tags_by_norm(&mut tx, space_id).await?;
     // #2968 — also resolve/create the TAG names referenced by structured
     // `{{query v2n:…}}` inline queries so a query's tag refs remap to this
     // vault's tag ids (create-if-missing) on re-import, exactly like an inbound
     // `#tag`.
-    let tag_token_names: Vec<String> = collect_inbound_tag_names(&parse_output.blocks)
+    let tag_token_names: Vec<String> = collect_inbound_tag_names(blocks)
         .into_iter()
-        .chain(super::inline_query_md::query_tag_names(
-            &parse_output.blocks,
-        ))
+        .chain(super::inline_query_md::query_tag_names(blocks))
         .collect();
     for token_name in tag_token_names {
         let norm = agaric_core::tag_norm::normalize_tag_name(&token_name);
@@ -3671,9 +3970,10 @@ async fn resolve_inbound_tags(
                     materializer,
                     device_id,
                     new_tag_id.clone(),
-                    &space_id,
+                    space_id,
                 )
                 .await?;
+                ctx.created.push(new_tag);
                 resolved_tag_norm.insert(norm, new_tag_id.clone());
                 resolved_tag_tokens.insert(token_name, new_tag_id);
             }
@@ -3683,7 +3983,7 @@ async fn resolve_inbound_tags(
                     error = %e,
                     "import: tag create failed; leaving token as plain text (#1924)"
                 );
-                warnings.push(format!(
+                ctx.warnings.push(format!(
                     "tag '#{token_name}' could not be created; left as plain text"
                 ));
             }
@@ -4934,6 +5234,20 @@ pub async fn get_page_source(
         .map_err(sanitize_internal_error)
 }
 
+/// Tauri command: render blocks as clipboard markdown. Delegates to
+/// [`get_blocks_source_inner`].
+#[tauri::command]
+#[specta::specta]
+pub async fn get_blocks_source(
+    read_pool: State<'_, ReadPool>,
+    block_ids: Vec<BlockId>,
+    with_children: bool,
+) -> Result<String, AppError> {
+    get_blocks_source_inner(&read_pool.0, block_ids, with_children)
+        .await
+        .map_err(sanitize_internal_error)
+}
+
 /// Tauri command: duplicate a block and its content subtree right after the
 /// original. Delegates to [`duplicate_block_inner`].
 #[tauri::command]
@@ -4946,6 +5260,30 @@ pub async fn duplicate_block(
         duplicate_block_inner(ctx.pool(), ctx.device_id(), ctx.materializer(), block_id)
             .await
             .map(|blocks| CreatedBlocks { blocks })
+    })
+    .await
+    .map_err(sanitize_internal_error)
+}
+
+/// Tauri command: paste clipboard text or structured blocks right after the
+/// anchor block. Delegates to [`paste_blocks_inner`].
+#[tauri::command]
+#[specta::specta]
+pub async fn paste_blocks(
+    ctx: State<'_, WriteCtx>,
+    anchor_block_id: BlockId,
+    input: PasteInput,
+) -> Result<WithOps<CreatedBlocks>, AppError> {
+    capture_op_refs(async {
+        paste_blocks_inner(
+            ctx.pool(),
+            ctx.device_id(),
+            ctx.materializer(),
+            anchor_block_id,
+            input,
+        )
+        .await
+        .map(|blocks| CreatedBlocks { blocks })
     })
     .await
     .map_err(sanitize_internal_error)
@@ -5049,16 +5387,12 @@ mod tests {
         cases: Vec<ReferenceTokenCase>,
     }
 
-    /// #3599 — a PARSER-DRIVEN parity vector. `cases` hands each side a block it
-    /// constructs itself (with `is_code` supplied by the fixture), which cannot
-    /// cross-check the two code-protection MECHANISMS: Rust decides `is_code`
-    /// in its line-oriented importer, the frontend decides it from a single
-    /// block's content. These vectors feed the raw text to each side's real
-    /// mechanism — `parse_logseq_markdown` here, `fencedCodeSpans` there — and
-    /// compare the one thing both produce: the SET of page and tag names the
-    /// resolvers are asked to create. Rewrite output is not compared, because the importer's
-    /// parser rewrites block content (stripping bullets and indentation) and the
-    /// paste path does not; the `cases` corpus and the unit tests pin that half.
+    /// #3599 — a PARSER-DRIVEN vector. `cases` supplies `is_code` itself, so it
+    /// cannot pin how the parser decides it. These vectors feed the raw text to
+    /// `parse_logseq_markdown` and compare the SET of page and tag names the
+    /// resolvers are asked to create. Rewrite output is not compared, because
+    /// the parser rewrites block content (stripping bullets and indentation);
+    /// the `cases` corpus and the unit tests pin that half.
     #[derive(serde::Deserialize)]
     #[serde(rename_all = "camelCase")]
     struct CodeFenceCase {
@@ -5086,12 +5420,9 @@ mod tests {
     struct ReferenceTokenCase {
         name: String,
         input: String,
-        /// #3599 — drive the vector through the CODE-BLOCK path. Rust protects
-        /// fenced code at BLOCK granularity (its parser is fence-aware and sets
-        /// `is_code`); the frontend paste parser is line-oriented, so the same
-        /// fence arrives as one multi-line block and is detected from the
-        /// content. Different mechanism, one observable contract — which is
-        /// exactly what a shared vector should pin.
+        /// #3599 — drive the vector through the CODE-BLOCK path: fenced code is
+        /// protected at BLOCK granularity, as a block the parser flagged
+        /// `is_code`.
         #[serde(default)]
         is_code: bool,
         expected: ReferenceTokenExpected,
@@ -5107,9 +5438,9 @@ mod tests {
         transformed: String,
     }
 
-    /// #1920/#3261 — the canonical Rust regexes, collectors, and rewriters must
-    /// match the frontend paste grammar over one shared golden fixture. This
-    /// pins the prefix-sensitive distinction between `[[page]]`, `#[[tag]]`,
+    /// #1920/#3261 — the regexes, collectors, and rewriters import and paste
+    /// share, pinned over one golden fixture. This pins the prefix-sensitive
+    /// distinction between `[[page]]`, `#[[tag]]`,
     /// and `![[embed]]`, as well as canonical-ULID exclusion and final output.
     #[test]
     fn page_link_re_parity_boundaries_1920() {
@@ -5469,9 +5800,8 @@ mod tests {
     }
 
     /// #3599 — a bare `#tag` inside a MULTI-WORD tag name (`#[[Alpha #b]]`) is
-    /// part of that name. Rust used to scan the original content and collect a
-    /// stray `b`, creating a tag the frontend paste path never creates: the
-    /// rendered output matched while the resolver SIDE EFFECTS diverged. Both
+    /// part of that name: the collector must not create a stray tag `b` for it,
+    /// even when the rendered output would not show one. Both
     /// the resolved and the unresolved multi-word name are pinned, because only
     /// the unresolved one also exercises the rewriter.
     #[test]

@@ -45,7 +45,7 @@
  * (create / rename / delete), not a value it read back, so there is nothing
  * to normalise: it is non-blank by construction and already the exact bytes
  * a later `preload` will re-fetch. `TagList`, `useBlockTags`,
- * `useRichContentCallbacks`, `paste-internalize`, `page-rename`,
+ * `useRichContentCallbacks`, the paste reducer, `page-rename`,
  * `usePageDeleteAction`, `onCreatePage` / `onCreateTag`, the journal /
  * date-picker page seeds, and `createUntitledPage` (`@/lib/untitled-page.ts`,
  * behind the three new-page paths — whose `Untitled` / `Untitled N` title is

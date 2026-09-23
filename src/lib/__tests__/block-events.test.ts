@@ -24,7 +24,7 @@ describe('BLOCK_EVENTS', () => {
       'OPEN_BLOCK_PROPERTIES',
       'OPEN_EMOJI_PICKER',
       'OPEN_QUERY_BUILDER',
-      'PASTE_HTML_BLOCKS',
+      'PASTE_BLOCKS',
       'DISCARD_BLOCK_EDIT',
       'CYCLE_PRIORITY',
       'SET_PRIORITY_1',

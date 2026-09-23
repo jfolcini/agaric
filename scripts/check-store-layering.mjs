@@ -59,6 +59,9 @@ export const PAGE_BLOCK_STORE_FAMILY = [
  * edge (page-block store → navigation stores); neither module imports
  * the family back (the reverse ban plus the import-cycle hook keep it
  * one-way).
+ * `resolve.ts` was added for #5140's paste: the pages and tags a
+ * `paste_blocks` created are seeded into the resolve cache so their chips
+ * render at once — a forward edge; `resolve.ts` imports no page-block store.
  * Intra-family imports (e.g. `page-blocks.ts` importing
  * `page-blocks-reducers.ts`) are always allowed and don't need listing here.
  */
@@ -68,6 +71,7 @@ export const PAGE_BLOCK_STORE_ALLOWED_IMPORTS = new Set([
   'undo.ts',
   'tabs.ts',
   'recent-pages.ts',
+  'resolve.ts',
 ])
 
 /** Store module that must never import the page-block-store family. */

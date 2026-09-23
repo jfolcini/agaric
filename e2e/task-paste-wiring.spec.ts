@@ -171,8 +171,8 @@ test.describe('Task-list editor paste wiring (#1481)', () => {
 
     await pasteText(editor, '- [ ] one\n- [ ] two')
 
-    // TaskPaste only acts on a SINGLE task line; multi-line falls through to the
-    // default paste (and the flush → splitBlock path), so the block is NOT a
+    // TaskPaste only acts on a SINGLE task line; a multi-line list goes to the
+    // block-paste path (`paste_blocks`, #5140), so the focused block is NOT a
     // single task paragraph carrying a `todoState` attr.
     await expect(editor.locator('p[data-todo-state]')).toHaveCount(0)
   })

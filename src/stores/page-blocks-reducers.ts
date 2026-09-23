@@ -14,16 +14,15 @@
 import type { StoreApi } from 'zustand'
 
 import { retryOnPoolBusy, unwrap } from '@/lib/app-error'
-import type { BlockRow, CreateBlockSpec, OpRef } from '@/lib/bindings'
+import type { BlockRow, OpRef, PasteInput } from '@/lib/bindings'
 import { commands } from '@/lib/bindings'
-import { internalizeRefTokens, parseIndentedMarkdown } from '@/lib/block-clipboard'
 import { newBlockId } from '@/lib/block-id'
 import { computeIndentedBlocks, findPrevSiblingAt, planSplit } from '@/lib/block-tree-ops'
 import { recordGraphStructureChange } from '@/lib/graph-structure-events'
 import { i18n } from '@/lib/i18n'
 import { logger } from '@/lib/logger'
+import { notifyPageAdded, notifyTagAdded } from '@/lib/name-change-bus'
 import { notify } from '@/lib/notify'
-import { buildImportRefInternalizers } from '@/lib/paste-internalize'
 import {
   buildIndexById,
   getDragDescendants,
@@ -42,6 +41,8 @@ import {
   rollbackProvisionalMove,
 } from '@/stores/page-blocks-move'
 import type { DeleteBlockOptions, PageBlockState } from '@/stores/page-blocks-types'
+import { useResolveStore } from '@/stores/resolve'
+import { useSpaceStore } from '@/stores/space'
 import { useUndoStore } from '@/stores/undo'
 
 /**
@@ -81,12 +82,32 @@ function notifyUndoNewAction(
 ): void {
   if (rootParentId && undoable) {
     const { onNewAction } = useUndoStore.getState()
-    // Only forward `coalesceKey` when set (content edits, paste) so the existing
+    // Only forward `coalesceKey` when set (content edits) so the existing
     // call shape for every other action is unchanged (#2600).
     if (coalesceKey !== undefined) onNewAction(rootParentId, opRefs, coalesceKey)
     else onNewAction(rootParentId, opRefs)
   }
   recordGraphStructureChange()
+}
+
+/**
+ * #1484 / #4338 — a paste's `[[Title]]` or `#tag` naming nothing yet creates
+ * that page or tag in the same transaction, and the reply lists it ahead of
+ * the pasted content. Seed the resolve cache so its chip renders the name at
+ * once, and tell the pickers in `spaceId`: the name is already in use as a
+ * link, so the next `[[` on it must offer the page rather than "Create new
+ * page". The cache's `set` writes under the space live now, so a space switch
+ * during the paste seeds the cache under the space switched to.
+ */
+function announceCreatedNames(rows: readonly BlockRow[], spaceId: string | null): void {
+  for (const row of rows) {
+    if (row.block_type !== 'page' && row.block_type !== 'tag') continue
+    const name = row.content ?? ''
+    useResolveStore.getState().set(row.id, name, false)
+    if (spaceId == null) continue
+    if (row.block_type === 'page') notifyPageAdded(row.id, name, spaceId)
+    else notifyTagAdded(row.id, name, spaceId)
+  }
 }
 
 /**
@@ -1123,134 +1144,25 @@ export function createReducers({
         }
       }),
 
-    pasteBlocks: async (anchorBlockId: string, markdown: string) => {
-      const { blocks, rootParentId } = get()
-      const anchor = blocks.find((b) => b.id === anchorBlockId)
-      // The anchor (last-selected / focused block) may have vanished between
-      // the keypress and here (a racing sync delete). Reconcile and bail —
-      // there is no valid sibling slot to paste into.
-      if (!anchor) {
-        await get().load()
-        return []
-      }
-
-      // Parse the outline. Empty / unrecognizable text → a single content block
-      // from the raw markdown (paste must not be a silent no-op).
-      const parsed = parseIndentedMarkdown(markdown)
-      const effective =
-        parsed.length > 0 ? parsed : [{ content: markdown, parentIndex: null as number | null }]
-
-      // #1484 — rewrite human-readable wiki-links (`[[Page Name]]`, `#tag`) in
-      // the pasted content back to internal refs (`[[ULID]]`, `#[ULID]`),
-      // creating missing pages/tags. Canonical `[[ULID]]`/`#[ULID]` tokens and
-      // unresolvable/ambiguous names are left untouched. The resolvers share one
-      // page/tag list fetch across the whole paste; sequential per-block so
-      // same-name creation can't race.
-      // `null` (no active space) → skip resolution, content stays verbatim.
-      const internalizers = buildImportRefInternalizers()
-      if (internalizers) {
-        for (const entry of effective) {
-          entry.content = await internalizeRefTokens(entry.content, internalizers)
-        }
-      }
-
-      // #3323 — the sibling slot MUST be captured from LIVE state right
-      // before the IPC, not from the pre-await `blocks`/`anchor` snapshot
-      // above: `buildImportRefInternalizers` builds lazy page/tag caches, so
-      // when the pasted text contains an unresolved `[[Name]]`/`#tag`, the
-      // `internalizeRefTokens` await above can open a real IPC window (a
-      // full paginated page fetch). A concurrent remote/MCP write inserting
-      // siblings above the anchor during that window would stale the
-      // pre-await slot, landing the pasted run at the wrong position with
-      // nothing to repair it (the reducer's own post-paste `load()` just
-      // reconciles the FE to that already-wrong backend order). Re-find the
-      // anchor and bail exactly like the pre-await check above if it vanished
-      // in the meantime.
-      const liveBlocks = get().blocks
-      const liveAnchor = liveBlocks.find((b) => b.id === anchorBlockId)
-      if (!liveAnchor) {
-        await get().load()
-        return []
-      }
-      // Top-level pasted blocks become SIBLINGS of the anchor (same parent),
-      // landing right after the anchor among its siblings. `position` is 1-based
-      // on the wire (#400: position 1 → engine index 0), so the 0-based slot
-      // right after the anchor (`anchorSlot + 1`) maps to wire position
-      // `anchorSlot + 2`; subsequent top-level blocks step up from there.
-      // Both `parentId` and the slot are read off `liveAnchor` (not the
-      // pre-await `anchor`) so they stay mutually consistent even if the
-      // anchor itself moved to a new parent during the internalization await.
-      const parentId = liveAnchor.parent_id ?? null
-      const firstSiblingPosition = siblingSlot(liveBlocks, liveAnchor) + 2
-
-      // Compute each parsed block's depth so we can batch level-by-level
-      // (children reference parents created in an earlier batch — the
-      // `insertTemplateBlocks` pattern). Depth 0 = top-level paste blocks.
-      const depthByIndex: number[] = effective.map(() => 0)
-      for (let i = 0; i < effective.length; i += 1) {
-        const pIdx = effective[i]?.parentIndex
-        if (pIdx != null) depthByIndex[i] = (depthByIndex[pIdx] ?? 0) + 1
-      }
-      let maxDepth = 0
-      for (const d of depthByIndex) if (d > maxDepth) maxDepth = d
-
-      // parsed-index → created block id (filled as each depth level lands).
-      const createdIds: string[] = Array.from<string>({ length: effective.length })
-      const pasteUndoKey = `paste:${newBlockId()}`
+    pasteBlocks: async (anchorBlockId: string, input: PasteInput) => {
+      const { blocksById, rootParentId } = get()
+      if (!blocksById.has(anchorBlockId)) return []
+      // #4391 — the pickers hear of the pages and tags the paste creates in the
+      // space the paste was made in, not whichever one is live when the reply
+      // lands.
+      const spaceId = useSpaceStore.getState().currentSpaceId
       try {
-        for (let level = 0; level <= maxDepth; level += 1) {
-          const indicesAtLevel: number[] = []
-          const specs: CreateBlockSpec[] = []
-          // Count of top-level blocks placed so far, to step their sibling
-          // positions contiguously after the anchor.
-          let topLevelEmitted = 0
-          for (let i = 0; i < effective.length; i += 1) {
-            if ((depthByIndex[i] ?? 0) !== level) continue
-            const entry = effective[i]
-            if (entry == null) continue
-            // Top-level paste blocks go under the anchor's parent; nested
-            // blocks resolve to their just-created parent's id.
-            const resolvedParentId =
-              entry.parentIndex == null ? parentId : (createdIds[entry.parentIndex] ?? parentId)
-            indicesAtLevel.push(i)
-            specs.push({
-              blockType: 'content',
-              content: entry.content,
-              parentId: resolvedParentId,
-              // Top-level blocks land contiguously after the anchor; nested
-              // blocks append under their just-created parent (`null` = append,
-              // order preserved by their order in this batch).
-              position: entry.parentIndex == null ? firstSiblingPosition + topLevelEmitted++ : null,
-              properties: {},
-            })
-          }
-          if (specs.length === 0) continue
-          // #730 — route through the shared pool_busy retry like the other
-          // structural actions.
-          const created = await retryOnPoolBusy(() =>
-            commands.createBlocksBatch(specs).then(unwrap),
-          )
-          for (let k = 0; k < indicesAtLevel.length; k += 1) {
-            const idx = indicesAtLevel[k]
-            const row = created.blocks[k]
-            if (idx != null && row != null) createdIds[idx] = row.id
-          }
-          // Per level, not per paste: the paste's own key joins its levels into
-          // one entry however long each level's IPC takes, the ref cap splits
-          // one too large for a single `undo_ops`, and a later level's failure
-          // leaves this one undoable.
-          notifyUndoNewAction(rootParentId, created.op_refs, pasteUndoKey)
-        }
-        // Structural insert across N blocks — reload for the authoritative
-        // flattened order (mirrors `moveBlocks` / `moveToParent`).
+        const resp = await retryOnPoolBusy(() =>
+          commands.pasteBlocks(anchorBlockId, input).then(unwrap),
+        )
+        notifyUndoNewAction(rootParentId, resp.op_refs)
+        announceCreatedNames(resp.blocks, spaceId)
         await get().load()
-        return createdIds.filter((id): id is string => typeof id === 'string')
+        return resp.blocks.filter((b) => b.block_type === 'content').map((b) => b.id)
       } catch (err) {
         logger.error('page-blocks', 'Failed to paste blocks', { anchorBlockId }, err)
         notify.error(i18n.t('error.pasteBlocksFailed'))
-        // Reconcile FE with whatever the backend committed before the failure.
-        await get().load()
-        return createdIds.filter((id): id is string => typeof id === 'string')
+        return []
       }
     },
 

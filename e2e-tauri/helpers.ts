@@ -404,6 +404,28 @@ export function blockStaticsByMarker(marker: string) {
 }
 
 /**
+ * Click `element` while holding Control: the block-selection toggle (the
+ * Playwright twin is `ctrlSelectById` in `e2e/block-paste-outline.spec.ts`).
+ * One W3C action chain — the key source presses Control a tick before the
+ * pointer moves and releases it a tick after the button comes up, so the click
+ * carries `ctrlKey`. The click lands 6 px in from the top-left corner, clear of
+ * inline chips and the text a centred click could start a drag on.
+ */
+export async function ctrlClick(element: ReturnType<typeof $>): Promise<void> {
+  const target = await element.getElement()
+  const { width, height } = await target.getSize()
+  await browser.actions([
+    browser.action('key').down('\uE009').pause(0).pause(0).pause(0).up('\uE009'),
+    browser
+      .action('pointer')
+      .pause(0)
+      .move({ origin: target, x: Math.round(6 - width / 2), y: Math.round(6 - height / 2) })
+      .down()
+      .up(),
+  ])
+}
+
+/**
  * Assert that nothing matching `selector` is in the DOM, after a nav
  * round-trip re-queried the backend. A reverse `waitForExist` alone would pass
  * on a page that has not finished rendering yet, so callers put it AFTER the

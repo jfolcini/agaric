@@ -46,7 +46,9 @@ import {
 import { renderItem as renderMenuItem } from '@/components/editor/block-context-menu/menu-row'
 import type { BlockContextMenuProps, MenuItem } from '@/components/editor/block-context-menu/types'
 import { useListKeyboardNavigation } from '@/hooks/useListKeyboardNavigation'
-import { type RefResolver, serializeBlockSubtree } from '@/lib/block-clipboard'
+import { flushActiveDraft } from '@/lib/active-draft-flush'
+import { unwrap } from '@/lib/app-error'
+import { commands } from '@/lib/bindings'
 import type { BlockTypeToken } from '@/lib/block-type-convert'
 import { writeText } from '@/lib/clipboard'
 import { logger } from '@/lib/logger'
@@ -54,12 +56,11 @@ import { notify } from '@/lib/notify'
 import { openUrl } from '@/lib/open-url'
 import { TURN_INTO_OPTIONS, turnIntoTypeKey } from '@/lib/slash-commands'
 import type { FlatBlock } from '@/lib/tree-utils'
+import { computeSelectionRoots } from '@/lib/tree-utils'
 import { isAllowedUrl } from '@/lib/url-validation'
 import { cn } from '@/lib/utils'
 import { useBlockStore } from '@/stores/blocks'
 import { usePageBlockStoreOptional } from '@/stores/page-blocks'
-import { keyFor, useResolveStore } from '@/stores/resolve'
-import { useSpaceStore } from '@/stores/space'
 
 // Re-export the public type from its leaf module so external code keeps
 // importing it from `@/components/editor/BlockContextMenu` unchanged.
@@ -431,37 +432,28 @@ function buildLinkGroup(ctx: MenuGroupContext): MenuItem[] {
 }
 
 /**
- * The SYSTEM-clipboard reference renderer (#1440), rebuilt at click time so it
- * reads the freshest resolve cache. Rewrites opaque-ULID tokens to their
- * human-readable names (`[[Page Name]]` / `#tag` / `((Name))`), exactly as the
- * `copyBlocks` chord (`use-block-tree-keyboard-shortcuts`) and page-export do.
- * A cache miss returns `undefined`, so a dangling ULID falls back to its
- * verbatim token rather than a `[[xxxx…]]` placeholder.
+ * Copy `ids` to the system clipboard as the backend renders them
+ * (`get_blocks_source`), toasting either way. The backend reads committed
+ * rows, so the focused block's pending edit is flushed first. An empty render
+ * (nothing left to copy) is reported as a failure rather than silently
+ * "succeeding" with an empty clipboard.
  */
-function humanizingResolver(): RefResolver {
-  const resolveCache = useResolveStore.getState().cache
-  const spaceId = useSpaceStore.getState().currentSpaceId
-  return (ulid) => resolveCache.get(keyFor(spaceId, ulid))?.title
-}
-
-/**
- * Write serialized markdown to the system clipboard, toasting either way.
- * Empty markdown (nothing resolved) is reported as a failure rather than
- * silently "succeeding" with an empty clipboard.
- */
-async function copyMarkdown(
-  markdown: string,
+async function copySource(
+  ids: string[],
+  withChildren: boolean,
   t: TFn,
   successKey: string,
   context: Record<string, unknown>,
 ): Promise<void> {
-  if (markdown.length === 0) {
-    logger.warn('BlockContextMenu', 'Nothing to copy — serialized to empty', context)
-    notify.error(t('contextMenu.copyContentFailed'))
-    return
-  }
   try {
-    await writeText(markdown)
+    await flushActiveDraft()
+    const text = unwrap(await commands.getBlocksSource(ids, withChildren))
+    if (text.length === 0) {
+      logger.warn('BlockContextMenu', 'Nothing to copy — rendered to empty', context)
+      notify.error(t('contextMenu.copyContentFailed'))
+      return
+    }
+    await writeText(text)
     notify.success(t(successKey))
   } catch (err) {
     logger.error('BlockContextMenu', 'Failed to copy content to clipboard', context, err)
@@ -470,33 +462,23 @@ async function copyMarkdown(
 }
 
 /**
- * The content-copy rows: block / subtree / selection markdown → clipboard.
- *
- * All three reuse `serializeBlockSubtree`, which ALWAYS emits a root plus its
- * descendants. "Copy block content" therefore scopes the item list to the block
- * ITSELF (a one-element list has no descendants to walk), which is also what
- * makes its relative-indent baseline land at 0.
+ * The content-copy rows: the block alone, the block with its subtree, or the
+ * selection with theirs, as clipboard markdown.
  *
  * Gated on the block being present in `blocks`: with no `PageBlockStoreProvider`
- * above the menu there is nothing to serialize, so the rows are omitted rather
- * than offered as no-ops.
+ * above the menu there is nothing on this page to copy, so the rows are
+ * omitted rather than offered as no-ops.
  */
 function buildContentCopyItems(ctx: MenuGroupContext): MenuItem[] {
   const { t, blockId, blocks, bulkIds, onClose } = ctx
-  const self = blocks.find((b) => b.id === blockId)
-  if (!self) return []
+  if (!blocks.some((b) => b.id === blockId)) return []
 
   const items: MenuItem[] = [
     {
       label: t('contextMenu.copyBlockContent'),
       icon: <Copy className="h-3.5 w-3.5" />,
       action: async () => {
-        await copyMarkdown(
-          serializeBlockSubtree([self], [blockId], humanizingResolver()),
-          t,
-          'contextMenu.blockContentCopied',
-          { blockId },
-        )
+        await copySource([blockId], false, t, 'contextMenu.blockContentCopied', { blockId })
         onClose()
       },
     },
@@ -509,12 +491,7 @@ function buildContentCopyItems(ctx: MenuGroupContext): MenuItem[] {
       label: t('contextMenu.copySubtreeContent'),
       icon: <ListTree className="h-3.5 w-3.5" />,
       action: async () => {
-        await copyMarkdown(
-          serializeBlockSubtree(blocks, [blockId], humanizingResolver()),
-          t,
-          'contextMenu.subtreeContentCopied',
-          { blockId },
-        )
+        await copySource([blockId], true, t, 'contextMenu.subtreeContentCopied', { blockId })
         onClose()
       },
     })
@@ -522,10 +499,9 @@ function buildContentCopyItems(ctx: MenuGroupContext): MenuItem[] {
 
   // Multi-select only (`bulkIds` — >1 selected AND this block among them),
   // matching the rest of the menu's bulk rows. Restricted to ids this page
-  // owns, the same ownership gate the `copyBlocks` chord applies;
-  // `serializeBlockSubtree` de-duplicates nested selections via
-  // `computeSelectionRoots`, so a selected descendant travels with its ancestor
-  // instead of being emitted twice.
+  // owns, the same ownership gate the `copyBlocks` chord applies, and sent as
+  // the selection roots: a selected descendant travels with its selected
+  // ancestor.
   if (bulkIds) {
     const owned = bulkIds.filter((id) => blocks.some((b) => b.id === id))
     if (owned.length > 1) {
@@ -533,12 +509,10 @@ function buildContentCopyItems(ctx: MenuGroupContext): MenuItem[] {
         label: t('contextMenu.copySelectionContent'),
         icon: <CopyCheck className="h-3.5 w-3.5" />,
         action: async () => {
-          await copyMarkdown(
-            serializeBlockSubtree(blocks, owned, humanizingResolver()),
-            t,
-            'contextMenu.selectionContentCopied',
-            { count: owned.length },
-          )
+          const roots = computeSelectionRoots(blocks, owned)
+          await copySource(roots, true, t, 'contextMenu.selectionContentCopied', {
+            count: owned.length,
+          })
           onClose()
         },
       })

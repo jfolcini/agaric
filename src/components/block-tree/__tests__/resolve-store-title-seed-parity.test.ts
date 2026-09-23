@@ -670,10 +670,10 @@ const DECLARED_WRITERS: Record<
     kind: 'echo',
     note: 'new page via palette — see App.tsx',
   },
-  'src/lib/paste-internalize.ts': {
-    writes: 2,
+  'src/stores/page-blocks-reducers.ts': {
+    writes: 1,
     kind: 'echo',
-    note: 'page / tag just created during import',
+    note: 'page / tag a paste just created, named as the paste wrote it (#5140)',
   },
   'src/stores/page-rename.ts': { writes: 1, kind: 'echo', note: 'rename just committed' },
 }

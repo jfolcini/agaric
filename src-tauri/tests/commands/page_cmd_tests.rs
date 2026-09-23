@@ -3601,6 +3601,720 @@ async fn duplicate_block_past_the_depth_limit_writes_nothing() {
 }
 
 // ======================================================================
+// get_blocks_source / paste_blocks — the clipboard (#5140)
+// ======================================================================
+
+async fn copy_source(pool: &SqlitePool, ids: &[&BlockId], with_children: bool) -> String {
+    let ids = ids.iter().map(|id| (*id).clone()).collect();
+    get_blocks_source_inner(pool, ids, with_children)
+        .await
+        .unwrap()
+}
+
+fn paste_text(text: &str) -> PasteInput {
+    PasteInput::Text { text: text.into() }
+}
+
+async fn paste(
+    pool: &SqlitePool,
+    mat: &Materializer,
+    anchor: &BlockId,
+    input: PasteInput,
+) -> Vec<BlockRow> {
+    let rows = paste_blocks_inner(pool, DEV, mat, anchor.clone(), input)
+        .await
+        .unwrap();
+    settle(mat).await;
+    rows
+}
+
+/// Page "Copy" holding `a` (holding `a1`, which holds `a1x`, and `a2`), then
+/// `b` and `c`. Returns `[a, a1, a1x, a2, b, c]`.
+async fn copy_tree(pool: &SqlitePool, mat: &Materializer) -> [BlockId; 6] {
+    let page = dup_page(pool, mat, "Copy").await;
+    let a = dup_child(pool, mat, &page, "a").await;
+    let a1 = dup_child(pool, mat, &a, "a1").await;
+    let a1x = dup_child(pool, mat, &a1, "a1x").await;
+    let a2 = dup_child(pool, mat, &a, "a2").await;
+    let b = dup_child(pool, mat, &page, "b").await;
+    let c = dup_child(pool, mat, &page, "c").await;
+    [a, a1, a1x, a2, b, c]
+}
+
+/// The names come from the page's space in the database, as in the page's
+/// source buffer, and a block needing no `^ID` gets none.
+#[tokio::test]
+async fn get_blocks_source_writes_names_and_raw_block_refs_without_anchors() {
+    let (pool, _dir) = test_pool().await;
+    seed_source_page(
+        &pool,
+        &format!("see [[{SOURCE_PROJECT}]] #[{SOURCE_WORK}] (({SOURCE_TARGET}))"),
+    )
+    .await;
+
+    let md = copy_source(&pool, &[&BlockId::from_trusted(SOURCE_BLOCK)], true).await;
+
+    assert_eq!(
+        md,
+        format!("- see [[Project]] #work (({SOURCE_TARGET}))\n"),
+        "in-space names replace their ids, a block ref stays raw, and there is no anchor"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn get_blocks_source_writes_each_root_once_in_document_order() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let [a, a1, a1x, _, _, c] = copy_tree(&pool, &mat).await;
+
+    let md = copy_source(&pool, &[&c, &a1x, &a, &a1], true).await;
+
+    assert_eq!(
+        md, "- a\n  - a1\n    - a1x\n  - a2\n- c\n",
+        "a block under another selected block travels with it, and roots follow the page"
+    );
+}
+
+/// A selected child of a selected root is dropped here too: its root stands
+/// for it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn get_blocks_source_without_children_writes_each_root_alone() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let [a, a1, _, _, _, c] = copy_tree(&pool, &mat).await;
+
+    let md = copy_source(&pool, &[&c, &a1, &a], false).await;
+
+    assert_eq!(md, "- a\n- c\n", "no child is written");
+}
+
+/// The page is the first live content block's: a page id before it, a
+/// trashed block of another page, or a block on no page, does not choose it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn get_blocks_source_skips_what_is_not_a_live_content_block_of_that_page() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let page = dup_page(&pool, &mat, "Mine").await;
+    let a = dup_child(&pool, &mat, &page, "a").await;
+    let other = dup_page(&pool, &mat, "Other").await;
+    let other_block = dup_child(&pool, &mat, &other, "other").await;
+    let trashed = dup_child(&pool, &mat, &other, "trashed").await;
+    delete_block_inner(&pool, DEV, &mat, trashed.clone())
+        .await
+        .unwrap();
+    settle(&mat).await;
+    let pageless = BlockId::from_trusted("01J5140N0PAGE0000000000001");
+    insert_block(
+        &pool,
+        pageless.as_str(),
+        "content",
+        "on no page",
+        None,
+        None,
+    )
+    .await;
+    sqlx::query("UPDATE blocks SET page_id = NULL WHERE id = ?")
+        .bind(pageless.as_str())
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let md = copy_source(
+        &pool,
+        &[&pageless, &other, &trashed, &page, &a, &other_block],
+        true,
+    )
+    .await;
+
+    assert_eq!(
+        md, "- a\n",
+        "pages, trashed blocks and another page's blocks are skipped"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn get_blocks_source_of_nothing_is_empty_and_of_too_many_is_refused() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    copy_tree(&pool, &mat).await;
+
+    assert_eq!(copy_source(&pool, &[], true).await, "", "no ids, no text");
+    assert_eq!(
+        copy_source(&pool, &[&BlockId::new()], true).await,
+        "",
+        "an unknown id is skipped"
+    );
+    let too_many = (0..=pagination::MAX_BATCH_BLOCK_IDS)
+        .map(|_| BlockId::new())
+        .collect();
+    let result = get_blocks_source_inner(&pool, too_many, true).await;
+    assert!(
+        matches!(result, Err(AppError::Validation { .. })),
+        "more ids than one batch takes are refused, got {result:?}"
+    );
+}
+
+/// A property value with a line break would paste back as more content or as
+/// another block: a copy that renders one is refused, whether the block is
+/// selected or travels under a selected one. A copy that doesn't render it
+/// still works.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn get_blocks_source_refuses_a_property_value_with_a_line_break() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let [a, a1, a1x, _, b, _] = copy_tree(&pool, &mat).await;
+    for (block, value) in [(&a1, "a\nb"), (&a1x, "a\rb")] {
+        set_property_inner(
+            &pool,
+            DEV,
+            &mat,
+            block.as_str().into(),
+            "note".into(),
+            Some(value.into()),
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+    }
+    settle(&mat).await;
+
+    for (ids, with_children) in [(vec![&a1], false), (vec![&a1x], false), (vec![&a], true)] {
+        let ids = ids.into_iter().cloned().collect();
+        let result = get_blocks_source_inner(&pool, ids, with_children).await;
+        assert!(
+            matches!(result, Err(AppError::Validation { .. })),
+            "with_children={with_children}: refused, got {result:?}"
+        );
+    }
+    assert_eq!(
+        copy_source(&pool, &[&a, &b], false).await,
+        "- a\n- b\n",
+        "blocks holding no such value still copy"
+    );
+}
+
+/// Everything a copy carries lands where the original keeps it: content
+/// verbatim, with a closed fence, an open fence and its child, a trailing
+/// ` ^word` and a raw block ref; each task state, with the stamp a new task
+/// gets; the task columns, the list style, a custom and a declared-ref
+/// property.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_copy_pastes_back_as_the_blocks_it_was_copied_from() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let page = dup_page(&pool, &mat, "Copy").await;
+    create_property_def_inner(&pool, "reviewer".into(), "ref".into(), None)
+        .await
+        .unwrap();
+    let target = dup_child(&pool, &mat, &page, "target").await;
+    let open = dup_child(&pool, &mat, &page, "```sh\necho").await;
+    let open_child = dup_child(&pool, &mat, &open, "inside the open fence").await;
+    let mut originals = vec![target.clone(), open, open_child];
+    for content in [
+        "```js\nfirst\n```".to_owned(),
+        "ends in a word ^note".to_owned(),
+        format!("see (({target}))"),
+    ] {
+        originals.push(dup_child(&pool, &mat, &page, &content).await);
+    }
+    for state in ["TODO", "DOING", "DONE", "CANCELLED"] {
+        let task = dup_child(&pool, &mat, &page, state).await;
+        set_todo_state_inner(&pool, DEV, &mat, task.as_str().into(), Some(state.into()))
+            .await
+            .unwrap();
+        originals.push(task);
+    }
+    let props = dup_child(&pool, &mat, &page, "props").await;
+    let id = || props.as_str().into();
+    set_priority_inner(&pool, DEV, &mat, id(), Some("2".into()))
+        .await
+        .unwrap();
+    set_scheduled_date_inner(&pool, DEV, &mat, id(), Some("2026-02-01".into()))
+        .await
+        .unwrap();
+    set_due_date_inner(&pool, DEV, &mat, id(), Some("2026-03-01".into()))
+        .await
+        .unwrap();
+    for (key, text, reference) in [
+        ("listStyle", Some("bullet"), None),
+        ("note", Some("free text"), None),
+        ("reviewer", None, Some(target.clone().into_string())),
+    ] {
+        set_property_inner(
+            &pool,
+            DEV,
+            &mat,
+            id(),
+            key.into(),
+            text.map(Into::into),
+            None,
+            None,
+            reference,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+    }
+    originals.push(props);
+    let dest = dup_page(&pool, &mat, "Dest").await;
+    let anchor = dup_child(&pool, &mat, &dest, "the anchor").await;
+    settle(&mat).await;
+    let copied: Vec<&BlockId> = originals.iter().collect();
+    let md = copy_source(&pool, &copied, true).await;
+
+    let rows = paste(&pool, &mat, &anchor, paste_text(&md)).await;
+
+    assert_eq!(
+        rows.len(),
+        originals.len(),
+        "one block per original; md:\n{md}"
+    );
+    for (original, copy) in originals.iter().zip(&rows) {
+        let original_content: String =
+            sqlx::query_scalar("SELECT content FROM blocks WHERE id = ?")
+                .bind(original.as_str())
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(
+            copy.content.as_deref(),
+            Some(original_content.as_str()),
+            "content is copied verbatim; md:\n{md}"
+        );
+        assert_eq!(
+            dup_storage(&pool, &copy.id).await,
+            dup_storage(&pool, original).await,
+            "{original_content:?} carries every column and property; md:\n{md}"
+        );
+    }
+    let today = chrono::Local::now().format("%Y-%m-%d").to_string();
+    let stamps: Vec<Vec<String>> = {
+        let mut out = Vec::new();
+        for copy in &rows[6..10] {
+            out.push(dup_stamps(&pool, &copy.id).await);
+        }
+        out
+    };
+    assert_eq!(
+        stamps,
+        vec![
+            vec![format!("created_at={today}")],
+            vec![format!("created_at={today}")],
+            vec![format!("completed_at={today}")],
+            vec![],
+        ],
+        "each pasted task gets the stamp a new task gets"
+    );
+    let parents: Vec<Option<String>> = rows
+        .iter()
+        .map(|r| r.parent_id.clone().map(BlockId::into_string))
+        .collect();
+    let mut expected_parents = vec![Some(dest.clone().into_string()); rows.len()];
+    expected_parents[2] = Some(rows[1].id.clone().into_string());
+    assert_eq!(
+        parents, expected_parents,
+        "the open fence's child is pasted under its copy, the rest after the anchor"
+    );
+}
+
+/// `[[Name]]` and `#tag` resolve in the anchor's space as an import resolves
+/// them: an existing unique page or tag is linked, a missing one is created in
+/// the space, an ambiguous title and anything in code stay text.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn paste_blocks_resolves_names_in_the_anchors_space() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let page = dup_page(&pool, &mat, "Dest").await;
+    let project = dup_page(&pool, &mat, "Project").await;
+    insert_block(&pool, SOURCE_WORK, "tag", "work", None, Some(1)).await;
+    for (id, position) in [(SOURCE_PROJECT, 10), (SOURCE_PROJECT_TWIN, 11)] {
+        insert_block(&pool, id, "page", "Twin", None, Some(position)).await;
+        assign_to_space(&pool, id, TEST_SPACE_ID).await;
+    }
+    assign_to_space(&pool, SOURCE_WORK, TEST_SPACE_ID).await;
+    let anchor = dup_child(&pool, &mat, &page, "anchor").await;
+    settle(&mat).await;
+
+    let rows = paste(
+        &pool,
+        &mat,
+        &anchor,
+        paste_text(
+            "- see [[New Page]] [[Project]] #work #fresh `#code` [[Twin]]\n\
+             - ```\n  [[Inside]] #inside\n  ```\n",
+        ),
+    )
+    .await;
+
+    let shape: Vec<(&str, Option<&str>)> = rows
+        .iter()
+        .map(|r| (r.block_type.as_str(), r.content.as_deref()))
+        .collect();
+    let (new_page, fresh) = (&rows[0].id, &rows[1].id);
+    assert_eq!(
+        shape,
+        vec![
+            ("page", Some("New Page")),
+            ("tag", Some("fresh")),
+            (
+                "content",
+                Some(
+                    format!(
+                        "see [[{new_page}]] [[{project}]] #[{SOURCE_WORK}] #[{fresh}] `#code` \
+                         [[Twin]]"
+                    )
+                    .as_str()
+                )
+            ),
+            ("content", Some("```\n[[Inside]] #inside\n```")),
+        ],
+        "the created page and tag come first, then the pasted blocks with their names resolved"
+    );
+    for created in [new_page, fresh] {
+        let space: Option<String> = sqlx::query_scalar("SELECT space_id FROM blocks WHERE id = ?")
+            .bind(created.as_str())
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(
+            space.as_deref(),
+            Some(TEST_SPACE_ID),
+            "a created page or tag is in the anchor's space"
+        );
+    }
+    let stray: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM blocks WHERE block_type IN ('page', 'tag') \
+         AND content IN ('Inside', 'inside', 'code')",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(stray, 0, "a name in code creates nothing");
+}
+
+/// With no space to resolve them in, `[[Name]]` and `#tag` stay text and
+/// nothing is created.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn paste_blocks_in_no_space_leaves_names_as_text() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let page = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "page".into(),
+        "Spaceless".into(),
+        None,
+        None,
+    )
+    .await
+    .unwrap()
+    .id;
+    let anchor = dup_child(&pool, &mat, &page, "anchor").await;
+    settle(&mat).await;
+    assert_eq!(
+        agaric_store::space::resolve_block_space(&pool, &anchor)
+            .await
+            .unwrap(),
+        None,
+        "precondition: the anchor is in no space"
+    );
+    let names = "SELECT COUNT(*) FROM blocks WHERE block_type IN ('page', 'tag')";
+    let before: i64 = sqlx::query_scalar(names).fetch_one(&pool).await.unwrap();
+
+    let rows = paste(
+        &pool,
+        &mat,
+        &anchor,
+        paste_text("- see [[Brand New Page]] #newtag\n"),
+    )
+    .await;
+
+    let shape: Vec<(&str, Option<&str>)> = rows
+        .iter()
+        .map(|r| (r.block_type.as_str(), r.content.as_deref()))
+        .collect();
+    assert_eq!(
+        shape,
+        vec![("content", Some("see [[Brand New Page]] #newtag"))],
+        "the reply holds only the pasted block, its names verbatim"
+    );
+    let after: i64 = sqlx::query_scalar(names).fetch_one(&pool).await.unwrap();
+    assert_eq!(after, before, "no page or tag is created");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn paste_blocks_lands_top_level_blocks_in_order_after_the_anchor() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let page = dup_page(&pool, &mat, "Dest").await;
+    let a = dup_child(&pool, &mat, &page, "a").await;
+    dup_child(&pool, &mat, &page, "b").await;
+    settle(&mat).await;
+
+    paste(&pool, &mat, &a, paste_text("- x\n- y\n  - y1\n- z")).await;
+
+    let order: Vec<String> = dup_children(&pool, &page)
+        .await
+        .into_iter()
+        .map(|(_, content)| content)
+        .collect();
+    assert_eq!(
+        order,
+        vec!["a", "x", "y", "z", "b"],
+        "the pasted blocks follow the anchor in their own order, before its next sibling"
+    );
+}
+
+/// HTML paste hands over blocks already split: each is one block, verbatim.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn paste_blocks_keeps_each_given_block_whole() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let page = dup_page(&pool, &mat, "Dest").await;
+    let anchor = dup_child(&pool, &mat, &page, "anchor").await;
+    settle(&mat).await;
+    let blocks = vec![
+        PastedBlock {
+            content: "line one\n- line two\nkey:: v".into(),
+            depth: 0,
+        },
+        PastedBlock {
+            content: "child".into(),
+            depth: 1,
+        },
+    ];
+
+    let rows = paste(&pool, &mat, &anchor, PasteInput::Blocks { blocks }).await;
+
+    let shape: Vec<(Option<&str>, Option<String>)> = rows
+        .iter()
+        .map(|r| {
+            (
+                r.content.as_deref(),
+                r.parent_id.clone().map(BlockId::into_string),
+            )
+        })
+        .collect();
+    assert_eq!(
+        shape,
+        vec![
+            (
+                Some("line one\n- line two\nkey:: v"),
+                Some(page.clone().into_string())
+            ),
+            (Some("child"), Some(rows[0].id.clone().into_string())),
+        ],
+        "a multi-line block stays one block, and the deeper one nests under it"
+    );
+    assert_eq!(
+        dup_storage(&pool, &rows[0].id).await,
+        vec!["columns todo=None priority=None scheduled=None due=None".to_owned()],
+        "a given block's lines are its text, not properties"
+    );
+}
+
+/// A pasted `^ID` naming an existing block does not make the paste that
+/// block: the paste is a new block, and the original is left alone.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn paste_blocks_never_pairs_an_anchor_with_a_block() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let page = dup_page(&pool, &mat, "Dest").await;
+    let anchor = dup_child(&pool, &mat, &page, "anchor").await;
+    let original = dup_child(&pool, &mat, &page, "original").await;
+    settle(&mat).await;
+
+    let rows = paste(
+        &pool,
+        &mat,
+        &anchor,
+        paste_text(&format!("- copied ^{original}\n")),
+    )
+    .await;
+
+    assert_ne!(rows[0].id, original, "the paste is a block of its own");
+    assert_eq!(
+        dup_children(&pool, &page).await,
+        vec![
+            (anchor.into_string(), "anchor".to_owned()),
+            (rows[0].id.clone().into_string(), "copied".to_owned()),
+            (original.into_string(), "original".to_owned()),
+        ],
+        "the original keeps its content and place"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn paste_blocks_op_refs_undo_the_whole_paste_with_what_it_created() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let page = dup_page(&pool, &mat, "Dest").await;
+    let anchor = dup_child(&pool, &mat, &page, "anchor").await;
+    settle(&mat).await;
+
+    let resp = capture_op_refs(async {
+        paste_blocks_inner(
+            &pool,
+            DEV,
+            &mat,
+            anchor.clone(),
+            paste_text("- [ ] see [[New Page]] #fresh\n  - child\n"),
+        )
+        .await
+        .map(|blocks| CreatedBlocks { blocks })
+    })
+    .await
+    .unwrap();
+    settle(&mat).await;
+    assert_eq!(
+        resp.op_refs.len(),
+        8,
+        "the page and the tag with their space, the task with its state and stamp, the child"
+    );
+
+    undo_ops_inner(&pool, DEV, &mat, resp.op_refs.clone())
+        .await
+        .unwrap();
+    settle(&mat).await;
+
+    let ids: Vec<&str> = resp.inner.blocks.iter().map(|b| b.id.as_str()).collect();
+    assert_eq!(ids.len(), 4, "a page, a tag and two blocks were pasted");
+    let live: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM blocks WHERE id IN (SELECT value FROM json_each(?)) \
+         AND deleted_at IS NULL",
+    )
+    .bind(serde_json::to_string(&ids).unwrap())
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        live, 0,
+        "undoing the refs removes the page, the tag and the blocks"
+    );
+    assert_eq!(
+        dup_children(&pool, &page).await,
+        vec![(anchor.into_string(), "anchor".to_owned())],
+        "the anchor is all that is left"
+    );
+}
+
+/// 1001 lines, one create each: one more op than one undo reverts.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn paste_blocks_over_one_undo_of_ops_is_refused_and_writes_nothing() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let page = dup_page(&pool, &mat, "Dest").await;
+    let anchor = dup_child(&pool, &mat, &page, "anchor").await;
+    settle(&mat).await;
+    let text: String = (0..=pagination::MAX_BATCH_BLOCK_IDS)
+        .map(|i| format!("line {i}\n"))
+        .collect();
+    let before = dup_counts(&pool).await;
+
+    let result = paste_blocks_inner(&pool, DEV, &mat, anchor.clone(), paste_text(&text)).await;
+
+    assert!(
+        matches!(result, Err(AppError::Validation { .. })),
+        "1001 ops is more than one undo reverts, got {result:?}"
+    );
+    assert_eq!(
+        dup_counts(&pool).await,
+        before,
+        "a refused paste writes nothing"
+    );
+    assert_eq!(
+        dup_engine_children(&mat, &page),
+        vec![anchor.into_string()],
+        "the engine rolled back the blocks it had applied"
+    );
+}
+
+/// The anchor is as deep as a block may be: its pasted sibling fits, that
+/// sibling's child does not, and the paste is refused after the sibling was
+/// applied.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn paste_blocks_past_the_depth_limit_writes_nothing() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let page = dup_page(&pool, &mat, "Dest").await;
+    let mut parent = page;
+    let mut deepest = dup_child(&pool, &mat, &parent, "depth 1").await;
+    for depth in 2..=MAX_BLOCK_DEPTH {
+        parent = deepest;
+        deepest = dup_child(&pool, &mat, &parent, &format!("depth {depth}")).await;
+    }
+    settle(&mat).await;
+    let before = dup_counts(&pool).await;
+
+    let result =
+        paste_blocks_inner(&pool, DEV, &mat, deepest.clone(), paste_text("- a\n  - b")).await;
+
+    assert!(
+        matches!(result, Err(AppError::Validation { .. })),
+        "a block nested past the limit is refused, got {result:?}"
+    );
+    assert_eq!(
+        dup_counts(&pool).await,
+        before,
+        "the refused paste wrote nothing"
+    );
+    assert_eq!(
+        dup_engine_children(&mat, &parent),
+        vec![deepest.into_string()],
+        "the engine rolled back the sibling it had applied"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn paste_blocks_refusals() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let page = dup_page(&pool, &mat, "Dest").await;
+    let anchor = dup_child(&pool, &mat, &page, "anchor").await;
+    let trashed = dup_child(&pool, &mat, &page, "trashed").await;
+    delete_block_inner(&pool, DEV, &mat, trashed.clone())
+        .await
+        .unwrap();
+    settle(&mat).await;
+    let before = dup_counts(&pool).await;
+
+    let unknown = paste_blocks_inner(&pool, DEV, &mat, BlockId::new(), paste_text("- x")).await;
+    assert!(
+        matches!(unknown, Err(AppError::NotFound(_))),
+        "an unknown anchor is NotFound, got {unknown:?}"
+    );
+    for (what, id) in [("a trashed block", trashed), ("a page", page)] {
+        let result = paste_blocks_inner(&pool, DEV, &mat, id, paste_text("- x")).await;
+        assert!(
+            matches!(result, Err(AppError::Validation { .. })),
+            "{what} is refused as an anchor, got {result:?}"
+        );
+    }
+    for input in [
+        paste_text(""),
+        paste_text(" \n\t\n"),
+        PasteInput::Blocks { blocks: Vec::new() },
+    ] {
+        let result = paste_blocks_inner(&pool, DEV, &mat, anchor.clone(), input.clone()).await;
+        assert!(
+            matches!(result, Err(AppError::Validation { .. })),
+            "{input:?} has nothing to paste, got {result:?}"
+        );
+    }
+    assert_eq!(
+        dup_counts(&pool).await,
+        before,
+        "no refusal writes anything"
+    );
+}
+
+// ======================================================================
 // import_markdown — Logseq/Markdown import (#660)
 // ======================================================================
 

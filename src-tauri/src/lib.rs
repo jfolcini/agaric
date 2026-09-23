@@ -68,6 +68,8 @@ macro_rules! agaric_commands {
             $crate::commands::blocks::crud::create_blocks_batch,
             // #5140: one command copies a block and its subtree, one undo.
             $crate::commands::pages::duplicate_block,
+            // #5140: the clipboard's paste, one undo.
+            $crate::commands::pages::paste_blocks,
             $crate::commands::blocks::crud::edit_block,
             $crate::commands::blocks::crud::delete_block,
             // Multi-select batch delete: collapses
@@ -223,6 +225,7 @@ macro_rules! agaric_commands {
             // Markdown export (#519)
             $crate::commands::pages::export_page_markdown,
             $crate::commands::pages::get_page_source,
+            $crate::commands::pages::get_blocks_source,
             // Agenda projection (#644)
             $crate::commands::agenda::list_projected_agenda,
             // Undated tasks

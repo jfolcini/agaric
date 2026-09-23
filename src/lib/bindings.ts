@@ -38,6 +38,11 @@ export const commands = {
 	 */
 	duplicateBlock: (blockId: BlockId) => typedError<WithOps<CreatedBlocks>, AppError>(__TAURI_INVOKE("duplicate_block", { blockId })),
 	/**
+	 *  Tauri command: paste clipboard text or structured blocks right after the
+	 *  anchor block. Delegates to [`paste_blocks_inner`].
+	 */
+	pasteBlocks: (anchorBlockId: BlockId, input: PasteInput) => typedError<WithOps<CreatedBlocks>, AppError>(__TAURI_INVOKE("paste_blocks", { anchorBlockId, input })),
+	/**
 	 *  Tauri command: edit a block's content. Delegates to [`edit_block_inner`].
 	 *  #2468: the response carries the produced op ref(s) — see [`create_block`].
 	 */
@@ -573,6 +578,11 @@ export const commands = {
 	exportPageMarkdown: (pageId: PageId) => typedError<string, AppError>(__TAURI_INVOKE("export_page_markdown", { pageId })),
 	/**  Tauri command: render a page as its source-mode markdown buffer. Delegates to [`get_page_source_inner`]. */
 	getPageSource: (pageId: PageId) => typedError<string, AppError>(__TAURI_INVOKE("get_page_source", { pageId })),
+	/**
+	 *  Tauri command: render blocks as clipboard markdown. Delegates to
+	 *  [`get_blocks_source_inner`].
+	 */
+	getBlocksSource: (blockIds: BlockId[], withChildren: boolean) => typedError<string, AppError>(__TAURI_INVOKE("get_blocks_source", { blockIds, withChildren })),
 	/**
 	 *  Tauri command: list projected future occurrences of repeating tasks.
 	 *  Delegates to [`list_projected_agenda_inner`].
@@ -1820,14 +1830,15 @@ export type CreateBlockSpec = {
 };
 
 /**
- *  Reply of [`create_blocks_batch`] and [`duplicate_block`].
+ *  Reply of [`create_blocks_batch`], [`duplicate_block`] and [`paste_blocks`].
  *  `#[serde(flatten)]` cannot wrap a `Vec`, so the list rides under a key and
  *  [`WithOps`] puts `op_refs` beside it (#5140).
  */
 export type CreatedBlocks = {
 	/**
-	 *  One row per created block: per spec in input order, or the copy's root
-	 *  then its descendants depth-first.
+	 *  One row per created block: per spec in input order; the copy's root
+	 *  then its descendants depth-first; or the pages and tags a paste
+	 *  created, then the pasted blocks in document order.
 	 */
 	blocks: BlockRow[],
 };
@@ -3024,6 +3035,15 @@ export type PartitionedSearchResponse = {
 	 *  merges them client-side.
 	 */
 	blocks: PageResponse<SearchBlockRow>,
+};
+
+/**  What a paste carries: clipboard text, or blocks already split. */
+export type PasteInput = { kind: "text"; text: string } | { kind: "blocks"; blocks: PastedBlock[] };
+
+/**  One pasted block: its content verbatim and its depth under the paste. */
+export type PastedBlock = {
+	content: string,
+	depth: number,
 };
 
 /**  A row from the `peer_refs` table representing a remote sync peer. */

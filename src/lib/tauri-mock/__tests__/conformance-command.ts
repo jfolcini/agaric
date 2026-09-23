@@ -165,6 +165,15 @@ const RETURN_SHAPE: Readonly<Record<string, ReturnShape>> = {
     lists: [],
     rows: 'blocks',
   },
+  // #5140 Phase 3b — the same row list again: the pages and tags the paste
+  // created, then the pasted blocks in document order, so the placement after
+  // the anchor and the nesting are pinned with the rows.
+  paste_blocks: {
+    idKey: 'id',
+    attrs: ['block_type', 'content', 'parent_id', 'position'],
+    lists: [],
+    rows: 'blocks',
+  },
   // #5057 — five writers whose table is OUTSIDE the snapshot's five arrays
   // (`peer_refs`, `app_settings`, `property_definitions`), so what they wrote is
   // pinned by the read that follows them in the same fixture rather than by the

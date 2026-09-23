@@ -371,7 +371,15 @@ export function expandOpArgs(
   // expands it (`arg_label_id("spaceId")`), so leaving it out here handed the
   // mock a raw `C1`: the page was still created, under a space id nothing
   // matched, and only its sibling RANK gave the mismatch away.
-  for (const key of ['blockId', 'parentId', 'newParentId', 'tagId', 'pageId', 'spaceId']) {
+  for (const key of [
+    'blockId',
+    'anchorBlockId',
+    'parentId',
+    'newParentId',
+    'tagId',
+    'pageId',
+    'spaceId',
+  ]) {
     if (typeof out[key] === 'string') out[key] = resolveOpArgId(out[key] as string, createdIds)
   }
   // #5057 — a batch command takes the SAME labels as a list, so each entry

@@ -1,5 +1,6 @@
 /**
- * TipTap extension: convert pasted clipboard HTML to Agaric Markdown (#1439).
+ * TipTap extension: convert pasted clipboard HTML to Agaric Markdown (#1439),
+ * and route a pasted outline to the block-paste path (#5140).
  *
  * Pasting from a web page (or another rich editor) carries a `text/html`
  * fragment on the clipboard. The browser's / ProseMirror's default paste either
@@ -8,14 +9,19 @@
  *
  *   - single inline run (one heading/paragraph/list-item, no nesting) → inserted
  *     inline at the caret as real marks (bold/italic/code/strike/links);
- *   - multi-block (several blocks, or any nesting) → routed through the existing
- *     block-creation path: `dispatchBlockEvent('PASTE_HTML_BLOCKS', …)` →
- *     the focused BlockTree's `pasteBlocks(focusedBlockId, indentedMarkdown)`
- *     (`parseIndentedMarkdown`, `src/lib/block-clipboard.ts`).
+ *   - multi-block (several blocks, or any nesting) → routed through the
+ *     block-creation path: `dispatchBlockEvent('PASTE_BLOCKS', …)` → the
+ *     focused BlockTree's `pasteBlocks(focusedBlockId, { kind: 'blocks', … })`.
  *
- * No regressions: when there is no USABLE `text/html` (absent, empty, or only a
- * bare wrapper) the handler returns `false` so the existing handlers
- * (`task-paste`, `external-link`) and the plain-text fallback run unchanged. It
+ * With no usable HTML, a plain-text paste that opens with a list item — our
+ * own block copy, or an outline from another tool — takes the same route as
+ * `{ kind: 'text', … }`, so it lands as nested blocks instead of paragraphs
+ * whose markers ProseMirror would escape. A lone task line stays with
+ * `TaskPaste`.
+ *
+ * No regressions: any other paste without USABLE `text/html` (absent, empty, or
+ * only a bare wrapper) returns `false` so the existing handlers (`task-paste`,
+ * `external-link`) and the plain-text fallback run unchanged. It
  * MUST therefore be ordered BEFORE `TaskPaste` and `ExternalLink` in the editor
  * extension list (they share the same `handlePaste` chain).
  *
@@ -26,8 +32,7 @@
  * Scope: headings, paragraphs, lists (incl. nesting), links, and
  * bold/italic/code/strike marks (#1439 MVP); plus tables, fenced code blocks,
  * images, blockquotes/callouts and task lists (#1439 Phase 2). See
- * `html-to-blocks.ts` for the per-construct emission and the multi-line-block
- * (table / code fence) outline encoding.
+ * `html-to-blocks.ts` for the per-construct emission.
  */
 
 import { Extension } from '@tiptap/core'
@@ -35,8 +40,10 @@ import { Fragment, Slice } from '@tiptap/pm/model'
 import { Plugin, PluginKey } from '@tiptap/pm/state'
 import type { EditorView } from '@tiptap/pm/view'
 
+import { pastedTaskParagraph } from '@/editor/extensions/task-paste'
 import { parse } from '@/editor/markdown-serializer'
 import type { DocNode } from '@/editor/types'
+import type { PasteInput } from '@/lib/bindings'
 import { dispatchBlockEvent } from '@/lib/block-events'
 import { logger } from '@/lib/logger'
 import { useBlockStore } from '@/stores/blocks'
@@ -126,7 +133,7 @@ function parseHtmlBody(html: string): ParentNode | null {
  * dispatch (mirroring the picker-plugin `editor.view?.isDestroyed` convention).
  *
  * `targetBlockId` is the focused block captured SYNCHRONOUSLY at paste time; it
- * is threaded into the `PASTE_HTML_BLOCKS` payload so the receiver can no-op when
+ * is threaded into the `PASTE_BLOCKS` payload so the receiver can no-op when
  * focus has since moved to a different block, rather than routing structured
  * content into whatever block happens to be focused at resolution time (#2033).
  *
@@ -150,8 +157,10 @@ export async function convertAndInsert(
   try {
     // Lazy-load Turndown + the converter so they stay out of the main chunk and
     // only load on the first HTML paste (#750).
-    const [{ createInlineTurndown }, { htmlBodyToOutline, outlineToIndentedMarkdown }] =
-      await Promise.all([import('@/editor/inline-turndown'), import('@/editor/html-to-blocks')])
+    const [{ createInlineTurndown }, { htmlBodyToOutline }] = await Promise.all([
+      import('@/editor/inline-turndown'),
+      import('@/editor/html-to-blocks'),
+    ])
 
     // The dynamic import is itself a turn, so re-check after it resolves.
     if (view.isDestroyed) return
@@ -201,12 +210,32 @@ export async function convertAndInsert(
     // BlockTree's `pasteBlocks`. Routed through the focus-keyed block command
     // bus so exactly the owning tree handles it. The captured `targetBlockId`
     // lets the receiver reject the paste if focus has since moved (#2033).
-    const markdown = outlineToIndentedMarkdown(blocks)
-    dispatchBlockEvent('PASTE_HTML_BLOCKS', { markdown, targetBlockId })
+    const input: PasteInput = { kind: 'blocks', blocks }
+    dispatchBlockEvent('PASTE_BLOCKS', { input, targetBlockId })
   } catch (err) {
     logger.warn('htmlPaste', 'conversion failed; falling back to plain text', undefined, err)
     insertPlainText(view, plainText)
   }
+}
+
+/**
+ * A bullet line as `import::is_bullet_line` reads one: `- ` or a bare `-`
+ * after optional indentation. Only a paste opening with one parses as an
+ * outline there, so only that one is worth routing.
+ */
+const BULLET_LINE_RE = /^[ \t]*-(?: |$)/
+
+/**
+ * Plain text to paste as blocks rather than into the editor: its first
+ * non-blank line is a bullet, the shape copy writes, even for one block. A
+ * lone task line stays with `TaskPaste`, and a lone `-` is just a dash.
+ */
+function isPastedOutline(text: string): boolean {
+  const lines = text.split(/\r?\n/).filter((line) => line.trim() !== '')
+  const first = lines[0]
+  if (first === undefined || !BULLET_LINE_RE.test(first)) return false
+  if (lines.length === 1 && first.trim() === '-') return false
+  return pastedTaskParagraph(text) === null
 }
 
 /**
@@ -270,16 +299,11 @@ export const HtmlPaste = Extension.create({
             // payload into the fence (guard convention: math.ts, query-hint.ts).
             if (view.state.selection.$from.parent.type.spec.code) return false
 
-            const html = event.clipboardData?.getData('text/html')
-            // No usable HTML → fall through to task-paste / external-link /
-            // the default plain-text path unchanged (no regressions).
-            if (!html) return false
+            const html = event.clipboardData?.getData('text/html') ?? ''
             // #3277 — ONE parse decides usability AND supplies the body
             // `convertAndInsert` walks; the old `isUsableHtml` gate parsed
             // the same string again a second time inside the conversion.
-            const body = parseUsableHtmlBody(html)
-            if (!body) return false
-
+            const body = html ? parseUsableHtmlBody(html) : null
             const plainText = event.clipboardData?.getData('text/plain') ?? ''
 
             // Capture the focused (paste-target) block id SYNCHRONOUSLY: the
@@ -287,6 +311,16 @@ export const HtmlPaste = Extension.create({
             // through the bus the focus may have moved. Threading the captured
             // id lets the receiver reject a paste into the wrong block (#2033).
             const targetBlockId = useBlockStore.getState().focusedBlockId
+
+            if (!body) {
+              // No usable HTML → an outline goes to the block-paste path;
+              // anything else falls through to task-paste / external-link /
+              // the default plain-text path unchanged (no regressions).
+              if (!isPastedOutline(plainText)) return false
+              const input: PasteInput = { kind: 'text', text: plainText }
+              dispatchBlockEvent('PASTE_BLOCKS', { input, targetBlockId })
+              return true
+            }
 
             // Claim the paste synchronously (the conversion is async). The
             // async path inserts structured content, or the plain-text payload

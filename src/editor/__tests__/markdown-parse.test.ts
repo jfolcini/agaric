@@ -404,7 +404,7 @@ describe('parse — disallowed link scheme normalization (#2209)', () => {
 })
 
 // -- #3274: a pasted table's separator line must not render as a blank block --
-// pasteBlocks/parseIndentedMarkdown splits pasted markdown one block per LINE,
+// A plain-text paste that is not an outline is one block per LINE (`paste_blocks`),
 // so a pasted GFM table's `| --- | --- |` line lands in its OWN block and is
 // parsed in isolation via this top-level `parse()`. It used to come back as a
 // content-less doc (`{ type: 'doc' }`, no `content` key) — StaticBlock then had

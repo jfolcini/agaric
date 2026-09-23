@@ -114,12 +114,11 @@
  * fact fixed at the moment the backend call was made; the field must carry
  * that fact, not a re-guess.
  *
- * `paste-internalize.ts` was the widest window (#4391's report): it captures
- * `spaceId` once at internalizer-build time and reuses it for the whole
- * paste, so a switch mid-paste is a real, reachable interleaving, not a
- * theoretical one. It already had the right value in hand — `spaceId`, the
- * same const passed to `createPageInSpace` — so closing the class needed no
- * new capture there, just threading the existing value onto the event.
+ * A paste was the widest window (#4391's report): the pages and tags it
+ * creates are reported only when its command replies, so a switch mid-paste
+ * is a real, reachable interleaving, not a theoretical one. The paste reducer
+ * (`pasteBlocks`) therefore captures `spaceId` before the command and threads
+ * that value onto the events.
  *
  * `invalidated` carries no `spaceId` and is NOT scoped: it says "drop
  * everything", which is always a safe (if occasionally wasteful) thing to do
@@ -242,7 +241,7 @@ function emit(change: NameChange): void {
  *    link to it is the next thing they are likely to want.
  *  - `useJournalBlockCreation.ts` creates a date page — #4358's subject, and
  *    the same shape as the date picker's own create (#4319).
- *  - `paste-internalize.ts` creates a page for a pasted `[[Name]]` that did
+ *  - a paste (`pasteBlocks`) creates a page for a pasted `[[Name]]` that did
  *    not exist. The strongest case: the name is already being used as a link.
  *  - `WelcomeModal.tsx` seeds the onboarding sample pages. Usually there is
  *    no warm cache to update (first boot), but "Show the welcome tour again"
@@ -271,8 +270,8 @@ export function notifyPageAdded(pageId: string, title: string, spaceId: string):
  * A tag has just been CREATED and displays as `name` (#4338), in `spaceId`
  * (#4391 — see `notifyPageAdded`). Call AFTER the backend write commits.
  * `notifyPageAdded`'s note applies verbatim; the out-of-hook tag creation
- * sites are `TagList.tsx` (the Tags view create form) and
- * `paste-internalize.ts` (a pasted `#tag` that did not exist).
+ * sites are `TagList.tsx` (the Tags view create form) and a paste
+ * (`pasteBlocks`, a pasted `#tag` that did not exist).
  */
 export function notifyTagAdded(tagId: string, name: string, spaceId: string): void {
   emit({ kind: 'added', entity: 'tag', id: tagId, name, spaceId })
