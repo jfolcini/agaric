@@ -7,6 +7,7 @@ import { axe } from 'vitest-axe'
 import type { PageHeaderMenuProps } from '@/components/pages/PageHeaderMenu'
 import { PageHeaderMenu } from '@/components/pages/PageHeaderMenu'
 import { TooltipProvider } from '@/components/ui/tooltip'
+import { t } from '@/lib/i18n'
 
 vi.mock('lucide-react', () => ({
   BookTemplate: (props: React.SVGProps<SVGSVGElement>) => (
@@ -17,6 +18,9 @@ vi.mock('lucide-react', () => ({
   ),
   ExternalLink: (props: React.SVGProps<SVGSVGElement>) => (
     <svg data-testid="external-link-icon" {...props} />
+  ),
+  FileCode: (props: React.SVGProps<SVGSVGElement>) => (
+    <svg data-testid="file-code-icon" {...props} />
   ),
   FolderOutput: (props: React.SVGProps<SVGSVGElement>) => (
     <svg data-testid="folder-output-icon" {...props} />
@@ -49,6 +53,7 @@ const defaultProps: PageHeaderMenuProps = {
   onToggleTemplate: vi.fn(),
   onToggleJournalTemplate: vi.fn(),
   onExport: vi.fn(),
+  onViewSource: vi.fn(),
   onDeleteRequest: vi.fn(),
 }
 
@@ -201,6 +206,16 @@ describe('PageHeaderMenu interaction', () => {
 
     await user.click(screen.getByText(/Export as Markdown/i))
     expect(onExport).toHaveBeenCalledOnce()
+  })
+
+  it('calls onViewSource when "View as Markdown" clicked', async () => {
+    const onViewSource = vi.fn()
+    const user = userEvent.setup()
+
+    renderMenu({ kebabOpen: true, onViewSource })
+
+    await user.click(screen.getByRole('menuitem', { name: t('pageHeader.viewMarkdown') }))
+    expect(onViewSource).toHaveBeenCalledOnce()
   })
 
   it('calls onDeleteRequest when delete option clicked', async () => {
@@ -360,8 +375,8 @@ describe('PageHeaderMenu ARIA menu semantics (CR-A11Y #151)', () => {
     const menu = screen.getByRole('menu', { name: /page actions/i })
     const items = within(menu).getAllByRole('menuitem')
     // addAlias, addTag, addProperty, toggleTemplate, toggleJournalTemplate,
-    // export, delete = 7 (no openInNewTab / no move entry by default).
-    expect(items).toHaveLength(7)
+    // export, viewSource, delete = 8 (no openInNewTab / no move entry by default).
+    expect(items).toHaveLength(8)
     expect(within(menu).getByText('Add alias').closest('button')).toHaveAttribute(
       'role',
       'menuitem',
@@ -448,6 +463,26 @@ describe('PageHeaderMenu ARIA menu semantics (CR-A11Y #151)', () => {
     expect(within(menu).getByText('Add alias').closest('button')).toHaveFocus()
   })
 
+  it('ArrowUp from delete lands on View as Markdown, just after export', async () => {
+    const user = userEvent.setup()
+    renderMenu({ kebabOpen: true })
+
+    const menu = screen.getByRole('menu', { name: /page actions/i })
+    await waitFor(() => {
+      expect(within(menu).getByText('Add alias').closest('button')).toHaveFocus()
+    })
+
+    await user.keyboard('{End}')
+    await user.keyboard('{ArrowUp}')
+    expect(within(menu).getByRole('menuitem', { name: t('pageHeader.viewMarkdown') })).toHaveFocus()
+    await user.keyboard('{ArrowUp}')
+    expect(
+      within(menu)
+        .getByText(/Export as Markdown/i)
+        .closest('button'),
+    ).toHaveFocus()
+  })
+
   it('still fires the click callback after keyboard navigation', async () => {
     const onAddTag = vi.fn()
     const user = userEvent.setup()
@@ -467,7 +502,7 @@ describe('PageHeaderMenu ARIA menu semantics (CR-A11Y #151)', () => {
     renderMenu({ kebabOpen: true, onOpenInNewTab: vi.fn() })
 
     const menu = screen.getByRole('menu', { name: /page actions/i })
-    expect(within(menu).getAllByRole('menuitem')).toHaveLength(8)
+    expect(within(menu).getAllByRole('menuitem')).toHaveLength(9)
   })
 
   it('keeps the move-to-space sub-menu working without counting its items in the top-level set', async () => {
@@ -483,8 +518,8 @@ describe('PageHeaderMenu ARIA menu semantics (CR-A11Y #151)', () => {
     })
 
     const topMenu = screen.getByRole('menu', { name: /page actions/i })
-    // 7 default + the move-to entry = 8 top-level menuitems.
-    expect(within(topMenu).getAllByRole('menuitem')).toHaveLength(8)
+    // 8 default + the move-to entry = 9 top-level menuitems.
+    expect(within(topMenu).getAllByRole('menuitem')).toHaveLength(9)
 
     // Expand the sub-menu and pick a target.
     await user.click(within(topMenu).getByText(/move to/i))

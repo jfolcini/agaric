@@ -6,6 +6,7 @@ import {
   getInvokeCalls,
   installIpcRecorder,
   openPage,
+  readClipboard,
   reopenPage,
   test,
   waitForBoot,
@@ -64,25 +65,6 @@ async function ctrlSelectById(page: import('@playwright/test').Page, blockId: st
     .locator(`[data-testid="sortable-block"][data-block-id="${blockId}"]`)
     .locator('[data-testid="block-static"]')
     .click({ modifiers: ['Control'], position: { x: 6, y: 6 } })
-}
-
-/**
- * Read the harness clipboard via the SAME path the product uses
- * (`src/lib/clipboard.ts` → Tauri clipboard plugin). The plugin IPC is backed
- * by the mock's in-memory clipboard, so this observes exactly what the copy
- * chord wrote — proving the real system-clipboard pipeline fired (not a store
- * method). `navigator.clipboard` is a different surface the product does NOT
- * use here, so we must not assert against it.
- */
-async function readClipboard(page: import('@playwright/test').Page): Promise<string> {
-  return page.evaluate(async () => {
-    const invoke = (
-      window as unknown as {
-        __TAURI_INTERNALS__: { invoke: (c: string, a?: unknown) => Promise<unknown> }
-      }
-    ).__TAURI_INTERNALS__.invoke
-    return ((await invoke('plugin:clipboard-manager|read_text')) as string | null) ?? ''
-  })
 }
 
 test.describe('Copy/paste block outline (keyboard + system clipboard, #913)', () => {

@@ -17,6 +17,7 @@ import {
   appErrorRejection,
   buildPageMetaRow,
   compareMetaRows,
+  comparePositionThenId,
   deriveLinkEdges,
   encodeNextCursor,
   findLivePageByTitle,
@@ -668,6 +669,32 @@ export const pagesHandlers = {
     return md
   },
 
+  // DELIBERATE APPROXIMATION of `render_page_source` (#5140): every live
+  // descendant, depth-first in sibling order, as `- content ^ID`. No list
+  // markers, task checkboxes or property lines — the Rust tests own that
+  // grammar, and a faithful port is the second implementation #5140 deletes.
+  get_page_source: (args) => {
+    const pid = (args as Record<string, unknown>)['pageId'] as string
+    const page = blocks.get(pid)
+    // Like the backend's `load_page_row`: a trashed page is not found, and a
+    // block that is not a page is a validation error.
+    if (!page || page['deleted_at']) throw notFoundRejection(`page '${pid}' not found`)
+    if (page['block_type'] !== 'page') throw validationRejection('not a page')
+    let md = ''
+    const render = (parentId: string, depth: number): void => {
+      const children = [...blocks.values()]
+        .filter((b) => b['parent_id'] === parentId && !b['deleted_at'])
+        .toSorted(comparePositionThenId)
+      for (const child of children) {
+        const id = child['id'] as string
+        md += `${'  '.repeat(depth)}- ${(child['content'] as string | null) ?? ''} ^${id}\n`
+        render(id, depth + 1)
+      }
+    }
+    render(pid, 0)
+    return md
+  },
+
   // ---------------------------------------------------------------------------
   // Markdown import (#660)
   // ---------------------------------------------------------------------------
@@ -925,6 +952,7 @@ export const pagesHandlers = {
   | 'resolve_page_by_alias'
   | 'list_page_aliases_by_prefix'
   | 'export_page_markdown'
+  | 'get_page_source'
   | 'import_markdown'
   | 'import_bibliography'
 >

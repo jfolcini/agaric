@@ -136,6 +136,7 @@ describe('tauri-mock error-shape conformance (#2463)', () => {
         args: { key: 'no-such-def', options: '["a"]' },
       },
       { name: 'export_page_markdown', cmd: 'export_page_markdown', args: { pageId: MISSING_ID } },
+      { name: 'get_page_source', cmd: 'get_page_source', args: { pageId: MISSING_ID } },
       {
         name: 'compute_block_vs_current_diff (missing block)',
         cmd: 'compute_block_vs_current_diff',

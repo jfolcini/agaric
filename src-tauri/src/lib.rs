@@ -220,6 +220,7 @@ macro_rules! agaric_commands {
             $crate::commands::pages::resolve_page_by_alias,
             // Markdown export (#519)
             $crate::commands::pages::export_page_markdown,
+            $crate::commands::pages::get_page_source,
             // Agenda projection (#644)
             $crate::commands::agenda::list_projected_agenda,
             // Undated tasks

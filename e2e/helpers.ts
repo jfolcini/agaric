@@ -824,6 +824,25 @@ export async function clearInvokeCalls(page: Page): Promise<void> {
 }
 
 /**
+ * Read the harness clipboard via the SAME path the product uses
+ * (`src/lib/clipboard.ts` → Tauri clipboard plugin). The plugin IPC is backed
+ * by the mock's in-memory clipboard, so this observes exactly what a product
+ * copy action wrote — proving the real system-clipboard pipeline fired (not a
+ * store method). `navigator.clipboard` is a different surface the product
+ * does NOT use here, so callers must not assert against it.
+ */
+export async function readClipboard(page: Page): Promise<string> {
+  return page.evaluate(async () => {
+    const invoke = (
+      window as unknown as {
+        __TAURI_INTERNALS__: { invoke: (c: string, a?: unknown) => Promise<unknown> }
+      }
+    ).__TAURI_INTERNALS__.invoke
+    return ((await invoke('plugin:clipboard-manager|read_text')) as string | null) ?? ''
+  })
+}
+
+/**
  * Navigate away and back to force `BlockTree` to re-fetch from the mock backend.
  *
  * Used in undo/redo flows. Block-level undo (`useUndoShortcuts`) calls

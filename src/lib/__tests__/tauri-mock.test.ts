@@ -29,7 +29,7 @@ vi.mock('@/lib/logger', () => ({
 import { logger } from '@/lib/logger'
 import { clearMockErrors, injectMockError, resetMock, SEED_IDS, setupMock } from '@/lib/tauri-mock'
 import { deriveLinkEdges } from '@/lib/tauri-mock/link-scan'
-import { blocks, opLog, peerRefs } from '@/lib/tauri-mock/seed'
+import { blocks, makeBlock, opLog, peerRefs } from '@/lib/tauri-mock/seed'
 
 /** Helper — call the captured IPC handler as if invoke() were called. */
 function invoke(cmd: string, args: Record<string, unknown> = {}): unknown {
@@ -2635,6 +2635,49 @@ describe('export_page_markdown', () => {
 
   it('throws for non-existent page', () => {
     expect(() => invoke('export_page_markdown', { pageId: 'NONEXISTENT' })).toThrow('not found')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// get_page_source
+// ---------------------------------------------------------------------------
+
+describe('get_page_source', () => {
+  it('renders live descendants depth-first in sibling order, each with its anchor', () => {
+    blocks.set('SRC_PAGE', makeBlock('SRC_PAGE', 'page', 'Source', null, 90))
+    blocks.set('SRC_A', makeBlock('SRC_A', 'content', 'a', 'SRC_PAGE', 2))
+    blocks.set('SRC_B', makeBlock('SRC_B', 'content', 'b', 'SRC_PAGE', 1))
+    blocks.set('SRC_A1', makeBlock('SRC_A1', 'content', 'a1', 'SRC_A', 1))
+    blocks.set('SRC_GONE', {
+      ...makeBlock('SRC_GONE', 'content', 'gone', 'SRC_PAGE', 3),
+      deleted_at: '2026-04-15T12:00:00Z',
+    })
+
+    expect(invoke('get_page_source', { pageId: 'SRC_PAGE' })).toBe(
+      '- b ^SRC_B\n- a ^SRC_A\n  - a1 ^SRC_A1\n',
+    )
+  })
+
+  it('throws for non-existent page', () => {
+    expect(() => invoke('get_page_source', { pageId: 'NONEXISTENT' })).toThrow('not found')
+  })
+
+  it('throws for a trashed page', () => {
+    blocks.set('SRC_TRASHED', {
+      ...makeBlock('SRC_TRASHED', 'page', 'Trashed', null, 91),
+      deleted_at: '2026-04-15T12:00:00Z',
+    })
+
+    expect(() => invoke('get_page_source', { pageId: 'SRC_TRASHED' })).toThrow('not found')
+  })
+
+  it('rejects a block that is not a page with a validation error', () => {
+    blocks.set('SRC_PAGE', makeBlock('SRC_PAGE', 'page', 'Source', null, 90))
+    blocks.set('SRC_A', makeBlock('SRC_A', 'content', 'a', 'SRC_PAGE', 1))
+
+    expect(() => invoke('get_page_source', { pageId: 'SRC_A' })).toThrow(
+      expect.objectContaining({ kind: 'validation' }),
+    )
   })
 })
 

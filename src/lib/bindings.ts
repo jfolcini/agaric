@@ -566,6 +566,8 @@ export const commands = {
 	resolvePageByAlias: (alias: string, scope: SpaceScope) => typedError<[string, string | null] | null, AppError>(__TAURI_INVOKE("resolve_page_by_alias", { alias, scope })),
 	/**  Tauri command: export a page as Markdown. Delegates to [`export_page_markdown_inner`]. */
 	exportPageMarkdown: (pageId: PageId) => typedError<string, AppError>(__TAURI_INVOKE("export_page_markdown", { pageId })),
+	/**  Tauri command: render a page as its source-mode markdown buffer. Delegates to [`get_page_source_inner`]. */
+	getPageSource: (pageId: PageId) => typedError<string, AppError>(__TAURI_INVOKE("get_page_source", { pageId })),
 	/**
 	 *  Tauri command: list projected future occurrences of repeating tasks.
 	 *  Delegates to [`list_projected_agenda_inner`].
