@@ -96,4 +96,27 @@ describe('#5140 batch commands seed the undo stack with their op_refs', () => {
       { device_id: 'dev1', seq: 3 },
     ])
   })
+
+  it('pasteBlocks: a later level failing leaves the earlier level undoable', async () => {
+    const anchor = makeBlock({ id: 'A', parent_id: 'PAGE_1', position: 0 })
+    store.setState({ blocks: [anchor] })
+    let calls = 0
+    stubInvoke(mockedInvoke, {
+      create_blocks_batch: () => {
+        calls += 1
+        if (calls > 1) throw new Error('level 1 failed')
+        return {
+          op_refs: [{ device_id: 'dev1', seq: 1 }],
+          blocks: [makeBlockRow({ id: 'NEW0', content: 'parent', parent_id: 'PAGE_1' })],
+        }
+      },
+      load_page_subtree: () => subtreeResp([anchor]),
+    })
+
+    await store.getState().pasteBlocks('A', 'parent\n  child')
+
+    const page = useUndoStore.getState().pages.get('PAGE_1')
+    expect(page?.undoStack).toHaveLength(1)
+    expect(page?.undoStack[0]?.refs).toEqual([{ device_id: 'dev1', seq: 1 }])
+  })
 })

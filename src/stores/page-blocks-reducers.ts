@@ -827,11 +827,10 @@ export function createReducers({
           // parent other than the one we requested (prevSibling), our local
           // "indent under prevSibling" splice would diverge from the backend
           // tree. Fall back to a structural reload (overwriting the provisional)
-          // instead of silently trusting the requested parent. `resp?.` also
-          // catches a nullish echo → ref-less (positional) undo entry.
-          if ((resp?.new_parent_id ?? null) !== prevSibling.id) {
+          // instead of silently trusting the requested parent.
+          if (resp.new_parent_id !== prevSibling.id) {
             await get().load()
-            notifyUndoNewAction(rootParentId, resp?.op_refs)
+            notifyUndoNewAction(rootParentId, resp.op_refs)
             return true
           }
           // Confirm the provisional splice; the double-apply guard reloads if a
@@ -1196,7 +1195,6 @@ export function createReducers({
 
       // parsed-index → created block id (filled as each depth level lands).
       const createdIds: string[] = Array.from<string>({ length: effective.length })
-      const opRefs: OpRef[] = []
       try {
         for (let level = 0; level <= maxDepth; level += 1) {
           const indicesAtLevel: number[] = []
@@ -1230,18 +1228,20 @@ export function createReducers({
           const created = await retryOnPoolBusy(() =>
             commands.createBlocksBatch(specs).then(unwrap),
           )
-          opRefs.push(...created.op_refs)
           for (let k = 0; k < indicesAtLevel.length; k += 1) {
             const idx = indicesAtLevel[k]
             const row = created.blocks[k]
             if (idx != null && row != null) createdIds[idx] = row.id
           }
+          // Per level, not per paste: the capture window still coalesces a
+          // normal paste into one entry, the ref cap splits one too large for
+          // a single `undo_ops`, and a later level's failure leaves this one
+          // undoable.
+          notifyUndoNewAction(rootParentId, created.op_refs)
         }
         // Structural insert across N blocks — reload for the authoritative
         // flattened order (mirrors `moveBlocks` / `moveToParent`).
         await get().load()
-        // One undo entry for the whole paste: the refs of every level's batch.
-        notifyUndoNewAction(rootParentId, opRefs)
         return createdIds.filter((id): id is string => typeof id === 'string')
       } catch (err) {
         logger.error('page-blocks', 'Failed to paste blocks', { anchorBlockId }, err)
