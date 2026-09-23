@@ -43,6 +43,13 @@ interface ReturnShape {
   idKey: string
   attrs: readonly string[]
   lists: readonly string[]
+  /**
+   * #5140 — the key the LIST OF ROWS rides under when the wrapper answers
+   * `WithOps<{ [rows]: T[] }>` (a `Vec` cannot be flattened). The Rust runner
+   * calls the `_inner`, which returns the bare list, so this is TS-only: it
+   * strips the envelope the mock mirrors, as ignoring `op_refs` does.
+   */
+  rows?: string
 }
 
 /**
@@ -142,11 +149,13 @@ const RETURN_SHAPE: Readonly<Record<string, ReturnShape>> = {
     idKey: 'id',
     attrs: ['block_type', 'content', 'parent_id', 'position'],
     lists: [],
+    rows: 'blocks',
   },
   move_blocks_batch: {
     idKey: 'block_id',
     attrs: ['new_parent_id', 'new_position'],
     lists: [],
+    rows: 'moves',
   },
   // #5057 — five writers whose table is OUTSIDE the snapshot's five arrays
   // (`peer_refs`, `app_settings`, `property_definitions`), so what they wrote is
@@ -234,8 +243,10 @@ export function projectReturn(command: string, response: unknown): string[] {
 
   // A LIST return is a list of ROWS: one row token per element, in the order
   // the command returned them.
-  if (Array.isArray(response)) {
-    return response.map((row) => idToken(headRow(row), shape.idKey, shape.attrs))
+  const list =
+    shape.rows !== undefined ? (response as Record<string, unknown>)[shape.rows] : response
+  if (Array.isArray(list)) {
+    return list.map((row) => idToken(headRow(row), shape.idKey, shape.attrs))
   }
   const row = headRow(response)
   const out = [idToken(row, shape.idKey, shape.attrs)]

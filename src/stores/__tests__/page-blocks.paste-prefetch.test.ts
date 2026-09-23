@@ -135,14 +135,16 @@ describe('PageBlockStore', () => {
         create_blocks_batch: (args) => {
           const specs = specsOf(args)
           batches.push(specs)
-          return specs.map((s) =>
-            makeBlockRow({
-              id: `NEW${created++}`,
-              content: s.content,
-              parent_id: s.parentId,
-              position: null,
-            }),
-          )
+          return withOps({
+            blocks: specs.map((s) =>
+              makeBlockRow({
+                id: `NEW${created++}`,
+                content: s.content,
+                parent_id: s.parentId,
+                position: null,
+              }),
+            ),
+          })
         },
         load_page_subtree: () => subtreeResp(reloadRows),
       })
@@ -313,14 +315,16 @@ describe('PageBlockStore', () => {
           create_blocks_batch: (args) => {
             const specs = specsOf(args)
             batches.push(specs)
-            return specs.map((s) =>
-              makeBlockRow({
-                id: `NEW${createdBlocks++}`,
-                content: s.content,
-                parent_id: s.parentId,
-                position: null,
-              }),
-            )
+            return withOps({
+              blocks: specs.map((s) =>
+                makeBlockRow({
+                  id: `NEW${createdBlocks++}`,
+                  content: s.content,
+                  parent_id: s.parentId,
+                  position: null,
+                }),
+              ),
+            })
           },
           load_page_subtree: () =>
             subtreeResp([makeBlock({ id: 'A', parent_id: 'PAGE_1', position: 0 })]),
@@ -424,14 +428,16 @@ describe('PageBlockStore', () => {
           create_blocks_batch: (args) => {
             const specs = specsOf(args)
             batches.push(specs)
-            return specs.map((s) =>
-              makeBlockRow({
-                id: `NEW${createdBlocks++}`,
-                content: s.content,
-                parent_id: s.parentId,
-                position: null,
-              }),
-            )
+            return withOps({
+              blocks: specs.map((s) =>
+                makeBlockRow({
+                  id: `NEW${createdBlocks++}`,
+                  content: s.content,
+                  parent_id: s.parentId,
+                  position: null,
+                }),
+              ),
+            })
           },
           load_page_subtree: () => subtreeResp(store.getState().blocks),
         })
@@ -476,14 +482,16 @@ describe('PageBlockStore', () => {
           create_blocks_batch: (args) => {
             const specs = specsOf(args)
             batches.push(specs)
-            return specs.map((s) =>
-              makeBlockRow({
-                id: `NEW${createdBlocks++}`,
-                content: s.content,
-                parent_id: s.parentId,
-                position: null,
-              }),
-            )
+            return withOps({
+              blocks: specs.map((s) =>
+                makeBlockRow({
+                  id: `NEW${createdBlocks++}`,
+                  content: s.content,
+                  parent_id: s.parentId,
+                  position: null,
+                }),
+              ),
+            })
           },
           load_page_subtree: () => subtreeResp(store.getState().blocks),
         })

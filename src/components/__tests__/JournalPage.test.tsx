@@ -394,8 +394,8 @@ function templateCreateBlockResponse(args: unknown, todayStr: string): unknown {
 
 /**
  * `create_blocks_batch` response. Returns one
- * BlockRow per spec, mirroring the per-spec creation that the legacy
- * per-line `create_block` loop produced. Test code can find the spec
+ * BlockRow per spec under `blocks` (plus empty `op_refs`), mirroring the
+ * per-spec creation that the legacy per-line `create_block` loop produced. Test code can find the spec
  * for a given content string via the same `mockedInvoke.mock.calls`
  * filter pattern, just looking inside `args.specs[*]` instead of the
  * top-level args.
@@ -405,13 +405,16 @@ function templateCreateBlocksBatchResponse(args: unknown): unknown {
     | { specs?: Array<{ blockType: string; content?: string; parentId?: string }> }
     | undefined
   const specs = params?.specs ?? []
-  return specs.map((s) => ({
-    id: `NEW-${s.content?.replace(/\s+/g, '-') ?? 'block'}`,
-    block_type: s.blockType,
-    content: s.content ?? '',
-    parent_id: s.parentId,
-    position: 0,
-  }))
+  return {
+    blocks: specs.map((s) => ({
+      id: `NEW-${s.content?.replace(/\s+/g, '-') ?? 'block'}`,
+      block_type: s.blockType,
+      content: s.content ?? '',
+      parent_id: s.parentId,
+      position: 0,
+    })),
+    op_refs: [],
+  }
 }
 
 /** Dispatcher used by the `auto-create applies journal template` test. */

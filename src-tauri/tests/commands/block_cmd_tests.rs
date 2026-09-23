@@ -8636,6 +8636,73 @@ async fn create_blocks_batch_inserts_n_blocks_in_one_tx() {
     );
 }
 
+/// #5140 — the `#[tauri::command]` wrapper runs `create_blocks_batch_inner`
+/// under `capture_op_refs`; the refs it harvests are one per spec, in append
+/// order, each naming that spec's `create_block` op, and `undo_ops` over them
+/// reverts the whole batch.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn create_blocks_batch_op_refs_undo_the_whole_batch_5140() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    let n: usize = 3;
+    let specs: Vec<CreateBlockSpec> = (0..n)
+        .map(|i| CreateBlockSpec {
+            block_type: "content".into(),
+            content: format!("line {i}"),
+            parent_id: None,
+            position: None,
+            properties: std::collections::HashMap::new(),
+        })
+        .collect();
+
+    let resp = capture_op_refs(async {
+        create_blocks_batch_inner(&pool, DEV, &mat, specs)
+            .await
+            .map(|blocks| CreatedBlocks { blocks })
+    })
+    .await
+    .unwrap();
+    let blocks = &resp.inner.blocks;
+    assert_eq!(blocks.len(), n, "one row per spec");
+    assert_eq!(resp.op_refs.len(), n, "one op ref per spec");
+
+    for (i, r) in resp.op_refs.iter().enumerate() {
+        let (op_type, block_id): (String, Option<String>) =
+            sqlx::query_as("SELECT op_type, block_id FROM op_log WHERE device_id = ? AND seq = ?")
+                .bind(&r.device_id)
+                .bind(r.seq)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(op_type, "create_block", "ref {i} names a create_block op");
+        assert_eq!(
+            block_id.as_deref(),
+            Some(blocks[i].id.as_str()),
+            "ref {i} names the block returned at index {i} (append order)"
+        );
+    }
+
+    let results = undo_ops_inner(&pool, DEV, &mat, resp.op_refs.clone())
+        .await
+        .unwrap();
+    settle(&mat).await;
+    assert_eq!(results.len(), n, "one reverse op per ref");
+
+    for (i, b) in blocks.iter().enumerate() {
+        let deleted_at: Option<i64> =
+            sqlx::query_scalar("SELECT deleted_at FROM blocks WHERE id = ?")
+                .bind(b.id.as_str())
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert!(
+            deleted_at.is_some(),
+            "block {i} must be soft-deleted after undoing its create"
+        );
+    }
+}
+
 /// An invalid `block_type` mid-batch must roll the
 /// whole transaction back. After the call returns Err, neither the
 /// blocks table nor the op_log carries any rows from the attempted
@@ -9389,6 +9456,117 @@ async fn move_blocks_batch_reparents_k_blocks_positions_and_ops_in_order() {
         vec!["A".to_string(), "B".to_string(), "C".to_string()],
         "op_log should carry K MoveBlock ops in input order"
     );
+}
+
+/// #5140 — the `#[tauri::command]` wrapper runs `move_blocks_batch_inner`
+/// under `capture_op_refs`; the refs it harvests are one per moved root, in
+/// input order, each naming that root's `move_block` op, and `undo_ops` over
+/// them restores the exact pre-move layout.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn move_blocks_batch_op_refs_undo_the_whole_batch_5140() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    // Born via REAL create ops, not `insert_block`: the reverse of a move
+    // reconstructs the prior placement from the block's own prior op_log row
+    // (`find_prior_position`), so a raw-seeded block has no reverse.
+    let p = create_block_inner(&pool, DEV, &mat, "page".into(), "P".into(), None, Some(0))
+        .await
+        .unwrap();
+    let q = create_block_inner(&pool, DEV, &mat, "page".into(), "Q".into(), None, Some(1))
+        .await
+        .unwrap();
+    settle(&mat).await;
+    let mut roots: Vec<BlockId> = Vec::new();
+    for (i, label) in ["A", "B", "C"].iter().enumerate() {
+        let b = create_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            "content".into(),
+            (*label).into(),
+            Some(p.id.clone()),
+            Some(i64::try_from(i).unwrap()),
+        )
+        .await
+        .unwrap();
+        roots.push(b.id);
+    }
+    settle(&mat).await;
+
+    // Live children of `parent` as `(id, position)` in sibling order.
+    let layout = |parent: String| {
+        let pool = pool.clone();
+        async move {
+            sqlx::query_as::<_, (String, Option<i64>)>(
+                "SELECT id, position FROM blocks WHERE parent_id = ? AND deleted_at IS NULL \
+                 ORDER BY position ASC, id ASC",
+            )
+            .bind(&parent)
+            .fetch_all(&pool)
+            .await
+            .unwrap()
+        }
+    };
+    let p_id = p.id.clone().into_string();
+    let q_id = q.id.clone().into_string();
+    let before = layout(p_id.clone()).await;
+    assert_eq!(before.len(), 3, "sanity: A, B, C under P");
+    assert!(layout(q_id.clone()).await.is_empty(), "sanity: Q empty");
+
+    let resp = capture_op_refs(async {
+        move_blocks_batch_inner(&pool, DEV, &mat, roots.clone(), Some(q.id.clone()), 0)
+            .await
+            .map(|moves| MovedBlocks { moves })
+    })
+    .await
+    .unwrap();
+    let moves = &resp.inner.moves;
+    assert_eq!(moves.len(), 3, "one row per moved root");
+    assert_eq!(resp.op_refs.len(), 3, "one op ref per moved root");
+
+    for (i, r) in resp.op_refs.iter().enumerate() {
+        let (op_type, block_id): (String, Option<String>) =
+            sqlx::query_as("SELECT op_type, block_id FROM op_log WHERE device_id = ? AND seq = ?")
+                .bind(&r.device_id)
+                .bind(r.seq)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(op_type, "move_block", "ref {i} names a move_block op");
+        assert_eq!(
+            block_id.as_deref(),
+            Some(moves[i].block_id.as_str()),
+            "ref {i} names the root returned at index {i} (input order)"
+        );
+    }
+    settle(&mat).await;
+    let under_q: Vec<String> = layout(q_id.clone())
+        .await
+        .into_iter()
+        .map(|(id, _)| id)
+        .collect();
+    assert_eq!(
+        under_q,
+        roots
+            .iter()
+            .map(|b| b.as_str().to_owned())
+            .collect::<Vec<_>>(),
+        "sanity: the batch landed A, B, C under Q"
+    );
+
+    let results = undo_ops_inner(&pool, DEV, &mat, resp.op_refs.clone())
+        .await
+        .unwrap();
+    settle(&mat).await;
+    assert_eq!(results.len(), 3, "one reverse op per ref");
+
+    assert_eq!(
+        layout(p_id).await,
+        before,
+        "undoing the batch by its refs restores the exact pre-move layout under P"
+    );
+    assert!(layout(q_id).await.is_empty(), "Q is empty again");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

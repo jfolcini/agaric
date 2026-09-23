@@ -470,7 +470,7 @@ export async function insertTemplateBlocks(
     }
     if (specsAtLevel.length === 0) continue
     try {
-      const created = unwrap(await commands.createBlocksBatch(specsAtLevel))
+      const { blocks: created } = unwrap(await commands.createBlocksBatch(specsAtLevel))
       for (let k = 0; k < indicesAtLevel.length; k += 1) {
         const idx = indicesAtLevel[k]
         if (idx == null) continue
@@ -564,7 +564,7 @@ export async function insertTemplateBlocksFromString(
   }
   if (specs.length === 0) return []
   try {
-    const created = unwrap(await commands.createBlocksBatch(specs))
+    const { blocks: created } = unwrap(await commands.createBlocksBatch(specs))
     return created.map((b) => b.id)
   } catch (err) {
     logger.warn(

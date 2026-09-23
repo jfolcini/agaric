@@ -1322,10 +1322,10 @@ describe('useUndoStore', () => {
       })
     })
 
-    describe('positional fallback preserved for ref-less flows (batch commands)', () => {
+    describe('positional fallback preserved for ref-less flows', () => {
       it('a ref-less entry undoes via undoPageGroup (depth/window) and pops the entry', async () => {
-        // moveBlocksBatch / createBlocksBatch don't surface refs yet — their
-        // notification pushes a fallback entry.
+        // A call site that does not thread refs (`set_todo_state`, the
+        // multi-select loops, …) pushes a fallback entry.
         useUndoStore.getState().onNewAction('page1')
 
         mockedUndoPageGroup.mockResolvedValueOnce(ok(makeGroup(3, 3, 'dev1')))
@@ -1342,7 +1342,7 @@ describe('useUndoStore', () => {
         expect(pageState?.redoGroupSizes).toEqual([3])
       })
 
-      it('mixed stack: positional fallback for the newer batch entry, then ref undo for the older entry', async () => {
+      it('mixed stack: positional fallback for the newer ref-less entry, then ref undo for the older entry', async () => {
         vi.useFakeTimers()
         try {
           vi.setSystemTime(1_000_000)

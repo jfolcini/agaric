@@ -3326,15 +3326,23 @@ pub async fn create_blocks_batch_inner(
 /// `insertTemplateBlocksFromString` into one round-trip and one
 /// writer-lock window. A 10-line template that previously fired 10
 /// IPCs now fires 1.
+///
+/// #5140: the response carries the produced op refs (`WithOps`, one per
+/// appended op in append order) so the frontend undo stack can address the
+/// batch by exact ref, as for [`create_block`].
 #[tauri::command]
 #[specta::specta]
 pub async fn create_blocks_batch(
     ctx: State<'_, WriteCtx>,
     specs: Vec<CreateBlockSpec>,
-) -> Result<Vec<BlockRow>, AppError> {
-    create_blocks_batch_inner(ctx.pool(), ctx.device_id(), ctx.materializer(), specs)
-        .await
-        .map_err(sanitize_internal_error)
+) -> Result<WithOps<CreatedBlocks>, AppError> {
+    capture_op_refs(async {
+        create_blocks_batch_inner(ctx.pool(), ctx.device_id(), ctx.materializer(), specs)
+            .await
+            .map(|blocks| CreatedBlocks { blocks })
+    })
+    .await
+    .map_err(sanitize_internal_error)
 }
 
 // #3259: `anonymize_attachment_path` lived here to render a purged

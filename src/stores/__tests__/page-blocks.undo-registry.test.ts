@@ -283,9 +283,8 @@ describe('PageBlockStore', () => {
     // #2468 — ref-addressed undo: every migrated mutation threads the
     // response's `op_refs` (the exact op-log refs the command appended) into
     // the undo notification, so Ctrl+Z submits captured refs instead of a
-    // positional depth. The two batch commands (`move_blocks_batch`,
-    // `create_blocks_batch`) do not surface refs yet — their flows must keep
-    // the ref-LESS call shape (positional `undoPageGroup` fallback).
+    // positional depth. The two batch commands joined in #5140; the durable
+    // stack assertion for them lives in `page-blocks.batch-op-refs.test.ts`.
     // -------------------------------------------------------------------------
     describe('#2468 op_refs threading', () => {
       const REFS: OpRef[] = [{ device_id: 'dev1', seq: 42 }]
@@ -369,7 +368,7 @@ describe('PageBlockStore', () => {
         expect(mockOnNewAction).toHaveBeenCalledWith('PAGE_1', REFS)
       })
 
-      it('moveBlocks (batch) keeps the ref-less positional fallback', async () => {
+      it('moveBlocks (batch) forwards the move_blocks_batch response op_refs', async () => {
         store.setState({
           blocks: [
             makeBlock({ id: 'A', position: 0, parent_id: null }),
@@ -377,20 +376,20 @@ describe('PageBlockStore', () => {
           ],
         })
         stubInvoke(mockedInvoke, {
-          move_blocks_batch: () => [{ block_id: 'A', new_parent_id: 'B', new_position: 1 }],
+          move_blocks_batch: () => ({
+            op_refs: REFS,
+            moves: [{ block_id: 'A', new_parent_id: 'B', new_position: 1 }],
+          }),
           load_page_subtree: () => subtreeResp([]),
         })
 
         await store.getState().moveBlocks(['A'], 'B', 0)
 
-        // Exactly ONE argument — no refs threaded: the undo store must record
-        // a positional-fallback entry for the batch flow.
         expect(mockOnNewAction).toHaveBeenCalledTimes(1)
-        expect(mockOnNewAction).toHaveBeenCalledWith('PAGE_1')
-        expect(mockOnNewAction.mock.calls[0]).toHaveLength(1)
+        expect(mockOnNewAction).toHaveBeenCalledWith('PAGE_1', REFS)
       })
 
-      it('pasteBlocks (batch create) keeps the ref-less positional fallback', async () => {
+      it('pasteBlocks (batch create) forwards the create_blocks_batch response op_refs', async () => {
         const anchor = makeBlock({ id: 'A', parent_id: 'PAGE_1', position: 0 })
         store.setState({ blocks: [anchor] })
         stubInvoke(mockedInvoke, {
@@ -399,14 +398,17 @@ describe('PageBlockStore', () => {
               content: string
               parentId: string | null
             }>
-            return specs.map((s, i) =>
-              makeBlockRow({
-                id: `NEW${i}`,
-                content: s.content,
-                parent_id: s.parentId,
-                position: null,
-              }),
-            )
+            return {
+              op_refs: REFS,
+              blocks: specs.map((s, i) =>
+                makeBlockRow({
+                  id: `NEW${i}`,
+                  content: s.content,
+                  parent_id: s.parentId,
+                  position: null,
+                }),
+              ),
+            }
           },
           load_page_subtree: () => subtreeResp([anchor]),
         })
@@ -414,8 +416,7 @@ describe('PageBlockStore', () => {
         await store.getState().pasteBlocks('A', 'one\ntwo')
 
         expect(mockOnNewAction).toHaveBeenCalledTimes(1)
-        expect(mockOnNewAction).toHaveBeenCalledWith('PAGE_1')
-        expect(mockOnNewAction.mock.calls[0]).toHaveLength(1)
+        expect(mockOnNewAction).toHaveBeenCalledWith('PAGE_1', REFS)
       })
     })
   })

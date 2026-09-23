@@ -160,7 +160,9 @@ const RETURN_SHAPE: &[(&str, &str, &[&str], &[&str])] = &[
     // #5057 — the two batch commands that answer with a LIST OF ROWS. Each
     // element becomes its own row token in the order returned, so the returned
     // ORDER is pinned as well as the rows: a batch that answers with the right
-    // set in the wrong order reds.
+    // set in the wrong order reds. The `_inner` returns the bare list; the
+    // wrapper wraps it (`CreatedBlocks` / `MovedBlocks`, #5140), which is why
+    // the TS twin's rows carry a `rows` key and these do not.
     (
         "create_blocks_batch",
         "id",
