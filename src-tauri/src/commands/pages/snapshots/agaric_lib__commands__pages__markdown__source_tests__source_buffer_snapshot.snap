@@ -1,0 +1,14 @@
+---
+source: src/commands/pages/markdown_source_tests.rs
+expression: render_page_source(&data)
+---
+- - Groceries ^01J0000000000000000000000A
+  - 1. milk ^01J0000000000000000000000B
+  - 2. [ ] eggs ^01J0000000000000000000000C
+- ```sh
+  echo hi
+  ```
+  ^01J0000000000000000000000D
+  lang:: sh
+- [x] See ((01J0000000000000000000000D)) first ^01J0000000000000000000000E
+  priority:: 1
