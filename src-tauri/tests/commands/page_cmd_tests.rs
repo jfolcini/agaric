@@ -1000,6 +1000,105 @@ async fn export_page_markdown_same_page_block_ref_roundtrips_2963() {
     mat.shutdown();
 }
 
+/// A code block that is a same-page ref target round-trips too. Its `^ID`
+/// marker cannot share a line with the closing fence, where the importer reads
+/// it as code: the anchor would stay in the content and the ref would degrade
+/// to a page link.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn export_code_block_ref_target_anchor_round_trips_5140() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    ensure_test_space(&pool).await;
+    mark_block_as_space(&pool, TEST_SPACE_ID).await;
+
+    const SRC_PAGE: &str = "01AAAAAAAAAAAAAAAAAA5140P1";
+    const CODE: &str = "01AAAAAAAAAAAAAAAAAA5140C1";
+    const REFBLK: &str = "01AAAAAAAAAAAAAAAAAA5140R1";
+    const CODE_CONTENT: &str = "```sh\necho hi\n```";
+
+    insert_block(&pool, SRC_PAGE, "page", "Code Target", None, Some(1)).await;
+    assign_to_space(&pool, SRC_PAGE, TEST_SPACE_ID).await;
+    insert_block(
+        &pool,
+        CODE,
+        "content",
+        CODE_CONTENT,
+        Some(SRC_PAGE),
+        Some(1),
+    )
+    .await;
+    insert_block(
+        &pool,
+        REFBLK,
+        "content",
+        &format!("See (({CODE})) there"),
+        Some(SRC_PAGE),
+        Some(2),
+    )
+    .await;
+    agaric_store::cache::rebuild_page_ids(&pool).await.unwrap();
+
+    let md = export_page_markdown_inner(&pool, SRC_PAGE).await.unwrap();
+    let result = import_markdown_inner(
+        &pool,
+        DEV,
+        &mat,
+        _dir.path(),
+        md.clone(),
+        Some("Code Target Reimported.md".into()),
+        TEST_SPACE_ID.into(),
+        None,
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    let new_page: String = sqlx::query_scalar(
+        "SELECT id FROM blocks WHERE block_type = 'page' AND content = 'Code Target Reimported'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let new_code_id: String = sqlx::query_scalar(
+        "SELECT id FROM blocks WHERE page_id = ? AND block_type = 'content' \
+         AND content LIKE '```%' AND deleted_at IS NULL",
+    )
+    .bind(&new_page)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let new_code_content: String = sqlx::query_scalar("SELECT content FROM blocks WHERE id = ?")
+        .bind(&new_code_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        new_code_content, CODE_CONTENT,
+        "the anchor marker must be stripped off the code block; md:\n{md}"
+    );
+
+    let referencing_content: String = sqlx::query_scalar(
+        "SELECT content FROM blocks WHERE page_id = ? AND block_type = 'content' \
+         AND content LIKE 'See%' AND deleted_at IS NULL",
+    )
+    .bind(&new_page)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        referencing_content,
+        format!("See (({new_code_id})) there"),
+        "the ref must re-import as a block ref to the new code block; md:\n{md}"
+    );
+    assert!(
+        !result.warnings.iter().any(|w| w.contains("anchor")),
+        "no anchor may go unmatched; warnings={:?}",
+        result.warnings
+    );
+
+    mat.shutdown();
+}
+
 /// #2963 — a CROSS-PAGE `((ULID))` block reference (target on a different page)
 /// exports to a human-readable `[[Target Page#^<ULID>]]` link, never the raw
 /// ULID. The importer's block-anchor resolution is intra-note only, so this
@@ -8718,6 +8817,111 @@ async fn import_export_fenced_code_block_round_trip_2725() {
     mat.shutdown();
 }
 
+/// Export `src_page`, re-import the markdown as the page `stem`, and return the
+/// markdown plus the content of every content block on the new page, sorted.
+/// The exported `# Title` line comes back as a block of its own.
+async fn export_and_reimport_contents(
+    pool: &SqlitePool,
+    mat: &Materializer,
+    dir: &std::path::Path,
+    src_page: &str,
+    stem: &str,
+) -> (String, Vec<String>) {
+    let md = export_page_markdown_inner(pool, src_page).await.unwrap();
+    import_markdown_inner(
+        pool,
+        DEV,
+        mat,
+        dir,
+        md.clone(),
+        Some(format!("{stem}.md")),
+        TEST_SPACE_ID.into(),
+        None,
+    )
+    .await
+    .expect("round-trip re-import must succeed");
+    settle(mat).await;
+    let contents: Vec<String> = sqlx::query_scalar(
+        "SELECT b.content FROM blocks b JOIN blocks p ON p.id = b.page_id \
+         WHERE p.block_type = 'page' AND p.content = ? \
+         AND b.block_type = 'content' AND b.deleted_at IS NULL ORDER BY b.content",
+    )
+    .bind(stem)
+    .fetch_all(pool)
+    .await
+    .unwrap();
+    (md, contents)
+}
+
+/// A ```` - ``` ```` line goes out escaped (```` \- ``` ````), so it opens no
+/// fence on import.
+/// The exporter has to agree, or the `- y` after it goes out unescaped and
+/// comes back as a block of its own. Covers the line both as a continuation
+/// and as the block's first line.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn import_export_fence_opening_list_line_round_trip_2716() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    ensure_test_space(&pool).await;
+    mark_block_as_space(&pool, TEST_SPACE_ID).await;
+
+    const SRC: &str = "01AAAAAAAAAAAAAAAAAA2716S2";
+    const CONTINUATION: &str = "intro\n- ```\n- y\n```";
+    const FIRST_LINE: &str = "- ```\n- y\n```";
+
+    insert_block(&pool, SRC, "page", "Fence Opener", None, Some(1)).await;
+    assign_to_space(&pool, SRC, TEST_SPACE_ID).await;
+    for (id, content, position) in [
+        ("01AAAAAAAAAAAAAAAAAA2716B2", CONTINUATION, 1),
+        ("01AAAAAAAAAAAAAAAAAA2716B3", FIRST_LINE, 2),
+    ] {
+        insert_block(&pool, id, "content", content, Some(SRC), Some(position)).await;
+    }
+    agaric_store::cache::rebuild_page_ids(&pool).await.unwrap();
+
+    let (md, contents) =
+        export_and_reimport_contents(&pool, &mat, _dir.path(), SRC, "Fence Opener Reimported")
+            .await;
+    let mut expected = vec!["# Fence Opener", CONTINUATION, FIRST_LINE];
+    expected.sort_unstable();
+    assert_eq!(contents, expected, "md:\n{md}");
+
+    mat.shutdown();
+}
+
+/// A continuation line that already starts with a backslash is escaped again,
+/// so the importer's one-backslash un-escape hands back exactly what was
+/// written: `\- x` must not come back as `- x`, nor `\key:: v` as `key:: v`.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn import_export_backslash_led_continuation_round_trip_2716() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    ensure_test_space(&pool).await;
+    mark_block_as_space(&pool, TEST_SPACE_ID).await;
+
+    const SRC: &str = "01AAAAAAAAAAAAAAAAAA2716S3";
+    const CONTENTS: [&str; 3] = ["a\n\\- x", "a\n\\\\- x", "a\n\\key:: v"];
+
+    insert_block(&pool, SRC, "page", "Backslash Lines", None, Some(1)).await;
+    assign_to_space(&pool, SRC, TEST_SPACE_ID).await;
+    for (i, content) in CONTENTS.into_iter().enumerate() {
+        let id = format!("01AAAAAAAAAAAAAAAAAA2716D{i}");
+        let position = i64::try_from(i).unwrap() + 1;
+        insert_block(&pool, &id, "content", content, Some(SRC), Some(position)).await;
+    }
+    agaric_store::cache::rebuild_page_ids(&pool).await.unwrap();
+
+    let (md, contents) =
+        export_and_reimport_contents(&pool, &mat, _dir.path(), SRC, "Backslash Lines Reimported")
+            .await;
+    let mut expected = vec!["# Backslash Lines"];
+    expected.extend(CONTENTS);
+    expected.sort_unstable();
+    assert_eq!(contents, expected, "md:\n{md}");
+
+    mat.shutdown();
+}
+
 // ======================================================================
 // #1925 — import attachments referenced by Logseq/Obsidian vaults
 // ======================================================================
@@ -10545,6 +10749,62 @@ async fn export_import_export_list_style_fixpoint_4552() {
         md_b,
         format!("# Fix4552B\n\n- # Fix4552A\n{BODY}"),
         "export → import → export must be a fixpoint over the list lines"
+    );
+
+    mat.shutdown();
+}
+
+/// #4552 — a list-styled code block exports as `- - ```sh` / ```` - 1. ``` ````,
+/// and that line has to open the fence on import as well, or the `- x` lines
+/// inside the code come back as child blocks.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn export_import_list_styled_code_block_round_trip_4552() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    ensure_test_space(&pool).await;
+    mark_block_as_space(&pool, TEST_SPACE_ID).await;
+
+    const SRC: &str = "01AAAAAAAAAAAAAAAAAA4552P2";
+    const BUL: &str = "01AAAAAAAAAAAAAAAAAA4552B2";
+    const ORD: &str = "01AAAAAAAAAAAAAAAAAA4552N3";
+    const BULLET_CODE: &str = "```sh\n- x\n- y\n```";
+    const ORDERED_CODE: &str = "```\n- z\n```";
+
+    insert_block(&pool, SRC, "page", "List Code", None, Some(1)).await;
+    assign_to_space(&pool, SRC, TEST_SPACE_ID).await;
+    insert_block(&pool, BUL, "content", BULLET_CODE, Some(SRC), Some(1)).await;
+    insert_block(&pool, ORD, "content", ORDERED_CODE, Some(SRC), Some(2)).await;
+    set_list_style(&pool, BUL, "bullet").await;
+    set_list_style(&pool, ORD, "ordered").await;
+    agaric_store::cache::rebuild_page_ids(&pool).await.unwrap();
+
+    let (md, contents) =
+        export_and_reimport_contents(&pool, &mat, _dir.path(), SRC, "List Code Reimported").await;
+    // The code goes out verbatim. If the marked line opened no fence, export
+    // and import would still agree, but only by escaping the code's own lines.
+    assert_eq!(
+        md,
+        "# List Code\n\n- - ```sh\n  - x\n  - y\n  ```\n- 1. ```\n  - z\n  ```\n"
+    );
+    let mut expected = vec!["# List Code", BULLET_CODE, ORDERED_CODE];
+    expected.sort_unstable();
+    assert_eq!(contents, expected, "md:\n{md}");
+
+    let styles: Vec<(String, String)> = sqlx::query_as(
+        "SELECT b.content, p.value_text FROM block_properties p \
+         JOIN blocks b ON b.id = p.block_id JOIN blocks pg ON pg.id = b.page_id \
+         WHERE pg.content = 'List Code Reimported' AND p.key = 'listStyle' ORDER BY b.content",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        styles,
+        vec![
+            (ORDERED_CODE.to_string(), "ordered".to_string()),
+            (BULLET_CODE.to_string(), "bullet".to_string()),
+        ],
+        "each code block keeps its listStyle; md:\n{md}"
     );
 
     mat.shutdown();
