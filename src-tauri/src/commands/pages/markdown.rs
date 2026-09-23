@@ -1002,6 +1002,22 @@ fn push_anchored_source_bullet(
     id: &str,
 ) -> bool {
     let start = output.len();
+    // Written with the marker, not appended to: the marker can change the last
+    // line's escape (`key::` becomes the property line `key:: ^ID`). Whether
+    // the last line is code does not depend on the marker, since fences are
+    // told by their prefix.
+    let code = push_block_bullet(
+        output,
+        indent,
+        list_marker,
+        task_marker,
+        &format!("{content} ^{id}"),
+        RenderMode::Source,
+    );
+    if !code.last {
+        return code.any;
+    }
+    output.truncate(start);
     let code = push_block_bullet(
         output,
         indent,
@@ -1010,21 +1026,7 @@ fn push_anchored_source_bullet(
         content,
         RenderMode::Source,
     );
-    if code.last {
-        output.push_str(&format!("{indent}  ^{id}\n"));
-    } else {
-        // Rewritten rather than appended to: the marker can change the last
-        // line's escape (`key::` becomes the property line `key:: ^ID`).
-        output.truncate(start);
-        push_block_bullet(
-            output,
-            indent,
-            list_marker,
-            task_marker,
-            &format!("{content} ^{id}"),
-            RenderMode::Source,
-        );
-    }
+    output.push_str(&format!("{indent}  ^{id}\n"));
     code.any
 }
 
@@ -1202,33 +1204,19 @@ fn render_block_tree(output: &mut String, page_id: &str, data: &PageExportData, 
     // reorder renumbers and a hand-written `3.` / `7.` normalises on the first
     // round trip.
     let list_ordinals = compute_list_ordinals(&children_by_parent, &data.list_styles);
-
-    // Iterative DFS pre-order from the page root. A visited set guards against
-    // a pathological parent cycle (a block whose ancestor chain loops back) so
-    // export can never infinite-loop on corrupt data.
-    let mut visited: HashSet<String> = HashSet::new();
-    // Stack of (block, depth), pushed in reverse so siblings pop in order.
-    let mut stack: Vec<(&BlockRow, usize)> = Vec::new();
-    if let Some(roots) = children_by_parent.get(page_id) {
-        for child in roots.iter().rev() {
-            stack.push((child, 0));
-        }
-    }
-    while let Some((block, depth)) = stack.pop() {
-        let id = block.id.clone().into_string();
-        if !visited.insert(id.clone()) {
-            continue;
-        }
-        render_block(output, block, depth, data, &list_ordinals, mode);
-
-        // Push this block's children (reversed so they pop in sibling order)
-        // at depth + 1.
-        if let Some(kids) = children_by_parent.get(&id) {
-            for kid in kids.iter().rev() {
-                stack.push((kid, depth + 1));
-            }
-        }
-    }
+    let roots = children_by_parent
+        .get(page_id)
+        .map_or(&[][..], Vec::as_slice);
+    let visited: HashSet<String> = render_subtrees(
+        output,
+        roots,
+        &children_by_parent,
+        &list_ordinals,
+        data,
+        mode,
+    )
+    .into_iter()
+    .collect();
 
     // Safety net: any descendant NOT reachable by DFS from the page root
     // (e.g. an orphan whose `parent_id` points outside this subtree while its
@@ -1242,6 +1230,63 @@ fn render_block_tree(output: &mut String, page_id: &str, data: &PageExportData, 
         }
         render_block(output, block, 0, data, &list_ordinals, mode);
     }
+}
+
+/// `roots` at depth 0 and everything under them, depth-first in sibling
+/// order, each through [`render_block`]. Returns the ids it rendered, in
+/// render order.
+fn render_subtrees<'a>(
+    output: &mut String,
+    roots: &[&'a BlockRow],
+    children_by_parent: &HashMap<String, Vec<&'a BlockRow>>,
+    list_ordinals: &HashMap<String, usize>,
+    data: &PageExportData,
+    mode: RenderMode,
+) -> Vec<String> {
+    // Iterative DFS pre-order. A visited set guards against a pathological
+    // parent cycle (a block whose ancestor chain loops back) so export can
+    // never infinite-loop on corrupt data.
+    let mut visited: HashSet<String> = HashSet::new();
+    let mut rendered = Vec::new();
+    // Stack of (block, depth), pushed in reverse so siblings pop in order.
+    let mut stack: Vec<(&BlockRow, usize)> = roots.iter().rev().map(|b| (*b, 0)).collect();
+    while let Some((block, depth)) = stack.pop() {
+        let id = block.id.clone().into_string();
+        if !visited.insert(id.clone()) {
+            continue;
+        }
+        render_block(output, block, depth, data, list_ordinals, mode);
+        rendered.push(id.clone());
+
+        // Push this block's children (reversed so they pop in sibling order)
+        // at depth + 1.
+        if let Some(kids) = children_by_parent.get(&id) {
+            for kid in kids.iter().rev() {
+                stack.push((kid, depth + 1));
+            }
+        }
+    }
+    rendered
+}
+
+/// `root` and its subtree as source mode writes them, `root` at depth 0: every
+/// block with its `^ID`, which ends a fence the block leaves open and keeps a
+/// trailing ` ^word` in its content from reading back as an anchor. A page
+/// nested under `root` is not here: `descendants` stops at a nested page.
+/// Returns the buffer and the ids it holds, in order.
+fn render_subtree_source(data: &PageExportData, root: &BlockRow) -> (String, Vec<String>) {
+    let children_by_parent = group_children_by_parent(data.page.id.as_str(), &data.descendants);
+    let list_ordinals = compute_list_ordinals(&children_by_parent, &data.list_styles);
+    let mut output = String::new();
+    let ids = render_subtrees(
+        &mut output,
+        &[root],
+        &children_by_parent,
+        &list_ordinals,
+        data,
+        RenderMode::Source,
+    );
+    (output, ids)
 }
 
 /// Step 1 of the export read half: the page row, refused unless it is an
@@ -1974,6 +2019,159 @@ pub async fn get_page_source_inner(pool: &SqlitePool, page_id: &str) -> Result<S
     data.name_snapshot = load_name_snapshot(&mut tx, &data).await?;
     tx.commit().await?;
     Ok(render_page_source(&data))
+}
+
+/// Copy a content block and its content subtree to right after the original
+/// (#5140), as one transaction and so one undo. The subtree is rendered as a
+/// source buffer and parsed back, so the copy carries what that buffer
+/// carries: content verbatim with its raw refs, the list marker, the task
+/// state, priority and dates, and the custom properties. A nested page is not
+/// copied. Returns every created row, the root copy first, then its
+/// descendants depth-first.
+///
+/// # Errors
+///
+/// - [`AppError::Ulid`] — `block_id` is not a ULID
+/// - [`AppError::NotFound`] — no block has that id
+/// - [`AppError::Validation`] — the block is soft-deleted or not a content
+///   block, a copied value doesn't read back from the source grammar (a
+///   property value with a line break), the copy would append more ops than
+///   one undo reverts, or a copied block would be nested past
+///   `MAX_BLOCK_DEPTH`
+#[instrument(skip(pool, device_id, materializer), err)]
+pub async fn duplicate_block_inner(
+    pool: &SqlitePool,
+    device_id: &str,
+    materializer: &Materializer,
+    block_id: BlockId,
+) -> Result<Vec<BlockRow>, AppError> {
+    let block_id = BlockId::from_string(block_id.into_string())?;
+    let mut tx = CommandTx::begin_immediate(pool, "duplicate_block").await?;
+    // #2604 — rollback-safe engine apply (rewind on tx abort).
+    tx.arm_engine_rollback(materializer.loro_state());
+    let root = agaric_engine::block_ops::fetch_live_block_in_tx(&mut tx, block_id.as_str()).await?;
+    if root.block_type != "content" {
+        return Err(AppError::validation(format!(
+            "only a content block can be duplicated, not a '{}'",
+            root.block_type
+        )));
+    }
+    let page_id = root
+        .page_id
+        .clone()
+        .ok_or_else(|| AppError::validation(format!("block '{block_id}' is on no page")))?;
+    let data = load_page_export_data(&mut tx, page_id.as_str()).await?;
+    let (source, ids) = render_subtree_source(&data, &root);
+    let parsed = import::parse_source_outline(&source);
+    // A value the grammar cannot carry, such as a property value with a line
+    // break, reads back as extra text or an extra block: refuse, never write a
+    // mangled copy.
+    let anchors = parsed.blocks.iter().map(|b| b.block_anchor.as_deref());
+    if !anchors.eq(ids.iter().map(|id| Some(id.as_str()))) {
+        return Err(AppError::validation(format!(
+            "block '{block_id}' holds a value Duplicate cannot copy"
+        )));
+    }
+    crate::commands::ensure_batch_within_cap("duplicate ops", planned_ops(&parsed.blocks))?;
+
+    let parent_id = root.parent_id.map(BlockId::into_string);
+    let siblings =
+        super::super::blocks::move_ops::ordered_live_children(&mut tx, parent_id.as_deref())
+            .await?;
+    let index = siblings
+        .iter()
+        .position(|id| id == block_id.as_str())
+        .map(|slot| i64::try_from(slot + 1).unwrap_or(i64::MAX));
+    // Boxed: inline, the copy loop's future makes this one too large for the
+    // stack (`clippy::large_futures`).
+    let created = Box::pin(create_duplicate_blocks(
+        &mut tx,
+        materializer,
+        device_id,
+        parent_id,
+        index,
+        &parsed.blocks,
+    ))
+    .await?;
+    tx.commit_and_dispatch(materializer).await?;
+    Ok(created)
+}
+
+/// The `todo_state` a parsed block carries, from its checkbox or a property
+/// line.
+fn parsed_todo_state(block: &import::ParsedBlock) -> Option<&str> {
+    block
+        .properties
+        .iter()
+        .rev()
+        .find(|(key, _)| key == "todo_state")
+        .map(|(_, value)| value.as_str())
+}
+
+/// The ops a duplicate appends: a create per block, a write per property, and
+/// the one stamp `write_todo_timestamp_transitions_in_tx` gives a new task
+/// (`created_at` for TODO and DOING, `completed_at` for DONE).
+fn planned_ops(blocks: &[import::ParsedBlock]) -> usize {
+    blocks
+        .iter()
+        .map(|block| {
+            let stamps = matches!(parsed_todo_state(block), Some("TODO" | "DOING" | "DONE"));
+            1 + block.properties.len() + usize::from(stamps)
+        })
+        .sum()
+}
+
+/// Create the parsed copy: the depth-0 block at `index` among `parent_id`'s
+/// children, each deeper block appended under its parsed parent. A block's
+/// properties and task stamp are written right after it, so its ops stay
+/// together in the log.
+async fn create_duplicate_blocks(
+    tx: &mut CommandTx,
+    materializer: &Materializer,
+    device_id: &str,
+    parent_id: Option<String>,
+    index: Option<i64>,
+    blocks: &[import::ParsedBlock],
+) -> Result<Vec<BlockRow>, AppError> {
+    let mut created = Vec::with_capacity(blocks.len());
+    let mut open: Vec<(usize, String)> = Vec::new();
+    for block in blocks {
+        while open.last().is_some_and(|(depth, _)| *depth >= block.depth) {
+            open.pop();
+        }
+        let (parent, slot) = match open.last() {
+            Some((_, id)) => (Some(id.clone()), None),
+            None => (parent_id.clone(), index),
+        };
+        let (row, op) = create_block_in_tx(
+            tx,
+            materializer.loro_state(),
+            device_id,
+            "content".into(),
+            block.content.clone(),
+            parent,
+            slot,
+            None,
+        )
+        .await?;
+        tx.enqueue_background(op);
+        let id = row.id.clone().into_string();
+        apply_block_properties(tx, materializer, device_id, &id, &block.properties, true).await?;
+        if let Some(state) = parsed_todo_state(block) {
+            super::super::properties::write_todo_timestamp_transitions_in_tx(
+                tx,
+                materializer.loro_state(),
+                device_id,
+                &id,
+                &super::super::properties::PriorTaskState::default(),
+                Some(state),
+            )
+            .await?;
+        }
+        open.push((block.depth, id));
+        created.push(row);
+    }
+    Ok(created)
 }
 
 /// Steps 1-4b: every read an export makes, through the caller's snapshot.
@@ -3895,9 +4093,10 @@ async fn create_import_block(
     }
 }
 
-/// Set one imported block's properties in the same chunk transaction as the
-/// block itself — a block and its properties are never split across a chunk
-/// boundary (they are written before the next depth-0 flush check).
+/// Set one imported or duplicated block's properties in the same transaction
+/// as the block itself — an import never splits a block and its properties
+/// across a chunk boundary (they are written before the next depth-0 flush
+/// check). Returns how many it set.
 ///
 /// #2982 — registry-aware coercion for body-block properties too. Pre-#2982
 /// they always routed through `typed_property_args_for_string_value`, which
@@ -3918,21 +4117,28 @@ async fn create_import_block(
 /// ourselves and call `set_property_in_tx_with_declaration` with the result —
 /// still exactly ONE query per property, not two.
 ///
-/// `ref`-typed keys are NOT specially resolved here (unlike the frontmatter
-/// path's title→ULID reverse lookup, which needs a `tx` + `space_id` round-trip
-/// against `blocks`) — `typed_property_args_for_registry_value` falls through to
-/// the text default for `ref` (see its doc comment), identical to the pre-fix
-/// routing, so a `ref`-declared custom body property's behaviour is UNCHANGED.
-/// A key with no `property_definitions` row (`declaration: None`) also falls
-/// through to the existing string/text behaviour.
+/// `copying` is Duplicate's: its values were already accepted on the original
+/// and come from a source render, which writes a `ref`-declared value as the
+/// raw id, so that value goes to `value_ref` as is. Nor is a copied value
+/// re-checked against the key's options today: a retired select option or
+/// narrowed priority levels must not make the copy fail. Import passes
+/// `false`: its `ref`-typed keys are NOT
+/// specially resolved here (unlike the frontmatter path's title→ULID reverse
+/// lookup, which needs a `tx` + `space_id` round-trip against `blocks`) —
+/// `typed_property_args_for_registry_value` falls through to the text default
+/// for `ref` (see its doc comment), identical to the pre-fix routing, so a
+/// `ref`-declared custom body property's behaviour is UNCHANGED. A key with no
+/// `property_definitions` row (`declaration: None`) also falls through to the
+/// existing string/text behaviour.
 async fn apply_block_properties(
     tx: &mut CommandTx,
     materializer: &Materializer,
     device_id: &str,
     block_id: &str,
     properties: &[(String, String)],
-    counters: &mut ImportCounters,
-) -> Result<(), AppError> {
+    copying: bool,
+) -> Result<u64, AppError> {
+    let mut set: u64 = 0;
     for (key, value) in properties {
         let declaration = sqlx::query!(
             "SELECT value_type, options FROM property_definitions WHERE key = ?",
@@ -3942,7 +4148,7 @@ async fn apply_block_properties(
         .await?
         .map(|row| agaric_engine::block_ops::PropertyDeclaration {
             value_type: row.value_type,
-            options: row.options,
+            options: if copying { None } else { row.options },
         });
         // #623 — build the correct typed `PropertyValue` shape per key:
         // reserved date keys (`due_date`/`scheduled_date`) must hit the
@@ -3951,12 +4157,17 @@ async fn apply_block_properties(
         // reserved-key routing (it falls back to
         // `typed_property_args_for_string_value` whenever the declared
         // type doesn't itself claim the value).
+        let value_type = declaration.as_ref().map(|d| d.value_type.as_str());
         let (value_text, value_num, value_date, value_ref, value_bool) =
-            agaric_engine::block_ops::typed_property_args_for_registry_value(
-                key,
-                value.clone(),
-                declaration.as_ref().map(|d| d.value_type.as_str()),
-            );
+            if copying && value_type == Some("ref") {
+                (None, None, None, Some(value.clone()), None)
+            } else {
+                agaric_engine::block_ops::typed_property_args_for_registry_value(
+                    key,
+                    value.clone(),
+                    value_type,
+                )
+            };
         let (_block, prop_op) = agaric_engine::block_ops::set_property_in_tx_with_declaration(
             tx,
             materializer.loro_state(),
@@ -3971,10 +4182,10 @@ async fn apply_block_properties(
             declaration,
         )
         .await?;
-        counters.properties_set += 1;
+        set += 1;
         tx.enqueue_background(prop_op);
     }
-    Ok(())
+    Ok(set)
 }
 
 /// #662 — chunked block-insertion loop + final commit. Accumulates into the
@@ -4079,13 +4290,13 @@ async fn insert_blocks(
             });
         }
 
-        apply_block_properties(
+        counters.properties_set += apply_block_properties(
             &mut tx,
             materializer,
             device_id,
             &new_block_id,
             &block.properties,
-            counters,
+            false,
         )
         .await?;
     }
@@ -4721,6 +4932,23 @@ pub async fn get_page_source(
     get_page_source_inner(&read_pool.0, page_id.as_str())
         .await
         .map_err(sanitize_internal_error)
+}
+
+/// Tauri command: duplicate a block and its content subtree right after the
+/// original. Delegates to [`duplicate_block_inner`].
+#[tauri::command]
+#[specta::specta]
+pub async fn duplicate_block(
+    ctx: State<'_, WriteCtx>,
+    block_id: BlockId,
+) -> Result<WithOps<CreatedBlocks>, AppError> {
+    capture_op_refs(async {
+        duplicate_block_inner(ctx.pool(), ctx.device_id(), ctx.materializer(), block_id)
+            .await
+            .map(|blocks| CreatedBlocks { blocks })
+    })
+    .await
+    .map_err(sanitize_internal_error)
 }
 
 /// Tauri command: import a Logseq-style markdown file as a page with

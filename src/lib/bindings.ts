@@ -33,6 +33,11 @@ export const commands = {
 	 */
 	createBlocksBatch: (specs: CreateBlockSpec[]) => typedError<WithOps<CreatedBlocks>, AppError>(__TAURI_INVOKE("create_blocks_batch", { specs })),
 	/**
+	 *  Tauri command: duplicate a block and its content subtree right after the
+	 *  original. Delegates to [`duplicate_block_inner`].
+	 */
+	duplicateBlock: (blockId: BlockId) => typedError<WithOps<CreatedBlocks>, AppError>(__TAURI_INVOKE("duplicate_block", { blockId })),
+	/**
 	 *  Tauri command: edit a block's content. Delegates to [`edit_block_inner`].
 	 *  #2468: the response carries the produced op ref(s) — see [`create_block`].
 	 */
@@ -1815,12 +1820,15 @@ export type CreateBlockSpec = {
 };
 
 /**
- *  Reply of [`create_blocks_batch`]. `#[serde(flatten)]` cannot wrap a
- *  `Vec`, so the list rides under a key and [`WithOps`] puts `op_refs`
- *  beside it (#5140).
+ *  Reply of [`create_blocks_batch`] and [`duplicate_block`].
+ *  `#[serde(flatten)]` cannot wrap a `Vec`, so the list rides under a key and
+ *  [`WithOps`] puts `op_refs` beside it (#5140).
  */
 export type CreatedBlocks = {
-	/**  One row per spec, in input order. */
+	/**
+	 *  One row per created block: per spec in input order, or the copy's root
+	 *  then its descendants depth-first.
+	 */
 	blocks: BlockRow[],
 };
 

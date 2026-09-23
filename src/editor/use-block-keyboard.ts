@@ -369,8 +369,8 @@ const KEY_RULES: ReadonlyArray<KeyRule> = [
     },
   },
   // #976 (item 13) — configurable shortcut (default Ctrl/Cmd+Shift+J): duplicate
-  // the focused block + its subtree, reusing the same `handleDuplicate` the
-  // context-menu "Duplicate" row and the `/duplicate` slash command fire.
+  // the focused block + its subtree through `BlockTree.handleDuplicate`, which
+  // the context-menu "Duplicate" row also fires.
   {
     match: (e) => matchesShortcutBinding(e, 'duplicateBlock'),
     handle: (e, cb) => {

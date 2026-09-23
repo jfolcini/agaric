@@ -66,6 +66,8 @@ macro_rules! agaric_commands {
             // and one op_log scope covering every block + its
             // properties.
             $crate::commands::blocks::crud::create_blocks_batch,
+            // #5140: one command copies a block and its subtree, one undo.
+            $crate::commands::pages::duplicate_block,
             $crate::commands::blocks::crud::edit_block,
             $crate::commands::blocks::crud::delete_block,
             // Multi-select batch delete: collapses

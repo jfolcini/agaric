@@ -302,8 +302,8 @@ export const SLASH_COMMANDS: PickerItem[] = [
   {
     // #976 (item 13) — duplicate the current block + its subtree, inserting the
     // copy right after the original at the same depth. Fires the SAME
-    // serialize-subtree → pasteBlocks path the context-menu "Duplicate" row and
-    // the `Ctrl+Shift+J` keyboard binding use (no separate clone op).
+    // `duplicateBlock` store action the context-menu "Duplicate" row and the
+    // `Ctrl+Shift+J` keyboard binding use.
     id: 'duplicate',
     label: 'DUPLICATE — Copy this block and its subtree',
     category: 'slashCommand.categories.structure',

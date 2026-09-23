@@ -761,7 +761,7 @@ pub async fn set_property_in_tx(
 /// removed from the WHERE clause so the fetched `deleted_at` lets us
 /// reproduce `verify_active`'s EXACT discrimination (distinct NotFound vs
 /// soft-deleted errors) from this one query.
-async fn fetch_live_block_in_tx(
+pub async fn fetch_live_block_in_tx(
     tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
     block_id: &str,
 ) -> Result<BlockRow, AppError> {

@@ -234,7 +234,7 @@ pub async fn set_property_inner(
 /// — every one of those blocks got a `DeleteProperty(completed_at)` for a key
 /// it never had, and the next Ctrl+Z restored nothing (#5074).
 #[derive(Clone, Debug, Default)]
-struct PriorTaskState {
+pub(crate) struct PriorTaskState {
     todo_state: Option<String>,
     has_created_at: bool,
     has_completed_at: bool,
@@ -291,7 +291,7 @@ async fn prior_task_state_in_tx(
 ///
 /// The caller owns the transaction and its commit; this helper only appends
 /// writes to it.
-async fn write_todo_timestamp_transitions_in_tx(
+pub(crate) async fn write_todo_timestamp_transitions_in_tx(
     tx: &mut CommandTx,
     state: &agaric_engine::loro::shared::LoroState,
     device_id: &str,

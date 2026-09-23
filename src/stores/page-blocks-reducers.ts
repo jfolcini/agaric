@@ -50,14 +50,14 @@ import { useUndoStore } from '@/stores/undo'
  *
  * #1530: every local block/link/page CRUD op (`createBelow`, `edit`, `remove`,
  * `reorder`, `moveToParent`, `moveBlocks`, `indent`, `dedent`, `moveUp`,
- * `moveDown`, `splitBlock`, `pasteBlocks`) funnels through here after a
- * successful write, so it is the single funnel for "this page's block/link
- * structure just changed locally." `edit` is included deliberately — editing a
- * block's text can add or remove a `[[link]]`, which is a graph EDGE. Bumping
- * the structure counter here invalidates `GraphView`'s cache so the next graph
- * read reflects the new nodes/edges instead of stale data until the TTL. The
- * `appendBlock` path bumps it separately because that path does not call this
- * helper (its caller owns the undo notification).
+ * `moveDown`, `splitBlock`, `pasteBlocks`, `duplicateBlock`) funnels through
+ * here after a successful write, so it is the single funnel for "this page's
+ * block/link structure just changed locally." `edit` is included deliberately —
+ * editing a block's text can add or remove a `[[link]]`, which is a graph EDGE.
+ * Bumping the structure counter here invalidates `GraphView`'s cache so the
+ * next graph read reflects the new nodes/edges instead of stale data until the
+ * TTL. The `appendBlock` path bumps it separately because that path does not
+ * call this helper (its caller owns the undo notification).
  *
  * #2468 — `opRefs` threads the mutation response's `op_refs` (the exact op-log
  * refs the command appended) into the undo store so Ctrl+Z is ref-addressed.
@@ -143,6 +143,7 @@ export function createReducers({
   | 'moveUp'
   | 'moveDown'
   | 'pasteBlocks'
+  | 'duplicateBlock'
   | 'appendBlock'
 > {
   return {
@@ -1141,10 +1142,10 @@ export function createReducers({
 
       // #1484 — rewrite human-readable wiki-links (`[[Page Name]]`, `#tag`) in
       // the pasted content back to internal refs (`[[ULID]]`, `#[ULID]`),
-      // creating missing pages/tags. Canonical `[[ULID]]`/`#[ULID]` tokens (an
-      // internal duplicate→paste round-trip) and unresolvable/ambiguous names
-      // are left untouched. The resolvers share one page/tag list fetch across
-      // the whole paste; sequential per-block so same-name creation can't race.
+      // creating missing pages/tags. Canonical `[[ULID]]`/`#[ULID]` tokens and
+      // unresolvable/ambiguous names are left untouched. The resolvers share one
+      // page/tag list fetch across the whole paste; sequential per-block so
+      // same-name creation can't race.
       // `null` (no active space) → skip resolution, content stays verbatim.
       const internalizers = buildImportRefInternalizers()
       if (internalizers) {
@@ -1250,6 +1251,21 @@ export function createReducers({
         // Reconcile FE with whatever the backend committed before the failure.
         await get().load()
         return createdIds.filter((id): id is string => typeof id === 'string')
+      }
+    },
+
+    duplicateBlock: async (blockId: string) => {
+      const { blocksById, rootParentId } = get()
+      if (!blocksById.has(blockId)) return []
+      try {
+        const resp = await retryOnPoolBusy(() => commands.duplicateBlock(blockId).then(unwrap))
+        notifyUndoNewAction(rootParentId, resp.op_refs)
+        await get().load()
+        return resp.blocks.map((b) => b.id)
+      } catch (err) {
+        logger.error('page-blocks', 'Failed to duplicate block', { blockId }, err)
+        notify.error(i18n.t('blockTree.duplicateFailed'))
+        return []
       }
     },
 

@@ -437,9 +437,6 @@ function buildLinkGroup(ctx: MenuGroupContext): MenuItem[] {
  * `copyBlocks` chord (`use-block-tree-keyboard-shortcuts`) and page-export do.
  * A cache miss returns `undefined`, so a dangling ULID falls back to its
  * verbatim token rather than a `[[xxxx…]]` placeholder.
- *
- * INTERNAL copy→paste paths (duplicate, context-menu paste) must NOT use this:
- * their content stays ULID-canonical so it can be re-imported losslessly.
  */
 function humanizingResolver(): RefResolver {
   const resolveCache = useResolveStore.getState().cache
