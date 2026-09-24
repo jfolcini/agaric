@@ -53,7 +53,7 @@ const defaultProps: PageHeaderMenuProps = {
   onToggleTemplate: vi.fn(),
   onToggleJournalTemplate: vi.fn(),
   onExport: vi.fn(),
-  onViewSource: vi.fn(),
+  onEditSource: vi.fn(),
   onDeleteRequest: vi.fn(),
 }
 
@@ -208,14 +208,32 @@ describe('PageHeaderMenu interaction', () => {
     expect(onExport).toHaveBeenCalledOnce()
   })
 
-  it('calls onViewSource when "View as Markdown" clicked', async () => {
-    const onViewSource = vi.fn()
+  it('calls onEditSource when "Edit as Markdown" clicked', async () => {
+    const onEditSource = vi.fn()
     const user = userEvent.setup()
 
-    renderMenu({ kebabOpen: true, onViewSource })
+    renderMenu({ kebabOpen: true, onEditSource })
 
-    await user.click(screen.getByRole('menuitem', { name: t('pageHeader.viewMarkdown') }))
-    expect(onViewSource).toHaveBeenCalledOnce()
+    await user.click(screen.getByRole('menuitem', { name: t('pageSource.edit') }))
+    expect(onEditSource).toHaveBeenCalledOnce()
+  })
+
+  it('hides "Edit as Markdown" without onEditSource and keeps it out of the arrow-key order', async () => {
+    const user = userEvent.setup()
+    renderMenu({ kebabOpen: true, onEditSource: undefined })
+
+    const menu = screen.getByRole('menu', { name: /page actions/i })
+    expect(within(menu).queryByRole('menuitem', { name: t('pageSource.edit') })).toBeNull()
+    await waitFor(() => {
+      expect(within(menu).getByText('Add alias').closest('button')).toHaveFocus()
+    })
+    await user.keyboard('{End}')
+    await user.keyboard('{ArrowUp}')
+    expect(
+      within(menu)
+        .getByText(/Export as Markdown/i)
+        .closest('button'),
+    ).toHaveFocus()
   })
 
   it('calls onDeleteRequest when delete option clicked', async () => {
@@ -375,7 +393,7 @@ describe('PageHeaderMenu ARIA menu semantics (CR-A11Y #151)', () => {
     const menu = screen.getByRole('menu', { name: /page actions/i })
     const items = within(menu).getAllByRole('menuitem')
     // addAlias, addTag, addProperty, toggleTemplate, toggleJournalTemplate,
-    // export, viewSource, delete = 8 (no openInNewTab / no move entry by default).
+    // export, editSource, delete = 8 (no openInNewTab / no move entry by default).
     expect(items).toHaveLength(8)
     expect(within(menu).getByText('Add alias').closest('button')).toHaveAttribute(
       'role',
@@ -463,7 +481,7 @@ describe('PageHeaderMenu ARIA menu semantics (CR-A11Y #151)', () => {
     expect(within(menu).getByText('Add alias').closest('button')).toHaveFocus()
   })
 
-  it('ArrowUp from delete lands on View as Markdown, just after export', async () => {
+  it('ArrowUp from delete lands on Edit as Markdown, just after export', async () => {
     const user = userEvent.setup()
     renderMenu({ kebabOpen: true })
 
@@ -474,7 +492,7 @@ describe('PageHeaderMenu ARIA menu semantics (CR-A11Y #151)', () => {
 
     await user.keyboard('{End}')
     await user.keyboard('{ArrowUp}')
-    expect(within(menu).getByRole('menuitem', { name: t('pageHeader.viewMarkdown') })).toHaveFocus()
+    expect(within(menu).getByRole('menuitem', { name: t('pageSource.edit') })).toHaveFocus()
     await user.keyboard('{ArrowUp}')
     expect(
       within(menu)

@@ -58,6 +58,7 @@ function createTestStore(blocks: FlatBlock[]): StoreApi<PageBlockState> {
     moveDown: vi.fn(),
     pasteBlocks: vi.fn(),
     duplicateBlock: vi.fn(),
+    applyPageSource: vi.fn(),
     appendBlock: vi.fn(),
     merge: vi.fn(),
     toggleCollapse: vi.fn(),

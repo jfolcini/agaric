@@ -7,7 +7,7 @@
  * import (core imports the reducers; the reducers reference the state type).
  */
 
-import type { BlockRow, PasteInput } from '@/lib/bindings'
+import type { BlockRow, PageSourceReport, PasteInput } from '@/lib/bindings'
 import type { FlatBlock } from '@/lib/tree-utils'
 
 export type { FlatBlock }
@@ -151,6 +151,16 @@ export interface PageBlockState {
    * block is not on this page or the command failed, which toasts).
    */
   duplicateBlock: (blockId: string) => Promise<string[]>
+
+  /**
+   * #5140 — save the page edited as its source buffer, as one
+   * `apply_page_source` command and one undo entry, then reload the tree.
+   * `baseSource` is the buffer as loaded; `force` keeps anchors the page no
+   * longer holds as new blocks. Rejects with the backend's error untouched
+   * (no toast), so the caller can tell a stale base (`RequiresRefresh`) from a
+   * buffer it must fix.
+   */
+  applyPageSource: (source: string, baseSource: string, force: boolean) => Promise<PageSourceReport>
 
   /**
    * Append a single backend-returned `BlockRow` to the

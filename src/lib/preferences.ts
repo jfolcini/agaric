@@ -1367,6 +1367,35 @@ export function pruneImageCollapse(): void {
   writePreference(IMAGE_COLLAPSE_PREFERENCE, readPreference(IMAGE_COLLAPSE_PREFERENCE))
 }
 
+interface PageSourceDraft {
+  base: string
+  text: string
+}
+
+function parsePageSourceDraft(raw: string): PageSourceDraft {
+  const parsed: unknown = JSON.parse(raw)
+  if (typeof parsed === 'object' && parsed !== null && 'base' in parsed && 'text' in parsed) {
+    const { base, text } = parsed
+    if (typeof base === 'string' && typeof text === 'string') return { base, text }
+  }
+  throw new Error('invalid page source draft')
+}
+
+/**
+ * `agaric-page-source-draft:<pageId>` — source mode's unsaved buffer and the
+ * source it was loaded from (#5140, `src/components/pages/PageSourceEditor.tsx`),
+ * so a save of a restored draft still catches what changed since. Page-keyed;
+ * `null` when there is none.
+ */
+const PAGE_SOURCE_DRAFT_PREFERENCE: PreferenceDefinition<PageSourceDraft | null> = {
+  key: 'agaric-page-source-draft',
+  scope: 'page',
+  version: 1,
+  defaultValue: null,
+  parse: parsePageSourceDraft,
+  serialize: jsonSerialize<PageSourceDraft | null>,
+}
+
 /**
  * Central registry of every localStorage-backed app preference. New keys go
  * here (see module docstring) so preferences stay discoverable in one place.
@@ -1408,4 +1437,5 @@ export const PREFERENCES = {
   blockCollapse: BLOCK_COLLAPSE_PREFERENCE,
   embedCollapse: EMBED_COLLAPSE_PREFERENCE,
   imageCollapse: IMAGE_COLLAPSE_PREFERENCE,
+  pageSourceDraft: PAGE_SOURCE_DRAFT_PREFERENCE,
 } as const

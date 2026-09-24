@@ -57,12 +57,29 @@ vi.mock('@/components/editor/BlockTree', () => ({
 }))
 
 // ── Mock PageHeader ─────────────────────────────────────────────────
-let capturedPageHeaderProps: { pageId: string; title: string; onBack?: () => void } | null = null
+interface CapturedPageHeaderProps {
+  pageId: string
+  title: string
+  onBack?: () => void
+  onEditSource?: () => void
+}
+let capturedPageHeaderProps: CapturedPageHeaderProps | null = null
 vi.mock('@/components/pages/PageHeader', () => ({
-  PageHeader: (props: { pageId: string; title: string; onBack?: () => void }) => {
+  PageHeader: (props: CapturedPageHeaderProps) => {
     capturedPageHeaderProps = props
     return <div data-testid="page-header" data-page-id={props.pageId} data-title={props.title} />
   },
+}))
+
+// ── Mock PageSourceEditor (#5140) ───────────────────────────────────
+vi.mock('@/components/pages/PageSourceEditor', () => ({
+  PageSourceEditor: (props: { pageId: string; onClose: () => void }) => (
+    <div data-testid="page-source-mode" data-page-id={props.pageId}>
+      <button type="button" onClick={props.onClose}>
+        close source
+      </button>
+    </div>
+  ),
 }))
 
 // ── Mock panel components ───────────────────────────────────────────
@@ -732,6 +749,94 @@ describe('PageEditor tag page is read-only (#4725)', () => {
     })
     const results = await axe(container)
     expect(results).toHaveNoViolations()
+  })
+})
+
+describe('PageEditor source mode (#5140)', () => {
+  /** Waits for `get_block` to settle the page type, which gates the entry point. */
+  async function editSourceHandler(): Promise<() => void> {
+    await waitFor(() => {
+      expect(capturedPageHeaderProps?.onEditSource).toBeTypeOf('function')
+    })
+    return capturedPageHeaderProps?.onEditSource as () => void
+  }
+
+  it('swaps the block tree and add-block button for the source editor, clearing focus first', async () => {
+    useBlockStore.setState({ focusedBlockId: 'BLOCK_1' })
+    render(<PageEditor pageId="PAGE_1" title="My Page" />)
+    const editSource = await editSourceHandler()
+
+    act(() => editSource())
+
+    expect(useBlockStore.getState().focusedBlockId).toBeNull()
+    expect(screen.getByTestId('page-source-mode')).toHaveAttribute('data-page-id', 'PAGE_1')
+    expect(screen.queryByTestId('block-tree')).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /add block/i })).not.toBeInTheDocument()
+    expect(screen.getByTestId('linked-references')).toBeInTheDocument()
+    expect(capturedPageHeaderProps?.onEditSource).toBeUndefined()
+  })
+
+  it('closing the source editor brings the block tree back', async () => {
+    const user = userEvent.setup()
+    render(<PageEditor pageId="PAGE_1" title="My Page" />)
+    const editSource = await editSourceHandler()
+    act(() => editSource())
+
+    await user.click(screen.getByRole('button', { name: 'close source' }))
+
+    expect(screen.queryByTestId('page-source-mode')).not.toBeInTheDocument()
+    expect(screen.getByTestId('block-tree')).toHaveAttribute('data-parent-id', 'PAGE_1')
+    expect(capturedPageHeaderProps?.onEditSource).toBeTypeOf('function')
+  })
+
+  it('navigating to another page ends source mode, also after coming back', async () => {
+    const { rerender } = render(<PageEditor pageId="PAGE_1" title="My Page" />)
+    const editSource = await editSourceHandler()
+    act(() => editSource())
+
+    rerender(<PageEditor pageId="PAGE_2" title="Other" />)
+
+    // Once PAGE_2's type has settled, so a source mode still on would show.
+    await waitFor(() => {
+      expect(capturedPageHeaderProps?.pageId).toBe('PAGE_2')
+      expect(capturedPageHeaderProps?.onEditSource).toBeTypeOf('function')
+    })
+    expect(screen.getByTestId('block-tree')).toHaveAttribute('data-parent-id', 'PAGE_2')
+    expect(screen.queryByTestId('page-source-mode')).not.toBeInTheDocument()
+
+    rerender(<PageEditor pageId="PAGE_1" title="My Page" />)
+
+    // Back on the page it was opened on, the blocks show, not the old buffer.
+    await waitFor(() => {
+      expect(capturedPageHeaderProps?.pageId).toBe('PAGE_1')
+      expect(capturedPageHeaderProps?.onEditSource).toBeTypeOf('function')
+    })
+    expect(screen.getByTestId('block-tree')).toHaveAttribute('data-parent-id', 'PAGE_1')
+    expect(screen.queryByTestId('page-source-mode')).not.toBeInTheDocument()
+  })
+
+  it('offers no source mode on a tag page', async () => {
+    stubInvoke({
+      get_block: (args) =>
+        makePage({ id: args['blockId'] as string, block_type: 'tag', content: 'urgent' }),
+    })
+
+    render(<PageEditor pageId="TAG_1" title="urgent" />)
+
+    await waitFor(() => {
+      expect(screen.queryByTestId('block-tree')).not.toBeInTheDocument()
+    })
+    expect(capturedPageHeaderProps?.onEditSource).toBeUndefined()
+  })
+
+  it('has no a11y violations in source mode', async () => {
+    const { container } = render(<PageEditor pageId="PAGE_1" title="My Page" />)
+    const editSource = await editSourceHandler()
+    act(() => editSource())
+
+    await waitFor(async () => {
+      expect(await axe(container)).toHaveNoViolations()
+    })
   })
 })
 
