@@ -1,0 +1,75 @@
+{
+  "blocks": [
+    {
+      "name": "two lines of prose are one block",
+      "content": "hello\nworld",
+      "editorFlush": "split",
+      "finding": "X1"
+    },
+    {
+      "name": "a second line shaped like a property stays text",
+      "content": "hello\nkey:: v",
+      "editorFlush": "split",
+      "finding": "X1"
+    },
+    {
+      "name": "a second line shaped like a bullet stays text",
+      "content": "first\n- not a bullet",
+      "editorFlush": "split",
+      "finding": "X1"
+    },
+    {
+      "name": "a first line shaped like a property stays text",
+      "content": "key:: v",
+      "editorFlush": "property",
+      "finding": "X1"
+    },
+    {
+      "name": "a line shaped like an anchor line stays text",
+      "content": "see below\n^01J0000000000000000000ANCH",
+      "editorFlush": "split",
+      "finding": "X1"
+    },
+    {
+      "name": "two trailing spaces before a line break keep the line in the block",
+      "content": "line one  \nline two",
+      "editorFlush": "split",
+      "finding": "X1"
+    },
+    {
+      "name": "trailing spaces are kept",
+      "content": "trailing  ",
+      "editorFlush": "edit"
+    },
+    {
+      "name": "a fenced block keeps its bullet and property lines as code",
+      "content": "```sh\necho hi\n- x\nkey:: v\n```",
+      "editorFlush": "edit"
+    },
+    {
+      "name": "text shaped like a checkbox stays text",
+      "content": "[x] not a task",
+      "editorFlush": "edit"
+    },
+    {
+      "name": "text shaped like a task list item stays text",
+      "content": "- [ ] open task",
+      "editorFlush": "checkbox",
+      "finding": "X1"
+    },
+    {
+      "name": "text shaped like an ordered list item stays text",
+      "content": "1. not a list",
+      "editorFlush": "edit"
+    }
+  ],
+  "taskMarkers": [
+    { "marker": " ", "todoState": "TODO", "canonical": true },
+    { "marker": "/", "todoState": "DOING", "canonical": true },
+    { "marker": "x", "todoState": "DONE", "canonical": true },
+    { "marker": "X", "todoState": "DONE", "canonical": false },
+    { "marker": "-", "todoState": "CANCELLED", "canonical": true },
+    { "marker": "?", "todoState": null, "canonical": false },
+    { "marker": ">", "todoState": null, "canonical": false }
+  ]
+}

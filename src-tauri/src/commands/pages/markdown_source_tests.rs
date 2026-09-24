@@ -626,3 +626,98 @@ fn a_name_inside_code_stays_raw() {
         format!("- {inline} ^{BLOCK}\n")
     );
 }
+
+// ── shared stored-content vectors (#5160) ───────────────────────────────────
+
+/// `conformance/block-content.vectors.json`: stored block content and the
+/// meaning Rust and the block editor must agree on. This side reads each
+/// content through source mode as one block with that content and no
+/// properties; `block-content-conformance.test.ts` runs the editor's save
+/// flush over the same rows.
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct BlockContentVectors {
+    blocks: Vec<StoredBlockVector>,
+    task_markers: Vec<TaskMarkerVector>,
+}
+
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct StoredBlockVector {
+    name: String,
+    content: String,
+}
+
+/// A checkbox as typed after the list marker, the `todo_state` it stands for,
+/// and whether it is the one both sides write for that state.
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct TaskMarkerVector {
+    marker: char,
+    todo_state: Option<String>,
+    canonical: bool,
+}
+
+fn block_content_vectors() -> BlockContentVectors {
+    serde_json::from_str(include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../conformance/block-content.vectors.json"
+    )))
+    .expect("block-content conformance vectors must be valid JSON")
+}
+
+#[test]
+fn a_stored_block_vector_reads_back_as_one_block() {
+    for vector in block_content_vectors().blocks {
+        let md = render_page_source(&page_data(vec![row(BLOCK, PAGE, 1, &vector.content)]));
+        let parsed = import::parse_source_outline(&md).blocks;
+        assert_eq!(parsed.len(), 1, "{:?}, md:\n{md}", vector.name);
+        assert_eq!(
+            parsed[0].content, vector.content,
+            "{:?}, md:\n{md}",
+            vector.name
+        );
+        assert_eq!(
+            parsed[0].block_anchor.as_deref(),
+            Some(BLOCK),
+            "{:?}",
+            vector.name
+        );
+        assert!(
+            parsed[0].properties.is_empty(),
+            "{:?} read back {:?}, md:\n{md}",
+            vector.name,
+            parsed[0].properties
+        );
+    }
+}
+
+/// A checkbox typed after the bullet is the row's `todo_state`, or stays text
+/// when the row has none, and `task_marker_for` writes the canonical ones.
+#[test]
+fn the_checkbox_alphabet_vector_is_source_modes() {
+    for vector in block_content_vectors().task_markers {
+        let marker = vector.marker;
+        let md = format!("- [{marker}] task");
+        let parsed = import::parse_source_outline(&md).blocks;
+        assert_eq!(parsed.len(), 1, "{md:?}");
+        let state = parsed[0]
+            .properties
+            .iter()
+            .find(|(key, _)| key == "todo_state")
+            .map(|(_, value)| value.as_str());
+        assert_eq!(state, vector.todo_state.as_deref(), "{md:?}");
+        let content = match vector.todo_state {
+            Some(_) => "task".to_string(),
+            None => format!("[{marker}] task"),
+        };
+        assert_eq!(parsed[0].content, content, "{md:?}");
+        if vector.canonical {
+            let state = vector
+                .todo_state
+                .as_deref()
+                .expect("a canonical marker has a state");
+            assert_eq!(import::task_marker_for(state), Some(marker), "{state}");
+        }
+    }
+}
