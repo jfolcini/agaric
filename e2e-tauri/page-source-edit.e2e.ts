@@ -18,8 +18,10 @@ import {
   expectAbsent,
   navigateTo,
   openNewPage,
+  openPageSource,
   reopenPageByTitle,
   runScopedMarker,
+  setPageSource,
   typeMarkerVerified,
   waitForAppReady,
 } from './helpers'
@@ -28,7 +30,6 @@ const FIRST = runScopedMarker('wdio-src-first')
 const SECOND = runScopedMarker('wdio-src-second')
 const THIRD = runScopedMarker('wdio-src-third')
 const EDITED = runScopedMarker('wdio-src-edited')
-const SOURCE = '[data-testid="page-source-editor"]'
 
 const rowsWith = (marker: string) => $$(`[data-testid="sortable-block"]*=${marker}`).getElements()
 
@@ -46,29 +47,6 @@ async function reopenTheNewPage(marker: string): Promise<void> {
   await navigateTo('Journal')
   await reopenPageByTitle('Untitled')
   await $(`[data-testid="sortable-block"]*=${marker}`).waitForDisplayed({ timeout: NAV_TIMEOUT })
-}
-
-/**
- * Replace the source buffer in one input event, as a paste lands. Typed keys
- * lose repeated characters in this WebView (see `typeMarkerVerified`), and the
- * `^ID` anchors are full of them.
- */
-async function setSource(text: string): Promise<void> {
-  await browser.execute(
-    (selector: string, value: string) => {
-      const textarea = document.querySelector<HTMLTextAreaElement>(selector)
-      if (textarea === null) throw new Error('setSource: no source editor')
-      // The prototype setter goes around React's own value tracking, so the
-      // input event reads as a change.
-      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set?.call(
-        textarea,
-        value,
-      )
-      textarea.dispatchEvent(new Event('input', { bubbles: true }))
-    },
-    SOURCE,
-    text,
-  )
 }
 
 describe('Agaric real-backend source mode (#5140 Phase 4b)', () => {
@@ -89,20 +67,7 @@ describe('Agaric real-backend source mode (#5140 Phase 4b)', () => {
       'data-block-id',
     )
 
-    const kebab = $('button[aria-label="Page actions"]')
-    await kebab.waitForClickable({ timeout: ACTION_TIMEOUT })
-    await kebab.click()
-    const editAsMarkdown = $('[role="menuitem"]*=Edit as Markdown')
-    await editAsMarkdown.waitForClickable({ timeout: ACTION_TIMEOUT })
-    await editAsMarkdown.click()
-    const source = $(SOURCE)
-    await browser.waitUntil(
-      async () => {
-        const text = await source.getValue()
-        return [FIRST, SECOND, THIRD].every((marker) => text.includes(marker))
-      },
-      { timeout: ACTION_TIMEOUT, timeoutMsg: 'the source editor never held the three blocks' },
-    )
+    const source = await openPageSource([FIRST, SECOND, THIRD])
 
     // Each block is its bullet line and the lines under it, anchor included.
     const base = await source.getValue()
@@ -112,7 +77,7 @@ describe('Agaric real-backend source mode (#5140 Phase 4b)', () => {
       if (block === undefined) throw new Error(`no block holds ${marker} in ${base}`)
       return block
     }
-    await setSource(`${blockWith(THIRD)}\n${blockWith(FIRST).replace(FIRST, EDITED)}\n`)
+    await setPageSource(`${blockWith(THIRD)}\n${blockWith(FIRST).replace(FIRST, EDITED)}\n`)
     const save = source.parentElement().$('button=Save')
     await save.waitForClickable({ timeout: ACTION_TIMEOUT })
     await save.click()

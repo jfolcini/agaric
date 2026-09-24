@@ -596,3 +596,50 @@ export async function pasteFileIntoFocusedBlock(
     mimeType,
   )
 }
+
+const PAGE_SOURCE = '[data-testid="page-source-editor"]'
+
+/**
+ * The page kebab's "Edit as Markdown" (#5140): the source editor, once its
+ * buffer holds every one of `markers`.
+ */
+export async function openPageSource(markers: string[]) {
+  const kebab = $('button[aria-label="Page actions"]')
+  await kebab.waitForClickable({ timeout: ACTION_TIMEOUT })
+  await kebab.click()
+  const editAsMarkdown = $('[role="menuitem"]*=Edit as Markdown')
+  await editAsMarkdown.waitForClickable({ timeout: ACTION_TIMEOUT })
+  await editAsMarkdown.click()
+  const source = $(PAGE_SOURCE)
+  await browser.waitUntil(
+    async () => {
+      const text = await source.getValue()
+      return markers.every((marker) => text.includes(marker))
+    },
+    { timeout: ACTION_TIMEOUT, timeoutMsg: `the source editor never held ${markers.join(', ')}` },
+  )
+  return source
+}
+
+/**
+ * Replace the source buffer in one input event, as a paste lands. Typed keys
+ * lose repeated characters in this WebView (see `typeMarkerVerified`), and the
+ * `^ID` anchors are full of them.
+ */
+export async function setPageSource(text: string): Promise<void> {
+  await browser.execute(
+    (selector: string, value: string) => {
+      const textarea = document.querySelector<HTMLTextAreaElement>(selector)
+      if (textarea === null) throw new Error('setPageSource: no source editor')
+      // The prototype setter goes around React's own value tracking, so the
+      // input event reads as a change.
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set?.call(
+        textarea,
+        value,
+      )
+      textarea.dispatchEvent(new Event('input', { bubbles: true }))
+    },
+    PAGE_SOURCE,
+    text,
+  )
+}

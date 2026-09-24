@@ -178,20 +178,235 @@ function longestInOrderRun(ids: string[], rank: ReadonlyMap<string, number>): Se
   return kept
 }
 
+/** One side of a source merge: each block by key, its parent's key, each parent's children. */
+interface SourceOutline {
+  byKey: Map<string, SourceBullet>
+  parent: Map<string, string | null>
+  children: Map<string | null, string[]>
+}
+
+/**
+ * `bullets` as a tree keyed by anchor. An unanchored bullet is keyed
+ * `new:<index>` when `keepUnanchored`, and otherwise left out, its children
+ * going to its parent.
+ */
+function sourceOutline(bullets: SourceBullet[], keepUnanchored: boolean): SourceOutline {
+  const outline: SourceOutline = { byKey: new Map(), parent: new Map(), children: new Map() }
+  const open: Array<{ depth: number; key: string }> = []
+  bullets.forEach((bullet, i) => {
+    const key = bullet.anchor ?? (keepUnanchored ? `new:${i}` : null)
+    if (key === null) return
+    while ((open.at(-1)?.depth ?? -1) >= bullet.depth) open.pop()
+    const parent = open.at(-1)?.key ?? null
+    outline.byKey.set(key, bullet)
+    outline.parent.set(key, parent)
+    outline.children.set(parent, [...(outline.children.get(parent) ?? []), key])
+    open.push({ depth: bullet.depth, key })
+  })
+  return outline
+}
+
+/** A block the merge keeps, and the buffer's version saved as a new block before it. */
+interface MergedBlock {
+  content: string
+  anchor: string | null
+  fork: string | null
+}
+
+/** A merge warning about a block, which it names by its first line cut to 40 characters. */
+function warningAbout(content: string, what: string): string {
+  const line = Array.from(content.split('\n')[0] ?? '')
+  return `'${line.length > 40 ? `${line.slice(0, 40).join('')}…` : line.join('')}' ${what}`
+}
+
+/**
+ * Which blocks a merge keeps and with what text. A block changed on one side
+ * takes that side's text; changed on both, the page's stays and the buffer's
+ * is forked as a new block before it. A delete on one side stands unless the
+ * other side changed the block. DELIBERATE APPROXIMATION: two different edits
+ * of a multi-line block fork here, where the backend's `merge_lines` first
+ * tries to merge them line by line.
+ */
+function mergeSourceBlocks(
+  base: SourceOutline,
+  current: SourceOutline,
+  mine: SourceOutline,
+  warnings: string[],
+): Map<string, MergedBlock> {
+  const kept = new Map<string, MergedBlock>()
+  for (const [key, c] of current.byKey) {
+    const b = base.byKey.get(key)
+    const m = mine.byKey.get(key)
+    if (m === undefined) {
+      if (b?.content === c.content) continue
+      if (b !== undefined) {
+        warnings.push(warningAbout(c.content, 'changed on the page; your delete was not applied'))
+      }
+      kept.set(key, { content: c.content, anchor: key, fork: null })
+    } else if (c.content === m.content || m.content === b?.content) {
+      kept.set(key, { content: c.content, anchor: key, fork: null })
+    } else if (c.content === b?.content) {
+      kept.set(key, { content: m.content, anchor: key, fork: null })
+    } else {
+      warnings.push(warningAbout(c.content, 'was changed here and on the page; both versions kept'))
+      kept.set(key, { content: c.content, anchor: key, fork: m.content })
+    }
+  }
+  for (const [key, m] of mine.byKey) {
+    if (current.byKey.has(key)) continue
+    const b = base.byKey.get(key)
+    if (b === undefined) {
+      kept.set(key, { content: m.content, anchor: m.anchor, fork: null })
+    } else if (m.content !== b.content) {
+      warnings.push(warningAbout(m.content, 'was deleted on the page; saved as a new block'))
+      kept.set(key, { content: m.content, anchor: null, fork: null })
+    }
+  }
+  return kept
+}
+
+/** `key`'s parent in `side`, or its nearest ancestor there the merge keeps; null is the page. */
+function keptAncestor(key: string, side: SourceOutline, kept: ReadonlyMap<string, unknown>) {
+  let parent = side.parent.get(key) ?? null
+  while (parent !== null && !kept.has(parent)) parent = side.parent.get(parent) ?? null
+  return parent
+}
+
+/**
+ * Each kept block's parent. A block the page moved keeps the page's parent, one
+ * the buffer moved takes the buffer's, and one both moved differently keeps the
+ * page's, with a warning; so does one the buffer's parent would make its own
+ * ancestor. A parent the merge drops is replaced by its nearest kept ancestor
+ * on the side the parent came from.
+ */
+function mergeSourceParents(
+  outlines: { base: SourceOutline; current: SourceOutline; mine: SourceOutline },
+  kept: ReadonlyMap<string, MergedBlock>,
+  warnings: string[],
+): Map<string, string | null> {
+  const { base, current, mine } = outlines
+  const parentOf = new Map<string, string | null>()
+  for (const key of kept.keys()) {
+    parentOf.set(key, keptAncestor(key, current.byKey.has(key) ? current : mine, kept))
+  }
+  const isAncestor = (key: string, of: string | null): boolean => {
+    for (let at = of; at !== null; at = parentOf.get(at) ?? null) if (at === key) return true
+    return false
+  }
+  for (const key of mine.byKey.keys()) {
+    if (!kept.has(key) || !current.byKey.has(key)) continue
+    const [b, c, m] = [base, current, mine].map((side) => side.parent.get(key))
+    if (m === b || m === c) continue
+    const theirs = keptAncestor(key, mine, kept)
+    if (c !== b || isAncestor(key, theirs)) {
+      const { content } = current.byKey.get(key) as SourceBullet
+      warnings.push(warningAbout(content, "was moved here and on the page; the page's place kept"))
+    } else {
+      parentOf.set(key, theirs)
+    }
+  }
+  return parentOf
+}
+
+/** `side`'s children of `parent`, a block the merge drops replaced by its own. */
+function keptChildren(
+  side: SourceOutline,
+  parent: string | null,
+  kept: ReadonlyMap<string, unknown>,
+): string[] {
+  return (side.children.get(parent) ?? []).flatMap((key) =>
+    kept.has(key) ? [key] : keptChildren(side, key, kept),
+  )
+}
+
+/**
+ * `parent`'s children in merged order. The keys on all three sides decide
+ * whose order is the skeleton: the page's when the buffer kept the base order,
+ * otherwise the buffer's, with a warning when the page reordered them too.
+ * Every child the skeleton lacks goes after the nearest child before it on its
+ * own side that is already placed, or first.
+ */
+function mergeSourceOrder(
+  outlines: { base: SourceOutline; current: SourceOutline; mine: SourceOutline },
+  parent: string | null,
+  parentOf: ReadonlyMap<string, string | null>,
+  warnings: string[],
+): string[] {
+  const [b, c, m] = [outlines.base, outlines.current, outlines.mine].map((side) =>
+    keptChildren(side, parent, parentOf).filter((key) => parentOf.get(key) === parent),
+  ) as [string[], string[], string[]]
+  const common = (list: string[]): string =>
+    list.filter((key) => b.includes(key) && c.includes(key) && m.includes(key)).join()
+  const [orderB, orderC, orderM] = [common(b), common(c), common(m)]
+  if (orderC !== orderB && orderM !== orderB && orderC !== orderM) {
+    const under =
+      parent === null
+        ? undefined
+        : (outlines.current.byKey.get(parent) ?? outlines.mine.byKey.get(parent))
+    warnings.push(
+      under === undefined
+        ? "the page's blocks were reordered here and on the page; your order kept"
+        : `the blocks under ${warningAbout(under.content, 'were reordered here and on the page; your order kept')}`,
+    )
+  }
+  const skeleton = orderM === orderB ? c : m
+  const other = skeleton === c ? m : c
+  const order = [...skeleton]
+  for (const key of other) {
+    if (order.includes(key)) continue
+    const before = other.slice(0, other.indexOf(key)).findLast((k) => order.includes(k))
+    order.splice(before === undefined ? 0 : order.indexOf(before) + 1, 0, key)
+  }
+  return order
+}
+
+/**
+ * The buffer with what changed on the page since `base` folded in (#5140
+ * Phase 5): blocks by anchor, text, parent and order each merged three ways,
+ * as `mergeSourceBlocks`, `mergeSourceParents` and `mergeSourceOrder` say.
+ * Bullets in pre-order, depth from the merged tree.
+ */
+function mergeSourceBuffer(
+  base: SourceBullet[],
+  current: SourceBullet[],
+  mine: SourceBullet[],
+  warnings: string[],
+): SourceBullet[] {
+  const outlines = {
+    base: sourceOutline(base, false),
+    current: sourceOutline(current, false),
+    mine: sourceOutline(mine, true),
+  }
+  const kept = mergeSourceBlocks(outlines.base, outlines.current, outlines.mine, warnings)
+  const parentOf = mergeSourceParents(outlines, kept, warnings)
+  const merged: SourceBullet[] = []
+  const emit = (parent: string | null, depth: number): void => {
+    for (const key of mergeSourceOrder(outlines, parent, parentOf, warnings)) {
+      const block = kept.get(key) as MergedBlock
+      if (block.fork !== null) merged.push({ content: block.fork, depth, anchor: null })
+      merged.push({ content: block.content, depth, anchor: block.anchor })
+      emit(key, depth + 1)
+    }
+  }
+  emit(null, 0)
+  return merged
+}
+
 /**
  * Every refusal `apply_page_source` makes, checked before anything is written:
- * a stale base (`force` never skips it: it overrides a foreign anchor, not a
- * stale base), a page that does not read back as its own source, an anchor
- * named twice, an anchor that is not a block of this page unless `force` forks
- * it as a new block, and a delete that would take a nested page with it.
- * Returns the buffer's bullets, the page's text per anchor as it reads back,
- * the rendered ids the buffer left out and the warnings.
+ * a stale base unless `merge` folds the page's changes into the buffer
+ * (`force` never skips it: it overrides a foreign anchor, not a stale base), a
+ * page that does not read back as its own source, an anchor named twice, an
+ * anchor that is not a block of this page unless `force` forks it as a new
+ * block, and a delete that would take a nested page with it. Returns the
+ * buffer's bullets, the page's text per anchor as it reads back, the rendered
+ * ids the buffer left out and the warnings.
  */
 function readSourceEdit(
   pageId: string,
   source: string,
-  baseSource: unknown,
-  force: boolean,
+  baseSource: string,
+  flags: { force: boolean; merge: boolean },
 ): {
   t1: SourceBullet[]
   before: Map<string | null, string>
@@ -199,7 +414,8 @@ function readSourceEdit(
   warnings: string[]
 } {
   const current = renderPageSource(pageId)
-  if (current.source !== baseSource) {
+  const stale = current.source !== baseSource
+  if (stale && !flags.merge) {
     throw appErrorRejection({
       kind: 'validation',
       code: 'RequiresRefresh',
@@ -211,17 +427,19 @@ function readSourceEdit(
     throw validationRejection(`page '${pageId}' does not read back as its own source`)
   }
   const before = new Map(t0.map((b) => [b.anchor, b.content]))
-  const t1 = parseSourceBuffer(source)
-  const anchors = new Set<string>()
-  for (const { anchor } of t1) {
+  const typed = parseSourceBuffer(source)
+  const seen = new Set<string>()
+  for (const { anchor } of typed) {
     if (anchor === null) continue
-    if (anchors.has(anchor)) throw validationRejection(`^${anchor} appears more than once`)
-    anchors.add(anchor)
+    if (seen.has(anchor)) throw validationRejection(`^${anchor} appears more than once`)
+    seen.add(anchor)
   }
   const warnings: string[] = []
+  const t1 = stale ? mergeSourceBuffer(parseSourceBuffer(baseSource), t0, typed, warnings) : typed
+  const anchors = new Set(t1.flatMap(({ anchor }) => (anchor === null ? [] : [anchor])))
   for (const bullet of t1) {
     if (bullet.anchor === null || before.has(bullet.anchor)) continue
-    if (!force) throw validationRejection(`^${bullet.anchor} is not a block of this page`)
+    if (!flags.force) throw validationRejection(`^${bullet.anchor} is not a block of this page`)
     warnings.push(`^${bullet.anchor} no longer on this page; saved as a new block`)
     bullet.anchor = null
   }
@@ -889,11 +1107,15 @@ export const pagesHandlers = {
   // `parseSourceBuffer`, so the backend's list markers, task checkboxes,
   // property lines and names are not modelled (`properties_*` stay 0,
   // `names_created` empty), nor are its op cap and depth limit; tests must not
-  // rely on the mock for them.
+  // rely on the mock for them. Phase 5: with `merge`, a stale buffer is saved
+  // with the page's changes folded in (`mergeSourceBuffer`).
   apply_page_source: (args) => {
     const a = args as Record<string, unknown>
     const pageId = a['pageId'] as string
-    const edit = readSourceEdit(pageId, a['source'] as string, a['baseSource'], a['force'] === true)
+    const edit = readSourceEdit(pageId, a['source'] as string, a['baseSource'] as string, {
+      force: a['force'] === true,
+      merge: a['merge'] === true,
+    })
     const report = { created: 0, edited: 0, moved: 0, deleted: 0 }
     const opRefs = placeSourceBullets(pageId, edit.t1, report)
     for (const { anchor, content } of edit.t1) {

@@ -3,8 +3,9 @@
  *
  * Replaces the block tree while open. Save writes the buffer through
  * `apply_page_source` as one undo entry; a page changed elsewhere since the
- * buffer was loaded opens `PageSourceConflictDialog`. Unsaved text survives
- * leaving the page as a localStorage draft, cleared by Save or Cancel.
+ * buffer was loaded opens `PageSourceConflictDialog`, whose Merge saves the
+ * buffer with those changes folded in. Unsaved text survives leaving the page
+ * as a localStorage draft, cleared by Save or Cancel.
  */
 
 import type React from 'react'
@@ -113,13 +114,13 @@ export function PageSourceEditor({ pageId, onClose }: PageSourceEditorProps): Re
     }
   }
 
-  const submit = async (against: string, force: boolean): Promise<void> => {
+  const submit = async (against: string, force: boolean, merge: boolean): Promise<void> => {
     if (savingRef.current) return
     savingRef.current = true
     setSaving(true)
     setSaveError(null)
     try {
-      const report = await applyPageSource(text, against, force)
+      const report = await applyPageSource(text, against, force, merge)
       discardDraft()
       if (report.warnings.length > 0) {
         notify.warning(t('pageSource.warnings', { warnings: report.warnings.join('; ') }))
@@ -146,7 +147,7 @@ export function PageSourceEditor({ pageId, onClose }: PageSourceEditorProps): Re
     } else if (text.trim() === '' && base.trim() !== '') {
       setConfirmingDeleteAll(true)
     } else {
-      void submit(base, false)
+      void submit(base, false, false)
     }
   }
 
@@ -181,7 +182,14 @@ export function PageSourceEditor({ pageId, onClose }: PageSourceEditorProps): Re
   const handleOverwrite = (): void => {
     if (conflict === null) return
     setConflict(null)
-    void submit(conflict, true)
+    void submit(conflict, true, false)
+  }
+
+  // Against the buffer's own base, so the backend sees what changed on each side.
+  const handleMerge = (): void => {
+    if (conflict === null || base === null) return
+    setConflict(null)
+    void submit(base, false, true)
   }
 
   if (loadFailed) {
@@ -250,12 +258,13 @@ export function PageSourceEditor({ pageId, onClose }: PageSourceEditorProps): Re
         confirmKey="pageSource.deleteAll"
         variant="destructive"
         onConfirm={() => {
-          void submit(base, false)
+          void submit(base, false, false)
         }}
       />
       <PageSourceConflictDialog
         base={base}
         current={conflict}
+        onMerge={handleMerge}
         onReload={handleReload}
         onOverwrite={handleOverwrite}
         onKeepEditing={() => setConflict(null)}

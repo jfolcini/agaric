@@ -173,7 +173,7 @@ describe('PageSourceEditor saving', () => {
       expect(onClose).toHaveBeenCalledOnce()
     })
     expect(applyCalls()).toEqual([
-      { pageId: PAGE_GETTING_STARTED, source: text, baseSource: base, force: false },
+      { pageId: PAGE_GETTING_STARTED, source: text, baseSource: base, force: false, merge: false },
     ])
     expect(pageSource(PAGE_GETTING_STARTED)).toBe(text)
     expect(store.getState().blocksById.get(BLOCK_GS_1)?.content).toBe(
@@ -331,11 +331,14 @@ describe('PageSourceEditor emptying the page', () => {
 describe('PageSourceEditor when the page changed elsewhere', () => {
   const ELSEWHERE = 'Edited on another device'
 
+  const HELLO = (source: string): string =>
+    source.replace('- Welcome to Agaric!', '- Hello, Agaric!')
+
   /** Opens the seeded page, edits the buffer, changes a block behind its back, and saves. */
-  async function saveOverAChange() {
+  async function saveOverAChange(edit: (source: string) => string = HELLO) {
     const base = routeToMockBackend()
     const { BLOCK_GS_3, PAGE_GETTING_STARTED } = SEED_IDS
-    const text = base.replace('- Welcome to Agaric!', '- Hello, Agaric!')
+    const text = edit(base)
     const user = userEvent.setup()
     const rendered = renderEditor(PAGE_GETTING_STARTED)
     const textarea = await loadedEditor()
@@ -367,10 +370,74 @@ describe('PageSourceEditor when the page changed elsewhere', () => {
       expect(onClose).toHaveBeenCalledOnce()
     })
     expect(applyCalls()).toEqual([
-      { pageId: PAGE_GETTING_STARTED, source: text, baseSource: base, force: false },
-      { pageId: PAGE_GETTING_STARTED, source: text, baseSource: current, force: true },
+      { pageId: PAGE_GETTING_STARTED, source: text, baseSource: base, force: false, merge: false },
+      {
+        pageId: PAGE_GETTING_STARTED,
+        source: text,
+        baseSource: current,
+        force: true,
+        merge: false,
+      },
     ])
     expect(pageSource(PAGE_GETTING_STARTED)).toBe(text)
+  })
+
+  it('Merge saves the buffer against its own base with the change made elsewhere folded in, as one undo entry', async () => {
+    const { current, dialog, onClose, user } = await saveOverAChange()
+    const { PAGE_GETTING_STARTED } = SEED_IDS
+    await waitFor(() => {
+      expect(localStorage.getItem(draftKey(PAGE_GETTING_STARTED))).not.toBeNull()
+    })
+
+    await user.click(within(dialog).getByRole('button', { name: t('pageSource.merge') }))
+
+    await waitFor(() => {
+      expect(onClose).toHaveBeenCalledOnce()
+    })
+    expect(pageSource(PAGE_GETTING_STARTED)).toBe(HELLO(current))
+    expect(useUndoStore.getState().pages.get(PAGE_GETTING_STARTED)?.undoStack).toHaveLength(1)
+    expect(localStorage.getItem(draftKey(PAGE_GETTING_STARTED))).toBeNull()
+    expect(vi.mocked(toast.warning)).not.toHaveBeenCalled()
+  })
+
+  it("Merge keeps both versions of a block changed on both sides, the buffer's first, and warns", async () => {
+    const mine = '- Mine: new blocks by pressing Enter'
+    const { current, dialog, onClose, user } = await saveOverAChange((source) =>
+      source.replace('- Create new blocks by pressing Enter', mine),
+    )
+    const withoutAnchors = (source: string): string => source.replace(/ \^\w{26}$/gm, '')
+
+    await user.click(within(dialog).getByRole('button', { name: t('pageSource.merge') }))
+
+    await waitFor(() => {
+      expect(onClose).toHaveBeenCalledOnce()
+    })
+    expect(withoutAnchors(pageSource(SEED_IDS.PAGE_GETTING_STARTED))).toBe(
+      withoutAnchors(
+        current.replace(`- ${ELSEWHERE}`, `${mine} at the end of any block.\n- ${ELSEWHERE}`),
+      ),
+    )
+    expect(vi.mocked(toast.warning)).toHaveBeenCalledOnce()
+  })
+
+  it('a refused Merge shows the backend message inline and keeps the buffer', async () => {
+    vi.spyOn(logger, 'warn').mockImplementation(() => {})
+    const failure = { kind: 'validation', message: `^${A} is not a block of this page` }
+    const replies = [{ kind: 'validation', code: 'RequiresRefresh', message: 'stale' }, failure]
+    stubSource(() => Promise.reject(replies.shift()))
+    const user = userEvent.setup()
+    const { onClose } = renderEditor()
+    const textarea = await loadedEditor()
+    await user.type(textarea, 'x')
+    await user.click(screen.getByRole('button', { name: t('action.save') }))
+    const dialog = await screen.findByRole('dialog', { name: t('pageSource.conflictTitle') })
+
+    await user.click(within(dialog).getByRole('button', { name: t('pageSource.merge') }))
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(failure.message)
+    expect(textarea.value).toBe(`${BUFFER}x`)
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(onClose).not.toHaveBeenCalled()
   })
 
   it('Reload replaces the buffer and its base with the page as it is now and drops the draft', async () => {
@@ -537,6 +604,7 @@ describe('PageSourceConflictDialog', () => {
       <PageSourceConflictDialog
         base={base}
         current={`- two ^${B}\n- one ^${A}\n`}
+        onMerge={vi.fn()}
         onReload={vi.fn()}
         onOverwrite={vi.fn()}
         onKeepEditing={vi.fn()}
@@ -549,6 +617,40 @@ describe('PageSourceConflictDialog', () => {
     expect(within(dialog).queryByRole('list')).not.toBeInTheDocument()
   })
 
+  it('offers Merge as the primary action: last, focused on open, described by what it does', async () => {
+    const onMerge = vi.fn()
+    const user = userEvent.setup()
+    render(
+      <PageSourceConflictDialog
+        base={base}
+        current={`- one ^${A}\n`}
+        onMerge={onMerge}
+        onReload={vi.fn()}
+        onOverwrite={vi.fn()}
+        onKeepEditing={vi.fn()}
+        onCloseAutoFocus={vi.fn()}
+      />,
+    )
+
+    const dialog = screen.getByRole('dialog')
+    const footer = dialog.querySelector('[data-slot="dialog-footer"]') as HTMLElement
+    expect(
+      within(footer)
+        .getAllByRole('button')
+        .map((b) => b.textContent),
+    ).toEqual([
+      t('pageSource.overwrite'),
+      t('action.reload'),
+      t('pageSource.keepEditing'),
+      t('pageSource.merge'),
+    ])
+    const merge = within(footer).getByRole('button', { name: t('pageSource.merge') })
+    expect(merge).toHaveFocus()
+    expect(merge).toHaveAccessibleDescription(t('pageSource.mergeHint'))
+    await user.click(merge)
+    expect(onMerge).toHaveBeenCalledOnce()
+  })
+
   it('describes Overwrite with its warning and closing it keeps editing', async () => {
     const onKeepEditing = vi.fn()
     const user = userEvent.setup()
@@ -556,6 +658,7 @@ describe('PageSourceConflictDialog', () => {
       <PageSourceConflictDialog
         base={base}
         current={`- one ^${A}\n`}
+        onMerge={vi.fn()}
         onReload={vi.fn()}
         onOverwrite={vi.fn()}
         onKeepEditing={onKeepEditing}
@@ -575,6 +678,7 @@ describe('PageSourceConflictDialog', () => {
       <PageSourceConflictDialog
         base={base}
         current={`- one, edited ^${A}\n- three\n`}
+        onMerge={vi.fn()}
         onReload={vi.fn()}
         onOverwrite={vi.fn()}
         onKeepEditing={vi.fn()}

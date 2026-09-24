@@ -2784,6 +2784,31 @@ async fn save_source(
         source.to_owned(),
         base.to_owned(),
         force,
+        false,
+    )
+    .await;
+    settle(mat).await;
+    result
+}
+
+/// Save `source` over `page`, edited from `base`, with the changes the page
+/// took since folded in.
+async fn merge_source(
+    pool: &SqlitePool,
+    mat: &Materializer,
+    page: &BlockId,
+    source: &str,
+    base: &str,
+) -> Result<PageSourceReport, AppError> {
+    let result = apply_page_source_inner(
+        pool,
+        DEV,
+        mat,
+        page.as_str(),
+        source.to_owned(),
+        base.to_owned(),
+        false,
+        true,
     )
     .await;
     settle(mat).await;
@@ -4058,6 +4083,7 @@ async fn apply_page_source_op_refs_undo_the_whole_save() {
         source,
         base.clone(),
         false,
+        false,
     ))
     .await
     .unwrap();
@@ -4077,6 +4103,223 @@ async fn apply_page_source_op_refs_undo_the_whole_save() {
         page_source(&pool, &page).await,
         base,
         "the page is as it was"
+    );
+}
+
+/// A block edited on the page after the base was read, another in the buffer:
+/// the save is stale without `merge`, and with it both edits stand, the
+/// buffer's as the one edit written.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn apply_page_source_merge_lands_disjoint_edits() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let page = dup_page(&pool, &mat, "Merge").await;
+    let a = dup_child(&pool, &mat, &page, "a").await;
+    let b = dup_child(&pool, &mat, &page, "b").await;
+    settle(&mat).await;
+    let base = page_source(&pool, &page).await;
+    edit_block_inner(&pool, DEV, &mat, a.clone(), "a, edited elsewhere".into())
+        .await
+        .unwrap();
+    settle(&mat).await;
+    let source = with(&base, "- b ^", "- b, edited here ^");
+    assert!(is_refresh(
+        &save_source(&pool, &mat, &page, &source, &base, false).await
+    ));
+    let before = last_seq(&pool).await;
+
+    let report = merge_source(&pool, &mat, &page, &source, &base)
+        .await
+        .unwrap();
+
+    assert_eq!(
+        counts(&report),
+        [0, 1, 0, 0, 0, 0],
+        "the buffer's edit alone"
+    );
+    assert_eq!(report.warnings, Vec::<String>::new());
+    assert_eq!(ops_after(&pool, before).await, vec!["edit_block"]);
+    assert_eq!(
+        dup_children(&pool, &page).await,
+        vec![
+            (a.into_string(), "a, edited elsewhere".to_owned()),
+            (b.into_string(), "b, edited here".to_owned()),
+        ]
+    );
+}
+
+/// The same block edited differently on each side: the page's version keeps
+/// the block, the buffer's is created directly before it, and the save says
+/// so once.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn apply_page_source_merge_keeps_both_versions_of_a_conflict() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let page = dup_page(&pool, &mat, "Conflict").await;
+    let a = dup_child(&pool, &mat, &page, "a").await;
+    let c = dup_child(&pool, &mat, &page, "c").await;
+    settle(&mat).await;
+    let base = page_source(&pool, &page).await;
+    edit_block_inner(&pool, DEV, &mat, a.clone(), "a, edited elsewhere".into())
+        .await
+        .unwrap();
+    settle(&mat).await;
+    let before = last_seq(&pool).await;
+
+    let report = merge_source(
+        &pool,
+        &mat,
+        &page,
+        &with(&base, "- a ^", "- a, edited here ^"),
+        &base,
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(
+        counts(&report),
+        [1, 0, 0, 0, 0, 0],
+        "the buffer's version created"
+    );
+    assert_eq!(
+        report.warnings,
+        vec!["'a, edited elsewhere' was changed here and on the page; both versions kept"]
+    );
+    assert_eq!(ops_after(&pool, before).await, vec!["create_block"]);
+    let children = dup_children(&pool, &page).await;
+    let texts: Vec<&str> = children.iter().map(|(_, text)| text.as_str()).collect();
+    assert_eq!(texts, ["a, edited here", "a, edited elsewhere", "c"]);
+    assert_eq!(
+        (children[1].0.as_str(), children[2].0.as_str()),
+        (a.as_str(), c.as_str()),
+        "the page's blocks keep their ids"
+    );
+}
+
+/// A block deleted on the page and edited in the buffer comes back as a new
+/// block; one edited on the page and dropped from the buffer stays. Each says
+/// so.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn apply_page_source_merge_keeps_an_edit_over_the_other_sides_delete() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let page = dup_page(&pool, &mat, "Deletes").await;
+    let a = dup_child(&pool, &mat, &page, "a").await;
+    let b = dup_child(&pool, &mat, &page, "b").await;
+    let c = dup_child(&pool, &mat, &page, "c").await;
+    settle(&mat).await;
+    let base = page_source(&pool, &page).await;
+    delete_block_inner(&pool, DEV, &mat, a.clone())
+        .await
+        .unwrap();
+    edit_block_inner(&pool, DEV, &mat, b.clone(), "b, edited elsewhere".into())
+        .await
+        .unwrap();
+    settle(&mat).await;
+    let source = with(&base, "- a ^", "- a, edited here ^").replace(&format!("- b ^{b}\n"), "");
+
+    let report = merge_source(&pool, &mat, &page, &source, &base)
+        .await
+        .unwrap();
+
+    assert_eq!(
+        counts(&report),
+        [1, 0, 0, 0, 0, 0],
+        "a created again; b not deleted"
+    );
+    assert_eq!(
+        report.warnings,
+        vec![
+            "'b, edited elsewhere' changed on the page; your delete was not applied",
+            "'a, edited here' was deleted on the page; saved as a new block",
+        ]
+    );
+    let children = dup_children(&pool, &page).await;
+    let texts: Vec<&str> = children.iter().map(|(_, text)| text.as_str()).collect();
+    assert_eq!(texts, ["a, edited here", "b, edited elsewhere", "c"]);
+    assert_ne!(
+        children[0].0,
+        a.into_string(),
+        "a new block, not the deleted one"
+    );
+    assert_eq!(children[2].0, c.into_string());
+}
+
+/// The op refs a merged save returns undo all of it: the page is again as the
+/// edit elsewhere left it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn apply_page_source_merge_op_refs_undo_the_whole_save() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let page = dup_page(&pool, &mat, "Undo merge").await;
+    let a = dup_child(&pool, &mat, &page, "a").await;
+    dup_child(&pool, &mat, &page, "b").await;
+    settle(&mat).await;
+    let base = page_source(&pool, &page).await;
+    edit_block_inner(&pool, DEV, &mat, a.clone(), "a, edited elsewhere".into())
+        .await
+        .unwrap();
+    settle(&mat).await;
+    let elsewhere = page_source(&pool, &page).await;
+    let source = format!("{}- new\n", with(&base, "- a ^", "- a, edited here ^"));
+
+    let resp = capture_op_refs(apply_page_source_inner(
+        &pool,
+        DEV,
+        &mat,
+        page.as_str(),
+        source,
+        base,
+        false,
+        true,
+    ))
+    .await
+    .unwrap();
+    settle(&mat).await;
+    assert_eq!(
+        counts(&resp.inner),
+        [2, 0, 0, 0, 0, 0],
+        "the buffer's version of a, and the new block"
+    );
+    undo_ops_inner(&pool, DEV, &mat, resp.op_refs.clone())
+        .await
+        .unwrap();
+    settle(&mat).await;
+
+    assert_eq!(
+        page_source(&pool, &page).await,
+        elsewhere,
+        "the page is as the edit elsewhere left it"
+    );
+}
+
+/// `merge` on a base that is still the page's source is the plain save.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn apply_page_source_merge_on_a_fresh_base_is_a_plain_save() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let page = dup_page(&pool, &mat, "Fresh").await;
+    let a = dup_child(&pool, &mat, &page, "a").await;
+    settle(&mat).await;
+    let base = page_source(&pool, &page).await;
+    let before = last_seq(&pool).await;
+
+    let report = merge_source(
+        &pool,
+        &mat,
+        &page,
+        &with(&base, "- a ^", "- a, edited ^"),
+        &base,
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(counts(&report), [0, 1, 0, 0, 0, 0]);
+    assert_eq!(report.warnings, Vec::<String>::new());
+    assert_eq!(ops_after(&pool, before).await, vec!["edit_block"]);
+    assert_eq!(
+        dup_children(&pool, &page).await,
+        vec![(a.into_string(), "a, edited".to_owned())]
     );
 }
 

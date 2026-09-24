@@ -48,7 +48,11 @@ pub struct PageSourceReport {
 /// Save `source`, the page's source buffer as the user edited it, over the
 /// page (#5140), as one transaction and so one undo. `base_source` is the
 /// source the edit started from: when it is not the page's source now, the
-/// save is refused as stale, whatever `force` says.
+/// save is refused as stale, whatever `force` says, unless `merge`: then the
+/// changes the page took since are folded into the buffer first
+/// (`merge::merge_outlines`), and a block both sides changed differently is
+/// kept twice, the buffer's version as a new block directly before the page's,
+/// with a warning.
 ///
 /// Blocks pair with the page's by their `^ID` anchor. A paired block gets the
 /// content, properties, parent and slot the buffer gives it, each written only
@@ -64,11 +68,13 @@ pub struct PageSourceReport {
 /// - [`AppError::NotFound`] — no live page has that id
 /// - [`AppError::Validation`] — `page_id` is not a page; with code
 ///   [`ValidationCode::RequiresRefresh`] when `base_source` is not the page's
-///   source; the page's source does not read back as its blocks (a property
-///   value with a line break); an anchor is written twice, or names no block
-///   of the page and `force` is false; a block the save would delete holds a
-///   nested page; a block would be nested past `MAX_BLOCK_DEPTH`; or the save
-///   would append more ops than one undo reverts
+///   source and `merge` is false; the page's source does not read back as its
+///   blocks (a property value with a line break); an anchor is written twice,
+///   or names no block of the page and `force` is false; a block the save
+///   would delete holds a nested page; a block would be nested past
+///   `MAX_BLOCK_DEPTH`; or the save would append more ops than one undo
+///   reverts
+#[expect(clippy::too_many_arguments)]
 #[instrument(skip(pool, device_id, materializer, source, base_source), err)]
 pub async fn apply_page_source_inner(
     pool: &SqlitePool,
@@ -78,6 +84,7 @@ pub async fn apply_page_source_inner(
     source: String,
     base_source: String,
     force: bool,
+    merge: bool,
 ) -> Result<PageSourceReport, AppError> {
     let page_id = BlockId::from_string(page_id)?;
     let mut tx = CommandTx::begin_immediate(pool, "apply_page_source").await?;
@@ -85,10 +92,16 @@ pub async fn apply_page_source_inner(
     tx.arm_engine_rollback(materializer.loro_state());
     let mut data = load_page_export_data(&mut tx, page_id.as_str()).await?;
     data.name_snapshot = load_name_snapshot(&mut tx, &data).await?;
-    let base = read_base(&data, &base_source)?;
+    let (base, stale) = read_base(&data, &base_source, merge)?;
     let parsed = import::parse_source_outline(&source);
     let mut warnings = parsed.warnings;
-    let mut buffer = pair_blocks(&base, parsed.blocks, force, &mut warnings)?;
+    let blocks = if stale {
+        let older = import::parse_source_outline(&base_source).blocks;
+        merge::merge_outlines(older, &base.blocks, parsed.blocks, &mut warnings)?
+    } else {
+        parsed.blocks
+    };
+    let mut buffer = pair_blocks(&base, blocks, force, &mut warnings)?;
     // Boxed for the reason `duplicate_block_inner` gives.
     let (mut tx, names_created) = Box::pin(resolve_buffer_names(
         tx,
@@ -146,14 +159,19 @@ struct Base {
     parents: Vec<Option<usize>>,
 }
 
-/// The page's source, refused as stale when it is not `base_source`, and
-/// refused when it does not read back as the blocks it renders: a value the
-/// grammar cannot carry, such as a property value with a line break, reads
-/// back as other content or another block, and saving over it would rewrite
-/// the block.
-fn read_base(data: &PageExportData, base_source: &str) -> Result<Base, AppError> {
+/// The page's source, and whether it is stale: not `base_source`, which is
+/// refused unless `merge`. Refused too when it does not read back as the
+/// blocks it renders: a value the grammar cannot carry, such as a property
+/// value with a line break, reads back as other content or another block, and
+/// saving over it would rewrite the block.
+fn read_base(
+    data: &PageExportData,
+    base_source: &str,
+    merge: bool,
+) -> Result<(Base, bool), AppError> {
     let (current, ids) = render_page_source_ids(data);
-    if current != base_source {
+    let stale = current != base_source;
+    if stale && !merge {
         return Err(AppError::validation_coded(
             ValidationCode::RequiresRefresh,
             "the page changed after its source was read",
@@ -171,11 +189,14 @@ fn read_base(data: &PageExportData, base_source: &str) -> Result<Base, AppError>
              value with a line break"
         )));
     }
-    Ok(Base {
-        parents: outline_parents(&blocks),
-        ids,
-        blocks,
-    })
+    Ok((
+        Base {
+            parents: outline_parents(&blocks),
+            ids,
+            blocks,
+        },
+        stale,
+    ))
 }
 
 /// The edited buffer (T1): its blocks, each one's parent among them, the base
@@ -817,6 +838,7 @@ pub async fn apply_page_source(
     source: String,
     base_source: String,
     force: bool,
+    merge: bool,
 ) -> Result<WithOps<PageSourceReport>, AppError> {
     capture_op_refs(apply_page_source_inner(
         ctx.pool(),
@@ -826,10 +848,14 @@ pub async fn apply_page_source(
         source,
         base_source,
         force,
+        merge,
     ))
     .await
     .map_err(sanitize_internal_error)
 }
+
+#[path = "markdown_source_merge.rs"]
+mod merge;
 
 #[cfg(test)]
 mod tests {

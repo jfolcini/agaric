@@ -1,10 +1,11 @@
-//! Word-level two-way diff for undo/redo history display.
+//! Word-level two-way diff for undo/redo history display, and the line-level
+//! three-way merge a source-mode save folds two edits of one block with.
 //!
 //! Uses the `similar` crate's `TextDiff::from_words()` to produce
 //! `DiffSpan` items with `{Equal, Delete, Insert}` tags.
 
 use serde::Serialize;
-use similar::{ChangeTag, TextDiff};
+use similar::{ChangeTag, TextDiff, TextMerge};
 
 /// Tag indicating what happened to a span of text.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, specta::Type)]
@@ -37,10 +38,53 @@ pub fn compute_word_diff(old: &str, new: &str) -> Vec<DiffSpan> {
         .collect()
 }
 
+/// `ours` and `theirs`, both edited from `base`, merged line by line: `None`
+/// when they change the same lines differently. Each text is read as if it
+/// ended in a newline, so a last line without one is a line like the others
+/// rather than a change to the whole tail, and the result gets none added.
+pub fn merge_lines(base: &str, ours: &str, theirs: &str) -> Option<String> {
+    let merge = TextMerge::from_lines(
+        format!("{base}\n"),
+        format!("{ours}\n"),
+        format!("{theirs}\n"),
+    );
+    if merge.is_conflicted() {
+        return None;
+    }
+    let merged = merge.to_string();
+    Some(merged.strip_suffix('\n').unwrap_or(&merged).to_owned())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use proptest::prelude::*;
+
+    /// Each side's edit of a line the other left merges, a last line deleted
+    /// on one side included, which only reads as one line's deletion because
+    /// the texts are taken as newline-terminated. As in git, edits of the
+    /// same line, or of lines that touch, conflict.
+    #[test]
+    fn merge_lines_takes_each_sides_edit_of_a_different_line() {
+        assert_eq!(
+            merge_lines("a\nb\nc", "A\nb\nc", "a\nb\nC").as_deref(),
+            Some("A\nb\nC"),
+            "no newline is added"
+        );
+        assert_eq!(
+            merge_lines("a\nb\nc", "A\nb\nc", "a\nb").as_deref(),
+            Some("A\nb")
+        );
+        assert_eq!(merge_lines("a", "a", "a").as_deref(), Some("a"));
+        assert_eq!(merge_lines("", "x", "").as_deref(), Some("x"));
+        assert_eq!(
+            merge_lines("a", "A", "B"),
+            None,
+            "one line changed both ways"
+        );
+        assert_eq!(merge_lines("a\nb", "A\nb", "a\nB"), None, "touching lines");
+        assert_eq!(merge_lines("", "x", "y"), None);
+    }
 
     #[test]
     fn identical_text_returns_single_equal_span() {
