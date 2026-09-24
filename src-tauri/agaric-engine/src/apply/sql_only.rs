@@ -27,10 +27,10 @@ use super::*;
 /// `BlockSnapshot` carries `position: i64` (the engine read-back is always a
 /// concrete rank), so it cannot represent the SQL NULL the old inline INSERT
 /// wrote in that corner. This both-`None` case IS reachable in production: the
-/// canonical create path `domain::block_ops::create_block_in_tx` takes
-/// `index: Option<i64>` and builds `CreateBlockPayload { position: None, index,
-/// .. }`, so a bare-append create (`index: None`) routed to this fallback on a
-/// space-unresolved / engine-uninit miss hits it. We map it to `i64::MAX`
+/// canonical create path `domain::block_ops::create_block_in_tx` records the
+/// resolved slot for an append under a parent (#5155) but leaves a top-level
+/// append's `index` at `None`, so a top-level create routed to this fallback on
+/// a space-unresolved / engine-uninit miss hits it. We map it to `i64::MAX`
 /// (the engine arm appends through the slot path, `apply_create_block_at(…,
 /// usize::MAX)`, and stamps no position at all — #4688). This changes the
 /// persisted byte from SQL NULL to `i64::MAX`, but is **behavior-preserving**:
@@ -52,7 +52,7 @@ pub async fn apply_create_block_sql_only(
     // #400: a new-scheme op carries a 0-based `index` and no legacy `position`;
     // fall back to a 1-based provisional position for this engine-less path.
     // Same formula the old inline INSERT bound; see the doc comment on the
-    // #1245 / #1257 reproject-gap and on the both-`None` corner (reachable: a bare-append create).
+    // #1245 / #1257 reproject-gap and on the both-`None` corner (reachable: a top-level append).
     let position = p
         .position
         .or_else(|| {

@@ -9801,3 +9801,147 @@ async fn move_blocks_batch_cross_page_rederives_descendant_page_ids() {
         "grandchild page_id must rederive to B"
     );
 }
+
+// ======================================================================
+// #5155 — an append records the slot it resolved to
+// ======================================================================
+
+/// A page in the test space, so creates under it take the engine path.
+async fn space_page(pool: &SqlitePool, mat: &Materializer) -> BlockId {
+    ensure_test_space(pool).await;
+    mark_block_as_space(pool, TEST_SPACE_ID).await;
+    create_page_in_space_inner(pool, DEV, mat, None, "Appends".into(), TEST_SPACE_ID.into())
+        .await
+        .unwrap()
+}
+
+/// A content block appended under `parent` (no index).
+async fn append(
+    pool: &SqlitePool,
+    mat: &Materializer,
+    parent: &BlockId,
+    content: &str,
+) -> BlockRow {
+    create_block_inner(
+        pool,
+        DEV,
+        mat,
+        "content".into(),
+        content.into(),
+        Some(parent.clone()),
+        None,
+    )
+    .await
+    .unwrap()
+}
+
+/// `parent`'s live children in sibling order.
+async fn live_order(pool: &SqlitePool, parent: &BlockId) -> Vec<String> {
+    sqlx::query_scalar(
+        "SELECT id FROM blocks WHERE parent_id = ? AND deleted_at IS NULL ORDER BY position, id",
+    )
+    .bind(parent.as_str())
+    .fetch_all(pool)
+    .await
+    .unwrap()
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn append_records_live_child_count_and_lands_before_trailing_tombstone() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let page = space_page(&pool, &mat).await;
+    let a = append(&pool, &mat, &page, "A").await;
+    let b = append(&pool, &mat, &page, "B").await;
+    let x = append(&pool, &mat, &page, "X").await;
+    delete_block_inner(&pool, DEV, &mat, x.id.clone())
+        .await
+        .unwrap();
+    settle(&mat).await;
+
+    let d = append(&pool, &mat, &page, "D").await;
+    settle(&mat).await;
+
+    let payload: String = sqlx::query_scalar(
+        "SELECT payload FROM op_log WHERE block_id = ? AND op_type = 'create_block'",
+    )
+    .bind(d.id.as_str())
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let create: agaric_store::op::CreateBlockPayload = serde_json::from_str(&payload).unwrap();
+    assert_eq!(
+        create.index,
+        Some(2),
+        "the append records the slot it resolved to: two live siblings"
+    );
+    assert_eq!(
+        live_order(&pool, &page).await,
+        [a.id.as_str(), b.id.as_str(), d.id.as_str()],
+        "D is the last live child"
+    );
+    let ranks: Vec<(String, i64)> =
+        sqlx::query_as("SELECT id, position FROM blocks WHERE parent_id = ? ORDER BY position, id")
+            .bind(page.as_str())
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        ranks,
+        [
+            (a.id.into_string(), 1),
+            (b.id.into_string(), 2),
+            (d.id.into_string(), 3),
+            (x.id.into_string(), 4),
+        ],
+        "D takes the slot before the trailing tombstone, which is ranked after it"
+    );
+}
+
+/// The SQL-only fallback (a page in no space) writes the payload's provisional
+/// `index + 1`; with tombstones ahead of the live tail that would sort the
+/// append before a live sibling, so the append fixup lifts it to the tail.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn append_on_sql_only_fallback_lands_after_live_tail_past_tombstones() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let page = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "page".into(),
+        "No space".into(),
+        None,
+        None,
+    )
+    .await
+    .unwrap()
+    .id;
+    let a = append(&pool, &mat, &page, "A").await;
+    let b = append(&pool, &mat, &page, "B").await;
+    let c = append(&pool, &mat, &page, "C").await;
+    delete_block_inner(&pool, DEV, &mat, a.id.clone())
+        .await
+        .unwrap();
+    delete_block_inner(&pool, DEV, &mat, b.id.clone())
+        .await
+        .unwrap();
+    settle(&mat).await;
+
+    let d = append(&pool, &mat, &page, "D").await;
+
+    assert_eq!(
+        live_order(&pool, &page).await,
+        [c.id.as_str(), d.id.as_str()],
+        "D is appended after C"
+    );
+    let rank: i64 = sqlx::query_scalar("SELECT position FROM blocks WHERE id = ?")
+        .bind(d.id.as_str())
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        rank, 4,
+        "D's rank is one past the live tail, not the live-child count + 1"
+    );
+}

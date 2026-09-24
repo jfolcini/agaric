@@ -174,8 +174,8 @@ pub fn is_statically_non_reversible(op_type: &str) -> bool {
 /// RUNTIME (not statically by op-type) by:
 ///   * the `purge_block` arm (no inverse exists at all),
 ///   * `delete_attachment` whose paired `add_attachment` is gone, and
-///   * `move_block` whose only prior placement is an ancient
-///     `create_block` with neither `index` nor `position`.
+///   * `move_block` whose only prior placement is a `create_block` with
+///     neither `index` nor `position` (an append recorded before #5155).
 ///
 /// Centralizing the predicate here is what lets a restore skip the
 /// dynamically-discovered non-reversible ops (a position-less
@@ -952,9 +952,10 @@ fn build_reverse_move_block(
             (p.new_parent_id, p.new_index, Some(p.new_position))
         } else {
             let p: CreateBlockPayload = serde_json::from_str(prior_payload)?;
-            // Ancient `create_block` payloads predate the position wire
-            // field (both `index` and `position` absent) → no valid reverse-move;
-            // mirror `block_ops::find_prior_position` and surface `NonReversible`.
+            // A create with neither `index` nor `position` (an append recorded
+            // before #5155, or pre-#400 data without a position) left no slot
+            // to restore → no valid reverse-move; mirror
+            // `block_ops::find_prior_position` and surface `NonReversible`.
             match (p.index, p.position) {
                 (Some(idx), _) => (p.parent_id, Some(idx), None),
                 (None, Some(pos)) => (p.parent_id, None, Some(pos)),

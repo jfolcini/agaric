@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE blocks SET position = ? WHERE id = ? AND (position = 9223372036854775807 OR position < ?)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 3
+    },
+    "nullable": []
+  },
+  "hash": "8cc8f91cec0fa01e1499bc63f03622709555319d7ec67232ab5e9922eb6b0c2e"
+}

@@ -387,12 +387,12 @@ async fn find_prior_position(
             } else {
                 let p: CreateBlockPayload = serde_json::from_str(&r.payload)?;
                 // #400: a new-scheme create carries a 0-based `index`; restore
-                // to it. A pre-#400 create carries a 1-based `position`.
-                // Ancient `create_block` payloads predate the position
-                // wire field (both `index` and `position` absent); we cannot
-                // fabricate a valid reverse move for them — surface a
-                // `NonReversible` error (matching `DeleteAttachment` when the
-                // paired `AddAttachment` is gone) rather than guessing a slot.
+                // to it. A pre-#400 create carries a 1-based `position`. A
+                // create with neither (an append recorded before #5155, or
+                // pre-#400 data without a position) left no slot to restore,
+                // and guessing one would silently reorder siblings — surface
+                // `NonReversible` (matching `DeleteAttachment` when the paired
+                // `AddAttachment` is gone).
                 match (p.index, p.position) {
                     (Some(idx), _) => Ok(Some(PriorPlacement {
                         parent: p.parent_id,
