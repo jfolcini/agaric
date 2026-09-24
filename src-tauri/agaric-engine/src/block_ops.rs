@@ -301,22 +301,29 @@ async fn validate_parent_in_tx(
     Ok(())
 }
 
-/// #1257 ENGINE-ABSENT bare-append position parity. When the engine
-/// path engages, `reproject_dense_positions` gives every sibling a concrete
-/// dense 1-based rank (never the sentinel). But when the create falls back to
-/// the SQL-only path (space unresolved, #2250) AND it's a
-/// bare append (`index: None`, `position: None` — the payload this command
-/// path always builds), `apply_create_block_sql_only` writes the append
-/// sentinel `i64::MAX` (its documented both-`None` corner). The pre-PR-2
-/// command path instead computed a concrete `MAX(position)+1` rank inline for
-/// that case, and existing tests pin `1, 2, 3` for successive bare appends.
-/// Restore that concrete rank here, scoped to exactly the fallback-append
-/// case (position == sentinel), so the engine-absent fallback is observably
-/// identical to before. A no-op when the engine ran (dense rank ≠ sentinel);
-/// [`create_block_in_tx`] skips this when an explicit `index` was given (the
-/// fallback used the provisional `index+1`, never the sentinel). We do NOT
-/// touch the op-log payload (`position: None`) — only the projected SQL
-/// column — so sync/replay semantics are unchanged.
+/// Live children of `parent_id`: the slot an append resolves to.
+pub(crate) async fn live_child_count(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    parent_id: &str,
+) -> Result<i64, AppError> {
+    Ok(sqlx::query_scalar!(
+        r#"SELECT COUNT(*) AS "n!: i64" FROM blocks
+           WHERE parent_id = ? AND deleted_at IS NULL"#,
+        parent_id,
+    )
+    .fetch_one(&mut **tx)
+    .await?)
+}
+
+/// #1257 engine-absent append position parity. The engine path ranks the whole
+/// sibling group densely, so an append lands at `MAX(live position) + 1`. The
+/// SQL-only fallback (space unresolved, #2250) instead writes the payload's
+/// provisional rank: `index + 1`, or the sentinel `i64::MAX` for a top-level
+/// append, which carries no `index`. With tombstoned siblings ahead of the live
+/// tail, `index + 1` (`index` being the live-child count, #5155) sorts before a
+/// live sibling, so both shapes — the sentinel, or a rank below the live tail —
+/// are lifted to the concrete rank here. A no-op when the engine ran; the op-log
+/// payload is untouched, only the projected SQL column.
 async fn restore_bare_append_position_in_tx(
     tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
     parent_id: Option<&str>,
@@ -333,9 +340,10 @@ async fn restore_bare_append_position_in_tx(
     .await?;
     sqlx::query!(
         "UPDATE blocks SET position = ? \
-         WHERE id = ? AND position = 9223372036854775807",
+         WHERE id = ? AND (position = 9223372036854775807 OR position < ?)",
         next_pos,
         block_id_str,
+        next_pos,
     )
     .execute(&mut **tx)
     .await?;
@@ -388,13 +396,6 @@ pub async fn create_block_in_tx(
     // with `create_blocks_batch_inner`'s pre-validation pass).
     validate_create_block_shape(&block_type, &content)?;
 
-    // 1b. #400: `index` is a 0-based slot; slot 0 ("first child") is valid. The
-    // old positive-1-based-position validation is gone. A stray negative clamps.
-    // (#383's NULL_POSITION_SENTINEL rejection is obsolete here: `index` is a
-    // sibling slot, not a verbatim position — the engine derives the dense
-    // position via reprojection, so a caller can no longer target the sentinel.)
-    let index = index.map(|i| i.max(0));
-
     // 2. Resolve the new BlockId (client-supplied or server-generated).
     let block_id = resolve_block_id_in_tx(tx, client_id).await?;
 
@@ -407,9 +408,22 @@ pub async fn create_block_in_tx(
         validate_parent_in_tx(tx, pid, &block_type, &block_id, &content).await?;
     }
 
-    // 3b. Build CreateBlockPayload (#400: carries the 0-based `index`; `None`
-    // index ⇒ a bare append, which the engine resolves to the end of the
-    // sibling list). The engine derives the authoritative DENSE 1-based
+    // 1b. #400: `index` is a 0-based slot; slot 0 ("first child") is valid and
+    // a stray negative clamps. #5155: an append under a parent records the slot
+    // it resolves to, the live-child count, so a later move of the block can
+    // be undone — a create with neither `index` nor `position` has no slot to
+    // restore. A top-level append keeps `None`: root slots are per-space in the
+    // engine but global in SQL, and nothing moves a top-level block.
+    let appended = index.is_none();
+    let index = match (index, parent_id.as_deref()) {
+        (Some(i), _) => Some(i.max(0)),
+        (None, Some(pid)) => Some(live_child_count(tx, pid).await?),
+        (None, None) => None,
+    };
+
+    // 3b. Build CreateBlockPayload (#400: carries the 0-based `index`; only a
+    // top-level append leaves it `None`, which the engine resolves to the end
+    // of the root list). The engine derives the authoritative DENSE 1-based
     // `position` from the fractional sibling order, so this payload no longer
     // carries a provisional SQL position.
     let parent_block_id = parent_id.as_ref().map(|s| BlockId::from_trusted(s));
@@ -474,8 +488,8 @@ pub async fn create_block_in_tx(
     // LOCAL copy is gone; `block_id_str` is retained for the fixups below.
     let block_id_str = block_id.as_str();
 
-    // #1257 engine-absent bare-append position parity.
-    if index.is_none() {
+    // #1257 engine-absent append position parity.
+    if appended {
         restore_bare_append_position_in_tx(tx, parent_id.as_deref(), block_id_str).await?;
     }
 

@@ -51,7 +51,7 @@ use agaric_store::op_log::{self, OpRecord};
 use agaric_store::task_locals::{Actor, ActorContext};
 
 use crate::apply::kernel::{ApplyEffects, apply_op_projected};
-use crate::block_ops::{create_block_in_tx, set_property_in_tx};
+use crate::block_ops::{create_block_in_tx, live_child_count, set_property_in_tx};
 use crate::loro::shared::LoroState;
 use crate::spaces::SPACE_PERSONAL_ULID;
 
@@ -209,20 +209,6 @@ impl UnreachablePage {
         ops.push(RepairOp::Plain(record));
         Ok(())
     }
-}
-
-/// Live children of `parent_id` — the append slot for the next move.
-async fn live_child_count(
-    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
-    parent_id: &str,
-) -> Result<i64, AppError> {
-    Ok(sqlx::query_scalar!(
-        r#"SELECT COUNT(*) AS "n!: i64" FROM blocks
-           WHERE parent_id = ? AND deleted_at IS NULL"#,
-        parent_id,
-    )
-    .fetch_one(&mut **tx)
-    .await?)
 }
 
 /// Append `block_id` as the last child of `new_parent_id` through a

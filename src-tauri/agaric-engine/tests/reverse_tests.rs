@@ -472,12 +472,11 @@ async fn reverse_move_block_when_prior_is_create_uses_create_position() {
     }
 }
 
-/// An ancient `create_block` payload with `position = None`
-/// (pre-migration data) cannot be reversed into a valid `move_block`
-/// because positions are 1-based and `move_block_inner` rejects 0.
-/// Instead of silently defaulting to 0 (overflow into Validation) or
-/// fabricating 1 (pretending to know the original slot), the reverse
-/// must surface `NonReversible` explicitly.
+/// A `create_block` payload with neither `position` nor `index` (an append
+/// recorded before #5155, or pre-#400 data without a position) cannot be
+/// reversed into a valid `move_block`: the slot is unknown, and fabricating
+/// one would silently reorder siblings. The reverse must surface
+/// `NonReversible` explicitly.
 #[tokio::test]
 async fn reverse_move_block_when_prior_create_lacks_position_is_non_reversible() {
     let (pool, _dir) = test_pool().await;

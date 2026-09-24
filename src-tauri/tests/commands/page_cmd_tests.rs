@@ -13853,3 +13853,43 @@ async fn export_emits_a_stray_the_dfs_walk_cannot_reach() {
          bullet, exactly as a walked block's is, got: {md}"
     );
 }
+
+/// #5155 — the copies Duplicate makes are appended (no index) under the copied
+/// parent; moving one out and undoing puts it back at the slot its append
+/// resolved to.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn duplicate_then_move_copy_out_undoes_to_its_slot() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let page = dup_page(&pool, &mat, "Dup undo").await;
+    let x = dup_child(&pool, &mat, &page, "x").await;
+    dup_child(&pool, &mat, &x, "y").await;
+    dup_child(&pool, &mat, &x, "z").await;
+
+    let rows = duplicate(&pool, &mat, &x).await;
+    let (x2, y2, z2) = (rows[0].id.clone(), rows[1].id.clone(), rows[2].id.clone());
+    let expected = vec![
+        (y2.as_str().to_owned(), "y".to_owned()),
+        (z2.as_str().to_owned(), "z".to_owned()),
+    ];
+    assert_eq!(
+        dup_children(&pool, &x2).await,
+        expected,
+        "fixture: the copy holds y′ then z′"
+    );
+
+    move_block_inner(&pool, DEV, &mat, z2, Some(page.clone()), 0)
+        .await
+        .unwrap();
+    settle(&mat).await;
+    undo_page_op_inner(&pool, DEV, &mat, page.into_string(), 0)
+        .await
+        .expect("a move of a duplicated child must undo (#5155)");
+    settle(&mat).await;
+
+    assert_eq!(
+        dup_children(&pool, &x2).await,
+        expected,
+        "z′ is back under x′ at the slot its append resolved to"
+    );
+}

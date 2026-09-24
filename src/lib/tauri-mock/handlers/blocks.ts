@@ -17,6 +17,7 @@ import { compareUtf8Bytes } from '@/lib/sqlite-collation'
 import {
   type TypedHandlers,
   appErrorRejection,
+  appendSlot,
   assertValidReservedPropertyValue,
   comparePositionThenId,
   deleteCohort,
@@ -934,10 +935,11 @@ export const blocksHandlers = {
       space_id: (blockType === 'page' || blockType === 'tag') && spaceId !== null ? spaceId : null,
     }
     blocks.set(id, row)
-    // #400: `index` is a 0-based sibling slot; null appends at the end. Insert
-    // at the slot and renumber the sibling group to dense 1-based positions.
+    // #400: `index` is a 0-based sibling slot; null appends (#5155: at the
+    // parent's live-child count). Insert at the slot and renumber the sibling
+    // group to dense 1-based positions.
     const rawIndex = a['index'] as number | null | undefined
-    insertAtSlotAndRenumber(parentId, id, rawIndex == null ? Number.MAX_SAFE_INTEGER : rawIndex)
+    insertAtSlotAndRenumber(parentId, id, rawIndex == null ? appendSlot(parentId, id) : rawIndex)
     const position = row['position'] as number
     // Stamp the `space` ref property on new pages AND tags so the rest of the
     // scope-aware mock handlers that still read the legacy `space` property
@@ -1029,7 +1031,7 @@ export const blocksHandlers = {
       insertAtSlotAndRenumber(
         parentId,
         id,
-        specPosition == null ? Number.MAX_SAFE_INTEGER : specPosition - 1,
+        specPosition == null ? appendSlot(parentId, id) : specPosition - 1,
       )
       const position = row['position'] as number
       const createOp = pushOp('create_block', {

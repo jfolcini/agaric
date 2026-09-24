@@ -8728,3 +8728,123 @@ async fn undo_page_group_survives_a_bulk_clear_of_never_completed_blocks_5074() 
         );
     }
 }
+
+// ======================================================================
+// #5155 — a move of a block created by an append is undoable
+// ======================================================================
+
+/// A page in the test space, made through the commands so the engine holds
+/// the tree the SQL does and creates under it take the engine path.
+async fn space_page(pool: &SqlitePool, mat: &Materializer) -> BlockId {
+    ensure_test_space(pool).await;
+    mark_block_as_space(pool, TEST_SPACE_ID).await;
+    create_page_in_space_inner(pool, DEV, mat, None, "Appends".into(), TEST_SPACE_ID.into())
+        .await
+        .unwrap()
+}
+
+/// A content block appended under `parent`: no index, the way the editor,
+/// templates, paste and the MCP `append_block` create.
+async fn append_child(
+    pool: &SqlitePool,
+    mat: &Materializer,
+    parent: &BlockId,
+    content: &str,
+) -> BlockId {
+    create_block_inner(
+        pool,
+        DEV,
+        mat,
+        "content".into(),
+        content.into(),
+        Some(parent.clone()),
+        None,
+    )
+    .await
+    .unwrap()
+    .id
+}
+
+/// `parent`'s live children in sibling order.
+async fn live_children(pool: &SqlitePool, parent: &BlockId) -> Vec<String> {
+    sqlx::query_scalar(
+        "SELECT id FROM blocks WHERE parent_id = ? AND deleted_at IS NULL ORDER BY position, id",
+    )
+    .bind(parent.as_str())
+    .fetch_all(pool)
+    .await
+    .unwrap()
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn undo_page_op_reverses_move_of_appended_block() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let page = space_page(&pool, &mat).await;
+    let a = append_child(&pool, &mat, &page, "A").await;
+    let b = append_child(&pool, &mat, &page, "B").await;
+    let c = append_child(&pool, &mat, &page, "C").await;
+
+    move_block_inner(&pool, DEV, &mat, a.clone(), Some(page.clone()), 2)
+        .await
+        .unwrap();
+    settle(&mat).await;
+    assert_eq!(
+        live_children(&pool, &page).await,
+        [b.as_str(), c.as_str(), a.as_str()],
+        "fixture: A moved to the end"
+    );
+
+    let result = undo_page_op_inner(&pool, DEV, &mat, page.clone().into_string(), 0)
+        .await
+        .expect("a move of an appended block must undo (#5155)");
+    settle(&mat).await;
+
+    assert_eq!(
+        result.reversed_op_type, "move_block",
+        "the move is the op undone"
+    );
+    assert_eq!(
+        live_children(&pool, &page).await,
+        [a.as_str(), b.as_str(), c.as_str()],
+        "A is back at the slot its append resolved to"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn undo_ops_reverses_move_of_appended_block() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let page = space_page(&pool, &mat).await;
+    let a = append_child(&pool, &mat, &page, "A").await;
+    let b = append_child(&pool, &mat, &page, "B").await;
+    let c = append_child(&pool, &mat, &page, "C").await;
+
+    move_block_inner(&pool, DEV, &mat, a.clone(), Some(page.clone()), 2)
+        .await
+        .unwrap();
+    settle(&mat).await;
+    let (device_id, seq): (String, i64) = sqlx::query_as(
+        "SELECT device_id, seq FROM op_log WHERE block_id = ? AND op_type = 'move_block'",
+    )
+    .bind(a.as_str())
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    let results = undo_ops_inner(&pool, DEV, &mat, vec![OpRef { device_id, seq }])
+        .await
+        .expect("a ref-addressed undo of a move of an appended block must undo (#5155)");
+    settle(&mat).await;
+
+    assert_eq!(results.len(), 1, "one op reversed");
+    assert_eq!(
+        results[0].reversed_op_type, "move_block",
+        "the move is the op undone"
+    );
+    assert_eq!(
+        live_children(&pool, &page).await,
+        [a.as_str(), b.as_str(), c.as_str()],
+        "A is back at the slot its append resolved to"
+    );
+}
