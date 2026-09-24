@@ -12,6 +12,8 @@
 
 **Checked by the reviewer.** The recorded slot is the one the engine consumed, through the same payload. Where SQL and the engine could disagree (the #1257 window), undo lands where the create did. `apply_page_source` never appends: it passes explicit slots. So 4a's fixture and every other fixture are byte-unchanged. Recovery now reads a slot instead of NULL for appends, which orders them better.
 
+**Also fixed: a lost "Add block" click.** The real-backend smoke `search-bm25-order` went red on this PR, but not because of it: the backend placed and listed the blocks correctly under probes, and the same failure shows in a run from before it. Pressing the mouse on "Add block" blurred the editor, which swapped the edited row for the shorter static row. The button moved up under the pointer, so the release missed it and no block was created. The button now keeps the editor through the click (`preventDefault` on mousedown, as the inline block controls do). `e2e/journal-add-block-while-editing.spec.ts` injects IPC latency and a human-sized press. It went red twice against a copy without the fix and passes three times in a row with it.
+
 **Verified.**
 - `cargo nextest run --workspace` ran 6474 tests with 0 failures, split into two partitions to fit the tool limit.
 - Clippy, fmt, the offline `sqlx` check and the rustdoc link check are clean, and the mock suite passed 1020 tests.

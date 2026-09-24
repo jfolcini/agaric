@@ -32,6 +32,11 @@ export function AddBlockButton({
       variant="ghost"
       size="sm"
       className={className ?? 'text-muted-foreground'}
+      // Keep the roving editor mounted through the click: blurring it on
+      // mousedown swaps its row for the shorter static row, the button moves
+      // up under the pointer, and the mouseup lands off it, so `onClick`
+      // never fires.
+      onMouseDown={(e) => e.preventDefault()}
       onClick={onClick}
     >
       <Plus className="h-4 w-4" />
