@@ -15,7 +15,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 use agaric_core::word_diff::merge_lines;
 
-use super::{AppError, import, outline_parents, restore_text_anchor};
+use super::{AppError, import, outline_parents};
 
 /// The buffer `mine`, edited from `base`, with the changes between `base` and
 /// `current`, the page's source now, folded in: each block's content and
@@ -94,7 +94,7 @@ impl Side {
     /// `unanchored_are_new`, the buffer's case; on the other two sides, which
     /// the page rendered with an anchor on every block, it is dropped.
     fn new(mut blocks: Vec<import::ParsedBlock>, unanchored_are_new: bool) -> Self {
-        blocks.iter_mut().for_each(restore_text_anchor);
+        blocks.iter_mut().for_each(import::restore_text_anchor);
         if !unanchored_are_new {
             blocks.retain(|block| block.block_anchor.is_some());
         }

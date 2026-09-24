@@ -1,5 +1,5 @@
 {
-  "description": "#5140 Phase 5 — `apply_page_source` with `merge`: a save whose base is stale folds the changes the page took since into the buffer instead of being refused. Blocks pair by `^ID` anchor across the base, the page's source now and the buffer; a block one side edited takes that edit, a block edited both ways is kept twice (the buffer's version as a new block before the page's), a block deleted on the page and edited in the buffer comes back as a new block, a block dropped from the buffer and edited on the page stays, and the side that moved a block places it. Only what the tauri mock models: plain single-line text, no properties or names, as in `apply_page_source.json`. Payload ops change the page between the merged saves; each `merge` step's `baseSource` is the source an earlier step left, so it is stale, except the fresh-base step. One kind of write per step, and the two steps that create a block come after every step whose base they would otherwise have to spell. Seed: S1 (Home) > S2 (alpha), S3 (bravo), S4 (charlie), S5 (delta), S6 (echo). Re-author `expected` / `expected_ops` via CONFORMANCE_UPDATE=1.",
+  "description": "#5140 Phase 5 — `apply_page_source` with `merge`: a save whose base is stale folds the changes the page took since into the buffer instead of being refused. Blocks pair by `^ID` anchor across the base, the page's source now and the buffer; a block one side edited takes that edit, a block edited both ways is kept twice (the buffer's version as a new block before the page's), a block deleted on the page and edited in the buffer comes back as a new block, a block dropped from the buffer and edited on the page stays, and the side that moved a block places it. A block whose anchor an edit moved off its end is still that block, among the blocks of the base the edit started from. Only what the tauri mock models: plain single-line text, no properties or names, as in `apply_page_source.json`. Payload ops change the page between the merged saves; each `merge` step's `baseSource` is the source an earlier step left, so it is stale, except the fresh-base step. One kind of write per step, and the two steps that create a block come after every step whose base they would otherwise have to spell. Seed: S1 (Home) > S2 (alpha), S3 (bravo), S4 (charlie), S5 (delta), S6 (echo). Re-author `expected` / `expected_ops` via CONFORMANCE_UPDATE=1.",
   "expected": {
     "block_tags": [],
     "blocks": [
@@ -19,12 +19,12 @@
       {
         "block_type": "content",
         "content": "alpha edited on the page",
-        "deleted_at": null,
+        "deleted_at": "DELETED",
         "due_date": null,
         "id": "B2",
         "page_id": "B1",
         "parent_id": "B1",
-        "position": 2,
+        "position": 4,
         "priority": null,
         "scheduled_date": null,
         "todo_state": null
@@ -37,20 +37,20 @@
         "id": "B3",
         "page_id": "B1",
         "parent_id": "B1",
-        "position": 4,
+        "position": 6,
         "priority": null,
         "scheduled_date": null,
         "todo_state": null
       },
       {
         "block_type": "content",
-        "content": "charlie edited on a fresh base",
+        "content": "charlie edited on a fresh base\nmore",
         "deleted_at": null,
         "due_date": null,
         "id": "B4",
         "page_id": "B1",
         "parent_id": "B1",
-        "position": 5,
+        "position": 2,
         "priority": null,
         "scheduled_date": null,
         "todo_state": null
@@ -63,7 +63,7 @@
         "id": "B5",
         "page_id": "B1",
         "parent_id": "B1",
-        "position": 7,
+        "position": 8,
         "priority": null,
         "scheduled_date": null,
         "todo_state": null
@@ -76,7 +76,7 @@
         "id": "B6",
         "page_id": "B1",
         "parent_id": "B1",
-        "position": 1,
+        "position": 3,
         "priority": null,
         "scheduled_date": null,
         "todo_state": null
@@ -89,7 +89,7 @@
         "id": "B7",
         "page_id": "B1",
         "parent_id": "B1",
-        "position": 6,
+        "position": 7,
         "priority": null,
         "scheduled_date": null,
         "todo_state": null
@@ -102,14 +102,27 @@
         "id": "B8",
         "page_id": "B1",
         "parent_id": "B1",
-        "position": 3,
+        "position": 5,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "alpha edited on the page typed",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B9",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 1,
         "priority": null,
         "scheduled_date": null,
         "todo_state": null
       }
     ],
     "op_log_digest": {
-      "count": 9,
+      "count": 13,
       "ops": [
         {
           "op_type": "edit_block"
@@ -134,6 +147,18 @@
         },
         {
           "op_type": "edit_block"
+        },
+        {
+          "op_type": "create_block"
+        },
+        {
+          "op_type": "move_block"
+        },
+        {
+          "op_type": "edit_block"
+        },
+        {
+          "op_type": "delete_block"
         },
         {
           "op_type": "create_block"
@@ -184,6 +209,18 @@
       "code": null,
       "error": null,
       "name": "a_block_edited_both_ways_is_kept_twice",
+      "returns": ["apply_page_source#created=1#edited=0#deleted=0"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "a_line_under_a_moved_anchor_edits_the_block_where_the_page_put_it",
+      "returns": ["apply_page_source#created=0#edited=1#deleted=0"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "text_after_a_moved_anchor_survives_a_delete_on_the_page",
       "returns": ["apply_page_source#created=1#edited=0#deleted=0"]
     }
   ],
@@ -312,6 +349,48 @@
       "command": "apply_page_source",
       "comment": "Bravo edited differently on each side: the page's version keeps the block, the buffer's is created directly before it. Last, because the fork's id is minted per stack.",
       "name": "a_block_edited_both_ways_is_kept_twice",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockId": "S4",
+        "newIndex": 0,
+        "newParentId": "S1"
+      },
+      "command": "move_block",
+      "comment": "Charlie moved first on the page."
+    },
+    {
+      "args": {
+        "baseSource": "- alpha edited on the page ^000000000000000000000000S2\n- bravo edited here ^000000000000000000000000S3\n- charlie edited on a fresh base ^000000000000000000000000S4\n- delta ^000000000000000000000000S5\n- echo ^000000000000000000000000S6\n",
+        "force": false,
+        "merge": true,
+        "pageId": "S1",
+        "source": "- alpha edited on the page ^000000000000000000000000S2\n- bravo edited here ^000000000000000000000000S3\n- charlie edited on a fresh base ^000000000000000000000000S4\n  more\n- delta ^000000000000000000000000S5\n- echo ^000000000000000000000000S6\n"
+      },
+      "command": "apply_page_source",
+      "comment": "A line typed under charlie's anchor, on the older base: the anchor still names charlie, so the merge reads charlie as edited here and moved on the page, and the edit lands where the page put it, with no move and no block created. Its base never held a minted id, so it can follow the creates.",
+      "name": "a_line_under_a_moved_anchor_edits_the_block_where_the_page_put_it",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockId": "S2"
+      },
+      "command": "delete_block",
+      "comment": "Alpha deleted on the page."
+    },
+    {
+      "args": {
+        "baseSource": "- alpha edited on the page ^000000000000000000000000S2\n- bravo edited here ^000000000000000000000000S3\n- charlie edited on a fresh base ^000000000000000000000000S4\n- delta ^000000000000000000000000S5\n- echo ^000000000000000000000000S6\n",
+        "force": false,
+        "merge": true,
+        "pageId": "S1",
+        "source": "- alpha edited on the page ^000000000000000000000000S2 typed\n- bravo edited here ^000000000000000000000000S3\n- charlie edited on a fresh base ^000000000000000000000000S4\n- delta ^000000000000000000000000S5\n- echo ^000000000000000000000000S6\n"
+      },
+      "command": "apply_page_source",
+      "comment": "Text typed after alpha's anchor, on the older base that still holds alpha: the anchor still names alpha, so the merge reads it as an edit here of a block deleted on the page, and the edit comes back as a new block without the anchor in its text. Last, because that block's id is minted per stack.",
+      "name": "text_after_a_moved_anchor_survives_a_delete_on_the_page",
       "via": "command"
     }
   ],

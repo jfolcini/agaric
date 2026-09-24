@@ -1,5 +1,5 @@
 {
-  "description": "#5140 Phase 4a — `apply_page_source` saves a page edited as its source buffer: the buffer is diffed against the page's own render by `^ID` anchor, and the difference is written as edits, moves, creates and deletes. Covers only what the tauri mock models, so every seeded block is plain single-line text (no task markers, list styles, properties or names, and no `[[`, `#`, `->` or `::`), which both stacks' `get_page_source` render byte for byte as `- content ^ID`; the anchors are the seed labels' expanded ids. Each successful step's `baseSource` is the page's source after the step before it, so every step also passes the stale check; the create runs last because its block's id is minted per stack. One kind of change per step, so the op log's order does not depend on the order the command writes kinds in, and the delete is kept out of a reordered sibling group. Seed: S1 (Home) > S2 (alpha), S3 (bravo), S4 (charlie), S5 (delta) > S6 (echo); S7 (Elsewhere) > S8 (foreign). Re-author `expected` / `expected_ops` via CONFORMANCE_UPDATE=1.",
+  "description": "#5140 Phase 4a — `apply_page_source` saves a page edited as its source buffer: the buffer is diffed against the page's own render by `^ID` anchor, and the difference is written as edits, moves, creates and deletes. An anchor an edit moved off the end of its block (text after it, a line under it) still names the block; two such anchors in one block refuse the save. Covers only what the tauri mock models, so every seeded block is plain single-line text (no task markers, list styles, properties or names, and no `[[`, `#`, `->` or `::`), which both stacks' `get_page_source` render byte for byte as `- content ^ID`, a further line indented under its bullet; the anchors are the seed labels' expanded ids. Each successful step's `baseSource` is the page's source after the step before it, so every step also passes the stale check; the create runs last because its block's id is minted per stack. One kind of change per step, so the op log's order does not depend on the order the command writes kinds in, and the delete is kept out of a reordered sibling group. Seed: S1 (Home) > S2 (alpha), S3 (bravo), S4 (charlie), S5 (delta) > S6 (echo); S7 (Elsewhere) > S8 (foreign). Re-author `expected` / `expected_ops` via CONFORMANCE_UPDATE=1.",
   "expected": {
     "block_tags": [],
     "blocks": [
@@ -31,7 +31,7 @@
       },
       {
         "block_type": "content",
-        "content": "bravo edited",
+        "content": "bravo edited again",
         "deleted_at": null,
         "due_date": null,
         "id": "B3",
@@ -57,7 +57,7 @@
       },
       {
         "block_type": "content",
-        "content": "delta",
+        "content": "delta\nmore",
         "deleted_at": null,
         "due_date": null,
         "id": "B5",
@@ -122,7 +122,7 @@
       }
     ],
     "op_log_digest": {
-      "count": 5,
+      "count": 7,
       "ops": [
         {
           "op_type": "edit_block"
@@ -135,6 +135,12 @@
         },
         {
           "op_type": "delete_block"
+        },
+        {
+          "op_type": "edit_block"
+        },
+        {
+          "op_type": "edit_block"
         },
         {
           "op_type": "create_block"
@@ -174,6 +180,24 @@
       "error": null,
       "name": "delete_a_leaf",
       "returns": ["apply_page_source#created=0#edited=0#deleted=1"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "text_after_a_moved_anchor_keeps_the_block",
+      "returns": ["apply_page_source#created=0#edited=1#deleted=0"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "a_line_under_a_moved_anchor_keeps_the_block",
+      "returns": ["apply_page_source#created=0#edited=1#deleted=0"]
+    },
+    {
+      "code": null,
+      "error": "validation",
+      "name": "two_moved_anchors_in_one_block_are_refused",
+      "returns": []
     },
     {
       "code": "RequiresRefresh",
@@ -276,6 +300,43 @@
     },
     {
       "args": {
+        "baseSource": "- bravo edited ^000000000000000000000000S3\n- alpha ^000000000000000000000000S2\n  - charlie ^000000000000000000000000S4\n- delta ^000000000000000000000000S5\n",
+        "force": false,
+        "pageId": "S1",
+        "source": "- bravo edited ^000000000000000000000000S3 again\n- alpha ^000000000000000000000000S2\n  - charlie ^000000000000000000000000S4\n- delta ^000000000000000000000000S5\n"
+      },
+      "command": "apply_page_source",
+      "comment": "Text typed after bravo's anchor: the anchor still names bravo, which is edited to `bravo edited again` with the anchor gone from its text, not deleted and created anew.",
+      "name": "text_after_a_moved_anchor_keeps_the_block",
+      "via": "command"
+    },
+    {
+      "args": {
+        "baseSource": "- bravo edited again ^000000000000000000000000S3\n- alpha ^000000000000000000000000S2\n  - charlie ^000000000000000000000000S4\n- delta ^000000000000000000000000S5\n",
+        "force": false,
+        "pageId": "S1",
+        "source": "- bravo edited again ^000000000000000000000000S3\n- alpha ^000000000000000000000000S2\n  - charlie ^000000000000000000000000S4\n- delta ^000000000000000000000000S5\n  more\n"
+      },
+      "command": "apply_page_source",
+      "comment": "A line typed under delta's anchor: delta is edited to two lines, `delta` and `more`, and keeps its id.",
+      "name": "a_line_under_a_moved_anchor_keeps_the_block",
+      "via": "command"
+    },
+    {
+      "args": {
+        "baseSource": "- bravo edited again ^000000000000000000000000S3\n- alpha ^000000000000000000000000S2\n  - charlie ^000000000000000000000000S4\n- delta\n  more ^000000000000000000000000S5\n",
+        "force": false,
+        "pageId": "S1",
+        "source": "- bravo edited again ^000000000000000000000000S3\n- alpha ^000000000000000000000000S2 and ^000000000000000000000000S4 joined\n- delta\n  more ^000000000000000000000000S5\n"
+      },
+      "command": "apply_page_source",
+      "comment": "Alpha's bullet holds its own anchor and charlie's, and no other bullet claims either: one block cannot be two, so the save is refused.",
+      "expect_error": "validation",
+      "name": "two_moved_anchors_in_one_block_are_refused",
+      "via": "command"
+    },
+    {
+      "args": {
         "baseSource": "- alpha ^000000000000000000000000S2\n- bravo ^000000000000000000000000S3\n- charlie ^000000000000000000000000S4\n- delta ^000000000000000000000000S5\n  - echo ^000000000000000000000000S6\n",
         "force": true,
         "pageId": "S1",
@@ -290,10 +351,10 @@
     },
     {
       "args": {
-        "baseSource": "- bravo edited ^000000000000000000000000S3\n- alpha ^000000000000000000000000S2\n  - charlie ^000000000000000000000000S4\n- delta ^000000000000000000000000S5\n",
+        "baseSource": "- bravo edited again ^000000000000000000000000S3\n- alpha ^000000000000000000000000S2\n  - charlie ^000000000000000000000000S4\n- delta\n  more ^000000000000000000000000S5\n",
         "force": false,
         "pageId": "S1",
-        "source": "- bravo edited ^000000000000000000000000S3\n- alpha ^000000000000000000000000S2\n  - charlie ^000000000000000000000000S4\n- delta ^000000000000000000000000S5\n- again ^000000000000000000000000S2\n"
+        "source": "- bravo edited again ^000000000000000000000000S3\n- alpha ^000000000000000000000000S2\n  - charlie ^000000000000000000000000S4\n- delta\n  more ^000000000000000000000000S5\n- again ^000000000000000000000000S2\n"
       },
       "command": "apply_page_source",
       "comment": "Alpha's anchor appears twice: two bullets cannot both be that block.",
@@ -303,10 +364,10 @@
     },
     {
       "args": {
-        "baseSource": "- bravo edited ^000000000000000000000000S3\n- alpha ^000000000000000000000000S2\n  - charlie ^000000000000000000000000S4\n- delta ^000000000000000000000000S5\n",
+        "baseSource": "- bravo edited again ^000000000000000000000000S3\n- alpha ^000000000000000000000000S2\n  - charlie ^000000000000000000000000S4\n- delta\n  more ^000000000000000000000000S5\n",
         "force": false,
         "pageId": "S1",
-        "source": "- bravo edited ^000000000000000000000000S3\n- alpha ^000000000000000000000000S2\n  - charlie ^000000000000000000000000S4\n- delta ^000000000000000000000000S5\n- foreign ^000000000000000000000000S8\n"
+        "source": "- bravo edited again ^000000000000000000000000S3\n- alpha ^000000000000000000000000S2\n  - charlie ^000000000000000000000000S4\n- delta\n  more ^000000000000000000000000S5\n- foreign ^000000000000000000000000S8\n"
       },
       "command": "apply_page_source",
       "comment": "S8 lives on the other page, so it is not a block of this one; without `force` the save is refused rather than adopting or forking it.",
@@ -342,10 +403,10 @@
     },
     {
       "args": {
-        "baseSource": "- bravo edited ^000000000000000000000000S3\n- alpha ^000000000000000000000000S2\n  - charlie ^000000000000000000000000S4\n- delta ^000000000000000000000000S5\n",
+        "baseSource": "- bravo edited again ^000000000000000000000000S3\n- alpha ^000000000000000000000000S2\n  - charlie ^000000000000000000000000S4\n- delta\n  more ^000000000000000000000000S5\n",
         "force": false,
         "pageId": "S1",
-        "source": "- bravo edited ^000000000000000000000000S3\n- inserted\n- alpha ^000000000000000000000000S2\n  - charlie ^000000000000000000000000S4\n- delta ^000000000000000000000000S5\n"
+        "source": "- bravo edited again ^000000000000000000000000S3\n- inserted\n- alpha ^000000000000000000000000S2\n  - charlie ^000000000000000000000000S4\n- delta\n  more ^000000000000000000000000S5\n"
       },
       "command": "apply_page_source",
       "comment": "An unanchored bullet between bravo and alpha becomes a new block at that slot. Last, because the block's id is minted per stack and every later base would have to spell it.",
