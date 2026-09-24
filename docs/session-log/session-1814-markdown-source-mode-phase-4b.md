@@ -29,9 +29,11 @@ It checked each of these and found nothing to change:
 - global shortcuts while typing;
 - the e2e-tauri spec's reopen and value-setting pattern.
 
-**Found along the way, for the follow-up.** Both are older than this phase:
+**Found along the way.** Both are older than this phase. Neither was filed: both are fixed in the PR that batches this sweep's review notes.
 - At 390 px the page header's action row overflows. The kebab (*Edit as Markdown*, Export, Delete page) is clipped off-screen, so phone users can't reach it.
 - Focus falls to `body` after source mode closes and after Cancel in the shared `ConfirmDialog`.
+
+**CI review.** The PR's reviewer found that returning to a page after leaving it in source mode showed the buffer again, because `PageEditor` stays mounted across navigation. A page change now ends source mode, and the navigation test covers A → B → A. Removing the reset turns it red.
 
 **Verified.**
 - The whole vitest suite passed 19295 tests (844 files).

@@ -789,7 +789,7 @@ describe('PageEditor source mode (#5140)', () => {
     expect(capturedPageHeaderProps?.onEditSource).toBeTypeOf('function')
   })
 
-  it('navigating to another page leaves source mode', async () => {
+  it('navigating to another page ends source mode, also after coming back', async () => {
     const { rerender } = render(<PageEditor pageId="PAGE_1" title="My Page" />)
     const editSource = await editSourceHandler()
     act(() => editSource())
@@ -802,6 +802,16 @@ describe('PageEditor source mode (#5140)', () => {
       expect(capturedPageHeaderProps?.onEditSource).toBeTypeOf('function')
     })
     expect(screen.getByTestId('block-tree')).toHaveAttribute('data-parent-id', 'PAGE_2')
+    expect(screen.queryByTestId('page-source-mode')).not.toBeInTheDocument()
+
+    rerender(<PageEditor pageId="PAGE_1" title="My Page" />)
+
+    // Back on the page it was opened on, the blocks show, not the old buffer.
+    await waitFor(() => {
+      expect(capturedPageHeaderProps?.pageId).toBe('PAGE_1')
+      expect(capturedPageHeaderProps?.onEditSource).toBeTypeOf('function')
+    })
+    expect(screen.getByTestId('block-tree')).toHaveAttribute('data-parent-id', 'PAGE_1')
     expect(screen.queryByTestId('page-source-mode')).not.toBeInTheDocument()
   })
 
