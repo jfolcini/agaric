@@ -192,8 +192,8 @@ describe('tauri-mock ⇄ backend conformance (#763)', () => {
 })
 
 // #4670 — the command leg's declaration discipline, mirror of the Rust
-// `check_declaration` tests. No committed fixture declares an `expect_code`,
-// so without these the code arms never execute.
+// `check_declaration` tests. A committed fixture only ever takes the matching
+// `expect_code` arm, so without these the mismatch arms never execute.
 describe('#4670 a command op declares its refusal, kind and code alike', () => {
   it('accepts matching declarations', () => {
     expect(() => checkDeclaration('at', null, null, null, null)).not.toThrow()

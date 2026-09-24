@@ -174,6 +174,16 @@ const RETURN_SHAPE: Readonly<Record<string, ReturnShape>> = {
     lists: [],
     rows: 'blocks',
   },
+  // #5140 Phase 4a — a COUNT envelope with no row identity. `moved` is left
+  // out: which blocks of a reordered group move is the backend's
+  // longest-in-order choice, and the mock only approximates it; the snapshot
+  // pins where they land. The names and warnings are grammar the mock does not
+  // model.
+  apply_page_source: {
+    idKey: HEADED_ID_KEY,
+    attrs: ['created', 'edited', 'deleted'],
+    lists: [],
+  },
   // #5057 — five writers whose table is OUTSIDE the snapshot's five arrays
   // (`peer_refs`, `app_settings`, `property_definitions`), so what they wrote is
   // pinned by the read that follows them in the same fixture rather than by the

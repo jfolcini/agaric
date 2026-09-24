@@ -64,8 +64,11 @@ pub enum ValidationCode {
     /// Filter primitive not allowed / not supported on the queried surface
     /// (Pages metadata listing, advanced-query engine).
     InvalidFilter,
-    /// Stale pagination cursor (format/sort mismatch) — the client should
-    /// retry once without a cursor (see `usePageBrowserData`).
+    /// Stale request state: a pagination cursor whose format or sort no
+    /// longer matches (the client retries once without it, see
+    /// `usePageBrowserData`), or a page source saved against a base that is
+    /// no longer the page's source (`apply_page_source`, #5140; the client
+    /// reads the current source before it saves again).
     RequiresRefresh,
     /// Requested page/root block does not belong to the requesting space
     /// (`load_page_subtree_inner`, #2810). Distinguishes the "page moved

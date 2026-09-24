@@ -406,14 +406,6 @@ pub async fn set_todo_state_inner(
     block_id: ActiveBlockId,
     state: Option<String>,
 ) -> Result<ActiveBlockRow, AppError> {
-    if let Some(ref s) = state
-        && (s.is_empty() || s.len() > 50)
-    {
-        return Err(AppError::validation(
-            "Todo state must be 1-50 characters".into(),
-        ));
-    }
-
     // H-4: open one IMMEDIATE tx covering every write below — the
     // state change, the `created_at`/`completed_at` timestamp writes,
     // and the recurrence-sibling creation. A pre-fix crash mid-sequence
@@ -423,20 +415,58 @@ pub async fn set_todo_state_inner(
     // #2604 — rollback-safe engine apply (rewind on tx abort).
     tx.arm_engine_rollback(materializer.loro_state());
 
-    // Validate against todo_state property definition options.
-    // `set_property_in_tx` already performs this check when the
-    // definition exists; this fallback guards the case where the
-    // definition has been deleted, ensuring the built-in defaults are
-    // Still enforced. the validation logic is shared
-    // with `set_priority_inner` via `validate_reserved_property_value`.
-    //
-    // This fetch was previously issued against `pool` *before*
-    // opening the tx; folded inside so the validation read and the
-    // write share atomicity (single source of truth = the live tx).
+    // Just the task lifecycle — the full SELECT * is unnecessary here since
+    // `set_property_in_tx` (called below) issues its own SELECT and returns
+    // NotFound if the block is missing, so the redundant existence guard is
+    // dropped.
+    let prior = prior_task_state_in_tx(&mut tx, block_id.as_str()).await?;
+    let result = set_todo_state_in_tx(
+        &mut tx,
+        materializer.loro_state(),
+        device_id,
+        block_id.into_string(),
+        &prior,
+        state,
+    )
+    .await?;
+
+    tx.commit_and_dispatch(materializer).await?;
+
+    Ok(ActiveBlockRow::from_block_row_unchecked(result))
+}
+
+/// [`set_todo_state_inner`]'s writes on the caller's transaction, for a block
+/// whose task state before them was `prior`: the state, its #5074 stamps and,
+/// on the edge into DONE, the next occurrence. Shared with the page source
+/// save (#5140), so a checkbox typed there does what a click does.
+///
+/// # Errors
+///
+/// - [`AppError::Validation`] — `state` is not 1-50 characters, or not an
+///   option of the `todo_state` definition (the built-in states when it has
+///   been deleted)
+/// - [`AppError::NotFound`] — the block is missing
+pub(crate) async fn set_todo_state_in_tx(
+    tx: &mut CommandTx,
+    loro: &agaric_engine::loro::shared::LoroState,
+    device_id: &str,
+    block_id: String,
+    prior: &PriorTaskState,
+    state: Option<String>,
+) -> Result<BlockRow, AppError> {
     if let Some(ref s) = state {
+        if s.is_empty() || s.len() > 50 {
+            return Err(AppError::validation(
+                "Todo state must be 1-50 characters".into(),
+            ));
+        }
+        // `set_property_in_tx` checks the definition's options when it
+        // exists; the built-in defaults still hold when it has been deleted.
+        // Shared with `set_priority_inner` via
+        // `validate_reserved_property_value`.
         let def_row =
             sqlx::query!("SELECT options FROM property_definitions WHERE key = 'todo_state'")
-                .fetch_optional(&mut **tx)
+                .fetch_optional(&mut ***tx)
                 .await?;
         validate_reserved_property_value(
             def_row.is_some(),
@@ -445,22 +475,12 @@ pub async fn set_todo_state_inner(
             TODO_STATE_FALLBACK_DEFAULTS,
         )?;
     }
-
-    let block_id_str = block_id.as_str();
-
-    // Just the task lifecycle — the full SELECT * is unnecessary here since
-    // `set_property_in_tx` (called below) issues its own SELECT and returns
-    // NotFound if the block is missing, so the redundant existence guard is
-    // dropped.
-    let prior = prior_task_state_in_tx(&mut tx, block_id_str).await?;
     let new_state = state.clone();
-
-    let block_id_owned = block_id.into_string();
     let (result, todo_op) = set_property_in_tx(
-        &mut tx,
-        materializer.loro_state(),
+        &mut *tx,
+        loro,
         device_id,
-        block_id_owned.clone(),
+        block_id.clone(),
         "todo_state",
         state,
         None,
@@ -472,11 +492,11 @@ pub async fn set_todo_state_inner(
     tx.enqueue_background(todo_op);
 
     write_todo_timestamp_transitions_in_tx(
-        &mut tx,
-        materializer.loro_state(),
+        tx,
+        loro,
         device_id,
-        &block_id_owned,
-        &prior,
+        &block_id,
+        prior,
         new_state.as_deref(),
     )
     .await?;
@@ -485,18 +505,9 @@ pub async fn set_todo_state_inner(
     // module — using the in-tx form so the sibling creation rolls back
     // alongside the state change if anything below fails.
     if new_state.as_deref() == Some("DONE") && prior.todo_state.as_deref() != Some("DONE") {
-        crate::recurrence::handle_recurrence_in_tx(
-            &mut tx,
-            materializer.loro_state(),
-            device_id,
-            &block_id_owned,
-        )
-        .await?;
+        crate::recurrence::handle_recurrence_in_tx(tx, loro, device_id, &block_id).await?;
     }
-
-    tx.commit_and_dispatch(materializer).await?;
-
-    Ok(ActiveBlockRow::from_block_row_unchecked(result))
+    Ok(result)
 }
 
 /// Probe a batch's target blocks for a `repeat` property and `warn!` if any
@@ -614,7 +625,7 @@ fn validate_todo_state_batch_input(
 ///
 /// # Errors
 /// Returns [`AppError`] if the id list cannot be serialized or the query fails.
-async fn resolve_prior_task_states_batch(
+pub(crate) async fn resolve_prior_task_states_batch(
     conn: &mut sqlx::SqliteConnection,
     block_ids: &[BlockId],
 ) -> Result<HashMap<String, PriorTaskState>, AppError> {

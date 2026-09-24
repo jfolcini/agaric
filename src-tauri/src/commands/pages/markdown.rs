@@ -1235,14 +1235,24 @@ fn render_page_markdown(page_id: &str, data: &PageExportData) -> String {
 /// The page as the one markdown buffer source mode edits (#5140): its block
 /// tree alone. The title, frontmatter and page attachments have their own UIs.
 fn render_page_source(data: &PageExportData) -> String {
+    render_page_source_ids(data).0
+}
+
+/// [`render_page_source`], with the ids of the blocks it holds in order.
+fn render_page_source_ids(data: &PageExportData) -> (String, Vec<String>) {
     let mut output = String::new();
-    render_block_tree(&mut output, data.page.id.as_str(), data, RenderMode::Source);
-    output
+    let ids = render_block_tree(&mut output, data.page.id.as_str(), data, RenderMode::Source);
+    (output, ids)
 }
 
 /// Every descendant of `page_id`, depth-first in sibling order, each through
-/// [`render_block`].
-fn render_block_tree(output: &mut String, page_id: &str, data: &PageExportData, mode: RenderMode) {
+/// [`render_block`]. Returns the ids it rendered, in render order.
+fn render_block_tree(
+    output: &mut String,
+    page_id: &str,
+    data: &PageExportData,
+    mode: RenderMode,
+) -> Vec<String> {
     let children_by_parent = group_children_by_parent(page_id, &data.descendants);
     // #4552 slice 4 — positional ordinals for `ordered` blocks. Computed HERE,
     // once `children_by_parent` is grouped and sibling-sorted, because an
@@ -1255,16 +1265,15 @@ fn render_block_tree(output: &mut String, page_id: &str, data: &PageExportData, 
     let roots = children_by_parent
         .get(page_id)
         .map_or(&[][..], Vec::as_slice);
-    let visited: HashSet<String> = render_subtrees(
+    let mut rendered = render_subtrees(
         output,
         roots,
         &children_by_parent,
         &list_ordinals,
         data,
         mode,
-    )
-    .into_iter()
-    .collect();
+    );
+    let visited: HashSet<String> = rendered.iter().cloned().collect();
 
     // Safety net: any descendant NOT reachable by DFS from the page root
     // (e.g. an orphan whose `parent_id` points outside this subtree while its
@@ -1277,7 +1286,9 @@ fn render_block_tree(output: &mut String, page_id: &str, data: &PageExportData, 
             continue;
         }
         render_block(output, block, 0, data, &list_ordinals, mode);
+        rendered.push(id);
     }
+    rendered
 }
 
 /// `roots` at depth 0 and everything under them, depth-first in sibling
@@ -2235,6 +2246,7 @@ pub async fn duplicate_block_inner(
         parent_id,
         index,
         &parsed.blocks,
+        PropertyWrite::Copy,
     ))
     .await?;
     tx.commit_and_dispatch(materializer).await?;
@@ -2334,6 +2346,7 @@ pub async fn paste_blocks_inner(
         parent_id,
         index,
         &blocks,
+        PropertyWrite::Copy,
     ))
     .await?;
     tx.commit_and_dispatch(materializer).await?;
@@ -2397,6 +2410,7 @@ async fn create_parsed_blocks(
     parent_id: Option<String>,
     index: Option<i64>,
     blocks: &[import::ParsedBlock],
+    mode: PropertyWrite,
 ) -> Result<Vec<BlockRow>, AppError> {
     let mut created = Vec::with_capacity(blocks.len());
     let mut open: Vec<(usize, String)> = Vec::new();
@@ -2425,7 +2439,7 @@ async fn create_parsed_blocks(
         .await?;
         tx.enqueue_background(op);
         let id = row.id.clone().into_string();
-        apply_block_properties(tx, materializer, device_id, &id, &block.properties, true).await?;
+        apply_block_properties(tx, materializer, device_id, &id, &block.properties, mode).await?;
         if let Some(state) = parsed_todo_state(block) {
             super::super::properties::write_todo_timestamp_transitions_in_tx(
                 tx,
@@ -3870,23 +3884,40 @@ async fn snapshot_tags_by_norm(
     Ok(map)
 }
 
+/// The resolved tag state [`resolve_tag_names`] returns with the
+/// transaction: by normalised name, by token, and the pre-pass snapshot.
+type ResolvedTags = (
+    CommandTx,
+    HashMap<String, String>,
+    HashMap<String, String>,
+    HashMap<String, String>,
+);
+
 /// #1924 / #1950 — resolve inbound inline tags (`#tag`, `#[[Tag With Space]]`)
 /// to `#[ULID]` refs (resolve-or-create), returning the transaction plus the
 /// per-pass tag state reused by the block loop and the frontmatter-tag pass.
-#[allow(clippy::type_complexity)]
 async fn resolve_inbound_tags(
     ctx: &mut NameCtx<'_>,
-    mut tx: CommandTx,
+    tx: CommandTx,
     blocks: &[import::ParsedBlock],
-) -> Result<
-    (
-        CommandTx,
-        HashMap<String, String>,
-        HashMap<String, String>,
-        HashMap<String, String>,
-    ),
-    AppError,
-> {
+) -> Result<ResolvedTags, AppError> {
+    // #2968 — also resolve/create the TAG names referenced by structured
+    // `{{query v2n:…}}` inline queries so a query's tag refs remap to this
+    // vault's tag ids (create-if-missing) on re-import, exactly like an inbound
+    // `#tag`.
+    let tag_token_names: Vec<String> = collect_inbound_tag_names(blocks)
+        .into_iter()
+        .chain(super::inline_query_md::query_tag_names(blocks))
+        .collect();
+    resolve_tag_names(ctx, tx, tag_token_names).await
+}
+
+/// [`resolve_inbound_tags`] for names already collected.
+async fn resolve_tag_names(
+    ctx: &mut NameCtx<'_>,
+    mut tx: CommandTx,
+    tag_token_names: Vec<String>,
+) -> Result<ResolvedTags, AppError> {
     let materializer = ctx.materializer;
     let device_id = ctx.device_id;
     let space_id = ctx.space_id;
@@ -3916,14 +3947,6 @@ async fn resolve_inbound_tags(
     let mut resolved_tag_norm: HashMap<String, String> = HashMap::new();
     let mut resolved_tag_tokens: HashMap<String, String> = HashMap::new();
     let existing_tag_by_norm = snapshot_tags_by_norm(&mut tx, space_id).await?;
-    // #2968 — also resolve/create the TAG names referenced by structured
-    // `{{query v2n:…}}` inline queries so a query's tag refs remap to this
-    // vault's tag ids (create-if-missing) on re-import, exactly like an inbound
-    // `#tag`.
-    let tag_token_names: Vec<String> = collect_inbound_tag_names(blocks)
-        .into_iter()
-        .chain(super::inline_query_md::query_tag_names(blocks))
-        .collect();
     for token_name in tag_token_names {
         let norm = agaric_core::tag_norm::normalize_tag_name(&token_name);
 
@@ -4393,6 +4416,21 @@ async fn create_import_block(
     }
 }
 
+/// Whose property values [`apply_block_properties`] writes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PropertyWrite {
+    /// An imported file: a `ref`-declared value is text, options are checked.
+    Import,
+    /// Duplicate and paste re-store values a block already held, from a source
+    /// render: a `ref`-declared value is the raw id, and options the key has
+    /// since retired or narrowed must not make the copy fail.
+    Copy,
+    /// A source-mode save writes what the user typed: a `ref`-declared value
+    /// is the raw id, refused unless it is a live block's, and options are
+    /// checked as the property editor checks them.
+    Edit,
+}
+
 /// Set one imported or duplicated block's properties in the same transaction
 /// as the block itself — an import never splits a block and its properties
 /// across a chunk boundary (they are written before the next depth-0 flush
@@ -4417,12 +4455,8 @@ async fn create_import_block(
 /// ourselves and call `set_property_in_tx_with_declaration` with the result —
 /// still exactly ONE query per property, not two.
 ///
-/// `copying` is Duplicate's: its values were already accepted on the original
-/// and come from a source render, which writes a `ref`-declared value as the
-/// raw id, so that value goes to `value_ref` as is. Nor is a copied value
-/// re-checked against the key's options today: a retired select option or
-/// narrowed priority levels must not make the copy fail. Import passes
-/// `false`: its `ref`-typed keys are NOT
+/// `mode` says whose values these are ([`PropertyWrite`]). Import's
+/// `ref`-typed keys are NOT
 /// specially resolved here (unlike the frontmatter path's title→ULID reverse
 /// lookup, which needs a `tx` + `space_id` round-trip against `blocks`) —
 /// `typed_property_args_for_registry_value` falls through to the text default
@@ -4436,7 +4470,7 @@ async fn apply_block_properties(
     device_id: &str,
     block_id: &str,
     properties: &[(String, String)],
-    copying: bool,
+    mode: PropertyWrite,
 ) -> Result<u64, AppError> {
     let mut set: u64 = 0;
     for (key, value) in properties {
@@ -4448,7 +4482,11 @@ async fn apply_block_properties(
         .await?
         .map(|row| agaric_engine::block_ops::PropertyDeclaration {
             value_type: row.value_type,
-            options: if copying { None } else { row.options },
+            options: if mode == PropertyWrite::Copy {
+                None
+            } else {
+                row.options
+            },
         });
         // #623 — build the correct typed `PropertyValue` shape per key:
         // reserved date keys (`due_date`/`scheduled_date`) must hit the
@@ -4458,8 +4496,11 @@ async fn apply_block_properties(
         // `typed_property_args_for_string_value` whenever the declared
         // type doesn't itself claim the value).
         let value_type = declaration.as_ref().map(|d| d.value_type.as_str());
+        if mode == PropertyWrite::Edit && value_type == Some("ref") {
+            ensure_live_block_id(tx, key, value).await?;
+        }
         let (value_text, value_num, value_date, value_ref, value_bool) =
-            if copying && value_type == Some("ref") {
+            if mode != PropertyWrite::Import && value_type == Some("ref") {
                 (None, None, None, Some(value.clone()), None)
             } else {
                 agaric_engine::block_ops::typed_property_args_for_registry_value(
@@ -4486,6 +4527,25 @@ async fn apply_block_properties(
         tx.enqueue_background(prop_op);
     }
     Ok(set)
+}
+
+/// Refuse `value`, typed under the `ref`-declared `key`, unless it is a live
+/// block's id: the projection drops a `value_ref` row whose block does not
+/// exist, so any other value would be reported set while the block shows no
+/// such property.
+async fn ensure_live_block_id(tx: &mut CommandTx, key: &str, value: &str) -> Result<(), AppError> {
+    if let Ok(id) = BlockId::from_string(value)
+        && id.as_str() == value
+    {
+        match crate::ulid::verify_active_in_tx(tx, &id).await {
+            Ok(_) => return Ok(()),
+            Err(AppError::NotFound(_) | AppError::Validation { .. }) => {}
+            Err(err) => return Err(err),
+        }
+    }
+    Err(AppError::validation(format!(
+        "'{key}' holds a block id, and '{value}' is not the id of a live block"
+    )))
 }
 
 /// #662 — chunked block-insertion loop + final commit. Accumulates into the
@@ -4596,7 +4656,7 @@ async fn insert_blocks(
             device_id,
             &new_block_id,
             &block.properties,
-            false,
+            PropertyWrite::Import,
         )
         .await?;
     }
@@ -5338,6 +5398,10 @@ pub async fn import_markdown(
     .await
     .map_err(sanitize_internal_error)
 }
+
+#[path = "markdown_source_apply.rs"]
+mod source_apply;
+pub use source_apply::*;
 
 #[cfg(test)]
 #[path = "markdown_source_tests.rs"]

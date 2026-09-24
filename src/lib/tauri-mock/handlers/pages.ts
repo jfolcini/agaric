@@ -11,6 +11,7 @@
 
 import { base64UrlToUtf8 } from '@/lib/base64url'
 import { compareNocase, compareUtf8Bytes, foldAsciiUppercase } from '@/lib/sqlite-collation'
+import { blocksHandlers, parseOutline } from '@/lib/tauri-mock/handlers/blocks'
 import {
   type PageMetaRow,
   type TypedHandlers,
@@ -86,6 +87,216 @@ function nextDenseRank(parentId: string | null, spaceId: string | null): number 
     siblings += 1
   }
   return siblings + 1
+}
+
+type OpRefs = Array<{ device_id: string; seq: number }>
+
+/** `parentId`'s live children in sibling order, hidden ones included. */
+function liveChildren(parentId: string): Record<string, unknown>[] {
+  return [...blocks.values()]
+    .filter((b) => b['parent_id'] === parentId && !b['deleted_at'])
+    .toSorted(comparePositionThenId)
+}
+
+/**
+ * DELIBERATE APPROXIMATION of `render_page_source` (#5140): every live content
+ * descendant, depth-first in sibling order, as `- content ^ID` with its further
+ * lines indented under the bullet. Like the backend, a nested page and what is
+ * under it are left out. No list markers, task checkboxes or property lines —
+ * the Rust tests own that grammar, and a faithful port is the second
+ * implementation #5140 deletes. Returns the buffer and the ids it holds, in
+ * order.
+ */
+function renderPageSource(pid: string): { source: string; ids: string[] } {
+  const page = blocks.get(pid)
+  // Like the backend's `load_page_row`: a trashed page is not found, and a
+  // block that is not a page is a validation error.
+  if (!page || page['deleted_at']) throw notFoundRejection(`page '${pid}' not found`)
+  if (page['block_type'] !== 'page') throw validationRejection('not a page')
+  let source = ''
+  const ids: string[] = []
+  const render = (parentId: string, depth: number): void => {
+    for (const child of liveChildren(parentId)) {
+      if (child['block_type'] !== 'content') continue
+      const id = child['id'] as string
+      const [head, ...rest] = ((child['content'] as string | null) ?? '').split('\n')
+      source += `${'  '.repeat(depth)}- ${head}`
+      for (const line of rest) source += line === '' ? '\n' : `\n${'  '.repeat(depth + 1)}${line}`
+      source += ` ^${id}\n`
+      ids.push(id)
+      render(id, depth + 1)
+    }
+  }
+  render(pid, 0)
+  return { source, ids }
+}
+
+interface SourceBullet {
+  content: string
+  depth: number
+  anchor: string | null
+}
+
+/**
+ * The ` ^id` a source block ends with. A ` ^word` that is not a block id is
+ * text, as the backend's save keeps it.
+ */
+const SOURCE_ANCHOR_RE = /(?:^|\s)\^([0-9A-Za-z]{26})\s*$/
+
+/** A source buffer's blocks ({@link parseOutline}), each trailing ` ^id` split off. */
+function parseSourceBuffer(source: string): SourceBullet[] {
+  return parseOutline(source).map(({ content, depth }) => {
+    const match = SOURCE_ANCHOR_RE.exec(content)
+    return match
+      ? { content: content.slice(0, match.index), depth, anchor: match[1] ?? null }
+      : { content, depth, anchor: null }
+  })
+}
+
+/** The longest run of `ids` already in `rank` order: the ones that need no move. */
+function longestInOrderRun(ids: string[], rank: ReadonlyMap<string, number>): Set<string> {
+  interface Run {
+    id: string
+    length: number
+    previous: Run | null
+  }
+  const runs: Run[] = []
+  let longest: Run | null = null
+  for (const id of ids) {
+    const run: Run = { id, length: 1, previous: null }
+    for (const earlier of runs) {
+      if ((rank.get(earlier.id) ?? 0) < (rank.get(id) ?? 0) && earlier.length >= run.length) {
+        run.length = earlier.length + 1
+        run.previous = earlier
+      }
+    }
+    runs.push(run)
+    if (longest === null || run.length > longest.length) longest = run
+  }
+  const kept = new Set<string>()
+  for (let run = longest; run !== null; run = run.previous) kept.add(run.id)
+  return kept
+}
+
+/**
+ * Every refusal `apply_page_source` makes, checked before anything is written:
+ * a stale base (`force` never skips it: it overrides a foreign anchor, not a
+ * stale base), a page that does not read back as its own source, an anchor
+ * named twice, an anchor that is not a block of this page unless `force` forks
+ * it as a new block, and a delete that would take a nested page with it.
+ * Returns the buffer's bullets, the page's text per anchor as it reads back,
+ * the rendered ids the buffer left out and the warnings.
+ */
+function readSourceEdit(
+  pageId: string,
+  source: string,
+  baseSource: unknown,
+  force: boolean,
+): {
+  t1: SourceBullet[]
+  before: Map<string | null, string>
+  absent: string[]
+  warnings: string[]
+} {
+  const current = renderPageSource(pageId)
+  if (current.source !== baseSource) {
+    throw appErrorRejection({
+      kind: 'validation',
+      code: 'RequiresRefresh',
+      message: `page '${pageId}' changed since its source was loaded`,
+    })
+  }
+  const t0 = parseSourceBuffer(current.source)
+  if (t0.length !== current.ids.length || t0.some((b, i) => b.anchor !== current.ids[i])) {
+    throw validationRejection(`page '${pageId}' does not read back as its own source`)
+  }
+  const before = new Map(t0.map((b) => [b.anchor, b.content]))
+  const t1 = parseSourceBuffer(source)
+  const anchors = new Set<string>()
+  for (const { anchor } of t1) {
+    if (anchor === null) continue
+    if (anchors.has(anchor)) throw validationRejection(`^${anchor} appears more than once`)
+    anchors.add(anchor)
+  }
+  const warnings: string[] = []
+  for (const bullet of t1) {
+    if (bullet.anchor === null || before.has(bullet.anchor)) continue
+    if (!force) throw validationRejection(`^${bullet.anchor} is not a block of this page`)
+    warnings.push(`^${bullet.anchor} no longer on this page; saved as a new block`)
+    bullet.anchor = null
+  }
+  const absent = current.ids.filter((id) => !anchors.has(id))
+  const absentSet = new Set(absent)
+  for (const row of blocks.values()) {
+    if (row['block_type'] !== 'page' || row['deleted_at']) continue
+    if (absentSet.has(row['parent_id'] as string)) {
+      throw validationRejection(`deleting its parent would delete the page '${String(row['id'])}'`)
+    }
+  }
+  return { t1, before, absent, warnings }
+}
+
+/**
+ * Put every bullet of `t1` under the parent its indentation names, parent by
+ * parent in pre-order from the page. A bullet whose block is already under
+ * that parent and in the longest in-order run stays; every other one is moved
+ * (or created) right after the bullet before it, so hidden children keep their
+ * places. Returns the refs of the ops it appended.
+ */
+function placeSourceBullets(
+  pageId: string,
+  t1: SourceBullet[],
+  report: { created: number; moved: number },
+): OpRefs {
+  const childrenOf = new Map<SourceBullet | null, SourceBullet[]>()
+  const open: SourceBullet[] = []
+  for (const bullet of t1) {
+    while ((open.at(-1)?.depth ?? -1) >= bullet.depth) open.pop()
+    const parent = open.at(-1) ?? null
+    childrenOf.set(parent, [...(childrenOf.get(parent) ?? []), bullet])
+    open.push(bullet)
+  }
+  const opRefs: OpRefs = []
+  const place = (parentId: string, list: SourceBullet[]): void => {
+    const rank = new Map(liveChildren(parentId).map((row, i) => [row['id'] as string, i]))
+    const kept = longestInOrderRun(
+      list.flatMap(({ anchor }) => (anchor !== null && rank.has(anchor) ? [anchor] : [])),
+      rank,
+    )
+    let prev: string | null = null
+    const ids: string[] = []
+    for (const bullet of list) {
+      let id = bullet.anchor
+      if (id === null || !kept.has(id)) {
+        const others = liveChildren(parentId).filter((row) => row['id'] !== id)
+        const index = prev === null ? 0 : others.findIndex((row) => row['id'] === prev) + 1
+        if (id === null) {
+          const row = blocksHandlers.create_block({
+            blockType: 'content',
+            content: bullet.content,
+            parentId,
+            index,
+          })
+          id = row.id
+          opRefs.push(...row.op_refs)
+          report.created += 1
+        } else {
+          const moved = blocksHandlers.move_block({
+            blockId: id,
+            newParentId: parentId,
+            newIndex: index,
+          })
+          opRefs.push(...moved.op_refs)
+          report.moved += 1
+        }
+      }
+      ids.push(id)
+      prev = id
+    }
+    list.forEach((bullet, i) => place(ids[i] as string, childrenOf.get(bullet) ?? []))
+  }
+  place(pageId, childrenOf.get(null) ?? [])
+  return opRefs
 }
 
 export const pagesHandlers = {
@@ -669,30 +880,43 @@ export const pagesHandlers = {
     return md
   },
 
-  // DELIBERATE APPROXIMATION of `render_page_source` (#5140): every live
-  // descendant, depth-first in sibling order, as `- content ^ID`. No list
-  // markers, task checkboxes or property lines — the Rust tests own that
-  // grammar, and a faithful port is the second implementation #5140 deletes.
-  get_page_source: (args) => {
-    const pid = (args as Record<string, unknown>)['pageId'] as string
-    const page = blocks.get(pid)
-    // Like the backend's `load_page_row`: a trashed page is not found, and a
-    // block that is not a page is a validation error.
-    if (!page || page['deleted_at']) throw notFoundRejection(`page '${pid}' not found`)
-    if (page['block_type'] !== 'page') throw validationRejection('not a page')
-    let md = ''
-    const render = (parentId: string, depth: number): void => {
-      const children = [...blocks.values()]
-        .filter((b) => b['parent_id'] === parentId && !b['deleted_at'])
-        .toSorted(comparePositionThenId)
-      for (const child of children) {
-        const id = child['id'] as string
-        md += `${'  '.repeat(depth)}- ${(child['content'] as string | null) ?? ''} ^${id}\n`
-        render(id, depth + 1)
-      }
+  get_page_source: (args) =>
+    renderPageSource((args as Record<string, unknown>)['pageId'] as string).source,
+
+  // #5140 Phase 4a — save the page edited as its source buffer: moves and
+  // creates first, then edits, then deletes, so a child kept out of a deleted
+  // block has moved before the delete cascades. The buffer is read by
+  // `parseSourceBuffer`, so the backend's list markers, task checkboxes,
+  // property lines and names are not modelled (`properties_*` stay 0,
+  // `names_created` empty), nor are its op cap and depth limit; tests must not
+  // rely on the mock for them.
+  apply_page_source: (args) => {
+    const a = args as Record<string, unknown>
+    const pageId = a['pageId'] as string
+    const edit = readSourceEdit(pageId, a['source'] as string, a['baseSource'], a['force'] === true)
+    const report = { created: 0, edited: 0, moved: 0, deleted: 0 }
+    const opRefs = placeSourceBullets(pageId, edit.t1, report)
+    for (const { anchor, content } of edit.t1) {
+      if (anchor === null || content === edit.before.get(anchor)) continue
+      if (content === blocks.get(anchor)?.['content']) continue
+      opRefs.push(...blocksHandlers.edit_block({ blockId: anchor, toText: content }).op_refs)
+      report.edited += 1
     }
-    render(pid, 0)
-    return md
+    const absentSet = new Set(edit.absent)
+    for (const id of edit.absent) {
+      if (absentSet.has(blocks.get(id)?.['parent_id'] as string)) continue
+      const response = blocksHandlers.delete_block({ blockId: id })
+      opRefs.push(...response.op_refs)
+      report.deleted += response.descendants_affected
+    }
+    return {
+      op_refs: opRefs,
+      ...report,
+      properties_set: 0,
+      properties_deleted: 0,
+      names_created: [],
+      warnings: edit.warnings,
+    }
   },
 
   // DELIBERATE APPROXIMATION of `get_blocks_source` (#5140 Phase 3b), the
@@ -715,10 +939,6 @@ export const pagesHandlers = {
     if (!first) return ''
     const pageId = first['page_id']
     const selected = new Set(ids.filter((id) => liveContent(id)?.['page_id'] === pageId))
-    const liveChildren = (parentId: string): Record<string, unknown>[] =>
-      [...blocks.values()]
-        .filter((b) => b['parent_id'] === parentId && !b['deleted_at'])
-        .toSorted(comparePositionThenId)
     let md = ''
     const renderBlock = (row: Record<string, unknown>, depth: number): void => {
       const [head, ...rest] = ((row['content'] as string | null) ?? '').split('\n')
@@ -997,6 +1217,7 @@ export const pagesHandlers = {
   | 'list_page_aliases_by_prefix'
   | 'export_page_markdown'
   | 'get_page_source'
+  | 'apply_page_source'
   | 'get_blocks_source'
   | 'import_markdown'
   | 'import_bibliography'
