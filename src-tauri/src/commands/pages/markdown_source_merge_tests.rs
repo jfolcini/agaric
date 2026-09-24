@@ -122,6 +122,36 @@ fn a_delete_gives_way_to_the_other_sides_edit() {
     );
 }
 
+/// A move to another parent is a change a delete gives way to, as an edit is:
+/// a block the buffer moved that the page deleted comes back as a new block,
+/// and one the page moved that the buffer deleted stays, each with a warning.
+/// A reorder under the same parent is not.
+#[test]
+fn a_delete_gives_way_to_the_other_sides_move() {
+    let base = "- a ^A\n- b ^B\n";
+    assert_eq!(
+        merge(base, "- a ^A\n", "- a ^A\n  - b ^B\n"),
+        (
+            "- a ^A\n  - b\n".into(),
+            vec!["'b' was deleted on the page; saved as a new block".to_owned()]
+        ),
+        "the buffer moved b, the page deleted it"
+    );
+    assert_eq!(
+        merge(base, "- a ^A\n  - b ^B\n", "- a ^A\n"),
+        (
+            "- a ^A\n  - b ^B\n".into(),
+            vec!["'b' changed on the page; your delete was not applied".to_owned()]
+        ),
+        "the page moved b, the buffer deleted it"
+    );
+    assert_eq!(
+        merge(base, "- b ^B\n- a ^A\n", "- a ^A\n"),
+        ("- a ^A\n".into(), Vec::new()),
+        "the page reordered b, the buffer deleted it"
+    );
+}
+
 /// Two blocks inserted after the same one are both kept, the buffer's first.
 #[test]
 fn inserts_after_the_same_block_are_both_kept() {

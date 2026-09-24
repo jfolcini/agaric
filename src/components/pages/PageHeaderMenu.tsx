@@ -46,6 +46,8 @@ export interface PageHeaderMenuProps {
   onExport: () => void
   /** Opens source mode; the row is hidden without it. */
   onEditSource?: (() => void) | undefined
+  /** The kebab trigger, so focus can return to it. */
+  kebabRef?: React.Ref<HTMLButtonElement> | undefined
   onDeleteRequest: () => void
   onOpenInNewTab?: (() => void) | undefined
   /**
@@ -79,6 +81,7 @@ export function PageHeaderMenu({
   onToggleJournalTemplate,
   onExport,
   onEditSource,
+  kebabRef,
   onDeleteRequest,
   onOpenInNewTab,
   isSpaceBlock = false,
@@ -251,7 +254,12 @@ export function PageHeaderMenu({
       </Tooltip>
       <Popover open={kebabOpen} onOpenChange={onKebabOpenChange}>
         <PopoverTrigger asChild>
-          <Button variant="ghost" size="icon-xs" aria-label={t('pageHeader.pageActions')}>
+          <Button
+            ref={kebabRef}
+            variant="ghost"
+            size="icon-xs"
+            aria-label={t('pageHeader.pageActions')}
+          >
             <MoreVertical className="h-3.5 w-3.5" />
           </Button>
         </PopoverTrigger>

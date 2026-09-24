@@ -10,11 +10,19 @@ import { expect, navigateToView, test, waitForBoot } from './helpers'
  * editor row for the shorter static row, the button moved up under the pointer,
  * mouseup landed off it and `onClick` never ran: no new block, and the empty
  * one was dropped by the blur cleanup. The mock answers synchronously, so the
- * IPC latency that opens that window is injected here, test-side, and the
- * click is driven as mousedown / mouseup with a human-sized gap.
+ * IPC latency that opens that window is injected here, test-side (the Enter's
+ * create is held until Escape has landed), and the click is driven as
+ * mousedown / mouseup with a human-sized gap.
  */
 
 const IPC_LATENCY_MS = 120
+
+type LatencyWindow = Window & {
+  __TAURI_INTERNALS__?: Record<string, unknown>
+  /** The next `create_block` answer waits for `__releaseCreate`. */
+  __holdCreate?: boolean
+  __releaseCreate?: () => void
+}
 
 // Tall enough that the seeded day plus two new rows never scroll: with the page
 // at its scroll limit, the shrinking row would pull the document up under the
@@ -27,14 +35,21 @@ test('adds a block when the button is clicked while an empty block is being edit
   await waitForBoot(page)
   await navigateToView(page, 'Journal')
   await page.evaluate((ms) => {
-    const internals = (window as unknown as { __TAURI_INTERNALS__?: Record<string, unknown> })
-      .__TAURI_INTERNALS__
-    if (!internals) return
+    const w = window as LatencyWindow
+    const internals = w.__TAURI_INTERNALS__
+    if (!internals) throw new Error('no __TAURI_INTERNALS__ to inject IPC latency into')
     const original = internals['invoke'] as (cmd: string, args: unknown, opts?: unknown) => unknown
     const slow = new Set(['create_block', 'delete_block', 'edit_block', 'load_page_subtree'])
     internals['invoke'] = async (cmd: string, args: unknown, opts?: unknown) => {
       const result = await original(cmd, args, opts)
-      if (slow.has(cmd)) await new Promise((resolve) => setTimeout(resolve, ms))
+      if (cmd === 'create_block' && w.__holdCreate) {
+        w.__holdCreate = false
+        await new Promise<void>((resolve) => {
+          w.__releaseCreate = resolve
+        })
+      } else if (slow.has(cmd)) {
+        await new Promise((resolve) => setTimeout(resolve, ms))
+      }
       return result
     }
   }, IPC_LATENCY_MS)
@@ -47,14 +62,18 @@ test('adds a block when the button is clicked while an empty block is being edit
   await addBlock.click()
   await expect(editor).toBeVisible()
   await editor.pressSequentially('zap of ink', { delay: 10 })
+  await page.evaluate(() => {
+    ;(window as LatencyWindow).__holdCreate = true
+  })
   await page.keyboard.press('Enter')
-  // Escape lands before the Enter-created sibling's create has resolved.
-  await page.waitForTimeout(35)
+  // Escape lands while the Enter-created sibling's create is still unanswered.
+  await page.waitForFunction(() => (window as LatencyWindow).__releaseCreate !== undefined)
   await page.keyboard.press('Escape')
   await expect(
     page.locator('[data-testid="block-static"]', { hasText: 'zap of ink' }),
   ).toBeVisible()
   // The create resolves and focuses the new empty block: the window.
+  await page.evaluate(() => (window as LatencyWindow).__releaseCreate?.())
   await expect(editor).toBeVisible()
   const emptyBlockId = await page
     .locator('[data-testid="block-editor"]')

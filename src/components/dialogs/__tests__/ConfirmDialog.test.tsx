@@ -16,6 +16,7 @@
 
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { useState } from 'react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
@@ -945,5 +946,54 @@ describe('ConfirmDialog', () => {
         expect(results).toHaveNoViolations()
       })
     })
+  })
+})
+
+// No Radix Trigger opens this dialog, so Radix has nothing to hand focus back
+// to on close; the dialog returns it to what had it when it opened.
+describe('ConfirmDialog focus return', () => {
+  function Opener({ variant }: { variant?: 'destructive' }) {
+    const [open, setOpen] = useState(false)
+    return (
+      <>
+        <button type="button" onClick={() => setOpen(true)}>
+          Open
+        </button>
+        <ConfirmDialog
+          open={open}
+          onOpenChange={setOpen}
+          titleKey={TITLE_KEY}
+          descriptionKey={DESC_KEY}
+          {...(variant ? { variant } : {})}
+        />
+      </>
+    )
+  }
+
+  it.each([
+    ['desktop', false],
+    ['mobile', true],
+  ])('Cancel on the %s path returns focus to the opener', async (_path, isMobile) => {
+    mockedUseIsMobile.mockReturnValue(isMobile)
+    const user = userEvent.setup()
+    render(<Opener />)
+    const opener = screen.getByRole('button', { name: 'Open' })
+
+    await user.click(opener)
+    await user.click(await screen.findByRole('button', { name: /Cancel/ }))
+
+    await waitFor(() => expect(opener).toHaveFocus())
+  })
+
+  it('Escape on a destructive dialog returns focus to the opener', async () => {
+    const user = userEvent.setup()
+    render(<Opener variant="destructive" />)
+    const opener = screen.getByRole('button', { name: 'Open' })
+
+    await user.click(opener)
+    await waitFor(() => expect(screen.getByRole('button', { name: /Cancel/ })).toHaveFocus())
+    await user.keyboard('{Escape}')
+
+    await waitFor(() => expect(opener).toHaveFocus())
   })
 })

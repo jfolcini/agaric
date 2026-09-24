@@ -2,6 +2,7 @@
 pub use crate::db::ReadPool;
 use crate::db::init_pool;
 use crate::materializer::Materializer;
+use agaric_core::ulid::BlockId;
 // kept (#2897): test-prelude re-export, now consumed through
 // `tests/commands/prelude.rs` by the moved command suites (#4499 phase 0d).
 pub use agaric_store::space::{SpaceId, SpaceScope};
@@ -217,4 +218,54 @@ pub async fn assign_all_to_test_space(pool: &SqlitePool) {
     .execute(pool)
     .await
     .unwrap();
+}
+
+/// A page in [`TEST_SPACE_ID`], made through the commands so the engine holds
+/// the tree the SQL does and creates under it take the engine path.
+pub async fn space_page(pool: &SqlitePool, mat: &Materializer) -> BlockId {
+    ensure_test_space(pool).await;
+    mark_block_as_space(pool, TEST_SPACE_ID).await;
+    crate::commands::create_page_in_space_inner(
+        pool,
+        DEV,
+        mat,
+        None,
+        "Appends".into(),
+        TEST_SPACE_ID.into(),
+    )
+    .await
+    .unwrap()
+}
+
+/// A content block appended under `parent`: no index, the way the editor,
+/// templates, paste and the MCP `append_block` create.
+pub async fn append_child(
+    pool: &SqlitePool,
+    mat: &Materializer,
+    parent: &BlockId,
+    content: &str,
+) -> BlockId {
+    crate::commands::create_block_inner(
+        pool,
+        DEV,
+        mat,
+        "content".into(),
+        content.into(),
+        Some(parent.clone()),
+        None,
+    )
+    .await
+    .unwrap()
+    .id
+}
+
+/// `parent`'s live children in sibling order.
+pub async fn live_children(pool: &SqlitePool, parent: &BlockId) -> Vec<String> {
+    sqlx::query_scalar(
+        "SELECT id FROM blocks WHERE parent_id = ? AND deleted_at IS NULL ORDER BY position, id",
+    )
+    .bind(parent.as_str())
+    .fetch_all(pool)
+    .await
+    .unwrap()
 }

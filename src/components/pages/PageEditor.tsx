@@ -259,7 +259,12 @@ function PageEditorInner({
     setFocused(null)
     setSourcePageId(pageId)
   }, [pageId, setFocused])
-  const handleCloseSource = useCallback(() => setSourcePageId(null), [])
+  // Back to the kebab source mode was opened from, rather than `body`.
+  const kebabRef = useRef<HTMLButtonElement>(null)
+  const handleCloseSource = useCallback(() => {
+    setSourcePageId(null)
+    kebabRef.current?.focus()
+  }, [])
 
   // Clear undo state for the previous page when navigating away or unmounting
   useEffect(
@@ -354,6 +359,7 @@ function PageEditorInner({
         title={title}
         onBack={onBack}
         onEditSource={isTagPage === false && !sourceMode ? handleEditSource : undefined}
+        kebabRef={kebabRef}
       />
 
       {sourceMode ? (

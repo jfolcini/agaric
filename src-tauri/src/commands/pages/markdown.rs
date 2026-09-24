@@ -803,6 +803,20 @@ struct PageExportData {
     name_snapshot: NameSnapshot,
 }
 
+/// What a page is read for, which decides what [`load_page_export_data`]
+/// reads beyond the block tree, its references and its blocks' properties.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum PageRead {
+    /// An export: the attachments, the page's own properties, aliases and
+    /// tags, and the titles of ref-typed property values.
+    Export,
+    /// Source mode, the clipboard and a source save: the names a block may be
+    /// written with.
+    Source,
+    /// A duplicate, which writes every id raw: nothing more.
+    Duplicate,
+}
+
 /// The renderings of a page's block tree. `Export` writes a file for other
 /// tools: ids become names and links, and only a block a same-page ref points
 /// at carries an anchor. `Source` writes the buffer source mode edits (#5140),
@@ -986,32 +1000,30 @@ fn push_source_bullet(
 ) {
     let id = block.id.as_str();
     let content = block.content.as_deref().unwrap_or("");
+    let push = if mode == RenderMode::Clipboard {
+        push_clipboard_bullet
+    } else {
+        push_anchored_source_bullet
+    };
     let start = output.len();
-    let is_code =
-        push_anchored_source_bullet(output, indent, list_marker, task_marker, content, id);
-    let named = humanise_refs_for_source(
+    let is_code = push(output, indent, list_marker, task_marker, content, id);
+    let Some(named) = humanise_refs_for_source(
         content,
         is_code,
         &data.tag_names,
         &data.page_titles,
         &data.name_snapshot,
-    );
-    if mode == RenderMode::Source && named.is_none() {
+    ) else {
         return;
-    }
+    };
     output.truncate(start);
-    let text = named.as_deref().unwrap_or(content);
-    if mode == RenderMode::Clipboard {
-        push_clipboard_bullet(output, indent, list_marker, task_marker, text, id);
-    } else {
-        push_anchored_source_bullet(output, indent, list_marker, task_marker, text, id);
-    }
+    push(output, indent, list_marker, task_marker, &named, id);
 }
 
 /// `content` as a source bullet without its `^id`, unless the bullet needs it
 /// to read back: when the block leaves a fence open, which the anchor line
 /// ends, or when the bullet alone reads back as other content, as one ending
-/// in ` ^word` or in a blank line does.
+/// in ` ^word` or in a blank line does. Returns whether any line is code.
 fn push_clipboard_bullet(
     output: &mut String,
     indent: &str,
@@ -1019,7 +1031,7 @@ fn push_clipboard_bullet(
     task_marker: &str,
     content: &str,
     id: &str,
-) {
+) -> bool {
     let start = output.len();
     let code = push_block_bullet(
         output,
@@ -1031,10 +1043,10 @@ fn push_clipboard_bullet(
     );
     let read_back = import::parse_source_outline(&output[start..]).blocks;
     if !code.open && matches!(read_back.as_slice(), [block] if block.content == content) {
-        return;
+        return code.any;
     }
     output.truncate(start);
-    push_anchored_source_bullet(output, indent, list_marker, task_marker, content, id);
+    push_anchored_source_bullet(output, indent, list_marker, task_marker, content, id)
 }
 
 /// `content` as a source bullet with `^id` at the end of its last line or,
@@ -2048,7 +2060,7 @@ pub async fn export_page_markdown_inner(
     // resolution and property reads all execute against `&mut *tx`, so
     // they cannot interleave with a concurrent writer's commit.
     let mut tx = pool.begin().await?;
-    let data = load_page_export_data(&mut tx, page_id).await?;
+    let data = load_page_export_data(&mut tx, page_id, PageRead::Export).await?;
 
     // #660 — all reads are done; release the snapshot tx. A read-only
     // `BEGIN DEFERRED` tx takes no writer lock, so the `commit` here is
@@ -2074,8 +2086,7 @@ pub async fn export_page_markdown_inner(
 pub async fn get_page_source_inner(pool: &SqlitePool, page_id: &str) -> Result<String, AppError> {
     BlockId::from_string(page_id)?;
     let mut tx = pool.begin().await?;
-    let mut data = load_page_export_data(&mut tx, page_id).await?;
-    data.name_snapshot = load_name_snapshot(&mut tx, &data).await?;
+    let data = load_page_export_data(&mut tx, page_id, PageRead::Source).await?;
     tx.commit().await?;
     Ok(render_page_source(&data))
 }
@@ -2118,8 +2129,7 @@ pub async fn get_blocks_source_inner(
     let Some(page_id) = page_id else {
         return Ok(String::new());
     };
-    let mut data = load_page_export_data(&mut tx, &page_id).await?;
-    data.name_snapshot = load_name_snapshot(&mut tx, &data).await?;
+    let data = load_page_export_data(&mut tx, &page_id, PageRead::Source).await?;
     tx.commit().await?;
     render_clipboard_source(&data, &ids, with_children)
 }
@@ -2217,7 +2227,7 @@ pub async fn duplicate_block_inner(
         .page_id
         .clone()
         .ok_or_else(|| AppError::validation(format!("block '{block_id}' is on no page")))?;
-    let data = load_page_export_data(&mut tx, page_id.as_str()).await?;
+    let data = load_page_export_data(&mut tx, page_id.as_str(), PageRead::Duplicate).await?;
     let (source, ids) = render_subtree_source(&data, &root);
     let parsed = import::parse_source_outline(&source);
     // A value the grammar cannot carry, such as a property value with a line
@@ -2236,7 +2246,7 @@ pub async fn duplicate_block_inner(
     let index = siblings
         .iter()
         .position(|id| id == block_id.as_str())
-        .map(|slot| i64::try_from(slot + 1).unwrap_or(i64::MAX));
+        .map(|slot| i64::try_from(slot + 1).expect("a Vec index fits in i64"));
     // Boxed: inline, the copy loop's future makes this one too large for the
     // stack (`clippy::large_futures`).
     let created = Box::pin(create_parsed_blocks(
@@ -2338,7 +2348,7 @@ pub async fn paste_blocks_inner(
     let index = siblings
         .iter()
         .position(|id| id == anchor_id.as_str())
-        .map(|slot| i64::try_from(slot + 1).unwrap_or(i64::MAX));
+        .map(|slot| i64::try_from(slot + 1).expect("a Vec index fits in i64"));
     let pasted = Box::pin(create_parsed_blocks(
         &mut tx,
         materializer,
@@ -2458,20 +2468,43 @@ async fn create_parsed_blocks(
     Ok(created)
 }
 
-/// Steps 1-4b: every read an export makes, through the caller's snapshot.
-/// The name snapshot is left empty; only source mode reads it.
+/// Steps 1-4b: every read the page is rendered from, through the caller's
+/// snapshot. What `read` does not need is left empty.
 async fn load_page_export_data(
     conn: &mut sqlx::SqliteConnection,
     page_id: &str,
+    read: PageRead,
 ) -> Result<PageExportData, AppError> {
+    let export = read == PageRead::Export;
     let page = load_page_row(conn, page_id).await?;
     let descendants = load_descendants(conn, page_id).await?;
-    let attachments_by_block = load_attachments(conn, page_id, &descendants).await?;
+    let attachments_by_block = if export {
+        load_attachments(conn, page_id, &descendants).await?
+    } else {
+        HashMap::new()
+    };
     let refs = resolve_references(conn, page_id, &descendants).await?;
-    let properties = load_page_properties(conn, page_id).await?;
+    let properties = if export {
+        load_page_properties(conn, page_id).await?
+    } else {
+        Vec::new()
+    };
     let descendant = load_descendant_properties(conn, &descendants).await?;
-    let ref_titles = resolve_property_ref_titles(conn, &properties, &descendant.properties).await?;
-    let (aliases, tag_names_fm) = load_frontmatter_lists(conn, page_id).await?;
+    let ref_titles = if export {
+        resolve_property_ref_titles(conn, &properties, &descendant.properties).await?
+    } else {
+        HashMap::new()
+    };
+    let (aliases, tag_names_fm) = if export {
+        load_frontmatter_lists(conn, page_id).await?
+    } else {
+        (Vec::new(), Vec::new())
+    };
+    let name_snapshot = if read == PageRead::Source {
+        load_name_snapshot(conn, &page.id, &refs.page_titles).await?
+    } else {
+        NameSnapshot::default()
+    };
     Ok(PageExportData {
         page,
         descendants,
@@ -2486,22 +2519,22 @@ async fn load_page_export_data(
         properties,
         aliases,
         tag_names_fm,
-        name_snapshot: NameSnapshot::default(),
+        name_snapshot,
     })
 }
 
 /// What the importer would resolve the page's referenced names against: its
-/// space's pages with those titles and its space's tags. A page in no space
-/// gets the empty snapshot, so every name stays raw.
+/// space's pages with the `page_titles` it links to, and its space's tags. A
+/// page in no space gets the empty snapshot, so every name stays raw.
 async fn load_name_snapshot(
     conn: &mut sqlx::SqliteConnection,
-    data: &PageExportData,
+    page_id: &BlockId,
+    page_titles: &HashMap<String, String>,
 ) -> Result<NameSnapshot, AppError> {
-    let Some(space) = agaric_store::space::resolve_block_space(&mut *conn, &data.page.id).await?
-    else {
+    let Some(space) = agaric_store::space::resolve_block_space(&mut *conn, page_id).await? else {
         return Ok(NameSnapshot::default());
     };
-    let titles: Vec<String> = data.page_titles.values().cloned().collect();
+    let titles: Vec<String> = page_titles.values().cloned().collect();
     Ok(NameSnapshot {
         page_ids_by_title: snapshot_page_link_matches(conn, space.as_str(), &titles).await?,
         tag_id_by_norm: snapshot_tags_by_norm(conn, space.as_str()).await?,

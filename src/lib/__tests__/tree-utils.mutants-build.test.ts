@@ -162,10 +162,11 @@ describe('computeSelectionRoots', () => {
  * test.
  *
  * Every real caller reinforces the same conclusion independently of the
- * differential sweep below. `computeSelectionRoots` has two callers,
- * `src/components/block-tree/use-block-dnd.ts` and the cut chord in
- * `src/components/block-tree/use-block-tree-keyboard-shortcuts.ts`, and both
- * pass the store's `blocks`: the FULL-PAGE flat array straight out of
+ * differential sweep below. `computeSelectionRoots` has three callers,
+ * `src/components/block-tree/use-block-dnd.ts`, the copy/cut chord in
+ * `src/components/block-tree/use-block-tree-keyboard-shortcuts.ts`, and the
+ * copy-selection row in `src/components/editor/BlockContextMenu.tsx`, and all
+ * three pass the store's `blocks`: the FULL-PAGE flat array straight out of
  * `buildFlatTree`, never a hand-built or sliced subset. For every caller
  * today, a non-depth-0 first item is not just untested but unreachable.
  *

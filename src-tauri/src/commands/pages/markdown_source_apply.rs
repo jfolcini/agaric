@@ -24,6 +24,18 @@ use crate::commands::properties::{
     PriorTaskState, resolve_prior_task_states_batch, set_todo_state_in_tx,
 };
 
+/// What [`apply_page_source_inner`] does with a buffer that does not fit the
+/// page as it is.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct SourceSaveFlags {
+    /// Save a block whose anchor names no block of the page as a new block,
+    /// with a warning, instead of refusing the save.
+    pub force: bool,
+    /// Fold the changes the page took since `base_source` into the buffer
+    /// instead of refusing the save as stale.
+    pub merge: bool,
+}
+
 /// What [`apply_page_source`] wrote.
 #[derive(Debug, Clone, Default, Serialize, Type)]
 pub struct PageSourceReport {
@@ -50,8 +62,8 @@ pub struct PageSourceReport {
 /// Save `source`, the page's source buffer as the user edited it, over the
 /// page (#5140), as one transaction and so one undo. `base_source` is the
 /// source the edit started from: when it is not the page's source now, the
-/// save is refused as stale, whatever `force` says, unless `merge`: then the
-/// changes the page took since are folded into the buffer first
+/// save is refused as stale, whatever `flags.force` says, unless `flags.merge`:
+/// then the changes the page took since are folded into the buffer first
 /// (`merge::merge_outlines`), and a block both sides changed differently is
 /// kept twice, the buffer's version as a new block directly before the page's,
 /// with a warning.
@@ -70,13 +82,12 @@ pub struct PageSourceReport {
 /// - [`AppError::NotFound`] — no live page has that id
 /// - [`AppError::Validation`] — `page_id` is not a page; with code
 ///   [`ValidationCode::RequiresRefresh`] when `base_source` is not the page's
-///   source and `merge` is false; the page's source does not read back as its
-///   blocks (a property value with a line break); an anchor is written twice,
-///   or names no block of the page and `force` is false; a block the save
-///   would delete holds a nested page; a block would be nested past
+///   source and `flags.merge` is false; the page's source does not read back as
+///   its blocks (a property value with a line break); an anchor is written
+///   twice, or names no block of the page and `flags.force` is false; a block
+///   the save would delete holds a nested page; a block would be nested past
 ///   `MAX_BLOCK_DEPTH`; or the save would append more ops than one undo
 ///   reverts
-#[expect(clippy::too_many_arguments)]
 #[instrument(skip(pool, device_id, materializer, source, base_source), err)]
 pub async fn apply_page_source_inner(
     pool: &SqlitePool,
@@ -85,19 +96,17 @@ pub async fn apply_page_source_inner(
     page_id: &str,
     source: String,
     base_source: String,
-    force: bool,
-    merge: bool,
+    flags: SourceSaveFlags,
 ) -> Result<PageSourceReport, AppError> {
     let page_id = BlockId::from_string(page_id)?;
     let mut tx = CommandTx::begin_immediate(pool, "apply_page_source").await?;
     // #2604 — rollback-safe engine apply (rewind on tx abort).
     tx.arm_engine_rollback(materializer.loro_state());
-    let mut data = load_page_export_data(&mut tx, page_id.as_str()).await?;
-    data.name_snapshot = load_name_snapshot(&mut tx, &data).await?;
-    let (base, stale) = read_base(&data, &base_source, merge)?;
+    let data = load_page_export_data(&mut tx, page_id.as_str(), PageRead::Source).await?;
+    let (base, stale) = read_base(&data, &base_source, flags.merge)?;
     let mut warnings = Vec::new();
     let blocks = read_buffer(&source, &base_source, &base, stale, &mut warnings)?;
-    let mut buffer = pair_blocks(&base, blocks, force, &mut warnings)?;
+    let mut buffer = pair_blocks(&base, blocks, flags.force, &mut warnings)?;
     // Boxed for the reason `duplicate_block_inner` gives.
     let (mut tx, names_created) = Box::pin(resolve_buffer_names(
         tx,
@@ -294,9 +303,9 @@ fn pair_blocks(
 
 /// A `^ID` an edit moved off the end of its block, by text typed after it or
 /// a line under it, still names the block: an unanchored block whose text
-/// holds, outside code, exactly one `^ID` of a `loaded` block no other block
-/// claims takes it as its anchor, and the token leaves the text. Two or more
-/// refuse the save: a block has one anchor.
+/// holds, outside inline code, exactly one `^ID` of a `loaded` block no other
+/// block claims takes it as its anchor, and the token leaves the text. Two or
+/// more refuse the save: a block has one anchor.
 fn heal_moved_anchors(
     blocks: &mut [import::ParsedBlock],
     loaded: &HashSet<&str>,
@@ -336,55 +345,27 @@ fn heal_moved_anchors(
 static MOVED_ANCHOR_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"(?:^|\s)(\^[A-Za-z0-9-]+)").expect("invalid moved-anchor regex"));
 
-/// The byte range in `content` of each `^word` outside fenced code and inline
-/// code spans whose word `names_block`.
+/// The byte range in `content` of each `^word` outside inline code spans whose
+/// word `names_block`.
 fn moved_anchors(content: &str, names_block: impl Fn(&str) -> bool) -> Vec<(usize, usize)> {
     let mut found = Vec::new();
-    let mut in_fence = false;
     let mut line_start = 0;
-    for (i, line) in content.split('\n').enumerate() {
-        if !content_line_is_code(line, i == 0, &mut in_fence) {
-            let spans = import::inline_code_spans(line);
-            for token in MOVED_ANCHOR_RE
-                .captures_iter(line)
-                .filter_map(|caps| caps.get(1))
-            {
-                let in_span = spans
-                    .iter()
-                    .any(|&(start, end)| token.start() >= start && token.start() < end);
-                if !in_span && names_block(&token.as_str()[1..]) {
-                    found.push((line_start + token.start(), line_start + token.end()));
-                }
+    for line in content.split('\n') {
+        let spans = import::inline_code_spans(line);
+        for token in MOVED_ANCHOR_RE
+            .captures_iter(line)
+            .filter_map(|caps| caps.get(1))
+        {
+            let in_span = spans
+                .iter()
+                .any(|&(start, end)| token.start() >= start && token.start() < end);
+            if !in_span && names_block(&token.as_str()[1..]) {
+                found.push((line_start + token.start(), line_start + token.end()));
             }
         }
         line_start += line.len() + 1;
     }
     found
-}
-
-/// Whether a line of a block's content is code, as the parser read the buffer
-/// the block came from: the first line, its markers already split off, opens
-/// a fence when it starts with backticks, a later line as the render writes
-/// it, and inside a fence an anchor line closes it. A code line the render
-/// escaped as an anchor line reads here as one, so a block whose code holds
-/// a line `^ID` naming a free page block can pair with that block.
-fn content_line_is_code(line: &str, first: bool, in_fence: &mut bool) -> bool {
-    if *in_fence && import::is_anchor_line(line.trim_start()) {
-        *in_fence = false;
-        return false;
-    }
-    let delimiter = if *in_fence {
-        import::is_source_fence_delimiter(line, true)
-    } else if first {
-        line.starts_with("```")
-    } else {
-        line.trim_start().starts_with("```")
-    };
-    let code = *in_fence || delimiter;
-    if delimiter {
-        *in_fence = !*in_fence;
-    }
-    code
 }
 
 /// `content` less the token at `start..end` and the one separator written
@@ -642,6 +623,9 @@ async fn place_blocks(
 ) -> Result<(), AppError> {
     let base_children = children_of(&base.parents);
     for (entry, children) in children_of(&buffer.parents).iter().enumerate() {
+        if children.is_empty() {
+            continue;
+        }
         let (parent, before) = match entry.checked_sub(1) {
             None => (page_id.to_owned(), Some(&base_children[0])),
             Some(row) => (
@@ -749,7 +733,7 @@ async fn place_children(
                 .position(|id| id == previous)
                 .expect("the child before is under the parent")
         });
-        let slot = i64::try_from(index).unwrap_or(i64::MAX);
+        let slot = i64::try_from(index).expect("a Vec index fits in i64");
         let id = match moving {
             Some(id) => {
                 move_block_in_tx(
@@ -895,18 +879,16 @@ async fn write_properties(
         tx.enqueue_background(op);
         save.report.properties_deleted += 1;
     }
-    if !changes.set.is_empty() {
-        apply_block_properties(
-            tx,
-            save.materializer,
-            save.device_id,
-            id,
-            &changes.set,
-            PropertyWrite::Edit,
-        )
-        .await?;
-        save.report.properties_set += u32::try_from(changes.set.len()).unwrap_or(u32::MAX);
-    }
+    let set = apply_block_properties(
+        tx,
+        save.materializer,
+        save.device_id,
+        id,
+        &changes.set,
+        PropertyWrite::Edit,
+    )
+    .await?;
+    save.report.properties_set += u32::try_from(set).unwrap_or(u32::MAX);
     if let Some(state) = changes.todo_state {
         let counter = if state.is_some() {
             &mut save.report.properties_set
@@ -974,8 +956,7 @@ pub async fn apply_page_source(
         page_id.as_str(),
         source,
         base_source,
-        force,
-        merge,
+        SourceSaveFlags { force, merge },
     ))
     .await
     .map_err(sanitize_internal_error)
@@ -1072,18 +1053,14 @@ mod tests {
         }
     }
 
-    /// A token in code, in an inline code span, naming no block of the page,
-    /// or naming one another bullet claims, is text.
+    /// A token in an inline code span, naming no block of the page, or naming
+    /// one another bullet claims, is text.
     #[test]
-    fn a_token_that_names_no_free_block_outside_code_is_text() {
-        let code =
-            format!("- ```\n  x ^{A}\n  ```\n  `y ^{A}` ^01J0000000000000000000000C\n  more\n");
+    fn a_token_that_names_no_free_block_outside_inline_code_is_text() {
+        let code = format!("- `y ^{A}` ^01J0000000000000000000000C\n  more\n");
         assert_eq!(
             healed(&code).unwrap(),
-            [(
-                format!("```\nx ^{A}\n```\n`y ^{A}` ^01J0000000000000000000000C\nmore"),
-                None
-            )]
+            [(format!("`y ^{A}` ^01J0000000000000000000000C\nmore"), None)]
         );
         assert_eq!(
             healed(&format!("- x ^{A} more\n- a ^{A}\n")).unwrap(),

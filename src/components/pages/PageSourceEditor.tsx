@@ -229,7 +229,7 @@ export function PageSourceEditor({ pageId, onClose }: PageSourceEditorProps): Re
         readOnly={saving}
         spellCheck={false}
         aria-label={t('pageSource.editorLabel')}
-        aria-describedby={`${draftNoteId} ${hintId}`}
+        aria-describedby={draftRestored ? `${draftNoteId} ${hintId}` : hintId}
         data-testid="page-source-editor"
         className="min-h-[50vh] [@media(pointer:coarse)]:min-h-[50vh] font-mono"
       />

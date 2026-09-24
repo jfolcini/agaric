@@ -24,7 +24,7 @@ function hasInlineTokens(text: string): boolean {
 }
 
 const TITLE_CLASS = cn(
-  'flex-1 text-xl font-semibold outline-hidden rounded-md px-1 cursor-text',
+  'flex-1 min-w-48 text-xl font-semibold outline-hidden rounded-md px-1 cursor-text',
   'focus:ring-2 focus:ring-ring/50',
   'hover:bg-accent/5 focus-within:bg-accent/5 transition-colors',
 )

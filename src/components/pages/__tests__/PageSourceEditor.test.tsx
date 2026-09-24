@@ -154,6 +154,16 @@ describe('PageSourceEditor loading', () => {
       expect(await axe(container)).toHaveNoViolations()
     })
   })
+
+  it('with no draft restored, is described by the hint alone', async () => {
+    renderEditor()
+    const textarea = await loadedEditor()
+
+    const ids = textarea.getAttribute('aria-describedby')?.split(' ') ?? []
+    expect(ids.map((id) => document.getElementById(id)?.textContent)).toEqual([
+      t('pageSource.hint'),
+    ])
+  })
 })
 
 describe('PageSourceEditor saving', () => {
@@ -301,7 +311,8 @@ describe('PageSourceEditor emptying the page', () => {
     const textarea = await loadedEditor()
     await replaceBuffer(user, textarea, '  \n')
 
-    await user.click(screen.getByRole('button', { name: t('action.save') }))
+    const save = screen.getByRole('button', { name: t('action.save') })
+    await user.click(save)
     const confirm = await screen.findByRole('alertdialog', {
       name: t('pageSource.deleteAllTitle'),
     })
@@ -310,6 +321,7 @@ describe('PageSourceEditor emptying the page', () => {
     await waitFor(() => {
       expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
     })
+    await waitFor(() => expect(save).toHaveFocus())
     expect(pageSource(PAGE_GETTING_STARTED)).toBe(base)
     expect(textarea.value).toBe('  \n')
     expect(onClose).not.toHaveBeenCalled()

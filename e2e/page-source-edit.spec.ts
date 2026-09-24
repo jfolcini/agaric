@@ -1,6 +1,15 @@
 import type { Locator, Page } from '@playwright/test'
+import { devices } from '@playwright/test'
 
-import { activeDialog, expect, focusBlockById, openPage, test, waitForBoot } from './helpers'
+import {
+  activeDialog,
+  expect,
+  focusBlockById,
+  openPage,
+  openPageMobile,
+  test,
+  waitForBoot,
+} from './helpers'
 
 /**
  * Source mode (#5140 Phase 4b): the page kebab's "Edit as Markdown" swaps the
@@ -20,8 +29,13 @@ const GS5 = '0000000000000000000BLOCK05'
 const WELCOME = 'Welcome to Agaric!'
 const HELLO = 'Hello, Agaric!'
 
+/** The page kebab: it opens source mode, and closing source mode focuses it again. */
+function pageActions(page: Page): Locator {
+  return page.getByRole('button', { name: 'Page actions', exact: true })
+}
+
 async function openSourceMode(page: Page): Promise<Locator> {
-  await page.getByRole('button', { name: 'Page actions', exact: true }).click()
+  await pageActions(page).click()
   await page.getByRole('menuitem', { name: 'Edit as Markdown', exact: true }).click()
   const editor = page.getByRole('textbox', { name: 'Markdown source', exact: true })
   await expect(editor).toHaveValue(new RegExp(`^- ${WELCOME} .* \\^${GS1}\n`))
@@ -85,6 +99,7 @@ test.describe('Edit as Markdown (#5140 Phase 4b)', () => {
     await page.getByRole('button', { name: 'Save', exact: true }).click()
 
     await expect(sourceEditor(page)).toHaveCount(0)
+    await expect(pageActions(page)).toBeFocused()
     await expect.poll(() => blockIds(page)).toEqual([GS3, GS2, GS1, GS4, GS5])
     await expect(staticBlock(page, GS1)).toContainText(HELLO)
   })
@@ -120,6 +135,7 @@ test.describe('Edit as Markdown (#5140 Phase 4b)', () => {
     await activeDialog(page).getByRole('button', { name: 'Merge', exact: true }).click()
 
     await expect(sourceEditor(page)).toHaveCount(0)
+    await expect(pageActions(page)).toBeFocused()
     await expect(staticBlock(page, GS1)).toContainText(HELLO)
     await expect(staticBlock(page, GS3)).toContainText(elsewhere)
     await expect.poll(() => blockIds(page)).toEqual([GS1, GS2, GS3, GS4, GS5])
@@ -144,7 +160,27 @@ test.describe('Edit as Markdown (#5140 Phase 4b)', () => {
     await page.getByRole('button', { name: 'Cancel', exact: true }).click()
 
     await expect(sourceEditor(page)).toHaveCount(0)
+    await expect(pageActions(page)).toBeFocused()
     await expect.poll(() => blockIds(page)).toEqual([GS1, GS2, GS3, GS4, GS5])
     await expect(staticBlock(page, GS1)).toContainText(WELCOME)
+  })
+})
+
+test.describe('Edit as Markdown on a 390 px phone', () => {
+  const iPhone13 = devices['iPhone 13']
+  test.use({
+    viewport: { width: 390, height: 844 },
+    hasTouch: iPhone13.hasTouch,
+    isMobile: iPhone13.isMobile,
+    deviceScaleFactor: iPhone13.deviceScaleFactor,
+    userAgent: iPhone13.userAgent,
+  })
+
+  test('the page kebab is on screen and opens the buffer', async ({ page }) => {
+    await waitForBoot(page)
+    await openPageMobile(page, PAGE)
+
+    await expect(pageActions(page)).toBeInViewport({ ratio: 1 })
+    await openSourceMode(page)
   })
 })

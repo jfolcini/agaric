@@ -301,7 +301,7 @@ async fn validate_parent_in_tx(
     Ok(())
 }
 
-/// Live children of `parent_id`: the slot an append resolves to.
+/// Live children of `parent_id`: the slot an append records (#5155).
 pub(crate) async fn live_child_count(
     tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
     parent_id: &str,
@@ -322,8 +322,12 @@ pub(crate) async fn live_child_count(
 /// append, which carries no `index`. With tombstoned siblings ahead of the live
 /// tail, `index + 1` (`index` being the live-child count, #5155) sorts before a
 /// live sibling, so both shapes — the sentinel, or a rank below the live tail —
-/// are lifted to the concrete rank here. A no-op when the engine ran; the op-log
-/// payload is untouched, only the projected SQL column.
+/// are lifted to the concrete rank here. When the engine ran, its rank is
+/// already past every live sibling it knows, so this is a no-op, except in the
+/// #2250 window, where SQL holds live siblings the engine lacks: that rank can
+/// sit below theirs and is lifted, which is harmless, since the block stays
+/// last among its live siblings. The op-log payload is untouched, only the
+/// projected SQL column.
 async fn restore_bare_append_position_in_tx(
     tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
     parent_id: Option<&str>,
@@ -409,11 +413,13 @@ pub async fn create_block_in_tx(
     }
 
     // 1b. #400: `index` is a 0-based slot; slot 0 ("first child") is valid and
-    // a stray negative clamps. #5155: an append under a parent records the slot
-    // it resolves to, the live-child count, so a later move of the block can
-    // be undone — a create with neither `index` nor `position` has no slot to
-    // restore. A top-level append keeps `None`: root slots are per-space in the
-    // engine but global in SQL, and nothing moves a top-level block.
+    // a stray negative clamps. #5155: an append under a parent records a slot,
+    // the live-child count, so a later move of the block can be undone — a
+    // create with neither `index` nor `position` has no slot to restore. The
+    // block lands at that slot, before any trailing tombstone, as Enter at the
+    // end of the last block places one; a slotless append went after them. A
+    // top-level append keeps `None`: root slots are per-space in the engine but
+    // global in SQL, and nothing moves a top-level block.
     let appended = index.is_none();
     let index = match (index, parent_id.as_deref()) {
         (Some(i), _) => Some(i.max(0)),

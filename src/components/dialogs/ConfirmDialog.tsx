@@ -132,6 +132,16 @@ export function ConfirmDialog({
 }: ConfirmDialogProps): React.ReactElement {
   const { t } = useTranslation()
   const [pending, setPending] = useState(false)
+  // No Trigger opens this dialog, so Radix would leave focus on `body` when it
+  // closes: hand it back to whatever had it when the dialog opened.
+  const [wasOpen, setWasOpen] = useState(open)
+  const [openedFrom, setOpenedFrom] = useState<HTMLElement | null>(null)
+  if (open !== wasOpen) {
+    setWasOpen(open)
+    if (open) {
+      setOpenedFrom(document.activeElement instanceof HTMLElement ? document.activeElement : null)
+    }
+  }
 
   // exactOptionalPropertyTypes: i18next's t() overload set rejects an
   // explicit `undefined` for the second arg, so we only pass `values`
@@ -224,7 +234,14 @@ export function ConfirmDialog({
 
   return (
     <Root open={open} onOpenChange={onOpenChange}>
-      <Content className={className} data-testid={contentTestId}>
+      <Content
+        className={className}
+        data-testid={contentTestId}
+        onCloseAutoFocus={(event) => {
+          event.preventDefault()
+          openedFrom?.focus()
+        }}
+      >
         <Header>
           <Title>{resolvedTitle}</Title>
           {/* Description renders inline as a sibling so we keep markup parity

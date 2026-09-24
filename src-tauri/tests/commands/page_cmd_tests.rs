@@ -2783,8 +2783,10 @@ async fn save_source(
         page.as_str(),
         source.to_owned(),
         base.to_owned(),
-        force,
-        false,
+        SourceSaveFlags {
+            force,
+            merge: false,
+        },
     )
     .await;
     settle(mat).await;
@@ -2807,8 +2809,10 @@ async fn merge_source(
         page.as_str(),
         source.to_owned(),
         base.to_owned(),
-        false,
-        true,
+        SourceSaveFlags {
+            force: false,
+            merge: true,
+        },
     )
     .await;
     settle(mat).await;
@@ -4203,8 +4207,7 @@ async fn apply_page_source_op_refs_undo_the_whole_save() {
         page.as_str(),
         source,
         base.clone(),
-        false,
-        false,
+        SourceSaveFlags::default(),
     ))
     .await
     .unwrap();
@@ -4475,8 +4478,10 @@ async fn apply_page_source_merge_op_refs_undo_the_whole_save() {
         page.as_str(),
         source,
         base,
-        false,
-        true,
+        SourceSaveFlags {
+            force: false,
+            merge: true,
+        },
     ))
     .await
     .unwrap();
