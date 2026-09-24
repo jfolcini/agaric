@@ -15,7 +15,7 @@
 
 import { invoke } from '@tauri-apps/api/core'
 import type { InvokeArgs } from '@tauri-apps/api/core'
-import { render, screen, waitFor, within } from '@testing-library/react'
+import { act, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import type React from 'react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
@@ -1894,26 +1894,79 @@ describe('PageHeader export flushes the active draft first (#2969)', () => {
   })
 })
 
-// ── View as Markdown (#5140) ───────────────────────────────────────
+// ── Edit as Markdown (#5140) ───────────────────────────────────────
 
-describe('PageHeader View as Markdown', () => {
-  it('opens the source dialog with the page buffer from the kebab menu', async () => {
+describe('PageHeader Edit as Markdown', () => {
+  it('the kebab row calls onEditSource and closes the menu', async () => {
     const user = userEvent.setup()
-    const buffer = '- first ^01J0000000000000000000000A\n  - child ^01J0000000000000000000000B\n'
-    const baseImpl = mockedInvoke.getMockImplementation()
-    mockedInvoke.mockImplementation(async (cmd: string, args?: InvokeArgs) => {
-      if (cmd === 'get_page_source') return buffer
-      return baseImpl?.(cmd, args)
+    const onEditSource = vi.fn()
+
+    renderPageHeader(<PageHeader pageId="PAGE_1" title="Test Page" onEditSource={onEditSource} />)
+
+    await user.click(screen.getByRole('button', { name: /page actions/i }))
+    await user.click(await screen.findByRole('menuitem', { name: t('pageSource.edit') }))
+
+    expect(onEditSource).toHaveBeenCalledOnce()
+    await waitFor(() => {
+      expect(screen.queryByRole('menu', { name: /page actions/i })).toBeNull()
     })
+  })
+
+  // The source editor focuses its textarea once its load resolves, after the
+  // menu has started closing.
+  it('closing the menu leaves focus where the row put it', async () => {
+    const user = userEvent.setup()
+    const elsewhere = document.createElement('textarea')
+    document.body.append(elsewhere)
+    const focusElsewhereLater = () => {
+      void Promise.resolve().then(() => elsewhere.focus())
+    }
+    try {
+      renderPageHeader(
+        <PageHeader pageId="PAGE_1" title="Test Page" onEditSource={focusElsewhereLater} />,
+      )
+
+      await user.click(screen.getByRole('button', { name: /page actions/i }))
+      await user.click(await screen.findByRole('menuitem', { name: t('pageSource.edit') }))
+      await waitFor(() => {
+        expect(screen.queryByRole('menu', { name: /page actions/i })).toBeNull()
+      })
+      // Radix hands focus back on a zero-delay timer once the menu unmounts.
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 0))
+      })
+
+      expect(elsewhere).toHaveFocus()
+    } finally {
+      elsewhere.remove()
+    }
+  })
+
+  it('closing the menu with Escape returns focus to the kebab', async () => {
+    const user = userEvent.setup()
+    renderPageHeader(<PageHeader pageId="PAGE_1" title="Test Page" onEditSource={vi.fn()} />)
+    const kebab = screen.getByRole('button', { name: /page actions/i })
+
+    await user.click(kebab)
+    const menu = await screen.findByRole('menu', { name: /page actions/i })
+    await waitFor(() => {
+      expect(within(menu).getAllByRole('menuitem')[0]).toHaveFocus()
+    })
+    await user.keyboard('{Escape}')
+
+    await waitFor(() => {
+      expect(kebab).toHaveFocus()
+    })
+  })
+
+  it('offers no "Edit as Markdown" row without onEditSource', async () => {
+    const user = userEvent.setup()
 
     renderPageHeader(<PageHeader pageId="PAGE_1" title="Test Page" />)
 
     await user.click(screen.getByRole('button', { name: /page actions/i }))
-    await user.click(await screen.findByRole('menuitem', { name: t('pageHeader.viewMarkdown') }))
-
-    const dialog = await screen.findByRole('dialog', { name: t('pageSource.title') })
-    expect((await within(dialog).findByTestId('page-source-content')).textContent).toBe(buffer)
-    expect(mockedInvoke).toHaveBeenCalledWith('get_page_source', { pageId: 'PAGE_1' })
+    const menu = await screen.findByRole('menu', { name: /page actions/i })
+    expect(within(menu).queryByRole('menuitem', { name: t('pageSource.edit') })).toBeNull()
   })
 })
 

@@ -14,7 +14,7 @@
 import type { StoreApi } from 'zustand'
 
 import { retryOnPoolBusy, unwrap } from '@/lib/app-error'
-import type { BlockRow, OpRef, PasteInput } from '@/lib/bindings'
+import type { BlockRow, OpRef, PageSourceReport, PasteInput } from '@/lib/bindings'
 import { commands } from '@/lib/bindings'
 import { newBlockId } from '@/lib/block-id'
 import { computeIndentedBlocks, findPrevSiblingAt, planSplit } from '@/lib/block-tree-ops'
@@ -51,10 +51,11 @@ import { useUndoStore } from '@/stores/undo'
  *
  * #1530: every local block/link/page CRUD op (`createBelow`, `edit`, `remove`,
  * `reorder`, `moveToParent`, `moveBlocks`, `indent`, `dedent`, `moveUp`,
- * `moveDown`, `splitBlock`, `pasteBlocks`, `duplicateBlock`) funnels through
- * here after a successful write, so it is the single funnel for "this page's
- * block/link structure just changed locally." `edit` is included deliberately —
- * editing a block's text can add or remove a `[[link]]`, which is a graph EDGE.
+ * `moveDown`, `splitBlock`, `pasteBlocks`, `duplicateBlock`, `applyPageSource`)
+ * funnels through here after a successful write, so it is the single funnel
+ * for "this page's block/link structure just changed locally." `edit` is
+ * included deliberately — editing a block's text can add or remove a
+ * `[[link]]`, which is a graph EDGE.
  * Bumping the structure counter here invalidates `GraphView`'s cache so the
  * next graph read reflects the new nodes/edges instead of stale data until the
  * TTL. The `appendBlock` path bumps it separately because that path does not
@@ -165,6 +166,7 @@ export function createReducers({
   | 'moveDown'
   | 'pasteBlocks'
   | 'duplicateBlock'
+  | 'applyPageSource'
   | 'appendBlock'
 > {
   return {
@@ -1179,6 +1181,24 @@ export function createReducers({
         notify.error(i18n.t('blockTree.duplicateFailed'))
         return []
       }
+    },
+
+    applyPageSource: async (
+      source: string,
+      baseSource: string,
+      force: boolean,
+    ): Promise<PageSourceReport> => {
+      const { rootParentId } = get()
+      if (rootParentId == null) throw new Error('applyPageSource needs a page')
+      // #4391 — see `pasteBlocks`.
+      const spaceId = useSpaceStore.getState().currentSpaceId
+      const resp = await retryOnPoolBusy(() =>
+        commands.applyPageSource(rootParentId, source, baseSource, force).then(unwrap),
+      )
+      notifyUndoNewAction(rootParentId, resp.op_refs)
+      announceCreatedNames(resp.names_created, spaceId)
+      await get().load()
+      return resp
     },
 
     appendBlock: (row: BlockRow) => {

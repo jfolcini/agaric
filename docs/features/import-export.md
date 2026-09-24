@@ -41,7 +41,7 @@ In the **PageHeaderMenu** kebab → *Export as Markdown* (or `Ctrl+Shift+E`).
 - A YAML front-matter block carries the page's properties (todo state, dates, tags, custom properties).
 - Inline `[[links]]` and `#tags` are written as their textual equivalents, and both round-trip: re-importing the file resolves them back into page references and tags.
 
-*View as Markdown*, next in the same kebab, opens a read-only dialog with the page as its source-mode buffer (one line per block ending in its `^ID` anchor, children indented two spaces, `key:: value` property lines, `[ ]` / `[x]` tasks; no title, front-matter or attachment lines) and a **Copy** button.
+*Edit as Markdown*, next in the same kebab, edits the page as its source buffer: a `-` bullet per block ending in its `^ID` anchor, children indented two spaces, `key:: value` property lines, `[ ]` / `[x]` tasks, and no title, front-matter or attachment lines (see [editor.md](editor.md#edit-as-markdown)). Block copy / paste and *Duplicate* go through the same grammar, so a copy keeps its task state, properties and nesting, and a multi-line block stays one block.
 
 ### Export-as-ZIP (Settings → Data)
 

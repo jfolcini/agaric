@@ -72,6 +72,16 @@ Drag-handle on the left gutter (or anywhere with a long-press on touch). The dro
 
 You cannot drop a block into its own subtree.
 
+## Edit as Markdown
+
+Page kebab → *Edit as Markdown* swaps the page's blocks for one text box holding the page as markdown: a `-` bullet per block, children indented two spaces, `key:: value` property lines, `[ ]` / `[x]` tasks, and each block's `^ID` anchor at its end. The title, front-matter and attachments keep their own UIs and are not in it.
+
+- **Anchors keep blocks.** A bullet with a `^ID` stays that block: edit its text, or move the bullet to reorder or re-nest it. Removing a bullet deletes its block, a bullet without a `^ID` creates one, and joining two bullets deletes the first block.
+- `[[Page]]` and `#tag` resolve in the page's space as import resolves them, creating what does not exist yet.
+- **Save** (or `Ctrl+Enter`) writes the whole buffer as one change, so one page-level `Ctrl+Z` undoes it. Saving an empty buffer asks first, since it deletes every block. **Cancel** throws the buffer away.
+- **If the page changed elsewhere** (another device, an agent, another tab) since you opened the buffer, Save lists what changed there instead of saving. *Reload* swaps your text for the page as it is now, *Keep editing* leaves your text so you can copy it out, and *Overwrite* saves your text over those changes: edits made there are reverted, blocks added there are deleted, blocks deleted there come back as new copies, and a page renamed there is linked by its old name, which creates a new page.
+- **Unsaved text is kept** on this device as a draft and restored the next time you open *Edit as Markdown* on that page, until you Save or Cancel. A restored draft still catches what changed on the page since.
+
 ## File attachments
 
 - **Drag-and-drop** files into the editor.

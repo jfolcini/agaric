@@ -20,6 +20,7 @@ import { BlockTree } from '@/components/editor/BlockTree'
 import { LinkPreviewTooltip } from '@/components/LinkPreviewTooltip'
 import { PageHeader } from '@/components/pages/PageHeader'
 import { PageMetadataBar } from '@/components/pages/PageMetadataBar'
+import { PageSourceEditor } from '@/components/pages/PageSourceEditor'
 import { PagesTreeSection } from '@/components/pages/PagesTreeSection'
 import { unwrap } from '@/lib/app-error'
 import { commands } from '@/lib/bindings'
@@ -243,6 +244,17 @@ function PageEditorInner({
     }
   }, [pageId])
 
+  // #5140 — source mode ("Edit as Markdown") swaps the block tree for the
+  // page's markdown buffer. Tagged with its page like `zoom`, so navigating
+  // away leaves it.
+  const [sourcePageId, setSourcePageId] = useState<string | null>(null)
+  const sourceMode = sourcePageId === pageId && isTagPage === false
+  const handleEditSource = useCallback(() => {
+    setFocused(null)
+    setSourcePageId(pageId)
+  }, [pageId, setFocused])
+  const handleCloseSource = useCallback(() => setSourcePageId(null), [])
+
   // Clear undo state for the previous page when navigating away or unmounting
   useEffect(
     () => () => {
@@ -331,25 +343,34 @@ function PageEditorInner({
       onPointerDown={handleBackgroundMouseDown}
     >
       {/* Header: back button + editable title + tag badges */}
-      <PageHeader pageId={pageId} title={title} onBack={onBack} />
+      <PageHeader
+        pageId={pageId}
+        title={title}
+        onBack={onBack}
+        onEditSource={isTagPage === false && !sourceMode ? handleEditSource : undefined}
+      />
 
-      {/* Block tree — loads children of pageId. */}
-      {isTagPage !== true && (
-        <BlockTree
-          parentId={pageId}
-          autoCreateFirstBlock={isTagPage === false}
-          onNavigateToPage={onNavigateToPage}
-          onRevealSettled={handleRevealSettled}
-          revealNonce={revealNonce}
-          onZoomChange={handleZoomChange}
-        />
-      )}
+      {sourceMode ? (
+        <PageSourceEditor pageId={pageId} onClose={handleCloseSource} />
+      ) : (
+        isTagPage !== true && (
+          <>
+            {/* Block tree — loads children of pageId. */}
+            <BlockTree
+              parentId={pageId}
+              autoCreateFirstBlock={isTagPage === false}
+              onNavigateToPage={onNavigateToPage}
+              onRevealSettled={handleRevealSettled}
+              revealNonce={revealNonce}
+              onZoomChange={handleZoomChange}
+            />
 
-      {/* Add block button — directly beneath the last block */}
-      {isTagPage !== true && (
-        <div>
-          <AddBlockButton onClick={handleAddBlock} />
-        </div>
+            {/* Add block button — directly beneath the last block */}
+            <div>
+              <AddBlockButton onClick={handleAddBlock} />
+            </div>
+          </>
+        )
       )}
 
       {/* Due/Done panels — shown on date-formatted pages (mirrors DaySection daily view) */}

@@ -119,7 +119,7 @@ The implementation **does not bump `CURRENT_CURSOR_VERSION`** (it stays at 1). I
 
 A cursor whose `position` slot does not match the requested sort is rejected by `validate_pages_metadata_cursor` with `AppError::validation_coded(ValidationCode::RequiresRefresh, "cursor sort mismatch (expected …)")`. The frontend recognises the structured `RequiresRefresh` code (#2251 promoted the former message prefix to a `code` field; `validationCode(err) === ValidationCode.RequiresRefresh` in `withCursorRecovery`) as a recovery signal: drop the cursor, refetch from page 1, and (if the user is mid-scroll) surface a "Sort changed — refresh to continue" toast.
 
-**This is the only `RequiresRefresh` consumer today.** Any future paginator that introduces cross-cursor incompatibility (sort change, schema change, filter change that invalidates keysets) should use the same `AppError::validation_coded(ValidationCode::RequiresRefresh, …)` shape so the frontend's recovery path stays single.
+**The source-mode save is the other `RequiresRefresh` consumer.** `apply_page_source` refuses a buffer whose base is no longer the page's source with the same code, and `PageSourceEditor` answers it by showing what changed instead of saving. Any future paginator that introduces cross-cursor incompatibility (sort change, schema change, filter change that invalidates keysets) should use the same `AppError::validation_coded(ValidationCode::RequiresRefresh, …)` shape so the frontend's recovery path stays single.
 
 ## Metadata aggregation
 

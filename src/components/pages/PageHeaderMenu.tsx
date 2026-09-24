@@ -44,7 +44,8 @@ export interface PageHeaderMenuProps {
   onToggleTemplate: () => void
   onToggleJournalTemplate: () => void
   onExport: () => void
-  onViewSource: () => void
+  /** Opens source mode; the row is hidden without it. */
+  onEditSource?: (() => void) | undefined
   onDeleteRequest: () => void
   onOpenInNewTab?: (() => void) | undefined
   /**
@@ -77,7 +78,7 @@ export function PageHeaderMenu({
   onToggleTemplate,
   onToggleJournalTemplate,
   onExport,
-  onViewSource,
+  onEditSource,
   onDeleteRequest,
   onOpenInNewTab,
   isSpaceBlock = false,
@@ -117,7 +118,7 @@ export function PageHeaderMenu({
     'toggleTemplate',
     'toggleJournalTemplate',
     'export',
-    'viewSource',
+    ...(onEditSource != null ? ['editSource'] : []),
     ...(showMoveEntry ? ['moveTo'] : []),
     'delete',
   ]
@@ -261,6 +262,11 @@ export function PageHeaderMenu({
           tabIndex={-1}
           aria-label={t('pageHeader.pageActions')}
           onKeyDown={handleMenuKeyDown}
+          // Back to the kebab only when closing left focus nowhere: a row that
+          // focused something (Edit as Markdown's textarea) keeps it.
+          onCloseAutoFocus={(e) => {
+            if (document.activeElement !== document.body) e.preventDefault()
+          }}
         >
           {onOpenInNewTab != null && !isMobile && (
             <>
@@ -337,15 +343,17 @@ export function PageHeaderMenu({
               {getShortcutKeys('exportPageMarkdown')}
             </span>
           </button>
-          <button
-            type="button"
-            className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-sm hover:bg-accent touch-target focus-ring-visible"
-            onClick={onViewSource}
-            {...menuItemProps('viewSource')}
-          >
-            <FileCode className="h-3.5 w-3.5" />
-            {t('pageHeader.viewMarkdown')}
-          </button>
+          {onEditSource != null && (
+            <button
+              type="button"
+              className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-sm hover:bg-accent touch-target focus-ring-visible"
+              onClick={onEditSource}
+              {...menuItemProps('editSource')}
+            >
+              <FileCode className="h-3.5 w-3.5" />
+              {t('pageSource.edit')}
+            </button>
+          )}
           {showMoveEntry && (
             <>
               <hr className="my-1 h-px bg-border border-none" />
