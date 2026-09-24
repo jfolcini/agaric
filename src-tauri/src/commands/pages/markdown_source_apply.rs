@@ -8,8 +8,10 @@
 //! gave it.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::sync::LazyLock;
 
 use agaric_core::error::ValidationCode;
+use regex::Regex;
 use serde::Serialize;
 
 use super::*;
@@ -93,14 +95,8 @@ pub async fn apply_page_source_inner(
     let mut data = load_page_export_data(&mut tx, page_id.as_str()).await?;
     data.name_snapshot = load_name_snapshot(&mut tx, &data).await?;
     let (base, stale) = read_base(&data, &base_source, merge)?;
-    let parsed = import::parse_source_outline(&source);
-    let mut warnings = parsed.warnings;
-    let blocks = if stale {
-        let older = import::parse_source_outline(&base_source).blocks;
-        merge::merge_outlines(older, &base.blocks, parsed.blocks, &mut warnings)?
-    } else {
-        parsed.blocks
-    };
+    let mut warnings = Vec::new();
+    let blocks = read_buffer(&source, &base_source, &base, stale, &mut warnings)?;
     let mut buffer = pair_blocks(&base, blocks, force, &mut warnings)?;
     // Boxed for the reason `duplicate_block_inner` gives.
     let (mut tx, names_created) = Box::pin(resolve_buffer_names(
@@ -209,18 +205,47 @@ struct Buffer {
     edited: Vec<bool>,
 }
 
+/// The buffer's blocks as the save pairs them. An anchor that is not a block
+/// id is text, and one an edit moved off the end of its block still names it
+/// ([`heal_moved_anchors`]), among the blocks of `base_source`, the source the
+/// edit started from. Then, when the page changed since (`stale`), its changes
+/// are folded in, so the merge compares a block whose anchor an edit moved as
+/// that block, edited.
+fn read_buffer(
+    source: &str,
+    base_source: &str,
+    base: &Base,
+    stale: bool,
+    warnings: &mut Vec<String>,
+) -> Result<Vec<import::ParsedBlock>, AppError> {
+    let parsed = import::parse_source_outline(source);
+    warnings.extend(parsed.warnings);
+    let mut blocks = parsed.blocks;
+    blocks.iter_mut().for_each(import::restore_text_anchor);
+    let older = stale.then(|| import::parse_source_outline(base_source).blocks);
+    let loaded: HashSet<&str> = older
+        .as_ref()
+        .unwrap_or(&base.blocks)
+        .iter()
+        .filter_map(|block| block.block_anchor.as_deref())
+        .collect();
+    heal_moved_anchors(&mut blocks, &loaded)?;
+    match older {
+        Some(older) => merge::merge_outlines(older, &base.blocks, blocks, warnings),
+        None => Ok(blocks),
+    }
+}
+
 /// `blocks` paired with the base by anchor. An anchor written twice is
 /// refused, and so is one that names no block of the page's source, unless
 /// `force`: then its block is saved as a new one, with a warning, and the block
-/// the anchor names, wherever it is, is left alone. An anchor that is not a
-/// block id is text.
+/// the anchor names, wherever it is, is left alone.
 fn pair_blocks(
     base: &Base,
-    mut blocks: Vec<import::ParsedBlock>,
+    blocks: Vec<import::ParsedBlock>,
     force: bool,
     warnings: &mut Vec<String>,
 ) -> Result<Buffer, AppError> {
-    blocks.iter_mut().for_each(restore_text_anchor);
     let slots: HashMap<&str, usize> = base
         .ids
         .iter()
@@ -267,19 +292,121 @@ fn pair_blocks(
     })
 }
 
-/// Put a trailing ` ^word` whose word is not a block id back into the block's
-/// text: it names no block, so it is what the user wrote. The parse took the
-/// whitespace around it, so a tab or line break before it comes back as a
-/// space, and whitespace after it is lost.
-fn restore_text_anchor(block: &mut import::ParsedBlock) {
-    let Some(word) = block
-        .block_anchor
-        .take_if(|word| BlockId::from_string(word.as_str()).is_err())
-    else {
-        return;
+/// A `^ID` an edit moved off the end of its block, by text typed after it or
+/// a line under it, still names the block: an unanchored block whose text
+/// holds, outside code, exactly one `^ID` of a `loaded` block no other block
+/// claims takes it as its anchor, and the token leaves the text. Two or more
+/// refuse the save: a block has one anchor.
+fn heal_moved_anchors(
+    blocks: &mut [import::ParsedBlock],
+    loaded: &HashSet<&str>,
+) -> Result<(), AppError> {
+    let mut claimed: HashSet<String> = blocks
+        .iter()
+        .filter_map(|block| block.block_anchor.clone())
+        .collect();
+    for block in blocks
+        .iter_mut()
+        .filter(|block| block.block_anchor.is_none())
+    {
+        let tokens = moved_anchors(&block.content, |id| {
+            loaded.contains(id) && !claimed.contains(id)
+        });
+        let (start, end) = match tokens.as_slice() {
+            [] => continue,
+            [token] => *token,
+            [first, second, ..] => {
+                return Err(AppError::validation(format!(
+                    "{} and {} are written in one block; a block has one anchor",
+                    &block.content[first.0..first.1],
+                    &block.content[second.0..second.1]
+                )));
+            }
+        };
+        let id = block.content[start + 1..end].to_string();
+        block.content = without_token(&block.content, start, end);
+        claimed.insert(id.clone());
+        block.block_anchor = Some(id);
+    }
+    Ok(())
+}
+
+/// A `^word` at a line start or after whitespace, as the parser reads a
+/// trailing one.
+static MOVED_ANCHOR_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?:^|\s)(\^[A-Za-z0-9-]+)").expect("invalid moved-anchor regex"));
+
+/// The byte range in `content` of each `^word` outside fenced code and inline
+/// code spans whose word `names_block`.
+fn moved_anchors(content: &str, names_block: impl Fn(&str) -> bool) -> Vec<(usize, usize)> {
+    let mut found = Vec::new();
+    let mut in_fence = false;
+    let mut line_start = 0;
+    for (i, line) in content.split('\n').enumerate() {
+        if !content_line_is_code(line, i == 0, &mut in_fence) {
+            let spans = import::inline_code_spans(line);
+            for token in MOVED_ANCHOR_RE
+                .captures_iter(line)
+                .filter_map(|caps| caps.get(1))
+            {
+                let in_span = spans
+                    .iter()
+                    .any(|&(start, end)| token.start() >= start && token.start() < end);
+                if !in_span && names_block(&token.as_str()[1..]) {
+                    found.push((line_start + token.start(), line_start + token.end()));
+                }
+            }
+        }
+        line_start += line.len() + 1;
+    }
+    found
+}
+
+/// Whether a line of a block's content is code, as the parser read the buffer
+/// the block came from: the first line, its markers already split off, opens
+/// a fence when it starts with backticks, a later line as the render writes
+/// it, and inside a fence an anchor line closes it. A code line the render
+/// escaped as an anchor line reads here as one, so a block whose code holds
+/// a line `^ID` naming a free page block can pair with that block.
+fn content_line_is_code(line: &str, first: bool, in_fence: &mut bool) -> bool {
+    if *in_fence && import::is_anchor_line(line.trim_start()) {
+        *in_fence = false;
+        return false;
+    }
+    let delimiter = if *in_fence {
+        import::is_source_fence_delimiter(line, true)
+    } else if first {
+        line.starts_with("```")
+    } else {
+        line.trim_start().starts_with("```")
     };
-    let separator = if block.content.is_empty() { "" } else { " " };
-    block.content = format!("{}{separator}^{word}", block.content);
+    let code = *in_fence || delimiter;
+    if delimiter {
+        *in_fence = !*in_fence;
+    }
+    code
+}
+
+/// `content` less the token at `start..end` and the one separator written
+/// with it: the whitespace before it, or at a line start the space after it,
+/// or the line break of a line that is the token alone.
+fn without_token(content: &str, start: usize, end: usize) -> String {
+    let (before, after) = (&content[..start], &content[end..]);
+    let at_line_start = before.is_empty() || before.ends_with('\n');
+    let (before, after) = if !at_line_start {
+        let separator = before.chars().next_back().map_or(0, char::len_utf8);
+        (&before[..before.len() - separator], after)
+    } else if let Some(rest) = after.strip_prefix(' ') {
+        (before, rest)
+    } else if after.is_empty() || after.starts_with('\n') {
+        match before.strip_suffix('\n') {
+            Some(rest) => (rest, after),
+            None => (before, after.strip_prefix('\n').unwrap_or(after)),
+        }
+    } else {
+        (before, after)
+    };
+    format!("{before}{after}")
 }
 
 /// Each block's parent among `blocks`, `None` for a top-level one, nested as
@@ -908,6 +1035,80 @@ mod tests {
         assert_eq!(
             staying(&live, &children(&[Some("X"), Some("A"), None])),
             [false, true, false]
+        );
+    }
+
+    const A: &str = "01J0000000000000000000000A";
+    const B: &str = "01J0000000000000000000000B";
+
+    /// `md` parsed as a source buffer and healed over a page holding A and B:
+    /// each block's content and anchor.
+    fn healed(md: &str) -> Result<Vec<(String, Option<String>)>, AppError> {
+        let mut blocks = import::parse_source_outline(md).blocks;
+        heal_moved_anchors(&mut blocks, &HashSet::from([A, B]))?;
+        Ok(blocks
+            .into_iter()
+            .map(|block| (block.content, block.block_anchor))
+            .collect())
+    }
+
+    /// The token leaves the text with the one separator written with it.
+    #[test]
+    fn a_moved_anchor_names_its_block_and_leaves_the_text() {
+        for (md, content) in [
+            (format!("- foo ^{A} bar\n"), "foo bar"),
+            (format!("- foo ^{A}.\n"), "foo."),
+            (format!("- foo ^{A}\n  more\n"), "foo\nmore"),
+            (format!("- foo\n  ^{A} bar\n"), "foo\nbar"),
+            (format!("- foo\n  ^{A}\n  more\n"), "foo\nmore"),
+            (format!("- ^{A}\n  more\n"), "more"),
+            (format!("- ```\n  x\n  ^{A}\n  more\n"), "```\nx\nmore"),
+        ] {
+            assert_eq!(
+                healed(&md).unwrap(),
+                [(content.to_string(), Some(A.to_string()))],
+                "{md:?}"
+            );
+        }
+    }
+
+    /// A token in code, in an inline code span, naming no block of the page,
+    /// or naming one another bullet claims, is text.
+    #[test]
+    fn a_token_that_names_no_free_block_outside_code_is_text() {
+        let code =
+            format!("- ```\n  x ^{A}\n  ```\n  `y ^{A}` ^01J0000000000000000000000C\n  more\n");
+        assert_eq!(
+            healed(&code).unwrap(),
+            [(
+                format!("```\nx ^{A}\n```\n`y ^{A}` ^01J0000000000000000000000C\nmore"),
+                None
+            )]
+        );
+        assert_eq!(
+            healed(&format!("- x ^{A} more\n- a ^{A}\n")).unwrap(),
+            [
+                (format!("x ^{A} more"), None),
+                ("a".to_string(), Some(A.to_string())),
+            ]
+        );
+    }
+
+    /// Two free anchors in one block are refused, naming both; with one of
+    /// them claimed elsewhere, the other heals.
+    #[test]
+    fn two_moved_anchors_in_one_block_are_refused() {
+        let err = healed(&format!("- a ^{A} and ^{B} joined\n")).unwrap_err();
+        assert!(
+            matches!(&err, AppError::Validation { message, .. } if message.contains(A) && message.contains(B)),
+            "{err:?}"
+        );
+        assert_eq!(
+            healed(&format!("- a ^{A} and ^{B} joined\n- b ^{B}\n")).unwrap(),
+            [
+                (format!("a and ^{B} joined"), Some(A.to_string())),
+                ("b".to_string(), Some(B.to_string())),
+            ]
         );
     }
 }

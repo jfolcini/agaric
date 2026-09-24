@@ -3459,6 +3459,127 @@ async fn apply_page_source_keeps_an_anchor_that_is_not_a_block_id_as_text() {
     );
 }
 
+/// An anchor an edit left mid-block — a line typed under it, text typed after
+/// it, a code block under it — still names its block: the block is edited,
+/// not deleted and created anew, and the anchor leaves its text.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn apply_page_source_keeps_a_block_whose_anchor_an_edit_moved() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let page = dup_page(&pool, &mat, "Moved").await;
+    let a = dup_child(&pool, &mat, &page, "foo").await;
+    settle(&mat).await;
+
+    for (what, edited, content) in [
+        (
+            "a line typed under the anchor",
+            format!("- foo ^{a}\n  more\n"),
+            "foo\nmore",
+        ),
+        (
+            "text typed after the anchor",
+            format!("- foo ^{a} bar\n"),
+            "foo bar",
+        ),
+        (
+            "a code block typed under the anchor",
+            format!("- foo ^{a}\n  ```\n  x\n  ```\n"),
+            "foo\n```\nx\n```",
+        ),
+    ] {
+        let base = page_source(&pool, &page).await;
+        let before = last_seq(&pool).await;
+        let report = save_source(&pool, &mat, &page, &edited, &base, false)
+            .await
+            .unwrap();
+        assert_eq!(
+            counts(&report),
+            [0, 1, 0, 0, 0, 0],
+            "{what}: the block is edited"
+        );
+        assert!(report.warnings.is_empty(), "{what}: {:?}", report.warnings);
+        assert_eq!(ops_after(&pool, before).await, vec!["edit_block"], "{what}");
+        assert_eq!(
+            dup_children(&pool, &page).await,
+            vec![(a.clone().into_string(), content.to_owned())],
+            "{what}: the block is the same block, with the anchor gone from its text"
+        );
+    }
+}
+
+/// Two anchors of the page inside one unanchored block would name two blocks:
+/// the save is refused, naming both, and writes nothing.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn apply_page_source_refuses_a_block_holding_two_moved_anchors() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let page = dup_page(&pool, &mat, "Two").await;
+    let a = dup_child(&pool, &mat, &page, "a").await;
+    let b = dup_child(&pool, &mat, &page, "b").await;
+    settle(&mat).await;
+    let base = page_source(&pool, &page).await;
+    let before = last_seq(&pool).await;
+
+    let result = save_source(
+        &pool,
+        &mat,
+        &page,
+        &format!("- a ^{a} and ^{b} joined\n"),
+        &base,
+        false,
+    )
+    .await;
+
+    assert!(
+        matches!(&result, Err(AppError::Validation { message, .. })
+            if message.contains(a.as_str()) && message.contains(b.as_str())),
+        "refused naming both anchors: {result:?}"
+    );
+    assert_eq!(ops_after(&pool, before).await, Vec::<String>::new());
+    assert_eq!(page_source(&pool, &page).await, base, "nothing is written");
+}
+
+/// A property line the save would not store — a reserved key such as
+/// `repeat` — is what the user typed: it stays in the block's text instead of
+/// being dropped with a warning.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn apply_page_source_keeps_a_reserved_property_line_as_text() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let page = dup_page(&pool, &mat, "Reserved").await;
+    let a = dup_child(&pool, &mat, &page, "weekly").await;
+    settle(&mat).await;
+    let base = page_source(&pool, &page).await;
+
+    let report = save_source(
+        &pool,
+        &mat,
+        &page,
+        &format!("- weekly ^{a}\n  repeat:: +1w\n"),
+        &base,
+        false,
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(
+        counts(&report),
+        [0, 1, 0, 0, 0, 0],
+        "the block is edited and no property is set"
+    );
+    assert!(report.warnings.is_empty(), "{:?}", report.warnings);
+    assert_eq!(
+        dup_children(&pool, &page).await,
+        vec![(a.clone().into_string(), "weekly\nrepeat:: +1w".to_owned())],
+        "the line is the block's text"
+    );
+    assert_eq!(
+        dup_storage(&pool, &a).await,
+        vec!["columns todo=None priority=None scheduled=None due=None"],
+        "and not a property"
+    );
+}
+
 /// A block moved under a bullet the same save creates lands under it: the
 /// bullet is created before its children are placed.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -4243,6 +4364,90 @@ async fn apply_page_source_merge_keeps_an_edit_over_the_other_sides_delete() {
         "a new block, not the deleted one"
     );
     assert_eq!(children[2].0, c.into_string());
+}
+
+/// A line typed under a block's anchor while the page edited another block
+/// and moved this one: the merge reads the moved anchor as its block, edited,
+/// so the block is edited where the page put it, the page's edit stands, and
+/// nothing is created, moved or warned.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn apply_page_source_merge_keeps_a_block_whose_anchor_an_edit_moved() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let page = dup_page(&pool, &mat, "Moved merge").await;
+    let a = dup_child(&pool, &mat, &page, "a").await;
+    let b = dup_child(&pool, &mat, &page, "b").await;
+    settle(&mat).await;
+    let base = page_source(&pool, &page).await;
+    edit_block_inner(&pool, DEV, &mat, b.clone(), "b, edited elsewhere".into())
+        .await
+        .unwrap();
+    move_block_inner(&pool, DEV, &mat, a.clone(), Some(page.clone()), 1)
+        .await
+        .unwrap();
+    settle(&mat).await;
+    let source = with(&base, &format!("^{a}\n"), &format!("^{a}\n  more\n"));
+    let before = last_seq(&pool).await;
+
+    let report = merge_source(&pool, &mat, &page, &source, &base)
+        .await
+        .unwrap();
+
+    assert_eq!(
+        counts(&report),
+        [0, 1, 0, 0, 0, 0],
+        "a edited, nothing else"
+    );
+    assert_eq!(report.warnings, Vec::<String>::new());
+    assert_eq!(ops_after(&pool, before).await, vec!["edit_block"]);
+    assert_eq!(
+        dup_children(&pool, &page).await,
+        vec![
+            (b.into_string(), "b, edited elsewhere".to_owned()),
+            (a.into_string(), "a\nmore".to_owned()),
+        ]
+    );
+}
+
+/// Text typed after a block's anchor while the page edited that block: the
+/// merge reads it as the block edited on both sides, so both versions are
+/// kept, as for any such conflict, and no block holds the anchor as text.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn apply_page_source_merge_reads_a_moved_anchor_as_its_blocks_edit() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let page = dup_page(&pool, &mat, "Moved conflict").await;
+    let a = dup_child(&pool, &mat, &page, "a").await;
+    let b = dup_child(&pool, &mat, &page, "b").await;
+    settle(&mat).await;
+    let base = page_source(&pool, &page).await;
+    edit_block_inner(&pool, DEV, &mat, a.clone(), "a, edited elsewhere".into())
+        .await
+        .unwrap();
+    settle(&mat).await;
+    let source = with(&base, &format!("^{a}\n"), &format!("^{a} typed\n"));
+
+    let report = merge_source(&pool, &mat, &page, &source, &base)
+        .await
+        .unwrap();
+
+    assert_eq!(
+        counts(&report),
+        [1, 0, 0, 0, 0, 0],
+        "the buffer's version created"
+    );
+    assert_eq!(
+        report.warnings,
+        vec!["'a, edited elsewhere' was changed here and on the page; both versions kept"]
+    );
+    let children = dup_children(&pool, &page).await;
+    let texts: Vec<&str> = children.iter().map(|(_, text)| text.as_str()).collect();
+    assert_eq!(texts, ["a typed", "a, edited elsewhere", "b"]);
+    assert_eq!(
+        (children[1].0.as_str(), children[2].0.as_str()),
+        (a.as_str(), b.as_str()),
+        "the page's blocks keep their ids"
+    );
 }
 
 /// The op refs a merged save returns undo all of it: the page is again as the
@@ -5714,6 +5919,33 @@ async fn paste_blocks_never_pairs_an_anchor_with_a_block() {
     );
 }
 
+/// Text the paste will not store as an anchor or a property is kept as text: a
+/// trailing ` ^word` that is not a block id, and a reserved key's line.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn paste_blocks_keeps_a_caret_word_and_a_reserved_property_line_as_text() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let page = dup_page(&pool, &mat, "Dest").await;
+    let anchor = dup_child(&pool, &mat, &page, "anchor").await;
+    settle(&mat).await;
+
+    let rows = paste(
+        &pool,
+        &mat,
+        &anchor,
+        paste_text("- press ^C\n- a\n  template:: x\n"),
+    )
+    .await;
+
+    let contents: Vec<Option<&str>> = rows.iter().map(|r| r.content.as_deref()).collect();
+    assert_eq!(contents, [Some("press ^C"), Some("a\ntemplate:: x")]);
+    assert_eq!(
+        dup_storage(&pool, &rows[1].id).await,
+        vec!["columns todo=None priority=None scheduled=None due=None"],
+        "the reserved line is not a property"
+    );
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn paste_blocks_op_refs_undo_the_whole_paste_with_what_it_created() {
     let (pool, _dir) = test_pool().await;
@@ -6046,7 +6278,8 @@ async fn import_markdown_block_ref_strip_surfaces_warning_1933() {
     ensure_test_space(&pool).await;
     mark_block_as_space(&pool, TEST_SPACE_ID).await;
 
-    let content = "- See ((abc-123)) and ((def-456)) here";
+    let content = "- See ((7f3a1b2c-4d5e-4f60-8a9b-0c1d2e3f4a5b)) and \
+                   ((650f0a1b-2c3d-4e5f-8091-a2b3c4d5e6f7)) here";
     let result = import_markdown_inner(
         &pool,
         DEV,
@@ -11970,7 +12203,8 @@ async fn import_export_multiline_block_content_round_trip_2716() {
 /// #2725 — a block whose content is a fenced code block whose interior carries
 /// list-like (`- item`) and property-like (`key:: value`) lines must round-trip
 /// intact as ONE block. Before the fix those interior lines were split into new
-/// blocks / properties on re-import.
+/// blocks / properties on re-import. An indented, double-spaced code line with
+/// parentheses comes back byte for byte too: code is not prose.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn import_export_fenced_code_block_round_trip_2725() {
     let (pool, _dir) = test_pool().await;
@@ -11986,7 +12220,7 @@ async fn import_export_fenced_code_block_round_trip_2725() {
 
     // A fenced code block whose body contains list/property-shaped lines. These
     // are literal code, NOT new blocks/properties.
-    const CONTENT: &str = "```\n- fake item\nkey:: fake prop\n```";
+    const CONTENT: &str = "```\n- fake item\nkey:: fake prop\n    y  =  f((a, b))\n```";
     insert_block(&pool, BLK, "content", CONTENT, Some(SRC), Some(1)).await;
     agaric_store::cache::rebuild_page_ids(&pool).await.unwrap();
 

@@ -546,8 +546,8 @@ fn rewrite_inbound_tags(content: &str, resolved: &HashMap<String, String>) -> St
 /// cross-page target yields `[[Target Page#^ULID]]`. A `((ULID))` whose target
 /// is missing from the map (deleted / dangling) is NOT left as a raw ULID: it
 /// degrades to a clearly-marked, human-readable `(unresolved block reference)`
-/// literal that survives re-import as plain text (the raw `((ULID))` would be
-/// silently stripped by the importer's `strip_block_refs_counted`).
+/// literal that survives re-import as plain text (the raw `((ULID))` would come
+/// back as a dangling ref).
 fn resolve_ulids_for_export(
     content: &str,
     tag_names: &HashMap<String, String>,

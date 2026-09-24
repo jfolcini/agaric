@@ -3,6 +3,7 @@
 //! Parses indented markdown into a flat list of blocks with parent/child
 //! relationships determined by indentation level.
 
+use agaric_core::ulid::BlockId;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use specta::Type;
@@ -299,6 +300,11 @@ fn split_block_task_marker(text: &str) -> (Option<&'static str>, &str) {
 /// A source buffer's anchor line: `^` and a ULID, alone on the line.
 static ANCHOR_LINE_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^\^[0-9A-HJKMNP-TV-Z]{26}$").expect("invalid anchor-line regex"));
+
+/// `true` when `trimmed` is the anchor line that ends a block's open fence.
+pub fn is_anchor_line(trimmed: &str) -> bool {
+    ANCHOR_LINE_RE.is_match(trimmed)
+}
 
 /// `true` when Source mode must backslash-escape `line`, a code line, so it
 /// does not read back as the anchor line that ends its block's fence. It looks
@@ -799,7 +805,8 @@ fn source_outline(content: &str, clamp: bool) -> ParseOutput {
 
 /// Clipboard text as blocks (#5140). Text whose first non-blank line is a
 /// bullet is an outline, read as a source buffer is but flattened past the
-/// import depth limit as an import is. Any other text is one
+/// import depth limit as an import is, and with a trailing ` ^word` that is
+/// not a block id kept as text. Any other text is one
 /// block per non-blank line, the line less its indentation, nested by that
 /// indentation, with nothing on it read as a marker or a property.
 pub fn parse_pasted_text(text: &str) -> Vec<ParsedBlock> {
@@ -809,7 +816,9 @@ pub fn parse_pasted_text(text: &str) -> Vec<ParsedBlock> {
         .map(str::trim_start)
         .find(|line| !line.is_empty());
     if first_line.is_some_and(is_bullet_line) {
-        return source_outline(&text, true).blocks;
+        let mut blocks = source_outline(&text, true).blocks;
+        blocks.iter_mut().for_each(restore_text_anchor);
+        return blocks;
     }
     text.lines()
         .filter(|line| !line.trim_start().is_empty())
@@ -1044,6 +1053,9 @@ fn parse_block_lines(
     // interior is known only at the next non-blank line: a continuation line
     // takes the run, a bullet or property line drops it.
     let mut blank_run: Vec<&str> = Vec::new();
+    // The column the last block's text starts at: after a bullet's `- `, or
+    // where a bare line of text starts.
+    let mut text_column = 0;
     // #1921 — iterate `normalized.lines()` directly instead of collecting into
     // a `Vec<&str>`. The scan only ever reads the CURRENT line in document
     // order, so a streaming iterator is a drop-in that avoids the intermediate
@@ -1073,7 +1085,7 @@ fn parse_block_lines(
         // A source buffer writes the anchor of a block that ends in code on a
         // line of its own, so a fence the block leaves open ends there instead
         // of swallowing the lines after it.
-        if mode == ParseMode::Source && fence.open && ANCHOR_LINE_RE.is_match(trimmed) {
+        if mode == ParseMode::Source && fence.open && is_anchor_line(trimmed) {
             fence = FenceState::default();
         }
         // Probed after the recovery, which may have just closed the fence.
@@ -1119,40 +1131,24 @@ fn parse_block_lines(
         if let Some(text) = bullet_text {
             lossy.stripped_refs += push_bullet_block(&mut blocks, text, depth, line_is_code, mode);
             ends_in_code.push(line_is_code);
+            text_column = (depth + 1) * 2;
         } else if !line_is_code
-            && let Some((key_candidate, value)) = trimmed
-                .split_once(":: ")
-                .filter(|(k, _)| is_property_key(k.trim()))
+            && let Some((key_candidate, value)) = property_line(trimmed, &blocks, depth, mode)
         {
-            // Property line: `key:: value` — but only if the LHS matches the
-            // same alphabet that `op::validate_set_property` enforces
-            // (`^[A-Za-z0-9_-]{1,64}$`). I-Core-10: a free-form line
-            // containing `:: ` mid-sentence (e.g. URL-bearing notes from
-            // Logseq) would otherwise be misclassified and produce arbitrary
-            // key/value pairs. The stricter discriminator falls through to
-            // the content-block branch when the LHS is not a valid key.
             attach_property_line(&mut blocks, key_candidate, value, depth, &mut lossy);
         } else if let Some(last) = blocks.last_mut() {
             match mode {
                 ParseMode::Import => {
-                    lossy.stripped_refs += append_continuation_line(last, trimmed, line_is_code);
+                    lossy.stripped_refs +=
+                        append_continuation_line(last, line, line_is_code, text_column);
                 }
                 ParseMode::Source => append_source_line(last, &blank_run, line, line_is_code),
             }
             ends_in_code[blocks.len() - 1] = line_is_code;
         } else {
-            // Non-list, non-property line with no preceding block (file starts
-            // with bare text) -- treat as a standalone depth-0 content block.
-            let (cleaned, removed) = clean_text(trimmed, mode);
-            lossy.stripped_refs += removed;
-            blocks.push(ParsedBlock {
-                content: cleaned,
-                depth,
-                properties: Vec::new(),
-                is_code: line_is_code,
-                block_anchor: None,
-            });
+            lossy.stripped_refs += push_text_block(&mut blocks, trimmed, depth, line_is_code, mode);
             ends_in_code.push(line_is_code);
+            text_column = depth * 2;
         }
         blank_run.clear();
     }
@@ -1186,7 +1182,7 @@ fn push_bullet_block(
     if let Some(state) = todo_state {
         properties.push(("todo_state".to_string(), state.to_string()));
     }
-    let (cleaned, removed) = clean_text(text, mode);
+    let (cleaned, removed) = clean_text(text, mode, line_is_code);
     blocks.push(ParsedBlock {
         content: cleaned,
         depth,
@@ -1200,14 +1196,54 @@ fn push_bullet_block(
     removed
 }
 
+/// Push a line no block precedes (a file that starts with bare text) as a
+/// block of its own. Returns how many references were stripped from it.
+fn push_text_block(
+    blocks: &mut Vec<ParsedBlock>,
+    trimmed: &str,
+    depth: usize,
+    line_is_code: bool,
+    mode: ParseMode,
+) -> usize {
+    let (cleaned, removed) = clean_text(trimmed, mode, line_is_code);
+    blocks.push(ParsedBlock {
+        content: cleaned,
+        depth,
+        properties: Vec::new(),
+        is_code: line_is_code,
+        block_anchor: None,
+    });
+    removed
+}
+
 /// A line's text as its block keeps it, and how many `((uuid))` references
-/// were stripped: an import normalises it ([`strip_block_refs_counted`]), a
-/// source buffer keeps it as written.
-fn clean_text(text: &str, mode: ParseMode) -> (String, usize) {
+/// were stripped: an import normalises prose ([`strip_block_refs_counted`]);
+/// code, and a source buffer, keep it as written.
+fn clean_text(text: &str, mode: ParseMode, line_is_code: bool) -> (String, usize) {
     match mode {
-        ParseMode::Import => strip_block_refs_counted(text),
-        ParseMode::Source => (text.to_string(), 0),
+        ParseMode::Import if !line_is_code => strip_block_refs_counted(text),
+        ParseMode::Import | ParseMode::Source => (text.to_string(), 0),
     }
+}
+
+/// The key and value of `trimmed` when it is a `key:: value` line `mode` reads
+/// as a property: the key is one `op::validate_set_property` accepts
+/// (`^[A-Za-z0-9_-]{1,64}$`, I-Core-10), so a `:: ` mid-sentence is content.
+/// In Source mode a line the save would not store — a reserved key, or no
+/// block at or above its indentation — is what the user typed: content. An
+/// import reads it as a property and drops it with a warning.
+fn property_line<'a>(
+    trimmed: &'a str,
+    blocks: &[ParsedBlock],
+    depth: usize,
+    mode: ParseMode,
+) -> Option<(&'a str, &'a str)> {
+    let (key, value) = trimmed
+        .split_once(":: ")
+        .filter(|(key, _)| is_property_key(key.trim()))?;
+    let stored = !FRONTMATTER_RESERVED_KEYS.contains(&key.trim())
+        && blocks.iter().any(|block| block.depth <= depth);
+    (mode == ParseMode::Import || stored).then_some((key, value))
 }
 
 /// Attach a `key:: value` body property to the block that *indentation* says
@@ -1217,7 +1253,8 @@ fn clean_text(text: &str, mode: ParseMode) -> (String, usize) {
 /// line's depth. Scanning in reverse over the document-ordered `blocks` finds
 /// that nearest ancestor; a property nested under a grandchild therefore no
 /// longer mis-attaches to an unrelated later sibling. Reserved keys and
-/// properties with no owning ancestor are dropped and counted in `lossy`.
+/// properties with no owning ancestor are dropped and counted in `lossy`
+/// ([`property_line`] hands an import such a line, never a source buffer).
 fn attach_property_line(
     blocks: &mut [ParsedBlock],
     key_candidate: &str,
@@ -1254,9 +1291,19 @@ fn attach_property_line(
 /// body of that bullet, appended (newline-joined) to the owning block's
 /// content instead of spawning a separate block, matching how Logseq stores
 /// multi-line bullet bodies. Returns how many `((uuid))` references were
-/// stripped from it.
-fn append_continuation_line(last: &mut ParsedBlock, trimmed: &str, line_is_code: bool) -> usize {
-    let (cleaned, removed) = strip_block_refs_counted(unescape_continuation(trimmed, line_is_code));
+/// stripped from it. A code line is kept as written, less the indentation up
+/// to `text_column`, where its block's text starts.
+fn append_continuation_line(
+    last: &mut ParsedBlock,
+    line: &str,
+    line_is_code: bool,
+    text_column: usize,
+) -> usize {
+    let (cleaned, removed) = if line_is_code {
+        (dedent(line, text_column).to_string(), 0)
+    } else {
+        strip_block_refs_counted(unescape_continuation(line.trim_start(), false))
+    };
     // #1924 — a continuation line inside a fence makes the owning block code
     // (e.g. the fenced body lines that follow a `- ```rust` bullet, and the
     // closing ```` ``` ```` delimiter line). Once a block is flagged code it
@@ -1381,6 +1428,21 @@ fn extract_block_anchors(blocks: &mut [ParsedBlock], ends_in_code: &[bool], mode
             block.block_anchor = Some(anchor);
         }
     }
+}
+
+/// Put a trailing ` ^word` whose word is not a block id back into the block's
+/// text: it names no block, so it is what the user wrote. The parse took the
+/// whitespace around it, so a tab or line break before it comes back as a
+/// space, and whitespace after it is lost.
+pub fn restore_text_anchor(block: &mut ParsedBlock) {
+    let Some(word) = block
+        .block_anchor
+        .take_if(|word| BlockId::from_string(word.as_str()).is_err())
+    else {
+        return;
+    };
+    let separator = if block.content.is_empty() { "" } else { " " };
+    block.content = format!("{}{separator}^{word}", block.content);
 }
 
 /// Clamp depth to [`MAX_IMPORT_DEPTH`] (flattening deeper blocks) and return
@@ -1924,63 +1986,42 @@ fn parse_block_scalar_indicator(value: &str) -> Option<BlockScalarSpec> {
 /// the symmetric counterpart of `yaml_flow_item`'s quoting).
 use agaric_core::text_utils::strip_yaml_quotes;
 
-/// Matches any `((...))` parenthetical token for stripping to plain text.
-///
-/// This is INTENTIONALLY broad — `\(\([^)]*\)\)` strips arbitrary Logseq
-/// `((uuid))` AND `((free text))` tokens — and deliberately DIFFERS from the
-/// canonical 26-char-ULID-scoped block-ref pattern used elsewhere
-/// (`agaric_store::cache` / `agaric_store::fts`). The import path wants to remove every
-/// `((...))` reference (the target block does not exist in the imported vault),
-/// so it does not constrain the body to a ULID.
-static PARENTHETICAL_REF_STRIP_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"\(\([^)]*\)\)").expect("invalid parenthetical-ref regex"));
+/// A Logseq block reference: `((` a uuid `))`. Its target is not in the
+/// imported vault, so it is stripped; any other `((…))` is the user's text.
+static LOGSEQ_BLOCK_REF_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?i)\(\([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\)\)")
+        .expect("invalid block-ref regex")
+});
 
-/// Matches two or more consecutive spaces.
-static MULTI_SPACE_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"  +").expect("invalid multi-space regex"));
-
-/// Strip `((uuid))` block references, reporting how many `((uuid))` block
-/// references it removed (#1933). Block-reference stripping is a lossy
-/// transform — the reference target is silently dropped — so the import path
-/// needs a count to surface an aggregate diagnostic, mirroring the
-/// depth-clamp / orphan-property counters. Returns the cleaned text and the
-/// number of references removed from this line.
+/// Strip each `((uuid))` block reference outside an inline code span, with the
+/// one space its removal leaves doubled, and trim the line; other spacing is
+/// the user's. Returns the text and how many references were removed (#1933),
+/// which the import surfaces as an aggregate warning: the reference target is
+/// dropped, so the strip must not be silent.
 fn strip_block_refs_counted(text: &str) -> (String, usize) {
-    // #1921 fast-path: most imported lines carry no `((...))` token, so skip
-    // the parenthetical regex entirely when the marker is absent. `find_iter`
-    // / `replace_all` only run when a `((` substring is actually present.
-    let removed = if text.contains("((") {
-        PARENTHETICAL_REF_STRIP_RE.find_iter(text).count()
-    } else {
-        0
-    };
-    if removed > 0 {
-        // Per-occurrence diagnostic so a stalled or lossy import is
-        // traceable line-by-line at debug level; the aggregate warning
-        // (assembled by `parse_logseq_markdown`) is the operator-facing
-        // summary.
-        tracing::debug!(
-            removed,
-            "stripping ((block-ref)) token(s) from imported line (#1933)"
-        );
+    if !text.contains("((") {
+        return (text.trim().to_string(), 0);
     }
-    // Only run the strip regex when a ref was actually found; otherwise the
-    // text is unchanged and we keep a borrow to avoid an allocation.
-    let result: std::borrow::Cow<'_, str> = if removed > 0 {
-        PARENTHETICAL_REF_STRIP_RE.replace_all(text, "")
-    } else {
-        std::borrow::Cow::Borrowed(text)
-    };
-    // Preserve the exact original semantics: trim first, then collapse runs of
-    // 2+ spaces. #1921 fast-path: skip the multi-space regex + `to_string`
-    // allocation when the trimmed text has no double-space run.
-    let trimmed = result.trim();
-    let collapsed = if trimmed.contains("  ") {
-        MULTI_SPACE_RE.replace_all(trimmed, " ").to_string()
-    } else {
-        trimmed.to_string()
-    };
-    (collapsed, removed)
+    let code_spans = inline_code_spans(text);
+    let mut kept = String::with_capacity(text.len());
+    let mut cursor = 0;
+    let mut removed = 0;
+    for found in LOGSEQ_BLOCK_REF_RE.find_iter(text) {
+        if code_spans
+            .iter()
+            .any(|&(start, end)| found.start() >= start && found.start() < end)
+        {
+            continue;
+        }
+        kept.push_str(&text[cursor..found.start()]);
+        cursor = found.end();
+        removed += 1;
+        if kept.ends_with(' ') && text[cursor..].starts_with(' ') {
+            cursor += 1;
+        }
+    }
+    kept.push_str(&text[cursor..]);
+    (kept.trim().to_string(), removed)
 }
 
 /// #2510 — matches a trailing Obsidian block-anchor marker: a `^` followed by
@@ -2057,6 +2098,10 @@ fn line_is_property_shaped(line: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Two Logseq block ids, the only `((…))` body an import strips.
+    const UUID_A: &str = "7f3a1b2c-4d5e-4f60-8a9b-0c1d2e3f4a5b";
+    const UUID_B: &str = "650F0A1B-2C3D-4E5F-8091-A2B3C4D5E6F7";
 
     #[test]
     fn parse_simple_list() {
@@ -2432,8 +2477,56 @@ mod tests {
 
     #[test]
     fn parse_block_refs_stripped() {
-        let output = parse_logseq_markdown("- See ((abc-123)) here");
+        let output = parse_logseq_markdown(&format!("- See (({UUID_A})) here"));
         assert_eq!(output.blocks[0].content, "See here");
+    }
+
+    /// Only a Logseq `((uuid))` is a block ref: an inline code span and prose
+    /// parentheses are text, and no space but the ref's own is collapsed.
+    #[test]
+    fn an_import_strips_only_a_logseq_uuid_ref_outside_code() {
+        let output = parse_logseq_markdown(&format!(
+            "- code `f((x))`  and ((inaudible)) then (({UUID_A})) end\n"
+        ));
+        assert_eq!(
+            output.blocks[0].content,
+            "code `f((x))`  and ((inaudible)) then end"
+        );
+        assert_eq!(
+            output.warnings,
+            [
+                "1 ((block-ref)) reference(s) were stripped from imported content and could not \
+              be preserved"
+            ]
+        );
+    }
+
+    /// An import keeps a fenced code line as written, less its bullet's
+    /// indentation: no `((…))` strip and no space collapse, so an export of
+    /// indented code imports byte for byte.
+    #[test]
+    fn an_import_keeps_fenced_code_lines_as_written() {
+        let output = parse_logseq_markdown(
+            "- script\n  ```python\n  if x:\n      y  =  1\n      print((a, b))\n  ```\n",
+        );
+        assert_eq!(output.blocks.len(), 1, "{:?}", output.blocks);
+        assert_eq!(
+            output.blocks[0].content,
+            "script\n```python\nif x:\n    y  =  1\n    print((a, b))\n```"
+        );
+        assert!(output.warnings.is_empty(), "{:?}", output.warnings);
+    }
+
+    /// Code under a line of bare text, a README's shape, keeps its
+    /// indentation too: that block's text starts at the line's own column.
+    #[test]
+    fn an_import_keeps_code_under_bare_text_as_written() {
+        let output = parse_logseq_markdown("# Notes\n```yaml\na:\n  b: 1\n```\n");
+        assert_eq!(output.blocks.len(), 1, "{:?}", output.blocks);
+        assert_eq!(
+            output.blocks[0].content,
+            "# Notes\n```yaml\na:\n  b: 1\n```"
+        );
     }
 
     /// #1933: block-ref stripping is a lossy transform and must surface an
@@ -2442,11 +2535,13 @@ mod tests {
     /// items, continuation lines, and bare content lines.
     #[test]
     fn parse_block_refs_stripped_counts_and_warns_1933() {
-        let md = "\
-- See ((abc-123)) and ((def-456)) here
-  continuation with ((ghi-789))
-bare line ((jkl-012)) too";
-        let output = parse_logseq_markdown(md);
+        let md = format!(
+            "\
+- See (({UUID_A})) and (({UUID_B})) here
+  continuation with (({UUID_A}))
+bare line (({UUID_B})) too"
+        );
+        let output = parse_logseq_markdown(&md);
         // Four refs total: two on the bullet, one on the continuation, one on
         // the bare content line.
         let warning = output
@@ -2594,38 +2689,40 @@ bare line ((jkl-012)) too";
         }
     }
 
-    /// #1921 — `strip_block_refs_counted` fast-paths must preserve EXACT
-    /// output (trim + 2+-space collapse) across all four input shapes:
-    /// no-refs-no-doublespace (both fast paths), refs-only, double-spaces-only,
-    /// and both together.
+    /// `strip_block_refs_counted` trims the line, strips each `((uuid))` with
+    /// the one space its removal doubles, and touches no other spacing.
     #[test]
-    fn strip_block_refs_fast_paths_preserve_output_1921() {
-        // (a) No refs, no double space — both fast paths taken. Trimmed only.
-        let (out, removed) = strip_block_refs_counted("  plain text  ");
-        assert_eq!(out, "plain text", "trim only; no regex work");
-        assert_eq!(removed, 0);
-
-        // (b) Refs only (no double space introduced after strip + trim).
-        let (out, removed) = strip_block_refs_counted("a ((ref)) b");
-        assert_eq!(out, "a  b".replace("  ", " "), "refs stripped");
-        assert_eq!(out, "a b", "single space collapse from the gap");
-        assert_eq!(removed, 1);
-
-        // (c) Double spaces only (no refs) — first fast path skips the
-        // parenthetical regex, the collapse regex still runs.
-        let (out, removed) = strip_block_refs_counted("a    b   c");
-        assert_eq!(out, "a b c", "runs of spaces collapse to one");
-        assert_eq!(removed, 0);
-
-        // (d) Both refs and double spaces.
-        let (out, removed) = strip_block_refs_counted("x  ((r1))  y ((r2)) z");
-        assert_eq!(out, "x y z", "refs removed and spaces collapsed");
-        assert_eq!(removed, 2);
-
-        // (e) A token-only line collapses to empty after trim.
-        let (out, removed) = strip_block_refs_counted("((only))");
-        assert_eq!(out, "", "a bare ref line strips to empty");
-        assert_eq!(removed, 1);
+    fn strip_block_refs_collapses_only_the_seam_a_strip_opens() {
+        assert_eq!(
+            strip_block_refs_counted("  plain text  "),
+            ("plain text".to_string(), 0),
+            "trim only"
+        );
+        assert_eq!(
+            strip_block_refs_counted(&format!("a (({UUID_A})) b")),
+            ("a b".to_string(), 1),
+            "the seam keeps one space"
+        );
+        assert_eq!(
+            strip_block_refs_counted("a    b   c"),
+            ("a    b   c".to_string(), 0),
+            "the user's spacing is kept"
+        );
+        assert_eq!(
+            strip_block_refs_counted(&format!("x  (({UUID_A}))  y (({UUID_B})) z")),
+            ("x   y z".to_string(), 2),
+            "each seam loses one space, whatever the run around it"
+        );
+        assert_eq!(
+            strip_block_refs_counted(&format!("(({UUID_A}))")),
+            (String::new(), 1),
+            "a bare ref line strips to empty"
+        );
+        assert_eq!(
+            strip_block_refs_counted(&format!("`(({UUID_A}))` ((not a uuid)) x")),
+            (format!("`(({UUID_A}))` ((not a uuid)) x"), 0),
+            "a ref in an inline code span and a non-uuid body are text"
+        );
     }
 
     #[test]
@@ -4253,6 +4350,39 @@ mod tests_source_outline_5140 {
         assert_eq!(out.blocks[0].block_anchor.as_deref(), Some(ID_A));
     }
 
+    /// A property line the save would not store — a reserved key, or one with
+    /// no block at or above its indentation — is what the user typed: content.
+    /// An import still drops both, with a warning.
+    #[test]
+    fn a_reserved_or_orphan_property_line_is_text() {
+        let out = parse_source_outline("alias:: foo\n- a\n  repeat:: +1w\n  key:: v\n");
+        let shapes: Vec<(&str, &[(String, String)])> = out
+            .blocks
+            .iter()
+            .map(|b| (b.content.as_str(), b.properties.as_slice()))
+            .collect();
+        assert_eq!(
+            shapes,
+            [
+                ("alias:: foo", &[][..]),
+                (
+                    "a\nrepeat:: +1w",
+                    &[("key".to_string(), "v".to_string())][..]
+                ),
+            ]
+        );
+        assert!(out.warnings.is_empty(), "{:?}", out.warnings);
+
+        let orphan = parse_source_outline("  - a\nkey:: v\n");
+        assert_eq!(orphan.blocks[0].content, "a\nkey:: v");
+        assert!(orphan.blocks[0].properties.is_empty());
+        assert!(orphan.warnings.is_empty(), "{:?}", orphan.warnings);
+
+        let import = parse_logseq_markdown("alias:: foo\n- a\n  repeat:: +1w\n");
+        assert_eq!(import.blocks[0].content, "a");
+        assert_eq!(import.warnings.len(), 2, "{:?}", import.warnings);
+    }
+
     /// The checkbox is source mode's alone: an imported file's `[ ]` is text.
     #[test]
     fn an_import_reads_no_checkbox() {
@@ -4415,6 +4545,15 @@ mod tests_pasted_text_5140 {
     fn empty_or_blank_text_is_no_block() {
         assert!(parse_pasted_text("").is_empty());
         assert!(parse_pasted_text(" \n\t\n").is_empty());
+    }
+
+    /// A trailing ` ^word` that is not a block id is text; one that is a block
+    /// id is dropped, so a paste never pairs with a block.
+    #[test]
+    fn a_trailing_caret_word_is_kept_and_a_block_id_dropped() {
+        let blocks = parse_pasted_text("- press ^C\n- copied ^01ARZ3NDEKTSV4RRFFQ69G5FAV\n");
+        let contents: Vec<&str> = blocks.iter().map(|b| b.content.as_str()).collect();
+        assert_eq!(contents, ["press ^C", "copied"]);
     }
 
     #[test]

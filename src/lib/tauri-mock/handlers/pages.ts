@@ -153,6 +153,58 @@ function parseSourceBuffer(source: string): SourceBullet[] {
   })
 }
 
+/** A `^word` at a line start or after whitespace, as {@link SOURCE_ANCHOR_RE} reads a trailing one. */
+const MOVED_ANCHOR_RE = /(?:^|\s)(\^[0-9A-Za-z-]+)/g
+
+/**
+ * Mirrors `heal_moved_anchors` (`markdown_source_apply.rs`): an unanchored
+ * bullet whose text holds exactly one `^ID` of a `loaded` block no other
+ * bullet claims takes it as its anchor, and the token leaves the text with the
+ * one separator written with it. Two or more refuse the save. The mock models
+ * no code fences or inline code, so the backend's code skip has no counterpart.
+ */
+function healMovedAnchors(
+  typed: SourceBullet[],
+  loaded: ReadonlySet<string>,
+  claimed: Set<string>,
+): void {
+  for (const bullet of typed) {
+    if (bullet.anchor !== null) continue
+    const tokens = [...bullet.content.matchAll(MOVED_ANCHOR_RE)]
+      .map((match) => {
+        const token = match[1] ?? ''
+        return { token, start: match.index + match[0].length - token.length }
+      })
+      .filter(({ token }) => loaded.has(token.slice(1)) && !claimed.has(token.slice(1)))
+    const [first, second] = tokens
+    if (!first) continue
+    if (second) {
+      throw validationRejection(`${first.token} and ${second.token} are written in one block`)
+    }
+    const id = first.token.slice(1)
+    bullet.content = withoutToken(bullet.content, first.start, first.start + first.token.length)
+    bullet.anchor = id
+    claimed.add(id)
+  }
+}
+
+/**
+ * `content` less the token at `start..end` and the one separator written with
+ * it: the whitespace before it, or at a line start the space after it, or the
+ * line break of a line that is the token alone.
+ */
+function withoutToken(content: string, start: number, end: number): string {
+  let before = content.slice(0, start)
+  let after = content.slice(end)
+  if (before !== '' && !before.endsWith('\n')) before = before.slice(0, -1)
+  else if (after.startsWith(' ')) after = after.slice(1)
+  else if (after === '' || after.startsWith('\n')) {
+    if (before.endsWith('\n')) before = before.slice(0, -1)
+    else after = after.slice(1)
+  }
+  return before + after
+}
+
 /** The longest run of `ids` already in `rank` order: the ones that need no move. */
 function longestInOrderRun(ids: string[], rank: ReadonlyMap<string, number>): Set<string> {
   interface Run {
@@ -434,8 +486,13 @@ function readSourceEdit(
     if (seen.has(anchor)) throw validationRejection(`^${anchor} appears more than once`)
     seen.add(anchor)
   }
+  // Against the source the edit started from and before the merge, as
+  // `read_buffer` heals, so the merge reads a healed bullet as its block.
+  const loaded = stale ? parseSourceBuffer(baseSource) : t0
+  const loadedIds = new Set(loaded.flatMap(({ anchor }) => (anchor === null ? [] : [anchor])))
+  healMovedAnchors(typed, loadedIds, seen)
   const warnings: string[] = []
-  const t1 = stale ? mergeSourceBuffer(parseSourceBuffer(baseSource), t0, typed, warnings) : typed
+  const t1 = stale ? mergeSourceBuffer(loaded, t0, typed, warnings) : typed
   const anchors = new Set(t1.flatMap(({ anchor }) => (anchor === null ? [] : [anchor])))
   for (const bullet of t1) {
     if (bullet.anchor === null || before.has(bullet.anchor)) continue
