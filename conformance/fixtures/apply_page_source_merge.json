@@ -1,0 +1,366 @@
+{
+  "description": "#5140 Phase 5 — `apply_page_source` with `merge`: a save whose base is stale folds the changes the page took since into the buffer instead of being refused. Blocks pair by `^ID` anchor across the base, the page's source now and the buffer; a block one side edited takes that edit, a block edited both ways is kept twice (the buffer's version as a new block before the page's), a block deleted on the page and edited in the buffer comes back as a new block, a block dropped from the buffer and edited on the page stays, and the side that moved a block places it. Only what the tauri mock models: plain single-line text, no properties or names, as in `apply_page_source.json`. Payload ops change the page between the merged saves; each `merge` step's `baseSource` is the source an earlier step left, so it is stale, except the fresh-base step. One kind of write per step, and the two steps that create a block come after every step whose base they would otherwise have to spell. Seed: S1 (Home) > S2 (alpha), S3 (bravo), S4 (charlie), S5 (delta), S6 (echo). Re-author `expected` / `expected_ops` via CONFORMANCE_UPDATE=1.",
+  "expected": {
+    "block_tags": [],
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Home",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B1",
+        "page_id": "B1",
+        "parent_id": null,
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "alpha edited on the page",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B2",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 2,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "bravo edited again on the page",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B3",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 4,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "charlie edited on a fresh base",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B4",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 5,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "delta",
+        "deleted_at": "DELETED",
+        "due_date": null,
+        "id": "B5",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 7,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "echo edited here",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B6",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "delta edited here",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B7",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 6,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "bravo edited again here",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B8",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 3,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      }
+    ],
+    "op_log_digest": {
+      "count": 9,
+      "ops": [
+        {
+          "op_type": "edit_block"
+        },
+        {
+          "op_type": "edit_block"
+        },
+        {
+          "op_type": "edit_block"
+        },
+        {
+          "op_type": "delete_block"
+        },
+        {
+          "op_type": "create_block"
+        },
+        {
+          "op_type": "move_block"
+        },
+        {
+          "op_type": "edit_block"
+        },
+        {
+          "op_type": "edit_block"
+        },
+        {
+          "op_type": "create_block"
+        }
+      ]
+    },
+    "page_links": [],
+    "properties": []
+  },
+  "expected_ops": [
+    {
+      "code": "RequiresRefresh",
+      "error": "validation",
+      "name": "stale_base_is_refused_without_merge",
+      "returns": []
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "disjoint_edits_both_land",
+      "returns": ["apply_page_source#created=0#edited=1#deleted=0"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "merge_on_a_fresh_base_is_a_plain_save",
+      "returns": ["apply_page_source#created=0#edited=1#deleted=0"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "an_edit_here_survives_a_delete_on_the_page",
+      "returns": ["apply_page_source#created=1#edited=0#deleted=0"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "a_page_reorder_and_a_buffer_edit_of_the_moved_block",
+      "returns": ["apply_page_source#created=0#edited=1#deleted=0"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "a_delete_here_gives_way_to_an_edit_on_the_page",
+      "returns": ["apply_page_source#created=0#edited=0#deleted=0"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "a_block_edited_both_ways_is_kept_twice",
+      "returns": ["apply_page_source#created=1#edited=0#deleted=0"]
+    }
+  ],
+  "name": "apply_page_source_merge",
+  "ops": [
+    {
+      "args": {
+        "blockId": "S2",
+        "toText": "alpha edited on the page"
+      },
+      "command": "edit_block",
+      "comment": "The page changes after the base is read: from here every base spelling `alpha` is stale."
+    },
+    {
+      "args": {
+        "baseSource": "- alpha ^000000000000000000000000S2\n- bravo ^000000000000000000000000S3\n- charlie ^000000000000000000000000S4\n- delta ^000000000000000000000000S5\n- echo ^000000000000000000000000S6\n",
+        "force": false,
+        "merge": false,
+        "pageId": "S1",
+        "source": "- alpha ^000000000000000000000000S2\n- bravo edited here ^000000000000000000000000S3\n- charlie ^000000000000000000000000S4\n- delta ^000000000000000000000000S5\n- echo ^000000000000000000000000S6\n"
+      },
+      "command": "apply_page_source",
+      "comment": "Bravo edited in the buffer against the stale base: without `merge` the save is refused as it always was.",
+      "expect_code": "RequiresRefresh",
+      "expect_error": "validation",
+      "name": "stale_base_is_refused_without_merge",
+      "via": "command"
+    },
+    {
+      "args": {
+        "baseSource": "- alpha ^000000000000000000000000S2\n- bravo ^000000000000000000000000S3\n- charlie ^000000000000000000000000S4\n- delta ^000000000000000000000000S5\n- echo ^000000000000000000000000S6\n",
+        "force": false,
+        "merge": true,
+        "pageId": "S1",
+        "source": "- alpha ^000000000000000000000000S2\n- bravo edited here ^000000000000000000000000S3\n- charlie ^000000000000000000000000S4\n- delta ^000000000000000000000000S5\n- echo ^000000000000000000000000S6\n"
+      },
+      "command": "apply_page_source",
+      "comment": "The same buffer merged: alpha's edit on the page is folded in, bravo's edit is the one write, nothing else differs.",
+      "name": "disjoint_edits_both_land",
+      "via": "command"
+    },
+    {
+      "args": {
+        "baseSource": "- alpha edited on the page ^000000000000000000000000S2\n- bravo edited here ^000000000000000000000000S3\n- charlie ^000000000000000000000000S4\n- delta ^000000000000000000000000S5\n- echo ^000000000000000000000000S6\n",
+        "force": false,
+        "merge": true,
+        "pageId": "S1",
+        "source": "- alpha edited on the page ^000000000000000000000000S2\n- bravo edited here ^000000000000000000000000S3\n- charlie edited on a fresh base ^000000000000000000000000S4\n- delta ^000000000000000000000000S5\n- echo ^000000000000000000000000S6\n"
+      },
+      "command": "apply_page_source",
+      "comment": "The base is the page's source now, so `merge` changes nothing: one edit, as a plain save.",
+      "name": "merge_on_a_fresh_base_is_a_plain_save",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockId": "S5"
+      },
+      "command": "delete_block",
+      "comment": "Delta deleted on the page."
+    },
+    {
+      "args": {
+        "baseSource": "- alpha edited on the page ^000000000000000000000000S2\n- bravo edited here ^000000000000000000000000S3\n- charlie edited on a fresh base ^000000000000000000000000S4\n- delta ^000000000000000000000000S5\n- echo ^000000000000000000000000S6\n",
+        "force": false,
+        "merge": true,
+        "pageId": "S1",
+        "source": "- alpha edited on the page ^000000000000000000000000S2\n- bravo edited here ^000000000000000000000000S3\n- charlie edited on a fresh base ^000000000000000000000000S4\n- delta edited here ^000000000000000000000000S5\n- echo ^000000000000000000000000S6\n"
+      },
+      "command": "apply_page_source",
+      "comment": "Delta edited in the buffer against the base that still holds it: its block is gone, so the buffer's version is created where delta stood, between charlie and echo. Its id is minted per stack, so later steps merge from bases older than it and never spell it.",
+      "name": "an_edit_here_survives_a_delete_on_the_page",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockId": "S6",
+        "newIndex": 0,
+        "newParentId": "S1"
+      },
+      "command": "move_block",
+      "comment": "Echo moved first on the page."
+    },
+    {
+      "args": {
+        "baseSource": "- alpha edited on the page ^000000000000000000000000S2\n- bravo edited here ^000000000000000000000000S3\n- charlie edited on a fresh base ^000000000000000000000000S4\n- delta ^000000000000000000000000S5\n- echo ^000000000000000000000000S6\n",
+        "force": false,
+        "merge": true,
+        "pageId": "S1",
+        "source": "- alpha edited on the page ^000000000000000000000000S2\n- bravo edited here ^000000000000000000000000S3\n- charlie edited on a fresh base ^000000000000000000000000S4\n- delta ^000000000000000000000000S5\n- echo edited here ^000000000000000000000000S6\n"
+      },
+      "command": "apply_page_source",
+      "comment": "The buffer, still on the older base, edits echo where it was: the page's order stands and the edit lands on the moved block. Delta, unchanged in the buffer, stays deleted; the block created two steps ago, which the base never held, is kept.",
+      "name": "a_page_reorder_and_a_buffer_edit_of_the_moved_block",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockId": "S3",
+        "toText": "bravo edited again on the page"
+      },
+      "command": "edit_block",
+      "comment": "Bravo edited on the page, for the conflict below."
+    },
+    {
+      "args": {
+        "baseSource": "- alpha edited on the page ^000000000000000000000000S2\n- bravo edited here ^000000000000000000000000S3\n- charlie edited on a fresh base ^000000000000000000000000S4\n- delta ^000000000000000000000000S5\n- echo ^000000000000000000000000S6\n",
+        "force": false,
+        "merge": true,
+        "pageId": "S1",
+        "source": "- alpha edited on the page ^000000000000000000000000S2\n- charlie edited on a fresh base ^000000000000000000000000S4\n- delta ^000000000000000000000000S5\n- echo ^000000000000000000000000S6\n"
+      },
+      "command": "apply_page_source",
+      "comment": "Bravo dropped from the buffer after the page edited it: the delete gives way to the edit, the block stays, and nothing is written.",
+      "name": "a_delete_here_gives_way_to_an_edit_on_the_page",
+      "via": "command"
+    },
+    {
+      "args": {
+        "baseSource": "- alpha edited on the page ^000000000000000000000000S2\n- bravo edited here ^000000000000000000000000S3\n- charlie edited on a fresh base ^000000000000000000000000S4\n- delta ^000000000000000000000000S5\n- echo ^000000000000000000000000S6\n",
+        "force": false,
+        "merge": true,
+        "pageId": "S1",
+        "source": "- alpha edited on the page ^000000000000000000000000S2\n- bravo edited again here ^000000000000000000000000S3\n- charlie edited on a fresh base ^000000000000000000000000S4\n- delta ^000000000000000000000000S5\n- echo ^000000000000000000000000S6\n"
+      },
+      "command": "apply_page_source",
+      "comment": "Bravo edited differently on each side: the page's version keeps the block, the buffer's is created directly before it. Last, because the fork's id is minted per stack.",
+      "name": "a_block_edited_both_ways_is_kept_twice",
+      "via": "command"
+    }
+  ],
+  "seed": {
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Home",
+        "id": "S1",
+        "parent_id": null,
+        "position": 1
+      },
+      {
+        "block_type": "content",
+        "content": "alpha",
+        "id": "S2",
+        "parent_id": "S1",
+        "position": 1
+      },
+      {
+        "block_type": "content",
+        "content": "bravo",
+        "id": "S3",
+        "parent_id": "S1",
+        "position": 2
+      },
+      {
+        "block_type": "content",
+        "content": "charlie",
+        "id": "S4",
+        "parent_id": "S1",
+        "position": 3
+      },
+      {
+        "block_type": "content",
+        "content": "delta",
+        "id": "S5",
+        "parent_id": "S1",
+        "position": 4
+      },
+      {
+        "block_type": "content",
+        "content": "echo",
+        "id": "S6",
+        "parent_id": "S1",
+        "position": 5
+      }
+    ],
+    "properties": [],
+    "tags": []
+  }
+}

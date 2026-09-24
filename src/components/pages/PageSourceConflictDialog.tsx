@@ -1,7 +1,7 @@
 /**
  * PageSourceConflictDialog — a source save found the page changed since the
- * buffer was loaded (#5140). Lists what changed elsewhere and offers Reload,
- * Overwrite, or Keep editing.
+ * buffer was loaded (#5140). Lists what changed elsewhere and offers Merge,
+ * Reload, Overwrite, or Keep editing.
  */
 
 import { useId, useMemo } from 'react'
@@ -43,6 +43,7 @@ export interface PageSourceConflictDialogProps {
   base: string
   /** The page's source now; the dialog is open while it is set. */
   current: string | null
+  onMerge: () => void
   onReload: () => void
   onOverwrite: () => void
   onKeepEditing: () => void
@@ -53,12 +54,14 @@ export interface PageSourceConflictDialogProps {
 export function PageSourceConflictDialog({
   base,
   current,
+  onMerge,
   onReload,
   onOverwrite,
   onKeepEditing,
   onCloseAutoFocus,
 }: PageSourceConflictDialogProps) {
   const { t } = useTranslation()
+  const mergeHintId = useId()
   const overwriteWarningId = useId()
   const changes = useMemo(
     () => (current === null ? [] : diffSourceByAnchor(base, current)),
@@ -97,18 +100,29 @@ export function PageSourceConflictDialog({
             </ul>
           )}
         </DialogBody>
+        <p id={mergeHintId} className="text-sm text-muted-foreground">
+          {t('pageSource.mergeHint')}
+        </p>
         <p id={overwriteWarningId} className="text-sm text-muted-foreground">
           {t('pageSource.overwriteWarning')}
         </p>
         <DialogFooter>
-          <Button variant="outline" onClick={onKeepEditing}>
-            {t('pageSource.keepEditing')}
+          <Button variant="destructive" onClick={onOverwrite} aria-describedby={overwriteWarningId}>
+            {t('pageSource.overwrite')}
           </Button>
           <Button variant="outline" onClick={onReload}>
             {t('action.reload')}
           </Button>
-          <Button variant="destructive" onClick={onOverwrite} aria-describedby={overwriteWarningId}>
-            {t('pageSource.overwrite')}
+          <Button variant="outline" onClick={onKeepEditing}>
+            {t('pageSource.keepEditing')}
+          </Button>
+          <Button
+            onClick={onMerge}
+            aria-describedby={mergeHintId}
+            // oxlint-disable-next-line jsx-a11y/no-autofocus -- the primary action is last, as in every dialog here, and Radix would otherwise focus Overwrite, the first button, so a reflexive Enter would discard the page's changes
+            autoFocus
+          >
+            {t('pageSource.merge')}
           </Button>
         </DialogFooter>
       </DialogContent>

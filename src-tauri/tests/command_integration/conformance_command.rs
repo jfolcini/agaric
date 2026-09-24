@@ -723,7 +723,8 @@ pub(super) async fn apply_op_via_command(
             .await,
         ),
         // The two buffers are the caller's own text, anchors spelled as the
-        // seed labels' expanded ids; only the page is a label.
+        // seed labels' expanded ids; only the page is a label. `merge` came
+        // after the first fixture's steps, so it is false when absent.
         "apply_page_source" => to_json(
             apply_page_source_inner(
                 pool,
@@ -735,6 +736,7 @@ pub(super) async fn apply_op_via_command(
                 arg("force")
                     .and_then(Value::as_bool)
                     .unwrap_or_else(|| panic!("conformance op '{command}' is missing arg 'force'")),
+                arg("merge").and_then(Value::as_bool).unwrap_or(false),
             )
             .await,
         ),

@@ -5,9 +5,10 @@ import { activeDialog, expect, focusBlockById, openPage, test, waitForBoot } fro
 /**
  * Source mode (#5140 Phase 4b): the page kebab's "Edit as Markdown" swaps the
  * block tree for the page's markdown buffer, and Save writes it back through
- * `apply_page_source`. Every assertion reads the block tree the save reloaded
- * from the mock. The Rust tests own the grammar; the real-backend twin is
- * `e2e-tauri/page-source-edit.e2e.ts`.
+ * `apply_page_source`; Phase 5's Merge saves a stale buffer with the page's
+ * changes folded in. Every assertion reads the block tree the save reloaded
+ * from the mock. The Rust tests own the grammar; the real-backend twins are
+ * `e2e-tauri/page-source-edit.e2e.ts` and `e2e-tauri/page-source-merge.e2e.ts`.
  */
 
 const PAGE = 'Getting Started'
@@ -48,6 +49,13 @@ function staticBlock(page: Page, id: string): Locator {
   return page.locator(`[data-testid="block-static"][data-block-id="${id}"]`)
 }
 
+// By test id, not role: while the conflict dialog is open Radix hides the
+// textarea from the accessibility tree, so a role locator is already "hidden"
+// before anything closes source mode.
+function sourceEditor(page: Page): Locator {
+  return page.getByTestId('page-source-editor')
+}
+
 async function editBlockElsewhere(page: Page, blockId: string, toText: string): Promise<void> {
   await page.evaluate(
     async ({ id, text }) => {
@@ -76,7 +84,7 @@ test.describe('Edit as Markdown (#5140 Phase 4b)', () => {
     await editor.fill(swapBullets(base, GS1, GS3).replace(WELCOME, HELLO))
     await page.getByRole('button', { name: 'Save', exact: true }).click()
 
-    await expect(editor).toBeHidden()
+    await expect(sourceEditor(page)).toHaveCount(0)
     await expect.poll(() => blockIds(page)).toEqual([GS3, GS2, GS1, GS4, GS5])
     await expect(staticBlock(page, GS1)).toContainText(HELLO)
   })
@@ -96,10 +104,25 @@ test.describe('Edit as Markdown (#5140 Phase 4b)', () => {
     await expect(dialog.getByRole('listitem')).toContainText(elsewhere)
     await dialog.getByRole('button', { name: 'Overwrite', exact: true }).click()
 
-    await expect(editor).toBeHidden()
+    await expect(sourceEditor(page)).toHaveCount(0)
     await expect(staticBlock(page, GS1)).toContainText(HELLO)
     await expect(staticBlock(page, GS3)).toContainText('Create new blocks')
     await expect(page.getByText(elsewhere)).toHaveCount(0)
+  })
+
+  test('Merge saves the buffer with the change made since opening folded in', async ({ page }) => {
+    const elsewhere = 'Edited on another device'
+    const editor = await openSourceMode(page)
+    await editBlockElsewhere(page, GS3, elsewhere)
+    await editor.fill((await editor.inputValue()).replace(WELCOME, HELLO))
+
+    await page.getByRole('button', { name: 'Save', exact: true }).click()
+    await activeDialog(page).getByRole('button', { name: 'Merge', exact: true }).click()
+
+    await expect(sourceEditor(page)).toHaveCount(0)
+    await expect(staticBlock(page, GS1)).toContainText(HELLO)
+    await expect(staticBlock(page, GS3)).toContainText(elsewhere)
+    await expect.poll(() => blockIds(page)).toEqual([GS1, GS2, GS3, GS4, GS5])
   })
 
   // Opening the kebab blurs the editor, which commits the block before the
@@ -120,7 +143,7 @@ test.describe('Edit as Markdown (#5140 Phase 4b)', () => {
 
     await page.getByRole('button', { name: 'Cancel', exact: true }).click()
 
-    await expect(editor).toBeHidden()
+    await expect(sourceEditor(page)).toHaveCount(0)
     await expect.poll(() => blockIds(page)).toEqual([GS1, GS2, GS3, GS4, GS5])
     await expect(staticBlock(page, GS1)).toContainText(WELCOME)
   })

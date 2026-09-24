@@ -582,7 +582,7 @@ export const commands = {
 	 *  Tauri command: save a page edited as its source buffer. Delegates to
 	 *  [`apply_page_source_inner`].
 	 */
-	applyPageSource: (pageId: PageId, source: string, baseSource: string, force: boolean) => typedError<WithOps<PageSourceReport>, AppError>(__TAURI_INVOKE("apply_page_source", { pageId, source, baseSource, force })),
+	applyPageSource: (pageId: PageId, source: string, baseSource: string, force: boolean, merge: boolean) => typedError<WithOps<PageSourceReport>, AppError>(__TAURI_INVOKE("apply_page_source", { pageId, source, baseSource, force, merge })),
 	/**
 	 *  Tauri command: render blocks as clipboard markdown. Delegates to
 	 *  [`get_blocks_source_inner`].

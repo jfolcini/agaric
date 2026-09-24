@@ -168,6 +168,7 @@ async fn save(fx: &Fixture, source: &str, base: &str) -> PageSourceReport {
         source.to_owned(),
         base.to_owned(),
         false,
+        false,
     )
     .await
     .unwrap()

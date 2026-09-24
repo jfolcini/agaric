@@ -4,9 +4,10 @@
  * approximations of the backend grammar (bullets, indentation, continuation
  * lines and `^ID` anchors; no markers, properties or names), so what is pinned
  * here is the diff the mock applies: edits, creates, moves and deletes by
- * anchor, and the refusals. Everything is read back through the mock's read
- * commands. Backend parity is pinned by
- * `conformance/fixtures/apply_page_source.json`.
+ * anchor, and the refusals; Phase 5 adds the merge of a stale buffer. Everything
+ * is read back through the mock's read commands. Backend parity is pinned by
+ * `conformance/fixtures/apply_page_source.json` and
+ * `conformance/fixtures/apply_page_source_merge.json`.
  */
 
 import { beforeEach, describe, expect, it } from 'vitest'
@@ -354,5 +355,223 @@ describe('tauri-mock apply_page_source', () => {
       kind: 'validation',
       code: null,
     })
+  })
+})
+
+describe('tauri-mock apply_page_source with merge (#5140 Phase 5)', () => {
+  /** Save `buffer`, written against `INITIAL`, over whatever the page holds now. */
+  function merge(buffer: string, baseSource = INITIAL): Report {
+    return dispatch('apply_page_source', {
+      pageId: PAGE,
+      source: buffer,
+      baseSource,
+      force: false,
+      merge: true,
+    }) as Report
+  }
+
+  const editThere = (blockId: string, toText: string): unknown =>
+    dispatch('edit_block', { blockId, toText })
+  const moveThere = (blockId: string, newParentId: string, newIndex: number): unknown =>
+    dispatch('move_block', { blockId, newParentId, newIndex })
+  const deleteThere = (blockId: string): unknown => dispatch('delete_block', { blockId })
+
+  const contents = (parentId: string): Array<string | null> =>
+    children(parentId).map((r) => r.content)
+
+  beforeEach(() => {
+    seedBlocks()
+    blocks.clear()
+    properties.clear()
+    opLog.length = 0
+    put(PAGE, 'page', 'Home', null, 1, PAGE)
+    put(A, 'content', 'alpha', PAGE, 1, PAGE)
+    put(B, 'content', 'bravo', PAGE, 2, PAGE)
+    put(B1, 'content', 'bravo child', B, 1, PAGE)
+    put(B11, 'content', 'grandchild', B1, 1, PAGE)
+    put(C, 'content', 'charlie', PAGE, 3, PAGE)
+    put(NESTED_PAGE, 'page', 'Nested', C, 1, NESTED_PAGE)
+    put(D, 'content', 'delta', PAGE, 4, PAGE)
+    put(M, 'content', MULTI, PAGE, 5, PAGE)
+  })
+
+  it('saves the buffer on a fresh base as a plain save does', () => {
+    const buffer = `- delta ^${D}\n${INITIAL.replace(`- delta ^${D}\n`, '').replace('- bravo ^', '- bravo, edited ^')}- new\n`
+
+    const report = merge(buffer, source())
+
+    expect(report).toMatchObject({ created: 1, edited: 1, moved: 1, deleted: 0, warnings: [] })
+    expect(contents(PAGE)).toEqual(['delta', 'alpha', 'bravo, edited', 'charlie', MULTI, 'new'])
+  })
+
+  it('a buffer left at its base keeps every change made on the page and writes nothing', () => {
+    editThere(A, 'alpha, edited there')
+    moveThere(D, PAGE, 0)
+    deleteThere(B)
+    moveThere(M, C, 1)
+    const changed = source()
+    const ops = opLog.length
+
+    const report = merge(INITIAL)
+
+    expect(report).toMatchObject({ ...COUNTS_NONE, warnings: [] })
+    expect(opLog).toHaveLength(ops)
+    expect(source()).toBe(changed)
+  })
+
+  it('writes an edit made in the buffer and keeps a different block the page edited', () => {
+    editThere(B, 'bravo, edited there')
+
+    const report = merge(INITIAL.replace('- delta ^', '- delta, edited here ^'))
+
+    expect(report).toMatchObject({ ...COUNTS_NONE, edited: 1, warnings: [] })
+    expect(contents(PAGE)).toEqual([
+      'alpha',
+      'bravo, edited there',
+      'charlie',
+      'delta, edited here',
+      MULTI,
+    ])
+  })
+
+  it("keeps both versions of a block both sides changed, the buffer's as a new block right before the page's", () => {
+    editThere(B, 'bravo, edited there')
+
+    const report = merge(INITIAL.replace('- bravo ^', '- bravo, edited here ^'))
+
+    expect(report).toMatchObject({ ...COUNTS_NONE, created: 1 })
+    expect(report.warnings).toEqual([
+      "'bravo, edited there' was changed here and on the page; both versions kept",
+    ])
+    expect(tree(PAGE).slice(0, 3)).toEqual([
+      { content: 'alpha', children: [] },
+      { content: 'bravo, edited here', children: [] },
+      {
+        content: 'bravo, edited there',
+        children: [{ content: 'bravo child', children: [{ content: 'grandchild', children: [] }] }],
+      },
+    ])
+  })
+
+  it('deletes what the buffer removed, except a block the page changed, which stays with a warning', () => {
+    editThere(D, 'delta, edited there')
+
+    const report = merge(INITIAL.replace(`- alpha ^${A}\n`, '').replace(`- delta ^${D}\n`, ''))
+
+    expect(report).toMatchObject({ ...COUNTS_NONE, deleted: 1 })
+    expect(report.warnings).toEqual([
+      "'delta, edited there' changed on the page; your delete was not applied",
+    ])
+    expect(isLive(A)).toBe(false)
+    expect(contents(PAGE)).toEqual(['bravo', 'charlie', 'delta, edited there', MULTI])
+  })
+
+  it('keeps what the page deleted deleted, except a block the buffer changed, saved as a new block with a warning', () => {
+    deleteThere(A)
+    deleteThere(D)
+
+    const report = merge(INITIAL.replace('- delta ^', '- delta, edited here ^'))
+
+    expect(report).toMatchObject({ ...COUNTS_NONE, created: 1 })
+    expect(report.warnings).toEqual([
+      "'delta, edited here' was deleted on the page; saved as a new block",
+    ])
+    expect([A, D].map(isLive)).toEqual([false, false])
+    expect(contents(PAGE)).toEqual(['bravo', 'charlie', 'delta, edited here', MULTI])
+  })
+
+  it("keeps the page's order when only the page reordered", () => {
+    moveThere(D, PAGE, 0)
+
+    const report = merge(INITIAL.replace('- bravo ^', '- bravo, edited here ^'))
+
+    expect(report).toMatchObject({ ...COUNTS_NONE, edited: 1, warnings: [] })
+    expect(contents(PAGE)).toEqual(['delta', 'alpha', 'bravo, edited here', 'charlie', MULTI])
+  })
+
+  it("keeps the buffer's order when only the buffer reordered", () => {
+    editThere(A, 'alpha, edited there')
+
+    const report = merge(`- delta ^${D}\n${INITIAL.replace(`- delta ^${D}\n`, '')}`)
+
+    expect(report).toMatchObject({ ...COUNTS_NONE, moved: 1, warnings: [] })
+    expect(contents(PAGE)).toEqual(['delta', 'alpha, edited there', 'bravo', 'charlie', MULTI])
+  })
+
+  it("keeps the buffer's order, with a warning, when both sides reordered the same children differently", () => {
+    moveThere(D, PAGE, 0)
+    const multi = INITIAL.slice(INITIAL.indexOf('- multi'))
+
+    const report = merge(`${multi}${INITIAL.replace(multi, '')}`)
+
+    expect(report.warnings).toEqual([
+      "the page's blocks were reordered here and on the page; your order kept",
+    ])
+    expect(contents(PAGE)).toEqual([MULTI, 'alpha', 'bravo', 'charlie', 'delta'])
+  })
+
+  it("keeps the page's parent, with a warning, for a block each side moved under a different parent", () => {
+    moveThere(D, A, 0)
+
+    const report = merge(INITIAL.replace(`- delta ^${D}`, `  - delta ^${D}`))
+
+    expect(report.warnings).toEqual([
+      "'delta' was moved here and on the page; the page's place kept",
+    ])
+    expect(contents(A)).toEqual(['delta'])
+    expect(contents(C)).toEqual(['Nested'])
+  })
+
+  it("keeps the page's parent, with a warning, where the buffer's would make a block its own ancestor", () => {
+    moveThere(A, D, 0)
+
+    const report = merge(
+      INITIAL.replace(`- delta ^${D}\n`, '').replace(
+        `- alpha ^${A}`,
+        `- alpha ^${A}\n  - delta ^${D}`,
+      ),
+    )
+
+    expect(report.warnings).toEqual([
+      "'delta' was moved here and on the page; the page's place kept",
+    ])
+    expect(tree(PAGE)).toEqual([
+      expect.objectContaining({ content: 'bravo' }),
+      expect.objectContaining({ content: 'charlie' }),
+      { content: 'delta', children: [{ content: 'alpha', children: [] }] },
+      { content: MULTI, children: [] },
+    ])
+  })
+
+  it('moves a block the buffer added under one the page deleted up to where that block was', () => {
+    deleteThere(D)
+
+    const report = merge(INITIAL.replace(`- delta ^${D}\n`, `- delta ^${D}\n  - under delta\n`))
+
+    expect(report).toMatchObject({ ...COUNTS_NONE, created: 1, warnings: [] })
+    expect(isLive(D)).toBe(false)
+    expect(contents(PAGE)).toEqual(['alpha', 'bravo', 'charlie', 'under delta', MULTI])
+  })
+
+  it("keeps a block added on each side after the same block, the buffer's first", () => {
+    dispatch('create_block', {
+      blockType: 'content',
+      content: 'added there',
+      parentId: PAGE,
+      index: 1,
+    })
+
+    const report = merge(INITIAL.replace(`- bravo ^${B}`, `- added here\n- bravo ^${B}`))
+
+    expect(report).toMatchObject({ ...COUNTS_NONE, created: 1, warnings: [] })
+    expect(contents(PAGE)).toEqual([
+      'alpha',
+      'added here',
+      'added there',
+      'bravo',
+      'charlie',
+      'delta',
+      MULTI,
+    ])
   })
 })

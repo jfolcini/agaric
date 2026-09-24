@@ -170,6 +170,9 @@ export const pages: Record<string, string> = {
   'pageSource.changeRemoved': 'Removed:',
   'pageSource.changeChanged': 'Changed:',
   'pageSource.keepEditing': 'Keep editing',
+  'pageSource.merge': 'Merge',
+  'pageSource.mergeHint':
+    'Merge saves your text with the changes made elsewhere folded in. Where both sides changed a block differently, both versions are kept.',
   'pageSource.overwrite': 'Overwrite',
   'pageSource.overwriteWarning':
     'Overwrite keeps your text over everything changed elsewhere since you opened it: edits made there are reverted, blocks added there are deleted, blocks deleted there come back as new copies, and a page renamed there is linked by its old name, which creates a new page.',

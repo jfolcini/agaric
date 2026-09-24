@@ -77,7 +77,7 @@ describe('page-blocks applyPageSource (#5140 Phase 4b)', () => {
       .join('\n')
       .replace(`- Welcome to Agaric!`, `- Hello, Agaric!`)
 
-    const result = await pageStore.getState().applyPageSource(source, base, false)
+    const result = await pageStore.getState().applyPageSource(source, base, false, false)
 
     expect(result).toMatchObject({ edited: 1, deleted: 1, created: 0, moved: 0 })
     const { blocks, blocksById } = pageStore.getState()
@@ -104,7 +104,7 @@ describe('page-blocks applyPageSource (#5140 Phase 4b)', () => {
       load_page_subtree: emptySubtree,
     })
 
-    await store.getState().applyPageSource('- same ^X\n', '- same ^X\n', false)
+    await store.getState().applyPageSource('- same ^X\n', '- same ^X\n', false, false)
 
     const page = useUndoStore.getState().pages.get('PAGE_1')
     expect(page?.undoStack).toEqual([])
@@ -130,7 +130,7 @@ describe('page-blocks applyPageSource (#5140 Phase 4b)', () => {
     })
 
     try {
-      await store.getState().applyPageSource('- see [[Reading list]] #later\n', '', false)
+      await store.getState().applyPageSource('- see [[Reading list]] #later\n', '', false, false)
     } finally {
       unsubscribe()
     }
@@ -153,12 +153,14 @@ describe('page-blocks applyPageSource (#5140 Phase 4b)', () => {
       apply_page_source: () => Promise.reject(stale),
     })
 
-    await expect(store.getState().applyPageSource('- a\n', '- b\n', true)).rejects.toBe(stale)
+    await expect(store.getState().applyPageSource('- a\n', '- b\n', true, false)).rejects.toBe(
+      stale,
+    )
 
     expect(mockedInvoke.mock.calls).toEqual([
       [
         'apply_page_source',
-        { pageId: 'PAGE_1', source: '- a\n', baseSource: '- b\n', force: true },
+        { pageId: 'PAGE_1', source: '- a\n', baseSource: '- b\n', force: true, merge: false },
       ],
     ])
     expect(vi.mocked(toast.error)).not.toHaveBeenCalled()
