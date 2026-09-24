@@ -57,23 +57,18 @@ describe('page-blocks duplicateBlock (#5140 Phase 3a)', () => {
     dispatch('set_todo_state', { blockId: BLOCK_GS_1, state: 'TODO' })
     const pageStore = createPageBlockStore(PAGE_GETTING_STARTED)
     await pageStore.getState().load()
+    const before = pageStore.getState().blocks.length
 
-    const ids = await pageStore.getState().duplicateBlock(BLOCK_GS_1)
+    await pageStore.getState().duplicateBlock(BLOCK_GS_1)
 
-    expect(ids).toHaveLength(2)
-    const [copyId, copyChildId] = ids as [string, string]
-    const { blocks, blocksById } = pageStore.getState()
-    expect(blocks.map((b) => b.id).slice(0, 5)).toEqual([
-      BLOCK_GS_1,
-      child.id,
-      copyId,
-      copyChildId,
-      BLOCK_GS_2,
-    ])
-    expect(blocksById.get(copyId)?.content).toBe(mockBlocks.get(BLOCK_GS_1)?.['content'])
-    expect(blocksById.get(copyId)?.todo_state).toBe('TODO')
-    expect(blocksById.get(copyChildId)?.parent_id).toBe(copyId)
-    expect(blocksById.get(copyChildId)?.content).toBe('nested under GS_1')
+    const { blocks } = pageStore.getState()
+    expect(blocks).toHaveLength(before + 2)
+    const [original, originalChild, copy, copyChild, next] = blocks
+    expect([original?.id, originalChild?.id, next?.id]).toEqual([BLOCK_GS_1, child.id, BLOCK_GS_2])
+    expect(copy?.content).toBe(mockBlocks.get(BLOCK_GS_1)?.['content'])
+    expect(copy?.todo_state).toBe('TODO')
+    expect(copyChild?.parent_id).toBe(copy?.id)
+    expect(copyChild?.content).toBe('nested under GS_1')
 
     // Root create, its todo_state, the child's create.
     expect(returnedRefs).toHaveLength(3)
@@ -82,7 +77,7 @@ describe('page-blocks duplicateBlock (#5140 Phase 3a)', () => {
     expect(page?.undoStack[0]?.refs).toEqual(returnedRefs)
   })
 
-  it('a rejected duplicate toasts, logs, adds no undo entry and resolves no ids', async () => {
+  it('a rejected duplicate toasts, logs, and adds no undo entry', async () => {
     const original = makeBlock({ id: 'A', parent_id: 'PAGE_1', position: 1 })
     store.setState({ blocks: [original] })
     const errorSpy = vi.spyOn(logger, 'error')
@@ -91,9 +86,8 @@ describe('page-blocks duplicateBlock (#5140 Phase 3a)', () => {
       duplicate_block: () => Promise.reject(failure),
     })
 
-    const ids = await store.getState().duplicateBlock('A')
+    await store.getState().duplicateBlock('A')
 
-    expect(ids).toEqual([])
     expect(vi.mocked(toast.error)).toHaveBeenCalledWith(t('blockTree.duplicateFailed'))
     expect(errorSpy).toHaveBeenCalledWith(
       'page-blocks',
@@ -105,12 +99,11 @@ describe('page-blocks duplicateBlock (#5140 Phase 3a)', () => {
     expect(store.getState().blocks.map((b) => b.id)).toEqual(['A'])
   })
 
-  it('an id this page does not hold makes no IPC and resolves no ids', async () => {
+  it('an id this page does not hold makes no IPC', async () => {
     store.setState({ blocks: [makeBlock({ id: 'A', parent_id: 'PAGE_1' })] })
 
-    const ids = await store.getState().duplicateBlock('NOT_ON_THIS_PAGE')
+    await store.getState().duplicateBlock('NOT_ON_THIS_PAGE')
 
-    expect(ids).toEqual([])
     expect(mockedInvoke).not.toHaveBeenCalled()
     expect(useUndoStore.getState().pages.get('PAGE_1')).toBeUndefined()
   })

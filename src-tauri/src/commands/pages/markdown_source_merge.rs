@@ -22,10 +22,10 @@ use super::{AppError, import, outline_parents};
 /// properties three-way merged, its parent and its place among its siblings
 /// taken from whichever side moved it, and blocks either side added or kept
 /// changed placed where that side put them. Every kept block of `current`
-/// keeps its anchor; a block deleted on the page and changed in the buffer, and
-/// the buffer's version of a block both sides changed differently, come back
-/// as new blocks, without one. Each event the merge could not keep as written
-/// adds one warning.
+/// keeps its anchor; a block deleted on the page and changed or moved to
+/// another parent in the buffer, and the buffer's version of a block both
+/// sides changed differently, come back as new blocks, without one. Each event
+/// the merge could not keep as written adds one warning.
 ///
 /// # Errors
 ///
@@ -181,8 +181,8 @@ struct Merge<'a> {
 
 impl Merge<'_> {
     /// Whether `key`'s block is kept, and as what. A block one side deleted
-    /// goes unless the other side changed it; a block both sides changed
-    /// differently is kept twice.
+    /// goes unless the other side changed it or moved it to another parent; a
+    /// block both sides changed differently is kept twice.
     fn keep(&mut self, key: &Key) -> Option<Kept> {
         let (b, c, m) = (
             self.base.block(key),
@@ -206,7 +206,7 @@ impl Merge<'_> {
                 Some(fork(c, m))
             }
             (Some(b), Some(c), None) => {
-                if same(b, c) {
+                if same(b, c) && self.current.parent(key) == self.base.parent(key) {
                     return None;
                 }
                 warn(
@@ -220,7 +220,7 @@ impl Merge<'_> {
                 })
             }
             (Some(b), None, Some(m)) => {
-                if same(b, m) {
+                if same(b, m) && self.mine.parent(key) == self.base.parent(key) {
                     return None;
                 }
                 warn(

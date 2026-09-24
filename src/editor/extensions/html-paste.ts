@@ -315,8 +315,9 @@ export const HtmlPaste = Extension.create({
             if (!body) {
               // No usable HTML → an outline goes to the block-paste path;
               // anything else falls through to task-paste / external-link /
-              // the default plain-text path unchanged (no regressions).
-              if (!isPastedOutline(plainText)) return false
+              // the default plain-text path unchanged (no regressions). Over a
+              // selection the default paste replaces it, as in `TaskPaste`.
+              if (!view.state.selection.empty || !isPastedOutline(plainText)) return false
               const input: PasteInput = { kind: 'text', text: plainText }
               dispatchBlockEvent('PASTE_BLOCKS', { input, targetBlockId })
               return true

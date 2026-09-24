@@ -539,7 +539,9 @@ function duplicateSubtree(rootId: string): Record<string, unknown>[] {
 /**
  * Create a copy of `src` under `parentId` at the 0-based live `slot`, then
  * write its carried properties: `listStyle`, the four columns, then every other
- * key in byte order. Each appended op's ref lands in `opRefs`.
+ * key in byte order. Each appended op's ref lands in `opRefs`. The backend's
+ * `created_at` / `completed_at` writes are left out: the conformance digest
+ * (`RawOp::canonicalize`) and properties query drop both keys.
  */
 function duplicateRow(
   src: Record<string, unknown>,

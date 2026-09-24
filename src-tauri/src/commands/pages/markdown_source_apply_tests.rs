@@ -167,8 +167,7 @@ async fn save(fx: &Fixture, source: &str, base: &str) -> PageSourceReport {
         &fx.page,
         source.to_owned(),
         base.to_owned(),
-        false,
-        false,
+        SourceSaveFlags::default(),
     )
     .await
     .unwrap()
@@ -185,8 +184,9 @@ async fn rearranged_source(
     levels: &[usize],
 ) -> (String, BTreeMap<String, Vec<String>>) {
     let mut conn = fx.pool.acquire().await.unwrap();
-    let mut data = load_page_export_data(&mut conn, &fx.page).await.unwrap();
-    data.name_snapshot = load_name_snapshot(&mut conn, &data).await.unwrap();
+    let mut data = load_page_export_data(&mut conn, &fx.page, PageRead::Source)
+        .await
+        .unwrap();
     let mut children: BTreeMap<String, Vec<String>> = BTreeMap::new();
     let mut ancestors: Vec<String> = Vec::new();
     let mut previous: Option<usize> = None;

@@ -8733,49 +8733,6 @@ async fn undo_page_group_survives_a_bulk_clear_of_never_completed_blocks_5074() 
 // #5155 — a move of a block created by an append is undoable
 // ======================================================================
 
-/// A page in the test space, made through the commands so the engine holds
-/// the tree the SQL does and creates under it take the engine path.
-async fn space_page(pool: &SqlitePool, mat: &Materializer) -> BlockId {
-    ensure_test_space(pool).await;
-    mark_block_as_space(pool, TEST_SPACE_ID).await;
-    create_page_in_space_inner(pool, DEV, mat, None, "Appends".into(), TEST_SPACE_ID.into())
-        .await
-        .unwrap()
-}
-
-/// A content block appended under `parent`: no index, the way the editor,
-/// templates, paste and the MCP `append_block` create.
-async fn append_child(
-    pool: &SqlitePool,
-    mat: &Materializer,
-    parent: &BlockId,
-    content: &str,
-) -> BlockId {
-    create_block_inner(
-        pool,
-        DEV,
-        mat,
-        "content".into(),
-        content.into(),
-        Some(parent.clone()),
-        None,
-    )
-    .await
-    .unwrap()
-    .id
-}
-
-/// `parent`'s live children in sibling order.
-async fn live_children(pool: &SqlitePool, parent: &BlockId) -> Vec<String> {
-    sqlx::query_scalar(
-        "SELECT id FROM blocks WHERE parent_id = ? AND deleted_at IS NULL ORDER BY position, id",
-    )
-    .bind(parent.as_str())
-    .fetch_all(pool)
-    .await
-    .unwrap()
-}
-
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn undo_page_op_reverses_move_of_appended_block() {
     let (pool, _dir) = test_pool().await;

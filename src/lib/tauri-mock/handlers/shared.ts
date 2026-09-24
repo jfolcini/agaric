@@ -1198,8 +1198,8 @@ export function renumberSiblings(parentId: string | null): void {
  * create at index 0 → delete → create at index 1 put the new block at position
  * 1 in the mock (slot 1 clamped to 0, the tombstone being invisible) and at
  * position 2 in the backend (the tombstone still occupying slot 0). Found by
- * the differential-fuzz lane; no committed fixture creates a sibling after
- * deleting one.
+ * the differential-fuzz lane; `append_create_undo.json` pins a create after a
+ * delete.
  */
 export function insertAtSlotAndRenumber(
   parentId: string | null,

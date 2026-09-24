@@ -13,7 +13,6 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { stubInvoke } from '@/__tests__/helpers/invoke'
 import type { UseBlockTreeKeyboardShortcutsOptions } from '@/components/block-tree/use-block-tree-keyboard-shortcuts'
 import { useBlockTreeKeyboardShortcuts } from '@/components/block-tree/use-block-tree-keyboard-shortcuts'
-import { registerActiveDraftFlush } from '@/lib/active-draft-flush'
 import { t } from '@/lib/i18n'
 import { __resetLastInteractedTreeForTests } from '@/lib/last-interacted-tree'
 import type { MountedIds, SelectAllScopeIds } from '@/lib/zoom-scope'
@@ -504,27 +503,15 @@ describe('useBlockTreeKeyboardShortcuts', () => {
       return requests
     }
 
-    it('Ctrl+C flushes the draft, then writes the backend render of the selection with its subtrees', async () => {
-      const order: string[] = []
-      const unregister = registerActiveDraftFlush('A', async () => {
-        order.push('flush')
-      })
+    it('Ctrl+C writes the backend render of the selection with its subtrees', async () => {
       const requests = stubSource()
-      mockWriteText.mockImplementation(async (text) => {
-        order.push(`write:${text}`)
-      })
       const { opts } = clipboardOpts({ selectedBlockIds: ['A', 'B'] })
       renderHook(() => useBlockTreeKeyboardShortcuts(opts))
 
-      try {
-        fireEvent.keyDown(document, { key: 'c', ctrlKey: true })
-        await waitFor(() => expect(mockWriteText).toHaveBeenCalledWith(SOURCE))
-      } finally {
-        unregister()
-      }
+      fireEvent.keyDown(document, { key: 'c', ctrlKey: true })
 
+      await waitFor(() => expect(mockWriteText).toHaveBeenCalledWith(SOURCE))
       expect(requests).toEqual([{ blockIds: ['A', 'B'], withChildren: true }])
-      expect(order).toEqual(['flush', `write:${SOURCE}`])
     })
 
     it('Ctrl+C sends only the selection roots (a selected child travels with its parent)', async () => {

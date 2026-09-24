@@ -733,10 +733,12 @@ pub(super) async fn apply_op_via_command(
                 arg_label_id("pageId").expect("pageId").as_str(),
                 req_str("source"),
                 req_str("baseSource"),
-                arg("force")
-                    .and_then(Value::as_bool)
-                    .unwrap_or_else(|| panic!("conformance op '{command}' is missing arg 'force'")),
-                arg("merge").and_then(Value::as_bool).unwrap_or(false),
+                SourceSaveFlags {
+                    force: arg("force").and_then(Value::as_bool).unwrap_or_else(|| {
+                        panic!("conformance op '{command}' is missing arg 'force'")
+                    }),
+                    merge: arg("merge").and_then(Value::as_bool).unwrap_or(false),
+                },
             )
             .await,
         ),

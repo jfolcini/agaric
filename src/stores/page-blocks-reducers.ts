@@ -1170,16 +1170,14 @@ export function createReducers({
 
     duplicateBlock: async (blockId: string) => {
       const { blocksById, rootParentId } = get()
-      if (!blocksById.has(blockId)) return []
+      if (!blocksById.has(blockId)) return
       try {
         const resp = await retryOnPoolBusy(() => commands.duplicateBlock(blockId).then(unwrap))
         notifyUndoNewAction(rootParentId, resp.op_refs)
         await get().load()
-        return resp.blocks.map((b) => b.id)
       } catch (err) {
         logger.error('page-blocks', 'Failed to duplicate block', { blockId }, err)
         notify.error(i18n.t('blockTree.duplicateFailed'))
-        return []
       }
     },
 

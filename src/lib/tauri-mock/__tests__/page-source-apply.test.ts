@@ -196,11 +196,18 @@ describe('tauri-mock apply_page_source', () => {
     ])
   })
 
-  it('keeps a trailing caret word that is not a block id as text', () => {
-    const report = apply(`${INITIAL}- x ^2\n`)
+  // A block id is what `BlockId::from_string` reads: Crockford base32 (no
+  // I, L, O or U) that fits 128 bits.
+  it.each([
+    ['a short word', 'x ^2'],
+    ['the alphabet', 'x ^ABCDEFGHIJKLMNOPQRSTUVWXYZ'],
+    ['letters Crockford leaves out', 'x ^0000000000000000000000ILOU'],
+    ['a word past the largest ULID', 'x ^80000000000000000000000000'],
+  ])('keeps a trailing caret word that is not a block id as text: %s', (_name, line) => {
+    const report = apply(`${INITIAL}- ${line}\n`)
 
     expect(report).toMatchObject({ ...COUNTS_NONE, created: 1, warnings: [] })
-    expect(children(PAGE).at(-1)?.content).toBe('x ^2')
+    expect(children(PAGE).at(-1)?.content).toBe(line)
   })
 
   it('keeps text typed above the first bullet as a block of its own', () => {

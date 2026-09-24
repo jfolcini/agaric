@@ -52,9 +52,11 @@ export interface PageHeaderProps {
   onBack?: (() => void) | undefined
   /** Opens source mode; the kebab offers "Edit as Markdown" only with it. */
   onEditSource?: (() => void) | undefined
+  /** The page-actions kebab, so focus can return to it. */
+  kebabRef?: React.Ref<HTMLButtonElement> | undefined
 }
 
-export function PageHeader({ pageId, title, onBack, onEditSource }: PageHeaderProps) {
+export function PageHeader({ pageId, title, onBack, onEditSource, kebabRef }: PageHeaderProps) {
   const { t } = useTranslation()
   const pageStore = usePageBlockStoreApi()
 
@@ -285,10 +287,15 @@ export function PageHeader({ pageId, title, onBack, onEditSource }: PageHeaderPr
     setKebabOpen(false)
   }, [])
 
-  const handleEditSource = useCallback(() => {
-    setKebabOpen(false)
-    onEditSource?.()
-  }, [onEditSource])
+  const handleEditSource = useMemo(
+    () =>
+      onEditSource &&
+      (() => {
+        setKebabOpen(false)
+        onEditSource()
+      }),
+    [onEditSource],
+  )
 
   const handleOpenInNewTab = useCallback(() => {
     useTabsStore.getState().openInNewTab(pageId, editableTitle || title)
@@ -508,8 +515,10 @@ export function PageHeader({ pageId, title, onBack, onEditSource }: PageHeaderPr
     <>
       <ViewHeader>
         <div className="page-header space-y-2">
-          {/* Title row */}
-          <div className="flex items-center gap-2">
+          {/* Title row. On a phone the actions wrap onto a line of their
+              own, right-aligned, instead of running off-screen; the title
+              keeps its minimum width (`PageTitleEditor`). */}
+          <div className="flex flex-wrap items-center justify-end gap-2">
             {onBack && (
               <IconButton
                 variant="ghost"
@@ -569,7 +578,8 @@ export function PageHeader({ pageId, title, onBack, onEditSource }: PageHeaderPr
               onToggleTemplate={handleToggleTemplate}
               onToggleJournalTemplate={handleToggleJournalTemplate}
               onExport={handleExport}
-              onEditSource={onEditSource ? handleEditSource : undefined}
+              onEditSource={handleEditSource}
+              kebabRef={kebabRef}
               onDeleteRequest={handleRequestDelete}
               onOpenInNewTab={handleOpenInNewTab}
               isSpaceBlock={isSpaceBlock}

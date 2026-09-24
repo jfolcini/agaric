@@ -17,7 +17,6 @@ import { useEffect } from 'react'
 import type { StoreApi } from 'zustand'
 
 import type { DatePickerMode } from '@/components/block-tree/use-block-date-picker'
-import { flushActiveDraft } from '@/lib/active-draft-flush'
 import { unwrap } from '@/lib/app-error'
 import { commands } from '@/lib/bindings'
 import { readText, writeText } from '@/lib/clipboard'
@@ -107,11 +106,10 @@ export interface UseBlockTreeKeyboardShortcutsOptions {
 
 /**
  * Put `ids` and their subtrees on the system clipboard as the backend renders
- * them. The backend reads committed rows, so the focused block's pending edit
- * is flushed first. Resolves `false` when there was nothing to copy.
+ * them. The chord runs only with no block focused, so no draft is pending.
+ * Resolves `false` when there was nothing to copy.
  */
 async function copySelection(ids: string[]): Promise<boolean> {
-  await flushActiveDraft()
   const text = unwrap(await commands.getBlocksSource(ids, true))
   if (text.length === 0) return false
   await writeText(text)

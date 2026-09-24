@@ -301,11 +301,6 @@ fn split_block_task_marker(text: &str) -> (Option<&'static str>, &str) {
 static ANCHOR_LINE_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^\^[0-9A-HJKMNP-TV-Z]{26}$").expect("invalid anchor-line regex"));
 
-/// `true` when `trimmed` is the anchor line that ends a block's open fence.
-pub fn is_anchor_line(trimmed: &str) -> bool {
-    ANCHOR_LINE_RE.is_match(trimmed)
-}
-
 /// `true` when Source mode must backslash-escape `line`, a code line, so it
 /// does not read back as the anchor line that ends its block's fence. It looks
 /// past leading whitespace and backslashes, as [`needs_list_marker_escape`]
@@ -1085,7 +1080,7 @@ fn parse_block_lines(
         // A source buffer writes the anchor of a block that ends in code on a
         // line of its own, so a fence the block leaves open ends there instead
         // of swallowing the lines after it.
-        if mode == ParseMode::Source && fence.open && is_anchor_line(trimmed) {
+        if mode == ParseMode::Source && fence.open && ANCHOR_LINE_RE.is_match(trimmed) {
             fence = FenceState::default();
         }
         // Probed after the recovery, which may have just closed the fence.

@@ -147,10 +147,10 @@ export interface PageBlockState {
   /**
    * #976 item 13 / #5140 — copy `blockId` and its content subtree right after
    * the original, as one `duplicate_block` command and one undo entry, then
-   * reload the tree. Resolves the created ids, root first (empty when the
-   * block is not on this page or the command failed, which toasts).
+   * reload the tree. A block not on this page is a no-op; a failed command
+   * toasts.
    */
-  duplicateBlock: (blockId: string) => Promise<string[]>
+  duplicateBlock: (blockId: string) => Promise<void>
 
   /**
    * #5140 — save the page edited as its source buffer, as one

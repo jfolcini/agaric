@@ -1,5 +1,5 @@
 {
-  "description": "#5140 Phase 5 — `apply_page_source` with `merge`: a save whose base is stale folds the changes the page took since into the buffer instead of being refused. Blocks pair by `^ID` anchor across the base, the page's source now and the buffer; a block one side edited takes that edit, a block edited both ways is kept twice (the buffer's version as a new block before the page's), a block deleted on the page and edited in the buffer comes back as a new block, a block dropped from the buffer and edited on the page stays, and the side that moved a block places it. A block whose anchor an edit moved off its end is still that block, among the blocks of the base the edit started from. Only what the tauri mock models: plain single-line text, no properties or names, as in `apply_page_source.json`. Payload ops change the page between the merged saves; each `merge` step's `baseSource` is the source an earlier step left, so it is stale, except the fresh-base step. One kind of write per step, and the two steps that create a block come after every step whose base they would otherwise have to spell. Seed: S1 (Home) > S2 (alpha), S3 (bravo), S4 (charlie), S5 (delta), S6 (echo). Re-author `expected` / `expected_ops` via CONFORMANCE_UPDATE=1.",
+  "description": "#5140 Phase 5 — `apply_page_source` with `merge`: a save whose base is stale folds the changes the page took since into the buffer instead of being refused. Blocks pair by `^ID` anchor across the base, the page's source now and the buffer; a block one side edited takes that edit, a block edited both ways is kept twice (the buffer's version as a new block before the page's), a block deleted on the page and edited or moved to another parent in the buffer comes back as a new block, a block dropped from the buffer and edited or moved to another parent on the page stays, and the side that moved a block places it. A block whose anchor an edit moved off its end is still that block, among the blocks of the base the edit started from. Only what the tauri mock models: plain single-line text, no properties or names, as in `apply_page_source.json`. Payload ops change the page between the merged saves; each `merge` step's `baseSource` is the source an earlier step left, so it is stale, except the fresh-base step. One kind of write per step, and the steps that create a block come after every step whose base they would otherwise have to spell. Seed: S1 (Home) > S2 (alpha), S3 (bravo), S4 (charlie), S5 (delta), S6 (echo). Re-author `expected` / `expected_ops` via CONFORMANCE_UPDATE=1.",
   "expected": {
     "block_tags": [],
     "blocks": [
@@ -71,7 +71,7 @@
       {
         "block_type": "content",
         "content": "echo edited here",
-        "deleted_at": null,
+        "deleted_at": "DELETED",
         "due_date": null,
         "id": "B6",
         "page_id": "B1",
@@ -109,10 +109,23 @@
       },
       {
         "block_type": "content",
-        "content": "alpha edited on the page typed",
+        "content": "echo",
         "deleted_at": null,
         "due_date": null,
         "id": "B9",
+        "page_id": "B1",
+        "parent_id": "B4",
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "alpha edited on the page typed",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B10",
         "page_id": "B1",
         "parent_id": "B1",
         "position": 1,
@@ -122,7 +135,7 @@
       }
     ],
     "op_log_digest": {
-      "count": 13,
+      "count": 16,
       "ops": [
         {
           "op_type": "edit_block"
@@ -147,6 +160,15 @@
         },
         {
           "op_type": "edit_block"
+        },
+        {
+          "op_type": "create_block"
+        },
+        {
+          "op_type": "move_block"
+        },
+        {
+          "op_type": "delete_block"
         },
         {
           "op_type": "create_block"
@@ -209,6 +231,18 @@
       "code": null,
       "error": null,
       "name": "a_block_edited_both_ways_is_kept_twice",
+      "returns": ["apply_page_source#created=1#edited=0#deleted=0"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "a_delete_here_gives_way_to_a_move_on_the_page",
+      "returns": ["apply_page_source#created=0#edited=0#deleted=0"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "a_move_here_survives_a_delete_on_the_page",
       "returns": ["apply_page_source#created=1#edited=0#deleted=0"]
     },
     {
@@ -347,8 +381,50 @@
         "source": "- alpha edited on the page ^000000000000000000000000S2\n- bravo edited again here ^000000000000000000000000S3\n- charlie edited on a fresh base ^000000000000000000000000S4\n- delta ^000000000000000000000000S5\n- echo ^000000000000000000000000S6\n"
       },
       "command": "apply_page_source",
-      "comment": "Bravo edited differently on each side: the page's version keeps the block, the buffer's is created directly before it. Last, because the fork's id is minted per stack.",
+      "comment": "Bravo edited differently on each side: the page's version keeps the block, the buffer's is created directly before it. Its id is minted per stack, so later steps merge from bases older than it and never spell it.",
       "name": "a_block_edited_both_ways_is_kept_twice",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockId": "S4",
+        "newIndex": 0,
+        "newParentId": "S2"
+      },
+      "command": "move_block",
+      "comment": "Charlie moved under alpha on the page, its text unchanged."
+    },
+    {
+      "args": {
+        "baseSource": "- alpha edited on the page ^000000000000000000000000S2\n- bravo edited here ^000000000000000000000000S3\n- charlie edited on a fresh base ^000000000000000000000000S4\n- delta ^000000000000000000000000S5\n- echo ^000000000000000000000000S6\n",
+        "force": false,
+        "merge": true,
+        "pageId": "S1",
+        "source": "- alpha edited on the page ^000000000000000000000000S2\n- bravo edited here ^000000000000000000000000S3\n- delta ^000000000000000000000000S5\n- echo ^000000000000000000000000S6\n"
+      },
+      "command": "apply_page_source",
+      "comment": "Charlie dropped from the buffer after the page moved it to another parent: the move counts as a change, so the delete gives way as it does to an edit, the block stays under alpha, and nothing is written.",
+      "name": "a_delete_here_gives_way_to_a_move_on_the_page",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockId": "S6"
+      },
+      "command": "delete_block",
+      "comment": "Echo deleted on the page."
+    },
+    {
+      "args": {
+        "baseSource": "- alpha edited on the page ^000000000000000000000000S2\n- bravo edited here ^000000000000000000000000S3\n- charlie edited on a fresh base ^000000000000000000000000S4\n- delta ^000000000000000000000000S5\n- echo ^000000000000000000000000S6\n",
+        "force": false,
+        "merge": true,
+        "pageId": "S1",
+        "source": "- alpha edited on the page ^000000000000000000000000S2\n- bravo edited here ^000000000000000000000000S3\n- charlie edited on a fresh base ^000000000000000000000000S4\n  - echo ^000000000000000000000000S6\n- delta ^000000000000000000000000S5\n"
+      },
+      "command": "apply_page_source",
+      "comment": "Echo moved under charlie in the buffer, its text unchanged, after the page deleted it: the move counts as a change, so the buffer's echo is created under charlie, which stays under alpha, where the page put it.",
+      "name": "a_move_here_survives_a_delete_on_the_page",
       "via": "command"
     },
     {
@@ -358,7 +434,7 @@
         "newParentId": "S1"
       },
       "command": "move_block",
-      "comment": "Charlie moved first on the page."
+      "comment": "Charlie moved back out from under alpha, first on the page, with the echo created under it."
     },
     {
       "args": {
@@ -378,7 +454,7 @@
         "blockId": "S2"
       },
       "command": "delete_block",
-      "comment": "Alpha deleted on the page."
+      "comment": "Alpha deleted on the page, with nothing under it any more."
     },
     {
       "args": {

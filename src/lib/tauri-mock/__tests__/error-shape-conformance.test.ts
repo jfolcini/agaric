@@ -45,6 +45,8 @@ const CHILD = '00000000000000000000CHILDA'
 const TAG = '0000000000000000000000TAGZ'
 const SPACE = 'SPACE_PERSONAL'
 const MISSING_ID = '00000000000000000000MISSING'
+/** A well-formed ULID no row has: page-source reads parse the id before the lookup. */
+const ABSENT_ULID = '00000000000000000000ABSENT'
 
 /** Reset every mock store and seed one page + one child block in `SPACE`. */
 function resetMockState(): void {
@@ -135,8 +137,8 @@ describe('tauri-mock error-shape conformance (#2463)', () => {
         cmd: 'update_property_def_options',
         args: { key: 'no-such-def', options: '["a"]' },
       },
-      { name: 'export_page_markdown', cmd: 'export_page_markdown', args: { pageId: MISSING_ID } },
-      { name: 'get_page_source', cmd: 'get_page_source', args: { pageId: MISSING_ID } },
+      { name: 'export_page_markdown', cmd: 'export_page_markdown', args: { pageId: ABSENT_ULID } },
+      { name: 'get_page_source', cmd: 'get_page_source', args: { pageId: ABSENT_ULID } },
       {
         name: 'compute_block_vs_current_diff (missing block)',
         cmd: 'compute_block_vs_current_diff',

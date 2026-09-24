@@ -137,18 +137,28 @@ interface SourceBullet {
   anchor: string | null
 }
 
-/**
- * The ` ^id` a source block ends with. A ` ^word` that is not a block id is
- * text, as the backend's save keeps it.
- */
+/** The ` ^word` a source block ends with, when it is id-sized. */
 const SOURCE_ANCHOR_RE = /(?:^|\s)\^([0-9A-Za-z]{26})\s*$/
+
+/** What `BlockId::from_string` reads: Crockford base32, either case, in 128 bits. */
+const ULID_RE = /^[0-7][0-9A-HJKMNP-TV-Z]{25}$/i
+
+/**
+ * Whether a caret word is a block id: anything else is text, as the backend's
+ * save keeps it. The mock's own ids (`…BLOCK01`, `…MOCK…`) spell letters
+ * outside Crockford, so a word naming a block the mock holds is one too.
+ */
+function isBlockId(word: string): boolean {
+  return ULID_RE.test(word) || blocks.has(word)
+}
 
 /** A source buffer's blocks ({@link parseOutline}), each trailing ` ^id` split off. */
 function parseSourceBuffer(source: string): SourceBullet[] {
   return parseOutline(source).map(({ content, depth }) => {
     const match = SOURCE_ANCHOR_RE.exec(content)
-    return match
-      ? { content: content.slice(0, match.index), depth, anchor: match[1] ?? null }
+    const word = match?.[1]
+    return match && word !== undefined && isBlockId(word)
+      ? { content: content.slice(0, match.index), depth, anchor: word }
       : { content, depth, anchor: null }
   })
 }
@@ -161,7 +171,7 @@ const MOVED_ANCHOR_RE = /(?:^|\s)(\^[0-9A-Za-z-]+)/g
  * bullet whose text holds exactly one `^ID` of a `loaded` block no other
  * bullet claims takes it as its anchor, and the token leaves the text with the
  * one separator written with it. Two or more refuse the save. The mock models
- * no code fences or inline code, so the backend's code skip has no counterpart.
+ * no inline code, so the backend's inline-code skip has no counterpart.
  */
 function healMovedAnchors(
   typed: SourceBullet[],
@@ -275,9 +285,9 @@ function warningAbout(content: string, what: string): string {
  * Which blocks a merge keeps and with what text. A block changed on one side
  * takes that side's text; changed on both, the page's stays and the buffer's
  * is forked as a new block before it. A delete on one side stands unless the
- * other side changed the block. DELIBERATE APPROXIMATION: two different edits
- * of a multi-line block fork here, where the backend's `merge_lines` first
- * tries to merge them line by line.
+ * other side changed the block or moved it to another parent. DELIBERATE
+ * APPROXIMATION: two different edits of a multi-line block fork here, where
+ * the backend's `merge_lines` first tries to merge them line by line.
  */
 function mergeSourceBlocks(
   base: SourceOutline,
@@ -286,11 +296,12 @@ function mergeSourceBlocks(
   warnings: string[],
 ): Map<string, MergedBlock> {
   const kept = new Map<string, MergedBlock>()
+  const moved = (side: SourceOutline, key: string) => side.parent.get(key) !== base.parent.get(key)
   for (const [key, c] of current.byKey) {
     const b = base.byKey.get(key)
     const m = mine.byKey.get(key)
     if (m === undefined) {
-      if (b?.content === c.content) continue
+      if (b?.content === c.content && !moved(current, key)) continue
       if (b !== undefined) {
         warnings.push(warningAbout(c.content, 'changed on the page; your delete was not applied'))
       }
@@ -309,7 +320,7 @@ function mergeSourceBlocks(
     const b = base.byKey.get(key)
     if (b === undefined) {
       kept.set(key, { content: m.content, anchor: m.anchor, fork: null })
-    } else if (m.content !== b.content) {
+    } else if (m.content !== b.content || moved(mine, key)) {
       warnings.push(warningAbout(m.content, 'was deleted on the page; saved as a new block'))
       kept.set(key, { content: m.content, anchor: null, fork: null })
     }

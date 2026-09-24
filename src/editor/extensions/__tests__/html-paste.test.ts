@@ -422,6 +422,18 @@ describe('handlePaste — a pasted outline goes to the block path (#5140)', () =
     expect(dispatchBlockEvent).not.toHaveBeenCalled()
   })
 
+  it('leaves an outline pasted over a selection to the default paste, which replaces it', async () => {
+    editor = await build({
+      type: 'doc',
+      content: [{ type: 'paragraph', content: [{ type: 'text', text: 'foo' }] }],
+    })
+    editor.commands.setTextSelection({ from: 1, to: 4 })
+
+    expect(paste(editor, '- a\n- b')).toBe(false)
+
+    expect(dispatchBlockEvent).not.toHaveBeenCalled()
+  })
+
   it('keeps an outline pasted inside a code block literal', async () => {
     editor = await build({
       type: 'doc',

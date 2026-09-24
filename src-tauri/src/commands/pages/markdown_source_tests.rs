@@ -508,6 +508,16 @@ const BLOCK: &str = "01J0000000000000000000000A";
 /// `content` as a one-block page in source mode, with every ref above named
 /// and `names` as what the importer would resolve against.
 fn source_with_names(content: &str, pages: &[(&str, &[&str])], tags: &[(&str, &str)]) -> String {
+    render_page_source(&data_with_names(content, pages, tags))
+}
+
+/// A one-block page holding `content`, with every ref above named and `names`
+/// as what the importer would resolve against.
+fn data_with_names(
+    content: &str,
+    pages: &[(&str, &[&str])],
+    tags: &[(&str, &str)],
+) -> PageExportData {
     let mut data = page_data(vec![row(BLOCK, PAGE, 1, content)]);
     data.page_titles = [
         (PROJECT, "Project"),
@@ -540,7 +550,7 @@ fn source_with_names(content: &str, pages: &[(&str, &[&str])], tags: &[(&str, &s
             .map(|(norm, id)| (norm.to_string(), id.to_string()))
             .collect(),
     };
-    render_page_source(&data)
+    data
 }
 
 #[test]
@@ -603,6 +613,12 @@ fn a_name_inside_code_stays_raw() {
     assert_eq!(
         source_with_names(&fenced, pages, &[]),
         format!("- ````\n  [[{PROJECT}]]\n  ````\n  ^{BLOCK}\n")
+    );
+    let data = data_with_names(&fenced, pages, &[]);
+    assert_eq!(
+        render_clipboard_source(&data, &[BLOCK.into()], true).unwrap(),
+        format!("- ````\n  [[{PROJECT}]]\n  ````\n"),
+        "a copy"
     );
     let inline = format!("`[[{PROJECT}]]`");
     assert_eq!(
