@@ -761,7 +761,7 @@ pub fn parse_logseq_markdown(content: &str) -> ParseOutput {
     );
 
     let mut warnings = frontmatter_warnings;
-    let blocks = parse_outline(&normalized, ParseMode::Import, &mut warnings);
+    let blocks = parse_outline(&normalized, ParseMode::Import, true, &mut warnings);
 
     ParseOutput {
         blocks,
@@ -776,11 +776,19 @@ pub fn parse_logseq_markdown(content: &str) -> ParseOutput {
 /// this keeps what the renderer wrote: `((ULID))` refs, spacing, a block's
 /// interior blank lines and the indentation of its continuation lines. It also
 /// reads a checkbox after the list marker as the block's `todo_state`. A buffer
-/// has no frontmatter, so none is looked for.
+/// has no frontmatter, so none is looked for. Nor is a block nested past the
+/// import depth limit flattened: a save refuses it where an import would
+/// reshape it.
 pub fn parse_source_outline(content: &str) -> ParseOutput {
+    source_outline(content, false)
+}
+
+/// [`parse_source_outline`], flattening blocks past [`MAX_IMPORT_DEPTH`] as an
+/// import does when `clamp`.
+fn source_outline(content: &str, clamp: bool) -> ParseOutput {
     let normalized = content.replace("\r\n", "\n").replace('\r', "\n");
     let mut warnings = Vec::new();
-    let blocks = parse_outline(&normalized, ParseMode::Source, &mut warnings);
+    let blocks = parse_outline(&normalized, ParseMode::Source, clamp, &mut warnings);
     ParseOutput {
         blocks,
         frontmatter: Vec::new(),
@@ -790,7 +798,8 @@ pub fn parse_source_outline(content: &str) -> ParseOutput {
 }
 
 /// Clipboard text as blocks (#5140). Text whose first non-blank line is a
-/// bullet is an outline, read as a source buffer is. Any other text is one
+/// bullet is an outline, read as a source buffer is but flattened past the
+/// import depth limit as an import is. Any other text is one
 /// block per non-blank line, the line less its indentation, nested by that
 /// indentation, with nothing on it read as a marker or a property.
 pub fn parse_pasted_text(text: &str) -> Vec<ParsedBlock> {
@@ -800,7 +809,7 @@ pub fn parse_pasted_text(text: &str) -> Vec<ParsedBlock> {
         .map(str::trim_start)
         .find(|line| !line.is_empty());
     if first_line.is_some_and(is_bullet_line) {
-        return parse_source_outline(&text).blocks;
+        return source_outline(&text, true).blocks;
     }
     text.lines()
         .filter(|line| !line.trim_start().is_empty())
@@ -830,15 +839,19 @@ enum ParseMode {
 }
 
 /// The block scan both modes share: lines into blocks, then anchors, then the
-/// depth clamp, appending one warning per lossy transform to `warnings`.
+/// depth clamp when `clamp`, appending one warning per lossy transform to
+/// `warnings`.
 fn parse_outline(
     normalized: &str,
     mode: ParseMode,
+    clamp: bool,
     warnings: &mut Vec<String>,
 ) -> Vec<ParsedBlock> {
     let (mut blocks, ends_in_code, mut lossy) = parse_block_lines(normalized, mode);
     extract_block_anchors(&mut blocks, &ends_in_code, mode);
-    lossy.clamped = clamp_block_depths(&mut blocks);
+    if clamp {
+        lossy.clamped = clamp_block_depths(&mut blocks);
+    }
     lossy.push_warnings(warnings);
     blocks
 }
@@ -1084,8 +1097,10 @@ fn parse_block_lines(
         // delimiters. Such a line falls through to the continuation branch
         // (folded into the fenced block's content), mirroring the
         // already-guarded property branch below.
+        // A source buffer writes code this way itself, so there it is no
+        // reshaping to report.
         let in_code_body = fence.open && !is_fence_delim;
-        if in_code_body && is_bullet_line(trimmed) {
+        if in_code_body && is_bullet_line(trimmed) && mode == ParseMode::Import {
             lossy.fence_split_avoided += 1;
         }
 
@@ -4191,6 +4206,17 @@ mod tests_source_outline_5140 {
         assert!(block.is_code);
     }
 
+    /// A bullet-shaped line in code is how the render writes it, so a source
+    /// buffer reports no reshaping where an import of the same text does.
+    #[test]
+    fn a_bullet_shaped_code_line_is_reported_only_on_import() {
+        let md = "- ```\n  - x\n  ```\n";
+        let source = parse_source_outline(md).warnings;
+        assert!(source.is_empty(), "a source buffer: {source:?}");
+        let import = parse_logseq_markdown(md).warnings;
+        assert_eq!(import.len(), 1, "an import: {import:?}");
+    }
+
     const ID_A: &str = "01J0000000000000000000000A";
     const ID_B: &str = "01J0000000000000000000000B";
 
@@ -4282,7 +4308,7 @@ mod tests_source_outline_5140 {
 
 #[cfg(test)]
 mod tests_pasted_text_5140 {
-    use super::{parse_pasted_text, parse_source_outline, pasted_block};
+    use super::{MAX_IMPORT_DEPTH, parse_pasted_text, parse_source_outline, pasted_block};
 
     /// `(depth, content, properties)` of a block.
     type Shape = (usize, String, Vec<(String, String)>);
@@ -4348,6 +4374,41 @@ mod tests_pasted_text_5140 {
     fn a_tab_after_the_bullet_indentation_is_content() {
         let out = parse_source_outline("- ```\n  \tindented\n  ```\n");
         assert_eq!(out.blocks[0].content, "```\n\tindented\n```");
+    }
+
+    /// A chain of bullets one level past the import depth limit.
+    fn chain_past_the_depth_limit() -> String {
+        (0..=MAX_IMPORT_DEPTH + 1)
+            .map(|depth| format!("{}- b{depth}\n", "  ".repeat(depth)))
+            .collect()
+    }
+
+    /// A source buffer is saved, not imported: a block too deep is refused by
+    /// the write, so the parse keeps its depth.
+    #[test]
+    fn a_source_buffer_keeps_a_depth_past_the_import_limit() {
+        let out = parse_source_outline(&chain_past_the_depth_limit());
+        assert_eq!(
+            out.blocks.last().map(|b| b.depth),
+            Some(MAX_IMPORT_DEPTH + 1),
+            "the deepest block keeps its depth"
+        );
+        assert!(
+            out.warnings.is_empty(),
+            "nothing was flattened: {:?}",
+            out.warnings
+        );
+    }
+
+    /// Pasted text is flattened past the limit, as an import is.
+    #[test]
+    fn a_pasted_outline_is_flattened_past_the_import_limit() {
+        let blocks = parse_pasted_text(&chain_past_the_depth_limit());
+        assert_eq!(
+            blocks.last().map(|b| b.depth),
+            Some(MAX_IMPORT_DEPTH),
+            "the deepest block is flattened to the limit"
+        );
     }
 
     #[test]

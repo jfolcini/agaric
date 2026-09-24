@@ -640,27 +640,17 @@ function dedent(line: string, width: number): string {
 }
 
 /**
- * DELIBERATE APPROXIMATION of `import::parse_pasted_text`. Text whose first
- * non-blank line is a bullet is an outline: each bullet starts a block at its
- * indentation, and the lines under it — interior blank lines included — join
- * its content with the bullet's own indentation removed. Any other text is one
- * block per non-blank line, at its indentation. Code fences, list markers,
- * task checkboxes, property lines, escapes and anchors are not modelled.
+ * DELIBERATE APPROXIMATION of `import::parse_source_outline`: each bullet
+ * starts a block at its indentation, and the lines under it — interior blank
+ * lines included — join its content with the bullet's own indentation removed.
+ * A line before the first bullet is a block of its own. Code fences, list
+ * markers, task checkboxes, property lines, escapes and anchors are not
+ * modelled.
  */
-function parsePastedText(text: string): PlannedPaste[] {
-  const lines = text.replace(/\r\n?/g, '\n').split('\n')
-  const firstLine = lines.find((line) => line.trim() !== '')
-  if (firstLine === undefined) return []
+export function parseOutline(text: string): PlannedPaste[] {
   const out: PlannedPaste[] = []
-  if (!isBulletLine(firstLine.trimStart())) {
-    for (const line of lines) {
-      if (line.trim() === '') continue
-      out.push({ content: line.trimStart(), depth: indentDepth(line) })
-    }
-    return out
-  }
   let blankLines = 0
-  for (const line of lines) {
+  for (const line of text.replace(/\r\n?/g, '\n').split('\n')) {
     const trimmed = line.trimStart()
     if (trimmed === '') {
       blankLines += 1
@@ -671,8 +661,28 @@ function parsePastedText(text: string): PlannedPaste[] {
       out.push({ content: trimmed.slice(2), depth: indentDepth(line) })
     } else if (last) {
       last.content += `${'\n'.repeat(blankLines + 1)}${dedent(line, (last.depth + 1) * 2)}`
+    } else {
+      out.push({ content: trimmed, depth: indentDepth(line) })
     }
     blankLines = 0
+  }
+  return out
+}
+
+/**
+ * DELIBERATE APPROXIMATION of `import::parse_pasted_text`. Text whose first
+ * non-blank line is a bullet is an outline ({@link parseOutline}). Any other
+ * text is one block per non-blank line, at its indentation.
+ */
+function parsePastedText(text: string): PlannedPaste[] {
+  const lines = text.replace(/\r\n?/g, '\n').split('\n')
+  const firstLine = lines.find((line) => line.trim() !== '')
+  if (firstLine === undefined) return []
+  if (isBulletLine(firstLine.trimStart())) return parseOutline(text)
+  const out: PlannedPaste[] = []
+  for (const line of lines) {
+    if (line.trim() === '') continue
+    out.push({ content: line.trimStart(), depth: indentDepth(line) })
   }
   return out
 }

@@ -225,6 +225,8 @@ macro_rules! agaric_commands {
             // Markdown export (#519)
             $crate::commands::pages::export_page_markdown,
             $crate::commands::pages::get_page_source,
+            // #5140: the page saved from its source buffer, one undo.
+            $crate::commands::pages::apply_page_source,
             $crate::commands::pages::get_blocks_source,
             // Agenda projection (#644)
             $crate::commands::agenda::list_projected_agenda,

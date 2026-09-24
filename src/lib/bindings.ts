@@ -579,6 +579,11 @@ export const commands = {
 	/**  Tauri command: render a page as its source-mode markdown buffer. Delegates to [`get_page_source_inner`]. */
 	getPageSource: (pageId: PageId) => typedError<string, AppError>(__TAURI_INVOKE("get_page_source", { pageId })),
 	/**
+	 *  Tauri command: save a page edited as its source buffer. Delegates to
+	 *  [`apply_page_source_inner`].
+	 */
+	applyPageSource: (pageId: PageId, source: string, baseSource: string, force: boolean) => typedError<WithOps<PageSourceReport>, AppError>(__TAURI_INVOKE("apply_page_source", { pageId, source, baseSource, force })),
+	/**
 	 *  Tauri command: render blocks as clipboard markdown. Delegates to
 	 *  [`get_blocks_source_inner`].
 	 */
@@ -2918,6 +2923,32 @@ export type PageSort =
  */
 "default";
 
+/**  What [`apply_page_source`] wrote. */
+export type PageSourceReport = {
+	/**
+	 *  Blocks created from the buffer: new bullets, and anchors a forced save
+	 *  kept as new blocks.
+	 */
+	created: number,
+	/**  Blocks of the page whose content was rewritten. */
+	edited: number,
+	/**  Blocks moved to another parent or slot. */
+	moved: number,
+	/**
+	 *  Blocks of the page the buffer no longer holds, each deleted with the
+	 *  blocks under it.
+	 */
+	deleted: number,
+	/**  Properties set on blocks the page already had, task state included. */
+	properties_set: number,
+	/**  Properties removed from blocks the page already had. */
+	properties_deleted: number,
+	/**  The pages and tags created for names the buffer newly wrote. */
+	names_created: BlockRow[],
+	/**  What the save could not keep as written. */
+	warnings: string[],
+};
+
 /**
  *  Result of [`load_page_subtree_inner`] — the (possibly capped) block
  *  set plus an honest truncation signal so the FE can surface a
@@ -4515,8 +4546,11 @@ export type ValidationCode =
  */
 "InvalidFilter" | 
 /**
- *  Stale pagination cursor (format/sort mismatch) — the client should
- *  retry once without a cursor (see `usePageBrowserData`).
+ *  Stale request state: a pagination cursor whose format or sort no
+ *  longer matches (the client retries once without it, see
+ *  `usePageBrowserData`), or a page source saved against a base that is
+ *  no longer the page's source (`apply_page_source`, #5140; the client
+ *  reads the current source before it saves again).
  */
 "RequiresRefresh" | 
 /**

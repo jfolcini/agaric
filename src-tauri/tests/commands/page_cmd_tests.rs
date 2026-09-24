@@ -2760,6 +2760,1327 @@ async fn get_page_source_of_a_soft_deleted_page_returns_not_found() {
 }
 
 // ======================================================================
+// apply_page_source — the page saved from its source buffer (#5140)
+// ======================================================================
+
+async fn page_source(pool: &SqlitePool, page: &BlockId) -> String {
+    get_page_source_inner(pool, page.as_str()).await.unwrap()
+}
+
+/// Save `source` over `page`, edited from `base`.
+async fn save_source(
+    pool: &SqlitePool,
+    mat: &Materializer,
+    page: &BlockId,
+    source: &str,
+    base: &str,
+    force: bool,
+) -> Result<PageSourceReport, AppError> {
+    let result = apply_page_source_inner(
+        pool,
+        DEV,
+        mat,
+        page.as_str(),
+        source.to_owned(),
+        base.to_owned(),
+        force,
+    )
+    .await;
+    settle(mat).await;
+    result
+}
+
+/// `source` with its one `from` replaced by `to`.
+fn with(source: &str, from: &str, to: &str) -> String {
+    assert_eq!(
+        source.matches(from).count(),
+        1,
+        "`{from}` occurs once in:\n{source}"
+    );
+    source.replacen(from, to, 1)
+}
+
+/// Created, edited, moved, deleted, properties set, properties deleted.
+fn counts(report: &PageSourceReport) -> [u32; 6] {
+    [
+        report.created,
+        report.edited,
+        report.moved,
+        report.deleted,
+        report.properties_set,
+        report.properties_deleted,
+    ]
+}
+
+async fn last_seq(pool: &SqlitePool) -> i64 {
+    sqlx::query_scalar("SELECT COALESCE(MAX(seq), 0) FROM op_log")
+        .fetch_one(pool)
+        .await
+        .unwrap()
+}
+
+/// The types of the ops appended after `seq`, in order.
+async fn ops_after(pool: &SqlitePool, seq: i64) -> Vec<String> {
+    sqlx::query_scalar("SELECT op_type FROM op_log WHERE seq > ? ORDER BY seq")
+        .bind(seq)
+        .fetch_all(pool)
+        .await
+        .unwrap()
+}
+
+fn is_refresh(result: &Result<PageSourceReport, AppError>) -> bool {
+    matches!(result, Err(err) if err.validation_code() == Some(agaric_core::error::ValidationCode::RequiresRefresh))
+}
+
+/// A page using everything the buffer carries: tasks in and out of the
+/// checkbox set, priority, both dates, both list styles, typed properties, a
+/// code block, multi-line and marker-like content, names written as names and
+/// as raw ids, a literal `#42`, and a nested page among the blocks.
+async fn everything_page(pool: &SqlitePool, mat: &Materializer) -> BlockId {
+    let page = dup_page(pool, mat, "Everything").await;
+    let project = dup_page(pool, mat, "Project").await;
+    insert_block(pool, SOURCE_WORK, "tag", "work", None, Some(1)).await;
+    assign_to_space(pool, SOURCE_WORK, TEST_SPACE_ID).await;
+    for (id, position) in [(SOURCE_PROJECT, 10), (SOURCE_PROJECT_TWIN, 11)] {
+        insert_block(pool, id, "page", "Twin", None, Some(position)).await;
+        assign_to_space(pool, id, TEST_SPACE_ID).await;
+    }
+    update_property_def_options_inner(
+        pool,
+        "todo_state".into(),
+        r#"["TODO","DOING","DONE","CANCELLED","WAITING"]"#.into(),
+    )
+    .await
+    .unwrap();
+    for (key, value_type) in [
+        ("estimate", "number"),
+        ("billable", "boolean"),
+        ("review_on", "date"),
+        ("reviewer", "ref"),
+    ] {
+        create_property_def_inner(pool, key.into(), value_type.into(), None)
+            .await
+            .unwrap();
+    }
+    let task = dup_child(pool, mat, &page, "a task").await;
+    let waiting = dup_child(pool, mat, &task, "waiting on it").await;
+    let bullet = dup_child(pool, mat, &page, "bullet item").await;
+    let numbered = dup_child(pool, mat, &page, "numbered item").await;
+    dup_child(pool, mat, &page, "```sh\necho hi\n```").await;
+    dup_child(
+        pool,
+        mat,
+        &page,
+        "first\n- not a bullet\nkey:: not a property",
+    )
+    .await;
+    dup_child(pool, mat, &page, "[ ] not a task").await;
+    dup_child(
+        pool,
+        mat,
+        &page,
+        &format!("see [[{project}]] #[{SOURCE_WORK}]"),
+    )
+    .await;
+    dup_child(pool, mat, &page, &format!("twin [[{SOURCE_PROJECT}]]")).await;
+    create_page_in_space_inner(
+        pool,
+        DEV,
+        mat,
+        Some(page.clone().into_string()),
+        "Nested".into(),
+        TEST_SPACE_ID.into(),
+    )
+    .await
+    .unwrap();
+    dup_child(pool, mat, &page, "issue #42").await;
+    let id = |block: &BlockId| block.as_str().into();
+    set_todo_state_inner(pool, DEV, mat, id(&task), Some("DONE".into()))
+        .await
+        .unwrap();
+    set_todo_state_inner(pool, DEV, mat, id(&waiting), Some("WAITING".into()))
+        .await
+        .unwrap();
+    set_priority_inner(pool, DEV, mat, id(&task), Some("1".into()))
+        .await
+        .unwrap();
+    set_scheduled_date_inner(pool, DEV, mat, id(&task), Some("2026-02-01".into()))
+        .await
+        .unwrap();
+    set_due_date_inner(pool, DEV, mat, id(&task), Some("2026-03-01".into()))
+        .await
+        .unwrap();
+    for (block, key, text, num, date, reference, boolean) in [
+        (&bullet, "listStyle", Some("bullet"), None, None, None, None),
+        (
+            &numbered,
+            "listStyle",
+            Some("ordered"),
+            None,
+            None,
+            None,
+            None,
+        ),
+        (&task, "estimate", None, Some(3.5), None, None, None),
+        (&task, "billable", None, None, None, None, Some(true)),
+        (
+            &task,
+            "review_on",
+            None,
+            None,
+            Some("2026-04-01"),
+            None,
+            None,
+        ),
+        (
+            &task,
+            "reviewer",
+            None,
+            None,
+            None,
+            Some(project.as_str()),
+            None,
+        ),
+        (&task, "note", Some("free text"), None, None, None, None),
+    ] {
+        set_property_inner(
+            pool,
+            DEV,
+            mat,
+            id(block),
+            key.into(),
+            text.map(Into::into),
+            num,
+            date.map(Into::into),
+            reference.map(Into::into),
+            boolean,
+            None,
+        )
+        .await
+        .unwrap();
+    }
+    settle(mat).await;
+    page
+}
+
+/// Saving a page's own source appends no op, however much the page holds:
+/// the save compares the buffer with the page's parsed source, not with the
+/// stored rows, and resolves no name in a block it leaves alone.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn apply_page_source_of_its_own_source_writes_nothing() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let page = everything_page(&pool, &mat).await;
+    let source = page_source(&pool, &page).await;
+    for written in [
+        "- [x] a task",
+        "todo_state:: WAITING",
+        "- - bullet item",
+        "- 1. numbered item",
+        "\\- not a bullet",
+        "- \\[ ] not a task",
+        "see [[Project]] #work ^",
+        "twin [[01J5140PR0JECT000000000001]] ^",
+        "issue #42 ^",
+    ] {
+        assert!(
+            source.contains(written),
+            "seed: the source writes `{written}`:\n{source}"
+        );
+    }
+    let before = last_seq(&pool).await;
+
+    let report = save_source(&pool, &mat, &page, &source, &source, false)
+        .await
+        .unwrap();
+
+    assert_eq!(
+        ops_after(&pool, before).await,
+        Vec::<String>::new(),
+        "an unchanged buffer appends no op"
+    );
+    assert_eq!(counts(&report), [0; 6], "and reports none");
+    assert!(
+        report.names_created.is_empty() && report.warnings.is_empty(),
+        "and creates no name and warns of nothing: {report:?}"
+    );
+    assert_eq!(
+        page_source(&pool, &page).await,
+        source,
+        "the page is as it was"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn apply_page_source_edits_a_blocks_content() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let page = dup_page(&pool, &mat, "Edit").await;
+    let a = dup_child(&pool, &mat, &page, "hello").await;
+    dup_child(&pool, &mat, &page, "untouched").await;
+    settle(&mat).await;
+    let base = page_source(&pool, &page).await;
+    let before = last_seq(&pool).await;
+
+    let report = save_source(
+        &pool,
+        &mat,
+        &page,
+        &with(&base, "- hello ^", "- hello\n  world ^"),
+        &base,
+        false,
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(counts(&report), [0, 1, 0, 0, 0, 0], "one block edited");
+    assert_eq!(ops_after(&pool, before).await, vec!["edit_block"]);
+    assert_eq!(
+        dup_children(&pool, &page).await[0],
+        (a.into_string(), "hello\nworld".to_owned()),
+        "the continuation line is the block's second line"
+    );
+}
+
+/// A changed value is set, a new key added, a removed line's key deleted, and
+/// a value under a `ref`-declared key goes to `value_ref`.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn apply_page_source_sets_and_deletes_properties() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let page = dup_page(&pool, &mat, "Props").await;
+    create_property_def_inner(&pool, "reviewer".into(), "ref".into(), None)
+        .await
+        .unwrap();
+    let target = dup_child(&pool, &mat, &page, "the reviewer").await;
+    let block = dup_child(&pool, &mat, &page, "has properties").await;
+    for (key, value) in [("note", "open"), ("drop", "me")] {
+        set_property_inner(
+            &pool,
+            DEV,
+            &mat,
+            block.as_str().into(),
+            key.into(),
+            Some(value.into()),
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+    }
+    settle(&mat).await;
+    let base = page_source(&pool, &page).await;
+    let source = with(
+        &with(&base, "  drop:: me\n", ""),
+        "  note:: open\n",
+        &format!("  note:: done\n  owner:: ann\n  reviewer:: {target}\n"),
+    );
+
+    let report = save_source(&pool, &mat, &page, &source, &base, false)
+        .await
+        .unwrap();
+
+    assert_eq!(
+        counts(&report),
+        [0, 0, 0, 0, 3, 1],
+        "three set, one deleted"
+    );
+    assert_eq!(
+        dup_storage(&pool, &block).await,
+        vec![
+            "columns todo=None priority=None scheduled=None due=None".to_owned(),
+            r#"note text=Some("done") num=None date=None ref=None bool=None"#.to_owned(),
+            r#"owner text=Some("ann") num=None date=None ref=None bool=None"#.to_owned(),
+            format!(
+                "reviewer text=None num=None date=None ref={:?} bool=None",
+                Some(target.as_str())
+            ),
+        ],
+        "the stored properties are the buffer's"
+    );
+}
+
+/// A value typed under a `ref`-declared key that is not a live block's id,
+/// such as the title of the page meant, is refused naming the key, and nothing
+/// is written.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn apply_page_source_refuses_a_ref_value_that_is_not_a_block_id() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let page = dup_page(&pool, &mat, "Refs").await;
+    dup_page(&pool, &mat, "Project").await;
+    create_property_def_inner(&pool, "reviewer".into(), "ref".into(), None)
+        .await
+        .unwrap();
+    let block = dup_child(&pool, &mat, &page, "needs a reviewer").await;
+    settle(&mat).await;
+    let base = page_source(&pool, &page).await;
+    let line = format!("- needs a reviewer ^{block}\n");
+    let before = last_seq(&pool).await;
+
+    let result = save_source(
+        &pool,
+        &mat,
+        &page,
+        &with(&base, &line, &format!("{line}  reviewer:: Project\n")),
+        &base,
+        false,
+    )
+    .await;
+
+    assert!(
+        matches!(&result, Err(AppError::Validation { message, .. }) if message.contains("reviewer")),
+        "refused naming the key, not reported set and dropped: {result:?}"
+    );
+    assert_eq!(ops_after(&pool, before).await, Vec::<String>::new());
+    assert_eq!(page_source(&pool, &page).await, base, "nothing is written");
+}
+
+/// What the user types is checked against the key's options, as the property
+/// editor checks it; a value a block already held but its key no longer offers
+/// is left alone.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn apply_page_source_checks_only_typed_values_against_their_options() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let page = dup_page(&pool, &mat, "Options").await;
+    let kept = dup_child(&pool, &mat, &page, "kept").await;
+    let other = dup_child(&pool, &mat, &page, "other").await;
+    set_property_inner(
+        &pool,
+        DEV,
+        &mat,
+        kept.as_str().into(),
+        "priority".into(),
+        Some("3".into()),
+        None,
+        None,
+        None,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    update_property_def_options_inner(&pool, "priority".into(), r#"["1","2"]"#.into())
+        .await
+        .unwrap();
+    settle(&mat).await;
+    let base = page_source(&pool, &page).await;
+    let before = dup_counts(&pool).await;
+    let line = format!("- other ^{other}\n");
+
+    let typed = with(&base, &line, &format!("{line}  priority:: 3\n"));
+    let refused = save_source(&pool, &mat, &page, &typed, &base, false).await;
+    assert!(
+        matches!(refused, Err(AppError::Validation { .. })),
+        "a typed value outside the options is refused, got {refused:?}"
+    );
+    assert_eq!(dup_counts(&pool).await, before, "nothing is written");
+
+    let edited = with(&base, &line, &format!("- other, edited ^{other}\n"));
+    let report = save_source(&pool, &mat, &page, &edited, &base, false)
+        .await
+        .unwrap();
+    assert_eq!(
+        counts(&report),
+        [0, 1, 0, 0, 0, 0],
+        "only the edit is written"
+    );
+    assert_eq!(
+        dup_storage(&pool, &kept).await[0],
+        r#"columns todo=None priority=Some("3") scheduled=None due=None"#,
+        "the value its key no longer offers stays"
+    );
+}
+
+/// Ticking a repeating task's checkbox does what a click does: DONE, the
+/// `completed_at` stamp, and the next occurrence.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn apply_page_source_checkbox_completes_a_repeating_task() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let page = dup_page(&pool, &mat, "Tasks").await;
+    let task = dup_child(&pool, &mat, &page, "daily task").await;
+    let id = || task.as_str().into();
+    set_todo_state_inner(&pool, DEV, &mat, id(), Some("TODO".into()))
+        .await
+        .unwrap();
+    set_due_date_inner(&pool, DEV, &mat, id(), Some("2025-06-15".into()))
+        .await
+        .unwrap();
+    set_property_inner(
+        &pool,
+        DEV,
+        &mat,
+        id(),
+        "repeat".into(),
+        Some("daily".into()),
+        None,
+        None,
+        None,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+    let base = page_source(&pool, &page).await;
+
+    let report = save_source(
+        &pool,
+        &mat,
+        &page,
+        &with(&base, "- [ ] daily task", "- [x] daily task"),
+        &base,
+        false,
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(counts(&report), [0, 0, 0, 0, 1, 0], "the task state is set");
+    assert_eq!(
+        dup_storage(&pool, &task).await[0],
+        r#"columns todo=Some("DONE") priority=None scheduled=None due=Some("2025-06-15")"#,
+        "the task is DONE"
+    );
+    assert!(
+        dup_stamps(&pool, &task)
+            .await
+            .iter()
+            .any(|stamp| stamp.starts_with("completed_at=")),
+        "and stamped completed"
+    );
+    let next: Vec<(Option<String>, Option<String>)> = sqlx::query_as(
+        "SELECT todo_state, due_date FROM blocks \
+         WHERE parent_id = ? AND id != ? AND deleted_at IS NULL",
+    )
+    .bind(page.as_str())
+    .bind(task.as_str())
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        next,
+        vec![(Some("TODO".to_owned()), Some("2025-06-16".to_owned()))],
+        "the next occurrence is a TODO due the day after"
+    );
+
+    // Unticking it again clears the stamp, which only the state the task had
+    // before the save tells apart from a task never done.
+    let base = page_source(&pool, &page).await;
+    save_source(
+        &pool,
+        &mat,
+        &page,
+        &with(&base, "- [x] daily task", "- [ ] daily task"),
+        &base,
+        false,
+    )
+    .await
+    .unwrap();
+    assert!(
+        !dup_stamps(&pool, &task)
+            .await
+            .iter()
+            .any(|stamp| stamp.starts_with("completed_at=")),
+        "an open task carries no completed stamp"
+    );
+}
+
+/// A removed priority or date line clears its column, and a list marker added
+/// or removed sets or deletes `listStyle`.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn apply_page_source_clears_columns_and_list_markers() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let page = dup_page(&pool, &mat, "Columns").await;
+    let task = dup_child(&pool, &mat, &page, "task").await;
+    let plain = dup_child(&pool, &mat, &page, "plain").await;
+    let numbered = dup_child(&pool, &mat, &page, "numbered").await;
+    set_priority_inner(&pool, DEV, &mat, task.as_str().into(), Some("2".into()))
+        .await
+        .unwrap();
+    set_scheduled_date_inner(
+        &pool,
+        DEV,
+        &mat,
+        task.as_str().into(),
+        Some("2026-02-01".into()),
+    )
+    .await
+    .unwrap();
+    set_property_inner(
+        &pool,
+        DEV,
+        &mat,
+        numbered.as_str().into(),
+        "listStyle".into(),
+        Some("ordered".into()),
+        None,
+        None,
+        None,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+    let base = page_source(&pool, &page).await;
+    let source = with(
+        &with(
+            &with(&base, "  priority:: 2\n  scheduled_date:: 2026-02-01\n", ""),
+            "- plain ^",
+            "- - plain ^",
+        ),
+        "- 1. numbered ^",
+        "- numbered ^",
+    );
+
+    let report = save_source(&pool, &mat, &page, &source, &base, false)
+        .await
+        .unwrap();
+
+    assert_eq!(
+        counts(&report),
+        [0, 0, 0, 0, 1, 3],
+        "one set, three deleted"
+    );
+    assert_eq!(
+        dup_storage(&pool, &task).await,
+        vec!["columns todo=None priority=None scheduled=None due=None"],
+        "priority and scheduled date are NULL"
+    );
+    assert_eq!(
+        dup_storage(&pool, &plain).await[1..],
+        [r#"listStyle text=Some("bullet") num=None date=None ref=None bool=None"#],
+        "the added marker is a bullet style"
+    );
+    assert_eq!(
+        dup_storage(&pool, &numbered).await.len(),
+        1,
+        "the removed marker's style is deleted"
+    );
+}
+
+/// A bullet with no anchor is created where the buffer puts it, with its
+/// properties and task state.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn apply_page_source_creates_an_unanchored_bullet_in_place() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let page = dup_page(&pool, &mat, "Create").await;
+    let a = dup_child(&pool, &mat, &page, "a").await;
+    let b = dup_child(&pool, &mat, &page, "b").await;
+    settle(&mat).await;
+    let base = page_source(&pool, &page).await;
+    let source = with(
+        &base,
+        &format!("- b ^{b}"),
+        &format!("- [ ] fresh\n  owner:: ann\n- b ^{b}"),
+    );
+
+    let report = save_source(&pool, &mat, &page, &source, &base, false)
+        .await
+        .unwrap();
+
+    assert_eq!(counts(&report), [1, 0, 0, 0, 0, 0], "one block created");
+    let children = dup_children(&pool, &page).await;
+    let contents: Vec<&str> = children.iter().map(|(_, c)| c.as_str()).collect();
+    assert_eq!(
+        contents,
+        ["a", "fresh", "b"],
+        "the new block is between a and b"
+    );
+    assert_eq!(children[0].0, a.into_string());
+    assert_eq!(
+        dup_storage(&pool, &BlockId::from_trusted(&children[1].0)).await,
+        vec![
+            r#"columns todo=Some("TODO") priority=None scheduled=None due=None"#.to_owned(),
+            r#"owner text=Some("ann") num=None date=None ref=None bool=None"#.to_owned(),
+        ],
+        "with its task state and property"
+    );
+}
+
+/// A new bullet ending in ` ^word`, where the word is not a block id, keeps
+/// it as text: it names no block, so it is neither refused nor forked.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn apply_page_source_keeps_an_anchor_that_is_not_a_block_id_as_text() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let page = dup_page(&pool, &mat, "Carets").await;
+    dup_child(&pool, &mat, &page, "a").await;
+    settle(&mat).await;
+    let base = page_source(&pool, &page).await;
+
+    let report = save_source(&pool, &mat, &page, &format!("{base}- x ^2\n"), &base, false)
+        .await
+        .unwrap();
+
+    assert_eq!(counts(&report), [1, 0, 0, 0, 0, 0], "one block created");
+    assert!(report.warnings.is_empty(), "{:?}", report.warnings);
+    let contents: Vec<String> = dup_children(&pool, &page)
+        .await
+        .into_iter()
+        .map(|(_, content)| content)
+        .collect();
+    assert_eq!(
+        contents,
+        ["a", "x ^2"],
+        "the caret word is the block's text"
+    );
+}
+
+/// A block moved under a bullet the same save creates lands under it: the
+/// bullet is created before its children are placed.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn apply_page_source_moves_a_block_under_a_bullet_it_creates() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let page = dup_page(&pool, &mat, "Adopt").await;
+    let a = dup_child(&pool, &mat, &page, "a").await;
+    let b = dup_child(&pool, &mat, &page, "b").await;
+    settle(&mat).await;
+    let base = page_source(&pool, &page).await;
+
+    let report = save_source(
+        &pool,
+        &mat,
+        &page,
+        &format!("- new\n  - a ^{a}\n- b ^{b}\n"),
+        &base,
+        false,
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(counts(&report), [1, 0, 1, 0, 0, 0], "one create, one move");
+    let top = dup_children(&pool, &page).await;
+    let contents: Vec<&str> = top.iter().map(|(_, content)| content.as_str()).collect();
+    assert_eq!(contents, ["new", "b"]);
+    assert_eq!(
+        dup_children(&pool, &BlockId::from_trusted(&top[0].0)).await,
+        vec![(a.into_string(), "a".to_owned())],
+        "a is under the new block"
+    );
+}
+
+/// A child outdented out of a parent the buffer drops is moved out first, so
+/// deleting the parent does not take it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn apply_page_source_deleting_a_parent_keeps_its_outdented_child() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let page = dup_page(&pool, &mat, "Delete").await;
+    let parent = dup_child(&pool, &mat, &page, "parent").await;
+    let child = dup_child(&pool, &mat, &parent, "child").await;
+    let gone = dup_child(&pool, &mat, &parent, "gone with it").await;
+    settle(&mat).await;
+    let base = page_source(&pool, &page).await;
+    assert_eq!(
+        base,
+        format!("- parent ^{parent}\n  - child ^{child}\n  - gone with it ^{gone}\n"),
+        "seed"
+    );
+
+    let report = save_source(
+        &pool,
+        &mat,
+        &page,
+        &format!("- child ^{child}\n"),
+        &base,
+        false,
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(
+        counts(&report),
+        [0, 0, 1, 2, 0, 0],
+        "the child moved, the parent and its other child deleted"
+    );
+    assert_eq!(
+        dup_children(&pool, &page).await,
+        vec![(child.into_string(), "child".to_owned())],
+        "the child is all the page holds"
+    );
+    let live: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM blocks WHERE id IN (?, ?) AND deleted_at IS NULL")
+            .bind(parent.as_str())
+            .bind(gone.as_str())
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(live, 0, "the parent and its dropped child are deleted");
+}
+
+/// The stale check always runs: a base that is not the page's source is
+/// refused with `RequiresRefresh`, with `force` too, and nothing is written.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn apply_page_source_against_a_stale_base_is_refused_even_forced() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let page = dup_page(&pool, &mat, "Stale").await;
+    let a = dup_child(&pool, &mat, &page, "a").await;
+    settle(&mat).await;
+    let base = page_source(&pool, &page).await;
+    edit_block_inner(&pool, DEV, &mat, a.clone(), "a, edited elsewhere".into())
+        .await
+        .unwrap();
+    settle(&mat).await;
+    let before = last_seq(&pool).await;
+    let source = with(&base, "- a ^", "- a, edited here ^");
+
+    for force in [false, true] {
+        let result = save_source(&pool, &mat, &page, &source, &base, force).await;
+        assert!(
+            is_refresh(&result),
+            "a stale base is RequiresRefresh (force = {force}), got {result:?}"
+        );
+    }
+    assert_eq!(ops_after(&pool, before).await, Vec::<String>::new());
+    assert_eq!(
+        dup_children(&pool, &page).await,
+        vec![(a.into_string(), "a, edited elsewhere".to_owned())],
+        "the edit made elsewhere stands"
+    );
+}
+
+/// A page renamed after the source was read changes the name the source
+/// wrote, so the save is stale: resolving the old title would create a page.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn apply_page_source_after_a_linked_page_is_renamed_is_stale() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let page = dup_page(&pool, &mat, "Links").await;
+    let project = dup_page(&pool, &mat, "Project").await;
+    dup_child(&pool, &mat, &page, &format!("see [[{project}]]")).await;
+    settle(&mat).await;
+    let base = page_source(&pool, &page).await;
+    assert!(base.contains("see [[Project]]"), "seed: {base}");
+    edit_block_inner(&pool, DEV, &mat, project, "Renamed".into())
+        .await
+        .unwrap();
+    settle(&mat).await;
+    let before = last_seq(&pool).await;
+
+    let result = save_source(
+        &pool,
+        &mat,
+        &page,
+        &with(&base, "see", "look at"),
+        &base,
+        false,
+    )
+    .await;
+
+    assert!(is_refresh(&result), "stale, got {result:?}");
+    assert_eq!(ops_after(&pool, before).await, Vec::<String>::new());
+}
+
+/// Overwriting with an anchor whose block was deleted after the buffer was
+/// read saves that block as a new one, with a warning, and leaves the deleted
+/// one in the trash.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn apply_page_source_forced_saves_a_deleted_blocks_anchor_as_a_new_block() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let page = dup_page(&pool, &mat, "Fork").await;
+    let a = dup_child(&pool, &mat, &page, "a").await;
+    let b = dup_child(&pool, &mat, &page, "b").await;
+    settle(&mat).await;
+    let edited = with(&page_source(&pool, &page).await, "- b ^", "- b, kept ^");
+    delete_block_inner(&pool, DEV, &mat, b.clone())
+        .await
+        .unwrap();
+    settle(&mat).await;
+    let current = page_source(&pool, &page).await;
+    let deleted_at: Option<i64> = sqlx::query_scalar("SELECT deleted_at FROM blocks WHERE id = ?")
+        .bind(b.as_str())
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+
+    let refused = save_source(&pool, &mat, &page, &edited, &current, false).await;
+    assert!(
+        matches!(&refused, Err(AppError::Validation { message, .. }) if message.contains(b.as_str())),
+        "without force the anchor is refused, naming it: {refused:?}"
+    );
+    let report = save_source(&pool, &mat, &page, &edited, &current, true)
+        .await
+        .unwrap();
+
+    assert_eq!(counts(&report), [1, 0, 0, 0, 0, 0], "one block created");
+    assert_eq!(
+        report.warnings,
+        vec![format!("^{b} no longer on this page; saved as a new block")],
+        "the fork is named"
+    );
+    let children = dup_children(&pool, &page).await;
+    assert_eq!(children.len(), 2, "a and the new block: {children:?}");
+    assert_eq!(children[0].0, a.into_string());
+    assert_ne!(
+        children[1].0,
+        b.as_str(),
+        "the new block is not the deleted one"
+    );
+    assert_eq!(children[1].1, "b, kept");
+    let still: Option<i64> = sqlx::query_scalar("SELECT deleted_at FROM blocks WHERE id = ?")
+        .bind(b.as_str())
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(still, deleted_at, "the deleted block stays in the trash");
+}
+
+/// A block is placed among the siblings the source shows: no op names a
+/// nested page, and it makes no shown sibling move. A new first bullet and a
+/// dropped one move nothing, and a swap across the nested page moves one
+/// block, as it would without it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn apply_page_source_keeps_a_nested_page_in_place() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let page = dup_page(&pool, &mat, "Holder").await;
+    let a = dup_child(&pool, &mat, &page, "a").await;
+    let nested = create_page_in_space_inner(
+        &pool,
+        DEV,
+        &mat,
+        Some(page.clone().into_string()),
+        "Nested".into(),
+        TEST_SPACE_ID.into(),
+    )
+    .await
+    .unwrap();
+    let b = dup_child(&pool, &mat, &page, "b").await;
+    let c = dup_child(&pool, &mat, &page, "c").await;
+    settle(&mat).await;
+    let seed = page_source(&pool, &page).await;
+    assert_eq!(seed, format!("- a ^{a}\n- b ^{b}\n- c ^{c}\n"), "seed");
+    let before = last_seq(&pool).await;
+
+    for (what, source, expected, order) in [
+        (
+            "a new first bullet",
+            format!("- new\n{seed}"),
+            [1, 0, 0, 0, 0, 0],
+            ["new", "a", "Nested", "b", "c"].as_slice(),
+        ),
+        (
+            "the new bullet dropped",
+            seed.clone(),
+            [0, 0, 0, 1, 0, 0],
+            &["a", "Nested", "b", "c"],
+        ),
+        (
+            "a and b swapped",
+            format!("- b ^{b}\n- a ^{a}\n- c ^{c}\n"),
+            [0, 0, 1, 0, 0, 0],
+            &["b", "a", "Nested", "c"],
+        ),
+    ] {
+        let base = page_source(&pool, &page).await;
+        let report = save_source(&pool, &mat, &page, &source, &base, false)
+            .await
+            .unwrap();
+        assert_eq!(counts(&report), expected, "{what}");
+        let contents: Vec<String> = dup_children(&pool, &page)
+            .await
+            .into_iter()
+            .map(|(_, content)| content)
+            .collect();
+        assert_eq!(
+            contents, order,
+            "{what}: the nested page stays where it was"
+        );
+    }
+    let touched: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM op_log WHERE seq > ? AND payload LIKE ?")
+            .bind(before)
+            .bind(format!("%{nested}%"))
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(touched, 0, "no op names the nested page");
+}
+
+/// A delete that would take a nested page with it is refused after the save's
+/// other ops reached the engine, and the engine rolls them back.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn apply_page_source_refuses_to_delete_a_block_holding_a_nested_page() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let page = dup_page(&pool, &mat, "Holder").await;
+    let holder = dup_child(&pool, &mat, &page, "holder").await;
+    let keep = dup_child(&pool, &mat, &page, "keep").await;
+    let nested = create_page_in_space_inner(
+        &pool,
+        DEV,
+        &mat,
+        Some(holder.clone().into_string()),
+        "Nested".into(),
+        TEST_SPACE_ID.into(),
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+    let base = page_source(&pool, &page).await;
+    let before = last_seq(&pool).await;
+
+    let result = save_source(
+        &pool,
+        &mat,
+        &page,
+        &format!("- added\n- keep, edited ^{keep}\n"),
+        &base,
+        false,
+    )
+    .await;
+
+    assert!(
+        matches!(&result, Err(AppError::Validation { message, .. }) if message.contains(nested.as_str())),
+        "refused, naming the nested page: {result:?}"
+    );
+    assert_eq!(ops_after(&pool, before).await, Vec::<String>::new());
+    assert_eq!(page_source(&pool, &page).await, base, "nothing is written");
+    assert_eq!(
+        dup_engine_children(&mat, &page),
+        [&holder, &keep].map(|id| id.as_str().to_owned()),
+        "the engine rolled back the create the refusal came after"
+    );
+}
+
+/// Every refusal writes nothing: an anchor written twice, an anchor of
+/// another page's block, a page whose source does not read back, a nesting
+/// past the depth limit, and more ops than one undo reverts.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn apply_page_source_refusals_write_nothing() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let page = dup_page(&pool, &mat, "Refusals").await;
+    let other = dup_page(&pool, &mat, "Other").await;
+    let a = dup_child(&pool, &mat, &page, "a").await;
+    let elsewhere = dup_child(&pool, &mat, &other, "elsewhere").await;
+    settle(&mat).await;
+    let base = page_source(&pool, &page).await;
+    let deep: String = (0..=MAX_BLOCK_DEPTH)
+        .map(|depth| {
+            format!(
+                "{}- d{depth}\n",
+                "  ".repeat(usize::try_from(depth).unwrap())
+            )
+        })
+        .collect();
+    let many: String = (0..1001).map(|i| format!("- n{i}\n")).collect();
+    let before = last_seq(&pool).await;
+
+    for (what, source) in [
+        ("an anchor written twice", format!("{base}- again ^{a}\n")),
+        (
+            "another page's block",
+            format!("{base}- moved in ^{elsewhere}\n"),
+        ),
+        ("a nesting past the depth limit", format!("{base}{deep}")),
+        ("more ops than one undo", format!("{base}{many}")),
+    ] {
+        let result = save_source(&pool, &mat, &page, &source, &base, false).await;
+        assert!(
+            matches!(result, Err(AppError::Validation { .. })),
+            "{what} is refused, got {result:?}"
+        );
+    }
+    assert_eq!(ops_after(&pool, before).await, Vec::<String>::new());
+    assert_eq!(
+        dup_engine_children(&mat, &page),
+        vec![a.into_string()],
+        "the engine rolled back what the refused saves had applied"
+    );
+
+    set_property_inner(
+        &pool,
+        DEV,
+        &mat,
+        elsewhere.as_str().into(),
+        "note".into(),
+        Some("two\nlines".into()),
+        None,
+        None,
+        None,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+    let unreadable = page_source(&pool, &other).await;
+    let before = last_seq(&pool).await;
+    let result = save_source(&pool, &mat, &other, &unreadable, &unreadable, false).await;
+    assert!(
+        matches!(&result, Err(AppError::Validation { message, .. }) if message.contains(elsewhere.as_str())),
+        "a source that does not read back is refused, naming the block: {result:?}"
+    );
+    assert_eq!(ops_after(&pool, before).await, Vec::<String>::new());
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn apply_page_source_of_an_unknown_trashed_or_non_page_id_is_refused() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let page = dup_page(&pool, &mat, "Page").await;
+    let block = dup_child(&pool, &mat, &page, "block").await;
+    let trashed = dup_page(&pool, &mat, "Trashed").await;
+    delete_block_inner(&pool, DEV, &mat, trashed.clone())
+        .await
+        .unwrap();
+    settle(&mat).await;
+
+    for (what, id) in [("unknown", BlockId::new()), ("trashed", trashed)] {
+        let result = save_source(&pool, &mat, &id, "", "", false).await;
+        assert!(
+            matches!(result, Err(AppError::NotFound(_))),
+            "an {what} page is NotFound, got {result:?}"
+        );
+    }
+    let result = save_source(&pool, &mat, &block, "", "", false).await;
+    assert!(
+        matches!(result, Err(AppError::Validation { .. })),
+        "a content block is not a page, got {result:?}"
+    );
+}
+
+/// A name typed into a block is resolved in the page's space, creating the
+/// page or tag no name there matches, and reported; a name the block already
+/// held keeps its meaning: its id when it was written as a name, text when it
+/// was text.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn apply_page_source_resolves_only_the_names_a_block_newly_writes() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let page = dup_page(&pool, &mat, "Names").await;
+    let project = dup_page(&pool, &mat, "Project").await;
+    dup_child(&pool, &mat, &page, &format!("see [[{project}]]")).await;
+    dup_child(&pool, &mat, &page, "issue #42 open").await;
+    dup_child(&pool, &mat, &page, "typed").await;
+    settle(&mat).await;
+    let base = page_source(&pool, &page).await;
+    let source = with(
+        &with(
+            &with(&base, "see [[Project]] ^", "see [[Project]] again ^"),
+            "issue #42 open",
+            "issue #42 closed",
+        ),
+        "- typed ^",
+        "- typed [[Brand New]] #fresh ^",
+    );
+
+    let report = save_source(&pool, &mat, &page, &source, &base, false)
+        .await
+        .unwrap();
+
+    let created: Vec<(&str, Option<&str>)> = report
+        .names_created
+        .iter()
+        .map(|row| (row.block_type.as_str(), row.content.as_deref()))
+        .collect();
+    assert_eq!(
+        created,
+        [("page", Some("Brand New")), ("tag", Some("fresh"))],
+        "only the new names are created"
+    );
+    for row in &report.names_created {
+        let space: Option<String> = sqlx::query_scalar("SELECT space_id FROM blocks WHERE id = ?")
+            .bind(row.id.as_str())
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(space.as_deref(), Some(TEST_SPACE_ID), "in the page's space");
+    }
+    let (new_page, fresh) = (&report.names_created[0].id, &report.names_created[1].id);
+    let contents: Vec<String> = dup_children(&pool, &page)
+        .await
+        .into_iter()
+        .map(|(_, content)| content)
+        .collect();
+    assert_eq!(
+        contents,
+        [
+            format!("see [[{project}]] again"),
+            "issue #42 closed".to_owned(),
+            format!("typed [[{new_page}]] #[{fresh}]"),
+        ],
+        "the held name maps back to its page, #42 stays text, the new names are ids"
+    );
+    let tag_42: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM blocks WHERE content = '42'")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(tag_42, 0, "no tag 42 is created");
+
+    // The name written back as the raw id it stands for changes nothing.
+    let base = page_source(&pool, &page).await;
+    let before = last_seq(&pool).await;
+    let report = save_source(
+        &pool,
+        &mat,
+        &page,
+        &with(
+            &base,
+            "see [[Project]] again",
+            &format!("see [[{project}]] again"),
+        ),
+        &base,
+        false,
+    )
+    .await
+    .unwrap();
+    assert_eq!(counts(&report), [0; 6], "the same id: {report:?}");
+    assert_eq!(ops_after(&pool, before).await, Vec::<String>::new());
+}
+
+/// A title two pages of the space share names neither: it stays text, with a
+/// warning.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn apply_page_source_leaves_an_ambiguous_title_as_text_with_a_warning() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let page = dup_page(&pool, &mat, "Ambiguous").await;
+    for (id, position) in [(SOURCE_PROJECT, 10), (SOURCE_PROJECT_TWIN, 11)] {
+        insert_block(&pool, id, "page", "Twin", None, Some(position)).await;
+        assign_to_space(&pool, id, TEST_SPACE_ID).await;
+    }
+    settle(&mat).await;
+    let base = page_source(&pool, &page).await;
+
+    let report = save_source(&pool, &mat, &page, "- see [[Twin]]\n", &base, false)
+        .await
+        .unwrap();
+
+    assert_eq!(
+        dup_children(&pool, &page).await[0].1,
+        "see [[Twin]]",
+        "the title stays text"
+    );
+    assert!(report.names_created.is_empty(), "nothing is created");
+    assert_eq!(
+        report.warnings,
+        vec!["wiki-link '[[Twin]]' matches multiple pages in this space; left as plain text"],
+        "the warning names it"
+    );
+}
+
+/// A refusal at the last block undoes every write before it, the engine's
+/// included.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn apply_page_source_refused_at_the_last_block_rolls_everything_back() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let page = dup_page(&pool, &mat, "Rollback").await;
+    let a = dup_child(&pool, &mat, &page, "a").await;
+    let b = dup_child(&pool, &mat, &page, "b").await;
+    let c = dup_child(&pool, &mat, &page, "c").await;
+    settle(&mat).await;
+    let base = page_source(&pool, &page).await;
+    let before = last_seq(&pool).await;
+
+    let result = save_source(
+        &pool,
+        &mat,
+        &page,
+        &format!("- a, edited ^{a}\n- c ^{c}\n- [ ] new\n- b ^{b}\n  todo_state:: BOGUS\n"),
+        &base,
+        false,
+    )
+    .await;
+
+    assert!(
+        matches!(result, Err(AppError::Validation { .. })),
+        "a state outside the options is refused, got {result:?}"
+    );
+    assert_eq!(ops_after(&pool, before).await, Vec::<String>::new());
+    assert_eq!(
+        page_source(&pool, &page).await,
+        base,
+        "the page is as it was"
+    );
+    assert_eq!(
+        dup_engine_children(&mat, &page),
+        [&a, &b, &c].map(|id| id.as_str().to_owned()),
+        "the engine rolled back the move and the create"
+    );
+}
+
+/// The op refs a save returns undo all of it: the page's source is again
+/// what it was. The blocks are created at a slot, as the editor creates them:
+/// a move's undo reads the slot back from the block's create.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn apply_page_source_op_refs_undo_the_whole_save() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let page = dup_page(&pool, &mat, "Undo").await;
+    let mut created = Vec::new();
+    for (slot, content) in ["a", "task", "c"].into_iter().enumerate() {
+        let row = create_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            "content".into(),
+            content.into(),
+            Some(page.clone()),
+            Some(i64::try_from(slot).unwrap()),
+        )
+        .await
+        .unwrap();
+        created.push(row.id);
+    }
+    let [a, task, c] = <[BlockId; 3]>::try_from(created).unwrap();
+    dup_child(&pool, &mat, &c, "d").await;
+    set_todo_state_inner(&pool, DEV, &mat, task.as_str().into(), Some("TODO".into()))
+        .await
+        .unwrap();
+    set_priority_inner(&pool, DEV, &mat, task.as_str().into(), Some("2".into()))
+        .await
+        .unwrap();
+    settle(&mat).await;
+    let base = page_source(&pool, &page).await;
+    let source = format!(
+        "- c ^{c}\n- a, edited ^{a}\n- [x] task ^{task}\n- e [[Fresh Page]]\n  owner:: ann\n"
+    );
+
+    let resp = capture_op_refs(apply_page_source_inner(
+        &pool,
+        DEV,
+        &mat,
+        page.as_str(),
+        source,
+        base.clone(),
+        false,
+    ))
+    .await
+    .unwrap();
+    settle(&mat).await;
+    assert_eq!(
+        counts(&resp.inner),
+        [1, 1, 1, 1, 1, 1],
+        "e created, a edited, c moved, d deleted, DONE set, priority deleted"
+    );
+
+    undo_ops_inner(&pool, DEV, &mat, resp.op_refs.clone())
+        .await
+        .unwrap();
+    settle(&mat).await;
+
+    assert_eq!(
+        page_source(&pool, &page).await,
+        base,
+        "the page is as it was"
+    );
+}
+
+// ======================================================================
 // duplicate_block — a block and its subtree copied by one command (#5140)
 // ======================================================================
 

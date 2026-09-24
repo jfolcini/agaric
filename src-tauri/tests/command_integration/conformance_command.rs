@@ -191,6 +191,15 @@ const RETURN_SHAPE: &[(&str, &str, &[&str], &[&str])] = &[
         &["block_type", "content", "parent_id", "position"],
         &[],
     ),
+    // #5140 — a COUNT envelope with no row identity. `moved` stays off it:
+    // the fewest moves a reorder needs is the backend's placement to pin, not
+    // the mock's, and the snapshot pins where the blocks landed.
+    (
+        "apply_page_source",
+        HEADED_ID_KEY,
+        &["created", "edited", "deleted"],
+        &[],
+    ),
     // #5057 — five writers whose table is OUTSIDE the snapshot's five arrays
     // (`peer_refs`, `app_settings`, `property_definitions`), so what they wrote
     // is pinned by the read that follows them in the same fixture rather than
@@ -713,6 +722,22 @@ pub(super) async fn apply_op_via_command(
             )
             .await,
         ),
+        // The two buffers are the caller's own text, anchors spelled as the
+        // seed labels' expanded ids; only the page is a label.
+        "apply_page_source" => to_json(
+            apply_page_source_inner(
+                pool,
+                DEV,
+                mat,
+                arg_label_id("pageId").expect("pageId").as_str(),
+                req_str("source"),
+                req_str("baseSource"),
+                arg("force")
+                    .and_then(Value::as_bool)
+                    .unwrap_or_else(|| panic!("conformance op '{command}' is missing arg 'force'")),
+            )
+            .await,
+        ),
         "move_blocks_batch" => to_json(
             move_blocks_batch_inner(
                 pool,
@@ -1071,7 +1096,7 @@ mod tests {
     /// vice versa, and the count is the one this module claims — so a
     /// mutating command cannot join one table without the other, and cannot
     /// join at all without this number moving.
-    const MUTATING_ARM_COUNT: usize = 41;
+    const MUTATING_ARM_COUNT: usize = 42;
 
     #[test]
     fn the_dispatcher_and_the_return_shape_table_name_the_same_commands() {
