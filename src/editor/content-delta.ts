@@ -45,24 +45,21 @@ export function computeContentDelta(originalMarkdown: string, currentJson: DocNo
   return { newMarkdown, changed: newMarkdown !== canonicalOriginal, originalMarkdown }
 }
 
-// #1630 — single-entry parse memo for the blur hot path. The blur flush parses
-// the same markdown string more than once (e.g. `useEditorBlur` Step 3's
-// early-persist check and Step 5's split decision both call `shouldSplitOnBlur`
-// with the identical fresh-block content), duplicating the markdown parse. Since
-// `parse` is a pure function of its input string, caching the last
-// (string -> DocNode) pair lets back-to-back calls over the same content reuse
-// the parse. A one-entry cache is sufficient: the duplicate calls are adjacent,
-// and behaviour is identical to re-parsing.
-let lastParsedMarkdown: string | null = null
-let lastParsedDoc: DocNode | null = null
+// #1630 — parse memo for the blur hot path. The blur flush parses the same
+// markdown more than once (e.g. `useEditorBlur` Step 3's early-persist check
+// and Step 5's split decision both call `shouldSplitOnBlur` with the identical
+// content). Since `parse` is a pure function of its input string, caching the
+// last (string -> DocNode) pairs lets back-to-back calls reuse the parse. Two
+// entries, because one call parses `changed` and then `loaded`: with one entry
+// each evicted the other and nothing was ever reused.
+const parseMemo: { markdown: string; doc: DocNode }[] = []
 
 function parseMemoized(markdown: string): DocNode {
-  if (lastParsedMarkdown === markdown && lastParsedDoc !== null) {
-    return lastParsedDoc
-  }
+  const hit = parseMemo.find((entry) => entry.markdown === markdown)
+  if (hit) return hit.doc
   const doc = parse(markdown)
-  lastParsedMarkdown = markdown
-  lastParsedDoc = doc
+  parseMemo.unshift({ markdown, doc })
+  if (parseMemo.length > 2) parseMemo.pop()
   return doc
 }
 

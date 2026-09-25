@@ -29,7 +29,7 @@ vi.mock('@/lib/logger', () => ({
 import { logger } from '@/lib/logger'
 import { clearMockErrors, injectMockError, resetMock, SEED_IDS, setupMock } from '@/lib/tauri-mock'
 import { deriveLinkEdges } from '@/lib/tauri-mock/link-scan'
-import { blocks, makeBlock, opLog, peerRefs } from '@/lib/tauri-mock/seed'
+import { blocks, makeBlock, opLog, pageAliases, peerRefs } from '@/lib/tauri-mock/seed'
 
 /** Helper — call the captured IPC handler as if invoke() were called. */
 function invoke(cmd: string, args: Record<string, unknown> = {}): unknown {
@@ -3133,6 +3133,45 @@ describe('import_markdown', () => {
     expect(result).toHaveProperty('properties_set', 0)
     expect(result).toHaveProperty('warnings')
     expect(Array.isArray(result['warnings'])).toBe(true)
+  })
+
+  // #5160 D12: an import adopts an empty page of the file's title, exact or
+  // case-folded, never one matched only by alias (`create_import_page`).
+  it('adopts an empty page by its title, never by an alias (matches backend)', () => {
+    const emptyPage = (id: string, title: string) => {
+      blocks.set(id, {
+        ...makeBlock(id, 'page', title, null, blocks.size),
+        space_id: 'SPACE_PERSONAL',
+      })
+    }
+    emptyPage('PAGE_ROADMAP', 'Roadmap')
+    pageAliases.set('PAGE_ROADMAP', ['Plan'])
+    emptyPage('PAGE_NOTES', 'notes')
+    const childrenOf = (parentId: string) =>
+      (invoke('list_blocks', { parentId }) as { items: Record<string, unknown>[] }).items.map(
+        (b) => b['content'],
+      )
+    const pagesTitled = (title: string) =>
+      (invoke('list_blocks', { blockType: 'page' }) as { items: Record<string, unknown>[] }).items
+        .filter((p) => p['content'] === title)
+        .map((p) => p['id'])
+
+    invoke('import_markdown', {
+      content: 'Plan body',
+      filename: 'Plan.md',
+      spaceId: 'SPACE_PERSONAL',
+    })
+    invoke('import_markdown', {
+      content: 'Notes body',
+      filename: 'Notes.md',
+      spaceId: 'SPACE_PERSONAL',
+    })
+
+    expect(childrenOf('PAGE_ROADMAP')).toEqual([])
+    const [plan] = pagesTitled('Plan')
+    expect(childrenOf(plan as string)).toEqual(['Plan body'])
+    expect(childrenOf('PAGE_NOTES')).toEqual(['Notes body'])
+    expect(pagesTitled('Notes')).toEqual([])
   })
 
   it('derives page title from filename (strips .md)', () => {

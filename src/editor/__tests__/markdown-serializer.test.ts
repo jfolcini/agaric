@@ -419,6 +419,14 @@ describe('serialize', () => {
       expect(serialize(doc(paragraph(text('a # b'))))).toBe('a # b')
     })
 
+    // #5160 follow-up, item 17 — the parser reads `#<tab>` as a heading marker
+    // as it reads `# `, so a paragraph opening with one is escaped the same way.
+    it('a paragraph beginning with `#<tab>` is escaped so it stays a paragraph', () => {
+      expect(serialize(doc(paragraph(text('#\tnot a heading'))))).toBe('\\#\tnot a heading')
+      expect(parse('\\#\tnot a heading')).toEqual(doc(paragraph(text('#\tnot a heading'))))
+      expect(parse('#\tHeading')).toEqual(doc(heading(1, text('Heading'))))
+    })
+
     it('lone [ is escaped (could start external link)', () => {
       expect(serialize(doc(paragraph(text('a [ b'))))).toBe('a \\[ b')
     })

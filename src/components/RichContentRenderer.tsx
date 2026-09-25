@@ -17,7 +17,7 @@ export { CALLOUT_CONFIG } from '@/components/RichContentRenderer/context'
  * `options` (resolve callbacks, `interactive`, `inline`, …) only feed the
  * downstream RENDER pass — they never touch `parse`. So the produced
  * `DocNode` is fully determined by the markdown string and safe to memoize on
- * that key. (Mirrors the single-entry `parseMemoized` in `use-roving-editor`.)
+ * that key. (Mirrors `parseMemoized` in `content-delta.ts`.)
  *
  * Backlink / diff / agenda list views re-render on every keystroke or
  * arrow-key focus change, re-running `parse` for every visible row. This cache

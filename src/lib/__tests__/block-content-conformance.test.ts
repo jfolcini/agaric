@@ -6,9 +6,7 @@
  *
  * Here the save flush runs over each block after a typo fix, and must keep it
  * one plain edit: the flush acts only on what the edit added, never on the
- * shape the block was loaded with (D2). A row whose flush does something else
- * records that result and its #5160 finding, so the phase that fixes it flips
- * exactly that row.
+ * shape the block was loaded with (D2).
  */
 
 import { readFileSync } from 'node:fs'
@@ -26,7 +24,6 @@ interface StoredBlock {
   name: string
   content: string
   editorFlush: UnmountFlushResult['kind']
-  finding?: string
 }
 
 interface TaskMarker {
@@ -82,9 +79,6 @@ describe('stored block content vectors (#5160)', () => {
       })
       await result.outcome
       expect(result.kind).toBe(row.editorFlush)
-      if (row.editorFlush !== 'edit') {
-        expect(row.finding, 'a flush other than a plain edit names its finding').toBeDefined()
-      }
     },
   )
 

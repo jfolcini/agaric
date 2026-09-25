@@ -316,6 +316,19 @@ describe('shouldSplitOnBlur', () => {
     expect(shouldSplitOnBlur(md, '')).toBe(true)
     expect(mockedParse).toHaveBeenCalledTimes(1)
   })
+
+  // #5160 follow-up, item 35 — one call parses `changed` then `loaded`, so a
+  // one-entry memo evicted each with the other and the second call parsed
+  // both again. Two entries hold the pair.
+  it('parses changed and loaded once each across back-to-back calls', () => {
+    const mockedParse = vi.mocked(parse)
+    mockedParse.mockClear()
+    const loaded = '# Memo pair title\nMemo pair paragraph'
+    const changed = '# Memo pair title\nMemo pair paragraph!'
+    expect(shouldSplitOnBlur(changed, loaded)).toBe(false)
+    expect(shouldSplitOnBlur(changed, loaded)).toBe(false)
+    expect(mockedParse).toHaveBeenCalledTimes(2)
+  })
 })
 
 // -- unmount error boundary (B-12) -------------------------------------------

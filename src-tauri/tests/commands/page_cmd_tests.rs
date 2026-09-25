@@ -10348,6 +10348,85 @@ async fn import_leaves_a_same_title_page_with_content_alone_and_warns() {
     mat.shutdown();
 }
 
+/// D12 — adoption goes by title, never by alias: an empty `Roadmap` aliased
+/// `Plan` is left alone, and `Plan.md` becomes a page titled `Plan`.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn import_does_not_adopt_an_empty_page_matched_only_by_alias() {
+    let (pool, dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let roadmap = dup_page(&pool, &mat, "Roadmap").await;
+    set_page_aliases_inner(&pool, roadmap.as_str(), vec!["Plan".into()])
+        .await
+        .unwrap();
+    settle(&mat).await;
+
+    let result = import_file(&pool, &mat, dir.path(), "Plan.md", "- plan body").await;
+
+    assert_eq!(
+        pages_titled(&pool, "Plan").await.len(),
+        1,
+        "the file became a page titled Plan"
+    );
+    assert_eq!(
+        dup_children(&pool, &roadmap).await,
+        Vec::<(String, String)>::new(),
+        "the aliased page stays empty"
+    );
+    assert_eq!(block_starting(&pool, "plan body").await, "plan body");
+    assert_eq!(result.warnings, Vec::<String>::new());
+    mat.shutdown();
+}
+
+/// D12 — the title is matched case-folded, as a link is: `Roadmap.md` adopts
+/// an empty `roadmap` (the placeholder a `[[roadmap]]` link makes), no twin.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn import_adopts_an_empty_page_whose_title_differs_only_in_case() {
+    let (pool, dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let roadmap = dup_page(&pool, &mat, "roadmap").await;
+    settle(&mat).await;
+
+    let result = import_file(&pool, &mat, dir.path(), "Roadmap.md", "- road body").await;
+
+    assert_eq!(pages_titled(&pool, "Roadmap").await, Vec::<String>::new());
+    let children: Vec<String> = dup_children(&pool, &roadmap)
+        .await
+        .into_iter()
+        .map(|(_, content)| content)
+        .collect();
+    assert_eq!(children, ["road body"]);
+    assert_eq!(result.warnings, Vec::<String>::new());
+    mat.shutdown();
+}
+
+/// D12 — an adopted page's own aliases are not "used by another page": the
+/// file's frontmatter repeats one without a warning, and adds the rest.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn import_into_an_adopted_page_keeps_its_aliases_without_warning() {
+    let (pool, dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let b = dup_page(&pool, &mat, "B").await;
+    set_page_aliases_inner(&pool, b.as_str(), vec!["Bee".into()])
+        .await
+        .unwrap();
+    settle(&mat).await;
+
+    let md = "---\naliases: [Bee, Buzz]\n---\n- b body";
+    let result = import_file(&pool, &mat, dir.path(), "B.md", md).await;
+
+    assert_eq!(
+        pages_titled(&pool, "B").await,
+        [b.as_str()],
+        "B was adopted"
+    );
+    assert_eq!(
+        get_page_aliases_inner(&pool, b.as_str()).await.unwrap(),
+        ["Bee", "Buzz"]
+    );
+    assert_eq!(result.warnings, Vec::<String>::new());
+    mat.shutdown();
+}
+
 /// D10 — `[[A#B]]` is the page titled `A#B` first, whether it already exists or
 /// the same import creates it; no `A` is created and no anchor is dropped.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

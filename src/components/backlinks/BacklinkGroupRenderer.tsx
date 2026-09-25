@@ -165,6 +165,8 @@ function BacklinkRowInner({
       block.content
         ? renderRichContent(block.content, {
             interactive: true,
+            // The row is one clamped `truncate` line (#5160 follow-up, item 23).
+            inline: true,
             onTagClick: (id) => onTagClickRef.current(id),
             resolveBlockTitle: (id) => resolveBlockTitleRef.current(id),
             resolveTagName: (id) => resolveTagNameRef.current(id),

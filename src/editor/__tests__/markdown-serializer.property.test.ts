@@ -462,7 +462,7 @@ function paragraphStartsWithAmbiguousSyntax(block: ParagraphNode): boolean {
   // carrying one is structurally ambiguous on round-trip and must be excluded from
   // doc→text→doc structural-equality properties. The fixed-point / idempotence
   // properties (which compare serializer output, not structure) still exercise them.
-  if (/^#{1,6} /.test(lead)) return true
+  if (/^#{1,6}[ \t]/.test(lead)) return true
   if (lead.startsWith('```')) return true
   if (lead.startsWith('>')) return true
   if (/^\d+\. /.test(lead)) return true

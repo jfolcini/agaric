@@ -3438,14 +3438,17 @@ async fn create_import_page(
 
     // #5160 D12 — a unique page of this title with no blocks (the placeholder
     // a `[[link]]` in an earlier file created) is adopted, so the links to it
-    // resolve. A page with content is never touched.
+    // resolve. The title exact or case-folded, never an alias: an alias names
+    // a page of another title. A page with content is never touched.
     let title = [page_title.to_string()];
-    match snapshot_page_link_matches(&mut tx, space_id, &title)
-        .await?
-        .find(page_title)
-    {
-        Some(LinkMatch::Unique(id)) if !page_has_blocks(&mut tx, &id).await? => {
-            return Ok((tx, id));
+    let matches = snapshot_page_link_matches(&mut tx, space_id, &title).await?;
+    let same_title = matches
+        .exact
+        .get(page_title)
+        .or_else(|| matches.folded.get(&page_title.to_ascii_lowercase()));
+    match same_title.map(Vec::as_slice) {
+        Some([id]) if !page_has_blocks(&mut tx, id).await? => {
+            return Ok((tx, id.clone()));
         }
         Some(_) => warnings.push(format!(
             "a page titled '{page_title}' already exists in this space; the file was imported as \
@@ -3720,19 +3723,27 @@ async fn fetch_frontmatter_declarations(
 /// here is the established pattern, and `INSERT OR IGNORE` keeps re-import
 /// idempotent (alias is globally UNIQUE NOCASE).
 ///
-/// `inserted_here` (ASCII-folded to mirror the NOCASE index) tracks aliases this
-/// call just wrote, so a duplicate WITHIN the frontmatter (`[Solo, Solo]`) is a
-/// benign no-op rather than a spurious collision warning. Any OTHER 0-row insert
-/// means the alias is already held by a DIFFERENT page (the page was created
-/// empty in this very tx, so it owned no aliases before this loop) — a
-/// never-silent degradation, surfaced as a warning.
+/// `own` (ASCII-folded to mirror the NOCASE index) holds the aliases the page
+/// already has — an adopted page (D12) may hold some — and those this call just
+/// wrote, so a repeat of either (`[Solo, Solo]`) is a benign no-op rather than
+/// a spurious collision warning. Any OTHER 0-row insert means the alias is held
+/// by a DIFFERENT page — a never-silent degradation, surfaced as a warning.
 async fn apply_frontmatter_aliases(
     tx: &mut CommandTx,
     page_id: &str,
     aliases: Vec<&str>,
     warnings: &mut Vec<String>,
 ) -> Result<(), AppError> {
-    let mut inserted_here: std::collections::HashSet<String> = std::collections::HashSet::new();
+    // Byte-identical to `get_page_aliases_inner`'s, so its `.sqlx` entry is reused.
+    let mut own: std::collections::HashSet<String> = sqlx::query_scalar!(
+        "SELECT alias FROM page_aliases WHERE page_id = ?1 ORDER BY alias",
+        page_id,
+    )
+    .fetch_all(&mut ***tx)
+    .await?
+    .into_iter()
+    .map(|alias| alias.to_ascii_lowercase())
+    .collect();
     for alias in aliases {
         let res = sqlx::query!(
             "INSERT OR IGNORE INTO page_aliases (page_id, alias) VALUES (?1, ?2)",
@@ -3742,8 +3753,8 @@ async fn apply_frontmatter_aliases(
         .execute(&mut ***tx)
         .await?;
         if res.rows_affected() > 0 {
-            inserted_here.insert(alias.to_ascii_lowercase());
-        } else if !inserted_here.contains(&alias.to_ascii_lowercase()) {
+            own.insert(alias.to_ascii_lowercase());
+        } else if !own.contains(&alias.to_ascii_lowercase()) {
             warnings.push(format!(
                 "alias '{alias}' is already used by another page; not applied to \
                  the imported page"
