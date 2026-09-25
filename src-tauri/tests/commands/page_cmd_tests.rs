@@ -6349,7 +6349,9 @@ async fn paste_blocks_splice_writes_the_first_blocks_task_state_on_the_anchor() 
 /// was pasted as: the markers and property lines the parse read into
 /// properties are written back into the text, escaped where the text starts a
 /// line as Source mode escapes a first line, and the anchor keeps its own task
-/// state and properties.
+/// state and properties. A heading's marker is text before the cursor, so a
+/// paste at the start of `## Plan` is one of these: the block stays a heading
+/// and the first line is its text.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn paste_blocks_splice_mid_text_joins_the_first_block_as_text() {
     for (case, text, cursor, joined) in [
@@ -6364,6 +6366,12 @@ async fn paste_blocks_splice_mid_text_joins_the_first_block_as_text() {
             "- - x\n- [x] y",
             ("para\n", "world"),
             "para\n\\- x",
+        ),
+        (
+            "at the start of a heading",
+            "1. [ ] Buy milk\n\nEggs",
+            ("## ", "Plan"),
+            "## 1. [ ] Buy milk",
         ),
     ] {
         let (pool, _dir) = test_pool().await;
@@ -6391,7 +6399,7 @@ async fn paste_blocks_splice_mid_text_joins_the_first_block_as_text() {
         let top = dup_children(&pool, &page).await;
         assert_eq!(top[0], (anchor.to_string(), joined.to_owned()), "{case}");
         assert_eq!(top.len(), 2, "{case}: {top:?}");
-        assert!(top[1].1.ends_with("world"), "{case}: {top:?}");
+        assert!(top[1].1.ends_with(cursor.1), "{case}: {top:?}");
         assert_eq!(
             dup_storage(&pool, &anchor).await,
             stored,
@@ -12637,6 +12645,36 @@ async fn import_export_fenced_code_block_round_trip_2725() {
     assert!(
         fake_props.is_empty(),
         "a `key:: value` line inside a code fence must stay literal; got {fake_props:?}"
+    );
+
+    mat.shutdown();
+}
+
+/// #5160 follow-up (items 9 and 10) — a fenced code block keeps its blank
+/// lines and tabs through export and import: an import normalises prose, but a
+/// fence's lines are code and come back as written.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn import_export_fenced_code_keeps_blank_lines_and_tabs_5160() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    ensure_test_space(&pool).await;
+    mark_block_as_space(&pool, TEST_SPACE_ID).await;
+
+    const SRC: &str = "01AAAAAAAAAAAAAAAAAA5160F1";
+    const BLK: &str = "01AAAAAAAAAAAAAAAAAA5160F2";
+    const CONTENT: &str = "```go\nfunc main() {\n\n\tfmt.Println(\"hi\")\n}\n```";
+
+    insert_block(&pool, SRC, "page", "Fenced Verbatim", None, Some(1)).await;
+    assign_to_space(&pool, SRC, TEST_SPACE_ID).await;
+    insert_block(&pool, BLK, "content", CONTENT, Some(SRC), Some(1)).await;
+    agaric_store::cache::rebuild_page_ids(&pool).await.unwrap();
+
+    let (md, contents) =
+        export_and_reimport_contents(&pool, &mat, _dir.path(), SRC, "Reimported Verbatim").await;
+    assert_eq!(
+        contents,
+        ["# Fenced Verbatim".to_string(), CONTENT.to_string()],
+        "the fence's blank line and tab must come back as written\nmd:\n{md}"
     );
 
     mat.shutdown();

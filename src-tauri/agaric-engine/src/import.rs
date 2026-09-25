@@ -741,10 +741,9 @@ pub fn parse_logseq_markdown(content: &str) -> ParseOutput {
     // frontmatter would otherwise be retained as block content. Doing this
     // first also lets `body.lines()` and the indent calculation see clean
     // Lines without stray `\r` characters.
-    let normalized_eol = content.replace("\r\n", "\n").replace('\r', "\n");
-
-    // Normalize tabs to 2 spaces for consistent indentation parsing
-    let normalized = normalized_eol.replace('\t', "  ");
+    // Tabs stay: `indent_columns` counts one as a level, and a fence keeps
+    // its lines verbatim (#5160 follow-up, item 9).
+    let normalized = content.replace("\r\n", "\n").replace('\r', "\n");
 
     // Capture + parse a leading YAML frontmatter block (#1432). The exporter
     // (`export_page_markdown_inner`) emits page properties as scalar
@@ -1089,7 +1088,9 @@ fn parse_block_lines(
     for (index, line) in normalized.lines().enumerate() {
         let trimmed = line.trim_start();
         if trimmed.is_empty() {
-            if mode == ParseMode::Source {
+            // A fence keeps its blank lines; a source buffer keeps a block's
+            // interior ones too.
+            if mode == ParseMode::Source || scan.fence.is_some() {
                 scan.blank_run.push(line);
             }
             scan.after_blank = true;
@@ -1176,16 +1177,49 @@ impl<'a> Scan<'a> {
         }
     }
 
-    /// Whether a list marker of `len` bytes starts an item. Outside any list,
-    /// on a line that would continue a paragraph, it does only when the item
-    /// has text and, if ordered, is numbered 1 (CommonMark § 5.2), so wrapped
-    /// prose keeps a line that opens with `42.`.
+    /// Whether a list marker of `len` bytes starts an item. On a line that
+    /// would continue the innermost open block's paragraph
+    /// ([`Scan::continues_paragraph`]), an ordered item does only when it has
+    /// text and is numbered 1, and a bullet only when it has text or sits
+    /// inside an item (CommonMark § 5.2, save that Agaric's own export and
+    /// clipboard write an empty child as a bare `-` at its parent's content
+    /// column, which must read back as the block it was). So wrapped prose
+    /// keeps a line that opens with `42.`, inside a list item as well as
+    /// outside one.
     fn starts_item(&self, trimmed: &str, indent: usize, len: usize, ordered: bool) -> bool {
-        let in_list = self.open.iter().any(|open| open.kind == Kind::Bullet);
-        in_list
-            || !self.continues(trimmed, indent)
-            || (!trimmed[len..].trim().is_empty()
-                && (!ordered || trimmed[..len - 1].parse::<u32>() == Ok(1)))
+        if !self.continues_paragraph(indent) {
+            return true;
+        }
+        let has_text = !trimmed[len..].trim().is_empty();
+        if ordered {
+            has_text && trimmed[..len - 1].parse::<u32>() == Ok(1)
+        } else {
+            has_text || self.open.iter().any(|open| open.kind == Kind::Bullet)
+        }
+    }
+
+    /// Whether a line at `indent` would continue the innermost open block's
+    /// paragraph, and not lazily: the block's last line is prose, no blank
+    /// line separates them, and the line is not left of the innermost open
+    /// item's content column. A marker left of that column has left the item,
+    /// so `- a\n-\n- b` is three items.
+    fn continues_paragraph(&self, indent: usize) -> bool {
+        let Some(top) = self.open.last() else {
+            return false;
+        };
+        matches!(top.kind, Kind::Bullet | Kind::Paragraph)
+            && !self.ends_in_code[top.index]
+            && !self.after_blank
+            && indent >= self.item_column()
+    }
+
+    /// The content column of the innermost open item, or 0 outside any list.
+    fn item_column(&self) -> usize {
+        self.open
+            .iter()
+            .rev()
+            .find(|open| open.kind == Kind::Bullet)
+            .map_or(0, |item| item.content)
     }
 
     /// A bullet: a block under the innermost open block whose text starts at
@@ -1248,12 +1282,7 @@ impl<'a> Scan<'a> {
         } else {
             Kind::Paragraph
         };
-        let column = self
-            .open
-            .iter()
-            .rev()
-            .find(|open| open.kind == Kind::Bullet)
-            .map_or(0, |item| item.content);
+        let column = self.item_column();
         self.push_block(trimmed, Vec::new(), fence.is_some(), indent, indent, kind);
         if let Some(run) = fence {
             self.fence = Some(Fence {
@@ -1342,7 +1371,8 @@ impl<'a> Scan<'a> {
         let block = &mut self.blocks[index];
         match self.mode {
             ParseMode::Import => {
-                self.lossy.stripped_refs += append_continuation_line(block, line, is_code, width);
+                self.lossy.stripped_refs +=
+                    append_continuation_line(block, &self.blank_run, line, is_code, width);
             }
             ParseMode::Source => append_source_line(block, &self.blank_run, line, is_code, width),
         }
@@ -1414,14 +1444,20 @@ fn clean_text(text: &str, mode: ParseMode, line_is_code: bool) -> (String, usize
 /// (newline-joined) to the owning block's content, as Logseq stores a
 /// multi-line bullet body. Returns how many `((uuid))` references were
 /// stripped from it. A code line is kept as written, less the indentation up
-/// to `width`, its block's content column.
+/// to `width`, its block's content column, and so are the blank lines of its
+/// fence before it, which the scan held in `blank_run`.
 fn append_continuation_line(
     last: &mut ParsedBlock,
+    blank_run: &[&str],
     line: &str,
     line_is_code: bool,
     width: usize,
 ) -> usize {
     let (cleaned, removed) = if line_is_code {
+        for blank in blank_run {
+            last.content.push('\n');
+            last.content.push_str(dedent(blank, width));
+        }
         (dedent(line, width).to_string(), 0)
     } else {
         strip_block_refs_counted(unescape_continuation(line.trim_start()))
@@ -1488,8 +1524,7 @@ fn dedent(line: &str, width: usize) -> &str {
 }
 
 /// The columns `line`'s indentation spans. A tab counts as two, one level, so
-/// a hand-typed tab-indented outline nests; an import has already turned its
-/// tabs into two spaces each.
+/// a tab-indented outline nests.
 fn indent_columns(line: &str) -> usize {
     let indent = &line[..line.len() - line.trim_start().len()];
     indent.len() + indent.matches('\t').count()
@@ -4151,8 +4186,8 @@ mod parse_proptest {
     /// What each line of `input` may give up to the grammar: [`LINE_SYNTAX`],
     /// the `::` of a `key:: value` line, and the `^` of an anchor. When an
     /// import warns that it dropped property lines, every property-shaped line
-    /// may go. Tabs stay tabs: a source buffer reads `-\t-` as the `- -`
-    /// marker pair, which the two spaces an import puts there would hide.
+    /// may go. Tabs stay tabs: every parser reads `-\t-` as the `- -` marker
+    /// pair.
     fn consumable(input: &str, warnings: &[String]) -> HashMap<char, usize> {
         let dropped = warnings.iter().any(|w| w.contains("property line(s)"));
         let mut allowed = HashMap::new();
@@ -4184,7 +4219,9 @@ mod parse_proptest {
     /// marker or a checkbox stands for and are not counted. A marker the
     /// grammar reads where the writer meant text, such as S5's `- ` line in a
     /// column-0 fence, is consumed by the grammar's own rule, so this cannot
-    /// see it; the corpus snapshots pin that.
+    /// see it; the corpus snapshots pin that. The multisets are per document,
+    /// not per line, so a character lost on one line goes unseen when the same
+    /// character turns up spare elsewhere.
     fn check_nothing_lost(
         parser: &str,
         input: &str,
@@ -5092,12 +5129,15 @@ mod tests_block_grammar_5160 {
         }
     }
 
-    /// CommonMark § 5.2: outside a list, a list item interrupts a paragraph
-    /// only when it is non-empty and, if ordered, numbered 1. Otherwise the
-    /// line is the paragraph's text, so hard-wrapped prose keeps its `42.`.
+    /// CommonMark § 5.2: a list item interrupts a paragraph only when it is
+    /// non-empty and, if ordered, numbered 1, inside a list item as well as
+    /// outside one. Otherwise the line is the paragraph's text, so
+    /// hard-wrapped prose keeps its `42.`. An empty `-` at an item's content
+    /// column is the one exception: Agaric's own export and clipboard write an
+    /// empty child that way.
     #[test]
-    fn a_list_item_interrupts_a_paragraph_outside_a_list_only_when_non_empty_and_from_one() {
-        let cases: [(&str, &[(usize, &str)]); 9] = [
+    fn a_list_item_interrupts_a_paragraph_only_when_non_empty_and_from_one() {
+        let cases: [(&str, &[(usize, &str)]); 13] = [
             (
                 "The answer is\n42. That is all.",
                 &[(0, "The answer is\n42. That is all.")],
@@ -5110,11 +5150,24 @@ mod tests_block_grammar_5160 {
             // A line that would not continue the paragraph starts a list.
             ("Intro\n\n2. b", &[(0, "Intro"), (0, "b")]),
             ("# H\n2. b", &[(0, "# H"), (1, "b")]),
-            // A paragraph inside a list item keeps starting items.
+            // Inside a list item the same rule holds: a line at the item's
+            // content column continues its paragraph unless the item starts
+            // at 1 (#5160 follow-up, item 12).
+            (
+                "- Numbers to remember:\n  42. That is all.",
+                &[(0, "Numbers to remember:\n42. That is all.")],
+            ),
             (
                 "- one\n  # H\n  para\n  2. x",
+                &[(0, "one"), (1, "# H"), (1, "para\n2. x")],
+            ),
+            (
+                "- one\n  # H\n  para\n  1. x",
                 &[(0, "one"), (1, "# H"), (1, "para"), (1, "x")],
             ),
+            ("- a\n\n  2. b", &[(0, "a"), (1, "b")]),
+            // The export and clipboard shape of an empty child block.
+            ("- parent\n  -\n  - b", &[(0, "parent"), (1, ""), (1, "b")]),
         ];
         for (md, want) in cases {
             for (parser, blocks) in all_three(md) {
@@ -5123,6 +5176,31 @@ mod tests_block_grammar_5160 {
         }
         for (parser, blocks) in all_three("Intro\n1. first") {
             assert_eq!(list_style(&blocks[1]), Some("ordered"), "{parser}");
+        }
+    }
+
+    /// #5160 follow-up, items 9 and 10: an import keeps a fence's lines
+    /// verbatim, blank lines and tabs included, as Source and a paste do, and
+    /// like them reads the tab after a marker as its space, so `-\t-` is the
+    /// `- -` marker pair.
+    #[test]
+    fn an_import_keeps_a_fence_verbatim_and_a_tab_after_a_marker_is_its_space() {
+        for md in [
+            "- ```\n  one\n\n  \ttwo\n  ```\n- next\n",
+            "```\none\n\n\ttwo\n```\nnext\n",
+        ] {
+            for (parser, blocks) in all_three(md) {
+                assert_eq!(
+                    shape(&blocks),
+                    [(0, "```\none\n\n\ttwo\n```"), (0, "next")],
+                    "{parser}: {md:?}"
+                );
+                assert!(blocks[0].is_code, "{parser}: {md:?}");
+            }
+        }
+        for (parser, blocks) in all_three("-\t-\n-\tx\n") {
+            assert_eq!(shape(&blocks), [(0, ""), (0, "x")], "{parser}");
+            assert_eq!(list_style(&blocks[0]), Some("bullet"), "{parser}");
         }
     }
 

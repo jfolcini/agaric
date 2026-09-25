@@ -1161,7 +1161,10 @@ export const pagesHandlers = {
       .toSorted((x, y) => ((x['position'] as number) ?? 0) - ((y['position'] as number) ?? 0))
     let md = `# ${(page['content'] as string) ?? 'Untitled'}\n\n`
     for (const child of children) {
-      md += `- ${(child['content'] as string) ?? ''}\n`
+      // Like the backend's `push_block_bullet`: the lines after the first
+      // are indented under the bullet, so a fence's tab stays code.
+      const [head, ...rest] = ((child['content'] as string | null) ?? '').split('\n')
+      md += `- ${head}${rest.map((line) => `\n  ${line}`).join('')}\n`
     }
     return md
   },

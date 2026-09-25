@@ -2381,12 +2381,14 @@ fn pasted_as_text(block: &import::ParsedBlock, starts_line: bool) -> String {
 ///
 /// With a `splice`, the paste goes into the anchor's text (#5160 D4). The
 /// anchor becomes the first block, `before` + its content, and keeps its id,
-/// place, other properties and children: at the start of its text it takes
-/// the first block's properties, after text it takes the block as the text it
-/// was pasted as. The first block's children follow the anchor's own; `after`
-/// ends the last block, or follows a last block that is code as a block of
-/// its own. The anchor is then the first pasted block returned. The names in
-/// `before` and `after` are left as they are.
+/// place, other properties and children: with nothing before the cursor, as
+/// at the start of a plain paragraph, it takes the first block's properties;
+/// after text it takes the block as the text it was pasted as. A heading's or
+/// a quote's marker is text before the cursor, so such a block keeps its type
+/// and takes the first line as text. The first block's children follow the
+/// anchor's own; `after` ends the last block, or follows a last block that is
+/// code as a block of its own. The anchor is then the first pasted block
+/// returned. The names in `before` and `after` are left as they are.
 ///
 /// # Errors
 ///
