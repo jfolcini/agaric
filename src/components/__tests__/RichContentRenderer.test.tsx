@@ -472,7 +472,8 @@ describe('RichContentRenderer', () => {
 
   // -- Inline tokens: hardBreak -----------------------------------------------
 
-  it('renders hardBreak as space span', () => {
+  // #5160 D2 — a line break inside a block is shown as a break at rest.
+  it('renders hardBreak as a visible line break', () => {
     mockedParse.mockReturnValueOnce({
       type: 'doc',
       content: [
@@ -487,8 +488,8 @@ describe('RichContentRenderer', () => {
       ],
     })
     const { container } = render(renderRichContent('before\nafter', {}))
-    expect(container.textContent).toContain('before')
-    expect(container.textContent).toContain('after')
+    expect(container.querySelectorAll('br')).toHaveLength(1)
+    expect(container.textContent).toBe('beforeafter')
   })
 
   // -- Interactive mode -------------------------------------------------------

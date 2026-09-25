@@ -615,7 +615,8 @@ describe('useBlockFlush — split path (#3278)', () => {
 
     // The split decision came from the SHARED predicate, not an open-coded
     // parse check private to this file.
-    expect(mockShouldSplitOnBlur).toHaveBeenCalledWith('line1\nline2')
+    // …and against the mount-time baseline, read BEFORE unmount() (#5160 D2).
+    expect(mockShouldSplitOnBlur).toHaveBeenCalledWith('line1\nline2', '')
     expect(mockSplitBlockFn).toHaveBeenCalledWith('BLK', 'line1\nline2')
     expect(mockedInvoke).not.toHaveBeenCalledWith('edit_block', expect.anything())
 

@@ -3,38 +3,32 @@
     {
       "name": "two lines of prose are one block",
       "content": "hello\nworld",
-      "editorFlush": "split",
-      "finding": "X1"
+      "editorFlush": "edit"
     },
     {
       "name": "a second line shaped like a property stays text",
       "content": "hello\nkey:: v",
-      "editorFlush": "split",
-      "finding": "X1"
+      "editorFlush": "edit"
     },
     {
       "name": "a second line shaped like a bullet stays text",
       "content": "first\n- not a bullet",
-      "editorFlush": "split",
-      "finding": "X1"
+      "editorFlush": "edit"
     },
     {
       "name": "a first line shaped like a property stays text",
       "content": "key:: v",
-      "editorFlush": "property",
-      "finding": "X1"
+      "editorFlush": "edit"
     },
     {
       "name": "a line shaped like an anchor line stays text",
       "content": "see below\n^01J0000000000000000000ANCH",
-      "editorFlush": "split",
-      "finding": "X1"
+      "editorFlush": "edit"
     },
     {
       "name": "two trailing spaces before a line break keep the line in the block",
       "content": "line one  \nline two",
-      "editorFlush": "split",
-      "finding": "X1"
+      "editorFlush": "edit"
     },
     {
       "name": "trailing spaces are kept",
@@ -54,8 +48,7 @@
     {
       "name": "text shaped like a task list item stays text",
       "content": "- [ ] open task",
-      "editorFlush": "checkbox",
-      "finding": "X1"
+      "editorFlush": "edit"
     },
     {
       "name": "text shaped like an ordered list item stays text",

@@ -194,13 +194,15 @@ describe('serialize', () => {
   })
 
   describe('special nodes', () => {
-    it('hardBreak emits backslash hard break (#710-5)', () => {
-      expect(serialize(doc(paragraph(text('a'), hardBreak(), text('b'))))).toBe('a\\\nb')
+    // #5160 D2 — a hardBreak is a bare newline; a blank line separates
+    // paragraphs.
+    it('hardBreak emits a bare newline', () => {
+      expect(serialize(doc(paragraph(text('a'), hardBreak(), text('b'))))).toBe('a\nb')
     })
 
-    it('multiple paragraphs joined with newline', () => {
+    it('multiple paragraphs are separated by a blank line', () => {
       expect(serialize(doc(paragraph(text('first')), paragraph(text('second'))))).toBe(
-        'first\nsecond',
+        'first\n\nsecond',
       )
     })
 
@@ -234,9 +236,9 @@ describe('serialize', () => {
       expect(serialize(doc(blockquote()))).toBe('> ')
     })
 
-    it('serializes multi-line blockquote', () => {
+    it('serializes multi-line blockquote with a quoted blank line between paragraphs', () => {
       expect(serialize(doc(blockquote(paragraph(text('line 1')), paragraph(text('line 2')))))).toBe(
-        '> line 1\n> line 2',
+        '> line 1\n> \n> line 2',
       )
     })
 
@@ -298,7 +300,7 @@ describe('serialize', () => {
     it('serializes multi-line callout', () => {
       expect(
         serialize(doc(callout('warning', paragraph(text('line 1')), paragraph(text('line 2'))))),
-      ).toBe('> [!WARNING] line 1\n> line 2')
+      ).toBe('> [!WARNING] line 1\n> \n> line 2')
     })
 
     it('serializes callout with marks', () => {
@@ -755,19 +757,21 @@ describe('parse', () => {
     })
   })
 
+  // #5160 D2 — a single newline is a line inside the paragraph; a blank
+  // line is the paragraph separator (see markdown-line-breaks.test.ts).
   describe('newlines (multi-paragraph)', () => {
-    it('two lines produce two paragraphs', () => {
+    it('two lines produce one paragraph with a hard break', () => {
       expect(parse('first\nsecond')).toEqual(
-        doc(paragraph(text('first')), paragraph(text('second'))),
+        doc(paragraph(text('first'), hardBreak(), text('second'))),
       )
     })
 
-    it('empty line produces empty paragraph', () => {
-      expect(parse('a\n\nb')).toEqual(doc(paragraph(text('a')), paragraph(), paragraph(text('b'))))
+    it('empty line separates two paragraphs', () => {
+      expect(parse('a\n\nb')).toEqual(doc(paragraph(text('a')), paragraph(text('b'))))
     })
 
-    it('trailing newline produces empty paragraph', () => {
-      expect(parse('a\n')).toEqual(doc(paragraph(text('a')), paragraph()))
+    it('trailing newline is dropped', () => {
+      expect(parse('a\n')).toEqual(doc(paragraph(text('a'))))
     })
   })
 
@@ -778,7 +782,7 @@ describe('parse', () => {
 
     it('handles multi-line blockquote', () => {
       expect(parse('> line 1\n> line 2')).toEqual(
-        doc(blockquote(paragraph(text('line 1')), paragraph(text('line 2')))),
+        doc(blockquote(paragraph(text('line 1'), hardBreak(), text('line 2')))),
       )
     })
 
@@ -828,8 +832,9 @@ describe('parse', () => {
     })
 
     it('parses multi-line callout', () => {
+      // #5160 D2 — a single quoted line break is a line of the same paragraph.
       expect(parse('> [!WARNING] line 1\n> line 2')).toEqual(
-        doc(callout('warning', paragraph(text('line 1')), paragraph(text('line 2')))),
+        doc(callout('warning', paragraph(text('line 1'), hardBreak(), text('line 2')))),
       )
     })
 
@@ -1352,7 +1357,9 @@ describe('list continuation indent (#4050): the residue is indentation, not text
     const withSpace = doc(
       bulletList(listItem(paragraph(text('x')), paragraph(text('a'), hardBreak(), text(' b')))),
     )
-    expect(serialize(withSpace)).toBe('- x\n  a\\\n  \\ b')
+    expect(serialize(withSpace)).toBe('- x\n  a\n  \\ b')
+    expect(parse('- x\n  a\n  \\ b')).toEqual(withSpace)
+    // The legacy marker spelling of the same break still reads back.
     expect(parse('- x\n  a\\\n  \\ b')).toEqual(withSpace)
     expect(parse('- x\n  a\\\n     b')).toEqual(
       doc(bulletList(listItem(paragraph(text('x')), paragraph(text('a'), hardBreak(), text('b'))))),
@@ -2920,12 +2927,12 @@ describe('inline variant dispatch', () => {
   })
 
   describe('hardBreak variant', () => {
-    it('emits a backslash hard break (#710-5, happy path)', () => {
-      expect(serialize(doc(paragraph(text('a'), hardBreak(), text('b'))))).toBe('a\\\nb')
+    it('emits a bare newline (#5160 D2, happy path)', () => {
+      expect(serialize(doc(paragraph(text('a'), hardBreak(), text('b'))))).toBe('a\nb')
     })
 
     it('closes active bold before emitting hardBreak (edge: atom amid marks)', () => {
-      expect(serialize(doc(paragraph(bold('a'), hardBreak(), text('b'))))).toBe('**a**\\\nb')
+      expect(serialize(doc(paragraph(bold('a'), hardBreak(), text('b'))))).toBe('**a**\nb')
     })
   })
 
@@ -2959,7 +2966,7 @@ describe('inline variant dispatch', () => {
           ),
         ),
       )
-      expect(out).toBe(`a #[${ULID}] b [[${ULID}]] c ((${REF_ULID})) d\\\ne`)
+      expect(out).toBe(`a #[${ULID}] b [[${ULID}]] c ((${REF_ULID})) d\ne`)
     })
   })
 })
@@ -3506,11 +3513,11 @@ describe('#710 round-trip corruption family', () => {
     })
   })
 
-  describe('5. hard breaks (were serialized as bare \\n = block separator)', () => {
+  describe('5. hard breaks (a bare \\n inside a paragraph, #5160 D2)', () => {
     it('doc→md→doc: text + hardBreak + text stays ONE paragraph (was split into 2 blocks)', () => {
       const original = doc(paragraph(text('first'), hardBreak(), text('second')))
       const md = serialize(original)
-      expect(md).toBe('first\\\nsecond')
+      expect(md).toBe('first\nsecond')
       expect(parse(md)).toEqual(original)
       // The parsed doc has exactly one block — shouldSplitOnBlur-style checks
       // (parse().content.length > 1) no longer split it.
@@ -3531,13 +3538,15 @@ describe('#710 round-trip corruption family', () => {
       expect(parse(serialize(original))).toEqual(original)
     })
 
-    it('md→doc→md: backslash hard break is byte-stable', () => {
-      expectByteStable('first\\\nsecond')
-      expectByteStable('a\\\nb\\\nc')
+    it('md→doc→md: the legacy backslash hard break normalizes to a bare newline once', () => {
+      expect(serialize(parse('first\\\nsecond'))).toBe('first\nsecond')
+      expect(serialize(parse('a\\\nb\\\nc'))).toBe('a\nb\nc')
+      expectByteStable('first\nsecond')
+      expectByteStable('a\nb\nc')
     })
 
-    it('paragraph blocks separated by a bare newline still split (escaped backslash at EOL is literal)', () => {
-      expect(parse('a\\\\\nb')).toEqual(doc(paragraph(text('a\\')), paragraph(text('b'))))
+    it('an escaped backslash at EOL is literal, and the newline after it is still a hard break', () => {
+      expect(parse('a\\\\\nb')).toEqual(doc(paragraph(text('a\\'), hardBreak(), text('b'))))
     })
 
     it('backslash at end of input stays literal (CommonMark)', () => {

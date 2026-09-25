@@ -146,7 +146,7 @@ describe('PageBlockStore', () => {
       // edit('A', 'line1') then createBelow for 'line2' and 'line3'.
       stubInvoke(mockedInvoke, { edit_block: echoEditBlock, create_block: echoCreateBlock })
 
-      await store.getState().splitBlock('A', 'line1\nline2\nline3')
+      await store.getState().splitBlock('A', 'line1\n\nline2\n\nline3')
 
       const blocks = store.getState().blocks
       expect(blocks).toHaveLength(3)
@@ -176,7 +176,7 @@ describe('PageBlockStore', () => {
       // edit, then createBelow('A','b') and createBelow on ITS new id for 'c'.
       stubInvoke(mockedInvoke, { edit_block: echoEditBlock, create_block: echoCreateBlock })
 
-      await store.getState().splitBlock('A', 'a\nb\nc')
+      await store.getState().splitBlock('A', 'a\n\nb\n\nc')
 
       // #2849 PR2 — the two created blocks carry CLIENT ids (`CID_1`, `CID_2`);
       // splitBlock chains on those (the store's actual ids), not server ids.
@@ -228,8 +228,9 @@ describe('PageBlockStore', () => {
       const block = makeBlock({ id: 'A', position: 0 })
       store.setState({ blocks: [block] })
 
-      // 'hello\n\nworld' → 3 parsed blocks: paragraph("hello"), empty paragraph, paragraph("world")
-      // After filtering empty: 2 blocks
+      // 'hello\n\nworld' → 2 parsed blocks (a blank line separates paragraphs,
+      // #5160 D2); 'hello\n\n\n\nworld' would carry an empty paragraph between
+      // them, which the plan filters out.
       stubInvoke(mockedInvoke, { edit_block: echoEditBlock, create_block: echoCreateBlock })
 
       await store.getState().splitBlock('A', 'hello\n\nworld')
@@ -254,7 +255,7 @@ describe('PageBlockStore', () => {
         // swallows it and resolves false (the real store contract).
         stubInvoke(mockedInvoke, { edit_block: () => Promise.reject(new Error('edit failed')) })
 
-        await expect(store.getState().splitBlock('A', 'line1\nline2')).resolves.toBe(false)
+        await expect(store.getState().splitBlock('A', 'line1\n\nline2')).resolves.toBe(false)
       })
 
       it('resolves false when a createBelow fails mid-split', async () => {
@@ -283,7 +284,7 @@ describe('PageBlockStore', () => {
           create_block: () => Promise.reject(new Error('create failed')),
         })
 
-        await expect(store.getState().splitBlock('A', 'line1\nline2')).resolves.toBe(false)
+        await expect(store.getState().splitBlock('A', 'line1\n\nline2')).resolves.toBe(false)
         // The compensating edit ran and restored the pre-split content, so
         // the store never had to fall back to a full `load()`.
         const editCalls = mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'edit_block')
@@ -307,7 +308,7 @@ describe('PageBlockStore', () => {
         store.setState({ blocks: [block] })
         stubInvoke(mockedInvoke, { edit_block: echoEditBlock, create_block: echoCreateBlock })
 
-        await expect(store.getState().splitBlock('A', 'line1\nline2')).resolves.toBe(true)
+        await expect(store.getState().splitBlock('A', 'line1\n\nline2')).resolves.toBe(true)
       })
 
       it('resolves true for a noop plan (nothing needed persisting)', async () => {
@@ -340,7 +341,7 @@ describe('PageBlockStore', () => {
         create_block: () => Promise.reject(new Error('create failed')),
       })
 
-      await store.getState().splitBlock('A', 'line1\nline2')
+      await store.getState().splitBlock('A', 'line1\n\nline2')
 
       // Non-tautology: a compensating BACKEND write must have been issued with the
       // full pre-split content. The pre-fix local-only `set()` restore issued NO
@@ -377,7 +378,7 @@ describe('PageBlockStore', () => {
           ]),
       })
 
-      await store.getState().splitBlock('A', 'line1\nline2')
+      await store.getState().splitBlock('A', 'line1\n\nline2')
 
       // Non-tautology: load() must have been invoked as the reconciling fallback —
       // the pre-fix code never called load() on this path.
@@ -411,13 +412,13 @@ describe('PageBlockStore', () => {
           createCall++ === 0 ? Promise.reject(new Error('create failed')) : echoCreateBlock(args),
       })
 
-      await store.getState().splitBlock('A', 'line1\nline2')
+      await store.getState().splitBlock('A', 'line1\n\nline2')
       // edit + failed create + compensating edit = 3 IPCs.
       expect(mockedInvoke).toHaveBeenCalledTimes(3)
 
       // Second split on the SAME block must run — if the guard were still set,
       // splitBlock would early-return and issue zero further IPCs.
-      await store.getState().splitBlock('A', 'x\ny')
+      await store.getState().splitBlock('A', 'x\n\ny')
 
       // Two more IPCs (edit + create) fired → the guard was cleared on the error
       // path. 3 (first split incl. compensating edit) + 2 = 5.
@@ -436,8 +437,8 @@ describe('PageBlockStore', () => {
 
       // Fire two splitBlocks simultaneously on the same block
       await Promise.all([
-        store.getState().splitBlock('A', 'line1\nline2'),
-        store.getState().splitBlock('A', 'line1\nline2'),
+        store.getState().splitBlock('A', 'line1\n\nline2'),
+        store.getState().splitBlock('A', 'line1\n\nline2'),
       ])
 
       // Only the first splitBlock should have made backend calls (edit + create = 2)
@@ -456,11 +457,11 @@ describe('PageBlockStore', () => {
       stubInvoke(mockedInvoke, { edit_block: echoEditBlock, create_block: echoCreateBlock })
 
       // First splitBlock on block A
-      await store.getState().splitBlock('A', 'line1\nline2')
+      await store.getState().splitBlock('A', 'line1\n\nline2')
       expect(mockedInvoke).toHaveBeenCalledTimes(2)
 
       // Second splitBlock on same block A — should work (guard cleared)
-      await store.getState().splitBlock('A', 'x\ny')
+      await store.getState().splitBlock('A', 'x\n\ny')
       expect(mockedInvoke).toHaveBeenCalledTimes(4)
     })
 
@@ -475,7 +476,7 @@ describe('PageBlockStore', () => {
       // rolls its optimistic update back internally).
       stubInvoke(mockedInvoke, { edit_block: () => Promise.reject(new Error('edit failed')) })
 
-      await store.getState().splitBlock('A', 'line1\nline2\nline3')
+      await store.getState().splitBlock('A', 'line1\n\nline2\n\nline3')
 
       // Only the failed edit_block IPC fired — NO create_block for line2/line3.
       expect(mockedInvoke).toHaveBeenCalledTimes(1)

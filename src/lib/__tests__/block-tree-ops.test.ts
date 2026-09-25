@@ -86,8 +86,14 @@ describe('planSplit', () => {
     expect(planSplit(code)).toEqual({ kind: 'noop' })
   })
 
-  it('returns split for two paragraphs separated by a newline', () => {
-    const plan = planSplit('first\nsecond')
+  // #5160 D2 — a single line break is a line inside one paragraph, so the
+  // plan is a noop; a blank line is the paragraph separator that splits.
+  it('treats a single line break as one paragraph (noop)', () => {
+    expect(planSplit('first\nsecond')).toEqual({ kind: 'noop' })
+  })
+
+  it('returns split for two paragraphs separated by a blank line', () => {
+    const plan = planSplit('first\n\nsecond')
     expect(plan.kind).toBe('split')
     if (plan.kind === 'split') {
       expect(plan.first).toBe('first')
@@ -96,8 +102,8 @@ describe('planSplit', () => {
     }
   })
 
-  it('splits three lines into first + two rest entries', () => {
-    const plan = planSplit('one\ntwo\nthree')
+  it('splits three paragraphs into first + two rest entries', () => {
+    const plan = planSplit('one\n\ntwo\n\nthree')
     expect(plan.kind).toBe('split')
     if (plan.kind === 'split') {
       expect(plan.first).toBe('one')

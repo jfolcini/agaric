@@ -781,7 +781,7 @@ describe('property: structural invariants', () => {
     )
   })
 
-  it('serialized output has same number of newlines as paragraphs minus one', () => {
+  it('serialized output has one blank line between paragraphs (two newlines per separator)', () => {
     fc.assert(
       fc.property(arbDoc, (d) => {
         const md = serialize(d)
@@ -789,10 +789,11 @@ describe('property: structural invariants', () => {
           expect(md).toBe('')
           return
         }
-        // Count newlines in the serialized markdown
+        // Count newlines in the serialized markdown. The paragraphs hold no
+        // hardBreak (see arbInlineNode), so every newline is a separator, and
+        // two sibling paragraphs are separated by a blank line (#5160 D2).
         const newlineCount = (md.match(/\n/g) ?? []).length
-        // Should be paragraphs - 1 (join with \n)
-        expect(newlineCount).toBe(d.content.length - 1)
+        expect(newlineCount).toBe(2 * (d.content.length - 1))
       }),
       { numRuns: NUM_RUNS },
     )
