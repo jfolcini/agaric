@@ -131,8 +131,20 @@ describe('parseHeading', () => {
     expect(block?.type === 'heading' ? block.attrs.level : null).toBe(6)
   })
 
+  // #5160 follow-up, item 17 — CommonMark lets a tab follow the `#` run, and
+  // the Rust grammar reads `#\tH` as a heading, so the editor must too.
+  it('accepts a tab after the # run', () => {
+    expect(parseHeading(['#\tTitle'], 0, 0)).toEqual({
+      blocks: [
+        { type: 'heading', attrs: { level: 1 }, content: [{ type: 'text', text: 'Title' }] },
+      ],
+      consumed: 1,
+    })
+  })
+
   it('returns null when the line is not a heading', () => {
     expect(parseHeading(['plain'], 0, 0)).toBeNull()
+    expect(parseHeading(['#tag'], 0, 0)).toBeNull()
   })
 
   it('returns null for 7+ hashes (out of range)', () => {

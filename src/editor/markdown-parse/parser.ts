@@ -294,7 +294,10 @@ function buildBlockquote(
     : { type: 'blockquote', content }
 }
 
-/** Heading: `#`…`######` followed by a space and inline content. */
+/**
+ * Heading: `#`…`######` followed by a space or a tab (CommonMark § 4.2, and
+ * what the Rust grammar's `heading_level` reads) and inline content.
+ */
 export function parseHeading(
   lines: readonly string[],
   i: number,
@@ -304,7 +307,7 @@ export function parseHeading(
   // `[^\n]` rather than `.` for the content: `.` excludes CR (and U+2028/9), so
   // a `.`-matched production silently fails on a line holding one — see
   // `splitLines`. Lines never contain `\n`, so the two are otherwise identical.
-  const headingMatch = line.match(/^(#{1,6}) ([^\n]*)$/)
+  const headingMatch = line.match(/^(#{1,6})[ \t]([^\n]*)$/)
   if (!headingMatch) return null
   const level = headingMatch[1]?.length as number
   // A hardBreak inside a heading serializes as an odd trailing backslash run

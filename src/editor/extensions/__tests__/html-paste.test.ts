@@ -692,6 +692,23 @@ describe('handlePaste — pasted text goes to the block path, spliced (#5160 D4)
     expect(table.child(1).child(0).textContent).toBe('oneTitle')
   })
 
+  // #5160 follow-up, item 21 — `text/html` with no `text/plain`: the literal
+  // path has nothing to insert, so the selection stays rather than being
+  // replaced by nothing.
+  it('leaves a selection in a table cell alone when the HTML paste has no plain text', async () => {
+    const ed = await buildEditor(TABLE_DOC)
+    editor = ed
+    const end = endOf(ed, 'one')
+    ed.commands.setTextSelection({ from: end - 3, to: end })
+    htmlBodyToOutline.mockReturnValue([{ content: '# Title', depth: 0 }])
+
+    expect(paste(ed, '', '<h1>Title</h1>')).toBe(true)
+    await vi.waitFor(() => expect(htmlBodyToOutline).toHaveBeenCalled())
+
+    expect(dispatchBlockEvent).not.toHaveBeenCalled()
+    expect(ed.state.doc.child(0).child(1).child(0).textContent).toBe('one')
+  })
+
   it('pastes as literal lines after Ctrl+Shift+V: no blocks, no markdown read', async () => {
     editor = await buildEditor(HELLO_WORLD)
     editor.commands.setTextSelection(7)

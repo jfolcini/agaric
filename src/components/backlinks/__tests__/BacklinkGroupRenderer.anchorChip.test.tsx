@@ -92,3 +92,14 @@ describe('BacklinkGroupRenderer — anchor chip (#4551)', () => {
     expect(container.querySelectorAll('.ref-chip-anchor')).toHaveLength(0)
   })
 })
+
+// #5160 follow-up, item 23 — the row is one clamped `truncate` line, so a
+// stored line break renders as a space there, not as a second line.
+describe('BacklinkGroupRenderer — one-line preview', () => {
+  it('renders a block with a line break on one line', () => {
+    const { container } = renderRow('hello\nworld', undefined)
+
+    expect(container.querySelector('.linked-reference-item-text')).toHaveTextContent('hello world')
+    expect(container.querySelector('br')).toBeNull()
+  })
+})

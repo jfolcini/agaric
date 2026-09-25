@@ -1387,9 +1387,7 @@ impl<'a> Scan<'a> {
     /// typed: content. An import reads it as a property and drops it with a
     /// warning.
     fn property_line<'l>(&self, trimmed: &'l str, indent: usize) -> Option<(&'l str, &'l str)> {
-        let (key, value) = trimmed
-            .split_once(":: ")
-            .filter(|(key, _)| is_property_key(key.trim()))?;
+        let (key, value) = split_property_line(trimmed)?;
         let stored =
             !FRONTMATTER_RESERVED_KEYS.contains(&key.trim()) && self.owner_at(indent).is_some();
         (self.mode == ParseMode::Import || stored).then_some((key, value))
@@ -2234,12 +2232,20 @@ fn is_property_key(s: &str) -> bool {
             .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
 }
 
-/// #2716 — `true` when `line` matches the `key:: value` property shape (a
-/// `:: `-separated pair whose LHS is a valid [`is_property_key`]), the shape
-/// [`continuation_line_is_ambiguous`] escapes and the un-escape reverses.
+/// The key and value of a `key:: value` line: `::` followed by a space or a
+/// tab (Logseq users write either) after a valid [`is_property_key`], so a
+/// `::` mid-sentence (`std::vector`) is content.
+fn split_property_line(line: &str) -> Option<(&str, &str)> {
+    let (key, rest) = line.split_once("::")?;
+    let value = rest.strip_prefix([' ', '\t'])?;
+    is_property_key(key.trim()).then_some((key, value))
+}
+
+/// #2716 — `true` when `line` matches the `key:: value` property shape
+/// ([`split_property_line`]), the shape [`continuation_line_is_ambiguous`]
+/// escapes and the un-escape reverses.
 fn line_is_property_shaped(line: &str) -> bool {
-    line.split_once(":: ")
-        .is_some_and(|(k, _)| is_property_key(k.trim()))
+    split_property_line(line).is_some()
 }
 
 #[cfg(test)]
@@ -4102,8 +4108,9 @@ pub mod line_soup {
     }
 
     fn arb_line() -> impl Strategy<Value = String> {
-        const MARKERS: [&str; 12] = [
-            "- ", "-", "* ", "+ ", "1. ", "1) ", "- 1. ", "- [ ] ", "- [x] ", "-\t", "## ", "> ",
+        const MARKERS: [&str; 14] = [
+            "- ", "-", "* ", "+ ", "1. ", "2. ", "42. ", "1) ", "- 1. ", "- [ ] ", "- [x] ", "-\t",
+            "## ", "> ",
         ];
         const FENCES: [&str; 6] = ["```", "```sh", "````", "````md", "~~~", "~~~yaml"];
         let word = prop_oneof!["[A-Za-z0-9-]{1,12}", "[0-7][0-9A-HJKMNP-TV-Z]{25}"];
@@ -4201,7 +4208,7 @@ mod parse_proptest {
                 &mut allowed,
                 LINE_SYNTAX.find(line).map_or("", |m| m.as_str()),
             );
-            if line.contains(":: ") {
+            if line.contains(":: ") || line.contains("::\t") {
                 count(&mut allowed, "::");
             }
             if TRAILING_WORD.is_match(line) {
@@ -4995,6 +5002,20 @@ mod tests_block_grammar_5160 {
     fn b4_dash_tab_is_a_bullet_in_all_modes() {
         for (parser, blocks) in all_three("-\ta\n-\tb\n") {
             assert_eq!(shape(&blocks), [(0, "a"), (0, "b")], "{parser}");
+        }
+    }
+
+    /// A tab after `::` separates a `key:: value` line as a space does, in
+    /// every mode (#5160 follow-up, item 18).
+    #[test]
+    fn a_tab_after_the_double_colon_is_a_property_separator() {
+        for (parser, blocks) in all_three("- a\n  key::\tvalue\n") {
+            assert_eq!(shape(&blocks), [(0, "a")], "{parser}");
+            assert_eq!(
+                blocks[0].properties,
+                [("key".to_string(), "value".to_string())],
+                "{parser}"
+            );
         }
     }
 

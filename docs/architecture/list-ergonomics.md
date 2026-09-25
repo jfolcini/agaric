@@ -243,36 +243,47 @@ Three requirements to actually get idempotence:
    because promoting a stray control character to a block boundary is not
    recoverable whereas keeping it is.
 
-**Known divergence — the vault importer normalises the opposite way on both of
-those axes.** Rules 4 and 5 describe the TypeScript parser, which is the path a
-PASTE into the editor takes. A markdown file read from disk goes through the
-Rust vault importer instead (`src-tauri/agaric-engine/src/import.rs`), and it
-decides both questions differently:
+**Known divergence — the Rust block grammar decides both axes differently.**
+Rules 4 and 5 describe the TypeScript parser, which reads a block's STORED
+content (the editor and the at-rest renderer). A markdown file read from disk,
+a source-mode buffer and a paste of more than one line all go through the Rust
+grammar instead (`src-tauri/agaric-engine/src/import.rs`, #5160 Phase 2a), which
+decides:
 
-- **Lone `\r`** — `src-tauri/agaric-engine/src/import.rs:514` normalises `\r\n` to `\n` and then *every
-  remaining* `\r` to `\n`, i.e. CommonMark §2.3: a lone CR is a line ending and
-  splits the block. The TS parser keeps it as content (rule 5). So `a\rb` is two
-  blocks imported from disk and one paragraph holding a CR when pasted.
-- **Tabs** — `src-tauri/agaric-engine/src/import.rs:517` expands `\t` to two spaces flat (not to the next
-  4-column stop), and `src-tauri/agaric-engine/src/import.rs:596-600` derives depth as
-  `leading-space-count / 2`. So a tab is exactly one nesting level there, while
-  the TS parser measures a tab as the columns it occupies and spends one content
-  column per level.
+- **Lone `\r`** — `parse_logseq_markdown` and `source_outline` normalise `\r\n`
+  to `\n` and then *every remaining* `\r` to `\n`, i.e. CommonMark §2.3: a lone
+  CR is a line ending and splits the block. The TS parser keeps it as content
+  (rule 5). So `a\rb` is two blocks imported from disk and one paragraph holding
+  a CR once stored.
+- **Tabs are kept, and a tab is one level** — the grammar stores tabs as
+  written (a fence keeps its blank lines and tabs verbatim, #5168). Depth is not
+  arithmetic on the indentation but the stack of open blocks: a new block nests
+  under the innermost open block whose content column it reaches (`Scan::pop_to`,
+  `Open::owns_from`), so `- a` / four-space `- b` / eight-space `- c` is depths
+  0, 1, 2, and so is the same outline indented by one tab per level.
+  `indent_columns` counts a tab as two columns, one level, on the way in, and
+  `dedent` spends it the same way when a continuation line is folded into its
+  block, so a tab up to the content column is indentation and a tab past it
+  stays in the text. A tab after a marker — `-\t`, `#\t`, `key::\t` — is the
+  marker's space in every mode.
 
 The two agree on the common case — a single leading tab is one level under both
-— but not beyond it. `- p` followed by `\t\t- deep` is a **depth-2 block** to
-the importer (two tabs → four spaces → depth 2) and a **continuation paragraph
-inside `- p`** to the parser (two tabs → column 8, dedented by one content
-column, still far past the three-space marker tolerance, so it is text: the
-serializer re-emits it as `\- deep` at the one-level nest indent). A mixed space-then-tab indent diverges the same way. So the same file can nest differently depending on whether it was
-imported or pasted.
+— but not beyond it. `- p` followed by `\t\t- deep` is a **child block of
+`- p`** to the grammar (depth 1: the stack holds only `- p`, and the bullet
+reaches its content column) and a
+**continuation paragraph inside `- p`** to the TS parser (two tabs → column 8,
+dedented by one content column, still far past the three-space marker tolerance,
+so it is text: the serializer re-emits it as `\- deep` at the one-level nest
+indent). A mixed space-then-tab indent diverges the same way. The TS parser meets
+such a shape only in a block's stored content, since the grammar has already
+split a file or a paste into blocks.
 
-Nothing pins this today — no conformance vector covers markdown tab or CR
+Nothing pins the divergence — no conformance vector covers markdown tab or CR
 handling — and neither behaviour is obviously the wrong one to pick: the
-importer's flat expansion matches Logseq's on-disk convention (two spaces per
-level, which is what our own exporter writes), while the parser's column
-arithmetic matches CommonMark. Reconciling them is a decision about which
-convention owns the on-disk format, deliberately **not** made here.
+grammar's one-tab-one-level reading matches Logseq's on-disk convention, while
+the parser's column arithmetic matches CommonMark. Reconciling them is a
+decision about which convention owns the on-disk format, deliberately **not**
+made here.
 
 **Caveat — the coarse (multi-line) block option.** Intra-block soft breaks
 (`Shift+Enter`) and indentation-based child nesting both want indentation in

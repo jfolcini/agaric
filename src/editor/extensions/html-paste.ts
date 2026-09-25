@@ -169,7 +169,9 @@ function parseHtmlBody(html: string): ParentNode | null {
  *
  * `literal` — the caret sits in a table or a list inside the block, where the
  * block path's splice would cut it in two: what would become blocks goes in as
- * the plain text's literal lines instead, as a text paste does there.
+ * the plain text's literal lines instead, as a text paste does there. With no
+ * plain text (a clipboard carrying only `text/html`) nothing is inserted, so
+ * the selection is not replaced by nothing.
  *
  * @internal Exported for testing.
  */
@@ -239,7 +241,7 @@ export async function convertAndInsert(
         return
       }
       if (single) insertInlineMarkdown(view, first.content)
-      else insertLiteralLines(view, plainText)
+      else if (plainText.length > 0) insertLiteralLines(view, plainText)
       return
     }
 

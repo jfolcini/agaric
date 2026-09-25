@@ -83,6 +83,8 @@ export function TrashRowItem({
       block.content
         ? renderRichContent(block.content, {
             interactive: true,
+            // The row is one clamped `truncate` line (#5160 follow-up, item 23).
+            inline: true,
             onTagClick,
             resolveBlockTitle,
             resolveBlockStatus,
