@@ -1454,6 +1454,19 @@ describe('RichContentRenderer', () => {
       expect(container.textContent).toContain('const x = 1')
     })
 
+    // #5160 D2: a stored line break is a hardBreak. A <br> breaks a clamped
+    // `truncate` row even under nowrap and hides the second line, so the
+    // preview keeps the space the at-rest view turns into a break.
+    it('line break: a space, never a <br>', () => {
+      const def = render(renderRichContent('hello\nworld', {}))
+      expect(def.container.querySelector('br')).toBeInTheDocument()
+      def.unmount()
+
+      const { container } = render(renderRichContent('hello\nworld', { inline: true }))
+      expect(container.querySelector('br')).toBeNull()
+      expect(container.textContent).toBe('hello world')
+    })
+
     it('multiple blocks: never nest a block element, separated by inline space', () => {
       const { container } = render(renderRichContent('# Title\n\nbody paragraph', { inline: true }))
       expect(container.querySelector(BLOCK_SELECTOR)).toBeNull()

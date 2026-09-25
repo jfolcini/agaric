@@ -21,10 +21,11 @@ The change was built and reviewed as one PR (#5167). The review bot timed out on
 **Review.** An independent reviewer ran the full suite on the whole change.
 - **A defect, fixed:** a focus and blur with no edit rewrote every stored two-paragraph block as one paragraph with a break. Paragraphs out of the editor carry the schema default `todoState: null`, and the serializer's plain-paragraph check wanted no attribute at all. It now reads the attribute by truthiness, as the task prefix does. A vitest and a Playwright test failed on the old check.
 - Two 2b tests had pinned the old meaning: a splice tail spelled `here\nnext line` for two paragraphs, and a caret helper that skipped hard breaks. Both now follow D2.
+- **The PR's own review found a second defect, fixed:** the one-line previews used in agenda rows, history, query results, backlinks and the drag overlay rendered the break as `<br>`. That breaks a clamped row even under `nowrap`, so `hello\nworld` showed only `hello`. In preview mode the break is a space again, as it was when the lines were two paragraphs. The test failed before the fix and again when the fix was broken on a copy.
 
 **Worth knowing.**
 - The legacy marker still lands in the store at a few seams: an empty line inside a paragraph, a 2b splice fragment that starts or ends at a break, and two Shift+Enters in a row. The editor reads these correctly, and the next real edit rewrites them. Until then Source and export show a trailing `\`, which is CommonMark's own hard-break syntax.
-- A blank line after a list, heading or fence reads as an empty paragraph. So a Source-authored block like `- b\n\na` gains one blank line on its first real edit, then stays put.
+- A blank line after a list, heading or fence reads as an empty paragraph. So a Source-authored block like `- b\n\na` gains one blank line on its first real edit, then stays put. Two blank lines between paragraphs do the same: `a\n\n\nb` is a separator plus an empty paragraph, which the first real edit writes as `a\n\n\n\nb`.
 
 **Verified, on this half alone.**
 - `npm run typecheck` is clean.

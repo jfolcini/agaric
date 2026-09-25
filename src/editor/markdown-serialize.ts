@@ -1466,8 +1466,8 @@ function isPlainParagraph(node: BlockLevelNode | undefined): boolean {
  * line between two plain paragraphs, which a bare newline would read back as
  * ONE paragraph with a hard break, and a bare newline everywhere else, where
  * the second block's first line interrupts the first (a task's `- [ ] ` marker
- * included). A list item's children keep the bare newline throughout
- * (`serializeListItem`): a blank line would end the item instead.
+ * included). A list item's nested blocks are joined the same way; the
+ * caller indents the blank line, so it stays inside the item.
  */
 function joinBlocks(nodes: readonly BlockLevelNode[], serialized: readonly string[]): string {
   let out = ''

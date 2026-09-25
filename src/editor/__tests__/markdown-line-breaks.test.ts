@@ -108,6 +108,14 @@ describe('a blank line separates paragraphs', () => {
     expect(serialize(doc(heading(1, text('h')), paragraph()))).toBe('# h\n')
   })
 
+  // Two blank lines are a separator plus one empty paragraph, which writes
+  // back with a separator on each side: one normalizing pass, then stable.
+  it('normalizes `a\\n\\n\\nb` once to `a\\n\\n\\n\\nb`', () => {
+    const md = serialize(parse('a\n\n\nb'))
+    expect(md).toBe('a\n\n\n\nb')
+    expect(serialize(parse(md))).toBe(md)
+  })
+
   it('drops a trailing newline after a paragraph and reads `\\n` as one empty paragraph', () => {
     expect(parse('a\n')).toEqual(doc(paragraph(text('a'))))
     expect(parse('\n')).toEqual(doc(paragraph()))
