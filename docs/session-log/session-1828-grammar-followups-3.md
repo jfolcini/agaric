@@ -7,7 +7,7 @@ This PR batches the non-blocking review notes from the #5160 PRs merged in this 
 - **`key::\tvalue` is a property line** on Import, Source and paste. One predicate, `split_property_line`, decides for all three and for the export escape, so stored text never turns into a property.
 - **A paste with HTML but no plain text** into a table cell or list item no longer deletes the selection.
 - **The backlink and trash rows are one line.** They render a line break as a space, like every other one-line preview. They also stop placing headings and tables inside a clamped row.
-- **Import adopts an empty page only by its title**, exact or case-folded, never by an alias. Importing `Plan.md` no longer fills an empty `Roadmap` aliased `Plan`. Adopting a page no longer warns about the page's own aliases.
+- **Import adopts an empty page only by its title**, exact or case-folded, never by an alias. Importing `Plan.md` no longer fills an empty `Roadmap` aliased `Plan`. Adopting a page no longer warns about the page's own aliases. The mock follows the same rule; the bot's review caught that it still adopted by alias.
 - **The blur's parse memo keeps two entries**, so an indent or move parses twice instead of four times.
 - **Smaller:**
   - The Source proptest generates `2.` and `42.` lines, which exercises the list-item interruption rule.

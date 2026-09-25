@@ -53,30 +53,32 @@ function livePages(spaceId: string): Row[] {
 const only = (ids: string[]): Match =>
   ids.length === 0 ? null : ids.length === 1 ? { id: ids[0] as string } : 'ambiguous'
 
-/** `LinkMatches::find` over the live pages of the space. */
-function findPage(name: string, pages: readonly Row[]): Match {
+/** The title arms of `LinkMatches::find`: the exact title, else the case-folded one. */
+function findTitled(name: string, pages: readonly Row[]): Match {
   const folded = foldAsciiUppercase(name)
   const titled = (same: (title: string) => boolean): string[] =>
     pages.filter((p) => same((p['content'] as string | null) ?? '')).map((p) => p['id'] as string)
+  return only(titled((t) => t === name)) ?? only(titled((t) => foldAsciiUppercase(t) === folded))
+}
+
+/** `LinkMatches::find` over the live pages of the space. */
+function findPage(name: string, pages: readonly Row[]): Match {
+  const folded = foldAsciiUppercase(name)
   const aliased = pages
     .filter((p) =>
       (pageAliases.get(p['id'] as string) ?? []).some((a) => foldAsciiUppercase(a) === folded),
     )
     .map((p) => p['id'] as string)
-  return (
-    only(titled((t) => t === name)) ??
-    only(titled((t) => foldAsciiUppercase(t) === folded)) ??
-    only(aliased)
-  )
+  return findTitled(name, pages) ?? only(aliased)
 }
 
 /**
  * The page an import of a file titled `title` adopts (#5160 D12): the one
- * page `title` names by the rule above, when it has no live child; `null`
- * when there is none or it has content.
+ * page of that title, exact or case-folded, when it has no live child; never
+ * a page matched by alias (`create_import_page`); `null` otherwise.
  */
 export function findEmptyPageTitled(title: string, spaceId: string): string | null {
-  const match = findPage(title, livePages(spaceId))
+  const match = findTitled(title, livePages(spaceId))
   if (!match || match === 'ambiguous') return null
   const hasChild = [...blocks.values()].some(
     (b) => b['parent_id'] === match.id && b['deleted_at'] == null,
