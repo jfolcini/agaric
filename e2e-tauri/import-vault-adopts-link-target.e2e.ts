@@ -10,11 +10,12 @@
 // `B`, holding B's block, with A's link chip resolving to it — asserted after a
 // navigation round-trip, on what the backend stored.
 //
-// The files are picked through the Data tab's hidden multi-file
-// `<input type="file">` (ImportSection.tsx `import-file-input`): WebDriver's
-// Element Send Keys on it sets the FileList from newline-separated paths, in
-// that order. The `hidden` class is stripped first, as the other import specs
-// do.
+// The files are picked one at a time through the Data tab's hidden
+// `<input type="file">` (ImportSection.tsx `import-file-input`), so each run's
+// result names its page: a multi-file pick reports no page title
+// (useImportRunner.ts `pageTitle`). The backend sees the same thing either way,
+// one `import_markdown` per file. The `hidden` class is stripped first, as the
+// other import specs do.
 //
 // Globals (`$`, `$$`, `browser`, `expect`) come from @wdio/globals — see helpers.ts.
 // ---------------------------------------------------------------------------
@@ -33,7 +34,7 @@ import {
   waitForAppReady,
 } from './helpers'
 
-async function importFiles(files: string[], lastTitle: string): Promise<void> {
+async function importFile(file: string, title: string): Promise<void> {
   await navigateTo('Settings')
   const dataTab = $('#settings-tab-data')
   await dataTab.waitForClickable({ timeout: NAV_TIMEOUT })
@@ -44,18 +45,15 @@ async function importFiles(files: string[], lastTitle: string): Promise<void> {
   await browser.execute(() => {
     document.querySelector('[data-testid="import-file-input"]')?.classList.remove('hidden')
   })
-  await input.addValue(files.join('\n'))
-  // The result region names the LAST file imported (ImportSection.tsx
+  await input.addValue(file)
+  // The result region names the imported page (ImportSection.tsx
   // `data.importResultSummary`), so the run is over once it does.
   const result = $('[data-testid="import-result"]')
   await result.waitForDisplayed({ timeout: ACTION_TIMEOUT })
-  await browser.waitUntil(
-    async () => (await result.getText()).includes(`Imported “${lastTitle}”`),
-    {
-      timeout: ACTION_TIMEOUT,
-      timeoutMsg: `import result never named ${JSON.stringify(lastTitle)}`,
-    },
-  )
+  await browser.waitUntil(async () => (await result.getText()).includes(`Imported “${title}”`), {
+    timeout: ACTION_TIMEOUT,
+    timeoutMsg: `import result never named ${JSON.stringify(title)}`,
+  })
 }
 
 /** How many rows of the Pages list carry exactly `title`. */
@@ -108,8 +106,12 @@ describe('Agaric real-backend two-file import adopts the page a link created (#5
       writeFileSync(linkerFile, `- ${marker}-links [[${target}]]\n`)
       writeFileSync(targetFile, `- ${marker}-body\n`)
 
-      const files = order === 'linker-first' ? [linkerFile, targetFile] : [targetFile, linkerFile]
-      await importFiles(files, order === 'linker-first' ? target : linker)
+      const runs: [string, string][] = [
+        [linkerFile, linker],
+        [targetFile, target],
+      ]
+      if (order === 'target-first') runs.reverse()
+      for (const [file, title] of runs) await importFile(file, title)
       await assertOneTargetHoldingItsBlockAndLinked(marker, linker, target)
     })
   }
