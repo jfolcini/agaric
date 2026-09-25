@@ -158,6 +158,12 @@ function planChildReparent(
   return { childIds, newIndex }
 }
 
+/** The focused editor's markdown and the content it was mounted with. */
+interface EditorCapture {
+  content: string
+  loaded: string
+}
+
 export interface UseBlockActionOrchestrationParams {
   focusedBlockId: string | null
   /**
@@ -196,6 +202,7 @@ export interface UseBlockActionOrchestrationParams {
     | 'listMarker'
     | 'unmount'
     | 'getMarkdown'
+    | 'originalMarkdown'
     | 'splitAtCaret'
   >
   setFocused: (id: string | null) => void
@@ -540,44 +547,57 @@ export function useBlockActionOrchestration({
   )
 
   /**
+   * What the focused editor holds right before a flush: its markdown, and the
+   * content it was mounted with, which the flush's split decision compares it
+   * against (#5160 D2) and `unmount()` resets.
+   */
+  const captureEditor = useCallback(
+    (): EditorCapture => ({
+      content: rovingEditorRef.current.getMarkdown?.() ?? '',
+      loaded: rovingEditorRef.current.originalMarkdown,
+    }),
+    [],
+  )
+
+  /**
    * #4957 — what the restructure handlers remount with after `handleFlush()`.
-   * A multi-block capture was split: `splitBlock` wrote line 1 into the store
-   * synchronously, so remounting the full capture would re-commit lines 2..N
-   * that now exist as siblings. The `?? captured` covers a block another page's
-   * store owns (#4550 embeds), which the flush leaves unsplit.
+   * A capture that added blocks was split: `splitBlock` wrote line 1 into the
+   * store synchronously, so remounting the full capture would re-commit lines
+   * 2..N that now exist as siblings. The `?? content` covers a block another
+   * page's store owns (#4550 embeds), which the flush leaves unsplit.
    */
   const remountBaseline = useCallback(
-    (blockId: string, captured: string): string =>
-      shouldSplitOnBlur(captured)
-        ? (pageStore.getState().blocksById.get(blockId)?.content ?? captured)
-        : captured,
+    (blockId: string, { content, loaded }: EditorCapture): string =>
+      shouldSplitOnBlur(content, loaded)
+        ? (pageStore.getState().blocksById.get(blockId)?.content ?? content)
+        : content,
     [pageStore],
   )
 
   const handleIndent = useCallback(() => {
     if (!focusedBlockId) return
     const blockId = focusedBlockId
-    const content = rovingEditorRef.current.getMarkdown?.() ?? ''
+    const content = captureEditor()
     handleFlush()
     // R6 (#405): announce on RESOLUTION so assistive tech reports the real
     // outcome — a no-op (already at outermost level) or a backend rejection
     // must not announce a phantom "indented".
     void announceMoveResult(indent(blockId), t, 'announce.blockIndented')
     rovingEditorRef.current.mount(blockId, remountBaseline(blockId, content))
-  }, [focusedBlockId, handleFlush, indent, remountBaseline, t])
+  }, [captureEditor, focusedBlockId, handleFlush, indent, remountBaseline, t])
 
   const handleDedent = useCallback(() => {
     if (!focusedBlockId) return
     const blockId = focusedBlockId
-    const content = rovingEditorRef.current.getMarkdown?.() ?? ''
+    const content = captureEditor()
     handleFlush()
     void announceMoveResult(dedent(blockId), t, 'announce.blockDedented')
     rovingEditorRef.current.mount(blockId, remountBaseline(blockId, content))
-  }, [focusedBlockId, handleFlush, dedent, remountBaseline, t])
+  }, [captureEditor, focusedBlockId, handleFlush, dedent, remountBaseline, t])
 
   const handleMoveUp = useCallback(() => {
     if (!focusedBlockId) return
-    const content = rovingEditorRef.current.getMarkdown?.() ?? ''
+    const content = captureEditor()
     handleFlush()
     const blockId = focusedBlockId
     // R6 (#405): announce + scroll on RESOLUTION — a boundary no-op or backend
@@ -586,22 +606,22 @@ export function useBlockActionOrchestration({
       scrollFocusedBlockIntoView(blockId),
     )
     rovingEditorRef.current.mount(blockId, remountBaseline(blockId, content))
-  }, [focusedBlockId, handleFlush, moveUp, remountBaseline, t])
+  }, [captureEditor, focusedBlockId, handleFlush, moveUp, remountBaseline, t])
 
   const handleMoveDown = useCallback(() => {
     if (!focusedBlockId) return
-    const content = rovingEditorRef.current.getMarkdown?.() ?? ''
+    const content = captureEditor()
     handleFlush()
     const blockId = focusedBlockId
     void announceMoveResult(moveDown(blockId), t, 'announce.blockMovedDown', () =>
       scrollFocusedBlockIntoView(blockId),
     )
     rovingEditorRef.current.mount(blockId, remountBaseline(blockId, content))
-  }, [focusedBlockId, handleFlush, moveDown, remountBaseline, t])
+  }, [captureEditor, focusedBlockId, handleFlush, moveDown, remountBaseline, t])
 
   const handleIndentById = useCallback(
     (id: string) => {
-      const content = id === focusedBlockId ? (rovingEditorRef.current.getMarkdown?.() ?? '') : null
+      const content = id === focusedBlockId ? captureEditor() : null
       handleFlush()
       const result = announceMoveResult(
         indent(id).catch((err: unknown) => {
@@ -616,12 +636,12 @@ export function useBlockActionOrchestration({
       }
       return result
     },
-    [focusedBlockId, handleFlush, indent, remountBaseline, t],
+    [captureEditor, focusedBlockId, handleFlush, indent, remountBaseline, t],
   )
 
   const handleDedentById = useCallback(
     (id: string) => {
-      const content = id === focusedBlockId ? (rovingEditorRef.current.getMarkdown?.() ?? '') : null
+      const content = id === focusedBlockId ? captureEditor() : null
       handleFlush()
       const result = announceMoveResult(
         dedent(id).catch((err: unknown) => {
@@ -636,12 +656,12 @@ export function useBlockActionOrchestration({
       }
       return result
     },
-    [dedent, focusedBlockId, handleFlush, remountBaseline, t],
+    [captureEditor, dedent, focusedBlockId, handleFlush, remountBaseline, t],
   )
 
   const handleMoveUpById = useCallback(
     (id: string) => {
-      const content = id === focusedBlockId ? (rovingEditorRef.current.getMarkdown?.() ?? '') : null
+      const content = id === focusedBlockId ? captureEditor() : null
       handleFlush()
       const result = announceMoveResult(
         moveUp(id).catch((err: unknown) => {
@@ -657,12 +677,12 @@ export function useBlockActionOrchestration({
       }
       return result
     },
-    [focusedBlockId, handleFlush, moveUp, remountBaseline, t],
+    [captureEditor, focusedBlockId, handleFlush, moveUp, remountBaseline, t],
   )
 
   const handleMoveDownById = useCallback(
     (id: string) => {
-      const content = id === focusedBlockId ? (rovingEditorRef.current.getMarkdown?.() ?? '') : null
+      const content = id === focusedBlockId ? captureEditor() : null
       handleFlush()
       const result = announceMoveResult(
         moveDown(id).catch((err: unknown) => {
@@ -678,7 +698,7 @@ export function useBlockActionOrchestration({
       }
       return result
     },
-    [focusedBlockId, handleFlush, moveDown, remountBaseline, t],
+    [captureEditor, focusedBlockId, handleFlush, moveDown, remountBaseline, t],
   )
 
   /**

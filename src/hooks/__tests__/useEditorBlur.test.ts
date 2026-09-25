@@ -369,7 +369,8 @@ describe('useEditorBlur', () => {
         result.current.handleBlur(makeFocusEvent())
       })
 
-      expect(mockShouldSplitOnBlur).toHaveBeenCalledWith(multiParagraph)
+      // The mount-time baseline is read BEFORE unmount() resets it (#5160 D2).
+      expect(mockShouldSplitOnBlur).toHaveBeenCalledWith(multiParagraph, 'existing content')
       expect(mockSplitBlock).toHaveBeenCalledWith('B1', multiParagraph)
       expect(mockEdit).not.toHaveBeenCalled()
     })
@@ -402,7 +403,7 @@ describe('useEditorBlur', () => {
         result.current.handleBlur(makeFocusEvent())
       })
 
-      expect(mockShouldSplitOnBlur).toHaveBeenCalledWith(codeBlock)
+      expect(mockShouldSplitOnBlur).toHaveBeenCalledWith(codeBlock, 'existing content')
       expect(mockEdit).toHaveBeenCalledWith('B1', codeBlock)
       expect(mockSplitBlock).not.toHaveBeenCalled()
     })

@@ -22,18 +22,17 @@
  *
  * Scope note (flagged, not silently decided): this flushes the CONTENT
  * commit path only — the same one the idle debounce uses. It intentionally
- * mirrors that debounce's own skips, so three block shapes flush NOTHING and
- * export at their previously committed text: a block holding an unparsed
- * inline `key:: value` property line, one whose markdown splits into several
- * blocks, and one whose markdown leads with a GFM task marker. All three are
- * left to blur's classifying flush, which is the only path that handles them
- * (`useBlockFlush`, `useEditorBlur`, and `persistUnmount` in EditableBlock
- * share that decision chain — see `unmount-flush.ts`, #3278; the latter two
- * skips are `commitNow`'s, #4976). Accepted trade, same class as #2675: all
- * three are rarer at export time than the "typed text, hit the export
- * shortcut without blurring" race this closes, and a full cross-component
- * flush-all covering every save path would be a much larger refactor (there
- * is no shared store/context between `BlockTree` and `PageHeader` today).
+ * mirrors that debounce's own skip, so a draft the blur would classify (an
+ * inline `key:: value` line, a block or a leading GFM task marker the edit
+ * INTRODUCED — `classifyUnmountFlush`, #5160 D2) flushes NOTHING and exports
+ * at its previously committed text; the same shapes a block was loaded with
+ * are plain text and flush normally. The classifying branches strip, fold or
+ * split the store's content, which would desync it from the still-mounted
+ * editor's document, so they stay blur-only (`useBlockFlush`, `useEditorBlur`,
+ * and `persistUnmount` in EditableBlock share that decision chain — see
+ * `unmount-flush.ts`, #3278; the skips are `commitNow`'s, #4976). Accepted
+ * trade, same class as #2675: such drafts are rarer at export time than the
+ * "typed text, hit the export shortcut without blurring" race this closes.
  */
 
 interface Registration {

@@ -17,6 +17,7 @@ import {
   CalendarDays,
   CheckSquare,
   Code,
+  CornerDownLeft,
   FileSymlink,
   Highlighter,
   Italic,
@@ -268,15 +269,24 @@ export function createRefsAndBlocks(editor: Editor): ToolbarButtonConfig[] {
 }
 
 /**
- * #1960 — the structure buttons (ordered list / divider / callout) were folded
- * into the "Turn into" popover (`TurnIntoMenu`), which now owns every block-type
- * transform. The group is intentionally empty: group 1 of the toolbar now holds
- * only the table-insert picker (and the contextual table-ops trigger), which are
- * inserts requiring dimensions, not block-type conversions. Kept as a function
- * (rather than deleted) so the group plumbing in `items.ts` stays uniform.
+ * Group 1, the structural inserts. #1960 folded the block-type transforms
+ * (ordered list / divider / callout) into the "Turn into" popover; the table
+ * picker and the contextual table-ops trigger are wired in `items.ts`.
  */
-export function createStructureButtons(): ToolbarButtonConfig[] {
-  return []
+export function createStructureButtons(editor: Editor): ToolbarButtonConfig[] {
+  return [
+    {
+      // #5160 D2 — a line break inside the block, the Shift+Enter action for
+      // virtual keyboards, which have no Shift+Enter. High priority so it
+      // survives the overflow collapse at phone width, where it is the only
+      // way to type one.
+      icon: CornerDownLeft,
+      label: 'toolbar.newLine',
+      tip: 'toolbar.newLineTip',
+      priority: 90,
+      action: () => editor.chain().focus().setHardBreak().run(),
+    },
+  ]
 }
 
 export function createMetadataButtons(): ToolbarButtonConfig[] {

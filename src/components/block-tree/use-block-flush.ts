@@ -144,6 +144,9 @@ export function useBlockFlush({
     // correctly, so this returns before unmounting and leaves the editor for
     // that path to flush.
     if (!storeOwnsBlock(pageStore, blockId)) return null
+    // Read BEFORE `unmount()` resets it: the flush classifies the edit
+    // against the content the editor was mounted with (#5160 D2).
+    const loaded = handle.originalMarkdown
     const changed = handle.unmount()
     if (changed !== null) {
       // #2914 — snapshot the pre-split block ids right before `splitBlock`
@@ -152,6 +155,7 @@ export function useBlockFlush({
       let beforeIds = new Set<string>()
       const result = runUnmountFlush({
         blockId,
+        loaded,
         changed,
         edit,
         splitBlock,

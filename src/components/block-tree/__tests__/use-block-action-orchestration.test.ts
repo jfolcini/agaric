@@ -122,6 +122,7 @@ function makeDefaultParams(
       listMarker: vi.fn(() => ({ style: 'none' as ListStyle, ordinal: undefined })),
       unmount: vi.fn(() => null as string | null),
       getMarkdown: vi.fn(() => null as string | null),
+      originalMarkdown: '' as string,
       splitAtCaret: vi.fn(() => null as { before: string; after: string } | null),
     },
     setFocused: vi.fn(),

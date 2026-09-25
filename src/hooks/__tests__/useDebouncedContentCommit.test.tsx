@@ -156,6 +156,28 @@ describe('useDebouncedContentCommit (#2600 / #2938)', () => {
     expect(state.original).toBe('')
   })
 
+  // #5160 D2 — the flush acts only on what the edit added, and so does this
+  // guard: a property-shaped line the block was LOADED with is plain text, so
+  // a typo fix next to it commits like any other edit.
+  it('commits a typo fix in a block loaded with a property-shaped line', async () => {
+    const { handle, markCommitted } = makeHandle({
+      activeBlockId: 'B1',
+      markdown: 'hello!\ncontext:: home',
+      original: 'hello\ncontext:: home',
+    })
+    const edit = vi.fn<Props['edit']>().mockResolvedValue(true)
+    const rovingEditorRef = { current: handle }
+
+    const { result } = renderCommit({ isFocused: true, blockId: 'B1', rovingEditorRef, edit })
+    act(() => result.current.schedule())
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(CONTENT_COMMIT_DEBOUNCE_MS)
+    })
+
+    expect(edit).toHaveBeenCalledExactlyOnceWith('B1', 'hello!\ncontext:: home')
+    expect(markCommitted).toHaveBeenCalledExactlyOnceWith('hello!\ncontext:: home')
+  })
+
   it('still commits `::`-bearing text that is NOT a property line (#2675)', async () => {
     const { handle, markCommitted } = makeHandle({
       activeBlockId: 'B1',

@@ -8,20 +8,17 @@
     {
       "name": "a second line shaped like a property stays text",
       "content": "hello\nkey:: v",
-      "editorFlush": "property",
-      "finding": "X1"
+      "editorFlush": "edit"
     },
     {
       "name": "a second line shaped like a bullet stays text",
       "content": "first\n- not a bullet",
-      "editorFlush": "split",
-      "finding": "X1"
+      "editorFlush": "edit"
     },
     {
       "name": "a first line shaped like a property stays text",
       "content": "key:: v",
-      "editorFlush": "property",
-      "finding": "X1"
+      "editorFlush": "edit"
     },
     {
       "name": "a line shaped like an anchor line stays text",
@@ -51,8 +48,7 @@
     {
       "name": "text shaped like a task list item stays text",
       "content": "- [ ] open task",
-      "editorFlush": "checkbox",
-      "finding": "X1"
+      "editorFlush": "edit"
     },
     {
       "name": "text shaped like an ordered list item stays text",
