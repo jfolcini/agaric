@@ -14,7 +14,7 @@
 import type { StoreApi } from 'zustand'
 
 import { retryOnPoolBusy, unwrap } from '@/lib/app-error'
-import type { BlockRow, OpRef, PageSourceReport, PasteInput } from '@/lib/bindings'
+import type { BlockRow, OpRef, PageSourceReport, PasteInput, PasteSplice } from '@/lib/bindings'
 import { commands } from '@/lib/bindings'
 import { newBlockId } from '@/lib/block-id'
 import { computeIndentedBlocks, findPrevSiblingAt, planSplit } from '@/lib/block-tree-ops'
@@ -74,18 +74,22 @@ import { useUndoStore } from '@/stores/undo'
  * user's own last action, and clearing `redoStack` would eat their Ctrl+Y for
  * the same reason. The only caller is the leaked-empty-block cleanup's
  * `remove`; every user-initiated action keeps the default.
+ *
+ * #5160 D4 — `options.merge = false` starts an undo entry of its own (a paste;
+ * see `onNewAction`).
  */
 function notifyUndoNewAction(
   rootParentId: string | null,
   opRefs: OpRef[],
   coalesceKey?: string,
-  { undoable = true }: { undoable?: boolean } = {},
+  { undoable = true, merge = true }: { undoable?: boolean; merge?: boolean } = {},
 ): void {
   if (rootParentId && undoable) {
     const { onNewAction } = useUndoStore.getState()
-    // Only forward `coalesceKey` when set (content edits) so the existing
-    // call shape for every other action is unchanged (#2600).
-    if (coalesceKey !== undefined) onNewAction(rootParentId, opRefs, coalesceKey)
+    // Only forward `coalesceKey` / `merge` when set (content edits, a paste) so
+    // the existing call shape for every other action is unchanged (#2600).
+    if (!merge) onNewAction(rootParentId, opRefs, coalesceKey, { merge })
+    else if (coalesceKey !== undefined) onNewAction(rootParentId, opRefs, coalesceKey)
     else onNewAction(rootParentId, opRefs)
   }
   recordGraphStructureChange()
@@ -109,6 +113,23 @@ function announceCreatedNames(rows: readonly BlockRow[], spaceId: string | null)
     if (row.block_type === 'page') notifyPageAdded(row.id, name, spaceId)
     else notifyTagAdded(row.id, name, spaceId)
   }
+}
+
+/**
+ * `state` with one block's content replaced. Copy-on-write of that one slot and
+ * key only (#2200): every other block keeps its object, so memoized rows skip.
+ */
+function withContent(
+  state: PageBlockState,
+  blockId: string,
+  content: string,
+): Partial<PageBlockState> {
+  const idx = state.blocks.findIndex((b) => b.id === blockId)
+  if (idx < 0) return {}
+  const edited = { ...(state.blocks[idx] as FlatBlock), content }
+  const blocks = state.blocks.slice()
+  blocks[idx] = edited
+  return { blocks, blocksById: cloneBlocksByIdWith(state.blocksById, [edited]) }
 }
 
 /**
@@ -286,14 +307,7 @@ export function createReducers({
       // Zustand/React see the update, and downstream per-row `React.memo`
       // (SortableBlock/EditableBlock) keys off each BLOCK OBJECT's identity,
       // which this preserves for every entry but the edited one.
-      set((state) => {
-        const idx = state.blocks.findIndex((b) => b.id === blockId)
-        if (idx < 0) return {}
-        const edited = { ...(state.blocks[idx] as FlatBlock), content }
-        const blocks = state.blocks.slice()
-        blocks[idx] = edited
-        return { blocks, blocksById: cloneBlocksByIdWith(state.blocksById, [edited]) }
-      })
+      set((state) => withContent(state, blockId, content))
       try {
         // #730 — retry a transient pool_busy blip before reverting visible
         // user text. Without this a 50ms back-pressure spike rolled the
@@ -1146,7 +1160,12 @@ export function createReducers({
         }
       }),
 
-    pasteBlocks: async (anchorBlockId: string, input: PasteInput) => {
+    pasteBlocks: async (
+      anchorBlockId: string,
+      input: PasteInput,
+      splice?: PasteSplice,
+      onSpliced?: (content: string) => void,
+    ) => {
       const { blocksById, rootParentId } = get()
       if (!blocksById.has(anchorBlockId)) return []
       // #4391 — the pickers hear of the pages and tags the paste creates in the
@@ -1155,10 +1174,18 @@ export function createReducers({
       const spaceId = useSpaceStore.getState().currentSpaceId
       try {
         const resp = await retryOnPoolBusy(() =>
-          commands.pasteBlocks(anchorBlockId, input).then(unwrap),
+          commands.pasteBlocks(anchorBlockId, input, splice ?? null).then(unwrap),
         )
-        notifyUndoNewAction(rootParentId, resp.op_refs)
+        notifyUndoNewAction(rootParentId, resp.op_refs, undefined, { merge: false })
         announceCreatedNames(resp.blocks, spaceId)
+        const anchor = splice ? resp.blocks.find((b) => b.id === anchorBlockId) : undefined
+        if (anchor) {
+          // #5160 D4 — before the reload, which keeps a focused block's text as
+          // the store holds it.
+          const content = anchor.content ?? ''
+          set((state) => withContent(state, anchorBlockId, content))
+          onSpliced?.(content)
+        }
         await get().load()
         return resp.blocks.filter((b) => b.block_type === 'content').map((b) => b.id)
       } catch (err) {

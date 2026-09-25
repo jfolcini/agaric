@@ -39,9 +39,13 @@ export const commands = {
 	duplicateBlock: (blockId: BlockId) => typedError<WithOps<CreatedBlocks>, AppError>(__TAURI_INVOKE("duplicate_block", { blockId })),
 	/**
 	 *  Tauri command: paste clipboard text or structured blocks right after the
-	 *  anchor block. Delegates to [`paste_blocks_inner`].
+	 *  anchor block, or into its text with a `splice`. Delegates to
+	 *  [`paste_blocks_inner`].
 	 */
-	pasteBlocks: (anchorBlockId: BlockId, input: PasteInput) => typedError<WithOps<CreatedBlocks>, AppError>(__TAURI_INVOKE("paste_blocks", { anchorBlockId, input })),
+	pasteBlocks: (anchorBlockId: BlockId, input: PasteInput, splice: {
+	before: string,
+	after: string,
+} | null) => typedError<WithOps<CreatedBlocks>, AppError>(__TAURI_INVOKE("paste_blocks", { anchorBlockId, input, splice })),
 	/**
 	 *  Tauri command: edit a block's content. Delegates to [`edit_block_inner`].
 	 *  #2468: the response carries the produced op ref(s) — see [`create_block`].
@@ -3070,6 +3074,15 @@ export type PartitionedSearchResponse = {
 
 /**  What a paste carries: clipboard text, or blocks already split. */
 export type PasteInput = { kind: "text"; text: string } | { kind: "blocks"; blocks: PastedBlock[] };
+
+/**
+ *  A paste into the anchor block's text (#5160 D4): its content before and
+ *  after the cursor, with any selection already cut out.
+ */
+export type PasteSplice = {
+	before: string,
+	after: string,
+};
 
 /**  One pasted block: its content verbatim and its depth under the paste. */
 export type PastedBlock = {

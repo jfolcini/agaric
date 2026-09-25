@@ -703,8 +703,9 @@ pub(super) async fn apply_op_via_command(
             to_json(create_blocks_batch_inner(pool, DEV, mat, block_specs()).await)
         }
         "duplicate_block" => to_json(duplicate_block_inner(pool, DEV, mat, block_id()).await),
-        // `input` is the caller's own text or blocks, so it takes no label
-        // expansion; only the anchor is a label.
+        // `input` and `splice` are the caller's own text or blocks, so they
+        // take no label expansion; only the anchor is a label. `splice` came
+        // after the first fixture's steps, so it is `None` when absent.
         "paste_blocks" => to_json(
             paste_blocks_inner(
                 pool,
@@ -719,6 +720,13 @@ pub(super) async fn apply_op_via_command(
                     panic!("conformance op '{command}' is missing arg 'input'")
                 }))
                 .unwrap_or_else(|e| panic!("conformance op '{command}': input: {e}")),
+                arg("splice")
+                    .filter(|v| !v.is_null())
+                    .cloned()
+                    .map(|splice| {
+                        serde_json::from_value(splice)
+                            .unwrap_or_else(|e| panic!("conformance op '{command}': splice: {e}"))
+                    }),
             )
             .await,
         ),

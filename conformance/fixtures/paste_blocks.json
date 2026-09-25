@@ -1,5 +1,5 @@
 {
-  "description": "#5140 Phase 3b — `paste_blocks` parses clipboard text (or takes HTML-paste blocks) and creates the blocks right after the anchor, in one transaction. Covers only what the tauri mock models: an outline whose bullet carries a continuation line and a nested child; two top-level bullets landing in order at the anchor's slot + 1 + k, ahead of the anchor's later siblings; text that does not open with a bullet, read by the same grammar (#5160 Phase 2a: consecutive lines are one paragraph block, a blank line separates blocks, `*` bullets nest by their content column; a heading owning its section is pinned by the mock's own tests, since `#` is a token separator here); a `blocks` input whose two-line block stays ONE block and whose depth-1 entry nests under it; and the refusals. Names, task markers and property lines are left to the Rust tests, so no content here carries `[[`, `#` or `::`. The returns pin every created row in document order. Seed: S1 (Home) > S2 (the anchor), S3, S4 > S5 (purged by an op). Re-author `expected` / `expected_ops` via CONFORMANCE_UPDATE=1.",
+  "description": "#5140 Phase 3b — `paste_blocks` parses clipboard text (or takes HTML-paste blocks) and creates the blocks right after the anchor, in one transaction. Covers only what the tauri mock models: an outline whose bullet carries a continuation line and a nested child; two top-level bullets landing in order at the anchor's slot + 1 + k, ahead of the anchor's later siblings; text that does not open with a bullet, read by the same grammar (#5160 Phase 2a: consecutive lines are one paragraph block, a blank line separates blocks, `*` bullets nest by their content column; a heading owning its section is pinned by the mock's own tests, since `#` is a token separator here); a `blocks` input whose two-line block stays ONE block and whose depth-1 entry nests under it; #5160 D4 splices, a paste into the anchor's text (`splice`): mid-block with the first block's child following the anchor's own and `after` ending the last block, a one-block paste that only edits the anchor, `blocks` into an empty block, a first block joined after text as the text it was pasted as (marker, checkbox and property line kept as text, the anchor's own properties untouched), and a last block that is code, after which the text after the cursor is a block of its own; and the refusals. Names are left to the Rust tests, so no content here carries `[[` or `#`; task markers and property lines appear only after text, where both sides keep them as text. The returns pin every created row in document order. Seed: S1 (Home) > S2 (the anchor), S3, S4 > S5 (purged by an op), S6 > S7, S8 (empty), S9, S10. Re-author `expected` / `expected_ops` via CONFORMANCE_UPDATE=1.",
   "expected": {
     "block_tags": [],
     "blocks": [
@@ -31,7 +31,7 @@
       },
       {
         "block_type": "content",
-        "content": "plain lines land after this",
+        "content": "plain two\nlines land after this",
         "deleted_at": null,
         "due_date": null,
         "id": "B3",
@@ -57,20 +57,20 @@
       },
       {
         "block_type": "content",
-        "content": "parent\na continuation line",
+        "content": "splice first",
         "deleted_at": null,
         "due_date": null,
         "id": "B6",
         "page_id": "B1",
         "parent_id": "B1",
-        "position": 4,
+        "position": 11,
         "priority": null,
         "scheduled_date": null,
         "todo_state": null
       },
       {
         "block_type": "content",
-        "content": "child",
+        "content": "its child",
         "deleted_at": null,
         "due_date": null,
         "id": "B7",
@@ -89,53 +89,53 @@
         "id": "B8",
         "page_id": "B1",
         "parent_id": "B1",
-        "position": 2,
+        "position": 14,
         "priority": null,
         "scheduled_date": null,
         "todo_state": null
       },
       {
         "block_type": "content",
-        "content": "two",
+        "content": "Hello 1. [ ] Buy milk\nnote:: soon",
         "deleted_at": null,
         "due_date": null,
         "id": "B9",
         "page_id": "B1",
         "parent_id": "B1",
-        "position": 3,
+        "position": 16,
         "priority": null,
         "scheduled_date": null,
         "todo_state": null
       },
       {
         "block_type": "content",
-        "content": "Intro line one\nline two",
+        "content": "Hello First",
         "deleted_at": null,
         "due_date": null,
         "id": "B10",
         "page_id": "B1",
         "parent_id": "B1",
-        "position": 6,
+        "position": 18,
         "priority": null,
         "scheduled_date": null,
         "todo_state": null
       },
       {
         "block_type": "content",
-        "content": "first",
+        "content": "parent\na continuation line",
         "deleted_at": null,
         "due_date": null,
         "id": "B11",
         "page_id": "B1",
         "parent_id": "B1",
-        "position": 7,
+        "position": 4,
         "priority": null,
         "scheduled_date": null,
         "todo_state": null
       },
       {
         "block_type": "content",
-        "content": "nested",
+        "content": "child",
         "deleted_at": null,
         "due_date": null,
         "id": "B12",
@@ -148,10 +148,75 @@
       },
       {
         "block_type": "content",
-        "content": "After",
+        "content": "one",
         "deleted_at": null,
         "due_date": null,
         "id": "B13",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 2,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "two",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B14",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 3,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "Intro line one\nline two",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B15",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 6,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "first",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B16",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 7,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "nested",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B17",
+        "page_id": "B1",
+        "parent_id": "B16",
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "After",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B18",
         "page_id": "B1",
         "parent_id": "B1",
         "position": 8,
@@ -164,7 +229,7 @@
         "content": "```js\nconst a = 1\nconst b = 2\n```",
         "deleted_at": null,
         "due_date": null,
-        "id": "B14",
+        "id": "B19",
         "page_id": "B1",
         "parent_id": "B1",
         "position": 10,
@@ -177,17 +242,108 @@
         "content": "under the code",
         "deleted_at": null,
         "due_date": null,
-        "id": "B15",
+        "id": "B20",
         "page_id": "B1",
-        "parent_id": "B14",
+        "parent_id": "B19",
         "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "under first",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B21",
+        "page_id": "B1",
+        "parent_id": "B6",
+        "position": 2,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "second",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B22",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 12,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "Last here",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B23",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 13,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "two",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B24",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 15,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "Eggsworld",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B25",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 17,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "```\ncode\n```",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B26",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 19,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "world",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B27",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 20,
         "priority": null,
         "scheduled_date": null,
         "todo_state": null
       }
     ],
     "op_log_digest": {
-      "count": 12,
+      "count": 24,
       "ops": [
         {
           "op_type": "delete_block"
@@ -224,6 +380,42 @@
         },
         {
           "op_type": "create_block"
+        },
+        {
+          "op_type": "edit_block"
+        },
+        {
+          "op_type": "create_block"
+        },
+        {
+          "op_type": "create_block"
+        },
+        {
+          "op_type": "create_block"
+        },
+        {
+          "op_type": "edit_block"
+        },
+        {
+          "op_type": "edit_block"
+        },
+        {
+          "op_type": "create_block"
+        },
+        {
+          "op_type": "edit_block"
+        },
+        {
+          "op_type": "create_block"
+        },
+        {
+          "op_type": "edit_block"
+        },
+        {
+          "op_type": "create_block"
+        },
+        {
+          "op_type": "create_block"
         }
       ]
     },
@@ -236,8 +428,8 @@
       "error": null,
       "name": "paste_an_outline_with_a_continuation_line_and_a_child",
       "returns": [
-        "B6#block_type=content#content=parent\na continuation line#parent_id=B1#position=2",
-        "B7#block_type=content#content=child#parent_id=B6#position=1"
+        "B11#block_type=content#content=parent\na continuation line#parent_id=B1#position=2",
+        "B12#block_type=content#content=child#parent_id=B11#position=1"
       ]
     },
     {
@@ -245,8 +437,8 @@
       "error": null,
       "name": "paste_two_top_level_blocks_in_order_after_the_anchor",
       "returns": [
-        "B8#block_type=content#content=one#parent_id=B1#position=2",
-        "B9#block_type=content#content=two#parent_id=B1#position=3"
+        "B13#block_type=content#content=one#parent_id=B1#position=2",
+        "B14#block_type=content#content=two#parent_id=B1#position=3"
       ]
     },
     {
@@ -254,10 +446,10 @@
       "error": null,
       "name": "paste_a_document_shape_as_paragraphs_and_nested_star_items",
       "returns": [
-        "B10#block_type=content#content=Intro line one\nline two#parent_id=B1#position=6",
-        "B11#block_type=content#content=first#parent_id=B1#position=7",
-        "B12#block_type=content#content=nested#parent_id=B11#position=1",
-        "B13#block_type=content#content=After#parent_id=B1#position=8"
+        "B15#block_type=content#content=Intro line one\nline two#parent_id=B1#position=6",
+        "B16#block_type=content#content=first#parent_id=B1#position=7",
+        "B17#block_type=content#content=nested#parent_id=B16#position=1",
+        "B18#block_type=content#content=After#parent_id=B1#position=8"
       ]
     },
     {
@@ -265,8 +457,55 @@
       "error": null,
       "name": "paste_blocks_input_keeps_a_multi_line_block_whole",
       "returns": [
-        "B14#block_type=content#content=```js\nconst a = 1\nconst b = 2\n```#parent_id=B1#position=10",
-        "B15#block_type=content#content=under the code#parent_id=B14#position=1"
+        "B19#block_type=content#content=```js\nconst a = 1\nconst b = 2\n```#parent_id=B1#position=10",
+        "B20#block_type=content#content=under the code#parent_id=B19#position=1"
+      ]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "paste_into_a_blocks_text_splices_the_blocks_at_the_cursor",
+      "returns": [
+        "B6#block_type=content#content=splice first#parent_id=B1#position=11",
+        "B21#block_type=content#content=under first#parent_id=B6#position=2",
+        "B22#block_type=content#content=second#parent_id=B1#position=12",
+        "B23#block_type=content#content=Last here#parent_id=B1#position=13"
+      ]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "paste_one_block_into_a_blocks_text_only_edits_it",
+      "returns": [
+        "B3#block_type=content#content=plain two\nlines land after this#parent_id=B1#position=5"
+      ]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "paste_blocks_into_an_empty_block_replaces_it",
+      "returns": [
+        "B8#block_type=content#content=one#parent_id=B1#position=14",
+        "B24#block_type=content#content=two#parent_id=B1#position=15"
+      ]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "paste_after_text_joins_the_first_block_as_the_text_it_was_pasted_as",
+      "returns": [
+        "B9#block_type=content#content=Hello 1. [ ] Buy milk\nnote:: soon#parent_id=B1#position=16",
+        "B25#block_type=content#content=Eggsworld#parent_id=B1#position=17"
+      ]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "paste_ending_in_code_puts_the_text_after_the_cursor_in_a_block_of_its_own",
+      "returns": [
+        "B10#block_type=content#content=Hello First#parent_id=B1#position=18",
+        "B26#block_type=content#content=```\ncode\n```#parent_id=B1#position=19",
+        "B27#block_type=content#content=world#parent_id=B1#position=20"
       ]
     },
     {
@@ -365,6 +604,100 @@
     },
     {
       "args": {
+        "anchorBlockId": "S6",
+        "input": {
+          "kind": "text",
+          "text": "- first\n  - under first\n- second\n\nLast"
+        },
+        "splice": {
+          "after": " here",
+          "before": "splice "
+        }
+      },
+      "command": "paste_blocks",
+      "comment": "#5160 D4 — a paste into the anchor's text: the anchor keeps its id and becomes `before` + the first block, the first block's child follows the anchor's own child, the next blocks land after the anchor, and `after` ends the last one. The anchor is returned first.",
+      "name": "paste_into_a_blocks_text_splices_the_blocks_at_the_cursor",
+      "via": "command"
+    },
+    {
+      "args": {
+        "anchorBlockId": "S3",
+        "input": {
+          "kind": "text",
+          "text": "two\nlines"
+        },
+        "splice": {
+          "after": " land after this",
+          "before": "plain "
+        }
+      },
+      "command": "paste_blocks",
+      "comment": "Text that reads as one block is joined between the two halves: one edit, nothing created.",
+      "name": "paste_one_block_into_a_blocks_text_only_edits_it",
+      "via": "command"
+    },
+    {
+      "args": {
+        "anchorBlockId": "S8",
+        "input": {
+          "blocks": [
+            {
+              "content": "one",
+              "depth": 0
+            },
+            {
+              "content": "two",
+              "depth": 0
+            }
+          ],
+          "kind": "blocks"
+        },
+        "splice": {
+          "after": "",
+          "before": ""
+        }
+      },
+      "command": "paste_blocks",
+      "comment": "HTML-paste blocks into an empty block: the block is replaced by the first, the second lands after it.",
+      "name": "paste_blocks_into_an_empty_block_replaces_it",
+      "via": "command"
+    },
+    {
+      "args": {
+        "anchorBlockId": "S9",
+        "input": {
+          "kind": "text",
+          "text": "1. [ ] Buy milk\n   note:: soon\n\nEggs"
+        },
+        "splice": {
+          "after": "world",
+          "before": "Hello "
+        }
+      },
+      "command": "paste_blocks",
+      "comment": "#5160 D4 — after text, the first block joins as the text it was pasted as: its ordered marker, checkbox and property line stay text, and the anchor keeps its own task state and properties.",
+      "name": "paste_after_text_joins_the_first_block_as_the_text_it_was_pasted_as",
+      "via": "command"
+    },
+    {
+      "args": {
+        "anchorBlockId": "S10",
+        "input": {
+          "kind": "text",
+          "text": "First\n\n```\ncode\n```"
+        },
+        "splice": {
+          "after": "world",
+          "before": "Hello "
+        }
+      },
+      "command": "paste_blocks",
+      "comment": "#5160 D4 — a last block that is code keeps its closing fence: the text after the cursor is a block of its own right after it.",
+      "name": "paste_ending_in_code_puts_the_text_after_the_cursor_in_a_block_of_its_own",
+      "via": "command"
+    },
+    {
+      "args": {
         "anchorBlockId": "S5",
         "input": {
           "kind": "text",
@@ -442,6 +775,41 @@
         "id": "S5",
         "parent_id": "S4",
         "position": 1
+      },
+      {
+        "block_type": "content",
+        "content": "splice here",
+        "id": "S6",
+        "parent_id": "S1",
+        "position": 4
+      },
+      {
+        "block_type": "content",
+        "content": "its child",
+        "id": "S7",
+        "parent_id": "S6",
+        "position": 1
+      },
+      {
+        "block_type": "content",
+        "content": "",
+        "id": "S8",
+        "parent_id": "S1",
+        "position": 5
+      },
+      {
+        "block_type": "content",
+        "content": "Hello world",
+        "id": "S9",
+        "parent_id": "S1",
+        "position": 6
+      },
+      {
+        "block_type": "content",
+        "content": "Hello world",
+        "id": "S10",
+        "parent_id": "S1",
+        "position": 7
       }
     ],
     "properties": [],

@@ -10,18 +10,23 @@
  *   (b) multi-block content threads the paste-time `targetBlockId` so the
  *       receiver can reject a paste whose focus has since moved.
  * They also pin which plain-text pastes `handlePaste` routes to the block path
- * (#5140).
+ * (#5140), spliced into the block at the selection (#5160 D4), and the
+ * Ctrl/Cmd+Shift+V plain paste.
  */
 
 import { Editor } from '@tiptap/core'
 import { CodeBlockLowlight } from '@tiptap/extension-code-block-lowlight'
 import Document from '@tiptap/extension-document'
+import HardBreak from '@tiptap/extension-hard-break'
+import Heading from '@tiptap/extension-heading'
 import Text from '@tiptap/extension-text'
 import type { EditorView } from '@tiptap/pm/view'
 import { common, createLowlight } from 'lowlight'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
+import { CalloutBlockquote } from '@/editor/extensions/callout-blockquote'
 import { TaskParagraph } from '@/editor/extensions/task-paragraph'
+import { parse } from '@/editor/markdown-serializer'
 
 const dispatchBlockEvent = vi.fn()
 
@@ -97,6 +102,35 @@ function makeViewDestroyedAfter(flipAfter: number): FakeView {
 async function loadModule() {
   return import('@/editor/extensions/html-paste')
 }
+
+const lowlight = createLowlight(common)
+
+/** A real editor with the paste extension, hard breaks, headings and a code block. */
+async function buildEditor(content: object): Promise<Editor> {
+  const { HtmlPaste } = await loadModule()
+  return new Editor({
+    element: document.createElement('div'),
+    extensions: [
+      Document,
+      TaskParagraph,
+      Text,
+      HardBreak,
+      Heading,
+      CalloutBlockquote,
+      CodeBlockLowlight.configure({ lowlight }),
+      HtmlPaste,
+    ],
+    content,
+  })
+}
+
+function paragraphDoc(text: string): object {
+  return { type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'text', text }] }] }
+}
+
+const EMPTY_PARAGRAPH = { type: 'doc', content: [{ type: 'paragraph' }] }
+const HELLO_WORLD = paragraphDoc('Hello world')
+const HELLO_BIG_WORLD = paragraphDoc('Hello big world')
 
 describe('convertAndInsert — destroyed-view guard (#2033)', () => {
   it('no-ops without throwing when the view is already destroyed', async () => {
@@ -235,9 +269,17 @@ describe('convertAndInsert — single-inline focus-handoff guard (#2454)', () =>
 })
 
 describe('convertAndInsert — captured paste target (#2033)', () => {
-  it('sends the converted blocks, with the captured targetBlockId, as a PASTE_BLOCKS payload', async () => {
+  let editor: Editor | null = null
+
+  afterEach(() => {
+    editor?.destroy()
+    editor = null
+  })
+
+  it('sends the converted blocks, with the captured targetBlockId and the splice, as a PASTE_BLOCKS payload', async () => {
     const { convertAndInsert } = await loadModule()
-    const view = makeView(false)
+    editor = await buildEditor(HELLO_WORLD)
+    editor.commands.setTextSelection(7)
 
     // A multi-line block and a nested one → routes through the block-paste path.
     const blocks = [
@@ -246,24 +288,21 @@ describe('convertAndInsert — captured paste target (#2033)', () => {
     ]
     htmlBodyToOutline.mockReturnValue(blocks)
 
-    await convertAndInsert(
-      view as unknown as EditorView,
-      '<p>one</p><p>two</p>',
-      'one\ntwo',
-      'BLOCK_A',
-    )
+    await convertAndInsert(editor.view, '<p>one</p><p>two</p>', 'one\ntwo', 'BLOCK_A')
 
     expect(dispatchBlockEvent).toHaveBeenCalledWith('PASTE_BLOCKS', {
       input: { kind: 'blocks', blocks },
       targetBlockId: 'BLOCK_A',
+      splice: { before: 'Hello ', after: 'world' },
+      asText: expect.any(String),
     })
     // Block content must never be force-inserted into the editor view.
-    expect(view.dispatch).not.toHaveBeenCalled()
+    expect(editor.state.doc.textContent).toBe('Hello world')
   })
 
   it('forwards a null targetBlockId (no focused block) unchanged', async () => {
     const { convertAndInsert } = await loadModule()
-    const view = makeView(false)
+    editor = await buildEditor(EMPTY_PARAGRAPH)
 
     const blocks = [
       { content: 'one', depth: 0 },
@@ -271,12 +310,33 @@ describe('convertAndInsert — captured paste target (#2033)', () => {
     ]
     htmlBodyToOutline.mockReturnValue(blocks)
 
-    await convertAndInsert(view as unknown as EditorView, '<p>one</p><p>two</p>', 'one\ntwo', null)
+    await convertAndInsert(editor.view, '<p>one</p><p>two</p>', 'one\ntwo', null)
 
     expect(dispatchBlockEvent).toHaveBeenCalledWith('PASTE_BLOCKS', {
       input: { kind: 'blocks', blocks },
       targetBlockId: null,
+      splice: { before: '', after: '' },
+      asText: expect.any(String),
     })
+  })
+
+  // followup-notes-2 item 1 — multi-block HTML over a selection replaced it
+  // only on the plain-text branch; both branches splice now.
+  it('replaces a selection: the selected text is in neither half of the splice', async () => {
+    const { convertAndInsert } = await loadModule()
+    editor = await buildEditor(HELLO_BIG_WORLD)
+    editor.commands.setTextSelection({ from: 7, to: 11 })
+    htmlBodyToOutline.mockReturnValue([
+      { content: 'one', depth: 0 },
+      { content: 'two', depth: 0 },
+    ])
+
+    await convertAndInsert(editor.view, '<p>one</p><p>two</p>', 'one\ntwo', 'BLOCK_A')
+
+    expect(dispatchBlockEvent).toHaveBeenCalledWith(
+      'PASTE_BLOCKS',
+      expect.objectContaining({ splice: { before: 'Hello ', after: 'world' } }),
+    )
   })
 })
 
@@ -324,35 +384,19 @@ describe('convertAndInsert — precomputed body plumbing (#3277)', () => {
   })
 })
 
-// #5140 — with no usable HTML, plain text that opens with a list item is
-// pasted as blocks (`paste_blocks` parses it), not into the editor, where
-// ProseMirror would escape its markers into literal text. A lone task line is
-// `TaskPaste`'s.
-describe('handlePaste — a pasted outline goes to the block path (#5140)', () => {
-  const lowlight = createLowlight(common)
+// #5140 / #5160 D4 — with no usable HTML, text of more than one line (or one
+// bullet line, our copy of a block) is pasted as blocks (`paste_blocks` reads
+// it with the import grammar), not into the editor, where ProseMirror would
+// escape its markers into literal paragraphs (`\## Plan`, `1\.`). The payload
+// splices it into the block at the selection. A single line stays inline, a
+// lone task line is `TaskPaste`'s.
+describe('handlePaste — pasted text goes to the block path, spliced (#5160 D4)', () => {
   let editor: Editor | null = null
 
   afterEach(() => {
     editor?.destroy()
     editor = null
   })
-
-  async function build(content: object): Promise<Editor> {
-    const { HtmlPaste } = await loadModule()
-    return new Editor({
-      element: document.createElement('div'),
-      extensions: [
-        Document,
-        TaskParagraph,
-        Text,
-        CodeBlockLowlight.configure({ lowlight }),
-        HtmlPaste,
-      ],
-      content,
-    })
-  }
-
-  const EMPTY_PARAGRAPH = { type: 'doc', content: [{ type: 'paragraph' }] }
 
   /** Fire the handlePaste chain with a text/plain payload (and optional HTML). */
   function paste(ed: Editor, plain: string, html?: string): boolean {
@@ -367,17 +411,32 @@ describe('handlePaste — a pasted outline goes to the block path (#5140)', () =
     )
   }
 
+  /** Fire the handleKeyDown chain, as the browser does before a paste. */
+  function keyDown(ed: Editor, init: KeyboardEventInit): void {
+    const event = new KeyboardEvent('keydown', init)
+    ed.view.someProp('handleKeyDown', (fn) => fn(ed.view, event))
+  }
+
+  const README = '# Agaric\n\nA note app.\n\n## Install\n\n```sh\nnpm i\n```\n'
+  const LLM_ANSWER =
+    'Here is a plan:\n\n## Plan\n\n1. First step\n   - detail\n2. Second step\n\nGood luck!'
+
   it.each([
+    ['multi-line prose', 'First line\nsecond line'],
+    ['two paragraphs', 'One.\n\nTwo.'],
+    ['a README', README],
+    ['an LLM answer', LLM_ANSWER],
+    ['a `*` list', '* a\n* b'],
+    ['a numbered list', '1. one\n2. two'],
     ['our own copy of a parent and child', '- parent\n  - child\n'],
     ['our own copy of one block', '- only one\n'],
     ['a single bullet with trailing blank lines', '- only one\n\n  \n'],
     ['a task with a child', '- [ ] buy milk\n  - oat'],
-    ['an indented first bullet', '  - a\n  - b'],
-    ['a bullet list with a blank line between items', '- a\n\n- b'],
     ['an empty block with a child', '-\n  - child'],
-  ])('routes %s as text', async (_name, text) => {
+  ])('routes %s as text, spliced at the caret', async (_name, text) => {
     mockFocusedBlockId = 'BLOCK_A'
-    editor = await build(EMPTY_PARAGRAPH)
+    editor = await buildEditor(HELLO_WORLD)
+    editor.commands.setTextSelection(7)
 
     expect(paste(editor, text)).toBe(true)
 
@@ -385,13 +444,102 @@ describe('handlePaste — a pasted outline goes to the block path (#5140)', () =
     expect(dispatchBlockEvent).toHaveBeenCalledWith('PASTE_BLOCKS', {
       input: { kind: 'text', text },
       targetBlockId: 'BLOCK_A',
+      splice: { before: 'Hello ', after: 'world' },
+      asText: expect.any(String),
     })
     // Nothing lands in the editor itself.
-    expect(editor.state.doc.textContent).toBe('')
+    expect(editor.state.doc.textContent).toBe('Hello world')
+  })
+
+  it.each([
+    ['at the start', 1, { before: '', after: 'Hello world' }],
+    ['at the end', 12, { before: 'Hello world', after: '' }],
+  ])('splices %s of the block', async (_name, caret, splice) => {
+    editor = await buildEditor(HELLO_WORLD)
+    editor.commands.setTextSelection(caret)
+
+    expect(paste(editor, 'a\nb')).toBe(true)
+
+    expect(dispatchBlockEvent).toHaveBeenCalledWith(
+      'PASTE_BLOCKS',
+      expect.objectContaining({ splice }),
+    )
+  })
+
+  // `after` ends the LAST pasted block, so it must be the text alone: a
+  // `doc.cut` from the caret keeps the heading node, whose serialization
+  // repeats the `## ` marker mid-text.
+  it('splices mid-heading: the anchor keeps its marker, the text after the caret carries none', async () => {
+    editor = await buildEditor({
+      type: 'doc',
+      content: [
+        { type: 'heading', attrs: { level: 2 }, content: [{ type: 'text', text: 'Heading here' }] },
+        { type: 'paragraph', content: [{ type: 'text', text: 'next line' }] },
+      ],
+    })
+    editor.commands.setTextSelection(9)
+
+    expect(paste(editor, 'a\nb')).toBe(true)
+
+    expect(dispatchBlockEvent).toHaveBeenCalledWith(
+      'PASTE_BLOCKS',
+      expect.objectContaining({ splice: { before: '## Heading ', after: 'here\nnext line' } }),
+    )
+  })
+
+  it('splices mid-quote: the cut leaves no empty `> ` line in the text after the caret', async () => {
+    editor = await buildEditor({
+      type: 'doc',
+      content: [
+        {
+          type: 'blockquote',
+          content: [{ type: 'paragraph', content: [{ type: 'text', text: 'quoted text' }] }],
+        },
+      ],
+    })
+    editor.commands.setTextSelection(8)
+
+    expect(paste(editor, 'a\nb')).toBe(true)
+
+    expect(dispatchBlockEvent).toHaveBeenCalledWith(
+      'PASTE_BLOCKS',
+      expect.objectContaining({ splice: { before: '> quoted', after: ' text' } }),
+    )
+  })
+
+  it('replaces a selection: the selected text is in neither half of the splice', async () => {
+    editor = await buildEditor(HELLO_BIG_WORLD)
+    editor.commands.setTextSelection({ from: 7, to: 11 })
+
+    expect(paste(editor, '- a\n- b')).toBe(true)
+
+    expect(dispatchBlockEvent).toHaveBeenCalledWith(
+      'PASTE_BLOCKS',
+      expect.objectContaining({ splice: { before: 'Hello ', after: 'world' } }),
+    )
+  })
+
+  it('carries the block as a plain paste leaves it: the lines literal, at the caret', async () => {
+    editor = await buildEditor(HELLO_WORLD)
+    editor.commands.setTextSelection(7)
+
+    paste(editor, '## Plan\n1. step\n')
+
+    const [, detail] = dispatchBlockEvent.mock.calls[0] as [string, { asText: string }]
+    expect(parse(detail.asText).content).toEqual([
+      {
+        type: 'paragraph',
+        content: [
+          { type: 'text', text: 'Hello ## Plan' },
+          { type: 'hardBreak' },
+          { type: 'text', text: '1. stepworld' },
+        ],
+      },
+    ])
   })
 
   it('routes an outline when the HTML beside it is unusable (a bare wrapper)', async () => {
-    editor = await build(EMPTY_PARAGRAPH)
+    editor = await buildEditor(EMPTY_PARAGRAPH)
     const html = '<html><body><!--StartFragment--><!--EndFragment--></body></html>'
 
     expect(paste(editor, '- a\n- b', html)).toBe(true)
@@ -399,43 +547,29 @@ describe('handlePaste — a pasted outline goes to the block path (#5140)', () =
     expect(dispatchBlockEvent).toHaveBeenCalledWith('PASTE_BLOCKS', {
       input: { kind: 'text', text: '- a\n- b' },
       targetBlockId: null,
+      splice: { before: '', after: '' },
+      asText: expect.any(String),
     })
   })
 
   it.each([
+    ['a single line', 'just one line'],
+    ['a single line with blank lines around it', '\n  one line\n\n'],
+    ['a single `*` item', '* one'],
+    ['a single numbered line', '1. Introduction'],
     ['a single task line (TaskPaste owns it)', '- [ ] buy milk'],
     ['a single task line with trailing blank lines', '- [x] done\n\n'],
-    ['plain lines', 'first line\nsecond line'],
-    ['plain first line, then a bullet', 'intro\n- a\n- b'],
-    ['a dash with no space', '-a\n-b'],
     ['a lone dash', '-'],
-    // The backend reads only `- ` as a bullet, so these would land as
-    // literal one-line blocks: they keep the default paste.
-    ['a `*` list', '* a\n* b'],
-    ['a `+` list', '+ a\n+ b'],
-    ['a numbered list', '1. one\n2. two'],
-  ])('leaves %s to the other paste handlers', async (_name, text) => {
-    editor = await build(EMPTY_PARAGRAPH)
+  ])('leaves %s to the other paste handlers (inline)', async (_name, text) => {
+    editor = await buildEditor(EMPTY_PARAGRAPH)
 
     expect(paste(editor, text)).toBe(false)
 
     expect(dispatchBlockEvent).not.toHaveBeenCalled()
   })
 
-  it('leaves an outline pasted over a selection to the default paste, which replaces it', async () => {
-    editor = await build({
-      type: 'doc',
-      content: [{ type: 'paragraph', content: [{ type: 'text', text: 'foo' }] }],
-    })
-    editor.commands.setTextSelection({ from: 1, to: 4 })
-
-    expect(paste(editor, '- a\n- b')).toBe(false)
-
-    expect(dispatchBlockEvent).not.toHaveBeenCalled()
-  })
-
-  it('keeps an outline pasted inside a code block literal', async () => {
-    editor = await build({
+  it('keeps text pasted inside a code block literal', async () => {
+    editor = await buildEditor({
       type: 'doc',
       content: [{ type: 'codeBlock', attrs: { language: 'js' } }],
     })
@@ -443,5 +577,53 @@ describe('handlePaste — a pasted outline goes to the block path (#5140)', () =
     expect(paste(editor, '- a\n- b')).toBe(false)
 
     expect(dispatchBlockEvent).not.toHaveBeenCalled()
+  })
+
+  it('pastes as literal lines after Ctrl+Shift+V: no blocks, no markdown read', async () => {
+    editor = await buildEditor(HELLO_WORLD)
+    editor.commands.setTextSelection(7)
+
+    keyDown(editor, { key: 'V', ctrlKey: true, shiftKey: true })
+    expect(paste(editor, '## Plan\n- step')).toBe(true)
+
+    expect(dispatchBlockEvent).not.toHaveBeenCalled()
+    expect(editor.getJSON().content?.map((node) => node.content)).toEqual([
+      [
+        { type: 'text', text: 'Hello ## Plan' },
+        { type: 'hardBreak' },
+        { type: 'text', text: '- stepworld' },
+      ],
+    ])
+  })
+
+  it('pastes as literal lines after Cmd+Shift+V, replacing a selection', async () => {
+    editor = await buildEditor(HELLO_BIG_WORLD)
+    editor.commands.setTextSelection({ from: 7, to: 11 })
+
+    keyDown(editor, { key: 'v', metaKey: true, shiftKey: true })
+    expect(paste(editor, 'a\nb')).toBe(true)
+
+    expect(editor.getJSON().content?.map((node) => node.content)).toEqual([
+      [{ type: 'text', text: 'Hello a' }, { type: 'hardBreak' }, { type: 'text', text: 'bworld' }],
+    ])
+  })
+
+  it('reads the chord for one paste only: a later key clears it', async () => {
+    editor = await buildEditor(EMPTY_PARAGRAPH)
+
+    keyDown(editor, { key: 'V', ctrlKey: true, shiftKey: true })
+    keyDown(editor, { key: 'a' })
+    expect(paste(editor, 'a\nb')).toBe(true)
+
+    expect(dispatchBlockEvent).toHaveBeenCalledTimes(1)
+  })
+
+  it('reads a plain Ctrl+V as a normal paste', async () => {
+    editor = await buildEditor(EMPTY_PARAGRAPH)
+
+    keyDown(editor, { key: 'v', ctrlKey: true })
+    expect(paste(editor, 'a\nb')).toBe(true)
+
+    expect(dispatchBlockEvent).toHaveBeenCalledTimes(1)
   })
 })

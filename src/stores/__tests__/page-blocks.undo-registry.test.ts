@@ -389,7 +389,7 @@ describe('PageBlockStore', () => {
         expect(mockOnNewAction).toHaveBeenCalledWith('PAGE_1', REFS)
       })
 
-      it('pasteBlocks forwards the paste_blocks response op_refs, with no coalesce key', async () => {
+      it('pasteBlocks forwards the paste_blocks response op_refs, as an undo entry of its own', async () => {
         const anchor = makeBlock({ id: 'A', parent_id: 'PAGE_1', position: 0 })
         store.setState({ blocks: [anchor] })
         stubInvoke(mockedInvoke, {
@@ -403,7 +403,7 @@ describe('PageBlockStore', () => {
         await store.getState().pasteBlocks('A', { kind: 'text', text: 'one' })
 
         expect(mockOnNewAction).toHaveBeenCalledTimes(1)
-        expect(mockOnNewAction).toHaveBeenCalledWith('PAGE_1', REFS)
+        expect(mockOnNewAction).toHaveBeenCalledWith('PAGE_1', REFS, undefined, { merge: false })
       })
     })
   })
