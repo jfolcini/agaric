@@ -667,11 +667,23 @@ function ownsFrom(open: OpenBlock): number {
 }
 
 /**
+ * `Scan::starts_item` declining `marker` on a line that would continue the
+ * innermost open block's paragraph, so the line is the paragraph's text: an
+ * ordered item interrupts only numbered 1 and with text, a bullet only with
+ * text or `inList`, where Agaric's own export writes an empty child as a bare `-`.
+ */
+function isParagraphText(marker: string, rest: string, inList: boolean): boolean {
+  const empty = rest.trim() === ''
+  if (/^\d/.test(marker)) return empty || Number.parseInt(marker, 10) !== 1
+  return empty && !inList
+}
+
+/**
  * DELIBERATE APPROXIMATION of `import::parse_source_outline` (#5160 Phase 2a):
  * the block grammar, for the shapes the mock models. A list marker (`-`, `*`,
  * `+`, `1.`, `1)`) starts a block, nested by the content column of the open
- * blocks, unless it would interrupt a paragraph outside a list while empty or
- * numbered other than 1; a heading is a block of its own and, outside a list,
+ * blocks, unless it would interrupt a paragraph while numbered other than 1,
+ * or while empty outside a list; a heading is a block of its own and, outside a list,
  * owns what follows it; a line indented to a bullet's content column continues
  * it, interior blank lines included, and so does a line with no blank line
  * before it; consecutive plain lines are one paragraph block. Code fences,
@@ -707,14 +719,17 @@ export function parseOutline(text: string): PlannedPaste[] {
     const bullet = BULLET_RE.exec(trimmed)
     const heading = HEADING_RE.exec(trimmed)
     const top = open.at(-1)
-    // `Scan::starts_item` declining the marker: the line is the paragraph's text.
+    const item = open.findLast((o) => o.kind === 'bullet')
+    // `Scan::continues_paragraph`: the line is not left of the innermost
+    // item's content column, so it is not a lazy continuation a marker may leave.
+    const continuesParagraph =
+      blankLines === 0 &&
+      (top?.kind === 'paragraph' || top?.kind === 'bullet') &&
+      indent >= (item?.content ?? 0)
     const paragraphText =
       bullet !== null &&
-      blankLines === 0 &&
-      top?.kind === 'paragraph' &&
-      !open.some((o) => o.kind === 'bullet') &&
-      (trimmed.slice(bullet[0].length).trim() === '' ||
-        (/^\d/.test(bullet[0]) && Number.parseInt(bullet[0], 10) !== 1))
+      continuesParagraph &&
+      isParagraphText(bullet[0], trimmed.slice(bullet[0].length), item !== undefined)
     if (bullet && !paragraphText) {
       const len = bullet[0].length
       popTo(indent, null)

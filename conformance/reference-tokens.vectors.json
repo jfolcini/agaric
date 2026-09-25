@@ -156,15 +156,13 @@
       "name": "#5160 N8 a tag whose name the bare form cuts short is written bare (reads back as tag C)",
       "tagUlid": "01BX5ZZKBKACTAV9WEVGEMMVSX",
       "tagName": "C++",
-      "expected": "#C++",
-      "finding": "N8"
+      "expected": "#C++"
     },
     {
       "name": "#5160 N8 a dotted tag name is written bare (reads back as tag v1)",
       "tagUlid": "01BX5ZZKBKACTAV9WEVGEMMVSY",
       "tagName": "v1.2",
-      "expected": "#v1.2",
-      "finding": "N8"
+      "expected": "#v1.2"
     }
   ],
   "nameRuleCases": [

@@ -2636,6 +2636,29 @@ describe('export_page_markdown', () => {
   it('throws for non-existent page', () => {
     expect(() => invoke('export_page_markdown', { pageId: 'NONEXISTENT' })).toThrow('not found')
   })
+
+  // #5160 follow-up, item 9: a fenced code block's blank line and tab come back
+  // through export and import as written, as the backend keeps them.
+  it('round-trips a fenced code block with a blank line and a tab through import_markdown', () => {
+    const content = '```\none\n\n\ttwo\n```'
+    invoke('create_block', {
+      blockType: 'content',
+      content,
+      parentId: SEED_IDS.PAGE_GETTING_STARTED,
+    })
+    const md = invoke('export_page_markdown', { pageId: SEED_IDS.PAGE_GETTING_STARTED }) as string
+    invoke('import_markdown', { content: md, filename: 'reimported.md' })
+    const pageId = (
+      (
+        invoke('list_blocks', { blockType: 'page' }) as { items: Record<string, unknown>[] }
+      ).items.find((p) => p['content'] === 'reimported') as Record<string, unknown>
+    )['id'] as string
+    const children = (
+      invoke('list_blocks', { parentId: pageId }) as { items: Record<string, unknown>[] }
+    ).items.map((b) => b['content'])
+
+    expect(children).toContain(content)
+  })
 })
 
 // ---------------------------------------------------------------------------

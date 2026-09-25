@@ -1130,9 +1130,10 @@ mod tests {
     }
 
     proptest! {
-        /// #5160 — whatever a hand-written buffer reads as, once saved, renders
-        /// back to the same tree, content and properties, each block under its
-        /// own `^ID`: the buffer reopened after a save shows what it stored.
+        /// #5160 — whatever a hand-written buffer reads as renders back to the
+        /// same tree, content and properties, each block under its own `^ID`,
+        /// once stored as [`stored`] models a save storing it: render ∘ model ∘
+        /// parse, with the model standing in for `apply_markdown_source`.
         #[test]
         fn a_saved_buffer_renders_back_to_what_was_saved(text in arb_document()) {
             let mut saved = import::parse_source_outline(&text).blocks;

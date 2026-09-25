@@ -223,8 +223,22 @@ describe('tauri-mock clipboard pair', () => {
           ['b', '# H'],
         ],
       ],
+      // Inside a list item the same rule holds: a line at the item's content
+      // column continues its paragraph unless the item starts at 1.
+      [
+        '- Numbers to remember:\n  42. That is all.',
+        [['Numbers to remember:\n42. That is all.', 'Home']],
+      ],
       [
         '- one\n  # H\n  para\n  2. x',
+        [
+          ['one', 'Home'],
+          ['# H', 'one'],
+          ['para\n2. x', 'one'],
+        ],
+      ],
+      [
+        '- one\n  # H\n  para\n  1. x',
         [
           ['one', 'Home'],
           ['# H', 'one'],
@@ -232,15 +246,21 @@ describe('tauri-mock clipboard pair', () => {
           ['x', 'one'],
         ],
       ],
-    ])(
-      'starts a list after a paragraph outside a list only at a non-empty item numbered 1: %j',
-      (text, want) => {
-        const pasted = paste(A, { kind: 'text', text })
-        const parentContent = (r: Row) => blocks.get(r.parent_id ?? '')?.['content']
+      // The export and clipboard shape of an empty child block.
+      [
+        '- parent\n  -\n  - b',
+        [
+          ['parent', 'Home'],
+          ['', 'parent'],
+          ['b', 'parent'],
+        ],
+      ],
+    ])('starts a list after a paragraph only at a non-empty item numbered 1: %j', (text, want) => {
+      const pasted = paste(A, { kind: 'text', text })
+      const parentContent = (r: Row) => blocks.get(r.parent_id ?? '')?.['content']
 
-        expect(pasted.map((r) => [r.content, parentContent(r)])).toEqual(want)
-      },
-    )
+      expect(pasted.map((r) => [r.content, parentContent(r)])).toEqual(want)
+    })
 
     it('creates `blocks` input verbatim, a multi-line block staying ONE block', () => {
       const pasted = paste(B, {

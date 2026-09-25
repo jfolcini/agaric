@@ -19,6 +19,12 @@ import { CodeBlockLowlight } from '@tiptap/extension-code-block-lowlight'
 import Document from '@tiptap/extension-document'
 import HardBreak from '@tiptap/extension-hard-break'
 import Heading from '@tiptap/extension-heading'
+import { BulletList } from '@tiptap/extension-list'
+import ListItem from '@tiptap/extension-list-item'
+import { Table } from '@tiptap/extension-table'
+import { TableCell } from '@tiptap/extension-table-cell'
+import { TableHeader } from '@tiptap/extension-table-header'
+import { TableRow } from '@tiptap/extension-table-row'
 import Text from '@tiptap/extension-text'
 import type { EditorView } from '@tiptap/pm/view'
 import { common, createLowlight } from 'lowlight'
@@ -105,7 +111,10 @@ async function loadModule() {
 
 const lowlight = createLowlight(common)
 
-/** A real editor with the paste extension, hard breaks, headings and a code block. */
+/**
+ * A real editor with the paste extension, hard breaks, headings, a code block,
+ * tables and bullet lists.
+ */
 async function buildEditor(content: object): Promise<Editor> {
   const { HtmlPaste } = await loadModule()
   return new Editor({
@@ -118,6 +127,12 @@ async function buildEditor(content: object): Promise<Editor> {
       Heading,
       CalloutBlockquote,
       CodeBlockLowlight.configure({ lowlight }),
+      Table.configure({ resizable: false }),
+      TableRow,
+      TableHeader,
+      TableCell,
+      BulletList,
+      ListItem,
       HtmlPaste,
     ],
     content,
@@ -577,6 +592,103 @@ describe('handlePaste — pasted text goes to the block path, spliced (#5160 D4)
     expect(paste(editor, '- a\n- b')).toBe(false)
 
     expect(dispatchBlockEvent).not.toHaveBeenCalled()
+  })
+
+  // #5160 follow-up, item 13 — the splice cuts the block's doc at the cursor,
+  // which would leave two tables with rows short of the header's cells, or two
+  // lists. Inside one, a multi-line paste takes the literal path instead.
+  const cell = (type: 'tableHeader' | 'tableCell', text: string) => ({
+    type,
+    content: [{ type: 'paragraph', content: [{ type: 'text', text }] }],
+  })
+  const TABLE_DOC = {
+    type: 'doc',
+    content: [
+      {
+        type: 'table',
+        content: [
+          { type: 'tableRow', content: [cell('tableHeader', 'A'), cell('tableHeader', 'B')] },
+          { type: 'tableRow', content: [cell('tableCell', 'one'), cell('tableCell', 'two')] },
+        ],
+      },
+    ],
+  }
+  const item = (text: string) => ({
+    type: 'listItem',
+    content: [{ type: 'paragraph', content: [{ type: 'text', text }] }],
+  })
+  const LIST_DOC = {
+    type: 'doc',
+    content: [{ type: 'bulletList', content: [item('one'), item('two')] }],
+  }
+  const PASTED_AFTER_ONE = [
+    { type: 'text', text: 'onea' },
+    { type: 'hardBreak' },
+    { type: 'text', text: 'b' },
+  ]
+
+  /** The position right after the text node `text`. */
+  function endOf(ed: Editor, text: string): number {
+    let end = 0
+    ed.state.doc.descendants((node, pos) => {
+      if (node.isText && node.text === text) end = pos + text.length
+    })
+    return end
+  }
+
+  it('pastes literal lines into a table cell: one table, every row the width of the header', async () => {
+    editor = await buildEditor(TABLE_DOC)
+    editor.commands.setTextSelection(endOf(editor, 'one'))
+
+    expect(paste(editor, 'a\nb')).toBe(true)
+
+    expect(dispatchBlockEvent).not.toHaveBeenCalled()
+    const { doc } = editor.state
+    expect(doc.childCount).toBe(1)
+    const table = doc.child(0)
+    expect(table.type.name).toBe('table')
+    const widths = Array.from({ length: table.childCount }, (_, i) => table.child(i).childCount)
+    expect(widths).toEqual([2, 2])
+    expect(table.child(1).child(0).child(0).toJSON().content).toEqual(PASTED_AFTER_ONE)
+  })
+
+  it('pastes literal lines into a nested list item: one list, its items intact', async () => {
+    editor = await buildEditor(LIST_DOC)
+    editor.commands.setTextSelection(endOf(editor, 'one'))
+
+    expect(paste(editor, '- a\n- b')).toBe(true)
+
+    expect(dispatchBlockEvent).not.toHaveBeenCalled()
+    const { doc } = editor.state
+    expect(doc.childCount).toBe(1)
+    const list = doc.child(0)
+    expect(list.type.name).toBe('bulletList')
+    const items = Array.from({ length: list.childCount }, (_, i) => list.child(i).type.name)
+    expect(items).toEqual(['listItem', 'listItem'])
+    expect(list.child(0).child(0).toJSON().content).toEqual([
+      { type: 'text', text: 'one- a' },
+      { type: 'hardBreak' },
+      { type: 'text', text: '- b' },
+    ])
+  })
+
+  it('pastes structural HTML into a table cell as literal text: no blocks, one table', async () => {
+    const ed = await buildEditor(TABLE_DOC)
+    editor = ed
+    ed.commands.setTextSelection(endOf(ed, 'one'))
+    htmlBodyToOutline.mockReturnValue([{ content: '# Title', depth: 0 }])
+
+    expect(paste(ed, 'Title', '<h1>Title</h1>')).toBe(true)
+    await vi.waitFor(() => expect(ed.state.doc.textContent).toContain('Title'))
+
+    expect(dispatchBlockEvent).not.toHaveBeenCalled()
+    const { doc } = ed.state
+    expect(doc.childCount).toBe(1)
+    const table = doc.child(0)
+    expect(table.type.name).toBe('table')
+    const widths = Array.from({ length: table.childCount }, (_, i) => table.child(i).childCount)
+    expect(widths).toEqual([2, 2])
+    expect(table.child(1).child(0).textContent).toBe('oneTitle')
   })
 
   it('pastes as literal lines after Ctrl+Shift+V: no blocks, no markdown read', async () => {

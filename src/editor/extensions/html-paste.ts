@@ -25,7 +25,9 @@
  * cursor ends the last block. It also carries the block as a plain-text paste
  * would leave it, for the toast's "Paste as text". Ctrl/Cmd+Shift+V pastes the
  * text as literal lines, directly; browsers send only `text/plain` for it, so
- * the chord is read on keydown.
+ * the chord is read on keydown. Inside a table or a list in the block's
+ * content, a paste that would make blocks takes that literal path too: the
+ * splice would cut the table or list in two.
  *
  * No regressions: any other paste without USABLE `text/html` (absent, empty, or
  * only a bare wrapper) returns `false` so the existing handlers (`task-paste`,
@@ -44,7 +46,7 @@
  */
 
 import { Extension } from '@tiptap/core'
-import type { Node as PMNode } from '@tiptap/pm/model'
+import type { Node as PMNode, ResolvedPos } from '@tiptap/pm/model'
 import { Fragment, Slice } from '@tiptap/pm/model'
 import { Plugin, PluginKey } from '@tiptap/pm/state'
 import type { EditorView } from '@tiptap/pm/view'
@@ -165,6 +167,10 @@ function parseHtmlBody(html: string): ParentNode | null {
  * string. Omitted (the default), this falls back to parsing `html` itself —
  * every direct test call below relies on that fallback, unchanged.
  *
+ * `literal` — the caret sits in a table or a list inside the block, where the
+ * block path's splice would cut it in two: what would become blocks goes in as
+ * the plain text's literal lines instead, as a text paste does there.
+ *
  * @internal Exported for testing.
  */
 export async function convertAndInsert(
@@ -173,6 +179,7 @@ export async function convertAndInsert(
   plainText: string,
   targetBlockId: string | null,
   precomputedBody?: ParentNode | null,
+  literal = false,
 ): Promise<void> {
   // The view may have been destroyed between claiming the paste and now.
   if (view.isDestroyed) return
@@ -206,8 +213,15 @@ export async function convertAndInsert(
     // Single, top-level, list-marker-free block → insert inline at the caret so
     // the marks land in the current block (no new block created). Lists and
     // headings always route through the block path so they become their own
-    // typed blocks.
-    if (blocks.length === 1 && blocks[0]?.depth === 0 && !isStructuralLine(blocks[0].content)) {
+    // typed blocks, unless the caret is in a table or a list, where they go in
+    // as literal lines.
+    const first = blocks[0]
+    const single =
+      blocks.length === 1 &&
+      first !== undefined &&
+      first.depth === 0 &&
+      !isStructuralLine(first.content)
+    if (single || literal) {
       // #2454 — the single roving TipTap view can be handed to a DIFFERENT block
       // during the async conversion turn WITHOUT being destroyed (the view object
       // survives; only its document / active block changes), so `isDestroyed`
@@ -224,7 +238,8 @@ export async function convertAndInsert(
         })
         return
       }
-      insertInlineMarkdown(view, blocks[0].content)
+      if (single) insertInlineMarkdown(view, first.content)
+      else insertLiteralLines(view, plainText)
       return
     }
 
@@ -328,6 +343,20 @@ function dispatchPasteBlocks(
   dispatchBlockEvent('PASTE_BLOCKS', detail)
 }
 
+/**
+ * Whether the selection sits in a table or a list inside the block's content.
+ * `pasteSplice` cuts the block's doc at the cursor, which would leave two
+ * tables, each with rows short of the header's cells, or two lists, so a
+ * paste that would make blocks stays literal there.
+ */
+function inTableOrList($from: ResolvedPos): boolean {
+  for (let depth = $from.depth; depth > 0; depth -= 1) {
+    const { name } = $from.node(depth).type
+    if (name === 'table' || name === 'listItem') return true
+  }
+  return false
+}
+
 /** Ctrl/Cmd+Shift+V, the paste-as-plain-text chord. */
 function isPlainPasteChord(event: KeyboardEvent): boolean {
   return (
@@ -403,13 +432,16 @@ export const HtmlPaste = Extension.create({
           handlePaste: (view, event) => {
             const plain = plainPasteChord
             plainPasteChord = false
+            const { $from } = view.state.selection
             // Inside a code textblock the paste must stay literal: let
             // ProseMirror's default code-context paste insert the text/plain
             // payload into the fence (guard convention: math.ts, query-hint.ts).
-            if (view.state.selection.$from.parent.type.spec.code) return false
+            if ($from.parent.type.spec.code) return false
 
             const plainText = event.clipboardData?.getData('text/plain') ?? ''
-            if (plain && plainText.length > 0) {
+            const inside = inTableOrList($from)
+            const literal = plain || (inside && isBlockPaste(plainText))
+            if (literal && plainText.length > 0) {
               insertLiteralLines(view, plainText)
               return true
             }
@@ -438,7 +470,7 @@ export const HtmlPaste = Extension.create({
             // Claim the paste synchronously (the conversion is async). The
             // async path inserts structured content, or the plain-text payload
             // on any failure, so content is never silently dropped.
-            void convertAndInsert(view, html, plainText, targetBlockId, body)
+            void convertAndInsert(view, html, plainText, targetBlockId, body, inside)
             return true
           },
         },
