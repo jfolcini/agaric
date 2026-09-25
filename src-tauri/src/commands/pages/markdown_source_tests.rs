@@ -710,25 +710,30 @@ fn a_stored_block_vector_reads_back_as_one_block() {
 }
 
 /// A checkbox typed after the bullet is the row's `todo_state`, or stays text
-/// when the row has none, and `task_marker_for` writes the canonical ones.
+/// when the row has none, in the buffer and in an import alike (#5160 D6), and
+/// `task_marker_for` writes the canonical ones.
 #[test]
-fn the_checkbox_alphabet_vector_is_source_modes() {
+fn the_checkbox_alphabet_vector_is_read_by_source_and_import() {
     for vector in block_content_vectors().task_markers {
         let marker = vector.marker;
         let md = format!("- [{marker}] task");
-        let parsed = import::parse_source_outline(&md).blocks;
-        assert_eq!(parsed.len(), 1, "{md:?}");
-        let state = parsed[0]
-            .properties
-            .iter()
-            .find(|(key, _)| key == "todo_state")
-            .map(|(_, value)| value.as_str());
-        assert_eq!(state, vector.todo_state.as_deref(), "{md:?}");
-        let content = match vector.todo_state {
-            Some(_) => "task".to_string(),
-            None => format!("[{marker}] task"),
-        };
-        assert_eq!(parsed[0].content, content, "{md:?}");
+        for (parser, parsed) in [
+            ("source", import::parse_source_outline(&md).blocks),
+            ("import", import::parse_logseq_markdown(&md).blocks),
+        ] {
+            assert_eq!(parsed.len(), 1, "{parser}: {md:?}");
+            let state = parsed[0]
+                .properties
+                .iter()
+                .find(|(key, _)| key == "todo_state")
+                .map(|(_, value)| value.as_str());
+            assert_eq!(state, vector.todo_state.as_deref(), "{parser}: {md:?}");
+            let content = match vector.todo_state {
+                Some(_) => "task".to_string(),
+                None => format!("[{marker}] task"),
+            };
+            assert_eq!(parsed[0].content, content, "{parser}: {md:?}");
+        }
         if vector.canonical {
             let state = vector
                 .todo_state

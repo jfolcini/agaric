@@ -5,10 +5,12 @@ expression: "serde_json::json!({\n    \"import\": output_shape(parse_logseq_mark
 import:
   blocks:
     - block_anchor: 01J0000000000000000000000A
-      content: "[ ] Plan the trip"
+      content: Plan the trip
       depth: 0
       is_code: false
       properties:
+        - - todo_state
+          - TODO
         - - priority
           - "1"
     - block_anchor: 01J0000000000000000000000B

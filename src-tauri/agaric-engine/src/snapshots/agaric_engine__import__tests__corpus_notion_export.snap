@@ -35,15 +35,19 @@ import:
       is_code: false
       properties: []
     - block_anchor: ~
-      content: "[ ] Write the doc"
+      content: Write the doc
       depth: 2
       is_code: false
-      properties: []
+      properties:
+        - - todo_state
+          - TODO
     - block_anchor: ~
-      content: "[x] Kick-off meeting"
+      content: Kick-off meeting
       depth: 2
       is_code: false
-      properties: []
+      properties:
+        - - todo_state
+          - DONE
     - block_anchor: ~
       content: "<aside>\n💡 Remember to invite design."
       depth: 2

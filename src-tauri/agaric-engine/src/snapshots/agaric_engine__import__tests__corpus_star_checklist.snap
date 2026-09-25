@@ -5,25 +5,33 @@ expression: "serde_json::json!({\n    \"import\": output_shape(parse_logseq_mark
 import:
   blocks:
     - block_anchor: ~
-      content: "[ ] Plan the trip"
+      content: Plan the trip
       depth: 0
       is_code: false
-      properties: []
+      properties:
+        - - todo_state
+          - TODO
     - block_anchor: ~
-      content: "[x] Book flights"
+      content: Book flights
       depth: 1
       is_code: false
-      properties: []
+      properties:
+        - - todo_state
+          - DONE
     - block_anchor: ~
-      content: "[ ] Book hotel"
+      content: Book hotel
       depth: 1
       is_code: false
-      properties: []
+      properties:
+        - - todo_state
+          - TODO
     - block_anchor: ~
-      content: "[ ] Pack"
+      content: Pack
       depth: 0
       is_code: false
-      properties: []
+      properties:
+        - - todo_state
+          - TODO
   frontmatter: []
   frontmatter_list_items: {}
   warnings: []

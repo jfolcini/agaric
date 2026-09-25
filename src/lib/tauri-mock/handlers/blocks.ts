@@ -14,6 +14,8 @@ import type { PasteInput, PasteSplice } from '@/lib/bindings'
 import { INLINE_PROPERTY_RESERVED_KEYS } from '@/lib/inline-property-parse'
 import { LIST_STYLE_KEY } from '@/lib/list-style'
 import { compareUtf8Bytes } from '@/lib/sqlite-collation'
+import type { TodoState } from '@/lib/task-states'
+import { TASK_STATE_TO_MARKER, taskStateFromMarker } from '@/lib/task-states'
 import {
   type TypedHandlers,
   appErrorRejection,
@@ -610,6 +612,30 @@ interface PlannedPaste {
   depth: number
   /** Read from a `1.` item, whose marker the backend keeps as the `ordered` list style. */
   ordered?: boolean
+  /** Read from a checkbox after the marker (`- [ ] `), the block's `todo_state` (#5160 D6). */
+  todoState?: TodoState
+}
+
+/** `import::split_task_marker`: a checkbox of the shared alphabet and one space, or alone. */
+const CHECKBOX_RE = /^\[([ xX/-])\](?: |$)/
+
+/** The `todo_state` of a checkbox opening `text`, and the text after it. */
+function splitTaskMarker(text: string): { todoState: TodoState; text: string } | null {
+  const match = CHECKBOX_RE.exec(text)
+  const todoState = match ? taskStateFromMarker(match[1] ?? '') : null
+  return match && todoState ? { todoState, text: text.slice(match[0].length) } : null
+}
+
+/**
+ * `import::pasted_block`: an HTML-paste block whose first line opens with
+ * `- [ ] ` is a task, the `- ` going with the checkbox; any other block is
+ * verbatim.
+ */
+function pastedBlock(block: { content: string; depth: number }): PlannedPaste {
+  const [first = '', ...rest] = block.content.split('\n')
+  const task = first.startsWith('- ') ? splitTaskMarker(first.slice(2)) : null
+  if (!task) return { content: block.content, depth: block.depth }
+  return { content: [task.text, ...rest].join('\n'), depth: block.depth, todoState: task.todoState }
 }
 
 /**
@@ -687,9 +713,10 @@ function isParagraphText(marker: string, rest: string, inList: boolean): boolean
  * or while empty outside a list; a heading is a block of its own and, outside a list,
  * owns what follows it; a line indented to a bullet's content column continues
  * it, interior blank lines included, and so does a line with no blank line
- * before it; consecutive plain lines are one paragraph block. Code fences,
- * thematic breaks, list-style and task markers, property lines, escapes and
- * anchors are not modelled; a `1.` item is only flagged, for `joinSplice`.
+ * before it; consecutive plain lines are one paragraph block; a checkbox
+ * after a bullet's marker is its `todoState` (#5160 D6). Code fences,
+ * thematic breaks, list-style markers, property lines, escapes and anchors
+ * are not modelled; a `1.` item is only flagged, for `joinSplice`.
  */
 export function parseOutline(text: string): PlannedPaste[] {
   const out: PlannedPaste[] = []
@@ -705,8 +732,18 @@ export function parseOutline(text: string): PlannedPaste[] {
       top = open.at(-1)
     }
   }
-  const push = (entry: Omit<OpenBlock, 'block'>, content: string, ordered = false): void => {
-    const block = { content, depth: open.length, ...(ordered && { ordered }) }
+  const push = (
+    entry: Omit<OpenBlock, 'block'>,
+    content: string,
+    ordered = false,
+    todoState?: TodoState,
+  ): void => {
+    const block = {
+      content,
+      depth: open.length,
+      ...(ordered && { ordered }),
+      ...(todoState && { todoState }),
+    }
     out.push(block)
     open.push({ block, ...entry })
   }
@@ -735,7 +772,9 @@ export function parseOutline(text: string): PlannedPaste[] {
       const len = bullet[0].length
       popTo(indent, null)
       const entry = { marker: indent, content: indent + len + 1, kind: 'bullet', level: 0 } as const
-      push(entry, trimmed.slice(len).replace(/^[ \t]/, ''), /^\d/.test(bullet[0]))
+      const body = trimmed.slice(len).replace(/^[ \t]/, '')
+      const task = splitTaskMarker(body)
+      push(entry, task?.text ?? body, /^\d/.test(bullet[0]), task?.todoState)
     } else if (heading) {
       const level = heading[1]?.length ?? 1
       popTo(indent, level)
@@ -761,15 +800,19 @@ const FENCE_LINE_RE = /^\s*(?:`{3}|~{3})/m
 
 /**
  * `PasteSplice::join`: `before` starts the first block, which after text keeps
- * the `1. ` its item was read from, and `after` ends the last block, or
- * follows it as a block of its own when it is code (a fence keeps its closing
- * line).
+ * the `1. ` and the checkbox its item was read from (`pasted_as_text`), and
+ * `after` ends the last block, or follows it as a block of its own when it is
+ * code (a fence keeps its closing line).
  */
 function joinSplice(planned: readonly PlannedPaste[], splice: PasteSplice): PlannedPaste[] {
   const joined = planned.map((block) => ({ ...block }))
   const first = joined[0] as PlannedPaste
   const last = joined.at(-1) as PlannedPaste
-  if (splice.before !== '' && first.ordered) first.content = `1. ${first.content}`
+  if (splice.before !== '') {
+    const markers = `${first.ordered ? '1. ' : ''}${first.todoState ? `[${TASK_STATE_TO_MARKER[first.todoState]}] ` : ''}`
+    first.content = first.content === '' ? markers.trimEnd() : markers + first.content
+    delete first.todoState
+  }
   if (splice.after !== '' && FENCE_LINE_RE.test(last.content)) {
     joined.push({ content: splice.after, depth: last.depth })
   } else {
@@ -779,8 +822,14 @@ function joinSplice(planned: readonly PlannedPaste[], splice: PasteSplice): Plan
   return joined
 }
 
-/** Create one pasted content row under `parentId` at the live `slot`. */
+/**
+ * Create one pasted content row under `parentId` at the live `slot`, with the
+ * `todo_state` its checkbox read (a `set_property` op after the create, as
+ * `create_parsed_blocks` writes it; the backend's task stamps are outside the
+ * conformance digest).
+ */
 function pasteRow(
+  block: PlannedPaste,
   content: string,
   parentId: string | null,
   pageId: string | null,
@@ -796,7 +845,7 @@ function pasteRow(
     page_id: pageId,
     position: 0,
     deleted_at: null,
-    todo_state: null,
+    todo_state: block.todoState ?? null,
     priority: null,
     due_date: null,
     scheduled_date: null,
@@ -811,6 +860,10 @@ function pasteRow(
     position: row['position'],
   })
   opRefs.push({ device_id: op.device_id, seq: op.seq })
+  if (block.todoState) {
+    const stateOp = pushOp('set_property', { block_id: id, key: 'todo_state', from_value: null })
+    opRefs.push({ device_id: stateOp.device_id, seq: stateOp.seq })
+  }
   return row
 }
 
@@ -1231,11 +1284,12 @@ export const blocksHandlers = {
   // `[[Title]]` / `#tag` names resolve in the anchor's space through
   // `resolveInboundNames` (#5160 N4), the created pages and tags reported
   // ahead of the content rows as the backend does; with no space every name
-  // stays text. The backend also reads task markers and property lines, and
-  // refuses an over-deep or oversized paste; the mock models none of that, so
-  // tests must not rely on it for them. After text the backend writes a first
-  // block's markers and property lines back as text, which is where the mock
-  // leaves them.
+  // stays text. A checkbox after a bullet, in text or in an HTML-paste block
+  // (`- [ ] text`), is the row's `todo_state` (#5160 D6); after text the first
+  // block's marker and checkbox are written back as text, as the backend's
+  // `pasted_as_text` does. The backend also reads property lines and list
+  // markers, stamps a task, and refuses an over-deep or oversized paste; the
+  // mock models none of that, so tests must not rely on it for them.
   paste_blocks: (args) => {
     const a = args as Record<string, unknown>
     const anchorId = a['anchorBlockId'] as string
@@ -1251,7 +1305,7 @@ export const blocksHandlers = {
         `can only paste after a content block, not a '${String(anchor['block_type'])}'`,
       )
     }
-    const parsed = input.kind === 'text' ? parseOutline(input.text) : input.blocks
+    const parsed = input.kind === 'text' ? parseOutline(input.text) : input.blocks.map(pastedBlock)
     if (parsed.length === 0) throw validationRejection('nothing to paste')
     const planned = splice ? joinSplice(parsed, splice) : parsed
     const parentId = (anchor['parent_id'] as string | null) ?? null
@@ -1273,6 +1327,7 @@ export const blocksHandlers = {
     let topLevel = 0
     let start = 0
     if (splice) {
+      const first = planned[0] as PlannedPaste
       const content = contents[0] as string
       const op = pushOp('edit_block', {
         block_id: anchorId,
@@ -1281,8 +1336,19 @@ export const blocksHandlers = {
       })
       anchor['content'] = content
       opRefs.push({ device_id: op.device_id, seq: op.seq })
+      // At the start of the block the anchor takes the first block's state
+      // (`splice_into_anchor`); after text `joinSplice` wrote it back as text.
+      if (first.todoState) {
+        anchor['todo_state'] = first.todoState
+        const stateOp = pushOp('set_property', {
+          block_id: anchorId,
+          key: 'todo_state',
+          from_value: null,
+        })
+        opRefs.push({ device_id: stateOp.device_id, seq: stateOp.seq })
+      }
       out.push(anchor)
-      open.push({ depth: (planned[0] as PlannedPaste).depth, id: anchorId })
+      open.push({ depth: first.depth, id: anchorId })
       start = 1
     }
     for (let i = start; i < planned.length; i++) {
@@ -1291,8 +1357,8 @@ export const blocksHandlers = {
       while ((open.at(-1)?.depth ?? -1) >= block.depth) open.pop()
       const parent = open.at(-1)
       const row = parent
-        ? pasteRow(content, parent.id, pageId, Number.MAX_SAFE_INTEGER, opRefs)
-        : pasteRow(content, parentId, pageId, firstSlot + topLevel++, opRefs)
+        ? pasteRow(block, content, parent.id, pageId, Number.MAX_SAFE_INTEGER, opRefs)
+        : pasteRow(block, content, parentId, pageId, firstSlot + topLevel++, opRefs)
       open.push({ depth: block.depth, id: row['id'] as string })
       out.push(row)
     }

@@ -1,8 +1,8 @@
 /**
  * #5140 Phase 3b — mock `get_blocks_source` and `paste_blocks`, the clipboard
  * pair. Both are approximations of the backend grammar (list markers, headings,
- * paragraphs, indentation, continuation lines; no fences, anchors, list-style
- * or task markers, properties or names), so what is
+ * paragraphs, indentation, continuation lines, a checkbox as the task state;
+ * no fences, anchors, list-style markers, properties or names), so what is
  * pinned here is the shape the Playwright specs rely on: a copied subtree
  * pastes back as the same tree. Everything is read back through the mock's own
  * read commands. Backend parity for `paste_blocks` is pinned by
@@ -347,6 +347,69 @@ describe('tauri-mock clipboard pair', () => {
 
       expect(pasted.map((r) => [r.id, r.content])).toEqual([[A, 'Hi two\nlines!']])
       expect(opLog.map((op) => op.op_type)).toEqual(['edit_block'])
+    })
+
+    it("reads a checkbox after the bullet as the row's todo_state, in text and in HTML-paste blocks (#5160 D6)", () => {
+      const text = paste(A, {
+        kind: 'text',
+        text: '- [ ] open\n  - [x] done\n- [/] wip\n- [-] gone\n- [X] loud\n- [?] text',
+      })
+      expect(
+        text.map((r) => [r.content, (r as Row & { todo_state: string | null }).todo_state]),
+      ).toEqual([
+        ['open', 'TODO'],
+        ['done', 'DONE'],
+        ['wip', 'DOING'],
+        ['gone', 'CANCELLED'],
+        ['loud', 'DONE'],
+        ['[?] text', null],
+      ])
+      const html = paste(A, {
+        kind: 'blocks',
+        blocks: [
+          { content: '- [ ] open task', depth: 0 },
+          { content: '- [x] finished\nsecond line', depth: 1 },
+          { content: '- plain item', depth: 0 },
+        ],
+      })
+      expect(
+        html.map((r) => [r.content, (r as Row & { todo_state: string | null }).todo_state]),
+      ).toEqual([
+        ['open task', 'TODO'],
+        ['finished\nsecond line', 'DONE'],
+        ['- plain item', null],
+      ])
+      // Re-queried: the state is on the stored row (the second paste landed
+      // right after the anchor, ahead of the first), and each task wrote its
+      // state op after its create.
+      expect(
+        childrenOf(PAGE).map((r) => (r as Row & { todo_state: string | null }).todo_state),
+      ).toEqual([null, 'TODO', null, 'TODO', 'DOING', 'CANCELLED', 'DONE', null, null, null])
+      expect(opLog.map((op) => op.op_type).slice(0, 4)).toEqual([
+        'create_block',
+        'set_property',
+        'create_block',
+        'set_property',
+      ])
+    })
+
+    it("splices a first task block into the anchor: its state at the block's start, its checkbox as text after text", () => {
+      const atStart = paste(A, { kind: 'text', text: '- [/] wip' }, { before: '', after: '' })
+      expect(
+        atStart.map((r) => [
+          r.id,
+          r.content,
+          (r as Row & { todo_state: string | null }).todo_state,
+        ]),
+      ).toEqual([[A, 'wip', 'DOING']])
+      const afterText = paste(B, { kind: 'text', text: '- [x] done' }, { before: 'Hi ', after: '' })
+      expect(
+        afterText.map((r) => [
+          r.id,
+          r.content,
+          (r as Row & { todo_state: string | null }).todo_state,
+        ]),
+      ).toEqual([[B, 'Hi [x] done', null]])
     })
 
     it('refuses an unknown anchor as not_found, and a page, a trashed anchor or nothing to paste as validation', () => {

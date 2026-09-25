@@ -28,8 +28,9 @@ Type, paste, or use the toolbar:
 | Callout | Slash menu (`/callout`); types: tip / note / info / warning / error |
 | Ordered / unordered list | Toolbar, or markdown shortcut (`1.`, `-`) |
 | Table | Slash menu (`/table 4x6` for 4 rows × 6 columns) |
+| Task | A checkbox and a space typed at the start of the block, with or without a `-` and a space before it: `[ ]` TODO, `[/]` DOING, `[x]` or `[X]` DONE, `[-]` CANCELLED. The marker disappears and the block takes the state; `Ctrl+Enter`, the checkbox and the toolbar cycle it from there. `TODO` stays a word |
 
-Markdown shortcuts trigger as you type (`#`, `##`, ``` ` ```, `**bold**`, `_italic_`, `~~strike~~`, `==highlight==`, `1.`, `-`, `>`).
+Markdown shortcuts trigger as you type (`#`, `##`, ``` ` ```, `**bold**`, `_italic_`, `~~strike~~`, `==highlight==`, `1.`, `-`, `>`, `[ ]`, `[/]`, `[x]`, `[-]`).
 
 ## External links
 

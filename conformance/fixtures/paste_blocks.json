@@ -1,5 +1,5 @@
 {
-  "description": "#5140 Phase 3b — `paste_blocks` parses clipboard text (or takes HTML-paste blocks) and creates the blocks right after the anchor, in one transaction. Covers only what the tauri mock models: an outline whose bullet carries a continuation line and a nested child; two top-level bullets landing in order at the anchor's slot + 1 + k, ahead of the anchor's later siblings; text that does not open with a bullet, read by the same grammar (#5160 Phase 2a: consecutive lines are one paragraph block, a blank line separates blocks, `*` bullets nest by their content column; a heading owning its section is pinned by the mock's own tests, since `#` is a token separator here); a `blocks` input whose two-line block stays ONE block and whose depth-1 entry nests under it; #5160 D4 splices, a paste into the anchor's text (`splice`): mid-block with the first block's child following the anchor's own and `after` ending the last block, a one-block paste that only edits the anchor, `blocks` into an empty block, a first block joined after text as the text it was pasted as (marker, checkbox and property line kept as text, the anchor's own properties untouched), and a last block that is code, after which the text after the cursor is a block of its own; and the refusals. One paste carries page names (#5160 N4): `[[project plan]]` links the seeded `Project Plan` by case, `[[RM]]` links `Roadmap` by its alias, and `[[TWIN]]` ties between `Twin` and `twin` and stays text; a created page's fresh ULID would land in the content where the relabel does not reach, and no content carries `#`, which the command-leg row tokens split on, so creation and the tag rules are pinned by the Rust tests and `reference-tokens.vectors.json` instead; task markers and property lines appear only after text, where both sides keep them as text. The returns pin every created row in document order. Seed: S1 (Home) > S2 (the anchor), S3, S4 > S5 (purged by an op), S6 > S7, S8 (empty), S9, S10, S11 (Project Plan), S12 (Roadmap, alias `rm` set by an op), S13 (Twin), S14 (twin). Re-author `expected` / `expected_ops` via CONFORMANCE_UPDATE=1.",
+  "description": "#5140 Phase 3b — `paste_blocks` parses clipboard text (or takes HTML-paste blocks) and creates the blocks right after the anchor, in one transaction. Covers only what the tauri mock models: an outline whose bullet carries a continuation line and a nested child; two top-level bullets landing in order at the anchor's slot + 1 + k, ahead of the anchor's later siblings; text that does not open with a bullet, read by the same grammar (#5160 Phase 2a: consecutive lines are one paragraph block, a blank line separates blocks, `*` bullets nest by their content column; a heading owning its section is pinned by the mock's own tests, since `#` is a token separator here); a `blocks` input whose two-line block stays ONE block and whose depth-1 entry nests under it; #5160 D4 splices, a paste into the anchor's text (`splice`): mid-block with the first block's child following the anchor's own and `after` ending the last block, a one-block paste that only edits the anchor, `blocks` into an empty block, a first block joined after text as the text it was pasted as (marker, checkbox and property line kept as text, the anchor's own properties untouched), and a last block that is code, after which the text after the cursor is a block of its own; and the refusals. One paste carries page names (#5160 N4): `[[project plan]]` links the seeded `Project Plan` by case, `[[RM]]` links `Roadmap` by its alias, and `[[TWIN]]` ties between `Twin` and `twin` and stays text; a created page's fresh ULID would land in the content where the relabel does not reach, and no content carries `#`, which the command-leg row tokens split on, so creation and the tag rules are pinned by the Rust tests and `reference-tokens.vectors.json` instead; a checkbox after the bullet is the block's `todo_state` on both sides (#5160 D6: in text, in HTML-paste blocks, and in the whole alphabet), while a property line, and a marker after text, both sides keep as text. The returns pin every created row in document order. Seed: S1 (Home) > S2 (the anchor), S3, S4 > S5 (purged by an op), S6 > S7, S8 (empty), S9, S10, S11 (Project Plan), S12 (Roadmap, alias `rm` set by an op), S13 (Twin), S14 (twin). Re-author `expected` / `expected_ops` via CONFORMANCE_UPDATE=1.",
   "expected": {
     "block_tags": [],
     "blocks": [
@@ -63,7 +63,7 @@
         "id": "B6",
         "page_id": "B1",
         "parent_id": "B1",
-        "position": 12,
+        "position": 17,
         "priority": null,
         "scheduled_date": null,
         "todo_state": null
@@ -89,7 +89,7 @@
         "id": "B8",
         "page_id": "B1",
         "parent_id": "B1",
-        "position": 15,
+        "position": 20,
         "priority": null,
         "scheduled_date": null,
         "todo_state": null
@@ -102,7 +102,7 @@
         "id": "B9",
         "page_id": "B1",
         "parent_id": "B1",
-        "position": 17,
+        "position": 22,
         "priority": null,
         "scheduled_date": null,
         "todo_state": null
@@ -115,7 +115,7 @@
         "id": "B10",
         "page_id": "B1",
         "parent_id": "B1",
-        "position": 19,
+        "position": 24,
         "priority": null,
         "scheduled_date": null,
         "todo_state": null
@@ -284,7 +284,7 @@
         "id": "B23",
         "page_id": "B1",
         "parent_id": "B1",
-        "position": 11,
+        "position": 16,
         "priority": null,
         "scheduled_date": null,
         "todo_state": null
@@ -304,10 +304,88 @@
       },
       {
         "block_type": "content",
-        "content": "under first",
+        "content": "open task",
         "deleted_at": null,
         "due_date": null,
         "id": "B25",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 14,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": "TODO"
+      },
+      {
+        "block_type": "content",
+        "content": "finished task",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B26",
+        "page_id": "B1",
+        "parent_id": "B25",
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": "DONE"
+      },
+      {
+        "block_type": "content",
+        "content": "- plain item",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B27",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 15,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "wip",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B28",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 11,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": "DOING"
+      },
+      {
+        "block_type": "content",
+        "content": "dropped",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B29",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 12,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": "CANCELLED"
+      },
+      {
+        "block_type": "content",
+        "content": "shouted",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B30",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 13,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": "DONE"
+      },
+      {
+        "block_type": "content",
+        "content": "under first",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B31",
         "page_id": "B1",
         "parent_id": "B6",
         "position": 2,
@@ -320,46 +398,7 @@
         "content": "second",
         "deleted_at": null,
         "due_date": null,
-        "id": "B26",
-        "page_id": "B1",
-        "parent_id": "B1",
-        "position": 13,
-        "priority": null,
-        "scheduled_date": null,
-        "todo_state": null
-      },
-      {
-        "block_type": "content",
-        "content": "Last here",
-        "deleted_at": null,
-        "due_date": null,
-        "id": "B27",
-        "page_id": "B1",
-        "parent_id": "B1",
-        "position": 14,
-        "priority": null,
-        "scheduled_date": null,
-        "todo_state": null
-      },
-      {
-        "block_type": "content",
-        "content": "two",
-        "deleted_at": null,
-        "due_date": null,
-        "id": "B28",
-        "page_id": "B1",
-        "parent_id": "B1",
-        "position": 16,
-        "priority": null,
-        "scheduled_date": null,
-        "todo_state": null
-      },
-      {
-        "block_type": "content",
-        "content": "Eggsworld",
-        "deleted_at": null,
-        "due_date": null,
-        "id": "B29",
+        "id": "B32",
         "page_id": "B1",
         "parent_id": "B1",
         "position": 18,
@@ -369,23 +408,23 @@
       },
       {
         "block_type": "content",
-        "content": "```\ncode\n```",
+        "content": "Last here",
         "deleted_at": null,
         "due_date": null,
-        "id": "B30",
+        "id": "B33",
         "page_id": "B1",
         "parent_id": "B1",
-        "position": 20,
+        "position": 19,
         "priority": null,
         "scheduled_date": null,
         "todo_state": null
       },
       {
         "block_type": "content",
-        "content": "world",
+        "content": "two",
         "deleted_at": null,
         "due_date": null,
-        "id": "B31",
+        "id": "B34",
         "page_id": "B1",
         "parent_id": "B1",
         "position": 21,
@@ -395,10 +434,49 @@
       },
       {
         "block_type": "content",
+        "content": "Eggsworld",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B35",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 23,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "```\ncode\n```",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B36",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 25,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "world",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B37",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 26,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
         "content": "see [[00000000000000000000000S11]] [[00000000000000000000000S12]] [[TWIN]]",
         "deleted_at": null,
         "due_date": null,
-        "id": "B32",
+        "id": "B38",
         "page_id": "B1",
         "parent_id": "B1",
         "position": 2,
@@ -408,7 +486,7 @@
       }
     ],
     "op_log_digest": {
-      "count": 25,
+      "count": 36,
       "ops": [
         {
           "op_type": "delete_block"
@@ -445,6 +523,39 @@
         },
         {
           "op_type": "create_block"
+        },
+        {
+          "op_type": "create_block"
+        },
+        {
+          "op_type": "set_todo_state"
+        },
+        {
+          "op_type": "create_block"
+        },
+        {
+          "op_type": "set_todo_state"
+        },
+        {
+          "op_type": "create_block"
+        },
+        {
+          "op_type": "create_block"
+        },
+        {
+          "op_type": "set_todo_state"
+        },
+        {
+          "op_type": "create_block"
+        },
+        {
+          "op_type": "set_todo_state"
+        },
+        {
+          "op_type": "create_block"
+        },
+        {
+          "op_type": "set_todo_state"
         },
         {
           "op_type": "edit_block"
@@ -490,13 +601,13 @@
     "page_links": [
       {
         "kind": "page_link",
-        "source_id": "B32",
+        "source_id": "B38",
         "source_page_id": "B1",
         "target_id": "B11"
       },
       {
         "kind": "page_link",
-        "source_id": "B32",
+        "source_id": "B38",
         "source_page_id": "B1",
         "target_id": "B12"
       }
@@ -545,12 +656,32 @@
     {
       "code": null,
       "error": null,
+      "name": "paste_html_task_items_read_the_checkbox",
+      "returns": [
+        "B25#block_type=content#content=open task#parent_id=B1#position=10",
+        "B26#block_type=content#content=finished task#parent_id=B25#position=1",
+        "B27#block_type=content#content=- plain item#parent_id=B1#position=11"
+      ]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "paste_text_reads_every_checkbox",
+      "returns": [
+        "B28#block_type=content#content=wip#parent_id=B1#position=10",
+        "B29#block_type=content#content=dropped#parent_id=B1#position=11",
+        "B30#block_type=content#content=shouted#parent_id=B1#position=12"
+      ]
+    },
+    {
+      "code": null,
+      "error": null,
       "name": "paste_into_a_blocks_text_splices_the_blocks_at_the_cursor",
       "returns": [
-        "B6#block_type=content#content=splice first#parent_id=B1#position=11",
-        "B25#block_type=content#content=under first#parent_id=B6#position=2",
-        "B26#block_type=content#content=second#parent_id=B1#position=12",
-        "B27#block_type=content#content=Last here#parent_id=B1#position=13"
+        "B6#block_type=content#content=splice first#parent_id=B1#position=16",
+        "B31#block_type=content#content=under first#parent_id=B6#position=2",
+        "B32#block_type=content#content=second#parent_id=B1#position=17",
+        "B33#block_type=content#content=Last here#parent_id=B1#position=18"
       ]
     },
     {
@@ -566,8 +697,8 @@
       "error": null,
       "name": "paste_blocks_into_an_empty_block_replaces_it",
       "returns": [
-        "B8#block_type=content#content=one#parent_id=B1#position=14",
-        "B28#block_type=content#content=two#parent_id=B1#position=15"
+        "B8#block_type=content#content=one#parent_id=B1#position=19",
+        "B34#block_type=content#content=two#parent_id=B1#position=20"
       ]
     },
     {
@@ -575,8 +706,8 @@
       "error": null,
       "name": "paste_after_text_joins_the_first_block_as_the_text_it_was_pasted_as",
       "returns": [
-        "B9#block_type=content#content=Hello 1. [ ] Buy milk\nnote:: soon#parent_id=B1#position=16",
-        "B29#block_type=content#content=Eggsworld#parent_id=B1#position=17"
+        "B9#block_type=content#content=Hello 1. [ ] Buy milk\nnote:: soon#parent_id=B1#position=21",
+        "B35#block_type=content#content=Eggsworld#parent_id=B1#position=22"
       ]
     },
     {
@@ -584,9 +715,9 @@
       "error": null,
       "name": "paste_ending_in_code_puts_the_text_after_the_cursor_in_a_block_of_its_own",
       "returns": [
-        "B10#block_type=content#content=Hello First#parent_id=B1#position=18",
-        "B30#block_type=content#content=```\ncode\n```#parent_id=B1#position=19",
-        "B31#block_type=content#content=world#parent_id=B1#position=20"
+        "B10#block_type=content#content=Hello First#parent_id=B1#position=23",
+        "B36#block_type=content#content=```\ncode\n```#parent_id=B1#position=24",
+        "B37#block_type=content#content=world#parent_id=B1#position=25"
       ]
     },
     {
@@ -606,7 +737,7 @@
       "error": null,
       "name": "paste_resolves_page_names_in_the_anchors_space",
       "returns": [
-        "B32#block_type=content#content=see [[00000000000000000000000S11]] [[00000000000000000000000S12]] [[TWIN]]#parent_id=B1#position=2"
+        "B38#block_type=content#content=see [[00000000000000000000000S11]] [[00000000000000000000000S12]] [[TWIN]]#parent_id=B1#position=2"
       ]
     },
     {
@@ -695,6 +826,45 @@
       "command": "paste_blocks",
       "comment": "HTML-paste blocks are created verbatim: the two-line code block stays ONE block, and the depth-1 entry nests under it.",
       "name": "paste_blocks_input_keeps_a_multi_line_block_whole",
+      "via": "command"
+    },
+    {
+      "args": {
+        "anchorBlockId": "S4",
+        "input": {
+          "blocks": [
+            {
+              "content": "- [ ] open task",
+              "depth": 0
+            },
+            {
+              "content": "- [x] finished task",
+              "depth": 1
+            },
+            {
+              "content": "- plain item",
+              "depth": 0
+            }
+          ],
+          "kind": "blocks"
+        }
+      },
+      "command": "paste_blocks",
+      "comment": "#5160 D6 — HTML paste sends a task list item as `- [ ] text`: the checkbox is the block's `todo_state` and leaves its text with the `- `, nested or not; a plain item is verbatim.",
+      "name": "paste_html_task_items_read_the_checkbox",
+      "via": "command"
+    },
+    {
+      "args": {
+        "anchorBlockId": "S4",
+        "input": {
+          "kind": "text",
+          "text": "- [/] wip\n- [-] dropped\n- [X] shouted"
+        }
+      },
+      "command": "paste_blocks",
+      "comment": "#5160 D6 — pasted text reads the whole checkbox alphabet: `[/]` DOING, `[-]` CANCELLED, `[X]` DONE.",
+      "name": "paste_text_reads_every_checkbox",
       "via": "command"
     },
     {

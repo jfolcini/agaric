@@ -77,6 +77,7 @@ import { t } from '@/lib/i18n'
 import { tipTapShortcutMap } from '@/lib/keyboard-config'
 import { logger } from '@/lib/logger'
 import { curatedLowlight } from '@/lib/lowlight-curated'
+import type { TodoState } from '@/lib/task-states'
 
 const suggestionPluginKeys = [
   atTagPickerPluginKey,
@@ -558,8 +559,8 @@ export interface RovingEditorOptions {
   searchSlashCommands?: (query: string) => PickerItem[] | Promise<PickerItem[]>
   /** Execute a selected slash command. */
   onSlashCommand?: (item: PickerItem) => void
-  /** Called when checkbox syntax (- [ ] or - [x]) is detected during typing. */
-  onCheckbox?: ((state: 'TODO' | 'DONE') => void) | null
+  /** Called when a checkbox (`[ ]`, `[/]`, `[x]`, `[-]`, after `- ` or bare) is typed at the block's start. */
+  onCheckbox?: ((state: TodoState) => void) | null
   /** Called when the block-level `1. ` / `- ` list-marker syntax is detected during typing (#4552). */
   onListStyle?: ((style: 'bullet' | 'ordered') => void) | null
   /** Return property keys matching query (for :: picker). */
@@ -901,9 +902,9 @@ export function useRovingEditor(options: RovingEditorOptions = {}): RovingEditor
           return merged
         },
       }),
-      // oxlint-disable-next-line react/refs -- the ref is read inside a TipTap `.configure` closure that TipTap invokes at edit/paste/render time, never during this render; handing a ref to a consumer that defers the read is the intended use — `onCheckboxRef` fires when a typed markdown checkbox pattern (`[ ]`/`[x]`) completes; see #4406
+      // oxlint-disable-next-line react/refs -- the ref is read inside a TipTap `.configure` closure that TipTap invokes at edit/paste/render time, never during this render; handing a ref to a consumer that defers the read is the intended use — `onCheckboxRef` fires when a typed markdown checkbox pattern (`[ ]`, `[/]`, `[x]`, `[-]`) completes; see #4406
       CheckboxInputRule.configure({
-        onCheckbox: (state: 'TODO' | 'DONE') => onCheckboxRef.current?.(state),
+        onCheckbox: (state: TodoState) => onCheckboxRef.current?.(state),
       }),
       // #4552 slice 2 — block-level `1. ` / `- ` list-marker syntax. Its
       // bullet rule excludes a leading `[` precisely so it never competes

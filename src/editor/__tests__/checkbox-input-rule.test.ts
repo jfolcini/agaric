@@ -37,89 +37,79 @@ describe('CheckboxInputRule extension', () => {
   })
 })
 
-describe('Checkbox regex patterns', () => {
-  const todoRegex = /^- \[ \] $/
-  const doneRegex = /^- \[[xX]\] $/
+/** The extension's two rules: the direct `- [ ] ` one, then the bare `[ ] ` one. */
+function rulesOf(onCheckbox: ((state: string) => void) | null) {
+  const ext = CheckboxInputRule.configure({ onCheckbox })
+  const rules = ext.config.addInputRules?.call({ options: ext.options } as any)
+  const direct = rules?.[0]
+  const bare = rules?.[1]
+  if (!direct || !bare) throw new Error('the extension has two rules')
+  return { direct, bare, count: rules.length }
+}
 
-  it('TODO regex matches "- [ ] "', () => {
-    expect(todoRegex.test('- [ ] ')).toBe(true)
+describe('Checkbox rule patterns (#5160 D6)', () => {
+  const { direct, bare } = rulesOf(null)
+  const directRe = direct.find as RegExp
+  const bareRe = bare.find as RegExp
+
+  it('the direct rule matches every checkbox of the alphabet after `- `', () => {
+    for (const marker of [' ', '/', 'x', 'X', '-']) {
+      expect(directRe.test(`- [${marker}] `)).toBe(true)
+      expect(bareRe.test(`- [${marker}] `)).toBe(false)
+    }
   })
 
-  it('DONE regex matches "- [x] "', () => {
-    expect(doneRegex.test('- [x] ')).toBe(true)
+  it('the bare rule matches every checkbox of the alphabet at the start', () => {
+    for (const marker of [' ', '/', 'x', 'X', '-']) {
+      expect(bareRe.test(`[${marker}] `)).toBe(true)
+      expect(directRe.test(`[${marker}] `)).toBe(false)
+    }
   })
 
-  it('DONE regex matches "- [X] "', () => {
-    expect(doneRegex.test('- [X] ')).toBe(true)
-  })
-
-  it('TODO regex does not match "- []"', () => {
-    expect(todoRegex.test('- []')).toBe(false)
-  })
-
-  it('TODO regex does not match "- [ ]x"', () => {
-    expect(todoRegex.test('- [ ]x')).toBe(false)
-  })
-
-  it('DONE regex does not match "[x]"', () => {
-    expect(doneRegex.test('[x]')).toBe(false)
-  })
-
-  it('TODO regex does not match partial "- [ ]" (no trailing space)', () => {
-    expect(todoRegex.test('- [ ]')).toBe(false)
-  })
-
-  it('DONE regex does not match partial "- [x]" (no trailing space)', () => {
-    expect(doneRegex.test('- [x]')).toBe(false)
-  })
-
-  it('TODO regex does not match with leading text', () => {
-    expect(todoRegex.test('text - [ ] ')).toBe(false)
-  })
-
-  it('DONE regex does not match with leading text', () => {
-    expect(doneRegex.test('text - [x] ')).toBe(false)
+  it('neither matches an unknown marker, a missing space, or leading text', () => {
+    for (const text of [
+      '- []',
+      '- [ ]x',
+      '- [ ]',
+      '- [?] ',
+      'text - [ ] ',
+      '[ ]',
+      '[?] ',
+      'x [x] ',
+    ]) {
+      expect(directRe.test(text)).toBe(false)
+      expect(bareRe.test(text)).toBe(false)
+    }
   })
 })
 
 describe('CheckboxInputRule input rules', () => {
-  it('extension has exactly 4 input rules (2 direct `- [ ] ` + 2 bullet-unwrap `[ ] `)', () => {
-    const ext = CheckboxInputRule.configure({ onCheckbox: null })
-    const rules = ext.config.addInputRules?.call({ options: ext.options } as any)
-    expect(rules).toHaveLength(4)
+  it('extension has exactly 2 input rules (direct `- [ ] ` and bare `[ ] `)', () => {
+    expect(rulesOf(null).count).toBe(2)
   })
 
-  it('TODO handler calls onCheckbox with TODO', () => {
-    const onCheckbox = vi.fn()
-    const ext = CheckboxInputRule.configure({ onCheckbox })
-    const rules = ext.config.addInputRules?.call({ options: ext.options } as any)
-    const todoRule = rules?.[0]
-    const mockState = { tr: { delete: vi.fn() } }
-    const mockRange = { from: 1, to: 7 }
-    todoRule?.handler({
-      state: mockState,
-      range: mockRange,
-      match: '- [ ] '.match(/^- \[ \] $/) as RegExpMatchArray,
-    } as unknown as Parameters<NonNullable<typeof todoRule>['handler']>[0])
-    expect(mockState.tr.delete).toHaveBeenCalledWith(1, 7)
-    expect(onCheckbox).toHaveBeenCalledWith('TODO')
-  })
-
-  it('DONE handler calls onCheckbox with DONE', () => {
-    const onCheckbox = vi.fn()
-    const ext = CheckboxInputRule.configure({ onCheckbox })
-    const rules = ext.config.addInputRules?.call({ options: ext.options } as any)
-    const doneRule = rules?.[1]
-    const mockState = { tr: { delete: vi.fn() } }
-    const mockRange = { from: 1, to: 7 }
-    doneRule?.handler({
-      state: mockState,
-      range: mockRange,
-      match: '- [x] '.match(/^- \[[xX]\] $/) as RegExpMatchArray,
-    } as unknown as Parameters<NonNullable<typeof doneRule>['handler']>[0])
-    expect(mockState.tr.delete).toHaveBeenCalledWith(1, 7)
-    expect(onCheckbox).toHaveBeenCalledWith('DONE')
-  })
+  it.each([
+    ['- [ ] ', 'TODO'],
+    ['- [/] ', 'DOING'],
+    ['- [x] ', 'DONE'],
+    ['- [X] ', 'DONE'],
+    ['- [-] ', 'CANCELLED'],
+  ])(
+    'the direct handler of %j deletes the trigger and calls onCheckbox with %s',
+    (typed, state) => {
+      const onCheckbox = vi.fn()
+      const { direct } = rulesOf(onCheckbox)
+      const mockState = { tr: { delete: vi.fn() } }
+      const mockRange = { from: 1, to: 7 }
+      direct.handler({
+        state: mockState,
+        range: mockRange,
+        match: typed.match(direct.find as RegExp) as RegExpMatchArray,
+      } as unknown as Parameters<typeof direct.handler>[0])
+      expect(mockState.tr.delete).toHaveBeenCalledWith(1, 7)
+      expect(onCheckbox).toHaveBeenCalledWith(state)
+    },
+  )
 })
 
 // ── Real-editor integration ─────────────────────────────────────────────
@@ -157,10 +147,7 @@ describe('CheckboxInputRule real-editor integration', () => {
    * we can drive Ctrl+Z (`editor.commands.undo()`) tests, and CodeBlock
    * so we can verify the rule does NOT fire inside code blocks.
    */
-  function buildEditor(
-    onCheckbox: ((state: 'TODO' | 'DONE') => void) | null,
-    initialText = '',
-  ): Editor {
+  function buildEditor(onCheckbox: ((state: string) => void) | null, initialText = ''): Editor {
     return new Editor({
       element: document.createElement('div'),
       extensions: [
@@ -226,6 +213,60 @@ describe('CheckboxInputRule real-editor integration', () => {
     expect(onCheckbox).toHaveBeenCalledTimes(1)
     expect(onCheckbox).toHaveBeenCalledWith('DONE')
     expect(editor.state.doc.child(0).textContent).toBe('')
+  })
+
+  it.each([
+    ['- [/] ', 'DOING'],
+    ['- [-] ', 'CANCELLED'],
+  ])('typing %j fires onCheckbox(%s) (#5160 P9)', async (typed, state) => {
+    const onCheckbox = vi.fn()
+    editor = buildEditor(onCheckbox)
+    editor.commands.insertContent(typed, { applyInputRules: true })
+    await flushInputRule()
+
+    expect(onCheckbox).toHaveBeenCalledTimes(1)
+    expect(onCheckbox).toHaveBeenCalledWith(state)
+    expect(editor.state.doc.child(0).textContent).toBe('')
+  })
+
+  it.each([
+    ['[ ] ', 'TODO'],
+    ['[/] ', 'DOING'],
+    ['[X] ', 'DONE'],
+    ['[-] ', 'CANCELLED'],
+  ])(
+    'a bare %j at the start of the block fires onCheckbox(%s), as in the buffer (X11)',
+    async (typed, state) => {
+      const onCheckbox = vi.fn()
+      editor = buildEditor(onCheckbox)
+      editor.commands.insertContent(typed, { applyInputRules: true })
+      await flushInputRule()
+
+      expect(onCheckbox).toHaveBeenCalledTimes(1)
+      expect(onCheckbox).toHaveBeenCalledWith(state)
+      expect(editor.state.doc.child(0).textContent).toBe('')
+    },
+  )
+
+  it('a bare "[ ] " at the start of a LATER paragraph of the block stays literal', async () => {
+    const onCheckbox = vi.fn()
+    editor = new Editor({
+      element: document.createElement('div'),
+      extensions: [Document, Paragraph, Text, History, CheckboxInputRule.configure({ onCheckbox })],
+      content: {
+        type: 'doc',
+        content: [
+          { type: 'paragraph', content: [{ type: 'text', text: 'first' }] },
+          { type: 'paragraph' },
+        ],
+      },
+    })
+    editor.commands.focus('end')
+    editor.commands.insertContent('[ ] ', { applyInputRules: true })
+    await flushInputRule()
+
+    expect(onCheckbox).not.toHaveBeenCalled()
+    expect(editor.state.doc.child(1).textContent).toBe('[ ] ')
   })
 
   it('typing "- [ ] " mid-line does NOT trigger the rule (regex anchors at start of textblock)', async () => {
@@ -372,7 +413,7 @@ describe('CheckboxInputRule — typed path under BulletList shadowing (#1494)', 
   })
 
   function buildEditor(
-    onCheckbox: ((state: 'TODO' | 'DONE') => void) | null,
+    onCheckbox: ((state: string) => void) | null,
     content: Array<Record<string, unknown>> = [{ type: 'paragraph' }],
   ): Editor {
     return new Editor({
@@ -464,13 +505,42 @@ describe('CheckboxInputRule — typed path under BulletList shadowing (#1494)', 
     expect(editor.getJSON()).toEqual({ type: 'doc', content: [{ type: 'paragraph' }] })
   })
 
-  it('bare "[ ] " (no dash) in a plain paragraph stays literal and does not fire', async () => {
+  it('typing "- [/] " and "- [-] " char-by-char fires DOING and CANCELLED (#5160 P9)', async () => {
+    for (const [typed, state] of [
+      ['- [/] ', 'DOING'],
+      ['- [-] ', 'CANCELLED'],
+    ] as const) {
+      const onCheckbox = vi.fn()
+      editor?.destroy()
+      editor = buildEditor(onCheckbox)
+      typeChars(editor, typed)
+      await flush()
+      expect(onCheckbox, typed).toHaveBeenCalledTimes(1)
+      expect(onCheckbox, typed).toHaveBeenCalledWith(state)
+      expect(editor.getJSON(), typed).toEqual({ type: 'doc', content: [{ type: 'paragraph' }] })
+    }
+  })
+
+  it('bare "[ ] " (no dash) typed at the start of a plain paragraph fires TODO (X11)', async () => {
     const onCheckbox = vi.fn()
     editor = buildEditor(onCheckbox)
     typeChars(editor, '[ ] ')
     await flush()
+    expect(onCheckbox).toHaveBeenCalledTimes(1)
+    expect(onCheckbox).toHaveBeenCalledWith('TODO')
+    expect(editor.state.doc.child(0).textContent).toBe('')
+  })
+
+  it('"[ ] " typed mid-paragraph stays literal', async () => {
+    const onCheckbox = vi.fn()
+    editor = buildEditor(onCheckbox, [
+      { type: 'paragraph', content: [{ type: 'text', text: 'note ' }] },
+    ])
+    editor.commands.focus('end')
+    typeChars(editor, '[ ] ')
+    await flush()
     expect(onCheckbox).not.toHaveBeenCalled()
-    expect(editor.state.doc.child(0).textContent).toBe('[ ] ')
+    expect(editor.state.doc.child(0).textContent).toBe('note [ ] ')
   })
 
   it('"[ ] " typed inside a real multi-item bullet list does NOT unwrap or fire', async () => {

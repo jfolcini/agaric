@@ -11,6 +11,7 @@
 
 import { base64UrlToUtf8 } from '@/lib/base64url'
 import { compareNocase, compareUtf8Bytes, foldAsciiUppercase } from '@/lib/sqlite-collation'
+import { TASK_STATE_TO_MARKER } from '@/lib/task-states'
 import { blocksHandlers, parseOutline } from '@/lib/tauri-mock/handlers/blocks'
 import {
   type PageMetaRow,
@@ -154,9 +155,16 @@ function isBlockId(word: string): boolean {
   return ULID_RE.test(word) || blocks.has(word)
 }
 
-/** A source buffer's blocks ({@link parseOutline}), each trailing ` ^id` split off. */
+/**
+ * A source buffer's blocks ({@link parseOutline}), each trailing ` ^id` split
+ * off. The save models no task checkboxes, so one `parseOutline` read goes
+ * back into the text it was read from.
+ */
 function parseSourceBuffer(source: string): SourceBullet[] {
-  return parseOutline(source).map(({ content, depth }) => {
+  return parseOutline(source).map(({ content: text, depth, todoState }) => {
+    const content = todoState
+      ? `[${TASK_STATE_TO_MARKER[todoState]}]${text === '' ? '' : ` ${text}`}`
+      : text
     const match = SOURCE_ANCHOR_RE.exec(content)
     const word = match?.[1]
     return match && word !== undefined && isBlockId(word)
@@ -1294,7 +1302,8 @@ export const pagesHandlers = {
   //     that title is the title, not a block (#5160 S6); any other heading is
   //     ordinary content.
   //   - Blocks: the mock's block grammar (`parseOutline` in blocks.ts): one
-  //     block per list item of any marker, heading and paragraph.
+  //     block per list item of any marker, heading and paragraph, a checkbox
+  //     after the marker as the block's `todo_state` (#5160 D6).
   //   - Names: `[[Page]]` and `#tag` resolve in the target space through
   //     `resolveInboundNames` (#5160 N4), and a file whose title names an
   //     empty page of the space fills that page (D12).
@@ -1389,7 +1398,8 @@ export const pagesHandlers = {
     // Pre-compute the content blocks so we know `blocks_total` before emitting
     // `started` (the real backend reports the parser's count up front so the UI
     // can render a determinate bar from the very first event).
-    const parsedLines = parseOutline(lines.join('\n')).map((block) => block.content)
+    const parsed = parseOutline(lines.join('\n'))
+    const parsedLines = parsed.map((block) => block.content)
     const blocksTotal = parsedLines.length
 
     emit({ kind: 'started', page_title: pageTitle, blocks_total: blocksTotal })
@@ -1406,9 +1416,11 @@ export const pagesHandlers = {
 
     let blocksCreated = 0
     let position = 0
-    for (const trimmed of contentLines) {
+    for (const [i, trimmed] of contentLines.entries()) {
       const blockId = fakeId()
       const block = makeBlock(blockId, 'content', trimmed, pageId, position)
+      // A checkbox after the bullet is the block's task state (#5160 D6).
+      block['todo_state'] = parsed[i]?.todoState ?? null
       blocks.set(blockId, block)
       blocksCreated++
       position++
