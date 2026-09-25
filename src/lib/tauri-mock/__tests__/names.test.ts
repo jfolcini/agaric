@@ -121,6 +121,19 @@ describe('paste_blocks resolves names in the anchor’s space (#5160 N4)', () =>
     expect(tags.map((b) => b['content'])).toEqual(['Work', 'fresh'])
   })
 
+  it('stores a link label unless it is the title, and reads the Logseq form (#5160 D9)', () => {
+    const rows = paste(
+      ANCHOR,
+      '- [[Project Plan|the plan]] [[project plan|Project Plan]] [see it]([[Roadmap]]) [[Fresh|new]]',
+    )
+    expect(rows.map((r) => r.block_type)).toEqual(['page', 'content'])
+    const fresh = rows[0] as Row
+    expect(fresh.content).toBe('Fresh')
+    expect(rows[1]?.content).toBe(
+      `[[${PLAN}|the plan]] [[${PLAN}]] [[${ROADMAP}|see it]] [[${fresh.id}|new]]`,
+    )
+  })
+
   it('leaves every name as text when the anchor is in no space', () => {
     const rows = paste(NO_SPACE_ANCHOR, '- see [[Project Plan]] #work')
     expect(rows.map((r) => [r.block_type, r.content])).toEqual([

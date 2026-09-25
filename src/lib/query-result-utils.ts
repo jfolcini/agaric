@@ -79,7 +79,8 @@ function isSyntheticTitle(resolved: string): boolean {
  * inside backticks to reach. Anything cheaper (counting backticks) would be a
  * second, differently-wrong parser.
  */
-const INLINE_REF_PATTERN = /\[\[([^\]]{26})\]\]|\(\(([^)]{26})\)\)|#\[([^\]]{26})\]/g
+const INLINE_REF_PATTERN =
+  /\[\[([^\]|]{26})(?:\|([^\]\n]*))?\]\]|\(\(([^)]{26})\)\)|#\[([^\]]{26})\]/g
 
 /**
  * Replace each inline reference in `content` with the title its target
@@ -113,9 +114,11 @@ function resolveInlineRefs(
   if (!resolveRefTitle) return content
   return content.replace(
     INLINE_REF_PATTERN,
-    (match: string, link?: string, ref?: string, tag?: string): string => {
+    (match: string, link?: string, label?: string, ref?: string, tag?: string): string => {
       const id = link ?? ref ?? tag
       if (id === undefined || !ULID_RE.test(id)) return match
+      // A labelled link shows its label (#5160 D9), so the name carries it too.
+      if (label) return label
       return resolveRefTitle(id) || match
     },
   )

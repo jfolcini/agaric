@@ -41,7 +41,7 @@ export interface UseBacklinkResolutionResult {
 // block whose only outbound reference was a `((`-inserted block ref never
 // resolved here even though `fetchAndCacheLinks` (the block-tree scanner)
 // already covered it — the two scanners drifting on token shape.
-const ULID_RE = /(?:\[\[|\(\()([0-9A-Z]{26})(?:\]\]|\)\))/g
+const ULID_RE = /(?:\[\[|\(\()([0-9A-Z]{26})(?:\|[^\]\n]*)?(?:\]\]|\)\))/g
 const TAG_RE = /#\[([0-9A-Z]{26})\]/g
 
 /** Collect every [[ULID]], ((ULID)), and #[ULID] token id present in the groups' content. */

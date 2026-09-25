@@ -175,8 +175,11 @@ export interface ResolveAndInsertPickerTokenOptions {
    * must stay as typed (an ambiguous name, #5160 N4).
    */
   matchItem: (items: PickerItem[], text: string) => PickerItem | undefined | null
-  /** Builds the TipTap content descriptor for the resolved id. */
-  tokenFor: (id: string) => Record<string, unknown>
+  /**
+   * Builds the TipTap content descriptor for the resolved id; `item` is the
+   * matched picker item, absent on the create path.
+   */
+  tokenFor: (id: string, item?: PickerItem) => Record<string, unknown>
   /** Optional "no match, create new" branch — returns the new resolved id. */
   onCreate?: ((text: string) => Promise<string>) | undefined
   /** Component name passed to `logger.warn` (e.g. `'BlockLinkPicker'`). */
@@ -239,7 +242,7 @@ export async function resolveAndInsertPickerToken({
         insertPlainAtCursor()
         return
       }
-      editor.chain().focus().insertContentAt(pos, tokenFor(exactMatch.id)).run()
+      editor.chain().focus().insertContentAt(pos, tokenFor(exactMatch.id, exactMatch)).run()
     } else if (exactMatch === undefined && onCreate) {
       // Bail BEFORE the create IPC — minting a page/tag whose token can no
       // longer be inserted would leave an orphan entity behind.

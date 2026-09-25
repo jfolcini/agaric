@@ -129,12 +129,16 @@ pub fn strip_for_fts_with_maps(
         })
         .to_string();
 
-    // Step 5: Replace page links
+    // Step 5: Replace page links with the label the reader sees (#5160 D9),
+    // else the page's title
     result = PAGE_LINK_RE
-        .replace_all(&result, |caps: &regex::Captures| {
-            let ulid = &caps[1];
-            page_titles.get(ulid).cloned().unwrap_or_default()
-        })
+        .replace_all(
+            &result,
+            |caps: &regex::Captures| match crate::cache::page_link_label(caps) {
+                Some(label) => label.to_string(),
+                None => page_titles.get(&caps[1]).cloned().unwrap_or_default(),
+            },
+        )
         .to_string();
 
     // Step 6: Unescape backslash sequences (\* -> *, \` -> `, \~ -> ~, \= -> =)

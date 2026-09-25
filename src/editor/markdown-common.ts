@@ -19,6 +19,14 @@ const WS_RE = /\s/
 export const ULID_RE = /^[0-9A-Z]{26}$/
 
 /**
+ * The stored text of a page link: `[[ULID]]`, or `[[ULID|label]]` (#5160 D9).
+ * Shared so the serializer and the parser's plain-text revert write one form.
+ */
+export function blockLinkToken(id: string, label?: string): string {
+  return label ? `[[${id}|${label}]]` : `[[${id}]]`
+}
+
+/**
  * Indentation of ONE list-nesting level (#1513). Shared because the two halves
  * must agree exactly: the serializer prefixes every non-leading child of a list
  * item with it, and the parser recognizes a nested block by it and dedents by

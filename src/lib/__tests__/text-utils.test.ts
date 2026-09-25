@@ -23,6 +23,12 @@ describe('truncateContent', () => {
     expect(truncateContent('See [[My Page]] for details')).toBe('See My Page for details')
   })
 
+  it('reads a [[x|label]] link as its label (#5160 D9)', () => {
+    expect(truncateContent('See [[01ARZ3NDEKTSV4RRFFQ69G5FAV|the plan]] now')).toBe(
+      'See the plan now',
+    )
+  })
+
   it('strips markdown chars #*_~`', () => {
     expect(truncateContent('# Hello **world** _foo_ ~bar~ `code`')).toBe(
       ' Hello world foo bar code',

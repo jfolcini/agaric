@@ -847,6 +847,40 @@ async fn block_links_basic_reindex() {
     );
 }
 
+/// #5160 D9 — a labelled `[[ULID|label]]` link is an edge to the ULID, so
+/// backlinks see it whether or not it carries a label.
+#[tokio::test]
+async fn block_links_index_a_labelled_page_link() {
+    let (pool, _dir) = test_pool().await;
+
+    insert_block(&pool, "01HZ00000000000000000000AB", "page", "Target").await;
+    insert_block(
+        &pool,
+        "01HZ0000000000000000000SRC",
+        "content",
+        "See [[01HZ00000000000000000000AB|the target]]",
+    )
+    .await;
+
+    reindex_block_links(&pool, "01HZ0000000000000000000SRC")
+        .await
+        .unwrap();
+
+    let rows: Vec<(String, String)> =
+        sqlx::query_as("SELECT target_id, kind FROM block_links WHERE source_id = ?")
+            .bind("01HZ0000000000000000000SRC")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        rows,
+        [(
+            "01HZ00000000000000000000AB".to_string(),
+            "page_link".to_string()
+        )]
+    );
+}
+
 #[tokio::test]
 async fn block_links_incremental_diff_adds_and_removes() {
     let (pool, _dir) = test_pool().await;

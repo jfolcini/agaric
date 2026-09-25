@@ -992,3 +992,133 @@ describe('LinkEditPopover', () => {
     })
   })
 })
+
+// ── #5160 D9 — opened on a selected [[page]] chip, the popover edits its label ──
+
+describe('LinkEditPopover on a block_link chip (#5160 D9)', () => {
+  const onClose = vi.fn()
+  const setBlockLinkLabel = vi.fn(() => ({ run: mockRun }))
+  const setNodeSelection = vi.fn(() => ({ setBlockLinkLabel }))
+  const focus = vi.fn(() => ({ setNodeSelection }))
+
+  function chipEditor(label: string | null, at = 3) {
+    return {
+      chain: () => ({ focus }),
+      commands: { focus: mockCommandsFocus },
+      schema: { marks: { link: mockLinkMarkType } },
+      state: {
+        tr: mockTr,
+        selection: { from: at, to: at + 1 },
+        doc: {
+          nodeAt: (pos: number) =>
+            pos === at ? { type: { name: 'block_link' }, attrs: { id: 'PAGE', label } } : null,
+        },
+      },
+      view: { dispatch: mockDispatch },
+    } as never
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
+
+  it('shows one label field, pre-filled from the chip, and no URL field', () => {
+    render(
+      <LinkEditPopover
+        editor={chipEditor('the plan')}
+        isEditing={false}
+        initialUrl=""
+        initialLabel=""
+        onClose={onClose}
+        savedSelection={{ from: 3, to: 4 }}
+      />,
+    )
+    const input = screen.getByTestId('block-link-label-input')
+    expect(input).toHaveValue('the plan')
+    expect(input).toHaveFocus()
+    expect(input).toHaveAttribute('placeholder', t('linkEdit.blockLinkLabelPlaceholder'))
+    expect(screen.queryByTestId('link-url-input')).not.toBeInTheDocument()
+    expect(screen.getByLabelText(t('linkEdit.label'))).toBe(input)
+  })
+
+  it('Update applies the typed label to the chip through setBlockLinkLabel and closes', () => {
+    render(
+      <LinkEditPopover
+        editor={chipEditor(null)}
+        isEditing={false}
+        initialUrl=""
+        initialLabel=""
+        onClose={onClose}
+        savedSelection={{ from: 3, to: 4 }}
+      />,
+    )
+    fireEvent.change(screen.getByTestId('block-link-label-input'), {
+      target: { value: 'see the plan' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: t('linkEdit.update') }))
+    expect(setNodeSelection).toHaveBeenCalledWith(3)
+    expect(setBlockLinkLabel).toHaveBeenCalledWith('see the plan')
+    expect(mockRun).toHaveBeenCalled()
+    expect(onClose).toHaveBeenCalled()
+  })
+
+  it('Enter applies and Escape closes without applying', () => {
+    render(
+      <LinkEditPopover
+        editor={chipEditor('old')}
+        isEditing={false}
+        initialUrl=""
+        initialLabel=""
+        onClose={onClose}
+        savedSelection={{ from: 3, to: 4 }}
+      />,
+    )
+    const input = screen.getByTestId('block-link-label-input')
+    fireEvent.change(input, { target: { value: 'new' } })
+    fireEvent.keyDown(input, { key: 'Escape' })
+    expect(setBlockLinkLabel).not.toHaveBeenCalled()
+    expect(onClose).toHaveBeenCalledTimes(1)
+    fireEvent.keyDown(input, { key: 'Enter' })
+    expect(setBlockLinkLabel).toHaveBeenCalledWith('new')
+  })
+
+  it('reads the live selection when no range was saved, and is the URL form off a chip', () => {
+    const { unmount } = render(
+      <LinkEditPopover
+        editor={chipEditor('x', 7)}
+        isEditing={false}
+        initialUrl=""
+        initialLabel=""
+        onClose={onClose}
+      />,
+    )
+    expect(screen.getByTestId('block-link-label-input')).toHaveValue('x')
+    unmount()
+    render(
+      <LinkEditPopover
+        editor={chipEditor('x', 7)}
+        isEditing={false}
+        initialUrl=""
+        initialLabel=""
+        onClose={onClose}
+        savedSelection={{ from: 1, to: 2 }}
+      />,
+    )
+    expect(screen.queryByTestId('block-link-label-input')).not.toBeInTheDocument()
+    expect(screen.getByTestId('link-url-input')).toBeInTheDocument()
+  })
+
+  it('passes axe audit', async () => {
+    const { container } = render(
+      <LinkEditPopover
+        editor={chipEditor('the plan')}
+        isEditing={false}
+        initialUrl=""
+        initialLabel=""
+        onClose={onClose}
+        savedSelection={{ from: 3, to: 4 }}
+      />,
+    )
+    expect(await axe(container)).toHaveNoViolations()
+  })
+})

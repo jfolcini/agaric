@@ -166,6 +166,12 @@ describe('serialize', () => {
       )
     })
 
+    it('block_link with a label writes [[ULID|label]] (#5160 D9)', () => {
+      expect(
+        serialize(doc(paragraph(blockLink('01ARZ3NDEKTSV4RRFFQ69G5FAV', 'see #this|too')))),
+      ).toBe('[[01ARZ3NDEKTSV4RRFFQ69G5FAV|see #this|too]]')
+    })
+
     it('token adjacent to text', () => {
       expect(
         serialize(
@@ -661,6 +667,33 @@ describe('parse', () => {
     it('block_link', () => {
       expect(parse('[[01ARZ3NDEKTSV4RRFFQ69G5FAV]]')).toEqual(
         doc(paragraph(blockLink('01ARZ3NDEKTSV4RRFFQ69G5FAV'))),
+      )
+    })
+
+    it('block_link with a label (#5160 D9): the label runs to the closing ]]', () => {
+      expect(parse('see [[01ARZ3NDEKTSV4RRFFQ69G5FAV|the plan]] now')).toEqual(
+        doc(
+          paragraph(
+            text('see '),
+            blockLink('01ARZ3NDEKTSV4RRFFQ69G5FAV', 'the plan'),
+            text(' now'),
+          ),
+        ),
+      )
+      expect(parse('[[01ARZ3NDEKTSV4RRFFQ69G5FAV|a|b #c]]')).toEqual(
+        doc(paragraph(blockLink('01ARZ3NDEKTSV4RRFFQ69G5FAV', 'a|b #c'))),
+      )
+    })
+
+    it('an empty label is no label, and a ] inside one makes the token text', () => {
+      expect(parse('[[01ARZ3NDEKTSV4RRFFQ69G5FAV|]]')).toEqual(
+        doc(paragraph(blockLink('01ARZ3NDEKTSV4RRFFQ69G5FAV'))),
+      )
+      expect(parse('[[01ARZ3NDEKTSV4RRFFQ69G5FAV|a]b]]')).toEqual(
+        doc(paragraph(text('[[01ARZ3NDEKTSV4RRFFQ69G5FAV|a]b]]'))),
+      )
+      expect(parse('[[01ARZ3NDEKTSV4RRFFQ69G5FAV|open')).toEqual(
+        doc(paragraph(text('[[01ARZ3NDEKTSV4RRFFQ69G5FAV|open'))),
       )
     })
 

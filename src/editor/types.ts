@@ -63,9 +63,13 @@ export interface TagRefNode {
   readonly attrs: { readonly id: string }
 }
 
+/**
+ * A `[[ULID]]` page link, or `[[ULID|label]]` (#5160 D9): the label is shown
+ * in place of the page's title and is omitted, never empty, when there is none.
+ */
 export interface BlockLinkNode {
   readonly type: 'block_link'
-  readonly attrs: { readonly id: string }
+  readonly attrs: { readonly id: string; readonly label?: string }
 }
 
 export interface BlockRefNode {

@@ -13,7 +13,7 @@
  * Zero external dependencies. Moved verbatim from the original monolith.
  */
 
-import { ULID_RE } from '@/editor/markdown-common'
+import { blockLinkToken, ULID_RE } from '@/editor/markdown-common'
 import type {
   BlockLevelNode,
   BlockLinkNode,
@@ -179,6 +179,28 @@ export function remaining(s: Scanner): number {
   return s.src.length - s.pos
 }
 
+/**
+ * `[[ULID]]`, or `[[ULID|label]]` (#5160 D9): the label runs to the first `]`,
+ * which must close the token, and holds no newline; an empty one is no label.
+ */
+function tryConsumeBlockLink(s: Scanner): BlockLinkNode | null {
+  const candidate = s.src.slice(s.pos + 2, s.pos + 28)
+  if (candidate.length !== 26 || !ULID_RE.test(candidate)) return null
+  if (s.src[s.pos + 28] === ']' && s.src[s.pos + 29] === ']') {
+    s.pos += 30
+    return { type: 'block_link', attrs: { id: candidate } }
+  }
+  if (s.src[s.pos + 28] !== '|') return null
+  const close = s.src.indexOf(']', s.pos + 29)
+  if (close < 0 || s.src[close + 1] !== ']') return null
+  const label = s.src.slice(s.pos + 29, close)
+  if (label.includes('\n')) return null
+  s.pos = close + 2
+  return label === ''
+    ? { type: 'block_link', attrs: { id: candidate } }
+    : { type: 'block_link', attrs: { id: candidate, label } }
+}
+
 export function tryConsumeToken(s: Scanner): TagRefNode | BlockLinkNode | BlockRefNode | null {
   // Tag ref: #[ULID]
   if (peek(s) === '#' && peek(s, 1) === '[' && remaining(s) >= 29) {
@@ -188,18 +210,10 @@ export function tryConsumeToken(s: Scanner): TagRefNode | BlockLinkNode | BlockR
       return { type: 'tag_ref', attrs: { id: candidate } }
     }
   }
-  // Block link: [[ULID]]
+  // Block link: [[ULID]] or [[ULID|label]]
   if (peek(s) === '[' && peek(s, 1) === '[' && remaining(s) >= 30) {
-    const candidate = s.src.slice(s.pos + 2, s.pos + 28)
-    if (
-      candidate.length === 26 &&
-      ULID_RE.test(candidate) &&
-      s.src[s.pos + 28] === ']' &&
-      s.src[s.pos + 29] === ']'
-    ) {
-      s.pos += 30
-      return { type: 'block_link', attrs: { id: candidate } }
-    }
+    const link = tryConsumeBlockLink(s)
+    if (link) return link
   }
   // Block ref: ((ULID))
   if (peek(s) === '(' && peek(s, 1) === '(' && remaining(s) >= 30) {
@@ -460,7 +474,7 @@ export function nodeToPlainText(node: InlineNode): string {
       return `#[${node.attrs.id}]`
     }
     case 'block_link': {
-      return `[[${node.attrs.id}]]`
+      return blockLinkToken(node.attrs.id, node.attrs.label)
     }
     case 'block_ref': {
       return `((${node.attrs.id}))`

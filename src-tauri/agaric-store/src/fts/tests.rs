@@ -184,6 +184,18 @@ fn strip_page_link_resolved() {
     );
 }
 
+/// #5160 D9 — a labelled link indexes its label, the text the reader sees,
+/// not the page's title.
+#[test]
+fn strip_labelled_page_link_indexes_the_label() {
+    let mut page_titles = HashMap::new();
+    page_titles.insert(PAGE_ULID.to_string(), "My Page".to_string());
+
+    let input = format!("see [[{PAGE_ULID}|the plan]] and [[{PAGE_ULID}|]]");
+    let result = strip_for_fts_with_maps(&input, &HashMap::new(), &page_titles);
+    assert_eq!(result, "see the plan and My Page");
+}
+
 #[test]
 fn strip_unknown_tag_ref_becomes_empty() {
     let input = format!("task #[{UNKNOWN_ULID}]");

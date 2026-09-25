@@ -9,7 +9,12 @@ import Text from '@tiptap/extension-text'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { BlockLink } from '@/editor/extensions/block-link'
-import { BlockLinkPicker } from '@/editor/extensions/block-link-picker'
+import {
+  BlockLinkPicker,
+  blockLinkToken,
+  parseTypedLink,
+} from '@/editor/extensions/block-link-picker'
+import type { PickerItem } from '@/editor/SuggestionList'
 
 /** Helper: create a chainProxy mock that tracks deleteRange and insertContentAt calls. */
 function createChainProxy() {
@@ -939,5 +944,161 @@ describe('BlockLinkPicker real-editor chain result', () => {
     expect($from.parent.type.name).toBe('paragraph')
     expect($from.parentOffset).toBe(paragraph.content.size)
     expect(editor.state.selection.from).toBe(doc.content.size - 1)
+  })
+})
+
+// ── #5160 D9 / D10 / N6: labels and anchors in a typed [[…]] ────────────────
+
+describe('parseTypedLink and blockLinkToken (#5160 D9, D10)', () => {
+  it('splits the label off the first pipe and the base off the first hash', () => {
+    expect(parseTypedLink('Page')).toEqual({ name: 'Page', base: 'Page', label: undefined })
+    expect(parseTypedLink(' Page | a|b ')).toEqual({ name: 'Page', base: 'Page', label: 'a|b' })
+    expect(parseTypedLink('Page|')).toEqual({ name: 'Page', base: 'Page', label: undefined })
+    expect(parseTypedLink('A#B|see')).toEqual({ name: 'A#B', base: 'A', label: 'see' })
+    expect(parseTypedLink('#heading')).toBeNull()
+    expect(parseTypedLink('   ')).toBeNull()
+  })
+
+  it('stores the label unless it is empty or the title', () => {
+    expect(blockLinkToken('ID', 'plan', 'Plan')).toEqual({
+      type: 'block_link',
+      attrs: { id: 'ID', label: 'plan' },
+    })
+    expect(blockLinkToken('ID', 'Plan', 'Plan')).toEqual({
+      type: 'block_link',
+      attrs: { id: 'ID' },
+    })
+    expect(blockLinkToken('ID', undefined, 'Plan')).toEqual({
+      type: 'block_link',
+      attrs: { id: 'ID' },
+    })
+  })
+})
+
+describe('BlockLinkPicker input rule — labels and anchors (#5160 D9, N6)', () => {
+  type OnCreate = (label: string) => Promise<string>
+  function run(match: [string, string], items: PickerItem[], onCreate?: OnCreate) {
+    const insertContentAtCalls: Array<{ pos: number; content: unknown }> = []
+    const chainProxy: Record<string, unknown> = {
+      focus: () => chainProxy,
+      insertContent: (_c: unknown) => chainProxy,
+      insertContentAt: (pos: number, content: unknown) => {
+        insertContentAtCalls.push({ pos, content })
+        return chainProxy
+      },
+      run: () => true,
+    }
+    const mockEditor = { chain: () => chainProxy, state: { doc: { content: { size: 1000 } } } }
+    const mockItems = vi.fn(async (query: string): Promise<PickerItem[]> =>
+      items.filter((item) =>
+        (item.title ?? item.label).toLowerCase().includes(query.toLowerCase()),
+      ),
+    )
+    const ext = BlockLinkPicker.configure({ items: mockItems, onCreate })
+    const rules = (
+      ext.config.addInputRules as unknown as (
+        ...args: unknown[]
+      ) => [{ handler: (...a: unknown[]) => unknown }]
+    ).call({ options: ext.options, editor: mockEditor })
+    rules[0].handler({ state: { tr: { delete: vi.fn() } }, range: { from: 1, to: 20 }, match })
+    return { insertContentAtCalls, mockItems }
+  }
+
+  it('[[Page|label]] links the page and stores the label', async () => {
+    const { insertContentAtCalls } = run(
+      ['[[Plan|the plan]]', 'Plan|the plan'],
+      [{ id: 'PLAN', label: 'Plan', title: 'Plan' }],
+    )
+    await vi.waitFor(() => expect(insertContentAtCalls.length).toBe(1))
+    expect(insertContentAtCalls[0]).toEqual({
+      pos: 1,
+      content: { type: 'block_link', attrs: { id: 'PLAN', label: 'the plan' } },
+    })
+  })
+
+  it('[[Page|Page]] drops the label that equals the title, case folded to the real title', async () => {
+    const { insertContentAtCalls } = run(
+      ['[[plan|Plan]]', 'plan|Plan'],
+      [{ id: 'PLAN', label: 'Plan', title: 'Plan' }],
+    )
+    await vi.waitFor(() => expect(insertContentAtCalls.length).toBe(1))
+    expect(insertContentAtCalls[0]?.content).toEqual({ type: 'block_link', attrs: { id: 'PLAN' } })
+  })
+
+  it('[[New|label]] creates the base page, not one titled with the label', async () => {
+    const onCreate = vi.fn<OnCreate>().mockResolvedValue('NEW')
+    const { insertContentAtCalls } = run(['[[New|label]]', 'New|label'], [], onCreate)
+    await vi.waitFor(() => expect(insertContentAtCalls.length).toBe(1))
+    expect(onCreate).toHaveBeenCalledWith('New')
+    expect(insertContentAtCalls[0]?.content).toEqual({
+      type: 'block_link',
+      attrs: { id: 'NEW', label: 'label' },
+    })
+  })
+
+  it('[[Page#Heading]] never creates Page#Heading: it links Page, creating it when absent (N6)', async () => {
+    const onCreate = vi.fn<OnCreate>().mockResolvedValue('PAGE')
+    const { insertContentAtCalls, mockItems } = run(
+      ['[[Page#Heading]]', 'Page#Heading'],
+      [],
+      onCreate,
+    )
+    await vi.waitFor(() => expect(insertContentAtCalls.length).toBe(1))
+    expect(onCreate).toHaveBeenCalledTimes(1)
+    expect(onCreate).toHaveBeenCalledWith('Page')
+    expect(mockItems).toHaveBeenCalledWith('Page#Heading')
+    expect(mockItems).toHaveBeenCalledWith('Page')
+    expect(insertContentAtCalls[0]?.content).toEqual({ type: 'block_link', attrs: { id: 'PAGE' } })
+  })
+
+  it('[[Page#Heading]] links the existing Page and drops the anchor', async () => {
+    const onCreate = vi.fn<OnCreate>()
+    const { insertContentAtCalls } = run(
+      ['[[Page#Heading|see]]', 'Page#Heading|see'],
+      [{ id: 'PAGE', label: 'Page', title: 'Page' }],
+      onCreate,
+    )
+    await vi.waitFor(() => expect(insertContentAtCalls.length).toBe(1))
+    expect(onCreate).not.toHaveBeenCalled()
+    expect(insertContentAtCalls[0]?.content).toEqual({
+      type: 'block_link',
+      attrs: { id: 'PAGE', label: 'see' },
+    })
+  })
+
+  it('[[C# Notes]] links the page titled with the whole text first (D10)', async () => {
+    const onCreate = vi.fn<OnCreate>()
+    const { insertContentAtCalls } = run(
+      ['[[C# Notes]]', 'C# Notes'],
+      [
+        { id: 'C', label: 'C', title: 'C' },
+        { id: 'CSHARP', label: 'C# Notes', title: 'C# Notes' },
+      ],
+      onCreate,
+    )
+    await vi.waitFor(() => expect(insertContentAtCalls.length).toBe(1))
+    expect(onCreate).not.toHaveBeenCalled()
+    expect(insertContentAtCalls[0]?.content).toEqual({
+      type: 'block_link',
+      attrs: { id: 'CSHARP' },
+    })
+  })
+
+  it('[[#heading]] names no page and is left alone', () => {
+    const onCreate = vi.fn<OnCreate>()
+    const deleteSpy = vi.fn()
+    const ext = BlockLinkPicker.configure({ items: () => [], onCreate })
+    const rules = (
+      ext.config.addInputRules as unknown as (
+        ...args: unknown[]
+      ) => [{ handler: (...a: unknown[]) => unknown }]
+    ).call({ options: ext.options, editor: {} })
+    rules[0].handler({
+      state: { tr: { delete: deleteSpy } },
+      range: { from: 1, to: 12 },
+      match: ['[[#heading]]', '#heading'],
+    })
+    expect(deleteSpy).not.toHaveBeenCalled()
+    expect(onCreate).not.toHaveBeenCalled()
   })
 })

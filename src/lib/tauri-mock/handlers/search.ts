@@ -157,14 +157,18 @@ function capIndexedText(s: string): string {
  *
  *  1. strip inline markup to a fixed point ({@link stripInlineMarkup});
  *  2. resolve `#[ULID]` tag references to the tag's name;
- *  3. resolve `[[ULID]]` page links to the page's title;
+ *  3. resolve `[[ULID]]` page links to the page's title, or `[[ULID|label]]` to its label;
  *  4. unescape `\*` `\`` `\~` `\=`, NFC-normalise, then cap the indexed bytes
  *     ({@link capIndexedText}) — `src-tauri/agaric-store/src/fts/strip.rs:141-162`.
  */
 export function stripForFts(content: string | null | undefined): string {
   let result = stripInlineMarkup(content ?? '')
   result = result.replace(FTS_TAG_REF_RE, (_match, ulid: string) => ftsRefName(ulid, 'tag'))
-  result = result.replace(linkTokenRe(), (_match, ulid: string) => ftsRefName(ulid, 'page'))
+  // A labelled link indexes its label, the text the reader sees (#5160 D9).
+  result = result.replace(
+    linkTokenRe(),
+    (_match, ulid: string, label?: string) => label || ftsRefName(ulid, 'page'),
+  )
   result = result
     .replaceAll('\\*', '*')
     .replaceAll('\\`', '`')

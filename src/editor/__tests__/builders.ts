@@ -72,8 +72,10 @@ export function tagRef(id: string): TagRefNode {
   return { type: 'tag_ref', attrs: { id } }
 }
 
-export function blockLink(id: string): BlockLinkNode {
-  return { type: 'block_link', attrs: { id } }
+export function blockLink(id: string, label?: string): BlockLinkNode {
+  return label === undefined
+    ? { type: 'block_link', attrs: { id } }
+    : { type: 'block_link', attrs: { id, label } }
 }
 
 export function hardBreak(): HardBreakNode {

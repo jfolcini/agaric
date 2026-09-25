@@ -50,8 +50,8 @@ import { requireActiveScope, toSpaceScope } from '@/lib/space-scope'
 import { useSpaceStore } from '@/stores/space'
 
 // ── ULID reference extraction (B-53) ──────────────────────────────────
-/** Matches [[ULID]], #[ULID], and ((ULID)) refs inside block content. */
-const ULID_REF_RE = /(?:\[\[|#\[|\(\()([0-9A-Z]{26})(?:\]\]|\]|\)\))/g
+/** Matches [[ULID]] (labelled or not, #5160 D9), #[ULID], and ((ULID)) refs inside block content. */
+const ULID_REF_RE = /(?:\[\[|#\[|\(\()([0-9A-Z]{26})(?:\|[^\]\n]*)?(?:\]\]|\]|\)\))/g
 
 /** Extract all ULID references from a string. */
 export function extractUlidRefs(text: string): string[] {

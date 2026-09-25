@@ -12,6 +12,8 @@
  *   - a `[[Page#anchor]]` token is the page titled `Page#anchor` when one
  *     exists (D10), else its page; the block anchors the backend resolves to
  *     `((ULID))` refs are not modelled;
+ *   - a `[[Page|label]]` token keeps its label as `[[id|label]]` unless the
+ *     label is the page's title (D9);
  *   - a tag is the smallest-id tag of the same normalised name, else created.
  *
  * Created pages come first, in name order, then tags, each with the
@@ -135,6 +137,11 @@ function createNamed(
   return row
 }
 
+/** `stored_page_link`: the label is kept unless it is the page's title (#5160 D9). */
+function pageRef(id: string, label: string | undefined): string {
+  return label && label !== blocks.get(id)?.['content'] ? `[[${id}|${label}]]` : `[[${id}]]`
+}
+
 /** Resolve the names `contents` write in `spaceId`, creating what no name matches. */
 export function resolveInboundNames(
   contents: readonly string[],
@@ -197,7 +204,7 @@ export function resolveInboundNames(
     for (const token of (scanned[i] ?? []).toReversed()) {
       const id = token.kind === 'page' ? pageIds.get(token.name) : tagIds.get(token.name)
       if (id === undefined) continue
-      const ref = token.kind === 'page' ? `[[${id}]]` : `#[${id}]`
+      const ref = token.kind === 'page' ? pageRef(id, token.label) : `#[${id}]`
       out = out.slice(0, token.start) + ref + out.slice(token.end)
     }
     return out

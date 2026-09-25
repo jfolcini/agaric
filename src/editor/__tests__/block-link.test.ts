@@ -2,13 +2,15 @@
  * Tests for the BlockLink extension.
  */
 
-import { Editor } from '@tiptap/core'
+import { Editor, type JSONContent } from '@tiptap/core'
 import Document from '@tiptap/extension-document'
 import Paragraph from '@tiptap/extension-paragraph'
 import Text from '@tiptap/extension-text'
 import { afterEach, describe, expect, it } from 'vitest'
 
 import { BlockLink } from '@/editor/extensions/block-link'
+import { parse, serialize } from '@/editor/markdown-serializer'
+import type { DocNode } from '@/editor/types'
 
 describe('BlockLink', () => {
   it('creates an extension with the correct name', () => {
@@ -151,5 +153,95 @@ describe('BlockLink broken link recovery', () => {
 
     expect(dom.getAttribute('title')).toBeNull()
     expect(dom.classList.contains('block-link-deleted')).toBe(false)
+  })
+})
+
+describe('BlockLink label (#5160 D9)', () => {
+  const ID = '01ARZ3NDEKTSV4RRFFQ69G5FAV'
+  let editor: Editor
+
+  afterEach(() => {
+    editor.destroy()
+  })
+
+  /** The attrs of the first paragraph's inline nodes, as `getJSON` reports them. */
+  function inlineAttrs(): Array<Record<string, unknown>> {
+    const inline = (editor.getJSON().content?.[0]?.content ?? []) as Array<{
+      attrs?: Record<string, unknown>
+    }>
+    return inline.map((node) => node.attrs ?? {})
+  }
+
+  function build(content: JSONContent[]): Editor {
+    editor = new Editor({
+      element: document.createElement('div'),
+      extensions: [
+        Document,
+        Paragraph,
+        Text,
+        BlockLink.configure({ resolveTitle: () => 'Quarterly Plan' }),
+      ],
+      content: { type: 'doc', content: [{ type: 'paragraph', content }] },
+    })
+    return editor
+  }
+
+  it('the chip shows the label in place of the title, with the title as its tooltip', () => {
+    build([{ type: 'block_link', attrs: { id: ID, label: 'the plan' } }])
+    const chip = editor.view.dom.querySelector('[data-testid="block-link-chip"]')
+    expect(chip?.textContent).toBe('the plan')
+    expect(chip?.getAttribute('title')).toBe('Quarterly Plan')
+    expect(chip?.getAttribute('data-label')).toBe('the plan')
+  })
+
+  it('an unlabelled chip shows the title and carries no data-label', () => {
+    build([{ type: 'block_link', attrs: { id: ID } }])
+    const chip = editor.view.dom.querySelector('[data-testid="block-link-chip"]')
+    expect(chip?.textContent).toBe('Quarterly Plan')
+    expect(chip?.hasAttribute('data-label')).toBe(false)
+  })
+
+  it('insertBlockLink stores a label only when given one', () => {
+    build([])
+    editor.commands.insertBlockLink(ID, 'the plan')
+    editor.commands.insertBlockLink(ID)
+    expect(inlineAttrs()).toEqual([
+      { id: ID, label: 'the plan' },
+      { id: ID, label: null },
+    ])
+  })
+
+  it('setBlockLinkLabel trims, drops an empty or title-equal label, and needs a selected chip', () => {
+    build([{ type: 'block_link', attrs: { id: ID } }])
+    const labelOf = () => inlineAttrs()[0]?.['label']
+    expect(editor.commands.setBlockLinkLabel('x')).toBe(false)
+    expect(labelOf()).toBeNull()
+
+    // Re-selected before each call: the node the update replaces the chip
+    // with is what the popover selects too (`LinkEditPopover`).
+    const set = (label: string) => {
+      editor.commands.setNodeSelection(1)
+      return editor.commands.setBlockLinkLabel(label)
+    }
+    expect(set('  the plan  ')).toBe(true)
+    expect(labelOf()).toBe('the plan')
+    expect(set('Quarterly Plan')).toBe(true)
+    expect(labelOf()).toBeNull()
+    set('again')
+    expect(labelOf()).toBe('again')
+    expect(set('   ')).toBe(true)
+    expect(labelOf()).toBeNull()
+  })
+
+  it('setBlockLinkLabel drops a ], which would end the stored token and leave it text', () => {
+    build([{ type: 'block_link', attrs: { id: ID } }])
+    editor.commands.setNodeSelection(1)
+    editor.commands.setBlockLinkLabel('[WIP] spec')
+    const stored = serialize(editor.getJSON() as DocNode)
+    expect(stored).toBe(`[[${ID}|[WIP spec]]`)
+    expect(parse(stored).content?.[0]).toEqual({
+      type: 'paragraph',
+      content: [{ type: 'block_link', attrs: { id: ID, label: '[WIP spec' } }],
+    })
   })
 })

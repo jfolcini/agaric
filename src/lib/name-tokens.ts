@@ -12,6 +12,9 @@
  * of backslashes, or, for a tag, inside a bare URL, a link destination or a
  * `[[…]]` link; a `#name` is a tag only when the name holds a non-digit and
  * the `#` follows a boundary, which `&` and `[` are not.
+ *
+ * A link body splits on its first `|` into the name and a label (#5160 D9),
+ * and Logseq's `[label]([[Page]])` is the same token.
  */
 
 export interface NameToken {
@@ -21,6 +24,8 @@ export interface NameToken {
   end: number
   /** The trimmed name the token resolves. */
   name: string
+  /** The trimmed label a `[[name|label]]` link shows, when it has one. */
+  label?: string
 }
 
 type Span = [start: number, end: number]
@@ -34,6 +39,8 @@ const BARE_TAG_RE = /(^|[^\p{L}\p{N}\p{M}_&[])#([\p{L}\p{N}_][\p{L}\p{N}\p{M}_/-
 const TAG_GUARD_RE = /[A-Za-z][A-Za-z0-9+.-]*:\/\/\S+|\]\([^)\n]*\)/g
 /** A canonical `[[ULID]]` body, which is already a ref and resolves nothing. */
 const ULID_RE = /^[0-9A-Z]{26}$/
+/** `LOGSEQ_LABELLED_LINK_RE`'s head, `[label](`, ending right before a `[[…]]` link. */
+const LOGSEQ_LABEL_HEAD_RE = /\[([^\]\n]*)\]\($/
 
 /** Whether `#name` names a tag: the name holds a non-digit. */
 export function isTagName(name: string): boolean {
@@ -82,17 +89,32 @@ export function scanNameTokens(content: string): NameToken[] {
   const code = inlineCodeSpans(content)
   const guards = [...code, ...spansOf(TAG_GUARD_RE, content)]
   const links: Span[] = []
-  for (const m of content.matchAll(PAGE_LINK_RE)) {
-    const start = m.index
-    const end = start + m[0].length
-    links.push([start, end])
+  const isToken = (start: number): boolean => {
     const before = content[start - 1]
-    if (inSpan(start, code) || before === '#' || before === '!' || isEscaped(content, start))
-      continue
+    return !inSpan(start, code) && before !== '#' && before !== '!' && !isEscaped(content, start)
+  }
+  for (const m of content.matchAll(PAGE_LINK_RE)) {
+    let start = m.index
+    let end = start + m[0].length
+    links.push([start, end])
     const body = m[1] ?? ''
-    const name = trimWhiteSpace(body)
-    if (name === '' || ULID_RE.test(body)) continue
-    tokens.push({ kind: 'page', start, end, name })
+    const pipe = body.indexOf('|')
+    const rawName = pipe < 0 ? body : body.slice(0, pipe)
+    const name = trimWhiteSpace(rawName)
+    let label = pipe < 0 ? '' : trimWhiteSpace(body.slice(pipe + 1))
+    // Logseq's `[label]([[Page]])` is one token when its own `[` is one.
+    const head = LOGSEQ_LABEL_HEAD_RE.exec(content.slice(0, start))
+    if (head && content[end] === ')' && isToken(start - head[0].length)) {
+      label = trimWhiteSpace(head[1] ?? '')
+      start -= head[0].length
+      end += 1
+    } else if (!isToken(start)) continue
+    // Untrimmed, as the backend's canonical regex reads the whole token: a
+    // padded ULID is a human name.
+    if (name === '' || ULID_RE.test(rawName)) continue
+    tokens.push(
+      label === '' ? { kind: 'page', start, end, name } : { kind: 'page', start, end, name, label },
+    )
   }
   for (const m of content.matchAll(MULTIWORD_TAG_RE)) {
     const start = m.index

@@ -526,6 +526,10 @@ async fn resolve_buffer_names(
         warnings,
     ))
     .await?;
+    // A label equal to its page's title is not stored (#5160 D9): the page's
+    // rendered titles cover the names a block held, the pass's the new ones.
+    let mut titles = data.page_titles.clone();
+    titles.extend(resolved.titles);
     for mut plan in plans {
         for (names, map, ids) in [
             (&plan.new.links, &mut plan.links, &resolved.links),
@@ -538,7 +542,7 @@ async fn resolve_buffer_names(
             );
         }
         let block = &mut buffer.blocks[plan.row];
-        block.content = rewrite_block_content_for_import(block, &plan.links, &plan.tags);
+        block.content = rewrite_block_content_for_import(block, &plan.links, &titles, &plan.tags);
     }
     Ok((tx, resolved.created))
 }
@@ -556,6 +560,8 @@ fn stored_contents(data: &PageExportData) -> HashMap<&str, &str> {
 #[derive(Default)]
 struct ResolvedNames {
     links: HashMap<String, String>,
+    /// Each linked page's title by id.
+    titles: HashMap<String, String>,
     tags: HashMap<String, String>,
     created: Vec<BlockRow>,
 }
@@ -594,6 +600,7 @@ async fn resolve_new_names(
         tx,
         ResolvedNames {
             links: links.page_links,
+            titles: links.titles,
             tags,
             created: ctx.created,
         },

@@ -141,8 +141,19 @@ const arbTextNode: fc.Arbitrary<TextNode> = fc.tuple(arbText, arbMarks).map(([te
 /** A tag_ref node. */
 const arbTagRef = arbUlid.map((id) => ({ type: 'tag_ref' as const, attrs: { id } }))
 
-/** A block_link node. */
-const arbBlockLink = arbUlid.map((id) => ({ type: 'block_link' as const, attrs: { id } }))
+/** A block_link label (#5160 D9): anything but `]` and a newline, never empty. */
+const arbLinkLabel = fc
+  .array(fc.constantFrom(...'ab |#[(*_ 0'.split('')), { minLength: 1, maxLength: 8 })
+  .map((chars) => chars.join(''))
+
+/** A block_link node, labelled or not. */
+const arbBlockLink = fc
+  .tuple(arbUlid, fc.option(arbLinkLabel, { nil: undefined }))
+  .map(([id, label]) =>
+    label === undefined
+      ? { type: 'block_link' as const, attrs: { id } }
+      : { type: 'block_link' as const, attrs: { id, label } },
+  )
 
 /** A block_ref node (atomic inline — no content). */
 const arbBlockRef = arbUlid.map((id) => ({
@@ -684,7 +695,11 @@ describe('property: content preservation', () => {
               expect(md).toContain(`#[${node.attrs.id}]`)
             }
             if (node.type === 'block_link') {
-              expect(md).toContain(`[[${node.attrs.id}]]`)
+              expect(md).toContain(
+                node.attrs.label
+                  ? `[[${node.attrs.id}|${node.attrs.label}]]`
+                  : `[[${node.attrs.id}]]`,
+              )
             }
           }
         }

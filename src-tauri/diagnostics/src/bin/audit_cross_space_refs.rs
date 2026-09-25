@@ -60,7 +60,8 @@ use sqlx::sqlite::{SqliteConnectOptions, SqlitePool, SqlitePoolOptions};
 // across the repo will find both copies.
 
 static ULID_LINK_RE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"(?:\[\[|\(\()([0-9A-Z]{26})(?:\]\]|\)\))").expect("invalid ULID link regex")
+    Regex::new(r"(?:\[\[|\(\()([0-9A-Z]{26})(?:\|[^\]\n]*)?(?:\]\]|\)\))")
+        .expect("invalid ULID link regex")
 });
 
 static TAG_REF_RE: LazyLock<Regex> =
@@ -965,13 +966,16 @@ mod tests {
         insert_page(&pool, PAGE_WORK, WORK, "W").await;
         insert_content_block(&pool, BLOCK_WORK, PAGE_WORK, "target body").await;
         insert_tag(&pool, TAG_GLOBAL, "shared", Some(WORK)).await;
-        // Source in Personal embeds tokens pointing at Work-space targets.
-        let content = format!("see [[{BLOCK_WORK}]] and (({BLOCK_WORK})) plus #[{TAG_GLOBAL}]");
+        // Source in Personal embeds tokens pointing at Work-space targets,
+        // one of them a labelled link (#5160 D9).
+        let content = format!(
+            "see [[{BLOCK_WORK}]] and (({BLOCK_WORK})) plus #[{TAG_GLOBAL}] or [[{BLOCK_WORK}|it]]"
+        );
         insert_content_block(&pool, BLOCK_PERSONAL, PAGE_PERSONAL, &content).await;
 
         let report = run_audit(&pool, 10).await.unwrap();
-        // 2 ULID-link tokens (`[[…]]` + `((…))`) + 1 tag-ref token.
-        assert_eq!(report.a4.count, 3, "expected 3 cross-space inline tokens");
+        // 3 ULID-link tokens (`[[…]]`, `((…))`, `[[…|label]]`) + 1 tag-ref token.
+        assert_eq!(report.a4.count, 4, "expected 4 cross-space inline tokens");
         assert_eq!(report.a1.count, 0);
         assert_eq!(report.a2.count, 0);
         assert_eq!(report.a3.count, 0);
@@ -979,6 +983,7 @@ mod tests {
         let joined = report.a4.examples.join("\n");
         assert!(joined.contains(&format!("[[{BLOCK_WORK}]]")));
         assert!(joined.contains(&format!("(({BLOCK_WORK}))")));
+        assert!(joined.contains(&format!("[[{BLOCK_WORK}|it]]")));
         assert!(joined.contains(&format!("#[{TAG_GLOBAL}]")));
     }
 

@@ -312,6 +312,17 @@ describe('RichContentRenderer', () => {
     expect(chip.textContent).toBe('My Page')
   })
 
+  it('a labelled block_link shows its label and keeps the title as tooltip (#5160 D9)', () => {
+    render(
+      renderRichContent(`[[${BLOCK_ID}|the plan]]`, {
+        resolveBlockTitle: () => 'Team/My Page',
+      }),
+    )
+    const chip = screen.getByTestId('block-link-chip')
+    expect(chip.textContent).toBe('the plan')
+    expect(chip).toHaveAttribute('title', 'Team/My Page')
+  })
+
   it('block_link click calls onNavigate', async () => {
     const onNavigate = vi.fn()
     const user = userEvent.setup()

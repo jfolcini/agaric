@@ -7,6 +7,9 @@
  *  - `t('linkEdit.apply')` + optional `t('linkEdit.remove')` button (when editing an existing link)
  *  - Enter applies, Escape cancels
  *  - URLs without a protocol scheme get `https://` prepended automatically
+ *
+ * Opened on a selected `[[page]]` chip (Ctrl+K, #5160 D9), it edits the
+ * chip's label instead: one field, applied through `setBlockLinkLabel`.
  */
 
 import type { Editor } from '@tiptap/react'
@@ -36,6 +39,23 @@ export interface LinkEditPopoverProps {
   savedSelection?: { from: number; to: number } | null
 }
 
+/** The `block_link` chip the selection is on, with its label, or `null`. */
+function selectedBlockLink(
+  editor: Editor,
+  savedSelection: { from: number; to: number } | null | undefined,
+): { pos: number; label: string } | null {
+  try {
+    const range = savedSelection ?? editor.state.selection
+    if (range.to !== range.from + 1) return null
+    const node = editor.state.doc.nodeAt(range.from)
+    if (!node || node.type.name !== 'block_link') return null
+    return { pos: range.from, label: (node.attrs['label'] as string | null) ?? '' }
+  } catch {
+    // A stale range, or a test double without a document.
+    return null
+  }
+}
+
 export function LinkEditPopover({
   editor,
   isEditing,
@@ -45,10 +65,17 @@ export function LinkEditPopover({
   savedSelection,
 }: LinkEditPopoverProps): React.ReactElement {
   const { t } = useTranslation()
+  const blockLink = selectedBlockLink(editor, savedSelection)
   const [url, setUrl] = useState(initialUrl)
-  const [label, setLabel] = useState(initialLabel)
+  const [label, setLabel] = useState(blockLink?.label ?? initialLabel)
   const [urlError, setUrlError] = useState<string | null>(null)
   const { fetch: fetchMeta } = useLinkMetadata()
+
+  const handleApplyBlockLinkLabel = useCallback(() => {
+    if (!blockLink) return
+    editor.chain().focus().setNodeSelection(blockLink.pos).setBlockLinkLabel(label).run()
+    onClose()
+  }, [blockLink, editor, label, onClose])
 
   const handleApply = useCallback(() => {
     const trimmedUrl = url.trim()
@@ -115,15 +142,48 @@ export function LinkEditPopover({
     (e: React.KeyboardEvent) => {
       if (e.key === 'Enter') {
         e.preventDefault()
-        handleApply()
+        if (blockLink) handleApplyBlockLinkLabel()
+        else handleApply()
       } else if (e.key === 'Escape') {
         e.preventDefault()
         editor.commands.focus()
         onClose()
       }
     },
-    [handleApply, editor, onClose],
+    [blockLink, handleApplyBlockLinkLabel, handleApply, editor, onClose],
   )
+
+  if (blockLink) {
+    return (
+      <div className="flex flex-col gap-3" data-testid="link-edit-popover">
+        <div className="flex flex-col gap-1">
+          <Label size="xs" htmlFor="block-link-label-input">
+            {t('linkEdit.label')}
+          </Label>
+          <Input
+            id="block-link-label-input"
+            type="text"
+            placeholder={t('linkEdit.blockLinkLabelPlaceholder')}
+            value={label}
+            onChange={(e) => setLabel(e.target.value)}
+            onKeyDown={handleKeyDown}
+            // oxlint-disable-next-line jsx-a11y/no-autofocus -- the popover opens on demand over the chip; the label is its one field
+            autoFocus
+            className="h-8 [@media(pointer:coarse)]:h-11 text-sm"
+            data-testid="block-link-label-input"
+          />
+        </div>
+        <Button
+          size="xs"
+          className="[@media(pointer:coarse)]:h-11 [@media(pointer:coarse)]:min-w-[44px]"
+          onPointerDown={(e) => e.preventDefault()}
+          onClick={handleApplyBlockLinkLabel}
+        >
+          {t('linkEdit.update')}
+        </Button>
+      </div>
+    )
+  }
 
   return (
     <div className="flex flex-col gap-3" data-testid="link-edit-popover">
