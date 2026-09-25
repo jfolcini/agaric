@@ -16,8 +16,8 @@ import { expect, getInvokeCalls, installIpcRecorder, openPage, test, waitForBoot
  *     package the app itself uses) to assert the namespace hierarchy round-trips.
  *  7. Import warning summary (#2707) — the mock's `import_markdown` handler always
  *     appends one representative parse warning (handlers.ts, "dev-preview mock:
- *     tags (#tag) and attachments are not imported"); assert the result panel's
- *     warnings heading + list render it.
+ *     attachments are not imported"); assert the result panel's warnings
+ *     heading + list render it.
  *
  * Seed data (tauri-mock.ts):
  *   PAGE_GETTING_STARTED ("Getting Started") — 5 child blocks, some with [[link]] and #[tag] tokens
@@ -279,8 +279,8 @@ test.describe('Import markdown', () => {
 
   // #2707 — the mock's `import_markdown` handler (handlers.ts) unconditionally
   // appends one representative parse warning to every successful import
-  // ("dev-preview mock: tags (#tag) and attachments are not imported (kept as
-  // literal text)"), so the result panel's warnings summary is exercisable on
+  // ("dev-preview mock: attachments are not imported (kept as literal text)";
+  // tags resolve since #5160 N4), so the result panel's warnings summary is exercisable on
   // ANY import — no special seeding required. This was never asserted despite
   // every other import test in this file uploading a file that triggers it.
   test('import result panel shows the warning count and message', async ({ page }) => {
@@ -308,7 +308,7 @@ test.describe('Import markdown', () => {
     await page.getByTestId('import-result-details').locator('summary').click()
     const warningItem = page.getByTestId('import-warning-item')
     await expect(warningItem).toBeVisible()
-    await expect(warningItem).toContainText('tags (#tag) and attachments are not imported')
+    await expect(warningItem).toContainText('attachments are not imported')
   })
 
   // #2707 — the mock also counts `key:: value` property lines into

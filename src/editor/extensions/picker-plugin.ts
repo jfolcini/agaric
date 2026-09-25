@@ -160,12 +160,21 @@ export interface ResolveAndInsertPickerTokenOptions {
   editor: Editor
   /** The text the user typed inside the trigger (e.g. `myTag`, `My Page`). */
   text: string
+  /**
+   * What goes back when `matchItem` says the name must stay as typed (`null`):
+   * the whole typed token, e.g. `[[My Page]]`. Defaults to `text`.
+   */
+  typed?: string | undefined
   /** Captured insertion offset (the original `range.from`). */
   insertPos: number
   /** Async items lookup. */
   items: (query: string) => PickerItem[] | Promise<PickerItem[]>
-  /** Per-picker exact-match predicate. Returns the matched item, or `undefined`. */
-  matchItem: (items: PickerItem[], text: string) => PickerItem | undefined
+  /**
+   * Per-picker exact-match predicate. Returns the matched item; `undefined`
+   * when nothing matches (create, when the picker can); `null` when the text
+   * must stay as typed (an ambiguous name, #5160 N4).
+   */
+  matchItem: (items: PickerItem[], text: string) => PickerItem | undefined | null
   /** Builds the TipTap content descriptor for the resolved id. */
   tokenFor: (id: string) => Record<string, unknown>
   /** Optional "no match, create new" branch — returns the new resolved id. */
@@ -179,6 +188,7 @@ export interface ResolveAndInsertPickerTokenOptions {
 export async function resolveAndInsertPickerToken({
   editor,
   text,
+  typed = text,
   insertPos,
   items,
   matchItem,
@@ -230,7 +240,7 @@ export async function resolveAndInsertPickerToken({
         return
       }
       editor.chain().focus().insertContentAt(pos, tokenFor(exactMatch.id)).run()
-    } else if (onCreate) {
+    } else if (exactMatch === undefined && onCreate) {
       // Bail BEFORE the create IPC — minting a page/tag whose token can no
       // longer be inserted would leave an orphan entity behind.
       if (isGone()) return
@@ -249,14 +259,19 @@ export async function resolveAndInsertPickerToken({
       }
       editor.chain().focus().insertContentAt(pos, tokenFor(newId)).run()
     } else {
-      // No match and no onCreate — re-insert as plain text
+      // No match and no onCreate — re-insert as plain text; an ambiguous name
+      // (#5160 N4) goes back exactly as typed.
       if (isGone()) return
       const pos = tracked.pos ?? insertPos
       if (isStale(pos)) {
         insertPlainAtCursor()
         return
       }
-      editor.chain().focus().insertContentAt(pos, text).run()
+      editor
+        .chain()
+        .focus()
+        .insertContentAt(pos, exactMatch === null ? typed : text)
+        .run()
     }
   } catch (err) {
     logger.warn(loggerComponent, errorMessage, { text }, err)

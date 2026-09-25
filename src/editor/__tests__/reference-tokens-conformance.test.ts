@@ -19,12 +19,14 @@ import { describe, expect, it } from 'vitest'
 
 import { parse } from '@/editor/markdown-parse'
 import type { DocNode, InlineNode, LinkMark } from '@/editor/types'
+import { scanNameTokens } from '@/lib/name-tokens'
 
 /** One piece of what the editor shows: `[kind, text]`. */
 type Piece = [kind: 'text' | 'tag' | 'page' | 'link', text: string]
 
 interface NameRuleCase {
   name: string
+  input: string
   transformed: string
   requestedPageNames: string[]
   requestedTagNames: string[]
@@ -32,10 +34,19 @@ interface NameRuleCase {
   finding?: string
 }
 
+/** A row of `cases`, the regex corpus; `isCode` rows are fenced blocks the scanner never sees. */
+interface ReferenceTokenCase {
+  name: string
+  input: string
+  isCode?: boolean
+  expected: { requestedPageNames: string[]; requestedTagNames: string[] }
+}
+
 interface Vectors {
   pageResolutions: Record<string, string>
   tagResolutions: Record<string, string>
   nameRuleCases: NameRuleCase[]
+  cases: ReferenceTokenCase[]
 }
 
 const VECTORS_PATH = path.resolve(
@@ -103,5 +114,39 @@ describe('name-rule vectors through the editor parse (#5160)', () => {
     if (!sidesAgree) {
       expect(row.finding, 'a row where the sides disagree names its finding').toBeDefined()
     }
+  })
+})
+
+/**
+ * The title the Rust reader of `nameRuleCases` looks up for a link text: the
+ * whole text when the fixture holds a page of that title (D10), else the text
+ * before its first `#`. The resolver's business, not the scanner's; `cases`
+ * pins the raw link text.
+ */
+function lookedUpTitle(name: string): string {
+  if (!name.includes('#') || name in vectors.pageResolutions) return name
+  return name.slice(0, name.indexOf('#')).trim()
+}
+
+/** The distinct names the scanner asks for, sorted, as `collect_inbound_*` returns them. */
+function scannedNames(input: string, kind: 'page' | 'tag', title = (n: string) => n): string[] {
+  const names = scanNameTokens(input).flatMap((t) =>
+    t.kind === kind ? [kind === 'page' ? title(t.name) : t.name] : [],
+  )
+  return [...new Set(names)].toSorted()
+}
+
+describe('name-rule vectors through the mock scanner (#5160)', () => {
+  it.each(vectors.nameRuleCases.map((row) => [row.name, row] as const))('%s', (_name, row) => {
+    expect(scannedNames(row.input, 'page', lookedUpTitle)).toEqual(
+      row.requestedPageNames.toSorted(),
+    )
+    expect(scannedNames(row.input, 'tag')).toEqual(row.requestedTagNames.toSorted())
+  })
+
+  const regexRows = vectors.cases.filter((row) => !row.isCode)
+  it.each(regexRows.map((row) => [row.name, row] as const))('%s', (_name, row) => {
+    expect(scannedNames(row.input, 'page')).toEqual(row.expected.requestedPageNames.toSorted())
+    expect(scannedNames(row.input, 'tag')).toEqual(row.expected.requestedTagNames.toSorted())
   })
 })

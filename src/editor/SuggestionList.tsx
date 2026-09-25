@@ -21,6 +21,11 @@ import { cn } from '@/lib/utils'
 export interface PickerItem {
   id: string
   label: string
+  /**
+   * A page's full title, namespace included, where `label` is its leaf. The
+   * `[[text]]` input rule matches on this (#5160 N4), never on the leaf.
+   */
+  title?: string
   /** When true, selecting this item creates a new page instead of linking to an existing one. */
   isCreate?: boolean
   /**

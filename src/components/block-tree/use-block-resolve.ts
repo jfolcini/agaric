@@ -255,7 +255,7 @@ function formatNamespacedLabel(title: string): {
  */
 function makePagePickerItem(id: string, title: string): PickerItem {
   const { label, breadcrumb } = formatNamespacedLabel(untitledOr(title))
-  return { id, label, icon: FileText, breadcrumb }
+  return { id, label, title, icon: FileText, breadcrumb }
 }
 
 /**

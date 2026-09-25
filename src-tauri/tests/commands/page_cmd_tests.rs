@@ -9955,9 +9955,8 @@ async fn import_wikilink_batch_resolution_preserves_semantics_2200() {
     insert_block(&pool, AMB2, "page", "Amb Page", None, Some(1)).await;
     assign_to_space(&pool, AMB1, TEST_SPACE_ID).await;
     assign_to_space(&pool, AMB2, TEST_SPACE_ID).await;
-    // A case-variant of the unique title, present with the EXACT case only.
-    // `[[uniq page]]` (lowercase) must NOT match `Uniq Page` — resolution is
-    // binary/case-sensitive — so it is treated as missing and CREATED.
+    // A case-variant of the unique title, present with the EXACT case only:
+    // `[[uniq page]]` resolves to `Uniq Page` (#5160 N4).
     agaric_store::cache::rebuild_page_ids(&pool).await.unwrap();
 
     let md = "- unique [[Uniq Page]]\n- ambiguous [[Amb Page]]\n- missing [[Fresh Page]]\n- casevariant [[uniq page]]";
@@ -10027,20 +10026,15 @@ async fn import_wikilink_batch_resolution_preserves_semantics_2200() {
         "missing wiki-link must create + rewrite to the new page ULID"
     );
 
-    // CASE-SENSITIVITY — `[[uniq page]]` (lowercase) does NOT match `Uniq Page`,
-    // so a DISTINCT lowercase page is created and the link points at it, never
-    // at the existing mixed-case `Uniq Page`.
-    let lower_id: String = sqlx::query_scalar(
-        "SELECT id FROM blocks WHERE block_type = 'page' AND content = 'uniq page' AND space_id = ?",
+    // CASE — `[[uniq page]]` is the unique case-insensitive match for
+    // `Uniq Page`, so it links there and creates nothing (#5160 N4).
+    let lower_pages: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM blocks WHERE block_type = 'page' AND content = 'uniq page'",
     )
-    .bind(TEST_SPACE_ID)
     .fetch_one(&pool)
     .await
-    .expect("case-variant title must be created as its own page (binary match)");
-    assert_ne!(
-        lower_id, UNIQUE,
-        "lowercase [[uniq page]] must NOT collapse onto mixed-case Uniq Page"
-    );
+    .unwrap();
+    assert_eq!(lower_pages, 0, "no lowercase twin is created");
     let case_content: String = sqlx::query_scalar(
         "SELECT content FROM blocks WHERE block_type = 'content' AND content LIKE 'casevariant%'",
     )
@@ -10049,8 +10043,8 @@ async fn import_wikilink_batch_resolution_preserves_semantics_2200() {
     .unwrap();
     assert_eq!(
         case_content,
-        format!("casevariant [[{lower_id}]]"),
-        "case-variant wiki-link must resolve to its own freshly-created page"
+        format!("casevariant [[{UNIQUE}]]"),
+        "case-variant wiki-link must resolve to the existing page"
     );
 
     mat.shutdown();
@@ -10168,6 +10162,303 @@ async fn import_export_namespace_and_wikilink_round_trip_1446() {
         "wiki-link must reverse-resolve to the same target ULID after round-trip; got {content:?}"
     );
 
+    mat.shutdown();
+}
+
+// ======================================================================
+// #5160 Phase 3a — how names resolve
+// ======================================================================
+
+/// One file imported into the test space through the real command path.
+async fn import_file(
+    pool: &SqlitePool,
+    mat: &Materializer,
+    dir: &std::path::Path,
+    name: &str,
+    md: &str,
+) -> agaric_engine::import::ImportResult {
+    let result = import_markdown_inner(
+        pool,
+        DEV,
+        mat,
+        dir,
+        md.into(),
+        Some(name.into()),
+        TEST_SPACE_ID.into(),
+        None,
+    )
+    .await
+    .unwrap();
+    settle(mat).await;
+    result
+}
+
+/// The live pages of the test space titled `title`, by id.
+async fn pages_titled(pool: &SqlitePool, title: &str) -> Vec<String> {
+    sqlx::query_scalar(
+        "SELECT id FROM blocks WHERE block_type = 'page' AND deleted_at IS NULL \
+         AND content = ? AND space_id = ? ORDER BY id",
+    )
+    .bind(title)
+    .bind(TEST_SPACE_ID)
+    .fetch_all(pool)
+    .await
+    .unwrap()
+}
+
+/// The one live content block whose text starts with `prefix`.
+async fn block_starting(pool: &SqlitePool, prefix: &str) -> String {
+    sqlx::query_scalar(
+        "SELECT content FROM blocks WHERE block_type = 'content' AND deleted_at IS NULL \
+         AND content LIKE ? || '%'",
+    )
+    .bind(prefix)
+    .fetch_one(pool)
+    .await
+    .unwrap()
+}
+
+/// N4 — `[[name]]` resolves to the exact title, else a unique case-insensitive
+/// title, else a unique alias, else a new page; a case tie is never guessed.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn import_resolves_a_name_by_exact_title_then_case_then_alias_then_creates() {
+    let (pool, dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let plan = dup_page(&pool, &mat, "Project Plan").await;
+    let roadmap = dup_page(&pool, &mat, "Roadmap").await;
+    set_page_aliases_inner(&pool, roadmap.as_str(), vec!["rm".into()])
+        .await
+        .unwrap();
+    let foo = dup_page(&pool, &mat, "Foo").await;
+    dup_page(&pool, &mat, "foo").await;
+    settle(&mat).await;
+
+    let result = import_file(
+        &pool,
+        &mat,
+        dir.path(),
+        "Notes.md",
+        "- exact [[Project Plan]]\n- folded [[project plan]]\n- alias [[RM]]\n\
+         - tie [[FOO]]\n- exactcase [[Foo]]\n- fresh [[Brand New]]",
+    )
+    .await;
+
+    for prefix in ["exact", "folded"] {
+        assert_eq!(
+            block_starting(&pool, prefix).await,
+            format!("{prefix} [[{plan}]]")
+        );
+    }
+    assert_eq!(
+        pages_titled(&pool, "project plan").await,
+        Vec::<String>::new()
+    );
+    assert_eq!(
+        block_starting(&pool, "alias").await,
+        format!("alias [[{roadmap}]]")
+    );
+    assert_eq!(block_starting(&pool, "tie").await, "tie [[FOO]]");
+    assert!(
+        result
+            .warnings
+            .iter()
+            .any(|w| w.contains("[[FOO]]") && w.contains("multiple")),
+        "{:?}",
+        result.warnings
+    );
+    assert_eq!(pages_titled(&pool, "FOO").await, Vec::<String>::new());
+    assert_eq!(
+        block_starting(&pool, "exactcase").await,
+        format!("exactcase [[{foo}]]"),
+        "the exact spelling picks between the two"
+    );
+    let fresh = pages_titled(&pool, "Brand New").await;
+    assert_eq!(fresh.len(), 1);
+    assert_eq!(
+        block_starting(&pool, "fresh").await,
+        format!("fresh [[{}]]", fresh[0])
+    );
+    mat.shutdown();
+}
+
+/// D12 — a folder import adopts the empty page an earlier file's link created,
+/// in either file order: one `B`, holding B's blocks, with A's link at it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn import_adopts_the_empty_page_a_link_created_in_either_file_order() {
+    let a = ("A.md", "- see [[B]]");
+    let b = ("B.md", "- b body");
+    for order in [[a, b], [b, a]] {
+        let (pool, dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+        ensure_test_space(&pool).await;
+        mark_block_as_space(&pool, TEST_SPACE_ID).await;
+        let mut warnings = Vec::new();
+        for (name, md) in order {
+            warnings.extend(
+                import_file(&pool, &mat, dir.path(), name, md)
+                    .await
+                    .warnings,
+            );
+        }
+
+        let b_pages = pages_titled(&pool, "B").await;
+        assert_eq!(b_pages.len(), 1, "order {order:?}: exactly one B");
+        let children: Vec<String> = sqlx::query_scalar(
+            "SELECT content FROM blocks WHERE parent_id = ? AND deleted_at IS NULL",
+        )
+        .bind(&b_pages[0])
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert_eq!(children, ["b body"], "order {order:?}: B holds B's blocks");
+        assert_eq!(
+            block_starting(&pool, "see").await,
+            format!("see [[{}]]", b_pages[0]),
+            "order {order:?}: A's link points at B"
+        );
+        assert_eq!(warnings, Vec::<String>::new(), "order {order:?}");
+        mat.shutdown();
+    }
+}
+
+/// D12 — a same-title page with content is never touched: the file becomes a
+/// new page and the import warns.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn import_leaves_a_same_title_page_with_content_alone_and_warns() {
+    let (pool, dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let existing = dup_page(&pool, &mat, "B").await;
+    dup_child(&pool, &mat, &existing, "existing").await;
+    settle(&mat).await;
+
+    let result = import_file(&pool, &mat, dir.path(), "B.md", "- b body").await;
+
+    let b_pages = pages_titled(&pool, "B").await;
+    assert_eq!(b_pages.len(), 2, "the file became a new page");
+    assert_eq!(
+        dup_children(&pool, &existing).await.len(),
+        1,
+        "the existing page keeps only its own block"
+    );
+    assert_eq!(block_starting(&pool, "b body").await, "b body");
+    assert_eq!(
+        result.warnings,
+        ["a page titled 'B' already exists in this space; the file was imported as a new page"]
+    );
+    mat.shutdown();
+}
+
+/// D10 — `[[A#B]]` is the page titled `A#B` first, whether it already exists or
+/// the same import creates it; no `A` is created and no anchor is dropped.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn import_resolves_a_title_holding_a_hash_to_that_page_first() {
+    let (pool, dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let c_sharp = dup_page(&pool, &mat, "C# Notes").await;
+    settle(&mat).await;
+
+    let result = import_file(&pool, &mat, dir.path(), "Notes.md", "- see [[C# Notes]]").await;
+    assert_eq!(
+        block_starting(&pool, "see").await,
+        format!("see [[{c_sharp}]]")
+    );
+    assert_eq!(pages_titled(&pool, "C").await, Vec::<String>::new());
+    assert_eq!(result.warnings, Vec::<String>::new());
+
+    let result = import_file(&pool, &mat, dir.path(), "F# Tips.md", "- self [[F# Tips]]").await;
+    let f_sharp = pages_titled(&pool, "F# Tips").await;
+    assert_eq!(f_sharp.len(), 1);
+    assert_eq!(
+        block_starting(&pool, "self").await,
+        format!("self [[{}]]", f_sharp[0])
+    );
+    assert_eq!(pages_titled(&pool, "F").await, Vec::<String>::new());
+    assert_eq!(result.warnings, Vec::<String>::new());
+    mat.shutdown();
+}
+
+/// N8 — an export writes `#[[name]]` where the bare form would not read back,
+/// and a title holding a `#` as is, so an export → import round trip through
+/// the real commands lands on the same tags and page.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn export_writes_names_that_import_reads_back() {
+    let (pool, dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let src = dup_page(&pool, &mat, "Src").await;
+    let c_sharp = dup_page(&pool, &mat, "C# Notes").await;
+    const CPP: &str = "01J5160TAGCPP0000000000001";
+    const V12: &str = "01J5160TAGV120000000000001";
+    const ISSUE: &str = "01J5160TAG4200000000000001";
+    const WORK: &str = "01J5160TAGWRK0000000000001";
+    for (id, name) in [(CPP, "C++"), (V12, "v1.2"), (ISSUE, "42"), (WORK, "work")] {
+        insert_block(&pool, id, "tag", name, None, Some(1)).await;
+        assign_to_space(&pool, id, TEST_SPACE_ID).await;
+    }
+    // `[#[work]]` follows a `[`, which is no boundary (N1), so the bare form
+    // would read back as text: the context brackets it too.
+    let refs = format!("#[{CPP}] #[{V12}] #[{ISSUE}] [#[{WORK}]] [[{c_sharp}]]");
+    dup_child(&pool, &mat, &src, &format!("see {refs}")).await;
+    settle(&mat).await;
+
+    let md = export_page_markdown_inner(&pool, src.as_str())
+        .await
+        .unwrap();
+    assert!(
+        md.contains("see #[[C++]] #[[v1.2]] #[[42]] [#[[work]]] [[C# Notes]]"),
+        "{md}"
+    );
+
+    import_file(&pool, &mat, dir.path(), "Roundtrip.md", &md).await;
+    let copies: Vec<String> = sqlx::query_scalar(
+        "SELECT content FROM blocks WHERE block_type = 'content' AND content LIKE 'see %' \
+         ORDER BY id",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(copies, [format!("see {refs}"), format!("see {refs}")]);
+    let tags: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM blocks WHERE block_type = 'tag'")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(tags, 4, "no tag was created");
+    assert_eq!(pages_titled(&pool, "C").await, Vec::<String>::new());
+    mat.shutdown();
+}
+
+/// N10 — on a folder import a relative `.md` link, percent-decoded and resolved
+/// against the file's folder, becomes a `[[title]]` link that resolves like one;
+/// external links, other file types and a lone file's links are untouched.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn import_reads_a_relative_md_link_as_a_page_link_on_a_folder_import() {
+    let (pool, dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    ensure_test_space(&pool).await;
+    mark_block_as_space(&pool, TEST_SPACE_ID).await;
+    let md = "- folder [x](Other%20note.md) [y](../Top.md) [z](https://x.dev/a.md) [w](pic.png)";
+
+    import_file(&pool, &mat, dir.path(), "vault/notes/A.md", md).await;
+    let other = pages_titled(&pool, "vault/notes/Other note").await;
+    let top = pages_titled(&pool, "vault/Top").await;
+    assert_eq!((other.len(), top.len()), (1, 1));
+    assert_eq!(
+        block_starting(&pool, "folder").await,
+        format!(
+            "folder [[{}]] [[{}]] [z](https://x.dev/a.md) [w](pic.png)",
+            other[0], top[0]
+        )
+    );
+
+    let lone = md.replace("folder", "lone");
+    import_file(&pool, &mat, dir.path(), "A.md", &lone).await;
+    assert_eq!(
+        block_starting(&pool, "lone").await,
+        lone.trim_start_matches("- ")
+    );
+    assert_eq!(
+        pages_titled(&pool, "Other note").await,
+        Vec::<String>::new()
+    );
     mat.shutdown();
 }
 
@@ -11828,15 +12119,11 @@ async fn import_tag_reuses_unicode_case_variant_1990() {
     mat.shutdown();
 }
 
-/// #1922 (`no-namespace-collision-import-test`) — `import_markdown_inner`
-/// ALWAYS creates a brand-new page block from the derived (namespaced) title;
-/// there is NO de-dup / merge against an existing page with the same title in
-/// the same space. So seeding `Project/Backend/API` and then importing
-/// `Project/Backend/API.md` yields TWO same-title pages. This pins the
-/// create-new contract (and the wiki-link ambiguity it can create), the exact
-/// duplicate-title condition the inbound resolver treats as ambiguous.
+/// #1922 / #5160 D12 — importing `Project/Backend/API.md` beside an EMPTY page
+/// already titled `Project/Backend/API` in the same space adopts that page: the
+/// file's blocks land in it and no same-title twin is created.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn import_namespaced_title_collision_creates_duplicate_page_1922() {
+async fn import_namespaced_title_collision_adopts_the_empty_page_1922() {
     let (pool, _dir) = test_pool().await;
     let mat = Materializer::new(pool.clone());
     ensure_test_space(&pool).await;
@@ -11874,8 +12161,6 @@ async fn import_namespaced_title_collision_creates_duplicate_page_1922() {
         "import derives the namespaced title from the folder path"
     );
 
-    // Current behavior: NO de-dup — the import created a SECOND page with the
-    // identical title, so two same-title pages now exist.
     let same_title_pages: i64 = sqlx::query_scalar(
         "SELECT COUNT(*) FROM blocks WHERE block_type = 'page' \
          AND content = 'Project/Backend/API' AND deleted_at IS NULL",
@@ -11883,11 +12168,13 @@ async fn import_namespaced_title_collision_creates_duplicate_page_1922() {
     .fetch_one(&pool)
     .await
     .unwrap();
-    assert_eq!(
-        same_title_pages, 2,
-        "import creates a NEW page unconditionally — no merge/de-dup against \
-         the pre-existing same-title page"
-    );
+    assert_eq!(same_title_pages, 1, "the empty same-title page is adopted");
+    let body_parent: String =
+        sqlx::query_scalar("SELECT parent_id FROM blocks WHERE content = 'body'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(body_parent, EXISTING, "the file's blocks land in it");
 
     mat.shutdown();
 }
