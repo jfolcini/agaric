@@ -16,7 +16,9 @@ concurrency:
 jobs:
   claude-review:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # A parser/serializer diff took the review past 30 minutes three times
+    # (#5167, #5169) and it posted nothing.
+    timeout-minutes: 60
     # `secrets` cannot be read from a step-level `if:`.
     env:
       HAS_REVIEWER_APP: ${{ secrets.REVIEWER_APP_ID != '' }}
