@@ -1,0 +1,90 @@
+---
+source: agaric-engine/src/import.rs
+expression: "serde_json::json!({\n    \"import\": output_shape(parse_logseq_markdown(&text)), \"source\":\n    output_shape(parse_source_outline(&text)), \"paste\":\n    blocks_shape(parse_pasted_text(&text)),\n})"
+---
+import:
+  blocks:
+    - block_anchor: ~
+      content: Projects
+      depth: 0
+      is_code: false
+      properties: []
+    - block_anchor: ~
+      content: Agaric
+      depth: 2
+      is_code: false
+      properties: []
+    - block_anchor: ~
+      content: Grammar review
+      depth: 4
+      is_code: false
+      properties: []
+    - block_anchor: ~
+      content: Garden
+      depth: 2
+      is_code: false
+      properties: []
+    - block_anchor: ~
+      content: Areas
+      depth: 0
+      is_code: false
+      properties: []
+  frontmatter: []
+  frontmatter_list_items: {}
+  warnings: []
+paste:
+  - block_anchor: ~
+    content: Projects
+    depth: 0
+    is_code: false
+    properties: []
+  - block_anchor: ~
+    content: Agaric
+    depth: 2
+    is_code: false
+    properties: []
+  - block_anchor: ~
+    content: Grammar review
+    depth: 4
+    is_code: false
+    properties: []
+  - block_anchor: ~
+    content: Garden
+    depth: 2
+    is_code: false
+    properties: []
+  - block_anchor: ~
+    content: Areas
+    depth: 0
+    is_code: false
+    properties: []
+source:
+  blocks:
+    - block_anchor: ~
+      content: Projects
+      depth: 0
+      is_code: false
+      properties: []
+    - block_anchor: ~
+      content: Agaric
+      depth: 2
+      is_code: false
+      properties: []
+    - block_anchor: ~
+      content: Grammar review
+      depth: 4
+      is_code: false
+      properties: []
+    - block_anchor: ~
+      content: Garden
+      depth: 2
+      is_code: false
+      properties: []
+    - block_anchor: ~
+      content: Areas
+      depth: 0
+      is_code: false
+      properties: []
+  frontmatter: []
+  frontmatter_list_items: {}
+  warnings: []

@@ -1,0 +1,23 @@
+Here's a simple plan to get your garden ready for winter:
+
+### 1. Clean up
+
+1. **Remove dead plants** – they harbour pests.
+2. **Rake leaves** into a compost pile.
+   - Shred them first so they break down faster.
+   - Avoid diseased leaves.
+
+### 2. Protect the soil
+
+- Add a 5–8 cm layer of mulch.
+- Plant a cover crop such as winter rye.
+
+---
+
+**Tip:** you can check your soil with:
+
+```bash
+soil-test --ph --moisture
+```
+
+Let me know if you'd like a week-by-week schedule!

@@ -1,0 +1,20 @@
+## Summary
+
+The migration has three phases.
+
+## Phases
+
+- **Phase 1** — freeze writes
+  - announce the window
+  - snapshot the database
+- **Phase 2** — copy data
+- **Phase 3** — cut over
+
+| Phase | Owner | Days |
+|-------|-------|------|
+| 1     | Ops   | 1    |
+| 2     | Data  | 3    |
+
+```sql
+SELECT count(*) FROM blocks;
+```

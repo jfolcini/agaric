@@ -19,7 +19,7 @@ use super::*;
 #[path = "markdown_source_apply_tests.rs"]
 mod apply;
 
-const PAGE: &str = "01J0000000000000000000PAGE";
+pub(super) const PAGE: &str = "01J0000000000000000000PAGE";
 
 /// The ids content refs point at. Every one has a name, so the renderer tries
 /// to write names, and with no snapshot to check them against must not.
@@ -29,7 +29,7 @@ const REF_IDS: [&str; 3] = [
     "01J00000000000000000000RF3",
 ];
 
-fn row(id: &str, parent: &str, position: i64, content: &str) -> BlockRow {
+pub(super) fn row(id: &str, parent: &str, position: i64, content: &str) -> BlockRow {
     BlockRow {
         id: BlockId::test_id(id),
         block_type: "content".into(),
@@ -45,7 +45,7 @@ fn row(id: &str, parent: &str, position: i64, content: &str) -> BlockRow {
     }
 }
 
-fn page_data(descendants: Vec<BlockRow>) -> PageExportData {
+pub(super) fn page_data(descendants: Vec<BlockRow>) -> PageExportData {
     let mut page = row(PAGE, PAGE, 0, "Title");
     page.block_type = "page".into();
     page.parent_id = None;
@@ -67,7 +67,7 @@ fn page_data(descendants: Vec<BlockRow>) -> PageExportData {
     }
 }
 
-fn text_property(key: &str, value: &str) -> FrontmatterRow {
+pub(super) fn text_property(key: &str, value: &str) -> FrontmatterRow {
     FrontmatterRow {
         key: key.into(),
         value_text: Some(value.into()),

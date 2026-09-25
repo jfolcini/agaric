@@ -1,0 +1,45 @@
+---
+source: agaric-engine/src/import.rs
+expression: "serde_json::json!({\n    \"import\": output_shape(parse_logseq_markdown(&text)), \"source\":\n    output_shape(parse_source_outline(&text)), \"paste\":\n    blocks_shape(parse_pasted_text(&text)),\n})"
+---
+import:
+  blocks:
+    - block_anchor: ~
+      content: "* [ ] Plan the trip\n* [x] Book flights\n* [ ] Book hotel\n* [ ] Pack"
+      depth: 0
+      is_code: false
+      properties: []
+  frontmatter: []
+  frontmatter_list_items: {}
+  warnings: []
+paste:
+  - block_anchor: ~
+    content: "* [ ] Plan the trip"
+    depth: 0
+    is_code: false
+    properties: []
+  - block_anchor: ~
+    content: "* [x] Book flights"
+    depth: 1
+    is_code: false
+    properties: []
+  - block_anchor: ~
+    content: "* [ ] Book hotel"
+    depth: 1
+    is_code: false
+    properties: []
+  - block_anchor: ~
+    content: "* [ ] Pack"
+    depth: 0
+    is_code: false
+    properties: []
+source:
+  blocks:
+    - block_anchor: ~
+      content: "* [ ] Plan the trip\n* [x] Book flights\n* [ ] Book hotel\n* [ ] Pack"
+      depth: 0
+      is_code: false
+      properties: []
+  frontmatter: []
+  frontmatter_list_items: {}
+  warnings: []

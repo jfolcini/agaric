@@ -1,0 +1,29 @@
+# Deploy notes
+
+Run the migration first:
+
+```bash
+# comment, not a heading
+- not a bullet
+psql -f migrate.sql
+```
+
+Then check the config:
+
+~~~yaml
+- name: web
+  replicas: 3
+~~~
+
+How to document a snippet:
+
+````md
+```js
+console.log("hi")
+```
+- item inside the example
+````
+
+Old-style indented code:
+
+    make release

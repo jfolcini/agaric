@@ -30,7 +30,7 @@ hooks = [
     # them and make `specta_tests::ts_bindings_up_to_date` fail (committed !=
     # generated). Exclude the generated file from both, like the other formatters.
     # WHY: trailing whitespace churns every diff it touches — upstream builtin, no repo incident
-    { id = "trailing-whitespace", exclude = "(\\.(png|ico|icns|svg)$|^src/lib/bindings\\.ts$|^src-tauri/fuzz/corpus/)", stages = [
+    { id = "trailing-whitespace", exclude = "(\\.(png|ico|icns|svg)$|^src/lib/bindings\\.ts$|^src-tauri/(fuzz/corpus|agaric-engine/tests/markdown-corpus)/)", stages = [
         "pre-commit",
     ] },
     # WHY: a missing final newline churns diffs and breaks line-oriented tools — upstream builtin
@@ -94,11 +94,12 @@ hooks = [
     { id = "check-executables-have-shebangs", stages = [
         "pre-commit",
     ] },
-    # Normalise CRLF leakage from non-Linux contributors.
+    # Normalise CRLF leakage from non-Linux contributors. The parser corpora
+    # hold CRLF documents on purpose.
     # WHY: CRLF leakage from non-Linux contributors churns diffs — upstream builtin
     { id = "mixed-line-ending", args = [
         "--fix=lf",
-    ], stages = [
+    ], exclude = "^src-tauri/(fuzz/corpus|agaric-engine/tests/markdown-corpus)/", stages = [
         "pre-commit",
     ] },
 ]

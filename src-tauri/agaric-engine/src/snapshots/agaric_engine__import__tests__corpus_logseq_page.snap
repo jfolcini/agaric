@@ -1,0 +1,353 @@
+---
+source: agaric-engine/src/import.rs
+expression: "serde_json::json!({\n    \"import\": output_shape(parse_logseq_markdown(&text)), \"source\":\n    output_shape(parse_source_outline(&text)), \"paste\":\n    blocks_shape(parse_pasted_text(&text)),\n})"
+---
+import:
+  blocks:
+    - block_anchor: ~
+      content: "## Goals"
+      depth: 0
+      is_code: false
+      properties: []
+    - block_anchor: ~
+      content: Cut onboarding time in half
+      depth: 1
+      is_code: false
+      properties: []
+    - block_anchor: ~
+      content: Replace the legacy importer
+      depth: 1
+      is_code: false
+      properties: []
+    - block_anchor: ~
+      content: "Met with [[Alice]] about [[Project Atlas]]"
+      depth: 0
+      is_code: false
+      properties: []
+    - block_anchor: ~
+      content: She wants the draft by Friday
+      depth: 1
+      is_code: false
+      properties: []
+    - block_anchor: ~
+      content: "TODO Send her the budget sheet\nSCHEDULED: <2026-09-26 Sat>"
+      depth: 1
+      is_code: false
+      properties: []
+    - block_anchor: ~
+      content: DONE Book the room
+      depth: 1
+      is_code: false
+      properties: []
+    - block_anchor: ~
+      content: "NOW [#A] Review PR 4412\nDEADLINE: <2026-09-25 Fri>"
+      depth: 0
+      is_code: false
+      properties: []
+    - block_anchor: ~
+      content: LATER Read
+      depth: 0
+      is_code: false
+      properties: []
+    - block_anchor: ~
+      content: Quote from the call
+      depth: 0
+      is_code: false
+      properties:
+        - - id
+          - 650f1c2e-8a3b-4f6e-9d21-7c5e0b9a1f33
+        - - collapsed
+          - "true"
+    - block_anchor: ~
+      content: "Ship small, ship often"
+      depth: 1
+      is_code: false
+      properties: []
+    - block_anchor: ~
+      content: "Two task flavours:\n+ `LATER` -> `NOW` -> `DONE`\n+ `TODO` -> `DOING` -> `DONE`"
+      depth: 0
+      is_code: false
+      properties: []
+    - block_anchor: ~
+      content: "A block with a code sample\n```python\ndef hello():\n    print(\"hi\")\n```"
+      depth: 0
+      is_code: true
+      properties: []
+    - block_anchor: ~
+      content: "A multi-line block\nsecond line of the same block"
+      depth: 0
+      is_code: false
+      properties: []
+    - block_anchor: ~
+      content: "## Open questions"
+      depth: 0
+      is_code: false
+      properties: []
+    - block_anchor: ~
+      content: Who owns the migration?
+      depth: 1
+      is_code: false
+      properties:
+        - - owner
+          - "[[Bob]]"
+  frontmatter: []
+  frontmatter_list_items: {}
+  warnings:
+    - 3 property line(s) had no owning block at or above their indentation and were dropped
+    - 1 ((block-ref)) reference(s) were stripped from imported content and could not be preserved
+paste:
+  - block_anchor: ~
+    content: "title:: Project Atlas"
+    depth: 0
+    is_code: false
+    properties: []
+  - block_anchor: ~
+    content: "tags:: project, q3"
+    depth: 0
+    is_code: false
+    properties: []
+  - block_anchor: ~
+    content: "alias:: Atlas"
+    depth: 0
+    is_code: false
+    properties: []
+  - block_anchor: ~
+    content: "- ## Goals"
+    depth: 0
+    is_code: false
+    properties: []
+  - block_anchor: ~
+    content: "- Cut onboarding time in half"
+    depth: 1
+    is_code: false
+    properties: []
+  - block_anchor: ~
+    content: "- Replace the legacy importer"
+    depth: 1
+    is_code: false
+    properties: []
+  - block_anchor: ~
+    content: "- Met with [[Alice]] about [[Project Atlas]]"
+    depth: 0
+    is_code: false
+    properties: []
+  - block_anchor: ~
+    content: "- She wants the draft by Friday"
+    depth: 1
+    is_code: false
+    properties: []
+  - block_anchor: ~
+    content: "- TODO Send her the budget sheet"
+    depth: 1
+    is_code: false
+    properties: []
+  - block_anchor: ~
+    content: "SCHEDULED: <2026-09-26 Sat>"
+    depth: 2
+    is_code: false
+    properties: []
+  - block_anchor: ~
+    content: "- DONE Book the room"
+    depth: 1
+    is_code: false
+    properties: []
+  - block_anchor: ~
+    content: "- NOW [#A] Review PR 4412"
+    depth: 0
+    is_code: false
+    properties: []
+  - block_anchor: ~
+    content: "DEADLINE: <2026-09-25 Fri>"
+    depth: 1
+    is_code: false
+    properties: []
+  - block_anchor: ~
+    content: "- LATER Read ((650f1c2e-8a3b-4f6e-9d21-7c5e0b9a1f33))"
+    depth: 0
+    is_code: false
+    properties: []
+  - block_anchor: ~
+    content: "- Quote from the call"
+    depth: 0
+    is_code: false
+    properties: []
+  - block_anchor: ~
+    content: "id:: 650f1c2e-8a3b-4f6e-9d21-7c5e0b9a1f33"
+    depth: 1
+    is_code: false
+    properties: []
+  - block_anchor: ~
+    content: "collapsed:: true"
+    depth: 1
+    is_code: false
+    properties: []
+  - block_anchor: ~
+    content: "- Ship small, ship often"
+    depth: 1
+    is_code: false
+    properties: []
+  - block_anchor: ~
+    content: "- Two task flavours:"
+    depth: 0
+    is_code: false
+    properties: []
+  - block_anchor: ~
+    content: "+ `LATER` -> `NOW` -> `DONE`"
+    depth: 1
+    is_code: false
+    properties: []
+  - block_anchor: ~
+    content: "+ `TODO` -> `DOING` -> `DONE`"
+    depth: 1
+    is_code: false
+    properties: []
+  - block_anchor: ~
+    content: "- A block with a code sample"
+    depth: 0
+    is_code: false
+    properties: []
+  - block_anchor: ~
+    content: "```python"
+    depth: 1
+    is_code: true
+    properties: []
+  - block_anchor: ~
+    content: "def hello():"
+    depth: 1
+    is_code: false
+    properties: []
+  - block_anchor: ~
+    content: "print(\"hi\")"
+    depth: 3
+    is_code: false
+    properties: []
+  - block_anchor: ~
+    content: "```"
+    depth: 1
+    is_code: true
+    properties: []
+  - block_anchor: ~
+    content: "- A multi-line block"
+    depth: 0
+    is_code: false
+    properties: []
+  - block_anchor: ~
+    content: second line of the same block
+    depth: 1
+    is_code: false
+    properties: []
+  - block_anchor: ~
+    content: "- ## Open questions"
+    depth: 0
+    is_code: false
+    properties: []
+  - block_anchor: ~
+    content: "- Who owns the migration?"
+    depth: 1
+    is_code: false
+    properties: []
+  - block_anchor: ~
+    content: "owner:: [[Bob]]"
+    depth: 2
+    is_code: false
+    properties: []
+source:
+  blocks:
+    - block_anchor: ~
+      content: "title:: Project Atlas"
+      depth: 0
+      is_code: false
+      properties:
+        - - tags
+          - "project, q3"
+        - - alias
+          - Atlas
+    - block_anchor: ~
+      content: "## Goals"
+      depth: 0
+      is_code: false
+      properties: []
+    - block_anchor: ~
+      content: Cut onboarding time in half
+      depth: 1
+      is_code: false
+      properties: []
+    - block_anchor: ~
+      content: Replace the legacy importer
+      depth: 1
+      is_code: false
+      properties: []
+    - block_anchor: ~
+      content: "Met with [[Alice]] about [[Project Atlas]]"
+      depth: 0
+      is_code: false
+      properties: []
+    - block_anchor: ~
+      content: She wants the draft by Friday
+      depth: 1
+      is_code: false
+      properties: []
+    - block_anchor: ~
+      content: "TODO Send her the budget sheet\nSCHEDULED: <2026-09-26 Sat>"
+      depth: 1
+      is_code: false
+      properties: []
+    - block_anchor: ~
+      content: DONE Book the room
+      depth: 1
+      is_code: false
+      properties: []
+    - block_anchor: ~
+      content: "NOW [#A] Review PR 4412\nDEADLINE: <2026-09-25 Fri>"
+      depth: 0
+      is_code: false
+      properties: []
+    - block_anchor: ~
+      content: LATER Read ((650f1c2e-8a3b-4f6e-9d21-7c5e0b9a1f33))
+      depth: 0
+      is_code: false
+      properties: []
+    - block_anchor: ~
+      content: Quote from the call
+      depth: 0
+      is_code: false
+      properties:
+        - - id
+          - 650f1c2e-8a3b-4f6e-9d21-7c5e0b9a1f33
+        - - collapsed
+          - "true"
+    - block_anchor: ~
+      content: "Ship small, ship often"
+      depth: 1
+      is_code: false
+      properties: []
+    - block_anchor: ~
+      content: "Two task flavours:\n+ `LATER` -> `NOW` -> `DONE`\n+ `TODO` -> `DOING` -> `DONE`"
+      depth: 0
+      is_code: false
+      properties: []
+    - block_anchor: ~
+      content: "A block with a code sample\n```python\ndef hello():\n    print(\"hi\")\n```"
+      depth: 0
+      is_code: true
+      properties: []
+    - block_anchor: ~
+      content: "A multi-line block\nsecond line of the same block"
+      depth: 0
+      is_code: false
+      properties: []
+    - block_anchor: ~
+      content: "## Open questions"
+      depth: 0
+      is_code: false
+      properties: []
+    - block_anchor: ~
+      content: Who owns the migration?
+      depth: 1
+      is_code: false
+      properties:
+        - - owner
+          - "[[Bob]]"
+  frontmatter: []
+  frontmatter_list_items: {}
+  warnings: []

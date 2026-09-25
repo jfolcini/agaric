@@ -1,0 +1,32 @@
+title:: Project Atlas
+tags:: project, q3
+alias:: Atlas
+
+- ## Goals
+	- Cut onboarding time in half
+	- Replace the legacy importer
+- Met with [[Alice]] about [[Project Atlas]]
+	- She wants the draft by Friday
+	- TODO Send her the budget sheet
+	  SCHEDULED: <2026-09-26 Sat>
+	- DONE Book the room
+- NOW [#A] Review PR 4412
+  DEADLINE: <2026-09-25 Fri>
+- LATER Read ((650f1c2e-8a3b-4f6e-9d21-7c5e0b9a1f33))
+- Quote from the call
+  id:: 650f1c2e-8a3b-4f6e-9d21-7c5e0b9a1f33
+  collapsed:: true
+	- Ship small, ship often
+- Two task flavours:
+  + `LATER` -> `NOW` -> `DONE`
+  + `TODO` -> `DOING` -> `DONE`
+- A block with a code sample
+  ```python
+  def hello():
+      print("hi")
+  ```
+- A multi-line block
+  second line of the same block
+- ## Open questions
+	- Who owns the migration?
+	  owner:: [[Bob]]

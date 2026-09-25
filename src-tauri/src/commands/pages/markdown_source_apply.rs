@@ -967,6 +967,10 @@ mod merge;
 
 #[cfg(test)]
 mod tests {
+    use agaric_engine::import::line_soup::arb_document;
+    use proptest::prelude::*;
+
+    use super::super::source_tests::{PAGE, page_data, row, text_property};
     use super::*;
 
     fn ids(values: &[&str]) -> Vec<String> {
@@ -1069,6 +1073,80 @@ mod tests {
                 ("a".to_string(), Some(A.to_string())),
             ]
         );
+    }
+
+    /// `blocks` as a save stores them on an empty page, with their ids: each a
+    /// new block under the parent [`outline_parents`] gives it. Of its last-wins
+    /// properties, the task state goes to its column, `listStyle` to the list
+    /// marker and the rest to property rows, as the save routes the keys the
+    /// line soup can write.
+    fn stored(blocks: &[import::ParsedBlock]) -> (PageExportData, Vec<String>) {
+        let ids: Vec<String> = (0..blocks.len()).map(|i| format!("01J{i:023}")).collect();
+        let mut data = page_data(Vec::new());
+        let mut slots: HashMap<Option<usize>, i64> = HashMap::new();
+        for ((block, parent), id) in blocks.iter().zip(outline_parents(blocks)).zip(&ids) {
+            let slot = slots.entry(parent).or_insert(0);
+            *slot += 1;
+            let parent_id = parent.map_or(PAGE, |parent| ids[parent].as_str());
+            let mut stored = row(id, parent_id, *slot, &block.content);
+            let mut rows = Vec::new();
+            let properties: BTreeMap<&str, &str> = block
+                .properties
+                .iter()
+                .map(|(key, value)| (key.as_str(), value.as_str()))
+                .collect();
+            for (key, value) in properties {
+                match key {
+                    "todo_state" => stored.todo_state = Some(value.to_string()),
+                    "listStyle" => {
+                        data.list_styles.insert(id.clone(), value.to_string());
+                    }
+                    _ => rows.push(text_property(key, value)),
+                }
+            }
+            data.descendant_properties.insert(id.clone(), rows);
+            data.descendants.push(stored);
+        }
+        (data, ids)
+    }
+
+    /// A block's parent, content and last-wins properties.
+    type Shape<'a> = (Option<usize>, &'a str, BTreeMap<&'a str, &'a str>);
+
+    /// Each block's [`Shape`].
+    fn tree(blocks: &[import::ParsedBlock]) -> Vec<Shape<'_>> {
+        blocks
+            .iter()
+            .zip(outline_parents(blocks))
+            .map(|(block, parent)| {
+                let properties = block
+                    .properties
+                    .iter()
+                    .map(|(key, value)| (key.as_str(), value.as_str()))
+                    .collect();
+                (parent, block.content.as_str(), properties)
+            })
+            .collect()
+    }
+
+    proptest! {
+        /// #5160 — whatever a hand-written buffer reads as, once saved, renders
+        /// back to the same tree, content and properties, each block under its
+        /// own `^ID`: the buffer reopened after a save shows what it stored.
+        #[test]
+        fn a_saved_buffer_renders_back_to_what_was_saved(text in arb_document()) {
+            let mut saved = import::parse_source_outline(&text).blocks;
+            saved.iter_mut().for_each(import::restore_text_anchor);
+            let (data, ids) = stored(&saved);
+            let md = render_page_source(&data);
+            let mut again = import::parse_source_outline(&md).blocks;
+            again.iter_mut().for_each(import::restore_text_anchor);
+            prop_assert_eq!(tree(&again), tree(&saved), "text: {:?}\nmd:\n{}", text, md);
+            let anchors: Vec<Option<&str>> =
+                again.iter().map(|block| block.block_anchor.as_deref()).collect();
+            let ids: Vec<Option<&str>> = ids.iter().map(|id| Some(id.as_str())).collect();
+            prop_assert_eq!(anchors, ids, "text: {:?}\nmd:\n{}", text, md);
+        }
     }
 
     /// Two free anchors in one block are refused, naming both; with one of

@@ -1,0 +1,162 @@
+---
+source: agaric-engine/src/import.rs
+expression: "serde_json::json!({\n    \"import\": output_shape(parse_logseq_markdown(&text)), \"source\":\n    output_shape(parse_source_outline(&text)), \"paste\":\n    blocks_shape(parse_pasted_text(&text)),\n})"
+---
+import:
+  blocks:
+    - block_anchor: ~
+      content: "Markdown is the most popular format that Logseq supports. Logseq supports most syntaxes including some extended ones.\n### **Standard** syntax"
+      depth: 0
+      is_code: false
+      properties:
+        - - id
+          - 60a78b6b-a0ff-49fe-822f-87216fbf79ff
+    - block_anchor: ~
+      content: "what's logseq? #card"
+      depth: 1
+      is_code: false
+      properties:
+        - - card-last-interval
+          - "28.3"
+        - - card-repeats
+          - "4"
+    - block_anchor: ~
+      content: knowledge base
+      depth: 2
+      is_code: false
+      properties: []
+    - block_anchor: ~
+      content: "and so on...\n### **Extended** syntax"
+      depth: 1
+      is_code: false
+      properties: []
+    - block_anchor: ~
+      content: "[[term/page reference]]"
+      depth: 1
+      is_code: false
+      properties:
+        - - id
+          - 60ab4582-5a6e-4f3a-84a2-71ae056455a0
+    - block_anchor: ~
+      content: "syntax: `[[page name]]`"
+      depth: 2
+      is_code: false
+      properties: []
+  frontmatter: []
+  frontmatter_list_items: {}
+  warnings:
+    - 1 property line(s) had no owning block at or above their indentation and were dropped
+paste:
+  - block_anchor: ~
+    content: "description:: Markdown is a popular markup language with many flavors. Our implementation is parsed by https://github.com/logseq/mldoc."
+    depth: 0
+    is_code: false
+    properties: []
+  - block_anchor: ~
+    content: "- Markdown is the most popular format that Logseq supports. Logseq supports most syntaxes including some extended ones."
+    depth: 0
+    is_code: false
+    properties: []
+  - block_anchor: ~
+    content: "### **Standard** syntax"
+    depth: 0
+    is_code: false
+    properties: []
+  - block_anchor: ~
+    content: "- what's logseq? #card"
+    depth: 1
+    is_code: false
+    properties: []
+  - block_anchor: ~
+    content: "card-last-interval:: 28.3"
+    depth: 2
+    is_code: false
+    properties: []
+  - block_anchor: ~
+    content: "card-repeats:: 4"
+    depth: 2
+    is_code: false
+    properties: []
+  - block_anchor: ~
+    content: "- knowledge base"
+    depth: 2
+    is_code: false
+    properties: []
+  - block_anchor: ~
+    content: "- and so on..."
+    depth: 1
+    is_code: false
+    properties: []
+  - block_anchor: ~
+    content: "### **Extended** syntax"
+    depth: 0
+    is_code: false
+    properties: []
+  - block_anchor: ~
+    content: "id:: 60a78b6b-a0ff-49fe-822f-87216fbf79ff"
+    depth: 0
+    is_code: false
+    properties: []
+  - block_anchor: ~
+    content: "- [[term/page reference]]"
+    depth: 1
+    is_code: false
+    properties: []
+  - block_anchor: ~
+    content: "id:: 60ab4582-5a6e-4f3a-84a2-71ae056455a0"
+    depth: 2
+    is_code: false
+    properties: []
+  - block_anchor: ~
+    content: "- syntax: `[[page name]]`"
+    depth: 2
+    is_code: false
+    properties: []
+source:
+  blocks:
+    - block_anchor: ~
+      content: "description:: Markdown is a popular markup language with many flavors. Our implementation is parsed by https://github.com/logseq/mldoc."
+      depth: 0
+      is_code: false
+      properties: []
+    - block_anchor: ~
+      content: "Markdown is the most popular format that Logseq supports. Logseq supports most syntaxes including some extended ones.\n### **Standard** syntax"
+      depth: 0
+      is_code: false
+      properties:
+        - - id
+          - 60a78b6b-a0ff-49fe-822f-87216fbf79ff
+    - block_anchor: ~
+      content: "what's logseq? #card"
+      depth: 1
+      is_code: false
+      properties:
+        - - card-last-interval
+          - "28.3"
+        - - card-repeats
+          - "4"
+    - block_anchor: ~
+      content: knowledge base
+      depth: 2
+      is_code: false
+      properties: []
+    - block_anchor: ~
+      content: "and so on...\n### **Extended** syntax"
+      depth: 1
+      is_code: false
+      properties: []
+    - block_anchor: ~
+      content: "[[term/page reference]]"
+      depth: 1
+      is_code: false
+      properties:
+        - - id
+          - 60ab4582-5a6e-4f3a-84a2-71ae056455a0
+    - block_anchor: ~
+      content: "syntax: `[[page name]]`"
+      depth: 2
+      is_code: false
+      properties: []
+  frontmatter: []
+  frontmatter_list_items: {}
+  warnings: []

@@ -1,0 +1,50 @@
+---
+source: agaric-engine/src/import.rs
+expression: "serde_json::json!({\n    \"import\": output_shape(parse_logseq_markdown(&text)), \"source\":\n    output_shape(parse_source_outline(&text)), \"paste\":\n    blocks_shape(parse_pasted_text(&text)),\n})"
+---
+import:
+  blocks:
+    - block_anchor: ~
+      content: "1. Preheat the oven to 200 °C.\n2. Mix the dry ingredients.\n1. Flour\n2. Sugar\n3. Bake for 25 minutes."
+      depth: 0
+      is_code: false
+      properties: []
+  frontmatter: []
+  frontmatter_list_items: {}
+  warnings: []
+paste:
+  - block_anchor: ~
+    content: 1. Preheat the oven to 200 °C.
+    depth: 0
+    is_code: false
+    properties: []
+  - block_anchor: ~
+    content: 2. Mix the dry ingredients.
+    depth: 0
+    is_code: false
+    properties: []
+  - block_anchor: ~
+    content: 1. Flour
+    depth: 1
+    is_code: false
+    properties: []
+  - block_anchor: ~
+    content: 2. Sugar
+    depth: 1
+    is_code: false
+    properties: []
+  - block_anchor: ~
+    content: 3. Bake for 25 minutes.
+    depth: 0
+    is_code: false
+    properties: []
+source:
+  blocks:
+    - block_anchor: ~
+      content: "1. Preheat the oven to 200 °C.\n2. Mix the dry ingredients.\n 1. Flour\n 2. Sugar\n3. Bake for 25 minutes."
+      depth: 0
+      is_code: false
+      properties: []
+  frontmatter: []
+  frontmatter_list_items: {}
+  warnings: []

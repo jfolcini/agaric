@@ -1,0 +1,60 @@
+---
+source: agaric-engine/src/import.rs
+expression: "serde_json::json!({\n    \"import\": output_shape(parse_logseq_markdown(&text)), \"source\":\n    output_shape(parse_source_outline(&text)), \"paste\":\n    blocks_shape(parse_pasted_text(&text)),\n})"
+---
+import:
+  blocks:
+    - block_anchor: ~
+      content: Groceries
+      depth: 0
+      is_code: false
+      properties: []
+    - block_anchor: ~
+      content: Milk
+      depth: 1
+      is_code: false
+      properties: []
+    - block_anchor: ~
+      content: Eggs
+      depth: 1
+      is_code: false
+      properties: []
+    - block_anchor: ~
+      content: Call the plumber
+      depth: 0
+      is_code: false
+      properties: []
+  frontmatter: []
+  frontmatter_list_items: {}
+  warnings: []
+paste:
+  - block_anchor: ~
+    content: "-\tGroceries"
+    depth: 0
+    is_code: false
+    properties: []
+  - block_anchor: ~
+    content: "-\tMilk"
+    depth: 1
+    is_code: false
+    properties: []
+  - block_anchor: ~
+    content: "-\tEggs"
+    depth: 1
+    is_code: false
+    properties: []
+  - block_anchor: ~
+    content: "-\tCall the plumber"
+    depth: 0
+    is_code: false
+    properties: []
+source:
+  blocks:
+    - block_anchor: ~
+      content: "-\tGroceries\n-\tMilk\n-\tEggs\n-\tCall the plumber"
+      depth: 0
+      is_code: false
+      properties: []
+  frontmatter: []
+  frontmatter_list_items: {}
+  warnings: []

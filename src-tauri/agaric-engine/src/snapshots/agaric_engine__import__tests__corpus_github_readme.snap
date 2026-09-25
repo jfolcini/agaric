@@ -1,0 +1,105 @@
+---
+source: agaric-engine/src/import.rs
+expression: "serde_json::json!({\n    \"import\": output_shape(parse_logseq_markdown(&text)), \"source\":\n    output_shape(parse_source_outline(&text)), \"paste\":\n    blocks_shape(parse_pasted_text(&text)),\n})"
+---
+import:
+  blocks:
+    - block_anchor: ~
+      content: "# fastgrep\n[![CI](https://github.com/example/fastgrep/actions/workflows/ci.yml/badge.svg)](https://github.com/example/fastgrep/actions)\nA tiny, fast grep clone.\n## Install\n```sh\ncargo install fastgrep\n```\n## Usage\n1. Build the index: `fastgrep index .`\n2. Search: `fastgrep find \"needle\"`\n## Features\n* Regex support\n* Respects `.gitignore`\n* including nested ignore files\n## License\nMIT"
+      depth: 0
+      is_code: true
+      properties: []
+  frontmatter: []
+  frontmatter_list_items: {}
+  warnings: []
+paste:
+  - block_anchor: ~
+    content: "# fastgrep"
+    depth: 0
+    is_code: false
+    properties: []
+  - block_anchor: ~
+    content: "[![CI](https://github.com/example/fastgrep/actions/workflows/ci.yml/badge.svg)](https://github.com/example/fastgrep/actions)"
+    depth: 0
+    is_code: false
+    properties: []
+  - block_anchor: ~
+    content: "A tiny, fast grep clone."
+    depth: 0
+    is_code: false
+    properties: []
+  - block_anchor: ~
+    content: "## Install"
+    depth: 0
+    is_code: false
+    properties: []
+  - block_anchor: ~
+    content: "```sh"
+    depth: 0
+    is_code: true
+    properties: []
+  - block_anchor: ~
+    content: cargo install fastgrep
+    depth: 0
+    is_code: false
+    properties: []
+  - block_anchor: ~
+    content: "```"
+    depth: 0
+    is_code: true
+    properties: []
+  - block_anchor: ~
+    content: "## Usage"
+    depth: 0
+    is_code: false
+    properties: []
+  - block_anchor: ~
+    content: "1. Build the index: `fastgrep index .`"
+    depth: 0
+    is_code: false
+    properties: []
+  - block_anchor: ~
+    content: "2. Search: `fastgrep find \"needle\"`"
+    depth: 0
+    is_code: false
+    properties: []
+  - block_anchor: ~
+    content: "## Features"
+    depth: 0
+    is_code: false
+    properties: []
+  - block_anchor: ~
+    content: "* Regex support"
+    depth: 0
+    is_code: false
+    properties: []
+  - block_anchor: ~
+    content: "* Respects `.gitignore`"
+    depth: 0
+    is_code: false
+    properties: []
+  - block_anchor: ~
+    content: "* including nested ignore files"
+    depth: 1
+    is_code: false
+    properties: []
+  - block_anchor: ~
+    content: "## License"
+    depth: 0
+    is_code: false
+    properties: []
+  - block_anchor: ~
+    content: MIT
+    depth: 0
+    is_code: false
+    properties: []
+source:
+  blocks:
+    - block_anchor: ~
+      content: "# fastgrep\n\n[![CI](https://github.com/example/fastgrep/actions/workflows/ci.yml/badge.svg)](https://github.com/example/fastgrep/actions)\n\nA tiny, fast grep clone.\n\n## Install\n\n```sh\ncargo install fastgrep\n```\n\n## Usage\n\n1. Build the index: `fastgrep index .`\n2. Search: `fastgrep find \"needle\"`\n\n## Features\n\n* Regex support\n* Respects `.gitignore`\n* including nested ignore files\n\n## License\n\nMIT"
+      depth: 0
+      is_code: true
+      properties: []
+  frontmatter: []
+  frontmatter_list_items: {}
+  warnings: []

@@ -247,7 +247,10 @@ const NO_FIXTURE_ALLOWLIST: Readonly<Record<string, string>> = {
   // ── Import / quick capture (composes covered create/edit ops) ──
   import_bibliography: 'covered by import-bibliography.test.ts',
   import_markdown:
-    'composes create_block/edit_block (block_crud_basic.json); parsing covered by e2e',
+    'composes create_block/edit_block (block_crud_basic.json); the parser is covered by the ' +
+    'Rust tests in agaric-engine/src/import.rs and by ' +
+    '../e2e-tauri/import-markdown-nesting.e2e.ts, not by the Playwright e2e, which runs ' +
+    "the mock's line splitter",
   quick_capture_block:
     'the local DATE is the input, not the scope: `chrono::Local::now()` names the journal ' +
     'page, so the date lands in `blocks[].content` and a backend-authored `expected` binds ' +

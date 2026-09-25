@@ -1,0 +1,143 @@
+---
+source: agaric-engine/src/import.rs
+expression: "serde_json::json!({\n    \"import\": output_shape(parse_logseq_markdown(&text)), \"source\":\n    output_shape(parse_source_outline(&text)), \"paste\":\n    blocks_shape(parse_pasted_text(&text)),\n})"
+---
+import:
+  blocks:
+    - block_anchor: ~
+      content: "# Trip"
+      depth: 0
+      is_code: false
+      properties: []
+    - block_anchor: ~
+      content: Plan the trip
+      depth: 0
+      is_code: false
+      properties:
+        - - todo_state
+          - TODO
+    - block_anchor: ~
+      content: Book flights
+      depth: 1
+      is_code: false
+      properties:
+        - - listStyle
+          - bullet
+    - block_anchor: ~
+      content: Pick dates
+      depth: 1
+      is_code: false
+      properties:
+        - - listStyle
+          - ordered
+    - block_anchor: ~
+      content: Pay deposit
+      depth: 1
+      is_code: false
+      properties:
+        - - listStyle
+          - ordered
+    - block_anchor: ~
+      content: "A block with a [[Page]] link and #tag"
+      depth: 0
+      is_code: false
+      properties: []
+  frontmatter:
+    - - status
+      - planning
+  frontmatter_list_items: {}
+  warnings: []
+paste:
+  - block_anchor: ~
+    content: "# Trip"
+    depth: 0
+    is_code: false
+    properties: []
+  - block_anchor: ~
+    content: "---"
+    depth: 0
+    is_code: false
+    properties: []
+  - block_anchor: ~
+    content: "status: planning"
+    depth: 0
+    is_code: false
+    properties: []
+  - block_anchor: ~
+    content: "---"
+    depth: 0
+    is_code: false
+    properties: []
+  - block_anchor: ~
+    content: "- Plan the trip"
+    depth: 0
+    is_code: false
+    properties: []
+  - block_anchor: ~
+    content: "todo_state:: TODO"
+    depth: 1
+    is_code: false
+    properties: []
+  - block_anchor: ~
+    content: "- - Book flights"
+    depth: 1
+    is_code: false
+    properties: []
+  - block_anchor: ~
+    content: "- 1. Pick dates"
+    depth: 1
+    is_code: false
+    properties: []
+  - block_anchor: ~
+    content: "- 2. Pay deposit"
+    depth: 1
+    is_code: false
+    properties: []
+  - block_anchor: ~
+    content: "- A block with a [[Page]] link and #tag"
+    depth: 0
+    is_code: false
+    properties: []
+source:
+  blocks:
+    - block_anchor: ~
+      content: "# Trip\n\n---\nstatus: planning\n---"
+      depth: 0
+      is_code: false
+      properties: []
+    - block_anchor: ~
+      content: Plan the trip
+      depth: 0
+      is_code: false
+      properties:
+        - - todo_state
+          - TODO
+    - block_anchor: ~
+      content: Book flights
+      depth: 1
+      is_code: false
+      properties:
+        - - listStyle
+          - bullet
+    - block_anchor: ~
+      content: Pick dates
+      depth: 1
+      is_code: false
+      properties:
+        - - listStyle
+          - ordered
+    - block_anchor: ~
+      content: Pay deposit
+      depth: 1
+      is_code: false
+      properties:
+        - - listStyle
+          - ordered
+    - block_anchor: ~
+      content: "A block with a [[Page]] link and #tag"
+      depth: 0
+      is_code: false
+      properties: []
+  frontmatter: []
+  frontmatter_list_items: {}
+  warnings: []
