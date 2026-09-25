@@ -33,6 +33,7 @@ import {
   spaceRootGroup,
   validationRejection,
 } from '@/lib/tauri-mock/handlers/shared'
+import { resolveInboundNames } from '@/lib/tauri-mock/names'
 import {
   attachmentBytes,
   attachments,
@@ -1227,12 +1228,14 @@ export const blocksHandlers = {
   // block (`before` + its content, one `edit_block`), the first block's
   // children follow the anchor's own, `after` ends the last block or follows a
   // code block as its own (`joinSplice`), and the anchor is returned first.
-  // The backend also resolves `[[Title]]` / `#tag` names (reporting the pages
-  // and tags it creates ahead of the content rows), reads task markers and
-  // property lines, and refuses an over-deep or oversized paste; the mock
-  // models none of that, so tests must not rely on it for them. After text
-  // the backend writes a first block's markers and property lines back as
-  // text, which is where the mock leaves them.
+  // `[[Title]]` / `#tag` names resolve in the anchor's space through
+  // `resolveInboundNames` (#5160 N4), the created pages and tags reported
+  // ahead of the content rows as the backend does; with no space every name
+  // stays text. The backend also reads task markers and property lines, and
+  // refuses an over-deep or oversized paste; the mock models none of that, so
+  // tests must not rely on it for them. After text the backend writes a first
+  // block's markers and property lines back as text, which is where the mock
+  // leaves them.
   paste_blocks: (args) => {
     const a = args as Record<string, unknown>
     const anchorId = a['anchorBlockId'] as string
@@ -1259,11 +1262,18 @@ export const blocksHandlers = {
     const firstSlot = liveSiblings.findIndex((b) => b['id'] === anchorId) + 1
     const opRefs: OpRefs = []
     const out: Record<string, unknown>[] = []
+    const spaceId = (anchor['space_id'] as string | null) ?? ownerSpaceOf(anchor)
+    let contents = planned.map((block) => block.content)
+    if (spaceId !== null) {
+      const names = resolveInboundNames(contents, spaceId, opRefs)
+      contents = names.contents
+      out.push(...names.created)
+    }
     const open: Array<{ depth: number; id: string }> = []
     let topLevel = 0
     let start = 0
     if (splice) {
-      const content = (planned[0] as PlannedPaste).content
+      const content = contents[0] as string
       const op = pushOp('edit_block', {
         block_id: anchorId,
         to_text: content,
@@ -1277,11 +1287,12 @@ export const blocksHandlers = {
     }
     for (let i = start; i < planned.length; i++) {
       const block = planned[i] as PlannedPaste
+      const content = contents[i] as string
       while ((open.at(-1)?.depth ?? -1) >= block.depth) open.pop()
       const parent = open.at(-1)
       const row = parent
-        ? pasteRow(block.content, parent.id, pageId, Number.MAX_SAFE_INTEGER, opRefs)
-        : pasteRow(block.content, parentId, pageId, firstSlot + topLevel++, opRefs)
+        ? pasteRow(content, parent.id, pageId, Number.MAX_SAFE_INTEGER, opRefs)
+        : pasteRow(content, parentId, pageId, firstSlot + topLevel++, opRefs)
       open.push({ depth: block.depth, id: row['id'] as string })
       out.push(row)
     }

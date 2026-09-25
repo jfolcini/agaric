@@ -36,7 +36,11 @@
     "39": "01BX5ZZKBKACTAV9WEVGEMMVSR",
     "A": "01BX5ZZKBKACTAV9WEVGEMMVSS",
     "C": "01BX5ZZKBKACTAV9WEVGEMMVSV",
-    "v1": "01BX5ZZKBKACTAV9WEVGEMMVSW"
+    "v1": "01BX5ZZKBKACTAV9WEVGEMMVSW",
+    "C++": "01BX5ZZKBKACTAV9WEVGEMMVSX",
+    "v1.2": "01BX5ZZKBKACTAV9WEVGEMMVSY",
+    "Q&A": "01BX5ZZKBKACTAV9WEVGEMMVSZ",
+    "Q": "01BX5ZZKBKACTAV9WEVGEMMVT0"
   },
   "codeFenceCases": [
     {
@@ -147,105 +151,137 @@
       "expected": "#[[NEL\u0085Inside]]"
     },
     {
-      "name": "U+FEFF boundary is not Rust whitespace",
+      "name": "U+FEFF is not a name char, so the tag is bracketed; it is not Rust whitespace either, so the brackets keep it",
       "tagUlid": "01BX5ZZKBKACTAV9WEVGEMMVS5",
       "tagName": "\uFEFFBOM\uFEFF",
-      "expected": "#\uFEFFBOM\uFEFF"
+      "expected": "#[[\uFEFFBOM\uFEFF]]"
     },
     {
-      "name": "#5160 N8 a tag whose name the bare form cuts short is written bare (reads back as tag C)",
+      "name": "#5160 N8 a tag whose name the bare form would cut short is bracketed",
       "tagUlid": "01BX5ZZKBKACTAV9WEVGEMMVSX",
       "tagName": "C++",
-      "expected": "#C++"
+      "expected": "#[[C++]]"
     },
     {
-      "name": "#5160 N8 a dotted tag name is written bare (reads back as tag v1)",
+      "name": "#5160 N8 a dotted tag name is bracketed",
       "tagUlid": "01BX5ZZKBKACTAV9WEVGEMMVSY",
       "tagName": "v1.2",
-      "expected": "#v1.2"
+      "expected": "#[[v1.2]]"
+    },
+    {
+      "name": "#5160 N8 a tag name holding an ampersand is bracketed",
+      "tagUlid": "01BX5ZZKBKACTAV9WEVGEMMVSZ",
+      "tagName": "Q&A",
+      "expected": "#[[Q&A]]"
+    },
+    {
+      "name": "#5160 N8 an all-digit tag name is bracketed, since the bare form is not a tag",
+      "tagUlid": "01BX5ZZKBKACTAV9WEVGEMMVSN",
+      "tagName": "42",
+      "expected": "#[[42]]"
+    },
+    {
+      "name": "#5160 N8 a plain name is written bare",
+      "tagUlid": "01BX5ZZKBKACTAV9WEVGEMMVSW",
+      "tagName": "v1",
+      "expected": "#v1"
     }
   ],
   "nameRuleCases": [
     {
-      "name": "#5160 N1 an issue number mints a tag",
+      "name": "#5160 N1 an issue number is text: a tag name needs a non-digit",
       "input": "fixes #42",
       "requestedPageNames": [],
-      "requestedTagNames": ["42"],
-      "transformed": "fixes #[01BX5ZZKBKACTAV9WEVGEMMVSN]",
-      "editor": [
-        ["text", "fixes "],
-        ["tag", "42"]
-      ],
-      "finding": "N1"
+      "requestedTagNames": [],
+      "transformed": "fixes #42",
+      "editor": [["text", "fixes #42"]]
     },
     {
-      "name": "#5160 N1 a bare URL's fragment mints a tag and the URL is rewritten",
+      "name": "#5160 N1 a bare URL's fragment is not a tag and the URL is left intact",
       "input": "see https://docs.rs/x/#install",
       "requestedPageNames": [],
-      "requestedTagNames": ["install"],
-      "transformed": "see https://docs.rs/x/#[01BX5ZZKBKACTAV9WEVGEMMVSP]",
+      "requestedTagNames": [],
+      "transformed": "see https://docs.rs/x/#install",
       "editor": [
         ["text", "see "],
-        [
-          "link",
-          "https://docs.rs/x/#[01BX5ZZKBKACTAV9WEVGEMMVSP -> https://docs.rs/x/#[01BX5ZZKBKACTAV9WEVGEMMVSP"
-        ],
-        ["text", "]"]
-      ],
-      "finding": "N1"
+        ["link", "https://docs.rs/x/#install -> https://docs.rs/x/#install"]
+      ]
     },
     {
-      "name": "#5160 N1 a link destination's fragment mints a tag and the link is rewritten",
+      "name": "#5160 N1 a link destination's fragment is not a tag and the link is left intact",
       "input": "[docs](https://x.dev/#setup)",
       "requestedPageNames": [],
-      "requestedTagNames": ["setup"],
-      "transformed": "[docs](https://x.dev/#[01BX5ZZKBKACTAV9WEVGEMMVSQ])",
-      "editor": [["link", "docs -> https://x.dev/#[01BX5ZZKBKACTAV9WEVGEMMVSQ]"]],
-      "finding": "N1"
+      "requestedTagNames": [],
+      "transformed": "[docs](https://x.dev/#setup)",
+      "editor": [["link", "docs -> https://x.dev/#setup"]]
     },
     {
-      "name": "#5160 N1 an HTML entity mints a tag",
+      "name": "#5160 N1 an HTML entity is text: `&` is not a boundary",
       "input": "it&#39;s",
       "requestedPageNames": [],
-      "requestedTagNames": ["39"],
-      "transformed": "it&#[01BX5ZZKBKACTAV9WEVGEMMVSR];s",
-      "editor": [
-        ["text", "it&"],
-        ["tag", "39"],
-        ["text", ";s"]
-      ],
-      "finding": "N1"
+      "requestedTagNames": [],
+      "transformed": "it&#39;s",
+      "editor": [["text", "it&#39;s"]]
     },
     {
-      "name": "#5160 N1 a Logseq priority mints a tag",
+      "name": "#5160 N1 a Logseq priority is text: `[` is not a boundary",
       "input": "[#A] ship it",
       "requestedPageNames": [],
-      "requestedTagNames": ["A"],
-      "transformed": "[#[01BX5ZZKBKACTAV9WEVGEMMVSS]] ship it",
-      "editor": [
-        ["text", "["],
-        ["tag", "A"],
-        ["text", "] ship it"]
-      ],
-      "finding": "N1"
+      "requestedTagNames": [],
+      "transformed": "[#A] ship it",
+      "editor": [["text", "[#A] ship it"]]
     },
     {
-      "name": "#5160 N3 an escaped hash still resolves, and the editor shows the raw id",
+      "name": "#5160 N1 an ampersand inside a name ends it: `#Q&A` is the tag Q, so N8's writer must bracket it",
+      "input": "#Q&A",
+      "requestedPageNames": [],
+      "requestedTagNames": ["Q"],
+      "transformed": "#[01BX5ZZKBKACTAV9WEVGEMMVT0]&A",
+      "editor": [
+        ["tag", "Q"],
+        ["text", "&A"]
+      ]
+    },
+    {
+      "name": "#5160 N3 an escaped hash is text",
       "input": "\\#tag",
       "requestedPageNames": [],
-      "requestedTagNames": ["tag"],
-      "transformed": "\\#[01BX5ZZKBKACTAV9WEVGEMMVS1]",
-      "editor": [["text", "#[01BX5ZZKBKACTAV9WEVGEMMVS1]"]],
-      "finding": "N3"
+      "requestedTagNames": [],
+      "transformed": "\\#tag",
+      "editor": [["text", "#tag"]]
     },
     {
-      "name": "#5160 N3 an escaped wiki-link still resolves, and the editor shows the raw id",
+      "name": "#5160 N3 an even run of backslashes is literal backslashes before a tag",
+      "input": "\\\\#tag",
+      "requestedPageNames": [],
+      "requestedTagNames": ["tag"],
+      "transformed": "\\\\#[01BX5ZZKBKACTAV9WEVGEMMVS1]",
+      "editor": [
+        ["text", "\\"],
+        ["tag", "tag"]
+      ]
+    },
+    {
+      "name": "#5160 N3 an escaped wiki-link is text",
       "input": "\\[[Page]]",
-      "requestedPageNames": ["Page"],
+      "requestedPageNames": [],
       "requestedTagNames": [],
-      "transformed": "\\[[01ARZ3NDEKTSV4RRFFQ69G5FAV]]",
-      "editor": [["text", "[[01ARZ3NDEKTSV4RRFFQ69G5FAV]]"]],
-      "finding": "N3"
+      "transformed": "\\[[Page]]",
+      "editor": [["text", "[[Page]]"]]
+    },
+    {
+      "name": "#5160 N8 bracketed names read back whole, which is why the writer brackets them",
+      "input": "#[[C++]] #[[v1.2]] #[[42]]",
+      "requestedPageNames": [],
+      "requestedTagNames": ["C++", "v1.2", "42"],
+      "transformed": "#[01BX5ZZKBKACTAV9WEVGEMMVSX] #[01BX5ZZKBKACTAV9WEVGEMMVSY] #[01BX5ZZKBKACTAV9WEVGEMMVSN]",
+      "editor": [
+        ["tag", "C++"],
+        ["text", " "],
+        ["tag", "v1.2"],
+        ["text", " "],
+        ["tag", "42"]
+      ]
     },
     {
       "name": "#5160 N6 a labelled link asks for a page titled with its label",
@@ -287,13 +323,12 @@
       ]
     },
     {
-      "name": "#5160 N8 a title holding a hash resolves the text before it, though that exact title exists",
+      "name": "#5160 D10 a title holding a hash is that page first, when it exists",
       "input": "[[C# Notes]]",
-      "requestedPageNames": ["C"],
+      "requestedPageNames": ["C# Notes"],
       "requestedTagNames": [],
-      "transformed": "[[01ARZ3NDEKTSV4RRFFQ69G5FB4]]",
-      "editor": [["page", "C"]],
-      "finding": "N8"
+      "transformed": "[[01ARZ3NDEKTSV4RRFFQ69G5FB5]]",
+      "editor": [["page", "C# Notes"]]
     }
   ],
   "cases": [

@@ -2,8 +2,8 @@
  * #5140 Phase 4a — mock `apply_page_source`, the save of a page edited as its
  * source buffer, over the mock's own `get_page_source` render. Both are
  * approximations of the backend grammar (bullets, indentation, continuation
- * lines and `^ID` anchors; no markers, properties or names), so what is pinned
- * here is the diff the mock applies: edits, creates, moves and deletes by
+ * lines and `^ID` anchors; no markers or properties; names are `names.test.ts`),
+ * so what is pinned here is the diff the mock applies: edits, creates, moves and deletes by
  * anchor, and the refusals; Phase 5 adds the merge of a stale buffer. Everything
  * is read back through the mock's read commands. Backend parity is pinned by
  * `conformance/fixtures/apply_page_source.json` and

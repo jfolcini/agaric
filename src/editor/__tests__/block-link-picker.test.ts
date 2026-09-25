@@ -236,6 +236,52 @@ describe('BlockLinkPicker input rule — alias disambiguation', () => {
   })
 })
 
+// #5160 N4 — two pages differing only by case, neither spelled as typed: the
+// name is ambiguous, so the typed `[[FOO]]` stays exactly as typed (brackets
+// included), as paste, import and Source keep it.
+describe('BlockLinkPicker input rule — ambiguous name', () => {
+  it('re-inserts the typed [[FOO]] when two pages tie by case', async () => {
+    const insertContentAtCalls: Array<{ pos: number; content: unknown }> = []
+    const chainProxy: Record<string, unknown> = {
+      focus: () => chainProxy,
+      insertContent: (_c: unknown) => chainProxy,
+      insertContentAt: (pos: number, content: unknown) => {
+        insertContentAtCalls.push({ pos, content })
+        return chainProxy
+      },
+      run: () => true,
+    }
+    const mockEditor = {
+      chain: () => chainProxy,
+      state: { doc: { content: { size: 1000 } } },
+    } as unknown
+    const onCreate = vi.fn()
+    const mockItems = vi.fn().mockResolvedValue([
+      { id: 'PAGE_UPPER', label: 'Foo', title: 'Foo' },
+      { id: 'PAGE_LOWER', label: 'foo', title: 'foo' },
+    ])
+    const ext = BlockLinkPicker.configure({ items: mockItems, onCreate })
+    const rules = (
+      ext.config.addInputRules as unknown as (
+        ...args: unknown[]
+      ) => [
+        { handler: (...a: unknown[]) => unknown },
+        ...{ handler: (...a: unknown[]) => unknown }[],
+      ]
+    ).call({ options: ext.options, editor: mockEditor })
+
+    rules[0].handler({
+      state: { tr: { delete: vi.fn() } },
+      range: { from: 5, to: 12 },
+      match: ['[[FOO]]', 'FOO'],
+    })
+
+    await vi.waitFor(() => expect(insertContentAtCalls.length).toBeGreaterThan(0))
+    expect(insertContentAtCalls).toEqual([{ pos: 5, content: '[[FOO]]' }])
+    expect(onCreate).not.toHaveBeenCalled()
+  })
+})
+
 describe('BlockLinkPicker input rule uses insertContentAt (race-condition fix)', () => {
   it('calls insertContentAt with captured position on exact match', async () => {
     // Track the calls to verify position-anchored insertion

@@ -594,17 +594,22 @@ fn a_title_from_another_space_stays_raw() {
     assert_eq!(md, format!("- {content} ^{BLOCK}\n"));
 }
 
-/// `[[C# Notes]]` reads back as a link to `C` with an anchor. The block's other
-/// link would read back fine, and still goes out raw with it.
+/// `[[C# Notes]]` reads back as that page when it is in the space (#5160 D10),
+/// and otherwise as a link to `C` with an anchor, so the block's other link,
+/// which would read back fine, goes out raw with it.
 #[test]
-fn a_title_with_a_hash_stays_raw_and_so_does_its_block() {
+fn a_title_with_a_hash_is_written_only_when_that_page_reads_back() {
     let content = format!("[[{PROJECT}]] and [[{C_SHARP}]]");
-    let md = source_with_names(
-        &content,
-        &[("Project", &[PROJECT]), ("C# Notes", &[C_SHARP])],
-        &[],
+    let pages: &[(&str, &[&str])] = &[("Project", &[PROJECT]), ("C# Notes", &[C_SHARP])];
+    assert_eq!(
+        source_with_names(&content, pages, &[]),
+        format!("- [[Project]] and [[C# Notes]] ^{BLOCK}\n")
     );
-    assert_eq!(md, format!("- {content} ^{BLOCK}\n"));
+    let only_c: &[(&str, &[&str])] = &[("Project", &[PROJECT]), ("C", &[OTHER_PROJECT])];
+    assert_eq!(
+        source_with_names(&content, only_c, &[]),
+        format!("- {content} ^{BLOCK}\n")
+    );
 }
 
 /// `Work` and `work` normalise alike, and the importer resolves both to the

@@ -24,10 +24,12 @@ import {
   findLivePageByTitle,
   metaRowMatchesFilter,
   notFoundRejection,
+  ownerSpaceOf,
   sortDiscriminator,
   spaceRootGroup,
   validationRejection,
 } from '@/lib/tauri-mock/handlers/shared'
+import { findEmptyPageTitled, resolveInboundNames } from '@/lib/tauri-mock/names'
 import {
   blockTags,
   blocks,
@@ -1175,11 +1177,13 @@ export const pagesHandlers = {
   // #5140 Phase 4a — save the page edited as its source buffer: moves and
   // creates first, then edits, then deletes, so a child kept out of a deleted
   // block has moved before the delete cascades. The buffer is read by
-  // `parseSourceBuffer`, so the backend's list markers, task checkboxes,
-  // property lines and names are not modelled (`properties_*` stay 0,
-  // `names_created` empty), nor are its op cap and depth limit; tests must not
-  // rely on the mock for them. Phase 5: with `merge`, a stale buffer is saved
-  // with the page's changes folded in (`mergeSourceBuffer`).
+  // `parseSourceBuffer`, so the backend's list markers, task checkboxes and
+  // property lines are not modelled (`properties_*` stay 0), nor are its op cap
+  // and depth limit; tests must not rely on the mock for them. The names a new
+  // or edited bullet writes resolve in the page's space (`resolveInboundNames`,
+  // #5160 N4), the created pages and tags in `names_created`. Phase 5: with
+  // `merge`, a stale buffer is saved with the page's changes folded in
+  // (`mergeSourceBuffer`).
   apply_page_source: (args) => {
     const a = args as Record<string, unknown>
     const pageId = a['pageId'] as string
@@ -1188,7 +1192,26 @@ export const pagesHandlers = {
       merge: a['merge'] === true,
     })
     const report = { created: 0, edited: 0, moved: 0, deleted: 0 }
-    const opRefs = placeSourceBullets(pageId, edit.t1, report)
+    const opRefs: OpRefs = []
+    const namesCreated: Record<string, unknown>[] = []
+    const page = blocks.get(pageId)
+    const spaceId = page ? ((page['space_id'] as string | null) ?? ownerSpaceOf(page)) : null
+    if (spaceId !== null) {
+      const written = edit.t1.filter(
+        ({ anchor, content }) => anchor === null || content !== edit.before.get(anchor),
+      )
+      const names = resolveInboundNames(
+        written.map(({ content }) => content),
+        spaceId,
+        opRefs,
+      )
+      written.forEach((bullet, i) => {
+        bullet.content = names.contents[i] as string
+      })
+      namesCreated.push(...names.created)
+      edit.warnings.push(...names.warnings)
+    }
+    opRefs.push(...placeSourceBullets(pageId, edit.t1, report))
     for (const { anchor, content } of edit.t1) {
       if (anchor === null || content === edit.before.get(anchor)) continue
       if (content === blocks.get(anchor)?.['content']) continue
@@ -1207,7 +1230,7 @@ export const pagesHandlers = {
       ...report,
       properties_set: 0,
       properties_deleted: 0,
-      names_created: [],
+      names_created: namesCreated,
       warnings: edit.warnings,
     }
   },
@@ -1272,15 +1295,17 @@ export const pagesHandlers = {
   //     ordinary content.
   //   - Blocks: the mock's block grammar (`parseOutline` in blocks.ts): one
   //     block per list item of any marker, heading and paragraph.
+  //   - Names: `[[Page]]` and `#tag` resolve in the target space through
+  //     `resolveInboundNames` (#5160 N4), and a file whose title names an
+  //     empty page of the space fills that page (D12).
   //
   // It intentionally does NOT model (and tests MUST NOT rely on the mock for
   // any of these — the Rust tests own the import contract):
   //   - Frontmatter / inline `key:: value` properties beyond a raw COUNT
   //     (`properties_set`); no property values are stamped onto blocks.
-  //   - Wiki-link (`[[...]]`) resolution.
-  //   - `((block-ref))` stripping.
+  //   - `((block-ref))` stripping and `[[Page#anchor]]` block targets.
   //   - Depth: every content block is emitted flat under the page.
-  //   - `#tag` and attachment handling (kept as literal text).
+  //   - Attachment handling (kept as literal text).
   //
   // WARNING: mock-backed frontend tests give NO assurance about import-contract
   // fidelity. Validate import semantics against the Rust tests, not this mock.
@@ -1341,11 +1366,14 @@ export const pagesHandlers = {
     // 0. (Frontmatter and `#tag` parsing are intentionally NOT modelled here.)
     const propertiesSet = lines.filter((line) => /^\s*[^\s:][^:]*::\s+\S/.test(line)).length
 
-    // Create the page block + stamp `space` ref property.
-    const pageId = fakeId()
-    const pageBlock = makeBlock(pageId, 'page', pageTitle, null, blocks.size)
-    blocks.set(pageId, pageBlock)
-    if (spaceId) {
+    // Create the page block + stamp `space` ref property, unless an empty page
+    // of the space already carries the title (#5160 D12).
+    const adopted = spaceId ? findEmptyPageTitled(pageTitle, spaceId) : null
+    const pageId = adopted ?? fakeId()
+    if (adopted === null) {
+      blocks.set(pageId, makeBlock(pageId, 'page', pageTitle, null, blocks.size))
+    }
+    if (spaceId && adopted === null) {
       if (!properties.has(pageId)) properties.set(pageId, new Map())
       properties.get(pageId)?.set('space', {
         block_id: pageId,
@@ -1361,10 +1389,20 @@ export const pagesHandlers = {
     // Pre-compute the content blocks so we know `blocks_total` before emitting
     // `started` (the real backend reports the parser's count up front so the UI
     // can render a determinate bar from the very first event).
-    const contentLines = parseOutline(lines.join('\n')).map((block) => block.content)
-    const blocksTotal = contentLines.length
+    const parsedLines = parseOutline(lines.join('\n')).map((block) => block.content)
+    const blocksTotal = parsedLines.length
 
     emit({ kind: 'started', page_title: pageTitle, blocks_total: blocksTotal })
+
+    // Representative non-empty warning so the result panel's warning UI is
+    // exercised in dev-preview. Mirrors the shape of a real parse-time
+    // diagnostic (attachments are not modelled; their refs stay literal text).
+    const warnings: string[] = [
+      'dev-preview mock: attachments are not imported (kept as literal text)',
+    ]
+    const names = spaceId ? resolveInboundNames(parsedLines, spaceId, []) : null
+    const contentLines = names?.contents ?? parsedLines
+    warnings.push(...(names?.warnings ?? []))
 
     let blocksCreated = 0
     let position = 0
@@ -1376,13 +1414,6 @@ export const pagesHandlers = {
       position++
       emit({ kind: 'progress', blocks_done: blocksCreated, blocks_total: blocksTotal })
     }
-
-    // Representative non-empty warning so the result panel's warning UI is
-    // exercised in dev-preview. Mirrors the shape of a real parse-time
-    // diagnostic (#tag fidelity is not implemented; hashtags stay literal text).
-    const warnings: string[] = [
-      'dev-preview mock: tags (#tag) and attachments are not imported (kept as literal text)',
-    ]
 
     emit({
       kind: 'complete',

@@ -492,6 +492,10 @@ function replayOps(fixture: Fixture): CommandRecord[] {
 export function replayFixture(fixture: Fixture): NormalizedSnapshot {
   clearMock()
   loadSeed(fixture)
+  // The Rust runner stamps the seed into the test space before any op, so a
+  // command that resolves names in the anchor's space (`paste_blocks`, #5160
+  // N4) sees one; the stamp writes nothing the snapshot reads.
+  stampMockSpace()
   replayOps(fixture)
   const state: MockState = { blocks, properties, blockTags, opLog }
   return buildSnapshot(state, canonicalOrder(fixture))

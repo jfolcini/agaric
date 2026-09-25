@@ -38,24 +38,26 @@ declare module '@tiptap/core' {
 }
 
 /**
- * Exact-match predicate for the BlockLink resolve paths.
- *
- * Look for an exact match: case-insensitive label OR exact alias text.
- * With prefix-alias matching now in `searchPages`, multiple items
- * can carry `isAlias: true` for prefixes that aren't `text` exactly — only
- * the alias whose `aliasText === text` should auto-resolve from the input
- * rule / selection-resolve path. Using `aliasText` instead of the dropped
- * `|| item.isAlias` short-circuit preserves the original "[[my-alias]]
- * resolves to its target page" intent without auto-resolving prefix-only
- * matches like "[[my]]".
+ * The page `[[text]]` names among `items`, by the one rule the backend applies
+ * (#5160 N4): the exact full title, else the unique case-insensitive title,
+ * else the unique alias whose `aliasText` is `text`, else `undefined`, which
+ * creates the page. Two pages that differ only by case are never guessed:
+ * `null` leaves the text as typed. Titles are compared whole, namespace
+ * included (`item.title`), so typing an existing namespaced title creates no
+ * twin; prefix-only alias hits (`[[my]]` for alias `my-alias`) never resolve.
  */
-function matchBlockLinkItem(items: PickerItem[], text: string): PickerItem | undefined {
+export function matchBlockLinkItem(
+  items: PickerItem[],
+  text: string,
+): PickerItem | undefined | null {
+  const pages = items.filter((item) => !item.isCreate && !item.isAlias)
+  const exact = pages.find((item) => (item.title ?? item.label) === text)
+  if (exact) return exact
   const lower = text.toLowerCase()
-  return items.find(
-    (item) =>
-      !item.isCreate &&
-      (item.label.toLowerCase() === lower || item.aliasText?.toLowerCase() === lower),
-  )
+  const folded = pages.filter((item) => (item.title ?? item.label).toLowerCase() === lower)
+  if (folded.length === 1) return folded[0]
+  if (folded.length > 1) return null
+  return items.find((item) => !item.isCreate && item.aliasText?.toLowerCase() === lower)
 }
 
 export const BlockLinkPicker = Extension.create<BlockLinkPickerOptions>({
@@ -125,6 +127,7 @@ export const BlockLinkPicker = Extension.create<BlockLinkPickerOptions>({
           void resolveAndInsertPickerToken({
             editor,
             text: innerText,
+            typed: match[0],
             insertPos,
             items: extensionOptions.items,
             matchItem: matchBlockLinkItem,

@@ -1,0 +1,21 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT EXISTS(\n               SELECT 1 FROM blocks WHERE parent_id = ?1 AND deleted_at IS NULL\n           ) AS \"has!: bool\"",
+  "describe": {
+    "columns": [
+      {
+        "name": "has!: bool",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "f77272aa6a1bd7663ccb949db15258cb1eee09871b746cb6faa5ea978ceb66bf"
+}
