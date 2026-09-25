@@ -5,9 +5,10 @@
  * one block with that content and no properties.
  *
  * Here the save flush runs over each block after a typo fix, and must keep it
- * one plain edit. A row whose flush does something else today records that
- * result and its #5160 finding, so the phase that fixes it flips exactly that
- * row.
+ * one plain edit: the flush acts only on what the edit added, never on the
+ * shape the block was loaded with (D2). A row whose flush does something else
+ * records that result and its #5160 finding, so the phase that fixes it flips
+ * exactly that row.
  */
 
 import { readFileSync } from 'node:fs'
@@ -69,10 +70,11 @@ describe('stored block content vectors (#5160)', () => {
   })
 
   it.each(vectors.blocks.map((row) => [row.name, row] as const))(
-    'an edited copy of %s flushes as today',
+    'an edited copy of %s flushes as one plain edit',
     async (_name, row) => {
       const result = runUnmountFlush({
         blockId: 'BLOCK',
+        loaded: row.content,
         changed: typoFixed(row.content),
         edit: () => Promise.resolve(true),
         splitBlock: () => Promise.resolve(true),

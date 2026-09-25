@@ -66,17 +66,21 @@ function parseMemoized(markdown: string): DocNode {
   return doc
 }
 
+/** How many top-level blocks the markdown holds; a single line is always one. */
+function countTopLevelBlocks(markdown: string): number {
+  if (!markdown.includes('\n')) return 1
+  return (parseMemoized(markdown).content ?? []).length
+}
+
 /**
- * Return true when the markdown would produce multiple top-level blocks
- * (i.e. contains newlines outside of code fences), meaning the block
- * should be split on blur.
- *
- * Pass an already-parsed `DocNode` as the optional second argument to skip the
- * parse entirely when the caller has the doc in hand (#1630).
+ * Whether the edit ADDED top-level blocks (#5160 D2): `changed` parses to more
+ * of them than `loaded`, the content the block was mounted with. Only then does
+ * the blur split the block into siblings. A stored `a\nb` is one paragraph
+ * with a line break, and a block loaded as `a\n\nb` stays one block after a
+ * typo fix; Enter inside a list or table, or pasting paragraphs, adds blocks
+ * and splits.
  */
-export function shouldSplitOnBlur(markdown: string, parsed?: DocNode): boolean {
-  if (!markdown.includes('\n')) return false
-  const doc = parsed ?? parseMemoized(markdown)
-  const blocks = doc.content ?? []
-  return blocks.length > 1
+export function shouldSplitOnBlur(changed: string, loaded: string): boolean {
+  if (!changed.includes('\n')) return false
+  return countTopLevelBlocks(changed) > countTopLevelBlocks(loaded)
 }

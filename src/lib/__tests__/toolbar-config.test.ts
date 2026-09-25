@@ -47,6 +47,7 @@ vi.mock('@/lib/block-command-bus', async () => {
 // ── Mock editor ─────────────────────────────────────────────────────────
 
 const mockRun = vi.fn()
+const mockSetHardBreak = vi.fn(() => ({ run: mockRun }))
 const mockFocus = vi.fn(() => ({
   toggleBold: vi.fn(() => ({ run: mockRun })),
   toggleItalic: vi.fn(() => ({ run: mockRun })),
@@ -58,6 +59,7 @@ const mockFocus = vi.fn(() => ({
   insertContent: vi.fn(() => ({ run: mockRun })),
   undo: vi.fn(() => ({ run: mockRun })),
   redo: vi.fn(() => ({ run: mockRun })),
+  setHardBreak: mockSetHardBreak,
 }))
 const mockChain = vi.fn(() => ({ focus: mockFocus }))
 
@@ -375,11 +377,25 @@ describe('createRefsAndBlocks', () => {
 // ── createStructureButtons ──────────────────────────────────────────────
 
 describe('createStructureButtons', () => {
-  // #1960 — ordered-list / divider / callout moved into the Turn into menu
-  // (TurnIntoMenu); this group is now empty. Group 1 of the toolbar holds only
-  // the table-insert picker, wired separately in items.ts.
-  it('returns no buttons (structure transforms moved to Turn into)', () => {
-    expect(createStructureButtons()).toEqual([])
+  // #1960 moved the block-type transforms into the Turn into menu; #5160 D2
+  // put the "new line" insert here (Shift+Enter has no key on a phone).
+  it('returns the New line button', () => {
+    const buttons = createStructureButtons(makeEditor())
+    expect(buttons.map((b) => b.label)).toEqual(['toolbar.newLine'])
+    for (const btn of buttons) assertValidConfig(btn)
+  })
+
+  it('New line inserts a hard break at the caret', () => {
+    const [newLine] = createStructureButtons(makeEditor())
+    newLine?.action()
+    expect(mockSetHardBreak).toHaveBeenCalledOnce()
+    expect(mockRun).toHaveBeenCalled()
+  })
+
+  it('New line outranks the long-tail inserts so it stays on a phone-width bar', () => {
+    const [newLine] = createStructureButtons(makeEditor())
+    const longTail = Math.max(...createMetadataButtons().map((b) => b.priority ?? 0))
+    expect(newLine?.priority ?? 0).toBeGreaterThan(longTail)
   })
 })
 

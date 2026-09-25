@@ -166,7 +166,7 @@ export function FormattingToolbar({
   const groups = useMemo(
     () => ({
       refsAndBlocks: createRefsAndBlocks(editor),
-      structureButtons: createStructureButtons(),
+      structureButtons: createStructureButtons(editor),
       metadataButtons: createMetadataButtons(),
       historyButtons: createHistoryButtons(editor),
     }),

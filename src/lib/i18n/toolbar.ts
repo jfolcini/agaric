@@ -102,4 +102,7 @@ export const toolbar: Record<string, string> = {
   'toolbar.insertTableTip': 'Insert table (/table)',
   'toolbar.tableInsertHint': 'Drag to size',
   'toolbar.tableDimensionsCell': '{{rows}} by {{cols}} table',
+  // #5160 D2 — a line break inside the block (Shift+Enter, for virtual keyboards).
+  'toolbar.newLine': 'New line',
+  'toolbar.newLineTip': 'New line (Shift+Enter)',
 }

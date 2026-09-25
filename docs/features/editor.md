@@ -48,7 +48,7 @@ Markdown shortcuts trigger as you type (`#`, `##`, ``` ` ```, `**bold**`, `_ital
 | --- | --- |
 | Split block | `Enter` |
 | Continue a list | `Enter` on a bullet / numbered block creates the next block with the same list style; `Enter` on an *empty* styled block leaves the list instead |
-| Line break inside a block | `Shift+Enter`. A single line break is a line of the same block, stored as one newline and shown as a break; a blank line separates blocks |
+| Line break inside a block | `Shift+Enter`, or the toolbar's *New line* button (virtual keyboards have no Shift+Enter). A single line break is a line of the same block, stored as one newline and shown as a break; a blank line separates blocks |
 | Merge into previous | `Backspace` at start of block. On a bullet / numbered block the first `Backspace` clears the list style; the second merges (or, on an empty block, deletes it) |
 | Indent / dedent | `Tab` / `Shift+Tab`, or `Ctrl+Shift+→` / `Ctrl+Shift+←` |
 | Move block up / down | `Ctrl+Shift+↑` / `Ctrl+Shift+↓` |
