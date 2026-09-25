@@ -33,7 +33,7 @@ function renderInlineNode(
       return renderBlockRef(node, key, ctx)
     }
     case 'hardBreak': {
-      return renderHardBreak(node, key)
+      return renderHardBreak(node, key, ctx)
     }
     case 'math_inline': {
       return renderMathInline(node, key)

@@ -15,11 +15,11 @@
  * `handleEnterSave` AWAITS it and focuses the last block it produced, instead of
  * firing a parallel empty-block create. This test wires the REAL `useBlockFlush`
  * producer to the REAL `handleEnterSave` consumer over a REAL page-blocks store
- * (only `invoke` is mocked, and the REAL markdown serializer splits on `\n`), so
+ * (only `invoke` is mocked, and the REAL markdown parser splits on a blank line), so
  * it exercises the actual coordination end-to-end.
  *
  * NOTE: deliberately does NOT mock `@/editor/markdown-serializer` — the real
- * parser must see `alpha\nbravo\ncharlie` as three blocks so both the flush's
+ * parser must see `alpha\n\nbravo\n\ncharlie` as three blocks so both the flush's
  * `parse()` multi-block detector and the store's `planSplit` take the split path.
  */
 
@@ -101,7 +101,9 @@ describe('#2914 — Enter on multi-block content does not race splitBlock vs cre
   it('awaits the split, skips the extra empty createBelow, and focuses the last split block', async () => {
     const setFocused = vi.fn()
     const justCreatedBlockIds = { current: new Set<string>() }
-    const handle = makeHandle('A', 'alpha\nbravo\ncharlie')
+    // Blank-line separated: a single newline is a line inside one paragraph
+    // (#5160 D2) and would not split at all.
+    const handle = makeHandle('A', 'alpha\n\nbravo\n\ncharlie')
     const rovingRef = { current: handle as RovingEditorHandle | null }
 
     const { result } = renderHook(() => {

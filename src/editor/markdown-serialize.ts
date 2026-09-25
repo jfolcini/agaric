@@ -570,6 +570,27 @@ function isVulnerableItalicOpen(content: readonly InlineNode[], i: number): bool
   return false
 }
 
+/**
+ * {@link defuseLeadingItalicMarker} on every line of a dispatched paragraph.
+ * A hard break is a bare newline (#5160 D2), so each continuation line is a
+ * line the block parser dispatches, and an italic opening onto a space there
+ * is the same bullet marker it would be on the first line.
+ */
+function defuseEveryLineStart(content: readonly InlineNode[]): InlineNode[] {
+  const out: InlineNode[] = []
+  let line: InlineNode[] = []
+  for (const node of content) {
+    if (node.type !== 'hardBreak') {
+      line.push(node)
+      continue
+    }
+    out.push(...defuseLeadingItalicMarker(line), node)
+    line = []
+  }
+  out.push(...defuseLeadingItalicMarker(line))
+  return out
+}
+
 /** Pull the bold/italic/strike/highlight/underline subset out of a mark list. */
 export function markSetFromMarks(marks: readonly PMMark[]): Set<string> {
   const desired = new Set<string>()
@@ -626,13 +647,10 @@ function serializeInlineChild(
     const alt = escapeImageAlt(child.attrs.alt)
     return serializeInlineAtom(`![${alt}](${escapeUrl(child.attrs.src)})`, activeMarks)
   }
-  // #710-5: a CommonMark backslash hard break (`\` + newline) — distinct from
-  // the bare `\n` block separator, so a Shift+Enter line break round-trips as
-  // ONE paragraph instead of being split into two blocks on blur. The parser
-  // recognises an odd trailing-backslash run (escapeText doubles literal
-  // backslashes, so serializer output can only end a line with an odd run via
-  // this token).
-  if (child.type === 'hardBreak') return serializeInlineAtom('\\\n', activeMarks)
+  // A line break inside the paragraph (#5160 D2). Emitted as a bare newline
+  // here; `finishParagraphLine` decides per line whether it stays bare or
+  // takes the legacy `\` + newline marker (#710-5).
+  if (child.type === 'hardBreak') return serializeInlineAtom('\n', activeMarks)
   const unknown = child as { type: string }
   onUnknownNode?.(unknown.type)
   return serializeInlineAtom('', activeMarks)
@@ -833,7 +851,7 @@ function serializeParagraph(
   // `atLineStart: false` (see `defuseLeadingItalicMarker`).
   const dispatched = atLineStart && taskPrefix === ''
   const content = coalesceSameMarkText(node.content)
-  const groups = groupByLink(dispatched ? defuseLeadingItalicMarker(content) : content)
+  const groups = groupByLink(dispatched ? defuseEveryLineStart(content) : content)
 
   // #2385: a bare-URL autolink emission is only unambiguous when re-scanning
   // it in its final surroundings consumes exactly the href again. When the
@@ -896,48 +914,12 @@ function serializeParagraph(
     }
   }
 
-  // A paragraph whose text begins with a leading BLOCK marker would re-parse
-  // as that other block kind, breaking serialize→parse→serialize idempotence
-  // (#711): the first serialize emits the marker verbatim, the reparse turns
-  // the paragraph into a heading / ordered list / bullet list, and the second
-  // serialize then escapes the marker — a byte drift. Escape the marker on the
-  // way out so the text stays a paragraph. The parser accepts `\#`, `\.` and
-  // `\-`, `\>` as literal escapes (`-` was made escapable for #1436, `>` for
-  // the blockquote gap). `escapeText` already escapes a leading `|` table gate
-  // plus every literal `*` (so a `* ` bullet marker can never lead a
-  // paragraph). Heading, ordered list, bullet list (`- `), blockquote (`> ` or
-  // a bare `>`) and the all-dashes horizontal rule (`---`) are the gaps closed
-  // here. Only the START of the paragraph can trigger a block production
-  // (hard-break continuation lines are consumed by the paragraph parser before
-  // any block production sees them).
-  // The two LIST markers are additionally escaped after ANY leading indent,
-  // because the parser tolerates up to three spaces before a marker
-  // (CommonMark's 3-space rule, `MAX_MARKER_INDENT` in
-  // `markdown-parse/vocab.ts`, which is what keeps a 4-space-nested import a
-  // real sub-list). The escape has to be WIDER than that tolerance: a
-  // paragraph nested in a list item is emitted indented and re-parsed
-  // DEDENTED by the item's content column, so an indent that is too deep to be
-  // a marker on the way out (`     - x`) lands inside the tolerance on the way
-  // back in (`   - x`) and would re-parse as a list — the marker-ness of a line
-  // has to be invariant under that dedent, and only escaping at every indent
-  // makes it so. Heading / blockquote / horizontal rule need no such widening:
-  // their productions are anchored at column 0, so an indented one is never a
-  // marker at any depth.
-  //
-  // A leading `*` from an OPENED italic mark (rather than literal text) is
-  // handled separately, before this string even exists — see
-  // `defuseLeadingItalicMarker` — because escaping only the opening
-  // delimiter here would leave its matching close dangling (#4156).
+  // A `\n` in the inline string is a hardBreak atom (text nodes hold none), so
+  // splitting on it yields the paragraph's lines.
   const escaped = result
-    .replace(/^( *)(\d+)\. /, '$1$2\\. ')
-    .replace(/^(#{1,6}) /, '\\$1 ')
-    .replace(/^( *)- /, '$1\\- ')
-    // Horizontal rule: a line of only 3+ dashes (`/^-{3,}$/`). Escaping the
-    // first dash (`\---`) drops out of the rule pattern; the parser unescapes
-    // `\-` back to `-`, so the run survives as paragraph text.
-    .replace(/^(-{3,})$/, '\\$1')
-    // Blockquote: `> ` or a bare `>`. `\>` round-trips to `>` (parser change).
-    .replace(/^>( |$)/, '\\>$1')
+    .split('\n')
+    .map((line, k, lines) => finishParagraphLine(line, k, lines, dispatched))
+    .join('\n')
   // The task prefix (#1435) is prepended AFTER block-marker escaping so the
   // leading-`-` escape only sees the user text, never our own `- [ ] ` marker.
   // Content that serializes to NOTHING (e.g. a whitespace-only math atom) gets
@@ -945,6 +927,81 @@ function serializeParagraph(
   // so the emitted form matches what its reparse re-serializes to.
   if (taskPrefix && escaped === '') return taskPrefix.trimEnd()
   return taskPrefix + escaped
+}
+
+/**
+ * One line of a paragraph as emitted: its leading block marker escaped where
+ * the block parser would read the line, and its hard break spelled so the
+ * parser reads it back as one (#5160 D2).
+ *
+ * A DISPATCHED paragraph (see `serializeParagraph`'s `dispatched`) is read by
+ * the paragraph production, which takes a plain following line as its own, so
+ * a hard break is a bare newline there and EVERY line gets the marker escape.
+ * Two exceptions keep the legacy `\` + newline marker (#710-5), which the
+ * parser still reads: a break next to an EMPTY line, because an empty line is
+ * the blank-line block separator; and every break in a heading, task or
+ * list-item paragraph, whose single-line productions absorb only marker
+ * continuations and would read a bare newline as the next block. Only the
+ * first line of those is dispatched, so only it needs the escape.
+ */
+function finishParagraphLine(
+  line: string,
+  k: number,
+  lines: readonly string[],
+  dispatched: boolean,
+): string {
+  const escaped = k === 0 || dispatched ? escapeLeadingBlockMarker(line) : line
+  if (k === lines.length - 1) return escaped
+  const bare = dispatched && line !== '' && lines[k + 1] !== ''
+  return bare ? escaped : `${escaped}\\`
+}
+
+/**
+ * A paragraph line whose text begins with a leading BLOCK marker would re-parse
+ * as that other block kind, breaking serialize→parse→serialize idempotence
+ * (#711): the first serialize emits the marker verbatim, the reparse turns
+ * the paragraph into a heading / ordered list / bullet list, and the second
+ * serialize then escapes the marker — a byte drift. Escape the marker on the
+ * way out so the text stays a paragraph. The parser accepts `\#`, `\.` and
+ * `\-`, `\>` as literal escapes (`-` was made escapable for #1436, `>` for
+ * the blockquote gap). `escapeText` already escapes a leading `|` table gate
+ * plus every literal `*` (so a `* ` bullet marker can never lead a
+ * paragraph). Heading, ordered list, bullet list (`- `), blockquote (`> ` or
+ * a bare `>`) and the all-dashes horizontal rule (`---`) are the gaps closed
+ * here.
+ *
+ * The two LIST markers are additionally escaped after ANY leading indent,
+ * because the parser tolerates up to three spaces before a marker
+ * (CommonMark's 3-space rule, `MAX_MARKER_INDENT` in
+ * `markdown-parse/vocab.ts`, which is what keeps a 4-space-nested import a
+ * real sub-list). The escape has to be WIDER than that tolerance: a
+ * paragraph nested in a list item is emitted indented and re-parsed
+ * DEDENTED by the item's content column, so an indent that is too deep to be
+ * a marker on the way out (`     - x`) lands inside the tolerance on the way
+ * back in (`   - x`) and would re-parse as a list — the marker-ness of a line
+ * has to be invariant under that dedent, and only escaping at every indent
+ * makes it so. Heading / blockquote / horizontal rule need no such widening:
+ * their productions are anchored at column 0, so an indented one is never a
+ * marker at any depth.
+ *
+ * A leading `*` from an OPENED italic mark (rather than literal text) is
+ * handled separately, before this string even exists — see
+ * `defuseLeadingItalicMarker` — because escaping only the opening
+ * delimiter here would leave its matching close dangling (#4156).
+ */
+function escapeLeadingBlockMarker(line: string): string {
+  return (
+    line
+      .replace(/^( *)(\d+)\. /, '$1$2\\. ')
+      .replace(/^(#{1,6}) /, '\\$1 ')
+      .replace(/^( *)- /, '$1\\- ')
+      // Horizontal rule: a line of only 3+ dashes (`/^-{3,}$/`). Escaping the
+      // first dash (`\---`) drops out of the rule pattern; the parser unescapes
+      // `\-` back to `-`, so the run survives as paragraph text.
+      .replace(/^(-{3,})$/, '\\$1')
+      // Blockquote: `> ` or a bare `>`. `\>` round-trips to `>` (parser change).
+      .replace(/^>( |$)/, '\\>$1')
+  )
 }
 
 function serializeHeading(node: HeadingNode, onUnknownNode?: (type: string) => void): string {
@@ -988,7 +1045,7 @@ function serializeBlockquote(node: BlockquoteNode, onUnknownNode?: (type: string
   // Recursively serialize each child block (via the shared block dispatch so
   // the grammar is enumerated in one place, #2219), then prefix every line
   // with "> ".
-  const inner = serializeBlockSequence(node.content, onUnknownNode).join('\n')
+  const inner = joinBlocks(node.content, serializeBlockSequence(node.content, onUnknownNode))
   const lines = inner.split('\n')
   // Prepend [!TYPE] prefix to the first line when calloutType is set
   if (node.attrs?.calloutType) {
@@ -1191,13 +1248,16 @@ function serializeListItem(
   // following a nested list inside the item needs the same leading-indent
   // defusing (#4071/#4076) — the recursive parse of the item's nested lines
   // sees exactly these strings, dedented back to column 0.
-  const parts = serializeBlockSequence(children, onUnknownNode, true).map((serialized, idx) =>
-    // The first child sits on the marker line (no indent); every later block is
-    // indented one level so it round-trips back into this item as nested content
-    // rather than leaking out as a sibling block.
-    idx === 0 ? serialized : indentLines(serialized, LIST_NEST_INDENT),
-  )
-  return `${marker}${parts.join('\n')}`
+  const [lead = '', ...rest] = serializeBlockSequence(children, onUnknownNode, true)
+  if (children.length <= 1) return `${marker}${lead}`
+  // The first child sits on the marker line (no indent); every later block is
+  // indented one level so it round-trips back into this item as nested content
+  // rather than leaking out as a sibling block. The nested blocks are joined as
+  // the parser separates them (`joinBlocks`): the blank line between two
+  // nested paragraphs is emitted indented too, so `collectListItem` keeps it
+  // inside the item.
+  const nested = joinBlocks(children.slice(1), rest)
+  return `${marker}${lead}\n${indentLines(nested, LIST_NEST_INDENT)}`
 }
 
 function serializeOrderedList(
@@ -1392,7 +1452,35 @@ function needsWhitespaceDefuse(firstLine: string, prev: BlockLevelNode | undefin
   return leadingIndent(firstLine) >= LIST_NEST_INDENT.length
 }
 
+/**
+ * A paragraph the parser's paragraph production reads (no task marker). Read
+ * by truthiness, as `serializeParagraph` reads the prefix: a paragraph out of
+ * the editor carries the schema default `todoState: null`, not no `attrs`.
+ */
+function isPlainParagraph(node: BlockLevelNode | undefined): boolean {
+  return node?.type === 'paragraph' && !node.attrs?.todoState
+}
+
+/**
+ * Join sibling blocks the way the parser separates them (#5160 D2): a blank
+ * line between two plain paragraphs, which a bare newline would read back as
+ * ONE paragraph with a hard break, and a bare newline everywhere else, where
+ * the second block's first line interrupts the first (a task's `- [ ] ` marker
+ * included). A list item's nested blocks are joined the same way; the
+ * caller indents the blank line, so it stays inside the item.
+ */
+function joinBlocks(nodes: readonly BlockLevelNode[], serialized: readonly string[]): string {
+  let out = ''
+  for (const [idx, text] of serialized.entries()) {
+    if (idx > 0) {
+      out += isPlainParagraph(nodes[idx - 1]) && isPlainParagraph(nodes[idx]) ? '\n\n' : '\n'
+    }
+    out += text
+  }
+  return out
+}
+
 export function serialize(doc: DocNode, onUnknownNode?: (type: string) => void): string {
   if (!doc.content || doc.content.length === 0) return ''
-  return serializeBlockSequence(doc.content, onUnknownNode).join('\n')
+  return joinBlocks(doc.content, serializeBlockSequence(doc.content, onUnknownNode))
 }

@@ -267,8 +267,13 @@ describe('shouldSplitOnBlur', () => {
     expect(shouldSplitOnBlur('hello world')).toBe(false)
   })
 
-  it('returns true when markdown contains a newline (multiple paragraphs)', () => {
-    expect(shouldSplitOnBlur('line1\nline2')).toBe(true)
+  // #5160 D2: a single line break is a line inside the paragraph.
+  it('returns false for a line break inside a paragraph (one block, two lines)', () => {
+    expect(shouldSplitOnBlur('line1\nline2')).toBe(false)
+  })
+
+  it('returns true for paragraphs separated by a blank line', () => {
+    expect(shouldSplitOnBlur('line1\n\nline2')).toBe(true)
   })
 
   it('returns false when newline is inside a code block', () => {
@@ -2107,7 +2112,7 @@ describe('shouldSplitOnBlur — hard breaks (#710-5)', () => {
   })
 
   it('still returns true for a genuine two-paragraph separator', () => {
-    expect(shouldSplitOnBlur('first\nsecond')).toBe(true)
+    expect(shouldSplitOnBlur('first\n\nsecond')).toBe(true)
   })
 })
 

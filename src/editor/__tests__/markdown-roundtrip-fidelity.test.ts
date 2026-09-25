@@ -262,7 +262,9 @@ describe('finding 12: adjacent sibling blockquotes/tables merge (pinned canonica
   // do — but only where the split is decidable (see the width-change case
   // below); a rectangular run keeps the merge pinned here, because the two
   // readings of one are provably indistinguishable.
-  it('two sibling blockquotes normalize to ONE blockquote with both paragraphs, stably', () => {
+  // #5160 D2: the merged quote's two lines are one paragraph with a hard
+  // break, since a single quoted line break is a line of the same paragraph.
+  it('two sibling blockquotes normalize to ONE blockquote with one two-line paragraph, stably', () => {
     const d = doc(
       blockquote(paragraph(text('first quote'))),
       blockquote(paragraph(text('second quote'))),
@@ -271,7 +273,7 @@ describe('finding 12: adjacent sibling blockquotes/tables merge (pinned canonica
     expect(md).toBe('> first quote\n> second quote')
     const reparsed = parse(md)
     expect(reparsed).toEqual(
-      doc(blockquote(paragraph(text('first quote')), paragraph(text('second quote')))),
+      doc(blockquote(paragraph(text('first quote'), hardBreak(), text('second quote')))),
     )
     expect(serialize(reparsed)).toBe(md)
   })
@@ -281,7 +283,7 @@ describe('finding 12: adjacent sibling blockquotes/tables merge (pinned canonica
     const md = serialize(d)
     const reparsed = parse(md)
     expect(reparsed).toEqual(
-      doc(callout('info', paragraph(text('note')), paragraph(text('plain')))),
+      doc(callout('info', paragraph(text('note'), hardBreak(), text('plain')))),
     )
     expect(serialize(reparsed)).toBe(md)
   })
@@ -880,7 +882,9 @@ describe('#4156: an emphasis span wrapping only whitespace', () => {
     ['*\\ |*', ' *\\|*'],
     ['*\\ *`', ' \\`'],
     ['_\\ *](x)](x)-_', ' *\\*\\](x)\\](x)-*'],
-    ['\n*\\ *', '\n '],
+    // #5160 D2: the leading blank line is an empty paragraph, and the
+    // serializer separates it from the next paragraph with a blank line.
+    ['\n*\\ *', '\n\n '],
   ])('sibling shape %j converges on the FIRST pass', (input, expected) => {
     const { once, twice } = passes(input)
     expect(once).toBe(expected)

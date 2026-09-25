@@ -23,6 +23,8 @@ export interface RenderContext {
    * (`.ref-chip-anchor`) to pick it out of the row's other chips.
    */
   readonly anchorRefId?: string | undefined
+  /** Preview mode (#1533): nothing that breaks a clamped one-line row. */
+  readonly inline?: boolean | undefined
 }
 
 export const HEADING_CLASSES: Record<number, string> = {
