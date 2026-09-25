@@ -1,0 +1,4 @@
+* [ ] Plan the trip
+  * [x] Book flights
+  * [ ] Book hotel
+* [ ] Pack

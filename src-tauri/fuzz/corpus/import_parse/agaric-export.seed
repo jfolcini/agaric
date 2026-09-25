@@ -1,0 +1,12 @@
+# Trip
+
+---
+status: planning
+---
+
+- Plan the trip
+  todo_state:: TODO
+  - - Book flights
+  - 1. Pick dates
+  - 2. Pay deposit
+- A block with a [[Page]] link and #tag

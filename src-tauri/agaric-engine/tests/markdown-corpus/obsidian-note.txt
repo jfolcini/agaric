@@ -1,0 +1,31 @@
+---
+tags:
+  - reading
+  - books
+aliases: [Deep Work notes]
+status: in-progress
+---
+# Deep Work
+
+Cal Newport argues that focused work is **rare** and _valuable_. See also [[Digital Minimalism|his later book]] and [[Deep Work#Rule 1]].
+
+> [!note] Key idea
+> Schedule every minute of your day.
+
+## Takeaways
+
+- Work deeply
+    - Choose a depth philosophy
+    - Ritualize
+- Embrace boredom ^boredom
+- Quit social media
+
+~~~python
+blocks = plan(day)
+~~~
+
+## Tasks
+
+- [ ] Finish chapter 3
+- [x] Buy the book
+rating:: 4

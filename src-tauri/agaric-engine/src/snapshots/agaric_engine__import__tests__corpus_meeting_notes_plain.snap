@@ -1,0 +1,65 @@
+---
+source: agaric-engine/src/import.rs
+expression: "serde_json::json!({\n    \"import\": output_shape(parse_logseq_markdown(&text)), \"source\":\n    output_shape(parse_source_outline(&text)), \"paste\":\n    blocks_shape(parse_pasted_text(&text)),\n})"
+---
+import:
+  blocks:
+    - block_anchor: ~
+      content: "Weekly sync 24/09\nAttendees: Alice, Bob, Carol\nAgenda\n1) Budget\n2) Hiring\nAction items\nAlice: send the deck\nBob: book interviews"
+      depth: 0
+      is_code: false
+      properties: []
+  frontmatter: []
+  frontmatter_list_items: {}
+  warnings: []
+paste:
+  - block_anchor: ~
+    content: Weekly sync 24/09
+    depth: 0
+    is_code: false
+    properties: []
+  - block_anchor: ~
+    content: "Attendees: Alice, Bob, Carol"
+    depth: 0
+    is_code: false
+    properties: []
+  - block_anchor: ~
+    content: Agenda
+    depth: 0
+    is_code: false
+    properties: []
+  - block_anchor: ~
+    content: 1) Budget
+    depth: 0
+    is_code: false
+    properties: []
+  - block_anchor: ~
+    content: 2) Hiring
+    depth: 0
+    is_code: false
+    properties: []
+  - block_anchor: ~
+    content: Action items
+    depth: 0
+    is_code: false
+    properties: []
+  - block_anchor: ~
+    content: "Alice: send the deck"
+    depth: 0
+    is_code: false
+    properties: []
+  - block_anchor: ~
+    content: "Bob: book interviews"
+    depth: 0
+    is_code: false
+    properties: []
+source:
+  blocks:
+    - block_anchor: ~
+      content: "Weekly sync 24/09\nAttendees: Alice, Bob, Carol\n\nAgenda\n1) Budget\n2) Hiring\n\nAction items\nAlice: send the deck\nBob: book interviews"
+      depth: 0
+      is_code: false
+      properties: []
+  frontmatter: []
+  frontmatter_list_items: {}
+  warnings: []

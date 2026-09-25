@@ -1,0 +1,150 @@
+---
+source: agaric-engine/src/import.rs
+expression: "serde_json::json!({\n    \"import\": output_shape(parse_logseq_markdown(&text)), \"source\":\n    output_shape(parse_source_outline(&text)), \"paste\":\n    blocks_shape(parse_pasted_text(&text)),\n})"
+---
+import:
+  blocks:
+    - block_anchor: ~
+      content: "## Summary\nThe migration has three phases.\n## Phases"
+      depth: 0
+      is_code: false
+      properties: []
+    - block_anchor: ~
+      content: "**Phase 1** — freeze writes"
+      depth: 0
+      is_code: false
+      properties: []
+    - block_anchor: ~
+      content: announce the window
+      depth: 1
+      is_code: false
+      properties: []
+    - block_anchor: ~
+      content: snapshot the database
+      depth: 1
+      is_code: false
+      properties: []
+    - block_anchor: ~
+      content: "**Phase 2** — copy data"
+      depth: 0
+      is_code: false
+      properties: []
+    - block_anchor: ~
+      content: "**Phase 3** — cut over\n| Phase | Owner | Days |\n|-------|-------|------|\n| 1     | Ops   | 1    |\n| 2     | Data  | 3    |\n```sql\nSELECT count(*) FROM blocks;\n```"
+      depth: 0
+      is_code: true
+      properties: []
+  frontmatter: []
+  frontmatter_list_items: {}
+  warnings: []
+paste:
+  - block_anchor: ~
+    content: "## Summary"
+    depth: 0
+    is_code: false
+    properties: []
+  - block_anchor: ~
+    content: The migration has three phases.
+    depth: 0
+    is_code: false
+    properties: []
+  - block_anchor: ~
+    content: "## Phases"
+    depth: 0
+    is_code: false
+    properties: []
+  - block_anchor: ~
+    content: "- **Phase 1** — freeze writes"
+    depth: 0
+    is_code: false
+    properties: []
+  - block_anchor: ~
+    content: "- announce the window"
+    depth: 1
+    is_code: false
+    properties: []
+  - block_anchor: ~
+    content: "- snapshot the database"
+    depth: 1
+    is_code: false
+    properties: []
+  - block_anchor: ~
+    content: "- **Phase 2** — copy data"
+    depth: 0
+    is_code: false
+    properties: []
+  - block_anchor: ~
+    content: "- **Phase 3** — cut over"
+    depth: 0
+    is_code: false
+    properties: []
+  - block_anchor: ~
+    content: "| Phase | Owner | Days |"
+    depth: 0
+    is_code: false
+    properties: []
+  - block_anchor: ~
+    content: "|-------|-------|------|"
+    depth: 0
+    is_code: false
+    properties: []
+  - block_anchor: ~
+    content: "| 1     | Ops   | 1    |"
+    depth: 0
+    is_code: false
+    properties: []
+  - block_anchor: ~
+    content: "| 2     | Data  | 3    |"
+    depth: 0
+    is_code: false
+    properties: []
+  - block_anchor: ~
+    content: "```sql"
+    depth: 0
+    is_code: true
+    properties: []
+  - block_anchor: ~
+    content: SELECT count(*) FROM blocks;
+    depth: 0
+    is_code: false
+    properties: []
+  - block_anchor: ~
+    content: "```"
+    depth: 0
+    is_code: true
+    properties: []
+source:
+  blocks:
+    - block_anchor: ~
+      content: "## Summary\n\nThe migration has three phases.\n\n## Phases"
+      depth: 0
+      is_code: false
+      properties: []
+    - block_anchor: ~
+      content: "**Phase 1** — freeze writes"
+      depth: 0
+      is_code: false
+      properties: []
+    - block_anchor: ~
+      content: announce the window
+      depth: 1
+      is_code: false
+      properties: []
+    - block_anchor: ~
+      content: snapshot the database
+      depth: 1
+      is_code: false
+      properties: []
+    - block_anchor: ~
+      content: "**Phase 2** — copy data"
+      depth: 0
+      is_code: false
+      properties: []
+    - block_anchor: ~
+      content: "**Phase 3** — cut over\n\n| Phase | Owner | Days |\n|-------|-------|------|\n| 1     | Ops   | 1    |\n| 2     | Data  | 3    |\n\n```sql\nSELECT count(*) FROM blocks;\n```"
+      depth: 0
+      is_code: true
+      properties: []
+  frontmatter: []
+  frontmatter_list_items: {}
+  warnings: []

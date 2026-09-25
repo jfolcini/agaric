@@ -22,3 +22,7 @@ scripts/*.mjs linguist-vendored
 # `28 b5 2f fd 0a` — the zstd magic plus a newline the end-of-file-fixer hook
 # appended before that hook excluded this directory (see prek.toml).
 src-tauri/fuzz/corpus/** -text
+
+# The parser corpus the fuzz seeds are copied from (#5160): its CRLF line
+# endings are inputs, as above.
+src-tauri/agaric-engine/tests/markdown-corpus/** -text

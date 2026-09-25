@@ -3549,16 +3549,33 @@ bare line (({UUID_B})) too"
     // document — no timestamps, ULIDs or hashes — so nothing needs
     // redacting.
 
+    /// [`output_shape`] of an import of `md`.
+    fn parse_output_shape(md: &str) -> serde_json::Value {
+        output_shape(parse_logseq_markdown(md))
+    }
+
     /// Serializable mirror of [`ParseOutput`]. See the module note above on
     /// why this destructures exhaustively and sorts the `HashMap`.
-    fn parse_output_shape(md: &str) -> serde_json::Value {
+    fn output_shape(output: ParseOutput) -> serde_json::Value {
         let ParseOutput {
             blocks,
             frontmatter,
             frontmatter_list_items,
             warnings,
-        } = parse_logseq_markdown(md);
-        let blocks: Vec<serde_json::Value> = blocks
+        } = output;
+        let frontmatter_list_items: std::collections::BTreeMap<String, Vec<String>> =
+            frontmatter_list_items.into_iter().collect();
+        serde_json::json!({
+            "blocks": blocks_shape(blocks),
+            "frontmatter": frontmatter,
+            "frontmatter_list_items": frontmatter_list_items,
+            "warnings": warnings,
+        })
+    }
+
+    /// Serializable mirror of each [`ParsedBlock`].
+    fn blocks_shape(blocks: Vec<ParsedBlock>) -> Vec<serde_json::Value> {
+        blocks
             .into_iter()
             .map(|block| {
                 let ParsedBlock {
@@ -3576,15 +3593,7 @@ bare line (({UUID_B})) too"
                     "block_anchor": block_anchor,
                 })
             })
-            .collect();
-        let frontmatter_list_items: std::collections::BTreeMap<String, Vec<String>> =
-            frontmatter_list_items.into_iter().collect();
-        serde_json::json!({
-            "blocks": blocks,
-            "frontmatter": frontmatter,
-            "frontmatter_list_items": frontmatter_list_items,
-            "warnings": warnings,
-        })
+            .collect()
     }
 
     /// A well-formed multi-block document: YAML frontmatter carrying both a
@@ -3624,6 +3633,65 @@ bare line (({UUID_B})) too"
             "  ".repeat(25)
         );
         insta::assert_yaml_snapshot!(parse_output_shape(&md));
+    }
+
+    /// The #5160 findings each corpus snapshot pins as today's reading, where
+    /// it differs from the decided grammar. The phase that fixes one flips
+    /// these snapshots and drops its id here.
+    const CORPUS_FINDINGS: &[(&str, &str)] = &[
+        ("corpus_agaric_export", "S3, S6, S8"),
+        ("corpus_agaric_source", "P1"),
+        ("corpus_chatgpt_answer", "S1, S2, S3"),
+        ("corpus_claude_answer", "S1, S3"),
+        ("corpus_code_heavy", "S1, S3, S4, S5"),
+        ("corpus_crlf_windows", "P1"),
+        ("corpus_four_space_outline", "S7"),
+        ("corpus_gdocs_export", "S1, S2, S3"),
+        ("corpus_github_readme", "S1, S2, S3"),
+        ("corpus_logseq_docs_markdown", "S1, S3, S8, P3, P8"),
+        ("corpus_logseq_page", "S2, S3, S8, P2, P3, P8"),
+        ("corpus_meeting_notes_plain", "S1, S2, S3"),
+        ("corpus_nbsp_indent", "S7"),
+        ("corpus_notion_export", "S1, S3, S7, P1"),
+        ("corpus_obsidian_daily", "S1, S3, P1"),
+        ("corpus_obsidian_note", "S1, S3, S4, S7, S8, P1"),
+        ("corpus_ordered_steps", "S2, S3"),
+        ("corpus_roam_export", "S7"),
+        ("corpus_star_checklist", "S2, S3"),
+        ("corpus_tab_bullets", "S2, S3"),
+    ];
+
+    /// Each real-shaped document under `tests/markdown-corpus/` (#5160) as the
+    /// three parsers read it: a file import, an Edit as Markdown save and a
+    /// plain-text paste, snapshotted as `corpus_<file stem>` with `-` written
+    /// `_`. The snapshot is the reviewable spec of what Agaric does with that
+    /// document today, so a grammar change shows as its diff.
+    #[test]
+    fn corpus_documents_read_as_snapshotted() {
+        let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/markdown-corpus");
+        for entry in std::fs::read_dir(dir).expect("the corpus directory") {
+            let path = entry.expect("a corpus entry").path();
+            let stem = path
+                .file_stem()
+                .and_then(std::ffi::OsStr::to_str)
+                .expect("a UTF-8 file name");
+            let name = format!("corpus_{}", stem.replace('-', "_"));
+            let text = std::fs::read_to_string(&path).expect("a UTF-8 document");
+            assert!(
+                CORPUS_FINDINGS
+                    .iter()
+                    .any(|(document, _)| *document == name),
+                "{name} names the #5160 findings its snapshot pins in CORPUS_FINDINGS"
+            );
+            insta::assert_yaml_snapshot!(
+                name,
+                serde_json::json!({
+                    "import": output_shape(parse_logseq_markdown(&text)),
+                    "source": output_shape(parse_source_outline(&text)),
+                    "paste": blocks_shape(parse_pasted_text(&text)),
+                })
+            );
+        }
     }
 
     /// The attachment side of an import: [`detect_attachment_refs`] over a
@@ -3863,6 +3931,58 @@ mod tests_l9 {
     }
 }
 
+/// Line soup for the grammar properties (#5160): outline lines as people type
+/// and paste them. Bullets, `*` and `1.` markers, checkboxes, `key:: value`
+/// lines, trailing `^words` (some shaped like block ids), three- and
+/// four-backtick and `~~~` fences and prose, indented with spaces, tabs and
+/// NBSP, and ended by `\n`, `\r\n` or `\r`. No line opens front matter, which
+/// has its own tests. The no-silent-loss property below and the app crate's
+/// Source render→parse fixpoint both read it.
+#[cfg(any(test, feature = "test-util"))]
+pub mod line_soup {
+    use proptest::prelude::*;
+
+    /// Prose, with tabs and NBSP.
+    const TEXT: &str = "[a-zA-Z0-9 \t\u{a0}#:\\[\\]()^-]{0,40}";
+
+    /// Indentation of spaces, tabs and NBSP, and now and then past the import
+    /// depth limit, where an import and a paste flatten the block.
+    fn arb_indent() -> impl Strategy<Value = String> {
+        prop_oneof![3 => "[ \t\u{a0}]{0,12}", 1 => " {40,48}"]
+    }
+
+    fn arb_line() -> impl Strategy<Value = String> {
+        const MARKERS: [&str; 8] = ["- ", "-", "* ", "1. ", "- 1. ", "- [ ] ", "- [x] ", "-\t"];
+        const FENCES: [&str; 6] = ["```", "```sh", "````", "````md", "~~~", "~~~yaml"];
+        let word = prop_oneof!["[A-Za-z0-9-]{1,12}", "[0-7][0-9A-HJKMNP-TV-Z]{25}"];
+        prop_oneof![
+            (arb_indent(), proptest::sample::select(&MARKERS[..]), TEXT)
+                .prop_map(|(indent, marker, text)| format!("{indent}{marker}{text}")),
+            (arb_indent(), "[a-z-]{1,10}", "[a-zA-Z0-9 ]{0,20}")
+                .prop_map(|(indent, key, value)| format!("{indent}{key}:: {value}")),
+            (arb_indent(), "[a-zA-Z0-9 ]{0,30}", word)
+                .prop_map(|(indent, text, word)| format!("{indent}{text} ^{word}")),
+            (arb_indent(), TEXT).prop_map(|(indent, text)| format!("{indent}{text}")),
+            (arb_indent(), proptest::sample::select(&FENCES[..]))
+                .prop_map(|(indent, fence)| format!("{indent}{fence}")),
+        ]
+        .prop_filter("front matter has its own tests", |line| {
+            !line.trim_start().starts_with("---")
+        })
+    }
+
+    /// Up to 25 lines, each ended by `\n`, `\r\n` or `\r`.
+    pub fn arb_document() -> impl Strategy<Value = String> {
+        let ending = proptest::sample::select(&["\n", "\r\n", "\r"][..]);
+        proptest::collection::vec((arb_line(), ending), 0..25).prop_map(|lines| {
+            lines
+                .into_iter()
+                .map(|(line, ending)| line + ending)
+                .collect()
+        })
+    }
+}
+
 // ===========================================================================
 // Property-based tests (proptest) — #2590
 // ===========================================================================
@@ -3870,44 +3990,130 @@ mod tests_l9 {
 // The Markdown/Obsidian importer parses fully arbitrary user files (a picked
 // vault folder, an Obsidian export, ENEX/JEX notes composed into Markdown), so
 // `parse_logseq_markdown` is a raw-input boundary. The example-based tests above
-// pin specific shapes; this proptest asserts the *structural contract* holds for
-// arbitrary input: the parser never panics, always clamps `depth` to
-// `MAX_IMPORT_DEPTH`, and only ever emits a non-empty, caret-free block anchor.
+// pin specific shapes; these proptests assert the *structural contract* holds
+// for arbitrary input: the parser never panics and always clamps `depth` to
+// `MAX_IMPORT_DEPTH`, and no parser loses text silently (#5160).
 // (The libFuzzer `import_parse` target in `src-tauri/fuzz` drives the same entry
-// point over the raw byte space; proptest generates VALID-ish Markdown shapes,
+// points over the raw byte space; proptest generates VALID-ish Markdown shapes,
 // libFuzzer the truncated/garbage boundary — the two are complementary.)
 #[cfg(test)]
 mod parse_proptest {
-    use super::{MAX_IMPORT_DEPTH, parse_logseq_markdown};
-    use proptest::prelude::*;
+    use std::collections::HashMap;
+    use std::sync::LazyLock;
 
-    /// One line of plausible Logseq/Obsidian Markdown: an indented bullet, a
-    /// `key:: value` property, a trailing `^block-id` anchor, a fence, or an
-    /// arbitrary text line. Joined with `\n` this exercises the block splitter,
-    /// the depth clamp, the property parser, and the anchor stripper.
-    fn arb_md_line() -> impl Strategy<Value = String> {
-        prop_oneof![
-            (0usize..12, "[a-zA-Z0-9 #\\[\\]()^:-]{0,40}").prop_map(|(indent, text)| format!(
-                "{}- {}",
-                "  ".repeat(indent),
-                text
-            )),
-            ("[a-z-]{1,10}", "[a-zA-Z0-9 ]{0,20}").prop_map(|(k, v)| format!("{k}:: {v}")),
-            "[a-zA-Z0-9 ]{0,30} \\^[A-Za-z0-9-]{1,12}".prop_map(|s: String| s),
-            "[a-zA-Z0-9 #:\\[\\]()^-]{0,40}".prop_map(|s: String| s),
-            Just("```".to_string()),
-        ]
+    use proptest::prelude::*;
+    use regex::Regex;
+
+    use super::line_soup::arb_document;
+    use super::{
+        MAX_IMPORT_DEPTH, ParsedBlock, line_is_property_shaped, parse_logseq_markdown,
+        parse_pasted_text, parse_source_outline,
+    };
+
+    /// The start of a line the grammar may read as syntax: a bullet, an
+    /// escape, a list marker, an escape and a checkbox.
+    static LINE_SYNTAX: LazyLock<Regex> = LazyLock::new(|| {
+        Regex::new(r"^\s*(?:-(?:\s|$))?\\?(?:-(?:\s|$)|[0-9]+\.(?:\s|$))?\\?(?:\[[ xX/-]\])?")
+            .expect("invalid line-syntax regex")
+    });
+
+    /// A line ending in a `^word` a parser may take as its block's anchor.
+    static TRAILING_WORD: LazyLock<Regex> = LazyLock::new(|| {
+        Regex::new(r"(?:^|\s)\^[A-Za-z0-9-]+\s*$").expect("invalid trailing-word regex")
+    });
+
+    /// Add the non-whitespace characters of `text` to `counts`.
+    fn count(counts: &mut HashMap<char, usize>, text: &str) {
+        for c in text.chars().filter(|c| !c.is_whitespace()) {
+            *counts.entry(c).or_default() += 1;
+        }
     }
 
-    fn arb_markdown() -> impl Strategy<Value = String> {
-        proptest::collection::vec(arb_md_line(), 0..25).prop_map(|lines| lines.join("\n"))
+    /// What each line of `input`, its tabs read as spaces as an import reads
+    /// them, may give up to the grammar: [`LINE_SYNTAX`], the `::` of a
+    /// `key:: value` line, and the `^` of an anchor. When an import warns that
+    /// it dropped property lines, every property-shaped line may go.
+    fn consumable(input: &str, warnings: &[String]) -> HashMap<char, usize> {
+        let dropped = warnings.iter().any(|w| w.contains("property line(s)"));
+        let mut allowed = HashMap::new();
+        let lines = input
+            .replace("\r\n", "\n")
+            .replace('\r', "\n")
+            .replace('\t', "  ");
+        for line in lines.lines() {
+            if dropped && line_is_property_shaped(line.trim_start()) {
+                count(&mut allowed, line);
+                continue;
+            }
+            count(
+                &mut allowed,
+                LINE_SYNTAX.find(line).map_or("", |m| m.as_str()),
+            );
+            if line.contains(":: ") {
+                count(&mut allowed, "::");
+            }
+            if TRAILING_WORD.is_match(line) {
+                count(&mut allowed, "^");
+            }
+        }
+        allowed
+    }
+
+    /// No silent loss (#5160): every non-whitespace character of `input` is
+    /// found, as many times as it occurs, in a block's content, a property key
+    /// or value, or a block's anchor, unless the grammar consumed it
+    /// ([`consumable`]) or a warning names the loss. The soup never types a
+    /// `listStyle` or `todo_state` key, so those properties are what a list
+    /// marker or a checkbox stands for and are not counted. A marker the
+    /// grammar reads where the writer meant text, such as S5's `- ` line in a
+    /// column-0 fence, is consumed by the grammar's own rule, so this cannot
+    /// see it; the corpus snapshots pin that.
+    fn check_nothing_lost(
+        parser: &str,
+        input: &str,
+        blocks: &[ParsedBlock],
+        warnings: &[String],
+    ) -> Result<(), TestCaseError> {
+        let mut landed = HashMap::new();
+        for block in blocks {
+            count(&mut landed, &block.content);
+            for (key, value) in &block.properties {
+                if key != "listStyle" && key != "todo_state" {
+                    count(&mut landed, key);
+                    count(&mut landed, value);
+                }
+            }
+            count(&mut landed, block.block_anchor.as_deref().unwrap_or(""));
+        }
+        let mut written = HashMap::new();
+        count(&mut written, input);
+        let allowed = consumable(input, warnings);
+        let lost: HashMap<char, usize> = written
+            .into_iter()
+            .filter_map(|(c, n)| {
+                let found =
+                    landed.get(&c).copied().unwrap_or(0) + allowed.get(&c).copied().unwrap_or(0);
+                let missing = n.saturating_sub(found);
+                (missing > 0).then_some((c, missing))
+            })
+            .collect();
+        prop_assert!(
+            lost.is_empty(),
+            "{} lost {:?} of {:?}\nblocks: {:#?}\nwarnings: {:?}",
+            parser,
+            lost,
+            input,
+            blocks,
+            warnings
+        );
+        Ok(())
     }
 
     proptest! {
-        /// `parse_logseq_markdown` never panics and always upholds its
-        /// structural invariants on arbitrary Markdown-ish input.
+        /// `parse_logseq_markdown` never panics and clamps every block to the
+        /// import depth limit.
         #[test]
-        fn parse_logseq_markdown_upholds_invariants(input in arb_markdown()) {
+        fn parse_logseq_markdown_upholds_invariants(input in arb_document()) {
             let output = parse_logseq_markdown(&input);
             for block in &output.blocks {
                 prop_assert!(
@@ -3916,14 +4122,18 @@ mod parse_proptest {
                     block.depth,
                     MAX_IMPORT_DEPTH,
                 );
-                if let Some(anchor) = &block.block_anchor {
-                    prop_assert!(!anchor.is_empty(), "a block anchor, when present, is never empty");
-                    prop_assert!(
-                        !anchor.contains('^'),
-                        "the leading caret is stripped from a block anchor, got {anchor:?}",
-                    );
-                }
             }
+        }
+
+        /// No parser loses text silently: import, Edit as Markdown and paste
+        /// ([`check_nothing_lost`]).
+        #[test]
+        fn no_parser_loses_text_silently(input in arb_document()) {
+            let import = parse_logseq_markdown(&input);
+            check_nothing_lost("import", &input, &import.blocks, &import.warnings)?;
+            let source = parse_source_outline(&input);
+            check_nothing_lost("source", &input, &source.blocks, &source.warnings)?;
+            check_nothing_lost("paste", &input, &parse_pasted_text(&input), &[])?;
         }
 
         /// Also fuzz the truly-arbitrary-string boundary (not just Markdown-ish

@@ -1,0 +1,11 @@
+# 2026-09-24
+
+## Tasks
+- [ ] Call the bank 📅 2026-09-25
+- [ ] Draft the RFC ⏫
+	- [ ] Outline
+	- [x] Collect feedback ✅ 2026-09-23
+
+## Log
+- 09:30 Standup
+- 14:00 1:1 with [[Alice]]

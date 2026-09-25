@@ -1,0 +1,120 @@
+---
+source: agaric-engine/src/import.rs
+expression: "serde_json::json!({\n    \"import\": output_shape(parse_logseq_markdown(&text)), \"source\":\n    output_shape(parse_source_outline(&text)), \"paste\":\n    blocks_shape(parse_pasted_text(&text)),\n})"
+---
+import:
+  blocks:
+    - block_anchor: ~
+      content: "{{[[TODO]]}} Draft the essay outline"
+      depth: 0
+      is_code: false
+      properties: []
+    - block_anchor: ~
+      content: "Intro:: why notes matter"
+      depth: 2
+      is_code: false
+      properties: []
+    - block_anchor: ~
+      content: "{{[[DONE]]}} Collect sources #[[Reading List]]"
+      depth: 2
+      is_code: false
+      properties: []
+    - block_anchor: ~
+      content: "Met [[Alice]] on [[September 24th, 2026]]"
+      depth: 0
+      is_code: false
+      properties: []
+    - block_anchor: ~
+      content: She said ^^ship it^^
+      depth: 2
+      is_code: false
+      properties: []
+    - block_anchor: ~
+      content: "## Ideas"
+      depth: 0
+      is_code: false
+      properties: []
+    - block_anchor: ~
+      content: Link to ((GH7xk2PqA))
+      depth: 2
+      is_code: false
+      properties: []
+  frontmatter: []
+  frontmatter_list_items: {}
+  warnings: []
+paste:
+  - block_anchor: ~
+    content: "{{[[TODO]]}} Draft the essay outline"
+    depth: 0
+    is_code: false
+    properties: []
+  - block_anchor: ~
+    content: "Intro:: why notes matter"
+    depth: 2
+    is_code: false
+    properties: []
+  - block_anchor: ~
+    content: "{{[[DONE]]}} Collect sources #[[Reading List]]"
+    depth: 2
+    is_code: false
+    properties: []
+  - block_anchor: ~
+    content: "Met [[Alice]] on [[September 24th, 2026]]"
+    depth: 0
+    is_code: false
+    properties: []
+  - block_anchor: ~
+    content: She said ^^ship it^^
+    depth: 2
+    is_code: false
+    properties: []
+  - block_anchor: ~
+    content: "## Ideas"
+    depth: 0
+    is_code: false
+    properties: []
+  - block_anchor: ~
+    content: Link to ((GH7xk2PqA))
+    depth: 2
+    is_code: false
+    properties: []
+source:
+  blocks:
+    - block_anchor: ~
+      content: "{{[[TODO]]}} Draft the essay outline"
+      depth: 0
+      is_code: false
+      properties: []
+    - block_anchor: ~
+      content: "Intro:: why notes matter"
+      depth: 2
+      is_code: false
+      properties: []
+    - block_anchor: ~
+      content: "{{[[DONE]]}} Collect sources #[[Reading List]]"
+      depth: 2
+      is_code: false
+      properties: []
+    - block_anchor: ~
+      content: "Met [[Alice]] on [[September 24th, 2026]]"
+      depth: 0
+      is_code: false
+      properties: []
+    - block_anchor: ~
+      content: She said ^^ship it^^
+      depth: 2
+      is_code: false
+      properties: []
+    - block_anchor: ~
+      content: "## Ideas"
+      depth: 0
+      is_code: false
+      properties: []
+    - block_anchor: ~
+      content: Link to ((GH7xk2PqA))
+      depth: 2
+      is_code: false
+      properties: []
+  frontmatter: []
+  frontmatter_list_items: {}
+  warnings: []

@@ -1,0 +1,20 @@
+# Q3 Planning
+
+Status: In progress
+Owner: Alice Smith
+Tags: planning, q3
+
+## Goals
+
+- Ship the importer
+    - Parse bullets
+    - Parse tasks
+- [ ] Write the doc
+- [x] Kick-off meeting
+
+<aside>
+💡 Remember to invite design.
+
+</aside>
+
+See [Retro notes](Q3%20Planning%2012ab34cd56ef7890/Retro%20notes%2098fe76dc54ba3210.md)

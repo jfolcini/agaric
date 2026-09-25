@@ -1,0 +1,14 @@
+description:: Markdown is a popular markup language with many flavors. Our implementation is parsed by https://github.com/logseq/mldoc.
+
+- Markdown is the most popular format that Logseq supports. Logseq supports most syntaxes including some extended ones.
+### **Standard** syntax
+	- what's logseq? #card
+	  card-last-interval:: 28.3
+	  card-repeats:: 4
+		- knowledge base
+	- and so on...
+### **Extended** syntax
+id:: 60a78b6b-a0ff-49fe-822f-87216fbf79ff
+	- [[term/page reference]]
+	  id:: 60ab4582-5a6e-4f3a-84a2-71ae056455a0
+		- syntax: `[[page name]]`
