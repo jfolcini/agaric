@@ -262,38 +262,44 @@ describe('computeContentDelta', () => {
 
 // -- shouldSplitOnBlur --------------------------------------------------------
 
+// #5160 D2 — `shouldSplitOnBlur(changed, loaded)`: the edit added top-level
+// blocks beyond what the block was loaded with.
 describe('shouldSplitOnBlur', () => {
   it('returns false for single line', () => {
-    expect(shouldSplitOnBlur('hello world')).toBe(false)
+    expect(shouldSplitOnBlur('hello world', '')).toBe(false)
   })
 
-  // #5160 D2: a single line break is a line inside the paragraph.
   it('returns false for a line break inside a paragraph (one block, two lines)', () => {
-    expect(shouldSplitOnBlur('line1\nline2')).toBe(false)
+    expect(shouldSplitOnBlur('line1\nline2', '')).toBe(false)
   })
 
-  it('returns true for paragraphs separated by a blank line', () => {
-    expect(shouldSplitOnBlur('line1\n\nline2')).toBe(true)
+  it('returns true for a blank-line paragraph separator the edit added', () => {
+    expect(shouldSplitOnBlur('line1\n\nline2', '')).toBe(true)
+    expect(shouldSplitOnBlur('line1\n\nline2', 'line1')).toBe(true)
+  })
+
+  it('returns false when the block was loaded with those paragraphs', () => {
+    expect(shouldSplitOnBlur('line1!\n\nline2', 'line1\n\nline2')).toBe(false)
   })
 
   it('returns false when newline is inside a code block', () => {
-    expect(shouldSplitOnBlur('```\ncode line\nmore code\n```')).toBe(false)
+    expect(shouldSplitOnBlur('```\ncode line\nmore code\n```', '')).toBe(false)
   })
 
-  it('returns true when newline exists outside code block', () => {
-    expect(shouldSplitOnBlur('```\ncode\n```\ntext after')).toBe(true)
+  it('returns true when a block follows the code block', () => {
+    expect(shouldSplitOnBlur('```\ncode\n```\ntext after', '')).toBe(true)
   })
 
   it('returns false for empty string', () => {
-    expect(shouldSplitOnBlur('')).toBe(false)
+    expect(shouldSplitOnBlur('', '')).toBe(false)
   })
 
   it('returns false for a single heading', () => {
-    expect(shouldSplitOnBlur('## Just a heading')).toBe(false)
+    expect(shouldSplitOnBlur('## Just a heading', '')).toBe(false)
   })
 
   it('returns true for heading followed by paragraph', () => {
-    expect(shouldSplitOnBlur('# Title\nParagraph')).toBe(true)
+    expect(shouldSplitOnBlur('# Title\nParagraph', '')).toBe(true)
   })
 
   // #1630 — the blur flush calls shouldSplitOnBlur with the same content more
@@ -306,19 +312,9 @@ describe('shouldSplitOnBlur', () => {
     // Use content unique to this test so the module-level memo starts cold for
     // it (a string parsed by an earlier test would already be cached).
     const md = '# Memo dedup title\nMemo dedup paragraph'
-    expect(shouldSplitOnBlur(md)).toBe(true)
-    expect(shouldSplitOnBlur(md)).toBe(true)
+    expect(shouldSplitOnBlur(md, '')).toBe(true)
+    expect(shouldSplitOnBlur(md, '')).toBe(true)
     expect(mockedParse).toHaveBeenCalledTimes(1)
-  })
-
-  it('skips the parse entirely when given an already-parsed DocNode (#1630)', () => {
-    const mockedParse = vi.mocked(parse)
-    const doc = parse('# Title\nParagraph')
-    mockedParse.mockClear()
-    // Different string than the doc to prove the doc (not the string) is used.
-    expect(shouldSplitOnBlur('ignored\nstring', doc)).toBe(true)
-    expect(shouldSplitOnBlur('a\nb', { type: 'doc', content: [{ type: 'paragraph' }] })).toBe(false)
-    expect(mockedParse).not.toHaveBeenCalled()
   })
 })
 
@@ -2104,15 +2100,16 @@ describe('computeContentDelta — canonicalization is not an edit (#711)', () =>
 
 // -- #710-5 follow-through: hard breaks don't split the block on blur ----------
 
-describe('shouldSplitOnBlur — hard breaks (#710-5)', () => {
-  it('returns false for a Shift+Enter hard break (one paragraph, not two blocks)', () => {
-    // Serialized form of text+hardBreak+text — contains a newline but parses
-    // back to a SINGLE paragraph block.
-    expect(shouldSplitOnBlur('first\\\nsecond')).toBe(false)
+describe('shouldSplitOnBlur — hard breaks (#710-5, #5160 D2)', () => {
+  it('returns false for a Shift+Enter hard break in either spelling', () => {
+    // Both the legacy marker and the bare newline parse back to a SINGLE
+    // paragraph block.
+    expect(shouldSplitOnBlur('first\\\nsecond', '')).toBe(false)
+    expect(shouldSplitOnBlur('first\nsecond', '')).toBe(false)
   })
 
   it('still returns true for a genuine two-paragraph separator', () => {
-    expect(shouldSplitOnBlur('first\n\nsecond')).toBe(true)
+    expect(shouldSplitOnBlur('first\n\nsecond', '')).toBe(true)
   })
 })
 

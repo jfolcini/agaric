@@ -124,9 +124,10 @@ export function useEditorBlur(params: {
       // down editor state / discard the draft / clear focus).
       let earlyPersisted: string | null = null
       let earlyPersistOutcome: Promise<boolean> | void = undefined
-      if (rovingEditorRef.current.originalMarkdown === '' && rovingEditorRef.current.getMarkdown) {
+      const loaded = rovingEditorRef.current.originalMarkdown
+      if (loaded === '' && rovingEditorRef.current.getMarkdown) {
         const content = rovingEditorRef.current.getMarkdown()
-        if (content && content !== '' && !shouldSplitOnBlur(content)) {
+        if (content && content !== '' && !shouldSplitOnBlur(content, loaded)) {
           earlyPersistOutcome = edit(blockId, content)
           earlyPersisted = content
           // Don't return — continue to normal blur logic (unmount, setFocused, etc.)
@@ -169,7 +170,9 @@ export function useEditorBlur(params: {
         }
       }
 
-      // Step 5: Unmount -> save or split -> discard draft -> clear focus
+      // Step 5: Unmount -> save or split -> discard draft -> clear focus.
+      // `loaded` was read above, before `unmount()` resets it: the flush
+      // classifies the edit against it (#5160 D2).
       const changed = rovingEditorRef.current.unmount()
       // Findings 2/48: capture the save's settlement so the draft discard can
       // gate its deleteDraft on the write actually committing (`edit` resolves
@@ -192,6 +195,7 @@ export function useEditorBlur(params: {
       if (changed !== null) {
         const result = runUnmountFlush({
           blockId,
+          loaded,
           changed,
           edit,
           splitBlock,

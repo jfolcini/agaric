@@ -63,13 +63,11 @@
 import { useCallback, useEffect, useLayoutEffect, useRef } from 'react'
 import type { RefObject } from 'react'
 
-import { shouldSplitOnBlur } from '@/editor/content-delta'
 import type { RovingEditorHandle } from '@/editor/use-roving-editor'
 import { useDebouncedCallback } from '@/hooks/useDebouncedCallback'
 import { registerActiveDraftFlush } from '@/lib/active-draft-flush'
-import { processCheckboxSyntax } from '@/lib/block-utils'
-import { parseInlineProperties } from '@/lib/inline-property-parse'
 import { logger } from '@/lib/logger'
+import { classifyUnmountFlush } from '@/lib/unmount-flush'
 
 /** Trailing idle-debounce window (ms) before a mid-typing content commit. */
 export const CONTENT_COMMIT_DEBOUNCE_MS = 700
@@ -109,20 +107,18 @@ export function useDebouncedContentCommit(params: {
     if (md === null) return
     // Nothing new since the last commit (or since mount) — skip.
     if (md === re.originalMarkdown) return
-    // Defer to the blur flush for all three of its classifications. Those
-    // branches (`runUnmountFlush`) only run when blur's `unmount()` reports a
-    // delta; committing here would rebase the baseline (`markCommitted`), so a
-    // user who pauses past the debounce window before blurring would get a null
-    // delta at flush and the content would silently stay literal with nothing
-    // written. Skipping keeps the baseline unrebased — blur re-commits through
-    // the classifying flush path. Cost: mid-typing CRDT commits pause only
-    // while the block's markdown carries one of these three shapes.
-    // #2675 — inline `key:: value` property lines.
-    if (parseInlineProperties(md).length > 0) return
-    // #4957 — multi-block content the flush splits into siblings.
-    if (shouldSplitOnBlur(md)) return
-    // #4957 — a leading GFM task marker the flush folds into `todo_state`.
-    if (processCheckboxSyntax(md).todoState) return
+    // Defer to the blur flush for all three of its classifications (#2675
+    // inline `key:: value` lines, #4957 multi-block content and a leading GFM
+    // task marker). Those branches (`runUnmountFlush`) only run when blur's
+    // `unmount()` reports a delta; committing here would rebase the baseline
+    // (`markCommitted`), so a user who pauses past the debounce window before
+    // blurring would get a null delta at flush and the content would silently
+    // stay literal with nothing written. Skipping keeps the baseline unrebased
+    // — blur re-commits through the classifying flush path. The decision is
+    // the flush's own, against the same baseline (#5160 D2): a shape the block
+    // was LOADED with is plain text to both, so only an edit that INTRODUCED
+    // one pauses the mid-typing CRDT commits.
+    if (classifyUnmountFlush(re.originalMarkdown, md).kind !== 'edit') return
 
     try {
       const ok = await edit(blockId, md)

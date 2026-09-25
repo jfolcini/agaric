@@ -68,6 +68,9 @@ function persistUnmount(
   rootParentId: string | null,
   pageStore: ReturnType<typeof usePageBlockStoreApi>,
 ): string | null {
+  // Read BEFORE `unmount()` resets it: the flush classifies the edit against
+  // the content the editor was mounted with (#5160 D2).
+  const loaded = re.originalMarkdown
   const changed = re.unmount()
   // #770 gap 1 — drop the previous block's draft row so it can't resurrect at
   // boot. Best-effort; deleting an absent row is a harmless no-op.
@@ -98,6 +101,7 @@ function persistUnmount(
   // clobber this newer one.
   const { outcome } = runUnmountFlush({
     blockId: prevId,
+    loaded,
     changed,
     edit: editFn,
     splitBlock: splitBlockFn,

@@ -170,6 +170,7 @@ const mockInsertContent = vi.fn(() => ({ run: mockRun }))
 const mockUndo = vi.fn(() => ({ run: mockRun }))
 const mockRedo = vi.fn(() => ({ run: mockRun }))
 const mockUpdateAttributes = vi.fn(() => ({ run: mockRun }))
+const mockSetHardBreak = vi.fn(() => ({ run: mockRun }))
 const mockFocus = vi.fn(() => ({
   toggleCodeBlock: mockToggleCodeBlock,
   toggleBlockquote: mockToggleBlockquote,
@@ -178,6 +179,7 @@ const mockFocus = vi.fn(() => ({
   undo: mockUndo,
   redo: mockRedo,
   updateAttributes: mockUpdateAttributes,
+  setHardBreak: mockSetHardBreak,
 }))
 const mockChain = vi.fn(() => ({
   focus: mockFocus,
@@ -408,6 +410,18 @@ describe('FormattingToolbar', () => {
 
       expect(mockRedo).toHaveBeenCalled() // no-args by contract
       expect(mockRun).toHaveBeenCalled() // no-args by contract
+    })
+
+    // #5160 D2 — the Shift+Enter action for virtual keyboards: a hard break
+    // at the caret, from a button that keeps the editor focused.
+    it('inserts a hard break at the caret on pointerdown of New line', async () => {
+      const { container } = render(<FormattingToolbar editor={makeEditor()} />)
+      const button = screen.getByRole('button', { name: t('toolbar.newLine') })
+      fireEvent.pointerDown(button)
+
+      expect(mockSetHardBreak).toHaveBeenCalledOnce()
+      expect(mockRun).toHaveBeenCalled()
+      expect(await axe(container)).toHaveNoViolations()
     })
   })
 
@@ -771,14 +785,14 @@ describe('FormattingToolbar', () => {
       const sentinel = screen.getByTestId('toolbar-sentinel')
       expect(sentinel).toBeInTheDocument()
       expect(sentinel).toHaveAttribute('aria-hidden', 'true')
-      // Each item in the flattened list (17 buttons + 3 separators = 20) must
+      // Each item in the flattened list (18 buttons + 3 separators = 21) must
       // have a measurable child carrying its data-toolbar-item-key. #1960
       // replaced the 6 standalone block buttons (code/heading/blockquote/
       // ordered-list/divider/callout) with the single Format + Turn into pair,
       // dropping the count from 21 buttons to 16; #281 then added the emoji
-      // button, bringing it to 17.
+      // button, bringing it to 17; #5160 the New line button, 18.
       const measurableChildren = sentinel.querySelectorAll('[data-toolbar-item-key]')
-      expect(measurableChildren.length).toBe(20)
+      expect(measurableChildren.length).toBe(21)
     })
   })
 

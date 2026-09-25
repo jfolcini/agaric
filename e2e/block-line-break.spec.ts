@@ -1,4 +1,6 @@
-import { expect, focusBlock, openPage, test, waitForBoot } from './helpers'
+import { devices } from '@playwright/test'
+
+import { expect, focusBlock, openPage, saveBlock, test, waitForBoot } from './helpers'
 
 /**
  * E2E for #5160 D2 — a line break inside a block.
@@ -7,9 +9,10 @@ import { expect, focusBlock, openPage, test, waitForBoot } from './helpers'
  * block with two lines) used to parse in the editor as two paragraphs, so the
  * first blur after a typo fix split the block into siblings (X1). Now a single
  * `\n` is a line of the same paragraph, shown as a break at rest, and the blur
- * leaves a two-paragraph block it did not change as it was.
+ * splits only what the edit ADDED. Phones get the Shift+Enter action as a
+ * toolbar button.
  *
- * Each test seeds the content through the mock's `edit_block` IPC —
+ * The desktop test seeds the content through the mock's `edit_block` IPC —
  * exactly the shape a Source-mode save or an import stores — and re-queries
  * the block through `get_block` after the blur (durable state, not call
  * shape).
@@ -105,5 +108,51 @@ test.describe('A line break inside a block (#5160 D2)', () => {
     await expect(first).toHaveText('hello world')
     await expect(first.locator('br')).toHaveCount(0)
     expect(await blockContent(page, BLOCK_GS_1)).toBe('hello\n\nworld')
+  })
+})
+
+const iPhone13 = devices['iPhone 13']
+
+test.describe('The toolbar New line button (iPhone 13 viewport)', () => {
+  test.use({
+    viewport: iPhone13.viewport,
+    hasTouch: iPhone13.hasTouch,
+    isMobile: iPhone13.isMobile,
+    deviceScaleFactor: iPhone13.deviceScaleFactor,
+    userAgent: iPhone13.userAgent,
+  })
+
+  test('tapping New line inserts a line break the block keeps', async ({ page }) => {
+    // The default boot (Journal) view's seeded day already has editable blocks.
+    await waitForBoot(page)
+    await expect(page.locator('[data-testid="block-static"]').first()).toBeVisible()
+
+    const editor = await focusBlock(page, 0)
+    const blockId = await page
+      .locator('[data-testid="block-editor"]')
+      .first()
+      .getAttribute('data-block-id')
+    expect(blockId).not.toBeNull()
+
+    // `focusBlock` leaves the caret at the end of the block's text.
+    await page.keyboard.type('one')
+    const newLine = page.getByTestId('formatting-toolbar').getByRole('button', { name: 'New line' })
+    // Directly on the pinned bar, not behind the overflow "More" menu.
+    await expect(newLine).toBeVisible()
+    await newLine.tap()
+    await page.keyboard.type('two')
+    // Counted after the second line exists: ProseMirror pads a break at the end
+    // of a paragraph with a trailing placeholder `<br>` for the caret.
+    await expect(editor.locator('br')).toHaveCount(1)
+
+    // Enter at the end commits the block and moves on; the block keeps both
+    // lines instead of being split.
+    await saveBlock(page, 'Enter')
+    const content = await blockContent(page, blockId as string)
+    expect(content.endsWith('one\ntwo')).toBe(true)
+    const committed = page.locator(
+      `[data-testid="sortable-block"][data-block-id="${blockId as string}"] [data-testid="block-static"]`,
+    )
+    await expect(committed.locator('br')).toHaveCount(1)
   })
 })

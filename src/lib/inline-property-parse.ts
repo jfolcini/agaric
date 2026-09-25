@@ -41,13 +41,14 @@
  *   - Lines inside fenced code blocks (``` delimiters) are never property
  *     lines, mirroring import.rs's `line_is_code` guard.
  *   - HARD BREAKS: block content arrives SERIALIZED (see
- *     `markdown-serialize.ts`), where a Shift+Enter hard break is a trailing
- *     `\` before the newline and a LITERAL backslash is escaped to `\\`. A
- *     non-final line therefore ends with an odd trailing-backslash run whose
- *     final `\` is the break marker, never value text — it is dropped before
- *     parsing (else `context:: home` + Shift+Enter would store `home\`), and
- *     `stripPropertyLines` removes a marker left dangling on the new last
- *     line when the original last line is stripped.
+ *     `markdown-serialize.ts`), where a Shift+Enter hard break is a bare
+ *     newline (#5160 D2), or — next to an empty line, and in content stored
+ *     before D2 — a trailing `\` before the newline, while a LITERAL
+ *     backslash is escaped to `\\`. A non-final line ending in an odd
+ *     trailing-backslash run therefore ends in the break marker, never value
+ *     text — it is dropped before parsing (else `context:: home` + Shift+Enter
+ *     would store `home\`), and `stripPropertyLines` removes a marker left
+ *     dangling on the new last line when the original last line is stripped.
  *
  * Everything here is pure and IPC-free; the flush integration owns the
  * actual `set_property` writes and the strip-only-on-success policy.

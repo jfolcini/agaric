@@ -14,6 +14,16 @@
  * verbatim via another, depending on which of the three paths happened to
  * run — see the issue for the full repro.
  *
+ * The chain acts only on what the edit ADDED (#5160 D2): each branch compares
+ * `changed` with `loaded`, the content the editor was mounted with (or last
+ * committed, see `markCommitted`). A block loaded with several paragraphs, a
+ * `key:: value` line or a leading task marker — from Source, import or paste,
+ * where Rust already reads them as one block of text — keeps them after a typo
+ * fix; the same shapes typed into the block are split, extracted or folded.
+ * `classifyUnmountFlush` is that decision on its own, shared with the
+ * debounced content commit, which must skip exactly the edits this chain
+ * would not commit as a plain edit.
+ *
  * This function performs the classification AND makes the actual store call
  * for the chosen branch. Callers layer their own extras on top of the
  * returned `{ kind, outcome }`:
@@ -48,7 +58,8 @@ import {
   commitInlineProperties,
   type PageBlockStoreLike,
 } from '@/lib/inline-property-commit'
-import { parseInlineProperties } from '@/lib/inline-property-parse'
+import { type InlinePropertyLine, parseInlineProperties } from '@/lib/inline-property-parse'
+import type { TodoState } from '@/lib/task-states'
 
 export type UnmountFlushResult =
   | { kind: 'split'; outcome: Promise<boolean> | void }
@@ -56,8 +67,40 @@ export type UnmountFlushResult =
   | { kind: 'property'; outcome: Promise<boolean> }
   | { kind: 'edit'; outcome: Promise<boolean> | void }
 
+export type UnmountFlushClassification =
+  | { kind: 'split' }
+  | { kind: 'checkbox'; cleanContent: string; todoState: TodoState }
+  | { kind: 'property'; inlineProps: InlinePropertyLine[] }
+  | { kind: 'edit' }
+
+/** The `key:: value` lines of `changed` whose key `loaded` did not already carry. */
+function addedInlineProperties(loaded: string, changed: string): InlinePropertyLine[] {
+  const added = parseInlineProperties(changed)
+  if (added.length === 0) return added
+  const loadedKeys = new Set(parseInlineProperties(loaded).map((prop) => prop.key))
+  return added.filter((prop) => !loadedKeys.has(prop.key))
+}
+
+/**
+ * What the flush does with `changed`, given the block was loaded as `loaded`:
+ * the first branch whose shape the edit introduced, else a plain edit.
+ */
+export function classifyUnmountFlush(loaded: string, changed: string): UnmountFlushClassification {
+  if (shouldSplitOnBlur(changed, loaded)) return { kind: 'split' }
+  const { cleanContent, todoState } = processCheckboxSyntax(changed)
+  if (todoState && !processCheckboxSyntax(loaded).todoState) {
+    return { kind: 'checkbox', cleanContent, todoState }
+  }
+  const inlineProps = addedInlineProperties(loaded, changed)
+  if (inlineProps.length > 0) return { kind: 'property', inlineProps }
+  return { kind: 'edit' }
+}
+
 export interface UnmountFlushDeps {
   blockId: string
+  /** The content the editor was mounted with, or last committed
+   *  (`RovingEditorHandle.originalMarkdown`, read BEFORE `unmount()` resets it). */
+  loaded: string
   /** Non-null unmounted content — callers only invoke this after checking
    *  `unmount()` did not return null. */
   changed: string
@@ -77,6 +120,7 @@ export interface UnmountFlushDeps {
 export function runUnmountFlush(deps: UnmountFlushDeps): UnmountFlushResult {
   const {
     blockId,
+    loaded,
     changed,
     edit,
     splitBlock,
@@ -87,25 +131,26 @@ export function runUnmountFlush(deps: UnmountFlushDeps): UnmountFlushResult {
     dedupe,
   } = deps
 
-  // 1. Split — multi-block pasted/typed content always wins; a marker or
-  //    property line embedded in one of several resulting blocks is folded
-  //    the next time THAT block is individually flushed, not here.
-  if (shouldSplitOnBlur(changed)) {
+  const classified = classifyUnmountFlush(loaded, changed)
+
+  // 1. Split — blocks the edit added always win; a marker or property line
+  //    embedded in one of several resulting blocks is folded the next time
+  //    THAT block is individually flushed, not here.
+  if (classified.kind === 'split') {
     bumpFlushSeq(blockId)
     onWillSplit?.()
     const outcome = invokeSync(() => splitBlock(blockId, changed))
     return { kind: 'split', outcome }
   }
 
-  // 2. Checkbox — a leading GFM task marker folds into `todo_state`.
-  const { cleanContent, todoState } = processCheckboxSyntax(changed)
-  if (todoState) {
+  // 2. Checkbox — a leading GFM task marker the edit typed folds into `todo_state`.
+  if (classified.kind === 'checkbox') {
     const mySeq = bumpFlushSeq(blockId)
     const outcome = commitCheckboxState({
       blockId,
       content: changed,
-      cleanContent,
-      todoState,
+      cleanContent: classified.cleanContent,
+      todoState: classified.todoState,
       mySeq,
       edit,
       pageStore,
@@ -114,14 +159,13 @@ export function runUnmountFlush(deps: UnmountFlushDeps): UnmountFlushResult {
     return { kind: 'checkbox', outcome }
   }
 
-  // 3. Inline `key:: value` properties.
-  const inlineProps = parseInlineProperties(changed)
-  if (inlineProps.length > 0) {
+  // 3. Inline `key:: value` properties the edit added.
+  if (classified.kind === 'property') {
     const mySeq = bumpFlushSeq(blockId)
     const outcome = commitInlineProperties({
       blockId,
       content: changed,
-      inlineProps,
+      inlineProps: classified.inlineProps,
       mySeq,
       edit,
       rootParentId,
