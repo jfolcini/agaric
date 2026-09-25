@@ -60,6 +60,30 @@ function rowsWithText(page: import('@playwright/test').Page, token: string) {
   return page.locator('[data-testid="sortable-block"]').filter({ hasText: token })
 }
 
+interface InvokeWindow extends Window {
+  __TAURI_INTERNALS__: { invoke: (cmd: string, args?: unknown) => Promise<unknown> }
+}
+
+/**
+ * The PERSISTED row of the first block whose text holds `token`, read back
+ * over IPC: what the paste stored, not what the editor shows.
+ */
+async function persistedRow(
+  page: import('@playwright/test').Page,
+  token: string,
+): Promise<{ content: string; todo_state: string | null }> {
+  const blockId = await rowsWithText(page, token).first().getAttribute('data-block-id')
+  expect(blockId).not.toBeNull()
+  return page.evaluate(async (id) => {
+    const invoke = (window as unknown as InvokeWindow).__TAURI_INTERNALS__.invoke
+    const row = (await invoke('get_block', { blockId: id })) as {
+      content: string
+      todo_state: string | null
+    }
+    return { content: row.content, todo_state: row.todo_state }
+  }, blockId)
+}
+
 test.describe('HTML paste → markdown blocks (#1439)', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
@@ -149,12 +173,21 @@ test.describe('HTML paste → markdown blocks (#1439)', () => {
     ).toBeVisible()
 
     // Task list → two separate task blocks. The `- [ ]` / `- [x]` markers are
-    // CONSUMED by the parser (recognised as tasks, not literal bullets), so the
-    // rendered rows show only the labels — never the literal `- [ ]` text.
+    // CONSUMED by the paste (#5160 D6): the stored row carries the state in
+    // `todo_state` and only the label in `content`, so the rendered rows never
+    // show the literal `- [ ]` text either.
     await expect.poll(async () => await rowsWithText(page, 'open task').count()).toBeGreaterThan(0)
     await expect
       .poll(async () => await rowsWithText(page, 'finished task').count())
       .toBeGreaterThan(0)
+    expect(await persistedRow(page, 'open task')).toEqual({
+      content: 'open task',
+      todo_state: 'TODO',
+    })
+    expect(await persistedRow(page, 'finished task')).toEqual({
+      content: 'finished task',
+      todo_state: 'DONE',
+    })
     await expect(rowsWithText(page, 'open task').first()).not.toContainText('- [ ]')
     await expect(rowsWithText(page, 'finished task').first()).not.toContainText('- [x]')
   })

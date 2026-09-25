@@ -11,6 +11,7 @@ import type { StoreApi } from 'zustand'
 import type { DatePickerMode, TFn } from '@/components/block-tree/use-block-slash-commands/types'
 import type { PickerItem } from '@/editor/SuggestionList'
 import type { RovingEditorHandle } from '@/editor/use-roving-editor'
+import type { TodoState } from '@/lib/task-states'
 import type { PageBlockState } from '@/stores/page-blocks'
 
 export interface UseBlockSlashCommandsParams {
@@ -35,7 +36,7 @@ export interface UseBlockSlashCommandsParams {
 export interface UseBlockSlashCommandsReturn {
   handleSlashCommand: (item: PickerItem) => Promise<void>
   handleTemplateSelect: (templatePageId: string) => Promise<void>
-  handleCheckboxSyntax: (state: 'TODO' | 'DONE') => void
+  handleCheckboxSyntax: (state: TodoState) => void
   /** #4552 — persist a `listStyle` set from the block-level `1. ` / `- ` input rule. */
   handleListStyleSyntax: (style: 'bullet' | 'ordered') => void
   templatePickerOpen: boolean

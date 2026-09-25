@@ -6446,6 +6446,13 @@ async fn paste_blocks_splice_puts_the_text_after_a_fence_in_a_block_of_its_own()
             vec!["Hello First", fence, "next"],
             vec![],
         ),
+        (
+            "with text after the cursor that reads as a task",
+            "First\n\n```\ncode\n```",
+            "- [ ] world",
+            vec!["Hello First", fence, "- [ ] world", "next"],
+            vec![],
+        ),
     ] {
         let (pool, _dir) = test_pool().await;
         let mat = Materializer::new(pool.clone());
@@ -12391,12 +12398,13 @@ async fn export_emits_bulleted_indented_block_content_1916() {
     );
 }
 
-/// #1916 — task metadata (TODO/DONE state, priority, scheduled/due dates)
-/// lives in reserved `blocks` columns and was silently dropped on export.
-/// The exporter must emit each populated column as an indented `key:: value`
-/// property line (the form the importer's property parser reads back).
+/// #1916 / #5160 D6 — task metadata lives in reserved `blocks` columns and was
+/// silently dropped on export. The exporter writes a task's state as the
+/// checkbox after the bullet (`- [ ] `, `[/]`, `[x]`, `[-]`), a state outside
+/// that alphabet as a `todo_state::` line, and priority and the dates as
+/// indented `key:: value` property lines, all of which the importer reads back.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn export_emits_task_metadata_as_property_lines_1916() {
+async fn export_emits_task_checkbox_and_metadata_property_lines_1916() {
     let (pool, _dir) = test_pool().await;
     const PAGE: &str = "01AAAAAAAAAAAAAAAAAAA1916T";
     const TASK: &str = "01AAAAAAAAAAAAAAAAAA1916T1";
@@ -12410,37 +12418,301 @@ async fn export_emits_task_metadata_as_property_lines_1916() {
         Some(1),
     )
     .await;
-    set_task_columns(
-        &pool,
-        TASK,
-        Some("TODO"),
-        Some("A"),
-        Some("2026-06-21"),
-        Some("2026-06-28"),
-    )
-    .await;
     agaric_store::cache::rebuild_page_ids(&pool).await.unwrap();
 
-    let md = export_page_markdown_inner(&pool, PAGE).await.unwrap();
+    for (state, bullet) in [
+        ("TODO", "- [ ] Write the report\n"),
+        ("DOING", "- [/] Write the report\n"),
+        ("DONE", "- [x] Write the report\n"),
+        ("CANCELLED", "- [-] Write the report\n"),
+        ("WAITING", "- Write the report\n  todo_state:: WAITING\n"),
+    ] {
+        set_task_columns(
+            &pool,
+            TASK,
+            Some(state),
+            Some("A"),
+            Some("2026-06-21"),
+            Some("2026-06-28"),
+        )
+        .await;
 
-    assert!(
-        md.contains("- Write the report\n"),
-        "bullet content; got:\n{md}"
+        let md = export_page_markdown_inner(&pool, PAGE).await.unwrap();
+
+        assert!(md.contains(bullet), "{state}: bullet; got:\n{md}");
+        assert_eq!(
+            md.matches("todo_state::").count(),
+            usize::from(state == "WAITING"),
+            "{state}: a checkbox state is never written twice; got:\n{md}"
+        );
+        // The other columns are property lines indented one level under the bullet.
+        assert!(
+            md.contains("  priority:: A\n"),
+            "{state}: priority; got:\n{md}"
+        );
+        assert!(
+            md.contains("  scheduled_date:: 2026-06-21\n"),
+            "{state}: scheduled_date; got:\n{md}"
+        );
+        assert!(
+            md.contains("  due_date:: 2026-06-28\n"),
+            "{state}: due_date; got:\n{md}"
+        );
+    }
+}
+
+/// #5160 D6 — an Export → Import round trip keeps every task state: the four
+/// written as checkboxes and one written as a `todo_state::` line, and a
+/// block whose text merely looks like a checkbox stays text.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn export_import_round_trip_keeps_every_task_state() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    ensure_test_space(&pool).await;
+    mark_block_as_space(&pool, TEST_SPACE_ID).await;
+    update_property_def_options_inner(
+        &pool,
+        "todo_state".into(),
+        r#"["TODO","DOING","DONE","CANCELLED","WAITING"]"#.into(),
+    )
+    .await
+    .unwrap();
+    const SRC: &str = "01AAAAAAAAAAAAAAAAAATASKRT";
+    insert_block(&pool, SRC, "page", "Task Round Trip", None, Some(1)).await;
+    assign_to_space(&pool, SRC, TEST_SPACE_ID).await;
+    // Each block's text is the task keyword an import would read (D7), so the
+    // round trip also proves the export escapes it and the import reads the
+    // escape back.
+    let states = [
+        ("TODO", Some("TODO")),
+        ("DOING", Some("DOING")),
+        ("DONE", Some("DONE")),
+        ("CANCELLED", Some("CANCELLED")),
+        ("WAITING", Some("WAITING")),
+        ("[ ] not a task", None),
+        ("[#A] not a priority\nSCHEDULED: <2026-10-01 Thu>", None),
+    ];
+    for (position, (content, state)) in (1i64..).zip(states) {
+        let id = format!("01AAAAAAAAAAAAAAAAATASKRT{position}");
+        insert_block(&pool, &id, "content", content, Some(SRC), Some(position)).await;
+        set_task_columns(&pool, &id, state, None, None, None).await;
+    }
+    agaric_store::cache::rebuild_page_ids(&pool).await.unwrap();
+
+    let md = export_page_markdown_inner(&pool, SRC).await.unwrap();
+    for escaped in [
+        "- [ ] \\TODO\n",
+        "- \\WAITING\n  todo_state:: WAITING\n",
+        "- \\[ ] not a task\n",
+        "- \\[#A] not a priority\n  \\SCHEDULED: <2026-10-01 Thu>\n",
+    ] {
+        assert!(md.contains(escaped), "{escaped:?}; got:\n{md}");
+    }
+    import_markdown_inner(
+        &pool,
+        DEV,
+        &mat,
+        _dir.path(),
+        md.clone(),
+        Some("Task Round Trip.md".into()),
+        TEST_SPACE_ID.into(),
+        None,
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    let new_page: String = sqlx::query_scalar(
+        "SELECT id FROM blocks WHERE block_type = 'page' AND content = 'Task Round Trip' \
+         AND id != ? ORDER BY id DESC LIMIT 1",
+    )
+    .bind(SRC)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let rows: Vec<(String, Option<String>)> = sqlx::query_as(
+        "SELECT content, todo_state FROM blocks WHERE parent_id = ? AND deleted_at IS NULL \
+         ORDER BY position",
+    )
+    .bind(&new_page)
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    let expected: Vec<(String, Option<String>)> = states
+        .iter()
+        .map(|(content, state)| ((*content).to_string(), state.map(str::to_string)))
+        .collect();
+    assert_eq!(rows, expected, "md:\n{md}");
+    mat.shutdown();
+}
+
+/// #5160 D6 — HTML paste sends a task list item as `- [ ] text`: the block
+/// lands with the state in its column and the marker out of its text, like a
+/// typed task, with its stamp.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn paste_blocks_reads_the_checkbox_of_an_html_task_item() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let page = dup_page(&pool, &mat, "Dest").await;
+    let anchor = dup_child(&pool, &mat, &page, "anchor").await;
+    settle(&mat).await;
+    let blocks = ["- [ ] open task", "- [x] finished task", "- plain item"]
+        .into_iter()
+        .map(|content| PastedBlock {
+            content: content.into(),
+            depth: 0,
+        })
+        .collect();
+
+    let rows = paste(&pool, &mat, &anchor, PasteInput::Blocks { blocks }).await;
+
+    let contents: Vec<Option<&str>> = rows.iter().map(|r| r.content.as_deref()).collect();
+    assert_eq!(
+        contents,
+        [
+            Some("open task"),
+            Some("finished task"),
+            Some("- plain item")
+        ]
     );
-    // Task columns emitted as property lines indented one level under the bullet.
-    assert!(
-        md.contains("  todo_state:: TODO\n"),
-        "todo_state; got:\n{md}"
+    for (row, todo, stamp) in [
+        (&rows[0], "Some(\"TODO\")", "created_at="),
+        (&rows[1], "Some(\"DONE\")", "completed_at="),
+    ] {
+        assert_eq!(
+            dup_storage(&pool, &row.id).await,
+            vec![format!(
+                "columns todo={todo} priority=None scheduled=None due=None"
+            )]
+        );
+        let stamps = dup_stamps(&pool, &row.id).await;
+        assert!(
+            stamps.iter().any(|s| s.starts_with(stamp)),
+            "{stamps:?} has {stamp}"
+        );
+    }
+    assert_eq!(
+        dup_storage(&pool, &rows[2].id).await,
+        vec!["columns todo=None priority=None scheduled=None due=None"]
     );
-    assert!(md.contains("  priority:: A\n"), "priority; got:\n{md}");
-    assert!(
-        md.contains("  scheduled_date:: 2026-06-21\n"),
-        "scheduled_date; got:\n{md}"
+}
+
+/// #5160 D7 — a Logseq page's task syntax lands in the columns and properties
+/// a typed task uses: the keyword in `todo_state`, `[#A]` as the first option
+/// of the `priority` definition, `SCHEDULED:` / `DEADLINE:` in the date
+/// columns and a repeater in `repeat`. The planning lines are consumed; one
+/// that cannot be read stays text and is reported.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn import_reads_logseq_task_syntax_into_the_task_columns() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    ensure_test_space(&pool).await;
+    mark_block_as_space(&pool, TEST_SPACE_ID).await;
+    let md = "- TODO [#A] Write the report\n  SCHEDULED: <2026-10-01 Thu +1w>\n\
+              - NOW [#C] Review PR 4412\n  DEADLINE: <2026-10-05 Mon>\n\
+              - DONE Book the room\n  SCHEDULED: <2026-10-01 Thu -2d>\n\
+              - Plain text\n";
+
+    let result = import_markdown_inner(
+        &pool,
+        DEV,
+        &mat,
+        _dir.path(),
+        md.into(),
+        Some("Logseq Tasks.md".into()),
+        TEST_SPACE_ID.into(),
+        None,
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    assert_eq!(result.blocks_created, 4);
+    assert_eq!(
+        result.warnings,
+        ["1 SCHEDULED/DEADLINE line(s) could not be read and were kept as text"]
     );
-    assert!(
-        md.contains("  due_date:: 2026-06-28\n"),
-        "due_date; got:\n{md}"
+    let rows: Vec<(String, String)> = sqlx::query_as(
+        "SELECT b.id, b.content FROM blocks b JOIN blocks p ON p.id = b.parent_id \
+         WHERE p.content = 'Logseq Tasks' AND b.deleted_at IS NULL ORDER BY b.position",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    let contents: Vec<&str> = rows.iter().map(|(_, c)| c.as_str()).collect();
+    assert_eq!(
+        contents,
+        [
+            "Write the report",
+            "Review PR 4412",
+            "Book the room\nSCHEDULED: <2026-10-01 Thu -2d>",
+            "Plain text",
+        ]
     );
+    let mut storage = Vec::new();
+    for (id, _) in &rows {
+        storage.push(dup_storage(&pool, &BlockId::from_string(id.clone()).unwrap()).await);
+    }
+    assert_eq!(
+        storage,
+        [
+            vec![
+                "columns todo=Some(\"TODO\") priority=Some(\"1\") scheduled=Some(\"2026-10-01\") \
+                 due=None"
+                    .to_string(),
+                "repeat text=Some(\"+1w\") num=None date=None ref=None bool=None".to_string(),
+            ],
+            vec![
+                "columns todo=Some(\"DOING\") priority=Some(\"3\") scheduled=None \
+                 due=Some(\"2026-10-05\")"
+                    .to_string()
+            ],
+            vec!["columns todo=Some(\"DONE\") priority=None scheduled=None due=None".to_string()],
+            vec!["columns todo=None priority=None scheduled=None due=None".to_string()],
+        ]
+    );
+    mat.shutdown();
+}
+
+/// #5160 D7 — `[#B]` is the SECOND option of the `priority` definition, whatever
+/// the user named it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn import_maps_an_org_priority_letter_to_the_definitions_option() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    ensure_test_space(&pool).await;
+    mark_block_as_space(&pool, TEST_SPACE_ID).await;
+    for (options, expected, title) in [
+        (r#"["High","Medium","Low"]"#, "Medium", "Named"),
+        (r#"["A","B","C"]"#, "B", "Lettered"),
+    ] {
+        update_property_def_options_inner(&pool, "priority".into(), options.into())
+            .await
+            .unwrap();
+        import_markdown_inner(
+            &pool,
+            DEV,
+            &mat,
+            _dir.path(),
+            "- TODO [#B] x\n".into(),
+            Some(format!("{title}.md")),
+            TEST_SPACE_ID.into(),
+            None,
+        )
+        .await
+        .unwrap();
+        settle(&mat).await;
+        let priority: Option<String> = sqlx::query_scalar(
+            "SELECT b.priority FROM blocks b JOIN blocks p ON p.id = b.parent_id \
+             WHERE p.content = ? AND b.deleted_at IS NULL",
+        )
+        .bind(title)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(priority.as_deref(), Some(expected), "{options}");
+    }
+    mat.shutdown();
 }
 
 /// #1918 — a single over-deep import block must skip-and-warn, NOT abort the
@@ -14648,7 +14920,7 @@ async fn export_descendant_reserved_columns_not_duplicated_2962() {
     let md = export_page_markdown_inner(&pool, PAGE).await.unwrap();
 
     for expected in [
-        "  todo_state:: TODO\n",
+        "- [ ] Write the report\n",
         "  priority:: A\n",
         "  scheduled_date:: 2026-06-21\n",
         "  due_date:: 2026-06-28\n",
@@ -15075,7 +15347,7 @@ async fn export_emits_a_stray_the_dfs_walk_cannot_reach() {
 
     // `page_id` says PAGE, `parent_id` says OTHER: the descendant read returns
     // the stray, the DFS from PAGE never reaches it.
-    sqlx::query("UPDATE blocks SET page_id = ?, todo_state = 'TODO' WHERE id = ?")
+    sqlx::query("UPDATE blocks SET page_id = ?, priority = '1' WHERE id = ?")
         .bind(PAGE)
         .bind(STRAY)
         .execute(&pool)
@@ -15097,7 +15369,7 @@ async fn export_emits_a_stray_the_dfs_walk_cannot_reach() {
         .unwrap_or_else(|| panic!("an unreachable stray must still export at depth 0, got: {md}"));
     assert_eq!(
         lines[stray + 1],
-        "  todo_state:: TODO",
+        "  priority:: 1",
         "a stray's reserved-column metadata is indented one level under its \
          bullet, exactly as a walked block's is, got: {md}"
     );

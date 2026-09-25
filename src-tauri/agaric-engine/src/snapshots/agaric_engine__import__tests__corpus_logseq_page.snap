@@ -30,25 +30,39 @@ import:
       is_code: false
       properties: []
     - block_anchor: ~
-      content: "TODO Send her the budget sheet\nSCHEDULED: <2026-09-26 Sat>"
+      content: Send her the budget sheet
       depth: 1
       is_code: false
-      properties: []
+      properties:
+        - - todo_state
+          - TODO
+        - - scheduled_date
+          - 2026-09-26
     - block_anchor: ~
-      content: DONE Book the room
+      content: Book the room
       depth: 1
       is_code: false
-      properties: []
+      properties:
+        - - todo_state
+          - DONE
     - block_anchor: ~
-      content: "NOW [#A] Review PR 4412\nDEADLINE: <2026-09-25 Fri>"
+      content: Review PR 4412
       depth: 0
       is_code: false
-      properties: []
+      properties:
+        - - todo_state
+          - DOING
+        - - priority
+          - A
+        - - due_date
+          - 2026-09-25
     - block_anchor: ~
-      content: LATER Read
+      content: Read
       depth: 0
       is_code: false
-      properties: []
+      properties:
+        - - todo_state
+          - TODO
     - block_anchor: ~
       content: Quote from the call
       depth: 0

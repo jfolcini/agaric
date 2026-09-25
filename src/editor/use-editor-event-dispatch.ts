@@ -44,13 +44,14 @@ import type { RefObject } from 'react'
 import { useCallback, useLayoutEffect, useMemo, useRef } from 'react'
 
 import type { PickerItem } from '@/editor/SuggestionList'
+import type { TodoState } from '@/lib/task-states'
 
 /** Maps each editor event name to its handler signature. */
 export interface EditorEventHandlers {
   /** Execute a selected slash command. */
   slashCommand: (item: PickerItem) => void
-  /** Persist a checkbox-syntax (`- [ ]` / `- [x]`) toggle detected while typing. */
-  checkbox: (state: 'TODO' | 'DONE') => void
+  /** Persist the state of a checkbox (`[ ]`, `[/]`, `[x]`, `[-]`) typed at the block's start. */
+  checkbox: (state: TodoState) => void
   /** Persist a `listStyle` set from the block-level `1. ` / `- ` input rule (#4552). */
   listStyle: (style: 'bullet' | 'ordered') => void
   /** Write the property selected from the `::` picker. */

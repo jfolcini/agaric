@@ -54,7 +54,7 @@ describe('ListStyleInputRule real-editor integration', () => {
 
   function buildEditor(
     onListStyle: ((style: 'bullet' | 'ordered') => void) | null,
-    onCheckbox: ((state: 'TODO' | 'DONE') => void) | null = null,
+    onCheckbox: ((state: string) => void) | null = null,
     content: Array<Record<string, unknown>> = [{ type: 'paragraph' }],
   ): Editor {
     return new Editor({

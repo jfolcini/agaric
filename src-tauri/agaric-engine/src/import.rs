@@ -33,6 +33,11 @@ const MAX_IMPORT_DEPTH: usize = (agaric_store::block_descendants::MAX_BLOCK_DEPT
 pub struct ParsedBlock {
     pub content: String,
     pub depth: usize,
+    /// The block's `key:: value` lines and the properties its markers stand
+    /// for: `listStyle`, `todo_state` (a checkbox on every surface, D6; a task
+    /// keyword on import, D7), and on import `priority` as an Org letter
+    /// (`A`–`C`) and the `scheduled_date` / `due_date` / `repeat` of a
+    /// planning line. Later entries win.
     pub properties: Vec<(String, String)>,
     /// #1924 — `true` when the block's source line(s) fell inside a fenced
     /// ```` ``` ```` code region. Set MINIMALLY: the parser does not change
@@ -239,9 +244,10 @@ pub fn split_block_list_marker(text: &str) -> (Option<&'static str>, &str) {
     }
 }
 
-/// The `todo_state` each Source-mode checkbox stands for (#5140). The alphabet
-/// is the frontend's (`TASK_MARKER_TO_STATE` in `src/lib/task-states.ts`); the
-/// first character listed for a state is the one the renderer writes.
+/// The `todo_state` each checkbox stands for (#5140, #5160 D6), on every
+/// surface. The alphabet is the frontend's (`TASK_MARKER_TO_STATE` in
+/// `src/lib/task-states.ts`); the first character listed for a state is the
+/// one the renderer writes.
 const TASK_MARKERS: [(char, &str); 5] = [
     (' ', "TODO"),
     ('x', "DONE"),
@@ -250,8 +256,8 @@ const TASK_MARKERS: [(char, &str); 5] = [
     ('-', "CANCELLED"),
 ];
 
-/// The checkbox character Source mode writes for `todo_state`, or `None` for a
-/// state outside the alphabet, which stays a `todo_state::` property line.
+/// The checkbox character the renderers write for `todo_state`, or `None` for
+/// a state outside the alphabet, which stays a `todo_state::` property line.
 pub fn task_marker_for(todo_state: &str) -> Option<char> {
     TASK_MARKERS
         .iter()
@@ -272,7 +278,7 @@ fn split_task_marker(text: &str) -> Option<(&'static str, &str)> {
     after.strip_prefix(' ').map(|rest| (state, rest))
 }
 
-/// `true` when Source mode must backslash-escape `text`, the first line of a
+/// `true` when a renderer must backslash-escape `text`, the first line of a
 /// block that writes no checkbox, so it does not read back as one. It looks
 /// past a leading run of backslashes, as [`needs_list_marker_escape`] does, so
 /// the escape is injective.
@@ -280,9 +286,9 @@ pub fn needs_task_marker_escape(text: &str) -> bool {
     split_task_marker(text.trim_start_matches('\\')).is_some()
 }
 
-/// Source mode's checkbox counterpart of [`split_block_list_marker`], applied
-/// to the text after the list marker: the `todo_state` a checkbox stands for,
-/// and the text with the checkbox, or one escape, removed.
+/// The checkbox counterpart of [`split_block_list_marker`], applied to the
+/// text after the list marker: the `todo_state` a checkbox stands for, and the
+/// text with the checkbox, or one escape, removed.
 fn split_block_task_marker(text: &str) -> (Option<&'static str>, &str) {
     if let Some(rest) = text.strip_prefix('\\')
         && needs_task_marker_escape(rest)
@@ -293,6 +299,150 @@ fn split_block_task_marker(text: &str) -> (Option<&'static str>, &str) {
         Some((state, rest)) => (Some(state), rest),
         None => (None, text),
     }
+}
+
+/// The Logseq and Org task keywords an import reads at the start of a bullet's
+/// text (#5160 D7), and the `todo_state` each stands for. Typing, paste and
+/// Edit as Markdown keep them as words.
+const TASK_KEYWORDS: [(&str, &str); 11] = [
+    ("TODO", "TODO"),
+    ("LATER", "TODO"),
+    ("WAITING", "TODO"),
+    ("WAIT", "TODO"),
+    ("DOING", "DOING"),
+    ("NOW", "DOING"),
+    ("IN-PROGRESS", "DOING"),
+    ("DONE", "DONE"),
+    ("CANCELLED", "CANCELLED"),
+    ("CANCELED", "CANCELLED"),
+    ("CANCEL", "CANCELLED"),
+];
+
+/// The Org priority cookies an import reads (D7) and the `priority` each is
+/// stored as: the letter, which the import command maps to the first, second
+/// or third option of the `priority` definition.
+const ORG_PRIORITIES: [(&str, &str); 3] = [("[#A]", "A"), ("[#B]", "B"), ("[#C]", "C")];
+
+/// The text after `word` when `text` opens with it as a whole word: followed by
+/// one space, or the whole text.
+fn split_word<'a>(text: &'a str, word: &str) -> Option<&'a str> {
+    let rest = text.strip_prefix(word)?;
+    if rest.is_empty() {
+        return Some(rest);
+    }
+    rest.strip_prefix(' ')
+}
+
+/// The `todo_state` of a task keyword opening `text`, and the text after it.
+fn split_task_keyword(text: &str) -> Option<(&'static str, &str)> {
+    TASK_KEYWORDS
+        .iter()
+        .find_map(|&(keyword, state)| split_word(text, keyword).map(|rest| (state, rest)))
+}
+
+/// The `priority` letter of an Org cookie opening `text`, and the text after it.
+fn split_org_priority(text: &str) -> Option<(&'static str, &str)> {
+    ORG_PRIORITIES
+        .iter()
+        .find_map(|&(cookie, letter)| split_word(text, cookie).map(|rest| (letter, rest)))
+}
+
+/// `true` when an export must backslash-escape `text`, a block's first line
+/// after its markers, so an import does not read it as a task keyword or a
+/// priority cookie (D7) and Export → Import stays the identity. It looks past
+/// a leading run of backslashes, as [`needs_task_marker_escape`] does, so the
+/// escape is injective. Source mode and the clipboard read no keyword, so they
+/// neither write nor remove it.
+pub fn needs_task_syntax_escape(text: &str) -> bool {
+    let body = text.trim_start_matches('\\');
+    split_task_keyword(body).is_some() || split_org_priority(body).is_some()
+}
+
+/// An import's reading of the task keyword and priority cookie opening `text`,
+/// the checkbox already split off: a keyword only where no checkbox was
+/// written (after one, `TODO` is the task's text), a cookie after either, and
+/// neither after the export's escape, which is removed.
+fn split_task_syntax<'a>(
+    text: &'a str,
+    checkbox: Option<&'static str>,
+) -> (Option<&'static str>, Option<&'static str>, &'a str) {
+    if let Some(rest) = text.strip_prefix('\\')
+        && needs_task_syntax_escape(rest)
+    {
+        return (checkbox, None, rest);
+    }
+    let (todo_state, text) = match checkbox {
+        Some(state) => (Some(state), text),
+        None => split_task_keyword(text).map_or((None, text), |(state, rest)| (Some(state), rest)),
+    };
+    let (priority, text) =
+        split_org_priority(text).map_or((None, text), |(letter, rest)| (Some(letter), rest));
+    (todo_state, priority, text)
+}
+
+/// A Logseq/Org planning line: `SCHEDULED: <…>` or `DEADLINE: <…>` first.
+fn is_planning_line(trimmed: &str) -> bool {
+    trimmed.starts_with("SCHEDULED:") || trimmed.starts_with("DEADLINE:")
+}
+
+/// The properties a planning line writes (D7): `scheduled_date` for
+/// `SCHEDULED:` and `due_date` for `DEADLINE:`, each from a `<YYYY-MM-DD …>`
+/// timestamp, and `repeat` for a repeater the timestamps carry. `None` when
+/// any part of the line is something else, so the line stays text.
+fn parse_planning_line(line: &str) -> Option<Vec<(String, String)>> {
+    let mut properties = Vec::new();
+    let mut repeat: Option<String> = None;
+    let mut rest = line.trim();
+    while !rest.is_empty() {
+        let (key, after) = match rest.strip_prefix("SCHEDULED:") {
+            Some(after) => ("scheduled_date", after),
+            None => ("due_date", rest.strip_prefix("DEADLINE:")?),
+        };
+        let (stamp, after) = after.trim_start().strip_prefix('<')?.split_once('>')?;
+        let (date, repeater) = parse_org_timestamp(stamp)?;
+        properties.push((key.to_string(), date));
+        if let Some(rule) = repeater {
+            // Two repeaters are one rule or none: a block repeats one way.
+            if repeat.as_ref().is_some_and(|known| *known != rule) {
+                return None;
+            }
+            repeat = Some(rule);
+        }
+        rest = after.trim_start();
+    }
+    properties.extend(repeat.map(|rule| ("repeat".to_string(), rule)));
+    Some(properties)
+}
+
+/// The inside of an Org timestamp, `2026-10-01 Thu 10:00 +1w`: its date, and
+/// its repeater when Agaric's repeat rule can express it. The day name and a
+/// time are dropped; anything else, a warning period (`-2d`) or a repeater the
+/// rule cannot express, makes the stamp unreadable.
+fn parse_org_timestamp(stamp: &str) -> Option<(String, Option<String>)> {
+    let mut tokens = stamp.split_whitespace();
+    let date = tokens.next()?;
+    chrono::NaiveDate::parse_from_str(date, "%Y-%m-%d").ok()?;
+    let mut repeat = None;
+    for token in tokens {
+        if token.chars().all(|c| c.is_ascii_alphabetic()) || is_org_time(token) {
+            continue;
+        }
+        let repeater = (token.starts_with('+') || token.starts_with(".+"))
+            && repeat.is_none()
+            && agaric_store::recurrence_math::validate_repeat_rule_shape(token).is_ok();
+        if !repeater {
+            return None;
+        }
+        repeat = Some(token.to_string());
+    }
+    Some((date.to_string(), repeat))
+}
+
+/// An Org time, `10:00`, or time range, `10:00-11:30`.
+fn is_org_time(token: &str) -> bool {
+    token
+        .split('-')
+        .all(|time| chrono::NaiveTime::parse_from_str(time, "%H:%M").is_ok())
 }
 
 /// A source buffer's anchor line: `^` and a ULID, alone on the line.
@@ -322,26 +472,44 @@ fn unescape_code_line(text: &str) -> &str {
         .unwrap_or(text)
 }
 
-/// A bullet's text split into its markers and the block's own text: the
-/// `listStyle` its markers imply and, in Source mode, the `todo_state` of the
-/// checkbox after them. An `ordered` outline marker (`1. `, `1) `) is the
-/// style; after `-`, `+` or `*` a second marker may follow (`- - x`, `- 1. x`).
-fn bullet_body(
-    text: &str,
-    ordered: bool,
-    mode: ParseMode,
-) -> (Option<&'static str>, Option<&'static str>, &str) {
+/// A bullet's first line read into its markers and the block's own text.
+struct BulletBody<'a> {
+    /// The `listStyle` the list marker(s) imply.
+    list_style: Option<&'static str>,
+    /// The `todo_state` of a checkbox after them (D6) or, on import, of a
+    /// task keyword (D7).
+    todo_state: Option<&'static str>,
+    /// The `priority` letter of an Org `[#A]` cookie, on import (D7).
+    priority: Option<&'static str>,
+    text: &'a str,
+}
+
+/// A bullet's text split into its markers and the block's own text. An
+/// `ordered` outline marker (`1. `, `1) `) is the style; after `-`, `+` or `*`
+/// a second marker may follow (`- - x`, `- 1. x`), then a checkbox. An import
+/// also reads a task keyword where no checkbox was written (`- TODO x`), and
+/// a priority cookie after either (`- TODO [#A] x`).
+fn bullet_body(text: &str, ordered: bool, mode: ParseMode) -> BulletBody<'_> {
     let (list_style, text) = if ordered {
         (Some(LIST_STYLE_ORDERED), text)
     } else {
         split_block_list_marker(text)
     };
-    match mode {
-        ParseMode::Import => (list_style, None, text),
-        ParseMode::Source => {
-            let (todo_state, text) = split_block_task_marker(text);
-            (list_style, todo_state, text)
-        }
+    let (todo_state, text) = split_block_task_marker(text);
+    if mode == ParseMode::Source {
+        return BulletBody {
+            list_style,
+            todo_state,
+            priority: None,
+            text,
+        };
+    }
+    let (todo_state, priority, text) = split_task_syntax(text, todo_state);
+    BulletBody {
+        list_style,
+        todo_state,
+        priority,
+        text,
     }
 }
 
@@ -375,15 +543,15 @@ pub fn closes_fence(line: &str, fence: FenceRun) -> bool {
 }
 
 /// The fence `line` opens as an import reads it: at the line's own text, or at
-/// the text of its bullet past the list marker(s), so a list-styled code block
-/// (`- - ```sh`, `- 1. ```sh`) opens one too.
+/// the text of its bullet past the list marker(s) and checkbox, so a
+/// list-styled code block (`- - ```sh`, `- 1. ```sh`) and a task whose
+/// content is a code block (`- [ ] ```sh`) open one too.
 pub fn fence_opener(line: &str) -> Option<FenceRun> {
     line_fence(line, ParseMode::Import)
 }
 
-/// [`fence_opener`] for a Source-mode buffer, where a bullet's first line may
-/// carry a checkbox before its text: a task whose content is a code block
-/// opens its fence on that line.
+/// [`fence_opener`] for a Source-mode buffer, which reads no task keyword: a
+/// bullet's `TODO` is text there.
 pub fn source_fence_opener(line: &str) -> Option<FenceRun> {
     line_fence(line, ParseMode::Source)
 }
@@ -391,7 +559,9 @@ pub fn source_fence_opener(line: &str) -> Option<FenceRun> {
 fn line_fence(line: &str, mode: ParseMode) -> Option<FenceRun> {
     let trimmed = line.trim_start();
     match bullet_marker(trimmed) {
-        Some((len, ordered)) => fence_run(bullet_body(bullet_text(trimmed, len), ordered, mode).2),
+        Some((len, ordered)) => {
+            fence_run(bullet_body(bullet_text(trimmed, len), ordered, mode).text)
+        }
         None => fence_run(trimmed),
     }
 }
@@ -823,9 +993,32 @@ pub fn parse_pasted_text(text: &str) -> Vec<ParsedBlock> {
     blocks
 }
 
-/// A pasted block holding `content` as it comes, at `depth`. Like an imported
-/// block, it is code when a line of it opens a fence.
+/// A block HTML paste sends, at `depth`: a checkbox after the list marker on
+/// its first line (`- [ ] text`, a task list item) is its `todo_state` (D6);
+/// the rest is kept as it comes.
 pub fn pasted_block(content: String, depth: usize) -> ParsedBlock {
+    let (first, rest) = content.split_once('\n').unzip();
+    let Some((state, text)) = first
+        .unwrap_or(&content)
+        .strip_prefix("- ")
+        .and_then(split_task_marker)
+    else {
+        return verbatim_block(content, depth);
+    };
+    let text = match rest {
+        Some(rest) => format!("{text}\n{rest}"),
+        None => text.to_string(),
+    };
+    let mut block = verbatim_block(text, depth);
+    block
+        .properties
+        .push(("todo_state".to_string(), state.to_string()));
+    block
+}
+
+/// A block holding `content` as it comes, at `depth`. Like an imported block,
+/// it is code when a line of it opens a fence.
+pub fn verbatim_block(content: String, depth: usize) -> ParsedBlock {
     ParsedBlock {
         is_code: content.lines().any(|line| fence_opener(line).is_some()),
         content,
@@ -901,6 +1094,9 @@ struct LossyCounts {
     /// counting it surfaces an aggregate warning so an import that drops
     /// block-refs is diagnosable from the returned warnings / logs.
     stripped_refs: usize,
+    /// #5160 D7 — `SCHEDULED:` / `DEADLINE:` lines an import could not read in
+    /// full and kept as text.
+    unreadable_planning: usize,
     /// #5160 D5 — a source buffer's fences left open and closed before the
     /// next bullet carrying a block's anchor, each named.
     unclosed_fences: Vec<String>,
@@ -915,6 +1111,7 @@ impl LossyCounts {
             orphan_property,
             reserved_property,
             stripped_refs,
+            unreadable_planning,
             unclosed_fences,
         } = self;
         if *clamped > 0 {
@@ -938,6 +1135,12 @@ impl LossyCounts {
             warnings.push(format!(
                 "{stripped_refs} ((block-ref)) reference(s) were stripped from imported \
                  content and could not be preserved"
+            ));
+        }
+        if *unreadable_planning > 0 {
+            warnings.push(format!(
+                "{unreadable_planning} SCHEDULED/DEADLINE line(s) could not be read and were \
+                 kept as text"
             ));
         }
         warnings.extend(unclosed_fences.iter().cloned());
@@ -1128,6 +1331,9 @@ impl<'a> Scan<'a> {
         } else if let Some((key, value)) = self.property_line(trimmed, indent) {
             self.attach_property(key, value, indent);
         } else if self.continues(trimmed, indent) {
+            if self.mode == ParseMode::Import && self.take_planning_line(trimmed) {
+                return;
+            }
             let fence = fence_run(trimmed);
             if let Some(run) = fence {
                 let column = self.open.last().map_or(0, |top| top.content);
@@ -1166,6 +1372,27 @@ impl<'a> Scan<'a> {
             ));
             self.fence = None;
         }
+    }
+
+    /// Read a Logseq/Org planning line continuing the innermost open block
+    /// (D7): `SCHEDULED: <date>` and `DEADLINE: <date>` become its scheduled
+    /// and due dates, a repeater its `repeat`. A line the grammar cannot read
+    /// in full stays text, counted for one warning.
+    fn take_planning_line(&mut self, trimmed: &str) -> bool {
+        if !is_planning_line(trimmed) {
+            return false;
+        }
+        let Some(properties) = parse_planning_line(trimmed) else {
+            self.lossy.unreadable_planning += 1;
+            return false;
+        };
+        let top = self
+            .open
+            .last()
+            .expect("a continuation line has an open block")
+            .index;
+        self.blocks[top].properties.extend(properties);
+        true
     }
 
     /// A line inside `fence`: code of the block that opened it, and the fence
@@ -1224,18 +1451,20 @@ impl<'a> Scan<'a> {
 
     /// A bullet: a block under the innermost open block whose text starts at
     /// or left of its marker (S7). The marker(s) become its `listStyle`
-    /// (#4552), in Source mode a checkbox its `todo_state`, and a fence its
-    /// text opens is its own.
+    /// (#4552), a checkbox or, on import, a task keyword its `todo_state`, an
+    /// Org `[#A]` its `priority` ([`bullet_body`]), and a fence its text opens
+    /// is its own.
     fn bullet(&mut self, trimmed: &str, indent: usize, len: usize, ordered: bool, number: usize) {
-        let (list_style, todo_state, text) =
-            bullet_body(bullet_text(trimmed, len), ordered, self.mode);
-        let mut properties: Vec<(String, String)> = Vec::new();
-        if let Some(style) = list_style {
-            properties.push((LIST_STYLE_KEY.to_string(), style.to_string()));
-        }
-        if let Some(state) = todo_state {
-            properties.push(("todo_state".to_string(), state.to_string()));
-        }
+        let body = bullet_body(bullet_text(trimmed, len), ordered, self.mode);
+        let text = body.text;
+        let properties: Vec<(String, String)> = [
+            (LIST_STYLE_KEY, body.list_style),
+            ("todo_state", body.todo_state),
+            ("priority", body.priority),
+        ]
+        .into_iter()
+        .filter_map(|(key, value)| Some((key.to_string(), value?.to_string())))
+        .collect();
         let fence = fence_run(text);
         self.pop_to(indent, None);
         let content = indent + len + 1;
@@ -1529,14 +1758,18 @@ fn indent_columns(line: &str) -> usize {
 }
 
 /// `true` when `line`, written as a block's continuation line, would read as
-/// something else: a bullet, a heading or a `key:: value` property. The
-/// renderer backslash-escapes such a line and `unescape_continuation`
-/// reverses it (#2716). Leading whitespace and backslashes are looked past, so
-/// the escape is injective: `\- x` is escaped again rather than losing its
-/// backslash on the way back.
+/// something else: a bullet, a heading, a `key:: value` property or, on
+/// import, a `SCHEDULED:` / `DEADLINE:` planning line (D7). The renderer
+/// backslash-escapes such a line and `unescape_continuation` reverses it
+/// (#2716). Leading whitespace and backslashes are looked past, so the escape
+/// is injective: `\- x` is escaped again rather than losing its backslash on
+/// the way back.
 pub fn continuation_line_is_ambiguous(line: &str) -> bool {
     let body = line.trim_start_matches(|c: char| c.is_whitespace() || c == '\\');
-    is_bullet_line(body) || heading_level(body).is_some() || line_is_property_shaped(body)
+    is_bullet_line(body)
+        || heading_level(body).is_some()
+        || line_is_property_shaped(body)
+        || is_planning_line(body)
 }
 
 /// A continuation line's text with the renderer's escape, if any, removed:
@@ -3791,29 +4024,30 @@ bare line (({UUID_B})) too"
     /// The #5160 findings each corpus snapshot still pins, where its reading
     /// differs from the decided grammar; `""` once it matches. The phase that
     /// fixes one flips these snapshots and drops its id here. Phase 2a (the
-    /// block grammar) fixed S1–S7; the corpus reads with no file name, so an
-    /// export's own `# Title` stays a heading here (S6 is pinned by the import
-    /// command's round trips in `page_cmd_tests.rs`).
+    /// block grammar) fixed S1–S7 and Phase 4a (tasks) P1 and P2; the corpus
+    /// reads with no file name, so an export's own `# Title` stays a heading
+    /// here (S6 is pinned by the import command's round trips in
+    /// `page_cmd_tests.rs`).
     const CORPUS_FINDINGS: &[(&str, &str)] = &[
         ("corpus_agaric_export", "S8"),
-        ("corpus_agaric_source", "P1"),
+        ("corpus_agaric_source", ""),
         ("corpus_chatgpt_answer", ""),
         ("corpus_claude_answer", ""),
         ("corpus_code_heavy", ""),
-        ("corpus_crlf_windows", "P1"),
+        ("corpus_crlf_windows", ""),
         ("corpus_four_space_outline", ""),
         ("corpus_gdocs_export", ""),
         ("corpus_github_readme", ""),
         ("corpus_logseq_docs_markdown", "S8, P3, P8"),
-        ("corpus_logseq_page", "S8, P2, P3, P8"),
+        ("corpus_logseq_page", "S8, P3, P8"),
         ("corpus_meeting_notes_plain", ""),
         ("corpus_nbsp_indent", ""),
-        ("corpus_notion_export", "P1"),
-        ("corpus_obsidian_daily", "P1"),
-        ("corpus_obsidian_note", "S8, P1"),
+        ("corpus_notion_export", ""),
+        ("corpus_obsidian_daily", ""),
+        ("corpus_obsidian_note", "S8"),
         ("corpus_ordered_steps", ""),
         ("corpus_roam_export", ""),
-        ("corpus_star_checklist", "P1"),
+        ("corpus_star_checklist", ""),
         ("corpus_tab_bullets", ""),
     ];
 
@@ -4738,10 +4972,24 @@ mod tests_source_outline_5140 {
         assert_eq!(import.warnings.len(), 2, "{:?}", import.warnings);
     }
 
-    /// The checkbox is source mode's alone: an imported file's `[ ]` is text.
+    /// Checkboxes everywhere (#5160 D6): an import reads the same alphabet as
+    /// the buffer, `[X]` included, and an escaped one is text.
     #[test]
-    fn an_import_reads_no_checkbox() {
-        let block = &parse_logseq_markdown("- [ ] a").blocks[0];
+    fn an_import_reads_the_checkbox() {
+        for (md, state, content) in [
+            ("- [ ] a", "TODO", "a"),
+            ("- [x] a", "DONE", "a"),
+            ("- [X] a", "DONE", "a"),
+            ("- [/] a", "DOING", "a"),
+            ("- [-] a", "CANCELLED", "a"),
+            ("* [ ]", "TODO", ""),
+            ("1. [x] a", "DONE", "a"),
+        ] {
+            let block = &parse_logseq_markdown(md).blocks[0];
+            assert_eq!(todo_state_of(block), Some(state), "{md:?}");
+            assert_eq!(block.content, content, "{md:?}");
+        }
+        let block = &parse_logseq_markdown("- \\[ ] a").blocks[0];
         assert_eq!(block.content, "[ ] a");
         assert!(block.properties.is_empty());
     }
@@ -4928,6 +5176,44 @@ mod tests_pasted_text_5140 {
         assert!(pasted_block("```js\nx".to_string(), 0).is_code);
         assert!(pasted_block("a\n  ```".to_string(), 0).is_code);
         assert!(!pasted_block("a `b` c".to_string(), 0).is_code);
+    }
+
+    /// HTML paste sends a task list item as `- [ ] text` (D6): the checkbox is
+    /// the block's `todo_state`, the `- ` goes with it, and the rest of the
+    /// block is kept as it comes. Any other block, a `- ` bullet included, is
+    /// verbatim.
+    #[test]
+    fn a_pasted_task_list_item_has_its_state() {
+        for (content, state, text) in [
+            ("- [ ] open task", "TODO", "open task"),
+            ("- [x] finished task", "DONE", "finished task"),
+            ("- [X] finished task", "DONE", "finished task"),
+            ("- [/] wip", "DOING", "wip"),
+            ("- [-] dropped", "CANCELLED", "dropped"),
+            ("- [ ]", "TODO", ""),
+            ("- [ ] first\nsecond", "TODO", "first\nsecond"),
+        ] {
+            let block = pasted_block(content.to_string(), 1);
+            assert_eq!(block.content, text, "{content:?}");
+            assert_eq!(
+                block.properties,
+                [("todo_state".to_string(), state.to_string())],
+                "{content:?}"
+            );
+            assert_eq!(block.depth, 1);
+        }
+        for content in [
+            "- plain item",
+            "[ ] no marker",
+            "- [?] x",
+            "a\n- [ ] b",
+            "1. [ ] x",
+        ] {
+            let block = pasted_block(content.to_string(), 0);
+            assert_eq!(block.content, content, "{content:?}");
+            assert!(block.properties.is_empty(), "{content:?}");
+        }
+        assert!(pasted_block("- [ ] ```sh\necho".to_string(), 0).is_code);
     }
 }
 
@@ -5378,6 +5664,279 @@ mod tests_block_grammar_5160 {
     }
 }
 
+/// Logseq/Org task syntax, read by an import alone (#5160 D7): the keyword
+/// map, the `[#A]` priority cookie, `SCHEDULED:` / `DEADLINE:` planning lines
+/// and their repeater.
+#[cfg(test)]
+mod tests_task_syntax_5160 {
+    use super::{ParsedBlock, parse_logseq_markdown, parse_pasted_text, parse_source_outline};
+
+    fn property<'a>(block: &'a ParsedBlock, key: &str) -> Option<&'a str> {
+        block
+            .properties
+            .iter()
+            .rev()
+            .find(|(k, _)| k == key)
+            .map(|(_, v)| v.as_str())
+    }
+
+    /// Every keyword maps to its state and leaves the text; the block's
+    /// content is what follows the keyword.
+    #[test]
+    fn a_task_keyword_opening_a_bullet_is_its_state() {
+        for (keyword, state) in [
+            ("TODO", "TODO"),
+            ("LATER", "TODO"),
+            ("WAIT", "TODO"),
+            ("WAITING", "TODO"),
+            ("DOING", "DOING"),
+            ("NOW", "DOING"),
+            ("IN-PROGRESS", "DOING"),
+            ("DONE", "DONE"),
+            ("CANCEL", "CANCELLED"),
+            ("CANCELED", "CANCELLED"),
+            ("CANCELLED", "CANCELLED"),
+        ] {
+            let md = format!("- {keyword} write the report\n* {keyword}\n");
+            let blocks = parse_logseq_markdown(&md).blocks;
+            assert_eq!(blocks.len(), 2, "{md:?}");
+            assert_eq!(property(&blocks[0], "todo_state"), Some(state), "{md:?}");
+            assert_eq!(blocks[0].content, "write the report", "{md:?}");
+            assert_eq!(property(&blocks[1], "todo_state"), Some(state), "{md:?}");
+            assert_eq!(blocks[1].content, "", "{md:?}");
+        }
+    }
+
+    /// Anything else stays text: a lowercase or glued keyword, one not at the
+    /// start of the first line, a checkbox's own text, and an unknown cookie.
+    #[test]
+    fn other_words_stay_text() {
+        for md in [
+            "- todo x",
+            "- TODO: x",
+            "- TODOx",
+            "- fix TODO x",
+            "- a\n  TODO x",
+            "- [#D] x",
+            "- [#a] x",
+            "- [#A]x",
+        ] {
+            let block = &parse_logseq_markdown(md).blocks[0];
+            assert!(
+                block.properties.is_empty(),
+                "{md:?} read {:?}",
+                block.properties
+            );
+        }
+        // After a checkbox the keyword is the task's text.
+        let block = &parse_logseq_markdown("- [ ] TODO x").blocks[0];
+        assert_eq!(property(block, "todo_state"), Some("TODO"));
+        assert_eq!(block.content, "TODO x");
+    }
+
+    /// `[#A]`–`[#C]` are the priority letters, after a keyword or alone; the
+    /// import command maps each to the definition's option.
+    #[test]
+    fn an_org_priority_cookie_is_the_priority_letter() {
+        for (md, letter, state, content) in [
+            ("- TODO [#A] x", "A", Some("TODO"), "x"),
+            ("- NOW [#B] x", "B", Some("DOING"), "x"),
+            ("- [#C] x", "C", None, "x"),
+            ("- [x] [#A] x", "A", Some("DONE"), "x"),
+            ("- DONE [#B]", "B", Some("DONE"), ""),
+        ] {
+            let block = &parse_logseq_markdown(md).blocks[0];
+            assert_eq!(property(block, "priority"), Some(letter), "{md:?}");
+            assert_eq!(property(block, "todo_state"), state, "{md:?}");
+            assert_eq!(block.content, content, "{md:?}");
+        }
+    }
+
+    /// A planning line under the bullet, however indented, is consumed into the
+    /// dates; a repeater becomes `repeat`; the day name and a time are dropped.
+    #[test]
+    fn planning_lines_become_the_dates_and_the_repeater() {
+        let md = "- TODO [#A] write\n  SCHEDULED: <2026-10-01 Thu>\n\
+                  - DONE book\n\tDEADLINE: <2026-10-05 Mon 10:00-11:30 .+1m>\n\
+                  - LATER both\n  SCHEDULED: <2026-10-01 Thu +1w> DEADLINE: <2026-10-03 Sat +1w>\n\
+                  * TODO org\nSCHEDULED: <2026-10-02 Fri ++1d>\n";
+        let out = parse_logseq_markdown(md);
+        assert!(out.warnings.is_empty(), "{:?}", out.warnings);
+        let shapes: Vec<(&str, Vec<(String, String)>)> = out
+            .blocks
+            .iter()
+            .map(|b| (b.content.as_str(), b.properties.clone()))
+            .collect();
+        let p = |pairs: &[(&str, &str)]| -> Vec<(String, String)> {
+            pairs
+                .iter()
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .collect()
+        };
+        assert_eq!(
+            shapes,
+            [
+                (
+                    "write",
+                    p(&[
+                        ("todo_state", "TODO"),
+                        ("priority", "A"),
+                        ("scheduled_date", "2026-10-01"),
+                    ])
+                ),
+                (
+                    "book",
+                    p(&[
+                        ("todo_state", "DONE"),
+                        ("due_date", "2026-10-05"),
+                        ("repeat", ".+1m"),
+                    ])
+                ),
+                (
+                    "both",
+                    p(&[
+                        ("todo_state", "TODO"),
+                        ("scheduled_date", "2026-10-01"),
+                        ("due_date", "2026-10-03"),
+                        ("repeat", "+1w"),
+                    ])
+                ),
+                (
+                    "org",
+                    p(&[
+                        ("todo_state", "TODO"),
+                        ("scheduled_date", "2026-10-02"),
+                        ("repeat", "++1d"),
+                    ])
+                ),
+            ]
+        );
+    }
+
+    /// A planning line the grammar cannot read in full stays text, with one
+    /// warning for all of them: an unparseable date, a warning period, a
+    /// repeater the repeat rule cannot express, two repeaters that differ, a
+    /// `CLOSED:` entry, and a bare keyword. A line that does not open with
+    /// `SCHEDULED:` or `DEADLINE:`, and a planning-shaped paragraph of its
+    /// own, are text with no warning.
+    #[test]
+    fn an_unreadable_planning_line_stays_text_with_a_warning() {
+        let lines = [
+            "SCHEDULED: <2026-13-01 Thu>",
+            "SCHEDULED: <2026-10-01 Thu -2d>",
+            "DEADLINE: <2026-10-01 Thu +1h>",
+            "SCHEDULED: <2026-10-01 Thu +1w> DEADLINE: <2026-10-02 Fri +2w>",
+            "SCHEDULED: <2026-10-01 Thu> CLOSED: [2026-10-01 Thu 10:00]",
+            "SCHEDULED: <2026-10-01 Thu> DEADLINE:",
+            "SCHEDULED: 2026-10-01",
+        ];
+        let md: String = lines
+            .iter()
+            .map(|line| format!("- TODO x\n  {line}\n"))
+            .collect();
+        let out = parse_logseq_markdown(&md);
+        assert_eq!(out.blocks.len(), lines.len());
+        for (block, line) in out.blocks.iter().zip(lines) {
+            assert_eq!(block.content, format!("x\n{line}"));
+            assert_eq!(
+                block.properties,
+                [("todo_state".to_string(), "TODO".to_string())],
+                "{line:?}"
+            );
+        }
+        assert_eq!(
+            out.warnings,
+            [format!(
+                "{} SCHEDULED/DEADLINE line(s) could not be read and were kept as text",
+                lines.len()
+            )]
+        );
+
+        let out = parse_logseq_markdown(
+            "SCHEDULED: <2026-10-01 Thu>\n\n- a\n  CLOSED: [2026-10-01 Thu] SCHEDULED: <2026-10-01 Thu>\n",
+        );
+        assert_eq!(out.blocks[0].content, "SCHEDULED: <2026-10-01 Thu>");
+        assert_eq!(
+            out.blocks[1].content,
+            "a\nCLOSED: [2026-10-01 Thu] SCHEDULED: <2026-10-01 Thu>"
+        );
+        assert!(out.blocks.iter().all(|b| b.properties.is_empty()));
+        assert!(out.warnings.is_empty(), "{:?}", out.warnings);
+    }
+
+    /// Export → Import stays the identity (D7): the export escapes a first line
+    /// an import would read as a keyword or a cookie, after a checkbox too, and
+    /// a planning-shaped continuation line; the import removes exactly that
+    /// escape and reads no task syntax. The escape is injective.
+    #[test]
+    fn the_export_escape_keeps_task_syntax_as_text() {
+        for (md, state, content) in [
+            ("- \\TODO x", None, "TODO x"),
+            ("- \\[#A] x", None, "[#A] x"),
+            ("- \\TODO [#A] x", None, "TODO [#A] x"),
+            ("- [ ] \\[#A] x", Some("TODO"), "[#A] x"),
+            ("- [x] \\TODO x", Some("DONE"), "TODO x"),
+            ("- \\\\TODO x", None, "\\TODO x"),
+            ("- - \\NOW x", None, "NOW x"),
+            ("- \\alpha", None, "\\alpha"),
+            (
+                "- a\n  \\SCHEDULED: <2026-10-01 Thu>",
+                None,
+                "a\nSCHEDULED: <2026-10-01 Thu>",
+            ),
+        ] {
+            let block = &parse_logseq_markdown(md).blocks[0];
+            let properties: Vec<(&str, &str)> = block
+                .properties
+                .iter()
+                .filter(|(k, _)| k != "listStyle")
+                .map(|(k, v)| (k.as_str(), v.as_str()))
+                .collect();
+            let expected: Vec<(&str, &str)> =
+                state.into_iter().map(|s| ("todo_state", s)).collect();
+            assert_eq!(properties, expected, "{md:?}");
+            assert_eq!(block.content, content, "{md:?}");
+        }
+        for text in ["TODO x", "[#B]", "WAIT", "\\DONE x", "\\\\[#C] x"] {
+            assert!(super::needs_task_syntax_escape(text), "{text:?}");
+        }
+        for text in ["todo x", "TODO: x", "[#D] x", "x TODO", "\\alpha", ""] {
+            assert!(!super::needs_task_syntax_escape(text), "{text:?}");
+        }
+        assert!(super::continuation_line_is_ambiguous(
+            "SCHEDULED: <2026-10-01 Thu>"
+        ));
+        assert!(super::continuation_line_is_ambiguous("  \\DEADLINE: x"));
+        assert!(!super::continuation_line_is_ambiguous(
+            "CLOSED: [2026-10-01 Thu]"
+        ));
+    }
+
+    /// Import only (D7): a paste and the buffer keep the keyword, the cookie
+    /// and the planning line as the text they are.
+    #[test]
+    fn paste_and_source_keep_the_logseq_syntax_as_text() {
+        let md = "- TODO [#A] x\n  SCHEDULED: <2026-10-01 Thu>\n";
+        for (parser, blocks) in [
+            ("source", parse_source_outline(md).blocks),
+            ("paste", parse_pasted_text(md)),
+        ] {
+            assert_eq!(blocks.len(), 1, "{parser}");
+            assert_eq!(
+                blocks[0].content, "TODO [#A] x\nSCHEDULED: <2026-10-01 Thu>",
+                "{parser}"
+            );
+            assert!(blocks[0].properties.is_empty(), "{parser}");
+        }
+        // The checkbox is read by all three, and `[#A]` stays text after it
+        // outside an import.
+        let md = "- [/] [#A] x";
+        assert_eq!(parse_source_outline(md).blocks[0].content, "[#A] x");
+        assert_eq!(parse_pasted_text(md)[0].content, "[#A] x");
+        assert_eq!(parse_logseq_markdown(md).blocks[0].content, "x");
+    }
+}
+
 /// The line probes the grammar and the renderer share (#5160): the escape set
 /// for continuation and code lines, the fence runs, and the title heading an
 /// import drops.
@@ -5410,6 +5969,8 @@ mod tests_line_probes_5160 {
             "######",
             "key:: value",
             "todo_state:: TODO",
+            "SCHEDULED: <2026-10-01 Thu>",
+            "DEADLINE: <2026-10-01 Thu>",
             "\\- already escaped",
             "\\\\ - two backslashes",
             "\\* b",
@@ -5493,11 +6054,12 @@ mod tests_line_probes_5160 {
         assert!(fence_opener("* - ~~~").is_some());
         assert!(fence_opener("1. ```").is_some());
         assert!(fence_opener("- \\- ```").is_none());
-        assert!(
-            fence_opener("- [ ] ```").is_none(),
-            "an import reads no checkbox"
-        );
+        // A task whose content is a code block opens its fence in every mode
+        // (D6); a keyword is looked past on import alone (D7).
+        assert!(fence_opener("- [ ] ```").is_some());
         assert!(source_fence_opener("- [ ] ```").is_some());
+        assert!(fence_opener("- TODO ```").is_some());
+        assert!(source_fence_opener("- TODO ```").is_none());
     }
 
     /// An import drops a leading `# Title` equal to the page title it derived

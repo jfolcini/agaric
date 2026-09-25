@@ -60,15 +60,19 @@ import:
       is_code: false
       properties: []
     - block_anchor: ~
-      content: "[ ] Finish chapter 3"
-      depth: 2
-      is_code: false
-      properties: []
-    - block_anchor: ~
-      content: "[x] Buy the book"
+      content: Finish chapter 3
       depth: 2
       is_code: false
       properties:
+        - - todo_state
+          - TODO
+    - block_anchor: ~
+      content: Buy the book
+      depth: 2
+      is_code: false
+      properties:
+        - - todo_state
+          - DONE
         - - rating
           - "4"
   frontmatter:

@@ -866,14 +866,15 @@ enum PageRead {
     Duplicate,
 }
 
-/// The renderings of a page's block tree. `Export` writes a file for other
-/// tools: ids become names and links, and only a block a same-page ref points
-/// at carries an anchor. `Source` writes the buffer source mode edits (#5140),
-/// which `import::parse_source_outline` reads back as exactly this tree: every
-/// block carries its `^ID`, ids stay raw unless a name reads back to the same
-/// id, and a task's state is a checkbox. `Clipboard` is `Source` for text
-/// that leaves the app: a block carries its `^ID` only when it would not read
-/// back without it.
+/// The renderings of a page's block tree. In every one a task's state is a
+/// checkbox after the bullet (#5160 D6), or a `todo_state::` line for a state
+/// outside the checkbox alphabet. `Export` writes a file for other tools: ids
+/// become names and links, and only a block a same-page ref points at carries
+/// an anchor. `Source` writes the buffer source mode edits (#5140), which
+/// `import::parse_source_outline` reads back as exactly this tree: every block
+/// carries its `^ID`, and ids stay raw unless a name reads back to the same
+/// id. `Clipboard` is `Source` for text that leaves the app: a block carries
+/// its `^ID` only when it would not read back without it.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum RenderMode {
     Export,
@@ -909,11 +910,11 @@ fn render_block(
     let indent = "  ".repeat(depth);
     let content = block.content.as_deref().unwrap_or("");
     let list_marker = list_marker_for(&id, list_styles, list_ordinals);
-    let task_marker = source_task_marker(block, mode);
+    let task_marker = task_marker(block);
     match mode {
         RenderMode::Export => {
             let resolved = export_block_text(content, &id, data);
-            push_block_bullet(output, &indent, &list_marker, "", &resolved, mode);
+            push_block_bullet(output, &indent, &list_marker, &task_marker, &resolved, mode);
         }
         RenderMode::Source | RenderMode::Clipboard => {
             push_source_bullet(
@@ -998,12 +999,9 @@ fn render_block(
     }
 }
 
-/// The checkbox a source bullet writes for the block's task state: none in an
-/// export, or for a state outside the checkbox alphabet.
-fn source_task_marker(block: &BlockRow, mode: RenderMode) -> String {
-    if mode == RenderMode::Export {
-        return String::new();
-    }
+/// The checkbox a bullet writes for the block's task state: none for a state
+/// outside the checkbox alphabet, which stays a `todo_state::` line.
+fn task_marker(block: &BlockRow) -> String {
     block
         .todo_state
         .as_deref()
@@ -2365,7 +2363,7 @@ impl PasteSplice {
         match blocks.last_mut() {
             Some(last) if last.is_code && !after.is_empty() => {
                 let depth = last.depth;
-                blocks.push(import::pasted_block(after, depth));
+                blocks.push(import::verbatim_block(after, depth));
             }
             Some(last) => last.content.push_str(&after),
             None => {}
@@ -2856,8 +2854,8 @@ fn list_marker_for(
 ///
 /// #4552 slice 4 — `list_marker` (from [`list_marker_for`]) is the block's
 /// `listStyle` marker, written between the outline `- ` and the first line:
-/// `""`, `"- "`, or `"<n>. "`. In source mode `task_marker` (`"[x] "`, or
-/// `""`) follows it. A first line that would itself read as a marker the
+/// `""`, `"- "`, or `"<n>. "`. `task_marker` (`"[x] "`, or `""`) follows it
+/// in every mode (#5160 D6). A first line that would itself read as a marker the
 /// block does not write is backslash-escaped ([`first_line_needs_escape`]),
 /// the first-line analogue of the continuation-line escape above.
 ///
@@ -2951,20 +2949,26 @@ struct CodeLines {
 /// `bullet` block whose text is `foo` instead of a plain block whose text is
 /// `- foo`. `\- ` / `\1. ` is the same escape shape the TS serializer uses for
 /// a paragraph (`docs/architecture/list-ergonomics.md`), and
-/// `import::split_block_list_marker` reverses it. Source mode escapes a
-/// checkbox the same way, after any list marker; after a checkbox the parser
-/// reads no further marker, so nothing needs escaping.
+/// `import::split_block_list_marker` reverses it. A checkbox is escaped the
+/// same way, after any list marker, since every parser reads one (#5160 D6);
+/// after a checkbox no further marker is read. An export also escapes a first
+/// line an import would read as a Logseq/Org task keyword or priority cookie
+/// (D7, `import::needs_task_syntax_escape`), after a checkbox too, so
+/// Export → Import keeps a block whose text starts with `TODO`; the buffer and
+/// the clipboard read neither, so they write no such escape.
 fn first_line_needs_escape(
     first: &str,
     list_marker: &str,
     task_marker: &str,
     mode: RenderMode,
 ) -> bool {
+    let task_syntax = mode == RenderMode::Export && import::needs_task_syntax_escape(first);
     if !task_marker.is_empty() {
-        return false;
+        return task_syntax;
     }
     (list_marker.is_empty() && import::needs_list_marker_escape(first))
-        || (mode != RenderMode::Export && import::needs_task_marker_escape(first))
+        || import::needs_task_marker_escape(first)
+        || task_syntax
 }
 
 /// #2724 — count how many attachment INGEST ATTEMPTS will read each vault file,
@@ -4967,16 +4971,21 @@ async fn apply_block_properties(
         if mode == PropertyWrite::Edit && value_type == Some("ref") {
             ensure_live_block_id(tx, key, value).await?;
         }
-        let (value_text, value_num, value_date, value_ref, value_bool) =
-            if mode != PropertyWrite::Import && value_type == Some("ref") {
-                (None, None, None, Some(value.clone()), None)
-            } else {
-                agaric_engine::block_ops::typed_property_args_for_registry_value(
-                    key,
-                    value.clone(),
-                    value_type,
-                )
-            };
+        let value = match (mode, key.as_str()) {
+            (PropertyWrite::Import, "priority") => import_priority_value(
+                value,
+                declaration.as_ref().and_then(|d| d.options.as_deref()),
+            ),
+            _ => value.clone(),
+        };
+        let (value_text, value_num, value_date, value_ref, value_bool) = if mode
+            != PropertyWrite::Import
+            && value_type == Some("ref")
+        {
+            (None, None, None, Some(value), None)
+        } else {
+            agaric_engine::block_ops::typed_property_args_for_registry_value(key, value, value_type)
+        };
         let (_block, prop_op) = agaric_engine::block_ops::set_property_in_tx_with_declaration(
             tx,
             materializer.loro_state(),
@@ -4995,6 +5004,26 @@ async fn apply_block_properties(
         tx.enqueue_background(prop_op);
     }
     Ok(set)
+}
+
+/// The `priority` an import stores for `value`: an Org priority letter, which
+/// the parser writes for `[#A]`–`[#C]` (#5160 D7), is the first, second or
+/// third option of the `priority` definition (`options`, its JSON list), or of
+/// the seeded defaults when the definition is gone, so a Logseq `[#A]` is what
+/// `Ctrl+Shift+1` sets. Any other value, and a letter the options do not
+/// reach, is what was written.
+fn import_priority_value(value: &str, options: Option<&str>) -> String {
+    let Some(position) = ["A", "B", "C"].iter().position(|letter| *letter == value) else {
+        return value.to_string();
+    };
+    let declared: Option<Vec<String>> = options.and_then(|json| serde_json::from_str(json).ok());
+    let option = match declared {
+        Some(declared) => declared.get(position).cloned(),
+        None => super::super::properties::PRIORITY_FALLBACK_DEFAULTS
+            .get(position)
+            .map(|option| (*option).to_string()),
+    };
+    option.unwrap_or_else(|| value.to_string())
 }
 
 /// Refuse `value`, typed under the `ref`-declared `key`, unless it is a live

@@ -3260,6 +3260,31 @@ describe('import_markdown', () => {
     expect(children).toEqual(['Item one', 'Item two', 'Item three', 'Item four', 'Item five'])
   })
 
+  // #5160 D6: a checkbox after the marker is the block's task state, `[X]`
+  // included; any other bracket stays text.
+  it('reads a checkbox after the marker as the todo_state (matches backend)', () => {
+    invoke('import_markdown', {
+      content: '- [ ] open\n- [/] wip\n* [x] done\n- [X] loud\n1. [-] gone\n- [?] kept',
+      filename: 'tasks.md',
+    })
+    const pageId = (
+      (
+        invoke('list_blocks', { blockType: 'page' }) as { items: Record<string, unknown>[] }
+      ).items.find((p) => p['content'] === 'tasks') as Record<string, unknown>
+    )['id'] as string
+    const children = (
+      invoke('list_blocks', { parentId: pageId }) as { items: Record<string, unknown>[] }
+    ).items.map((b) => [b['content'], b['todo_state']])
+    expect(children).toEqual([
+      ['open', 'TODO'],
+      ['wip', 'DOING'],
+      ['done', 'DONE'],
+      ['loud', 'DONE'],
+      ['gone', 'CANCELLED'],
+      ['[?] kept', null],
+    ])
+  })
+
   it('skips empty lines', () => {
     const result = invoke('import_markdown', {
       content: '\n\nOnly one line\n\n',

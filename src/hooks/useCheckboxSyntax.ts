@@ -1,6 +1,7 @@
 /**
- * Checkbox-syntax handler — invoked when the user types `[x]` / `[ ]` inline
- * and the editor converts it into a TODO/DONE state change.
+ * Checkbox-syntax handler — invoked when the user types a checkbox (`[ ]`,
+ * `[/]`, `[x]`, `[-]`) at the block's start and the editor converts it into
+ * the task state it stands for.
  *
  * Extracted from `useBlockSlashCommands` so the main orchestrator stays
  * focused on slash-command dispatch. Mirrors the TODO/DONE logic from the
@@ -16,6 +17,7 @@ import { unwrap } from '@/lib/app-error'
 import { commands } from '@/lib/bindings'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
+import type { TodoState } from '@/lib/task-states'
 import type { PageBlockState } from '@/stores/page-blocks'
 import { useUndoStore } from '@/stores/undo'
 
@@ -26,7 +28,7 @@ export interface UseCheckboxSyntaxParams {
   t: TFunction
 }
 
-export type CheckboxSyntaxHandler = (state: 'TODO' | 'DONE') => void
+export type CheckboxSyntaxHandler = (state: TodoState) => void
 
 export function useCheckboxSyntax({
   focusedBlockId,
@@ -40,7 +42,7 @@ export function useCheckboxSyntax({
   const inProgress = useRef(false)
 
   return useCallback(
-    (state: 'TODO' | 'DONE') => {
+    (state: TodoState) => {
       if (!focusedBlockId) return
       if (inProgress.current) return
       inProgress.current = true
