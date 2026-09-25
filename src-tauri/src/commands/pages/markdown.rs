@@ -5482,6 +5482,23 @@ mod tests {
         humanize_cases: Vec<HumanizeTagCase>,
         code_fence_cases: Vec<CodeFenceCase>,
         cases: Vec<ReferenceTokenCase>,
+        name_rule_cases: Vec<NameRuleCase>,
+    }
+
+    /// #5160 — what the name pass of import, paste and source mode does today
+    /// with one block of text. The page names are the titles it looks up or
+    /// creates: a link's text before its first `#`. A row that differs from
+    /// the decided grammar carries its finding id, and
+    /// `reference-tokens-conformance.test.ts` pins how the editor reads
+    /// `transformed`.
+    #[derive(serde::Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct NameRuleCase {
+        name: String,
+        input: String,
+        requested_page_names: Vec<String>,
+        requested_tag_names: Vec<String>,
+        transformed: String,
     }
 
     /// #3599 — a PARSER-DRIVEN vector. `cases` supplies `is_code` itself, so it
@@ -5715,6 +5732,60 @@ mod tests {
             assert_eq!(
                 transformed, vector.expected.transformed,
                 "transformed reference tokens for {:?}",
+                vector.name
+            );
+        }
+    }
+
+    /// #5160 — the name rules each text surface applies today, with the names
+    /// resolved from the fixture's maps as `resolve_link_names` keys them: by
+    /// the whole token, to the page its base names.
+    #[test]
+    fn name_rule_vectors_pin_todays_name_pass() {
+        let vectors: ReferenceTokenVectors = serde_json::from_str(include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../conformance/reference-tokens.vectors.json"
+        )))
+        .expect("reference-token conformance fixture must be valid JSON");
+        let as_set = |names: &[String]| -> std::collections::BTreeSet<String> {
+            names.iter().cloned().collect()
+        };
+        for vector in &vectors.name_rule_cases {
+            let parsed = import::parse_logseq_markdown(&vector.input);
+            assert_eq!(parsed.blocks.len(), 1, "{:?}", vector.name);
+            let block = &parsed.blocks[0];
+            assert_eq!(
+                block.content, vector.input,
+                "the importer rewrote {:?}, so the row is not about names",
+                vector.name
+            );
+            let blocks = std::slice::from_ref(block);
+
+            let mut page_bases = std::collections::BTreeSet::new();
+            let mut page_links = HashMap::new();
+            for name in collect_inbound_page_link_names(blocks) {
+                let (base, _) = split_wikilink_anchor(&name);
+                if let Some(id) = vectors.page_resolutions.get(base) {
+                    page_links.insert(name.clone(), id.clone());
+                }
+                page_bases.insert(base.to_string());
+            }
+            assert_eq!(
+                page_bases,
+                as_set(&vector.requested_page_names),
+                "requested pages for {:?}",
+                vector.name
+            );
+            assert_eq!(
+                as_set(&collect_inbound_tag_names(blocks)),
+                as_set(&vector.requested_tag_names),
+                "requested tags for {:?}",
+                vector.name
+            );
+            assert_eq!(
+                rewrite_block_content_for_import(block, &page_links, &vectors.tag_resolutions),
+                vector.transformed,
+                "stored content for {:?}",
                 vector.name
             );
         }
