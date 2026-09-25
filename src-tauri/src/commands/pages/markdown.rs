@@ -722,7 +722,7 @@ fn append_block_anchor(resolved: &str, block_id: &str) -> String {
     let last_line = resolved
         .rsplit_once('\n')
         .map_or(resolved, |(_, line)| line);
-    let ends_on_closing_fence = import::is_fence_delimiter(last_line, true);
+    let ends_on_closing_fence = import::fence_run(last_line.trim_start()).is_some();
     let separator = if ends_on_closing_fence { '\n' } else { ' ' };
     format!("{resolved}{separator}^{block_id}")
 }
@@ -2618,16 +2618,18 @@ fn list_marker_for(
 /// bullet. The first line is written after the `- ` marker; every subsequent
 /// line is a CONTINUATION line indented two spaces under the bullet (never
 /// re-prefixed with `- `), which `import::parse_logseq_markdown` folds back
-/// into the same block. A continuation line that would otherwise be
-/// misclassified on re-import — it opens a bullet or matches the `key:: value`
-/// property shape ([`content_line_is_ambiguous`]) — is backslash-escaped so the
-/// importer's continuation branch keeps it literal (and reverses the escape).
+/// into the same block. A continuation line that would otherwise be read as
+/// something else — a bullet of any marker, a heading or a `key:: value`
+/// property ([`import::continuation_line_is_ambiguous`]) — is
+/// backslash-escaped so the importer's continuation branch keeps it literal
+/// (and reverses the escape).
 ///
-/// Lines inside a fenced code block (```` ``` ````) are emitted verbatim: the
-/// importer's #2725 fence guard folds them without an escape, and code must not
-/// gain stray backslashes. The one exception is source mode's
+/// Lines inside a fenced code block (```` ``` ```` or `~~~`, closed by a run of
+/// the same character at least as long) are emitted verbatim: the importer
+/// reads them as code without an escape, and code must not gain stray
+/// backslashes. The one exception is source mode's
 /// [`import::needs_anchor_line_escape`], for a code line the parser would read
-/// as the anchor line that ends a fence.
+/// as a line that ends the fence.
 ///
 /// #4552 slice 4 — `list_marker` (from [`list_marker_for`]) is the block's
 /// `listStyle` marker, written between the outline `- ` and the first line:
@@ -2645,10 +2647,9 @@ fn push_block_bullet(
     resolved: &str,
     mode: RenderMode,
 ) -> CodeLines {
-    use super::markdown_yaml::content_line_is_ambiguous;
-    let is_fence_delimiter = match mode {
-        RenderMode::Export => import::is_fence_delimiter,
-        RenderMode::Source | RenderMode::Clipboard => import::is_source_fence_delimiter,
+    let fence_opener = match mode {
+        RenderMode::Export => import::fence_opener,
+        RenderMode::Source | RenderMode::Clipboard => import::source_fence_opener,
     };
 
     let mut lines = resolved.split('\n');
@@ -2671,12 +2672,12 @@ fn push_block_bullet(
         output.push_str(first);
     }
     // Fences are tracked over each line as written, escape and marker
-    // included, with the importer's own probe: an escaped ```` \- ``` ```` opens
+    // included, with the importer's own probes: an escaped ```` \- ``` ```` opens
     // no fence there, so it must open none here either.
-    let mut in_fence = is_fence_delimiter(&output[line_start..], false);
+    let mut in_fence = fence_opener(&output[line_start..]);
     let mut code = CodeLines {
-        any: in_fence,
-        last: in_fence,
+        any: in_fence.is_some(),
+        last: in_fence.is_some(),
         open: false,
     };
     output.push('\n');
@@ -2685,24 +2686,29 @@ fn push_block_bullet(
     for line in lines {
         let line_start = output.len();
         output.push_str(&cont_indent);
-        let needs_escape = if in_fence {
+        let needs_escape = if in_fence.is_some() {
             mode != RenderMode::Export && import::needs_anchor_line_escape(line)
         } else {
-            content_line_is_ambiguous(line)
+            import::continuation_line_is_ambiguous(line)
         };
         if needs_escape {
             output.push('\\');
         }
         output.push_str(line);
-        let is_delimiter = is_fence_delimiter(&output[line_start..], in_fence);
-        code.last = in_fence || is_delimiter;
+        let written = &output[line_start..];
+        code.last = if let Some(fence) = in_fence {
+            if import::closes_fence(written, fence) {
+                in_fence = None;
+            }
+            true
+        } else {
+            in_fence = import::fence_opener(written);
+            in_fence.is_some()
+        };
         code.any |= code.last;
-        if is_delimiter {
-            in_fence = !in_fence;
-        }
         output.push('\n');
     }
-    code.open = in_fence;
+    code.open = in_fence.is_some();
     code
 }
 
@@ -3031,11 +3037,14 @@ fn parse_import_payload(
         let total_bytes: u64 = files.iter().map(|f| f.bytes.len() as u64).sum();
         check_attachment_budget(files.len(), total_bytes)?;
     }
-    let parse_output = import::parse_logseq_markdown(content);
     let page_title = filename
         .map(|f| folder_path_to_namespace_title(&f))
         .filter(|t| !t.is_empty())
         .unwrap_or_else(|| "Imported Page".to_string());
+    // Agaric's own export writes the title as a leading `# Title` line, which
+    // would otherwise come back as a block repeating it (#5160 S6).
+    let parse_output =
+        import::parse_logseq_markdown(import::strip_title_heading(content, &page_title));
     Ok((parse_output, page_title))
 }
 

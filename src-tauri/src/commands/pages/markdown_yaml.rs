@@ -164,36 +164,6 @@ pub(crate) fn yaml_scalar_emit(key: &str, value: &str) -> String {
     }
 }
 
-/// `true` when `line` (a `key:: value` candidate) matches the importer's
-/// property-line shape: a `:: `-separated pair whose key matches the same
-/// `^[A-Za-z0-9_-]{1,64}$` alphabet `import::is_property_key` enforces. Kept in
-/// lockstep with that importer predicate so the export escape and the import
-/// classification agree.
-fn looks_like_property_line(line: &str) -> bool {
-    line.split_once(":: ").is_some_and(|(k, _)| {
-        let k = k.trim();
-        !k.is_empty()
-            && k.len() <= 64
-            && k.chars()
-                .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
-    })
-}
-
-/// #2716/#2725 — `true` when `line`, taken verbatim as a block-content
-/// CONTINUATION line, would be MISCLASSIFIED by the importer's line grammar:
-/// it opens a list bullet (`- ` / a bare `-`) or matches the `key:: value`
-/// property shape. The exporter backslash-escapes such a continuation line
-/// (outside code fences) so `import::parse_logseq_markdown` folds it as literal
-/// continuation instead of spawning a new block / property; the importer's
-/// continuation branch reverses the escape. Shared by the two export-side bugs.
-///
-/// Leading backslashes are looked past, as the importer's un-escape does, so
-/// `\- x` is escaped again rather than losing its backslash on the way back.
-pub(crate) fn content_line_is_ambiguous(line: &str) -> bool {
-    let t = line.trim_start_matches(|c: char| c.is_whitespace() || c == '\\');
-    t == "-" || t.starts_with("- ") || looks_like_property_line(t)
-}
-
 // #2621 (wave E4-import) — the `strip_yaml_quotes` frontmatter helper moved
 // into `agaric_core::text_utils` (a pure string helper) so the query-free
 // import parser can reach it without depending on the app crate. The remaining
@@ -304,29 +274,6 @@ mod tests {
         // spaces, which `parse_frontmatter` strips + re-joins with `\n`.
         let multi = yaml_scalar_emit("k", "line one\n---\ntail: end");
         assert_eq!(multi, "k: |\n  line one\n  ---\n  tail: end\n");
-    }
-
-    /// #2716 — `content_line_is_ambiguous` flags exactly the continuation
-    /// lines the importer would misclassify (bullets + `key:: value`
-    /// properties) or un-escape, and nothing else.
-    #[test]
-    fn content_line_is_ambiguous_2716() {
-        assert!(content_line_is_ambiguous("- looks like a bullet"));
-        assert!(content_line_is_ambiguous("-"));
-        assert!(content_line_is_ambiguous("  - indented bullet"));
-        assert!(content_line_is_ambiguous("key:: value"));
-        assert!(content_line_is_ambiguous("todo_state:: TODO"));
-        // Backslash-led: the importer strips one backslash off these, so they
-        // are escaped again to come back unchanged.
-        assert!(content_line_is_ambiguous("\\- already escaped"));
-        assert!(content_line_is_ambiguous("\\\\ - two backslashes"));
-        assert!(content_line_is_ambiguous("\\key:: value"));
-        // Not ambiguous: plain prose, a mid-line colon-colon that isn't a
-        // valid key, a backslash that guards nothing.
-        assert!(!content_line_is_ambiguous("just prose"));
-        assert!(!content_line_is_ambiguous("see http://x :: y")); // key has spaces
-        assert!(!content_line_is_ambiguous("\\alpha"));
-        assert!(!content_line_is_ambiguous("dash-in-middle - here"));
     }
 
     /// #1920 — `yaml_flow_sequence` joins quoted/bare items with `, ` inside

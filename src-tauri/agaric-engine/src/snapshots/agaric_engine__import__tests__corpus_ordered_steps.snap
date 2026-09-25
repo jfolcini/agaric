@@ -5,46 +5,116 @@ expression: "serde_json::json!({\n    \"import\": output_shape(parse_logseq_mark
 import:
   blocks:
     - block_anchor: ~
-      content: "1. Preheat the oven to 200 °C.\n2. Mix the dry ingredients.\n1. Flour\n2. Sugar\n3. Bake for 25 minutes."
+      content: Preheat the oven to 200 °C.
       depth: 0
       is_code: false
-      properties: []
+      properties:
+        - - listStyle
+          - ordered
+    - block_anchor: ~
+      content: Mix the dry ingredients.
+      depth: 0
+      is_code: false
+      properties:
+        - - listStyle
+          - ordered
+    - block_anchor: ~
+      content: Flour
+      depth: 1
+      is_code: false
+      properties:
+        - - listStyle
+          - ordered
+    - block_anchor: ~
+      content: Sugar
+      depth: 1
+      is_code: false
+      properties:
+        - - listStyle
+          - ordered
+    - block_anchor: ~
+      content: Bake for 25 minutes.
+      depth: 0
+      is_code: false
+      properties:
+        - - listStyle
+          - ordered
   frontmatter: []
   frontmatter_list_items: {}
   warnings: []
 paste:
   - block_anchor: ~
-    content: 1. Preheat the oven to 200 °C.
+    content: Preheat the oven to 200 °C.
     depth: 0
     is_code: false
-    properties: []
+    properties:
+      - - listStyle
+        - ordered
   - block_anchor: ~
-    content: 2. Mix the dry ingredients.
+    content: Mix the dry ingredients.
     depth: 0
     is_code: false
-    properties: []
+    properties:
+      - - listStyle
+        - ordered
   - block_anchor: ~
-    content: 1. Flour
+    content: Flour
     depth: 1
     is_code: false
-    properties: []
+    properties:
+      - - listStyle
+        - ordered
   - block_anchor: ~
-    content: 2. Sugar
+    content: Sugar
     depth: 1
     is_code: false
-    properties: []
+    properties:
+      - - listStyle
+        - ordered
   - block_anchor: ~
-    content: 3. Bake for 25 minutes.
+    content: Bake for 25 minutes.
     depth: 0
     is_code: false
-    properties: []
+    properties:
+      - - listStyle
+        - ordered
 source:
   blocks:
     - block_anchor: ~
-      content: "1. Preheat the oven to 200 °C.\n2. Mix the dry ingredients.\n 1. Flour\n 2. Sugar\n3. Bake for 25 minutes."
+      content: Preheat the oven to 200 °C.
       depth: 0
       is_code: false
-      properties: []
+      properties:
+        - - listStyle
+          - ordered
+    - block_anchor: ~
+      content: Mix the dry ingredients.
+      depth: 0
+      is_code: false
+      properties:
+        - - listStyle
+          - ordered
+    - block_anchor: ~
+      content: Flour
+      depth: 1
+      is_code: false
+      properties:
+        - - listStyle
+          - ordered
+    - block_anchor: ~
+      content: Sugar
+      depth: 1
+      is_code: false
+      properties:
+        - - listStyle
+          - ordered
+    - block_anchor: ~
+      content: Bake for 25 minutes.
+      depth: 0
+      is_code: false
+      properties:
+        - - listStyle
+          - ordered
   frontmatter: []
   frontmatter_list_items: {}
   warnings: []

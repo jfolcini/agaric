@@ -5,10 +5,59 @@ expression: "serde_json::json!({\n    \"import\": output_shape(parse_logseq_mark
 import:
   blocks:
     - block_anchor: ~
-      content: "# Team offsite\n**Date:** 24 September 2026\n## Agenda\n* Welcome\n* Roadmap review\n* Q4 bets\n* Retro\n## Decisions\n1. Move standup to 10:00\n2. Adopt the new on-call rota"
+      content: "# Team offsite"
       depth: 0
       is_code: false
       properties: []
+    - block_anchor: ~
+      content: "**Date:** 24 September 2026"
+      depth: 1
+      is_code: false
+      properties: []
+    - block_anchor: ~
+      content: "## Agenda"
+      depth: 1
+      is_code: false
+      properties: []
+    - block_anchor: ~
+      content: Welcome
+      depth: 2
+      is_code: false
+      properties: []
+    - block_anchor: ~
+      content: Roadmap review
+      depth: 2
+      is_code: false
+      properties: []
+    - block_anchor: ~
+      content: Q4 bets
+      depth: 3
+      is_code: false
+      properties: []
+    - block_anchor: ~
+      content: Retro
+      depth: 2
+      is_code: false
+      properties: []
+    - block_anchor: ~
+      content: "## Decisions"
+      depth: 1
+      is_code: false
+      properties: []
+    - block_anchor: ~
+      content: "Move standup to 10:00"
+      depth: 2
+      is_code: false
+      properties:
+        - - listStyle
+          - ordered
+    - block_anchor: ~
+      content: Adopt the new on-call rota
+      depth: 2
+      is_code: false
+      properties:
+        - - listStyle
+          - ordered
   frontmatter: []
   frontmatter_list_items: {}
   warnings: []
@@ -20,56 +69,109 @@ paste:
     properties: []
   - block_anchor: ~
     content: "**Date:** 24 September 2026"
-    depth: 0
-    is_code: false
-    properties: []
-  - block_anchor: ~
-    content: "## Agenda"
-    depth: 0
-    is_code: false
-    properties: []
-  - block_anchor: ~
-    content: "* Welcome  "
-    depth: 0
-    is_code: false
-    properties: []
-  - block_anchor: ~
-    content: "* Roadmap review  "
-    depth: 0
-    is_code: false
-    properties: []
-  - block_anchor: ~
-    content: "* Q4 bets  "
     depth: 1
     is_code: false
     properties: []
   - block_anchor: ~
-    content: "* Retro"
-    depth: 0
+    content: "## Agenda"
+    depth: 1
+    is_code: false
+    properties: []
+  - block_anchor: ~
+    content: "Welcome  "
+    depth: 2
+    is_code: false
+    properties: []
+  - block_anchor: ~
+    content: "Roadmap review  "
+    depth: 2
+    is_code: false
+    properties: []
+  - block_anchor: ~
+    content: "Q4 bets  "
+    depth: 3
+    is_code: false
+    properties: []
+  - block_anchor: ~
+    content: Retro
+    depth: 2
     is_code: false
     properties: []
   - block_anchor: ~
     content: "## Decisions"
-    depth: 0
+    depth: 1
     is_code: false
     properties: []
   - block_anchor: ~
-    content: "1. Move standup to 10:00  "
-    depth: 0
+    content: "Move standup to 10:00  "
+    depth: 2
     is_code: false
-    properties: []
+    properties:
+      - - listStyle
+        - ordered
   - block_anchor: ~
-    content: 2. Adopt the new on-call rota
-    depth: 0
+    content: Adopt the new on-call rota
+    depth: 2
     is_code: false
-    properties: []
+    properties:
+      - - listStyle
+        - ordered
 source:
   blocks:
     - block_anchor: ~
-      content: "# Team offsite\n\n**Date:** 24 September 2026\n\n## Agenda\n\n* Welcome  \n* Roadmap review  \n* Q4 bets  \n* Retro\n\n## Decisions\n\n1. Move standup to 10:00  \n2. Adopt the new on-call rota"
+      content: "# Team offsite"
       depth: 0
       is_code: false
       properties: []
+    - block_anchor: ~
+      content: "**Date:** 24 September 2026"
+      depth: 1
+      is_code: false
+      properties: []
+    - block_anchor: ~
+      content: "## Agenda"
+      depth: 1
+      is_code: false
+      properties: []
+    - block_anchor: ~
+      content: "Welcome  "
+      depth: 2
+      is_code: false
+      properties: []
+    - block_anchor: ~
+      content: "Roadmap review  "
+      depth: 2
+      is_code: false
+      properties: []
+    - block_anchor: ~
+      content: "Q4 bets  "
+      depth: 3
+      is_code: false
+      properties: []
+    - block_anchor: ~
+      content: Retro
+      depth: 2
+      is_code: false
+      properties: []
+    - block_anchor: ~
+      content: "## Decisions"
+      depth: 1
+      is_code: false
+      properties: []
+    - block_anchor: ~
+      content: "Move standup to 10:00  "
+      depth: 2
+      is_code: false
+      properties:
+        - - listStyle
+          - ordered
+    - block_anchor: ~
+      content: Adopt the new on-call rota
+      depth: 2
+      is_code: false
+      properties:
+        - - listStyle
+          - ordered
   frontmatter: []
   frontmatter_list_items: {}
   warnings: []

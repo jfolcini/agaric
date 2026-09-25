@@ -29,29 +29,44 @@ import:
   warnings: []
 paste:
   - block_anchor: ~
-    content: "-\tGroceries"
+    content: Groceries
     depth: 0
     is_code: false
     properties: []
   - block_anchor: ~
-    content: "-\tMilk"
+    content: Milk
     depth: 1
     is_code: false
     properties: []
   - block_anchor: ~
-    content: "-\tEggs"
+    content: Eggs
     depth: 1
     is_code: false
     properties: []
   - block_anchor: ~
-    content: "-\tCall the plumber"
+    content: Call the plumber
     depth: 0
     is_code: false
     properties: []
 source:
   blocks:
     - block_anchor: ~
-      content: "-\tGroceries\n-\tMilk\n-\tEggs\n-\tCall the plumber"
+      content: Groceries
+      depth: 0
+      is_code: false
+      properties: []
+    - block_anchor: ~
+      content: Milk
+      depth: 1
+      is_code: false
+      properties: []
+    - block_anchor: ~
+      content: Eggs
+      depth: 1
+      is_code: false
+      properties: []
+    - block_anchor: ~
+      content: Call the plumber
       depth: 0
       is_code: false
       properties: []

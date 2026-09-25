@@ -4,7 +4,12 @@ expression: parse_output_shape(&md)
 ---
 blocks:
   - block_anchor: ~
-    content: "---\ntitle: Never closed"
+    content: "---"
+    depth: 0
+    is_code: false
+    properties: []
+  - block_anchor: ~
+    content: "title: Never closed"
     depth: 0
     is_code: false
     properties: []
@@ -20,10 +25,9 @@ blocks:
     properties: []
   - block_anchor: ~
     content: Way too deep
-    depth: 19
+    depth: 1
     is_code: false
     properties: []
 frontmatter: []
 frontmatter_list_items: {}
-warnings:
-  - 1 block(s) exceeded maximum depth of 19 and were flattened
+warnings: []

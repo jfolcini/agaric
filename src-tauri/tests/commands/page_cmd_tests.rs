@@ -6005,7 +6005,7 @@ async fn paste_blocks_op_refs_undo_the_whole_paste_with_what_it_created() {
     );
 }
 
-/// 1001 lines, one create each: one more op than one undo reverts.
+/// 1001 bullets, one create each: one more op than one undo reverts.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn paste_blocks_over_one_undo_of_ops_is_refused_and_writes_nothing() {
     let (pool, _dir) = test_pool().await;
@@ -6014,7 +6014,7 @@ async fn paste_blocks_over_one_undo_of_ops_is_refused_and_writes_nothing() {
     let anchor = dup_child(&pool, &mat, &page, "anchor").await;
     settle(&mat).await;
     let text: String = (0..=pagination::MAX_BATCH_BLOCK_IDS)
-        .map(|i| format!("line {i}\n"))
+        .map(|i| format!("- line {i}\n"))
         .collect();
     let before = dup_counts(&pool).await;
 
@@ -11887,27 +11887,32 @@ async fn import_export_full_round_trip_1916_1917_1918() {
         .await
         .unwrap();
 
-    // 2. Re-import as a NEW page.
+    // 2. Re-import as a NEW page, from the file Export All writes: named after
+    // the title, so the `# Round Trip Source` line is the title, not a block
+    // (#5160 S6). An import never adopts an existing page, so the new page is
+    // the newest of that title.
     let result = import_markdown_inner(
         &pool,
         DEV,
         &mat,
         _dir.path(),
         md.clone(),
-        Some("Reimported RT.md".into()),
+        Some("Round Trip Source.md".into()),
         TEST_SPACE_ID.into(),
         None,
     )
     .await
     .expect("round-trip re-import must succeed");
-    assert_eq!(result.page_title, "Reimported RT");
+    assert_eq!(result.page_title, "Round Trip Source");
 
     let new_page: String = sqlx::query_scalar(
-        "SELECT id FROM blocks WHERE block_type = 'page' AND content = 'Reimported RT'",
+        "SELECT id FROM blocks WHERE block_type = 'page' AND content = 'Round Trip Source' \
+         ORDER BY id DESC LIMIT 1",
     )
     .fetch_one(&pool)
     .await
     .unwrap();
+    assert_ne!(new_page, SRC, "the import created a new page");
 
     // 3a. Block count: 3 content blocks (Parent, Child, Task).
     #[derive(sqlx::FromRow, Debug)]
@@ -11928,14 +11933,9 @@ async fn import_export_full_round_trip_1916_1917_1918() {
     .fetch_all(&pool)
     .await
     .unwrap();
-    // The exported `# Round Trip Source` heading is preserved as a depth-0
-    // content block on re-import (pre-existing importer behaviour — the page
-    // title itself comes from the filename, not the heading). Exclude that
-    // stray heading block; the three SEEDED blocks must all round-trip.
-    let blocks: Vec<&BRow> = all_blocks
-        .iter()
-        .filter(|b| !b.content.as_deref().unwrap_or("").starts_with("# "))
-        .collect();
+    // The exported `# Round Trip Source` heading is the page title, not a
+    // block: the three SEEDED blocks are all there is.
+    let blocks: Vec<&BRow> = all_blocks.iter().collect();
     assert_eq!(
         blocks.len(),
         3,
@@ -12289,7 +12289,9 @@ async fn import_export_fenced_code_block_round_trip_2725() {
 
 /// Export `src_page`, re-import the markdown as the page `stem`, and return the
 /// markdown plus the content of every content block on the new page, sorted.
-/// The exported `# Title` line comes back as a block of its own.
+/// `stem` differs from the exported title, so the exported `# Title` line comes
+/// back as a block of its own (an import drops it only when it equals the title,
+/// #5160 S6).
 async fn export_and_reimport_contents(
     pool: &SqlitePool,
     mat: &Materializer,
@@ -13726,28 +13728,32 @@ async fn import_round_trips_typed_descendant_block_property_2982() {
         "descendant's typed custom property must export correctly, got:\n{md}"
     );
 
-    // Re-import the exported markdown as a NEW page.
+    // Re-import the exported markdown as a NEW page, from a file named after
+    // the title as Export All writes it (#5160 S6): the newest page of that
+    // title, since an import never adopts an existing one.
     let result = import_markdown_inner(
         &pool,
         DEV,
         &mat,
         _dir.path(),
         md.clone(),
-        Some("Reimported2982.md".into()),
+        Some("Score Source Page.md".into()),
         TEST_SPACE_ID.into(),
         None,
     )
     .await
     .unwrap();
-    assert_eq!(result.page_title, "Reimported2982");
+    assert_eq!(result.page_title, "Score Source Page");
     settle(&mat).await;
 
     let new_page_id: String = sqlx::query_scalar(
-        "SELECT id FROM blocks WHERE block_type = 'page' AND content = 'Reimported2982'",
+        "SELECT id FROM blocks WHERE block_type = 'page' AND content = 'Score Source Page' \
+         ORDER BY id DESC LIMIT 1",
     )
     .fetch_one(&pool)
     .await
     .unwrap();
+    assert_ne!(new_page_id, SRC_PAGE, "the import created a new page");
     let new_task_id: String = sqlx::query_scalar(
         "SELECT id FROM blocks WHERE parent_id = ? AND content = 'Review the draft'",
     )
@@ -14100,12 +14106,10 @@ async fn export_renumbers_ordered_runs_positionally_4552() {
 /// BYTE-IDENTICAL fixpoint for a document mixing `bullet`, `ordered` and
 /// plain blocks, including plain blocks whose text merely LOOKS like a marker.
 ///
-/// The exported title line is the one thing that cannot be a fixpoint in this
-/// harness (a re-import takes its page title from the filename and keeps the
-/// old `# Heading` as an ordinary block), so the assertions compare the whole
-/// BODY byte-for-byte and account for that single extra heading block
-/// explicitly — no `contains`, so a marker that silently moved, doubled, or
-/// lost its escape fails the test.
+/// A file named after its `# Title` re-imports without a heading block (#5160
+/// S6), so the whole export is a fixpoint, compared byte-for-byte — no
+/// `contains`, so a marker that silently moved, doubled, or lost its escape
+/// fails the test.
 ///
 /// Two-reasons guard: the intermediate markdown is asserted verbatim as well,
 /// so this cannot pass because export and import are equally wrong and cancel
@@ -14156,12 +14160,16 @@ async fn export_import_export_list_style_fixpoint_4552() {
         .await
         .unwrap();
         settle(mat).await;
-        let page_id: String =
-            sqlx::query_scalar("SELECT id FROM blocks WHERE block_type = 'page' AND content = ?")
-                .bind(stem)
-                .fetch_one(pool)
-                .await
-                .unwrap();
+        // The newest page of that title: pass 2 imports pass 1's export under
+        // the same name, and an import never adopts an existing page.
+        let page_id: String = sqlx::query_scalar(
+            "SELECT id FROM blocks WHERE block_type = 'page' AND content = ? \
+             ORDER BY id DESC LIMIT 1",
+        )
+        .bind(stem)
+        .fetch_one(pool)
+        .await
+        .unwrap();
         export_page_markdown_inner(pool, &page_id).await.unwrap()
     }
 
@@ -14212,13 +14220,13 @@ async fn export_import_export_list_style_fixpoint_4552() {
         "every marker must have become a listStyle row"
     );
 
-    // Pass 2: feed the FULL export (heading line included) back in. The only
-    // permitted difference is the previous title surviving as a leading block.
-    let md_b = import_and_export(&pool, &mat, _dir.path(), md_a.clone(), "Fix4552B").await;
+    // Pass 2: feed the FULL export (heading line included) back in under its
+    // own title, as an Export All restore does: the heading is the title, not
+    // a block, and the export is a fixpoint.
+    let md_b = import_and_export(&pool, &mat, _dir.path(), md_a.clone(), "Fix4552A").await;
     assert_eq!(
-        md_b,
-        format!("# Fix4552B\n\n- # Fix4552A\n{BODY}"),
-        "export → import → export must be a fixpoint over the list lines"
+        md_b, md_a,
+        "export → import → export must be a fixpoint, heading included"
     );
 
     mat.shutdown();

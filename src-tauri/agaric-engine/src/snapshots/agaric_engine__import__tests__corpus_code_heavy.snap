@@ -5,24 +5,53 @@ expression: "serde_json::json!({\n    \"import\": output_shape(parse_logseq_mark
 import:
   blocks:
     - block_anchor: ~
-      content: "# Deploy notes\nRun the migration first:\n```bash\n# comment, not a heading"
+      content: "# Deploy notes"
       depth: 0
+      is_code: false
+      properties: []
+    - block_anchor: ~
+      content: "Run the migration first:"
+      depth: 1
+      is_code: false
+      properties: []
+    - block_anchor: ~
+      content: "```bash\n# comment, not a heading\n- not a bullet\npsql -f migrate.sql\n```"
+      depth: 1
       is_code: true
       properties: []
     - block_anchor: ~
-      content: "not a bullet\npsql -f migrate.sql\n```\nThen check the config:\n~~~yaml"
-      depth: 0
+      content: "Then check the config:"
+      depth: 1
+      is_code: false
+      properties: []
+    - block_anchor: ~
+      content: "~~~yaml\n- name: web\n  replicas: 3\n~~~"
+      depth: 1
       is_code: true
       properties: []
     - block_anchor: ~
-      content: "name: web\nreplicas: 3\n~~~\nHow to document a snippet:\n````md\n```js\nconsole.log(\"hi\")\n```\n- item inside the example\n````\nOld-style indented code:\nmake release"
-      depth: 0
+      content: "How to document a snippet:"
+      depth: 1
+      is_code: false
+      properties: []
+    - block_anchor: ~
+      content: "````md\n```js\nconsole.log(\"hi\")\n```\n- item inside the example\n````"
+      depth: 1
       is_code: true
+      properties: []
+    - block_anchor: ~
+      content: "Old-style indented code:"
+      depth: 1
+      is_code: false
+      properties: []
+    - block_anchor: ~
+      content: make release
+      depth: 2
+      is_code: false
       properties: []
   frontmatter: []
   frontmatter_list_items: {}
-  warnings:
-    - 1 list-like line(s) inside a code fence were kept as literal code content instead of new blocks
+  warnings: []
 paste:
   - block_anchor: ~
     content: "# Deploy notes"
@@ -31,97 +60,37 @@ paste:
     properties: []
   - block_anchor: ~
     content: "Run the migration first:"
-    depth: 0
-    is_code: false
-    properties: []
-  - block_anchor: ~
-    content: "```bash"
-    depth: 0
-    is_code: true
-    properties: []
-  - block_anchor: ~
-    content: "# comment, not a heading"
-    depth: 0
-    is_code: false
-    properties: []
-  - block_anchor: ~
-    content: "- not a bullet"
-    depth: 0
-    is_code: false
-    properties: []
-  - block_anchor: ~
-    content: psql -f migrate.sql
-    depth: 0
-    is_code: false
-    properties: []
-  - block_anchor: ~
-    content: "```"
-    depth: 0
-    is_code: true
-    properties: []
-  - block_anchor: ~
-    content: "Then check the config:"
-    depth: 0
-    is_code: false
-    properties: []
-  - block_anchor: ~
-    content: ~~~yaml
-    depth: 0
-    is_code: false
-    properties: []
-  - block_anchor: ~
-    content: "- name: web"
-    depth: 0
-    is_code: false
-    properties: []
-  - block_anchor: ~
-    content: "replicas: 3"
     depth: 1
     is_code: false
     properties: []
   - block_anchor: ~
-    content: ~~~
-    depth: 0
+    content: "```bash\n# comment, not a heading\n- not a bullet\npsql -f migrate.sql\n```"
+    depth: 1
+    is_code: true
+    properties: []
+  - block_anchor: ~
+    content: "Then check the config:"
+    depth: 1
     is_code: false
+    properties: []
+  - block_anchor: ~
+    content: "~~~yaml\n- name: web\n  replicas: 3\n~~~"
+    depth: 1
+    is_code: true
     properties: []
   - block_anchor: ~
     content: "How to document a snippet:"
-    depth: 0
+    depth: 1
     is_code: false
     properties: []
   - block_anchor: ~
-    content: "````md"
-    depth: 0
-    is_code: true
-    properties: []
-  - block_anchor: ~
-    content: "```js"
-    depth: 0
-    is_code: true
-    properties: []
-  - block_anchor: ~
-    content: "console.log(\"hi\")"
-    depth: 0
-    is_code: false
-    properties: []
-  - block_anchor: ~
-    content: "```"
-    depth: 0
-    is_code: true
-    properties: []
-  - block_anchor: ~
-    content: "- item inside the example"
-    depth: 0
-    is_code: false
-    properties: []
-  - block_anchor: ~
-    content: "````"
-    depth: 0
+    content: "````md\n```js\nconsole.log(\"hi\")\n```\n- item inside the example\n````"
+    depth: 1
     is_code: true
     properties: []
   - block_anchor: ~
     content: "Old-style indented code:"
-    depth: 0
+    depth: 1
     is_code: false
     properties: []
   - block_anchor: ~
@@ -132,19 +101,49 @@ paste:
 source:
   blocks:
     - block_anchor: ~
-      content: "# Deploy notes\n\nRun the migration first:\n\n```bash\n# comment, not a heading"
+      content: "# Deploy notes"
       depth: 0
+      is_code: false
+      properties: []
+    - block_anchor: ~
+      content: "Run the migration first:"
+      depth: 1
+      is_code: false
+      properties: []
+    - block_anchor: ~
+      content: "```bash\n# comment, not a heading\n- not a bullet\npsql -f migrate.sql\n```"
+      depth: 1
       is_code: true
       properties: []
     - block_anchor: ~
-      content: "not a bullet\npsql -f migrate.sql\n```\n\nThen check the config:\n\n~~~yaml"
-      depth: 0
+      content: "Then check the config:"
+      depth: 1
+      is_code: false
+      properties: []
+    - block_anchor: ~
+      content: "~~~yaml\n- name: web\n  replicas: 3\n~~~"
+      depth: 1
       is_code: true
       properties: []
     - block_anchor: ~
-      content: "name: web\nreplicas: 3\n~~~\n\nHow to document a snippet:\n\n````md\n```js\nconsole.log(\"hi\")\n```\n- item inside the example\n````\n\nOld-style indented code:\n\n  make release"
-      depth: 0
+      content: "How to document a snippet:"
+      depth: 1
+      is_code: false
+      properties: []
+    - block_anchor: ~
+      content: "````md\n```js\nconsole.log(\"hi\")\n```\n- item inside the example\n````"
+      depth: 1
       is_code: true
+      properties: []
+    - block_anchor: ~
+      content: "Old-style indented code:"
+      depth: 1
+      is_code: false
+      properties: []
+    - block_anchor: ~
+      content: make release
+      depth: 2
+      is_code: false
       properties: []
   frontmatter: []
   frontmatter_list_items: {}

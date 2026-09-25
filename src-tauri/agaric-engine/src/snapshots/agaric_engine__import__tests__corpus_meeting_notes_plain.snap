@@ -5,7 +5,31 @@ expression: "serde_json::json!({\n    \"import\": output_shape(parse_logseq_mark
 import:
   blocks:
     - block_anchor: ~
-      content: "Weekly sync 24/09\nAttendees: Alice, Bob, Carol\nAgenda\n1) Budget\n2) Hiring\nAction items\nAlice: send the deck\nBob: book interviews"
+      content: "Weekly sync 24/09\nAttendees: Alice, Bob, Carol"
+      depth: 0
+      is_code: false
+      properties: []
+    - block_anchor: ~
+      content: Agenda
+      depth: 0
+      is_code: false
+      properties: []
+    - block_anchor: ~
+      content: Budget
+      depth: 0
+      is_code: false
+      properties:
+        - - listStyle
+          - ordered
+    - block_anchor: ~
+      content: Hiring
+      depth: 0
+      is_code: false
+      properties:
+        - - listStyle
+          - ordered
+    - block_anchor: ~
+      content: "Action items\nAlice: send the deck\nBob: book interviews"
       depth: 0
       is_code: false
       properties: []
@@ -14,12 +38,7 @@ import:
   warnings: []
 paste:
   - block_anchor: ~
-    content: Weekly sync 24/09
-    depth: 0
-    is_code: false
-    properties: []
-  - block_anchor: ~
-    content: "Attendees: Alice, Bob, Carol"
+    content: "Weekly sync 24/09\nAttendees: Alice, Bob, Carol"
     depth: 0
     is_code: false
     properties: []
@@ -29,34 +48,52 @@ paste:
     is_code: false
     properties: []
   - block_anchor: ~
-    content: 1) Budget
+    content: Budget
     depth: 0
     is_code: false
-    properties: []
+    properties:
+      - - listStyle
+        - ordered
   - block_anchor: ~
-    content: 2) Hiring
+    content: Hiring
     depth: 0
     is_code: false
-    properties: []
+    properties:
+      - - listStyle
+        - ordered
   - block_anchor: ~
-    content: Action items
-    depth: 0
-    is_code: false
-    properties: []
-  - block_anchor: ~
-    content: "Alice: send the deck"
-    depth: 0
-    is_code: false
-    properties: []
-  - block_anchor: ~
-    content: "Bob: book interviews"
+    content: "Action items\nAlice: send the deck\nBob: book interviews"
     depth: 0
     is_code: false
     properties: []
 source:
   blocks:
     - block_anchor: ~
-      content: "Weekly sync 24/09\nAttendees: Alice, Bob, Carol\n\nAgenda\n1) Budget\n2) Hiring\n\nAction items\nAlice: send the deck\nBob: book interviews"
+      content: "Weekly sync 24/09\nAttendees: Alice, Bob, Carol"
+      depth: 0
+      is_code: false
+      properties: []
+    - block_anchor: ~
+      content: Agenda
+      depth: 0
+      is_code: false
+      properties: []
+    - block_anchor: ~
+      content: Budget
+      depth: 0
+      is_code: false
+      properties:
+        - - listStyle
+          - ordered
+    - block_anchor: ~
+      content: Hiring
+      depth: 0
+      is_code: false
+      properties:
+        - - listStyle
+          - ordered
+    - block_anchor: ~
+      content: "Action items\nAlice: send the deck\nBob: book interviews"
       depth: 0
       is_code: false
       properties: []

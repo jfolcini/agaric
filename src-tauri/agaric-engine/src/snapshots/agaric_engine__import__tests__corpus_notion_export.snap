@@ -5,33 +5,58 @@ expression: "serde_json::json!({\n    \"import\": output_shape(parse_logseq_mark
 import:
   blocks:
     - block_anchor: ~
-      content: "# Q3 Planning\nStatus: In progress\nOwner: Alice Smith\nTags: planning, q3\n## Goals"
+      content: "# Q3 Planning"
       depth: 0
+      is_code: false
+      properties: []
+    - block_anchor: ~
+      content: "Status: In progress\nOwner: Alice Smith\nTags: planning, q3"
+      depth: 1
+      is_code: false
+      properties: []
+    - block_anchor: ~
+      content: "## Goals"
+      depth: 1
       is_code: false
       properties: []
     - block_anchor: ~
       content: Ship the importer
-      depth: 0
+      depth: 2
       is_code: false
       properties: []
     - block_anchor: ~
       content: Parse bullets
-      depth: 2
+      depth: 3
       is_code: false
       properties: []
     - block_anchor: ~
       content: Parse tasks
-      depth: 2
+      depth: 3
       is_code: false
       properties: []
     - block_anchor: ~
       content: "[ ] Write the doc"
-      depth: 0
+      depth: 2
       is_code: false
       properties: []
     - block_anchor: ~
-      content: "[x] Kick-off meeting\n<aside>\n💡 Remember to invite design.\n</aside>\nSee [Retro notes](Q3%20Planning%2012ab34cd56ef7890/Retro%20notes%2098fe76dc54ba3210.md)"
-      depth: 0
+      content: "[x] Kick-off meeting"
+      depth: 2
+      is_code: false
+      properties: []
+    - block_anchor: ~
+      content: "<aside>\n💡 Remember to invite design."
+      depth: 2
+      is_code: false
+      properties: []
+    - block_anchor: ~
+      content: "</aside>"
+      depth: 2
+      is_code: false
+      properties: []
+    - block_anchor: ~
+      content: "See [Retro notes](Q3%20Planning%2012ab34cd56ef7890/Retro%20notes%2098fe76dc54ba3210.md)"
+      depth: 2
       is_code: false
       properties: []
   frontmatter: []
@@ -44,106 +69,120 @@ paste:
     is_code: false
     properties: []
   - block_anchor: ~
-    content: "Status: In progress"
-    depth: 0
-    is_code: false
-    properties: []
-  - block_anchor: ~
-    content: "Owner: Alice Smith"
-    depth: 0
-    is_code: false
-    properties: []
-  - block_anchor: ~
-    content: "Tags: planning, q3"
-    depth: 0
+    content: "Status: In progress\nOwner: Alice Smith\nTags: planning, q3"
+    depth: 1
     is_code: false
     properties: []
   - block_anchor: ~
     content: "## Goals"
-    depth: 0
+    depth: 1
     is_code: false
     properties: []
   - block_anchor: ~
-    content: "- Ship the importer"
-    depth: 0
-    is_code: false
-    properties: []
-  - block_anchor: ~
-    content: "- Parse bullets"
+    content: Ship the importer
     depth: 2
     is_code: false
     properties: []
   - block_anchor: ~
-    content: "- Parse tasks"
+    content: Parse bullets
+    depth: 3
+    is_code: false
+    properties: []
+  - block_anchor: ~
+    content: Parse tasks
+    depth: 3
+    is_code: false
+    properties: []
+  - block_anchor: ~
+    content: Write the doc
     depth: 2
     is_code: false
-    properties: []
+    properties:
+      - - todo_state
+        - TODO
   - block_anchor: ~
-    content: "- [ ] Write the doc"
-    depth: 0
+    content: Kick-off meeting
+    depth: 2
     is_code: false
-    properties: []
+    properties:
+      - - todo_state
+        - DONE
   - block_anchor: ~
-    content: "- [x] Kick-off meeting"
-    depth: 0
-    is_code: false
-    properties: []
-  - block_anchor: ~
-    content: "<aside>"
-    depth: 0
-    is_code: false
-    properties: []
-  - block_anchor: ~
-    content: 💡 Remember to invite design.
-    depth: 0
+    content: "<aside>\n💡 Remember to invite design."
+    depth: 2
     is_code: false
     properties: []
   - block_anchor: ~
     content: "</aside>"
-    depth: 0
+    depth: 2
     is_code: false
     properties: []
   - block_anchor: ~
     content: "See [Retro notes](Q3%20Planning%2012ab34cd56ef7890/Retro%20notes%2098fe76dc54ba3210.md)"
-    depth: 0
+    depth: 2
     is_code: false
     properties: []
 source:
   blocks:
     - block_anchor: ~
-      content: "# Q3 Planning\n\nStatus: In progress\nOwner: Alice Smith\nTags: planning, q3\n\n## Goals"
+      content: "# Q3 Planning"
       depth: 0
+      is_code: false
+      properties: []
+    - block_anchor: ~
+      content: "Status: In progress\nOwner: Alice Smith\nTags: planning, q3"
+      depth: 1
+      is_code: false
+      properties: []
+    - block_anchor: ~
+      content: "## Goals"
+      depth: 1
       is_code: false
       properties: []
     - block_anchor: ~
       content: Ship the importer
-      depth: 0
+      depth: 2
       is_code: false
       properties: []
     - block_anchor: ~
       content: Parse bullets
-      depth: 2
+      depth: 3
       is_code: false
       properties: []
     - block_anchor: ~
       content: Parse tasks
-      depth: 2
+      depth: 3
       is_code: false
       properties: []
     - block_anchor: ~
       content: Write the doc
-      depth: 0
+      depth: 2
       is_code: false
       properties:
         - - todo_state
           - TODO
     - block_anchor: ~
-      content: "Kick-off meeting\n\n<aside>\n💡 Remember to invite design.\n\n</aside>\n\nSee [Retro notes](Q3%20Planning%2012ab34cd56ef7890/Retro%20notes%2098fe76dc54ba3210.md)"
-      depth: 0
+      content: Kick-off meeting
+      depth: 2
       is_code: false
       properties:
         - - todo_state
           - DONE
+    - block_anchor: ~
+      content: "<aside>\n💡 Remember to invite design."
+      depth: 2
+      is_code: false
+      properties: []
+    - block_anchor: ~
+      content: "</aside>"
+      depth: 2
+      is_code: false
+      properties: []
+    - block_anchor: ~
+      content: "See [Retro notes](Q3%20Planning%2012ab34cd56ef7890/Retro%20notes%2098fe76dc54ba3210.md)"
+      depth: 2
+      is_code: false
+      properties: []
   frontmatter: []
   frontmatter_list_items: {}
   warnings: []

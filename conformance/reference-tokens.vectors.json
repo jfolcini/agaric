@@ -40,9 +40,9 @@
   },
   "codeFenceCases": [
     {
-      "name": "a tilde fence is not a fence — neither side protects it",
+      "name": "a tilde fence is a fence (#5160 S5): the tag inside is literal",
       "input": "~~~\n#hushed\n~~~",
-      "requestedTagNames": ["hushed"]
+      "requestedTagNames": []
     },
     {
       "name": "a closed backtick fence leaves every tag literal",
@@ -65,19 +65,19 @@
       "requestedTagNames": []
     },
     {
-      "name": "an unbalanced fence recovers at a sibling bullet line (#2866)",
+      "name": "an unterminated column-0 fence runs to the end of the document (#5160 D5): a bullet-shaped line inside it is code",
       "input": "```\n- interior\n#tail",
-      "requestedTagNames": ["tail"]
-    },
-    {
-      "name": "a bare closing delimiter next keeps the bullet as fence content (#2866)",
-      "input": "```\n- interior\n```\n#tail",
       "requestedTagNames": []
     },
     {
-      "name": "an ordinary bullet outside a fence still ends the block run (#3617)",
+      "name": "a bullet-shaped line inside a column-0 fence is code, and the line after the closing fence is its own block (#5160 S5)",
+      "input": "```\n- interior\n```\n#tail",
+      "requestedTagNames": ["tail"]
+    },
+    {
+      "name": "a column-0 fence after a bullet is its own block (#5160 S2), so the bullet's tag is real",
       "input": "a #before\n- b #x\n```\n#inside\n```",
-      "requestedTagNames": ["before"]
+      "requestedTagNames": ["before", "x"]
     },
     {
       "name": "an ordinary bullet after a closed fence still starts a fresh block (#3617)",
@@ -90,9 +90,9 @@
       "requestedTagNames": []
     },
     {
-      "name": "is_code is block-level: text before the opener and after the closer is literal too",
+      "name": "a fence is a block of its own (#5160 S2): the paragraphs before the opener and after the closer keep their tags",
       "input": "a #before\n```\n#inside\n```\n#after",
-      "requestedTagNames": []
+      "requestedTagNames": ["after", "before"]
     },
     {
       "name": "a double-backtick run pairs as two single-backtick spans on both sides",
@@ -100,9 +100,9 @@
       "requestedTagNames": ["code", "real"]
     },
     {
-      "name": "a bare fence opener owns the PRECEDING block's depth, not its own indent (#3627)",
+      "name": "a column-0 fence after a list item is its own block and holds the indented bullet line after it as code (#5160 S5)",
       "input": "  - a\n```\n  - b #probe",
-      "requestedTagNames": ["probe"]
+      "requestedTagNames": []
     },
     {
       "name": "the mirror shape — a bare opener indented PAST the preceding block still owns that block's depth (#3627)",
