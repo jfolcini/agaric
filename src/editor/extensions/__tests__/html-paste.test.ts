@@ -483,7 +483,8 @@ describe('handlePaste — pasted text goes to the block path, spliced (#5160 D4)
 
   // `after` ends the LAST pasted block, so it must be the text alone: a
   // `doc.cut` from the caret keeps the heading node, whose serialization
-  // repeats the `## ` marker mid-text.
+  // repeats the `## ` marker mid-text. The heading's tail and the paragraph
+  // after it are two paragraphs, so a blank line separates them (#5160 D2).
   it('splices mid-heading: the anchor keeps its marker, the text after the caret carries none', async () => {
     editor = await buildEditor({
       type: 'doc',
@@ -498,7 +499,7 @@ describe('handlePaste — pasted text goes to the block path, spliced (#5160 D4)
 
     expect(dispatchBlockEvent).toHaveBeenCalledWith(
       'PASTE_BLOCKS',
-      expect.objectContaining({ splice: { before: '## Heading ', after: 'here\nnext line' } }),
+      expect.objectContaining({ splice: { before: '## Heading ', after: 'here\n\nnext line' } }),
     )
   })
 

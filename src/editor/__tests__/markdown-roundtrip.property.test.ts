@@ -534,6 +534,21 @@ const FIXPOINT_SEEDS: readonly DocNode[] = [
       ),
     ),
   ),
+  // #5160 D2: a hardBreak is a bare `\n`, so every line of a paragraph is a
+  // line the block parser dispatches, and two sibling paragraphs need a blank
+  // line between them. The break at a paragraph's edge, or doubled, keeps the
+  // legacy marker so no line of the paragraph is empty.
+  doc(paragraph(text('a'), hardBreak(), text('b'))),
+  doc(paragraph(text('a')), paragraph(text('b'))),
+  doc(paragraph(text('a'), hardBreak(), text('- b'))),
+  doc(paragraph(text('a'), hardBreak(), text('# b'))),
+  doc(paragraph(text('a'), hardBreak(), text('b', [{ type: 'italic' }]))),
+  doc(paragraph(text('a'), hardBreak(), text(' b', [{ type: 'italic' }]))),
+  doc(paragraph(hardBreak(), text('a'))),
+  doc(paragraph(text('a'), hardBreak())),
+  doc(paragraph(text('a'), hardBreak(), hardBreak(), text('b'))),
+  doc(blockquote(paragraph(text('a')), paragraph(text('b')))),
+  doc(bulletList(listItem(paragraph(text('p')), paragraph(text('a')), paragraph(text('b'))))),
 ]
 
 /** Shapes that normalize (string changes once) before becoming stable. */
@@ -864,6 +879,10 @@ const arbForeignLine: fc.Arbitrary<string> = fc
       '- [ ] task',
       '- [x] task',
       'plain text',
+      // #5160 D2: a second plain line is a hard-break continuation of the
+      // first, and the legacy marker form still reads as one.
+      'second line',
+      'marked line\\',
       '# heading',
       '> quote',
       '```',

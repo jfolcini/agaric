@@ -268,6 +268,15 @@ describe('StaticBlock', () => {
     expect(screen.getByText('Hello world')).toBeInTheDocument()
   })
 
+  // #5160 D2 — a stored `\n` is a line inside the block, shown as a break.
+  it('renders a stored line break as a visible break', () => {
+    const { container } = render(
+      <StaticBlock blockId="B1" content={'hello\nworld'} onFocus={vi.fn()} />,
+    )
+    expect(container.querySelectorAll('[data-testid="block-static"] br')).toHaveLength(1)
+    expect(screen.getByTestId('block-static').textContent).toBe('helloworld')
+  })
+
   it('renders empty block placeholder when content is empty', () => {
     render(
       <TooltipProvider>

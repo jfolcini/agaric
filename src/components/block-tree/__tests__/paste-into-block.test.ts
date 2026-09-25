@@ -81,11 +81,14 @@ function liveTarget(): { target: PasteIntoBlockTarget; handle: RovingEditorHandl
   }
 }
 
-/** The text before the caret of `handle`'s editor, a line per paragraph. */
+/**
+ * The text before the caret of `handle`'s editor, a line per paragraph and
+ * per hard break (a pasted `two\nlines` is one paragraph with a break, #5160 D2).
+ */
 function textBeforeCaret(handle: RovingEditorHandle): string {
   const { doc, selection } = (handle.editor as Editor).state
   expect(selection.empty).toBe(true)
-  return doc.textBetween(0, selection.from, '\n')
+  return doc.textBetween(0, selection.from, '\n', '\n')
 }
 
 /** The page's top-level blocks after a fresh load: `content` in order. */

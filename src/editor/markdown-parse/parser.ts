@@ -963,13 +963,13 @@ function buildListItem(itemTextLines: string[], nested: string[], depth: number)
 /**
  * Fallback production: paragraph. Always matches.
  *
- * A line whose trailing backslash run is odd ends with a hard-break marker
- * (#710-5) — the following line is part of the SAME paragraph, joined by a
- * `hardBreak` node, so Shift+Enter line breaks no longer split the block on
- * blur. A trailing backslash on the LAST line stays literal (CommonMark:
- * a backslash at end of input is not a hard break) — the serializer always
- * emits a newline after the marker, so this case never comes from our own
- * output.
+ * A line whose trailing backslash run is odd ends with the legacy hard-break
+ * marker (#710-5) — the following line is part of the SAME paragraph, joined
+ * by a `hardBreak` node, whatever its shape. A trailing backslash on the LAST
+ * line stays literal (CommonMark: a backslash at end of input is not a hard
+ * break). A plain line directly after this paragraph is ALSO a line of it
+ * (#5160 D2): `parseDocument` joins it with a `hardBreak`, so this production
+ * only has to consume the marker form.
  *
  * `indentIsStructure` marks the lines of a list item's nested content, which
  * `collectListItem` has already dedented by the item's content column: there,
@@ -1002,15 +1002,15 @@ export function parseParagraph(
 }
 
 /**
- * Dispatch to the first matching block-level production. Paragraph is the
- * always-matching fallback.
+ * The first block-level production that matches at `lines[i]`, or `null` when
+ * only the paragraph fallback would. A line that matches here interrupts the
+ * paragraph before it (D2); one that does not is a line of that paragraph.
  */
-function dispatchBlockProduction(
+function matchBlockProduction(
   lines: readonly string[],
   i: number,
   depth: number,
-  indentIsStructure: boolean,
-): BlockParseResult {
+): BlockParseResult | null {
   return (
     parseCodeBlock(lines, i) ??
     parseMathBlock(lines, i) ??
@@ -1020,9 +1020,24 @@ function dispatchBlockProduction(
     parseHorizontalRule(lines, i) ??
     parseOrderedList(lines, i, depth) ??
     parseTask(lines, i, depth) ??
-    parseBulletList(lines, i, depth) ??
-    parseParagraph(lines, i, depth, indentIsStructure)
+    parseBulletList(lines, i, depth)
   )
+}
+
+/**
+ * A plain paragraph — no task marker — whose next line, when it is not a blank
+ * and starts no other block, is a line of it (#5160 D2).
+ */
+function isOpenParagraph(node: BlockLevelNode | undefined): node is ParagraphNode {
+  return node?.type === 'paragraph' && node.attrs?.todoState === undefined
+}
+
+/** `next`'s lines appended to `open` after a `hardBreak`. */
+function joinParagraphs(open: ParagraphNode, next: ParagraphNode): ParagraphNode {
+  return {
+    type: 'paragraph',
+    content: [...(open.content ?? []), { type: 'hardBreak' }, ...(next.content ?? [])],
+  }
 }
 
 /**
@@ -1079,6 +1094,21 @@ export function parse(markdown: string, depth = 0): DocNode {
  * see {@link parseParagraph}. It applies to THAT level alone: a blockquote
  * nested there re-enters through {@link parse}, where its own content's leading
  * whitespace is text again.
+ *
+ * Lines and blocks (#5160 D2, what Rust reads too): a single line break
+ * inside a paragraph is a line of that paragraph, joined by a `hardBreak`,
+ * and a blank line separates two paragraphs. Only the exactly-empty line is
+ * blank — a whitespace-only line is text, so stored whitespace survives the
+ * round trip. A line that starts another block production ends the paragraph,
+ * so every other construct keeps its meaning.
+ *
+ * The blank line is read as the inverse of `joinBlocks`: the one directly
+ * after a paragraph is that paragraph's separator; any other blank line (a
+ * second one in a row, one after a heading or list, one at the start) is an
+ * empty paragraph, which the serializer emits as an empty line. So
+ * `a\n\nb` is two paragraphs and `a\n\n\n\nb` three, the middle one empty —
+ * and an empty paragraph survives a round trip instead of vanishing from the
+ * block it sits in.
  */
 function parseDocument(markdown: string, depth: number, indentIsStructure: boolean): DocNode {
   if (markdown.length === 0) return { type: 'doc', content: [{ type: 'paragraph' }] }
@@ -1103,11 +1133,39 @@ function parseDocument(markdown: string, depth: number, indentIsStructure: boole
   }
 
   const blocks: BlockLevelNode[] = []
+  // The block before `lines[i]` is a text paragraph the line may continue.
+  let open = false
+  // A blank line at `lines[i]` separates the paragraph before it (else it is
+  // an empty paragraph).
+  let blankSeparates = false
   let i = 0
   while (i < lines.length) {
-    const result = dispatchBlockProduction(lines, i, depth, indentIsStructure)
-    blocks.push(...result.blocks)
+    if (lines[i] === '') {
+      if (!blankSeparates) blocks.push({ type: 'paragraph' })
+      blankSeparates = !blankSeparates
+      open = false
+      i++
+      continue
+    }
+    const matched = matchBlockProduction(lines, i, depth)
+    if (matched) {
+      blocks.push(...matched.blocks)
+      i += matched.consumed
+      open = false
+      blankSeparates = false
+      continue
+    }
+    const result = parseParagraph(lines, i, depth, indentIsStructure)
+    const paragraph = result.blocks[0] as ParagraphNode
+    const last = blocks.at(-1)
+    if (open && isOpenParagraph(last)) {
+      blocks[blocks.length - 1] = joinParagraphs(last, paragraph)
+    } else {
+      blocks.push(paragraph)
+    }
     i += result.consumed
+    open = true
+    blankSeparates = true
   }
 
   if (blocks.length === 0) return { type: 'doc' }
