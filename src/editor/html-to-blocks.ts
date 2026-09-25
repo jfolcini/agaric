@@ -440,11 +440,37 @@ function walkList(
   }
 }
 
+/** A top-level heading block's level (`# ` → 1 … `###### ` → 6), or 0. */
+function headingLevel(block: OutlineBlock): number {
+  if (block.depth !== 0) return 0
+  return /^(#{1,6}) /.exec(block.content)?.[1]?.length ?? 0
+}
+
 /**
- * Convert a clipboard HTML fragment into a flat list of {@link OutlineBlock}s in
- * document order. `inline` renders each element's inline content (see
- * {@link createInlineTurndown}). The `body` is parsed from `html` by the caller
- * (so this stays DOM-agnostic and testable with any `DOMParser`).
+ * Nest the blocks under the headings that own them (#5160 D16), as import and
+ * text paste read the same document: a heading owns what follows it until a
+ * heading of its level or higher, and a deeper heading nests inside a
+ * shallower one. Headings inside lists are never blocks here, so they own
+ * nothing.
+ */
+function nestUnderHeadings(blocks: OutlineBlock[]): OutlineBlock[] {
+  const open: number[] = []
+  return blocks.map((block) => {
+    const level = headingLevel(block)
+    if (level === 0) return { content: block.content, depth: block.depth + open.length }
+    while ((open.at(-1) ?? 0) >= level) open.pop()
+    const nested = { content: block.content, depth: open.length }
+    open.push(level)
+    return nested
+  })
+}
+
+/**
+ * Convert a clipboard HTML fragment into a list of {@link OutlineBlock}s in
+ * document order, nested under their headings. `inline` renders each
+ * element's inline content (see {@link createInlineTurndown}). The `body` is
+ * parsed from `html` by the caller (so this stays DOM-agnostic and testable
+ * with any `DOMParser`).
  *
  * Returns `[]` when nothing block-like (and no text) is present — the caller
  * treats that as "not usable HTML" and falls back to the normal paste path.
@@ -452,5 +478,5 @@ function walkList(
 export function htmlBodyToOutline(body: ParentNode, inline: InlineToMarkdown): OutlineBlock[] {
   const out: OutlineBlock[] = []
   walkChildren(body, 0, inline, out)
-  return out
+  return nestUnderHeadings(out)
 }

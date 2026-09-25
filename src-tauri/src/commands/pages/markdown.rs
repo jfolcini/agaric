@@ -2290,6 +2290,84 @@ impl PasteInput {
     }
 }
 
+/// A paste into the anchor block's text (#5160 D4): its content before and
+/// after the cursor, with any selection already cut out.
+#[derive(Debug, Clone, Deserialize, Type)]
+pub struct PasteSplice {
+    pub before: String,
+    pub after: String,
+}
+
+impl PasteSplice {
+    /// Join the pasted blocks into the anchor's text as a text editor does:
+    /// the text before the cursor starts the first block, the text after it
+    /// ends the last. After text, the first block joins as the text it was
+    /// pasted as ([`pasted_as_text`]), so the anchor stays what it is. After
+    /// a last block that is code, the text after the cursor is a block of its
+    /// own at its depth, so the fence keeps its closing line.
+    fn join(self, blocks: &mut Vec<import::ParsedBlock>) {
+        let Self { before, after } = self;
+        if let Some(first) = blocks.first_mut()
+            && !before.is_empty()
+        {
+            first.content = pasted_as_text(first, before.ends_with('\n'));
+            first.properties.clear();
+        }
+        match blocks.last_mut() {
+            Some(last) if last.is_code && !after.is_empty() => {
+                let depth = last.depth;
+                blocks.push(import::pasted_block(after, depth));
+            }
+            Some(last) => last.content.push_str(&after),
+            None => {}
+        }
+        if let Some(first) = blocks.first_mut() {
+            first.content.insert_str(0, &before);
+        }
+    }
+}
+
+/// `block` as the text it was pasted as, for a paste after text (#5160 D4):
+/// the list marker and checkbox the parse read into properties back before
+/// its text, and its other properties back as `key:: value` lines, as Source
+/// mode writes them. Text that `starts_line` is escaped as Source mode escapes
+/// a first line, so no marker in it is read back.
+fn pasted_as_text(block: &import::ParsedBlock, starts_line: bool) -> String {
+    // The last value of a key is the one a paste writes.
+    let mut properties: Vec<(&str, &str)> = Vec::new();
+    for (key, value) in &block.properties {
+        properties.retain(|(k, _)| k != key);
+        properties.push((key.as_str(), value.as_str()));
+    }
+    let mut marker = |key: &str, write: fn(&str) -> Option<String>| {
+        let at = properties.iter().position(|(k, _)| *k == key)?;
+        let marker = write(properties[at].1)?;
+        properties.remove(at);
+        Some(marker)
+    };
+    let list = marker(import::LIST_STYLE_KEY, |style| match style {
+        import::LIST_STYLE_BULLET => Some("- ".to_owned()),
+        import::LIST_STYLE_ORDERED => Some("1. ".to_owned()),
+        _ => None,
+    });
+    let task = marker("todo_state", |state| {
+        import::task_marker_for(state).map(|c| format!("[{c}] "))
+    });
+    let markers = format!("{}{}", list.unwrap_or_default(), task.unwrap_or_default());
+    let mut text = if block.content.is_empty() {
+        markers.trim_end().to_owned()
+    } else {
+        markers + &block.content
+    };
+    if starts_line && first_line_needs_escape(&text, "", "", RenderMode::Source) {
+        text.insert(0, '\\');
+    }
+    for (key, value) in properties {
+        text.push_str(&format!("\n{key}:: {value}"));
+    }
+    text
+}
+
 /// Paste `input` right after the anchor block (#5140), as one transaction and
 /// so one undo. Text is read by [`import::parse_pasted_text`]; each of
 /// `blocks` is one block as it comes. A page link or tag written as a name is
@@ -2301,6 +2379,15 @@ impl PasteInput {
 /// and properties. Returns the pages and tags the names created, then the
 /// pasted blocks in document order.
 ///
+/// With a `splice`, the paste goes into the anchor's text (#5160 D4). The
+/// anchor becomes the first block, `before` + its content, and keeps its id,
+/// place, other properties and children: at the start of its text it takes
+/// the first block's properties, after text it takes the block as the text it
+/// was pasted as. The first block's children follow the anchor's own; `after`
+/// ends the last block, or follows a last block that is code as a block of
+/// its own. The anchor is then the first pasted block returned. The names in
+/// `before` and `after` are left as they are.
+///
 /// # Errors
 ///
 /// - [`AppError::Ulid`] — `anchor_block_id` is not a ULID
@@ -2308,13 +2395,14 @@ impl PasteInput {
 /// - [`AppError::Validation`] — the input holds no block, the anchor is
 ///   soft-deleted or not a content block, the paste would append more ops
 ///   than one undo reverts, or a block would be nested past `MAX_BLOCK_DEPTH`
-#[instrument(skip(pool, device_id, materializer, input), err)]
+#[instrument(skip(pool, device_id, materializer, input, splice), err)]
 pub async fn paste_blocks_inner(
     pool: &SqlitePool,
     device_id: &str,
     materializer: &Materializer,
     anchor_block_id: BlockId,
     input: PasteInput,
+    splice: Option<PasteSplice>,
 ) -> Result<Vec<BlockRow>, AppError> {
     let anchor_id = BlockId::from_string(anchor_block_id.into_string())?;
     let mut blocks = input.into_blocks();
@@ -2349,19 +2437,101 @@ pub async fn paste_blocks_inner(
         .iter()
         .position(|id| id == anchor_id.as_str())
         .map(|slot| i64::try_from(slot + 1).expect("a Vec index fits in i64"));
+    let spliced = match splice {
+        Some(splice) => {
+            splice.join(&mut blocks);
+            let into = Box::pin(splice_into_anchor(
+                &mut tx,
+                materializer,
+                device_id,
+                &anchor_id,
+                &blocks,
+            ));
+            into.await?
+        }
+        None => Vec::new(),
+    };
     let pasted = Box::pin(create_parsed_blocks(
         &mut tx,
         materializer,
         device_id,
         parent_id,
         index,
-        &blocks,
+        &blocks[spliced.len()..],
         PropertyWrite::Copy,
     ))
     .await?;
     tx.commit_and_dispatch(materializer).await?;
+    created.extend(spliced);
     created.extend(pasted);
     Ok(created)
+}
+
+/// Write the first of `blocks` into the anchor (#5160 D4): its content and
+/// properties, with the task stamps its state change implies, and its children
+/// after the anchor's own. Returns the anchor, then those children: one row for
+/// each block it took.
+async fn splice_into_anchor(
+    tx: &mut CommandTx,
+    materializer: &Materializer,
+    device_id: &str,
+    anchor_id: &BlockId,
+    blocks: &[import::ParsedBlock],
+) -> Result<Vec<BlockRow>, AppError> {
+    let (first, rest) = blocks.split_first().expect("a paste holds a block");
+    let id = anchor_id.as_str();
+    let loro = materializer.loro_state();
+    let prior = super::super::properties::resolve_prior_task_states_batch(
+        tx,
+        std::slice::from_ref(anchor_id),
+    )
+    .await?
+    .remove(id)
+    .unwrap_or_default();
+    let anchor = super::super::blocks::crud::edit_block_in_tx(
+        tx,
+        loro,
+        device_id,
+        id.to_owned(),
+        first.content.clone(),
+    )
+    .await?;
+    apply_block_properties(
+        tx,
+        materializer,
+        device_id,
+        id,
+        &first.properties,
+        PropertyWrite::Copy,
+    )
+    .await?;
+    if let Some(state) = parsed_todo_state(first) {
+        super::super::properties::write_todo_timestamp_transitions_in_tx(
+            tx,
+            loro,
+            device_id,
+            id,
+            &prior,
+            Some(state),
+        )
+        .await?;
+    }
+    crate::commands::ensure_batch_within_cap("ops", tx.pending_len())?;
+    let children = rest.iter().take_while(|b| b.depth > first.depth).count();
+    let mut rows = vec![anchor];
+    rows.extend(
+        Box::pin(create_parsed_blocks(
+            tx,
+            materializer,
+            device_id,
+            Some(id.to_owned()),
+            None,
+            &rest[..children],
+            PropertyWrite::Copy,
+        ))
+        .await?,
+    );
+    Ok(rows)
 }
 
 /// Resolve the page links and tags `blocks` write as names in `anchor`'s
@@ -5368,13 +5538,15 @@ pub async fn duplicate_block(
 }
 
 /// Tauri command: paste clipboard text or structured blocks right after the
-/// anchor block. Delegates to [`paste_blocks_inner`].
+/// anchor block, or into its text with a `splice`. Delegates to
+/// [`paste_blocks_inner`].
 #[tauri::command]
 #[specta::specta]
 pub async fn paste_blocks(
     ctx: State<'_, WriteCtx>,
     anchor_block_id: BlockId,
     input: PasteInput,
+    splice: Option<PasteSplice>,
 ) -> Result<WithOps<CreatedBlocks>, AppError> {
     capture_op_refs(async {
         paste_blocks_inner(
@@ -5383,6 +5555,7 @@ pub async fn paste_blocks(
             ctx.materializer(),
             anchor_block_id,
             input,
+            splice,
         )
         .await
         .map(|blocks| CreatedBlocks { blocks })

@@ -30,6 +30,7 @@ import type { RefObject } from 'react'
 import { useEffect, useLayoutEffect, useRef } from 'react'
 import type { StoreApi } from 'zustand'
 
+import { pasteIntoBlock, type PastePayload } from '@/components/block-tree/paste-into-block'
 import type { DatePickerMode } from '@/components/block-tree/use-block-date-picker'
 import {
   applyContentEdit,
@@ -38,7 +39,6 @@ import {
 import type { SlashCommandContext } from '@/components/block-tree/use-block-slash-commands/types'
 import type { RovingEditorHandle } from '@/editor/use-roving-editor'
 import { unwrap } from '@/lib/app-error'
-import type { PasteInput } from '@/lib/bindings'
 import { commands } from '@/lib/bindings'
 import { type BlockCommandHandler, registerBlockCommandTarget } from '@/lib/block-command-bus'
 import {
@@ -249,13 +249,15 @@ export function useBlockTreeEventListeners(options: UseBlockTreeEventListenersOp
       })()
     }
 
-    // #1439 / #5140 — a paste the editor routed to the block path: converted
-    // clipboard HTML or a pasted outline (`detail.input`). Materialize it via
-    // `pasteBlocks`, anchored on the focused block (`blockId` is the focused,
-    // owned block — the bus only routes here when this tree's store owns the
-    // focus). The blocks land AFTER the anchor, exactly like the keyboard paste.
+    // #1439 / #5140 / #5160 D4 — a paste the editor routed to the block path:
+    // converted clipboard HTML or pasted markdown text (`detail.input`), with
+    // where it goes in the block's text (`detail.splice`). `pasteIntoBlock`
+    // lands it in the focused block (`blockId` is the focused, owned block —
+    // the bus only routes here when this tree's store owns the focus).
     const onPasteBlocks: BlockCommandHandler = (blockId, detail) => {
-      const payload = detail as { input?: PasteInput; targetBlockId?: string | null } | undefined
+      const payload = detail as
+        | (Partial<PastePayload> & { targetBlockId?: string | null })
+        | undefined
       const input = payload?.input
       if (!input) return
       // #2033 — the editor's paste handler captures the focused block id
@@ -271,13 +273,16 @@ export function useBlockTreeEventListeners(options: UseBlockTreeEventListenersOp
         })
         return
       }
-      void pageStore
-        .getState()
-        .pasteBlocks(blockId, input)
-        .catch((err: unknown) => {
-          logger.error('BlockTree', 'Failed to paste blocks', { blockId }, err)
-          notify.error(t('error.pasteBlocksFailed'))
-        })
+      const target = {
+        blockId,
+        rootParentId,
+        pageStore,
+        rovingEditor: () => rovingEditorRef.current,
+      }
+      void pasteIntoBlock(target, { ...payload, input }).catch((err: unknown) => {
+        logger.error('BlockTree', 'Failed to paste blocks', { blockId }, err)
+        notify.error(t('error.pasteBlocksFailed'))
+      })
     }
 
     return registerBlockCommandTarget(pageStore, {

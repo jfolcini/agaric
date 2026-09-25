@@ -5395,7 +5395,7 @@ async fn paste(
     anchor: &BlockId,
     input: PasteInput,
 ) -> Vec<BlockRow> {
-    let rows = paste_blocks_inner(pool, DEV, mat, anchor.clone(), input)
+    let rows = paste_blocks_inner(pool, DEV, mat, anchor.clone(), input, None)
         .await
         .unwrap();
     settle(mat).await;
@@ -5966,6 +5966,7 @@ async fn paste_blocks_op_refs_undo_the_whole_paste_with_what_it_created() {
             &mat,
             anchor.clone(),
             paste_text("- [ ] see [[New Page]] #fresh\n  - child\n"),
+            None,
         )
         .await
         .map(|blocks| CreatedBlocks { blocks })
@@ -6018,7 +6019,8 @@ async fn paste_blocks_over_one_undo_of_ops_is_refused_and_writes_nothing() {
         .collect();
     let before = dup_counts(&pool).await;
 
-    let result = paste_blocks_inner(&pool, DEV, &mat, anchor.clone(), paste_text(&text)).await;
+    let result =
+        paste_blocks_inner(&pool, DEV, &mat, anchor.clone(), paste_text(&text), None).await;
 
     assert!(
         matches!(result, Err(AppError::Validation { .. })),
@@ -6053,8 +6055,15 @@ async fn paste_blocks_past_the_depth_limit_writes_nothing() {
     settle(&mat).await;
     let before = dup_counts(&pool).await;
 
-    let result =
-        paste_blocks_inner(&pool, DEV, &mat, deepest.clone(), paste_text("- a\n  - b")).await;
+    let result = paste_blocks_inner(
+        &pool,
+        DEV,
+        &mat,
+        deepest.clone(),
+        paste_text("- a\n  - b"),
+        None,
+    )
+    .await;
 
     assert!(
         matches!(result, Err(AppError::Validation { .. })),
@@ -6085,13 +6094,14 @@ async fn paste_blocks_refusals() {
     settle(&mat).await;
     let before = dup_counts(&pool).await;
 
-    let unknown = paste_blocks_inner(&pool, DEV, &mat, BlockId::new(), paste_text("- x")).await;
+    let unknown =
+        paste_blocks_inner(&pool, DEV, &mat, BlockId::new(), paste_text("- x"), None).await;
     assert!(
         matches!(unknown, Err(AppError::NotFound(_))),
         "an unknown anchor is NotFound, got {unknown:?}"
     );
     for (what, id) in [("a trashed block", trashed), ("a page", page)] {
-        let result = paste_blocks_inner(&pool, DEV, &mat, id, paste_text("- x")).await;
+        let result = paste_blocks_inner(&pool, DEV, &mat, id, paste_text("- x"), None).await;
         assert!(
             matches!(result, Err(AppError::Validation { .. })),
             "{what} is refused as an anchor, got {result:?}"
@@ -6102,7 +6112,8 @@ async fn paste_blocks_refusals() {
         paste_text(" \n\t\n"),
         PasteInput::Blocks { blocks: Vec::new() },
     ] {
-        let result = paste_blocks_inner(&pool, DEV, &mat, anchor.clone(), input.clone()).await;
+        let result =
+            paste_blocks_inner(&pool, DEV, &mat, anchor.clone(), input.clone(), None).await;
         assert!(
             matches!(result, Err(AppError::Validation { .. })),
             "{input:?} has nothing to paste, got {result:?}"
@@ -6113,6 +6124,350 @@ async fn paste_blocks_refusals() {
         before,
         "no refusal writes anything"
     );
+}
+
+// ----------------------------------------------------------------------
+// paste_blocks with a splice — a paste into a block's text (#5160 D4)
+// ----------------------------------------------------------------------
+
+/// A document with a heading first: `# Title` owns `Intro` and `## Part`
+/// (which owns `item`), and `# Next` owns the last paragraph.
+const SPLICED_DOC: &str = "# Title\n\nIntro\n\n## Part\n\n- item\n\n# Next\n\nLast para.";
+
+/// Paste `text` into `anchor`'s text, `before` and `after` the cursor.
+async fn paste_into(
+    pool: &SqlitePool,
+    mat: &Materializer,
+    anchor: &BlockId,
+    text: &str,
+    (before, after): (&str, &str),
+) -> WithOps<CreatedBlocks> {
+    let splice = PasteSplice {
+        before: before.into(),
+        after: after.into(),
+    };
+    let resp = capture_op_refs(async {
+        paste_blocks_inner(
+            pool,
+            DEV,
+            mat,
+            anchor.clone(),
+            paste_text(text),
+            Some(splice),
+        )
+        .await
+        .map(|blocks| CreatedBlocks { blocks })
+    })
+    .await
+    .unwrap();
+    settle(mat).await;
+    resp
+}
+
+/// Each place the cursor can be: the text before it starts the first block,
+/// which the anchor becomes (keeping its id, place and child); the first
+/// block's children follow the anchor's own; the text after the cursor ends
+/// the last block. A selection is cut out by the caller, so its text is in
+/// neither half and is gone. One undo of the paste's ops puts it all back.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn paste_blocks_splices_the_document_into_the_anchors_text() {
+    for (case, stored, cursor) in [
+        ("mid-block", "Hello world", ("Hello ", "world")),
+        ("at the start", "Hello world", ("", "Hello world")),
+        ("at the end", "Hello world", ("Hello world", "")),
+        ("into an empty block", "", ("", "")),
+        ("over a selection", "Hello big world", ("Hello ", " world")),
+    ] {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+        let page = dup_page(&pool, &mat, "Dest").await;
+        let anchor = dup_child(&pool, &mat, &page, stored).await;
+        let kid = dup_child(&pool, &mat, &anchor, "kid").await;
+        let next = dup_child(&pool, &mat, &page, "next").await;
+        settle(&mat).await;
+
+        let resp = paste_into(&pool, &mat, &anchor, SPLICED_DOC, cursor).await;
+
+        let (before, after) = cursor;
+        let top = dup_children(&pool, &page).await;
+        assert_eq!(top.len(), 3, "{case}: {top:?}");
+        assert_eq!(
+            top[0],
+            (anchor.to_string(), format!("{before}# Title")),
+            "{case}: the anchor keeps its id and place and becomes the first block"
+        );
+        assert_eq!(
+            top[1].1, "# Next",
+            "{case}: the next top-level block follows it"
+        );
+        assert_eq!(
+            top[2],
+            (next.to_string(), "next".to_owned()),
+            "{case}: the anchor's next sibling comes after the paste"
+        );
+        let under_anchor: Vec<String> = dup_children(&pool, &anchor)
+            .await
+            .into_iter()
+            .map(|(_, content)| content)
+            .collect();
+        assert_eq!(
+            under_anchor,
+            ["kid", "Intro", "## Part"],
+            "{case}: the anchor keeps its child, then the first block's"
+        );
+        let part = BlockId::from(dup_children(&pool, &anchor).await[2].0.as_str());
+        assert_eq!(dup_children(&pool, &part).await[0].1, "item", "{case}");
+        let last = BlockId::from(top[1].0.as_str());
+        assert_eq!(
+            dup_children(&pool, &last).await[0].1,
+            format!("Last para.{after}"),
+            "{case}: the text after the cursor ends the last block"
+        );
+        let returned: Vec<&str> = resp.inner.blocks.iter().map(|b| b.id.as_str()).collect();
+        assert_eq!(
+            returned.len(),
+            6,
+            "{case}: the anchor and the five blocks it did not take"
+        );
+        assert_eq!(
+            returned[0],
+            anchor.as_str(),
+            "{case}: the anchor is returned first"
+        );
+
+        undo_ops_inner(&pool, DEV, &mat, resp.op_refs.clone())
+            .await
+            .unwrap();
+        settle(&mat).await;
+        assert_eq!(
+            dup_children(&pool, &page).await,
+            vec![
+                (anchor.to_string(), stored.to_owned()),
+                (next.to_string(), "next".to_owned())
+            ],
+            "{case}: one undo of the paste restores the anchor's text and drops the blocks"
+        );
+        assert_eq!(
+            dup_children(&pool, &anchor).await,
+            vec![(kid.to_string(), "kid".to_owned())],
+            "{case}: and the blocks it put under the anchor"
+        );
+    }
+}
+
+/// A paste that reads as one block edits the anchor and creates nothing: the
+/// block is joined between the two halves of the text.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn paste_blocks_splice_of_one_block_only_edits_the_anchor() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let page = dup_page(&pool, &mat, "Dest").await;
+    let anchor = dup_child(&pool, &mat, &page, "Hello world").await;
+    settle(&mat).await;
+    let before = dup_counts(&pool).await;
+
+    let resp = paste_into(&pool, &mat, &anchor, "two\nlines", ("Hello ", " world")).await;
+
+    assert_eq!(
+        dup_children(&pool, &page).await,
+        vec![(anchor.to_string(), "Hello two\nlines world".to_owned())]
+    );
+    assert_eq!(resp.op_refs.len(), 1, "one edit");
+    assert_eq!(
+        dup_counts(&pool).await,
+        (before.0, before.1 + 1),
+        "no block created"
+    );
+}
+
+/// The first block's task state lands on the anchor, from the state the anchor
+/// had: a DONE anchor pasted over with a TODO line loses its `completed_at`.
+/// The anchor's own properties stay, and one undo puts back the state with
+/// its stamp.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn paste_blocks_splice_writes_the_first_blocks_task_state_on_the_anchor() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let page = dup_page(&pool, &mat, "Dest").await;
+    let anchor = dup_child(&pool, &mat, &page, "").await;
+    set_priority_inner(&pool, DEV, &mat, anchor.as_str().into(), Some("1".into()))
+        .await
+        .unwrap();
+    set_todo_state_inner(
+        &pool,
+        DEV,
+        &mat,
+        anchor.as_str().into(),
+        Some("DONE".into()),
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+    let stored = dup_storage(&pool, &anchor).await;
+    let stamps = dup_stamps(&pool, &anchor).await;
+    assert!(
+        stamps.iter().any(|s| s.starts_with("completed_at=")),
+        "{stamps:?}"
+    );
+
+    let resp = paste_into(&pool, &mat, &anchor, "- [ ] a\n- [ ] b", ("", "")).await;
+
+    let top = dup_children(&pool, &page).await;
+    assert_eq!(
+        top.iter().map(|(_, c)| c.as_str()).collect::<Vec<_>>(),
+        ["a", "b"]
+    );
+    assert_eq!(
+        dup_storage(&pool, &anchor).await,
+        vec!["columns todo=Some(\"TODO\") priority=Some(\"1\") scheduled=None due=None"],
+        "the anchor is a TODO task now and keeps its priority"
+    );
+    assert!(
+        !dup_stamps(&pool, &anchor)
+            .await
+            .iter()
+            .any(|s| s.starts_with("completed_at=")),
+        "leaving DONE clears the stamp"
+    );
+    undo_ops_inner(&pool, DEV, &mat, resp.op_refs.clone())
+        .await
+        .unwrap();
+    settle(&mat).await;
+    assert_eq!(
+        dup_storage(&pool, &anchor).await,
+        stored,
+        "undo restores the anchor"
+    );
+    assert_eq!(dup_stamps(&pool, &anchor).await, stamps, "and its stamps");
+    assert_eq!(
+        dup_children(&pool, &page).await,
+        vec![(anchor.to_string(), String::new())]
+    );
+}
+
+/// With text before the cursor the first pasted block joins it as the text it
+/// was pasted as: the markers and property lines the parse read into
+/// properties are written back into the text, escaped where the text starts a
+/// line as Source mode escapes a first line, and the anchor keeps its own task
+/// state and properties.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn paste_blocks_splice_mid_text_joins_the_first_block_as_text() {
+    for (case, text, cursor, joined) in [
+        (
+            "mid-line",
+            "1. [ ] Buy milk\n   note:: soon\n\nEggs",
+            ("Hello ", "world"),
+            "Hello 1. [ ] Buy milk\nnote:: soon",
+        ),
+        (
+            "at a line start",
+            "- - x\n- [x] y",
+            ("para\n", "world"),
+            "para\n\\- x",
+        ),
+    ] {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+        let page = dup_page(&pool, &mat, "Dest").await;
+        let anchor = dup_child(&pool, &mat, &page, "stored").await;
+        set_priority_inner(&pool, DEV, &mat, anchor.as_str().into(), Some("1".into()))
+            .await
+            .unwrap();
+        set_todo_state_inner(
+            &pool,
+            DEV,
+            &mat,
+            anchor.as_str().into(),
+            Some("DONE".into()),
+        )
+        .await
+        .unwrap();
+        settle(&mat).await;
+        let stored = dup_storage(&pool, &anchor).await;
+        let stamps = dup_stamps(&pool, &anchor).await;
+
+        let resp = paste_into(&pool, &mat, &anchor, text, cursor).await;
+
+        let top = dup_children(&pool, &page).await;
+        assert_eq!(top[0], (anchor.to_string(), joined.to_owned()), "{case}");
+        assert_eq!(top.len(), 2, "{case}: {top:?}");
+        assert!(top[1].1.ends_with("world"), "{case}: {top:?}");
+        assert_eq!(
+            dup_storage(&pool, &anchor).await,
+            stored,
+            "{case}: the anchor keeps its task state and properties"
+        );
+        assert_eq!(dup_stamps(&pool, &anchor).await, stamps, "{case}");
+        undo_ops_inner(&pool, DEV, &mat, resp.op_refs.clone())
+            .await
+            .unwrap();
+        settle(&mat).await;
+        assert_eq!(
+            dup_children(&pool, &page).await,
+            vec![(anchor.to_string(), "stored".to_owned())],
+            "{case}: one undo restores the anchor's text and drops the block"
+        );
+    }
+}
+
+/// A fence ending the last pasted block keeps its closing line: the text after
+/// the cursor becomes a block of its own right after it, at its depth. With no
+/// text after the cursor, nothing is created for it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn paste_blocks_splice_puts_the_text_after_a_fence_in_a_block_of_its_own() {
+    let fence = "```\ncode\n```";
+    for (case, text, after, top_level, under_anchor) in [
+        (
+            "at the top level",
+            "First\n\n```\ncode\n```",
+            "world",
+            vec!["Hello First", fence, "world", "next"],
+            vec![],
+        ),
+        (
+            "nested",
+            "- a\n  - ```\n    code\n    ```",
+            "world",
+            vec!["Hello a", "next"],
+            vec![fence, "world"],
+        ),
+        (
+            "with nothing after the cursor",
+            "First\n\n```\ncode\n```",
+            "",
+            vec!["Hello First", fence, "next"],
+            vec![],
+        ),
+    ] {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+        let page = dup_page(&pool, &mat, "Dest").await;
+        let anchor = dup_child(&pool, &mat, &page, "Hello world").await;
+        dup_child(&pool, &mat, &page, "next").await;
+        settle(&mat).await;
+
+        let resp = paste_into(&pool, &mat, &anchor, text, ("Hello ", after)).await;
+
+        let contents = |rows: Vec<(String, String)>| -> Vec<String> {
+            rows.into_iter().map(|(_, content)| content).collect()
+        };
+        assert_eq!(
+            contents(dup_children(&pool, &page).await),
+            top_level,
+            "{case}"
+        );
+        assert_eq!(
+            contents(dup_children(&pool, &anchor).await),
+            under_anchor,
+            "{case}"
+        );
+        let last = resp.inner.blocks.last().unwrap();
+        assert_eq!(
+            last.content.as_deref(),
+            Some(if after.is_empty() { fence } else { after }),
+            "{case}: the block holding the text after the cursor is returned last"
+        );
+    }
 }
 
 // ======================================================================

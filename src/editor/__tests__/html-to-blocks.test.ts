@@ -70,10 +70,40 @@ describe('parseUsableHtmlBody — handlePaste’s usability gate', () => {
 })
 
 describe('htmlBodyToOutline — block structure', () => {
-  it('converts headings to ATX heading blocks', () => {
+  it('converts headings to ATX heading blocks, a deeper one nested in a shallower one', () => {
     expect(convert('<h1>Title</h1><h3>Sub</h3>')).toEqual([
       { content: '# Title', depth: 0 },
-      { content: '### Sub', depth: 0 },
+      { content: '### Sub', depth: 1 },
+    ])
+  })
+
+  // #5160 D16 — a heading owns what follows it until a heading of its level or
+  // higher, so HTML paste gives the tree text paste and import give.
+  it('nests the blocks after a heading under it, lists keeping their own nesting', () => {
+    const html =
+      '<h1>Title</h1><p>Intro</p><h2>Part A</h2><ul><li>x<ul><li>y</li></ul></li></ul>' +
+      '<h2>Part B</h2><p>b</p><h1>Next</h1><p>last</p>'
+    expect(convert(html)).toEqual([
+      { content: '# Title', depth: 0 },
+      { content: 'Intro', depth: 1 },
+      { content: '## Part A', depth: 1 },
+      { content: '- x', depth: 2 },
+      { content: '- y', depth: 3 },
+      { content: '## Part B', depth: 1 },
+      { content: 'b', depth: 2 },
+      { content: '# Next', depth: 0 },
+      { content: 'last', depth: 1 },
+    ])
+  })
+
+  it('closes a deeper heading at a shallower one and leaves what precedes any heading alone', () => {
+    const html = '<p>before</p><h3>Deep</h3><p>d</p><h2>Shallower</h2><p>s</p>'
+    expect(convert(html)).toEqual([
+      { content: 'before', depth: 0 },
+      { content: '### Deep', depth: 0 },
+      { content: 'd', depth: 1 },
+      { content: '## Shallower', depth: 0 },
+      { content: 's', depth: 1 },
     ])
   })
 

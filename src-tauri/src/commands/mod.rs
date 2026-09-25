@@ -137,7 +137,7 @@ pub use mcp::{
 };
 pub use pages::{
     ImportBibliographyResult, MCP_PAGE_LIMIT_CAP, PAGE_LINKS_EDGE_CAP, PageHeading,
-    PageLinksResponse, PageSourceReport, PageSubtreeResponse, PasteInput, PastedBlock,
+    PageLinksResponse, PageSourceReport, PageSubtreeResponse, PasteInput, PasteSplice, PastedBlock,
     SourceSaveFlags, apply_page_source, apply_page_source_inner, duplicate_block,
     duplicate_block_inner, export_page_markdown, export_page_markdown_inner, get_blocks_source,
     get_blocks_source_inner, get_page_aliases, get_page_aliases_inner, get_page_inner,

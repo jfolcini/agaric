@@ -221,8 +221,16 @@ interface UndoStore {
    * same defined key into ONE entry regardless of elapsed time (content edits
    * pass `edit:<blockId>`), so a block's debounced mid-typing commits fold into
    * a single undo step. Omit it for the pure timed-window behavior (#2468).
+   *
+   * #5160 D4 — `merge: false` never joins the top entry: a paste, which its
+   * toast's Undo reverts, must not take along the typing flushed just before it.
    */
-  onNewAction: (pageId: string, opRefs?: OpRef[], coalesceKey?: string) => void
+  onNewAction: (
+    pageId: string,
+    opRefs?: OpRef[],
+    coalesceKey?: string,
+    opts?: { merge?: boolean },
+  ) => void
 
   /** Clear undo state for a page (called on navigation away). */
   clearPage: (pageId: string) => void
@@ -913,7 +921,7 @@ export const useUndoStore = create<UndoStore>((set, get) => {
       return pageState != null && pageState.redoStack.length > 0
     },
 
-    onNewAction: (pageId: string, opRefs?: OpRef[], coalesceKey?: string) => {
+    onNewAction: (pageId, opRefs, coalesceKey, { merge = true } = {}) => {
       // Idempotent no-op (`op_refs: []` — e.g. add_tag on an already-tagged
       // block): the backend appended nothing, so there is nothing to undo and
       // no reason to invalidate redo history. Ignore entirely (see interface
@@ -957,7 +965,7 @@ export const useUndoStore = create<UndoStore>((set, get) => {
             opRefs === undefined ||
             top.refs.length + opRefs.length <= MAX_COALESCED_UNDO_REFS
           let undoStack: UndoStackEntry[]
-          if (top !== undefined && (sameKeyGroup || withinWindow) && withinCoalesceCap) {
+          if (merge && top !== undefined && (sameKeyGroup || withinWindow) && withinCoalesceCap) {
             // Capture-time coalescing: this action joins the top entry's group
             // (`at` advances to the newest action; the entry adopts this
             // action's `coalesceKey` so the session identity tracks the latest

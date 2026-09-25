@@ -11,7 +11,7 @@
 
 import { beforeEach, describe, expect, it } from 'vitest'
 
-import type { PasteInput } from '@/lib/bindings'
+import type { PasteInput, PasteSplice } from '@/lib/bindings'
 import { dispatch } from '@/lib/tauri-mock/handlers'
 import { blocks, makeBlock, opLog, properties, seedBlocks } from '@/lib/tauri-mock/seed'
 
@@ -60,8 +60,8 @@ function source(blockIds: string[], withChildren: boolean): string {
   return dispatch('get_blocks_source', { blockIds, withChildren }) as string
 }
 
-function paste(anchorBlockId: string, input: PasteInput): Row[] {
-  return (dispatch('paste_blocks', { anchorBlockId, input }) as { blocks: Row[] }).blocks
+function paste(anchorBlockId: string, input: PasteInput, splice?: PasteSplice): Row[] {
+  return (dispatch('paste_blocks', { anchorBlockId, input, splice }) as { blocks: Row[] }).blocks
 }
 
 /** The `AppErrorKind` the paste refuses with, or `null` when it succeeds. */
@@ -288,6 +288,45 @@ describe('tauri-mock clipboard pair', () => {
       const creates = opLog.filter((op) => op.op_type === 'create_block')
       expect(resp.op_refs).toEqual(creates.map((op) => ({ device_id: op.device_id, seq: op.seq })))
       expect(creates).toHaveLength(2)
+    })
+
+    // #5160 D4 — a paste into the anchor's text.
+    it('splices into the anchor: it becomes the first block, whose children follow its own, and the text after the cursor ends the last', () => {
+      const resp = dispatch('paste_blocks', {
+        anchorBlockId: CODE,
+        input: { kind: 'text', text: '# Title\n\nIntro\n\n# Next\n\nLast' },
+        splice: { before: 'Hello ', after: 'world' },
+      }) as { blocks: Row[]; op_refs: Array<{ device_id: string; seq: number }> }
+
+      expect(resp.blocks.map((r) => r.id)[0]).toBe(CODE)
+      expect(tree(PAGE)).toEqual([
+        { content: 'alpha', children: [] },
+        {
+          content: 'Hello # Title',
+          children: [
+            { content: 'child', children: [{ content: 'grandchild', children: [] }] },
+            { content: 'Nested', children: [] },
+            { content: 'Intro', children: [] },
+          ],
+        },
+        { content: '# Next', children: [{ content: 'Lastworld', children: [] }] },
+        { content: 'beta', children: [] },
+      ])
+
+      dispatch('undo_ops', { ops: resp.op_refs })
+
+      expect(tree(PAGE).map((b) => (b as { content: string }).content)).toEqual([
+        'alpha',
+        FENCED,
+        'beta',
+      ])
+    })
+
+    it('splices a one-block paste between the two halves, creating nothing', () => {
+      const pasted = paste(A, { kind: 'text', text: 'two\nlines' }, { before: 'Hi ', after: '!' })
+
+      expect(pasted.map((r) => [r.id, r.content])).toEqual([[A, 'Hi two\nlines!']])
+      expect(opLog.map((op) => op.op_type)).toEqual(['edit_block'])
     })
 
     it('refuses an unknown anchor as not_found, and a page, a trashed anchor or nothing to paste as validation', () => {

@@ -111,10 +111,10 @@ function snakeToCamel(s: string | null | undefined): string {
  *
  * Uses the standalone `t` (not the React `useTranslation` hook) so it is
  * safe to call from a toast action callback outside the component tree.
- * Returns a promise that resolves once the undo + reload settle (rejections
- * are surfaced as an error toast and swallowed).
+ * Returns a promise that resolves once the undo + reload settle, to whether an
+ * op was reversed (rejections are surfaced as an error toast and swallowed).
  */
-export async function performPageUndo(pageId: string): Promise<void> {
+export async function performPageUndo(pageId: string): Promise<boolean> {
   // #4391 — every route into here (the Ctrl+Z handler, `performActivePageUndo`
   // and the swipe-to-delete toast action) reaches this line synchronously from
   // the user's gesture, so this is the last point before the first `await`
@@ -122,15 +122,17 @@ export async function performPageUndo(pageId: string): Promise<void> {
   const spaceId = useSpaceStore.getState().currentSpaceId
   try {
     const result = await useUndoStore.getState().undo(pageId)
-    if (!result) return
+    if (!result) return false
     const opKey = `undo.op.${snakeToCamel(result.reversed_op_type)}`
     const message = translate(opKey, { defaultValue: translate('undo.undoneMessage') })
     notify(message, { duration: 1500 })
     announce(translate('announce.undone'))
     await refreshAfterUndoRedo(pageId, spaceId)
+    return true
   } catch {
     notify.error(translate('undo.undoFailedMessage'))
     announce(translate('announce.undoFailed'))
+    return false
   }
 }
 

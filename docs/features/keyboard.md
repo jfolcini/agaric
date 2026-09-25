@@ -33,6 +33,7 @@ Settings → Keyboard. Each entry shows its current binding and a "Record" butto
 | `Ctrl+Shift+D` | Open the date picker (inserts a date at the cursor). The *due* and *scheduled* pickers are toolbar-only — they have no default binding |
 | `Ctrl+Shift+Y` | Open block history |
 | `Ctrl+Shift+J` | Duplicate block and its subtree, with its task state, priority, dates, list style and properties |
+| `Ctrl+Shift+V` | Paste as plain text: the clipboard's lines go into the block as they are, with no blocks made and no markdown read |
 | `Ctrl+Shift+T` | Turn block into another type |
 | `Ctrl+Backspace` (on empty block) | Delete the block |
 

@@ -440,7 +440,7 @@ describe('useBlockTreeEventListeners', () => {
     const INPUT: PasteInput = { kind: 'blocks', blocks: [{ content: 'a', depth: 0 }] }
 
     function pasteOpts() {
-      const pasteBlocks = vi.fn().mockResolvedValue(undefined)
+      const pasteBlocks = vi.fn().mockResolvedValue([])
       const blocksById = new Map([['BLOCK_1', { id: 'BLOCK_1', content: '' }]])
       const opts = makeOptions({
         pageStore: {
@@ -453,32 +453,38 @@ describe('useBlockTreeEventListeners', () => {
       return { opts, pasteBlocks }
     }
 
-    it('pastes when the captured target matches the focused block', () => {
+    it('pastes when the captured target matches the focused block, with the splice', async () => {
       const { opts, pasteBlocks } = pasteOpts()
       renderHook(() => useBlockTreeEventListeners(opts))
+      const splice = { before: 'a', after: 'b' }
 
-      dispatchBlockEvent('PASTE_BLOCKS', { input: INPUT, targetBlockId: 'BLOCK_1' })
+      dispatchBlockEvent('PASTE_BLOCKS', { input: INPUT, targetBlockId: 'BLOCK_1', splice })
 
-      expect(pasteBlocks).toHaveBeenCalledWith('BLOCK_1', INPUT)
+      await vi.waitFor(() =>
+        expect(pasteBlocks).toHaveBeenCalledWith('BLOCK_1', INPUT, splice, expect.any(Function)),
+      )
     })
 
-    it('no-ops (does NOT paste into the wrong block) when focus moved since paste', () => {
+    it('no-ops (does NOT paste into the wrong block) when focus moved since paste', async () => {
       const { opts, pasteBlocks } = pasteOpts()
       renderHook(() => useBlockTreeEventListeners(opts))
 
       // Paste was claimed while OTHER_BLOCK was focused, but focus is now BLOCK_1.
       dispatchBlockEvent('PASTE_BLOCKS', { input: INPUT, targetBlockId: 'OTHER_BLOCK' })
+      await Promise.resolve()
 
       expect(pasteBlocks).not.toHaveBeenCalled()
     })
 
-    it('pastes when no target was captured (null targetBlockId — legacy payload)', () => {
+    it('pastes when no target was captured (null targetBlockId — legacy payload)', async () => {
       const { opts, pasteBlocks } = pasteOpts()
       renderHook(() => useBlockTreeEventListeners(opts))
 
       dispatchBlockEvent('PASTE_BLOCKS', { input: INPUT, targetBlockId: null })
 
-      expect(pasteBlocks).toHaveBeenCalledWith('BLOCK_1', INPUT)
+      await vi.waitFor(() =>
+        expect(pasteBlocks).toHaveBeenCalledWith('BLOCK_1', INPUT, undefined, expect.any(Function)),
+      )
     })
   })
 

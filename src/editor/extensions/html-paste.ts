@@ -1,6 +1,6 @@
 /**
  * TipTap extension: convert pasted clipboard HTML to Agaric Markdown (#1439),
- * and route a pasted outline to the block-paste path (#5140).
+ * and route pasted markdown text to the block-paste path (#5140, #5160 D4).
  *
  * Pasting from a web page (or another rich editor) carries a `text/html`
  * fragment on the clipboard. The browser's / ProseMirror's default paste either
@@ -13,11 +13,19 @@
  *     block-creation path: `dispatchBlockEvent('PASTE_BLOCKS', …)` → the
  *     focused BlockTree's `pasteBlocks(focusedBlockId, { kind: 'blocks', … })`.
  *
- * With no usable HTML, a plain-text paste that opens with a list item — our
- * own block copy, or an outline from another tool — takes the same route as
- * `{ kind: 'text', … }`, so it lands as nested blocks instead of paragraphs
- * whose markers ProseMirror would escape. A lone task line stays with
- * `TaskPaste`.
+ * With no usable HTML, plain text of more than one line — or one bullet line,
+ * our own copy of a block — takes the same route as `{ kind: 'text', … }`, so
+ * the backend reads it with the import grammar instead of ProseMirror escaping
+ * its markers into literal paragraphs. A single line stays inline, and a lone
+ * task line stays with `TaskPaste`.
+ *
+ * Both routes splice like a text editor (#5160 D4): the payload carries the
+ * block's text before and after the selection, so the first pasted block joins
+ * the block at the cursor, a selection is replaced, and the text after the
+ * cursor ends the last block. It also carries the block as a plain-text paste
+ * would leave it, for the toast's "Paste as text". Ctrl/Cmd+Shift+V pastes the
+ * text as literal lines, directly; browsers send only `text/plain` for it, so
+ * the chord is read on keydown.
  *
  * No regressions: any other paste without USABLE `text/html` (absent, empty, or
  * only a bare wrapper) returns `false` so the existing handlers (`task-paste`,
@@ -36,17 +44,31 @@
  */
 
 import { Extension } from '@tiptap/core'
+import type { Node as PMNode } from '@tiptap/pm/model'
 import { Fragment, Slice } from '@tiptap/pm/model'
 import { Plugin, PluginKey } from '@tiptap/pm/state'
 import type { EditorView } from '@tiptap/pm/view'
 
 import { pastedTaskParagraph } from '@/editor/extensions/task-paste'
-import { parse } from '@/editor/markdown-serializer'
+import { notifyUnknownNodeTypeToast } from '@/editor/markdown-serialize-toast'
+import { parse, serialize } from '@/editor/markdown-serializer'
 import type { DocNode } from '@/editor/types'
-import type { PasteInput } from '@/lib/bindings'
+import type { PasteInput, PasteSplice } from '@/lib/bindings'
 import { dispatchBlockEvent } from '@/lib/block-events'
 import { logger } from '@/lib/logger'
 import { useBlockStore } from '@/stores/blocks'
+
+/**
+ * The `PASTE_BLOCKS` payload: what to paste, into which block, where in its
+ * text, and the block as a plain-text paste would leave it (`asText`, for the
+ * toast's "Paste as text").
+ */
+export interface PasteBlocksDetail {
+  input: PasteInput
+  targetBlockId: string | null
+  splice: PasteSplice
+  asText: string
+}
 
 const htmlPastePluginKey = new PluginKey('htmlPaste')
 
@@ -210,32 +232,110 @@ export async function convertAndInsert(
     // BlockTree's `pasteBlocks`. Routed through the focus-keyed block command
     // bus so exactly the owning tree handles it. The captured `targetBlockId`
     // lets the receiver reject the paste if focus has since moved (#2033).
-    const input: PasteInput = { kind: 'blocks', blocks }
-    dispatchBlockEvent('PASTE_BLOCKS', { input, targetBlockId })
+    dispatchPasteBlocks(view, { kind: 'blocks', blocks }, plainText, targetBlockId)
   } catch (err) {
     logger.warn('htmlPaste', 'conversion failed; falling back to plain text', undefined, err)
     insertPlainText(view, plainText)
   }
 }
 
-/**
- * A bullet line as `import::is_bullet_line` reads one: `- ` or a bare `-`
- * after optional indentation. Only a paste opening with one parses as an
- * outline there, so only that one is worth routing.
- */
+/** A `- ` bullet line, or a bare `-`: the shape copy writes for one block. */
 const BULLET_LINE_RE = /^[ \t]*-(?: |$)/
 
 /**
- * Plain text to paste as blocks rather than into the editor: its first
- * non-blank line is a bullet, the shape copy writes, even for one block. A
- * lone task line stays with `TaskPaste`, and a lone `-` is just a dash.
+ * Plain text to paste as blocks rather than into the editor (#5160 D4): more
+ * than one non-blank line, or one bullet line, our own copy of one block. Any
+ * other single line stays inline, a lone task line stays with `TaskPaste`, and
+ * a lone `-` is just a dash.
  */
-function isPastedOutline(text: string): boolean {
+function isBlockPaste(text: string): boolean {
   const lines = text.split(/\r?\n/).filter((line) => line.trim() !== '')
+  if (lines.length > 1) return true
   const first = lines[0]
-  if (first === undefined || !BULLET_LINE_RE.test(first)) return false
-  if (lines.length === 1 && first.trim() === '-') return false
+  if (first === undefined || !BULLET_LINE_RE.test(first) || first.trim() === '-') return false
   return pastedTaskParagraph(text) === null
+}
+
+/** Serialize a ProseMirror doc to the block's markdown. */
+function toMarkdown(doc: PMNode): string {
+  return serialize(doc.toJSON() as DocNode, notifyUnknownNodeTypeToast)
+}
+
+/** A wrapper the cut left with nothing inside: no textblock, no atom. */
+function hollow(node: PMNode): boolean {
+  if (node.isTextblock || node.isLeaf) return false
+  let solid = false
+  node.descendants((child) => {
+    if (child.isTextblock || child.isLeaf) solid = true
+    return !solid
+  })
+  return !solid
+}
+
+/**
+ * The block's text before and after the selection (#5160 D4): the selected
+ * range is in neither, so the paste replaces it. `after` ends the last pasted
+ * block, so it is text alone: the tail of the selection's textblock as a plain
+ * paragraph, then what follows that textblock. A plain `doc.cut` from the
+ * caret would keep the textblock's type and its ancestors, so a heading, a
+ * quote or a list item would repeat its marker mid-text.
+ */
+function pasteSplice(view: EditorView): PasteSplice {
+  const { doc, selection, schema } = view.state
+  const { $to } = selection
+  const paragraph = schema.nodes['paragraph']
+  let after = doc.cut(selection.to)
+  if ($to.parent.isTextblock && paragraph) {
+    let rest = doc.cut($to.after()).content
+    while (rest.firstChild && hollow(rest.firstChild)) rest = rest.cut(rest.firstChild.nodeSize)
+    const tail = paragraph.create(null, $to.parent.cut($to.parentOffset).content)
+    after = doc.type.create(null, Fragment.from(tail).append(rest))
+  }
+  return { before: toMarkdown(doc.cut(0, selection.from)), after: toMarkdown(after) }
+}
+
+/**
+ * The pasted text as literal lines: text nodes joined by hard breaks, with no
+ * markdown read into them (trailing line breaks dropped).
+ */
+function literalLines(view: EditorView, text: string): Slice {
+  const { schema } = view.state
+  const hardBreak = schema.nodes['hardBreak']
+  const nodes: PMNode[] = []
+  const lines = text.replace(/\r\n?/g, '\n').replace(/\n+$/, '').split('\n')
+  lines.forEach((line, index) => {
+    if (index > 0 && hardBreak) nodes.push(hardBreak.create())
+    if (line.length > 0) nodes.push(schema.text(line))
+  })
+  return new Slice(Fragment.from(nodes), 0, 0)
+}
+
+/** Paste `text` into the block as literal lines, replacing the selection. */
+function insertLiteralLines(view: EditorView, text: string): void {
+  if (view.isDestroyed) return
+  view.dispatch(view.state.tr.replaceSelection(literalLines(view, text)))
+}
+
+/** Route `input` to the block-paste path, spliced at the selection. */
+function dispatchPasteBlocks(
+  view: EditorView,
+  input: PasteInput,
+  plainText: string,
+  targetBlockId: string | null,
+): void {
+  const asText = toMarkdown(view.state.tr.replaceSelection(literalLines(view, plainText)).doc)
+  const detail: PasteBlocksDetail = { input, targetBlockId, splice: pasteSplice(view), asText }
+  dispatchBlockEvent('PASTE_BLOCKS', detail)
+}
+
+/** Ctrl/Cmd+Shift+V, the paste-as-plain-text chord. */
+function isPlainPasteChord(event: KeyboardEvent): boolean {
+  return (
+    (event.ctrlKey || event.metaKey) &&
+    event.shiftKey &&
+    !event.altKey &&
+    event.key.toLowerCase() === 'v'
+  )
 }
 
 /**
@@ -289,22 +389,36 @@ export const HtmlPaste = Extension.create({
   name: 'htmlPaste',
 
   addProseMirrorPlugins() {
+    // Set by the Ctrl/Cmd+Shift+V keydown, read by the paste it fires; any
+    // other key clears it.
+    let plainPasteChord = false
     return [
       new Plugin({
         key: htmlPastePluginKey,
         props: {
+          handleKeyDown: (_view, event) => {
+            plainPasteChord = isPlainPasteChord(event)
+            return false
+          },
           handlePaste: (view, event) => {
+            const plain = plainPasteChord
+            plainPasteChord = false
             // Inside a code textblock the paste must stay literal: let
             // ProseMirror's default code-context paste insert the text/plain
             // payload into the fence (guard convention: math.ts, query-hint.ts).
             if (view.state.selection.$from.parent.type.spec.code) return false
+
+            const plainText = event.clipboardData?.getData('text/plain') ?? ''
+            if (plain && plainText.length > 0) {
+              insertLiteralLines(view, plainText)
+              return true
+            }
 
             const html = event.clipboardData?.getData('text/html') ?? ''
             // #3277 — ONE parse decides usability AND supplies the body
             // `convertAndInsert` walks; the old `isUsableHtml` gate parsed
             // the same string again a second time inside the conversion.
             const body = html ? parseUsableHtmlBody(html) : null
-            const plainText = event.clipboardData?.getData('text/plain') ?? ''
 
             // Capture the focused (paste-target) block id SYNCHRONOUSLY: the
             // conversion is async, so by the time multi-block content is routed
@@ -313,13 +427,11 @@ export const HtmlPaste = Extension.create({
             const targetBlockId = useBlockStore.getState().focusedBlockId
 
             if (!body) {
-              // No usable HTML → an outline goes to the block-paste path;
-              // anything else falls through to task-paste / external-link /
-              // the default plain-text path unchanged (no regressions). Over a
-              // selection the default paste replaces it, as in `TaskPaste`.
-              if (!view.state.selection.empty || !isPastedOutline(plainText)) return false
-              const input: PasteInput = { kind: 'text', text: plainText }
-              dispatchBlockEvent('PASTE_BLOCKS', { input, targetBlockId })
+              // No usable HTML → text worth reading as blocks goes to the
+              // block-paste path; anything else falls through to task-paste /
+              // external-link / the default plain-text path unchanged.
+              if (!isBlockPaste(plainText)) return false
+              dispatchPasteBlocks(view, { kind: 'text', text: plainText }, plainText, targetBlockId)
               return true
             }
 

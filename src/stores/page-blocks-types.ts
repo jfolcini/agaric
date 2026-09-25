@@ -7,7 +7,7 @@
  * import (core imports the reducers; the reducers reference the state type).
  */
 
-import type { BlockRow, PageSourceReport, PasteInput } from '@/lib/bindings'
+import type { BlockRow, PageSourceReport, PasteInput, PasteSplice } from '@/lib/bindings'
 import type { FlatBlock } from '@/lib/tree-utils'
 
 export type { FlatBlock }
@@ -141,8 +141,18 @@ export interface PageBlockState {
    * as siblings after the anchor and nests the rest under them. Resolves the
    * pasted content ids in document order (empty when the anchor is not on this
    * page or the command failed, which toasts).
+   *
+   * #5160 D4 — with a `splice` the paste goes into the anchor's text: the
+   * anchor becomes the first pasted block (`before` + its content) and is the
+   * first id resolved; `after` ends the last one. The anchor's new text is in
+   * the store, and handed to `onSpliced`, before the reload.
    */
-  pasteBlocks: (anchorBlockId: string, input: PasteInput) => Promise<string[]>
+  pasteBlocks: (
+    anchorBlockId: string,
+    input: PasteInput,
+    splice?: PasteSplice,
+    onSpliced?: (content: string) => void,
+  ) => Promise<string[]>
 
   /**
    * #976 item 13 / #5140 — copy `blockId` and its content subtree right after

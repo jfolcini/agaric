@@ -10,7 +10,7 @@
  */
 
 import { base64UrlToUtf8, isBase64UrlNoPad, utf8ToBase64Url } from '@/lib/base64url'
-import type { PasteInput } from '@/lib/bindings'
+import type { PasteInput, PasteSplice } from '@/lib/bindings'
 import { INLINE_PROPERTY_RESERVED_KEYS } from '@/lib/inline-property-parse'
 import { LIST_STYLE_KEY } from '@/lib/list-style'
 import { compareUtf8Bytes } from '@/lib/sqlite-collation'
@@ -607,6 +607,8 @@ function duplicateRow(
 interface PlannedPaste {
   content: string
   depth: number
+  /** Read from a `1.` item, whose marker the backend keeps as the `ordered` list style. */
+  ordered?: boolean
 }
 
 /**
@@ -674,7 +676,7 @@ function ownsFrom(open: OpenBlock): number {
  * it, interior blank lines included, and so does a line with no blank line
  * before it; consecutive plain lines are one paragraph block. Code fences,
  * thematic breaks, list-style and task markers, property lines, escapes and
- * anchors are not modelled.
+ * anchors are not modelled; a `1.` item is only flagged, for `joinSplice`.
  */
 export function parseOutline(text: string): PlannedPaste[] {
   const out: PlannedPaste[] = []
@@ -690,8 +692,8 @@ export function parseOutline(text: string): PlannedPaste[] {
       top = open.at(-1)
     }
   }
-  const push = (entry: Omit<OpenBlock, 'block'>, content: string): void => {
-    const block = { content, depth: open.length }
+  const push = (entry: Omit<OpenBlock, 'block'>, content: string, ordered = false): void => {
+    const block = { content, depth: open.length, ...(ordered && { ordered }) }
     out.push(block)
     open.push({ block, ...entry })
   }
@@ -717,7 +719,7 @@ export function parseOutline(text: string): PlannedPaste[] {
       const len = bullet[0].length
       popTo(indent, null)
       const entry = { marker: indent, content: indent + len + 1, kind: 'bullet', level: 0 } as const
-      push(entry, trimmed.slice(len).replace(/^[ \t]/, ''))
+      push(entry, trimmed.slice(len).replace(/^[ \t]/, ''), /^\d/.test(bullet[0]))
     } else if (heading) {
       const level = heading[1]?.length ?? 1
       popTo(indent, level)
@@ -736,6 +738,29 @@ export function parseOutline(text: string): PlannedPaste[] {
     blankLines = 0
   }
   return out
+}
+
+/** `import::fence_opener`, for the shapes the mock models: a line opening with ``` or ~~~. */
+const FENCE_LINE_RE = /^\s*(?:`{3}|~{3})/m
+
+/**
+ * `PasteSplice::join`: `before` starts the first block, which after text keeps
+ * the `1. ` its item was read from, and `after` ends the last block, or
+ * follows it as a block of its own when it is code (a fence keeps its closing
+ * line).
+ */
+function joinSplice(planned: readonly PlannedPaste[], splice: PasteSplice): PlannedPaste[] {
+  const joined = planned.map((block) => ({ ...block }))
+  const first = joined[0] as PlannedPaste
+  const last = joined.at(-1) as PlannedPaste
+  if (splice.before !== '' && first.ordered) first.content = `1. ${first.content}`
+  if (splice.after !== '' && FENCE_LINE_RE.test(last.content)) {
+    joined.push({ content: splice.after, depth: last.depth })
+  } else {
+    last.content += splice.after
+  }
+  first.content = splice.before + first.content
+  return joined
 }
 
 /** Create one pasted content row under `parentId` at the live `slot`. */
@@ -1183,14 +1208,21 @@ export const blocksHandlers = {
   // #5140 Phase 3b — paste clipboard text or HTML-paste blocks right after the
   // anchor: the k-th top-level block at the anchor's slot + 1 + k, deeper ones
   // under the block the outline nests them in. Returns the created rows in
-  // document order. The backend also resolves `[[Title]]` / `#tag` names
-  // (reporting the pages and tags it creates ahead of the content rows), reads
-  // task markers and property lines, and refuses an over-deep or oversized
-  // paste; the mock models none of that, so tests must not rely on it for them.
+  // document order. With a `splice` (#5160 D4) the anchor becomes the first
+  // block (`before` + its content, one `edit_block`), the first block's
+  // children follow the anchor's own, `after` ends the last block or follows a
+  // code block as its own (`joinSplice`), and the anchor is returned first.
+  // The backend also resolves `[[Title]]` / `#tag` names (reporting the pages
+  // and tags it creates ahead of the content rows), reads task markers and
+  // property lines, and refuses an over-deep or oversized paste; the mock
+  // models none of that, so tests must not rely on it for them. After text
+  // the backend writes a first block's markers and property lines back as
+  // text, which is where the mock leaves them.
   paste_blocks: (args) => {
     const a = args as Record<string, unknown>
     const anchorId = a['anchorBlockId'] as string
     const input = a['input'] as PasteInput
+    const splice = (a['splice'] as PasteSplice | null | undefined) ?? null
     const anchor = blocks.get(anchorId)
     if (!anchor) throw notFoundRejection(`block '${anchorId}' does not exist`)
     if (anchor['deleted_at'] != null) {
@@ -1201,8 +1233,9 @@ export const blocksHandlers = {
         `can only paste after a content block, not a '${String(anchor['block_type'])}'`,
       )
     }
-    const planned = input.kind === 'text' ? parseOutline(input.text) : input.blocks
-    if (planned.length === 0) throw validationRejection('nothing to paste')
+    const parsed = input.kind === 'text' ? parseOutline(input.text) : input.blocks
+    if (parsed.length === 0) throw validationRejection('nothing to paste')
+    const planned = splice ? joinSplice(parsed, splice) : parsed
     const parentId = (anchor['parent_id'] as string | null) ?? null
     const pageId = (anchor['page_id'] as string | null) ?? null
     const liveSiblings = [...blocks.values()]
@@ -1213,7 +1246,22 @@ export const blocksHandlers = {
     const out: Record<string, unknown>[] = []
     const open: Array<{ depth: number; id: string }> = []
     let topLevel = 0
-    for (const block of planned) {
+    let start = 0
+    if (splice) {
+      const content = (planned[0] as PlannedPaste).content
+      const op = pushOp('edit_block', {
+        block_id: anchorId,
+        to_text: content,
+        from_text: anchor['content'],
+      })
+      anchor['content'] = content
+      opRefs.push({ device_id: op.device_id, seq: op.seq })
+      out.push(anchor)
+      open.push({ depth: (planned[0] as PlannedPaste).depth, id: anchorId })
+      start = 1
+    }
+    for (let i = start; i < planned.length; i++) {
+      const block = planned[i] as PlannedPaste
       while ((open.at(-1)?.depth ?? -1) >= block.depth) open.pop()
       const parent = open.at(-1)
       const row = parent

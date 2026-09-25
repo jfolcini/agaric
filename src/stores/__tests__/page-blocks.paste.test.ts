@@ -61,7 +61,7 @@ describe('page-blocks pasteBlocks (#5140 Phase 3b)', () => {
     const ids = await pageStore.getState().pasteBlocks(BLOCK_GS_1, input)
 
     expect(mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'paste_blocks')).toEqual([
-      ['paste_blocks', { anchorBlockId: BLOCK_GS_1, input }],
+      ['paste_blocks', { anchorBlockId: BLOCK_GS_1, input, splice: null }],
     ])
     expect(ids).toHaveLength(3)
     const [parentId, childId, secondId] = ids as [string, string, string]
