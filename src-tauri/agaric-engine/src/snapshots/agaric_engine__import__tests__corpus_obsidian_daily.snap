@@ -5,38 +5,48 @@ expression: "serde_json::json!({\n    \"import\": output_shape(parse_logseq_mark
 import:
   blocks:
     - block_anchor: ~
-      content: "# 2026-09-24\n## Tasks"
+      content: "# 2026-09-24"
       depth: 0
       is_code: false
       properties: []
     - block_anchor: ~
-      content: "[ ] Call the bank 📅 2026-09-25"
-      depth: 0
-      is_code: false
-      properties: []
-    - block_anchor: ~
-      content: "[ ] Draft the RFC ⏫"
-      depth: 0
-      is_code: false
-      properties: []
-    - block_anchor: ~
-      content: "[ ] Outline"
+      content: "## Tasks"
       depth: 1
       is_code: false
       properties: []
     - block_anchor: ~
-      content: "[x] Collect feedback ✅ 2026-09-23\n## Log"
+      content: "[ ] Call the bank 📅 2026-09-25"
+      depth: 2
+      is_code: false
+      properties: []
+    - block_anchor: ~
+      content: "[ ] Draft the RFC ⏫"
+      depth: 2
+      is_code: false
+      properties: []
+    - block_anchor: ~
+      content: "[ ] Outline"
+      depth: 3
+      is_code: false
+      properties: []
+    - block_anchor: ~
+      content: "[x] Collect feedback ✅ 2026-09-23"
+      depth: 3
+      is_code: false
+      properties: []
+    - block_anchor: ~
+      content: "## Log"
       depth: 1
       is_code: false
       properties: []
     - block_anchor: ~
       content: "09:30 Standup"
-      depth: 0
+      depth: 2
       is_code: false
       properties: []
     - block_anchor: ~
       content: "14:00 1:1 with [[Alice]]"
-      depth: 0
+      depth: 2
       is_code: false
       properties: []
   frontmatter: []
@@ -50,87 +60,105 @@ paste:
     properties: []
   - block_anchor: ~
     content: "## Tasks"
-    depth: 0
-    is_code: false
-    properties: []
-  - block_anchor: ~
-    content: "- [ ] Call the bank 📅 2026-09-25"
-    depth: 0
-    is_code: false
-    properties: []
-  - block_anchor: ~
-    content: "- [ ] Draft the RFC ⏫"
-    depth: 0
-    is_code: false
-    properties: []
-  - block_anchor: ~
-    content: "- [ ] Outline"
     depth: 1
     is_code: false
     properties: []
   - block_anchor: ~
-    content: "- [x] Collect feedback ✅ 2026-09-23"
-    depth: 1
+    content: Call the bank 📅 2026-09-25
+    depth: 2
     is_code: false
-    properties: []
+    properties:
+      - - todo_state
+        - TODO
+  - block_anchor: ~
+    content: Draft the RFC ⏫
+    depth: 2
+    is_code: false
+    properties:
+      - - todo_state
+        - TODO
+  - block_anchor: ~
+    content: Outline
+    depth: 3
+    is_code: false
+    properties:
+      - - todo_state
+        - TODO
+  - block_anchor: ~
+    content: Collect feedback ✅ 2026-09-23
+    depth: 3
+    is_code: false
+    properties:
+      - - todo_state
+        - DONE
   - block_anchor: ~
     content: "## Log"
-    depth: 0
+    depth: 1
     is_code: false
     properties: []
   - block_anchor: ~
-    content: "- 09:30 Standup"
-    depth: 0
+    content: "09:30 Standup"
+    depth: 2
     is_code: false
     properties: []
   - block_anchor: ~
-    content: "- 14:00 1:1 with [[Alice]]"
-    depth: 0
+    content: "14:00 1:1 with [[Alice]]"
+    depth: 2
     is_code: false
     properties: []
 source:
   blocks:
     - block_anchor: ~
-      content: "# 2026-09-24\n\n## Tasks"
+      content: "# 2026-09-24"
       depth: 0
       is_code: false
       properties: []
     - block_anchor: ~
+      content: "## Tasks"
+      depth: 1
+      is_code: false
+      properties: []
+    - block_anchor: ~
       content: Call the bank 📅 2026-09-25
-      depth: 0
+      depth: 2
       is_code: false
       properties:
         - - todo_state
           - TODO
     - block_anchor: ~
       content: Draft the RFC ⏫
-      depth: 0
+      depth: 2
       is_code: false
       properties:
         - - todo_state
           - TODO
     - block_anchor: ~
       content: Outline
-      depth: 1
+      depth: 3
       is_code: false
       properties:
         - - todo_state
           - TODO
     - block_anchor: ~
-      content: "Collect feedback ✅ 2026-09-23\n\n## Log"
-      depth: 1
+      content: Collect feedback ✅ 2026-09-23
+      depth: 3
       is_code: false
       properties:
         - - todo_state
           - DONE
     - block_anchor: ~
+      content: "## Log"
+      depth: 1
+      is_code: false
+      properties: []
+    - block_anchor: ~
       content: "09:30 Standup"
-      depth: 0
+      depth: 2
       is_code: false
       properties: []
     - block_anchor: ~
       content: "14:00 1:1 with [[Alice]]"
-      depth: 0
+      depth: 2
       is_code: false
       properties: []
   frontmatter: []

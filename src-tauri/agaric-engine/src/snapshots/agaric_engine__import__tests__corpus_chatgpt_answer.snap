@@ -5,29 +5,73 @@ expression: "serde_json::json!({\n    \"import\": output_shape(parse_logseq_mark
 import:
   blocks:
     - block_anchor: ~
-      content: "Here's a simple plan to get your garden ready for winter:\n### 1. Clean up\n1. **Remove dead plants** – they harbour pests.\n2. **Rake leaves** into a compost pile."
+      content: "Here's a simple plan to get your garden ready for winter:"
       depth: 0
       is_code: false
       properties: []
     - block_anchor: ~
-      content: Shred them first so they break down faster.
-      depth: 1
+      content: "### 1. Clean up"
+      depth: 0
       is_code: false
       properties: []
     - block_anchor: ~
-      content: "Avoid diseased leaves.\n### 2. Protect the soil"
+      content: "**Remove dead plants** – they harbour pests."
       depth: 1
+      is_code: false
+      properties:
+        - - listStyle
+          - ordered
+    - block_anchor: ~
+      content: "**Rake leaves** into a compost pile."
+      depth: 1
+      is_code: false
+      properties:
+        - - listStyle
+          - ordered
+    - block_anchor: ~
+      content: Shred them first so they break down faster.
+      depth: 2
+      is_code: false
+      properties: []
+    - block_anchor: ~
+      content: Avoid diseased leaves.
+      depth: 2
+      is_code: false
+      properties: []
+    - block_anchor: ~
+      content: "### 2. Protect the soil"
+      depth: 0
       is_code: false
       properties: []
     - block_anchor: ~
       content: Add a 5–8 cm layer of mulch.
-      depth: 0
+      depth: 1
       is_code: false
       properties: []
     - block_anchor: ~
-      content: "Plant a cover crop such as winter rye.\n---\n**Tip:** you can check your soil with:\n```bash\nsoil-test --ph --moisture\n```\nLet me know if you'd like a week-by-week schedule!"
-      depth: 0
+      content: Plant a cover crop such as winter rye.
+      depth: 1
+      is_code: false
+      properties: []
+    - block_anchor: ~
+      content: "---"
+      depth: 1
+      is_code: false
+      properties: []
+    - block_anchor: ~
+      content: "**Tip:** you can check your soil with:"
+      depth: 1
+      is_code: false
+      properties: []
+    - block_anchor: ~
+      content: "```bash\nsoil-test --ph --moisture\n```"
+      depth: 1
       is_code: true
+      properties: []
+    - block_anchor: ~
+      content: "Let me know if you'd like a week-by-week schedule!"
+      depth: 1
+      is_code: false
       properties: []
   frontmatter: []
   frontmatter_list_items: {}
@@ -44,23 +88,27 @@ paste:
     is_code: false
     properties: []
   - block_anchor: ~
-    content: 1. **Remove dead plants** – they harbour pests.
-    depth: 0
-    is_code: false
-    properties: []
-  - block_anchor: ~
-    content: 2. **Rake leaves** into a compost pile.
-    depth: 0
-    is_code: false
-    properties: []
-  - block_anchor: ~
-    content: "- Shred them first so they break down faster."
+    content: "**Remove dead plants** – they harbour pests."
     depth: 1
     is_code: false
+    properties:
+      - - listStyle
+        - ordered
+  - block_anchor: ~
+    content: "**Rake leaves** into a compost pile."
+    depth: 1
+    is_code: false
+    properties:
+      - - listStyle
+        - ordered
+  - block_anchor: ~
+    content: Shred them first so they break down faster.
+    depth: 2
+    is_code: false
     properties: []
   - block_anchor: ~
-    content: "- Avoid diseased leaves."
-    depth: 1
+    content: Avoid diseased leaves.
+    depth: 2
     is_code: false
     properties: []
   - block_anchor: ~
@@ -69,71 +117,105 @@ paste:
     is_code: false
     properties: []
   - block_anchor: ~
-    content: "- Add a 5–8 cm layer of mulch."
-    depth: 0
+    content: Add a 5–8 cm layer of mulch.
+    depth: 1
     is_code: false
     properties: []
   - block_anchor: ~
-    content: "- Plant a cover crop such as winter rye."
-    depth: 0
+    content: Plant a cover crop such as winter rye.
+    depth: 1
     is_code: false
     properties: []
   - block_anchor: ~
     content: "---"
-    depth: 0
+    depth: 1
     is_code: false
     properties: []
   - block_anchor: ~
     content: "**Tip:** you can check your soil with:"
-    depth: 0
+    depth: 1
     is_code: false
     properties: []
   - block_anchor: ~
-    content: "```bash"
-    depth: 0
-    is_code: true
-    properties: []
-  - block_anchor: ~
-    content: soil-test --ph --moisture
-    depth: 0
-    is_code: false
-    properties: []
-  - block_anchor: ~
-    content: "```"
-    depth: 0
+    content: "```bash\nsoil-test --ph --moisture\n```"
+    depth: 1
     is_code: true
     properties: []
   - block_anchor: ~
     content: "Let me know if you'd like a week-by-week schedule!"
-    depth: 0
+    depth: 1
     is_code: false
     properties: []
 source:
   blocks:
     - block_anchor: ~
-      content: "Here's a simple plan to get your garden ready for winter:\n\n### 1. Clean up\n\n1. **Remove dead plants** – they harbour pests.\n2. **Rake leaves** into a compost pile."
+      content: "Here's a simple plan to get your garden ready for winter:"
       depth: 0
       is_code: false
       properties: []
     - block_anchor: ~
-      content: Shred them first so they break down faster.
-      depth: 1
+      content: "### 1. Clean up"
+      depth: 0
       is_code: false
       properties: []
     - block_anchor: ~
-      content: "Avoid diseased leaves.\n\n### 2. Protect the soil"
+      content: "**Remove dead plants** – they harbour pests."
       depth: 1
+      is_code: false
+      properties:
+        - - listStyle
+          - ordered
+    - block_anchor: ~
+      content: "**Rake leaves** into a compost pile."
+      depth: 1
+      is_code: false
+      properties:
+        - - listStyle
+          - ordered
+    - block_anchor: ~
+      content: Shred them first so they break down faster.
+      depth: 2
+      is_code: false
+      properties: []
+    - block_anchor: ~
+      content: Avoid diseased leaves.
+      depth: 2
+      is_code: false
+      properties: []
+    - block_anchor: ~
+      content: "### 2. Protect the soil"
+      depth: 0
       is_code: false
       properties: []
     - block_anchor: ~
       content: Add a 5–8 cm layer of mulch.
-      depth: 0
+      depth: 1
       is_code: false
       properties: []
     - block_anchor: ~
-      content: "Plant a cover crop such as winter rye.\n\n---\n\n**Tip:** you can check your soil with:\n\n```bash\nsoil-test --ph --moisture\n```\n\nLet me know if you'd like a week-by-week schedule!"
-      depth: 0
+      content: Plant a cover crop such as winter rye.
+      depth: 1
+      is_code: false
+      properties: []
+    - block_anchor: ~
+      content: "---"
+      depth: 1
+      is_code: false
+      properties: []
+    - block_anchor: ~
+      content: "**Tip:** you can check your soil with:"
+      depth: 1
+      is_code: false
+      properties: []
+    - block_anchor: ~
+      content: "```bash\nsoil-test --ph --moisture\n```"
+      depth: 1
       is_code: true
+      properties: []
+    - block_anchor: ~
+      content: "Let me know if you'd like a week-by-week schedule!"
+      depth: 1
+      is_code: false
       properties: []
   frontmatter: []
   frontmatter_list_items: {}

@@ -11,17 +11,17 @@ import:
       properties: []
     - block_anchor: ~
       content: Agaric
-      depth: 2
+      depth: 1
       is_code: false
       properties: []
     - block_anchor: ~
       content: Grammar review
-      depth: 4
+      depth: 2
       is_code: false
       properties: []
     - block_anchor: ~
       content: Garden
-      depth: 2
+      depth: 1
       is_code: false
       properties: []
     - block_anchor: ~
@@ -40,17 +40,17 @@ paste:
     properties: []
   - block_anchor: ~
     content: Agaric
-    depth: 2
+    depth: 1
     is_code: false
     properties: []
   - block_anchor: ~
     content: Grammar review
-    depth: 4
+    depth: 2
     is_code: false
     properties: []
   - block_anchor: ~
     content: Garden
-    depth: 2
+    depth: 1
     is_code: false
     properties: []
   - block_anchor: ~
@@ -67,17 +67,17 @@ source:
       properties: []
     - block_anchor: ~
       content: Agaric
-      depth: 2
+      depth: 1
       is_code: false
       properties: []
     - block_anchor: ~
       content: Grammar review
-      depth: 4
+      depth: 2
       is_code: false
       properties: []
     - block_anchor: ~
       content: Garden
-      depth: 2
+      depth: 1
       is_code: false
       properties: []
     - block_anchor: ~

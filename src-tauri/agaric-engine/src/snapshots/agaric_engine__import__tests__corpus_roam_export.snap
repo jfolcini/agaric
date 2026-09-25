@@ -11,12 +11,12 @@ import:
       properties: []
     - block_anchor: ~
       content: "Intro:: why notes matter"
-      depth: 2
+      depth: 1
       is_code: false
       properties: []
     - block_anchor: ~
       content: "{{[[DONE]]}} Collect sources #[[Reading List]]"
-      depth: 2
+      depth: 1
       is_code: false
       properties: []
     - block_anchor: ~
@@ -26,7 +26,7 @@ import:
       properties: []
     - block_anchor: ~
       content: She said ^^ship it^^
-      depth: 2
+      depth: 1
       is_code: false
       properties: []
     - block_anchor: ~
@@ -36,7 +36,7 @@ import:
       properties: []
     - block_anchor: ~
       content: Link to ((GH7xk2PqA))
-      depth: 2
+      depth: 1
       is_code: false
       properties: []
   frontmatter: []
@@ -50,12 +50,12 @@ paste:
     properties: []
   - block_anchor: ~
     content: "Intro:: why notes matter"
-    depth: 2
+    depth: 1
     is_code: false
     properties: []
   - block_anchor: ~
     content: "{{[[DONE]]}} Collect sources #[[Reading List]]"
-    depth: 2
+    depth: 1
     is_code: false
     properties: []
   - block_anchor: ~
@@ -65,7 +65,7 @@ paste:
     properties: []
   - block_anchor: ~
     content: She said ^^ship it^^
-    depth: 2
+    depth: 1
     is_code: false
     properties: []
   - block_anchor: ~
@@ -75,7 +75,7 @@ paste:
     properties: []
   - block_anchor: ~
     content: Link to ((GH7xk2PqA))
-    depth: 2
+    depth: 1
     is_code: false
     properties: []
 source:
@@ -87,12 +87,12 @@ source:
       properties: []
     - block_anchor: ~
       content: "Intro:: why notes matter"
-      depth: 2
+      depth: 1
       is_code: false
       properties: []
     - block_anchor: ~
       content: "{{[[DONE]]}} Collect sources #[[Reading List]]"
-      depth: 2
+      depth: 1
       is_code: false
       properties: []
     - block_anchor: ~
@@ -102,7 +102,7 @@ source:
       properties: []
     - block_anchor: ~
       content: She said ^^ship it^^
-      depth: 2
+      depth: 1
       is_code: false
       properties: []
     - block_anchor: ~
@@ -112,7 +112,7 @@ source:
       properties: []
     - block_anchor: ~
       content: Link to ((GH7xk2PqA))
-      depth: 2
+      depth: 1
       is_code: false
       properties: []
   frontmatter: []

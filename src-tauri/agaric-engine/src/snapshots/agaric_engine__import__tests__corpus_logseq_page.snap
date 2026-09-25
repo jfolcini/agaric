@@ -64,8 +64,18 @@ import:
       is_code: false
       properties: []
     - block_anchor: ~
-      content: "Two task flavours:\n+ `LATER` -> `NOW` -> `DONE`\n+ `TODO` -> `DOING` -> `DONE`"
+      content: "Two task flavours:"
       depth: 0
+      is_code: false
+      properties: []
+    - block_anchor: ~
+      content: "`LATER` -> `NOW` -> `DONE`"
+      depth: 1
+      is_code: false
+      properties: []
+    - block_anchor: ~
+      content: "`TODO` -> `DOING` -> `DONE`"
+      depth: 1
       is_code: false
       properties: []
     - block_anchor: ~
@@ -100,157 +110,107 @@ paste:
     content: "title:: Project Atlas"
     depth: 0
     is_code: false
-    properties: []
+    properties:
+      - - tags
+        - "project, q3"
+      - - alias
+        - Atlas
   - block_anchor: ~
-    content: "tags:: project, q3"
+    content: "## Goals"
     depth: 0
     is_code: false
     properties: []
   - block_anchor: ~
-    content: "alias:: Atlas"
+    content: Cut onboarding time in half
+    depth: 1
+    is_code: false
+    properties: []
+  - block_anchor: ~
+    content: Replace the legacy importer
+    depth: 1
+    is_code: false
+    properties: []
+  - block_anchor: ~
+    content: "Met with [[Alice]] about [[Project Atlas]]"
     depth: 0
     is_code: false
     properties: []
   - block_anchor: ~
-    content: "- ## Goals"
+    content: She wants the draft by Friday
+    depth: 1
+    is_code: false
+    properties: []
+  - block_anchor: ~
+    content: "TODO Send her the budget sheet\nSCHEDULED: <2026-09-26 Sat>"
+    depth: 1
+    is_code: false
+    properties: []
+  - block_anchor: ~
+    content: DONE Book the room
+    depth: 1
+    is_code: false
+    properties: []
+  - block_anchor: ~
+    content: "NOW [#A] Review PR 4412\nDEADLINE: <2026-09-25 Fri>"
     depth: 0
     is_code: false
     properties: []
   - block_anchor: ~
-    content: "- Cut onboarding time in half"
-    depth: 1
-    is_code: false
-    properties: []
-  - block_anchor: ~
-    content: "- Replace the legacy importer"
-    depth: 1
-    is_code: false
-    properties: []
-  - block_anchor: ~
-    content: "- Met with [[Alice]] about [[Project Atlas]]"
+    content: LATER Read ((650f1c2e-8a3b-4f6e-9d21-7c5e0b9a1f33))
     depth: 0
     is_code: false
     properties: []
   - block_anchor: ~
-    content: "- She wants the draft by Friday"
+    content: Quote from the call
+    depth: 0
+    is_code: false
+    properties:
+      - - id
+        - 650f1c2e-8a3b-4f6e-9d21-7c5e0b9a1f33
+      - - collapsed
+        - "true"
+  - block_anchor: ~
+    content: "Ship small, ship often"
     depth: 1
     is_code: false
     properties: []
   - block_anchor: ~
-    content: "- TODO Send her the budget sheet"
-    depth: 1
-    is_code: false
-    properties: []
-  - block_anchor: ~
-    content: "SCHEDULED: <2026-09-26 Sat>"
-    depth: 2
-    is_code: false
-    properties: []
-  - block_anchor: ~
-    content: "- DONE Book the room"
-    depth: 1
-    is_code: false
-    properties: []
-  - block_anchor: ~
-    content: "- NOW [#A] Review PR 4412"
+    content: "Two task flavours:"
     depth: 0
     is_code: false
     properties: []
   - block_anchor: ~
-    content: "DEADLINE: <2026-09-25 Fri>"
+    content: "`LATER` -> `NOW` -> `DONE`"
     depth: 1
     is_code: false
     properties: []
   - block_anchor: ~
-    content: "- LATER Read ((650f1c2e-8a3b-4f6e-9d21-7c5e0b9a1f33))"
+    content: "`TODO` -> `DOING` -> `DONE`"
+    depth: 1
+    is_code: false
+    properties: []
+  - block_anchor: ~
+    content: "A block with a code sample\n```python\ndef hello():\n    print(\"hi\")\n```"
     depth: 0
-    is_code: false
-    properties: []
-  - block_anchor: ~
-    content: "- Quote from the call"
-    depth: 0
-    is_code: false
-    properties: []
-  - block_anchor: ~
-    content: "id:: 650f1c2e-8a3b-4f6e-9d21-7c5e0b9a1f33"
-    depth: 1
-    is_code: false
-    properties: []
-  - block_anchor: ~
-    content: "collapsed:: true"
-    depth: 1
-    is_code: false
-    properties: []
-  - block_anchor: ~
-    content: "- Ship small, ship often"
-    depth: 1
-    is_code: false
-    properties: []
-  - block_anchor: ~
-    content: "- Two task flavours:"
-    depth: 0
-    is_code: false
-    properties: []
-  - block_anchor: ~
-    content: "+ `LATER` -> `NOW` -> `DONE`"
-    depth: 1
-    is_code: false
-    properties: []
-  - block_anchor: ~
-    content: "+ `TODO` -> `DOING` -> `DONE`"
-    depth: 1
-    is_code: false
-    properties: []
-  - block_anchor: ~
-    content: "- A block with a code sample"
-    depth: 0
-    is_code: false
-    properties: []
-  - block_anchor: ~
-    content: "```python"
-    depth: 1
     is_code: true
     properties: []
   - block_anchor: ~
-    content: "def hello():"
-    depth: 1
-    is_code: false
-    properties: []
-  - block_anchor: ~
-    content: "print(\"hi\")"
-    depth: 3
-    is_code: false
-    properties: []
-  - block_anchor: ~
-    content: "```"
-    depth: 1
-    is_code: true
-    properties: []
-  - block_anchor: ~
-    content: "- A multi-line block"
+    content: "A multi-line block\nsecond line of the same block"
     depth: 0
     is_code: false
     properties: []
   - block_anchor: ~
-    content: second line of the same block
-    depth: 1
-    is_code: false
-    properties: []
-  - block_anchor: ~
-    content: "- ## Open questions"
+    content: "## Open questions"
     depth: 0
     is_code: false
     properties: []
   - block_anchor: ~
-    content: "- Who owns the migration?"
+    content: Who owns the migration?
     depth: 1
     is_code: false
-    properties: []
-  - block_anchor: ~
-    content: "owner:: [[Bob]]"
-    depth: 2
-    is_code: false
-    properties: []
+    properties:
+      - - owner
+        - "[[Bob]]"
 source:
   blocks:
     - block_anchor: ~
@@ -322,8 +282,18 @@ source:
       is_code: false
       properties: []
     - block_anchor: ~
-      content: "Two task flavours:\n+ `LATER` -> `NOW` -> `DONE`\n+ `TODO` -> `DOING` -> `DONE`"
+      content: "Two task flavours:"
       depth: 0
+      is_code: false
+      properties: []
+    - block_anchor: ~
+      content: "`LATER` -> `NOW` -> `DONE`"
+      depth: 1
+      is_code: false
+      properties: []
+    - block_anchor: ~
+      content: "`TODO` -> `DOING` -> `DONE`"
+      depth: 1
       is_code: false
       properties: []
     - block_anchor: ~

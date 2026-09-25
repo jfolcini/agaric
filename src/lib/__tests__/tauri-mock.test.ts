@@ -3100,14 +3100,13 @@ describe('update_peer_name', () => {
 // ---------------------------------------------------------------------------
 
 describe('import_markdown', () => {
-  it('creates a page from markdown content', () => {
+  it('creates a page from markdown content, one block per paragraph', () => {
     const result = invoke('import_markdown', {
-      content: 'First paragraph\nSecond paragraph',
+      content: 'First paragraph\n\nSecond paragraph',
       filename: 'notes.md',
     }) as Record<string, unknown>
     expect(result).toHaveProperty('page_title', 'notes')
-    expect(result).toHaveProperty('blocks_created')
-    expect(result['blocks_created']).toBeGreaterThanOrEqual(2)
+    expect(result['blocks_created']).toBe(2)
     expect(result).toHaveProperty('properties_set', 0)
     expect(result).toHaveProperty('warnings')
     expect(Array.isArray(result['warnings'])).toBe(true)
@@ -3131,6 +3130,36 @@ describe('import_markdown', () => {
       filename: 'fallback.md',
     }) as Record<string, unknown>
     expect(result['page_title']).toBe('fallback')
+    expect(result['blocks_created']).toBe(2)
+  })
+
+  // #5160 S6: a leading `# Title` equal to the derived title is the title, not
+  // a block, as the backend's `strip_title_heading` reads it (CRLF and trailing
+  // spaces included).
+  it('drops a leading `# Title` equal to the derived title (matches backend)', () => {
+    const result = invoke('import_markdown', {
+      content: '# titled \r\n\r\nBody',
+      filename: 'titled.md',
+    }) as Record<string, unknown>
+    expect(result['page_title']).toBe('titled')
+    expect(result['blocks_created']).toBe(1)
+    const pageId = (
+      (
+        invoke('list_blocks', { blockType: 'page' }) as { items: Record<string, unknown>[] }
+      ).items.find((p) => p['content'] === 'titled') as Record<string, unknown>
+    )['id'] as string
+    const children = (
+      invoke('list_blocks', { parentId: pageId }) as { items: Record<string, unknown>[] }
+    ).items.map((b) => b['content'])
+    expect(children).toEqual(['Body'])
+  })
+
+  it('keeps a leading `# heading` that differs from the derived title as content', () => {
+    const result = invoke('import_markdown', {
+      content: '# Heading Title\n\nContent here',
+      filename: 'fallback.md',
+    }) as Record<string, unknown>
+    expect(result['page_title']).toBe('fallback')
   })
 
   it('falls back to "Imported Page" when no filename is supplied (matches backend)', () => {
@@ -3149,16 +3178,13 @@ describe('import_markdown', () => {
     expect(result['page_title']).toBe('Project/Backend/API')
   })
 
-  // #1919: ONLY `- ` is a bullet marker (import.rs `strip_prefix("- ")`).
-  // `*`, `+`, and `1.` are kept as literal content — the mock must not accept
-  // structure the real importer ignores.
-  it('strips only `- ` bullets; keeps `*`/`+`/`1.` markers literal (matches backend)', () => {
+  // #5160 S1: every list marker starts a block (`import::bullet_marker`), and
+  // the marker is not part of the block's text.
+  it('reads `-`, `*`, `+` and `1.` items as blocks (matches backend)', () => {
     const result = invoke('import_markdown', {
       content: '- Item one\n- Item two\n* Item three\n+ Item four\n1. Item five',
       filename: 'list.md',
     }) as Record<string, unknown>
-    // 5 content blocks: two `- ` bullets (markers stripped) + three lines whose
-    // `*`/`+`/`1.` markers are kept as literal content.
     expect(result['blocks_created']).toBe(5)
 
     const pageId = (
@@ -3169,12 +3195,7 @@ describe('import_markdown', () => {
     const children = (
       invoke('list_blocks', { parentId: pageId }) as { items: Record<string, unknown>[] }
     ).items.map((b) => b['content'])
-    expect(children).toContain('Item one')
-    expect(children).toContain('Item two')
-    // Non-`- ` markers are preserved verbatim.
-    expect(children).toContain('* Item three')
-    expect(children).toContain('+ Item four')
-    expect(children).toContain('1. Item five')
+    expect(children).toEqual(['Item one', 'Item two', 'Item three', 'Item four', 'Item five'])
   })
 
   it('skips empty lines', () => {
@@ -3227,7 +3248,7 @@ describe('import_markdown', () => {
     // `onmessage` getter returns the consumer callback.
     const progress = { onmessage: (u: Record<string, unknown>) => events.push(u) }
     const result = invoke('import_markdown', {
-      content: 'Line one\nLine two',
+      content: 'Line one\n\nLine two',
       filename: 'progress.md',
       progress,
     }) as Record<string, unknown>

@@ -26,7 +26,7 @@ import:
       properties: []
     - block_anchor: ~
       content: Passport
-      depth: 4
+      depth: 1
       is_code: false
       properties: []
     - block_anchor: ~
@@ -60,7 +60,7 @@ paste:
     properties: []
   - block_anchor: ~
     content: Passport
-    depth: 4
+    depth: 1
     is_code: false
     properties: []
   - block_anchor: ~
@@ -92,7 +92,7 @@ source:
       properties: []
     - block_anchor: ~
       content: Passport
-      depth: 4
+      depth: 1
       is_code: false
       properties: []
     - block_anchor: ~

@@ -130,8 +130,9 @@ fn arb_prose() -> impl Strategy<Value = String> {
 /// A prose line, often opening with something the grammar reads as a marker,
 /// an escape or a property.
 fn arb_line() -> impl Strategy<Value = String> {
-    const PREFIXES: [&str; 13] = [
-        "", "- ", "-", "1. ", "[ ] ", "[x] ", "[/] ", "[-] ", "\\", "\\- ", "\\[ ] ", " ", "  ",
+    const PREFIXES: [&str; 20] = [
+        "", "- ", "-", "1. ", "* ", "+ ", "1) ", "-\t", "# ", "## ", "[ ] ", "[x] ", "[/] ",
+        "[-] ", "\\", "\\- ", "\\* ", "\\## ", "\\[ ] ", "  ",
     ];
     prop_oneof![
         4 => (proptest::sample::select(&PREFIXES[..]), arb_prose())
@@ -140,30 +141,41 @@ fn arb_line() -> impl Strategy<Value = String> {
     ]
 }
 
-/// A fenced code block, sometimes left open: its body holds blank lines,
-/// indentation, and lines that outside a fence would be a bullet or a
-/// property, or that read as an anchor line.
+/// A fenced code block of backticks or tildes, sometimes left open: its body
+/// holds blank lines, indentation, lines that outside a fence would be a
+/// bullet, a heading or a property, shorter fence runs, and lines that read as
+/// an anchor line or an anchored bullet.
 fn arb_fence() -> impl Strategy<Value = Vec<String>> {
     let body_line = prop_oneof![
         Just(String::new()),
         " {0,6}[a-z(){};=]{1,6}",
         Just("- x".to_string()),
+        Just("* x".to_string()),
+        Just("## x".to_string()),
         Just("key:: v".to_string()),
         Just("[ ] x".to_string()),
         Just("\\- x".to_string()),
+        Just("```".to_string()),
+        Just("~~~".to_string()),
         r" ?\\{0,2}\^01J0000000000000000000ANCH",
+        r"\\{0,2}- x \^01J0000000000000000000ANCH",
     ];
+    let run = proptest::sample::select(&["```", "````", "~~~"][..]);
     let lang = prop_oneof![Just(""), Just("sh")];
-    (lang, prop::collection::vec(body_line, 0..4), any::<bool>()).prop_map(
-        |(lang, body, closed)| {
-            let mut lines = vec![format!("```{lang}")];
+    (
+        run,
+        lang,
+        prop::collection::vec(body_line, 0..4),
+        any::<bool>(),
+    )
+        .prop_map(|(run, lang, body, closed)| {
+            let mut lines = vec![format!("{run}{lang}")];
             lines.extend(body);
             if closed {
-                lines.push("```".to_string());
+                lines.push(run.to_string());
             }
             lines
-        },
-    )
+        })
 }
 
 fn arb_content() -> impl Strategy<Value = String> {

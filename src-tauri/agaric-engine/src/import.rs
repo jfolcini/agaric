@@ -1,7 +1,5 @@
-//! Logseq/Markdown import parser.
-//!
-//! Parses indented markdown into a flat list of blocks with parent/child
-//! relationships determined by indentation level.
+//! The markdown block grammar (#5160): one CommonMark-shaped reading of text
+//! into blocks with depth, shared by file import, Edit as Markdown and paste.
 
 use agaric_core::ulid::BlockId;
 use regex::Regex;
@@ -301,12 +299,19 @@ fn split_block_task_marker(text: &str) -> (Option<&'static str>, &str) {
 static ANCHOR_LINE_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^\^[0-9A-HJKMNP-TV-Z]{26}$").expect("invalid anchor-line regex"));
 
+/// The ` ^ULID` a source buffer writes at the end of a block's bullet line.
+static TRAILING_ANCHOR_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"\s\^[0-9A-HJKMNP-TV-Z]{26}\s*$").expect("invalid trailing-anchor regex")
+});
+
 /// `true` when Source mode must backslash-escape `line`, a code line, so it
-/// does not read back as the anchor line that ends its block's fence. It looks
-/// past leading whitespace and backslashes, as [`needs_list_marker_escape`]
-/// does, so the escape is injective.
+/// does not read back as a line that ends its block's fence: the anchor line,
+/// or a bullet carrying a block's anchor (#5160 D5). It looks past leading
+/// whitespace and backslashes, as [`needs_list_marker_escape`] does, so the
+/// escape is injective.
 pub fn needs_anchor_line_escape(line: &str) -> bool {
-    ANCHOR_LINE_RE.is_match(line.trim_start_matches(|c: char| c.is_whitespace() || c == '\\'))
+    let body = line.trim_start_matches(|c: char| c.is_whitespace() || c == '\\');
+    ANCHOR_LINE_RE.is_match(body) || (is_bullet_line(body) && TRAILING_ANCHOR_RE.is_match(body))
 }
 
 /// A source code line with the escape [`needs_anchor_line_escape`] asks for,
@@ -318,13 +323,19 @@ fn unescape_code_line(text: &str) -> &str {
 }
 
 /// A bullet's text split into its markers and the block's own text: the
-/// `listStyle` its list marker implies and, in Source mode, the `todo_state`
-/// of the checkbox after it.
-fn split_bullet_markers(
+/// `listStyle` its markers imply and, in Source mode, the `todo_state` of the
+/// checkbox after them. An `ordered` outline marker (`1. `, `1) `) is the
+/// style; after `-`, `+` or `*` a second marker may follow (`- - x`, `- 1. x`).
+fn bullet_body(
     text: &str,
+    ordered: bool,
     mode: ParseMode,
 ) -> (Option<&'static str>, Option<&'static str>, &str) {
-    let (list_style, text) = split_block_list_marker(text);
+    let (list_style, text) = if ordered {
+        (Some(LIST_STYLE_ORDERED), text)
+    } else {
+        split_block_list_marker(text)
+    };
     match mode {
         ParseMode::Import => (list_style, None, text),
         ParseMode::Source => {
@@ -334,35 +345,54 @@ fn split_bullet_markers(
     }
 }
 
-/// `true` when `line` is a code-fence delimiter: backticks opening the line
-/// itself or the body of its `- ` bullet. The exporter tracks fences with this
-/// same probe, applied to each line as written, so the two sides agree on
-/// where code starts and ends.
-///
-/// Opening a fence, a bullet counts when the text it imports as starts with
-/// the backticks, so a list-styled code block (`- - ```sh`, `- 1. ```sh`)
-/// opens one too. Inside a fence the list marker is not looked past: a marker
-/// only ever precedes a block's first line, so ```` - - ``` ```` there is code.
-pub fn is_fence_delimiter(line: &str, fence_open: bool) -> bool {
-    fence_delimiter(line, fence_open, ParseMode::Import)
+/// A code fence's character and the length of its opening run (CommonMark
+/// § 4.5). The renderer tracks fences with the same probes as the parser, so
+/// the two sides agree on where code starts and ends.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct FenceRun {
+    ch: u8,
+    len: usize,
 }
 
-/// [`is_fence_delimiter`] for a Source-mode buffer, where a bullet's first line
-/// may carry a checkbox before its text: a task whose content is a code block
-/// opens its fence on that line.
-pub fn is_source_fence_delimiter(line: &str, fence_open: bool) -> bool {
-    fence_delimiter(line, fence_open, ParseMode::Source)
+/// The fence `text` opens: three or more backticks or tildes at its start. A
+/// backtick fence's info string holds no backtick, so an inline code span is
+/// not one.
+pub fn fence_run(text: &str) -> Option<FenceRun> {
+    let ch = *text.as_bytes().first()?;
+    if ch != b'`' && ch != b'~' {
+        return None;
+    }
+    let len = text.bytes().take_while(|&b| b == ch).count();
+    (len >= 3 && !(ch == b'`' && text[len..].contains('`'))).then_some(FenceRun { ch, len })
 }
 
-fn fence_delimiter(line: &str, fence_open: bool, mode: ParseMode) -> bool {
+/// Whether `line` closes `fence`: a run of its character at least as long,
+/// alone on the line after any indentation.
+pub fn closes_fence(line: &str, fence: FenceRun) -> bool {
     let trimmed = line.trim_start();
-    let Some(body) = trimmed.strip_prefix("- ") else {
-        return trimmed.starts_with("```");
-    };
-    if fence_open {
-        body.starts_with("```")
-    } else {
-        split_bullet_markers(body, mode).2.starts_with("```")
+    let run = trimmed.bytes().take_while(|&b| b == fence.ch).count();
+    run >= fence.len && trimmed[run..].trim().is_empty()
+}
+
+/// The fence `line` opens as an import reads it: at the line's own text, or at
+/// the text of its bullet past the list marker(s), so a list-styled code block
+/// (`- - ```sh`, `- 1. ```sh`) opens one too.
+pub fn fence_opener(line: &str) -> Option<FenceRun> {
+    line_fence(line, ParseMode::Import)
+}
+
+/// [`fence_opener`] for a Source-mode buffer, where a bullet's first line may
+/// carry a checkbox before its text: a task whose content is a code block
+/// opens its fence on that line.
+pub fn source_fence_opener(line: &str) -> Option<FenceRun> {
+    line_fence(line, ParseMode::Source)
+}
+
+fn line_fence(line: &str, mode: ParseMode) -> Option<FenceRun> {
+    let trimmed = line.trim_start();
+    match bullet_marker(trimmed) {
+        Some((len, ordered)) => fence_run(bullet_body(bullet_text(trimmed, len), ordered, mode).2),
+        None => fence_run(trimmed),
     }
 }
 
@@ -696,29 +726,13 @@ pub fn guess_attachment_mime(path: &str) -> String {
     .to_string()
 }
 
-/// Parse Logseq-style indented markdown into a list of blocks with depth.
-///
-/// Each line starting with `- ` (after optional indentation) is a block.
-/// Indentation determines depth (2 spaces = 1 level).
-///
-/// **Continuation lines** (#682): a non-list, non-property line that is
-/// indented under a preceding bullet is treated as a continuation of that
-/// bullet — its text is appended (newline-joined) to the owning block's
-/// content rather than spawned as a separate block. This matches Logseq,
-/// which stores soft-wrapped / multi-line bullet bodies as a single block.
-/// A non-list line with no preceding block (file starts with bare text)
-/// still becomes its own depth-0 content block.
-///
-/// **Property lines** (#682): a `key:: value` line attaches to the nearest
-/// preceding block whose depth is *less than or equal to* the property
-/// line's own indentation depth — i.e. the block that indentation says owns
-/// it — rather than blindly to the most-recently-pushed block. Logseq emits
-/// property lines indented one level under (or level with) their owner, so a
-/// property nested under a grandchild no longer mis-attaches to an unrelated
-/// later sibling. If no such ancestor exists the property is dropped and a
-/// warning is recorded (mirroring the depth-clamp warning counter).
-///
-/// `((uuid))` references are converted to plain text.
+/// Parse a markdown file into a list of blocks with depth, by the block
+/// grammar `parse_block_lines` describes: one block per list item, heading,
+/// paragraph and fence, nested by the content column, headings owning what
+/// follows them. Logseq's continuation lines and `key:: value` property lines
+/// (#682) attach to the block indentation says owns them; a property with no
+/// owner is dropped with a warning. `((uuid))` references become plain text,
+/// and leading YAML frontmatter becomes page properties.
 pub fn parse_logseq_markdown(content: &str) -> ParseOutput {
     // Normalize line endings BEFORE any other parsing. The frontmatter strip
     // below uses `find("\n---")`, which is fragile against CRLF (works only
@@ -784,12 +798,13 @@ pub fn parse_source_outline(content: &str) -> ParseOutput {
     source_outline(content, false)
 }
 
-/// [`parse_source_outline`], flattening blocks past [`MAX_IMPORT_DEPTH`] as an
-/// import does when `clamp`.
-fn source_outline(content: &str, clamp: bool) -> ParseOutput {
+/// [`parse_source_outline`], reading text from outside Agaric when `foreign`:
+/// flattened past [`MAX_IMPORT_DEPTH`] as an import is, an unterminated fence
+/// ending with its list item as CommonMark reads it.
+fn source_outline(content: &str, foreign: bool) -> ParseOutput {
     let normalized = content.replace("\r\n", "\n").replace('\r', "\n");
     let mut warnings = Vec::new();
-    let blocks = parse_outline(&normalized, ParseMode::Source, clamp, &mut warnings);
+    let blocks = parse_outline(&normalized, ParseMode::Source, foreign, &mut warnings);
     ParseOutput {
         blocks,
         frontmatter: Vec::new(),
@@ -798,34 +813,22 @@ fn source_outline(content: &str, clamp: bool) -> ParseOutput {
     }
 }
 
-/// Clipboard text as blocks (#5140). Text whose first non-blank line is a
-/// bullet is an outline, read as a source buffer is but flattened past the
-/// import depth limit as an import is, and with a trailing ` ^word` that is
-/// not a block id kept as text. Any other text is one
-/// block per non-blank line, the line less its indentation, nested by that
-/// indentation, with nothing on it read as a marker or a property.
+/// Clipboard text as blocks (#5140): read as a source buffer is, flattened past
+/// the import depth limit as an import is, and with a trailing ` ^word` that
+/// is not a block id kept as text. One grammar for every paste (#5160 S3): a
+/// README or an LLM answer gives the blocks its headings, paragraphs, list
+/// items and fences are.
 pub fn parse_pasted_text(text: &str) -> Vec<ParsedBlock> {
-    let text = text.replace("\r\n", "\n").replace('\r', "\n");
-    let first_line = text
-        .lines()
-        .map(str::trim_start)
-        .find(|line| !line.is_empty());
-    if first_line.is_some_and(is_bullet_line) {
-        let mut blocks = source_outline(&text, true).blocks;
-        blocks.iter_mut().for_each(restore_text_anchor);
-        return blocks;
-    }
-    text.lines()
-        .filter(|line| !line.trim_start().is_empty())
-        .map(|line| pasted_block(line.trim_start().to_string(), indent_columns(line) / 2))
-        .collect()
+    let mut blocks = source_outline(text, true).blocks;
+    blocks.iter_mut().for_each(restore_text_anchor);
+    blocks
 }
 
 /// A pasted block holding `content` as it comes, at `depth`. Like an imported
-/// block, it is code when a line of it is a fence line.
+/// block, it is code when a line of it opens a fence.
 pub fn pasted_block(content: String, depth: usize) -> ParsedBlock {
     ParsedBlock {
-        is_code: content.lines().any(|line| is_fence_delimiter(line, false)),
+        is_code: content.lines().any(|line| fence_opener(line).is_some()),
         content,
         depth,
         properties: Vec::new(),
@@ -833,27 +836,41 @@ pub fn pasted_block(content: String, depth: usize) -> ParsedBlock {
     }
 }
 
-/// The two readings of the outline grammar. Import normalises a file written
-/// by another tool; Source reads back the buffer source mode renders and must
-/// return exactly the tree it was rendered from.
+/// `content` less a leading `# {title}` line: Agaric's own export writes the
+/// page title as one, and an import derives the title from the file name, so
+/// the line would come back as a block repeating it (#5160 S6). Any other
+/// first line is kept.
+pub fn strip_title_heading<'a>(content: &'a str, title: &str) -> &'a str {
+    let (first, rest) = content.split_once('\n').unwrap_or((content, ""));
+    let heading = first.strip_suffix('\r').unwrap_or(first);
+    match heading.strip_prefix("# ") {
+        // The blank lines after it go too, so frontmatter is still leading.
+        Some(text) if text.trim() == title => rest.trim_start_matches(['\r', '\n']),
+        _ => content,
+    }
+}
+
+/// The two readings of the block grammar. Import normalises a file written by
+/// another tool; Source reads back the buffer Edit as Markdown renders and must
+/// return exactly the tree it was rendered from. A paste reads as Source does.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum ParseMode {
     Import,
     Source,
 }
 
-/// The block scan both modes share: lines into blocks, then anchors, then the
-/// depth clamp when `clamp`, appending one warning per lossy transform to
-/// `warnings`.
+/// The block scan both modes share: lines into blocks, then anchors, then, for
+/// `foreign` text (an import or a paste, not the page's own buffer), the depth
+/// clamp, appending one warning per lossy transform to `warnings`.
 fn parse_outline(
     normalized: &str,
     mode: ParseMode,
-    clamp: bool,
+    foreign: bool,
     warnings: &mut Vec<String>,
 ) -> Vec<ParsedBlock> {
-    let (mut blocks, ends_in_code, mut lossy) = parse_block_lines(normalized, mode);
+    let (mut blocks, ends_in_code, mut lossy) = parse_block_lines(normalized, mode, foreign);
     extract_block_anchors(&mut blocks, &ends_in_code, mode);
-    if clamp {
+    if foreign {
         lossy.clamped = clamp_block_depths(&mut blocks);
     }
     lossy.push_warnings(warnings);
@@ -885,10 +902,9 @@ struct LossyCounts {
     /// counting it surfaces an aggregate warning so an import that drops
     /// block-refs is diagnosable from the returned warnings / logs.
     stripped_refs: usize,
-    /// #2725 — `- `-prefixed lines that appeared STRICTLY INSIDE an open
-    /// fenced code block and were therefore folded into the owning block's
-    /// content instead of (mis)spawning a new block.
-    fence_split_avoided: usize,
+    /// #5160 D5 — a source buffer's fences left open and closed before the
+    /// next bullet carrying a block's anchor, each named.
+    unclosed_fences: Vec<String>,
 }
 
 impl LossyCounts {
@@ -900,315 +916,488 @@ impl LossyCounts {
             orphan_property,
             reserved_property,
             stripped_refs,
-            fence_split_avoided,
-        } = *self;
-        if clamped > 0 {
+            unclosed_fences,
+        } = self;
+        if *clamped > 0 {
             warnings.push(format!(
                 "{clamped} block(s) exceeded maximum depth of {MAX_IMPORT_DEPTH} and were flattened"
             ));
         }
-        if orphan_property > 0 {
+        if *orphan_property > 0 {
             warnings.push(format!(
                 "{orphan_property} property line(s) had no owning block at or above their \
                  indentation and were dropped"
             ));
         }
-        if reserved_property > 0 {
+        if *reserved_property > 0 {
             warnings.push(format!(
                 "{reserved_property} reserved/exporter-managed property line(s) (e.g. `space`) \
                  were skipped during import"
             ));
         }
-        if stripped_refs > 0 {
+        if *stripped_refs > 0 {
             warnings.push(format!(
                 "{stripped_refs} ((block-ref)) reference(s) were stripped from imported \
                  content and could not be preserved"
             ));
         }
-        if fence_split_avoided > 0 {
-            warnings.push(format!(
-                "{fence_split_avoided} list-like line(s) inside a code fence were kept as \
-                 literal code content instead of new blocks"
-            ));
-        }
+        warnings.extend(unclosed_fences.iter().cloned());
     }
 }
 
-/// A bullet line: `- text`, or the bare `-` empty bullet Logseq/Obsidian emit
-/// for an empty list item.
+/// The list marker opening `trimmed`, as its byte length and whether it is
+/// ordered: `-`, `+`, `*`, or one to nine digits and `.` or `)`, followed by a
+/// space, a tab or the end of the line (CommonMark § 5.2).
+fn bullet_marker(trimmed: &str) -> Option<(usize, bool)> {
+    let bytes = trimmed.as_bytes();
+    let (len, ordered) = match bytes.first()? {
+        b'-' | b'+' | b'*' => (1, false),
+        b'0'..=b'9' => {
+            let digits = bytes.iter().take_while(|b| b.is_ascii_digit()).count();
+            if digits > 9 || !matches!(bytes.get(digits), Some(b'.' | b')')) {
+                return None;
+            }
+            (digits + 1, true)
+        }
+        _ => return None,
+    };
+    matches!(bytes.get(len), None | Some(b' ' | b'\t')).then_some((len, ordered))
+}
+
+/// A bullet line: a list marker, then its text or nothing.
 fn is_bullet_line(trimmed: &str) -> bool {
-    trimmed == "-" || trimmed.starts_with("- ")
+    bullet_marker(trimmed).is_some()
 }
 
-/// Document-global fenced-code state for the line scan (#1924). An
-/// [`is_fence_delimiter`] line toggles the fence, and the delimiter line plus
-/// every line until the closing delimiter is treated as code. This is
-/// intentionally a single-fence-char (`` ` ``) heuristic — full code-fence
-/// import handling (tilde fences, language hints, indented fences, verbatim
-/// preservation) is separate, out-of-scope work.
-#[derive(Default)]
-struct FenceState {
-    open: bool,
-    /// #2866: depth of the block that opened the currently-open fence (if
-    /// any). The fence flag is document-global, so a block whose content
-    /// contains an ODD number of fence delimiters (an unbalanced/unterminated
-    /// fence) would otherwise leave the fence open past the end of that block
-    /// and swallow the next sibling into it. This depth lets the scan detect
-    /// that boundary — see [`FenceState::close_unbalanced_at`].
-    open_depth: Option<usize>,
+/// A bullet's text: `trimmed` past its marker of `len` bytes and the one space
+/// or tab after it. Further spacing is the text's (D18).
+fn bullet_text(trimmed: &str, len: usize) -> &str {
+    let rest = &trimmed[len..];
+    rest.strip_prefix([' ', '\t']).unwrap_or(rest)
 }
 
-impl FenceState {
-    /// #2866 — recover from an unbalanced fence at a sibling boundary: the
-    /// fence is still open from an earlier, unterminated delimiter and the
-    /// line is a NEW bullet at or above the depth of the block that opened it. That
-    /// means we have left the owning block's scope, so the fence must have
-    /// been meant to close by the end of that block — force it closed here so
-    /// the sibling spawns its own block instead of being folded into the
-    /// never-closed fence. Only applies to non-delimiter lines; a genuine
-    /// closing delimiter is handled by [`FenceState::toggle`].
-    ///
-    /// `rest` is the scan's own line iterator, cloned so this can peek — see
-    /// the ambiguity note inside.
-    fn close_unbalanced_at(&mut self, trimmed: &str, depth: usize, rest: std::str::Lines<'_>) {
-        let Some(open_depth) = self.open_depth else {
-            return;
-        };
-        if !self.open
-            || is_fence_delimiter(trimmed, self.open)
-            || !is_bullet_line(trimmed)
-            || depth > open_depth
-        {
-            return;
-        }
-        // Regression guard against #2725: a bullet-shaped line at (or above)
-        // the fence-opener's own depth is genuinely ambiguous on its own — it
-        // could be the sibling bullet #2866 needs to recover at (the fence
-        // never really closes), OR it could be literal fence CONTENT that just
-        // happens to look bullet-shaped, with the fence properly closing on
-        // the very next line (e.g. a pasted snippet whose last line is
-        // `- interior`, immediately followed by the closing fence:
-        // `- ```\n- interior\n``` `). Those two shapes are indistinguishable
-        // from this line alone.
-        //
-        // Resolve the ambiguity with a single-line peek: if the next non-blank
-        // line is a BARE closing delimiter (no `- ` prefix), that's an
-        // UNAMBIGUOUS signal the fence closes right here — a bare
-        // ```` ``` ```` can only ever be a continuation/close of an
-        // already-open fence, never the start of a new bullet — so treat the
-        // current line as fence content and do NOT recover. A BULLETED
-        // delimiter (`- ``` `) on the next line is NOT treated as unambiguous:
-        // it could just as easily be opening a brand-new sibling code block
-        // (the exact shape #2866 was filed over, see the multi-code-block
-        // regression test below), so recovery still fires in that case.
-        // Anything else on the next line (or EOF) also falls through to
-        // recovery, matching the pre-existing (unrefined) behaviour.
-        let next_is_unambiguous_close = rest
-            .map(str::trim_start)
-            .find(|next| !next.is_empty())
-            .is_some_and(|next| next.starts_with("```"));
-        if !next_is_unambiguous_close {
-            self.open = false;
-            self.open_depth = None;
-        }
-    }
+/// The level of the ATX heading `trimmed` opens: one to six `#`, then a space,
+/// a tab or the end of the line. `#tag` is not one.
+fn heading_level(trimmed: &str) -> Option<usize> {
+    let level = trimmed.bytes().take_while(|&b| b == b'#').count();
+    ((1..=6).contains(&level) && matches!(trimmed.as_bytes().get(level), None | Some(b' ' | b'\t')))
+        .then_some(level)
+}
 
-    /// Toggle over a fence-delimiter line. Opening a fence records the depth
-    /// of the block that owns it (for the unbalanced-fence recovery above): a
-    /// delimiter that opens a bullet (`- ```rust`) owns that bullet's own
-    /// depth; a bare ```` ``` ```` continuation line belongs to the
-    /// most-recently-pushed block instead.
-    fn toggle(&mut self, trimmed: &str, depth: usize, last_block: Option<&ParsedBlock>) {
-        self.open_depth = if self.open {
-            None
-        } else if is_bullet_line(trimmed) {
-            Some(depth)
-        } else {
-            Some(last_block.map_or(depth, |b| b.depth))
-        };
-        self.open = !self.open;
+/// A thematic break: three or more `-`, `*` or `_` and nothing else. It ends a
+/// lazy continuation, as a heading or a fence does.
+fn is_thematic_break(trimmed: &str) -> bool {
+    let line = trimmed.trim_end();
+    line.len() >= 3
+        && line.bytes().next().is_some_and(|first| {
+            matches!(first, b'-' | b'*' | b'_') && line.bytes().all(|b| b == first)
+        })
+}
+
+/// A block the scan may still add lines or children to.
+struct Open {
+    /// Its index in the scanned blocks.
+    index: usize,
+    /// The column its line starts at.
+    marker: usize,
+    /// The column its text starts at: past the marker for a bullet, `marker`
+    /// otherwise. A continuation line is dedented by it.
+    content: usize,
+    kind: Kind,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Kind {
+    Bullet,
+    Paragraph,
+    /// A heading read outside any list item, with its level: it owns the
+    /// blocks after it until the next heading of its level or higher (D16).
+    Heading(usize),
+    /// A fence, a thematic break, or a heading inside a list item: a block no
+    /// line continues lazily and that owns only what is indented past it.
+    Verbatim,
+}
+
+impl Open {
+    /// The column a later block must start at to be inside this one.
+    fn owns_from(&self) -> usize {
+        match self.kind {
+            Kind::Bullet => self.content,
+            Kind::Heading(_) => self.marker,
+            Kind::Paragraph | Kind::Verbatim => self.marker + 1,
+        }
     }
+}
+
+/// An open code fence: its run, the column a line must reach to stay inside
+/// the list item holding it (Import), and the line it opened on.
+struct Fence {
+    run: FenceRun,
+    column: usize,
+    line: usize,
+}
+
+/// The line scan's state: the blocks so far, whether each one's last line was
+/// code (which decides whether a trailing `^id` on it is an anchor,
+/// [`extract_block_anchors`]), the open blocks innermost last, the open fence,
+/// and what separates the current line from the last non-blank one. Source
+/// mode keeps a block's interior blank lines: whether a blank line is interior
+/// is known only at the next non-blank line, so `blank_run` holds them until a
+/// continuation line takes them or another line drops them.
+struct Scan<'a> {
+    mode: ParseMode,
+    /// Text from outside Agaric (an import or a paste): an unterminated fence
+    /// ends with its list item, as CommonMark reads it (D5).
+    foreign: bool,
+    blocks: Vec<ParsedBlock>,
+    ends_in_code: Vec<bool>,
+    lossy: LossyCounts,
+    open: Vec<Open>,
+    fence: Option<Fence>,
+    blank_run: Vec<&'a str>,
+    after_blank: bool,
 }
 
 /// Scan already-normalized, frontmatter-free markdown into blocks, collecting
 /// the lossy-transform counters [`parse_logseq_markdown`] turns into warnings.
 ///
-/// Alongside each block it returns whether the block's last content line was
-/// code, which decides whether a trailing `^id` on it is an anchor
-/// ([`extract_block_anchors`]).
+/// One CommonMark-shaped block grammar for import, Edit as Markdown and paste
+/// (#5160): a list marker starts a block, unless [`Scan::starts_item`] leaves
+/// it in a paragraph, nested by the content column of the open blocks (a tab
+/// is two columns); a heading is a block of its own and, outside a list, owns
+/// what follows it; a line indented to a bullet's content column continues
+/// it, and so does a line with no blank line before it that is not a heading,
+/// a fence or a thematic break; consecutive plain lines are one paragraph
+/// block; a fence is closed only by a run of its character at least as long,
+/// and nothing inside it is a bullet, a heading or a property.
 fn parse_block_lines(
     normalized: &str,
     mode: ParseMode,
+    foreign: bool,
 ) -> (Vec<ParsedBlock>, Vec<bool>, LossyCounts) {
-    let mut blocks: Vec<ParsedBlock> = Vec::new();
-    let mut ends_in_code: Vec<bool> = Vec::new();
-    let mut lossy = LossyCounts::default();
-    let mut fence = FenceState::default();
-    // Source mode keeps a block's interior blank lines. Whether a blank line is
-    // interior is known only at the next non-blank line: a continuation line
-    // takes the run, a bullet or property line drops it.
-    let mut blank_run: Vec<&str> = Vec::new();
-    // The column the last block's text starts at: after a bullet's `- `, or
-    // where a bare line of text starts.
-    let mut text_column = 0;
-    // #1921 — iterate `normalized.lines()` directly instead of collecting into
-    // a `Vec<&str>`. The scan only ever reads the CURRENT line in document
-    // order, so a streaming iterator is a drop-in that avoids the intermediate
-    // allocation.
-    // #2866 (review follow-up) — `lines()` (`Lines<'_>`) is `Clone`, so a
-    // manual `while let` over it (instead of a `for` loop) lets the boundary
-    // check below CLONE the iterator to peek one line ahead without consuming
-    // it. This is a read-only peek: the cloned iterator is discarded after the
-    // check, so the outer loop's position and every other line's processing is
-    // completely unaffected.
-    let mut lines_iter = normalized.lines();
-    while let Some(line) = lines_iter.next() {
+    let mut scan = Scan {
+        mode,
+        foreign,
+        blocks: Vec::new(),
+        ends_in_code: Vec::new(),
+        lossy: LossyCounts::default(),
+        open: Vec::new(),
+        fence: None,
+        blank_run: Vec::new(),
+        after_blank: false,
+    };
+    for (index, line) in normalized.lines().enumerate() {
         let trimmed = line.trim_start();
-
         if trimmed.is_empty() {
             if mode == ParseMode::Source {
-                blank_run.push(line);
+                scan.blank_run.push(line);
             }
+            scan.after_blank = true;
             continue;
         }
+        scan.read(line, trimmed, index + 1);
+        scan.after_blank = false;
+        scan.blank_run.clear();
+    }
+    (scan.blocks, scan.ends_in_code, scan.lossy)
+}
 
-        // Calculate indentation (leading columns / 2). Computed ahead of the
-        // fence handling (#2866) so `depth` is available to it.
-        let depth = indent_columns(line) / 2;
-
-        fence.close_unbalanced_at(trimmed, depth, lines_iter.clone());
-        // A source buffer writes the anchor of a block that ends in code on a
-        // line of its own, so a fence the block leaves open ends there instead
-        // of swallowing the lines after it.
-        if mode == ParseMode::Source && fence.open && ANCHOR_LINE_RE.is_match(trimmed) {
-            fence = FenceState::default();
-        }
-        // Probed after the recovery, which may have just closed the fence.
-        let is_fence_delim = fence_delimiter(trimmed, fence.open, mode);
-
-        // The delimiter line is itself part of the code region (`line_is_code`
-        // is true on both the opening and closing fence), and every line
-        // strictly inside a fence is code. Computed BEFORE classification so
-        // the block this line lands in (or appends to) can be marked.
-        let line_is_code = fence.open || is_fence_delim;
-        if is_fence_delim {
-            fence.toggle(trimmed, depth, blocks.last());
-        }
-
-        // #2725 — a `- `-prefixed line STRICTLY INSIDE an open code fence
-        // (i.e. not itself a fence delimiter) is literal code content, NOT a
-        // new list item. `line_is_code` is also true on the fence-DELIMITER
-        // line (`- ```rust` opens the code block's own bullet), so guarding on
-        // `line_is_code` would wrongly swallow that opening bullet; guard on
-        // `in_code_body` instead — true only for lines between (not on) the
-        // delimiters. Such a line falls through to the continuation branch
-        // (folded into the fenced block's content), mirroring the
-        // already-guarded property branch below.
-        // A source buffer writes code this way itself, so there it is no
-        // reshaping to report.
-        let in_code_body = fence.open && !is_fence_delim;
-        if in_code_body && is_bullet_line(trimmed) && mode == ParseMode::Import {
-            lossy.fence_split_avoided += 1;
-        }
-
-        // Check if this is a list item (- prefix). #1917: a bare `-` with no
-        // trailing space is an EMPTY bullet (Logseq/Obsidian emit these for an
-        // empty list item) — it must spawn its own empty block, not fold into
-        // the previous block's content as a continuation line. Handle both the
-        // `- text` and the bare `-` forms here.
-        let bullet_text = if in_code_body {
-            None
-        } else if trimmed == "-" {
-            Some("")
-        } else {
-            trimmed.strip_prefix("- ")
-        };
-        if let Some(text) = bullet_text {
-            lossy.stripped_refs += push_bullet_block(&mut blocks, text, depth, line_is_code, mode);
-            ends_in_code.push(line_is_code);
-            text_column = (depth + 1) * 2;
-        } else if !line_is_code
-            && let Some((key_candidate, value)) = property_line(trimmed, &blocks, depth, mode)
-        {
-            attach_property_line(&mut blocks, key_candidate, value, depth, &mut lossy);
-        } else if let Some(last) = blocks.last_mut() {
-            match mode {
-                ParseMode::Import => {
-                    lossy.stripped_refs +=
-                        append_continuation_line(last, line, line_is_code, text_column);
-                }
-                ParseMode::Source => append_source_line(last, &blank_run, line, line_is_code),
+impl<'a> Scan<'a> {
+    /// Read one non-blank line, `number` in the buffer.
+    fn read(&mut self, line: &'a str, trimmed: &str, number: usize) {
+        let indent = indent_columns(line);
+        self.end_fence_before(trimmed, indent, number);
+        if let Some(fence) = self.fence.take() {
+            // A source buffer writes the anchor of a block that ends in code
+            // on a line of its own, which ends the fence; the anchor is text
+            // until the post-pass reads it. Every other line is code.
+            if self.mode == ParseMode::Source && ANCHOR_LINE_RE.is_match(trimmed) {
+                self.append(line, false);
+            } else {
+                self.code_line(line, trimmed, fence);
             }
-            ends_in_code[blocks.len() - 1] = line_is_code;
-        } else {
-            lossy.stripped_refs += push_text_block(&mut blocks, trimmed, depth, line_is_code, mode);
-            ends_in_code.push(line_is_code);
-            text_column = depth * 2;
+            return;
         }
-        blank_run.clear();
+        let item = bullet_marker(trimmed)
+            .filter(|&(len, ordered)| self.starts_item(trimmed, indent, len, ordered));
+        if let Some((len, ordered)) = item {
+            self.bullet(trimmed, indent, len, ordered, number);
+        } else if let Some(level) = heading_level(trimmed) {
+            self.heading(trimmed, indent, level);
+        } else if let Some((key, value)) = self.property_line(trimmed, indent) {
+            self.attach_property(key, value, indent);
+        } else if self.continues(trimmed, indent) {
+            let fence = fence_run(trimmed);
+            if let Some(run) = fence {
+                let column = self.open.last().map_or(0, |top| top.content);
+                self.fence = Some(Fence {
+                    run,
+                    column,
+                    line: number,
+                });
+            }
+            self.append(line, fence.is_some());
+        } else {
+            self.text_block(trimmed, indent, number);
+        }
     }
 
-    (blocks, ends_in_code, lossy)
-}
-
-/// Push a `- text` bullet as a new block: the leading list marker (if any)
-/// becomes a `listStyle` property (#4552), in Source mode a checkbox after it
-/// becomes `todo_state`, and on import `((uuid))` block references are
-/// stripped to plain text. Returns how many references were stripped.
-fn push_bullet_block(
-    blocks: &mut Vec<ParsedBlock>,
-    text: &str,
-    depth: usize,
-    line_is_code: bool,
-    mode: ParseMode,
-) -> usize {
-    // #4552 slice 4 — a SECOND list marker right after the outline bullet is
-    // the block's `listStyle`, not its content: the exporter writes `- - foo` /
-    // `- 1. foo` for a `bullet` / `ordered` block and `- \- foo` for a plain
-    // block whose text merely begins with a marker. Consume the marker into a
-    // property row and keep `blocks.content` bare — the marker is a
-    // document-assembly concern, not a block-content one. The literal ordinal
-    // is discarded; export re-derives it positionally.
-    let (list_style, todo_state, text) = split_bullet_markers(text, mode);
-    let mut properties: Vec<(String, String)> = Vec::new();
-    if let Some(style) = list_style {
-        properties.push((LIST_STYLE_KEY.to_string(), style.to_string()));
+    /// Close an open fence the line ends without a closing fence (D5): in
+    /// foreign text, a line left of the fence's column has left the list item
+    /// that holds it (CommonMark); in a source buffer, a bullet carrying a
+    /// block's anchor starts that block, and the save warns, naming the fence.
+    fn end_fence_before(&mut self, trimmed: &str, indent: usize, number: usize) {
+        let Some(fence) = &self.fence else {
+            return;
+        };
+        if self.foreign && indent < fence.column {
+            self.fence = None;
+        } else if self.mode == ParseMode::Source
+            && is_bullet_line(trimmed)
+            && TRAILING_ANCHOR_RE.is_match(trimmed)
+        {
+            let run =
+                String::from_utf8(vec![fence.run.ch; fence.run.len]).expect("a fence run is ASCII");
+            self.lossy.unclosed_fences.push(format!(
+                "the {run} code fence opened on line {} is not closed; it ends before the block \
+                 on line {number}",
+                fence.line
+            ));
+            self.fence = None;
+        }
     }
-    if let Some(state) = todo_state {
-        properties.push(("todo_state".to_string(), state.to_string()));
-    }
-    let (cleaned, removed) = clean_text(text, mode, line_is_code);
-    blocks.push(ParsedBlock {
-        content: cleaned,
-        depth,
-        // A body `listStyle:: value` line further down the file is
-        // appended AFTER this seed and therefore wins — an explicit
-        // property line overrides the marker, not the other way round.
-        properties,
-        is_code: line_is_code,
-        block_anchor: None,
-    });
-    removed
-}
 
-/// Push a line no block precedes (a file that starts with bare text) as a
-/// block of its own. Returns how many references were stripped from it.
-fn push_text_block(
-    blocks: &mut Vec<ParsedBlock>,
-    trimmed: &str,
-    depth: usize,
-    line_is_code: bool,
-    mode: ParseMode,
-) -> usize {
-    let (cleaned, removed) = clean_text(trimmed, mode, line_is_code);
-    blocks.push(ParsedBlock {
-        content: cleaned,
-        depth,
-        properties: Vec::new(),
-        is_code: line_is_code,
-        block_anchor: None,
-    });
-    removed
+    /// A line inside `fence`: code of the block that opened it, and the fence
+    /// stays open unless the line closes it.
+    fn code_line(&mut self, line: &'a str, trimmed: &str, fence: Fence) {
+        self.append(line, true);
+        if !closes_fence(trimmed, fence.run) {
+            self.fence = Some(fence);
+        }
+    }
+
+    /// Whether a list marker of `len` bytes starts an item. Outside any list,
+    /// on a line that would continue a paragraph, it does only when the item
+    /// has text and, if ordered, is numbered 1 (CommonMark § 5.2), so wrapped
+    /// prose keeps a line that opens with `42.`.
+    fn starts_item(&self, trimmed: &str, indent: usize, len: usize, ordered: bool) -> bool {
+        let in_list = self.open.iter().any(|open| open.kind == Kind::Bullet);
+        in_list
+            || !self.continues(trimmed, indent)
+            || (!trimmed[len..].trim().is_empty()
+                && (!ordered || trimmed[..len - 1].parse::<u32>() == Ok(1)))
+    }
+
+    /// A bullet: a block under the innermost open block whose text starts at
+    /// or left of its marker (S7). The marker(s) become its `listStyle`
+    /// (#4552), in Source mode a checkbox its `todo_state`, and a fence its
+    /// text opens is its own.
+    fn bullet(&mut self, trimmed: &str, indent: usize, len: usize, ordered: bool, number: usize) {
+        let (list_style, todo_state, text) =
+            bullet_body(bullet_text(trimmed, len), ordered, self.mode);
+        let mut properties: Vec<(String, String)> = Vec::new();
+        if let Some(style) = list_style {
+            properties.push((LIST_STYLE_KEY.to_string(), style.to_string()));
+        }
+        if let Some(state) = todo_state {
+            properties.push(("todo_state".to_string(), state.to_string()));
+        }
+        let fence = fence_run(text);
+        self.pop_to(indent, None);
+        let content = indent + len + 1;
+        self.push_block(
+            text,
+            properties,
+            fence.is_some(),
+            indent,
+            content,
+            Kind::Bullet,
+        );
+        if let Some(run) = fence {
+            self.fence = Some(Fence {
+                run,
+                column: content,
+                line: number,
+            });
+        }
+    }
+
+    /// A heading line is always a block of its own. Outside a list it owns what
+    /// follows it until the next heading of its level or higher; inside a list
+    /// item it owns nothing, so Agaric's own `- ` output reads back unchanged
+    /// (D16).
+    fn heading(&mut self, trimmed: &str, indent: usize, level: usize) {
+        self.pop_to(indent, Some(level));
+        let kind = if self.open.iter().any(|open| open.kind == Kind::Bullet) {
+            Kind::Verbatim
+        } else {
+            Kind::Heading(level)
+        };
+        self.push_block(trimmed, Vec::new(), false, indent, indent, kind);
+    }
+
+    /// A line that starts a block of its own without a marker: a paragraph, or
+    /// a fence or thematic break, nested by its indentation like a bullet. A
+    /// fence it opens stays inside the list item holding it, if any: a line
+    /// left of that item's content column ends both.
+    fn text_block(&mut self, trimmed: &str, indent: usize, number: usize) {
+        self.pop_to(indent, None);
+        let fence = fence_run(trimmed);
+        let kind = if fence.is_some() || is_thematic_break(trimmed) {
+            Kind::Verbatim
+        } else {
+            Kind::Paragraph
+        };
+        let column = self
+            .open
+            .iter()
+            .rev()
+            .find(|open| open.kind == Kind::Bullet)
+            .map_or(0, |item| item.content);
+        self.push_block(trimmed, Vec::new(), fence.is_some(), indent, indent, kind);
+        if let Some(run) = fence {
+            self.fence = Some(Fence {
+                run,
+                column,
+                line: number,
+            });
+        }
+    }
+
+    /// Close the open blocks a new block at `indent` is not inside: those
+    /// whose text starts right of it and, for a heading of `level`, the
+    /// headings of that level or deeper.
+    fn pop_to(&mut self, indent: usize, level: Option<usize>) {
+        while let Some(top) = self.open.last() {
+            let outranked =
+                matches!((top.kind, level), (Kind::Heading(above), Some(level)) if above >= level);
+            if top.owns_from() > indent || outranked {
+                self.open.pop();
+            } else {
+                break;
+            }
+        }
+    }
+
+    /// Push a block at the open depth and open it. On import `((uuid))` block
+    /// references are stripped from prose (counted); code and a source buffer
+    /// keep the text as written.
+    fn push_block(
+        &mut self,
+        text: &str,
+        properties: Vec<(String, String)>,
+        is_code: bool,
+        marker: usize,
+        content: usize,
+        kind: Kind,
+    ) {
+        let (cleaned, removed) = clean_text(text, self.mode, is_code);
+        self.lossy.stripped_refs += removed;
+        self.blocks.push(ParsedBlock {
+            content: cleaned,
+            depth: self.open.len(),
+            // A body `listStyle:: value` line further down the file is
+            // appended AFTER this seed and therefore wins — an explicit
+            // property line overrides the marker, not the other way round.
+            properties,
+            is_code,
+            block_anchor: None,
+        });
+        self.ends_in_code.push(is_code);
+        self.open.push(Open {
+            index: self.blocks.len() - 1,
+            marker,
+            content,
+            kind,
+        });
+    }
+
+    /// Whether a line that starts no block continues the innermost open block:
+    /// it is indented to a bullet's content column, or it follows the block's
+    /// last line with no blank line between (lazily) and is not a fence or a
+    /// thematic break. A heading, a fence and a break are never continued.
+    fn continues(&self, trimmed: &str, indent: usize) -> bool {
+        let Some(top) = self.open.last() else {
+            return false;
+        };
+        match top.kind {
+            Kind::Bullet if indent >= top.content => true,
+            Kind::Bullet | Kind::Paragraph => {
+                !self.after_blank && fence_run(trimmed).is_none() && !is_thematic_break(trimmed)
+            }
+            Kind::Heading(_) | Kind::Verbatim => false,
+        }
+    }
+
+    /// Fold `line` into the innermost open block, less the indentation up to
+    /// its content column: an import normalises prose and keeps code as
+    /// written; a source buffer keeps every byte, interior blank lines
+    /// included.
+    fn append(&mut self, line: &'a str, is_code: bool) {
+        let top = self
+            .open
+            .last()
+            .expect("a continuation line has an open block");
+        let (index, width) = (top.index, top.content);
+        let block = &mut self.blocks[index];
+        match self.mode {
+            ParseMode::Import => {
+                self.lossy.stripped_refs += append_continuation_line(block, line, is_code, width);
+            }
+            ParseMode::Source => append_source_line(block, &self.blank_run, line, is_code, width),
+        }
+        self.ends_in_code[index] = is_code;
+    }
+
+    /// The key and value of `trimmed` when it is a `key:: value` line `mode`
+    /// reads as a property: the key is one `op::validate_set_property` accepts
+    /// (`^[A-Za-z0-9_-]{1,64}$`, I-Core-10), so a `:: ` mid-sentence is
+    /// content. In Source mode a line the save would not store — a reserved
+    /// key, or no block at or left of its indentation — is what the user
+    /// typed: content. An import reads it as a property and drops it with a
+    /// warning.
+    fn property_line<'l>(&self, trimmed: &'l str, indent: usize) -> Option<(&'l str, &'l str)> {
+        let (key, value) = trimmed
+            .split_once(":: ")
+            .filter(|(key, _)| is_property_key(key.trim()))?;
+        let stored =
+            !FRONTMATTER_RESERVED_KEYS.contains(&key.trim()) && self.owner_at(indent).is_some();
+        (self.mode == ParseMode::Import || stored).then_some((key, value))
+    }
+
+    /// The block a `key:: value` line at `indent` belongs to (#682): the
+    /// innermost open block starting at or left of it. Logseq writes a
+    /// property line indented under (or level with) its owning bullet.
+    fn owner_at(&self, indent: usize) -> Option<usize> {
+        self.open
+            .iter()
+            .rev()
+            .find(|open| open.marker <= indent)
+            .map(|open| open.index)
+    }
+
+    /// Attach a `key:: value` body property to the block that indentation says
+    /// owns it. Reserved keys and properties with no owning block are dropped
+    /// and counted ([`Scan::property_line`] hands an import such a line, never
+    /// a source buffer).
+    fn attach_property(&mut self, key: &str, value: &str, indent: usize) {
+        let key = key.trim().to_string();
+        let value = value.trim().to_string();
+        // #1568: a reserved body property is dropped, never written, and the
+        // surrounding good content imports, as the frontmatter path does.
+        if FRONTMATTER_RESERVED_KEYS.contains(&key.as_str()) {
+            tracing::debug!(
+                key = %key,
+                "skipping reserved/column-backed body property during import (#1568)"
+            );
+            self.lossy.reserved_property += 1;
+            return;
+        }
+        match self.owner_at(indent) {
+            Some(owner) => self.blocks[owner].properties.push((key, value)),
+            None => self.lossy.orphan_property += 1,
+        }
+    }
 }
 
 /// A line's text as its block keeps it, and how many `((uuid))` references
@@ -1221,83 +1410,21 @@ fn clean_text(text: &str, mode: ParseMode, line_is_code: bool) -> (String, usize
     }
 }
 
-/// The key and value of `trimmed` when it is a `key:: value` line `mode` reads
-/// as a property: the key is one `op::validate_set_property` accepts
-/// (`^[A-Za-z0-9_-]{1,64}$`, I-Core-10), so a `:: ` mid-sentence is content.
-/// In Source mode a line the save would not store — a reserved key, or no
-/// block at or above its indentation — is what the user typed: content. An
-/// import reads it as a property and drops it with a warning.
-fn property_line<'a>(
-    trimmed: &'a str,
-    blocks: &[ParsedBlock],
-    depth: usize,
-    mode: ParseMode,
-) -> Option<(&'a str, &'a str)> {
-    let (key, value) = trimmed
-        .split_once(":: ")
-        .filter(|(key, _)| is_property_key(key.trim()))?;
-    let stored = !FRONTMATTER_RESERVED_KEYS.contains(&key.trim())
-        && blocks.iter().any(|block| block.depth <= depth);
-    (mode == ParseMode::Import || stored).then_some((key, value))
-}
-
-/// Attach a `key:: value` body property to the block that *indentation* says
-/// owns it, rather than to the most-recently-pushed block (#682): Logseq emits
-/// a property line indented one level under (or level with) its owning bullet,
-/// so the owner is the nearest preceding block whose depth is <= the property
-/// line's depth. Scanning in reverse over the document-ordered `blocks` finds
-/// that nearest ancestor; a property nested under a grandchild therefore no
-/// longer mis-attaches to an unrelated later sibling. Reserved keys and
-/// properties with no owning ancestor are dropped and counted in `lossy`
-/// ([`property_line`] hands an import such a line, never a source buffer).
-fn attach_property_line(
-    blocks: &mut [ParsedBlock],
-    key_candidate: &str,
-    value: &str,
-    depth: usize,
-    lossy: &mut LossyCounts,
-) {
-    let key = key_candidate.trim().to_string();
-    let value = value.trim().to_string();
-    // #1568: skip reserved/exporter-managed keys before attaching them to an
-    // owning block. Filtering here matches the frontmatter round-trip
-    // semantics: a reserved body property is dropped, never written, and the
-    // surrounding good content imports.
-    if FRONTMATTER_RESERVED_KEYS.contains(&key.as_str()) {
-        tracing::debug!(
-            key = %key,
-            "skipping reserved/column-backed body property during import (#1568)"
-        );
-        lossy.reserved_property += 1;
-        return;
-    }
-    match blocks.iter_mut().rev().find(|b| b.depth <= depth) {
-        Some(owner) => owner.properties.push((key, value)),
-        // No ancestor at or above this indentation (e.g. a property line
-        // indented deeper than any preceding bullet, or before any bullet at
-        // all). Lossy — surface it via a warning counter rather than swallow
-        // it silently.
-        None => lossy.orphan_property += 1,
-    }
-}
-
-/// Fold a continuation line into the block it belongs to (#682): a non-list,
-/// non-property line that follows a bullet is the soft-wrapped / multi-line
-/// body of that bullet, appended (newline-joined) to the owning block's
-/// content instead of spawning a separate block, matching how Logseq stores
-/// multi-line bullet bodies. Returns how many `((uuid))` references were
+/// Fold a continuation line into the block it belongs to (#682), appended
+/// (newline-joined) to the owning block's content, as Logseq stores a
+/// multi-line bullet body. Returns how many `((uuid))` references were
 /// stripped from it. A code line is kept as written, less the indentation up
-/// to `text_column`, where its block's text starts.
+/// to `width`, its block's content column.
 fn append_continuation_line(
     last: &mut ParsedBlock,
     line: &str,
     line_is_code: bool,
-    text_column: usize,
+    width: usize,
 ) -> usize {
     let (cleaned, removed) = if line_is_code {
-        (dedent(line, text_column).to_string(), 0)
+        (dedent(line, width).to_string(), 0)
     } else {
-        strip_block_refs_counted(unescape_continuation(line.trim_start(), false))
+        strip_block_refs_counted(unescape_continuation(line.trim_start()))
     };
     // #1924 — a continuation line inside a fence makes the owning block code
     // (e.g. the fenced body lines that follow a `- ```rust` bullet, and the
@@ -1315,12 +1442,17 @@ fn append_continuation_line(
     removed
 }
 
-/// A source buffer's continuation line (#5140): only its bullet's own
-/// indentation, `(depth + 1) * 2` spaces, is removed, so code keeps its
-/// indentation and prose its spacing. The blank lines before it are interior
-/// to the block and are kept the same way.
-fn append_source_line(last: &mut ParsedBlock, blank_run: &[&str], line: &str, line_is_code: bool) {
-    let width = (last.depth + 1) * 2;
+/// A source buffer's continuation line (#5140): only the indentation up to its
+/// block's content column, `width`, is removed, so code keeps its indentation
+/// and prose its spacing. The blank lines before it are interior to the block
+/// and are kept the same way.
+fn append_source_line(
+    last: &mut ParsedBlock,
+    blank_run: &[&str],
+    line: &str,
+    line_is_code: bool,
+    width: usize,
+) {
     for blank in blank_run {
         last.content.push('\n');
         last.content.push_str(dedent(blank, width));
@@ -1330,7 +1462,7 @@ fn append_source_line(last: &mut ParsedBlock, blank_run: &[&str], line: &str, li
     last.content.push_str(if line_is_code {
         unescape_code_line(text)
     } else {
-        unescape_continuation(text, false)
+        unescape_continuation(text)
     });
     if line_is_code {
         last.is_code = true;
@@ -1363,40 +1495,27 @@ fn indent_columns(line: &str) -> usize {
     indent.len() + indent.matches('\t').count()
 }
 
-/// A continuation line's text with the exporter's escape, if any, removed.
-fn unescape_continuation(text: &str, line_is_code: bool) -> &str {
-    // #2716 — reverse the exporter's continuation-line escape: a NON-code
-    // continuation line the exporter had to guard (it opens a bullet or matches
-    // `key:: value`) was emitted with a single leading `\` so it would land
-    // HERE (folded) instead of spawning a block / property. Strip that one
-    // backslash — but ONLY when the escaped payload really is such an
-    // ambiguous line, so an ordinary continuation line that legitimately begins
-    // with `\` (e.g. a LaTeX command) is preserved verbatim. Skipped inside a
-    // code fence (`line_is_code`): code is emitted verbatim and must keep its
-    // backslashes intact.
-    if !line_is_code
-        && let Some(rest) = text.strip_prefix('\\')
-        && {
-            // The exporter escapes based on the line's TRIMMED shape
-            // (`content_line_is_ambiguous`) and anchors the `\` BEFORE the
-            // continuation line's own leading whitespace, so an INDENTED
-            // ambiguous line reaches here as `\<ws><token>` (`  - sub` → wire
-            // `  \  - sub`, `trimmed` = `\  - sub`). Match the same TRIMMED
-            // shape — otherwise the untrimmed `rest.starts_with("- ")` misses
-            // it and the `\` leaks into the folded content as a spurious
-            // character. (On import, interior indentation itself is still
-            // normalised away downstream by `strip_block_refs_counted`'s trim,
-            // exactly as it is for a non-ambiguous indented continuation line;
-            // the point of the un-escape is only to strip the escape marker,
-            // never to inject one.) Further backslashes are looked past too, as the exporter
-            // does, so a line written as `\- x` comes back with its backslash.
-            let body = rest.trim_start_matches(|c: char| c.is_whitespace() || c == '\\');
-            is_bullet_line(body) || line_is_property_shaped(body)
-        }
-    {
-        rest
-    } else {
-        text
+/// `true` when `line`, written as a block's continuation line, would read as
+/// something else: a bullet, a heading or a `key:: value` property. The
+/// renderer backslash-escapes such a line and `unescape_continuation`
+/// reverses it (#2716). Leading whitespace and backslashes are looked past, so
+/// the escape is injective: `\- x` is escaped again rather than losing its
+/// backslash on the way back.
+pub fn continuation_line_is_ambiguous(line: &str) -> bool {
+    let body = line.trim_start_matches(|c: char| c.is_whitespace() || c == '\\');
+    is_bullet_line(body) || heading_level(body).is_some() || line_is_property_shaped(body)
+}
+
+/// A continuation line's text with the renderer's escape, if any, removed:
+/// one leading `\` whose payload is [`continuation_line_is_ambiguous`]. An
+/// ordinary line that begins with `\` (a LaTeX command, say) is kept verbatim.
+/// The renderer anchors the `\` before the line's own leading whitespace, so
+/// an indented ambiguous line reaches here as `\<ws><token>` and the payload
+/// is matched on its trimmed shape.
+fn unescape_continuation(text: &str) -> &str {
+    match text.strip_prefix('\\') {
+        Some(rest) if continuation_line_is_ambiguous(rest) => rest,
+        _ => text,
     }
 }
 
@@ -2081,10 +2200,8 @@ fn is_property_key(s: &str) -> bool {
 }
 
 /// #2716 — `true` when `line` matches the `key:: value` property shape (a
-/// `:: `-separated pair whose LHS is a valid [`is_property_key`]). Used by the
-/// continuation-branch un-escape to recognise a property-shaped line the
-/// exporter backslash-escaped, symmetric with the export-side
-/// `markdown_yaml::content_line_is_ambiguous`.
+/// `:: `-separated pair whose LHS is a valid [`is_property_key`]), the shape
+/// [`continuation_line_is_ambiguous`] escapes and the un-escape reverses.
 fn line_is_property_shaped(line: &str) -> bool {
     line.split_once(":: ")
         .is_some_and(|(k, _)| is_property_key(k.trim()))
@@ -2163,11 +2280,10 @@ mod tests {
     }
 
     /// #2866 — an odd number of ```` ``` ```` delimiters inside a block (an
-    /// unbalanced/unterminated fence) must NOT leave the importer's
-    /// document-global [`FenceState`] open past the end of that block: the
-    /// next sibling bullet must still spawn its own block instead of being
-    /// folded into the never-closed fence. Mirrors the issue's repro shape
-    /// (`["```\nunclosed", "normal"]`).
+    /// unbalanced/unterminated fence) must NOT leave the fence open past the
+    /// end of that block: the next sibling bullet must still spawn its own
+    /// block instead of being folded into the never-closed fence. Mirrors the
+    /// issue's repro shape (`["```\nunclosed", "normal"]`).
     #[test]
     fn parse_unbalanced_fence_does_not_swallow_sibling_block_2866() {
         let md = "- ```\n  unclosed\n- normal";
@@ -2213,28 +2329,25 @@ mod tests {
         assert!(!output.blocks[1].is_code);
     }
 
-    /// #2866 (review follow-up, highest-risk case) — an interior `- `-prefixed
-    /// line at the SAME depth as the fence-opening bullet, immediately
-    /// followed by the closing delimiter, must still fold into ONE balanced
-    /// code block instead of being mistaken for the #2866 sibling-recovery
-    /// boundary. Without the unambiguous-bare-close peek this false-positives
-    /// (splits the balanced fence into two blocks) because a same-depth
-    /// bullet-shaped line is locally indistinguishable from a genuine
-    /// never-closed-fence sibling.
+    /// #5160 D5 (flips the #2866 peek) — a bullet-shaped line left of a list
+    /// item's fence column has left the item, as CommonMark reads it: it is a
+    /// sibling, and the bare fence after it opens a new one. Inside the item
+    /// (`b6_fence_col0_keeps_its_bullet_lines`, `b3_tilde_fence_is_code`) such
+    /// a line is code.
     #[test]
-    fn parse_balanced_fence_with_same_depth_interior_bullet_still_folds_2866() {
-        let md = "- ```\n- interior\n```";
-        let output = parse_logseq_markdown(md);
-
+    fn a_bullet_line_left_of_a_list_items_fence_ends_the_item() {
+        let output = parse_logseq_markdown("- ```\n- interior\n```");
+        let shapes: Vec<(&str, bool)> = output
+            .blocks
+            .iter()
+            .map(|b| (b.content.as_str(), b.is_code))
+            .collect();
         assert_eq!(
-            output.blocks.len(),
-            1,
-            "a balanced fence whose interior bullet-shaped line is immediately \
-             followed by the closing delimiter must stay ONE block; got {:?}",
+            shapes,
+            [("```", true), ("interior", false), ("```", true)],
+            "{:?}",
             output.blocks
         );
-        assert_eq!(output.blocks[0].content, "```\n- interior\n```");
-        assert!(output.blocks[0].is_code);
     }
 
     /// #2866 (review follow-up) — non-regression: two SEPARATE fenced code
@@ -2334,11 +2447,8 @@ mod tests {
             block.properties
         );
         assert!(
-            output
-                .warnings
-                .iter()
-                .any(|w| w.contains("code fence") && w.contains("literal code")),
-            "the fold must be surfaced via a warning; got {:?}",
+            output.warnings.is_empty(),
+            "the fence is authoritative, so there is nothing to report; got {:?}",
             output.warnings
         );
     }
@@ -2512,16 +2622,17 @@ mod tests {
         assert!(output.warnings.is_empty(), "{:?}", output.warnings);
     }
 
-    /// Code under a line of bare text, a README's shape, keeps its
-    /// indentation too: that block's text starts at the line's own column.
+    /// A column-0 fence under a heading, a README's shape, is the heading's
+    /// own block (#5160 D16) and keeps its indentation: that block's text
+    /// starts at the line's own column.
     #[test]
     fn an_import_keeps_code_under_bare_text_as_written() {
         let output = parse_logseq_markdown("# Notes\n```yaml\na:\n  b: 1\n```\n");
-        assert_eq!(output.blocks.len(), 1, "{:?}", output.blocks);
-        assert_eq!(
-            output.blocks[0].content,
-            "# Notes\n```yaml\na:\n  b: 1\n```"
-        );
+        assert_eq!(output.blocks.len(), 2, "{:?}", output.blocks);
+        assert_eq!(output.blocks[0].content, "# Notes");
+        assert_eq!(output.blocks[1].content, "```yaml\na:\n  b: 1\n```");
+        assert_eq!(output.blocks[1].depth, 1);
+        assert!(output.blocks[1].is_code);
     }
 
     /// #1933: block-ref stripping is a lossy transform and must surface an
@@ -2725,9 +2836,11 @@ bare line (({UUID_B})) too"
         // #1918 — the clamp target is MAX_BLOCK_DEPTH - 1 (19), not 20, so the
         // clamped block plus the page-root offset stays at-or-below the
         // create-path MAX_BLOCK_DEPTH bound.
-        let deep = format!("{}- Deep block", "  ".repeat(25));
+        let deep: String = (0..=25)
+            .map(|d| format!("{}- Deep block\n", "  ".repeat(d)))
+            .collect();
         let output = parse_logseq_markdown(&deep);
-        assert_eq!(output.blocks[0].depth, MAX_IMPORT_DEPTH);
+        assert_eq!(output.blocks[25].depth, MAX_IMPORT_DEPTH);
         assert_eq!(MAX_IMPORT_DEPTH, 19, "clamp must leave room for page root");
     }
 
@@ -3392,16 +3505,14 @@ bare line (({UUID_B})) too"
 
     #[test]
     fn parse_depth_clamping_emits_warning() {
-        // Build markdown with 3 blocks exceeding depth 20
-        let mut lines = vec!["- Root".to_string()];
-        for i in 0..3 {
-            lines.push(format!("{}- Deep block {i}", "  ".repeat(25)));
-        }
-        let content = lines.join("\n");
+        // A chain of bullets, its last three past the depth limit.
+        let content: String = (0..MAX_IMPORT_DEPTH + 4)
+            .map(|d| format!("{}- Block {d}\n", "  ".repeat(d)))
+            .collect();
         let output = parse_logseq_markdown(&content);
 
-        // All deep blocks should be clamped to MAX_IMPORT_DEPTH (#1918: 19)
-        for block in &output.blocks[1..] {
+        // The deep blocks are clamped to MAX_IMPORT_DEPTH (#1918: 19)
+        for block in &output.blocks[MAX_IMPORT_DEPTH..] {
             assert_eq!(
                 block.depth, MAX_IMPORT_DEPTH,
                 "block depth should be clamped to MAX_IMPORT_DEPTH"
@@ -3621,11 +3732,12 @@ bare line (({UUID_B})) too"
     }
 
     /// Malformed / partial input — the case a hand-written assertion tends
-    /// to under-specify because the interesting output is the WARNING list
-    /// and the salvaged blocks, not one field. An unclosed frontmatter
-    /// fence (must survive as content rather than be excised), a bare `-`
-    /// empty bullet, and nesting past `MAX_IMPORT_DEPTH` (clamped, with a
-    /// warning). Pins both what survives and what the user is told.
+    /// to under-specify. An unclosed frontmatter fence (it must survive as
+    /// content rather than be excised: the `---` a thematic break, the
+    /// `title:` line a paragraph), a bare `-` empty bullet, and a bullet
+    /// indented fifty columns under it, which is its child: depth counts
+    /// blocks, not columns (#5160 S7), so nothing here is clamped. The clamp
+    /// itself is pinned by `parse_depth_clamping_emits_warning`.
     #[test]
     fn snapshot_parse_output_malformed_input() {
         let md = format!(
@@ -3635,30 +3747,33 @@ bare line (({UUID_B})) too"
         insta::assert_yaml_snapshot!(parse_output_shape(&md));
     }
 
-    /// The #5160 findings each corpus snapshot pins as today's reading, where
-    /// it differs from the decided grammar. The phase that fixes one flips
-    /// these snapshots and drops its id here.
+    /// The #5160 findings each corpus snapshot still pins, where its reading
+    /// differs from the decided grammar; `""` once it matches. The phase that
+    /// fixes one flips these snapshots and drops its id here. Phase 2a (the
+    /// block grammar) fixed S1–S7; the corpus reads with no file name, so an
+    /// export's own `# Title` stays a heading here (S6 is pinned by the import
+    /// command's round trips in `page_cmd_tests.rs`).
     const CORPUS_FINDINGS: &[(&str, &str)] = &[
-        ("corpus_agaric_export", "S3, S6, S8"),
+        ("corpus_agaric_export", "S8"),
         ("corpus_agaric_source", "P1"),
-        ("corpus_chatgpt_answer", "S1, S2, S3"),
-        ("corpus_claude_answer", "S1, S3"),
-        ("corpus_code_heavy", "S1, S3, S4, S5"),
+        ("corpus_chatgpt_answer", ""),
+        ("corpus_claude_answer", ""),
+        ("corpus_code_heavy", ""),
         ("corpus_crlf_windows", "P1"),
-        ("corpus_four_space_outline", "S7"),
-        ("corpus_gdocs_export", "S1, S2, S3"),
-        ("corpus_github_readme", "S1, S2, S3"),
-        ("corpus_logseq_docs_markdown", "S1, S3, S8, P3, P8"),
-        ("corpus_logseq_page", "S2, S3, S8, P2, P3, P8"),
-        ("corpus_meeting_notes_plain", "S1, S2, S3"),
-        ("corpus_nbsp_indent", "S7"),
-        ("corpus_notion_export", "S1, S3, S7, P1"),
-        ("corpus_obsidian_daily", "S1, S3, P1"),
-        ("corpus_obsidian_note", "S1, S3, S4, S7, S8, P1"),
-        ("corpus_ordered_steps", "S2, S3"),
-        ("corpus_roam_export", "S7"),
-        ("corpus_star_checklist", "S2, S3"),
-        ("corpus_tab_bullets", "S2, S3"),
+        ("corpus_four_space_outline", ""),
+        ("corpus_gdocs_export", ""),
+        ("corpus_github_readme", ""),
+        ("corpus_logseq_docs_markdown", "S8, P3, P8"),
+        ("corpus_logseq_page", "S8, P2, P3, P8"),
+        ("corpus_meeting_notes_plain", ""),
+        ("corpus_nbsp_indent", ""),
+        ("corpus_notion_export", "P1"),
+        ("corpus_obsidian_daily", "P1"),
+        ("corpus_obsidian_note", "S8, P1"),
+        ("corpus_ordered_steps", ""),
+        ("corpus_roam_export", ""),
+        ("corpus_star_checklist", "P1"),
+        ("corpus_tab_bullets", ""),
     ];
 
     /// Each real-shaped document under `tests/markdown-corpus/` (#5160) as the
@@ -3932,9 +4047,9 @@ mod tests_l9 {
 }
 
 /// Line soup for the grammar properties (#5160): outline lines as people type
-/// and paste them. Bullets, `*` and `1.` markers, checkboxes, `key:: value`
-/// lines, trailing `^words` (some shaped like block ids), three- and
-/// four-backtick and `~~~` fences and prose, indented with spaces, tabs and
+/// and paste them. Bullets of every marker, checkboxes, headings, quotes,
+/// `key:: value` lines, trailing `^words` (some shaped like block ids), three-
+/// and four-backtick and `~~~` fences and prose, indented with spaces, tabs and
 /// NBSP, and ended by `\n`, `\r\n` or `\r`. No line opens front matter, which
 /// has its own tests. The no-silent-loss property below and the app crate's
 /// Source render→parse fixpoint both read it.
@@ -3952,7 +4067,9 @@ pub mod line_soup {
     }
 
     fn arb_line() -> impl Strategy<Value = String> {
-        const MARKERS: [&str; 8] = ["- ", "-", "* ", "1. ", "- 1. ", "- [ ] ", "- [x] ", "-\t"];
+        const MARKERS: [&str; 12] = [
+            "- ", "-", "* ", "+ ", "1. ", "1) ", "- 1. ", "- [ ] ", "- [x] ", "-\t", "## ", "> ",
+        ];
         const FENCES: [&str; 6] = ["```", "```sh", "````", "````md", "~~~", "~~~yaml"];
         let word = prop_oneof!["[A-Za-z0-9-]{1,12}", "[0-7][0-9A-HJKMNP-TV-Z]{25}"];
         prop_oneof![
@@ -4010,11 +4127,13 @@ mod parse_proptest {
         parse_pasted_text, parse_source_outline,
     };
 
-    /// The start of a line the grammar may read as syntax: a bullet, an
-    /// escape, a list marker, an escape and a checkbox.
+    /// The start of a line the grammar may read as syntax: a bullet of any
+    /// marker, an escape, a second list marker, an escape and a checkbox.
     static LINE_SYNTAX: LazyLock<Regex> = LazyLock::new(|| {
-        Regex::new(r"^\s*(?:-(?:\s|$))?\\?(?:-(?:\s|$)|[0-9]+\.(?:\s|$))?\\?(?:\[[ xX/-]\])?")
-            .expect("invalid line-syntax regex")
+        Regex::new(
+            r"^\s*(?:[-*+](?:\s|$)|[0-9]{1,9}[.)](?:\s|$))?\\?(?:-(?:\s|$)|[0-9]+\.(?:\s|$))?\\?(?:\[[ xX/-]\])?",
+        )
+        .expect("invalid line-syntax regex")
     });
 
     /// A line ending in a `^word` a parser may take as its block's anchor.
@@ -4029,17 +4148,15 @@ mod parse_proptest {
         }
     }
 
-    /// What each line of `input`, its tabs read as spaces as an import reads
-    /// them, may give up to the grammar: [`LINE_SYNTAX`], the `::` of a
-    /// `key:: value` line, and the `^` of an anchor. When an import warns that
-    /// it dropped property lines, every property-shaped line may go.
+    /// What each line of `input` may give up to the grammar: [`LINE_SYNTAX`],
+    /// the `::` of a `key:: value` line, and the `^` of an anchor. When an
+    /// import warns that it dropped property lines, every property-shaped line
+    /// may go. Tabs stay tabs: a source buffer reads `-\t-` as the `- -`
+    /// marker pair, which the two spaces an import puts there would hide.
     fn consumable(input: &str, warnings: &[String]) -> HashMap<char, usize> {
         let dropped = warnings.iter().any(|w| w.contains("property line(s)"));
         let mut allowed = HashMap::new();
-        let lines = input
-            .replace("\r\n", "\n")
-            .replace('\r', "\n")
-            .replace('\t', "  ");
+        let lines = input.replace("\r\n", "\n").replace('\r', "\n");
         for line in lines.lines() {
             if dropped && line_is_property_shaped(line.trim_start()) {
                 count(&mut allowed, line);
@@ -4508,17 +4625,6 @@ mod tests_source_outline_5140 {
         assert!(block.is_code);
     }
 
-    /// A bullet-shaped line in code is how the render writes it, so a source
-    /// buffer reports no reshaping where an import of the same text does.
-    #[test]
-    fn a_bullet_shaped_code_line_is_reported_only_on_import() {
-        let md = "- ```\n  - x\n  ```\n";
-        let source = parse_source_outline(md).warnings;
-        assert!(source.is_empty(), "a source buffer: {source:?}");
-        let import = parse_logseq_markdown(md).warnings;
-        assert_eq!(import.len(), 1, "an import: {import:?}");
-    }
-
     const ID_A: &str = "01J0000000000000000000000A";
     const ID_B: &str = "01J0000000000000000000000B";
 
@@ -4674,17 +4780,29 @@ mod tests_pasted_text_5140 {
         );
     }
 
-    /// Nothing on a plain line is a marker or a property, and each keeps its
-    /// indentation as its depth, a tab counting as one level.
+    /// Text that opens with no bullet reads as a source buffer does (#5160
+    /// S3): paragraphs, headings owning what follows, bullets of any marker
+    /// with their checkbox and property lines.
     #[test]
-    fn other_text_is_one_block_per_line_nested_by_indentation() {
+    fn other_text_reads_by_the_same_grammar() {
         assert_eq!(
-            shape("first\n  - second\n\n\t[x] third\n    key:: v\r\n"),
+            shape("Intro\nmore\n\n## Plan\n\n* [x] done\n  key:: v\n1) step\r\n"),
             [
-                (0, "first".to_string(), vec![]),
-                (1, "- second".to_string(), vec![]),
-                (1, "[x] third".to_string(), vec![]),
-                (2, "key:: v".to_string(), vec![]),
+                (0, "Intro\nmore".to_string(), vec![]),
+                (0, "## Plan".to_string(), vec![]),
+                (
+                    1,
+                    "done".to_string(),
+                    vec![
+                        ("todo_state".to_string(), "DONE".to_string()),
+                        ("key".to_string(), "v".to_string()),
+                    ]
+                ),
+                (
+                    1,
+                    "step".to_string(),
+                    vec![("listStyle".to_string(), "ordered".to_string())]
+                ),
             ]
         );
     }
@@ -4766,5 +4884,545 @@ mod tests_pasted_text_5140 {
         assert!(pasted_block("```js\nx".to_string(), 0).is_code);
         assert!(pasted_block("a\n  ```".to_string(), 0).is_code);
         assert!(!pasted_block("a `b` c".to_string(), 0).is_code);
+    }
+}
+
+/// The block grammar (#5160 Phase 2a): one CommonMark-shaped reading for the
+/// three text parsers. Each test is a probe input from the structure review,
+/// named after it.
+#[cfg(test)]
+mod tests_block_grammar_5160 {
+    use super::{ParsedBlock, parse_logseq_markdown, parse_pasted_text, parse_source_outline};
+
+    /// `(depth, content)` of each block.
+    fn shape(blocks: &[ParsedBlock]) -> Vec<(usize, &str)> {
+        blocks
+            .iter()
+            .map(|b| (b.depth, b.content.as_str()))
+            .collect()
+    }
+
+    /// The three parsers over `md`, each named.
+    fn all_three(md: &str) -> [(&'static str, Vec<ParsedBlock>); 3] {
+        [
+            ("import", parse_logseq_markdown(md).blocks),
+            ("source", parse_source_outline(md).blocks),
+            ("paste", parse_pasted_text(md)),
+        ]
+    }
+
+    fn list_style(block: &ParsedBlock) -> Option<&str> {
+        block
+            .properties
+            .iter()
+            .find(|(k, _)| k == "listStyle")
+            .map(|(_, v)| v.as_str())
+    }
+
+    /// S1: `*`, `+`, `1.` and `1)` start blocks, and `N.` / `N)` store the
+    /// ordered list style.
+    #[test]
+    fn b1_star_plus_and_ordered_markers_start_blocks() {
+        for (md, style) in [
+            ("* a\n* b\n", None),
+            ("+ a\n+ b\n", None),
+            ("1. a\n2. b\n", Some("ordered")),
+            ("1) a\n2) b\n", Some("ordered")),
+        ] {
+            for (parser, blocks) in all_three(md) {
+                assert_eq!(shape(&blocks), [(0, "a"), (0, "b")], "{parser}: {md:?}");
+                assert_eq!(list_style(&blocks[0]), style, "{parser}: {md:?}");
+                assert_eq!(list_style(&blocks[1]), style, "{parser}: {md:?}");
+            }
+        }
+        for (parser, blocks) in all_three("- a\n  * b\n    + c\n") {
+            assert_eq!(shape(&blocks), [(0, "a"), (1, "b"), (2, "c")], "{parser}");
+        }
+    }
+
+    /// S1: an LLM answer's numbered list with three-space `-` children.
+    #[test]
+    fn b4_llm_numbered_list_with_three_space_children() {
+        for (parser, blocks) in all_three("1. First\n   - sub a\n   - sub b\n2. Second\n") {
+            assert_eq!(
+                shape(&blocks),
+                [(0, "First"), (1, "sub a"), (1, "sub b"), (0, "Second")],
+                "{parser}"
+            );
+            assert_eq!(list_style(&blocks[3]), Some("ordered"), "{parser}");
+        }
+    }
+
+    /// S6: a tab after the marker is a bullet in every mode.
+    #[test]
+    fn b4_dash_tab_is_a_bullet_in_all_modes() {
+        for (parser, blocks) in all_three("-\ta\n-\tb\n") {
+            assert_eq!(shape(&blocks), [(0, "a"), (0, "b")], "{parser}");
+        }
+    }
+
+    /// S7: depth is the nesting, not the indentation over two.
+    #[test]
+    fn b1_indent4_nests_by_content_column() {
+        for (parser, blocks) in all_three("- a\n    - b\n        - c\n") {
+            assert_eq!(shape(&blocks), [(0, "a"), (1, "b"), (2, "c")], "{parser}");
+        }
+        for (parser, blocks) in all_three("- a\n   - b\n      - c\n") {
+            assert_eq!(shape(&blocks), [(0, "a"), (1, "b"), (2, "c")], "{parser}");
+        }
+        // A continuation line loses its own bullet's content column, so no
+        // stray space is left.
+        let blocks = parse_source_outline("- a\n   - b\n     cont of b\n").blocks;
+        assert_eq!(shape(&blocks), [(0, "a"), (1, "b\ncont of b")]);
+        // A four-space outline ten deep is ten deep, under the import clamp.
+        let deep: String = (0..10)
+            .map(|d| format!("{}- b{d}\n", "    ".repeat(d)))
+            .collect();
+        let out = parse_logseq_markdown(&deep);
+        let depths: Vec<usize> = out.blocks.iter().map(|b| b.depth).collect();
+        assert_eq!(depths, (0..10).collect::<Vec<_>>());
+        assert!(out.warnings.is_empty(), "{:?}", out.warnings);
+    }
+
+    /// S2 + D16: a README is one block per heading and paragraph, each
+    /// heading owning what follows it.
+    #[test]
+    fn b2_readme_shape_reads_as_a_document() {
+        let md = "# Title\n\n## A\n\nPara a.\n\n## B\n\nPara b.\n\n- item\n";
+        for (parser, blocks) in all_three(md) {
+            assert_eq!(
+                shape(&blocks),
+                [
+                    (0, "# Title"),
+                    (1, "## A"),
+                    (2, "Para a."),
+                    (1, "## B"),
+                    (2, "Para b."),
+                    (2, "item"),
+                ],
+                "{parser}"
+            );
+        }
+    }
+
+    /// S2 + D16: a heading between two lists owns the second one.
+    #[test]
+    fn b2_heading_between_lists() {
+        let md = "- one\n- two\n\n## Section\n\n- three\n- four\n";
+        for (parser, blocks) in all_three(md) {
+            assert_eq!(
+                shape(&blocks),
+                [
+                    (0, "one"),
+                    (0, "two"),
+                    (0, "## Section"),
+                    (1, "three"),
+                    (1, "four"),
+                ],
+                "{parser}"
+            );
+        }
+        let md = "# H1\n## H2\n### H3\n#### H4\n##### H5\n###### H6\n";
+        for (parser, blocks) in all_three(md) {
+            let depths: Vec<usize> = blocks.iter().map(|b| b.depth).collect();
+            assert_eq!(depths, [0, 1, 2, 3, 4, 5], "{parser}");
+        }
+    }
+
+    /// D16: a heading inside a list item is its own block and owns nothing.
+    #[test]
+    fn b2_heading_in_bullet_is_its_own_block_and_owns_nothing() {
+        for (parser, blocks) in all_three("- one\n  # Heading inside bullet\n  - two\n") {
+            assert_eq!(
+                shape(&blocks),
+                [(0, "one"), (1, "# Heading inside bullet"), (1, "two")],
+                "{parser}"
+            );
+        }
+    }
+
+    /// D2 + D3: a paragraph is a block; a blank line separates blocks and a
+    /// single line break stays inside the block.
+    #[test]
+    fn b2_paragraphs_are_blocks() {
+        for (parser, blocks) in all_three("Just a paragraph.\n\nAnother paragraph.\n\nA third.\n") {
+            assert_eq!(
+                shape(&blocks),
+                [
+                    (0, "Just a paragraph."),
+                    (0, "Another paragraph."),
+                    (0, "A third.")
+                ],
+                "{parser}"
+            );
+        }
+        for (parser, blocks) in all_three("line one\nline two\n\nnext\n") {
+            assert_eq!(
+                shape(&blocks),
+                [(0, "line one\nline two"), (0, "next")],
+                "{parser}"
+            );
+        }
+        // A column-0 line after a blank line ends the list.
+        for (parser, blocks) in all_three("- one\n\ncontinuation at col 0 ends list\n\n- two\n") {
+            assert_eq!(
+                shape(&blocks),
+                [
+                    (0, "one"),
+                    (0, "continuation at col 0 ends list"),
+                    (0, "two")
+                ],
+                "{parser}"
+            );
+        }
+        // Lazily, with no blank line, it continues the bullet.
+        for (parser, blocks) in all_three("- line one\nlazy continuation\n- next\n") {
+            assert_eq!(
+                shape(&blocks),
+                [(0, "line one\nlazy continuation"), (0, "next")],
+                "{parser}"
+            );
+        }
+        for (parser, blocks) in all_three("para\n- a\n  - b\n") {
+            assert_eq!(
+                shape(&blocks),
+                [(0, "para"), (0, "a"), (1, "b")],
+                "{parser}"
+            );
+        }
+    }
+
+    /// CommonMark § 5.2: outside a list, a list item interrupts a paragraph
+    /// only when it is non-empty and, if ordered, numbered 1. Otherwise the
+    /// line is the paragraph's text, so hard-wrapped prose keeps its `42.`.
+    #[test]
+    fn a_list_item_interrupts_a_paragraph_outside_a_list_only_when_non_empty_and_from_one() {
+        let cases: [(&str, &[(usize, &str)]); 9] = [
+            (
+                "The answer is\n42. That is all.",
+                &[(0, "The answer is\n42. That is all.")],
+            ),
+            ("Year\n2024.\nmore", &[(0, "Year\n2024.\nmore")]),
+            ("Intro\n1. first", &[(0, "Intro"), (0, "first")]),
+            ("Intro\n- a", &[(0, "Intro"), (0, "a")]),
+            ("Intro\n-", &[(0, "Intro\n-")]),
+            ("- a\n-\n- b", &[(0, "a"), (0, ""), (0, "b")]),
+            // A line that would not continue the paragraph starts a list.
+            ("Intro\n\n2. b", &[(0, "Intro"), (0, "b")]),
+            ("# H\n2. b", &[(0, "# H"), (1, "b")]),
+            // A paragraph inside a list item keeps starting items.
+            (
+                "- one\n  # H\n  para\n  2. x",
+                &[(0, "one"), (1, "# H"), (1, "para"), (1, "x")],
+            ),
+        ];
+        for (md, want) in cases {
+            for (parser, blocks) in all_three(md) {
+                assert_eq!(shape(&blocks), want, "{parser}: {md:?}");
+            }
+        }
+        for (parser, blocks) in all_three("Intro\n1. first") {
+            assert_eq!(list_style(&blocks[1]), Some("ordered"), "{parser}");
+        }
+    }
+
+    /// S2: a thematic break and a block quote are blocks of their own.
+    #[test]
+    fn b2_thematic_break_and_quote_are_blocks() {
+        for (parser, blocks) in all_three("- one\n- two\n\n---\n\n- three\n") {
+            assert_eq!(
+                shape(&blocks),
+                [(0, "one"), (0, "two"), (0, "---"), (0, "three")],
+                "{parser}"
+            );
+        }
+        for (parser, blocks) in all_three("- one\n\n> quoted line\n> more quote\n\n- two\n") {
+            assert_eq!(
+                shape(&blocks),
+                [(0, "one"), (0, "> quoted line\n> more quote"), (0, "two")],
+                "{parser}"
+            );
+        }
+    }
+
+    /// S3: a pasted LLM answer is seven blocks, the fence whole and code.
+    #[test]
+    fn b2_llm_answer_pastes_as_seven_blocks() {
+        let md = "Answer:\n\n1. First step\n   - sub a\n   - sub b\n2. Second step\n\n```sh\nnpm install\n```\n\nDone.\n";
+        let blocks = parse_pasted_text(md);
+        assert_eq!(
+            shape(&blocks),
+            [
+                (0, "Answer:"),
+                (0, "First step"),
+                (1, "sub a"),
+                (1, "sub b"),
+                (0, "Second step"),
+                (0, "```sh\nnpm install\n```"),
+                (0, "Done."),
+            ]
+        );
+        let code: Vec<bool> = blocks.iter().map(|b| b.is_code).collect();
+        assert_eq!(code, [false, false, false, false, false, true, false]);
+    }
+
+    /// S4: a fence closes only on a run of its character at least as long.
+    #[test]
+    fn b6_fence_length_is_tracked() {
+        let md = "- ````md\n  ```\n  - inner bullet\n  ```\n  ````\n- next\n";
+        for (parser, blocks) in all_three(md) {
+            assert_eq!(
+                shape(&blocks),
+                [(0, "````md\n```\n- inner bullet\n```\n````"), (0, "next")],
+                "{parser}"
+            );
+            assert!(blocks[0].is_code, "{parser}");
+            assert!(!blocks[1].is_code, "{parser}");
+        }
+    }
+
+    /// S5: `~~~` fences code, so nothing inside is a bullet or a property.
+    #[test]
+    fn b3_tilde_fence_is_code() {
+        let md = "- ~~~\n  - x\n  key:: v\n  ~~~\n- next\n";
+        for (parser, blocks) in all_three(md) {
+            assert_eq!(
+                shape(&blocks),
+                [(0, "~~~\n- x\nkey:: v\n~~~"), (0, "next")],
+                "{parser}"
+            );
+            assert!(blocks[0].is_code, "{parser}");
+            assert!(blocks[0].properties.is_empty(), "{parser}");
+        }
+    }
+
+    /// S5: a fence records its column: a `- ` line inside a column-0 fence
+    /// stays code.
+    #[test]
+    fn b6_fence_col0_keeps_its_bullet_lines() {
+        let md = "- one\n\n```sh\n- not a bullet\n```\n\n- two\n";
+        for (parser, blocks) in all_three(md) {
+            assert_eq!(
+                shape(&blocks),
+                [(0, "one"), (0, "```sh\n- not a bullet\n```"), (0, "two")],
+                "{parser}"
+            );
+            assert!(blocks[1].is_code, "{parser}");
+        }
+    }
+
+    /// An indented fence outside any list holds a column-0 line: only a list
+    /// item's content column ends a fence early.
+    #[test]
+    fn an_indented_top_level_fence_holds_a_column_zero_line() {
+        for (parser, blocks) in all_three(" ```\n#hushed\n ```\nafter\n") {
+            assert_eq!(
+                shape(&blocks),
+                [(0, "```\n#hushed\n```"), (0, "after")],
+                "{parser}"
+            );
+            assert!(blocks[0].is_code, "{parser}");
+        }
+    }
+
+    /// A fence indented past its bullet's content column is that bullet's.
+    #[test]
+    fn b5_fence_deeper_than_its_bullet_is_its_content() {
+        // Code keeps its indentation past the bullet's content column.
+        for (parser, blocks) in all_three("- a\n    ```\n    code\n    ```\n") {
+            assert_eq!(shape(&blocks), [(0, "a\n  ```\n  code\n  ```")], "{parser}");
+            assert!(blocks[0].is_code, "{parser}");
+        }
+    }
+
+    /// D5: on import and paste an unterminated fence ends with its list item.
+    #[test]
+    fn b3_unterminated_fence_ends_with_its_list_item() {
+        let md = "- ```\n  never closed\n- next\n- after\n";
+        for (parser, blocks) in [
+            ("import", parse_logseq_markdown(md).blocks),
+            ("paste", parse_pasted_text(md)),
+        ] {
+            assert_eq!(
+                shape(&blocks),
+                [(0, "```\nnever closed"), (0, "next"), (0, "after")],
+                "{parser}"
+            );
+        }
+        // A bullet-shaped line left of the fence's column ends the item, as
+        // CommonMark reads it, and the bare fence after it opens a new one.
+        let blocks = parse_logseq_markdown("- ```\n- interior\n```\n").blocks;
+        assert_eq!(shape(&blocks), [(0, "```"), (0, "interior"), (0, "```")]);
+    }
+
+    /// D5: in a source buffer an unterminated fence stops at the next bullet
+    /// carrying a block's anchor, with a warning naming the fence; a bullet
+    /// without one is code.
+    #[test]
+    fn b3_unterminated_fence_in_a_source_buffer_stops_at_the_next_anchored_bullet() {
+        const A: &str = "01J0000000000000000000000A";
+        const B: &str = "01J0000000000000000000000B";
+        let out = parse_source_outline(&format!("- a\n  ```\n  code\n- b ^{B}\n"));
+        assert_eq!(shape(&out.blocks), [(0, "a\n```\ncode"), (0, "b")]);
+        assert!(out.blocks[0].is_code);
+        assert_eq!(out.blocks[1].block_anchor.as_deref(), Some(B));
+        assert_eq!(out.warnings.len(), 1, "{:?}", out.warnings);
+        assert!(
+            out.warnings[0].contains("```") && out.warnings[0].contains("line 2"),
+            "{:?}",
+            out.warnings
+        );
+
+        let out = parse_source_outline(&format!("- a\n  ```\n  code\n- b\n- c ^{A}\n"));
+        assert_eq!(shape(&out.blocks), [(0, "a\n```\ncode\n- b"), (0, "c")]);
+        assert_eq!(out.blocks[1].block_anchor.as_deref(), Some(A));
+    }
+}
+
+/// The line probes the grammar and the renderer share (#5160): the escape set
+/// for continuation and code lines, the fence runs, and the title heading an
+/// import drops.
+#[cfg(test)]
+mod tests_line_probes_5160 {
+    use super::{
+        FenceRun, closes_fence, continuation_line_is_ambiguous, fence_opener, fence_run,
+        needs_anchor_line_escape, parse_logseq_markdown, parse_source_outline, source_fence_opener,
+        strip_title_heading, unescape_code_line,
+    };
+
+    /// The renderer escapes exactly the continuation lines the grammar would
+    /// read as a block start or a property, looking past backslashes so the
+    /// escape is injective (#2716).
+    #[test]
+    fn continuation_line_escapes_cover_every_block_start() {
+        for line in [
+            "- looks like a bullet",
+            "-",
+            "  - indented bullet",
+            "* b",
+            "+ b",
+            "*",
+            "1. b",
+            "1) b",
+            "12.",
+            "-\tb",
+            "# H",
+            "## H",
+            "######",
+            "key:: value",
+            "todo_state:: TODO",
+            "\\- already escaped",
+            "\\\\ - two backslashes",
+            "\\* b",
+            "\\## H",
+            "\\key:: value",
+        ] {
+            assert!(continuation_line_is_ambiguous(line), "{line:?}");
+        }
+        for line in [
+            "just prose",
+            "see http://x :: y",
+            "\\alpha",
+            "dash-in-middle - here",
+            "-foo",
+            "*foo*",
+            "1.5 x",
+            "1234567890. x",
+            "#tag",
+            "####### seven",
+            "---",
+            "```",
+            "~~~",
+        ] {
+            assert!(!continuation_line_is_ambiguous(line), "{line:?}");
+        }
+        // Read back: each escaped line is the block's text.
+        let out = parse_source_outline("- a\n  \\* b\n  \\## H\n  \\1) c\n  \\-\tdash\n");
+        assert_eq!(out.blocks.len(), 1, "{:?}", out.blocks);
+        assert_eq!(out.blocks[0].content, "a\n* b\n## H\n1) c\n-\tdash");
+        let out = parse_logseq_markdown("- a\n  \\+ b\n  \\### H\n");
+        assert_eq!(out.blocks[0].content, "a\n+ b\n### H");
+    }
+
+    /// A code line that would end its fence in a source buffer is escaped: the
+    /// anchor line, and a bullet carrying a block's anchor (D5).
+    #[test]
+    fn a_code_line_shaped_like_an_anchored_bullet_is_escaped_and_read_back() {
+        const A: &str = "01J0000000000000000000000A";
+        const B: &str = "01J0000000000000000000000B";
+        for line in [
+            format!("^{A}"),
+            format!("- x ^{A}"),
+            format!("* x ^{A}"),
+            format!("  1. x ^{A}"),
+            format!("\\- x ^{A}"),
+        ] {
+            assert!(needs_anchor_line_escape(&line), "{line:?}");
+            assert_eq!(unescape_code_line(&format!("\\{line}")), line, "{line:?}");
+        }
+        for line in ["- x ^word", "x ^01J0000000000000000000000A", "- x", "```"] {
+            assert!(!needs_anchor_line_escape(line), "{line:?}");
+            assert_eq!(unescape_code_line(line), line, "{line:?}");
+        }
+        // Escaped inside a fence, it is code and leaves the fence open.
+        let out = parse_source_outline(&format!("- ```\n  \\- x ^{B}\n  ```\n  ^{A}\n"));
+        assert_eq!(out.blocks.len(), 1, "{:?}", out.blocks);
+        assert_eq!(out.blocks[0].content, format!("```\n- x ^{B}\n```"));
+        assert_eq!(out.blocks[0].block_anchor.as_deref(), Some(A));
+        assert!(out.warnings.is_empty(), "{:?}", out.warnings);
+    }
+
+    /// A fence is three or more backticks or tildes; a backtick fence's info
+    /// string holds no backtick; it closes on a run of its character at least
+    /// as long and nothing else.
+    #[test]
+    fn fence_runs_open_and_close_as_commonmark_reads_them() {
+        assert_eq!(fence_run("```sh"), Some(FenceRun { ch: b'`', len: 3 }));
+        assert_eq!(fence_run("~~~~yaml"), Some(FenceRun { ch: b'~', len: 4 }));
+        for text in ["``", "~~", "`code`", "```a`b", "x```", ""] {
+            assert_eq!(fence_run(text), None, "{text:?}");
+        }
+        let three = fence_run("```").expect("a fence");
+        assert!(closes_fence("```", three));
+        assert!(closes_fence("  ````  ", three));
+        assert!(!closes_fence("``", three));
+        assert!(!closes_fence("~~~", three));
+        assert!(!closes_fence("```sh", three));
+        assert!(!closes_fence("- ```", three));
+        // At the line level a bullet's markers are looked past.
+        assert!(fence_opener("  - ```rust").is_some());
+        assert!(fence_opener("* - ~~~").is_some());
+        assert!(fence_opener("1. ```").is_some());
+        assert!(fence_opener("- \\- ```").is_none());
+        assert!(
+            fence_opener("- [ ] ```").is_none(),
+            "an import reads no checkbox"
+        );
+        assert!(source_fence_opener("- [ ] ```").is_some());
+    }
+
+    /// An import drops a leading `# Title` equal to the page title it derived
+    /// from the file name (S6), and keeps any other first line.
+    #[test]
+    fn a_leading_title_heading_equal_to_the_derived_title_is_dropped() {
+        let md = "# Trip\n\n---\nstatus: planning\n---\n\n- a\n";
+        let out = parse_logseq_markdown(strip_title_heading(md, "Trip"));
+        let contents: Vec<&str> = out.blocks.iter().map(|b| b.content.as_str()).collect();
+        assert_eq!(contents, ["a"]);
+        assert_eq!(out.blocks[0].depth, 0);
+        assert_eq!(
+            out.frontmatter,
+            [("status".to_string(), "planning".to_string())]
+        );
+        assert_eq!(strip_title_heading("# Trip\r\n- a\r\n", "Trip"), "- a\r\n");
+        assert_eq!(strip_title_heading("# Trip", "Trip"), "");
+        for (md, title) in [
+            ("# Trip\n- a\n", "Other"),
+            ("## Trip\n- a\n", "Trip"),
+            ("- # Trip\n", "Trip"),
+            ("\n# Trip\n", "Trip"),
+        ] {
+            assert_eq!(strip_title_heading(md, title), md, "{md:?} {title:?}");
+        }
     }
 }

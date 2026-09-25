@@ -5,12 +5,15 @@ expression: "serde_json::json!({\n    \"import\": output_shape(parse_logseq_mark
 import:
   blocks:
     - block_anchor: ~
-      content: "Markdown is the most popular format that Logseq supports. Logseq supports most syntaxes including some extended ones.\n### **Standard** syntax"
+      content: Markdown is the most popular format that Logseq supports. Logseq supports most syntaxes including some extended ones.
       depth: 0
       is_code: false
-      properties:
-        - - id
-          - 60a78b6b-a0ff-49fe-822f-87216fbf79ff
+      properties: []
+    - block_anchor: ~
+      content: "### **Standard** syntax"
+      depth: 0
+      is_code: false
+      properties: []
     - block_anchor: ~
       content: "what's logseq? #card"
       depth: 1
@@ -26,10 +29,17 @@ import:
       is_code: false
       properties: []
     - block_anchor: ~
-      content: "and so on...\n### **Extended** syntax"
+      content: and so on...
       depth: 1
       is_code: false
       properties: []
+    - block_anchor: ~
+      content: "### **Extended** syntax"
+      depth: 0
+      is_code: false
+      properties:
+        - - id
+          - 60a78b6b-a0ff-49fe-822f-87216fbf79ff
     - block_anchor: ~
       content: "[[term/page reference]]"
       depth: 1
@@ -53,7 +63,7 @@ paste:
     is_code: false
     properties: []
   - block_anchor: ~
-    content: "- Markdown is the most popular format that Logseq supports. Logseq supports most syntaxes including some extended ones."
+    content: Markdown is the most popular format that Logseq supports. Logseq supports most syntaxes including some extended ones.
     depth: 0
     is_code: false
     properties: []
@@ -63,27 +73,21 @@ paste:
     is_code: false
     properties: []
   - block_anchor: ~
-    content: "- what's logseq? #card"
+    content: "what's logseq? #card"
     depth: 1
     is_code: false
-    properties: []
+    properties:
+      - - card-last-interval
+        - "28.3"
+      - - card-repeats
+        - "4"
   - block_anchor: ~
-    content: "card-last-interval:: 28.3"
+    content: knowledge base
     depth: 2
     is_code: false
     properties: []
   - block_anchor: ~
-    content: "card-repeats:: 4"
-    depth: 2
-    is_code: false
-    properties: []
-  - block_anchor: ~
-    content: "- knowledge base"
-    depth: 2
-    is_code: false
-    properties: []
-  - block_anchor: ~
-    content: "- and so on..."
+    content: and so on...
     depth: 1
     is_code: false
     properties: []
@@ -91,24 +95,18 @@ paste:
     content: "### **Extended** syntax"
     depth: 0
     is_code: false
-    properties: []
+    properties:
+      - - id
+        - 60a78b6b-a0ff-49fe-822f-87216fbf79ff
   - block_anchor: ~
-    content: "id:: 60a78b6b-a0ff-49fe-822f-87216fbf79ff"
-    depth: 0
-    is_code: false
-    properties: []
-  - block_anchor: ~
-    content: "- [[term/page reference]]"
+    content: "[[term/page reference]]"
     depth: 1
     is_code: false
-    properties: []
+    properties:
+      - - id
+        - 60ab4582-5a6e-4f3a-84a2-71ae056455a0
   - block_anchor: ~
-    content: "id:: 60ab4582-5a6e-4f3a-84a2-71ae056455a0"
-    depth: 2
-    is_code: false
-    properties: []
-  - block_anchor: ~
-    content: "- syntax: `[[page name]]`"
+    content: "syntax: `[[page name]]`"
     depth: 2
     is_code: false
     properties: []
@@ -120,12 +118,15 @@ source:
       is_code: false
       properties: []
     - block_anchor: ~
-      content: "Markdown is the most popular format that Logseq supports. Logseq supports most syntaxes including some extended ones.\n### **Standard** syntax"
+      content: Markdown is the most popular format that Logseq supports. Logseq supports most syntaxes including some extended ones.
       depth: 0
       is_code: false
-      properties:
-        - - id
-          - 60a78b6b-a0ff-49fe-822f-87216fbf79ff
+      properties: []
+    - block_anchor: ~
+      content: "### **Standard** syntax"
+      depth: 0
+      is_code: false
+      properties: []
     - block_anchor: ~
       content: "what's logseq? #card"
       depth: 1
@@ -141,10 +142,17 @@ source:
       is_code: false
       properties: []
     - block_anchor: ~
-      content: "and so on...\n### **Extended** syntax"
+      content: and so on...
       depth: 1
       is_code: false
       properties: []
+    - block_anchor: ~
+      content: "### **Extended** syntax"
+      depth: 0
+      is_code: false
+      properties:
+        - - id
+          - 60a78b6b-a0ff-49fe-822f-87216fbf79ff
     - block_anchor: ~
       content: "[[term/page reference]]"
       depth: 1

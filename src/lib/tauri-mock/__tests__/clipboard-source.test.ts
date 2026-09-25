@@ -1,7 +1,8 @@
 /**
  * #5140 Phase 3b — mock `get_blocks_source` and `paste_blocks`, the clipboard
- * pair. Both are approximations of the backend grammar (bullets, indentation,
- * continuation lines; no anchors, markers, properties or names), so what is
+ * pair. Both are approximations of the backend grammar (list markers, headings,
+ * paragraphs, indentation, continuation lines; no fences, anchors, list-style
+ * or task markers, properties or names), so what is
  * pinned here is the shape the Playwright specs rely on: a copied subtree
  * pastes back as the same tree. Everything is read back through the mock's own
  * read commands. Backend parity for `paste_blocks` is pinned by
@@ -156,15 +157,90 @@ describe('tauri-mock clipboard pair', () => {
       ])
     })
 
-    it('takes text that does not open with a bullet as one block per line, nested by indentation', () => {
-      const pasted = paste(A, { kind: 'text', text: 'first\n  under first\n\nsecond' })
+    it('reads text that does not open with a bullet by the same grammar: a heading owns what follows, lines join into a paragraph, `*` bullets nest', () => {
+      const pasted = paste(A, {
+        kind: 'text',
+        text: '## Plan\n\nIntro line one\nline two\n\n* first\n  * nested\n\nAfter',
+      })
 
       expect(pasted.map((r) => [r.content, r.parent_id])).toEqual([
-        ['first', PAGE],
-        ['under first', pasted[0]?.id],
-        ['second', PAGE],
+        ['## Plan', PAGE],
+        ['Intro line one\nline two', pasted[0]?.id],
+        ['first', pasted[0]?.id],
+        ['nested', pasted[2]?.id],
+        ['After', pasted[0]?.id],
       ])
     })
+
+    it('starts a block at any list marker and nests by the content column', () => {
+      const pasted = paste(A, { kind: 'text', text: '1. one\n   + two\n2) three\n-\tfour' })
+
+      expect(pasted.map((r) => [r.content, r.parent_id])).toEqual([
+        ['one', PAGE],
+        ['two', pasted[0]?.id],
+        ['three', PAGE],
+        ['four', PAGE],
+      ])
+    })
+
+    it.each([
+      ['The answer is\n42. That is all.', [['The answer is\n42. That is all.', 'Home']]],
+      ['Year\n2024.\nmore', [['Year\n2024.\nmore', 'Home']]],
+      [
+        'Intro\n1. first',
+        [
+          ['Intro', 'Home'],
+          ['first', 'Home'],
+        ],
+      ],
+      [
+        'Intro\n- a',
+        [
+          ['Intro', 'Home'],
+          ['a', 'Home'],
+        ],
+      ],
+      ['Intro\n-', [['Intro\n-', 'Home']]],
+      [
+        '- a\n-\n- b',
+        [
+          ['a', 'Home'],
+          ['', 'Home'],
+          ['b', 'Home'],
+        ],
+      ],
+      [
+        'Intro\n\n2. b',
+        [
+          ['Intro', 'Home'],
+          ['b', 'Home'],
+        ],
+      ],
+      [
+        '# H\n2. b',
+        [
+          ['# H', 'Home'],
+          ['b', '# H'],
+        ],
+      ],
+      [
+        '- one\n  # H\n  para\n  2. x',
+        [
+          ['one', 'Home'],
+          ['# H', 'one'],
+          ['para', 'one'],
+          ['x', 'one'],
+        ],
+      ],
+    ])(
+      'starts a list after a paragraph outside a list only at a non-empty item numbered 1: %j',
+      (text, want) => {
+        const pasted = paste(A, { kind: 'text', text })
+        const parentContent = (r: Row) => blocks.get(r.parent_id ?? '')?.['content']
+
+        expect(pasted.map((r) => [r.content, parentContent(r)])).toEqual(want)
+      },
+    )
 
     it('creates `blocks` input verbatim, a multi-line block staying ONE block', () => {
       const pasted = paste(B, {

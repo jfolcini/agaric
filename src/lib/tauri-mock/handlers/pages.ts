@@ -1254,22 +1254,21 @@ export const pagesHandlers = {
   // ---------------------------------------------------------------------------
 
   // DELIBERATE APPROXIMATION of the Rust importer (#1919). The real import
-  // contract lives in `src-tauri/src/import.rs` (`parse_logseq_markdown`) and
-  // `src-tauri/src/commands/pages/markdown.rs` (`import_markdown_with_progress`
+  // contract lives in `agaric-engine/src/import.rs` (`parse_logseq_markdown`)
+  // and `src-tauri/src/commands/pages/markdown.rs` (`import_markdown_with_progress`
   // / `folder_path_to_namespace_title`). This handler does NOT reimplement that
   // parser — it deliberately models a faithful *subset* of the backend so the
   // dev-preview UI (progress bar, warnings panel, "N properties" branch) is
   // exercised, while never *accepting more structure than the backend does*.
   //
-  // It intentionally aligns with the backend on the two things tests can assert:
+  // It intentionally aligns with the backend on the things tests can assert:
   //   - Title: derived from the filename/folder path the same way the backend
   //     does (strip `.md`, normalise `\`→`/`, drop empty segments, rejoin with
-  //     `/`), falling back to "Imported Page". A leading `# heading` is NOT a
-  //     title source (the backend never reads one — import.rs treats `# heading`
-  //     as ordinary content).
-  //   - Block bullets: ONLY a `- ` prefix marks a bullet, matching
-  //     import.rs `strip_prefix("- ")`. `*`, `+`, and `1.` markers are kept as
-  //     literal content (the backend does not recognise them).
+  //     `/`), falling back to "Imported Page". A leading `# heading` equal to
+  //     that title is the title, not a block (#5160 S6); any other heading is
+  //     ordinary content.
+  //   - Blocks: the mock's block grammar (`parseOutline` in blocks.ts): one
+  //     block per list item of any marker, heading and paragraph.
   //
   // It intentionally does NOT model (and tests MUST NOT rely on the mock for
   // any of these — the Rust tests own the import contract):
@@ -1277,7 +1276,7 @@ export const pagesHandlers = {
   //     (`properties_set`); no property values are stamped onto blocks.
   //   - Wiki-link (`[[...]]`) resolution.
   //   - `((block-ref))` stripping.
-  //   - Indentation → depth nesting (all content blocks are emitted flat).
+  //   - Depth: every content block is emitted flat under the page.
   //   - `#tag` and attachment handling (kept as literal text).
   //
   // WARNING: mock-backed frontend tests give NO assurance about import-contract
@@ -1316,10 +1315,8 @@ export const pagesHandlers = {
 
     // Derive the page title the way the backend does
     // (`folder_path_to_namespace_title`, markdown.rs): strip a trailing `.md`,
-    // normalise `\`→`/`, drop empty segments, rejoin with `/`. A leading
-    // `# heading` is NOT a title source (import.rs never reads one — it treats
-    // the heading line as ordinary content). Fall back to "Imported Page" when
-    // nothing usable remains, matching markdown.rs:884.
+    // normalise `\`→`/`, drop empty segments, rejoin with `/`. Fall back to
+    // "Imported Page" when nothing usable remains, matching markdown.rs:884.
     const namespaceTitle = (filename ?? '')
       .replace(/\.md$/i, '')
       .replace(/\\/g, '/')
@@ -1328,9 +1325,11 @@ export const pagesHandlers = {
       .filter((seg) => seg.length > 0)
       .join('/')
     const pageTitle = namespaceTitle.length > 0 ? namespaceTitle : 'Imported Page'
-    // The heading line stays in `lines` as ordinary content (no shift),
-    // mirroring the backend which never excises a `# heading` line.
+    // A leading `# Title` equal to the derived title is dropped, as the
+    // backend's `strip_title_heading` does (#5160 S6).
     const lines = content.split('\n')
+    const first = lines[0]?.replace(/\r$/, '') ?? ''
+    if (first.startsWith('# ') && first.slice(2).trim() === pageTitle) lines.shift()
 
     // Faithful-but-simple property count: the real importer pulls properties
     // from YAML frontmatter and inline `key:: value` lines. We don't reproduce
@@ -1359,17 +1358,7 @@ export const pagesHandlers = {
     // Pre-compute the content blocks so we know `blocks_total` before emitting
     // `started` (the real backend reports the parser's count up front so the UI
     // can render a determinate bar from the very first event).
-    const contentLines = lines
-      .map((line) =>
-        line
-          // Strip ONLY a leading `- ` bullet marker, matching the backend
-          // (import.rs `strip_prefix("- ")`). `*`, `+`, and `1.` markers are
-          // NOT recognised by the importer, so they are left as literal content
-          // here — the mock must not accept structure the real importer ignores.
-          .replace(/^\s*-\s+/, '')
-          .trim(),
-      )
-      .filter((trimmed) => trimmed.length > 0)
+    const contentLines = parseOutline(lines.join('\n')).map((block) => block.content)
     const blocksTotal = contentLines.length
 
     emit({ kind: 'started', page_title: pageTitle, blocks_total: blocksTotal })

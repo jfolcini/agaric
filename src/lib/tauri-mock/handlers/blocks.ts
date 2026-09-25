@@ -609,20 +609,19 @@ interface PlannedPaste {
   depth: number
 }
 
-/** `import::is_bullet_line`: `- text`, or the bare `-` of an empty bullet. */
-function isBulletLine(trimmed: string): boolean {
-  return trimmed === '-' || trimmed.startsWith('- ')
-}
+/**
+ * `import::bullet_marker`: `-`, `+`, `*`, or one to nine digits and `.` or `)`,
+ * followed by a space, a tab or the end of the line.
+ */
+const BULLET_RE = /^(?:[-*+]|\d{1,9}[.)])(?=[ \t]|$)/
 
-/** Indentation depth, two columns per level and a tab counting as one level. */
-function indentDepth(line: string): number {
-  let columns = 0
-  for (const ch of line) {
-    if (ch === ' ') columns += 1
-    else if (ch === '\t') columns += 2
-    else break
-  }
-  return Math.floor(columns / 2)
+/** `import::heading_level`: one to six `#`, then a space, a tab or the end of the line. */
+const HEADING_RE = /^(#{1,6})(?=[ \t]|$)/
+
+/** The columns a line's indentation spans (`import::indent_columns`), a tab counting as two. */
+function indentColumns(line: string): number {
+  const indent = line.slice(0, line.length - line.trimStart().length)
+  return indent.length + (indent.match(/\t/g)?.length ?? 0)
 }
 
 /**
@@ -642,50 +641,99 @@ function dedent(line: string, width: number): string {
   return line.slice(cut)
 }
 
+/** A block the scan may still add lines or children to (`import::Open`). */
+interface OpenBlock {
+  block: PlannedPaste
+  /** The column its line starts at. */
+  marker: number
+  /** Where its text starts: past a bullet's marker, `marker` otherwise. */
+  content: number
+  /**
+   * `heading` is a heading read outside any list, owning what follows it until
+   * a heading of its level or higher (D16); `verbatim` a heading inside a list
+   * item, which owns nothing and is never continued.
+   */
+  kind: 'bullet' | 'paragraph' | 'heading' | 'verbatim'
+  level: number
+}
+
+/** The column a later block must start at to be inside `open`. */
+function ownsFrom(open: OpenBlock): number {
+  if (open.kind === 'bullet') return open.content
+  if (open.kind === 'heading') return open.marker
+  return open.marker + 1
+}
+
 /**
- * DELIBERATE APPROXIMATION of `import::parse_source_outline`: each bullet
- * starts a block at its indentation, and the lines under it — interior blank
- * lines included — join its content with the bullet's own indentation removed.
- * A line before the first bullet is a block of its own. Code fences, list
- * markers, task checkboxes, property lines, escapes and anchors are not
- * modelled.
+ * DELIBERATE APPROXIMATION of `import::parse_source_outline` (#5160 Phase 2a):
+ * the block grammar, for the shapes the mock models. A list marker (`-`, `*`,
+ * `+`, `1.`, `1)`) starts a block, nested by the content column of the open
+ * blocks, unless it would interrupt a paragraph outside a list while empty or
+ * numbered other than 1; a heading is a block of its own and, outside a list,
+ * owns what follows it; a line indented to a bullet's content column continues
+ * it, interior blank lines included, and so does a line with no blank line
+ * before it; consecutive plain lines are one paragraph block. Code fences,
+ * thematic breaks, list-style and task markers, property lines, escapes and
+ * anchors are not modelled.
  */
 export function parseOutline(text: string): PlannedPaste[] {
   const out: PlannedPaste[] = []
+  const open: OpenBlock[] = []
   let blankLines = 0
+  const popTo = (indent: number, level: number | null): void => {
+    let top = open.at(-1)
+    while (
+      top &&
+      (ownsFrom(top) > indent || (level !== null && top.kind === 'heading' && top.level >= level))
+    ) {
+      open.pop()
+      top = open.at(-1)
+    }
+  }
+  const push = (entry: Omit<OpenBlock, 'block'>, content: string): void => {
+    const block = { content, depth: open.length }
+    out.push(block)
+    open.push({ block, ...entry })
+  }
   for (const line of text.replace(/\r\n?/g, '\n').split('\n')) {
     const trimmed = line.trimStart()
     if (trimmed === '') {
       blankLines += 1
       continue
     }
-    const last = out.at(-1)
-    if (isBulletLine(trimmed)) {
-      out.push({ content: trimmed.slice(2), depth: indentDepth(line) })
-    } else if (last) {
-      last.content += `${'\n'.repeat(blankLines + 1)}${dedent(line, (last.depth + 1) * 2)}`
+    const indent = indentColumns(line)
+    const bullet = BULLET_RE.exec(trimmed)
+    const heading = HEADING_RE.exec(trimmed)
+    const top = open.at(-1)
+    // `Scan::starts_item` declining the marker: the line is the paragraph's text.
+    const paragraphText =
+      bullet !== null &&
+      blankLines === 0 &&
+      top?.kind === 'paragraph' &&
+      !open.some((o) => o.kind === 'bullet') &&
+      (trimmed.slice(bullet[0].length).trim() === '' ||
+        (/^\d/.test(bullet[0]) && Number.parseInt(bullet[0], 10) !== 1))
+    if (bullet && !paragraphText) {
+      const len = bullet[0].length
+      popTo(indent, null)
+      const entry = { marker: indent, content: indent + len + 1, kind: 'bullet', level: 0 } as const
+      push(entry, trimmed.slice(len).replace(/^[ \t]/, ''))
+    } else if (heading) {
+      const level = heading[1]?.length ?? 1
+      popTo(indent, level)
+      const kind = open.some((o) => o.kind === 'bullet') ? 'verbatim' : 'heading'
+      push({ marker: indent, content: indent, kind, level }, trimmed)
+    } else if (
+      top &&
+      ((top.kind === 'bullet' && indent >= top.content) ||
+        (blankLines === 0 && (top.kind === 'bullet' || top.kind === 'paragraph')))
+    ) {
+      top.block.content += `${'\n'.repeat(blankLines + 1)}${dedent(line, top.content)}`
     } else {
-      out.push({ content: trimmed, depth: indentDepth(line) })
+      popTo(indent, null)
+      push({ marker: indent, content: indent, kind: 'paragraph', level: 0 }, trimmed)
     }
     blankLines = 0
-  }
-  return out
-}
-
-/**
- * DELIBERATE APPROXIMATION of `import::parse_pasted_text`. Text whose first
- * non-blank line is a bullet is an outline ({@link parseOutline}). Any other
- * text is one block per non-blank line, at its indentation.
- */
-function parsePastedText(text: string): PlannedPaste[] {
-  const lines = text.replace(/\r\n?/g, '\n').split('\n')
-  const firstLine = lines.find((line) => line.trim() !== '')
-  if (firstLine === undefined) return []
-  if (isBulletLine(firstLine.trimStart())) return parseOutline(text)
-  const out: PlannedPaste[] = []
-  for (const line of lines) {
-    if (line.trim() === '') continue
-    out.push({ content: line.trimStart(), depth: indentDepth(line) })
   }
   return out
 }
@@ -1153,7 +1201,7 @@ export const blocksHandlers = {
         `can only paste after a content block, not a '${String(anchor['block_type'])}'`,
       )
     }
-    const planned = input.kind === 'text' ? parsePastedText(input.text) : input.blocks
+    const planned = input.kind === 'text' ? parseOutline(input.text) : input.blocks
     if (planned.length === 0) throw validationRejection('nothing to paste')
     const parentId = (anchor['parent_id'] as string | null) ?? null
     const pageId = (anchor['page_id'] as string | null) ?? null
