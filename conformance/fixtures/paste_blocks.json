@@ -37,7 +37,7 @@
         "id": "B3",
         "page_id": "B1",
         "parent_id": "B1",
-        "position": 6,
+        "position": 7,
         "priority": null,
         "scheduled_date": null,
         "todo_state": null
@@ -50,7 +50,7 @@
         "id": "B4",
         "page_id": "B1",
         "parent_id": "B1",
-        "position": 10,
+        "position": 11,
         "priority": null,
         "scheduled_date": null,
         "todo_state": null
@@ -63,7 +63,7 @@
         "id": "B6",
         "page_id": "B1",
         "parent_id": "B1",
-        "position": 17,
+        "position": 18,
         "priority": null,
         "scheduled_date": null,
         "todo_state": null
@@ -89,7 +89,7 @@
         "id": "B8",
         "page_id": "B1",
         "parent_id": "B1",
-        "position": 20,
+        "position": 21,
         "priority": null,
         "scheduled_date": null,
         "todo_state": null
@@ -102,7 +102,7 @@
         "id": "B9",
         "page_id": "B1",
         "parent_id": "B1",
-        "position": 22,
+        "position": 23,
         "priority": null,
         "scheduled_date": null,
         "todo_state": null
@@ -115,7 +115,7 @@
         "id": "B10",
         "page_id": "B1",
         "parent_id": "B1",
-        "position": 24,
+        "position": 25,
         "priority": null,
         "scheduled_date": null,
         "todo_state": null
@@ -180,7 +180,7 @@
         "id": "B15",
         "page_id": "B1",
         "parent_id": "B1",
-        "position": 5,
+        "position": 6,
         "priority": null,
         "scheduled_date": null,
         "todo_state": null
@@ -206,7 +206,7 @@
         "id": "B17",
         "page_id": "B1",
         "parent_id": "B1",
-        "position": 3,
+        "position": 4,
         "priority": null,
         "scheduled_date": null,
         "todo_state": null
@@ -219,7 +219,7 @@
         "id": "B18",
         "page_id": "B1",
         "parent_id": "B1",
-        "position": 4,
+        "position": 5,
         "priority": null,
         "scheduled_date": null,
         "todo_state": null
@@ -232,7 +232,7 @@
         "id": "B19",
         "page_id": "B1",
         "parent_id": "B1",
-        "position": 7,
+        "position": 8,
         "priority": null,
         "scheduled_date": null,
         "todo_state": null
@@ -245,7 +245,7 @@
         "id": "B20",
         "page_id": "B1",
         "parent_id": "B1",
-        "position": 8,
+        "position": 9,
         "priority": null,
         "scheduled_date": null,
         "todo_state": null
@@ -271,7 +271,7 @@
         "id": "B22",
         "page_id": "B1",
         "parent_id": "B1",
-        "position": 9,
+        "position": 10,
         "priority": null,
         "scheduled_date": null,
         "todo_state": null
@@ -284,7 +284,7 @@
         "id": "B23",
         "page_id": "B1",
         "parent_id": "B1",
-        "position": 16,
+        "position": 17,
         "priority": null,
         "scheduled_date": null,
         "todo_state": null
@@ -310,7 +310,7 @@
         "id": "B25",
         "page_id": "B1",
         "parent_id": "B1",
-        "position": 14,
+        "position": 15,
         "priority": null,
         "scheduled_date": null,
         "todo_state": "TODO"
@@ -336,7 +336,7 @@
         "id": "B27",
         "page_id": "B1",
         "parent_id": "B1",
-        "position": 15,
+        "position": 16,
         "priority": null,
         "scheduled_date": null,
         "todo_state": null
@@ -349,7 +349,7 @@
         "id": "B28",
         "page_id": "B1",
         "parent_id": "B1",
-        "position": 11,
+        "position": 12,
         "priority": null,
         "scheduled_date": null,
         "todo_state": "DOING"
@@ -362,7 +362,7 @@
         "id": "B29",
         "page_id": "B1",
         "parent_id": "B1",
-        "position": 12,
+        "position": 13,
         "priority": null,
         "scheduled_date": null,
         "todo_state": "CANCELLED"
@@ -375,7 +375,7 @@
         "id": "B30",
         "page_id": "B1",
         "parent_id": "B1",
-        "position": 13,
+        "position": 14,
         "priority": null,
         "scheduled_date": null,
         "todo_state": "DONE"
@@ -401,7 +401,7 @@
         "id": "B32",
         "page_id": "B1",
         "parent_id": "B1",
-        "position": 18,
+        "position": 19,
         "priority": null,
         "scheduled_date": null,
         "todo_state": null
@@ -414,7 +414,7 @@
         "id": "B33",
         "page_id": "B1",
         "parent_id": "B1",
-        "position": 19,
+        "position": 20,
         "priority": null,
         "scheduled_date": null,
         "todo_state": null
@@ -427,7 +427,7 @@
         "id": "B34",
         "page_id": "B1",
         "parent_id": "B1",
-        "position": 21,
+        "position": 22,
         "priority": null,
         "scheduled_date": null,
         "todo_state": null
@@ -440,7 +440,7 @@
         "id": "B35",
         "page_id": "B1",
         "parent_id": "B1",
-        "position": 23,
+        "position": 24,
         "priority": null,
         "scheduled_date": null,
         "todo_state": null
@@ -453,7 +453,7 @@
         "id": "B36",
         "page_id": "B1",
         "parent_id": "B1",
-        "position": 25,
+        "position": 26,
         "priority": null,
         "scheduled_date": null,
         "todo_state": null
@@ -466,7 +466,7 @@
         "id": "B37",
         "page_id": "B1",
         "parent_id": "B1",
-        "position": 26,
+        "position": 27,
         "priority": null,
         "scheduled_date": null,
         "todo_state": null
@@ -479,6 +479,19 @@
         "id": "B38",
         "page_id": "B1",
         "parent_id": "B1",
+        "position": 3,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "[[00000000000000000000000S11|the plan]] [[00000000000000000000000S11]] [[00000000000000000000000S12|see it]]",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B39",
+        "page_id": "B1",
+        "parent_id": "B1",
         "position": 2,
         "priority": null,
         "scheduled_date": null,
@@ -486,7 +499,7 @@
       }
     ],
     "op_log_digest": {
-      "count": 36,
+      "count": 37,
       "ops": [
         {
           "op_type": "delete_block"
@@ -595,6 +608,9 @@
         },
         {
           "op_type": "create_block"
+        },
+        {
+          "op_type": "create_block"
         }
       ]
     },
@@ -608,6 +624,18 @@
       {
         "kind": "page_link",
         "source_id": "B38",
+        "source_page_id": "B1",
+        "target_id": "B12"
+      },
+      {
+        "kind": "page_link",
+        "source_id": "B39",
+        "source_page_id": "B1",
+        "target_id": "B11"
+      },
+      {
+        "kind": "page_link",
+        "source_id": "B39",
         "source_page_id": "B1",
         "target_id": "B12"
       }
@@ -738,6 +766,14 @@
       "name": "paste_resolves_page_names_in_the_anchors_space",
       "returns": [
         "B38#block_type=content#content=see [[00000000000000000000000S11]] [[00000000000000000000000S12]] [[TWIN]]#parent_id=B1#position=2"
+      ]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "paste_stores_a_links_label_unless_it_is_the_title",
+      "returns": [
+        "B39#block_type=content#content=[[00000000000000000000000S11|the plan]] [[00000000000000000000000S11]] [[00000000000000000000000S12|see it]]#parent_id=B1#position=2"
       ]
     },
     {

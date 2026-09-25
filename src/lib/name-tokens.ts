@@ -1,7 +1,7 @@
 /**
  * The name tokens the text surfaces resolve: `[[Page]]` links, `#tag` and
  * `#[[multi word]]` tags (#5160 N1, N3). The rules are the backend's
- * (`collect_inbound_page_link_names` / `collect_inbound_tag_names` in
+ * (`collect_inbound_page_link_bodies` / `collect_inbound_tag_names` in
  * `src-tauri/src/commands/pages/markdown.rs`), and both sides are pinned to the
  * same rows of `conformance/reference-tokens.vectors.json` by
  * `reference-tokens-conformance.test.ts`. The Tauri mock resolves names
@@ -14,19 +14,37 @@
  * the `#` follows a boundary, which `&` and `[` are not.
  *
  * A link body splits on its first `|` into the name and a label (#5160 D9),
- * and Logseq's `[label]([[Page]])` is the same token.
+ * and Logseq's `[label]([[Page]])` is the same token. That split is what the
+ * body reads as when no longer reading names a page (D10): the resolver tries
+ * `linkBodyReadings` first.
  */
 
-export interface NameToken {
-  kind: 'page' | 'tag'
+export interface TagToken {
+  kind: 'tag'
   /** `[start, end)` of the whole token in the content, in UTF-16 units. */
   start: number
   end: number
   /** The trimmed name the token resolves. */
   name: string
-  /** The trimmed label a `[[name|label]]` link shows, when it has one. */
-  label?: string
 }
+
+export interface PageToken {
+  kind: 'page'
+  /** `[start, end)` of the whole token in the content, in UTF-16 units. */
+  start: number
+  end: number
+  /**
+   * The trimmed name before the body's first `|`, which the token resolves
+   * when no longer reading of the body names a page (#5160 D10).
+   */
+  name: string
+  /** The trimmed label after that `|`, when there is one. */
+  label?: string
+  /** The trimmed body, `Page|label` for Logseq's form. */
+  body: string
+}
+
+export type NameToken = TagToken | PageToken
 
 type Span = [start: number, end: number]
 
@@ -53,6 +71,30 @@ export function isTagName(name: string): boolean {
  * at both edges the vectors probe: it keeps U+0085 and strips U+FEFF.
  */
 const trimWhiteSpace = (s: string): string => s.replace(/^\p{White_Space}+|\p{White_Space}+$/gu, '')
+
+/** A link body read as a page name, with the label the rest of it shows. */
+export interface LinkReading {
+  name: string
+  label?: string
+}
+
+/**
+ * `link_body_readings`: the ways a link body reads as a name and a label, in
+ * the order the name pass tries them (#5160 D10, exact title first): the whole
+ * body with no label, then each prefix ending before a `|`, longest first,
+ * labelled with the rest. Trimmed; an empty label is none. The last reading
+ * splits on the first `|`.
+ */
+export function linkBodyReadings(body: string): LinkReading[] {
+  const readings: LinkReading[] = [{ name: trimWhiteSpace(body) }]
+  for (let at = body.length - 1; at >= 0; at -= 1) {
+    if (body[at] !== '|') continue
+    const name = trimWhiteSpace(body.slice(0, at))
+    const label = trimWhiteSpace(body.slice(at + 1))
+    readings.push(label === '' ? { name } : { name, label })
+  }
+  return readings
+}
 
 /** Whether the token at `pos` follows an odd run of backslashes. */
 function isEscaped(content: string, pos: number): boolean {
@@ -83,6 +125,17 @@ function spansOf(re: RegExp, content: string): Span[] {
 const inSpan = (pos: number, spans: readonly Span[]): boolean =>
   spans.some(([start, end]) => pos >= start && pos < end)
 
+/** The page token over `[start, end)` whose trimmed body is `body`, split on its first `|`. */
+function pageToken(start: number, end: number, body: string): PageToken {
+  const pipe = body.indexOf('|')
+  if (pipe < 0) return { kind: 'page', start, end, name: body, body }
+  const name = trimWhiteSpace(body.slice(0, pipe))
+  const label = trimWhiteSpace(body.slice(pipe + 1))
+  return label === ''
+    ? { kind: 'page', start, end, name, body }
+    : { kind: 'page', start, end, name, label, body }
+}
+
 /** Every page-link and tag token of `content`, in text order. */
 export function scanNameTokens(content: string): NameToken[] {
   const tokens: NameToken[] = []
@@ -97,24 +150,22 @@ export function scanNameTokens(content: string): NameToken[] {
     let start = m.index
     let end = start + m[0].length
     links.push([start, end])
-    const body = m[1] ?? ''
-    const pipe = body.indexOf('|')
-    const rawName = pipe < 0 ? body : body.slice(0, pipe)
-    const name = trimWhiteSpace(rawName)
-    let label = pipe < 0 ? '' : trimWhiteSpace(body.slice(pipe + 1))
-    // Logseq's `[label]([[Page]])` is one token when its own `[` is one.
+    const inner = m[1] ?? ''
+    const rawName = inner.split('|', 1)[0] ?? ''
+    let body = trimWhiteSpace(inner)
+    // Logseq's `[label]([[Page]])` is one token when its own `[` is one, read
+    // as `[[Page|label]]`.
     const head = LOGSEQ_LABEL_HEAD_RE.exec(content.slice(0, start))
     if (head && content[end] === ')' && isToken(start - head[0].length)) {
-      label = trimWhiteSpace(head[1] ?? '')
+      const logseqLabel = trimWhiteSpace(head[1] ?? '')
+      if (logseqLabel !== '') body = `${body}|${logseqLabel}`
       start -= head[0].length
       end += 1
     } else if (!isToken(start)) continue
     // Untrimmed, as the backend's canonical regex reads the whole token: a
     // padded ULID is a human name.
-    if (name === '' || ULID_RE.test(rawName)) continue
-    tokens.push(
-      label === '' ? { kind: 'page', start, end, name } : { kind: 'page', start, end, name, label },
-    )
+    if (body === '' || ULID_RE.test(rawName)) continue
+    tokens.push(pageToken(start, end, body))
   }
   for (const m of content.matchAll(MULTIWORD_TAG_RE)) {
     const start = m.index

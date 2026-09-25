@@ -14,13 +14,22 @@
  *     `((ULID))` refs are not modelled;
  *   - a `[[Page|label]]` token keeps its label as `[[id|label]]` unless the
  *     label is the page's title (D9);
+ *   - a body holding a `|` reads as the first of its readings (whole, then
+ *     each prefix before a `|`, longest first) that names a page, else splits
+ *     on its first `|`; a reading that ties leaves it text with a warning
+ *     (D10);
  *   - a tag is the smallest-id tag of the same normalised name, else created.
  *
  * Created pages come first, in name order, then tags, each with the
  * `create_block` and `set_property` (space) ops the backend appends.
  */
 
-import { scanNameTokens } from '@/lib/name-tokens'
+import {
+  type LinkReading,
+  linkBodyReadings,
+  type PageToken,
+  scanNameTokens,
+} from '@/lib/name-tokens'
 import { compareUtf8Bytes, foldAsciiUppercase } from '@/lib/sqlite-collation'
 import { appendSlot, insertAtSlotAndRenumber, ownerSpaceOf } from '@/lib/tauri-mock/handlers/shared'
 import { blocks, fakeId, pageAliases, properties, pushOp } from '@/lib/tauri-mock/seed'
@@ -72,6 +81,30 @@ function findPage(name: string, pages: readonly Row[]): Match {
     )
     .map((p) => p['id'] as string)
   return findTitled(name, pages) ?? only(aliased)
+}
+
+/**
+ * `LinkMatches::find_name`: the page titled with the whole name, else, when an
+ * anchor holding no `|` follows its first `#`, the page its base names.
+ */
+function findName(name: string, pages: readonly Row[]): Match {
+  const hashAt = name.indexOf('#')
+  const base = hashAt < 0 ? '' : name.slice(0, hashAt).trim()
+  const anchored = base !== '' && !name.slice(hashAt + 1).includes('|')
+  return findPage(name, pages) ?? (anchored ? findPage(base, pages) : null)
+}
+
+/**
+ * `read_link_body`: the first longer reading of the token's body whose name
+ * names a page, else its first-`|` split; `null` when a reading ties.
+ */
+function readLinkBody(token: PageToken, pages: readonly Row[]): LinkReading | null {
+  for (const reading of linkBodyReadings(token.body).slice(0, -1)) {
+    const match = findName(reading.name, pages)
+    if (match === 'ambiguous') return null
+    if (match) return reading
+  }
+  return token.label === undefined ? { name: token.name } : { name: token.name, label: token.label }
 }
 
 /**
@@ -149,20 +182,30 @@ export function resolveInboundNames(
   opRefs: OpRefs,
 ): ResolvedNames {
   const scanned = contents.map((content) => scanNameTokens(content))
-  const names = (kind: 'page' | 'tag'): string[] =>
-    [...new Set(scanned.flat().flatMap((t) => (t.kind === kind ? [t.name] : [])))].toSorted(
-      compareUtf8Bytes,
-    )
+  const sorted = (names: Iterable<string>): string[] =>
+    [...new Set(names)].toSorted(compareUtf8Bytes)
   const created: Row[] = []
   const warnings: string[] = []
-  const pageIds = new Map<string, string>()
+  const tied = (text: string) =>
+    warnings.push(
+      `wiki-link '[[${text}]]' matches multiple pages in this space; left as plain text`,
+    )
   const pages = livePages(spaceId)
+  const pageTokens = new Map<string, PageToken>()
+  for (const token of scanned.flat()) {
+    if (token.kind === 'page') pageTokens.set(token.body, token)
+  }
+  const readings = new Map<string, LinkReading>()
+  for (const [body, token] of [...pageTokens].toSorted(([a], [b]) => compareUtf8Bytes(a, b))) {
+    const reading = readLinkBody(token, pages)
+    if (reading === null) tied(body)
+    else readings.set(body, reading)
+  }
+  const pageIds = new Map<string, string>()
   const resolvePage = (title: string): string | null => {
     const match = findPage(title, pages)
     if (match === 'ambiguous') {
-      warnings.push(
-        `wiki-link '[[${title}]]' matches multiple pages in this space; left as plain text`,
-      )
+      tied(title)
       return null
     }
     if (match) return match.id
@@ -171,7 +214,7 @@ export function resolveInboundNames(
     created.push(row)
     return row['id'] as string
   }
-  for (const name of names('page')) {
+  for (const name of sorted([...readings.values()].map((r) => r.name))) {
     const hashAt = name.indexOf('#')
     const base = hashAt < 0 ? name : name.slice(0, hashAt).trim()
     if (base === '') continue
@@ -188,7 +231,7 @@ export function resolveInboundNames(
     const norm = normalizeTagName(row['content'] as string)
     if (!tagsByNorm.has(norm)) tagsByNorm.set(norm, row['id'] as string)
   }
-  for (const name of names('tag')) {
+  for (const name of sorted(scanned.flat().flatMap((t) => (t.kind === 'tag' ? [t.name] : [])))) {
     const norm = normalizeTagName(name)
     let id = tagsByNorm.get(norm)
     if (id === undefined) {
@@ -199,12 +242,17 @@ export function resolveInboundNames(
     }
     tagIds.set(name, id)
   }
+  const linkRef = (token: PageToken): string | undefined => {
+    const reading = readings.get(token.body)
+    const id = reading && pageIds.get(reading.name)
+    return id === undefined ? undefined : pageRef(id, reading?.label)
+  }
   const rewritten = contents.map((content, i) => {
     let out = content
     for (const token of (scanned[i] ?? []).toReversed()) {
-      const id = token.kind === 'page' ? pageIds.get(token.name) : tagIds.get(token.name)
-      if (id === undefined) continue
-      const ref = token.kind === 'page' ? pageRef(id, token.label) : `#[${id}]`
+      const tagId = token.kind === 'tag' ? tagIds.get(token.name) : undefined
+      const ref = token.kind === 'page' ? linkRef(token) : tagId && `#[${tagId}]`
+      if (ref === undefined) continue
       out = out.slice(0, token.start) + ref + out.slice(token.end)
     }
     return out

@@ -418,10 +418,12 @@ fn children_of(parents: &[Option<usize>]) -> Vec<Vec<usize>> {
     children
 }
 
-/// The page-link and tag names a block writes, as the importer collects them.
+/// The page-link bodies, inline-query page names and tag names a block
+/// writes, as the importer collects them.
 #[derive(Default)]
 struct Names {
     links: BTreeSet<String>,
+    queries: BTreeSet<String>,
     tags: BTreeSet<String>,
 }
 
@@ -429,10 +431,8 @@ impl Names {
     fn of(block: &import::ParsedBlock) -> Self {
         let one = std::slice::from_ref(block);
         Self {
-            links: collect_inbound_page_link_names(one)
-                .into_iter()
-                .chain(query_page_names(one))
-                .collect(),
+            links: collect_inbound_page_link_bodies(one).into_iter().collect(),
+            queries: query_page_names(one).into_iter().collect(),
             tags: collect_inbound_tag_names(one)
                 .into_iter()
                 .chain(query_tag_names(one))
@@ -443,19 +443,16 @@ impl Names {
     /// The names in `self` that `other` holds, when `held`, or that it does
     /// not.
     fn split(&self, other: &Self, held: bool) -> Self {
+        let pick = |mine: &BTreeSet<String>, theirs: &BTreeSet<String>| {
+            mine.iter()
+                .filter(|name| theirs.contains(*name) == held)
+                .cloned()
+                .collect()
+        };
         Self {
-            links: self
-                .links
-                .iter()
-                .filter(|name| other.links.contains(*name) == held)
-                .cloned()
-                .collect(),
-            tags: self
-                .tags
-                .iter()
-                .filter(|name| other.tags.contains(*name) == held)
-                .cloned()
-                .collect(),
+            links: pick(&self.links, &other.links),
+            queries: pick(&self.queries, &other.queries),
+            tags: pick(&self.tags, &other.tags),
         }
     }
 }
@@ -464,7 +461,7 @@ impl Names {
 /// it already held map to, and the names new to it.
 struct NamePlan {
     row: usize,
-    links: HashMap<String, String>,
+    links: PageLinks,
     tags: HashMap<String, String>,
     new: Names,
 }
@@ -498,17 +495,20 @@ async fn resolve_buffer_names(
         let humanised = slot.is_some_and(|slot| {
             stored.get(base.ids[slot].as_str()) != Some(&base.blocks[slot].content.as_str())
         });
+        // A query's page name reads as a link body does when it names a page
+        // by its exact title, which is all the snapshot maps.
         let (links, tags) = if humanised {
             let snapshot = &data.name_snapshot;
             (
-                snapshot.page_links(kept.links.into_iter().collect()),
+                snapshot.page_links(kept.links.into_iter().chain(kept.queries)),
                 snapshot.tags(kept.tags.into_iter().collect()),
             )
         } else {
-            (HashMap::new(), HashMap::new())
+            (PageLinks::default(), HashMap::new())
         };
         let new = names.split(&held, false);
         new_names.links.extend(new.links.iter().cloned());
+        new_names.queries.extend(new.queries.iter().cloned());
         new_names.tags.extend(new.tags.iter().cloned());
         plans.push(NamePlan {
             row,
@@ -531,16 +531,14 @@ async fn resolve_buffer_names(
     let mut titles = data.page_titles.clone();
     titles.extend(resolved.titles);
     for mut plan in plans {
-        for (names, map, ids) in [
-            (&plan.new.links, &mut plan.links, &resolved.links),
-            (&plan.new.tags, &mut plan.tags, &resolved.tags),
-        ] {
-            map.extend(
-                names
-                    .iter()
-                    .filter_map(|n| Some((n.clone(), ids.get(n)?.clone()))),
-            );
-        }
+        plan.links
+            .extend_from(&resolved.links, &plan.new.links, &plan.new.queries);
+        plan.tags.extend(
+            plan.new
+                .tags
+                .iter()
+                .filter_map(|n| Some((n.clone(), resolved.tags.get(n)?.clone()))),
+        );
         let block = &mut buffer.blocks[plan.row];
         block.content = rewrite_block_content_for_import(block, &plan.links, &titles, &plan.tags);
     }
@@ -555,11 +553,11 @@ fn stored_contents(data: &PageExportData) -> HashMap<&str, &str> {
         .collect()
 }
 
-/// What [`resolve_new_names`] resolved: each name's id, and the pages and tags
-/// it created.
+/// What [`resolve_new_names`] resolved: each link body's reading and each
+/// name's id, and the pages and tags it created.
 #[derive(Default)]
 struct ResolvedNames {
-    links: HashMap<String, String>,
+    links: PageLinks,
     /// Each linked page's title by id.
     titles: HashMap<String, String>,
     tags: HashMap<String, String>,
@@ -577,7 +575,7 @@ async fn resolve_new_names(
     names: Names,
     warnings: &mut Vec<String>,
 ) -> Result<(CommandTx, ResolvedNames), AppError> {
-    if names.links.is_empty() && names.tags.is_empty() {
+    if names.links.is_empty() && names.queries.is_empty() && names.tags.is_empty() {
         return Ok((tx, ResolvedNames::default()));
     }
     let Some(space) = agaric_store::space::resolve_block_space(&mut **tx, &page.id).await? else {
@@ -591,9 +589,9 @@ async fn resolve_new_names(
         warnings,
         created: Vec::new(),
     };
-    let links: Vec<String> = names.links.into_iter().collect();
-    let matches = snapshot_page_link_matches(&mut tx, space.as_str(), &links).await?;
-    let (tx, links) = resolve_link_names(&mut ctx, tx, links, &matches).await?;
+    let bodies = names.links.into_iter().collect();
+    let queries = names.queries.into_iter().collect();
+    let (tx, links) = resolve_page_refs(&mut ctx, tx, bodies, queries).await?;
     let (tx, _, tags, _) =
         resolve_tag_names(&mut ctx, tx, names.tags.into_iter().collect()).await?;
     Ok((

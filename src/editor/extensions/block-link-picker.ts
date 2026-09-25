@@ -10,7 +10,8 @@
  * the name is stored on the link (#5160 D9) unless it is the page's own title,
  * and a `#anchor` names the page titled with the whole text when one exists
  * (D10), else the page before the `#`: typing `[[Page#Heading]]` never creates
- * `Page#Heading` (N6).
+ * `Page#Heading` (N6). A page titled with the text up to a later `|`, or with
+ * all of it, wins over the first `|` (D10): `[[A | B]]` links `A | B`.
  */
 
 import { type Editor, Extension, InputRule } from '@tiptap/core'
@@ -23,6 +24,7 @@ import {
 } from '@/editor/extensions/picker-plugin'
 import type { PickerItem } from '@/editor/SuggestionList'
 import { t } from '@/lib/i18n'
+import { linkBodyReadings } from '@/lib/name-tokens'
 
 export const blockLinkPickerPluginKey = new PluginKey('blockLinkPicker')
 
@@ -89,6 +91,19 @@ export function parseTypedLink(inner: string): TypedLink | null {
 }
 
 /**
+ * The label a picked `item` keeps from the typed `body` (#5160 D9, D10): the
+ * text after the first of the body's readings that names the item as
+ * {@link matchBlockLinkItem} compares, none for the whole body, else the text
+ * after the first `|`; never the item's own title.
+ */
+export function pickedLinkLabel(item: PickerItem, body: string): string | undefined {
+  const readings = linkBodyReadings(body)
+  const named = readings.find((reading) => matchBlockLinkItem([item], reading.name) === item)
+  const label = (named ?? readings.at(-1))?.label
+  return label === (item.title ?? item.label) ? undefined : label
+}
+
+/**
  * The `block_link` node for `id`, labelled unless the label is empty or the
  * target's `title`, which the chip shows anyway and follows through renames.
  */
@@ -102,11 +117,10 @@ export function blockLinkToken(
     : { type: 'block_link', attrs: { id } }
 }
 
-/** The link typed after the popup's `[[` trigger over `range`, or `null` when unreadable. */
-function typedLinkAt(editor: Editor, range: { from: number; to: number }): TypedLink | null {
+/** The link body typed after the popup's `[[` trigger over `range`, or `null` when unreadable. */
+function typedBodyAt(editor: Editor, range: { from: number; to: number }): string | null {
   try {
-    const typed = editor.state.doc.textBetween(range.from, range.to)
-    return parseTypedLink(typed.replace(/^\[\[/, ''))
+    return editor.state.doc.textBetween(range.from, range.to).replace(/^\[\[/, '')
   } catch {
     // A range the document no longer holds.
     return null
@@ -114,36 +128,54 @@ function typedLinkAt(editor: Editor, range: { from: number; to: number }): Typed
 }
 
 /**
- * Resolve a typed link and insert its chip at `insertPos`. `text` is the base
- * name; with an anchor, a page titled with the whole name is looked up first
- * (D10) and the base only when none is, so the anchor is dropped rather than
+ * The page a link name names among the `items` it is searched for (D10): the
+ * page titled with the whole name, else, when an anchor holding no `|` follows
+ * its first `#`, the page before the `#`, so the anchor is dropped rather than
  * minted into a title (N6).
+ */
+async function findTypedName(
+  options: BlockLinkPickerOptions,
+  name: string,
+): Promise<PickerItem | null | undefined> {
+  const whole = matchBlockLinkItem(await options.items(name), name)
+  const hash = name.indexOf('#')
+  const base = hash < 0 ? '' : name.slice(0, hash).trim()
+  if (whole !== undefined || base === '' || name.slice(hash + 1).includes('|')) return whole
+  return matchBlockLinkItem(await options.items(base), base)
+}
+
+/**
+ * Resolve a typed link `body` and insert its chip at `insertPos`: the first of
+ * its readings that names a page wins, with that reading's label; a tie leaves
+ * the text as typed; with none, `link`, its first-`|` split, creates its base.
  */
 function resolveTypedLink(
   editor: Editor,
   options: BlockLinkPickerOptions,
+  body: string,
   link: TypedLink,
   typed: string,
   insertPos: number,
   errorMessage: string,
 ): void {
-  const whole = link.name === link.base ? null : link.name
+  let found: PickerItem | null | undefined
+  let label = link.label
   void resolveAndInsertPickerToken({
     editor,
     text: link.base,
     typed,
     insertPos,
-    items: async (query) => {
-      if (whole === null) return options.items(query)
-      const exact = await options.items(whole)
-      return matchBlockLinkItem(exact, whole) ? exact : options.items(query)
+    items: async () => {
+      for (const reading of linkBodyReadings(body)) {
+        found = await findTypedName(options, reading.name)
+        label = reading.label
+        if (found !== undefined) break
+      }
+      return found ? [found] : []
     },
-    matchItem: (items, query) => {
-      const exact = whole === null ? undefined : matchBlockLinkItem(items, whole)
-      return exact === undefined ? matchBlockLinkItem(items, query) : exact
-    },
+    matchItem: () => found,
     tokenFor: (id, item) =>
-      blockLinkToken(id, link.label, item ? (item.title ?? item.label) : link.base),
+      blockLinkToken(id, label, item ? (item.title ?? item.label) : link.base),
     onCreate: options.onCreate,
     loggerComponent: 'BlockLinkPicker',
     errorMessage,
@@ -183,6 +215,7 @@ export const BlockLinkPicker = Extension.create<BlockLinkPickerOptions>({
           resolveTypedLink(
             editor,
             extensionOptions,
+            selectedText,
             link,
             selectedText,
             insertPos,
@@ -201,7 +234,8 @@ export const BlockLinkPicker = Extension.create<BlockLinkPickerOptions>({
       new InputRule({
         find: /\[\[([^\]]+)\]\]$/,
         handler: ({ state, range, match }) => {
-          const link = parseTypedLink(match[1] ?? '')
+          const body = match[1] ?? ''
+          const link = parseTypedLink(body)
           if (!link) return
 
           // Capture the insertion position *before* deletion so the async
@@ -217,6 +251,7 @@ export const BlockLinkPicker = Extension.create<BlockLinkPickerOptions>({
           resolveTypedLink(
             editor,
             extensionOptions,
+            body,
             link,
             match[0],
             insertPos,
@@ -243,7 +278,8 @@ export const BlockLinkPicker = Extension.create<BlockLinkPickerOptions>({
         items: (query) => extensionOptions.items(parseTypedLink(query)?.base ?? query),
         command: ({ editor, range, props }) => {
           const item = props as PickerItem
-          const typed = typedLinkAt(editor, range)
+          const body = typedBodyAt(editor, range)
+          const typed = body === null ? null : parseTypedLink(body)
           if (item.isCreate && extensionOptions.onCreate) {
             // Shared create path: deletes the trigger range synchronously
             // (closing the popup and the double-create window) and tracks
@@ -259,9 +295,7 @@ export const BlockLinkPicker = Extension.create<BlockLinkPickerOptions>({
               errorMessage: 'Failed to create page for block link',
             })
           } else {
-            const title = item.title ?? item.label
-            const label =
-              typed?.label !== undefined && typed.label !== title ? typed.label : undefined
+            const label = body === null ? undefined : pickedLinkLabel(item, body)
             editor.chain().focus().deleteRange(range).insertBlockLink(item.id, label).run()
           }
         },

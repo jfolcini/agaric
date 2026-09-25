@@ -134,6 +134,26 @@ describe('paste_blocks resolves names in the anchor’s space (#5160 N4)', () =>
     )
   })
 
+  it('reads a title holding a `|` before the label, and splits on the first `|` otherwise (#5160 D10)', () => {
+    const ab = id('AB')
+    put(ab, 'page', 'A | B', null)
+    put(id('XY'), 'page', 'X | Y', null)
+    put(id('XYLOWER'), 'page', 'x | y', null)
+    const rows = paste(
+      ANCHOR,
+      '- [[A | B]] [[a | b|see]] [see]([[A | B]]) [[A | B#Heading|x]] [[X | y|z]] [[C | D]] [[|e]]',
+    )
+    expect(rows.map((r) => r.block_type)).toEqual(['page', 'content'])
+    const c = rows[0] as Row
+    expect(c.content).toBe('C')
+    expect(rows[1]?.content).toBe(
+      `[[${ab}]] [[${ab}|see]] [[${ab}|see]] [[${ab}|x]] [[X | y|z]] [[${c.id}|D]] [[|e]]`,
+    )
+    expect(livePages('')).toHaveLength(0)
+    expect(livePages('A')).toHaveLength(0)
+    expect(livePages('X')).toHaveLength(0)
+  })
+
   it('leaves every name as text when the anchor is in no space', () => {
     const rows = paste(NO_SPACE_ANCHOR, '- see [[Project Plan]] #work')
     expect(rows.map((r) => [r.block_type, r.content])).toEqual([

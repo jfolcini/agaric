@@ -5993,6 +5993,226 @@ async fn import_markdown_stores_link_labels_from_every_form() {
     mat.shutdown();
 }
 
+/// #5160 D10 — a `|` in a link body starts the label only when no longer
+/// reading names a page: `[[A | B]]` is the page titled `A | B`, `[[A |
+/// B|see]]` and Logseq's `[see]([[A | B]])` are that page labelled, and an
+/// anchor still splits off the chosen name. With no page `C | D`, `[[C | D]]`
+/// splits on its first `|`, and `[[|x]]`, which then names nothing, is text.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn import_reads_a_title_holding_a_pipe_before_its_label() {
+    let (pool, dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let ab = dup_page(&pool, &mat, "A | B").await;
+    settle(&mat).await;
+
+    import_file(
+        &pool,
+        &mat,
+        dir.path(),
+        "Notes.md",
+        "- whole [[A | B]]\n- labelled [[A | B|see]]\n- logseq [see]([[A | B]])\n\
+         - anchored [[A | B#Heading|x]]\n- fresh [[C | D]]\n- empty [[|x]]",
+    )
+    .await;
+
+    assert_eq!(
+        block_starting(&pool, "whole").await,
+        format!("whole [[{ab}]]")
+    );
+    assert_eq!(
+        block_starting(&pool, "labelled").await,
+        format!("labelled [[{ab}|see]]")
+    );
+    assert_eq!(
+        block_starting(&pool, "logseq").await,
+        format!("logseq [[{ab}|see]]")
+    );
+    assert_eq!(
+        block_starting(&pool, "anchored").await,
+        format!("anchored [[{ab}|x]]")
+    );
+    assert_eq!(block_starting(&pool, "empty").await, "empty [[|x]]");
+    assert_eq!(pages_titled(&pool, "").await, Vec::<String>::new());
+    assert_eq!(pages_titled(&pool, "A").await, Vec::<String>::new());
+    let c = pages_titled(&pool, "C").await;
+    assert_eq!(c.len(), 1, "with no page `C | D` the first `|` splits");
+    assert_eq!(
+        block_starting(&pool, "fresh").await,
+        format!("fresh [[{}|D]]", c[0])
+    );
+    mat.shutdown();
+}
+
+/// #5160 D10 — a reading that ties stops the search: the link stays text with
+/// the ambiguity warning, and the shorter reading creates nothing.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn import_leaves_a_link_whose_pipe_reading_ties_as_text() {
+    let (pool, dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    dup_page(&pool, &mat, "X | Y").await;
+    dup_page(&pool, &mat, "x | y").await;
+    settle(&mat).await;
+
+    let result = import_file(
+        &pool,
+        &mat,
+        dir.path(),
+        "Notes.md",
+        "- tie [[X | y]]\n- labelled [[X | y|see]]",
+    )
+    .await;
+
+    assert_eq!(block_starting(&pool, "tie").await, "tie [[X | y]]");
+    assert_eq!(
+        block_starting(&pool, "labelled").await,
+        "labelled [[X | y|see]]"
+    );
+    for body in ["[[X | y]]", "[[X | y|see]]"] {
+        assert!(
+            result
+                .warnings
+                .iter()
+                .any(|w| w.contains(body) && w.contains("multiple")),
+            "{body}: {:?}",
+            result.warnings
+        );
+    }
+    assert_eq!(pages_titled(&pool, "X").await, Vec::<String>::new());
+    mat.shutdown();
+}
+
+/// #5160 D10 — a copy writes a link to `A | B` by its title and pastes back to
+/// the same page and label; typed text reads the title whole too, and falls
+/// back to the first `|` when no page has the longer title.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn copy_and_paste_read_a_title_holding_a_pipe_before_its_label() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let page = dup_page(&pool, &mat, "Dest").await;
+    let ab = dup_page(&pool, &mat, "A | B").await;
+    let anchor = dup_child(&pool, &mat, &page, "anchor").await;
+    let linked = format!("see [[{ab}]] and [[{ab}|see]]");
+    let src = dup_child(&pool, &mat, &page, &linked).await;
+    settle(&mat).await;
+
+    let copied = copy_source(&pool, &[&src], false).await;
+    assert_eq!(copied, "- see [[A | B]] and [[A | B|see]]\n");
+    let rows = paste(&pool, &mat, &anchor, paste_text(&copied)).await;
+    assert_eq!(
+        rows.iter()
+            .map(|r| r.content.clone().unwrap_or_default())
+            .collect::<Vec<_>>(),
+        [linked],
+        "nothing is created"
+    );
+
+    let rows = paste(
+        &pool,
+        &mat,
+        &anchor,
+        paste_text("- typed [[a | b|look]] [[C | D]]\n"),
+    )
+    .await;
+    let c = pages_titled(&pool, "C").await;
+    assert_eq!(c.len(), 1);
+    assert_eq!(
+        rows[1].content.as_deref(),
+        Some(format!("typed [[{ab}|look]] [[{}|D]]", c[0]).as_str())
+    );
+    assert_eq!(pages_titled(&pool, "A").await, Vec::<String>::new());
+}
+
+/// #5160 D10 — the source buffer writes a link to `A | B` by its title, with
+/// and without a label, and a save keeps both ids and the label; a link typed
+/// to `A | B` in the buffer links it too.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn apply_page_source_round_trips_a_link_to_a_title_holding_a_pipe() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let page = dup_page(&pool, &mat, "Names").await;
+    let ab = dup_page(&pool, &mat, "A | B").await;
+    let block = dup_child(
+        &pool,
+        &mat,
+        &page,
+        &format!("see [[{ab}]] and [[{ab}|see]]"),
+    )
+    .await;
+    settle(&mat).await;
+
+    let base = page_source(&pool, &page).await;
+    assert_eq!(
+        base,
+        format!("- see [[A | B]] and [[A | B|see]] ^{block}\n")
+    );
+    let report = save_source(
+        &pool,
+        &mat,
+        &page,
+        &with(&base, " and ", " or [[A | B|typed]] "),
+        &base,
+        false,
+    )
+    .await
+    .unwrap();
+    assert_eq!(counts(&report), [0, 1, 0, 0, 0, 0], "{report:?}");
+    assert!(report.names_created.is_empty(), "{report:?}");
+    let contents =
+        |rows: Vec<(String, String)>| rows.into_iter().map(|(_, c)| c).collect::<Vec<_>>();
+    assert_eq!(
+        contents(dup_children(&pool, &page).await),
+        [format!("see [[{ab}]] or [[{ab}|typed]] [[{ab}|see]]")]
+    );
+}
+
+/// #5160 D10 — a link to `Project` labelled `Plan` is written raw while a page
+/// is titled `Project|Plan`, which `[[Project|Plan]]` would name instead.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn get_page_source_writes_a_label_raw_when_title_and_label_name_a_page() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let page = dup_page(&pool, &mat, "Names").await;
+    let project = dup_page(&pool, &mat, "Project").await;
+    dup_page(&pool, &mat, "Project|Plan").await;
+    let block = dup_child(&pool, &mat, &page, &format!("see [[{project}|Plan]]")).await;
+    settle(&mat).await;
+
+    assert_eq!(
+        page_source(&pool, &page).await,
+        format!("- see [[{project}|Plan]] ^{block}\n")
+    );
+}
+
+/// #5160 D10 — an export writes a link to `A | B` by its title, and importing
+/// it back into the space lands on the same page with the same label.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn export_and_import_round_trip_a_link_to_a_title_holding_a_pipe() {
+    let (pool, dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let src = dup_page(&pool, &mat, "Src").await;
+    let ab = dup_page(&pool, &mat, "A | B").await;
+    let refs = format!("[[{ab}]] [[{ab}|see]]");
+    dup_child(&pool, &mat, &src, &format!("see {refs}")).await;
+    settle(&mat).await;
+
+    let md = export_page_markdown_inner(&pool, src.as_str())
+        .await
+        .unwrap();
+    assert!(md.contains("see [[A | B]] [[A | B|see]]"), "{md}");
+
+    import_file(&pool, &mat, dir.path(), "Roundtrip.md", &md).await;
+    let copies: Vec<String> = sqlx::query_scalar(
+        "SELECT content FROM blocks WHERE block_type = 'content' AND content LIKE 'see %' \
+         ORDER BY id",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(copies, [format!("see {refs}"), format!("see {refs}")]);
+    assert_eq!(pages_titled(&pool, "A").await, Vec::<String>::new());
+    mat.shutdown();
+}
+
 /// With no space to resolve them in, `[[Name]]` and `#tag` stay text and
 /// nothing is created.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

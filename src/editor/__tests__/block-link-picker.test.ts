@@ -13,6 +13,7 @@ import {
   BlockLinkPicker,
   blockLinkToken,
   parseTypedLink,
+  pickedLinkLabel,
 } from '@/editor/extensions/block-link-picker'
 import type { PickerItem } from '@/editor/SuggestionList'
 
@@ -1084,6 +1085,40 @@ describe('BlockLinkPicker input rule — labels and anchors (#5160 D9, N6)', () 
     })
   })
 
+  it('[[A | B]] links the page titled with the whole text before the first-pipe split (D10)', async () => {
+    const onCreate = vi.fn<OnCreate>()
+    const pages = [
+      { id: 'A', label: 'A', title: 'A' },
+      { id: 'AB', label: 'A | B', title: 'A | B' },
+    ]
+    for (const [body, content] of [
+      ['A | B', { type: 'block_link', attrs: { id: 'AB' } }],
+      ['a | b|see', { type: 'block_link', attrs: { id: 'AB', label: 'see' } }],
+      ['A | B#Heading|x', { type: 'block_link', attrs: { id: 'AB', label: 'x' } }],
+    ] as const) {
+      const { insertContentAtCalls } = run([`[[${body}]]`, body], pages, onCreate)
+      await vi.waitFor(() => expect(insertContentAtCalls.length).toBe(1))
+      expect(insertContentAtCalls[0]?.content).toEqual(content)
+    }
+    expect(onCreate).not.toHaveBeenCalled()
+  })
+
+  it('[[X | y]] stays text when its whole title ties by case, creating nothing (D10)', async () => {
+    const onCreate = vi.fn<OnCreate>()
+    const { insertContentAtCalls } = run(
+      ['[[X | y|see]]', 'X | y|see'],
+      [
+        { id: 'XY', label: 'X | Y', title: 'X | Y' },
+        { id: 'XY2', label: 'x | y', title: 'x | y' },
+        { id: 'X', label: 'X', title: 'X' },
+      ],
+      onCreate,
+    )
+    await vi.waitFor(() => expect(insertContentAtCalls.length).toBe(1))
+    expect(insertContentAtCalls[0]?.content).toBe('[[X | y|see]]')
+    expect(onCreate).not.toHaveBeenCalled()
+  })
+
   it('[[#heading]] names no page and is left alone', () => {
     const onCreate = vi.fn<OnCreate>()
     const deleteSpy = vi.fn()
@@ -1100,5 +1135,74 @@ describe('BlockLinkPicker input rule — labels and anchors (#5160 D9, N6)', () 
     })
     expect(deleteSpy).not.toHaveBeenCalled()
     expect(onCreate).not.toHaveBeenCalled()
+  })
+})
+
+describe('pickedLinkLabel (#5160 D9, D10)', () => {
+  const page = (title: string): PickerItem => ({ id: 'ID', label: title, title })
+
+  it('keeps no label when the picked title is the whole typed text', () => {
+    expect(pickedLinkLabel(page('A | B'), 'A | B')).toBeUndefined()
+    expect(pickedLinkLabel(page('A | B'), 'a | b')).toBeUndefined()
+  })
+
+  it('keeps the text after the longest prefix the picked title names', () => {
+    expect(pickedLinkLabel(page('A | B'), 'A | B|see')).toBe('see')
+    expect(pickedLinkLabel(page('A'), 'A | B')).toBe('B')
+  })
+
+  it('keeps the text after the first `|` when the title names no prefix, unless it is the title', () => {
+    expect(pickedLinkLabel(page('Apple'), 'A|see')).toBe('see')
+    expect(pickedLinkLabel(page('Apple'), 'A|Apple')).toBeUndefined()
+  })
+
+  it('reads the prefix an alias match names as the picker does', () => {
+    const aliased: PickerItem = { id: 'ID', label: 'Roadmap', isAlias: true, aliasText: 'a | b' }
+    expect(pickedLinkLabel(aliased, 'A | B|go')).toBe('go')
+  })
+})
+
+describe('BlockLinkPicker suggestion command — a picked title holding a `|` (#5160 D10)', () => {
+  it('picking `A | B` after typing `[[A | B` stores no label', async () => {
+    let capturedCommand:
+      | ((ctx: { editor: unknown; range: { from: number; to: number }; props: unknown }) => void)
+      | undefined
+    vi.resetModules()
+    vi.doMock('@tiptap/suggestion', () => ({
+      Suggestion: (opts: Record<string, unknown>) => {
+        capturedCommand = opts['command'] as typeof capturedCommand
+        return { key: opts['pluginKey'] }
+      },
+    }))
+    const mod = await import('@/editor/extensions/block-link-picker')
+    const ext = mod.BlockLinkPicker.configure({ items: () => [] })
+    ;(ext.config.addProseMirrorPlugins as (...args: unknown[]) => unknown).call({
+      editor: {} as unknown,
+      options: ext.options,
+    })
+    const inserted: Array<[string, string | undefined]> = []
+    const chainProxy: Record<string, unknown> = {
+      focus: () => chainProxy,
+      deleteRange: () => chainProxy,
+      insertBlockLink: (id: string, label?: string) => {
+        inserted.push([id, label])
+        return chainProxy
+      },
+      run: () => true,
+    }
+    for (const typed of ['[[A | B', '[[A | B|see']) {
+      capturedCommand?.({
+        editor: { chain: () => chainProxy, state: { doc: { textBetween: () => typed } } },
+        range: { from: 1, to: 9 },
+        props: { id: 'AB', label: 'A | B', title: 'A | B', isCreate: false },
+      })
+    }
+    expect(inserted).toEqual([
+      ['AB', undefined],
+      ['AB', 'see'],
+    ])
+
+    vi.doUnmock('@tiptap/suggestion')
+    vi.resetModules()
   })
 })

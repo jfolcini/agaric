@@ -547,16 +547,20 @@ fn data_with_names(
     .into_iter()
     .map(|(id, name)| (id.to_string(), name.to_string()))
     .collect();
+    let exact = pages
+        .iter()
+        .map(|(title, ids)| {
+            (
+                title.to_string(),
+                ids.iter().map(ToString::to_string).collect(),
+            )
+        })
+        .collect();
     data.name_snapshot = NameSnapshot {
-        page_ids_by_title: pages
-            .iter()
-            .map(|(title, ids)| {
-                (
-                    title.to_string(),
-                    ids.iter().map(ToString::to_string).collect(),
-                )
-            })
-            .collect(),
+        pages: LinkMatches {
+            exact,
+            ..LinkMatches::default()
+        },
         tag_id_by_norm: tags
             .iter()
             .map(|(norm, id)| (norm.to_string(), id.to_string()))
@@ -608,6 +612,23 @@ fn a_title_with_a_hash_is_written_only_when_that_page_reads_back() {
     let only_c: &[(&str, &[&str])] = &[("Project", &[PROJECT]), ("C", &[OTHER_PROJECT])];
     assert_eq!(
         source_with_names(&content, only_c, &[]),
+        format!("- {content} ^{BLOCK}\n")
+    );
+}
+
+/// `[[Project|Plan]]` reads back as the page `Project` labelled `Plan` unless
+/// a page is titled `Project|Plan`, which the whole body names first (#5160
+/// D10).
+#[test]
+fn a_labelled_link_is_written_only_when_no_longer_title_claims_it() {
+    let content = format!("see [[{PROJECT}|Plan]]");
+    assert_eq!(
+        source_with_names(&content, &[("Project", &[PROJECT])], &[]),
+        format!("- see [[Project|Plan]] ^{BLOCK}\n")
+    );
+    let longer: &[(&str, &[&str])] = &[("Project", &[PROJECT]), ("Project|Plan", &[OTHER_PROJECT])];
+    assert_eq!(
+        source_with_names(&content, longer, &[]),
         format!("- {content} ^{BLOCK}\n")
     );
 }

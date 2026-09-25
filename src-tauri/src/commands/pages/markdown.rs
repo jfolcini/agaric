@@ -214,7 +214,7 @@ fn bare_tag_is_token(
 /// the inner tag name (any run that is neither `]` nor a newline, non-greedy).
 /// Distinct from a bare `[[Page]]` wiki-link by the leading `#` — the wiki-link
 /// pre-pass skips any `[[...]]` immediately preceded by `#` (see
-/// `collect_inbound_page_link_names` / `rewrite_inbound_page_links`) so a
+/// `collect_inbound_page_link_bodies` / `rewrite_inbound_page_links`) so a
 /// `#[[...]]` becomes a TAG here, never a page.
 static HUMAN_MULTIWORD_TAG_RE: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
     regex::Regex::new(r"#\[\[([^\]\n]+?)\]\]").expect("invalid human multi-word-tag regex")
@@ -262,16 +262,36 @@ fn split_wikilink_anchor(name: &str) -> (&str, Option<&str>) {
     }
 }
 
-/// Split a wiki-link body on its FIRST `|` into the trimmed name and the
-/// trimmed label (#5160 D9): `Page|label` names `Page` and shows `label`. A
-/// later `|` belongs to the label, and a label is never escaped; an empty one
-/// is none. The name is what every resolver looks up, and is what
+/// The ways a wiki-link body reads as a name and a label, in the order the
+/// name pass tries them (#5160 D9, D10 exact title first): the whole body with
+/// no label, then each prefix ending before a `|`, longest first, labelled
+/// with the text after that `|`. Names and labels are trimmed, and an empty
+/// label is none. The last reading splits on the first `|`; its name is what
 /// [`split_wikilink_anchor`] then reads, so `A#B|label` anchors `A#B`.
-fn split_link_label(body: &str) -> (&str, Option<&str>) {
-    match body.split_once('|') {
-        Some((name, label)) => (name.trim(), Some(label.trim()).filter(|l| !l.is_empty())),
-        None => (body.trim(), None),
+fn link_body_readings(body: &str) -> Vec<(&str, Option<&str>)> {
+    let mut readings = vec![(body.trim(), None)];
+    for (at, _) in body.rmatch_indices('|') {
+        let label = body[at + 1..].trim();
+        readings.push((body[..at].trim(), Some(label).filter(|l| !l.is_empty())));
     }
+    readings
+}
+
+/// How a wiki-link body reads (#5160 D10): the first of its
+/// [`link_body_readings`] whose name names a page in `matches`, else the split
+/// on its first `|`, which the name pass resolves or creates. `None` when a
+/// reading's name ties: the link stays text.
+fn read_link_body<'a>(body: &'a str, matches: &LinkMatches) -> Option<(&'a str, Option<&'a str>)> {
+    let readings = link_body_readings(body);
+    let (first_split, longer) = readings.split_last().expect("the whole body is a reading");
+    for &(name, label) in longer {
+        match matches.find_name(name) {
+            Some(LinkMatch::Unique(_)) => return Some((name, label)),
+            Some(LinkMatch::Ambiguous) => return None,
+            None => {}
+        }
+    }
+    Some(*first_split)
 }
 
 /// Write the stored link to `ulid`: labelled unless the label is empty or the
@@ -349,11 +369,14 @@ struct PendingHeading {
     empty_base: bool,
 }
 
-/// Collect the DISTINCT human-readable `[[Page Name]]` names referenced across
-/// every parsed block's content (#1446 Part B). A token whose body is already a
-/// canonical `[[ULID]]` ref is skipped (it needs no resolution). Used to drive
-/// the create-if-missing pre-pass before the block-write loop, so each distinct
-/// name is resolved/created exactly once regardless of how many blocks cite it.
+/// Collect the DISTINCT trimmed bodies of the human-readable `[[Page Name]]`
+/// links across every parsed block's content (#1446 Part B), Logseq's
+/// `[label]([[Page]])` read as `[[Page|label]]`. A body holding a `|` is read
+/// later, once the pages it may name are known (#5160 D10). A token whose body
+/// is already a canonical `[[ULID]]` ref is skipped (it needs no resolution).
+/// Used to drive the create-if-missing pre-pass before the block-write loop,
+/// so each distinct name is resolved/created exactly once regardless of how
+/// many blocks cite it.
 ///
 /// #3605 — a link inside CODE is literal text and resolves to nothing. A
 /// `is_code` block (born inside a ```` ``` ```` fence) is skipped wholesale and
@@ -363,9 +386,9 @@ struct PendingHeading {
 /// resolved AND rewritten — so a snippet documenting the wiki-link syntax both
 /// minted a page nobody asked for and came back with a raw ULID pasted into
 /// the code.
-fn collect_inbound_page_link_names(blocks: &[import::ParsedBlock]) -> Vec<String> {
+fn collect_inbound_page_link_bodies(blocks: &[import::ParsedBlock]) -> Vec<String> {
     use std::collections::BTreeSet;
-    let mut names: BTreeSet<String> = BTreeSet::new();
+    let mut bodies: BTreeSet<String> = BTreeSet::new();
     for block in blocks {
         if block.is_code {
             continue;
@@ -374,8 +397,9 @@ fn collect_inbound_page_link_names(blocks: &[import::ParsedBlock]) -> Vec<String
         if !block.content.contains("[[") {
             continue;
         }
-        let code_spans = import::inline_code_spans(&block.content);
-        for cap in HUMAN_PAGE_LINK_RE.captures_iter(&block.content) {
+        let content = rewrite_logseq_labelled_links(&block.content);
+        let code_spans = import::inline_code_spans(&content);
+        for cap in HUMAN_PAGE_LINK_RE.captures_iter(&content) {
             let whole = cap.get(0).expect("group 0 always present");
             // #3605 — inside an inline-code span: literal, never resolved.
             // #1950 — a `[[...]]` immediately preceded by `#` is the multi-word
@@ -388,18 +412,18 @@ fn collect_inbound_page_link_names(blocks: &[import::ParsedBlock]) -> Vec<String
             // EMBED `![[file]]` (an attachment ref), NOT a page link. Skip it
             // here so no page is created and the embed token survives intact for
             // the attachment detection/ingest pass.
-            if !page_link_is_token(&block.content, whole.start(), &code_spans) {
+            if !page_link_is_token(&content, whole.start(), &code_spans) {
                 continue;
             }
-            let (name, _label) = split_link_label(&cap[1]);
+            let body = cap[1].trim();
             // Skip canonical `[[ULID]]` bodies — they are already internal refs.
-            if name.is_empty() || agaric_store::cache::PAGE_LINK_RE.is_match(&cap[0]) {
+            if body.is_empty() || agaric_store::cache::PAGE_LINK_RE.is_match(&cap[0]) {
                 continue;
             }
-            names.insert(name.to_string());
+            bodies.insert(body.to_string());
         }
     }
-    names.into_iter().collect()
+    bodies.into_iter().collect()
 }
 
 /// Logseq's labelled link, `[label]([[Page]])`: group 1 the label, group 2
@@ -411,7 +435,8 @@ static LOGSEQ_LABELLED_LINK_RE: std::sync::LazyLock<regex::Regex> =
     });
 
 /// `content` with each Logseq `[label]([[Page]])` outside code written as
-/// `[[Page|label]]`, the one labelled form the name pass reads (#5160 D9).
+/// `[[Page|label]]`, the one labelled form the name pass reads (#5160 D9). The
+/// link body goes over whole, so a page titled `A | B` is still its reading.
 fn rewrite_logseq_labelled_links(content: &str) -> std::borrow::Cow<'_, str> {
     if !content.contains("]([[") {
         return std::borrow::Cow::Borrowed(content);
@@ -422,7 +447,7 @@ fn rewrite_logseq_labelled_links(content: &str) -> std::borrow::Cow<'_, str> {
         if !page_link_is_token(content, m.start(), &code_spans) {
             return m.as_str().to_string();
         }
-        let (name, _) = split_link_label(&caps[2]);
+        let name = caps[2].trim();
         match caps[1].trim() {
             "" => format!("[[{name}]]"),
             label => format!("[[{name}|{label}]]"),
@@ -431,9 +456,10 @@ fn rewrite_logseq_labelled_links(content: &str) -> std::borrow::Cow<'_, str> {
 }
 
 /// Rewrite human-readable `[[Page Name]]` tokens in `content` to internal
-/// `[[ULID]]` refs using the resolved `name → ULID` map (#1446 Part B). A name
-/// absent from the map (unresolvable / ambiguous duplicate title / creation
-/// failure) is left as its original plain-text token — nothing is dropped.
+/// `[[ULID]]` refs through `links` (#1446 Part B): each body's reading, then
+/// the reading's name's page. A body with no reading, or whose name has no page
+/// (unresolvable / ambiguous duplicate title / creation failure), is left as
+/// its original plain-text token — nothing is dropped.
 /// Canonical `[[ULID]]` tokens already in the content are left untouched.
 /// Code blocks (`is_code`) are handled by the CALLER (skipped before this
 /// runs); inline-code spans are skipped here (#3605) — the exact split
@@ -444,7 +470,7 @@ fn rewrite_logseq_labelled_links(content: &str) -> std::borrow::Cow<'_, str> {
 /// read as the same token.
 fn rewrite_inbound_page_links(
     content: &str,
-    resolved: &HashMap<String, String>,
+    links: &PageLinks,
     titles: &HashMap<String, String>,
 ) -> String {
     // #1921 fast-path: a block with no `[[` can carry no wiki-link, so skip the
@@ -460,7 +486,7 @@ fn rewrite_inbound_page_links(
         .replace_all(&content, |caps: &regex::Captures<'_>| {
             let m = caps.get(0).expect("group 0 always present");
             let whole = m.as_str();
-            // IDENTICAL guard to `collect_inbound_page_link_names`: a link
+            // IDENTICAL guard to `collect_inbound_page_link_bodies`: a link
             // inside an inline-code span (#3605), the `#[[Tag]]` multi-word tag
             // form (#1950), the `![[file]]` embed (#1925) and an escaped token
             // stay byte-identical.
@@ -471,9 +497,13 @@ fn rewrite_inbound_page_links(
             if agaric_store::cache::PAGE_LINK_RE.is_match(whole) {
                 return whole.to_string();
             }
-            let (name, label) = split_link_label(&caps[1]);
-            match resolved.get(name) {
-                Some(ulid) => stored_page_link(ulid, label, titles.get(ulid).map(String::as_str)),
+            let Some((name, label)) = links.readings.get(caps[1].trim()) else {
+                return whole.to_string();
+            };
+            match links.ids.get(name) {
+                Some(ulid) => {
+                    stored_page_link(ulid, label.as_deref(), titles.get(ulid).map(String::as_str))
+                }
                 None => whole.to_string(),
             }
         })
@@ -733,8 +763,9 @@ fn tag_reads_back_bare(before: &str, name: &str, after: &str) -> bool {
 /// The check runs the importer's own name collection and rewrite over the
 /// named text, with `is_code` as the parser will read the block; only the
 /// resolution comes from `names` instead of the database, and nothing is
-/// created. A name can be unique and still not come back: `[[C# Notes]]` reads
-/// as a link to `C` with an anchor, and `#v1.2` as the tag `v1`.
+/// created. A name can be unique and still not come back: `[[Foo|Bar]]` reads
+/// as the page `Foo|Bar` when one exists (#5160 D10), and `#v1.2` as the tag
+/// `v1`.
 fn humanise_refs_for_source(
     content: &str,
     is_code: bool,
@@ -754,32 +785,38 @@ fn humanise_refs_for_source(
         block_anchor: None,
     };
     let blocks = std::slice::from_ref(&block);
-    let page_links = names.page_links(collect_inbound_page_link_names(blocks));
+    let page_links = names.page_links(collect_inbound_page_link_bodies(blocks));
     let tags = names.tags(collect_inbound_tag_names(blocks));
     let internalised = rewrite_block_content_for_import(&block, &page_links, page_titles, &tags);
     (internalised == content).then_some(block.content)
 }
 
 /// The in-space names the importer resolves against, as its snapshots read
-/// them: each exact page title with at most its two smallest ids
+/// them: the pages every reading of the link bodies the render writes may name
 /// (`snapshot_page_link_matches`), and each normalised tag name with its
 /// smallest-id tag (`snapshot_tags_by_norm`, #1990).
 #[derive(Default)]
 struct NameSnapshot {
-    page_ids_by_title: HashMap<String, Vec<String>>,
+    pages: LinkMatches,
     tag_id_by_norm: HashMap<String, String>,
 }
 
 impl NameSnapshot {
-    /// What the importer's page-link pass would map each name to without
-    /// creating a page: the one in-space page with exactly that title. The
-    /// render writes titles, and an exact title wins before any case or alias
-    /// match (N4), so nothing else can claim the name.
-    fn page_links(&self, names: Vec<String>) -> HashMap<String, String> {
-        let mut links = HashMap::new();
-        for name in names {
-            if let Some([id]) = self.page_ids_by_title.get(name.trim()).map(Vec::as_slice) {
-                links.insert(name.clone(), id.clone());
+    /// What the importer's page-link pass would make of each link body
+    /// without creating a page: its reading ([`read_link_body`]), when the
+    /// name read is the one in-space page with exactly that title. The render
+    /// writes titles, and an exact title wins before any case or alias match
+    /// (N4), so nothing else can claim the name.
+    fn page_links(&self, bodies: impl IntoIterator<Item = String>) -> PageLinks {
+        let mut links = PageLinks::default();
+        for body in bodies {
+            let Some((name, label)) = read_link_body(&body, &self.pages) else {
+                continue;
+            };
+            if let Some([id]) = self.pages.exact.get(name).map(Vec::as_slice) {
+                links.ids.insert(name.to_string(), id.clone());
+                let reading = (name.to_string(), label.map(str::to_string));
+                links.readings.insert(body, reading);
             }
         }
         links
@@ -2780,7 +2817,7 @@ async fn load_page_export_data(
         (Vec::new(), Vec::new())
     };
     let name_snapshot = if read == PageRead::Source {
-        load_name_snapshot(conn, &page.id, &refs.page_titles).await?
+        load_name_snapshot(conn, &page.id, &descendants, &refs.page_titles).await?
     } else {
         NameSnapshot::default()
     };
@@ -2803,23 +2840,42 @@ async fn load_page_export_data(
 }
 
 /// What the importer would resolve the page's referenced names against: its
-/// space's pages with the `page_titles` it links to, and its space's tags. A
-/// page in no space gets the empty snapshot, so every name stays raw.
+/// space's pages the link bodies the render writes may name, and its space's
+/// tags. A page in no space gets the empty snapshot, so every name stays raw.
 async fn load_name_snapshot(
     conn: &mut sqlx::SqliteConnection,
     page_id: &BlockId,
+    descendants: &[BlockRow],
     page_titles: &HashMap<String, String>,
 ) -> Result<NameSnapshot, AppError> {
     let Some(space) = agaric_store::space::resolve_block_space(&mut *conn, page_id).await? else {
         return Ok(NameSnapshot::default());
     };
-    let titles: Vec<String> = page_titles.values().cloned().collect();
+    let bodies = rendered_link_bodies(descendants, page_titles);
     Ok(NameSnapshot {
-        page_ids_by_title: snapshot_page_link_matches(conn, space.as_str(), &titles)
-            .await?
-            .exact,
+        pages: snapshot_page_link_matches(conn, space.as_str(), &bodies).await?,
         tag_id_by_norm: snapshot_tags_by_norm(conn, space.as_str()).await?,
     })
+}
+
+/// The link bodies the render writes for `descendants`: each linked page's
+/// title, with the link's label.
+fn rendered_link_bodies(
+    descendants: &[BlockRow],
+    page_titles: &HashMap<String, String>,
+) -> Vec<String> {
+    use agaric_store::cache::{PAGE_LINK_RE, page_link_label};
+    let contents = descendants.iter().filter_map(|b| b.content.as_deref());
+    contents
+        .flat_map(|content| PAGE_LINK_RE.captures_iter(content))
+        .filter_map(|caps| {
+            let title = page_titles.get(&caps[1])?;
+            Some(match page_link_label(&caps) {
+                Some(label) => format!("{title}|{label}"),
+                None => title.clone(),
+            })
+        })
+        .collect()
 }
 
 /// #2961 — sanitize an attachment's `filename` for use as markdown link
@@ -4003,13 +4059,50 @@ async fn apply_frontmatter_properties(
     Ok(tx)
 }
 
+/// What the wiki-link bodies and inline-query page names of a text resolve to
+/// (#5160 D9, D10).
+#[derive(Default)]
+struct PageLinks {
+    /// Each trimmed link body's reading: the name it links and its label. A
+    /// body with none stays text.
+    readings: HashMap<String, (String, Option<String>)>,
+    /// Each name's page: the names the readings give and the inline queries
+    /// hold.
+    ids: HashMap<String, String>,
+}
+
+impl PageLinks {
+    /// Add what `from` holds for the link `bodies` and the query `names`.
+    fn extend_from(
+        &mut self,
+        from: &Self,
+        bodies: &std::collections::BTreeSet<String>,
+        names: &std::collections::BTreeSet<String>,
+    ) {
+        let readings = bodies
+            .iter()
+            .filter_map(|body| Some((body, from.readings.get(body)?)));
+        for (body, reading) in readings {
+            self.readings.insert(body.clone(), reading.clone());
+            if let Some(id) = from.ids.get(&reading.0) {
+                self.ids.insert(reading.0.clone(), id.clone());
+            }
+        }
+        for name in names {
+            if let Some(id) = from.ids.get(name) {
+                self.ids.insert(name.clone(), id.clone());
+            }
+        }
+    }
+}
+
 /// The wiki-link state one import document's pre-pass produces: the resolved
-/// `full token → page ULID` rewrite map, plus the same-document block- and
+/// page links the rewrite reads, plus the same-document block- and
 /// heading-anchor tokens whose target block does not exist yet and so are
 /// resolved in the post-commit anchor phase.
 #[derive(Default)]
 struct InboundLinks {
-    page_links: HashMap<String, String>,
+    page_links: PageLinks,
     /// Each resolved page's title by id, so a label equal to it is not stored
     /// (#5160 D9).
     titles: HashMap<String, String>,
@@ -4093,6 +4186,17 @@ impl LinkMatches {
         }
     }
 
+    /// The page a link's `name` names (#5160 D10): the page titled with the
+    /// whole name, else, when an anchor holding no `|` follows its first `#`,
+    /// the page its base names. A `|` after the `#` starts a label, so it
+    /// never makes an anchor.
+    fn find_name(&self, name: &str) -> Option<LinkMatch> {
+        let (base, anchor) = split_wikilink_anchor(name);
+        let anchored = !base.is_empty() && anchor.is_some_and(|a| !a.contains('|'));
+        self.find(name)
+            .or_else(|| anchored.then(|| self.find(base)).flatten())
+    }
+
     /// The page `name` resolves to (#5160 N4): the exact title, else a unique
     /// case-insensitive title, else a unique alias, else none. A case tie is
     /// never guessed. Titles are compared whole, namespace included.
@@ -4112,19 +4216,19 @@ impl LinkMatches {
     }
 }
 
-/// The names [`LinkMatches`] looks up for `link_names`: each whole token, so a
-/// title holding a `#` wins first (#5160 D10), and each anchor-stripped base.
-/// An anchor-only link like `[[#heading]]` has an empty base and looks up
-/// nothing.
+/// The names [`LinkMatches`] looks up for `link_names` (#5160 D10): the name
+/// of each of their [`link_body_readings`], so a title holding a `|` or a `#`
+/// wins first, and each anchor-stripped base. An anchor-only link like
+/// `[[#heading]]` has an empty base and looks up nothing.
 fn link_lookup_names(link_names: &[String]) -> Vec<String> {
     let mut set = std::collections::BTreeSet::new();
-    for name in link_names {
+    for (name, _) in link_names.iter().flat_map(|body| link_body_readings(body)) {
         let (base, anchor) = split_wikilink_anchor(name);
         if base.is_empty() {
             continue;
         }
         if anchor.is_some() {
-            set.insert(name.trim().to_string());
+            set.insert(name.to_string());
         }
         set.insert(base.to_string());
     }
@@ -4314,7 +4418,7 @@ async fn resolve_link_names(
             match link_matches.find(name.trim()) {
                 Some(LinkMatch::Unique(id)) => {
                     links.remember_title(&id, link_matches, name.trim());
-                    links.page_links.insert(name, id);
+                    links.page_links.ids.insert(name, id);
                     continue;
                 }
                 Some(LinkMatch::Ambiguous) => {
@@ -4354,7 +4458,7 @@ async fn resolve_link_names(
         if anchor.is_some() {
             dropped_anchor_count += 1;
         }
-        links.page_links.insert(name, resolved_ulid);
+        links.page_links.ids.insert(name, resolved_ulid);
     }
     if dropped_anchor_count > 0 {
         // #1282 — aggregate warning for the lossy anchor drop (mirrors the
@@ -4389,17 +4493,53 @@ async fn resolve_link_names(
 /// rewrite leaves its original `[[Name]]` token untouched — nothing is lost.
 async fn resolve_inbound_page_links(
     ctx: &mut NameCtx<'_>,
-    mut tx: CommandTx,
+    tx: CommandTx,
     blocks: &[import::ParsedBlock],
 ) -> Result<(CommandTx, InboundLinks), AppError> {
-    let mut link_names = collect_inbound_page_link_names(blocks);
     // #2968 — also resolve/create the PAGE names referenced by structured
     // `{{query v2n:…}}` inline queries, so a query's page/structural refs remap
     // to this vault's page ids (create-if-missing) on re-import, exactly like an
     // inbound `[[Page]]` link.
-    link_names.extend(super::inline_query_md::query_page_names(blocks));
-    let link_matches = snapshot_page_link_matches(&mut tx, ctx.space_id, &link_names).await?;
-    resolve_link_names(ctx, tx, link_names, &link_matches).await
+    let query_names = super::inline_query_md::query_page_names(blocks);
+    resolve_page_refs(
+        ctx,
+        tx,
+        collect_inbound_page_link_bodies(blocks),
+        query_names,
+    )
+    .await
+}
+
+/// Resolve wiki-link `bodies` and inline-query page `names` against one
+/// snapshot of the pages they may name: each body reads by [`read_link_body`]
+/// (#5160 D10), and the names read and `names` resolve by
+/// [`resolve_link_names`], so only a name no page matches is created. A body
+/// whose reading ties stays text, with a warning.
+async fn resolve_page_refs(
+    ctx: &mut NameCtx<'_>,
+    mut tx: CommandTx,
+    bodies: Vec<String>,
+    names: Vec<String>,
+) -> Result<(CommandTx, InboundLinks), AppError> {
+    let lookup: Vec<String> = bodies.iter().chain(&names).cloned().collect();
+    let matches = snapshot_page_link_matches(&mut tx, ctx.space_id, &lookup).await?;
+    let mut readings = HashMap::new();
+    let mut read_names = std::collections::BTreeSet::new();
+    for body in bodies {
+        match read_link_body(&body, &matches) {
+            None => warn_ambiguous_link(ctx, &body),
+            Some(("", _)) => {}
+            Some((name, label)) => {
+                read_names.insert(name.to_string());
+                let reading = (name.to_string(), label.map(str::to_string));
+                readings.insert(body, reading);
+            }
+        }
+    }
+    let names = read_names.into_iter().chain(names).collect();
+    let (tx, mut links) = resolve_link_names(ctx, tx, names, &matches).await?;
+    links.page_links.readings = readings;
+    Ok((tx, links))
 }
 
 /// #1990 — snapshot the in-space live tag blocks ONCE, indexed by normalized
@@ -4876,19 +5016,19 @@ fn parent_for_depth(
 /// of that token.
 fn rewrite_block_content_for_import(
     block: &import::ParsedBlock,
-    resolved_page_links: &HashMap<String, String>,
+    page_links: &PageLinks,
     page_titles: &HashMap<String, String>,
     resolved_tag_tokens: &HashMap<String, String>,
 ) -> String {
     let content = super::inline_query_md::rewrite_inline_queries_for_import(
         &block.content,
-        resolved_page_links,
+        &page_links.ids,
         resolved_tag_tokens,
     );
     if block.is_code {
         return content;
     }
-    let content = rewrite_inbound_page_links(&content, resolved_page_links, page_titles);
+    let content = rewrite_inbound_page_links(&content, page_links, page_titles);
     rewrite_inbound_tags(&content, resolved_tag_tokens)
 }
 
@@ -5339,7 +5479,10 @@ fn rewrite_anchor_tokens(
             }
             // A block ref has no label form, so a label is dropped with it
             // (#5160 D9); the page-link fallback keeps it.
-            let (name, label) = split_link_label(&caps[1]);
+            let Some((name, label)) = refs.links.page_links.readings.get(caps[1].trim()) else {
+                return whole.to_string();
+            };
+            let label = label.as_deref();
             let mut block_ref = |target_id: String| {
                 outcomes.dropped_labels += usize::from(label.is_some());
                 format!("(({target_id}))")
@@ -5367,9 +5510,7 @@ fn rewrite_anchor_tokens(
                     outcomes.resolved_heading_refs += 1;
                     block_ref(target_id)
                 } else if pending.empty_base {
-                    outcomes
-                        .unresolved_empty_base_headings
-                        .insert(name.to_string());
+                    outcomes.unresolved_empty_base_headings.insert(name.clone());
                     whole.to_string()
                 } else {
                     any_patched = true;
@@ -6161,7 +6302,7 @@ mod tests {
             // #3605 — the page-link resolver is held to the same contract as
             // the tag one: a link inside a protected code range is never even
             // looked up, so no page is created for it.
-            let requested_pages = collect_inbound_page_link_names(&parsed.blocks);
+            let requested_pages = requested_page_names(&parsed.blocks);
             assert_eq!(
                 requested_pages.len(),
                 vector.requested_page_names.len(),
@@ -6263,7 +6404,7 @@ mod tests {
             let as_set = |names: &[String]| -> std::collections::BTreeSet<String> {
                 names.iter().cloned().collect()
             };
-            let requested_pages = collect_inbound_page_link_names(&blocks);
+            let requested_pages = requested_page_names(&blocks);
             assert_eq!(
                 requested_pages.len(),
                 vector.expected.requested_page_names.len(),
@@ -6292,7 +6433,7 @@ mod tests {
 
             let with_pages = rewrite_inbound_page_links(
                 &vector.input,
-                &vectors.page_resolutions,
+                &page_links_for(&vector.input, &vectors.page_resolutions),
                 &invert(&vectors.page_resolutions),
             );
             // Mirror the production caller (`import_markdown`): the tag rewrite
@@ -6312,8 +6453,8 @@ mod tests {
 
     /// #5160 — the name rules each text surface applies, with the names
     /// resolved from the fixture's maps as `resolve_link_names` keys them: by
-    /// the whole token, to the page the whole title names (D10) or else its
-    /// base names.
+    /// the whole name a body reads as, to the page the whole title names (D10)
+    /// or else its base names.
     #[test]
     fn name_rule_vectors_pin_the_name_pass() {
         let vectors: ReferenceTokenVectors = serde_json::from_str(include_str!(concat!(
@@ -6336,17 +6477,16 @@ mod tests {
             let blocks = std::slice::from_ref(block);
 
             let mut page_names = std::collections::BTreeSet::new();
-            let mut page_links = HashMap::new();
-            for name in collect_inbound_page_link_names(blocks) {
-                let (base, anchor) = split_wikilink_anchor(&name);
-                let whole = name.trim();
-                let title = if anchor.is_some() && vectors.page_resolutions.contains_key(whole) {
-                    whole
+            let mut page_links = page_links_for(&block.content, &vectors.page_resolutions);
+            for (name, _) in page_links.readings.values() {
+                let (base, anchor) = split_wikilink_anchor(name);
+                let title = if anchor.is_some() && vectors.page_resolutions.contains_key(name) {
+                    name
                 } else {
                     base
                 };
                 if let Some(id) = vectors.page_resolutions.get(title) {
-                    page_links.insert(name.clone(), id.clone());
+                    page_links.ids.insert(name.clone(), id.clone());
                 }
                 page_names.insert(title.to_string());
             }
@@ -6382,19 +6522,118 @@ mod tests {
         names.iter().map(|(k, v)| (v.clone(), k.clone())).collect()
     }
 
-    /// #5160 D9 — a link body splits on its first `|` into the name and the
-    /// label; the name is what the anchor split then reads.
+    /// The names the name pass asks for when no page holds a longer reading
+    /// of a body: each body's split on its first `|` (#5160 D10).
+    fn requested_page_names(blocks: &[import::ParsedBlock]) -> Vec<String> {
+        let names: std::collections::BTreeSet<String> = collect_inbound_page_link_bodies(blocks)
+            .iter()
+            .filter_map(|body| link_body_readings(body).last().map(|(n, _)| n.to_string()))
+            .filter(|name| !name.is_empty())
+            .collect();
+        names.into_iter().collect()
+    }
+
+    /// Page links in which each of `pages`' titles (`title → id`) reads as
+    /// itself and links its page.
+    fn links_to(pages: &HashMap<String, String>) -> PageLinks {
+        PageLinks {
+            readings: pages
+                .keys()
+                .map(|title| (title.clone(), (title.clone(), None)))
+                .collect(),
+            ids: pages.clone(),
+        }
+    }
+
+    /// The fixture's pages, `title → id`, as the name pass's snapshot holds
+    /// them.
+    fn fixture_matches(pages: &HashMap<String, String>) -> LinkMatches {
+        let mut matches = LinkMatches::default();
+        for (title, id) in pages {
+            LinkMatches::push(&mut matches.folded, title.to_ascii_lowercase(), id.clone());
+            LinkMatches::push(&mut matches.exact, title.clone(), id.clone());
+        }
+        matches
+    }
+
+    /// What the name pass makes of the links in `content` when `pages`
+    /// (`title → id`) are the space's pages: each body read against them, and
+    /// each title's page.
+    fn page_links_for(content: &str, pages: &HashMap<String, String>) -> PageLinks {
+        let block = import::ParsedBlock {
+            content: content.to_string(),
+            depth: 0,
+            properties: Vec::new(),
+            is_code: false,
+            block_anchor: None,
+        };
+        let matches = fixture_matches(pages);
+        let mut links = PageLinks {
+            ids: pages.clone(),
+            ..PageLinks::default()
+        };
+        for body in collect_inbound_page_link_bodies(std::slice::from_ref(&block)) {
+            if let Some((name, label)) = read_link_body(&body, &matches) {
+                let reading = (name.to_string(), label.map(str::to_string));
+                links.readings.insert(body, reading);
+            }
+        }
+        links
+    }
+
+    /// #5160 D9, D10 — a link body reads whole, then as each prefix before a
+    /// `|`, longest first, labelled with the rest; the last reading splits on
+    /// the first `|`, and its name is what the anchor split then reads.
     #[test]
-    fn a_link_body_splits_on_its_first_pipe() {
-        assert_eq!(split_link_label("Page"), ("Page", None));
-        assert_eq!(split_link_label(" Page | label "), ("Page", Some("label")));
-        assert_eq!(split_link_label("Page|a|b"), ("Page", Some("a|b")));
-        assert_eq!(split_link_label("Page|"), ("Page", None));
-        assert_eq!(split_link_label("A#B|see"), ("A#B", Some("see")));
+    fn a_link_body_reads_whole_then_before_each_pipe() {
+        assert_eq!(link_body_readings(" Page "), [("Page", None)]);
         assert_eq!(
-            split_wikilink_anchor(split_link_label("A#B|see").0),
+            link_body_readings(" A | B | c "),
+            [
+                ("A | B | c", None),
+                ("A | B", Some("c")),
+                ("A", Some("B | c"))
+            ]
+        );
+        assert_eq!(
+            link_body_readings("Page|"),
+            [("Page|", None), ("Page", None)]
+        );
+        assert_eq!(
+            split_wikilink_anchor(link_body_readings("A#B|see")[1].0),
             ("A", Some("B"))
         );
+    }
+
+    /// #5160 D10 — the first reading that names a page wins, a `|` after a
+    /// `#` starts the label, a tie leaves the body as text, and with no page
+    /// the body splits on its first `|`.
+    #[test]
+    fn a_link_body_reads_as_the_longest_name_a_page_has() {
+        let pages = HashMap::from([
+            (
+                "A | B".to_string(),
+                "01ARZ3NDEKTSV4RRFFQ69G5FAV".to_string(),
+            ),
+            (
+                "X | Y".to_string(),
+                "01ARZ3NDEKTSV4RRFFQ69G5FB0".to_string(),
+            ),
+            (
+                "x | y".to_string(),
+                "01ARZ3NDEKTSV4RRFFQ69G5FB1".to_string(),
+            ),
+        ]);
+        let matches = fixture_matches(&pages);
+        let read = |body| read_link_body(body, &matches);
+        assert_eq!(read("A | B"), Some(("A | B", None)));
+        assert_eq!(read("a | b|see"), Some(("a | b", Some("see"))));
+        assert_eq!(read("A | B#Heading"), Some(("A | B#Heading", None)));
+        assert_eq!(read("A | B#Heading|x"), Some(("A | B#Heading", Some("x"))));
+        assert_eq!(read("A#x | B"), Some(("A#x", Some("B"))));
+        assert_eq!(read("C | D"), Some(("C", Some("D"))));
+        assert_eq!(read("X | y|see"), None);
+        assert_eq!(read("X | Y|see"), Some(("X | Y", Some("see"))));
     }
 
     /// #5160 D9 — the stored token keeps a label unless it is the target's
@@ -6411,14 +6650,11 @@ mod tests {
             format!("[[{ULID}]]")
         );
         assert_eq!(stored_page_link(ULID, None, None), format!("[[{ULID}]]"));
-        let resolved = HashMap::from([("Plan".to_string(), ULID.to_string())]);
-        let titles = HashMap::from([(ULID.to_string(), "Plan".to_string())]);
+        let pages = HashMap::from([("Plan".to_string(), ULID.to_string())]);
+        let titles = invert(&pages);
+        let content = "[[Plan|the plan]] [[Plan|Plan]] [the plan]([[Plan]]) `[x]([[Plan]])` [[Plan|see #x|y]]";
         assert_eq!(
-            rewrite_inbound_page_links(
-                "[[Plan|the plan]] [[Plan|Plan]] [the plan]([[Plan]]) `[x]([[Plan]])` [[Plan|see #x|y]]",
-                &resolved,
-                &titles
-            ),
+            rewrite_inbound_page_links(content, &page_links_for(content, &pages), &titles),
             format!(
                 "[[{ULID}|the plan]] [[{ULID}]] [[{ULID}|the plan]] `[x]([[Plan]])` [[{ULID}|see #x|y]]"
             )
@@ -6776,7 +7012,7 @@ mod tests {
             block_anchor: None,
         }];
         // Only the un-prefixed `[[Real Page]]` is collected as a page name.
-        let names = collect_inbound_page_link_names(&blocks);
+        let names = collect_inbound_page_link_bodies(&blocks);
         assert_eq!(names, vec!["Real Page".to_string()], "got {names:?}");
 
         // Rewrite: the `#[[Tag With Space]]` token survives untouched; the page
@@ -6786,7 +7022,8 @@ mod tests {
             "Real Page".to_string(),
             "01PAGE0000000000000000PAGE".to_string(),
         );
-        let out = rewrite_inbound_page_links(&blocks[0].content, &resolved, &HashMap::new());
+        let out =
+            rewrite_inbound_page_links(&blocks[0].content, &links_to(&resolved), &HashMap::new());
         assert_eq!(
             out, "a #[[Tag With Space]] and [[01PAGE0000000000000000PAGE]]",
             "the `#[[...]]` must be left for the tag pass; got {out:?}"
@@ -6855,7 +7092,7 @@ mod tests {
         let resolved: HashMap<String, String> = HashMap::new();
         let content = "a plain block with no wiki link, just #tag-ish text";
         assert_eq!(
-            rewrite_inbound_page_links(content, &resolved, &HashMap::new()),
+            rewrite_inbound_page_links(content, &links_to(&resolved), &HashMap::new()),
             content,
             "a link-free block must be returned unchanged"
         );
@@ -6863,7 +7100,11 @@ mod tests {
         let mut resolved2: HashMap<String, String> = HashMap::new();
         resolved2.insert("Target".to_string(), "01ABC".to_string());
         assert_eq!(
-            rewrite_inbound_page_links("see [[Target]] here", &resolved2, &HashMap::new()),
+            rewrite_inbound_page_links(
+                "see [[Target]] here",
+                &links_to(&resolved2),
+                &HashMap::new()
+            ),
             "see [[01ABC]] here",
             "a resolved name must be rewritten to its ULID ref"
         );
@@ -6893,7 +7134,7 @@ mod tests {
             },
         ];
 
-        let names = collect_inbound_page_link_names(&blocks);
+        let names = collect_inbound_page_link_bodies(&blocks);
         assert_eq!(
             names,
             vec!["Live Page".to_string()],
@@ -6917,7 +7158,8 @@ mod tests {
             "01LIVE00000000000000PAGE00".to_string(),
         );
 
-        let out = rewrite_inbound_page_links(&blocks[1].content, &resolved, &HashMap::new());
+        let out =
+            rewrite_inbound_page_links(&blocks[1].content, &links_to(&resolved), &HashMap::new());
         assert_eq!(
             out, "see `[[Quoted Page]]` vs [[01LIVE00000000000000PAGE00]]",
             "the inline-code link must stay byte-identical while its neighbour rewrites; \
@@ -6939,9 +7181,9 @@ mod tests {
             parsed.blocks
         );
         assert!(
-            collect_inbound_page_link_names(&parsed.blocks).is_empty(),
+            collect_inbound_page_link_bodies(&parsed.blocks).is_empty(),
             "a fenced block must ask for no page: {:?}",
-            collect_inbound_page_link_names(&parsed.blocks)
+            collect_inbound_page_link_bodies(&parsed.blocks)
         );
         assert!(
             collect_inbound_tag_names(&parsed.blocks).is_empty(),
