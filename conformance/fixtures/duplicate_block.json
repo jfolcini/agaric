@@ -1,5 +1,5 @@
 {
-  "description": "#5140 Phase 3a — `duplicate_block` copies a content block and its content subtree as ROWS, right after the original. A fenced block stays ONE block whether or not its fence is closed (the markdown round-trip it replaced split on every newline), the open-fence block's child travels with it while the page nested in the same subtree does not, and the copy carries the ref-typed property with its target, the task columns and the list style. The returns pin every created row, root first then its descendants in pre-order, with the root one slot after the original. Seed: S1 (Home) > S2 (closed fence), S3 (open fence) > [S4 (child), S5 (nested page) > S6], S7 (carries a ref to S9), S8 (DONE task), S9 (ref target) > S11 (purged by an op), S10 (trashed by an op). Re-author `expected` / `expected_ops` via CONFORMANCE_UPDATE=1.",
+  "description": "#5140 Phase 3a — `duplicate_block` copies a content block and its content subtree as ROWS, right after the original. A fenced block stays ONE block whether or not its fence is closed (the markdown round-trip it replaced split on every newline), the open-fence block's child travels with it while the page nested in the same subtree does not, and the copy carries the ref-typed property with its target, the task columns, the list style and the recurrence rule (#5160 P4), not an occurrence's `repeat-seq`. The returns pin every created row, root first then its descendants in pre-order, with the root one slot after the original. Seed: S1 (Home) > S2 (closed fence), S3 (open fence) > [S4 (child), S5 (nested page) > S6], S7 (carries a ref to S9), S8 (DONE task), S9 (ref target) > S11 (purged by an op), S10 (trashed by an op). Re-author `expected` / `expected_ops` via CONFORMANCE_UPDATE=1.",
   "expected": {
     "block_tags": [],
     "blocks": [
@@ -200,7 +200,7 @@
       }
     ],
     "op_log_digest": {
-      "count": 18,
+      "count": 21,
       "ops": [
         {
           "key": "reviewer",
@@ -217,6 +217,14 @@
         },
         {
           "key": "listStyle",
+          "op_type": "set_property"
+        },
+        {
+          "key": "repeat",
+          "op_type": "set_property"
+        },
+        {
+          "key": "repeat-seq",
           "op_type": "set_property"
         },
         {
@@ -259,6 +267,10 @@
         },
         {
           "op_type": "set_due_date"
+        },
+        {
+          "key": "repeat",
+          "op_type": "set_property"
         }
       ]
     },
@@ -277,6 +289,18 @@
         "value_type": "Text"
       },
       {
+        "block_id": "B8",
+        "key": "repeat",
+        "value": "+1w",
+        "value_type": "Text"
+      },
+      {
+        "block_id": "B8",
+        "key": "repeat-seq",
+        "value": 2.0,
+        "value_type": "Num"
+      },
+      {
         "block_id": "B15",
         "key": "reviewer",
         "value": "B9",
@@ -286,6 +310,12 @@
         "block_id": "B16",
         "key": "listStyle",
         "value": "ordered",
+        "value_type": "Text"
+      },
+      {
+        "block_id": "B16",
+        "key": "repeat",
+        "value": "+1w",
         "value_type": "Text"
       }
     ]
@@ -401,6 +431,28 @@
     },
     {
       "args": {
+        "blockId": "S8",
+        "key": "repeat",
+        "value": {
+          "value_text": "+1w"
+        }
+      },
+      "command": "set_property",
+      "comment": "#5160 P4 — the recurrence rule is a property line on every surface, so the copy carries it."
+    },
+    {
+      "args": {
+        "blockId": "S8",
+        "key": "repeat-seq",
+        "value": {
+          "value_num": 2
+        }
+      },
+      "command": "set_property",
+      "comment": "One occurrence's bookkeeping, which the source render leaves out: the copy does not carry it."
+    },
+    {
+      "args": {
         "blockId": "S10"
       },
       "command": "delete_block"
@@ -449,7 +501,7 @@
         "blockId": "S8"
       },
       "command": "duplicate_block",
-      "comment": "The copy keeps todo_state, priority and due_date (the snapshot's block columns) and listStyle (its properties); the digest pins the order they are written in.",
+      "comment": "The copy keeps todo_state, priority and due_date (the snapshot's block columns), and listStyle and the repeat rule but not repeat-seq (its properties); the digest pins the order they are written in.",
       "name": "duplicate_keeps_task_columns_and_list_style",
       "via": "command"
     },

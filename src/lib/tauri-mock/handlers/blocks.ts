@@ -596,7 +596,8 @@ function duplicateRow(
   }
   const customKeys = [...srcProps.keys()]
     // The reserved keys the backend's source render leaves out: they
-    // describe the original (its space, timestamps, recurrence, template).
+    // describe the original (its space, timestamps, one occurrence of its
+    // recurrence, template). The rule itself is copied (#5160 P4).
     .filter((key) => key !== LIST_STYLE_KEY && !INLINE_PROPERTY_RESERVED_KEYS.has(key))
     .toSorted(compareUtf8Bytes)
   for (const key of customKeys) copyProperty(key)
@@ -1288,8 +1289,10 @@ export const blocksHandlers = {
   // (`- [ ] text`), is the row's `todo_state` (#5160 D6); after text the first
   // block's marker and checkbox are written back as text, as the backend's
   // `pasted_as_text` does. The backend also reads property lines and list
-  // markers, stamps a task, and refuses an over-deep or oversized paste; the
-  // mock models none of that, so tests must not rely on it for them.
+  // markers (keeping a value a definition refuses as text, named in the
+  // reply's `warnings`), stamps a task, and refuses an over-deep or oversized
+  // paste; the mock models none of that, so its `warnings` is always empty
+  // and tests must not rely on it for them.
   paste_blocks: (args) => {
     const a = args as Record<string, unknown>
     const anchorId = a['anchorBlockId'] as string
@@ -1362,7 +1365,7 @@ export const blocksHandlers = {
       open.push({ depth: block.depth, id: row['id'] as string })
       out.push(row)
     }
-    return { blocks: out, op_refs: opRefs }
+    return { blocks: out, warnings: [], op_refs: opRefs }
   },
 
   // ---------------------------------------------------------------------------

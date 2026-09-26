@@ -458,6 +458,7 @@ fn merge_block(
         properties: merged,
         is_code,
         block_anchor: c.block_anchor.clone(),
+        task_markers: c.task_markers.clone(),
     })
 }
 

@@ -89,6 +89,7 @@ describe('page-blocks pasteBlocks (#5140 Phase 3b)', () => {
     stubInvoke(mockedInvoke, {
       paste_blocks: () => ({
         op_refs: [{ device_id: 'dev1', seq: 1 }],
+        warnings: [],
         blocks: [
           makeBlockRow({ id: 'NEW_PAGE', block_type: 'page', content: 'Reading list' }),
           makeBlockRow({ id: 'NEW_TAG', block_type: 'tag', content: 'later' }),
@@ -117,6 +118,7 @@ describe('page-blocks pasteBlocks (#5140 Phase 3b)', () => {
         useSpaceStore.setState({ currentSpaceId: OTHER_SPACE })
         return {
           op_refs: [{ device_id: 'dev1', seq: 1 }],
+          warnings: [],
           blocks: [
             makeBlockRow({ id: 'NEW_PAGE', block_type: 'page', content: 'Reading list' }),
             makeBlockRow({ id: 'NEW_TAG', block_type: 'tag', content: 'later' }),
@@ -143,6 +145,30 @@ describe('page-blocks pasteBlocks (#5140 Phase 3b)', () => {
       },
       { kind: 'added', entity: 'tag', id: 'NEW_TAG', name: 'later', spaceId: 'SPACE_TEST' },
     ])
+  })
+
+  it('names what the paste kept as text in one warning toast (#5160 D11)', async () => {
+    store.setState({ blocks: [makeBlock({ id: 'A', parent_id: 'PAGE_1' })] })
+    const warnings = [
+      '`priority:: high` was kept as text: not an option',
+      '`due:: tomorrow` was kept as text: not a date',
+    ]
+    stubInvoke(mockedInvoke, {
+      paste_blocks: () => ({
+        op_refs: [{ device_id: 'dev1', seq: 1 }],
+        warnings,
+        blocks: [makeBlockRow({ id: 'PASTED', content: 'a\npriority:: high' })],
+      }),
+      load_page_subtree: () => subtreeResp([]),
+    })
+
+    const ids = await store.getState().pasteBlocks('A', { kind: 'text', text: 'x' })
+
+    expect(ids).toEqual(['PASTED'])
+    expect(vi.mocked(toast.warning)).toHaveBeenCalledExactlyOnceWith(
+      t('blockTree.pasteKeptAsText'),
+      { description: warnings.join('\n') },
+    )
   })
 
   it('a rejected paste toasts, logs, adds no undo entry, announces nothing and resolves no ids', async () => {

@@ -395,6 +395,7 @@ describe('PageBlockStore', () => {
         stubInvoke(mockedInvoke, {
           paste_blocks: () => ({
             op_refs: REFS,
+            warnings: [],
             blocks: [makeBlockRow({ id: 'NEW0', content: 'one', parent_id: 'PAGE_1' })],
           }),
           load_page_subtree: () => subtreeResp([anchor]),

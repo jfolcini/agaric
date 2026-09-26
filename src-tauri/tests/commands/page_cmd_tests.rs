@@ -2032,7 +2032,8 @@ async fn export_page_markdown_handles_many_unrelated_tags() {
 
 /// #384 regression: exported frontmatter must
 ///   (a) EXCLUDE internal/system-managed keys (space, is_space, template,
-///       created_at, repeat-*, …), and
+///       created_at, repeat-seq, …) while the recurrence rule the user set
+///       is a property like any other (#5160 P4), and
 ///   (b) RENDER value_ref (resolved to the referenced page's title) and
 ///       value_num (the number) instead of dropping them to empty — the
 ///       old query only projected value_text + value_date.
@@ -2088,12 +2089,19 @@ async fn export_page_markdown_frontmatter_filters_internal_and_renders_ref_num()
     seed("is_space", "value_text", "true").await;
     seed("template", "value_text", "weekly").await;
     seed("created_at", "value_text", "2020-01-01").await;
+    seed("repeat-seq", "value_text", "2").await;
     seed("repeat", "value_text", "daily").await;
 
     let md = export_page_markdown_inner(&pool, PAGE).await.unwrap();
 
     // Internal keys absent.
-    for internal in ["space:", "is_space:", "template:", "created_at:", "repeat:"] {
+    for internal in [
+        "space:",
+        "is_space:",
+        "template:",
+        "created_at:",
+        "repeat-seq:",
+    ] {
         assert!(
             !md.contains(internal),
             "internal key {internal:?} must NOT appear in frontmatter, got:\n{md}"
@@ -2108,6 +2116,10 @@ async fn export_page_markdown_frontmatter_filters_internal_and_renders_ref_num()
     assert!(
         md.contains("status: active"),
         "text prop missing, got:\n{md}"
+    );
+    assert!(
+        md.contains("repeat: daily\n"),
+        "the rule is exported, got:\n{md}"
     );
     assert!(
         md.contains("due: 2026-01-15"),
@@ -2763,12 +2775,12 @@ async fn get_page_source_of_a_soft_deleted_page_returns_not_found() {
 // apply_page_source — the page saved from its source buffer (#5140)
 // ======================================================================
 
-async fn page_source(pool: &SqlitePool, page: &BlockId) -> String {
+pub(super) async fn page_source(pool: &SqlitePool, page: &BlockId) -> String {
     get_page_source_inner(pool, page.as_str()).await.unwrap()
 }
 
 /// Save `source` over `page`, edited from `base`.
-async fn save_source(
+pub(super) async fn save_source(
     pool: &SqlitePool,
     mat: &Materializer,
     page: &BlockId,
@@ -2820,7 +2832,7 @@ async fn merge_source(
 }
 
 /// `source` with its one `from` replaced by `to`.
-fn with(source: &str, from: &str, to: &str) -> String {
+pub(super) fn with(source: &str, from: &str, to: &str) -> String {
     assert_eq!(
         source.matches(from).count(),
         1,
@@ -2830,7 +2842,7 @@ fn with(source: &str, from: &str, to: &str) -> String {
 }
 
 /// Created, edited, moved, deleted, properties set, properties deleted.
-fn counts(report: &PageSourceReport) -> [u32; 6] {
+pub(super) fn counts(report: &PageSourceReport) -> [u32; 6] {
     [
         report.created,
         report.edited,
@@ -2841,7 +2853,7 @@ fn counts(report: &PageSourceReport) -> [u32; 6] {
     ]
 }
 
-async fn last_seq(pool: &SqlitePool) -> i64 {
+pub(super) async fn last_seq(pool: &SqlitePool) -> i64 {
     sqlx::query_scalar("SELECT COALESCE(MAX(seq), 0) FROM op_log")
         .fetch_one(pool)
         .await
@@ -2849,7 +2861,7 @@ async fn last_seq(pool: &SqlitePool) -> i64 {
 }
 
 /// The types of the ops appended after `seq`, in order.
-async fn ops_after(pool: &SqlitePool, seq: i64) -> Vec<String> {
+pub(super) async fn ops_after(pool: &SqlitePool, seq: i64) -> Vec<String> {
     sqlx::query_scalar("SELECT op_type FROM op_log WHERE seq > ? ORDER BY seq")
         .bind(seq)
         .fetch_all(pool)
@@ -3132,40 +3144,66 @@ async fn apply_page_source_sets_and_deletes_properties() {
     );
 }
 
-/// A value typed under a `ref`-declared key that is not a live block's id,
-/// such as the title of the page meant, is refused naming the key, and nothing
-/// is written.
+/// A value typed under a `ref`-declared key is a live block's id, or a page
+/// title in the space as a typed `[[name]]` resolves (#5160 D11). A title two
+/// pages tie on refuses the save naming the line, and nothing is written.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn apply_page_source_refuses_a_ref_value_that_is_not_a_block_id() {
+async fn apply_page_source_reads_a_ref_value_as_an_id_or_a_title() {
     let (pool, _dir) = test_pool().await;
     let mat = Materializer::new(pool.clone());
     let page = dup_page(&pool, &mat, "Refs").await;
-    dup_page(&pool, &mat, "Project").await;
+    let project = dup_page(&pool, &mat, "Project").await;
+    dup_page(&pool, &mat, "Twin").await;
+    dup_page(&pool, &mat, "twin").await;
     create_property_def_inner(&pool, "reviewer".into(), "ref".into(), None)
         .await
         .unwrap();
-    let block = dup_child(&pool, &mat, &page, "needs a reviewer").await;
+    let plain = dup_child(&pool, &mat, &page, "plain").await;
+    let linked = dup_child(&pool, &mat, &page, "linked").await;
     settle(&mat).await;
     let base = page_source(&pool, &page).await;
-    let line = format!("- needs a reviewer ^{block}\n");
+    let plain_line = format!("- plain ^{plain}\n");
+    let linked_line = format!("- linked ^{linked}\n");
     let before = last_seq(&pool).await;
 
-    let result = save_source(
-        &pool,
-        &mat,
-        &page,
-        &with(&base, &line, &format!("{line}  reviewer:: Project\n")),
+    let tied = with(
         &base,
-        false,
-    )
-    .await;
-
+        &plain_line,
+        &format!("{plain_line}  reviewer:: TWIN\n"),
+    );
+    let result = save_source(&pool, &mat, &page, &tied, &base, false).await;
     assert!(
-        matches!(&result, Err(AppError::Validation { message, .. }) if message.contains("reviewer")),
-        "refused naming the key, not reported set and dropped: {result:?}"
+        matches!(&result, Err(AppError::Validation { message, .. })
+            if message.contains("`reviewer:: TWIN`") && message.contains("more than one page")),
+        "a tie is never guessed, and the refusal names the line: {result:?}"
     );
     assert_eq!(ops_after(&pool, before).await, Vec::<String>::new());
-    assert_eq!(page_source(&pool, &page).await, base, "nothing is written");
+
+    let source = with(
+        &with(
+            &base,
+            &plain_line,
+            &format!("{plain_line}  reviewer:: Project\n"),
+        ),
+        &linked_line,
+        &format!("{linked_line}  reviewer:: [[project]]\n"),
+    );
+    let report = save_source(&pool, &mat, &page, &source, &base, false)
+        .await
+        .unwrap();
+
+    assert_eq!(counts(&report), [0, 0, 0, 0, 2, 0], "both are set");
+    let reviewer = format!(
+        "reviewer text=None num=None date=None ref={:?} bool=None",
+        Some(project.as_str())
+    );
+    for block in [&plain, &linked] {
+        assert_eq!(
+            dup_storage(&pool, block).await[1],
+            reviewer,
+            "the page, by its title"
+        );
+    }
 }
 
 /// What the user types is checked against the key's options, as the property
@@ -3544,8 +3582,8 @@ async fn apply_page_source_refuses_a_block_holding_two_moved_anchors() {
 }
 
 /// A property line the save would not store — a reserved key such as
-/// `repeat` — is what the user typed: it stays in the block's text instead of
-/// being dropped with a warning.
+/// `repeat-seq` — is what the user typed: it stays in the block's text instead
+/// of being dropped with a warning.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn apply_page_source_keeps_a_reserved_property_line_as_text() {
     let (pool, _dir) = test_pool().await;
@@ -3559,7 +3597,7 @@ async fn apply_page_source_keeps_a_reserved_property_line_as_text() {
         &pool,
         &mat,
         &page,
-        &format!("- weekly ^{a}\n  repeat:: +1w\n"),
+        &format!("- weekly ^{a}\n  repeat-seq:: 2\n"),
         &base,
         false,
     )
@@ -3574,7 +3612,7 @@ async fn apply_page_source_keeps_a_reserved_property_line_as_text() {
     assert!(report.warnings.is_empty(), "{:?}", report.warnings);
     assert_eq!(
         dup_children(&pool, &page).await,
-        vec![(a.clone().into_string(), "weekly\nrepeat:: +1w".to_owned())],
+        vec![(a.clone().into_string(), "weekly\nrepeat-seq:: 2".to_owned())],
         "the line is the block's text"
     );
     assert_eq!(
@@ -4539,7 +4577,7 @@ async fn apply_page_source_merge_on_a_fresh_base_is_a_plain_save() {
 
 /// A page in the test space, made through the commands so the engine holds
 /// the tree the SQL does.
-async fn dup_page(pool: &SqlitePool, mat: &Materializer, title: &str) -> BlockId {
+pub(super) async fn dup_page(pool: &SqlitePool, mat: &Materializer, title: &str) -> BlockId {
     ensure_test_space(pool).await;
     mark_block_as_space(pool, TEST_SPACE_ID).await;
     create_page_in_space_inner(pool, DEV, mat, None, title.into(), TEST_SPACE_ID.into())
@@ -4548,7 +4586,7 @@ async fn dup_page(pool: &SqlitePool, mat: &Materializer, title: &str) -> BlockId
 }
 
 /// A content block appended under `parent`.
-async fn dup_child(
+pub(super) async fn dup_child(
     pool: &SqlitePool,
     mat: &Materializer,
     parent: &BlockId,
@@ -4568,7 +4606,11 @@ async fn dup_child(
     .id
 }
 
-async fn duplicate(pool: &SqlitePool, mat: &Materializer, id: &BlockId) -> Vec<BlockRow> {
+pub(super) async fn duplicate(
+    pool: &SqlitePool,
+    mat: &Materializer,
+    id: &BlockId,
+) -> Vec<BlockRow> {
     let rows = duplicate_block_inner(pool, DEV, mat, id.clone())
         .await
         .unwrap();
@@ -4577,7 +4619,7 @@ async fn duplicate(pool: &SqlitePool, mat: &Materializer, id: &BlockId) -> Vec<B
 }
 
 /// `parent`'s live children in sibling order, as `(id, content)`.
-async fn dup_children(pool: &SqlitePool, parent: &BlockId) -> Vec<(String, String)> {
+pub(super) async fn dup_children(pool: &SqlitePool, parent: &BlockId) -> Vec<(String, String)> {
     sqlx::query_as(
         "SELECT id, content FROM blocks WHERE parent_id = ? AND deleted_at IS NULL \
          ORDER BY position, id",
@@ -4590,7 +4632,7 @@ async fn dup_children(pool: &SqlitePool, parent: &BlockId) -> Vec<(String, Strin
 
 /// A block's task columns and its property rows, bar the two lifecycle stamps,
 /// one string each.
-async fn dup_storage(pool: &SqlitePool, id: &BlockId) -> Vec<String> {
+pub(super) async fn dup_storage(pool: &SqlitePool, id: &BlockId) -> Vec<String> {
     let (todo, priority, scheduled, due): (
         Option<String>,
         Option<String>,
@@ -4806,8 +4848,9 @@ async fn duplicate_block_carries_each_task_state() {
 }
 
 /// Everything the source buffer writes lands where the original keeps it:
-/// the task columns in `blocks`, the list style and the custom properties in
-/// `block_properties`, each declared type in its own column.
+/// the task columns in `blocks`, the list style, the recurrence rule (#5160
+/// P4) and the custom properties in `block_properties`, each declared type in
+/// its own column.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn duplicate_block_carries_task_columns_list_style_and_typed_properties() {
     let (pool, _dir) = test_pool().await;
@@ -4850,6 +4893,9 @@ async fn duplicate_block_carries_task_columns_list_style_and_typed_properties() 
             ("review_on", None, None, Some("2026-04-01"), None),
             ("stage", Some("final"), None, None, None),
             ("note", Some("free text"), None, None, None),
+            ("repeat", Some("+1w"), None, None, None),
+            ("repeat-until", None, None, Some("2026-12-31"), None),
+            ("repeat-count", None, Some(4.0), None, None),
         ] {
             set_property_inner(
                 &pool,
@@ -4874,6 +4920,9 @@ async fn duplicate_block_carries_task_columns_list_style_and_typed_properties() 
             "estimate text=None num=Some(3.5) date=None ref=None bool=None".to_owned(),
             format!("listStyle text={:?} num=None date=None ref=None bool=None", Some(style)),
             r#"note text=Some("free text") num=None date=None ref=None bool=None"#.to_owned(),
+            r#"repeat text=Some("+1w") num=None date=None ref=None bool=None"#.to_owned(),
+            "repeat-count text=None num=Some(4.0) date=None ref=None bool=None".to_owned(),
+            r#"repeat-until text=None num=None date=Some("2026-12-31") ref=None bool=None"#.to_owned(),
             r#"review_on text=None num=None date=Some("2026-04-01") ref=None bool=None"#.to_owned(),
             r#"stage text=Some("final") num=None date=None ref=None bool=None"#.to_owned(),
         ];
@@ -5385,21 +5434,21 @@ async fn copy_source(pool: &SqlitePool, ids: &[&BlockId], with_children: bool) -
         .unwrap()
 }
 
-fn paste_text(text: &str) -> PasteInput {
+pub(super) fn paste_text(text: &str) -> PasteInput {
     PasteInput::Text { text: text.into() }
 }
 
-async fn paste(
+pub(super) async fn paste(
     pool: &SqlitePool,
     mat: &Materializer,
     anchor: &BlockId,
     input: PasteInput,
 ) -> Vec<BlockRow> {
-    let rows = paste_blocks_inner(pool, DEV, mat, anchor.clone(), input, None)
+    let pasted = paste_blocks_inner(pool, DEV, mat, anchor.clone(), input, None)
         .await
         .unwrap();
     settle(mat).await;
-    rows
+    pasted.blocks
 }
 
 /// Page "Copy" holding `a` (holding `a1`, which holds `a1x`, and `a2`), then
@@ -6509,7 +6558,6 @@ async fn paste_blocks_op_refs_undo_the_whole_paste_with_what_it_created() {
             None,
         )
         .await
-        .map(|blocks| CreatedBlocks { blocks })
     })
     .await
     .unwrap();
@@ -6681,7 +6729,7 @@ async fn paste_into(
     anchor: &BlockId,
     text: &str,
     (before, after): (&str, &str),
-) -> WithOps<CreatedBlocks> {
+) -> WithOps<PastedBlocks> {
     let splice = PasteSplice {
         before: before.into(),
         after: after.into(),
@@ -6696,7 +6744,6 @@ async fn paste_into(
             Some(splice),
         )
         .await
-        .map(|blocks| CreatedBlocks { blocks })
     })
     .await
     .unwrap();
@@ -7595,40 +7642,19 @@ async fn import_markdown_single_transaction() {
     mat.shutdown();
 }
 
-/// A per-property validation error mid-import must abort the
-/// whole transaction. No page, no blocks, no properties, no op_log
-/// entries should land in the DB. The import returns `Err(...)` rather
-/// than swallowing the failure into `result.warnings`.
+/// A value its definition refuses no longer aborts the import (#5160 D11):
+/// the line stays text in its block, one warning names it, and the rest of
+/// the file imports.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn import_markdown_aborts_on_first_validation_error_l30() {
+async fn import_markdown_keeps_a_refused_value_as_text_l30() {
     let (pool, _dir) = test_pool().await;
     let mat = Materializer::new(pool.clone());
     ensure_test_space(&pool).await;
     mark_block_as_space(&pool, TEST_SPACE_ID).await;
 
-    // Baseline: post-seed snapshot. Includes the seeded space block +
-    // its `is_space = true` property row, so the post-error assertions
-    // compare against the seeded state rather than a strictly empty DB.
-    let blocks_before: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM blocks")
-        .fetch_one(&pool)
-        .await
-        .unwrap();
-    let props_before: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM block_properties")
-        .fetch_one(&pool)
-        .await
-        .unwrap();
-    let ops_before: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM op_log WHERE device_id = ?")
-        .bind(DEV)
-        .fetch_one(&pool)
-        .await
-        .unwrap();
-
     // `priority` is a select-type property whose seeded options are
-    // ["1","2","3"] (migration 0014). `priority:: 99` therefore fails
-    // `set_property_in_tx`'s options-membership check on the second
-    // block, after the first block + page have already been written
-    // inside the open transaction.
-    let content = "- Block 1\n- Block 2\n  priority:: 99\n- Block 3";
+    // ["1","2","3"] (migration 0014), so `99` is refused.
+    let content = "- Block 1\n- Block 2\n  priority:: 99\n- Block 3\n  priority:: 2";
     let result = import_markdown_inner(
         &pool,
         DEV,
@@ -7639,53 +7665,38 @@ async fn import_markdown_aborts_on_first_validation_error_l30() {
         TEST_SPACE_ID.into(),
         None,
     )
-    .await;
+    .await
+    .expect("a refused value does not abort the import");
+    settle(&mat).await;
 
-    assert!(
-        result.is_err(),
-        "import must surface the per-property validation error as Err, got: {result:?}"
-    );
-
-    // All-or-nothing: rollback restored the DB to its pre-import state.
-    let blocks_after: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM blocks")
-        .fetch_one(&pool)
-        .await
-        .unwrap();
+    assert_eq!(result.blocks_created, 3);
+    assert_eq!(result.properties_set, 1, "only Block 3's priority is set");
+    let refused: Vec<&String> = result
+        .warnings
+        .iter()
+        .filter(|w| w.contains("`priority:: 99`"))
+        .collect();
     assert_eq!(
-        blocks_after.0, blocks_before.0,
-        "no block rows should survive a rolled-back import"
+        refused.len(),
+        1,
+        "one warning names it: {:?}",
+        result.warnings
     );
-
-    let props_after: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM block_properties")
-        .fetch_one(&pool)
-        .await
-        .unwrap();
+    let rows: Vec<(String, Option<String>)> = sqlx::query_as(
+        "SELECT b.content, b.priority FROM blocks b JOIN blocks p ON p.id = b.parent_id \
+         WHERE p.content = 'AbortTest' AND b.deleted_at IS NULL ORDER BY b.position",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
     assert_eq!(
-        props_after.0, props_before.0,
-        "no block_properties rows should survive a rolled-back import"
-    );
-
-    let ops_after: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM op_log WHERE device_id = ?")
-        .bind(DEV)
-        .fetch_one(&pool)
-        .await
-        .unwrap();
-    assert_eq!(
-        ops_after.0, ops_before.0,
-        "no op_log entries should survive a rolled-back import"
-    );
-
-    // The page row itself must not exist either — even though it was
-    // created before the failing property write, the rollback wipes it.
-    let page_exists: (i64,) =
-        sqlx::query_as("SELECT COUNT(*) FROM blocks WHERE block_type = 'page' AND content = ?")
-            .bind("AbortTest")
-            .fetch_one(&pool)
-            .await
-            .unwrap();
-    assert_eq!(
-        page_exists.0, 0,
-        "the page block must not exist after a rolled-back import"
+        rows,
+        vec![
+            ("Block 1".to_owned(), None),
+            ("Block 2\npriority:: 99".to_owned(), None),
+            ("Block 3".to_owned(), Some("2".to_owned())),
+        ],
+        "the refused line is Block 2's text"
     );
 
     mat.shutdown();
@@ -15475,14 +15486,12 @@ async fn export_descendant_reserved_columns_not_duplicated_2962() {
     }
 }
 
-/// #2962 — recurrence bookkeeping keys (`repeat`, `repeat-until`,
-/// `repeat-count`, `repeat-seq`, `repeat-origin`) and the other internal
-/// keys the page-level frontmatter query already excludes (`space`,
-/// `is_space`, `created_at`, `completed_at`, `template`) must NOT be
-/// round-tripped through a descendant block's markdown export either. This
-/// is a DELIBERATE, symmetric-by-design exclusion (recurrence is managed by
-/// its own state-transition helpers, not markdown) — the new
-/// custom-property emission path must not regress it.
+/// #2962 — the recurrence bookkeeping of one occurrence (`repeat-seq`,
+/// `repeat-origin`) and the other internal keys the page-level frontmatter
+/// query already excludes (`space`, `is_space`, `created_at`, `completed_at`,
+/// `template`) must NOT be round-tripped through a descendant block's
+/// markdown export either. The rule the user set (`repeat`, `repeat-until`,
+/// `repeat-count`) is exported, as every surface reads it (#5160 P4).
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn export_descendant_internal_and_recurrence_keys_not_round_tripped_2962() {
     let (pool, _dir) = test_pool().await;
@@ -15531,9 +15540,6 @@ async fn export_descendant_internal_and_recurrence_keys_not_round_tripped_2962()
     let md = export_page_markdown_inner(&pool, PAGE).await.unwrap();
 
     for internal in [
-        "repeat::",
-        "repeat-until::",
-        "repeat-count::",
         "repeat-seq::",
         "repeat-origin::",
         "is_space::",
@@ -15550,6 +15556,10 @@ async fn export_descendant_internal_and_recurrence_keys_not_round_tripped_2962()
     assert!(
         md.contains("  assignee:: Carol\n"),
         "a non-excluded custom key on the same block must still export, got:\n{md}"
+    );
+    assert!(
+        md.contains("  repeat:: daily\n  repeat-count:: 5\n  repeat-until:: 2026-12-31\n"),
+        "the recurrence rule is exported, got:\n{md}"
     );
 }
 

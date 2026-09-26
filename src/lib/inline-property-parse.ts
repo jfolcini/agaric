@@ -15,25 +15,24 @@
  * import agree on what a property line IS:
  *
  *   - A line is a property line when, after trimming, it splits at the FIRST
- *     `":: "` occurrence into a valid key and a non-empty value.
+ *     `::` followed by a space or a tab into a valid key and a non-empty
+ *     value (import.rs's `split_property_line`).
  *   - Keys match the same alphabet `op::validate_set_property` enforces:
  *     `^[A-Za-z0-9_-]{1,64}$` (see `is_property_key` in import.rs). Free-form
  *     text containing `:: ` mid-sentence (URLs, prose, `std::vector`) never
- *     matches because the LHS is not a valid key or there is no `":: "`.
+ *     matches because the LHS is not a valid key or there is no separator.
  *   - `key::` / `key:: ` with no value is NOT a property line — the text
- *     stays literal, matching the backend's rejection of empty values.
- *     (Near-DIVERGENCE nuance: import.rs sees `key::` as content — no
- *     `":: "` separator — but `key:: ` with a trailing space DOES split
- *     there, yielding an empty value the backend then rejects. Here both
- *     forms stay literal, which is the only non-lossy option at save time.)
- *     There is no explicit empty-value check enforcing this any more (#3797
- *     removed one that no input could reach). The property is now STRUCTURAL:
- *     `raw.trim()` runs before the `":: "` search, so the separator's trailing
- *     space can never be the last character and the value slice always keeps a
- *     non-whitespace char. Reorder those two steps and this mirror breaks with
- *     nothing pointing at it.
+ *     stays literal, as import and paste read it (only Edit as Markdown reads
+ *     it as clearing the property, #5160 P7). There is no explicit
+ *     empty-value check enforcing this (#3797 removed one that no input could
+ *     reach). The property is STRUCTURAL: `raw.trim()` runs before the
+ *     separator search, so the separator's trailing space or tab can never be
+ *     the last character and the value slice always keeps a non-whitespace
+ *     char. Reorder those two steps and this mirror breaks with nothing
+ *     pointing at it.
  *   - Reserved / exporter-managed keys (`FRONTMATTER_RESERVED_KEYS` in
- *     import.rs, e.g. `space`, `template`) are never parsed. DIVERGENCE from
+ *     import.rs, e.g. `space`, `template`), in any spelling
+ *     ({@link foldPropertyKey}), are never parsed. DIVERGENCE from
  *     import.rs: import DROPS such lines (round-trip filter); here the line
  *     stays literal instead — silently deleting text a user just typed would
  *     be data loss, while an imported file's reserved lines are
@@ -80,13 +79,27 @@ export const INLINE_PROPERTY_RESERVED_KEYS: ReadonlySet<string> = new Set([
   'is_space',
   'created_at',
   'completed_at',
-  'repeat',
-  'repeat-until',
-  'repeat-count',
   'repeat-seq',
   'repeat-origin',
   'template',
 ])
+
+/**
+ * A property key as every surface matches it against the reserved keys and
+ * the property definitions (#5160 D13): ASCII case folded and `-` read as
+ * `_`, so `Due-Date` is `due_date`. No aliases: `due` is not `due_date`.
+ * Mirrors `fold_property_key` in `src-tauri/agaric-engine/src/import.rs`.
+ */
+export function foldPropertyKey(key: string): string {
+  return key
+    .trim()
+    .replaceAll('-', '_')
+    .replace(/[A-Z]/g, (c) => c.toLowerCase())
+}
+
+const FOLDED_RESERVED_KEYS: ReadonlySet<string> = new Set(
+  [...INLINE_PROPERTY_RESERVED_KEYS].map(foldPropertyKey),
+)
 
 /**
  * Same key alphabet as `is_property_key` in import.rs and
@@ -148,19 +161,19 @@ export function parseInlineProperties(content: string): InlinePropertyLine[] {
       continue
     }
     if (inFence) continue
-    const sepIndex = trimmed.indexOf(':: ')
+    const sepIndex = trimmed.search(/::[ \t]/)
     if (sepIndex === -1) continue
     const key = trimmed.slice(0, sepIndex).trim()
     // `value` is structurally non-empty and needs no emptiness guard (#3797):
     // `trimmed` is fully right-trimmed, so its last character is never
-    // whitespace, so the matched `':: '` separator's trailing space can never
+    // whitespace, so the matched separator's trailing space or tab can never
     // BE that last character — the slice below therefore always keeps at least
     // one trailing non-whitespace char. A typed `key:: ` reaches this loop as
-    // `key::` (no `':: '` at all) and is rejected by the `sepIndex === -1`
+    // `key::` (no separator at all) and is rejected by the `sepIndex === -1`
     // check above instead; see the "rejects an empty value" test.
     const value = trimmed.slice(sepIndex + 3).trim()
     if (!isInlinePropertyKey(key)) continue
-    if (INLINE_PROPERTY_RESERVED_KEYS.has(key)) continue
+    if (FOLDED_RESERVED_KEYS.has(foldPropertyKey(key))) continue
     result.push({ key, value, lineIndex })
   }
   return result

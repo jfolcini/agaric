@@ -1,11 +1,22 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT key AS \"key!\", value_text, value_date, value_num, value_ref,\n                  value_bool AS \"value_bool: i64\"\n           FROM block_properties\n           WHERE block_id = ?1\n             AND key NOT IN (\n                'space', 'is_space', 'created_at', 'completed_at',\n                'repeat', 'repeat-until', 'repeat-count', 'repeat-seq',\n                'repeat-origin', 'template', 'listStyle'\n             )",
+  "query": "SELECT block_id AS \"block_id!\", key AS \"key!\", value_text, value_date,\n                      value_num, value_ref, value_bool AS \"value_bool: i64\"\n               FROM block_properties\n               WHERE block_id IN (SELECT value FROM json_each(?1))\n                 AND key NOT IN (\n                    'space', 'is_space', 'created_at', 'completed_at',\n                    'repeat-seq', 'repeat-origin', 'template', 'listStyle'\n                 )\n               ORDER BY block_id ASC, key ASC",
   "describe": {
     "columns": [
       {
-        "name": "key!",
+        "name": "block_id!",
         "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "block_properties",
+            "name": "block_id"
+          }
+        }
+      },
+      {
+        "name": "key!",
+        "ordinal": 1,
         "type_info": "Text",
         "origin": {
           "Table": {
@@ -16,7 +27,7 @@
       },
       {
         "name": "value_text",
-        "ordinal": 1,
+        "ordinal": 2,
         "type_info": "Text",
         "origin": {
           "Table": {
@@ -27,7 +38,7 @@
       },
       {
         "name": "value_date",
-        "ordinal": 2,
+        "ordinal": 3,
         "type_info": "Text",
         "origin": {
           "Table": {
@@ -38,7 +49,7 @@
       },
       {
         "name": "value_num",
-        "ordinal": 3,
+        "ordinal": 4,
         "type_info": "Float",
         "origin": {
           "Table": {
@@ -49,7 +60,7 @@
       },
       {
         "name": "value_ref",
-        "ordinal": 4,
+        "ordinal": 5,
         "type_info": "Text",
         "origin": {
           "Table": {
@@ -60,7 +71,7 @@
       },
       {
         "name": "value_bool: i64",
-        "ordinal": 5,
+        "ordinal": 6,
         "type_info": "Integer",
         "origin": {
           "Table": {
@@ -75,6 +86,7 @@
     },
     "nullable": [
       false,
+      false,
       true,
       true,
       true,
@@ -82,5 +94,5 @@
       true
     ]
   },
-  "hash": "fa9be196f848dfbf5328a35066c732f17655eaa8c4d2ae63b7de8864a8f19d3d"
+  "hash": "7ff73be1634b6584354cd71638b25dbe70d83feefe514e894c5c71aac61a9e1f"
 }

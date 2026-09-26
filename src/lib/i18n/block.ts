@@ -208,7 +208,8 @@ export const block: Record<string, string> = {
   'blockTree.repeatUntilMessage': 'Repeat until {{date}}',
   'blockTree.setRepeatEndDateFailed': 'Failed to set repeat end date',
   'blockTree.setScheduledDateFailed': 'Failed to set scheduled date',
-  'blockTree.setPropertyFailed': 'Failed to set property',
+  'blockTree.propertyKeptAsText': 'Kept as text: {{lines}}',
+  'blockTree.pasteKeptAsText': 'Some of the paste was kept as text',
   'blockTree.loadingLabel': 'Loading blocks',
   // #1258 — page-subtree truncation notice. The backend caps a page at
   // PAGE_SUBTREE_MAX_BLOCKS; before this, the excess was dropped silently.
