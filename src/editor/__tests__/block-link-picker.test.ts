@@ -613,6 +613,34 @@ describe('resolveBlockLinkFromSelection command', () => {
     ])
   })
 
+  // The selection is prose, not link syntax: a `#` or `|` in it is part of
+  // the name, never an anchor to drop or a label to split off.
+  it('names the page with the whole selection, `#` and `|` included', async () => {
+    for (const selected of ['Issue #42', 'Plan|see']) {
+      const { chainProxy, insertContentAtCalls } = createChainProxy()
+      const mockEditor = {
+        chain: () => chainProxy,
+        state: {
+          selection: { from: 3, to: 3 + selected.length },
+          doc: { textBetween: () => selected, content: { size: 1000 } },
+        },
+      } as unknown
+      const mockOnCreate = vi.fn().mockResolvedValue('NEW_ULID')
+      const ext = BlockLinkPicker.configure({
+        items: vi.fn().mockResolvedValue([]),
+        onCreate: mockOnCreate,
+      })
+
+      expect(getCommand(ext)()({ editor: mockEditor })).toBe(true)
+      await vi.waitFor(() => expect(insertContentAtCalls.length).toBeGreaterThan(0))
+
+      expect(mockOnCreate).toHaveBeenCalledWith(selected)
+      expect(insertContentAtCalls).toEqual([
+        { pos: 3, content: { type: 'block_link', attrs: { id: 'NEW_ULID' } } },
+      ])
+    }
+  })
+
   it('creates page when no match found', async () => {
     const { chainProxy, insertContentAtCalls } = createChainProxy()
     const mockEditor = {
@@ -970,6 +998,19 @@ describe('parseTypedLink and blockLinkToken (#5160 D9, D10)', () => {
       attrs: { id: 'ID' },
     })
     expect(blockLinkToken('ID', undefined, 'Plan')).toEqual({
+      type: 'block_link',
+      attrs: { id: 'ID' },
+    })
+  })
+
+  // A `]` would end the stored `[[ULID|label]]` token early, and every reader
+  // would then see text: the link, its backlink and the chip would be lost.
+  it('drops a ] from the label, and a label left empty is none', () => {
+    expect(blockLinkToken('ID', 'a]b', 'Plan')).toEqual({
+      type: 'block_link',
+      attrs: { id: 'ID', label: 'ab' },
+    })
+    expect(blockLinkToken('ID', ' ] ', 'Plan')).toEqual({
       type: 'block_link',
       attrs: { id: 'ID' },
     })

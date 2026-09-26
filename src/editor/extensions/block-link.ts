@@ -15,6 +15,8 @@
 import { mergeAttributes, Node } from '@tiptap/core'
 import type { Node as ProseMirrorNode } from '@tiptap/pm/model'
 
+import { storableLinkLabel } from '@/editor/markdown-common'
+
 export interface BlockLinkOptions {
   /** Resolve a block/page ULID to its display title. Falls back to truncated ULID. */
   resolveTitle: (id: string) => string
@@ -144,8 +146,13 @@ export const BlockLink = Node.create<BlockLinkOptions>({
     return {
       insertBlockLink:
         (id: string, label?: string) =>
-        ({ commands }) =>
-          commands.insertContent({ type: this.name, attrs: label ? { id, label } : { id } }),
+        ({ commands }) => {
+          const stored = storableLinkLabel(label)
+          return commands.insertContent({
+            type: this.name,
+            attrs: stored ? { id, label: stored } : { id },
+          })
+        },
       setBlockLinkLabel:
         (label: string) =>
         ({ state, commands }) => {
@@ -154,10 +161,10 @@ export const BlockLink = Node.create<BlockLinkOptions>({
           const { selection } = state
           const node = 'node' in selection ? (selection.node as ProseMirrorNode) : null
           if (!node || node.type.name !== this.name) return false
-          const trimmed = label.replaceAll(']', '').trim()
+          const stored = storableLinkLabel(label)
           const title = this.options.resolveTitle(node.attrs['id'] as string)
           return commands.updateAttributes(this.name, {
-            label: trimmed === '' || trimmed === title ? null : trimmed,
+            label: stored === undefined || stored === title ? null : stored,
           })
         },
     }

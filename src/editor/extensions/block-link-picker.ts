@@ -22,6 +22,7 @@ import {
   createPickerTokenFromCommand,
   resolveAndInsertPickerToken,
 } from '@/editor/extensions/picker-plugin'
+import { storableLinkLabel } from '@/editor/markdown-common'
 import type { PickerItem } from '@/editor/SuggestionList'
 import { t } from '@/lib/i18n'
 import { linkBodyReadings } from '@/lib/name-tokens'
@@ -112,8 +113,9 @@ export function blockLinkToken(
   label: string | undefined,
   title: string | undefined,
 ): Record<string, unknown> {
-  return label && label !== title
-    ? { type: 'block_link', attrs: { id, label } }
+  const stored = storableLinkLabel(label)
+  return stored && stored !== title
+    ? { type: 'block_link', attrs: { id, label: stored } }
     : { type: 'block_link', attrs: { id } }
 }
 
@@ -204,23 +206,23 @@ export const BlockLinkPicker = Extension.create<BlockLinkPickerOptions>({
           const selectedText = editor.state.doc.textBetween(from, to).trim()
           if (!selectedText) return false
 
-          const link = parseTypedLink(selectedText)
-          if (!link) return false
-
           // Capture position before deletion (same race-condition fix as the input rule)
           const insertPos = from
           editor.chain().focus().deleteRange({ from, to }).run()
 
-          // Shared race-guard.
-          resolveTypedLink(
+          // The selection is prose, not link syntax: its whole text names the
+          // page, so no `#` or `|` in it is read as an anchor or a label.
+          void resolveAndInsertPickerToken({
             editor,
-            extensionOptions,
-            selectedText,
-            link,
-            selectedText,
+            text: selectedText,
             insertPos,
-            'resolveBlockLinkFromSelection failed, falling back to plain text',
-          )
+            items: extensionOptions.items,
+            matchItem: matchBlockLinkItem,
+            tokenFor: (id) => blockLinkToken(id, undefined, undefined),
+            onCreate: extensionOptions.onCreate,
+            loggerComponent: 'BlockLinkPicker',
+            errorMessage: 'resolveBlockLinkFromSelection failed, falling back to plain text',
+          })
           return true
         },
     }

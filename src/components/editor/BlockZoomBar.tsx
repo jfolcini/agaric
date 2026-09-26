@@ -41,9 +41,9 @@ function stripBreadcrumbMarkup(
   resolveBlockTitle: (id: string) => string | undefined,
 ): string {
   let s = raw
-  // [[ULID]] block-link tokens; a `[[ULID|label]]` reads as its label (#5160 D9)
-  s = s.replace(/\[\[([^\]|]+)(?:\|([^\]]*))?\]\]/g, (_match, id: string, label?: string) => {
-    if (label) return label
+  // [[ULID]] block-link tokens; a stored `[[ULID|label]]` reads as its label (#5160 D9)
+  s = s.replace(/\[\[[0-9A-Z]{26}\|([^\]\n]+)\]\]/g, '$1')
+  s = s.replace(/\[\[([^\]]+)\]\]/g, (_match, id: string) => {
     const trimmed = id.trim()
     const resolved = resolveBlockTitle(trimmed)
     if (resolved) return resolved

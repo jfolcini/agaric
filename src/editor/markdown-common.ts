@@ -27,6 +27,14 @@ export function blockLinkToken(id: string, label?: string): string {
 }
 
 /**
+ * A link label as it can be stored (#5160 D9): without `]`, which would end the
+ * token and turn it into text for every reader, and trimmed; empty is none.
+ */
+export function storableLinkLabel(label: string | undefined): string | undefined {
+  return label?.replaceAll(']', '').trim() || undefined
+}
+
+/**
  * Indentation of ONE list-nesting level (#1513). Shared because the two halves
  * must agree exactly: the serializer prefixes every non-leading child of a list
  * item with it, and the parser recognizes a nested block by it and dedents by

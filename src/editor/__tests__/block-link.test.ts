@@ -233,6 +233,21 @@ describe('BlockLink label (#5160 D9)', () => {
     expect(labelOf()).toBeNull()
   })
 
+  it('insertBlockLink drops a ] from the label, so a picked link stays a link', () => {
+    build([])
+    editor.commands.insertBlockLink(ID, 'see [1]')
+    editor.commands.insertBlockLink(ID, ' ] ')
+    const stored = serialize(editor.getJSON() as DocNode)
+    expect(stored).toBe(`[[${ID}|see [1]][[${ID}]]`)
+    expect(parse(stored).content?.[0]).toEqual({
+      type: 'paragraph',
+      content: [
+        { type: 'block_link', attrs: { id: ID, label: 'see [1' } },
+        { type: 'block_link', attrs: { id: ID } },
+      ],
+    })
+  })
+
   it('setBlockLinkLabel drops a ], which would end the stored token and leave it text', () => {
     build([{ type: 'block_link', attrs: { id: ID } }])
     editor.commands.setNodeSelection(1)

@@ -23,6 +23,10 @@ Phase 3b of #5160: decision D9 (store the label) and N6. `[[Page|label]]` used t
   - "Link it" corrupted another link;
   - a `]` in a label turned the link into text;
   - the `|`-in-title regression.
+- **The PR's review bot found two more, now fixed with tests shown red first:**
+  - A `]` typed into a label on the picker and selection paths still reached storage. One rule, `storableLinkLabel`, now builds every stored label.
+  - Turning a selection into a link cut it at the first `#`, so selecting `Issue #42` created `Issue` and deleted ` #42`. A selection is prose, so its whole text names the page, as before this phase.
+  - One-line previews now read only a stored `[[ULID|label]]` as its label, so an unresolved `[[Article | Medium]]` keeps its text.
 - **Open product question:** a block that mentions a page only inside another link's label still lists under that page's Unlinked References, because the label is search text. "Link it" there now shows the "link failed" toast instead of corrupting the other link.
 - **Known limits:**
   - A `|`-titled JEX note that links to another `|`-titled note imported after it still splits.

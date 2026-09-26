@@ -29,6 +29,12 @@ describe('truncateContent', () => {
     )
   })
 
+  // A human link a tie left as text is not a stored link: its `|` belongs to
+  // the title (`Article | Medium`), not to a label.
+  it('keeps the whole text of an unresolved [[A | B]]', () => {
+    expect(truncateContent('Read [[Article | Medium]]')).toBe('Read Article | Medium')
+  })
+
   it('strips markdown chars #*_~`', () => {
     expect(truncateContent('# Hello **world** _foo_ ~bar~ `code`')).toBe(
       ' Hello world foo bar code',

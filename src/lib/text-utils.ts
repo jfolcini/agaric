@@ -1,6 +1,6 @@
 /**
- * Strip markdown formatting and wiki-link brackets (a `[[x|label]]` reads as
- * its label, #5160 D9), then truncate.
+ * Strip markdown formatting and wiki-link brackets (a stored `[[ULID|label]]`
+ * reads as its label, #5160 D9), then truncate.
  */
 export function truncateContent(
   content: string | null,
@@ -9,10 +9,8 @@ export function truncateContent(
 ): string {
   if (!content) return emptyFallback
   const plain = content
-    .replace(
-      /\[\[([^\]|]*)(?:\|([^\]]*))?\]\]/g,
-      (_m, inner: string, label?: string) => label || inner,
-    )
+    .replace(/\[\[[0-9A-Z]{26}\|([^\]\n]+)\]\]/g, '$1')
+    .replace(/\[\[([^\]]*)\]\]/g, '$1')
     .replace(/[#*_~`]/g, '')
   return plain.length > max ? `${plain.slice(0, max)}...` : plain
 }
