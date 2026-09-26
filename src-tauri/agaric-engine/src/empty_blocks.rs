@@ -296,7 +296,7 @@ async fn select_candidates(
 }
 
 /// Guard 7 — candidate ids that some live block's content names as
-/// `((id))` or `[[id]]`.
+/// `((id))`, `[[id]]` or `[[id|label]]` (#5160 D9).
 ///
 /// One pass over the blocks that contain a link opener at all, driven as
 /// the outer loop (`CROSS JOIN` pins the order) against the candidate set,
@@ -316,7 +316,8 @@ async fn referenced_candidate_ids(
            WHERE r.deleted_at IS NULL
              AND (r.content LIKE '%((%' OR r.content LIKE '%[[%')
              AND (instr(r.content, '((' || c.value || '))') > 0
-                  OR instr(r.content, '[[' || c.value || ']]') > 0)"#,
+                  OR instr(r.content, '[[' || c.value || ']]') > 0
+                  OR instr(r.content, '[[' || c.value || '|') > 0)"#,
         ids_json,
     )
     .fetch_all(&mut **tx)
@@ -836,6 +837,19 @@ mod tests {
         run_sweep(&pool).await;
 
         assert_survives(&pool, &id, "guard 7: [[id]] link").await;
+    }
+
+    // Guard 7c (#5160 D9)
+    #[tokio::test]
+    async fn empty_referenced_by_a_labelled_page_link_survives() {
+        let (pool, _tmp) = fresh_pool().await;
+        let page = page_with_a_real_block(&pool).await;
+        let id = insert_old_empty(&pool, &page, 2).await;
+        insert_referrer(&pool, &page, &format!("see [[{id}|the label]] above")).await;
+
+        run_sweep(&pool).await;
+
+        assert_survives(&pool, &id, "guard 7: [[id|label]] link").await;
     }
 
     #[tokio::test]

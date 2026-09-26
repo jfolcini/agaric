@@ -227,7 +227,7 @@ fn join_children(
 /// Neutralize markdown link/tag token boundaries in a resolved ref NAME
 /// before it is folded into the plaintext description (#3027 Part C). The
 /// description sits in RAW block content, and the importer's
-/// `collect_inbound_page_link_names` / `collect_inbound_tag_names` scan that
+/// `collect_inbound_page_link_bodies` / `collect_inbound_tag_names` scan that
 /// raw content for `[[…]]` (`HUMAN_PAGE_LINK_RE`) and `#word` /
 /// `#[[…]]` (`HUMAN_TAG_RE` / `HUMAN_MULTIWORD_TAG_RE`) tokens BEFORE the
 /// query token is consumed — a page/tag whose title literally contains one of

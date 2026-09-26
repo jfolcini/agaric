@@ -18,6 +18,7 @@
  */
 
 import {
+  blockLinkToken,
   isAutolinkableUrl,
   leadingIndent,
   LIST_NEST_INDENT,
@@ -624,7 +625,7 @@ function serializeInlineChild(
     return serializeInlineAtom(`#[${child.attrs.id}]`, activeMarks)
   }
   if (child.type === 'block_link') {
-    return serializeInlineAtom(`[[${child.attrs.id}]]`, activeMarks)
+    return serializeInlineAtom(blockLinkToken(child.attrs.id, child.attrs.label), activeMarks)
   }
   if (child.type === 'block_ref') {
     return serializeInlineAtom(`((${child.attrs.id}))`, activeMarks)

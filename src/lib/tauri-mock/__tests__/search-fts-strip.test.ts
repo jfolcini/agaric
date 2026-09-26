@@ -117,6 +117,13 @@ describe('stripForFts — models strip_for_fts_with_maps (strip.rs:114-163)', ()
     expect(stripForFts(raw)).toBe(expected)
   })
 
+  // #5160 D9 — a labelled link indexes the label the reader sees, not the title.
+  it('indexes a [[ULID|label]] link as its label', () => {
+    const PAGE = 'LABELPAGE'.padStart(26, '0')
+    blocks.set(PAGE, makeBlock(PAGE, 'page', 'My Page', null, 1))
+    expect(stripForFts(`see [[${PAGE}|the plan]] and [[${PAGE}]]`)).toBe('see the plan and My Page')
+  })
+
   // `cap_indexed_text` (strip.rs:179-195). Unreachable through any fixture —
   // asserted through the export, like `approximateFtsRank`'s two guard
   // branches, because an omission a comment merely NAMES still diverges

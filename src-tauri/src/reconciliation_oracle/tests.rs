@@ -1878,6 +1878,8 @@ fn oracle_link_grammar_matches_production_3955() {
         format!("[{OK}]"),
         format!("prefix [[{OK}]] infix (({OK})) suffix"),
         format!("[[{OK}]][[{OK}]]"),
+        format!("[[{OK}|a label]] and [[{OK}|]]"),
+        format!("[[{OK}|no\nnewline]]"),
         String::new(),
     ];
     for text in &corpus {
@@ -1906,6 +1908,14 @@ fn oracle_link_grammar_matches_production_3955() {
             .count(),
         2
     );
+    // A label rides along (#5160 D9); a newline in it makes the token text.
+    assert_eq!(
+        super::ORACLE_LINK_TOKEN_RE
+            .captures_iter(&corpus[11])
+            .count(),
+        2
+    );
+    assert!(super::ORACLE_LINK_TOKEN_RE.captures(&corpus[12]).is_none());
 }
 
 /// The measurement behind the LANE decision (#3955), kept `#[ignore]`d so the

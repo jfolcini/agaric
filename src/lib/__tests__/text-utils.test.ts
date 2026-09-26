@@ -23,6 +23,18 @@ describe('truncateContent', () => {
     expect(truncateContent('See [[My Page]] for details')).toBe('See My Page for details')
   })
 
+  it('reads a [[x|label]] link as its label (#5160 D9)', () => {
+    expect(truncateContent('See [[01ARZ3NDEKTSV4RRFFQ69G5FAV|the plan]] now')).toBe(
+      'See the plan now',
+    )
+  })
+
+  // A human link a tie left as text is not a stored link: its `|` belongs to
+  // the title (`Article | Medium`), not to a label.
+  it('keeps the whole text of an unresolved [[A | B]]', () => {
+    expect(truncateContent('Read [[Article | Medium]]')).toBe('Read Article | Medium')
+  })
+
   it('strips markdown chars #*_~`', () => {
     expect(truncateContent('# Hello **world** _foo_ ~bar~ `code`')).toBe(
       ' Hello world foo bar code',

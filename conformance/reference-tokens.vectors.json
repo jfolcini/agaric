@@ -4,7 +4,6 @@
     "Shared": "01ARZ3NDEKTSV4RRFFQ69G5FB0",
     "01ARZ3NDEKTSV4RRFFQ69G5FAV": "01ARZ3NDEKTSV4RRFFQ69G5FB1",
     "﻿Page﻿": "01ARZ3NDEKTSV4RRFFQ69G5FB2",
-    "Page|label": "01ARZ3NDEKTSV4RRFFQ69G5FB3",
     "C": "01ARZ3NDEKTSV4RRFFQ69G5FB4",
     "C# Notes": "01ARZ3NDEKTSV4RRFFQ69G5FB5"
   },
@@ -284,13 +283,52 @@
       ]
     },
     {
-      "name": "#5160 N6 a labelled link asks for a page titled with its label",
+      "name": "#5160 D9 a labelled link names its page and stores the label",
       "input": "[[Page|label]]",
-      "requestedPageNames": ["Page|label"],
+      "requestedPageNames": ["Page"],
       "requestedTagNames": [],
-      "transformed": "[[01ARZ3NDEKTSV4RRFFQ69G5FB3]]",
-      "editor": [["page", "Page|label"]],
-      "finding": "N6"
+      "transformed": "[[01ARZ3NDEKTSV4RRFFQ69G5FAV|label]]",
+      "editor": [["page", "Page", "label"]]
+    },
+    {
+      "name": "#5160 D9 a label equal to the title is not stored",
+      "input": "[[Page|Page]]",
+      "requestedPageNames": ["Page"],
+      "requestedTagNames": [],
+      "transformed": "[[01ARZ3NDEKTSV4RRFFQ69G5FAV]]",
+      "editor": [["page", "Page"]]
+    },
+    {
+      "name": "#5160 D9 Logseq's labelled link is the same token",
+      "input": "[label]([[Page]])",
+      "requestedPageNames": ["Page"],
+      "requestedTagNames": [],
+      "transformed": "[[01ARZ3NDEKTSV4RRFFQ69G5FAV|label]]",
+      "editor": [["page", "Page", "label"]]
+    },
+    {
+      "name": "#5160 D9 a label holds a hash and a second pipe: neither is a tag or a split",
+      "input": "[[Page|see #tag|x]]",
+      "requestedPageNames": ["Page"],
+      "requestedTagNames": [],
+      "transformed": "[[01ARZ3NDEKTSV4RRFFQ69G5FAV|see #tag|x]]",
+      "editor": [["page", "Page", "see #tag|x"]]
+    },
+    {
+      "name": "#5160 D9 a label rides along an anchored link, whose anchor is dropped",
+      "input": "[[Page#Heading|label]]",
+      "requestedPageNames": ["Page"],
+      "requestedTagNames": [],
+      "transformed": "[[01ARZ3NDEKTSV4RRFFQ69G5FAV|label]]",
+      "editor": [["page", "Page", "label"]]
+    },
+    {
+      "name": "#5160 D10 a block anchor on a page with no such title resolves its page today",
+      "input": "[[Page#^abc]]",
+      "requestedPageNames": ["Page"],
+      "requestedTagNames": [],
+      "transformed": "[[01ARZ3NDEKTSV4RRFFQ69G5FAV]]",
+      "editor": [["page", "Page"]]
     },
     {
       "name": "#5160 a heading link with no page of that exact title resolves its page and drops the heading",
@@ -363,6 +401,17 @@
         "requestedPageNames": ["Page"],
         "requestedTagNames": [],
         "transformed": "[[01ARZ3NDEKTSV4RRFFQ69G5FAV]]"
+      }
+    },
+    {
+      "name": "#5160 D9 a label is not part of the name, and a canonical labelled token resolves nothing",
+      "input": "[[Page|label]] and [[01ARZ3NDEKTSV4RRFFQ69G5FAV|kept]]",
+      "expected": {
+        "pageCaptures": ["Page|label", "01ARZ3NDEKTSV4RRFFQ69G5FAV|kept"],
+        "multiwordTagCaptures": [],
+        "requestedPageNames": ["Page"],
+        "requestedTagNames": [],
+        "transformed": "[[01ARZ3NDEKTSV4RRFFQ69G5FAV|label]] and [[01ARZ3NDEKTSV4RRFFQ69G5FAV|kept]]"
       }
     },
     {

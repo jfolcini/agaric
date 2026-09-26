@@ -184,10 +184,24 @@ const arbImage: fc.Arbitrary<InlineNode> = fc
   .tuple(arbText, fc.constantFrom(...LINK_HREFS))
   .map(([alt, src]) => ({ type: 'image' as const, attrs: { alt, src } }))
 
+/** A block_link label (#5160 D9): anything but `]` and a newline, never empty. */
+const arbLinkLabel = fc
+  .array(fc.constantFrom(...'ab |#[(*_ 0'.split('')), { minLength: 1, maxLength: 8 })
+  .map((chars) => chars.join(''))
+
 const arbInlineNode: fc.Arbitrary<InlineNode> = fc.oneof(
   { weight: 6, arbitrary: arbTextNode },
   { weight: 1, arbitrary: arbUlid.map((id) => ({ type: 'tag_ref' as const, attrs: { id } })) },
-  { weight: 1, arbitrary: arbUlid.map((id) => ({ type: 'block_link' as const, attrs: { id } })) },
+  {
+    weight: 1,
+    arbitrary: fc
+      .tuple(arbUlid, fc.option(arbLinkLabel, { nil: undefined }))
+      .map(([id, label]) =>
+        label === undefined
+          ? { type: 'block_link' as const, attrs: { id } }
+          : { type: 'block_link' as const, attrs: { id, label } },
+      ),
+  },
   { weight: 1, arbitrary: arbUlid.map((id) => ({ type: 'block_ref' as const, attrs: { id } })) },
   { weight: 2, arbitrary: arbMathInline },
   { weight: 1, arbitrary: arbImage },

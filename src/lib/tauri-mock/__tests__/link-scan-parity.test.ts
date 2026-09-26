@@ -52,9 +52,10 @@ function mockSourceFiles(dir: string = MOCK_DIR): string[] {
 describe('#3332 — the [[ULID]] link scan has a single owner', () => {
   it('declares the token regex in exactly one file', () => {
     // The literal, however it is spelled: `[[` + a 26-char Crockford-base32
-    // capture + `]]`. Matching the SOURCE TEXT is the point — this is a
-    // duplication guard, not a behaviour check.
-    const declRe = /\\\[\\\[\(\[0-9A-Z\]\{26\}\)\\\]\\\]/
+    // capture, then an optional `|label` group or nothing, + `]]`. Matching the
+    // SOURCE TEXT is the point — this is a duplication guard, not a behaviour
+    // check.
+    const declRe = /\\\[\\\[\(\[0-9A-Z\]\{26\}\)(?:\(\?:.*?\)\?)?\\\]\\\]/
     const owners = mockSourceFiles()
       .filter((f) => declRe.test(readFileSync(f, 'utf8')))
       .map((f) => path.relative(MOCK_DIR, f))
@@ -148,6 +149,18 @@ describe('#3332 — the [[ULID]] link scan has a single owner', () => {
     // Before widening `scanLinkTargets`/`contentLinksTo` to match, the mock's
     // `[[ULID]]`-only scan derived no edge for this block, so the app fix
     // #4551 shipped could not be exercised end-to-end under Playwright.
+    it('a labelled [[ULID|label]] token derives a page_link edge (#5160 D9)', () => {
+      const LBL = 'LBL'.padStart(26, '0')
+      blocks.set(LBL, makeBlock(LBL, 'content', `see [[${PAGE_B}|page b]] here`, PAGE_A, 5))
+
+      const res = dispatch('get_backlinks', { blockId: PAGE_B }) as {
+        items: Array<Record<string, unknown>>
+      }
+      expect(res.items.map((b) => b['id'] as string).toSorted()).toEqual(expectedSources(PAGE_B))
+      expect(expectedSources(PAGE_B)).toEqual([A1, A2, LBL].toSorted())
+      expect(deriveLinkEdges(blocks).find((e) => e.sourceId === LBL)?.kind).toBe('page_link')
+    })
+
     it('a ((ULID)) block-ref token also derives a backlink edge', () => {
       const BREF = 'BREF'.padStart(26, '0')
       blocks.set(BREF, makeBlock(BREF, 'content', `see ((${PAGE_B})) for detail`, PAGE_A, 4))

@@ -271,6 +271,12 @@ describe('resolveBlockDisplay — the name resolves inline references (#4719)', 
     expect(result.title).not.toContain(LINK_ID)
   })
 
+  it('names a labelled block link by its label, as the chip shows it (#5160 D9)', () => {
+    const block = makeBlock({ id: 'B5', content: `follow up on [[${LINK_ID}|the plan]]` })
+
+    expect(resolveBlockDisplay(block, new Map(), resolver).title).toBe('follow up on the plan')
+  })
+
   it('covers block refs and tag refs too, and leaves a non-ULID alone', () => {
     // All three shapes carry a bare 26-char ULID that `truncateContent` would
     // otherwise expose (it strips `#` and `[[…]]`, and does not touch `((…))`

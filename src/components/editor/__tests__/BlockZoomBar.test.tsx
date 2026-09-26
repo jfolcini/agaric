@@ -154,6 +154,16 @@ describe('BlockZoomBar', () => {
     expect(container.textContent ?? '').not.toContain(']]')
   })
 
+  it('reads a stored [[ULID|label]] as its label, and an unresolved [[A | B]] as its title', () => {
+    const items: BreadcrumbItem[] = [
+      { id: 'Y', content: 'See [[01ARZ3NDEKTSV4RRFFQ69G5FAV|the plan]]' },
+      { id: 'Z', content: '[[Article | Medium]]' },
+    ]
+    render(<BlockZoomBar breadcrumbs={items} onNavigate={vi.fn()} onZoomToRoot={vi.fn()} />)
+    expect(screen.getByText('See the plan')).toBeInTheDocument()
+    expect(screen.queryByText('Medium')).toBeNull()
+  })
+
   it('uses chevron separators between crumbs (not slashes or commas)', () => {
     const { container } = render(
       <BlockZoomBar breadcrumbs={breadcrumbs} onNavigate={vi.fn()} onZoomToRoot={vi.fn()} />,

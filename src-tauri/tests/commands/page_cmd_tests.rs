@@ -5771,6 +5771,546 @@ async fn paste_blocks_resolves_names_in_the_anchors_space() {
     assert_eq!(stray, 0, "a name in code creates nothing");
 }
 
+/// #5160 D9 — a pasted `[[Title|label]]` stores `[[ULID|label]]`; a label equal
+/// to the target's title is dropped; Logseq's `[label]([[Title]])` is the same
+/// token; and the link graph, which backlinks read, sees the labelled link.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn paste_blocks_stores_a_links_label_unless_it_is_the_title() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let page = dup_page(&pool, &mat, "Dest").await;
+    let project = dup_page(&pool, &mat, "Project Plan").await;
+    let anchor = dup_child(&pool, &mat, &page, "anchor").await;
+    settle(&mat).await;
+
+    let rows = paste(
+        &pool,
+        &mat,
+        &anchor,
+        paste_text(
+            "- see [[Project Plan|the plan]] [[project plan|Project Plan]] \
+             [the plan]([[Project Plan]]) [[New|fresh]]\n",
+        ),
+    )
+    .await;
+
+    let new_page = &rows[0].id;
+    assert_eq!(
+        rows[0].content.as_deref(),
+        Some("New"),
+        "the base name is the page"
+    );
+    assert_eq!(
+        rows[1].content.as_deref(),
+        Some(
+            format!(
+                "see [[{project}|the plan]] [[{project}]] [[{project}|the plan]] \
+                 [[{new_page}|fresh]]"
+            )
+            .as_str()
+        ),
+        "the label is stored, dropped when it is the title, and read from the Logseq form"
+    );
+    mat.flush_background().await.unwrap();
+    let backlinks = get_backlinks_inner(&pool, project.clone(), None, None, &SpaceScope::Global)
+        .await
+        .unwrap();
+    assert_eq!(
+        backlinks
+            .items
+            .iter()
+            .map(|b| b.content.clone())
+            .collect::<Vec<_>>(),
+        [rows[1].content.clone()],
+        "the labelled link is a backlink of its page"
+    );
+}
+
+/// #5160 D9 — the source buffer writes `[[Title|label]]` and reads it back
+/// as `[[ULID|label]]`; a label written as the title is not stored.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn apply_page_source_round_trips_a_links_label() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let page = dup_page(&pool, &mat, "Names").await;
+    let project = dup_page(&pool, &mat, "Project").await;
+    let block = dup_child(&pool, &mat, &page, &format!("see [[{project}|the plan]]")).await;
+    settle(&mat).await;
+
+    let base = page_source(&pool, &page).await;
+    assert_eq!(
+        base,
+        format!("- see [[Project|the plan]] ^{block}\n"),
+        "the render writes the title with the label"
+    );
+
+    let report = save_source(
+        &pool,
+        &mat,
+        &page,
+        &with(&base, "[[Project|the plan]]", "[[Project|renamed]]"),
+        &base,
+        false,
+    )
+    .await
+    .unwrap();
+    assert_eq!(counts(&report), [0, 1, 0, 0, 0, 0], "{report:?}");
+    let contents =
+        |rows: Vec<(String, String)>| rows.into_iter().map(|(_, c)| c).collect::<Vec<_>>();
+    assert_eq!(
+        contents(dup_children(&pool, &page).await),
+        [format!("see [[{project}|renamed]]")]
+    );
+
+    let base = page_source(&pool, &page).await;
+    let report = save_source(
+        &pool,
+        &mat,
+        &page,
+        &with(&base, "[[Project|renamed]]", "[[Project|Project]]"),
+        &base,
+        false,
+    )
+    .await
+    .unwrap();
+    assert_eq!(counts(&report), [0, 1, 0, 0, 0, 0], "{report:?}");
+    assert_eq!(
+        contents(dup_children(&pool, &page).await),
+        [format!("see [[{project}]]")],
+        "a label equal to the title is not stored"
+    );
+}
+
+/// #5160 D9 — export writes `[[Title|label]]`, and a rename changes the title
+/// it writes while the stored link, and so the label, stays as it was.
+#[tokio::test]
+async fn export_page_markdown_writes_a_links_label_through_a_rename() {
+    let (pool, _dir) = test_pool().await;
+    insert_block(
+        &pool,
+        "01LINKPAGE000000000000LNK1",
+        "page",
+        "Linked Page",
+        None,
+        Some(1),
+    )
+    .await;
+    insert_block(
+        &pool,
+        "01AAAAAAAAAAAAAAAAAAAAPAGE",
+        "page",
+        "Source Page",
+        None,
+        Some(2),
+    )
+    .await;
+    let content = "See [[01LINKPAGE000000000000LNK1|the link]] for details";
+    insert_block(
+        &pool,
+        "01AAAAAAAAAAAAAAAAAAAABLK1",
+        "content",
+        content,
+        Some("01AAAAAAAAAAAAAAAAAAAAPAGE"),
+        Some(1),
+    )
+    .await;
+    agaric_store::cache::rebuild_page_ids(&pool).await.unwrap();
+
+    let md = export_page_markdown_inner(&pool, "01AAAAAAAAAAAAAAAAAAAAPAGE")
+        .await
+        .unwrap();
+    assert!(
+        md.contains("See [[Linked Page|the link]] for details"),
+        "the label rides on the title: {md}"
+    );
+
+    sqlx::query("UPDATE blocks SET content = 'Renamed Page' WHERE id = ?")
+        .bind("01LINKPAGE000000000000LNK1")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let md = export_page_markdown_inner(&pool, "01AAAAAAAAAAAAAAAAAAAAPAGE")
+        .await
+        .unwrap();
+    assert!(
+        md.contains("See [[Renamed Page|the link]] for details"),
+        "the link follows the rename and keeps its label: {md}"
+    );
+    let stored: String = sqlx::query_scalar("SELECT content FROM blocks WHERE id = ?")
+        .bind("01AAAAAAAAAAAAAAAAAAAABLK1")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(stored, content, "a rename touches no link");
+}
+
+/// #5160 D9 / N10 — an import stores the label of `[[Title|label]]`, of
+/// Logseq's `[label]([[Title]])` and of a folder-relative `[text](Other.md)`,
+/// all to the one page the file names, and drops a label equal to the title.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn import_markdown_stores_link_labels_from_every_form() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    ensure_test_space(&pool).await;
+    mark_block_as_space(&pool, TEST_SPACE_ID).await;
+    agaric_store::cache::rebuild_page_ids(&pool).await.unwrap();
+
+    import_markdown_inner(
+        &pool,
+        DEV,
+        &mat,
+        _dir.path(),
+        "- [[vault/Other|see other]] [label]([[vault/Other]]) [see here](Other.md) \
+         [[vault/Other|vault/Other]]"
+            .into(),
+        Some("vault/Note.md".into()),
+        TEST_SPACE_ID.into(),
+        None,
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    let others: Vec<String> = sqlx::query_scalar(
+        "SELECT id FROM blocks WHERE block_type = 'page' AND content = 'vault/Other' \
+         AND deleted_at IS NULL",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(others.len(), 1, "one page for the four links");
+    let other = &others[0];
+    let content: String = sqlx::query_scalar(
+        "SELECT content FROM blocks WHERE block_type = 'content' AND deleted_at IS NULL",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        content,
+        format!("[[{other}|see other]] [[{other}|label]] [[{other}|see here]] [[{other}]]")
+    );
+    mat.shutdown();
+}
+
+/// #5160 D9 — a `#tag` in a Logseq `[label]([[Page]])` label lands inside the
+/// stored `[[ULID|label]]`, where it stays text, so the import mints no tag for
+/// it; a `#tag` outside the link is still one.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn import_mints_no_tag_for_a_hash_inside_a_logseq_label() {
+    let (pool, dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let roadmap = dup_page(&pool, &mat, "Roadmap").await;
+    settle(&mat).await;
+
+    import_file(
+        &pool,
+        &mat,
+        dir.path(),
+        "Notes.md",
+        "- [see #plan]([[Roadmap]]) and #kept",
+    )
+    .await;
+
+    let tags: Vec<String> = sqlx::query_scalar(
+        "SELECT content FROM blocks WHERE block_type = 'tag' AND deleted_at IS NULL \
+         ORDER BY content",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(tags, vec!["kept".to_string()]);
+    let kept: String =
+        sqlx::query_scalar("SELECT id FROM blocks WHERE block_type = 'tag' AND content = 'kept'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    let content: String = sqlx::query_scalar(
+        "SELECT content FROM blocks WHERE block_type = 'content' AND deleted_at IS NULL",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(content, format!("[[{roadmap}|see #plan]] and #[{kept}]"));
+    mat.shutdown();
+}
+
+/// #5160 D10 — a `|` in a link body starts the label only when no longer
+/// reading names a page: `[[A | B]]` is the page titled `A | B`, `[[A |
+/// B|see]]` and Logseq's `[see]([[A | B]])` are that page labelled, and an
+/// anchor still splits off the chosen name. With no page `C | D`, `[[C | D]]`
+/// splits on its first `|`, and `[[|x]]`, which then names nothing, is text.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn import_reads_a_title_holding_a_pipe_before_its_label() {
+    let (pool, dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let ab = dup_page(&pool, &mat, "A | B").await;
+    settle(&mat).await;
+
+    import_file(
+        &pool,
+        &mat,
+        dir.path(),
+        "Notes.md",
+        "- whole [[A | B]]\n- labelled [[A | B|see]]\n- logseq [see]([[A | B]])\n\
+         - anchored [[A | B#Heading|x]]\n- fresh [[C | D]]\n- empty [[|x]]",
+    )
+    .await;
+
+    assert_eq!(
+        block_starting(&pool, "whole").await,
+        format!("whole [[{ab}]]")
+    );
+    assert_eq!(
+        block_starting(&pool, "labelled").await,
+        format!("labelled [[{ab}|see]]")
+    );
+    assert_eq!(
+        block_starting(&pool, "logseq").await,
+        format!("logseq [[{ab}|see]]")
+    );
+    assert_eq!(
+        block_starting(&pool, "anchored").await,
+        format!("anchored [[{ab}|x]]")
+    );
+    assert_eq!(block_starting(&pool, "empty").await, "empty [[|x]]");
+    assert_eq!(pages_titled(&pool, "").await, Vec::<String>::new());
+    assert_eq!(pages_titled(&pool, "A").await, Vec::<String>::new());
+    let c = pages_titled(&pool, "C").await;
+    assert_eq!(c.len(), 1, "with no page `C | D` the first `|` splits");
+    assert_eq!(
+        block_starting(&pool, "fresh").await,
+        format!("fresh [[{}|D]]", c[0])
+    );
+    mat.shutdown();
+}
+
+/// #5160 D10 — a reading that ties stops the search: the link stays text with
+/// the ambiguity warning, and the shorter reading creates nothing.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn import_leaves_a_link_whose_pipe_reading_ties_as_text() {
+    let (pool, dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    dup_page(&pool, &mat, "X | Y").await;
+    dup_page(&pool, &mat, "x | y").await;
+    settle(&mat).await;
+
+    let result = import_file(
+        &pool,
+        &mat,
+        dir.path(),
+        "Notes.md",
+        "- tie [[X | y]]\n- labelled [[X | y|see]]",
+    )
+    .await;
+
+    assert_eq!(block_starting(&pool, "tie").await, "tie [[X | y]]");
+    assert_eq!(
+        block_starting(&pool, "labelled").await,
+        "labelled [[X | y|see]]"
+    );
+    for body in ["[[X | y]]", "[[X | y|see]]"] {
+        assert!(
+            result
+                .warnings
+                .iter()
+                .any(|w| w.contains(body) && w.contains("multiple")),
+            "{body}: {:?}",
+            result.warnings
+        );
+    }
+    assert_eq!(pages_titled(&pool, "X").await, Vec::<String>::new());
+    mat.shutdown();
+}
+
+/// #5160 D10 — a copy writes a link to `A | B` by its title and pastes back to
+/// the same page and label; typed text reads the title whole too, and falls
+/// back to the first `|` when no page has the longer title.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn copy_and_paste_read_a_title_holding_a_pipe_before_its_label() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let page = dup_page(&pool, &mat, "Dest").await;
+    let ab = dup_page(&pool, &mat, "A | B").await;
+    let anchor = dup_child(&pool, &mat, &page, "anchor").await;
+    let linked = format!("see [[{ab}]] and [[{ab}|see]]");
+    let src = dup_child(&pool, &mat, &page, &linked).await;
+    settle(&mat).await;
+
+    let copied = copy_source(&pool, &[&src], false).await;
+    assert_eq!(copied, "- see [[A | B]] and [[A | B|see]]\n");
+    let rows = paste(&pool, &mat, &anchor, paste_text(&copied)).await;
+    assert_eq!(
+        rows.iter()
+            .map(|r| r.content.clone().unwrap_or_default())
+            .collect::<Vec<_>>(),
+        [linked],
+        "nothing is created"
+    );
+
+    let rows = paste(
+        &pool,
+        &mat,
+        &anchor,
+        paste_text("- typed [[a | b|look]] [[C | D]]\n"),
+    )
+    .await;
+    let c = pages_titled(&pool, "C").await;
+    assert_eq!(c.len(), 1);
+    assert_eq!(
+        rows[1].content.as_deref(),
+        Some(format!("typed [[{ab}|look]] [[{}|D]]", c[0]).as_str())
+    );
+    assert_eq!(pages_titled(&pool, "A").await, Vec::<String>::new());
+}
+
+/// #5160 D10 — the source buffer writes a link to `A | B` by its title, with
+/// and without a label, and a save keeps both ids and the label; a link typed
+/// to `A | B` in the buffer links it too.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn apply_page_source_round_trips_a_link_to_a_title_holding_a_pipe() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let page = dup_page(&pool, &mat, "Names").await;
+    let ab = dup_page(&pool, &mat, "A | B").await;
+    let block = dup_child(
+        &pool,
+        &mat,
+        &page,
+        &format!("see [[{ab}]] and [[{ab}|see]]"),
+    )
+    .await;
+    settle(&mat).await;
+
+    let base = page_source(&pool, &page).await;
+    assert_eq!(
+        base,
+        format!("- see [[A | B]] and [[A | B|see]] ^{block}\n")
+    );
+    let report = save_source(
+        &pool,
+        &mat,
+        &page,
+        &with(&base, " and ", " or [[A | B|typed]] "),
+        &base,
+        false,
+    )
+    .await
+    .unwrap();
+    assert_eq!(counts(&report), [0, 1, 0, 0, 0, 0], "{report:?}");
+    assert!(report.names_created.is_empty(), "{report:?}");
+    let contents =
+        |rows: Vec<(String, String)>| rows.into_iter().map(|(_, c)| c).collect::<Vec<_>>();
+    assert_eq!(
+        contents(dup_children(&pool, &page).await),
+        [format!("see [[{ab}]] or [[{ab}|typed]] [[{ab}|see]]")]
+    );
+}
+
+/// #5160 D10 — an edit to a block holding an inline query keeps the query's
+/// page ref: source mode writes the query as its stored `v2:` payload, ids and
+/// all, so the save never resolves a name there.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn apply_page_source_keeps_an_inline_query_page_ref() {
+    use agaric_lib::commands::pages::inline_query_md::{InlineQuerySpec, decode_v2, encode_v2};
+    use agaric_store::filters::{FilterExpr, FilterPrimitive};
+
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let page = dup_page(&pool, &mat, "Host").await;
+    let target = dup_page(&pool, &mat, "Target Page").await;
+    let child_of_target = FilterExpr::Leaf {
+        primitive: FilterPrimitive::ChildOf {
+            parent: target.to_string(),
+        },
+    };
+    let spec = InlineQuerySpec {
+        filter: child_of_target.clone(),
+        table: false,
+    };
+    let payload = encode_v2(&spec).unwrap();
+    dup_child(
+        &pool,
+        &mat,
+        &page,
+        &format!("tasks {{{{query {payload}}}}}"),
+    )
+    .await;
+    settle(&mat).await;
+
+    let base = page_source(&pool, &page).await;
+    assert!(base.contains(&format!("{{{{query {payload}}}}}")), "{base}");
+    save_source(
+        &pool,
+        &mat,
+        &page,
+        &with(&base, "tasks", "open tasks"),
+        &base,
+        false,
+    )
+    .await
+    .unwrap();
+
+    let rows = dup_children(&pool, &page).await;
+    let content = &rows[0].1;
+    let stored = content
+        .strip_prefix("open tasks {{query ")
+        .and_then(|rest| rest.strip_suffix("}}"))
+        .unwrap_or_else(|| panic!("not a stored query: {content}"));
+    assert_eq!(
+        decode_v2(stored).map(|spec| spec.filter),
+        Some(child_of_target)
+    );
+}
+
+/// #5160 D10 — a link to `Project` labelled `Plan` is written raw while a page
+/// is titled `Project|Plan`, which `[[Project|Plan]]` would name instead.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn get_page_source_writes_a_label_raw_when_title_and_label_name_a_page() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let page = dup_page(&pool, &mat, "Names").await;
+    let project = dup_page(&pool, &mat, "Project").await;
+    dup_page(&pool, &mat, "Project|Plan").await;
+    let block = dup_child(&pool, &mat, &page, &format!("see [[{project}|Plan]]")).await;
+    settle(&mat).await;
+
+    assert_eq!(
+        page_source(&pool, &page).await,
+        format!("- see [[{project}|Plan]] ^{block}\n")
+    );
+}
+
+/// #5160 D10 — an export writes a link to `A | B` by its title, and importing
+/// it back into the space lands on the same page with the same label.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn export_and_import_round_trip_a_link_to_a_title_holding_a_pipe() {
+    let (pool, dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let src = dup_page(&pool, &mat, "Src").await;
+    let ab = dup_page(&pool, &mat, "A | B").await;
+    let refs = format!("[[{ab}]] [[{ab}|see]]");
+    dup_child(&pool, &mat, &src, &format!("see {refs}")).await;
+    settle(&mat).await;
+
+    let md = export_page_markdown_inner(&pool, src.as_str())
+        .await
+        .unwrap();
+    assert!(md.contains("see [[A | B]] [[A | B|see]]"), "{md}");
+
+    import_file(&pool, &mat, dir.path(), "Roundtrip.md", &md).await;
+    let copies: Vec<String> = sqlx::query_scalar(
+        "SELECT content FROM blocks WHERE block_type = 'content' AND content LIKE 'see %' \
+         ORDER BY id",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(copies, [format!("see {refs}"), format!("see {refs}")]);
+    assert_eq!(pages_titled(&pool, "A").await, Vec::<String>::new());
+    mat.shutdown();
+}
+
 /// With no space to resolve them in, `[[Name]]` and `#tag` stay text and
 /// nothing is created.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -10513,8 +11053,9 @@ async fn export_writes_names_that_import_reads_back() {
 }
 
 /// N10 — on a folder import a relative `.md` link, percent-decoded and resolved
-/// against the file's folder, becomes a `[[title]]` link that resolves like one;
-/// external links, other file types and a lone file's links are untouched.
+/// against the file's folder, becomes a `[[title|text]]` link that resolves like
+/// one, its text kept as the label (#5160 D9); external links, other file types
+/// and a lone file's links are untouched.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn import_reads_a_relative_md_link_as_a_page_link_on_a_folder_import() {
     let (pool, dir) = test_pool().await;
@@ -10530,7 +11071,7 @@ async fn import_reads_a_relative_md_link_as_a_page_link_on_a_folder_import() {
     assert_eq!(
         block_starting(&pool, "folder").await,
         format!(
-            "folder [[{}]] [[{}]] [z](https://x.dev/a.md) [w](pic.png)",
+            "folder [[{}|x]] [[{}|y]] [z](https://x.dev/a.md) [w](pic.png)",
             other[0], top[0]
         )
     );

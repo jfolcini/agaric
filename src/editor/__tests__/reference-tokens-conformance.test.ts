@@ -21,8 +21,8 @@ import { parse } from '@/editor/markdown-parse'
 import type { DocNode, InlineNode, LinkMark } from '@/editor/types'
 import { scanNameTokens } from '@/lib/name-tokens'
 
-/** One piece of what the editor shows: `[kind, text]`. */
-type Piece = [kind: 'text' | 'tag' | 'page' | 'link', text: string]
+/** One piece of what the editor shows: `[kind, text]`, plus a page link's label (#5160 D9). */
+type Piece = [kind: 'text' | 'tag' | 'page' | 'link', text: string, label?: string]
 
 interface NameRuleCase {
   name: string
@@ -70,7 +70,8 @@ function inlinePiece(node: InlineNode): Piece {
       return ['tag', tagNames.get(node.attrs.id) ?? node.attrs.id]
     }
     case 'block_link': {
-      return ['page', pageNames.get(node.attrs.id) ?? node.attrs.id]
+      const name = pageNames.get(node.attrs.id) ?? node.attrs.id
+      return node.attrs.label === undefined ? ['page', name] : ['page', name, node.attrs.label]
     }
     case 'text': {
       const link = node.marks?.find((mark): mark is LinkMark => mark.type === 'link')

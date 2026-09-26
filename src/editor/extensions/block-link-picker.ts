@@ -6,10 +6,15 @@
  * 2. **Input rule** — Type [[text]] (with closing brackets) to auto-resolve.
  *    If an exact-match page exists, links to it. Otherwise creates it.
  *
- * Both resolve to ULID, never writing [[title]] to storage.
+ * Both resolve to ULID, never writing [[title]] to storage. A `|label` after
+ * the name is stored on the link (#5160 D9) unless it is the page's own title,
+ * and a `#anchor` names the page titled with the whole text when one exists
+ * (D10), else the page before the `#`: typing `[[Page#Heading]]` never creates
+ * `Page#Heading` (N6). A page titled with the text up to a later `|`, or with
+ * all of it, wins over the first `|` (D10): `[[A | B]]` links `A | B`.
  */
 
-import { Extension, InputRule } from '@tiptap/core'
+import { type Editor, Extension, InputRule } from '@tiptap/core'
 import { PluginKey } from '@tiptap/pm/state'
 
 import {
@@ -17,8 +22,10 @@ import {
   createPickerTokenFromCommand,
   resolveAndInsertPickerToken,
 } from '@/editor/extensions/picker-plugin'
+import { storableLinkLabel } from '@/editor/markdown-common'
 import type { PickerItem } from '@/editor/SuggestionList'
 import { t } from '@/lib/i18n'
+import { linkBodyReadings } from '@/lib/name-tokens'
 
 export const blockLinkPickerPluginKey = new PluginKey('blockLinkPicker')
 
@@ -60,6 +67,122 @@ export function matchBlockLinkItem(
   return items.find((item) => !item.isCreate && item.aliasText?.toLowerCase() === lower)
 }
 
+/** What a typed `[[…]]` body means (#5160 D9, D10). */
+export interface TypedLink {
+  /** The text before the first `|`, trimmed: what a page must be titled to win whole. */
+  name: string
+  /** `name` before its first `#`, trimmed: the page an anchored name falls back to. */
+  base: string
+  /** The trimmed text after the first `|`, when there is one. */
+  label: string | undefined
+}
+
+/**
+ * Split a typed link body into its name, base and label; `null` for an
+ * anchor-only `[[#heading]]`, which names no page.
+ */
+export function parseTypedLink(inner: string): TypedLink | null {
+  const pipe = inner.indexOf('|')
+  const name = (pipe < 0 ? inner : inner.slice(0, pipe)).trim()
+  const label = pipe < 0 ? undefined : inner.slice(pipe + 1).trim() || undefined
+  const hash = name.indexOf('#')
+  const base = hash < 0 ? name : name.slice(0, hash).trim()
+  if (base === '') return null
+  return { name, base, label }
+}
+
+/**
+ * The label a picked `item` keeps from the typed `body` (#5160 D9, D10): the
+ * text after the first of the body's readings that names the item as
+ * {@link matchBlockLinkItem} compares, none for the whole body, else the text
+ * after the first `|`; never the item's own title.
+ */
+export function pickedLinkLabel(item: PickerItem, body: string): string | undefined {
+  const readings = linkBodyReadings(body)
+  const named = readings.find((reading) => matchBlockLinkItem([item], reading.name) === item)
+  const label = (named ?? readings.at(-1))?.label
+  return label === (item.title ?? item.label) ? undefined : label
+}
+
+/**
+ * The `block_link` node for `id`, labelled unless the label is empty or the
+ * target's `title`, which the chip shows anyway and follows through renames.
+ */
+export function blockLinkNode(
+  id: string,
+  label: string | undefined,
+  title: string | undefined,
+): Record<string, unknown> {
+  const stored = storableLinkLabel(label)
+  return stored && stored !== title
+    ? { type: 'block_link', attrs: { id, label: stored } }
+    : { type: 'block_link', attrs: { id } }
+}
+
+/** The link body typed after the popup's `[[` trigger over `range`, or `null` when unreadable. */
+function typedBodyAt(editor: Editor, range: { from: number; to: number }): string | null {
+  try {
+    return editor.state.doc.textBetween(range.from, range.to).replace(/^\[\[/, '')
+  } catch {
+    // A range the document no longer holds.
+    return null
+  }
+}
+
+/**
+ * The page a link name names among the `items` it is searched for (D10): the
+ * page titled with the whole name, else, when an anchor holding no `|` follows
+ * its first `#`, the page before the `#`, so the anchor is dropped rather than
+ * minted into a title (N6).
+ */
+async function findTypedName(
+  options: BlockLinkPickerOptions,
+  name: string,
+): Promise<PickerItem | null | undefined> {
+  const whole = matchBlockLinkItem(await options.items(name), name)
+  const hash = name.indexOf('#')
+  const base = hash < 0 ? '' : name.slice(0, hash).trim()
+  if (whole !== undefined || base === '' || name.slice(hash + 1).includes('|')) return whole
+  return matchBlockLinkItem(await options.items(base), base)
+}
+
+/**
+ * Resolve a typed link `body` and insert its chip at `insertPos`: the first of
+ * its readings that names a page wins, with that reading's label; a tie leaves
+ * the text as typed; with none, `link`, its first-`|` split, creates its base.
+ */
+function resolveTypedLink(
+  editor: Editor,
+  options: BlockLinkPickerOptions,
+  body: string,
+  link: TypedLink,
+  typed: string,
+  insertPos: number,
+  errorMessage: string,
+): void {
+  let found: PickerItem | null | undefined
+  let label: string | undefined
+  void resolveAndInsertPickerToken({
+    editor,
+    text: link.base,
+    typed,
+    insertPos,
+    items: async () => {
+      for (const reading of linkBodyReadings(body)) {
+        found = await findTypedName(options, reading.name)
+        label = reading.label
+        if (found !== undefined) break
+      }
+      return found ? [found] : []
+    },
+    matchItem: () => found,
+    tokenFor: (id, item) => blockLinkNode(id, label, item ? (item.title ?? item.label) : link.base),
+    onCreate: options.onCreate,
+    loggerComponent: 'BlockLinkPicker',
+    errorMessage,
+  })
+}
+
 export const BlockLinkPicker = Extension.create<BlockLinkPickerOptions>({
   name: 'blockLinkPicker',
 
@@ -86,14 +209,15 @@ export const BlockLinkPicker = Extension.create<BlockLinkPickerOptions>({
           const insertPos = from
           editor.chain().focus().deleteRange({ from, to }).run()
 
-          // Shared race-guard.
+          // The selection is prose, not link syntax: its whole text names the
+          // page, so no `#` or `|` in it is read as an anchor or a label.
           void resolveAndInsertPickerToken({
             editor,
             text: selectedText,
             insertPos,
             items: extensionOptions.items,
             matchItem: matchBlockLinkItem,
-            tokenFor: (id) => ({ type: 'block_link', attrs: { id } }),
+            tokenFor: (id) => blockLinkNode(id, undefined, undefined),
             onCreate: extensionOptions.onCreate,
             loggerComponent: 'BlockLinkPicker',
             errorMessage: 'resolveBlockLinkFromSelection failed, falling back to plain text',
@@ -111,8 +235,9 @@ export const BlockLinkPicker = Extension.create<BlockLinkPickerOptions>({
       new InputRule({
         find: /\[\[([^\]]+)\]\]$/,
         handler: ({ state, range, match }) => {
-          const innerText = (match[1] ?? '').trim()
-          if (!innerText) return
+          const body = match[1] ?? ''
+          const link = parseTypedLink(body)
+          if (!link) return
 
           // Capture the insertion position *before* deletion so the async
           // callback inserts at the correct spot even if the cursor moves.
@@ -124,18 +249,15 @@ export const BlockLinkPicker = Extension.create<BlockLinkPickerOptions>({
           // Shared race-guard. Token shape `block_link`;
           // exact-match recognises `aliasText === text` so `[[my-alias]]`
           // Resolves to its target page.
-          void resolveAndInsertPickerToken({
+          resolveTypedLink(
             editor,
-            text: innerText,
-            typed: match[0],
+            extensionOptions,
+            body,
+            link,
+            match[0],
             insertPos,
-            items: extensionOptions.items,
-            matchItem: matchBlockLinkItem,
-            tokenFor: (id) => ({ type: 'block_link', attrs: { id } }),
-            onCreate: extensionOptions.onCreate,
-            loggerComponent: 'BlockLinkPicker',
-            errorMessage: 'Failed to resolve block link via input rule, falling back to plain text',
-          })
+            'Failed to resolve block link via input rule, falling back to plain text',
+          )
         },
       }),
     ]
@@ -152,24 +274,30 @@ export const BlockLinkPicker = Extension.create<BlockLinkPickerOptions>({
         allowedPrefixes: null,
         allowSpaces: true,
         editor: this.editor,
-        items: (query) => extensionOptions.items(query),
+        // The popup searches the base name: a `|label` or `#anchor` typed after
+        // it is not part of any title (#5160 D9, N6).
+        items: (query) => extensionOptions.items(parseTypedLink(query)?.base ?? query),
         command: ({ editor, range, props }) => {
           const item = props as PickerItem
+          const body = typedBodyAt(editor, range)
+          const typed = body === null ? null : parseTypedLink(body)
           if (item.isCreate && extensionOptions.onCreate) {
             // Shared create path: deletes the trigger range synchronously
             // (closing the popup and the double-create window) and tracks
             // the insertion offset across the async create IPC.
+            const label = typed?.base ?? item.label
             createPickerTokenFromCommand({
               editor,
               range,
-              label: item.label,
+              label,
               onCreate: extensionOptions.onCreate,
-              tokenFor: (id) => ({ type: 'block_link', attrs: { id } }),
+              tokenFor: (id) => blockLinkNode(id, typed?.label, label),
               loggerComponent: 'BlockLinkPicker',
               errorMessage: 'Failed to create page for block link',
             })
           } else {
-            editor.chain().focus().deleteRange(range).insertBlockLink(item.id).run()
+            const label = body === null ? undefined : pickedLinkLabel(item, body)
+            editor.chain().focus().deleteRange(range).insertBlockLink(item.id, label).run()
           }
         },
       }),

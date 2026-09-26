@@ -42,8 +42,9 @@ export function renderBlockLink(
   const status = ctx.resolveBlockStatus?.(linkId) ?? 'active'
   // Bug 1: inline `[[link]]` chip renders the LEAF only. The full
   // path stays available via the `title=""` tooltip — the chip lives inside
-  // flowing text where a full namespaced path overflows the line.
-  const { label } = getPageDisplayName(title, 'leaf')
+  // flowing text where a full namespaced path overflows the line. A stored
+  // label is shown in the leaf's place (#5160 D9).
+  const label = node.attrs.label ?? getPageDisplayName(title, 'leaf').label
   const deletedProps = status === 'deleted' ? { 'aria-label': `${title} (deleted)` } : {}
   // Unified chip interactivity policy (matches tagRef / blockRef):
   // - clickable (handler AND interactive) → full affordances: role=link,

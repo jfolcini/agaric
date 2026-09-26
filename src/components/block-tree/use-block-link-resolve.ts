@@ -33,7 +33,7 @@ import { useSpaceStore } from '@/stores/space'
  * token shapes cannot drift out of sync with each other or with the
  * backend's.
  */
-const ULID_LINK_RE = /(?:\[\[|\(\()([0-9A-Z]{26})(?:\]\]|\)\))/g
+const ULID_LINK_RE = /(?:\[\[|\(\()([0-9A-Z]{26})(?:\|[^\]\n]*)?(?:\]\]|\)\))/g
 
 /**
  * Scan the provided blocks for `[[ULID]]` / `((ULID))` tokens whose ids are

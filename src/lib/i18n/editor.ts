@@ -189,6 +189,8 @@ export const editor: Record<string, string> = {
   'rename.errorTooLong': 'Name must be {{max}} characters or fewer.',
   'linkEdit.label': 'Link text',
   'linkEdit.labelPlaceholder': 'Display text (optional)',
+  // #5160 D9 — the one field of the popover opened on a [[page]] chip.
+  'linkEdit.blockLinkLabelPlaceholder': 'Shown in place of the page title',
   'linkEdit.url': 'URL',
   'linkEdit.invalidUrl': 'javascript: and data: URLs are not allowed',
   'linkEdit.apply': 'Apply',

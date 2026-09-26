@@ -6,7 +6,7 @@
 
 import { describe, expect, it } from 'vitest'
 
-import { enexNoteToMarkdown, type EnexNote } from '@/lib/enex-import'
+import { enexNoteToMarkdown, type EnexNote, sanitizeNoteTitleToFilename } from '@/lib/enex-import'
 import { jexNoteToMarkdown, type JexNote } from '@/lib/jex-import'
 import {
   basename,
@@ -345,6 +345,21 @@ describe('jexNotesToUnits', () => {
     expect(loaded?.content).toBe(content)
     expect(loaded?.path).toBe('Picture Note.md')
     expect(loaded?.vaultFiles).toBeNull()
+  })
+
+  it('#5160 D10 — imports the notes whose titles hold a `|` first, so links to them find their pages', () => {
+    const units = jexNotesToUnits([
+      note('Links'),
+      note('Article | Medium'),
+      note('Other'),
+      note('A|B'),
+    ])
+    expect(units.map((u) => u.name)).toEqual([
+      `${sanitizeNoteTitleToFilename('Article | Medium')}.md`,
+      `${sanitizeNoteTitleToFilename('A|B')}.md`,
+      'Links.md',
+      'Other.md',
+    ])
   })
 
   it('ships decoded resource bytes as vaultFiles', async () => {

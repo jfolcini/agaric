@@ -92,8 +92,27 @@ function escapeRegExp(s: string): string {
 function buildBoundaryRegex(term: string): RegExp {
   return new RegExp(
     `(?<![\\p{L}\\p{N}\\p{M}_])${escapeRegExp(term)}(?![\\p{L}\\p{N}\\p{M}_])`,
-    'iu',
+    'giu',
   )
+}
+
+/** A stored `[[ULID]]` or `[[ULID|label]]` token (#5160 D9). */
+const STORED_LINK_RE = /\[\[[0-9A-Z]{26}(?:\|[^\]\n]*)?\]\]/g
+
+/**
+ * The first whole-word mention of `term` in `content` that is not inside a
+ * stored link: a title inside another link's label (#5160 D9) is FTS text, so
+ * the block surfaces here, but splicing `[[id]]` into that label breaks the
+ * token.
+ */
+function firstMentionOutsideLinks(content: string, term: string): RegExpExecArray | null {
+  const links = [...content.matchAll(STORED_LINK_RE)].map(
+    (m) => [m.index, m.index + m[0].length] as const,
+  )
+  for (const m of content.matchAll(buildBoundaryRegex(term))) {
+    if (!links.some(([start, end]) => m.index >= start && m.index < end)) return m
+  }
+  return null
 }
 
 export function UnlinkedReferences({
@@ -268,9 +287,10 @@ export function UnlinkedReferences({
       let newContent = content
       let replaced = false
       for (const term of candidates) {
-        const regex = buildBoundaryRegex(term)
-        if (regex.test(content)) {
-          newContent = content.replace(regex, `[[${pageId}]]`)
+        const mention = firstMentionOutsideLinks(content, term)
+        if (mention) {
+          const end = mention.index + mention[0].length
+          newContent = `${content.slice(0, mention.index)}[[${pageId}]]${content.slice(end)}`
           replaced = true
           break
         }
@@ -282,7 +302,8 @@ export function UnlinkedReferences({
         // OR (#3313) when `term` only occurs as a substring of a larger
         // word/run (no `\p{L}\p{N}_` boundary on both sides), which is
         // exactly the corrupting-splice case `buildBoundaryRegex` now
-        // refuses to rewrite. CJK titles have no script-based word
+        // refuses to rewrite, or (#5160 D9) only inside another link's
+        // label. CJK titles have no script-based word
         // boundary, so a CJK substring match lands here too — that is
         // intentional; do not special-case it. Reuse the existing toast
         // so the user sees something other than a silent removal —

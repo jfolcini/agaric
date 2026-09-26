@@ -662,6 +662,64 @@ describe('UnlinkedReferences', () => {
     expect(mockedEditBlock).toHaveBeenCalledWith('B1', 'I mention [[PAGE1]] in lowercase')
   })
 
+  // #5160 D9 — a link's label is FTS text, so a block whose label holds the
+  // title surfaces here; "Link it" must not splice `[[id]]` into that token.
+  it('"Link it" leaves a mention inside another link\'s label alone (#5160 D9)', async () => {
+    const user = userEvent.setup()
+    const resp = {
+      groups: [
+        makeGroup('P1', 'Page One', [
+          { id: 'B1', content: 'see [[01ARZ3NDEKTSV4RRFFQ69G5FAV|My Page notes]] today' },
+        ]),
+      ],
+      next_cursor: null,
+      has_more: false,
+      total_count: 1,
+      filtered_count: 1,
+      truncated: false,
+    }
+    mockedListUnlinked.mockResolvedValue(resp)
+
+    renderUnlinkedReferences({ pageId: 'PAGE1', pageTitle: 'My Page' })
+
+    await user.click(screen.getByRole('button', { name: /unlinked references/i }))
+    await user.click(await screen.findByRole('button', { name: /link it/i }))
+
+    expect(mockedEditBlock).not.toHaveBeenCalled()
+    expect(logger.warn).toHaveBeenCalledWith(
+      'UnlinkedReferences',
+      'No title/alias match found for Link it',
+      { blockId: 'B1', pageId: 'PAGE1' },
+    )
+  })
+
+  it('"Link it" links the mention outside a link whose label also holds the title (#5160 D9)', async () => {
+    const user = userEvent.setup()
+    const resp = {
+      groups: [
+        makeGroup('P1', 'Page One', [
+          { id: 'B1', content: '[[01ARZ3NDEKTSV4RRFFQ69G5FAV|My Page notes]] and My Page' },
+        ]),
+      ],
+      next_cursor: null,
+      has_more: false,
+      total_count: 1,
+      filtered_count: 1,
+      truncated: false,
+    }
+    mockedListUnlinked.mockResolvedValue(resp)
+
+    renderUnlinkedReferences({ pageId: 'PAGE1', pageTitle: 'My Page' })
+
+    await user.click(screen.getByRole('button', { name: /unlinked references/i }))
+    await user.click(await screen.findByRole('button', { name: /link it/i }))
+
+    expect(mockedEditBlock).toHaveBeenCalledWith(
+      'B1',
+      '[[01ARZ3NDEKTSV4RRFFQ69G5FAV|My Page notes]] and [[PAGE1]]',
+    )
+  })
+
   // 9. Load more button fetches next page
   it('load more button fetches next page', async () => {
     const user = userEvent.setup()

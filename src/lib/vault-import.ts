@@ -279,9 +279,16 @@ export function enexNotesToUnits(notes: EnexNote[]): ImportUnit[] {
  * Evernote-title sanitizer (`sanitizeNoteTitleToFilename` from
  * `@/lib/enex-import`) the pre-refactor `.jex` handler used, preserving exact
  * filename behaviour.
+ *
+ * A note link is written `[[Title]]`, and one to a title holding a `|` reads as
+ * that page only once it exists, else it splits on the `|` (#5160 D10), so
+ * those notes import first. Such a note linking to another one imported after
+ * it still splits.
  */
 export function jexNotesToUnits(notes: JexNote[]): ImportUnit[] {
-  return notes.map((note) => {
+  const piped = (note: JexNote) => Number(note.title.includes('|'))
+  const ordered = notes.toSorted((a, b) => piped(b) - piped(a))
+  return ordered.map((note) => {
     const name = `${sanitizeNoteTitleToFilename(note.title)}.md`
     const content = jexNoteToMarkdown(note)
     return {
