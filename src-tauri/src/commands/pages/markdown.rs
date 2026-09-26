@@ -4511,8 +4511,7 @@ async fn link_cross_page_anchors(
     }
     if dropped > 0 {
         warnings.push(format!(
-            "{dropped} wikilink block/heading anchors were dropped; links resolve to the page \
-             (Obsidian block-anchor targeting is not yet supported)"
+            "{dropped} wikilink block/heading anchors were dropped; links resolve to the page"
         ));
     }
     Ok(())
@@ -5577,8 +5576,7 @@ fn push_anchor_warnings(warnings: &mut Vec<String>, outcomes: &AnchorOutcomes) {
         let unresolved_heading_count = outcomes.unresolved_headings;
         warnings.push(format!(
             "{unresolved_heading_count} wikilink heading-anchor(s) (`#Heading`) could not be \
-             matched to a heading in this document; left as a page link (Obsidian cross-note \
-             heading targeting is not yet supported)"
+             matched to a heading in this document; left as a page link"
         ));
     }
     for name in &outcomes.unresolved_empty_base_headings {

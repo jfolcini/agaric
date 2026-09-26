@@ -11164,9 +11164,9 @@ async fn import_wikilink_heading_anchor_resolves_to_base_page_1282() {
 
     // The lossy anchor drop is surfaced exactly once (count 1).
     assert!(
-        result.warnings.iter().any(|w| w
-            == "1 wikilink block/heading anchors were dropped; links resolve to \
-                 the page (Obsidian block-anchor targeting is not yet supported)"),
+        result.warnings.iter().any(
+            |w| w == "1 wikilink block/heading anchors were dropped; links resolve to the page"
+        ),
         "a dropped-anchor warning with count 1 must be surfaced; warnings={:?}",
         result.warnings
     );
@@ -12194,10 +12194,7 @@ async fn import_wikilink_heading_anchor_cross_note_unchanged_2567() {
 
 /// The warning for `n` anchors a link could not keep.
 fn dropped_anchors(n: usize) -> String {
-    format!(
-        "{n} wikilink block/heading anchors were dropped; links resolve to the page (Obsidian \
-         block-anchor targeting is not yet supported)"
-    )
+    format!("{n} wikilink block/heading anchors were dropped; links resolve to the page")
 }
 
 /// Page "Guide" holding a `## Setup` heading and a plain block, and page
@@ -12205,7 +12202,7 @@ fn dropped_anchors(n: usize) -> String {
 /// plain, dest block]`.
 async fn anchor_pages(pool: &SqlitePool, mat: &Materializer) -> [BlockId; 4] {
     let guide = dup_page(pool, mat, "Guide").await;
-    let heading = dup_child(pool, mat, &guide, "## Setup").await;
+    let heading = dup_child(pool, mat, &guide, "# Setup").await;
     let plain = dup_child(pool, mat, &guide, "plain").await;
     let dest = dup_page(pool, mat, "Dest").await;
     let after = dup_child(pool, mat, &dest, "paste after me").await;
@@ -12448,7 +12445,7 @@ async fn an_unmatched_anchor_into_the_file_drops_a_label_equal_to_its_title() {
     ensure_test_space(&pool).await;
     mark_block_as_space(&pool, TEST_SPACE_ID).await;
 
-    import_file(
+    let result = import_file(
         &pool,
         &mat,
         dir.path(),
@@ -12469,6 +12466,16 @@ async fn an_unmatched_anchor_into_the_file_drops_a_label_equal_to_its_title() {
     assert_eq!(
         block_starting(&pool, "other").await,
         format!("other [[{page}|elsewhere]]")
+    );
+    assert_eq!(
+        result.warnings,
+        [
+            "1 wikilink block-anchor(s) (`#^blockId`) could not be matched to a block in this \
+             document; left as a page link (Obsidian cross-note block-anchor targeting is not \
+             yet supported)",
+            "2 wikilink heading-anchor(s) (`#Heading`) could not be matched to a heading in this \
+             document; left as a page link",
+        ]
     );
     mat.shutdown();
 }
