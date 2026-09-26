@@ -11250,9 +11250,9 @@ async fn import_wikilink_heading_anchor_resolves_to_base_page_1282() {
 
     // The lossy anchor drop is surfaced exactly once (count 1).
     assert!(
-        result.warnings.iter().any(|w| w
-            == "1 wikilink block/heading anchors were dropped; links resolve to \
-                 the page (Obsidian block-anchor targeting is not yet supported)"),
+        result.warnings.iter().any(
+            |w| w == "1 wikilink block/heading anchors were dropped; links resolve to the page"
+        ),
         "a dropped-anchor warning with count 1 must be surfaced; warnings={:?}",
         result.warnings
     );
@@ -11803,10 +11803,9 @@ async fn import_wikilink_block_anchor_not_found_falls_back_to_page_link_2510() {
 }
 
 /// #2510 regression guard — a block-anchor link whose base resolves to a
-/// DIFFERENT, already-existing page (a cross-note reference) is UNCHANGED
+/// DIFFERENT page holding no such block (a cross-note reference) is UNCHANGED
 /// from #1282: the anchor is dropped and the link resolves to the base PAGE,
-/// never a block-ref (cross-note block-anchor targeting is out of scope for
-/// this slice).
+/// never a block-ref.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn import_wikilink_block_anchor_cross_note_unchanged_1282_2510() {
     let (pool, _dir) = test_pool().await;
@@ -12211,11 +12210,10 @@ async fn import_wikilink_heading_anchor_unresolved_empty_base_literal_2567() {
     mat.shutdown();
 }
 
-/// #2567 regression guard — a heading anchor whose base resolves to a DIFFERENT,
-/// already-referenced page (a cross-note reference) is UNCHANGED from #1282: the
-/// anchor is dropped and the link resolves to the base PAGE, never a block-ref
-/// (cross-note heading targeting is out of scope for this slice). The
-/// interaction with the #2510 `#^block-id` path is unaffected.
+/// #2567 regression guard — a heading anchor whose base resolves to a DIFFERENT
+/// page holding no such heading (a cross-note reference) is UNCHANGED from
+/// #1282: the anchor is dropped and the link resolves to the base PAGE, never a
+/// block-ref. The interaction with the #2510 `#^block-id` path is unaffected.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn import_wikilink_heading_anchor_cross_note_unchanged_2567() {
     let (pool, _dir) = test_pool().await;
@@ -12271,6 +12269,300 @@ async fn import_wikilink_heading_anchor_cross_note_unchanged_2567() {
         result.warnings
     );
 
+    mat.shutdown();
+}
+
+// ======================================================================
+// #5160 D10 — `[[A#Heading]]` and `[[A#^id]]` into another page link the block
+// they name: A's one heading with that text, or A's block with that id. Any
+// other anchor links page A, with the dropped-anchor warning.
+// ======================================================================
+
+/// The warning for `n` anchors a link could not keep.
+fn dropped_anchors(n: usize) -> String {
+    format!("{n} wikilink block/heading anchors were dropped; links resolve to the page")
+}
+
+/// Page "Guide" holding a `## Setup` heading and a plain block, and page
+/// "Dest" holding the block a paste lands after. Returns `[guide, heading,
+/// plain, dest block]`.
+async fn anchor_pages(pool: &SqlitePool, mat: &Materializer) -> [BlockId; 4] {
+    let guide = dup_page(pool, mat, "Guide").await;
+    let heading = dup_child(pool, mat, &guide, "# Setup").await;
+    let plain = dup_child(pool, mat, &guide, "plain").await;
+    let dest = dup_page(pool, mat, "Dest").await;
+    let after = dup_child(pool, mat, &dest, "paste after me").await;
+    settle(mat).await;
+    [guide, heading, plain, after]
+}
+
+/// The content of the last block a paste of `text` after `after` created.
+async fn pasted(pool: &SqlitePool, mat: &Materializer, after: &BlockId, text: &str) -> String {
+    let rows = paste(pool, mat, after, paste_text(text)).await;
+    rows.last().and_then(|row| row.content.clone()).unwrap()
+}
+
+/// D10 — a link to a heading of another page is a ref to that heading's
+/// block, the heading compared as the same-file pass compares it (case and
+/// spacing folded), through import, paste and the source buffer. A block ref
+/// has no label, so a label is dropped with a warning.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_link_to_a_heading_of_another_page_is_a_ref_to_its_block() {
+    let (pool, dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let [guide, heading, _, after] = anchor_pages(&pool, &mat).await;
+    let dest = pages_titled(&pool, "Dest").await.remove(0);
+    let block_ref = format!("(({heading}))");
+
+    let result = import_file(
+        &pool,
+        &mat,
+        dir.path(),
+        "Notes.md",
+        "- see [[Guide#Setup]]\n- folded [[guide#  setup ]]\n\
+         - labelled [[Guide#Setup|the steps]]\n- elsewhere [[Dest#Setup]]\n\
+         - page [[Guide|the guide]]",
+    )
+    .await;
+    assert_eq!(
+        block_starting(&pool, "see").await,
+        format!("see {block_ref}")
+    );
+    assert_eq!(
+        block_starting(&pool, "folded").await,
+        format!("folded {block_ref}")
+    );
+    assert_eq!(
+        block_starting(&pool, "labelled").await,
+        format!("labelled {block_ref}")
+    );
+    assert_eq!(
+        block_starting(&pool, "elsewhere").await,
+        format!("elsewhere [[{dest}]]"),
+        "Guide's heading is not Dest's"
+    );
+    assert_eq!(
+        block_starting(&pool, "page").await,
+        format!("page [[{guide}|the guide]]")
+    );
+    assert_eq!(
+        result.warnings,
+        [
+            dropped_anchors(1),
+            "1 link label(s) were dropped: a block reference carries no label".into()
+        ]
+    );
+
+    assert_eq!(
+        pasted(&pool, &mat, &after, "- pasted [[Guide#Setup]]\n").await,
+        format!("pasted {block_ref}")
+    );
+
+    let page = dup_page(&pool, &mat, "Buffer").await;
+    let block = dup_child(&pool, &mat, &page, "typed").await;
+    settle(&mat).await;
+    let base = page_source(&pool, &page).await;
+    let report = save_source(
+        &pool,
+        &mat,
+        &page,
+        &with(&base, "typed", "typed [[Guide#Setup]]"),
+        &base,
+        false,
+    )
+    .await
+    .unwrap();
+    assert_eq!(report.warnings, Vec::<String>::new());
+    assert_eq!(
+        dup_children(&pool, &page).await,
+        [(block.into_string(), format!("typed {block_ref}"))]
+    );
+    mat.shutdown();
+}
+
+/// D10 — a heading link whose page holds two headings of that text, or none
+/// but a deleted one, links the page and drops the anchor with the warning.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_heading_link_is_to_the_page_unless_exactly_one_heading_matches() {
+    let (pool, dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let [guide, _, _, after] = anchor_pages(&pool, &mat).await;
+    dup_child(&pool, &mat, &guide, "### setup").await;
+    let other = dup_page(&pool, &mat, "Other").await;
+    dup_child(&pool, &mat, &other, "Setup").await;
+    let deleted = dup_child(&pool, &mat, &other, "## Setup").await;
+    delete_block_inner(&pool, DEV, &mat, deleted).await.unwrap();
+    settle(&mat).await;
+
+    let result = import_file(
+        &pool,
+        &mat,
+        dir.path(),
+        "Notes.md",
+        "- twice [[Guide#Setup]]\n- none [[Other#Setup]]",
+    )
+    .await;
+    assert_eq!(
+        block_starting(&pool, "twice").await,
+        format!("twice [[{guide}]]")
+    );
+    assert_eq!(
+        block_starting(&pool, "none").await,
+        format!("none [[{other}]]")
+    );
+    assert_eq!(result.warnings, [dropped_anchors(2)]);
+
+    assert_eq!(
+        pasted(
+            &pool,
+            &mat,
+            &after,
+            "- pasted [[Guide#Setup]] [[Other#Setup]]\n"
+        )
+        .await,
+        format!("pasted [[{guide}]] [[{other}]]")
+    );
+    mat.shutdown();
+}
+
+/// D10 — `[[Guide#^id]]` links Guide's block of that id, which is how an
+/// export writes a ref to another page's block, so the ref survives an export
+/// read back into the same space. An Obsidian `^name` is kept by no block
+/// after its own file's import, and a block of another page is not Guide's:
+/// both link the page, with the warning.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_block_id_anchor_links_that_block_of_the_page() {
+    let (pool, dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let [guide, heading, plain, after] = anchor_pages(&pool, &mat).await;
+    let src = dup_page(&pool, &mat, "Src").await;
+    let cite = dup_child(&pool, &mat, &src, &format!("cite (({plain}))")).await;
+    settle(&mat).await;
+    let md = export_page_markdown_inner(&pool, src.as_str())
+        .await
+        .unwrap();
+    assert!(md.contains(&format!("cite [[Guide#^{plain}]]")), "{md}");
+
+    let result = import_file(
+        &pool,
+        &mat,
+        dir.path(),
+        "Notes.md",
+        &format!(
+            "- copied [[Guide#^{plain}]]\n- obsidian [[Guide#^setup-step]]\n\
+             - elsewhere [[Guide#^{cite}]]\n- back [[Src#^{plain}]]\n\
+             - itself [[Guide#^{guide}]]"
+        ),
+    )
+    .await;
+    assert_eq!(
+        block_starting(&pool, "copied").await,
+        format!("copied (({plain}))")
+    );
+    assert_eq!(
+        block_starting(&pool, "obsidian").await,
+        format!("obsidian [[{guide}]]")
+    );
+    assert_eq!(
+        block_starting(&pool, "elsewhere").await,
+        format!("elsewhere [[{guide}]]")
+    );
+    assert_eq!(
+        block_starting(&pool, "back").await,
+        format!("back [[{src}]]")
+    );
+    assert_eq!(
+        block_starting(&pool, "itself").await,
+        format!("itself [[{guide}]]")
+    );
+    assert_eq!(result.warnings, [dropped_anchors(4)]);
+
+    assert_eq!(
+        pasted(
+            &pool,
+            &mat,
+            &after,
+            &format!("- pasted [[Guide#^{heading}]]\n")
+        )
+        .await,
+        format!("pasted (({heading}))")
+    );
+    mat.shutdown();
+}
+
+/// D10 — a page titled with the whole link still wins over a heading of the
+/// page before the `#`.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_page_titled_with_the_whole_link_wins_over_a_heading() {
+    let (pool, dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let [_, _, _, after] = anchor_pages(&pool, &mat).await;
+    let titled = dup_page(&pool, &mat, "Guide#Setup").await;
+    settle(&mat).await;
+
+    let result = import_file(
+        &pool,
+        &mat,
+        dir.path(),
+        "Notes.md",
+        "- titled [[Guide#Setup]]",
+    )
+    .await;
+    assert_eq!(
+        block_starting(&pool, "titled").await,
+        format!("titled [[{titled}]]")
+    );
+    assert_eq!(result.warnings, Vec::<String>::new());
+
+    assert_eq!(
+        pasted(&pool, &mat, &after, "- pasted [[Guide#Setup]]\n").await,
+        format!("pasted [[{titled}]]")
+    );
+    mat.shutdown();
+}
+
+/// #5160 D9 — an anchor into the imported file that matches nothing there
+/// links the file's page, and a label equal to that page's title is not
+/// stored; another label is.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_unmatched_anchor_into_the_file_drops_a_label_equal_to_its_title() {
+    let (pool, dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    ensure_test_space(&pool).await;
+    mark_block_as_space(&pool, TEST_SPACE_ID).await;
+
+    let result = import_file(
+        &pool,
+        &mat,
+        dir.path(),
+        "Self.md",
+        "- block [[#^gone|Self]]\n- heading [[Self#Nowhere|Self]]\n\
+         - other [[Self#Nowhere|elsewhere]]",
+    )
+    .await;
+    let page = pages_titled(&pool, "Self").await.remove(0);
+    assert_eq!(
+        block_starting(&pool, "block").await,
+        format!("block [[{page}]]")
+    );
+    assert_eq!(
+        block_starting(&pool, "heading").await,
+        format!("heading [[{page}]]")
+    );
+    assert_eq!(
+        block_starting(&pool, "other").await,
+        format!("other [[{page}|elsewhere]]")
+    );
+    assert_eq!(
+        result.warnings,
+        [
+            "1 wikilink block-anchor(s) (`#^blockId`) could not be matched to a block in this \
+             document; left as a page link (Obsidian cross-note block-anchor targeting is not \
+             yet supported)",
+            "2 wikilink heading-anchor(s) (`#Heading`) could not be matched to a heading in this \
+             document; left as a page link",
+        ]
+    );
     mat.shutdown();
 }
 
