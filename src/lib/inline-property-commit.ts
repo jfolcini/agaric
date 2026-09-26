@@ -73,10 +73,6 @@ export interface PageBlockStoreLike {
 /** Per-block flush sequence tokens — see the module docstring. */
 const flushSeqByBlock = new Map<string, number>()
 
-/** The column-backed keys a typed key folds to with or without a definition
- *  (`RESERVED_PROPERTY_KEYS` in `agaric-store/src/op.rs`). */
-const RESERVED_PROPERTY_KEYS = ['todo_state', 'priority', 'due_date', 'scheduled_date']
-
 /** Every property definition, page by page. */
 async function listAllPropertyDefs(): Promise<PropertyDefinition[]> {
   const defs: PropertyDefinition[] = []
@@ -93,26 +89,25 @@ async function listAllPropertyDefs(): Promise<PropertyDefinition[]> {
 
 /**
  * The key a typed `key:: value` line names and its definition (#5160 D13):
- * the definition spelled so, else the one reserved key or definition the key
- * folds to (`foldPropertyKey`). Two that fold alike are never guessed
- * between, and a key none folds to is a custom key: both stay as typed.
- * Mirrors `PropertyLines::canonical_key` in the backend.
+ * the definition spelled so, else the one definition the key folds to
+ * (`foldPropertyKey`), the reserved keys' included (migration 0014 declares
+ * them). Two that fold alike are never guessed between, and a key none folds
+ * to is a custom key: both stay as typed. `listDefs` answers every
+ * definition; a key with no definition spelled so needs the list, since a
+ * definition spelled otherwise (`repeat-until`) may fold to it. Mirrors
+ * `PropertyLines::canonical_key` in the backend.
  */
 async function resolveTypedKey(
   typed: string,
+  listDefs: () => Promise<PropertyDefinition[]>,
 ): Promise<{ key: string; def: PropertyDefinition | null }> {
   const exact = unwrap(await commands.getPropertyDef(typed))
   if (exact) return { key: typed, def: exact }
   const folded = foldPropertyKey(typed)
-  const defs = await listAllPropertyDefs()
-  const keys = new Set(
-    [...RESERVED_PROPERTY_KEYS, ...defs.map((def) => def.key)].filter(
-      (key) => foldPropertyKey(key) === folded,
-    ),
-  )
-  const [key] = keys
-  if (keys.size !== 1 || key === undefined) return { key: typed, def: null }
-  return { key, def: defs.find((def) => def.key === key) ?? null }
+  const matches = (await listDefs()).filter((def) => foldPropertyKey(def.key) === folded)
+  const [def] = matches
+  if (matches.length !== 1 || def === undefined) return { key: typed, def: null }
+  return { key: def.key, def }
 }
 
 /**
@@ -138,8 +133,9 @@ export function readFlushSeq(blockId: string): number | undefined {
  * persist `content` with ONLY the succeeded lines stripped. See
  * `use-block-flush.ts` step 5 and `inline-property-parse.ts` for the rules.
  *
- * - Each line: its key as the reserved key or definition it folds to
- *   (`resolveTypedKey`, #5160 D13) → `buildInlinePropertySetParams` (honours
+ * - Each line: its key as the definition it folds to (`resolveTypedKey`,
+ *   #5160 D13, the definitions listed at most once per save) →
+ *   `buildInlinePropertySetParams` (honours
  *   the definition type; `null` params = value not representable → treated
  *   as a rejected write) → `setProperty` (upsert; the backend enforces select
  *   membership etc.).
@@ -172,9 +168,11 @@ export async function commitInlineProperties(opts: {
   // stays LITERAL in the committed content (see `strippedLines`), so the text
   // they now know how to fix is still on screen.
   let repeatReason: string | null = null
+  let defs: Promise<PropertyDefinition[]> | undefined
+  const listDefs = () => (defs ??= listAllPropertyDefs())
   for (const prop of inlineProps) {
     try {
-      const { key, def } = await resolveTypedKey(prop.key)
+      const { key, def } = await resolveTypedKey(prop.key, listDefs)
       const params = buildInlinePropertySetParams(blockId, key, prop.value, def)
       if (params === null) {
         keptAsText.push(`${prop.key}:: ${prop.value}`)

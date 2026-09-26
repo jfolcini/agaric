@@ -50,21 +50,63 @@ describe('commitInlineProperties (#5160 Phase 4b)', () => {
     )
   })
 
+  // `repeat_until` is already folded, yet names `repeat-until`: a key with no
+  // definition spelled so still needs the definitions listed.
   it('a key typed in another case or with `-` lands on the key it folds to (D13)', async () => {
-    const edit = await commit('task\nPriority:: 1\nConText:: @home\ndue:: soon')
+    const edit = await commit(
+      'task\nPriority:: 1\nConText:: @home\nrepeat_until:: 2026-12-31\ndue:: 2026-06-01',
+    )
 
     expect(edit).toHaveBeenCalledExactlyOnceWith(BLOCK, 'task')
     const { row, properties } = stored()
     expect(row.priority).toBe('1')
-    expect(properties.map((p) => [p.key, p.value_text])).toEqual(
+    expect(properties.map((p) => [p.key, p.value_text ?? p.value_date])).toEqual(
       expect.arrayContaining([
         ['context', '@home'],
-        ['due', 'soon'],
+        ['repeat-until', '2026-12-31'],
+        ['due', '2026-06-01'],
       ]),
     )
     expect(properties.map((p) => p.key)).not.toContain('ConText')
     expect(row.due_date).toBeNull()
     expect(toast.error).not.toHaveBeenCalled()
+  })
+
+  it('a value the seeded `due` date definition refuses stays as text, as in the app', async () => {
+    const edit = await commit('task\ndue:: soon')
+
+    expect(edit).toHaveBeenCalledExactlyOnceWith(BLOCK, 'task\ndue:: soon')
+    expect(stored().properties.map((p) => p.key)).not.toContain('due')
+    expect(toast.error).toHaveBeenCalledExactlyOnceWith('Kept as text: due:: soon')
+  })
+
+  it('a ref value names a page by title or `[[id]]`, and one naming none stays text (D11)', async () => {
+    for (const key of ['owner', 'approver', 'watcher']) {
+      dispatch('create_property_def', { key, valueType: 'ref', options: null })
+    }
+
+    const edit = await commit(
+      `task\nowner:: getting started\napprover:: [[${SEED_IDS.PAGE_QUICK_NOTES}]]\nwatcher:: Nobody`,
+    )
+
+    expect(edit).toHaveBeenCalledExactlyOnceWith(BLOCK, 'task\nwatcher:: Nobody')
+    expect(toast.error).toHaveBeenCalledExactlyOnceWith('Kept as text: watcher:: Nobody')
+    expect(stored().properties.map((p) => [p.key, p.value_ref])).toEqual(
+      expect.arrayContaining([
+        ['owner', SEED_IDS.PAGE_GETTING_STARTED],
+        ['approver', SEED_IDS.PAGE_QUICK_NOTES],
+      ]),
+    )
+  })
+
+  it('lists the definitions once per save, however many new keys it holds (D13)', async () => {
+    await commit('task\nmood:: calm\nenergy:: high')
+
+    const listings = vi.mocked(invoke).mock.calls.filter(([cmd]) => cmd === 'list_property_defs')
+    expect(listings).toHaveLength(1)
+    expect(stored().properties.map((p) => p.key)).toEqual(
+      expect.arrayContaining(['mood', 'energy']),
+    )
   })
 
   it('a typed recurrence rule is a property (P4)', async () => {

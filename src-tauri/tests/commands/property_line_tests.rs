@@ -21,6 +21,17 @@ enum Value<'a> {
 
 /// Set `key` on `block` through the property command.
 async fn set(pool: &SqlitePool, mat: &Materializer, block: &BlockId, key: &str, value: Value<'_>) {
+    try_set(pool, mat, block, key, value).await.unwrap();
+}
+
+/// [`set`], answering the command's refusal.
+async fn try_set(
+    pool: &SqlitePool,
+    mat: &Materializer,
+    block: &BlockId,
+    key: &str,
+    value: Value<'_>,
+) -> Result<(), AppError> {
     let (text, num, date, reference) = match value {
         Value::Text(text) => (Some(text.to_owned()), None, None, None),
         Value::Num(num) => (None, Some(num), None, None),
@@ -41,7 +52,7 @@ async fn set(pool: &SqlitePool, mat: &Materializer, block: &BlockId, key: &str, 
         None,
     )
     .await
-    .unwrap();
+    .map(drop)
 }
 
 /// A task on `page` repeating weekly, four times at most, until the end of
@@ -171,8 +182,9 @@ async fn page_source_renders_and_reads_the_recurrence_lines() {
     );
 }
 
-/// `key::` and `key:: ` both delete the property (#5160 P7): no raw error
-/// code, no line appended as text, and the block keeps its anchor.
+/// `key::` and `key:: ` both delete the property (#5160 P7), in any spelling
+/// that folds to it: no raw error code, no line appended as text, and the
+/// block keeps its anchor.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn apply_page_source_a_line_with_no_value_deletes_the_property() {
     let (pool, _dir) = test_pool().await;
@@ -186,7 +198,7 @@ async fn apply_page_source_a_line_with_no_value_deletes_the_property() {
     settle(&mat).await;
     let base = page_source(&pool, &page).await;
     let source = with(
-        &with(&base, "  priority:: 2\n", "  priority::\n"),
+        &with(&base, "  priority:: 2\n", "  Priority::\n"),
         "  note:: open\n",
         "  note:: \n",
     );
@@ -210,6 +222,44 @@ async fn apply_page_source_a_line_with_no_value_deletes_the_property() {
         page_source(&pool, &page).await,
         format!("- has both ^{block}\n")
     );
+}
+
+/// A `key::` line with no value for a key its block does not hold clears
+/// nothing, so it is what the user typed: it stays as text in the block, a new
+/// block's too, and the next save of the page reads it back as that text.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn apply_page_source_keeps_a_line_with_no_value_for_a_key_not_held_as_text() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let page = dup_page(&pool, &mat, "Recipes").await;
+    let block = dup_child(&pool, &mat, &page, "soup").await;
+    settle(&mat).await;
+    let base = page_source(&pool, &page).await;
+    let line = format!("- soup ^{block}\n");
+    let source = format!(
+        "{}- bread\n  Flour::\n",
+        with(&base, &line, &format!("{line}  Ingredients::\n"))
+    );
+
+    let report = save_source(&pool, &mat, &page, &source, &base, false)
+        .await
+        .unwrap();
+
+    assert_eq!(counts(&report), [1, 1, 0, 0, 0, 0]);
+    assert!(report.warnings.is_empty(), "{:?}", report.warnings);
+    let contents: Vec<String> = dup_children(&pool, &page)
+        .await
+        .into_iter()
+        .map(|(_, content)| content)
+        .collect();
+    assert_eq!(contents, ["soup\nIngredients::", "bread\nFlour::"]);
+    assert_eq!(dup_storage(&pool, &block).await, [NO_COLUMNS]);
+
+    let saved = page_source(&pool, &page).await;
+    let report = save_source(&pool, &mat, &page, &saved, &saved, false)
+        .await
+        .unwrap();
+    assert_eq!(counts(&report), [0; 6], "it reads back as the text it is");
 }
 
 /// A key names the reserved key or definition it folds to, whatever its case
@@ -259,8 +309,8 @@ async fn apply_page_source_folds_a_key_to_its_canonical_spelling() {
     let result = save_source(&pool, &mat, &page, &refused, &saved, false).await;
     assert!(
         matches!(&result, Err(AppError::Validation { message, .. })
-            if message.contains("`due_date:: tomorrow`")),
-        "a refused value refuses the save naming the line: {result:?}"
+            if message.contains("`Due-Date:: tomorrow`")),
+        "a refused value refuses the save naming the line as typed: {result:?}"
     );
 }
 
@@ -488,6 +538,112 @@ async fn import_markdown_resolves_a_ref_value_by_title() {
         .filter(|w| w.contains("`reviewer:: TWIN`") || w.contains("`reviewer:: Nobody`"))
         .collect();
     assert_eq!(named.len(), 2, "{:?}", result.warnings);
+}
+
+/// A text value under a `ref` definition names its target as a typed line
+/// does (#5160 D11), so the block editor's `reviewer:: Alice` is Alice: a
+/// block id, `[[Title]]` or a title of a page in the block's space. A title
+/// two pages tie on, or none has, is refused.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn set_property_reads_a_ref_value_typed_as_text() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let page = dup_page(&pool, &mat, "Typed").await;
+    let alice = dup_page(&pool, &mat, "Alice").await;
+    dup_page(&pool, &mat, "Twin").await;
+    dup_page(&pool, &mat, "twin").await;
+    create_property_def_inner(&pool, "reviewer".into(), "ref".into(), None)
+        .await
+        .unwrap();
+    let block = dup_child(&pool, &mat, &page, "task").await;
+    settle(&mat).await;
+
+    for typed in ["Alice", "[[alice]]", alice.as_str()] {
+        try_set(&pool, &mat, &block, "reviewer", Value::Text("Typed"))
+            .await
+            .unwrap();
+        try_set(&pool, &mat, &block, "reviewer", Value::Text(typed))
+            .await
+            .unwrap();
+        assert_eq!(
+            dup_storage(&pool, &block).await[1],
+            reviewer_row(&alice),
+            "{typed}"
+        );
+    }
+    for refused in ["TWIN", "Nobody"] {
+        let result = try_set(&pool, &mat, &block, "reviewer", Value::Text(refused)).await;
+        assert!(
+            matches!(&result, Err(AppError::Validation { .. })),
+            "{refused}: {result:?}"
+        );
+    }
+    let both = set_property_inner(
+        &pool,
+        DEV,
+        &mat,
+        block.as_str().into(),
+        "reviewer".into(),
+        Some("Typed".into()),
+        None,
+        None,
+        Some(alice.as_str().into()),
+        None,
+        None,
+    )
+    .await;
+    assert!(
+        matches!(&both, Err(AppError::Validation { .. })),
+        "a text beside a ref is two values, not one: {both:?}"
+    );
+    assert_eq!(dup_storage(&pool, &block).await[1], reviewer_row(&alice));
+}
+
+/// A ref value a definition refuses is kept as inert text (#5160 D11): the
+/// name pass neither creates the page it names nor warns about it a second
+/// time, on an import and on a paste. A `[[` the user escaped stays escaped.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_refused_ref_value_is_inert_text() {
+    let (pool, dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let page = dup_page(&pool, &mat, "Paste").await;
+    dup_page(&pool, &mat, "Twin").await;
+    dup_page(&pool, &mat, "twin").await;
+    create_property_def_inner(&pool, "reviewer".into(), "ref".into(), None)
+        .await
+        .unwrap();
+    let anchor = dup_child(&pool, &mat, &page, "anchor").await;
+    settle(&mat).await;
+    let md = "- a\n  reviewer:: [[Nobody]]\n- b\n  reviewer:: [[TWIN]]\n\
+              - c\n  reviewer:: \\[[Nobody]]\n";
+    let kept = [
+        "a\nreviewer:: \\[[Nobody]]",
+        "b\nreviewer:: \\[[TWIN]]",
+        "c\nreviewer:: \\[[Nobody]]",
+    ];
+
+    let result = import(&pool, &mat, dir.path(), md, "Refused.md").await;
+    let pasted = paste_blocks_inner(&pool, DEV, &mat, anchor, paste_text(md), None)
+        .await
+        .unwrap();
+    settle(&mat).await;
+
+    let imported = page_titled(&pool, "Refused").await;
+    let contents = |blocks: Vec<(String, String)>| -> Vec<String> {
+        blocks.into_iter().map(|(_, content)| content).collect()
+    };
+    assert_eq!(contents(dup_children(&pool, &imported).await), kept);
+    assert_eq!(contents(dup_children(&pool, &page).await)[1..], kept);
+    for warnings in [&result.warnings, &pasted.warnings] {
+        assert_eq!(warnings.len(), 3, "one per refused line: {warnings:?}");
+    }
+    let created: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM blocks WHERE block_type = 'page' AND content = 'Nobody'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(created, 0, "no page is created for a refused name");
 }
 
 /// Export → Import keeps a body ref property, written as its target's title,

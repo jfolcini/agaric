@@ -307,13 +307,13 @@ test.describe('Property definitions view', () => {
     // "New Page" button / other UI doesn't confuse the locator).
     const settingsPanel = page.locator('[data-testid="settings-panel-properties"]')
     const keyInput = settingsPanel.getByLabel('Property key')
-    await keyInput.fill('status')
+    await keyInput.fill('mood')
 
     // Select "text" type (default)
     await settingsPanel.getByRole('button', { name: 'Create' }).click()
 
     // New definition should appear in the list
-    await expect(settingsPanel.locator('ul li', { hasText: 'status' })).toBeVisible()
+    await expect(settingsPanel.locator('ul li', { hasText: 'mood' })).toBeVisible()
   })
 
   test('deleting a property definition with confirmation removes it', async ({ page }) => {
