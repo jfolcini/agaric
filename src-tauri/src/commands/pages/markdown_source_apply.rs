@@ -495,12 +495,13 @@ async fn resolve_buffer_names(
         let humanised = slot.is_some_and(|slot| {
             stored.get(base.ids[slot].as_str()) != Some(&base.blocks[slot].content.as_str())
         });
-        // A query's page name reads as a link body does when it names a page
-        // by its exact title, which is all the snapshot maps.
+        // A query names no page here: source mode writes a stored query as
+        // its `v2:` payload, ids and all, so only links and tags were rendered
+        // by name.
         let (links, tags) = if humanised {
             let snapshot = &data.name_snapshot;
             (
-                snapshot.page_links(kept.links.into_iter().chain(kept.queries)),
+                snapshot.page_links(kept.links),
                 snapshot.tags(kept.tags.into_iter().collect()),
             )
         } else {

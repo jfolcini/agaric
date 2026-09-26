@@ -6207,6 +6207,62 @@ async fn apply_page_source_round_trips_a_link_to_a_title_holding_a_pipe() {
     );
 }
 
+/// #5160 D10 — an edit to a block holding an inline query keeps the query's
+/// page ref: source mode writes the query as its stored `v2:` payload, ids and
+/// all, so the save never resolves a name there.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn apply_page_source_keeps_an_inline_query_page_ref() {
+    use agaric_lib::commands::pages::inline_query_md::{InlineQuerySpec, decode_v2, encode_v2};
+    use agaric_store::filters::{FilterExpr, FilterPrimitive};
+
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let page = dup_page(&pool, &mat, "Host").await;
+    let target = dup_page(&pool, &mat, "Target Page").await;
+    let child_of_target = FilterExpr::Leaf {
+        primitive: FilterPrimitive::ChildOf {
+            parent: target.to_string(),
+        },
+    };
+    let spec = InlineQuerySpec {
+        filter: child_of_target.clone(),
+        table: false,
+    };
+    let payload = encode_v2(&spec).unwrap();
+    dup_child(
+        &pool,
+        &mat,
+        &page,
+        &format!("tasks {{{{query {payload}}}}}"),
+    )
+    .await;
+    settle(&mat).await;
+
+    let base = page_source(&pool, &page).await;
+    assert!(base.contains(&format!("{{{{query {payload}}}}}")), "{base}");
+    save_source(
+        &pool,
+        &mat,
+        &page,
+        &with(&base, "tasks", "open tasks"),
+        &base,
+        false,
+    )
+    .await
+    .unwrap();
+
+    let rows = dup_children(&pool, &page).await;
+    let content = &rows[0].1;
+    let stored = content
+        .strip_prefix("open tasks {{query ")
+        .and_then(|rest| rest.strip_suffix("}}"))
+        .unwrap_or_else(|| panic!("not a stored query: {content}"));
+    assert_eq!(
+        decode_v2(stored).map(|spec| spec.filter),
+        Some(child_of_target)
+    );
+}
+
 /// #5160 D10 — a link to `Project` labelled `Plan` is written raw while a page
 /// is titled `Project|Plan`, which `[[Project|Plan]]` would name instead.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
