@@ -236,9 +236,9 @@ describe('BlockLinkPicker input rule — alias disambiguation', () => {
 
     await vi.waitFor(() => expect(insertContentAtCalls.length).toBeGreaterThan(0))
 
-    // Plain text re-inserted at the captured position — NOT a
+    // What was typed re-inserted at the captured position — NOT a
     // block_link to the prefix-alias hit.
-    expect(insertContentAtCalls).toEqual([{ pos: 5, content: 'my' }])
+    expect(insertContentAtCalls).toEqual([{ pos: 5, content: '[[my]]' }])
   })
 })
 
@@ -439,8 +439,8 @@ describe('BlockLinkPicker input rule uses insertContentAt (race-condition fix)',
 
     await vi.waitFor(() => expect(insertContentAtCalls.length).toBeGreaterThan(0))
 
-    // Plain text re-inserted at the captured position
-    expect(insertContentAtCalls).toEqual([{ pos: 3, content: 'No Such Page' }])
+    // What was typed re-inserted at the captured position
+    expect(insertContentAtCalls).toEqual([{ pos: 3, content: '[[No Such Page]]' }])
   })
 
   it('falls back to plain text at captured position on error', async () => {
@@ -475,15 +475,15 @@ describe('BlockLinkPicker input rule uses insertContentAt (race-condition fix)',
     const rule = rules[0]
 
     const mockState = { tr: { delete: vi.fn() } }
-    const mockRange = { from: 7, to: 20 }
-    const mockMatch = ['[[Broken]]', 'Broken']
+    const mockRange = { from: 7, to: 25 }
+    const mockMatch = ['[[Broken|label]]', 'Broken|label']
 
     rule.handler({ state: mockState, range: mockRange, match: mockMatch })
 
     await vi.waitFor(() => expect(insertContentAtCalls.length).toBeGreaterThan(0))
 
-    // On error, plain text re-inserted at the captured position
-    expect(insertContentAtCalls).toEqual([{ pos: 7, content: 'Broken' }])
+    // On error, what was typed, label included, re-inserted at the captured position
+    expect(insertContentAtCalls).toEqual([{ pos: 7, content: '[[Broken|label]]' }])
   })
 })
 
@@ -548,10 +548,47 @@ describe('BlockLinkPicker stale-insertPos guard ()', () => {
     // Wait for the async resolve to land on the cursor-fallback path.
     await vi.waitFor(() => expect(insertContentCalls.length).toBeGreaterThan(0))
 
-    // Plain text inserted at the current cursor (insertContent),
+    // What was typed inserted at the current cursor (insertContent),
     // NOT the inline node at the stale offset.
-    expect(insertContentCalls).toEqual(['My Page'])
+    expect(insertContentCalls).toEqual(['[[My Page]]'])
     expect(insertContentAtCalls).toEqual([])
+  })
+
+  it('an ambiguous [[FOO]] racing a stale offset comes back with its brackets', async () => {
+    const insertContentCalls: unknown[] = []
+    const chainProxy: Record<string, unknown> = {
+      focus: () => chainProxy,
+      insertContent: (content: unknown) => {
+        insertContentCalls.push(content)
+        return chainProxy
+      },
+      insertContentAt: () => chainProxy,
+      run: () => true,
+    }
+    const mockEditor = {
+      chain: () => chainProxy,
+      state: { doc: { content: { size: 5 } } },
+    } as unknown
+    const ext = BlockLinkPicker.configure({
+      items: vi.fn().mockResolvedValue([
+        { id: 'PAGE_UPPER', label: 'Foo', title: 'Foo' },
+        { id: 'PAGE_LOWER', label: 'foo', title: 'foo' },
+      ]),
+    })
+    const rules = (
+      ext.config.addInputRules as unknown as (
+        ...args: unknown[]
+      ) => [{ handler: (...a: unknown[]) => unknown }]
+    ).call({ options: ext.options, editor: mockEditor })
+
+    rules[0].handler({
+      state: { tr: { delete: vi.fn() } },
+      range: { from: 10, to: 17 },
+      match: ['[[FOO]]', 'FOO'],
+    })
+
+    await vi.waitFor(() => expect(insertContentCalls.length).toBeGreaterThan(0))
+    expect(insertContentCalls).toEqual(['[[FOO]]'])
   })
 })
 
@@ -980,10 +1017,10 @@ describe('BlockLinkPicker real-editor chain result', () => {
 
 describe('parseTypedLink and blockLinkNode (#5160 D9, D10)', () => {
   it('splits the label off the first pipe and the base off the first hash', () => {
-    expect(parseTypedLink('Page')).toEqual({ name: 'Page', base: 'Page', label: undefined })
-    expect(parseTypedLink(' Page | a|b ')).toEqual({ name: 'Page', base: 'Page', label: 'a|b' })
-    expect(parseTypedLink('Page|')).toEqual({ name: 'Page', base: 'Page', label: undefined })
-    expect(parseTypedLink('A#B|see')).toEqual({ name: 'A#B', base: 'A', label: 'see' })
+    expect(parseTypedLink('Page')).toEqual({ base: 'Page', label: undefined })
+    expect(parseTypedLink(' Page | a|b ')).toEqual({ base: 'Page', label: 'a|b' })
+    expect(parseTypedLink('Page|')).toEqual({ base: 'Page', label: undefined })
+    expect(parseTypedLink('A#B|see')).toEqual({ base: 'A', label: 'see' })
     expect(parseTypedLink('#heading')).toBeNull()
     expect(parseTypedLink('   ')).toBeNull()
   })
@@ -1195,6 +1232,12 @@ describe('pickedLinkLabel (#5160 D9, D10)', () => {
   it('keeps the text after the first `|` when the title names no prefix, unless it is the title', () => {
     expect(pickedLinkLabel(page('Apple'), 'A|see')).toBe('see')
     expect(pickedLinkLabel(page('Apple'), 'A|Apple')).toBeUndefined()
+  })
+
+  it('reads a prefix whose name is the title and an anchor, as the input rule does', () => {
+    expect(pickedLinkLabel(page('A | B'), 'A | B#h|see')).toBe('see')
+    expect(pickedLinkLabel(page('A'), 'A#h|see')).toBe('see')
+    expect(pickedLinkLabel(page('A | B'), 'A | B#h|x|see')).toBe('x|see')
   })
 
   it('reads the prefix an alias match names as the picker does', () => {

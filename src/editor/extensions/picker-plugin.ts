@@ -158,11 +158,12 @@ function trackInsertPosition(editor: Editor, initialPos: number): TrackedInsertP
 export interface ResolveAndInsertPickerTokenOptions {
   /** Live editor reference. */
   editor: Editor
-  /** The text the user typed inside the trigger (e.g. `myTag`, `My Page`). */
+  /** The name searched for and created (e.g. `myTag`, `My Page`). */
   text: string
   /**
-   * What goes back when `matchItem` says the name must stay as typed (`null`):
-   * the whole typed token, e.g. `[[My Page]]`. Defaults to `text`.
+   * What goes back as plain text whenever no token lands (a tie, no match
+   * and no create, a failed lookup, a stale offset): the whole typed token,
+   * e.g. `[[My Page|label]]`. Defaults to `text`.
    */
   typed?: string | undefined
   /** Captured insertion offset (the original `range.from`). */
@@ -214,7 +215,7 @@ export async function resolveAndInsertPickerToken({
   // back to plain text at the current cursor.
   const isStale = (pos: number) => pos > editor.state.doc.content.size
   const insertPlainAtCursor = () => {
-    editor.chain().focus().insertContent(text).run()
+    editor.chain().focus().insertContent(typed).run()
   }
   const isGone = () => {
     if (tracked.pos !== null) return false
@@ -262,19 +263,15 @@ export async function resolveAndInsertPickerToken({
       }
       editor.chain().focus().insertContentAt(pos, tokenFor(newId)).run()
     } else {
-      // No match and no onCreate — re-insert as plain text; an ambiguous name
-      // (#5160 N4) goes back exactly as typed.
+      // No match and no onCreate, or an ambiguous name (#5160 N4): the text
+      // goes back as typed.
       if (isGone()) return
       const pos = tracked.pos ?? insertPos
       if (isStale(pos)) {
         insertPlainAtCursor()
         return
       }
-      editor
-        .chain()
-        .focus()
-        .insertContentAt(pos, exactMatch === null ? typed : text)
-        .run()
+      editor.chain().focus().insertContentAt(pos, typed).run()
     }
   } catch (err) {
     logger.warn(loggerComponent, errorMessage, { text }, err)
@@ -287,7 +284,7 @@ export async function resolveAndInsertPickerToken({
       insertPlainAtCursor()
       return
     }
-    editor.chain().focus().insertContentAt(pos, text).run()
+    editor.chain().focus().insertContentAt(pos, typed).run()
   } finally {
     tracked.stop()
   }

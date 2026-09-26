@@ -198,7 +198,7 @@ describe('AtTagPicker input rule (T-2)', () => {
     rule.handler({ state: mockState, range: mockRange, match: mockMatch })
 
     await vi.waitFor(() => expect(insertContentAtCalls.length).toBeGreaterThan(0))
-    expect(insertContentAtCalls).toEqual([{ pos: 3, content: 'orphan' }])
+    expect(insertContentAtCalls).toEqual([{ pos: 3, content: '#[orphan]' }])
   })
 
   it('falls back to plain text at captured position on error', async () => {
@@ -239,7 +239,7 @@ describe('AtTagPicker input rule (T-2)', () => {
     rule.handler({ state: mockState, range: mockRange, match: mockMatch })
 
     await vi.waitFor(() => expect(insertContentAtCalls.length).toBeGreaterThan(0))
-    expect(insertContentAtCalls).toEqual([{ pos: 7, content: 'broken' }])
+    expect(insertContentAtCalls).toEqual([{ pos: 7, content: '#[broken]' }])
   })
 })
 
@@ -306,7 +306,7 @@ describe('AtTagPicker stale-insertPos guard ()', () => {
 
     // Plain text inserted at the current cursor (insertContent),
     // NOT the inline node at the stale offset.
-    expect(insertContentCalls).toEqual(['myTag'])
+    expect(insertContentCalls).toEqual(['#[myTag]'])
     expect(insertContentAtCalls).toEqual([])
   })
 })

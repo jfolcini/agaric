@@ -33,7 +33,7 @@ export type BuildResult =
   | { ok: false; error: 'invalidNumber' }
 
 /**
- * Properties that the backend considers non-deletable (system-managed).
+ * Built-in (system-managed) properties, whose definitions cannot be deleted.
  * Mirrors `is_builtin_property_key` in `src-tauri/agaric-store/src/op.rs`.
  */
 export const NON_DELETABLE_PROPERTIES = new Set([
@@ -73,7 +73,7 @@ export const LOCKED_PROPERTY_OPTIONS = new Set(['todo_state'])
  * `is_builtin_property_key` (the reserved keys plus the `created_at` /
  * `completed_at` / `repeat-*` lifecycle keys) — the two sets overlap but mean
  * different things, and `delete_property` explicitly ALLOWS the reserved keys
- * while refusing the lifecycle ones.
+ * and the recurrence rule while refusing the other lifecycle ones.
  */
 export const COLUMN_BACKED_PROPERTY_KEYS = new Set([
   'todo_state',

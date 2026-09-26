@@ -165,6 +165,14 @@ describe('paste_blocks resolves names in the anchor’s space (#5160 N4)', () =>
     expect(livePages('X')).toHaveLength(0)
   })
 
+  it('leaves an anchored link whose whole title ties by case as text, as the backend does', () => {
+    put(id('HASHLOWER'), 'page', 'page#h', null)
+    put(id('HASHUPPER'), 'page', 'PAGE#h', null)
+    const rows = paste(ANCHOR, '- see [[Page#h]]')
+    expect(rows.map((r) => [r.block_type, r.content])).toEqual([['content', 'see [[Page#h]]']])
+    expect(livePages('Page')).toHaveLength(0)
+  })
+
   it('leaves every name as text when the anchor is in no space', () => {
     const rows = paste(NO_SPACE_ANCHOR, '- see [[Project Plan]] #work')
     expect(rows.map((r) => [r.block_type, r.content])).toEqual([

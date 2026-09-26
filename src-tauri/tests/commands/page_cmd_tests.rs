@@ -6360,6 +6360,44 @@ async fn export_and_import_round_trip_a_link_to_a_title_holding_a_pipe() {
     mat.shutdown();
 }
 
+/// #5160 N3 — a tag ref or a page link after an odd run of backslashes is
+/// escaped, and no name form of it reads back there, so an export writes it as
+/// it is stored and Export → Import keeps the block's text; one after an even
+/// run is a ref after literal backslashes, written by name.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn export_and_import_round_trip_refs_after_a_backslash() {
+    let (pool, dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let src = dup_page(&pool, &mat, "Src").await;
+    let page = dup_page(&pool, &mat, "Target").await;
+    import_file(&pool, &mat, dir.path(), "Seed.md", "- #work").await;
+    let tag: String =
+        sqlx::query_scalar("SELECT id FROM blocks WHERE block_type = 'tag' AND content = 'work'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    let content = format!(r"foo\#[{tag}] bar\\#[{tag}] \[[{page}]] \\[[{page}]]");
+    dup_child(&pool, &mat, &src, &content).await;
+    settle(&mat).await;
+
+    let md = export_page_markdown_inner(&pool, src.as_str())
+        .await
+        .unwrap();
+    let written = format!(r"- foo\#[{tag}] bar\\#work \[[{page}]] \\[[Target]]");
+    assert!(md.contains(&written), "{md}");
+
+    import_file(&pool, &mat, dir.path(), "Roundtrip.md", &md).await;
+    let copies: Vec<String> = sqlx::query_scalar(
+        "SELECT content FROM blocks WHERE block_type = 'content' AND content LIKE 'foo%' \
+         ORDER BY id",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(copies, [content.clone(), content]);
+    mat.shutdown();
+}
+
 /// With no space to resolve them in, `[[Name]]` and `#tag` stay text and
 /// nothing is created.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -7001,6 +7039,54 @@ async fn paste_blocks_splice_mid_text_joins_the_first_block_as_text() {
             dup_children(&pool, &page).await,
             vec![(anchor.to_string(), "stored".to_owned())],
             "{case}: one undo restores the anchor's text and drops the block"
+        );
+    }
+}
+
+/// An HTML paste's task item joins text before the cursor as the text it was
+/// pasted as, `- ` and checkbox included, as a plain item keeps its `- `; at
+/// the start of a line the `- ` is escaped, as there it would open a list.
+/// The next item is a task block as ever.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn paste_blocks_splice_after_text_keeps_an_html_task_items_marker() {
+    for (before, joined) in [
+        ("Hello ", "Hello - [ ] open task"),
+        ("para\n", "para\n\\- [ ] open task"),
+    ] {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+        let page = dup_page(&pool, &mat, "Dest").await;
+        let anchor = dup_child(&pool, &mat, &page, "stored").await;
+        settle(&mat).await;
+        let blocks = ["- [ ] open task", "- [x] done task"]
+            .map(|content| PastedBlock {
+                content: content.into(),
+                depth: 0,
+            })
+            .to_vec();
+        let splice = PasteSplice {
+            before: before.into(),
+            after: String::new(),
+        };
+        let input = PasteInput::Blocks { blocks };
+        paste_blocks_inner(&pool, DEV, &mat, anchor.clone(), input, Some(splice))
+            .await
+            .unwrap();
+        settle(&mat).await;
+
+        let top = dup_children(&pool, &page).await;
+        assert_eq!(top[0], (anchor.to_string(), joined.to_owned()));
+        assert_eq!(top[1].1, "done task", "{before:?}: {top:?}");
+        assert_eq!(top.len(), 2, "{before:?}: {top:?}");
+        assert_eq!(
+            dup_storage(&pool, &anchor).await,
+            vec!["columns todo=None priority=None scheduled=None due=None"],
+            "{before:?}: the anchor takes no task state"
+        );
+        let done = BlockId::from(top[1].0.as_str());
+        assert_eq!(
+            dup_storage(&pool, &done).await[0],
+            "columns todo=Some(\"DONE\") priority=None scheduled=None due=None"
         );
     }
 }

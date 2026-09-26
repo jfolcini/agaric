@@ -433,6 +433,17 @@ describe('serialize', () => {
       expect(parse('#\tHeading')).toEqual(doc(heading(1, text('Heading'))))
     })
 
+    // #5160 follow-up 4, item 9 — the grammar (`heading_level`) reads a line of
+    // only a `#` run as an empty heading, so the editor does too, and a
+    // paragraph holding only one is escaped so it stays a paragraph.
+    it('a line of only a `#` run is an empty heading, and such a paragraph is escaped', () => {
+      expect(parse('#')).toEqual(doc(heading(1)))
+      expect(parse('######')).toEqual(doc(heading(6)))
+      expect(parse('#######')).toEqual(doc(paragraph(text('#######'))))
+      expect(serialize(doc(paragraph(text('##'))))).toBe('\\##')
+      expect(parse('\\##')).toEqual(doc(paragraph(text('##'))))
+    })
+
     it('lone [ is escaped (could start external link)', () => {
       expect(serialize(doc(paragraph(text('a [ b'))))).toBe('a \\[ b')
     })

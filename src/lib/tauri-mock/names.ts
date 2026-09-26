@@ -219,7 +219,12 @@ export function resolveInboundNames(
     const base = hashAt < 0 ? name : name.slice(0, hashAt).trim()
     if (base === '') continue
     const whole = hashAt < 0 ? null : findPage(name, pages)
-    const id = whole && whole !== 'ambiguous' ? whole.id : resolvePage(base)
+    // A whole anchored title that ties is left as text, never its base.
+    if (whole === 'ambiguous') {
+      tied(name)
+      continue
+    }
+    const id = whole ? whole.id : resolvePage(base)
     if (id !== null) pageIds.set(name, id)
   }
   const tagIds = new Map<string, string>()

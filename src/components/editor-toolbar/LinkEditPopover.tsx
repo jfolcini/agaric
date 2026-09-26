@@ -44,16 +44,11 @@ function selectedBlockLink(
   editor: Editor,
   savedSelection: { from: number; to: number } | null | undefined,
 ): { pos: number; label: string } | null {
-  try {
-    const range = savedSelection ?? editor.state.selection
-    if (range.to !== range.from + 1) return null
-    const node = editor.state.doc.nodeAt(range.from)
-    if (!node || node.type.name !== 'block_link') return null
-    return { pos: range.from, label: (node.attrs['label'] as string | null) ?? '' }
-  } catch {
-    // A stale range, or a test double without a document.
-    return null
-  }
+  const range = savedSelection ?? editor.state.selection
+  if (range.to !== range.from + 1) return null
+  const node = editor.state.doc.nodeAt(range.from)
+  if (!node || node.type.name !== 'block_link') return null
+  return { pos: range.from, label: (node.attrs['label'] as string | null) ?? '' }
 }
 
 export function LinkEditPopover({
