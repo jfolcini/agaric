@@ -32,6 +32,12 @@ describe('runUnmountFlush classifies the edit against the loaded content (#5160)
     vi.mocked(invoke).mockImplementation(
       mockInvokeCommands({
         get_property_def: () => null,
+        list_property_defs: () => ({
+          items: [],
+          next_cursor: null,
+          has_more: false,
+          total_count: null,
+        }),
         set_property: () => undefined,
         set_todo_state: () => undefined,
       }),

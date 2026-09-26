@@ -41,11 +41,12 @@
  */
 
 import { unwrap } from '@/lib/app-error'
-import type { OpRef } from '@/lib/bindings'
+import type { OpRef, PageResponse, PropertyDefinition } from '@/lib/bindings'
 import { commands } from '@/lib/bindings'
 import { i18n } from '@/lib/i18n'
 import {
   buildInlinePropertySetParams,
+  foldPropertyKey,
   type InlinePropertyLine,
   stripPropertyLines,
 } from '@/lib/inline-property-parse'
@@ -72,6 +73,48 @@ export interface PageBlockStoreLike {
 /** Per-block flush sequence tokens — see the module docstring. */
 const flushSeqByBlock = new Map<string, number>()
 
+/** The column-backed keys a typed key folds to with or without a definition
+ *  (`RESERVED_PROPERTY_KEYS` in `agaric-store/src/op.rs`). */
+const RESERVED_PROPERTY_KEYS = ['todo_state', 'priority', 'due_date', 'scheduled_date']
+
+/** Every property definition, page by page. */
+async function listAllPropertyDefs(): Promise<PropertyDefinition[]> {
+  const defs: PropertyDefinition[] = []
+  let cursor: string | null = null
+  do {
+    const page: PageResponse<PropertyDefinition> = unwrap(
+      await commands.listPropertyDefs(cursor, null),
+    )
+    defs.push(...page.items)
+    cursor = page.has_more ? page.next_cursor : null
+  } while (cursor !== null)
+  return defs
+}
+
+/**
+ * The key a typed `key:: value` line names and its definition (#5160 D13):
+ * the definition spelled so, else the one reserved key or definition the key
+ * folds to (`foldPropertyKey`). Two that fold alike are never guessed
+ * between, and a key none folds to is a custom key: both stay as typed.
+ * Mirrors `PropertyLines::canonical_key` in the backend.
+ */
+async function resolveTypedKey(
+  typed: string,
+): Promise<{ key: string; def: PropertyDefinition | null }> {
+  const exact = unwrap(await commands.getPropertyDef(typed))
+  if (exact) return { key: typed, def: exact }
+  const folded = foldPropertyKey(typed)
+  const defs = await listAllPropertyDefs()
+  const keys = new Set(
+    [...RESERVED_PROPERTY_KEYS, ...defs.map((def) => def.key)].filter(
+      (key) => foldPropertyKey(key) === folded,
+    ),
+  )
+  const [key] = keys
+  if (keys.size !== 1 || key === undefined) return { key: typed, def: null }
+  return { key, def: defs.find((def) => def.key === key) ?? null }
+}
+
 /**
  * Bump and return the block's flush sequence token. Call synchronously at the
  * start of EVERY save of the block's content (async property/checkbox flows
@@ -95,12 +138,14 @@ export function readFlushSeq(blockId: string): number | undefined {
  * persist `content` with ONLY the succeeded lines stripped. See
  * `use-block-flush.ts` step 5 and `inline-property-parse.ts` for the rules.
  *
- * - Each line: `getPropertyDef` → `buildInlinePropertySetParams` (honours the
- *   definition type; `null` params = value not representable → treated as a
- *   rejected write) → `setProperty` (upsert; the backend enforces select
+ * - Each line: its key as the reserved key or definition it folds to
+ *   (`resolveTypedKey`, #5160 D13) → `buildInlinePropertySetParams` (honours
+ *   the definition type; `null` params = value not representable → treated
+ *   as a rejected write) → `setProperty` (upsert; the backend enforces select
  *   membership etc.).
  * - A line is stripped ONLY after its write succeeds; failures leave it
- *   literal so nothing typed is ever lost, and produce ONE toast total.
+ *   literal so nothing typed is ever lost, and produce ONE toast total,
+ *   naming the lines kept as text (D11).
  * - `mySeq` is the token captured from `bumpFlushSeq(blockId)` at save start;
  *   if a newer save bumped it while our IPCs were in flight, we bail without
  *   calling `edit()` (properties already written stand — idempotent upserts
@@ -120,7 +165,7 @@ export async function commitInlineProperties(opts: {
   const { blockId, content, inlineProps, mySeq, edit, rootParentId } = opts
   const strippedLines = new Set<number>()
   const opRefs: OpRef[] = []
-  let anyFailed = false
+  const keptAsText: string[] = []
   // #3647 — the backend's reason for rejecting a `repeat:: …` line, if one
   // carried a malformed rule. Preferred over the generic toast: it names which
   // rule is wrong and why, right where the user typed it. The rejected line
@@ -129,10 +174,10 @@ export async function commitInlineProperties(opts: {
   let repeatReason: string | null = null
   for (const prop of inlineProps) {
     try {
-      const def = unwrap(await commands.getPropertyDef(prop.key))
-      const params = buildInlinePropertySetParams(blockId, prop.key, prop.value, def)
+      const { key, def } = await resolveTypedKey(prop.key)
+      const params = buildInlinePropertySetParams(blockId, key, prop.value, def)
       if (params === null) {
-        anyFailed = true
+        keptAsText.push(`${prop.key}:: ${prop.value}`)
         continue
       }
       const resp = unwrap(
@@ -147,7 +192,7 @@ export async function commitInlineProperties(opts: {
       if (resp?.op_refs) opRefs.push(...resp.op_refs)
       strippedLines.add(prop.lineIndex)
     } catch (err: unknown) {
-      anyFailed = true
+      keptAsText.push(`${prop.key}:: ${prop.value}`)
       repeatReason ??= invalidRepeatRuleMessage(err)
       logger.error(
         'BlockTree',
@@ -157,7 +202,11 @@ export async function commitInlineProperties(opts: {
       )
     }
   }
-  if (anyFailed) notify.error(repeatReason ?? i18n.t('blockTree.setPropertyFailed'))
+  if (keptAsText.length > 0) {
+    notify.error(
+      repeatReason ?? i18n.t('blockTree.propertyKeptAsText', { lines: keptAsText.join(', ') }),
+    )
+  }
   // A newer save on this block superseded us while the IPCs were in flight —
   // bail without calling `edit()` so we don't clobber it. The newer session
   // owns the block's content + draft lifecycle, so resolve `true` (callers

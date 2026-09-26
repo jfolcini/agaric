@@ -138,7 +138,7 @@ pub use mcp::{
 pub use pages::{
     ImportBibliographyResult, MCP_PAGE_LIMIT_CAP, PAGE_LINKS_EDGE_CAP, PageHeading,
     PageLinksResponse, PageSourceReport, PageSubtreeResponse, PasteInput, PasteSplice, PastedBlock,
-    SourceSaveFlags, apply_page_source, apply_page_source_inner, duplicate_block,
+    PastedBlocks, SourceSaveFlags, apply_page_source, apply_page_source_inner, duplicate_block,
     duplicate_block_inner, export_page_markdown, export_page_markdown_inner, get_blocks_source,
     get_blocks_source_inner, get_page_aliases, get_page_aliases_inner, get_page_inner,
     get_page_source, get_page_source_inner, get_page_unscoped_inner, import_bibliography,
@@ -562,14 +562,13 @@ pub struct MoveResponse {
     pub new_position: i64,
 }
 
-/// Reply of [`create_blocks_batch`], [`duplicate_block`] and [`paste_blocks`].
+/// Reply of [`create_blocks_batch`] and [`duplicate_block`].
 /// `#[serde(flatten)]` cannot wrap a `Vec`, so the list rides under a key and
 /// [`WithOps`] puts `op_refs` beside it (#5140).
 #[derive(Debug, Clone, Serialize, Type)]
 pub struct CreatedBlocks {
-    /// One row per created block: per spec in input order; the copy's root
-    /// then its descendants depth-first; or the pages and tags a paste
-    /// created, then the pasted blocks in document order.
+    /// One row per created block: per spec in input order, or the copy's root
+    /// then its descendants depth-first.
     pub blocks: Vec<BlockRow>,
 }
 

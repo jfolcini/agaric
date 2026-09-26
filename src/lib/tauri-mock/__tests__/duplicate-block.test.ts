@@ -112,7 +112,10 @@ describe('tauri-mock duplicate_block', () => {
     for (const key of ['space', 'template']) setProp(SRC, key, { value_ref: PAGE })
     for (const key of ['created_at', 'completed_at'])
       setProp(SRC, key, { value_date: '2026-01-01' })
-    for (const key of ['repeat', 'repeat-until']) setProp(SRC, key, { value_text: 'weekly' })
+    // #5160 P4 — the rule is copied; one occurrence's bookkeeping is not.
+    setProp(SRC, 'repeat', { value_text: '+1w' })
+    setProp(SRC, 'repeat-until', { value_date: '2026-12-31' })
+    for (const key of ['repeat-seq', 'repeat-origin']) setProp(SRC, key, { value_text: '1' })
   })
 
   it('lands the root one slot after the original and returns the content subtree in pre-order', () => {
@@ -157,7 +160,14 @@ describe('tauri-mock duplicate_block', () => {
     const props = dispatch('get_properties', { blockId: copy.id }) as PropertyRow[]
     expect(
       Object.fromEntries(props.map((p) => [p.key, p.value_text ?? p.value_ref ?? p.value_date])),
-    ).toEqual({ listStyle: 'ordered', colour: 'red', repeatable: 'yes', reviewer: C })
+    ).toEqual({
+      listStyle: 'ordered',
+      colour: 'red',
+      repeatable: 'yes',
+      reviewer: C,
+      repeat: '+1w',
+      'repeat-until': '2026-12-31',
+    })
   })
 
   it('refuses an unknown id, a page and a trashed block without appending an op', () => {

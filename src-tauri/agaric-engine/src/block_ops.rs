@@ -130,9 +130,11 @@ pub fn typed_property_args_for_string_value(key: &str, value: String) -> TypedPr
 /// unknown frontmatter keys are stored as `value_text` exactly like an
 /// unknown inline `key:: value` property.
 ///
-/// Coercion failures (e.g. a `number`-typed key whose value isn't a valid
-/// `f64`) degrade gracefully to `value_text` so a single malformed line can
-/// never abort the whole import.
+/// A coercion failure (a `number`-typed key whose value isn't a valid `f64`)
+/// falls back to `value_text`, which the declared type then refuses, as a
+/// `select` refuses a value outside its options and a `date` one that is not
+/// `YYYY-MM-DD`. A surface that must not fail on one such line checks it with
+/// [`check_property_value`] before writing (#5160 D11).
 pub fn typed_property_args_for_registry_value(
     key: &str,
     value: String,
@@ -708,6 +710,28 @@ pub(crate) fn validate_property_value(
     }
 
     Ok(())
+}
+
+/// Whether [`set_property_in_tx_with_declaration`] would accept `args` under
+/// `key` and `declaration`, checked before anything is written so a surface
+/// can keep a refused `key:: value` line as text (#5160 D11). The block is not
+/// looked at, so a ref target's space is not checked here.
+pub fn check_property_value(
+    key: &str,
+    args: &TypedPropertyArgs,
+    declaration: Option<&PropertyDeclaration>,
+) -> Result<(), AppError> {
+    let (value_text, value_num, value_date, value_ref, value_bool) = args.clone();
+    let payload = SetPropertyPayload {
+        block_id: BlockId::from_trusted(""),
+        key: key.to_owned(),
+        value_text,
+        value_num,
+        value_date,
+        value_ref: value_ref.map(BlockId::from),
+        value_bool,
+    };
+    validate_property_value(&payload, declaration)
 }
 
 /// Set (upsert) a property on a block inside an existing transaction.

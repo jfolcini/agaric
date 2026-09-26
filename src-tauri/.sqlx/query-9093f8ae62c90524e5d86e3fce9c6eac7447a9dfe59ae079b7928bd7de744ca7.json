@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT key AS \"key!\", value_type, options\n                   FROM property_definitions\n                   WHERE key IN (SELECT value FROM json_each(?1))",
+  "query": "SELECT key AS \"key!\", value_type, options FROM property_definitions",
   "describe": {
     "columns": [
       {
@@ -38,7 +38,7 @@
       }
     ],
     "parameters": {
-      "Right": 1
+      "Right": 0
     },
     "nullable": [
       false,
@@ -46,5 +46,5 @@
       true
     ]
   },
-  "hash": "626d72b52dfc764b90dc1afbb8553e77d4f4757240347c67134439eeb75ecfe5"
+  "hash": "9093f8ae62c90524e5d86e3fce9c6eac7447a9dfe59ae079b7928bd7de744ca7"
 }

@@ -61,6 +61,12 @@ pub struct ParsedBlock {
     /// OWNING block (a real Agaric `((ULID))` block-ref) instead of only the
     /// page (#1282's fallback).
     pub block_anchor: Option<String>,
+    /// The first-line token each of the block's first `todo_state` and
+    /// `priority` properties was read from, as written: a checkbox (`[/]`),
+    /// a task keyword (`NOW`) or an Org cookie (`[#C]`). An import or a paste
+    /// puts it back in the text when the definition refuses the value
+    /// (#5160 D11), so nothing is lost.
+    pub task_markers: Vec<(String, String)>,
 }
 
 /// Outcome of importing one markdown file: the created page plus aggregate
@@ -141,18 +147,46 @@ pub struct ParseOutput {
 ///
 /// Sites 3 and 4 are literal SQL, so grepping for either constant name will
 /// NOT find them.
+///
+/// A key matches its fold ([`fold_property_key`], D13), so `Space::` is
+/// reserved too. The recurrence rule (`repeat`, `repeat-until`,
+/// `repeat-count`) is not reserved: it is a property line on every surface, so
+/// Duplicate, copy → paste and Export → Import keep a repeating task
+/// repeating (#5160 P4). `repeat-seq` and `repeat-origin` describe one
+/// occurrence and stay hidden.
 const FRONTMATTER_RESERVED_KEYS: &[&str] = &[
     "space",
     "is_space",
     "created_at",
     "completed_at",
-    "repeat",
-    "repeat-until",
-    "repeat-count",
     "repeat-seq",
     "repeat-origin",
     "template",
 ];
+
+/// A property key as every surface matches it against the reserved keys and
+/// the property definitions (#5160 D13): ASCII case folded and `-` read as
+/// `_`, so `Due-Date::` is `due_date`. No aliases: `due` is not `due_date`.
+pub fn fold_property_key(key: &str) -> String {
+    key.trim()
+        .chars()
+        .map(|c| {
+            if c == '-' {
+                '_'
+            } else {
+                c.to_ascii_lowercase()
+            }
+        })
+        .collect()
+}
+
+/// Whether `key`, folded, is one of [`FRONTMATTER_RESERVED_KEYS`].
+fn is_reserved_line_key(key: &str) -> bool {
+    let folded = fold_property_key(key);
+    FRONTMATTER_RESERVED_KEYS
+        .iter()
+        .any(|reserved| fold_property_key(reserved) == folded)
+}
 
 /// The `block_properties` key under which a block's list style is stored
 /// (#4552). Mirrors `LIST_STYLE_KEY` in `src/lib/list-style.ts`.
@@ -511,6 +545,32 @@ fn bullet_body(text: &str, ordered: bool, mode: ParseMode) -> BulletBody<'_> {
         priority,
         text,
     }
+}
+
+/// The tokens `body`'s `todo_state` and `priority` were read from on a
+/// bullet's first line, `text` (see [`ParsedBlock::task_markers`]): what the
+/// task syntax took between the list marker and the block's own text, a
+/// checkbox (`[ ]`, three bytes) or a keyword first, then a cookie.
+fn read_task_markers(text: &str, ordered: bool, body: &BulletBody<'_>) -> Vec<(String, String)> {
+    let after_list = if ordered {
+        text
+    } else {
+        split_block_list_marker(text).1
+    };
+    let mut rest = &after_list[..after_list.len() - body.text.len()];
+    let mut markers = Vec::new();
+    for (key, value) in [("todo_state", body.todo_state), ("priority", body.priority)] {
+        if value.is_none() {
+            continue;
+        }
+        let len = match rest.get(..3) {
+            Some(checkbox) if key == "todo_state" && checkbox.starts_with('[') => 3,
+            _ => rest.find(' ').unwrap_or(rest.len()),
+        };
+        markers.push((key.to_string(), rest[..len].to_string()));
+        rest = rest[len..].trim_start_matches(' ');
+    }
+    markers
 }
 
 /// A code fence's character and the length of its opening run (CommonMark
@@ -1005,6 +1065,7 @@ pub fn pasted_block(content: String, depth: usize) -> ParsedBlock {
     else {
         return verbatim_block(content, depth);
     };
+    let checkbox = first.unwrap_or(&content)[2..5].to_string();
     let text = match rest {
         Some(rest) => format!("{text}\n{rest}"),
         None => text.to_string(),
@@ -1013,6 +1074,9 @@ pub fn pasted_block(content: String, depth: usize) -> ParsedBlock {
     block
         .properties
         .push(("todo_state".to_string(), state.to_string()));
+    block
+        .task_markers
+        .push(("todo_state".to_string(), checkbox));
     block
 }
 
@@ -1025,6 +1089,7 @@ pub fn verbatim_block(content: String, depth: usize) -> ParsedBlock {
         depth,
         properties: Vec::new(),
         block_anchor: None,
+        task_markers: Vec::new(),
     }
 }
 
@@ -1456,6 +1521,7 @@ impl<'a> Scan<'a> {
     /// is its own.
     fn bullet(&mut self, trimmed: &str, indent: usize, len: usize, ordered: bool, number: usize) {
         let body = bullet_body(bullet_text(trimmed, len), ordered, self.mode);
+        let task_markers = read_task_markers(bullet_text(trimmed, len), ordered, &body);
         let text = body.text;
         let properties: Vec<(String, String)> = [
             (LIST_STYLE_KEY, body.list_style),
@@ -1476,6 +1542,9 @@ impl<'a> Scan<'a> {
             content,
             Kind::Bullet,
         );
+        if let Some(block) = self.blocks.last_mut() {
+            block.task_markers = task_markers;
+        }
         if let Some(run) = fence {
             self.fence = Some(Fence {
                 run,
@@ -1560,6 +1629,7 @@ impl<'a> Scan<'a> {
             properties,
             is_code,
             block_anchor: None,
+            task_markers: Vec::new(),
         });
         self.ends_in_code.push(is_code);
         self.open.push(Open {
@@ -1614,11 +1684,16 @@ impl<'a> Scan<'a> {
     /// content. In Source mode a line the save would not store — a reserved
     /// key, or no block at or left of its indentation — is what the user
     /// typed: content. An import reads it as a property and drops it with a
-    /// warning.
+    /// warning. A line with no value (`key::`, `key:: `) clears the property
+    /// in the page's own buffer (#5160 P7); anywhere else it is text, as the
+    /// block editor reads it.
     fn property_line<'l>(&self, trimmed: &'l str, indent: usize) -> Option<(&'l str, &'l str)> {
         let (key, value) = split_property_line(trimmed)?;
-        let stored =
-            !FRONTMATTER_RESERVED_KEYS.contains(&key.trim()) && self.owner_at(indent).is_some();
+        let stored = !is_reserved_line_key(key) && self.owner_at(indent).is_some();
+        if value.trim().is_empty() {
+            let clears = self.mode == ParseMode::Source && !self.foreign && stored;
+            return clears.then_some((key, ""));
+        }
         (self.mode == ParseMode::Import || stored).then_some((key, value))
     }
 
@@ -1642,7 +1717,7 @@ impl<'a> Scan<'a> {
         let value = value.trim().to_string();
         // #1568: a reserved body property is dropped, never written, and the
         // surrounding good content imports, as the frontmatter path does.
-        if FRONTMATTER_RESERVED_KEYS.contains(&key.as_str()) {
+        if is_reserved_line_key(&key) {
             tracing::debug!(
                 key = %key,
                 "skipping reserved/column-backed body property during import (#1568)"
@@ -2176,7 +2251,7 @@ impl<'a> FrontmatterScan<'a> {
             self.skipped_invalid += 1;
             return;
         }
-        if FRONTMATTER_RESERVED_KEYS.contains(&key) {
+        if is_reserved_line_key(key) {
             // Exporter-managed key — silently filtered (it is never meant
             // to round-trip as a user property).
             return;
@@ -2467,16 +2542,21 @@ fn is_property_key(s: &str) -> bool {
 
 /// The key and value of a `key:: value` line: `::` followed by a space or a
 /// tab (Logseq users write either) after a valid [`is_property_key`], so a
-/// `::` mid-sentence (`std::vector`) is content.
+/// `::` mid-sentence (`std::vector`) is content, or `::` ending the line, the
+/// value left empty (#5160 P7).
 fn split_property_line(line: &str) -> Option<(&str, &str)> {
     let (key, rest) = line.split_once("::")?;
-    let value = rest.strip_prefix([' ', '\t'])?;
+    let value = if rest.trim().is_empty() {
+        ""
+    } else {
+        rest.strip_prefix([' ', '\t'])?
+    };
     is_property_key(key.trim()).then_some((key, value))
 }
 
 /// #2716 — `true` when `line` matches the `key:: value` property shape
-/// ([`split_property_line`]), the shape [`continuation_line_is_ambiguous`]
-/// escapes and the un-escape reverses.
+/// ([`split_property_line`]), an empty value included, the shape
+/// [`continuation_line_is_ambiguous`] escapes and the un-escape reverses.
 fn line_is_property_shaped(line: &str) -> bool {
     split_property_line(line).is_some()
 }
@@ -3963,12 +4043,14 @@ bare line (({UUID_B})) too"
         blocks
             .into_iter()
             .map(|block| {
+                // The markers are the tokens `properties` were read from.
                 let ParsedBlock {
                     content,
                     depth,
                     properties,
                     is_code,
                     block_anchor,
+                    task_markers: _,
                 } = block;
                 serde_json::json!({
                     "content": content,
@@ -4425,10 +4507,10 @@ mod parse_proptest {
     }
 
     /// What each line of `input` may give up to the grammar: [`LINE_SYNTAX`],
-    /// the `::` of a `key:: value` line, and the `^` of an anchor. When an
-    /// import warns that it dropped property lines, every property-shaped line
-    /// may go. Tabs stay tabs: every parser reads `-\t-` as the `- -` marker
-    /// pair.
+    /// the `::` of a `key:: value` line or of a `key::` line clearing a
+    /// property in a buffer (P7), and the `^` of an anchor. When an import
+    /// warns that it dropped property lines, every property-shaped line may
+    /// go. Tabs stay tabs: every parser reads `-\t-` as the `- -` marker pair.
     fn consumable(input: &str, warnings: &[String]) -> HashMap<char, usize> {
         let dropped = warnings.iter().any(|w| w.contains("property line(s)"));
         let mut allowed = HashMap::new();
@@ -4442,7 +4524,7 @@ mod parse_proptest {
                 &mut allowed,
                 LINE_SYNTAX.find(line).map_or("", |m| m.as_str()),
             );
-            if line.contains(":: ") || line.contains("::\t") {
+            if line_is_property_shaped(line.trim_start()) {
                 count(&mut allowed, "::");
             }
             if TRAILING_WORD.is_match(line) {
@@ -4795,8 +4877,9 @@ mod tests_list_style_4552 {
 #[cfg(test)]
 mod tests_source_outline_5140 {
     use super::{
-        needs_task_marker_escape, parse_logseq_markdown, parse_source_outline,
-        split_block_task_marker, split_task_marker, task_marker_for,
+        continuation_line_is_ambiguous, fold_property_key, needs_task_marker_escape,
+        parse_logseq_markdown, parse_pasted_text, parse_source_outline, split_block_task_marker,
+        split_task_marker, task_marker_for,
     };
 
     fn todo_state_of(block: &super::ParsedBlock) -> Option<&str> {
@@ -4939,12 +5022,13 @@ mod tests_source_outline_5140 {
         assert_eq!(out.blocks[0].block_anchor.as_deref(), Some(ID_A));
     }
 
-    /// A property line the save would not store — a reserved key, or one with
-    /// no block at or above its indentation — is what the user typed: content.
-    /// An import still drops both, with a warning.
+    /// A property line the save would not store — a reserved key in any
+    /// spelling (D13), or one with no block at or above its indentation — is
+    /// what the user typed: content. An import still drops both, with a
+    /// warning.
     #[test]
     fn a_reserved_or_orphan_property_line_is_text() {
-        let out = parse_source_outline("alias:: foo\n- a\n  repeat:: +1w\n  key:: v\n");
+        let out = parse_source_outline("alias:: foo\n- a\n  Repeat-Seq:: 2\n  key:: v\n");
         let shapes: Vec<(&str, &[(String, String)])> = out
             .blocks
             .iter()
@@ -4955,7 +5039,7 @@ mod tests_source_outline_5140 {
             [
                 ("alias:: foo", &[][..]),
                 (
-                    "a\nrepeat:: +1w",
+                    "a\nRepeat-Seq:: 2",
                     &[("key".to_string(), "v".to_string())][..]
                 ),
             ]
@@ -4967,9 +5051,105 @@ mod tests_source_outline_5140 {
         assert!(orphan.blocks[0].properties.is_empty());
         assert!(orphan.warnings.is_empty(), "{:?}", orphan.warnings);
 
-        let import = parse_logseq_markdown("alias:: foo\n- a\n  repeat:: +1w\n");
+        let import = parse_logseq_markdown("alias:: foo\n- a\n  repeat_origin:: X\n");
         assert_eq!(import.blocks[0].content, "a");
         assert_eq!(import.warnings.len(), 2, "{:?}", import.warnings);
+    }
+
+    /// The recurrence rule is a property line on every surface (#5160 P4):
+    /// `repeat`, `repeat-until` and `repeat-count` are read by an import, a
+    /// buffer and a paste alike.
+    #[test]
+    fn the_recurrence_lines_are_properties() {
+        let md = "- a\n  repeat:: +1w\n  repeat-until:: 2026-12-31\n  repeat-count:: 3\n";
+        let expected = [
+            ("repeat".to_string(), "+1w".to_string()),
+            ("repeat-until".to_string(), "2026-12-31".to_string()),
+            ("repeat-count".to_string(), "3".to_string()),
+        ];
+        for (parser, blocks) in [
+            ("import", parse_logseq_markdown(md).blocks),
+            ("source", parse_source_outline(md).blocks),
+            ("paste", parse_pasted_text(md)),
+        ] {
+            assert_eq!(blocks.len(), 1, "{parser}");
+            assert_eq!(blocks[0].content, "a", "{parser}");
+            assert_eq!(blocks[0].properties, expected, "{parser}");
+        }
+    }
+
+    /// `::` and a tab is a property line too, as Logseq users write it.
+    #[test]
+    fn a_tab_after_the_separator_is_a_property_line() {
+        for (parser, blocks) in [
+            ("import", parse_logseq_markdown("- a\n  key::\tv\n").blocks),
+            ("source", parse_source_outline("- a\n  key::\tv\n").blocks),
+        ] {
+            assert_eq!(blocks[0].content, "a", "{parser}");
+            assert_eq!(
+                blocks[0].properties,
+                [("key".to_string(), "v".to_string())],
+                "{parser}"
+            );
+        }
+    }
+
+    /// A line with no value, `key::` or `key:: `, clears the property in the
+    /// page's own buffer (#5160 P7) and is text everywhere else, as the block
+    /// editor reads it. A reserved key's is text in the buffer too.
+    #[test]
+    fn a_line_with_no_value_clears_in_the_buffer_only() {
+        let md = "- a\n  priority::\n  note:: \n  space::\n";
+        let buffer = parse_source_outline(md);
+        assert_eq!(buffer.blocks[0].content, "a\nspace::");
+        assert_eq!(
+            buffer.blocks[0].properties,
+            [
+                ("priority".to_string(), String::new()),
+                ("note".to_string(), String::new()),
+            ]
+        );
+        for (parser, blocks, content) in [
+            (
+                "import",
+                parse_logseq_markdown("- a\n  priority::\n  note:: \n").blocks,
+                "a\npriority::\nnote::",
+            ),
+            (
+                "paste",
+                parse_pasted_text("- a\n  priority::\n  note:: \n"),
+                "a\npriority::\nnote:: ",
+            ),
+        ] {
+            assert_eq!(blocks[0].content, content, "{parser}");
+            assert!(blocks[0].properties.is_empty(), "{parser}");
+        }
+    }
+
+    /// A content line shaped like a `key::` line with no value is escaped when
+    /// written, so the buffer reads it back as text, not as a clear.
+    #[test]
+    fn a_valueless_property_shape_is_escaped() {
+        assert!(continuation_line_is_ambiguous("note::"));
+        assert!(continuation_line_is_ambiguous("note:: "));
+        assert!(!continuation_line_is_ambiguous("std::vector"));
+        let block = &parse_source_outline("- a\n  \\note::\n").blocks[0];
+        assert_eq!(block.content, "a\nnote::");
+        assert!(block.properties.is_empty());
+    }
+
+    /// D13: case and `-`/`_` fold; nothing else does.
+    #[test]
+    fn a_property_key_folds_case_and_dashes() {
+        for (typed, folded) in [
+            ("Priority", "priority"),
+            ("due-date", "due_date"),
+            ("Scheduled_Date", "scheduled_date"),
+            ("REPEAT-UNTIL", "repeat_until"),
+            ("due", "due"),
+        ] {
+            assert_eq!(fold_property_key(typed), folded, "{typed}");
+        }
     }
 
     /// Checkboxes everywhere (#5160 D6): an import reads the same alphabet as

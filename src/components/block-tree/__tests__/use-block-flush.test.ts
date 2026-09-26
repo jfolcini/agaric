@@ -390,7 +390,7 @@ describe('useBlockFlush — inline `key:: value` properties (#2675)', () => {
     })
 
     await waitFor(() => {
-      expect(vi.mocked(toast.error)).toHaveBeenCalledWith('Failed to set property')
+      expect(vi.mocked(toast.error)).toHaveBeenCalledWith('Kept as text: project:: delta')
     })
     expect(vi.mocked(toast.error)).toHaveBeenCalledTimes(1)
     // Nothing stored; the typed text survives verbatim.
@@ -424,7 +424,7 @@ describe('useBlockFlush — inline `key:: value` properties (#2675)', () => {
       )
     })
     await waitFor(() => {
-      expect(vi.mocked(toast.error)).toHaveBeenCalledWith('Failed to set property')
+      expect(vi.mocked(toast.error)).toHaveBeenCalledWith('Kept as text: project:: delta')
     })
     expect(vi.mocked(toast.error)).toHaveBeenCalledTimes(1)
   })

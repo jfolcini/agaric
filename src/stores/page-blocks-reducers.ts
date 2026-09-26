@@ -1178,6 +1178,12 @@ export function createReducers({
         )
         notifyUndoNewAction(rootParentId, resp.op_refs, undefined, { merge: false })
         announceCreatedNames(resp.blocks, spaceId)
+        // #5160 D11 — a property line the paste kept as text, named.
+        if (resp.warnings.length > 0) {
+          notify.warning(i18n.t('blockTree.pasteKeptAsText'), {
+            description: resp.warnings.join('\n'),
+          })
+        }
         const anchor = splice ? resp.blocks.find((b) => b.id === anchorBlockId) : undefined
         if (anchor) {
           // #5160 D4 — before the reload, which keeps a focused block's text as

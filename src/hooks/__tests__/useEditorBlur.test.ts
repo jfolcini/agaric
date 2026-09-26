@@ -28,7 +28,8 @@ import { EDITOR_PORTAL_SELECTOR, useEditorBlur } from '@/hooks/useEditorBlur'
 // The integration tests drive the real `useDraftAutosave`, which now calls
 // `commands.{saveDraft,flushDraft,deleteDraft}` from `@/lib/bindings`, and the
 // #2675 tests drive the real `commitInlineProperties`, which now calls
-// `commands.{getPropertyDef,setProperty}` — both unwrap the `Result` envelope.
+// `commands.{getPropertyDef,listPropertyDefs,setProperty}` — each unwraps the
+// `Result` envelope.
 // `saveDraft`/`deleteDraft`/`getPropertyDef` (#4411) and `setProperty` (#4412)
 // retired their hand-written wrappers, so only `commands.*` is mocked — assert
 // on the bare `mockSaveDraft`/`mockDeleteDraft`/`mockGetPropertyDef`/
@@ -39,6 +40,7 @@ const {
   mockFlushDraft,
   mockDeleteDraft,
   mockGetPropertyDef,
+  mockListPropertyDefs,
   mockSetProperty,
   mockSetTodoState,
 } = vi.hoisted(() => ({
@@ -46,6 +48,13 @@ const {
   mockFlushDraft: vi.fn(() => Promise.resolve({ status: 'ok', data: null })),
   mockDeleteDraft: vi.fn(() => Promise.resolve({ status: 'ok', data: null })),
   mockGetPropertyDef: vi.fn(() => Promise.resolve({ status: 'ok', data: null })),
+  // #5160 D13 — a key with no definition of its own is folded against them all.
+  mockListPropertyDefs: vi.fn(() =>
+    Promise.resolve({
+      status: 'ok',
+      data: { items: [], next_cursor: null, has_more: false, total_count: null },
+    }),
+  ),
   mockSetProperty: vi.fn(() => Promise.resolve({ status: 'ok', data: { op_refs: [] } })),
   // #3278 — the checkbox-fold-on-blur tests drive the real `commitCheckboxState`,
   // which calls `commands.setTodoState`.
@@ -62,6 +71,7 @@ vi.mock('@/lib/bindings', async () => {
       flushDraft: mockFlushDraft,
       deleteDraft: mockDeleteDraft,
       getPropertyDef: mockGetPropertyDef,
+      listPropertyDefs: mockListPropertyDefs,
       setProperty: mockSetProperty,
       setTodoState: mockSetTodoState,
     },
@@ -1655,7 +1665,7 @@ describe('useEditorBlur', () => {
 
       // Data-loss invariant: a failed write NEVER strips its line.
       expect(mockEdit).toHaveBeenCalledExactlyOnceWith('B1', 'context:: home')
-      expect(vi.mocked(toast.error)).toHaveBeenCalledExactlyOnceWith('Failed to set property')
+      expect(vi.mocked(toast.error)).toHaveBeenCalledExactlyOnceWith('Kept as text: context:: home')
       // The commit flow still resolves true — the literal text IS durable.
       const [outcome] = mockDiscardDraft.mock.calls[0] as [Promise<boolean> | undefined, unknown]
       await expect(outcome).resolves.toBe(true)

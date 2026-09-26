@@ -5,7 +5,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use specta::Type;
 use sqlx::SqlitePool;
 use tracing::instrument;
@@ -787,6 +787,7 @@ fn humanise_refs_for_source(
         properties: Vec::new(),
         is_code,
         block_anchor: None,
+        task_markers: Vec::new(),
     };
     let blocks = std::slice::from_ref(&block);
     let page_links = names.page_links(collect_inbound_page_link_bodies(blocks));
@@ -1894,8 +1895,7 @@ async fn load_page_properties(
     //     A styled block already exports its list-ness as the `- ` / `N. `
     //     marker emitted by the descendant walk below. Emitting the property
     //     line as well would render the marker twice on re-import (once as
-    //     structure, once as a visible property row) — the exact
-    //     double-emission the DRIFT WARNING's `repeat*` keys avoid.
+    //     structure, once as a visible property row).
     //   * IMPORT ("must this key be refused when it appears in a file?") — NO,
     //     it must be accepted. `listStyle` is an ordinary user-settable
     //     `select` property (migration 0103): typing `listStyle:: bullet`
@@ -1917,8 +1917,7 @@ async fn load_page_properties(
            WHERE block_id = ?1
              AND key NOT IN (
                 'space', 'is_space', 'created_at', 'completed_at',
-                'repeat', 'repeat-until', 'repeat-count', 'repeat-seq',
-                'repeat-origin', 'template', 'listStyle'
+                'repeat-seq', 'repeat-origin', 'template', 'listStyle'
              )"#,
         page_id,
     )
@@ -1976,10 +1975,10 @@ async fn load_descendant_properties(
     // descendant alike — before it ever reaches `block_properties`, so no
     // descendant row can carry one of these keys. The `NOT IN` here is
     // therefore belt-and-braces symmetry with the page query, not new
-    // behavior. In particular the `repeat*` keys are recurrence bookkeeping
-    // that is DELIBERATELY not round-tripped through markdown (a separate,
-    // symmetric-by-design exclusion on both the export and import sides) —
-    // this query must not start emitting them.
+    // behavior. The recurrence rule (`repeat`, `repeat-until`,
+    // `repeat-count`) is emitted, so a duplicate, a copy and an export keep a
+    // repeating task repeating (#5160 P4); `repeat-seq` and `repeat-origin`
+    // describe one occurrence and stay out.
     //
     // The 4 reserved `blocks` columns (todo_state/priority/scheduled_date/
     // due_date) need no exclusion here: migration 0088's `key_not_reserved`
@@ -2004,8 +2003,8 @@ async fn load_descendant_properties(
     // rendering of the same fact — while an inline / hand-written
     // `listStyle:: bullet` must still IMPORT, which is why the import copies
     // are left alone. This one is NOT belt-and-braces symmetry with the import
-    // filter (unlike the `repeat*` keys): it is load-bearing, because the
-    // importer does write `listStyle` rows.
+    // filter: it is load-bearing, because the importer does write `listStyle`
+    // rows.
     let descendant_ids: Vec<String> = descendants
         .iter()
         .map(|b| b.id.clone().into_string())
@@ -2045,8 +2044,7 @@ async fn load_descendant_properties(
                WHERE block_id IN (SELECT value FROM json_each(?1))
                  AND key NOT IN (
                     'space', 'is_space', 'created_at', 'completed_at',
-                    'repeat', 'repeat-until', 'repeat-count', 'repeat-seq',
-                    'repeat-origin', 'template', 'listStyle'
+                    'repeat-seq', 'repeat-origin', 'template', 'listStyle'
                  )
                ORDER BY block_id ASC, key ASC"#,
             ids_json,
@@ -2386,6 +2384,7 @@ pub async fn duplicate_block_inner(
             "block '{block_id}' holds a value Duplicate cannot copy"
         )));
     }
+    let lines = PropertyLines::load(&mut tx, PropertyWrite::Copy).await?;
     let parent_id = root.parent_id.map(BlockId::into_string);
     let siblings =
         super::super::blocks::move_ops::ordered_live_children(&mut tx, parent_id.as_deref())
@@ -2403,7 +2402,7 @@ pub async fn duplicate_block_inner(
         parent_id,
         index,
         &parsed.blocks,
-        PropertyWrite::Copy,
+        &lines,
     ))
     .await?;
     tx.commit_and_dispatch(materializer).await?;
@@ -2435,6 +2434,17 @@ impl PasteInput {
                 .collect(),
         }
     }
+}
+
+/// Reply of [`paste_blocks`], in the envelope [`CreatedBlocks`] uses.
+#[derive(Debug, Clone, Serialize, Type)]
+pub struct PastedBlocks {
+    /// The pages and tags the paste created, then the pasted blocks in
+    /// document order.
+    pub blocks: Vec<BlockRow>,
+    /// Each property line the paste kept as text and each name it left as
+    /// text, named (#5160 D11).
+    pub warnings: Vec<String>,
 }
 
 /// A paste into the anchor block's text (#5160 D4): its content before and
@@ -2537,6 +2547,10 @@ fn pasted_as_text(block: &import::ParsedBlock, starts_line: bool) -> String {
 /// code as a block of its own. The anchor is then the first pasted block
 /// returned. The names in `before` and `after` are left as they are.
 ///
+/// A property line a definition refuses stays text at the end of its block,
+/// and a name that ties between two pages stays text; the reply's warnings
+/// name each (#5160 D11).
+///
 /// # Errors
 ///
 /// - [`AppError::Ulid`] — `anchor_block_id` is not a ULID
@@ -2552,7 +2566,7 @@ pub async fn paste_blocks_inner(
     anchor_block_id: BlockId,
     input: PasteInput,
     splice: Option<PasteSplice>,
-) -> Result<Vec<BlockRow>, AppError> {
+) -> Result<PastedBlocks, AppError> {
     let anchor_id = BlockId::from_string(anchor_block_id.into_string())?;
     let mut blocks = input.into_blocks();
     if blocks.is_empty() {
@@ -2569,6 +2583,7 @@ pub async fn paste_blocks_inner(
             anchor.block_type
         )));
     }
+    let (lines, mut warnings) = read_pasted_properties(&mut tx, &anchor, &mut blocks).await?;
     // Both passes are boxed for the reason `duplicate_block_inner` gives.
     let (mut tx, mut created) = Box::pin(resolve_pasted_names(
         tx,
@@ -2576,6 +2591,7 @@ pub async fn paste_blocks_inner(
         device_id,
         &anchor,
         &mut blocks,
+        &mut warnings,
     ))
     .await?;
     let parent_id = anchor.parent_id.map(BlockId::into_string);
@@ -2592,6 +2608,7 @@ pub async fn paste_blocks_inner(
             let into = Box::pin(splice_into_anchor(
                 &mut tx,
                 materializer,
+                &lines,
                 device_id,
                 &anchor_id,
                 &blocks,
@@ -2607,13 +2624,34 @@ pub async fn paste_blocks_inner(
         parent_id,
         index,
         &blocks[spliced.len()..],
-        PropertyWrite::Copy,
+        &lines,
     ))
     .await?;
     tx.commit_and_dispatch(materializer).await?;
     created.extend(spliced);
     created.extend(pasted);
-    Ok(created)
+    Ok(PastedBlocks {
+        blocks: created,
+        warnings,
+    })
+}
+
+/// Read the property lines of `blocks`, pasted after `anchor`, in its space
+/// (#5160 D11, D13): each key canonical, and each value a definition refuses
+/// kept as text, named in the returned warnings.
+async fn read_pasted_properties(
+    tx: &mut CommandTx,
+    anchor: &BlockRow,
+    blocks: &mut [import::ParsedBlock],
+) -> Result<(PropertyLines, Vec<String>), AppError> {
+    let space = agaric_store::space::resolve_block_space(&mut ***tx, &anchor.id).await?;
+    let mut lines = PropertyLines::load(tx, PropertyWrite::Paste).await?;
+    lines
+        .resolve_refs(tx, space.as_ref().map(SpaceId::as_str), blocks)
+        .await?;
+    let mut warnings = Vec::new();
+    lines.keep_refused_as_text(blocks, &mut warnings);
+    Ok((lines, warnings))
 }
 
 /// Write the first of `blocks` into the anchor (#5160 D4): its content and
@@ -2623,6 +2661,7 @@ pub async fn paste_blocks_inner(
 async fn splice_into_anchor(
     tx: &mut CommandTx,
     materializer: &Materializer,
+    lines: &PropertyLines,
     device_id: &str,
     anchor_id: &BlockId,
     blocks: &[import::ParsedBlock],
@@ -2645,15 +2684,7 @@ async fn splice_into_anchor(
         first.content.clone(),
     )
     .await?;
-    apply_block_properties(
-        tx,
-        materializer,
-        device_id,
-        id,
-        &first.properties,
-        PropertyWrite::Copy,
-    )
-    .await?;
+    apply_block_properties(tx, materializer, device_id, id, &first.properties, lines).await?;
     if let Some(state) = parsed_todo_state(first) {
         super::super::properties::write_todo_timestamp_transitions_in_tx(
             tx,
@@ -2676,7 +2707,7 @@ async fn splice_into_anchor(
             Some(id.to_owned()),
             None,
             &rest[..children],
-            PropertyWrite::Copy,
+            lines,
         ))
         .await?,
     );
@@ -2685,27 +2716,25 @@ async fn splice_into_anchor(
 
 /// Resolve the page links and tags `blocks` write as names in `anchor`'s
 /// space, creating what no name there matches, and write each block's content
-/// with their ids. Returns the pages and tags created. With no space, every
-/// name stays text.
+/// with their ids. Returns the pages and tags created; a name left as text is
+/// named in `warnings`. With no space, every name stays text.
 async fn resolve_pasted_names(
     mut tx: CommandTx,
     materializer: &Materializer,
     device_id: &str,
     anchor: &BlockRow,
     blocks: &mut [import::ParsedBlock],
+    warnings: &mut Vec<String>,
 ) -> Result<(CommandTx, Vec<BlockRow>), AppError> {
     let Some(space) = agaric_store::space::resolve_block_space(&mut **tx, &anchor.id).await? else {
         return Ok((tx, Vec::new()));
     };
-    // What an ambiguous name left as text reports; a paste has no summary to
-    // show it in.
-    let mut warnings = Vec::new();
     let mut names = NameCtx {
         materializer,
         device_id,
         space_id: space.as_str(),
         page_id: anchor.page_id.as_ref().map_or("", BlockId::as_str),
-        warnings: &mut warnings,
+        warnings,
         created: Vec::new(),
     };
     let (tx, links) = resolve_inbound_page_links(&mut names, tx, blocks).await?;
@@ -2740,7 +2769,7 @@ async fn create_parsed_blocks(
     parent_id: Option<String>,
     index: Option<i64>,
     blocks: &[import::ParsedBlock],
-    mode: PropertyWrite,
+    lines: &PropertyLines,
 ) -> Result<Vec<BlockRow>, AppError> {
     let mut created = Vec::with_capacity(blocks.len());
     let mut open: Vec<(usize, String)> = Vec::new();
@@ -2769,7 +2798,7 @@ async fn create_parsed_blocks(
         .await?;
         tx.enqueue_background(op);
         let id = row.id.clone().into_string();
-        apply_block_properties(tx, materializer, device_id, &id, &block.properties, mode).await?;
+        apply_block_properties(tx, materializer, device_id, &id, &block.properties, lines).await?;
         if let Some(state) = parsed_todo_state(block) {
             super::super::properties::write_todo_timestamp_transitions_in_tx(
                 tx,
@@ -3301,7 +3330,7 @@ pub async fn import_markdown_with_progress(
         parse_output.warnings.len(),
     );
 
-    let (tx, page_id) = create_import_page(
+    let (mut tx, page_id) = create_import_page(
         pool,
         materializer,
         device_id,
@@ -3310,6 +3339,11 @@ pub async fn import_markdown_with_progress(
         &mut parse_output.warnings,
     )
     .await?;
+    let mut lines = PropertyLines::load(&mut tx, PropertyWrite::Import).await?;
+    lines
+        .resolve_refs(&mut tx, Some(&space_id), &parse_output.blocks)
+        .await?;
+    lines.keep_refused_as_text(&mut parse_output.blocks, &mut parse_output.warnings);
 
     let mut counters = ImportCounters::default();
     // Bundle the read-only handles + derived identity + the running `warnings`
@@ -3328,6 +3362,7 @@ pub async fn import_markdown_with_progress(
         page_id,
         page_title,
         blocks_total,
+        lines,
         warnings: std::mem::take(&mut parse_output.warnings),
     };
 
@@ -3729,6 +3764,8 @@ struct ImportCtx<'a> {
     page_id: String,
     page_title: String,
     blocks_total: u64,
+    /// How the file's property lines read against the definitions.
+    lines: PropertyLines,
     /// Parse-time + apply-time diagnostics, accumulated across every phase and
     /// returned in the final [`ImportResult`].
     warnings: Vec<String>,
@@ -3808,41 +3845,6 @@ async fn stamp_space_property(
     Ok(())
 }
 
-/// #1920 (A7) / #1921 (B1) — every distinct frontmatter key's declared
-/// `(value_type, options)`, fetched in ONE `json_each(?1)` query.
-///
-/// Pre-fix the apply loop ran `SELECT value_type FROM property_definitions
-/// WHERE key = ?` once PER key, and `set_property_in_tx` then re-queried
-/// `value_type, options` for the SAME key a second time. Driving the loop from
-/// this map and passing the pre-fetched declaration straight into
-/// `set_property_in_tx_with_declaration` eliminates BOTH round-trips. A key
-/// absent from the map is undeclared (declaration `None`), preserving the
-/// missing-key behaviour exactly.
-async fn fetch_frontmatter_declarations(
-    tx: &mut CommandTx,
-    frontmatter: &[(String, String)],
-) -> Result<HashMap<String, (Option<String>, Option<String>)>, AppError> {
-    let distinct_keys: std::collections::BTreeSet<&str> =
-        frontmatter.iter().map(|(k, _)| k.as_str()).collect();
-    if distinct_keys.is_empty() {
-        return Ok(HashMap::new());
-    }
-    let keys: Vec<&str> = distinct_keys.into_iter().collect();
-    let keys_json = serde_json::to_string(&keys)?;
-    let rows = sqlx::query!(
-        r#"SELECT key AS "key!", value_type, options
-                   FROM property_definitions
-                   WHERE key IN (SELECT value FROM json_each(?1))"#,
-        keys_json,
-    )
-    .fetch_all(&mut ***tx)
-    .await?;
-    Ok(rows
-        .into_iter()
-        .map(|r| (r.key, (Some(r.value_type), r.options)))
-        .collect())
-}
-
 /// #2722 — write the frontmatter `aliases:` items as real `page_aliases` rows in
 /// the import's own transaction.
 ///
@@ -3893,10 +3895,10 @@ async fn apply_frontmatter_aliases(
     Ok(())
 }
 
-/// Registry-aware coercion of one frontmatter value into its typed property
-/// arguments, or `None` when the property must be skipped with a warning.
+/// A `ref`-declared frontmatter value's typed property arguments, or `None`
+/// when the property must be skipped with a warning.
 ///
-/// A `ref`-declared value arrives as the resolved target *title* (that is what
+/// The value arrives as the resolved target *title* (that is what
 /// `export_page_markdown_inner` emits), so it is reverse-resolved to a live
 /// page/tag block id. Resolution is SAME-SPACE-SCOPED (`AND space_id = ?`): a
 /// title that collides with a page/tag in a DIFFERENT space must NOT resolve
@@ -3906,23 +3908,13 @@ async fn apply_frontmatter_aliases(
 /// match the value can be persisted neither as a `ref` (no live target) nor as
 /// `text` (the typed def would reject text), so the single property is skipped
 /// with the human-readable title surfaced in the warning.
-async fn frontmatter_typed_args(
+async fn frontmatter_ref_args(
     tx: &mut CommandTx,
     space_id: &str,
     key: &str,
     value: &str,
-    value_type: Option<&str>,
     warnings: &mut Vec<String>,
 ) -> Result<Option<agaric_engine::block_ops::TypedPropertyArgs>, AppError> {
-    if value_type != Some("ref") {
-        return Ok(Some(
-            agaric_engine::block_ops::typed_property_args_for_registry_value(
-                key,
-                value.to_string(),
-                value_type,
-            ),
-        ));
-    }
     let resolved: Option<String> = sqlx::query_scalar!(
         r#"SELECT id FROM blocks
                        WHERE content = ?
@@ -3954,6 +3946,10 @@ async fn frontmatter_typed_args(
 
 /// #1432 — apply the leading YAML frontmatter as page-level properties. Returns
 /// the (possibly moved-through) transaction.
+///
+/// A key names the reserved key or definition it folds to (#5160 D13), and a
+/// value its definition refuses is skipped with a warning naming it (D11):
+/// front matter has no block to keep it in as text.
 async fn apply_frontmatter_properties(
     ctx: &mut ImportCtx<'_>,
     mut tx: CommandTx,
@@ -3964,6 +3960,7 @@ async fn apply_frontmatter_properties(
     let device_id = ctx.device_id;
     let space_id = ctx.space_id.clone();
     let page_id = ctx.page_id.clone();
+    let lines = &ctx.lines;
     let warnings = &mut ctx.warnings;
     // #1432 — apply the leading YAML frontmatter as PAGE-level properties,
     // closing the export↔import asymmetry: `export_page_markdown_inner`
@@ -3975,9 +3972,6 @@ async fn apply_frontmatter_properties(
     // written into the FIRST chunk (alongside the page + space property),
     // before the block loop opens any new chunk, so they share the page's
     // atomic write.
-    let frontmatter_decls =
-        fetch_frontmatter_declarations(&mut tx, &parse_output.frontmatter).await?;
-
     for (key, value) in &parse_output.frontmatter {
         // #2722 — `aliases` and `tags` are SEMANTIC frontmatter keys the
         // exporter emits from the `page_aliases` table and `block_tags`
@@ -4007,48 +4001,34 @@ async fn apply_frontmatter_properties(
             // here so it is never stamped as a misleading text property.
             continue;
         }
-
-        // Registry-aware coercion: consult the declared `value_type` (from the
-        // batched map above) so a `number` / `boolean` / `date` value
-        // round-trips into the right typed column instead of always landing as
-        // text. `ref`-typed values are special-cased below (the exporter
-        // renders refs as the target page's *title*, not its ULID, so we
-        // reverse-resolve the title).
-        let (value_type, options): (Option<String>, Option<String>) =
-            frontmatter_decls.get(key).cloned().unwrap_or((None, None));
-
-        let Some((value_text, value_num, value_date, value_ref, value_bool)) =
-            frontmatter_typed_args(
-                &mut tx,
-                &space_id,
-                key,
-                value,
-                value_type.as_deref(),
-                warnings,
-            )
-            .await?
-        else {
-            continue;
+        let key = lines.canonical_key(key);
+        // #1921 (B1) — the declaration read once for the whole import. A key
+        // with no `property_definitions` row stays undeclared (`None`).
+        let declaration = lines.declaration(&key);
+        let args = if declaration.as_ref().is_some_and(|d| d.value_type == "ref") {
+            let args = frontmatter_ref_args(&mut tx, &space_id, &key, value, warnings).await?;
+            let Some(args) = args else {
+                continue;
+            };
+            args
+        } else {
+            match lines.read(&key, value) {
+                Ok(args) => args,
+                Err(reason) => {
+                    warnings.push(format!(
+                        "front matter `{key}: {value}` was skipped: {reason}"
+                    ));
+                    continue;
+                }
+            }
         };
-
-        // #1921 (B1) — reuse the declaration already fetched into the batched
-        // map instead of letting `set_property_in_tx` re-query it. A key with
-        // no `property_definitions` row stays undeclared (`None`), matching the
-        // wrapper's behaviour. Frontmatter always sets a value (never a clear),
-        // so a declared key carries a real declaration here.
-        let declaration =
-            value_type
-                .clone()
-                .map(|vt| agaric_engine::block_ops::PropertyDeclaration {
-                    value_type: vt,
-                    options: options.clone(),
-                });
+        let (value_text, value_num, value_date, value_ref, value_bool) = args;
         let (_page_block, prop_op) = agaric_engine::block_ops::set_property_in_tx_with_declaration(
             &mut tx,
             materializer.loro_state(),
             device_id,
             page_id.clone(),
-            key,
+            &key,
             value_text,
             value_num,
             value_date,
@@ -5115,104 +5095,50 @@ async fn create_import_block(
     }
 }
 
-/// Whose property values [`apply_block_properties`] writes.
+/// Whose property values [`apply_block_properties`] writes, which decides
+/// how [`PropertyLines`] reads them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum PropertyWrite {
-    /// An imported file: a `ref`-declared value is text, options are checked.
+    /// An imported file: a value its definition refuses stays text in the
+    /// block, with a warning (#5160 D11).
     Import,
-    /// Duplicate and paste re-store values a block already held, from a source
-    /// render: a `ref`-declared value is the raw id, and options the key has
-    /// since retired or narrowed must not make the copy fail.
+    /// Duplicate re-stores values a block already held, from a source render:
+    /// a `ref`-declared value is the raw id, and options the key has since
+    /// retired or narrowed must not make the copy fail.
     Copy,
-    /// A source-mode save writes what the user typed: a `ref`-declared value
-    /// is the raw id, refused unless it is a live block's, and options are
-    /// checked as the property editor checks them.
+    /// Pasted text, read as an import reads a file (D11).
+    Paste,
+    /// A source-mode save writes what the user typed: a value its definition
+    /// refuses refuses the save, naming the line.
     Edit,
 }
 
-/// Set one imported or duplicated block's properties in the same transaction
-/// as the block itself — an import never splits a block and its properties
-/// across a chunk boundary (they are written before the next depth-0 flush
-/// check). Returns how many it set.
+/// Set one block's properties, each under its canonical key, in the same
+/// transaction as the block itself — an import never splits a block and its
+/// properties across a chunk boundary (they are written before the next
+/// depth-0 flush check). Returns how many it set.
 ///
-/// #2982 — registry-aware coercion for body-block properties too. Pre-#2982
-/// they always routed through `typed_property_args_for_string_value`, which
-/// forces every custom key's value into `value_text` (except the two reserved
-/// date keys), so a descendant block's number/boolean/date-typed custom property
-/// exported correctly typed (#2962) but re-imported coerced back to
-/// `value_text` — the VALUE round-tripped, its TYPE did not. The key's declared
-/// `value_type` comes from `property_definitions`, a single GLOBAL table (`key
-/// TEXT PRIMARY KEY`, no `space_id` column), so no space-scoping is needed here
-/// unlike ref-target title resolution.
-///
-/// Looked up PER KEY (not batched like the frontmatter pre-pass): body-block
-/// property keys are unbounded and vary block-to-block across the whole
-/// document, so a doc-wide pre-fetch isn't the same bounded win. This adds NO
-/// extra query, though: `set_property_in_tx` already ran this exact `SELECT
-/// value_type, options FROM property_definitions WHERE key = ?` internally on
-/// every non-clear write (for validation only, discarding the type). We run it
-/// ourselves and call `set_property_in_tx_with_declaration` with the result —
-/// still exactly ONE query per property, not two.
-///
-/// `mode` says whose values these are ([`PropertyWrite`]). Import's
-/// `ref`-typed keys are NOT
-/// specially resolved here (unlike the frontmatter path's title→ULID reverse
-/// lookup, which needs a `tx` + `space_id` round-trip against `blocks`) —
-/// `typed_property_args_for_registry_value` falls through to the text default
-/// for `ref` (see its doc comment), identical to the pre-fix routing, so a
-/// `ref`-declared custom body property's behaviour is UNCHANGED. A key with no
-/// `property_definitions` row (`declaration: None`) also falls through to the
-/// existing string/text behaviour.
+/// Each value is typed by its key's declared `value_type` (#2982): a
+/// number-, boolean- or date-typed custom property imports into the column it
+/// exported from, a `ref`-declared one as the block its id or title names, and
+/// the reserved date keys as `value_date` (#623). `lines` read the definitions
+/// once for the whole surface; a line they refuse is an error here, which only
+/// a source save reaches: an import and a paste keep such a line as text first
+/// ([`PropertyLines::keep_refused_as_text`]).
 async fn apply_block_properties(
     tx: &mut CommandTx,
     materializer: &Materializer,
     device_id: &str,
     block_id: &str,
     properties: &[(String, String)],
-    mode: PropertyWrite,
+    lines: &PropertyLines,
 ) -> Result<u64, AppError> {
     let mut set: u64 = 0;
     for (key, value) in properties {
-        let declaration = sqlx::query!(
-            "SELECT value_type, options FROM property_definitions WHERE key = ?",
-            key,
-        )
-        .fetch_optional(&mut ***tx)
-        .await?
-        .map(|row| agaric_engine::block_ops::PropertyDeclaration {
-            value_type: row.value_type,
-            options: if mode == PropertyWrite::Copy {
-                None
-            } else {
-                row.options
-            },
-        });
-        // #623 — build the correct typed `PropertyValue` shape per key:
-        // reserved date keys (`due_date`/`scheduled_date`) must hit the
-        // `value_date` field, or `validate_property_value` rejects the
-        // chunk. `typed_property_args_for_registry_value` preserves this
-        // reserved-key routing (it falls back to
-        // `typed_property_args_for_string_value` whenever the declared
-        // type doesn't itself claim the value).
-        let value_type = declaration.as_ref().map(|d| d.value_type.as_str());
-        if mode == PropertyWrite::Edit && value_type == Some("ref") {
-            ensure_live_block_id(tx, key, value).await?;
-        }
-        let value = match (mode, key.as_str()) {
-            (PropertyWrite::Import, "priority") => import_priority_value(
-                value,
-                declaration.as_ref().and_then(|d| d.options.as_deref()),
-            ),
-            _ => value.clone(),
-        };
-        let (value_text, value_num, value_date, value_ref, value_bool) = if mode
-            != PropertyWrite::Import
-            && value_type == Some("ref")
-        {
-            (None, None, None, Some(value), None)
-        } else {
-            agaric_engine::block_ops::typed_property_args_for_registry_value(key, value, value_type)
-        };
+        let (value_text, value_num, value_date, value_ref, value_bool) =
+            lines.read(key, value).map_err(|reason| {
+                AppError::validation(format!("`{key}:: {value}` cannot be saved: {reason}"))
+            })?;
         let (_block, prop_op) = agaric_engine::block_ops::set_property_in_tx_with_declaration(
             tx,
             materializer.loro_state(),
@@ -5224,7 +5150,7 @@ async fn apply_block_properties(
             value_date,
             value_ref,
             value_bool,
-            declaration,
+            lines.declaration(key),
         )
         .await?;
         set += 1;
@@ -5251,25 +5177,6 @@ fn import_priority_value(value: &str, options: Option<&str>) -> String {
             .map(|option| (*option).to_string()),
     };
     option.unwrap_or_else(|| value.to_string())
-}
-
-/// Refuse `value`, typed under the `ref`-declared `key`, unless it is a live
-/// block's id: the projection drops a `value_ref` row whose block does not
-/// exist, so any other value would be reported set while the block shows no
-/// such property.
-async fn ensure_live_block_id(tx: &mut CommandTx, key: &str, value: &str) -> Result<(), AppError> {
-    if let Ok(id) = BlockId::from_string(value)
-        && id.as_str() == value
-    {
-        match crate::ulid::verify_active_in_tx(tx, &id).await {
-            Ok(_) => return Ok(()),
-            Err(AppError::NotFound(_) | AppError::Validation { .. }) => {}
-            Err(err) => return Err(err),
-        }
-    }
-    Err(AppError::validation(format!(
-        "'{key}' holds a block id, and '{value}' is not the id of a live block"
-    )))
 }
 
 /// #662 — chunked block-insertion loop + final commit. Accumulates into the
@@ -5384,7 +5291,7 @@ async fn insert_blocks(
             device_id,
             &new_block_id,
             &block.properties,
-            PropertyWrite::Import,
+            &ctx.lines,
         )
         .await?;
     }
@@ -6078,19 +5985,15 @@ pub async fn paste_blocks(
     anchor_block_id: BlockId,
     input: PasteInput,
     splice: Option<PasteSplice>,
-) -> Result<WithOps<CreatedBlocks>, AppError> {
-    capture_op_refs(async {
-        paste_blocks_inner(
-            ctx.pool(),
-            ctx.device_id(),
-            ctx.materializer(),
-            anchor_block_id,
-            input,
-            splice,
-        )
-        .await
-        .map(|blocks| CreatedBlocks { blocks })
-    })
+) -> Result<WithOps<PastedBlocks>, AppError> {
+    capture_op_refs(paste_blocks_inner(
+        ctx.pool(),
+        ctx.device_id(),
+        ctx.materializer(),
+        anchor_block_id,
+        input,
+        splice,
+    ))
     .await
     .map_err(sanitize_internal_error)
 }
@@ -6144,6 +6047,10 @@ pub async fn import_markdown(
     .await
     .map_err(sanitize_internal_error)
 }
+
+#[path = "markdown_properties.rs"]
+mod property_lines;
+use property_lines::PropertyLines;
 
 #[path = "markdown_source_apply.rs"]
 mod source_apply;
@@ -6398,6 +6305,7 @@ mod tests {
                 properties: Vec::new(),
                 is_code: vector.is_code,
                 block_anchor: None,
+                task_markers: Vec::new(),
             }];
             // #3599 — the contract is the SET of distinct names each side asks
             // its resolver for, not an encounter order. Rust collects through a
@@ -6570,6 +6478,7 @@ mod tests {
             properties: Vec::new(),
             is_code: false,
             block_anchor: None,
+            task_markers: Vec::new(),
         };
         let matches = fixture_matches(pages);
         let mut links = PageLinks {
@@ -6876,6 +6785,7 @@ mod tests {
             properties: Vec::new(),
             is_code: false,
             block_anchor: None,
+            task_markers: Vec::new(),
         }];
         // Only the genuine `#realtag` is collected; the `#My` inside `[[…]]` is
         // NOT (it is a heading anchor, not a tag).
@@ -6910,6 +6820,7 @@ mod tests {
             properties: Vec::new(),
             is_code: false,
             block_anchor: None,
+            task_markers: Vec::new(),
         }];
         let names = collect_inbound_tag_names(&blocks);
         assert_eq!(
@@ -6970,6 +6881,7 @@ mod tests {
                 properties: Vec::new(),
                 is_code: false,
                 block_anchor: None,
+                task_markers: Vec::new(),
             },
             import::ParsedBlock {
                 content: "#[[Unknown #b]] #real".to_string(),
@@ -6977,6 +6889,7 @@ mod tests {
                 properties: Vec::new(),
                 is_code: false,
                 block_anchor: None,
+                task_markers: Vec::new(),
             },
         ];
         let names = collect_inbound_tag_names(&blocks);
@@ -7014,6 +6927,7 @@ mod tests {
             properties: Vec::new(),
             is_code: false,
             block_anchor: None,
+            task_markers: Vec::new(),
         }];
         // Only the un-prefixed `[[Real Page]]` is collected as a page name.
         let names = collect_inbound_page_link_bodies(&blocks);
@@ -7049,6 +6963,7 @@ mod tests {
                 properties: Vec::new(),
                 is_code: false,
                 block_anchor: None,
+                task_markers: Vec::new(),
             },
             import::ParsedBlock {
                 content: "fenced #shouldskip".to_string(),
@@ -7056,6 +6971,7 @@ mod tests {
                 properties: Vec::new(),
                 is_code: true,
                 block_anchor: None,
+                task_markers: Vec::new(),
             },
         ];
         let names = collect_inbound_tag_names(&blocks);
@@ -7128,6 +7044,7 @@ mod tests {
                 properties: Vec::new(),
                 is_code: true,
                 block_anchor: None,
+                task_markers: Vec::new(),
             },
             import::ParsedBlock {
                 content: "see `[[Quoted Page]]` vs [[Live Page]]".to_string(),
@@ -7135,6 +7052,7 @@ mod tests {
                 properties: Vec::new(),
                 is_code: false,
                 block_anchor: None,
+                task_markers: Vec::new(),
             },
         ];
 

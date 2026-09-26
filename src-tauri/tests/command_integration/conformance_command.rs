@@ -162,7 +162,9 @@ const RETURN_SHAPE: &[(&str, &str, &[&str], &[&str])] = &[
     // ORDER is pinned as well as the rows: a batch that answers with the right
     // set in the wrong order reds. The `_inner` returns the bare list; the
     // wrapper wraps it (`CreatedBlocks` / `MovedBlocks`, #5140), which is why
-    // the TS twin's rows carry a `rows` key and these do not.
+    // the TS twin's rows carry a `rows` key and these do not. A paste's rows
+    // are read off `PastedBlocks` beside its warnings, which are grammar the
+    // mock does not model.
     (
         "create_blocks_batch",
         "id",
@@ -728,7 +730,8 @@ pub(super) async fn apply_op_via_command(
                             .unwrap_or_else(|e| panic!("conformance op '{command}': splice: {e}"))
                     }),
             )
-            .await,
+            .await
+            .map(|pasted| pasted.blocks),
         ),
         // The two buffers are the caller's own text, anchors spelled as the
         // seed labels' expanded ids; only the page is a label. `merge` came

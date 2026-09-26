@@ -45,7 +45,7 @@ export const commands = {
 	pasteBlocks: (anchorBlockId: BlockId, input: PasteInput, splice: {
 	before: string,
 	after: string,
-} | null) => typedError<WithOps<CreatedBlocks>, AppError>(__TAURI_INVOKE("paste_blocks", { anchorBlockId, input, splice })),
+} | null) => typedError<WithOps<PastedBlocks>, AppError>(__TAURI_INVOKE("paste_blocks", { anchorBlockId, input, splice })),
 	/**
 	 *  Tauri command: edit a block's content. Delegates to [`edit_block_inner`].
 	 *  #2468: the response carries the produced op ref(s) — see [`create_block`].
@@ -1839,15 +1839,14 @@ export type CreateBlockSpec = {
 };
 
 /**
- *  Reply of [`create_blocks_batch`], [`duplicate_block`] and [`paste_blocks`].
+ *  Reply of [`create_blocks_batch`] and [`duplicate_block`].
  *  `#[serde(flatten)]` cannot wrap a `Vec`, so the list rides under a key and
  *  [`WithOps`] puts `op_refs` beside it (#5140).
  */
 export type CreatedBlocks = {
 	/**
-	 *  One row per created block: per spec in input order; the copy's root
-	 *  then its descendants depth-first; or the pages and tags a paste
-	 *  created, then the pasted blocks in document order.
+	 *  One row per created block: per spec in input order, or the copy's root
+	 *  then its descendants depth-first.
 	 */
 	blocks: BlockRow[],
 };
@@ -3088,6 +3087,20 @@ export type PasteSplice = {
 export type PastedBlock = {
 	content: string,
 	depth: number,
+};
+
+/**  Reply of [`paste_blocks`], in the envelope [`CreatedBlocks`] uses. */
+export type PastedBlocks = {
+	/**
+	 *  The pages and tags the paste created, then the pasted blocks in
+	 *  document order.
+	 */
+	blocks: BlockRow[],
+	/**
+	 *  Each property line the paste kept as text and each name it left as
+	 *  text, named (#5160 D11).
+	 */
+	warnings: string[],
 };
 
 /**  A row from the `peer_refs` table representing a remote sync peer. */

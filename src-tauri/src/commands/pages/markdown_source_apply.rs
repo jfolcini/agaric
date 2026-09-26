@@ -76,6 +76,10 @@ pub struct PageSourceReport {
 /// the page or tag no name there matches. A checkbox does what a click on it
 /// does: the #5074 stamps and, on the edge into DONE, the next occurrence.
 ///
+/// A property key names the reserved key or definition it folds to (#5160
+/// D13), a `key::` line with no value deletes the property (P7), and a ref
+/// value is a block id or a page title in the space (D11).
+///
 /// # Errors
 ///
 /// - [`AppError::Ulid`] — `page_id` is not a ULID
@@ -84,10 +88,11 @@ pub struct PageSourceReport {
 ///   [`ValidationCode::RequiresRefresh`] when `base_source` is not the page's
 ///   source and `flags.merge` is false; the page's source does not read back as
 ///   its blocks (a property value with a line break); an anchor is written
-///   twice, or names no block of the page and `flags.force` is false; a block
-///   the save would delete holds a nested page; a block would be nested past
-///   `MAX_BLOCK_DEPTH`; or the save would append more ops than one undo
-///   reverts
+///   twice, or names no block of the page and `flags.force` is false; a
+///   property line sets a value its definition refuses, named in the message;
+///   a block the save would delete holds a nested page; a block would be
+///   nested past `MAX_BLOCK_DEPTH`; or the save would append more ops than one
+///   undo reverts
 #[instrument(skip(pool, device_id, materializer, source, base_source), err)]
 pub async fn apply_page_source_inner(
     pool: &SqlitePool,
@@ -104,9 +109,13 @@ pub async fn apply_page_source_inner(
     tx.arm_engine_rollback(materializer.loro_state());
     let data = load_page_export_data(&mut tx, page_id.as_str(), PageRead::Source).await?;
     let (base, stale) = read_base(&data, &base_source, flags.merge)?;
+    let mut lines = PropertyLines::load(&mut tx, PropertyWrite::Edit).await?;
     let mut warnings = Vec::new();
-    let blocks = read_buffer(&source, &base_source, &base, stale, &mut warnings)?;
+    let blocks = read_buffer(&source, &base_source, &base, stale, &lines, &mut warnings)?;
     let mut buffer = pair_blocks(&base, blocks, flags.force, &mut warnings)?;
+    let space = agaric_store::space::resolve_block_space(&mut **tx, &page_id).await?;
+    let space = space.as_ref().map(agaric_store::space::SpaceId::as_str);
+    lines.resolve_refs(&mut tx, space, &buffer.blocks).await?;
     // Boxed for the reason `duplicate_block_inner` gives.
     let (mut tx, names_created) = Box::pin(resolve_buffer_names(
         tx,
@@ -120,6 +129,7 @@ pub async fn apply_page_source_inner(
     .await?;
     let mut save = Save {
         materializer,
+        lines: &lines,
         device_id,
         ids: buffer
             .base
@@ -219,12 +229,15 @@ struct Buffer {
 /// ([`heal_moved_anchors`]), among the blocks of `base_source`, the source the
 /// edit started from. Then, when the page changed since (`stale`), its changes
 /// are folded in, so the merge compares a block whose anchor an edit moved as
-/// that block, edited.
+/// that block, edited. A property key is read as the one `lines` fold it to
+/// (#5160 D13) before anything is compared, unless its block held it as
+/// written in the source the edit started from.
 fn read_buffer(
     source: &str,
     base_source: &str,
     base: &Base,
     stale: bool,
+    lines: &PropertyLines,
     warnings: &mut Vec<String>,
 ) -> Result<Vec<import::ParsedBlock>, AppError> {
     let parsed = import::parse_source_outline(source);
@@ -232,13 +245,13 @@ fn read_buffer(
     let mut blocks = parsed.blocks;
     blocks.iter_mut().for_each(import::restore_text_anchor);
     let older = stale.then(|| import::parse_source_outline(base_source).blocks);
-    let loaded: HashSet<&str> = older
-        .as_ref()
-        .unwrap_or(&base.blocks)
+    let edited_from = older.as_ref().unwrap_or(&base.blocks);
+    let loaded: HashSet<&str> = edited_from
         .iter()
         .filter_map(|block| block.block_anchor.as_deref())
         .collect();
     heal_moved_anchors(&mut blocks, &loaded)?;
+    lines.canonicalize(&mut blocks, edited_from);
     match older {
         Some(older) => merge::merge_outlines(older, &base.blocks, blocks, warnings),
         None => Ok(blocks),
@@ -610,6 +623,7 @@ async fn resolve_new_names(
 /// report so far.
 struct Save<'a> {
     materializer: &'a Materializer,
+    lines: &'a PropertyLines,
     device_id: &'a str,
     ids: Vec<Option<String>>,
     report: PageSourceReport,
@@ -765,7 +779,7 @@ async fn place_children(
 }
 
 /// Create `block` under `parent` at `slot`, as a paste creates it. Returns its
-/// id.
+/// id. A new block has no property for a `key::` line to clear.
 async fn create_child(
     tx: &mut CommandTx,
     save: &mut Save<'_>,
@@ -773,21 +787,24 @@ async fn create_child(
     slot: i64,
     block: &import::ParsedBlock,
 ) -> Result<String, AppError> {
+    let mut block = block.clone();
+    block.properties.retain(|(_, value)| !value.is_empty());
     let created = Box::pin(create_parsed_blocks(
         tx,
         save.materializer,
         save.device_id,
         Some(parent.to_owned()),
         Some(slot),
-        std::slice::from_ref(block),
-        PropertyWrite::Edit,
+        std::slice::from_ref(&block),
+        save.lines,
     ))
     .await?;
     save.report.created += 1;
     Ok(created[0].id.clone().into_string())
 }
 
-/// A paired block's property changes: the last line for a key wins.
+/// A paired block's property changes: the last line for a key wins, and one
+/// with no value (`key::`) deletes the property (#5160 P7).
 #[derive(Default)]
 struct PropertyChanges {
     set: Vec<(String, String)>,
@@ -801,7 +818,8 @@ impl PropertyChanges {
         let map = |block: &import::ParsedBlock| -> BTreeMap<String, String> {
             block.properties.iter().cloned().collect()
         };
-        let (old, new) = (map(before), map(after));
+        let (old, mut new) = (map(before), map(after));
+        new.retain(|_, value| !value.is_empty());
         let mut changes = Self::default();
         for (key, value) in &new {
             if old.get(key) == Some(value) {
@@ -891,7 +909,7 @@ async fn write_properties(
         save.device_id,
         id,
         &changes.set,
-        PropertyWrite::Edit,
+        save.lines,
     )
     .await?;
     save.report.properties_set += u32::try_from(set).unwrap_or(u32::MAX);

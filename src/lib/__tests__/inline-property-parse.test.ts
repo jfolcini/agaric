@@ -2,7 +2,7 @@
  * Unit tests for the inline `key:: value` property parser (#2675).
  *
  * The line-level rules mirror the Logseq import parser
- * (`src-tauri/agaric-engine/src/import.rs`): split at the FIRST `":: "`, key must match
+ * (`src-tauri/agaric-engine/src/import.rs`): split at the FIRST `::` and a space or tab, key must match
  * `^[A-Za-z0-9_-]{1,64}$`, value must be non-empty after trimming, reserved
  * keys and fenced code are skipped. Divergences (reserved keys stay literal
  * instead of being dropped) are documented in the module docstring.
@@ -14,6 +14,7 @@ import type { PropertyDefinition } from '@/lib/bindings'
 
 import {
   buildInlinePropertySetParams,
+  foldPropertyKey,
   INLINE_PROPERTY_RESERVED_KEYS,
   isInlinePropertyKey,
   parseInlineProperties,
@@ -27,16 +28,15 @@ import {
  * it asserts over passes for any value of that constant (#3797). Mirrors
  * `FRONTMATTER_RESERVED_KEYS` in `src-tauri/agaric-engine/src/import.rs` and
  * the two `key NOT IN (…)` SQL lists in `export_page_markdown_inner`
- * (`src-tauri/src/commands/pages/markdown.rs`).
+ * (`src-tauri/src/commands/pages/markdown.rs`). The recurrence rule
+ * (`repeat`, `repeat-until`, `repeat-count`) is a property line on every
+ * surface (#5160 P4), so it is not here.
  */
 const EXPECTED_RESERVED_KEYS = [
   'space',
   'is_space',
   'created_at',
   'completed_at',
-  'repeat',
-  'repeat-until',
-  'repeat-count',
   'repeat-seq',
   'repeat-origin',
   'template',
@@ -99,9 +99,15 @@ describe('parseInlineProperties', () => {
     expect(parseInlineProperties('a URL https://x.test :: note')).toEqual([])
   })
 
-  it('rejects `::` without a following space (std::vector never matches)', () => {
+  it('rejects `::` without a following space or tab (std::vector never matches)', () => {
     expect(parseInlineProperties('std::vector<int> usage')).toEqual([])
     expect(parseInlineProperties('key::value')).toEqual([])
+  })
+
+  it('accepts a tab after `::`, as the Rust grammar does', () => {
+    expect(parseInlineProperties('status::\tactive')).toEqual([
+      { key: 'status', value: 'active', lineIndex: 0 },
+    ])
   })
 
   it('rejects a key longer than 64 chars', () => {
@@ -124,10 +130,21 @@ describe('parseInlineProperties', () => {
   // `INLINE_PROPERTY_RESERVED_KEYS.has(key)` guard is deleted from
   // `parseInlineProperties`. It iterates the independent literal, not the
   // constant, so it can no longer pass vacuously (#3797).
-  it('skips reserved / exporter-managed keys (they stay literal)', () => {
+  it('skips reserved / exporter-managed keys in any spelling (they stay literal)', () => {
     for (const key of EXPECTED_RESERVED_KEYS) {
       expect(parseInlineProperties(`${key}:: something`)).toEqual([])
+      expect(parseInlineProperties(`${key.toUpperCase().replaceAll('_', '-')}:: x`)).toEqual([])
     }
+  })
+
+  it('parses the recurrence rule lines (#5160 P4)', () => {
+    expect(
+      parseInlineProperties('repeat:: +1w\nrepeat-until:: 2026-12-31\nrepeat-count:: 3'),
+    ).toEqual([
+      { key: 'repeat', value: '+1w', lineIndex: 0 },
+      { key: 'repeat-until', value: '2026-12-31', lineIndex: 1 },
+      { key: 'repeat-count', value: '3', lineIndex: 2 },
+    ])
   })
 
   // Membership half — line 58-68 [ArrayDeclaration / StringLiteral]: pins the
@@ -252,6 +269,17 @@ describe('parseInlineProperties', () => {
   it('returns an empty list for plain content', () => {
     expect(parseInlineProperties('just a normal block')).toEqual([])
     expect(parseInlineProperties('')).toEqual([])
+  })
+})
+
+describe('foldPropertyKey (#5160 D13)', () => {
+  it('folds ASCII case and reads `-` as `_`, and nothing else', () => {
+    expect(foldPropertyKey('Priority')).toBe('priority')
+    expect(foldPropertyKey('due-date')).toBe('due_date')
+    expect(foldPropertyKey('Scheduled_Date')).toBe('scheduled_date')
+    expect(foldPropertyKey('REPEAT-UNTIL')).toBe('repeat_until')
+    expect(foldPropertyKey('due')).toBe('due')
+    expect(foldPropertyKey('Ünï')).toBe('Ünï')
   })
 })
 

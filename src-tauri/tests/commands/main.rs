@@ -32,6 +32,7 @@ mod pages_orphan_conformance_tests;
 mod pages_path_glob_conformance_tests;
 mod pages_tag_property_conformance_tests;
 mod property_cmd_tests;
+mod property_line_tests;
 mod query_cmd_tests;
 mod search_blocks_struct_tests;
 mod snapshot_tests;

@@ -1,0 +1,301 @@
+//! How a markdown surface reads a block's `key:: value` lines against the
+//! property definitions (#5160): a key names the reserved key or definition it
+//! folds to (D13), and a value a definition refuses is kept as text by an
+//! import and a paste, and refuses an Edit as Markdown save (D11).
+
+use agaric_engine::block_ops::{PropertyDeclaration, TypedPropertyArgs};
+
+use super::*;
+
+/// The property definitions, and the values written under a `ref`-declared
+/// key, of one import, paste, duplicate or source save, read once before
+/// anything is written.
+pub(super) struct PropertyLines {
+    mode: PropertyWrite,
+    declarations: HashMap<String, PropertyDeclaration>,
+    /// Each folded key's reserved key and definitions.
+    spellings: HashMap<String, Vec<String>>,
+    /// Each ref value's block id, or why it names none.
+    refs: HashMap<String, Result<String, String>>,
+}
+
+impl PropertyLines {
+    /// Read the definitions. A surface that writes typed values resolves its
+    /// ref values next ([`Self::resolve_refs`]); a copy writes back the ids a
+    /// block held.
+    pub(super) async fn load(
+        conn: &mut sqlx::SqliteConnection,
+        mode: PropertyWrite,
+    ) -> Result<Self, AppError> {
+        let rows =
+            sqlx::query!(r#"SELECT key AS "key!", value_type, options FROM property_definitions"#)
+                .fetch_all(&mut *conn)
+                .await?;
+        let mut spellings: HashMap<String, Vec<String>> = HashMap::new();
+        let keys = agaric_store::op::RESERVED_PROPERTY_KEYS
+            .iter()
+            .map(|key| (*key).to_string())
+            .chain(rows.iter().map(|row| row.key.clone()));
+        for key in keys {
+            let known = spellings
+                .entry(import::fold_property_key(&key))
+                .or_default();
+            if !known.contains(&key) {
+                known.push(key);
+            }
+        }
+        let declarations = rows
+            .into_iter()
+            .map(|row| {
+                let declaration = PropertyDeclaration {
+                    value_type: row.value_type,
+                    options: row.options,
+                };
+                (row.key, declaration)
+            })
+            .collect();
+        Ok(Self {
+            mode,
+            declarations,
+            spellings,
+            refs: HashMap::new(),
+        })
+    }
+
+    /// Resolve in `space_id` the values `blocks` write under a `ref`-declared
+    /// key.
+    pub(super) async fn resolve_refs(
+        &mut self,
+        conn: &mut sqlx::SqliteConnection,
+        space_id: Option<&str>,
+        blocks: &[import::ParsedBlock],
+    ) -> Result<(), AppError> {
+        let names: Vec<&str> = blocks
+            .iter()
+            .flat_map(|block| &block.properties)
+            .filter(|(key, _)| self.is_ref(&self.canonical_key(key)))
+            .map(|(_, value)| ref_name(value))
+            .collect();
+        self.refs = resolve_ref_values(conn, space_id, names).await?;
+        Ok(())
+    }
+
+    /// The key `typed` names (D13): the one reserved key or definition it
+    /// folds to. Two that fold alike are never guessed between, and a key none
+    /// folds to is a custom key: both stay as typed.
+    pub(super) fn canonical_key(&self, typed: &str) -> String {
+        match self
+            .spellings
+            .get(&import::fold_property_key(typed))
+            .map(Vec::as_slice)
+        {
+            Some([single]) => single.clone(),
+            _ => typed.to_string(),
+        }
+    }
+
+    /// Give each of `blocks`' properties its [`Self::canonical_key`], except a
+    /// key the block with its anchor in `held` holds as written: keys were
+    /// stored as typed before D13, so that line is that property.
+    pub(super) fn canonicalize(
+        &self,
+        blocks: &mut [import::ParsedBlock],
+        held: &[import::ParsedBlock],
+    ) {
+        let held: HashSet<(&str, &str)> = held
+            .iter()
+            .filter_map(|block| Some((block.block_anchor.as_deref()?, &block.properties)))
+            .flat_map(|(anchor, properties)| {
+                properties
+                    .iter()
+                    .map(move |(key, _)| (anchor, key.as_str()))
+            })
+            .collect();
+        for block in blocks {
+            let anchor = block.block_anchor.as_deref().unwrap_or_default();
+            for (key, _) in &mut block.properties {
+                if !held.contains(&(anchor, key.as_str())) {
+                    *key = self.canonical_key(key);
+                }
+            }
+        }
+    }
+
+    /// The declaration `key` is written under. A copy writes back values a
+    /// block held, so options the key has since narrowed are not checked.
+    pub(super) fn declaration(&self, key: &str) -> Option<PropertyDeclaration> {
+        let mut declaration = self.declarations.get(key).cloned()?;
+        if self.mode == PropertyWrite::Copy {
+            declaration.options = None;
+        }
+        Some(declaration)
+    }
+
+    fn is_ref(&self, key: &str) -> bool {
+        self.declarations
+            .get(key)
+            .is_some_and(|declaration| declaration.value_type == "ref")
+    }
+
+    /// The typed arguments `value` is written with under `key`, a canonical
+    /// key, or why its definition refuses it. A copy's ref value is the id it
+    /// held; any other ref value is a block id or a page title in the space.
+    pub(super) fn read(&self, key: &str, value: &str) -> Result<TypedPropertyArgs, String> {
+        let declaration = self.declaration(key);
+        let value_type = declaration.as_ref().map(|d| d.value_type.as_str());
+        if self.mode == PropertyWrite::Copy {
+            return Ok(match value_type {
+                Some("ref") => (None, None, None, Some(value.to_string()), None),
+                _ => agaric_engine::block_ops::typed_property_args_for_registry_value(
+                    key,
+                    value.to_string(),
+                    value_type,
+                ),
+            });
+        }
+        if value.trim().is_empty() {
+            return Err("it has no value".to_string());
+        }
+        if key == "repeat" {
+            agaric_engine::recurrence::validate_repeat_rule(value).map_err(refusal)?;
+        }
+        let value = match (self.mode, key) {
+            (PropertyWrite::Import, "priority") => import_priority_value(
+                value,
+                declaration.as_ref().and_then(|d| d.options.as_deref()),
+            ),
+            _ => value.to_string(),
+        };
+        let args = if value_type == Some("ref") {
+            let id = self
+                .refs
+                .get(ref_name(&value))
+                .cloned()
+                .unwrap_or_else(|| Err(format!("'{value}' names no block")))?;
+            (None, None, None, Some(id), None)
+        } else {
+            agaric_engine::block_ops::typed_property_args_for_registry_value(key, value, value_type)
+        };
+        agaric_engine::block_ops::check_property_value(key, &args, declaration.as_ref())
+            .map_err(refusal)?;
+        Ok(args)
+    }
+
+    /// Give each of `blocks`' properties its canonical key, and keep each line
+    /// whose value [`Self::read`] refuses as text, with one warning naming it
+    /// (D11): a `key:: value` line as it was written, at the end of its block,
+    /// and a checkbox, task keyword or priority cookie back before the text
+    /// it was read off.
+    pub(super) fn keep_refused_as_text(
+        &self,
+        blocks: &mut [import::ParsedBlock],
+        warnings: &mut Vec<String>,
+    ) {
+        for block in blocks {
+            let mut markers = std::mem::take(&mut block.task_markers);
+            let mut restored: Vec<String> = Vec::new();
+            for (typed, value) in std::mem::take(&mut block.properties) {
+                let marker = markers
+                    .iter()
+                    .position(|(key, _)| *key == typed)
+                    .map(|at| markers.remove(at).1);
+                let key = self.canonical_key(&typed);
+                let Err(reason) = self.read(&key, &value) else {
+                    block.properties.push((key, value));
+                    continue;
+                };
+                if let Some(marker) = marker {
+                    warnings.push(format!("`{marker}` was kept as text: {reason}"));
+                    restored.push(marker);
+                    continue;
+                }
+                let line = format!("{typed}:: {value}");
+                warnings.push(format!("`{line}` was kept as text: {reason}"));
+                if !block.content.is_empty() {
+                    block.content.push('\n');
+                }
+                block.content.push_str(&line);
+            }
+            if !restored.is_empty() {
+                if !block.content.is_empty() {
+                    restored.push(std::mem::take(&mut block.content));
+                }
+                block.content = restored.join(" ");
+            }
+        }
+    }
+}
+
+/// A validation error as the reason a line is refused.
+fn refusal(err: AppError) -> String {
+    match err {
+        AppError::Validation { message, .. } => message,
+        other => other.to_string(),
+    }
+}
+
+/// The name a ref value is written as: `[[Title]]` less its brackets, or the
+/// value.
+fn ref_name(value: &str) -> &str {
+    let value = value.trim();
+    value
+        .strip_prefix("[[")
+        .and_then(|name| name.strip_suffix("]]"))
+        .map_or(value, str::trim)
+}
+
+/// What each of `names` refers to (#5160 D11): a block id is the live block,
+/// unless it is in a space other than `space_id`; anything else is the title
+/// of a page in `space_id` by the link rule (exact, then case-insensitive,
+/// then alias, never a tie).
+async fn resolve_ref_values(
+    conn: &mut sqlx::SqliteConnection,
+    space_id: Option<&str>,
+    names: Vec<&str>,
+) -> Result<HashMap<String, Result<String, String>>, AppError> {
+    let (ids, titles): (Vec<&str>, Vec<&str>) = names
+        .into_iter()
+        .partition(|name| BlockId::from_string(*name).is_ok_and(|id| id.as_str() == *name));
+    let mut resolved = HashMap::new();
+    if !ids.is_empty() {
+        let ids_json = serde_json::to_string(&ids)?;
+        let rows = sqlx::query!(
+            r#"SELECT b.id AS "id!", COALESCE(b.space_id, p.space_id) AS "space_id?: String"
+               FROM blocks b
+               LEFT JOIN blocks p ON p.id = b.page_id AND p.deleted_at IS NULL
+               WHERE b.id IN (SELECT value FROM json_each(?1))
+                 AND b.deleted_at IS NULL"#,
+            ids_json,
+        )
+        .fetch_all(&mut *conn)
+        .await?;
+        let live: HashMap<String, Option<String>> =
+            rows.into_iter().map(|row| (row.id, row.space_id)).collect();
+        for id in ids {
+            let outcome = match live.get(id) {
+                None => Err(format!("'{id}' is not the id of a live block")),
+                Some(Some(target)) if space_id.is_some_and(|space| space != target) => {
+                    Err(format!("'{id}' is a block of another space"))
+                }
+                Some(_) => Ok(id.to_string()),
+            };
+            resolved.insert(id.to_string(), outcome);
+        }
+    }
+    let titles: Vec<String> = titles.into_iter().map(str::to_string).collect();
+    let matches = match space_id {
+        Some(space) if !titles.is_empty() => {
+            snapshot_page_link_matches(conn, space, &titles).await?
+        }
+        _ => LinkMatches::default(),
+    };
+    for title in titles {
+        let outcome = match matches.find(&title) {
+            Some(LinkMatch::Unique(id)) => Ok(id),
+            Some(LinkMatch::Ambiguous) => Err(format!("more than one page is titled '{title}'")),
+            None => Err(format!("no page is titled '{title}' in this space")),
+        };
+        resolved.insert(title, outcome);
+    }
+    Ok(resolved)
+}
