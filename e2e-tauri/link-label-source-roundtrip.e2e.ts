@@ -47,7 +47,11 @@ describe('Agaric real-backend labelled link (#5160 D9)', () => {
     // The `]]` closes the input rule, which turns the text into a chip, so the
     // verified typing stops before it.
     await typeMarkerVerified(`${MARKER} [[${TARGET}|${LABEL}`)
-    await browser.keys([']', ']'])
+    // WebKit coalesces two identical keys sent together (`typeVerified`), so
+    // the `]]` goes one key at a time.
+    await browser.keys([']'])
+    await browser.pause(40)
+    await browser.keys([']'])
     await chipWith(LABEL).waitForDisplayed({ timeout: ACTION_TIMEOUT })
 
     await reopenTheNewPage()
