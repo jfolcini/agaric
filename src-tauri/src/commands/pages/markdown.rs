@@ -240,10 +240,9 @@ pub fn folder_path_to_namespace_title(path: &str) -> String {
 /// #1282 (Obsidian slice) — split an Obsidian-style wiki-link target on its
 /// FIRST `#` into the base page name and an optional sub-anchor. Obsidian links
 /// may address a heading (`[[Page#Heading]]`) or a block id
-/// (`[[Page#^blockId]]`) INSIDE a page; the importer resolves only the base
-/// PAGE (the `#…` sub-anchor is not yet a navigable target — Obsidian
-/// block/heading targeting is a deferred follow-up), so it strips the anchor
-/// here and resolves/creates `page` exactly like a plain `[[page]]`.
+/// (`[[Page#^blockId]]`) INSIDE a page; the name pass resolves/creates the base
+/// `page` exactly like a plain `[[page]]`, then links the block the anchor
+/// names when it finds one (#2510, #2567, #5160 D10).
 ///
 /// Returns `(base, Some(anchor))` when a `#` is present — `base` is the text
 /// before the first `#` with leading/trailing whitespace TRIMMED (matching the
@@ -467,7 +466,8 @@ fn rewrite_logseq_labelled_links(content: &str) -> std::borrow::Cow<'_, str> {
 ///
 /// A `[[Page|label]]` keeps its label as `[[ULID|label]]` unless the label is
 /// the target's title in `titles` (#5160 D9); Logseq's `[label]([[Page]])` is
-/// read as the same token.
+/// read as the same token. A name with a block in `links` is a `((ULID))`
+/// ref, which has no label (D10).
 fn rewrite_inbound_page_links(
     content: &str,
     links: &PageLinks,
@@ -500,6 +500,9 @@ fn rewrite_inbound_page_links(
             let Some((name, label)) = links.readings.get(caps[1].trim()) else {
                 return whole.to_string();
             };
+            if let Some(block) = links.blocks.get(name) {
+                return format!("(({block}))");
+            }
             match links.ids.get(name) {
                 Some(ulid) => {
                     stored_page_link(ulid, label.as_deref(), titles.get(ulid).map(String::as_str))
@@ -1793,15 +1796,13 @@ async fn resolve_block_refs(
     //         The importer's #2510 intra-note anchor pass rewrites it back to a
     //         real `((<new ULID>))` block ref (base is empty ⇒ implicitly this
     //         page), and the `^<ULID>` marker we stamp on the target's line
-    //         (see the emit loop) is what that pass matches on. This is the
-    //         only form that ROUNDTRIPS to a block ref.
+    //         (see the emit loop) is what that pass matches on.
     //       * target on ANOTHER page → emit `[[<Target Page>#^<ULID>]]`. This
-    //         renders as a block link in Obsidian, but the importer's
-    //         block-anchor resolution is INTRA-NOTE only (a cross-note base
-    //         falls through to the #1282 dropped-anchor path), so on re-import
-    //         it degrades to a plain page link + a warning rather than a block
-    //         ref. Still strictly better than the opaque `((ULID))` (which no
-    //         external tool renders and which the importer strips entirely).
+    //         renders as a block link in Obsidian. Read back into a space
+    //         where that block still lives on that page, it is the block ref
+    //         again (#5160 D10); anywhere else it degrades to a page link + a
+    //         warning. Still strictly better than the opaque `((ULID))` (which
+    //         no external tool renders and which the importer strips entirely).
     //       * target missing / deleted → absent from the map; the resolver
     //         emits a `(unresolved block reference)` literal (never a raw ULID).
     let mut block_ref_replacement: HashMap<String, String> = HashMap::new();
@@ -4053,6 +4054,9 @@ struct PageLinks {
     /// Each name's page: the names the readings give and the inline queries
     /// hold.
     ids: HashMap<String, String>,
+    /// Each anchored name's block on another page, which the link refs
+    /// instead of the page (#5160 D10).
+    blocks: HashMap<String, String>,
 }
 
 impl PageLinks {
@@ -4070,6 +4074,9 @@ impl PageLinks {
             self.readings.insert(body.clone(), reading.clone());
             if let Some(id) = from.ids.get(&reading.0) {
                 self.ids.insert(reading.0.clone(), id.clone());
+            }
+            if let Some(block) = from.blocks.get(&reading.0) {
+                self.blocks.insert(reading.0.clone(), block.clone());
             }
         }
         for name in names {
@@ -4365,9 +4372,8 @@ fn warn_ambiguous_link(ctx: &mut NameCtx<'_>, name: &str) {
 /// map stays keyed on the ORIGINAL full token (so the rewrite still matches
 /// `[[Page#Heading]]` and swaps in `[[<ULID>]]`). A sub-anchor that points
 /// INTO the document being imported is deferred instead (see
-/// [`DeferredAnchor`]); a CROSS-note anchor (the base resolves to a DIFFERENT,
-/// already-existing page) falls through to the #1282 dropped-anchor page-link
-/// behaviour.
+/// [`DeferredAnchor`]); one into another page links the block it names there,
+/// else the page (see [`link_cross_page_anchors`]).
 async fn resolve_link_names(
     ctx: &mut NameCtx<'_>,
     mut tx: CommandTx,
@@ -4377,10 +4383,7 @@ async fn resolve_link_names(
     let page_id = ctx.page_id;
     let mut links = InboundLinks::default();
     let mut resolved_base_links: HashMap<String, String> = HashMap::new();
-    // #1282 — count of DISTINCT full tokens whose `#…` sub-anchor was dropped to
-    // resolve to the base page. Surfaced as one aggregate warning (mirroring the
-    // block-ref-strip warning) so the lossy anchor drop is diagnosable.
-    let mut dropped_anchor_count: usize = 0;
+    let mut cross_page = Vec::new();
     for name in link_names {
         let (base, anchor) = split_wikilink_anchor(&name);
         // #2510 — the `^block-id` sub-anchor id, when this is an Obsidian
@@ -4439,22 +4442,111 @@ async fn resolve_link_names(
             continue;
         }
 
-        if anchor.is_some() {
-            dropped_anchor_count += 1;
+        if let Some(anchor) = anchor {
+            cross_page.push(CrossPageAnchor {
+                anchor: anchor.to_string(),
+                name,
+                page_id: resolved_ulid,
+            });
+            continue;
         }
         links.page_links.ids.insert(name, resolved_ulid);
     }
-    if dropped_anchor_count > 0 {
-        // #1282 — aggregate warning for the lossy anchor drop (mirrors the
-        // block-ref-strip warning style). The links still resolve to the page;
-        // only the `#heading` / cross-note `#^blockId` sub-anchor targeting is
-        // not applied.
-        ctx.warnings.push(format!(
-            "{dropped_anchor_count} wikilink block/heading anchors were dropped; links resolve to \
-             the page (Obsidian block-anchor targeting is not yet supported)"
+    link_cross_page_anchors(&mut tx, &mut links.page_links, cross_page, ctx.warnings).await?;
+    Ok((tx, links))
+}
+
+/// A link into another page (#5160 D10): `name` is `Page#anchor`, and
+/// `page_id` the page its base names.
+struct CrossPageAnchor {
+    anchor: String,
+    name: String,
+    page_id: String,
+}
+
+/// Link each of `anchors` to the block it names on its page (#5160 D10): the
+/// one heading whose text is the anchor, compared as the same-file pass
+/// compares it, or, for `^id`, the block of that id, which is the anchor an
+/// export writes for a ref to another page's block. An Obsidian `^name` names
+/// no block once its own file's import is done. Any other anchor links the
+/// page, and the anchors dropped so are counted in one warning (#1282). One
+/// read covers every page; `page_id` holds a page's whole subtree.
+async fn link_cross_page_anchors(
+    conn: &mut sqlx::SqliteConnection,
+    links: &mut PageLinks,
+    anchors: Vec<CrossPageAnchor>,
+    warnings: &mut Vec<String>,
+) -> Result<(), AppError> {
+    if anchors.is_empty() {
+        return Ok(());
+    }
+    let pages: HashSet<&str> = anchors.iter().map(|a| a.page_id.as_str()).collect();
+    let ids: HashSet<&str> = anchors
+        .iter()
+        .filter_map(|a| obsidian_block_anchor_id(&a.anchor))
+        .collect();
+    let pages_json = serde_json::to_string(&pages)?;
+    let ids_json = serde_json::to_string(&ids)?;
+    let candidates = sqlx::query_as!(
+        AnchorCandidate,
+        r#"SELECT id AS "id!", page_id AS "page_id!", COALESCE(content, '') AS "content!"
+               FROM blocks
+               WHERE block_type = 'content'
+                 AND deleted_at IS NULL
+                 AND page_id IN (SELECT value FROM json_each(?1))
+                 AND (ltrim(content) LIKE '#%' OR id IN (SELECT value FROM json_each(?2)))"#,
+        pages_json,
+        ids_json,
+    )
+    .fetch_all(&mut *conn)
+    .await?;
+    let mut dropped = 0;
+    for a in anchors {
+        if let Some(block) = anchor_block(&candidates, &a) {
+            links.blocks.insert(a.name, block.to_string());
+        } else {
+            dropped += 1;
+            links.ids.insert(a.name, a.page_id);
+        }
+    }
+    if dropped > 0 {
+        warnings.push(format!(
+            "{dropped} wikilink block/heading anchors were dropped; links resolve to the page \
+             (Obsidian block-anchor targeting is not yet supported)"
         ));
     }
-    Ok((tx, links))
+    Ok(())
+}
+
+/// A block of a page some link names by an anchor: a heading, or a block
+/// named by its id.
+struct AnchorCandidate {
+    id: String,
+    page_id: String,
+    content: String,
+}
+
+/// The block `a` names among `candidates`: on its page, the block of the `^id`
+/// or the only heading of the anchor's text.
+fn anchor_block<'a>(candidates: &'a [AnchorCandidate], a: &CrossPageAnchor) -> Option<&'a str> {
+    let block_id = obsidian_block_anchor_id(&a.anchor);
+    let norm = normalize_heading_anchor(&a.anchor);
+    let names = |c: &&AnchorCandidate| {
+        if let Some(id) = block_id {
+            c.id == id
+        } else {
+            obsidian_heading_text(&c.content)
+                .is_some_and(|text| normalize_heading_anchor(text) == norm)
+        }
+    };
+    let mut hits = candidates
+        .iter()
+        .filter(|c| c.page_id == a.page_id)
+        .filter(names);
+    match (hits.next(), hits.next()) {
+        (Some(block), None) => Some(block.id.as_str()),
+        _ => None,
+    }
 }
 
 /// #1446 Part B / #1921 — resolve inbound `[[Page Name]]` wiki-links to internal
@@ -4498,7 +4590,8 @@ async fn resolve_inbound_page_links(
 /// snapshot of the pages they may name: each body reads by [`read_link_body`]
 /// (#5160 D10), and the names read and `names` resolve by
 /// [`resolve_link_names`], so only a name no page matches is created. A body
-/// whose reading ties stays text, with a warning.
+/// whose reading ties stays text, and a label on a link that became a block
+/// ref is dropped, each with a warning.
 async fn resolve_page_refs(
     ctx: &mut NameCtx<'_>,
     mut tx: CommandTx,
@@ -4522,8 +4615,21 @@ async fn resolve_page_refs(
     }
     let names = read_names.into_iter().chain(names).collect();
     let (tx, mut links) = resolve_link_names(ctx, tx, names, &matches).await?;
+    let dropped_labels = readings
+        .values()
+        .filter(|(name, label)| label.is_some() && links.page_links.blocks.contains_key(name))
+        .count();
+    if dropped_labels > 0 {
+        ctx.warnings.push(dropped_labels_warning(dropped_labels));
+    }
     links.page_links.readings = readings;
     Ok((tx, links))
+}
+
+/// The warning for `n` link labels dropped with links that became block refs,
+/// which carry no label (#5160 D9).
+fn dropped_labels_warning(n: usize) -> String {
+    format!("{n} link label(s) were dropped: a block reference carries no label")
 }
 
 /// #1990 — snapshot the in-space live tag blocks ONCE, indexed by normalized
@@ -5362,12 +5468,14 @@ async fn fetch_anchor_block_content(
 ///     (scroll/focus-to-block) is reused verbatim.
 ///   * otherwise (marker not found anywhere in this document, or its owning
 ///     block was skipped) → fall back to a link to THIS page, mirroring #1282's
-///     dropped-anchor fallback. The one exception is an anchor-only
+///     dropped-anchor fallback, with its label unless that is `page_title`
+///     (#5160 D9). The one exception is an anchor-only
 ///     `[[#Heading]]` that matched no heading: it is left LITERAL with a
 ///     per-token "no page target" warning, exactly as before #2567.
 fn rewrite_anchor_tokens(
     current_content: &str,
     page_id: &str,
+    page_title: &str,
     created_block_ids: &[Option<String>],
     refs: &DocumentRefs,
     outcomes: &mut AnchorOutcomes,
@@ -5409,7 +5517,7 @@ fn rewrite_anchor_tokens(
                     block_ref(target_id)
                 } else {
                     outcomes.unresolved_block_anchors += 1;
-                    stored_page_link(page_id, label, None)
+                    stored_page_link(page_id, label, Some(page_title))
                 }
             } else if let Some(pending) = refs.links.pending_heading_anchors.get(name) {
                 if let Some(target_id) = refs
@@ -5426,7 +5534,7 @@ fn rewrite_anchor_tokens(
                 } else {
                     any_patched = true;
                     outcomes.unresolved_headings += 1;
-                    stored_page_link(page_id, label, None)
+                    stored_page_link(page_id, label, Some(page_title))
                 }
             } else {
                 whole.to_string()
@@ -5483,10 +5591,7 @@ fn push_anchor_warnings(warnings: &mut Vec<String>, outcomes: &AnchorOutcomes) {
         ));
     }
     if outcomes.dropped_labels > 0 {
-        warnings.push(format!(
-            "{} link label(s) were dropped: a block reference carries no label",
-            outcomes.dropped_labels
-        ));
+        warnings.push(dropped_labels_warning(outcomes.dropped_labels));
     }
 }
 
@@ -5540,6 +5645,7 @@ async fn resolve_anchor_links(
         let Some(new_content) = rewrite_anchor_tokens(
             &current_content,
             &page_id,
+            &ctx.page_title,
             created_block_ids,
             refs,
             &mut outcomes,
@@ -6454,6 +6560,7 @@ mod tests {
                 .map(|title| (title.clone(), (title.clone(), None)))
                 .collect(),
             ids: pages.clone(),
+            ..PageLinks::default()
         }
     }
 
