@@ -195,6 +195,8 @@ const RETURN_SHAPE: Readonly<Record<string, ReturnShape>> = {
   // #4549 — one `app_settings` row, observed by `get_sync_relay_settings`.
   set_sync_relay_settings: { idKey: HEADED_ID_KEY, attrs: [], lists: [] },
   delete_property_def: { idKey: HEADED_ID_KEY, attrs: [], lists: [] },
+  // Its `(block_id, key)` echo is the caller's own args; the snapshot pins the row.
+  delete_property: { idKey: HEADED_ID_KEY, attrs: [], lists: [] },
   // #5057 — the two attachment writers that need no blob. `attachments` is
   // outside the snapshot's five arrays, so `list_attachments` observes them.
   delete_attachment: { idKey: HEADED_ID_KEY, attrs: [], lists: [] },

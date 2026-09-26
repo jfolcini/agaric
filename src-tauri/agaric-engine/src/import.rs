@@ -414,9 +414,14 @@ fn split_task_syntax<'a>(
     (todo_state, priority, text)
 }
 
-/// A Logseq/Org planning line: `SCHEDULED: <…>` or `DEADLINE: <…>` first.
+/// A Logseq/Org planning line: `SCHEDULED:` or `DEADLINE:` and a `<`
+/// timestamp first. Prose such as `DEADLINE: when we're ready` is not one.
 fn is_planning_line(trimmed: &str) -> bool {
-    trimmed.starts_with("SCHEDULED:") || trimmed.starts_with("DEADLINE:")
+    ["SCHEDULED:", "DEADLINE:"].iter().any(|keyword| {
+        trimmed
+            .strip_prefix(keyword)
+            .is_some_and(|rest| rest.trim_start().starts_with('<'))
+    })
 }
 
 /// The properties a planning line writes (D7): `scheduled_date` for
@@ -1447,7 +1452,7 @@ impl<'a> Scan<'a> {
         if !is_planning_line(trimmed) {
             return false;
         }
-        let Some(properties) = parse_planning_line(trimmed) else {
+        let Some(mut properties) = parse_planning_line(trimmed) else {
             self.lossy.unreadable_planning += 1;
             return false;
         };
@@ -1456,7 +1461,22 @@ impl<'a> Scan<'a> {
             .last()
             .expect("a continuation line has an open block")
             .index;
-        self.blocks[top].properties.extend(properties);
+        let block = &mut self.blocks[top];
+        let repeat = |properties: &[(String, String)]| {
+            properties
+                .iter()
+                .find(|(key, _)| key == "repeat")
+                .map(|(_, rule)| rule.clone())
+        };
+        // A block repeats one way, as on one line: another rule is refused.
+        if let Some(known) = repeat(&block.properties) {
+            if repeat(&properties).is_some_and(|rule| rule != known) {
+                self.lossy.unreadable_planning += 1;
+                return false;
+            }
+            properties.retain(|(key, _)| key != "repeat");
+        }
+        block.properties.extend(properties);
         true
     }
 
@@ -1762,7 +1782,7 @@ fn append_continuation_line(
         }
         (dedent(line, width).to_string(), 0)
     } else {
-        strip_block_refs_counted(unescape_continuation(line.trim_start()))
+        strip_block_refs_counted(unescape_continuation(line.trim_start(), ParseMode::Import))
     };
     // #1924 — a continuation line inside a fence makes the owning block code
     // (e.g. the fenced body lines that follow a `- ```rust` bullet, and the
@@ -1800,7 +1820,7 @@ fn append_source_line(
     last.content.push_str(if line_is_code {
         unescape_code_line(text)
     } else {
-        unescape_continuation(text)
+        unescape_continuation(text, ParseMode::Source)
     });
     if line_is_code {
         last.is_code = true;
@@ -1833,29 +1853,40 @@ fn indent_columns(line: &str) -> usize {
 }
 
 /// `true` when `line`, written as a block's continuation line, would read as
-/// something else: a bullet, a heading, a `key:: value` property or, on
-/// import, a `SCHEDULED:` / `DEADLINE:` planning line (D7). The renderer
-/// backslash-escapes such a line and `unescape_continuation` reverses it
-/// (#2716). Leading whitespace and backslashes are looked past, so the escape
-/// is injective: `\- x` is escaped again rather than losing its backslash on
-/// the way back.
+/// something else: a bullet, a heading or a `key:: value` property. The
+/// renderer backslash-escapes such a line and `unescape_continuation` reverses
+/// it (#2716). Leading whitespace and backslashes are looked past, so the
+/// escape is injective: `\- x` is escaped again rather than losing its
+/// backslash on the way back.
 pub fn continuation_line_is_ambiguous(line: &str) -> bool {
     let body = line.trim_start_matches(|c: char| c.is_whitespace() || c == '\\');
-    is_bullet_line(body)
-        || heading_level(body).is_some()
-        || line_is_property_shaped(body)
-        || is_planning_line(body)
+    is_bullet_line(body) || heading_level(body).is_some() || line_is_property_shaped(body)
+}
+
+/// `true` when an export must backslash-escape `line`, a continuation line, so
+/// an import does not read it as a `SCHEDULED:` / `DEADLINE:` planning line
+/// (D7). Source mode and the clipboard read none, so they neither write nor
+/// remove it, as with [`needs_task_syntax_escape`]. Injective as
+/// [`continuation_line_is_ambiguous`] is.
+pub fn needs_planning_line_escape(line: &str) -> bool {
+    is_planning_line(line.trim_start_matches(|c: char| c.is_whitespace() || c == '\\'))
 }
 
 /// A continuation line's text with the renderer's escape, if any, removed:
-/// one leading `\` whose payload is [`continuation_line_is_ambiguous`]. An
-/// ordinary line that begins with `\` (a LaTeX command, say) is kept verbatim.
-/// The renderer anchors the `\` before the line's own leading whitespace, so
-/// an indented ambiguous line reaches here as `\<ws><token>` and the payload
-/// is matched on its trimmed shape.
-fn unescape_continuation(text: &str) -> &str {
+/// one leading `\` whose payload is [`continuation_line_is_ambiguous`], or on
+/// import [`needs_planning_line_escape`]. An ordinary line that begins with
+/// `\` (a LaTeX command, say) is kept verbatim. The renderer anchors the `\`
+/// before the line's own leading whitespace, so an indented ambiguous line
+/// reaches here as `\<ws><token>` and the payload is matched on its trimmed
+/// shape.
+fn unescape_continuation(text: &str, mode: ParseMode) -> &str {
     match text.strip_prefix('\\') {
-        Some(rest) if continuation_line_is_ambiguous(rest) => rest,
+        Some(rest)
+            if continuation_line_is_ambiguous(rest)
+                || (mode == ParseMode::Import && needs_planning_line_escape(rest)) =>
+        {
+            rest
+        }
         _ => text,
     }
 }
@@ -5997,8 +6028,8 @@ mod tests_task_syntax_5160 {
     /// warning for all of them: an unparseable date, a warning period, a
     /// repeater the repeat rule cannot express, two repeaters that differ, a
     /// `CLOSED:` entry, and a bare keyword. A line that does not open with
-    /// `SCHEDULED:` or `DEADLINE:`, and a planning-shaped paragraph of its
-    /// own, are text with no warning.
+    /// `SCHEDULED:` or `DEADLINE:` and a `<` timestamp, and a planning-shaped
+    /// paragraph of its own, are text with no warning.
     #[test]
     fn an_unreadable_planning_line_stays_text_with_a_warning() {
         let lines = [
@@ -6008,7 +6039,7 @@ mod tests_task_syntax_5160 {
             "SCHEDULED: <2026-10-01 Thu +1w> DEADLINE: <2026-10-02 Fri +2w>",
             "SCHEDULED: <2026-10-01 Thu> CLOSED: [2026-10-01 Thu 10:00]",
             "SCHEDULED: <2026-10-01 Thu> DEADLINE:",
-            "SCHEDULED: 2026-10-01",
+            "DEADLINE:<when>",
         ];
         let md: String = lines
             .iter()
@@ -6033,15 +6064,53 @@ mod tests_task_syntax_5160 {
         );
 
         let out = parse_logseq_markdown(
-            "SCHEDULED: <2026-10-01 Thu>\n\n- a\n  CLOSED: [2026-10-01 Thu] SCHEDULED: <2026-10-01 Thu>\n",
+            "SCHEDULED: <2026-10-01 Thu>\n\n- a\n  CLOSED: [2026-10-01 Thu] SCHEDULED: <2026-10-01 Thu>\n\
+             - Deploy plan\n  DEADLINE: when we're ready\n  SCHEDULED: 2026-10-01\n",
         );
         assert_eq!(out.blocks[0].content, "SCHEDULED: <2026-10-01 Thu>");
         assert_eq!(
             out.blocks[1].content,
             "a\nCLOSED: [2026-10-01 Thu] SCHEDULED: <2026-10-01 Thu>"
         );
+        assert_eq!(
+            out.blocks[2].content,
+            "Deploy plan\nDEADLINE: when we're ready\nSCHEDULED: 2026-10-01"
+        );
         assert!(out.blocks.iter().all(|b| b.properties.is_empty()));
         assert!(out.warnings.is_empty(), "{:?}", out.warnings);
+    }
+
+    /// Logseq writes `SCHEDULED:` and `DEADLINE:` on lines of their own: a
+    /// block repeats one way, so a second line whose repeater is not the
+    /// block's stays text with the warning, as the pair on one line does, and
+    /// the same repeater twice is read.
+    #[test]
+    fn a_second_planning_line_with_another_repeater_stays_text() {
+        let out = parse_logseq_markdown(
+            "- TODO a\n  SCHEDULED: <2026-10-01 Thu +1w>\n  DEADLINE: <2026-10-02 Fri +2w>\n\
+             - TODO b\n  SCHEDULED: <2026-10-01 Thu +1w>\n  DEADLINE: <2026-10-02 Fri +1w>\n",
+        );
+        let property = |block: &ParsedBlock, key: &str| -> Vec<String> {
+            block
+                .properties
+                .iter()
+                .filter(|(k, _)| k == key)
+                .map(|(_, v)| v.clone())
+                .collect()
+        };
+        let [a, b] = &out.blocks[..] else {
+            panic!("{:?}", out.blocks);
+        };
+        assert_eq!(a.content, "a\nDEADLINE: <2026-10-02 Fri +2w>");
+        assert_eq!(property(a, "repeat"), ["+1w"]);
+        assert_eq!(property(a, "due_date"), Vec::<String>::new());
+        assert_eq!(b.content, "b");
+        assert_eq!(property(b, "due_date"), ["2026-10-02"]);
+        assert_eq!(property(b, "repeat"), ["+1w"]);
+        assert_eq!(
+            out.warnings,
+            ["1 SCHEDULED/DEADLINE line(s) could not be read and were kept as text"]
+        );
     }
 
     /// Export → Import stays the identity (D7): the export escapes a first line
@@ -6083,13 +6152,17 @@ mod tests_task_syntax_5160 {
         for text in ["todo x", "TODO: x", "[#D] x", "x TODO", "\\alpha", ""] {
             assert!(!super::needs_task_syntax_escape(text), "{text:?}");
         }
-        assert!(super::continuation_line_is_ambiguous(
-            "SCHEDULED: <2026-10-01 Thu>"
-        ));
-        assert!(super::continuation_line_is_ambiguous("  \\DEADLINE: x"));
-        assert!(!super::continuation_line_is_ambiguous(
-            "CLOSED: [2026-10-01 Thu]"
-        ));
+        for line in ["SCHEDULED: <2026-10-01 Thu>", "  \\DEADLINE: <2026-10-01>"] {
+            assert!(super::needs_planning_line_escape(line), "{line:?}");
+            assert!(!super::continuation_line_is_ambiguous(line), "{line:?}");
+        }
+        for line in [
+            "CLOSED: [2026-10-01]",
+            "DEADLINE: x",
+            "\\SCHEDULED: 2026-10-01",
+        ] {
+            assert!(!super::needs_planning_line_escape(line), "{line:?}");
+        }
     }
 
     /// Import only (D7): a paste and the buffer keep the keyword, the cookie
@@ -6108,6 +6181,16 @@ mod tests_task_syntax_5160 {
             );
             assert!(blocks[0].properties.is_empty(), "{parser}");
         }
+        // So is a typed `\SCHEDULED:` line, backslash and all.
+        let md = "- a\n  \\SCHEDULED: <2026-10-01 Thu>\n";
+        assert_eq!(
+            parse_source_outline(md).blocks[0].content,
+            "a\n\\SCHEDULED: <2026-10-01 Thu>"
+        );
+        assert_eq!(
+            parse_pasted_text(md)[0].content,
+            "a\n\\SCHEDULED: <2026-10-01 Thu>"
+        );
         // The checkbox is read by all three, and `[#A]` stays text after it
         // outside an import.
         let md = "- [/] [#A] x";
@@ -6149,8 +6232,6 @@ mod tests_line_probes_5160 {
             "######",
             "key:: value",
             "todo_state:: TODO",
-            "SCHEDULED: <2026-10-01 Thu>",
-            "DEADLINE: <2026-10-01 Thu>",
             "\\- already escaped",
             "\\\\ - two backslashes",
             "\\* b",

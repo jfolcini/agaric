@@ -693,20 +693,27 @@ describe('handlePaste — pasted text goes to the block path, spliced (#5160 D4)
   })
 
   // #5160 follow-up, item 21 — `text/html` with no `text/plain`: the literal
-  // path has nothing to insert, so the selection stays rather than being
-  // replaced by nothing.
-  it('leaves a selection in a table cell alone when the HTML paste has no plain text', async () => {
+  // path inserts the blocks' text, one per line, over the selection, rather
+  // than replacing it by nothing or dropping the paste.
+  it('pastes the blocks’ text into a table cell when the HTML paste has no plain text', async () => {
     const ed = await buildEditor(TABLE_DOC)
     editor = ed
     const end = endOf(ed, 'one')
     ed.commands.setTextSelection({ from: end - 3, to: end })
-    htmlBodyToOutline.mockReturnValue([{ content: '# Title', depth: 0 }])
+    htmlBodyToOutline.mockReturnValue([
+      { content: '# Title', depth: 0 },
+      { content: 'Body', depth: 0 },
+    ])
 
-    expect(paste(ed, '', '<h1>Title</h1>')).toBe(true)
-    await vi.waitFor(() => expect(htmlBodyToOutline).toHaveBeenCalled())
+    expect(paste(ed, '', '<h1>Title</h1><p>Body</p>')).toBe(true)
+    await vi.waitFor(() => expect(ed.state.doc.textContent).toContain('Body'))
 
     expect(dispatchBlockEvent).not.toHaveBeenCalled()
-    expect(ed.state.doc.child(0).child(1).child(0).textContent).toBe('one')
+    expect(ed.state.doc.child(0).child(1).child(0).child(0).toJSON().content).toEqual([
+      { type: 'text', text: '# Title' },
+      { type: 'hardBreak' },
+      { type: 'text', text: 'Body' },
+    ])
   })
 
   it('pastes as literal lines after Ctrl+Shift+V: no blocks, no markdown read', async () => {

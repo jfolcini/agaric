@@ -44,6 +44,11 @@ describe('matchBlockLinkItem', () => {
     expect(matchBlockLinkItem(items, 'FOO')).toBeNull()
   })
 
+  it('never guesses between two pages of the same exact title either', () => {
+    const items = [page('P1', 'Foo'), page('P2', 'Foo'), create]
+    expect(matchBlockLinkItem(items, 'Foo')).toBeNull()
+  })
+
   it('resolves an exact alias after the titles, never a prefix-only alias hit', () => {
     const items = [alias('P9', 'Roadmap', 'rm'), page('P1', 'Rm Notes'), create]
     expect(matchBlockLinkItem(items, 'RM')?.id).toBe('P9')

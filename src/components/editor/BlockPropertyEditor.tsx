@@ -516,10 +516,9 @@ export function BlockPropertyEditor({
               // though they are filtered out of the chip row upstream by
               // `useExtraBlockProperties` and do not reach here in practice.
               // For the LIFECYCLE keys (`created_at` / `completed_at` /
-              // `repeat-*`) neither route works — `delete_property` refuses
-              // them by name and the all-null write is rejected as
-              // non-reserved — so they keep failing exactly as before rather
-              // than gaining a new, equally-rejected code path.
+              // `repeat-*`) the all-null write is rejected as non-reserved, and
+              // `delete_property` refuses all but the recurrence rule by name,
+              // so they keep failing exactly as before.
               if (newValue === '' && !NON_DELETABLE_PROPERTIES.has(editingProp.key)) {
                 try {
                   unwrap(await commands.deleteProperty(blockId, editingProp.key))

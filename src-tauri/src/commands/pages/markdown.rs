@@ -466,8 +466,9 @@ fn rewrite_logseq_labelled_links(content: &str) -> std::borrow::Cow<'_, str> {
 /// `rewrite_inbound_tags` uses.
 ///
 /// A `[[Page|label]]` keeps its label as `[[ULID|label]]` unless the label is
-/// the target's title in `titles` (#5160 D9); Logseq's `[label]([[Page]])` is
-/// read as the same token.
+/// the target's title in `titles` (#5160 D9). Logseq's `[label]([[Page]])` is
+/// normalised to that token first, whether or not `Page` resolves, so one that
+/// stays text stays as `[[Page|label]]`.
 fn rewrite_inbound_page_links(
     content: &str,
     links: &PageLinks,
@@ -691,7 +692,8 @@ fn resolve_ulids_for_export(
 }
 
 /// Replace `#[ULID]` with `#tagname` and `[[ULID]]` with `[[Page Title]]`; an
-/// id missing from its map stays raw.
+/// id missing from its map stays raw, and so does an escaped `\#[ULID]`, after
+/// which no name reads back as the tag (#5160 N3).
 fn humanise_tag_and_page_refs(
     content: &str,
     tag_names: &HashMap<String, String>,
@@ -713,7 +715,10 @@ fn humanise_tag_and_page_refs(
     for caps in TAG_REF_RE.captures_iter(content) {
         let m = caps.get(0).expect("group 0 always present");
         result.push_str(&content[last..m.start()]);
-        match tag_names.get(&caps[1]) {
+        match tag_names
+            .get(&caps[1])
+            .filter(|_| !is_escaped(content, m.start()))
+        {
             Some(name) if tag_reads_back_bare(&result, name, &content[m.end()..]) => {
                 result.push('#');
                 result.push_str(name);
@@ -723,7 +728,7 @@ fn humanise_tag_and_page_refs(
                 result.push_str(name);
                 result.push_str("]]");
             }
-            None => result.push_str(m.as_str()), // Keep original if not found
+            None => result.push_str(m.as_str()),
         }
         last = m.end();
     }
@@ -2425,12 +2430,23 @@ pub struct PastedBlock {
 }
 
 impl PasteInput {
-    fn into_blocks(self) -> Vec<import::ParsedBlock> {
+    /// The blocks the input holds. After text (#5160 D4) the first of an HTML
+    /// paste's blocks is the text it was pasted as, so its `- [ ] ` checkbox
+    /// stays text as a plain item's `- ` does.
+    fn into_blocks(self, after_text: bool) -> Vec<import::ParsedBlock> {
         match self {
             Self::Text { text } => import::parse_pasted_text(&text),
             Self::Blocks { blocks } => blocks
                 .into_iter()
-                .map(|block| import::pasted_block(block.content, block.depth as usize))
+                .enumerate()
+                .map(|(at, block)| {
+                    let depth = block.depth as usize;
+                    if at == 0 && after_text {
+                        import::verbatim_block(block.content, depth)
+                    } else {
+                        import::pasted_block(block.content, depth)
+                    }
+                })
                 .collect(),
         }
     }
@@ -2568,7 +2584,7 @@ pub async fn paste_blocks_inner(
     splice: Option<PasteSplice>,
 ) -> Result<PastedBlocks, AppError> {
     let anchor_id = BlockId::from_string(anchor_block_id.into_string())?;
-    let mut blocks = input.into_blocks();
+    let mut blocks = input.into_blocks(splice.as_ref().is_some_and(|s| !s.before.is_empty()));
     if blocks.is_empty() {
         return Err(AppError::validation("there is nothing to paste".into()));
     }
@@ -2990,7 +3006,8 @@ fn list_marker_for(
 /// re-prefixed with `- `), which `import::parse_logseq_markdown` folds back
 /// into the same block. A continuation line that would otherwise be read as
 /// something else — a bullet of any marker, a heading or a `key:: value`
-/// property ([`import::continuation_line_is_ambiguous`]) — is
+/// property ([`import::continuation_line_is_ambiguous`]), and in an export a
+/// planning line ([`import::needs_planning_line_escape`]) — is
 /// backslash-escaped so the importer's continuation branch keeps it literal
 /// (and reverses the escape).
 ///
@@ -3060,6 +3077,7 @@ fn push_block_bullet(
             mode != RenderMode::Export && import::needs_anchor_line_escape(line)
         } else {
             import::continuation_line_is_ambiguous(line)
+                || (mode == RenderMode::Export && import::needs_planning_line_escape(line))
         };
         if needs_escape {
             output.push('\\');
@@ -3479,9 +3497,10 @@ fn rewrite_relative_md_links(content: &str, dir: &str) -> String {
 }
 
 /// The page title a relative `.md` link destination imports as, resolved
-/// against `dir`: `Other%20note.md` from `notes` is `notes/Other note`, and
-/// `../Top.md` is `Top`. `None` for a URL, an absolute path, another file type
-/// or a path that climbs out of the vault.
+/// against `dir`, whose first folder is the vault's: `Other%20note.md` from
+/// `vault/notes` is `vault/notes/Other note`, and `../Top.md` is `vault/Top`.
+/// `None` for a URL, an absolute path, another file type or a path that climbs
+/// out of the vault.
 fn relative_md_link_title(dest: &str, dir: &str) -> Option<String> {
     let dest = percent_decode(dest).replace('\\', "/");
     if dest.contains("://") || dest.starts_with('/') || !dest.to_ascii_lowercase().ends_with(".md")
@@ -3493,9 +3512,10 @@ fn relative_md_link_title(dest: &str, dir: &str) -> Option<String> {
     for segment in stem.split('/') {
         match segment {
             "" | "." => {}
-            ".." => {
-                segments.pop()?;
+            ".." if segments.len() > 1 => {
+                segments.pop();
             }
+            ".." => return None,
             _ => segments.push(segment),
         }
     }
@@ -6670,7 +6690,17 @@ mod tests {
             relative_md_link_title("../Top.md", "vault/notes").as_deref(),
             Some("vault/Top")
         );
+        assert_eq!(
+            relative_md_link_title("../../Top.md", "vault/a/b").as_deref(),
+            Some("vault/Top")
+        );
+        assert_eq!(
+            relative_md_link_title("../../Out.md", "vault/a"),
+            None,
+            "the vault's root is its first folder"
+        );
         for dest in [
+            "../Out.md",
             "../../Out.md",
             "https://x.dev/a.md",
             "/abs.md",

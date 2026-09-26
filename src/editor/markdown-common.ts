@@ -26,6 +26,11 @@ export function blockLinkToken(id: string, label?: string): string {
   return label ? `[[${id}|${label}]]` : `[[${id}]]`
 }
 
+/** `text` with each stored `[[ULID|label]]` read as its label (#5160 D9). */
+export function readLinkLabels(text: string): string {
+  return text.replace(/\[\[[0-9A-Z]{26}\|([^\]\n]+)\]\]/g, '$1')
+}
+
 /**
  * A link label as it can be stored (#5160 D9): without `]`, which would end the
  * token and turn it into text for every reader, and trimmed; empty is none.

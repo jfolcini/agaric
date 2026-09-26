@@ -477,10 +477,10 @@ async fn delete_property_space_clears_space_id_533() {
 }
 
 /// #658 — the public `delete_property` command must reject system-managed
-/// *lifecycle* built-in keys (`created_at` / `completed_at` / `repeat-*`),
-/// which are written only by internal state-transition helpers. Deleting
-/// them from FE/MCP would break recurrence bookkeeping. User-settable
-/// properties remain freely deletable.
+/// *lifecycle* built-in keys (`created_at` / `completed_at` / `repeat-seq` /
+/// `repeat-origin`), which are written only by internal state-transition
+/// helpers. Deleting them from FE/MCP would break recurrence bookkeeping.
+/// User-settable properties remain freely deletable.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn delete_property_rejects_lifecycle_builtin_key_658() {
     let (pool, _dir) = test_pool().await;
@@ -540,11 +540,13 @@ async fn delete_property_rejects_lifecycle_builtin_key_658() {
         "created_at must survive a rejected delete, got: {props:?}"
     );
 
-    // A `repeat-*` lifecycle key is likewise rejected.
-    let err = delete_property_inner(&pool, DEV, &mat, block.id.as_str().into(), "repeat".into())
-        .await
-        .expect_err("deleting a repeat-* key must be rejected");
-    assert!(matches!(err, AppError::Validation { .. }));
+    // So are the keys recurrence writes on each occurrence.
+    for key in ["completed_at", "repeat-seq", "repeat-origin"] {
+        let err = delete_property_inner(&pool, DEV, &mat, block.id.as_str().into(), key.into())
+            .await
+            .expect_err("deleting a key recurrence writes must be rejected");
+        assert!(matches!(err, AppError::Validation { .. }), "{key}: {err:?}");
+    }
 
     // Deleting a user-settable property like "effort" still works.
     set_property_inner(
@@ -595,6 +597,75 @@ async fn delete_property_rejects_lifecycle_builtin_key_658() {
     )
     .await
     .unwrap();
+}
+
+/// `/repeat remove` and `/repeat-limit remove`: the recurrence rule is the
+/// user's to remove, and a task without it no longer repeats.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn delete_property_removes_the_recurrence_rule() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let block = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "weekly review".into(),
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    let id = block.id.as_str();
+    set_todo_state_inner(&pool, DEV, &mat, id.into(), Some("TODO".into()))
+        .await
+        .unwrap();
+    set_due_date_inner(&pool, DEV, &mat, id.into(), Some("2025-06-14".into()))
+        .await
+        .unwrap();
+    set_repeat_property(&pool, DEV, &mat, id, "weekly").await;
+    let (until, count) = (Some("2026-01-01".to_string()), Some(3.0));
+    for (key, date, num) in [("repeat-until", until, None), ("repeat-count", None, count)] {
+        set_property_inner(
+            &pool,
+            DEV,
+            &mat,
+            id.into(),
+            key.into(),
+            None,
+            num,
+            date,
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+    }
+    mat.flush_background().await.unwrap();
+
+    for key in ["repeat", "repeat-until", "repeat-count"] {
+        delete_property_inner(&pool, DEV, &mat, id.into(), key.into())
+            .await
+            .unwrap_or_else(|err| panic!("{key}: {err:?}"));
+    }
+    mat.flush_background().await.unwrap();
+    let props = get_properties_inner(&pool, block.id.clone()).await.unwrap();
+    assert!(
+        !props.iter().any(|p| p.key.starts_with("repeat")),
+        "{props:?}"
+    );
+
+    set_todo_state_inner(&pool, DEV, &mat, id.into(), Some("DONE".into()))
+        .await
+        .unwrap();
+    mat.flush_background().await.unwrap();
+    let blocks: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM blocks WHERE deleted_at IS NULL")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(blocks, 1, "completing it creates no next occurrence");
+    mat.shutdown();
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
