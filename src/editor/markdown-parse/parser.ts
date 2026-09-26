@@ -307,7 +307,9 @@ export function parseHeading(
   // `[^\n]` rather than `.` for the content: `.` excludes CR (and U+2028/9), so
   // a `.`-matched production silently fails on a line holding one — see
   // `splitLines`. Lines never contain `\n`, so the two are otherwise identical.
-  const headingMatch = line.match(/^(#{1,6})[ \t]([^\n]*)$/)
+  // A line of only the `#` run is an empty heading, as `import::heading_level`
+  // reads it.
+  const headingMatch = line.match(/^(#{1,6})(?:[ \t]([^\n]*))?$/)
   if (!headingMatch) return null
   const level = headingMatch[1]?.length as number
   // A hardBreak inside a heading serializes as an odd trailing backslash run
@@ -315,7 +317,7 @@ export function parseHeading(
   // continuations into the heading's inline content — mirroring parseParagraph
   // and collectListItem — so Shift+Enter inside a heading round-trips as ONE
   // heading instead of splitting the block and leaving a literal stray `\`.
-  const { textLines, next } = collectHardBreakContinuations(lines, headingMatch[2] as string, i + 1)
+  const { textLines, next } = collectHardBreakContinuations(lines, headingMatch[2] ?? '', i + 1)
   const inlineNodes = parseHardBreakLines(textLines, depth)
   const block: HeadingNode =
     inlineNodes.length === 0

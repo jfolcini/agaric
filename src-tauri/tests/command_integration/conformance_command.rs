@@ -32,7 +32,7 @@
 use super::common::*;
 use super::conformance::{resolve_op_arg_id, resolve_op_ref_label};
 use super::conformance_query::{PROJECTING_STEP, PROPERTY_DEF_ATTRS, relabel_token, row_token};
-use agaric_core::ulid::{AttachmentId, BlockId};
+use agaric_core::ulid::{ActiveBlockId, AttachmentId, BlockId};
 use agaric_store::op::OpRef;
 use serde::Serialize;
 use serde_json::{Value, json};
@@ -215,6 +215,9 @@ const RETURN_SHAPE: &[(&str, &str, &[&str], &[&str])] = &[
     // `get_sync_relay_settings` step that follows.
     ("set_sync_relay_settings", HEADED_ID_KEY, &[], &[]),
     ("delete_property_def", HEADED_ID_KEY, &[], &[]),
+    // Its `(block_id, key)` echo is the caller's own args; the row it removed
+    // is the snapshot's to pin.
+    ("delete_property", HEADED_ID_KEY, &[], &[]),
     // #5057 — the two attachment writers that need no blob. Both answer `()`,
     // and `attachments` is outside the snapshot's five arrays, so the
     // `list_attachments` step is what observes them.
@@ -490,6 +493,16 @@ pub(super) async fn apply_op_via_command(
             .await,
         ),
         "delete_property_def" => to_json(delete_property_def_inner(pool, req_str("key")).await),
+        "delete_property" => to_json(
+            delete_property_inner(
+                pool,
+                DEV,
+                mat,
+                ActiveBlockId::from_trusted_active(block_id().as_str()),
+                req_str("key"),
+            )
+            .await,
+        ),
         // #5057 — positional undo. `pageId` is a label like any other block
         // arg; `undoDepth` is an ORDINAL ("the newest undoable op on this
         // page"), which is why this one is spellable where the ref-addressed
@@ -1111,7 +1124,7 @@ mod tests {
     /// vice versa, and the count is the one this module claims — so a
     /// mutating command cannot join one table without the other, and cannot
     /// join at all without this number moving.
-    const MUTATING_ARM_COUNT: usize = 42;
+    const MUTATING_ARM_COUNT: usize = 43;
 
     #[test]
     fn the_dispatcher_and_the_return_shape_table_name_the_same_commands() {

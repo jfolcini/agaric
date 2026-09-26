@@ -994,7 +994,7 @@ function escapeLeadingBlockMarker(line: string): string {
   return (
     line
       .replace(/^( *)(\d+)\. /, '$1$2\\. ')
-      .replace(/^(#{1,6})([ \t])/, '\\$1$2')
+      .replace(/^(#{1,6})([ \t]|$)/, '\\$1$2')
       .replace(/^( *)- /, '$1\\- ')
       // Horizontal rule: a line of only 3+ dashes (`/^-{3,}$/`). Escaping the
       // first dash (`\---`) drops out of the rule pattern; the parser unescapes

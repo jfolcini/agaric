@@ -120,11 +120,11 @@ const NUM_RUNS = Number(process.env['SWEEP_RUNS'] ?? 300)
 
 /**
  * Text alphabet: the mark/block delimiters of the locked grammar PLUS the
- * `$` / `!` / digit / paren chars behind the seam-escape fixes, so the
- * fixpoint property keeps re-exploring exactly the collision space the audit
- * findings came from.
+ * `$` / `!` / digit / paren chars behind the seam-escape fixes, and a tab
+ * (`#\t` is a heading marker), so the fixpoint property keeps re-exploring
+ * exactly the collision space the audit findings came from.
  */
-const INTERESTING_CHARS = 'abX 012*`#[\\]()_|~=<>u$!'
+const INTERESTING_CHARS = 'abX 012*`#[\\]()_|~=<>u$!\t'
 
 const arbText: fc.Arbitrary<string> = fc
   .array(fc.constantFrom(...INTERESTING_CHARS.split('')), { minLength: 1, maxLength: 8 })

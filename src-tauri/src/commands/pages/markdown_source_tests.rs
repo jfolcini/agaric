@@ -134,10 +134,14 @@ fn arb_line() -> impl Strategy<Value = String> {
         "", "- ", "-", "1. ", "* ", "+ ", "1) ", "-\t", "# ", "## ", "[ ] ", "[x] ", "[/] ",
         "[-] ", "\\", "\\- ", "\\* ", "\\## ", "\\[ ] ", "  ",
     ];
+    // A planning line, which only an import reads (D7), bare and escaped.
+    const PLANNING: [&str; 2] = ["SCHEDULED", "\\DEADLINE"];
     prop_oneof![
         4 => (proptest::sample::select(&PREFIXES[..]), arb_prose())
             .prop_map(|(prefix, prose)| format!("{prefix}{prose}")),
         1 => ("[a-z][a-z_-]{0,5}", arb_prose()).prop_map(|(key, value)| format!("{key}:: {value}")),
+        1 => (proptest::sample::select(&PLANNING[..]), arb_prose())
+            .prop_map(|(keyword, prose)| format!("{keyword}: <2026-10-01> {prose}")),
     ]
 }
 
@@ -505,6 +509,24 @@ fn a_last_line_the_anchor_makes_property_shaped_reads_back_as_text() {
     assert_eq!(block.content, "a\nkey::", "md:\n{md}");
     assert_eq!(block.block_anchor.as_deref(), Some(A), "md:\n{md}");
     assert!(block.properties.is_empty(), "md:\n{md}");
+}
+
+/// Only an import reads a planning line (D7), so the buffer and a copy write
+/// one, and a `\SCHEDULED:` the user typed, as the text it is.
+#[test]
+fn a_planning_line_is_written_as_text_in_the_buffer_and_a_copy() {
+    const A: &str = "01J0000000000000000000000A";
+    for content in [
+        "a\nSCHEDULED: <2026-10-01 Thu>",
+        "a\n\\DEADLINE: <2026-10-01 Thu>",
+    ] {
+        let data = page_data(vec![row(A, PAGE, 1, content)]);
+        let lines = content.replace('\n', "\n  ");
+        let md = render_page_source(&data);
+        assert!(md.starts_with(&format!("- {lines} ^{A}")), "md:\n{md}");
+        let copy = render_clipboard_source(&data, &[A.into()], true).unwrap();
+        assert_eq!(copy, format!("- {lines}\n"));
+    }
 }
 
 const PROJECT: &str = "01J00000000000000000PAGEP1";

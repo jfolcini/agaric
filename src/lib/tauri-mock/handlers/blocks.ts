@@ -1308,7 +1308,17 @@ export const blocksHandlers = {
         `can only paste after a content block, not a '${String(anchor['block_type'])}'`,
       )
     }
-    const parsed = input.kind === 'text' ? parseOutline(input.text) : input.blocks.map(pastedBlock)
+    // `PasteInput::into_blocks`: after text an HTML paste's first block is the
+    // text it was pasted as, its `- [ ] ` included.
+    const afterText = splice !== null && splice.before !== ''
+    const parsed =
+      input.kind === 'text'
+        ? parseOutline(input.text)
+        : input.blocks.map((block, at) =>
+            at === 0 && afterText
+              ? { content: block.content, depth: block.depth }
+              : pastedBlock(block),
+          )
     if (parsed.length === 0) throw validationRejection('nothing to paste')
     const planned = splice ? joinSplice(parsed, splice) : parsed
     const parentId = (anchor['parent_id'] as string | null) ?? null

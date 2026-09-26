@@ -1,0 +1,216 @@
+{
+  "description": "#658 — `delete_property` removes the recurrence rule a user set (`repeat`, `repeat-count`, as `/repeat remove` and `/repeat-limit remove` do) and refuses the keys only state transitions and recurrence write (`created_at`, `completed_at`, `repeat-seq`, `repeat-origin`), leaving a refused row in place. The mock used to accept every one.",
+  "expected": {
+    "block_tags": [],
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Home",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B1",
+        "page_id": "B1",
+        "parent_id": null,
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "weekly review",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B2",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      }
+    ],
+    "op_log_digest": {
+      "count": 5,
+      "ops": [
+        {
+          "key": "repeat",
+          "op_type": "set_property"
+        },
+        {
+          "key": "repeat-count",
+          "op_type": "set_property"
+        },
+        {
+          "key": "repeat-seq",
+          "op_type": "set_property"
+        },
+        {
+          "op_type": "delete_property"
+        },
+        {
+          "op_type": "delete_property"
+        }
+      ]
+    },
+    "page_links": [],
+    "properties": [
+      {
+        "block_id": "B2",
+        "key": "repeat-seq",
+        "value": 1.0,
+        "value_type": "Num"
+      }
+    ]
+  },
+  "expected_ops": [
+    {
+      "code": null,
+      "error": null,
+      "name": "remove_the_repeat_rule",
+      "returns": ["delete_property"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "remove_the_repeat_limit",
+      "returns": ["delete_property"]
+    },
+    {
+      "code": null,
+      "error": "validation",
+      "name": "repeat_seq_is_refused",
+      "returns": []
+    },
+    {
+      "code": null,
+      "error": "validation",
+      "name": "repeat_origin_is_refused",
+      "returns": []
+    },
+    {
+      "code": null,
+      "error": "validation",
+      "name": "created_at_is_refused",
+      "returns": []
+    },
+    {
+      "code": null,
+      "error": "validation",
+      "name": "completed_at_is_refused",
+      "returns": []
+    }
+  ],
+  "name": "delete_property_system_managed",
+  "ops": [
+    {
+      "args": {
+        "blockId": "S2",
+        "key": "repeat",
+        "value": {
+          "value_text": "weekly"
+        }
+      },
+      "command": "set_property"
+    },
+    {
+      "args": {
+        "blockId": "S2",
+        "key": "repeat-count",
+        "value": {
+          "value_num": 3
+        }
+      },
+      "command": "set_property"
+    },
+    {
+      "args": {
+        "blockId": "S2",
+        "key": "repeat-seq",
+        "value": {
+          "value_num": 1
+        }
+      },
+      "command": "set_property"
+    },
+    {
+      "args": {
+        "blockId": "S2",
+        "key": "repeat"
+      },
+      "command": "delete_property",
+      "name": "remove_the_repeat_rule",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockId": "S2",
+        "key": "repeat-count"
+      },
+      "command": "delete_property",
+      "name": "remove_the_repeat_limit",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockId": "S2",
+        "key": "repeat-seq"
+      },
+      "command": "delete_property",
+      "comment": "Each occurrence's sequence number is recurrence bookkeeping: refused, and the row stays.",
+      "expect_error": "validation",
+      "name": "repeat_seq_is_refused",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockId": "S2",
+        "key": "repeat-origin"
+      },
+      "command": "delete_property",
+      "expect_error": "validation",
+      "name": "repeat_origin_is_refused",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockId": "S2",
+        "key": "created_at"
+      },
+      "command": "delete_property",
+      "expect_error": "validation",
+      "name": "created_at_is_refused",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockId": "S2",
+        "key": "completed_at"
+      },
+      "command": "delete_property",
+      "expect_error": "validation",
+      "name": "completed_at_is_refused",
+      "via": "command"
+    }
+  ],
+  "seed": {
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Home",
+        "id": "S1",
+        "parent_id": null,
+        "position": 1
+      },
+      {
+        "block_type": "content",
+        "content": "weekly review",
+        "id": "S2",
+        "parent_id": "S1",
+        "position": 1
+      }
+    ],
+    "properties": [],
+    "tags": []
+  }
+}

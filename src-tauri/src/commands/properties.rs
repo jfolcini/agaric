@@ -1180,17 +1180,23 @@ pub async fn set_scheduled_date_inner(
     .await
 }
 
+/// The keys only state transitions and recurrence write (#658): a task's
+/// `created_at` / `completed_at` stamps and each occurrence's `repeat-seq` /
+/// `repeat-origin`. The recurrence rule itself (`repeat`, `repeat-until`,
+/// `repeat-count`) is the user's to remove, as `/repeat remove` does. Mirrored
+/// by the tauri mock's `delete_property`.
+const SYSTEM_MANAGED_PROPERTY_KEYS: [&str; 4] =
+    ["created_at", "completed_at", "repeat-seq", "repeat-origin"];
+
 /// Delete a property from a block.
 ///
 /// Appends a `DeleteProperty` op and removes the row from `block_properties`.
 ///
 /// # Errors
 ///
-/// - [`AppError::Validation`] — `key` is a protected lifecycle/recurrence
-///   property (`created_at` / `completed_at` / `repeat-*`). Created/completed dates are
-///   managed by state transitions, while repeat keys participate in recurrence
-///   configuration; direct FE/MCP deletion is rejected to protect that
-///   bookkeeping (#658).
+/// - [`AppError::Validation`] — `key` is one of the
+///   `SYSTEM_MANAGED_PROPERTY_KEYS`; direct FE/MCP deletion is rejected to
+///   protect that bookkeeping (#658).
 /// - [`AppError::NotFound`] — block does not exist or is soft-deleted
 #[instrument(skip(pool, device_id, materializer), err)]
 pub async fn delete_property_inner(
@@ -1204,17 +1210,10 @@ pub async fn delete_property_inner(
     // transaction, and this is its sole production caller. Keep the lifecycle
     // guard here before delegating. State-transition helpers that already hold
     // a transaction use `delete_property_in_tx` to clear `created_at` /
-    // `completed_at` keys.
-    //
-    // The reserved *column* keys (`todo_state` / `priority` / `due_date` /
-    // `scheduled_date`) are intentionally NOT blocked: clearing them is a
-    // legitimate user action (e.g. removing a block's due date), and core
-    // routes them to the matching `blocks` column. So the guard is the
-    // built-in set MINUS the reserved column keys — i.e. exactly the
-    // lifecycle keys.
-    if agaric_store::op::is_builtin_property_key(&key)
-        && !agaric_store::op::is_reserved_property_key(&key)
-    {
+    // `completed_at` keys. The reserved *column* keys (`todo_state` /
+    // `priority` / `due_date` / `scheduled_date`) are not blocked: clearing
+    // them is a user action, and core routes them to their `blocks` column.
+    if SYSTEM_MANAGED_PROPERTY_KEYS.contains(&key.as_str()) {
         return Err(AppError::validation(format!(
             "cannot delete system-managed property '{key}'"
         )));

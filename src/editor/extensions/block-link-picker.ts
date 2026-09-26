@@ -48,38 +48,37 @@ declare module '@tiptap/core' {
  * The page `[[text]]` names among `items`, by the one rule the backend applies
  * (#5160 N4): the exact full title, else the unique case-insensitive title,
  * else the unique alias whose `aliasText` is `text`, else `undefined`, which
- * creates the page. Two pages that differ only by case are never guessed:
- * `null` leaves the text as typed. Titles are compared whole, namespace
- * included (`item.title`), so typing an existing namespaced title creates no
- * twin; prefix-only alias hits (`[[my]]` for alias `my-alias`) never resolve.
+ * creates the page. Two pages a title matches alike, exactly or by case, are
+ * never guessed: `null` leaves the text as typed. Titles are compared whole,
+ * namespace included (`item.title`), so typing an existing namespaced title
+ * creates no twin; prefix-only alias hits (`[[my]]` for alias `my-alias`)
+ * never resolve.
  */
 export function matchBlockLinkItem(
   items: PickerItem[],
   text: string,
 ): PickerItem | undefined | null {
   const pages = items.filter((item) => !item.isCreate && !item.isAlias)
-  const exact = pages.find((item) => (item.title ?? item.label) === text)
-  if (exact) return exact
+  const unique = (found: PickerItem[]) => (found.length > 1 ? null : found[0])
+  const exact = unique(pages.filter((item) => (item.title ?? item.label) === text))
+  if (exact !== undefined) return exact
   const lower = text.toLowerCase()
-  const folded = pages.filter((item) => (item.title ?? item.label).toLowerCase() === lower)
-  if (folded.length === 1) return folded[0]
-  if (folded.length > 1) return null
+  const folded = unique(pages.filter((item) => (item.title ?? item.label).toLowerCase() === lower))
+  if (folded !== undefined) return folded
   return items.find((item) => !item.isCreate && item.aliasText?.toLowerCase() === lower)
 }
 
 /** What a typed `[[…]]` body means (#5160 D9, D10). */
 export interface TypedLink {
-  /** The text before the first `|`, trimmed: what a page must be titled to win whole. */
-  name: string
-  /** `name` before its first `#`, trimmed: the page an anchored name falls back to. */
+  /** The text before the first `|` and then before its first `#`, trimmed: the page it creates. */
   base: string
   /** The trimmed text after the first `|`, when there is one. */
   label: string | undefined
 }
 
 /**
- * Split a typed link body into its name, base and label; `null` for an
- * anchor-only `[[#heading]]`, which names no page.
+ * Split a typed link body into its base and label; `null` for an anchor-only
+ * `[[#heading]]`, which names no page.
  */
 export function parseTypedLink(inner: string): TypedLink | null {
   const pipe = inner.indexOf('|')
@@ -88,18 +87,29 @@ export function parseTypedLink(inner: string): TypedLink | null {
   const hash = name.indexOf('#')
   const base = hash < 0 ? name : name.slice(0, hash).trim()
   if (base === '') return null
-  return { name, base, label }
+  return { base, label }
+}
+
+/**
+ * The page an anchored link `name` falls back to (D10, N6): the text before
+ * its first `#` when an anchor holding no `|` follows it, else `''`.
+ */
+function anchorBase(name: string): string {
+  const hash = name.indexOf('#')
+  return hash < 0 || name.slice(hash + 1).includes('|') ? '' : name.slice(0, hash).trim()
 }
 
 /**
  * The label a picked `item` keeps from the typed `body` (#5160 D9, D10): the
  * text after the first of the body's readings that names the item as
- * {@link matchBlockLinkItem} compares, none for the whole body, else the text
- * after the first `|`; never the item's own title.
+ * {@link matchBlockLinkItem} compares, by its whole name or, as the input
+ * rule reads it, the name before an anchor; none for the whole body, else the
+ * text after the first `|`; never the item's own title.
  */
 export function pickedLinkLabel(item: PickerItem, body: string): string | undefined {
   const readings = linkBodyReadings(body)
-  const named = readings.find((reading) => matchBlockLinkItem([item], reading.name) === item)
+  const names = (name: string) => name !== '' && matchBlockLinkItem([item], name) === item
+  const named = readings.find((reading) => names(reading.name) || names(anchorBase(reading.name)))
   const label = (named ?? readings.at(-1))?.label
   return label === (item.title ?? item.label) ? undefined : label
 }
@@ -140,47 +150,9 @@ async function findTypedName(
   name: string,
 ): Promise<PickerItem | null | undefined> {
   const whole = matchBlockLinkItem(await options.items(name), name)
-  const hash = name.indexOf('#')
-  const base = hash < 0 ? '' : name.slice(0, hash).trim()
-  if (whole !== undefined || base === '' || name.slice(hash + 1).includes('|')) return whole
+  const base = anchorBase(name)
+  if (whole !== undefined || base === '') return whole
   return matchBlockLinkItem(await options.items(base), base)
-}
-
-/**
- * Resolve a typed link `body` and insert its chip at `insertPos`: the first of
- * its readings that names a page wins, with that reading's label; a tie leaves
- * the text as typed; with none, `link`, its first-`|` split, creates its base.
- */
-function resolveTypedLink(
-  editor: Editor,
-  options: BlockLinkPickerOptions,
-  body: string,
-  link: TypedLink,
-  typed: string,
-  insertPos: number,
-  errorMessage: string,
-): void {
-  let found: PickerItem | null | undefined
-  let label: string | undefined
-  void resolveAndInsertPickerToken({
-    editor,
-    text: link.base,
-    typed,
-    insertPos,
-    items: async () => {
-      for (const reading of linkBodyReadings(body)) {
-        found = await findTypedName(options, reading.name)
-        label = reading.label
-        if (found !== undefined) break
-      }
-      return found ? [found] : []
-    },
-    matchItem: () => found,
-    tokenFor: (id, item) => blockLinkNode(id, label, item ? (item.title ?? item.label) : link.base),
-    onCreate: options.onCreate,
-    loggerComponent: 'BlockLinkPicker',
-    errorMessage,
-  })
 }
 
 export const BlockLinkPicker = Extension.create<BlockLinkPickerOptions>({
@@ -246,18 +218,31 @@ export const BlockLinkPicker = Extension.create<BlockLinkPickerOptions>({
           // Delete the [[text]] range immediately so the raw text doesn't linger
           state.tr.delete(range.from, range.to)
 
-          // Shared race-guard. Token shape `block_link`;
-          // exact-match recognises `aliasText === text` so `[[my-alias]]`
-          // Resolves to its target page.
-          resolveTypedLink(
+          // The first of the body's readings that names a page wins, with that
+          // reading's label; a tie leaves the text as typed; with none, the
+          // first-`|` split creates its base.
+          let found: PickerItem | null | undefined
+          let label: string | undefined
+          void resolveAndInsertPickerToken({
             editor,
-            extensionOptions,
-            body,
-            link,
-            match[0],
+            text: link.base,
+            typed: match[0],
             insertPos,
-            'Failed to resolve block link via input rule, falling back to plain text',
-          )
+            items: async () => {
+              for (const reading of linkBodyReadings(body)) {
+                found = await findTypedName(extensionOptions, reading.name)
+                label = reading.label
+                if (found !== undefined) break
+              }
+              return found ? [found] : []
+            },
+            matchItem: () => found,
+            tokenFor: (id, item) =>
+              blockLinkNode(id, label, item ? (item.title ?? item.label) : link.base),
+            onCreate: extensionOptions.onCreate,
+            loggerComponent: 'BlockLinkPicker',
+            errorMessage: 'Failed to resolve block link via input rule, falling back to plain text',
+          })
         },
       }),
     ]

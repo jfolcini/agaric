@@ -56,6 +56,7 @@ export const AtTagPicker = Extension.create<AtTagPickerOptions>({
           void resolveAndInsertPickerToken({
             editor,
             text: innerText,
+            typed: match[0],
             insertPos,
             items: extensionOptions.items,
             matchItem: (items, text) =>

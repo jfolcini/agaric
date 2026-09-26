@@ -40,6 +40,18 @@ const RESERVED_PROPERTY_COLUMN: Record<string, 'value_text' | 'value_date'> = {
 }
 
 /**
+ * `SYSTEM_MANAGED_PROPERTY_KEYS` (`commands/properties.rs`): the keys only
+ * state transitions and recurrence write, which `delete_property` refuses
+ * (#658). The recurrence rule itself is the user's to remove.
+ */
+const SYSTEM_MANAGED_PROPERTY_KEYS = new Set([
+  'created_at',
+  'completed_at',
+  'repeat-seq',
+  'repeat-origin',
+])
+
+/**
  * Route a reserved-key `set_property` onto the block's dedicated column (NOT
  * `block_properties`) and append the op. `from_value: null` keeps the op's
  * revert a no-op against the properties map — the column value is reverted via
@@ -311,6 +323,9 @@ export const propertiesHandlers = {
     const a = args as Record<string, unknown>
     const blockId = a['blockId'] as string
     const key = a['key'] as string
+    if (SYSTEM_MANAGED_PROPERTY_KEYS.has(key)) {
+      throw validationRejection(`cannot delete system-managed property '${key}'`)
+    }
     // #3079 — reserved column-backed keys clear the block COLUMN (backend
     // routes the delete through `reserved_key_blocks_column` → clears
     // `blocks.<col>`), NOT a block_properties row (which never holds a

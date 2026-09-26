@@ -500,7 +500,7 @@ pub fn is_column_backed_property_key(key: &str) -> bool {
     COLUMN_BACKED_PROPERTY_KEYS.contains(&key)
 }
 
-/// Property keys that are system-managed and must not be deleted by users.
+/// Property keys that are system-managed, whose definitions cannot be deleted.
 ///
 /// Reserved column keys (`todo_state`, `priority`, `due_date`,
 /// `scheduled_date`) live on the `blocks` table and are managed via

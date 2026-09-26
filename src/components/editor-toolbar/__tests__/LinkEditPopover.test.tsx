@@ -105,7 +105,7 @@ function makeEditor() {
     chain: mockChain,
     commands: { focus: mockCommandsFocus },
     schema: { marks: { link: mockLinkMarkType } },
-    state: { tr: mockTr },
+    state: { tr: mockTr, selection: { from: 0, to: 0 } },
     view: { dispatch: mockDispatch },
   } as never
 }
