@@ -26,7 +26,7 @@ import { notify } from '@/lib/notify'
 import {
   buildPropertyParams,
   carriedRenameDefinition,
-  NON_DELETABLE_PROPERTIES,
+  COLUMN_BACKED_PROPERTY_KEYS,
   renameMayDeclareKey,
 } from '@/lib/property-save-utils'
 import { reportIpcError } from '@/lib/report-ipc-error'
@@ -509,17 +509,15 @@ export function BlockPropertyEditor({
               // needed to clear, so this runs before the definition is
               // resolved.
               //
-              // `NON_DELETABLE_PROPERTIES` (= `is_builtin_property_key`) keeps
-              // its two halves on the pre-existing `set_property` path below.
-              // For the four RESERVED keys the all-null payload IS the clear
+              // The column-backed keys stay on the `set_property` path below:
+              // for the four RESERVED keys the all-null payload IS the clear
               // (`validate_set_property` accepts count==0 only for them),
               // though they are filtered out of the chip row upstream by
               // `useExtraBlockProperties` and do not reach here in practice.
-              // For the LIFECYCLE keys (`created_at` / `completed_at` /
-              // `repeat-*`) the all-null write is rejected as non-reserved, and
-              // `delete_property` refuses all but the recurrence rule by name,
-              // so they keep failing exactly as before.
-              if (newValue === '' && !NON_DELETABLE_PROPERTIES.has(editingProp.key)) {
+              // Every other key, the repeat rule's `repeat-until` /
+              // `repeat-count` included, is removed by `delete_property`,
+              // which refuses only the system-managed lifecycle keys.
+              if (newValue === '' && !COLUMN_BACKED_PROPERTY_KEYS.has(editingProp.key)) {
                 try {
                   unwrap(await commands.deleteProperty(blockId, editingProp.key))
                 } catch (err) {
@@ -790,12 +788,10 @@ export function BlockPropertyEditor({
               // above, one branch over, and invisible here for as long as the
               // test fixture answered `{status:'ok'}` to every payload.
               //
-              // The split matches that clear exactly: `delete_property` is the
-              // removal a user key supports, and the system-managed keys keep
-              // the all-null payload (right for the reserved four, and no worse
-              // than before for the lifecycle keys, which neither route
-              // accepts).
-              if (NON_DELETABLE_PROPERTIES.has(editingKey.oldKey)) {
+              // The split matches that clear exactly: the column-backed keys
+              // keep the all-null payload (right for the reserved four), and
+              // every other key is removed by `delete_property`.
+              if (COLUMN_BACKED_PROPERTY_KEYS.has(editingKey.oldKey)) {
                 unwrap(
                   await commands.setProperty(blockId, editingKey.oldKey, {
                     value_text: null,

@@ -692,8 +692,8 @@ fn resolve_ulids_for_export(
 }
 
 /// Replace `#[ULID]` with `#tagname` and `[[ULID]]` with `[[Page Title]]`; an
-/// id missing from its map stays raw, and so does an escaped `\#[ULID]`, after
-/// which no name reads back as the tag (#5160 N3).
+/// id missing from its map stays raw, and so does an escaped `\#[ULID]` or
+/// `\[[ULID]]`, after which no name reads back as the ref (#5160 N3).
 fn humanise_tag_and_page_refs(
     content: &str,
     tag_names: &HashMap<String, String>,
@@ -737,6 +737,10 @@ fn humanise_tag_and_page_refs(
     // Replace [[ULID]] → [[Page Title]], a label riding along (#5160 D9)
     PAGE_LINK_RE
         .replace_all(&result, |caps: &regex::Captures| {
+            let m = caps.get(0).expect("group 0 always present");
+            if is_escaped(&result, m.start()) {
+                return m.as_str().to_owned();
+            }
             let ulid = &caps[1];
             let target = page_titles.get(ulid).map_or(ulid, String::as_str);
             match agaric_store::cache::page_link_label(caps) {

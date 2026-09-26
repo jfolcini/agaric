@@ -6360,29 +6360,31 @@ async fn export_and_import_round_trip_a_link_to_a_title_holding_a_pipe() {
     mat.shutdown();
 }
 
-/// #5160 N3 — a tag ref after an odd run of backslashes is escaped, and no
-/// name form of it reads back there, so an export writes it as it is stored
-/// and Export → Import keeps the block's text; one after an even run is a tag
-/// after literal backslashes, written by name.
+/// #5160 N3 — a tag ref or a page link after an odd run of backslashes is
+/// escaped, and no name form of it reads back there, so an export writes it as
+/// it is stored and Export → Import keeps the block's text; one after an even
+/// run is a ref after literal backslashes, written by name.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn export_and_import_round_trip_a_tag_after_a_backslash() {
+async fn export_and_import_round_trip_refs_after_a_backslash() {
     let (pool, dir) = test_pool().await;
     let mat = Materializer::new(pool.clone());
     let src = dup_page(&pool, &mat, "Src").await;
+    let page = dup_page(&pool, &mat, "Target").await;
     import_file(&pool, &mat, dir.path(), "Seed.md", "- #work").await;
     let tag: String =
         sqlx::query_scalar("SELECT id FROM blocks WHERE block_type = 'tag' AND content = 'work'")
             .fetch_one(&pool)
             .await
             .unwrap();
-    let content = format!(r"foo\#[{tag}] bar\\#[{tag}]");
+    let content = format!(r"foo\#[{tag}] bar\\#[{tag}] \[[{page}]] \\[[{page}]]");
     dup_child(&pool, &mat, &src, &content).await;
     settle(&mat).await;
 
     let md = export_page_markdown_inner(&pool, src.as_str())
         .await
         .unwrap();
-    assert!(md.contains(&format!(r"- foo\#[{tag}] bar\\#work")), "{md}");
+    let written = format!(r"- foo\#[{tag}] bar\\#work \[[{page}]] \\[[Target]]");
+    assert!(md.contains(&written), "{md}");
 
     import_file(&pool, &mat, dir.path(), "Roundtrip.md", &md).await;
     let copies: Vec<String> = sqlx::query_scalar(

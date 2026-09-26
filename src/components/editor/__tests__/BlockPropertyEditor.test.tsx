@@ -1316,6 +1316,40 @@ describe('BlockPropertyEditor', () => {
       expect(mockToastError).not.toHaveBeenCalled()
     })
 
+    // The repeat rule's end date is a chip too; `delete_property` removes it.
+    it('renames a repeat-until chip, removing the old key by deleting it', async () => {
+      mockGetProperties.mockResolvedValue({
+        status: 'ok',
+        data: [
+          {
+            key: 'repeat-until',
+            value_text: null,
+            value_num: null,
+            value_date: '2026-12-31',
+            value_ref: null,
+            value_bool: null,
+          },
+        ],
+      })
+
+      render(
+        <BlockPropertyEditor
+          {...makeProps({ editingKey: { oldKey: 'repeat-until', value: '2026-12-31' } })}
+        />,
+      )
+      const keyInput = document.querySelector('.property-key-editor input') as HTMLInputElement
+      fireEvent.change(keyInput, { target: { value: 'ends' } })
+      await act(async () => {
+        fireEvent.blur(keyInput)
+      })
+
+      await waitFor(() => {
+        expect(mockDeleteProperty).toHaveBeenCalledWith('BLOCK_1', 'repeat-until')
+      })
+      expect(mockSetProperty).not.toHaveBeenCalledWith('BLOCK_1', 'repeat-until', expect.anything())
+      expect(mockToastError).not.toHaveBeenCalled()
+    })
+
     // The other arm: the fixture must still be able to FAIL a rename, or the
     // test above would pass against a mock that simply says yes again.
     it('surfaces the failure toast when the carried write is genuinely rejected', async () => {
@@ -1695,6 +1729,25 @@ describe('BlockPropertyEditor', () => {
       // for a reserved key (count==0 is legal for those four alone), so the
       // clear must not be re-routed through `delete_property`.
       expect(mockDeleteProperty).not.toHaveBeenCalled()
+    })
+
+    // The repeat rule's end conditions are chips, and `delete_property`
+    // removes them; the all-null write is refused for them as for any key
+    // that is not reserved.
+    it.each([
+      ['repeat-until', '2026-12-31', 'date'],
+      ['repeat-count', '3', 'number'],
+    ] as const)('clears a %s chip by deleting it', async (key, value, valueType) => {
+      render(<BlockPropertyEditor {...makeProps({ editingProp: { key, value }, valueType })} />)
+      const input = screen.getByRole('textbox')
+      fireEvent.change(input, { target: { value: '' } })
+      fireEvent.blur(input)
+
+      await waitFor(() => {
+        expect(mockDeleteProperty).toHaveBeenCalledWith('BLOCK_1', key)
+      })
+      expect(mockSetProperty).not.toHaveBeenCalled()
+      expect(mockToastError).not.toHaveBeenCalled()
     })
 
     it('surfaces a failed clear instead of silently closing', async () => {
