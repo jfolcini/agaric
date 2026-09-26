@@ -161,6 +161,8 @@ export function scanNameTokens(content: string): NameToken[] {
       if (logseqLabel !== '') body = `${body}|${logseqLabel}`
       start -= head[0].length
       end += 1
+      // The label is inside the token, so a `#` in it is no tag.
+      links.push([start, end])
     } else if (!isToken(start)) continue
     // Untrimmed, as the backend's canonical regex reads the whole token: a
     // padded ULID is a human name.

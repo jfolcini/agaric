@@ -570,12 +570,16 @@ fn collect_inbound_tag_names(blocks: &[import::ParsedBlock]) -> Vec<String> {
         if !block.content.contains('#') {
             continue;
         }
-        let guards = tag_guard_spans(&block.content);
-        let link_spans = human_page_link_spans(&block.content);
+        // Read as the page pass rewrites it (#5160 D9): a `#tag` in a Logseq
+        // `[label]([[Page]])` label lands inside `[[Page|label]]`, where the tag
+        // rewrite leaves it, so collecting it would mint a tag nothing links.
+        let content = rewrite_logseq_labelled_links(&block.content);
+        let guards = tag_guard_spans(&content);
+        let link_spans = human_page_link_spans(&content);
         // Multi-word `#[[...]]` first.
-        for cap in HUMAN_MULTIWORD_TAG_RE.captures_iter(&block.content) {
+        for cap in HUMAN_MULTIWORD_TAG_RE.captures_iter(&content) {
             let whole = cap.get(0).expect("group 0 always present");
-            if is_in_span(whole.start(), &guards) || is_escaped(&block.content, whole.start()) {
+            if is_in_span(whole.start(), &guards) || is_escaped(&content, whole.start()) {
                 continue;
             }
             let name = cap[1].trim();
@@ -585,9 +589,9 @@ fn collect_inbound_tag_names(blocks: &[import::ParsedBlock]) -> Vec<String> {
         }
         // Bare `#tag`. The `#` is at `name_match.start() - 1` (group 1 is the
         // boundary char, which may be empty at line start).
-        for cap in HUMAN_TAG_RE.captures_iter(&block.content) {
+        for cap in HUMAN_TAG_RE.captures_iter(&content) {
             let name_m = cap.get(2).expect("name group present");
-            if bare_tag_is_token(&block.content, name_m, &guards, &link_spans) {
+            if bare_tag_is_token(&content, name_m, &guards, &link_spans) {
                 names.insert(name_m.as_str().to_string());
             }
         }

@@ -134,6 +134,17 @@ describe('paste_blocks resolves names in the anchor’s space (#5160 N4)', () =>
     )
   })
 
+  // The label lands inside the stored `[[ULID|label]]`, where a `#` is text,
+  // as the backend reads it: no tag is minted and the token is not split.
+  it('mints no tag for a `#` inside a Logseq label (#5160 D9)', () => {
+    const rows = paste(ANCHOR, '- [see #plan]([[Roadmap]]) and #work')
+    expect(rows.map((r) => [r.block_type, r.content])).toEqual([
+      ['content', `[[${ROADMAP}|see #plan]] and #[${WORK}]`],
+    ])
+    const tags = [...blocks.values()].filter((b) => b['block_type'] === 'tag')
+    expect(tags.map((b) => b['content'])).toEqual(['Work'])
+  })
+
   it('reads a title holding a `|` before the label, and splits on the first `|` otherwise (#5160 D10)', () => {
     const ab = id('AB')
     put(ab, 'page', 'A | B', null)

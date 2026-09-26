@@ -5993,6 +5993,48 @@ async fn import_markdown_stores_link_labels_from_every_form() {
     mat.shutdown();
 }
 
+/// #5160 D9 — a `#tag` in a Logseq `[label]([[Page]])` label lands inside the
+/// stored `[[ULID|label]]`, where it stays text, so the import mints no tag for
+/// it; a `#tag` outside the link is still one.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn import_mints_no_tag_for_a_hash_inside_a_logseq_label() {
+    let (pool, dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let roadmap = dup_page(&pool, &mat, "Roadmap").await;
+    settle(&mat).await;
+
+    import_file(
+        &pool,
+        &mat,
+        dir.path(),
+        "Notes.md",
+        "- [see #plan]([[Roadmap]]) and #kept",
+    )
+    .await;
+
+    let tags: Vec<String> = sqlx::query_scalar(
+        "SELECT content FROM blocks WHERE block_type = 'tag' AND deleted_at IS NULL \
+         ORDER BY content",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(tags, vec!["kept".to_string()]);
+    let kept: String =
+        sqlx::query_scalar("SELECT id FROM blocks WHERE block_type = 'tag' AND content = 'kept'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    let content: String = sqlx::query_scalar(
+        "SELECT content FROM blocks WHERE block_type = 'content' AND deleted_at IS NULL",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(content, format!("[[{roadmap}|see #plan]] and #[{kept}]"));
+    mat.shutdown();
+}
+
 /// #5160 D10 — a `|` in a link body starts the label only when no longer
 /// reading names a page: `[[A | B]]` is the page titled `A | B`, `[[A |
 /// B|see]]` and Logseq's `[see]([[A | B]])` are that page labelled, and an

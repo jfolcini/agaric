@@ -108,7 +108,7 @@ export function pickedLinkLabel(item: PickerItem, body: string): string | undefi
  * The `block_link` node for `id`, labelled unless the label is empty or the
  * target's `title`, which the chip shows anyway and follows through renames.
  */
-export function blockLinkToken(
+export function blockLinkNode(
   id: string,
   label: string | undefined,
   title: string | undefined,
@@ -161,7 +161,7 @@ function resolveTypedLink(
   errorMessage: string,
 ): void {
   let found: PickerItem | null | undefined
-  let label = link.label
+  let label: string | undefined
   void resolveAndInsertPickerToken({
     editor,
     text: link.base,
@@ -176,8 +176,7 @@ function resolveTypedLink(
       return found ? [found] : []
     },
     matchItem: () => found,
-    tokenFor: (id, item) =>
-      blockLinkToken(id, label, item ? (item.title ?? item.label) : link.base),
+    tokenFor: (id, item) => blockLinkNode(id, label, item ? (item.title ?? item.label) : link.base),
     onCreate: options.onCreate,
     loggerComponent: 'BlockLinkPicker',
     errorMessage,
@@ -218,7 +217,7 @@ export const BlockLinkPicker = Extension.create<BlockLinkPickerOptions>({
             insertPos,
             items: extensionOptions.items,
             matchItem: matchBlockLinkItem,
-            tokenFor: (id) => blockLinkToken(id, undefined, undefined),
+            tokenFor: (id) => blockLinkNode(id, undefined, undefined),
             onCreate: extensionOptions.onCreate,
             loggerComponent: 'BlockLinkPicker',
             errorMessage: 'resolveBlockLinkFromSelection failed, falling back to plain text',
@@ -292,7 +291,7 @@ export const BlockLinkPicker = Extension.create<BlockLinkPickerOptions>({
               range,
               label,
               onCreate: extensionOptions.onCreate,
-              tokenFor: (id) => blockLinkToken(id, typed?.label, label),
+              tokenFor: (id) => blockLinkNode(id, typed?.label, label),
               loggerComponent: 'BlockLinkPicker',
               errorMessage: 'Failed to create page for block link',
             })

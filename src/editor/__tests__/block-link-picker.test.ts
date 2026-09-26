@@ -11,7 +11,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { BlockLink } from '@/editor/extensions/block-link'
 import {
   BlockLinkPicker,
-  blockLinkToken,
+  blockLinkNode,
   parseTypedLink,
   pickedLinkLabel,
 } from '@/editor/extensions/block-link-picker'
@@ -978,7 +978,7 @@ describe('BlockLinkPicker real-editor chain result', () => {
 
 // ── #5160 D9 / D10 / N6: labels and anchors in a typed [[…]] ────────────────
 
-describe('parseTypedLink and blockLinkToken (#5160 D9, D10)', () => {
+describe('parseTypedLink and blockLinkNode (#5160 D9, D10)', () => {
   it('splits the label off the first pipe and the base off the first hash', () => {
     expect(parseTypedLink('Page')).toEqual({ name: 'Page', base: 'Page', label: undefined })
     expect(parseTypedLink(' Page | a|b ')).toEqual({ name: 'Page', base: 'Page', label: 'a|b' })
@@ -989,15 +989,15 @@ describe('parseTypedLink and blockLinkToken (#5160 D9, D10)', () => {
   })
 
   it('stores the label unless it is empty or the title', () => {
-    expect(blockLinkToken('ID', 'plan', 'Plan')).toEqual({
+    expect(blockLinkNode('ID', 'plan', 'Plan')).toEqual({
       type: 'block_link',
       attrs: { id: 'ID', label: 'plan' },
     })
-    expect(blockLinkToken('ID', 'Plan', 'Plan')).toEqual({
+    expect(blockLinkNode('ID', 'Plan', 'Plan')).toEqual({
       type: 'block_link',
       attrs: { id: 'ID' },
     })
-    expect(blockLinkToken('ID', undefined, 'Plan')).toEqual({
+    expect(blockLinkNode('ID', undefined, 'Plan')).toEqual({
       type: 'block_link',
       attrs: { id: 'ID' },
     })
@@ -1006,11 +1006,11 @@ describe('parseTypedLink and blockLinkToken (#5160 D9, D10)', () => {
   // A `]` would end the stored `[[ULID|label]]` token early, and every reader
   // would then see text: the link, its backlink and the chip would be lost.
   it('drops a ] from the label, and a label left empty is none', () => {
-    expect(blockLinkToken('ID', 'a]b', 'Plan')).toEqual({
+    expect(blockLinkNode('ID', 'a]b', 'Plan')).toEqual({
       type: 'block_link',
       attrs: { id: 'ID', label: 'ab' },
     })
-    expect(blockLinkToken('ID', ' ] ', 'Plan')).toEqual({
+    expect(blockLinkNode('ID', ' ] ', 'Plan')).toEqual({
       type: 'block_link',
       attrs: { id: 'ID' },
     })

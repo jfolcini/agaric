@@ -27,6 +27,7 @@ Phase 3b of #5160: decision D9 (store the label) and N6. `[[Page|label]]` used t
   - A `]` typed into a label on the picker and selection paths still reached storage. One rule, `storableLinkLabel`, now builds every stored label.
   - Turning a selection into a link cut it at the first `#`, so selecting `Issue #42` created `Issue` and deleted ` #42`. A selection is prose, so its whole text names the page, as before this phase.
   - One-line previews now read only a stored `[[ULID|label]]` as its label, so an unresolved `[[Article | Medium]]` keeps its text.
+  - A `#tag` in a Logseq `[label]([[Page]])` label minted a tag nothing linked on the backend, and split the token in the mock. The label lands inside the stored link, so the tag is collected from the rewritten text and the mock treats the whole form as one token.
 - **Open product question:** a block that mentions a page only inside another link's label still lists under that page's Unlinked References, because the label is search text. "Link it" there now shows the "link failed" toast instead of corrupting the other link.
 - **Known limits:**
   - A `|`-titled JEX note that links to another `|`-titled note imported after it still splits.
