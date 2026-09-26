@@ -17,9 +17,11 @@ import {
   assertValidReservedPropertyValue,
   assertValidSetPropertyValue,
   notFoundRejection,
+  ownerSpaceOf,
   returnEmptyPage,
   validationRejection,
 } from '@/lib/tauri-mock/handlers/shared'
+import { resolveRefValue } from '@/lib/tauri-mock/names'
 import { appSettings, blocks, properties, propertyDefs, pushOp } from '@/lib/tauri-mock/seed'
 
 /** #4554 — the two `app_settings` keys `reminders::get_settings` reads; `'1'` = enabled. */
@@ -261,14 +263,26 @@ export const propertiesHandlers = {
     // Typed values are bundled under `value: SetPropertyArgs` (was 4 flat
     // args). Navigate the bundle to read each typed value column.
     const valueArgs = a['value'] as Record<string, unknown> | undefined
-    const valueText = (valueArgs?.['value_text'] as string | null) ?? null
+    let valueText = (valueArgs?.['value_text'] as string | null) ?? null
     const valueNum = (valueArgs?.['value_num'] as number | null) ?? null
     const valueDate = (valueArgs?.['value_date'] as string | null) ?? null
-    const valueRef = (valueArgs?.['value_ref'] as string | null) ?? null
+    let valueRef = (valueArgs?.['value_ref'] as string | null) ?? null
     const valueBool = (valueArgs?.['value_bool'] as boolean | null) ?? null
     // #2656 — mirror the real backend's op-log value validation so contract
     // drift fails e2e/unit instead of storing an invalid value silently.
     assertValidSetPropertyValue(key, valueText)
+    // #5160 D11 — `read_typed_ref`: text under a `ref` definition is the block
+    // it names in the block's space.
+    if (
+      valueText !== null &&
+      valueRef === null &&
+      propertyDefs.get(key)?.['value_type'] === 'ref'
+    ) {
+      const block = blocks.get(blockId)
+      const spaceId = block ? ((block['space_id'] as string | null) ?? ownerSpaceOf(block)) : null
+      valueRef = resolveRefValue(valueText, spaceId)
+      valueText = null
+    }
     // #3079 — reserved column-backed keys (todo_state/priority/due_date/
     // scheduled_date) are the single source of truth on the block ROW, not
     // block_properties. Route them to the same-named block column and DO NOT

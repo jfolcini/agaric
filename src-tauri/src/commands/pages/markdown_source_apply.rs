@@ -111,7 +111,14 @@ pub async fn apply_page_source_inner(
     let (base, stale) = read_base(&data, &base_source, flags.merge)?;
     let mut lines = PropertyLines::load(&mut tx, PropertyWrite::Edit).await?;
     let mut warnings = Vec::new();
-    let blocks = read_buffer(&source, &base_source, &base, stale, &lines, &mut warnings)?;
+    let blocks = read_buffer(
+        &source,
+        &base_source,
+        &base,
+        stale,
+        &mut lines,
+        &mut warnings,
+    )?;
     let mut buffer = pair_blocks(&base, blocks, flags.force, &mut warnings)?;
     let space = agaric_store::space::resolve_block_space(&mut **tx, &page_id).await?;
     let space = space.as_ref().map(agaric_store::space::SpaceId::as_str);
@@ -231,13 +238,14 @@ struct Buffer {
 /// are folded in, so the merge compares a block whose anchor an edit moved as
 /// that block, edited. A property key is read as the one `lines` fold it to
 /// (#5160 D13) before anything is compared, unless its block held it as
-/// written in the source the edit started from.
+/// written in the source the edit started from, and a `key::` line for a key
+/// it did not hold is text (P7).
 fn read_buffer(
     source: &str,
     base_source: &str,
     base: &Base,
     stale: bool,
-    lines: &PropertyLines,
+    lines: &mut PropertyLines,
     warnings: &mut Vec<String>,
 ) -> Result<Vec<import::ParsedBlock>, AppError> {
     let parsed = import::parse_source_outline(source);

@@ -1,0 +1,271 @@
+{
+  "description": "#5160 D11 — a text value under a `ref` definition, through `set_property` itself (`via: \"command\"`): the block editor commits a typed `reviewer:: Alice` line this way, and `set_property_inner` reads the text as the block it names — a live block id, `[[Title]]`, or a page title in the block's space by the link rule (exact title, then a unique case-insensitive one, then a unique alias). The replay leg appends a payload and never sees this. Each accepted step writes its own ref-declared key, so the snapshot pins every resolution: `reviewer` by title, `approver` by block id, `watcher` by a bracketed title in another case. The two refusals leave `reviewer` as it was: a title two pages tie on (`twin` and `TWIN` for `Twin`, never guessed) and a title no page has. Re-author `expected` / `expected_ops` via CONFORMANCE_UPDATE=1.",
+  "expected": {
+    "block_tags": [],
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Home",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B1",
+        "page_id": "B1",
+        "parent_id": null,
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "card",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B2",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "page",
+        "content": "Alice",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B3",
+        "page_id": "B3",
+        "parent_id": null,
+        "position": 2,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "page",
+        "content": "twin",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B4",
+        "page_id": "B4",
+        "parent_id": null,
+        "position": 3,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "page",
+        "content": "TWIN",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B5",
+        "page_id": "B5",
+        "parent_id": null,
+        "position": 4,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      }
+    ],
+    "op_log_digest": {
+      "count": 3,
+      "ops": [
+        {
+          "key": "reviewer",
+          "op_type": "set_property"
+        },
+        {
+          "key": "approver",
+          "op_type": "set_property"
+        },
+        {
+          "key": "watcher",
+          "op_type": "set_property"
+        }
+      ]
+    },
+    "page_links": [],
+    "properties": [
+      {
+        "block_id": "B2",
+        "key": "approver",
+        "value": "B1",
+        "value_type": "Ref"
+      },
+      {
+        "block_id": "B2",
+        "key": "reviewer",
+        "value": "B3",
+        "value_type": "Ref"
+      },
+      {
+        "block_id": "B2",
+        "key": "watcher",
+        "value": "B3",
+        "value_type": "Ref"
+      }
+    ]
+  },
+  "expected_ops": [
+    {
+      "code": null,
+      "error": null,
+      "name": "ref_by_title",
+      "returns": ["B2"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "ref_by_id",
+      "returns": ["B2"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "ref_by_bracketed_title",
+      "returns": ["B2"]
+    },
+    {
+      "code": null,
+      "error": "validation",
+      "name": "ref_tie_rejects",
+      "returns": []
+    },
+    {
+      "code": null,
+      "error": "validation",
+      "name": "ref_unknown_title_rejects",
+      "returns": []
+    }
+  ],
+  "name": "set_property_ref_text",
+  "ops": [
+    {
+      "args": {
+        "blockId": "S2",
+        "key": "reviewer",
+        "value": {
+          "value_text": "Alice"
+        }
+      },
+      "command": "set_property",
+      "comment": "A plain title names the page titled so.",
+      "name": "ref_by_title",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockId": "S2",
+        "key": "approver",
+        "value": {
+          "value_text": "000000000000000000000000S1"
+        }
+      },
+      "command": "set_property",
+      "comment": "A live block id in the block's space names that block.",
+      "name": "ref_by_id",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockId": "S2",
+        "key": "watcher",
+        "value": {
+          "value_text": "[[alice]]"
+        }
+      },
+      "command": "set_property",
+      "comment": "`[[Title]]` less its brackets, matched case-insensitively when no page has the exact title.",
+      "name": "ref_by_bracketed_title",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockId": "S2",
+        "key": "reviewer",
+        "value": {
+          "value_text": "Twin"
+        }
+      },
+      "command": "set_property",
+      "comment": "No page is titled exactly `Twin` and two fold to it: a tie is refused, never guessed.",
+      "expect_error": "validation",
+      "name": "ref_tie_rejects",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockId": "S2",
+        "key": "reviewer",
+        "value": {
+          "value_text": "Nobody"
+        }
+      },
+      "command": "set_property",
+      "comment": "A title no page in the space has is refused.",
+      "expect_error": "validation",
+      "name": "ref_unknown_title_rejects",
+      "via": "command"
+    }
+  ],
+  "seed": {
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Home",
+        "id": "S1",
+        "parent_id": null,
+        "position": 1
+      },
+      {
+        "block_type": "content",
+        "content": "card",
+        "id": "S2",
+        "parent_id": "S1",
+        "position": 1
+      },
+      {
+        "block_type": "page",
+        "content": "Alice",
+        "id": "S3",
+        "parent_id": null,
+        "position": 2
+      },
+      {
+        "block_type": "page",
+        "content": "twin",
+        "id": "S4",
+        "parent_id": null,
+        "position": 3
+      },
+      {
+        "block_type": "page",
+        "content": "TWIN",
+        "id": "S5",
+        "parent_id": null,
+        "position": 4
+      }
+    ],
+    "properties": [],
+    "property_defs": [
+      {
+        "key": "approver",
+        "options": null,
+        "value_type": "ref"
+      },
+      {
+        "key": "reviewer",
+        "options": null,
+        "value_type": "ref"
+      },
+      {
+        "key": "watcher",
+        "options": null,
+        "value_type": "ref"
+      }
+    ],
+    "tags": []
+  }
+}
