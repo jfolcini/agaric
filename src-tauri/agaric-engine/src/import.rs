@@ -981,7 +981,7 @@ pub fn guess_attachment_mime(path: &str) -> String {
 /// (#682) attach to the block indentation says owns them; a property with no
 /// owner is dropped with a warning. Leading YAML frontmatter, and Logseq's
 /// `key:: value` lines before the first block, become page properties.
-/// Logseq's bookkeeping is read ([`read_logseq_bookkeeping`]) and its
+/// Logseq's bookkeeping is read (`read_logseq_bookkeeping`) and its
 /// `:LOGBOOK:` drawers dropped, and a `((uuid))` reference to no block of the
 /// file is stripped.
 pub fn parse_logseq_markdown(content: &str) -> ParseOutput {
