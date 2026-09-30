@@ -303,6 +303,53 @@ proptest! {
         })?;
     }
 
+    /// #5160 A — the page's own text, each block's id beside the line it
+    /// starts on, saves as nothing too, the blocks the text cannot carry
+    /// exactly among them: the save reads the page's source as that same text.
+    #[test]
+    fn saving_a_pages_own_text_by_its_line_ids_writes_nothing(forest in arb_forest()) {
+        Runtime::new().unwrap().block_on(async {
+            let fx = fixture().await;
+            let ids = create_forest(&fx, &forest).await;
+            write_metadata(&fx.pool, &ids, &forest).await;
+            let buffer = get_page_buffer_inner(&fx.pool, &fx.page).await.unwrap();
+            let before = op_counts(&fx.pool).await;
+
+            let report = apply_page_source_inner(
+                &fx.pool,
+                DEV,
+                &fx.materializer,
+                &fx.page,
+                buffer.text.clone(),
+                buffer.source.clone(),
+                SourceSaveFlags {
+                    line_ids: Some(buffer.line_ids.clone()),
+                    ..SourceSaveFlags::default()
+                },
+            )
+            .await
+            .unwrap();
+
+            let after = op_counts(&fx.pool).await;
+            prop_assert_eq!(appended(&before, &after), BTreeMap::new(), "text:\n{}", buffer.text);
+            prop_assert_eq!(
+                (report.created, report.edited, report.moved, report.deleted),
+                (0, 0, 0, 0),
+                "text:\n{}",
+                buffer.text
+            );
+            prop_assert_eq!((report.properties_set, report.properties_deleted), (0, 0));
+            prop_assert!(report.names_created.is_empty());
+            // A fence a block leaves open ends at the next block, and says so.
+            prop_assert!(
+                report.warnings.iter().all(|warning| warning.contains("code fence")),
+                "{:?}",
+                report.warnings
+            );
+            Ok(())
+        })?;
+    }
+
     /// The page's blocks shuffled and re-indented: the save lands exactly that
     /// tree, with moves only, and no more of them than the tree needs.
     #[test]

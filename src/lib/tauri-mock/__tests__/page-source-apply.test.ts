@@ -603,3 +603,200 @@ describe('tauri-mock apply_page_source with merge (#5140 Phase 5)', () => {
     ])
   })
 })
+
+describe('tauri-mock get_page_buffer and apply_page_source by line ids (#5160 A)', () => {
+  type Line = [string, string | null]
+
+  interface Buffer {
+    source: string
+    text: string
+    line_ids: Array<string | null>
+  }
+
+  const buffer = (): Buffer => dispatch('get_page_buffer', { pageId: PAGE }) as Buffer
+
+  /** The page's buffer as lines, each with the id it carries. */
+  function lines(): Line[] {
+    const { text, line_ids } = buffer()
+    return text.split('\n').map((line, i) => [line, line_ids[i] ?? null])
+  }
+
+  /** The `{ kind, code }` `run` throws, or `null` when it returns. */
+  function thrown(run: () => unknown): unknown {
+    try {
+      run()
+    } catch (err) {
+      const { kind, code } = err as { kind?: unknown; code?: unknown }
+      return { kind, code: code ?? null }
+    }
+    return null
+  }
+
+  function applyByLine(edited: Line[], merge = false, baseSource = source()): Report {
+    return dispatch('apply_page_source', {
+      pageId: PAGE,
+      source: edited.map(([line]) => line).join('\n'),
+      baseSource,
+      force: false,
+      merge,
+      lineIds: edited.map(([, carried]) => carried),
+    }) as Report
+  }
+
+  beforeEach(() => {
+    seedBlocks()
+    blocks.clear()
+    properties.clear()
+    opLog.length = 0
+    put(PAGE, 'page', 'Home', null, 1, PAGE)
+    put(A, 'content', 'alpha', PAGE, 1, PAGE)
+    put(B, 'content', 'bravo', PAGE, 2, PAGE)
+    put(B1, 'content', 'bravo child', B, 1, PAGE)
+    put(C, 'content', 'charlie', PAGE, 3, PAGE)
+    put(M, 'content', MULTI, PAGE, 4, PAGE)
+    put(OTHER_PAGE, 'page', 'Elsewhere', null, 2, OTHER_PAGE)
+    put(ELSEWHERE, 'content', 'on another page', OTHER_PAGE, 1, OTHER_PAGE)
+  })
+
+  it('gives the source, the source less its anchors, and the id each line carries', () => {
+    const { source: anchored, text, line_ids } = buffer()
+
+    expect(anchored).toBe(source())
+    expect(text).toBe(
+      '- alpha\n- bravo\n  - bravo child\n- charlie\n- multi\n\n    indented line\n',
+    )
+    expect(line_ids).toEqual([A, B, B1, C, M, null, null, null])
+  })
+
+  it('appends nothing for the page’s own text', () => {
+    const report = applyByLine(lines())
+
+    expect(report).toMatchObject({ ...COUNTS_NONE, warnings: [] })
+    expect(opLog).toHaveLength(0)
+  })
+
+  it('edits the block whose line changed, no anchor needed', () => {
+    const edited = lines()
+    edited[1] = ['- bravo, edited ^note', B]
+
+    const report = applyByLine(edited)
+
+    expect(report).toMatchObject({ ...COUNTS_NONE, edited: 1, warnings: [] })
+    expect(children(PAGE).map((r) => r.content)).toEqual([
+      'alpha',
+      'bravo, edited ^note',
+      'charlie',
+      MULTI,
+    ])
+  })
+
+  it('moves a line cut and pasted in the buffer, keeping its id', () => {
+    const edited = lines()
+    const [cut] = edited.splice(0, 1) as [Line]
+    edited.splice(3, 0, [`  ${cut[0]}`, cut[1]])
+
+    const report = applyByLine(edited)
+
+    expect(report).toMatchObject({ ...COUNTS_NONE, moved: 1 })
+    expect(children(C).map((r) => r.id)).toEqual([A])
+  })
+
+  it('saves a copied line as a new block, the first line keeping the id, with a warning', () => {
+    const edited = lines()
+    edited.splice(4, 0, ['- alpha again', A])
+
+    const report = applyByLine(edited)
+
+    expect(report).toMatchObject({
+      ...COUNTS_NONE,
+      created: 1,
+      warnings: ['line 5: a copy of the block on line 1; saved as a new block'],
+    })
+    expect(children(PAGE).map((r) => [r.id === A, r.content])).toEqual([
+      [true, 'alpha'],
+      [false, 'bravo'],
+      [false, 'charlie'],
+      [false, 'alpha again'],
+      [false, MULTI],
+    ])
+  })
+
+  it('saves a line carrying another page’s id as a new block, with a warning', () => {
+    const edited = lines()
+    edited.splice(1, 0, ['- borrowed', ELSEWHERE])
+
+    const report = applyByLine(edited)
+
+    expect(report).toMatchObject({
+      ...COUNTS_NONE,
+      created: 1,
+      warnings: ['line 2: not a block of this page; saved as a new block'],
+    })
+    expect(children(PAGE)[1]?.content).toBe('borrowed')
+    expect(children(PAGE)[1]?.id).not.toBe(ELSEWHERE)
+    expect(children(OTHER_PAGE).map((r) => r.id)).toEqual([ELSEWHERE])
+  })
+
+  it('refuses line ids that are not one per line, writing nothing', () => {
+    const edited = lines()
+    const lineIds = edited.map(([, carried]) => carried)
+    for (const ids of [lineIds.slice(1), [...lineIds, null]]) {
+      const refused = thrown(() =>
+        dispatch('apply_page_source', {
+          pageId: PAGE,
+          source: edited.map(([line]) => line).join('\n'),
+          baseSource: source(),
+          force: false,
+          merge: false,
+          lineIds: ids,
+        }),
+      )
+      expect(refused).toEqual({ kind: 'validation', code: null })
+    }
+    expect(opLog).toHaveLength(0)
+  })
+
+  it('ends a fence left open at the next line carrying an id, with a warning', () => {
+    const edited = lines()
+    edited[0] = ['- ```', A]
+    edited.splice(1, 0, ['- not a block', null])
+
+    const report = applyByLine(edited)
+
+    expect(report).toMatchObject({
+      ...COUNTS_NONE,
+      edited: 1,
+      warnings: [
+        'the ``` code fence opened on line 1 is not closed; it ends before the block on line 3',
+      ],
+    })
+    expect(children(PAGE).map((r) => r.content)).toEqual([
+      '```\n- not a block',
+      'bravo',
+      'charlie',
+      MULTI,
+    ])
+  })
+
+  it('refuses a stale text, and folds the page’s change in with merge', () => {
+    const base = source()
+    const edited = lines()
+    edited[0] = ['- alpha, in the buffer', A]
+    dispatch('edit_block', { blockId: C, toText: 'charlie, on the page' })
+    opLog.length = 0
+
+    expect(thrown(() => applyByLine(edited, false, base))).toEqual({
+      kind: 'validation',
+      code: 'RequiresRefresh',
+    })
+    const report = applyByLine(edited, true, base)
+
+    expect(report).toMatchObject({ ...COUNTS_NONE, edited: 1, warnings: [] })
+    expect(children(PAGE).map((r) => r.content)).toEqual([
+      'alpha, in the buffer',
+      'bravo',
+      'charlie, on the page',
+      MULTI,
+    ])
+  })
+})

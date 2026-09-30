@@ -288,7 +288,12 @@ fn arb_block() -> impl Strategy<Value = BlockSpec> {
 /// A forest in depth-first order: each block at most one level below the one
 /// before it.
 fn arb_forest() -> impl Strategy<Value = Vec<BlockSpec>> {
-    prop::collection::vec(arb_block(), 0..8).prop_map(|mut blocks| {
+    arb_forest_of(arb_block())
+}
+
+/// [`arb_forest`] of `block`s.
+fn arb_forest_of(block: impl Strategy<Value = BlockSpec>) -> impl Strategy<Value = Vec<BlockSpec>> {
+    prop::collection::vec(block, 0..8).prop_map(|mut blocks| {
         let mut previous: Option<usize> = None;
         for block in &mut blocks {
             block.level = previous.map_or(0, |p| block.level.min(p + 1));
@@ -407,6 +412,59 @@ proptest! {
         let md = render_clipboard_source(&data, &ids, true);
         check_read_back(&md, &import::parse_pasted_text(&md), &expected, false)?;
     }
+
+    /// #5160 A — the buffer less its anchors holds one id entry per line, and
+    /// read by those ids is the tree it was rendered from, each block under
+    /// its own id, for every block the text can carry ([`text_carries`]).
+    #[test]
+    fn a_buffer_read_by_its_line_ids_is_the_tree_it_was_rendered_from(
+        forest in arb_forest_of(arb_block().prop_filter("the text carries it", text_carries))
+    ) {
+        let (data, expected) = build_page(&forest);
+        let (text, line_ids) = anchor_free(&render_page_source(&data));
+        prop_assert_eq!(text.split('\n').count(), line_ids.len(), "text:\n{}", text);
+        let id_lines = (1..=line_ids.len()).filter(|&line| line_ids[line - 1].is_some()).collect();
+        let mut blocks = import::parse_source_text(&text, &id_lines).blocks;
+        for block in &mut blocks {
+            let line = block.line.expect("a buffer's block has a line");
+            block.block_anchor.clone_from(&line_ids[line - 1]);
+        }
+        check_read_back(&text, &blocks, &expected, true)?;
+    }
+}
+
+/// Whether the text [`anchor_free`] makes of a page carries `spec` exactly.
+/// Two blocks only its anchor keeps apart: one whose content ends in a blank
+/// line, which is the blank line between blocks once the anchor after it is
+/// gone, and one that leaves a fence open before its property lines, which
+/// only its anchor line ended.
+fn text_carries(spec: &BlockSpec) -> bool {
+    let ends_blank = spec
+        .content
+        .rsplit_once('\n')
+        .is_some_and(|(_, last)| last.trim().is_empty());
+    let list_marker = match spec.list_style {
+        Some("bullet") => "- ",
+        Some(_) => "1. ",
+        None => "",
+    };
+    let checkbox = spec.todo_state.as_deref().and_then(import::task_marker_for);
+    let task_marker = checkbox.map(|c| format!("[{c}] ")).unwrap_or_default();
+    let open = push_block_bullet(
+        &mut String::new(),
+        "",
+        list_marker,
+        &task_marker,
+        &spec.content,
+        RenderMode::Source,
+    )
+    .open;
+    let property_lines = (spec.todo_state.is_some() && checkbox.is_none())
+        || spec.priority.is_some()
+        || spec.scheduled_date.is_some()
+        || spec.due_date.is_some()
+        || !spec.properties.is_empty();
+    !(ends_blank || (open && property_lines))
 }
 
 // ── fixtures ────────────────────────────────────────────────────────────────

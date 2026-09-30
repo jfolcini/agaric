@@ -185,6 +185,95 @@ function parseSourceBuffer(source: string): SourceBullet[] {
   })
 }
 
+/**
+ * The text `get_page_buffer` gives (#5160 A): `source` less the ` ^ID` each
+ * block's last line ends in, and the id each line carries, the block's on the
+ * line it starts on. The mock's render writes no anchor on a line of its own,
+ * so there is none to drop.
+ */
+function anchorFree(source: string): { text: string; lineIds: Array<string | null> } {
+  const lines = source.split('\n')
+  const lineIds: Array<string | null> = lines.map(() => null)
+  for (const bullet of parseSourceBuffer(source)) {
+    if (bullet.anchor === null || bullet.line === undefined) continue
+    const last = bullet.line - 1 + bullet.content.split('\n').length - 1
+    const line = lines[last] ?? ''
+    const suffix = ` ^${bullet.anchor}`
+    if (line.toUpperCase().endsWith(suffix.toUpperCase())) {
+      lines[last] = line.slice(0, -suffix.length)
+    }
+    lineIds[bullet.line - 1] = bullet.anchor
+  }
+  return { text: lines.join('\n'), lineIds }
+}
+
+/** `text` read with its ids beside it on `lineIds`, no id assigned yet. */
+function parseTextBuffer(
+  text: string,
+  lineIds: ReadonlyArray<string | null>,
+  warnings: string[],
+): SourceBullet[] {
+  const idLines = new Set(lineIds.flatMap((carried, i) => (carried === null ? [] : [i + 1])))
+  return parseOutline(text, { idLines, warnings }).map(({ content, depth, todoState, line }) => ({
+    content: todoState
+      ? `[${TASK_STATE_TO_MARKER[todoState]}]${content === '' ? '' : ` ${content}`}`
+      : content,
+    depth,
+    anchor: null,
+    line,
+  }))
+}
+
+/** A page's own source read as the text {@link anchorFree} makes of it, each block under its id. */
+function readOwnText(source: string): SourceBullet[] {
+  const { text, lineIds } = anchorFree(source)
+  const bullets = parseTextBuffer(text, lineIds, [])
+  for (const bullet of bullets) {
+    bullet.anchor = bullet.line === undefined ? null : (lineIds[bullet.line - 1] ?? null)
+  }
+  return bullets
+}
+
+/**
+ * Mirrors `read_by_line` (`markdown_source_apply.rs`): `text` read into
+ * bullets, each under the id `lineIds` gives the line it starts on, refused
+ * unless `lineIds` holds one entry per line. A copy is a new block and a cut
+ * is a move (#5160 D15): an id on more than one line stays with the first,
+ * and one that is not `known` is read as none, each with a warning naming the
+ * line.
+ */
+function readByLine(
+  text: string,
+  lineIds: ReadonlyArray<string | null>,
+  known: ReadonlySet<string>,
+  warnings: string[],
+): SourceBullet[] {
+  const lines = text.replace(/\r\n/g, '\n').split(/[\n\r]/).length
+  if (lineIds.length !== lines) {
+    throw validationRejection(
+      `line_ids holds ${lineIds.length} entries for the ${lines} lines of the text`,
+    )
+  }
+  const bullets = parseTextBuffer(text, lineIds, warnings)
+  const first = new Map<string, number>()
+  for (const bullet of bullets) {
+    const line = bullet.line ?? 0
+    const carried = lineIds[line - 1] ?? null
+    if (carried === null) continue
+    const id = known.has(carried) ? carried : carried.toUpperCase()
+    const at = first.get(id)
+    if (!known.has(id)) {
+      warnings.push(`line ${line}: not a block of this page; saved as a new block`)
+    } else if (at !== undefined) {
+      warnings.push(`line ${line}: a copy of the block on line ${at}; saved as a new block`)
+    } else {
+      first.set(id, line)
+      bullet.anchor = id
+    }
+  }
+  return bullets
+}
+
 /** A `^word` at a line start or after whitespace, as {@link SOURCE_ANCHOR_RE} reads a trailing one. */
 const MOVED_ANCHOR_RE = /(?:^|\s)(\^[0-9A-Za-z-]+)/g
 
@@ -477,6 +566,19 @@ function mergeSourceBuffer(
   return merged
 }
 
+/** A buffer with each block's `^ID` in its text: an anchor named twice is refused, then anchors are healed. */
+function readAnchored(source: string, loadedIds: ReadonlySet<string>): SourceBullet[] {
+  const typed = parseSourceBuffer(source)
+  const seen = new Set<string>()
+  for (const bullet of typed) {
+    if (bullet.anchor === null) continue
+    if (seen.has(bullet.anchor)) throw refusedAt(bullet, `^${bullet.anchor} appears more than once`)
+    seen.add(bullet.anchor)
+  }
+  healMovedAnchors(typed, loadedIds, seen)
+  return typed
+}
+
 /**
  * Every refusal `apply_page_source` makes, checked before anything is written:
  * a stale base unless `merge` folds the page's changes into the buffer
@@ -491,7 +593,7 @@ function readSourceEdit(
   pageId: string,
   source: string,
   baseSource: string,
-  flags: { force: boolean; merge: boolean },
+  flags: { force: boolean; merge: boolean; lineIds: ReadonlyArray<string | null> | null },
 ): {
   t1: SourceBullet[]
   before: Map<string | null, string>
@@ -507,24 +609,22 @@ function readSourceEdit(
       message: `page '${pageId}' changed since its source was loaded`,
     })
   }
-  const t0 = parseSourceBuffer(current.source)
+  // With the ids beside the text, the page's own source is read as that text.
+  const readOwn = flags.lineIds === null ? parseSourceBuffer : readOwnText
+  const t0 = readOwn(current.source)
   if (t0.length !== current.ids.length || t0.some((b, i) => b.anchor !== current.ids[i])) {
     throw validationRejection(`page '${pageId}' does not read back as its own source`)
   }
   const before = new Map(t0.map((b) => [b.anchor, b.content]))
-  const typed = parseSourceBuffer(source)
-  const seen = new Set<string>()
-  for (const bullet of typed) {
-    if (bullet.anchor === null) continue
-    if (seen.has(bullet.anchor)) throw refusedAt(bullet, `^${bullet.anchor} appears more than once`)
-    seen.add(bullet.anchor)
-  }
   // Against the source the edit started from and before the merge, as
   // `read_buffer` heals, so the merge reads a healed bullet as its block.
-  const loaded = stale ? parseSourceBuffer(baseSource) : t0
+  const loaded = stale ? readOwn(baseSource) : t0
   const loadedIds = new Set(loaded.flatMap(({ anchor }) => (anchor === null ? [] : [anchor])))
-  healMovedAnchors(typed, loadedIds, seen)
   const warnings: string[] = []
+  const typed =
+    flags.lineIds === null
+      ? readAnchored(source, loadedIds)
+      : readByLine(source, flags.lineIds, new Set([...loadedIds, ...current.ids]), warnings)
   const t1 = stale ? mergeSourceBuffer(loaded, t0, typed, warnings) : typed
   const anchors = new Set(t1.flatMap(({ anchor }) => (anchor === null ? [] : [anchor])))
   for (const bullet of t1) {
@@ -1210,6 +1310,14 @@ export const pagesHandlers = {
   get_page_source: (args) =>
     renderPageSource((args as Record<string, unknown>)['pageId'] as string).source,
 
+  // #5160 A — the same buffer with each block's id beside its text: the mock's
+  // render less its anchors ({@link anchorFree}).
+  get_page_buffer: (args) => {
+    const { source } = renderPageSource((args as Record<string, unknown>)['pageId'] as string)
+    const { text, lineIds } = anchorFree(source)
+    return { source, text, line_ids: lineIds }
+  },
+
   // #5140 Phase 4a — save the page edited as its source buffer: moves and
   // creates first, then edits, then deletes, so a child kept out of a deleted
   // block has moved before the delete cascades. The buffer is read by
@@ -1226,6 +1334,7 @@ export const pagesHandlers = {
     const edit = readSourceEdit(pageId, a['source'] as string, a['baseSource'] as string, {
       force: a['force'] === true,
       merge: a['merge'] === true,
+      lineIds: (a['lineIds'] as Array<string | null> | null | undefined) ?? null,
     })
     const report = { created: 0, edited: 0, moved: 0, deleted: 0 }
     const opRefs: OpRefs = []
@@ -1577,6 +1686,7 @@ export const pagesHandlers = {
   | 'list_page_aliases_by_prefix'
   | 'export_page_markdown'
   | 'get_page_source'
+  | 'get_page_buffer'
   | 'apply_page_source'
   | 'get_blocks_source'
   | 'import_markdown'

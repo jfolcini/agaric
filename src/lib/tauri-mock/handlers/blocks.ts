@@ -720,12 +720,21 @@ function isParagraphText(marker: string, rest: string, inList: boolean): boolean
  * after a bullet's marker is its `todoState` (#5160 D6). Code fences,
  * thematic breaks, list-style markers, property lines, escapes and anchors
  * are not modelled; a `1.` item is only flagged, for `joinSplice`.
+ *
+ * With `byLine`, a buffer whose block ids travel beside its text (#5160 A),
+ * fences are modelled, because D5 needs them: a fence's lines are code of the
+ * block that opened it, until a line closes it or a line carrying an id ends
+ * it, with the backend's warning.
  */
-export function parseOutline(text: string): PlannedPaste[] {
+export function parseOutline(
+  text: string,
+  byLine?: { idLines: ReadonlySet<number>; warnings: string[] },
+): PlannedPaste[] {
   const out: PlannedPaste[] = []
   const open: OpenBlock[] = []
   let blankLines = 0
   let lineNumber = 0
+  const fences = fenceTracker(byLine)
   const popTo = (indent: number, level: number | null): void => {
     let top = open.at(-1)
     while (
@@ -760,9 +769,13 @@ export function parseOutline(text: string): PlannedPaste[] {
       continue
     }
     const indent = indentColumns(line)
+    const top = open.at(-1)
+    if (fences.code(line, lineNumber, top, blankLines)) {
+      blankLines = 0
+      continue
+    }
     const bullet = BULLET_RE.exec(trimmed)
     const heading = HEADING_RE.exec(trimmed)
-    const top = open.at(-1)
     const item = open.findLast((o) => o.kind === 'bullet')
     // `Scan::continues_paragraph`: the line is not left of the innermost
     // item's content column, so it is not a lazy continuation a marker may leave.
@@ -774,14 +787,17 @@ export function parseOutline(text: string): PlannedPaste[] {
       bullet !== null &&
       continuesParagraph &&
       isParagraphText(bullet[0], trimmed.slice(bullet[0].length), item !== undefined)
+    let opens = trimmed
     if (bullet && !paragraphText) {
       const len = bullet[0].length
       popTo(indent, null)
       const entry = { marker: indent, content: indent + len + 1, kind: 'bullet', level: 0 } as const
       const body = trimmed.slice(len).replace(/^[ \t]/, '')
       const task = splitTaskMarker(body)
-      push(entry, task?.text ?? body, /^\d/.test(bullet[0]), task?.todoState)
+      opens = task?.text ?? body
+      push(entry, opens, /^\d/.test(bullet[0]), task?.todoState)
     } else if (heading) {
+      opens = ''
       const level = heading[1]?.length ?? 1
       popTo(indent, level)
       const kind = open.some((o) => o.kind === 'bullet') ? 'verbatim' : 'heading'
@@ -796,9 +812,60 @@ export function parseOutline(text: string): PlannedPaste[] {
       popTo(indent, null)
       push({ marker: indent, content: indent, kind: 'paragraph', level: 0 }, trimmed)
     }
+    fences.open(opens, lineNumber)
     blankLines = 0
   }
   return out
+}
+
+/**
+ * The fence a block of a buffer read by line ids left open (#5160 D5), which
+ * a line closing it or carrying an id ends; nothing without `byLine`.
+ */
+function fenceTracker(byLine?: { idLines: ReadonlySet<number>; warnings: string[] }): {
+  code: (line: string, lineNumber: number, top: OpenBlock | undefined, blanks: number) => boolean
+  open: (text: string, lineNumber: number) => void
+} {
+  let fence: { run: string; line: number } | null = null
+  return {
+    /** Whether `line` is code of the open fence, appended to `top`'s block. */
+    code(line, lineNumber, top, blanks) {
+      if (!byLine || !fence || !top) return false
+      if (byLine.idLines.has(lineNumber)) {
+        byLine.warnings.push(
+          `the ${fence.run} code fence opened on line ${fence.line} is not closed; it ends ` +
+            `before the block on line ${lineNumber}`,
+        )
+        fence = null
+        return false
+      }
+      top.block.content += `${'\n'.repeat(blanks + 1)}${dedent(line, top.content)}`
+      if (closesFence(line.trimStart(), fence.run)) fence = null
+      return true
+    },
+    /** Open the fence `text`, a block's text on line `lineNumber`, opens, if any. */
+    open(text, lineNumber) {
+      const run = byLine ? fenceRun(text) : null
+      if (run !== null) fence = { run, line: lineNumber }
+    },
+  }
+}
+
+/**
+ * `import::fence_run`: the run of three or more backticks or tildes `text`
+ * opens with; a backtick fence's info string holds no backtick.
+ */
+function fenceRun(text: string): string | null {
+  const run = /^(?:`{3,}|~{3,})/.exec(text)?.[0]
+  if (run === undefined) return null
+  return run.startsWith('`') && text.slice(run.length).includes('`') ? null : run
+}
+
+/** `import::closes_fence`: a run of the fence's character at least as long, alone on the line. */
+function closesFence(trimmed: string, run: string): boolean {
+  let length = 0
+  while (trimmed[length] === run[0]) length += 1
+  return length >= run.length && trimmed.slice(length).trim() === ''
 }
 
 /** `import::fence_opener`, for the shapes the mock models: a line opening with ``` or ~~~. */

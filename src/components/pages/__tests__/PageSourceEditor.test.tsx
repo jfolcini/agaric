@@ -223,7 +223,14 @@ describe('PageSourceEditor saving', () => {
       expect(onClose).toHaveBeenCalledOnce()
     })
     expect(applyCalls()).toEqual([
-      { pageId: PAGE_GETTING_STARTED, source: text, baseSource: base, force: false, merge: false },
+      {
+        pageId: PAGE_GETTING_STARTED,
+        source: text,
+        baseSource: base,
+        force: false,
+        merge: false,
+        lineIds: null,
+      },
     ])
     expect(pageSource(PAGE_GETTING_STARTED)).toBe(text)
     expect(store.getState().blocksById.get(BLOCK_GS_1)?.content).toBe(
@@ -490,13 +497,21 @@ describe('PageSourceEditor when the page changed elsewhere', () => {
       expect(onClose).toHaveBeenCalledOnce()
     })
     expect(applyCalls()).toEqual([
-      { pageId: PAGE_GETTING_STARTED, source: text, baseSource: base, force: false, merge: false },
+      {
+        pageId: PAGE_GETTING_STARTED,
+        source: text,
+        baseSource: base,
+        force: false,
+        merge: false,
+        lineIds: null,
+      },
       {
         pageId: PAGE_GETTING_STARTED,
         source: text,
         baseSource: current,
         force: true,
         merge: false,
+        lineIds: null,
       },
     ])
     expect(pageSource(PAGE_GETTING_STARTED)).toBe(text)

@@ -1032,7 +1032,7 @@ pub fn parse_logseq_markdown(content: &str) -> ParseOutput {
     let body = strip_leading_properties(&normalized, &mut frontmatter, &mut frontmatter_list_items);
 
     let mut warnings = frontmatter_warnings;
-    let mut blocks = parse_outline(body, ParseMode::Import, true, &mut warnings);
+    let mut blocks = parse_outline(body, ParseMode::Import, true, None, &mut warnings);
     let collapsed = read_logseq_bookkeeping(&mut blocks);
 
     ParseOutput {
@@ -1196,16 +1196,37 @@ fn logseq_ids(blocks: &[ParsedBlock]) -> std::collections::HashSet<String> {
 /// import depth limit flattened: a save refuses it where an import would
 /// reshape it.
 pub fn parse_source_outline(content: &str) -> ParseOutput {
-    source_outline(content, false)
+    source_outline(content, false, None)
+}
+
+/// [`parse_source_outline`] for a buffer whose block ids travel beside the
+/// text (#5160 A): `id_lines` are the lines, counted from 1, that carry one.
+/// No `^ID` is read as an anchor, and a fence never crosses a line that
+/// carries an id: one left open ends before it, with a warning (D5).
+pub fn parse_source_text(
+    content: &str,
+    id_lines: &std::collections::HashSet<usize>,
+) -> ParseOutput {
+    source_outline(content, false, Some(id_lines))
 }
 
 /// [`parse_source_outline`], reading text from outside Agaric when `foreign`:
 /// flattened past [`MAX_IMPORT_DEPTH`] as an import is, an unterminated fence
 /// ending with its list item as CommonMark reads it.
-fn source_outline(content: &str, foreign: bool) -> ParseOutput {
+fn source_outline(
+    content: &str,
+    foreign: bool,
+    id_lines: Option<&std::collections::HashSet<usize>>,
+) -> ParseOutput {
     let normalized = content.replace("\r\n", "\n").replace('\r', "\n");
     let mut warnings = Vec::new();
-    let blocks = parse_outline(&normalized, ParseMode::Source, foreign, &mut warnings);
+    let blocks = parse_outline(
+        &normalized,
+        ParseMode::Source,
+        foreign,
+        id_lines,
+        &mut warnings,
+    );
     ParseOutput {
         blocks,
         frontmatter: Vec::new(),
@@ -1221,7 +1242,7 @@ fn source_outline(content: &str, foreign: bool) -> ParseOutput {
 /// README or an LLM answer gives the blocks its headings, paragraphs, list
 /// items and fences are.
 pub fn parse_pasted_text(text: &str) -> Vec<ParsedBlock> {
-    let mut blocks = source_outline(text, true).blocks;
+    let mut blocks = source_outline(text, true, None).blocks;
     blocks.iter_mut().for_each(restore_text_anchor);
     blocks
 }
@@ -1290,17 +1311,21 @@ enum ParseMode {
     Source,
 }
 
-/// The block scan both modes share: lines into blocks, then anchors, then, for
-/// `foreign` text (an import or a paste, not the page's own buffer), the depth
-/// clamp, appending one warning per lossy transform to `warnings`.
+/// The block scan both modes share: lines into blocks, then anchors, unless
+/// the ids travel beside the text on `id_lines`, then, for `foreign` text (an
+/// import or a paste, not the page's own buffer), the depth clamp, appending
+/// one warning per lossy transform to `warnings`.
 fn parse_outline(
     normalized: &str,
     mode: ParseMode,
     foreign: bool,
+    id_lines: Option<&std::collections::HashSet<usize>>,
     warnings: &mut Vec<String>,
 ) -> Vec<ParsedBlock> {
-    let (mut blocks, ends_in_code, mut lossy) = read_blocks(normalized, mode, foreign);
-    extract_block_anchors(&mut blocks, &ends_in_code, mode);
+    let (mut blocks, ends_in_code, mut lossy) = read_blocks(normalized, mode, foreign, id_lines);
+    if id_lines.is_none() {
+        extract_block_anchors(&mut blocks, &ends_in_code, mode);
+    }
     if foreign {
         lossy.clamped = clamp_block_depths(&mut blocks);
     }
@@ -1316,13 +1341,15 @@ fn read_blocks(
     normalized: &str,
     mode: ParseMode,
     foreign: bool,
+    id_lines: Option<&std::collections::HashSet<usize>>,
 ) -> (Vec<ParsedBlock>, Vec<bool>, LossyCounts) {
-    let read = parse_block_lines(normalized, mode, foreign, &std::collections::HashSet::new());
+    let none = std::collections::HashSet::new();
+    let read = parse_block_lines(normalized, mode, foreign, &none, id_lines);
     let ids = logseq_ids(&read.0);
     if read.2.stripped_refs == 0 || ids.is_empty() {
         return read;
     }
-    parse_block_lines(normalized, mode, foreign, &ids)
+    parse_block_lines(normalized, mode, foreign, &ids, id_lines)
 }
 
 /// Counts of the lossy / silently-corrected transforms [`parse_block_lines`]
@@ -1356,7 +1383,7 @@ struct LossyCounts {
     /// #5160 D14 — Logseq `:LOGBOOK:` drawers an import dropped.
     logbooks: usize,
     /// #5160 D5 — a source buffer's fences left open and closed before the
-    /// next bullet carrying a block's anchor, each named.
+    /// next line carrying another block's id, each named.
     unclosed_fences: Vec<String>,
 }
 
@@ -1528,6 +1555,9 @@ struct Scan<'a> {
     in_logbook: bool,
     /// The number of the line being read.
     line: usize,
+    /// The lines that carry a block's id when the ids travel beside a source
+    /// buffer's text; `None` when they are written in it as anchors.
+    id_lines: Option<&'a std::collections::HashSet<usize>>,
 }
 
 /// Scan already-normalized, frontmatter-free markdown into blocks, collecting
@@ -1547,6 +1577,7 @@ fn parse_block_lines(
     mode: ParseMode,
     foreign: bool,
     kept_refs: &std::collections::HashSet<String>,
+    id_lines: Option<&std::collections::HashSet<usize>>,
 ) -> (Vec<ParsedBlock>, Vec<bool>, LossyCounts) {
     let mut scan = Scan {
         mode,
@@ -1561,6 +1592,7 @@ fn parse_block_lines(
         kept_refs,
         in_logbook: false,
         line: 0,
+        id_lines,
     };
     for (index, line) in normalized.lines().enumerate() {
         let trimmed = line.trim_start();
@@ -1590,7 +1622,10 @@ impl<'a> Scan<'a> {
             // A source buffer writes the anchor of a block that ends in code
             // on a line of its own, which ends the fence; the anchor is text
             // until the post-pass reads it. Every other line is code.
-            if self.mode == ParseMode::Source && ANCHOR_LINE_RE.is_match(trimmed) {
+            if self.mode == ParseMode::Source
+                && self.id_lines.is_none()
+                && ANCHOR_LINE_RE.is_match(trimmed)
+            {
                 self.append(line, false);
             } else {
                 self.code_line(line, trimmed, fence);
@@ -1628,18 +1663,15 @@ impl<'a> Scan<'a> {
 
     /// Close an open fence the line ends without a closing fence (D5): in
     /// foreign text, a line left of the fence's column has left the list item
-    /// that holds it (CommonMark); in a source buffer, a bullet carrying a
-    /// block's anchor starts that block, and the save warns, naming the fence.
+    /// that holds it (CommonMark); in a source buffer, a line carrying a
+    /// block's id starts that block, and the save warns, naming the fence.
     fn end_fence_before(&mut self, trimmed: &str, indent: usize, number: usize) {
         let Some(fence) = &self.fence else {
             return;
         };
         if self.foreign && indent < fence.column {
             self.fence = None;
-        } else if self.mode == ParseMode::Source
-            && is_bullet_line(trimmed)
-            && TRAILING_ANCHOR_RE.is_match(trimmed)
-        {
+        } else if self.mode == ParseMode::Source && self.carries_id(trimmed, number) {
             let run =
                 String::from_utf8(vec![fence.run.ch; fence.run.len]).expect("a fence run is ASCII");
             self.lossy.unclosed_fences.push(format!(
@@ -1648,6 +1680,15 @@ impl<'a> Scan<'a> {
                 fence.line
             ));
             self.fence = None;
+        }
+    }
+
+    /// Whether line `number` of a source buffer carries a block's id: beside
+    /// the text, or written in it as a bullet ending in its `^ID`.
+    fn carries_id(&self, trimmed: &str, number: usize) -> bool {
+        match self.id_lines {
+            Some(lines) => lines.contains(&number),
+            None => is_bullet_line(trimmed) && TRAILING_ANCHOR_RE.is_match(trimmed),
         }
     }
 
@@ -6436,6 +6477,100 @@ mod tests_block_grammar_5160 {
         let out = parse_source_outline(&format!("- a\n  ```\n  code\n- b\n- c ^{A}\n"));
         assert_eq!(shape(&out.blocks), [(0, "a\n```\ncode\n- b"), (0, "c")]);
         assert_eq!(out.blocks[1].block_anchor.as_deref(), Some(A));
+    }
+
+    /// `md` read as a buffer whose ids travel beside it, on `id_lines`.
+    fn by_line(md: &str, id_lines: &[usize]) -> super::ParseOutput {
+        super::parse_source_text(md, &id_lines.iter().copied().collect())
+    }
+
+    /// #5160 A — with the ids beside the text, no `^ID` in it is an anchor: a
+    /// trailing one is text, and an anchor line in a fence is code.
+    #[test]
+    fn a_buffer_read_by_line_ids_reads_no_anchor() {
+        const A: &str = "01J0000000000000000000000A";
+        let out = by_line(&format!("- a ^{A}\n- b ^note\n"), &[1, 2]);
+        assert_eq!(
+            shape(&out.blocks),
+            [(0, format!("a ^{A}").as_str()), (0, "b ^note")]
+        );
+        assert!(out.blocks.iter().all(|block| block.block_anchor.is_none()));
+        assert_eq!(
+            out.blocks
+                .iter()
+                .map(|block| block.line)
+                .collect::<Vec<_>>(),
+            [Some(1), Some(2)]
+        );
+
+        let out = by_line(&format!("- ```\n  code\n  ^{A}\n  - x\n"), &[1]);
+        assert_eq!(
+            shape(&out.blocks),
+            [(0, format!("```\ncode\n^{A}\n- x").as_str())]
+        );
+        assert!(out.warnings.is_empty(), "{:?}", out.warnings);
+    }
+
+    /// D5 by id: an unterminated fence stops at the next line carrying a
+    /// block's id, whatever it looks like, with a warning naming both lines; a
+    /// bullet carrying none, an anchored one included, is code.
+    #[test]
+    fn an_unterminated_fence_stops_at_the_next_line_carrying_an_id() {
+        const B: &str = "01J0000000000000000000000B";
+        let md = format!("- a\n  ```\n  code\n- b ^{B}\n- c\n  more\n");
+        let out = by_line(&md, &[1, 5]);
+        assert_eq!(
+            shape(&out.blocks),
+            [
+                (0, format!("a\n```\ncode\n- b ^{B}").as_str()),
+                (0, "c\nmore")
+            ]
+        );
+        assert_eq!(
+            out.blocks
+                .iter()
+                .map(|block| block.line)
+                .collect::<Vec<_>>(),
+            [Some(1), Some(5)]
+        );
+        assert_eq!(
+            out.warnings,
+            [
+                "the ``` code fence opened on line 2 is not closed; it ends before the block on \
+              line 5"
+            ]
+        );
+
+        // The id's line need not be a bullet; it starts no block of its own, so
+        // it continues the block before it, as prose.
+        let out = by_line("- ```\n  code\n  more\n", &[1, 3]);
+        assert_eq!(shape(&out.blocks), [(0, "```\ncode\nmore")]);
+        assert_eq!(out.warnings.len(), 1, "{:?}", out.warnings);
+
+        // A closed fence crosses nothing, and needs no warning.
+        let out = by_line("- ```\n  - x\n  ```\n- b\n", &[1, 4]);
+        assert_eq!(shape(&out.blocks), [(0, "```\n- x\n```"), (0, "b")]);
+        assert!(out.warnings.is_empty(), "{:?}", out.warnings);
+    }
+
+    /// D5's other side: a paste reads an unterminated fence as CommonMark does,
+    /// to the end of its list item or of the text, whatever the lines in it
+    /// look like, and an import reads it the same way.
+    #[test]
+    fn a_paste_or_import_runs_an_unterminated_fence_to_the_end_of_its_item() {
+        let md = "```\ncode\n- b\n- c\n";
+        assert_eq!(shape(&parse_pasted_text(md)), [(0, "```\ncode\n- b\n- c")]);
+        assert_eq!(
+            shape(&parse_logseq_markdown(md).blocks),
+            [(0, "```\ncode\n- b\n- c")]
+        );
+        let by_id = by_line(md, &[3, 4]);
+        assert_eq!(shape(&by_id.blocks), [(0, "```\ncode"), (0, "b"), (0, "c")]);
+        assert_eq!(by_id.warnings.len(), 1, "{:?}", by_id.warnings);
+
+        let md = "- ```\n  code\n- c\n";
+        assert_eq!(shape(&parse_pasted_text(md)), [(0, "```\ncode"), (0, "c")]);
+        assert_eq!(by_line(md, &[1]).blocks.len(), 1, "no id on line 3: code");
     }
 }
 

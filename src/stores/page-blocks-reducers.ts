@@ -1225,7 +1225,7 @@ export function createReducers({
       // #4391 — see `pasteBlocks`.
       const spaceId = useSpaceStore.getState().currentSpaceId
       const resp = await retryOnPoolBusy(() =>
-        commands.applyPageSource(rootParentId, source, baseSource, force, merge).then(unwrap),
+        commands.applyPageSource(rootParentId, source, baseSource, force, merge, null).then(unwrap),
       )
       notifyUndoNewAction(rootParentId, resp.op_refs)
       announceCreatedNames(resp.names_created, spaceId)
