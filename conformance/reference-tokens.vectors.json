@@ -207,6 +207,14 @@
       ]
     },
     {
+      "name": "#5160 D8 a scheme-less URL's fragment is not a tag: `/` is not a boundary",
+      "input": "see x.com/#install",
+      "requestedPageNames": [],
+      "requestedTagNames": [],
+      "transformed": "see x.com/#install",
+      "editor": [["text", "see x.com/#install"]]
+    },
+    {
       "name": "#5160 N1 a link destination's fragment is not a tag and the link is left intact",
       "input": "[docs](https://x.dev/#setup)",
       "requestedPageNames": [],

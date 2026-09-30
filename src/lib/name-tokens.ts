@@ -5,13 +5,13 @@
  * `src-tauri/src/commands/pages/markdown.rs`), and both sides are pinned to the
  * same rows of `conformance/reference-tokens.vectors.json` by
  * `reference-tokens-conformance.test.ts`. The Tauri mock resolves names
- * through this scan; the editor's typed-tag rule (Phase 3c) reads the same
- * predicates.
+ * through this scan, and the editor's typed tag (`completedTag` in
+ * `at-tag-picker.ts`) reads names with it.
  *
  * A token is not a token when it is inside inline code, escaped by an odd run
  * of backslashes, or, for a tag, inside a bare URL, a link destination or a
  * `[[…]]` link; a `#name` is a tag only when the name holds a non-digit and
- * the `#` follows a boundary, which `&` and `[` are not.
+ * the `#` follows a boundary, which `&`, `[` and `/` are not.
  *
  * A link body splits on its first `|` into the name and a label (#5160 D9),
  * and Logseq's `[label]([[Page]])` is the same token. That split is what the
@@ -54,7 +54,7 @@ const PAGE_LINK_RE = /\[\[([^\]\n]+?)\]\]/g
 const MULTIWORD_TAG_RE = /#\[\[([^\]\n]+?)\]\]/g
 /** `HUMAN_TAG_RE`: group 1 the boundary (empty at the start), group 2 the name. */
 // content-regex-allow: a compile-time constant; the first-char class omits `\p{M}` on purpose, as the Rust twin does (#3367): a name starts on a base character, and marks follow one
-const BARE_TAG_RE = /(^|[^\p{L}\p{N}\p{M}_&[])#([\p{L}\p{N}_][\p{L}\p{N}\p{M}_/-]*)/gu
+const BARE_TAG_RE = /(^|[^\p{L}\p{N}\p{M}_&[/])#([\p{L}\p{N}_][\p{L}\p{N}\p{M}_/-]*)/gu
 /** `TAG_GUARD_RE`: a bare URL up to whitespace, or a link destination. */
 const TAG_GUARD_RE = /[A-Za-z][A-Za-z0-9+.-]*:\/\/\S+|\]\([^)\n]*\)/g
 /** `LOGSEQ_LABELLED_LINK_RE`'s head, `[label](`, ending right before a `[[…]]` link. */
