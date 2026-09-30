@@ -280,6 +280,35 @@ fn properties_and_lines_merge_field_by_field() {
     );
 }
 
+/// A merged block names its line in the buffer, so a refusal can (#5160 X3);
+/// a block only the page holds has none, whatever line of the page's source
+/// it came from.
+#[test]
+fn a_merged_block_names_its_line_in_the_buffer() {
+    let mut warnings = Vec::new();
+    let merged = merge_outlines(
+        parse("- a ^A\n- b ^B\n"),
+        &parse("- z ^Z\n- a ^A\n- b2 ^B\n"),
+        parse("- new\n- b ^B\n- a2 ^A\n"),
+        &mut warnings,
+    )
+    .unwrap();
+    let lines: Vec<(String, Option<usize>)> = merged
+        .iter()
+        .map(|block| (block.content.clone(), block.line))
+        .collect();
+    assert_eq!(
+        lines,
+        [
+            ("z".to_string(), None),
+            ("new".to_string(), Some(1)),
+            ("b2".to_string(), Some(2)),
+            ("a2".to_string(), Some(3)),
+        ]
+    );
+}
+
+/// Refused naming the line of the second (#5160 X3).
 #[test]
 fn an_anchor_written_twice_in_the_buffer_is_refused() {
     let mut warnings = Vec::new();
@@ -290,7 +319,7 @@ fn an_anchor_written_twice_in_the_buffer_is_refused() {
         &mut warnings,
     );
     assert!(
-        matches!(result, Err(AppError::Validation { .. })),
+        matches!(&result, Err(AppError::Validation { message, .. }) if message.starts_with("line 2: ")),
         "got {result:?}"
     );
 }

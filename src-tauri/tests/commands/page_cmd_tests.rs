@@ -3083,6 +3083,98 @@ async fn apply_page_source_edits_a_blocks_content() {
     );
 }
 
+/// A lowercase `^id` is the block it spells (#5160 X3): ULIDs are uppercase,
+/// and the save reads the anchor so.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn apply_page_source_reads_a_lowercase_anchor_as_its_block() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let page = dup_page(&pool, &mat, "Lowercase").await;
+    let a = dup_child(&pool, &mat, &page, "hello").await;
+    settle(&mat).await;
+    let base = page_source(&pool, &page).await;
+    let lowercase = a.as_str().to_ascii_lowercase();
+
+    let report = save_source(
+        &pool,
+        &mat,
+        &page,
+        &format!("- hello again ^{lowercase}\n"),
+        &base,
+        false,
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(counts(&report), [0, 1, 0, 0, 0, 0], "the block is edited");
+    assert_eq!(
+        dup_children(&pool, &page).await,
+        vec![(a.into_string(), "hello again".to_owned())]
+    );
+}
+
+/// A property value with a line break, which MCP can set, is written quoted
+/// in the buffer (#5160 X5): the page's own source saves as a no-op, and a
+/// quoted value typed in the buffer is stored as the value it spells.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn apply_page_source_round_trips_a_multi_line_property_value() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let page = dup_page(&pool, &mat, "Multi").await;
+    let block = dup_child(&pool, &mat, &page, "has a note").await;
+    set_property_inner(
+        &pool,
+        DEV,
+        &mat,
+        block.as_str().into(),
+        "note".into(),
+        Some("two\nlines".into()),
+        None,
+        None,
+        None,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+    let base = page_source(&pool, &page).await;
+    assert!(
+        base.contains("  note:: \"two\\nlines\"\n"),
+        "the value is quoted:\n{base}"
+    );
+    let before = last_seq(&pool).await;
+
+    let report = save_source(&pool, &mat, &page, &base, &base, false)
+        .await
+        .unwrap();
+    assert_eq!(
+        counts(&report),
+        [0; 6],
+        "the page's own source writes nothing"
+    );
+    assert_eq!(ops_after(&pool, before).await, Vec::<String>::new());
+
+    let source = with(
+        &base,
+        "note:: \"two\\nlines\"",
+        r#"note:: "a \"quoted\" line\nand C:\\temp""#,
+    );
+    let report = save_source(&pool, &mat, &page, &source, &base, false)
+        .await
+        .unwrap();
+    assert_eq!(counts(&report), [0, 0, 0, 0, 1, 0], "one property set");
+    assert_eq!(
+        dup_storage(&pool, &block).await[1],
+        r#"note text=Some("a \"quoted\" line\nand C:\\temp") num=None date=None ref=None bool=None"#,
+    );
+    assert_eq!(
+        page_source(&pool, &page).await,
+        source,
+        "and reads back as typed"
+    );
+}
+
 /// A changed value is set, a new key added, a removed line's key deleted, and
 /// a value under a `ref`-declared key goes to `value_ref`.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -3628,8 +3720,9 @@ async fn apply_page_source_refuses_a_block_holding_two_moved_anchors() {
 
     assert!(
         matches!(&result, Err(AppError::Validation { message, .. })
-            if message.contains(a.as_str()) && message.contains(b.as_str())),
-        "refused naming both anchors: {result:?}"
+            if message.starts_with("line 1: ")
+                && message.contains(a.as_str()) && message.contains(b.as_str())),
+        "refused naming the line and both anchors: {result:?}"
     );
     assert_eq!(ops_after(&pool, before).await, Vec::<String>::new());
     assert_eq!(page_source(&pool, &page).await, base, "nothing is written");
@@ -3996,9 +4089,10 @@ async fn apply_page_source_refuses_to_delete_a_block_holding_a_nested_page() {
     );
 }
 
-/// Every refusal writes nothing: an anchor written twice, an anchor of
-/// another page's block, a page whose source does not read back, a nesting
-/// past the depth limit, and more ops than one undo reverts.
+/// Every refusal writes nothing and names the buffer line it stopped at
+/// (#5160 X3): an anchor written twice, an anchor of another page's block, a
+/// nesting past the depth limit, and more ops than one undo reverts; and a
+/// page whose source does not read back is refused, naming the block.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn apply_page_source_refusals_write_nothing() {
     let (pool, _dir) = test_pool().await;
@@ -4020,19 +4114,30 @@ async fn apply_page_source_refusals_write_nothing() {
     let many: String = (0..1001).map(|i| format!("- n{i}\n")).collect();
     let before = last_seq(&pool).await;
 
-    for (what, source) in [
-        ("an anchor written twice", format!("{base}- again ^{a}\n")),
+    let deepest = 2 + usize::try_from(MAX_BLOCK_DEPTH).unwrap();
+    for (what, source, line) in [
+        (
+            "an anchor written twice",
+            format!("{base}- again ^{a}\n"),
+            2,
+        ),
         (
             "another page's block",
             format!("{base}- moved in ^{elsewhere}\n"),
+            2,
         ),
-        ("a nesting past the depth limit", format!("{base}{deep}")),
-        ("more ops than one undo", format!("{base}{many}")),
+        (
+            "a nesting past the depth limit",
+            format!("{base}{deep}"),
+            deepest,
+        ),
+        ("more ops than one undo", format!("{base}{many}"), 1002),
     ] {
         let result = save_source(&pool, &mat, &page, &source, &base, false).await;
         assert!(
-            matches!(result, Err(AppError::Validation { .. })),
-            "{what} is refused, got {result:?}"
+            matches!(&result, Err(AppError::Validation { message, .. })
+                if message.starts_with(&format!("line {line}: "))),
+            "{what} is refused at line {line}, got {result:?}"
         );
     }
     assert_eq!(ops_after(&pool, before).await, Vec::<String>::new());
@@ -4042,27 +4147,13 @@ async fn apply_page_source_refusals_write_nothing() {
         "the engine rolled back what the refused saves had applied"
     );
 
-    set_property_inner(
-        &pool,
-        DEV,
-        &mat,
-        elsewhere.as_str().into(),
-        "note".into(),
-        Some("two\nlines".into()),
-        None,
-        None,
-        None,
-        None,
-        None,
-    )
-    .await
-    .unwrap();
+    let split = dup_child(&pool, &mat, &other, "one\r- two").await;
     settle(&mat).await;
     let unreadable = page_source(&pool, &other).await;
     let before = last_seq(&pool).await;
     let result = save_source(&pool, &mat, &other, &unreadable, &unreadable, false).await;
     assert!(
-        matches!(&result, Err(AppError::Validation { message, .. }) if message.contains(elsewhere.as_str())),
+        matches!(&result, Err(AppError::Validation { message, .. }) if message.contains(split.as_str())),
         "a source that does not read back is refused, naming the block: {result:?}"
     );
     assert_eq!(ops_after(&pool, before).await, Vec::<String>::new());
@@ -4239,8 +4330,8 @@ async fn apply_page_source_refused_at_the_last_block_rolls_everything_back() {
     .await;
 
     assert!(
-        matches!(result, Err(AppError::Validation { .. })),
-        "a state outside the options is refused, got {result:?}"
+        matches!(&result, Err(AppError::Validation { message, .. }) if message.starts_with("line 4: ")),
+        "a state outside the options is refused, naming its block's line, got {result:?}"
     );
     assert_eq!(ops_after(&pool, before).await, Vec::<String>::new());
     assert_eq!(
@@ -5088,11 +5179,10 @@ async fn duplicate_block_copies_a_value_its_key_no_longer_offers() {
     );
 }
 
-/// A property value with a line break doesn't survive the source grammar: it
-/// would read back as more content or as another block. Duplicate refuses
-/// rather than write a mangled copy.
+/// A property value with a line break is quoted in the source a copy goes
+/// through (#5160 X5), so Duplicate copies it as it is.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn duplicate_block_refuses_a_value_the_grammar_cannot_carry() {
+async fn duplicate_block_copies_a_property_value_with_a_line_break() {
     let (pool, _dir) = test_pool().await;
     let mat = Materializer::new(pool.clone());
     let page = dup_page(&pool, &mat, "Dup").await;
@@ -5114,18 +5204,16 @@ async fn duplicate_block_refuses_a_value_the_grammar_cannot_carry() {
         .await
         .unwrap();
         settle(&mat).await;
-        let before = dup_counts(&pool).await;
 
-        let result = duplicate_block_inner(&pool, DEV, &mat, original).await;
+        let rows = duplicate_block_inner(&pool, DEV, &mat, original.clone())
+            .await
+            .unwrap();
+        settle(&mat).await;
 
-        assert!(
-            matches!(result, Err(AppError::Validation { .. })),
-            "a note of {value:?} is refused, got {result:?}"
-        );
         assert_eq!(
-            dup_counts(&pool).await,
-            before,
-            "nothing is written for {value:?}"
+            dup_storage(&pool, &rows[0].id).await,
+            dup_storage(&pool, &original).await,
+            "the copy holds the note {value:?}"
         );
     }
 }
@@ -5631,49 +5719,6 @@ async fn get_blocks_source_of_nothing_is_empty_and_of_too_many_is_refused() {
     );
 }
 
-/// A property value with a line break would paste back as more content or as
-/// another block: a copy that renders one is refused, whether the block is
-/// selected or travels under a selected one. A copy that doesn't render it
-/// still works.
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn get_blocks_source_refuses_a_property_value_with_a_line_break() {
-    let (pool, _dir) = test_pool().await;
-    let mat = Materializer::new(pool.clone());
-    let [a, a1, a1x, _, b, _] = copy_tree(&pool, &mat).await;
-    for (block, value) in [(&a1, "a\nb"), (&a1x, "a\rb")] {
-        set_property_inner(
-            &pool,
-            DEV,
-            &mat,
-            block.as_str().into(),
-            "note".into(),
-            Some(value.into()),
-            None,
-            None,
-            None,
-            None,
-            None,
-        )
-        .await
-        .unwrap();
-    }
-    settle(&mat).await;
-
-    for (ids, with_children) in [(vec![&a1], false), (vec![&a1x], false), (vec![&a], true)] {
-        let ids = ids.into_iter().cloned().collect();
-        let result = get_blocks_source_inner(&pool, ids, with_children).await;
-        assert!(
-            matches!(result, Err(AppError::Validation { .. })),
-            "with_children={with_children}: refused, got {result:?}"
-        );
-    }
-    assert_eq!(
-        copy_source(&pool, &[&a, &b], false).await,
-        "- a\n- b\n",
-        "blocks holding no such value still copy"
-    );
-}
-
 /// Everything a copy carries lands where the original keeps it: content
 /// verbatim, with a closed fence, an open fence and its child, a trailing
 /// ` ^word` and a raw block ref; each task state, with the stamp a new task
@@ -5719,6 +5764,7 @@ async fn a_copy_pastes_back_as_the_blocks_it_was_copied_from() {
     for (key, text, reference) in [
         ("listStyle", Some("bullet"), None),
         ("note", Some("free text"), None),
+        ("detail", Some("two\nlines\r and \"quotes\""), None),
         ("reviewer", None, Some(target.clone().into_string())),
     ] {
         set_property_inner(

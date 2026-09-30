@@ -333,6 +333,27 @@ describe('tauri-mock apply_page_source', () => {
     expect(opLog).toHaveLength(0)
   })
 
+  it('starts each refusal with the buffer line of the block it is about (#5160 X3)', () => {
+    const cases: Array<[string, number]> = [
+      [`${INITIAL}- adopted ^${ELSEWHERE}\n`, 10],
+      [`${INITIAL}- again ^${A}\n`, 10],
+      [`- intro\n- alpha ^${A} and ^${B} joined\n`, 2],
+    ]
+    for (const [buffer, line] of cases) {
+      const save = () =>
+        dispatch('apply_page_source', { pageId: PAGE, source: buffer, baseSource: source() })
+      expect(save).toThrow(new RegExp(`^line ${line}: `))
+    }
+    expect(opLog).toHaveLength(0)
+  })
+
+  it('reads a lowercase anchor as the block it spells (#5160 X3)', () => {
+    const report = apply(INITIAL.replace(`- alpha ^${A}`, `- alpha, edited ^${A.toLowerCase()}`))
+
+    expect(report).toMatchObject({ ...COUNTS_NONE, edited: 1 })
+    expect(children(PAGE)[0]).toMatchObject({ id: A, content: 'alpha, edited' })
+  })
+
   it('refuses a page whose source does not read back as its blocks', () => {
     // A continuation line that is itself a bullet: the mock writes no escape.
     put(D, 'content', 'delta\n- not a bullet', PAGE, 4, PAGE)

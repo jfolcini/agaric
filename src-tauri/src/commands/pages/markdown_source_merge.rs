@@ -15,7 +15,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 use agaric_core::word_diff::merge_lines;
 
-use super::{AppError, import, outline_parents};
+use super::{AppError, at_line, import, outline_parents};
 
 /// The buffer `mine`, edited from `base`, with the changes between `base` and
 /// `current`, the page's source now, folded in: each block's content and
@@ -38,10 +38,13 @@ pub(super) fn merge_outlines(
 ) -> Result<Vec<import::ParsedBlock>, AppError> {
     let mine = Side::new(mine, true);
     let mut seen = HashSet::new();
-    if let Some(Key::Anchor(anchor)) = mine.keys.iter().find(|key| !seen.insert(*key)) {
-        return Err(AppError::validation(format!(
-            "^{anchor} is written on more than one block"
-        )));
+    if let Some(at) = mine.keys.iter().position(|key| !seen.insert(key))
+        && let Key::Anchor(anchor) = &mine.keys[at]
+    {
+        return Err(at_line(
+            mine.blocks[at].line,
+            AppError::validation(format!("^{anchor} is written on more than one block")),
+        ));
     }
     let mut merge = Merge {
         base: Side::new(base, false),
@@ -337,10 +340,12 @@ impl Merge<'_> {
         let top = self.order(None, &lists);
         let mut stack: Vec<(Key, usize)> = top.into_iter().rev().map(|key| (key, 0)).collect();
         while let Some((key, depth)) = stack.pop() {
-            let Kept { block, fork } = self
+            let Kept { mut block, fork } = self
                 .kept
                 .remove(&key)
                 .expect("a kept block is ordered under its one parent");
+            // A refusal names the block's line in the buffer, not in the page.
+            block.line = self.mine.block(&key).and_then(|mine| mine.line);
             for mut block in fork.into_iter().chain([block]) {
                 block.depth = depth;
                 out.push(block);
@@ -459,6 +464,7 @@ fn merge_block(
         is_code,
         block_anchor: c.block_anchor.clone(),
         task_markers: c.task_markers.clone(),
+        line: None,
     })
 }
 

@@ -1,0 +1,9 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 37b35229617016c32056915c48acfced27f905724ab8ea84ee0db7318dc21795 # shrinks to forest = [BlockSpec { level: 0, content: "", todo_state: None, priority: None, scheduled_date: None, due_date: None, list_style: None, properties: {"a": ("\r", false)} }]
+cc 2d5103dc5aaec336b3f734d4e4227589fe0ea95b29d225a394d7a6bb5ada0b86 # shrinks to forest = [BlockSpec { level: 0, content: "", todo_state: None, priority: None, scheduled_date: None, due_date: None, list_style: None, properties: {"a": ("\r", false)} }]
+cc acf152fc132e51785c4ab8dfca5397208766364b8001a801082062f5a65ad2a2 # shrinks to forest = [BlockSpec { level: 0, content: "", todo_state: None, priority: None, scheduled_date: None, due_date: None, list_style: None, properties: {"a": ("\t", false)} }]

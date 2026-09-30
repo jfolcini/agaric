@@ -787,6 +787,7 @@ fn humanise_refs_for_source(
         is_code,
         block_anchor: None,
         task_markers: Vec::new(),
+        line: None,
     };
     let blocks = std::slice::from_ref(&block);
     let page_links = names.page_links(collect_inbound_page_link_bodies(blocks));
@@ -1065,15 +1066,18 @@ fn render_block(
     // escape-hatch custom-property case. `descendant_properties` was
     // batch-read once for the whole subtree, so this is a HashMap lookup,
     // not a per-block query. Source mode writes a ref-typed value as its raw
-    // id, which is what the value is.
+    // id, which is what the value is, and quotes a value its line cannot
+    // carry as it is (#5160 X5).
     let no_titles = HashMap::new();
-    let ref_titles = match mode {
-        RenderMode::Export => ref_titles,
-        RenderMode::Source | RenderMode::Clipboard => &no_titles,
+    let (ref_titles, write_value): (_, fn(&str) -> String) = match mode {
+        RenderMode::Export => (ref_titles, str::to_string),
+        RenderMode::Source | RenderMode::Clipboard => {
+            (&no_titles, import::write_source_property_value)
+        }
     };
     if let Some(props) = descendant_properties.get(&id) {
         for prop in props {
-            let value = frontmatter_row_value(prop, ref_titles);
+            let value = write_value(&frontmatter_row_value(prop, ref_titles));
             output.push_str(&format!("{prop_indent}{}:: {value}\n", prop.key));
         }
     }
@@ -2242,9 +2246,7 @@ pub async fn get_page_source_inner(pool: &SqlitePool, page_id: &str) -> Result<S
 ///
 /// # Errors
 ///
-/// - [`AppError::Validation`] — more ids than one batch takes, or a copied
-///   block holds a property value with a line break, which would paste back
-///   as other content
+/// - [`AppError::Validation`] — more ids than one batch takes
 #[instrument(skip(pool, block_ids), err)]
 pub async fn get_blocks_source_inner(
     pool: &SqlitePool,
@@ -2273,18 +2275,16 @@ pub async fn get_blocks_source_inner(
     };
     let data = load_page_export_data(&mut tx, &page_id, PageRead::Source).await?;
     tx.commit().await?;
-    render_clipboard_source(&data, &ids, with_children)
+    Ok(render_clipboard_source(&data, &ids, with_children))
 }
 
 /// The selected blocks of `data`'s page no other selected block holds, in
 /// document order, each at depth 0, with its subtree when `with_children`.
-/// Refused when a rendered block holds a property value with a line break:
-/// its `key:: value` line would read back as content or another block.
 fn render_clipboard_source(
     data: &PageExportData,
     selected: &[String],
     with_children: bool,
-) -> Result<String, AppError> {
+) -> String {
     let children_by_parent = group_children_by_parent(data.page.id.as_str(), &data.descendants);
     let list_ordinals = compute_list_ordinals(&children_by_parent, &data.list_styles);
     let selected: HashSet<&str> = selected.iter().map(String::as_str).collect();
@@ -2306,7 +2306,7 @@ fn render_clipboard_source(
         &no_children
     };
     let mut output = String::new();
-    let rendered = render_subtrees(
+    render_subtrees(
         &mut output,
         &roots,
         children,
@@ -2314,20 +2314,7 @@ fn render_clipboard_source(
         data,
         RenderMode::Clipboard,
     );
-    let no_titles = HashMap::new();
-    let multiline = rendered.iter().find(|id| {
-        data.descendant_properties.get(*id).is_some_and(|props| {
-            props
-                .iter()
-                .any(|prop| frontmatter_row_value(prop, &no_titles).contains(['\n', '\r']))
-        })
-    });
-    if let Some(id) = multiline {
-        return Err(AppError::validation(format!(
-            "block '{id}' holds a property value with a line break, which copy cannot carry"
-        )));
-    }
-    Ok(output)
+    output
 }
 
 /// Copy a content block and its content subtree to right after the original
@@ -2344,9 +2331,8 @@ fn render_clipboard_source(
 /// - [`AppError::NotFound`] — no block has that id
 /// - [`AppError::Validation`] — the block is soft-deleted or not a content
 ///   block, a copied value doesn't read back from the source grammar (a
-///   property value with a line break), the copy would append more ops than
-///   one undo reverts, or a copied block would be nested past
-///   `MAX_BLOCK_DEPTH`
+///   carriage return in the text), the copy would append more ops than one
+///   undo reverts, or a copied block would be nested past `MAX_BLOCK_DEPTH`
 #[instrument(skip(pool, device_id, materializer), err)]
 pub async fn duplicate_block_inner(
     pool: &SqlitePool,
@@ -2372,8 +2358,8 @@ pub async fn duplicate_block_inner(
     let data = load_page_export_data(&mut tx, page_id.as_str(), PageRead::Duplicate).await?;
     let (source, ids) = render_subtree_source(&data, &root);
     let parsed = import::parse_source_outline(&source);
-    // A value the grammar cannot carry, such as a property value with a line
-    // break, reads back as extra text or an extra block: refuse, never write a
+    // A value the grammar cannot carry, such as a carriage return in the
+    // text, reads back as extra text or an extra block: refuse, never write a
     // mangled copy.
     let anchors = parsed.blocks.iter().map(|b| b.block_anchor.as_deref());
     if !anchors.eq(ids.iter().map(|id| Some(id.as_str()))) {
@@ -5290,8 +5276,8 @@ async fn apply_block_properties(
     block_id: &str,
     properties: &[(String, String)],
     lines: &PropertyLines,
-) -> Result<u64, AppError> {
-    let mut set: u64 = 0;
+) -> Result<u32, AppError> {
+    let mut set: u32 = 0;
     for (key, value) in properties {
         let (value_text, value_num, value_date, value_ref, value_bool) =
             lines.read(key, value).map_err(|reason| {
@@ -5444,15 +5430,17 @@ async fn insert_blocks(
             });
         }
 
-        counters.properties_set += apply_block_properties(
-            &mut tx,
-            materializer,
-            device_id,
-            &new_block_id,
-            &block.properties,
-            &ctx.lines,
-        )
-        .await?;
+        counters.properties_set += u64::from(
+            apply_block_properties(
+                &mut tx,
+                materializer,
+                device_id,
+                &new_block_id,
+                &block.properties,
+                &ctx.lines,
+            )
+            .await?,
+        );
     }
 
     commit_final_chunk(tx, materializer, &page_title, counters).await?;
@@ -6485,6 +6473,7 @@ mod tests {
                 is_code: vector.is_code,
                 block_anchor: None,
                 task_markers: Vec::new(),
+                line: None,
             }];
             // #3599 — the contract is the SET of distinct names each side asks
             // its resolver for, not an encounter order. Rust collects through a
@@ -6659,6 +6648,7 @@ mod tests {
             is_code: false,
             block_anchor: None,
             task_markers: Vec::new(),
+            line: None,
         };
         let matches = fixture_matches(pages);
         let mut links = PageLinks {
@@ -6980,6 +6970,7 @@ mod tests {
             is_code: false,
             block_anchor: None,
             task_markers: Vec::new(),
+            line: None,
         }];
         // Only the genuine `#realtag` is collected; the `#My` inside `[[…]]` is
         // NOT (it is a heading anchor, not a tag).
@@ -7015,6 +7006,7 @@ mod tests {
             is_code: false,
             block_anchor: None,
             task_markers: Vec::new(),
+            line: None,
         }];
         let names = collect_inbound_tag_names(&blocks);
         assert_eq!(
@@ -7076,6 +7068,7 @@ mod tests {
                 is_code: false,
                 block_anchor: None,
                 task_markers: Vec::new(),
+                line: None,
             },
             import::ParsedBlock {
                 content: "#[[Unknown #b]] #real".to_string(),
@@ -7084,6 +7077,7 @@ mod tests {
                 is_code: false,
                 block_anchor: None,
                 task_markers: Vec::new(),
+                line: None,
             },
         ];
         let names = collect_inbound_tag_names(&blocks);
@@ -7122,6 +7116,7 @@ mod tests {
             is_code: false,
             block_anchor: None,
             task_markers: Vec::new(),
+            line: None,
         }];
         // Only the un-prefixed `[[Real Page]]` is collected as a page name.
         let names = collect_inbound_page_link_bodies(&blocks);
@@ -7158,6 +7153,7 @@ mod tests {
                 is_code: false,
                 block_anchor: None,
                 task_markers: Vec::new(),
+                line: None,
             },
             import::ParsedBlock {
                 content: "fenced #shouldskip".to_string(),
@@ -7166,6 +7162,7 @@ mod tests {
                 is_code: true,
                 block_anchor: None,
                 task_markers: Vec::new(),
+                line: None,
             },
         ];
         let names = collect_inbound_tag_names(&blocks);
@@ -7239,6 +7236,7 @@ mod tests {
                 is_code: true,
                 block_anchor: None,
                 task_markers: Vec::new(),
+                line: None,
             },
             import::ParsedBlock {
                 content: "see `[[Quoted Page]]` vs [[Live Page]]".to_string(),
@@ -7247,6 +7245,7 @@ mod tests {
                 is_code: false,
                 block_anchor: None,
                 task_markers: Vec::new(),
+                line: None,
             },
         ];
 

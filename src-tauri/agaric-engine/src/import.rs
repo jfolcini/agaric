@@ -67,6 +67,10 @@ pub struct ParsedBlock {
     /// puts it back in the text when the definition refuses the value
     /// (#5160 D11), so nothing is lost.
     pub task_markers: Vec<(String, String)>,
+    /// The line the block starts on, counting from 1, in text read as a
+    /// source buffer is (the buffer, a paste), so a refused save can name it
+    /// (#5160 X3). `None` otherwise: an import, an HTML paste.
+    pub line: Option<usize>,
 }
 
 /// Outcome of importing one markdown file: the created page plus aggregate
@@ -1259,6 +1263,7 @@ pub fn verbatim_block(content: String, depth: usize) -> ParsedBlock {
         properties: Vec::new(),
         block_anchor: None,
         task_markers: Vec::new(),
+        line: None,
     }
 }
 
@@ -1521,6 +1526,8 @@ struct Scan<'a> {
     kept_refs: &'a std::collections::HashSet<String>,
     /// Inside a Logseq `:LOGBOOK:` drawer, which an import drops.
     in_logbook: bool,
+    /// The number of the line being read.
+    line: usize,
 }
 
 /// Scan already-normalized, frontmatter-free markdown into blocks, collecting
@@ -1553,6 +1560,7 @@ fn parse_block_lines(
         after_blank: false,
         kept_refs,
         in_logbook: false,
+        line: 0,
     };
     for (index, line) in normalized.lines().enumerate() {
         let trimmed = line.trim_start();
@@ -1575,6 +1583,7 @@ fn parse_block_lines(
 impl<'a> Scan<'a> {
     /// Read one non-blank line, `number` in the buffer.
     fn read(&mut self, line: &'a str, trimmed: &str, number: usize) {
+        self.line = number;
         let indent = indent_columns(line);
         self.end_fence_before(trimmed, indent, number);
         if let Some(fence) = self.fence.take() {
@@ -1866,6 +1875,7 @@ impl<'a> Scan<'a> {
             is_code,
             block_anchor: None,
             task_markers: Vec::new(),
+            line: (self.mode == ParseMode::Source).then_some(self.line),
         });
         self.ends_in_code.push(is_code);
         self.open.push(Open {
@@ -1953,10 +1963,14 @@ impl<'a> Scan<'a> {
     /// Attach a `key:: value` body property to the block that indentation says
     /// owns it. Reserved keys and properties with no owning block are dropped
     /// and counted ([`Scan::property_line`] hands an import such a line, never
-    /// a source buffer).
+    /// a source buffer). A source buffer's value may be quoted
+    /// ([`read_source_property_value`]).
     fn attach_property(&mut self, key: &str, value: &str, indent: usize) {
         let key = key.trim().to_string();
-        let value = value.trim().to_string();
+        let value = match self.mode {
+            ParseMode::Import => value.trim().to_string(),
+            ParseMode::Source => read_source_property_value(value),
+        };
         // #1568: a reserved body property is dropped, never written, and the
         // surrounding good content imports, as the frontmatter path does.
         if is_reserved_line_key(&key) {
@@ -2151,14 +2165,17 @@ fn extract_block_anchors(blocks: &mut [ParsedBlock], ends_in_code: &[bool], mode
 /// Put a trailing ` ^word` whose word is not a block id back into the block's
 /// text: it names no block, so it is what the user wrote. The parse took the
 /// whitespace around it, so a tab or line break before it comes back as a
-/// space, and whitespace after it is lost.
+/// space, and whitespace after it is lost. A block id stays the anchor, read
+/// uppercase as ids are stored (invariant 8), so a lowercase `^id` names the
+/// block it spells (#5160 X3).
 pub fn restore_text_anchor(block: &mut ParsedBlock) {
-    let Some(word) = block
-        .block_anchor
-        .take_if(|word| BlockId::from_string(word.as_str()).is_err())
-    else {
+    let Some(word) = block.block_anchor.take() else {
         return;
     };
+    if let Ok(id) = BlockId::from_string(word.as_str()) {
+        block.block_anchor = Some(id.into_string());
+        return;
+    }
     let separator = if block.content.is_empty() { "" } else { " " };
     block.content = format!("{}{separator}^{word}", block.content);
 }
@@ -2864,6 +2881,31 @@ fn split_property_line(line: &str) -> Option<(&str, &str)> {
         rest.strip_prefix([' ', '\t'])?
     };
     is_property_key(key.trim()).then_some((key, value))
+}
+
+/// A `key:: value` line's value as a source buffer reads it (#5160 X5): one
+/// in double quotes is a JSON string, as a YAML double-quoted scalar is, so a
+/// line break or surrounding whitespace fits on the line; anything else is its
+/// trimmed text.
+fn read_source_property_value(raw: &str) -> String {
+    let value = raw.trim();
+    if value.starts_with('"')
+        && let Ok(unquoted) = serde_json::from_str::<String>(value)
+    {
+        return unquoted;
+    }
+    value.to_string()
+}
+
+/// `value` as a source buffer's `key:: value` line writes it, to read back as
+/// itself: as it is, or as a JSON string when it holds a line break,
+/// surrounding whitespace, or text that reads as a quoted value (#5160 X5).
+pub fn write_source_property_value(value: &str) -> String {
+    if value.contains(['\n', '\r']) || read_source_property_value(value) != value {
+        serde_json::to_string(value).expect("a string serialises")
+    } else {
+        value.to_string()
+    }
 }
 
 /// #2716 — `true` when `line` matches the `key:: value` property shape
@@ -4510,6 +4552,7 @@ bare line (({UUID_B})) too"
                     is_code,
                     block_anchor,
                     task_markers: _,
+                    line: _,
                 } = block;
                 serde_json::json!({
                     "content": content,
@@ -5351,8 +5394,8 @@ mod tests_list_style_4552 {
 mod tests_source_outline_5140 {
     use super::{
         continuation_line_is_ambiguous, fold_property_key, needs_task_marker_escape,
-        parse_logseq_markdown, parse_pasted_text, parse_source_outline, split_block_task_marker,
-        split_task_marker, task_marker_for,
+        parse_logseq_markdown, parse_pasted_text, parse_source_outline, restore_text_anchor,
+        split_block_task_marker, split_task_marker, task_marker_for, write_source_property_value,
     };
 
     fn todo_state_of(block: &super::ParsedBlock) -> Option<&str> {
@@ -5394,6 +5437,85 @@ mod tests_source_outline_5140 {
     fn an_empty_first_line_keeps_its_newline() {
         let out = parse_source_outline("- \n  b\n");
         assert_eq!(out.blocks[0].content, "\nb");
+    }
+
+    /// #5160 X3 — each block names the buffer line it starts on, counted from
+    /// the buffer's first line: blank lines count, a continuation or property
+    /// line starts nothing, and a bare paragraph or heading is a block too. An
+    /// import has no buffer to name.
+    #[test]
+    fn a_block_names_the_line_it_starts_on() {
+        let md = "\n# Heading\n- a\n  more\n  key:: v\n\n  - b\n\npara\n\n- c\r\n";
+        let lines: Vec<Option<usize>> = parse_source_outline(md)
+            .blocks
+            .iter()
+            .map(|block| block.line)
+            .collect();
+        assert_eq!(lines, [Some(2), Some(3), Some(7), Some(9), Some(11)]);
+        let pasted: Vec<Option<usize>> = parse_pasted_text("- a\n- b\n")
+            .iter()
+            .map(|block| block.line)
+            .collect();
+        assert_eq!(pasted, [Some(1), Some(2)]);
+        assert!(
+            parse_logseq_markdown(md)
+                .blocks
+                .iter()
+                .all(|block| block.line.is_none())
+        );
+    }
+
+    /// #5160 X5 — a value a `key:: value` line cannot carry as it is (a line
+    /// break, surrounding whitespace, or text that reads as a quoted value) is
+    /// written as a JSON string; any other value, backslashes and all, as it
+    /// is. Either way it reads back as itself, from the buffer and from a
+    /// paste. An import reads no quotes.
+    #[test]
+    fn a_property_value_reads_back_as_it_was_written() {
+        for (value, written) in [
+            ("plain", "plain"),
+            (r"C:\new\temp", r"C:\new\temp"),
+            (r"literal \n and \\", r"literal \n and \\"),
+            ("say \"hi\"", "say \"hi\""),
+            ("\"open", "\"open"),
+            ("two\nlines", r#""two\nlines""#),
+            ("cr\rand\r\n", r#""cr\rand\r\n""#),
+            (" padded\t", r#"" padded\t""#),
+            ("\"quoted\"", r#""\"quoted\"""#),
+            (r#""\n""#, r#""\"\\n\"""#),
+        ] {
+            assert_eq!(write_source_property_value(value), written, "{value:?}");
+            let md = format!("- a\n  key:: {written}\n");
+            let expected = [("key".to_string(), value.to_string())];
+            assert_eq!(
+                parse_source_outline(&md).blocks[0].properties,
+                expected,
+                "{md:?}"
+            );
+            assert_eq!(parse_pasted_text(&md)[0].properties, expected, "{md:?}");
+        }
+        let imported = parse_logseq_markdown("- a\n  key:: \"quoted\"\n");
+        assert_eq!(
+            imported.blocks[0].properties,
+            [("key".into(), "\"quoted\"".into())]
+        );
+    }
+
+    /// #5160 X3 — ULIDs are uppercase (invariant 8), so a lowercase `^id` is
+    /// the block it spells; a word that is no block id goes back into the text.
+    #[test]
+    fn a_lowercase_anchor_is_read_uppercase() {
+        let mut blocks =
+            parse_source_outline("- a ^01j0000000000000000000000a\n- b ^note\n").blocks;
+        blocks.iter_mut().for_each(restore_text_anchor);
+        let read: Vec<(&str, Option<&str>)> = blocks
+            .iter()
+            .map(|block| (block.content.as_str(), block.block_anchor.as_deref()))
+            .collect();
+        assert_eq!(
+            read,
+            [("a", Some("01J0000000000000000000000A")), ("b ^note", None)]
+        );
     }
 
     #[test]

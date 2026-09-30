@@ -615,6 +615,8 @@ interface PlannedPaste {
   ordered?: boolean
   /** Read from a checkbox after the marker (`- [ ] `), the block's `todo_state` (#5160 D6). */
   todoState?: TodoState
+  /** The line of the text the block starts on, counting from 1 (#5160 X3). */
+  line?: number
 }
 
 /** `import::split_task_marker`: a checkbox of the shared alphabet and one space, or alone. */
@@ -723,6 +725,7 @@ export function parseOutline(text: string): PlannedPaste[] {
   const out: PlannedPaste[] = []
   const open: OpenBlock[] = []
   let blankLines = 0
+  let lineNumber = 0
   const popTo = (indent: number, level: number | null): void => {
     let top = open.at(-1)
     while (
@@ -742,6 +745,7 @@ export function parseOutline(text: string): PlannedPaste[] {
     const block = {
       content,
       depth: open.length,
+      line: lineNumber,
       ...(ordered && { ordered }),
       ...(todoState && { todoState }),
     }
@@ -749,6 +753,7 @@ export function parseOutline(text: string): PlannedPaste[] {
     open.push({ block, ...entry })
   }
   for (const line of text.replace(/\r\n?/g, '\n').split('\n')) {
+    lineNumber += 1
     const trimmed = line.trimStart()
     if (trimmed === '') {
       blankLines += 1
