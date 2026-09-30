@@ -39,7 +39,7 @@ agaric-core = { path = "../agaric-core", version = "0.1.0" }
 opentelemetry = { version = "0.32", features = ["logs", "metrics"] }
 opentelemetry_sdk = { version = "0.32", features = ["logs", "metrics"] }
 opentelemetry-otlp = { version = "0.32", default-features = false, features = ["trace", "http-proto", "reqwest-blocking-client"] }
-opentelemetry-appender-tracing = "0.32"
+opentelemetry-appender-tracing = "0.33"
 # The tracing↔OTel trace bridge (`tracing_opentelemetry::layer()`). Pins
 # opentelemetry 0.32 + opentelemetry_sdk 0.32, matching the versions above.
 tracing-opentelemetry = "0.33"
