@@ -15,6 +15,8 @@
  * block is saved") must behave identically on all three, so the parse →
  * `set_property` → strip-only-on-success routine lives here and each path
  * calls it instead of a raw `edit()` when the content carries property lines.
+ * The chain's other async flows live here too: the checkbox fold and the
+ * typed tags (`commitTypedTags`).
  *
  * ## Supersession (the flush sequence token)
  *
@@ -51,10 +53,15 @@ import {
   stripPropertyLines,
 } from '@/lib/inline-property-parse'
 import { logger } from '@/lib/logger'
+import { notifyTagAdded } from '@/lib/name-change-bus'
+import type { TagToken } from '@/lib/name-tokens'
 import { notify } from '@/lib/notify'
 import { invalidRepeatRuleMessage } from '@/lib/repeat-utils'
+import { requireActiveScope } from '@/lib/space-scope'
 import type { TodoState } from '@/lib/task-states'
 import type { FlatBlock } from '@/lib/tree-utils'
+import { useResolveStore } from '@/stores/resolve'
+import { useSpaceStore } from '@/stores/space'
 import { useUndoStore } from '@/stores/undo'
 
 /**
@@ -321,4 +328,85 @@ export async function commitCheckboxState(opts: {
     })
     return ok !== false
   }
+}
+
+/** Whether a store write settled as a success; store actions resolve `false` on failure. */
+async function saved(outcome: Promise<boolean> | void, blockId: string): Promise<boolean> {
+  try {
+    return (await outcome) !== false
+  } catch (err) {
+    logger.warn('unmount-flush', 'content edit rejected', { blockId }, err)
+    return false
+  }
+}
+
+/**
+ * The id of each of `names` in `spaceId`, keyed lowercased: the existing tag
+ * of that name in any case, as the typed tag picks one, else a new tag. A name
+ * whose lookup or create fails is missing. Stops creating once `current` says
+ * a newer save of the block took over.
+ */
+async function tagIds(
+  names: string[],
+  spaceId: string,
+  current: () => boolean,
+): Promise<Map<string, string>> {
+  const ids = new Map<string, string>()
+  try {
+    for (const tag of unwrap(await commands.listAllTagsInSpace(requireActiveScope(spaceId)))) {
+      const key = tag.name.toLowerCase()
+      if (!ids.has(key)) ids.set(key, tag.tag_id)
+    }
+  } catch (err) {
+    logger.warn('unmount-flush', 'tag lookup failed, the tags stay text', { spaceId }, err)
+    return ids
+  }
+  for (const name of names) {
+    const key = name.toLowerCase()
+    if (ids.has(key)) continue
+    if (!current()) break
+    try {
+      const scope = requireActiveScope(spaceId)
+      const row = unwrap(await commands.createBlock('tag', name, null, null, scope, null))
+      ids.set(key, row.id)
+      useResolveStore.getState().set(row.id, name, false)
+      notifyTagAdded(row.id, name, spaceId)
+    } catch (err) {
+      logger.warn('unmount-flush', 'tag create failed, the tag stays text', { name }, err)
+    }
+  }
+  return ids
+}
+
+/**
+ * Once `content` is saved as text, write its `tags` as the tags they name
+ * (#5160 follow-up 7a). Saving first keeps the text durable and on screen
+ * while the lookup runs. Resolves `false` only when that save failed, the
+ * draft-gating contract of the other branches.
+ */
+export async function commitTypedTags(opts: {
+  blockId: string
+  content: string
+  tags: TagToken[]
+  textSaved: Promise<boolean> | void
+  mySeq: number
+  edit: (blockId: string, content: string) => Promise<boolean> | void
+}): Promise<boolean> {
+  const { blockId, content, tags, textSaved, mySeq, edit } = opts
+  if (!(await saved(textSaved, blockId))) return false
+  const spaceId = useSpaceStore.getState().currentSpaceId
+  if (spaceId === null) return true
+  const current = () => readFlushSeq(blockId) === mySeq
+  const ids = await tagIds(
+    tags.map((tag) => tag.name),
+    spaceId,
+    current,
+  )
+  let named = content
+  for (const tag of tags.toReversed()) {
+    const id = ids.get(tag.name.toLowerCase())
+    if (id !== undefined) named = `${named.slice(0, tag.start)}#[${id}]${named.slice(tag.end)}`
+  }
+  if (named !== content && current()) await saved(edit(blockId, named), blockId)
+  return true
 }

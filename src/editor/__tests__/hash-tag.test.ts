@@ -316,6 +316,10 @@ describe('what stays text (#5160 D8)', () => {
     ['a # in a [[link]] still being typed', '[[Project #alpha,'],
     ['a Logseq priority', '[#A] '],
     ['an escaped #[[x]]', '\\#[[x]]'],
+    ['a # after an opening parenthesis', '(#tag) '],
+    ['a # after a quote', '"#tag '],
+    ['a # after a comma', ',#tag '],
+    ['a # after an emoji', '😀#tag '],
   ])('%s: %s', async (_name, typed) => {
     const { editor: ed, tagItems, createTag, createPage } = setup()
     type(ed, typed)
@@ -367,6 +371,8 @@ describe('the # picker (#5160 D8)', () => {
     ['at block start', '', '#pro'],
     ['after a space', 'see ', '#pro'],
     ['after a no-break space', 'see\u00A0', '#pro'],
+    ['after an ideographic space', 'see\u3000', '#pro'],
+    ['after a tab', 'see\t', '#pro'],
   ])('opens %s, searching the name', async (_name, before, typed) => {
     const { editor: ed, tagItems } = setup(before)
     type(ed, typed)
@@ -379,6 +385,8 @@ describe('the # picker (#5160 D8)', () => {
     ['after a slash', 'x.com/#pro'],
     ['after an ampersand', '&#pro'],
     ['after a backslash', '\\#pro'],
+    ['after an opening parenthesis', '(#pro'],
+    ['after an emoji', '😀#pro'],
     ['on a bare #', '#'],
     ['on a # run', '###'],
     ['on an issue number', '#42'],
