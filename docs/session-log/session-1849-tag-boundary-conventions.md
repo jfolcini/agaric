@@ -1,4 +1,4 @@
-# Session 1842 — follow-up 7a: the tag boundary follows Obsidian and Logseq; a typed `#name` is a tag on save (#5160)
+# Session 1849 — follow-up 7a: the tag boundary follows Obsidian and Logseq; a typed `#name` is a tag on save (#5160)
 
 The review notes on #5205 (session 1835): 99, 98 and 100. Note 101 (a typed tag inside an open `((`) is let go.
 
