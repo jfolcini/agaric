@@ -3692,7 +3692,7 @@ struct DocumentRefs {
     /// `ParsedBlock::block_anchor`).
     anchor_to_block_index: HashMap<String, usize>,
     /// #2567 — normalized heading text → INDEX (into `parse_output.blocks`) of
-    /// the one block whose content is that ATX heading.
+    /// the FIRST block whose content is that ATX heading.
     heading_to_block_index: HashMap<String, usize>,
 }
 
@@ -3710,26 +3710,21 @@ fn index_block_anchors(blocks: &[import::ParsedBlock]) -> HashMap<String, usize>
 }
 
 /// #2567 — map each normalized ATX heading label to the index of the block that
-/// is that heading. A label two headings share maps to neither: a tie is never
-/// guessed (#5160 N4), as the cross-page pass needs exactly one match, so a
-/// link to it is unresolved. Obsidian's `heading-1` numeric-suffix
-/// disambiguation is not mirrored. `is_code` blocks are skipped — a
-/// `# comment` inside a fenced code sample is not a heading.
+/// is that heading. A repeated label targets its first occurrence in document
+/// order (`or_insert`), as Obsidian resolves a link to a repeated heading.
+/// `is_code` blocks are skipped — a `# comment` inside a fenced code sample is
+/// not a heading.
 fn index_headings(blocks: &[import::ParsedBlock]) -> HashMap<String, usize> {
-    let mut map: HashMap<String, Option<usize>> = HashMap::new();
+    let mut map: HashMap<String, usize> = HashMap::new();
     for (idx, b) in blocks.iter().enumerate() {
         if b.is_code {
             continue;
         }
         if let Some(text) = obsidian_heading_text(&b.content) {
-            map.entry(normalize_heading_anchor(text))
-                .and_modify(|tie| *tie = None)
-                .or_insert(Some(idx));
+            map.entry(normalize_heading_anchor(text)).or_insert(idx);
         }
     }
-    map.into_iter()
-        .filter_map(|(label, idx)| Some((label, idx?)))
-        .collect()
+    map
 }
 
 /// The import's pre-commit phases: page-level frontmatter, then the wiki-link

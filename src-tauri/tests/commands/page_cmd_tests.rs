@@ -11985,9 +11985,9 @@ async fn import_wikilink_block_anchor_dedup_same_anchor_2510() {
 // wiki-link resolves to the BLOCK that renders that heading, via a per-document
 // heading-text → block-ULID map (analogous to #2510's `^block-id` map). The
 // link is rewritten to the SAME block-ref `((ULID))` form so navigation reuses
-// the block-anchor scroll/focus path. An unmatched heading, or one two
-// headings share, preserves #1282's fallback (empty base → literal + "no page
-// target"; explicit self-title → page link + warning).
+// the block-anchor scroll/focus path. Duplicate heading text resolves to the
+// FIRST occurrence. An unmatched heading preserves #1282's fallback (empty base
+// → literal + "no page target"; explicit self-title → page link + warning).
 // ======================================================================
 
 /// #2567 — `[[#My Heading]]` (anchor-only) resolves to a real block-ref
@@ -12155,11 +12155,11 @@ async fn import_wikilink_heading_anchor_normalized_match_2567() {
     mat.shutdown();
 }
 
-/// #2567 / #5160 N4 — two headings of one text tie, and a tie is never
-/// guessed: as for a heading the file does not hold, `[[#Dup]]` stays text
-/// and `[[File#Dup]]` links the page, each with its warning.
+/// #2567 — COLLISION RULE: duplicate heading text resolves to the FIRST
+/// occurrence in document order. Two `## Dup` headings exist; `[[#Dup]]` must
+/// target the earlier (smaller-ULID) one.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn import_wikilink_heading_anchor_duplicate_is_unresolved_2567() {
+async fn import_wikilink_heading_anchor_duplicate_first_occurrence_2567() {
     let (pool, _dir) = test_pool().await;
     let mat = Materializer::new(pool.clone());
     ensure_test_space(&pool).await;
@@ -12171,7 +12171,7 @@ async fn import_wikilink_heading_anchor_duplicate_is_unresolved_2567() {
         DEV,
         &mat,
         _dir.path(),
-        "- ## Dup\n- body one\n- ## Dup\n- See [[#Dup]] here\n- Also [[File#Dup]] there".into(),
+        "- ## Dup\n- body one\n- ## Dup\n- See [[#Dup]] here".into(),
         Some("File.md".into()),
         TEST_SPACE_ID.into(),
         None,
@@ -12180,19 +12180,31 @@ async fn import_wikilink_heading_anchor_duplicate_is_unresolved_2567() {
     .unwrap();
     settle(&mat).await;
 
-    let page = pages_titled(&pool, "File").await.remove(0);
-    assert_eq!(block_starting(&pool, "See").await, "See [[#Dup]] here");
+    // Both heading blocks share the same content; document order == ULID order,
+    // so the FIRST occurrence is the smallest id.
+    let first_dup_id: String = sqlx::query_scalar(
+        "SELECT id FROM blocks WHERE block_type = 'content' AND content = '## Dup' \
+         AND deleted_at IS NULL ORDER BY id ASC LIMIT 1",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let referencing_content: String = sqlx::query_scalar(
+        "SELECT content FROM blocks WHERE block_type = 'content' \
+         AND content LIKE 'See%' AND deleted_at IS NULL",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
     assert_eq!(
-        block_starting(&pool, "Also").await,
-        format!("Also [[{page}]] there")
+        referencing_content,
+        format!("See (({first_dup_id})) here"),
+        "a duplicate heading anchor must resolve to the FIRST occurrence"
     );
-    assert_eq!(
-        result.warnings,
-        [
-            "1 wikilink heading-anchor(s) (`#Heading`) could not be matched to a heading in this \
-             document; left as a page link",
-            "wiki-link '[[#Dup]]' has no page target (intra-note anchor); left as plain text",
-        ]
+    assert!(
+        !result.warnings.iter().any(|w| w.contains("anchor")),
+        "warnings={:?}",
+        result.warnings
     );
 
     mat.shutdown();

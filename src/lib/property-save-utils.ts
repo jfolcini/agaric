@@ -64,6 +64,16 @@ export const SYSTEM_MANAGED_PROPERTY_KEYS: ReadonlySet<string> = new Set([
 ])
 
 /**
+ * The keys `delete_property` removes with `repeat`, those the block holds.
+ * Mirrors `REPEAT_RULE_BOUNDS` in `src-tauri/src/commands/properties.rs`.
+ */
+export const REPEAT_RULE_BOUNDS: ReadonlySet<string> = new Set([
+  'repeat-until',
+  'repeat-count',
+  'repeat-seq',
+])
+
+/**
  * Properties whose `options` list is locked — users cannot edit them from
  * the Properties tab. Currently only `todo_state`: the task cycle
  * (`none → TODO → DOING → DONE → CANCELLED → none`) is intentionally fixed

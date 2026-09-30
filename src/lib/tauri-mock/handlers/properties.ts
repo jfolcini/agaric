@@ -9,7 +9,11 @@
  * store.
  */
 
-import { NON_DELETABLE_PROPERTIES, SYSTEM_MANAGED_PROPERTY_KEYS } from '@/lib/property-save-utils'
+import {
+  NON_DELETABLE_PROPERTIES,
+  REPEAT_RULE_BOUNDS,
+  SYSTEM_MANAGED_PROPERTY_KEYS,
+} from '@/lib/property-save-utils'
 import { compareUtf8Bytes } from '@/lib/sqlite-collation'
 import {
   type TypedHandlers,
@@ -40,9 +44,6 @@ const RESERVED_PROPERTY_COLUMN: Record<string, 'value_text' | 'value_date'> = {
   due_date: 'value_date',
   scheduled_date: 'value_date',
 }
-
-/** `REPEAT_RULE_BOUNDS` (`commands/properties.rs`): deleting `repeat` deletes the ones held. */
-const REPEAT_RULE_BOUNDS = ['repeat-until', 'repeat-count', 'repeat-seq']
 
 /**
  * Delete `key`'s `block_properties` row, appending the op with the prior value

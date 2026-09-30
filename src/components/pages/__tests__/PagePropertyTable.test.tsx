@@ -1525,17 +1525,6 @@ describe('PagePropertyTable forceExpanded', () => {
   })
 })
 
-// ── #2792 — add-from-definition against the REAL tauri-mock ────────────────
-//
-// Every test above stubs `invoke` directly with hand-written command
-// responses, which is exactly why the empty-`value_text` bug (#2792, the
-// PagePropertyTable sibling of #2656) was latent: the stubs never modeled
-// the backend's `set_property` value validation, so an invalid empty write
-// would have "succeeded" silently. This block instead routes the mocked
-// `invoke` through the real `dispatch()` from `@/lib/tauri-mock/handlers`,
-// whose `assertValidSetPropertyValue` mirrors `op.rs::validate_property_value`
-// and rejects an empty `value_text` (and an out-of-options select value).
-// Follows the draft-row test pattern from `BlockPropertyDrawer.test.tsx` (#2656).
 describe('PagePropertyTable removing the repeat rule against the real tauri-mock (#5160)', () => {
   const PAGE_ID = SEED_IDS.PAGE_QUICK_NOTES
 
@@ -1572,9 +1561,23 @@ describe('PagePropertyTable removing the repeat rule against the real tauri-mock
     await waitFor(() => {
       expect(properties.get(PAGE_ID)?.size).toBe(0)
     })
+    await waitFor(() => {
+      expect(screen.queryByLabelText(deleteLabel('repeat-count'))).not.toBeInTheDocument()
+    })
   })
 })
 
+// ── #2792 — add-from-definition against the REAL tauri-mock ────────────────
+//
+// Every test above stubs `invoke` directly with hand-written command
+// responses, which is exactly why the empty-`value_text` bug (#2792, the
+// PagePropertyTable sibling of #2656) was latent: the stubs never modeled
+// the backend's `set_property` value validation, so an invalid empty write
+// would have "succeeded" silently. This block instead routes the mocked
+// `invoke` through the real `dispatch()` from `@/lib/tauri-mock/handlers`,
+// whose `assertValidSetPropertyValue` mirrors `op.rs::validate_property_value`
+// and rejects an empty `value_text` (and an out-of-options select value).
+// Follows the draft-row test pattern from `BlockPropertyDrawer.test.tsx` (#2656).
 describe('PagePropertyTable add-from-definition against the real tauri-mock (#2792)', () => {
   const PAGE_ID = SEED_IDS.PAGE_QUICK_NOTES
 
