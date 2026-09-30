@@ -88,12 +88,13 @@ pub struct PageSourceReport {
 /// - [`AppError::Validation`] — `page_id` is not a page; with code
 ///   [`ValidationCode::RequiresRefresh`] when `base_source` is not the page's
 ///   source and `flags.merge` is false; the page's source does not read back as
-///   its blocks (a property value with a line break); an anchor is written
+///   its blocks (a carriage return in a block's text); an anchor is written
 ///   twice, or names no block of the page and `flags.force` is false; a
 ///   property line sets a value its definition refuses, named in the message;
 ///   a block the save would delete holds a nested page; a block would be
 ///   nested past `MAX_BLOCK_DEPTH`; or the save would append more ops than one
-///   undo reverts
+///   undo reverts. A refusal at a block of the buffer starts with its line,
+///   `line N: ` (#5160 X3).
 #[instrument(skip(pool, device_id, materializer, source, base_source), err)]
 pub async fn apply_page_source_inner(
     pool: &SqlitePool,
@@ -184,9 +185,9 @@ struct Base {
 
 /// The page's source, and whether it is stale: not `base_source`, which is
 /// refused unless `merge`. Refused too when it does not read back as the
-/// blocks it renders: a value the grammar cannot carry, such as a property
-/// value with a line break, reads back as other content or another block, and
-/// saving over it would rewrite the block.
+/// blocks it renders: text the grammar cannot carry, such as a carriage
+/// return, reads back as other content or another block, and saving over it
+/// would rewrite the block.
 fn read_base(
     data: &PageExportData,
     base_source: &str,
@@ -208,8 +209,7 @@ fn read_base(
     if let Some(at) = unread {
         let id = ids.get(at).or(ids.last()).map_or("", String::as_str);
         return Err(AppError::validation(format!(
-            "block '{id}' holds a value the page's source cannot carry, such as a property \
-             value with a line break"
+            "block '{id}' holds text the page's source cannot carry, such as a carriage return"
         )));
     }
     Ok((
@@ -291,9 +291,10 @@ fn pair_blocks(
             continue;
         };
         if !seen.insert(anchor) {
-            return Err(AppError::validation(format!(
-                "^{anchor} is written on more than one block"
-            )));
+            return Err(at_line(
+                block.line,
+                AppError::validation(format!("^{anchor} is written on more than one block")),
+            ));
         }
         match slots.get(anchor) {
             Some(&slot) => paired.push(Some(slot)),
@@ -304,9 +305,10 @@ fn pair_blocks(
                 paired.push(None);
             }
             None => {
-                return Err(AppError::validation(format!(
-                    "^{anchor} is not a block of this page"
-                )));
+                return Err(at_line(
+                    block.line,
+                    AppError::validation(format!("^{anchor} is not a block of this page")),
+                ));
             }
         }
     }
@@ -347,11 +349,14 @@ fn heal_moved_anchors(
             [] => continue,
             [token] => *token,
             [first, second, ..] => {
-                return Err(AppError::validation(format!(
-                    "{} and {} are written in one block; a block has one anchor",
-                    &block.content[first.0..first.1],
-                    &block.content[second.0..second.1]
-                )));
+                return Err(at_line(
+                    block.line,
+                    AppError::validation(format!(
+                        "{} and {} are written in one block; a block has one anchor",
+                        &block.content[first.0..first.1],
+                        &block.content[second.0..second.1]
+                    )),
+                ));
             }
         };
         let id = block.content[start + 1..end].to_string();
@@ -428,6 +433,18 @@ fn outline_parents(blocks: &[import::ParsedBlock]) -> Vec<Option<usize>> {
             parent
         })
         .collect()
+}
+
+/// `err` naming the buffer line it was refused at, `line N: ` before its
+/// message (#5160 X3), when it is a refusal and the block has a line.
+pub(super) fn at_line(line: Option<usize>, err: AppError) -> AppError {
+    match (line, err) {
+        (Some(line), AppError::Validation { code, message }) => AppError::Validation {
+            code,
+            message: format!("line {line}: {message}"),
+        },
+        (_, err) => err,
+    }
 }
 
 /// Each parent's children, in order: entry 0 is the page's, entry `i + 1`
@@ -764,6 +781,8 @@ async fn place_children(
                 .expect("the child before is under the parent")
         });
         let slot = i64::try_from(index).expect("a Vec index fits in i64");
+        let line = buffer.blocks[row].line;
+        let at = |err| at_line(line, err);
         let id = match moving {
             Some(id) => {
                 move_block_in_tx(
@@ -774,12 +793,15 @@ async fn place_children(
                     Some(parent.to_owned()),
                     slot,
                 )
-                .await?;
+                .await
+                .map_err(at)?;
                 save.report.moved += 1;
-                crate::commands::ensure_batch_within_cap("ops", tx.pending_len())?;
+                crate::commands::ensure_batch_within_cap("ops", tx.pending_len()).map_err(at)?;
                 id
             }
-            None => create_child(tx, save, parent, slot, &buffer.blocks[row]).await?,
+            None => create_child(tx, save, parent, slot, &buffer.blocks[row])
+                .await
+                .map_err(at)?,
         };
         current.insert(index, id.clone());
         save.ids[row] = Some(id.clone());
@@ -885,15 +907,20 @@ async fn write_changes(
         resolve_prior_task_states_batch(tx, &tasks).await?
     };
     for (row, id, changes) in changes {
-        let content = &buffer.blocks[row].content;
+        let import::ParsedBlock { content, line, .. } = &buffer.blocks[row];
+        let at = |err| at_line(*line, err);
         if buffer.edited[row] && stored.get(id) != Some(&content.as_str()) {
             let loro = save.materializer.loro_state();
-            edit_block_in_tx(tx, loro, save.device_id, id.to_owned(), content.clone()).await?;
+            edit_block_in_tx(tx, loro, save.device_id, id.to_owned(), content.clone())
+                .await
+                .map_err(at)?;
             save.report.edited += 1;
         }
         let prior = priors.get(id).cloned().unwrap_or_default();
-        Box::pin(write_properties(tx, save, id, changes, &prior)).await?;
-        crate::commands::ensure_batch_within_cap("ops", tx.pending_len())?;
+        Box::pin(write_properties(tx, save, id, changes, &prior))
+            .await
+            .map_err(at)?;
+        crate::commands::ensure_batch_within_cap("ops", tx.pending_len()).map_err(at)?;
     }
     Ok(())
 }
@@ -914,8 +941,9 @@ async fn write_properties(
         save.report.properties_deleted += 1;
     }
     if changes.deleted.iter().any(|key| key == "repeat") {
-        let bounds = delete_repeat_bounds_in_tx(tx, loro, save.device_id, id).await?;
-        save.report.properties_deleted += u32::try_from(bounds.len()).unwrap_or(u32::MAX);
+        for _ in delete_repeat_bounds_in_tx(tx, loro, save.device_id, id).await? {
+            save.report.properties_deleted += 1;
+        }
     }
     let set = apply_block_properties(
         tx,
@@ -926,7 +954,7 @@ async fn write_properties(
         save.lines,
     )
     .await?;
-    save.report.properties_set += u32::try_from(set).unwrap_or(u32::MAX);
+    save.report.properties_set += set;
     if let Some(state) = changes.todo_state {
         let counter = if state.is_some() {
             &mut save.report.properties_set

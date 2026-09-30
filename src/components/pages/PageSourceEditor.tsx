@@ -37,6 +37,20 @@ function storeDraft(pageId: string, draft: { base: string; text: string }): void
   else writePreference(PREFERENCES.pageSourceDraft, draft, pageId)
 }
 
+/**
+ * The selection range of the buffer line a refused save names (`line N: …`,
+ * #5160 X3) in `text`, or null when it names none.
+ */
+export function refusedLineRange(message: string, text: string): [number, number] | null {
+  const match = /^line (\d+): /.exec(message)
+  const lines = text.split('\n')
+  const index = Number(match?.[1]) - 1
+  const line = lines[index]
+  if (line === undefined) return null
+  const start = lines.slice(0, index).reduce((offset, before) => offset + before.length + 1, 0)
+  return [start, start + line.length]
+}
+
 export interface PageSourceEditorProps {
   pageId: string
   onClose: () => void
@@ -135,7 +149,13 @@ export function PageSourceEditor({ pageId, onClose }: PageSourceEditorProps): Re
         await showConflict()
       } else {
         logger.warn('PageSourceEditor', 'Failed to save page source', { pageId }, err)
-        setSaveError(formatErrorForDisplay(err, { fallback: t('pageSource.saveFailed') }))
+        const message = formatErrorForDisplay(err, { fallback: t('pageSource.saveFailed') })
+        setSaveError(message)
+        const refused = refusedLineRange(message, text)
+        if (refused !== null) {
+          textareaRef.current?.focus()
+          textareaRef.current?.setSelectionRange(...refused)
+        }
       }
     } finally {
       savingRef.current = false

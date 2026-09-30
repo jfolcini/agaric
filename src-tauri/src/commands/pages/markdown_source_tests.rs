@@ -4,11 +4,9 @@
 //! clipboard copy (`render_clipboard_source`) must read back as a paste
 //! (`import::parse_pasted_text`) reads it, as the same tree less the anchors.
 //!
-//! The render→parse proptests are the oracle. Known source-mode limits, which
-//! their generator excludes:
-//! - a `\r` in content (line splitting takes it as a line ending);
-//! - a custom property value with surrounding whitespace or a newline (a
-//!   `key:: value` line is one trimmed line).
+//! The render→parse proptests are the oracle. A known source-mode limit, which
+//! their generator excludes: a `\r` in content (line splitting takes it as a
+//! line ending).
 
 use std::collections::BTreeMap;
 
@@ -204,11 +202,14 @@ fn arb_todo_state() -> impl Strategy<Value = Option<String>> {
     ]
 }
 
-/// A custom property value, trimmed and single-line by construction: text, or
-/// a ref, which source mode writes as the raw id even though it has a title.
+/// A custom property value: text; text a `key:: value` line cannot carry as
+/// it is, with line breaks, surrounding whitespace, quotes and backslashes
+/// (#5160 X5); or a ref, which source mode writes as the raw id even though it
+/// has a title.
 fn arb_property_value() -> impl Strategy<Value = (String, bool)> {
     prop_oneof![
         "[a-z0-9]([a-z0-9 :#^.-]{0,8}[a-z0-9])?".prop_map(|text| (text, false)),
+        "[a-n \"\\\\\t\r\n]{1,8}".prop_map(|text| (text, false)),
         arb_ref_id().prop_map(|id| (id.to_string(), true)),
     ]
 }
@@ -403,7 +404,7 @@ proptest! {
     fn a_clipboard_copy_pastes_back_as_the_tree_it_was_rendered_from(forest in arb_forest()) {
         let (data, expected) = build_page(&forest);
         let ids: Vec<String> = expected.iter().map(|(_, _, id, _)| id.clone()).collect();
-        let md = render_clipboard_source(&data, &ids, true).unwrap();
+        let md = render_clipboard_source(&data, &ids, true);
         check_read_back(&md, &import::parse_pasted_text(&md), &expected, false)?;
     }
 }
@@ -473,7 +474,7 @@ fn a_clipboard_copy_of_a_plain_subtree_has_no_anchor() {
         row(C, PAGE, 2, "sibling"),
     ]);
     assert_eq!(
-        render_clipboard_source(&data, &[A.into(), C.into()], true).unwrap(),
+        render_clipboard_source(&data, &[A.into(), C.into()], true),
         "- parent\n  second line\n  - [x] child\n- sibling\n"
     );
 }
@@ -495,7 +496,7 @@ fn a_clipboard_copy_keeps_the_anchors_blocks_need_to_read_back() {
     ]);
     let ids = [A.into(), C.into(), D.into()];
     assert_eq!(
-        render_clipboard_source(&data, &ids, true).unwrap(),
+        render_clipboard_source(&data, &ids, true),
         format!("- ````\n  ^{A}\n  - B\n- ends in ^word ^{C}\n- ends in a blank line\n   ^{D}\n")
     );
 }
@@ -524,7 +525,7 @@ fn a_planning_line_is_written_as_text_in_the_buffer_and_a_copy() {
         let lines = content.replace('\n', "\n  ");
         let md = render_page_source(&data);
         assert!(md.starts_with(&format!("- {lines} ^{A}")), "md:\n{md}");
-        let copy = render_clipboard_source(&data, &[A.into()], true).unwrap();
+        let copy = render_clipboard_source(&data, &[A.into()], true);
         assert_eq!(copy, format!("- {lines}\n"));
     }
 }
@@ -676,7 +677,7 @@ fn a_name_inside_code_stays_raw() {
     );
     let data = data_with_names(&fenced, pages, &[]);
     assert_eq!(
-        render_clipboard_source(&data, &[BLOCK.into()], true).unwrap(),
+        render_clipboard_source(&data, &[BLOCK.into()], true),
         format!("- ````\n  [[{PROJECT}]]\n  ````\n"),
         "a copy"
     );

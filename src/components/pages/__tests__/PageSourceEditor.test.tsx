@@ -18,7 +18,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from '@/__tests__/helpers/axe'
 import { type CommandReturns, deferred, mockInvokeCommands } from '@/__tests__/helpers/invoke'
 import { PageSourceConflictDialog } from '@/components/pages/PageSourceConflictDialog'
-import { PageSourceEditor } from '@/components/pages/PageSourceEditor'
+import { PageSourceEditor, refusedLineRange } from '@/components/pages/PageSourceEditor'
 import { t } from '@/lib/i18n'
 import { logger } from '@/lib/logger'
 import { dispatch } from '@/lib/tauri-mock/handlers'
@@ -369,6 +369,44 @@ describe('PageSourceEditor saving', () => {
       { pageId: PAGE_ID },
       failure,
     )
+  })
+
+  it('a refusal naming a line selects that line of the buffer (#5160 X3)', async () => {
+    vi.spyOn(logger, 'warn').mockImplementation(() => {})
+    const base = routeToMockBackend()
+    const again = `- again ^${SEED_IDS.BLOCK_GS_1}`
+    const text = `${base}${again}\n`
+    const line = base.split('\n').length
+    const user = userEvent.setup()
+    renderEditor(SEED_IDS.PAGE_GETTING_STARTED)
+    const textarea = await loadedEditor()
+    await replaceBuffer(user, textarea, text)
+
+    await user.click(screen.getByRole('button', { name: t('action.save') }))
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(new RegExp(`^line ${line}: `))
+    expect(textarea).toHaveFocus()
+    expect([textarea.selectionStart, textarea.selectionEnd]).toEqual([
+      base.length,
+      base.length + again.length,
+    ])
+    expect(pageSource(SEED_IDS.PAGE_GETTING_STARTED)).toBe(base)
+  })
+})
+
+describe('refusedLineRange', () => {
+  const text = 'a\nbb\nccc'
+
+  it('is the range of the line the message names', () => {
+    expect(refusedLineRange('line 1: x', text)).toEqual([0, 1])
+    expect(refusedLineRange('line 2: x', text)).toEqual([2, 4])
+    expect(refusedLineRange('line 3: x', text)).toEqual([5, 8])
+  })
+
+  it('is null for a message naming no line, or one the text does not have', () => {
+    for (const message of ['x', 'block 2: x', 'see line 2: x', 'line 0: x', 'line 4: x']) {
+      expect(refusedLineRange(message, text)).toBeNull()
+    }
   })
 })
 

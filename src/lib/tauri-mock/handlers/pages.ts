@@ -139,6 +139,15 @@ interface SourceBullet {
   content: string
   depth: number
   anchor: string | null
+  /** The buffer line the bullet starts on, which a refusal names (#5160 X3). */
+  line?: number | undefined
+}
+
+/** A refusal at `bullet`, prefixed with its line as the backend's are. */
+function refusedAt(bullet: SourceBullet, message: string): Error {
+  return validationRejection(
+    bullet.line === undefined ? message : `line ${bullet.line}: ${message}`,
+  )
 }
 
 /** The ` ^word` a source block ends with, when it is id-sized. */
@@ -158,19 +167,21 @@ function isBlockId(word: string): boolean {
 
 /**
  * A source buffer's blocks ({@link parseOutline}), each trailing ` ^id` split
- * off. The save models no task checkboxes, so one `parseOutline` read goes
- * back into the text it was read from.
+ * off, a ULID read uppercase as the backend reads it. The save models no task
+ * checkboxes, so one `parseOutline` read goes back into the text it was read
+ * from.
  */
 function parseSourceBuffer(source: string): SourceBullet[] {
-  return parseOutline(source).map(({ content: text, depth, todoState }) => {
+  return parseOutline(source).map(({ content: text, depth, todoState, line }) => {
     const content = todoState
       ? `[${TASK_STATE_TO_MARKER[todoState]}]${text === '' ? '' : ` ${text}`}`
       : text
     const match = SOURCE_ANCHOR_RE.exec(content)
     const word = match?.[1]
-    return match && word !== undefined && isBlockId(word)
-      ? { content: content.slice(0, match.index), depth, anchor: word }
-      : { content, depth, anchor: null }
+    if (!match || word === undefined || !isBlockId(word))
+      return { content, depth, anchor: null, line }
+    const anchor = ULID_RE.test(word) ? word.toUpperCase() : word
+    return { content: content.slice(0, match.index), depth, anchor, line }
   })
 }
 
@@ -200,7 +211,7 @@ function healMovedAnchors(
     const [first, second] = tokens
     if (!first) continue
     if (second) {
-      throw validationRejection(`${first.token} and ${second.token} are written in one block`)
+      throw refusedAt(bullet, `${first.token} and ${second.token} are written in one block`)
     }
     const id = first.token.slice(1)
     bullet.content = withoutToken(bullet.content, first.start, first.start + first.token.length)
@@ -503,10 +514,10 @@ function readSourceEdit(
   const before = new Map(t0.map((b) => [b.anchor, b.content]))
   const typed = parseSourceBuffer(source)
   const seen = new Set<string>()
-  for (const { anchor } of typed) {
-    if (anchor === null) continue
-    if (seen.has(anchor)) throw validationRejection(`^${anchor} appears more than once`)
-    seen.add(anchor)
+  for (const bullet of typed) {
+    if (bullet.anchor === null) continue
+    if (seen.has(bullet.anchor)) throw refusedAt(bullet, `^${bullet.anchor} appears more than once`)
+    seen.add(bullet.anchor)
   }
   // Against the source the edit started from and before the merge, as
   // `read_buffer` heals, so the merge reads a healed bullet as its block.
@@ -518,7 +529,7 @@ function readSourceEdit(
   const anchors = new Set(t1.flatMap(({ anchor }) => (anchor === null ? [] : [anchor])))
   for (const bullet of t1) {
     if (bullet.anchor === null || before.has(bullet.anchor)) continue
-    if (!flags.force) throw validationRejection(`^${bullet.anchor} is not a block of this page`)
+    if (!flags.force) throw refusedAt(bullet, `^${bullet.anchor} is not a block of this page`)
     warnings.push(`^${bullet.anchor} no longer on this page; saved as a new block`)
     bullet.anchor = null
   }
