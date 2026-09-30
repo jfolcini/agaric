@@ -37,7 +37,11 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef } from 'react'
 
 import { computeContentDelta, shouldSplitOnBlur } from '@/editor/content-delta'
 import type { ContentDelta } from '@/editor/content-delta'
-import { AtTagPicker, atTagPickerPluginKey } from '@/editor/extensions/at-tag-picker'
+import {
+  AtTagPicker,
+  atTagPickerPluginKey,
+  hashTagPickerPluginKey,
+} from '@/editor/extensions/at-tag-picker'
 import { BlockLink } from '@/editor/extensions/block-link'
 import { BlockLinkPicker, blockLinkPickerPluginKey } from '@/editor/extensions/block-link-picker'
 import { BlockRef } from '@/editor/extensions/block-ref'
@@ -81,6 +85,7 @@ import type { TodoState } from '@/lib/task-states'
 
 const suggestionPluginKeys = [
   atTagPickerPluginKey,
+  hashTagPickerPluginKey,
   blockLinkPickerPluginKey,
   blockRefPickerPluginKey,
   emojiPickerPluginKey,
@@ -836,7 +841,7 @@ export function useRovingEditor(options: RovingEditorOptions = {}): RovingEditor
         },
         onNavigate: (id: string) => onNavigateRef.current?.(id),
       }),
-      // oxlint-disable-next-line react/refs -- the ref is read inside a TipTap `.configure` closure that TipTap invokes at edit/paste/render time, never during this render; handing a ref to a consumer that defers the read is the intended use — `searchTagsRef` powers the `@`-tag picker's query and `onCreateTagRef` creates a tag on demand; see #4406
+      // oxlint-disable-next-line react/refs -- the ref is read inside a TipTap `.configure` closure that TipTap invokes at edit/paste/render time, never during this render; handing a ref to a consumer that defers the read is the intended use — `searchTagsRef` powers the `@` and `#` tag pickers' query and `onCreateTagRef` creates a tag on demand; see #4406
       AtTagPicker.configure({
         items: (query: string) => searchTagsRef.current(query),
         onCreate: (name: string) => {

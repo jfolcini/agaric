@@ -204,8 +204,9 @@ export const BlockLinkPicker = Extension.create<BlockLinkPickerOptions>({
     const editor = this.editor
     return [
       // Match [[text]] — auto-resolve to a block link on typing the closing ]]
+      // — unless a `#` makes it the tag `#[[text]]` (#5160 N7).
       new InputRule({
-        find: /\[\[([^\]]+)\]\]$/,
+        find: /(?<!#)\[\[([^\]]+)\]\]$/,
         handler: ({ state, range, match }) => {
           const body = match[1] ?? ''
           const link = parseTypedLink(body)
@@ -258,6 +259,8 @@ export const BlockLinkPicker = Extension.create<BlockLinkPickerOptions>({
         char: '[[',
         allowedPrefixes: null,
         allowSpaces: true,
+        // `#[[` starts a tag, not a page link (#5160 N7).
+        allow: ({ state, range }) => state.doc.textBetween(range.from - 1, range.from) !== '#',
         editor: this.editor,
         // The popup searches the base name: a `|label` or `#anchor` typed after
         // it is not part of any title (#5160 D9, N6).

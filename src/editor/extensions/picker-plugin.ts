@@ -90,7 +90,9 @@ export function createPickerPlugin(cfg: PickerPluginConfig) {
 // deletes the position on both sides (`deletedAcross`), which is the
 // signal to drop the pending insertion rather than splice a token into
 // an unrelated document. Same-block edits merely shift the offset, and
-// the mapped position keeps the insertion anchored correctly.
+// the mapped position keeps the insertion anchored correctly. Text typed
+// AT the offset while the lookup runs (`#[[tag]]` and then a space) stays
+// after it, so the token lands before that text.
 
 interface TrackedInsertPosition {
   /** Mapped offset, or `null` once the position was deleted across. */
@@ -103,7 +105,7 @@ function trackInsertPosition(editor: Editor, initialPos: number): TrackedInsertP
   let pos: number | null = initialPos
   const onTransaction = ({ transaction }: { transaction: Transaction }) => {
     if (pos === null) return
-    const mapped = transaction.mapping.mapResult(pos)
+    const mapped = transaction.mapping.mapResult(pos, -1)
     pos = mapped.deletedAcross ? null : mapped.pos
   }
   // Unit-test doubles pass minimal `{ chain, state }` editors without the
@@ -208,6 +210,10 @@ export async function resolveAndInsertPickerToken({
   // document is mounted now.
   const tracked = trackInsertPosition(editor, insertPos)
 
+  // Every insertion leaves the caret where the user has it, which can be past
+  // the insertion point: after a typed tag's terminator, or further on when
+  // typing went on during the lookup (#5160 D8).
+  //
   // InsertContentAt clamps silently when the offset is past the doc's end
   // (only reachable when tracking is unavailable — mapped positions are
   // always in range), so the existing try/catch never fires on that path.
@@ -243,7 +249,11 @@ export async function resolveAndInsertPickerToken({
         insertPlainAtCursor()
         return
       }
-      editor.chain().focus().insertContentAt(pos, tokenFor(exactMatch.id, exactMatch)).run()
+      editor
+        .chain()
+        .focus()
+        .insertContentAt(pos, tokenFor(exactMatch.id, exactMatch), { updateSelection: false })
+        .run()
     } else if (exactMatch === undefined && onCreate) {
       // Bail BEFORE the create IPC — minting a page/tag whose token can no
       // longer be inserted would leave an orphan entity behind.
@@ -261,7 +271,7 @@ export async function resolveAndInsertPickerToken({
         insertPlainAtCursor()
         return
       }
-      editor.chain().focus().insertContentAt(pos, tokenFor(newId)).run()
+      editor.chain().focus().insertContentAt(pos, tokenFor(newId), { updateSelection: false }).run()
     } else {
       // No match and no onCreate, or an ambiguous name (#5160 N4): the text
       // goes back as typed.
@@ -271,7 +281,7 @@ export async function resolveAndInsertPickerToken({
         insertPlainAtCursor()
         return
       }
-      editor.chain().focus().insertContentAt(pos, typed).run()
+      editor.chain().focus().insertContentAt(pos, typed, { updateSelection: false }).run()
     }
   } catch (err) {
     logger.warn(loggerComponent, errorMessage, { text }, err)
@@ -284,7 +294,7 @@ export async function resolveAndInsertPickerToken({
       insertPlainAtCursor()
       return
     }
-    editor.chain().focus().insertContentAt(pos, typed).run()
+    editor.chain().focus().insertContentAt(pos, typed, { updateSelection: false }).run()
   } finally {
     tracked.stop()
   }

@@ -9,6 +9,7 @@ Inline pickers let you reference other content or insert structure without leavi
 | --- | --- | --- | --- |
 | `[[` | **BlockLinkPicker** | A page-link chip pointing at the page or block you pick. | "Link to my project plan" / cross-reference |
 | `@` | **AtTagPicker** | An inline tag-reference chip (e.g. `@urgent`). | Lightweight tagging inline in a sentence |
+| `#` | **AtTagPicker** | The same tag chip. Opens only where a space would make the text a tag, so never on `#42`, in code, or on a bare `#` (which still starts a heading). Typing `#urgent` and a space or punctuation makes the tag without picking; `#[[multi word]]` makes the tag `multi word`. See [tags-and-links.md](tags-and-links.md#tags). | Tagging as you type |
 | `((` | **BlockRefPicker** | A *block reference* — a one-line chip carrying the target block's title. A link with a nicer label: no children, no live content. For the block's actual content, use `/embed`. | Point at a definition or a decision |
 | `{{` | **QueryPicker** | *Insert query…* (opens the visual **QueryBuilder**) and *Insert embed…*. Typing `{{embed` searches blocks and pages and writes the embed token; anything else after `{{` yields to hand-written `{{query …}}` syntax with ghost-text completion. | Discover embedded queries and embeds without the slash menu |
 | `/` | **SlashCommand** | Varies — task, date, structure, formatting, property, query, repeat-rule. See full catalog below. | Insert structure or quickly set metadata |
@@ -22,7 +23,7 @@ The popups share the same look (the `SuggestionList` component) and the same key
 - The query is what you type *after* the trigger character.
 - Matching is fuzzy (`match-sorter`) — substring matches and reorderings count.
 - Each row shows a short breadcrumb (parent page or namespace) when relevant, so you can disambiguate same-named pages.
-- For `[[` and `@`, results are scoped to the active space. Cross-space targets are hidden.
+- For `[[`, `@` and `#`, results are scoped to the active space. Cross-space targets are hidden.
 - Pickers respect aliases — if a page has an alias, typing the alias matches.
 
 ## Slash menu commands

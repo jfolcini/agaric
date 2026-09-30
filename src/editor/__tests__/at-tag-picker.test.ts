@@ -24,225 +24,6 @@ describe('AtTagPicker', () => {
   })
 })
 
-describe('AtTagPicker input rule (T-2)', () => {
-  it('input rule regex matches #[tagname] pattern', () => {
-    const regex = /#\[([^\]]+)\]$/
-    const match = '#[myTag]'.match(regex)
-    expect(match).not.toBeNull()
-    expect(match?.[1]).toBe('myTag')
-  })
-
-  it('input rule regex matches #[multi word tag] pattern', () => {
-    const regex = /#\[([^\]]+)\]$/
-    const match = '#[my cool tag]'.match(regex)
-    expect(match).not.toBeNull()
-    expect(match?.[1]).toBe('my cool tag')
-  })
-
-  it('input rule regex does not match # without brackets', () => {
-    const regex = /#\[([^\]]+)\]$/
-    expect('#heading'.match(regex)).toBeNull()
-  })
-
-  it('input rule regex does not match empty brackets', () => {
-    const regex = /#\[([^\]]+)\]$/
-    // The regex requires at least one non-] character, so #[] does not match
-    expect('#[]'.match(regex)).toBeNull()
-  })
-
-  it('registers input rules via addInputRules', () => {
-    const ext = AtTagPicker.configure({
-      items: () => [],
-      onCreate: async (name: string) => `ULID_${name}`,
-    })
-    expect(ext.config.addInputRules).toBeDefined()
-  })
-
-  it('input rule calls insertContentAt with exact match', async () => {
-    const insertContentAtCalls: Array<{ pos: number; content: unknown }> = []
-    const chainProxy: Record<string, unknown> = {
-      focus: () => chainProxy,
-      insertContentAt: (pos: number, content: unknown) => {
-        insertContentAtCalls.push({ pos, content })
-        return chainProxy
-      },
-      run: () => true,
-    }
-    const mockEditor = {
-      chain: () => chainProxy,
-      state: { doc: { content: { size: 1000 } } },
-    } as unknown
-
-    const mockItems = vi
-      .fn()
-      .mockResolvedValue([{ id: 'TAG_ULID_1', label: 'myTag', isCreate: false }])
-
-    const ext = AtTagPicker.configure({ items: mockItems })
-
-    const rules = (
-      ext.config.addInputRules as unknown as (
-        ...args: unknown[]
-      ) => [
-        { handler: (...a: unknown[]) => unknown },
-        ...{ handler: (...a: unknown[]) => unknown }[],
-      ]
-    ).call({
-      options: ext.options,
-      editor: mockEditor,
-    })
-    expect(rules).toHaveLength(1)
-    const rule = rules[0]
-
-    const deleteCalls: Array<{ from: number; to: number }> = []
-    const mockState = {
-      tr: { delete: (from: number, to: number) => deleteCalls.push({ from, to }) },
-    }
-    const mockRange = { from: 5, to: 13 } // #[myTag] occupies positions 5-13
-    const mockMatch = ['#[myTag]', 'myTag']
-
-    rule.handler({ state: mockState, range: mockRange, match: mockMatch })
-
-    expect(deleteCalls).toEqual([{ from: 5, to: 13 }])
-
-    await vi.waitFor(() => expect(insertContentAtCalls.length).toBeGreaterThan(0))
-
-    expect(insertContentAtCalls).toEqual([
-      { pos: 5, content: { type: 'tag_ref', attrs: { id: 'TAG_ULID_1' } } },
-    ])
-  })
-
-  it('input rule creates tag when no exact match', async () => {
-    const insertContentAtCalls: Array<{ pos: number; content: unknown }> = []
-    const chainProxy: Record<string, unknown> = {
-      focus: () => chainProxy,
-      insertContentAt: (pos: number, content: unknown) => {
-        insertContentAtCalls.push({ pos, content })
-        return chainProxy
-      },
-      run: () => true,
-    }
-    const mockEditor = {
-      chain: () => chainProxy,
-      state: { doc: { content: { size: 1000 } } },
-    } as unknown
-
-    const mockItems = vi.fn().mockResolvedValue([])
-    const mockOnCreate = vi.fn().mockResolvedValue('NEW_TAG_ULID')
-
-    const ext = AtTagPicker.configure({ items: mockItems, onCreate: mockOnCreate })
-    const rules = (
-      ext.config.addInputRules as unknown as (
-        ...args: unknown[]
-      ) => [
-        { handler: (...a: unknown[]) => unknown },
-        ...{ handler: (...a: unknown[]) => unknown }[],
-      ]
-    ).call({
-      options: ext.options,
-      editor: mockEditor,
-    })
-    const rule = rules[0]
-
-    const deleteCalls: Array<{ from: number; to: number }> = []
-    const mockState = {
-      tr: { delete: (from: number, to: number) => deleteCalls.push({ from, to }) },
-    }
-    const mockRange = { from: 10, to: 22 }
-    const mockMatch = ['#[New Tag]', 'New Tag']
-
-    rule.handler({ state: mockState, range: mockRange, match: mockMatch })
-
-    await vi.waitFor(() => expect(insertContentAtCalls.length).toBeGreaterThan(0))
-
-    expect(mockOnCreate).toHaveBeenCalledWith('New Tag')
-    expect(insertContentAtCalls).toEqual([
-      { pos: 10, content: { type: 'tag_ref', attrs: { id: 'NEW_TAG_ULID' } } },
-    ])
-  })
-
-  it('falls back to plain text when no match and no onCreate', async () => {
-    const insertContentAtCalls: Array<{ pos: number; content: unknown }> = []
-    const chainProxy: Record<string, unknown> = {
-      focus: () => chainProxy,
-      insertContentAt: (pos: number, content: unknown) => {
-        insertContentAtCalls.push({ pos, content })
-        return chainProxy
-      },
-      run: () => true,
-    }
-    const mockEditor = {
-      chain: () => chainProxy,
-      state: { doc: { content: { size: 1000 } } },
-    } as unknown
-
-    const mockItems = vi.fn().mockResolvedValue([])
-
-    const ext = AtTagPicker.configure({ items: mockItems })
-    const rules = (
-      ext.config.addInputRules as unknown as (
-        ...args: unknown[]
-      ) => [
-        { handler: (...a: unknown[]) => unknown },
-        ...{ handler: (...a: unknown[]) => unknown }[],
-      ]
-    ).call({
-      options: ext.options,
-      editor: mockEditor,
-    })
-    const rule = rules[0]
-
-    const mockState = { tr: { delete: vi.fn() } }
-    const mockRange = { from: 3, to: 14 }
-    const mockMatch = ['#[orphan]', 'orphan']
-
-    rule.handler({ state: mockState, range: mockRange, match: mockMatch })
-
-    await vi.waitFor(() => expect(insertContentAtCalls.length).toBeGreaterThan(0))
-    expect(insertContentAtCalls).toEqual([{ pos: 3, content: '#[orphan]' }])
-  })
-
-  it('falls back to plain text at captured position on error', async () => {
-    const insertContentAtCalls: Array<{ pos: number; content: unknown }> = []
-    const chainProxy: Record<string, unknown> = {
-      focus: () => chainProxy,
-      insertContentAt: (pos: number, content: unknown) => {
-        insertContentAtCalls.push({ pos, content })
-        return chainProxy
-      },
-      run: () => true,
-    }
-    const mockEditor = {
-      chain: () => chainProxy,
-      state: { doc: { content: { size: 1000 } } },
-    } as unknown
-
-    const mockItems = vi.fn().mockRejectedValue(new Error('network error'))
-
-    const ext = AtTagPicker.configure({ items: mockItems })
-    const rules = (
-      ext.config.addInputRules as unknown as (
-        ...args: unknown[]
-      ) => [
-        { handler: (...a: unknown[]) => unknown },
-        ...{ handler: (...a: unknown[]) => unknown }[],
-      ]
-    ).call({
-      options: ext.options,
-      editor: mockEditor,
-    })
-    const rule = rules[0]
-
-    const mockState = { tr: { delete: vi.fn() } }
-    const mockRange = { from: 7, to: 18 }
-    const mockMatch = ['#[broken]', 'broken']
-
-    rule.handler({ state: mockState, range: mockRange, match: mockMatch })
-
-    await vi.waitFor(() => expect(insertContentAtCalls.length).toBeGreaterThan(0))
-    expect(insertContentAtCalls).toEqual([{ pos: 7, content: '#[broken]' }])
-  })
-})
-
 // ── ──────────────────────────────────────────────────────────────
 //
 // `insertContentAt(insertPos, ...)` clamps silently rather than throwing
@@ -284,21 +65,20 @@ describe('AtTagPicker stale-insertPos guard ()', () => {
     const rules = (
       ext.config.addInputRules as unknown as (
         ...args: unknown[]
-      ) => [
-        { handler: (...a: unknown[]) => unknown },
-        ...{ handler: (...a: unknown[]) => unknown }[],
-      ]
+      ) => [{ handler: (...a: unknown[]) => unknown }]
     ).call({
       options: ext.options,
       editor: mockEditor,
     })
     const rule = rules[0]
 
-    const mockState = { tr: { delete: vi.fn() } }
+    const mockState = { tr: { delete: vi.fn(), insertText: vi.fn() } }
     rule.handler({
       state: mockState,
-      range: { from: 10, to: 18 },
-      match: ['#[myTag]', 'myTag'],
+      range: { from: 10, to: 16 },
+      match: Object.assign(['#myTag '], {
+        data: { name: 'myTag', typed: '#myTag', terminator: ' ' },
+      }),
     })
 
     // Wait for the async resolve to land on the cursor-fallback path.
@@ -306,7 +86,7 @@ describe('AtTagPicker stale-insertPos guard ()', () => {
 
     // Plain text inserted at the current cursor (insertContent),
     // NOT the inline node at the stale offset.
-    expect(insertContentCalls).toEqual(['#[myTag]'])
+    expect(insertContentCalls).toEqual(['#myTag'])
     expect(insertContentAtCalls).toEqual([])
   })
 })
@@ -324,12 +104,12 @@ describe('AtTagPicker suggestion plugin configuration', () => {
   // block. Pinning the prefix set here ensures the picker only opens when
   // `@` is preceded by whitespace (or starts a block), matching the
   // Suggestion plugin's own default.
-  it('restricts trigger to whitespace/start-of-block prefixes', async () => {
-    let capturedOptions: Record<string, unknown> | undefined
+  it('restricts both triggers to whitespace/start-of-block prefixes', async () => {
+    const captured: Array<Record<string, unknown>> = []
     vi.resetModules()
     vi.doMock('@tiptap/suggestion', () => ({
       Suggestion: (opts: Record<string, unknown>) => {
-        capturedOptions = opts
+        captured.push(opts)
         return { key: opts['pluginKey'] }
       },
     }))
@@ -339,14 +119,20 @@ describe('AtTagPicker suggestion plugin configuration', () => {
       editor: {} as unknown,
       options: ext.options,
     })
-    expect(capturedOptions).toBeDefined()
-    expect(capturedOptions?.['char']).toBe('@')
+    expect(captured.map((opts) => opts['char'])).toEqual(['@', '#'])
     // Space, NBSP (ProseMirror normalises a trailing ASCII space to U+00A0
     // when it's the last character in a paragraph), and newline are all
     // valid prefixes that let the picker open mid-block. `\0` is appended
     // by TipTap internally so empty/start-of-block prefixes also match.
-    expect(capturedOptions?.['allowedPrefixes']).toEqual([' ', '\u00A0', '\n'])
-    expect(capturedOptions?.['allowSpaces']).toBe(true)
+    for (const opts of captured) {
+      expect(opts['allowedPrefixes']).toEqual([' ', '\u00A0', '\n'])
+    }
+    // `@multi word` searches with spaces; `#` ends at one, where the typed
+    // tag takes over, and opens only where that space would make a tag.
+    expect(captured[0]?.['allowSpaces']).toBe(true)
+    expect(captured[0]?.['allow']).toBeUndefined()
+    expect(captured[1]?.['allowSpaces']).toBe(false)
+    expect(captured[1]?.['allow']).toBeTypeOf('function')
 
     vi.doUnmock('@tiptap/suggestion')
     vi.resetModules()

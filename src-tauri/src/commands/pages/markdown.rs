@@ -104,15 +104,16 @@ static HUMAN_PAGE_LINK_RE: std::sync::LazyLock<regex::Regex> = std::sync::LazyLo
 /// marks, with `/` and `-` allowed after the first char for nested +
 /// hyphenated tags).
 ///
-/// The leading boundary `(^|[^\p{L}\p{N}\p{M}_&\[])` prevents matching
+/// The leading boundary `(^|[^\p{L}\p{N}\p{M}_&\[/])` prevents matching
 /// `# heading` (the `#` is followed by a space, not a name char), `word#frag`
 /// (the `#` is preceded by a word char), and `a#b`. Because the name's FIRST
 /// char must be a word char and a canonical `#[ULID]` ref's next char is `[`
 /// (not a word char), this regex never matches an already-internal `#[ULID]`
-/// token — so canonical refs survive untouched. `&` and `[` are not
-/// boundaries either (#5160 N1): `it&#39;s` is an HTML entity and `[#A]` a
-/// Logseq priority. The regex is only half the rule; [`is_tag_name`] and
-/// [`tag_guard_spans`] are the other half, and every reader applies all three.
+/// token — so canonical refs survive untouched. `&`, `[` and `/` are not
+/// boundaries either (#5160 N1, D8): `it&#39;s` is an HTML entity, `[#A]` a
+/// Logseq priority and `x.com/#install` a URL with no scheme. The regex is
+/// only half the rule; [`is_tag_name`] and [`tag_guard_spans`] are the other
+/// half, and every reader applies all three.
 ///
 /// #3367 — the three classes are NOT interchangeable, and the asymmetry is the
 /// whole fix. `\p{M}` belongs in the BOUNDARY class and in the name's
@@ -140,7 +141,7 @@ static HUMAN_PAGE_LINK_RE: std::sync::LazyLock<regex::Regex> = std::sync::LazyLo
 /// (#3367).
 pub(super) static HUMAN_TAG_RE: std::sync::LazyLock<regex::Regex> =
     std::sync::LazyLock::new(|| {
-        regex::Regex::new(r"(^|[^\p{L}\p{N}\p{M}_&\[])#([\p{L}\p{N}_][\p{L}\p{N}\p{M}_/-]*)")
+        regex::Regex::new(r"(^|[^\p{L}\p{N}\p{M}_&\[/])#([\p{L}\p{N}_][\p{L}\p{N}\p{M}_/-]*)")
             .expect("invalid human inline-tag regex")
     });
 
@@ -6741,17 +6742,18 @@ mod tests {
     }
 
     /// #5160 N8 — a tag written where a bare `#name` would not read back as
-    /// that tag (after a `[` or a word char, or before a name char) is
+    /// that tag (after a `[`, a `/` or a word char, or before a name char) is
     /// bracketed; what was written just before it is what the reader sees.
     #[test]
     fn a_tag_next_to_a_non_boundary_is_bracketed() {
         const ULID: &str = "01ARZ3NDEKTSV4RRFFQ69G5FAV";
         let tags = HashMap::from([(ULID.to_string(), "work".to_string())]);
-        let content = format!("[#[{ULID}]] #[{ULID}] #[{ULID}]#[{ULID}] #[{ULID}]s x#[{ULID}]");
+        let content =
+            format!("[#[{ULID}]] #[{ULID}] #[{ULID}]#[{ULID}] #[{ULID}]s x#[{ULID}] x/#[{ULID}]");
         let named = humanise_tag_and_page_refs(&content, &tags, &HashMap::new());
         assert_eq!(
             named,
-            "[#[[work]]] #work #work#[[work]] #[[work]]s x#[[work]]"
+            "[#[[work]]] #work #work#[[work]] #[[work]]s x#[[work]] x/#[[work]]"
         );
         assert_eq!(
             rewrite_inbound_tags(
