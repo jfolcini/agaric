@@ -54,6 +54,7 @@ export const shortcuts: Record<string, string> = {
   'keyboard.moveToPreviousBlock': 'Move to previous block',
   'keyboard.moveToNextBlock': 'Move to next block',
   'keyboard.saveBlockAndClose': 'Save block and close editor',
+  'keyboard.leaveBlockAndSelect': 'Save block, close editor and select the block',
   'keyboard.deleteBlock': 'Delete block',
   'keyboard.mergeWithPrevious': 'Merge with previous',
   'keyboard.indentBlock': 'Indent block',

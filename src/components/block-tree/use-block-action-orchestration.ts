@@ -206,6 +206,8 @@ export interface UseBlockActionOrchestrationParams {
     | 'splitAtCaret'
   >
   setFocused: (id: string | null) => void
+  /** Replace the block selection; a non-empty one also leaves editing. */
+  setSelected: (ids: string[]) => void
   handleFlush: () => string | null
   /**
    * #4957 — page store API, read for the post-flush remount baseline (see
@@ -248,7 +250,7 @@ export interface UseBlockActionOrchestrationParams {
    */
   preserveEmptyBlockIds?: RefObject<Set<string>>
   /**
-   * Discard any persisted draft for the given block. Called on Escape, and
+   * Discard any persisted draft for the given block. Called by Discard, and
    * (#2786) after a successful caret-split `edit()` to drop the departed
    * block's now-stale pre-split draft row.
    */
@@ -271,7 +273,8 @@ export interface UseBlockActionOrchestrationReturn {
   handleMergeWithPrev: () => Promise<void>
   handleMergeById: (blockId: string) => Promise<void>
   handleEnterSave: () => Promise<void>
-  handleEscapeCancel: () => void
+  handleEscapeSave: () => void
+  handleDiscard: () => void
 }
 
 export function useBlockActionOrchestration({
@@ -281,6 +284,7 @@ export function useBlockActionOrchestration({
   revealNextMounted,
   rovingEditor,
   setFocused,
+  setSelected,
   handleFlush,
   pageStore,
   remove,
@@ -1073,7 +1077,7 @@ export function useBlockActionOrchestration({
         const newBlockId = await createBelow(focusedBlockId, split.after)
         if (newBlockId) {
           // NOT added to justCreatedBlockIds: the new block carries real
-          // content, so Escape must not auto-delete it as an empty stub. (The
+          // content, so Discard must not auto-delete it as an empty stub. (The
           // SOURCE's #4729 exemption was registered above, before the awaits;
           // this `setFocused` is what consumes it.)
           setFocused(newBlockId)
@@ -1104,7 +1108,7 @@ export function useBlockActionOrchestration({
         if (lastSplitId) {
           // The last split block carries real content (the paste's final line),
           // so — like the caret-split path — it is NOT added to
-          // justCreatedBlockIds (Escape must not auto-delete it as an empty stub).
+          // justCreatedBlockIds (Discard must not auto-delete it as an empty stub).
           setFocused(lastSplitId)
           announce(t('announce.blockCreated'))
         } else {
@@ -1144,7 +1148,19 @@ export function useBlockActionOrchestration({
     continueListStyle,
   ])
 
-  const handleEscapeCancel = useCallback(() => {
+  // #5160 D17 — Escape keeps the text: the same flush every other way out of a
+  // block takes, then the block is selected so the block-selection keys act on
+  // it. A blank block is left unselected, because leaving it lets BlockTree's
+  // empty-block cleanup delete it and the selection would outlive the block.
+  const handleEscapeSave = useCallback(() => {
+    if (!focusedBlockId) return
+    const blank = captureEditor().content.trim() === ''
+    handleFlush()
+    if (blank) setFocused(null)
+    else setSelected([focusedBlockId])
+  }, [focusedBlockId, captureEditor, handleFlush, setFocused, setSelected])
+
+  const handleDiscard = useCallback(() => {
     if (!focusedBlockId) return
     // Discard any persisted draft BEFORE unmounting so the autosave
     // cleanup cannot flush stale content to the database.
@@ -1168,7 +1184,7 @@ export function useBlockActionOrchestration({
       remove(focusedBlockId).catch((err: unknown) => {
         logger.warn(
           'useBlockActionOrchestration',
-          'Failed to remove empty just-created block on Escape',
+          'Failed to remove empty just-created block on discard',
           { blockId: focusedBlockId },
           err,
         )
@@ -1192,6 +1208,7 @@ export function useBlockActionOrchestration({
     handleMergeWithPrev,
     handleMergeById,
     handleEnterSave,
-    handleEscapeCancel,
+    handleEscapeSave,
+    handleDiscard,
   }
 }

@@ -357,7 +357,7 @@ test.describe('Copy/paste through the source grammar (#5140 Phase 3b)', () => {
     await expect(live.locator('p.is-editor-empty')).toBeVisible()
     await pasteText(live, clip)
     // Leave by clicking another block: a blur commits whatever the paste left
-    // in the editor (Escape would discard it).
+    // in the editor.
     await page.locator(`[data-testid="block-static"][data-block-id="${GS5}"]`).click()
 
     const copies = async () =>

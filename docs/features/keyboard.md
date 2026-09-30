@@ -10,13 +10,14 @@ Settings → Keyboard. Each entry shows its current binding and a "Record" butto
 ## What's not rebindable
 
 - The **picker triggers** — `[[`, `@`, `((`, `{{`, `/`, `::`, `:` — are part of the editor's character grammar, not shortcuts. They can't be moved.
-- A set of **structural** bindings always keeps a binding and offers no Record button: `Enter` (save block), `Backspace` (merge / delete), `Shift+Enter`, the arrow-key block navigation and selection chords, `Ctrl+B` / `Ctrl+I`, and the History list's `j` / `k` / range-select.
+- A set of **structural** bindings always keeps a binding and offers no Record button: `Enter` (save block), `Escape` (leave the block), `Backspace` (merge / delete), `Shift+Enter`, the arrow-key block navigation and selection chords, `Ctrl+B` / `Ctrl+I`, and the History list's `j` / `k` / range-select.
 
 ## Editor & block operations
 
 | Shortcut | Action |
 | --- | --- |
 | `Enter` | Split block at the cursor |
+| `Escape` | Leave the block, keeping what you typed, and select it |
 | `Shift+Enter` | Soft line break inside the current block |
 | `Backspace` (at block start) | Merge into the previous block |
 | `Ctrl+Shift+→` | Indent block (and any selected siblings) |

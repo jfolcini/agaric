@@ -29,13 +29,10 @@
  *    tab stop, and phase 1 deliberately kept arrow-key outline navigation from
  *    descending into an embed, so the toggle is the only way in. **Escape** is
  *    the way out: it relocks and returns focus to the container, this region's
- *    one tab stop, so Tab moves on from there. It SAVES — relocking clears the
- *    focus, and `useEditorBlur` persists on the way out — which is the opposite
- *    of what Escape does in a host row, where it discards and toasts. That is
- *    deliberate: an edit here lands on another page, and silently dropping it
- *    on a keypress the user reached for as "get me out" would be worse than
- *    keeping it. It bails while a suggestion picker is open so the pickers keep
- *    their own Escape. Escape has to be handled in the
+ *    one tab stop, so Tab moves on from there. It SAVES, as Escape in a host
+ *    row does (#5160 D17): relocking clears the focus, and `useEditorBlur`
+ *    persists on the way out. It bails while a suggestion picker is open so the
+ *    pickers keep their own Escape. Escape has to be handled in the
  *    CAPTURE phase, because the roving editor holds the INERT callback set
  *    while it sits on an embedded row and `useBlockKeyboard` would otherwise
  *    `preventDefault()` + `stopPropagation()` it along with Tab and the

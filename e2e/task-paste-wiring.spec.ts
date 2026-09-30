@@ -136,10 +136,9 @@ test.describe('Task-list editor paste wiring (#1481)', () => {
 
     await page.waitForTimeout(PAST_CONTENT_COMMIT_DEBOUNCE_MS)
 
-    // Blur the editor the way clicking away does. NOT `helpers.blurEditors`,
-    // whose leading Escape is the DISCARD gesture (`handleEscapeCancel`), and
-    // not Enter: with a caret split available `handleEnterSave` commits through
-    // `edit()` and never reaches the classifying flush.
+    // Blur the editor the way clicking away does. Not Enter: with a caret
+    // split available `handleEnterSave` commits through `edit()` and never
+    // reaches the classifying flush.
     await page.evaluate(() => {
       const el = document.activeElement
       if (el instanceof HTMLElement) el.blur()

@@ -50,14 +50,14 @@ async function handleCallout(ctx: SlashCommandContext, calloutType: string): Pro
  * serializes the live editor and commits it, so the text the user had just
  * typed was persisted as a side effect. These two commit nothing, so typed
  * text still sitting in the editor's commit debounce
- * (`useDebouncedContentCommit`, `CONTENT_COMMIT_DEBOUNCE_MS`) survived only
- * until the next Escape — which discards the pending edit — leaving a block
- * styled as a list with the pre-command content. Flush the pending commit
+ * (`useDebouncedContentCommit`, `CONTENT_COMMIT_DEBOUNCE_MS`) was not saved
+ * with the style: a Discard straight after dropped it, leaving a block styled
+ * as a list with the pre-command content. Flush the pending commit
  * first, through the same `flushActiveDraft` bridge export uses (#2969): it
  * is the editor's own commit path (`debounced.cancel()` + `commitNow()`), not
  * a second mechanism, and it is a no-op when nothing is pending. It is also
  * a no-op for a block carrying an inline `key:: value` line (`commitNow`'s
- * #2675 carve-out), so Escape after a slash command still discards typed
+ * #2675 carve-out), so Discard after a slash command still drops typed
  * text there.
  *
  * This is the one place that argument is written out. Every property-writing

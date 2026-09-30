@@ -75,7 +75,7 @@ test.describe('A line break inside a block (#5160 D2)', () => {
     await page.keyboard.press('Control+End')
     await page.keyboard.type('!')
     // A genuine blur (focus leaves the editor for another block's static
-    // surface): the classifying flush, not Escape's discard.
+    // surface) runs the classifying flush.
     await rows.nth(1).locator('[data-testid="block-static"]').click()
     await expect(first).toBeVisible()
 

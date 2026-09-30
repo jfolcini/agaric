@@ -66,6 +66,13 @@ export const DEFAULT_SHORTCUTS: ShortcutBinding[] = [
     rebindable: false,
   },
   {
+    id: 'leaveBlock',
+    keys: 'Escape',
+    category: 'keyboard.category.editing',
+    description: 'keyboard.leaveBlockAndSelect',
+    rebindable: false,
+  },
+  {
     id: 'deleteBlock',
     keys: 'Backspace',
     category: 'keyboard.category.editing',

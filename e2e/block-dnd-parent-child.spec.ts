@@ -80,14 +80,13 @@ test.describe('Block drag-and-drop (parent + child multi-select, #914)', () => {
       .poll(async () => (await moveCalls(page)).find((c) => c.blockId === gs2)?.newParentId)
       .toBe(gs1)
 
-    // Leave editor focus so Ctrl+Click drives block-select (not in-editor text
-    // selection), then clear the recorder so only the drag's IPC is asserted.
+    // Escape leaves the editor and selects the child it was editing (GS_2,
+    // #5160 D17); clear the recorder so only the drag's IPC is asserted.
     await page.keyboard.press('Escape')
     await clearInvokeCalls(page)
 
-    // Ctrl+Click the parent (GS_1) AND its child (GS_2) into the selection.
+    // Ctrl+Click the parent (GS_1) in beside its child (GS_2).
     await ctrlSelectById(page, gs1)
-    await ctrlSelectById(page, gs2)
     const batchToolbar = page.getByTestId('batch-toolbar')
     await expect(batchToolbar).toContainText('2')
 

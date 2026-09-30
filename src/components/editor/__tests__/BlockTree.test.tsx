@@ -169,7 +169,7 @@ const INERT_SENTINEL = vi.hoisted(() => ({
   onFlush: () => null,
   onMergeWithPrev: () => {},
   onEnterSave: () => {},
-  onEscapeCancel: () => {},
+  onEscapeSave: () => {},
 }))
 
 vi.mock('@/editor/use-block-keyboard', () => ({
