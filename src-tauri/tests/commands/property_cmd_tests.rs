@@ -2186,7 +2186,8 @@ async fn set_property_ref_type_enforces_value_ref() {
 
     mat.flush_background().await.unwrap();
 
-    // Setting value_text on a ref-type property should fail
+    // A value_text on a ref-type property names a page (#5160 D11); one that
+    // names none is refused
     let result = set_property_inner(
         &pool,
         DEV,
@@ -2203,8 +2204,8 @@ async fn set_property_ref_type_enforces_value_ref() {
     .await;
 
     assert!(
-        matches!(result, Err(AppError::Validation { message: ref msg, .. }) if msg.contains("expects type")),
-        "ref def with value_text should fail type check, got: {result:?}"
+        matches!(result, Err(AppError::Validation { message: ref msg, .. }) if msg.contains("no page is titled 'wrong'")),
+        "ref def with a value_text naming no page should be refused, got: {result:?}"
     );
 
     // Setting value_ref should succeed

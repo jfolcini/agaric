@@ -53,6 +53,7 @@
  * actual `set_property` writes and the strip-only-on-success policy.
  */
 
+import { trailingBackslashRun } from '@/editor/markdown-parse/vocab'
 import type { PropertyDefinition } from '@/lib/bindings'
 
 /**
@@ -88,13 +89,11 @@ export const INLINE_PROPERTY_RESERVED_KEYS: ReadonlySet<string> = new Set([
  * A property key as every surface matches it against the reserved keys and
  * the property definitions (#5160 D13): ASCII case folded and `-` read as
  * `_`, so `Due-Date` is `due_date`. No aliases: `due` is not `due_date`.
- * Mirrors `fold_property_key` in `src-tauri/agaric-engine/src/import.rs`.
+ * Mirrors `fold_property_key` in `src-tauri/agaric-engine/src/import.rs` for
+ * a valid key ({@link isInlinePropertyKey}), the only kind any caller has.
  */
 export function foldPropertyKey(key: string): string {
-  return key
-    .trim()
-    .replaceAll('-', '_')
-    .replace(/[A-Z]/g, (c) => c.toLowerCase())
+  return key.replaceAll('-', '_').replace(/[A-Z]/g, (c) => c.toLowerCase())
 }
 
 const FOLDED_RESERVED_KEYS: ReadonlySet<string> = new Set(
@@ -111,18 +110,10 @@ export function isInlinePropertyKey(key: string): boolean {
 }
 
 /**
- * Length of the trailing `\` run on a serialized line. In serialized markdown
- * a literal backslash is escaped to `\\` (see `ALWAYS_ESCAPE` in
- * `markdown-serialize.ts`), so an ODD run means the final `\` is a hard-break
- * marker (`\` + newline), not value text.
+ * Whether a serialized non-final line ends with a hard-break marker `\`: a
+ * literal backslash is escaped to `\\` (see `ALWAYS_ESCAPE` in
+ * `markdown-serialize.ts`), so an ODD trailing run ends in the marker.
  */
-function trailingBackslashRun(line: string): number {
-  let n = 0
-  for (let i = line.length - 1; i >= 0 && line[i] === '\\'; i--) n++
-  return n
-}
-
-/** Whether a serialized non-final line ends with a hard-break marker `\`. */
 function endsWithHardBreakMarker(line: string): boolean {
   return trailingBackslashRun(line) % 2 === 1
 }
@@ -186,7 +177,6 @@ export function parseInlineProperties(content: string): InlinePropertyLine[] {
  * literal (nothing lost).
  */
 export function stripPropertyLines(content: string, lineIndexes: ReadonlySet<number>): string {
-  if (lineIndexes.size === 0) return content
   const lines = content.split('\n')
   const kept = lines.filter((_, i) => !lineIndexes.has(i))
   // When the ORIGINAL last line is stripped, the line that becomes the new
@@ -231,8 +221,9 @@ export interface InlineSetPropertyParams {
  *     anything else returns `null`. DIVERGENCE from the drawer, which maps
  *     any non-'true' string to `false` — fine for a checkbox UI, silent data
  *     mangling for free-typed text,
- *   - `ref` → always `null`; a page reference cannot be expressed as inline
- *     text (the drawer uses a page picker for these).
+ *   - `ref` → `valueText`, which the backend reads as a block id, `[[Title]]`
+ *     or a page title in the block's space (#5160 D11) and refuses when it
+ *     names no one block (the line stays literal).
  *
  * Returns `null` when the value cannot be represented for the key's type;
  * the caller must then leave the property line literal in the content.
@@ -256,11 +247,9 @@ export function buildInlinePropertySetParams(
       if (value !== 'true' && value !== 'false') return null
       return { blockId, key, valueBool: value === 'true' }
     }
-    case 'ref': {
-      return null
-    }
     default: {
-      // No definition yet, or text/select — both store value_text.
+      // No definition yet, text/select, or a ref the backend resolves — all
+      // send value_text.
       return { blockId, key, valueText: value }
     }
   }

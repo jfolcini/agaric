@@ -13,10 +13,13 @@ use super::*;
 pub(super) struct PropertyLines {
     mode: PropertyWrite,
     declarations: HashMap<String, PropertyDeclaration>,
-    /// Each folded key's reserved key and definitions.
+    /// Each folded key's definitions.
     spellings: HashMap<String, Vec<String>>,
     /// Each ref value's block id, or why it names none.
     refs: HashMap<String, Result<String, String>>,
+    /// The key each canonical `key:: value` line of a source buffer was typed
+    /// with, when it was typed otherwise, to name the line by.
+    typed: HashMap<(String, String), String>,
 }
 
 impl PropertyLines {
@@ -32,17 +35,11 @@ impl PropertyLines {
                 .fetch_all(&mut *conn)
                 .await?;
         let mut spellings: HashMap<String, Vec<String>> = HashMap::new();
-        let keys = agaric_store::op::RESERVED_PROPERTY_KEYS
-            .iter()
-            .map(|key| (*key).to_string())
-            .chain(rows.iter().map(|row| row.key.clone()));
-        for key in keys {
-            let known = spellings
-                .entry(import::fold_property_key(&key))
-                .or_default();
-            if !known.contains(&key) {
-                known.push(key);
-            }
+        for row in &rows {
+            spellings
+                .entry(import::fold_property_key(&row.key))
+                .or_default()
+                .push(row.key.clone());
         }
         let declarations = rows
             .into_iter()
@@ -59,6 +56,7 @@ impl PropertyLines {
             declarations,
             spellings,
             refs: HashMap::new(),
+            typed: HashMap::new(),
         })
     }
 
@@ -80,9 +78,10 @@ impl PropertyLines {
         Ok(())
     }
 
-    /// The key `typed` names (D13): the one reserved key or definition it
-    /// folds to. Two that fold alike are never guessed between, and a key none
-    /// folds to is a custom key: both stay as typed.
+    /// The key `typed` names (D13): the one definition it folds to, the
+    /// reserved keys' included (migration 0014 declares them). Two that fold
+    /// alike are never guessed between, and a key none folds to is a custom
+    /// key: both stay as typed.
     pub(super) fn canonical_key(&self, typed: &str) -> String {
         match self
             .spellings
@@ -96,9 +95,12 @@ impl PropertyLines {
 
     /// Give each of `blocks`' properties its [`Self::canonical_key`], except a
     /// key the block with its anchor in `held` holds as written: keys were
-    /// stored as typed before D13, so that line is that property.
+    /// stored as typed before D13, so that line is that property. A `key::`
+    /// line with no value clears a key the block holds (P7); for any other key
+    /// it clears nothing, so it is what the user typed and stays as text in
+    /// the block.
     pub(super) fn canonicalize(
-        &self,
+        &mut self,
         blocks: &mut [import::ParsedBlock],
         held: &[import::ParsedBlock],
     ) {
@@ -113,12 +115,30 @@ impl PropertyLines {
             .collect();
         for block in blocks {
             let anchor = block.block_anchor.as_deref().unwrap_or_default();
-            for (key, _) in &mut block.properties {
-                if !held.contains(&(anchor, key.as_str())) {
-                    *key = self.canonical_key(key);
+            for (typed, value) in std::mem::take(&mut block.properties) {
+                if held.contains(&(anchor, typed.as_str())) {
+                    block.properties.push((typed, value));
+                    continue;
                 }
+                let key = self.canonical_key(&typed);
+                if value.is_empty() && !held.contains(&(anchor, key.as_str())) {
+                    push_text_line(&mut block.content, &format!("{typed}::"));
+                    continue;
+                }
+                if key != typed {
+                    self.typed.insert((key.clone(), value.clone()), typed);
+                }
+                block.properties.push((key, value));
             }
         }
+    }
+
+    /// The `key:: value` line a source buffer wrote for canonical `key`, as
+    /// the user typed it.
+    pub(super) fn typed_line(&self, key: &str, value: &str) -> String {
+        let pair = (key.to_owned(), value.to_owned());
+        let typed = self.typed.get(&pair).map_or(key, String::as_str);
+        format!("{typed}:: {value}")
     }
 
     /// The declaration `key` is written under. A copy writes back values a
@@ -185,7 +205,8 @@ impl PropertyLines {
     /// whose value [`Self::read`] refuses as text, with one warning naming it
     /// (D11): a `key:: value` line as it was written, at the end of its block,
     /// and a checkbox, task keyword or priority cookie back before the text
-    /// it was read off.
+    /// it was read off. A refused ref value names no one page, so its `[[` is
+    /// escaped: the name pass neither creates that page nor warns again.
     pub(super) fn keep_refused_as_text(
         &self,
         blocks: &mut [import::ParsedBlock],
@@ -211,10 +232,12 @@ impl PropertyLines {
                 }
                 let line = format!("{typed}:: {value}");
                 warnings.push(format!("`{line}` was kept as text: {reason}"));
-                if !block.content.is_empty() {
-                    block.content.push('\n');
-                }
-                block.content.push_str(&line);
+                let text = if self.is_ref(&key) {
+                    escape_page_links(&line)
+                } else {
+                    line
+                };
+                push_text_line(&mut block.content, &text);
             }
             if !restored.is_empty() {
                 if !block.content.is_empty() {
@@ -224,6 +247,29 @@ impl PropertyLines {
             }
         }
     }
+}
+
+/// Append `line` to `content` as a line of its own.
+fn push_text_line(content: &mut String, line: &str) {
+    if !content.is_empty() {
+        content.push('\n');
+    }
+    content.push_str(line);
+}
+
+/// `text` with each `[[` that opens a page link escaped (#5160 N3).
+fn escape_page_links(text: &str) -> String {
+    let mut escaped = String::with_capacity(text.len() + 2);
+    let mut copied = 0;
+    for (at, _) in text.match_indices("[[") {
+        if !is_escaped(text, at) {
+            escaped.push_str(&text[copied..at]);
+            escaped.push('\\');
+            copied = at;
+        }
+    }
+    escaped.push_str(&text[copied..]);
+    escaped
 }
 
 /// A validation error as the reason a line is refused.
@@ -298,4 +344,38 @@ async fn resolve_ref_values(
         resolved.insert(title, outcome);
     }
     Ok(resolved)
+}
+
+/// A text value `set_property` writes under `key` on `block_id`, as
+/// `(value_text, value_ref)`: under a `ref` definition, the block a live block
+/// id, `[[Title]]` or a title of a page in the block's space names, as a typed
+/// `key:: value` line reads it (#5160 D11); under any other key, the text.
+///
+/// # Errors
+///
+/// [`AppError::Validation`] naming why a ref value names no block.
+pub(crate) async fn read_typed_ref(
+    conn: &mut sqlx::SqliteConnection,
+    block_id: &str,
+    key: &str,
+    text: String,
+) -> Result<(Option<String>, Option<String>), AppError> {
+    let declared = sqlx::query!(
+        "SELECT value_type, options FROM property_definitions WHERE key = ?",
+        key,
+    )
+    .fetch_optional(&mut *conn)
+    .await?;
+    if declared.is_none_or(|row| row.value_type != "ref") {
+        return Ok((Some(text), None));
+    }
+    let block = BlockId::from_trusted(block_id);
+    let space = agaric_store::space::resolve_block_space(&mut *conn, &block).await?;
+    let name = ref_name(&text);
+    let id = resolve_ref_values(conn, space.as_ref().map(SpaceId::as_str), vec![name])
+        .await?
+        .remove(name)
+        .unwrap_or_else(|| Err(format!("'{text}' names no block")))
+        .map_err(AppError::validation)?;
+    Ok((None, Some(id)))
 }

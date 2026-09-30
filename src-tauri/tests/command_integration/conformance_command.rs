@@ -150,6 +150,10 @@ const RETURN_SHAPE: &[(&str, &str, &[&str], &[&str])] = &[
         &["affected_count"],
         &[],
     ),
+    // #5160 D11 — the row the property was set on; the snapshot pins the
+    // value, and a text value under a `ref` definition is read as the block
+    // it names, which only the command does.
+    ("set_property", "id", &[], &[]),
     // #5057 — the three batch COUNTERS answer with a bare `i64`, which carries
     // no field to name it. The shape's single attribute names the scalar, so
     // the token reads `set_property_batch#updated=3` instead of exposing a
@@ -429,6 +433,30 @@ pub(super) async fn apply_op_via_command(
         }
         "purge_blocks_by_ids" => {
             to_json(purge_blocks_by_ids_inner(pool, DEV, mat, block_ids()).await)
+        }
+        // The value is the caller's own text; only the block is a label.
+        "set_property" => {
+            let value: SetPropertyArgs =
+                serde_json::from_value(arg("value").cloned().unwrap_or_else(|| {
+                    panic!("conformance op '{command}' is missing arg 'value'")
+                }))
+                .unwrap_or_else(|e| panic!("conformance op '{command}': value: {e}"));
+            to_json(
+                set_property_inner(
+                    pool,
+                    DEV,
+                    mat,
+                    block_id().into_string().into(),
+                    req_str("key"),
+                    value.value_text,
+                    value.value_num,
+                    value.value_date,
+                    value.value_ref,
+                    value.value_bool,
+                    None,
+                )
+                .await,
+            )
         }
         "set_property_batch" => to_json(
             set_property_batch_inner(
@@ -1124,7 +1152,7 @@ mod tests {
     /// vice versa, and the count is the one this module claims — so a
     /// mutating command cannot join one table without the other, and cannot
     /// join at all without this number moving.
-    const MUTATING_ARM_COUNT: usize = 43;
+    const MUTATING_ARM_COUNT: usize = 44;
 
     #[test]
     fn the_dispatcher_and_the_return_shape_table_name_the_same_commands() {

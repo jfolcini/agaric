@@ -304,19 +304,6 @@ describe('stripPropertyLines', () => {
     const content = 'text\nstatus:: active'
     expect(stripPropertyLines(content, new Set())).toBe(content)
   })
-  // Ledger — #3804 — line refreshed (was 150, drifted): [ConditionalExpression
-  // `lineIndexes.size === 0 → false`], currently inline-property-parse.ts:175
-  // (verify with `grep -n 'lineIndexes.size === 0'
-  // src/lib/inline-property-parse.ts`): equivalent. This early return is a
-  // pure optimization, not a correctness requirement — with an empty set,
-  // `lines.filter` removes nothing (`kept === lines`), the marker-stripping
-  // guard's own `lineIndexes.has(...)` check short-circuits false, and
-  // `content.split('\n').join('\n')` always reconstructs `content` exactly
-  // (split/join with the same separator is lossless for any string, by
-  // construction). Originally verified over a 100k random-string sweep (0
-  // diffs from the original with an empty set; 8,569/8,569 identical results
-  // on non-empty sets too, confirming it isn't trivially vacuous) that was
-  // never committed. #3804 — re-verified with a harness since deleted by #4556.
 
   it('stripping the only line yields an empty string', () => {
     expect(stripPropertyLines('status:: active', new Set([0]))).toBe('')
@@ -345,41 +332,12 @@ describe('stripPropertyLines', () => {
     expect(stripPropertyLines('end\\\\\nk:: v', new Set([1]))).toBe('end\\\\')
   })
 
-  // #3804 — line refreshed (was 88, drifted): [EqualityOperator `i >= 0 → i >
-  // 0`] inside the shared `trailingBackslashRun` helper, currently
-  // inline-property-parse.ts:107 (verify with `grep -n 'i >= 0 &&'
-  // src/lib/inline-property-parse.ts`). The off-by-one only shows up when the
-  // scanned line is backslashes ALL the way down to index 0 — here the new
-  // last line after stripping is a lone `\`, so the loop's final check
-  // happens at i===0. Original: `i>=0` true, counts index 0 too → n=1 (odd)
-  // → marker stripped → `''`. Mutant: `i>0` is false AT i===0, so index 0 is
-  // never counted → n=0 (even) → marker left in place → `'\'` survives.
-  // (`parseInlineProperties` alone can't observe this: a pure-backslash line
-  // never contains `':: '` either way, so the divergence is invisible until
-  // it feeds into the marker-stripping branch here. Originally verified over
-  // a 200k random-string sweep plus every backslash-run-length/strip-mask
-  // combination up to length 6 that was never committed (12 edge-case diffs,
-  // all here — this codepath was the only one where a difference from the
-  // original ever appeared; a same-family `true`-replacement mutant produced
-  // zero diffs anywhere, see the ledger below). #3804 — re-verified with a
-  // harness since deleted by #4556.)
+  // The run is counted down to index 0: the new last line after stripping is
+  // a lone `\`, a marker with no line after it, so it goes. Counting stops one
+  // short and the `\` survives.
   it('drops the marker on a lone backslash line only when the run truly reaches index 0', () => {
     expect(stripPropertyLines('\\\ncontext:: home', new Set([1]))).toBe('')
   })
-
-  // Ledger — #3804 — line refreshed (was 88, drifted): [ConditionalExpression
-  // `i >= 0 → true`], currently inline-property-parse.ts:107 (same site as
-  // the control above): equivalent for every input. Dropping the `i>=0`
-  // guard entirely relies on JS returning `undefined` for an out-of-range
-  // string index rather than throwing; `undefined === '\\'` is `false`, so
-  // the loop still stops at exactly the same `i` with the same count `n` as
-  // the guarded version — the guard is provably redundant, not merely
-  // untested. Originally verified over the same 200k random-string sweep
-  // plus every backslash-run/strip-mask edge case above that was never
-  // committed (0 diffs from the original in all cases, vs. the `i>0` mutant
-  // just above, caught 442/200k times at random and on 12/many edge cases —
-  // confirming the harness does detect a real divergence in this same
-  // family). #3804 — re-verified with a harness since deleted by #4556.
 })
 
 describe('buildInlinePropertySetParams', () => {
@@ -456,7 +414,11 @@ describe('buildInlinePropertySetParams', () => {
     expect(buildInlinePropertySetParams('B', 'k', 'yes', def('boolean'))).toBeNull()
   })
 
-  it('rejects ref definitions (inline text cannot express a page ref)', () => {
-    expect(buildInlinePropertySetParams('B', 'k', 'Some Page', def('ref'))).toBeNull()
+  it('sends a ref value as text, which the backend reads as the block it names (#5160 D11)', () => {
+    expect(buildInlinePropertySetParams('B', 'k', 'Some Page', def('ref'))).toEqual({
+      blockId: 'B',
+      key: 'k',
+      valueText: 'Some Page',
+    })
   })
 })
