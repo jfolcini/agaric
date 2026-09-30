@@ -331,6 +331,13 @@ updates:
         patterns:
           - 'loro'
           - 'loro-*'
+      # 0.x minors break and these pin each other: a solo bump cannot compile.
+      opentelemetry:
+        patterns:
+          - 'opentelemetry'
+          - 'opentelemetry_*'
+          - 'opentelemetry-*'
+          - 'tracing-opentelemetry'
       tracing:
         patterns:
           - 'tracing'
