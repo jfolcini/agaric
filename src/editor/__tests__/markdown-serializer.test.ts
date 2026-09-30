@@ -657,15 +657,17 @@ describe('parse', () => {
       expect(parse('****')).toEqual(doc(paragraph(text('****'))))
     })
 
-    it('unclosed bold containing tag_ref reverts to plain text', () => {
+    // The `**` is literal; the ref after it stays a ref, which re-serializing
+    // plain text would escape into text for good (#5160).
+    it('unclosed bold containing tag_ref keeps the tag_ref', () => {
       expect(parse('**see #[01ARZ3NDEKTSV4RRFFQ69G5FAV]')).toEqual(
-        doc(paragraph(text('**see #[01ARZ3NDEKTSV4RRFFQ69G5FAV]'))),
+        doc(paragraph(text('**see '), tagRef('01ARZ3NDEKTSV4RRFFQ69G5FAV'))),
       )
     })
 
-    it('unclosed bold containing block_link reverts to plain text', () => {
+    it('unclosed bold containing block_link keeps the block_link', () => {
       expect(parse('**see [[01ARZ3NDEKTSV4RRFFQ69G5FAV]]')).toEqual(
-        doc(paragraph(text('**see [[01ARZ3NDEKTSV4RRFFQ69G5FAV]]'))),
+        doc(paragraph(text('**see '), blockLink('01ARZ3NDEKTSV4RRFFQ69G5FAV'))),
       )
     })
   })

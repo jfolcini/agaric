@@ -30,7 +30,7 @@ Type, paste, or use the toolbar:
 | Table | Slash menu (`/table 4x6` for 4 rows × 6 columns) |
 | Task | A checkbox and a space typed at the start of the block, with or without a `-` and a space before it: `[ ]` TODO, `[/]` DOING, `[x]` or `[X]` DONE, `[-]` CANCELLED. The marker disappears and the block takes the state; `Ctrl+Enter`, the checkbox and the toolbar cycle it from there. `TODO` stays a word |
 
-Markdown shortcuts trigger as you type (`#`, `##`, ``` ` ```, `**bold**`, `_italic_`, `~~strike~~`, `==highlight==`, `[text](url)`, `1.`, `-`, `>`, `[ ]`, `[/]`, `[x]`, `[-]`).
+Markdown shortcuts trigger as you type (`#`, `##`, ``` ` ```, `**bold**`, `_italic_`, `~~strike~~`, `==highlight==`, `[text](url)`, `1.`, `-`, `>`, `[ ]`, `[/]`, `[x]`, `[-]`). A mark delimiter follows CommonMark's flanking rule, typed, pasted or stored alike: one with a space on its inner side stays text, so `5 * 3 = 15 and 2 * 4 = 8` is not italic.
 
 ## External links
 

@@ -829,6 +829,17 @@ describe('handlePaste — one pasted line is read as inline markdown (#5160 N11)
     ])
   })
 
+  it('keeps a link after a delimiter that never closes', async () => {
+    editor = await buildMarkedEditor(EMPTY_PARAGRAPH)
+
+    expect(paste(editor, '*Note: see [docs](https://example.com)')).toBe(true)
+
+    expect(editor.getJSON().content?.[0]?.content).toEqual([
+      { type: 'text', text: '*Note: see ' },
+      { type: 'text', text: 'docs', marks: [LINK] },
+    ])
+  })
+
   it.each([
     ['plain text', 'just text, 5 * 3 = 15'],
     ['a bare URL, which ExternalLink links and prefetches', 'https://example.com'],

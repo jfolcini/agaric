@@ -412,3 +412,31 @@ test.describe('Round-trip persistence', () => {
     await expect(reopenedEditor.locator('h1')).toContainText('Persistent Heading')
   })
 })
+
+// ===========================================================================
+// 5. Typed delimiters follow the parser's flanking rule (#5160 N9)
+// ===========================================================================
+
+test.describe('Typed delimiters (#5160 N9)', () => {
+  test.beforeEach(async ({ page }) => {
+    await waitForBoot(page)
+    await openPage(page, 'Getting Started')
+  })
+
+  test('typed arithmetic stays text while *word* still italicises', async ({ page }) => {
+    const editor = await focusBlock(page)
+
+    await page.keyboard.press('Control+a')
+    await page.keyboard.type('5 * 3 = 15 and 2 * 4 = 8, then *word* ')
+
+    await expect(editor.locator('em')).toHaveText('word')
+    await saveBlock(page)
+
+    const staticBlock = page
+      .locator('[data-testid="sortable-block"]')
+      .first()
+      .locator('[data-testid="block-static"]')
+    await expect(staticBlock).toContainText('5 * 3 = 15 and 2 * 4 = 8, then')
+    await expect(staticBlock.locator('em')).toHaveText('word')
+  })
+})

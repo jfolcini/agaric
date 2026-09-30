@@ -1729,6 +1729,40 @@ describe('useRovingEditor integration (renderHook)', () => {
     result.current.editor?.destroy()
     unmountHook()
   })
+
+  // #5160 N9: the mark shortcuts follow the parser's flanking rule as typed.
+  it.each([
+    ['5 * 3 = 15 and 2 *', [['5 * 3 = 15 and 2 *', []]]],
+    ['a ** b **', [['a ** b **', []]]],
+    ['a ~~ b ~~', [['a ~~ b ~~', []]]],
+    ['x == y and y ==', [['x == y and y ==', []]]],
+    [
+      'see *word*',
+      [
+        ['see ', []],
+        ['word', ['italic']],
+      ],
+    ],
+  ])('typing %j formats only a delimiter that flanks', async (typed, expected) => {
+    const { result, unmount: unmountHook } = await setup()
+    const editor = result.current.editor as Editor
+    const last = typed.slice(-1)
+    editor.commands.insertContent(typed.slice(0, -1))
+    const { from } = editor.state.selection
+    const handled = editor.view.someProp('handleTextInput', (f) =>
+      f(editor.view, from, from, last, () => editor.state.tr.insertText(last, from)),
+    )
+    if (!handled) editor.commands.insertContent(last)
+
+    const runs: Array<[string, string[]]> = []
+    editor.state.doc.child(0).forEach((node) => {
+      runs.push([node.text ?? '', node.marks.map((m) => m.type.name)])
+    })
+    expect(runs).toEqual(expected)
+
+    editor.destroy()
+    unmountHook()
+  })
 })
 
 // -- suggestion-exit dispatch error handling ----------------------

@@ -43,7 +43,6 @@ import {
   MARKER_INDENT_SRC,
   MAX_LINK_SCAN,
   MAX_PARSE_DEPTH,
-  nodeToPlainText,
   peek,
   probeExternalLink,
   scanBalancedClose,
@@ -71,6 +70,7 @@ import type {
   PMMark,
   TableNode,
   TableRowNode,
+  TextNode,
   TodoState,
 } from '@/editor/types'
 import { logger } from '@/lib/logger'
@@ -1537,6 +1537,7 @@ export function scanStrike(st: InlineState): boolean {
   if (st.inStrike) {
     st.inStrike = false
   } else {
+    st.strikeOpenPos = st.scanner.pos
     st.strikeOpenNodeLen = st.nodes.length
     st.inStrike = true
   }
@@ -1552,6 +1553,7 @@ export function scanHighlight(st: InlineState): boolean {
   if (st.inHighlight) {
     st.inHighlight = false
   } else {
+    st.highlightOpenPos = st.scanner.pos
     st.highlightOpenNodeLen = st.nodes.length
     st.inHighlight = true
   }
@@ -1582,6 +1584,7 @@ export function scanUnderline(st: InlineState): boolean {
   }
   if (!st.inUnderline && peek(s) === '<' && peek(s, 1) === 'u' && peek(s, 2) === '>') {
     flushBuf(st, currentMarks(st))
+    st.underlineOpenPos = s.pos
     st.underlineOpenNodeLen = st.nodes.length
     st.inUnderline = true
     s.pos += 3
@@ -1630,57 +1633,74 @@ function scanPlain(st: InlineState): void {
 }
 
 /**
- * At end-of-line, revert any unclosed marks back into their literal
- * delimiter + underlying plain text. Runs in reverse order of opening so that
- * nested unclosed marks are handled correctly.
+ * At end-of-line, turn each mark still open back into the delimiter that
+ * opened it. Only that mark comes off the nodes after it: a link, a ref, math,
+ * code and every inner mark that did close stay, so a stray `**` never costs
+ * the line a tag or a URL. The latest opener goes first, so each insert leaves
+ * the nodes before it where they are.
  */
 function revertUnclosedMarks(st: InlineState): void {
-  // (Code spans need no revert: scanCodeSpan resolves open/close eagerly and
-  // emits unmatched delimiter runs as literal text on the spot.)
-  if (st.inHighlight) {
-    const reverted = st.nodes.splice(st.highlightOpenNodeLen)
-    st.buf = `==${reverted.map(nodeToPlainText).join('')}${st.buf}`
+  const unclosed: Array<{ mark: string; pos: number; at: number; text: string }> = []
+  const lit = (delim: '*' | '_' | null, n: number) => (delim === '_' ? '_' : '*').repeat(n)
+  if (st.inUnderline) {
+    unclosed.push({
+      mark: 'underline',
+      pos: st.underlineOpenPos,
+      at: st.underlineOpenNodeLen,
+      text: '<u>',
+    })
+  }
+  if (st.inBold) {
+    unclosed.push({
+      mark: 'bold',
+      pos: st.boldOpenPos,
+      at: st.boldOpenNodeLen,
+      text: lit(st.boldDelim, 2),
+    })
+  }
+  if (st.inItalic) {
+    unclosed.push({
+      mark: 'italic',
+      pos: st.italicOpenPos,
+      at: st.italicOpenNodeLen,
+      text: lit(st.italicDelim, 1),
+    })
   }
   if (st.inStrike) {
-    const reverted = st.nodes.splice(st.strikeOpenNodeLen)
-    st.buf = `~~${reverted.map(nodeToPlainText).join('')}${st.buf}`
+    unclosed.push({ mark: 'strike', pos: st.strikeOpenPos, at: st.strikeOpenNodeLen, text: '~~' })
   }
-  revertUnclosedItalic(st)
-  if (st.inBold) {
-    const reverted = st.nodes.splice(st.boldOpenNodeLen)
-    // Revert to the literal delimiter that opened the run (`**` or `__`).
-    const lit = st.boldDelim === '_' ? '__' : '**'
-    st.buf = `${lit}${reverted.map(nodeToPlainText).join('')}${st.buf}`
+  if (st.inHighlight) {
+    unclosed.push({
+      mark: 'highlight',
+      pos: st.highlightOpenPos,
+      at: st.highlightOpenNodeLen,
+      text: '==',
+    })
   }
-  // Underline is the outermost mark (opened first) → reverted last so the
-  // inner reverts above have already folded their nodes back into `buf`.
-  if (st.inUnderline) {
-    const reverted = st.nodes.splice(st.underlineOpenNodeLen)
-    st.buf = `<u>${reverted.map(nodeToPlainText).join('')}${st.buf}`
+  for (const { mark, at, text } of unclosed.toSorted((a, b) => b.pos - a.pos)) {
+    const after = st.nodes
+      .splice(at)
+      .map((node) => (node.type === 'text' ? withoutMark(node, mark) : node))
+    st.nodes.push({ type: 'text', text }, ...after)
   }
+  // Neighbours the revert left with the same marks are one run. (Two code
+  // spans never meet: the grammar needs a char between them.)
+  const merged = st.nodes.splice(0).reduce<InlineNode[]>((out, node) => {
+    const prev = out.at(-1)
+    const sameRun =
+      prev?.type === 'text' &&
+      node.type === 'text' &&
+      JSON.stringify(prev.marks ?? []) === JSON.stringify(node.marks ?? [])
+    if (sameRun) out[out.length - 1] = { ...prev, text: prev.text + node.text }
+    else out.push(node)
+    return out
+  }, [])
+  st.nodes.push(...merged)
 }
 
-/**
- * Italic revert is the only case that interacts with bold — if bold opened
- * *inside* an unclosed italic, the bold `**` delimiter must be preserved
- * verbatim in the reverted text (and `inBold` cleared so it isn't reverted
- * a second time).
- */
-function revertUnclosedItalic(st: InlineState): void {
-  if (!st.inItalic) return
-  const reverted = st.nodes.splice(st.italicOpenNodeLen)
-  // Revert to the literal delimiter that opened each run (`*`/`_`, `**`/`__`).
-  const italicLit = st.italicDelim === '_' ? '_' : '*'
-  if (st.inBold && st.boldOpenPos > st.italicOpenPos) {
-    const boldLit = st.boldDelim === '_' ? '__' : '**'
-    const splitAt = st.boldOpenNodeLen - st.italicOpenNodeLen
-    const before = reverted.slice(0, splitAt)
-    const after = reverted.slice(splitAt)
-    st.buf = `${italicLit}${before.map(nodeToPlainText).join('')}${boldLit}${after.map(nodeToPlainText).join('')}${st.buf}`
-    st.inBold = false
-  } else {
-    st.buf = `${italicLit}${reverted.map(nodeToPlainText).join('')}${st.buf}`
-  }
+function withoutMark(node: TextNode, mark: string): TextNode {
+  const marks = (node.marks ?? []).filter((m) => m.type !== mark)
+  return marks.length > 0 ? { ...node, marks } : { type: 'text', text: node.text }
 }
 
 /**
