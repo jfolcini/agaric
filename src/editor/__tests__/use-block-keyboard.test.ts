@@ -82,7 +82,7 @@ function makeCallbacks(overrides: { isLastBlock?: () => boolean } = {}): BlockKe
     },
     onMergeWithPrev: track('onMergeWithPrev'),
     onEnterSave: track('onEnterSave'),
-    onEscapeCancel: track('onEscapeCancel'),
+    onEscapeSave: track('onEscapeSave'),
     onMoveUp: track('onMoveUp'),
     onMoveDown: track('onMoveDown'),
     onToggleTodo: track('onToggleTodo'),
@@ -635,7 +635,7 @@ describe('handleBlockKeyDown', () => {
   })
 
   describe('Escape', () => {
-    it('Escape calls onEscapeCancel', () => {
+    it('Escape calls onEscapeSave', () => {
       const editor = makeEditor({})
       const cbs = makeCallbacks()
       const event = makeEvent('Escape')
@@ -643,7 +643,7 @@ describe('handleBlockKeyDown', () => {
       handleBlockKeyDown(event, editor, cbs)
 
       expect(event.preventDefault).toHaveBeenCalledOnce()
-      expect(cbs._calls['onEscapeCancel']).toBe(1)
+      expect(cbs._calls['onEscapeSave']).toBe(1)
     })
   })
 
@@ -1015,7 +1015,7 @@ describe('handleBlockKeyDown', () => {
       cleanup()
     })
 
-    it('Escape does NOT trigger onEscapeCancel when popup is visible (hook-level yield)', () => {
+    it('Escape does NOT trigger onEscapeSave when popup is visible (hook-level yield)', () => {
       addVisiblePopup()
       const { callbacks, target, cleanup } = setupHookWithRealEditor()
 
@@ -1028,7 +1028,7 @@ describe('handleBlockKeyDown', () => {
 
       target.dispatchEvent(event)
 
-      expect(callbacks._calls['onEscapeCancel']).toBeUndefined()
+      expect(callbacks._calls['onEscapeSave']).toBeUndefined()
       expect(preventDefaultSpy).not.toHaveBeenCalled()
 
       cleanup()

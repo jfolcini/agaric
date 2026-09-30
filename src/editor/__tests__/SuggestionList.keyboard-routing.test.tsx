@@ -76,7 +76,7 @@ function makeCallbacks(): BlockKeyboardCallbacks & { _calls: Record<string, numb
     },
     onMergeWithPrev: track('onMergeWithPrev'),
     onEnterSave: track('onEnterSave'),
-    onEscapeCancel: track('onEscapeCancel'),
+    onEscapeSave: track('onEscapeSave'),
     onMoveUp: track('onMoveUp'),
     onMoveDown: track('onMoveDown'),
     onToggleTodo: track('onToggleTodo'),

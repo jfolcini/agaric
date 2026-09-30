@@ -414,7 +414,7 @@ export function createReducers({
           }
         })
         // Focus/selection cleanup is the caller's responsibility — all current
-        // callers (handleDeleteBlock, handleMerge*, handleEscapeCancel, BlockTree
+        // callers (handleDeleteBlock, handleMerge*, handleDiscard, BlockTree
         // empty-block cleanup) explicitly manage focus after remove() resolves.
         notifyUndoNewAction(rootParentId, resp.op_refs, undefined, { undoable })
       } catch (err) {

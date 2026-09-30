@@ -93,7 +93,6 @@
  */
 
 import {
-  blurEditors,
   clearInvokeCalls,
   expect,
   focusBlock,
@@ -154,7 +153,9 @@ test.describe('Draft autosave', () => {
 
     await editor.press('Control+a')
     await editor.pressSequentially('unsaved edit')
-    await blurEditors(page)
+    await page.evaluate(() => {
+      if (document.activeElement instanceof HTMLElement) document.activeElement.blur()
+    })
 
     await expect
       .poll(async () => (await getInvokeCalls(page, 'delete_draft')).map((c) => c['blockId']))

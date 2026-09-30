@@ -37,8 +37,6 @@ test.describe('Block-reference peek', () => {
     const suggestions = activeSuggestionList(page)
     await expect(suggestions.locator('[data-testid="suggestion-item"]').first()).toBeVisible()
     await page.keyboard.press('Enter')
-    // Enter, not Escape: Escape discards the draft, and the chip would never
-    // reach the saved block.
     await saveBlock(page, 'Enter')
 
     const chip = page.locator('[data-testid="block-static"] [data-testid="block-ref-chip"]').first()

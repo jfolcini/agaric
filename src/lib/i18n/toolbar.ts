@@ -72,7 +72,7 @@ export const toolbar: Record<string, string> = {
   'toolbar.propertiesTip': 'Block properties (Ctrl+Shift+P)',
   'toolbar.undoTip': 'Undo (Ctrl+Z)',
   'toolbar.redoTip': 'Redo (Ctrl+Y)',
-  'toolbar.discardTip': 'Discard changes (Esc)',
+  'toolbar.discardTip': 'Discard changes',
   'toolbar.orderedList': 'Ordered list',
   'toolbar.orderedListTip': 'Ordered list (1. prefix)',
   'toolbar.divider': 'Divider',

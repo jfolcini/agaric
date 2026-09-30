@@ -246,7 +246,7 @@ describe('useSlashCommandStructural — list, divider (#4552 slice 2)', () => {
     }
 
     // Re-read the store rather than asserting the call shape: this is the
-    // content a subsequent Escape would leave behind.
+    // content a subsequent Discard would leave behind.
     expect(pageStore.getState().blocksById.get('BLOCK_1')?.content).toBe('typed but uncommitted')
     expect(mockedSetListStyle).toHaveBeenCalledWith('BLOCK_1', 'ordered')
   })

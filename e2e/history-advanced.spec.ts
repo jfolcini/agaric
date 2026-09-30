@@ -129,8 +129,7 @@ test.describe('HistoryView — diff toggle', () => {
     await editor.pressSequentially('Updated welcome message')
     // Commit via blur (clicking the page title), NOT Enter (which splits
     // off a trailing empty block and would push a `create_block` op ahead
-    // of the `edit_block` we want at index 0) or Escape (which discards
-    // the edit — `onEscapeCancel` in src/editor/use-block-keyboard.ts).
+    // of the `edit_block` we want at index 0).
     await page.locator('[aria-label="Page title"]').click()
     await expect(page.locator('[data-testid="block-static"]').first()).toContainText(
       'Updated welcome message',

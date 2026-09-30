@@ -123,6 +123,7 @@ describe('#2914 — Enter on multi-block content does not race splitBlock vs cre
         blocks: store.getState().blocks,
         rovingEditor: handle,
         setFocused,
+        setSelected: vi.fn(),
         handleFlush,
         pageStore: store,
         remove: store.getState().remove,
@@ -174,7 +175,7 @@ describe('#2914 — Enter on multi-block content does not race splitBlock vs cre
     expect(setFocused).toHaveBeenCalledTimes(1)
     expect(setFocused).toHaveBeenCalledWith(lastSplit?.id)
 
-    // The content-bearing last block is NOT registered as an Escape-deletable
+    // The content-bearing last block is NOT registered as a Discard-deletable
     // empty stub (parity with the caret-split path).
     expect(justCreatedBlockIds.current.size).toBe(0)
   })

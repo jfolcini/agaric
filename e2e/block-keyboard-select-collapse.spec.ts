@@ -58,15 +58,12 @@ test.describe('Keyboard range selection across an ancestor collapse (#922)', () 
     await expect(chevron).toBeVisible()
     await expect(chevron).toHaveAttribute('aria-expanded', 'true')
 
-    // Leave editor focus so the Ctrl+Click / Shift+Arrow chords drive
-    // BLOCK-select mode (not in-editor text selection).
+    // 2. Escape leaves the editor and selects the CHILD (GS_2) it was editing
+    //    (#5160 D17), anchoring BLOCK-select mode there. Shift+ArrowDown then
+    //    extends the range down to the next visible block (GS_3), so the
+    //    selection includes the nested child GS_2.
     await page.keyboard.press('Escape')
     await expect(page.locator('[data-testid="block-editor"]')).not.toBeVisible()
-
-    // 2. Anchor the selection on the CHILD (GS_2) via Ctrl+Click, then
-    //    Shift+ArrowDown to extend the range down to the next visible block
-    //    (GS_3). The selection now includes the nested child GS_2.
-    await childById.click({ modifiers: ['Control'] })
     await expect(childById).toHaveClass(/block-selected/)
     await expect(batchToolbar).toContainText('1')
 

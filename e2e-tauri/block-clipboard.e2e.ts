@@ -161,12 +161,15 @@ describe('Agaric real-backend block clipboard (#5140 Phase 3b)', () => {
     )
 
     // Block-select mode: the chords stand down while a block holds the editor.
+    // Escape leaves it with that block selected (#5160 D17), and the second
+    // Escape clears that selection so the Ctrl+clicks below start from none.
     if (await $('[data-testid="block-editor"]').isExisting()) {
       await browser.keys(['Escape'])
       await $('[data-testid="block-editor"]').waitForExist({
         reverse: true,
         timeout: ACTION_TIMEOUT,
       })
+      await browser.keys(['Escape'])
     }
     await ctrlClick(blockStaticByMarker(PARENT))
     await ctrlClick(blockStaticByMarker(SECOND))

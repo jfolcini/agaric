@@ -58,7 +58,7 @@ const CALLOUT_TYPES = new Set(['info', 'warning', 'tip', 'error', 'note'])
 export interface UseBlockTreeEventListenersOptions {
   focusedBlockId: string | null
   rootParentId: string | null
-  handleEscapeCancel: () => void
+  handleDiscard: () => void
   handleToggleTodo: (id: string) => void
   handleTogglePriority: (id: string) => void
   handleShowProperties: (id: string) => void
@@ -78,7 +78,7 @@ export interface UseBlockTreeEventListenersOptions {
 export function useBlockTreeEventListeners(options: UseBlockTreeEventListenersOptions): void {
   const {
     rootParentId,
-    handleEscapeCancel,
+    handleDiscard,
     handleToggleTodo,
     handleTogglePriority,
     handleShowProperties,
@@ -110,7 +110,7 @@ export function useBlockTreeEventListeners(options: UseBlockTreeEventListenersOp
   useEffect(() => {
     // ── Discard button command (from FormattingToolbar) ───────────────
     const onDiscard: BlockCommandHandler = () => {
-      handleEscapeCancel()
+      handleDiscard()
     }
 
     // ── Priority cycling command (from FormattingToolbar) ─────────────
@@ -306,7 +306,7 @@ export function useBlockTreeEventListeners(options: UseBlockTreeEventListenersOp
     })
   }, [
     rootParentId,
-    handleEscapeCancel,
+    handleDiscard,
     handleToggleTodo,
     handleTogglePriority,
     handleShowProperties,

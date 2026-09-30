@@ -73,15 +73,8 @@ async function reopenGettingStartedAfterSeed(page: import('@playwright/test').Pa
 /**
  * Commit the edited block the way #1513 describes — a genuine BLUR (focus
  * leaves the editor) so `useEditorBlur` serializes + flushes the doc and the
- * block re-renders at rest.
- *
- * NB: do NOT use the `blurEditors` helper here. It presses `Escape` first,
- * which the block keyboard map binds to "cancel editing, DISCARD changes"
- * (use-block-keyboard.ts:320 → `onEscapeCancel`) — that reverts the in-editor
- * Tab-nesting before any serialize runs, so the at-rest content would (always)
- * be the pre-edit value and the round-trip would never be exercised. We instead
- * move focus to another block's static surface, which drains the blur+flush
- * (serialize) path that the regression is actually about.
+ * block re-renders at rest. Focus moves to another block's static surface,
+ * which drains the blur+flush (serialize) path the regression is about.
  */
 async function commitBlockByBlur(page: import('@playwright/test').Page): Promise<void> {
   // Click the SECOND block's at-rest surface: focus leaves the first block's

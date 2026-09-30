@@ -245,7 +245,7 @@ export function BlockTree({
     createBelow,
   } = pageStore.getState()
   // Global focus/selection actions
-  const { setFocused, toggleSelected, clearSelected } = useBlockStore.getState()
+  const { setFocused, setSelected, toggleSelected, clearSelected } = useBlockStore.getState()
   // #3344/#3642 — the three selection entry points carry the zoom-scope brands
   // on the STORE primitives themselves (`@/lib/zoom-scope`), so every id that
   // can reach the batch delete / batch TODO handlers had to come out of the
@@ -946,7 +946,7 @@ export function BlockTree({
     rovingEditorRef.current = rovingEditor
   })
 
-  // ── Draft discard callback for Escape ────────────────────────────────
+  // ── Draft discard callback (Discard, caret split) ─────────────────────
   const handleDiscardDraft = useCallback((blockId: string) => {
     commands
       .deleteDraft(blockId)
@@ -972,7 +972,8 @@ export function BlockTree({
     handleMergeWithPrev,
     handleMergeById,
     handleEnterSave,
-    handleEscapeCancel,
+    handleEscapeSave,
+    handleDiscard,
   } = useBlockActionOrchestration({
     focusedBlockId,
     // #3251 — the hook's document-order neighbour lookups (focus-prev/next,
@@ -1002,6 +1003,7 @@ export function BlockTree({
     }, [uncappedZoomedVisible, zoomedVisible.length, revealIndex]),
     rovingEditor,
     setFocused,
+    setSelected,
     handleFlush,
     pageStore,
     // The store's `remove` swallows its own errors (it logs + toasts and
@@ -1127,7 +1129,7 @@ export function BlockTree({
           onFlush: handleFlush,
           onMergeWithPrev: handleMergeWithPrev,
           onEnterSave: handleEnterSave,
-          onEscapeCancel: handleEscapeCancel,
+          onEscapeSave: handleEscapeSave,
           onToggleTodo: handleToggleFocusedTodo,
           onToggleCollapse: handleToggleFocusedCollapse,
           onShowProperties: handleShowFocusedProperties,
@@ -1142,7 +1144,7 @@ export function BlockTree({
   useBlockTreeEventListeners({
     focusedBlockId,
     rootParentId,
-    handleEscapeCancel,
+    handleDiscard,
     handleToggleTodo,
     handleTogglePriority,
     handleShowProperties,
@@ -1177,7 +1179,7 @@ export function BlockTree({
     if (!prevId || prevId === focusedBlockId) return
 
     // Bookkeeping unchanged — leaving a block closes its "just created"
-    // window, which is what gates `handleEscapeCancel`'s own auto-delete.
+    // window, which is what gates `handleDiscard`'s own auto-delete.
     justCreatedBlockIds.current.delete(prevId)
 
     // A block deliberately left blank by one step of an interaction that is

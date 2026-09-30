@@ -59,7 +59,7 @@ function makeOptions(
   return {
     focusedBlockId: 'BLOCK_1',
     rootParentId: 'PAGE_1',
-    handleEscapeCancel: vi.fn(),
+    handleDiscard: vi.fn(),
     handleToggleTodo: vi.fn(),
     handleTogglePriority: vi.fn(),
     handleShowProperties: vi.fn(),
@@ -123,23 +123,23 @@ afterEach(() => {
 
 describe('useBlockTreeEventListeners', () => {
   describe('DISCARD_BLOCK_EDIT', () => {
-    it('calls handleEscapeCancel when event is dispatched and block is focused', () => {
+    it('calls handleDiscard when event is dispatched and block is focused', () => {
       const opts = makeOptions()
       renderHook(() => useBlockTreeEventListeners(opts))
 
       dispatchBlockEvent('DISCARD_BLOCK_EDIT')
 
-      expect(opts.handleEscapeCancel).toHaveBeenCalledTimes(1)
+      expect(opts.handleDiscard).toHaveBeenCalledTimes(1)
     })
 
-    it('does not call handleEscapeCancel when no block is focused', () => {
+    it('does not call handleDiscard when no block is focused', () => {
       setGlobalFocus(null)
       const opts = makeOptions({ focusedBlockId: null })
       renderHook(() => useBlockTreeEventListeners(opts))
 
       dispatchBlockEvent('DISCARD_BLOCK_EDIT')
 
-      expect(opts.handleEscapeCancel).not.toHaveBeenCalled()
+      expect(opts.handleDiscard).not.toHaveBeenCalled()
     })
   })
 
@@ -317,7 +317,7 @@ describe('useBlockTreeEventListeners', () => {
       dispatchBlockEvent('TOGGLE_TODO_STATE')
       dispatchBlockEvent('OPEN_BLOCK_PROPERTIES')
 
-      expect(opts.handleEscapeCancel).not.toHaveBeenCalled()
+      expect(opts.handleDiscard).not.toHaveBeenCalled()
       expect(opts.handleTogglePriority).not.toHaveBeenCalled()
       expect(opts.handleToggleTodo).not.toHaveBeenCalled()
       expect(opts.handleShowProperties).not.toHaveBeenCalled()
@@ -588,7 +588,7 @@ describe('useBlockTreeEventListeners', () => {
       // Flush any async microtasks.
       await Promise.resolve()
 
-      expect(opts.handleEscapeCancel).not.toHaveBeenCalled()
+      expect(opts.handleDiscard).not.toHaveBeenCalled()
       expect(opts.handleTogglePriority).not.toHaveBeenCalled()
       expect(opts.handleToggleTodo).not.toHaveBeenCalled()
       expect(opts.handleShowProperties).not.toHaveBeenCalled()

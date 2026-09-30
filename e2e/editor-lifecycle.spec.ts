@@ -8,7 +8,7 @@ import { deleteBlockViaContextMenu, expect, test } from './helpers'
  * Static blocks: `[data-testid="block-static"]` div (passive container after no role/aria-label)
  * - TipTap editor: `[role="textbox"][aria-label="Block editor"]` (contenteditable)
  * - Sortable wrapper: `[data-testid="sortable-block"]`
- * - Enter saves; Escape discards.
+ * - Enter saves; Escape saves and selects the block.
  */
 
 async function openGettingStarted(page: import('@playwright/test').Page) {
@@ -91,7 +91,7 @@ test.describe('Editor lifecycle', () => {
     const editor = page.getByRole('textbox', { name: 'Block editor' })
     await expect(editor).toBeVisible()
 
-    // Press Escape to discard and unfocus without changing
+    // Escape leaves the block without changing it
     await editor.press('Escape')
     await expect(page.getByText(originalText)).toBeVisible()
   })

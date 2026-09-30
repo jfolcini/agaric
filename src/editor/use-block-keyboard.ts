@@ -93,7 +93,7 @@ export const INERT_BLOCK_KEYBOARD_CALLBACKS: BlockKeyboardCallbacks = {
   onFlush: () => null,
   onMergeWithPrev: () => {},
   onEnterSave: () => {},
-  onEscapeCancel: () => {},
+  onEscapeSave: () => {},
 }
 
 export interface BlockKeyboardCallbacks {
@@ -113,8 +113,8 @@ export interface BlockKeyboardCallbacks {
   onMergeWithPrev: () => void
   /** Flush current content and close the editor. Called on Enter. */
   onEnterSave: () => void
-  /** Escape pressed — cancel editing, discard changes, unfocus. */
-  onEscapeCancel: () => void
+  /** Escape pressed — save, leave editing, select the block (#5160 D17). */
+  onEscapeSave: () => void
   /** Move block up among siblings (Ctrl/Cmd+Shift+ArrowUp). */
   onMoveUp?: (() => void) | undefined
   /** Move block down among siblings (Ctrl/Cmd+Shift+ArrowDown). */
@@ -403,12 +403,12 @@ const KEY_RULES: ReadonlyArray<KeyRule> = [
       cb.onEnterSave()
     },
   },
-  // Escape: cancel editing, discard changes
+  // Escape: save, leave editing, select the block
   {
     match: (e) => e.key === 'Escape',
     handle: (e, cb) => {
       e.preventDefault()
-      cb.onEscapeCancel()
+      cb.onEscapeSave()
     },
   },
   // ArrowUp / ArrowLeft at position 0 → previous block (suppressed when popup open).
@@ -487,7 +487,7 @@ export function useBlockKeyboard(editor: Editor | null, callbacks: BlockKeyboard
     onFlush,
     onMergeWithPrev,
     onEnterSave,
-    onEscapeCancel,
+    onEscapeSave,
     onMoveUp,
     onMoveDown,
     onToggleTodo,
@@ -546,7 +546,7 @@ export function useBlockKeyboard(editor: Editor | null, callbacks: BlockKeyboard
         onFlush,
         onMergeWithPrev,
         onEnterSave,
-        onEscapeCancel,
+        onEscapeSave,
         onMoveUp,
         onMoveDown,
         onToggleTodo,
@@ -574,7 +574,7 @@ export function useBlockKeyboard(editor: Editor | null, callbacks: BlockKeyboard
       onFlush,
       onMergeWithPrev,
       onEnterSave,
-      onEscapeCancel,
+      onEscapeSave,
       onMoveUp,
       onMoveDown,
       onToggleTodo,

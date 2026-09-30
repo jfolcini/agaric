@@ -31,12 +31,8 @@ import {
 
 const EDITED = 'Edited from inside the embed'
 
-/**
- * Blur the roving editor WITHOUT the `blurEditors` helper's leading Escape:
- * Escape is the discard-edit chord, and every edit this spec makes is the
- * thing under test.
- */
-async function blurWithoutDiscarding(page: Page): Promise<void> {
+/** Blur the roving editor the way a click away does, leaving no block selected. */
+async function blurEditor(page: Page): Promise<void> {
   await page.evaluate(() => {
     if (document.activeElement instanceof HTMLElement) document.activeElement.blur()
   })
@@ -71,7 +67,7 @@ test.describe('embed edit-in-place', () => {
     await page.getByRole('button', { name: 'Add block' }).click()
     await expect(page.locator('[data-testid="block-editor"]')).toHaveCount(1)
     await insertEmbedOfWelcomeBlock(page)
-    await blurWithoutDiscarding(page)
+    await blurEditor(page)
 
     const embed = page.locator('[data-testid="embed-container"]').first()
     await expect(embed).toBeVisible()
@@ -95,7 +91,7 @@ test.describe('embed edit-in-place', () => {
 
     await page.keyboard.press('Control+a')
     await page.keyboard.type(EDITED)
-    await blurWithoutDiscarding(page)
+    await blurEditor(page)
     await expect(embed.getByText(EDITED)).toBeVisible()
 
     // The durable effect: the write went to the EMBEDDED block's own page.

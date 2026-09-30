@@ -55,10 +55,6 @@ test.describe('Linked references follow the zoom', () => {
     // assert it rather than assume, because the zoom target below is that
     // exact block.
     const targetId = await chip.getAttribute('data-id')
-    // Enter, not Escape: Escape DISCARDS the draft here (it fires
-    // `delete_draft` and no `edit_block`), so the reference would never reach
-    // the mock's block_links derivation and every assertion below would be
-    // vacuous.
     await saveBlock(page, 'Enter')
 
     // 2. At the page root the panel lists the PAGE's backlinks: QN_1.

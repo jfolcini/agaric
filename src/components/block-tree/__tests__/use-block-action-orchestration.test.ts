@@ -126,6 +126,7 @@ function makeDefaultParams(
       splitAtCaret: vi.fn(() => null as { before: string; after: string } | null),
     },
     setFocused: vi.fn(),
+    setSelected: vi.fn(),
     handleFlush: vi.fn(() => null as string | null),
     pageStore,
     remove: vi.fn(async () => {}),
@@ -1897,7 +1898,7 @@ describe('useBlockActionOrchestration handleEnterSave', () => {
       await result.current.handleEnterSave()
     })
 
-    // It carries real content, so Escape must not auto-delete it.
+    // It carries real content, so Discard must not auto-delete it.
     expect(params.justCreatedBlockIds.current.has('NEW_1')).toBe(false)
   })
 
@@ -2015,14 +2016,62 @@ describe('useBlockActionOrchestration handleEnterSave', () => {
   })
 })
 
-describe('useBlockActionOrchestration handleEscapeCancel', () => {
+// #5160 D17 — Escape keeps the text: it saves through the same flush every
+// other way out of a block takes, leaves editing, and selects the block.
+describe('useBlockActionOrchestration handleEscapeSave', () => {
+  it('saves through the flush, leaves editing and selects the block, with no toast', () => {
+    const params = makeDefaultParams()
+    params.rovingEditor.getMarkdown = vi.fn(() => 'Beta, edited')
+    const { result } = renderHook(() => useBlockActionOrchestration(params))
+
+    act(() => {
+      result.current.handleEscapeSave()
+    })
+
+    expect(params.handleFlush).toHaveBeenCalledTimes(1)
+    expect(params.setSelected).toHaveBeenCalledWith(['B'])
+    expect(params.setFocused).not.toHaveBeenCalled()
+    expect(params.discardDraft).not.toHaveBeenCalled()
+    expect(params.remove).not.toHaveBeenCalled()
+    expect(vi.mocked(toast)).not.toHaveBeenCalled()
+  })
+
+  it('leaves a blank block without selecting it', () => {
+    const params = makeDefaultParams()
+    params.rovingEditor.getMarkdown = vi.fn(() => '  ')
+    const { result } = renderHook(() => useBlockActionOrchestration(params))
+
+    act(() => {
+      result.current.handleEscapeSave()
+    })
+
+    expect(params.handleFlush).toHaveBeenCalledTimes(1)
+    expect(params.setFocused).toHaveBeenCalledWith(null)
+    expect(params.setSelected).not.toHaveBeenCalled()
+  })
+
+  it('does nothing when focusedBlockId is null', () => {
+    const params = makeDefaultParams({ focusedBlockId: null })
+    const { result } = renderHook(() => useBlockActionOrchestration(params))
+
+    act(() => {
+      result.current.handleEscapeSave()
+    })
+
+    expect(params.handleFlush).not.toHaveBeenCalled()
+    expect(params.setSelected).not.toHaveBeenCalled()
+    expect(params.setFocused).not.toHaveBeenCalled()
+  })
+})
+
+describe('useBlockActionOrchestration handleDiscard', () => {
   it('unmounts editor and unfocuses', () => {
     const params = makeDefaultParams()
     params.rovingEditor.unmount = vi.fn(() => 'changed content')
     const { result } = renderHook(() => useBlockActionOrchestration(params))
 
     act(() => {
-      result.current.handleEscapeCancel()
+      result.current.handleDiscard()
     })
 
     expect(params.rovingEditor.unmount).toHaveBeenCalled() // no-args by contract
@@ -2036,7 +2085,7 @@ describe('useBlockActionOrchestration handleEscapeCancel', () => {
     const { result } = renderHook(() => useBlockActionOrchestration(params))
 
     act(() => {
-      result.current.handleEscapeCancel()
+      result.current.handleDiscard()
     })
 
     expect(params.setFocused).toHaveBeenCalledWith(null)
@@ -2048,14 +2097,14 @@ describe('useBlockActionOrchestration handleEscapeCancel', () => {
     const { result } = renderHook(() => useBlockActionOrchestration(params))
 
     act(() => {
-      result.current.handleEscapeCancel()
+      result.current.handleDiscard()
     })
 
     expect(params.rovingEditor.unmount).not.toHaveBeenCalled()
     expect(params.setFocused).not.toHaveBeenCalled()
   })
 
-  it('removes just-created empty block on Escape', () => {
+  it('removes just-created empty block on discard', () => {
     const emptyB = [
       makeBlock({ id: 'A', depth: 0, content: 'Alpha' }),
       makeBlock({ id: 'B', depth: 0, content: '' }),
@@ -2073,7 +2122,7 @@ describe('useBlockActionOrchestration handleEscapeCancel', () => {
     const { result } = renderHook(() => useBlockActionOrchestration(params))
 
     act(() => {
-      result.current.handleEscapeCancel()
+      result.current.handleDiscard()
     })
 
     expect(params.remove).toHaveBeenCalledWith('B')
@@ -2095,7 +2144,7 @@ describe('useBlockActionOrchestration handleEscapeCancel', () => {
     const { result } = renderHook(() => useBlockActionOrchestration(params))
 
     act(() => {
-      result.current.handleEscapeCancel()
+      result.current.handleDiscard()
     })
 
     expect(params.remove).not.toHaveBeenCalled()
@@ -2121,7 +2170,7 @@ describe('useBlockActionOrchestration handleEscapeCancel', () => {
     const { result } = renderHook(() => useBlockActionOrchestration(params))
 
     act(() => {
-      result.current.handleEscapeCancel()
+      result.current.handleDiscard()
     })
 
     // Block should NOT be removed because user had typed content
@@ -2153,7 +2202,7 @@ describe('useBlockActionOrchestration handleEscapeCancel', () => {
     const { result } = renderHook(() => useBlockActionOrchestration(params))
 
     act(() => {
-      result.current.handleEscapeCancel()
+      result.current.handleDiscard()
     })
 
     expect(params.remove).not.toHaveBeenCalled()
@@ -2173,20 +2222,20 @@ describe('useBlockActionOrchestration handleEscapeCancel', () => {
     const { result } = renderHook(() => useBlockActionOrchestration(params))
 
     act(() => {
-      result.current.handleEscapeCancel()
+      result.current.handleDiscard()
     })
 
     expect(params.discardDraft).toHaveBeenCalledWith('B')
     expect(callOrder).toEqual(['discardDraft', 'unmount'])
   })
 
-  it('calls discardDraft even when no changes on Escape', () => {
+  it('calls discardDraft even when no changes', () => {
     const params = makeDefaultParams()
     params.rovingEditor.unmount = vi.fn(() => null)
     const { result } = renderHook(() => useBlockActionOrchestration(params))
 
     act(() => {
-      result.current.handleEscapeCancel()
+      result.current.handleDiscard()
     })
 
     expect(params.discardDraft).toHaveBeenCalledWith('B')
@@ -2198,7 +2247,7 @@ describe('useBlockActionOrchestration handleEscapeCancel', () => {
     const { result } = renderHook(() => useBlockActionOrchestration(params))
 
     act(() => {
-      result.current.handleEscapeCancel()
+      result.current.handleDiscard()
     })
 
     expect(params.discardDraft).not.toHaveBeenCalled()
