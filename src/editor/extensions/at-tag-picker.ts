@@ -147,13 +147,10 @@ export const AtTagPicker = Extension.create<AtTagPickerOptions>({
         },
         handler: ({ state, range, match }) => {
           const tag = match.data as CompletedTag
-          // The document holds the token but for a closing `]`, and the
-          // terminator only once an IME composition has put it there. A typed
-          // terminator goes in after the token before the token goes, so the
-          // tag lands before it.
-          const tokenEnd = Math.min(range.to, range.from + tag.typed.length)
-          if (tag.terminator && range.to === tokenEnd) state.tr.insertText(tag.terminator, tokenEnd)
-          state.tr.delete(range.from, tokenEnd)
+          // The range is what the typed text replaces: the token, a selection
+          // typed over, and the terminator once an IME composition has put it
+          // in the document. The terminator alone takes its place.
+          state.tr.insertText(tag.terminator, range.from, range.to)
 
           void resolveAndInsertPickerToken({
             editor,

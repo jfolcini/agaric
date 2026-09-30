@@ -72,7 +72,7 @@ describe('AtTagPicker stale-insertPos guard ()', () => {
     })
     const rule = rules[0]
 
-    const mockState = { tr: { delete: vi.fn(), insertText: vi.fn() } }
+    const mockState = { tr: { insertText: vi.fn() } }
     rule.handler({
       state: mockState,
       range: { from: 10, to: 16 },

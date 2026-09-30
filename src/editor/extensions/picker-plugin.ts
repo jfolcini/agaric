@@ -362,7 +362,8 @@ export function createPickerTokenFromCommand({
         )
         return
       }
-      editor.chain().focus().insertContentAt(pos, tokenFor(newId)).run()
+      // The caret stays after anything typed while the create ran.
+      editor.chain().focus().insertContentAt(pos, tokenFor(newId), { updateSelection: false }).run()
     })
     .catch((err: unknown) => {
       logger.error(loggerComponent, errorMessage, undefined, err)
@@ -370,7 +371,7 @@ export function createPickerTokenFromCommand({
       const pos = tracked.pos
       if (pos === null) return
       // Restore the trigger text so the user's typing isn't lost.
-      editor.chain().focus().insertContentAt(pos, triggerText).run()
+      editor.chain().focus().insertContentAt(pos, triggerText, { updateSelection: false }).run()
     })
     .finally(() => {
       tracked.stop()

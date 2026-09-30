@@ -249,6 +249,15 @@ describe('typing #name and a space or punctuation makes the tag (#5160 D8)', () 
     expect(inline(ed)).toEqual(['see ', '#TAG_PROJECT', ' x'])
   })
 
+  it('replaces a selection the terminator is typed over', async () => {
+    const { editor: ed } = setup('#projectold')
+    ed.commands.setTextSelection({ from: 9, to: 12 })
+    type(ed, ' ')
+    await vi.waitFor(() => expect(inline(ed)).toEqual(['#TAG_PROJECT', ' ']))
+    type(ed, 'x')
+    expect(inline(ed)).toEqual(['#TAG_PROJECT', ' x'])
+  })
+
   it('leaves Enter to the picker or the block', async () => {
     const { editor: ed, createTag } = setup()
     type(ed, '#project')
@@ -409,6 +418,44 @@ describe('the # picker (#5160 D8)', () => {
       ?.command({ id: '__create__', label: 'fresh', isCreate: true })
     await vi.waitFor(() => expect(inline(ed)).toEqual(['#NEW_fresh']))
     expect(createTag).toHaveBeenCalledWith('fresh')
+  })
+
+  it('keeps text typed during the create after the tag, and the caret after that text', async () => {
+    let finishCreate = (): void => {}
+    const { editor: ed, createTag } = setup('see ')
+    createTag.mockImplementation(
+      (name) => new Promise((resolve) => (finishCreate = () => resolve(`NEW_${name}`))),
+    )
+    type(ed, '#fresh')
+    await vi.waitFor(() => expect(rendered.props.get(hashTagPickerPluginKey)).toBeDefined())
+    rendered.props
+      .get(hashTagPickerPluginKey)
+      ?.command({ id: '__create__', label: 'fresh', isCreate: true })
+    type(ed, ' and')
+    finishCreate()
+    await vi.waitFor(() => expect(inline(ed)).toEqual(['see ', '#NEW_fresh', ' and']))
+    type(ed, 'x')
+    expect(inline(ed)).toEqual(['see ', '#NEW_fresh', ' andx'])
+  })
+
+  it('puts #query back before text typed during a failed create, the caret after that text', async () => {
+    const error = vi.spyOn(logger, 'error').mockImplementation(() => {})
+    let failCreate = (): void => {}
+    const { editor: ed, createTag } = setup('see ')
+    createTag.mockImplementation(
+      () => new Promise((_resolve, reject) => (failCreate = () => reject(new Error('down')))),
+    )
+    type(ed, '#fresh')
+    await vi.waitFor(() => expect(rendered.props.get(hashTagPickerPluginKey)).toBeDefined())
+    rendered.props
+      .get(hashTagPickerPluginKey)
+      ?.command({ id: '__create__', label: 'fresh', isCreate: true })
+    type(ed, ' and')
+    failCreate()
+    await vi.waitFor(() => expect(inline(ed)).toEqual(['see #fresh and']))
+    type(ed, 'x')
+    expect(inline(ed)).toEqual(['see #fresh andx'])
+    error.mockRestore()
   })
 
   it('leaves the @ picker working', async () => {
