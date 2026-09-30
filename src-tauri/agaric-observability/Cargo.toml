@@ -42,7 +42,7 @@ opentelemetry-otlp = { version = "0.32", default-features = false, features = ["
 opentelemetry-appender-tracing = "0.32"
 # The tracing↔OTel trace bridge (`tracing_opentelemetry::layer()`). Pins
 # opentelemetry 0.32 + opentelemetry_sdk 0.32, matching the versions above.
-tracing-opentelemetry = "0.33"
+tracing-opentelemetry = "0.34"
 
 tracing = { version = "0.1.44", features = ["attributes"] }
 tracing-subscriber = { version = "0.3.23", features = ["env-filter", "json"] }
