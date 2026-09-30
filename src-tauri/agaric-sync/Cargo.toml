@@ -105,7 +105,7 @@ rand = "0.10"
 # Unicode General_Category lookup, for `is_display_hostile` (#4298 review) to
 # strip the Cf (Format) class wholesale instead of an incomplete by-name list.
 # Not a new addition to the dependency graph: `iroh` already resolves this
-# exact version transitively (iroh -> hickory-net -> idna -> idna_adapter),
+# exact version transitively (iroh -> url -> idna -> idna_adapter),
 # with its default `compiled_data` feature (the baked property tables), so
 # this only promotes an already-compiled, already-linked crate to a direct
 # dependency rather than adding new supply-chain surface or binary weight.

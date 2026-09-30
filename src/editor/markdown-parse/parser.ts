@@ -1497,6 +1497,15 @@ function mayToggle(s: Scanner, open: boolean): boolean {
   return open ? canClose : canOpen
 }
 
+/**
+ * A closer right after its opener is the same delimiter run, which never
+ * closes the mark it opened (CommonMark §6.2): both stay text, so `a====b`
+ * keeps its `====`. Call it as the mark closes, before the cursor moves on.
+ */
+function keepEmptySpanAsText(st: InlineState, openPos: number, delimiter: string): void {
+  if (st.scanner.pos === openPos + delimiter.length) st.buf += delimiter + delimiter
+}
+
 /** Bold toggle: `**` (asterisk) or `__` (underscore), each by its flanking rule. */
 export function scanBold(st: InlineState): boolean {
   const ch = peek(st.scanner)
@@ -1519,6 +1528,7 @@ export function scanBold(st: InlineState): boolean {
   if (st.inBold) {
     st.inBold = false
     st.boldDelim = null
+    keepEmptySpanAsText(st, st.boldOpenPos, ch + ch)
   } else {
     st.boldOpenPos = st.scanner.pos
     st.boldOpenNodeLen = st.nodes.length
@@ -1536,6 +1546,7 @@ export function scanStrike(st: InlineState): boolean {
   flushBuf(st, currentMarks(st))
   if (st.inStrike) {
     st.inStrike = false
+    keepEmptySpanAsText(st, st.strikeOpenPos, '~~')
   } else {
     st.strikeOpenPos = st.scanner.pos
     st.strikeOpenNodeLen = st.nodes.length
@@ -1552,6 +1563,7 @@ export function scanHighlight(st: InlineState): boolean {
   flushBuf(st, currentMarks(st))
   if (st.inHighlight) {
     st.inHighlight = false
+    keepEmptySpanAsText(st, st.highlightOpenPos, '==')
   } else {
     st.highlightOpenPos = st.scanner.pos
     st.highlightOpenNodeLen = st.nodes.length
@@ -1616,6 +1628,7 @@ export function scanItalic(st: InlineState): boolean {
   if (st.inItalic) {
     st.inItalic = false
     st.italicDelim = null
+    keepEmptySpanAsText(st, st.italicOpenPos, ch)
   } else {
     st.italicOpenPos = st.scanner.pos
     st.italicOpenNodeLen = st.nodes.length
@@ -1719,12 +1732,14 @@ function flushRemainingBuf(st: InlineState): void {
 }
 
 /**
- * Parse a single line of inline content into InlineNode[].
+ * Parse a single line of inline content into InlineNode[]: marks, links,
+ * images, math and ref tokens, never a block production. A one-line paste
+ * reads its line with it (#5160 N11).
  *
  * `depth` is threaded through so that recursive `parse()` calls inside
  * external-link display text (`consumeExternalLink`) increment the cap.
  */
-function parseLine(line: string, depth = 0): InlineNode[] {
+export function parseLine(line: string, depth = 0): InlineNode[] {
   const st = createInlineState(line, depth)
   while (st.scanner.pos < st.scanner.src.length) {
     if (scanCodeSpan(st)) continue
@@ -1745,12 +1760,4 @@ function parseLine(line: string, depth = 0): InlineNode[] {
   revertUnclosedMarks(st)
   flushRemainingBuf(st)
   return st.nodes
-}
-
-/**
- * One line of pasted text read as inline content only (#5160 N11): marks,
- * links, images, math and ref tokens, never a block production.
- */
-export function parseInline(line: string): InlineNode[] {
-  return parseLine(line)
 }

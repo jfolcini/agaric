@@ -258,9 +258,9 @@ updates:
           - minor
           - patch
     ignore:
-      # mermaid 12 makes `elkjs` (EPL-2.0) a production dependency, and the
-      # `license-checker` allowlist admits only GPL-3-compatible licences
-      # (#5125). Held at 11 until that licence question is decided.
+      # Held at 11: mermaid 12 makes `elkjs` (EPL-2.0) a production
+      # dependency, and the `license-checker` allowlist admits only
+      # GPL-3-compatible licences (the maintainer's call on #5125).
       - dependency-name: 'mermaid'
         update-types:
           - 'version-update:semver-major'

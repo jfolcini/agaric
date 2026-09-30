@@ -65,6 +65,11 @@ describe('N9 E22: `*`, `**`, `~~` and `==` obey CommonMark flanking', () => {
     // Between a letter and punctuation a run neither opens nor closes.
     ['a**(b)**c'],
     ['a==(b)==c'],
+    // A run never closes the mark it opened.
+    ['a====b'],
+    ['a****b'],
+    ['a~~~~b'],
+    ['(____)'],
   ])('%j stays literal text', (md) => {
     expect(inline(md)).toEqual([text(md)])
   })
@@ -79,6 +84,7 @@ describe('N9 E22: `*`, `**`, `~~` and `==` obey CommonMark flanking', () => {
     ['(**b**)', [text('('), bold('b'), text(')')]],
     ['***bi***', [text('bi', [{ type: 'bold' }, { type: 'italic' }])]],
     ['2 * 3 = *six*', [text('2 * 3 = '), italic('six')]],
+    ['__a**b__', [bold('a**b')]],
   ])('%j still reads as emphasis', (md, expected) => {
     expect(inline(md)).toEqual(expected)
   })

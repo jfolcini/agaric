@@ -55,7 +55,7 @@ import type { EditorView } from '@tiptap/pm/view'
 import { isValidHttpUrl } from '@/editor/extensions/external-link'
 import { pastedTaskParagraph } from '@/editor/extensions/task-paste'
 import { notifyUnknownNodeTypeToast } from '@/editor/markdown-serialize-toast'
-import { parse, parseInline, serialize } from '@/editor/markdown-serializer'
+import { parse, parseLine, serialize } from '@/editor/markdown-serializer'
 import type { DocNode } from '@/editor/types'
 import type { PasteInput, PasteSplice } from '@/lib/bindings'
 import { dispatchBlockEvent } from '@/lib/block-events'
@@ -422,7 +422,7 @@ function insertInlineMarkdown(view: EditorView, markdown: string): void {
 function pasteOneLine(view: EditorView, text: string): boolean {
   const line = text.split(/\r?\n/).find((l) => l.trim() !== '')
   if (line === undefined || pastedTaskParagraph(text) !== null || isValidHttpUrl(line)) return false
-  const nodes = parseInline(line)
+  const nodes = parseLine(line)
   const only = nodes[0]
   if (nodes.length === 1 && only?.type === 'text' && !only.marks && only.text === line) return false
   let fragment: Fragment

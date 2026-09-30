@@ -31,10 +31,10 @@ function createEditor(after = ''): Editor {
       Document,
       Paragraph,
       Text,
-      withFlankingShortcuts(Bold),
-      withFlankingShortcuts(Italic),
-      withFlankingShortcuts(Strike),
-      withFlankingShortcuts(Highlight),
+      withFlankingShortcuts(Bold, ['**', '__']),
+      withFlankingShortcuts(Italic, ['*', '_']),
+      withFlankingShortcuts(Strike, ['~~']),
+      withFlankingShortcuts(Highlight, ['==']),
     ],
     content: after,
   })
@@ -75,6 +75,11 @@ describe('typed delimiters format only where they flank (#5160 N9)', () => {
     ['a ~~ b ~~'],
     ['x == y and y =='],
     ['a _ b _'],
+    // An intraword `_` neither opens nor closes.
+    ['un_break_'],
+    // The first `*` of a closing `**` is not an italic closer.
+    ['**word*'],
+    ['un**break*'],
   ])('%j stays text', (typed) => {
     editor = createEditor()
     type(editor, typed)
@@ -94,6 +99,20 @@ describe('typed delimiters format only where they flank (#5160 N9)', () => {
     expect(runs(editor)).toEqual([
       ['see ', []],
       ['word', [mark]],
+    ])
+  })
+
+  it.each([
+    ['un*break*', 'italic'],
+    ['un**break**', 'bold'],
+    ['un~~break~~', 'strike'],
+    ['un==break==', 'highlight'],
+  ])('%j formats mid-word, as the parser reads it', (typed, mark) => {
+    editor = createEditor()
+    type(editor, typed)
+    expect(runs(editor)).toEqual([
+      ['un', []],
+      ['break', [mark]],
     ])
   })
 
@@ -133,6 +152,25 @@ describe('pasted delimiters format only where they flank (#5160 N9)', () => {
       [' and ', []],
       ['c', ['highlight']],
       [' for a == b == c', []],
+    ])
+  })
+
+  it('a span that does not flank leaves its closer to open the next', () => {
+    editor = createEditor()
+    editor.view.pasteText('a == b and ==c==')
+    expect(runs(editor)).toEqual([
+      ['a == b and ', []],
+      ['c', ['highlight']],
+    ])
+  })
+
+  it('pasted mid-word emphasis formats', () => {
+    editor = createEditor()
+    editor.view.pasteText('un*break*able')
+    expect(runs(editor)).toEqual([
+      ['un', []],
+      ['break', ['italic']],
+      ['able', []],
     ])
   })
 

@@ -521,6 +521,7 @@ pub(super) async fn apply_op_via_command(
             .await,
         ),
         "delete_property_def" => to_json(delete_property_def_inner(pool, req_str("key")).await),
+        // The deleted keys name the changed-property event; the wire returns none.
         "delete_property" => to_json(
             delete_property_inner(
                 pool,
@@ -529,7 +530,8 @@ pub(super) async fn apply_op_via_command(
                 ActiveBlockId::from_trusted_active(block_id().as_str()),
                 req_str("key"),
             )
-            .await,
+            .await
+            .map(drop),
         ),
         // #5057 — positional undo. `pageId` is a label like any other block
         // arg; `undoDepth` is an ORDINAL ("the newest undoable op on this

@@ -914,8 +914,8 @@ async fn write_properties(
         save.report.properties_deleted += 1;
     }
     if changes.deleted.iter().any(|key| key == "repeat") {
-        save.report.properties_deleted +=
-            delete_repeat_bounds_in_tx(tx, loro, save.device_id, id).await?;
+        let bounds = delete_repeat_bounds_in_tx(tx, loro, save.device_id, id).await?;
+        save.report.properties_deleted += u32::try_from(bounds.len()).unwrap_or(u32::MAX);
     }
     let set = apply_block_properties(
         tx,

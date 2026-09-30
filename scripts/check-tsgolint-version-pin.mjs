@@ -37,10 +37,10 @@
 // `oxlint-tsgolint@7.0.2001` pairs with `typescript@7.0.2`, and it is
 // tempting to encode that as `patch === tsPatch * 1000 + n`. Resist it. The
 // scheme is not documented anywhere — not in the package README, not in the
-// tsgolint release notes, not in oxc's — and only TWO releases have ever used
-// it (`7.0.2000` and `7.0.2001`, both 2026-07-21, against the single TS 7.x
-// stable `7.0.2`). Two data points do not establish a formula, and a guard
-// built on a guessed one would either wave through a genuinely mismatched
+// tsgolint release notes, not in oxc's — and the four releases that use it
+// (`7.0.2000` to `7.0.2003`, 2026-07-21 to 2026-09-24) all target the single
+// TS 7.x stable, `7.0.2`. One TS version does not establish a formula, and a
+// guard built on a guessed one would either wave through a genuinely mismatched
 // pair or block a legitimate one, with the same confident message either way.
 //
 // So `VERIFIED_PAIRS` below is an explicit list of pairs somebody has

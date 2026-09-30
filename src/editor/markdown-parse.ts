@@ -25,7 +25,7 @@ export {
   parseCodeBlock,
   parseHeading,
   parseHorizontalRule,
-  parseInline,
+  parseLine,
   parseMathBlock,
   parseOrderedList,
   parseParagraph,
