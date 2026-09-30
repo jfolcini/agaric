@@ -754,11 +754,9 @@ describe('property: structural invariants', () => {
         const result = parse(s)
         if (result.content) {
           for (const child of result.content) {
-            // The full set of block-level nodes `parse` can emit at the doc
-            // top level. The list previously omitted `bulletList`, `blockquote`,
-            // and `horizontalRule`, so a fast-check input containing `* a`,
-            // `> q`, or `---` flaked this assertion (counterexample `["* a"]`,
-            // seed -1171359990). All are legitimate block-level children.
+            // Every block-level node `parse` can emit at the doc top level. A
+            // missing type fails only on the rare random input that makes one
+            // (`* a`, `> q`, `---`, `$$…$$`).
             expect([
               'paragraph',
               'heading',
@@ -768,11 +766,12 @@ describe('property: structural invariants', () => {
               'bulletList',
               'blockquote',
               'horizontalRule',
+              'math_block',
             ]).toContain(child.type)
           }
         }
       }),
-      { numRuns: NUM_RUNS },
+      { numRuns: NUM_RUNS, examples: [['$$#[00000000000000000000000000]$$']] },
     )
   })
 
