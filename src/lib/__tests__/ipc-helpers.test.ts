@@ -197,6 +197,8 @@ describe('importMarkdown', () => {
       page_title: 'My Page',
       blocks_created: 5,
       properties_set: 2,
+      page_id: 'PAGE',
+      collapsed: [],
       warnings: [],
     }
     mockedInvoke.mockImplementation(mockInvokeCommands({ import_markdown: () => expected }))
@@ -228,6 +230,8 @@ describe('importMarkdown', () => {
           page_title: 'Untitled',
           blocks_created: 1,
           properties_set: 0,
+          page_id: 'PAGE',
+          collapsed: [],
           warnings: [],
         }),
       }),
@@ -254,7 +258,14 @@ describe('importMarkdown', () => {
       mockInvokeCommands({
         import_markdown: (args) => {
           capturedChannel = args['progress'] as { onmessage?: (u: unknown) => void }
-          return { page_title: 'X', blocks_created: 0, properties_set: 0, warnings: [] }
+          return {
+            page_title: 'X',
+            blocks_created: 0,
+            properties_set: 0,
+            page_id: 'PAGE',
+            collapsed: [],
+            warnings: [],
+          }
         },
       }),
     )
@@ -277,6 +288,8 @@ describe('importMarkdown', () => {
           page_title: 'P',
           blocks_created: 1,
           properties_set: 0,
+          page_id: 'PAGE',
+          collapsed: [],
           warnings: [],
         }),
       }),

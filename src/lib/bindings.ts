@@ -2448,6 +2448,11 @@ export type ImportResult = {
 	 *  or the file's leading heading).
 	 */
 	page_title: string,
+	/**
+	 *  The page the import wrote into: the one it created, or the empty
+	 *  same-title page it adopted (#5160 D12).
+	 */
+	page_id: string,
 	/**  Number of content blocks made durable by the import. */
 	blocks_created: number,
 	/**
@@ -2455,6 +2460,12 @@ export type ImportResult = {
 	 *  from YAML frontmatter).
 	 */
 	properties_set: number,
+	/**
+	 *  The imported blocks a Logseq `collapsed:: true` line folds (#5160
+	 *  D14). Collapse is a per-device layout, not a property, so the frontend
+	 *  folds them on the device that imported the page.
+	 */
+	collapsed: string[],
 	/**
 	 *  Non-fatal diagnostics collected while importing. Carries both soft
 	 *  parse warnings (e.g. depth clamping, stripped `((block-ref))` tokens,

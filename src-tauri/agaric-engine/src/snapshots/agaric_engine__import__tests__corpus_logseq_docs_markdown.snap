@@ -33,29 +33,26 @@ import:
       depth: 1
       is_code: false
       properties: []
-    - block_anchor: ~
+    - block_anchor: 60a78b6b-a0ff-49fe-822f-87216fbf79ff
       content: "### **Extended** syntax"
       depth: 0
       is_code: false
-      properties:
-        - - id
-          - 60a78b6b-a0ff-49fe-822f-87216fbf79ff
-    - block_anchor: ~
+      properties: []
+    - block_anchor: 60ab4582-5a6e-4f3a-84a2-71ae056455a0
       content: "[[term/page reference]]"
       depth: 1
       is_code: false
-      properties:
-        - - id
-          - 60ab4582-5a6e-4f3a-84a2-71ae056455a0
+      properties: []
     - block_anchor: ~
       content: "syntax: `[[page name]]`"
       depth: 2
       is_code: false
       properties: []
-  frontmatter: []
+  frontmatter:
+    - - description
+      - "Markdown is a popular markup language with many flavors. Our implementation is parsed by https://github.com/logseq/mldoc."
   frontmatter_list_items: {}
-  warnings:
-    - 1 property line(s) had no owning block at or above their indentation and were dropped
+  warnings: []
 paste:
   - block_anchor: ~
     content: "description:: Markdown is a popular markup language with many flavors. Our implementation is parsed by https://github.com/logseq/mldoc."

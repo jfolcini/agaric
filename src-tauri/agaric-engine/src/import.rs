@@ -78,11 +78,18 @@ pub struct ImportResult {
     /// Title of the page block the import created (derived from the filename
     /// or the file's leading heading).
     pub page_title: String,
+    /// The page the import wrote into: the one it created, or the empty
+    /// same-title page it adopted (#5160 D12).
+    pub page_id: String,
     /// Number of content blocks made durable by the import.
     pub blocks_created: u64,
     /// Number of page-level properties stamped onto the created page (e.g.
     /// from YAML frontmatter).
     pub properties_set: u64,
+    /// The imported blocks a Logseq `collapsed:: true` line folds (#5160
+    /// D14). Collapse is a per-device layout, not a property, so the frontend
+    /// folds them on the device that imported the page.
+    pub collapsed: Vec<String>,
     /// Non-fatal diagnostics collected while importing. Carries both soft
     /// parse warnings (e.g. depth clamping, stripped `((block-ref))` tokens,
     /// ambiguous wiki-links left as plain text) and per-item skip notices
@@ -103,7 +110,9 @@ pub struct ParseOutput {
     /// stamped onto the imported page block as page properties (mirroring
     /// the export → import round-trip). Internal/reserved keys
     /// (see `FRONTMATTER_RESERVED_KEYS`) are filtered out here so they are
-    /// never re-imported. Empty when the file has no frontmatter.
+    /// never re-imported. Logseq's page properties, the `key:: value` lines
+    /// before the first block (#5160 P3), join them. Empty when the file has
+    /// neither.
     pub frontmatter: Vec<(String, String)>,
     /// For frontmatter keys whose value arrived as a genuine multi-item YAML
     /// sequence — an inline flow sequence (`key: [a, "b, c"]`) or a
@@ -118,6 +127,10 @@ pub struct ParseOutput {
     /// no entry here either has no frontmatter value or arrived as a plain
     /// (non-sequence) scalar.
     pub frontmatter_list_items: std::collections::HashMap<String, Vec<String>>,
+    /// The indices of the blocks a Logseq `collapsed:: true` line folds
+    /// (#5160 D14). Collapse is a per-device layout rather than a property,
+    /// so the import hands them to the frontend.
+    pub collapsed: Vec<usize>,
     pub warnings: Vec<String>,
 }
 
@@ -966,8 +979,11 @@ pub fn guess_attachment_mime(path: &str) -> String {
 /// paragraph and fence, nested by the content column, headings owning what
 /// follows them. Logseq's continuation lines and `key:: value` property lines
 /// (#682) attach to the block indentation says owns them; a property with no
-/// owner is dropped with a warning. `((uuid))` references become plain text,
-/// and leading YAML frontmatter becomes page properties.
+/// owner is dropped with a warning. Leading YAML frontmatter, and Logseq's
+/// `key:: value` lines before the first block, become page properties.
+/// Logseq's bookkeeping is read (`read_logseq_bookkeeping`) and its
+/// `:LOGBOOK:` drawers dropped, and a `((uuid))` reference to no block of the
+/// file is stripped.
 pub fn parse_logseq_markdown(content: &str) -> ParseOutput {
     // Normalize line endings BEFORE any other parsing. The frontmatter strip
     // below uses `find("\n---")`, which is fragile against CRLF (works only
@@ -1009,15 +1025,162 @@ pub fn parse_logseq_markdown(content: &str) -> ParseOutput {
         &mut frontmatter_warnings,
     );
 
+    let body = strip_leading_properties(&normalized, &mut frontmatter, &mut frontmatter_list_items);
+
     let mut warnings = frontmatter_warnings;
-    let blocks = parse_outline(&normalized, ParseMode::Import, true, &mut warnings);
+    let mut blocks = parse_outline(body, ParseMode::Import, true, &mut warnings);
+    let collapsed = read_logseq_bookkeeping(&mut blocks);
 
     ParseOutput {
         blocks,
         frontmatter,
         frontmatter_list_items,
+        collapsed,
         warnings,
     }
+}
+
+/// Logseq's page properties (#5160 P3): the `key:: value` lines before the
+/// first block, blank lines between them included, appended to the front
+/// matter as YAML's pairs are. `alias` names the page's aliases and `tags` its
+/// tags, each a list ([`logseq_list_items`]); a reserved key is filtered as
+/// front matter filters it. Returns the text after them.
+fn strip_leading_properties<'a>(
+    body: &'a str,
+    frontmatter: &mut Vec<(String, String)>,
+    list_items: &mut std::collections::HashMap<String, Vec<String>>,
+) -> &'a str {
+    let mut rest = body;
+    for line in body.split_inclusive('\n') {
+        let trimmed = line.trim();
+        if !trimmed.is_empty() {
+            let Some((key, value)) =
+                split_property_line(trimmed).filter(|(_, value)| !value.trim().is_empty())
+            else {
+                break;
+            };
+            push_page_property(key.trim(), value.trim(), frontmatter, list_items);
+        }
+        rest = &rest[line.len()..];
+    }
+    rest
+}
+
+/// Append one Logseq page property to the front matter
+/// ([`strip_leading_properties`]).
+fn push_page_property(
+    key: &str,
+    value: &str,
+    frontmatter: &mut Vec<(String, String)>,
+    list_items: &mut std::collections::HashMap<String, Vec<String>>,
+) {
+    if is_reserved_line_key(key) {
+        return;
+    }
+    let list_key = match fold_property_key(key).as_str() {
+        "alias" | "aliases" => "aliases",
+        "tags" => "tags",
+        _ => {
+            frontmatter.push((key.to_string(), value.to_string()));
+            return;
+        }
+    };
+    let items = logseq_list_items(value);
+    frontmatter.push((list_key.to_string(), items.join(", ")));
+    list_items.insert(list_key.to_string(), items);
+}
+
+/// The page names of a Logseq list value, `a, [[B, Inc]], #c`: split on the
+/// commas outside `[[…]]`, each less a leading `#` and the `[[ ]]` around it.
+fn logseq_list_items(value: &str) -> Vec<String> {
+    let mut items = Vec::new();
+    let mut depth = 0usize;
+    let mut item = String::new();
+    for c in value.chars().chain([',']) {
+        match c {
+            ',' if depth == 0 => {
+                let name = item.trim();
+                let name = name.strip_prefix('#').unwrap_or(name);
+                let name = name
+                    .strip_prefix("[[")
+                    .and_then(|inner| inner.strip_suffix("]]"))
+                    .unwrap_or(name)
+                    .trim();
+                if !name.is_empty() {
+                    items.push(name.to_string());
+                }
+                item.clear();
+                continue;
+            }
+            '[' => depth += 1,
+            ']' => depth = depth.saturating_sub(1),
+            _ => {}
+        }
+        item.push(c);
+    }
+    items
+}
+
+/// Read Logseq's bookkeeping lines on import (#5160 D14), each consumed: an
+/// `id:: <uuid>` is its block's anchor, so a `((uuid))` in the file resolves
+/// to the block, unless the block ends in an `^id` of its own; `heading::
+/// true` makes the block a heading one level below its outline level, as
+/// Logseq renders it, and `heading:: N` one of level N; `collapsed:: true`
+/// folds the block and `collapsed:: false` is the default. A value Logseq does
+/// not write stays a property. Returns the indices of the folded blocks.
+fn read_logseq_bookkeeping(blocks: &mut [ParsedBlock]) -> Vec<usize> {
+    let mut collapsed = Vec::new();
+    for (index, block) in blocks.iter_mut().enumerate() {
+        let mut folded = false;
+        let mut properties = std::mem::take(&mut block.properties);
+        properties.retain(|(key, value)| !take_bookkeeping_line(block, key, value, &mut folded));
+        block.properties = properties;
+        if folded {
+            collapsed.push(index);
+        }
+    }
+    collapsed
+}
+
+/// Apply one Logseq bookkeeping line to `block` ([`read_logseq_bookkeeping`]),
+/// returning whether it was one.
+fn take_bookkeeping_line(
+    block: &mut ParsedBlock,
+    key: &str,
+    value: &str,
+    folded: &mut bool,
+) -> bool {
+    match (fold_property_key(key).as_str(), value) {
+        ("id", uuid) if block.block_anchor.is_none() && LOGSEQ_ID_RE.is_match(uuid) => {
+            block.block_anchor = Some(uuid.to_ascii_lowercase());
+        }
+        ("collapsed", "true") => *folded = true,
+        ("collapsed", "false") => {}
+        ("heading", level) if !block.is_code => {
+            let level = match level {
+                "true" => (block.depth + 2).min(6),
+                _ => match level.parse::<usize>() {
+                    Ok(level @ 1..=6) => level,
+                    _ => return false,
+                },
+            };
+            if heading_level(&block.content).is_none() {
+                block.content = format!("{} {}", "#".repeat(level), block.content);
+            }
+        }
+        _ => return false,
+    }
+    true
+}
+
+/// The Logseq block ids `blocks` carry as `id:: <uuid>` lines, lowercased.
+fn logseq_ids(blocks: &[ParsedBlock]) -> std::collections::HashSet<String> {
+    blocks
+        .iter()
+        .flat_map(|block| &block.properties)
+        .filter(|(key, value)| fold_property_key(key) == "id" && LOGSEQ_ID_RE.is_match(value))
+        .map(|(_, value)| value.to_ascii_lowercase())
+        .collect()
 }
 
 /// Parse a source-mode buffer (#5140) back into the blocks it was rendered
@@ -1043,6 +1206,7 @@ fn source_outline(content: &str, foreign: bool) -> ParseOutput {
         blocks,
         frontmatter: Vec::new(),
         frontmatter_list_items: std::collections::HashMap::new(),
+        collapsed: Vec::new(),
         warnings,
     }
 }
@@ -1130,13 +1294,30 @@ fn parse_outline(
     foreign: bool,
     warnings: &mut Vec<String>,
 ) -> Vec<ParsedBlock> {
-    let (mut blocks, ends_in_code, mut lossy) = parse_block_lines(normalized, mode, foreign);
+    let (mut blocks, ends_in_code, mut lossy) = read_blocks(normalized, mode, foreign);
     extract_block_anchors(&mut blocks, &ends_in_code, mode);
     if foreign {
         lossy.clamped = clamp_block_depths(&mut blocks);
     }
     lossy.push_warnings(warnings);
     blocks
+}
+
+/// [`parse_block_lines`], which on import strips each `((uuid))` reference
+/// but one naming a block of the text by its Logseq `id::` line (#5160 D14).
+/// The line may come after the reference, so a text holding both is read
+/// twice.
+fn read_blocks(
+    normalized: &str,
+    mode: ParseMode,
+    foreign: bool,
+) -> (Vec<ParsedBlock>, Vec<bool>, LossyCounts) {
+    let read = parse_block_lines(normalized, mode, foreign, &std::collections::HashSet::new());
+    let ids = logseq_ids(&read.0);
+    if read.2.stripped_refs == 0 || ids.is_empty() {
+        return read;
+    }
+    parse_block_lines(normalized, mode, foreign, &ids)
 }
 
 /// Counts of the lossy / silently-corrected transforms [`parse_block_lines`]
@@ -1167,6 +1348,8 @@ struct LossyCounts {
     /// #5160 D7 — `SCHEDULED:` / `DEADLINE:` lines an import could not read in
     /// full and kept as text.
     unreadable_planning: usize,
+    /// #5160 D14 — Logseq `:LOGBOOK:` drawers an import dropped.
+    logbooks: usize,
     /// #5160 D5 — a source buffer's fences left open and closed before the
     /// next bullet carrying a block's anchor, each named.
     unclosed_fences: Vec<String>,
@@ -1182,6 +1365,7 @@ impl LossyCounts {
             reserved_property,
             stripped_refs,
             unreadable_planning,
+            logbooks,
             unclosed_fences,
         } = self;
         if *clamped > 0 {
@@ -1211,6 +1395,11 @@ impl LossyCounts {
             warnings.push(format!(
                 "{unreadable_planning} SCHEDULED/DEADLINE line(s) could not be read and were \
                  kept as text"
+            ));
+        }
+        if *logbooks > 0 {
+            warnings.push(format!(
+                "{logbooks} Logseq :LOGBOOK: drawer(s) were dropped"
             ));
         }
         warnings.extend(unclosed_fences.iter().cloned());
@@ -1328,6 +1517,10 @@ struct Scan<'a> {
     fence: Option<Fence>,
     blank_run: Vec<&'a str>,
     after_blank: bool,
+    /// The Logseq ids whose `((uuid))` references an import keeps.
+    kept_refs: &'a std::collections::HashSet<String>,
+    /// Inside a Logseq `:LOGBOOK:` drawer, which an import drops.
+    in_logbook: bool,
 }
 
 /// Scan already-normalized, frontmatter-free markdown into blocks, collecting
@@ -1346,6 +1539,7 @@ fn parse_block_lines(
     normalized: &str,
     mode: ParseMode,
     foreign: bool,
+    kept_refs: &std::collections::HashSet<String>,
 ) -> (Vec<ParsedBlock>, Vec<bool>, LossyCounts) {
     let mut scan = Scan {
         mode,
@@ -1357,6 +1551,8 @@ fn parse_block_lines(
         fence: None,
         blank_run: Vec::new(),
         after_blank: false,
+        kept_refs,
+        in_logbook: false,
     };
     for (index, line) in normalized.lines().enumerate() {
         let trimmed = line.trim_start();
@@ -1401,7 +1597,9 @@ impl<'a> Scan<'a> {
         } else if let Some((key, value)) = self.property_line(trimmed, indent) {
             self.attach_property(key, value, indent);
         } else if self.continues(trimmed, indent) {
-            if self.mode == ParseMode::Import && self.take_planning_line(trimmed) {
+            if self.mode == ParseMode::Import
+                && (self.take_logbook_line(trimmed) || self.take_planning_line(trimmed))
+            {
                 return;
             }
             let fence = fence_run(trimmed);
@@ -1477,6 +1675,23 @@ impl<'a> Scan<'a> {
             properties.retain(|(key, _)| key != "repeat");
         }
         block.properties.extend(properties);
+        true
+    }
+
+    /// Drop a Logseq `:LOGBOOK:` drawer continuing the innermost open block
+    /// (#5160 D14), Logseq's clock history, through its `:END:` line; the next
+    /// block ends one left open. Counted for one warning.
+    fn take_logbook_line(&mut self, trimmed: &str) -> bool {
+        let line = trimmed.trim_end();
+        if self.in_logbook {
+            self.in_logbook = line != ":END:";
+            return true;
+        }
+        if line != ":LOGBOOK:" {
+            return false;
+        }
+        self.in_logbook = true;
+        self.lossy.logbooks += 1;
         true
     }
 
@@ -1638,8 +1853,9 @@ impl<'a> Scan<'a> {
         content: usize,
         kind: Kind,
     ) {
-        let (cleaned, removed) = clean_text(text, self.mode, is_code);
+        let (cleaned, removed) = clean_text(text, self.mode, is_code, self.kept_refs);
         self.lossy.stripped_refs += removed;
+        self.in_logbook = false;
         self.blocks.push(ParsedBlock {
             content: cleaned,
             depth: self.open.len(),
@@ -1690,8 +1906,14 @@ impl<'a> Scan<'a> {
         let block = &mut self.blocks[index];
         match self.mode {
             ParseMode::Import => {
-                self.lossy.stripped_refs +=
-                    append_continuation_line(block, &self.blank_run, line, is_code, width);
+                self.lossy.stripped_refs += append_continuation_line(
+                    block,
+                    &self.blank_run,
+                    line,
+                    is_code,
+                    width,
+                    self.kept_refs,
+                );
             }
             ParseMode::Source => append_source_line(block, &self.blank_run, line, is_code, width),
         }
@@ -1753,11 +1975,17 @@ impl<'a> Scan<'a> {
 }
 
 /// A line's text as its block keeps it, and how many `((uuid))` references
-/// were stripped: an import normalises prose ([`strip_block_refs_counted`]);
-/// code, and a source buffer, keep it as written.
-fn clean_text(text: &str, mode: ParseMode, line_is_code: bool) -> (String, usize) {
+/// were stripped: an import normalises prose ([`strip_block_refs_counted`],
+/// keeping the references to `kept_refs`); code, and a source buffer, keep it
+/// as written.
+fn clean_text(
+    text: &str,
+    mode: ParseMode,
+    line_is_code: bool,
+    kept_refs: &std::collections::HashSet<String>,
+) -> (String, usize) {
     match mode {
-        ParseMode::Import if !line_is_code => strip_block_refs_counted(text),
+        ParseMode::Import if !line_is_code => strip_block_refs_counted(text, kept_refs),
         ParseMode::Import | ParseMode::Source => (text.to_string(), 0),
     }
 }
@@ -1774,6 +2002,7 @@ fn append_continuation_line(
     line: &str,
     line_is_code: bool,
     width: usize,
+    kept_refs: &std::collections::HashSet<String>,
 ) -> usize {
     let (cleaned, removed) = if line_is_code {
         for blank in blank_run {
@@ -1782,7 +2011,10 @@ fn append_continuation_line(
         }
         (dedent(line, width).to_string(), 0)
     } else {
-        strip_block_refs_counted(unescape_continuation(line.trim_start(), ParseMode::Import))
+        strip_block_refs_counted(
+            unescape_continuation(line.trim_start(), ParseMode::Import),
+            kept_refs,
+        )
     };
     // #1924 — a continuation line inside a fence makes the owning block code
     // (e.g. the fenced body lines that follow a `- ```rust` bullet, and the
@@ -2472,42 +2704,91 @@ fn parse_block_scalar_indicator(value: &str) -> Option<BlockScalarSpec> {
 /// the symmetric counterpart of `yaml_flow_item`'s quoting).
 use agaric_core::text_utils::strip_yaml_quotes;
 
-/// A Logseq block reference: `((` a uuid `))`. Its target is not in the
-/// imported vault, so it is stripped; any other `((…))` is the user's text.
+/// A Logseq block id: a uuid.
+const LOGSEQ_UUID: &str = r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}";
+
+/// A Logseq `id::` value: a uuid and nothing else.
+static LOGSEQ_ID_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(&format!("(?i)^{LOGSEQ_UUID}$")).expect("invalid block-id regex"));
+
+/// A Logseq block reference: `((` a uuid `))`. One to a block of the imported
+/// file resolves to it (#5160 D14); any other is stripped, and any other
+/// `((…))` is the user's text.
 static LOGSEQ_BLOCK_REF_RE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"(?i)\(\([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\)\)")
-        .expect("invalid block-ref regex")
+    Regex::new(&format!(r"(?i)\(\({LOGSEQ_UUID}\)\)")).expect("invalid block-ref regex")
 });
 
-/// Strip each `((uuid))` block reference outside an inline code span, with the
-/// one space its removal leaves doubled, and trim the line; other spacing is
-/// the user's. Returns the text and how many references were removed (#1933),
-/// which the import surfaces as an aggregate warning: the reference target is
-/// dropped, so the strip must not be silent.
-fn strip_block_refs_counted(text: &str) -> (String, usize) {
+/// The lowercased uuid of a [`LOGSEQ_BLOCK_REF_RE`] match.
+fn logseq_ref_uuid(found: &regex::Match<'_>) -> String {
+    found.as_str()[2..found.len() - 2].to_ascii_lowercase()
+}
+
+/// Strip each `((uuid))` block reference outside an inline code span but one
+/// to `kept`, with the one space its removal leaves doubled, and trim the
+/// line; other spacing is the user's. Returns the text and how many references
+/// were removed (#1933), which the import surfaces as an aggregate warning:
+/// the reference target is dropped, so the strip must not be silent.
+fn strip_block_refs_counted(
+    text: &str,
+    kept: &std::collections::HashSet<String>,
+) -> (String, usize) {
     if !text.contains("((") {
         return (text.trim().to_string(), 0);
     }
     let code_spans = inline_code_spans(text);
-    let mut kept = String::with_capacity(text.len());
+    let mut stripped = String::with_capacity(text.len());
     let mut cursor = 0;
     let mut removed = 0;
     for found in LOGSEQ_BLOCK_REF_RE.find_iter(text) {
         if code_spans
             .iter()
             .any(|&(start, end)| found.start() >= start && found.start() < end)
+            || kept.contains(&logseq_ref_uuid(&found))
         {
             continue;
         }
-        kept.push_str(&text[cursor..found.start()]);
+        stripped.push_str(&text[cursor..found.start()]);
         cursor = found.end();
         removed += 1;
-        if kept.ends_with(' ') && text[cursor..].starts_with(' ') {
+        if stripped.ends_with(' ') && text[cursor..].starts_with(' ') {
             cursor += 1;
         }
     }
-    kept.push_str(&text[cursor..]);
-    (kept.trim().to_string(), removed)
+    stripped.push_str(&text[cursor..]);
+    (stripped.trim().to_string(), removed)
+}
+
+/// `content` with each Logseq `((uuid))` that `target` names a block for
+/// replaced by that block's `((ULID))` reference (#5160 D14), or `None` when
+/// none is. A reference in an inline code span is text, each line's spans
+/// found as the import found them.
+pub fn resolve_logseq_refs(
+    content: &str,
+    target: impl Fn(&str) -> Option<String>,
+) -> Option<String> {
+    let mut resolved = false;
+    let lines: Vec<String> = content
+        .split('\n')
+        .map(|line| {
+            let code_spans = inline_code_spans(line);
+            LOGSEQ_BLOCK_REF_RE
+                .replace_all(line, |caps: &regex::Captures<'_>| {
+                    let found = caps.get(0).expect("group 0 always present");
+                    let in_code = code_spans
+                        .iter()
+                        .any(|&(start, end)| found.start() >= start && found.start() < end);
+                    match target(&logseq_ref_uuid(&found)).filter(|_| !in_code) {
+                        Some(id) => {
+                            resolved = true;
+                            format!("(({id}))")
+                        }
+                        None => found.as_str().to_string(),
+                    }
+                })
+                .into_owned()
+        })
+        .collect();
+    resolved.then(|| lines.join("\n"))
 }
 
 /// #2510 — matches a trailing Obsidian block-anchor marker: a `^` followed by
@@ -2596,9 +2877,10 @@ fn line_is_property_shaped(line: &str) -> bool {
 mod tests {
     use super::*;
 
-    /// Two Logseq block ids, the only `((…))` body an import strips.
+    /// Logseq block ids, the only `((…))` body an import strips.
     const UUID_A: &str = "7f3a1b2c-4d5e-4f60-8a9b-0c1d2e3f4a5b";
     const UUID_B: &str = "650F0A1B-2C3D-4E5F-8091-A2B3C4D5E6F7";
+    const UUID_C: &str = "0a1b2c3d-5e6f-4a7b-8c9d-0e1f2a3b4c5d";
 
     #[test]
     fn parse_simple_list() {
@@ -3184,33 +3466,34 @@ bare line (({UUID_B})) too"
     /// the one space its removal doubles, and touches no other spacing.
     #[test]
     fn strip_block_refs_collapses_only_the_seam_a_strip_opens() {
+        let none = std::collections::HashSet::new();
         assert_eq!(
-            strip_block_refs_counted("  plain text  "),
+            strip_block_refs_counted("  plain text  ", &none),
             ("plain text".to_string(), 0),
             "trim only"
         );
         assert_eq!(
-            strip_block_refs_counted(&format!("a (({UUID_A})) b")),
+            strip_block_refs_counted(&format!("a (({UUID_A})) b"), &none),
             ("a b".to_string(), 1),
             "the seam keeps one space"
         );
         assert_eq!(
-            strip_block_refs_counted("a    b   c"),
+            strip_block_refs_counted("a    b   c", &none),
             ("a    b   c".to_string(), 0),
             "the user's spacing is kept"
         );
         assert_eq!(
-            strip_block_refs_counted(&format!("x  (({UUID_A}))  y (({UUID_B})) z")),
+            strip_block_refs_counted(&format!("x  (({UUID_A}))  y (({UUID_B})) z"), &none),
             ("x   y z".to_string(), 2),
             "each seam loses one space, whatever the run around it"
         );
         assert_eq!(
-            strip_block_refs_counted(&format!("(({UUID_A}))")),
+            strip_block_refs_counted(&format!("(({UUID_A}))"), &none),
             (String::new(), 1),
             "a bare ref line strips to empty"
         );
         assert_eq!(
-            strip_block_refs_counted(&format!("`(({UUID_A}))` ((not a uuid)) x")),
+            strip_block_refs_counted(&format!("`(({UUID_A}))` ((not a uuid)) x"), &none),
             (format!("`(({UUID_A}))` ((not a uuid)) x"), 0),
             "a ref in an inline code span and a non-uuid body are text"
         );
@@ -3513,28 +3796,166 @@ bare line (({UUID_B})) too"
         );
     }
 
-    /// #682: a property line with no preceding block at or above its
-    /// indentation is dropped and surfaced via a warning counter (mirroring
-    /// the depth-clamp warning).
+    /// #5160 P3: the property lines before the first block are Logseq's page
+    /// properties, read as front matter. A property line after a block with
+    /// no block at or left of its indentation is still dropped with a warning
+    /// (#682).
     #[test]
-    fn parse_orphan_property_before_any_block_warns_682() {
-        let output = parse_logseq_markdown("orphan:: value\n- First bullet");
-        // "orphan:: value" is a valid property shape but has no preceding
-        // block, so it is dropped (not turned into a block) and warned about.
+    fn property_lines_before_any_block_are_page_properties() {
+        let output = parse_logseq_markdown("orphan:: value\n\nkey:: v\n- First bullet");
+        assert_eq!(
+            output.frontmatter,
+            [
+                ("orphan".to_string(), "value".to_string()),
+                ("key".to_string(), "v".to_string())
+            ]
+        );
         assert_eq!(output.blocks.len(), 1, "got {:?}", output.blocks);
         assert_eq!(output.blocks[0].content, "First bullet");
-        assert!(
-            output.blocks[0].properties.is_empty(),
-            "the orphan property must not leak onto a later block; got {:?}",
-            output.blocks[0].properties,
+        assert!(output.blocks[0].properties.is_empty());
+        assert!(output.warnings.is_empty(), "{:?}", output.warnings);
+
+        let orphan = parse_logseq_markdown("  - a\nkey:: v\n");
+        assert_eq!(orphan.blocks[0].content, "a");
+        assert!(orphan.blocks[0].properties.is_empty());
+        assert!(orphan.frontmatter.is_empty());
+        assert_eq!(
+            orphan.warnings,
+            [
+                "1 property line(s) had no owning block at or above their indentation and were \
+                 dropped"
+            ]
         );
-        assert!(
-            output
-                .warnings
-                .iter()
-                .any(|w| w.contains("property line(s) had no owning block")),
-            "an orphan-property warning must be emitted; got {:?}",
+    }
+
+    /// #5160 P3: Logseq's `alias::` is the page's aliases and `tags::` its
+    /// tags, each a comma-separated list whose items may be written as
+    /// `[[Page]]` or `#tag`; a comma inside `[[…]]` is the name's own. Other
+    /// keys, `title::` included, are page properties as written, and a
+    /// reserved key is filtered as front matter filters it.
+    #[test]
+    fn logseq_alias_and_tags_lines_are_lists() {
+        let output = parse_logseq_markdown(
+            "title:: Project Atlas\nAlias:: Atlas, [[Beta, Inc]]\n\
+             tags:: project, #q3, #[[Q3 plans]], [[x]]\nspace:: S\n- body",
+        );
+        assert_eq!(
+            output.frontmatter,
+            [
+                ("title".to_string(), "Project Atlas".to_string()),
+                ("aliases".to_string(), "Atlas, Beta, Inc".to_string()),
+                ("tags".to_string(), "project, q3, Q3 plans, x".to_string()),
+            ]
+        );
+        assert_eq!(
+            output.frontmatter_list_items["aliases"],
+            ["Atlas", "Beta, Inc"]
+        );
+        assert_eq!(
+            output.frontmatter_list_items["tags"],
+            ["project", "q3", "Q3 plans", "x"]
+        );
+        assert_eq!(output.blocks.len(), 1);
+        assert!(output.warnings.is_empty(), "{:?}", output.warnings);
+    }
+
+    /// #5160 D14: a Logseq `id:: <uuid>` line is its block's anchor, so a
+    /// `((uuid))` naming it is kept, before or after the line, to be resolved
+    /// once the block exists; a ref to no block of the file is stripped as
+    /// before. `collapsed:: true` is the block's collapsed state and
+    /// `heading:: true` makes it a heading one level below Logseq's outline
+    /// level, as Logseq renders it, unless it is one already. Each line is
+    /// consumed, but an `id::` on a block with an `^id` of its own, whose
+    /// anchor that is.
+    #[test]
+    fn logseq_bookkeeping_lines_are_read_on_import() {
+        let md = format!(
+            "- Read (({})) and (({UUID_B}))\n- Quote\n  id:: {UUID_A}\n  collapsed:: true\n\
+             \x20 - Plan\n    heading:: true\n    collapsed:: false\n- Top\n  heading:: 1\n\
+             - Kept\n  heading:: big\n  id:: not-a-uuid\n- ## Done\n  heading:: true\n\
+             - Both ^x\n  id:: {UUID_C}\n",
+            UUID_A.to_uppercase()
+        );
+        let output = parse_logseq_markdown(&md);
+        type Shape<'a> = (&'a str, Option<&'a str>, &'a [(String, String)]);
+        let shapes: Vec<Shape<'_>> = output
+            .blocks
+            .iter()
+            .map(|b| {
+                (
+                    b.content.as_str(),
+                    b.block_anchor.as_deref(),
+                    b.properties.as_slice(),
+                )
+            })
+            .collect();
+        let kept = [
+            ("heading".to_string(), "big".to_string()),
+            ("id".to_string(), "not-a-uuid".to_string()),
+        ];
+        let both = [("id".to_string(), UUID_C.to_string())];
+        assert_eq!(
+            shapes,
+            [
+                (
+                    format!("Read (({})) and", UUID_A.to_uppercase()).as_str(),
+                    None,
+                    &[][..]
+                ),
+                ("Quote", Some(UUID_A), &[][..]),
+                ("### Plan", None, &[][..]),
+                ("# Top", None, &[][..]),
+                ("Kept", None, &kept[..]),
+                ("## Done", None, &[][..]),
+                ("Both", Some("x"), &both[..]),
+            ]
+        );
+        assert_eq!(output.collapsed, [1]);
+        assert_eq!(
             output.warnings,
+            [
+                "1 ((block-ref)) reference(s) were stripped from imported content and could not \
+                 be preserved"
+            ]
+        );
+    }
+
+    /// #5160 D14: once the blocks exist, each `((uuid))` naming one becomes
+    /// its `((ULID))`, matched ignoring case; a ref in an inline code span,
+    /// or to no block, is kept as written.
+    #[test]
+    fn resolve_logseq_refs_swaps_known_ids_outside_code() {
+        let ulid = "01J0000000000000000000000A";
+        let target = |uuid: &str| (uuid == UUID_A).then(|| ulid.to_string());
+        let content = format!(
+            "see (({})) and `(({UUID_A}))`\nthen (({UUID_A})) or (({UUID_B}))",
+            UUID_A.to_uppercase()
+        );
+        assert_eq!(
+            resolve_logseq_refs(&content, target).as_deref(),
+            Some(
+                format!("see (({ulid})) and `(({UUID_A}))`\nthen (({ulid})) or (({UUID_B}))")
+                    .as_str()
+            )
+        );
+        assert_eq!(resolve_logseq_refs(&format!("(({UUID_B}))"), target), None);
+    }
+
+    /// #5160 D14: a Logseq `:LOGBOOK:` drawer, the clock history under a
+    /// task, is dropped through its `:END:` line, or up to the next block
+    /// when it is never closed, and counted in one warning.
+    #[test]
+    fn a_logseq_logbook_drawer_is_dropped_with_a_warning() {
+        let output = parse_logseq_markdown(
+            "- DONE Task\n  :LOGBOOK:\n  CLOCK: [2026-09-20 Sun 10:00:00]--[2026-09-20 Sun \
+             10:30:00] =>  00:30:00\n  :END:\n  after\n- Next\n  :LOGBOOK:\n  CLOCK: [x]\n- Last\n  \
+             kept",
+        );
+        let contents: Vec<&str> = output.blocks.iter().map(|b| b.content.as_str()).collect();
+        assert_eq!(contents, ["Task\nafter", "Next", "Last\nkept"]);
+        assert_eq!(
+            output.warnings,
+            ["2 Logseq :LOGBOOK: drawer(s) were dropped"]
         );
     }
 
@@ -4057,16 +4478,23 @@ bare line (({UUID_B})) too"
             blocks,
             frontmatter,
             frontmatter_list_items,
+            collapsed,
             warnings,
         } = output;
         let frontmatter_list_items: std::collections::BTreeMap<String, Vec<String>> =
             frontmatter_list_items.into_iter().collect();
-        serde_json::json!({
+        let mut shape = serde_json::json!({
             "blocks": blocks_shape(blocks),
             "frontmatter": frontmatter,
             "frontmatter_list_items": frontmatter_list_items,
             "warnings": warnings,
-        })
+        });
+        // Only a Logseq file folds blocks, so the other snapshots stay as
+        // they were.
+        if !collapsed.is_empty() {
+            shape["collapsed"] = serde_json::json!(collapsed);
+        }
+        shape
     }
 
     /// Serializable mirror of each [`ParsedBlock`].
@@ -4137,7 +4565,8 @@ bare line (({UUID_B})) too"
     /// The #5160 findings each corpus snapshot still pins, where its reading
     /// differs from the decided grammar; `""` once it matches. The phase that
     /// fixes one flips these snapshots and drops its id here. Phase 2a (the
-    /// block grammar) fixed S1–S7 and Phase 4a (tasks) P1 and P2; the corpus
+    /// block grammar) fixed S1–S7, Phase 4a (tasks) P1 and P2, and Phase 4c
+    /// (Logseq bookkeeping) P3 and P8; the corpus
     /// reads with no file name, so an export's own `# Title` stays a heading
     /// here (S6 is pinned by the import command's round trips in
     /// `page_cmd_tests.rs`).
@@ -4151,8 +4580,8 @@ bare line (({UUID_B})) too"
         ("corpus_four_space_outline", ""),
         ("corpus_gdocs_export", ""),
         ("corpus_github_readme", ""),
-        ("corpus_logseq_docs_markdown", "S8, P3, P8"),
-        ("corpus_logseq_page", "S8, P3, P8"),
+        ("corpus_logseq_docs_markdown", "S8"),
+        ("corpus_logseq_page", "S8"),
         ("corpus_meeting_notes_plain", ""),
         ("corpus_nbsp_indent", ""),
         ("corpus_notion_export", ""),
@@ -4250,8 +4679,10 @@ bare line (({UUID_B})) too"
     fn snapshot_import_result_wire_shape() {
         let result = ImportResult {
             page_title: "Quarterly Review".into(),
+            page_id: "01J00000000000000000PAGE01".into(),
             blocks_created: 12,
             properties_set: 3,
+            collapsed: vec!["01J00000000000000000BLOCK1".into()],
             warnings: vec![
                 "1 block(s) exceeded maximum depth of 19 and were flattened".into(),
                 "stripped 2 unresolvable ((block-ref)) token(s)".into(),
@@ -4567,7 +4998,7 @@ mod parse_proptest {
 
     /// No silent loss (#5160): every non-whitespace character of `input` is
     /// found, as many times as it occurs, in a block's content, a property key
-    /// or value, or a block's anchor, unless the grammar consumed it
+    /// or value, a block's anchor or a page property, unless the grammar consumed it
     /// ([`consumable`]) or a warning names the loss. The soup never types a
     /// `listStyle` or `todo_state` key, so those properties are what a list
     /// marker or a checkbox stands for and are not counted. A marker the
@@ -4580,9 +5011,14 @@ mod parse_proptest {
         parser: &str,
         input: &str,
         blocks: &[ParsedBlock],
+        page: &[(String, String)],
         warnings: &[String],
     ) -> Result<(), TestCaseError> {
         let mut landed = HashMap::new();
+        for (key, value) in page {
+            count(&mut landed, key);
+            count(&mut landed, value);
+        }
         for block in blocks {
             count(&mut landed, &block.content);
             for (key, value) in &block.properties {
@@ -4638,10 +5074,16 @@ mod parse_proptest {
         #[test]
         fn no_parser_loses_text_silently(input in arb_document()) {
             let import = parse_logseq_markdown(&input);
-            check_nothing_lost("import", &input, &import.blocks, &import.warnings)?;
+            check_nothing_lost(
+                "import",
+                &input,
+                &import.blocks,
+                &import.frontmatter,
+                &import.warnings,
+            )?;
             let source = parse_source_outline(&input);
-            check_nothing_lost("source", &input, &source.blocks, &source.warnings)?;
-            check_nothing_lost("paste", &input, &parse_pasted_text(&input), &[])?;
+            check_nothing_lost("source", &input, &source.blocks, &[], &source.warnings)?;
+            check_nothing_lost("paste", &input, &parse_pasted_text(&input), &[], &[])?;
         }
 
         /// Also fuzz the truly-arbitrary-string boundary (not just Markdown-ish
@@ -5082,7 +5524,7 @@ mod tests_source_outline_5140 {
         assert!(orphan.blocks[0].properties.is_empty());
         assert!(orphan.warnings.is_empty(), "{:?}", orphan.warnings);
 
-        let import = parse_logseq_markdown("alias:: foo\n- a\n  repeat_origin:: X\n");
+        let import = parse_logseq_markdown("  - a\nalias:: foo\n  repeat_origin:: X\n");
         assert_eq!(import.blocks[0].content, "a");
         assert_eq!(import.warnings.len(), 2, "{:?}", import.warnings);
     }

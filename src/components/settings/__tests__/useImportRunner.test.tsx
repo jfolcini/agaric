@@ -11,6 +11,7 @@ import type React from 'react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { useImportRunner } from '@/components/settings/useImportRunner'
+import { hasPreference, PREFERENCES, readPreference } from '@/lib/preferences'
 import type { ImportUnit } from '@/lib/vault-import'
 
 const mockImportMarkdown = vi.fn()
@@ -74,6 +75,8 @@ describe('useImportRunner', () => {
         page_title: 'ok',
         blocks_created: 3,
         properties_set: 2,
+        page_id: 'PAGE',
+        collapsed: [],
         warnings: ['w1'],
       })
       .mockRejectedValueOnce({ kind: 'validation', message: 'bad' })
@@ -144,6 +147,8 @@ describe('useImportRunner', () => {
       page_title: 'Note',
       blocks_created: 5,
       properties_set: 0,
+      page_id: 'PAGE',
+      collapsed: [],
       warnings: [],
     })
 
@@ -176,6 +181,41 @@ describe('useImportRunner', () => {
     })
   })
 
+  it("folds the blocks a Logseq page folded in that page's collapse layout", async () => {
+    mockImportMarkdown
+      .mockResolvedValueOnce({
+        page_title: 'Atlas',
+        blocks_created: 3,
+        properties_set: 0,
+        page_id: 'PAGE_ATLAS',
+        collapsed: ['BLOCK_1', 'BLOCK_3'],
+        warnings: [],
+      })
+      .mockResolvedValueOnce({
+        page_title: 'Plain',
+        blocks_created: 1,
+        properties_set: 0,
+        page_id: 'PAGE_PLAIN',
+        collapsed: [],
+        warnings: [],
+      })
+
+    const { result } = renderHook(() => useImportRunner())
+    await act(async () => {
+      result.current.begin()
+      await result.current.run({
+        event: mkEvent(),
+        activeSpaceId: 'SPACE',
+        units: [unit('Atlas.md'), unit('Plain.md')],
+        notes: false,
+        loggerFailLabel: 'file import failed',
+      })
+    })
+
+    expect(readPreference(PREFERENCES.blockCollapse, 'PAGE_ATLAS')).toEqual(['BLOCK_1', 'BLOCK_3'])
+    expect(hasPreference(PREFERENCES.blockCollapse, 'PAGE_PLAIN')).toBe(false)
+  })
+
   it('cancels between units: the in-flight unit completes, the next never starts', async () => {
     const { result } = renderHook(() => useImportRunner())
 
@@ -183,7 +223,14 @@ describe('useImportRunner', () => {
     mockImportMarkdown
       .mockImplementationOnce(async () => {
         result.current.cancel()
-        return { page_title: 'a', blocks_created: 1, properties_set: 0, warnings: [] }
+        return {
+          page_title: 'a',
+          blocks_created: 1,
+          properties_set: 0,
+          page_id: 'PAGE',
+          collapsed: [],
+          warnings: [],
+        }
       })
       .mockImplementationOnce(() => {
         throw new Error('second unit should not start after cancel')
@@ -253,7 +300,14 @@ describe('useImportRunner', () => {
     expect(result.current.importing).toBe(true)
 
     await act(async () => {
-      resolveImport({ page_title: 'big', blocks_created: 3, properties_set: 0, warnings: [] })
+      resolveImport({
+        page_title: 'big',
+        blocks_created: 3,
+        properties_set: 0,
+        page_id: 'PAGE',
+        collapsed: [],
+        warnings: [],
+      })
       await runPromise
     })
 
