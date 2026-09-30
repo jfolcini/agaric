@@ -468,27 +468,19 @@ function sanitizeInlineMathLatex(latex: string): string {
 }
 
 /**
- * Serialize a single TextNode, coalescing its marks with the currently
- * active mark set. Mutates `activeMarks` to reflect the new active set
- * after this node is emitted. `before` and `after` are the chars emitted just
- * outside the node (`escapeText`).
+ * Serialize a delimited TextNode (not code), coalescing its marks with the
+ * currently active mark set. Mutates `activeMarks` to reflect the new active
+ * set after this node is emitted. `before` and `after` are the chars emitted
+ * just outside the node (`escapeText`).
  */
 function serializeInlineText(
   child: TextNode,
   activeMarks: Set<string>,
-  before = '',
-  after = '',
+  before: string,
+  after: string,
 ): string {
-  const marks = child.marks ?? []
-  const hasCode = marks.some((m) => m.type === 'code')
-
-  if (hasCode) {
-    // Code is exclusive — close all active marks, emit backtick-wrapped content
-    return serializeInlineAtom(serializeInlineCode(child.text), activeMarks)
-  }
-
   // Compute desired bold/italic/strike/highlight mark set for this node
-  const desired = markSetFromMarks(marks)
+  const desired = markSetFromMarks(child.marks ?? [])
 
   // Emit delimiters for any mark changes, update state, then emit text
   const transition = emitMarkTransition(activeMarks, desired)
@@ -698,7 +690,9 @@ export function markSetFromMarks(marks: readonly PMMark[]): Set<string> {
 }
 
 /**
- * Dispatch a single inline node to its per-variant serializer.
+ * Dispatch a single inline node that emits no mark delimiters, an atom or a
+ * code span, to its per-variant serializer (delimited text goes through
+ * `serializeInlineText`).
  *
  * Each variant handler is responsible for updating `activeMarks` so the
  * next node sees the correct mark state.
@@ -708,7 +702,10 @@ function serializeInlineChild(
   activeMarks: Set<string>,
   onUnknownNode?: (type: string) => void,
 ): string {
-  if (child.type === 'text') return serializeInlineText(child, activeMarks)
+  // Only a code span's text comes here, and code is exclusive: it closes the open marks.
+  if (child.type === 'text') {
+    return serializeInlineAtom(serializeInlineCode(child.text), activeMarks)
+  }
   if (child.type === 'tag_ref') {
     return serializeInlineAtom(`#[${child.attrs.id}]`, activeMarks)
   }

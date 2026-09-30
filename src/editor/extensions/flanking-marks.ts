@@ -2,16 +2,11 @@
  * The typed and pasted markdown shortcuts of a mark extension (`*word*`,
  * `__word__`, `~~word~~`, `==word==`, …) held to the flanking rule the parser
  * reads those delimiters with (#5160 N9), so typing `5 * 3 = 15 and 2 *` stays
- * text, as it would read back once stored.
+ * text and a typed `un*break*able` formats, as each would read back once
+ * stored.
  */
 
-import {
-  type ExtendedRegExpMatchArray,
-  InputRule,
-  type Mark,
-  PasteRule,
-  type Range,
-} from '@tiptap/core'
+import { InputRule, type Mark, markInputRule, markPasteRule, PasteRule } from '@tiptap/core'
 import type { EditorState } from '@tiptap/pm/state'
 
 import {
@@ -21,6 +16,19 @@ import {
   runFlank,
   underscoreRunFlank,
 } from '@/editor/markdown-common'
+
+/**
+ * `run`…`run` around text, matched wherever the parser could read it, not
+ * only after whitespace as TipTap's stock rules ask, but as a whole run, so
+ * the `*` rule does not fire inside a `**` being typed. Text with an edge
+ * space never flanks, so it is not matched either, and a paste goes on to the
+ * next span (`a == b and ==c==`). `match[1]` is the text.
+ */
+function spanPattern(run: string): string {
+  const char = `[${run[0]}]`
+  const text = `(?!\\s)[^${run[0]}]*[^${run[0]}\\s]`
+  return `(?<!${char})${char}{${run.length}}(${text})${char}{${run.length}}`
+}
 
 /**
  * The code point beside `pos` in its textblock, `''` past its edge or an
@@ -44,53 +52,50 @@ function flanks(before: string, run: string, after: string) {
     : runFlank(flankClass(before), flankClass(after))
 }
 
-/**
- * Whether a stock rule's match, `match[1]` the delimited span and `match[2]`
- * its text, opens and closes where it sits. `range` ends where the closer
- * does: at the caret for a typed one.
- */
+/** Whether `run` around `text`, from `from` to `to` in `state`, opens and closes where it sits. */
 function delimitersFlank(
   state: EditorState,
-  range: Range,
-  [full = '', span = '', text = '']: ExtendedRegExpMatchArray,
+  { from, to }: { from: number; to: number },
+  run: string,
+  text: string,
 ): boolean {
-  const run = span.slice(0, (span.length - text.length) / 2)
-  const before = charBeside(state, range.from + full.indexOf(span), 'before')
-  const after = charBeside(state, range.to, 'after')
   return (
-    flanks(before, run, codePointAt(text, 0)).canOpen &&
-    flanks(codePointBefore(text, text.length), run, after).canClose
+    flanks(charBeside(state, from, 'before'), run, codePointAt(text, 0)).canOpen &&
+    flanks(codePointBefore(text, text.length), run, charBeside(state, to, 'after')).canClose
   )
 }
 
+/** `mark` with a typed and a pasted shortcut for each of its delimiter `runs` (`['**', '__']`). */
 export function withFlankingShortcuts<Options, Storage>(
   mark: Mark<Options, Storage>,
+  runs: readonly string[],
 ): Mark<Options, Storage> {
   return mark.extend({
     addInputRules() {
-      return (this.parent?.() ?? []).map(
-        (rule) =>
-          new InputRule({
-            find: rule.find,
-            handler: (props) =>
-              delimitersFlank(props.state, props.range, props.match) ? rule.handler(props) : null,
-            undoable: rule.undoable,
-          }),
-      )
+      return runs.map((run) => {
+        const rule = markInputRule({ find: new RegExp(`${spanPattern(run)}$`), type: this.type })
+        return new InputRule({
+          find: rule.find,
+          handler: (props) =>
+            delimitersFlank(props.state, props.range, run, props.match[1] ?? '')
+              ? rule.handler(props)
+              : null,
+        })
+      })
     },
     addPasteRules() {
       // A match that does not flank is left as text; null instead would drop
       // every match of the paste for this rule.
-      return (this.parent?.() ?? []).map(
-        (rule) =>
-          new PasteRule({
-            find: rule.find,
-            handler: (props) =>
-              delimitersFlank(props.state, props.range, props.match)
-                ? rule.handler(props)
-                : undefined,
-          }),
-      )
+      return runs.map((run) => {
+        const rule = markPasteRule({ find: new RegExp(spanPattern(run), 'g'), type: this.type })
+        return new PasteRule({
+          find: rule.find,
+          handler: (props) =>
+            delimitersFlank(props.state, props.range, run, props.match[1] ?? '')
+              ? rule.handler(props)
+              : undefined,
+        })
+      })
     },
   })
 }

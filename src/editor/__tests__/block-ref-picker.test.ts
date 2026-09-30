@@ -333,7 +333,7 @@ describe('BlockRefPicker input rule ((c))', () => {
     ])
   })
 
-  it('falls back to plain text at captured position when no match (no onCreate path)', async () => {
+  it('puts the typed ((token)) back at its captured position when nothing matches', async () => {
     const insertContentAtCalls: Array<{ pos: number; content: unknown }> = []
     const chainProxy: Record<string, unknown> = {
       focus: () => chainProxy,
@@ -376,7 +376,7 @@ describe('BlockRefPicker input rule ((c))', () => {
     expect(insertContentAtCalls).toEqual([{ pos: 3, content: '((Foo))' }])
   })
 
-  it('falls back to plain text when multiple non-exact matches exist', async () => {
+  it('puts the typed ((token)) back when several matches are none exact', async () => {
     const insertContentAtCalls: Array<{ pos: number; content: unknown }> = []
     const chainProxy: Record<string, unknown> = {
       focus: () => chainProxy,
@@ -424,7 +424,7 @@ describe('BlockRefPicker input rule ((c))', () => {
     expect(insertContentAtCalls).toEqual([{ pos: 0, content: '((alice))' }])
   })
 
-  it('falls back to plain text on items callback error and logs a warning', async () => {
+  it('puts the typed ((token)) back and logs a warning when the items callback fails', async () => {
     const { logger } = await import('@/lib/logger')
     const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
 
@@ -485,11 +485,11 @@ describe('BlockRefPicker input rule ((c))', () => {
 // doc between the picker capturing `insertPos` and the async resolve
 // landing — so the existing try/catch fallback never fires on that path.
 // The picker must validate `insertPos <= doc.content.size` before calling
-// `insertContentAt`, and fall back to plain text at the current cursor
+// `insertContentAt`, and put the typed token back at the current cursor
 // when the offset is stale.
 
 describe('BlockRefPicker stale-insertPos guard ()', () => {
-  it('falls back to plain text at cursor when insertPos > doc.content.size', async () => {
+  it('puts the typed ((token)) back at the cursor when insertPos > doc.content.size', async () => {
     const insertContentCalls: unknown[] = []
     const insertContentAtCalls: Array<{ pos: number; content: unknown }> = []
     const chainProxy: Record<string, unknown> = {

@@ -1202,7 +1202,8 @@ const SYSTEM_MANAGED_PROPERTY_KEYS: [&str; 4] =
 ///
 /// Appends a `DeleteProperty` op and removes the row from `block_properties`.
 /// Deleting `repeat` also deletes the `repeat-until`, `repeat-count` and
-/// `repeat-seq` the block holds, in the same transaction.
+/// `repeat-seq` the block holds, in the same transaction. Returns every key
+/// deleted, `key` first.
 ///
 /// # Errors
 ///
@@ -1217,7 +1218,7 @@ pub async fn delete_property_inner(
     materializer: &Materializer,
     block_id: ActiveBlockId,
     key: String,
-) -> Result<(), AppError> {
+) -> Result<Vec<String>, AppError> {
     // #658: `delete_property_core` is the standalone path that owns its
     // transaction, and this is its sole production caller. Keep the lifecycle
     // guard here before delegating. State-transition helpers that already hold
@@ -1239,20 +1240,20 @@ const REPEAT_RULE_BOUNDS: [&str; 3] = ["repeat-until", "repeat-count", "repeat-s
 
 /// Delete the [`REPEAT_RULE_BOUNDS`] `block_id` holds in `tx`, as part of
 /// deleting its `repeat`. A key it does not hold appends no op, which would
-/// have no value to undo to. Returns how many were deleted.
+/// have no value to undo to. Returns the keys deleted.
 pub(crate) async fn delete_repeat_bounds_in_tx(
     tx: &mut CommandTx,
     state: &agaric_engine::loro::shared::LoroState,
     device_id: &str,
     block_id: &str,
-) -> Result<u32, AppError> {
+) -> Result<Vec<&'static str>, AppError> {
     let held = get_properties_inner(&mut ***tx, BlockId::from_trusted(block_id)).await?;
-    let mut deleted = 0;
+    let mut deleted = Vec::new();
     for key in REPEAT_RULE_BOUNDS {
         if held.iter().any(|p| p.key == key) {
             let op = delete_property_in_tx(&mut *tx, state, device_id, block_id, key).await?;
             tx.enqueue_background(op);
-            deleted += 1;
+            deleted.push(key);
         }
     }
     Ok(deleted)
@@ -2290,24 +2291,23 @@ pub async fn delete_property(
     // identical NotFound/Validation errors) now runs inside the write
     // transaction's existing re-validation (`delete_property_core`).
     let active_id = ActiveBlockId::from_trusted_active(block_id.as_str());
-    let result = capture_op_refs(async {
-        delete_property_inner(
-            ctx.pool(),
-            ctx.device_id(),
-            ctx.materializer(),
-            active_id,
-            key,
-        )
-        .await
-        .map(|()| DeletePropertyResponse {
-            block_id: block_id_clone.clone(),
-            key: key_clone.clone(),
-        })
-    })
+    let deleted = capture_op_refs(delete_property_inner(
+        ctx.pool(),
+        ctx.device_id(),
+        ctx.materializer(),
+        active_id,
+        key,
+    ))
     .await
     .map_err(sanitize_internal_error)?;
-    emit_property_changed_event(&app, block_id_clone, vec![key_clone]);
-    Ok(result)
+    emit_property_changed_event(&app, block_id_clone.clone(), deleted.inner);
+    Ok(WithOps {
+        inner: DeletePropertyResponse {
+            block_id: block_id_clone,
+            key: key_clone,
+        },
+        op_refs: deleted.op_refs,
+    })
 }
 
 /// Tauri command: get all properties for a block. Delegates to [`get_properties_inner`].

@@ -566,9 +566,11 @@ async fn delete_property_rejects_lifecycle_builtin_key_658() {
     .unwrap();
     mat.flush_background().await.unwrap();
 
-    delete_property_inner(&pool, DEV, &mat, block.id.as_str().into(), "effort".into())
-        .await
-        .unwrap();
+    let deleted =
+        delete_property_inner(&pool, DEV, &mat, block.id.as_str().into(), "effort".into())
+            .await
+            .unwrap();
+    assert_eq!(deleted, ["effort"]);
 
     // Deleting a custom property should still work.
     set_property_inner(
@@ -747,6 +749,11 @@ async fn delete_property_repeat_leaves_nothing_for_a_later_rule() {
         removed.op_refs.len(),
         3,
         "the rule, its limit and its count, the keys it held"
+    );
+    assert_eq!(
+        removed.inner,
+        ["repeat", "repeat-count", "repeat-seq"],
+        "the changed-property event names every key it deleted"
     );
     mat.flush_background().await.unwrap();
     assert_eq!(repeat_keys(&pool, &next).await, ["repeat-origin"]);

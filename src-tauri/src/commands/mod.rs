@@ -809,7 +809,7 @@ async fn delete_property_core(
     materializer: &Materializer,
     block_id: String,
     key: String,
-) -> Result<(), AppError> {
+) -> Result<Vec<String>, AppError> {
     // 1. Begin IMMEDIATE transaction (CommandTx couples
     //    commit + post-commit dispatch so a failed commit never leaks
     //    an op_record to the materializer).
@@ -868,21 +868,25 @@ async fn delete_property_core(
     // `apply_op_tx`'s count maintenance is a no-op and the effects are empty).
     crate::materializer::apply_op_projected(&mut tx, &op_record, materializer.loro_state(), false)
         .await?;
-
-    // 5. Dispatch background cache tasks after commit (fire-and-forget).
-    tx.enqueue_background(Arc::new(op_record));
-    if key == "repeat" {
+    let bounds = if key == "repeat" {
         properties::delete_repeat_bounds_in_tx(
             &mut tx,
             materializer.loro_state(),
             device_id,
             &block_id,
         )
-        .await?;
-    }
+        .await?
+    } else {
+        Vec::new()
+    };
+
+    // 5. Dispatch background cache tasks after commit (fire-and-forget).
+    tx.enqueue_background(Arc::new(op_record));
     tx.commit_and_dispatch(materializer).await?;
 
-    Ok(())
+    Ok(std::iter::once(key)
+        .chain(bounds.into_iter().map(String::from))
+        .collect())
 }
 
 // ---------------------------------------------------------------------------
