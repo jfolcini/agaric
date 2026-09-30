@@ -41,7 +41,7 @@ use rmcp::{
     model::{
         CacheScope, CallToolRequestParams, CallToolResponse, CallToolResult, ErrorData,
         Implementation, ListToolsResult, PaginatedRequestParams, ProtocolVersion,
-        ServerCapabilities, ServerInfo, Tool,
+        ServerCapabilities, ServerConfig, Tool,
     },
     service::{RequestContext, RoleServer},
 };
@@ -451,8 +451,8 @@ impl<R: ToolRegistry> RmcpAdapter<R> {
 }
 
 impl<R: ToolRegistry> ServerHandler for RmcpAdapter<R> {
-    fn get_info(&self) -> ServerInfo {
-        // `ServerInfo` (= `InitializeResult`) is `#[non_exhaustive]` —
+    fn get_info(&self) -> ServerConfig {
+        // `ServerConfig` (= `InitializeResult`) is `#[non_exhaustive]` —
         // construct it through the documented builder methods. The
         // hand-rolled code pins to MCP "2025-06-18"; rmcp picks the
         // latest spec version it knows. Either is acceptable per MCP
@@ -460,7 +460,7 @@ impl<R: ToolRegistry> ServerHandler for RmcpAdapter<R> {
         //
         // #693 — instructions come from the surface so the RW socket
         // no longer advertises itself as the read-only server.
-        ServerInfo::new(ServerCapabilities::builder().enable_tools().build())
+        ServerConfig::new(ServerCapabilities::builder().enable_tools().build())
             .with_server_info(Implementation::new("agaric", env!("CARGO_PKG_VERSION")))
             .with_instructions(self.surface.instructions())
     }
@@ -609,19 +609,19 @@ mod tests {
     use rmcp::{
         ClientLifecycleMode, ClientServiceExt,
         model::{
-            CallToolRequestParams, ClientCapabilities, ClientInfo, Implementation, ResultType,
+            CallToolRequestParams, ClientCapabilities, ClientConfig, Implementation, ResultType,
         },
         service::ServiceExt,
     };
     use serde_json::{Value, json};
 
-    /// Build a `ClientInfo` with a custom `clientInfo.name` so the
+    /// Build a `ClientConfig` with a custom `clientInfo.name` so the
     /// adapter's `RequestContext::client_info().name` is observable in
-    /// assertions. `ClientInfo` is `#[non_exhaustive]`, so we route
+    /// assertions. `ClientConfig` is `#[non_exhaustive]`, so we route
     /// through `InitializeRequestParams::new` instead of a struct
     /// literal — this is the public constructor.
-    fn make_test_client_info() -> ClientInfo {
-        ClientInfo::new(
+    fn make_test_client_info() -> ClientConfig {
+        ClientConfig::new(
             ClientCapabilities::default(),
             Implementation::new("spike-test-agent", "0.1.0"),
         )
@@ -800,7 +800,7 @@ mod tests {
     }
 
     /// Smoke-level sanity that the adapter compiles and produces the
-    /// right `ServerInfo` capabilities — pinned so a future rmcp bump
+    /// right `ServerConfig` capabilities — pinned so a future rmcp bump
     /// that subtly changes `ServerCapabilities::builder` is caught.
     #[test]
     fn rmcp_adapter_advertises_tools_capability() {
