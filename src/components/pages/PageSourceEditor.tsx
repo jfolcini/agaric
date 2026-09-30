@@ -4,16 +4,20 @@
  * Replaces the block tree while open. Save writes the buffer through
  * `apply_page_source` as one undo entry; a page changed elsewhere since the
  * buffer was loaded opens `PageSourceConflictDialog`, whose Merge saves the
- * buffer with those changes folded in. Unsaved text survives leaving the page
- * as a localStorage draft, cleared by Save or Cancel.
+ * buffer with those changes folded in. A saved buffer leaves a report
+ * (`notifyPageSourceSaved`). Cancel and Escape ask first when the text is not
+ * the source it was loaded from. Unsaved text survives leaving the page as a
+ * localStorage draft, cleared by Save or Cancel.
  */
 
 import type React from 'react'
 import { useCallback, useEffect, useId, useRef, useState } from 'react'
+import { flushSync } from 'react-dom'
 import { useTranslation } from 'react-i18next'
 
 import { ConfirmDialog } from '@/components/dialogs/ConfirmDialog'
 import { PageSourceConflictDialog } from '@/components/pages/PageSourceConflictDialog'
+import { latestUndoEntry, notifyPageSourceSaved } from '@/components/pages/PageSourceSaveReport'
 import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
 import { Textarea } from '@/components/ui/textarea'
@@ -21,8 +25,8 @@ import { useDebouncedCallback } from '@/hooks/useDebouncedCallback'
 import { unwrap, validationCode } from '@/lib/app-error'
 import { commands } from '@/lib/bindings'
 import { formatErrorForDisplay } from '@/lib/error-display'
+import { matchesShortcutBinding } from '@/lib/keyboard-config'
 import { logger } from '@/lib/logger'
-import { notify } from '@/lib/notify'
 import { PREFERENCES, readPreference, removePreference, writePreference } from '@/lib/preferences'
 import { ValidationCode } from '@/lib/search-query/validation-codes'
 import { usePageBlockStore } from '@/stores/page-blocks'
@@ -52,6 +56,7 @@ export function PageSourceEditor({ pageId, onClose }: PageSourceEditorProps): Re
   const savingRef = useRef(false)
   const [saveError, setSaveError] = useState<string | null>(null)
   const [confirmingDeleteAll, setConfirmingDeleteAll] = useState(false)
+  const [confirmingDiscard, setConfirmingDiscard] = useState(false)
   // The page's source now, after a save found it changed since `base`.
   const [conflict, setConflict] = useState<string | null>(null)
   const textareaRef = useRef<HTMLTextAreaElement | null>(null)
@@ -120,11 +125,10 @@ export function PageSourceEditor({ pageId, onClose }: PageSourceEditorProps): Re
     setSaving(true)
     setSaveError(null)
     try {
+      const before = latestUndoEntry(pageId)
       const report = await applyPageSource(text, against, force, merge)
       discardDraft()
-      if (report.warnings.length > 0) {
-        notify.warning(t('pageSource.warnings', { warnings: report.warnings.join('; ') }))
-      }
+      notifyPageSourceSaved(pageId, report, before)
       onClose()
     } catch (err) {
       if (validationCode(err) === ValidationCode.RequiresRefresh) {
@@ -151,9 +155,21 @@ export function PageSourceEditor({ pageId, onClose }: PageSourceEditorProps): Re
     }
   }
 
-  const handleCancel = (): void => {
+  const discardAndClose = (): void => {
     discardDraft()
     onClose()
+  }
+
+  const handleCancel = (): void => {
+    if (base !== null && text !== base) setConfirmingDiscard(true)
+    else discardAndClose()
+  }
+
+  // The dialog closes first: while its focus trap is up, it would pull back the
+  // focus the page hands out when the buffer closes.
+  const confirmDiscard = (): void => {
+    flushSync(() => setConfirmingDiscard(false))
+    discardAndClose()
   }
 
   const handleChange = (e: React.ChangeEvent<HTMLTextAreaElement>): void => {
@@ -163,9 +179,19 @@ export function PageSourceEditor({ pageId, onClose }: PageSourceEditorProps): Re
   }
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>): void => {
-    if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+    // An input method's Escape cancels the composition, not the buffer.
+    if (e.nativeEvent.isComposing) return
+    if (
+      matchesShortcutBinding(e, 'savePageSource') ||
+      (e.key === 'Enter' && (e.metaKey || e.ctrlKey))
+    ) {
       e.preventDefault()
       handleSave()
+    } else if (e.key === 'Escape') {
+      // The buffer owns this Escape: no document-level listener may also act on it.
+      e.preventDefault()
+      e.stopPropagation()
+      handleCancel()
     }
   }
 
@@ -260,6 +286,16 @@ export function PageSourceEditor({ pageId, onClose }: PageSourceEditorProps): Re
         onConfirm={() => {
           void submit(base, false, false)
         }}
+      />
+      <ConfirmDialog
+        open={confirmingDiscard}
+        onOpenChange={setConfirmingDiscard}
+        titleKey="pageSource.discardTitle"
+        descriptionKey="pageSource.discardBody"
+        confirmKey="pageSource.discard"
+        cancelKey="pageSource.keepEditing"
+        variant="destructive"
+        onConfirm={confirmDiscard}
       />
       <PageSourceConflictDialog
         base={base}

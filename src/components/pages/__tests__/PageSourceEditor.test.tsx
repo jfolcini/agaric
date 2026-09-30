@@ -8,8 +8,10 @@
 
 import type { InvokeArgs } from '@tauri-apps/api/core'
 import { invoke } from '@tauri-apps/api/core'
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import type React from 'react'
+import { useRef, useState } from 'react'
 import { toast } from 'sonner'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -21,8 +23,10 @@ import { t } from '@/lib/i18n'
 import { logger } from '@/lib/logger'
 import { dispatch } from '@/lib/tauri-mock/handlers'
 import { SEED_IDS, seedBlocks } from '@/lib/tauri-mock/seed'
+import { useNavigationStore } from '@/stores/navigation'
 import { createPageBlockStore, PageBlockContext } from '@/stores/page-blocks'
 import { useSpaceStore } from '@/stores/space'
+import { selectPageStack, useTabsStore } from '@/stores/tabs'
 import { useUndoStore } from '@/stores/undo'
 
 const mockedInvoke = vi.mocked(invoke)
@@ -102,11 +106,47 @@ function applyCalls(): unknown[] {
   return mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'apply_page_source').map(([, a]) => a)
 }
 
+interface ReportOptions {
+  description?: React.ReactNode
+  duration?: number
+  action?: { label: string; onClick: () => void }
+}
+
+/** The one save report shown, a success or (with warnings) a warning toast. */
+function saveReport(): { message: string; options: ReportOptions } {
+  const calls = [...vi.mocked(toast.success).mock.calls, ...vi.mocked(toast.warning).mock.calls]
+  expect(calls).toHaveLength(1)
+  const [message, options] = calls[0] as [string, ReportOptions]
+  return { message, options }
+}
+
+/** The report's body, rendered on its own. */
+function renderReportBody(options: ReportOptions): HTMLElement {
+  const { container } = render(<div data-testid="report-body">{options.description}</div>)
+  return container
+}
+
+/** Open the seeded page, write `edit(base)` into the buffer and save it with Ctrl+S. */
+async function saveSeededPage(edit: (base: string) => string) {
+  const base = routeToMockBackend()
+  const rendered = renderEditor(SEED_IDS.PAGE_GETTING_STARTED)
+  const user = userEvent.setup()
+  const textarea = await loadedEditor()
+  await replaceBuffer(user, textarea, edit(base))
+  await user.keyboard('{Control>}s{/Control}')
+  await waitFor(() => {
+    expect(rendered.onClose).toHaveBeenCalledOnce()
+  })
+  return { ...rendered, base, user }
+}
+
 beforeEach(() => {
   vi.clearAllMocks()
   localStorage.clear()
   useSpaceStore.setState({ currentSpaceId: 'SPACE_TEST' })
   useUndoStore.setState({ pages: new Map() })
+  useNavigationStore.setState({ currentView: 'page-editor', selectedBlockId: null })
+  useTabsStore.setState({ tabs: [{ id: '0', pageStack: [], label: '' }], activeTabIndex: 0 })
   stubSource()
 })
 
@@ -219,6 +259,27 @@ describe('PageSourceEditor saving', () => {
     expect(pageSource(PAGE_GETTING_STARTED)).toBe(text)
   })
 
+  it.each([
+    ['Ctrl+S', { ctrlKey: true }],
+    ['Cmd+S', { metaKey: true }],
+  ])('%s in the textarea saves, and the browser does not see it', async (_, modifier) => {
+    const base = routeToMockBackend()
+    const { PAGE_GETTING_STARTED } = SEED_IDS
+    const text = base.replace('- Welcome to Agaric!', '- Hello, Agaric!')
+    const user = userEvent.setup()
+    const { onClose } = renderEditor(PAGE_GETTING_STARTED)
+    const textarea = await loadedEditor()
+    await replaceBuffer(user, textarea, text)
+
+    const notPrevented = fireEvent.keyDown(textarea, { key: 's', ...modifier })
+
+    expect(notPrevented).toBe(false)
+    await waitFor(() => {
+      expect(onClose).toHaveBeenCalledOnce()
+    })
+    expect(pageSource(PAGE_GETTING_STARTED)).toBe(text)
+  })
+
   it('a second Mod+Enter while the save is in flight does not save again', async () => {
     const base = routeToMockBackend()
     const gate = deferred<void>()
@@ -261,7 +322,7 @@ describe('PageSourceEditor saving', () => {
     })
   })
 
-  it('shows the save warnings in one toast', async () => {
+  it('lists the save warnings one per line in a warning report that stays until dismissed', async () => {
     const warnings = [`^${A} no longer on this page; saved as a new block`, 'second warning']
     stubSource(() => report({ warnings }))
     const user = userEvent.setup()
@@ -273,9 +334,18 @@ describe('PageSourceEditor saving', () => {
     await waitFor(() => {
       expect(onClose).toHaveBeenCalledOnce()
     })
-    expect(vi.mocked(toast.warning).mock.calls).toEqual([
-      [t('pageSource.warnings', { warnings: warnings.join('; ') })],
-    ])
+    expect(vi.mocked(toast.success)).not.toHaveBeenCalled()
+    const { message, options } = saveReport()
+    expect(message).toBe(t('pageSource.saved'))
+    expect(options.duration).toBe(Number.POSITIVE_INFINITY)
+    const body = renderReportBody(options)
+    expect(within(body).getByText(t('pageSource.reportWarnings'))).toBeInTheDocument()
+    expect(
+      within(body)
+        .getAllByRole('listitem')
+        .map((item) => item.textContent),
+    ).toEqual(warnings)
+    expect(within(body).queryByText(/deleted/)).not.toBeInTheDocument()
   })
 
   it('a rejected save shows the backend message inline, logs, and keeps the buffer open', async () => {
@@ -523,13 +593,14 @@ describe('PageSourceEditor draft', () => {
     )
   })
 
-  it('leaving after Cancel stores nothing', async () => {
+  it('leaving after Cancel and Discard stores nothing', async () => {
     const user = userEvent.setup()
     const { unmount } = renderEditor()
     const textarea = await loadedEditor()
     fireEvent.change(textarea, { target: { value: `${BUFFER}x` } })
 
     await user.click(screen.getByRole('button', { name: t('action.cancel') }))
+    await user.click(await screen.findByRole('button', { name: t('pageSource.discard') }))
     unmount()
 
     expect(localStorage.getItem(draftKey())).toBeNull()
@@ -580,13 +651,15 @@ describe('PageSourceEditor draft', () => {
     expect(localStorage.getItem(draftKey(PAGE_GETTING_STARTED))).toBe(JSON.stringify(draft))
   })
 
-  it('Cancel drops the draft and closes without saving', async () => {
+  it('Cancel on a restored draft asks, and Discard drops the draft and closes without saving', async () => {
     localStorage.setItem(draftKey(), JSON.stringify({ base: BUFFER, text: `${BUFFER}x` }))
     const user = userEvent.setup()
     const { onClose } = renderEditor()
     await loadedEditor()
 
     await user.click(screen.getByRole('button', { name: t('action.cancel') }))
+    expect(onClose).not.toHaveBeenCalled()
+    await user.click(await screen.findByRole('button', { name: t('pageSource.discard') }))
 
     expect(onClose).toHaveBeenCalledOnce()
     expect(localStorage.getItem(draftKey())).toBeNull()
@@ -605,6 +678,244 @@ describe('PageSourceEditor draft', () => {
 
     expect(textarea.value).toBe(BUFFER)
     expect(textarea).toHaveAccessibleDescription(t('pageSource.hint'))
+  })
+})
+
+describe('PageSourceEditor Cancel and Escape', () => {
+  it('Cancel with the text changed asks: Keep editing keeps the buffer, Discard closes without saving', async () => {
+    const base = routeToMockBackend()
+    const { PAGE_GETTING_STARTED } = SEED_IDS
+    const user = userEvent.setup()
+    const { onClose } = renderEditor(PAGE_GETTING_STARTED)
+    const textarea = await loadedEditor()
+    await user.type(textarea, '- mine')
+    const cancel = screen.getByRole('button', { name: t('action.cancel') })
+
+    await user.click(cancel)
+    const confirm = await screen.findByRole('alertdialog', { name: t('pageSource.discardTitle') })
+    await user.click(within(confirm).getByRole('button', { name: t('pageSource.keepEditing') }))
+
+    await waitFor(() => {
+      expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
+    })
+    await waitFor(() => expect(cancel).toHaveFocus())
+    expect(textarea.value).toBe(`${base}- mine`)
+    expect(onClose).not.toHaveBeenCalled()
+
+    await user.click(cancel)
+    await user.click(
+      within(await screen.findByRole('alertdialog')).getByRole('button', {
+        name: t('pageSource.discard'),
+      }),
+    )
+
+    expect(onClose).toHaveBeenCalledOnce()
+    expect(pageSource(PAGE_GETTING_STARTED)).toBe(base)
+    expect(applyCalls()).toEqual([])
+  })
+
+  it('Discard leaves focus where the page puts it on close, not pulled back into the dialog', async () => {
+    const store = createPageBlockStore(PAGE_ID)
+    function Page(): React.ReactElement {
+      const kebab = useRef<HTMLButtonElement>(null)
+      const [open, setOpen] = useState(true)
+      const close = (): void => {
+        setOpen(false)
+        kebab.current?.focus()
+      }
+      return (
+        <PageBlockContext.Provider value={store}>
+          <button ref={kebab} type="button">
+            Page actions
+          </button>
+          {open && <PageSourceEditor pageId={PAGE_ID} onClose={close} />}
+        </PageBlockContext.Provider>
+      )
+    }
+    const user = userEvent.setup()
+    render(<Page />)
+    await user.type(await loadedEditor(), 'x')
+
+    await user.click(screen.getByRole('button', { name: t('action.cancel') }))
+    await user.click(await screen.findByRole('button', { name: t('pageSource.discard') }))
+
+    await waitFor(() => {
+      expect(screen.queryByRole('textbox')).not.toBeInTheDocument()
+    })
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Page actions' })).toHaveFocus())
+  })
+
+  it('Cancel with the text back as loaded closes without asking', async () => {
+    const user = userEvent.setup()
+    const { onClose } = renderEditor()
+    const textarea = await loadedEditor()
+    await user.type(textarea, 'x{Backspace}')
+
+    await user.click(screen.getByRole('button', { name: t('action.cancel') }))
+
+    expect(onClose).toHaveBeenCalledOnce()
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
+  })
+
+  it('Escape with the text changed asks, reaches nothing outside the buffer, and Escape again keeps editing', async () => {
+    const outside = vi.fn()
+    window.addEventListener('keydown', outside)
+    const user = userEvent.setup()
+    const { onClose } = renderEditor()
+    const textarea = await loadedEditor()
+    await user.type(textarea, 'x')
+    outside.mockClear()
+
+    await user.keyboard('{Escape}')
+
+    expect(
+      await screen.findByRole('alertdialog', { name: t('pageSource.discardTitle') }),
+    ).toBeInTheDocument()
+    expect(outside).not.toHaveBeenCalled()
+    window.removeEventListener('keydown', outside)
+    await user.keyboard('{Escape}')
+    await waitFor(() => {
+      expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
+    })
+    await waitFor(() => expect(textarea).toHaveFocus())
+    expect(textarea.value).toBe(`${BUFFER}x`)
+    expect(onClose).not.toHaveBeenCalled()
+  })
+
+  it('Escape with the text as loaded closes without asking', async () => {
+    const user = userEvent.setup()
+    const { onClose } = renderEditor()
+    await loadedEditor()
+
+    await user.keyboard('{Escape}')
+
+    expect(onClose).toHaveBeenCalledOnce()
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
+  })
+
+  it('an Escape that ends an input-method composition leaves the buffer open', async () => {
+    const { onClose } = renderEditor()
+    const textarea = await loadedEditor()
+
+    fireEvent.keyDown(textarea, { key: 'Escape', isComposing: true })
+
+    expect(onClose).not.toHaveBeenCalled()
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
+  })
+
+  it('the discard dialog has no a11y violations', async () => {
+    const user = userEvent.setup()
+    renderEditor()
+    await user.type(await loadedEditor(), 'x')
+
+    await user.click(screen.getByRole('button', { name: t('action.cancel') }))
+
+    const confirm = await screen.findByRole('alertdialog', { name: t('pageSource.discardTitle') })
+    expect(confirm).toHaveAccessibleDescription(t('pageSource.discardBody'))
+    await waitFor(async () => {
+      expect(await axe(confirm)).toHaveNoViolations()
+    })
+  })
+})
+
+describe('PageSourceEditor save report', () => {
+  const NEW_PAGE = 'Brand New Page'
+  const NEW_TAG = 'fresh-tag'
+
+  /** Drops the last bullet and links a page and a tag no name matches yet from the first. */
+  const deleteAndName = (base: string): string =>
+    base
+      .split('\n')
+      .filter((line) => !line.endsWith(` ^${SEED_IDS.BLOCK_GS_5}`))
+      .join('\n')
+      .replace('knowledge base.', `knowledge base. See [[${NEW_PAGE}]] #${NEW_TAG}`)
+
+  /** What the mock backend answered the (one) save with. */
+  async function applied(): Promise<CommandReturns['apply_page_source']> {
+    const i = mockedInvoke.mock.calls.findIndex(([cmd]) => cmd === 'apply_page_source')
+    return (await mockedInvoke.mock.results[i]?.value) as CommandReturns['apply_page_source']
+  }
+
+  it('a save that deletes blocks and creates names keeps a report until dismissed: counts, and the names as links', async () => {
+    const { user } = await saveSeededPage(deleteAndName)
+
+    const { message, options } = saveReport()
+    expect(message).toBe(t('pageSource.saved'))
+    expect(options.duration).toBe(Number.POSITIVE_INFINITY)
+    const body = renderReportBody(options)
+    expect(within(body).getByText('1 block deleted, 1 edited')).toBeInTheDocument()
+    expect(within(body).getByText(t('pageSource.reportCreated'))).toBeInTheDocument()
+    const links = within(body).getAllByRole('link')
+    expect(links.map((link) => link.textContent)).toEqual([NEW_PAGE, `#${NEW_TAG}`])
+    await waitFor(async () => {
+      expect(await axe(body)).toHaveNoViolations()
+    })
+
+    await user.click(links[0] as HTMLElement)
+
+    const opened = selectPageStack(useTabsStore.getState()).at(-1)
+    expect(opened?.title).toBe(NEW_PAGE)
+    const row = dispatch('get_block', { blockId: opened?.pageId }) as { content: string }
+    expect(row.content).toBe(NEW_PAGE)
+  })
+
+  it('a save with nothing to report says Saved for the usual few seconds, with Undo', async () => {
+    await saveSeededPage((base) => base.replace('- Welcome to Agaric!', '- Hello, Agaric!'))
+
+    const { message, options } = saveReport()
+    expect(message).toBe(t('pageSource.saved'))
+    expect(options.duration).toBeUndefined()
+    expect(options.description).toBeUndefined()
+    expect(options.action?.label).toBe(t('action.undo'))
+  })
+
+  it('Undo in the report reverts the whole save, the page and tag it created included', async () => {
+    const { base } = await saveSeededPage(deleteAndName)
+    const created = (await applied()).names_created.map((row) => row.id)
+    expect(created).toHaveLength(2)
+
+    await act(async () => {
+      saveReport().options.action?.onClick()
+    })
+
+    await waitFor(() => {
+      expect(pageSource(SEED_IDS.PAGE_GETTING_STARTED)).toBe(base)
+    })
+    for (const id of created) {
+      expect(() => dispatch('get_block', { blockId: id })).toThrow('not found')
+    }
+    expect(useUndoStore.getState().pages.get(SEED_IDS.PAGE_GETTING_STARTED)?.undoStack).toEqual([])
+  })
+
+  it('a stale Undo reverts nothing and says why', async () => {
+    const { store } = await saveSeededPage(deleteAndName)
+    const later = 'Edited after the save'
+    await act(() => store.getState().edit(SEED_IDS.BLOCK_GS_2, later))
+    const afterEdit = pageSource(SEED_IDS.PAGE_GETTING_STARTED)
+    expect(afterEdit).toContain(`- ${later} ^${SEED_IDS.BLOCK_GS_2}`)
+
+    await act(async () => {
+      saveReport().options.action?.onClick()
+    })
+
+    expect(vi.mocked(toast)).toHaveBeenLastCalledWith(t('pageSource.undoStale'))
+    expect(pageSource(SEED_IDS.PAGE_GETTING_STARTED)).toBe(afterEdit)
+    expect(mockedInvoke.mock.calls.map(([cmd]) => cmd)).not.toContain('undo_ops')
+  })
+
+  it('a save that wrote nothing offers no Undo, so none can revert an earlier change', async () => {
+    stubSource(() => report({ op_refs: [] }))
+    useUndoStore.getState().onNewAction(PAGE_ID, [{ device_id: 'dev1', seq: 7 }])
+    const user = userEvent.setup()
+    const { onClose } = renderEditor()
+    await user.type(await loadedEditor(), 'x')
+
+    await user.click(screen.getByRole('button', { name: t('action.save') }))
+
+    await waitFor(() => {
+      expect(onClose).toHaveBeenCalledOnce()
+    })
+    expect(saveReport().options.action).toBeUndefined()
   })
 })
 
