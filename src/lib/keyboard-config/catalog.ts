@@ -622,6 +622,13 @@ export const DEFAULT_SHORTCUTS: ShortcutBinding[] = [
     description: 'keyboard.exportPageMarkdown',
     condition: 'keyboard.condition.inPageEditor',
   },
+  {
+    id: 'savePageSource',
+    keys: 'Ctrl + S',
+    category: 'keyboard.category.pageEditor',
+    description: 'keyboard.savePageSource',
+    condition: 'keyboard.condition.inPageSource',
+  },
 
   // Tabs — after the TabBar is shell-wide on desktop, so the
   // tab-management shortcuts apply everywhere, not just inside the editor.

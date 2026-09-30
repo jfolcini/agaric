@@ -2,6 +2,7 @@ import type { Locator, Page } from '@playwright/test'
 import { devices } from '@playwright/test'
 
 import {
+  activeAlertDialog,
   activeDialog,
   expect,
   focusBlockById,
@@ -51,6 +52,19 @@ function swapBullets(source: string, a: string, b: string): string {
   lines[i] = lineB
   lines[j] = lineA
   return lines.join('\n')
+}
+
+/** `source` without the bullet anchored at `id`. */
+function dropBullet(source: string, id: string): string {
+  return source
+    .split('\n')
+    .filter((line) => !line.endsWith(` ^${id}`))
+    .join('\n')
+}
+
+/** The report a save leaves (#5160 X2). */
+function saveReport(page: Page): Locator {
+  return page.locator('[data-sonner-toast]').filter({ hasText: 'Markdown saved' })
 }
 
 function blockIds(page: Page): Promise<string[]> {
@@ -153,16 +167,59 @@ test.describe('Edit as Markdown (#5140 Phase 4b)', () => {
     await expect(editor).toHaveValue(new RegExp(`knowledge base\\. Typed just now\\. \\^${GS1}\n`))
   })
 
-  test('Cancel leaves the page untouched', async ({ page }) => {
+  test('Cancel with changes asks: Keep editing keeps the text, Discard leaves the page untouched', async ({
+    page,
+  }) => {
     const editor = await openSourceMode(page)
-    await editor.fill(swapBullets(await editor.inputValue(), GS1, GS3).replace(WELCOME, HELLO))
+    const edited = swapBullets(await editor.inputValue(), GS1, GS3).replace(WELCOME, HELLO)
+    await editor.fill(edited)
+    const cancel = page.getByRole('button', { name: 'Cancel', exact: true })
 
-    await page.getByRole('button', { name: 'Cancel', exact: true }).click()
+    await cancel.click()
+    const confirm = activeAlertDialog(page)
+    await expect(confirm.getByRole('heading', { name: 'Discard your changes?' })).toBeVisible()
+    await confirm.getByRole('button', { name: 'Keep editing', exact: true }).click()
+    await expect(confirm).toHaveCount(0)
+    await expect(editor).toHaveValue(edited)
+
+    await cancel.click()
+    await activeAlertDialog(page).getByRole('button', { name: 'Discard', exact: true }).click()
 
     await expect(sourceEditor(page)).toHaveCount(0)
     await expect(pageActions(page)).toBeFocused()
     await expect.poll(() => blockIds(page)).toEqual([GS1, GS2, GS3, GS4, GS5])
     await expect(staticBlock(page, GS1)).toContainText(WELCOME)
+  })
+
+  test('Ctrl+S saves, and the report lists what the save deleted and created', async ({ page }) => {
+    const editor = await openSourceMode(page)
+    const base = await editor.inputValue()
+    await editor.fill(
+      dropBullet(base, GS5).replace('knowledge base.', 'knowledge base. See [[Brand New Page]]'),
+    )
+
+    await editor.press('ControlOrMeta+s')
+
+    await expect(sourceEditor(page)).toHaveCount(0)
+    await expect.poll(() => blockIds(page)).toEqual([GS1, GS2, GS3, GS4])
+    await expect(saveReport(page)).toContainText('1 block deleted, 1 edited')
+    await saveReport(page).getByRole('link', { name: 'Brand New Page', exact: true }).click()
+    await expect(page.locator('[aria-label="Page title"]')).toHaveText('Brand New Page')
+  })
+
+  test('Undo in the report restores the page, as the buffer shows on reopening', async ({
+    page,
+  }) => {
+    const editor = await openSourceMode(page)
+    const base = await editor.inputValue()
+    await editor.fill(dropBullet(base, GS5).replace(WELCOME, HELLO))
+    await page.getByRole('button', { name: 'Save', exact: true }).click()
+    await expect.poll(() => blockIds(page)).toEqual([GS1, GS2, GS3, GS4])
+
+    await saveReport(page).getByRole('button', { name: 'Undo', exact: true }).click()
+
+    await expect.poll(() => blockIds(page)).toEqual([GS1, GS2, GS3, GS4, GS5])
+    await expect(await openSourceMode(page)).toHaveValue(base)
   })
 })
 

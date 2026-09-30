@@ -3401,8 +3401,13 @@ pub async fn import_markdown_with_progress(
     // #1925 — post-commit attachment ingest + content rewrite.
     ingest_attachments(&mut ctx, vault_files, pending_attachments).await;
 
+    let collapsed = parse_output
+        .collapsed
+        .iter()
+        .filter_map(|&index| created_block_ids[index].clone())
+        .collect();
     // #128 / #1932 / #1934 — completion event + diagnostics/telemetry logging.
-    Ok(finish(ctx, &counters))
+    Ok(finish(ctx, &counters, collapsed))
 }
 
 /// Guard the payload, parse it, and derive the page title.
@@ -4480,13 +4485,15 @@ struct CrossPageAnchor {
 }
 
 /// Link each of `anchors` to the block it names on its page (#5160 D10): the
-/// one heading whose text is the anchor, compared as the same-file pass
-/// compares it, or, for `^id`, the block of that id, which is the anchor an
+/// first heading in document order whose text is the anchor, compared as the
+/// same-file pass compares it and as Obsidian resolves a repeated heading, or,
+/// for `^id`, the block of that id, which is the anchor an
 /// export writes for a ref to another page's block. An Obsidian `^name` names
 /// no block once its own file's import is done. Any other anchor links the
 /// page, and the anchors dropped so are counted in one warning (#1282). Each
 /// name keeps its page too, which an inline query naming it remaps to. One
-/// read covers every page; `page_id` holds a page's whole subtree.
+/// read covers every page's blocks, `page_id` holding its whole subtree, with
+/// the text of its headings only.
 async fn link_cross_page_anchors(
     conn: &mut sqlx::SqliteConnection,
     links: &mut PageLinks,
@@ -4497,28 +4504,25 @@ async fn link_cross_page_anchors(
         return Ok(());
     }
     let pages: HashSet<&str> = anchors.iter().map(|a| a.page_id.as_str()).collect();
-    let ids: HashSet<&str> = anchors
-        .iter()
-        .filter_map(|a| obsidian_block_anchor_id(&a.anchor))
-        .collect();
     let pages_json = serde_json::to_string(&pages)?;
-    let ids_json = serde_json::to_string(&ids)?;
     let candidates = sqlx::query_as!(
         AnchorCandidate,
-        r#"SELECT id AS "id!", page_id AS "page_id!", COALESCE(content, '') AS "content!"
+        r#"SELECT id AS "id!", page_id AS "page_id!", parent_id, position,
+                  CASE WHEN ltrim(content) LIKE '#%' THEN content ELSE '' END
+                      AS "content!: String"
                FROM blocks
                WHERE block_type = 'content'
                  AND deleted_at IS NULL
-                 AND page_id IN (SELECT value FROM json_each(?1))
-                 AND (ltrim(content) LIKE '#%' OR id IN (SELECT value FROM json_each(?2)))"#,
+                 AND page_id IN (SELECT value FROM json_each(?1))"#,
         pages_json,
-        ids_json,
     )
     .fetch_all(&mut *conn)
     .await?;
+    let by_id: HashMap<&str, &AnchorCandidate> =
+        candidates.iter().map(|c| (c.id.as_str(), c)).collect();
     let mut dropped = 0;
     for a in anchors {
-        if let Some(block) = anchor_block(&candidates, &a) {
+        if let Some(block) = anchor_block(&candidates, &by_id, &a) {
             links.blocks.insert(a.name.clone(), block.to_string());
         } else {
             dropped += 1;
@@ -4533,17 +4537,24 @@ async fn link_cross_page_anchors(
     Ok(())
 }
 
-/// A block of a page some link names by an anchor: a heading, or a block
-/// named by its id.
+/// A block of a page some link names by an anchor, where it sits in the page,
+/// and its text when it is a heading.
 struct AnchorCandidate {
     id: String,
     page_id: String,
+    parent_id: Option<String>,
+    position: Option<i64>,
     content: String,
 }
 
-/// The block `a` names among `candidates`: on its page, the block of the `^id`
-/// or the only heading of the anchor's text.
-fn anchor_block<'a>(candidates: &'a [AnchorCandidate], a: &CrossPageAnchor) -> Option<&'a str> {
+/// The block `a` names among `candidates`, `by_id` indexing them: on its page,
+/// the block of the `^id` or the first heading of the anchor's text in
+/// document order.
+fn anchor_block<'a>(
+    candidates: &'a [AnchorCandidate],
+    by_id: &HashMap<&str, &'a AnchorCandidate>,
+    a: &CrossPageAnchor,
+) -> Option<&'a str> {
     let block_id = obsidian_block_anchor_id(&a.anchor);
     let norm = normalize_heading_anchor(&a.anchor);
     let names = |c: &&AnchorCandidate| {
@@ -4554,14 +4565,39 @@ fn anchor_block<'a>(candidates: &'a [AnchorCandidate], a: &CrossPageAnchor) -> O
                 .is_some_and(|text| normalize_heading_anchor(text) == norm)
         }
     };
-    let mut hits = candidates
+    candidates
         .iter()
         .filter(|c| c.page_id == a.page_id)
-        .filter(names);
-    match (hits.next(), hits.next()) {
-        (Some(block), None) => Some(block.id.as_str()),
-        _ => None,
+        .filter(names)
+        .min_by_key(|c| tree_path(by_id, c))
+        .map(|c| c.id.as_str())
+}
+
+/// Where `block` sits in its page read depth first: the `(position, id)` of
+/// its outermost ancestor on the page down to its own, so an ancestor sorts
+/// before its descendants and a page's smallest path is its first block. The
+/// walk is bounded like every descendant walk (invariant 9).
+fn tree_path<'a>(
+    by_id: &HashMap<&str, &'a AnchorCandidate>,
+    block: &'a AnchorCandidate,
+) -> Vec<(i64, &'a str)> {
+    let mut path = Vec::new();
+    let mut next = Some(block);
+    for _ in 0..agaric_store::block_descendants::DESCENDANT_DEPTH_CAP {
+        let Some(row) = next else {
+            break;
+        };
+        path.push((
+            row.position.unwrap_or(NULL_POSITION_SENTINEL),
+            row.id.as_str(),
+        ));
+        next = row
+            .parent_id
+            .as_deref()
+            .and_then(|parent| by_id.get(parent).copied());
     }
+    path.reverse();
+    path
 }
 
 /// #1446 Part B / #1921 — resolve inbound `[[Page Name]]` wiki-links to internal
@@ -5611,7 +5647,9 @@ fn push_anchor_warnings(warnings: &mut Vec<String>, outcomes: &AnchorOutcomes) {
 
 /// #2510 / #2567 — post-commit resolution of deferred same-document block- and
 /// heading-anchor wiki-links to real `((block ULID))` refs (with the #1282
-/// page-link fallback). Warn-and-continue only; never aborts the durable import.
+/// page-link fallback), and of Logseq `((uuid))` refs to the block whose `id::`
+/// line names it (#5160 D14). Warn-and-continue only; never aborts the durable
+/// import.
 ///
 /// Runs HERE, AFTER the import writer tx has fully committed (mirrors the #1925
 /// attachment phase below, for the same reason: `edit_block_inner` is pool-based
@@ -5628,6 +5666,7 @@ async fn resolve_anchor_links(
 ) {
     let pending = !refs.links.pending_block_anchors.is_empty()
         || !refs.links.pending_heading_anchors.is_empty();
+    let anchored = !refs.anchor_to_block_index.is_empty();
     let materializer = ctx.materializer;
     let device_id = ctx.device_id;
     let pool = ctx.pool;
@@ -5639,10 +5678,13 @@ async fn resolve_anchor_links(
     };
 
     for (block_index, block) in parse_output.blocks.iter().enumerate() {
-        // A cheap in-memory pre-filter over the ORIGINAL parsed content (`[[`
-        // presence) so only blocks that could possibly carry a pending token are
-        // re-fetched from the database.
-        if !pending || !block.content.contains("[[") {
+        // A cheap in-memory pre-filter over the ORIGINAL parsed content so
+        // only blocks that could possibly carry a pending token are re-fetched
+        // from the database. A code block's `((uuid))` is literal, as its
+        // links and tags are (#3605).
+        let links = pending && block.content.contains("[[");
+        let logseq_refs = anchored && !block.is_code && block.content.contains("((");
+        if !links && !logseq_refs {
             continue;
         }
         let Some(Some(container_id)) = created_block_ids.get(block_index) else {
@@ -5655,17 +5697,28 @@ async fn resolve_anchor_links(
         else {
             continue;
         };
-        if !current_content.contains("[[") {
-            continue;
-        }
-        let Some(new_content) = rewrite_anchor_tokens(
-            &current_content,
-            &page_id,
-            &ctx.page_title,
-            created_block_ids,
-            refs,
-            &mut outcomes,
-        ) else {
+        let linked = links
+            .then(|| {
+                rewrite_anchor_tokens(
+                    &current_content,
+                    &page_id,
+                    &ctx.page_title,
+                    created_block_ids,
+                    refs,
+                    &mut outcomes,
+                )
+            })
+            .flatten();
+        // #5160 D14 — a Logseq `((uuid))` to a block of this file refs it.
+        let resolved = logseq_refs
+            .then(|| {
+                import::resolve_logseq_refs(linked.as_deref().unwrap_or(&current_content), |uuid| {
+                    let &index = refs.anchor_to_block_index.get(uuid)?;
+                    created_block_ids.get(index).cloned().flatten()
+                })
+            })
+            .flatten();
+        let Some(new_content) = resolved.or(linked) else {
             continue;
         };
 
@@ -5982,7 +6035,7 @@ async fn ingest_attachments(
 
 /// #128 / #1932 / #1934 — emit the `Complete` progress event, log the collected
 /// diagnostics + completion telemetry, and build the returned [`ImportResult`].
-fn finish(ctx: ImportCtx<'_>, counters: &ImportCounters) -> ImportResult {
+fn finish(ctx: ImportCtx<'_>, counters: &ImportCounters, collapsed: Vec<String>) -> ImportResult {
     let &ImportCounters {
         blocks_created,
         properties_set,
@@ -5990,6 +6043,7 @@ fn finish(ctx: ImportCtx<'_>, counters: &ImportCounters) -> ImportResult {
     } = counters;
     let ImportCtx {
         progress,
+        page_id,
         page_title,
         warnings,
         started_at,
@@ -6036,8 +6090,10 @@ fn finish(ctx: ImportCtx<'_>, counters: &ImportCounters) -> ImportResult {
 
     ImportResult {
         page_title,
+        page_id,
         blocks_created,
         properties_set,
+        collapsed,
         warnings,
     }
 }

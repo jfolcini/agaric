@@ -23,6 +23,7 @@ import { unwrap } from '@/lib/app-error'
 import { commands } from '@/lib/bindings'
 import { importMarkdown } from '@/lib/ipc-helpers'
 import { logger } from '@/lib/logger'
+import { PREFERENCES, writePreference } from '@/lib/preferences'
 import { toSpaceScope } from '@/lib/space-scope'
 import { type ImportUnit, importErrorReason } from '@/lib/vault-import'
 import { useTabsStore } from '@/stores/tabs'
@@ -258,6 +259,11 @@ export function useImportRunner(): UseImportRunner {
             },
             vaultFiles,
           )
+          // Collapse is this device's layout, so the blocks a Logseq page
+          // folded are folded here (#5160 D14).
+          if (result.collapsed.length > 0) {
+            writePreference(PREFERENCES.blockCollapse, result.collapsed, result.page_id)
+          }
           totalBlocks += result.blocks_created
           totalProps += result.properties_set
           allWarnings.push(...result.warnings)

@@ -141,6 +141,8 @@ describe('DataTab', () => {
       page_title: 'Test Page',
       blocks_created: 5,
       properties_set: 2,
+      page_id: 'PAGE',
+      collapsed: [],
       warnings: [],
     }
     mockImportMarkdown.mockResolvedValueOnce(importResult)
@@ -237,6 +239,8 @@ describe('DataTab', () => {
       page_title: 'Test Page',
       blocks_created: 5,
       properties_set: 2,
+      page_id: 'PAGE',
+      collapsed: [],
       warnings: [],
     }
     mockImportMarkdown.mockResolvedValueOnce(importResult)
@@ -314,6 +318,8 @@ describe('DataTab', () => {
         page_title: 'Big',
         blocks_created: 3,
         properties_set: 0,
+        page_id: 'PAGE',
+        collapsed: [],
         warnings: [],
       })
     })
@@ -642,7 +648,14 @@ describe('DataTab', () => {
     })
 
     await act(async () => {
-      resolveFirst({ page_title: 'one', blocks_created: 1, properties_set: 0, warnings: [] })
+      resolveFirst({
+        page_title: 'one',
+        blocks_created: 1,
+        properties_set: 0,
+        page_id: 'PAGE',
+        collapsed: [],
+        warnings: [],
+      })
     })
 
     await waitFor(() => {
@@ -650,7 +663,14 @@ describe('DataTab', () => {
     })
 
     await act(async () => {
-      resolveSecond({ page_title: 'two', blocks_created: 1, properties_set: 0, warnings: [] })
+      resolveSecond({
+        page_title: 'two',
+        blocks_created: 1,
+        properties_set: 0,
+        page_id: 'PAGE',
+        collapsed: [],
+        warnings: [],
+      })
     })
 
     await waitFor(() => {
@@ -695,7 +715,14 @@ describe('DataTab', () => {
     expect(screen.queryByTestId('import-progress-detail')).not.toBeInTheDocument()
 
     await act(async () => {
-      resolveFirst({ page_title: 'one', blocks_created: 7, properties_set: 0, warnings: [] })
+      resolveFirst({
+        page_title: 'one',
+        blocks_created: 7,
+        properties_set: 0,
+        page_id: 'PAGE',
+        collapsed: [],
+        warnings: [],
+      })
     })
 
     // After file 1 resolves, the secondary line appears with
@@ -707,7 +734,14 @@ describe('DataTab', () => {
     })
 
     await act(async () => {
-      resolveSecond({ page_title: 'two', blocks_created: 3, properties_set: 0, warnings: [] })
+      resolveSecond({
+        page_title: 'two',
+        blocks_created: 3,
+        properties_set: 0,
+        page_id: 'PAGE',
+        collapsed: [],
+        warnings: [],
+      })
     })
 
     // Once the import finishes, the secondary line disappears along
@@ -745,7 +779,14 @@ describe('DataTab', () => {
     expect(screen.queryByTestId('import-progress-detail')).not.toBeInTheDocument()
 
     await act(async () => {
-      resolveFirst({ page_title: 'one', blocks_created: 1, properties_set: 0, warnings: [] })
+      resolveFirst({
+        page_title: 'one',
+        blocks_created: 1,
+        properties_set: 0,
+        page_id: 'PAGE',
+        collapsed: [],
+        warnings: [],
+      })
     })
   })
 
@@ -784,7 +825,14 @@ describe('DataTab', () => {
     expect(progressBar.max).toBe(2)
 
     await act(async () => {
-      resolveFirst({ page_title: 'one', blocks_created: 1, properties_set: 0, warnings: [] })
+      resolveFirst({
+        page_title: 'one',
+        blocks_created: 1,
+        properties_set: 0,
+        page_id: 'PAGE',
+        collapsed: [],
+        warnings: [],
+      })
     })
 
     await waitFor(() => {
@@ -793,7 +841,14 @@ describe('DataTab', () => {
     })
 
     await act(async () => {
-      resolveSecond({ page_title: 'two', blocks_created: 1, properties_set: 0, warnings: [] })
+      resolveSecond({
+        page_title: 'two',
+        blocks_created: 1,
+        properties_set: 0,
+        page_id: 'PAGE',
+        collapsed: [],
+        warnings: [],
+      })
     })
 
     // Once the import finishes, the progress bar disappears.
@@ -818,6 +873,8 @@ describe('DataTab', () => {
       page_title: 'Doc',
       blocks_created: 4,
       properties_set: 0,
+      page_id: 'PAGE',
+      collapsed: [],
       warnings: ['Dropped malformed YAML on line 2', 'Unrecognized property "foo"'],
     })
 
@@ -910,6 +967,8 @@ describe('DataTab', () => {
         page_title: 'ok',
         blocks_created: 3,
         properties_set: 0,
+        page_id: 'PAGE',
+        collapsed: [],
         warnings: [],
       })
       .mockRejectedValueOnce(new Error('boom'))
@@ -946,6 +1005,8 @@ describe('DataTab', () => {
       page_title: 'Doc',
       blocks_created: 1,
       properties_set: 0,
+      page_id: 'PAGE',
+      collapsed: [],
       warnings: [],
     })
 
@@ -1005,7 +1066,14 @@ describe('DataTab', () => {
     })
 
     await act(async () => {
-      resolveImport({ page_title: 'Big', blocks_created: 3, properties_set: 0, warnings: [] })
+      resolveImport({
+        page_title: 'Big',
+        blocks_created: 3,
+        properties_set: 0,
+        page_id: 'PAGE',
+        collapsed: [],
+        warnings: [],
+      })
     })
   })
 
@@ -1016,6 +1084,8 @@ describe('DataTab', () => {
         page_title: 'ok',
         blocks_created: 2,
         properties_set: 1,
+        page_id: 'PAGE',
+        collapsed: [],
         warnings: ['a warning'],
       })
       .mockRejectedValueOnce(new Error('boom'))
@@ -1110,6 +1180,8 @@ describe('DataTab', () => {
       page_title: 'Note',
       blocks_created: 3,
       properties_set: 0,
+      page_id: 'PAGE',
+      collapsed: [],
       warnings: [],
     })
 
@@ -1213,6 +1285,8 @@ describe('DataTab', () => {
       page_title: 'My Imported Page',
       blocks_created: 4,
       properties_set: 0,
+      page_id: 'PAGE',
+      collapsed: [],
       warnings: [],
     })
     mockResolvePageByAlias.mockResolvedValueOnce(['PAGE_ULID', 'My Imported Page'])
@@ -1277,7 +1351,14 @@ describe('DataTab', () => {
     // Now let the first file complete; the loop then sees the abort flag
     // and breaks before starting the second file.
     await act(async () => {
-      resolveFirst({ page_title: 'one', blocks_created: 1, properties_set: 0, warnings: [] })
+      resolveFirst({
+        page_title: 'one',
+        blocks_created: 1,
+        properties_set: 0,
+        page_id: 'PAGE',
+        collapsed: [],
+        warnings: [],
+      })
     })
 
     // Only the first file ran.
@@ -1360,7 +1441,14 @@ describe('DataTab', () => {
     expect(results).toHaveNoViolations()
 
     await act(async () => {
-      resolveImport({ page_title: 'one', blocks_created: 1, properties_set: 0, warnings: [] })
+      resolveImport({
+        page_title: 'one',
+        blocks_created: 1,
+        properties_set: 0,
+        page_id: 'PAGE',
+        collapsed: [],
+        warnings: [],
+      })
     })
   })
 
@@ -1384,6 +1472,8 @@ describe('DataTab', () => {
       page_title: 'note',
       blocks_created: 1,
       properties_set: 0,
+      page_id: 'PAGE',
+      collapsed: [],
       warnings: [],
     }
 
@@ -1462,6 +1552,8 @@ describe('DataTab', () => {
       page_title: title,
       blocks_created: 2,
       properties_set: 0,
+      page_id: 'PAGE',
+      collapsed: [],
       warnings: [],
     })
 
@@ -1663,6 +1755,8 @@ describe('DataTab', () => {
       page_title: title,
       blocks_created: 2,
       properties_set: 0,
+      page_id: 'PAGE',
+      collapsed: [],
       warnings: [],
     })
 
@@ -1808,6 +1902,8 @@ describe('DataTab', () => {
       pages_created: 3,
       entries_skipped: 1,
       properties_set: 12,
+      page_id: 'PAGE',
+      collapsed: [],
       warnings: [],
     }
 
