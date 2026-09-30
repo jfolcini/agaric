@@ -41,8 +41,12 @@ use agaric_core::error::AppError;
 /// engine's leftmost-first alternation prefers the longer delimiter at
 /// any given position. The remaining three (code/strike/highlight) have
 /// disjoint delimiters so their relative order is irrelevant.
+///
+/// Strike and highlight need a non-space next to each delimiter: the editor
+/// stores a space-flanked `~~` or `==` bare because it cannot be a mark
+/// (#5160 N12), so `a == b and c == d` is a comparison, indexed as written.
 static MARKUP_RE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"\*\*(.+?)\*\*|\*(.+?)\*|`(.+?)`|~~(.+?)~~|==(.+?)==")
+    Regex::new(r"\*\*(.+?)\*\*|\*(.+?)\*|`(.+?)`|~~(\S(?:.*?\S)?)~~|==(\S(?:.*?\S)?)==")
         .expect("invalid combined markup regex")
 });
 

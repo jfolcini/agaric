@@ -4,6 +4,7 @@
  * Wraps @tiptap/extension-link with app-specific defaults:
  * - autolink: detect bare URLs as the user types
  * - linkOnPaste: pasting a URL over selected text creates a link
+ * - markdownLinks: typing `[text](url)` creates a link
  * - openOnClick: false — a plain click places the caret (to edit the link);
  *   Ctrl/Cmd+Click opens the URL via the `handleClick` plugin prop (#924).
  * - Mod-k keyboard shortcut: dispatches a custom DOM event so the React
@@ -133,6 +134,8 @@ export const ExternalLink = Link.extend({
   openOnClick: false,
   autolink: true,
   linkOnPaste: true,
+  // A typed or pasted `[text](url)` becomes a link, as the stored form reads (#5160 N11).
+  markdownLinks: true,
   validate: (url: string) => isValidHttpUrl(url),
   HTMLAttributes: {
     class: 'external-link',

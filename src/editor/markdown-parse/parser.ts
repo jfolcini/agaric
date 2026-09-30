@@ -17,8 +17,14 @@
  */
 
 import {
+  ASCII_PUNCTUATION_RE,
+  codePointAt,
+  codePointBefore,
+  flankClass,
   leadingIndent,
+  linkDestination,
   LIST_NEST_INDENT,
+  runFlank,
   scanBareUrl,
   TAB_STOP,
   underscoreRunFlank,
@@ -37,7 +43,6 @@ import {
   MARKER_INDENT_SRC,
   MAX_LINK_SCAN,
   MAX_PARSE_DEPTH,
-  nodeToPlainText,
   peek,
   probeExternalLink,
   scanBalancedClose,
@@ -48,7 +53,6 @@ import {
   tryConsumeToken,
   type BlockParseResult,
   unescapeImageAlt,
-  unescapeUrl,
 } from '@/editor/markdown-parse/vocab'
 import type {
   BlockLevelNode,
@@ -66,6 +70,7 @@ import type {
   PMMark,
   TableNode,
   TableRowNode,
+  TextNode,
   TodoState,
 } from '@/editor/types'
 import { logger } from '@/lib/logger'
@@ -107,7 +112,7 @@ function consumeExternalLink(
   depth: number,
 ): InlineNode[] {
   s.pos = match.endPos
-  const href = unescapeUrl(match.url)
+  const href = linkDestination(match.url)
 
   // #2209 — a disallowed scheme (`javascript:`/`file:`/`data:`/…) must never
   // enter stored content as a live link mark: markdown import and peer sync are
@@ -1226,6 +1231,32 @@ export function scanCodeSpan(st: InlineState): boolean {
 }
 
 /**
+ * Inline math written `$$…$$` mid-line, as pandoc, Obsidian and LLM output
+ * write it (#5160 N9): the opener pairs with the next `$$` on the line and the
+ * trimmed text between is the LaTeX, which the serializer stores as `$…$`. A
+ * `$$` with no closing `$$`, or only whitespace inside, is literal. A line of
+ * only `$$ … $$` never gets here: it is a math block.
+ */
+function scanDollarPairMath(st: InlineState): boolean {
+  const s = st.scanner
+  if (peek(s) !== '$' || peek(s, 1) !== '$') return false
+  let i = s.pos + 2
+  while (i < s.src.length && !(s.src[i] === '$' && s.src[i + 1] === '$')) {
+    i += s.src[i] === '\\' ? 2 : 1
+  }
+  const latex = s.src.slice(s.pos + 2, i).trim()
+  if (i >= s.src.length || latex === '') {
+    st.buf += '$$'
+    s.pos += 2
+    return true
+  }
+  flushBuf(st, currentMarks(st))
+  st.nodes.push({ type: 'math_inline', attrs: { latex } })
+  s.pos = i + 2
+  return true
+}
+
+/**
  * Inline math (#1437): a `$…$` span whose content is raw LaTeX, rendered via
  * KaTeX. Follows the common CommonMark-math (pandoc / remark-math) inline rule
  * so a currency amount is NOT mistaken for math:
@@ -1287,7 +1318,7 @@ export function scanMathInline(st: InlineState): boolean {
   return true
 }
 
-/** Backslash escape for any parser-significant char. */
+/** Backslash escape: see `isEscapableChar` for the chars it escapes. */
 export function scanEscape(st: InlineState): boolean {
   if (peek(st.scanner) !== '\\' || st.scanner.pos + 1 >= st.scanner.src.length) return false
   const next = peek(st.scanner, 1)
@@ -1297,85 +1328,23 @@ export function scanEscape(st: InlineState): boolean {
   return true
 }
 
+/**
+ * Any ASCII punctuation, as in CommonMark §2.4 (#5160 N9), so a foreign `\(`
+ * decodes instead of keeping a backslash the next save doubles. Safe for our
+ * own output, which doubles every literal backslash.
+ *
+ * Two additions beyond CommonMark, each for a serializer escape:
+ *
+ *  - a digit, for the seam between a math atom and the digit text after it:
+ *    `$x$5` reads as currency, `$x$\5` keeps the math;
+ *  - a space or a tab, for a paragraph line whose text starts with whitespace
+ *    (#4071/#4076): `\ ` puts a character at column 0, so the whitespace is
+ *    content rather than list indentation. Decoded whitespace is storable, so
+ *    the serializer must re-emit the escape wherever it decodes
+ *    (`serializeBlockSequence`, whose tab arm exists because `\<tab>` does).
+ */
 function isEscapableChar(ch: string): boolean {
-  return (
-    ch === '*' ||
-    ch === '`' ||
-    ch === '\\' ||
-    ch === '#' ||
-    ch === '[' ||
-    ch === ']' ||
-    ch === '~' ||
-    ch === '=' ||
-    // `!` is escapable so a literal `!` immediately before `[` round-trips as
-    // text instead of opening an `![alt](url)` image (#1434). `\!` emits a bare
-    // `!`; any following `[…](…)` then parses as an ordinary link, never an image.
-    ch === '!' ||
-    // `$` is escapable so a literal dollar sign round-trips as text (`\$`)
-    // instead of opening an inline-math span (#1437) — this is what keeps a
-    // currency amount like `$5` literal once the serializer has escaped it.
-    ch === '$' ||
-    // `_`/`|` are escapable so literal underscores and pipes round-trip
-    // (#710-1, #710-4) — escapeText emits `\_` / `\|` and this accepts them.
-    ch === '_' ||
-    ch === '|' ||
-    // `(` is escapable so literal `((ULID))` TEXT round-trips as text
-    // (serialized `\((ULID))`) instead of resurrecting as a live block_ref —
-    // the serializer escapes the opening paren of a would-be ref token,
-    // mirroring the `#`+`[` tag_ref guard (escaping asymmetry fix).
-    ch === '(' ||
-    // Digits are escapable so the serializer can defuse the seam between a
-    // math_inline atom and immediately following digit text: `$x$5` re-parses
-    // as literal text (the currency closer rule rejects a `$` followed by a
-    // digit), while `$x$\5` keeps the math atom and `\5` decodes back to `5`.
-    (ch >= '0' && ch <= '9') ||
-    // `.` is escapable so a paragraph beginning with `N. ` round-trips as
-    // text (serialized `N\. `) instead of re-parsing as an ordered list.
-    ch === '.' ||
-    // `-` is escapable so a paragraph beginning with `- ` round-trips as
-    // text (serialized `\- `) instead of re-parsing as a bullet list (#1436).
-    ch === '-' ||
-    // `<` is escapable so a literal `<u>`/`</u>` in text (serialized as `\<u>`)
-    // round-trips as text instead of opening an underline mark (#211 P2-5).
-    ch === '<' ||
-    // `>` is escapable so a paragraph beginning with `> ` (or a bare `>`)
-    // round-trips as text (serialized `\> `) instead of re-parsing as a
-    // blockquote. Symmetric with `-` (#1436): no serializer output contained a
-    // literal `\>` before, so accepting it here cannot break an existing pair.
-    ch === '>' ||
-    // `:` is escapable so the serializer can defuse a bare `http(s)://…` URL
-    // that lives in PLAIN (unlinked) text — emitting the scheme colon as `\:`
-    // breaks the `://` autolink trigger on reparse while `\:` round-trips back
-    // to `:`. Without this, a URL substring inside escaped literal text (e.g.
-    // `\](https://x.com)`) would re-autolink on the next parse, breaking
-    // serialize∘parse idempotence (#1441).
-    ch === ':' ||
-    // A SPACE or TAB is escapable so the serializer can defuse a paragraph
-    // whose stored text begins with whitespace (#4071/#4076). Leading
-    // whitespace is the one thing that is both content (a paragraph stores it)
-    // and structure (it is how a list item's nested content is spelled), so a
-    // paragraph emitted after a list would be swallowed by it on reparse —
-    // see `serializeBlockSequence`. `\ ` puts a non-whitespace character at
-    // column 0, which settles the ambiguity in favour of content, and decodes
-    // back to the bare space/tab so nothing is added to the text.
-    //
-    // Only the escape is new: `escapeText` never emits `\ ` for an interior
-    // space, so this cannot change any previously serialized document — a
-    // literal backslash in stored text is exported as `\\`, which this reads
-    // back as one backslash before the space is even reached. What it does
-    // change is how a FOREIGN `\ ` imports, and reading it as a space is the
-    // same rule every other escapable char already follows.
-    //
-    // This is a deliberate divergence from CommonMark §2.4, which escapes only
-    // ASCII punctuation (`\ ` is a literal backslash there, and a trailing `\`
-    // is a hard break — which is what `scanEscape`'s end-of-input guard leaves
-    // it as). The cost is that the decoded whitespace is now storable, so the
-    // serializer has to be able to re-emit the escape in EVERY position it can
-    // decode in, not only the one it was added for: see `serializeBlockSequence`,
-    // whose tab arm exists precisely because `\<tab>` decodes here.
-    ch === ' ' ||
-    ch === '\t'
-  )
+  return ASCII_PUNCTUATION_RE.test(ch) || (ch >= '0' && ch <= '9') || ch === ' ' || ch === '\t'
 }
 
 /** Atomic ref tokens: `#[ULID]`, `[[ULID]]`, `((ULID))`. */
@@ -1392,8 +1361,8 @@ export function scanTokenRef(st: InlineState): boolean {
  * an image apart from a `[text](url)` link — the `!` MUST be immediately
  * followed by `[`, and the `[…](…)` that follows must form a valid link shape
  * (balanced `]` then `(…)`). The alt text is taken raw (an opaque string; it is
- * not parsed for nested marks — an image is an atom), and the URL is unescaped
- * with the same `unescapeUrl` the link path uses so an escaped `\)` round-trips.
+ * not parsed for nested marks — an image is an atom), and the URL is read with
+ * the same `linkDestination` the link path uses so an escaped `\)` round-trips.
  *
  * A literal `\![…]` never reaches here: `scanEscape` runs first and consumes the
  * `\!` into a bare `!`, so the following `[…](…)` parses as a normal link.
@@ -1420,7 +1389,7 @@ export function scanImage(st: InlineState): boolean {
   if (urlEnd === -1) return false
 
   const alt = unescapeImageAlt(s.src.slice(altStart, altEnd))
-  const src = unescapeUrl(s.src.slice(urlStart, urlEnd))
+  const src = linkDestination(s.src.slice(urlStart, urlEnd))
 
   flushBuf(st, currentMarks(st))
   st.nodes.push({ type: 'image', attrs: { alt, src } })
@@ -1491,8 +1460,7 @@ export function scanAutolink(st: InlineState): boolean {
  * CommonMark-aligned flanking test for an underscore delimiter run at the
  * scanner cursor (the cursor may sit mid-run if an earlier `_` was already
  * emitted as literal — e.g. the 2nd `_` of `a__b__c`). Thin wrapper over the
- * shared `underscoreRunFlank`. `*` runs use the naive asterisk toggle and have
- * no such guard.
+ * shared `underscoreRunFlank`. `*`, `~` and `=` runs use `mayToggle`.
  *
  * The serializer does NOT use this rule (#4049): it escapes one text node at a
  * time and cannot see the line, so it uses the coarser, dedent-invariant
@@ -1504,7 +1472,32 @@ function underscoreFlank(s: Scanner): { canOpen: boolean; canClose: boolean } {
   return underscoreRunFlank(s.src, s.pos)
 }
 
-/** Bold toggle: `**` (asterisk, naive) or `__` (underscore, CommonMark flanking). */
+/**
+ * The flanking of the `*`, `~` or `=` run at the scanner cursor (CommonMark
+ * §6.2), read from the whole run: the cursor sits mid-run once `scanBold` has
+ * taken two stars of `***`. The run may take in an escaped char before it,
+ * which only swaps its left neighbour for the backslash: punctuation either way.
+ */
+function delimiterRunFlank(s: Scanner): { canOpen: boolean; canClose: boolean } {
+  const ch = s.src[s.pos]
+  let start = s.pos
+  while (start > 0 && s.src[start - 1] === ch) start--
+  let end = s.pos
+  while (s.src[end] === ch) end++
+  return runFlank(flankClass(codePointBefore(s.src, start)), flankClass(codePointAt(s.src, end)))
+}
+
+/**
+ * Whether the delimiter at the cursor may toggle a mark that is `open` now:
+ * close it, or open it (#5160 N9). One that may not is literal text, so
+ * `5 * 3 = 15 and 2 * 4 = 8` stays prose.
+ */
+function mayToggle(s: Scanner, open: boolean): boolean {
+  const { canOpen, canClose } = delimiterRunFlank(s)
+  return open ? canClose : canOpen
+}
+
+/** Bold toggle: `**` (asterisk) or `__` (underscore), each by its flanking rule. */
 export function scanBold(st: InlineState): boolean {
   const ch = peek(st.scanner)
   if ((ch !== '*' && ch !== '_') || peek(st.scanner, 1) !== ch) return false
@@ -1518,6 +1511,8 @@ export function scanBold(st: InlineState): boolean {
     }
   } else if (st.inBold && st.boldDelim !== '*') {
     // `*` open run can only be closed by `*` (no `__…**` crossing).
+    return false
+  } else if (!mayToggle(st.scanner, st.inBold)) {
     return false
   }
   flushBuf(st, currentMarks(st))
@@ -1537,10 +1532,12 @@ export function scanBold(st: InlineState): boolean {
 /** Strikethrough toggle: `~~`. */
 export function scanStrike(st: InlineState): boolean {
   if (peek(st.scanner) !== '~' || peek(st.scanner, 1) !== '~') return false
+  if (!mayToggle(st.scanner, st.inStrike)) return false
   flushBuf(st, currentMarks(st))
   if (st.inStrike) {
     st.inStrike = false
   } else {
+    st.strikeOpenPos = st.scanner.pos
     st.strikeOpenNodeLen = st.nodes.length
     st.inStrike = true
   }
@@ -1551,10 +1548,12 @@ export function scanStrike(st: InlineState): boolean {
 /** Highlight toggle: `==`. */
 export function scanHighlight(st: InlineState): boolean {
   if (peek(st.scanner) !== '=' || peek(st.scanner, 1) !== '=') return false
+  if (!mayToggle(st.scanner, st.inHighlight)) return false
   flushBuf(st, currentMarks(st))
   if (st.inHighlight) {
     st.inHighlight = false
   } else {
+    st.highlightOpenPos = st.scanner.pos
     st.highlightOpenNodeLen = st.nodes.length
     st.inHighlight = true
   }
@@ -1585,6 +1584,7 @@ export function scanUnderline(st: InlineState): boolean {
   }
   if (!st.inUnderline && peek(s) === '<' && peek(s, 1) === 'u' && peek(s, 2) === '>') {
     flushBuf(st, currentMarks(st))
+    st.underlineOpenPos = s.pos
     st.underlineOpenNodeLen = st.nodes.length
     st.inUnderline = true
     s.pos += 3
@@ -1593,7 +1593,7 @@ export function scanUnderline(st: InlineState): boolean {
   return false
 }
 
-/** Italic toggle: `*` (single star) or `_` (single underscore, CommonMark flanking). */
+/** Italic toggle: `*` (single star) or `_` (single underscore), each by its flanking rule. */
 export function scanItalic(st: InlineState): boolean {
   const ch = peek(st.scanner)
   if (ch !== '*' && ch !== '_') return false
@@ -1608,6 +1608,8 @@ export function scanItalic(st: InlineState): boolean {
     }
   } else if (st.inItalic && st.italicDelim !== '*') {
     // `*` open run can only be closed by `*` (no `_…*` crossing).
+    return false
+  } else if (!mayToggle(st.scanner, st.inItalic)) {
     return false
   }
   flushBuf(st, currentMarks(st))
@@ -1631,57 +1633,74 @@ function scanPlain(st: InlineState): void {
 }
 
 /**
- * At end-of-line, revert any unclosed marks back into their literal
- * delimiter + underlying plain text. Runs in reverse order of opening so that
- * nested unclosed marks are handled correctly.
+ * At end-of-line, turn each mark still open back into the delimiter that
+ * opened it. Only that mark comes off the nodes after it: a link, a ref, math,
+ * code and every inner mark that did close stay, so a stray `**` never costs
+ * the line a tag or a URL. The latest opener goes first, so each insert leaves
+ * the nodes before it where they are.
  */
 function revertUnclosedMarks(st: InlineState): void {
-  // (Code spans need no revert: scanCodeSpan resolves open/close eagerly and
-  // emits unmatched delimiter runs as literal text on the spot.)
-  if (st.inHighlight) {
-    const reverted = st.nodes.splice(st.highlightOpenNodeLen)
-    st.buf = `==${reverted.map(nodeToPlainText).join('')}${st.buf}`
+  const unclosed: Array<{ mark: string; pos: number; at: number; text: string }> = []
+  const lit = (delim: '*' | '_' | null, n: number) => (delim === '_' ? '_' : '*').repeat(n)
+  if (st.inUnderline) {
+    unclosed.push({
+      mark: 'underline',
+      pos: st.underlineOpenPos,
+      at: st.underlineOpenNodeLen,
+      text: '<u>',
+    })
+  }
+  if (st.inBold) {
+    unclosed.push({
+      mark: 'bold',
+      pos: st.boldOpenPos,
+      at: st.boldOpenNodeLen,
+      text: lit(st.boldDelim, 2),
+    })
+  }
+  if (st.inItalic) {
+    unclosed.push({
+      mark: 'italic',
+      pos: st.italicOpenPos,
+      at: st.italicOpenNodeLen,
+      text: lit(st.italicDelim, 1),
+    })
   }
   if (st.inStrike) {
-    const reverted = st.nodes.splice(st.strikeOpenNodeLen)
-    st.buf = `~~${reverted.map(nodeToPlainText).join('')}${st.buf}`
+    unclosed.push({ mark: 'strike', pos: st.strikeOpenPos, at: st.strikeOpenNodeLen, text: '~~' })
   }
-  revertUnclosedItalic(st)
-  if (st.inBold) {
-    const reverted = st.nodes.splice(st.boldOpenNodeLen)
-    // Revert to the literal delimiter that opened the run (`**` or `__`).
-    const lit = st.boldDelim === '_' ? '__' : '**'
-    st.buf = `${lit}${reverted.map(nodeToPlainText).join('')}${st.buf}`
+  if (st.inHighlight) {
+    unclosed.push({
+      mark: 'highlight',
+      pos: st.highlightOpenPos,
+      at: st.highlightOpenNodeLen,
+      text: '==',
+    })
   }
-  // Underline is the outermost mark (opened first) → reverted last so the
-  // inner reverts above have already folded their nodes back into `buf`.
-  if (st.inUnderline) {
-    const reverted = st.nodes.splice(st.underlineOpenNodeLen)
-    st.buf = `<u>${reverted.map(nodeToPlainText).join('')}${st.buf}`
+  for (const { mark, at, text } of unclosed.toSorted((a, b) => b.pos - a.pos)) {
+    const after = st.nodes
+      .splice(at)
+      .map((node) => (node.type === 'text' ? withoutMark(node, mark) : node))
+    st.nodes.push({ type: 'text', text }, ...after)
   }
+  // Neighbours the revert left with the same marks are one run. (Two code
+  // spans never meet: the grammar needs a char between them.)
+  const merged = st.nodes.splice(0).reduce<InlineNode[]>((out, node) => {
+    const prev = out.at(-1)
+    const sameRun =
+      prev?.type === 'text' &&
+      node.type === 'text' &&
+      JSON.stringify(prev.marks ?? []) === JSON.stringify(node.marks ?? [])
+    if (sameRun) out[out.length - 1] = { ...prev, text: prev.text + node.text }
+    else out.push(node)
+    return out
+  }, [])
+  st.nodes.push(...merged)
 }
 
-/**
- * Italic revert is the only case that interacts with bold — if bold opened
- * *inside* an unclosed italic, the bold `**` delimiter must be preserved
- * verbatim in the reverted text (and `inBold` cleared so it isn't reverted
- * a second time).
- */
-function revertUnclosedItalic(st: InlineState): void {
-  if (!st.inItalic) return
-  const reverted = st.nodes.splice(st.italicOpenNodeLen)
-  // Revert to the literal delimiter that opened each run (`*`/`_`, `**`/`__`).
-  const italicLit = st.italicDelim === '_' ? '_' : '*'
-  if (st.inBold && st.boldOpenPos > st.italicOpenPos) {
-    const boldLit = st.boldDelim === '_' ? '__' : '**'
-    const splitAt = st.boldOpenNodeLen - st.italicOpenNodeLen
-    const before = reverted.slice(0, splitAt)
-    const after = reverted.slice(splitAt)
-    st.buf = `${italicLit}${before.map(nodeToPlainText).join('')}${boldLit}${after.map(nodeToPlainText).join('')}${st.buf}`
-    st.inBold = false
-  } else {
-    st.buf = `${italicLit}${reverted.map(nodeToPlainText).join('')}${st.buf}`
-  }
+function withoutMark(node: TextNode, mark: string): TextNode {
+  const marks = (node.marks ?? []).filter((m) => m.type !== mark)
+  return marks.length > 0 ? { ...node, marks } : { type: 'text', text: node.text }
 }
 
 /**
@@ -1710,6 +1729,7 @@ function parseLine(line: string, depth = 0): InlineNode[] {
   while (st.scanner.pos < st.scanner.src.length) {
     if (scanCodeSpan(st)) continue
     if (scanEscape(st)) continue
+    if (scanDollarPairMath(st)) continue
     if (scanMathInline(st)) continue
     if (scanTokenRef(st)) continue
     if (scanImage(st)) continue
@@ -1725,4 +1745,12 @@ function parseLine(line: string, depth = 0): InlineNode[] {
   revertUnclosedMarks(st)
   flushRemainingBuf(st)
   return st.nodes
+}
+
+/**
+ * One line of pasted text read as inline content only (#5160 N11): marks,
+ * links, images, math and ref tokens, never a block production.
+ */
+export function parseInline(line: string): InlineNode[] {
+  return parseLine(line)
 }

@@ -149,7 +149,8 @@ describe('every line of a paragraph is guarded against block dispatch', () => {
     ['# b', 'a\n\\# b'],
     ['> b', 'a\n\\> b'],
     ['---', 'a\n\\---'],
-    ['| b |', 'a\n\\| b \\|'],
+    // #5160 N12: only the leading `|` would start a table.
+    ['| b |', 'a\n\\| b |'],
     ['```', 'a\n\\`\\`\\`'],
     ['$$', 'a\n\\$$'],
     ['- [ ] b', 'a\n\\- \\[ \\] b'],
@@ -160,8 +161,8 @@ describe('every line of a paragraph is guarded against block dispatch', () => {
   })
 
   it('moves an italic opening onto a space off the continuation line start', () => {
-    // `* b*` at a line start is a bullet marker (#4156); the defuse that keeps
-    // it off the FIRST line keeps it off every line.
+    // `* b*` at a line start is a bullet marker (#4156). A `*` before a space
+    // cannot open (#5160 N9), so the serializer moves it off every line.
     const d = doc(paragraph(text('a'), hardBreak(), italic(' b')))
     const md = serialize(d)
     expect(md).toBe('a\n *b*')

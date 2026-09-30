@@ -132,6 +132,16 @@ fn strip_highlight() {
     assert_eq!(result, "important", "highlight markers should be stripped");
 }
 
+/// #5160 N12 — the editor stores a space-flanked `==` or `~~` bare, so a
+/// comparison is text, not a mark, and must be indexed as written.
+#[test]
+fn strip_keeps_space_flanked_comparisons() {
+    for text in ["if a == b and c == d", "x ~~ y and z ~~ w"] {
+        let result = strip_for_fts_with_maps(text, &HashMap::new(), &HashMap::new());
+        assert_eq!(result, text, "a space-flanked run is not a mark");
+    }
+}
+
 #[test]
 fn strip_mixed_formatting() {
     let result = strip_for_fts_with_maps(

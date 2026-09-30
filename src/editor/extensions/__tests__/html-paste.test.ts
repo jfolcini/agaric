@@ -10,15 +10,19 @@
  *   (b) multi-block content threads the paste-time `targetBlockId` so the
  *       receiver can reject a paste whose focus has since moved.
  * They also pin which plain-text pastes `handlePaste` routes to the block path
- * (#5140), spliced into the block at the selection (#5160 D4), and the
- * Ctrl/Cmd+Shift+V plain paste.
+ * (#5140), spliced into the block at the selection (#5160 D4), the
+ * Ctrl/Cmd+Shift+V plain paste, and the one-line paste read as inline
+ * markdown (#5160 N11).
  */
 
 import { Editor } from '@tiptap/core'
+import Bold from '@tiptap/extension-bold'
 import { CodeBlockLowlight } from '@tiptap/extension-code-block-lowlight'
 import Document from '@tiptap/extension-document'
 import HardBreak from '@tiptap/extension-hard-break'
 import Heading from '@tiptap/extension-heading'
+import Italic from '@tiptap/extension-italic'
+import Link from '@tiptap/extension-link'
 import { BulletList } from '@tiptap/extension-list'
 import ListItem from '@tiptap/extension-list-item'
 import { Table } from '@tiptap/extension-table'
@@ -762,5 +766,90 @@ describe('handlePaste — pasted text goes to the block path, spliced (#5160 D4)
     expect(paste(editor, 'a\nb')).toBe(true)
 
     expect(dispatchBlockEvent).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('handlePaste — one pasted line is read as inline markdown (#5160 N11)', () => {
+  let editor: Editor | null = null
+
+  afterEach(() => {
+    editor?.destroy()
+    editor = null
+  })
+
+  /** An editor with the marks a line of markdown can carry. */
+  async function buildMarkedEditor(content: object): Promise<Editor> {
+    const { HtmlPaste } = await loadModule()
+    return new Editor({
+      element: document.createElement('div'),
+      extensions: [Document, TaskParagraph, Text, HardBreak, Bold, Italic, Link, HtmlPaste],
+      content,
+    })
+  }
+
+  function paste(ed: Editor, plain: string): boolean {
+    const data = new DataTransfer()
+    data.setData('text/plain', plain)
+    const event = new ClipboardEvent('paste', { clipboardData: data })
+    return (
+      ed.view.someProp('handlePaste', (fn) =>
+        fn(ed.view, event, ed.view.state.selection.content()),
+      ) ?? false
+    )
+  }
+
+  const LINK = { type: 'link', attrs: expect.objectContaining({ href: 'https://example.com' }) }
+
+  it('inserts the line at the caret with its marks and links', async () => {
+    editor = await buildMarkedEditor(HELLO_WORLD)
+    editor.commands.setTextSelection(7)
+
+    expect(paste(editor, '**big** [docs](https://example.com) ')).toBe(true)
+
+    expect(dispatchBlockEvent).not.toHaveBeenCalled()
+    expect(editor.getJSON().content?.[0]?.content).toEqual([
+      { type: 'text', text: 'Hello ' },
+      { type: 'text', text: 'big', marks: [{ type: 'bold' }] },
+      { type: 'text', text: ' ' },
+      { type: 'text', text: 'docs', marks: [LINK] },
+      { type: 'text', text: ' world' },
+    ])
+  })
+
+  it('reads the one line of a paste with blank lines around it, replacing a selection', async () => {
+    editor = await buildMarkedEditor(HELLO_BIG_WORLD)
+    editor.commands.setTextSelection({ from: 7, to: 10 })
+
+    expect(paste(editor, '\n*small*\n\n')).toBe(true)
+
+    expect(editor.getJSON().content?.[0]?.content).toEqual([
+      { type: 'text', text: 'Hello ' },
+      { type: 'text', text: 'small', marks: [{ type: 'italic' }] },
+      { type: 'text', text: ' world' },
+    ])
+  })
+
+  it('keeps a link after a delimiter that never closes', async () => {
+    editor = await buildMarkedEditor(EMPTY_PARAGRAPH)
+
+    expect(paste(editor, '*Note: see [docs](https://example.com)')).toBe(true)
+
+    expect(editor.getJSON().content?.[0]?.content).toEqual([
+      { type: 'text', text: '*Note: see ' },
+      { type: 'text', text: 'docs', marks: [LINK] },
+    ])
+  })
+
+  it.each([
+    ['plain text', 'just text, 5 * 3 = 15'],
+    ['a bare URL, which ExternalLink links and prefetches', 'https://example.com'],
+    ['a task line, which TaskPaste owns', '- [ ] **buy** milk'],
+    ['a line the schema cannot hold (no math node here)', 'area $x^2$'],
+  ])('leaves %s to the other paste handlers', async (_name, text) => {
+    editor = await buildMarkedEditor(EMPTY_PARAGRAPH)
+
+    expect(paste(editor, text)).toBe(false)
+
+    expect(editor.state.doc.textContent).toBe('')
   })
 })

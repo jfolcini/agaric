@@ -46,6 +46,7 @@ import { CalloutBlockquote } from '@/editor/extensions/callout-blockquote'
 import { CheckboxInputRule } from '@/editor/extensions/checkbox-input-rule'
 import { EmojiPicker, emojiPickerPluginKey } from '@/editor/extensions/emoji-picker'
 import { ExternalLink } from '@/editor/extensions/external-link'
+import { withFlankingShortcuts } from '@/editor/extensions/flanking-marks'
 import { HtmlPaste } from '@/editor/extensions/html-paste'
 import { Image } from '@/editor/extensions/image'
 import {
@@ -771,11 +772,11 @@ export function useRovingEditor(options: RovingEditorOptions = {}): RovingEditor
       // checkbox state survives `nodeFromJSON` (the stock Paragraph drops it).
       TaskParagraph,
       Text,
-      Bold,
-      Italic,
+      withFlankingShortcuts(Bold),
+      withFlankingShortcuts(Italic),
       CodeWithShortcut,
-      StrikeWithShortcut,
-      HighlightWithShortcut,
+      withFlankingShortcuts(StrikeWithShortcut),
+      withFlankingShortcuts(HighlightWithShortcut),
       Underline,
       CalloutBlockquote,
       OrderedList,

@@ -19,9 +19,14 @@
 
 import {
   blockLinkToken,
+  codePointAt,
+  codePointBefore,
+  flankClass,
   isAutolinkableUrl,
   leadingIndent,
+  linkDestination,
   LIST_NEST_INDENT,
+  runFlank,
   scanBareUrl,
   ULID_RE,
   underscoreNeedsEscape,
@@ -61,18 +66,15 @@ function dollarOpensMath(s: string, i: number): boolean {
 
 /**
  * Single-char escapes whose verdict is context-free: the char is always
- * rewritten to `\<char>` regardless of neighbours. `|` is the table-cell
- * separator AND the table block gate (`startsWith('|')`); `*`/`` ` ``/`~`/`=`
- * are mark/code/strike/highlight delimiters; `[`/`]` open/close link labels;
- * `\` itself doubles. Kept as a table so the per-char loop stays flat.
+ * rewritten to `\<char>` regardless of neighbours. `*`/`` ` `` are mark and
+ * code delimiters, `[`/`]` open and close link labels, and `\` itself doubles.
+ * `~`, `=` and `|` are escaped only where they would parse (#5160 N12): see
+ * `delimiterRunNeedsEscape`, `escapeLeadingBlockMarker` and `escapeCellPipes`.
  */
 const ALWAYS_ESCAPE: Record<string, string> = {
   '\\': '\\\\',
   '*': '\\*',
   '`': '\\`',
-  '~': '\\~',
-  '=': '\\=',
-  '|': '\\|',
   '[': '\\[',
   ']': '\\]',
 }
@@ -148,7 +150,34 @@ function opensBlockRefToken(s: string, i: number): boolean {
   )
 }
 
-function escapeText(s: string): string {
+/**
+ * Whether the `~`/`=` run `s[start, end)` would parse as a strike or highlight
+ * delimiter (#5160 N12): it joins the same char just outside the text, or it
+ * is two or more that could flank. Any `~~~` is escaped too, since the import
+ * reads one at a line start as a code fence. `x = 5` and `a == b` stay bare.
+ */
+function delimiterRunNeedsEscape(
+  s: string,
+  start: number,
+  end: number,
+  before: string,
+  after: string,
+): boolean {
+  const ch = s[start]
+  const prev = start > 0 ? codePointBefore(s, start) : before
+  const next = end < s.length ? codePointAt(s, end) : after
+  if (prev === ch || next === ch) return true
+  if (end - start < 2) return false
+  if (ch === '~' && end - start > 2) return true
+  const { canOpen, canClose } = runFlank(flankClass(prev), flankClass(next))
+  return canOpen || canClose
+}
+
+/**
+ * Escape a text node's text. `before` and `after` are the chars emitted just
+ * outside it (`''` at a line edge), which decide a `~`/`=` run at its edge.
+ */
+function escapeText(s: string, before: string, after: string): string {
   let out = ''
   for (let i = 0; i < s.length; i++) {
     const ch = s[i] as string
@@ -156,6 +185,14 @@ function escapeText(s: string): string {
     if (url) {
       out += url.text
       i = url.next
+      continue
+    }
+    if (ch === '~' || ch === '=') {
+      let end = i + 1
+      while (s[end] === ch) end++
+      const run = s.slice(i, end)
+      out += delimiterRunNeedsEscape(s, i, end, before, after) ? run.replaceAll(ch, `\\${ch}`) : run
+      i = end - 1
       continue
     }
     const always = ALWAYS_ESCAPE[ch]
@@ -169,8 +206,28 @@ function escapeText(s: string): string {
   return out
 }
 
+/** Emphasis marks innermost first, the order their delimiters close in; they open in reverse. */
+const MARK_ORDER = ['highlight', 'strike', 'italic', 'bold', 'underline'] as const
+type EmphasisMark = (typeof MARK_ORDER)[number]
+
+const OPEN_DELIMITER: Record<EmphasisMark, string> = {
+  highlight: '==',
+  strike: '~~',
+  italic: '*',
+  bold: '**',
+  underline: '<u>',
+}
+const CLOSE_DELIMITER: Record<EmphasisMark, string> = { ...OPEN_DELIMITER, underline: '</u>' }
+
+interface Delimiter {
+  mark: EmphasisMark
+  open: boolean
+  text: string
+}
+
 /**
- * Emit mark delimiters to transition from one active mark state to another.
+ * The mark delimiters that move from one active mark state to another: closes
+ * first, innermost to outermost, then opens, outermost to innermost.
  *
  * The parser greedily matches `**` before `*`, so we emit close delimiters
  * for inner marks first (italic before bold) and open delimiters for outer
@@ -178,34 +235,27 @@ function escapeText(s: string): string {
  * both marks change, which the parser interprets as `**` + `*` (toggle bold,
  * then toggle italic) — matching the intended semantics.
  */
+function markTransition(from: ReadonlySet<string>, to: ReadonlySet<string>): Delimiter[] {
+  const closes = MARK_ORDER.filter((mark) => from.has(mark) && !to.has(mark)).map((mark) => ({
+    mark,
+    open: false,
+    text: CLOSE_DELIMITER[mark],
+  }))
+  const opens = MARK_ORDER.toReversed()
+    .filter((mark) => to.has(mark) && !from.has(mark))
+    .map((mark) => ({ mark, open: true, text: OPEN_DELIMITER[mark] }))
+  return [...closes, ...opens]
+}
+
 function emitMarkTransition(from: ReadonlySet<string>, to: ReadonlySet<string>): string {
-  let result = ''
-  // Close marks no longer needed (inner first → outer last: highlight, strike,
-  // italic, bold, then underline which is the outermost wrapper).
-  if (from.has('highlight') && !to.has('highlight')) result += '=='
-  if (from.has('strike') && !to.has('strike')) result += '~~'
-  if (from.has('italic') && !to.has('italic')) result += '*'
-  if (from.has('bold') && !to.has('bold')) result += '**'
-  if (from.has('underline') && !to.has('underline')) result += '</u>'
-  // Open marks newly needed (outer first → inner last: underline, then bold,
-  // italic, strike, highlight).
-  if (to.has('underline') && !from.has('underline')) result += '<u>'
-  if (to.has('bold') && !from.has('bold')) result += '**'
-  if (to.has('italic') && !from.has('italic')) result += '*'
-  if (to.has('strike') && !from.has('strike')) result += '~~'
-  if (to.has('highlight') && !from.has('highlight')) result += '=='
-  return result
+  return markTransition(from, to)
+    .map((d) => d.text)
+    .join('')
 }
 
 /** Close all active marks (inner first → outer last; underline outermost). */
 function emitCloseAll(active: ReadonlySet<string>): string {
-  let result = ''
-  if (active.has('highlight')) result += '=='
-  if (active.has('strike')) result += '~~'
-  if (active.has('italic')) result += '*'
-  if (active.has('bold')) result += '**'
-  if (active.has('underline')) result += '</u>'
-  return result
+  return emitMarkTransition(active, new Set())
 }
 
 // -- Link mark helpers --------------------------------------------------------
@@ -243,6 +293,17 @@ function linkSpanPlainText(nodes: readonly InlineNode[]): string | null {
     out += node.text
   }
   return out
+}
+
+/**
+ * A link group whose visible text is exactly its href, as one plain text
+ * node, and which the importer would re-autolink in full: it can be written
+ * as the bare URL (#1441). We compare the raw text, not the escaped one, which
+ * defuses the URL.
+ */
+function isBareUrlGroup(group: NodeGroup): boolean {
+  const rawText = linkSpanPlainText(group.nodes.map(stripLinkMark))
+  return rawText !== null && rawText === group.href && isAutolinkableUrl(group.href)
 }
 
 /** Group consecutive inline nodes by their link mark href. */
@@ -304,6 +365,17 @@ function escapeUrl(url: string): string {
 }
 
 /**
+ * A link or image destination the parser reads back as `url`
+ * (`linkDestination`). The bare form would drop a title-like tail
+ * (`https://x.com "t"`), edge whitespace or one layer of `<…>`, so such a URL
+ * is written in `<…>` form instead (#5160 N9).
+ */
+function linkDestinationText(url: string): string {
+  const escaped = escapeUrl(url)
+  return linkDestination(escaped) === url ? escaped : `<${escaped}>`
+}
+
+/**
  * Escape the alt text of an `![alt](url)` image (#1434). The alt is an opaque
  * string (not parsed for marks on the way back in), so only the chars that
  * would break the `![…]` label shape on reparse are escaped: a literal `\` is
@@ -333,6 +405,9 @@ function escapeImageAlt(alt: string): string {
  * unknown-node fallback). The caller provides the atom token to emit.
  */
 function serializeInlineAtom(token: string, activeMarks: Set<string>): string {
+  // An atom that emits nothing is not there. Closing the marks around it would
+  // put a close and a reopen side by side: `*a**b*` reads the `**` as bold.
+  if (token === '') return ''
   const out = emitCloseAll(activeMarks) + token
   activeMarks.clear()
   return out
@@ -395,9 +470,15 @@ function sanitizeInlineMathLatex(latex: string): string {
 /**
  * Serialize a single TextNode, coalescing its marks with the currently
  * active mark set. Mutates `activeMarks` to reflect the new active set
- * after this node is emitted.
+ * after this node is emitted. `before` and `after` are the chars emitted just
+ * outside the node (`escapeText`).
  */
-function serializeInlineText(child: TextNode, activeMarks: Set<string>): string {
+function serializeInlineText(
+  child: TextNode,
+  activeMarks: Set<string>,
+  before = '',
+  after = '',
+): string {
   const marks = child.marks ?? []
   const hasCode = marks.some((m) => m.type === 'code')
 
@@ -413,183 +494,190 @@ function serializeInlineText(child: TextNode, activeMarks: Set<string>): string 
   const transition = emitMarkTransition(activeMarks, desired)
   activeMarks.clear()
   for (const m of desired) activeMarks.add(m)
-  return transition + escapeText(child.text)
+  const prev = transition === '' ? before : (transition.at(-1) as string)
+  return transition + escapeText(child.text, prev, after)
+}
+
+/** A text node that emits mark delimiters around its escaped text: not code, which is an atom. */
+function isDelimitedText(node: InlineNode | undefined): node is TextNode {
+  return node?.type === 'text' && !(node.marks ?? []).some((m) => m.type === 'code')
 }
 
 /**
- * #4156: an italic span that leads a paragraph's content (possibly after
- * plain, all-space text — the marker-indent tolerance below), and whose text
- * starts with a space, has no markdown spelling. `emitMarkTransition` would
- * open it with a bare `*` immediately followed by that space — exactly
- * `BULLET_ITEM_RE`'s bullet-list marker (`[-*] `) — so the reparse reads the
- * paragraph as a bullet list instead of reopening emphasis (#711's collision,
- * but from a MARK delimiter rather than literal text, so `escapeText` never
- * sees it). Escaping only the opening delimiter after the fact leaves its
- * matching close dangling — a plain `*` with nothing to pair it with — which
- * reparses as literal text one way on the first pass and another way (via
- * `escapeText`'s unconditional `*` escape) on the second, converging only on
- * pass two (#4076's failure mode, moved rather than removed).
- *
- * Any OTHER co-active mark defuses this on its own, because it puts something
- * that is not a space between the italic star and the text:
- *
- *  - bold/strike/highlight/underline insert their own delimiter (`**` `*`, or
- *    `*` `~~`, …), so the line starts `**`/`<u>`, not `[-*] `;
- *  - a `code` mark is EXCLUSIVE — `serializeInlineText` emits a backtick run
- *    and no emphasis star at all;
- *  - a `link` mark wraps the span in `[`…`](url)`, so the line starts `[`.
- *
- * Italic alone (mod all-space plain text before it — the same widened
- * tolerance `serializeParagraph`'s dash/digit escapes use, since a nested
- * paragraph's indent can dedent BACK into the marker's 0-3-space tolerance),
- * opening onto a space, is the only vulnerable shape. {@link isVulnerableItalicOpen}
- * below therefore has to look past `markSetFromMarks` (which reports only the
- * five emphasis marks) and reject `code`/`link` explicitly.
- *
- * The transform moves the mark's OPENING boundary past the leading whitespace
- * instead of dropping it outright — `italic(' y')` becomes plain(' ') +
- * `italic('y')`, so the delimiter now opens on `y`, not on a space, and the
- * mark survives on everything it can still legally wrap. Only when the run is
- * whitespace all the way through (no character to move the boundary to, the
- * issue's literal repro `italic(' ')`) does the mark drop entirely — which
- * costs nothing visible, since italic on whitespace renders no differently
- * than plain whitespace.
- *
- * It is still LOSSY — a mark boundary moves, and `parse(serialize(doc))` stops
- * being the identity for these shapes — which is why it is applied only where
- * the collision can actually happen: `serializeParagraph`'s `atLineStart`,
- * false for a heading's inline content, a table cell, a task paragraph and a
- * list item's own leading paragraph, all of which emit a prefix that consumes
- * the line start before this text reaches it. Every other defense in
- * `serializeParagraph` is an escape the parser reverses, so applying one
- * needlessly costs nothing; this one costs a mark, so it is gated instead.
+ * The first char emitted after the delimited text node `nodes[i]`: the next
+ * delimiter, else the next atom or text, else `after`, the char past the run
+ * of nodes.
  */
-function defuseLeadingItalicMarker(content: readonly InlineNode[]): InlineNode[] {
-  const isPlainSpaces = (n: InlineNode | undefined): n is TextNode =>
-    n?.type === 'text' && (n.marks ?? []).length === 0 && /^ *$/.test(n.text)
-  // An inline ATOM that serializes to the empty string is just as invisible
-  // at the line start as a run of plain spaces — a whitespace-only
-  // `math_inline` node is the concrete case #4195 names
-  // (`serializeInlineChild`'s `math_inline` branch emits `''` when
-  // `sanitizeInlineMathLatex` reduces it to nothing), but it is not the only
-  // one: an unrecognized node type reaching `serializeInlineChild`'s final
-  // `onUnknownNode` fallback is dropped just as silently (see the "unknown
-  // node" tests in markdown-serializer.test.ts — `video_embed` et al. are a
-  // real, tested inline shape, not a hypothetical one). Rather than special-
-  // casing `math_inline` and leaving the fallback branch unresolved (same
-  // bullet-list collision, reachable via an unknown leading node instead of a
-  // math atom), ask the real serializer what it would emit for the node in
-  // isolation. `activeMarks` is always empty here — no node this walk can
-  // have already skipped could have opened one: only `TextNode` carries
-  // `marks`, and `isPlainSpaces` only admits mark-free text — so a fresh
-  // empty set reproduces exactly what the real pass would emit at this
-  // position, and any future empty-serializing atom type is covered without
-  // another bespoke predicate. `onUnknownNode` is deliberately omitted so
-  // this probe doesn't double-report the node; the real serialize pass over
-  // the (unmodified) returned content still fires it once.
-  const isEmptyAtom = (n: InlineNode | undefined): boolean =>
-    n !== undefined && n.type !== 'text' && serializeInlineChild(n, new Set()) === ''
-
-  let i = 0
-  while (i < content.length && (isPlainSpaces(content[i]) || isEmptyAtom(content[i]))) i++
-  if (!isVulnerableItalicOpen(content, i)) return content as InlineNode[]
-
-  // The maximal contiguous run that keeps italic continuously active from `i`
-  // (an atom or a mark change ends it — same boundary `emitMarkTransition`
-  // would close the delimiter at). A `code` or `link` mark ends it too, even
-  // though the node still carries `italic`: `isVulnerableItalicOpen` rejects
-  // both (code is exclusive, link wraps the whole span), so a node bearing
-  // either is never part of the vulnerable span and must not be pulled into
-  // this walk — otherwise `consumingLeadingSpace` stays true into a `code`
-  // node's own text and the leading-space split below cuts it into two spans.
-  let runEnd = i
-  while (
-    runEnd < content.length &&
-    content[runEnd]?.type === 'text' &&
-    ((content[runEnd] as TextNode).marks ?? []).some((m) => m.type === 'italic') &&
-    !((content[runEnd] as TextNode).marks ?? []).some((m) => m.type === 'code' || m.type === 'link')
-  ) {
-    runEnd++
+function charAfterText(nodes: readonly InlineNode[], i: number, after: string): string {
+  const marks = markSetFromMarks((nodes[i] as TextNode).marks ?? [])
+  for (const next of nodes.slice(i + 1)) {
+    if (isDelimitedText(next)) {
+      const delimiters = emitMarkTransition(marks, markSetFromMarks(next.marks ?? []))
+      return delimiters === '' ? codePointAt(next.text, 0) : (delimiters[0] as string)
+    }
+    const token = serializeInlineChild(next, new Set())
+    if (token !== '') return emitCloseAll(marks)[0] ?? codePointAt(token, 0)
   }
+  return emitCloseAll(marks)[0] ?? after
+}
 
-  const out: InlineNode[] = content.slice(0, i) as InlineNode[]
-  let consumingLeadingSpace = true
-  for (const child of content.slice(i, runEnd) as TextNode[]) {
-    if (!consumingLeadingSpace) {
-      out.push(child)
-      continue
-    }
-    const spaceLen = (child.text.match(/^ */) as RegExpMatchArray)[0].length
-    if (spaceLen === child.text.length) {
-      // Entirely spaces: drop italic (nothing to move the boundary onto yet;
-      // the next run node, if any, gets its own chance to hold the boundary).
-      const marks = (child.marks ?? []).filter((m) => m.type !== 'italic')
-      out.push(marks.length > 0 ? { ...child, marks } : { type: 'text', text: child.text })
-      continue
-    }
-    consumingLeadingSpace = false
-    if (spaceLen > 0) {
-      const marks = (child.marks ?? []).filter((m) => m.type !== 'italic')
-      const lead = { ...child, text: child.text.slice(0, spaceLen) }
-      out.push(marks.length > 0 ? { ...lead, marks } : { type: 'text', text: lead.text })
-    }
-    out.push({ ...child, text: child.text.slice(spaceLen) })
-  }
-  out.push(...content.slice(runEnd))
-  return out
+// -- Flanking (#5160 N9) ------------------------------------------------------
+
+/** One char of a node run's emission that a delimiter run can see: a delimiter, or the edge char of a text or an atom. */
+interface Cell {
+  ch: string
+  delimiter?: Delimiter
+  /** The text node whose mark the delimiter opens or closes. */
+  node?: number
 }
 
 /**
- * Whether the italic-only run starting at `content[i]` would make
- * `emitMarkTransition` open a bare `*` immediately followed by a space — the
- * exact `[-*] ` bullet marker.
- *
- * The trigger is NOT necessarily on a single node (#4221). `content[i]` is
- * where the delimiter opens — the first node whose only emphasis mark is
- * italic (`code`/`link` rejected even though `markSetFromMarks` cannot see
- * them; see {@link defuseLeadingItalicMarker}) — but a zero-length TextNode
- * there contributes no character: `emitMarkTransition` still emits the `*`
- * for it (a real byte), so the leading-space trigger can sit on a LATER node
- * that keeps italic continuously active. Walk forward through every such
- * empty node; the first one with actual text decides it. A node that is not
- * itself italic-only text (wrong type, a different/extra mark, `code`/`link`)
- * ends the walk with "not vulnerable" — it is a mark-set change, which always
- * closes the delimiter and reopens it (`**`, never `* `), so nothing past
- * that point can complete the trigger either.
+ * The delimiters `serializeInlineNodes` emits for `nodes`, between the chars
+ * next to them. Only a text's first and last char can touch a delimiter, and
+ * an underline tag is punctuation to a `*`, `~` or `=` run beside it.
  */
-function isVulnerableItalicOpen(content: readonly InlineNode[], i: number): boolean {
-  for (let j = i; j < content.length; j++) {
-    const node = content[j]
-    if (node?.type !== 'text') return false
-    const marks = node.marks ?? []
-    if (marks.some((m) => m.type === 'code' || m.type === 'link')) return false
-    const emphasis = markSetFromMarks(marks)
-    if (emphasis.size !== 1 || !emphasis.has('italic')) return false
-    if (node.text === '') continue // opens the delimiter, contributes no char
-    return node.text.startsWith(' ')
+function delimiterCells(nodes: readonly InlineNode[], before: string, after: string): Cell[] {
+  const cells: Cell[] = [{ ch: before }]
+  let active: ReadonlySet<string> = new Set()
+  let last = -1
+  const move = (to: ReadonlySet<string>, opening: number) => {
+    for (const delimiter of markTransition(active, to)) {
+      if (delimiter.mark === 'underline') cells.push({ ch: '<' }, { ch: '>' })
+      else {
+        const node = delimiter.open ? opening : last
+        cells.push({ ch: delimiter.text[0] as string, delimiter, node })
+      }
+    }
+    active = to
   }
-  return false
+  for (const [i, node] of nodes.entries()) {
+    const token = isDelimitedText(node) ? node.text : serializeInlineChild(node, new Set())
+    if (token === '') continue
+    move(isDelimitedText(node) ? markSetFromMarks(node.marks ?? []) : new Set(), i)
+    cells.push({ ch: codePointAt(token, 0) }, { ch: codePointBefore(token, token.length) })
+    if (isDelimitedText(node)) last = i
+  }
+  move(new Set(), -1)
+  cells.push({ ch: after })
+  return cells
+}
+
+/** A delimiter the parser would read as text: `open`s `mark` at the start of `nodes[index]`, or closes it at its end. */
+interface UnreadableDelimiter {
+  index: number
+  mark: EmphasisMark
+  open: boolean
+}
+
+/** The first delimiter of `nodes` whose run does not flank the way it must (`runFlank`). */
+function firstUnreadable(
+  nodes: readonly InlineNode[],
+  before: string,
+  after: string,
+): UnreadableDelimiter | null {
+  const cells = delimiterCells(nodes, before, after)
+  for (let k = 1; k < cells.length - 1; k++) {
+    const ch = (cells[k] as Cell).ch
+    if (!(cells[k] as Cell).delimiter) continue
+    let end = k
+    while ((cells[end] as Cell).delimiter && (cells[end] as Cell).ch === ch) end++
+    const prev = (cells[k - 1] as Cell).ch
+    const { canOpen, canClose } = runFlank(flankClass(prev), flankClass((cells[end] as Cell).ch))
+    for (const { delimiter, node } of cells.slice(k, end)) {
+      const { mark, open } = delimiter as Delimiter
+      if (!(open ? canOpen : canClose)) return { index: node as number, mark, open }
+    }
+    k = end - 1
+  }
+  return null
+}
+
+/** `node` over `text`, without `mark`. */
+function withoutMark(node: TextNode, mark: string, text: string): TextNode {
+  const marks = (node.marks ?? []).filter((m) => m.type !== mark)
+  return marks.length > 0 ? { ...node, text, marks } : { type: 'text', text }
+}
+
+/** `nodes` with the unreadable delimiter's mark moved inward, off the char at the edge of its span. */
+function moveBoundaryInward(
+  nodes: readonly InlineNode[],
+  { index, mark, open }: UnreadableDelimiter,
+): InlineNode[] {
+  const node = nodes[index] as TextNode
+  const edge = open ? codePointAt(node.text, 0) : codePointBefore(node.text, node.text.length)
+  const cut = open ? edge.length : node.text.length - edge.length
+  const head = node.text.slice(0, cut)
+  const tail = node.text.slice(cut)
+  const pieces = open
+    ? [withoutMark(node, mark, head), { ...node, text: tail }]
+    : [{ ...node, text: head }, withoutMark(node, mark, tail)]
+  return [
+    ...nodes.slice(0, index),
+    ...pieces.filter((n) => n.text !== ''),
+    ...nodes.slice(index + 1),
+  ]
 }
 
 /**
- * {@link defuseLeadingItalicMarker} on every line of a dispatched paragraph.
- * A hard break is a bare newline (#5160 D2), so each continuation line is a
- * line the block parser dispatches, and an italic opening onto a space there
- * is the same bullet marker it would be on the first line.
+ * Move each emphasis mark boundary inward until the delimiter run it emits
+ * can be read back (#5160 N9). The parser toggles a mark only through a run
+ * that flanks the right way, so `** a**` or `a**(b)**c` would come back as
+ * literal stars; the mark instead loses the char at its edge until its run
+ * reads: ` **a**`, `a(**b**)c`. A span left with nothing the delimiter can
+ * wrap drops the mark, and two delimiter kinds stacked against a letter are
+ * staggered (`x~~a**b**c~~y`). Lossy, but only for shapes the grammar cannot
+ * spell. `bare` tells which link groups are written as a bare URL, whose
+ * letters flank differently from the `[`…`)` of a bracketed link.
  */
-function defuseEveryLineStart(content: readonly InlineNode[]): InlineNode[] {
-  const out: InlineNode[] = []
-  let line: InlineNode[] = []
-  for (const node of content) {
-    if (node.type !== 'hardBreak') {
-      line.push(node)
-      continue
-    }
-    out.push(...defuseLeadingItalicMarker(line), node)
-    line = []
+function fitMarksToFlanking(
+  content: readonly InlineNode[],
+  bare: (group: NodeGroup, index: number) => boolean,
+): readonly InlineNode[] {
+  let nodes = content
+  for (;;) {
+    const miss = firstUnreadableInParagraph(nodes, bare)
+    if (!miss) return nodes
+    nodes = coalesceSameMarkText(moveBoundaryInward(nodes, miss))
   }
-  out.push(...defuseLeadingItalicMarker(line))
-  return out
+}
+
+/** `firstUnreadable` over a paragraph's link groups, each read as the parser reads it. */
+function firstUnreadableInParagraph(
+  nodes: readonly InlineNode[],
+  bare: (group: NodeGroup, index: number) => boolean,
+): UnreadableDelimiter | null {
+  const groups = groupByLink(nodes)
+  let offset = 0
+  for (const [index, group] of groups.entries()) {
+    const miss =
+      group.href === null
+        ? firstUnreadable(
+            group.nodes,
+            edgeChar(groups[index - 1], index - 1, bare, 'last'),
+            edgeChar(groups[index + 1], index + 1, bare, 'first'),
+          )
+        : bare(group, index)
+          ? null
+          : // A link's text is parsed as a line of its own.
+            firstUnreadable(group.nodes.map(stripLinkMark), '', '')
+    if (miss) return { ...miss, index: miss.index + offset }
+    offset += group.nodes.length
+  }
+  return null
+}
+
+/** The first or last char a link group emits next to a plain one: `[`/`)`, or the bare URL's. */
+function edgeChar(
+  group: NodeGroup | undefined,
+  index: number,
+  bare: (group: NodeGroup, index: number) => boolean,
+  edge: 'first' | 'last',
+): string {
+  if (!group?.href) return ''
+  if (!bare(group, index)) return edge === 'first' ? '[' : ')'
+  return edge === 'first'
+    ? codePointAt(group.href, 0)
+    : codePointBefore(group.href, group.href.length)
 }
 
 /** Pull the bold/italic/strike/highlight/underline subset out of a mark list. */
@@ -641,12 +729,12 @@ function serializeInlineChild(
     return serializeInlineAtom(latex === '' ? '' : `$${latex}$`, activeMarks)
   }
   // Image (#1434): emit `![alt](url)`. The alt is escaped for the chars that
-  // could break the `![…](…)` shape on reparse (`\` and `]`); the URL reuses the
-  // link serializer's `escapeUrl` (unbalanced-paren backslash escaping). An
-  // image is an atom and never carries text marks, so it serializes as an atom.
+  // could break the `![…](…)` shape on reparse (`\` and `]`); the URL is written
+  // as a link's is (`linkDestinationText`). An image is an atom and never
+  // carries text marks, so it serializes as an atom.
   if (child.type === 'image') {
     const alt = escapeImageAlt(child.attrs.alt)
-    return serializeInlineAtom(`![${alt}](${escapeUrl(child.attrs.src)})`, activeMarks)
+    return serializeInlineAtom(`![${alt}](${linkDestinationText(child.attrs.src)})`, activeMarks)
   }
   // A line break inside the paragraph (#5160 D2). Emitted as a bare newline
   // here; `finishParagraphLine` decides per line whether it stays bare or
@@ -655,15 +743,6 @@ function serializeInlineChild(
   const unknown = child as { type: string }
   onUnknownNode?.(unknown.type)
   return serializeInlineAtom('', activeMarks)
-}
-
-/**
- * A text node that may merge with a same-marked neighbour. A `code` node may
- * not: `serializeInlineText` gives each one its own backtick span, so two of
- * them are two spans and merging would change the content.
- */
-function mergeableText(node: InlineNode | undefined): node is TextNode {
-  return node?.type === 'text' && !(node.marks ?? []).some((m) => m.type === 'code')
 }
 
 /** Mark identity for the merge: the href is what makes two link marks differ. */
@@ -682,14 +761,17 @@ function markKey(node: TextNode): string {
  * breaks. Same-marked neighbours are emitted back to back with no delimiter
  * between them, so the split is invisible in the output and merging it away is
  * lossless; a mark change or an atom is a real delimiter position and keeps its
- * boundary. Applied at the paragraph entry so every pass below — the escaping
- * walk, `defuseLeadingItalicMarker`, `groupByLink` — reads the same nodes.
+ * boundary. Two `code` nodes are two backtick spans, so they never merge. An
+ * empty text node is dropped: it holds nothing but the delimiters it would
+ * emit. Applied at the paragraph entry so every pass below — the escaping
+ * walk, `fitMarksToFlanking`, `groupByLink` — reads the same nodes.
  */
 function coalesceSameMarkText(nodes: readonly InlineNode[]): readonly InlineNode[] {
   const merged: InlineNode[] = []
   for (const node of nodes) {
     const prev = merged.at(-1)
-    if (mergeableText(node) && mergeableText(prev) && markKey(prev) === markKey(node)) {
+    if (node.type === 'text' && node.text === '') continue
+    if (isDelimitedText(node) && isDelimitedText(prev) && markKey(prev) === markKey(node)) {
       merged[merged.length - 1] = { ...prev, text: prev.text + node.text }
     } else {
       merged.push(node)
@@ -708,17 +790,29 @@ function coalesceSameMarkText(nodes: readonly InlineNode[]): readonly InlineNode
  * For `italic("a") + boldItalic("b") + italic("c")`:
  *   open italic → "a" → open bold → "b" → close bold → "c" → close italic
  *   = `*a**b**c*`
+ *
+ * `before` and `after` are the chars emitted just outside the run (`''` at a
+ * line edge).
  */
 function serializeInlineNodes(
   nodes: readonly InlineNode[],
   onUnknownNode?: (type: string) => void,
+  before = '',
+  after = '',
 ): string {
   let result = ''
   const activeMarks = new Set<string>()
   let prevTail: SeamTail = 'text'
 
-  for (const child of nodes) {
-    const piece = serializeInlineChild(child, activeMarks, onUnknownNode)
+  for (const [i, child] of nodes.entries()) {
+    const piece = isDelimitedText(child)
+      ? serializeInlineText(
+          child,
+          activeMarks,
+          result === '' ? before : codePointBefore(result, result.length),
+          charAfterText(nodes, i, after),
+        )
+      : serializeInlineChild(child, activeMarks, onUnknownNode)
     // Cross-node seam guards (#1434 image discriminator, #1437 `$` seams):
     // `escapeText` decides per NODE, so meaning-changing char pairs that only
     // exist across the join are defused here — see joinInlinePieces.
@@ -848,11 +942,9 @@ function serializeParagraph(
   }
 
   // A task's own `- [ ] ` marker consumes the line start, so its text is never
-  // dispatched as a block either — same exemption as the callers that pass
-  // `atLineStart: false` (see `defuseLeadingItalicMarker`).
+  // dispatched as a block either — same as the callers that pass
+  // `atLineStart: false`.
   const dispatched = atLineStart && taskPrefix === ''
-  const content = coalesceSameMarkText(node.content)
-  const groups = groupByLink(dispatched ? defuseEveryLineStart(content) : content)
 
   // #2385: a bare-URL autolink emission is only unambiguous when re-scanning
   // it in its final surroundings consumes exactly the href again. When the
@@ -865,44 +957,48 @@ function serializeParagraph(
   // gluing ones to the explicit `[url](url)` form. Demotion only ever shrinks
   // the bare set, so the retry loop terminates; the common safe followers
   // (space, end-of-text, sentence punctuation the scanner trims back off)
-  // keep the compact bare form.
+  // keep the compact bare form. A demotion only turns a letter beside a
+  // plain group into a bracket, which flanks at least as well, so the marks
+  // fitted before it stay readable.
   const forceBracketed = new Set<number>()
+  const bare = (group: NodeGroup, index: number) =>
+    !forceBracketed.has(index) && isBareUrlGroup(group)
+  let content = coalesceSameMarkText(node.content)
   let result = ''
   for (let retry = true; retry;) {
     retry = false
+    content = fitMarksToFlanking(content, bare)
+    const groups = groupByLink(content)
     result = ''
     let prevTail: SeamTail = 'text'
     const bareEmits: Array<{ index: number; start: number; href: string }> = []
     for (const [index, group] of groups.entries()) {
       if (group.href !== null) {
-        // Serialize inner content with link marks stripped, then wrap
-        const stripped = group.nodes.map(stripLinkMark)
         // Lossless round-trip for autolinks (#1441): a link whose RAW visible
         // text is exactly its href and which the importer would re-autolink in
         // full is emitted as the bare URL, so an imported `https://x.com`
-        // survives round-tripping instead of bloating to `[url](url)`. We compare
-        // the raw text (not the escaped `inner`, which defuses the URL) and
-        // require the span to be a single plain text node (no other marks).
-        const rawText = linkSpanPlainText(stripped)
-        if (
-          !forceBracketed.has(index) &&
-          rawText !== null &&
-          rawText === group.href &&
-          isAutolinkableUrl(group.href)
-        ) {
+        // survives round-tripping instead of bloating to `[url](url)`.
+        if (bare(group, index)) {
           result = joinInlinePieces(result, group.href, prevTail)
           bareEmits.push({ index, start: result.length - group.href.length, href: group.href })
           prevTail = 'url'
         } else {
-          const inner = serializeInlineNodes(stripped, onUnknownNode)
+          // Serialize inner content with link marks stripped, then wrap
+          const inner = serializeInlineNodes(group.nodes.map(stripLinkMark), onUnknownNode)
           // A link group leads with `[`, so a literal `!` ending the previous
           // group would reparse as an image (#1434), and a trailing literal `$`
           // could close a bogus math span across the seam — defuse both.
-          result = joinInlinePieces(result, `[${inner}](${escapeUrl(group.href)})`, prevTail)
+          const link = `[${inner}](${linkDestinationText(group.href)})`
+          result = joinInlinePieces(result, link, prevTail)
           prevTail = 'text'
         }
       } else {
-        const piece = serializeInlineNodes(group.nodes, onUnknownNode)
+        const piece = serializeInlineNodes(
+          group.nodes,
+          onUnknownNode,
+          codePointBefore(result, result.length),
+          edgeChar(groups[index + 1], index + 1, bare, 'first'),
+        )
         result = joinInlinePieces(result, piece, prevTail)
         if (piece !== '') prevTail = groupTail(group.nodes)
       }
@@ -965,11 +1061,10 @@ function finishParagraphLine(
  * serialize then escapes the marker — a byte drift. Escape the marker on the
  * way out so the text stays a paragraph. The parser accepts `\#`, `\.` and
  * `\-`, `\>` as literal escapes (`-` was made escapable for #1436, `>` for
- * the blockquote gap). `escapeText` already escapes a leading `|` table gate
- * plus every literal `*` (so a `* ` bullet marker can never lead a
- * paragraph). Heading, ordered list, bullet list (`- `), blockquote (`> ` or
- * a bare `>`) and the all-dashes horizontal rule (`---`) are the gaps closed
- * here.
+ * the blockquote gap). `escapeText` already escapes every literal `*` (so a
+ * `* ` bullet marker can never lead a paragraph). Heading, ordered list,
+ * bullet list (`- `), blockquote (`> ` or a bare `>`), the all-dashes
+ * horizontal rule (`---`) and the `|` table gate are the gaps closed here.
  *
  * The two LIST markers are additionally escaped after ANY leading indent,
  * because the parser tolerates up to three spaces before a marker
@@ -985,10 +1080,9 @@ function finishParagraphLine(
  * their productions are anchored at column 0, so an indented one is never a
  * marker at any depth.
  *
- * A leading `*` from an OPENED italic mark (rather than literal text) is
- * handled separately, before this string even exists — see
- * `defuseLeadingItalicMarker` — because escaping only the opening
- * delimiter here would leave its matching close dangling (#4156).
+ * A leading `*` from an OPENED italic mark (rather than literal text) never
+ * reaches here followed by a space: an opener before whitespace cannot flank,
+ * so `fitMarksToFlanking` has already moved it past the space (#4156).
  */
 function escapeLeadingBlockMarker(line: string): string {
   return (
@@ -1002,6 +1096,8 @@ function escapeLeadingBlockMarker(line: string): string {
       .replace(/^(-{3,})$/, '\\$1')
       // Blockquote: `> ` or a bare `>`. `\>` round-trips to `>` (parser change).
       .replace(/^>( |$)/, '\\>$1')
+      // Table: a line starting with `|` is a table row (#5160 N12).
+      .replace(/^\|/, '\\|')
   )
 }
 
@@ -1009,7 +1105,7 @@ function serializeHeading(node: HeadingNode, onUnknownNode?: (type: string) => v
   const prefix = `${'#'.repeat(node.attrs.level)} `
   if (!node.content || node.content.length === 0) return prefix
   // `atLineStart: false` — the `#{1,6} ` prefix consumes the line start, so the
-  // heading's text is never re-dispatched as a block (#4156).
+  // heading's text is never re-dispatched as a block.
   return (
     prefix +
     serializeParagraph({ type: 'paragraph', content: [...node.content] }, onUnknownNode, false)
@@ -1058,9 +1154,9 @@ function serializeBlockquote(node: BlockquoteNode, onUnknownNode?: (type: string
 
 /**
  * Escape any `|` in a serialized cell that is not already escaped, scanning
- * escape-aware (`\x` pairs are copied verbatim). `escapeText` already emits
- * `\|` for plain text (#710-4), so this pass only catches pipes from paths
- * that bypass `escapeText` — inline-code content and link URLs.
+ * escape-aware (`\x` pairs are copied verbatim). A `|` would end the cell
+ * wherever it sits in the row, in plain text, inline code or a link URL alike
+ * (#710-4); outside a table it is escaped only at a line start (#5160 N12).
  */
 function escapeCellPipes(text: string): string {
   let out = ''
@@ -1128,13 +1224,24 @@ function trimCellEdge(nodes: readonly InlineNode[], edge: 'start' | 'end'): Inli
 }
 
 /**
+ * A cell paragraph with its marks fitted (`fitMarksToFlanking`) before the
+ * edge trim, so whitespace moved out of a mark at the cell edge is trimmed
+ * before any escape decision sees it (#4072).
+ */
+function fitCellParagraph(p: ParagraphNode): ParagraphNode {
+  if (!p.content) return p
+  return { ...p, content: [...fitMarksToFlanking(coalesceSameMarkText(p.content), isBareUrlGroup)] }
+}
+
+/**
  * A cell's paragraphs in the form the parser will store them back as: hardBreaks
- * degraded to spaces, and the cell's leading/trailing whitespace already gone.
+ * degraded to spaces, marks fitted, and the cell's leading/trailing whitespace
+ * already gone.
  * Whitespace BETWEEN paragraphs is untouched — the `join(' ')` below puts it
  * back as interior text, where no block-marker escape keys on it.
  */
 function canonicalCellParagraphs(paragraphs: readonly ParagraphNode[]): ParagraphNode[] {
-  const out = paragraphs.map(degradeCellHardBreaks)
+  const out = paragraphs.map(degradeCellHardBreaks).map(fitCellParagraph)
   for (let i = 0; i < out.length; i++) {
     const content = trimCellEdge((out[i] as ParagraphNode).content ?? [], 'start')
     out[i] = { ...(out[i] as ParagraphNode), content }
@@ -1188,7 +1295,7 @@ function serializeTable(node: TableNode, onUnknownNode?: (type: string) => void)
             ? escapeCellPipes(
                 canonicalCellParagraphs(cell.content)
                   // `atLineStart: false` — a cell sits behind `| `, so its text
-                  // is inline content the row production owns (#4156).
+                  // is inline content the row production owns.
                   .map((p) => serializeParagraph(p, onUnknownNode, false))
                   .join(' ')
                   .trim(),
@@ -1403,8 +1510,8 @@ function serializeBlockNode(node: BlockLevelNode, onUnknownNode?: (type: string)
  * the line start, so that text's own leading whitespace is not a line's leading
  * whitespace at all (`- <tab>x` round-trips as-is) and there is no preceding
  * sibling to absorb it. Its later lines are ordinary lines again. The same
- * "the marker owns this line start" fact is what exempts that paragraph from
- * the #4156 italic-delimiter defuse (`serializeParagraph`'s `atLineStart`).
+ * "the marker owns this line start" fact is what keeps that paragraph's hard
+ * breaks in the legacy marker form (`serializeParagraph`'s `atLineStart`).
  */
 function serializeBlockSequence(
   nodes: readonly BlockLevelNode[],
@@ -1414,8 +1521,8 @@ function serializeBlockSequence(
   return nodes.map((node, idx) => {
     const onMarkerLine = idx === 0 && skipFirst
     // A paragraph on the marker line is not at a line start the parser
-    // dispatches, so it also skips the #4156 italic defuse — one notion of
-    // "this text owns the start of its line", used by both.
+    // dispatches — one notion of "this text owns the start of its line", used
+    // by this defuse and by `serializeParagraph`'s `atLineStart`.
     const serialized =
       onMarkerLine && node.type === 'paragraph'
         ? serializeParagraph(node, onUnknownNode, false)

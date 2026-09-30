@@ -193,8 +193,9 @@ describe('serialize', () => {
     })
 
     it('token adjacent to mark', () => {
+      // A `**` after a space cannot close (#5160 N9), so the space leaves the bold.
       expect(serialize(doc(paragraph(bold('look: '), tagRef('01ARZ3NDEKTSV4RRFFQ69G5FAV'))))).toBe(
-        '**look: **#[01ARZ3NDEKTSV4RRFFQ69G5FAV]',
+        '**look:** #[01ARZ3NDEKTSV4RRFFQ69G5FAV]',
       )
     })
   })
@@ -397,12 +398,13 @@ describe('serialize', () => {
       expect(serialize(doc(paragraph(text('a ` b'))))).toBe('a \\` b')
     })
 
-    it('escapes literal tilde', () => {
-      expect(serialize(doc(paragraph(text('a ~ b'))))).toBe('a \\~ b')
+    // #5160 N12: a lone `~` or `=` cannot form a delimiter, so it stays bare.
+    it('leaves a lone tilde bare', () => {
+      expect(serialize(doc(paragraph(text('a ~ b'))))).toBe('a ~ b')
     })
 
-    it('escapes literal equals', () => {
-      expect(serialize(doc(paragraph(text('a = b'))))).toBe('a \\= b')
+    it('leaves a lone equals bare', () => {
+      expect(serialize(doc(paragraph(text('a = b'))))).toBe('a = b')
     })
 
     it('escapes literal #[', () => {
@@ -651,19 +653,21 @@ describe('parse', () => {
       expect(parse('==unclosed')).toEqual(doc(paragraph(text('==unclosed'))))
     })
 
-    it('empty bold **** produces empty paragraph', () => {
-      expect(parse('****')).toEqual(doc(paragraph()))
+    it('a bare **** is literal: a run between line edges cannot open (#5160 N9)', () => {
+      expect(parse('****')).toEqual(doc(paragraph(text('****'))))
     })
 
-    it('unclosed bold containing tag_ref reverts to plain text', () => {
+    // The `**` is literal; the ref after it stays a ref, which re-serializing
+    // plain text would escape into text for good (#5160).
+    it('unclosed bold containing tag_ref keeps the tag_ref', () => {
       expect(parse('**see #[01ARZ3NDEKTSV4RRFFQ69G5FAV]')).toEqual(
-        doc(paragraph(text('**see #[01ARZ3NDEKTSV4RRFFQ69G5FAV]'))),
+        doc(paragraph(text('**see '), tagRef('01ARZ3NDEKTSV4RRFFQ69G5FAV'))),
       )
     })
 
-    it('unclosed bold containing block_link reverts to plain text', () => {
+    it('unclosed bold containing block_link keeps the block_link', () => {
       expect(parse('**see [[01ARZ3NDEKTSV4RRFFQ69G5FAV]]')).toEqual(
-        doc(paragraph(text('**see [[01ARZ3NDEKTSV4RRFFQ69G5FAV]]'))),
+        doc(paragraph(text('**see '), blockLink('01ARZ3NDEKTSV4RRFFQ69G5FAV'))),
       )
     })
   })
@@ -991,8 +995,10 @@ describe('round-trip: serialize(parse(s)) === s', () => {
     ['block_link', '[[01ARZ3NDEKTSV4RRFFQ69G5FAV]]'],
     ['escaped asterisk', 'a \\* b'],
     ['escaped backtick', 'a \\` b'],
-    ['escaped tilde', 'a \\~ b'],
-    ['escaped equals', 'a \\= b'],
+    // #5160 N12: stored bare, since a lone `~` or `=` cannot form a delimiter.
+    ['bare tilde', 'a ~ b'],
+    ['bare equals', 'a = b'],
+    ['escaped intraword tilde pair', 'a\\~\\~b'],
     ['escaped backslash', 'a \\\\ b'],
     ['escaped #[', 'use \\#\\[not a tag'],
     ['escaped [[', 'use \\[\\[not a link'],
@@ -1000,7 +1006,7 @@ describe('round-trip: serialize(parse(s)) === s', () => {
     ['token with text', 'see #[01ARZ3NDEKTSV4RRFFQ69G5FAV] here'],
     ['two lines', 'first\nsecond'],
     ['whitespace-only', '   '],
-    ['marks adjacent to tokens', '**look: **#[01ARZ3NDEKTSV4RRFFQ69G5FAV]'],
+    ['marks adjacent to tokens', '**look:**#[01ARZ3NDEKTSV4RRFFQ69G5FAV]'],
     ['code with special chars inside', '`**not \\* bold**`'],
     ['multiple tokens', '#[01ARZ3NDEKTSV4RRFFQ69G5FAV] and [[01ARZ3NDEKTSV4RRFFQ69G5FAV]]'],
     ['consecutive tokens', '#[01ARZ3NDEKTSV4RRFFQ69G5FAV]#[01ARZ3NDEKTSV4RRFFQ69G5FAV]'],
@@ -1726,9 +1732,9 @@ describe('mark coalescing: nested marks across adjacent text nodes', () => {
     expect(md3).toBe(md1)
   })
 
-  it('empty-bold **** round-trip stabilizes to empty string', () => {
+  it('a bare **** round-trips as literal stars (#5160 N9: the run cannot open)', () => {
     const md1 = serialize(parse('****'))
-    expect(md1).toBe('')
+    expect(md1).toBe('\\*\\*\\*\\*')
     const md2 = serialize(parse(md1))
     expect(md2).toBe(md1)
   })
@@ -2931,9 +2937,8 @@ describe('inline variant dispatch', () => {
     })
 
     it('text variant handles every escape character', () => {
-      expect(serialize(doc(paragraph(text('a*b`c~d=e\\f[g]h'))))).toBe(
-        'a\\*b\\`c\\~d\\=e\\\\f\\[g\\]h',
-      )
+      // A lone `~` or `=` cannot form a delimiter, so it stays bare (#5160 N12).
+      expect(serialize(doc(paragraph(text('a*b`c~d=e\\f[g]h'))))).toBe('a\\*b\\`c~d=e\\\\f\\[g\\]h')
     })
   })
 
@@ -3438,16 +3443,13 @@ describe('#710 round-trip corruption family', () => {
     // merging it away cannot change anything but the verdict.
     describe('#4731 adjacent same-mark text nodes share one escape verdict', () => {
       it('the #4731 repro is a strict fixpoint', () => {
-        // `====` collapses on the first parse and leaves `a` and `_a` as two
-        // adjacent unmarked text nodes; the second parse yields the single node
-        // `a_a`, where the same `_` is plainly intraword.
+        // `====` used to collapse here and leave `a` and `_a` as two adjacent
+        // unmarked text nodes. Since #5160 N9 a run between a letter and a
+        // backslash cannot open, so it stays literal text; still a fixpoint.
         const stored = 'a====\\_a#[00000000000000000000000000]'
         const once = serialize(parse(stored))
-        expect(once).toBe('a_a#[00000000000000000000000000]')
+        expect(once).toBe('a\\=\\=\\=\\=\\_a#[00000000000000000000000000]')
         expect(serialize(parse(once))).toBe(once)
-        // Churn-free: the backslash this drops was pure spelling — the escaped
-        // form the old serializer wrote parses to the same doc as the new one.
-        expect(parse(once)).toEqual(parse('a\\_a#[00000000000000000000000000]'))
       })
 
       it('a split INSIDE a mark run is a fixpoint too', () => {
@@ -3458,7 +3460,8 @@ describe('#710 round-trip corruption family', () => {
           const once = serialize(parse(stored))
           expect(serialize(parse(once))).toBe(once)
         }
-        expect(serialize(parse('**a====\\_b**'))).toBe('**a_b**')
+        // The `====` is literal since #5160 N9, as in the repro above.
+        expect(serialize(parse('**a====\\_b**'))).toBe('**a\\=\\=\\=\\=\\_b**')
       })
 
       it('an unmarked split hides no escape: `a` + `_a` is intraword', () => {
@@ -3471,9 +3474,10 @@ describe('#710 round-trip corruption family', () => {
       })
 
       it('a mark boundary still escapes: the `_` opens the bold node', () => {
-        expect(serialize(doc(paragraph(text('a'), bold('_a'))))).toBe('a**\\_a**')
-        expect(parse(serialize(doc(paragraph(text('a'), bold('_a')))))).toEqual(
-          doc(paragraph(text('a'), bold('_a'))),
+        // After a space, so the `**` can open onto the `_` (#5160 N9).
+        expect(serialize(doc(paragraph(text('a '), bold('_a'))))).toBe('a **\\_a**')
+        expect(parse(serialize(doc(paragraph(text('a '), bold('_a')))))).toEqual(
+          doc(paragraph(text('a '), bold('_a'))),
         )
       })
 

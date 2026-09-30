@@ -6,6 +6,9 @@
  * cases per property and shrinks failures to minimal reproducers.
  */
 
+import { readdirSync, readFileSync } from 'node:fs'
+import path from 'node:path'
+
 import fc from 'fast-check'
 import { describe, expect, it } from 'vitest'
 
@@ -287,6 +290,11 @@ const arbMarkdownString: fc.Arbitrary<string> = fc
         '\\~',
         '\\=',
         '\\<',
+        // #5160 N9: `$$` math pairs and the ASCII-punctuation escapes.
+        '$$',
+        '$',
+        '\\(',
+        '\\"',
       ),
       // #898: leading block markers at paragraph start. These reparse into a
       // *different block kind* (heading / ordered-list / table) on the first
@@ -308,8 +316,15 @@ const arbMarkdownString: fc.Arbitrary<string> = fc
       // Occasionally inject a valid ULID token
       arbUlid.map((id) => `#[${id}]`),
       arbUlid.map((id) => `[[${id}]]`),
-      // Occasionally inject a valid external link
-      fc.constantFrom('[link](https://example.com)', '[text](https://a.com)'),
+      // Occasionally inject a valid external link, with a title or in `<…>`
+      // form (#5160 N9)
+      fc.constantFrom(
+        '[link](https://example.com)',
+        '[text](https://a.com)',
+        '[t](https://x.com "title")',
+        "[t](https://x.com 'title')",
+        '[t](<https://x.com/a b>)',
+      ),
     ),
     { minLength: 0, maxLength: 10 },
   )
@@ -481,64 +496,65 @@ function paragraphStartsWithAmbiguousSyntax(block: ParagraphNode): boolean {
   // #1436: a paragraph whose SERIALIZED form begins with a bullet marker
   // (`- ` / `* `) reparses as a bulletList. The marker can come either from
   // literal text (`- foo`) OR from an emphasis DELIMITER landing at column 0
-  // followed by a space. `bold(' ')` → `** **` is safe (the second `*` is not
-  // the marker's space), and #4156 removed the one delimiter shape that was
-  // not — but a stray literal marker some OTHER shape produces still lands
-  // here, so the probe stays.
+  // followed by a space. No opener lands before a space since #5160 N9
+  // (`fitMarksToFlanking`) — but a stray literal marker some OTHER shape
+  // produces still lands here, so the probe stays.
   // The leading-text inspection above cannot see delimiter-induced markers,
   // so serialize the paragraph and test the actual emitted prefix. (Literal
   // `- ` is escaped to `\- ` by the serializer, so a literal-dash paragraph is
   // NOT flagged here — only a genuinely ambiguous delimiter-space case is.)
   if (/^[-*] /.test(serializeParagraphForAmbiguity(block))) return true
-  // #4156: an italic run leading a paragraph (mod an all-space plain-text
-  // prefix — the same marker-indent tolerance the `- `/`* ` escapes above
-  // account for) and starting with a space USED to serialize into exactly
-  // that `* ` bullet marker (`italic(' a')` → `* a*`). It no longer does —
-  // `defuseLeadingItalicMarker` moves the mark's open boundary past the
-  // leading whitespace, or drops it if the run is whitespace all the way
-  // through — but that normalization is itself a structural change (a mark
-  // boundary moving, a text node splitting) this property's doc-IDENTITY bar
-  // does not tolerate, same as every other shape excluded here. Mirrors only
-  // the TRIGGER condition (not the transform) directly on the source doc,
-  // since there is nothing serialized yet to inspect at this point. It has to
-  // mirror it EXACTLY, or the exclusion silently covers more than the
-  // serializer changes: the shapes the serializer leaves alone are still
-  // identity-preserving and must stay under this property.
-  if (leadingItalicStartsOnWhitespace(block)) return true
+  // #5160 N9: a bold or italic delimiter that could not flank where it sits
+  // is read back as literal stars, so the serializer moves the mark boundary
+  // inward (`fitMarksToFlanking`) — a structural change (a mark boundary
+  // moving, a text node splitting) this property's doc-IDENTITY bar does not
+  // tolerate, same as every other shape excluded here. This replaced the
+  // #4156 filter for an italic opening onto a space at a line start, which is
+  // one case of it. It has to mirror the trigger EXACTLY, or the exclusion
+  // silently covers more than the serializer changes.
+  if (emphasisCannotFlank(block)) return true
   return false
 }
 
 /**
- * The #4156 trigger condition — see the call site above, and
- * `defuseLeadingItalicMarker` / `isVulnerableItalicOpen` in
- * `markdown-serialize.ts` for the production original this mirrors. These
- * generated blocks are always TOP-LEVEL doc children (`hasStructuralAmbiguity`
- * walks `doc.content` only), which is a line start the parser dispatches, so
- * the serializer's `atLineStart` gate is always on here; the one context test
- * that still has to be mirrored is the task marker, which a paragraph carries
- * on itself.
+ * The #5160 N9 trigger — see the call site above, and `fitMarksToFlanking` in
+ * `markdown-serialize.ts` for the production original this mirrors. In these
+ * docs the only flanking delimiters are bold and italic, so each mark
+ * boundary between two nodes emits one `*` run; every atom (a tag, a page
+ * link, a block ref, a code span) is punctuation beside it, and the paragraph
+ * edge is whitespace. The run must be able to close if a mark closes there,
+ * and to open if one opens: CommonMark's left- and right-flanking rules,
+ * spelled out here rather than imported so the filter cannot drift with the
+ * code under test.
  */
-function leadingItalicStartsOnWhitespace(block: ParagraphNode): boolean {
-  // A task's own `- [ ] ` marker consumes the line start.
-  if (block.attrs?.todoState) return false
+function emphasisCannotFlank(block: ParagraphNode): boolean {
   const content = block.content ?? []
-  let i = 0
-  while (
-    i < content.length &&
-    (content[i] as InlineNode).type === 'text' &&
-    ((content[i] as TextNode).marks ?? []).length === 0 &&
-    /^ *$/.test((content[i] as TextNode).text)
-  ) {
-    i++
+  const isEmphasisText = (node: InlineNode | undefined): node is TextNode =>
+    node?.type === 'text' && !(node.marks ?? []).some((m) => m.type === 'code')
+  const emphasis = (node: InlineNode | undefined) =>
+    isEmphasisText(node) ? markSetFromMarks(node.marks ?? []) : new Set<string>()
+  const edge = (node: InlineNode | undefined, side: 'first' | 'last') => {
+    if (node === undefined) return ''
+    if (!isEmphasisText(node)) return '#'
+    // The generated text is ASCII, so a char is a whole code point.
+    return side === 'first' ? (node.text[0] ?? '') : (node.text.at(-1) ?? '')
   }
-  const node = content[i]
-  if (!node || node.type !== 'text' || !node.text.startsWith(' ')) return false
-  const marks = node.marks ?? []
-  // `code` is exclusive (backticks, no star) and `link` wraps the span in
-  // `[`…`](url)`, so neither can put a bare `* ` at the line start.
-  if (marks.some((m) => m.type === 'code' || m.type === 'link')) return false
-  const emphasis = markSetFromMarks(marks)
-  return emphasis.size === 1 && emphasis.has('italic')
+  const kind = (ch: string) => {
+    if (ch === '' || /\s/.test(ch)) return 'space'
+    return /[\p{P}\p{S}]/u.test(ch) ? 'punct' : 'other'
+  }
+  for (let i = 0; i <= content.length; i++) {
+    const was = emphasis(content[i - 1])
+    const now = emphasis(content[i])
+    const closes = [...was].some((mark) => !now.has(mark))
+    const opens = [...now].some((mark) => !was.has(mark))
+    const before = kind(edge(content[i - 1], 'last'))
+    const after = kind(edge(content[i], 'first'))
+    const canOpen = after !== 'space' && (after !== 'punct' || before !== 'other')
+    const canClose = before !== 'space' && (before !== 'punct' || after !== 'other')
+    if ((closes && !canClose) || (opens && !canOpen)) return true
+  }
+  return false
 }
 
 /**
@@ -1225,4 +1241,27 @@ describe('serializer idempotence firewall: serialize(parse(x)) is a byte-for-byt
     const twice = serialize(parse(once))
     expect(twice).toBe(once)
   })
+})
+
+/**
+ * The #5160 corpus: real-shaped documents from each tool Agaric imports from,
+ * committed for the Rust grammar's snapshot (`corpus_documents_read_as_snapshotted`
+ * in `import.rs`). The editor reads the same text: what it stores must read
+ * back as what it read, and be a fixed point from there.
+ */
+const MARKDOWN_CORPUS_DIR = path.resolve(
+  import.meta.dirname,
+  '../../../src-tauri/agaric-engine/tests/markdown-corpus',
+)
+
+describe('the #5160 markdown corpus round-trips through the editor', () => {
+  it.each(readdirSync(MARKDOWN_CORPUS_DIR).filter((name) => name.endsWith('.txt')))(
+    '%s',
+    (name) => {
+      const read = parse(readFileSync(path.join(MARKDOWN_CORPUS_DIR, name), 'utf8'))
+      const stored = serialize(read)
+      expect(parse(stored)).toEqual(read)
+      expect(serialize(parse(stored))).toBe(stored)
+    },
+  )
 })

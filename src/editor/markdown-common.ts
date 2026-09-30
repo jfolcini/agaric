@@ -10,6 +10,76 @@
 export const WORD_CHAR_RE = /[\p{L}\p{N}]/u
 const WS_RE = /\s/
 
+/** CommonMark's punctuation (§2.1): the Unicode P and S categories. */
+const PUNCTUATION_RE = /[\p{P}\p{S}]/u
+
+/** ASCII punctuation, the chars a backslash escapes (CommonMark §2.4). */
+export const ASCII_PUNCTUATION_RE = /[!-/:-@[-`{-~]/
+
+/** What a delimiter run's neighbour is to the flanking rule; a line edge is whitespace. */
+export type FlankClass = 'space' | 'punct' | 'other'
+
+export function flankClass(ch: string): FlankClass {
+  if (ch === '' || WS_RE.test(ch)) return 'space'
+  return PUNCTUATION_RE.test(ch) ? 'punct' : 'other'
+}
+
+/**
+ * Whether a `*`, `~` or `=` delimiter run between `before` and `after` can
+ * open and can close a mark: left- and right-flanking, CommonMark §6.2 (#5160
+ * N9). The parser toggles a mark only through a run that may, and the
+ * serializer moves a mark boundary until its run may (`fitMarksToFlanking`).
+ */
+export function runFlank(
+  before: FlankClass,
+  after: FlankClass,
+): { canOpen: boolean; canClose: boolean } {
+  return {
+    canOpen: after !== 'space' && (after !== 'punct' || before !== 'other'),
+    canClose: before !== 'space' && (before !== 'punct' || after !== 'other'),
+  }
+}
+
+/** The code point that starts at `i` of `s` (`''` past the end). */
+export function codePointAt(s: string, i: number): string {
+  const cp = s.codePointAt(i)
+  return cp === undefined ? '' : String.fromCodePoint(cp)
+}
+
+/** The code point that ends just before `i` of `s` (`''` at the start). */
+export function codePointBefore(s: string, i: number): string {
+  if (i >= 2 && (s.codePointAt(i - 2) ?? 0) > 0xffff) return s.slice(i - 2, i)
+  return i > 0 ? s.slice(i - 1, i) : ''
+}
+
+/**
+ * Decode the backslash escapes in a link or image destination: any ASCII
+ * punctuation (CommonMark §2.4). The serializer doubles a literal backslash
+ * and escapes an unbalanced paren (`escapeUrl`), so its own output decodes
+ * exactly; percent sequences are never touched (#710-6).
+ */
+function unescapeUrl(url: string): string {
+  return url.replace(/\\(.)/g, (escape, ch: string) =>
+    ASCII_PUNCTUATION_RE.test(ch) ? ch : escape,
+  )
+}
+
+/** An optional link title after the destination: `"…"`, `'…'` or `(…)`. */
+const LINK_TITLE_RE = /^(.*?)[ \t]+(?:"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|\((?:[^()\\]|\\.)*\))$/
+
+/**
+ * The URL a link or image destination, as written between its parens, names
+ * (#5160 N9): edge whitespace and a title are dropped (the link mark has no
+ * title), `<…>` brackets are removed and the escapes decoded. The serializer
+ * writes an href this would misread in `<…>` form (`linkDestinationText`).
+ */
+export function linkDestination(raw: string): string {
+  let dest = raw.trim()
+  dest = LINK_TITLE_RE.exec(dest)?.[1] ?? dest
+  if (dest.length >= 2 && dest.startsWith('<') && dest.endsWith('>')) dest = dest.slice(1, -1)
+  return unescapeUrl(dest)
+}
+
 /**
  * Uppercase ULID (26 chars) — the payload shape of the `#[ULID]`, `[[ULID]]`
  * and `((ULID))` ref tokens. Shared: the parser recognizes the tokens with it

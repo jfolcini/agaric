@@ -13,7 +13,7 @@
  * Zero external dependencies. Moved verbatim from the original monolith.
  */
 
-import { blockLinkToken, ULID_RE } from '@/editor/markdown-common'
+import { ULID_RE } from '@/editor/markdown-common'
 import type {
   BlockLevelNode,
   BlockLinkNode,
@@ -300,29 +300,6 @@ export function probeExternalLink(s: Scanner): LinkMatch | null {
 }
 
 /**
- * Unescape a URL: decode the backslash escapes (`\\`, `\(`, `\)`) that
- * `escapeUrl` emits for literal backslashes and unbalanced parens.
- *
- * #710-6: the previous implementation decoded EVERY `%29` → `)`, corrupting
- * URLs in which the user literally typed `%29`. Percent sequences are now
- * left untouched; only the serializer's own backslash escapes are decoded.
- */
-export function unescapeUrl(url: string): string {
-  let out = ''
-  for (let i = 0; i < url.length; i++) {
-    const ch = url[i]
-    const next = url[i + 1]
-    if (ch === '\\' && (next === '\\' || next === '(' || next === ')')) {
-      out += next
-      i++
-      continue
-    }
-    out += ch
-  }
-  return out
-}
-
-/**
  * Unescape an image alt label (#1434): decode the `\[`, `\]` and `\\` escapes
  * that `escapeImageAlt` emits, mirroring it exactly so an alt containing `[`,
  * `]` or `\` round-trips. Other backslash sequences are left verbatim (the
@@ -392,9 +369,12 @@ export interface InlineState {
   inStrike: boolean
   inHighlight: boolean
   inUnderline: boolean
-  /** Position in source where the currently-open bold/italic delimiter started. */
+  /** Where each open mark's delimiter starts in the source: the revert puts them back in that order. */
   boldOpenPos: number
   italicOpenPos: number
+  strikeOpenPos: number
+  highlightOpenPos: number
+  underlineOpenPos: number
   /**
    * Which delimiter char opened the currently-open bold/italic run — `'*'` or
    * `'_'` (GFM accepts both). Only the matching char closes, so `*foo_` /
@@ -424,6 +404,9 @@ export function createInlineState(line: string, depth: number): InlineState {
     inUnderline: false,
     boldOpenPos: -1,
     italicOpenPos: -1,
+    strikeOpenPos: -1,
+    highlightOpenPos: -1,
+    underlineOpenPos: -1,
     boldDelim: null,
     italicDelim: null,
     boldOpenNodeLen: 0,
@@ -460,38 +443,4 @@ export function trailingBackslashRun(line: string): number {
   let n = 0
   while (n < line.length && line[line.length - 1 - n] === '\\') n++
   return n
-}
-
-// -- Helpers ------------------------------------------------------------------
-
-/** Convert an inline node back to its plain-text representation (for unclosed mark revert). */
-export function nodeToPlainText(node: InlineNode): string {
-  switch (node.type) {
-    case 'text': {
-      return node.text
-    }
-    case 'tag_ref': {
-      return `#[${node.attrs.id}]`
-    }
-    case 'block_link': {
-      return blockLinkToken(node.attrs.id, node.attrs.label)
-    }
-    case 'block_ref': {
-      return `((${node.attrs.id}))`
-    }
-    case 'math_inline': {
-      return `$${node.attrs.latex}$`
-    }
-    case 'image': {
-      return `![${node.attrs.alt}](${node.attrs.src})`
-    }
-    /* v8 ignore start -- hardBreak never appears during line parsing; default is type guard */
-    case 'hardBreak': {
-      return '\n'
-    }
-    default: {
-      return ''
-    }
-    /* v8 ignore stop */
-  }
 }
