@@ -16,7 +16,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use rmcp::{
-    model::{CallToolRequestParams, ClientCapabilities, ClientInfo, Implementation},
+    model::{CallToolRequestParams, ClientCapabilities, ClientConfig, Implementation},
     service::ServiceExt,
 };
 use serde_json::{Value, json};
@@ -57,8 +57,8 @@ impl ToolRegistry for SlowRegistry {
     }
 }
 
-fn make_test_client_info(name: &str) -> ClientInfo {
-    ClientInfo::new(
+fn make_test_client_info(name: &str) -> ClientConfig {
+    ClientConfig::new(
         ClientCapabilities::default(),
         Implementation::new(name, "0.1.0"),
     )
