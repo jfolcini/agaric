@@ -37,12 +37,12 @@ agaric-core = { path = "../agaric-core", version = "0.1.0" }
 # on-disk exporters, the loopback-only OTLP path, and the thread-based (no
 # rt-tokio) batch/periodic processors all moved here with the code.
 opentelemetry = { version = "0.33", features = ["logs", "metrics"] }
-opentelemetry_sdk = { version = "0.32", features = ["logs", "metrics"] }
-opentelemetry-otlp = { version = "0.32", default-features = false, features = ["trace", "http-proto", "reqwest-blocking-client"] }
-opentelemetry-appender-tracing = "0.32"
+opentelemetry_sdk = { version = "0.33", features = ["logs", "metrics"] }
+opentelemetry-otlp = { version = "0.33", default-features = false, features = ["trace", "http-proto", "reqwest-blocking-client"] }
+opentelemetry-appender-tracing = "0.33"
 # The tracing↔OTel trace bridge (`tracing_opentelemetry::layer()`). Pins
-# opentelemetry 0.32 + opentelemetry_sdk 0.32, matching the versions above.
-tracing-opentelemetry = "0.33"
+# opentelemetry 0.33 + opentelemetry_sdk 0.33, matching the versions above.
+tracing-opentelemetry = "0.34"
 
 tracing = { version = "0.1.44", features = ["attributes"] }
 tracing-subscriber = { version = "0.3.23", features = ["env-filter", "json"] }
@@ -68,7 +68,7 @@ specta = { version = "=2.0.0-rc.25", features = ["derive", "chrono"] }
 # Test-only OTel feature: the InMemory{Span,Log,Metric}Exporters the pipeline
 # tests assert against. Cargo unifies this onto the normal `opentelemetry_sdk`
 # dep for test builds; the release build never sees the `testing` feature.
-opentelemetry_sdk = { version = "0.32", features = ["testing", "logs", "metrics"] }
+opentelemetry_sdk = { version = "0.33", features = ["testing", "logs", "metrics"] }
 tempfile = "3.27.0"
 
 # Mirror the app crate's lint posture so clippy/rustc behave identically under
