@@ -253,8 +253,8 @@ tracing-log = "0.2.0"
 # direct dependency list entirely. What stays here is `tracing-opentelemetry`
 # (the `OpenTelemetrySpanExt` trait the lib.rs invoke wrapper uses to attach the
 # frontend's extracted trace context as the parent span) — it pins
-# opentelemetry 0.32 + opentelemetry_sdk 0.32 transitively.
-tracing-opentelemetry = "0.33"
+# opentelemetry 0.33 + opentelemetry_sdk 0.33 transitively.
+tracing-opentelemetry = "0.34"
 
 # Sync — #2621 Sync-D: the peer-to-peer net/protocol/daemon/files/snapshot
 # cluster moved into `agaric-sync`, taking its sync-only deps with it
