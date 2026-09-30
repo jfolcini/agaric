@@ -800,10 +800,17 @@ export function parseOutline(text: string): PlannedPaste[] {
 const FENCE_LINE_RE = /^\s*(?:`{3}|~{3})/m
 
 /**
+ * `first_line_needs_escape` in Source mode: a list marker (`- `, `1. `) or a
+ * checkbox, past a leading run of backslashes.
+ */
+const LINE_MARKER_RE = /^\\*(?:-|\d+\.|\[[ xX/-]\])(?: |$)/
+
+/**
  * `PasteSplice::join`: `before` starts the first block, which after text keeps
- * the `1. ` and the checkbox its item was read from (`pasted_as_text`), and
- * `after` ends the last block, or follows it as a block of its own when it is
- * code (a fence keeps its closing line).
+ * the `1. ` and the checkbox its item was read from (`pasted_as_text`),
+ * escaped when it starts a line so no marker reads back, and `after` ends the
+ * last block, or follows it as a block of its own when it is code (a fence
+ * keeps its closing line).
  */
 function joinSplice(planned: readonly PlannedPaste[], splice: PasteSplice): PlannedPaste[] {
   const joined = planned.map((block) => ({ ...block }))
@@ -812,6 +819,9 @@ function joinSplice(planned: readonly PlannedPaste[], splice: PasteSplice): Plan
   if (splice.before !== '') {
     const markers = `${first.ordered ? '1. ' : ''}${first.todoState ? `[${TASK_STATE_TO_MARKER[first.todoState]}] ` : ''}`
     first.content = first.content === '' ? markers.trimEnd() : markers + first.content
+    if (splice.before.endsWith('\n') && LINE_MARKER_RE.test(first.content)) {
+      first.content = `\\${first.content}`
+    }
     delete first.todoState
   }
   if (splice.after !== '' && FENCE_LINE_RE.test(last.content)) {

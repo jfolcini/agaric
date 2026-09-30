@@ -1536,6 +1536,45 @@ describe('PagePropertyTable forceExpanded', () => {
 // whose `assertValidSetPropertyValue` mirrors `op.rs::validate_property_value`
 // and rejects an empty `value_text` (and an out-of-options select value).
 // Follows the draft-row test pattern from `BlockPropertyDrawer.test.tsx` (#2656).
+describe('PagePropertyTable removing the repeat rule against the real tauri-mock (#5160)', () => {
+  const PAGE_ID = SEED_IDS.PAGE_QUICK_NOTES
+
+  beforeEach(() => {
+    seedBlocks()
+    const row = (key: string, overrides: Partial<PropertyRow>) => ({
+      ...makeProp(key),
+      ...overrides,
+    })
+    properties.set(
+      PAGE_ID,
+      new Map([
+        ['repeat', row('repeat', { value_text: 'daily' })],
+        ['repeat-count', row('repeat-count', { value_num: 3 })],
+        ['repeat-seq', row('repeat-seq', { value_num: 2 })],
+      ]),
+    )
+    mockedInvoke.mockImplementation(async (cmd: string, args?: InvokeArgs) => dispatch(cmd, args))
+  })
+
+  it('offers delete for the rule and its limit, not the occurrence count, and the rule takes both', async () => {
+    const user = userEvent.setup()
+    const deleteLabel = (key: string) => t('pageProperty.deletePropertyLabel', { key })
+    const { container } = render(<PagePropertyTable pageId={PAGE_ID} forceExpanded />)
+
+    const removeRule = await screen.findByLabelText(deleteLabel('repeat'))
+    expect(screen.getByLabelText(deleteLabel('repeat-count'))).toBeInTheDocument()
+    expect(screen.queryByLabelText(deleteLabel('repeat-seq'))).not.toBeInTheDocument()
+    expect(await axe(container)).toHaveNoViolations()
+
+    await user.click(removeRule)
+    await user.click(await screen.findByRole('button', { name: /^Delete$/i }))
+
+    await waitFor(() => {
+      expect(properties.get(PAGE_ID)?.size).toBe(0)
+    })
+  })
+})
+
 describe('PagePropertyTable add-from-definition against the real tauri-mock (#2792)', () => {
   const PAGE_ID = SEED_IDS.PAGE_QUICK_NOTES
 

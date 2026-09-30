@@ -51,6 +51,19 @@ export const NON_DELETABLE_PROPERTIES = new Set([
 ])
 
 /**
+ * The keys `delete_property` refuses, which only state transitions and
+ * recurrence write. Mirrors `SYSTEM_MANAGED_PROPERTY_KEYS` in
+ * `src-tauri/src/commands/properties.rs`; every other property, the repeat
+ * rule included, is the user's to remove.
+ */
+export const SYSTEM_MANAGED_PROPERTY_KEYS: ReadonlySet<string> = new Set([
+  'created_at',
+  'completed_at',
+  'repeat-seq',
+  'repeat-origin',
+])
+
+/**
  * Properties whose `options` list is locked — users cannot edit them from
  * the Properties tab. Currently only `todo_state`: the task cycle
  * (`none → TODO → DOING → DONE → CANCELLED → none`) is intentionally fixed
@@ -75,7 +88,7 @@ export const LOCKED_PROPERTY_OPTIONS = new Set(['todo_state'])
  * different things, and `delete_property` explicitly ALLOWS the reserved keys
  * and the recurrence rule while refusing the other lifecycle ones.
  */
-export const COLUMN_BACKED_PROPERTY_KEYS = new Set([
+const COLUMN_BACKED_PROPERTY_KEYS = new Set([
   'todo_state',
   'priority',
   'due_date',

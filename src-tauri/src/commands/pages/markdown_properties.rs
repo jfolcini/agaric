@@ -375,7 +375,7 @@ pub(crate) async fn read_typed_ref(
     let id = resolve_ref_values(conn, space.as_ref().map(SpaceId::as_str), vec![name])
         .await?
         .remove(name)
-        .unwrap_or_else(|| Err(format!("'{text}' names no block")))
+        .expect("resolve_ref_values answers each name it is given")
         .map_err(AppError::validation)?;
     Ok((None, Some(id)))
 }

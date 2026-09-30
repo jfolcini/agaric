@@ -3313,12 +3313,16 @@ describe('import_markdown', () => {
     expect((result['warnings'] as string[]).length).toBeGreaterThan(0)
   })
 
-  it('counts inline `key:: value` lines as properties_set', () => {
+  // A value its definition refuses stays text (#5160 D11): `open` and `high`
+  // are not options of the `status` and `priority` selects, while a priority
+  // letter is read as the option it stands for (`import_priority_value`).
+  it('counts the inline `key:: value` lines whose values their definitions accept', () => {
     const result = invoke('import_markdown', {
-      content: 'status:: done\npriority:: high\nplain line',
+      content:
+        'status:: done\nstatus:: open\npriority:: high\npriority:: A\nmood:: open\nplain line',
       filename: 'props.md',
     }) as Record<string, unknown>
-    expect(result['properties_set']).toBe(2)
+    expect(result['properties_set']).toBe(3)
   })
 
   it('reports properties_set: 0 when there are no `key:: value` lines', () => {

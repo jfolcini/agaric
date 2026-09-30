@@ -1201,6 +1201,8 @@ const SYSTEM_MANAGED_PROPERTY_KEYS: [&str; 4] =
 /// Delete a property from a block.
 ///
 /// Appends a `DeleteProperty` op and removes the row from `block_properties`.
+/// Deleting `repeat` also deletes the `repeat-until`, `repeat-count` and
+/// `repeat-seq` the block holds, in the same transaction.
 ///
 /// # Errors
 ///
@@ -1231,10 +1233,35 @@ pub async fn delete_property_inner(
     delete_property_core(pool, device_id, materializer, block_id.into_string(), key).await
 }
 
+/// Removing the `repeat` rule removes these with it: its end conditions and
+/// the count of its occurrences, which would otherwise bound a rule set later.
+const REPEAT_RULE_BOUNDS: [&str; 3] = ["repeat-until", "repeat-count", "repeat-seq"];
+
+/// Delete the [`REPEAT_RULE_BOUNDS`] `block_id` holds in `tx`, as part of
+/// deleting its `repeat`. A key it does not hold appends no op, which would
+/// have no value to undo to. Returns how many were deleted.
+pub(crate) async fn delete_repeat_bounds_in_tx(
+    tx: &mut CommandTx,
+    state: &agaric_engine::loro::shared::LoroState,
+    device_id: &str,
+    block_id: &str,
+) -> Result<u32, AppError> {
+    let held = get_properties_inner(&mut ***tx, BlockId::from_trusted(block_id)).await?;
+    let mut deleted = 0;
+    for key in REPEAT_RULE_BOUNDS {
+        if held.iter().any(|p| p.key == key) {
+            let op = delete_property_in_tx(&mut *tx, state, device_id, block_id, key).await?;
+            tx.enqueue_background(op);
+            deleted += 1;
+        }
+    }
+    Ok(deleted)
+}
+
 /// Get all properties for a block (read-only).
-#[instrument(skip(pool), err)]
-pub async fn get_properties_inner(
-    pool: &SqlitePool,
+#[instrument(skip(executor), err)]
+pub async fn get_properties_inner<'e>(
+    executor: impl sqlx::SqliteExecutor<'e>,
     block_id: BlockId,
 ) -> Result<Vec<PropertyRow>, AppError> {
     let block_id = block_id.as_str();
@@ -1244,7 +1271,7 @@ pub async fn get_properties_inner(
          FROM block_properties WHERE block_id = ?",
         block_id
     )
-    .fetch_all(pool)
+    .fetch_all(executor)
     .await?;
 
     Ok(rows)

@@ -4,7 +4,7 @@
  * Three ways to insert a block reference:
  * 1. **Picker** — Type (( to open the suggestion popup, select from list.
  * 2. **Input rule** — Type ((text)) (with closing parens) to auto-resolve
- *    when an exact-match block exists. Falls back to plain text on no match.
+ *    when an exact-match block exists. On no match the typed ((text)) stays.
  * 3. **Command** — `resolveBlockRefFromSelection` resolves the current
  *    selection to a block_ref via the same exact-match rule.
  *
@@ -105,6 +105,7 @@ export const BlockRefPicker = Extension.create<BlockRefPickerOptions>({
           void resolveAndInsertPickerToken({
             editor,
             text: innerText,
+            typed: match[0],
             insertPos,
             items: extensionOptions.items,
             matchItem: matchBlockRefItem,

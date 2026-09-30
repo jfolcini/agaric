@@ -871,6 +871,15 @@ async fn delete_property_core(
 
     // 5. Dispatch background cache tasks after commit (fire-and-forget).
     tx.enqueue_background(Arc::new(op_record));
+    if key == "repeat" {
+        properties::delete_repeat_bounds_in_tx(
+            &mut tx,
+            materializer.loro_state(),
+            device_id,
+            &block_id,
+        )
+        .await?;
+    }
     tx.commit_and_dispatch(materializer).await?;
 
     Ok(())

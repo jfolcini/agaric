@@ -24,6 +24,7 @@
  * `create_block` and `set_property` (space) ops the backend appends.
  */
 
+import { ULID_RE } from '@/editor/markdown-common'
 import {
   type LinkReading,
   linkBodyReadings,
@@ -136,7 +137,7 @@ export function resolveRefValue(value: string, spaceId: string | null): string {
   const trimmed = value.trim()
   const inner = trimmed.startsWith('[[') ? trimmed.slice(2) : ''
   const name = inner.endsWith(']]') ? inner.slice(0, -2).trim() : trimmed
-  if (/^[0-9A-Z]{26}$/.test(name)) {
+  if (ULID_RE.test(name)) {
     const row = blocks.get(name)
     if (!row || row['deleted_at'] != null) {
       throw validationRejection(`'${name}' is not the id of a live block`)

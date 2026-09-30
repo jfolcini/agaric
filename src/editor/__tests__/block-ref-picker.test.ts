@@ -372,8 +372,8 @@ describe('BlockRefPicker input rule ((c))', () => {
 
     await vi.waitFor(() => expect(insertContentAtCalls.length).toBeGreaterThan(0))
 
-    // Plain text re-inserted at the captured position
-    expect(insertContentAtCalls).toEqual([{ pos: 3, content: 'Foo' }])
+    // The typed token goes back at the captured position, as `[[` and `#[` put theirs back
+    expect(insertContentAtCalls).toEqual([{ pos: 3, content: '((Foo))' }])
   })
 
   it('falls back to plain text when multiple non-exact matches exist', async () => {
@@ -420,8 +420,8 @@ describe('BlockRefPicker input rule ((c))', () => {
 
     await vi.waitFor(() => expect(insertContentAtCalls.length).toBeGreaterThan(0))
 
-    // No exact match → plain text fallback (no block_ref node inserted)
-    expect(insertContentAtCalls).toEqual([{ pos: 0, content: 'alice' }])
+    // No exact match → the typed token goes back (no block_ref node inserted)
+    expect(insertContentAtCalls).toEqual([{ pos: 0, content: '((alice))' }])
   })
 
   it('falls back to plain text on items callback error and logs a warning', async () => {
@@ -466,7 +466,7 @@ describe('BlockRefPicker input rule ((c))', () => {
 
     await vi.waitFor(() => expect(insertContentAtCalls.length).toBeGreaterThan(0))
 
-    expect(insertContentAtCalls).toEqual([{ pos: 7, content: 'Broken' }])
+    expect(insertContentAtCalls).toEqual([{ pos: 7, content: '((Broken))' }])
     expect(warnSpy).toHaveBeenCalledWith(
       'BlockRefPicker',
       expect.stringContaining('input rule'),
@@ -539,9 +539,9 @@ describe('BlockRefPicker stale-insertPos guard ()', () => {
     // Wait for the async resolve to land on the cursor-fallback path.
     await vi.waitFor(() => expect(insertContentCalls.length).toBeGreaterThan(0))
 
-    // Plain text inserted at the current cursor (insertContent),
+    // The typed token inserted at the current cursor (insertContent),
     // NOT the inline node at the stale offset.
-    expect(insertContentCalls).toEqual(['Some Block'])
+    expect(insertContentCalls).toEqual(['((Some Block))'])
     expect(insertContentAtCalls).toEqual([])
   })
 })

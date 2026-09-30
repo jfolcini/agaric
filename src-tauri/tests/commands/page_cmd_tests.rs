@@ -3357,6 +3357,60 @@ async fn apply_page_source_checkbox_completes_a_repeating_task() {
     );
 }
 
+/// #5160 — a deleted `repeat::` line removes the rule as `/repeat remove`
+/// does: its limit, even with its line still in the buffer, and the hidden
+/// occurrence count go with it, so a rule typed later starts unbounded.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn apply_page_source_removing_the_repeat_line_removes_the_whole_rule() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let page = dup_page(&pool, &mat, "Chores").await;
+    let task = dup_child(&pool, &mat, &page, "water the plants").await;
+    set_todo_state_inner(&pool, DEV, &mat, task.as_str().into(), Some("TODO".into()))
+        .await
+        .unwrap();
+    for (key, text, num) in [
+        ("repeat", Some("daily".to_owned()), None),
+        ("repeat-count", None, Some(3.0)),
+        ("repeat-seq", None, Some(2.0)),
+    ] {
+        set_property_inner(
+            &pool,
+            DEV,
+            &mat,
+            task.as_str().into(),
+            key.into(),
+            text,
+            num,
+            None,
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+    }
+    settle(&mat).await;
+    let base = page_source(&pool, &page).await;
+
+    let report = save_source(
+        &pool,
+        &mat,
+        &page,
+        &with(&base, "  repeat:: daily\n", ""),
+        &base,
+        false,
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(counts(&report), [0, 0, 0, 0, 0, 3]);
+    assert_eq!(
+        dup_storage(&pool, &task).await,
+        [r#"columns todo=Some("TODO") priority=None scheduled=None due=None"#]
+    );
+}
+
 /// A removed priority or date line clears its column, and a list marker added
 /// or removed sets or deletes `listStyle`.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -11931,9 +11985,9 @@ async fn import_wikilink_block_anchor_dedup_same_anchor_2510() {
 // wiki-link resolves to the BLOCK that renders that heading, via a per-document
 // heading-text → block-ULID map (analogous to #2510's `^block-id` map). The
 // link is rewritten to the SAME block-ref `((ULID))` form so navigation reuses
-// the block-anchor scroll/focus path. Duplicate heading text resolves to the
-// FIRST occurrence. An unmatched heading preserves #1282's fallback (empty base
-// → literal + "no page target"; explicit self-title → page link + warning).
+// the block-anchor scroll/focus path. An unmatched heading, or one two
+// headings share, preserves #1282's fallback (empty base → literal + "no page
+// target"; explicit self-title → page link + warning).
 // ======================================================================
 
 /// #2567 — `[[#My Heading]]` (anchor-only) resolves to a real block-ref
@@ -12101,11 +12155,11 @@ async fn import_wikilink_heading_anchor_normalized_match_2567() {
     mat.shutdown();
 }
 
-/// #2567 — COLLISION RULE: duplicate heading text resolves to the FIRST
-/// occurrence in document order. Two `## Dup` headings exist; `[[#Dup]]` must
-/// target the earlier (smaller-ULID) one.
+/// #2567 / #5160 N4 — two headings of one text tie, and a tie is never
+/// guessed: as for a heading the file does not hold, `[[#Dup]]` stays text
+/// and `[[File#Dup]]` links the page, each with its warning.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn import_wikilink_heading_anchor_duplicate_first_occurrence_2567() {
+async fn import_wikilink_heading_anchor_duplicate_is_unresolved_2567() {
     let (pool, _dir) = test_pool().await;
     let mat = Materializer::new(pool.clone());
     ensure_test_space(&pool).await;
@@ -12117,7 +12171,7 @@ async fn import_wikilink_heading_anchor_duplicate_first_occurrence_2567() {
         DEV,
         &mat,
         _dir.path(),
-        "- ## Dup\n- body one\n- ## Dup\n- See [[#Dup]] here".into(),
+        "- ## Dup\n- body one\n- ## Dup\n- See [[#Dup]] here\n- Also [[File#Dup]] there".into(),
         Some("File.md".into()),
         TEST_SPACE_ID.into(),
         None,
@@ -12126,31 +12180,19 @@ async fn import_wikilink_heading_anchor_duplicate_first_occurrence_2567() {
     .unwrap();
     settle(&mat).await;
 
-    // Both heading blocks share the same content; document order == ULID order,
-    // so the FIRST occurrence is the smallest id.
-    let first_dup_id: String = sqlx::query_scalar(
-        "SELECT id FROM blocks WHERE block_type = 'content' AND content = '## Dup' \
-         AND deleted_at IS NULL ORDER BY id ASC LIMIT 1",
-    )
-    .fetch_one(&pool)
-    .await
-    .unwrap();
-    let referencing_content: String = sqlx::query_scalar(
-        "SELECT content FROM blocks WHERE block_type = 'content' \
-         AND content LIKE 'See%' AND deleted_at IS NULL",
-    )
-    .fetch_one(&pool)
-    .await
-    .unwrap();
+    let page = pages_titled(&pool, "File").await.remove(0);
+    assert_eq!(block_starting(&pool, "See").await, "See [[#Dup]] here");
     assert_eq!(
-        referencing_content,
-        format!("See (({first_dup_id})) here"),
-        "a duplicate heading anchor must resolve to the FIRST occurrence"
+        block_starting(&pool, "Also").await,
+        format!("Also [[{page}]] there")
     );
-    assert!(
-        !result.warnings.iter().any(|w| w.contains("anchor")),
-        "warnings={:?}",
-        result.warnings
+    assert_eq!(
+        result.warnings,
+        [
+            "1 wikilink heading-anchor(s) (`#Heading`) could not be matched to a heading in this \
+             document; left as a page link",
+            "wiki-link '[[#Dup]]' has no page target (intra-note anchor); left as plain text",
+        ]
     );
 
     mat.shutdown();
@@ -12521,6 +12563,133 @@ async fn a_page_titled_with_the_whole_link_wins_over_a_heading() {
     mat.shutdown();
 }
 
+/// D10 — an inline query naming `Issue #42` names the page `Issue`, though a
+/// link of that text refs `Issue`'s one `# 42` heading.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_inline_query_naming_an_anchored_page_remaps_to_the_page() {
+    use agaric_lib::commands::pages::inline_query_md::{InlineQuerySpec, decode_v2, encode_v2};
+    use agaric_store::filters::{FilterExpr, FilterPrimitive};
+
+    let (pool, dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let issue = dup_page(&pool, &mat, "Issue").await;
+    dup_child(&pool, &mat, &issue, "# 42").await;
+    settle(&mat).await;
+    let links_to = |target: &str| FilterExpr::Leaf {
+        primitive: FilterPrimitive::LinksTo {
+            target: target.to_owned(),
+        },
+    };
+    let spec = InlineQuerySpec {
+        filter: links_to("Issue #42"),
+        table: false,
+    };
+    let named = encode_v2(&spec).unwrap().replacen("v2:", "v2n:", 1);
+
+    import_file(
+        &pool,
+        &mat,
+        dir.path(),
+        "Notes.md",
+        &format!("- {{{{query {named} links}}}}"),
+    )
+    .await;
+
+    let stored = block_starting(&pool, "{{query").await;
+    let payload = stored
+        .strip_prefix("{{query ")
+        .and_then(|s| s.strip_suffix("}}"))
+        .unwrap();
+    assert_eq!(
+        decode_v2(payload).map(|spec| spec.filter),
+        Some(links_to(issue.as_str())),
+        "{stored}"
+    );
+    mat.shutdown();
+}
+
+/// D9 — the labels one import drops, on links into another page and into the
+/// file itself, are counted in one warning.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn one_import_counts_the_labels_it_drops_in_one_warning() {
+    let (pool, dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let [_, heading, _, _] = anchor_pages(&pool, &mat).await;
+
+    let result = import_file(
+        &pool,
+        &mat,
+        dir.path(),
+        "Notes.md",
+        "- # Local\n- here [[#Local|this]]\n- there [[Guide#Setup|the steps]]",
+    )
+    .await;
+
+    assert_eq!(
+        block_starting(&pool, "there").await,
+        format!("there (({heading}))")
+    );
+    assert!(block_starting(&pool, "here").await.starts_with("here (("));
+    assert_eq!(
+        result.warnings,
+        ["2 link label(s) were dropped: a block reference carries no label"]
+    );
+    mat.shutdown();
+}
+
+/// D10 — in paste and Edit as Markdown, a link into the page being written
+/// refs its one heading of that text among the page's saved blocks, as a link
+/// into another page does, and one that names none links the page with the
+/// warning. Only import, whose blocks are not saved yet, reads the file. A
+/// label dropped with a link that became a block ref is warned of (D9).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_link_into_the_page_being_written_refs_its_saved_heading() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let [guide, heading, plain, _] = anchor_pages(&pool, &mat).await;
+    let dropped_label = "1 link label(s) were dropped: a block reference carries no label";
+
+    let base = page_source(&pool, &guide).await;
+    let report = save_source(
+        &pool,
+        &mat,
+        &guide,
+        &with(&base, "plain", "plain [[Guide#Setup|the steps]]"),
+        &base,
+        false,
+    )
+    .await
+    .unwrap();
+    assert_eq!(report.warnings, [dropped_label]);
+    assert_eq!(
+        block_starting(&pool, "plain").await,
+        format!("plain (({heading}))")
+    );
+
+    let pasted = paste_blocks_inner(
+        &pool,
+        DEV,
+        &mat,
+        plain,
+        paste_text("- pasted [[Guide#Setup|the steps]]\n- gone [[Guide#Nowhere]]\n"),
+        None,
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+    let contents: Vec<_> = pasted
+        .blocks
+        .into_iter()
+        .filter_map(|b| b.content)
+        .collect();
+    assert_eq!(
+        contents,
+        [format!("pasted (({heading}))"), format!("gone [[{guide}]]")]
+    );
+    assert_eq!(pasted.warnings, [dropped_anchors(1), dropped_label.into()]);
+    mat.shutdown();
+}
+
 /// #5160 D9 — an anchor into the imported file that matches nothing there
 /// links the file's page, and a label equal to that page's title is not
 /// stored; another label is.
@@ -12557,8 +12726,8 @@ async fn an_unmatched_anchor_into_the_file_drops_a_label_equal_to_its_title() {
         result.warnings,
         [
             "1 wikilink block-anchor(s) (`#^blockId`) could not be matched to a block in this \
-             document; left as a page link (Obsidian cross-note block-anchor targeting is not \
-             yet supported)",
+             document; left as a page link (an Obsidian `^name` resolves only in the file that \
+             defines it)",
             "2 wikilink heading-anchor(s) (`#Heading`) could not be matched to a heading in this \
              document; left as a page link",
         ]
