@@ -1455,10 +1455,13 @@ export const pagesHandlers = {
       properties_set: propertiesSet,
     })
 
+    // The mock reads no Logseq `collapsed::` line, so it folds nothing.
     return {
       page_title: pageTitle,
+      page_id: pageId,
       blocks_created: blocksCreated,
       properties_set: propertiesSet,
+      collapsed: [],
       warnings,
     }
   },

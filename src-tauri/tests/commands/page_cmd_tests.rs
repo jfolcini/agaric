@@ -12434,14 +12434,33 @@ async fn a_link_to_a_heading_of_another_page_is_a_ref_to_its_block() {
     mat.shutdown();
 }
 
-/// D10 — a heading link whose page holds two headings of that text, or none
-/// but a deleted one, links the page and drops the anchor with the warning.
+/// D10 — a heading link whose page holds two headings of that text refs the
+/// first in document order, as Obsidian resolves a repeated heading: depth
+/// first, so a heading nested third under an earlier block comes before a
+/// later top-level one made before it. A page holding none but a deleted one
+/// is linked as the page, the anchor dropped with the warning.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_heading_link_is_to_the_page_unless_exactly_one_heading_matches() {
+async fn a_heading_link_is_to_the_first_matching_heading_in_document_order() {
     let (pool, dir) = test_pool().await;
     let mat = Materializer::new(pool.clone());
     let [guide, _, _, after] = anchor_pages(&pool, &mat).await;
     dup_child(&pool, &mat, &guide, "### setup").await;
+    let intro = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "intro".into(),
+        Some(guide.clone()),
+        Some(0),
+    )
+    .await
+    .unwrap()
+    .id;
+    for filler in ["a", "b"] {
+        dup_child(&pool, &mat, &intro, filler).await;
+    }
+    let first = dup_child(&pool, &mat, &intro, "## Setup").await;
     let other = dup_page(&pool, &mat, "Other").await;
     dup_child(&pool, &mat, &other, "Setup").await;
     let deleted = dup_child(&pool, &mat, &other, "## Setup").await;
@@ -12458,13 +12477,13 @@ async fn a_heading_link_is_to_the_page_unless_exactly_one_heading_matches() {
     .await;
     assert_eq!(
         block_starting(&pool, "twice").await,
-        format!("twice [[{guide}]]")
+        format!("twice (({first}))")
     );
     assert_eq!(
         block_starting(&pool, "none").await,
         format!("none [[{other}]]")
     );
-    assert_eq!(result.warnings, [dropped_anchors(2)]);
+    assert_eq!(result.warnings, [dropped_anchors(1)]);
 
     assert_eq!(
         pasted(
@@ -12474,7 +12493,102 @@ async fn a_heading_link_is_to_the_page_unless_exactly_one_heading_matches() {
             "- pasted [[Guide#Setup]] [[Other#Setup]]\n"
         )
         .await,
-        format!("pasted [[{guide}]] [[{other}]]")
+        format!("pasted (({first})) [[{other}]]")
+    );
+    mat.shutdown();
+}
+
+// ======================================================================
+// #5160 P3 / D14 — a Logseq page's page properties and bookkeeping.
+// ======================================================================
+
+/// P3, D14 — a Logseq page imports as Logseq shows it. The property lines
+/// before the first block are the page's properties, `alias::` its aliases
+/// and `tags::` its tags. A `((uuid))` to a block of the file refs that block
+/// once it exists, except in code, and one to no block of it is stripped
+/// with the warning. `collapsed:: true` is reported for the frontend to fold,
+/// `heading:: true` makes a heading, and a `:LOGBOOK:` drawer is dropped with
+/// one warning. None of the bookkeeping lines is left as a property.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_logseq_page_imports_its_page_properties_and_bookkeeping() {
+    let (pool, dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    ensure_test_space(&pool).await;
+    mark_block_as_space(&pool, TEST_SPACE_ID).await;
+    let quote_id = "650f1c2e-8a3b-4f6e-9d21-7c5e0b9a1f33";
+    let result = import_file(
+        &pool,
+        &mat,
+        dir.path(),
+        "Atlas.md",
+        &format!(
+            "title:: Project Atlas\nalias:: Atlas, [[Beta, Inc]]\ntags:: project, [[Q3 plans]]\n\n\
+             - LATER Read (({quote_id})) and ((11111111-2222-4333-8444-555555555555))\n\
+             - Quote from the call\n  id:: {quote_id}\n  collapsed:: true\n  - Ship small\n\
+             - Plan\n  heading:: true\n- ```\n  (({quote_id}))\n  ```\n\
+             - DONE Book the room\n  :LOGBOOK:\n  CLOCK: [2026-09-20 Sun 10:00:00]--\
+             [2026-09-20 Sun 10:30:00] =>  00:30:00\n  :END:\n"
+        ),
+    )
+    .await;
+    let page = pages_titled(&pool, "Atlas").await.remove(0);
+    assert_eq!(result.page_id, page);
+    let quote: String = sqlx::query_scalar("SELECT id FROM blocks WHERE content = ?")
+        .bind("Quote from the call")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+
+    assert_eq!(
+        block_starting(&pool, "Read").await,
+        format!("Read (({quote})) and")
+    );
+    assert_eq!(result.collapsed, [quote]);
+    assert_eq!(block_starting(&pool, "## Plan").await, "## Plan");
+    assert_eq!(
+        block_starting(&pool, "```").await,
+        format!("```\n(({quote_id}))\n```"),
+        "a code block's ref is its text"
+    );
+    assert_eq!(block_starting(&pool, "Book").await, "Book the room");
+    let keys: Vec<(String, String)> = sqlx::query_as(
+        "SELECT b.content, p.key FROM block_properties p JOIN blocks b ON b.id = p.block_id \
+         WHERE b.page_id = ? AND p.key IN ('id', 'collapsed', 'heading', 'title', 'aliases', \
+         'alias', 'tags') \
+         ORDER BY b.content, p.key",
+    )
+    .bind(&page)
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        keys,
+        [("Atlas".to_string(), "title".to_string())],
+        "only the page's title is one of these properties"
+    );
+    let page_id = BlockId::from_trusted(&page);
+    assert_eq!(
+        get_page_aliases_inner(&pool, page_id.as_str())
+            .await
+            .unwrap(),
+        ["Atlas", "Beta, Inc"]
+    );
+    let tags: Vec<String> = sqlx::query_scalar(
+        "SELECT t.content FROM block_tags bt JOIN blocks t ON t.id = bt.tag_id \
+         WHERE bt.block_id = ? ORDER BY t.content",
+    )
+    .bind(&page)
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(tags, ["Q3 plans", "project"]);
+    assert_eq!(
+        result.warnings,
+        [
+            "1 ((block-ref)) reference(s) were stripped from imported content and could not be \
+             preserved",
+            "1 Logseq :LOGBOOK: drawer(s) were dropped",
+        ]
     );
     mat.shutdown();
 }

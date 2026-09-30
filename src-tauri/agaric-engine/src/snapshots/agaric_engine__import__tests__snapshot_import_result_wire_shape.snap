@@ -3,8 +3,11 @@ source: agaric-engine/src/import.rs
 expression: result
 ---
 page_title: Quarterly Review
+page_id: 01J00000000000000000PAGE01
 blocks_created: 12
 properties_set: 3
+collapsed:
+  - 01J00000000000000000BLOCK1
 warnings:
   - 1 block(s) exceeded maximum depth of 19 and were flattened
   - stripped 2 unresolvable ((block-ref)) token(s)
