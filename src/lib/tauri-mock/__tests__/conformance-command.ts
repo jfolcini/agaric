@@ -135,6 +135,9 @@ const RETURN_SHAPE: Readonly<Record<string, ReturnShape>> = {
   },
   restore_blocks_by_ids: { idKey: HEADED_ID_KEY, attrs: ['affected_count'], lists: [] },
   purge_blocks_by_ids: { idKey: HEADED_ID_KEY, attrs: ['affected_count'], lists: [] },
+  // #5160 D11 — the row the property was set on; a text value under a `ref`
+  // definition is read as the block it names, which only the command does.
+  set_property: { idKey: 'id', attrs: [], lists: [] },
   // #5057 — the three batch COUNTERS answer with a bare number, which carries
   // no field to name it. The shape's single attribute names the scalar, so the
   // token reads `set_property_batch#updated=3` instead of exposing a synthetic

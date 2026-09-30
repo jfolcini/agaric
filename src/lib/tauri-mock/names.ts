@@ -31,7 +31,12 @@ import {
   scanNameTokens,
 } from '@/lib/name-tokens'
 import { compareUtf8Bytes, foldAsciiUppercase } from '@/lib/sqlite-collation'
-import { appendSlot, insertAtSlotAndRenumber, ownerSpaceOf } from '@/lib/tauri-mock/handlers/shared'
+import {
+  appendSlot,
+  insertAtSlotAndRenumber,
+  ownerSpaceOf,
+  validationRejection,
+} from '@/lib/tauri-mock/handlers/shared'
 import { blocks, fakeId, pageAliases, properties, pushOp } from '@/lib/tauri-mock/seed'
 
 type OpRefs = Array<{ device_id: string; seq: number }>
@@ -119,6 +124,33 @@ export function findEmptyPageTitled(title: string, spaceId: string): string | nu
     (b) => b['parent_id'] === match.id && b['deleted_at'] == null,
   )
   return hasChild ? null : match.id
+}
+
+/**
+ * The block a text value under a `ref` definition names for a block of
+ * `spaceId` (#5160 D11), as `read_typed_ref` reads it: `[[Title]]` less its
+ * brackets, or the value, is a live block id in the space, else a page title
+ * by `LinkMatches::find`. A tie, or no match, is refused.
+ */
+export function resolveRefValue(value: string, spaceId: string | null): string {
+  const trimmed = value.trim()
+  const inner = trimmed.startsWith('[[') ? trimmed.slice(2) : ''
+  const name = inner.endsWith(']]') ? inner.slice(0, -2).trim() : trimmed
+  if (/^[0-9A-Z]{26}$/.test(name)) {
+    const row = blocks.get(name)
+    if (!row || row['deleted_at'] != null) {
+      throw validationRejection(`'${name}' is not the id of a live block`)
+    }
+    const target = (row['space_id'] as string | null) ?? ownerSpaceOf(row)
+    if (spaceId !== null && target !== null && target !== spaceId) {
+      throw validationRejection(`'${name}' is a block of another space`)
+    }
+    return name
+  }
+  const match = spaceId === null ? null : findPage(name, livePages(spaceId))
+  if (match === 'ambiguous') throw validationRejection(`more than one page is titled '${name}'`)
+  if (match === null) throw validationRejection(`no page is titled '${name}' in this space`)
+  return match.id
 }
 
 /** A page or tag created as the backend's `create_block_in_tx` + space stamp. */

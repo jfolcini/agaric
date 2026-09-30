@@ -118,7 +118,9 @@ pub async fn list_property_values_inner(
 /// Set (upsert) a property on a block.
 ///
 /// Thin wrapper around [`set_property_in_tx`] that manages the transaction
-/// lifecycle and dispatches background work.
+/// lifecycle and dispatches background work. A `value_text` under a `ref`
+/// definition is the block its id, `[[Title]]` or title names in the block's
+/// space (#5160 D11), and is refused when it names none or two.
 ///
 /// `caller_context`: when `Some(name)`, the exactly-one-value
 /// invariant is enforced up-front and the resulting `AppError::Validation`
@@ -203,6 +205,14 @@ pub async fn set_property_inner(
     let mut tx = CommandTx::begin_immediate(pool, "set_property").await?;
     // #2604 — rollback-safe engine apply (rewind on tx abort).
     tx.arm_engine_rollback(materializer.loro_state());
+    // #5160 D11 — text under a `ref` definition names its target as a typed
+    // `key:: value` line does, so the block editor can commit one.
+    let (value_text, value_ref) = match value_text {
+        Some(text) if value_ref.is_none() => {
+            super::pages::markdown::read_typed_ref(&mut tx, block_id.as_str(), &key, text).await?
+        }
+        text => (text, value_ref),
+    };
     let (block, op_record) = set_property_in_tx(
         &mut tx,
         materializer.loro_state(),

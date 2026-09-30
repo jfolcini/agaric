@@ -5266,7 +5266,8 @@ async fn apply_block_properties(
     for (key, value) in properties {
         let (value_text, value_num, value_date, value_ref, value_bool) =
             lines.read(key, value).map_err(|reason| {
-                AppError::validation(format!("`{key}:: {value}` cannot be saved: {reason}"))
+                let line = lines.typed_line(key, value);
+                AppError::validation(format!("`{line}` cannot be saved: {reason}"))
             })?;
         let (_block, prop_op) = agaric_engine::block_ops::set_property_in_tx_with_declaration(
             tx,
@@ -6179,6 +6180,7 @@ pub async fn import_markdown(
 #[path = "markdown_properties.rs"]
 mod property_lines;
 use property_lines::PropertyLines;
+pub(crate) use property_lines::read_typed_ref;
 
 #[path = "markdown_source_apply.rs"]
 mod source_apply;

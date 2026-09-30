@@ -1622,10 +1622,10 @@ describe('list_property_values', () => {
   it('returns distinct values for a key, usage-ranked then value ASC', () => {
     setStatus(SEED_IDS.BLOCK_GS_1, 'done')
     setStatus(SEED_IDS.BLOCK_GS_2, 'done')
-    setStatus(SEED_IDS.BLOCK_GS_3, 'blocked')
+    setStatus(SEED_IDS.BLOCK_GS_3, 'paused')
     const result = invoke('list_property_values', { key: 'status' }) as string[]
-    // `done` used twice (leads), `blocked` once.
-    expect(result).toEqual(['done', 'blocked'])
+    // `done` used twice (leads), `paused` once.
+    expect(result).toEqual(['done', 'paused'])
   })
 
   it('scopes values to the requested key', () => {
@@ -2381,7 +2381,7 @@ describe('list_backlinks_grouped', () => {
       ids[status] = created['id'] as string
       invoke('set_property', {
         blockId: ids[status],
-        key: 'status',
+        key: 'phase',
         value: {
           value_text: status,
           value_num: null,
@@ -2395,7 +2395,7 @@ describe('list_backlinks_grouped', () => {
       (
         invoke('list_backlinks_grouped', {
           blockId: SEED_IDS.PAGE_GETTING_STARTED,
-          filters: [{ type: 'PropertyText', key: 'status', op, value: 'open' }],
+          filters: [{ type: 'PropertyText', key: 'phase', op, value: 'open' }],
         }) as { groups: Array<{ blocks: Array<Record<string, unknown>> }> }
       ).groups.flatMap((g) => g.blocks.map((b) => b['id']))
     expect(query('Eq')).toEqual([ids['open']])
@@ -2513,17 +2513,17 @@ describe('property definition commands', () => {
 
   it('create_property_def adds a new definition', () => {
     const def = invoke('create_property_def', {
-      key: 'effort',
+      key: 'estimate',
       valueType: 'number',
       options: null,
     }) as Record<string, unknown>
-    expect(def['key']).toBe('effort')
+    expect(def['key']).toBe('estimate')
     expect(def['value_type']).toBe('number')
 
     const page = invoke('list_property_defs') as {
       items: Array<Record<string, unknown>>
     }
-    expect(page.items.some((d) => d['key'] === 'effort')).toBe(true)
+    expect(page.items.some((d) => d['key'] === 'estimate')).toBe(true)
   })
 
   it('update_property_def_options updates options', () => {

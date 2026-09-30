@@ -307,18 +307,19 @@ test.describe('Structured DSL filters → IPC params (E2E-6)', () => {
 
   // E2E-A8 — empty-prop contract pin: a trailing `=` yields a
   // key-presence-only filter (empty value), mirroring the unit test in
-  // `to-search-filter.test.ts`.
+  // `to-search-filter.test.ts`. The key has no definition: a declared select
+  // such as `status` offers its options, and Enter picks the first.
   test('prop: token with empty value → filter.propertyFilters key-presence', async ({ page }) => {
     await searchUntil(
       page,
-      'prop:status=',
+      'prop:mood=',
       (f) =>
         Array.isArray(f['propertyFilters']) &&
         (f['propertyFilters'] as Array<{ key: string; value: string }>).some(
-          (p) => p.key === 'status' && p.value === '',
+          (p) => p.key === 'mood' && p.value === '',
         ),
     )
     const filter = await latestFilter(page)
-    expect(filter['propertyFilters']).toContainEqual({ key: 'status', value: '' })
+    expect(filter['propertyFilters']).toContainEqual({ key: 'mood', value: '' })
   })
 })
