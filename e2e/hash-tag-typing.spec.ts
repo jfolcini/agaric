@@ -5,11 +5,13 @@ import { expect, focusBlockById, openPage, saveBlock, test, waitForBoot } from '
 /**
  * #5160 D8 / N7: typing `#project` and a space, or `#[[multi word]]`, in a
  * block makes the tag. The block is stored with `#[ULID]` and the tag exists;
- * both are read back from the mock backend.
+ * both are read back from the mock backend. Follow-up 7a: a `#name` still text
+ * when the block is saved (the picker dismissed) is made the tag then.
  */
 
 const PAGE = 'Getting Started'
 const GS1 = '0000000000000000000BLOCK01'
+const GS2 = '0000000000000000000BLOCK02'
 const TAG_REF = /#\[([0-9A-Z]{26})\]/g
 
 interface TagRow {
@@ -62,5 +64,32 @@ test.describe('Typing # makes a tag (#5160 D8)', () => {
     const ids = [...(await storedContent(page)).matchAll(TAG_REF)].map((m) => m[1] as string)
     const names = await tagNames(page)
     expect(ids.map((id) => names.get(id))).toEqual(['project', 'multi word'])
+  })
+
+  test('a #name left as text by Escape is a tag once Enter saves the block', async ({ page }) => {
+    const editor = await focusBlockById(page, GS1)
+    await editor.press('End')
+    await page.keyboard.type(' #later', { delay: 30 })
+    await page.keyboard.press('Escape')
+    await expect(editor.locator('[data-testid="tag-ref-chip"]')).toHaveCount(0)
+    await saveBlock(page)
+
+    await expect.poll(() => storedContent(page)).toMatch(/^Plan #\[[0-9A-Z]{26}\]$/)
+    const [id] = [...(await storedContent(page)).matchAll(TAG_REF)].map((m) => m[1] as string)
+    expect((await tagNames(page)).get(id as string)).toBe('later')
+  })
+
+  test('a #name left as text is the existing tag once a click away saves the block', async ({
+    page,
+  }) => {
+    const editor = await focusBlockById(page, GS1)
+    await editor.press('End')
+    await page.keyboard.type(' #Work', { delay: 30 })
+    await page.keyboard.press('Escape')
+    await page.locator(`[data-testid="block-static"][data-block-id="${GS2}"]`).click()
+
+    await expect.poll(() => storedContent(page)).toMatch(/^Plan #\[[0-9A-Z]{26}\]$/)
+    const [id] = [...(await storedContent(page)).matchAll(TAG_REF)].map((m) => m[1] as string)
+    expect((await tagNames(page)).get(id as string)).toBe('work')
   })
 })

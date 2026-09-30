@@ -1,17 +1,19 @@
 /**
  * TipTap extension: the `@` and `#` tag pickers and the typed tag (#5160 D8).
  *
- * - `@` opens the tag picker after whitespace or at the start of a block.
- * - `#` opens the same picker there too, but only where typing a space would
- *   make `#query` a tag: never on `#42`, in code, or on a bare `#` run, so
- *   Space and Enter still make `# ` … `###### ` headings.
+ * - `@` opens the tag picker after a space or at the start of a block.
+ * - `#` opens the same picker exactly where typing a space would make `#query`
+ *   a tag: at the start of the text or after whitespace, never on `#42`, in
+ *   code, or on a bare `#` run, so Space and Enter still make `# ` … `###### `
+ *   headings.
  * - Typing `#name` and then a space or punctuation makes the tag without
  *   picking, and so does closing `#[[multi word]]` (N7): the existing tag of
  *   that name in any case, else a new one. The terminator stays after the tag;
  *   Enter is left to the picker or the block. {@link completedTag} reads the
  *   name with the rule import, paste and the buffer use (`scanNameTokens`), so
- *   `#42`, `a#b`, `x.com/#frag`, `&#39;`, `\#tag` and a `#` in a URL, a link
- *   destination, inline code or a `[[link]]` stay text.
+ *   `#42`, `a#b`, `(#tag`, `x.com/#frag`, `&#39;`, `\#tag` and a `#` in a URL,
+ *   a link destination, inline code or a `[[link]]` stay text. A `#name` left
+ *   as text when the block is saved becomes the tag then (`unmount-flush.ts`).
  * - TipTap runs input rules when an IME composition ends, so a composed
  *   `#name ` becomes a tag too.
  *
@@ -86,20 +88,16 @@ function inCode(state: EditorState, pos: number): boolean {
 /** The `@` or `#` picker: one search, create and insertion for both triggers. */
 function tagPicker(
   extension: { editor: Editor; options: AtTagPickerOptions },
-  trigger: Pick<PickerPluginConfig, 'pluginKey' | 'char' | 'allowSpaces' | 'allow'>,
+  trigger: Pick<
+    PickerPluginConfig,
+    'pluginKey' | 'char' | 'allowSpaces' | 'allowedPrefixes' | 'allow'
+  >,
 ) {
   const { options } = extension
   return createPickerPlugin({
     loggerComponent: 'AtTagPicker',
     displayName: t('editor.suggestion.tags'),
     ...trigger,
-    // Only after whitespace or at the start of the block. Without this guard,
-    // query expressions like `property:context=@office` would trip the picker
-    // and intercept Enter (creating a "Create 'office}}'" tag instead of saving
-    // the block). ProseMirror renders a trailing space as NBSP, so `tagged: `
-    // plus the toolbar's Insert-tag button reads `tagged:\u00A0@`; `\n` covers
-    // a hard break.
-    allowedPrefixes: [' ', '\u00A0', '\n'],
     editor: extension.editor,
     items: (query) => options.items(query),
     command: ({ editor, range, props }) => {
@@ -178,11 +176,20 @@ export const AtTagPicker = Extension.create<AtTagPickerOptions>({
         pluginKey: atTagPickerPluginKey,
         char: '@',
         allowSpaces: true,
+        // Only after a space or at the start of the block. Without this guard,
+        // query expressions like `property:context=@office` would trip the
+        // picker and intercept Enter (creating a "Create 'office}}'" tag instead
+        // of saving the block). ProseMirror renders a trailing space as NBSP, so
+        // `tagged: ` plus the toolbar's Insert-tag button reads
+        // `tagged:\u00A0@`; `\n` covers a hard break.
+        allowedPrefixes: [' ', '\u00A0', '\n'],
       }),
       tagPicker(this, {
         pluginKey: hashTagPickerPluginKey,
         char: '#',
         allowSpaces: false,
+        // The tag rule below decides, whitespace of every kind included.
+        allowedPrefixes: null,
         allow: ({ state, range }) =>
           !inCode(state, range.to) &&
           completedTag(`${getTextContentFromNodes(state.doc.resolve(range.to))} `)?.typed ===

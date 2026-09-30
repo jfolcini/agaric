@@ -104,7 +104,7 @@ describe('AtTagPicker suggestion plugin configuration', () => {
   // block. Pinning the prefix set here ensures the picker only opens when
   // `@` is preceded by whitespace (or starts a block), matching the
   // Suggestion plugin's own default.
-  it('restricts both triggers to whitespace/start-of-block prefixes', async () => {
+  it('restricts @ to whitespace/start-of-block prefixes and leaves # to the tag rule', async () => {
     const captured: Array<Record<string, unknown>> = []
     vi.resetModules()
     vi.doMock('@tiptap/suggestion', () => ({
@@ -124,11 +124,12 @@ describe('AtTagPicker suggestion plugin configuration', () => {
     // when it's the last character in a paragraph), and newline are all
     // valid prefixes that let the picker open mid-block. `\0` is appended
     // by TipTap internally so empty/start-of-block prefixes also match.
-    for (const opts of captured) {
-      expect(opts['allowedPrefixes']).toEqual([' ', '\u00A0', '\n'])
-    }
+    expect(captured[0]?.['allowedPrefixes']).toEqual([' ', '\u00A0', '\n'])
+    // `#` opens exactly where a space would make a tag, which its `allow`
+    // decides (hash-tag.test.ts pins where that is).
+    expect(captured[1]?.['allowedPrefixes']).toBeNull()
     // `@multi word` searches with spaces; `#` ends at one, where the typed
-    // tag takes over, and opens only where that space would make a tag.
+    // tag takes over.
     expect(captured[0]?.['allowSpaces']).toBe(true)
     expect(captured[0]?.['allow']).toBeUndefined()
     expect(captured[1]?.['allowSpaces']).toBe(false)

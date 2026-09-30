@@ -99,7 +99,7 @@
     },
     {
       "name": "a double-backtick run pairs as two single-backtick spans on both sides",
-      "input": "``#code`` and #real",
+      "input": "`` #code `` and #real",
       "requestedTagNames": ["code", "real"]
     },
     {
@@ -239,6 +239,29 @@
       "editor": [["text", "[#A] ship it"]]
     },
     {
+      "name": "#5160 follow-up 7a a tag starts the text or follows whitespace, as in Obsidian: punctuation and an emoji are no boundary",
+      "input": "(#tag) \"#tag ,#tag 😀#tag",
+      "requestedPageNames": [],
+      "requestedTagNames": [],
+      "transformed": "(#tag) \"#tag ,#tag 😀#tag",
+      "editor": [["text", "(#tag) \"#tag ,#tag 😀#tag"]]
+    },
+    {
+      "name": "#5160 follow-up 7a any whitespace is a boundary: a tab, a no-break space, an ideographic space",
+      "input": "a\t#tag #real　#alpha",
+      "requestedPageNames": [],
+      "requestedTagNames": ["tag", "real", "alpha"],
+      "transformed": "a\t#[01BX5ZZKBKACTAV9WEVGEMMVS1] #[01BX5ZZKBKACTAV9WEVGEMMVS7]　#[01BX5ZZKBKACTAV9WEVGEMMVS8]",
+      "editor": [
+        ["text", "a\t"],
+        ["tag", "tag"],
+        ["text", " "],
+        ["tag", "real"],
+        ["text", "　"],
+        ["tag", "alpha"]
+      ]
+    },
+    {
       "name": "#5160 N1 an ampersand inside a name ends it: `#Q&A` is the tag Q, so N8's writer must bracket it",
       "input": "#Q&A",
       "requestedPageNames": [],
@@ -259,7 +282,7 @@
     },
     {
       "name": "#5160 N3 an even run of backslashes is literal backslashes before a tag",
-      "input": "\\\\#tag",
+      "input": "\\\\#[[tag]]",
       "requestedPageNames": [],
       "requestedTagNames": ["tag"],
       "transformed": "\\\\#[01BX5ZZKBKACTAV9WEVGEMMVS1]",

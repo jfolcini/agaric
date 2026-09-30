@@ -1,6 +1,6 @@
 /**
  * runUnmountFlush — the shared post-`unmount()` decision chain: split →
- * checkbox → inline properties → plain edit (#3278).
+ * checkbox → inline properties → tags written as text → plain edit (#3278).
  *
  * Every unmount-triggered save — DOM blur (`useEditorBlur` Step 5),
  * programmatic focus move (`persistUnmount` in EditableBlock), imperative
@@ -20,6 +20,8 @@
  * `key:: value` line or a leading task marker — from Source, import or paste,
  * where Rust already reads them as one block of text — keeps them after a typo
  * fix; the same shapes typed into the block are split, extracted or folded.
+ * A tag written as text is the exception: import, paste and Source read a
+ * `#name` as the tag, so the flush makes every one a tag (#5160 follow-up 7a).
  * `classifyUnmountFlush` is that decision on its own, shared with the
  * debounced content commit, which must skip exactly the edits this chain
  * would not commit as a plain edit.
@@ -51,26 +53,31 @@
  */
 
 import { shouldSplitOnBlur } from '@/editor/content-delta'
+import { parse } from '@/editor/markdown-parse'
 import { processCheckboxSyntax } from '@/lib/block-utils'
 import {
   bumpFlushSeq,
   commitCheckboxState,
   commitInlineProperties,
+  commitTypedTags,
   type PageBlockStoreLike,
 } from '@/lib/inline-property-commit'
 import { type InlinePropertyLine, parseInlineProperties } from '@/lib/inline-property-parse'
+import { scanNameTokens, type TagToken } from '@/lib/name-tokens'
 import type { TodoState } from '@/lib/task-states'
 
 export type UnmountFlushResult =
   | { kind: 'split'; outcome: Promise<boolean> | void }
   | { kind: 'checkbox'; outcome: Promise<boolean> }
   | { kind: 'property'; outcome: Promise<boolean> }
+  | { kind: 'tag'; outcome: Promise<boolean> }
   | { kind: 'edit'; outcome: Promise<boolean> | void }
 
 export type UnmountFlushClassification =
   | { kind: 'split' }
   | { kind: 'checkbox'; cleanContent: string; todoState: TodoState }
   | { kind: 'property'; inlineProps: InlinePropertyLine[] }
+  | { kind: 'tag'; tags: TagToken[] }
   | { kind: 'edit' }
 
 /** The `key:: value` lines of `changed` whose key `loaded` did not already carry. */
@@ -93,7 +100,20 @@ export function classifyUnmountFlush(loaded: string, changed: string): UnmountFl
   }
   const inlineProps = addedInlineProperties(loaded, changed)
   if (inlineProps.length > 0) return { kind: 'property', inlineProps }
+  const tags = tagsWrittenAsText(changed)
+  if (tags.length > 0) return { kind: 'tag', tags }
   return { kind: 'edit' }
+}
+
+/**
+ * The `#name` and `#[[name]]` tokens `content` holds as text, which import,
+ * paste and Source read as tags; none when it holds a code block, which they
+ * never read for names.
+ */
+function tagsWrittenAsText(content: string): TagToken[] {
+  const tags = scanNameTokens(content).filter((token): token is TagToken => token.kind === 'tag')
+  if (tags.length === 0) return tags
+  return parse(content).content?.some((node) => node.type === 'codeBlock') ? [] : tags
 }
 
 export interface UnmountFlushDeps {
@@ -173,7 +193,23 @@ export function runUnmountFlush(deps: UnmountFlushDeps): UnmountFlushResult {
     return { kind: 'property', outcome }
   }
 
-  // 4. Plain edit — with the #1062 dedup skip.
+  // 4. Tags written as text: saved as the plain edit is, then written as tags.
+  if (classified.kind === 'tag') {
+    const mySeq = bumpFlushSeq(blockId)
+    const textSaved =
+      dedupe?.content === changed ? dedupe.outcome : invokeSync(() => edit(blockId, changed))
+    const outcome = commitTypedTags({
+      blockId,
+      content: changed,
+      tags: classified.tags,
+      textSaved,
+      mySeq,
+      edit,
+    })
+    return { kind: 'tag', outcome }
+  }
+
+  // 5. Plain edit — with the #1062 dedup skip.
   if (dedupe && dedupe.content === changed) {
     return { kind: 'edit', outcome: dedupe.outcome }
   }

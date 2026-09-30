@@ -6417,7 +6417,8 @@ async fn export_and_import_round_trip_a_link_to_a_title_holding_a_pipe() {
 /// #5160 N3 — a tag ref or a page link after an odd run of backslashes is
 /// escaped, and no name form of it reads back there, so an export writes it as
 /// it is stored and Export → Import keeps the block's text; one after an even
-/// run is a ref after literal backslashes, written by name.
+/// run is a ref after literal backslashes, written by name (a tag bracketed,
+/// since only whitespace begins a bare one).
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn export_and_import_round_trip_refs_after_a_backslash() {
     let (pool, dir) = test_pool().await;
@@ -6437,7 +6438,7 @@ async fn export_and_import_round_trip_refs_after_a_backslash() {
     let md = export_page_markdown_inner(&pool, src.as_str())
         .await
         .unwrap();
-    let written = format!(r"- foo\#[{tag}] bar\\#work \[[{page}]] \\[[Target]]");
+    let written = format!(r"- foo\#[{tag}] bar\\#[[work]] \[[{page}]] \\[[Target]]");
     assert!(md.contains(&written), "{md}");
 
     import_file(&pool, &mat, dir.path(), "Roundtrip.md", &md).await;

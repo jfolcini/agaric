@@ -98,39 +98,27 @@ static HUMAN_PAGE_LINK_RE: std::sync::LazyLock<regex::Regex> = std::sync::LazyLo
 });
 
 /// Matches a HUMAN-readable bare/nested/hyphenated inline tag `#tag` on import
-/// (#1924). Group 1 is the leading boundary char (or empty at line start);
-/// group 2 is the tag NAME — a run of `[\p{L}\p{N}_]` then
+/// (#1924). Group 1 is the whitespace before the `#` (empty at the start of the
+/// text); group 2 is the tag NAME — a run of `[\p{L}\p{N}_]` then
 /// `[\p{L}\p{N}\p{M}_/-]*` (Unicode letters/digits/underscore plus combining
 /// marks, with `/` and `-` allowed after the first char for nested +
 /// hyphenated tags).
 ///
-/// The leading boundary `(^|[^\p{L}\p{N}\p{M}_&\[/])` prevents matching
-/// `# heading` (the `#` is followed by a space, not a name char), `word#frag`
-/// (the `#` is preceded by a word char), and `a#b`. Because the name's FIRST
-/// char must be a word char and a canonical `#[ULID]` ref's next char is `[`
-/// (not a word char), this regex never matches an already-internal `#[ULID]`
-/// token — so canonical refs survive untouched. `&`, `[` and `/` are not
-/// boundaries either (#5160 N1, D8): `it&#39;s` is an HTML entity, `[#A]` a
-/// Logseq priority and `x.com/#install` a URL with no scheme. The regex is
-/// only half the rule; [`is_tag_name`] and [`tag_guard_spans`] are the other
-/// half, and every reader applies all three.
+/// A tag starts the text or follows whitespace, as in Obsidian (#5160
+/// follow-up 7a): `(#tag)`, `"#tag`, `a#b`, `it&#39;s`, `[#A]`,
+/// `x.com/#install` and `\#tag` are text. `# heading` is not a tag either (a
+/// space follows the `#`), and neither is a canonical `#[ULID]` ref (a `[`
+/// does), so canonical refs survive untouched. The regex is only half the
+/// rule; [`is_tag_name`] and [`tag_guard_spans`] are the other half, and every
+/// reader applies all three.
 ///
-/// #3367 — the three classes are NOT interchangeable, and the asymmetry is the
-/// whole fix. `\p{M}` belongs in the BOUNDARY class and in the name's
-/// CONTINUATION class, because a combining mark is part of the grapheme cluster
-/// its base char starts: without it the name run stopped at the base letter, so
-/// `#café` in NFD (`caf` + `e` + U+0301) minted a tag `cafe` and stranded the
-/// acute in the surrounding prose, and `café#tag` in NFD read that acute as a
-/// word boundary and spliced a tag into the middle of a word that plain
-/// `cafe#tag` is protected from. Not an NFD-only curiosity: Devanagari, Arabic
-/// and Hebrew have no precomposed forms at all, so `#हिन्दी` was truncated to
-/// `#ह` in ordinary text.
-///
-/// `\p{M}` deliberately stays OUT of the name's FIRST-char class. A `#`
-/// followed directly by a combining mark is itself a grapheme cluster (the mark
-/// renders on the `#`), so consuming the `#` as a sigil and the mark as the
-/// name's first char would split THAT cluster — the same defect, mirrored. A
-/// tag name must start on a base character; marks may only follow one. That
+/// #3367 — `\p{M}` belongs in the name's CONTINUATION class, because a
+/// combining mark is part of the grapheme cluster its base char starts:
+/// without it `#café` in NFD (`caf` + `e` + U+0301) minted a tag `cafe` and
+/// stranded the acute, and `#हिन्दी` (Devanagari has no precomposed forms) was
+/// truncated to `#ह`. It deliberately stays OUT of the FIRST-char class: a `#`
+/// followed directly by a mark is itself one grapheme cluster (the mark
+/// renders on the `#`), so a tag name must start on a base character. That
 /// also keeps this regex aligned with `neutralize_ref_name` in
 /// `inline_query_md.rs`, whose "is this `#` tag-initial?" test is likewise a
 /// base-character test.
@@ -141,7 +129,7 @@ static HUMAN_PAGE_LINK_RE: std::sync::LazyLock<regex::Regex> = std::sync::LazyLo
 /// (#3367).
 pub(super) static HUMAN_TAG_RE: std::sync::LazyLock<regex::Regex> =
     std::sync::LazyLock::new(|| {
-        regex::Regex::new(r"(^|[^\p{L}\p{N}\p{M}_&\[/])#([\p{L}\p{N}_][\p{L}\p{N}\p{M}_/-]*)")
+        regex::Regex::new(r"(^|\p{White_Space})#([\p{L}\p{N}_][\p{L}\p{N}\p{M}_/-]*)")
             .expect("invalid human inline-tag regex")
     });
 
@@ -193,12 +181,11 @@ fn page_link_is_token(content: &str, start: usize, code_spans: &[(usize, usize)]
         && !is_escaped(content, start)
 }
 
-/// Whether the bare `#name` whose name group is `name_m` is a tag token in
-/// `content`: its `#` is outside every guarded span and every `[[…]]` token
-/// (#2567/#3598: a `#` inside a wiki-link is its anchor or part of its name),
-/// it is not escaped, and the name is one.
+/// Whether the bare `#name` whose name group is `name_m` is a tag token: its
+/// `#` is outside every guarded span and every `[[…]]` token (#2567/#3598: a
+/// `#` inside a wiki-link is its anchor or part of its name), and the name is
+/// one. A backslash is no boundary, so an escaped `\#name` never matches.
 fn bare_tag_is_token(
-    content: &str,
     name_m: regex::Match<'_>,
     guards: &[(usize, usize)],
     link_spans: &[(usize, usize)],
@@ -206,7 +193,6 @@ fn bare_tag_is_token(
     let hash_pos = name_m.start() - 1;
     !is_in_span(hash_pos, guards)
         && !is_in_span(hash_pos, link_spans)
-        && !is_escaped(content, hash_pos)
         && is_tag_name(name_m.as_str())
 }
 
@@ -596,7 +582,7 @@ fn collect_inbound_tag_names(blocks: &[import::ParsedBlock]) -> Vec<String> {
         // boundary char, which may be empty at line start).
         for cap in HUMAN_TAG_RE.captures_iter(&content) {
             let name_m = cap.get(2).expect("name group present");
-            if bare_tag_is_token(&content, name_m, &guards, &link_spans) {
+            if bare_tag_is_token(name_m, &guards, &link_spans) {
                 names.insert(name_m.as_str().to_string());
             }
         }
@@ -646,7 +632,7 @@ fn rewrite_inbound_tags(content: &str, resolved: &HashMap<String, String>) -> St
             let name_m = caps.get(2).expect("name group present");
             let name = name_m.as_str();
             // IDENTICAL guard to `collect_inbound_tag_names`.
-            if !bare_tag_is_token(&after_multi, name_m, &guards2, &link_spans2) {
+            if !bare_tag_is_token(name_m, &guards2, &link_spans2) {
                 return format!("{boundary}#{name}");
             }
             match resolved.get(name) {
@@ -6804,18 +6790,21 @@ mod tests {
     }
 
     /// #5160 N8 — a tag written where a bare `#name` would not read back as
-    /// that tag (after a `[`, a `/` or a word char, or before a name char) is
+    /// that tag (after anything but whitespace, or before a name char) is
     /// bracketed; what was written just before it is what the reader sees.
     #[test]
     fn a_tag_next_to_a_non_boundary_is_bracketed() {
         const ULID: &str = "01ARZ3NDEKTSV4RRFFQ69G5FAV";
         let tags = HashMap::from([(ULID.to_string(), "work".to_string())]);
-        let content =
-            format!("[#[{ULID}]] #[{ULID}] #[{ULID}]#[{ULID}] #[{ULID}]s x#[{ULID}] x/#[{ULID}]");
+        let content = format!(
+            "[#[{ULID}]] #[{ULID}] #[{ULID}]#[{ULID}] #[{ULID}]s x#[{ULID}] x/#[{ULID}] \
+             (#[{ULID}]) \"#[{ULID}] **#[{ULID}]**\n#[{ULID}]\u{a0}#[{ULID}]"
+        );
         let named = humanise_tag_and_page_refs(&content, &tags, &HashMap::new());
         assert_eq!(
             named,
-            "[#[[work]]] #work #work#[[work]] #[[work]]s x#[[work]] x/#[[work]]"
+            "[#[[work]]] #work #work#[[work]] #[[work]]s x#[[work]] x/#[[work]] \
+             (#[[work]]) \"#[[work]] **#[[work]]**\n#work\u{a0}#work"
         );
         assert_eq!(
             rewrite_inbound_tags(

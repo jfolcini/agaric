@@ -3,16 +3,25 @@
  * with several top-level nodes, an inline `key:: value` line or a leading task
  * marker keeps them after a typo fix; the same shapes typed into the block are
  * split, extracted or folded as before.
+ *
+ * #5160 follow-up 7a — a `#name` the block is saved with as text is a tag, as
+ * import and paste read it.
  */
 
 import { invoke } from '@tauri-apps/api/core'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { makeBlockRow, withOps } from '@/__tests__/fixtures'
 import { mockInvokeCommands } from '@/__tests__/helpers/invoke'
+import type { TagCacheRow } from '@/lib/bindings'
+import { bumpFlushSeq } from '@/lib/inline-property-commit'
 import { classifyUnmountFlush, runUnmountFlush } from '@/lib/unmount-flush'
+import { useSpaceStore } from '@/stores/space'
 
-function run(loaded: string, changed: string) {
-  const edit = vi.fn<(id: string, content: string) => Promise<boolean>>(() => Promise.resolve(true))
+function run(loaded: string, changed: string, saved = true) {
+  const edit = vi.fn<(id: string, content: string) => Promise<boolean>>(() =>
+    Promise.resolve(saved),
+  )
   const splitBlock = vi.fn<(id: string, content: string) => Promise<boolean>>(() =>
     Promise.resolve(true),
   )
@@ -110,5 +119,103 @@ describe('classifyUnmountFlush', () => {
     expect(classifyUnmountFlush('', 'key:: v').kind).toBe('property')
     expect(classifyUnmountFlush('- [ ] x', '- [ ] x!').kind).toBe('edit')
     expect(classifyUnmountFlush('', '- [ ] x').kind).toBe('checkbox')
+    expect(classifyUnmountFlush('', 'see #project').kind).toBe('tag')
+  })
+
+  it('reads a #name as import does: a tag after whitespace, even one it was loaded with', () => {
+    expect(classifyUnmountFlush('see #project', 'see #project!').kind).toBe('tag')
+    expect(classifyUnmountFlush('', 'a #[[deep work]]').kind).toBe('tag')
+    expect(classifyUnmountFlush('', 'fixes #42').kind).toBe('edit')
+    expect(classifyUnmountFlush('', 'see (#project)').kind).toBe('edit')
+    expect(classifyUnmountFlush('', 'x `#endif`').kind).toBe('edit')
+  })
+
+  it('never reads a tag in a code block', () => {
+    expect(classifyUnmountFlush('', '```c\n#include <x>\n```').kind).toBe('edit')
+    // The fence around a ``` run pairs no backticks around the code.
+    expect(classifyUnmountFlush('', '````\n#include ```\n````').kind).toBe('edit')
+  })
+
+  it('leaves a typed property line or task marker first to its own branch', () => {
+    expect(classifyUnmountFlush('', 'see #project\nkey:: v').kind).toBe('property')
+    expect(classifyUnmountFlush('', '- [ ] see #project').kind).toBe('checkbox')
+  })
+})
+
+describe('a #name saved as text becomes the tag (#5160 follow-up 7a)', () => {
+  const TAGS: TagCacheRow[] = [
+    { tag_id: 'TAG_PROJECT', name: 'Project', usage_count: 1, updated_at: '' },
+  ]
+  const created: string[] = []
+
+  beforeEach(() => {
+    created.length = 0
+    useSpaceStore.setState({ currentSpaceId: 'SPACE' })
+    vi.mocked(invoke).mockImplementation(
+      mockInvokeCommands({
+        list_all_tags_in_space: () => TAGS,
+        create_block: (args) => {
+          const name = args['content'] as string
+          if (name === 'broken') throw new Error('create failed')
+          created.push(name)
+          return withOps(makeBlockRow({ id: `NEW_${created.length}`, block_type: 'tag' }))
+        },
+      }),
+    )
+  })
+
+  afterEach(() => {
+    useSpaceStore.setState({ currentSpaceId: null })
+  })
+
+  it('saves the text, then writes each tag as its id: the existing one in any case, else a new one', async () => {
+    const { result, edit } = run('', 'see #project and #[[deep work]] now')
+    expect(result.kind).toBe('tag')
+    expect(edit).toHaveBeenCalledExactlyOnceWith('BLOCK', 'see #project and #[[deep work]] now')
+    await expect(result.outcome).resolves.toBe(true)
+    expect(created).toEqual(['deep work'])
+    expect(edit).toHaveBeenLastCalledWith('BLOCK', 'see #[TAG_PROJECT] and #[NEW_1] now')
+    expect(edit).toHaveBeenCalledTimes(2)
+  })
+
+  it('creates a new name once, however many times the block writes it', async () => {
+    const { result, edit } = run('', '#plan and #Plan')
+    await result.outcome
+    expect(created).toEqual(['plan'])
+    expect(edit).toHaveBeenLastCalledWith('BLOCK', '#[NEW_1] and #[NEW_1]')
+  })
+
+  it('keeps a name whose create fails as text and writes the rest', async () => {
+    const { result, edit } = run('', '#broken #project')
+    await expect(result.outcome).resolves.toBe(true)
+    expect(edit).toHaveBeenLastCalledWith('BLOCK', '#broken #[TAG_PROJECT]')
+  })
+
+  it('leaves the text when the save failed, so the draft is kept', async () => {
+    const { result, edit } = run('', 'see #project', false)
+    await expect(result.outcome).resolves.toBe(false)
+    expect(edit).toHaveBeenCalledOnce()
+  })
+
+  it('leaves the text with no active space', async () => {
+    useSpaceStore.setState({ currentSpaceId: null })
+    const { result, edit } = run('', 'see #project')
+    await expect(result.outcome).resolves.toBe(true)
+    expect(edit).toHaveBeenCalledOnce()
+  })
+
+  it('writes nothing more once a newer save of the block has started', async () => {
+    vi.mocked(invoke).mockImplementation(
+      mockInvokeCommands({
+        list_all_tags_in_space: () => {
+          bumpFlushSeq('BLOCK')
+          return TAGS
+        },
+      }),
+    )
+    const { result, edit } = run('', 'see #project and #new')
+    await expect(result.outcome).resolves.toBe(true)
+    expect(edit).toHaveBeenCalledOnce()
+    expect(created).toEqual([])
   })
 })

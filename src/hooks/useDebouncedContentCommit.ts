@@ -107,9 +107,10 @@ export function useDebouncedContentCommit(params: {
     if (md === null) return
     // Nothing new since the last commit (or since mount) — skip.
     if (md === re.originalMarkdown) return
-    // Defer to the blur flush for all three of its classifications (#2675
-    // inline `key:: value` lines, #4957 multi-block content and a leading GFM
-    // task marker). Those branches (`runUnmountFlush`) only run when blur's
+    // Defer to the blur flush for all of its classifications (#2675 inline
+    // `key:: value` lines, #4957 multi-block content, a leading GFM task
+    // marker, and a `#name` still text, which the flush makes a tag once it is
+    // no longer being typed). Those branches (`runUnmountFlush`) only run when blur's
     // `unmount()` reports a delta; committing here would rebase the baseline
     // (`markCommitted`), so a user who pauses past the debounce window before
     // blurring would get a null delta at flush and the content would silently
@@ -117,7 +118,7 @@ export function useDebouncedContentCommit(params: {
     // — blur re-commits through the classifying flush path. The decision is
     // the flush's own, against the same baseline (#5160 D2): a shape the block
     // was LOADED with is plain text to both, so only an edit that INTRODUCED
-    // one pauses the mid-typing CRDT commits.
+    // one pauses the mid-typing CRDT commits; a `#name` is a tag either way.
     if (classifyUnmountFlush(re.originalMarkdown, md).kind !== 'edit') return
 
     try {
