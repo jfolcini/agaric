@@ -16,8 +16,9 @@
  * With no usable HTML, plain text of more than one line — or one bullet line,
  * our own copy of a block — takes the same route as `{ kind: 'text', … }`, so
  * the backend reads it with the import grammar instead of ProseMirror escaping
- * its markers into literal paragraphs. A single line stays inline, and a lone
- * task line stays with `TaskPaste`.
+ * its markers into literal paragraphs. A single line is read as inline
+ * markdown at the caret (#5160 N11); a lone task line stays with `TaskPaste`
+ * and a bare URL with `ExternalLink`.
  *
  * Both routes splice like a text editor (#5160 D4): the payload carries the
  * block's text before and after the selection, so the first pasted block joins
@@ -51,9 +52,10 @@ import { Fragment, Slice } from '@tiptap/pm/model'
 import { Plugin, PluginKey } from '@tiptap/pm/state'
 import type { EditorView } from '@tiptap/pm/view'
 
+import { isValidHttpUrl } from '@/editor/extensions/external-link'
 import { pastedTaskParagraph } from '@/editor/extensions/task-paste'
 import { notifyUnknownNodeTypeToast } from '@/editor/markdown-serialize-toast'
-import { parse, serialize } from '@/editor/markdown-serializer'
+import { parse, parseInline, serialize } from '@/editor/markdown-serializer'
 import type { DocNode } from '@/editor/types'
 import type { PasteInput, PasteSplice } from '@/lib/bindings'
 import { dispatchBlockEvent } from '@/lib/block-events'
@@ -410,6 +412,35 @@ function insertInlineMarkdown(view: EditorView, markdown: string): void {
   }
 }
 
+/**
+ * Paste one line of plain text as inline markdown at the caret (#5160 N11),
+ * so a line reads the same as it does pasted as a block: marks, links, images,
+ * math and refs. Plain text, a task line and a bare URL are left to the
+ * default paste, `TaskPaste` and `ExternalLink`, and so is a line whose nodes
+ * this editor's schema cannot hold.
+ */
+function pasteOneLine(view: EditorView, text: string): boolean {
+  const line = text.split(/\r?\n/).find((l) => l.trim() !== '')
+  if (line === undefined || pastedTaskParagraph(text) !== null || isValidHttpUrl(line)) return false
+  const nodes = parseInline(line)
+  const only = nodes[0]
+  if (nodes.length === 1 && only?.type === 'text' && !only.marks && only.text === line) return false
+  let fragment: Fragment
+  try {
+    fragment = Fragment.from(nodes.map((node) => view.state.schema.nodeFromJSON(node)))
+  } catch (err) {
+    logger.warn(
+      'htmlPaste',
+      'one-line paste holds nodes the schema lacks; leaving it to the default paste',
+      undefined,
+      err,
+    )
+    return false
+  }
+  view.dispatch(view.state.tr.replaceSelection(new Slice(fragment, 0, 0)))
+  return true
+}
+
 /** Insert raw text at the caret (plain-text fallback). */
 function insertPlainText(view: EditorView, text: string): void {
   if (text.length === 0) return
@@ -465,9 +496,8 @@ export const HtmlPaste = Extension.create({
 
             if (!body) {
               // No usable HTML → text worth reading as blocks goes to the
-              // block-paste path; anything else falls through to task-paste /
-              // external-link / the default plain-text path unchanged.
-              if (!isBlockPaste(plainText)) return false
+              // block-paste path, and one line is read inline at the caret.
+              if (!isBlockPaste(plainText)) return pasteOneLine(view, plainText)
               dispatchPasteBlocks(view, { kind: 'text', text: plainText }, plainText, targetBlockId)
               return true
             }

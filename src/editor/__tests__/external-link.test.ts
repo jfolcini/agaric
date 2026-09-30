@@ -12,6 +12,8 @@ import Text from '@tiptap/extension-text'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { ExternalLink, isValidHttpUrl } from '@/editor/extensions/external-link'
+import { serialize } from '@/editor/markdown-serializer'
+import type { DocNode } from '@/editor/types'
 
 // ── Mocks ────────────────────────────────────────────────────────────────
 
@@ -449,5 +451,55 @@ describe('ExternalLink Ctrl/Cmd+Click scheme guard (#2209)', () => {
     const handled = simulateClick(editor, 'https://example.com', {})
     expect(handled).toBe(false)
     expect(mockOpenUrl).not.toHaveBeenCalled()
+  })
+})
+
+// -- Typed markdown links (#5160 N11) -------------------------------------------
+
+/**
+ * Type `text` so the input rules see it: everything before the last char is
+ * inserted, and the last char goes through `handleTextInput`, the real typing
+ * path, falling back to a plain insert when no rule claims it.
+ */
+function typeText(editor: Editor, typed: string): void {
+  editor.chain().focus().insertContent(typed.slice(0, -1)).run()
+  const last = typed.slice(-1)
+  const { from } = editor.state.selection
+  const handled = editor.view.someProp('handleTextInput', (f) =>
+    f(editor.view, from, from, last, () => editor.state.tr.insertText(last, from)),
+  )
+  if (!handled) editor.commands.insertContent(last)
+}
+
+describe('ExternalLink typed markdown links (#5160 N11)', () => {
+  let editor: Editor
+
+  afterEach(() => {
+    editor?.destroy()
+  })
+
+  it('typing `[t](url)` makes a link, stored as the markdown link', () => {
+    editor = createEditor()
+    typeText(editor, 'see [docs](https://example.com)')
+    const textNode = editor.state.doc.child(0).child(1)
+    expect(textNode.text).toBe('docs')
+    expect(textNode.marks.find((m) => m.type.name === 'link')?.attrs['href']).toBe(
+      'https://example.com',
+    )
+    expect(serialize(editor.getJSON() as DocNode)).toBe('see [docs](https://example.com)')
+  })
+
+  it('a typed title is dropped from the stored link', () => {
+    editor = createEditor()
+    typeText(editor, '[docs](https://example.com "Docs")')
+    expect(serialize(editor.getJSON() as DocNode)).toBe('[docs](https://example.com)')
+  })
+
+  it('a disallowed scheme stays literal text', () => {
+    editor = createEditor()
+    typeText(editor, '[x](javascript:alert(1))')
+    expect(editor.state.doc.textContent).toBe('[x](javascript:alert(1))')
+    const marks = editor.state.doc.child(0).child(0).marks
+    expect(marks.some((m) => m.type.name === 'link')).toBe(false)
   })
 })

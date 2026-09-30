@@ -120,11 +120,16 @@ const NUM_RUNS = Number(process.env['SWEEP_RUNS'] ?? 300)
 
 /**
  * Text alphabet: the mark/block delimiters of the locked grammar PLUS the
- * `$` / `!` / digit / paren chars behind the seam-escape fixes, and a tab
- * (`#\t` is a heading marker), so the fixpoint property keeps re-exploring
- * exactly the collision space the audit findings came from.
+ * `$` / `!` / digit / paren chars behind the seam-escape fixes, a tab, and the
+ * `"` and `.` of link titles and sentence ends (#5160 N9), so the fixpoint
+ * property keeps re-exploring exactly the collision space the audit findings
+ * came from.
+ *
+ * The tab makes `#\t` (a heading marker) reachable, not reached: with its
+ * escape removed, only the deep-list property below reddens, in about one run
+ * in five. The escape's pin is its unit test in `markdown-serializer.test.ts`.
  */
-const INTERESTING_CHARS = 'abX 012*`#[\\]()_|~=<>u$!\t'
+const INTERESTING_CHARS = 'abX 012*`#[\\]()_|~=<>u$!\t".'
 
 const arbText: fc.Arbitrary<string> = fc
   .array(fc.constantFrom(...INTERESTING_CHARS.split('')), { minLength: 1, maxLength: 8 })
@@ -142,6 +147,10 @@ const LINK_HREFS: readonly string[] = [
   'https://example.com',
   'https://a.com/path?q=1&x=2',
   'https://ex.com/page(1)',
+  // #5160 N9: hrefs the bare destination form would misread as a title, or
+  // lose a layer of `<…>` from, so they are written in `<…>` form.
+  'https://x.com "title"',
+  '<https://x.com>',
 ]
 
 /** A mark set (code exclusive, matching the serializer's contract). */
@@ -251,24 +260,11 @@ const TODO_STATES: readonly TodoState[] = ['TODO', 'DOING', 'DONE', 'CANCELLED']
  * FIXED (#1436/#4156): this generator used to filter out any paragraph whose
  * serialized form began with a bare `* ` — an italic whose text begins with a
  * space used to land exactly that at column 0 (`italic(' a')` → `* a*`),
- * which reparsed as a bulletList wherever block dispatch runs (top level,
- * blockquote children); emphasis opening onto whitespace has no
- * representation in this grammar. `defuseLeadingItalicMarker` now moves the
- * mark's open boundary past the leading whitespace (or drops it, if the run is
- * whitespace all the way through) wherever the paragraph's own text starts the
- * dispatched line, so the serializer never emits a bare `* ` there again — the
- * filter is gone.
- *
- * This is a coverage GAIN, not a reduction: these properties assert the STRING
- * invariants (byte-identical re-serialization, one-pass convergence), never doc
- * identity, so the shapes the filter used to hide are now CHECKED rather than
- * merely unchecked — which is only true if they are also reachable. Measured
- * with the sweep the file's seed comment asks for: at `SWEEP_RUNS=20000`, with
- * the filter gone and the defuse disabled, `the first serialize …` and `a
- * depth-4 list …` both redden (3 of 3 random seeds); with the defuse in place
- * the whole file is green across 6 sweeps at that count. At the shipped 300 —
- * and even at 2 000 — the shape is too rare to reach, so the run count is the
- * evidence, not the default.
+ * which reparsed as a bulletList wherever block dispatch runs. The serializer
+ * now moves the boundary of any mark whose delimiter could not flank
+ * (`fitMarksToFlanking`, #5160 N9), so it never emits an opener before a space,
+ * and the filter is gone: these properties assert the STRING invariants, never
+ * doc identity, so the shapes it used to hide are checked rather than skipped.
  */
 const arbParagraph: fc.Arbitrary<ParagraphNode> = fc
   .tuple(arbInlineContent, fc.option(fc.constantFrom(...TODO_STATES), { nil: undefined }))
@@ -454,7 +450,7 @@ const FIXPOINT_SEEDS: readonly DocNode[] = [
   // hardBreak inside a task paragraph
   doc(task('TODO', text('buy milk'), hardBreak(), text('and eggs'))),
   // cross-node `$` seam (node-final literal `$` before a marked node)
-  doc(paragraph(text('Prices: 5$'), bold(' or 10$'))),
+  doc(paragraph(text('Prices: 5$'), bold('or 10$'))),
   // math_inline latex containing `$` and edge whitespace
   doc(paragraph(mathInline('a$b'), text(' and '), mathInline(' x '))),
   // literal ((ULID)) text alongside a live block_ref

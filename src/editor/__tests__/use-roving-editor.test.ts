@@ -1411,8 +1411,10 @@ describe('useRovingEditor integration (renderHook)', () => {
     })
 
     const split = result.current.splitAtCaret()
-    // Both halves keep the bold mark across the seam.
-    expect(split).toEqual({ before: '**bold**', after: '** text**' })
+    // Both halves keep the bold mark across the seam. The second half starts
+    // with the space, which a `**` cannot open onto (#5160 N9), so the mark
+    // opens after it.
+    expect(split).toEqual({ before: '**bold**', after: ' **text**' })
 
     result.current.editor?.destroy()
     unmountHook()

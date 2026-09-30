@@ -300,29 +300,6 @@ export function probeExternalLink(s: Scanner): LinkMatch | null {
 }
 
 /**
- * Unescape a URL: decode the backslash escapes (`\\`, `\(`, `\)`) that
- * `escapeUrl` emits for literal backslashes and unbalanced parens.
- *
- * #710-6: the previous implementation decoded EVERY `%29` → `)`, corrupting
- * URLs in which the user literally typed `%29`. Percent sequences are now
- * left untouched; only the serializer's own backslash escapes are decoded.
- */
-export function unescapeUrl(url: string): string {
-  let out = ''
-  for (let i = 0; i < url.length; i++) {
-    const ch = url[i]
-    const next = url[i + 1]
-    if (ch === '\\' && (next === '\\' || next === '(' || next === ')')) {
-      out += next
-      i++
-      continue
-    }
-    out += ch
-  }
-  return out
-}
-
-/**
  * Unescape an image alt label (#1434): decode the `\[`, `\]` and `\\` escapes
  * that `escapeImageAlt` emits, mirroring it exactly so an alt containing `[`,
  * `]` or `\` round-trips. Other backslash sequences are left verbatim (the

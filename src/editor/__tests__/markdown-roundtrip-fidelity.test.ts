@@ -136,7 +136,9 @@ describe('finding 8: hardBreak inside a task paragraph', () => {
 
 describe('finding 9: cross-node `$` seam', () => {
   it('literal `$` at a text-node edge before a marked node never becomes math', () => {
-    const d = doc(paragraph(text('Prices: 5$'), bold(' or 10$')))
+    // The bold starts on a letter: `**` before a space cannot open (#5160 N9),
+    // so a leading space would move out of the mark and away from the seam.
+    const d = doc(paragraph(text('Prices: 5$'), bold('or 10$')))
     const md = serialize(d)
     expect(parse(md)).toEqual(d)
     expect(serialize(parse(md))).toBe(md)
@@ -840,6 +842,16 @@ describe('#4072: whitespace at a table cell edge and the block-marker escape', (
   })
 })
 
+/**
+ * #4156, and #5160 N9 after it. An emphasis delimiter opening onto whitespace
+ * used to be emitted as-is, and at a line start `* ` is a bullet marker, so
+ * `italic(' y')` came back as a list. The first fix moved the italic's open
+ * boundary past the space at a dispatched line start only. The parser now
+ * reads `*`, `**`, `~~` and `==` by CommonMark flanking, so a delimiter before
+ * whitespace is literal everywhere, and `fitMarksToFlanking` moves every such
+ * boundary in every context. These are the #4156 shapes under that rule: each
+ * converges on the first pass, and none becomes a list.
+ */
 describe('#4156: an emphasis span wrapping only whitespace', () => {
   const passes = (s: string) => {
     const once = serialize(parse(s))
@@ -849,42 +861,27 @@ describe('#4156: an emphasis span wrapping only whitespace', () => {
   const it_ = (t: string) => text(t, [{ type: 'italic' }])
 
   /**
-   * The reported repro. `\ ` (backslash + space) is a hardBreak that degrades
-   * to a space, so `*\ *` parses as a paragraph holding one text node `" "`
-   * with the `italic` mark — an emphasis span wrapping only whitespace.
-   * `* *` was never a valid re-spelling: a `*`/`-` immediately followed by a
-   * space at a line start is a BULLET marker (`BULLET_ITEM_RE`), and block
-   * dispatch runs before any inline scan, so the naive serialization silently
-   * changed the paragraph into a list on reparse. (Note the inline `*` toggle
-   * itself is NAIVE here — `scanItalic` applies CommonMark flanking to `_`
-   * only — so `* *` is perfectly good emphasis anywhere a block production
-   * cannot claim it; the collision is with the BULLET marker, nothing else.)
-   * With no character to move the mark's open boundary onto, the mark drops —
-   * visually identical, since italicizing a space renders no differently than
-   * a plain one.
+   * The reported repro. `\ ` decodes to a space, and a `*` before whitespace
+   * cannot close, so `*\ *` is literal text (as CommonMark reads it), stored
+   * with both stars escaped. It was never a list, and it converges at once.
    */
   it('#4156: `*\\ *` converges on the FIRST pass, as a paragraph, not a list', () => {
     const { once, twice } = passes('*\\ *')
-    expect(once).toBe(' ')
+    expect(once).toBe('\\* \\*')
     expect(twice).toBe(once)
-    expect(parse(once)).toEqual(doc(paragraph(text(' '))))
+    expect(parse(once)).toEqual(doc(paragraph(text('* *'))))
   })
 
-  /** The other 5 non-convergent inputs the issue's exhaustive sweep found — all
-   * the same family: an italic open landing on whitespace, at column 0 (mod
-   * marker-indent tolerance) of a line. None of them wrap ONLY whitespace —
-   * `*\ |*` keeps a `|` after the space — which is why the fix moves the
-   * mark's open boundary past the leading whitespace instead of always
-   * dropping the mark outright: see the "boundary shifts" case below.
-   */
+  /** The other 5 non-convergent inputs the issue's exhaustive sweep found. */
   it.each([
-    [' *\\ *', '  '],
-    ['*\\ |*', ' *\\|*'],
-    ['*\\ *`', ' \\`'],
+    [' *\\ *', ' \\* \\*'],
+    // The closing `*` follows `|`, so it closes: the italic keeps the `|`.
+    ['*\\ |*', ' *|*'],
+    ['*\\ *`', '\\* \\*\\`'],
     ['_\\ *](x)](x)-_', ' *\\*\\](x)\\](x)-*'],
     // #5160 D2: the leading blank line is an empty paragraph, and the
     // serializer separates it from the next paragraph with a blank line.
-    ['\n*\\ *', '\n\n '],
+    ['\n*\\ *', '\n\n\\* \\*'],
   ])('sibling shape %j converges on the FIRST pass', (input, expected) => {
     const { once, twice } = passes(input)
     expect(once).toBe(expected)
@@ -899,9 +896,7 @@ describe('#4156: an emphasis span wrapping only whitespace', () => {
   /**
    * Not vacuous the other way: when the italic content has a non-whitespace
    * character to move the boundary onto, the mark SURVIVES — only the leading
-   * whitespace itself (invisible either way) loses it. Guards against a
-   * fix that just deletes the whole mark whenever it merely STARTS with a
-   * space, which would be needlessly lossy for `italic(' y')`.
+   * whitespace itself (invisible either way) loses it.
    */
   it('an italic span starting with (but not only) whitespace keeps the mark on its content', () => {
     const d = doc(paragraph(italic(' y')))
@@ -912,15 +907,9 @@ describe('#4156: an emphasis span wrapping only whitespace', () => {
   })
 
   /**
-   * The plain-space PREFIX case, which is why the defuse skips a leading run of
-   * all-space plain text before looking for the italic. `  ` + `italic(' y')`
-   * emitted `  * y*`, and the parser tolerates up to `MAX_MARKER_INDENT` = 3
-   * spaces in front of a marker — so it was a bullet list too, just an indented
-   * one. Widened past the tolerance for the same reason `serializeParagraph`'s
-   * `- `/`1. ` escapes are (see its comment): a paragraph nested in a list item
-   * is emitted indented and re-parsed DEDENTED, so a 4-space indent that is too
-   * deep to be a marker on the way out lands inside the tolerance on the way
-   * back in. Marker-ness has to be invariant under that dedent.
+   * A plain-space PREFIX: the moved space joins it, so the line starts with
+   * spaces and then an opening `*` followed by a letter, which no marker
+   * production matches at any indent.
    */
   it.each([
     [1, '  *y*'],
@@ -935,159 +924,75 @@ describe('#4156: an emphasis span wrapping only whitespace', () => {
   })
 
   /**
-   * …and a leading inline ATOM that serializes to nothing is just as
-   * invisible as a run of plain spaces — a whitespace-only `math_inline`
-   * emits `''` (see `serializeInlineChild`'s `math_inline` branch), so the
-   * vulnerable italic right after it is still at column 0 on the emitted
-   * line. Without stepping past it, `defuseLeadingItalicMarker` stopped at
-   * the math atom (not a `text` node, so `isVulnerableItalicOpen` rejected
-   * it outright) and left the italic undefused — the exact #4156 bullet-list
-   * collision, reachable again via a math atom instead of literal text
-   * (#4195).
-   */
-  it('a whitespace-only math_inline prefix before the italic is still defused', () => {
-    const d = doc(paragraph(mathInline('  '), italic(' y')))
-    const md = serialize(d)
-    expect(md).toBe(' *y*')
-    expect(serialize(parse(md))).toBe(md)
-    expect((parse(md).content ?? []).map((b) => b.type)).toEqual(['paragraph'])
-  })
-
-  /**
-   * A mix of plain-space text and empty math atoms in the prefix — the skip
-   * has to keep walking across both kinds, not just the first one it meets.
-   */
-  it('a mix of plain-space and empty-math-atom prefixes is defused too', () => {
-    const d = doc(paragraph(text('  '), mathInline(' '), text(' '), italic(' y')))
-    const md = serialize(d)
-    // Pinned, not just round-trip-stable: a defuse that dropped the italic
-    // mark entirely would emit `    y`, which is ALSO stable and ALSO a
-    // paragraph — so the two assertions below cannot tell a working defuse
-    // from a broken one on their own. The delimiters are the property.
-    expect(md).toBe('    *y*')
-    expect(serialize(parse(md))).toBe(md)
-    expect((parse(md).content ?? []).map((b) => b.type)).toEqual(['paragraph'])
-  })
-
-  /**
-   * A math atom that actually emits content is not "empty" — it already
-   * occupies column 0 with real bytes, so the italic after it was never
-   * vulnerable in the first place and the defuse correctly does not fire
-   * (the mark survives untouched either way).
-   */
-  it('a non-empty math_inline prefix is left alone — it already occupies column 0', () => {
-    const d = doc(paragraph(mathInline('x'), italic(' y')))
-    const md = serialize(d)
-    expect(parse(md)).toEqual(d)
-    expect(serialize(parse(md))).toBe(md)
-  })
-
-  /**
-   * #4195's stated defect is general — "an inline ATOM that serializes to
-   * the empty string" — and `math_inline` is only the concrete case the
-   * issue names. A leading node of an unrecognized type is just as invisible
-   * at the line start: `serializeInlineChild`'s final branch drops it
-   * silently (see the `onUnknownNode callback` describe block in
-   * markdown-serializer.test.ts, which exercises this exact fallback with a
-   * `video_embed`-typed node — a real, tested inline shape, not a
-   * hypothetical one). A predicate hard-coded to `math_inline` leaves this
-   * path unrepaired: the same bullet-list collision, reachable via an
-   * unknown node instead of a math atom.
-   */
-  it('a leading unrecognized inline node type is defused too, same as an empty math atom', () => {
-    const unknown = { type: 'video_embed' } as unknown as InlineNode
-    const d = doc(paragraph(unknown, italic(' y')))
-    const md = serialize(d)
-    expect(md).toBe(' *y*')
-    expect(serialize(parse(md))).toBe(md)
-    expect((parse(md).content ?? []).map((b) => b.type)).toEqual(['paragraph'])
-  })
-
-  /**
-   * …and inside a blockquote, the other container whose children go through
-   * block dispatch (`serializeBlockSequence` strips `> ` and re-dispatches).
-   */
-  it('a blockquote child is defused too', () => {
-    const d = doc(blockquote(paragraph(italic(' y'))))
-    const md = serialize(d)
-    expect(md).toBe('>  *y*')
-    expect(parse(md)).toEqual(doc(blockquote(paragraph(text(' '), it_('y')))))
-    expect(serialize(parse(md))).toBe(md)
-  })
-
-  /**
-   * The defuse is LOSSY — a mark boundary moves — so it is applied ONLY where
-   * the bullet collision can actually happen, which is where the paragraph's
-   * own text starts the line the parser dispatches. Every context below emits
-   * a prefix that consumes the line start first, so `* ` there is inline
-   * emphasis and nothing else; the mark survives and `parse(serialize(d))` is
-   * the exact identity. Each case reddens if `serializeParagraph`'s
-   * `atLineStart` argument is dropped at the corresponding call site (a list
-   * item's marker-line child in `serializeBlockSequence`, `serializeHeading`,
-   * `serializeTable`'s cell map, or the `taskPrefix` test inside
-   * `serializeParagraph` itself).
+   * …and a leading inline ATOM that serializes to nothing (#4195): a
+   * whitespace-only `math_inline`, or a node of an unrecognized type, which
+   * `serializeInlineChild` drops. Either is invisible at the line start.
    */
   it.each([
+    ['a whitespace-only math_inline', doc(paragraph(mathInline('  '), italic(' y'))), ' *y*'],
+    [
+      'a mix of plain-space text and empty math atoms',
+      doc(paragraph(text('  '), mathInline(' '), text(' '), italic(' y'))),
+      '    *y*',
+    ],
+    [
+      'an unrecognized inline node type',
+      doc(paragraph({ type: 'video_embed' } as unknown as InlineNode, italic(' y'))),
+      ' *y*',
+    ],
+  ])('%s before the italic is defused too', (_label, d, expected) => {
+    const md = serialize(d)
+    expect(md).toBe(expected)
+    expect(serialize(parse(md))).toBe(md)
+    expect((parse(md).content ?? []).map((b) => b.type)).toEqual(['paragraph'])
+  })
+
+  /**
+   * The boundary moves in every context, not just where the paragraph's text
+   * starts a dispatched line: a `*` before a space is literal to the inline
+   * parser wherever it sits, so a heading, a task, a list item's own
+   * paragraph and a blockquote all store the same fitted span.
+   */
+  it.each([
+    ['a blockquote child', doc(blockquote(paragraph(italic(' y')))), '>  *y*'],
     [
       "a bullet item's own leading paragraph",
       doc(bulletList(listItem(paragraph(italic(' y'))))),
-      '- * y*',
+      '-  *y*',
     ],
+    ['an ordered item', doc(orderedList(listItem(paragraph(italic(' y'))))), '1.  *y*'],
+    ['a heading', doc(heading(1, italic(' y'))), '#  *y*'],
+    ["a task's checkbox marker", doc(task('TODO', italic(' y'))), '- [ ]  *y*'],
     [
-      'an ordered item, whose marker is a digit run',
-      doc(orderedList(listItem(paragraph(italic(' y'))))),
-      '1. * y*',
+      "a list item's later paragraph, whose moved space the whitespace defuse escapes (#4050)",
+      doc(bulletList(listItem(paragraph(text('p')), paragraph(italic(' y'))))),
+      '- p\n  \\ *y*',
     ],
-    [
-      'a whitespace-only italic in a bullet item (the mark is not dropped either)',
-      doc(bulletList(listItem(paragraph(italic(' '))))),
-      '- * *',
-    ],
-    ['a heading', doc(heading(1, italic(' y'))), '# * y*'],
-    ["a task's checkbox marker", doc(task('TODO', italic(' y'))), '- [ ] * y*'],
-  ])('%s keeps the mark, byte-stable and identity-preserving', (_label, d, expected) => {
+  ])('%s keeps the mark on its content', (_label, d, expected) => {
     const md = serialize(d)
     expect(md).toBe(expected)
-    expect(parse(md)).toEqual(d)
     expect(serialize(parse(md))).toBe(md)
+    expect(JSON.stringify(parse(md))).toContain('"text":"y","marks":[{"type":"italic"}]')
+  })
+
+  it('a whitespace-only italic in a bullet item drops the mark', () => {
+    const md = serialize(doc(bulletList(listItem(paragraph(italic(' '))))))
+    expect(md).toBe('-  ')
+    expect(parse(md)).toEqual(doc(bulletList(listItem(paragraph(text(' '))))))
   })
 
   /**
-   * A list item's SECOND paragraph is a line of its own again, so it IS
-   * defused — the exemption is "sits on the marker line", not "is inside a
-   * list". Without it this emitted `- p\n  * y*`, whose reparse read the
-   * second line as a NESTED bullet list.
-   *
-   * The space the italic defuse moves out of the mark then starts an indented
-   * line, so the whitespace defuse (#4050) escapes it — that escape is now the
-   * only thing carrying it back, since indentation on such a line is dropped.
-   */
-  it("a list item's later paragraph is defused, unlike its marker-line one", () => {
-    const d = doc(bulletList(listItem(paragraph(text('p')), paragraph(italic(' y')))))
-    const md = serialize(d)
-    expect(md).toBe('- p\n  \\ *y*')
-    expect(serialize(parse(md))).toBe(md)
-    expect(parse(md)).toEqual(
-      doc(bulletList(listItem(paragraph(text('p')), paragraph(text(' '), it_('y'))))),
-    )
-  })
-
-  /**
-   * Shapes that LOOK like the trigger but cannot emit `[-*] `, so the defuse
-   * must leave them alone. `markSetFromMarks` reports only the five emphasis
-   * marks, so `code` and `link` have to be rejected by name; the rest are
-   * rejected because their own delimiter lands between the star and the space.
-   * Each of these reddens (identity is lost, and the emitted bytes change) if
-   * the corresponding guard in `isVulnerableItalicOpen` is removed.
+   * Every flanking delimiter moves the same way; underline is a tag and code a
+   * backtick span, neither of which the flanking rule reads, so both keep the
+   * space inside.
    */
   it.each([
-    ['bold, whose `**` is not a marker', doc(paragraph(bold(' y'))), '** y**'],
-    ['bold+italic', doc(paragraph(boldItalic(' y'))), '*** y***'],
-    ['strike', doc(paragraph(strike(' y'))), '~~ y~~'],
-    ['underline', doc(paragraph(underline(' y'))), '<u> y</u>'],
-    ['highlight', doc(paragraph(highlight(' y'))), '== y=='],
+    ['bold', doc(paragraph(bold(' y'))), ' **y**'],
+    ['bold+italic', doc(paragraph(boldItalic(' y'))), ' ***y***'],
+    ['strike', doc(paragraph(strike(' y'))), ' ~~y~~'],
+    ['highlight', doc(paragraph(highlight(' y'))), ' ==y=='],
     [
-      'italic+link, which emits `[` before the star',
+      'italic+link, whose text is read as a line of its own',
       doc(
         paragraph(
           text(' y', [
@@ -1096,72 +1001,35 @@ describe('#4156: an emphasis span wrapping only whitespace', () => {
           ]),
         ),
       ),
-      '[* y*](https://example.com)',
+      '[ *y*](https://example.com)',
     ],
-    [
-      'a leading TAB, which `BULLET_ITEM_RE` does not accept after the marker',
-      doc(paragraph(italic('\ty'))),
-      '*\ty*',
-    ],
-    [
-      'a leading NON-BREAKING space, likewise not the marker`s ASCII space',
-      doc(paragraph(italic(' y'))),
-      '* y*',
-    ],
-    [
-      'a whitespace-only NBSP italic — the repro shape, but unspellable only with a real space',
-      doc(paragraph(italic(' '))),
-      '* *',
-    ],
-  ])('%s is left alone', (_label, d, expected) => {
+    ['a leading TAB', doc(paragraph(italic('\ty'))), '\\\t*y*'],
+    ['a leading NON-BREAKING space', doc(paragraph(italic(' y'))), ' *y*'],
+  ])('%s opening onto whitespace is fitted', (_label, d, expected) => {
     const md = serialize(d)
     expect(md).toBe(expected)
-    expect(parse(md)).toEqual(d)
     expect(serialize(parse(md))).toBe(md)
   })
 
-  /**
-   * `code` is EXCLUSIVE in both halves: `serializeInlineText` emits a backtick
-   * run and no emphasis star, and the parser gives a code span the `code` mark
-   * alone — so the italic is lost on reparse either way, and that predates
-   * #4156. What matters here is that the defuse does NOT fire: the leading
-   * space stays INSIDE the span (`` ` y ` ``, padded per CommonMark) rather
-   * than being pulled out in front of the backticks, which would move a
-   * character out of the code content.
-   */
-  it('italic+code emits backticks and no star, so the defuse leaves the space inside', () => {
-    const d = doc(paragraph(text(' y', [{ type: 'italic' }, { type: 'code' }])))
+  it.each([
+    ['underline', doc(paragraph(underline(' y'))), '<u> y</u>', doc(paragraph(underline(' y')))],
+    [
+      'italic+code, where code is exclusive',
+      doc(paragraph(text(' y', [{ type: 'italic' }, { type: 'code' }]))),
+      '`  y `',
+      doc(paragraph(code(' y'))),
+    ],
+  ])('%s keeps the space inside', (_label, d, expected, reparsed) => {
     const md = serialize(d)
-    expect(md).toBe('`  y `')
-    expect(parse(md)).toEqual(doc(paragraph(text(' y', [{ type: 'code' }]))))
-    expect(serialize(parse(md))).toBe(md)
+    expect(md).toBe(expected)
+    expect(parse(md)).toEqual(reparsed)
   })
 
   /**
-   * A vulnerable-italic sibling (`italic(' ')`, whitespace all the way
-   * through) immediately followed by an italic+code node used to stay in the
-   * SAME run: the walk that computes `runEnd` required only `type === 'text'`
-   * plus an `italic` mark, so it did not stop at the code node the way
-   * `isVulnerableItalicOpen` itself does. `consumingLeadingSpace` — still
-   * true from the first (all-space) node — then ran into the code node's own
-   * text and split its leading space out in front of the backticks, turning
-   * ONE code span (`' x'`) into TWO (`' '` and `'x'`). The run must end at
-   * the code node exactly like `isVulnerableItalicOpen` rejects it, so the
-   * code node is untouched and stays a single span.
-   */
-  it('a code node in the same italic run is not split — the run stops at it, like isVulnerableItalicOpen rejects it', () => {
-    const d = doc(paragraph(italic(' '), text(' x', [{ type: 'italic' }, { type: 'code' }])))
-    const md = serialize(d)
-    expect(md).toBe(' `  x `')
-    expect(parse(md)).toEqual(doc(paragraph(text(' '), text(' x', [{ type: 'code' }]))))
-    expect(serialize(parse(md))).toBe(md)
-  })
-
-  /**
-   * The boundary move has to carry the WHOLE italic run, not just the node it
+   * The boundary move carries the WHOLE italic run, not just the node it
    * starts on: the run's later nodes keep the mark, and a nested mark opening
    * inside it still emits its delimiters in the order `emitMarkTransition`
-   * expects (`*y` then `**z`, closed `***`), so nothing is reordered.
+   * expects (`*y` then `**z`, closed `***`).
    */
   it('a multi-node italic run keeps every node past the moved boundary', () => {
     const d = doc(paragraph(italic(' y'), boldItalic('z')))
@@ -1171,11 +1039,6 @@ describe('#4156: an emphasis span wrapping only whitespace', () => {
     expect(serialize(parse(md))).toBe(md)
   })
 
-  /**
-   * An all-space FIRST node hands the boundary to the next node in the run
-   * rather than ending the walk — otherwise `italic(' ') + boldItalic('z')`
-   * would drop the mark from a run that had a `z` to open on.
-   */
   it('an all-space first node passes the boundary to the next node in the run', () => {
     const d = doc(paragraph(italic(' '), boldItalic('z')))
     const md = serialize(d)
@@ -1185,10 +1048,9 @@ describe('#4156: an emphasis span wrapping only whitespace', () => {
   })
 
   /**
-   * The other block markers reachable from inside the moved span. None of them
-   * needs escaping once the boundary has moved, because the emitted line now
-   * starts with a space and then a `*` that opens emphasis — the marker text
-   * is INSIDE the delimiters, where no block production can see it.
+   * The block markers reachable from inside the moved span need no escape:
+   * the line starts with a space and then a `*` that opens emphasis, so the
+   * marker text is INSIDE the delimiters, where no block production sees it.
    */
   it.each([
     [' - x', ' *- x*'],
@@ -1203,120 +1065,23 @@ describe('#4156: an emphasis span wrapping only whitespace', () => {
   })
 
   /**
-   * #4221: `isVulnerableItalicOpen` checked a SINGLE node for both halves of
-   * the trigger (carries only italic, AND starts with a space). A zero-length
-   * TextNode carrying `[italic]` satisfies neither `isPlainSpaces` (it has a
-   * mark) nor `isEmptyAtom` (it IS a `text` node) — but `emitMarkTransition`
-   * still opens the `*` delimiter on it, a real byte, while the leading-space
-   * trigger sits on the NEXT node. RED against the single-node predicate:
-   * `paragraph(it_(''), italic(' y'))` serialized to `'* y*'`, which reparses
-   * as a `bulletList` — the #4156 collision, reachable through an empty
-   * TEXT node instead of the empty ATOM #4195 already covers.
+   * #4221: zero-length nodes in front of the space-leading italic. An empty
+   * text node holds nothing but the delimiters it would emit, so the
+   * serializer drops it, and an atom that emits nothing no longer closes the
+   * marks around it; every shape below stores the one fitted span. The old
+   * forms (`*** y*`, `***** y*`, `******* y*`) needed two passes to converge.
    */
-  it('#4221: an empty italic TextNode followed by a space-leading italic node is still defused', () => {
-    const d = doc(paragraph(it_(''), italic(' y')))
-    const md = serialize(d)
+  it.each([
+    ['an empty italic TextNode', [it_('')]],
+    ['several empty italic TextNodes', [it_(''), it_(''), it_('')]],
+    ['an empty italic then an empty plain node', [it_(''), text('')]],
+    ['an empty italic+bold node', [it_(''), text('', [{ type: 'italic' }, { type: 'bold' }])]],
+    ['an empty bold-only node', [it_(''), text('', [{ type: 'bold' }])]],
+    ['an empty non-text atom', [it_(''), mathInline('')]],
+  ])('#4221: %s before a space-leading italic converges on the FIRST pass', (_label, lead) => {
+    const md = serialize(doc(paragraph(...(lead as InlineNode[]), italic(' y'))))
     expect(md).toBe(' *y*')
     expect(parse(md)).toEqual(doc(paragraph(text(' '), it_('y'))))
-    expect((parse(md).content ?? []).map((b) => b.type)).toEqual(['paragraph'])
     expect(serialize(parse(md))).toBe(md)
-  })
-
-  /**
-   * More than one empty italic-only TextNode can lead the run — the forward
-   * scan has to keep walking past every zero-length one, not just a single
-   * lookahead step, before it reaches the node that actually carries the
-   * leading-space trigger.
-   */
-  it('#4221: multiple leading empty italic TextNodes are all stepped past', () => {
-    const d = doc(paragraph(it_(''), it_(''), it_(''), italic(' y')))
-    const md = serialize(d)
-    expect(md).toBe(' *y*')
-    expect(parse(md)).toEqual(doc(paragraph(text(' '), it_('y'))))
-    expect((parse(md).content ?? []).map((b) => b.type)).toEqual(['paragraph'])
-    expect(serialize(parse(md))).toBe(md)
-  })
-
-  /**
-   * A NON-italic empty node breaking the run must NOT be treated as part of
-   * the vulnerable open — it is a mark-set change (italic closes, then
-   * reopens on the later node), which always inserts a second `*` right after
-   * the first (`**`, never `* `), so there is no bullet-list collision to
-   * defuse in the first place. Pins that the forward scan stops there instead
-   * of skipping through it the way it skips genuine empty italic nodes.
-   *
-   * `parse('*** y*')` itself is a pre-existing, unrelated quirk of the odd
-   * triple-star run (`scanBold`/`scanItalic`'s greedy toggling, nothing to do
-   * with the italic-open defuse) that only converges on the SECOND pass —
-   * same family as the `#4071/#4076` two-pass cases elsewhere in this file.
-   * What this test actually pins is that it never becomes a `bulletList` on
-   * either pass, and that the second pass is a stable fixed point.
-   */
-  it('#4221: a non-italic empty node between two italic nodes does not falsely trigger the defuse', () => {
-    const d = doc(paragraph(it_(''), text(''), italic(' y')))
-    const md = serialize(d)
-    expect(md).toBe('*** y*')
-    expect((parse(md).content ?? []).map((b) => b.type)).toEqual(['paragraph'])
-    const md2 = serialize(parse(md))
-    expect((parse(md2).content ?? []).map((b) => b.type)).toEqual(['paragraph'])
-    expect(serialize(parse(md2))).toBe(md2)
-  })
-
-  /**
-   * A zero-length node whose mark set is a SUPERSET of italic (adds bold) is
-   * a mark-set change too — `emitMarkTransition` keeps italic open across it
-   * (only `**` opens for the added bold), but the walk still has to stop
-   * there rather than skip through it: the resulting delimiter run is `*****`
-   * (open italic, open bold, close bold), never a lone `*` before the space.
-   * Same two-pass-convergence family as the sibling test below and
-   * `#4071/#4076` — what matters is that neither pass becomes a `bulletList`.
-   */
-  it('#4221: a superset (italic+bold) zero-length node between two italic-only nodes is not vulnerable', () => {
-    const d = doc(
-      paragraph(it_(''), text('', [{ type: 'italic' }, { type: 'bold' }]), italic(' y')),
-    )
-    const md = serialize(d)
-    expect(md).toBe('***** y*')
-    expect((parse(md).content ?? []).map((b) => b.type)).toEqual(['paragraph'])
-    const md2 = serialize(parse(md))
-    expect((parse(md2).content ?? []).map((b) => b.type)).toEqual(['paragraph'])
-    expect(serialize(parse(md2))).toBe(md2)
-  })
-
-  /**
-   * A zero-length node whose mark set is DISJOINT from italic (bold only, no
-   * italic) is the shape most likely to defeat a walk that stops on "first
-   * node that emits nothing" rather than "first node that isn't an
-   * italic-only continuation": it emits no bytes of its own, but the mark
-   * transitions around it (close italic, open bold, close bold, open italic)
-   * still guarantee more than one star lands before the space.
-   */
-  it('#4221: a disjoint (bold only) zero-length node between two italic-only nodes is not vulnerable', () => {
-    const d = doc(paragraph(it_(''), text('', [{ type: 'bold' }]), italic(' y')))
-    const md = serialize(d)
-    expect(md).toBe('******* y*')
-    expect((parse(md).content ?? []).map((b) => b.type)).toEqual(['paragraph'])
-    const md2 = serialize(parse(md))
-    expect((parse(md2).content ?? []).map((b) => b.type)).toEqual(['paragraph'])
-    expect(serialize(parse(md2))).toBe(md2)
-  })
-
-  /**
-   * An interposed node of a different TYPE that itself serializes to nothing
-   * (an empty atom, #4189/#4195's own case) sitting BETWEEN two italic-only
-   * nodes rather than leading the paragraph: the prefix-skip loop in
-   * `defuseLeadingItalicMarker` never reaches it (the paragraph opens on the
-   * italic node, not the atom), and `isVulnerableItalicOpen`'s walk correctly
-   * stops at it (wrong node type) rather than skipping through — matching the
-   * same `**`-never-`* ` guarantee as the other mark-set changes above.
-   */
-  it('#4221: an empty non-text atom between two italic-only nodes is not vulnerable', () => {
-    const d = doc(paragraph(it_(''), mathInline(''), italic(' y')))
-    const md = serialize(d)
-    expect(md).toBe('*** y*')
-    expect((parse(md).content ?? []).map((b) => b.type)).toEqual(['paragraph'])
-    const md2 = serialize(parse(md))
-    expect((parse(md2).content ?? []).map((b) => b.type)).toEqual(['paragraph'])
-    expect(serialize(parse(md2))).toBe(md2)
   })
 })
