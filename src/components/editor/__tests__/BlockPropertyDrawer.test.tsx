@@ -9,6 +9,7 @@
  *  - Has no a11y violations (axe audit)
  */
 
+import type { InvokeArgs } from '@tauri-apps/api/core'
 import { invoke } from '@tauri-apps/api/core'
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
@@ -20,6 +21,8 @@ import type { StoreApi } from 'zustand'
 
 import type { PropertyDefinition, PropertyRow } from '@/lib/bindings'
 import { reportIpcError } from '@/lib/report-ipc-error'
+import { dispatch } from '@/lib/tauri-mock/handlers'
+import { properties, SEED_IDS, seedBlocks } from '@/lib/tauri-mock/seed'
 import { useBlockStore } from '@/stores/blocks'
 import { createPageBlockStore, PageBlockContext, type PageBlockState } from '@/stores/page-blocks'
 
@@ -488,7 +491,7 @@ describe('BlockPropertyDrawer', () => {
     expect(screen.getByRole('button', { name: 'Delete property' })).toBeInTheDocument()
   })
 
-  it('does not show delete button for repeat properties', async () => {
+  it('shows the delete button for the repeat rule, the user’s to remove', async () => {
     const props = [makeProp('repeat', { value_text: '+1w' })]
     setupMock(props, [makeDef('repeat')])
 
@@ -498,7 +501,38 @@ describe('BlockPropertyDrawer', () => {
       expect(screen.getByText('Repeat')).toBeInTheDocument()
     })
 
-    expect(screen.queryByRole('button', { name: 'Delete property' })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Delete property' })).toBeInTheDocument()
+  })
+
+  // #5160 — the button follows what `delete_property` refuses, so a repeat
+  // limit is removable while the occurrence count recurrence writes is not.
+  it('removes a repeat limit against the real mock, but offers no delete for repeat-seq', async () => {
+    const user = userEvent.setup()
+    const blockId = SEED_IDS.BLOCK_GS_1
+    seedBlocks()
+    const row = (key: string, valueNum: number) => ({ ...makeProp(key), value_num: valueNum })
+    properties.set(
+      blockId,
+      new Map([
+        ['repeat-count', row('repeat-count', 3)],
+        ['repeat-seq', row('repeat-seq', 2)],
+      ]),
+    )
+    mockedInvoke.mockImplementation(async (cmd: string, args?: InvokeArgs) => dispatch(cmd, args))
+
+    renderWithProvider(<BlockPropertyDrawer blockId={blockId} open onOpenChange={vi.fn()} />)
+    await screen.findByTestId('property-value-input-repeat-seq')
+    const deletes = screen.getAllByRole('button', { name: 'Delete property' })
+    expect(deletes).toHaveLength(1)
+    // The Sheet portals out of the render container; its focus guards are Radix's.
+    const sheet = document.querySelector('[data-slot="sheet-content"]') as HTMLElement
+    expect(await axe(sheet)).toHaveNoViolations()
+
+    await user.click(deletes[0] as HTMLElement)
+
+    await waitFor(() => {
+      expect([...(properties.get(blockId)?.keys() ?? [])]).toEqual(['repeat-seq'])
+    })
   })
 
   // ── Repeat-syntax help popover ────────────────────────────────
@@ -649,6 +683,19 @@ describe('BlockPropertyDrawer', () => {
     expect(pickerBtn.tagName).toBe('BUTTON')
     // Should not have a plain text input for this property
     expect(screen.queryByRole('textbox', { name: 'linked_page value' })).not.toBeInTheDocument()
+  })
+
+  it('offers delete for a ref row unless recurrence writes it', async () => {
+    const props = [
+      makeProp('linked_page', { value_ref: null }),
+      makeProp('repeat-origin', { value_ref: null }),
+    ]
+    setupMock(props, [makeDef('linked_page', 'ref'), makeDef('repeat-origin', 'ref')])
+
+    renderWithProvider(<BlockPropertyDrawer blockId="BLOCK_1" open onOpenChange={vi.fn()} />)
+
+    expect(await screen.findByLabelText('Delete property linked_page')).toBeInTheDocument()
+    expect(screen.queryByLabelText('Delete property repeat-origin')).not.toBeInTheDocument()
   })
 
   it('renders ref-type property with resolved page title', async () => {

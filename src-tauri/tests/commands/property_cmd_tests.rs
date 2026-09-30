@@ -668,6 +668,102 @@ async fn delete_property_removes_the_recurrence_rule() {
     mat.shutdown();
 }
 
+/// The `repeat…` keys `block_id` holds, in key order.
+async fn repeat_keys(pool: &SqlitePool, block_id: &str) -> Vec<String> {
+    sqlx::query_scalar(
+        "SELECT key FROM block_properties WHERE block_id = ? AND key LIKE 'repeat%' ORDER BY key",
+    )
+    .bind(block_id)
+    .fetch_all(pool)
+    .await
+    .unwrap()
+}
+
+/// #5160 — removing the rule takes its limit and the occurrence count only
+/// recurrence writes with it, in the same undo, so a rule set later starts
+/// unbounded. `/repeat daily`, a limit of 1 and one completion leave the next
+/// occurrence at its limit; `/repeat remove` and `/repeat daily` on it used to
+/// give a rule born exhausted, whose completion made no next occurrence.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn delete_property_repeat_leaves_nothing_for_a_later_rule() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let block = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "water the plants".into(),
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    let first = block.id.as_str();
+    set_todo_state_inner(&pool, DEV, &mat, first.into(), Some("TODO".into()))
+        .await
+        .unwrap();
+    set_repeat_property(&pool, DEV, &mat, first, "daily").await;
+    set_property_inner(
+        &pool,
+        DEV,
+        &mat,
+        first.into(),
+        "repeat-count".into(),
+        None,
+        Some(1.0),
+        None,
+        None,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    set_todo_state_inner(&pool, DEV, &mat, first.into(), Some("DONE".into()))
+        .await
+        .unwrap();
+    mat.flush_background().await.unwrap();
+    let next: String =
+        sqlx::query_scalar("SELECT id FROM blocks WHERE id != ? AND deleted_at IS NULL")
+            .bind(first)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        repeat_keys(&pool, &next).await,
+        ["repeat", "repeat-count", "repeat-origin", "repeat-seq"]
+    );
+
+    let removed = capture_op_refs(delete_property_inner(
+        &pool,
+        DEV,
+        &mat,
+        next.as_str().into(),
+        "repeat".into(),
+    ))
+    .await
+    .unwrap();
+    assert_eq!(
+        removed.op_refs.len(),
+        3,
+        "the rule, its limit and its count, the keys it held"
+    );
+    mat.flush_background().await.unwrap();
+    assert_eq!(repeat_keys(&pool, &next).await, ["repeat-origin"]);
+
+    set_repeat_property(&pool, DEV, &mat, &next, "daily").await;
+    set_todo_state_inner(&pool, DEV, &mat, next.as_str().into(), Some("DONE".into()))
+        .await
+        .unwrap();
+    mat.flush_background().await.unwrap();
+    let live: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM blocks WHERE deleted_at IS NULL")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(live, 3, "completing it makes the next occurrence");
+    mat.shutdown();
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn delete_property_clears_reserved_column_key() {
     let (pool, _dir) = test_pool().await;

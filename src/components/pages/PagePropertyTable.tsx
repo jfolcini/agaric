@@ -25,6 +25,7 @@ import {
   buildInitParams,
   DRAFT_ROW_VALUE_TYPES,
   NON_DELETABLE_PROPERTIES,
+  SYSTEM_MANAGED_PROPERTY_KEYS,
 } from '@/lib/property-save-utils'
 import { reportIpcError, reportIpcErrorWithReason } from '@/lib/report-ipc-error'
 
@@ -310,7 +311,7 @@ export function PagePropertyTable({ pageId, forceExpanded }: PagePropertyTablePr
           {!loading &&
             properties.map((prop) => {
               const def = findDef(prop.key)
-              const canDelete = !NON_DELETABLE_PROPERTIES.has(prop.key)
+              const canDelete = !SYSTEM_MANAGED_PROPERTY_KEYS.has(prop.key)
               return (
                 <PropertyRowEditor
                   key={prop.key}

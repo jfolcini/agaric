@@ -37,6 +37,7 @@ import {
   buildInitParams,
   DRAFT_ROW_VALUE_TYPES,
   NON_DELETABLE_PROPERTIES,
+  SYSTEM_MANAGED_PROPERTY_KEYS,
 } from '@/lib/property-save-utils'
 import { BUILTIN_PROPERTY_ICONS, formatPropertyName } from '@/lib/property-utils'
 import { reportIpcError } from '@/lib/report-ipc-error'
@@ -347,7 +348,7 @@ export function BlockPropertyDrawer({
                       def={def}
                       onSave={(v) => handleSave(prop.key, v, propType)}
                       onDelete={
-                        !NON_DELETABLE_PROPERTIES.has(prop.key)
+                        !SYSTEM_MANAGED_PROPERTY_KEYS.has(prop.key)
                           ? () => handleDelete(prop.key)
                           : undefined
                       }
@@ -372,7 +373,7 @@ export function BlockPropertyDrawer({
                     testId={`property-value-input-${prop.key}`}
                     onSave={(v) => handleSaveField(prop.key, v, getType(prop.key))}
                     onRemove={
-                      !NON_DELETABLE_PROPERTIES.has(prop.key)
+                      !SYSTEM_MANAGED_PROPERTY_KEYS.has(prop.key)
                         ? () => handleDelete(prop.key)
                         : undefined
                     }

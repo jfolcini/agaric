@@ -21,7 +21,8 @@ use crate::commands::blocks::crud::{
 use crate::commands::blocks::move_ops::{move_block_in_tx, ordered_live_children};
 use crate::commands::pages::inline_query_md::{query_page_names, query_tag_names};
 use crate::commands::properties::{
-    PriorTaskState, resolve_prior_task_states_batch, set_todo_state_in_tx,
+    PriorTaskState, delete_repeat_bounds_in_tx, resolve_prior_task_states_batch,
+    set_todo_state_in_tx,
 };
 
 /// What [`apply_page_source_inner`] does with a buffer that does not fit the
@@ -607,13 +608,14 @@ async fn resolve_new_names(
         materializer,
         device_id,
         space_id: space.as_str(),
-        page_id: page.id.as_str(),
+        file_page: None,
         warnings,
         created: Vec::new(),
     };
     let bodies = names.links.into_iter().collect();
     let queries = names.queries.into_iter().collect();
     let (tx, links) = resolve_page_refs(&mut ctx, tx, bodies, queries).await?;
+    warn_dropped_labels(ctx.warnings, links.dropped_labels);
     let (tx, _, tags, _) =
         resolve_tag_names(&mut ctx, tx, names.tags.into_iter().collect()).await?;
     Ok((
@@ -910,6 +912,10 @@ async fn write_properties(
         let op = delete_property_in_tx(tx, loro, save.device_id, id, key).await?;
         tx.enqueue_background(op);
         save.report.properties_deleted += 1;
+    }
+    if changes.deleted.iter().any(|key| key == "repeat") {
+        save.report.properties_deleted +=
+            delete_repeat_bounds_in_tx(tx, loro, save.device_id, id).await?;
     }
     let set = apply_block_properties(
         tx,

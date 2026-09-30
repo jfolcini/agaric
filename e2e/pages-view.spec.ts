@@ -701,7 +701,10 @@ test.describe('pagination / virtualization', () => {
     await bootPages(page, { extraPages: 80 })
     await expect(page.getByTestId('load-more-progress')).toHaveText('Loaded 50 of 86')
 
-    await page.getByRole('button', { name: /load more/i }).click()
+    // Dispatched, not clicked: a click first scrolls the button into view, and
+    // reaching the bottom auto-loads the rest, which can unmount the button
+    // under the click ("element was detached").
+    await page.getByRole('button', { name: /load more/i }).dispatchEvent('click')
     // Everything is now loaded → the load-more button + progress disappear.
     await expect(page.getByRole('button', { name: /load more/i })).toHaveCount(0)
     // A late page is now reachable (it was on the unfetched cursor page before).
@@ -1041,7 +1044,8 @@ test.describe('cursor IPC contract (E12)', () => {
     await bootPages(page, { extraPages: 80 })
     await expect(countChip(page)).toHaveText('86 pages')
 
-    await page.getByRole('button', { name: /load more/i }).click()
+    // Dispatched for the reason the a11y-fallback test above gives.
+    await page.getByRole('button', { name: /load more/i }).dispatchEvent('click')
     // Even though the cursor page reported total_count = null, the chip holds
     // the retained first-page total (it does not vanish or change).
     await expect(page.getByRole('button', { name: /load more/i })).toHaveCount(0)

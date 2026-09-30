@@ -19,6 +19,8 @@
  * `linkBodyReadings` first.
  */
 
+import { ULID_RE } from '@/editor/markdown-common'
+
 export interface TagToken {
   kind: 'tag'
   /** `[start, end)` of the whole token in the content, in UTF-16 units. */
@@ -55,8 +57,6 @@ const MULTIWORD_TAG_RE = /#\[\[([^\]\n]+?)\]\]/g
 const BARE_TAG_RE = /(^|[^\p{L}\p{N}\p{M}_&[/])#([\p{L}\p{N}_][\p{L}\p{N}\p{M}_/-]*)/gu
 /** `TAG_GUARD_RE`: a bare URL up to whitespace, or a link destination. */
 const TAG_GUARD_RE = /[A-Za-z][A-Za-z0-9+.-]*:\/\/\S+|\]\([^)\n]*\)/g
-/** A canonical `[[ULID]]` body, which is already a ref and resolves nothing. */
-const ULID_RE = /^[0-9A-Z]{26}$/
 /** `LOGSEQ_LABELLED_LINK_RE`'s head, `[label](`, ending right before a `[[…]]` link. */
 const LOGSEQ_LABEL_HEAD_RE = /\[([^\]\n]*)\]\($/
 

@@ -1703,34 +1703,6 @@ describe('BlockPropertyEditor', () => {
       expect(setEditingProp).toHaveBeenCalledWith(null)
     })
 
-    it('clears a RESERVED key through the all-null set_property it accepts', async () => {
-      render(
-        <BlockPropertyEditor
-          {...makeProps({
-            editingProp: { key: 'due_date', value: '2026-09-15' },
-            valueType: 'date',
-          })}
-        />,
-      )
-      const input = screen.getByRole('textbox')
-      fireEvent.change(input, { target: { value: '' } })
-      fireEvent.blur(input)
-
-      await waitFor(() => {
-        expect(mockSetProperty).toHaveBeenCalledWith('BLOCK_1', 'due_date', {
-          value_text: null,
-          value_num: null,
-          value_date: null,
-          value_ref: null,
-          value_bool: null,
-        })
-      })
-      // The all-null payload is the ONLY clear `validate_set_property` accepts
-      // for a reserved key (count==0 is legal for those four alone), so the
-      // clear must not be re-routed through `delete_property`.
-      expect(mockDeleteProperty).not.toHaveBeenCalled()
-    })
-
     // The repeat rule's end conditions are chips, and `delete_property`
     // removes them; the all-null write is refused for them as for any key
     // that is not reserved.
