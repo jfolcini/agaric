@@ -102,6 +102,12 @@ export const VERIFIED_PAIRS = [
     evidence:
       '#4408: `npx oxlint --type-aware` ran clean-starting against this pair and produced 643 findings (246 syntax + 397 type-aware) in ~4s',
   },
+  {
+    typescript: '7.0.2',
+    tsgolint: '7.0.2002',
+    evidence:
+      '#5185: embeds the same typescript-go commit as 7.0.2001 (tag typescript/v7.0.2); `npx oxlint --type-aware` with OXLINT_TSGOLINT_PATH at 7.0.2002 and at 7.0.2001 gave identical findings (64 over 1982 files), and both flagged all four configured type-aware rules in a canary',
+  },
 ]
 
 /** Thrown when the guard cannot reach a verdict at all (exit 3, never 2). */
@@ -482,10 +488,10 @@ function selfTestTypescriptBumpLeavesTsgolintBehind({ check }) {
 }
 
 function selfTestTsgolintBumpLeavesTypescriptBehind({ check }) {
-  const lock = healthyLock({ 'node_modules/oxlint-tsgolint': { version: '7.0.2002' } })
+  const lock = healthyLock({ 'node_modules/oxlint-tsgolint': { version: '7.0.2999' } })
   const problems = collectProblems(stateOf(HEALTHY_PKG, lock))
   check(
-    problems.some((p) => p.severity === 'finding' && p.message.includes('7.0.2002')),
+    problems.some((p) => p.severity === 'finding' && p.message.includes('7.0.2999')),
     'the drift is caught from the OTHER side too — bumping tsgolint alone is equally a finding',
     JSON.stringify(problems),
   )
