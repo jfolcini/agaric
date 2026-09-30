@@ -26,7 +26,6 @@ import { notify } from '@/lib/notify'
 import {
   buildPropertyParams,
   carriedRenameDefinition,
-  COLUMN_BACKED_PROPERTY_KEYS,
   renameMayDeclareKey,
 } from '@/lib/property-save-utils'
 import { reportIpcError } from '@/lib/report-ipc-error'
@@ -508,16 +507,7 @@ export function BlockPropertyEditor({
               // user got `property.saveFailed` whatever they typed. No type is
               // needed to clear, so this runs before the definition is
               // resolved.
-              //
-              // The column-backed keys stay on the `set_property` path below:
-              // for the four RESERVED keys the all-null payload IS the clear
-              // (`validate_set_property` accepts count==0 only for them),
-              // though they are filtered out of the chip row upstream by
-              // `useExtraBlockProperties` and do not reach here in practice.
-              // Every other key, the repeat rule's `repeat-until` /
-              // `repeat-count` included, is removed by `delete_property`,
-              // which refuses only the system-managed lifecycle keys.
-              if (newValue === '' && !COLUMN_BACKED_PROPERTY_KEYS.has(editingProp.key)) {
+              if (newValue === '') {
                 try {
                   unwrap(await commands.deleteProperty(blockId, editingProp.key))
                 } catch (err) {
@@ -775,35 +765,7 @@ export function BlockPropertyEditor({
                 throw err
               }
               // Remove the OLD key, now that the new one holds the value.
-              //
-              // This used to be an all-null `set_property`, which
-              // `validate_set_property` accepts for the four RESERVED keys
-              // only ("Reserved keys allow all-null values (= clear the
-              // column)"); for any ordinary user key it is rejected with
-              // "SetProperty must have exactly 1 non-null value field, found
-              // 0". So `unwrap` threw and every rename of a user-defined
-              // property — the ordinary case — ended in `property.renameFailed`
-              // with the old chip still on the block, even though the new key
-              // had already been written. Same defect as the emptied-chip clear
-              // above, one branch over, and invisible here for as long as the
-              // test fixture answered `{status:'ok'}` to every payload.
-              //
-              // The split matches that clear exactly: the column-backed keys
-              // keep the all-null payload (right for the reserved four), and
-              // every other key is removed by `delete_property`.
-              if (COLUMN_BACKED_PROPERTY_KEYS.has(editingKey.oldKey)) {
-                unwrap(
-                  await commands.setProperty(blockId, editingKey.oldKey, {
-                    value_text: null,
-                    value_num: null,
-                    value_date: null,
-                    value_ref: null,
-                    value_bool: null,
-                  }),
-                )
-              } else {
-                unwrap(await commands.deleteProperty(blockId, editingKey.oldKey))
-              }
+              unwrap(await commands.deleteProperty(blockId, editingKey.oldKey))
             } catch (err) {
               reportIpcError('BlockPropertyEditor', 'property.renameFailed', err, t, {
                 blockId,

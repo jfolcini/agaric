@@ -9,7 +9,11 @@
  * store.
  */
 
-import { NON_DELETABLE_PROPERTIES } from '@/lib/property-save-utils'
+import {
+  NON_DELETABLE_PROPERTIES,
+  REPEAT_RULE_BOUNDS,
+  SYSTEM_MANAGED_PROPERTY_KEYS,
+} from '@/lib/property-save-utils'
 import { compareUtf8Bytes } from '@/lib/sqlite-collation'
 import {
   type TypedHandlers,
@@ -42,16 +46,24 @@ const RESERVED_PROPERTY_COLUMN: Record<string, 'value_text' | 'value_date'> = {
 }
 
 /**
- * `SYSTEM_MANAGED_PROPERTY_KEYS` (`commands/properties.rs`): the keys only
- * state transitions and recurrence write, which `delete_property` refuses
- * (#658). The recurrence rule itself is the user's to remove.
+ * Delete `key`'s `block_properties` row, appending the op with the prior value
+ * its undo re-adds.
  */
-const SYSTEM_MANAGED_PROPERTY_KEYS = new Set([
-  'created_at',
-  'completed_at',
-  'repeat-seq',
-  'repeat-origin',
-])
+function deletePropertyRow(blockId: string, key: string): { device_id: string; seq: number } {
+  const priorRow = properties.get(blockId)?.get(key)
+  const fromValue = priorRow
+    ? {
+        value_text: (priorRow['value_text'] as string | null) ?? null,
+        value_num: (priorRow['value_num'] as number | null) ?? null,
+        value_date: (priorRow['value_date'] as string | null) ?? null,
+        value_ref: (priorRow['value_ref'] as string | null) ?? null,
+        value_bool: (priorRow['value_bool'] as number | null) ?? null,
+      }
+    : null
+  properties.get(blockId)?.delete(key)
+  const op = pushOp('delete_property', { block_id: blockId, key, from_value: fromValue })
+  return { device_id: op.device_id, seq: op.seq }
+}
 
 /**
  * Route a reserved-key `set_property` onto the block's dedicated column (NOT
@@ -355,35 +367,19 @@ export const propertiesHandlers = {
         op_refs: [{ device_id: op.device_id, seq: op.seq }],
       }
     }
-    // Capture the prior typed value so revert can re-add it.
-    const priorRow = properties.get(blockId)?.get(key)
-    const fromValue = priorRow
-      ? {
-          value_text: (priorRow['value_text'] as string | null) ?? null,
-          value_num: (priorRow['value_num'] as number | null) ?? null,
-          value_date: (priorRow['value_date'] as string | null) ?? null,
-          value_ref: (priorRow['value_ref'] as string | null) ?? null,
-          value_bool: (priorRow['value_bool'] as number | null) ?? null,
-        }
-      : null
-    const blockProps = properties.get(blockId)
-    if (blockProps) blockProps.delete(key)
-    const op = pushOp('delete_property', {
-      block_id: blockId,
-      key,
-      from_value: fromValue,
-    })
     // #2468 — previously returned `null`; now echoes `(block_id, key)` plus
     // `op_refs` (`WithOps<DeletePropertyResponse>`). Backend parity: the real
     // `delete_property_core` ALWAYS appends the op — even when the property
     // does not exist — so the ref is always surfaced. Undoing a no-prior
     // delete then fails (`resolveUndoTarget` mirrors the backend's "no prior
     // set_property" NotFound from `build_reverse_delete_property`).
-    return {
-      block_id: blockId,
-      key,
-      op_refs: [{ device_id: op.device_id, seq: op.seq }],
+    const opRefs = [deletePropertyRow(blockId, key)]
+    if (key === 'repeat') {
+      for (const bound of REPEAT_RULE_BOUNDS) {
+        if (properties.get(blockId)?.has(bound)) opRefs.push(deletePropertyRow(blockId, bound))
+      }
     }
+    return { block_id: blockId, key, op_refs: opRefs }
   },
 
   get_properties: (args) => {

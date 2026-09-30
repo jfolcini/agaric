@@ -2754,11 +2754,12 @@ async fn resolve_pasted_names(
         materializer,
         device_id,
         space_id: space.as_str(),
-        page_id: anchor.page_id.as_ref().map_or("", BlockId::as_str),
+        file_page: None,
         warnings,
         created: Vec::new(),
     };
     let (tx, links) = resolve_inbound_page_links(&mut names, tx, blocks).await?;
+    warn_dropped_labels(names.warnings, links.dropped_labels);
     let (tx, _, tag_tokens, _) = resolve_inbound_tags(&mut names, tx, blocks).await?;
     for block in blocks.iter_mut() {
         block.content =
@@ -3709,12 +3710,10 @@ fn index_block_anchors(blocks: &[import::ParsedBlock]) -> HashMap<String, usize>
 }
 
 /// #2567 — map each normalized ATX heading label to the index of the block that
-/// is that heading. COLLISION RULE: first occurrence wins (`or_insert`), so a
-/// repeated heading label always targets its first occurrence in document order.
-/// Obsidian's own `heading`, `heading-1`, … numeric-suffix disambiguation is
-/// intentionally NOT mirrored (kept simple and deterministic; documented here
-/// and in the issue). `is_code` blocks are skipped — a `# comment` inside a
-/// fenced code sample is not a heading.
+/// is that heading. A repeated label targets its first occurrence in document
+/// order (`or_insert`), as Obsidian resolves a link to a repeated heading.
+/// `is_code` blocks are skipped — a `# comment` inside a fenced code sample is
+/// not a heading.
 fn index_headings(blocks: &[import::ParsedBlock]) -> HashMap<String, usize> {
     let mut map: HashMap<String, usize> = HashMap::new();
     for (idx, b) in blocks.iter().enumerate() {
@@ -3803,7 +3802,7 @@ impl ImportCtx<'_> {
             materializer: self.materializer,
             device_id: self.device_id,
             space_id: &self.space_id,
-            page_id: &self.page_id,
+            file_page: Some(&self.page_id),
             warnings: &mut self.warnings,
             created: Vec::new(),
         }
@@ -3817,9 +3816,11 @@ struct NameCtx<'a> {
     materializer: &'a Materializer,
     device_id: &'a str,
     space_id: &'a str,
-    /// The page the names are written into: a link to it with a `#` anchor
-    /// points into the text being written, not at the page.
-    page_id: &'a str,
+    /// The page an import writes its file into: a link to it with a `#` anchor
+    /// points into the file, which the same-file pass reads once its blocks
+    /// exist. Paste and Edit as Markdown write into a page whose blocks are
+    /// saved, so such a link is looked up there, as one into another page is.
+    file_page: Option<&'a str>,
     warnings: &'a mut Vec<String>,
     /// The pages and tags the passes created, in creation order.
     created: Vec<BlockRow>,
@@ -4123,6 +4124,9 @@ struct InboundLinks {
     titles: HashMap<String, String>,
     pending_block_anchors: HashMap<String, String>,
     pending_heading_anchors: HashMap<String, PendingHeading>,
+    /// Labels on links into another page that became block refs, which carry
+    /// none (#5160 D9): the caller warns, once, with any it drops itself.
+    dropped_labels: usize,
 }
 
 impl InboundLinks {
@@ -4404,7 +4408,7 @@ async fn resolve_link_names(
     link_names: Vec<String>,
     link_matches: &LinkMatches,
 ) -> Result<(CommandTx, InboundLinks), AppError> {
-    let page_id = ctx.page_id;
+    let file_page = ctx.file_page;
     let mut links = InboundLinks::default();
     let mut resolved_base_links: HashMap<String, String> = HashMap::new();
     let mut cross_page = Vec::new();
@@ -4454,7 +4458,7 @@ async fn resolve_link_names(
         links.remember_title(&resolved_ulid, link_matches, base);
 
         if let Some(anchor) = anchor
-            && resolved_ulid == page_id
+            && file_page == Some(resolved_ulid.as_str())
         {
             // An explicit self-title anchor (`[[SelfTitle#^blockId]]` /
             // `[[SelfTitle#Heading]]`): same-document, so defer it exactly like
@@ -4493,7 +4497,8 @@ struct CrossPageAnchor {
 /// compares it, or, for `^id`, the block of that id, which is the anchor an
 /// export writes for a ref to another page's block. An Obsidian `^name` names
 /// no block once its own file's import is done. Any other anchor links the
-/// page, and the anchors dropped so are counted in one warning (#1282). One
+/// page, and the anchors dropped so are counted in one warning (#1282). Each
+/// name keeps its page too, which an inline query naming it remaps to. One
 /// read covers every page; `page_id` holds a page's whole subtree.
 async fn link_cross_page_anchors(
     conn: &mut sqlx::SqliteConnection,
@@ -4527,11 +4532,11 @@ async fn link_cross_page_anchors(
     let mut dropped = 0;
     for a in anchors {
         if let Some(block) = anchor_block(&candidates, &a) {
-            links.blocks.insert(a.name, block.to_string());
+            links.blocks.insert(a.name.clone(), block.to_string());
         } else {
             dropped += 1;
-            links.ids.insert(a.name, a.page_id);
         }
+        links.ids.insert(a.name, a.page_id);
     }
     if dropped > 0 {
         warnings.push(format!(
@@ -4613,8 +4618,8 @@ async fn resolve_inbound_page_links(
 /// snapshot of the pages they may name: each body reads by [`read_link_body`]
 /// (#5160 D10), and the names read and `names` resolve by
 /// [`resolve_link_names`], so only a name no page matches is created. A body
-/// whose reading ties stays text, and a label on a link that became a block
-/// ref is dropped, each with a warning.
+/// whose reading ties stays text, with a warning, and a label on a link that
+/// became a block ref is dropped, counted for the caller to warn of.
 async fn resolve_page_refs(
     ctx: &mut NameCtx<'_>,
     mut tx: CommandTx,
@@ -4638,21 +4643,22 @@ async fn resolve_page_refs(
     }
     let names = read_names.into_iter().chain(names).collect();
     let (tx, mut links) = resolve_link_names(ctx, tx, names, &matches).await?;
-    let dropped_labels = readings
+    links.dropped_labels = readings
         .values()
         .filter(|(name, label)| label.is_some() && links.page_links.blocks.contains_key(name))
         .count();
-    if dropped_labels > 0 {
-        ctx.warnings.push(dropped_labels_warning(dropped_labels));
-    }
     links.page_links.readings = readings;
     Ok((tx, links))
 }
 
-/// The warning for `n` link labels dropped with links that became block refs,
-/// which carry no label (#5160 D9).
-fn dropped_labels_warning(n: usize) -> String {
-    format!("{n} link label(s) were dropped: a block reference carries no label")
+/// Warn of `n` link labels dropped with links that became block refs, which
+/// carry no label (#5160 D9), when there are any.
+fn warn_dropped_labels(warnings: &mut Vec<String>, n: usize) {
+    if n > 0 {
+        warnings.push(format!(
+            "{n} link label(s) were dropped: a block reference carries no label"
+        ));
+    }
 }
 
 /// #1990 — snapshot the in-space live tag blocks ONCE, indexed by normalized
@@ -5584,8 +5590,8 @@ fn push_anchor_warnings(warnings: &mut Vec<String>, outcomes: &AnchorOutcomes) {
         let unresolved_block_anchor_count = outcomes.unresolved_block_anchors;
         warnings.push(format!(
             "{unresolved_block_anchor_count} wikilink block-anchor(s) (`#^blockId`) could not \
-             be matched to a block in this document; left as a page link (Obsidian \
-             cross-note block-anchor targeting is not yet supported)"
+             be matched to a block in this document; left as a page link (an Obsidian \
+             `^name` resolves only in the file that defines it)"
         ));
     }
     if outcomes.resolved_heading_refs > 0 {
@@ -5613,9 +5619,7 @@ fn push_anchor_warnings(warnings: &mut Vec<String>, outcomes: &AnchorOutcomes) {
             "wiki-link '[[{name}]]' has no page target (intra-note anchor); left as plain text"
         ));
     }
-    if outcomes.dropped_labels > 0 {
-        warnings.push(dropped_labels_warning(outcomes.dropped_labels));
-    }
+    warn_dropped_labels(warnings, outcomes.dropped_labels);
 }
 
 /// #2510 / #2567 — post-commit resolution of deferred same-document block- and
@@ -5635,21 +5639,23 @@ async fn resolve_anchor_links(
     created_block_ids: &[Option<String>],
     refs: &DocumentRefs,
 ) {
-    if refs.links.pending_block_anchors.is_empty() && refs.links.pending_heading_anchors.is_empty()
-    {
-        return;
-    }
+    let pending = !refs.links.pending_block_anchors.is_empty()
+        || !refs.links.pending_heading_anchors.is_empty();
     let materializer = ctx.materializer;
     let device_id = ctx.device_id;
     let pool = ctx.pool;
     let page_id = ctx.page_id.clone();
-    let mut outcomes = AnchorOutcomes::default();
+    // The pre-pass's dropped labels are warned of with this pass's, once.
+    let mut outcomes = AnchorOutcomes {
+        dropped_labels: refs.links.dropped_labels,
+        ..AnchorOutcomes::default()
+    };
 
     for (block_index, block) in parse_output.blocks.iter().enumerate() {
         // A cheap in-memory pre-filter over the ORIGINAL parsed content (`[[`
         // presence) so only blocks that could possibly carry a pending token are
         // re-fetched from the database.
-        if !block.content.contains("[[") {
+        if !pending || !block.content.contains("[[") {
             continue;
         }
         let Some(Some(container_id)) = created_block_ids.get(block_index) else {

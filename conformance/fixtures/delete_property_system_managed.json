@@ -1,5 +1,5 @@
 {
-  "description": "#658 — `delete_property` removes the recurrence rule a user set (`repeat`, `repeat-count`, as `/repeat remove` and `/repeat-limit remove` do) and refuses the keys only state transitions and recurrence write (`created_at`, `completed_at`, `repeat-seq`, `repeat-origin`), leaving a refused row in place. The mock used to accept every one.",
+  "description": "#658 — `delete_property` removes the recurrence rule a user set (`repeat`, `repeat-count`, as `/repeat remove` and `/repeat-limit remove` do) and refuses the keys only state transitions and recurrence write (`created_at`, `completed_at`, `repeat-seq`, `repeat-origin`), leaving a refused row in place (on S3). The mock used to accept every one. #5160 — removing `repeat` also removes the `repeat-until`, `repeat-count` and `repeat-seq` the block holds, in the same transaction, so a rule set later is not born spent; one it does not hold (`repeat-until` here) appends no op.",
   "expected": {
     "block_tags": [],
     "blocks": [
@@ -28,10 +28,23 @@
         "priority": null,
         "scheduled_date": null,
         "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "daily standup",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B3",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 2,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
       }
     ],
     "op_log_digest": {
-      "count": 5,
+      "count": 8,
       "ops": [
         {
           "key": "repeat",
@@ -46,6 +59,16 @@
           "op_type": "set_property"
         },
         {
+          "key": "repeat-seq",
+          "op_type": "set_property"
+        },
+        {
+          "op_type": "delete_property"
+        },
+        {
+          "op_type": "delete_property"
+        },
+        {
           "op_type": "delete_property"
         },
         {
@@ -56,7 +79,7 @@
     "page_links": [],
     "properties": [
       {
-        "block_id": "B2",
+        "block_id": "B3",
         "key": "repeat-seq",
         "value": 1.0,
         "value_type": "Num"
@@ -135,10 +158,21 @@
     },
     {
       "args": {
+        "blockId": "S3",
+        "key": "repeat-seq",
+        "value": {
+          "value_num": 1
+        }
+      },
+      "command": "set_property"
+    },
+    {
+      "args": {
         "blockId": "S2",
         "key": "repeat"
       },
       "command": "delete_property",
+      "comment": "Removing the rule takes its limit and the occurrence count with it (#5160), so a rule set later starts unbounded.",
       "name": "remove_the_repeat_rule",
       "via": "command"
     },
@@ -148,12 +182,13 @@
         "key": "repeat-count"
       },
       "command": "delete_property",
+      "comment": "`/repeat-limit remove` is accepted; the limit is already gone with the rule, and the command appends its op anyway, as for any absent key.",
       "name": "remove_the_repeat_limit",
       "via": "command"
     },
     {
       "args": {
-        "blockId": "S2",
+        "blockId": "S3",
         "key": "repeat-seq"
       },
       "command": "delete_property",
@@ -164,7 +199,7 @@
     },
     {
       "args": {
-        "blockId": "S2",
+        "blockId": "S3",
         "key": "repeat-origin"
       },
       "command": "delete_property",
@@ -174,7 +209,7 @@
     },
     {
       "args": {
-        "blockId": "S2",
+        "blockId": "S3",
         "key": "created_at"
       },
       "command": "delete_property",
@@ -184,7 +219,7 @@
     },
     {
       "args": {
-        "blockId": "S2",
+        "blockId": "S3",
         "key": "completed_at"
       },
       "command": "delete_property",
@@ -208,6 +243,13 @@
         "id": "S2",
         "parent_id": "S1",
         "position": 1
+      },
+      {
+        "block_type": "content",
+        "content": "daily standup",
+        "id": "S3",
+        "parent_id": "S1",
+        "position": 2
       }
     ],
     "properties": [],

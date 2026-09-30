@@ -17,6 +17,7 @@ import {
   type PageMetaRow,
   type TypedHandlers,
   appErrorRejection,
+  assertValidSetPropertyValue,
   buildPageMetaRow,
   compareMetaRows,
   comparePositionThenId,
@@ -593,6 +594,22 @@ function placeSourceBullets(
   }
   place(pageId, childrenOf.get(null) ?? [])
   return opRefs
+}
+
+/**
+ * Whether an import writes `key:: value` as a property rather than keeping it
+ * as text (#5160 D11), for what the mock models: the value `set_property`
+ * accepts (a select option, a valid repeat rule), or a priority letter, which
+ * the import reads as the option it stands for (`import_priority_value`).
+ */
+function importKeepsProperty(key: string, value: string): boolean {
+  if (key === 'priority' && /^[ABC]$/.test(value)) return true
+  try {
+    assertValidSetPropertyValue(key, value)
+    return true
+  } catch {
+    return false
+  }
 }
 
 export const pagesHandlers = {
@@ -1370,10 +1387,14 @@ export const pagesHandlers = {
 
     // Faithful-but-simple property count: the real importer pulls properties
     // from YAML frontmatter and inline `key:: value` lines. We don't reproduce
-    // the parser — we just count `key:: value` occurrences so the result panel's
-    // "N properties" branch is exercised in dev-preview rather than hardcoded to
-    // 0. (Frontmatter and `#tag` parsing are intentionally NOT modelled here.)
-    const propertiesSet = lines.filter((line) => /^\s*[^\s:][^:]*::\s+\S/.test(line)).length
+    // the parser — we just count the `key:: value` lines it would write, so the
+    // result panel's "N properties" branch is exercised in dev-preview rather
+    // than hardcoded to 0. (Frontmatter and `#tag` parsing are intentionally
+    // NOT modelled here.)
+    const propertiesSet = lines.filter((line) => {
+      const match = /^\s*([^\s:][^:]*)::\s+(\S.*)$/.exec(line)
+      return match !== null && importKeepsProperty(match[1] ?? '', (match[2] ?? '').trim())
+    }).length
 
     // Create the page block + stamp `space` ref property, unless an empty page
     // of the space already carries the title (#5160 D12).

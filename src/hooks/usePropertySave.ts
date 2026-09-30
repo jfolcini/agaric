@@ -14,7 +14,11 @@ import { announce } from '@/lib/announcer'
 import type { PropertyRow } from '@/lib/bindings'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
-import { handleDeleteProperty, handleSaveProperty } from '@/lib/property-save-utils'
+import {
+  handleDeleteProperty,
+  handleSaveProperty,
+  REPEAT_RULE_BOUNDS,
+} from '@/lib/property-save-utils'
 import { invalidRepeatRuleMessage } from '@/lib/repeat-utils'
 
 export interface UsePropertySaveOptions {
@@ -95,7 +99,12 @@ export function usePropertySave({
       if (!blockId) return
       try {
         await handleDeleteProperty(blockId, key, () => {
-          setProperties((prev) => prev.filter((p) => p.key !== key))
+          // Removing the rule removes its bounds with it (`delete_property`).
+          setProperties((prev) =>
+            prev.filter(
+              (p) => p.key !== key && !(key === 'repeat' && REPEAT_RULE_BOUNDS.has(p.key)),
+            ),
+          )
         })
         if (announceOnDelete) {
           announce(t(announceOnDelete))

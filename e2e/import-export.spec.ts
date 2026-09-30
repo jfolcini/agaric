@@ -318,7 +318,7 @@ test.describe('Import markdown', () => {
     await navigateToDataSettings(page)
 
     const fileInput = page.locator('[data-testid="import-file-input"]')
-    const mdContent = '- A task with a property\nstatus:: open\n'
+    const mdContent = '- A task with a property\nmood:: open\n'
     await fileInput.setInputFiles({
       name: 'properties-check.md',
       mimeType: 'text/markdown',

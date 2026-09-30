@@ -49,6 +49,8 @@ For the `+` / `.+` / `++` mode semantics, see [journal-and-agenda.md](journal-an
 
 Marking a repeating task DONE rolls it forward: a new occurrence is generated, `repeat-seq` increments, and the previous occurrence stays as a completed entry in History / the Done panel.
 
+Removing `repeat` (`/repeat remove`, its delete button, or its line in *Edit as Markdown*) removes the `repeat-until`, `repeat-count` and `repeat-seq` the task holds with it, in one undo, so a rule set later starts over. `repeat-seq` and `repeat-origin` have no delete button of their own; only recurrence writes them.
+
 **Recipe — weekly until end of year:** `due_date = 2026-05-22`, `repeat = +1w`, `repeat-until = 2026-12-31`.
 
 ## The Property Drawer

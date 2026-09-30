@@ -59,9 +59,8 @@ import type { PropertyDefinition } from '@/lib/bindings'
 /**
  * Keys the parser never treats as inline properties. Mirrors
  * `FRONTMATTER_RESERVED_KEYS` in `src-tauri/agaric-engine/src/import.rs`
- * (#1568): these are exporter-managed / column-backed keys (`space` needs a
- * `value_ref`, so a text write would be rejected with a Validation error
- * anyway).
+ * (#1568): keys the exporter manages and keys only the app writes, such as
+ * `space`, the space a page belongs to.
  *
  * DRIFT WARNING (#3797) — this key set is duplicated in FOUR places and
  * nothing checks them against each other. Change one, change all four:
@@ -190,8 +189,7 @@ export function stripPropertyLines(content: string, lineIndexes: ReadonlySet<num
   return kept.join('\n')
 }
 
-/** Param shape accepted by `commands.setProperty` (structural copy —
- *  kept local so this module stays free of value imports). */
+/** The typed `setProperty` params one inline property line is written with. */
 export interface InlineSetPropertyParams {
   blockId: string
   key: string
