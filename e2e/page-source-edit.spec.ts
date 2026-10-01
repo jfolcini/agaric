@@ -4,6 +4,8 @@ import { devices } from '@playwright/test'
 import {
   activeAlertDialog,
   activeDialog,
+  activeSuggestionList,
+  activeSuggestionPopup,
   expect,
   focusBlockById,
   openPage,
@@ -427,6 +429,58 @@ test.describe('Edit as Markdown (#5140 Phase 4b)', () => {
 
     await expect.poll(() => blockIds(page)).toEqual([GS1, GS2, GS3, GS4, GS5])
     expect(await bufferLines(await openSourceMode(page))).toEqual(base)
+  })
+
+  test('Tab indents a line, which saves as a child of the block above it', async ({ page }) => {
+    const editor = await openSourceMode(page)
+    const second = FRONT_MATTER.length + 1
+    await caretAtEnd(page, editor, 'Use the sidebar')
+
+    await page.keyboard.press('Tab')
+
+    await expect(editor).toBeFocused()
+    const indented = await bufferLines(editor)
+    expect(indented[second]?.[0]).toMatch(/^ {2}- Use the sidebar/)
+    expect(indented[second]?.[1]).toBe(GS2)
+    await editor.press('ControlOrMeta+s')
+    await expect(sourceEditor(page)).toHaveCount(0)
+    await reopenPage(page, PAGE)
+    expect((await bufferLines(await openSourceMode(page)))[second]).toEqual(indented[second])
+  })
+
+  test('the move shortcut moves a line with its block, which saves in the new order', async ({
+    page,
+  }) => {
+    const editor = await openSourceMode(page)
+    await caretAtEnd(page, editor, CREATE)
+
+    await page.keyboard.press('ControlOrMeta+Shift+ArrowUp')
+
+    const first = FRONT_MATTER.length
+    const moved = (await bufferLines(editor)).slice(first, first + 3)
+    expect(moved.map(([, id]) => id)).toEqual([GS1, GS3, GS2])
+    await editor.press('ControlOrMeta+s')
+    await expect(sourceEditor(page)).toHaveCount(0)
+    await reopenPage(page, PAGE)
+    await expect.poll(() => blockIds(page)).toEqual([GS1, GS3, GS2, GS4, GS5])
+  })
+
+  test('[[ picks a page, written as [[Title]], which saves as a link to it', async ({ page }) => {
+    const editor = await openSourceMode(page)
+    await caretAtEnd(page, editor, WELCOME)
+
+    await page.keyboard.type(' [[Quick')
+    const option = activeSuggestionList(page).getByRole('option', { name: /Quick Notes/ })
+    await expect(option).toHaveAttribute('aria-selected', 'true')
+    await page.keyboard.press('Enter')
+
+    await expect(activeSuggestionPopup(page)).toHaveCount(0)
+    await expect(sourceLine(editor, WELCOME)).toHaveText(
+      '- Welcome to Agaric! This is your personal knowledge base. [[Quick Notes]]',
+    )
+    await editor.press('ControlOrMeta+s')
+    await expect(sourceEditor(page)).toHaveCount(0)
+    await expect(staticBlock(page, GS1)).toContainText('Quick Notes')
   })
 })
 

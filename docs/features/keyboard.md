@@ -58,10 +58,23 @@ Settings → Keyboard. Each entry shows its current binding and a "Record" butto
 | `Ctrl+Z` | Undo (in-editor history when focused; page-level otherwise) |
 | `Ctrl+Y` / `Ctrl+Shift+Z` | Redo |
 | `Ctrl+Shift+E` | Export current page as Markdown |
-| `Ctrl+S` / `Ctrl+Enter` | Save the *Edit as Markdown* buffer |
-| `Escape` (in *Edit as Markdown*) | Close the buffer, asking first when it changed |
 | `Ctrl+Space` | Toggle the focused block's selection |
 | `Ctrl+C` / `Ctrl+X` / `Ctrl+V` | Copy / cut / paste the selected blocks as a markdown outline, keeping their task state, priority, dates, list style and properties |
+
+## Edit as Markdown
+
+The buffer uses the block editor's bindings from the catalog, your rebinds included, on lines instead of blocks. No key changes which block a line keeps.
+
+| Shortcut | Action |
+| --- | --- |
+| `Enter` | Split the line. On a `-`, `*`, `+`, `1.` or `1)` line, start the next line with the same indent and marker, numbered one up (a task goes on as `- [ ]`); on a line holding only its marker, remove it, ending the list |
+| `Shift+Enter` | Split the line without continuing the list |
+| `Tab` / `Shift+Tab` | Indent the lines at the cursor or selection two spaces / remove up to two leading spaces or a tab. Follows *Tab indents blocks* in Settings → Editor: turned off, Tab moves focus as usual |
+| `Ctrl+Shift+→` / `Ctrl+Shift+←` | Indent / dedent, whatever the Tab setting |
+| `Ctrl+Shift+↑` / `Ctrl+Shift+↓` | Move the line, with the lines indented under it, past the sibling above / below it; a selection moves the siblings it touches together. Nothing at the top or bottom, and nothing moves into or out of the front matter |
+| `Ctrl+Enter` | Step the list line's task: none, `[ ]`, `[/]`, `[x]`, `[-]`, none again |
+| `Ctrl+S` | Save |
+| `Escape` | Close an open picker; else close the buffer, asking first when it changed |
 
 ## Global navigation
 

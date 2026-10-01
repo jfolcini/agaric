@@ -25,6 +25,8 @@ import { Fragment, Slice } from '@tiptap/pm/model'
 import { type Command, Plugin, TextSelection, type Transaction } from '@tiptap/pm/state'
 import { type Mappable, Mapping } from '@tiptap/pm/transform'
 
+import { SourceBufferKeys } from '@/editor/source-buffer-keys'
+
 export interface SourceLines {
   text: string
   /** One entry per line of `text`: the id of the block that starts on it. */
@@ -346,5 +348,6 @@ export function sourceBufferExtensions(pageIds: ReadonlyArray<string | null>) {
     Text,
     History,
     SourceBufferBehaviour.configure({ pageIds: new Set(pageIds) }),
+    SourceBufferKeys,
   ]
 }
