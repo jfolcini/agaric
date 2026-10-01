@@ -13,22 +13,23 @@
  */
 
 import { Extension } from '@tiptap/core'
-import type { Node as PMNode } from '@tiptap/pm/model'
 import { type Command, type EditorState, Plugin, TextSelection } from '@tiptap/pm/state'
 
+import {
+  blockAt,
+  blockAtCursor,
+  depthOf,
+  frontMatterEnd,
+  isBlank,
+  lineStarts,
+  subtreeEnd,
+} from '@/editor/source-buffer-blocks'
 import { isTabIndentEnabled } from '@/lib/editor-preferences'
 import { matchesShortcutBinding } from '@/lib/keyboard-config'
 import { nextTaskState, TASK_STATE_TO_MARKER, taskStateFromMarker } from '@/lib/task-states'
 
 /** A child is indented two spaces under its parent (the export's indent). */
 const INDENT = '  '
-
-/** The positions where `doc`'s lines start, before each one's first character. */
-export function lineStarts(doc: PMNode): number[] {
-  const starts: number[] = []
-  doc.forEach((_, offset) => starts.push(offset + 1))
-  return starts
-}
 
 /**
  * The first and last line the selection touches. A selection that ends where
@@ -53,8 +54,30 @@ export function indentRange(first: number, last: number): Command {
   }
 }
 
-const indentLines: Command = (state, dispatch) =>
-  indentRange(...touchedLines(state))(state, dispatch)
+/**
+ * The lines the selection touches, widened to each block they are in with its
+ * further lines and children, and whether one of those blocks is top-level. A
+ * line in no block, as the front matter's, stands for itself.
+ */
+function touchedBlocks(state: EditorState): { first: number; last: number; topLevel: boolean } {
+  const [from, to] = touchedLines(state)
+  let first = from
+  let end = to + 1
+  let topLevel = false
+  for (let i = from; i <= to; i += 1) {
+    const block = blockAt(state.doc, i)
+    if (block === null) continue
+    first = Math.min(first, block.line)
+    end = Math.max(end, block.subtreeEnd)
+    topLevel ||= depthOf(state.doc.child(block.line).textContent) === 0
+  }
+  return { first, last: end - 1, topLevel }
+}
+
+const indentBlocks: Command = (state, dispatch) => {
+  const { first, last } = touchedBlocks(state)
+  return indentRange(first, last)(state, dispatch)
+}
 
 /** Up to two leading spaces, or a tab. */
 const LEADING_INDENT = /^(?:\t| {1,2})/
@@ -74,8 +97,14 @@ export function dedentRange(first: number, last: number): Command {
   }
 }
 
-const dedentLines: Command = (state, dispatch) =>
-  dedentRange(...touchedLines(state))(state, dispatch)
+/**
+ * As the block menu's Dedent: a top-level block has nowhere to go, and the
+ * blocks selected with it stay where they are too.
+ */
+const dedentBlocks: Command = (state, dispatch) => {
+  const { first, last, topLevel } = touchedBlocks(state)
+  return topLevel || dedentRange(first, last)(state, dispatch)
+}
 
 // A list line: its indentation and list markers (`- 1.` is a bullet holding an
 // ordered list style), then the task checkbox it holds, if any.
@@ -102,28 +131,10 @@ export function cycleTaskAt(index: number): Command {
   }
 }
 
-const cycleTask: Command = (state, dispatch) => cycleTaskAt(touchedLines(state)[0])(state, dispatch)
-
-export const isBlank = (text: string): boolean => text.trim() === ''
-export const depthOf = (text: string): number => /^[ \t]*/.exec(text)?.[0].length ?? 0
-
-/** The line after the front matter (`---` … `---` at the top), 0 when there is none. */
-export function frontMatterEnd(texts: readonly string[]): number {
-  if (texts[0]?.trimEnd() !== '---') return 0
-  const close = texts.findIndex((text, i) => i > 0 && text.trimEnd() === '---')
-  return close < 0 ? 0 : close + 1
-}
-
-/** The end of line `start`'s subtree: past the lines after it indented deeper, and the blank lines between them. */
-export function subtreeEnd(texts: readonly string[], start: number, level: number): number {
-  let end = start + 1
-  for (let i = start + 1; i < texts.length; i += 1) {
-    const text = texts[i] as string
-    if (isBlank(text)) continue
-    if (depthOf(text) <= level) break
-    end = i + 1
-  }
-  return end
+/** Cycle the task of the block the caret is in, as the toolbar's button does. */
+const cycleTask: Command = (state, dispatch) => {
+  const block = blockAtCursor(state)
+  return block === null || cycleTaskAt(block.line)(state, dispatch)
 }
 
 interface LineMove {
@@ -227,13 +238,13 @@ function moveLines(direction: -1 | 1): Command {
 
 /** The command a key runs in the buffer, or `null` for a key it leaves alone. */
 function commandFor(event: KeyboardEvent): Command | null {
-  if (matchesShortcutBinding(event, 'indentBlock')) return indentLines
-  if (matchesShortcutBinding(event, 'dedentBlock')) return dedentLines
+  if (matchesShortcutBinding(event, 'indentBlock')) return indentBlocks
+  if (matchesShortcutBinding(event, 'dedentBlock')) return dedentBlocks
   if (matchesShortcutBinding(event, 'moveBlockUp')) return moveLines(-1)
   if (matchesShortcutBinding(event, 'moveBlockDown')) return moveLines(1)
   if (matchesShortcutBinding(event, 'cycleTaskState')) return cycleTask
   const plainTab = event.key === 'Tab' && !event.ctrlKey && !event.metaKey && !event.altKey
-  if (plainTab && isTabIndentEnabled()) return event.shiftKey ? dedentLines : indentLines
+  if (plainTab && isTabIndentEnabled()) return event.shiftKey ? dedentBlocks : indentBlocks
   return null
 }
 

@@ -906,6 +906,9 @@ export async function focusBlockById(page: Page, blockId: string) {
  * Presses Escape, then programmatically blurs the active element (so focus
  * lands on `document.body`), and finally polls until the active element is
  * `document.body` or any non-editable / non-input element.
+ *
+ * The Escape leaves the edited block selected (#5209), so a Ctrl+Click on that
+ * block next deselects it.
  */
 export async function blurEditors(page: Page) {
   await page.keyboard.press('Escape')

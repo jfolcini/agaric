@@ -116,9 +116,33 @@ describe('the block at the cursor', () => {
       ['  ```', null],
       ['- b', B],
     ])
+    const a = { line: 0, end: 3, subtreeEnd: 3, id: A }
 
-    expect(blockAt(ed.state.doc, 1)?.line).toBe(1)
-    expect(block(ed, 0)).toEqual({ line: 0, end: 3, subtreeEnd: 3, id: A })
+    expect(block(ed, 0)).toEqual(a)
+    expect(blockAt(ed.state.doc, 1)).toEqual(a)
+    expect(blockAt(ed.state.doc, 2)).toEqual(a)
+  })
+
+  it('in a fence under a block’s text, is that block, so its priority goes under the fence', () => {
+    const ed = build([
+      ['- a', A],
+      ['  ```', null],
+      ['  - x', null],
+      ['  ```', null],
+      ['- b', B],
+    ])
+    ed.commands.setTextSelection(at(ed, 2, 3))
+
+    run(ed, cyclePriority(blockAtCursor(ed.state) as SourceBlock))
+
+    expect(lines(ed)).toEqual([
+      ['- a', A],
+      ['  ```', null],
+      ['  - x', null],
+      ['  ```', null],
+      ['  priority:: 1', null],
+      ['- b', B],
+    ])
   })
 
   it('follows the selection’s head', () => {

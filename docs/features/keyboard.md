@@ -69,10 +69,10 @@ The buffer uses the block editor's bindings from the catalog, your rebinds inclu
 | --- | --- |
 | `Enter` | Split the line. On a `-`, `*`, `+`, `1.` or `1)` line, start the next line with the same indent and marker, numbered one up (a task goes on as `- [ ]`); on a line holding only its marker, remove it, ending the list |
 | `Shift+Enter` | Split the line without continuing the list |
-| `Tab` / `Shift+Tab` | Indent the lines at the cursor or selection two spaces / remove up to two leading spaces or a tab. Follows *Tab indents blocks* in Settings → Editor: turned off, Tab moves focus as usual |
+| `Tab` / `Shift+Tab` | Indent the blocks at the cursor or selection, each with its further lines and children, two spaces / remove up to two leading spaces or a tab from them; a top-level block stays where it is. Follows *Tab indents blocks* in Settings → Editor: turned off, Tab moves focus as usual |
 | `Ctrl+Shift+→` / `Ctrl+Shift+←` | Indent / dedent, whatever the Tab setting |
 | `Ctrl+Shift+↑` / `Ctrl+Shift+↓` | Move the line, with the lines indented under it, past the sibling above / below it; a selection moves the siblings it touches together. Nothing at the top or bottom, and nothing moves into or out of the front matter |
-| `Ctrl+Enter` | Step the list line's task: none, `[ ]`, `[/]`, `[x]`, `[-]`, none again |
+| `Ctrl+Enter` | Step the task of the block at the cursor: none, `[ ]`, `[/]`, `[x]`, `[-]`, none again |
 | `Ctrl+S` | Save |
 | `Escape` | Close an open picker; else close the buffer, asking first when it changed |
 
