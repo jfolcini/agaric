@@ -25,9 +25,11 @@ import {
   expectAbsent,
   navigateTo,
   openPageSource,
+  pageSourceButton,
+  pageSourceLines,
   reopenPageByTitle,
   runScopedMarker,
-  setPageSource,
+  setPageSourceLines,
   typeInputVerified,
   typeMarkerVerified,
   waitForAppReady,
@@ -159,10 +161,15 @@ describe('Agaric real-backend /repeat remove (#5160)', () => {
 
     // A daily task limited to one occurrence, written as its source lines.
     const source = await openPageSource([task])
-    const base = await source.getValue()
+    const base = await pageSourceLines()
     const rule = '  repeat:: daily\n  repeat-count:: 1\n'
-    await setPageSource(base.replace(`- ${task}`, `- [ ] ${task}`).replace(/\n?$/, `\n${rule}`))
-    const save = source.parentElement().$('button=Save')
+    await setPageSourceLines([
+      ...base
+        .filter((line) => line.text !== '')
+        .map(({ text, id }) => ({ id, text: text.replace(`- ${task}`, `- [ ] ${task}`) })),
+      ...rule.split('\n').map((text) => ({ text, id: null })),
+    ])
+    const save = pageSourceButton('Save')
     await save.waitForClickable({ timeout: ACTION_TIMEOUT })
     await save.click()
     await source.waitForExist({

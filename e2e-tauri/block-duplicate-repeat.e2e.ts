@@ -24,9 +24,12 @@ import {
   navigateTo,
   openNewPage,
   openPageSource,
+  pageSourceButton,
+  pageSourceLines,
+  pageSourceText,
   reopenPageByTitle,
   runScopedMarker,
-  setPageSource,
+  setPageSourceLines,
   typeMarkerVerified,
   waitForAppReady,
 } from './helpers'
@@ -44,7 +47,7 @@ async function reopenTheNewPage(): Promise<void> {
 
 /** Save the open source buffer and wait for the block tree to come back. */
 async function saveSource(source: ReturnType<typeof $>): Promise<void> {
-  const save = source.parentElement().$('button=Save')
+  const save = pageSourceButton('Save')
   await save.waitForClickable({ timeout: ACTION_TIMEOUT })
   await save.click()
   await source.waitForExist({
@@ -64,8 +67,13 @@ describe('Agaric real-backend Duplicate of a repeating task (#5160 P4)', () => {
 
     // Make it a task that repeats weekly: a checkbox and a `repeat::` line.
     const source = await openPageSource([TASK])
-    const base = await source.getValue()
-    await setPageSource(base.replace(`- ${TASK}`, `- [ ] ${TASK}`).replace(/\n?$/, `\n${RULE}`))
+    const base = await pageSourceLines()
+    await setPageSourceLines([
+      ...base
+        .filter((line) => line.text !== '')
+        .map(({ text, id }) => ({ id, text: text.replace(`- ${TASK}`, `- [ ] ${TASK}`) })),
+      ...RULE.split('\n').map((text) => ({ text, id: null })),
+    ])
     await saveSource(source)
     await reopenTheNewPage()
     const rowsWithTask = () => $$(`[data-testid="sortable-block"]*=${TASK}`).getElements()
@@ -100,7 +108,8 @@ describe('Agaric real-backend Duplicate of a repeating task (#5160 P4)', () => {
       timeout: NAV_TIMEOUT,
       timeoutMsg: 'the copy does not show a repeat chip',
     })
-    const saved = await (await openPageSource([TASK])).getValue()
+    await openPageSource([TASK])
+    const saved = await pageSourceText()
     expect(saved.split(RULE).length - 1).toBe(2)
   })
 })

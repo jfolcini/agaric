@@ -18,9 +18,11 @@ import {
   navigateTo,
   openNewPage,
   openPageSource,
+  pageSourceButton,
+  pageSourceLines,
   reopenPageByTitle,
   runScopedMarker,
-  setPageSource,
+  setPageSourceLines,
   typeMarkerVerified,
   waitForAppReady,
 } from './helpers'
@@ -82,10 +84,10 @@ describe('Agaric real-backend source-mode Merge (#5140 Phase 5)', () => {
     if (secondId === null) throw new Error('the second block has no data-block-id')
 
     const source = await openPageSource([FIRST, SECOND, THIRD])
-    const base = await source.getValue()
+    const base = await pageSourceLines()
     await editBlockElsewhere(secondId, ELSEWHERE)
-    await setPageSource(base.replace(FIRST, MINE))
-    const save = source.parentElement().$('button=Save')
+    await setPageSourceLines(base.map(({ text, id }) => ({ id, text: text.replace(FIRST, MINE) })))
+    const save = pageSourceButton('Save')
     await save.waitForClickable({ timeout: ACTION_TIMEOUT })
     await save.click()
     const merge = $('[data-slot="dialog-content"]').$('button=Merge')

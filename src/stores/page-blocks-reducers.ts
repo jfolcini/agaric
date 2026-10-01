@@ -1219,13 +1219,16 @@ export function createReducers({
       baseSource: string,
       force: boolean,
       merge: boolean,
+      lineIds: Array<string | null>,
     ): Promise<PageSourceReport> => {
       const { rootParentId } = get()
       if (rootParentId == null) throw new Error('applyPageSource needs a page')
       // #4391 — see `pasteBlocks`.
       const spaceId = useSpaceStore.getState().currentSpaceId
       const resp = await retryOnPoolBusy(() =>
-        commands.applyPageSource(rootParentId, source, baseSource, force, merge, null).then(unwrap),
+        commands
+          .applyPageSource(rootParentId, source, baseSource, force, merge, lineIds)
+          .then(unwrap),
       )
       notifyUndoNewAction(rootParentId, resp.op_refs)
       announceCreatedNames(resp.names_created, spaceId)

@@ -1,54 +1,99 @@
 /**
- * PageSourceEditor — the page edited as one markdown buffer (#5140).
+ * PageSourceEditor — the page edited as one markdown buffer (#5140, #5160).
  *
- * Replaces the block tree while open. Save writes the buffer through
- * `apply_page_source` as one undo entry; a page changed elsewhere since the
- * buffer was loaded opens `PageSourceConflictDialog`, whose Merge saves the
- * buffer with those changes folded in. A saved buffer leaves a report
- * (`notifyPageSourceSaved`). Cancel and Escape ask first when the text is not
- * the source it was loaded from. Unsaved text survives leaving the page as a
- * localStorage draft, cleared by Save or Cancel.
+ * Replaces the block tree while open. The text is `PageSourceBuffer`, loaded
+ * lazily, whose lines carry their block ids beside the text. Save writes the
+ * text and those ids through `apply_page_source` as one undo entry; a page
+ * changed elsewhere since the buffer was loaded opens
+ * `PageSourceConflictDialog`, whose Merge saves the buffer with those changes
+ * folded in. A saved buffer leaves a report (`notifyPageSourceSaved`). Cancel
+ * and Escape ask first when the buffer is not the page as loaded. Unsaved text
+ * survives leaving the page as a localStorage draft, cleared by Save or Cancel.
  */
 
+import { Copy } from 'lucide-react'
 import type React from 'react'
-import { useCallback, useEffect, useId, useRef, useState } from 'react'
+import { lazy, Suspense, useEffect, useId, useRef, useState } from 'react'
 import { flushSync } from 'react-dom'
 import { useTranslation } from 'react-i18next'
 
 import { ConfirmDialog } from '@/components/dialogs/ConfirmDialog'
+import type { PageSourceBufferHandle } from '@/components/pages/PageSourceBuffer'
 import { PageSourceConflictDialog } from '@/components/pages/PageSourceConflictDialog'
 import { latestUndoEntry, notifyPageSourceSaved } from '@/components/pages/PageSourceSaveReport'
 import { Button } from '@/components/ui/button'
+import { SHARED_INPUT_CLASSES } from '@/components/ui/input'
 import { Spinner } from '@/components/ui/spinner'
 import { Textarea } from '@/components/ui/textarea'
+import type { SourceLines } from '@/editor/source-buffer'
 import { useDebouncedCallback } from '@/hooks/useDebouncedCallback'
 import { unwrap, validationCode } from '@/lib/app-error'
-import { commands } from '@/lib/bindings'
+import { commands, type PageBuffer } from '@/lib/bindings'
+import { writeText } from '@/lib/clipboard'
 import { formatErrorForDisplay } from '@/lib/error-display'
 import { matchesShortcutBinding } from '@/lib/keyboard-config'
 import { logger } from '@/lib/logger'
+import { notify } from '@/lib/notify'
 import { PREFERENCES, readPreference, removePreference, writePreference } from '@/lib/preferences'
 import { ValidationCode } from '@/lib/search-query/validation-codes'
+import { cn } from '@/lib/utils'
 import { usePageBlockStore } from '@/stores/page-blocks'
 
-/** A buffer back at its base leaves no draft. */
-function storeDraft(pageId: string, draft: { base: string; text: string }): void {
-  if (draft.text === draft.base) removePreference(PREFERENCES.pageSourceDraft, pageId)
-  else writePreference(PREFERENCES.pageSourceDraft, draft, pageId)
+const LazyPageSourceBuffer = lazy(() =>
+  import('@/components/pages/PageSourceBuffer').then((m) => ({ default: m.PageSourceBuffer })),
+)
+
+// Styled here, not in the lazy buffer, so its chunk shares no design-system
+// module with startup that would split one off the startup chunks.
+const BUFFER_CLASS = cn(
+  'w-full rounded-md border border-input bg-transparent px-3 py-2 font-mono shadow-xs transition-[color,box-shadow] outline-hidden selection:bg-primary selection:text-primary-foreground dark:bg-input/30',
+  SHARED_INPUT_CLASSES,
+  // `.ProseMirror` sets a one-line min-height outside any layer.
+  'min-h-[50vh]!',
+)
+
+function sameLines(a: SourceLines, b: SourceLines): boolean {
+  return (
+    a.text === b.text &&
+    a.lineIds.length === b.lineIds.length &&
+    a.lineIds.every((id, i) => id === b.lineIds[i])
+  )
 }
 
-/**
- * The selection range of the buffer line a refused save names (`line N: …`,
- * #5160 X3) in `text`, or null when it names none.
- */
-export function refusedLineRange(message: string, text: string): [number, number] | null {
+function linesOf(buffer: PageBuffer): SourceLines {
+  return { text: buffer.text, lineIds: buffer.line_ids }
+}
+
+/** What the buffer opened with. */
+interface Opened {
+  /** The source the buffer's edit started from, which a save sends as its base. */
+  base: string
+  /** The page as loaded, which a buffer back at it does not need saved. */
+  page: SourceLines
+  /** The lines the buffer opened with: the page's, or a restored draft's. */
+  initial: SourceLines
+  draftRestored: boolean
+  /** A new buffer each time the page is reloaded into it. */
+  generation: number
+}
+
+/** The buffer as last typed, and what decides whether it is a draft. */
+interface Typed {
+  base: string
+  page: SourceLines
+  lines: SourceLines
+}
+
+/** A buffer back at the page leaves no draft. */
+function storeDraft(pageId: string, { base, page, lines }: Typed): void {
+  if (sameLines(lines, page)) removePreference(PREFERENCES.pageSourceDraft, pageId)
+  else writePreference(PREFERENCES.pageSourceDraft, { base, ...lines }, pageId)
+}
+
+/** The line, counted from 0, a refused save names (`line N: …`, #5160 X3), or null. */
+export function refusedLine(message: string): number | null {
   const match = /^line (\d+): /.exec(message)
-  const lines = text.split('\n')
-  const index = Number(match?.[1]) - 1
-  const line = lines[index]
-  if (line === undefined) return null
-  const start = lines.slice(0, index).reduce((offset, before) => offset + before.length + 1, 0)
-  return [start, start + line.length]
+  return match === null ? null : Number(match[1]) - 1
 }
 
 export interface PageSourceEditorProps {
@@ -61,23 +106,22 @@ export function PageSourceEditor({ pageId, onClose }: PageSourceEditorProps): Re
   const applyPageSource = usePageBlockStore((s) => s.applyPageSource)
   const hintId = useId()
   const draftNoteId = useId()
-  // `base` is the source the buffer was loaded from, null until it is.
-  const [base, setBase] = useState<string | null>(null)
-  const [text, setText] = useState('')
+  const legacyNoteId = useId()
+  const [opened, setOpened] = useState<Opened | null>(null)
+  // A draft an earlier version stored, its ids as `^ID` anchors in its text (#5160 D-f).
+  const [legacyDraft, setLegacyDraft] = useState<string | null>(null)
   const [loadFailed, setLoadFailed] = useState(false)
-  const [draftRestored, setDraftRestored] = useState(false)
   const [saving, setSaving] = useState(false)
   const savingRef = useRef(false)
   const [saveError, setSaveError] = useState<string | null>(null)
   const [confirmingDeleteAll, setConfirmingDeleteAll] = useState(false)
   const [confirmingDiscard, setConfirmingDiscard] = useState(false)
-  // The page's source now, after a save found it changed since `base`.
-  const [conflict, setConflict] = useState<string | null>(null)
-  const textareaRef = useRef<HTMLTextAreaElement | null>(null)
-  const attachTextarea = useCallback((node: HTMLTextAreaElement | null) => {
-    textareaRef.current = node
-    node?.focus()
-  }, [])
+  // The page now, after a save found it changed since `opened.base`.
+  const [conflict, setConflict] = useState<PageBuffer | null>(null)
+  const bufferRef = useRef<PageSourceBufferHandle | null>(null)
+  // Stored again on unmount: the debounce timer dies with the component, and
+  // the draft is the only copy of those keystrokes.
+  const typed = useRef<Typed | null>(null)
 
   useEffect(() => {
     let cancelled = false
@@ -86,14 +130,25 @@ export function PageSourceEditor({ pageId, onClose }: PageSourceEditorProps): Re
         // No `flushActiveDraft()` (#2969): entering source mode cleared focus, so
         // no block is left to flush. The kebab's blur committed it, and a commit
         // landing after this read makes the save stale: the conflict dialog.
-        const source = unwrap(await commands.getPageSource(pageId))
+        const buffer = unwrap(await commands.getPageBuffer(pageId))
         if (cancelled) return
         // A draft keeps its own base, so a save of it still catches whatever
         // changed on the page since the draft was written.
         const draft = readPreference(PREFERENCES.pageSourceDraft, pageId)
-        setBase(draft?.base ?? source)
-        setText(draft?.text ?? source)
-        setDraftRestored(draft !== null)
+        const page = linesOf(buffer)
+        if (draft?.lineIds == null) {
+          setOpened({
+            base: buffer.source,
+            page,
+            initial: page,
+            draftRestored: false,
+            generation: 0,
+          })
+          setLegacyDraft(draft?.text ?? null)
+        } else {
+          const initial = { text: draft.text, lineIds: draft.lineIds }
+          setOpened({ base: draft.base, page, initial, draftRestored: true, generation: 0 })
+        }
       } catch (err) {
         logger.error('PageSourceEditor', 'Failed to load page source', { pageId }, err)
         if (!cancelled) setLoadFailed(true)
@@ -105,28 +160,27 @@ export function PageSourceEditor({ pageId, onClose }: PageSourceEditorProps): Re
     }
   }, [pageId])
 
-  const draftSaver = useDebouncedCallback((next: string) => {
-    if (base !== null) storeDraft(pageId, { base, text: next })
+  const draftSaver = useDebouncedCallback(() => {
+    if (typed.current !== null) storeDraft(pageId, typed.current)
   }, 300)
-  // The buffer as last typed, stored again on unmount: the debounce timer dies
-  // with the component, and the draft is the only copy of those keystrokes.
-  const typedDraft = useRef<{ base: string; text: string } | null>(null)
   useEffect(
     () => () => {
-      if (typedDraft.current !== null) storeDraft(pageId, typedDraft.current)
+      if (typed.current !== null) storeDraft(pageId, typed.current)
     },
     [pageId],
   )
 
   const discardDraft = (): void => {
     draftSaver.cancel()
-    typedDraft.current = null
+    typed.current = null
     removePreference(PREFERENCES.pageSourceDraft, pageId)
   }
 
+  const currentLines = (open: Opened): SourceLines => typed.current?.lines ?? open.initial
+
   const showConflict = async (): Promise<void> => {
     try {
-      setConflict(unwrap(await commands.getPageSource(pageId)))
+      setConflict(unwrap(await commands.getPageBuffer(pageId)))
     } catch (err) {
       logger.warn('PageSourceEditor', 'Failed to reload page source', { pageId }, err)
       setSaveError(t('pageSource.loadFailed'))
@@ -134,13 +188,14 @@ export function PageSourceEditor({ pageId, onClose }: PageSourceEditorProps): Re
   }
 
   const submit = async (against: string, force: boolean, merge: boolean): Promise<void> => {
-    if (savingRef.current) return
+    if (savingRef.current || opened === null) return
     savingRef.current = true
     setSaving(true)
     setSaveError(null)
     try {
       const before = latestUndoEntry(pageId)
-      const report = await applyPageSource(text, against, force, merge)
+      const { text, lineIds } = currentLines(opened)
+      const report = await applyPageSource(text, against, force, merge, lineIds)
       discardDraft()
       notifyPageSourceSaved(pageId, report, before)
       onClose()
@@ -151,11 +206,8 @@ export function PageSourceEditor({ pageId, onClose }: PageSourceEditorProps): Re
         logger.warn('PageSourceEditor', 'Failed to save page source', { pageId }, err)
         const message = formatErrorForDisplay(err, { fallback: t('pageSource.saveFailed') })
         setSaveError(message)
-        const refused = refusedLineRange(message, text)
-        if (refused !== null) {
-          textareaRef.current?.focus()
-          textareaRef.current?.setSelectionRange(...refused)
-        }
+        const line = refusedLine(message)
+        if (line !== null) bufferRef.current?.selectLine(line)
       }
     } finally {
       savingRef.current = false
@@ -164,14 +216,15 @@ export function PageSourceEditor({ pageId, onClose }: PageSourceEditorProps): Re
   }
 
   const handleSave = (): void => {
-    if (base === null) return
-    if (text === base) {
+    if (opened === null) return
+    const lines = currentLines(opened)
+    if (sameLines(lines, opened.page)) {
       discardDraft()
       onClose()
-    } else if (text.trim() === '' && base.trim() !== '') {
+    } else if (lines.text.trim() === '' && opened.base.trim() !== '') {
       setConfirmingDeleteAll(true)
     } else {
-      void submit(base, false, false)
+      void submit(opened.base, false, false)
     }
   }
 
@@ -181,7 +234,7 @@ export function PageSourceEditor({ pageId, onClose }: PageSourceEditorProps): Re
   }
 
   const handleCancel = (): void => {
-    if (base !== null && text !== base) setConfirmingDiscard(true)
+    if (opened !== null && !sameLines(currentLines(opened), opened.page)) setConfirmingDiscard(true)
     else discardAndClose()
   }
 
@@ -192,50 +245,68 @@ export function PageSourceEditor({ pageId, onClose }: PageSourceEditorProps): Re
     discardAndClose()
   }
 
-  const handleChange = (e: React.ChangeEvent<HTMLTextAreaElement>): void => {
-    setText(e.target.value)
-    if (base !== null) typedDraft.current = { base, text: e.target.value }
-    draftSaver.schedule(e.target.value)
+  const handleChange = (lines: SourceLines): void => {
+    if (opened === null) return
+    typed.current = { base: opened.base, page: opened.page, lines }
+    draftSaver.schedule(lines.text)
   }
 
-  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>): void => {
+  const handleKeyDown = (e: KeyboardEvent): boolean => {
     // An input method's Escape cancels the composition, not the buffer.
-    if (e.nativeEvent.isComposing) return
+    if (e.isComposing) return false
     if (
       matchesShortcutBinding(e, 'savePageSource') ||
       (e.key === 'Enter' && (e.metaKey || e.ctrlKey))
     ) {
-      e.preventDefault()
       handleSave()
-    } else if (e.key === 'Escape') {
+      return true
+    }
+    if (e.key === 'Escape') {
       // The buffer owns this Escape: no document-level listener may also act on it.
-      e.preventDefault()
       e.stopPropagation()
       handleCancel()
+      return true
     }
+    return false
   }
 
   const handleReload = (): void => {
-    if (conflict === null) return
+    if (conflict === null || opened === null) return
     discardDraft()
-    setBase(conflict)
-    setText(conflict)
+    const page = linesOf(conflict)
+    setOpened({
+      base: conflict.source,
+      page,
+      initial: page,
+      draftRestored: false,
+      generation: opened.generation + 1,
+    })
     setConflict(null)
-    setDraftRestored(false)
     setSaveError(null)
   }
 
   const handleOverwrite = (): void => {
     if (conflict === null) return
     setConflict(null)
-    void submit(conflict, true, false)
+    void submit(conflict.source, true, false)
   }
 
   // Against the buffer's own base, so the backend sees what changed on each side.
   const handleMerge = (): void => {
-    if (conflict === null || base === null) return
+    if (conflict === null || opened === null) return
     setConflict(null)
-    void submit(base, false, true)
+    void submit(opened.base, false, true)
+  }
+
+  const copyLegacyDraft = async (): Promise<void> => {
+    if (legacyDraft === null) return
+    try {
+      await writeText(legacyDraft)
+      notify.success(t('pageSource.legacyDraftCopied'))
+    } catch (err) {
+      logger.warn('PageSourceEditor', 'Failed to copy the earlier draft', { pageId }, err)
+      notify.error(t('pageSource.copyFailed'))
+    }
   }
 
   if (loadFailed) {
@@ -251,34 +322,53 @@ export function PageSourceEditor({ pageId, onClose }: PageSourceEditorProps): Re
     )
   }
 
-  if (base === null) {
-    return (
-      <output aria-live="polite" className="flex items-center gap-2 text-sm text-muted-foreground">
-        <Spinner />
-        <span>{t('ui.loading')}</span>
-      </output>
-    )
-  }
+  const loading = (
+    <output aria-live="polite" className="flex items-center gap-2 text-sm text-muted-foreground">
+      <Spinner />
+      <span>{t('ui.loading')}</span>
+    </output>
+  )
+
+  if (opened === null) return loading
 
   return (
     <div className="flex flex-col gap-2">
-      {draftRestored && (
+      {legacyDraft !== null && (
+        <div className="flex flex-col gap-2">
+          <p id={legacyNoteId} className="text-sm text-muted-foreground">
+            {t('pageSource.legacyDraft')}
+          </p>
+          <Textarea
+            readOnly
+            value={legacyDraft}
+            aria-labelledby={legacyNoteId}
+            spellCheck={false}
+            className="max-h-48 font-mono"
+          />
+          <Button variant="outline" className="self-start" onClick={() => void copyLegacyDraft()}>
+            <Copy aria-hidden="true" />
+            {t('pageSource.copyLegacyDraft')}
+          </Button>
+        </div>
+      )}
+      {opened.draftRestored && (
         <p id={draftNoteId} className="text-sm text-muted-foreground">
           {t('pageSource.draftRestored')}
         </p>
       )}
-      <Textarea
-        ref={attachTextarea}
-        value={text}
-        onChange={handleChange}
-        onKeyDown={handleKeyDown}
-        readOnly={saving}
-        spellCheck={false}
-        aria-label={t('pageSource.editorLabel')}
-        aria-describedby={draftRestored ? `${draftNoteId} ${hintId}` : hintId}
-        data-testid="page-source-editor"
-        className="min-h-[50vh] [@media(pointer:coarse)]:min-h-[50vh] font-mono"
-      />
+      <Suspense fallback={loading}>
+        <LazyPageSourceBuffer
+          key={opened.generation}
+          ref={bufferRef}
+          initial={opened.initial}
+          readOnly={saving}
+          label={t('pageSource.editorLabel')}
+          describedBy={opened.draftRestored ? `${draftNoteId} ${hintId}` : hintId}
+          className={BUFFER_CLASS}
+          onChange={handleChange}
+          onKeyDown={handleKeyDown}
+        />
+      </Suspense>
       <p id={hintId} className="text-xs text-muted-foreground">
         {t('pageSource.hint')}
       </p>
@@ -304,7 +394,7 @@ export function PageSourceEditor({ pageId, onClose }: PageSourceEditorProps): Re
         confirmKey="pageSource.deleteAll"
         variant="destructive"
         onConfirm={() => {
-          void submit(base, false, false)
+          void submit(opened.base, false, false)
         }}
       />
       <ConfirmDialog
@@ -318,15 +408,15 @@ export function PageSourceEditor({ pageId, onClose }: PageSourceEditorProps): Re
         onConfirm={confirmDiscard}
       />
       <PageSourceConflictDialog
-        base={base}
-        current={conflict}
+        base={opened.base}
+        current={conflict?.source ?? null}
         onMerge={handleMerge}
         onReload={handleReload}
         onOverwrite={handleOverwrite}
         onKeepEditing={() => setConflict(null)}
         onCloseAutoFocus={(e) => {
           e.preventDefault()
-          textareaRef.current?.focus()
+          bufferRef.current?.focus()
         }}
       />
     </div>
