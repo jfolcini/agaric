@@ -737,7 +737,10 @@ export async function pageSourceClipboard(
   )
 }
 
-/** The source editor's button named `name`; the buffer sits in TipTap's own wrapper. */
+/**
+ * The source editor's button named `name`. The buffer sits in TipTap's own
+ * wrapper, inside the div that also holds its toolbar.
+ */
 export function pageSourceButton(name: string) {
-  return $(PAGE_SOURCE).parentElement().parentElement().$(`button=${name}`)
+  return $(PAGE_SOURCE).parentElement().parentElement().parentElement().$(`button=${name}`)
 }
