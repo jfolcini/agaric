@@ -282,6 +282,9 @@ function lineIdsAfter(
   return ids
 }
 
+/** `Shift+Enter`: break the line at the cursor without a list marker (#5160 D3). */
+export const breakLine: Command = splitLine(false)
+
 interface SourceBufferOptions {
   /** The page's line ids as the buffer loaded them: the only ids a paste or a drop brings in. */
   pageIds: ReadonlySet<string | null>
@@ -297,7 +300,7 @@ const SourceBufferBehaviour = Extension.create<SourceBufferOptions>({
   addKeyboardShortcuts() {
     return {
       Enter: ({ editor }) => splitLine(true)(editor.state, editor.view.dispatch),
-      'Shift-Enter': ({ editor }) => splitLine(false)(editor.state, editor.view.dispatch),
+      'Shift-Enter': ({ editor }) => breakLine(editor.state, editor.view.dispatch),
     }
   },
   addProseMirrorPlugins() {

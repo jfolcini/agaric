@@ -11,6 +11,38 @@
 import type { BlockActions } from '@/components/block-tree/use-block-actions'
 import type { BlockTypeToken } from '@/lib/block-type-convert'
 
+/**
+ * Every row the block menu can show, by the action it runs: the one list the
+ * *Edit as Markdown* buffer's block menu answers to, each row there or left
+ * out with a reason (#5160 D-c).
+ */
+export const BLOCK_MENU_ACTION_IDS = [
+  'openLink',
+  'copyUrl',
+  'copyBlockRef',
+  'copyPageRef',
+  'copyBlockContent',
+  'copySubtreeContent',
+  'copySelectionContent',
+  'cycleTodo',
+  'cyclePriority',
+  'turnInto',
+  'moveArrange',
+  'indent',
+  'dedent',
+  'moveUp',
+  'moveDown',
+  'duplicate',
+  'merge',
+  'collapse',
+  'zoomIn',
+  'history',
+  'properties',
+  'delete',
+] as const
+
+export type BlockMenuActionId = (typeof BLOCK_MENU_ACTION_IDS)[number]
+
 export interface BlockContextMenuProps {
   blockId: string
   position: { x: number; y: number }
@@ -71,9 +103,13 @@ export interface BlockContextMenuProps {
    * provided, fully replaces the store read.
    */
   selectedBlockIds?: string[] | undefined
+  /** Only these rows; every row when unset. */
+  actionIds?: ReadonlySet<BlockMenuActionId> | undefined
 }
 
 export interface MenuItem {
+  /** The action the row runs; a Turn into row shares its toggle's. */
+  id: BlockMenuActionId
   label: string
   icon: React.ReactNode
   action: (() => void) | undefined

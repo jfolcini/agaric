@@ -2,8 +2,9 @@
  * PageSourceBuffer — the text of *Edit as Markdown* (#5160 phase 5): a
  * plain-text TipTap editor whose lines carry their block ids
  * (`@/editor/source-buffer`), with the block editor's `[[`, `#` and `((`
- * searches behind its pickers. `PageSourceEditor` reaches it only through a
- * dynamic import, so TipTap stays off the startup path.
+ * searches behind its pickers and its toolbar above it (`PageSourceToolbar`).
+ * `PageSourceEditor` reaches it only through a dynamic import, so TipTap
+ * stays off the startup path.
  */
 
 import { EditorContent, useEditor } from '@tiptap/react'
@@ -11,6 +12,7 @@ import type React from 'react'
 import { useEffect, useImperativeHandle, useState } from 'react'
 
 import { useBlockResolve } from '@/components/block-tree/use-block-resolve'
+import { PageSourceToolbar } from '@/components/pages/PageSourceToolbar'
 import {
   linesContent,
   readLines,
@@ -26,6 +28,7 @@ export interface PageSourceBufferHandle {
 }
 
 export interface PageSourceBufferProps {
+  pageId: string
   /** The lines the buffer opens with; a new buffer, by `key`, opens with others. */
   initial: SourceLines
   /** The page's line ids as loaded: the only ids a paste or a drop brings in. */
@@ -37,10 +40,13 @@ export interface PageSourceBufferProps {
   onChange: (lines: SourceLines) => void
   /** Sees each keydown but an open picker's, before the editor; true when it handled it. */
   onKeyDown: (event: KeyboardEvent) => boolean
+  onSave: () => void
+  onCancel: () => void
   ref?: React.Ref<PageSourceBufferHandle>
 }
 
 export function PageSourceBuffer({
+  pageId,
   initial,
   pageIds,
   readOnly,
@@ -49,6 +55,8 @@ export function PageSourceBuffer({
   className,
   onChange,
   onKeyDown,
+  onSave,
+  onCancel,
   ref,
 }: PageSourceBufferProps): React.ReactElement {
   const { searchPages, searchTags, searchBlockRefs } = useBlockResolve()
@@ -127,5 +135,18 @@ export function PageSourceBuffer({
     [editor],
   )
 
-  return <EditorContent editor={editor} />
+  return (
+    <div>
+      {editor !== null && (
+        <PageSourceToolbar
+          editor={editor}
+          pageId={pageId}
+          saving={readOnly}
+          onSave={onSave}
+          onCancel={onCancel}
+        />
+      )}
+      <EditorContent editor={editor} />
+    </div>
+  )
 }

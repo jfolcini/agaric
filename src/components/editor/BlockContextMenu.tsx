@@ -107,6 +107,7 @@ interface MenuGroupContext {
   moveArrangeOpen: boolean
   setMoveArrangeOpen: React.Dispatch<React.SetStateAction<boolean>>
   moveArrangeGroupId: string
+  actionIds: BlockContextMenuProps['actionIds']
 }
 
 /** Group 1: the (single or bulk) Delete row. */
@@ -129,6 +130,7 @@ function buildDeleteGroup(ctx: MenuGroupContext): MenuItem[] {
       : undefined
   return [
     {
+      id: 'delete',
       label:
         isBulk && bulkIds
           ? t('contextMenu.deleteSelected', { count: bulkIds.length })
@@ -160,6 +162,7 @@ function buildMoveArrangeChildren(ctx: MenuGroupContext): MenuItem[] {
   const disclosureLabel = t('contextMenu.moveArrange')
   return [
     {
+      id: 'indent',
       label: t('contextMenu.indent'),
       icon: <ArrowRightToLine className="h-3.5 w-3.5" />,
       action: onIndent ? () => dispatch(onIndent) : undefined,
@@ -169,6 +172,7 @@ function buildMoveArrangeChildren(ctx: MenuGroupContext): MenuItem[] {
       disclosureLabel,
     },
     {
+      id: 'dedent',
       label: t('contextMenu.dedent'),
       icon: <ArrowLeftToLine className="h-3.5 w-3.5" />,
       action: onDedent ? () => dispatch(onDedent) : undefined,
@@ -178,6 +182,7 @@ function buildMoveArrangeChildren(ctx: MenuGroupContext): MenuItem[] {
       disclosureLabel,
     },
     {
+      id: 'moveUp',
       label: t('contextMenu.moveUp'),
       icon: <MoveUp className="h-3.5 w-3.5" />,
       action: onMoveUp ? () => dispatch(onMoveUp) : undefined,
@@ -187,6 +192,7 @@ function buildMoveArrangeChildren(ctx: MenuGroupContext): MenuItem[] {
       disclosureLabel,
     },
     {
+      id: 'moveDown',
       label: t('contextMenu.moveDown'),
       icon: <MoveDown className="h-3.5 w-3.5" />,
       action: onMoveDown ? () => dispatch(onMoveDown) : undefined,
@@ -200,6 +206,7 @@ function buildMoveArrangeChildren(ctx: MenuGroupContext): MenuItem[] {
     ...(onDuplicate && !isBulk
       ? [
           {
+            id: 'duplicate' as const,
             label: t('contextMenu.duplicate'),
             icon: <CopyPlus className="h-3.5 w-3.5" />,
             action: () => handleAction(onDuplicate),
@@ -213,6 +220,7 @@ function buildMoveArrangeChildren(ctx: MenuGroupContext): MenuItem[] {
     ...(onMerge
       ? [
           {
+            id: 'merge' as const,
             label: t('contextMenu.merge'),
             icon: <Merge className="h-3.5 w-3.5" />,
             action: () => handleAction(onMerge),
@@ -240,6 +248,7 @@ function buildMoveGroup(ctx: MenuGroupContext): MenuItem[] {
   if (!hasMoveArrangeChildren) return []
   return [
     {
+      id: 'moveArrange',
       label: t('contextMenu.moveArrange'),
       icon: <MoveVertical className="h-3.5 w-3.5" />,
       action: () => setMoveArrangeOpen((o) => !o),
@@ -264,6 +273,7 @@ function buildCollapseGroup(ctx: MenuGroupContext): MenuItem[] {
     ...(hasChildren
       ? [
           {
+            id: 'collapse' as const,
             label: isCollapsed ? t('contextMenu.expand') : t('contextMenu.collapse'),
             icon: isCollapsed ? (
               <ChevronRight className="h-3.5 w-3.5" />
@@ -278,6 +288,7 @@ function buildCollapseGroup(ctx: MenuGroupContext): MenuItem[] {
     ...(onZoomIn
       ? [
           {
+            id: 'zoomIn' as const,
             label: t('contextMenu.zoomIn'),
             icon: <ZoomIn className="h-3.5 w-3.5" />,
             action: () => handleAction(onZoomIn),
@@ -294,12 +305,14 @@ function buildTaskGroup(ctx: MenuGroupContext): MenuItem[] {
   const { onToggleTodo, onTogglePriority } = actions
   return [
     {
+      id: 'cycleTodo',
       label: isBulk ? t('contextMenu.cycleTodoSelected') : getTodoLabel(todoState, t),
       icon: <CheckSquare className="h-3.5 w-3.5" />,
       action: onToggleTodo ? () => dispatch(onToggleTodo) : undefined,
       shortcut: shortcutHint('cycleTaskState'),
     },
     {
+      id: 'cyclePriority',
       label: isBulk ? t('contextMenu.cyclePrioritySelected') : getPriorityLabel(priority, t),
       icon: <Signal className="h-3.5 w-3.5" />,
       action: onTogglePriority ? () => dispatch(onTogglePriority) : undefined,
@@ -316,6 +329,7 @@ function buildHistoryGroup(ctx: MenuGroupContext): MenuItem[] {
     ...(onShowHistory
       ? [
           {
+            id: 'history' as const,
             label: t('contextMenu.history'),
             icon: <Clock className="h-3.5 w-3.5" />,
             action: () => handleAction(onShowHistory),
@@ -326,6 +340,7 @@ function buildHistoryGroup(ctx: MenuGroupContext): MenuItem[] {
     ...(onShowProperties
       ? [
           {
+            id: 'properties' as const,
             label: t('contextMenu.properties'),
             icon: <Settings2 className="h-3.5 w-3.5" />,
             action: () => handleAction(onShowProperties),
@@ -352,6 +367,7 @@ function buildLinkGroup(ctx: MenuGroupContext): MenuItem[] {
   const openLinkItem: MenuItem | null =
     linkUrl && isAllowedUrl(linkUrl)
       ? {
+          id: 'openLink',
           label: t('contextMenu.openLink'),
           icon: <ExternalLink className="h-3.5 w-3.5" />,
           action: () => {
@@ -372,6 +388,7 @@ function buildLinkGroup(ctx: MenuGroupContext): MenuItem[] {
 
   const copyUrlItem: MenuItem | null = linkUrl
     ? {
+        id: 'copyUrl',
         label: t('contextMenu.copyUrl'),
         icon: <Copy className="h-3.5 w-3.5" />,
         action: async () => {
@@ -394,6 +411,7 @@ function buildLinkGroup(ctx: MenuGroupContext): MenuItem[] {
 
   // #1445 — "Copy block reference" (`((ULID))`). Always available.
   const copyBlockRefItem: MenuItem = {
+    id: 'copyBlockRef',
     label: t('contextMenu.copyBlockRef'),
     icon: <Copy className="h-3.5 w-3.5" />,
     action: async () => {
@@ -411,6 +429,7 @@ function buildLinkGroup(ctx: MenuGroupContext): MenuItem[] {
   // #1445 — "Copy page reference" (`[[ULID]]`). Hidden when pageRefId unknown.
   const copyPageRefItem: MenuItem | null = pageRefId
     ? {
+        id: 'copyPageRef',
         label: t('contextMenu.copyPageRef'),
         icon: <Link2 className="h-3.5 w-3.5" />,
         action: async () => {
@@ -475,6 +494,7 @@ function buildContentCopyItems(ctx: MenuGroupContext): MenuItem[] {
 
   const items: MenuItem[] = [
     {
+      id: 'copyBlockContent',
       label: t('contextMenu.copyBlockContent'),
       icon: <Copy className="h-3.5 w-3.5" />,
       action: async () => {
@@ -488,6 +508,7 @@ function buildContentCopyItems(ctx: MenuGroupContext): MenuItem[] {
   // with no children it would duplicate "Copy block content" verbatim.
   if (blocks.some((b) => b.parent_id === blockId)) {
     items.push({
+      id: 'copySubtreeContent',
       label: t('contextMenu.copySubtreeContent'),
       icon: <ListTree className="h-3.5 w-3.5" />,
       action: async () => {
@@ -506,6 +527,7 @@ function buildContentCopyItems(ctx: MenuGroupContext): MenuItem[] {
     const owned = bulkIds.filter((id) => blocks.some((b) => b.id === id))
     if (owned.length > 1) {
       items.push({
+        id: 'copySelectionContent',
         label: t('contextMenu.copySelectionContent'),
         icon: <CopyCheck className="h-3.5 w-3.5" />,
         action: async () => {
@@ -538,6 +560,7 @@ function buildTurnIntoGroup(ctx: MenuGroupContext): MenuItem[] {
   if (!onTurnInto) return []
   return [
     {
+      id: 'turnInto',
       label: t('contextMenu.turnInto'),
       icon: <Replace className="h-3.5 w-3.5" />,
       action: () => setTurnIntoOpen((o) => !o),
@@ -551,6 +574,7 @@ function buildTurnIntoGroup(ctx: MenuGroupContext): MenuItem[] {
           const blockType = opt.blockType as BlockTypeToken
           const isActive = activeBlockType === blockType
           return {
+            id: 'turnInto',
             label: t(turnIntoTypeKey(opt.blockType)),
             icon: Icon ? <Icon className="h-3.5 w-3.5" /> : <span className="h-3.5 w-3.5" />,
             active: isActive,
@@ -589,7 +613,13 @@ function buildMenuGroups(ctx: MenuGroupContext): MenuItem[][] {
     groups
       // Keep actionable items, plus the active "Turn into" indicator row (which
       // has no action by design — it shows the block's current type).
-      .map((group) => group.filter((item) => item.action !== undefined || item.active))
+      .map((group) =>
+        group.filter(
+          (item) =>
+            (item.action !== undefined || item.active) &&
+            (ctx.actionIds === undefined || ctx.actionIds.has(item.id)),
+        ),
+      )
       .filter((group) => group.length > 0)
   )
 }
@@ -609,6 +639,7 @@ export function BlockContextMenu({
   pageRefId,
   activeBlockType,
   selectedBlockIds: selectedBlockIdsProp,
+  actionIds,
 }: BlockContextMenuProps): React.ReactElement {
   const { t } = useTranslation()
 
@@ -869,6 +900,7 @@ export function BlockContextMenu({
     moveArrangeOpen,
     setMoveArrangeOpen,
     moveArrangeGroupId,
+    actionIds,
   })
 
   // Only actionable items participate in keyboard roving focus; the active

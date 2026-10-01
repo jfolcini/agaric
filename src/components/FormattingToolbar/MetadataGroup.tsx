@@ -27,6 +27,8 @@ interface CyclePriorityButtonProps {
   t: (key: string) => string
   currentPriority: string | null | undefined
   onAfterOverflowAction: () => void
+  /** What a press does: the focused block's cycle, or *Edit as Markdown*'s (#5160). */
+  onCycle?: () => void
 }
 
 /** Render the cycle-priority button (a custom inline button). */
@@ -47,6 +49,7 @@ export function renderCyclePriority({
   t,
   currentPriority,
   onAfterOverflowAction,
+  onCycle = () => dispatchBlockEvent('CYCLE_PRIORITY'),
 }: CyclePriorityButtonProps): React.ReactElement {
   const tipText = t('toolbar.cyclePriorityTip')
   if (mode === 'overflow') {
@@ -61,7 +64,7 @@ export function renderCyclePriority({
           currentPriority != null && toolbarActiveClass,
         )}
         {...toolbarPressHandlers(() => {
-          dispatchBlockEvent('CYCLE_PRIORITY')
+          onCycle()
           onAfterOverflowAction()
         })}
       >
@@ -81,7 +84,7 @@ export function renderCyclePriority({
         aria-label={t('toolbar.cyclePriority')}
         aria-pressed={currentPriority != null}
         className={cn(currentPriority != null && toolbarActiveClass)}
-        {...toolbarPressHandlers(() => dispatchBlockEvent('CYCLE_PRIORITY'))}
+        {...toolbarPressHandlers(onCycle)}
       >
         <span className="inline-flex items-center gap-1 text-xs font-semibold leading-none text-muted-foreground">
           {priorityDot(currentPriority)}

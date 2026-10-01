@@ -4,6 +4,9 @@ import { devices } from '@playwright/test'
 import {
   activeAlertDialog,
   activeDialog,
+  activeMenu,
+  activePopover,
+  activeSheet,
   activeSuggestionList,
   activeSuggestionPopup,
   expect,
@@ -148,6 +151,11 @@ function blockIds(page: Page): Promise<string[]> {
   return page
     .locator('[data-testid="sortable-block"]')
     .evaluateAll((rows) => rows.map((row) => row.getAttribute('data-block-id') ?? ''))
+}
+
+/** A button on the buffer's toolbar. */
+function toolbarButton(page: Page, name: string): Locator {
+  return page.getByTestId('page-source-toolbar').getByRole('button', { name, exact: true })
 }
 
 function staticBlock(page: Page, id: string): Locator {
@@ -483,6 +491,48 @@ test.describe('Edit as Markdown (#5140 Phase 4b)', () => {
     await expect(sourceEditor(page)).toHaveCount(0)
     await expect(staticBlock(page, GS1)).toContainText('Quick Notes')
   })
+
+  test('the toolbar’s Turn into makes the line at the cursor a heading, which saves as one', async ({
+    page,
+  }) => {
+    const editor = await openSourceMode(page)
+    await caretAtEnd(page, editor, WELCOME)
+
+    await toolbarButton(page, 'Turn into').click()
+    await activePopover(page).getByRole('menuitemradio', { name: 'Heading 1' }).click()
+
+    await expect(sourceLine(editor, WELCOME)).toHaveText(
+      '- # Welcome to Agaric! This is your personal knowledge base.',
+    )
+    await editor.press('ControlOrMeta+s')
+    await expect(sourceEditor(page)).toHaveCount(0)
+    await expect(staticBlock(page, GS1).locator('h1')).toContainText(WELCOME)
+  })
+
+  test('the block-menu button moves the block at the cursor, which saves in the new order', async ({
+    page,
+  }) => {
+    const editor = await openSourceMode(page)
+    await caretAtEnd(page, editor, CREATE)
+
+    await toolbarButton(page, 'Block actions').click()
+    const menu = activeMenu(page)
+    await menu.getByRole('menuitem', { name: /^Move & arrange/ }).click()
+    await menu.getByRole('menuitem', { name: /^Move Up/ }).click()
+
+    await expect(menu).toHaveCount(0)
+    await expect(editor).toBeFocused()
+    const first = FRONT_MATTER.length
+    expect((await bufferLines(editor)).slice(first, first + 3).map(([, id]) => id)).toEqual([
+      GS1,
+      GS3,
+      GS2,
+    ])
+    await editor.press('ControlOrMeta+s')
+    await expect(sourceEditor(page)).toHaveCount(0)
+    await reopenPage(page, PAGE)
+    await expect.poll(() => blockIds(page)).toEqual([GS1, GS3, GS2, GS4, GS5])
+  })
 })
 
 test.describe('Edit as Markdown on a 390 px phone', () => {
@@ -501,5 +551,40 @@ test.describe('Edit as Markdown on a 390 px phone', () => {
 
     await expect(pageActions(page)).toBeInViewport({ ratio: 1 })
     await openSourceMode(page)
+  })
+
+  test('the toolbar carries New line, Cancel and Save on screen, and Save saves', async ({
+    page,
+  }) => {
+    await waitForBoot(page)
+    await openPageMobile(page, PAGE)
+    const editor = await openSourceMode(page)
+
+    await expect(toolbarButton(page, 'New line')).toBeInViewport()
+    await expect(toolbarButton(page, 'Cancel')).toBeInViewport({ ratio: 1 })
+    const save = toolbarButton(page, 'Save')
+    await expect(save).toBeInViewport({ ratio: 1 })
+    await expect(page.getByRole('button', { name: 'Save', exact: true })).toHaveCount(1)
+
+    await caretAtEnd(page, editor, WELCOME)
+    await page.keyboard.type(' Typed on a phone.')
+    await save.click()
+
+    await expect(sourceEditor(page)).toHaveCount(0)
+    await expect(staticBlock(page, GS1)).toContainText('knowledge base. Typed on a phone.')
+  })
+
+  test('Cancel on the toolbar asks first when the buffer changed', async ({ page }) => {
+    await waitForBoot(page)
+    await openPageMobile(page, PAGE)
+    const editor = await openSourceMode(page)
+    await caretAtEnd(page, editor, WELCOME)
+    await page.keyboard.type(' Not kept.')
+
+    await toolbarButton(page, 'Cancel').click()
+    await activeSheet(page).getByRole('button', { name: 'Discard', exact: true }).click()
+
+    await expect(sourceEditor(page)).toHaveCount(0)
+    await expect(staticBlock(page, GS1)).not.toContainText('Not kept.')
   })
 })
