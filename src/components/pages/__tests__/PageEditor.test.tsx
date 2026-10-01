@@ -12,6 +12,7 @@
 import { invoke } from '@tauri-apps/api/core'
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import type { Ref } from 'react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
@@ -62,12 +63,19 @@ interface CapturedPageHeaderProps {
   title: string
   onBack?: () => void
   onEditSource?: () => void
+  kebabRef?: Ref<HTMLButtonElement>
 }
 let capturedPageHeaderProps: CapturedPageHeaderProps | null = null
 vi.mock('@/components/pages/PageHeader', () => ({
   PageHeader: (props: CapturedPageHeaderProps) => {
     capturedPageHeaderProps = props
-    return <div data-testid="page-header" data-page-id={props.pageId} data-title={props.title} />
+    return (
+      <div data-testid="page-header" data-page-id={props.pageId} data-title={props.title}>
+        <button type="button" ref={props.kebabRef}>
+          Page actions
+        </button>
+      </div>
+    )
   },
 }))
 
@@ -787,6 +795,21 @@ describe('PageEditor source mode (#5140)', () => {
     expect(screen.queryByTestId('page-source-mode')).not.toBeInTheDocument()
     expect(screen.getByTestId('block-tree')).toHaveAttribute('data-parent-id', 'PAGE_1')
     expect(capturedPageHeaderProps?.onEditSource).toBeTypeOf('function')
+  })
+
+  // #5160 S8 — a save may have changed the page's properties, aliases and
+  // tags, which the header reads once per mount.
+  it('closing the source editor remounts the header and focuses its kebab', async () => {
+    const user = userEvent.setup()
+    render(<PageEditor pageId="PAGE_1" title="My Page" />)
+    const editSource = await editSourceHandler()
+    act(() => editSource())
+    const header = screen.getByTestId('page-header')
+
+    await user.click(screen.getByRole('button', { name: 'close source' }))
+
+    expect(screen.getByTestId('page-header')).not.toBe(header)
+    expect(screen.getByRole('button', { name: 'Page actions' })).toHaveFocus()
   })
 
   it('navigating to another page ends source mode, also after coming back', async () => {

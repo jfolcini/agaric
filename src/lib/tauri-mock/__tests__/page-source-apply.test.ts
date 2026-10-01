@@ -14,7 +14,15 @@ import { beforeEach, describe, expect, it } from 'vitest'
 
 import type { PageSourceReport } from '@/lib/bindings'
 import { dispatch } from '@/lib/tauri-mock/handlers'
-import { blocks, makeBlock, opLog, properties, seedBlocks } from '@/lib/tauri-mock/seed'
+import {
+  blockTags,
+  blocks,
+  makeBlock,
+  opLog,
+  pageAliases,
+  properties,
+  seedBlocks,
+} from '@/lib/tauri-mock/seed'
 
 const id = (label: string): string => label.padStart(26, '0')
 const PAGE = id('PAGE')
@@ -798,5 +806,198 @@ describe('tauri-mock get_page_buffer and apply_page_source by line ids (#5160 A)
       'charlie, on the page',
       MULTI,
     ])
+  })
+})
+
+describe('tauri-mock apply_page_source front matter (#5160 S8)', () => {
+  const SPACE = id('SPACE')
+  const WORK = id('WORK')
+  const HEAD = '---\naliases: [Home base]\ntags: [work]\nstage: open\n---\n\n'
+  const BODY = `- alpha ^${A}\n`
+
+  const textRow = (key: string, value: string): Record<string, unknown> => ({
+    key,
+    value_text: value,
+    value_num: null,
+    value_date: null,
+    value_ref: null,
+    value_bool: null,
+  })
+
+  /** The refusal's message, or `null` when the save succeeds. */
+  function refusedWith(buffer: string): unknown {
+    try {
+      apply(buffer)
+    } catch (err) {
+      return (err as { message?: unknown }).message
+    }
+    return null
+  }
+
+  const pageKeys = (): Record<string, unknown> =>
+    Object.fromEntries(
+      [...(properties.get(PAGE) ?? [])].map(([key, row]) => [key, row['value_text']]),
+    )
+  const pageTags = (): unknown[] =>
+    [...(blockTags.get(PAGE) ?? [])].map((tagId) => blocks.get(tagId)?.['content'])
+
+  beforeEach(() => {
+    seedBlocks()
+    blocks.clear()
+    properties.clear()
+    blockTags.clear()
+    pageAliases.clear()
+    opLog.length = 0
+    put(PAGE, 'page', 'Home', null, 1, PAGE)['space_id'] = SPACE
+    put(A, 'content', 'alpha', PAGE, 1, PAGE)['space_id'] = SPACE
+    put(WORK, 'tag', 'work', null, 2, null)['space_id'] = SPACE
+    properties.set(
+      PAGE,
+      new Map([
+        ['stage', textRow('stage', 'open')],
+        ['template', textRow('template', 'x')],
+      ]),
+    )
+    pageAliases.set(PAGE, ['Home base'])
+    blockTags.set(PAGE, new Set([WORK]))
+  })
+
+  it('heads the buffer with the aliases, tags and shown properties, and saving it writes nothing', () => {
+    expect(source()).toBe(`${HEAD}${BODY}`)
+
+    const report = apply(source())
+
+    expect(report).toMatchObject({ ...COUNTS_NONE, properties_set: 0, properties_deleted: 0 })
+    expect(opLog).toHaveLength(0)
+  })
+
+  it('sets, adds and deletes properties, and a key it does not show stays', () => {
+    properties.get(PAGE)?.set('drop', textRow('drop', 'me'))
+
+    const report = apply(
+      source().replace('drop: me\n', '').replace('stage: open\n', 'stage: done\nowner: ann\n'),
+    )
+
+    expect(report).toMatchObject({ properties_set: 2, properties_deleted: 1 })
+    expect(pageKeys()).toEqual({ stage: 'done', template: 'x', owner: 'ann' })
+  })
+
+  it('replaces the aliases and tags, creating a tag no tag of the space names', () => {
+    const report = apply(
+      source().replace('aliases: [Home base]', 'aliases: [HQ]').replace('[work]', '[idea]'),
+    )
+
+    expect(pageAliases.get(PAGE)).toEqual(['HQ'])
+    expect(pageTags()).toEqual(['idea'])
+    expect(report.names_created.map((row) => row.content)).toEqual(['idea'])
+  })
+
+  it('refuses unreadable front matter or a refused value by its line, writing nothing', () => {
+    const typed = (line: string) => source().replace('stage: open\n', `stage: open\n${line}\n`)
+
+    expect(refusedWith(typed('not a pair'))).toBe('line 5: `not a pair` is not a `key: value` line')
+    expect(refusedWith(typed('space: x'))).toBe(
+      'line 5: `space` is kept by the app, not the front matter',
+    )
+    expect(refusedWith(typed('stage: done'))).toBe('line 5: `stage` is written twice')
+    expect(refusedWith(typed('status: nope'))).toMatch(/^line 5: `status: nope` cannot be saved: /)
+    expect(refusedWith(source().replace('---\n\n', '\n'))).toBe(
+      'line 1: the front matter this `---` opens has no closing `---`',
+    )
+    expect(opLog).toHaveLength(0)
+  })
+
+  it('names the buffer line of a block refused below the front matter, its lines counted (#5160 X3)', () => {
+    put(OTHER_PAGE, 'page', 'Elsewhere', null, 3, OTHER_PAGE)
+    put(ELSEWHERE, 'content', 'on another page', OTHER_PAGE, 1, OTHER_PAGE)
+
+    expect(refusedWith(`${source()}- again ^${A}\n`)).toBe(`line 8: ^${A} appears more than once`)
+    expect(refusedWith(`${source()}- adopted ^${ELSEWHERE}\n`)).toBe(
+      `line 8: ^${ELSEWHERE} is not a block of this page`,
+    )
+    expect(opLog).toHaveLength(0)
+  })
+
+  it('merged, keeps what the page changed since the buffer was loaded', () => {
+    const base = source()
+    dispatch('set_property', {
+      blockId: PAGE,
+      key: 'owner',
+      value: { value_text: 'bob', value_num: null, value_date: null, value_ref: null },
+    })
+
+    dispatch('apply_page_source', {
+      pageId: PAGE,
+      source: base.replace('stage: open', 'stage: done'),
+      baseSource: base,
+      force: false,
+      merge: true,
+    })
+
+    expect(pageKeys()).toEqual({ stage: 'done', template: 'x', owner: 'bob' })
+  })
+
+  describe('by line ids (#5160 A)', () => {
+    type Line = [string, string | null]
+
+    const buffer = () =>
+      dispatch('get_page_buffer', { pageId: PAGE }) as {
+        source: string
+        text: string
+        line_ids: Array<string | null>
+      }
+
+    function lines(): Line[] {
+      const { text, line_ids } = buffer()
+      return text.split('\n').map((line, i) => [line, line_ids[i] ?? null])
+    }
+
+    function applyByLine(edited: Line[]): Report {
+      return dispatch('apply_page_source', {
+        pageId: PAGE,
+        source: edited.map(([line]) => line).join('\n'),
+        baseSource: source(),
+        force: false,
+        merge: false,
+        lineIds: edited.map(([, carried]) => carried),
+      }) as Report
+    }
+
+    it('keeps the front matter in the text, its lines carrying no id', () => {
+      const { text, line_ids } = buffer()
+
+      expect(text).toBe(`${HEAD}- alpha\n`)
+      expect(line_ids).toEqual([null, null, null, null, null, null, A, null])
+    })
+
+    it('saves the page’s own text as nothing', () => {
+      const report = applyByLine(lines())
+
+      expect(report).toMatchObject({ ...COUNTS_NONE, properties_set: 0, warnings: [] })
+      expect(opLog).toHaveLength(0)
+    })
+
+    it('writes a front matter property and a block edited in one save', () => {
+      const edited = lines()
+      edited[3] = ['stage: done', null]
+      edited[6] = ['- alpha, edited', A]
+
+      const report = applyByLine(edited)
+
+      expect(report).toMatchObject({ ...COUNTS_NONE, edited: 1, properties_set: 1, warnings: [] })
+      expect(pageKeys()).toEqual({ stage: 'done', template: 'x' })
+      expect(blocks.get(A)?.['content']).toBe('alpha, edited')
+    })
+
+    it('names the buffer line of a copy below the front matter, and of a refusal in it', () => {
+      const own = lines()
+      const copied = [...own.slice(0, 7), own[6] as Line, ...own.slice(7)]
+      const unreadable = [...own.slice(0, 4), ['not a pair', null] as Line, ...own.slice(4)]
+
+      expect(() => applyByLine(unreadable)).toThrow(/^line 5: `not a pair` is not/)
+      expect(applyByLine(copied).warnings).toEqual([
+        'line 8: a copy of the block on line 7; saved as a new block',
+      ])
+    })
   })
 })

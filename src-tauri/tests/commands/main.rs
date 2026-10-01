@@ -26,6 +26,7 @@ mod history_cmd_tests;
 mod list_pages_with_metadata_tests;
 mod metadata_filter_tests;
 mod page_cmd_tests;
+mod page_front_matter_tests;
 mod pages_filter_primitive_conformance_tests;
 mod pages_metadata_conformance_tests;
 mod pages_orphan_conformance_tests;

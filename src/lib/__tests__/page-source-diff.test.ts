@@ -17,6 +17,20 @@ describe('diffSourceByAnchor', () => {
     expect(diffSourceByAnchor(source, source)).toEqual([])
   })
 
+  // #5160 S8 — the page's front matter is a change of its own, not of the
+  // first block it heads.
+  it('reports a change to the front matter apart from the blocks under it', () => {
+    const base = buffer('---', 'stage: open', '---', '', `- one ^${A}`)
+    const current = buffer('---', 'stage: done', '---', '', `- one ^${A}`)
+
+    expect(diffSourceByAnchor(base, current)).toEqual([
+      { kind: 'changed', text: '---\nstage: done\n---' },
+    ])
+    expect(diffSourceByAnchor(buffer(`- one ^${A}`), current)).toEqual([
+      { kind: 'added', text: '---\nstage: done\n---' },
+    ])
+  })
+
   it('does not count a block that only moved', () => {
     const base = buffer(`- one ^${A}`, `- two ^${B}`, `- three ^${C}`)
     const current = buffer(`- three ^${C}`, `- one ^${A}`, `- two ^${B}`)

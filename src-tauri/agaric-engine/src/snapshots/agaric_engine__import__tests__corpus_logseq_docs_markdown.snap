@@ -110,11 +110,6 @@ paste:
 source:
   blocks:
     - block_anchor: ~
-      content: "description:: Markdown is a popular markup language with many flavors. Our implementation is parsed by https://github.com/logseq/mldoc."
-      depth: 0
-      is_code: false
-      properties: []
-    - block_anchor: ~
       content: Markdown is the most popular format that Logseq supports. Logseq supports most syntaxes including some extended ones.
       depth: 0
       is_code: false
@@ -162,6 +157,10 @@ source:
       depth: 2
       is_code: false
       properties: []
-  frontmatter: []
+  frontmatter:
+    - - description
+      - "Markdown is a popular markup language with many flavors. Our implementation is parsed by https://github.com/logseq/mldoc."
+  frontmatter_lines:
+    description: 1
   frontmatter_list_items: {}
   warnings: []

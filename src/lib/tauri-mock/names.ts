@@ -54,7 +54,7 @@ export interface ResolvedNames {
 type Match = { id: string } | 'ambiguous' | null
 
 /** `agaric_core::tag_norm::normalize_tag_name`: NFC, lowercase, NFC. */
-const normalizeTagName = (name: string): string =>
+export const normalizeTagName = (name: string): string =>
   name.normalize('NFC').toLowerCase().normalize('NFC')
 
 function inSpace(row: Row, spaceId: string): boolean {
@@ -208,6 +208,40 @@ function pageRef(id: string, label: string | undefined): string {
   return label && label !== blocks.get(id)?.['content'] ? `[[${id}|${label}]]` : `[[${id}]]`
 }
 
+/**
+ * Each of `names` as the tag of `spaceId` its normalised name names (the
+ * smallest id wins), created where there is none. Returns the ids and the
+ * tags created, in creation order.
+ */
+export function resolveTagNames(
+  names: readonly string[],
+  spaceId: string,
+  opRefs: OpRefs,
+): { ids: Map<string, string>; created: Row[] } {
+  const created: Row[] = []
+  const tagsByNorm = new Map<string, string>()
+  for (const row of [...blocks.values()].toSorted((a, b) =>
+    compareUtf8Bytes(a['id'] as string, b['id'] as string),
+  )) {
+    if (row['block_type'] !== 'tag' || row['content'] == null || !inSpace(row, spaceId)) continue
+    const norm = normalizeTagName(row['content'] as string)
+    if (!tagsByNorm.has(norm)) tagsByNorm.set(norm, row['id'] as string)
+  }
+  const ids = new Map<string, string>()
+  for (const name of names) {
+    const norm = normalizeTagName(name)
+    let id = tagsByNorm.get(norm)
+    if (id === undefined) {
+      const row = createNamed('tag', name, spaceId, opRefs)
+      created.push(row)
+      id = row['id'] as string
+      tagsByNorm.set(norm, id)
+    }
+    ids.set(name, id)
+  }
+  return { ids, created }
+}
+
 /** Resolve the names `contents` write in `spaceId`, creating what no name matches. */
 export function resolveInboundNames(
   contents: readonly string[],
@@ -260,26 +294,13 @@ export function resolveInboundNames(
     const id = whole ? whole.id : resolvePage(base)
     if (id !== null) pageIds.set(name, id)
   }
-  const tagIds = new Map<string, string>()
-  const tagsByNorm = new Map<string, string>()
-  for (const row of [...blocks.values()].toSorted((a, b) =>
-    compareUtf8Bytes(a['id'] as string, b['id'] as string),
-  )) {
-    if (row['block_type'] !== 'tag' || row['content'] == null || !inSpace(row, spaceId)) continue
-    const norm = normalizeTagName(row['content'] as string)
-    if (!tagsByNorm.has(norm)) tagsByNorm.set(norm, row['id'] as string)
-  }
-  for (const name of sorted(scanned.flat().flatMap((t) => (t.kind === 'tag' ? [t.name] : [])))) {
-    const norm = normalizeTagName(name)
-    let id = tagsByNorm.get(norm)
-    if (id === undefined) {
-      const row = createNamed('tag', name, spaceId, opRefs)
-      created.push(row)
-      id = row['id'] as string
-      tagsByNorm.set(norm, id)
-    }
-    tagIds.set(name, id)
-  }
+  const tags = resolveTagNames(
+    sorted(scanned.flat().flatMap((t) => (t.kind === 'tag' ? [t.name] : []))),
+    spaceId,
+    opRefs,
+  )
+  created.push(...tags.created)
+  const tagIds = tags.ids
   const linkRef = (token: PageToken): string | undefined => {
     const reading = readings.get(token.body)
     const id = reading && pageIds.get(reading.name)

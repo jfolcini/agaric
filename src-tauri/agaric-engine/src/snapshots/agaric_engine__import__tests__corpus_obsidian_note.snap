@@ -189,31 +189,6 @@ paste:
 source:
   blocks:
     - block_anchor: ~
-      content: "---"
-      depth: 0
-      is_code: false
-      properties: []
-    - block_anchor: ~
-      content: "tags:"
-      depth: 0
-      is_code: false
-      properties: []
-    - block_anchor: ~
-      content: reading
-      depth: 1
-      is_code: false
-      properties: []
-    - block_anchor: ~
-      content: "books\naliases: [Deep Work notes]\nstatus: in-progress"
-      depth: 1
-      is_code: false
-      properties: []
-    - block_anchor: ~
-      content: "---"
-      depth: 0
-      is_code: false
-      properties: []
-    - block_anchor: ~
       content: "# Deep Work"
       depth: 0
       is_code: false
@@ -284,6 +259,21 @@ source:
           - DONE
         - - rating
           - "4"
-  frontmatter: []
-  frontmatter_list_items: {}
+  frontmatter:
+    - - tags
+      - "reading, books"
+    - - aliases
+      - Deep Work notes
+    - - status
+      - in-progress
+  frontmatter_lines:
+    aliases: 5
+    status: 6
+    tags: 2
+  frontmatter_list_items:
+    aliases:
+      - Deep Work notes
+    tags:
+      - reading
+      - books
   warnings: []

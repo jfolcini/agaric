@@ -4724,7 +4724,7 @@ async fn apply_page_source_merge_on_a_fresh_base_is_a_plain_save() {
 // ======================================================================
 
 /// The page's buffer as lines, each with the id it carries.
-async fn buffer_lines(
+pub(super) async fn buffer_lines(
     pool: &SqlitePool,
     page: &BlockId,
 ) -> (String, Vec<(String, Option<String>)>) {
@@ -4744,7 +4744,7 @@ async fn buffer_lines(
 }
 
 /// Save `lines` over `page` as text with its ids beside it, edited from `base`.
-async fn save_by_line(
+pub(super) async fn save_by_line(
     pool: &SqlitePool,
     mat: &Materializer,
     page: &BlockId,
@@ -4776,7 +4776,7 @@ async fn save_by_line(
 }
 
 /// `line` carrying no id.
-fn plain(line: &str) -> (String, Option<String>) {
+pub(super) fn plain(line: &str) -> (String, Option<String>) {
     (line.to_owned(), None)
 }
 
