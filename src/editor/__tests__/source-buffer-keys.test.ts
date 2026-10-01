@@ -116,7 +116,7 @@ describe('indent and dedent', () => {
       ['\t- c', C],
       ['- d', null],
     ])
-    ed.commands.setTextSelection({ from: at(ed, 0, 0), to: at(ed, 3, 3) })
+    ed.commands.setTextSelection({ from: at(ed, 0, 0), to: at(ed, 2, 3) })
 
     expect(press(ed, 'Tab', { shiftKey: true })).toBe(true)
     expect(lines(ed)).toEqual([
@@ -126,8 +126,68 @@ describe('indent and dedent', () => {
       ['- d', null],
     ])
 
+    caret(ed, 0, 0)
     press(ed, 'ArrowLeft', CHORD)
     expect(lines(ed)[0]).toEqual(['- a', A])
+  })
+
+  it('Tab on a block takes its further lines and its children with it, ids where they were', () => {
+    const ed = build([
+      ['- a', A],
+      ['- b', B],
+      ['  more of b', null],
+      ['  - b1', B1],
+      ['- c', C],
+    ])
+    caret(ed, 1, 3)
+
+    press(ed, 'Tab')
+
+    expect(lines(ed)).toEqual([
+      ['- a', A],
+      ['  - b', B],
+      ['    more of b', null],
+      ['    - b1', B1],
+      ['- c', C],
+    ])
+  })
+
+  it('Shift+Tab on a block’s further line dedents the block with its further lines and children', () => {
+    const ed = build([
+      ['- a', A],
+      ['  - b', B],
+      ['    more of b', null],
+      ['    - b1', B1],
+      ['- c', C],
+    ])
+    caret(ed, 2, 6)
+
+    press(ed, 'Tab', { shiftKey: true })
+
+    expect(lines(ed)).toEqual([
+      ['- a', A],
+      ['- b', B],
+      ['  more of b', null],
+      ['  - b1', B1],
+      ['- c', C],
+    ])
+  })
+
+  it('Shift+Tab leaves a top-level block where it is, and the blocks selected with it', () => {
+    const rows: Line[] = [
+      ['- a', A],
+      ['  priority:: 1', null],
+      ['  - a1', A1],
+      ['- b', B],
+    ]
+    const ed = build(rows)
+    caret(ed, 1, 4)
+
+    expect(press(ed, 'Tab', { shiftKey: true })).toBe(true)
+    ed.commands.setTextSelection({ from: at(ed, 2, 0), to: at(ed, 3, 1) })
+    press(ed, 'ArrowLeft', CHORD)
+
+    expect(lines(ed)).toEqual(rows)
   })
 
   it('with Tab indents blocks off, Tab is left to the browser and the chord still indents', () => {
@@ -165,6 +225,21 @@ describe('cycling a task', () => {
       ['  - foo', B],
     ])
     expect(lines(ed)[0]).toEqual(['- parent', A])
+  })
+
+  it('on a block’s further line, cycles that block’s checkbox', () => {
+    const ed = build([
+      ['- a', A],
+      ['  more of a', null],
+    ])
+    caret(ed, 1, 4)
+
+    press(ed, 'Enter', { ctrlKey: true })
+
+    expect(lines(ed)).toEqual([
+      ['- [ ] a', A],
+      ['  more of a', null],
+    ])
   })
 
   it('reads an ordered marker and an upper-case X, and leaves a line that is no list item as it is', () => {
