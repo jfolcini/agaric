@@ -25,6 +25,8 @@ interface FormatButtonProps {
   t: (key: string) => string
   open: boolean
   setOpen: (next: boolean | ((prev: boolean) => boolean)) => void
+  /** The popover's content in place of `FormatMenu`: *Edit as Markdown*'s marks (#5160). */
+  menu?: React.ReactNode
 }
 
 /**
@@ -41,6 +43,7 @@ export function renderFormatButton({
   t,
   open,
   setOpen,
+  menu,
 }: FormatButtonProps): React.ReactElement {
   if (mode === 'sentinel') {
     return (
@@ -97,7 +100,7 @@ export function renderFormatButton({
         onOpenAutoFocus={(e) => e.preventDefault()}
         onCloseAutoFocus={(e) => e.preventDefault()}
       >
-        <FormatMenu editor={editor} />
+        {menu ?? <FormatMenu editor={editor} />}
       </PopoverContent>
     </Popover>
   )
@@ -111,6 +114,8 @@ interface TurnIntoButtonProps {
   setOpen: (next: boolean | ((prev: boolean) => boolean)) => void
   /** The block this toolbar is anchored to (#4552 — feeds the active-state probe). */
   blockId?: string | undefined
+  /** The popover's content in place of `TurnIntoMenu`: *Edit as Markdown*'s (#5160). */
+  menu?: React.ReactNode
 }
 
 /**
@@ -127,6 +132,7 @@ export function renderTurnIntoButton({
   open,
   setOpen,
   blockId,
+  menu,
 }: TurnIntoButtonProps): React.ReactElement {
   if (mode === 'sentinel') {
     return (
@@ -179,7 +185,7 @@ export function renderTurnIntoButton({
         onOpenAutoFocus={(e) => e.preventDefault()}
         onCloseAutoFocus={(e) => e.preventDefault()}
       >
-        <TurnIntoMenu editor={editor} blockId={blockId} onClose={() => setOpen(false)} />
+        {menu ?? <TurnIntoMenu editor={editor} blockId={blockId} onClose={() => setOpen(false)} />}
       </PopoverContent>
     </Popover>
   )

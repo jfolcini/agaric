@@ -27,6 +27,7 @@ import { Spinner } from '@/components/ui/spinner'
 import { Textarea } from '@/components/ui/textarea'
 import type { SourceLines } from '@/editor/source-buffer'
 import { useDebouncedCallback } from '@/hooks/useDebouncedCallback'
+import { useIsTouch } from '@/hooks/useIsTouch'
 import { unwrap, validationCode } from '@/lib/app-error'
 import { commands, type PageBuffer } from '@/lib/bindings'
 import { writeText } from '@/lib/clipboard'
@@ -103,6 +104,7 @@ export interface PageSourceEditorProps {
 
 export function PageSourceEditor({ pageId, onClose }: PageSourceEditorProps): React.ReactElement {
   const { t } = useTranslation()
+  const isTouch = useIsTouch()
   const applyPageSource = usePageBlockStore((s) => s.applyPageSource)
   const hintId = useId()
   const draftNoteId = useId()
@@ -357,6 +359,7 @@ export function PageSourceEditor({ pageId, onClose }: PageSourceEditorProps): Re
         <LazyPageSourceBuffer
           key={opened.generation}
           ref={bufferRef}
+          pageId={pageId}
           initial={opened.initial}
           pageIds={opened.page.lineIds}
           readOnly={saving}
@@ -365,6 +368,8 @@ export function PageSourceEditor({ pageId, onClose }: PageSourceEditorProps): Re
           className={BUFFER_CLASS}
           onChange={handleChange}
           onKeyDown={handleKeyDown}
+          onSave={handleSave}
+          onCancel={handleCancel}
         />
       </Suspense>
       <p id={hintId} className="text-xs text-muted-foreground">
@@ -375,15 +380,18 @@ export function PageSourceEditor({ pageId, onClose }: PageSourceEditorProps): Re
           {saveError}
         </p>
       )}
-      <div className="flex justify-end gap-2">
-        <Button variant="outline" onClick={handleCancel} disabled={saving}>
-          {t('action.cancel')}
-        </Button>
-        <Button onClick={handleSave} disabled={saving}>
-          {saving && <Spinner />}
-          {t('action.save')}
-        </Button>
-      </div>
+      {/* On touch, Save and Cancel are on the toolbar pinned above the keyboard (X9). */}
+      {!isTouch && (
+        <div className="flex justify-end gap-2">
+          <Button variant="outline" onClick={handleCancel} disabled={saving}>
+            {t('action.cancel')}
+          </Button>
+          <Button onClick={handleSave} disabled={saving}>
+            {saving && <Spinner />}
+            {t('action.save')}
+          </Button>
+        </div>
+      )}
       <ConfirmDialog
         open={confirmingDeleteAll}
         onOpenChange={setConfirmingDeleteAll}
