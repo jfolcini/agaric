@@ -131,6 +131,12 @@ pub struct ParseOutput {
     /// no entry here either has no frontmatter value or arrived as a plain
     /// (non-sequence) scalar.
     pub frontmatter_list_items: std::collections::HashMap<String, Vec<String>>,
+    /// Read for a source buffer only (#5160 S8): the buffer line, counted
+    /// from 1, each `frontmatter` key was read from.
+    pub frontmatter_lines: std::collections::HashMap<String, usize>,
+    /// Read for a source buffer only: its first front matter line no page
+    /// property is read from, and why, which a save refuses.
+    pub frontmatter_refusal: Option<(usize, String)>,
     /// The indices of the blocks a Logseq `collapsed:: true` line folds
     /// (#5160 D14). Collapse is a per-device layout rather than a property,
     /// so the import hands them to the frontend.
@@ -1029,7 +1035,9 @@ pub fn parse_logseq_markdown(content: &str) -> ParseOutput {
         &mut frontmatter_warnings,
     );
 
-    let body = strip_leading_properties(&normalized, &mut frontmatter, &mut frontmatter_list_items);
+    let body = strip_leading_properties(&normalized, |_, key, value| {
+        push_page_property(key, value, &mut frontmatter, &mut frontmatter_list_items);
+    });
 
     let mut warnings = frontmatter_warnings;
     let mut blocks = parse_outline(body, ParseMode::Import, true, None, &mut warnings);
@@ -1039,23 +1047,19 @@ pub fn parse_logseq_markdown(content: &str) -> ParseOutput {
         blocks,
         frontmatter,
         frontmatter_list_items,
+        frontmatter_lines: std::collections::HashMap::new(),
+        frontmatter_refusal: None,
         collapsed,
         warnings,
     }
 }
 
 /// Logseq's page properties (#5160 P3): the `key:: value` lines before the
-/// first block, blank lines between them included, appended to the front
-/// matter as YAML's pairs are. `alias` names the page's aliases and `tags` its
-/// tags, each a list ([`logseq_list_items`]); a reserved key is filtered as
-/// front matter filters it. Returns the text after them.
-fn strip_leading_properties<'a>(
-    body: &'a str,
-    frontmatter: &mut Vec<(String, String)>,
-    list_items: &mut std::collections::HashMap<String, Vec<String>>,
-) -> &'a str {
+/// first block, blank lines between them included, each handed to `read` with
+/// its line's index. Returns the text after them.
+fn strip_leading_properties(body: &str, mut read: impl FnMut(usize, &str, &str)) -> &str {
     let mut rest = body;
-    for line in body.split_inclusive('\n') {
+    for (index, line) in body.split_inclusive('\n').enumerate() {
         let trimmed = line.trim();
         if !trimmed.is_empty() {
             let Some((key, value)) =
@@ -1063,35 +1067,38 @@ fn strip_leading_properties<'a>(
             else {
                 break;
             };
-            push_page_property(key.trim(), value.trim(), frontmatter, list_items);
+            read(index, key.trim(), value.trim());
         }
         rest = &rest[line.len()..];
     }
     rest
 }
 
-/// Append one Logseq page property to the front matter
-/// ([`strip_leading_properties`]).
+/// Append one Logseq page property to the front matter, as YAML's pairs are
+/// ([`strip_leading_properties`]). `alias` names the page's aliases and `tags`
+/// its tags, each a list ([`logseq_list_items`]). Returns whether it was one: a
+/// reserved key is not, as front matter filters it.
 fn push_page_property(
     key: &str,
     value: &str,
     frontmatter: &mut Vec<(String, String)>,
     list_items: &mut std::collections::HashMap<String, Vec<String>>,
-) {
+) -> bool {
     if is_reserved_line_key(key) {
-        return;
+        return false;
     }
     let list_key = match fold_property_key(key).as_str() {
         "alias" | "aliases" => "aliases",
         "tags" => "tags",
         _ => {
             frontmatter.push((key.to_string(), value.to_string()));
-            return;
+            return true;
         }
     };
     let items = logseq_list_items(value);
     frontmatter.push((list_key.to_string(), items.join(", ")));
     list_items.insert(list_key.to_string(), items);
+    true
 }
 
 /// The page names of a Logseq list value, `a, [[B, Inc]], #c`: split on the
@@ -1191,10 +1198,10 @@ fn logseq_ids(blocks: &[ParsedBlock]) -> std::collections::HashSet<String> {
 /// from. Where [`parse_logseq_markdown`] normalises a file from another tool,
 /// this keeps what the renderer wrote: `((ULID))` refs, spacing, a block's
 /// interior blank lines and the indentation of its continuation lines. It also
-/// reads a checkbox after the list marker as the block's `todo_state`. A buffer
-/// has no frontmatter, so none is looked for. Nor is a block nested past the
-/// import depth limit flattened: a save refuses it where an import would
-/// reshape it.
+/// reads a checkbox after the list marker as the block's `todo_state`. The
+/// buffer opens with the page's properties (`read_page_properties`). A block
+/// nested past the import depth limit is not flattened: a save refuses it
+/// where an import would reshape it.
 pub fn parse_source_outline(content: &str) -> ParseOutput {
     source_outline(content, false, None)
 }
@@ -1219,21 +1226,73 @@ fn source_outline(
     id_lines: Option<&std::collections::HashSet<usize>>,
 ) -> ParseOutput {
     let normalized = content.replace("\r\n", "\n").replace('\r', "\n");
-    let mut warnings = Vec::new();
-    let blocks = parse_outline(
-        &normalized,
+    let mut output = ParseOutput {
+        blocks: Vec::new(),
+        frontmatter: Vec::new(),
+        frontmatter_list_items: std::collections::HashMap::new(),
+        frontmatter_lines: std::collections::HashMap::new(),
+        frontmatter_refusal: None,
+        collapsed: Vec::new(),
+        warnings: Vec::new(),
+    };
+    let body = if foreign {
+        normalized
+    } else {
+        read_page_properties(&normalized, &mut output)
+    };
+    output.blocks = parse_outline(
+        &body,
         ParseMode::Source,
         foreign,
         id_lines,
-        &mut warnings,
+        &mut output.warnings,
     );
-    ParseOutput {
-        blocks,
-        frontmatter: Vec::new(),
-        frontmatter_list_items: std::collections::HashMap::new(),
-        collapsed: Vec::new(),
-        warnings,
+    output
+}
+
+/// The page properties a source buffer opens with (#5160 S8), read into
+/// `output` as an import reads them: YAML front matter at its very top, then
+/// Logseq `key:: value` lines, whose values read as a block's do
+/// ([`read_source_property_value`]). Each key is known by its line, counted
+/// from 1, and the first line no page property is read from is named in
+/// `output.frontmatter_refusal`: a page has no block to keep it in as text.
+/// Returns the buffer with their lines left blank, so a block after them
+/// names its line in the buffer (#5160 X3).
+fn read_page_properties(normalized: &str, output: &mut ParseOutput) -> String {
+    let mut refusal = None;
+    let mut at = 0;
+    if let Some((yaml, len)) = front_matter_fence(normalized) {
+        let mut warnings = Vec::new();
+        let scan = scan_frontmatter(yaml, &mut output.frontmatter_list_items, &mut warnings);
+        output.frontmatter = scan.pairs;
+        let lines = scan.key_lines.into_iter();
+        output.frontmatter_lines = lines.map(|(key, line)| (key, line + 1)).collect();
+        refusal = scan.unread.map(|(line, why)| (line + 1, why));
+        at = len;
+    } else if normalized.lines().next() == Some("---") {
+        let why = "the front matter this `---` opens has no closing `---`";
+        refusal = Some((1, why.to_string()));
     }
+    let first = normalized[..at].matches('\n').count() + 1;
+    let rest = strip_leading_properties(&normalized[at..], |index, key, value| {
+        let line = first + index;
+        let fm = &mut output.frontmatter;
+        let value = read_source_property_value(value);
+        let why = if !push_page_property(key, &value, fm, &mut output.frontmatter_list_items) {
+            format!("`{key}` is kept by the app, not the front matter")
+        } else {
+            let (stored, _) = fm.last().expect("a page property was pushed");
+            if !output.frontmatter_lines.contains_key(stored) {
+                output.frontmatter_lines.insert(stored.clone(), line);
+                return;
+            }
+            format!("`{stored}` is written twice")
+        };
+        refusal.get_or_insert((line, why));
+    });
+    output.frontmatter_refusal = refusal;
+    let read = &normalized[..normalized.len() - rest.len()];
+    format!("{}{rest}", "\n".repeat(read.matches('\n').count()))
 }
 
 /// Clipboard text as blocks (#5140): read as a source buffer is, flattened past
@@ -2259,18 +2318,9 @@ fn strip_frontmatter<'a>(
                        list_items: &mut std::collections::HashMap<String, Vec<String>>,
                        warnings: &mut Vec<String>|
      -> Option<usize> {
-        let after_open = slice.strip_prefix("---")?;
-        let end = after_open.find("\n---")?; // index within `after_open`
-        let yaml = &after_open[..end];
+        let (yaml, consumed) = front_matter_fence(slice)?;
         frontmatter.extend(parse_frontmatter(yaml, list_items, warnings));
-        // Consume through the closing fence line. `end + 4` skips the
-        // `\n---`; then advance past the rest of the closing line (to its
-        // newline, inclusive) so the heading/body that follows starts clean.
-        let consumed_in_after = end + 4;
-        let tail = &after_open[consumed_in_after..];
-        let line_end = tail.find('\n').map_or(tail.len(), |n| n + 1);
-        // 3 = len("---") opening fence we stripped.
-        Some(3 + consumed_in_after + line_end)
+        Some(consumed)
     };
 
     // Case 1: fence at the very top of the file.
@@ -2328,6 +2378,19 @@ fn strip_frontmatter<'a>(
     }
 
     Cow::Borrowed(normalized)
+}
+
+/// The YAML of a front matter fence opening `slice`, and the bytes the fence
+/// takes through its closing `---` line, or `None` when no `---` line closes
+/// it.
+fn front_matter_fence(slice: &str) -> Option<(&str, usize)> {
+    let after_open = slice.strip_prefix("---")?;
+    let end = after_open.find("\n---")?;
+    // Through the rest of the closing line, its line break included, so what
+    // follows starts clean. `+ 4` skips the `\n---`, `3` the opening `---`.
+    let tail = &after_open[end + 4..];
+    let line_end = tail.find('\n').map_or(tail.len(), |n| n + 1);
+    Some((&after_open[..end], 3 + end + 4 + line_end))
 }
 
 /// Parse a YAML inline flow sequence (`[a, b, "c, d"]`) into its individual
@@ -2463,6 +2526,13 @@ struct FrontmatterScan<'a> {
     pending_seq: Option<PendingSeq>,
     skipped_array: usize,
     skipped_invalid: usize,
+    /// The line being scanned, counted from 0.
+    line: usize,
+    /// The line each key was read from.
+    key_lines: std::collections::HashMap<String, usize>,
+    /// The first line no page property is read from, and why: an import
+    /// skips it, and a source buffer's save refuses it (#5160 S8).
+    unread: Option<(usize, String)>,
 }
 
 impl<'a> FrontmatterScan<'a> {
@@ -2479,7 +2549,15 @@ impl<'a> FrontmatterScan<'a> {
             pending_seq: None,
             skipped_array: 0,
             skipped_invalid: 0,
+            line: 0,
+            key_lines: std::collections::HashMap::new(),
+            unread: None,
         }
+    }
+
+    /// Note the line being scanned as one no page property is read from.
+    fn note_unread(&mut self, why: String) {
+        self.unread.get_or_insert((self.line, why));
     }
 
     /// Commit a finished block-style sequence into `pairs` (de-dup aware),
@@ -2548,6 +2626,7 @@ impl<'a> FrontmatterScan<'a> {
     fn absorb_sequence_item(&mut self, line: &str) {
         let Some(seq) = self.pending_seq.as_mut() else {
             self.skipped_array += 1;
+            self.note_unread(format!("`{line}` is a list item under no key"));
             return;
         };
         let item = strip_yaml_quotes(line.strip_prefix("- ").unwrap_or("").trim());
@@ -2565,17 +2644,25 @@ impl<'a> FrontmatterScan<'a> {
             // No colon: not a `key: value` scalar (e.g. a stray scalar or
             // malformed line). Surface it rather than silently swallow.
             self.skipped_invalid += 1;
+            self.note_unread(format!("`{line}` is not a `key: value` line"));
             return;
         };
         let key = key_raw.trim();
         if !is_property_key(key) {
             self.skipped_invalid += 1;
+            self.note_unread(format!("`{line}` is not a `key: value` line"));
             return;
         }
         if is_reserved_line_key(key) {
             // Exporter-managed key — silently filtered (it is never meant
             // to round-trip as a user property).
+            self.note_unread(format!("`{key}` is kept by the app, not the front matter"));
             return;
+        }
+        if self.key_lines.contains_key(key) {
+            self.note_unread(format!("`{key}` is written twice"));
+        } else {
+            self.key_lines.insert(key.to_string(), self.line);
         }
         let value_trimmed = value_raw.trim();
         // Block-scalar indicator (#1590): `key: |`, `key: >`, with optional
@@ -2614,6 +2701,9 @@ impl<'a> FrontmatterScan<'a> {
         }
         if value_trimmed.starts_with('{') && value_trimmed.ends_with('}') {
             self.skipped_array += 1;
+            self.note_unread(format!(
+                "`{line}` is a mapping, which a property cannot hold"
+            ));
             return;
         }
 
@@ -2640,9 +2730,9 @@ impl<'a> FrontmatterScan<'a> {
         self.pairs.push((key.to_string(), value.to_string()));
     }
 
-    /// Flush whatever is still open at end of input, append the aggregate
-    /// skip warnings, and yield the parsed pairs.
-    fn finish(mut self) -> Vec<(String, String)> {
+    /// Flush whatever is still open at end of input and append the aggregate
+    /// skip warnings.
+    fn finish(&mut self) {
         if let Some(b) = self.block.take() {
             commit_block(b, &mut self.pairs, &mut self.seen, self.warnings);
         }
@@ -2662,7 +2752,6 @@ impl<'a> FrontmatterScan<'a> {
                  and were ignored"
             ));
         }
-        self.pairs
     }
 }
 
@@ -2692,8 +2781,19 @@ fn parse_frontmatter(
     list_items: &mut std::collections::HashMap<String, Vec<String>>,
     warnings: &mut Vec<String>,
 ) -> Vec<(String, String)> {
+    scan_frontmatter(yaml, list_items, warnings).pairs
+}
+
+/// [`parse_frontmatter`]'s scan, finished, so a source buffer can read which
+/// line each key came from and which line no key did.
+fn scan_frontmatter<'a>(
+    yaml: &str,
+    list_items: &'a mut std::collections::HashMap<String, Vec<String>>,
+    warnings: &'a mut Vec<String>,
+) -> FrontmatterScan<'a> {
     let mut scan = FrontmatterScan::new(list_items, warnings);
-    for raw in yaml.lines() {
+    for (index, raw) in yaml.lines().enumerate() {
+        scan.line = index;
         if scan.absorb_block_scalar_line(raw) {
             continue;
         }
@@ -2714,7 +2814,8 @@ fn parse_frontmatter(
         }
         scan.parse_entry_line(line, raw);
     }
-    scan.finish()
+    scan.finish();
+    scan
 }
 
 /// Parsed YAML block-scalar header (#1590): the `|` / `>` indicator after a
@@ -4561,6 +4662,8 @@ bare line (({UUID_B})) too"
             blocks,
             frontmatter,
             frontmatter_list_items,
+            frontmatter_lines,
+            frontmatter_refusal,
             collapsed,
             warnings,
         } = output;
@@ -4576,6 +4679,15 @@ bare line (({UUID_B})) too"
         // they were.
         if !collapsed.is_empty() {
             shape["collapsed"] = serde_json::json!(collapsed);
+        }
+        // Only a source buffer reads them.
+        if !frontmatter_lines.is_empty() {
+            let lines: std::collections::BTreeMap<String, usize> =
+                frontmatter_lines.into_iter().collect();
+            shape["frontmatter_lines"] = serde_json::json!(lines);
+        }
+        if let Some(refusal) = frontmatter_refusal {
+            shape["frontmatter_refusal"] = serde_json::json!(refusal);
         }
         shape
     }
@@ -4649,11 +4761,13 @@ bare line (({UUID_B})) too"
     /// The #5160 findings each corpus snapshot still pins, where its reading
     /// differs from the decided grammar; `""` once it matches. The phase that
     /// fixes one flips these snapshots and drops its id here. Phase 2a (the
-    /// block grammar) fixed S1–S7, Phase 4a (tasks) P1 and P2, and Phase 4c
-    /// (Logseq bookkeeping) P3 and P8; the corpus
+    /// block grammar) fixed S1–S7, Phase 4a (tasks) P1 and P2, Phase 4c
+    /// (Logseq bookkeeping) P3 and P8, and Phase 5 S8 for front matter a
+    /// buffer opens with; the corpus
     /// reads with no file name, so an export's own `# Title` stays a heading
     /// here (S6 is pinned by the import command's round trips in
-    /// `page_cmd_tests.rs`).
+    /// `page_cmd_tests.rs`), and the front matter under it stays S8 in the
+    /// buffer's reading.
     const CORPUS_FINDINGS: &[(&str, &str)] = &[
         ("corpus_agaric_export", "S8"),
         ("corpus_agaric_source", ""),
@@ -4664,13 +4778,13 @@ bare line (({UUID_B})) too"
         ("corpus_four_space_outline", ""),
         ("corpus_gdocs_export", ""),
         ("corpus_github_readme", ""),
-        ("corpus_logseq_docs_markdown", "S8"),
-        ("corpus_logseq_page", "S8"),
+        ("corpus_logseq_docs_markdown", ""),
+        ("corpus_logseq_page", ""),
         ("corpus_meeting_notes_plain", ""),
         ("corpus_nbsp_indent", ""),
         ("corpus_notion_export", ""),
         ("corpus_obsidian_daily", ""),
-        ("corpus_obsidian_note", "S8"),
+        ("corpus_obsidian_note", ""),
         ("corpus_ordered_steps", ""),
         ("corpus_roam_export", ""),
         ("corpus_star_checklist", ""),
@@ -5154,7 +5268,8 @@ mod parse_proptest {
         }
 
         /// No parser loses text silently: import, Edit as Markdown and paste
-        /// ([`check_nothing_lost`]).
+        /// ([`check_nothing_lost`]). A buffer whose front matter is refused
+        /// saves nothing, so it loses nothing.
         #[test]
         fn no_parser_loses_text_silently(input in arb_document()) {
             let import = parse_logseq_markdown(&input);
@@ -5166,7 +5281,10 @@ mod parse_proptest {
                 &import.warnings,
             )?;
             let source = parse_source_outline(&input);
-            check_nothing_lost("source", &input, &source.blocks, &[], &source.warnings)?;
+            if source.frontmatter_refusal.is_none() {
+                let (blocks, page) = (&source.blocks, &source.frontmatter);
+                check_nothing_lost("source", &input, blocks, page, &source.warnings)?;
+            }
             check_nothing_lost("paste", &input, &parse_pasted_text(&input), &[], &[])?;
         }
 
@@ -5661,7 +5779,7 @@ mod tests_source_outline_5140 {
     /// A property line the save would not store — a reserved key in any
     /// spelling (D13), or one with no block at or above its indentation — is
     /// what the user typed: content. An import still drops both, with a
-    /// warning.
+    /// warning. One above the first bullet is the page's (#5160 S8).
     #[test]
     fn a_reserved_or_orphan_property_line_is_text() {
         let out = parse_source_outline("alias:: foo\n- a\n  Repeat-Seq:: 2\n  key:: v\n");
@@ -5672,13 +5790,14 @@ mod tests_source_outline_5140 {
             .collect();
         assert_eq!(
             shapes,
-            [
-                ("alias:: foo", &[][..]),
-                (
-                    "a\nRepeat-Seq:: 2",
-                    &[("key".to_string(), "v".to_string())][..]
-                ),
-            ]
+            [(
+                "a\nRepeat-Seq:: 2",
+                &[("key".to_string(), "v".to_string())][..]
+            )]
+        );
+        assert_eq!(
+            out.frontmatter,
+            [("aliases".to_string(), "foo".to_string())]
         );
         assert!(out.warnings.is_empty(), "{:?}", out.warnings);
 
@@ -5727,6 +5846,110 @@ mod tests_source_outline_5140 {
                 [("key".to_string(), "v".to_string())],
                 "{parser}"
             );
+        }
+    }
+
+    /// #5160 S8 — a buffer opens with its page's properties: YAML front
+    /// matter at its very top, then Logseq `key:: value` lines, each read as
+    /// an import reads it and known by its line, counted from 1; a quoted
+    /// `key::` value reads as a block's does (X5). The blocks start after
+    /// them, each naming its line in the buffer (X3). A paste reads neither.
+    #[test]
+    fn a_buffer_opens_with_its_page_properties() {
+        let md = "---\nstatus: open\naliases: [A, \"B, C\"]\ntags:\n  - x\n---\nowner:: ann\n\
+                  note:: \"two\\nlines\"\n\n- a\n";
+        let out = parse_source_outline(md);
+        let pair = |key: &str, value: &str| (key.to_string(), value.to_string());
+        assert_eq!(
+            out.frontmatter,
+            [
+                pair("status", "open"),
+                pair("aliases", "A, B, C"),
+                pair("tags", "x"),
+                pair("owner", "ann"),
+                pair("note", "two\nlines"),
+            ]
+        );
+        assert_eq!(out.frontmatter_list_items["aliases"], ["A", "B, C"]);
+        let lines: std::collections::BTreeMap<&str, usize> = out
+            .frontmatter_lines
+            .iter()
+            .map(|(key, line)| (key.as_str(), *line))
+            .collect();
+        assert_eq!(
+            lines,
+            [
+                ("aliases", 3),
+                ("note", 8),
+                ("owner", 7),
+                ("status", 2),
+                ("tags", 4)
+            ]
+            .into()
+        );
+        assert_eq!(out.frontmatter_refusal, None);
+        let blocks: Vec<(&str, Option<usize>)> = out
+            .blocks
+            .iter()
+            .map(|b| (b.content.as_str(), b.line))
+            .collect();
+        assert_eq!(blocks, [("a", Some(10))], "its line counts the page's");
+        assert!(parse_pasted_text(md).len() > 1, "a paste reads it as text");
+    }
+
+    /// A front matter line no page property is read from refuses the save,
+    /// named by its line: a page has no block to keep it in as text, and the
+    /// save must not drop it. So does a `---` no `---` closes.
+    #[test]
+    fn front_matter_a_page_cannot_read_is_refused_by_its_line() {
+        for (md, line, why) in [
+            (
+                "---\nstatus: open\nnot a pair\n---\n- a\n",
+                3,
+                "`not a pair` is not a `key: value` line",
+            ),
+            (
+                "---\nmeta: {a: 1}\n---\n",
+                2,
+                "`meta: {a: 1}` is a mapping, which a property cannot hold",
+            ),
+            (
+                "---\n- stray\n---\n",
+                2,
+                "`- stray` is a list item under no key",
+            ),
+            (
+                "---\nSpace: X\n---\n",
+                2,
+                "`Space` is kept by the app, not the front matter",
+            ),
+            (
+                "---\nstatus: a\n# note\nstatus: b\n---\n",
+                4,
+                "`status` is written twice",
+            ),
+            (
+                "---\nstatus: a\n---\nstatus:: b\n- x\n",
+                4,
+                "`status` is written twice",
+            ),
+            (
+                "tags:: a\ncreated-at:: x\n- a\n",
+                2,
+                "`created-at` is kept by the app, not the front matter",
+            ),
+            (
+                "---\nstatus: open\n- a\n",
+                1,
+                "the front matter this `---` opens has no closing `---`",
+            ),
+        ] {
+            let out = parse_source_outline(md);
+            let refusal = out
+                .frontmatter_refusal
+                .as_ref()
+                .map(|(n, why)| (*n, why.as_str()));
+            assert_eq!(refusal, Some((line, why)), "{md:?}");
         }
     }
 

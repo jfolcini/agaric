@@ -960,7 +960,8 @@ enum PageRead {
     /// An export: the attachments, the page's own properties, aliases and
     /// tags, and the titles of ref-typed property values.
     Export,
-    /// Source mode, the clipboard and a source save: the names a block may be
+    /// Source mode, the clipboard and a source save: the page's own
+    /// properties, aliases and tags (#5160 S8), and the names a block may be
     /// written with.
     Source,
     /// A duplicate, which writes every id raw: nothing more.
@@ -1242,7 +1243,8 @@ fn push_anchored_source_bullet(
 }
 
 /// The `---` YAML frontmatter block, emitted only when the page carries
-/// properties, aliases or tags.
+/// properties, aliases or tags. A ref value is its page's title where
+/// `ref_titles` has one, else its id.
 fn render_frontmatter(output: &mut String, data: &PageExportData) {
     let PageExportData {
         properties,
@@ -1395,8 +1397,9 @@ fn render_page_markdown(page_id: &str, data: &PageExportData) -> String {
     output
 }
 
-/// The page as the one markdown buffer source mode edits (#5140): its block
-/// tree alone. The title, frontmatter and page attachments have their own UIs.
+/// The page as the one markdown buffer source mode edits (#5140): its
+/// properties, aliases and tags as the export's front matter (#5160 S8), then
+/// its block tree. The title and page attachments have their own UIs.
 fn render_page_source(data: &PageExportData) -> String {
     render_page_source_ids(data).0
 }
@@ -1404,6 +1407,7 @@ fn render_page_source(data: &PageExportData) -> String {
 /// [`render_page_source`], with the ids of the blocks it holds in order.
 fn render_page_source_ids(data: &PageExportData) -> (String, Vec<String>) {
     let mut output = String::new();
+    render_frontmatter(&mut output, data);
     let ids = render_block_tree(&mut output, data.page.id.as_str(), data, RenderMode::Source);
     (output, ids)
 }
@@ -2262,8 +2266,8 @@ pub async fn export_page_markdown_inner(
     Ok(render_page_markdown(page_id, &data))
 }
 
-/// The page's source-mode markdown buffer (#5140): its block tree as
-/// `render_page_source` writes it. The page and tag names it may write are
+/// The page's source-mode markdown buffer (#5140): its front matter and block
+/// tree as `render_page_source` writes them. The page and tag names it may write are
 /// resolved in the same read snapshot as the content.
 ///
 /// # Errors
@@ -2715,8 +2719,9 @@ async fn read_pasted_properties(
 ) -> Result<(PropertyLines, Vec<String>), AppError> {
     let space = agaric_store::space::resolve_block_space(&mut ***tx, &anchor.id).await?;
     let mut lines = PropertyLines::load(tx, PropertyWrite::Paste).await?;
+    let values = blocks.iter().flat_map(|block| &block.properties);
     lines
-        .resolve_refs(tx, space.as_ref().map(SpaceId::as_str), blocks)
+        .resolve_refs(tx, space.as_ref().map(SpaceId::as_str), values)
         .await?;
     let mut warnings = Vec::new();
     lines.keep_refused_as_text(blocks, &mut warnings);
@@ -2895,6 +2900,7 @@ async fn load_page_export_data(
     read: PageRead,
 ) -> Result<PageExportData, AppError> {
     let export = read == PageRead::Export;
+    let front_matter = read != PageRead::Duplicate;
     let page = load_page_row(conn, page_id).await?;
     let descendants = load_descendants(conn, page_id).await?;
     let attachments_by_block = if export {
@@ -2903,7 +2909,7 @@ async fn load_page_export_data(
         HashMap::new()
     };
     let refs = resolve_references(conn, page_id, &descendants).await?;
-    let properties = if export {
+    let properties = if front_matter {
         load_page_properties(conn, page_id).await?
     } else {
         Vec::new()
@@ -2914,7 +2920,7 @@ async fn load_page_export_data(
     } else {
         HashMap::new()
     };
-    let (aliases, tag_names_fm) = if export {
+    let (aliases, tag_names_fm) = if front_matter {
         load_frontmatter_lists(conn, page_id).await?
     } else {
         (Vec::new(), Vec::new())
@@ -3412,9 +3418,11 @@ pub async fn import_markdown_with_progress(
     )
     .await?;
     let mut lines = PropertyLines::load(&mut tx, PropertyWrite::Import).await?;
-    lines
-        .resolve_refs(&mut tx, Some(&space_id), &parse_output.blocks)
-        .await?;
+    let values = parse_output
+        .blocks
+        .iter()
+        .flat_map(|block| &block.properties);
+    lines.resolve_refs(&mut tx, Some(&space_id), values).await?;
     lines.keep_refused_as_text(&mut parse_output.blocks, &mut parse_output.warnings);
 
     let mut counters = ImportCounters::default();
@@ -3967,7 +3975,7 @@ async fn apply_frontmatter_aliases(
         } else if !own.contains(&alias.to_ascii_lowercase()) {
             warnings.push(format!(
                 "alias '{alias}' is already used by another page; not applied to \
-                 the imported page"
+                 the page"
             ));
         }
     }

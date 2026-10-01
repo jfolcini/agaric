@@ -391,14 +391,7 @@ pub async fn remove_tag_inner(
     let block_id_str = block_id.as_str();
     let tag_id_str = tag_id.as_str();
 
-    // 1. Build OpPayload
-    let remove_payload = RemoveTagPayload {
-        block_id: block_id.clone(),
-        tag_id: tag_id.clone(),
-    };
-    let payload = OpPayload::RemoveTag(remove_payload.clone());
-
-    // 2. Single IMMEDIATE transaction: validation + op_log + block_tags write.
+    // 1. Single IMMEDIATE transaction: validation + op_log + block_tags write.
     //    BEGIN IMMEDIATE eagerly acquires the write lock, preventing
     //    SQLITE_BUSY_SNAPSHOT and fixing the TOCTOU window between validation
     // And the actual mutation. CommandTx couples commit +
@@ -420,23 +413,61 @@ pub async fn remove_tag_inner(
         )));
     }
 
+    // 2-4. Association check + op append + projection, shared with the
+    //      source save's front matter (#5160 S8).
+    let op_record = remove_tag_in_tx(
+        &mut tx,
+        materializer.loro_state(),
+        device_id,
+        block_id_str,
+        tag_id_str,
+    )
+    .await?
+    .ok_or_else(|| AppError::NotFound("tag association".into()))?;
+
+    // 5. Commit + dispatch background cache tasks (fire-and-forget).
+    tx.enqueue_background(op_record);
+    tx.commit_and_dispatch(materializer).await?;
+
+    // 6. Return response
+    Ok(TagResponse {
+        block_id: block_id.into_string(),
+        tag_id: tag_id.into_string(),
+    })
+}
+
+/// Remove `tag_id` from `block_id` in the caller's transaction, as
+/// [`remove_tag_inner`] does: the `RemoveTag` op, appended and projected,
+/// which the caller enqueues for dispatch. `None`, and nothing appended, when
+/// the block does not hold the tag.
+pub(crate) async fn remove_tag_in_tx(
+    tx: &mut CommandTx,
+    state: &agaric_engine::loro::shared::LoroState,
+    device_id: &str,
+    block_id: &str,
+    tag_id: &str,
+) -> Result<Option<op_log::OpRecord>, AppError> {
     // Check association exists (TOCTOU-safe)
     let assoc = sqlx::query!(
         r#"SELECT 1 as "v: i32" FROM block_tags WHERE block_id = ? AND tag_id = ?"#,
-        block_id_str,
-        tag_id_str
+        block_id,
+        tag_id
     )
-    .fetch_optional(&mut **tx)
+    .fetch_optional(&mut ***tx)
     .await?;
     if assoc.is_none() {
-        return Err(AppError::NotFound("tag association".into()));
+        return Ok(None);
     }
 
-    // 3. Append to op_log within transaction
+    // Append to op_log within transaction
+    let payload = OpPayload::RemoveTag(RemoveTagPayload {
+        block_id: BlockId::from_trusted(block_id),
+        tag_id: BlockId::from_trusted(tag_id),
+    });
     let op_record =
-        op_log::append_local_op_in_tx(&mut tx, device_id, payload, crate::db::now_ms()).await?;
+        op_log::append_local_op_in_tx(tx, device_id, payload, crate::db::now_ms()).await?;
 
-    // 4. #1257 route the `block_tags` delete + inherited-tag cleanup
+    // #1257 route the `block_tags` delete + inherited-tag cleanup
     // through the SAME engine-apply + projection the boot-replay / sync `ApplyOp`
     // path uses, IN this CommandTx, INSTEAD of the inline
     // `DELETE FROM block_tags` + `remove_inherited_tag`. `apply_remove_tag_via_loro`
@@ -458,18 +489,8 @@ pub async fn remove_tag_inner(
     // from `op_record.payload` and runs the SAME `apply_remove_tag_via_loro`;
     // RemoveTag carries no post-commit cohort fan-out, so the returned
     // `ApplyEffects` is empty and discarded.
-    crate::materializer::apply_op_projected(&mut tx, &op_record, materializer.loro_state(), false)
-        .await?;
-
-    // 5. Commit + dispatch background cache tasks (fire-and-forget).
-    tx.enqueue_background(op_record);
-    tx.commit_and_dispatch(materializer).await?;
-
-    // 6. Return response
-    Ok(TagResponse {
-        block_id: block_id.into_string(),
-        tag_id: tag_id.into_string(),
-    })
+    crate::materializer::apply_op_projected(tx, &op_record, state, false).await?;
+    Ok(Some(op_record))
 }
 
 /// Query blocks by boolean tag expression.

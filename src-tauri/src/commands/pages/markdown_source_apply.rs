@@ -55,9 +55,10 @@ pub struct PageSourceReport {
     /// Blocks of the page the buffer no longer holds, each deleted with the
     /// blocks under it.
     pub deleted: u32,
-    /// Properties set on blocks the page already had, task state included.
+    /// Properties set on the page and on blocks it already had, task state
+    /// included.
     pub properties_set: u32,
-    /// Properties removed from blocks the page already had.
+    /// Properties removed from the page and from blocks it already had.
     pub properties_deleted: u32,
     /// The pages and tags created for names the buffer newly wrote.
     pub names_created: Vec<BlockRow>,
@@ -86,6 +87,11 @@ pub struct PageSourceReport {
 /// D13), a `key::` line with no value deletes the property (P7), and a ref
 /// value is a block id or a page title in the space (D11).
 ///
+/// The page's own properties, aliases and tags are the front matter the
+/// buffer opens with (#5160 S8), written as their drawers write them: a key
+/// the front matter no longer holds is deleted, and a tag name no tag of the
+/// space has is created.
+///
 /// With `flags.line_ids` (#5160 A), `source` is the text `get_page_buffer`
 /// gives, anchors removed, and a block is the one whose id the line it starts
 /// on carries; no `^ID` in the text is read. A copy is a new block and a cut is
@@ -105,6 +111,8 @@ pub struct PageSourceReport {
 ///   its blocks (a carriage return in a block's text); an anchor is written
 ///   twice, or names no block of the page and `flags.force` is false; a
 ///   property line sets a value its definition refuses, named in the message;
+///   a front matter line holds no page property, or a value its definition
+///   refuses, named by its line;
 ///   a block the save would delete holds a nested page; a block would be
 ///   nested past `MAX_BLOCK_DEPTH`; or the save would append more ops than one
 ///   undo reverts; or `flags.line_ids` does not hold one entry per line of
@@ -129,7 +137,7 @@ pub async fn apply_page_source_inner(
     let (base, stale) = read_base(&data, &base_source, flags.merge, line_ids.is_some())?;
     let mut lines = PropertyLines::load(&mut tx, PropertyWrite::Edit).await?;
     let mut warnings = Vec::new();
-    let blocks = read_buffer(
+    let (blocks, front) = read_buffer(
         &source,
         line_ids,
         &base_source,
@@ -139,11 +147,9 @@ pub async fn apply_page_source_inner(
         &mut warnings,
     )?;
     let mut buffer = pair_blocks(&base, blocks, flags.force, &mut warnings)?;
-    let space = agaric_store::space::resolve_block_space(&mut **tx, &page_id).await?;
-    let space = space.as_ref().map(agaric_store::space::SpaceId::as_str);
-    lines.resolve_refs(&mut tx, space, &buffer.blocks).await?;
+    resolve_value_refs(&mut tx, &page_id, &mut lines, &buffer, &front).await?;
     // Boxed for the reason `duplicate_block_inner` gives.
-    let (mut tx, names_created) = Box::pin(resolve_buffer_names(
+    let (mut tx, mut names_created) = Box::pin(resolve_buffer_names(
         tx,
         materializer,
         device_id,
@@ -173,10 +179,44 @@ pub async fn apply_page_source_inner(
     ))
     .await?;
     Box::pin(write_changes(&mut tx, &mut save, &data, &base, &buffer)).await?;
+    let (mut tx, tags) = Box::pin(front_matter::write_front_matter(
+        tx,
+        &mut save,
+        &data,
+        &base.front_matter,
+        front,
+        &mut warnings,
+    ))
+    .await?;
+    names_created.extend(tags);
     let deletes = Box::pin(delete_dropped(&mut tx, &mut save, &base, &buffer)).await?;
     tx.commit_and_dispatch(materializer).await?;
-    // The post-commit fan-out `delete_block_inner` runs, per delete.
-    for deleted in &deletes {
+    dispatch_deletes(pool, materializer, &deletes).await;
+    save.report.names_created = names_created;
+    save.report.warnings = warnings;
+    Ok(save.report)
+}
+
+/// Resolve in the page's space the ref values the buffer's blocks and its
+/// front matter write.
+async fn resolve_value_refs(
+    tx: &mut CommandTx,
+    page_id: &BlockId,
+    lines: &mut PropertyLines,
+    buffer: &Buffer,
+    front: &front_matter::FrontMatterEdit,
+) -> Result<(), AppError> {
+    let space = agaric_store::space::resolve_block_space(&mut ***tx, page_id).await?;
+    let space = space.as_ref().map(agaric_store::space::SpaceId::as_str);
+    let values = buffer.blocks.iter().flat_map(|block| &block.properties);
+    lines
+        .resolve_refs(tx, space, values.chain(front.values()))
+        .await
+}
+
+/// The post-commit fan-out `delete_block_inner` runs, per delete.
+async fn dispatch_deletes(pool: &SqlitePool, materializer: &Materializer, deletes: &[DeleteInTx]) {
+    for deleted in deletes {
         crate::materializer::dispatch_delete_descendants(
             &deleted.op_record,
             &deleted.effects.deleted_cohort,
@@ -186,18 +226,16 @@ pub async fn apply_page_source_inner(
         .await;
         crate::materializer::remove_deleted_cohort_fts(pool, &deleted.effects.deleted_cohort).await;
     }
-    save.report.names_created = names_created;
-    save.report.warnings = warnings;
-    Ok(save.report)
 }
 
 /// The page's current source as the save reads it: the ids of the blocks the
 /// render holds, in order, and its parse (T0), block for block, with each
-/// block's parent among them.
+/// block's parent among them, and the front matter it opens with.
 struct Base {
     ids: Vec<String>,
     blocks: Vec<import::ParsedBlock>,
     parents: Vec<Option<usize>>,
+    front_matter: front_matter::FrontMatter,
 }
 
 /// The page's source, read `by_line` when the buffer's ids travel beside its
@@ -220,7 +258,9 @@ fn read_base(
             "the page changed after its source was read",
         ));
     }
-    let blocks = read_own_source(&current, by_line);
+    let parsed = read_own_source(&current, by_line);
+    let front_matter = front_matter::FrontMatter::of(&parsed);
+    let blocks = parsed.blocks;
     let unread = (0..blocks.len().max(ids.len())).find(|&i| {
         blocks.get(i).map(|block| block.block_anchor.as_deref())
             != ids.get(i).map(|id| Some(id.as_str()))
@@ -236,6 +276,7 @@ fn read_base(
             parents: outline_parents(&blocks),
             ids,
             blocks,
+            front_matter,
         },
         stale,
     ))
@@ -248,20 +289,20 @@ fn read_base(
 /// ending in a blank line or leaving a fence open before its property lines,
 /// so the save compares the buffer with this reading, not with the anchored
 /// one: the page's own text writes nothing.
-fn read_own_source(source: &str, by_line: bool) -> Vec<import::ParsedBlock> {
+fn read_own_source(source: &str, by_line: bool) -> import::ParseOutput {
     if !by_line {
-        return import::parse_source_outline(source).blocks;
+        return import::parse_source_outline(source);
     }
     let (text, line_ids) = anchor_free(source);
-    let mut blocks = import::parse_source_text(&text, &id_lines(&line_ids)).blocks;
-    for block in &mut blocks {
+    let mut parsed = import::parse_source_text(&text, &id_lines(&line_ids));
+    for block in &mut parsed.blocks {
         block.block_anchor = block
             .line
             .and_then(|line| line_ids.get(line - 1))
             .cloned()
             .flatten();
     }
-    blocks
+    parsed
 }
 
 /// The lines, counted from 1, that carry an id.
@@ -290,7 +331,9 @@ struct Buffer {
 /// block whose anchor an edit moved as that block, edited. A property key is
 /// read as the one `lines` fold it to (#5160 D13) before anything is compared,
 /// unless its block held it as written in the source the edit started from,
-/// and a `key::` line for a key it did not hold is text (P7).
+/// and a `key::` line for a key it did not hold is text (P7). The front matter
+/// is read either way, against the one the edit started from, as the page's
+/// properties.
 fn read_buffer(
     source: &str,
     line_ids: Option<&[Option<String>]>,
@@ -299,14 +342,18 @@ fn read_buffer(
     stale: bool,
     lines: &mut PropertyLines,
     warnings: &mut Vec<String>,
-) -> Result<Vec<import::ParsedBlock>, AppError> {
+) -> Result<(Vec<import::ParsedBlock>, front_matter::FrontMatterEdit), AppError> {
     let older = stale.then(|| read_own_source(base_source, line_ids.is_some()));
+    let from = older
+        .as_ref()
+        .map_or_else(|| base.front_matter.clone(), front_matter::FrontMatter::of);
+    let older = older.map(|older| older.blocks);
     let edited_from = older.as_ref().unwrap_or(&base.blocks);
     let loaded: HashSet<&str> = edited_from
         .iter()
         .filter_map(|block| block.block_anchor.as_deref())
         .collect();
-    let mut blocks = match line_ids {
+    let parsed = match line_ids {
         None => read_anchored(source, &loaded, warnings)?,
         Some(line_ids) => {
             let known = loaded
@@ -317,11 +364,14 @@ fn read_buffer(
             read_by_line(source, line_ids, &known, warnings)?
         }
     };
+    let front = front_matter::FrontMatterEdit::read(&parsed, from, lines)?;
+    let mut blocks = parsed.blocks;
     lines.canonicalize(&mut blocks, edited_from);
-    match older {
-        Some(older) => merge::merge_outlines(older, &base.blocks, blocks, warnings),
-        None => Ok(blocks),
-    }
+    let blocks = match older {
+        Some(older) => merge::merge_outlines(older, &base.blocks, blocks, warnings)?,
+        None => blocks,
+    };
+    Ok((blocks, front))
 }
 
 /// A buffer with each block's `^ID` in its text, read into blocks. An anchor
@@ -331,13 +381,15 @@ fn read_anchored(
     source: &str,
     loaded: &HashSet<&str>,
     warnings: &mut Vec<String>,
-) -> Result<Vec<import::ParsedBlock>, AppError> {
-    let parsed = import::parse_source_outline(source);
-    warnings.extend(parsed.warnings);
-    let mut blocks = parsed.blocks;
-    blocks.iter_mut().for_each(import::restore_text_anchor);
-    heal_moved_anchors(&mut blocks, loaded)?;
-    Ok(blocks)
+) -> Result<import::ParseOutput, AppError> {
+    let mut parsed = import::parse_source_outline(source);
+    warnings.append(&mut parsed.warnings);
+    parsed
+        .blocks
+        .iter_mut()
+        .for_each(import::restore_text_anchor);
+    heal_moved_anchors(&mut parsed.blocks, loaded)?;
+    Ok(parsed)
 }
 
 /// `text` read into blocks, each under the id `line_ids` gives the line it
@@ -350,7 +402,7 @@ fn read_by_line(
     line_ids: &[Option<String>],
     known: &HashSet<&str>,
     warnings: &mut Vec<String>,
-) -> Result<Vec<import::ParsedBlock>, AppError> {
+) -> Result<import::ParseOutput, AppError> {
     // Counted as the parser counts them, a lone carriage return a line end.
     let lines = text.replace("\r\n", "\n").split(['\n', '\r']).count();
     if line_ids.len() != lines {
@@ -359,11 +411,10 @@ fn read_by_line(
             line_ids.len()
         )));
     }
-    let parsed = import::parse_source_text(text, &id_lines(line_ids));
-    warnings.extend(parsed.warnings);
-    let mut blocks = parsed.blocks;
+    let mut parsed = import::parse_source_text(text, &id_lines(line_ids));
+    warnings.append(&mut parsed.warnings);
     let mut first: HashMap<String, usize> = HashMap::new();
-    for block in &mut blocks {
+    for block in &mut parsed.blocks {
         let Some(line) = block.line else {
             continue;
         };
@@ -386,7 +437,7 @@ fn read_by_line(
             )),
         }
     }
-    Ok(blocks)
+    Ok(parsed)
 }
 
 /// `blocks` paired with the base by anchor. An anchor written twice is
@@ -1157,6 +1208,9 @@ pub async fn apply_page_source(
 
 #[path = "markdown_source_merge.rs"]
 mod merge;
+
+#[path = "markdown_source_front_matter.rs"]
+mod front_matter;
 
 #[cfg(test)]
 mod tests {

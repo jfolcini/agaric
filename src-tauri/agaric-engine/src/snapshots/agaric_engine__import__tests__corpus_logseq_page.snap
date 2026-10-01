@@ -235,15 +235,6 @@ paste:
 source:
   blocks:
     - block_anchor: ~
-      content: "title:: Project Atlas"
-      depth: 0
-      is_code: false
-      properties:
-        - - tags
-          - "project, q3"
-        - - alias
-          - Atlas
-    - block_anchor: ~
       content: "## Goals"
       depth: 0
       is_code: false
@@ -339,6 +330,21 @@ source:
       properties:
         - - owner
           - "[[Bob]]"
-  frontmatter: []
-  frontmatter_list_items: {}
+  frontmatter:
+    - - title
+      - Project Atlas
+    - - tags
+      - "project, q3"
+    - - aliases
+      - Atlas
+  frontmatter_lines:
+    aliases: 3
+    tags: 2
+    title: 1
+  frontmatter_list_items:
+    aliases:
+      - Atlas
+    tags:
+      - project
+      - q3
   warnings: []

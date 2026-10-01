@@ -176,7 +176,8 @@ export const pages: Record<string, string> = {
     'Your changes to the Markdown are not saved. Discarding them leaves the page as it is.',
   'pageSource.discard': 'Discard',
   'pageSource.deleteAllTitle': 'Delete every block on this page?',
-  'pageSource.deleteAllBody': 'The source is empty, so saving it deletes every block on this page.',
+  'pageSource.deleteAllBody':
+    "The source is empty, so saving it deletes every block on this page and the page's properties, aliases and tags.",
   'pageSource.deleteAll': 'Delete all',
   'pageSource.conflictTitle': 'This page changed',
   'pageSource.conflictDescription': 'Since you opened the source, this changed elsewhere:',

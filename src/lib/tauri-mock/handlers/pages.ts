@@ -10,9 +10,15 @@
  */
 
 import { base64UrlToUtf8 } from '@/lib/base64url'
+import {
+  INLINE_PROPERTY_RESERVED_KEYS,
+  foldPropertyKey,
+  isInlinePropertyKey,
+} from '@/lib/inline-property-parse'
 import { compareNocase, compareUtf8Bytes, foldAsciiUppercase } from '@/lib/sqlite-collation'
 import { TASK_STATE_TO_MARKER } from '@/lib/task-states'
 import { blocksHandlers, parseOutline } from '@/lib/tauri-mock/handlers/blocks'
+import { propertiesHandlers } from '@/lib/tauri-mock/handlers/properties'
 import {
   type PageMetaRow,
   type TypedHandlers,
@@ -31,7 +37,13 @@ import {
   spaceRootGroup,
   validationRejection,
 } from '@/lib/tauri-mock/handlers/shared'
-import { findEmptyPageTitled, resolveInboundNames } from '@/lib/tauri-mock/names'
+import { tagsHandlers } from '@/lib/tauri-mock/handlers/tags'
+import {
+  findEmptyPageTitled,
+  normalizeTagName,
+  resolveInboundNames,
+  resolveTagNames,
+} from '@/lib/tauri-mock/names'
 import {
   blockTags,
   blocks,
@@ -103,11 +115,12 @@ function liveChildren(parentId: string): Record<string, unknown>[] {
 }
 
 /**
- * DELIBERATE APPROXIMATION of `render_page_source` (#5140): every live content
- * descendant, depth-first in sibling order, as `- content ^ID` with its further
- * lines indented under the bullet. Like the backend, a nested page and what is
- * under it are left out. No list markers, task checkboxes or property lines —
- * the Rust tests own that grammar, and a faithful port is the second
+ * DELIBERATE APPROXIMATION of `render_page_source` (#5140): the page's front
+ * matter ({@link renderFrontMatter}), then every live content descendant,
+ * depth-first in sibling order, as `- content ^ID` with its further lines
+ * indented under the bullet. Like the backend, a nested page and what is under
+ * it are left out. No list markers, task checkboxes or property lines — the
+ * Rust tests own that grammar, and a faithful port is the second
  * implementation #5140 deletes. Returns the buffer and the ids it holds, in
  * order.
  */
@@ -117,7 +130,7 @@ function renderPageSource(pid: string): { source: string; ids: string[] } {
   // block that is not a page is a validation error.
   if (!page || page['deleted_at']) throw notFoundRejection(`page '${pid}' not found`)
   if (page['block_type'] !== 'page') throw validationRejection('not a page')
-  let source = ''
+  let source = renderFrontMatter(pageFrontMatter(pid))
   const ids: string[] = []
   const render = (parentId: string, depth: number): void => {
     for (const child of liveChildren(parentId)) {
@@ -135,19 +148,244 @@ function renderPageSource(pid: string): { source: string; ids: string[] } {
   return { source, ids }
 }
 
+/** The page's properties, aliases and tags, as its front matter writes them (#5160 S8). */
+interface FrontMatter {
+  properties: Map<string, string>
+  aliases: string[]
+  tags: string[]
+}
+
+/** The page keys the export leaves out of front matter (`load_page_properties`). */
+const FRONT_MATTER_HIDDEN_KEYS: ReadonlySet<string> = new Set([
+  ...INLINE_PROPERTY_RESERVED_KEYS,
+  'listStyle',
+  'aliases',
+  'tags',
+])
+
+const FOLDED_RESERVED_KEYS: ReadonlySet<string> = new Set(
+  [...INLINE_PROPERTY_RESERVED_KEYS].map(foldPropertyKey),
+)
+
+/** `frontmatter_row_value` with no titles: a ref value is its id. */
+function frontMatterValue(row: Record<string, unknown>): string {
+  const text = row['value_date'] ?? row['value_text'] ?? row['value_ref']
+  if (typeof text === 'string') return text
+  if (typeof row['value_num'] === 'number') return String(row['value_num'])
+  return row['value_bool'] == null ? '' : String(row['value_bool'] !== 0)
+}
+
+/** What `pid`'s front matter holds: `load_page_properties` and `load_frontmatter_lists`. */
+function pageFrontMatter(pid: string): FrontMatter {
+  const rows = [...(properties.get(pid) ?? [])]
+    .filter(([key]) => !FRONT_MATTER_HIDDEN_KEYS.has(key))
+    .toSorted(([a], [b]) => compareUtf8Bytes(a, b))
+  const tags = [...(blockTags.get(pid) ?? [])]
+    .map((tagId) => blocks.get(tagId))
+    .filter(
+      (tag): tag is Record<string, unknown> =>
+        tag?.['block_type'] === 'tag' && !tag['deleted_at'] && tag['content'] != null,
+    )
+    .toSorted(
+      (a, b) =>
+        compareNocase(a['content'] as string, b['content'] as string) ||
+        compareUtf8Bytes(a['id'] as string, b['id'] as string),
+    )
+  return {
+    properties: new Map(rows.map(([key, row]) => [key, frontMatterValue(row)])),
+    aliases: (pageAliases.get(pid) ?? []).toSorted(compareNocase),
+    tags: tags.map((tag) => tag['content'] as string),
+  }
+}
+
+/**
+ * DELIBERATE APPROXIMATION of `render_frontmatter`: the export's YAML, written
+ * only when there is something to write, every value and list item bare. The
+ * Rust tests own the quoting and the block scalars.
+ */
+function renderFrontMatter(front: FrontMatter): string {
+  if (front.properties.size === 0 && front.aliases.length === 0 && front.tags.length === 0) {
+    return ''
+  }
+  let yaml = '---\n'
+  if (front.aliases.length > 0) yaml += `aliases: [${front.aliases.join(', ')}]\n`
+  if (front.tags.length > 0) yaml += `tags: [${front.tags.join(', ')}]\n`
+  for (const [key, value] of front.properties) yaml += `${key}: ${value}\n`
+  return `${yaml}---\n\n`
+}
+
+/** One layer of matching quotes off `value`, as `strip_yaml_quotes` takes it. */
+function unquoteYaml(value: string): string {
+  const quoted = /^"(.*)"$/s.exec(value) ?? /^'(.*)'$/s.exec(value)
+  return quoted?.[1] ?? value
+}
+
+/** A refusal at buffer line `line`, prefixed with it as the backend's are (`at_line`). */
+function refusedAt(line: number | undefined, message: string): Error {
+  return validationRejection(line === undefined ? message : `line ${line}: ${message}`)
+}
+
+/**
+ * DELIBERATE APPROXIMATION of `import::read_page_properties` (#5160 S8): the
+ * YAML front matter a buffer opens with, as `key: value` lines, `aliases:` and
+ * `tags:` as `[a, b]` lists split on every comma, one layer of quotes
+ * stripped. A line that is none of these, a key only the app sets and a key
+ * written twice refuse the save by their line, as does a `---` nothing
+ * closes. No Logseq `key::` lines, block scalars or block sequences. Returns
+ * the front matter, each key's line, and the buffer with its lines left blank,
+ * so a block after it names its line in the buffer (#5160 X3).
+ */
+function readFrontMatter(source: string): {
+  front: FrontMatter
+  lines: Map<string, number>
+  body: string
+} {
+  const front: FrontMatter = { properties: new Map(), aliases: [], tags: [] }
+  const lines = new Map<string, number>()
+  const rows = source.split('\n')
+  if (rows[0] !== '---') return { front, lines, body: source }
+  const close = rows.indexOf('---', 1)
+  if (close < 0) {
+    throw refusedAt(1, 'the front matter this `---` opens has no closing `---`')
+  }
+  for (let at = 1; at < close; at++) {
+    const text = (rows[at] ?? '').trim()
+    if (text === '' || text.startsWith('#')) continue
+    const colon = text.indexOf(':')
+    const key = colon < 0 ? '' : text.slice(0, colon).trim()
+    const refuse = (why: string) => refusedAt(at + 1, why)
+    if (!isInlinePropertyKey(key)) throw refuse(`\`${text}\` is not a \`key: value\` line`)
+    if (FOLDED_RESERVED_KEYS.has(foldPropertyKey(key))) {
+      throw refuse(`\`${key}\` is kept by the app, not the front matter`)
+    }
+    if (lines.has(key)) throw refuse(`\`${key}\` is written twice`)
+    lines.set(key, at + 1)
+    const value = text.slice(colon + 1).trim()
+    if (key === 'aliases' || key === 'tags') {
+      front[key] = value
+        .replace(/^\[(.*)\]$/s, '$1')
+        .split(',')
+        .map((item) => unquoteYaml(item.trim()))
+        .filter((item) => item !== '')
+    } else {
+      front.properties.set(key, unquoteYaml(value))
+    }
+  }
+  return { front, lines, body: rows.map((row, at) => (at > close ? row : '')).join('\n') }
+}
+
+/** What a save writes to the page's front matter (`markdown_source_front_matter.rs`). */
+interface FrontMatterWrites {
+  set: Array<[string, string]>
+  deleted: string[]
+  /** The page's aliases after the save, or `null` when they stay. */
+  aliases: string[] | null
+  tagsAdded: string[]
+  tagsRemoved: string[]
+}
+
+/**
+ * What `to` changed from `from`, the front matter the edit started from, less
+ * what the page (`now`) already holds: a merge keeps what the page changed
+ * since. Each value set is checked as `set_property` checks it first, a
+ * refusal naming its line, so nothing is written.
+ */
+function frontMatterWrites(
+  from: FrontMatter,
+  to: FrontMatter,
+  now: FrontMatter,
+  lines: ReadonlyMap<string, number>,
+): FrontMatterWrites {
+  const set = [...to.properties].filter(
+    ([key, value]) =>
+      value !== '' && from.properties.get(key) !== value && now.properties.get(key) !== value,
+  )
+  for (const [key, value] of set) {
+    try {
+      assertValidSetPropertyValue(key, value)
+    } catch (err) {
+      const reason = (err as { message?: unknown }).message
+      throw refusedAt(lines.get(key), `\`${key}: ${value}\` cannot be saved: ${String(reason)}`)
+    }
+  }
+  const has = (list: readonly string[], item: string) => list.includes(item)
+  const tag = (list: readonly string[], name: string) =>
+    list.some((held) => normalizeTagName(held) === normalizeTagName(name))
+  const aliases = [
+    ...now.aliases.filter((alias) => !has(from.aliases, alias) || has(to.aliases, alias)),
+    ...to.aliases.filter((alias) => !has(from.aliases, alias) && !has(now.aliases, alias)),
+  ]
+  return {
+    set,
+    deleted: [...from.properties.keys()].filter(
+      (key) => !(to.properties.get(key) ?? '') && now.properties.has(key),
+    ),
+    aliases: aliases.join('\n') === now.aliases.join('\n') ? null : aliases,
+    tagsAdded: to.tags.filter((name) => !tag(from.tags, name) && !tag(now.tags, name)),
+    tagsRemoved: from.tags.filter((name) => !tag(to.tags, name) && tag(now.tags, name)),
+  }
+}
+
+/**
+ * Write `writes` to `pageId` through the property, alias and tag commands: a
+ * tag name no tag of the space has is created. Returns the counts.
+ */
+function writeFrontMatter(
+  pageId: string,
+  writes: FrontMatterWrites,
+  spaceId: string | null,
+  out: { opRefs: OpRefs; namesCreated: Record<string, unknown>[]; warnings: string[] },
+): { properties_set: number; properties_deleted: number } {
+  for (const key of writes.deleted) {
+    out.opRefs.push(...propertiesHandlers.delete_property({ blockId: pageId, key }).op_refs)
+  }
+  for (const [key, value] of writes.set) {
+    const row = propertiesHandlers.set_property({
+      blockId: pageId,
+      key,
+      value: {
+        value_text: value,
+        value_num: null,
+        value_date: null,
+        value_ref: null,
+        value_bool: null,
+      },
+    }) as { op_refs: OpRefs } | null
+    out.opRefs.push(...(row?.op_refs ?? []))
+  }
+  if (writes.aliases !== null) {
+    const kept = pagesHandlers.set_page_aliases({ pageId, aliases: writes.aliases }) as string[]
+    for (const alias of writes.aliases.filter((wanted) => !kept.includes(wanted))) {
+      out.warnings.push(`alias '${alias}' is already used by another page; not applied to the page`)
+    }
+  }
+  for (const name of writes.tagsRemoved) {
+    const tagId = [...(blockTags.get(pageId) ?? [])].find(
+      (id) =>
+        normalizeTagName((blocks.get(id)?.['content'] as string) ?? '') === normalizeTagName(name),
+    )
+    if (tagId) out.opRefs.push(...tagsHandlers.remove_tag({ blockId: pageId, tagId }).op_refs)
+  }
+  if (spaceId === null) {
+    for (const name of writes.tagsAdded) {
+      out.warnings.push(`tag '${name}' names no tag of the page's space; not applied`)
+    }
+  } else if (writes.tagsAdded.length > 0) {
+    const tags = resolveTagNames(writes.tagsAdded, spaceId, out.opRefs)
+    out.namesCreated.push(...tags.created)
+    for (const tagId of tags.ids.values()) {
+      out.opRefs.push(...tagsHandlers.add_tag({ blockId: pageId, tagId }).op_refs)
+    }
+  }
+  return { properties_set: writes.set.length, properties_deleted: writes.deleted.length }
+}
+
 interface SourceBullet {
   content: string
   depth: number
   anchor: string | null
   /** The buffer line the bullet starts on, which a refusal names (#5160 X3). */
   line?: number | undefined
-}
-
-/** A refusal at `bullet`, prefixed with its line as the backend's are. */
-function refusedAt(bullet: SourceBullet, message: string): Error {
-  return validationRejection(
-    bullet.line === undefined ? message : `line ${bullet.line}: ${message}`,
-  )
 }
 
 /** The ` ^word` a source block ends with, when it is id-sized. */
@@ -188,13 +426,14 @@ function parseSourceBuffer(source: string): SourceBullet[] {
 /**
  * The text `get_page_buffer` gives (#5160 A): `source` less the ` ^ID` each
  * block's last line ends in, and the id each line carries, the block's on the
- * line it starts on. The mock's render writes no anchor on a line of its own,
- * so there is none to drop.
+ * line it starts on. The front matter's lines are kept as written, carrying
+ * none (#5160 S8). The mock's render writes no anchor on a line of its own, so
+ * there is none to drop.
  */
 function anchorFree(source: string): { text: string; lineIds: Array<string | null> } {
   const lines = source.split('\n')
   const lineIds: Array<string | null> = lines.map(() => null)
-  for (const bullet of parseSourceBuffer(source)) {
+  for (const bullet of parseSourceBuffer(readFrontMatter(source).body)) {
     if (bullet.anchor === null || bullet.line === undefined) continue
     const last = bullet.line - 1 + bullet.content.split('\n').length - 1
     const line = lines[last] ?? ''
@@ -300,7 +539,7 @@ function healMovedAnchors(
     const [first, second] = tokens
     if (!first) continue
     if (second) {
-      throw refusedAt(bullet, `${first.token} and ${second.token} are written in one block`)
+      throw refusedAt(bullet.line, `${first.token} and ${second.token} are written in one block`)
     }
     const id = first.token.slice(1)
     bullet.content = withoutToken(bullet.content, first.start, first.start + first.token.length)
@@ -572,7 +811,8 @@ function readAnchored(source: string, loadedIds: ReadonlySet<string>): SourceBul
   const seen = new Set<string>()
   for (const bullet of typed) {
     if (bullet.anchor === null) continue
-    if (seen.has(bullet.anchor)) throw refusedAt(bullet, `^${bullet.anchor} appears more than once`)
+    if (seen.has(bullet.anchor))
+      throw refusedAt(bullet.line, `^${bullet.anchor} appears more than once`)
     seen.add(bullet.anchor)
   }
   healMovedAnchors(typed, loadedIds, seen)
@@ -583,11 +823,12 @@ function readAnchored(source: string, loadedIds: ReadonlySet<string>): SourceBul
  * Every refusal `apply_page_source` makes, checked before anything is written:
  * a stale base unless `merge` folds the page's changes into the buffer
  * (`force` never skips it: it overrides a foreign anchor, not a stale base), a
- * page that does not read back as its own source, an anchor named twice, an
- * anchor that is not a block of this page unless `force` forks it as a new
+ * page that does not read back as its own source, front matter it cannot read
+ * or a value in it `set_property` refuses (#5160 S8), an anchor named twice,
+ * an anchor that is not a block of this page unless `force` forks it as a new
  * block, and a delete that would take a nested page with it. Returns the
  * buffer's bullets, the page's text per anchor as it reads back, the rendered
- * ids the buffer left out and the warnings.
+ * ids the buffer left out, what the front matter writes and the warnings.
  */
 function readSourceEdit(
   pageId: string,
@@ -598,6 +839,7 @@ function readSourceEdit(
   t1: SourceBullet[]
   before: Map<string | null, string>
   absent: string[]
+  front: FrontMatterWrites
   warnings: string[]
 } {
   const current = renderPageSource(pageId)
@@ -611,25 +853,29 @@ function readSourceEdit(
   }
   // With the ids beside the text, the page's own source is read as that text.
   const readOwn = flags.lineIds === null ? parseSourceBuffer : readOwnText
-  const t0 = readOwn(current.source)
+  const now = readFrontMatter(current.source)
+  const t0 = readOwn(now.body)
   if (t0.length !== current.ids.length || t0.some((b, i) => b.anchor !== current.ids[i])) {
     throw validationRejection(`page '${pageId}' does not read back as its own source`)
   }
   const before = new Map(t0.map((b) => [b.anchor, b.content]))
+  const edited = readFrontMatter(source)
+  const from = stale ? readFrontMatter(baseSource) : now
+  const front = frontMatterWrites(from.front, edited.front, now.front, edited.lines)
   // Against the source the edit started from and before the merge, as
   // `read_buffer` heals, so the merge reads a healed bullet as its block.
-  const loaded = stale ? readOwn(baseSource) : t0
+  const loaded = stale ? readOwn(from.body) : t0
   const loadedIds = new Set(loaded.flatMap(({ anchor }) => (anchor === null ? [] : [anchor])))
   const warnings: string[] = []
   const typed =
     flags.lineIds === null
-      ? readAnchored(source, loadedIds)
-      : readByLine(source, flags.lineIds, new Set([...loadedIds, ...current.ids]), warnings)
+      ? readAnchored(edited.body, loadedIds)
+      : readByLine(edited.body, flags.lineIds, new Set([...loadedIds, ...current.ids]), warnings)
   const t1 = stale ? mergeSourceBuffer(loaded, t0, typed, warnings) : typed
   const anchors = new Set(t1.flatMap(({ anchor }) => (anchor === null ? [] : [anchor])))
   for (const bullet of t1) {
     if (bullet.anchor === null || before.has(bullet.anchor)) continue
-    if (!flags.force) throw refusedAt(bullet, `^${bullet.anchor} is not a block of this page`)
+    if (!flags.force) throw refusedAt(bullet.line, `^${bullet.anchor} is not a block of this page`)
     warnings.push(`^${bullet.anchor} no longer on this page; saved as a new block`)
     bullet.anchor = null
   }
@@ -641,7 +887,7 @@ function readSourceEdit(
       throw validationRejection(`deleting its parent would delete the page '${String(row['id'])}'`)
     }
   }
-  return { t1, before, absent, warnings }
+  return { t1, before, absent, front, warnings }
 }
 
 /**
@@ -1319,11 +1565,12 @@ export const pagesHandlers = {
   },
 
   // #5140 Phase 4a — save the page edited as its source buffer: moves and
-  // creates first, then edits, then deletes, so a child kept out of a deleted
-  // block has moved before the delete cascades. The buffer is read by
-  // `parseSourceBuffer`, so the backend's list markers, task checkboxes and
-  // property lines are not modelled (`properties_*` stay 0), nor are its op cap
-  // and depth limit; tests must not rely on the mock for them. The names a new
+  // creates first, then edits, then the page's front matter (#5160 S8), then
+  // deletes, so a child kept out of a deleted block has moved before the
+  // delete cascades. The buffer is read by `parseSourceBuffer`, so the
+  // backend's list markers, task checkboxes and property lines are not
+  // modelled (`properties_*` count the page's own), nor are its op cap and
+  // depth limit; tests must not rely on the mock for them. The names a new
   // or edited bullet writes resolve in the page's space (`resolveInboundNames`,
   // #5160 N4), the created pages and tags in `names_created`. Phase 5: with
   // `merge`, a stale buffer is saved with the page's changes folded in
@@ -1363,6 +1610,11 @@ export const pagesHandlers = {
       opRefs.push(...blocksHandlers.edit_block({ blockId: anchor, toText: content }).op_refs)
       report.edited += 1
     }
+    const written = writeFrontMatter(pageId, edit.front, spaceId, {
+      opRefs,
+      namesCreated,
+      warnings: edit.warnings,
+    })
     const absentSet = new Set(edit.absent)
     for (const id of edit.absent) {
       if (absentSet.has(blocks.get(id)?.['parent_id'] as string)) continue
@@ -1373,8 +1625,7 @@ export const pagesHandlers = {
     return {
       op_refs: opRefs,
       ...report,
-      properties_set: 0,
-      properties_deleted: 0,
+      ...written,
       names_created: namesCreated,
       warnings: edit.warnings,
     }

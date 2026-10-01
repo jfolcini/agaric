@@ -5,7 +5,8 @@
  * anchor, at the end of its last line or on a line of its own. A block starts
  * at a bullet line and runs through its anchor to the next bullet, so a code
  * line above the anchor that looks like a bullet stays in the block. A block
- * is keyed by its anchor; one that only moved is not a change.
+ * is keyed by its anchor; one that only moved is not a change. The page's
+ * front matter, above the first bullet (#5160 S8), is one more.
  */
 
 export interface SourceChange {
@@ -17,11 +18,13 @@ const BULLET_LINE = /^\s*- /
 // Uppercase alphanumerics rather than strict Crockford, so the mock's seeded
 // ids (`…BLOCK01`) key as anchors too.
 const ANCHOR = /(?:^|\s)\^([0-9A-Z]{26})[ \t]*$/m
+const FRONT_MATTER = /^---\n(?:.*\n)*?---(?:\n|$)/
 
 function keyedBlocks(source: string): [key: string, text: string][] {
-  const blocks: string[] = []
-  let anchored = false
-  for (const line of source.split('\n')) {
+  const front = FRONT_MATTER.exec(source)?.[0] ?? ''
+  const blocks: string[] = front === '' ? [] : [front]
+  let anchored = front !== ''
+  for (const line of source.slice(front.length).split('\n')) {
     if (blocks.length === 0 || (anchored && BULLET_LINE.test(line))) {
       blocks.push(line)
       anchored = false
@@ -33,7 +36,7 @@ function keyedBlocks(source: string): [key: string, text: string][] {
   return blocks
     .map((block) => block.replace(/\n+$/, ''))
     .filter((text) => text !== '')
-    .map((text) => [ANCHOR.exec(text)?.[1] ?? text, text])
+    .map((text, i) => [i === 0 && front !== '' ? '---' : (ANCHOR.exec(text)?.[1] ?? text), text])
 }
 
 /** The changes from `base` to `current`, in current's order, removed ones where they sat in base. */

@@ -35,11 +35,14 @@ function pageActions(page: Page): Locator {
   return page.getByRole('button', { name: 'Page actions', exact: true })
 }
 
+/** The page's own aliases, the front matter its buffer opens with (#5160 S8), as a pattern. */
+const FRONT_MATTER = String.raw`---\naliases: \[getting-started, gs\]\n---\n\n`
+
 async function openSourceMode(page: Page): Promise<Locator> {
   await pageActions(page).click()
   await page.getByRole('menuitem', { name: 'Edit as Markdown', exact: true }).click()
   const editor = page.getByRole('textbox', { name: 'Markdown source', exact: true })
-  await expect(editor).toHaveValue(new RegExp(`^- ${WELCOME} .* \\^${GS1}\n`))
+  await expect(editor).toHaveValue(new RegExp(`^${FRONT_MATTER}- ${WELCOME} .* \\^${GS1}\n`))
   return editor
 }
 
@@ -165,6 +168,20 @@ test.describe('Edit as Markdown (#5140 Phase 4b)', () => {
     const editor = await openSourceMode(page)
 
     await expect(editor).toHaveValue(new RegExp(`knowledge base\\. Typed just now\\. \\^${GS1}\n`))
+  })
+
+  test('an alias typed into the front matter is saved, and the header shows it', async ({
+    page,
+  }) => {
+    const editor = await openSourceMode(page)
+    const aliases = 'aliases: [getting-started, gs'
+    await editor.fill((await editor.inputValue()).replace(aliases, `${aliases}, handbook`))
+
+    await page.getByRole('button', { name: 'Save', exact: true }).click()
+
+    await expect(sourceEditor(page)).toHaveCount(0)
+    await expect(pageActions(page)).toBeFocused()
+    await expect(page.getByText('handbook', { exact: true })).toBeVisible()
   })
 
   test('Cancel with changes asks: Keep editing keeps the text, Discard leaves the page untouched', async ({

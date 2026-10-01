@@ -2974,9 +2974,12 @@ export type PageSourceReport = {
 	 *  blocks under it.
 	 */
 	deleted: number,
-	/**  Properties set on blocks the page already had, task state included. */
+	/**
+	 *  Properties set on the page and on blocks it already had, task state
+	 *  included.
+	 */
 	properties_set: number,
-	/**  Properties removed from blocks the page already had. */
+	/**  Properties removed from the page and from blocks it already had. */
 	properties_deleted: number,
 	/**  The pages and tags created for names the buffer newly wrote. */
 	names_created: BlockRow[],

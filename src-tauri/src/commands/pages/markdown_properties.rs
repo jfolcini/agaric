@@ -60,17 +60,16 @@ impl PropertyLines {
         })
     }
 
-    /// Resolve in `space_id` the values `blocks` write under a `ref`-declared
-    /// key.
-    pub(super) async fn resolve_refs(
+    /// Resolve in `space_id` the values `properties` write under a
+    /// `ref`-declared key.
+    pub(super) async fn resolve_refs<'a>(
         &mut self,
         conn: &mut sqlx::SqliteConnection,
         space_id: Option<&str>,
-        blocks: &[import::ParsedBlock],
+        properties: impl IntoIterator<Item = &'a (String, String)>,
     ) -> Result<(), AppError> {
-        let names: Vec<&str> = blocks
-            .iter()
-            .flat_map(|block| &block.properties)
+        let names: Vec<&str> = properties
+            .into_iter()
             .filter(|(key, _)| self.is_ref(&self.canonical_key(key)))
             .map(|(_, value)| ref_name(value))
             .collect();

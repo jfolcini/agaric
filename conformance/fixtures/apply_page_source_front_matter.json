@@ -1,0 +1,421 @@
+{
+  "description": "#5160 S8 — the page's own properties, aliases and tags head its Edit as Markdown buffer as the export's YAML front matter, and `apply_page_source` writes what the front matter changed: a changed or new key is set, a key left out deleted, the alias list replaced and a tag added or removed; a line no property reads from, a value its definition refuses and an unclosed `---` refuse the save; the same holds by line ids (#5160 A), where `get_page_buffer` keeps the front matter as text carrying no id. Covers only what the tauri mock models: text values and plain list items, which both stacks render byte for byte (the keys sorted, `drop` seeded after `stage` so the order is the render's). Each successful step's `baseSource` is the page's source after the step before it. Seed: S1 (Home) > S2 (alpha), tagged S3 (work), alias `Home base`, `stage: open` (a select of open/done) and `drop: me`; S4 is the tag `idea`; both tags sit under S5 (Tags), since a root seed block's `page_id` differs between the two seed loaders. Re-author `expected` / `expected_ops` via CONFORMANCE_UPDATE=1.",
+  "expected": {
+    "block_tags": [
+      {
+        "block_id": "B1",
+        "tag_id": "B5"
+      }
+    ],
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Home",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B1",
+        "page_id": "B1",
+        "parent_id": null,
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "alpha, by line",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B2",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "page",
+        "content": "Tags",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B3",
+        "page_id": "B3",
+        "parent_id": null,
+        "position": 2,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "tag",
+        "content": "work",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B4",
+        "page_id": "B3",
+        "parent_id": "B3",
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "tag",
+        "content": "idea",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B5",
+        "page_id": "B3",
+        "parent_id": "B3",
+        "position": 2,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      }
+    ],
+    "op_log_digest": {
+      "count": 10,
+      "ops": [
+        {
+          "key": "stage",
+          "op_type": "set_property"
+        },
+        {
+          "key": "drop",
+          "op_type": "set_property"
+        },
+        {
+          "op_type": "add_tag"
+        },
+        {
+          "op_type": "delete_property"
+        },
+        {
+          "key": "owner",
+          "op_type": "set_property"
+        },
+        {
+          "key": "stage",
+          "op_type": "set_property"
+        },
+        {
+          "op_type": "remove_tag"
+        },
+        {
+          "op_type": "add_tag"
+        },
+        {
+          "op_type": "edit_block"
+        },
+        {
+          "key": "stage",
+          "op_type": "set_property"
+        }
+      ]
+    },
+    "page_links": [],
+    "properties": [
+      {
+        "block_id": "B1",
+        "key": "owner",
+        "value": "ann",
+        "value_type": "Text"
+      },
+      {
+        "block_id": "B1",
+        "key": "stage",
+        "value": "open",
+        "value_type": "Text"
+      }
+    ]
+  },
+  "expected_ops": [
+    {
+      "code": null,
+      "error": null,
+      "name": "unchanged_front_matter_writes_nothing",
+      "returns": ["apply_page_source#created=0#edited=0#deleted=0"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "set_add_and_delete_page_properties",
+      "returns": ["apply_page_source#created=0#edited=0#deleted=0"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "replace_aliases_and_tags",
+      "returns": ["apply_page_source#created=0#edited=0#deleted=0"]
+    },
+    {
+      "code": null,
+      "error": "validation",
+      "name": "unreadable_front_matter_is_refused",
+      "returns": []
+    },
+    {
+      "code": null,
+      "error": "validation",
+      "name": "refused_value_is_refused",
+      "returns": []
+    },
+    {
+      "code": null,
+      "error": "validation",
+      "name": "unclosed_front_matter_is_refused",
+      "returns": []
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "by_line_ids_writes_the_front_matter_and_a_block",
+      "returns": ["apply_page_source#created=0#edited=1#deleted=0"]
+    },
+    {
+      "code": null,
+      "error": "validation",
+      "name": "by_line_ids_unreadable_front_matter_is_refused",
+      "returns": []
+    }
+  ],
+  "expected_queries": [
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": null,
+      "name": "aliases_after_the_save",
+      "rows": ["HQ"],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": null,
+      "name": "the_buffer_after_the_saves",
+      "rows": [
+        "line#text=---",
+        "line#text=aliases: [HQ]",
+        "line#text=tags: [idea]",
+        "line#text=owner: ann",
+        "line#text=stage: open",
+        "line#text=---",
+        "line#text=",
+        "B2#text=- alpha, by line",
+        "line#text="
+      ],
+      "total_count": null
+    }
+  ],
+  "name": "apply_page_source_front_matter",
+  "ops": [
+    {
+      "args": {
+        "baseSource": "---\naliases: [Home base]\ntags: [work]\ndrop: me\nstage: open\n---\n\n- alpha ^000000000000000000000000S2\n",
+        "force": false,
+        "pageId": "S1",
+        "source": "---\naliases: [Home base]\ntags: [work]\ndrop: me\nstage: open\n---\n\n- alpha ^000000000000000000000000S2\n"
+      },
+      "command": "apply_page_source",
+      "comment": "The buffer is the page's own source, front matter and all: nothing differs, so nothing is written.",
+      "name": "unchanged_front_matter_writes_nothing",
+      "via": "command"
+    },
+    {
+      "args": {
+        "baseSource": "---\naliases: [Home base]\ntags: [work]\ndrop: me\nstage: open\n---\n\n- alpha ^000000000000000000000000S2\n",
+        "force": false,
+        "pageId": "S1",
+        "source": "---\naliases: [Home base]\ntags: [work]\nowner: ann\nstage: done\n---\n\n- alpha ^000000000000000000000000S2\n"
+      },
+      "command": "apply_page_source",
+      "comment": "`stage` changes, `owner` is new and `drop` is left out: two properties set on the page and one deleted, as the property drawer writes them.",
+      "name": "set_add_and_delete_page_properties",
+      "via": "command"
+    },
+    {
+      "args": {
+        "baseSource": "---\naliases: [Home base]\ntags: [work]\nowner: ann\nstage: done\n---\n\n- alpha ^000000000000000000000000S2\n",
+        "force": false,
+        "pageId": "S1",
+        "source": "---\naliases: [HQ]\ntags: [idea]\nowner: ann\nstage: done\n---\n\n- alpha ^000000000000000000000000S2\n"
+      },
+      "command": "apply_page_source",
+      "comment": "The alias list is replaced and the tag `work` swapped for the seeded `idea`: its association is added and `work`'s removed.",
+      "name": "replace_aliases_and_tags",
+      "via": "command"
+    },
+    {
+      "args": {
+        "baseSource": "---\naliases: [HQ]\ntags: [idea]\nowner: ann\nstage: done\n---\n\n- alpha ^000000000000000000000000S2\n",
+        "force": false,
+        "pageId": "S1",
+        "source": "---\naliases: [HQ]\ntags: [idea]\nowner: ann\nstage: done\nnot a pair\n---\n\n- alpha ^000000000000000000000000S2\n"
+      },
+      "command": "apply_page_source",
+      "comment": "A front matter line that is no `key: value` pair refuses the save by its line: the page has no block to keep it in as text.",
+      "expect_error": "validation",
+      "name": "unreadable_front_matter_is_refused",
+      "via": "command"
+    },
+    {
+      "args": {
+        "baseSource": "---\naliases: [HQ]\ntags: [idea]\nowner: ann\nstage: done\n---\n\n- alpha ^000000000000000000000000S2\n",
+        "force": false,
+        "pageId": "S1",
+        "source": "---\naliases: [HQ]\ntags: [idea]\nowner: ann\nstage: nope\n---\n\n- alpha ^000000000000000000000000S2\n"
+      },
+      "command": "apply_page_source",
+      "comment": "`nope` is not an option of the `stage` definition, so the save is refused as the property drawer refuses it.",
+      "expect_error": "validation",
+      "name": "refused_value_is_refused",
+      "via": "command"
+    },
+    {
+      "args": {
+        "baseSource": "---\naliases: [HQ]\ntags: [idea]\nowner: ann\nstage: done\n---\n\n- alpha ^000000000000000000000000S2\n",
+        "force": false,
+        "pageId": "S1",
+        "source": "---\naliases: [HQ]\ntags: [idea]\nowner: ann\nstage: done\n\n- alpha ^000000000000000000000000S2\n"
+      },
+      "command": "apply_page_source",
+      "comment": "A `---` no `---` closes is front matter left open, refused rather than saved as blocks.",
+      "expect_error": "validation",
+      "name": "unclosed_front_matter_is_refused",
+      "via": "command"
+    },
+    {
+      "args": {
+        "baseSource": "---\naliases: [HQ]\ntags: [idea]\nowner: ann\nstage: done\n---\n\n- alpha ^000000000000000000000000S2\n",
+        "force": false,
+        "lineIds": [null, null, null, null, null, null, null, "000000000000000000000000S2", null],
+        "merge": false,
+        "pageId": "S1",
+        "source": "---\naliases: [HQ]\ntags: [idea]\nowner: ann\nstage: open\n---\n\n- alpha, by line\n"
+      },
+      "command": "apply_page_source",
+      "comment": "By line ids (#5160 A): the text `get_page_buffer` gives, its front matter as written and carrying no id, with `stage` and alpha's line both changed: one save sets the property and edits the block.",
+      "name": "by_line_ids_writes_the_front_matter_and_a_block",
+      "via": "command"
+    },
+    {
+      "args": {
+        "baseSource": "---\naliases: [HQ]\ntags: [idea]\nowner: ann\nstage: open\n---\n\n- alpha, by line ^000000000000000000000000S2\n",
+        "force": false,
+        "lineIds": [
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          "000000000000000000000000S2",
+          null
+        ],
+        "merge": false,
+        "pageId": "S1",
+        "source": "---\naliases: [HQ]\ntags: [idea]\nowner: ann\nstage: open\nnot a pair\n---\n\n- alpha, by line\n"
+      },
+      "command": "apply_page_source",
+      "comment": "By line ids, a front matter line no property reads from refuses the save as it does in an anchored buffer.",
+      "expect_error": "validation",
+      "name": "by_line_ids_unreadable_front_matter_is_refused",
+      "via": "command"
+    }
+  ],
+  "queries": [
+    {
+      "args": {
+        "pageId": "S1"
+      },
+      "command": "get_page_aliases",
+      "comment": "`HQ` alone: the front matter's alias list replaced `Home base`, and `page_aliases` is outside the snapshot, so this read observes it.",
+      "name": "aliases_after_the_save"
+    },
+    {
+      "args": {
+        "pageId": "S1"
+      },
+      "command": "get_page_buffer",
+      "comment": "The page's buffer after the saves: the front matter as written, each of its lines carrying no id, and alpha's id on alpha's line.",
+      "name": "the_buffer_after_the_saves"
+    }
+  ],
+  "seed": {
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Home",
+        "id": "S1",
+        "parent_id": null,
+        "position": 1
+      },
+      {
+        "block_type": "content",
+        "content": "alpha",
+        "id": "S2",
+        "parent_id": "S1",
+        "position": 1
+      },
+      {
+        "block_type": "page",
+        "content": "Tags",
+        "id": "S5",
+        "parent_id": null,
+        "position": 2
+      },
+      {
+        "block_type": "tag",
+        "content": "work",
+        "id": "S3",
+        "parent_id": "S5",
+        "position": 1
+      },
+      {
+        "block_type": "tag",
+        "content": "idea",
+        "id": "S4",
+        "parent_id": "S5",
+        "position": 2
+      }
+    ],
+    "page_aliases": [
+      {
+        "alias": "Home base",
+        "page_id": "S1"
+      }
+    ],
+    "properties": [
+      {
+        "block_id": "S1",
+        "key": "stage",
+        "value": {
+          "value_text": "open"
+        }
+      },
+      {
+        "block_id": "S1",
+        "key": "drop",
+        "value": {
+          "value_text": "me"
+        }
+      }
+    ],
+    "property_defs": [
+      {
+        "key": "stage",
+        "options": "[\"open\",\"done\"]",
+        "value_type": "select"
+      }
+    ],
+    "tags": [
+      {
+        "block_id": "S1",
+        "tag_id": "S3"
+      }
+    ]
+  }
+}

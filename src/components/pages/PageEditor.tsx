@@ -259,12 +259,18 @@ function PageEditorInner({
     setFocused(null)
     setSourcePageId(pageId)
   }, [pageId, setFocused])
-  // Back to the kebab source mode was opened from, rather than `body`.
+  // Back to the kebab source mode was opened from, rather than `body`. The
+  // header remounts first: a save may have changed the page's properties,
+  // aliases and tags, which it reads once per mount (#5160 S8).
   const kebabRef = useRef<HTMLButtonElement>(null)
+  const [sourceClosed, setSourceClosed] = useState(0)
   const handleCloseSource = useCallback(() => {
     setSourcePageId(null)
-    kebabRef.current?.focus()
+    setSourceClosed((closed) => closed + 1)
   }, [])
+  useEffect(() => {
+    if (sourceClosed > 0) kebabRef.current?.focus()
+  }, [sourceClosed])
 
   // Clear undo state for the previous page when navigating away or unmounting
   useEffect(
@@ -355,6 +361,7 @@ function PageEditorInner({
     >
       {/* Header: back button + editable title + tag badges */}
       <PageHeader
+        key={sourceClosed}
         pageId={pageId}
         title={title}
         onBack={onBack}
