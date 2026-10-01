@@ -1,4 +1,5 @@
 use crate::prelude::*;
+use agaric_lib::commands::pages::anchor_free;
 use agaric_store::space::{SpaceId, SpaceScope};
 
 // ======================================================================
@@ -2779,35 +2780,21 @@ pub(super) async fn page_source(pool: &SqlitePool, page: &BlockId) -> String {
     get_page_source_inner(pool, page.as_str()).await.unwrap()
 }
 
-/// Save `source` over `page`, edited from `base`.
+/// Save `source` over `page`, edited from `base`. `source` is written as the
+/// page's source writes it, each block's `^ID` in its text, and saved as the
+/// editor saves it: as that text less its anchors, each id beside the line its
+/// block starts on (`anchor_free`).
 pub(super) async fn save_source(
     pool: &SqlitePool,
     mat: &Materializer,
     page: &BlockId,
     source: &str,
     base: &str,
-    force: bool,
 ) -> Result<PageSourceReport, AppError> {
-    let result = apply_page_source_inner(
-        pool,
-        DEV,
-        mat,
-        page.as_str(),
-        source.to_owned(),
-        base.to_owned(),
-        SourceSaveFlags {
-            force,
-            merge: false,
-            line_ids: None,
-        },
-    )
-    .await;
-    settle(mat).await;
-    result
+    save_text(pool, mat, page, anchor_free(source), base, false).await
 }
 
-/// Save `source` over `page`, edited from `base`, with the changes the page
-/// took since folded in.
+/// [`save_source`], with the changes the page took since `base` folded in.
 async fn merge_source(
     pool: &SqlitePool,
     mat: &Materializer,
@@ -2815,18 +2802,27 @@ async fn merge_source(
     source: &str,
     base: &str,
 ) -> Result<PageSourceReport, AppError> {
+    save_text(pool, mat, page, anchor_free(source), base, true).await
+}
+
+/// Save `text`, each of its lines carrying the id `line_ids` gives, over
+/// `page`, edited from `base`.
+async fn save_text(
+    pool: &SqlitePool,
+    mat: &Materializer,
+    page: &BlockId,
+    (text, line_ids): (String, Vec<Option<String>>),
+    base: &str,
+    merge: bool,
+) -> Result<PageSourceReport, AppError> {
     let result = apply_page_source_inner(
         pool,
         DEV,
         mat,
         page.as_str(),
-        source.to_owned(),
+        text,
         base.to_owned(),
-        SourceSaveFlags {
-            force: false,
-            merge: true,
-            line_ids: None,
-        },
+        SourceSaveFlags { merge, line_ids },
     )
     .await;
     settle(mat).await;
@@ -3006,115 +3002,6 @@ async fn everything_page(pool: &SqlitePool, mat: &Materializer) -> BlockId {
     page
 }
 
-/// Saving a page's own source appends no op, however much the page holds:
-/// the save compares the buffer with the page's parsed source, not with the
-/// stored rows, and resolves no name in a block it leaves alone.
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn apply_page_source_of_its_own_source_writes_nothing() {
-    let (pool, _dir) = test_pool().await;
-    let mat = Materializer::new(pool.clone());
-    let page = everything_page(&pool, &mat).await;
-    let source = page_source(&pool, &page).await;
-    for written in [
-        "- [x] a task",
-        "todo_state:: WAITING",
-        "- - bullet item",
-        "- 1. numbered item",
-        "\\- not a bullet",
-        "- \\[ ] not a task",
-        "see [[Project]] #work ^",
-        "twin [[01J5140PR0JECT000000000001]] ^",
-        "issue #42 ^",
-    ] {
-        assert!(
-            source.contains(written),
-            "seed: the source writes `{written}`:\n{source}"
-        );
-    }
-    let before = last_seq(&pool).await;
-
-    let report = save_source(&pool, &mat, &page, &source, &source, false)
-        .await
-        .unwrap();
-
-    assert_eq!(
-        ops_after(&pool, before).await,
-        Vec::<String>::new(),
-        "an unchanged buffer appends no op"
-    );
-    assert_eq!(counts(&report), [0; 6], "and reports none");
-    assert!(
-        report.names_created.is_empty() && report.warnings.is_empty(),
-        "and creates no name and warns of nothing: {report:?}"
-    );
-    assert_eq!(
-        page_source(&pool, &page).await,
-        source,
-        "the page is as it was"
-    );
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn apply_page_source_edits_a_blocks_content() {
-    let (pool, _dir) = test_pool().await;
-    let mat = Materializer::new(pool.clone());
-    let page = dup_page(&pool, &mat, "Edit").await;
-    let a = dup_child(&pool, &mat, &page, "hello").await;
-    dup_child(&pool, &mat, &page, "untouched").await;
-    settle(&mat).await;
-    let base = page_source(&pool, &page).await;
-    let before = last_seq(&pool).await;
-
-    let report = save_source(
-        &pool,
-        &mat,
-        &page,
-        &with(&base, "- hello ^", "- hello\n  world ^"),
-        &base,
-        false,
-    )
-    .await
-    .unwrap();
-
-    assert_eq!(counts(&report), [0, 1, 0, 0, 0, 0], "one block edited");
-    assert_eq!(ops_after(&pool, before).await, vec!["edit_block"]);
-    assert_eq!(
-        dup_children(&pool, &page).await[0],
-        (a.into_string(), "hello\nworld".to_owned()),
-        "the continuation line is the block's second line"
-    );
-}
-
-/// A lowercase `^id` is the block it spells (#5160 X3): ULIDs are uppercase,
-/// and the save reads the anchor so.
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn apply_page_source_reads_a_lowercase_anchor_as_its_block() {
-    let (pool, _dir) = test_pool().await;
-    let mat = Materializer::new(pool.clone());
-    let page = dup_page(&pool, &mat, "Lowercase").await;
-    let a = dup_child(&pool, &mat, &page, "hello").await;
-    settle(&mat).await;
-    let base = page_source(&pool, &page).await;
-    let lowercase = a.as_str().to_ascii_lowercase();
-
-    let report = save_source(
-        &pool,
-        &mat,
-        &page,
-        &format!("- hello again ^{lowercase}\n"),
-        &base,
-        false,
-    )
-    .await
-    .unwrap();
-
-    assert_eq!(counts(&report), [0, 1, 0, 0, 0, 0], "the block is edited");
-    assert_eq!(
-        dup_children(&pool, &page).await,
-        vec![(a.into_string(), "hello again".to_owned())]
-    );
-}
-
 /// A property value with a line break, which MCP can set, is written quoted
 /// in the buffer (#5160 X5): the page's own source saves as a no-op, and a
 /// quoted value typed in the buffer is stored as the value it spells.
@@ -3147,9 +3034,7 @@ async fn apply_page_source_round_trips_a_multi_line_property_value() {
     );
     let before = last_seq(&pool).await;
 
-    let report = save_source(&pool, &mat, &page, &base, &base, false)
-        .await
-        .unwrap();
+    let report = save_source(&pool, &mat, &page, &base, &base).await.unwrap();
     assert_eq!(
         counts(&report),
         [0; 6],
@@ -3162,7 +3047,7 @@ async fn apply_page_source_round_trips_a_multi_line_property_value() {
         "note:: \"two\\nlines\"",
         r#"note:: "a \"quoted\" line\nand C:\\temp""#,
     );
-    let report = save_source(&pool, &mat, &page, &source, &base, false)
+    let report = save_source(&pool, &mat, &page, &source, &base)
         .await
         .unwrap();
     assert_eq!(counts(&report), [0, 0, 0, 0, 1, 0], "one property set");
@@ -3214,7 +3099,7 @@ async fn apply_page_source_sets_and_deletes_properties() {
         &format!("  note:: done\n  owner:: ann\n  reviewer:: {target}\n"),
     );
 
-    let report = save_source(&pool, &mat, &page, &source, &base, false)
+    let report = save_source(&pool, &mat, &page, &source, &base)
         .await
         .unwrap();
 
@@ -3265,7 +3150,7 @@ async fn apply_page_source_reads_a_ref_value_as_an_id_or_a_title() {
         &plain_line,
         &format!("{plain_line}  reviewer:: TWIN\n"),
     );
-    let result = save_source(&pool, &mat, &page, &tied, &base, false).await;
+    let result = save_source(&pool, &mat, &page, &tied, &base).await;
     assert!(
         matches!(&result, Err(AppError::Validation { message, .. })
             if message.contains("`reviewer:: TWIN`") && message.contains("more than one page")),
@@ -3282,7 +3167,7 @@ async fn apply_page_source_reads_a_ref_value_as_an_id_or_a_title() {
         &linked_line,
         &format!("{linked_line}  reviewer:: [[project]]\n"),
     );
-    let report = save_source(&pool, &mat, &page, &source, &base, false)
+    let report = save_source(&pool, &mat, &page, &source, &base)
         .await
         .unwrap();
 
@@ -3334,7 +3219,7 @@ async fn apply_page_source_checks_only_typed_values_against_their_options() {
     let line = format!("- other ^{other}\n");
 
     let typed = with(&base, &line, &format!("{line}  priority:: 3\n"));
-    let refused = save_source(&pool, &mat, &page, &typed, &base, false).await;
+    let refused = save_source(&pool, &mat, &page, &typed, &base).await;
     assert!(
         matches!(refused, Err(AppError::Validation { .. })),
         "a typed value outside the options is refused, got {refused:?}"
@@ -3342,7 +3227,7 @@ async fn apply_page_source_checks_only_typed_values_against_their_options() {
     assert_eq!(dup_counts(&pool).await, before, "nothing is written");
 
     let edited = with(&base, &line, &format!("- other, edited ^{other}\n"));
-    let report = save_source(&pool, &mat, &page, &edited, &base, false)
+    let report = save_source(&pool, &mat, &page, &edited, &base)
         .await
         .unwrap();
     assert_eq!(
@@ -3396,7 +3281,6 @@ async fn apply_page_source_checkbox_completes_a_repeating_task() {
         &page,
         &with(&base, "- [ ] daily task", "- [x] daily task"),
         &base,
-        false,
     )
     .await
     .unwrap();
@@ -3438,7 +3322,6 @@ async fn apply_page_source_checkbox_completes_a_repeating_task() {
         &page,
         &with(&base, "- [x] daily task", "- [ ] daily task"),
         &base,
-        false,
     )
     .await
     .unwrap();
@@ -3493,7 +3376,6 @@ async fn apply_page_source_removing_the_repeat_line_removes_the_whole_rule() {
         &page,
         &with(&base, "  repeat:: daily\n", ""),
         &base,
-        false,
     )
     .await
     .unwrap();
@@ -3554,7 +3436,7 @@ async fn apply_page_source_clears_columns_and_list_markers() {
         "- numbered ^",
     );
 
-    let report = save_source(&pool, &mat, &page, &source, &base, false)
+    let report = save_source(&pool, &mat, &page, &source, &base)
         .await
         .unwrap();
 
@@ -3580,8 +3462,8 @@ async fn apply_page_source_clears_columns_and_list_markers() {
     );
 }
 
-/// A bullet with no anchor is created where the buffer puts it, with its
-/// properties and task state.
+/// A bullet whose line carries no id is created where the buffer puts it,
+/// with its properties and task state.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn apply_page_source_creates_an_unanchored_bullet_in_place() {
     let (pool, _dir) = test_pool().await;
@@ -3597,7 +3479,7 @@ async fn apply_page_source_creates_an_unanchored_bullet_in_place() {
         &format!("- [ ] fresh\n  owner:: ann\n- b ^{b}"),
     );
 
-    let report = save_source(&pool, &mat, &page, &source, &base, false)
+    let report = save_source(&pool, &mat, &page, &source, &base)
         .await
         .unwrap();
 
@@ -3620,114 +3502,35 @@ async fn apply_page_source_creates_an_unanchored_bullet_in_place() {
     );
 }
 
-/// A new bullet ending in ` ^word`, where the word is not a block id, keeps
-/// it as text: it names no block, so it is neither refused nor forked.
+/// A `^word` typed into the text stays text, a block's id among them: only
+/// the ids beside the lines name blocks, so a typed `^ID` neither moves nor
+/// copies the block it spells.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn apply_page_source_keeps_an_anchor_that_is_not_a_block_id_as_text() {
+async fn apply_page_source_keeps_a_typed_anchor_as_text() {
     let (pool, _dir) = test_pool().await;
     let mat = Materializer::new(pool.clone());
     let page = dup_page(&pool, &mat, "Carets").await;
-    dup_child(&pool, &mat, &page, "a").await;
+    let a = dup_child(&pool, &mat, &page, "a").await;
     settle(&mat).await;
-    let base = page_source(&pool, &page).await;
+    let (source, mut lines) = buffer_lines(&pool, &page).await;
+    let typed = format!("y ^{a}");
+    lines.insert(1, plain("- x ^2"));
+    lines.insert(2, plain(&format!("- {typed}")));
 
-    let report = save_source(&pool, &mat, &page, &format!("{base}- x ^2\n"), &base, false)
+    let report = save_by_line(&pool, &mat, &page, &lines, &source, false)
         .await
         .unwrap();
 
-    assert_eq!(counts(&report), [1, 0, 0, 0, 0, 0], "one block created");
+    assert_eq!(counts(&report), [2, 0, 0, 0, 0, 0], "two blocks created");
     assert!(report.warnings.is_empty(), "{:?}", report.warnings);
-    let contents: Vec<String> = dup_children(&pool, &page)
-        .await
-        .into_iter()
-        .map(|(_, content)| content)
-        .collect();
+    let children = dup_children(&pool, &page).await;
+    let contents: Vec<&str> = children.iter().map(|(_, c)| c.as_str()).collect();
     assert_eq!(
         contents,
-        ["a", "x ^2"],
-        "the caret word is the block's text"
+        ["a", "x ^2", typed.as_str()],
+        "the carets are text"
     );
-}
-
-/// An anchor an edit left mid-block — a line typed under it, text typed after
-/// it, a code block under it — still names its block: the block is edited,
-/// not deleted and created anew, and the anchor leaves its text.
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn apply_page_source_keeps_a_block_whose_anchor_an_edit_moved() {
-    let (pool, _dir) = test_pool().await;
-    let mat = Materializer::new(pool.clone());
-    let page = dup_page(&pool, &mat, "Moved").await;
-    let a = dup_child(&pool, &mat, &page, "foo").await;
-    settle(&mat).await;
-
-    for (what, edited, content) in [
-        (
-            "a line typed under the anchor",
-            format!("- foo ^{a}\n  more\n"),
-            "foo\nmore",
-        ),
-        (
-            "text typed after the anchor",
-            format!("- foo ^{a} bar\n"),
-            "foo bar",
-        ),
-        (
-            "a code block typed under the anchor",
-            format!("- foo ^{a}\n  ```\n  x\n  ```\n"),
-            "foo\n```\nx\n```",
-        ),
-    ] {
-        let base = page_source(&pool, &page).await;
-        let before = last_seq(&pool).await;
-        let report = save_source(&pool, &mat, &page, &edited, &base, false)
-            .await
-            .unwrap();
-        assert_eq!(
-            counts(&report),
-            [0, 1, 0, 0, 0, 0],
-            "{what}: the block is edited"
-        );
-        assert!(report.warnings.is_empty(), "{what}: {:?}", report.warnings);
-        assert_eq!(ops_after(&pool, before).await, vec!["edit_block"], "{what}");
-        assert_eq!(
-            dup_children(&pool, &page).await,
-            vec![(a.clone().into_string(), content.to_owned())],
-            "{what}: the block is the same block, with the anchor gone from its text"
-        );
-    }
-}
-
-/// Two anchors of the page inside one unanchored block would name two blocks:
-/// the save is refused, naming both, and writes nothing.
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn apply_page_source_refuses_a_block_holding_two_moved_anchors() {
-    let (pool, _dir) = test_pool().await;
-    let mat = Materializer::new(pool.clone());
-    let page = dup_page(&pool, &mat, "Two").await;
-    let a = dup_child(&pool, &mat, &page, "a").await;
-    let b = dup_child(&pool, &mat, &page, "b").await;
-    settle(&mat).await;
-    let base = page_source(&pool, &page).await;
-    let before = last_seq(&pool).await;
-
-    let result = save_source(
-        &pool,
-        &mat,
-        &page,
-        &format!("- a ^{a} and ^{b} joined\n"),
-        &base,
-        false,
-    )
-    .await;
-
-    assert!(
-        matches!(&result, Err(AppError::Validation { message, .. })
-            if message.starts_with("line 1: ")
-                && message.contains(a.as_str()) && message.contains(b.as_str())),
-        "refused naming the line and both anchors: {result:?}"
-    );
-    assert_eq!(ops_after(&pool, before).await, Vec::<String>::new());
-    assert_eq!(page_source(&pool, &page).await, base, "nothing is written");
+    assert_eq!(children[0].0, a.into_string(), "a is where it was");
 }
 
 /// A property line the save would not store — a reserved key such as
@@ -3740,18 +3543,12 @@ async fn apply_page_source_keeps_a_reserved_property_line_as_text() {
     let page = dup_page(&pool, &mat, "Reserved").await;
     let a = dup_child(&pool, &mat, &page, "weekly").await;
     settle(&mat).await;
-    let base = page_source(&pool, &page).await;
+    let (source, mut lines) = buffer_lines(&pool, &page).await;
+    lines.insert(1, plain("  repeat-seq:: 2"));
 
-    let report = save_source(
-        &pool,
-        &mat,
-        &page,
-        &format!("- weekly ^{a}\n  repeat-seq:: 2\n"),
-        &base,
-        false,
-    )
-    .await
-    .unwrap();
+    let report = save_by_line(&pool, &mat, &page, &lines, &source, false)
+        .await
+        .unwrap();
 
     assert_eq!(
         counts(&report),
@@ -3789,7 +3586,6 @@ async fn apply_page_source_moves_a_block_under_a_bullet_it_creates() {
         &page,
         &format!("- new\n  - a ^{a}\n- b ^{b}\n"),
         &base,
-        false,
     )
     .await
     .unwrap();
@@ -3823,16 +3619,9 @@ async fn apply_page_source_deleting_a_parent_keeps_its_outdented_child() {
         "seed"
     );
 
-    let report = save_source(
-        &pool,
-        &mat,
-        &page,
-        &format!("- child ^{child}\n"),
-        &base,
-        false,
-    )
-    .await
-    .unwrap();
+    let report = save_source(&pool, &mat, &page, &format!("- child ^{child}\n"), &base)
+        .await
+        .unwrap();
 
     assert_eq!(
         counts(&report),
@@ -3854,38 +3643,6 @@ async fn apply_page_source_deleting_a_parent_keeps_its_outdented_child() {
     assert_eq!(live, 0, "the parent and its dropped child are deleted");
 }
 
-/// The stale check always runs: a base that is not the page's source is
-/// refused with `RequiresRefresh`, with `force` too, and nothing is written.
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn apply_page_source_against_a_stale_base_is_refused_even_forced() {
-    let (pool, _dir) = test_pool().await;
-    let mat = Materializer::new(pool.clone());
-    let page = dup_page(&pool, &mat, "Stale").await;
-    let a = dup_child(&pool, &mat, &page, "a").await;
-    settle(&mat).await;
-    let base = page_source(&pool, &page).await;
-    edit_block_inner(&pool, DEV, &mat, a.clone(), "a, edited elsewhere".into())
-        .await
-        .unwrap();
-    settle(&mat).await;
-    let before = last_seq(&pool).await;
-    let source = with(&base, "- a ^", "- a, edited here ^");
-
-    for force in [false, true] {
-        let result = save_source(&pool, &mat, &page, &source, &base, force).await;
-        assert!(
-            is_refresh(&result),
-            "a stale base is RequiresRefresh (force = {force}), got {result:?}"
-        );
-    }
-    assert_eq!(ops_after(&pool, before).await, Vec::<String>::new());
-    assert_eq!(
-        dup_children(&pool, &page).await,
-        vec![(a.into_string(), "a, edited elsewhere".to_owned())],
-        "the edit made elsewhere stands"
-    );
-}
-
 /// A page renamed after the source was read changes the name the source
 /// wrote, so the save is stale: resolving the old title would create a page.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -3904,32 +3661,26 @@ async fn apply_page_source_after_a_linked_page_is_renamed_is_stale() {
     settle(&mat).await;
     let before = last_seq(&pool).await;
 
-    let result = save_source(
-        &pool,
-        &mat,
-        &page,
-        &with(&base, "see", "look at"),
-        &base,
-        false,
-    )
-    .await;
+    let result = save_source(&pool, &mat, &page, &with(&base, "see", "look at"), &base).await;
 
     assert!(is_refresh(&result), "stale, got {result:?}");
     assert_eq!(ops_after(&pool, before).await, Vec::<String>::new());
 }
 
-/// Overwriting with an anchor whose block was deleted after the buffer was
-/// read saves that block as a new one, with a warning, and leaves the deleted
-/// one in the trash.
+/// Overwrite saves the buffer against the page as it is now: a line
+/// carrying the id of a block deleted after the buffer was read is not a block
+/// of the page, so it is saved as a new block, with a warning naming its line,
+/// and the deleted block stays in the trash.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn apply_page_source_forced_saves_a_deleted_blocks_anchor_as_a_new_block() {
+async fn apply_page_source_saves_a_line_whose_block_was_deleted_as_a_new_block() {
     let (pool, _dir) = test_pool().await;
     let mat = Materializer::new(pool.clone());
     let page = dup_page(&pool, &mat, "Fork").await;
     let a = dup_child(&pool, &mat, &page, "a").await;
     let b = dup_child(&pool, &mat, &page, "b").await;
     settle(&mat).await;
-    let edited = with(&page_source(&pool, &page).await, "- b ^", "- b, kept ^");
+    let (_, mut lines) = buffer_lines(&pool, &page).await;
+    lines[1].0 = "- b, kept".to_owned();
     delete_block_inner(&pool, DEV, &mat, b.clone())
         .await
         .unwrap();
@@ -3941,20 +3692,15 @@ async fn apply_page_source_forced_saves_a_deleted_blocks_anchor_as_a_new_block()
         .await
         .unwrap();
 
-    let refused = save_source(&pool, &mat, &page, &edited, &current, false).await;
-    assert!(
-        matches!(&refused, Err(AppError::Validation { message, .. }) if message.contains(b.as_str())),
-        "without force the anchor is refused, naming it: {refused:?}"
-    );
-    let report = save_source(&pool, &mat, &page, &edited, &current, true)
+    let report = save_by_line(&pool, &mat, &page, &lines, &current, false)
         .await
         .unwrap();
 
     assert_eq!(counts(&report), [1, 0, 0, 0, 0, 0], "one block created");
     assert_eq!(
         report.warnings,
-        vec![format!("^{b} no longer on this page; saved as a new block")],
-        "the fork is named"
+        ["line 2: not a block of this page; saved as a new block"],
+        "the line is named"
     );
     let children = dup_children(&pool, &page).await;
     assert_eq!(children.len(), 2, "a and the new block: {children:?}");
@@ -4021,7 +3767,7 @@ async fn apply_page_source_keeps_a_nested_page_in_place() {
         ),
     ] {
         let base = page_source(&pool, &page).await;
-        let report = save_source(&pool, &mat, &page, &source, &base, false)
+        let report = save_source(&pool, &mat, &page, &source, &base)
             .await
             .unwrap();
         assert_eq!(counts(&report), expected, "{what}");
@@ -4074,7 +3820,6 @@ async fn apply_page_source_refuses_to_delete_a_block_holding_a_nested_page() {
         &page,
         &format!("- added\n- keep, edited ^{keep}\n"),
         &base,
-        false,
     )
     .await;
 
@@ -4092,9 +3837,9 @@ async fn apply_page_source_refuses_to_delete_a_block_holding_a_nested_page() {
 }
 
 /// Every refusal writes nothing and names the buffer line it stopped at
-/// (#5160 X3): an anchor written twice, an anchor of another page's block, a
-/// nesting past the depth limit, and more ops than one undo reverts; and a
-/// page whose source does not read back is refused, naming the block.
+/// (#5160 X3): a nesting past the depth limit, and more ops than one undo
+/// reverts; and a page whose source does not read back is refused, naming the
+/// block.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn apply_page_source_refusals_write_nothing() {
     let (pool, _dir) = test_pool().await;
@@ -4102,7 +3847,6 @@ async fn apply_page_source_refusals_write_nothing() {
     let page = dup_page(&pool, &mat, "Refusals").await;
     let other = dup_page(&pool, &mat, "Other").await;
     let a = dup_child(&pool, &mat, &page, "a").await;
-    let elsewhere = dup_child(&pool, &mat, &other, "elsewhere").await;
     settle(&mat).await;
     let base = page_source(&pool, &page).await;
     let deep: String = (0..=MAX_BLOCK_DEPTH)
@@ -4119,23 +3863,13 @@ async fn apply_page_source_refusals_write_nothing() {
     let deepest = 2 + usize::try_from(MAX_BLOCK_DEPTH).unwrap();
     for (what, source, line) in [
         (
-            "an anchor written twice",
-            format!("{base}- again ^{a}\n"),
-            2,
-        ),
-        (
-            "another page's block",
-            format!("{base}- moved in ^{elsewhere}\n"),
-            2,
-        ),
-        (
             "a nesting past the depth limit",
             format!("{base}{deep}"),
             deepest,
         ),
         ("more ops than one undo", format!("{base}{many}"), 1002),
     ] {
-        let result = save_source(&pool, &mat, &page, &source, &base, false).await;
+        let result = save_source(&pool, &mat, &page, &source, &base).await;
         assert!(
             matches!(&result, Err(AppError::Validation { message, .. })
                 if message.starts_with(&format!("line {line}: "))),
@@ -4153,7 +3887,7 @@ async fn apply_page_source_refusals_write_nothing() {
     settle(&mat).await;
     let unreadable = page_source(&pool, &other).await;
     let before = last_seq(&pool).await;
-    let result = save_source(&pool, &mat, &other, &unreadable, &unreadable, false).await;
+    let result = save_source(&pool, &mat, &other, &unreadable, &unreadable).await;
     assert!(
         matches!(&result, Err(AppError::Validation { message, .. }) if message.contains(split.as_str())),
         "a source that does not read back is refused, naming the block: {result:?}"
@@ -4174,13 +3908,13 @@ async fn apply_page_source_of_an_unknown_trashed_or_non_page_id_is_refused() {
     settle(&mat).await;
 
     for (what, id) in [("unknown", BlockId::new()), ("trashed", trashed)] {
-        let result = save_source(&pool, &mat, &id, "", "", false).await;
+        let result = save_source(&pool, &mat, &id, "", "").await;
         assert!(
             matches!(result, Err(AppError::NotFound(_))),
             "an {what} page is NotFound, got {result:?}"
         );
     }
-    let result = save_source(&pool, &mat, &block, "", "", false).await;
+    let result = save_source(&pool, &mat, &block, "", "").await;
     assert!(
         matches!(result, Err(AppError::Validation { .. })),
         "a content block is not a page, got {result:?}"
@@ -4212,7 +3946,7 @@ async fn apply_page_source_resolves_only_the_names_a_block_newly_writes() {
         "- typed [[Brand New]] #fresh ^",
     );
 
-    let report = save_source(&pool, &mat, &page, &source, &base, false)
+    let report = save_source(&pool, &mat, &page, &source, &base)
         .await
         .unwrap();
 
@@ -4268,7 +4002,6 @@ async fn apply_page_source_resolves_only_the_names_a_block_newly_writes() {
             &format!("see [[{project}]] again"),
         ),
         &base,
-        false,
     )
     .await
     .unwrap();
@@ -4290,7 +4023,7 @@ async fn apply_page_source_leaves_an_ambiguous_title_as_text_with_a_warning() {
     settle(&mat).await;
     let base = page_source(&pool, &page).await;
 
-    let report = save_source(&pool, &mat, &page, "- see [[Twin]]\n", &base, false)
+    let report = save_source(&pool, &mat, &page, "- see [[Twin]]\n", &base)
         .await
         .unwrap();
 
@@ -4327,7 +4060,6 @@ async fn apply_page_source_refused_at_the_last_block_rolls_everything_back() {
         &page,
         &format!("- a, edited ^{a}\n- c ^{c}\n- [ ] new\n- b ^{b}\n  todo_state:: BOGUS\n"),
         &base,
-        false,
     )
     .await;
 
@@ -4381,18 +4113,21 @@ async fn apply_page_source_op_refs_undo_the_whole_save() {
         .unwrap();
     settle(&mat).await;
     let base = page_source(&pool, &page).await;
-    let source = format!(
+    let (text, line_ids) = anchor_free(&format!(
         "- c ^{c}\n- a, edited ^{a}\n- [x] task ^{task}\n- e [[Fresh Page]]\n  owner:: ann\n"
-    );
+    ));
 
     let resp = capture_op_refs(apply_page_source_inner(
         &pool,
         DEV,
         &mat,
         page.as_str(),
-        source,
+        text,
         base.clone(),
-        SourceSaveFlags::default(),
+        SourceSaveFlags {
+            merge: false,
+            line_ids,
+        },
     ))
     .await
     .unwrap();
@@ -4433,7 +4168,7 @@ async fn apply_page_source_merge_lands_disjoint_edits() {
     settle(&mat).await;
     let source = with(&base, "- b ^", "- b, edited here ^");
     assert!(is_refresh(
-        &save_source(&pool, &mat, &page, &source, &base, false).await
+        &save_source(&pool, &mat, &page, &source, &base).await
     ));
     let before = last_seq(&pool).await;
 
@@ -4554,90 +4289,6 @@ async fn apply_page_source_merge_keeps_an_edit_over_the_other_sides_delete() {
     assert_eq!(children[2].0, c.into_string());
 }
 
-/// A line typed under a block's anchor while the page edited another block
-/// and moved this one: the merge reads the moved anchor as its block, edited,
-/// so the block is edited where the page put it, the page's edit stands, and
-/// nothing is created, moved or warned.
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn apply_page_source_merge_keeps_a_block_whose_anchor_an_edit_moved() {
-    let (pool, _dir) = test_pool().await;
-    let mat = Materializer::new(pool.clone());
-    let page = dup_page(&pool, &mat, "Moved merge").await;
-    let a = dup_child(&pool, &mat, &page, "a").await;
-    let b = dup_child(&pool, &mat, &page, "b").await;
-    settle(&mat).await;
-    let base = page_source(&pool, &page).await;
-    edit_block_inner(&pool, DEV, &mat, b.clone(), "b, edited elsewhere".into())
-        .await
-        .unwrap();
-    move_block_inner(&pool, DEV, &mat, a.clone(), Some(page.clone()), 1)
-        .await
-        .unwrap();
-    settle(&mat).await;
-    let source = with(&base, &format!("^{a}\n"), &format!("^{a}\n  more\n"));
-    let before = last_seq(&pool).await;
-
-    let report = merge_source(&pool, &mat, &page, &source, &base)
-        .await
-        .unwrap();
-
-    assert_eq!(
-        counts(&report),
-        [0, 1, 0, 0, 0, 0],
-        "a edited, nothing else"
-    );
-    assert_eq!(report.warnings, Vec::<String>::new());
-    assert_eq!(ops_after(&pool, before).await, vec!["edit_block"]);
-    assert_eq!(
-        dup_children(&pool, &page).await,
-        vec![
-            (b.into_string(), "b, edited elsewhere".to_owned()),
-            (a.into_string(), "a\nmore".to_owned()),
-        ]
-    );
-}
-
-/// Text typed after a block's anchor while the page edited that block: the
-/// merge reads it as the block edited on both sides, so both versions are
-/// kept, as for any such conflict, and no block holds the anchor as text.
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn apply_page_source_merge_reads_a_moved_anchor_as_its_blocks_edit() {
-    let (pool, _dir) = test_pool().await;
-    let mat = Materializer::new(pool.clone());
-    let page = dup_page(&pool, &mat, "Moved conflict").await;
-    let a = dup_child(&pool, &mat, &page, "a").await;
-    let b = dup_child(&pool, &mat, &page, "b").await;
-    settle(&mat).await;
-    let base = page_source(&pool, &page).await;
-    edit_block_inner(&pool, DEV, &mat, a.clone(), "a, edited elsewhere".into())
-        .await
-        .unwrap();
-    settle(&mat).await;
-    let source = with(&base, &format!("^{a}\n"), &format!("^{a} typed\n"));
-
-    let report = merge_source(&pool, &mat, &page, &source, &base)
-        .await
-        .unwrap();
-
-    assert_eq!(
-        counts(&report),
-        [1, 0, 0, 0, 0, 0],
-        "the buffer's version created"
-    );
-    assert_eq!(
-        report.warnings,
-        vec!["'a, edited elsewhere' was changed here and on the page; both versions kept"]
-    );
-    let children = dup_children(&pool, &page).await;
-    let texts: Vec<&str> = children.iter().map(|(_, text)| text.as_str()).collect();
-    assert_eq!(texts, ["a typed", "a, edited elsewhere", "b"]);
-    assert_eq!(
-        (children[1].0.as_str(), children[2].0.as_str()),
-        (a.as_str(), b.as_str()),
-        "the page's blocks keep their ids"
-    );
-}
-
 /// The op refs a merged save returns undo all of it: the page is again as the
 /// edit elsewhere left it.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -4654,19 +4305,21 @@ async fn apply_page_source_merge_op_refs_undo_the_whole_save() {
         .unwrap();
     settle(&mat).await;
     let elsewhere = page_source(&pool, &page).await;
-    let source = format!("{}- new\n", with(&base, "- a ^", "- a, edited here ^"));
+    let (text, line_ids) = anchor_free(&format!(
+        "{}- new\n",
+        with(&base, "- a ^", "- a, edited here ^")
+    ));
 
     let resp = capture_op_refs(apply_page_source_inner(
         &pool,
         DEV,
         &mat,
         page.as_str(),
-        source,
+        text,
         base,
         SourceSaveFlags {
-            force: false,
             merge: true,
-            line_ids: None,
+            line_ids,
         },
     ))
     .await
@@ -4757,22 +4410,8 @@ pub(super) async fn save_by_line(
         .map(|(line, _)| line.as_str())
         .collect::<Vec<_>>()
         .join("\n");
-    let result = apply_page_source_inner(
-        pool,
-        DEV,
-        mat,
-        page.as_str(),
-        text,
-        base.to_owned(),
-        SourceSaveFlags {
-            force: false,
-            merge,
-            line_ids: Some(lines.iter().map(|(_, id)| id.clone()).collect()),
-        },
-    )
-    .await;
-    settle(mat).await;
-    result
+    let line_ids = lines.iter().map(|(_, id)| id.clone()).collect();
+    save_text(pool, mat, page, (text, line_ids), base, merge).await
 }
 
 /// `line` carrying no id.
@@ -4856,13 +4495,30 @@ async fn get_page_buffer_of_a_content_block_or_a_trashed_page_is_refused() {
 }
 
 /// Saving a page's own text by its line ids appends no op, however much the
-/// page holds.
+/// page holds: the save compares the buffer with the page's parsed source,
+/// not with the stored rows, and resolves no name in a block it leaves alone.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn apply_page_source_by_line_ids_of_its_own_text_writes_nothing() {
     let (pool, _dir) = test_pool().await;
     let mat = Materializer::new(pool.clone());
     let page = everything_page(&pool, &mat).await;
     let (source, lines) = buffer_lines(&pool, &page).await;
+    for written in [
+        "- [x] a task",
+        "todo_state:: WAITING",
+        "- - bullet item",
+        "- 1. numbered item",
+        "\\- not a bullet",
+        "- \\[ ] not a task",
+        "see [[Project]] #work ^",
+        "twin [[01J5140PR0JECT000000000001]] ^",
+        "issue #42 ^",
+    ] {
+        assert!(
+            source.contains(written),
+            "seed: the source writes `{written}`:\n{source}"
+        );
+    }
     let before = last_seq(&pool).await;
 
     let report = save_by_line(&pool, &mat, &page, &lines, &source, false)
@@ -5069,9 +4725,8 @@ async fn apply_page_source_by_line_ids_of_the_wrong_length_is_refused() {
             "- a edited\n".to_owned(),
             source.clone(),
             SourceSaveFlags {
-                force: false,
                 merge: false,
-                line_ids: Some(ids),
+                line_ids: ids,
             },
         )
         .await;
@@ -6443,7 +6098,6 @@ async fn apply_page_source_round_trips_a_links_label() {
         &page,
         &with(&base, "[[Project|the plan]]", "[[Project|renamed]]"),
         &base,
-        false,
     )
     .await
     .unwrap();
@@ -6462,7 +6116,6 @@ async fn apply_page_source_round_trips_a_links_label() {
         &page,
         &with(&base, "[[Project|renamed]]", "[[Project|Project]]"),
         &base,
-        false,
     )
     .await
     .unwrap();
@@ -6786,7 +6439,6 @@ async fn apply_page_source_round_trips_a_link_to_a_title_holding_a_pipe() {
         &page,
         &with(&base, " and ", " or [[A | B|typed]] "),
         &base,
-        false,
     )
     .await
     .unwrap();
@@ -6839,7 +6491,6 @@ async fn apply_page_source_keeps_an_inline_query_page_ref() {
         &page,
         &with(&base, "tasks", "open tasks"),
         &base,
-        false,
     )
     .await
     .unwrap();
@@ -12913,7 +12564,6 @@ async fn a_link_to_a_heading_of_another_page_is_a_ref_to_its_block() {
         &page,
         &with(&base, "typed", "typed [[Guide#Setup]]"),
         &base,
-        false,
     )
     .await
     .unwrap();
@@ -13273,7 +12923,6 @@ async fn a_link_into_the_page_being_written_refs_its_saved_heading() {
         &guide,
         &with(&base, "plain", "plain [[Guide#Setup|the steps]]"),
         &base,
-        false,
     )
     .await
     .unwrap();

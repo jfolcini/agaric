@@ -1,46 +1,38 @@
 /**
- * What changed between two page source buffers, block by block (#5140).
+ * What changed between two page buffers, block by block (#5140, #5160 A).
  *
- * Both buffers are the backend's render, where every block carries its `^ID`
- * anchor, at the end of its last line or on a line of its own. A block starts
- * at a bullet line and runs through its anchor to the next bullet, so a code
- * line above the anchor that looks like a bullet stays in the block. A block
- * is keyed by its anchor; one that only moved is not a change. The page's
- * front matter, above the first bullet (#5160 S8), is one more.
+ * Both are `get_page_buffer` texts, each line beside the id it carries. A block
+ * starts at the line carrying its id and runs to the next line that carries
+ * one, and is keyed by that id, so one that only moved is not a change. The
+ * lines above the first block, the page's front matter (#5160 S8), are one
+ * more.
  */
+
+import type { PageBuffer } from '@/lib/bindings'
+
+/** A buffer's text and the id each of its lines carries. */
+export type BufferLines = Pick<PageBuffer, 'text' | 'line_ids'>
 
 export interface SourceChange {
   kind: 'added' | 'removed' | 'changed'
   text: string
 }
 
-const BULLET_LINE = /^\s*- /
-// Uppercase alphanumerics rather than strict Crockford, so the mock's seeded
-// ids (`…BLOCK01`) key as anchors too.
-const ANCHOR = /(?:^|\s)\^([0-9A-Z]{26})[ \t]*$/m
-const FRONT_MATTER = /^---\n(?:.*\n)*?---(?:\n|$)/
-
-function keyedBlocks(source: string): [key: string, text: string][] {
-  const front = FRONT_MATTER.exec(source)?.[0] ?? ''
-  const blocks: string[] = front === '' ? [] : [front]
-  let anchored = front !== ''
-  for (const line of source.slice(front.length).split('\n')) {
-    if (blocks.length === 0 || (anchored && BULLET_LINE.test(line))) {
-      blocks.push(line)
-      anchored = false
-    } else {
-      blocks[blocks.length - 1] += `\n${line}`
-    }
-    anchored ||= ANCHOR.test(line)
-  }
+function keyedBlocks({ text, line_ids }: BufferLines): [key: string | null, text: string][] {
+  const blocks: [key: string | null, lines: string[]][] = []
+  text.split('\n').forEach((line, i) => {
+    const id = line_ids[i] ?? null
+    const last = blocks.at(-1)
+    if (last === undefined || id !== null) blocks.push([id, [line]])
+    else last[1].push(line)
+  })
   return blocks
-    .map((block) => block.replace(/\n+$/, ''))
-    .filter((text) => text !== '')
-    .map((text, i) => [i === 0 && front !== '' ? '---' : (ANCHOR.exec(text)?.[1] ?? text), text])
+    .map(([key, lines]): [string | null, string] => [key, lines.join('\n').replace(/\n+$/, '')])
+    .filter(([, block]) => block !== '')
 }
 
 /** The changes from `base` to `current`, in current's order, removed ones where they sat in base. */
-export function diffSourceByAnchor(base: string, current: string): SourceChange[] {
+export function diffBuffers(base: BufferLines, current: BufferLines): SourceChange[] {
   const before = keyedBlocks(base)
   const beforeText = new Map(before)
   const after = new Map(keyedBlocks(current))

@@ -7,6 +7,7 @@
 //! too.
 
 use crate::prelude::*;
+use agaric_lib::commands::pages::anchor_free;
 
 use super::page_cmd_tests::{
     buffer_lines, counts, dup_child, dup_page, dup_storage, last_seq, ops_after, page_source,
@@ -101,37 +102,6 @@ async fn get_page_source_writes_the_pages_properties_as_front_matter() {
     );
 }
 
-/// Saving the page's own source writes nothing, front matter included.
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn apply_page_source_of_its_own_front_matter_writes_nothing() {
-    let (pool, _dir) = test_pool().await;
-    let mat = Materializer::new(pool.clone());
-    let (page, _) = front_matter_page(&pool, &mat).await;
-    let source = page_source(&pool, &page).await;
-    assert!(
-        source.starts_with("---\n"),
-        "seed: the source opens with front matter:\n{source}"
-    );
-    let before = last_seq(&pool).await;
-
-    let report = save_source(&pool, &mat, &page, &source, &source, false)
-        .await
-        .unwrap();
-
-    assert_eq!(ops_after(&pool, before).await, Vec::<String>::new());
-    assert_eq!(counts(&report), [0; 6]);
-    assert!(
-        report.warnings.is_empty() && report.names_created.is_empty(),
-        "{report:?}"
-    );
-    assert_eq!(
-        get_page_aliases_inner(&pool, page.as_str()).await.unwrap(),
-        ["Home base"]
-    );
-    assert_eq!(page_tags(&pool, &page).await, ["work"]);
-    assert_eq!(page_source(&pool, &page).await, source);
-}
-
 /// A changed value is set, a new key added and a key left out deleted, as the
 /// drawer writes them; the keys the buffer does not show stay.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -148,7 +118,7 @@ async fn apply_page_source_sets_adds_and_deletes_page_properties() {
         "stage: done\nowner: ann\n",
     );
 
-    let report = save_source(&pool, &mat, &page, &source, &base, false)
+    let report = save_source(&pool, &mat, &page, &source, &base)
         .await
         .unwrap();
 
@@ -184,7 +154,7 @@ async fn apply_page_source_writes_the_pages_aliases_and_tags() {
         "tags: [idea]",
     );
 
-    let report = save_source(&pool, &mat, &page, &source, &base, false)
+    let report = save_source(&pool, &mat, &page, &source, &base)
         .await
         .unwrap();
 
@@ -230,7 +200,7 @@ async fn apply_page_source_creates_the_pages_properties_from_either_form() {
         let base = page_source(&pool, &page).await;
         assert_eq!(base, format!("- body ^{body}\n"), "{title}: none written");
 
-        let report = save_source(&pool, &mat, &page, &format!("{head}{base}"), &base, false)
+        let report = save_source(&pool, &mat, &page, &format!("{head}{base}"), &base)
             .await
             .unwrap();
 
@@ -257,7 +227,7 @@ async fn apply_page_source_refuses_an_invalid_front_matter_value_by_its_line() {
     let source = with(&base, "stage: open\n", "stage: done\nEstimate: soon\n");
     let before = last_seq(&pool).await;
 
-    let err = save_source(&pool, &mat, &page, &source, &base, false)
+    let err = save_source(&pool, &mat, &page, &source, &base)
         .await
         .unwrap_err();
 
@@ -296,7 +266,7 @@ async fn apply_page_source_refuses_unreadable_front_matter_by_its_line() {
         ),
         (base.replacen("---\n\n", "\n", 1), "line 1: "),
     ] {
-        let err = save_source(&pool, &mat, &page, &source, &base, false)
+        let err = save_source(&pool, &mat, &page, &source, &base)
             .await
             .unwrap_err();
 
@@ -339,6 +309,7 @@ async fn apply_page_source_merge_keeps_the_front_matter_the_page_changed() {
         "aliases: [Home base]",
         "aliases: [Home base, Den]",
     );
+    let (text, line_ids) = anchor_free(&source);
     let before = last_seq(&pool).await;
 
     apply_page_source_inner(
@@ -346,12 +317,11 @@ async fn apply_page_source_merge_keeps_the_front_matter_the_page_changed() {
         DEV,
         &mat,
         page.as_str(),
-        source,
+        text,
         base,
         SourceSaveFlags {
-            force: false,
             merge: true,
-            line_ids: None,
+            line_ids,
         },
     )
     .await
@@ -379,59 +349,6 @@ async fn apply_page_source_merge_keeps_the_front_matter_the_page_changed() {
     );
 }
 
-/// A refusal at a block below the front matter names that block's line in
-/// the buffer, the front matter's lines counted (#5160 X3), in the YAML form
-/// and in Logseq's `key::` form alike, so the editor selects the right line.
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn apply_page_source_refusals_below_the_front_matter_count_its_lines() {
-    let (pool, _dir) = test_pool().await;
-    let mat = Materializer::new(pool.clone());
-    let (page, body) = front_matter_page(&pool, &mat).await;
-    let other = dup_page(&pool, &mat, "Other").await;
-    let elsewhere = dup_child(&pool, &mat, &other, "elsewhere").await;
-    settle(&mat).await;
-    let base = page_source(&pool, &page).await;
-    let bullet = format!("- body ^{body}\n");
-    let logseq = with(
-        &base,
-        "---\naliases: [Home base]\ntags: [work]\nstage: open\n---\n",
-        "alias:: Home base\ntags:: work\nstage:: open\n",
-    );
-    let before = last_seq(&pool).await;
-
-    for (what, source, line) in [
-        (
-            "an anchor written twice",
-            format!("{base}- again ^{body}\n"),
-            8,
-        ),
-        (
-            "another page's block",
-            format!("{base}- moved in ^{elsewhere}\n"),
-            8,
-        ),
-        (
-            "a value its definition refuses",
-            with(&base, &bullet, &format!("{bullet}  todo_state:: BOGUS\n")),
-            7,
-        ),
-        (
-            "an anchor written twice under Logseq's lines",
-            format!("{logseq}- again ^{body}\n"),
-            6,
-        ),
-    ] {
-        let result = save_source(&pool, &mat, &page, &source, &base, false).await;
-
-        assert!(
-            matches!(&result, Err(AppError::Validation { message, .. })
-                if message.starts_with(&format!("line {line}: "))),
-            "{what} is refused at line {line}, got {result:?}"
-        );
-    }
-    assert_eq!(ops_after(&pool, before).await, Vec::<String>::new());
-}
-
 /// A multi-line page property is the export's YAML block scalar in the front
 /// matter, `key: |` and its lines indented: the page's own source reads it
 /// back as it is, so saving it writes nothing, and an edited one is saved
@@ -450,14 +367,12 @@ async fn a_multi_line_page_property_round_trips_through_the_front_matter() {
     );
     let before = last_seq(&pool).await;
 
-    let unchanged = save_source(&pool, &mat, &page, &base, &base, false)
-        .await
-        .unwrap();
+    let unchanged = save_source(&pool, &mat, &page, &base, &base).await.unwrap();
     assert_eq!(counts(&unchanged), [0; 6]);
     assert_eq!(ops_after(&pool, before).await, Vec::<String>::new());
 
     let source = with(&base, "  lines\n", "  lines\n  and a third\n");
-    let report = save_source(&pool, &mat, &page, &source, &base, false)
+    let report = save_source(&pool, &mat, &page, &source, &base)
         .await
         .unwrap();
 
@@ -520,7 +435,7 @@ async fn apply_page_source_by_line_ids_of_its_own_front_matter_writes_nothing() 
 }
 
 /// One save by line ids writes a front matter property and a block edited
-/// together, as the anchored save does.
+/// together.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn apply_page_source_by_line_ids_writes_the_front_matter_and_a_block() {
     let (pool, _dir) = test_pool().await;

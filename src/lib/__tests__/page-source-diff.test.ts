@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { diffSourceByAnchor } from '@/lib/page-source-diff'
+import { type BufferLines, diffBuffers } from '@/lib/page-source-diff'
 
 const id = (suffix: string): string => `01J${'0'.repeat(22)}${suffix}`
 const A = id('A')
@@ -8,80 +8,75 @@ const B = id('B')
 const C = id('C')
 const D = id('D')
 
-const buffer = (...lines: string[]): string => `${lines.join('\n')}\n`
+/** A buffer of `lines`, each `[text, id]`, ending in a line break as the render does. */
+const buffer = (...lines: Array<[string, string | null]>): BufferLines => ({
+  text: `${lines.map(([text]) => text).join('\n')}\n`,
+  line_ids: [...lines.map(([, carried]) => carried), null],
+})
 
-describe('diffSourceByAnchor', () => {
+describe('diffBuffers', () => {
   it('finds nothing between identical buffers', () => {
-    const source = buffer(`- one ^${A}`, `  - child ^${B}`, `- two ^${C}`)
+    const lines = buffer(['- one', A], ['  - child', B], ['- two', C])
 
-    expect(diffSourceByAnchor(source, source)).toEqual([])
+    expect(diffBuffers(lines, lines)).toEqual([])
   })
 
   // #5160 S8 — the page's front matter is a change of its own, not of the
   // first block it heads.
   it('reports a change to the front matter apart from the blocks under it', () => {
-    const base = buffer('---', 'stage: open', '---', '', `- one ^${A}`)
-    const current = buffer('---', 'stage: done', '---', '', `- one ^${A}`)
+    const head = (stage: string): Array<[string, null]> => [
+      ['---', null],
+      [`stage: ${stage}`, null],
+      ['---', null],
+      ['', null],
+    ]
+    const base = buffer(...head('open'), ['- one', A])
+    const current = buffer(...head('done'), ['- one', A])
 
-    expect(diffSourceByAnchor(base, current)).toEqual([
-      { kind: 'changed', text: '---\nstage: done\n---' },
-    ])
-    expect(diffSourceByAnchor(buffer(`- one ^${A}`), current)).toEqual([
+    expect(diffBuffers(base, current)).toEqual([{ kind: 'changed', text: '---\nstage: done\n---' }])
+    expect(diffBuffers(buffer(['- one', A]), current)).toEqual([
       { kind: 'added', text: '---\nstage: done\n---' },
     ])
   })
 
   it('does not count a block that only moved', () => {
-    const base = buffer(`- one ^${A}`, `- two ^${B}`, `- three ^${C}`)
-    const current = buffer(`- three ^${C}`, `- one ^${A}`, `- two ^${B}`)
+    const base = buffer(['- one', A], ['- two', B], ['- three', C])
+    const current = buffer(['- three', C], ['- one', A], ['- two', B])
 
-    expect(diffSourceByAnchor(base, current)).toEqual([])
+    expect(diffBuffers(base, current)).toEqual([])
   })
 
   it('reports an added, a removed and a changed block, removed ones where they sat in base', () => {
-    const base = buffer(`- one ^${A}`, `- two ^${B}`, `- three ^${C}`)
-    const current = buffer(`- one, edited ^${A}`, `- three ^${C}`, `- four ^${D}`)
+    const base = buffer(['- one', A], ['- two', B], ['- three', C])
+    const current = buffer(['- one, edited', A], ['- three', C], ['- four', D])
 
-    expect(diffSourceByAnchor(base, current)).toEqual([
-      { kind: 'changed', text: `- one, edited ^${A}` },
-      { kind: 'removed', text: `- two ^${B}` },
-      { kind: 'added', text: `- four ^${D}` },
+    expect(diffBuffers(base, current)).toEqual([
+      { kind: 'changed', text: '- one, edited' },
+      { kind: 'removed', text: '- two' },
+      { kind: 'added', text: '- four' },
     ])
   })
 
-  it('keys a block by the anchor on its last line and counts its continuation lines', () => {
-    const base = buffer(`- first line`, `  second line ^${A}`)
-    const current = buffer(`- first line`, `  second line, edited ^${A}`)
+  it('keys a block by the id its first line carries and counts the lines up to the next id', () => {
+    const base = buffer(['- first line', A], ['  second line', null], ['  priority:: 1', null])
+    const current = buffer(['- first line', A], ['  second line', null], ['  priority:: 2', null])
 
-    expect(diffSourceByAnchor(base, current)).toEqual([
-      { kind: 'changed', text: `- first line\n  second line, edited ^${A}` },
+    expect(diffBuffers(base, current)).toEqual([
+      { kind: 'changed', text: '- first line\n  second line\n  priority:: 2' },
     ])
   })
 
-  it('keys a block by an anchor on a line of its own', () => {
-    const base = buffer('- ```', '  let x = 1', '  ```', `  ^${A}`)
-    const current = buffer('- ```', '  let x = 2', '  ```', `  ^${A}`)
+  it('keeps a line that looks like a bullet but carries no id in the block above it', () => {
+    const fence = (...code: string[]): Array<[string, string | null]> => [
+      ['- ```', A],
+      ...code.map((line): [string, null] => [`  ${line}`, null]),
+      ['  ```', null],
+    ]
+    const base = buffer(['- one', B], ...fence('- item'))
+    const current = buffer(['- one', B], ...fence('- item', '- item 2'))
 
-    expect(diffSourceByAnchor(base, current)).toEqual([
-      { kind: 'changed', text: `- \`\`\`\n  let x = 2\n  \`\`\`\n  ^${A}` },
-    ])
-  })
-
-  it('keys a block by its anchor when property lines follow it', () => {
-    const base = buffer(`- [ ] task ^${A}`, '  priority:: 1')
-    const current = buffer(`- [ ] task ^${A}`, '  priority:: 2')
-
-    expect(diffSourceByAnchor(base, current)).toEqual([
-      { kind: 'changed', text: `- [ ] task ^${A}\n  priority:: 2` },
-    ])
-  })
-
-  it('keeps a code line that looks like a bullet inside the block whose anchor follows it', () => {
-    const base = buffer(`- one ^${B}`, '- ```', '  - item', '  ```', `  ^${A}`)
-    const current = buffer(`- one ^${B}`, '- ```', '  - item', '  - item 2', '  ```', `  ^${A}`)
-
-    expect(diffSourceByAnchor(base, current)).toEqual([
-      { kind: 'changed', text: `- \`\`\`\n  - item\n  - item 2\n  \`\`\`\n  ^${A}` },
+    expect(diffBuffers(base, current)).toEqual([
+      { kind: 'changed', text: '- ```\n  - item\n  - item 2\n  ```' },
     ])
   })
 })

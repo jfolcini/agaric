@@ -41,6 +41,7 @@ const mockedInvoke = vi.mocked(invoke)
 const PAGE_ID = '01J00000000000000000000PAG'
 const A = '01J0000000000000000000000A'
 const B = '01J0000000000000000000000B'
+const C = '01J0000000000000000000000C'
 const BUFFER: PageBuffer = {
   source: `- first ^${A}\n- second ^${B}\n`,
   text: '- first\n- second\n',
@@ -293,7 +294,6 @@ describe('PageSourceEditor saving', () => {
         pageId: PAGE_GETTING_STARTED,
         source: text,
         baseSource: base.source,
-        force: false,
         merge: false,
         lineIds: base.line_ids,
       },
@@ -641,16 +641,17 @@ describe('PageSourceEditor when the page changed elsewhere', () => {
     return { ...rendered, base, box, current, dialog, edited, user }
   }
 
-  it('opens the conflict dialog listing what changed since the buffer was loaded', async () => {
+  it('opens the conflict dialog listing what changed since the buffer was loaded, without ids', async () => {
     const { dialog, onClose } = await saveOverAChange()
 
-    const row = within(dialog).getByText(`- ${ELSEWHERE} ^${SEED_IDS.BLOCK_GS_3}`)
+    const row = within(dialog).getByText(`- ${ELSEWHERE}`)
     expect(row.closest('li')).toHaveTextContent(t('pageSource.changeChanged'))
     expect(within(dialog).getAllByRole('listitem')).toHaveLength(1)
+    expect(within(dialog).getByRole('list')).not.toHaveTextContent('^')
     expect(onClose).not.toHaveBeenCalled()
   })
 
-  it('Overwrite saves the buffer with force against the page as it is now, and the buffer wins', async () => {
+  it('Overwrite saves the buffer against the page as it is now, and the buffer wins', async () => {
     const { base, current, dialog, edited, onClose, user } = await saveOverAChange()
     const { PAGE_GETTING_STARTED } = SEED_IDS
 
@@ -661,8 +662,8 @@ describe('PageSourceEditor when the page changed elsewhere', () => {
     })
     const save = { pageId: PAGE_GETTING_STARTED, source: edited.text, lineIds: edited.lineIds }
     expect(applyCalls()).toEqual([
-      { ...save, baseSource: base.source, force: false, merge: false },
-      { ...save, baseSource: current.source, force: true, merge: false },
+      { ...save, baseSource: base.source, merge: false },
+      { ...save, baseSource: current.source, merge: false },
     ])
     expect(pageBuffer(PAGE_GETTING_STARTED).text).toBe(edited.text)
   })
@@ -778,7 +779,7 @@ describe('PageSourceEditor draft', () => {
     await waitFor(() => {
       expect(localStorage.getItem(draftKey())).toBe(
         JSON.stringify({
-          base: BUFFER.source,
+          base: BUFFER,
           text: '- first\n- secondx\n',
           lineIds: [A, B, null],
         }),
@@ -800,7 +801,7 @@ describe('PageSourceEditor draft', () => {
     unmount()
 
     expect(localStorage.getItem(draftKey())).toBe(
-      JSON.stringify({ base: BUFFER.source, text: '- first\n- second x\n', lineIds: [A, B, null] }),
+      JSON.stringify({ base: BUFFER, text: '- first\n- second x\n', lineIds: [A, B, null] }),
     )
   })
 
@@ -820,7 +821,7 @@ describe('PageSourceEditor draft', () => {
     const base = routeToMockBackend()
     const { PAGE_GETTING_STARTED } = SEED_IDS
     const draft = {
-      base: base.source,
+      base,
       text: base.text.replace(WELCOME, HELLO),
       lineIds: base.line_ids,
     }
@@ -892,7 +893,11 @@ describe('PageSourceEditor draft', () => {
     const { BLOCK_GS_1, PAGE_GETTING_STARTED } = SEED_IDS
     const before = '- Welcome, before an edit elsewhere!'
     const draft = {
-      base: now.source.replace(WELCOME, before),
+      base: {
+        ...now,
+        source: now.source.replace(WELCOME, before),
+        text: now.text.replace(WELCOME, before),
+      },
       text: `${now.text.replace(WELCOME, before)}- mine\n`,
       lineIds: [...now.line_ids, null],
     }
@@ -904,7 +909,7 @@ describe('PageSourceEditor draft', () => {
     await user.click(screen.getByRole('button', { name: t('action.save') }))
 
     const dialog = await screen.findByRole('dialog', { name: t('pageSource.conflictTitle') })
-    const gs1Now = now.source.split('\n').find((line) => line.endsWith(` ^${BLOCK_GS_1}`)) as string
+    const gs1Now = now.text.split('\n')[now.line_ids.indexOf(BLOCK_GS_1)] as string
     expect(within(dialog).getByText(gs1Now).closest('li')).toHaveTextContent(
       t('pageSource.changeChanged'),
     )
@@ -914,7 +919,7 @@ describe('PageSourceEditor draft', () => {
   })
 
   it('Cancel on a restored draft asks, and Discard drops the draft and closes without saving', async () => {
-    const draft = { base: BUFFER.source, text: '- first\n- second x\n', lineIds: [A, B, null] }
+    const draft = { base: BUFFER, text: '- first\n- second x\n', lineIds: [A, B, null] }
     localStorage.setItem(draftKey(), JSON.stringify(draft))
     const user = userEvent.setup()
     const { onClose } = renderEditor()
@@ -931,9 +936,12 @@ describe('PageSourceEditor draft', () => {
 
   it.each([
     ['not JSON', '{not json'],
-    ['missing its text', JSON.stringify({ base: BUFFER.source, lineIds: [A] })],
-    ['with a non-string base', JSON.stringify({ base: 1, text: BUFFER.text, lineIds: [A] })],
-    ['with line ids that are not ids', JSON.stringify({ base: '', text: 'x', lineIds: [1] })],
+    ['missing its text', JSON.stringify({ base: BUFFER, lineIds: [A] })],
+    [
+      'with a base that is no buffer',
+      JSON.stringify({ base: BUFFER.source, text: 'x', lineIds: [A] }),
+    ],
+    ['with line ids that are not ids', JSON.stringify({ base: BUFFER, text: 'x', lineIds: [1] })],
   ])('ignores a draft that is %s and shows the page', async (_, stored) => {
     localStorage.setItem(draftKey(), stored)
     renderEditor()
@@ -1323,13 +1331,13 @@ describe('PageSourceEditor save report', () => {
 })
 
 describe('PageSourceConflictDialog', () => {
-  const base = `- one ^${A}\n- two ^${B}\n`
+  const base = { text: '- one\n- two\n', line_ids: [A, B, null] }
 
   it('says only the order changed when no block did', () => {
     render(
       <PageSourceConflictDialog
         base={base}
-        current={`- two ^${B}\n- one ^${A}\n`}
+        current={{ text: '- two\n- one\n', line_ids: [B, A, null] }}
         onMerge={vi.fn()}
         onReload={vi.fn()}
         onOverwrite={vi.fn()}
@@ -1349,7 +1357,7 @@ describe('PageSourceConflictDialog', () => {
     render(
       <PageSourceConflictDialog
         base={base}
-        current={`- one ^${A}\n`}
+        current={{ text: '- one\n', line_ids: [A, null] }}
         onMerge={onMerge}
         onReload={vi.fn()}
         onOverwrite={vi.fn()}
@@ -1383,7 +1391,7 @@ describe('PageSourceConflictDialog', () => {
     render(
       <PageSourceConflictDialog
         base={base}
-        current={`- one ^${A}\n`}
+        current={{ text: '- one\n', line_ids: [A, null] }}
         onMerge={vi.fn()}
         onReload={vi.fn()}
         onOverwrite={vi.fn()}
@@ -1403,7 +1411,7 @@ describe('PageSourceConflictDialog', () => {
     render(
       <PageSourceConflictDialog
         base={base}
-        current={`- one, edited ^${A}\n- three\n`}
+        current={{ text: '- one, edited\n- three\n', line_ids: [A, C, null] }}
         onMerge={vi.fn()}
         onReload={vi.fn()}
         onOverwrite={vi.fn()}

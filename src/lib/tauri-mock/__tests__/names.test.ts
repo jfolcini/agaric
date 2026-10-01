@@ -10,7 +10,7 @@
 
 import { beforeEach, describe, expect, it } from 'vitest'
 
-import type { PageSourceReport } from '@/lib/bindings'
+import type { PageBuffer, PageSourceReport } from '@/lib/bindings'
 import { dispatch } from '@/lib/tauri-mock/handlers'
 import { blocks, makeBlock, pageAliases, properties, seedBlocks } from '@/lib/tauri-mock/seed'
 
@@ -183,13 +183,13 @@ describe('paste_blocks resolves names in the anchor’s space (#5160 N4)', () =>
 
 describe('apply_page_source resolves the names new bullets write (#5160 N4)', () => {
   it('reports the created page and links the folded title', () => {
-    const base = dispatch('get_page_source', { pageId: PAGE }) as string
+    const base = dispatch('get_page_buffer', { pageId: PAGE }) as PageBuffer
     const report = dispatch('apply_page_source', {
       pageId: PAGE,
-      source: `${base}- new [[project plan]] [[Brand New]]\n`,
-      baseSource: base,
-      force: false,
+      source: `${base.text}- new [[project plan]] [[Brand New]]\n`,
+      baseSource: base.source,
       merge: false,
+      lineIds: [...base.line_ids, null],
     }) as PageSourceReport
     expect(report.names_created.map((r) => r.content)).toEqual(['Brand New'])
     const created = report.names_created[0]?.id

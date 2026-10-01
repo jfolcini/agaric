@@ -161,7 +161,7 @@ async fn page_source_renders_and_reads_the_recurrence_lines() {
         "  repeat-count:: 4\n",
         "",
     );
-    let report = save_source(&pool, &mat, &page, &source, &base, false)
+    let report = save_source(&pool, &mat, &page, &source, &base)
         .await
         .unwrap();
 
@@ -203,7 +203,7 @@ async fn apply_page_source_a_line_with_no_value_deletes_the_property() {
         "  note:: \n",
     );
 
-    let report = save_source(&pool, &mat, &page, &source, &base, false)
+    let report = save_source(&pool, &mat, &page, &source, &base)
         .await
         .unwrap();
 
@@ -241,7 +241,7 @@ async fn apply_page_source_keeps_a_line_with_no_value_for_a_key_not_held_as_text
         with(&base, &line, &format!("{line}  Ingredients::\n"))
     );
 
-    let report = save_source(&pool, &mat, &page, &source, &base, false)
+    let report = save_source(&pool, &mat, &page, &source, &base)
         .await
         .unwrap();
 
@@ -256,7 +256,7 @@ async fn apply_page_source_keeps_a_line_with_no_value_for_a_key_not_held_as_text
     assert_eq!(dup_storage(&pool, &block).await, [NO_COLUMNS]);
 
     let saved = page_source(&pool, &page).await;
-    let report = save_source(&pool, &mat, &page, &saved, &saved, false)
+    let report = save_source(&pool, &mat, &page, &saved, &saved)
         .await
         .unwrap();
     assert_eq!(counts(&report), [0; 6], "it reads back as the text it is");
@@ -278,7 +278,7 @@ async fn apply_page_source_folds_a_key_to_its_canonical_spelling() {
                  REPEAT:: +1d\n  due:: 2026-06-01\n";
     let source = with(&base, &line, &format!("{line}{typed}"));
 
-    let report = save_source(&pool, &mat, &page, &source, &base, false)
+    let report = save_source(&pool, &mat, &page, &source, &base)
         .await
         .unwrap();
 
@@ -306,7 +306,7 @@ async fn apply_page_source_folds_a_key_to_its_canonical_spelling() {
         "  due_date:: 2026-05-01\n",
         "  Due-Date:: tomorrow\n",
     );
-    let result = save_source(&pool, &mat, &page, &refused, &saved, false).await;
+    let result = save_source(&pool, &mat, &page, &refused, &saved).await;
     assert!(
         matches!(&result, Err(AppError::Validation { message, .. })
             if message.contains("`Due-Date:: tomorrow`")),
@@ -335,7 +335,7 @@ async fn apply_page_source_leaves_a_key_held_in_another_spelling_as_it_is() {
     let line = format!("- other ^{other}\n");
     let source = with(&base, &line, &format!("- other, edited ^{other}\n"));
 
-    let report = save_source(&pool, &mat, &page, &source, &base, false)
+    let report = save_source(&pool, &mat, &page, &source, &base)
         .await
         .unwrap();
 
@@ -344,7 +344,7 @@ async fn apply_page_source_leaves_a_key_held_in_another_spelling_as_it_is() {
 
     let saved = page_source(&pool, &page).await;
     let edited = with(&saved, "  Priority:: high\n", "  Priority:: low\n");
-    save_source(&pool, &mat, &page, &edited, &saved, false)
+    save_source(&pool, &mat, &page, &edited, &saved)
         .await
         .unwrap();
     assert_eq!(
@@ -403,7 +403,7 @@ async fn a_repeat_rule_the_engine_cannot_read_is_refused() {
     let line = format!("- task ^{block}\n");
     let typed = with(&base, &line, &format!("{line}  repeat:: every tuesday\n"));
 
-    let result = save_source(&pool, &mat, &page, &typed, &base, false).await;
+    let result = save_source(&pool, &mat, &page, &typed, &base).await;
 
     assert!(
         matches!(&result, Err(AppError::Validation { message, .. })
