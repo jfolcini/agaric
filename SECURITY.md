@@ -103,14 +103,15 @@ The repository already runs the following on every push to `main` and on every r
 
 A report that points at an issue already covered by one of the above is still useful — it usually means a config gap. Please mention which tool(s) you ran when filing.
 
-### Two OpenSSF Scorecard checks score 0 by design (solo-maintainer posture)
+### One OpenSSF Scorecard check scores 0 by design (solo-maintainer posture)
 
-For transparency, two Scorecard checks read **0** on this repository today, and both are deliberate consequences of the single-maintainer workflow rather than gaps a contributor should report:
+For transparency, one Scorecard check reads **0** on this repository, as a deliberate consequence of the single-maintainer workflow rather than a gap a contributor should report:
 
 - **`Code-Review` = 0** ([#144](https://github.com/jfolcini/agaric/issues/144)) — the solo maintainer pushes directly to `main` under an admin bypass on the branch ruleset, so Scorecard's rolling window of recent commits sees "0 reviewed" and floors the check. There is no per-check waiver knob for Scorecard, and "fixing" it would mean abolishing the solo-development workflow. It auto-recovers once a second contributor's reviewed PRs start landing. Full rationale: [`docs/architecture/ci-and-tooling.md`](docs/architecture/ci-and-tooling.md) § *Asymmetric branch-protection convention*.
-- **`Vulnerabilities` = 0** ([#145](https://github.com/jfolcini/agaric/issues/145)) — transitive GTK3 RustSec advisories reaching us via `wry → tauri` on Linux, all waived with rationale in [`src-tauri/deny.toml`](src-tauri/deny.toml) `[advisories].ignore` and recovering when upstream completes its GTK4 migration.
 
-Neither is an in-scope finding; both have open tracking issues with explicit revisit triggers.
+It is not an in-scope finding; #144 tracks it with an explicit revisit trigger.
+
+`Vulnerabilities` counts only advisories we have not waived: the waivers in [`src-tauri/deny.toml`](src-tauri/deny.toml) `[advisories].ignore` and [`.nsprc`](.nsprc) are generated into the `osv-scanner.toml` files that Scorecard's scanner reads ([#5207](https://github.com/jfolcini/agaric/issues/5207)), so an advisory that check reports is one nobody has triaged yet.
 
 ## Threat-model reference (for maintainers)
 

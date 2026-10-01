@@ -1186,11 +1186,15 @@ fn take_bookkeeping_line(
     true
 }
 
-/// The Logseq block ids `blocks` carry as `id:: <uuid>` lines, lowercased.
-fn logseq_ids(blocks: &[ParsedBlock]) -> std::collections::HashSet<String> {
+/// The Logseq block ids `blocks` carry as `id:: <uuid>` lines, lowercased,
+/// but on a block ending in an `^id` of its own: that is its anchor
+/// ([`take_bookkeeping_line`]), so a reference to the `id::` names no block.
+fn logseq_ids(blocks: &[ParsedBlock], ends_in_code: &[bool]) -> std::collections::HashSet<String> {
     blocks
         .iter()
-        .flat_map(|block| &block.properties)
+        .zip(ends_in_code)
+        .filter(|&(block, &code)| code || strip_written_anchor_marker(&block.content).1.is_none())
+        .flat_map(|(block, _)| &block.properties)
         .filter(|(key, value)| fold_property_key(key) == "id" && LOGSEQ_ID_RE.is_match(value))
         .map(|(_, value)| value.to_ascii_lowercase())
         .collect()
@@ -1406,7 +1410,7 @@ fn read_blocks(
 ) -> (Vec<ParsedBlock>, Vec<bool>, LossyCounts) {
     let none = std::collections::HashSet::new();
     let read = parse_block_lines(normalized, mode, foreign, &none, id_lines);
-    let ids = logseq_ids(&read.0);
+    let ids = logseq_ids(&read.0, &read.1);
     if read.2.stripped_refs == 0 || ids.is_empty() {
         return read;
     }
@@ -4029,6 +4033,23 @@ bare line (({UUID_B})) too"
             output.blocks[0].properties.is_empty(),
             "{:?}",
             output.blocks[0].properties
+        );
+    }
+
+    /// #5160 D14: a `((uuid))` naming the `id::` of a block that ends in an
+    /// `^id` of its own names no block, that `^id` being the anchor, so it is
+    /// stripped and counted as any other.
+    #[test]
+    fn a_ref_to_an_id_line_an_own_anchor_overrides_is_stripped() {
+        let output =
+            parse_logseq_markdown(&format!("- Both ^x\n  id:: {UUID_C}\n- see (({UUID_C}))\n"));
+        assert_eq!(output.blocks[1].content, "see");
+        assert_eq!(
+            output.warnings,
+            [
+                "1 ((block-ref)) reference(s) were stripped from imported content and could not \
+                 be preserved"
+            ]
         );
     }
 

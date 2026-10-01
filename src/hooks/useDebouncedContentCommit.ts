@@ -116,9 +116,11 @@ export function useDebouncedContentCommit(params: {
     // blurring would get a null delta at flush and the content would silently
     // stay literal with nothing written. Skipping keeps the baseline unrebased
     // — blur re-commits through the classifying flush path. The decision is
-    // the flush's own, against the same baseline (#5160 D2): a shape the block
-    // was LOADED with is plain text to both, so only an edit that INTRODUCED
-    // one pauses the mid-typing CRDT commits; a `#name` is a tag either way.
+    // the flush's own, against the same baseline (#5160 D2): several
+    // paragraphs, a `key:: value` line or a task marker the block was LOADED
+    // with is plain text to both, so only an edit that INTRODUCED one pauses
+    // the mid-typing CRDT commits. A `#name` held as text is a tag whether the
+    // block was loaded with it or not, so a block holding one commits on blur only.
     if (classifyUnmountFlush(re.originalMarkdown, md).kind !== 'edit') return
 
     try {

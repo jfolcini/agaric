@@ -19,19 +19,14 @@ import { breakLine } from '@/editor/source-buffer'
 import {
   cyclePriority,
   deleteBlock,
+  depthOf,
   duplicateBlock,
   insertTagTrigger,
   insertTrigger,
   type SourceBlock,
   turnInto,
 } from '@/editor/source-buffer-blocks'
-import {
-  cycleTaskAt,
-  dedentRange,
-  depthOf,
-  indentRange,
-  moveRange,
-} from '@/editor/source-buffer-keys'
+import { cycleTaskAt, dedentRange, indentRange, moveRange } from '@/editor/source-buffer-keys'
 
 /** A dialog a toolbar action opens, which writes what is picked in it. */
 export type SourceDialog = 'date' | 'due' | 'schedule' | 'emoji' | 'query'

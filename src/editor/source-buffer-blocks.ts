@@ -15,17 +15,39 @@
 import type { NodeType, Node as PMNode } from '@tiptap/pm/model'
 import { type Command, type EditorState, TextSelection, type Transaction } from '@tiptap/pm/state'
 
-import {
-  depthOf,
-  frontMatterEnd,
-  isBlank,
-  lineStarts,
-  subtreeEnd,
-} from '@/editor/source-buffer-keys'
 import { type BlockTypeToken, convertBlockContent, detectBlockType } from '@/lib/block-type-convert'
 import { type ListStyle, listStyleForBlockType } from '@/lib/list-style'
 import { getPriorityCycle } from '@/lib/priority-levels'
 import { type TodoState, taskStateFromMarker } from '@/lib/task-states'
+
+/** The positions where `doc`'s lines start, before each one's first character. */
+export function lineStarts(doc: PMNode): number[] {
+  const starts: number[] = []
+  doc.forEach((_, offset) => starts.push(offset + 1))
+  return starts
+}
+
+export const isBlank = (text: string): boolean => text.trim() === ''
+export const depthOf = (text: string): number => /^[ \t]*/.exec(text)?.[0].length ?? 0
+
+/** The line after the front matter (`---` … `---` at the top), 0 when there is none. */
+export function frontMatterEnd(texts: readonly string[]): number {
+  if (texts[0]?.trimEnd() !== '---') return 0
+  const close = texts.findIndex((text, i) => i > 0 && text.trimEnd() === '---')
+  return close < 0 ? 0 : close + 1
+}
+
+/** The end of line `start`'s subtree: past the lines after it indented deeper, and the blank lines between them. */
+export function subtreeEnd(texts: readonly string[], start: number, level: number): number {
+  let end = start + 1
+  for (let i = start + 1; i < texts.length; i += 1) {
+    const text = texts[i] as string
+    if (isBlank(text)) continue
+    if (depthOf(text) <= level) break
+    end = i + 1
+  }
+  return end
+}
 
 export interface SourceBlock {
   /** The line the block starts on, counted from 0. */
@@ -91,23 +113,25 @@ function ownEnd(doc: PMNode, texts: readonly string[], start: number): number {
 /**
  * The block at line `index`: the block that line starts, or the one whose
  * line starts the run of lines it is in. `null` in the front matter and above
- * the first block.
+ * the first block. Read from the top, so a list line inside a block's fence
+ * is that block's code, not a block of its own.
  */
 export function blockAt(doc: PMNode, index: number): SourceBlock | null {
   const texts = lineTexts(doc)
-  const top = frontMatterEnd(texts)
-  for (let i = Math.min(index, texts.length - 1); i >= top; i -= 1) {
-    const line = doc.child(i)
-    if (!startsBlock(line)) continue
-    const level = depthOf(texts[i] as string)
-    return {
-      line: i,
-      end: ownEnd(doc, texts, i),
-      subtreeEnd: subtreeEnd(texts, i, level),
-      id: (line.attrs['blockId'] as string | null | undefined) ?? null,
-    }
+  let start: number | null = null
+  let end = 0
+  for (let i = frontMatterEnd(texts); i <= Math.min(index, texts.length - 1); i += 1) {
+    if (i < end || !startsBlock(doc.child(i))) continue
+    start = i
+    end = ownEnd(doc, texts, i)
   }
-  return null
+  if (start === null) return null
+  return {
+    line: start,
+    end,
+    subtreeEnd: subtreeEnd(texts, start, depthOf(texts[start] as string)),
+    id: (doc.child(start).attrs['blockId'] as string | null | undefined) ?? null,
+  }
 }
 
 /** The block the selection's head is in. */
