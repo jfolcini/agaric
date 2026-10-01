@@ -21,6 +21,8 @@ import { Fragment, Slice } from '@tiptap/pm/model'
 import { type Command, type EditorState, Plugin, type Transaction } from '@tiptap/pm/state'
 import { Mapping } from '@tiptap/pm/transform'
 
+import { SourceBufferKeys } from '@/editor/source-buffer-keys'
+
 export interface SourceLines {
   text: string
   /** One entry per line of `text`: the id of the block that starts on it. */
@@ -263,4 +265,5 @@ export const SOURCE_BUFFER_EXTENSIONS = [
   Text,
   History,
   SourceBufferBehaviour,
+  SourceBufferKeys,
 ]

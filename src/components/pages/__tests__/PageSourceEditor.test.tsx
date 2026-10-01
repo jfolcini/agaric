@@ -27,6 +27,7 @@ import { readLines, type SourceLines } from '@/editor/source-buffer'
 import type { PageBuffer } from '@/lib/bindings'
 import { t } from '@/lib/i18n'
 import { logger } from '@/lib/logger'
+import { PREFERENCES, writePreference } from '@/lib/preferences'
 import { dispatch } from '@/lib/tauri-mock/handlers'
 import { opLog, pageAliases, SEED_IDS, seedBlocks } from '@/lib/tauri-mock/seed'
 import { useNavigationStore } from '@/stores/navigation'
@@ -348,21 +349,6 @@ describe('PageSourceEditor saving', () => {
     expect(mockedInvoke.mock.calls.map(([cmd]) => cmd)).toEqual(['get_page_buffer'])
   })
 
-  it('Mod+Enter in the buffer saves', async () => {
-    const base = routeToMockBackend()
-    const { PAGE_GETTING_STARTED } = SEED_IDS
-    const user = userEvent.setup()
-    const { onClose } = renderEditor(PAGE_GETTING_STARTED)
-    edit(await loadedEditor(), WELCOME, HELLO)
-
-    await user.keyboard('{Control>}{Enter}{/Control}')
-
-    await waitFor(() => {
-      expect(onClose).toHaveBeenCalledOnce()
-    })
-    expect(pageBuffer(PAGE_GETTING_STARTED).text).toBe(base.text.replace(WELCOME, HELLO))
-  })
-
   it.each([
     ['Ctrl+S', { ctrlKey: true }],
     ['Cmd+S', { metaKey: true }],
@@ -382,7 +368,7 @@ describe('PageSourceEditor saving', () => {
     expect(pageBuffer(PAGE_GETTING_STARTED).text).toBe(base.text.replace(WELCOME, HELLO))
   })
 
-  it('a second Mod+Enter while the save is in flight does not save again', async () => {
+  it('a second Ctrl+S while the save is in flight does not save again', async () => {
     const base = routeToMockBackend()
     const gate = deferred<void>()
     mockedInvoke.mockImplementation(async (cmd: string, args?: InvokeArgs) => {
@@ -394,7 +380,7 @@ describe('PageSourceEditor saving', () => {
     const { onClose } = renderEditor(PAGE_GETTING_STARTED)
     edit(await loadedEditor(), WELCOME, HELLO)
 
-    await user.keyboard('{Control>}{Enter}{Enter}{/Control}')
+    await user.keyboard('{Control>}ss{/Control}')
     gate.resolve()
 
     await waitFor(() => {
@@ -1308,6 +1294,202 @@ describe('PageSourceConflictDialog', () => {
     expect(within(dialog).getAllByRole('listitem')).toHaveLength(3)
     await waitFor(async () => {
       expect(await axe(dialog)).toHaveNoViolations()
+    })
+  })
+})
+
+/** Insert `text` at the caret as one transaction, as the editor applies a typed run. */
+function typeText(box: HTMLElement, text: string): void {
+  const ed = editorOf(box)
+  act(() => {
+    ed.view.dispatch(ed.state.tr.insertText(text))
+  })
+}
+
+describe('PageSourceEditor outline keys (#5160 phase 5)', () => {
+  it('Tab indents the line at the caret and keeps focus in the buffer; Escape still takes it out', async () => {
+    const user = userEvent.setup()
+    const { onClose } = renderEditor()
+    const box = await loadedEditor()
+    await waitFor(() => expect(box).toHaveFocus())
+
+    await user.keyboard('{Tab}')
+
+    expect(bufferOf(box)).toEqual({ text: '  - first\n- second\n', lineIds: BUFFER.line_ids })
+    expect(box).toHaveFocus()
+    await user.keyboard('{Escape}')
+    const confirm = await screen.findByRole('alertdialog', { name: t('pageSource.discardTitle') })
+    await waitFor(() => expect(confirm).toContainElement(document.activeElement as HTMLElement))
+    await user.keyboard('{Escape}')
+    await waitFor(() => expect(box).toHaveFocus())
+    await user.keyboard('{Shift>}{Tab}{/Shift}{Escape}')
+    expect(onClose).toHaveBeenCalledOnce()
+  })
+
+  it('with Tab indents blocks off, Tab moves focus on and leaves the text as it is', async () => {
+    writePreference(PREFERENCES.tabIndentsBlocks, false)
+    const user = userEvent.setup()
+    renderEditor()
+    const box = await loadedEditor()
+    await waitFor(() => expect(box).toHaveFocus())
+
+    await user.keyboard('{Tab}')
+
+    expect(box).not.toHaveFocus()
+    expect(bufferOf(box).text).toBe(BUFFER.text)
+  })
+
+  it('Ctrl+Shift+↑ moves a block above its sibling, and the save moves it: every block kept, in the new order', async () => {
+    const base = routeToMockBackend()
+    const { BLOCK_GS_1, BLOCK_GS_2, PAGE_GETTING_STARTED } = SEED_IDS
+    const user = userEvent.setup()
+    const { onClose } = renderEditor(PAGE_GETTING_STARTED)
+    const box = await loadedEditor()
+    caretAtEnd(box, 'Use the sidebar')
+
+    await user.keyboard('{Control>}{Shift>}{ArrowUp}{/Shift}{/Control}')
+    await user.keyboard('{Control>}s{/Control}')
+
+    await waitFor(() => {
+      expect(onClose).toHaveBeenCalledOnce()
+    })
+    const at = base.line_ids.indexOf(BLOCK_GS_1)
+    const swapped = <T,>(list: T[]): T[] => [
+      ...list.slice(0, at),
+      list[at + 1] as T,
+      list[at] as T,
+      ...list.slice(at + 2),
+    ]
+    const saved = pageBuffer(PAGE_GETTING_STARTED)
+    expect(saved.line_ids).toEqual(swapped(base.line_ids))
+    expect(saved.line_ids[at]).toBe(BLOCK_GS_2)
+    expect(saved.text.split('\n')).toEqual(swapped(base.text.split('\n')))
+  })
+
+  // The mock's save models no task checkbox (`parseSourceBuffer`), so the
+  // re-read buffer, which both sides write back as `[/]`, is the check.
+  it('Ctrl+Enter steps the line’s task state instead of saving, and the save keeps it on the block', async () => {
+    const base = routeToMockBackend()
+    const { BLOCK_GS_1, PAGE_GETTING_STARTED } = SEED_IDS
+    const user = userEvent.setup()
+    const { onClose } = renderEditor(PAGE_GETTING_STARTED)
+    const box = await loadedEditor()
+    caretAtEnd(box, WELCOME)
+
+    await user.keyboard('{Control>}{Enter}{Enter}{/Control}')
+
+    expect(onClose).not.toHaveBeenCalled()
+    await user.keyboard('{Control>}s{/Control}')
+    await waitFor(() => {
+      expect(onClose).toHaveBeenCalledOnce()
+    })
+    const saved = pageBuffer(PAGE_GETTING_STARTED)
+    const at = base.line_ids.indexOf(BLOCK_GS_1)
+    expect([saved.text.split('\n')[at], saved.line_ids[at]]).toEqual([
+      '- [/] Welcome to Agaric! This is your personal knowledge base.',
+      BLOCK_GS_1,
+    ])
+  })
+})
+
+describe('PageSourceEditor pickers (#5160 phase 5)', () => {
+  /** The seeded page in the buffer, `text` typed at the end of the line holding `find`. */
+  async function typeOnSeededPage(find: string, text: string) {
+    routeToMockBackend()
+    const user = userEvent.setup()
+    const rendered = renderEditor(SEED_IDS.PAGE_GETTING_STARTED)
+    const box = await loadedEditor()
+    caretAtEnd(box, find)
+    typeText(box, text)
+    return { ...rendered, box, user }
+  }
+
+  async function pickAndSave(
+    { box, user, onClose }: Awaited<ReturnType<typeof typeOnSeededPage>>,
+    option: HTMLElement,
+    find: string,
+  ): Promise<string> {
+    while (option.getAttribute('aria-selected') !== 'true') await user.keyboard('{ArrowDown}')
+    await user.keyboard('{Enter}')
+    await waitFor(() => {
+      expect(screen.queryByRole('listbox')).not.toBeInTheDocument()
+    })
+    const line = lineOf(editorOf(box), find).text
+    await user.keyboard('{Control>}s{/Control}')
+    await waitFor(() => {
+      expect(onClose).toHaveBeenCalledOnce()
+    })
+    return line
+  }
+
+  it('[[ searches pages and writes the one picked as [[Title]], which saves as a link to it', async () => {
+    const typed = await typeOnSeededPage(WELCOME, ' [[Quick')
+
+    const line = await pickAndSave(
+      typed,
+      await screen.findByRole('option', { name: /Quick Notes/ }),
+      'Welcome',
+    )
+
+    expect(line).toBe(`${WELCOME} This is your personal knowledge base. [[Quick Notes]]`)
+    expect(dispatch('get_block', { blockId: SEED_IDS.BLOCK_GS_1 })).toMatchObject({
+      content: `Welcome to Agaric! This is your personal knowledge base. [[${SEED_IDS.PAGE_QUICK_NOTES}]]`,
+    })
+  })
+
+  it('# searches tags and writes the one picked as #name, which saves as the tag', async () => {
+    const typed = await typeOnSeededPage('Create new blocks', ' #wor')
+
+    const line = await pickAndSave(
+      typed,
+      await screen.findByRole('option', { name: 'work' }),
+      'Create new blocks',
+    )
+
+    expect(line).toBe('- Create new blocks by pressing Enter at the end of any block. #work')
+    expect(dispatch('get_block', { blockId: SEED_IDS.BLOCK_GS_3 })).toMatchObject({
+      content: `Create new blocks by pressing Enter at the end of any block. #[${SEED_IDS.TAG_WORK}]`,
+    })
+  })
+
+  it('(( searches blocks and writes the one picked as ((ULID)), which saves as a reference to it', async () => {
+    const typed = await typeOnSeededPage('Create new blocks', ' ((standup')
+    const option = await screen.findByRole('option', { name: /Weekly standup notes/ })
+
+    const line = await pickAndSave(typed, option, 'Create new blocks')
+
+    const ref = `((${SEED_IDS.BLOCK_MTG_1}))`
+    expect(line).toBe(`- Create new blocks by pressing Enter at the end of any block. ${ref}`)
+    expect(dispatch('get_block', { blockId: SEED_IDS.BLOCK_GS_3 })).toMatchObject({
+      content: `Create new blocks by pressing Enter at the end of any block. ${ref}`,
+    })
+  })
+
+  it('Escape closes an open picker and leaves the buffer open with what was typed', async () => {
+    const { box, user, onClose } = await typeOnSeededPage(WELCOME, ' [[Quick')
+    await screen.findByRole('option', { name: /Quick Notes/ })
+
+    await user.keyboard('{Escape}')
+
+    await waitFor(() => {
+      expect(screen.queryByRole('listbox')).not.toBeInTheDocument()
+    })
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
+    expect(onClose).not.toHaveBeenCalled()
+    expect(lineOf(editorOf(box), 'Welcome').text).toMatch(/knowledge base\. \[\[Quick$/)
+  })
+
+  it('has no a11y violations with a picker open, the buffer a combobox controlling its list', async () => {
+    const { box, container } = await typeOnSeededPage(WELCOME, ' [[Quick')
+    await screen.findByRole('option', { name: /Quick Notes/ })
+
+    expect(box).toHaveAttribute('role', 'combobox')
+    expect(box).toHaveAttribute('aria-controls', screen.getByRole('listbox').id)
+    await waitFor(async () => {
+      expect(await axe(container)).toHaveNoViolations()
+    })
+    await waitFor(async () => {
+      expect(await axe(screen.getByTestId('suggestion-popup'))).toHaveNoViolations()
     })
   })
 })

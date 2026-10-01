@@ -1431,6 +1431,8 @@ describe('editable-combobox ARIA wiring (#1102)', () => {
     expect(dom.getAttribute('aria-expanded')).toBe('true')
     expect(dom.getAttribute('aria-controls')).toBe('suggestion-listbox')
     expect(dom.getAttribute('aria-autocomplete')).toBe('list')
+    // A textbox's attribute: axe's `aria-allowed-attr` refuses it on a combobox.
+    expect(dom.hasAttribute('aria-multiline')).toBe(false)
 
     renderer.onExit()
   })
@@ -1461,6 +1463,7 @@ describe('editable-combobox ARIA wiring (#1102)', () => {
     renderer.onExit()
 
     expect(dom.getAttribute('role')).toBe('textbox')
+    expect(dom.getAttribute('aria-multiline')).toBe('true')
     expect(dom.hasAttribute('aria-expanded')).toBe(false)
     expect(dom.hasAttribute('aria-controls')).toBe(false)
     expect(dom.hasAttribute('aria-autocomplete')).toBe(false)

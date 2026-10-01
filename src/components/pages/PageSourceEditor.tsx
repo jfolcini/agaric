@@ -254,10 +254,7 @@ export function PageSourceEditor({ pageId, onClose }: PageSourceEditorProps): Re
   const handleKeyDown = (e: KeyboardEvent): boolean => {
     // An input method's Escape cancels the composition, not the buffer.
     if (e.isComposing) return false
-    if (
-      matchesShortcutBinding(e, 'savePageSource') ||
-      (e.key === 'Enter' && (e.metaKey || e.ctrlKey))
-    ) {
+    if (matchesShortcutBinding(e, 'savePageSource')) {
       handleSave()
       return true
     }

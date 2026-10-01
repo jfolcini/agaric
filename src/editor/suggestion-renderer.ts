@@ -34,10 +34,13 @@ import { logger } from '@/lib/logger'
  * `editorProps.attributes` (which would churn the whole view on every keystroke)
  * and WITHOUT any `instanceof` on ProseMirror types (module-copy footgun — a
  * second @tiptap/pm/state copy makes `instanceof` silently false; see project
- * memory). The base `role="textbox"` is restored on exit.
+ * memory). The base `role="textbox"` is restored on exit. `aria-multiline`
+ * belongs to a textbox alone (`aria-allowed-attr`), so it is off while the
+ * contenteditable is a combobox.
  */
 function openCombobox(dom: HTMLElement, listboxId: string): void {
   dom.setAttribute('role', 'combobox')
+  dom.removeAttribute('aria-multiline')
   dom.setAttribute('aria-expanded', 'true')
   dom.setAttribute('aria-controls', listboxId)
   dom.setAttribute('aria-autocomplete', 'list')
@@ -55,11 +58,13 @@ function setActiveDescendant(dom: HTMLElement, id: string | null): void {
 
 /**
  * #1102 — tear down the combobox semantics and restore the contenteditable's
- * resting `role="textbox"` (the value set in `use-roving-editor.ts`
- * `EDITOR_PROPS`). Called on every exit path (onExit, Escape, outside click).
+ * resting multiline `role="textbox"` (the value set in `use-roving-editor.ts`
+ * `EDITOR_PROPS` and `PageSourceBuffer`). Called on every exit path (onExit,
+ * Escape, outside click).
  */
 function closeCombobox(dom: HTMLElement): void {
   dom.setAttribute('role', 'textbox')
+  dom.setAttribute('aria-multiline', 'true')
   dom.removeAttribute('aria-expanded')
   dom.removeAttribute('aria-controls')
   dom.removeAttribute('aria-autocomplete')
