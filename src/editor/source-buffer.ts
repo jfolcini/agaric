@@ -216,6 +216,9 @@ function lineIdsAfter(
   return ids
 }
 
+/** `Shift+Enter`: break the line at the cursor without a list marker (#5160 D3). */
+export const breakLine: Command = splitLine(false)
+
 const SourceBufferBehaviour = Extension.create({
   name: 'sourceBuffer',
   // Ahead of TipTap's own Enter and clipboard handling.
@@ -223,7 +226,7 @@ const SourceBufferBehaviour = Extension.create({
   addKeyboardShortcuts() {
     return {
       Enter: ({ editor }) => splitLine(true)(editor.state, editor.view.dispatch),
-      'Shift-Enter': ({ editor }) => splitLine(false)(editor.state, editor.view.dispatch),
+      'Shift-Enter': ({ editor }) => breakLine(editor.state, editor.view.dispatch),
     }
   },
   addProseMirrorPlugins() {

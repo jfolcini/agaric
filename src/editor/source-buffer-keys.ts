@@ -24,7 +24,7 @@ import { nextTaskState, TASK_STATE_TO_MARKER, taskStateFromMarker } from '@/lib/
 const INDENT = '  '
 
 /** The positions where `doc`'s lines start, before each one's first character. */
-function lineStarts(doc: PMNode): number[] {
+export function lineStarts(doc: PMNode): number[] {
   const starts: number[] = []
   doc.forEach((_, offset) => starts.push(offset + 1))
   return starts
@@ -42,67 +42,80 @@ function touchedLines({ doc, selection }: EditorState): [number, number] {
   return [first, last]
 }
 
-const indentLines: Command = (state, dispatch) => {
-  const [first, last] = touchedLines(state)
-  const starts = lineStarts(state.doc)
-  const tr = state.tr
-  for (let i = last; i >= first; i -= 1) tr.insertText(INDENT, starts[i])
-  dispatch?.(tr.scrollIntoView())
-  return true
+/** Indent lines `first` to `last` two spaces. */
+export function indentRange(first: number, last: number): Command {
+  return (state, dispatch) => {
+    const starts = lineStarts(state.doc)
+    const tr = state.tr
+    for (let i = last; i >= first; i -= 1) tr.insertText(INDENT, starts[i])
+    dispatch?.(tr.scrollIntoView())
+    return true
+  }
 }
+
+const indentLines: Command = (state, dispatch) =>
+  indentRange(...touchedLines(state))(state, dispatch)
 
 /** Up to two leading spaces, or a tab. */
 const LEADING_INDENT = /^(?:\t| {1,2})/
 
-const dedentLines: Command = (state, dispatch) => {
-  const [first, last] = touchedLines(state)
-  const starts = lineStarts(state.doc)
-  const tr = state.tr
-  for (let i = last; i >= first; i -= 1) {
-    const width = LEADING_INDENT.exec(state.doc.child(i).textContent)?.[0].length ?? 0
-    const start = starts[i] as number
-    if (width > 0) tr.delete(start, start + width)
+/** Take up to two leading spaces, or a tab, off lines `first` to `last`. */
+export function dedentRange(first: number, last: number): Command {
+  return (state, dispatch) => {
+    const starts = lineStarts(state.doc)
+    const tr = state.tr
+    for (let i = last; i >= first; i -= 1) {
+      const width = LEADING_INDENT.exec(state.doc.child(i).textContent)?.[0].length ?? 0
+      const start = starts[i] as number
+      if (width > 0) tr.delete(start, start + width)
+    }
+    if (tr.docChanged) dispatch?.(tr.scrollIntoView())
+    return true
   }
-  if (tr.docChanged) dispatch?.(tr.scrollIntoView())
-  return true
 }
+
+const dedentLines: Command = (state, dispatch) =>
+  dedentRange(...touchedLines(state))(state, dispatch)
 
 // A list line: its indentation and list markers (`- 1.` is a bullet holding an
 // ordered list style), then the task checkbox it holds, if any.
 const TASK_LINE = /^([ \t]*(?:(?:[-*+]|\d{1,9}[.)])(?:[ \t]+|$))+)(\[([ xX/-])\](?:[ \t]|$))?/
 
 /**
- * Step the list line at the cursor to the block editor's next task state
+ * Step list line `index` to the block editor's next task state
  * (`nextTaskState`), written as the checkbox after its marker: `- foo`,
  * `- [ ] foo`, `- [/] foo`, `- [x] foo`, `- [-] foo`, and `- foo` again.
  */
-const cycleTask: Command = (state, dispatch) => {
-  const [index] = touchedLines(state)
-  const match = TASK_LINE.exec(state.doc.child(index).textContent)
-  if (match === null) return true
-  const [, prefix = '', box, marker] = match
-  const at = (lineStarts(state.doc)[index] as number) + prefix.length
-  const next = nextTaskState(marker === undefined ? null : taskStateFromMarker(marker))
-  const tr = state.tr
-  if (next === null) tr.delete(at, at + (box?.length ?? 0))
-  else if (box !== undefined) tr.insertText(TASK_STATE_TO_MARKER[next], at + 1, at + 2)
-  else tr.insertText(`${/[ \t]$/.test(prefix) ? '' : ' '}[${TASK_STATE_TO_MARKER[next]}] `, at)
-  dispatch?.(tr.scrollIntoView())
-  return true
+export function cycleTaskAt(index: number): Command {
+  return (state, dispatch) => {
+    const match = TASK_LINE.exec(state.doc.child(index).textContent)
+    if (match === null) return true
+    const [, prefix = '', box, marker] = match
+    const at = (lineStarts(state.doc)[index] as number) + prefix.length
+    const next = nextTaskState(marker === undefined ? null : taskStateFromMarker(marker))
+    const tr = state.tr
+    if (next === null) tr.delete(at, at + (box?.length ?? 0))
+    else if (box !== undefined) tr.insertText(TASK_STATE_TO_MARKER[next], at + 1, at + 2)
+    else tr.insertText(`${/[ \t]$/.test(prefix) ? '' : ' '}[${TASK_STATE_TO_MARKER[next]}] `, at)
+    dispatch?.(tr.scrollIntoView())
+    return true
+  }
 }
 
-const isBlank = (text: string): boolean => text.trim() === ''
-const depthOf = (text: string): number => /^[ \t]*/.exec(text)?.[0].length ?? 0
+const cycleTask: Command = (state, dispatch) => cycleTaskAt(touchedLines(state)[0])(state, dispatch)
+
+export const isBlank = (text: string): boolean => text.trim() === ''
+export const depthOf = (text: string): number => /^[ \t]*/.exec(text)?.[0].length ?? 0
 
 /** The line after the front matter (`---` … `---` at the top), 0 when there is none. */
-function frontMatterEnd(texts: readonly string[]): number {
+export function frontMatterEnd(texts: readonly string[]): number {
   if (texts[0]?.trimEnd() !== '---') return 0
   const close = texts.findIndex((text, i) => i > 0 && text.trimEnd() === '---')
   return close < 0 ? 0 : close + 1
 }
 
 /** The end of line `start`'s subtree: past the lines after it indented deeper, and the blank lines between them. */
-function subtreeEnd(texts: readonly string[], start: number, level: number): number {
+export function subtreeEnd(texts: readonly string[], start: number, level: number): number {
   let end = start + 1
   for (let i = start + 1; i < texts.length; i += 1) {
     const text = texts[i] as string
@@ -184,16 +197,15 @@ function lineMove(
 }
 
 /**
- * Move the lines the selection touches past their sibling, in one step: the
- * same line nodes, ids and all, replace the lines they were, and the
- * selection goes with them.
+ * Move lines `first` to `last` past their sibling, in one step: the same line
+ * nodes, ids and all, replace the lines they were, and the selection, which
+ * is on them, goes with them.
  */
-function moveLines(direction: -1 | 1): Command {
+export function moveRange(first: number, last: number, direction: -1 | 1): Command {
   return (state, dispatch) => {
     const { doc, selection } = state
     const texts: string[] = []
     doc.forEach((line) => texts.push(line.textContent))
-    const [first, last] = touchedLines(state)
     const move = lineMove(texts, first, last, direction)
     if (move === null) return true
     const starts = lineStarts(doc)
@@ -206,6 +218,11 @@ function moveLines(direction: -1 | 1): Command {
     dispatch?.(tr.scrollIntoView())
     return true
   }
+}
+
+/** Move the lines the selection touches past their sibling. */
+function moveLines(direction: -1 | 1): Command {
+  return (state, dispatch) => moveRange(...touchedLines(state), direction)(state, dispatch)
 }
 
 /** The command a key runs in the buffer, or `null` for a key it leaves alone. */

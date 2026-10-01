@@ -14,6 +14,7 @@ import { type EditorState, PluginKey } from '@tiptap/pm/state'
 import { completedTag } from '@/editor/extensions/at-tag-picker'
 import { parseTypedLink, pickedLinkLabel } from '@/editor/extensions/block-link-picker'
 import { createPickerPlugin } from '@/editor/extensions/picker-plugin'
+import { closesFence, FENCE_OPENER } from '@/editor/source-buffer-blocks'
 import type { PickerItem } from '@/editor/SuggestionList'
 import { t } from '@/lib/i18n'
 import { scanNameTokens } from '@/lib/name-tokens'
@@ -59,15 +60,6 @@ export function pageLinkText(item: PickerItem, typed: string): string {
   const name = item.isAlias ? (item.aliasText ?? item.label) : (item.title ?? item.label)
   const label = pickedLinkLabel(item, typed)
   return label === undefined ? `[[${name}]]` : `[[${name}|${label}]]`
-}
-
-/** A line's fence opener: three or more backticks or tildes where its text starts, past its list markers and checkbox. */
-const FENCE_OPENER =
-  /^[ \t]*(?:(?:[-*+]|\d{1,9}[.)])[ \t]+)*(?:\[[ xX/-]\][ \t]+)?(`{3,}(?!.*`)|~{3,})/
-
-function closesFence(text: string, run: string): boolean {
-  const trimmed = text.trim()
-  return trimmed.length >= run.length && trimmed === run.charAt(0).repeat(trimmed.length)
 }
 
 /**
