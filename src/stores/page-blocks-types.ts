@@ -175,7 +175,6 @@ export interface PageBlockState {
   applyPageSource: (
     source: string,
     baseSource: string,
-    force: boolean,
     merge: boolean,
     lineIds: Array<string | null>,
   ) => Promise<PageSourceReport>

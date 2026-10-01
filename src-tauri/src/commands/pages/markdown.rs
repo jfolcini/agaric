@@ -1418,8 +1418,9 @@ fn render_page_source_ids(data: &PageExportData) -> (String, Vec<String>) {
 /// block's last line or, when that line is code, is a line of its own, which
 /// goes. Everything else is kept as written, so the parse by id reads the text
 /// back as the blocks the anchors named. What is not an anchor, a `^word` that
-/// is no block id, stays.
-fn anchor_free(source: &str) -> (String, Vec<Option<String>>) {
+/// is no block id, stays. Public so the command tests can write an edited
+/// buffer as the source it was loaded from, anchors and all.
+pub fn anchor_free(source: &str) -> (String, Vec<Option<String>>) {
     let mut lines: Vec<(&str, Option<String>)> =
         source.split('\n').map(|line| (line, None)).collect();
     let mut own_lines = HashSet::new();

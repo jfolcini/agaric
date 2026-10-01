@@ -1,7 +1,7 @@
 //! `apply_page_source` over generated pages on a real pool (#5140): saving a
-//! page's own source writes nothing, and saving its blocks rearranged lands
-//! exactly that tree with the fewest moves. The pages come from the render
-//! proptests' generator ([`arb_forest`]).
+//! page's own text by its line ids writes nothing, and saving its blocks
+//! rearranged lands exactly that tree with the fewest moves. The pages come
+//! from the render proptests' generator ([`arb_forest`]).
 
 use std::collections::BTreeMap;
 
@@ -159,15 +159,24 @@ fn appended(
         .collect()
 }
 
-async fn save(fx: &Fixture, source: &str, base: &str) -> PageSourceReport {
+/// Save `text`, each line carrying the id `line_ids` gives, edited from
+/// `base`.
+async fn save(
+    fx: &Fixture,
+    (text, line_ids): (String, Vec<Option<String>>),
+    base: &str,
+) -> PageSourceReport {
     apply_page_source_inner(
         &fx.pool,
         DEV,
         &fx.materializer,
         &fx.page,
-        source.to_owned(),
+        text,
         base.to_owned(),
-        SourceSaveFlags::default(),
+        SourceSaveFlags {
+            merge: false,
+            line_ids,
+        },
     )
     .await
     .unwrap()
@@ -276,36 +285,10 @@ async fn fewest_moves(pool: &SqlitePool, after: &BTreeMap<String, Vec<String>>) 
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(CASES))]
 
-    /// Every feature the generator writes, raw and humanised refs among them,
-    /// renders to a buffer whose save appends no op.
-    #[test]
-    fn saving_a_pages_own_source_writes_nothing(forest in arb_forest()) {
-        Runtime::new().unwrap().block_on(async {
-            let fx = fixture().await;
-            let ids = create_forest(&fx, &forest).await;
-            write_metadata(&fx.pool, &ids, &forest).await;
-            let source = get_page_source_inner(&fx.pool, &fx.page).await.unwrap();
-            let before = op_counts(&fx.pool).await;
-
-            let report = save(&fx, &source, &source).await;
-
-            let after = op_counts(&fx.pool).await;
-            prop_assert_eq!(appended(&before, &after), BTreeMap::new(), "source:\n{}", source);
-            prop_assert_eq!(
-                (report.created, report.edited, report.moved, report.deleted),
-                (0, 0, 0, 0),
-                "source:\n{}",
-                source
-            );
-            prop_assert_eq!((report.properties_set, report.properties_deleted), (0, 0));
-            prop_assert!(report.names_created.is_empty() && report.warnings.is_empty());
-            Ok(())
-        })?;
-    }
-
     /// #5160 A — the page's own text, each block's id beside the line it
-    /// starts on, saves as nothing too, the blocks the text cannot carry
-    /// exactly among them: the save reads the page's source as that same text.
+    /// starts on, saves as nothing, every feature the generator writes, raw
+    /// and humanised refs and the blocks the text cannot carry exactly among
+    /// them: the save reads the page's source as that same text.
     #[test]
     fn saving_a_pages_own_text_by_its_line_ids_writes_nothing(forest in arb_forest()) {
         Runtime::new().unwrap().block_on(async {
@@ -315,20 +298,12 @@ proptest! {
             let buffer = get_page_buffer_inner(&fx.pool, &fx.page).await.unwrap();
             let before = op_counts(&fx.pool).await;
 
-            let report = apply_page_source_inner(
-                &fx.pool,
-                DEV,
-                &fx.materializer,
-                &fx.page,
-                buffer.text.clone(),
-                buffer.source.clone(),
-                SourceSaveFlags {
-                    line_ids: Some(buffer.line_ids.clone()),
-                    ..SourceSaveFlags::default()
-                },
+            let report = save(
+                &fx,
+                (buffer.text.clone(), buffer.line_ids.clone()),
+                &buffer.source,
             )
-            .await
-            .unwrap();
+            .await;
 
             let after = op_counts(&fx.pool).await;
             prop_assert_eq!(appended(&before, &after), BTreeMap::new(), "text:\n{}", buffer.text);
@@ -350,8 +325,9 @@ proptest! {
         })?;
     }
 
-    /// The page's blocks shuffled and re-indented: the save lands exactly that
-    /// tree, with moves only, and no more of them than the tree needs.
+    /// The page's blocks shuffled and re-indented, each line keeping its id: the
+    /// save lands exactly that tree, with moves only, and no more of them than
+    /// the tree needs.
     #[test]
     fn a_rearranged_source_lands_its_tree_with_the_fewest_moves(
         (forest, order, levels) in arb_rearrangement()
@@ -364,7 +340,7 @@ proptest! {
             let expected_moves = fewest_moves(&fx.pool, &tree).await;
             let before = op_counts(&fx.pool).await;
 
-            let report = save(&fx, &source, &base).await;
+            let report = save(&fx, anchor_free(&source), &base).await;
 
             let after = op_counts(&fx.pool).await;
             let moves = [("move_block".to_string(), expected_moves)];

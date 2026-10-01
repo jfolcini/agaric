@@ -1,18 +1,17 @@
 //! Saving a page edited as its source buffer (#5140): [`apply_page_source`].
 //!
 //! The save parses two buffers: the page's current source (T0), rendered as
-//! `get_page_source` renders it, and the buffer the user edited (T1). Blocks
-//! pair by their `^ID` anchor, and only what differs between the two parses is
-//! written, compared before any name is resolved. So an unchanged buffer writes
+//! `get_page_source` renders it and read as the text `get_page_buffer` gives,
+//! and the text the user edited (T1). Blocks pair by the id beside the line
+//! each starts on, and only what differs between the two parses is written,
+//! compared before any name is resolved. So an unchanged buffer writes
 //! nothing, and a name the block already held keeps the meaning its render
 //! gave it.
 
 use std::collections::hash_map::Entry;
 use std::collections::{BTreeMap, BTreeSet};
-use std::sync::LazyLock;
 
 use agaric_core::error::ValidationCode;
-use regex::Regex;
 use serde::Serialize;
 
 use super::*;
@@ -26,27 +25,22 @@ use crate::commands::properties::{
     set_todo_state_in_tx,
 };
 
-/// How [`apply_page_source_inner`] reads the buffer, and what it does with one
-/// that does not fit the page as it is.
-#[derive(Debug, Clone, Default)]
+/// How [`apply_page_source_inner`] reads the buffer.
+#[derive(Debug, Clone)]
 pub struct SourceSaveFlags {
-    /// Save a block whose anchor names no block of the page as a new block,
-    /// with a warning, instead of refusing the save.
-    pub force: bool,
     /// Fold the changes the page took since `base_source` into the buffer
     /// instead of refusing the save as stale.
     pub merge: bool,
-    /// The id each line of the buffer carries, one entry per line, when the
-    /// ids travel beside its text rather than in it as `^ID` anchors
+    /// The id each line of the buffer carries, one entry per line
     /// (`get_page_buffer_inner`, #5160 A).
-    pub line_ids: Option<Vec<Option<String>>>,
+    pub line_ids: Vec<Option<String>>,
 }
 
 /// What [`apply_page_source`] wrote.
 #[derive(Debug, Clone, Default, Serialize, Type)]
 pub struct PageSourceReport {
-    /// Blocks created from the buffer: new bullets, anchors a forced save kept
-    /// as new blocks, and copied or foreign ids (#5160 D15).
+    /// Blocks created from the buffer: new bullets, and lines carrying a copied
+    /// or foreign id (#5160 D15).
     pub created: u32,
     /// Blocks of the page whose content was rewritten.
     pub edited: u32,
@@ -66,22 +60,31 @@ pub struct PageSourceReport {
     pub warnings: Vec<String>,
 }
 
-/// Save `source`, the page's source buffer as the user edited it, over the
-/// page (#5140), as one transaction and so one undo. `base_source` is the
-/// source the edit started from: when it is not the page's source now, the
-/// save is refused as stale, whatever `flags.force` says, unless `flags.merge`:
+/// Save `source`, the text of the page's source buffer as the user edited it,
+/// over the page (#5140), as one transaction and so one undo. `flags.line_ids`
+/// holds the id each of its lines carries (#5160 A). `base_source` is the
+/// source the edit started from, `get_page_buffer`'s `source`: when it is not
+/// the page's source now, the save is refused as stale, unless `flags.merge`:
 /// then the changes the page took since are folded into the buffer first
 /// (`merge::merge_outlines`), and a block both sides changed differently is
 /// kept twice, the buffer's version as a new block directly before the page's,
 /// with a warning.
 ///
-/// Blocks pair with the page's by their `^ID` anchor. A paired block gets the
-/// content, properties, parent and slot the buffer gives it, each written only
-/// when it differs from the page's source; a bullet with no anchor is created;
-/// a block of the page the buffer no longer holds is deleted. A name typed into
-/// a block is resolved in the page's space as an import resolves it, creating
-/// the page or tag no name there matches. A checkbox does what a click on it
-/// does: the #5074 stamps and, on the edge into DONE, the next occurrence.
+/// A block is the one whose id the line it starts on carries; no `^ID` in the
+/// text is read. A paired block gets the content, properties, parent and slot
+/// the buffer gives it, each written only when it differs from the page's
+/// source; a bullet whose line carries no id is created; a block of the page
+/// the buffer no longer holds is deleted. A copy is a new block and a cut is a
+/// move (D15): an id on more than one line stays with the first, and one that
+/// names no block of the page is a new block, each with a warning naming the
+/// line. A fence left open ends before the next line that carries an id, with
+/// a warning (D5). The page's own source is read the same way, so its own text
+/// saves as nothing.
+///
+/// A name typed into a block is resolved in the page's space as an import
+/// resolves it, creating the page or tag no name there matches. A checkbox
+/// does what a click on it does: the #5074 stamps and, on the edge into DONE,
+/// the next occurrence.
 ///
 /// A property key names the reserved key or definition it folds to (#5160
 /// D13), a `key::` line with no value deletes the property (P7), and a ref
@@ -92,15 +95,6 @@ pub struct PageSourceReport {
 /// the front matter no longer holds is deleted, and a tag name no tag of the
 /// space has is created.
 ///
-/// With `flags.line_ids` (#5160 A), `source` is the text `get_page_buffer`
-/// gives, anchors removed, and a block is the one whose id the line it starts
-/// on carries; no `^ID` in the text is read. A copy is a new block and a cut is
-/// a move (D15): an id on more than one line stays with the first, and one
-/// that names no block of the page is a new block, each with a warning naming
-/// the line. A fence left open ends before the next line that carries an id,
-/// with a warning (D5). The page's own source is read the same way, so its own
-/// text saves as nothing.
-///
 /// # Errors
 ///
 /// - [`AppError::Ulid`] — `page_id` is not a ULID
@@ -108,15 +102,13 @@ pub struct PageSourceReport {
 /// - [`AppError::Validation`] — `page_id` is not a page; with code
 ///   [`ValidationCode::RequiresRefresh`] when `base_source` is not the page's
 ///   source and `flags.merge` is false; the page's source does not read back as
-///   its blocks (a carriage return in a block's text); an anchor is written
-///   twice, or names no block of the page and `flags.force` is false; a
-///   property line sets a value its definition refuses, named in the message;
-///   a front matter line holds no page property, or a value its definition
-///   refuses, named by its line;
-///   a block the save would delete holds a nested page; a block would be
-///   nested past `MAX_BLOCK_DEPTH`; or the save would append more ops than one
-///   undo reverts; or `flags.line_ids` does not hold one entry per line of
-///   `source`. A refusal at a block of the buffer starts with its line,
+///   its blocks (a carriage return in a block's text); `flags.line_ids` does
+///   not hold one entry per line of `source`; a property line sets a value its
+///   definition refuses, named in the message; a front matter line holds no
+///   page property, or a value its definition refuses, named by its line; a
+///   block the save would delete holds a nested page; a block would be nested
+///   past `MAX_BLOCK_DEPTH`; or the save would append more ops than one undo
+///   reverts. A refusal at a block of the buffer starts with its line,
 ///   `line N: ` (#5160 X3).
 #[instrument(skip(pool, device_id, materializer, source, base_source), err)]
 pub async fn apply_page_source_inner(
@@ -133,20 +125,19 @@ pub async fn apply_page_source_inner(
     // #2604 — rollback-safe engine apply (rewind on tx abort).
     tx.arm_engine_rollback(materializer.loro_state());
     let data = load_page_export_data(&mut tx, page_id.as_str(), PageRead::Source).await?;
-    let line_ids = flags.line_ids.as_deref();
-    let (base, stale) = read_base(&data, &base_source, flags.merge, line_ids.is_some())?;
+    let (base, stale) = read_base(&data, &base_source, flags.merge)?;
     let mut lines = PropertyLines::load(&mut tx, PropertyWrite::Edit).await?;
     let mut warnings = Vec::new();
     let (blocks, front) = read_buffer(
         &source,
-        line_ids,
+        &flags.line_ids,
         &base_source,
         &base,
         stale,
         &mut lines,
         &mut warnings,
     )?;
-    let mut buffer = pair_blocks(&base, blocks, flags.force, &mut warnings)?;
+    let mut buffer = pair_blocks(&base, blocks)?;
     resolve_value_refs(&mut tx, &page_id, &mut lines, &buffer, &front).await?;
     // Boxed for the reason `duplicate_block_inner` gives.
     let (mut tx, mut names_created) = Box::pin(resolve_buffer_names(
@@ -238,17 +229,15 @@ struct Base {
     front_matter: front_matter::FrontMatter,
 }
 
-/// The page's source, read `by_line` when the buffer's ids travel beside its
-/// text ([`read_own_source`]), and whether it is stale: not `base_source`,
-/// which is refused unless `merge`. Refused too when it does not read back as
-/// the blocks it renders: text the grammar cannot carry, such as a carriage
-/// return, reads back as other content or another block, and saving over it
-/// would rewrite the block.
+/// The page's source, read as its text is ([`read_own_source`]), and whether
+/// it is stale: not `base_source`, which is refused unless `merge`. Refused
+/// too when it does not read back as the blocks it renders: text the grammar
+/// cannot carry, such as a carriage return, reads back as other content or
+/// another block, and saving over it would rewrite the block.
 fn read_base(
     data: &PageExportData,
     base_source: &str,
     merge: bool,
-    by_line: bool,
 ) -> Result<(Base, bool), AppError> {
     let (current, ids) = render_page_source_ids(data);
     let stale = current != base_source;
@@ -258,7 +247,7 @@ fn read_base(
             "the page changed after its source was read",
         ));
     }
-    let parsed = read_own_source(&current, by_line);
+    let parsed = read_own_source(&current);
     let front_matter = front_matter::FrontMatter::of(&parsed);
     let blocks = parsed.blocks;
     let unread = (0..blocks.len().max(ids.len())).find(|&i| {
@@ -282,17 +271,13 @@ fn read_base(
     ))
 }
 
-/// `source`, a page's source as `get_page_source` renders it, read as a buffer
-/// of its kind is: by its anchors, or, `by_line`, as the text `anchor_free`
-/// makes of it, each block under the id the line it starts on carries. The
-/// text cannot carry the few blocks its anchors keep apart, a block's content
-/// ending in a blank line or leaving a fence open before its property lines,
-/// so the save compares the buffer with this reading, not with the anchored
-/// one: the page's own text writes nothing.
-fn read_own_source(source: &str, by_line: bool) -> import::ParseOutput {
-    if !by_line {
-        return import::parse_source_outline(source);
-    }
+/// `source`, a page's source as `get_page_source` renders it, read as the text
+/// [`anchor_free`] makes of it, each block under the id the line it starts on
+/// carries. The text cannot carry the few blocks its anchors keep apart, a
+/// block's content ending in a blank line or leaving a fence open before its
+/// property lines, so the save compares the buffer with this reading, not with
+/// the anchored one: the page's own text writes nothing.
+fn read_own_source(source: &str) -> import::ParseOutput {
     let (text, line_ids) = anchor_free(source);
     let mut parsed = import::parse_source_text(&text, &id_lines(&line_ids));
     for block in &mut parsed.blocks {
@@ -315,8 +300,8 @@ fn id_lines(line_ids: &[Option<String>]) -> HashSet<usize> {
 }
 
 /// The edited buffer (T1): its blocks, each one's parent among them, the base
-/// block its anchor pairs it with, and whether a paired block's content
-/// differs from its base block's, read before any name in it is resolved.
+/// block its id pairs it with, and whether a paired block's content differs
+/// from its base block's, read before any name in it is resolved.
 struct Buffer {
     blocks: Vec<import::ParsedBlock>,
     parents: Vec<Option<usize>>,
@@ -324,72 +309,43 @@ struct Buffer {
     edited: Vec<bool>,
 }
 
-/// The buffer's blocks as the save pairs them: by anchor ([`read_anchored`]),
-/// or by the ids beside the text ([`read_by_line`]), against the blocks of
-/// `base_source`, the source the edit started from. Then, when the page
-/// changed since (`stale`), its changes are folded in, so the merge compares a
-/// block whose anchor an edit moved as that block, edited. A property key is
-/// read as the one `lines` fold it to (#5160 D13) before anything is compared,
-/// unless its block held it as written in the source the edit started from,
-/// and a `key::` line for a key it did not hold is text (P7). The front matter
-/// is read either way, against the one the edit started from, as the page's
-/// properties.
+/// The buffer's blocks, each under the id beside the line it starts on
+/// ([`read_by_line`]), against the blocks of `base_source`, the source the
+/// edit started from. Then, when the page changed since (`stale`), its changes
+/// are folded in. A property key is read as the one `lines` fold it to (#5160
+/// D13) before anything is compared, unless its block held it as written in
+/// the source the edit started from, and a `key::` line for a key it did not
+/// hold is text (P7). The front matter is read against the one the edit
+/// started from, as the page's properties.
 fn read_buffer(
-    source: &str,
-    line_ids: Option<&[Option<String>]>,
+    text: &str,
+    line_ids: &[Option<String>],
     base_source: &str,
     base: &Base,
     stale: bool,
     lines: &mut PropertyLines,
     warnings: &mut Vec<String>,
 ) -> Result<(Vec<import::ParsedBlock>, front_matter::FrontMatterEdit), AppError> {
-    let older = stale.then(|| read_own_source(base_source, line_ids.is_some()));
+    let older = stale.then(|| read_own_source(base_source));
     let from = older
         .as_ref()
         .map_or_else(|| base.front_matter.clone(), front_matter::FrontMatter::of);
     let older = older.map(|older| older.blocks);
     let edited_from = older.as_ref().unwrap_or(&base.blocks);
-    let loaded: HashSet<&str> = edited_from
+    let known: HashSet<&str> = edited_from
         .iter()
         .filter_map(|block| block.block_anchor.as_deref())
+        .chain(base.ids.iter().map(String::as_str))
         .collect();
-    let parsed = match line_ids {
-        None => read_anchored(source, &loaded, warnings)?,
-        Some(line_ids) => {
-            let known = loaded
-                .iter()
-                .copied()
-                .chain(base.ids.iter().map(String::as_str))
-                .collect();
-            read_by_line(source, line_ids, &known, warnings)?
-        }
-    };
+    let parsed = read_by_line(text, line_ids, &known, warnings)?;
     let front = front_matter::FrontMatterEdit::read(&parsed, from, lines)?;
     let mut blocks = parsed.blocks;
     lines.canonicalize(&mut blocks, edited_from);
     let blocks = match older {
-        Some(older) => merge::merge_outlines(older, &base.blocks, blocks, warnings)?,
+        Some(older) => merge::merge_outlines(older, &base.blocks, blocks, warnings),
         None => blocks,
     };
     Ok((blocks, front))
-}
-
-/// A buffer with each block's `^ID` in its text, read into blocks. An anchor
-/// that is not a block id is text, and one an edit moved off the end of its
-/// block still names it among the `loaded` blocks ([`heal_moved_anchors`]).
-fn read_anchored(
-    source: &str,
-    loaded: &HashSet<&str>,
-    warnings: &mut Vec<String>,
-) -> Result<import::ParseOutput, AppError> {
-    let mut parsed = import::parse_source_outline(source);
-    warnings.append(&mut parsed.warnings);
-    parsed
-        .blocks
-        .iter_mut()
-        .for_each(import::restore_text_anchor);
-    heal_moved_anchors(&mut parsed.blocks, loaded)?;
-    Ok(parsed)
 }
 
 /// `text` read into blocks, each under the id `line_ids` gives the line it
@@ -440,51 +396,27 @@ fn read_by_line(
     Ok(parsed)
 }
 
-/// `blocks` paired with the base by anchor. An anchor written twice is
-/// refused, and so is one that names no block of the page's source, unless
-/// `force`: then its block is saved as a new one, with a warning, and the block
-/// the anchor names, wherever it is, is left alone.
-fn pair_blocks(
-    base: &Base,
-    blocks: Vec<import::ParsedBlock>,
-    force: bool,
-    warnings: &mut Vec<String>,
-) -> Result<Buffer, AppError> {
+/// `blocks` paired with the base by the id each carries. [`read_by_line`]
+/// gives a block of the page to one block at most, and the merge keeps no
+/// other id, so each id names a block of the page's source, once. One that
+/// does not refuses the save rather than aborting the app.
+fn pair_blocks(base: &Base, blocks: Vec<import::ParsedBlock>) -> Result<Buffer, AppError> {
     let slots: HashMap<&str, usize> = base
         .ids
         .iter()
         .enumerate()
         .map(|(slot, id)| (id.as_str(), slot))
         .collect();
-    let mut seen: HashSet<&str> = HashSet::new();
-    let mut paired = Vec::with_capacity(blocks.len());
-    for block in &blocks {
-        let Some(anchor) = block.block_anchor.as_deref() else {
-            paired.push(None);
-            continue;
-        };
-        if !seen.insert(anchor) {
-            return Err(at_line(
-                block.line,
-                AppError::validation(format!("^{anchor} is written on more than one block")),
-            ));
-        }
-        match slots.get(anchor) {
-            Some(&slot) => paired.push(Some(slot)),
-            None if force => {
-                warnings.push(format!(
-                    "^{anchor} no longer on this page; saved as a new block"
-                ));
-                paired.push(None);
-            }
-            None => {
-                return Err(at_line(
-                    block.line,
-                    AppError::validation(format!("^{anchor} is not a block of this page")),
-                ));
-            }
-        }
-    }
+    let paired = blocks
+        .iter()
+        .map(|block| {
+            block.block_anchor.as_deref().map_or(Ok(None), |id| {
+                slots.get(id).copied().map(Some).ok_or_else(|| {
+                    AppError::Internal(format!("buffer block {id} is not a block of the page"))
+                })
+            })
+        })
+        .collect::<Result<Vec<Option<usize>>, AppError>>()?;
     let edited = blocks
         .iter()
         .zip(&paired)
@@ -496,98 +428,6 @@ fn pair_blocks(
         base: paired,
         edited,
     })
-}
-
-/// A `^ID` an edit moved off the end of its block, by text typed after it or
-/// a line under it, still names the block: an unanchored block whose text
-/// holds, outside inline code, exactly one `^ID` of a `loaded` block no other
-/// block claims takes it as its anchor, and the token leaves the text. Two or
-/// more refuse the save: a block has one anchor.
-fn heal_moved_anchors(
-    blocks: &mut [import::ParsedBlock],
-    loaded: &HashSet<&str>,
-) -> Result<(), AppError> {
-    let mut claimed: HashSet<String> = blocks
-        .iter()
-        .filter_map(|block| block.block_anchor.clone())
-        .collect();
-    for block in blocks
-        .iter_mut()
-        .filter(|block| block.block_anchor.is_none())
-    {
-        let tokens = moved_anchors(&block.content, |id| {
-            loaded.contains(id) && !claimed.contains(id)
-        });
-        let (start, end) = match tokens.as_slice() {
-            [] => continue,
-            [token] => *token,
-            [first, second, ..] => {
-                return Err(at_line(
-                    block.line,
-                    AppError::validation(format!(
-                        "{} and {} are written in one block; a block has one anchor",
-                        &block.content[first.0..first.1],
-                        &block.content[second.0..second.1]
-                    )),
-                ));
-            }
-        };
-        let id = block.content[start + 1..end].to_string();
-        block.content = without_token(&block.content, start, end);
-        claimed.insert(id.clone());
-        block.block_anchor = Some(id);
-    }
-    Ok(())
-}
-
-/// A `^word` at a line start or after whitespace, as the parser reads a
-/// trailing one.
-static MOVED_ANCHOR_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"(?:^|\s)(\^[A-Za-z0-9-]+)").expect("invalid moved-anchor regex"));
-
-/// The byte range in `content` of each `^word` outside inline code spans whose
-/// word `names_block`.
-fn moved_anchors(content: &str, names_block: impl Fn(&str) -> bool) -> Vec<(usize, usize)> {
-    let mut found = Vec::new();
-    let mut line_start = 0;
-    for line in content.split('\n') {
-        let spans = import::inline_code_spans(line);
-        for token in MOVED_ANCHOR_RE
-            .captures_iter(line)
-            .filter_map(|caps| caps.get(1))
-        {
-            let in_span = spans
-                .iter()
-                .any(|&(start, end)| token.start() >= start && token.start() < end);
-            if !in_span && names_block(&token.as_str()[1..]) {
-                found.push((line_start + token.start(), line_start + token.end()));
-            }
-        }
-        line_start += line.len() + 1;
-    }
-    found
-}
-
-/// `content` less the token at `start..end` and the one separator written
-/// with it: the whitespace before it, or at a line start the space after it,
-/// or the line break of a line that is the token alone.
-fn without_token(content: &str, start: usize, end: usize) -> String {
-    let (before, after) = (&content[..start], &content[end..]);
-    let at_line_start = before.is_empty() || before.ends_with('\n');
-    let (before, after) = if !at_line_start {
-        let separator = before.chars().next_back().map_or(0, char::len_utf8);
-        (&before[..before.len() - separator], after)
-    } else if let Some(rest) = after.strip_prefix(' ') {
-        (before, rest)
-    } else if after.is_empty() || after.starts_with('\n') {
-        match before.strip_suffix('\n') {
-            Some(rest) => (rest, after),
-            None => (before, after.strip_prefix('\n').unwrap_or(after)),
-        }
-    } else {
-        (before, after)
-    };
-    format!("{before}{after}")
 }
 
 /// Each block's parent among `blocks`, `None` for a top-level one, nested as
@@ -1185,9 +1025,8 @@ pub async fn apply_page_source(
     page_id: PageId,
     source: String,
     base_source: String,
-    force: bool,
     merge: bool,
-    line_ids: Option<Vec<Option<String>>>,
+    line_ids: Vec<Option<String>>,
 ) -> Result<WithOps<PageSourceReport>, AppError> {
     capture_op_refs(apply_page_source_inner(
         ctx.pool(),
@@ -1196,11 +1035,7 @@ pub async fn apply_page_source(
         page_id.as_str(),
         source,
         base_source,
-        SourceSaveFlags {
-            force,
-            merge,
-            line_ids,
-        },
+        SourceSaveFlags { merge, line_ids },
     ))
     .await
     .map_err(sanitize_internal_error)
@@ -1270,58 +1105,6 @@ mod tests {
         );
     }
 
-    const A: &str = "01J0000000000000000000000A";
-    const B: &str = "01J0000000000000000000000B";
-
-    /// `md` parsed as a source buffer and healed over a page holding A and B:
-    /// each block's content and anchor.
-    fn healed(md: &str) -> Result<Vec<(String, Option<String>)>, AppError> {
-        let mut blocks = import::parse_source_outline(md).blocks;
-        heal_moved_anchors(&mut blocks, &HashSet::from([A, B]))?;
-        Ok(blocks
-            .into_iter()
-            .map(|block| (block.content, block.block_anchor))
-            .collect())
-    }
-
-    /// The token leaves the text with the one separator written with it.
-    #[test]
-    fn a_moved_anchor_names_its_block_and_leaves_the_text() {
-        for (md, content) in [
-            (format!("- foo ^{A} bar\n"), "foo bar"),
-            (format!("- foo ^{A}.\n"), "foo."),
-            (format!("- foo ^{A}\n  more\n"), "foo\nmore"),
-            (format!("- foo\n  ^{A} bar\n"), "foo\nbar"),
-            (format!("- foo\n  ^{A}\n  more\n"), "foo\nmore"),
-            (format!("- ^{A}\n  more\n"), "more"),
-            (format!("- ```\n  x\n  ^{A}\n  more\n"), "```\nx\nmore"),
-        ] {
-            assert_eq!(
-                healed(&md).unwrap(),
-                [(content.to_string(), Some(A.to_string()))],
-                "{md:?}"
-            );
-        }
-    }
-
-    /// A token in an inline code span, naming no block of the page, or naming
-    /// one another bullet claims, is text.
-    #[test]
-    fn a_token_that_names_no_free_block_outside_inline_code_is_text() {
-        let code = format!("- `y ^{A}` ^01J0000000000000000000000C\n  more\n");
-        assert_eq!(
-            healed(&code).unwrap(),
-            [(format!("`y ^{A}` ^01J0000000000000000000000C\nmore"), None)]
-        );
-        assert_eq!(
-            healed(&format!("- x ^{A} more\n- a ^{A}\n")).unwrap(),
-            [
-                (format!("x ^{A} more"), None),
-                ("a".to_string(), Some(A.to_string())),
-            ]
-        );
-    }
-
     /// `blocks` as a save stores them on an empty page, with their ids: each a
     /// new block under the parent [`outline_parents`] gives it. Of its last-wins
     /// properties, the task state goes to its column, `listStyle` to the list
@@ -1378,40 +1161,21 @@ mod tests {
 
     proptest! {
         /// #5160 — whatever a hand-written buffer reads as renders back to the
-        /// same tree, content and properties, each block under its own `^ID`,
-        /// once stored as [`stored`] models a save storing it: render ∘ model ∘
-        /// parse, with the model standing in for `apply_markdown_source`.
+        /// same tree, content and properties, each block under its own id, once
+        /// stored as [`stored`] models a save storing it and read back as its
+        /// text: read ∘ render ∘ model ∘ read, with the model standing in for
+        /// `apply_page_source`. Typed, no line carries an id.
         #[test]
         fn a_saved_buffer_renders_back_to_what_was_saved(text in arb_document()) {
-            let mut saved = import::parse_source_outline(&text).blocks;
-            saved.iter_mut().for_each(import::restore_text_anchor);
+            let saved = import::parse_source_text(&text, &HashSet::new()).blocks;
             let (data, ids) = stored(&saved);
             let md = render_page_source(&data);
-            let mut again = import::parse_source_outline(&md).blocks;
-            again.iter_mut().for_each(import::restore_text_anchor);
+            let again = read_own_source(&md).blocks;
             prop_assert_eq!(tree(&again), tree(&saved), "text: {:?}\nmd:\n{}", text, md);
             let anchors: Vec<Option<&str>> =
                 again.iter().map(|block| block.block_anchor.as_deref()).collect();
             let ids: Vec<Option<&str>> = ids.iter().map(|id| Some(id.as_str())).collect();
             prop_assert_eq!(anchors, ids, "text: {:?}\nmd:\n{}", text, md);
         }
-    }
-
-    /// Two free anchors in one block are refused, naming both; with one of
-    /// them claimed elsewhere, the other heals.
-    #[test]
-    fn two_moved_anchors_in_one_block_are_refused() {
-        let err = healed(&format!("- a ^{A} and ^{B} joined\n")).unwrap_err();
-        assert!(
-            matches!(&err, AppError::Validation { message, .. } if message.contains(A) && message.contains(B)),
-            "{err:?}"
-        );
-        assert_eq!(
-            healed(&format!("- a ^{A} and ^{B} joined\n- b ^{B}\n")).unwrap(),
-            [
-                (format!("a and ^{B} joined"), Some(A.to_string())),
-                ("b".to_string(), Some(B.to_string())),
-            ]
-        );
     }
 }

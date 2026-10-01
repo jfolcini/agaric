@@ -591,7 +591,7 @@ export const commands = {
 	 *  Tauri command: save a page edited as its source buffer. Delegates to
 	 *  [`apply_page_source_inner`].
 	 */
-	applyPageSource: (pageId: PageId, source: string, baseSource: string, force: boolean, merge: boolean, lineIds: (string | null)[] | null) => typedError<WithOps<PageSourceReport>, AppError>(__TAURI_INVOKE("apply_page_source", { pageId, source, baseSource, force, merge, lineIds })),
+	applyPageSource: (pageId: PageId, source: string, baseSource: string, merge: boolean, lineIds: (string | null)[]) => typedError<WithOps<PageSourceReport>, AppError>(__TAURI_INVOKE("apply_page_source", { pageId, source, baseSource, merge, lineIds })),
 	/**
 	 *  Tauri command: render blocks as clipboard markdown. Delegates to
 	 *  [`get_blocks_source_inner`].
@@ -2961,8 +2961,8 @@ export type PageSort =
 /**  What [`apply_page_source`] wrote. */
 export type PageSourceReport = {
 	/**
-	 *  Blocks created from the buffer: new bullets, anchors a forced save kept
-	 *  as new blocks, and copied or foreign ids (#5160 D15).
+	 *  Blocks created from the buffer: new bullets, and lines carrying a copied
+	 *  or foreign id (#5160 D15).
 	 */
 	created: number,
 	/**  Blocks of the page whose content was rewritten. */

@@ -248,6 +248,7 @@ test.describe('Edit as Markdown (#5140 Phase 4b)', () => {
     await expect(dialog.getByRole('heading', { name: 'This page changed' })).toBeVisible()
     await expect(dialog.getByRole('listitem')).toHaveCount(1)
     await expect(dialog.getByRole('listitem')).toContainText(elsewhere)
+    await expect(dialog.getByRole('listitem')).not.toContainText('^')
     await dialog.getByRole('button', { name: 'Overwrite', exact: true }).click()
 
     await expect(sourceEditor(page)).toHaveCount(0)

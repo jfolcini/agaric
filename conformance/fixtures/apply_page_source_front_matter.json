@@ -1,5 +1,5 @@
 {
-  "description": "#5160 S8 — the page's own properties, aliases and tags head its Edit as Markdown buffer as the export's YAML front matter, and `apply_page_source` writes what the front matter changed: a changed or new key is set, a key left out deleted, the alias list replaced and a tag added or removed; a line no property reads from, a value its definition refuses and an unclosed `---` refuse the save; the same holds by line ids (#5160 A), where `get_page_buffer` keeps the front matter as text carrying no id. Covers only what the tauri mock models: text values and plain list items, which both stacks render byte for byte (the keys sorted, `drop` seeded after `stage` so the order is the render's). Each successful step's `baseSource` is the page's source after the step before it. Seed: S1 (Home) > S2 (alpha), tagged S3 (work), alias `Home base`, `stage: open` (a select of open/done) and `drop: me`; S4 is the tag `idea`; both tags sit under S5 (Tags), since a root seed block's `page_id` differs between the two seed loaders. Re-author `expected` / `expected_ops` via CONFORMANCE_UPDATE=1.",
+  "description": "#5160 S8 — the page's own properties, aliases and tags head its Edit as Markdown buffer as the export's YAML front matter, and `apply_page_source` writes what the front matter changed: a changed or new key is set, a key left out deleted, the alias list replaced and a tag added or removed; a line no property reads from, a value its definition refuses and an unclosed `---` refuse the save. The buffer is the text `get_page_buffer` gives (#5160 A), its front matter kept as text carrying no id. Covers only what the tauri mock models: text values and plain list items, which both stacks render byte for byte (the keys sorted, `drop` seeded after `stage` so the order is the render's). Each successful step's `baseSource` is the page's source after the step before it. Seed: S1 (Home) > S2 (alpha), tagged S3 (work), alias `Home base`, `stage: open` (a select of open/done) and `drop: me`; S4 is the tag `idea`; both tags sit under S5 (Tags), since a root seed block's `page_id` differs between the two seed loaders. Re-author `expected` / `expected_ops` via CONFORMANCE_UPDATE=1.",
   "expected": {
     "block_tags": [
       {
@@ -170,14 +170,8 @@
     {
       "code": null,
       "error": null,
-      "name": "by_line_ids_writes_the_front_matter_and_a_block",
+      "name": "writes_the_front_matter_and_a_block",
       "returns": ["apply_page_source#created=0#edited=1#deleted=0"]
-    },
-    {
-      "code": null,
-      "error": "validation",
-      "name": "by_line_ids_unreadable_front_matter_is_refused",
-      "returns": []
     }
   ],
   "expected_queries": [
@@ -213,9 +207,10 @@
     {
       "args": {
         "baseSource": "---\naliases: [Home base]\ntags: [work]\ndrop: me\nstage: open\n---\n\n- alpha ^000000000000000000000000S2\n",
-        "force": false,
+        "lineIds": [null, null, null, null, null, null, null, "000000000000000000000000S2", null],
+        "merge": false,
         "pageId": "S1",
-        "source": "---\naliases: [Home base]\ntags: [work]\ndrop: me\nstage: open\n---\n\n- alpha ^000000000000000000000000S2\n"
+        "source": "---\naliases: [Home base]\ntags: [work]\ndrop: me\nstage: open\n---\n\n- alpha\n"
       },
       "command": "apply_page_source",
       "comment": "The buffer is the page's own source, front matter and all: nothing differs, so nothing is written.",
@@ -225,9 +220,10 @@
     {
       "args": {
         "baseSource": "---\naliases: [Home base]\ntags: [work]\ndrop: me\nstage: open\n---\n\n- alpha ^000000000000000000000000S2\n",
-        "force": false,
+        "lineIds": [null, null, null, null, null, null, null, "000000000000000000000000S2", null],
+        "merge": false,
         "pageId": "S1",
-        "source": "---\naliases: [Home base]\ntags: [work]\nowner: ann\nstage: done\n---\n\n- alpha ^000000000000000000000000S2\n"
+        "source": "---\naliases: [Home base]\ntags: [work]\nowner: ann\nstage: done\n---\n\n- alpha\n"
       },
       "command": "apply_page_source",
       "comment": "`stage` changes, `owner` is new and `drop` is left out: two properties set on the page and one deleted, as the property drawer writes them.",
@@ -237,9 +233,10 @@
     {
       "args": {
         "baseSource": "---\naliases: [Home base]\ntags: [work]\nowner: ann\nstage: done\n---\n\n- alpha ^000000000000000000000000S2\n",
-        "force": false,
+        "lineIds": [null, null, null, null, null, null, null, "000000000000000000000000S2", null],
+        "merge": false,
         "pageId": "S1",
-        "source": "---\naliases: [HQ]\ntags: [idea]\nowner: ann\nstage: done\n---\n\n- alpha ^000000000000000000000000S2\n"
+        "source": "---\naliases: [HQ]\ntags: [idea]\nowner: ann\nstage: done\n---\n\n- alpha\n"
       },
       "command": "apply_page_source",
       "comment": "The alias list is replaced and the tag `work` swapped for the seeded `idea`: its association is added and `work`'s removed.",
@@ -249,60 +246,6 @@
     {
       "args": {
         "baseSource": "---\naliases: [HQ]\ntags: [idea]\nowner: ann\nstage: done\n---\n\n- alpha ^000000000000000000000000S2\n",
-        "force": false,
-        "pageId": "S1",
-        "source": "---\naliases: [HQ]\ntags: [idea]\nowner: ann\nstage: done\nnot a pair\n---\n\n- alpha ^000000000000000000000000S2\n"
-      },
-      "command": "apply_page_source",
-      "comment": "A front matter line that is no `key: value` pair refuses the save by its line: the page has no block to keep it in as text.",
-      "expect_error": "validation",
-      "name": "unreadable_front_matter_is_refused",
-      "via": "command"
-    },
-    {
-      "args": {
-        "baseSource": "---\naliases: [HQ]\ntags: [idea]\nowner: ann\nstage: done\n---\n\n- alpha ^000000000000000000000000S2\n",
-        "force": false,
-        "pageId": "S1",
-        "source": "---\naliases: [HQ]\ntags: [idea]\nowner: ann\nstage: nope\n---\n\n- alpha ^000000000000000000000000S2\n"
-      },
-      "command": "apply_page_source",
-      "comment": "`nope` is not an option of the `stage` definition, so the save is refused as the property drawer refuses it.",
-      "expect_error": "validation",
-      "name": "refused_value_is_refused",
-      "via": "command"
-    },
-    {
-      "args": {
-        "baseSource": "---\naliases: [HQ]\ntags: [idea]\nowner: ann\nstage: done\n---\n\n- alpha ^000000000000000000000000S2\n",
-        "force": false,
-        "pageId": "S1",
-        "source": "---\naliases: [HQ]\ntags: [idea]\nowner: ann\nstage: done\n\n- alpha ^000000000000000000000000S2\n"
-      },
-      "command": "apply_page_source",
-      "comment": "A `---` no `---` closes is front matter left open, refused rather than saved as blocks.",
-      "expect_error": "validation",
-      "name": "unclosed_front_matter_is_refused",
-      "via": "command"
-    },
-    {
-      "args": {
-        "baseSource": "---\naliases: [HQ]\ntags: [idea]\nowner: ann\nstage: done\n---\n\n- alpha ^000000000000000000000000S2\n",
-        "force": false,
-        "lineIds": [null, null, null, null, null, null, null, "000000000000000000000000S2", null],
-        "merge": false,
-        "pageId": "S1",
-        "source": "---\naliases: [HQ]\ntags: [idea]\nowner: ann\nstage: open\n---\n\n- alpha, by line\n"
-      },
-      "command": "apply_page_source",
-      "comment": "By line ids (#5160 A): the text `get_page_buffer` gives, its front matter as written and carrying no id, with `stage` and alpha's line both changed: one save sets the property and edits the block.",
-      "name": "by_line_ids_writes_the_front_matter_and_a_block",
-      "via": "command"
-    },
-    {
-      "args": {
-        "baseSource": "---\naliases: [HQ]\ntags: [idea]\nowner: ann\nstage: open\n---\n\n- alpha, by line ^000000000000000000000000S2\n",
-        "force": false,
         "lineIds": [
           null,
           null,
@@ -317,12 +260,53 @@
         ],
         "merge": false,
         "pageId": "S1",
-        "source": "---\naliases: [HQ]\ntags: [idea]\nowner: ann\nstage: open\nnot a pair\n---\n\n- alpha, by line\n"
+        "source": "---\naliases: [HQ]\ntags: [idea]\nowner: ann\nstage: done\nnot a pair\n---\n\n- alpha\n"
       },
       "command": "apply_page_source",
-      "comment": "By line ids, a front matter line no property reads from refuses the save as it does in an anchored buffer.",
+      "comment": "A front matter line that is no `key: value` pair refuses the save by its line: the page has no block to keep it in as text.",
       "expect_error": "validation",
-      "name": "by_line_ids_unreadable_front_matter_is_refused",
+      "name": "unreadable_front_matter_is_refused",
+      "via": "command"
+    },
+    {
+      "args": {
+        "baseSource": "---\naliases: [HQ]\ntags: [idea]\nowner: ann\nstage: done\n---\n\n- alpha ^000000000000000000000000S2\n",
+        "lineIds": [null, null, null, null, null, null, null, "000000000000000000000000S2", null],
+        "merge": false,
+        "pageId": "S1",
+        "source": "---\naliases: [HQ]\ntags: [idea]\nowner: ann\nstage: nope\n---\n\n- alpha\n"
+      },
+      "command": "apply_page_source",
+      "comment": "`nope` is not an option of the `stage` definition, so the save is refused as the property drawer refuses it.",
+      "expect_error": "validation",
+      "name": "refused_value_is_refused",
+      "via": "command"
+    },
+    {
+      "args": {
+        "baseSource": "---\naliases: [HQ]\ntags: [idea]\nowner: ann\nstage: done\n---\n\n- alpha ^000000000000000000000000S2\n",
+        "lineIds": [null, null, null, null, null, null, "000000000000000000000000S2", null],
+        "merge": false,
+        "pageId": "S1",
+        "source": "---\naliases: [HQ]\ntags: [idea]\nowner: ann\nstage: done\n\n- alpha\n"
+      },
+      "command": "apply_page_source",
+      "comment": "A `---` no `---` closes is front matter left open, refused rather than saved as blocks.",
+      "expect_error": "validation",
+      "name": "unclosed_front_matter_is_refused",
+      "via": "command"
+    },
+    {
+      "args": {
+        "baseSource": "---\naliases: [HQ]\ntags: [idea]\nowner: ann\nstage: done\n---\n\n- alpha ^000000000000000000000000S2\n",
+        "lineIds": [null, null, null, null, null, null, null, "000000000000000000000000S2", null],
+        "merge": false,
+        "pageId": "S1",
+        "source": "---\naliases: [HQ]\ntags: [idea]\nowner: ann\nstage: open\n---\n\n- alpha, by line\n"
+      },
+      "command": "apply_page_source",
+      "comment": "`stage` and alpha's line both changed: one save sets the property and edits the block.",
+      "name": "writes_the_front_matter_and_a_block",
       "via": "command"
     }
   ],

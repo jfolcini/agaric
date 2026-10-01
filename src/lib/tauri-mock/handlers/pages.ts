@@ -396,7 +396,7 @@ const ULID_RE = /^[0-7][0-9A-HJKMNP-TV-Z]{25}$/i
 
 /**
  * Whether a caret word is a block id: anything else is text, as the backend's
- * save keeps it. The mock's own ids (`…BLOCK01`, `…MOCK…`) spell letters
+ * `anchor_free` keeps it. The mock's own ids (`…BLOCK01`, `…MOCK…`) spell letters
  * outside Crockford, so a word naming a block the mock holds is one too.
  */
 function isBlockId(word: string): boolean {
@@ -511,58 +511,6 @@ function readByLine(
     }
   }
   return bullets
-}
-
-/** A `^word` at a line start or after whitespace, as {@link SOURCE_ANCHOR_RE} reads a trailing one. */
-const MOVED_ANCHOR_RE = /(?:^|\s)(\^[0-9A-Za-z-]+)/g
-
-/**
- * Mirrors `heal_moved_anchors` (`markdown_source_apply.rs`): an unanchored
- * bullet whose text holds exactly one `^ID` of a `loaded` block no other
- * bullet claims takes it as its anchor, and the token leaves the text with the
- * one separator written with it. Two or more refuse the save. The mock models
- * no inline code, so the backend's inline-code skip has no counterpart.
- */
-function healMovedAnchors(
-  typed: SourceBullet[],
-  loaded: ReadonlySet<string>,
-  claimed: Set<string>,
-): void {
-  for (const bullet of typed) {
-    if (bullet.anchor !== null) continue
-    const tokens = [...bullet.content.matchAll(MOVED_ANCHOR_RE)]
-      .map((match) => {
-        const token = match[1] ?? ''
-        return { token, start: match.index + match[0].length - token.length }
-      })
-      .filter(({ token }) => loaded.has(token.slice(1)) && !claimed.has(token.slice(1)))
-    const [first, second] = tokens
-    if (!first) continue
-    if (second) {
-      throw refusedAt(bullet.line, `${first.token} and ${second.token} are written in one block`)
-    }
-    const id = first.token.slice(1)
-    bullet.content = withoutToken(bullet.content, first.start, first.start + first.token.length)
-    bullet.anchor = id
-    claimed.add(id)
-  }
-}
-
-/**
- * `content` less the token at `start..end` and the one separator written with
- * it: the whitespace before it, or at a line start the space after it, or the
- * line break of a line that is the token alone.
- */
-function withoutToken(content: string, start: number, end: number): string {
-  let before = content.slice(0, start)
-  let after = content.slice(end)
-  if (before !== '' && !before.endsWith('\n')) before = before.slice(0, -1)
-  else if (after.startsWith(' ')) after = after.slice(1)
-  else if (after === '' || after.startsWith('\n')) {
-    if (before.endsWith('\n')) before = before.slice(0, -1)
-    else after = after.slice(1)
-  }
-  return before + after
 }
 
 /** The longest run of `ids` already in `rank` order: the ones that need no move. */
@@ -805,36 +753,20 @@ function mergeSourceBuffer(
   return merged
 }
 
-/** A buffer with each block's `^ID` in its text: an anchor named twice is refused, then anchors are healed. */
-function readAnchored(source: string, loadedIds: ReadonlySet<string>): SourceBullet[] {
-  const typed = parseSourceBuffer(source)
-  const seen = new Set<string>()
-  for (const bullet of typed) {
-    if (bullet.anchor === null) continue
-    if (seen.has(bullet.anchor))
-      throw refusedAt(bullet.line, `^${bullet.anchor} appears more than once`)
-    seen.add(bullet.anchor)
-  }
-  healMovedAnchors(typed, loadedIds, seen)
-  return typed
-}
-
 /**
  * Every refusal `apply_page_source` makes, checked before anything is written:
- * a stale base unless `merge` folds the page's changes into the buffer
- * (`force` never skips it: it overrides a foreign anchor, not a stale base), a
- * page that does not read back as its own source, front matter it cannot read
- * or a value in it `set_property` refuses (#5160 S8), an anchor named twice,
- * an anchor that is not a block of this page unless `force` forks it as a new
- * block, and a delete that would take a nested page with it. Returns the
- * buffer's bullets, the page's text per anchor as it reads back, the rendered
- * ids the buffer left out, what the front matter writes and the warnings.
+ * a stale base unless `merge` folds the page's changes into the buffer, a page
+ * that does not read back as its own source, `lineIds` that are not one per
+ * line, front matter it cannot read or a value in it `set_property` refuses
+ * (#5160 S8), and a delete that would take a nested page with it. Returns the
+ * buffer's bullets, the page's text per id as it reads back, the rendered ids
+ * the buffer left out, what the front matter writes and the warnings.
  */
 function readSourceEdit(
   pageId: string,
   source: string,
   baseSource: string,
-  flags: { force: boolean; merge: boolean; lineIds: ReadonlyArray<string | null> | null },
+  flags: { merge: boolean; lineIds: ReadonlyArray<string | null> },
 ): {
   t1: SourceBullet[]
   before: Map<string | null, string>
@@ -851,10 +783,9 @@ function readSourceEdit(
       message: `page '${pageId}' changed since its source was loaded`,
     })
   }
-  // With the ids beside the text, the page's own source is read as that text.
-  const readOwn = flags.lineIds === null ? parseSourceBuffer : readOwnText
+  // The page's own source is read as the text the buffer gives of it.
   const now = readFrontMatter(current.source)
-  const t0 = readOwn(now.body)
+  const t0 = readOwnText(now.body)
   if (t0.length !== current.ids.length || t0.some((b, i) => b.anchor !== current.ids[i])) {
     throw validationRejection(`page '${pageId}' does not read back as its own source`)
   }
@@ -862,23 +793,15 @@ function readSourceEdit(
   const edited = readFrontMatter(source)
   const from = stale ? readFrontMatter(baseSource) : now
   const front = frontMatterWrites(from.front, edited.front, now.front, edited.lines)
-  // Against the source the edit started from and before the merge, as
-  // `read_buffer` heals, so the merge reads a healed bullet as its block.
-  const loaded = stale ? readOwn(from.body) : t0
+  // An id of the source the edit started from is the page's too, so the merge
+  // reads a block the page deleted since as that block.
+  const loaded = stale ? readOwnText(from.body) : t0
   const loadedIds = new Set(loaded.flatMap(({ anchor }) => (anchor === null ? [] : [anchor])))
   const warnings: string[] = []
-  const typed =
-    flags.lineIds === null
-      ? readAnchored(edited.body, loadedIds)
-      : readByLine(edited.body, flags.lineIds, new Set([...loadedIds, ...current.ids]), warnings)
+  const known = new Set([...loadedIds, ...current.ids])
+  const typed = readByLine(edited.body, flags.lineIds, known, warnings)
   const t1 = stale ? mergeSourceBuffer(loaded, t0, typed, warnings) : typed
   const anchors = new Set(t1.flatMap(({ anchor }) => (anchor === null ? [] : [anchor])))
-  for (const bullet of t1) {
-    if (bullet.anchor === null || before.has(bullet.anchor)) continue
-    if (!flags.force) throw refusedAt(bullet.line, `^${bullet.anchor} is not a block of this page`)
-    warnings.push(`^${bullet.anchor} no longer on this page; saved as a new block`)
-    bullet.anchor = null
-  }
   const absent = current.ids.filter((id) => !anchors.has(id))
   const absentSet = new Set(absent)
   for (const row of blocks.values()) {
@@ -1567,21 +1490,19 @@ export const pagesHandlers = {
   // #5140 Phase 4a — save the page edited as its source buffer: moves and
   // creates first, then edits, then the page's front matter (#5160 S8), then
   // deletes, so a child kept out of a deleted block has moved before the
-  // delete cascades. The buffer is read by `parseSourceBuffer`, so the
-  // backend's list markers, task checkboxes and property lines are not
-  // modelled (`properties_*` count the page's own), nor are its op cap and
-  // depth limit; tests must not rely on the mock for them. The names a new
-  // or edited bullet writes resolve in the page's space (`resolveInboundNames`,
-  // #5160 N4), the created pages and tags in `names_created`. Phase 5: with
-  // `merge`, a stale buffer is saved with the page's changes folded in
-  // (`mergeSourceBuffer`).
+  // delete cascades. The text is read by `readByLine`, so the backend's list
+  // markers, task checkboxes and property lines are not modelled
+  // (`properties_*` count the page's own), nor are its op cap and depth limit;
+  // tests must not rely on the mock for them. The names a new or edited bullet
+  // writes resolve in the page's space (`resolveInboundNames`, #5160 N4), the
+  // created pages and tags in `names_created`. Phase 5: with `merge`, a stale
+  // buffer is saved with the page's changes folded in (`mergeSourceBuffer`).
   apply_page_source: (args) => {
     const a = args as Record<string, unknown>
     const pageId = a['pageId'] as string
     const edit = readSourceEdit(pageId, a['source'] as string, a['baseSource'] as string, {
-      force: a['force'] === true,
       merge: a['merge'] === true,
-      lineIds: (a['lineIds'] as Array<string | null> | null | undefined) ?? null,
+      lineIds: a['lineIds'] as Array<string | null>,
     })
     const report = { created: 0, edited: 0, moved: 0, deleted: 0 }
     const opRefs: OpRefs = []

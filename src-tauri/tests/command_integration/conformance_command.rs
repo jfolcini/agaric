@@ -776,10 +776,9 @@ pub(super) async fn apply_op_via_command(
             .await
             .map(|pasted| pasted.blocks),
         ),
-        // The two buffers are the caller's own text, anchors spelled as the
-        // seed labels' expanded ids; only the page is a label, and `lineIds`
-        // spells the ids the same way. `merge` and `lineIds` came after the
-        // first fixture's steps, so they are false and absent when absent.
+        // The text and the base are the caller's own, ids spelled as the seed
+        // labels' expanded ids, in `lineIds` and in the base's anchors; only
+        // the page is a label.
         "apply_page_source" => to_json(
             apply_page_source_inner(
                 pool,
@@ -789,14 +788,17 @@ pub(super) async fn apply_op_via_command(
                 req_str("source"),
                 req_str("baseSource"),
                 SourceSaveFlags {
-                    force: arg("force").and_then(Value::as_bool).unwrap_or_else(|| {
-                        panic!("conformance op '{command}' is missing arg 'force'")
+                    merge: arg("merge").and_then(Value::as_bool).unwrap_or_else(|| {
+                        panic!("conformance op '{command}' is missing arg 'merge'")
                     }),
-                    merge: arg("merge").and_then(Value::as_bool).unwrap_or(false),
-                    line_ids: arg("lineIds").filter(|v| !v.is_null()).map(|v| {
-                        serde_json::from_value(v.clone())
-                            .unwrap_or_else(|e| panic!("conformance op '{command}': lineIds: {e}"))
-                    }),
+                    line_ids: serde_json::from_value(
+                        arg("lineIds")
+                            .unwrap_or_else(|| {
+                                panic!("conformance op '{command}' is missing arg 'lineIds'")
+                            })
+                            .clone(),
+                    )
+                    .unwrap_or_else(|e| panic!("conformance op '{command}': lineIds: {e}")),
                 },
             )
             .await,

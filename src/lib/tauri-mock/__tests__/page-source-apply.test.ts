@@ -1,13 +1,13 @@
 /**
  * #5140 Phase 4a — mock `apply_page_source`, the save of a page edited as its
  * source buffer, over the mock's own `get_page_source` render. Both are
- * approximations of the backend grammar (bullets, indentation, continuation
- * lines and `^ID` anchors; no markers or properties; names are `names.test.ts`),
- * so what is pinned here is the diff the mock applies: edits, creates, moves and deletes by
- * anchor, and the refusals; Phase 5 adds the merge of a stale buffer. Everything
- * is read back through the mock's read commands. Backend parity is pinned by
- * `conformance/fixtures/apply_page_source.json` and
- * `conformance/fixtures/apply_page_source_merge.json`.
+ * approximations of the backend grammar (bullets, indentation and continuation
+ * lines; no markers or properties; names are `names.test.ts`), so what is
+ * pinned here is the diff the mock applies: edits, creates, moves and deletes
+ * by the id beside each line (#5160 A), and the refusals; Phase 5 adds the
+ * merge of a stale buffer. Everything is read back through the mock's read
+ * commands. Backend parity is pinned by the `apply_page_source*.json`
+ * conformance fixtures.
  */
 
 import { beforeEach, describe, expect, it } from 'vitest'
@@ -69,28 +69,42 @@ function source(pageId = PAGE): string {
   return dispatch('get_page_source', { pageId }) as string
 }
 
-function apply(buffer: string, force = false, baseSource = source()): Report {
+/**
+ * `buffer`, written as the page's source writes it, each block's ` ^ID` ending
+ * its last line, as the editor holds it: the text less those anchors, each id
+ * beside the line its block starts on.
+ */
+function byLine(buffer: string): { source: string; lineIds: Array<string | null> } {
+  const lines = buffer.split('\n')
+  const lineIds: Array<string | null> = lines.map(() => null)
+  let start = 0
+  lines.forEach((line, i) => {
+    if (/^\s*- /.test(line)) start = i
+    const anchor = / \^([0-9A-Z]{26})$/.exec(line)
+    if (anchor === null) return
+    lines[i] = line.slice(0, anchor.index)
+    lineIds[start] = anchor[1] ?? null
+  })
+  return { source: lines.join('\n'), lineIds }
+}
+
+function apply(buffer: string, baseSource = source()): Report {
   return dispatch('apply_page_source', {
     pageId: PAGE,
-    source: buffer,
+    ...byLine(buffer),
     baseSource,
-    force,
+    merge: false,
   }) as Report
 }
 
 /** The refusal's `{ kind, code }`, or `null` when the command succeeds. */
-function refusal(args: {
-  source: string
-  pageId?: string
-  baseSource?: string
-  force?: boolean
-}): unknown {
+function refusal(args: { source: string; pageId?: string; baseSource?: string }): unknown {
   try {
     dispatch('apply_page_source', {
       pageId: args.pageId ?? PAGE,
-      source: args.source,
+      ...byLine(args.source),
       baseSource: args.baseSource ?? source(),
-      force: args.force ?? false,
+      merge: false,
     })
   } catch (err) {
     const { kind, code } = err as { kind?: unknown; code?: unknown }
@@ -204,20 +218,6 @@ describe('tauri-mock apply_page_source', () => {
     ])
   })
 
-  // A block id is what `BlockId::from_string` reads: Crockford base32 (no
-  // I, L, O or U) that fits 128 bits.
-  it.each([
-    ['a short word', 'x ^2'],
-    ['the alphabet', 'x ^ABCDEFGHIJKLMNOPQRSTUVWXYZ'],
-    ['letters Crockford leaves out', 'x ^0000000000000000000000ILOU'],
-    ['a word past the largest ULID', 'x ^80000000000000000000000000'],
-  ])('keeps a trailing caret word that is not a block id as text: %s', (_name, line) => {
-    const report = apply(`${INITIAL}- ${line}\n`)
-
-    expect(report).toMatchObject({ ...COUNTS_NONE, created: 1, warnings: [] })
-    expect(children(PAGE).at(-1)?.content).toBe(line)
-  })
-
   it('keeps text typed above the first bullet as a block of its own', () => {
     const report = apply(`typed on top\n${INITIAL}`)
 
@@ -294,7 +294,7 @@ describe('tauri-mock apply_page_source', () => {
     ])
   })
 
-  it('refuses a stale base as RequiresRefresh even with force, writing nothing', () => {
+  it('refuses a stale base as RequiresRefresh, writing nothing', () => {
     const stale = INITIAL.replace('- alpha ^', '- alpha, as it was ^')
     const buffer = INITIAL.replace('- alpha ^', '- alpha, edited ^')
 
@@ -302,64 +302,8 @@ describe('tauri-mock apply_page_source', () => {
       kind: 'validation',
       code: 'RequiresRefresh',
     })
-    expect(refusal({ source: buffer, baseSource: stale, force: true })).toEqual({
-      kind: 'validation',
-      code: 'RequiresRefresh',
-    })
     expect(opLog).toHaveLength(0)
     expect(source()).toBe(INITIAL)
-  })
-
-  it('refuses an anchor that is not a block of this page unless forced', () => {
-    for (const foreign of [ELSEWHERE, TRASHED, NESTED_PAGE]) {
-      expect(refusal({ source: `${INITIAL}- adopted ^${foreign}\n` })).toEqual({
-        kind: 'validation',
-        code: null,
-      })
-    }
-    expect(opLog).toHaveLength(0)
-  })
-
-  it('with force, saves a foreign anchor as a new block and warns', () => {
-    const report = apply(`${INITIAL}- adopted ^${ELSEWHERE}\n`, true)
-
-    expect(report).toMatchObject({ ...COUNTS_NONE, created: 1 })
-    expect(report.warnings).toEqual([`^${ELSEWHERE} no longer on this page; saved as a new block`])
-    const created = children(PAGE).at(-1)
-    expect(created?.content).toBe('adopted')
-    expect(created?.id).not.toBe(ELSEWHERE)
-    expect(children(OTHER_PAGE).map((r) => [r.id, r.content])).toEqual([
-      [ELSEWHERE, 'on another page'],
-    ])
-  })
-
-  it('refuses a buffer that names one anchor twice, even with force', () => {
-    const buffer = `${INITIAL}- again ^${A}\n`
-
-    expect(refusal({ source: buffer })).toEqual({ kind: 'validation', code: null })
-    expect(refusal({ source: buffer, force: true })).toEqual({ kind: 'validation', code: null })
-    expect(opLog).toHaveLength(0)
-  })
-
-  it('starts each refusal with the buffer line of the block it is about (#5160 X3)', () => {
-    const cases: Array<[string, number]> = [
-      [`${INITIAL}- adopted ^${ELSEWHERE}\n`, 10],
-      [`${INITIAL}- again ^${A}\n`, 10],
-      [`- intro\n- alpha ^${A} and ^${B} joined\n`, 2],
-    ]
-    for (const [buffer, line] of cases) {
-      const save = () =>
-        dispatch('apply_page_source', { pageId: PAGE, source: buffer, baseSource: source() })
-      expect(save).toThrow(new RegExp(`^line ${line}: `))
-    }
-    expect(opLog).toHaveLength(0)
-  })
-
-  it('reads a lowercase anchor as the block it spells (#5160 X3)', () => {
-    const report = apply(INITIAL.replace(`- alpha ^${A}`, `- alpha, edited ^${A.toLowerCase()}`))
-
-    expect(report).toMatchObject({ ...COUNTS_NONE, edited: 1 })
-    expect(children(PAGE)[0]).toMatchObject({ id: A, content: 'alpha, edited' })
   })
 
   it('refuses a page whose source does not read back as its blocks', () => {
@@ -399,9 +343,8 @@ describe('tauri-mock apply_page_source with merge (#5140 Phase 5)', () => {
   function merge(buffer: string, baseSource = INITIAL): Report {
     return dispatch('apply_page_source', {
       pageId: PAGE,
-      source: buffer,
+      ...byLine(buffer),
       baseSource,
-      force: false,
       merge: true,
     }) as Report
   }
@@ -645,7 +588,6 @@ describe('tauri-mock get_page_buffer and apply_page_source by line ids (#5160 A)
       pageId: PAGE,
       source: edited.map(([line]) => line).join('\n'),
       baseSource,
-      force: false,
       merge,
       lineIds: edited.map(([, carried]) => carried),
     }) as Report
@@ -754,7 +696,6 @@ describe('tauri-mock get_page_buffer and apply_page_source by line ids (#5160 A)
           pageId: PAGE,
           source: edited.map(([line]) => line).join('\n'),
           baseSource: source(),
-          force: false,
           merge: false,
           lineIds: ids,
         }),
@@ -907,17 +848,6 @@ describe('tauri-mock apply_page_source front matter (#5160 S8)', () => {
     expect(opLog).toHaveLength(0)
   })
 
-  it('names the buffer line of a block refused below the front matter, its lines counted (#5160 X3)', () => {
-    put(OTHER_PAGE, 'page', 'Elsewhere', null, 3, OTHER_PAGE)
-    put(ELSEWHERE, 'content', 'on another page', OTHER_PAGE, 1, OTHER_PAGE)
-
-    expect(refusedWith(`${source()}- again ^${A}\n`)).toBe(`line 8: ^${A} appears more than once`)
-    expect(refusedWith(`${source()}- adopted ^${ELSEWHERE}\n`)).toBe(
-      `line 8: ^${ELSEWHERE} is not a block of this page`,
-    )
-    expect(opLog).toHaveLength(0)
-  })
-
   it('merged, keeps what the page changed since the buffer was loaded', () => {
     const base = source()
     dispatch('set_property', {
@@ -928,9 +858,8 @@ describe('tauri-mock apply_page_source front matter (#5160 S8)', () => {
 
     dispatch('apply_page_source', {
       pageId: PAGE,
-      source: base.replace('stage: open', 'stage: done'),
+      ...byLine(base.replace('stage: open', 'stage: done')),
       baseSource: base,
-      force: false,
       merge: true,
     })
 
@@ -957,7 +886,6 @@ describe('tauri-mock apply_page_source front matter (#5160 S8)', () => {
         pageId: PAGE,
         source: edited.map(([line]) => line).join('\n'),
         baseSource: source(),
-        force: false,
         merge: false,
         lineIds: edited.map(([, carried]) => carried),
       }) as Report

@@ -112,7 +112,7 @@ import {
   broadcastPreferenceChange,
   useLocalStoragePreference,
 } from '@/hooks/useLocalStoragePreference'
-import type { FilterPrimitive } from '@/lib/bindings'
+import type { FilterPrimitive, PageBuffer } from '@/lib/bindings'
 import { isLanguagePreference, type LanguagePreference } from '@/lib/i18n/locales'
 import { logger } from '@/lib/logger'
 
@@ -1367,18 +1367,30 @@ export function pruneImageCollapse(): void {
   writePreference(IMAGE_COLLAPSE_PREFERENCE, readPreference(IMAGE_COLLAPSE_PREFERENCE))
 }
 
-interface PageSourceDraft {
-  base: string
-  text: string
+type PageSourceDraft =
   /**
-   * The id each line of `text` carries (#5160 phase 5); `null` for a draft an
-   * earlier version wrote, whose ids are `^ID` anchors in its text.
+   * The text and the id each of its lines carries (#5160 phase 5), and the
+   * buffer the edit started from.
    */
-  lineIds: Array<string | null> | null
-}
+  | { base: PageBuffer; text: string; lineIds: Array<string | null> }
+  /** A draft an earlier version wrote: its ids are `^ID` anchors in its text. */
+  | { base: string; text: string; lineIds: null }
 
 function isLineIds(value: unknown): value is Array<string | null> {
   return Array.isArray(value) && value.every((id) => id === null || typeof id === 'string')
+}
+
+function isPageBuffer(value: unknown): value is PageBuffer {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    'source' in value &&
+    typeof value.source === 'string' &&
+    'text' in value &&
+    typeof value.text === 'string' &&
+    'line_ids' in value &&
+    isLineIds(value.line_ids)
+  )
 }
 
 function parsePageSourceDraft(raw: string): PageSourceDraft {
@@ -1386,12 +1398,9 @@ function parsePageSourceDraft(raw: string): PageSourceDraft {
   if (typeof parsed === 'object' && parsed !== null && 'base' in parsed && 'text' in parsed) {
     const { base, text } = parsed
     const lineIds = 'lineIds' in parsed ? parsed.lineIds : null
-    if (
-      typeof base === 'string' &&
-      typeof text === 'string' &&
-      (lineIds === null || isLineIds(lineIds))
-    ) {
-      return { base, text, lineIds }
+    if (typeof text === 'string') {
+      if (lineIds === null && typeof base === 'string') return { base, text, lineIds }
+      if (isLineIds(lineIds) && isPageBuffer(base)) return { base, text, lineIds }
     }
   }
   throw new Error('invalid page source draft')
@@ -1399,9 +1408,10 @@ function parsePageSourceDraft(raw: string): PageSourceDraft {
 
 /**
  * `agaric-page-source-draft:<pageId>` — source mode's unsaved buffer, the id
- * each of its lines carries, and the source it was loaded from (#5140,
+ * each of its lines carries, and the buffer it was loaded from (#5140,
  * `src/components/pages/PageSourceEditor.tsx`), so a save of a restored draft
- * still catches what changed since. Page-keyed; `null` when there is none.
+ * still catches what changed since, and the conflict dialog lists it.
+ * Page-keyed; `null` when there is none.
  */
 const PAGE_SOURCE_DRAFT_PREFERENCE: PreferenceDefinition<PageSourceDraft | null> = {
   key: 'agaric-page-source-draft',

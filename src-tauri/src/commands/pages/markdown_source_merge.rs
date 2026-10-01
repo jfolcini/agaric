@@ -2,7 +2,7 @@
 //! edited from that source (#5140): [`merge_outlines`].
 //!
 //! The three parses (the source the edit started from, the page's source now,
-//! and the buffer) pair block by block on their `^ID` anchor, so a block is
+//! and the buffer) pair block by block on their block id, so a block is
 //! merged against itself wherever each side put it, and the false conflicts a
 //! line merge of the whole buffer would raise (two adjacent one-line blocks,
 //! a block moved on one side and edited on the other, a block moved on both)
@@ -15,41 +15,28 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 use agaric_core::word_diff::merge_lines;
 
-use super::{AppError, at_line, import, outline_parents};
+use super::{import, outline_parents};
 
 /// The buffer `mine`, edited from `base`, with the changes between `base` and
 /// `current`, the page's source now, folded in: each block's content and
 /// properties three-way merged, its parent and its place among its siblings
 /// taken from whichever side moved it, and blocks either side added or kept
 /// changed placed where that side put them. Every kept block of `current`
-/// keeps its anchor; a block deleted on the page and changed or moved to
-/// another parent in the buffer, and the buffer's version of a block both
-/// sides changed differently, come back as new blocks, without one. Each event
-/// the merge could not keep as written adds one warning.
-///
-/// # Errors
-///
-/// [`AppError::Validation`] — an anchor is written on two blocks of `mine`.
+/// keeps its id; a block deleted on the page and changed or moved to another
+/// parent in the buffer, and the buffer's version of a block both sides
+/// changed differently, come back as new blocks, without one. Each event the
+/// merge could not keep as written adds one warning. Each id is on one block
+/// of `mine` at most, as `read_by_line` leaves it.
 pub(super) fn merge_outlines(
     base: Vec<import::ParsedBlock>,
     current: &[import::ParsedBlock],
     mine: Vec<import::ParsedBlock>,
     warnings: &mut Vec<String>,
-) -> Result<Vec<import::ParsedBlock>, AppError> {
-    let mine = Side::new(mine, true);
-    let mut seen = HashSet::new();
-    if let Some(at) = mine.keys.iter().position(|key| !seen.insert(key))
-        && let Key::Anchor(anchor) = &mine.keys[at]
-    {
-        return Err(at_line(
-            mine.blocks[at].line,
-            AppError::validation(format!("^{anchor} is written on more than one block")),
-        ));
-    }
+) -> Vec<import::ParsedBlock> {
     let mut merge = Merge {
         base: Side::new(base, false),
         current: Side::new(current.to_vec(), false),
-        mine,
+        mine: Side::new(mine, true),
         kept: HashMap::new(),
         parents: HashMap::new(),
         warnings,
@@ -73,10 +60,10 @@ pub(super) fn merge_outlines(
         }
     }
     merge.place(&keys);
-    Ok(merge.emit())
+    merge.emit()
 }
 
-/// What a block is merged as: its anchor, or, for a bullet of the buffer with
+/// What a block is merged as: its id, or, for a bullet of the buffer with
 /// none, its place there.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 enum Key {
@@ -93,11 +80,10 @@ struct Side {
 }
 
 impl Side {
-    /// `blocks` keyed by anchor. A bullet with none is a key of its own when
+    /// `blocks` keyed by id. A bullet with none is a key of its own when
     /// `unanchored_are_new`, the buffer's case; on the other two sides, which
-    /// the page rendered with an anchor on every block, it is dropped.
+    /// the page rendered with an id on every block, it is dropped.
     fn new(mut blocks: Vec<import::ParsedBlock>, unanchored_are_new: bool) -> Self {
-        blocks.iter_mut().for_each(import::restore_text_anchor);
         if !unanchored_are_new {
             blocks.retain(|block| block.block_anchor.is_some());
         }

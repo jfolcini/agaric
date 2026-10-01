@@ -9,7 +9,8 @@
  *     executeSearch(value)
  *   }, 300)
  *
- *   debounced.schedule(value)  // start/restart the timer
+ *   debounced.schedule(value)  // start/restart the timer; no value for a
+ *                              // callback that reads its own state
  *   debounced.cancel()         // cancel pending invocation
  */
 
@@ -19,7 +20,7 @@ export function useDebouncedCallback(
   callback: (value: string) => void,
   delay = 300,
 ): {
-  schedule: (value: string) => void
+  schedule: (value?: string) => void
   cancel: () => void
 } {
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -65,7 +66,7 @@ export function useDebouncedCallback(
       }
     }
 
-    function schedule(value: string) {
+    function schedule(value = '') {
       cancel()
       timerRef.current = setTimeout(() => {
         callbackRef.current(value)

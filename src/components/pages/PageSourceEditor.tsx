@@ -66,8 +66,11 @@ function linesOf(buffer: PageBuffer): SourceLines {
 
 /** What the buffer opened with. */
 interface Opened {
-  /** The source the buffer's edit started from, which a save sends as its base. */
-  base: string
+  /**
+   * The buffer the edit started from: a save sends its `source` as the base,
+   * and the conflict dialog lists what changed on the page since its lines.
+   */
+  base: PageBuffer
   /** The page as loaded, which a buffer back at it does not need saved. */
   page: SourceLines
   /** The lines the buffer opened with: the page's, or a restored draft's. */
@@ -79,7 +82,7 @@ interface Opened {
 
 /** The buffer as last typed, and what decides whether it is a draft. */
 interface Typed {
-  base: string
+  base: PageBuffer
   page: SourceLines
   lines: SourceLines
 }
@@ -138,7 +141,7 @@ export function PageSourceEditor({ pageId, onClose }: PageSourceEditorProps): Re
         const page = linesOf(buffer)
         if (draft?.lineIds == null) {
           setOpened({
-            base: buffer.source,
+            base: buffer,
             page,
             initial: page,
             draftRestored: false,
@@ -187,7 +190,7 @@ export function PageSourceEditor({ pageId, onClose }: PageSourceEditorProps): Re
     }
   }
 
-  const submit = async (against: string, force: boolean, merge: boolean): Promise<void> => {
+  const submit = async (against: string, merge: boolean): Promise<void> => {
     if (savingRef.current || opened === null) return
     savingRef.current = true
     setSaving(true)
@@ -195,7 +198,7 @@ export function PageSourceEditor({ pageId, onClose }: PageSourceEditorProps): Re
     try {
       const before = latestUndoEntry(pageId)
       const { text, lineIds } = currentLines(opened)
-      const report = await applyPageSource(text, against, force, merge, lineIds)
+      const report = await applyPageSource(text, against, merge, lineIds)
       discardDraft()
       notifyPageSourceSaved(pageId, report, before)
       onClose()
@@ -221,10 +224,10 @@ export function PageSourceEditor({ pageId, onClose }: PageSourceEditorProps): Re
     if (sameLines(lines, opened.page)) {
       discardDraft()
       onClose()
-    } else if (lines.text.trim() === '' && opened.base.trim() !== '') {
+    } else if (lines.text.trim() === '' && opened.base.text.trim() !== '') {
       setConfirmingDeleteAll(true)
     } else {
-      void submit(opened.base, false, false)
+      void submit(opened.base.source, false)
     }
   }
 
@@ -248,7 +251,7 @@ export function PageSourceEditor({ pageId, onClose }: PageSourceEditorProps): Re
   const handleChange = (lines: SourceLines): void => {
     if (opened === null) return
     typed.current = { base: opened.base, page: opened.page, lines }
-    draftSaver.schedule(lines.text)
+    draftSaver.schedule()
   }
 
   const handleKeyDown = (e: KeyboardEvent): boolean => {
@@ -275,7 +278,7 @@ export function PageSourceEditor({ pageId, onClose }: PageSourceEditorProps): Re
     discardDraft()
     const page = linesOf(conflict)
     setOpened({
-      base: conflict.source,
+      base: conflict,
       page,
       initial: page,
       draftRestored: false,
@@ -288,14 +291,14 @@ export function PageSourceEditor({ pageId, onClose }: PageSourceEditorProps): Re
   const handleOverwrite = (): void => {
     if (conflict === null) return
     setConflict(null)
-    void submit(conflict.source, true, false)
+    void submit(conflict.source, false)
   }
 
   // Against the buffer's own base, so the backend sees what changed on each side.
   const handleMerge = (): void => {
     if (conflict === null || opened === null) return
     setConflict(null)
-    void submit(opened.base, false, true)
+    void submit(opened.base.source, true)
   }
 
   const copyLegacyDraft = async (): Promise<void> => {
@@ -394,7 +397,7 @@ export function PageSourceEditor({ pageId, onClose }: PageSourceEditorProps): Re
         confirmKey="pageSource.deleteAll"
         variant="destructive"
         onConfirm={() => {
-          void submit(opened.base, false, false)
+          void submit(opened.base.source, false)
         }}
       />
       <ConfirmDialog
@@ -409,7 +412,7 @@ export function PageSourceEditor({ pageId, onClose }: PageSourceEditorProps): Re
       />
       <PageSourceConflictDialog
         base={opened.base}
-        current={conflict?.source ?? null}
+        current={conflict}
         onMerge={handleMerge}
         onReload={handleReload}
         onOverwrite={handleOverwrite}

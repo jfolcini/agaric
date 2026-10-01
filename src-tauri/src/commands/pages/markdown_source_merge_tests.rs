@@ -52,7 +52,7 @@ fn show(blocks: &[import::ParsedBlock]) -> String {
 /// The merge of the three outlines, shown, and its warnings.
 fn merge(base: &str, current: &str, mine: &str) -> (String, Vec<String>) {
     let mut warnings = Vec::new();
-    let merged = merge_outlines(parse(base), &parse(current), parse(mine), &mut warnings).unwrap();
+    let merged = merge_outlines(parse(base), &parse(current), parse(mine), &mut warnings);
     (show(&merged), warnings)
 }
 
@@ -291,8 +291,7 @@ fn a_merged_block_names_its_line_in_the_buffer() {
         &parse("- z ^Z\n- a ^A\n- b2 ^B\n"),
         parse("- new\n- b ^B\n- a2 ^A\n"),
         &mut warnings,
-    )
-    .unwrap();
+    );
     let lines: Vec<(String, Option<usize>)> = merged
         .iter()
         .map(|block| (block.content.clone(), block.line))
@@ -305,22 +304,6 @@ fn a_merged_block_names_its_line_in_the_buffer() {
             ("b2".to_string(), Some(2)),
             ("a2".to_string(), Some(3)),
         ]
-    );
-}
-
-/// Refused naming the line of the second (#5160 X3).
-#[test]
-fn an_anchor_written_twice_in_the_buffer_is_refused() {
-    let mut warnings = Vec::new();
-    let result = merge_outlines(
-        parse("- a ^A\n"),
-        &parse("- a ^A\n"),
-        parse("- a ^A\n- a ^A\n"),
-        &mut warnings,
-    );
-    assert!(
-        matches!(&result, Err(AppError::Validation { message, .. }) if message.starts_with("line 2: ")),
-        "got {result:?}"
     );
 }
 
@@ -478,7 +461,7 @@ proptest! {
             &parse(&outline(&x)),
             parse(&outline(&y)),
             &mut warnings,
-        ).unwrap();
+        );
         let anchors: Vec<&String> = merged.iter().filter_map(|m| m.block_anchor.as_ref()).collect();
         let distinct: HashSet<&&String> = anchors.iter().collect();
         prop_assert_eq!(anchors.len(), distinct.len(), "anchors: {:?}", anchors);
@@ -501,7 +484,7 @@ proptest! {
                 &parse(&outline(current)),
                 parse(&outline(mine)),
                 &mut warnings,
-            ).unwrap();
+            );
             contents(&merged)
         };
         prop_assert_eq!(both(&x, &y), both(&y, &x));

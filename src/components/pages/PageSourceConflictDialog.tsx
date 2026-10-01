@@ -17,7 +17,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
-import { diffSourceByAnchor, type SourceChange } from '@/lib/page-source-diff'
+import { type BufferLines, diffBuffers, type SourceChange } from '@/lib/page-source-diff'
 import { cn } from '@/lib/utils'
 
 const CHANGE_GLYPH: Record<SourceChange['kind'], string> = {
@@ -39,10 +39,10 @@ const CHANGE_LABEL_KEY: Record<SourceChange['kind'], string> = {
 }
 
 export interface PageSourceConflictDialogProps {
-  /** The source the buffer was loaded from. */
-  base: string
-  /** The page's source now; the dialog is open while it is set. */
-  current: string | null
+  /** The buffer the edit started from. */
+  base: BufferLines
+  /** The page's buffer now; the dialog is open while it is set. */
+  current: BufferLines | null
   onMerge: () => void
   onReload: () => void
   onOverwrite: () => void
@@ -64,7 +64,7 @@ export function PageSourceConflictDialog({
   const mergeHintId = useId()
   const overwriteWarningId = useId()
   const changes = useMemo(
-    () => (current === null ? [] : diffSourceByAnchor(base, current)),
+    () => (current === null ? [] : diffBuffers(base, current)),
     [base, current],
   )
 
