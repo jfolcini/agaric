@@ -155,8 +155,13 @@ export const pages: Record<string, string> = {
   'pageSource.edit': 'Edit as Markdown',
   'pageSource.editorLabel': 'Markdown source',
   'pageSource.hint':
-    "A bullet's ^ID keeps it the same block. Removing a bullet deletes its block, a bullet without one is created, and joining two bullets deletes the first block.",
+    "Each line keeps its block while you edit it, and a line you cut and paste moves its block. Removing a bullet deletes its block, a new bullet creates one, and joining two lines deletes the second line's block.",
   'pageSource.draftRestored': 'Restored your unsaved edits.',
+  'pageSource.legacyDraft':
+    "Unsaved edits from an earlier version of Edit as Markdown cannot be opened here. Copy what you need from them: saving, discarding or editing this page's Markdown replaces them.",
+  'pageSource.copyLegacyDraft': 'Copy earlier edits',
+  'pageSource.legacyDraftCopied': 'Earlier edits copied',
+  'pageSource.copyFailed': 'Failed to copy the earlier edits',
   'pageSource.loadFailed': 'Failed to load the markdown source',
   'pageSource.saveFailed': 'Failed to save the markdown source',
   'pageSource.saved': 'Markdown saved',

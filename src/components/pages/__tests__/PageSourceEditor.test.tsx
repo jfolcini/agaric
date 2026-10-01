@@ -1,15 +1,19 @@
 /**
- * PageSourceEditor + PageSourceConflictDialog — source mode (#5140 Phase 4b).
+ * PageSourceEditor + PageSourceConflictDialog — Edit as Markdown (#5140, #5160).
  *
- * The save paths that change the page run against the REAL tauri-mock
- * dispatch and re-read the page's source afterwards; the paths that only
- * decide what to show stub the two IPCs.
+ * The buffer is the real TipTap editor (`PageSourceBuffer`), its lines under
+ * their block ids. Keys go through the keyboard; whole edits go through the
+ * editor's own transactions, as typing does. The save paths that change the
+ * page run against the REAL tauri-mock dispatch and re-read the page's buffer
+ * afterwards; the paths that only decide what to show stub the IPCs.
  */
 
 import type { InvokeArgs } from '@tauri-apps/api/core'
 import { invoke } from '@tauri-apps/api/core'
+import { writeText as pluginWriteText } from '@tauri-apps/plugin-clipboard-manager'
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import type { Editor } from '@tiptap/core'
 import type React from 'react'
 import { useRef, useState } from 'react'
 import { toast } from 'sonner'
@@ -18,11 +22,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from '@/__tests__/helpers/axe'
 import { type CommandReturns, deferred, mockInvokeCommands } from '@/__tests__/helpers/invoke'
 import { PageSourceConflictDialog } from '@/components/pages/PageSourceConflictDialog'
-import { PageSourceEditor, refusedLineRange } from '@/components/pages/PageSourceEditor'
+import { PageSourceEditor, refusedLine } from '@/components/pages/PageSourceEditor'
+import { readLines, type SourceLines } from '@/editor/source-buffer'
+import type { PageBuffer } from '@/lib/bindings'
 import { t } from '@/lib/i18n'
 import { logger } from '@/lib/logger'
 import { dispatch } from '@/lib/tauri-mock/handlers'
-import { SEED_IDS, seedBlocks } from '@/lib/tauri-mock/seed'
+import { opLog, pageAliases, SEED_IDS, seedBlocks } from '@/lib/tauri-mock/seed'
 import { useNavigationStore } from '@/stores/navigation'
 import { createPageBlockStore, PageBlockContext } from '@/stores/page-blocks'
 import { useSpaceStore } from '@/stores/space'
@@ -34,8 +40,14 @@ const mockedInvoke = vi.mocked(invoke)
 const PAGE_ID = '01J00000000000000000000PAG'
 const A = '01J0000000000000000000000A'
 const B = '01J0000000000000000000000B'
-const BUFFER = `- first ^${A}\n- second ^${B}\n`
+const BUFFER: PageBuffer = {
+  source: `- first ^${A}\n- second ^${B}\n`,
+  text: '- first\n- second\n',
+  line_ids: [A, B, null],
+}
 const draftKey = (pageId = PAGE_ID): string => `agaric-page-source-draft:${pageId}`
+const WELCOME = '- Welcome to Agaric!'
+const HELLO = '- Hello, Agaric!'
 
 function report(
   overrides: Partial<CommandReturns['apply_page_source']> = {},
@@ -54,27 +66,27 @@ function report(
   }
 }
 
-/** `get_page_source` answers BUFFER; `apply_page_source` as given. */
+/** `get_page_buffer` answers BUFFER; `apply_page_source` as given. */
 function stubSource(applyPageSource: () => unknown = () => report()): void {
   mockedInvoke.mockImplementation(
     mockInvokeCommands({
-      get_page_source: () => BUFFER,
+      get_page_buffer: () => BUFFER,
       apply_page_source: applyPageSource as () => CommandReturns['apply_page_source'],
       load_page_subtree: () => ({ blocks: [], truncated: false, total: 0 }),
     }),
   )
 }
 
-/** Every IPC goes to the real tauri-mock; returns the seeded page's source. */
-function routeToMockBackend(): string {
+/** Every IPC goes to the real tauri-mock; returns the seeded page's buffer. */
+function routeToMockBackend(): PageBuffer {
   seedBlocks()
   useSpaceStore.setState({ currentSpaceId: 'SPACE_PERSONAL' })
   mockedInvoke.mockImplementation(async (cmd: string, args?: InvokeArgs) => dispatch(cmd, args))
-  return pageSource(SEED_IDS.PAGE_GETTING_STARTED)
+  return pageBuffer(SEED_IDS.PAGE_GETTING_STARTED)
 }
 
-function pageSource(pageId: string): string {
-  return dispatch('get_page_source', { pageId }) as string
+function pageBuffer(pageId: string): PageBuffer {
+  return dispatch('get_page_buffer', { pageId }) as PageBuffer
 }
 
 function renderEditor(pageId = PAGE_ID) {
@@ -88,18 +100,59 @@ function renderEditor(pageId = PAGE_ID) {
   return { ...utils, onClose, store }
 }
 
-async function loadedEditor(): Promise<HTMLTextAreaElement> {
-  const textarea = await screen.findByRole('textbox', { name: t('pageSource.editorLabel') })
-  return textarea as HTMLTextAreaElement
+async function loadedEditor(): Promise<HTMLElement> {
+  return screen.findByRole('textbox', { name: t('pageSource.editorLabel') })
 }
 
-async function replaceBuffer(
-  user: ReturnType<typeof userEvent.setup>,
-  textarea: HTMLTextAreaElement,
-  text: string,
-): Promise<void> {
-  await user.clear(textarea)
-  if (text !== '') await user.paste(text)
+function editorOf(box: HTMLElement): Editor {
+  return (box as HTMLElement & { editor: Editor }).editor
+}
+
+function bufferOf(box: HTMLElement): SourceLines {
+  return readLines(editorOf(box).state.doc)
+}
+
+/** The first line holding `find`: its text and where that starts. */
+function lineOf(ed: Editor, find: string): { text: string; start: number } {
+  let found: { text: string; start: number } | null = null
+  ed.state.doc.forEach((line, offset) => {
+    if (found === null && line.textContent.includes(find)) {
+      found = { text: line.textContent, start: offset + 1 }
+    }
+  })
+  if (found === null) throw new Error(`no line holds ${find}`)
+  return found
+}
+
+/** Replace `find`, within one line, with `replacement`, as typing over it does. */
+function edit(box: HTMLElement, find: string, replacement: string): void {
+  const ed = editorOf(box)
+  const { start, text } = lineOf(ed, find)
+  const from = start + text.indexOf(find)
+  act(() => {
+    ed.view.dispatch(ed.state.tr.insertText(replacement, from, from + find.length))
+  })
+}
+
+/** Remove the line holding `find`, line break and all. */
+function deleteLine(box: HTMLElement, find: string): void {
+  const ed = editorOf(box)
+  const { start, text } = lineOf(ed, find)
+  act(() => {
+    ed.view.dispatch(ed.state.tr.delete(start, start + text.length + 2))
+  })
+}
+
+/** Put the caret at the end of the line holding `find`, or of the buffer. */
+function caretAtEnd(box: HTMLElement, find?: string): void {
+  const ed = editorOf(box)
+  act(() => {
+    if (find === undefined) ed.commands.focus('end')
+    else {
+      const { start, text } = lineOf(ed, find)
+      ed.commands.focus(start + text.length)
+    }
+  })
 }
 
 function applyCalls(): unknown[] {
@@ -126,13 +179,13 @@ function renderReportBody(options: ReportOptions): HTMLElement {
   return container
 }
 
-/** Open the seeded page, write `edit(base)` into the buffer and save it with Ctrl+S. */
-async function saveSeededPage(edit: (base: string) => string) {
+/** Open the seeded page, edit the buffer and save it with Ctrl+S. */
+async function saveSeededPage(change: (box: HTMLElement) => void) {
   const base = routeToMockBackend()
   const rendered = renderEditor(SEED_IDS.PAGE_GETTING_STARTED)
   const user = userEvent.setup()
-  const textarea = await loadedEditor()
-  await replaceBuffer(user, textarea, edit(base))
+  const box = await loadedEditor()
+  change(box)
   await user.keyboard('{Control>}s{/Control}')
   await waitFor(() => {
     expect(rendered.onClose).toHaveBeenCalledOnce()
@@ -155,20 +208,36 @@ afterEach(() => {
 })
 
 describe('PageSourceEditor loading', () => {
-  it('shows the page source in a focused textarea', async () => {
-    renderEditor()
+  it('shows the page’s text in a focused textbox, each block’s id on the line it starts on and none in the text', async () => {
+    const buffer = routeToMockBackend()
+    renderEditor(SEED_IDS.PAGE_GETTING_STARTED)
 
-    const textarea = await loadedEditor()
-    expect(textarea.value).toBe(BUFFER)
-    expect(textarea).toHaveFocus()
-    expect(textarea).toHaveAttribute('data-testid', 'page-source-editor')
+    const box = await loadedEditor()
+
+    expect(bufferOf(box)).toEqual({ text: buffer.text, lineIds: buffer.line_ids })
+    expect(box).toHaveTextContent(WELCOME.slice(2))
+    expect(box.textContent).not.toContain('^')
+    expect(
+      [...box.querySelectorAll('[data-block-id]')].map((line) =>
+        line.getAttribute('data-block-id'),
+      ),
+    ).toEqual([
+      SEED_IDS.BLOCK_GS_1,
+      SEED_IDS.BLOCK_GS_2,
+      SEED_IDS.BLOCK_GS_3,
+      SEED_IDS.BLOCK_GS_4,
+      SEED_IDS.BLOCK_GS_5,
+    ])
+    await waitFor(() => expect(box).toHaveFocus())
+    expect(box).toHaveAttribute('aria-multiline', 'true')
+    expect(box).toHaveAttribute('data-testid', 'page-source-editor')
   })
 
   it('a rejected load shows the load-failed alert, logs, and Close closes', async () => {
     const errorSpy = vi.spyOn(logger, 'error').mockImplementation(() => {})
     const failure = { kind: 'not_found', message: `page '${PAGE_ID}' not found` }
     mockedInvoke.mockImplementation(
-      mockInvokeCommands({ get_page_source: () => Promise.reject(failure) }),
+      mockInvokeCommands({ get_page_buffer: () => Promise.reject(failure) }),
     )
     const user = userEvent.setup()
     const { onClose } = renderEditor()
@@ -197,46 +266,75 @@ describe('PageSourceEditor loading', () => {
 
   it('with no draft restored, is described by the hint alone', async () => {
     renderEditor()
-    const textarea = await loadedEditor()
+    const box = await loadedEditor()
 
-    const ids = textarea.getAttribute('aria-describedby')?.split(' ') ?? []
-    expect(ids.map((id) => document.getElementById(id)?.textContent)).toEqual([
-      t('pageSource.hint'),
-    ])
+    expect(box).toHaveAccessibleDescription(t('pageSource.hint'))
   })
 })
 
 describe('PageSourceEditor saving', () => {
-  it('Save writes the edited buffer against its base, closes, and the page reads back as the buffer', async () => {
+  it('Save writes the edited text with each line’s id, closes, and the page reads back as the buffer', async () => {
     const base = routeToMockBackend()
     const { BLOCK_GS_1, PAGE_GETTING_STARTED } = SEED_IDS
-    const text = base.replace('- Welcome to Agaric!', '- Hello, Agaric!')
     const user = userEvent.setup()
     const { onClose, store } = renderEditor(PAGE_GETTING_STARTED)
-    const textarea = await loadedEditor()
-    expect(textarea.value).toBe(base)
+    const box = await loadedEditor()
 
-    await replaceBuffer(user, textarea, text)
+    edit(box, WELCOME, HELLO)
     await user.click(screen.getByRole('button', { name: t('action.save') }))
 
     await waitFor(() => {
       expect(onClose).toHaveBeenCalledOnce()
     })
+    const text = base.text.replace(WELCOME, HELLO)
     expect(applyCalls()).toEqual([
       {
         pageId: PAGE_GETTING_STARTED,
         source: text,
-        baseSource: base,
+        baseSource: base.source,
         force: false,
         merge: false,
-        lineIds: null,
+        lineIds: base.line_ids,
       },
     ])
-    expect(pageSource(PAGE_GETTING_STARTED)).toBe(text)
+    expect(pageBuffer(PAGE_GETTING_STARTED)).toEqual({ ...base, text, source: expect.any(String) })
     expect(store.getState().blocksById.get(BLOCK_GS_1)?.content).toBe(
       'Hello, Agaric! This is your personal knowledge base.',
     )
     expect(useUndoStore.getState().pages.get(PAGE_GETTING_STARTED)?.undoStack).toHaveLength(1)
+  })
+
+  it('Enter at the end of a bullet starts the next one, which saves as a new block after it', async () => {
+    const base = routeToMockBackend()
+    const { BLOCK_GS_1, BLOCK_GS_2, PAGE_GETTING_STARTED } = SEED_IDS
+    const user = userEvent.setup()
+    const { onClose } = renderEditor(PAGE_GETTING_STARTED)
+    const box = await loadedEditor()
+
+    caretAtEnd(box, WELCOME)
+    await user.keyboard('{Enter}')
+    await user.keyboard('Added by Enter')
+    const at = base.line_ids.indexOf(BLOCK_GS_1)
+    expect(
+      bufferOf(box)
+        .text.split('\n')
+        .slice(at, at + 3),
+    ).toEqual([
+      expect.stringMatching(/^- Welcome/),
+      '- Added by Enter',
+      expect.stringMatching(/^- Use the sidebar/),
+    ])
+    await user.keyboard('{Control>}s{/Control}')
+
+    await waitFor(() => {
+      expect(onClose).toHaveBeenCalledOnce()
+    })
+    const saved = pageBuffer(PAGE_GETTING_STARTED)
+    expect(saved.text.split('\n')[at + 1]).toBe('- Added by Enter')
+    const added = saved.line_ids[at + 1] as string
+    expect([saved.line_ids[at], saved.line_ids[at + 2]]).toEqual([BLOCK_GS_1, BLOCK_GS_2])
+    expect(base.line_ids).not.toContain(added)
+    expect(dispatch('get_block', { blockId: added })).toMatchObject({ content: 'Added by Enter' })
   })
 
   it('Save with the buffer unchanged closes without any IPC', async () => {
@@ -247,44 +345,41 @@ describe('PageSourceEditor saving', () => {
     await user.click(screen.getByRole('button', { name: t('action.save') }))
 
     expect(onClose).toHaveBeenCalledOnce()
-    expect(mockedInvoke.mock.calls.map(([cmd]) => cmd)).toEqual(['get_page_source'])
+    expect(mockedInvoke.mock.calls.map(([cmd]) => cmd)).toEqual(['get_page_buffer'])
   })
 
-  it('Mod+Enter in the textarea saves', async () => {
+  it('Mod+Enter in the buffer saves', async () => {
     const base = routeToMockBackend()
     const { PAGE_GETTING_STARTED } = SEED_IDS
-    const text = base.replace('- Welcome to Agaric!', '- Hello, Agaric!')
     const user = userEvent.setup()
     const { onClose } = renderEditor(PAGE_GETTING_STARTED)
-    await replaceBuffer(user, await loadedEditor(), text)
+    edit(await loadedEditor(), WELCOME, HELLO)
 
     await user.keyboard('{Control>}{Enter}{/Control}')
 
     await waitFor(() => {
       expect(onClose).toHaveBeenCalledOnce()
     })
-    expect(pageSource(PAGE_GETTING_STARTED)).toBe(text)
+    expect(pageBuffer(PAGE_GETTING_STARTED).text).toBe(base.text.replace(WELCOME, HELLO))
   })
 
   it.each([
     ['Ctrl+S', { ctrlKey: true }],
     ['Cmd+S', { metaKey: true }],
-  ])('%s in the textarea saves, and the browser does not see it', async (_, modifier) => {
+  ])('%s in the buffer saves, and the browser does not see it', async (_, modifier) => {
     const base = routeToMockBackend()
     const { PAGE_GETTING_STARTED } = SEED_IDS
-    const text = base.replace('- Welcome to Agaric!', '- Hello, Agaric!')
-    const user = userEvent.setup()
     const { onClose } = renderEditor(PAGE_GETTING_STARTED)
-    const textarea = await loadedEditor()
-    await replaceBuffer(user, textarea, text)
+    const box = await loadedEditor()
+    edit(box, WELCOME, HELLO)
 
-    const notPrevented = fireEvent.keyDown(textarea, { key: 's', ...modifier })
+    const notPrevented = fireEvent.keyDown(box, { key: 's', ...modifier })
 
     expect(notPrevented).toBe(false)
     await waitFor(() => {
       expect(onClose).toHaveBeenCalledOnce()
     })
-    expect(pageSource(PAGE_GETTING_STARTED)).toBe(text)
+    expect(pageBuffer(PAGE_GETTING_STARTED).text).toBe(base.text.replace(WELCOME, HELLO))
   })
 
   it('a second Mod+Enter while the save is in flight does not save again', async () => {
@@ -295,10 +390,9 @@ describe('PageSourceEditor saving', () => {
       return dispatch(cmd, args)
     })
     const { PAGE_GETTING_STARTED } = SEED_IDS
-    const text = base.replace('- Welcome to Agaric!', '- Hello, Agaric!')
     const user = userEvent.setup()
     const { onClose } = renderEditor(PAGE_GETTING_STARTED)
-    await replaceBuffer(user, await loadedEditor(), text)
+    edit(await loadedEditor(), WELCOME, HELLO)
 
     await user.keyboard('{Control>}{Enter}{Enter}{/Control}')
     gate.resolve()
@@ -307,22 +401,23 @@ describe('PageSourceEditor saving', () => {
       expect(onClose).toHaveBeenCalledOnce()
     })
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
-    expect(pageSource(PAGE_GETTING_STARTED)).toBe(text)
+    expect(pageBuffer(PAGE_GETTING_STARTED).text).toBe(base.text.replace(WELCOME, HELLO))
     expect(useUndoStore.getState().pages.get(PAGE_GETTING_STARTED)?.undoStack).toHaveLength(1)
   })
 
-  it('disables Save while the save is in flight', async () => {
+  it('disables Save and makes the buffer read-only while the save is in flight', async () => {
     const pending = deferred<CommandReturns['apply_page_source']>()
     stubSource(() => pending.promise)
     const user = userEvent.setup()
     const { onClose } = renderEditor()
-    const textarea = await loadedEditor()
-    await user.type(textarea, 'x')
+    const box = await loadedEditor()
+    edit(box, 'first', 'first x')
 
     await user.click(screen.getByRole('button', { name: t('action.save') }))
 
     expect(screen.getByRole('button', { name: t('action.save') })).toBeDisabled()
-    expect(textarea).toHaveAttribute('readonly')
+    await waitFor(() => expect(box).toHaveAttribute('contenteditable', 'false'))
+    expect(box).toHaveAttribute('aria-readonly', 'true')
     pending.resolve(report())
     await waitFor(() => {
       expect(onClose).toHaveBeenCalledOnce()
@@ -330,11 +425,11 @@ describe('PageSourceEditor saving', () => {
   })
 
   it('lists the save warnings one per line in a warning report that stays until dismissed', async () => {
-    const warnings = [`^${A} no longer on this page; saved as a new block`, 'second warning']
+    const warnings = ['line 2: a copy of the block on line 1; saved as a new block', 'second']
     stubSource(() => report({ warnings }))
     const user = userEvent.setup()
     const { onClose } = renderEditor()
-    await user.type(await loadedEditor(), 'x')
+    edit(await loadedEditor(), 'first', 'first x')
 
     await user.click(screen.getByRole('button', { name: t('action.save') }))
 
@@ -357,17 +452,17 @@ describe('PageSourceEditor saving', () => {
 
   it('a rejected save shows the backend message inline, logs, and keeps the buffer open', async () => {
     const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
-    const failure = { kind: 'validation', message: `^${A} appears more than once` }
+    const failure = { kind: 'validation', message: 'the save would nest a block too deep' }
     stubSource(() => Promise.reject(failure))
     const user = userEvent.setup()
     const { onClose } = renderEditor()
-    const textarea = await loadedEditor()
-    await user.type(textarea, '- dup')
+    const box = await loadedEditor()
+    edit(box, 'second', 'second, edited')
 
     await user.click(screen.getByRole('button', { name: t('action.save') }))
 
     expect(await screen.findByRole('alert')).toHaveTextContent(failure.message)
-    expect(textarea.value).toBe(`${BUFFER}- dup`)
+    expect(bufferOf(box)).toEqual({ text: '- first\n- second, edited\n', lineIds: [A, B, null] })
     expect(onClose).not.toHaveBeenCalled()
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
     expect(warnSpy).toHaveBeenCalledWith(
@@ -380,39 +475,84 @@ describe('PageSourceEditor saving', () => {
 
   it('a refusal naming a line selects that line of the buffer (#5160 X3)', async () => {
     vi.spyOn(logger, 'warn').mockImplementation(() => {})
-    const base = routeToMockBackend()
-    const again = `- again ^${SEED_IDS.BLOCK_GS_1}`
-    const text = `${base}${again}\n`
-    const line = base.split('\n').length
+    const failure = { kind: 'validation', message: "line 2: 'due' takes a date" }
+    stubSource(() => Promise.reject(failure))
     const user = userEvent.setup()
-    renderEditor(SEED_IDS.PAGE_GETTING_STARTED)
-    const textarea = await loadedEditor()
-    await replaceBuffer(user, textarea, text)
+    renderEditor()
+    const box = await loadedEditor()
+    edit(box, 'first', 'first x')
+    caretAtEnd(box, 'first x')
 
     await user.click(screen.getByRole('button', { name: t('action.save') }))
 
-    expect(await screen.findByRole('alert')).toHaveTextContent(new RegExp(`^line ${line}: `))
-    expect(textarea).toHaveFocus()
-    expect([textarea.selectionStart, textarea.selectionEnd]).toEqual([
-      base.length,
-      base.length + again.length,
-    ])
-    expect(pageSource(SEED_IDS.PAGE_GETTING_STARTED)).toBe(base)
+    expect(await screen.findByRole('alert')).toHaveTextContent(failure.message)
+    await waitFor(() => expect(box).toHaveFocus())
+    const { from, to } = editorOf(box).state.selection
+    expect(editorOf(box).state.doc.textBetween(from, to)).toBe('- second')
+    expect(lineOf(editorOf(box), '- second').start).toBe(from)
   })
 })
 
-describe('refusedLineRange', () => {
-  const text = 'a\nbb\nccc'
+describe('PageSourceEditor front matter (#5160 S8)', () => {
+  const FRONT_MATTER = ['---', 'aliases: [getting-started, gs]', '---', '']
 
-  it('is the range of the line the message names', () => {
-    expect(refusedLineRange('line 1: x', text)).toEqual([0, 1])
-    expect(refusedLineRange('line 2: x', text)).toEqual([2, 4])
-    expect(refusedLineRange('line 3: x', text)).toEqual([5, 8])
+  it('opens with the page’s front matter first, its lines carrying no id, and saving it unchanged writes nothing', async () => {
+    const base = routeToMockBackend()
+    const { BLOCK_GS_1, PAGE_GETTING_STARTED } = SEED_IDS
+    const ops = opLog.length
+    const user = userEvent.setup()
+    const { onClose } = renderEditor(PAGE_GETTING_STARTED)
+    const box = await loadedEditor()
+
+    const { text, lineIds } = bufferOf(box)
+    expect(text.split('\n').slice(0, FRONT_MATTER.length)).toEqual(FRONT_MATTER)
+    expect(lineIds.slice(0, FRONT_MATTER.length + 1)).toEqual([null, null, null, null, BLOCK_GS_1])
+    await user.click(screen.getByRole('button', { name: t('action.save') }))
+
+    expect(onClose).toHaveBeenCalledOnce()
+    expect(applyCalls()).toEqual([])
+    expect(opLog).toHaveLength(ops)
+    expect(pageBuffer(PAGE_GETTING_STARTED)).toEqual(base)
   })
 
-  it('is null for a message naming no line, or one the text does not have', () => {
-    for (const message of ['x', 'block 2: x', 'see line 2: x', 'line 0: x', 'line 4: x']) {
-      expect(refusedLineRange(message, text)).toBeNull()
+  it('an alias typed into the front matter is saved, and the block edited under it is the save’s one block write', async () => {
+    const base = routeToMockBackend()
+    const { PAGE_GETTING_STARTED } = SEED_IDS
+    const ops = opLog.length
+    const user = userEvent.setup()
+    const { onClose } = renderEditor(PAGE_GETTING_STARTED)
+    const box = await loadedEditor()
+
+    edit(box, 'aliases: [getting-started, gs]', 'aliases: [getting-started, gs, handbook]')
+    edit(box, WELCOME, HELLO)
+    await user.click(screen.getByRole('button', { name: t('action.save') }))
+
+    await waitFor(() => {
+      expect(onClose).toHaveBeenCalledOnce()
+    })
+    expect(pageAliases.get(PAGE_GETTING_STARTED)?.toSorted()).toEqual([
+      'getting-started',
+      'gs',
+      'handbook',
+    ])
+    expect(pageBuffer(PAGE_GETTING_STARTED)).toEqual({
+      ...base,
+      text: base.text.replace('gs]', 'gs, handbook]').replace(WELCOME, HELLO),
+      source: expect.any(String),
+    })
+    expect(opLog.slice(ops).map((op) => op.op_type)).toEqual(['edit_block'])
+  })
+})
+
+describe('refusedLine', () => {
+  it('is the line, counted from 0, the message starts by naming', () => {
+    expect(refusedLine('line 1: x')).toBe(0)
+    expect(refusedLine('line 12: x')).toBe(11)
+  })
+
+  it('is null for a message that names no line first', () => {
+    for (const message of ['x', 'block 2: x', 'see line 2: x', 'line two: x']) {
+      expect(refusedLine(message)).toBeNull()
     }
   })
 })
@@ -423,8 +563,10 @@ describe('PageSourceEditor emptying the page', () => {
     const { PAGE_GETTING_STARTED } = SEED_IDS
     const user = userEvent.setup()
     const { onClose } = renderEditor(PAGE_GETTING_STARTED)
-    const textarea = await loadedEditor()
-    await replaceBuffer(user, textarea, '  \n')
+    const box = await loadedEditor()
+    act(() => {
+      editorOf(box).chain().selectAll().deleteSelection().insertContent('  ').run()
+    })
 
     const save = screen.getByRole('button', { name: t('action.save') })
     await user.click(save)
@@ -437,8 +579,8 @@ describe('PageSourceEditor emptying the page', () => {
       expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
     })
     await waitFor(() => expect(save).toHaveFocus())
-    expect(pageSource(PAGE_GETTING_STARTED)).toBe(base)
-    expect(textarea.value).toBe('  \n')
+    expect(pageBuffer(PAGE_GETTING_STARTED)).toEqual(base)
+    expect(bufferOf(box).text).toBe('  ')
     expect(onClose).not.toHaveBeenCalled()
 
     await user.click(screen.getByRole('button', { name: t('action.save') }))
@@ -451,31 +593,30 @@ describe('PageSourceEditor emptying the page', () => {
     await waitFor(() => {
       expect(onClose).toHaveBeenCalledOnce()
     })
-    expect(pageSource(PAGE_GETTING_STARTED)).toBe('')
+    expect(pageBuffer(PAGE_GETTING_STARTED).text).toBe('')
   })
 })
 
 describe('PageSourceEditor when the page changed elsewhere', () => {
   const ELSEWHERE = 'Edited on another device'
 
-  const HELLO = (source: string): string =>
-    source.replace('- Welcome to Agaric!', '- Hello, Agaric!')
-
   /** Opens the seeded page, edits the buffer, changes a block behind its back, and saves. */
-  async function saveOverAChange(edit: (source: string) => string = HELLO) {
+  async function saveOverAChange(
+    change: (box: HTMLElement) => void = (box) => edit(box, WELCOME, HELLO),
+  ) {
     const base = routeToMockBackend()
     const { BLOCK_GS_3, PAGE_GETTING_STARTED } = SEED_IDS
-    const text = edit(base)
     const user = userEvent.setup()
     const rendered = renderEditor(PAGE_GETTING_STARTED)
-    const textarea = await loadedEditor()
-    await replaceBuffer(user, textarea, text)
+    const box = await loadedEditor()
+    change(box)
+    const edited = bufferOf(box)
     dispatch('edit_block', { blockId: BLOCK_GS_3, toText: ELSEWHERE })
-    const current = pageSource(PAGE_GETTING_STARTED)
+    const current = pageBuffer(PAGE_GETTING_STARTED)
 
     await user.click(screen.getByRole('button', { name: t('action.save') }))
     const dialog = await screen.findByRole('dialog', { name: t('pageSource.conflictTitle') })
-    return { ...rendered, base, current, dialog, text, textarea, user }
+    return { ...rendered, base, box, current, dialog, edited, user }
   }
 
   it('opens the conflict dialog listing what changed since the buffer was loaded', async () => {
@@ -488,7 +629,7 @@ describe('PageSourceEditor when the page changed elsewhere', () => {
   })
 
   it('Overwrite saves the buffer with force against the page as it is now, and the buffer wins', async () => {
-    const { base, current, dialog, onClose, text, user } = await saveOverAChange()
+    const { base, current, dialog, edited, onClose, user } = await saveOverAChange()
     const { PAGE_GETTING_STARTED } = SEED_IDS
 
     await user.click(within(dialog).getByRole('button', { name: t('pageSource.overwrite') }))
@@ -496,25 +637,12 @@ describe('PageSourceEditor when the page changed elsewhere', () => {
     await waitFor(() => {
       expect(onClose).toHaveBeenCalledOnce()
     })
+    const save = { pageId: PAGE_GETTING_STARTED, source: edited.text, lineIds: edited.lineIds }
     expect(applyCalls()).toEqual([
-      {
-        pageId: PAGE_GETTING_STARTED,
-        source: text,
-        baseSource: base,
-        force: false,
-        merge: false,
-        lineIds: null,
-      },
-      {
-        pageId: PAGE_GETTING_STARTED,
-        source: text,
-        baseSource: current,
-        force: true,
-        merge: false,
-        lineIds: null,
-      },
+      { ...save, baseSource: base.source, force: false, merge: false },
+      { ...save, baseSource: current.source, force: true, merge: false },
     ])
-    expect(pageSource(PAGE_GETTING_STARTED)).toBe(text)
+    expect(pageBuffer(PAGE_GETTING_STARTED).text).toBe(edited.text)
   })
 
   it('Merge saves the buffer against its own base with the change made elsewhere folded in, as one undo entry', async () => {
@@ -529,7 +657,11 @@ describe('PageSourceEditor when the page changed elsewhere', () => {
     await waitFor(() => {
       expect(onClose).toHaveBeenCalledOnce()
     })
-    expect(pageSource(PAGE_GETTING_STARTED)).toBe(HELLO(current))
+    expect(pageBuffer(PAGE_GETTING_STARTED)).toEqual({
+      ...current,
+      text: current.text.replace(WELCOME, HELLO),
+      source: expect.any(String),
+    })
     expect(useUndoStore.getState().pages.get(PAGE_GETTING_STARTED)?.undoStack).toHaveLength(1)
     expect(localStorage.getItem(draftKey(PAGE_GETTING_STARTED))).toBeNull()
     expect(vi.mocked(toast.warning)).not.toHaveBeenCalled()
@@ -537,48 +669,46 @@ describe('PageSourceEditor when the page changed elsewhere', () => {
 
   it("Merge keeps both versions of a block changed on both sides, the buffer's first, and warns", async () => {
     const mine = '- Mine: new blocks by pressing Enter'
-    const { current, dialog, onClose, user } = await saveOverAChange((source) =>
-      source.replace('- Create new blocks by pressing Enter', mine),
+    const { current, dialog, onClose, user } = await saveOverAChange((box) =>
+      edit(box, '- Create new blocks by pressing Enter', mine),
     )
-    const withoutAnchors = (source: string): string => source.replace(/ \^\w{26}$/gm, '')
 
     await user.click(within(dialog).getByRole('button', { name: t('pageSource.merge') }))
 
     await waitFor(() => {
       expect(onClose).toHaveBeenCalledOnce()
     })
-    expect(withoutAnchors(pageSource(SEED_IDS.PAGE_GETTING_STARTED))).toBe(
-      withoutAnchors(
-        current.replace(`- ${ELSEWHERE}`, `${mine} at the end of any block.\n- ${ELSEWHERE}`),
-      ),
+    expect(pageBuffer(SEED_IDS.PAGE_GETTING_STARTED).text).toBe(
+      current.text.replace(`- ${ELSEWHERE}`, `${mine} at the end of any block.\n- ${ELSEWHERE}`),
     )
     expect(vi.mocked(toast.warning)).toHaveBeenCalledOnce()
   })
 
   it('a refused Merge shows the backend message inline and keeps the buffer', async () => {
     vi.spyOn(logger, 'warn').mockImplementation(() => {})
-    const failure = { kind: 'validation', message: `^${A} is not a block of this page` }
+    const failure = { kind: 'validation', message: 'the merge would nest a block too deep' }
     const replies = [{ kind: 'validation', code: 'RequiresRefresh', message: 'stale' }, failure]
     stubSource(() => Promise.reject(replies.shift()))
     const user = userEvent.setup()
     const { onClose } = renderEditor()
-    const textarea = await loadedEditor()
-    await user.type(textarea, 'x')
+    const box = await loadedEditor()
+    edit(box, 'first', 'first x')
     await user.click(screen.getByRole('button', { name: t('action.save') }))
     const dialog = await screen.findByRole('dialog', { name: t('pageSource.conflictTitle') })
 
     await user.click(within(dialog).getByRole('button', { name: t('pageSource.merge') }))
 
     expect(await screen.findByRole('alert')).toHaveTextContent(failure.message)
-    expect(textarea.value).toBe(`${BUFFER}x`)
+    expect(bufferOf(box).text).toBe('- first x\n- second\n')
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
     expect(onClose).not.toHaveBeenCalled()
   })
 
   it('Reload replaces the buffer and its base with the page as it is now and drops the draft', async () => {
-    const { current, dialog, onClose, textarea, user } = await saveOverAChange()
+    const { current, dialog, onClose, user } = await saveOverAChange()
+    const { PAGE_GETTING_STARTED } = SEED_IDS
     await waitFor(() => {
-      expect(localStorage.getItem(draftKey(SEED_IDS.PAGE_GETTING_STARTED))).not.toBeNull()
+      expect(localStorage.getItem(draftKey(PAGE_GETTING_STARTED))).not.toBeNull()
     })
 
     await user.click(within(dialog).getByRole('button', { name: t('action.reload') }))
@@ -586,19 +716,20 @@ describe('PageSourceEditor when the page changed elsewhere', () => {
     await waitFor(() => {
       expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
     })
-    expect(textarea.value).toBe(current)
-    expect(localStorage.getItem(draftKey(SEED_IDS.PAGE_GETTING_STARTED))).toBeNull()
+    const box = await loadedEditor()
+    expect(bufferOf(box)).toEqual({ text: current.text, lineIds: current.line_ids })
+    expect(localStorage.getItem(draftKey(PAGE_GETTING_STARTED))).toBeNull()
     // The new base is the page as it is now, so the reloaded buffer saves without a conflict.
-    await user.type(textarea, '- after reload')
+    edit(box, WELCOME, HELLO)
     await user.click(screen.getByRole('button', { name: t('action.save') }))
     await waitFor(() => {
       expect(onClose).toHaveBeenCalledOnce()
     })
-    expect(pageSource(SEED_IDS.PAGE_GETTING_STARTED)).toContain('\n- after reload ^')
+    expect(pageBuffer(PAGE_GETTING_STARTED).text).toBe(current.text.replace(WELCOME, HELLO))
   })
 
   it('Keep editing closes the dialog and keeps the buffer', async () => {
-    const { dialog, onClose, text, textarea, user } = await saveOverAChange()
+    const { box, dialog, edited, onClose, user } = await saveOverAChange()
 
     await user.click(within(dialog).getByRole('button', { name: t('pageSource.keepEditing') }))
 
@@ -606,51 +737,55 @@ describe('PageSourceEditor when the page changed elsewhere', () => {
       expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
     })
     await waitFor(() => {
-      expect(textarea).toHaveFocus()
+      expect(box).toHaveFocus()
     })
-    expect(textarea.value).toBe(text)
+    expect(bufferOf(box)).toEqual(edited)
     expect(applyCalls()).toHaveLength(1)
     expect(onClose).not.toHaveBeenCalled()
   })
 })
 
 describe('PageSourceEditor draft', () => {
-  it('writes the buffer as a draft while it differs from its base, and drops it when it matches again', async () => {
+  it('writes the buffer and its line ids as a draft while it differs from the page, and drops it when it matches again', async () => {
     const user = userEvent.setup()
     renderEditor()
-    const textarea = await loadedEditor()
+    const box = await loadedEditor()
+    caretAtEnd(box, '- second')
 
-    await user.type(textarea, 'x')
+    await user.keyboard('x')
     await waitFor(() => {
       expect(localStorage.getItem(draftKey())).toBe(
-        JSON.stringify({ base: BUFFER, text: `${BUFFER}x` }),
+        JSON.stringify({
+          base: BUFFER.source,
+          text: '- first\n- secondx\n',
+          lineIds: [A, B, null],
+        }),
       )
     })
 
-    await user.type(textarea, '{Backspace}')
+    await user.keyboard('{Backspace}')
     await waitFor(() => {
       expect(localStorage.getItem(draftKey())).toBeNull()
     })
   })
 
-  // `fireEvent.change` then `unmount()` run in one task, so the 300 ms timer cannot fire between.
+  // The edit and `unmount()` run in one task, so the 300 ms timer cannot fire between.
   it('leaving before the debounce fires still stores the last keystrokes', async () => {
     const { unmount } = renderEditor()
-    const textarea = await loadedEditor()
+    const box = await loadedEditor()
 
-    fireEvent.change(textarea, { target: { value: `${BUFFER}x` } })
+    edit(box, 'second', 'second x')
     unmount()
 
     expect(localStorage.getItem(draftKey())).toBe(
-      JSON.stringify({ base: BUFFER, text: `${BUFFER}x` }),
+      JSON.stringify({ base: BUFFER.source, text: '- first\n- second x\n', lineIds: [A, B, null] }),
     )
   })
 
   it('leaving after Cancel and Discard stores nothing', async () => {
     const user = userEvent.setup()
     const { unmount } = renderEditor()
-    const textarea = await loadedEditor()
-    fireEvent.change(textarea, { target: { value: `${BUFFER}x` } })
+    edit(await loadedEditor(), 'second', 'second x')
 
     await user.click(screen.getByRole('button', { name: t('action.cancel') }))
     await user.click(await screen.findByRole('button', { name: t('pageSource.discard') }))
@@ -659,17 +794,21 @@ describe('PageSourceEditor draft', () => {
     expect(localStorage.getItem(draftKey())).toBeNull()
   })
 
-  it('restores a stored draft over the fresh source, says so, saves it and clears it', async () => {
+  it('restores a stored draft with its line ids over the page, says so, saves it and clears it', async () => {
     const base = routeToMockBackend()
     const { PAGE_GETTING_STARTED } = SEED_IDS
-    const draft = { base, text: base.replace('- Welcome to Agaric!', '- Hello, Agaric!') }
+    const draft = {
+      base: base.source,
+      text: base.text.replace(WELCOME, HELLO),
+      lineIds: base.line_ids,
+    }
     localStorage.setItem(draftKey(PAGE_GETTING_STARTED), JSON.stringify(draft))
     const user = userEvent.setup()
     const { onClose } = renderEditor(PAGE_GETTING_STARTED)
-    const textarea = await loadedEditor()
+    const box = await loadedEditor()
 
-    expect(textarea.value).toBe(draft.text)
-    expect(textarea).toHaveAccessibleDescription(
+    expect(bufferOf(box)).toEqual({ text: draft.text, lineIds: draft.lineIds })
+    expect(box).toHaveAccessibleDescription(
       `${t('pageSource.draftRestored')} ${t('pageSource.hint')}`,
     )
 
@@ -678,15 +817,23 @@ describe('PageSourceEditor draft', () => {
     await waitFor(() => {
       expect(onClose).toHaveBeenCalledOnce()
     })
-    expect(pageSource(PAGE_GETTING_STARTED)).toBe(draft.text)
+    expect(pageBuffer(PAGE_GETTING_STARTED)).toEqual({
+      ...base,
+      text: draft.text,
+      source: expect.any(String),
+    })
     expect(localStorage.getItem(draftKey(PAGE_GETTING_STARTED))).toBeNull()
   })
 
   it('a restored draft the page has changed since saves nothing and opens the conflict dialog', async () => {
     const now = routeToMockBackend()
     const { BLOCK_GS_1, PAGE_GETTING_STARTED } = SEED_IDS
-    const draftBase = now.replace('- Welcome to Agaric!', '- Welcome, before an edit elsewhere!')
-    const draft = { base: draftBase, text: `${draftBase}- mine\n` }
+    const before = '- Welcome, before an edit elsewhere!'
+    const draft = {
+      base: now.source.replace(WELCOME, before),
+      text: `${now.text.replace(WELCOME, before)}- mine\n`,
+      lineIds: [...now.line_ids, null],
+    }
     localStorage.setItem(draftKey(PAGE_GETTING_STARTED), JSON.stringify(draft))
     const user = userEvent.setup()
     const { onClose } = renderEditor(PAGE_GETTING_STARTED)
@@ -695,17 +842,18 @@ describe('PageSourceEditor draft', () => {
     await user.click(screen.getByRole('button', { name: t('action.save') }))
 
     const dialog = await screen.findByRole('dialog', { name: t('pageSource.conflictTitle') })
-    const gs1Now = now.split('\n').find((line) => line.endsWith(` ^${BLOCK_GS_1}`)) as string
+    const gs1Now = now.source.split('\n').find((line) => line.endsWith(` ^${BLOCK_GS_1}`)) as string
     expect(within(dialog).getByText(gs1Now).closest('li')).toHaveTextContent(
       t('pageSource.changeChanged'),
     )
-    expect(pageSource(PAGE_GETTING_STARTED)).toBe(now)
+    expect(pageBuffer(PAGE_GETTING_STARTED)).toEqual(now)
     expect(onClose).not.toHaveBeenCalled()
     expect(localStorage.getItem(draftKey(PAGE_GETTING_STARTED))).toBe(JSON.stringify(draft))
   })
 
   it('Cancel on a restored draft asks, and Discard drops the draft and closes without saving', async () => {
-    localStorage.setItem(draftKey(), JSON.stringify({ base: BUFFER, text: `${BUFFER}x` }))
+    const draft = { base: BUFFER.source, text: '- first\n- second x\n', lineIds: [A, B, null] }
+    localStorage.setItem(draftKey(), JSON.stringify(draft))
     const user = userEvent.setup()
     const { onClose } = renderEditor()
     await loadedEditor()
@@ -721,16 +869,74 @@ describe('PageSourceEditor draft', () => {
 
   it.each([
     ['not JSON', '{not json'],
-    ['missing its text', JSON.stringify({ base: BUFFER })],
-    ['with a non-string base', JSON.stringify({ base: 1, text: BUFFER })],
-  ])('ignores a draft that is %s and shows the fresh source', async (_, stored) => {
+    ['missing its text', JSON.stringify({ base: BUFFER.source, lineIds: [A] })],
+    ['with a non-string base', JSON.stringify({ base: 1, text: BUFFER.text, lineIds: [A] })],
+    ['with line ids that are not ids', JSON.stringify({ base: '', text: 'x', lineIds: [1] })],
+  ])('ignores a draft that is %s and shows the page', async (_, stored) => {
     localStorage.setItem(draftKey(), stored)
     renderEditor()
 
-    const textarea = await loadedEditor()
+    const box = await loadedEditor()
 
-    expect(textarea.value).toBe(BUFFER)
-    expect(textarea).toHaveAccessibleDescription(t('pageSource.hint'))
+    expect(bufferOf(box)).toEqual({ text: BUFFER.text, lineIds: BUFFER.line_ids })
+    expect(box).toHaveAccessibleDescription(t('pageSource.hint'))
+    expect(screen.queryByText(t('pageSource.legacyDraft'))).not.toBeInTheDocument()
+  })
+})
+
+describe('PageSourceEditor with a draft from before the line ids (#5160 D-f)', () => {
+  const OLD = { base: BUFFER.source, text: `- first, edited earlier ^${A}\n- second ^${B}\n` }
+
+  it('shows it read-only beside the page, keeps it stored, and Copy puts its text on the clipboard', async () => {
+    localStorage.setItem(draftKey(), JSON.stringify(OLD))
+    const user = userEvent.setup()
+    const { container } = renderEditor()
+    const box = await loadedEditor()
+
+    expect(bufferOf(box)).toEqual({ text: BUFFER.text, lineIds: BUFFER.line_ids })
+    expect(box).toHaveAccessibleDescription(t('pageSource.hint'))
+    const earlier = screen.getByRole('textbox', { name: t('pageSource.legacyDraft') })
+    expect(earlier).toHaveValue(OLD.text)
+    expect(earlier).toHaveAttribute('readonly')
+    expect(localStorage.getItem(draftKey())).toBe(JSON.stringify(OLD))
+    await waitFor(async () => {
+      expect(await axe(container)).toHaveNoViolations()
+    })
+
+    await user.click(screen.getByRole('button', { name: t('pageSource.copyLegacyDraft') }))
+
+    await waitFor(() => {
+      expect(vi.mocked(toast.success)).toHaveBeenCalledWith(t('pageSource.legacyDraftCopied'))
+    })
+    expect(vi.mocked(pluginWriteText)).toHaveBeenCalledWith(OLD.text)
+  })
+
+  it('a failed Copy says so and logs', async () => {
+    const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
+    const failure = new Error('clipboard denied')
+    vi.mocked(pluginWriteText).mockRejectedValueOnce(failure)
+    const fallback = vi.spyOn(navigator.clipboard, 'writeText').mockRejectedValue(failure)
+    localStorage.setItem(draftKey(), JSON.stringify(OLD))
+    const user = userEvent.setup()
+    renderEditor()
+    await loadedEditor()
+
+    try {
+      await user.click(screen.getByRole('button', { name: t('pageSource.copyLegacyDraft') }))
+
+      await waitFor(() => {
+        expect(vi.mocked(toast.error)).toHaveBeenCalledWith(t('pageSource.copyFailed'))
+      })
+      expect(fallback).toHaveBeenCalledWith(OLD.text)
+      expect(warnSpy).toHaveBeenCalledWith(
+        'PageSourceEditor',
+        'Failed to copy the earlier draft',
+        { pageId: PAGE_ID },
+        failure,
+      )
+    } finally {
+      fallback.mockRestore()
+    }
   })
 })
 
@@ -740,8 +946,9 @@ describe('PageSourceEditor Cancel and Escape', () => {
     const { PAGE_GETTING_STARTED } = SEED_IDS
     const user = userEvent.setup()
     const { onClose } = renderEditor(PAGE_GETTING_STARTED)
-    const textarea = await loadedEditor()
-    await user.type(textarea, '- mine')
+    const box = await loadedEditor()
+    caretAtEnd(box)
+    await user.keyboard('- mine')
     const cancel = screen.getByRole('button', { name: t('action.cancel') })
 
     await user.click(cancel)
@@ -752,7 +959,7 @@ describe('PageSourceEditor Cancel and Escape', () => {
       expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
     })
     await waitFor(() => expect(cancel).toHaveFocus())
-    expect(textarea.value).toBe(`${base}- mine`)
+    expect(bufferOf(box).text).toBe(`${base.text}- mine`)
     expect(onClose).not.toHaveBeenCalled()
 
     await user.click(cancel)
@@ -763,8 +970,43 @@ describe('PageSourceEditor Cancel and Escape', () => {
     )
 
     expect(onClose).toHaveBeenCalledOnce()
-    expect(pageSource(PAGE_GETTING_STARTED)).toBe(base)
+    expect(pageBuffer(PAGE_GETTING_STARTED)).toEqual(base)
     expect(applyCalls()).toEqual([])
+  })
+
+  it('Cancel after lines that read the same swapped places, their ids with them, still asks', async () => {
+    mockedInvoke.mockImplementation(
+      mockInvokeCommands({
+        get_page_buffer: () => ({
+          source: `- same ^${A}\n- same ^${B}\n`,
+          text: '- same\n- same\n',
+          line_ids: [A, B, null],
+        }),
+      }),
+    )
+    const user = userEvent.setup()
+    const { onClose } = renderEditor()
+    const box = await loadedEditor()
+    const ed = editorOf(box)
+    // The second line, from its start to the start of the line after it.
+    const second = 1 + ed.state.doc.child(0).nodeSize
+    act(() => {
+      ed.commands.setTextSelection({ from: second, to: second + ed.state.doc.child(1).nodeSize })
+    })
+    const clipboard = new DataTransfer()
+    act(() => {
+      fireEvent(box, new ClipboardEvent('cut', { clipboardData: clipboard, bubbles: true }))
+      ed.commands.setTextSelection(1)
+      fireEvent(box, new ClipboardEvent('paste', { clipboardData: clipboard, bubbles: true }))
+    })
+    expect(bufferOf(box)).toEqual({ text: '- same\n- same\n', lineIds: [B, A, null] })
+
+    await user.click(screen.getByRole('button', { name: t('action.cancel') }))
+
+    expect(
+      await screen.findByRole('alertdialog', { name: t('pageSource.discardTitle') }),
+    ).toBeInTheDocument()
+    expect(onClose).not.toHaveBeenCalled()
   })
 
   it('Discard leaves focus where the page puts it on close, not pulled back into the dialog', async () => {
@@ -787,7 +1029,7 @@ describe('PageSourceEditor Cancel and Escape', () => {
     }
     const user = userEvent.setup()
     render(<Page />)
-    await user.type(await loadedEditor(), 'x')
+    edit(await loadedEditor(), 'first', 'first x')
 
     await user.click(screen.getByRole('button', { name: t('action.cancel') }))
     await user.click(await screen.findByRole('button', { name: t('pageSource.discard') }))
@@ -801,8 +1043,8 @@ describe('PageSourceEditor Cancel and Escape', () => {
   it('Cancel with the text back as loaded closes without asking', async () => {
     const user = userEvent.setup()
     const { onClose } = renderEditor()
-    const textarea = await loadedEditor()
-    await user.type(textarea, 'x{Backspace}')
+    caretAtEnd(await loadedEditor())
+    await user.keyboard('x{Backspace}')
 
     await user.click(screen.getByRole('button', { name: t('action.cancel') }))
 
@@ -815,8 +1057,9 @@ describe('PageSourceEditor Cancel and Escape', () => {
     window.addEventListener('keydown', outside)
     const user = userEvent.setup()
     const { onClose } = renderEditor()
-    const textarea = await loadedEditor()
-    await user.type(textarea, 'x')
+    const box = await loadedEditor()
+    caretAtEnd(box)
+    await user.keyboard('x')
     outside.mockClear()
 
     await user.keyboard('{Escape}')
@@ -830,15 +1073,16 @@ describe('PageSourceEditor Cancel and Escape', () => {
     await waitFor(() => {
       expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
     })
-    await waitFor(() => expect(textarea).toHaveFocus())
-    expect(textarea.value).toBe(`${BUFFER}x`)
+    await waitFor(() => expect(box).toHaveFocus())
+    expect(bufferOf(box).text).toBe(`${BUFFER.text}x`)
     expect(onClose).not.toHaveBeenCalled()
   })
 
   it('Escape with the text as loaded closes without asking', async () => {
     const user = userEvent.setup()
     const { onClose } = renderEditor()
-    await loadedEditor()
+    const box = await loadedEditor()
+    await waitFor(() => expect(box).toHaveFocus())
 
     await user.keyboard('{Escape}')
 
@@ -848,9 +1092,9 @@ describe('PageSourceEditor Cancel and Escape', () => {
 
   it('an Escape that ends an input-method composition leaves the buffer open', async () => {
     const { onClose } = renderEditor()
-    const textarea = await loadedEditor()
+    const box = await loadedEditor()
 
-    fireEvent.keyDown(textarea, { key: 'Escape', isComposing: true })
+    fireEvent.keyDown(box, { key: 'Escape', isComposing: true })
 
     expect(onClose).not.toHaveBeenCalled()
     expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
@@ -859,7 +1103,7 @@ describe('PageSourceEditor Cancel and Escape', () => {
   it('the discard dialog has no a11y violations', async () => {
     const user = userEvent.setup()
     renderEditor()
-    await user.type(await loadedEditor(), 'x')
+    edit(await loadedEditor(), 'first', 'first x')
 
     await user.click(screen.getByRole('button', { name: t('action.cancel') }))
 
@@ -876,12 +1120,10 @@ describe('PageSourceEditor save report', () => {
   const NEW_TAG = 'fresh-tag'
 
   /** Drops the last bullet and links a page and a tag no name matches yet from the first. */
-  const deleteAndName = (base: string): string =>
-    base
-      .split('\n')
-      .filter((line) => !line.endsWith(` ^${SEED_IDS.BLOCK_GS_5}`))
-      .join('\n')
-      .replace('knowledge base.', `knowledge base. See [[${NEW_PAGE}]] #${NEW_TAG}`)
+  const deleteAndName = (box: HTMLElement): void => {
+    deleteLine(box, '**Use the search panel**')
+    edit(box, 'knowledge base.', `knowledge base. See [[${NEW_PAGE}]] #${NEW_TAG}`)
+  }
 
   /** What the mock backend answered the (one) save with. */
   async function applied(): Promise<CommandReturns['apply_page_source']> {
@@ -913,7 +1155,7 @@ describe('PageSourceEditor save report', () => {
   })
 
   it('a save with nothing to report says Saved for the usual few seconds, with Undo', async () => {
-    await saveSeededPage((base) => base.replace('- Welcome to Agaric!', '- Hello, Agaric!'))
+    await saveSeededPage((box) => edit(box, WELCOME, HELLO))
 
     const { message, options } = saveReport()
     expect(message).toBe(t('pageSource.saved'))
@@ -932,7 +1174,7 @@ describe('PageSourceEditor save report', () => {
     })
 
     await waitFor(() => {
-      expect(pageSource(SEED_IDS.PAGE_GETTING_STARTED)).toBe(base)
+      expect(pageBuffer(SEED_IDS.PAGE_GETTING_STARTED)).toEqual(base)
     })
     for (const id of created) {
       expect(() => dispatch('get_block', { blockId: id })).toThrow('not found')
@@ -944,15 +1186,15 @@ describe('PageSourceEditor save report', () => {
     const { store } = await saveSeededPage(deleteAndName)
     const later = 'Edited after the save'
     await act(() => store.getState().edit(SEED_IDS.BLOCK_GS_2, later))
-    const afterEdit = pageSource(SEED_IDS.PAGE_GETTING_STARTED)
-    expect(afterEdit).toContain(`- ${later} ^${SEED_IDS.BLOCK_GS_2}`)
+    const afterEdit = pageBuffer(SEED_IDS.PAGE_GETTING_STARTED)
+    expect(afterEdit.text).toContain(`- ${later}\n`)
 
     await act(async () => {
       saveReport().options.action?.onClick()
     })
 
     expect(vi.mocked(toast)).toHaveBeenLastCalledWith(t('pageSource.undoStale'))
-    expect(pageSource(SEED_IDS.PAGE_GETTING_STARTED)).toBe(afterEdit)
+    expect(pageBuffer(SEED_IDS.PAGE_GETTING_STARTED)).toEqual(afterEdit)
     expect(mockedInvoke.mock.calls.map(([cmd]) => cmd)).not.toContain('undo_ops')
   })
 
@@ -961,7 +1203,7 @@ describe('PageSourceEditor save report', () => {
     useUndoStore.getState().onNewAction(PAGE_ID, [{ device_id: 'dev1', seq: 7 }])
     const user = userEvent.setup()
     const { onClose } = renderEditor()
-    await user.type(await loadedEditor(), 'x')
+    edit(await loadedEditor(), 'first', 'first x')
 
     await user.click(screen.getByRole('button', { name: t('action.save') }))
 

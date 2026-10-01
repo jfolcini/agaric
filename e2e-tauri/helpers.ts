@@ -599,6 +599,29 @@ export async function pasteFileIntoFocusedBlock(
 
 const PAGE_SOURCE = '[data-testid="page-source-editor"]'
 
+/** A line of the source buffer: its text and the block id it carries (#5160 A). */
+export interface SourceLine {
+  text: string
+  id: string | null
+}
+
+/** The open source buffer's lines. */
+export async function pageSourceLines(): Promise<SourceLine[]> {
+  return browser.execute(
+    (selector: string) =>
+      [...document.querySelectorAll(`${selector} [data-source-line]`)].map((line) => ({
+        text: line.textContent ?? '',
+        id: line.getAttribute('data-block-id'),
+      })),
+    PAGE_SOURCE,
+  )
+}
+
+/** The open source buffer's text, as Save sends it. */
+export async function pageSourceText(): Promise<string> {
+  return (await pageSourceLines()).map((line) => line.text).join('\n')
+}
+
 /**
  * The page kebab's "Edit as Markdown" (#5140): the source editor, once its
  * buffer holds every one of `markers`.
@@ -613,7 +636,7 @@ export async function openPageSource(markers: string[]) {
   const source = $(PAGE_SOURCE)
   await browser.waitUntil(
     async () => {
-      const text = await source.getValue()
+      const text = await pageSourceText()
       return markers.every((marker) => text.includes(marker))
     },
     { timeout: ACTION_TIMEOUT, timeoutMsg: `the source editor never held ${markers.join(', ')}` },
@@ -622,24 +645,33 @@ export async function openPageSource(markers: string[]) {
 }
 
 /**
- * Replace the source buffer in one input event, as a paste lands. Typed keys
- * lose repeated characters in this WebView (see `typeMarkerVerified`), and the
- * `^ID` anchors are full of them.
+ * Replace the source buffer with `lines`, each under the id it gives, in one
+ * edit, as lines cut from the buffer paste back. Typed keys lose repeated
+ * characters in this WebView (see `typeMarkerVerified`).
  */
-export async function setPageSource(text: string): Promise<void> {
+export async function setPageSourceLines(lines: SourceLine[]): Promise<void> {
   await browser.execute(
-    (selector: string, value: string) => {
-      const textarea = document.querySelector<HTMLTextAreaElement>(selector)
-      if (textarea === null) throw new Error('setPageSource: no source editor')
-      // The prototype setter goes around React's own value tracking, so the
-      // input event reads as a change.
-      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set?.call(
-        textarea,
-        value,
-      )
-      textarea.dispatchEvent(new Event('input', { bubbles: true }))
+    (selector: string, next: SourceLine[]) => {
+      // TipTap keeps its editor on the editable element.
+      const dom = document.querySelector<
+        HTMLElement & { editor?: { commands: { setContent: (content: unknown) => boolean } } }
+      >(selector)
+      if (dom?.editor === undefined) throw new Error('setPageSourceLines: no source editor')
+      dom.editor.commands.setContent({
+        type: 'doc',
+        content: next.map(({ text, id }) =>
+          text === ''
+            ? { type: 'line', attrs: { blockId: id } }
+            : { type: 'line', attrs: { blockId: id }, content: [{ type: 'text', text }] },
+        ),
+      })
     },
     PAGE_SOURCE,
-    text,
+    lines,
   )
+}
+
+/** The source editor's button named `name`; the buffer sits in TipTap's own wrapper. */
+export function pageSourceButton(name: string) {
+  return $(PAGE_SOURCE).parentElement().parentElement().$(`button=${name}`)
 }

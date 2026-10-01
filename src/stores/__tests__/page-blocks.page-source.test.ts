@@ -10,7 +10,7 @@ import type { StoreApi } from 'zustand'
 
 import { makeBlockRow } from '@/__tests__/fixtures'
 import { type CommandReturns, strictInvokeFallback, stubInvoke } from '@/__tests__/helpers/invoke'
-import type { OpRef } from '@/lib/bindings'
+import type { OpRef, PageBuffer } from '@/lib/bindings'
 import { type NameChange, subscribeToNameChanges } from '@/lib/name-change-bus'
 import { dispatch } from '@/lib/tauri-mock/handlers'
 import { SEED_IDS, seedBlocks } from '@/lib/tauri-mock/seed'
@@ -70,14 +70,18 @@ describe('page-blocks applyPageSource (#5140 Phase 4b)', () => {
     const { BLOCK_GS_1, BLOCK_GS_2, PAGE_GETTING_STARTED } = SEED_IDS
     const pageStore = createPageBlockStore(PAGE_GETTING_STARTED)
     await pageStore.getState().load()
-    const base = dispatch('get_page_source', { pageId: PAGE_GETTING_STARTED }) as string
-    const source = base
-      .split('\n')
-      .filter((line) => !line.endsWith(`^${BLOCK_GS_2}`))
+    const base = dispatch('get_page_buffer', { pageId: PAGE_GETTING_STARTED }) as PageBuffer
+    const lines = base.text.split('\n')
+    const gs2 = base.line_ids.indexOf(BLOCK_GS_2)
+    const source = lines
+      .filter((_, i) => i !== gs2)
       .join('\n')
       .replace(`- Welcome to Agaric!`, `- Hello, Agaric!`)
+    const lineIds = base.line_ids.filter((_, i) => i !== gs2)
 
-    const result = await pageStore.getState().applyPageSource(source, base, false, false)
+    const result = await pageStore
+      .getState()
+      .applyPageSource(source, base.source, false, false, lineIds)
 
     expect(result).toMatchObject({ edited: 1, deleted: 1, created: 0, moved: 0 })
     const { blocks, blocksById } = pageStore.getState()
@@ -104,7 +108,7 @@ describe('page-blocks applyPageSource (#5140 Phase 4b)', () => {
       load_page_subtree: emptySubtree,
     })
 
-    await store.getState().applyPageSource('- same ^X\n', '- same ^X\n', false, false)
+    await store.getState().applyPageSource('- same\n', '- same ^X\n', false, false, ['X', null])
 
     const page = useUndoStore.getState().pages.get('PAGE_1')
     expect(page?.undoStack).toEqual([])
@@ -130,7 +134,9 @@ describe('page-blocks applyPageSource (#5140 Phase 4b)', () => {
     })
 
     try {
-      await store.getState().applyPageSource('- see [[Reading list]] #later\n', '', false, false)
+      await store
+        .getState()
+        .applyPageSource('- see [[Reading list]] #later\n', '', false, false, [null, null])
     } finally {
       unsubscribe()
     }
@@ -153,9 +159,9 @@ describe('page-blocks applyPageSource (#5140 Phase 4b)', () => {
       apply_page_source: () => Promise.reject(stale),
     })
 
-    await expect(store.getState().applyPageSource('- a\n', '- b\n', true, false)).rejects.toBe(
-      stale,
-    )
+    await expect(
+      store.getState().applyPageSource('- a\n', '- b\n', true, false, [null, null]),
+    ).rejects.toBe(stale)
 
     expect(mockedInvoke.mock.calls).toEqual([
       [
@@ -166,7 +172,7 @@ describe('page-blocks applyPageSource (#5140 Phase 4b)', () => {
           baseSource: '- b\n',
           force: true,
           merge: false,
-          lineIds: null,
+          lineIds: [null, null],
         },
       ],
     ])
