@@ -25,7 +25,13 @@ import {
   type SourceBlock,
   turnInto,
 } from '@/editor/source-buffer-blocks'
-import { cycleTaskAt, dedentRange, indentRange, moveRange } from '@/editor/source-buffer-keys'
+import {
+  cycleTaskAt,
+  dedentRange,
+  depthOf,
+  indentRange,
+  moveRange,
+} from '@/editor/source-buffer-keys'
 
 /** A dialog a toolbar action opens, which writes what is picked in it. */
 export type SourceDialog = 'date' | 'due' | 'schedule' | 'emoji' | 'query'
@@ -137,7 +143,8 @@ export function sourceMenuRows(block: SourceBlock): ReadonlySet<BlockMenuActionI
 
 /**
  * The block menu's actions on `block`, as the block editor's act on theirs:
- * indent and dedent take its children with it, as the move keys do.
+ * indent and dedent take its children with it, as the move keys do, and a
+ * top-level block has nowhere to dedent to.
  */
 export function sourceBlockActions(
   run: (command: Command) => void,
@@ -149,7 +156,12 @@ export function sourceBlockActions(
     onTogglePriority: () => run(cyclePriority(block)),
     onTurnInto: (_id, type) => run(turnInto(block, type)),
     onIndent: () => run(indentRange(block.line, last)),
-    onDedent: () => run(dedentRange(block.line, last)),
+    onDedent: () =>
+      run(
+        (state, dispatch) =>
+          depthOf(state.doc.child(block.line).textContent) === 0 ||
+          dedentRange(block.line, last)(state, dispatch),
+      ),
     onMoveUp: () => run(moveRange(block.line, block.line, -1)),
     onMoveDown: () => run(moveRange(block.line, block.line, 1)),
     onDuplicate: () => run(duplicateBlock(block)),

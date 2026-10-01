@@ -197,9 +197,9 @@ function lineMove(
 }
 
 /**
- * Move lines `first` to `last` past their sibling, in one step: the same line
- * nodes, ids and all, replace the lines they were, and the selection, which
- * is on them, goes with them.
+ * Move lines `first` to `last`, with their subtrees, past their sibling, in
+ * one step: the same line nodes, ids and all, replace the lines they were, and
+ * a selection in the lines that move goes with them.
  */
 export function moveRange(first: number, last: number, direction: -1 | 1): Command {
   return (state, dispatch) => {

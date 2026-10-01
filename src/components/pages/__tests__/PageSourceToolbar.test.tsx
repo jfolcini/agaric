@@ -457,6 +457,26 @@ describe('the block menu', () => {
     expect(saved?.content).toBe('Create new blocks\n by pressing Enter at the end of any block.')
   })
 
+  it('Dedent leaves a top-level block and the lines under it where they are', async () => {
+    renderEditor()
+    const ed = await loadedEditor()
+    const user = userEvent.setup()
+    caretAfter(ed, 'Create new blocks')
+    await user.click(button(t('toolbar.newLine')))
+    act(() => {
+      ed.commands.insertContent('  ')
+    })
+    const before = lines(ed)
+
+    const menu = await openMenu()
+    await user.click(
+      within(menu).getByRole('menuitem', { name: menuRow(t('contextMenu.moveArrange')) }),
+    )
+    await user.click(within(menu).getByRole('menuitem', { name: menuRow(t('contextMenu.dedent')) }))
+
+    expect(lines(ed)).toEqual(before)
+  })
+
   it('Duplicate copies the block as a new one after it, and Delete takes a block out', async () => {
     const { onClose, store } = renderEditor()
     const ed = await loadedEditor()
