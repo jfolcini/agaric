@@ -1,7 +1,8 @@
 /**
  * PageSourceBuffer — the text of *Edit as Markdown* (#5160 phase 5): a
  * plain-text TipTap editor whose lines carry their block ids
- * (`@/editor/source-buffer`). `PageSourceEditor` reaches it only through a
+ * (`@/editor/source-buffer`), with the block editor's `[[`, `#` and `((`
+ * searches behind its pickers. `PageSourceEditor` reaches it only through a
  * dynamic import, so TipTap stays off the startup path.
  */
 
@@ -9,12 +10,14 @@ import { EditorContent, useEditor } from '@tiptap/react'
 import type React from 'react'
 import { useEffect, useImperativeHandle, useState } from 'react'
 
+import { useBlockResolve } from '@/components/block-tree/use-block-resolve'
 import {
   linesContent,
   readLines,
   sourceBufferExtensions,
   type SourceLines,
 } from '@/editor/source-buffer'
+import { pickerOpen, SourceBufferPickers } from '@/editor/source-buffer-pickers'
 
 export interface PageSourceBufferHandle {
   /** Focus the buffer with line `index`, counted from 0, selected, when it has that line. */
@@ -32,7 +35,7 @@ export interface PageSourceBufferProps {
   describedBy: string
   className: string
   onChange: (lines: SourceLines) => void
-  /** Sees each keydown after the editor's own keys; true when it handled it. */
+  /** Sees each keydown but an open picker's, before the editor; true when it handled it. */
   onKeyDown: (event: KeyboardEvent) => boolean
   ref?: React.Ref<PageSourceBufferHandle>
 }
@@ -48,10 +51,14 @@ export function PageSourceBuffer({
   onKeyDown,
   ref,
 }: PageSourceBufferProps): React.ReactElement {
+  const { searchPages, searchTags, searchBlockRefs } = useBlockResolve()
   // One options object for the editor's life: `useEditor` re-applies options
   // that change identity.
   const [options] = useState(() => ({
-    extensions: sourceBufferExtensions(pageIds),
+    extensions: [
+      ...sourceBufferExtensions(pageIds),
+      SourceBufferPickers.configure({ searchPages, searchTags, searchBlockRefs }),
+    ],
     content: linesContent(initial),
     autofocus: 'start' as const,
     // Built in an effect: a lazily loaded editor built during render can be
@@ -83,11 +90,13 @@ export function PageSourceBuffer({
   useEffect(() => {
     if (editor === null) return
     const dom = editor.view.dom
+    // Ahead of ProseMirror's own listener, which claims every Escape and acts
+    // on no key while the buffer is read-only; an open picker's keys are its own.
     const keydown = (event: KeyboardEvent): void => {
-      if (onKeyDown(event)) event.preventDefault()
+      if (!pickerOpen(editor.state) && onKeyDown(event)) event.preventDefault()
     }
-    dom.addEventListener('keydown', keydown)
-    return () => dom.removeEventListener('keydown', keydown)
+    dom.addEventListener('keydown', keydown, true)
+    return () => dom.removeEventListener('keydown', keydown, true)
   }, [editor, onKeyDown])
 
   useEffect(() => {
