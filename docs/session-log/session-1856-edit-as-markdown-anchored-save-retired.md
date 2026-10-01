@@ -21,7 +21,12 @@ Phase 5-5a's buffer saves by per-line ids, so the anchored save path is gone. Th
 
 **Worth knowing:**
 - The command tests write edited buffers in the anchored notation and save them through `anchor_free`, now `pub` for that, so most of them ported by dropping the `force` argument. An input that only the heal read as its block (`- weekly ^ID` above a reserved `repeat-seq::` line) was rewritten by line.
-- `pair_blocks` `expect`s that every id it sees is the page's. `read_by_line` keeps only ids in the page's source or the base's, and the merge drops every id the page no longer holds.
+- `pair_blocks` returns an error, not a panic, if an id it sees is not the page's: release builds abort on a panic. `read_by_line` keeps only ids in the page's source or the base's, and the merge drops every id the page no longer holds.
+- The anchored round-trip proptest, ported to the by-line reading, skips a buffer holding a block the text cannot carry (`text_carries`, as `markdown_source_tests` does): content ending in a blank line, or leaving a fence open before property lines.
+- At 4000 cases that proptest found a parser bug. Logseq's page properties (#5160 P3) took a first bullet reading `- :: value` as a page property keyed `-`, a valid key.
+  - So a page whose first block starts with `::` could not be saved from Edit as Markdown: its source read back as no block and was refused.
+  - An import lost that bullet to a page property.
+  - `strip_leading_properties` now stops at a bullet. `a_first_bullet_shaped_like_a_property_is_a_block` pins it; it and the proptest's saved seed go red without the check.
 
 **Verified.**
 - `cargo nextest run --workspace` over the page-source, outline, merge, line-ids, `get_page_buffer`, front matter, paste, duplicate, copy and clipboard tests, `page_cmd_tests`, `agaric-engine`, the conformance fixtures, the bindings check and the write-sweep denominator: 1510 passed.

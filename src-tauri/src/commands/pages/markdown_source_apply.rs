@@ -1159,15 +1159,55 @@ mod tests {
             .collect()
     }
 
+    /// Whether the text carries `block` once saved: not when its content ends
+    /// in a blank line or leaves a fence open before its property lines, which
+    /// only an anchor kept apart ([`read_own_source`]).
+    fn text_carries(block: &import::ParsedBlock) -> bool {
+        let last = |key: &str| {
+            block
+                .properties
+                .iter()
+                .rev()
+                .find(|(k, _)| k == key)
+                .map(|(_, value)| value.as_str())
+        };
+        let list_marker = match last("listStyle") {
+            Some("bullet") => "- ",
+            Some(_) => "1. ",
+            None => "",
+        };
+        let task_marker = last("todo_state")
+            .and_then(import::task_marker_for)
+            .map(|c| format!("[{c}] "))
+            .unwrap_or_default();
+        let open = super::super::push_block_bullet(
+            &mut String::new(),
+            "",
+            list_marker,
+            &task_marker,
+            &block.content,
+            super::super::RenderMode::Source,
+        )
+        .open;
+        let ends_blank = block
+            .content
+            .rsplit_once('\n')
+            .is_some_and(|(_, last)| last.trim().is_empty());
+        let property_lines = block.properties.iter().any(|(key, _)| key != "listStyle");
+        !(ends_blank || (open && property_lines))
+    }
+
     proptest! {
         /// #5160 — whatever a hand-written buffer reads as renders back to the
         /// same tree, content and properties, each block under its own id, once
         /// stored as [`stored`] models a save storing it and read back as its
         /// text: read ∘ render ∘ model ∘ read, with the model standing in for
-        /// `apply_page_source`. Typed, no line carries an id.
+        /// `apply_page_source`. Typed, no line carries an id; a buffer holding
+        /// a block the text cannot carry ([`text_carries`]) is skipped.
         #[test]
         fn a_saved_buffer_renders_back_to_what_was_saved(text in arb_document()) {
             let saved = import::parse_source_text(&text, &HashSet::new()).blocks;
+            prop_assume!(saved.iter().all(text_carries));
             let (data, ids) = stored(&saved);
             let md = render_page_source(&data);
             let again = read_own_source(&md).blocks;
