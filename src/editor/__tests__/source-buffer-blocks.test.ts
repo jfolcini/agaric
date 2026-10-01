@@ -9,7 +9,7 @@ import { Editor } from '@tiptap/core'
 import type { Command } from '@tiptap/pm/state'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
-import { linesContent, readLines, SOURCE_BUFFER_EXTENSIONS } from '@/editor/source-buffer'
+import { linesContent, readLines, sourceBufferExtensions } from '@/editor/source-buffer'
 import {
   blockAt,
   blockAtCursor,
@@ -48,7 +48,7 @@ afterEach(() => {
 function build(rows: Line[]): Editor {
   editor = new Editor({
     element: document.createElement('div'),
-    extensions: SOURCE_BUFFER_EXTENSIONS,
+    extensions: sourceBufferExtensions([]),
     content: linesContent({
       text: rows.map(([text]) => text).join('\n'),
       lineIds: rows.map(([, id]) => id),

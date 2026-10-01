@@ -8,9 +8,13 @@
  * the save reads it (`read_by_line`): a block is the one whose id the line it
  * starts on carries. So Enter keeps the id on the line where the text it splits
  * starts, joining two lines keeps the first line's (D-e) and drops the second's,
- * and a cut takes the id of each line whose start it removes, so pasting that
- * text where a line starts moves the block. A line whose start no edit moved
- * keeps the id it has; a new line has none.
+ * and a cut takes the id of each line whose start it removes with its line
+ * break or the rest of its text, so pasting that text where a line starts
+ * moves the block, while a cut of only a line's start leaves the line its id.
+ * Dragging lines within the buffer moves them as a cut and a paste do. A line
+ * whose start no edit moved keeps the id it has; a new line has none. A paste
+ * or a drop brings in only the page's own ids, so lines from another page's
+ * buffer are new blocks.
  */
 
 import { Extension, type JSONContent, Node } from '@tiptap/core'
@@ -18,8 +22,8 @@ import History from '@tiptap/extension-history'
 import Text from '@tiptap/extension-text'
 import type { NodeType, Node as PMNode, Schema } from '@tiptap/pm/model'
 import { Fragment, Slice } from '@tiptap/pm/model'
-import { type Command, type EditorState, Plugin, type Transaction } from '@tiptap/pm/state'
-import { Mapping } from '@tiptap/pm/transform'
+import { type Command, Plugin, TextSelection, type Transaction } from '@tiptap/pm/state'
+import { type Mappable, Mapping } from '@tiptap/pm/transform'
 
 import { SourceBufferKeys } from '@/editor/source-buffer-keys'
 
@@ -146,33 +150,100 @@ function holdsId(doc: PMNode, id: string): boolean {
 }
 
 /**
- * Paste `slice` as a text editor pastes lines: its first line joins the text
- * before the cursor, its last the text after. Pasted where a line starts, the
- * first line starts that line, under its id when no other line holds it: a cut
- * line pasted there is a move.
+ * `slice` with no id but `pageIds`: a line carrying another page's block is a
+ * new block, as a copy is (#5160 D15).
  */
-function pasteLines(state: EditorState, slice: Slice): Transaction {
+function withPageIds(slice: Slice, pageIds: ReadonlySet<string | null>): Slice {
+  const nodes: PMNode[] = []
+  slice.content.forEach((node) => {
+    const id = blockIdOf(node)
+    nodes.push(
+      id === null || pageIds.has(id)
+        ? node
+        : node.type.create({ ...node.attrs, blockId: null }, node.content),
+    )
+  })
+  return new Slice(Fragment.from(nodes), slice.openStart, slice.openEnd)
+}
+
+/** What a paste or a drop brings in: a buffer's lines, or anything else as its text (D-a). */
+function incoming(
+  schema: Schema,
+  data: DataTransfer | null,
+  slice: Slice,
+  pageIds: ReadonlySet<string | null>,
+): Slice {
+  const html = data?.getData('text/html') ?? ''
+  return html === '' || html.includes(SOURCE_LINE_ATTR)
+    ? withPageIds(slice, pageIds)
+    : textLines(schema, data?.getData('text/plain') ?? '')
+}
+
+/**
+ * Paste `slice` over `tr`'s selection as a text editor pastes lines: its first
+ * line joins the text before the cursor, its last the text after. Pasted where
+ * a line starts, the first line starts that line, under its id when no other
+ * line holds it: a cut line pasted there is a move.
+ */
+function pasteLines(tr: Transaction, slice: Slice): Transaction {
   const lines =
     slice.content.firstChild?.isTextblock === true ? new Slice(slice.content, 1, 1) : slice
-  const { $from } = state.selection
-  const tr = state.tr.replaceSelection(lines)
+  const { $from } = tr.selection
+  const before = tr.doc
+  const steps = tr.steps.length
+  tr.replaceSelection(lines)
   const first = lines.openStart > 0 ? lines.content.firstChild : null
   const id = first === null ? null : blockIdOf(first)
-  if (
-    id !== null &&
-    $from.parent.isTextblock &&
-    $from.parentOffset === 0 &&
-    !holdsId(state.doc, id)
-  ) {
-    tr.setNodeAttribute(tr.doc.resolve(tr.mapping.map($from.pos, -1)).before(), 'blockId', id)
+  if (id !== null && $from.parent.isTextblock && $from.parentOffset === 0 && !holdsId(before, id)) {
+    const start = tr.mapping.slice(steps).map($from.pos, -1)
+    tr.setNodeAttribute(tr.doc.resolve(start).before(), 'blockId', id)
   }
   return tr.scrollIntoView()
 }
 
 /**
+ * Whether the token at `pos`, a character or a line's end, is gone after the
+ * change `mapping` maps over: the positions either side of it no longer one apart.
+ */
+function goneAt(mapping: Mappable, pos: number): boolean {
+  return mapping.map(pos + 1, -1) - mapping.map(pos, 1) !== 1
+}
+
+/**
+ * The ids a cut over `mapping` takes from the lines of `before`: each line's
+ * whose start it removed with its line break or the rest of its text, so its
+ * first token and its last, a character or, empty, its end, are both gone. A
+ * cut that leaves part of a line leaves the line its id, as deleting it does.
+ */
+function cutIds(before: PMNode, mapping: Mappable): Set<string> {
+  const taken = new Set<string>()
+  before.forEach((line, offset) => {
+    const id = blockIdOf(line)
+    const last = offset + Math.max(line.content.size, 1)
+    if (id !== null && goneAt(mapping, offset + 1) && goneAt(mapping, last)) taken.add(id)
+  })
+  return taken
+}
+
+/**
+ * Delete `tr`'s selection as a cut does: a line whose id the cut takes gives it
+ * up to the line dragged away, so a line left where it was has none.
+ */
+function dragAway(tr: Transaction): void {
+  const before = tr.doc
+  const steps = tr.steps.length
+  tr.deleteSelection()
+  const taken = cutIds(before, tr.mapping.slice(steps))
+  tr.doc.forEach((line, offset) => {
+    const id = blockIdOf(line)
+    if (id !== null && taken.has(id)) tr.setNodeAttribute(offset, 'blockId', null)
+  })
+}
+
+/**
  * Each line's id after `transactions` turned `before` into `after`: the id of
  * the line whose start it now begins with, else the id it holds, unless another
- * line holds that id or a cut took it with the start of the line it was on.
+ * line holds that id or a cut took it (`cutIds`).
  */
 function lineIdsAfter(
   transactions: readonly Transaction[],
@@ -182,18 +253,13 @@ function lineIdsAfter(
   const mapping = new Mapping()
   for (const tr of transactions) mapping.appendMapping(tr.mapping)
   const cut = transactions.some((tr) => tr.getMeta('uiEvent') === 'cut')
+  const taken = cut ? cutIds(before, mapping) : new Set<string>()
   const moved = new Map<number, string>()
-  const taken = new Set<string>()
   before.forEach((line, offset) => {
     const id = blockIdOf(line)
-    if (id === null) return
-    // The line's first token, its first character or, empty, its end, is
-    // still there when the positions either side of it stay one apart.
+    // A line whose first token is gone has no start left to follow.
+    if (id === null || goneAt(mapping, offset + 1)) return
     const start = mapping.map(offset + 1, 1)
-    if (mapping.map(offset + 2, -1) - start !== 1) {
-      if (cut) taken.add(id)
-      return
-    }
     const $start = after.resolve(start)
     if ($start.depth === 1 && $start.parentOffset === 0 && !moved.has(start)) {
       moved.set(start, id)
@@ -219,10 +285,18 @@ function lineIdsAfter(
 /** `Shift+Enter`: break the line at the cursor without a list marker (#5160 D3). */
 export const breakLine: Command = splitLine(false)
 
-const SourceBufferBehaviour = Extension.create({
+interface SourceBufferOptions {
+  /** The page's line ids as the buffer loaded them: the only ids a paste or a drop brings in. */
+  pageIds: ReadonlySet<string | null>
+}
+
+const SourceBufferBehaviour = Extension.create<SourceBufferOptions>({
   name: 'sourceBuffer',
-  // Ahead of TipTap's own Enter and clipboard handling.
+  // Ahead of TipTap's own Enter, clipboard and drop handling.
   priority: 1000,
+  addOptions() {
+    return { pageIds: new Set() }
+  },
   addKeyboardShortcuts() {
     return {
       Enter: ({ editor }) => splitLine(true)(editor.state, editor.view.dispatch),
@@ -230,6 +304,7 @@ const SourceBufferBehaviour = Extension.create({
     }
   },
   addProseMirrorPlugins() {
+    const { pageIds } = this.options
     return [
       new Plugin({
         appendTransaction(transactions, oldState, newState) {
@@ -247,13 +322,19 @@ const SourceBufferBehaviour = Extension.create({
             slice.content.textBetween(0, slice.content.size, '\n'),
           clipboardTextParser: (text, $context) => textLines($context.doc.type.schema, text),
           handlePaste(view, event, slice) {
-            const html = event.clipboardData?.getData('text/html') ?? ''
-            // Anything but a buffer's own lines pastes as its text (D-a).
-            const pasted =
-              html === '' || html.includes(SOURCE_LINE_ATTR)
-                ? slice
-                : textLines(view.state.schema, event.clipboardData?.getData('text/plain') ?? '')
-            view.dispatch(pasteLines(view.state, pasted))
+            const pasted = incoming(view.state.schema, event.clipboardData, slice, pageIds)
+            view.dispatch(pasteLines(view.state.tr, pasted))
+            return true
+          },
+          handleDrop(view, event, slice, moved) {
+            const dropped = incoming(view.state.schema, event.dataTransfer, slice, pageIds)
+            const at = view.posAtCoords({ left: event.clientX, top: event.clientY })
+            if (at === null || dropped.size === 0) return false
+            const tr = view.state.tr
+            if (moved) dragAway(tr)
+            tr.setSelection(TextSelection.near(tr.doc.resolve(tr.mapping.map(at.pos))))
+            view.focus()
+            view.dispatch(pasteLines(tr, dropped).setMeta('uiEvent', 'drop'))
             return true
           },
         },
@@ -262,11 +343,14 @@ const SourceBufferBehaviour = Extension.create({
   },
 })
 
-export const SOURCE_BUFFER_EXTENSIONS = [
-  SourceDocument,
-  SourceLine,
-  Text,
-  History,
-  SourceBufferBehaviour,
-  SourceBufferKeys,
-]
+/** The buffer's extensions, for a page whose lines carried `pageIds` as loaded. */
+export function sourceBufferExtensions(pageIds: ReadonlyArray<string | null>) {
+  return [
+    SourceDocument,
+    SourceLine,
+    Text,
+    History,
+    SourceBufferBehaviour.configure({ pageIds: new Set(pageIds) }),
+    SourceBufferKeys,
+  ]
+}

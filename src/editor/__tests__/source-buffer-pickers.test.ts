@@ -9,7 +9,7 @@ import { Editor } from '@tiptap/core'
 import { TextSelection } from '@tiptap/pm/state'
 import { afterEach, describe, expect, it } from 'vitest'
 
-import { linesContent, SOURCE_BUFFER_EXTENSIONS } from '@/editor/source-buffer'
+import { linesContent, sourceBufferExtensions } from '@/editor/source-buffer'
 import { pageLinkText, SourceBufferPickers, tagText } from '@/editor/source-buffer-pickers'
 
 const A = '01J0000000000000000000000A'
@@ -25,7 +25,7 @@ afterEach(() => {
 function build(rows: Array<[string, string | null]>): Editor {
   editor = new Editor({
     element: document.createElement('div'),
-    extensions: [...SOURCE_BUFFER_EXTENSIONS, SourceBufferPickers],
+    extensions: [...sourceBufferExtensions([]), SourceBufferPickers],
     content: linesContent({
       text: rows.map(([text]) => text).join('\n'),
       lineIds: rows.map(([, id]) => id),
