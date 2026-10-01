@@ -20,10 +20,11 @@ import {
  * page's markdown, a plain-text editor whose lines carry their block ids out
  * of sight, and Save writes the text and those ids back through
  * `apply_page_source`; Merge saves a stale buffer with the page's changes
- * folded in. Every edit is typed, cut or pasted with the keyboard, and every
- * assertion reads the block tree the save reloaded from the mock. The Rust
- * tests own the grammar; the real-backend twins are
- * `e2e-tauri/page-source-edit.e2e.ts` and `e2e-tauri/page-source-merge.e2e.ts`.
+ * folded in. Every edit is typed, cut or pasted with the keyboard, or dragged
+ * with the mouse, and every assertion reads the block tree the save reloaded
+ * from the mock. The Rust tests own the grammar; the real-backend twins are
+ * `e2e-tauri/page-source-edit.e2e.ts`, `e2e-tauri/page-source-merge.e2e.ts`
+ * and `e2e-tauri/page-source-paste.e2e.ts`.
  */
 
 const PAGE = 'Getting Started'
@@ -36,6 +37,10 @@ const WELCOME = 'Welcome to Agaric!'
 const HELLO_LINE = '- Hello, Agaric! This is your personal knowledge base.'
 const CREATE = 'Create new blocks'
 const SEARCH = 'Use the search panel'
+const NOTES = 'Quick Notes'
+const QN1 = '0000000000000000000BLOCK08'
+const QN2 = '0000000000000000000BLOCK09'
+const JOT = 'Jot down quick thoughts'
 
 /** The page kebab: it opens source mode, and closing source mode focuses it again. */
 function pageActions(page: Page): Locator {
@@ -50,11 +55,11 @@ const FRONT_MATTER: Array<[string, string | null]> = [
   ['', null],
 ]
 
-async function openSourceMode(page: Page): Promise<Locator> {
+async function openSourceMode(page: Page, shows = WELCOME): Promise<Locator> {
   await pageActions(page).click()
   await page.getByRole('menuitem', { name: 'Edit as Markdown', exact: true }).click()
   const editor = page.getByRole('textbox', { name: 'Markdown source', exact: true })
-  await expect(editor).toContainText(WELCOME)
+  await expect(editor).toContainText(shows)
   return editor
 }
 
@@ -126,6 +131,12 @@ async function deleteLine(page: Page, editor: Locator, text: string): Promise<vo
   await selectLine(editor, text)
   await moveSelection(page, 'Shift+ArrowRight')
   await page.keyboard.press('Delete')
+}
+
+/** Back to a page opened before, by the quick-access bar, which `openPage`'s match also hits. */
+async function backTo(page: Page, title: string): Promise<void> {
+  await page.getByTestId('quick-access-bar').getByRole('button', { name: title }).click()
+  await expect(page.locator('[aria-label="Page title"]')).toHaveText(title)
 }
 
 /** The report a save leaves (#5160 X2). */
@@ -273,6 +284,59 @@ test.describe('Edit as Markdown (#5140 Phase 4b)', () => {
     await expect(staticBlock(page, GS1)).toContainText('Hello, Agaric!')
     await expect(staticBlock(page, GS3)).toContainText(elsewhere)
     await expect.poll(() => blockIds(page)).toEqual([GS1, GS2, GS3, GS4, GS5])
+  })
+
+  test('a line pasted from another page’s buffer saves as a new block, and that page is unchanged', async ({
+    page,
+  }) => {
+    await openPage(page, NOTES)
+    const notes = await openSourceMode(page, JOT)
+    await selectLine(notes, JOT)
+    await moveSelection(page, 'Shift+ArrowRight')
+    await page.keyboard.press('ControlOrMeta+c')
+    await notes.press('Escape')
+    await expect(sourceEditor(page)).toHaveCount(0)
+
+    await backTo(page, PAGE)
+    const editor = await openSourceMode(page)
+    await selectLine(editor, WELCOME)
+    await moveSelection(page, 'ArrowLeft')
+    await page.keyboard.press('ControlOrMeta+v')
+    await page.getByRole('button', { name: 'Save', exact: true }).click()
+
+    await expect(sourceEditor(page)).toHaveCount(0)
+    await expect(saveReport(page)).toBeVisible()
+    await expect(saveReport(page)).not.toContainText('not a block of this page')
+    await expect.poll(async () => (await blockIds(page)).length).toBe(6)
+    const [pasted, ...rest] = await blockIds(page)
+    expect(rest).toEqual([GS1, GS2, GS3, GS4, GS5])
+    expect([QN1, QN2]).not.toContain(pasted)
+    await expect(staticBlock(page, pasted as string)).toContainText(JOT)
+    await backTo(page, NOTES)
+    await expect.poll(() => blockIds(page)).toEqual([QN1, QN2])
+  })
+
+  test('a line dragged to where another starts moves its block', async ({ page }) => {
+    const editor = await openSourceMode(page)
+    await selectLine(editor, CREATE)
+    await moveSelection(page, 'Shift+ArrowRight')
+    const from = await sourceLine(editor, CREATE).boundingBox()
+    const to = await sourceLine(editor, WELCOME).boundingBox()
+    if (from === null || to === null) throw new Error('a buffer line has no box')
+
+    await page.mouse.move(from.x + 20, from.y + from.height / 2)
+    await page.mouse.down()
+    await page.mouse.move(to.x + 1, to.y + to.height / 2, { steps: 10 })
+    await page.mouse.up()
+    const first = FRONT_MATTER.length
+    expect((await bufferLines(editor)).slice(first, first + 2).map(([, id]) => id)).toEqual([
+      GS3,
+      GS1,
+    ])
+    await page.getByRole('button', { name: 'Save', exact: true }).click()
+
+    await expect(sourceEditor(page)).toHaveCount(0)
+    await expect.poll(() => blockIds(page)).toEqual([GS3, GS1, GS2, GS4, GS5])
   })
 
   // Opening the kebab blurs the editor, which commits the block before the

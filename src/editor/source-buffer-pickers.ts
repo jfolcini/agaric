@@ -30,6 +30,13 @@ const pagePickerKey = new PluginKey('sourcePagePicker')
 const tagPickerKey = new PluginKey('sourceTagPicker')
 const blockRefPickerKey = new PluginKey('sourceBlockRefPicker')
 
+/** Whether a picker is open in `state`: its Enter, Tab and Escape are its own. */
+export function pickerOpen(state: EditorState): boolean {
+  return [pagePickerKey, tagPickerKey, blockRefPickerKey].some(
+    (key) => (key.getState(state) as { active?: boolean } | undefined)?.active === true,
+  )
+}
+
 /**
  * `#name`, or `#[[name]]` when the bare form would not read back as that tag
  * between `before` and `after`: the export's rule (`tag_reads_back_bare`,

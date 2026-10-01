@@ -14,10 +14,10 @@ import { useBlockResolve } from '@/components/block-tree/use-block-resolve'
 import {
   linesContent,
   readLines,
-  SOURCE_BUFFER_EXTENSIONS,
+  sourceBufferExtensions,
   type SourceLines,
 } from '@/editor/source-buffer'
-import { SourceBufferPickers } from '@/editor/source-buffer-pickers'
+import { pickerOpen, SourceBufferPickers } from '@/editor/source-buffer-pickers'
 
 export interface PageSourceBufferHandle {
   /** Focus the buffer with line `index`, counted from 0, selected, when it has that line. */
@@ -28,18 +28,21 @@ export interface PageSourceBufferHandle {
 export interface PageSourceBufferProps {
   /** The lines the buffer opens with; a new buffer, by `key`, opens with others. */
   initial: SourceLines
+  /** The page's line ids as loaded: the only ids a paste or a drop brings in. */
+  pageIds: ReadonlyArray<string | null>
   readOnly: boolean
   label: string
   describedBy: string
   className: string
   onChange: (lines: SourceLines) => void
-  /** Sees each keydown the editor's own keys leave; true when it handled it. */
+  /** Sees each keydown but an open picker's, before the editor; true when it handled it. */
   onKeyDown: (event: KeyboardEvent) => boolean
   ref?: React.Ref<PageSourceBufferHandle>
 }
 
 export function PageSourceBuffer({
   initial,
+  pageIds,
   readOnly,
   label,
   describedBy,
@@ -53,7 +56,7 @@ export function PageSourceBuffer({
   // that change identity.
   const [options] = useState(() => ({
     extensions: [
-      ...SOURCE_BUFFER_EXTENSIONS,
+      ...sourceBufferExtensions(pageIds),
       SourceBufferPickers.configure({ searchPages, searchTags, searchBlockRefs }),
     ],
     content: linesContent(initial),
@@ -87,13 +90,13 @@ export function PageSourceBuffer({
   useEffect(() => {
     if (editor === null) return
     const dom = editor.view.dom
-    // After ProseMirror's own listener: a key the editor took, an open
-    // picker's Escape among them, is not the buffer's to act on again.
+    // Ahead of ProseMirror's own listener, which claims every Escape and acts
+    // on no key while the buffer is read-only; an open picker's keys are its own.
     const keydown = (event: KeyboardEvent): void => {
-      if (!event.defaultPrevented && onKeyDown(event)) event.preventDefault()
+      if (!pickerOpen(editor.state) && onKeyDown(event)) event.preventDefault()
     }
-    dom.addEventListener('keydown', keydown)
-    return () => dom.removeEventListener('keydown', keydown)
+    dom.addEventListener('keydown', keydown, true)
+    return () => dom.removeEventListener('keydown', keydown, true)
   }, [editor, onKeyDown])
 
   useEffect(() => {

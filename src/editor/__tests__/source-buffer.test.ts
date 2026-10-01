@@ -1,18 +1,22 @@
 /**
  * The *Edit as Markdown* buffer's document (#5160 phase 5): lines of plain
  * text, each under the id of the block that starts on it. A real TipTap editor
- * with the buffer's extensions; keys go through ProseMirror's `handleKeyDown`
- * and the clipboard through the view's own cut, copy and paste handlers.
+ * with the buffer's extensions; keys go through ProseMirror's `handleKeyDown`,
+ * the clipboard through the view's own cut, copy and paste handlers, and a drag
+ * through its dragstart and drop handlers, with only the hit test stubbed.
  */
 
 import { Editor } from '@tiptap/core'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { linesContent, readLines, SOURCE_BUFFER_EXTENSIONS } from '@/editor/source-buffer'
+import { linesContent, readLines, sourceBufferExtensions } from '@/editor/source-buffer'
 
 const A = '01J0000000000000000000000A'
 const B = '01J0000000000000000000000B'
 const C = '01J0000000000000000000000C'
+// Blocks of another page.
+const X = '01J0000000000000000000000X'
+const Y = '01J0000000000000000000000Y'
 
 type Line = [text: string, id: string | null]
 
@@ -23,15 +27,20 @@ afterEach(() => {
   editor = null
 })
 
-function build(rows: Line[]): Editor {
-  editor = new Editor({
+/** A buffer opened with `rows` on a page whose blocks are `pageIds`, by default the rows' ids. */
+function openBuffer(rows: Line[], pageIds = rows.map(([, id]) => id)): Editor {
+  return new Editor({
     element: document.createElement('div'),
-    extensions: SOURCE_BUFFER_EXTENSIONS,
+    extensions: sourceBufferExtensions(pageIds),
     content: linesContent({
       text: rows.map(([text]) => text).join('\n'),
       lineIds: rows.map(([, id]) => id),
     }),
   })
+}
+
+function build(rows: Line[], pageIds?: Array<string | null>): Editor {
+  editor = openBuffer(rows, pageIds)
   return editor
 }
 
@@ -261,6 +270,50 @@ describe('joining two lines (#5160 D-e)', () => {
   })
 })
 
+/** What copying the whole of another page's buffer, opened with `rows`, puts on the clipboard. */
+function copiedFromAnotherPage(rows: Line[]): DataTransfer {
+  const other = openBuffer(rows)
+  try {
+    const last = rows.length - 1
+    other.commands.setTextSelection({
+      from: at(other, 0, 0),
+      to: at(other, last, rows[last]?.[0].length ?? 0),
+    })
+    return clipboard(other, 'copy')
+  } finally {
+    other.destroy()
+  }
+}
+
+/**
+ * Send a drag event as the browser does: a mouse event carrying `data`, which
+ * happy-dom has no `DragEvent` for. Hit testing needs a layout happy-dom does
+ * not have, so the drop lands where `posAtCoords` is stubbed to say.
+ */
+function dragEvent(ed: Editor, type: string, data: DataTransfer, init: MouseEventInit = {}): void {
+  const event = new MouseEvent(type, { bubbles: true, cancelable: true, ...init })
+  Object.defineProperty(event, 'dataTransfer', { value: data })
+  ed.view.dom.dispatchEvent(event)
+}
+
+/** Drop `data`, dragged from outside the buffer, at `pos`. */
+function drop(ed: Editor, data: DataTransfer, pos: number): void {
+  vi.spyOn(ed.view, 'posAtCoords').mockReturnValue({ pos, inside: -1 })
+  dragEvent(ed, 'drop', data)
+}
+
+/**
+ * Drag the text from `from` to `to` and drop it at `pos`, through the view's
+ * own dragstart and drop handlers; `ctrlKey` drags a copy.
+ */
+function drag(ed: Editor, from: number, to: number, pos: number, init: MouseEventInit = {}): void {
+  ed.commands.setTextSelection({ from, to })
+  vi.spyOn(ed.view, 'posAtCoords').mockReturnValue({ pos, inside: -1 })
+  const data = new DataTransfer()
+  dragEvent(ed, 'dragstart', data)
+  dragEvent(ed, 'drop', data, init)
+}
+
 describe('the clipboard', () => {
   it('copies the selected lines as text, one per line, with no id in it (D-a)', () => {
     const ed = build([
@@ -316,6 +369,35 @@ describe('the clipboard', () => {
     ])
   })
 
+  it('a cut of a line’s start leaves the id on the rest of the line, and pasted mid-line it stays', () => {
+    const ed = build([['- foo bar', A]])
+    ed.commands.setTextSelection({ from: at(ed, 0, 0), to: at(ed, 0, 5) })
+
+    const data = clipboard(ed, 'cut')
+    expect(lines(ed)).toEqual([[' bar', A]])
+    caret(ed, 0, 4)
+    clipboard(ed, 'paste', data)
+
+    expect(lines(ed)).toEqual([[' bar- foo', A]])
+  })
+
+  it('a cut of a line’s start, pasted where another line starts, carries no id there', () => {
+    const ed = build([
+      ['- foo bar', A],
+      ['', null],
+    ])
+    ed.commands.setTextSelection({ from: at(ed, 0, 0), to: at(ed, 0, 5) })
+
+    const data = clipboard(ed, 'cut')
+    caret(ed, 1, 0)
+    clipboard(ed, 'paste', data)
+
+    expect(lines(ed)).toEqual([
+      [' bar', A],
+      ['- foo', null],
+    ])
+  })
+
   it('a copy pasted, twice, is new blocks: the line copied keeps its id', () => {
     const ed = build([
       ['- b', B],
@@ -361,6 +443,183 @@ describe('the clipboard', () => {
 
     expect(lines(ed)).toEqual([
       ['- **x**', null],
+      ['- y', null],
+    ])
+  })
+})
+
+describe('lines from another page (#5160 D15)', () => {
+  it('pasted from its buffer, they arrive as new blocks: none of its ids comes with them', () => {
+    const data = copiedFromAnotherPage([
+      ['- x', X],
+      ['- y', Y],
+    ])
+    expect(data.getData('text/html')).toContain(`data-block-id="${X}"`)
+    const ed = build([
+      ['- a', A],
+      ['', null],
+    ])
+    caret(ed, 1, 0)
+
+    clipboard(ed, 'paste', data)
+
+    expect(lines(ed)).toEqual([
+      ['- a', A],
+      ['- x', null],
+      ['- y', null],
+    ])
+  })
+
+  it('dropped from its buffer, they arrive as new blocks, as pasted ones do', () => {
+    const data = copiedFromAnotherPage([
+      ['- x', X],
+      ['- y', Y],
+    ])
+    const ed = build([
+      ['- a', A],
+      ['', null],
+    ])
+
+    drop(ed, data, at(ed, 1, 0))
+
+    expect(lines(ed)).toEqual([
+      ['- a', A],
+      ['- x', null],
+      ['- y', null],
+    ])
+  })
+})
+
+describe('a cut line pasted into the page’s buffer opened again', () => {
+  const cutLineB = (): DataTransfer => {
+    const first = openBuffer([
+      ['- a', A],
+      ['- b', B],
+      ['- c', C],
+    ])
+    try {
+      first.commands.setTextSelection({ from: at(first, 1, 0), to: at(first, 2, 0) })
+      return clipboard(first, 'cut')
+    } finally {
+      first.destroy()
+    }
+  }
+
+  it('moves its block while the page still has it, though the draft reopened lacks the line', () => {
+    const data = cutLineB()
+    const ed = build(
+      [
+        ['- a', A],
+        ['- c', C],
+      ],
+      [A, B, C],
+    )
+    caret(ed, 0, 0)
+
+    clipboard(ed, 'paste', data)
+
+    expect(lines(ed)).toEqual([
+      ['- b', B],
+      ['- a', A],
+      ['- c', C],
+    ])
+  })
+
+  it('is a new block once the page no longer has it', () => {
+    const data = cutLineB()
+    const ed = build([
+      ['- a', A],
+      ['- c', C],
+    ])
+    caret(ed, 0, 0)
+
+    clipboard(ed, 'paste', data)
+
+    expect(lines(ed)).toEqual([
+      ['- b', null],
+      ['- a', A],
+      ['- c', C],
+    ])
+  })
+})
+
+describe('drag and drop', () => {
+  it('a line dragged with its line break to where a line starts moves its block, and one undo takes it back', () => {
+    const ed = build([
+      ['- a', A],
+      ['- b', B],
+      ['- c', C],
+    ])
+
+    drag(ed, at(ed, 1, 0), at(ed, 2, 0), at(ed, 0, 0))
+
+    expect(lines(ed)).toEqual([
+      ['- b', B],
+      ['- a', A],
+      ['- c', C],
+    ])
+    ed.commands.undo()
+    expect(lines(ed)).toEqual([
+      ['- a', A],
+      ['- b', B],
+      ['- c', C],
+    ])
+  })
+
+  it('a line’s text dragged onto an empty line below moves its block, leaving its old line none', () => {
+    const ed = build([
+      ['- a', A],
+      ['- b', B],
+      ['', null],
+    ])
+
+    drag(ed, at(ed, 1, 0), at(ed, 1, 3), at(ed, 2, 0))
+
+    expect(lines(ed)).toEqual([
+      ['- a', A],
+      ['', null],
+      ['- b', B],
+    ])
+  })
+
+  it('a line’s start dragged where another line starts leaves the id on what remains', () => {
+    const ed = build([
+      ['- foo bar', A],
+      ['', null],
+    ])
+
+    drag(ed, at(ed, 0, 0), at(ed, 0, 5), at(ed, 1, 0))
+
+    expect(lines(ed)).toEqual([
+      [' bar', A],
+      ['- foo', null],
+    ])
+  })
+
+  it('a line dragged with Ctrl held is copied: the copy is a new block', () => {
+    const ed = build([
+      ['- b', B],
+      ['', null],
+    ])
+
+    drag(ed, at(ed, 0, 0), at(ed, 0, 3), at(ed, 1, 0), { ctrlKey: true })
+
+    expect(lines(ed)).toEqual([
+      ['- b', B],
+      ['- b', null],
+    ])
+  })
+
+  it('HTML dropped from elsewhere arrives as its text: a ^ID in it is text', () => {
+    const ed = build([['', null]])
+    const data = new DataTransfer()
+    data.setData('text/html', `<ul><li><strong>x</strong> ^${A}</li><li>y</li></ul>`)
+    data.setData('text/plain', `- **x** ^${A}\n- y`)
+
+    drop(ed, data, at(ed, 0, 0))
+
+    expect(lines(ed)).toEqual([
+      [`- **x** ^${A}`, null],
       ['- y', null],
     ])
   })
