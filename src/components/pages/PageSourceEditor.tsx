@@ -364,6 +364,7 @@ export function PageSourceEditor({ pageId, onClose }: PageSourceEditorProps): Re
           key={opened.generation}
           ref={bufferRef}
           initial={opened.initial}
+          pageIds={opened.page.lineIds}
           readOnly={saving}
           label={t('pageSource.editorLabel')}
           describedBy={opened.draftRestored ? `${draftNoteId} ${hintId}` : hintId}

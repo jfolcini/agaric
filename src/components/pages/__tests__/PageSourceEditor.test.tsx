@@ -304,6 +304,42 @@ describe('PageSourceEditor saving', () => {
     expect(useUndoStore.getState().pages.get(PAGE_GETTING_STARTED)?.undoStack).toHaveLength(1)
   })
 
+  it('a line whose first word is cut and retyped saves as the same block, which a ((ref)) still finds', async () => {
+    routeToMockBackend()
+    const { BLOCK_GS_1, BLOCK_QN_2, PAGE_GETTING_STARTED } = SEED_IDS
+    dispatch('edit_block', { blockId: BLOCK_QN_2, toText: `See ((${BLOCK_GS_1})).` })
+    const user = userEvent.setup()
+    const { onClose } = renderEditor(PAGE_GETTING_STARTED)
+    const box = await loadedEditor()
+    const ed = editorOf(box)
+    const { start } = lineOf(ed, WELCOME)
+
+    act(() => {
+      ed.commands.setTextSelection({ from: start, to: start + '- Welcome'.length })
+      box.dispatchEvent(
+        new ClipboardEvent('cut', {
+          clipboardData: new DataTransfer(),
+          bubbles: true,
+          cancelable: true,
+        }),
+      )
+    })
+    act(() => {
+      ed.view.dispatch(ed.state.tr.insertText('- Hello, welcome', start))
+    })
+    await user.click(screen.getByRole('button', { name: t('action.save') }))
+
+    await waitFor(() => {
+      expect(onClose).toHaveBeenCalledOnce()
+    })
+    const referrer = dispatch('get_block', { blockId: BLOCK_QN_2 }) as { content: string }
+    const target = /\(\(([0-9A-Z]{26})\)\)/.exec(referrer.content)?.[1]
+    expect(dispatch('get_block', { blockId: target })).toMatchObject({
+      content: 'Hello, welcome to Agaric! This is your personal knowledge base.',
+      deleted_at: null,
+    })
+  })
+
   it('Enter at the end of a bullet starts the next one, which saves as a new block after it', async () => {
     const base = routeToMockBackend()
     const { BLOCK_GS_1, BLOCK_GS_2, PAGE_GETTING_STARTED } = SEED_IDS
@@ -826,6 +862,46 @@ describe('PageSourceEditor draft', () => {
     expect(localStorage.getItem(draftKey(PAGE_GETTING_STARTED))).toBeNull()
   })
 
+  it('a line cut before leaving, pasted into the draft restored, still saves as a move', async () => {
+    routeToMockBackend()
+    const { BLOCK_GS_1, BLOCK_GS_2, BLOCK_GS_3, BLOCK_GS_4, BLOCK_GS_5, PAGE_GETTING_STARTED } =
+      SEED_IDS
+    const leaving = renderEditor(PAGE_GETTING_STARTED)
+    const before = editorOf(await loadedEditor())
+    const cut = new DataTransfer()
+    act(() => {
+      const line = lineOf(before, 'Create new blocks')
+      before.commands.setTextSelection({ from: line.start, to: line.start + line.text.length + 2 })
+      before.view.dom.dispatchEvent(
+        new ClipboardEvent('cut', { clipboardData: cut, bubbles: true, cancelable: true }),
+      )
+    })
+    leaving.unmount()
+
+    const user = userEvent.setup()
+    const { onClose } = renderEditor(PAGE_GETTING_STARTED)
+    const box = await loadedEditor()
+    expect(bufferOf(box).lineIds).not.toContain(BLOCK_GS_3)
+    act(() => {
+      editorOf(box).commands.setTextSelection(lineOf(editorOf(box), WELCOME).start)
+      box.dispatchEvent(
+        new ClipboardEvent('paste', { clipboardData: cut, bubbles: true, cancelable: true }),
+      )
+    })
+    await user.click(screen.getByRole('button', { name: t('action.save') }))
+
+    await waitFor(() => {
+      expect(onClose).toHaveBeenCalledOnce()
+    })
+    expect(pageBuffer(PAGE_GETTING_STARTED).line_ids.filter((id) => id !== null)).toEqual([
+      BLOCK_GS_3,
+      BLOCK_GS_1,
+      BLOCK_GS_2,
+      BLOCK_GS_4,
+      BLOCK_GS_5,
+    ])
+  })
+
   it('a restored draft the page has changed since saves nothing and opens the conflict dialog', async () => {
     const now = routeToMockBackend()
     const { BLOCK_GS_1, PAGE_GETTING_STARTED } = SEED_IDS
@@ -1219,6 +1295,52 @@ describe('PageSourceEditor save report', () => {
       expect(onClose).toHaveBeenCalledOnce()
     })
     expect(saveReport().options.action).toBeUndefined()
+  })
+
+  it('lines pasted from another page’s buffer save as new blocks, with no warning, and that page is unchanged', async () => {
+    const base = routeToMockBackend()
+    const { BLOCK_QN_1, BLOCK_QN_2, PAGE_GETTING_STARTED, PAGE_QUICK_NOTES } = SEED_IDS
+    const notes = pageBuffer(PAGE_QUICK_NOTES)
+    const pasted = notes.text.split('\n').slice(0, 2)
+    expect(notes.line_ids.slice(0, 2)).toEqual([BLOCK_QN_1, BLOCK_QN_2])
+    const copying = renderEditor(PAGE_QUICK_NOTES)
+    const notesEditor = editorOf(await loadedEditor())
+    const copied = new DataTransfer()
+    act(() => {
+      const last = lineOf(notesEditor, pasted[1] as string)
+      notesEditor.commands.setTextSelection({ from: 1, to: last.start + last.text.length })
+      notesEditor.view.dom.dispatchEvent(
+        new ClipboardEvent('copy', { clipboardData: copied, bubbles: true, cancelable: true }),
+      )
+    })
+    expect(copied.getData('text/html')).toContain(BLOCK_QN_1)
+    copying.unmount()
+
+    const user = userEvent.setup()
+    const { onClose } = renderEditor(PAGE_GETTING_STARTED)
+    const box = await loadedEditor()
+    caretAtEnd(box)
+    act(() => {
+      box.dispatchEvent(
+        new ClipboardEvent('paste', { clipboardData: copied, bubbles: true, cancelable: true }),
+      )
+    })
+    await user.keyboard('{Control>}s{/Control}')
+
+    await waitFor(() => {
+      expect(onClose).toHaveBeenCalledOnce()
+    })
+    expect((await applied()).warnings).toEqual([])
+    expect(vi.mocked(toast.warning)).not.toHaveBeenCalled()
+    const saved = pageBuffer(PAGE_GETTING_STARTED)
+    expect(saved.text).toBe(`${base.text}${pasted.join('\n')}\n`)
+    const added = saved.line_ids.slice(base.line_ids.length - 1, -1)
+    expect(added).toHaveLength(2)
+    for (const id of added) {
+      expect(id).toEqual(expect.any(String))
+      expect([BLOCK_QN_1, BLOCK_QN_2, ...base.line_ids]).not.toContain(id)
+    }
+    expect(pageBuffer(PAGE_QUICK_NOTES)).toEqual(notes)
   })
 })
 
