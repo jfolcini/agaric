@@ -1056,14 +1056,16 @@ pub fn parse_logseq_markdown(content: &str) -> ParseOutput {
 
 /// Logseq's page properties (#5160 P3): the `key:: value` lines before the
 /// first block, blank lines between them included, each handed to `read` with
-/// its line's index. Returns the text after them.
+/// its line's index. Returns the text after them. A bullet is the first block,
+/// even one reading `- :: value`, whose `-` is a valid key.
 fn strip_leading_properties(body: &str, mut read: impl FnMut(usize, &str, &str)) -> &str {
     let mut rest = body;
     for (index, line) in body.split_inclusive('\n').enumerate() {
         let trimmed = line.trim();
         if !trimmed.is_empty() {
-            let Some((key, value)) =
-                split_property_line(trimmed).filter(|(_, value)| !value.trim().is_empty())
+            let Some((key, value)) = split_property_line(trimmed)
+                .filter(|(_, value)| !value.trim().is_empty())
+                .filter(|_| bullet_marker(trimmed).is_none())
             else {
                 break;
             };
@@ -4010,6 +4012,20 @@ bare line (({UUID_B})) too"
                  dropped"
             ]
         );
+    }
+
+    /// #5160 P3: a first bullet reading `- :: value` is a block, not a page
+    /// property keyed `-`, in an import and in a page's own source.
+    #[test]
+    fn a_first_bullet_shaped_like_a_property_is_a_block() {
+        for output in [
+            parse_logseq_markdown("- :: value\n"),
+            parse_source_outline("- :: value\n"),
+            parse_source_outline("- ::\t ^01J00000000000000000000000\n"),
+        ] {
+            assert!(output.frontmatter.is_empty(), "{:?}", output.frontmatter);
+            assert_eq!(output.blocks.len(), 1, "got {:?}", output.blocks);
+        }
     }
 
     /// #5160 P3: Logseq's `alias::` is the page's aliases and `tags::` its
