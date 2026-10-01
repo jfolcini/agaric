@@ -228,6 +228,12 @@ type RowsLocation =
   /** The response is a `HashMap<K, Row>`; each entry projects `K-><row>`. */
   | { readonly kind: 'map-of-row' }
   /**
+   * #5160 A — the response is a `PageBuffer`: each line of its `text` is one
+   * row, the tuple of the id its `line_ids` entry gives it (or `line` for
+   * none) and the line. MUST match the `get_page_buffer` arm in the Rust twin.
+   */
+  | { readonly kind: 'buffer-lines' }
+  /**
    * The response is a `HashMap<K, Row[]>`; each entry projects one `K-><row>`
    * per element, and `K->(none)` when the key is present holding an EMPTY
    * array. That last case is the point: `get_batch_properties_inner` OMITS a
@@ -758,6 +764,17 @@ const WIRE: Readonly<Record<string, WireShape>> = {
   // and `list_page_aliases_by_prefix` is `ORDER BY length(alias), alias`, so the
   // ordered comparison pins both sorts rather than the mock's insertion order;
   // the two joined readers answer tuples, projected by position.
+  // ── The page buffer by line ids (#5160 A) ──
+  //
+  // One row per line of the text, the id its line carries beside it. `source`
+  // stays off the token: it is `get_page_source`'s render, which the mock
+  // approximates.
+  get_page_buffer: {
+    rows: { kind: 'buffer-lines' },
+    token: { kind: 'tuple', names: ['id', 'text'] },
+    hasMoreKey: null,
+    totalKey: null,
+  },
   get_page_aliases: {
     rows: { kind: 'bare-array' },
     token: { kind: 'scalar' },
@@ -1305,6 +1322,7 @@ function locateRows(response: unknown, where: RowsLocation): unknown {
     }
     case 'value':
     case 'count-map':
+    case 'buffer-lines':
     case 'map-of-row':
     case 'map-of-rows':
     case 'partitions':
@@ -1453,6 +1471,14 @@ function rawRows(response: unknown, shape: WireShape): string[] {
   }
   if (shape.rows.kind === 'count-map') {
     return countMapTokens(response)
+  }
+  if (shape.rows.kind === 'buffer-lines') {
+    const { text, line_ids: ids } = response as { text: string; line_ids: Array<string | null> }
+    const lines = text.split('\n')
+    if (lines.length !== ids.length) {
+      throw new Error(`get_page_buffer answered ${ids.length} line ids for ${lines.length} lines`)
+    }
+    return lines.map((line, i) => rowToken([ids[i] ?? 'line', line], shape.token))
   }
   if (shape.rows.kind === 'partitions') {
     return partitionRows(response, shape.rows.keys, shape.token)

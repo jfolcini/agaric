@@ -160,7 +160,14 @@ describe('page-blocks applyPageSource (#5140 Phase 4b)', () => {
     expect(mockedInvoke.mock.calls).toEqual([
       [
         'apply_page_source',
-        { pageId: 'PAGE_1', source: '- a\n', baseSource: '- b\n', force: true, merge: false },
+        {
+          pageId: 'PAGE_1',
+          source: '- a\n',
+          baseSource: '- b\n',
+          force: true,
+          merge: false,
+          lineIds: null,
+        },
       ],
     ])
     expect(vi.mocked(toast.error)).not.toHaveBeenCalled()

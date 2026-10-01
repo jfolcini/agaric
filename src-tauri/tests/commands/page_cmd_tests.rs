@@ -2798,6 +2798,7 @@ pub(super) async fn save_source(
         SourceSaveFlags {
             force,
             merge: false,
+            line_ids: None,
         },
     )
     .await;
@@ -2824,6 +2825,7 @@ async fn merge_source(
         SourceSaveFlags {
             force: false,
             merge: true,
+            line_ids: None,
         },
     )
     .await;
@@ -4664,6 +4666,7 @@ async fn apply_page_source_merge_op_refs_undo_the_whole_save() {
         SourceSaveFlags {
             force: false,
             merge: true,
+            line_ids: None,
         },
     ))
     .await
@@ -4713,6 +4716,447 @@ async fn apply_page_source_merge_on_a_fresh_base_is_a_plain_save() {
     assert_eq!(
         dup_children(&pool, &page).await,
         vec![(a.into_string(), "a, edited".to_owned())]
+    );
+}
+
+// ======================================================================
+// get_page_buffer / apply_page_source by line ids (#5160 A, D15, D5)
+// ======================================================================
+
+/// The page's buffer as lines, each with the id it carries.
+async fn buffer_lines(
+    pool: &SqlitePool,
+    page: &BlockId,
+) -> (String, Vec<(String, Option<String>)>) {
+    let buffer = get_page_buffer_inner(pool, page.as_str()).await.unwrap();
+    assert_eq!(
+        buffer.text.split('\n').count(),
+        buffer.line_ids.len(),
+        "one id entry per line of text"
+    );
+    let lines = buffer
+        .text
+        .split('\n')
+        .map(str::to_owned)
+        .zip(buffer.line_ids)
+        .collect();
+    (buffer.source, lines)
+}
+
+/// Save `lines` over `page` as text with its ids beside it, edited from `base`.
+async fn save_by_line(
+    pool: &SqlitePool,
+    mat: &Materializer,
+    page: &BlockId,
+    lines: &[(String, Option<String>)],
+    base: &str,
+    merge: bool,
+) -> Result<PageSourceReport, AppError> {
+    let text = lines
+        .iter()
+        .map(|(line, _)| line.as_str())
+        .collect::<Vec<_>>()
+        .join("\n");
+    let result = apply_page_source_inner(
+        pool,
+        DEV,
+        mat,
+        page.as_str(),
+        text,
+        base.to_owned(),
+        SourceSaveFlags {
+            force: false,
+            merge,
+            line_ids: Some(lines.iter().map(|(_, id)| id.clone()).collect()),
+        },
+    )
+    .await;
+    settle(mat).await;
+    result
+}
+
+/// `line` carrying no id.
+fn plain(line: &str) -> (String, Option<String>) {
+    (line.to_owned(), None)
+}
+
+/// The buffer is the source less its anchors, the one on a line of its own
+/// after a code block included, with each block's id on the line it starts
+/// on and none on its continuation and property lines.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn get_page_buffer_is_the_source_less_its_anchors_with_ids_beside_it() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let page = dup_page(&pool, &mat, "Buffer").await;
+    let a = dup_child(&pool, &mat, &page, "two\nlines ^note").await;
+    let b = dup_child(&pool, &mat, &a, "child").await;
+    let c = dup_child(&pool, &mat, &page, "```sh\necho hi\n```").await;
+    set_property_inner(
+        &pool,
+        DEV,
+        &mat,
+        c.as_str().into(),
+        "lang".into(),
+        Some("sh".into()),
+        None,
+        None,
+        None,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    let buffer = get_page_buffer_inner(&pool, page.as_str()).await.unwrap();
+
+    assert_eq!(
+        buffer.source,
+        page_source(&pool, &page).await,
+        "source is get_page_source's"
+    );
+    assert_eq!(
+        buffer.source,
+        format!(
+            "- two\n  lines ^note ^{a}\n  - child ^{b}\n- ```sh\n  echo hi\n  ```\n  ^{c}\n  lang:: sh\n"
+        ),
+        "seed: one anchor at a line's end, one on a line of its own"
+    );
+    assert_eq!(
+        buffer.text,
+        "- two\n  lines ^note\n  - child\n- ```sh\n  echo hi\n  ```\n  lang:: sh\n"
+    );
+    let id = |block: &BlockId| Some(block.as_str().to_owned());
+    assert_eq!(
+        buffer.line_ids,
+        [id(&a), None, id(&b), id(&c), None, None, None, None]
+    );
+}
+
+#[tokio::test]
+async fn get_page_buffer_of_a_content_block_or_a_trashed_page_is_refused() {
+    let (pool, _dir) = test_pool().await;
+    seed_source_page(&pool, "text").await;
+    let result = get_page_buffer_inner(&pool, SOURCE_BLOCK).await;
+    assert!(
+        matches!(result, Err(AppError::Validation { .. })),
+        "a non-page block id must return AppError::Validation, got: {result:?}"
+    );
+    sqlx::query("UPDATE blocks SET deleted_at = ? WHERE id = ?")
+        .bind(FIXED_TS)
+        .bind(SOURCE_PAGE)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let result = get_page_buffer_inner(&pool, SOURCE_PAGE).await;
+    assert!(
+        matches!(result, Err(AppError::NotFound(_))),
+        "a soft-deleted page must return AppError::NotFound, got: {result:?}"
+    );
+}
+
+/// Saving a page's own text by its line ids appends no op, however much the
+/// page holds.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn apply_page_source_by_line_ids_of_its_own_text_writes_nothing() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let page = everything_page(&pool, &mat).await;
+    let (source, lines) = buffer_lines(&pool, &page).await;
+    let before = last_seq(&pool).await;
+
+    let report = save_by_line(&pool, &mat, &page, &lines, &source, false)
+        .await
+        .unwrap();
+
+    assert_eq!(ops_after(&pool, before).await, Vec::<String>::new());
+    assert_eq!(counts(&report), [0; 6], "and reports none");
+    assert!(
+        report.names_created.is_empty() && report.warnings.is_empty(),
+        "and creates no name and warns of nothing: {report:?}"
+    );
+    assert_eq!(
+        page_source(&pool, &page).await,
+        source,
+        "the page is as it was"
+    );
+}
+
+/// A line typed into a block is its content; the ids decide the block, so
+/// no `^ID` is needed or read.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn apply_page_source_by_line_ids_edits_a_block() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let page = dup_page(&pool, &mat, "Edit").await;
+    let a = dup_child(&pool, &mat, &page, "hello").await;
+    let b = dup_child(&pool, &mat, &page, "untouched").await;
+    settle(&mat).await;
+    let (source, mut lines) = buffer_lines(&pool, &page).await;
+    lines.insert(1, plain("  world"));
+    let before = last_seq(&pool).await;
+
+    let report = save_by_line(&pool, &mat, &page, &lines, &source, false)
+        .await
+        .unwrap();
+
+    assert_eq!(counts(&report), [0, 1, 0, 0, 0, 0], "one block edited");
+    assert_eq!(ops_after(&pool, before).await, vec!["edit_block"]);
+    assert_eq!(
+        dup_children(&pool, &page).await,
+        vec![
+            (a.into_string(), "hello\nworld".to_owned()),
+            (b.into_string(), "untouched".to_owned())
+        ]
+    );
+    assert!(report.warnings.is_empty(), "{:?}", report.warnings);
+}
+
+/// A cut and paste in one buffer is a move: the line takes its id along.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn apply_page_source_by_line_ids_moves_a_line_with_its_id() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let page = dup_page(&pool, &mat, "Move").await;
+    let a = dup_child(&pool, &mat, &page, "a").await;
+    let b = dup_child(&pool, &mat, &page, "b").await;
+    let c = dup_child(&pool, &mat, &page, "c").await;
+    settle(&mat).await;
+    let (source, mut lines) = buffer_lines(&pool, &page).await;
+    let cut = lines.remove(0);
+    lines.insert(1, (format!("  {}", cut.0), cut.1));
+    let before = last_seq(&pool).await;
+
+    let report = save_by_line(&pool, &mat, &page, &lines, &source, false)
+        .await
+        .unwrap();
+
+    assert_eq!(
+        counts(&report),
+        [0, 0, 1, 0, 0, 0],
+        "one move, nothing else"
+    );
+    assert_eq!(ops_after(&pool, before).await, vec!["move_block"]);
+    assert_eq!(
+        dup_children(&pool, &page).await,
+        vec![
+            (b.clone().into_string(), "b".to_owned()),
+            (c.into_string(), "c".to_owned())
+        ]
+    );
+    assert_eq!(
+        dup_children(&pool, &b).await,
+        vec![(a.into_string(), "a".to_owned())],
+        "a, indented under b, is the same block"
+    );
+}
+
+/// A copy is a new block (#5160 D15): the first line carrying an id keeps
+/// it, and a later one is created, with a warning naming its line.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn apply_page_source_by_line_ids_saves_a_copied_line_as_a_new_block() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let page = dup_page(&pool, &mat, "Copy").await;
+    let a = dup_child(&pool, &mat, &page, "a").await;
+    let b = dup_child(&pool, &mat, &page, "b").await;
+    settle(&mat).await;
+    let (source, mut lines) = buffer_lines(&pool, &page).await;
+    let mut copy = lines[0].clone();
+    copy.0.push_str(" again");
+    lines.insert(2, copy);
+    let before = last_seq(&pool).await;
+
+    let report = save_by_line(&pool, &mat, &page, &lines, &source, false)
+        .await
+        .unwrap();
+
+    assert_eq!(counts(&report), [1, 0, 0, 0, 0, 0], "one block created");
+    assert_eq!(ops_after(&pool, before).await, vec!["create_block"]);
+    assert_eq!(
+        report.warnings,
+        ["line 3: a copy of the block on line 1; saved as a new block"]
+    );
+    let children = dup_children(&pool, &page).await;
+    assert_eq!(children.len(), 3, "{children:?}");
+    assert_eq!(
+        children[0],
+        (a.into_string(), "a".to_owned()),
+        "the first keeps its id"
+    );
+    assert_eq!(children[1], (b.into_string(), "b".to_owned()));
+    assert_eq!(children[2].1, "a again", "the copy is new");
+}
+
+/// An id that is not a block of this page is a new block (#5160 D15), with a
+/// warning naming its line; the block on the other page is not touched.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn apply_page_source_by_line_ids_saves_a_foreign_id_as_a_new_block() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let page = dup_page(&pool, &mat, "Here").await;
+    let a = dup_child(&pool, &mat, &page, "a").await;
+    let elsewhere = dup_page(&pool, &mat, "Elsewhere").await;
+    let foreign = dup_child(&pool, &mat, &elsewhere, "foreign").await;
+    settle(&mat).await;
+    let (source, mut lines) = buffer_lines(&pool, &page).await;
+    lines.insert(
+        1,
+        ("- foreign".to_owned(), Some(foreign.as_str().to_owned())),
+    );
+    lines.insert(2, ("- unknown".to_owned(), Some("not an id".to_owned())));
+    let before = last_seq(&pool).await;
+
+    let report = save_by_line(&pool, &mat, &page, &lines, &source, false)
+        .await
+        .unwrap();
+
+    assert_eq!(counts(&report), [2, 0, 0, 0, 0, 0], "two blocks created");
+    assert_eq!(
+        ops_after(&pool, before).await,
+        vec!["create_block", "create_block"]
+    );
+    assert_eq!(
+        report.warnings,
+        [
+            "line 2: not a block of this page; saved as a new block",
+            "line 3: not a block of this page; saved as a new block"
+        ]
+    );
+    let children = dup_children(&pool, &page).await;
+    assert_eq!(children.len(), 3, "{children:?}");
+    assert_eq!(children[0], (a.into_string(), "a".to_owned()));
+    assert_ne!(
+        children[1].0,
+        foreign.as_str(),
+        "a new block, not the foreign one"
+    );
+    assert_eq!(
+        dup_children(&pool, &elsewhere).await,
+        vec![(foreign.into_string(), "foreign".to_owned())],
+        "the other page keeps its block"
+    );
+}
+
+/// `line_ids` must hold one entry per line of the text: anything else is a
+/// client's mistake, refused before a write.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn apply_page_source_by_line_ids_of_the_wrong_length_is_refused() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let page = dup_page(&pool, &mat, "Length").await;
+    dup_child(&pool, &mat, &page, "a").await;
+    settle(&mat).await;
+    let (source, lines) = buffer_lines(&pool, &page).await;
+    let before = last_seq(&pool).await;
+
+    for ids in [
+        lines[..lines.len() - 1]
+            .iter()
+            .map(|(_, id)| id.clone())
+            .collect(),
+        lines
+            .iter()
+            .map(|(_, id)| id.clone())
+            .chain([None])
+            .collect::<Vec<_>>(),
+    ] {
+        let result = apply_page_source_inner(
+            &pool,
+            DEV,
+            &mat,
+            page.as_str(),
+            "- a edited\n".to_owned(),
+            source.clone(),
+            SourceSaveFlags {
+                force: false,
+                merge: false,
+                line_ids: Some(ids),
+            },
+        )
+        .await;
+        assert!(
+            matches!(&result, Err(AppError::Validation { message, .. }) if message.contains("line_ids")),
+            "{result:?}"
+        );
+    }
+    assert_eq!(
+        ops_after(&pool, before).await,
+        Vec::<String>::new(),
+        "nothing written"
+    );
+}
+
+/// D5 by id: a fence left open ends before the next line carrying an id, and
+/// the save warns; a bullet with no id before it is code.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn apply_page_source_by_line_ids_ends_an_open_fence_at_the_next_id() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let page = dup_page(&pool, &mat, "Fence").await;
+    let a = dup_child(&pool, &mat, &page, "a").await;
+    let b = dup_child(&pool, &mat, &page, "b").await;
+    settle(&mat).await;
+    let (source, mut lines) = buffer_lines(&pool, &page).await;
+    lines[0].0 = "- ```".to_owned();
+    lines.insert(1, plain("- not a block"));
+
+    let report = save_by_line(&pool, &mat, &page, &lines, &source, false)
+        .await
+        .unwrap();
+
+    assert_eq!(
+        counts(&report),
+        [0, 1, 0, 0, 0, 0],
+        "a edited, nothing created"
+    );
+    assert_eq!(
+        report.warnings,
+        ["the ``` code fence opened on line 1 is not closed; it ends before the block on line 3"]
+    );
+    assert_eq!(
+        dup_children(&pool, &page).await,
+        vec![
+            (a.into_string(), "```\n- not a block".to_owned()),
+            (b.into_string(), "b".to_owned())
+        ]
+    );
+}
+
+/// The stale check and the merge hold by line ids too: a buffer read before
+/// the page changed is refused, and with `merge` both edits land.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn apply_page_source_by_line_ids_is_stale_checked_and_merges() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let page = dup_page(&pool, &mat, "Stale").await;
+    let a = dup_child(&pool, &mat, &page, "a").await;
+    let b = dup_child(&pool, &mat, &page, "b").await;
+    settle(&mat).await;
+    let (source, mut lines) = buffer_lines(&pool, &page).await;
+    edit_block_inner(&pool, DEV, &mat, b.clone(), "b, on the page".into())
+        .await
+        .unwrap();
+    settle(&mat).await;
+    lines[0].0 = "- a, in the buffer".to_owned();
+    let before = last_seq(&pool).await;
+
+    let stale = save_by_line(&pool, &mat, &page, &lines, &source, false).await;
+    assert!(is_refresh(&stale), "{stale:?}");
+    assert_eq!(ops_after(&pool, before).await, Vec::<String>::new());
+
+    let report = save_by_line(&pool, &mat, &page, &lines, &source, true)
+        .await
+        .unwrap();
+
+    assert_eq!(counts(&report), [0, 1, 0, 0, 0, 0]);
+    assert_eq!(report.warnings, Vec::<String>::new());
+    assert_eq!(
+        dup_children(&pool, &page).await,
+        vec![
+            (a.into_string(), "a, in the buffer".to_owned()),
+            (b.into_string(), "b, on the page".to_owned())
+        ]
     );
 }
 

@@ -1582,6 +1582,42 @@ async fn run_step(pool: &SqlitePool, args: &StepArgs<'_>) -> Result<RawResult, A
         // both stacks (see `replay_fixture`). Each arm calls what the shipped
         // command calls. The two joined readers answer TUPLES, projected by
         // position through [`tuple_token`].
+        // ── The page buffer by line ids (#5160 A) ──
+        //
+        // One row per line of the text: the id `line_ids` gives the line,
+        // relabeled, or `line` for none, and the line itself, so the anchors'
+        // removal and each id's line are pinned together. `source` stays off
+        // it: it is `get_page_source`'s render, which the mock approximates
+        // (only the backend writes an anchor after a code block on its own
+        // line), and the step's read of it is that waiver's.
+        "get_page_buffer" => {
+            let page_id: PageId = arg_req(args, "pageId");
+            let buffer = get_page_buffer_inner(pool, page_id.as_str()).await?;
+            let lines: Vec<&str> = buffer.text.split('\n').collect();
+            assert_eq!(
+                lines.len(),
+                buffer.line_ids.len(),
+                "{}get_page_buffer answered {} line ids for {} lines",
+                projecting_at(),
+                buffer.line_ids.len(),
+                lines.len()
+            );
+            RawResult {
+                rows: lines
+                    .iter()
+                    .zip(&buffer.line_ids)
+                    .map(|(line, id)| {
+                        tuple_token(
+                            &json!([id.as_deref().unwrap_or("line"), line]),
+                            &["id", "text"],
+                        )
+                    })
+                    .collect(),
+                has_more: None,
+                total_count: None,
+                next_cursor: None,
+            }
+        }
         "get_page_aliases" => {
             let page_id: PageId = arg_req(args, "pageId");
             // `ORDER BY alias` under the column's NOCASE collation: the
@@ -2713,7 +2749,11 @@ pub(super) mod reader_delegation_tests {
     // to `block_properties` (`commands/spaces.rs`). The `is_space` /
     // `accent_color` rows it reads are written by `create_space` and
     // `set_property`, neither a read arm. Writer set unchanged.
-    const SWEPT_ARM_COUNT: usize = 54;
+    // #5160 A wired `get_page_buffer`: `get_page_source_inner`'s read
+    // (`load_page_export_data` in a plain `pool.begin()` tx, SELECTs only)
+    // plus `anchor_free`, a pure string pass (`commands/pages/markdown.rs`).
+    // Writer set unchanged.
+    const SWEPT_ARM_COUNT: usize = 55;
 
     /// #3833 item 8 — the WRITE sweep, recorded where its conclusion is cited.
     ///

@@ -583,10 +583,15 @@ export const commands = {
 	/**  Tauri command: render a page as its source-mode markdown buffer. Delegates to [`get_page_source_inner`]. */
 	getPageSource: (pageId: PageId) => typedError<string, AppError>(__TAURI_INVOKE("get_page_source", { pageId })),
 	/**
+	 *  Tauri command: a page's source buffer with each block's id beside its text.
+	 *  Delegates to [`get_page_buffer_inner`].
+	 */
+	getPageBuffer: (pageId: PageId) => typedError<PageBuffer, AppError>(__TAURI_INVOKE("get_page_buffer", { pageId })),
+	/**
 	 *  Tauri command: save a page edited as its source buffer. Delegates to
 	 *  [`apply_page_source_inner`].
 	 */
-	applyPageSource: (pageId: PageId, source: string, baseSource: string, force: boolean, merge: boolean) => typedError<WithOps<PageSourceReport>, AppError>(__TAURI_INVOKE("apply_page_source", { pageId, source, baseSource, force, merge })),
+	applyPageSource: (pageId: PageId, source: string, baseSource: string, force: boolean, merge: boolean, lineIds: (string | null)[] | null) => typedError<WithOps<PageSourceReport>, AppError>(__TAURI_INVOKE("apply_page_source", { pageId, source, baseSource, force, merge, lineIds })),
 	/**
 	 *  Tauri command: render blocks as clipboard markdown. Delegates to
 	 *  [`get_blocks_source_inner`].
@@ -2786,6 +2791,22 @@ export type OsNetworkBlockStatus = {
 };
 
 /**
+ *  A page's source buffer as the ids-beside-the-text editor reads it (#5160
+ *  A): the anchored `source`, which a save sends back as its `base_source`,
+ *  and the same buffer as `text`, its anchors removed, with the id each line
+ *  of the text carries in `line_ids`, one entry per line.
+ */
+export type PageBuffer = {
+	source: string,
+	text: string,
+	/**
+	 *  `Some` on the line a block starts on; `None` on a continuation,
+	 *  property or blank line.
+	 */
+	line_ids: (string | null)[],
+};
+
+/**
  *  Page header for callers that need every page in a space without
  *  pagination.  Used by the markdown export (`exportGraphAsZip`) and by
  *  the graph view, which both want the full set in one shot.
@@ -2940,8 +2961,8 @@ export type PageSort =
 /**  What [`apply_page_source`] wrote. */
 export type PageSourceReport = {
 	/**
-	 *  Blocks created from the buffer: new bullets, and anchors a forced save
-	 *  kept as new blocks.
+	 *  Blocks created from the buffer: new bullets, anchors a forced save kept
+	 *  as new blocks, and copied or foreign ids (#5160 D15).
 	 */
 	created: number,
 	/**  Blocks of the page whose content was rewritten. */

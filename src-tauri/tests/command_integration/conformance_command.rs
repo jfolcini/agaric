@@ -777,8 +777,9 @@ pub(super) async fn apply_op_via_command(
             .map(|pasted| pasted.blocks),
         ),
         // The two buffers are the caller's own text, anchors spelled as the
-        // seed labels' expanded ids; only the page is a label. `merge` came
-        // after the first fixture's steps, so it is false when absent.
+        // seed labels' expanded ids; only the page is a label, and `lineIds`
+        // spells the ids the same way. `merge` and `lineIds` came after the
+        // first fixture's steps, so they are false and absent when absent.
         "apply_page_source" => to_json(
             apply_page_source_inner(
                 pool,
@@ -792,6 +793,10 @@ pub(super) async fn apply_op_via_command(
                         panic!("conformance op '{command}' is missing arg 'force'")
                     }),
                     merge: arg("merge").and_then(Value::as_bool).unwrap_or(false),
+                    line_ids: arg("lineIds").filter(|v| !v.is_null()).map(|v| {
+                        serde_json::from_value(v.clone())
+                            .unwrap_or_else(|e| panic!("conformance op '{command}': lineIds: {e}"))
+                    }),
                 },
             )
             .await,

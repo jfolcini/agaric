@@ -1408,6 +1408,47 @@ fn render_page_source_ids(data: &PageExportData) -> (String, Vec<String>) {
     (output, ids)
 }
 
+/// `source`, a buffer with each block's `^ID` written in it, as the text with
+/// those anchors removed and the id each of its lines carries: the block's on
+/// the line it starts on, none on every other (#5160 A). An anchor ends its
+/// block's last line or, when that line is code, is a line of its own, which
+/// goes. Everything else is kept as written, so the parse by id reads the text
+/// back as the blocks the anchors named. What is not an anchor, a `^word` that
+/// is no block id, stays.
+fn anchor_free(source: &str) -> (String, Vec<Option<String>>) {
+    let mut lines: Vec<(&str, Option<String>)> =
+        source.split('\n').map(|line| (line, None)).collect();
+    let mut own_lines = HashSet::new();
+    for block in import::parse_source_outline(source).blocks {
+        let (Some(word), Some(start)) = (block.block_anchor, block.line) else {
+            continue;
+        };
+        let Ok(id) = BlockId::from_string(&word) else {
+            continue;
+        };
+        let last = start - 1 + block.content.split('\n').count() - 1;
+        let anchor = format!("^{word}");
+        if lines
+            .get(last + 1)
+            .is_some_and(|(line, _)| line.trim() == anchor)
+        {
+            own_lines.insert(last + 1);
+        } else if let Some((line, _)) = lines.get_mut(last) {
+            *line = line.strip_suffix(&format!(" {anchor}")).unwrap_or(line);
+        }
+        if let Some((_, carried)) = lines.get_mut(start - 1) {
+            *carried = Some(id.into_string());
+        }
+    }
+    let (text, ids): (Vec<&str>, Vec<Option<String>>) = lines
+        .into_iter()
+        .enumerate()
+        .filter(|(i, _)| !own_lines.contains(i))
+        .map(|(_, line)| line)
+        .unzip();
+    (text.join("\n"), ids)
+}
+
 /// Every descendant of `page_id`, depth-first in sibling order, each through
 /// [`render_block`]. Returns the ids it rendered, in render order.
 fn render_block_tree(
@@ -2235,6 +2276,40 @@ pub async fn get_page_source_inner(pool: &SqlitePool, page_id: &str) -> Result<S
     let data = load_page_export_data(&mut tx, page_id, PageRead::Source).await?;
     tx.commit().await?;
     Ok(render_page_source(&data))
+}
+
+/// A page's source buffer as the ids-beside-the-text editor reads it (#5160
+/// A): the anchored `source`, which a save sends back as its `base_source`,
+/// and the same buffer as `text`, its anchors removed, with the id each line
+/// of the text carries in `line_ids`, one entry per line.
+#[derive(Debug, Clone, Serialize, Type)]
+pub struct PageBuffer {
+    pub source: String,
+    pub text: String,
+    /// `Some` on the line a block starts on; `None` on a continuation,
+    /// property or blank line.
+    pub line_ids: Vec<Option<String>>,
+}
+
+/// The page's source buffer (#5140) with each block's id beside its text
+/// rather than in it (#5160 A): [`get_page_source_inner`]'s buffer, and the
+/// same buffer less its anchors, with the id each line carries.
+///
+/// # Errors
+///
+/// As [`export_page_markdown_inner`].
+#[instrument(skip(pool), err)]
+pub async fn get_page_buffer_inner(
+    pool: &SqlitePool,
+    page_id: &str,
+) -> Result<PageBuffer, AppError> {
+    let source = get_page_source_inner(pool, page_id).await?;
+    let (text, line_ids) = anchor_free(&source);
+    Ok(PageBuffer {
+        source,
+        text,
+        line_ids,
+    })
 }
 
 /// The blocks `block_ids` names as the clipboard carries them (#5140): the
@@ -6106,6 +6181,19 @@ pub async fn get_page_source(
     page_id: PageId,
 ) -> Result<String, AppError> {
     get_page_source_inner(&read_pool.0, page_id.as_str())
+        .await
+        .map_err(sanitize_internal_error)
+}
+
+/// Tauri command: a page's source buffer with each block's id beside its text.
+/// Delegates to [`get_page_buffer_inner`].
+#[tauri::command]
+#[specta::specta]
+pub async fn get_page_buffer(
+    read_pool: State<'_, ReadPool>,
+    page_id: PageId,
+) -> Result<PageBuffer, AppError> {
+    get_page_buffer_inner(&read_pool.0, page_id.as_str())
         .await
         .map_err(sanitize_internal_error)
 }
