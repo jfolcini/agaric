@@ -4014,6 +4014,24 @@ bare line (({UUID_B})) too"
         );
     }
 
+    /// #5110: a planning line whose repeater ends in a character wider than
+    /// one byte is unreadable, so it stays text, rather than panicking in the
+    /// repeat-rule split. The fuzz lane found it.
+    #[test]
+    fn a_planning_line_with_a_multibyte_repeater_stays_text() {
+        let output = parse_logseq_markdown("- a\n  SCHEDULED: <2026-09-08 .+1\u{b6}>\n");
+        assert_eq!(output.blocks.len(), 1);
+        assert_eq!(
+            output.blocks[0].content,
+            "a\nSCHEDULED: <2026-09-08 .+1\u{b6}>"
+        );
+        assert!(
+            output.blocks[0].properties.is_empty(),
+            "{:?}",
+            output.blocks[0].properties
+        );
+    }
+
     /// #5160 P3: a first bullet reading `- :: value` is a block, not a page
     /// property keyed `-`, in an import and in a page's own source.
     #[test]

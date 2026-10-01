@@ -398,6 +398,9 @@ mod repeat_rule_validation_tests_3647 {
         "+-3w",
         "3.5d",
         "5x",
+        // a last character wider than one byte (#5110)
+        "1é",
+        ".+1¶",
         "12q",
         "w",
         "+d",

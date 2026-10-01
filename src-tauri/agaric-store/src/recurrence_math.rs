@@ -169,10 +169,9 @@ pub fn try_shift_date_once(
             // by the caller for `.+` and `++` modes, but may still be present
             // for the default `+` mode).
             let num_unit = interval.strip_prefix('+').unwrap_or(interval);
-            if num_unit.len() < 2 {
+            let Some((num_str, unit)) = split_count_unit(num_unit) else {
                 return Err(ShiftFailure::Interval);
-            }
-            let (num_str, unit) = num_unit.split_at(num_unit.len() - 1);
+            };
             // #3281: a count that does not parse is a MALFORMED RULE, not an
             // arithmetic overflow — `++2weeks` splits into `"2week"` / `"s"`
             // and lands here.
@@ -204,6 +203,14 @@ pub fn try_shift_date_once(
     };
 
     Ok(shifted)
+}
+
+/// `num_unit`, as `3w`, split before its last character into the count and
+/// the unit, at a character boundary: a rule may end in any character
+/// (#5110). `None` for fewer than two characters.
+fn split_count_unit(num_unit: &str) -> Option<(&str, &str)> {
+    let (at, _) = num_unit.char_indices().next_back()?;
+    (at > 0).then(|| num_unit.split_at(at))
 }
 
 /// Shift a `YYYY-MM-DD` date string by a recurrence interval once from
@@ -333,19 +340,18 @@ fn classify_rejected_interval(interval: &str) -> RepeatRuleProblem {
     if num_unit != interval && matches!(num_unit, "daily" | "weekly" | "monthly" | "yearly") {
         return RepeatRuleProblem::KeywordWithPlus;
     }
-    if num_unit.len() >= 2 {
-        // Same split the parser uses; only the count is inspected here —
-        // if it parses, the trailing unit letter is by elimination what
-        // `try_shift_date_once` rejected.
-        let (num_str, _unit) = num_unit.split_at(num_unit.len() - 1);
-        if let Ok(n) = num_str.parse::<i64>() {
-            return if n <= 0 {
-                RepeatRuleProblem::NonPositiveCount
-            } else {
-                // The count is fine, so the unit is what the parser choked on.
-                RepeatRuleProblem::UnknownUnit
-            };
-        }
+    // The parser's own split; only the count is inspected here — if it
+    // parses, the trailing unit is by elimination what `try_shift_date_once`
+    // rejected.
+    if let Some((num_str, _unit)) = split_count_unit(num_unit)
+        && let Ok(n) = num_str.parse::<i64>()
+    {
+        return if n <= 0 {
+            RepeatRuleProblem::NonPositiveCount
+        } else {
+            // The count is fine, so the unit is what the parser choked on.
+            RepeatRuleProblem::UnknownUnit
+        };
     }
     RepeatRuleProblem::Unparseable
 }
@@ -699,6 +705,11 @@ mod repeat_rule_shape_tests {
         "invalid",
         "++2weeks",
         "FREQ=DAILY",
+        // a last character wider than one byte (#5110)
+        "é",
+        "1é",
+        "+1é",
+        ".+1¶",
     ];
 
     /// The probe date in [`super::REPEAT_PROBE`] is only sound if the
@@ -779,6 +790,7 @@ mod repeat_rule_shape_tests {
             ("-1d", RepeatRuleProblem::NonPositiveCount),
             ("5x", RepeatRuleProblem::UnknownUnit),
             ("12q", RepeatRuleProblem::UnknownUnit),
+            ("5é", RepeatRuleProblem::UnknownUnit),
             ("3.5d", RepeatRuleProblem::Unparseable),
             ("++2weeks", RepeatRuleProblem::Unparseable),
             ("invalid", RepeatRuleProblem::Unparseable),
