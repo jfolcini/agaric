@@ -671,6 +671,72 @@ export async function setPageSourceLines(lines: SourceLine[]): Promise<void> {
   )
 }
 
+/** A place in the source buffer: `offset` characters into line `line`, both counted from 0. */
+export interface SourceSpot {
+  line: number
+  offset: number
+}
+
+/**
+ * Select `from` to `to` in the source buffer and send it a `type` clipboard
+ * event holding `data`, which the buffer's own cut, copy and paste handlers
+ * take; resolves to what the clipboard holds after. A plain `Event` carries a
+ * stand-in for the system clipboard, which WebKitGTK may refuse on a
+ * constructed `ClipboardEvent` (see `pasteFileIntoFocusedBlock`).
+ */
+export async function pageSourceClipboard(
+  type: 'cut' | 'copy' | 'paste',
+  from: SourceSpot,
+  to: SourceSpot = from,
+  data: Record<string, string> = {},
+): Promise<Record<string, string>> {
+  return browser.execute(
+    (
+      selector: string,
+      kind: string,
+      start: SourceSpot,
+      end: SourceSpot,
+      held: Record<string, string>,
+    ) => {
+      const dom = document.querySelector<
+        HTMLElement & {
+          editor?: {
+            state: { doc: { child: (index: number) => { nodeSize: number } } }
+            commands: { setTextSelection: (range: { from: number; to: number }) => boolean }
+          }
+        }
+      >(selector)
+      if (dom?.editor === undefined) throw new Error('pageSourceClipboard: no source editor')
+      const { doc } = dom.editor.state
+      const at = ({ line, offset }: SourceSpot): number => {
+        let pos = 1
+        for (let i = 0; i < line; i += 1) pos += doc.child(i).nodeSize
+        return pos + offset
+      }
+      dom.editor.commands.setTextSelection({ from: at(start), to: at(end) })
+      const store = new Map(Object.entries(held))
+      const clipboardData = {
+        getData: (format: string) => store.get(format) ?? '',
+        setData: (format: string, value: string) => {
+          store.set(format, value)
+        },
+        clearData: () => {
+          store.clear()
+        },
+      }
+      const event = new Event(kind, { bubbles: true, cancelable: true })
+      Object.defineProperty(event, 'clipboardData', { value: clipboardData })
+      dom.dispatchEvent(event)
+      return Object.fromEntries(store)
+    },
+    PAGE_SOURCE,
+    type,
+    from,
+    to,
+    data,
+  )
+}
+
 /** The source editor's button named `name`; the buffer sits in TipTap's own wrapper. */
 export function pageSourceButton(name: string) {
   return $(PAGE_SOURCE).parentElement().parentElement().$(`button=${name}`)

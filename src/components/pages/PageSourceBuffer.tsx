@@ -12,7 +12,7 @@ import { useEffect, useImperativeHandle, useState } from 'react'
 import {
   linesContent,
   readLines,
-  SOURCE_BUFFER_EXTENSIONS,
+  sourceBufferExtensions,
   type SourceLines,
 } from '@/editor/source-buffer'
 
@@ -25,6 +25,8 @@ export interface PageSourceBufferHandle {
 export interface PageSourceBufferProps {
   /** The lines the buffer opens with; a new buffer, by `key`, opens with others. */
   initial: SourceLines
+  /** The page's line ids as loaded: the only ids a paste or a drop brings in. */
+  pageIds: ReadonlyArray<string | null>
   readOnly: boolean
   label: string
   describedBy: string
@@ -37,6 +39,7 @@ export interface PageSourceBufferProps {
 
 export function PageSourceBuffer({
   initial,
+  pageIds,
   readOnly,
   label,
   describedBy,
@@ -48,7 +51,7 @@ export function PageSourceBuffer({
   // One options object for the editor's life: `useEditor` re-applies options
   // that change identity.
   const [options] = useState(() => ({
-    extensions: SOURCE_BUFFER_EXTENSIONS,
+    extensions: sourceBufferExtensions(pageIds),
     content: linesContent(initial),
     autofocus: 'start' as const,
     // Built in an effect: a lazily loaded editor built during render can be
