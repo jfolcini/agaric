@@ -1370,27 +1370,43 @@ export function pruneImageCollapse(): void {
 interface PageSourceDraft {
   base: string
   text: string
+  /**
+   * The id each line of `text` carries (#5160 phase 5); `null` for a draft an
+   * earlier version wrote, whose ids are `^ID` anchors in its text.
+   */
+  lineIds: Array<string | null> | null
+}
+
+function isLineIds(value: unknown): value is Array<string | null> {
+  return Array.isArray(value) && value.every((id) => id === null || typeof id === 'string')
 }
 
 function parsePageSourceDraft(raw: string): PageSourceDraft {
   const parsed: unknown = JSON.parse(raw)
   if (typeof parsed === 'object' && parsed !== null && 'base' in parsed && 'text' in parsed) {
     const { base, text } = parsed
-    if (typeof base === 'string' && typeof text === 'string') return { base, text }
+    const lineIds = 'lineIds' in parsed ? parsed.lineIds : null
+    if (
+      typeof base === 'string' &&
+      typeof text === 'string' &&
+      (lineIds === null || isLineIds(lineIds))
+    ) {
+      return { base, text, lineIds }
+    }
   }
   throw new Error('invalid page source draft')
 }
 
 /**
- * `agaric-page-source-draft:<pageId>` — source mode's unsaved buffer and the
- * source it was loaded from (#5140, `src/components/pages/PageSourceEditor.tsx`),
- * so a save of a restored draft still catches what changed since. Page-keyed;
- * `null` when there is none.
+ * `agaric-page-source-draft:<pageId>` — source mode's unsaved buffer, the id
+ * each of its lines carries, and the source it was loaded from (#5140,
+ * `src/components/pages/PageSourceEditor.tsx`), so a save of a restored draft
+ * still catches what changed since. Page-keyed; `null` when there is none.
  */
 const PAGE_SOURCE_DRAFT_PREFERENCE: PreferenceDefinition<PageSourceDraft | null> = {
   key: 'agaric-page-source-draft',
   scope: 'page',
-  version: 1,
+  version: 2,
   defaultValue: null,
   parse: parsePageSourceDraft,
   serialize: jsonSerialize<PageSourceDraft | null>,

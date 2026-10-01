@@ -18,9 +18,12 @@ import {
   navigateTo,
   openNewPage,
   openPageSource,
+  pageSourceButton,
+  pageSourceLines,
+  pageSourceText,
   reopenPageByTitle,
   runScopedMarker,
-  setPageSource,
+  setPageSourceLines,
   typeMarkerVerified,
   waitForAppReady,
 } from './helpers'
@@ -59,10 +62,12 @@ describe('Agaric real-backend labelled link (#5160 D9)', () => {
     expect(await chipWith(LABEL).getAttribute('title')).toBe(TARGET)
 
     const source = await openPageSource([MARKER])
-    const base = await source.getValue()
-    expect(base).toContain(`[[${TARGET}|${LABEL}]]`)
-    await setPageSource(base.replace(`|${LABEL}]]`, `|${EDITED}]]`))
-    const save = source.parentElement().$('button=Save')
+    const base = await pageSourceLines()
+    expect(await pageSourceText()).toContain(`[[${TARGET}|${LABEL}]]`)
+    await setPageSourceLines(
+      base.map(({ text, id }) => ({ id, text: text.replace(`|${LABEL}]]`, `|${EDITED}]]`) })),
+    )
+    const save = pageSourceButton('Save')
     await save.waitForClickable({ timeout: ACTION_TIMEOUT })
     await save.click()
     await source.waitForExist({

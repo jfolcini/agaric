@@ -59,7 +59,7 @@ Settings → Keyboard. Each entry shows its current binding and a "Record" butto
 | `Ctrl+Y` / `Ctrl+Shift+Z` | Redo |
 | `Ctrl+Shift+E` | Export current page as Markdown |
 | `Ctrl+S` / `Ctrl+Enter` | Save the *Edit as Markdown* buffer |
-| `Escape` (in *Edit as Markdown*) | Close the buffer, asking first when its text changed |
+| `Escape` (in *Edit as Markdown*) | Close the buffer, asking first when it changed |
 | `Ctrl+Space` | Toggle the focused block's selection |
 | `Ctrl+C` / `Ctrl+X` / `Ctrl+V` | Copy / cut / paste the selected blocks as a markdown outline, keeping their task state, priority, dates, list style and properties |
 

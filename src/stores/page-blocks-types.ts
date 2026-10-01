@@ -165,8 +165,9 @@ export interface PageBlockState {
   /**
    * #5140 — save the page edited as its source buffer, as one
    * `apply_page_source` command and one undo entry, then reload the tree.
-   * `baseSource` is the buffer as loaded; `force` keeps anchors the page no
-   * longer holds as new blocks; `merge` folds in what changed on the page
+   * `source` is the buffer's text and `lineIds` the block id each of its lines
+   * carries (#5160 A); `baseSource` is the `source` of the `get_page_buffer`
+   * the buffer was loaded from; `merge` folds in what changed on the page
    * since `baseSource` instead of refusing a stale base. Rejects with the
    * backend's error untouched (no toast), so the caller can tell a stale base
    * (`RequiresRefresh`) from a buffer it must fix.
@@ -176,6 +177,7 @@ export interface PageBlockState {
     baseSource: string,
     force: boolean,
     merge: boolean,
+    lineIds: Array<string | null>,
   ) => Promise<PageSourceReport>
 
   /**

@@ -2,10 +2,10 @@
 // Real-backend source mode (#5140 Phase 4b).
 //
 // The page kebab's "Edit as Markdown" swaps the block tree for the page's
-// markdown buffer (`get_page_source`), and Save writes the whole buffer back
+// markdown buffer (`get_page_buffer`), and Save writes the whole buffer back
 // through `apply_page_source`. One save here reorders two blocks, edits one
 // and deletes one; the re-opened page must hold exactly that, with the edited
-// block keeping its id through its `^ID` anchor. The Playwright twin
+// block keeping its id through the id its line carries. The Playwright twin
 // (`e2e/page-source-edit.spec.ts`) runs against the mock.
 //
 // Globals (`$`, `$$`, `browser`, `expect`) come from @wdio/globals — see
@@ -19,9 +19,12 @@ import {
   navigateTo,
   openNewPage,
   openPageSource,
+  pageSourceButton,
+  pageSourceLines,
   reopenPageByTitle,
   runScopedMarker,
-  setPageSource,
+  type SourceLine,
+  setPageSourceLines,
   typeMarkerVerified,
   waitForAppReady,
 } from './helpers'
@@ -69,16 +72,23 @@ describe('Agaric real-backend source mode (#5140 Phase 4b)', () => {
 
     const source = await openPageSource([FIRST, SECOND, THIRD])
 
-    // Each block is its bullet line and the lines under it, anchor included.
-    const base = await source.getValue()
-    const blocks = base.trimEnd().split(/\n(?=[ \t]*- )/)
-    const blockWith = (marker: string): string => {
-      const block = blocks.find((b) => b.includes(marker))
-      if (block === undefined) throw new Error(`no block holds ${marker} in ${base}`)
+    // Each block is the line carrying its id and the lines under it.
+    const blocks: SourceLine[][] = []
+    for (const line of await pageSourceLines()) {
+      if (line.id !== null) blocks.push([line])
+      else if (line.text !== '') blocks.at(-1)?.push(line)
+    }
+    const blockWith = (marker: string): SourceLine[] => {
+      const block = blocks.find((lines) => lines.some((line) => line.text.includes(marker)))
+      if (block === undefined) throw new Error(`no block holds ${marker}`)
       return block
     }
-    await setPageSource(`${blockWith(THIRD)}\n${blockWith(FIRST).replace(FIRST, EDITED)}\n`)
-    const save = source.parentElement().$('button=Save')
+    await setPageSourceLines([
+      ...blockWith(THIRD),
+      ...blockWith(FIRST).map(({ text, id }) => ({ id, text: text.replace(FIRST, EDITED) })),
+      { text: '', id: null },
+    ])
+    const save = pageSourceButton('Save')
     await save.waitForClickable({ timeout: ACTION_TIMEOUT })
     await save.click()
     await source.waitForExist({
