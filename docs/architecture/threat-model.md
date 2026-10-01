@@ -267,9 +267,9 @@ The shape is intentionally narrative, not GSN-formal: the threat model above is 
 
 - [`ci-and-tooling.md` §Advisory handling — three concentric rings](ci-and-tooling.md#advisory-handling--three-concentric-rings) documents the policy.
 - `cargo-deny` runs on every PR via the prek hook suite in `_validate.yml`'s `lint` job; `cargo audit` runs in the same job.
-- [`.nsprc`](../../.nsprc) gives every npm advisory waiver an `expiresOn` date; these are the time-boxed exceptions.
+- [`.nsprc`](../../.nsprc) gives every npm advisory waiver an `expiry` date; these are the time-boxed exceptions.
 - `src-tauri/deny.toml` `[advisories].ignore` entries each carry a `reason`. The GTK3 bindings batch documents an upstream-release revisit trigger and the `quick-xml` entries cite tracking issue `#2310`; several other current entries have no explicit trigger and none has an automatic expiry.
-- The Scorecard `Vulnerabilities` score-vs-policy gap (RUSTSEC noise from atk/gtk3 transitives via `wry → tauri`) auto-recovers when upstream finishes the gtk4 migration.
+- The Scorecard `Vulnerabilities` check sees the same waivers: `scripts/sync-audit-from-deny.mjs` generates the `osv-scanner.toml` files its scanner reads from `deny.toml` and `.nsprc` (#5207).
 
 ### How this is maintained
 

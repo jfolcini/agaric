@@ -2323,17 +2323,19 @@ stages = ["pre-commit"]
 # `deny.toml` or `audit.toml` and fails if the working copy of
 # audit.toml is out of sync — telling the author to run
 # `node scripts/sync-audit-from-deny.mjs`. `deny.toml` stays the
-# single source of truth; `audit.toml` is generated.
+# single source of truth; `audit.toml` is generated. The same script
+# and check cover the `osv-scanner.toml` files Scorecard reads (#5207),
+# generated from `deny.toml` and `.nsprc`.
 # WHY: audit.toml drifting from deny.toml silently narrows what is actually audited — config-pair drift
 [[repos]]
 repo = "local"
 [[repos.hooks]]
 id = "audit-toml-in-sync"
-name = "audit.toml in sync with deny.toml"
+name = "audit.toml and osv-scanner.toml in sync with deny.toml and .nsprc"
 entry = "node scripts/sync-audit-from-deny.mjs --check"
 language = "system"
 pass_filenames = false
-files = "^src-tauri/(deny\\.toml|\\.cargo/audit\\.toml)$"
+files = "^(\\.nsprc|osv-scanner\\.toml|src-tauri/(deny\\.toml|\\.cargo/audit\\.toml|osv-scanner\\.toml|fuzz/osv-scanner\\.toml))$"
 stages = ["manual"]
 
 # Rust: unsafe-code allowlist. Workspace lint is
