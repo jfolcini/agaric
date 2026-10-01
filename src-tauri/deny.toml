@@ -35,8 +35,9 @@ feature-depth = 1
 # These are still flagged by `cargo audit` / OSV / Scorecard (full-lockfile scan),
 # so the entries MUST stay despite the cosmetic cargo-deny warning. Do NOT delete
 # them on the strength of `advisory-not-detected` alone — confirm with
-# `cargo audit` (target-agnostic) first. `.cargo/audit.toml` is generated from this
-# list (run `node scripts/sync-audit-from-deny.mjs` after any edit here).
+# `cargo audit` (target-agnostic) first. `.cargo/audit.toml` and the `osv-scanner.toml`
+# files Scorecard reads are generated from this list (run
+# `node scripts/sync-audit-from-deny.mjs` after any edit here).
 [advisories]
 ignore = [
     # GTK3 bindings — unmaintained, but required by Tauri on Linux (no alternative)
@@ -85,6 +86,7 @@ ignore = [
     { id = "RUSTSEC-2026-0248", reason = "im is unmaintained with no patched release; transitive only through pinned Loro 1.13.6 (#3161)" },
     { id = "RUSTSEC-2026-0251", reason = "sized-chunks is unmaintained with no patched release; transitive only through pinned Loro 1.13.6's im stack (#3161)" },
     { id = "RUSTSEC-2023-0126", reason = "im::OrdSet insertion is unsound, but Loro 1.13.6 production code uses im::HashMap and contains no OrdSet use; blocked on upstream replacing im (#3161)" },
+    { id = "RUSTSEC-2026-0255", reason = "sized-chunks double-drops when an element Drop panics inside clear/drop_left/drop_right; no patched release, transitive only through pinned Loro 1.13.6's im stack (#3161); shipped builds use the release profile's panic = abort, so that panic ends the process before the second free" },
     # NOTE: RUSTSEC-2023-0071 (rsa Marvin Attack, via sqlx-mysql) was removed here
     # In /#145 — current sqlx (0.8.x) no longer pulls the `rsa` crate at all
     # (absent from Cargo.lock), so the advisory is no longer reachable from any
