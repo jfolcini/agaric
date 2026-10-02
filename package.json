@@ -162,6 +162,7 @@
     "vitest-axe": "^0.1.0"
   },
   "overrides": {
+    "basic-ftp": "^6.2.1",
     "deepmerge-ts": "^8.0.1",
     "highlight.js": "^11.12.0",
     "js-yaml": "^4.2.0",
