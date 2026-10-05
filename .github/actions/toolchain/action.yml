@@ -67,13 +67,12 @@ runs:
 
     - name: Install Rust toolchain
       if: inputs.rust == 'true'
-      uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067 # v1
+      uses: ./.github/actions/rust-toolchain
       with:
         # #640: exact pin, kept in lockstep with rust-toolchain.toml and
-        # src-tauri/Cargo.toml `rust-version`. Without it this SHA-pinned
-        # action installs the floating latest stable.
+        # src-tauri/Cargo.toml `rust-version`.
         toolchain: 1.95.0
-        # dtolnay installs `--profile minimal`, which ships neither component;
+        # The install is `--profile minimal`, which ships neither component;
         # the cargo-fmt / clippy prek hooks need both.
         components: clippy,rustfmt
 

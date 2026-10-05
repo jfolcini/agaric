@@ -149,13 +149,11 @@ jobs:
           persist-credentials: false
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067 # v1
+        uses: ./.github/actions/rust-toolchain
         with:
           # #640: exact toolchain pin — keep in lockstep with
           # rust-toolchain.toml and src-tauri/Cargo.toml `rust-version`.
-          # Explicit here (not just rust-toolchain.toml) so the cross
-          # `targets` below land on the pinned toolchain, not on a
-          # floating latest-stable install.
+          # The cross `targets` below install onto this exact toolchain.
           toolchain: 1.95.0
           targets: ${{ matrix.target }}
 
@@ -1783,13 +1781,11 @@ jobs:
           df -h /
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067 # v1
+        uses: ./.github/actions/rust-toolchain
         with:
           # #640: exact toolchain pin — keep in lockstep with
           # rust-toolchain.toml and src-tauri/Cargo.toml `rust-version`.
-          # Explicit here (not just rust-toolchain.toml) so the cross
-          # `targets` below land on the pinned toolchain, not on a
-          # floating latest-stable install.
+          # The cross `targets` below install onto this exact toolchain.
           toolchain: 1.95.0
           targets: aarch64-linux-android
 

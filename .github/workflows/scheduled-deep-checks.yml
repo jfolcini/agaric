@@ -318,7 +318,7 @@ jobs:
           cp .cargo/config.toml.example .cargo/config.toml
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067 # v1
+        uses: ./.github/actions/rust-toolchain
         with:
           toolchain: 1.95.0
           components: clippy,rustfmt
@@ -417,7 +417,7 @@ jobs:
           cp .cargo/config.toml.example .cargo/config.toml
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067 # v1
+        uses: ./.github/actions/rust-toolchain
         with:
           toolchain: 1.95.0
 
@@ -729,7 +729,7 @@ jobs:
           cp .cargo/config.toml.example .cargo/config.toml
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067 # v1
+        uses: ./.github/actions/rust-toolchain
         with:
           toolchain: 1.95.0
 
@@ -1081,7 +1081,7 @@ jobs:
           cp .cargo/config.toml.example .cargo/config.toml
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067 # v1
+        uses: ./.github/actions/rust-toolchain
         with:
           toolchain: 1.95.0
 
@@ -2210,7 +2210,7 @@ jobs:
         # cargo-fuzz requires nightly for the libFuzzer sanitizer coverage
         # instrumentation (`-Z sanitizer`). The production toolchain stays
         # pinned at 1.95.0; only this lane uses nightly.
-        uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067 # v1
+        uses: ./.github/actions/rust-toolchain
         with:
           toolchain: nightly
 

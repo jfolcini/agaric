@@ -1,0 +1,44 @@
+name: Rust toolchain
+description: >-
+  `rustup toolchain install` + `rustup default` for an exact toolchain, using
+  the rustup every GitHub-hosted image already ships. It replaces
+  dtolnay/rust-toolchain, whose `v1` tag moves under the SHA pin: each move
+  failed zizmor's `ref-version-mismatch` audit until someone re-pinned by hand
+  (#3434, #4502, #5116, #5230).
+
+inputs:
+  toolchain:
+    description: >-
+      Exact toolchain, kept in lockstep with rust-toolchain.toml and
+      src-tauri/Cargo.toml `rust-version` (#640), or `nightly`.
+    required: true
+  components:
+    description: Comma-separated rustup components, e.g. `clippy,rustfmt`.
+    required: false
+    default: ''
+  targets:
+    description: Comma-separated extra compilation targets.
+    required: false
+    default: ''
+
+runs:
+  using: composite
+  steps:
+    - name: rustup toolchain install ${{ inputs.toolchain }}
+      shell: bash
+      env:
+        TOOLCHAIN: ${{ inputs.toolchain }}
+        COMPONENTS: ${{ inputs.components }}
+        TARGETS: ${{ inputs.targets }}
+      run: |
+        set -euo pipefail
+        args=(--profile minimal --no-self-update)
+        for c in ${COMPONENTS//,/ }; do args+=(--component "$c"); done
+        for t in ${TARGETS//,/ }; do args+=(--target "$t"); done
+        rustup toolchain install "$TOOLCHAIN" "${args[@]}"
+        rustup default "$TOOLCHAIN"
+        # The replaced action's environment: no incremental artefacts in the
+        # rust-cache entries, coloured cargo logs. A workflow's own value wins.
+        [ -n "${CARGO_INCREMENTAL+set}" ] || echo CARGO_INCREMENTAL=0 >> "$GITHUB_ENV"
+        [ -n "${CARGO_TERM_COLOR+set}" ] || echo CARGO_TERM_COLOR=always >> "$GITHUB_ENV"
+        rustc "+$TOOLCHAIN" --version --verbose
