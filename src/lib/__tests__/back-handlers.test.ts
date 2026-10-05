@@ -28,6 +28,7 @@ function resetStores() {
     currentView: 'journal',
     currentViewBySpace: {},
     selectedBlockId: null,
+    navHistoryBySpace: {},
   })
   useTabsStore.setState({
     tabs: [{ id: '0', pageStack: [], label: '' }],
@@ -220,6 +221,17 @@ describe('navigationBackHandler', () => {
 
     expect(navigationBackHandler()).toBe(true)
     expect(useNavigationStore.getState().currentView).toBe('journal')
+  })
+
+  // The gesture and the header's Back button walk the same history.
+  it('walks the Back history before the fallback rules', async () => {
+    useNavigationStore.getState().setView('settings')
+    await Promise.resolve()
+    useNavigationStore.getState().setView('pages')
+    await Promise.resolve()
+
+    expect(navigationBackHandler()).toBe(true)
+    expect(useNavigationStore.getState().currentView).toBe('settings')
   })
 
   it('declines at the journal root so the caller can exit', () => {

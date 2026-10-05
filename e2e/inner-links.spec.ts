@@ -107,7 +107,7 @@ test.describe('Inner links — navigation', () => {
       page.locator('[aria-label="Page title"]', { hasText: 'Quick Notes' }),
     ).toBeVisible()
 
-    await page.getByRole('button', { name: 'Go back' }).click()
+    await page.getByRole('button', { name: 'Back', exact: true }).click()
     await expect(
       page.locator('[aria-label="Page title"]', { hasText: 'Getting Started' }),
     ).toBeVisible()
@@ -144,13 +144,13 @@ test.describe('Inner links — navigation', () => {
     ).toBeVisible()
 
     // Back to Quick Notes
-    await page.getByRole('button', { name: 'Go back' }).click()
+    await page.getByRole('button', { name: 'Back', exact: true }).click()
     await expect(
       page.locator('[aria-label="Page title"]', { hasText: 'Quick Notes' }),
     ).toBeVisible()
 
     // Back to first Getting Started
-    await page.getByRole('button', { name: 'Go back' }).click()
+    await page.getByRole('button', { name: 'Back', exact: true }).click()
     await expect(
       page.locator('[aria-label="Page title"]', { hasText: 'Getting Started' }),
     ).toBeVisible()

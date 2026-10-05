@@ -7,6 +7,7 @@
  */
 
 import { useNavigationStore } from '@/stores/navigation'
+import { canNavigateBack, navigateBack } from '@/stores/navigation-history'
 import { exitViewForTab, useTabsStore } from '@/stores/tabs'
 
 /**
@@ -68,8 +69,10 @@ export function overlayBackHandler(): boolean {
 }
 
 /**
- * Step 3 — in-app navigation. Mirrors Android's "progressive collapse to
- * the start destination" convention:
+ * Step 3 — in-app navigation. Walks the header's Back history first, so the
+ * gesture and the ← button agree. With nothing left to go back to (a fresh
+ * launch), it falls back to Android's "progressive collapse to the start
+ * destination" convention:
  *
  *  - `page-editor` with a non-empty page stack → `useTabsStore.goBack()`
  *    (pops the stack; closes the tab / returns to the view the stack was
@@ -88,6 +91,10 @@ export function overlayBackHandler(): boolean {
  * that declines.
  */
 export function navigationBackHandler(): boolean {
+  if (canNavigateBack()) {
+    navigateBack()
+    return true
+  }
   const nav = useNavigationStore.getState()
   if (nav.currentView === 'page-editor') {
     const tabsState = useTabsStore.getState()

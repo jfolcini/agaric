@@ -70,17 +70,21 @@ describe('JournalControls', () => {
     expect(screen.getByRole('tab', { name: /agenda view/i })).toBeInTheDocument()
   })
 
-  it('gives each compact single-letter tab a native title with the full mode name', () => {
-    // #2281 — below 480px each tab collapses to its initial glyph (D/W/M/S/A).
-    // A native `title` on that glyph surfaces the full mode name on hover so a
-    // sighted user can disambiguate; the tab's aria-label already covers AT.
+  // Below lg the five tabs give way to one menu button, which is what leaves
+  // the phone row room for Back / Forward and a readable date.
+  it('below lg the mode tabs give way to a menu that switches mode', async () => {
+    const user = userEvent.setup()
     render(<JournalControls />)
-    const streamTab = screen.getByRole('tab', { name: /stream view/i })
-    const glyph = streamTab.querySelector('[title]')
-    expect(glyph).not.toBeNull()
-    // Title mirrors the tab's accessible name (the computed ariaLabels[m]).
-    expect(glyph?.getAttribute('title')).toBe(streamTab.getAttribute('aria-label'))
-    expect(glyph).toHaveTextContent('S')
+
+    expect(screen.getByRole('tablist').className).toContain('max-lg:hidden')
+    const trigger = screen.getByRole('button', { name: 'Journal view mode: Day' })
+    expect(trigger.className).toContain('lg:hidden')
+
+    await user.click(trigger)
+    await user.click(await screen.findByRole('button', { name: 'Week' }))
+
+    expect(useJournalStore.getState().mode).toBe('weekly')
+    expect(screen.getByRole('button', { name: 'Journal view mode: Week' })).toBeInTheDocument()
   })
 
   it('marks the active mode tab aria-selected', () => {
@@ -250,30 +254,6 @@ describe('JournalControls', () => {
     expect(dateDisplay.className).not.toMatch(/(?:^|\s)min-w-\[100px\]/)
   })
 
-  // PEND journal-header-responsive: under ~480 px the visible mode-tab text
-  // collapses to its first letter (D/W/M/A); the full word stays on aria-label
-  // and the longform span is hidden via `[@media(min-width:480px)]:` variants.
-  // We assert the two spans co-exist with mutually exclusive visibility
-  // classes so visual width shrinks while the accessible name is unchanged.
-  it('mode-tab labels include both full and single-letter spans for xs collapse', () => {
-    render(<JournalControls />)
-
-    const dailyTab = screen.getByRole('tab', { name: /daily view/i })
-    // Full word visible at >=480px, hidden below.
-    const fullSpan = dailyTab.querySelector('span.hidden')
-    // Single letter visible below 480px, hidden above.
-    const compactSpan = dailyTab.querySelector(
-      'span.\\[\\@media\\(min-width\\:480px\\)\\]\\:hidden',
-    )
-
-    expect(fullSpan).not.toBeNull()
-    expect(compactSpan).not.toBeNull()
-    expect(fullSpan?.className).toContain('[@media(min-width:480px)]:inline')
-    expect(compactSpan?.textContent).toBe('D')
-    // Accessible name still uses the long form via aria-label.
-    expect(dailyTab).toHaveAttribute('aria-label', expect.stringMatching(/daily view/i))
-  })
-
   // The header root used to be `flex-col sm:flex-row`, which — nested inside
   // the App header's own below-sm stack — gave a phone THREE rows: mode tabs,
   // date stepper, then the search trigger alone. It is now a single row at
@@ -295,16 +275,11 @@ describe('JournalControls', () => {
   })
 
   // The row fits at 360px only because every control except the date is a
-  // fixed, phone-sized width. Pin the three levers that buy the space; losing
-  // any one of them re-overflows the row (and fails the e2e overflow sweep).
-  it('phone width shrinks the tabs and the date stepper to fixed compact widths', () => {
+  // fixed, phone-sized width (the mode tabs are a menu there, see above).
+  // Losing either lever re-overflows the row (and fails the e2e overflow
+  // sweep).
+  it('phone width shrinks the date stepper to fixed compact widths', () => {
     render(<JournalControls />)
-
-    // Mode tabs: 24px wide below sm (the `xs` size's coarse-pointer `px-3`
-    // made them 31-35px, i.e. 174px for the five of them).
-    const dailyTab = screen.getByRole('tab', { name: /daily view/i })
-    expect(dailyTab.className).toContain('max-sm:w-6!')
-    expect(dailyTab.className).toContain('max-sm:px-0!')
 
     // Prev/next: 24px wide below sm, 44px tall as before.
     for (const name of [/previous day/i, /next day/i]) {
