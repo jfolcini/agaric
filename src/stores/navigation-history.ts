@@ -42,7 +42,7 @@ function periodStart(mode: JournalMode, date: Date): string {
 }
 
 /** Where the user is now, or `null` for the page editor with nothing open. */
-export function currentNavLocation(): NavLocation | null {
+function currentNavLocation(): NavLocation | null {
   const view = useNavigationStore.getState().currentView
   if (view === 'journal') {
     const { mode, currentDate } = useJournalStore.getState()
@@ -122,12 +122,21 @@ function replayPage(loc: Extract<NavLocation, { kind: 'page' }>): void {
   const tabIndex = tabsStore.tabs.findIndex((tab) => tab.id === loc.tabId)
   if (tabIndex !== -1) tabsStore.switchTab(tabIndex)
   const { tabs, activeTabIndex } = useTabsStore.getState()
-  if (tabs[activeTabIndex]?.pageStack.at(-1)?.pageId === loc.pageId) {
+  const stack = tabs[activeTabIndex]?.pageStack ?? []
+  if (stack.at(-1)?.pageId === loc.pageId) {
     useNavigationStore.getState().setView('page-editor')
     return
   }
-  // The page was since renamed, or its tab closed: open it in the active tab
-  // under the title the app knows now.
+  // Back to the page below the top pops, as the tab's own Back does; pushing
+  // would grow the stack, and reorder the recents, on every step.
+  if (stack.at(-2)?.pageId === loc.pageId) {
+    useTabsStore.getState().goBack()
+    useNavigationStore.getState().setView('page-editor')
+    return
+  }
+  // Forward to a page Back popped, a page deeper in the stack, or one whose
+  // tab was closed: open it in the active tab, under its current title in
+  // case it was renamed since.
   const resolve = useResolveStore.getState()
   const title = resolve.has(loc.pageId) ? resolve.resolveTitle(loc.pageId) : loc.title
   useTabsStore.getState().navigateToPage(loc.pageId, title)

@@ -3,7 +3,7 @@ import { useEffect, useRef } from 'react'
 import { unwrap } from '@/lib/app-error'
 import { commands } from '@/lib/bindings'
 import { formatDate } from '@/lib/date-utils'
-import { getShortcutKeys } from '@/lib/keyboard-config'
+import { getShortcutKeys, isEditableTarget } from '@/lib/keyboard-config'
 
 interface UseJournalAutoCreateOptions {
   loading: boolean
@@ -76,9 +76,7 @@ export function useJournalAutoCreate({
       if (spaceId == null) return
       const dateStr = formatDate(currentDate)
       if (createdPages.has(dateStr)) return
-      const target = e.target as HTMLElement
-      if (target.isContentEditable || target.tagName === 'INPUT' || target.tagName === 'TEXTAREA')
-        return
+      if (isEditableTarget(e.target)) return
       const createKeys = getShortcutKeys('createJournalBlock')
         .split('/')
         .map((k) => k.trim().toLowerCase())

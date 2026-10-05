@@ -89,3 +89,10 @@ function matchesSingleBinding(
   const matchAlt = altGrLayoutShift ? true : e.altKey === parsed.alt
   return matchCtrl && matchShift && matchAlt && normalizedEventKey === normalizedKey
 }
+
+/** True when a keystroke on `target` is typing into an input, textarea or contenteditable. */
+export function isEditableTarget(target: EventTarget | null): boolean {
+  const el = target as HTMLElement | null
+  if (!el) return false
+  return el.isContentEditable || el.tagName === 'INPUT' || el.tagName === 'TEXTAREA'
+}

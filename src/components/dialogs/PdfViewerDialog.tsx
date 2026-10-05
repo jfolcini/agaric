@@ -37,6 +37,7 @@ import { Button } from '@/components/ui/button'
 import { useDialogOrSheet } from '@/hooks/useDialogOrSheet'
 import { unwrap } from '@/lib/app-error'
 import { commands } from '@/lib/bindings'
+import { isEditableTarget } from '@/lib/keyboard-config'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
 
@@ -386,13 +387,8 @@ export function PdfViewerDialog({
       // Skip if a modifier key is held (avoids hijacking browser/OS shortcuts)
       if (e.ctrlKey || e.metaKey || e.altKey) return
 
-      // Defensive: don't trigger when focus is in an input/textarea/contenteditable
-      // (the annotation editor's FreeText field is contenteditable).
-      const target = e.target as HTMLElement | null
-      if (target) {
-        const tag = target.tagName
-        if (tag === 'INPUT' || tag === 'TEXTAREA' || target.isContentEditable) return
-      }
+      // The annotation editor's FreeText field is contenteditable.
+      if (isEditableTarget(e.target)) return
 
       switch (e.key) {
         case 'ArrowLeft':

@@ -14,7 +14,7 @@ import { type ZoomBehavior, zoom, zoomIdentity } from 'd3-zoom'
 
 import { applyGraphForces, applyResizeForces, RESIZE_ALPHA } from '@/lib/graph-forces'
 import type { GraphEdge, GraphNode } from '@/lib/graph-types'
-import { matchesShortcutBinding } from '@/lib/keyboard-config'
+import { isEditableTarget, matchesShortcutBinding } from '@/lib/keyboard-config'
 import { logger } from '@/lib/logger'
 import { shouldReduceMotion } from '@/lib/preferences'
 import type { NodePosition, WorkerOutboundMessage } from '@/workers/graph-worker-types'
@@ -388,13 +388,6 @@ export function setupZoomBehavior(
   svgSel.call(zoomBehavior)
   svg.setAttribute('tabindex', '0')
   return zoomBehavior
-}
-
-function isEditableTarget(target: EventTarget | null): boolean {
-  const el = target as HTMLElement | null
-  if (!el) return false
-  if (el.isContentEditable) return true
-  return el.tagName === 'INPUT' || el.tagName === 'TEXTAREA'
 }
 
 export function createZoomKeyHandler(

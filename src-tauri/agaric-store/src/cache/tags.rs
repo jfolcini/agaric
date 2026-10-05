@@ -353,6 +353,9 @@ async fn next_desired_winner(
     seen: &mut HashSet<(Option<String>, String)>,
 ) -> Result<Option<TagRow>, AppError> {
     while let Some(row) = stream.try_next().await? {
+        // Load-bearing for unscoped tags: SQLite treats NULLs as distinct, so
+        // `UNIQUE (space_id, name)` never rejects two `space_id IS NULL` rows
+        // with one name; only this dedup keeps them to one row per name.
         if seen.insert((row.3.clone(), normalize_tag_name(&row.1))) {
             return Ok(Some(row));
         }

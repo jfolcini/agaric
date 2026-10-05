@@ -21,7 +21,7 @@ import { unwrap } from '@/lib/app-error'
 import { commands } from '@/lib/bindings'
 import { readText, writeText } from '@/lib/clipboard'
 import { t } from '@/lib/i18n'
-import { matchesShortcutBinding } from '@/lib/keyboard-config'
+import { isEditableTarget, matchesShortcutBinding } from '@/lib/keyboard-config'
 import {
   clearTreeInteractionIfHolder,
   isLastInteractedTree,
@@ -116,13 +116,6 @@ async function copySelection(ids: string[]): Promise<boolean> {
   return true
 }
 
-/** Ctrl+A in an input or contenteditable (e.g. the page title) selects its own text. */
-function isTextField(target: EventTarget | null): boolean {
-  const el = target as HTMLElement | null
-  if (!el) return false
-  return el.isContentEditable || el.tagName === 'INPUT' || el.tagName === 'TEXTAREA'
-}
-
 export function useBlockTreeKeyboardShortcuts(options: UseBlockTreeKeyboardShortcutsOptions): void {
   const {
     focusedBlockId,
@@ -187,12 +180,13 @@ export function useBlockTreeKeyboardShortcuts(options: UseBlockTreeKeyboardShort
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       // `selectAllBlocks` (Ctrl/Cmd+A by default) — select all blocks (only
-      // when not editing). Routed through matchesShortcutBinding (#724).
+      // when not editing; in a text field such as the page title it selects
+      // that field's text). Routed through matchesShortcutBinding (#724).
       if (
         !e.defaultPrevented &&
         matchesShortcutBinding(e, 'selectAllBlocks') &&
         !focusedBlockId &&
-        !isTextField(e.target) &&
+        !isEditableTarget(e.target) &&
         isLastInteractedTree(pageStore)
       ) {
         e.preventDefault()

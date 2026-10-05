@@ -9,7 +9,7 @@
 export type { ShortcutBinding } from '@/lib/keyboard-config/catalog'
 export { DEFAULT_SHORTCUTS } from '@/lib/keyboard-config/catalog'
 export { formatChordTokens } from '@/lib/keyboard-config/format-chord'
-export { matchesShortcutBinding } from '@/lib/keyboard-config/match'
+export { isEditableTarget, matchesShortcutBinding } from '@/lib/keyboard-config/match'
 export type { ParsedChord } from '@/lib/keyboard-config/parse'
 export {
   formatParsedChord,
