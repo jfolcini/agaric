@@ -316,6 +316,21 @@ test.describe('Property definitions view', () => {
     await expect(settingsPanel.locator('ul li', { hasText: 'mood' })).toBeVisible()
   })
 
+  // The type Select's default `w-full` used to take the whole row and squeeze
+  // the key input to ~24px, too narrow to show its placeholder.
+  test('the create row gives the key input more room than the type select', async ({ page }) => {
+    await page
+      .locator('[data-slot="sidebar"]')
+      .getByRole('button', { name: 'Settings', exact: true })
+      .click()
+    await page.getByRole('tab', { name: 'Properties' }).click()
+
+    const settingsPanel = page.locator('[data-testid="settings-panel-properties"]')
+    const keyBox = await settingsPanel.getByLabel('Property key').boundingBox()
+    const typeBox = await settingsPanel.getByRole('combobox', { name: 'Type' }).boundingBox()
+    expect(keyBox?.width ?? 0).toBeGreaterThan(typeBox?.width ?? 0)
+  })
+
   test('deleting a property definition with confirmation removes it', async ({ page }) => {
     // Properties live under Settings → Properties tab (the old sidebar
     // Properties item was merged into Settings).

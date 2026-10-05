@@ -1406,9 +1406,9 @@ describe('App', () => {
       })
     })
 
-    // #1740 — Trash is a tool/admin view; the jump-to-journal date trio is
-    // off-context there and must NOT be rendered in its header.
-    it('does NOT show Today button in trash view', async () => {
+    // Today is on every header; on a tool/admin view like Trash the rest of
+    // the date trio is off-context and stays out (#1740).
+    it('shows Today but not the calendar in trash view', async () => {
       useNavigationStore.setState({
         currentView: 'trash',
         selectedBlockId: null,
@@ -1421,7 +1421,10 @@ describe('App', () => {
       await waitFor(() => {
         expect(screen.getByText(t('trash.emptyMessage'))).toBeInTheDocument()
       })
-      expect(screen.queryByRole('button', { name: /today/i })).not.toBeInTheDocument()
+      expect(screen.getByRole('button', { name: /go to today/i })).toBeInTheDocument()
+      expect(
+        screen.queryByRole('button', { name: /open calendar picker/i }),
+      ).not.toBeInTheDocument()
     })
   })
 

@@ -227,7 +227,7 @@ export function PropertyDefinitionsList(): React.ReactElement {
         />
         <Select value={newType} onValueChange={setNewType}>
           <SelectTrigger
-            className="rounded-md border bg-background px-3 py-2 text-sm"
+            className="rounded-md border bg-background px-3 py-2 text-sm sm:w-36"
             aria-label={t('propertiesView.createType')}
           >
             <SelectValue />
