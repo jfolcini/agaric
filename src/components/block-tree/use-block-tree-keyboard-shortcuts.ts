@@ -116,6 +116,13 @@ async function copySelection(ids: string[]): Promise<boolean> {
   return true
 }
 
+/** Ctrl+A in an input or contenteditable (e.g. the page title) selects its own text. */
+function isTextField(target: EventTarget | null): boolean {
+  const el = target as HTMLElement | null
+  if (!el) return false
+  return el.isContentEditable || el.tagName === 'INPUT' || el.tagName === 'TEXTAREA'
+}
+
 export function useBlockTreeKeyboardShortcuts(options: UseBlockTreeKeyboardShortcutsOptions): void {
   const {
     focusedBlockId,
@@ -185,6 +192,7 @@ export function useBlockTreeKeyboardShortcuts(options: UseBlockTreeKeyboardShort
         !e.defaultPrevented &&
         matchesShortcutBinding(e, 'selectAllBlocks') &&
         !focusedBlockId &&
+        !isTextField(e.target) &&
         isLastInteractedTree(pageStore)
       ) {
         e.preventDefault()

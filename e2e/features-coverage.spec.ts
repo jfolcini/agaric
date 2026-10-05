@@ -124,8 +124,8 @@ test.describe('Page editor', () => {
     // Press Enter to blur the title (triggers save)
     await page.keyboard.press('Enter')
 
-    // Verify the title changed
-    await expect(titleEl).toContainText('Renamed Page')
+    // Exact text: Ctrl+A must select the title, not every block on the page.
+    await expect(titleEl).toHaveText('Renamed Page')
   })
 
   test('Add block button creates a new block in page', async ({ page }) => {
