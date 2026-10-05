@@ -26,7 +26,7 @@ import { announce } from '@/lib/announcer'
 import { unwrap } from '@/lib/app-error'
 import { commands } from '@/lib/bindings'
 import { t as translate } from '@/lib/i18n'
-import { matchesShortcutBinding } from '@/lib/keyboard-config'
+import { isEditableTarget, matchesShortcutBinding } from '@/lib/keyboard-config'
 import { invalidateNameCaches } from '@/lib/name-change-bus'
 import { notify } from '@/lib/notify'
 import { useBlockStore } from '@/stores/blocks'
@@ -176,11 +176,7 @@ export function useUndoShortcuts(): void {
   const { t } = useTranslation()
   useEffect(() => {
     function handleKeyDown(e: KeyboardEvent) {
-      // Skip if inside contentEditable, input, or textarea
-      const target = e.target as HTMLElement
-      if (target.isContentEditable || target.tagName === 'INPUT' || target.tagName === 'TEXTAREA') {
-        return
-      }
+      if (isEditableTarget(e.target)) return
 
       // Skip while the roving block editor is mounted. A `data-editor-portal`
       // overlay (context menu, date picker) can hold DOM focus on a plain

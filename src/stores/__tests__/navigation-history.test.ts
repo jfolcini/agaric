@@ -10,6 +10,7 @@ import { beforeEach, describe, expect, it } from 'vitest'
 import { useJournalStore } from '@/stores/journal'
 import { MAX_NAV_HISTORY, selectNavHistory, useNavigationStore } from '@/stores/navigation'
 import { navigateBack, navigateForward } from '@/stores/navigation-history'
+import { useRecentPagesStore } from '@/stores/recent-pages'
 import { useResolveStore } from '@/stores/resolve'
 import { LEGACY_SPACE_KEY, useSpaceStore } from '@/stores/space'
 import { resetTabIdCounter, useTabsStore } from '@/stores/tabs'
@@ -142,6 +143,25 @@ describe('navigation history', () => {
     expect(tabs[activeTabIndex]?.id).toBe('0')
     expect(topPageId()).toBe('P1')
     expect(tabs).toHaveLength(2)
+  })
+
+  it('steps Back within one tab by popping its page stack', async () => {
+    useTabsStore.getState().navigateToPage('P1', 'One')
+    await settle()
+    useTabsStore.getState().navigateToPage('P2', 'Two')
+    await settle()
+    const recents = useRecentPagesStore.getState().recentPages.map((p) => p.pageId)
+
+    navigateBack()
+    await settle()
+    navigateForward()
+    await settle()
+    navigateBack()
+    await settle()
+
+    const { tabs, activeTabIndex } = useTabsStore.getState()
+    expect(tabs[activeTabIndex]?.pageStack.map((e) => e.pageId)).toEqual(['P1'])
+    expect(useRecentPagesStore.getState().recentPages.map((p) => p.pageId)).toEqual(recents)
   })
 
   it('reopens a page whose tab was closed without losing the Forward half', async () => {
