@@ -7,7 +7,7 @@
  */
 
 import { useNavigationStore } from '@/stores/navigation'
-import { canNavigateBack, navigateBack } from '@/stores/navigation-history'
+import { canNavigateBack, navigateBack, recordNextAsReplace } from '@/stores/navigation-history'
 import { exitViewForTab, useTabsStore } from '@/stores/tabs'
 
 /**
@@ -86,9 +86,10 @@ export function overlayBackHandler(): boolean {
  *    `journal` start destination.
  *  - `journal` → not handled (`false`): true root, the caller exits.
  *
- * The chain still terminates: the exit view is never `page-editor`, so the
- * next press falls into the non-`journal` → `journal` step and the one after
- * that declines.
+ * The chain still terminates: a fallback step replaces its history entry
+ * rather than pushing one, so it never gives Back an entry to return to; and
+ * the exit view is never `page-editor`, so the next press falls into the
+ * non-`journal` → `journal` step and the one after that declines.
  */
 export function navigationBackHandler(): boolean {
   if (canNavigateBack()) {
@@ -96,6 +97,8 @@ export function navigationBackHandler(): boolean {
     return true
   }
   const nav = useNavigationStore.getState()
+  if (nav.currentView === 'journal') return false
+  recordNextAsReplace()
   if (nav.currentView === 'page-editor') {
     const tabsState = useTabsStore.getState()
     const activeTab = tabsState.tabs[tabsState.activeTabIndex]
@@ -107,9 +110,6 @@ export function navigationBackHandler(): boolean {
     nav.setView(exitViewForTab(activeTab))
     return true
   }
-  if (nav.currentView !== 'journal') {
-    nav.setView('journal')
-    return true
-  }
-  return false
+  nav.setView('journal')
+  return true
 }

@@ -12,13 +12,16 @@ import { useTranslation } from 'react-i18next'
 
 import { IconButton } from '@/components/ui/icon-button'
 import { selectNavHistory, useNavigationStore } from '@/stores/navigation'
-import { navigateBack, navigateForward } from '@/stores/navigation-history'
+import { canStep, navigateBack, navigateForward } from '@/stores/navigation-history'
+import { useResolveStore } from '@/stores/resolve'
 import { LEGACY_SPACE_KEY, useSpaceStore } from '@/stores/space'
 
 export function HistoryNavButtons(): React.ReactElement {
   const { t } = useTranslation()
   const spaceKey = useSpaceStore((s) => s.currentSpaceId ?? LEGACY_SPACE_KEY)
-  const { entries, index } = useNavigationStore((s) => selectNavHistory(s, spaceKey))
+  const history = useNavigationStore((s) => selectNavHistory(s, spaceKey))
+  // Deleted pages are stepped over, so deleting one can leave an arrow with nowhere to go.
+  useResolveStore((s) => s.version)
 
   return (
     // `self-start` pins them beside the hamburger when a phone header wraps.
@@ -31,7 +34,7 @@ export function HistoryNavButtons(): React.ReactElement {
         className="max-md:w-6!"
         ariaLabel={t('nav.back')}
         tooltip={t('nav.back')}
-        disabled={index <= 0}
+        disabled={!canStep(history, -1)}
         onClick={navigateBack}
       >
         <ArrowLeft className="h-4 w-4" />
@@ -42,7 +45,7 @@ export function HistoryNavButtons(): React.ReactElement {
         className="max-md:w-6!"
         ariaLabel={t('nav.forward')}
         tooltip={t('nav.forward')}
-        disabled={index >= entries.length - 1}
+        disabled={!canStep(history, 1)}
         onClick={navigateForward}
       >
         <ArrowRight className="h-4 w-4" />

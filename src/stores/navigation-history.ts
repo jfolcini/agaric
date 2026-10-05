@@ -24,6 +24,7 @@ import { getWeekRange } from '@/lib/date-utils'
 import { type JournalMode, parseISODate, useJournalStore } from '@/stores/journal'
 import {
   MAX_NAV_HISTORY,
+  type NavHistory,
   type NavLocation,
   selectNavHistory,
   useNavigationStore,
@@ -71,8 +72,13 @@ function sameLocation(a: NavLocation, b: NavLocation): boolean {
   }
 }
 
-/** Set by a Back / Forward replay; the next record replaces instead of pushing. */
+/** Set by a replay or `recordNextAsReplace`; the next record replaces instead of pushing. */
 let replaying = false
+
+/** The next location recorded replaces the current entry instead of pushing a new one. */
+export function recordNextAsReplace(): void {
+  replaying = true
+}
 
 function record(): void {
   const loc = currentNavLocation()
@@ -147,19 +153,25 @@ function replay(loc: NavLocation): void {
   }
 }
 
-function step(delta: -1 | 1): void {
-  const space = activeSpaceKey()
-  const nav = useNavigationStore.getState()
-  const { entries, index } = selectNavHistory(nav, space)
+/** The index Back (-1) or Forward (1) lands on, or `-1` when there is none. */
+function stepTarget({ entries, index }: NavHistory, delta: -1 | 1): number {
   let target = index + delta
   // A deleted page would open as a dead editor; step over it.
   while (entries[target] !== undefined && isDeletedPage(entries[target] as NavLocation)) {
     target += delta
   }
-  const loc = entries[target]
+  return entries[target] === undefined ? -1 : target
+}
+
+function step(delta: -1 | 1): void {
+  const space = activeSpaceKey()
+  const nav = useNavigationStore.getState()
+  const history = selectNavHistory(nav, space)
+  const target = stepTarget(history, delta)
+  const loc = history.entries[target]
   if (loc === undefined) return
   replaying = true
-  nav.setNavHistory(space, { entries, index: target })
+  nav.setNavHistory(space, { entries: history.entries, index: target })
   replay(loc)
 }
 
@@ -171,9 +183,14 @@ export function navigateForward(): void {
   step(1)
 }
 
+/** Whether Back (-1) or Forward (1) has somewhere to go in `history`. */
+export function canStep(history: NavHistory, delta: -1 | 1): boolean {
+  return stepTarget(history, delta) !== -1
+}
+
 /** Whether Back has somewhere to go in the active space. */
 export function canNavigateBack(): boolean {
-  return selectNavHistory(useNavigationStore.getState(), activeSpaceKey()).index > 0
+  return canStep(selectNavHistory(useNavigationStore.getState(), activeSpaceKey()), -1)
 }
 
 useNavigationStore.subscribe(scheduleRecord)
