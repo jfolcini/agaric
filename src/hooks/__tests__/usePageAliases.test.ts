@@ -62,6 +62,7 @@ vi.mock('sonner', () => ({
 
 import { usePageAliases } from '@/hooks/usePageAliases'
 import { announce } from '@/lib/announcer'
+import { getGraphStructureKey } from '@/lib/graph-structure-events'
 
 const mockedAnnounce = vi.mocked(announce)
 const t = (key: string) => key
@@ -275,6 +276,35 @@ describe('usePageAliases — add / remove', () => {
       rejectFirst(new Error('ipc failure'))
     })
     expect(result.current.aliases).toEqual(['alpha'])
+  })
+})
+
+// #5249 — aliases are unlinked-reference search terms, and that panel (and its
+// own alias copy) refreshes on the structure counter.
+describe('usePageAliases — graph-structure counter', () => {
+  it('a committed add and a committed remove each bump the counter', async () => {
+    const { result } = renderHook(() => usePageAliases('page-1', t))
+    await waitFor(() => {
+      expect(mockedGet).toHaveBeenCalled()
+    })
+    const before = getGraphStructureKey()
+
+    act(() => {
+      result.current.setAliasInput('Nickname')
+    })
+    act(() => {
+      result.current.handleAddAlias()
+    })
+    await waitFor(() => {
+      expect(getGraphStructureKey()).toBe(before + 1)
+    })
+
+    act(() => {
+      result.current.handleRemoveAlias('Nickname')
+    })
+    await waitFor(() => {
+      expect(getGraphStructureKey()).toBe(before + 2)
+    })
   })
 })
 

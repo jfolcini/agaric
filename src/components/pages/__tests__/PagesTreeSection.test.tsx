@@ -17,6 +17,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
 import type { PageWithMetadataRow } from '@/lib/bindings'
+import { recordGraphStructureChange } from '@/lib/graph-structure-events'
 import { LIST_PAGES_WITH_METADATA_MAX } from '@/lib/safe-limit'
 
 // #2927 phase 7 — `PagesTreeSection` calls `commands` from `@/lib/bindings`
@@ -225,6 +226,25 @@ describe('PagesTreeSection', () => {
     await user.click(leaf)
 
     expect(onNavigateToPage).toHaveBeenCalledWith('CHILD_2026', 'Notes/2026')
+  })
+
+  // #5253 — a `[[Notes/2027]]` created from this page's picker lands with a
+  // link edit that bumps the structure counter; the panel must pick it up.
+  it('shows a child page created while the parent is open', async () => {
+    const rows: PageWithMetadataRow[] = []
+    mockedListPagesWithMetadata.mockImplementation(async () => onePage([...rows]))
+
+    render(<PagesTreeSection pageId="PARENT" pageTitle="Notes" onNavigateToPage={vi.fn()} />)
+    await waitFor(() => {
+      expect(mockedListPagesWithMetadata).toHaveBeenCalled()
+    })
+
+    rows.push(makeRow('CHILD_2027', 'Notes/2027'))
+    recordGraphStructureChange()
+
+    const user = userEvent.setup()
+    await user.click(await screen.findByRole('button', { name: /pages tree/i }))
+    expect(await screen.findByText('2027')).toBeInTheDocument()
   })
 
   it('stays hidden when the IPC rejects (no crash, no panel)', async () => {

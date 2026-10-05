@@ -131,6 +131,19 @@ describe('name-change bus (#4007)', () => {
 
     expect(seen).toEqual(['a', 'c'])
   })
+
+  // #5250 — a created page is a new graph node; GraphView's cache must see it.
+  it('notifyPageAdded bumps the graph-structure counter', () => {
+    _resetGraphStructureEventsForTest()
+    vi.useFakeTimers()
+    try {
+      notifyPageAdded('P1', 'Projects/Alpha', 'SPACE_1')
+      vi.advanceTimersByTime(DEBOUNCE_MS)
+      expect(getGraphStructureKey()).toBe(1)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
 })
 
 /**

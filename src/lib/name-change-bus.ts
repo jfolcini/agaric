@@ -142,7 +142,7 @@
  * source of truth for chip titles and each mutating surface already writes it
  * (see `@/stores/page-rename` for the rename fan-out). This bus is only about
  * the two picker list caches, plus the graph-structure bump that rides on
- * {@link notifyPagesRemoved} (#4963).
+ * {@link notifyPageAdded} (#5250) and {@link notifyPagesRemoved} (#4963).
  */
 
 import { recordGraphStructureChange } from '@/lib/graph-structure-events'
@@ -264,6 +264,8 @@ function emit(change: NameChange): void {
  */
 export function notifyPageAdded(pageId: string, title: string, spaceId: string): void {
   emit({ kind: 'added', entity: 'page', id: pageId, name: title, spaceId })
+  // #5250 — a new page is a new graph node.
+  recordGraphStructureChange()
 }
 
 /**

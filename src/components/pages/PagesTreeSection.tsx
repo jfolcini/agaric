@@ -32,6 +32,7 @@ import { useTranslation } from 'react-i18next'
 
 import { CollapsiblePanelHeader } from '@/components/common/CollapsiblePanelHeader'
 import { PageTreeItem } from '@/components/pages/PageTreeItem'
+import { useGraphStructureEvents } from '@/hooks/useGraphStructureEvents'
 import { unwrap } from '@/lib/app-error'
 import type { PageResponse, PageWithMetadataRow } from '@/lib/bindings'
 import { commands } from '@/lib/bindings'
@@ -169,6 +170,9 @@ export function PagesTreeSection({
   // visually. Local state, not a store, because `useUiPrefsStore`
   // doesn't exist in this codebase.
   const [collapsed, setCollapsed] = useState(true)
+  // A child page created while this page is open (#5253) arrives with a page
+  // create or a `[[link]]` edit, and both bump the structure counter.
+  const { structureKey } = useGraphStructureEvents()
 
   useEffect(() => {
     // FE-H-22 mirror — the resolve cache `preload` bails when
@@ -198,7 +202,7 @@ export function PagesTreeSection({
     return () => {
       cancelled = true
     }
-  }, [currentSpaceId, pageTitle])
+  }, [currentSpaceId, pageTitle, structureKey])
 
   const children = useMemo(() => {
     // The glob matches `pageTitle/...` only, so re-add the page itself as the

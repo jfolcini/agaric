@@ -25,6 +25,7 @@ import { Spinner } from '@/components/ui/spinner'
 import { useBacklinkResolution } from '@/hooks/useBacklinkResolution'
 import { useBlockNavigation } from '@/hooks/useBlockNavigation'
 import { useFocusedRowEffect } from '@/hooks/useFocusedRowEffect'
+import { useGraphStructureEvents } from '@/hooks/useGraphStructureEvents'
 import { useListKeyboardNavigation } from '@/hooks/useListKeyboardNavigation'
 import { usePropertyKeysCache } from '@/hooks/usePropertyKeysCache'
 import { useUnlinkedReferences } from '@/hooks/useUnlinkedReferences'
@@ -254,6 +255,9 @@ export function UnlinkedReferences({
   // Load the page's aliases alongside the title so
   // `handleLinkIt` can rewrite alias-only mentions. Mirrors the
   // `getPageAliases(pageId)` pattern already used by `PageHeader`.
+  // Reloaded on the structure counter, which alias writes bump (#5249): the
+  // backend searches the live aliases, so a stale set here fails "Link it".
+  const { structureKey } = useGraphStructureEvents()
   useEffect(() => {
     let cancelled = false
     commands
@@ -270,7 +274,7 @@ export function UnlinkedReferences({
     return () => {
       cancelled = true
     }
-  }, [pageId])
+  }, [pageId, structureKey])
 
   const handleLinkIt = useCallback(
     async (blockId: string, content: string) => {

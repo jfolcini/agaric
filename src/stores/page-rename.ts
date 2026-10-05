@@ -22,6 +22,7 @@
  * already current.
  */
 
+import { recordGraphStructureChange } from '@/lib/graph-structure-events'
 import { notifyPageRenamed } from '@/lib/name-change-bus'
 import { useRecentPagesStore } from '@/stores/recent-pages'
 import { useResolveStore } from '@/stores/resolve'
@@ -85,4 +86,7 @@ export function renamePage(pageId: string, title: string, spaceId: string | null
   useRecentPagesStore.getState().renamePage(pageId, title)
   useResolveStore.getState().set(pageId, title, false)
   if (spaceId != null) notifyPageRenamed(pageId, title, spaceId)
+  // #5250 — the graph's node labels and the unlinked-references search term
+  // are the title, and both refresh on the structure counter.
+  recordGraphStructureChange()
 }
