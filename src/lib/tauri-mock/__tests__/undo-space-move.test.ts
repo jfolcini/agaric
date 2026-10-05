@@ -21,6 +21,7 @@ import {
   opLog,
   properties,
   propertyDefs,
+  pushOp,
 } from '@/lib/tauri-mock/seed'
 
 const PAGE = '00000000000000000000PAGEZZ'
@@ -78,6 +79,10 @@ function seedPageInSpaceA(): void {
   row['space_id'] = SPACE_A
   blocks.set(PAGE, row)
   properties.set(PAGE, new Map([['space', spaceRow(PAGE, SPACE_A)]]))
+  // #5259 — the page's BIRTH op, as `create_page_in_space` appends it: a page's
+  // FIRST `set_property(space)` is never a positional-undo target, so without
+  // this row the move below would be that first op and Ctrl+Z would refuse it.
+  pushOp('set_property', { block_id: PAGE, key: 'space', from_value: null })
 }
 
 function memberships(): { column: unknown; property: unknown } {
@@ -103,14 +108,25 @@ describe('undoing a cross-space move (#5057)', () => {
     const row = blocks.get(PAGE)
     if (row) row['space_id'] = null
     properties.get(PAGE)?.delete('space')
+    opLog.length = 0
 
     expect(dispatch('move_blocks_to_space', { blockIds: [PAGE], spaceId: SPACE_B })).toBe(1)
     expect(memberships()).toEqual({ column: SPACE_B, property: SPACE_B })
 
-    dispatch('undo_page_op', { pageId: PAGE, undoDepth: 0 })
+    // #5259 — this move is the page's FIRST `set_property(space)`, i.e. its
+    // birth, which positional undo stops at: reverting it would leave the page
+    // in no space, which is what the Ctrl+Z path no longer does.
+    expect(() => dispatch('undo_page_op', { pageId: PAGE, undoDepth: 0 })).toThrow(
+      'no op found at undo_depth 0',
+    )
+    expect(memberships()).toEqual({ column: SPACE_B, property: SPACE_B })
 
-    // `from_value: null` means "no membership before", so the revert removes
-    // both records rather than inventing a space to fall back to.
+    // The explicit History-view revert still reaches it. `from_value: null`
+    // means "no membership before", so the revert removes both records rather
+    // than inventing a space to fall back to.
+    const move = opLog.at(-1)
+    if (!move) throw new Error('the move appended no op')
+    dispatch('revert_ops', { ops: [{ device_id: move.device_id, seq: move.seq }] })
     expect(memberships()).toEqual({ column: null, property: undefined })
   })
 })
