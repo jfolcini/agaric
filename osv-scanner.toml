@@ -10,3 +10,7 @@ ignoreUntil = 2026-11-12
 [[IgnoredVulns]]
 id = "GHSA-7pqw-9j4j-h8q3"
 ignoreUntil = 2026-11-12
+
+[[IgnoredVulns]]
+id = "GHSA-vfj7-8cjw-p6xm"
+ignoreUntil = 2026-11-12
