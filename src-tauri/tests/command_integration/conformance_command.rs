@@ -157,6 +157,10 @@ const RETURN_SHAPE: &[(&str, &str, &[&str], &[&str])] = &[
     // value, and a text value under a `ref` definition is read as the block
     // it names, which only the command does.
     ("set_property", "id", &[], &[]),
+    // #5074 — the row the state was set on. The `completed_at` it stamps or
+    // clears carries a clock date, so the snapshot drops it and a
+    // `query_by_property` step reads which blocks hold one.
+    ("set_todo_state", "id", &["todo_state"], &[]),
     // #5057 — the three batch COUNTERS answer with a bare `i64`, which carries
     // no field to name it. The shape's single attribute names the scalar, so
     // the token reads `set_property_batch#updated=3` instead of exposing a
@@ -500,6 +504,16 @@ pub(super) async fn apply_op_via_command(
                 block_ids(),
                 req_str("key"),
                 opt_str("value"),
+            )
+            .await,
+        ),
+        "set_todo_state" => to_json(
+            set_todo_state_inner(
+                pool,
+                DEV,
+                mat,
+                block_id().into_string().into(),
+                opt_str("state"),
             )
             .await,
         ),
@@ -1211,7 +1225,7 @@ mod tests {
     /// vice versa, and the count is the one this module claims — so a
     /// mutating command cannot join one table without the other, and cannot
     /// join at all without this number moving.
-    const MUTATING_ARM_COUNT: usize = 45;
+    const MUTATING_ARM_COUNT: usize = 46;
 
     #[test]
     fn the_dispatcher_and_the_return_shape_table_name_the_same_commands() {

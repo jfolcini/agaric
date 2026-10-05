@@ -1017,6 +1017,10 @@ export const pagesHandlers = {
         message: `block '${rootBlockId}' not in current space '${spaceId}'`,
       })
     }
+    // #5243 — a trashed root is `not_found`, checked after the space.
+    if (blocks.get(rootBlockId)?.['deleted_at']) {
+      throw notFoundRejection('page is in the trash')
+    }
     const items: Record<string, unknown>[] = []
     for (const b of blocks.values()) {
       if (b['id'] === rootBlockId) continue

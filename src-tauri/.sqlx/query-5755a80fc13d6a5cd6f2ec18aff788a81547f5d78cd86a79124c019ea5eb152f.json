@@ -1,0 +1,21 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT deleted_at IS NOT NULL AS \"trashed!: bool\" FROM blocks\n           WHERE id = ? AND space_id = ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "trashed!: bool",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "5755a80fc13d6a5cd6f2ec18aff788a81547f5d78cd86a79124c019ea5eb152f"
+}

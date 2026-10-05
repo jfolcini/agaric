@@ -32,14 +32,6 @@ interface PeerWindow {
   __emitMockEvent?: (event: string, payload?: unknown) => Promise<void>
 }
 
-/** Local YYYY-MM-DD, matching `date-utils.formatDate` and the seed's `today`. */
-function localDateStr(d: Date): string {
-  const y = d.getFullYear()
-  const m = String(d.getMonth() + 1).padStart(2, '0')
-  const day = String(d.getDate()).padStart(2, '0')
-  return `${y}-${m}-${day}`
-}
-
 /** Write to the backend as a synced peer would: no local command, no event. */
 function peerWrite<T>(page: Page, cmd: string, args: Record<string, unknown>): Promise<T> {
   return page.evaluate(
@@ -90,12 +82,6 @@ test.describe('task panels after a peer completes a task (#5256)', () => {
     await expect(donePanel.getByText('Fix login bug')).toHaveCount(0)
 
     await peerWrite(page, 'set_todo_state', { blockId: BLOCK_PROJ_2, state: 'DONE' })
-    // The backend stamps `completed_at` with DONE; the mock leaves it to the caller.
-    await peerWrite(page, 'set_property', {
-      blockId: BLOCK_PROJ_2,
-      key: 'completed_at',
-      value: { value_date: localDateStr(new Date()) },
-    })
     await peerSyncComplete(page, [PAGE_PROJECTS], 1)
 
     await expect(duePanel.getByText('Fix login bug')).toHaveCount(0)

@@ -482,8 +482,9 @@ async fn read_raw_state(pool: &SqlitePool) -> super::conformance_snapshot::RawSt
         .collect();
 
     // Properties — block_properties rows. Exclude auto-derived timestamp keys
-    // (created_at/completed_at) — they carry today's date and the mock does
-    // not model them; they are intentionally outside the conformance surface.
+    // (created_at/completed_at) — they carry today's date, and the mock does
+    // not model `created_at`; they are intentionally outside the conformance
+    // surface.
     let prop_rows = sqlx::query_as::<
         _,
         (

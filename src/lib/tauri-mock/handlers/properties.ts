@@ -26,7 +26,14 @@ import {
   validationRejection,
 } from '@/lib/tauri-mock/handlers/shared'
 import { resolveRefValue } from '@/lib/tauri-mock/names'
-import { appSettings, blocks, properties, propertyDefs, pushOp } from '@/lib/tauri-mock/seed'
+import {
+  appSettings,
+  blocks,
+  properties,
+  propertyDefs,
+  pushOp,
+  todayDate,
+} from '@/lib/tauri-mock/seed'
 
 /** #4554 — the two `app_settings` keys `reminders::get_settings` reads; `'1'` = enabled. */
 const REMINDERS_ENABLED_KEY = 'reminders.enabled'
@@ -45,24 +52,62 @@ const RESERVED_PROPERTY_COLUMN: Record<string, 'value_text' | 'value_date'> = {
   scheduled_date: 'value_date',
 }
 
+/** A `block_properties` row's typed value columns: the `from_value` its undo restores. */
+function typedValueOf(row: Record<string, unknown>): Record<string, unknown> {
+  return {
+    value_text: (row['value_text'] as string | null) ?? null,
+    value_num: (row['value_num'] as number | null) ?? null,
+    value_date: (row['value_date'] as string | null) ?? null,
+    value_ref: (row['value_ref'] as string | null) ?? null,
+    value_bool: (row['value_bool'] as number | null) ?? null,
+  }
+}
+
 /**
  * Delete `key`'s `block_properties` row, appending the op with the prior value
  * its undo re-adds.
  */
 function deletePropertyRow(blockId: string, key: string): { device_id: string; seq: number } {
   const priorRow = properties.get(blockId)?.get(key)
-  const fromValue = priorRow
-    ? {
-        value_text: (priorRow['value_text'] as string | null) ?? null,
-        value_num: (priorRow['value_num'] as number | null) ?? null,
-        value_date: (priorRow['value_date'] as string | null) ?? null,
-        value_ref: (priorRow['value_ref'] as string | null) ?? null,
-        value_bool: (priorRow['value_bool'] as number | null) ?? null,
-      }
-    : null
+  const fromValue = priorRow ? typedValueOf(priorRow) : null
   properties.get(blockId)?.delete(key)
   const op = pushOp('delete_property', { block_id: blockId, key, from_value: fromValue })
   return { device_id: op.device_id, seq: op.seq }
+}
+
+/**
+ * The `completed_at` half of `write_todo_timestamp_transitions_in_tx`
+ * (`commands/properties.rs`), which every `todo_state` writer runs: present
+ * iff `todo_state = 'DONE'` (#5074). Stamped today on an edge into DONE;
+ * cleared on an edge out of it, or when a block stops being a task, and only
+ * when the block holds one.
+ */
+function writeCompletedAtTransition(
+  blockId: string,
+  fromState: string | null,
+  toState: string | null,
+): void {
+  const wasDone = fromState === 'DONE'
+  const isDone = toState === 'DONE'
+  const prior = properties.get(blockId)?.get('completed_at')
+  if (isDone && !wasDone) {
+    if (!properties.has(blockId)) properties.set(blockId, new Map())
+    properties.get(blockId)?.set('completed_at', {
+      key: 'completed_at',
+      value_text: null,
+      value_num: null,
+      value_date: todayDate(),
+      value_ref: null,
+      value_bool: null,
+    })
+    pushOp('set_property', {
+      block_id: blockId,
+      key: 'completed_at',
+      from_value: prior ? typedValueOf(prior) : null,
+    })
+  } else if (!isDone && prior && (wasDone || (fromState !== null && toState === null))) {
+    deletePropertyRow(blockId, 'completed_at')
+  }
 }
 
 /**
@@ -471,6 +516,7 @@ export const propertiesHandlers = {
       state: b['todo_state'],
       from_state: fromState,
     })
+    writeCompletedAtTransition(a['blockId'] as string, fromState, b['todo_state'] as string | null)
     return { ...b }
   },
 
@@ -490,12 +536,14 @@ export const propertiesHandlers = {
     for (const id of inputIds) {
       const b = blocks.get(id)
       if (!b || b['deleted_at']) continue
+      const fromState = (b['todo_state'] as string | null) ?? null
       b['todo_state'] = newState
       pushOp('set_property', {
         block_id: id,
         key: 'todo_state',
         value_text: newState,
       })
+      writeCompletedAtTransition(id, fromState, newState)
       updated++
     }
     return updated
@@ -537,6 +585,7 @@ export const propertiesHandlers = {
     for (const id of inputIds) {
       const b = blocks.get(id)
       if (!b || b['deleted_at']) continue
+      const prior = (b[key] as string | null) ?? null
       // Keep the mock block row in sync so downstream reads observe the set,
       // mirroring the per-key single handlers (todo_state/priority/…).
       b[key] = value
@@ -544,6 +593,7 @@ export const propertiesHandlers = {
       // `null` → clear: emit no `value_*` field (single-row clear parity).
       if (value !== null) op[column] = value
       pushOp('set_property', op)
+      if (key === 'todo_state') writeCompletedAtTransition(id, prior, value)
       updated++
     }
     return updated

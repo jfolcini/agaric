@@ -81,7 +81,7 @@ function canonicalizeOp(opType: string, key: string | null): Record<string, unkn
   // Both directions: `write_todo_timestamp_transitions_in_tx` emits a
   // DeleteProperty on the edges that CLEAR `created_at` / `completed_at`, and
   // dropping only the writes would leave a backend-only op the mock — which
-  // models neither key — can never match (#5074).
+  // does not model `created_at` — can never match (#5074).
   if (
     (opType === 'set_property' || opType === 'delete_property') &&
     (key === 'created_at' || key === 'completed_at')

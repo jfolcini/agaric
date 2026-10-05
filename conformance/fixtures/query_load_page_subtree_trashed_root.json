@@ -1,0 +1,158 @@
+{
+  "description": "#5243 — `load_page_subtree` on a TRASHED root. Deleting a page cascade-tombstones its descendants, and the root check had no `deleted_at` filter, so the trashed page was served as an EMPTY page and the editor seeded a first block under a deleted parent. The root is now refused as `not_found`, the kind the frontend heal (`page-blocks.ts` `load()`) keys on to drop the stale recents/tab entry under its trash notice, while a live page in the same space still loads. Seed: S1 (Alpha, trashed by the op) > S2; S3 (Beta) > S4. Re-author `expected` / `expected_queries` via CONFORMANCE_UPDATE=1.",
+  "expected": {
+    "block_tags": [],
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Alpha",
+        "deleted_at": "DELETED",
+        "due_date": null,
+        "id": "B1",
+        "page_id": "B1",
+        "parent_id": null,
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "alpha-one",
+        "deleted_at": "DELETED",
+        "due_date": null,
+        "id": "B2",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "page",
+        "content": "Beta",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B3",
+        "page_id": "B3",
+        "parent_id": null,
+        "position": 2,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "beta-one",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B4",
+        "page_id": "B3",
+        "parent_id": "B3",
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      }
+    ],
+    "op_log_digest": {
+      "count": 1,
+      "ops": [
+        {
+          "op_type": "delete_block"
+        }
+      ]
+    },
+    "page_links": [],
+    "properties": []
+  },
+  "expected_queries": [
+    {
+      "cursor": null,
+      "error": "not_found",
+      "has_more": null,
+      "name": "load_page_subtree_refuses_a_trashed_root",
+      "rows": [],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "load_page_subtree_serves_a_live_root",
+      "rows": ["B4#parent_id=B3#page_id=B3#position=1#deleted_at=null"],
+      "total_count": 1
+    }
+  ],
+  "name": "query_load_page_subtree_trashed_root",
+  "ops": [
+    {
+      "args": {
+        "blockId": "S1"
+      },
+      "command": "delete_block"
+    }
+  ],
+  "queries": [
+    {
+      "args": {
+        "rootBlockId": "S1",
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
+      },
+      "command": "load_page_subtree",
+      "comment": "#5243 — the trashed root is refused as `not_found` (the kind `get_page` answers a tombstoned page with), not served as an empty page and not `validation` (`PageNotInSpace` stays the answer for a root outside the space, whose heal shows a different notice).",
+      "expect_error": "not_found",
+      "name": "load_page_subtree_refuses_a_trashed_root"
+    },
+    {
+      "args": {
+        "rootBlockId": "S3",
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
+      },
+      "command": "load_page_subtree",
+      "comment": "The negative control: a LIVE page in the same space is still served (S4), so the refusal above is the trash check and not a blanket one.",
+      "name": "load_page_subtree_serves_a_live_root"
+    }
+  ],
+  "seed": {
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Alpha",
+        "id": "S1",
+        "parent_id": null,
+        "position": 1
+      },
+      {
+        "block_type": "content",
+        "content": "alpha-one",
+        "id": "S2",
+        "parent_id": "S1",
+        "position": 1
+      },
+      {
+        "block_type": "page",
+        "content": "Beta",
+        "id": "S3",
+        "parent_id": null,
+        "position": 2
+      },
+      {
+        "block_type": "content",
+        "content": "beta-one",
+        "id": "S4",
+        "parent_id": "S3",
+        "position": 1
+      }
+    ],
+    "properties": [],
+    "tags": []
+  }
+}

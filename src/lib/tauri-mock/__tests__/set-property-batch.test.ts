@@ -52,14 +52,14 @@ describe('tauri-mock set_property_batch', () => {
     const updated = dispatch('set_property_batch', {
       blockIds: [A, B],
       key: 'todo_state',
-      value: 'DONE',
+      value: 'TODO',
     })
 
     expect(updated).toBe(2)
     const payload = lastPayload()
-    expect(payload).toMatchObject({ key: 'todo_state', value_text: 'DONE' })
+    expect(payload).toMatchObject({ key: 'todo_state', value_text: 'TODO' })
     expect(payload).not.toHaveProperty('value_date')
-    expect(blocks.get(A)?.['todo_state']).toBe('DONE')
+    expect(blocks.get(A)?.['todo_state']).toBe('TODO')
   })
 
   it('routes priority to value_text', () => {

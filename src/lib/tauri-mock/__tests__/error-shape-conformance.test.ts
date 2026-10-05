@@ -285,6 +285,22 @@ describe('tauri-mock error-shape conformance (#2463)', () => {
     expect(validationCode(err)).toBe('PageNotInSpace')
   })
 
+  it('load_page_subtree rejects a trashed page with not_found, after the space check (#5243)', () => {
+    const activeScope = { kind: 'active', space_id: SPACE }
+    expect(dispatch('load_page_subtree', { rootBlockId: PAGE, scope: activeScope })).toMatchObject({
+      blocks: [{ id: CHILD }],
+    })
+    dispatch('delete_block', { blockId: PAGE })
+
+    const trashed = captureRejection('load_page_subtree', { rootBlockId: PAGE, scope: activeScope })
+    expect(isNotFound(trashed)).toBe(true)
+    const foreign = captureRejection('load_page_subtree', {
+      rootBlockId: PAGE,
+      scope: { kind: 'active', space_id: 'SOME_OTHER_SPACE' },
+    })
+    expect(validationCode(foreign)).toBe('PageNotInSpace')
+  })
+
   it('notify_task rejects a blank title with validation (#2251)', () => {
     const err = captureRejection('notify_task', { notification: { title: '   ' } })
     expect(isAppError(err)).toBe(true)

@@ -902,6 +902,57 @@ describe('PageBlockStore', () => {
       expect(useNavigationStore.getState().currentView).toBe('pages')
       expect(useRecentPagesStore.getState().recentPagesBySpace['SPACE_PERSONAL']).toEqual([])
     })
+
+    it('#5243 — following a stale reference to a TRASHED page heals with the trash notice', async () => {
+      // Real mock dispatch, so the rejection is the genuine `load_page_subtree`
+      // `not_found` for a trashed root.
+      seedBlocks()
+      useSpaceStore.setState({ currentSpaceId: 'SPACE_PERSONAL' })
+      mockedInvoke.mockImplementation(async (cmd: string, args?: InvokeArgs) => dispatch(cmd, args))
+      dispatch('delete_block', { blockId: SEED_IDS.PAGE_QUICK_NOTES })
+
+      // The trashed page tops the tab it was followed into, over a live page,
+      // and is still offered by the recents beside a live entry.
+      useNavigationStore.getState().setView('page-editor')
+      useTabsStore.setState({
+        tabs: [
+          tab('0', [
+            { pageId: SEED_IDS.PAGE_GETTING_STARTED, title: 'Getting Started' },
+            { pageId: SEED_IDS.PAGE_QUICK_NOTES, title: 'Quick Notes' },
+          ]),
+        ],
+        activeTabIndex: 0,
+      })
+      useRecentPagesStore.setState({
+        recentPages: [
+          { pageId: SEED_IDS.PAGE_QUICK_NOTES, title: 'Quick Notes' },
+          { pageId: SEED_IDS.PAGE_GETTING_STARTED, title: 'Getting Started' },
+        ],
+        recentPagesBySpace: {
+          SPACE_PERSONAL: [
+            { pageId: SEED_IDS.PAGE_QUICK_NOTES, title: 'Quick Notes' },
+            { pageId: SEED_IDS.PAGE_GETTING_STARTED, title: 'Getting Started' },
+          ],
+        },
+      })
+
+      await createPageBlockStore(SEED_IDS.PAGE_QUICK_NOTES).getState().load()
+
+      expect(toast.error).not.toHaveBeenCalled()
+      expect(toast.info).toHaveBeenCalledTimes(1)
+      expect(toast.info).toHaveBeenCalledWith(
+        translate('error.pageInTrash'),
+        expect.objectContaining({ id: 'page-in-trash' }),
+      )
+      // Popped back to the live page underneath; only the trashed entry left
+      // the recents.
+      expect(selectPageStack(useTabsStore.getState()).map((p) => p.pageId)).toEqual([
+        SEED_IDS.PAGE_GETTING_STARTED,
+      ])
+      expect(
+        useRecentPagesStore.getState().recentPagesBySpace['SPACE_PERSONAL']?.map((p) => p.pageId),
+      ).toEqual([SEED_IDS.PAGE_GETTING_STARTED])
+    })
   })
   describe('createBelow', () => {
     it('inserts a new block after the specified block', async () => {

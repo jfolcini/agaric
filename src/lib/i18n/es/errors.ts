@@ -39,6 +39,7 @@ export const errors: Record<string, string> = {
   'errorBoundary.section.notifications': 'Notificaciones',
   'error.loadBlocksFailed': 'No se han podido cargar los bloques',
   'error.pageNotInCurrentSpace': 'Esta página se ha movido a otro espacio',
+  'error.pageInTrash': 'Esta página está en la papelera',
   'error.deleteBlockFailed': 'No se ha podido eliminar el bloque',
   'error.reorderBlockFailed': 'No se ha podido reordenar el bloque',
   'error.moveBlockFailed': 'No se ha podido mover el bloque',
