@@ -1075,8 +1075,9 @@ async fn drive_edit_block_fan_out(pool: &SqlitePool, block_id: &str, hint: Optio
 /// Some("tag")`. The UNDO goes through `revert_ops_inner` (and the two other
 /// revert sites in `commands/history.rs`), which enqueue the reverse op via the
 /// UNHINTED `CommandTx::enqueue_background` → `Materializer::dispatch_background`
-/// → `enqueue_background_tasks(record, None, None)`. Remote replay, inbound
-/// sync and boot take the same unhinted path.
+/// → `enqueue_background_tasks(record, None, None)`. Remote replay and boot
+/// take the same unhinted path; inbound sync enqueues its own reference
+/// reindex (#5241, pinned below).
 ///
 /// `agaric_store::fts::reindex_fts_references` is the ONLY thing that
 /// re-resolves a referencing block's inline `#[ULID]` token to the tag's
@@ -1159,6 +1160,120 @@ async fn undo_of_a_tag_rename_reindexes_fts_references_3296() {
         "the referencing block must be indexed under the RESTORED tag name after \
          the undo, got {undone:?}"
     );
+}
+
+// ======================================================================
+// #5241 — a peer's page / tag rename must reach the FTS rows of the blocks
+// that reference it, not only the renamed block's own row.
+// ======================================================================
+
+/// The `block_id`s FTS answers `query` with, sorted.
+async fn fts_hits(pool: &SqlitePool, query: &str) -> Vec<String> {
+    // dynamic-sql: test-only read-back of the FTS index.
+    let mut ids: Vec<String> =
+        sqlx::query_scalar::<_, String>("SELECT block_id FROM fts_blocks WHERE fts_blocks MATCH ?")
+            .bind(query)
+            .fetch_all(pool)
+            .await
+            .expect("fts_blocks MATCH");
+    ids.sort();
+    ids
+}
+
+/// Drive the inbound-sync fan-out for `changed` as a session does after
+/// `apply_remote` projected the rows, and wait for everything it enqueued.
+async fn drive_inbound_sync_fan_out(mat: &Materializer, changed: &[&str]) {
+    let changed: Vec<BlockId> = changed.iter().map(|id| BlockId::test_id(id)).collect();
+    mat.enqueue_inbound_sync_rebuilds(&changed, &[])
+        .await
+        .expect("enqueue inbound sync rebuilds");
+    mat.flush_inbound_rebuild_debounce().await;
+}
+
+/// A peer renames a page. The rename reaches this device as the page's row
+/// (already projected by `apply_remote`) plus `enqueue_inbound_sync_rebuilds`
+/// for it — which refreshed only the page's own FTS row, so a block linking
+/// the page stayed searchable under the old title and not the new one.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn inbound_page_rename_reindexes_the_referencing_blocks_5241() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    // 26-char ULID-shaped ids so the `[[ULID]]` PAGE_LINK regex matches.
+    let page_id = "01AAAAAAAAAAAAAAAAAAPG5241";
+    let note_id = "01AAAAAAAAAAAAAAAAAANT5241";
+    insert_block_direct(&pool, page_id, "page", "Old Title").await;
+    insert_block_direct(&pool, note_id, "content", &format!("see [[{page_id}]]")).await;
+    // The link row and both FTS rows, as the import that brought them left them.
+    drive_inbound_sync_fan_out(&mat, &[page_id, note_id]).await;
+    assert_eq!(
+        fts_hits(&pool, "Old Title").await,
+        vec![note_id.to_string(), page_id.to_string()],
+        "precondition: the referencing block is indexed under the original title"
+    );
+
+    // The peer's rename: `apply_remote` projects the page's row, then fans out.
+    sqlx::query("UPDATE blocks SET content = 'New Title' WHERE id = ?")
+        .bind(page_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    drive_inbound_sync_fan_out(&mat, &[page_id]).await;
+
+    assert_eq!(
+        fts_hits(&pool, "New Title").await,
+        vec![note_id.to_string(), page_id.to_string()],
+        "#5241: the block linking the renamed page must be found under the new title"
+    );
+    assert_eq!(
+        fts_hits(&pool, "Old Title").await,
+        Vec::<String>::new(),
+        "#5241: nothing may still answer to the old title"
+    );
+    mat.shutdown();
+}
+
+/// The tag half of #5241: a block carrying the renamed tag (a `block_tags`
+/// row, the way a tagged block references a tag) follows the rename.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn inbound_tag_rename_reindexes_the_tagged_blocks_5241() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let tag_id = "01AAAAAAAAAAAAAAAAAATG5241";
+    let note_id = "01AAAAAAAAAAAAAAAAAAN25241";
+    insert_block_direct(&pool, tag_id, "tag", "alpha").await;
+    insert_block_direct(
+        &pool,
+        note_id,
+        "content",
+        &format!("notes about #[{tag_id}]"),
+    )
+    .await;
+    insert_block_tag(&pool, note_id, tag_id).await;
+    drive_inbound_sync_fan_out(&mat, &[tag_id, note_id]).await;
+    assert_eq!(
+        fts_hits(&pool, "alpha").await,
+        vec![note_id.to_string(), tag_id.to_string()],
+        "precondition: the tagged block is indexed under the original tag name"
+    );
+
+    sqlx::query("UPDATE blocks SET content = 'omega' WHERE id = ?")
+        .bind(tag_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    drive_inbound_sync_fan_out(&mat, &[tag_id]).await;
+
+    assert_eq!(
+        fts_hits(&pool, "omega").await,
+        vec![note_id.to_string(), tag_id.to_string()],
+        "#5241: the tagged block must be found under the new tag name"
+    );
+    assert_eq!(
+        fts_hits(&pool, "alpha").await,
+        Vec::<String>::new(),
+        "#5241: nothing may still answer to the old tag name"
+    );
+    mat.shutdown();
 }
 
 // ======================================================================

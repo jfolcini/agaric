@@ -725,3 +725,222 @@ async fn first_assignment_and_same_space_set_do_not_prune_2907() {
         );
     }
 }
+
+// --------------------------------------------------------------------------
+// 9. #5239: a nested page is a space boundary for both the hydration and
+//    the reassignment prune. The UI never nests a page, but older data and
+//    direct IPC do.
+// --------------------------------------------------------------------------
+
+const NEST_Q: &str = "01HZ0000000000000000NEST5Q";
+const NEST_P: &str = "01HZ0000000000000000NEST5P";
+const NEST_K: &str = "01HZ0000000000000000NEST5K";
+const NEST_C: &str = "01HZ0000000000000000NEST5C";
+const NEST_KC: &str = "01HZ000000000000000NEST5KC";
+
+/// Stamp the `page_id` the deferred materialize task would and the sibling
+/// `position` the fixture needs (`create_op` writes every block at 0).
+async fn stamp(pool: &SqlitePool, block_id: &str, page_id: &str, position: i64) {
+    sqlx::query("UPDATE blocks SET page_id = ?, position = ? WHERE id = ?")
+        .bind(page_id)
+        .bind(position)
+        .bind(block_id)
+        .execute(pool)
+        .await
+        .expect("stamp page_id + position");
+}
+
+/// `(parent_id, position, space_id)` of a block's SQL row.
+async fn sql_row(
+    pool: &SqlitePool,
+    block_id: &str,
+) -> (Option<String>, Option<i64>, Option<String>) {
+    sqlx::query_as("SELECT parent_id, position, space_id FROM blocks WHERE id = ?")
+        .bind(block_id)
+        .fetch_one(pool)
+        .await
+        .expect("sql row")
+}
+
+async fn inherited_rows(pool: &SqlitePool, block_id: &str) -> i64 {
+    sqlx::query_scalar("SELECT COUNT(*) FROM block_tag_inherited WHERE block_id = ? AND tag_id = ?")
+        .bind(block_id)
+        .bind(TAG_ID)
+        .fetch_one(pool)
+        .await
+        .expect("count block_tag_inherited")
+}
+
+/// A page keeps its own space (#4480): the projection leaves a nested page
+/// unstamped (`page_id = ?` misses a block whose `page_id` is itself), so
+/// seeding it into its parent's doc would put it in a doc its SQL space never
+/// joined, and a peer importing that doc projects it into that space.
+#[tokio::test]
+async fn first_assignment_hydration_stops_before_a_nested_page_5239() {
+    let (pool, _dir) = fresh_pool_with_registered_space().await;
+    let state = crate::loro::shared::LoroState::new();
+    apply(&pool, &state, create_op(NEST_P, "page", None, "p")).await;
+    apply(
+        &pool,
+        &state,
+        create_op(NEST_C, "content", Some(NEST_P), "c"),
+    )
+    .await;
+    apply(&pool, &state, create_op(NEST_K, "page", Some(NEST_P), "k")).await;
+    apply(
+        &pool,
+        &state,
+        create_op(NEST_KC, "content", Some(NEST_K), "kc"),
+    )
+    .await;
+    stamp(&pool, NEST_C, NEST_P, 1).await;
+    stamp(&pool, NEST_KC, NEST_K, 1).await;
+
+    apply(&pool, &state, set_space_op(NEST_P, Some(SPACE_ID))).await;
+
+    let mut guard = state.registry.for_space(&space(), DEVICE_ID).expect("s1");
+    let engine = guard.engine_mut();
+    assert!(engine.contains_block(NEST_P), "the page is seeded");
+    assert!(engine.contains_block(NEST_C), "its content child is seeded");
+    assert!(
+        !engine.contains_block(NEST_K),
+        "a nested page joins a doc only through its own space op"
+    );
+    assert!(!engine.contains_block(NEST_KC), "nor does its subtree");
+    assert_eq!(
+        sql_row(&pool, NEST_K).await.2,
+        None,
+        "SQL agrees: the nested page was not stamped into the space"
+    );
+}
+
+/// Moving P (nested under Q, holding nested page K first and content C
+/// second) from S1 to S2: K stays in S1's doc, re-rooted since its parent
+/// left, and SQL follows as for any reparent — `parent_id` NULL, `position`
+/// at its root rank, the tags it inherited down P's chain gone. P being
+/// nested makes the root forest a group the prune changed without purging
+/// from it, which is what the SQL position assertion pins.
+#[tokio::test]
+async fn reassignment_re_roots_a_nested_page_in_the_old_doc_5239() {
+    let (pool, _dir) = fresh_pool_with_registered_space().await;
+    register_second_space(&pool).await;
+    let state = crate::loro::shared::LoroState::new();
+    sqlx::query(
+        "INSERT INTO blocks (id, block_type, content, parent_id, position, space_id) \
+             VALUES (?, 'tag', 'label', NULL, 0, ?)",
+    )
+    .bind(TAG_ID)
+    .bind(SPACE_ID)
+    .execute(&pool)
+    .await
+    .unwrap();
+    apply(&pool, &state, create_op(NEST_Q, "page", None, "q")).await;
+    apply(&pool, &state, create_op(NEST_P, "page", Some(NEST_Q), "p")).await;
+    apply(&pool, &state, create_op(NEST_K, "page", Some(NEST_P), "k")).await;
+    apply(
+        &pool,
+        &state,
+        create_op(NEST_C, "content", Some(NEST_P), "c"),
+    )
+    .await;
+    apply(
+        &pool,
+        &state,
+        create_op(NEST_KC, "content", Some(NEST_K), "kc"),
+    )
+    .await;
+    stamp(&pool, NEST_K, NEST_K, 1).await;
+    stamp(&pool, NEST_C, NEST_P, 2).await;
+    stamp(&pool, NEST_KC, NEST_K, 1).await;
+    // Each page joins S1 through its own space op (#4480); K lands under P.
+    for id in [NEST_Q, NEST_P, NEST_K] {
+        apply(&pool, &state, set_space_op(id, Some(SPACE_ID))).await;
+    }
+    apply(
+        &pool,
+        &state,
+        OpPayload::AddTag(AddTagPayload {
+            block_id: BlockId::from_trusted(NEST_P),
+            tag_id: BlockId::from_trusted(TAG_ID),
+        }),
+    )
+    .await;
+    {
+        let mut guard = state.registry.for_space(&space(), DEVICE_ID).expect("s1");
+        let k = guard
+            .engine_mut()
+            .read_block(NEST_K)
+            .unwrap()
+            .expect("K in S1");
+        assert_eq!(
+            k.parent_id.as_deref(),
+            Some(NEST_P),
+            "precondition: K hangs under P"
+        );
+        assert_eq!(k.position, 1, "precondition: K ranks first under P");
+    }
+    assert_eq!(
+        inherited_rows(&pool, NEST_KC).await,
+        1,
+        "precondition: KC inherits P's tag"
+    );
+
+    apply(&pool, &state, set_space_op(NEST_P, Some(SPACE2_ID))).await;
+
+    let s1_bytes = {
+        let mut guard = state.registry.for_space(&space(), DEVICE_ID).expect("s1");
+        let engine = guard.engine_mut();
+        for id in [NEST_P, NEST_C] {
+            assert!(!engine.contains_block(id), "{id} left S1's doc");
+        }
+        let k = engine
+            .read_block(NEST_K)
+            .unwrap()
+            .expect("K stays in S1's doc");
+        assert_eq!(k.parent_id, None, "K is re-rooted in S1's doc");
+        assert_eq!(k.position, 2, "K ranks behind Q among S1's roots");
+        assert_eq!(
+            engine.read_parent(NEST_KC).unwrap().as_deref(),
+            Some(NEST_K),
+            "K's subtree travels with it"
+        );
+        engine.export_snapshot().expect("export s1")
+    };
+    {
+        let mut guard = state.registry.for_space(&space2(), DEVICE_ID).expect("s2");
+        let engine = guard.engine_mut();
+        for id in [NEST_P, NEST_C] {
+            assert!(engine.contains_block(id), "{id} joined S2's doc");
+        }
+        for id in [NEST_K, NEST_KC] {
+            assert!(!engine.contains_block(id), "{id} never enters S2's doc");
+        }
+    }
+    // SQL says the same as S1's doc: a root page of S1 at the doc's rank.
+    assert_eq!(
+        sql_row(&pool, NEST_K).await,
+        (None, Some(2), Some(SPACE_ID.to_string())),
+        "K: parent NULL, position reprojected from the root forest, space S1"
+    );
+    assert_eq!(sql_row(&pool, NEST_KC).await.2.as_deref(), Some(SPACE_ID));
+    assert_eq!(sql_row(&pool, NEST_P).await.2.as_deref(), Some(SPACE2_ID));
+    assert_eq!(sql_row(&pool, NEST_C).await.2.as_deref(), Some(SPACE2_ID));
+    assert_eq!(
+        inherited_rows(&pool, NEST_KC).await,
+        0,
+        "KC no longer inherits a tag from the parent chain K left"
+    );
+
+    // A fresh peer importing S1's doc projects exactly that: K a root, P gone.
+    let mut peer = crate::loro::engine::LoroEngine::with_peer_id("fresh-peer-5239").expect("peer");
+    peer.import(&s1_bytes).expect("import s1");
+    assert!(
+        peer.read_block(NEST_P).unwrap().is_none(),
+        "P must not resurrect in S1 on a peer"
+    );
+    let k = peer
+        .read_block(NEST_K)
+        .unwrap()
+        .expect("K in S1 on the peer");
+    assert_eq!(k.parent_id, None, "the peer sees K as a root of S1");
+}

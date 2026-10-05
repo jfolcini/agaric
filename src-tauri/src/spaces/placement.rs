@@ -23,6 +23,13 @@
 //! and the tag-ref rebuilds it enqueues have drained, the sink emits
 //! `blocks:changed` with no page ids — the full-reload form — the same signal
 //! an MCP write uses for an out-of-band local write.
+//!
+//! #5251: the same signal follows every session that changed something, once
+//! the debounced post-sync cache rebuild has drained. A block synced in under
+//! another block has `page_id` NULL until that rebuild runs, so
+//! `page_link_cache` credits its links to its parent block and the graph a
+//! mounted view refetched on `sync:complete` has no edge for them. The signal
+//! carries the session's own page ids, or none when a block was placed.
 
 use std::sync::Arc;
 
@@ -74,6 +81,7 @@ impl SyncEventSink for SpacePlacementSink {
     fn on_sync_event(&self, event: SyncEvent) {
         if let SyncEvent::Complete {
             changed_blocks,
+            changed_page_ids,
             remote_device_id,
             ..
         } = &event
@@ -85,30 +93,40 @@ impl SyncEventSink for SpacePlacementSink {
             let materializer = self.materializer.clone();
             let view = self.view.clone();
             let peer = remote_device_id.clone();
+            let changed_page_ids = changed_page_ids.clone();
             let task = tokio::spawn(async move {
-                match place_space_less_blocks(&pool, &read_pool, &device_id, &materializer).await {
-                    Ok((0, 0)) => {}
-                    Ok((pages, tags)) => {
-                        tracing::info!(
-                            peer_id = %peer,
-                            pages,
-                            tags,
-                            "placed space-less blocks after inbound sync"
-                        );
-                        // The rebuilds are what turn a raw `#[ULID]` back into
-                        // a tag; signal only once they have drained. The wait
-                        // fails only on shutdown, when the signal has no
-                        // listener either.
-                        let _ = materializer.flush_background().await;
-                        view.emit_blocks_changed(Vec::new());
-                    }
-                    // Non-fatal: the boot pass remains the backstop.
-                    Err(e) => tracing::warn!(
-                        peer_id = %peer,
-                        error = %e,
-                        "failed to place space-less blocks after inbound sync"
-                    ),
-                }
+                let placed =
+                    match place_space_less_blocks(&pool, &read_pool, &device_id, &materializer)
+                        .await
+                    {
+                        Ok((0, 0)) => false,
+                        Ok((pages, tags)) => {
+                            tracing::info!(
+                                peer_id = %peer,
+                                pages,
+                                tags,
+                                "placed space-less blocks after inbound sync"
+                            );
+                            true
+                        }
+                        // Non-fatal: the boot pass remains the backstop.
+                        Err(e) => {
+                            tracing::warn!(
+                                peer_id = %peer,
+                                error = %e,
+                                "failed to place space-less blocks after inbound sync"
+                            );
+                            false
+                        }
+                    };
+                // #5251: signal only once the post-sync rebuild has drained —
+                // it is what fills `page_id` and `page_link_cache` for the
+                // synced-in blocks, and (#4781) what turns a placed block's raw
+                // `#[ULID]` back into a tag, so a placement takes the
+                // full-reload form. The wait fails only on shutdown, when the
+                // signal has no listener either.
+                let _ = materializer.flush_inbound_rebuilds().await;
+                view.emit_blocks_changed(if placed { Vec::new() } else { changed_page_ids });
             });
             #[cfg(test)]
             {
@@ -186,11 +204,18 @@ mod tests {
     }
 
     fn complete(changed_blocks: Option<usize>) -> SyncEvent {
+        complete_for_pages(changed_blocks, Vec::new())
+    }
+
+    fn complete_for_pages(
+        changed_blocks: Option<usize>,
+        changed_page_ids: Vec<String>,
+    ) -> SyncEvent {
         SyncEvent::Complete {
             remote_device_id: "PEER".into(),
             ops_received: 1,
             ops_sent: 0,
-            changed_page_ids: vec![],
+            changed_page_ids,
             changed_blocks,
         }
     }
@@ -223,7 +248,7 @@ mod tests {
         let materializer = Materializer::new(pool.clone());
         let (sink, recording, view) = sink(&pool, &materializer);
 
-        sink.on_sync_event(complete(changed_blocks));
+        sink.on_sync_event(complete_for_pages(changed_blocks, vec!["PAGE_A".into()]));
         let task = sink
             .last_task
             .lock()
@@ -245,24 +270,115 @@ mod tests {
         assert!(work.engine_mut().contains_block(&tag_id));
         // The event still reaches the wrapped sink.
         assert_eq!(recording.0.lock().unwrap().len(), 1);
-        // #4781 — and the frontend is told to reload once the placement landed.
+        // #4781 — and the frontend is told to reload everything once the
+        // placement landed: the placed tag is referenced from pages the
+        // session never named, so the session's own page set is not enough.
         assert_eq!(view.blocks_changed(), vec![Vec::<String>::new()]);
         materializer.shutdown();
     }
 
-    /// A session that moved blocks but delivered nothing space-less must not
-    /// trigger a full frontend reload.
+    /// A session that moved blocks but delivered nothing space-less signals
+    /// its own page set once (#5251), never the full-reload form (#4781).
     #[tokio::test]
-    async fn a_session_with_nothing_to_place_signals_nothing_4781() {
+    async fn a_session_with_nothing_to_place_signals_its_own_pages_5251() {
         let (pool, _dir) = seeded_pool().await;
         let materializer = Materializer::new(pool.clone());
         let (sink, _recording, view) = sink(&pool, &materializer);
 
-        sink.on_sync_event(complete(Some(3)));
+        sink.on_sync_event(complete_for_pages(Some(3), vec!["PAGE_A".into()]));
         let task = sink.last_task.lock().unwrap().take().expect("spawned");
         task.await.unwrap();
 
-        assert!(view.blocks_changed().is_empty());
+        assert_eq!(view.blocks_changed(), vec![vec!["PAGE_A".to_string()]]);
+        materializer.shutdown();
+    }
+
+    /// #5251 — a block synced in under another block has `page_id` NULL until
+    /// the debounced post-sync rebuild runs, so `page_link_cache` credits its
+    /// link to its parent block and the graph the frontend refetched on
+    /// `sync:complete` has no edge for it. The signal follows that rebuild.
+    #[tokio::test]
+    async fn the_signal_follows_the_post_sync_rebuild_5251() {
+        let (pool, _dir) = seeded_pool().await;
+        let page = BlockId::new().to_string();
+        let target = BlockId::new().to_string();
+        let holder = BlockId::new().to_string();
+        let link = BlockId::new().to_string();
+        for (id, title) in [(&page, "Graph source"), (&target, "Graph target")] {
+            sqlx::query(
+                "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id, space_id) \
+                 VALUES (?, 'page', ?, NULL, 1, ?, ?)",
+            )
+            .bind(id)
+            .bind(title)
+            .bind(id)
+            .bind(SPACE_WORK_ULID)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id, space_id) \
+             VALUES (?, 'content', 'holder', ?, 1, ?, ?)",
+        )
+        .bind(&holder)
+        .bind(&page)
+        .bind(&page)
+        .bind(SPACE_WORK_ULID)
+        .execute(&pool)
+        .await
+        .unwrap();
+        // As `project_block_full_to_sql` inserts a synced-in non-page block:
+        // space stamped, `page_id` left for the rebuild.
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id, space_id) \
+             VALUES (?, 'content', ?, ?, 1, NULL, ?)",
+        )
+        .bind(&link)
+        .bind(format!("[[{target}]]"))
+        .bind(&holder)
+        .bind(SPACE_WORK_ULID)
+        .execute(&pool)
+        .await
+        .unwrap();
+        let materializer = Materializer::new(pool.clone());
+        // What the session's import fanned out before it completed.
+        materializer
+            .enqueue_inbound_sync_rebuilds(&[BlockId::from_trusted(&link)], &[])
+            .await
+            .unwrap();
+        let (sink, _recording, view) = sink(&pool, &materializer);
+
+        sink.on_sync_event(complete_for_pages(Some(1), vec![page.clone()]));
+        let task = sink.last_task.lock().unwrap().take().expect("spawned");
+        task.await.unwrap();
+
+        assert_eq!(view.blocks_changed(), vec![vec![page.clone()]]);
+        let link_page: Option<String> =
+            sqlx::query_scalar("SELECT page_id FROM blocks WHERE id = ?")
+                .bind(&link)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(
+            link_page.as_deref(),
+            Some(page.as_str()),
+            "the rebuild resolved the synced-in block's page before the signal"
+        );
+        let edge: Option<i64> = sqlx::query_scalar(
+            "SELECT edge_count FROM page_link_cache \
+             WHERE source_page_id = ? AND target_page_id = ?",
+        )
+        .bind(&page)
+        .bind(&target)
+        .fetch_optional(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            edge,
+            Some(1),
+            "the graph edge is credited to the page, not to its parent block"
+        );
         materializer.shutdown();
     }
 

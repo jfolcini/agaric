@@ -8246,6 +8246,28 @@ async fn move_blocks_to_space_propagates_space_id_to_descendants_533() {
     );
 }
 
+/// Whether `space`'s per-space doc holds `id` (#5239 doc-membership probe).
+fn doc_holds(mat: &Materializer, space: &str, id: &str) -> bool {
+    let space = agaric_store::space::SpaceId::from_trusted(space);
+    let mut guard = mat
+        .loro_state()
+        .registry
+        .for_space(&space, DEV)
+        .expect("for_space");
+    guard.engine_mut().contains_block(id)
+}
+
+/// `id`'s parent in `space`'s per-space doc; `id` must be in it.
+fn doc_parent(mat: &Materializer, space: &str, id: &str) -> Option<String> {
+    let space = agaric_store::space::SpaceId::from_trusted(space);
+    let mut guard = mat
+        .loro_state()
+        .registry
+        .for_space(&space, DEV)
+        .expect("for_space");
+    guard.engine_mut().read_parent(id).expect("read_parent")
+}
+
 /// #4480 — the counterpart of the #533 test above, and the fact that decides
 /// what a batch move owes the `[[` picker's ORIGIN-space name cache.
 ///
@@ -8415,6 +8437,54 @@ async fn move_blocks_to_space_leaves_nested_pages_in_the_origin_space_4480() {
         !after_b.contains(&"MBS7_KID".to_string()),
         "the nested page must NOT appear in the destination space — it never \
          moved (got {after_b:?})"
+    );
+
+    // #5239 — the per-space docs agree with the columns above. Before the fix
+    // the old-doc prune deleted the whole LoroTree subtree, nested page
+    // included, and the hydration seeded it into B's doc: the nested page's
+    // edits then fell back to SQL-only and peers showed it in B.
+    for id in ["MBS7_KID", "MBS7_KIDCONTENT", "MBS7_SIB"] {
+        assert!(
+            doc_holds(&mat, "MBS7_SPACE_A", id),
+            "{id} stays in space A's doc"
+        );
+        assert!(
+            !doc_holds(&mat, "MBS7_SPACE_B", id),
+            "{id} never enters space B's doc"
+        );
+    }
+    for id in ["MBS7_PAGE", "MBS7_CONTENT"] {
+        assert!(
+            doc_holds(&mat, "MBS7_SPACE_B", id),
+            "{id} moves to space B's doc"
+        );
+        assert!(
+            !doc_holds(&mat, "MBS7_SPACE_A", id),
+            "{id} leaves space A's doc"
+        );
+    }
+    // Its parent left the doc, so the nested page is a root of A's doc now,
+    // its own subtree intact — and SQL says the same, a page cannot hang
+    // under a block of another space's doc.
+    assert_eq!(
+        doc_parent(&mat, "MBS7_SPACE_A", "MBS7_KID"),
+        None,
+        "the nested page is re-rooted in A's doc"
+    );
+    assert_eq!(
+        doc_parent(&mat, "MBS7_SPACE_A", "MBS7_KIDCONTENT").as_deref(),
+        Some("MBS7_KID"),
+        "the nested page's content child stays under it"
+    );
+    let kid_parent: Option<String> =
+        sqlx::query_scalar("SELECT parent_id FROM blocks WHERE id = ?")
+            .bind("MBS7_KID")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        kid_parent, None,
+        "SQL re-roots the nested page with the doc"
     );
 }
 

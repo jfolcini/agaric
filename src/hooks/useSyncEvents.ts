@@ -362,7 +362,9 @@ export function useSyncEvents(): void {
   // otherwise (the write is local, so `sync:complete` never fires). Route it
   // through the SAME targeted-reload path the `sync:complete` handler uses so
   // the affected page updates without navigation — no toast, no ops counter,
-  // just the reconciliation.
+  // just the reconciliation. #5251: the backend also sends it after a sync
+  // session once its post-sync cache rebuild has drained, so the graph and
+  // the Pages list refetch with `page_id` / `page_link_cache` current.
   useTauriEventListener<BlocksChangedPayload>(
     'blocks:changed',
     (event) => {

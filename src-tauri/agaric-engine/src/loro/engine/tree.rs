@@ -319,6 +319,47 @@ impl LoroEngine {
         }
         out
     }
+    /// #5239: move every nested page under `root_block_id` to the tree root,
+    /// each taking its own subtree with it, and return their block ids. The
+    /// walk stops at the first page on each path, so a page nested under a
+    /// nested page stays where it is. A page keeps its own space (#4480), so
+    /// this is what keeps it in this doc when its parent is purged out of it
+    /// for a space move; a `None` root is a no-op.
+    pub fn detach_nested_pages(&mut self, root_block_id: &str) -> Result<Vec<String>, AppError> {
+        let Some(root) = self.node_for(root_block_id) else {
+            return Ok(Vec::new());
+        };
+        let tree = self.tree();
+        let mut detached = Vec::new();
+        let mut stack = tree.children(TreeParentId::Node(root)).unwrap_or_default();
+        while let Some(node) = stack.pop() {
+            let meta = tree.get_meta(node).map_err(|e| {
+                AppError::validation(format!(
+                    "loro: detach nested pages under {root_block_id}: get_meta: {e}"
+                ))
+            })?;
+            if read_string(&meta, FIELD_BLOCK_TYPE)? == "page" {
+                let block_id = read_string(&meta, FIELD_BLOCK_ID)?;
+                tree.mov(node, TreeParentId::Root).map_err(|e| {
+                    AppError::validation(format!(
+                        "loro: detach nested page {block_id}: tree.mov: {e}"
+                    ))
+                })?;
+                // An explicit move to the root supersedes a recorded intent to
+                // hang under the departing parent.
+                self.pending_parent.remove(&block_id);
+                detached.push(block_id);
+                continue;
+            }
+            if let Some(children) = tree.children(TreeParentId::Node(node)) {
+                stack.extend(children);
+            }
+        }
+        if !detached.is_empty() {
+            self.doc.commit();
+        }
+        Ok(detached)
+    }
     /// The live (non-hard-purged) tree nodes paired with their `block_id`
     /// (read from node meta). The single forest-walk primitive shared by
     /// [`Self::rebuild_index`] and [`Self::count_alive_blocks`].
@@ -424,5 +465,81 @@ mod children_contract_tests {
             e.children_ordered_block_ids(Some("ghost")).unwrap(),
             Vec::<String>::new()
         );
+    }
+}
+
+#[cfg(test)]
+mod detach_nested_pages_tests {
+    //! #5239: the page-boundary walk behind the space move's old-doc prune.
+    use super::LoroEngine;
+
+    /// P holds a content child, a nested page K (with its own content child
+    /// and a page nested under it), and a content block that hides a second
+    /// nested page deeper down. Detaching from P re-roots exactly the two
+    /// pages met first on each path, each with its subtree intact.
+    #[test]
+    fn detach_nested_pages_re_roots_each_first_page_with_its_subtree() {
+        let mut e = LoroEngine::new();
+        e.apply_create_block_at("P", "page", "p", None, 0).unwrap();
+        e.apply_create_block_at("C", "content", "c", Some("P"), 0)
+            .unwrap();
+        e.apply_create_block_at("K", "page", "k", Some("P"), 1)
+            .unwrap();
+        e.apply_create_block_at("KC", "content", "kc", Some("K"), 0)
+            .unwrap();
+        e.apply_create_block_at("KK", "page", "kk", Some("K"), 1)
+            .unwrap();
+        e.apply_create_block_at("X", "content", "x", Some("P"), 2)
+            .unwrap();
+        e.apply_create_block_at("XK", "page", "xk", Some("X"), 0)
+            .unwrap();
+
+        let mut detached = e.detach_nested_pages("P").unwrap();
+        detached.sort();
+
+        assert_eq!(
+            detached,
+            vec!["K", "XK"],
+            "one page per path, nothing deeper"
+        );
+        assert_eq!(e.read_parent("K").unwrap(), None, "K is a root now");
+        assert_eq!(e.read_parent("XK").unwrap(), None, "XK is a root now");
+        assert_eq!(
+            e.read_parent("KC").unwrap().as_deref(),
+            Some("K"),
+            "K's subtree travels with K"
+        );
+        assert_eq!(
+            e.read_parent("KK").unwrap().as_deref(),
+            Some("K"),
+            "a page under K is behind K's boundary and stays there"
+        );
+        assert_eq!(
+            e.children_ordered_block_ids(Some("P")).unwrap(),
+            vec!["C", "X"],
+            "P keeps its non-page children"
+        );
+        let mut roots = e.children_ordered_block_ids(None).unwrap();
+        roots.sort();
+        assert_eq!(
+            roots,
+            vec!["K", "P", "XK"],
+            "the detached pages join the root forest"
+        );
+    }
+
+    #[test]
+    fn detach_nested_pages_is_a_noop_without_pages_or_root() {
+        let mut e = LoroEngine::new();
+        e.apply_create_block_at("P", "page", "p", None, 0).unwrap();
+        e.apply_create_block_at("C", "content", "c", Some("P"), 0)
+            .unwrap();
+
+        assert_eq!(e.detach_nested_pages("P").unwrap(), Vec::<String>::new());
+        assert_eq!(
+            e.detach_nested_pages("ghost").unwrap(),
+            Vec::<String>::new()
+        );
+        assert_eq!(e.read_parent("C").unwrap().as_deref(), Some("P"));
     }
 }

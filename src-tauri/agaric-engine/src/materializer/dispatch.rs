@@ -783,6 +783,22 @@ impl Materializer {
                 }
             }
         }
+        // #5241: a renamed page or tag arrives as a changed block, and the
+        // FTS rows of the blocks referencing it still carry its old name
+        // (`strip.rs` substitutes titles at index time). A local rename
+        // enqueues this from the `EditBlock` arm; nothing did for sync. Same
+        // threshold as the siblings: above it the full `RebuildFtsIndex`
+        // enqueued above re-resolves every reference anyway. A purge-only
+        // import has nothing to look up, so it skips the pool read like the
+        // sibling selectors do (the debounce tests arm with one under paused
+        // time, where a pool acquire times out).
+        if !changed_blocks.is_empty() && changed_blocks.len() <= SYNC_FTS_PER_BLOCK_MAX {
+            for block_id in self.changed_page_and_tag_ids(changed_blocks).await? {
+                self.try_enqueue_background(MaterializeTask::ReindexFtsReferences {
+                    block_id: Arc::from(block_id),
+                })?;
+            }
+        }
         // #2667: `block_tag_refs` is likewise NOT in the debounced global set
         // (see [`INBOUND_SYNC_CACHE_REBUILD_TASKS`]) — it is driven from the
         // same exact `changed_blocks` set, exactly like FTS above. A block's
@@ -816,6 +832,27 @@ impl Materializer {
             }
         }
         Ok(())
+    }
+
+    /// #5241: the `page` / `tag` blocks among `changed_blocks` — the ones
+    /// whose title other blocks' FTS rows embed.
+    async fn changed_page_and_tag_ids(
+        &self,
+        changed_blocks: &[agaric_core::ulid::BlockId],
+    ) -> Result<Vec<String>, AppError> {
+        let ids: Vec<&str> = changed_blocks
+            .iter()
+            .map(agaric_core::ulid::BlockId::as_str)
+            .collect();
+        let ids_json = serde_json::to_string(&ids)?;
+        Ok(sqlx::query_scalar!(
+            "SELECT id FROM blocks \
+             WHERE id IN (SELECT value FROM json_each(?)) \
+               AND block_type IN ('page', 'tag')",
+            ids_json,
+        )
+        .fetch_all(&self.reader_pool)
+        .await?)
     }
 
     /// #2291: arm the inbound-sync cache-rebuild trailing debounce instead
@@ -1120,29 +1157,48 @@ impl Materializer {
         }
     }
 
-    /// #2291 test-only: synchronously fire any pending inbound-sync rebuild
-    /// fan-out and drain the background queue, so debounce-agnostic cache
-    /// tests (which enqueue an inbound rebuild then assert the resulting
-    /// global cache state) stay deterministic without waiting out the
-    /// real-time trailing window. Disarms under the lock first, then fires
-    /// the identical 8-task set; a redundant later loop-fire is harmless
-    /// (idempotent + batch-deduped).
-    #[cfg(test)]
-    pub(super) async fn flush_inbound_rebuild_debounce(&self) {
-        {
+    /// #5251: disarm the inbound-sync rebuild debounce and, if it was armed,
+    /// enqueue its fan-out now. Mirrors [`Self::fire_pending_lifecycle_rebuild`].
+    fn fire_pending_inbound_rebuild(&self) {
+        let was_armed = {
             let mut st = self
                 .inbound_rebuild_debounce
                 .state
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
+            let was_armed = st.armed;
             st.armed = false;
             st.first_request = None;
             st.last_request = None;
+            was_armed
+        };
+        if was_armed {
+            self.fire_inbound_rebuild_fanout();
+            // Wake the loop so it re-reads the disarmed state instead of
+            // firing the same fan-out again when its window elapses.
+            self.inbound_rebuild_debounce.notify.notify_one();
         }
-        self.fire_inbound_rebuild_fanout();
+    }
+
+    /// #5251: fire the pending inbound-sync rebuild fan-out and wait for the
+    /// background queue to drain, so a caller can tell views that the caches
+    /// a sync session left stale (`page_id`, `page_link_cache`, …) are
+    /// current. The debounce itself keeps coalescing a burst of imports; this
+    /// only ends the window early for a session that is done.
+    pub async fn flush_inbound_rebuilds(&self) -> Result<(), AppError> {
+        self.fire_pending_inbound_rebuild();
+        self.flush_background().await
+    }
+
+    /// #2291 test-only: [`Self::flush_inbound_rebuilds`] for debounce-agnostic
+    /// cache tests (which enqueue an inbound rebuild then assert the resulting
+    /// global cache state), so they stay deterministic without waiting out
+    /// the real-time trailing window.
+    #[cfg(test)]
+    pub(super) async fn flush_inbound_rebuild_debounce(&self) {
         // Surface a drain failure here (not as a confusing downstream
         // cache-count assertion) — this is a test-only helper.
-        self.flush_background()
+        self.flush_inbound_rebuilds()
             .await
             .expect("flush_background in flush_inbound_rebuild_debounce");
     }
@@ -1625,7 +1681,9 @@ fn push_edit_block_invalidations(
             // REFERENCING block's `fts_blocks.stripped` holding the
             // post-rename name — searching the restored name missed
             // them, searching the undone name still matched. Remote
-            // replay / inbound sync take the same unhinted path.
+            // replay takes the same unhinted path; inbound sync never
+            // passes through here — `enqueue_inbound_sync_rebuilds`
+            // enqueues the reference reindex itself (#5241).
             tasks.push(MaterializeTask::ReindexFtsReferences {
                 block_id: Arc::from(block_id),
             });
