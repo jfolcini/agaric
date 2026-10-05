@@ -6,14 +6,14 @@
 # by SHA, specta by `=`, AGP/Gradle); the toolchain was the one unpinned
 # input. Bump deliberately via PR, keeping three places in lockstep:
 #   * this file
-#   * the `toolchain:` input on every dtolnay/rust-toolchain step
-#     (.github/workflows/{ci,release,_validate}.yml)
+#   * the `toolchain:` input on every `./.github/actions/rust-toolchain` step
+#     (.github/workflows/*.yml and .github/actions/toolchain)
 #   * `rust-version` in src-tauri/Cargo.toml (MSRV documentation)
 channel = "1.95.0"
 # clippy + rustfmt are required by the prek hooks (`cargo clippy -- -D
 # warnings`, `cargo fmt --check`). With a floating `stable` they came along
 # implicitly (full-profile installs); a pinned exact version is typically a
-# fresh `--profile minimal` install (dtolnay/rust-toolchain in CI), which
-# ships NEITHER — rustup installs components listed here automatically
+# fresh `--profile minimal` install (`.github/actions/rust-toolchain` in CI),
+# which ships NEITHER — rustup installs components listed here automatically
 # whenever this toolchain file is in effect.
 components = ["clippy", "rustfmt"]
