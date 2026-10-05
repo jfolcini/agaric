@@ -8,7 +8,7 @@
 
 import { Paintbrush, Pencil, Plus, Tag, Trash2, X } from 'lucide-react'
 import type React from 'react'
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { EmptyState } from '@/components/common/EmptyState'
@@ -31,6 +31,7 @@ import {
   notifyTagAdded,
   notifyTagRemoved,
   notifyTagRenamed,
+  subscribeToNameChanges,
 } from '@/lib/name-change-bus'
 import { notify } from '@/lib/notify'
 import { requireActiveScope } from '@/lib/space-scope'
@@ -43,6 +44,7 @@ import {
   tagColorForeground,
 } from '@/lib/tag-colors'
 import { cn } from '@/lib/utils'
+import { renamePage } from '@/stores/page-rename'
 import { useResolveStore } from '@/stores/resolve'
 import { useSpaceStore } from '@/stores/space'
 
@@ -65,8 +67,13 @@ export function TagList({ onTagClick }: TagListProps): React.ReactElement {
   const [renameTarget, setRenameTarget] = useState<{ id: string; name: string } | null>(null)
   const [tagColors, setTagColors] = useState<Record<string, string>>(getTagColors)
   const [colorPickerOpen, setColorPickerOpen] = useState<string | null>(null)
+  // #5257 — the view stays mounted across a space switch, so the list must
+  // follow the live space; a delete on another space's row purges that tag.
+  const currentSpaceId = useSpaceStore((s) => s.currentSpaceId)
+  const loadSeqRef = useRef(0)
 
   const loadTags = useCallback(async () => {
+    const seq = ++loadSeqRef.current
     setLoading(true)
     setLoadError(false)
     try {
@@ -79,27 +86,38 @@ export function TagList({ onTagClick }: TagListProps): React.ReactElement {
       // space there are no tags to show, so short-circuit locally to an
       // empty list instead of dispatching (a Global scope is rejected by
       // the backend).
-      const spaceId = useSpaceStore.getState().currentSpaceId
-      if (spaceId == null) {
+      if (currentSpaceId == null) {
         setTags([])
         setLoading(false)
         return
       }
-      const resp = unwrap(await commands.listAllTagsInSpace(requireActiveScope(spaceId)))
+      const resp = unwrap(await commands.listAllTagsInSpace(requireActiveScope(currentSpaceId)))
+      if (seq !== loadSeqRef.current) return
       setTags(resp)
     } catch (error) {
+      if (seq !== loadSeqRef.current) return
       logger.error('TagList', 'failed to load tags', undefined, error)
       setLoadError(true)
       notify.error(t('tags.loadFailed'), { id: 'tags-load-failed' })
     }
     setLoading(false)
-  }, [t])
+  }, [currentSpaceId, t])
 
   useEffect(() => {
     // `loadTags` toasts its own failure; never rejects.
     // oxlint-disable-next-line react/set-state-in-effect -- `loadTags` is the `listAllTagsInSpace` loader; its synchronous `setLoading(true)` arms the spinner for a backend fetch; see #4407
     void loadTags()
   }, [loadTags])
+
+  // #5258 — a sync or MCP write (an `invalidated` name change) can add, rename
+  // or remove tags.
+  useEffect(
+    () =>
+      subscribeToNameChanges((change) => {
+        if (change.kind === 'invalidated') void loadTags()
+      }),
+    [loadTags],
+  )
 
   const handleCreateTag = useCallback(async () => {
     const name = newTagName.trim()
@@ -224,8 +242,11 @@ export function TagList({ onTagClick }: TagListProps): React.ReactElement {
         setTags((prev) =>
           prev.map((tag) => (tag.tag_id === renameTarget.id ? { ...tag, name: trimmed } : tag)),
         )
-        useResolveStore.getState().set(renameTarget.id, trimmed, false)
-        // #4007 — mirror the page-rename fan-out for the `#` picker's cache.
+        // #5242 — a tag opens as a page, so its tab label and recents entry
+        // hold the name too.
+        renamePage(renameTarget.id, trimmed, spaceId)
+        // #4007 — `renamePage` broadcasts a PAGE rename; the `#` picker's
+        // cache needs the tag one.
         // #4391 — no active space: fall back to a full invalidation, same as
         // `handleDeleteTag`. See the "When the caller has NO active space"
         // section of `src/lib/name-change-bus.ts`.

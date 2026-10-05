@@ -30,6 +30,7 @@ import type { BlockRow, PageResponse, SpaceScope, TagExpr } from '@/lib/bindings
 import { commands } from '@/lib/bindings'
 import { PAGINATION_LIMIT } from '@/lib/constants'
 import { logger } from '@/lib/logger'
+import { subscribeToNameChanges } from '@/lib/name-change-bus'
 import { notify } from '@/lib/notify'
 import { queryClient } from '@/lib/query-client'
 import { type TagQueryParams, compileTagExpr, tagBuilderHasLeaves } from '@/lib/tagExpr'
@@ -493,6 +494,28 @@ export function TagFilterPanel(): React.ReactElement {
   const handleRemoveTag = useCallback((tagId: string) => {
     setSelectedTags((prev) => prev.filter((sel) => sel.id !== tagId))
   }, [])
+
+  // #5254 — the chips and the prefix matches hold a tag's name, and the Tags
+  // view above renames and deletes tags without unmounting this panel.
+  useEffect(
+    () =>
+      subscribeToNameChanges((change) => {
+        if (change.kind !== 'renamed' && change.kind !== 'removed') return
+        if (change.entity !== 'tag') return
+        const { id } = change
+        if (change.kind === 'renamed') {
+          const { name } = change
+          setSelectedTags((prev) => prev.map((sel) => (sel.id === id ? { ...sel, name } : sel)))
+          setMatchingTags((prev) => prev.map((m) => (m.tag_id === id ? { ...m, name } : m)))
+        } else {
+          setSelectedTags((prev) => prev.filter((sel) => sel.id !== id))
+          setMatchingTags((prev) => prev.filter((m) => m.tag_id !== id))
+        }
+        // A prefix pill or a composer leaf can match the tag too.
+        void queryClient.invalidateQueries({ queryKey: ['tagFilterBlocks'] })
+      }),
+    [],
+  )
 
   // ── #1426 prefix pills ───────────────────────────────────────────
   const handleAddPrefixPill = useCallback(() => {

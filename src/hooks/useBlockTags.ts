@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useState } from 'react'
 
 import { unwrap } from '@/lib/app-error'
-import type { BlockRow } from '@/lib/bindings'
 import { commands } from '@/lib/bindings'
+import { recordGraphStructureChange } from '@/lib/graph-structure-events'
 import { i18n } from '@/lib/i18n'
 import { logger } from '@/lib/logger'
+import { notifyTagAdded, subscribeToNameChanges } from '@/lib/name-change-bus'
 import { notify } from '@/lib/notify'
 import { usePageBlockStoreApi } from '@/stores/page-blocks'
 import { useResolveStore } from '@/stores/resolve'
@@ -52,9 +53,19 @@ export function useBlockTags(blockId: string | null): UseBlockTagsReturn {
   const [appliedTagIds, setAppliedTagIds] = useState<Set<string>>(new Set())
   const [inheritedTagIds, setInheritedTagIds] = useState<Set<string>>(new Set())
   const [loading, setLoading] = useState(false)
+  // #5244 — a sync or MCP write (an `invalidated` name change) can change the
+  // catalogue and this block's tags.
+  const [reloadKey, setReloadKey] = useState(0)
+  useEffect(
+    () =>
+      subscribeToNameChanges((change) => {
+        if (change.kind === 'invalidated') setReloadKey((key) => key + 1)
+      }),
+    [],
+  )
 
   // Load all available tags for the active space.
-  // #2248 — `listBlocks` requires an active space; there is no cross-space
+  // #2248 — the listing requires an active space; there is no cross-space
   // listing. With no active space, short-circuit to an empty tag list rather
   // than invoking (which would throw in `requireActiveScope`).
   useEffect(() => {
@@ -67,30 +78,18 @@ export function useBlockTags(blockId: string | null): UseBlockTagsReturn {
     let cancelled = false
     const capturedSpaceId = currentSpaceId
     if (!capturedSpaceId) {
-      // oxlint-disable-next-line react/set-state-in-effect -- empties the tag list when no space is active, since `listBlocks` cannot list tags cross-space; see #4407
+      // oxlint-disable-next-line react/set-state-in-effect -- empties the tag list when no space is active, since tags cannot be listed cross-space; see #4407
       setAllTags([])
       return
     }
+    // #5244 — the no-limit listing: `listBlocks` stopped at the 50 oldest tags.
     commands
-      .listBlocks(
-        {
-          parentId: null,
-          blockType: 'tag',
-          tagId: null,
-          date: null,
-          dateRange: null,
-          source: null,
-          excludeTodoStates: null,
-          cursor: null,
-          limit: null,
-        },
-        { kind: 'active', space_id: capturedSpaceId },
-      )
+      .listAllTagsInSpace({ kind: 'active', space_id: capturedSpaceId })
       .then(unwrap)
-      .then((resp) => {
+      .then((rows) => {
         if (cancelled) return
         if (useSpaceStore.getState().currentSpaceId !== capturedSpaceId) return
-        setAllTags(resp.items.map((t: BlockRow) => ({ id: t.id, name: t.content ?? '' })))
+        setAllTags(rows.map((row) => ({ id: row.tag_id, name: row.name })))
       })
       .catch((error) => {
         if (cancelled) return
@@ -100,7 +99,7 @@ export function useBlockTags(blockId: string | null): UseBlockTagsReturn {
     return () => {
       cancelled = true
     }
-  }, [currentSpaceId])
+  }, [currentSpaceId, reloadKey])
 
   // Load applied + inherited tags when blockId changes (#1423).
   // Direct (`block_tags`) and inherited (`block_tag_inherited`) tags are
@@ -108,40 +107,42 @@ export function useBlockTags(blockId: string | null): UseBlockTagsReturn {
   // (direct wins, since a direct tag is removable) so it never renders as
   // a derived chip.
   useEffect(() => {
+    // oxlint-disable-next-line react/set-state-in-effect -- clears the previous block's tag sets before the two per-block IPCs for the new `blockId` resolve; see #4407
+    setAppliedTagIds(new Set())
+    setInheritedTagIds(new Set())
+    setLoading(blockId != null)
+  }, [blockId])
+
+  // Separate from the clear above so a `reloadKey` refetch keeps the chips on
+  // screen until the fresh sets land.
+  useEffect(() => {
+    if (!blockId) return
     // #1518 — guard against an older block's tags resolving last and
     // overwriting the newer block after a fast blockId switch. `cancelled`
     // is tripped by the cleanup on every dep change / unmount, so any
     // in-flight response for the previous blockId is dropped.
     let cancelled = false
-    // oxlint-disable-next-line react/set-state-in-effect -- clears the previous block's tag sets before the two per-block IPCs for the new `blockId` resolve; see #4407
-    setAppliedTagIds(new Set())
-    setInheritedTagIds(new Set())
-    setLoading(true)
-    if (blockId) {
-      Promise.all([
-        commands.listTagsForBlock(blockId).then(unwrap),
-        commands.listInheritedTagsForBlock(blockId).then(unwrap),
-      ])
-        .then(([directIds, inheritedIds]) => {
-          if (cancelled) return
-          const direct = new Set(directIds)
-          setAppliedTagIds(direct)
-          setInheritedTagIds(new Set(inheritedIds.filter((id) => !direct.has(id))))
-          setLoading(false)
-        })
-        .catch((error) => {
-          if (cancelled) return
-          logger.error('useBlockTags', 'Failed to load tags for block', { blockId }, error)
-          notify.error(i18n.t('tags.loadFailed'), { id: 'tags-load-failed' })
-          setLoading(false)
-        })
-    } else {
-      setLoading(false)
-    }
+    Promise.all([
+      commands.listTagsForBlock(blockId).then(unwrap),
+      commands.listInheritedTagsForBlock(blockId).then(unwrap),
+    ])
+      .then(([directIds, inheritedIds]) => {
+        if (cancelled) return
+        const direct = new Set(directIds)
+        setAppliedTagIds(direct)
+        setInheritedTagIds(new Set(inheritedIds.filter((id) => !direct.has(id))))
+        setLoading(false)
+      })
+      .catch((error) => {
+        if (cancelled) return
+        logger.error('useBlockTags', 'Failed to load tags for block', { blockId }, error)
+        notify.error(i18n.t('tags.loadFailed'), { id: 'tags-load-failed' })
+        setLoading(false)
+      })
     return () => {
       cancelled = true
     }
-  }, [blockId])
+  }, [blockId, reloadKey])
 
   const handleAddTag = useCallback(
     async (tagId: string) => {
@@ -166,6 +167,8 @@ export function useBlockTags(blockId: string | null): UseBlockTagsReturn {
           next.delete(tagId)
           return next
         })
+        // #5250 — a tag-filtered graph view reads the structure counter.
+        recordGraphStructureChange()
       } catch (error) {
         logger.error('useBlockTags', 'Failed to add tag', { blockId, tagId }, error)
         notify.error(i18n.t('tags.addFailed'))
@@ -190,6 +193,7 @@ export function useBlockTags(blockId: string | null): UseBlockTagsReturn {
           next.delete(tagId)
           return next
         })
+        recordGraphStructureChange()
       } catch (error) {
         logger.error('useBlockTags', 'Failed to remove tag', { blockId, tagId }, error)
         notify.error(i18n.t('tags.deleteFailed'))
@@ -202,14 +206,15 @@ export function useBlockTags(blockId: string | null): UseBlockTagsReturn {
     async (name: string) => {
       const trimmed = name.trim()
       if (!trimmed) return
+      // #3081 — create the tag ATOMICALLY space-scoped (thread the active
+      // spaceId) so the backend stamps `blocks.space_id` in the same
+      // transaction as the CreateBlock op. Previously the tag was born an
+      // orphan and only adopted into the space if it was later applied to a
+      // block; a tag created for the page (or when `addTag` failed) could
+      // stay orphaned and vanish from the space-scoped Tags view (#3081).
+      const spaceId = useSpaceStore.getState().currentSpaceId
+      let tagId: string
       try {
-        // #3081 — create the tag ATOMICALLY space-scoped (thread the active
-        // spaceId) so the backend stamps `blocks.space_id` in the same
-        // transaction as the CreateBlock op. Previously the tag was born an
-        // orphan and only adopted into the space if it was later applied to a
-        // block; a tag created for the page (or when `addTag` failed) could
-        // stay orphaned and vanish from the space-scoped Tags view (#3081).
-        const spaceId = useSpaceStore.getState().currentSpaceId
         const resp = unwrap(
           await commands.createBlock(
             'tag',
@@ -220,25 +225,23 @@ export function useBlockTags(blockId: string | null): UseBlockTagsReturn {
             null,
           ),
         )
-        const entry = { id: resp.id, name: trimmed }
-        setAllTags((prev) => [...prev, entry])
-        useResolveStore.getState().set(resp.id, trimmed, false)
-        if (blockId) {
-          const tagResp = unwrap(await commands.addTag(blockId, resp.id))
-          const { rootParentId } = pageStore.getState()
-          // #2468 — see handleAddTag (a just-created tag can't already be
-          // attached, but honor the empty-refs no-op contract regardless).
-          if (rootParentId && tagResp.op_refs.length > 0) {
-            useUndoStore.getState().onNewAction(rootParentId, tagResp.op_refs)
-          }
-          setAppliedTagIds((prev) => new Set([...prev, resp.id]))
-        }
+        tagId = resp.id
       } catch (error) {
         logger.error('useBlockTags', 'Failed to create tag', { blockId, name: trimmed }, error)
         notify.error(i18n.t('tags.createFailed'))
+        return
       }
+      // #5236 — the backend answers a name that already exists with that
+      // tag, which may already be listed here or applied to this block.
+      setAllTags((prev) =>
+        prev.some((tag) => tag.id === tagId) ? prev : [...prev, { id: tagId, name: trimmed }],
+      )
+      useResolveStore.getState().set(tagId, trimmed, false)
+      if (spaceId != null) notifyTagAdded(tagId, trimmed, spaceId)
+      // `add_tag` rejects a tag that is already applied.
+      if (!appliedTagIds.has(tagId)) await handleAddTag(tagId)
     },
-    [blockId, pageStore],
+    [appliedTagIds, blockId, handleAddTag],
   )
 
   return {

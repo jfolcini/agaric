@@ -22,7 +22,7 @@
  */
 
 import { invoke } from '@tauri-apps/api/core'
-import { render, screen, waitFor, within } from '@testing-library/react'
+import { act, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { toast } from 'sonner'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
@@ -37,8 +37,10 @@ import {
 import { TagList } from '@/components/TagList'
 import { t } from '@/lib/i18n'
 import type { NameChange } from '@/lib/name-change-bus'
-import { subscribeToNameChanges } from '@/lib/name-change-bus'
+import { invalidateNameCaches, subscribeToNameChanges } from '@/lib/name-change-bus'
+import { selectRecentPagesForSpace, useRecentPagesStore } from '@/stores/recent-pages'
 import { useSpaceStore } from '@/stores/space'
+import { useTabsStore } from '@/stores/tabs'
 
 const mockedInvoke = vi.mocked(invoke)
 const mockedToastError = vi.mocked(toast.error)
@@ -1022,8 +1024,17 @@ describe('TagList', () => {
 
         await user.click(screen.getByRole('button', { name: /Save/i }))
 
+        // The 'page' event is `renamePage`'s (#5242); the picker's tag
+        // cache reads the 'tag' one.
         await waitFor(() =>
           expect(changes).toEqual([
+            {
+              kind: 'renamed',
+              entity: 'page',
+              id: 'T1',
+              name: 'after-rename',
+              spaceId: 'SPACE_TEST',
+            },
             {
               kind: 'renamed',
               entity: 'tag',
@@ -1102,5 +1113,155 @@ describe('TagList', () => {
         unsubscribe()
       }
     })
+  })
+
+  // #5257 — the Tags view stays mounted across a space switch (each space
+  // remembers its view), and the list used to keep the space it first loaded.
+  describe('follows the active space (#5257)', () => {
+    function stubSpaces(tagsBySpace: Record<string, TagCacheRow[]>) {
+      stubInvoke({
+        list_all_tags_in_space: (args) => {
+          const spaceId = (args as { scope: { space_id: string } }).scope.space_id
+          return tagsBySpace[spaceId] ?? []
+        },
+        delete_block: (args) =>
+          withOps({
+            block_id: (args as { blockId: string }).blockId,
+            deleted_at: 1736899200000,
+            descendants_affected: 1,
+            affected_page_ids: [],
+          }),
+        purge_block: (args) => {
+          const blockId = (args as { blockId: string }).blockId
+          for (const [space, rows] of Object.entries(tagsBySpace)) {
+            tagsBySpace[space] = rows.filter((row) => row.tag_id !== blockId)
+          }
+          return { block_id: blockId, purged_count: 1 }
+        },
+      })
+    }
+
+    it('lists the space switched back to, and a delete purges only that space', async () => {
+      const user = userEvent.setup()
+      const tagsBySpace = {
+        SPACE_A: [makeTag('TAG_A', 'alpha')],
+        SPACE_B: [makeTag('TAG_B', 'beta')],
+      }
+      stubSpaces(tagsBySpace)
+      useSpaceStore.setState({ currentSpaceId: 'SPACE_A' })
+
+      render(<TagList />)
+      expect(await screen.findByText('alpha')).toBeInTheDocument()
+
+      await act(async () => useSpaceStore.setState({ currentSpaceId: 'SPACE_B' }))
+      expect(await screen.findByText('beta')).toBeInTheDocument()
+      expect(screen.queryByText('alpha')).not.toBeInTheDocument()
+
+      await act(async () => useSpaceStore.setState({ currentSpaceId: 'SPACE_A' }))
+      expect(await screen.findByText('alpha')).toBeInTheDocument()
+      expect(screen.queryByText('beta')).not.toBeInTheDocument()
+
+      await user.click(findTrashButton(screen.getByText('alpha').closest('li') as HTMLElement))
+      await user.click(await screen.findByRole('button', { name: /^Delete$/i }))
+
+      await waitFor(() => expect(tagsBySpace.SPACE_A).toEqual([]))
+      expect(tagsBySpace.SPACE_B).toEqual([makeTag('TAG_B', 'beta')])
+    })
+
+    it('drops a load for the previous space that resolves after the switch', async () => {
+      let resolveA!: (rows: TagCacheRow[]) => void
+      stubInvoke({
+        list_all_tags_in_space: (args) => {
+          const spaceId = (args as { scope: { space_id: string } }).scope.space_id
+          if (spaceId === 'SPACE_A') {
+            return new Promise<TagCacheRow[]>((resolve) => {
+              resolveA = resolve
+            })
+          }
+          return [makeTag('TAG_B', 'beta')]
+        },
+      })
+      useSpaceStore.setState({ currentSpaceId: 'SPACE_A' })
+
+      render(<TagList />)
+      await waitFor(() => expect(resolveA).toBeDefined())
+
+      await act(async () => useSpaceStore.setState({ currentSpaceId: 'SPACE_B' }))
+      expect(await screen.findByText('beta')).toBeInTheDocument()
+
+      await act(async () => resolveA([makeTag('TAG_A', 'alpha')]))
+
+      expect(screen.getByText('beta')).toBeInTheDocument()
+      expect(screen.queryByText('alpha')).not.toBeInTheDocument()
+    })
+
+    it('drops a failure for the previous space that lands after the switch', async () => {
+      let rejectA!: (error: Error) => void
+      stubInvoke({
+        list_all_tags_in_space: (args) => {
+          const spaceId = (args as { scope: { space_id: string } }).scope.space_id
+          if (spaceId === 'SPACE_A') {
+            return new Promise<TagCacheRow[]>((_resolve, reject) => {
+              rejectA = reject
+            })
+          }
+          return [makeTag('TAG_B', 'beta')]
+        },
+      })
+      useSpaceStore.setState({ currentSpaceId: 'SPACE_A' })
+
+      render(<TagList />)
+      await waitFor(() => expect(rejectA).toBeDefined())
+
+      await act(async () => useSpaceStore.setState({ currentSpaceId: 'SPACE_B' }))
+      expect(await screen.findByText('beta')).toBeInTheDocument()
+
+      await act(async () => rejectA(new Error('offline')))
+
+      expect(mockedToastError).not.toHaveBeenCalled()
+    })
+  })
+
+  // #5258 — `useSyncEvents` announces a sync or MCP write as `invalidated`.
+  it('reloads when the name caches are invalidated', async () => {
+    let rows = [makeTag('T1', 'alpha')]
+    stubInvoke({ list_all_tags_in_space: () => rows })
+
+    render(<TagList />)
+    expect(await screen.findByText('alpha')).toBeInTheDocument()
+
+    rows = [makeTag('T1', 'alpha'), makeTag('T2', 'synced')]
+    act(() => invalidateNameCaches())
+
+    expect(await screen.findByText('synced')).toBeInTheDocument()
+  })
+
+  // #5242 — a tag opens as a page, so a tab and the recents strip hold its name.
+  it('renames the tag in its open tab and its recents entry', async () => {
+    const user = userEvent.setup()
+    useRecentPagesStore.setState({ recentPages: [], recentPagesBySpace: {}, rawKeysMerged: true })
+    useTabsStore.setState({
+      tabs: [{ id: '0', pageStack: [], label: '' }],
+      activeTabIndex: 0,
+      tabsBySpace: {},
+      activeTabIndexBySpace: {},
+    })
+    useTabsStore.getState().navigateToPage('T1', 'old-name')
+    stubTags([makeTag('T1', 'old-name')], {
+      edit_block: () => withOps(makeBlockRow({ id: 'T1', block_type: 'tag', content: 'new-name' })),
+    })
+
+    render(<TagList />)
+    const tag = await screen.findByText('old-name')
+    await user.click(findRenameButton(tag.closest('li') as HTMLElement))
+    const input = await screen.findByDisplayValue('old-name')
+    await user.clear(input)
+    await user.type(input, 'new-name')
+    await user.click(screen.getByRole('button', { name: /Save/i }))
+
+    await waitFor(() => expect(useTabsStore.getState().tabs[0]?.label).toBe('new-name'))
+    expect(selectRecentPagesForSpace(useRecentPagesStore.getState(), 'SPACE_TEST')[0]?.title).toBe(
+      'new-name',
+    )
   })
 })

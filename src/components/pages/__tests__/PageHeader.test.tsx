@@ -175,6 +175,7 @@ beforeEach(() => {
   // Default: no tags exist, no tags applied
   mockedInvoke.mockImplementation(async (cmd: string) => {
     if (cmd === 'list_blocks') return emptyPage
+    if (cmd === 'list_all_tags_in_space') return []
     if (cmd === 'list_tags_for_block') return []
     if (cmd === 'get_properties') return []
     if (cmd === 'list_property_defs')
@@ -190,34 +191,16 @@ beforeEach(() => {
   })
 })
 
+function tagRow(tagId: string, name: string) {
+  return { tag_id: tagId, name, usage_count: 0, updated_at: '2025-01-15T00:00:00Z' }
+}
+
 /** Helper to set up invoke mock with tags */
 function setupTagMock(appliedIds: string[] = ['TAG_1'], aliases: string[] = []) {
   mockedInvoke.mockImplementation(async (cmd: string, args?: any) => {
-    if (cmd === 'list_blocks') {
-      return {
-        items: [
-          {
-            id: 'TAG_1',
-            block_type: 'tag',
-            content: 'urgent',
-            parent_id: null,
-            position: null,
-            deleted_at: null,
-          },
-          {
-            id: 'TAG_2',
-            block_type: 'tag',
-            content: 'review',
-            parent_id: null,
-            position: null,
-            deleted_at: null,
-          },
-        ],
-        next_cursor: null,
-        has_more: false,
-        total_count: null,
-      }
-    }
+    if (cmd === 'list_blocks') return emptyPage
+    if (cmd === 'list_all_tags_in_space')
+      return [tagRow('TAG_1', 'urgent'), tagRow('TAG_2', 'review')]
     if (cmd === 'list_tags_for_block') return appliedIds
     // #2468 — WithOps<TagResponse>: op_refs carries the appended op ref so
     // the hook's ref-addressed undo capture path is exercised.
@@ -533,31 +516,9 @@ describe('PageHeader tag management', () => {
   it('tag picker search matches accented tag when query is ASCII', async () => {
     const user = userEvent.setup()
     mockedInvoke.mockImplementation(async (cmd: string, _args?: any) => {
-      if (cmd === 'list_blocks') {
-        return {
-          items: [
-            {
-              id: 'TAG_CAFE',
-              block_type: 'tag',
-              content: 'café',
-              parent_id: null,
-              position: null,
-              deleted_at: null,
-            },
-            {
-              id: 'TAG_PRIO',
-              block_type: 'tag',
-              content: 'priority',
-              parent_id: null,
-              position: null,
-              deleted_at: null,
-            },
-          ],
-          next_cursor: null,
-          has_more: false,
-          total_count: null,
-        }
-      }
+      if (cmd === 'list_blocks') return emptyPage
+      if (cmd === 'list_all_tags_in_space')
+        return [tagRow('TAG_CAFE', 'café'), tagRow('TAG_PRIO', 'priority')]
       if (cmd === 'list_tags_for_block') return []
       if (cmd === 'get_properties') return []
       if (cmd === 'list_property_defs')
@@ -2116,6 +2077,7 @@ describe('PageHeader Move to space (Phase 2)', () => {
     }
     mockedInvoke.mockImplementation(async (cmd, args) => {
       if (cmd === 'list_blocks') return emptyPage
+      if (cmd === 'list_all_tags_in_space') return []
       if (cmd === 'list_tags_for_block') return []
       // useBlockTags also fetches inherited tags in parallel; leaving this
       // command unhandled (falls through to the default `return null` below)
