@@ -1,6 +1,9 @@
-//! `tags_cache` — materialized `(tag_id, name, usage_count)` per live tag
-//! block, a DELETE+INSERT recompute of the GROUP BY in [`DESIRED_TAGS_SQL`]
-//! (a `COUNT(DISTINCT block_id)` over `block_tags ∪ block_tag_refs`).
+//! `tags_cache` — materialized `(tag_id, space_id, name, usage_count)` per
+//! live tag block, a DELETE+INSERT recompute of the GROUP BY in
+//! [`DESIRED_TAGS_SQL`] (a `COUNT(DISTINCT block_id)` over
+//! `block_tags ∪ block_tag_refs`). `space_id` mirrors `blocks.space_id`:
+//! the name slot is `UNIQUE (space_id, name)` (migration 0121, #5237), so
+//! the same name in two spaces is two cached tags.
 //!
 //! **Measurement justification (#2508).** The pre-cache read shape is the
 //! [`DESIRED_TAGS_SQL`] projection run live. The `interactive_slo` bench
@@ -23,12 +26,15 @@ use crate::db::MAX_SQL_PARAMS;
 use agaric_core::error::AppError;
 use agaric_core::tag_norm::normalize_tag_name;
 
-// `tags_cache` has 4 columns per row (tag_id, name, usage_count,
-// updated_at) → `MAX_SQL_PARAMS / 4 = 249` rows per chunk for INSERT.
+// `tags_cache` has 5 columns per row (tag_id, space_id, name, usage_count,
+// updated_at) → `MAX_SQL_PARAMS / 5 = 199` rows per chunk for INSERT.
 // DELETE binds 1 column (tag_id) → `MAX_SQL_PARAMS / 1 = 999` rows per
 // chunk.
-const INSERT_CHUNK: usize = MAX_SQL_PARAMS / 4; // 249
+const INSERT_CHUNK: usize = MAX_SQL_PARAMS / 5; // 199
 const DELETE_CHUNK: usize = MAX_SQL_PARAMS; // 999
+
+/// One desired or current cache row: `(tag_id, name, usage_count, space_id)`.
+type TagRow = (String, String, i64, Option<String>);
 
 // ---------------------------------------------------------------------------
 // Desired-state SQL
@@ -49,19 +55,22 @@ const DELETE_CHUNK: usize = MAX_SQL_PARAMS; // 999
 /// [`apply_sort_merge_rebuild`] can walk this stream alongside
 /// `tags_cache` (also `ORDER BY tag_id ASC`) in lockstep.
 ///
-/// **Duplicate-name de-duplication (#626).** `tags_cache.name` is UNIQUE
-/// (migration 0061:195) but `blocks.content` has no uniqueness for
-/// `block_type='tag'`: two live tags can legitimately share a name (a
-/// rename collision, or two devices independently creating `#project`
-/// then syncing). If both were emitted into the desired state, the
-/// rebuild's INSERT would have to resolve the UNIQUE(name) collision on
-/// *every* run, and `INSERT OR REPLACE` made the two rows flip-flop
-/// forever (each rebuild evicted whichever one the previous rebuild had
-/// inserted → `changed >= 1` perpetually, one tag permanently invisible).
+/// **Duplicate-name de-duplication (#626).** `tags_cache` is
+/// `UNIQUE (space_id, name)` (migration 0121) but `blocks.content` has no
+/// uniqueness for `block_type='tag'`: two live tags in one space can
+/// legitimately share a name (a rename collision, or two devices
+/// independently creating `#project` then syncing). If both were emitted
+/// into the desired state, the rebuild's INSERT would have to resolve the
+/// UNIQUE collision on *every* run, and `INSERT OR REPLACE` made the two
+/// rows flip-flop forever (each rebuild evicted whichever one the previous
+/// rebuild had inserted → `changed >= 1` perpetually, one tag permanently
+/// invisible).
 ///
 /// We instead de-duplicate by name *deterministically*: among all live
-/// tags sharing a name, only the one with the smallest `id` (ULID →
-/// earliest-created) survives.
+/// tags sharing a name within one space, only the one with the smallest
+/// `id` (ULID → earliest-created) survives. The same name in another
+/// space is a different tag and keeps its own row (#5237); `space_id` is
+/// the tag block's own `blocks.space_id`, NULL for an unscoped tag.
 ///
 /// **#1990 — normalize-consistent identity.** Tag identity is defined by
 /// [`agaric_core::tag_norm::normalize_tag_name`] (NFC → full-Unicode lowercase
@@ -71,11 +80,11 @@ const DELETE_CHUNK: usize = MAX_SQL_PARAMS; // 999
 /// ASCII A–Z, so non-ASCII case-variants (`#Σ`/`#σ`) were merged by the
 /// engine yet SPLIT into two cache rows — a latent multi-device hazard.
 /// SQLite cannot compute `normalize_tag_name`, so this SQL no longer
-/// de-duplicates at all: it emits EVERY live tag (id, content, cnt)
-/// ordered by `id ASC`, and [`next_desired_winner`] picks
-/// the smallest-id winner per normalized name in Rust. Because the stream
-/// is `id`-ordered, the first row for a normalized name IS the winner and
-/// later same-name rows are dropped. The winner is a pure function of the
+/// de-duplicates at all: it emits EVERY live tag (id, content, cnt,
+/// space_id) ordered by `id ASC`, and [`next_desired_winner`] picks the
+/// smallest-id winner per `(space_id, normalized name)` in Rust. Because
+/// the stream is `id`-ordered, the first row for a key IS the winner and
+/// later same-key rows are dropped. The winner is a pure function of the
 /// source rows, so the desired stream is stable across rebuilds → the
 /// cache converges (a settled rebuild reports `changed == 0`) and the
 /// same tag wins every time. The loser is omitted from the cache (it has
@@ -83,7 +92,7 @@ const DELETE_CHUNK: usize = MAX_SQL_PARAMS; // 999
 /// recoverable by a rename. The ASCII case behaviour is unchanged — it is
 /// a strict subset of the Unicode fold (pinned by
 /// `tag_norm::ascii_fold_matches_sqlite_nocase`).
-const DESIRED_TAGS_SQL: &str = "SELECT b.id, b.content, COALESCE(t.cnt, 0) AS cnt
+const DESIRED_TAGS_SQL: &str = "SELECT b.id, b.content, COALESCE(t.cnt, 0) AS cnt, b.space_id
              FROM blocks b
              LEFT JOIN (
                  SELECT tag_id, COUNT(*) AS cnt FROM (
@@ -103,7 +112,7 @@ const DESIRED_TAGS_SQL: &str = "SELECT b.id, b.content, COALESCE(t.cnt, 0) AS cn
              ORDER BY b.id ASC";
 
 const CURRENT_TAGS_SQL: &str =
-    "SELECT tag_id, name, usage_count FROM tags_cache ORDER BY tag_id ASC";
+    "SELECT tag_id, name, usage_count, space_id FROM tags_cache ORDER BY tag_id ASC";
 
 /// Scoped desired-state SQL for a SINGLE tag (#676).
 ///
@@ -114,12 +123,12 @@ const CURRENT_TAGS_SQL: &str =
 /// parameter `?` is the candidate tag's id.
 ///
 /// The de-dup guard is the load-bearing difference from a naive
-/// `WHERE b.id = ?`: in a full rebuild, among all live tags sharing a
-/// normalized name (#1990 — [`normalize_tag_name`], the engine's tag
-/// identity key) only the smallest-id tag occupies the cache slot; the
+/// `WHERE b.id = ?`: in a full rebuild, among all live tags in one space
+/// sharing a normalized name (#1990 — [`normalize_tag_name`], the engine's
+/// tag identity key) only the smallest-id tag occupies the cache slot; the
 /// rest are omitted. So this query emits a row **only if** the candidate
-/// is that smallest-id winner — i.e. no live tag with the same normalized
-/// name has a smaller id.
+/// is that smallest-id winner — i.e. no live tag in its space with the
+/// same normalized name has a smaller id.
 ///
 /// **SQLite cannot compute `normalize_tag_name`.** Earlier this guard was
 /// an SQL `NOT EXISTS … o.content = b.content COLLATE NOCASE`, but NOCASE
@@ -137,7 +146,8 @@ const CURRENT_TAGS_SQL: &str =
 /// name and the *set* of cached tag rows are invariant under these ops — only
 /// the winner's `usage_count` can move. Recomputing just this one row is
 /// therefore provably identical to the full rebuild's effect for the op.
-const DESIRED_TAG_USAGE_SQL: &str = "SELECT b.content AS name, COALESCE(t.cnt, 0) AS cnt
+const DESIRED_TAG_USAGE_SQL: &str =
+    "SELECT b.content AS name, COALESCE(t.cnt, 0) AS cnt, b.space_id
          FROM blocks b
          LEFT JOIN (
              SELECT COUNT(*) AS cnt FROM (
@@ -157,21 +167,23 @@ const DESIRED_TAG_USAGE_SQL: &str = "SELECT b.content AS name, COALESCE(t.cnt, 0
            AND b.deleted_at IS NULL
            AND b.content IS NOT NULL";
 
-/// All live tag blocks (id, content), ordered by `id ASC`, used by the
-/// scoped refresh to confirm the smallest-id winner for a candidate's
-/// normalized name in Rust (#1990). SQLite's NOCASE folds only ASCII, so a
-/// SQL prefilter on `content = ? COLLATE NOCASE` would MISS a non-ASCII
-/// case-variant sibling (`#Σ` for a `#σ` candidate) — the exact relationship
-/// the winner check must detect. So we scan every live tag and confirm the
+/// All live tag blocks (id, content) in one space (`?1`, `IS` so a NULL
+/// space matches NULL), ordered by `id ASC`, used by the scoped refresh to
+/// confirm the smallest-id winner for a candidate's normalized name in Rust
+/// (#1990). SQLite's NOCASE folds only ASCII, so a SQL prefilter on
+/// `content = ? COLLATE NOCASE` would MISS a non-ASCII case-variant sibling
+/// (`#Σ` for a `#σ` candidate) — the exact relationship the winner check
+/// must detect. So we scan every live tag of the space and confirm the
 /// full-Unicode `normalize_tag_name` equality in Rust. Tag count is bounded
 /// by the user's vocabulary (cf. the no-clamp `list_all_tags_in_space`), so
 /// the scan is cheap. The first `id`-ordered tag whose normalized name
 /// matches the candidate's is the winner.
-const ALL_LIVE_TAGS_SQL: &str = "SELECT id, content
+const LIVE_TAGS_IN_SPACE_SQL: &str = "SELECT id, content
          FROM blocks
          WHERE block_type = 'tag'
            AND deleted_at IS NULL
            AND content IS NOT NULL
+           AND space_id IS ?1
          ORDER BY id ASC";
 
 /// Incremental, single-tag refresh of `tags_cache.usage_count` (#676).
@@ -192,34 +204,36 @@ const ALL_LIVE_TAGS_SQL: &str = "SELECT id, content
 ///
 /// `INSERT OR REPLACE` is safe here for the same reason as in the full
 /// rebuild (`apply_tags_diff`): the candidate is, by the de-dup guard, the
-/// sole owner of its `UNIQUE(name)` slot among live tags, so no unchanged tag
-/// can collide on the name.
+/// sole owner of its `UNIQUE(space_id, name)` slot among live tags, so no
+/// unchanged tag can collide on the name.
 pub async fn refresh_tag_usage_count(pool: &SqlitePool, tag_id: &str) -> Result<(), AppError> {
     super::rebuild_with_timing("tags", || refresh_tag_usage_count_impl(pool, tag_id)).await
 }
 
 async fn refresh_tag_usage_count_impl(pool: &SqlitePool, tag_id: &str) -> Result<u64, AppError> {
     let now = agaric_core::time::now_rfc3339();
-    let desired: Option<(String, i64)> = sqlx::query_as::<_, (String, i64)>(DESIRED_TAG_USAGE_SQL)
-        .bind(tag_id)
-        .fetch_optional(pool)
-        .await?;
+    let desired: Option<(String, i64, Option<String>)> =
+        sqlx::query_as::<_, (String, i64, Option<String>)>(DESIRED_TAG_USAGE_SQL)
+            .bind(tag_id)
+            .fetch_optional(pool)
+            .await?;
 
-    let Some((name, cnt)) = desired else {
+    let Some((name, cnt, space_id)) = desired else {
         // Deleted / non-tag / NULL content: a full rebuild would not place this
         // id in the cache, so leave it untouched.
         return Ok(0);
     };
 
-    // #1990 — confirm the candidate is the smallest-id winner among all live
-    // tags sharing its NORMALIZED name (the engine's tag identity). SQLite
-    // cannot compute `normalize_tag_name`, so we resolve the winner in Rust
-    // (same fold the full rebuild's `dedup_desired_by_normalized_name` uses).
-    // If the candidate is a name *loser*, it has no UNIQUE(name) cache slot —
+    // #1990 — confirm the candidate is the smallest-id winner among the live
+    // tags of ITS SPACE sharing its NORMALIZED name (the engine's tag
+    // identity). SQLite cannot compute `normalize_tag_name`, so we resolve the
+    // winner in Rust (same fold the full rebuild's `next_desired_winner`
+    // uses). If the candidate is a name *loser*, it has no UNIQUE cache slot —
     // identical to a full rebuild, which omits it — so leave the cache
     // untouched.
     let candidate_norm = normalize_tag_name(&name);
-    let siblings = sqlx::query_as::<_, (String, Option<String>)>(ALL_LIVE_TAGS_SQL)
+    let siblings = sqlx::query_as::<_, (String, Option<String>)>(LIVE_TAGS_IN_SPACE_SQL)
+        .bind(&space_id)
         .fetch_all(pool)
         .await?;
     let winner_id = siblings.iter().find_map(|(id, content)| {
@@ -232,10 +246,11 @@ async fn refresh_tag_usage_count_impl(pool: &SqlitePool, tag_id: &str) -> Result
 
     let mut tx = crate::db::begin_immediate_logged(pool, "cache_tags_refresh_one").await?;
     let res = sqlx::query(
-        "INSERT OR REPLACE INTO tags_cache (tag_id, name, usage_count, updated_at) \
-         VALUES (?1, ?2, ?3, ?4)",
+        "INSERT OR REPLACE INTO tags_cache (tag_id, space_id, name, usage_count, updated_at) \
+         VALUES (?1, ?2, ?3, ?4, ?5)",
     )
     .bind(tag_id)
+    .bind(&space_id)
     .bind(&name)
     .bind(cnt)
     .bind(&now)
@@ -253,22 +268,18 @@ async fn refresh_tag_usage_count_impl(pool: &SqlitePool, tag_id: &str) -> Result
 /// [`MAX_SQL_PARAMS`].
 ///
 /// **Ordering invariant.** All DELETEs execute before any INSERTs. This
-/// matters because `tags_cache.name` carries a UNIQUE constraint: if a
-/// tag is renamed (e.g. TAG_A renamed to "X" while TAG_B still owns the
-/// row whose name was "X"), the new "X" insert would collide on UNIQUE
-/// unless TAG_B's row is deleted first. The pre-M-2 full rebuild
-/// dodged this trivially by truncating the table; here we mirror that
-/// guarantee by sequencing all deletes before all inserts within a
-/// single apply pass — see [`apply_sort_merge_rebuild`] which calls
-/// this exactly once at end-of-stream.
-///
-/// `INSERT OR IGNORE` matches the pre-M-2 full-rebuild and split-variant
-/// shape; any genuine UNIQUE(name) collision in the source data is
-/// silently dropped (preserving the old `INSERT OR IGNORE` semantic).
+/// matters because `tags_cache` carries a `UNIQUE (space_id, name)`
+/// constraint: if a tag is renamed (e.g. TAG_A renamed to "X" while TAG_B
+/// still owns the row whose name was "X"), the new "X" insert would
+/// collide on UNIQUE unless TAG_B's row is deleted first. The pre-M-2 full
+/// rebuild dodged this trivially by truncating the table; here we mirror
+/// that guarantee by sequencing all deletes before all inserts within a
+/// single apply pass — see [`apply_sort_merge_rebuild`] which calls this
+/// exactly once at end-of-stream.
 async fn apply_tags_diff(
     conn: &mut sqlx::SqliteConnection,
     delete_ids: &[String],
-    insert_rows: &[(String, String, i64)],
+    insert_rows: &[TagRow],
     now: &str,
 ) -> Result<(), AppError> {
     for chunk in delete_ids.chunks(DELETE_CHUNK) {
@@ -285,25 +296,32 @@ async fn apply_tags_diff(
     }
 
     for chunk in insert_rows.chunks(INSERT_CHUNK) {
-        let placeholders: Vec<&str> = chunk.iter().map(|_| "(?, ?, ?, ?)").collect();
+        let placeholders: Vec<&str> = chunk.iter().map(|_| "(?, ?, ?, ?, ?)").collect();
         let sql = format!(
             // INSERT OR REPLACE (not INSERT OR IGNORE): if a tag is renamed to
             // a name still held by an UNCHANGED tag (not in the delete set), the
-            // UNIQUE(name) constraint would cause INSERT OR IGNORE to silently
-            // drop the renamed tag's new row.  INSERT OR REPLACE instead evicts
-            // the stale row and preserves the incoming (correct) row.
+            // UNIQUE constraint would cause INSERT OR IGNORE to silently drop
+            // the renamed tag's new row.  INSERT OR REPLACE instead evicts the
+            // stale row and preserves the incoming (correct) row.
             //
-            // The desired projection now de-duplicates names deterministically
-            // (DESIRED_TAGS_SQL, #626), so each rebuild's insert set holds at
-            // most one row per name and OR REPLACE no longer flip-flops between
-            // two same-name tags: the same winner (smallest id) is inserted
-            // every rebuild and the cache converges (changed == 0 once settled).
-            "INSERT OR REPLACE INTO tags_cache (tag_id, name, usage_count, updated_at) VALUES {}",
+            // The desired projection de-duplicates names deterministically per
+            // space (DESIRED_TAGS_SQL, #626), so each rebuild's insert set holds
+            // at most one row per (space_id, name) and OR REPLACE no longer
+            // flip-flops between two same-name tags: the same winner (smallest
+            // id) is inserted every rebuild and the cache converges (changed ==
+            // 0 once settled).
+            "INSERT OR REPLACE INTO tags_cache (tag_id, space_id, name, usage_count, updated_at) \
+             VALUES {}",
             placeholders.join(", ")
         );
         let mut q = sqlx::query(sqlx::AssertSqlSafe(sql.as_str()));
-        for (tag_id, name, usage_count) in chunk {
-            q = q.bind(tag_id).bind(name).bind(usage_count).bind(now);
+        for (tag_id, name, usage_count, space_id) in chunk {
+            q = q
+                .bind(tag_id)
+                .bind(space_id)
+                .bind(name)
+                .bind(usage_count)
+                .bind(now);
         }
         q.execute(&mut *conn).await?;
     }
@@ -316,29 +334,31 @@ async fn apply_tags_diff(
 // ---------------------------------------------------------------------------
 
 /// Advance an `id`-ordered desired-tag stream to the next **name-winner**,
-/// de-duplicating by [`normalize_tag_name`] in Rust (#1990).
+/// de-duplicating by `(space_id, `[`normalize_tag_name`]`)` in Rust (#1990,
+/// #5237).
 ///
 /// [`DESIRED_TAGS_SQL`] emits EVERY live tag ordered by `id ASC` (SQLite
 /// cannot compute the full-Unicode `normalize_tag_name`, so the dedup can no
 /// longer live in SQL). For each candidate this folds its `content` to the
-/// engine's identity key and keeps it only if that key is unseen — i.e. it is
-/// the smallest-id tag for that normalized name. Later same-name rows (losers)
-/// are skipped, mirroring the old `ROW_NUMBER() … rn = 1` projection but with
-/// the Unicode-correct fold. `seen` accumulates the winning keys across the
-/// whole stream; because the stream is `id`-ordered the first occurrence of a
-/// key is always its smallest-id winner, so the result is a pure, stable
-/// function of the source rows (the cache still converges to `changed == 0`).
+/// engine's identity key, pairs it with the tag's space, and keeps it only if
+/// that key is unseen — i.e. it is the smallest-id tag for that normalized
+/// name in that space. Later same-key rows (losers) are skipped, mirroring
+/// the old `ROW_NUMBER() … rn = 1` projection but with the Unicode-correct
+/// fold. `seen` accumulates the winning keys across the whole stream; because
+/// the stream is `id`-ordered the first occurrence of a key is always its
+/// smallest-id winner, so the result is a pure, stable function of the source
+/// rows (the cache still converges to `changed == 0`).
 async fn next_desired_winner(
-    stream: &mut (impl futures_util::Stream<Item = Result<(String, String, i64), sqlx::Error>> + Unpin),
-    seen: &mut HashSet<String>,
-) -> Result<Option<(String, String, i64)>, AppError> {
+    stream: &mut (impl futures_util::Stream<Item = Result<TagRow, sqlx::Error>> + Unpin),
+    seen: &mut HashSet<(Option<String>, String)>,
+) -> Result<Option<TagRow>, AppError> {
     while let Some(row) = stream.try_next().await? {
-        if seen.insert(normalize_tag_name(&row.1)) {
+        if seen.insert((row.3.clone(), normalize_tag_name(&row.1))) {
             return Ok(Some(row));
         }
-        // Name-loser (a smaller-id tag already owns this normalized name) —
-        // skip it; it has no UNIQUE(name) cache slot, exactly as the old SQL
-        // `rn = 1` filter dropped it.
+        // Name-loser (a smaller-id tag in the same space already owns this
+        // normalized name) — skip it; it has no UNIQUE cache slot, exactly as
+        // the old SQL `rn = 1` filter dropped it.
     }
     Ok(None)
 }
@@ -347,9 +367,9 @@ async fn next_desired_winner(
 /// a diff:
 ///   - PK in NEW not in OLD → INSERT.
 ///   - PK in OLD not in NEW → DELETE.
-///   - PK in both, `(name, usage_count)` differs → DELETE + INSERT.
-///   - PK in both, same `(name, usage_count)` → no-op (preserves the
-///     prior `updated_at`).
+///   - PK in both, `(name, usage_count, space_id)` differs → DELETE + INSERT.
+///   - PK in both, same `(name, usage_count, space_id)` → no-op (preserves
+///     the prior `updated_at`).
 ///
 /// Diff rows are accumulated into `Vec`s and flushed once at the end via
 /// a single chunked DELETE + chunked INSERT pair (see the ordering
@@ -362,21 +382,19 @@ async fn apply_sort_merge_rebuild(
     write_conn: &mut sqlx::SqliteConnection,
     now: &str,
 ) -> Result<u64, AppError> {
-    let mut desired_stream =
-        sqlx::query_as::<_, (String, String, i64)>(DESIRED_TAGS_SQL).fetch(desired_conn);
-    let mut current_stream =
-        sqlx::query_as::<_, (String, String, i64)>(CURRENT_TAGS_SQL).fetch(current_conn);
+    let mut desired_stream = sqlx::query_as::<_, TagRow>(DESIRED_TAGS_SQL).fetch(desired_conn);
+    let mut current_stream = sqlx::query_as::<_, TagRow>(CURRENT_TAGS_SQL).fetch(current_conn);
 
     let mut deletes: Vec<String> = Vec::new();
-    let mut inserts: Vec<(String, String, i64)> = Vec::new();
+    let mut inserts: Vec<TagRow> = Vec::new();
     let mut changed: u64 = 0;
-    // #1990 — winning normalized names seen so far. The desired stream is
-    // de-duplicated by `normalize_tag_name` in Rust (the smallest-id tag wins
-    // each normalized name); `seen` tracks those winners as the stream
-    // advances. The desired stream stays `id`-ordered after the filter (we
-    // drop rows, never reorder), so the sort-merge below still walks both
-    // streams in lockstep on `id`.
-    let mut seen: HashSet<String> = HashSet::new();
+    // #1990 — winning `(space_id, normalized name)` keys seen so far. The
+    // desired stream is de-duplicated by that key in Rust (the smallest-id tag
+    // wins each key); `seen` tracks those winners as the stream advances. The
+    // desired stream stays `id`-ordered after the filter (we drop rows, never
+    // reorder), so the sort-merge below still walks both streams in lockstep
+    // on `id`.
+    let mut seen: HashSet<(Option<String>, String)> = HashSet::new();
 
     let mut next_desired = next_desired_winner(&mut desired_stream, &mut seen).await?;
     let mut next_current = current_stream.try_next().await?;
@@ -384,34 +402,34 @@ async fn apply_sort_merge_rebuild(
     loop {
         match (&next_desired, &next_current) {
             (None, None) => break,
-            (Some((d_id, d_name, d_cnt)), None) => {
-                inserts.push((d_id.clone(), d_name.clone(), *d_cnt));
+            (Some(desired), None) => {
+                inserts.push(desired.clone());
                 changed += 1;
                 next_desired = next_desired_winner(&mut desired_stream, &mut seen).await?;
             }
-            (None, Some((c_id, _, _))) => {
+            (None, Some((c_id, _, _, _))) => {
                 deletes.push(c_id.clone());
                 changed += 1;
                 next_current = current_stream.try_next().await?;
             }
-            (Some((d_id, d_name, d_cnt)), Some((c_id, c_name, c_cnt))) => {
-                match d_id.as_str().cmp(c_id.as_str()) {
+            (Some(desired), Some(current)) => {
+                match desired.0.as_str().cmp(current.0.as_str()) {
                     Ordering::Less => {
-                        inserts.push((d_id.clone(), d_name.clone(), *d_cnt));
+                        inserts.push(desired.clone());
                         changed += 1;
                         next_desired = next_desired_winner(&mut desired_stream, &mut seen).await?;
                     }
                     Ordering::Greater => {
-                        deletes.push(c_id.clone());
+                        deletes.push(current.0.clone());
                         changed += 1;
                         next_current = current_stream.try_next().await?;
                     }
                     Ordering::Equal => {
-                        if d_name != c_name || d_cnt != c_cnt {
-                            // Name and/or usage_count changed — DELETE + INSERT
-                            // under PK. Counts as one logical change.
-                            deletes.push(c_id.clone());
-                            inserts.push((d_id.clone(), d_name.clone(), *d_cnt));
+                        if desired != current {
+                            // Name, usage_count and/or space changed — DELETE +
+                            // INSERT under PK. Counts as one logical change.
+                            deletes.push(current.0.clone());
+                            inserts.push(desired.clone());
                             changed += 1;
                         }
                         next_desired = next_desired_winner(&mut desired_stream, &mut seen).await?;
@@ -1222,5 +1240,144 @@ mod tests {
         let second = rebuild_tags_cache_impl(&pool).await.unwrap();
         assert_eq!(second, 0, "idempotent rebuild must produce zero diff ops");
         assert_eq!(snapshot(&pool).await.len(), 50);
+    }
+
+    /// A registered space: a page block plus its `spaces` row, so
+    /// `blocks.space_id` (FK → `spaces`) can point at it.
+    async fn insert_space(pool: &SqlitePool, id: &str) {
+        sqlx::query!(
+            "INSERT INTO blocks (id, block_type, content, page_id) VALUES (?, 'page', 'space', ?)",
+            id,
+            id,
+        )
+        .execute(pool)
+        .await
+        .unwrap();
+        sqlx::query!("INSERT INTO spaces (id) VALUES (?)", id)
+            .execute(pool)
+            .await
+            .unwrap();
+    }
+
+    async fn insert_tag_in_space(pool: &SqlitePool, id: &str, name: &str, space_id: &str) {
+        sqlx::query!(
+            "INSERT INTO blocks (id, block_type, content, space_id) VALUES (?, 'tag', ?, ?)",
+            id,
+            name,
+            space_id,
+        )
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+
+    /// `(tag_id, name, usage_count, space_id)` in `tag_id` order.
+    async fn snapshot_with_space(pool: &SqlitePool) -> Vec<TagRow> {
+        sqlx::query_as::<_, TagRow>(
+            "SELECT tag_id, name, usage_count, space_id FROM tags_cache ORDER BY tag_id",
+        )
+        .fetch_all(pool)
+        .await
+        .unwrap()
+    }
+
+    const SPACE_WORK: &str = "SPACEWORK00000000000000000";
+    const SPACE_HOME: &str = "SPACEHOME00000000000000000";
+    const TODO_WORK: &str = "TAG5237A000000000000000000";
+    const TODO_HOME: &str = "TAG5237B000000000000000000";
+    const TODO_HOME_DUP: &str = "TAG5237C000000000000000000";
+
+    /// `todo` in Work (smallest id), `todo` in Home, and a same-space
+    /// case-variant loser `Todo` in Home (largest id).
+    async fn seed_todo_in_two_spaces(pool: &SqlitePool) {
+        insert_space(pool, SPACE_WORK).await;
+        insert_space(pool, SPACE_HOME).await;
+        insert_tag_in_space(pool, TODO_WORK, "todo", SPACE_WORK).await;
+        insert_tag_in_space(pool, TODO_HOME, "todo", SPACE_HOME).await;
+        insert_tag_in_space(pool, TODO_HOME_DUP, "Todo", SPACE_HOME).await;
+    }
+
+    /// #5237 — the same name in two spaces is two tags: the full rebuild
+    /// caches one row PER SPACE, the winner rule within a space is unchanged
+    /// (smallest id, normalized name), and the cache converges.
+    #[tokio::test]
+    async fn tags_cache_same_name_in_two_spaces_keeps_one_row_per_space_5237() {
+        let (pool, _dir) = test_pool().await;
+        seed_todo_in_two_spaces(&pool).await;
+        // Usage on the Home winner proves the count rides with its own row.
+        insert_content(&pool, "BLK5237000000000000000000A", "note").await;
+        add_tag(&pool, "BLK5237000000000000000000A", TODO_HOME).await;
+
+        let mut changes = Vec::new();
+        for _ in 0..3 {
+            changes.push(rebuild_tags_cache_impl(&pool).await.unwrap());
+            assert_eq!(
+                snapshot_with_space(&pool).await,
+                vec![
+                    (
+                        TODO_WORK.to_owned(),
+                        "todo".to_owned(),
+                        0,
+                        Some(SPACE_WORK.to_owned())
+                    ),
+                    (
+                        TODO_HOME.to_owned(),
+                        "todo".to_owned(),
+                        1,
+                        Some(SPACE_HOME.to_owned())
+                    ),
+                ],
+                "one `todo` row per space; the Home case-variant loser stays out"
+            );
+        }
+        assert_eq!(changes, vec![2, 0, 0], "converges after the first rebuild");
+    }
+
+    /// #5237 — the incremental path from a cold cache: refreshing the Home
+    /// `todo` while Work's `todo` already holds the name lands Home's own
+    /// row (the old vault-wide UNIQUE evicted it), and the same-space loser
+    /// is still a no-op. Scoped refresh equals a full rebuild throughout.
+    #[tokio::test]
+    async fn refresh_tag_usage_count_lands_same_name_in_second_space_5237() {
+        let (pool, _dir) = test_pool().await;
+        seed_todo_in_two_spaces(&pool).await;
+
+        refresh_tag_usage_count_impl(&pool, TODO_WORK)
+            .await
+            .unwrap();
+        let touched = refresh_tag_usage_count_impl(&pool, TODO_HOME)
+            .await
+            .unwrap();
+        assert_eq!(touched, 1, "Home's `todo` is the winner of its own space");
+        assert_eq!(
+            refresh_tag_usage_count_impl(&pool, TODO_HOME_DUP)
+                .await
+                .unwrap(),
+            0,
+            "the same-space case-variant loser has no slot"
+        );
+        assert_eq!(
+            snapshot_with_space(&pool).await,
+            vec![
+                (
+                    TODO_WORK.to_owned(),
+                    "todo".to_owned(),
+                    0,
+                    Some(SPACE_WORK.to_owned())
+                ),
+                (
+                    TODO_HOME.to_owned(),
+                    "todo".to_owned(),
+                    0,
+                    Some(SPACE_HOME.to_owned())
+                ),
+            ],
+            "both spaces' `todo` rows are cached"
+        );
+        assert_eq!(
+            snapshot(&pool).await,
+            full_rebuild_snapshot(&pool).await,
+            "scoped refresh must equal full rebuild"
+        );
     }
 }

@@ -166,8 +166,8 @@ function MobileSidebarTrigger(): ReactElement | null {
  */
 function headerContentClass(isJournalView: boolean): string {
   return cn(
-    'flex min-w-0 flex-1 gap-2 sm:flex-row sm:items-center',
-    isJournalView ? 'flex-row items-center max-sm:gap-0.5' : 'flex-row flex-wrap items-center',
+    'flex min-w-0 flex-1 flex-row items-center gap-2',
+    isJournalView ? 'max-sm:gap-0.5' : 'flex-wrap',
   )
 }
 

@@ -547,19 +547,27 @@ pub async fn load_page_subtree_inner(
     // `src/stores/page-blocks.ts` `load()` keys on this specific code
     // (not the generic `kind: "validation"`) to distinguish "page moved
     // to another space" staleness from any other validation on this path.
-    let space_match = sqlx::query_scalar!(
-        r#"SELECT 1 AS "ok!: i32" FROM blocks
+    //
+    // #5243 — a trashed root is `NotFound`, as `get_page_inner` answers a
+    // tombstoned page: its descendants are cascade-tombstoned, so serving the
+    // empty set made the editor seed a first block under a deleted parent. The
+    // same heal keys on `kind: "not_found"` to drop the stale recents/tab entry.
+    let trashed = sqlx::query_scalar!(
+        r#"SELECT deleted_at IS NOT NULL AS "trashed!: bool" FROM blocks
            WHERE id = ? AND space_id = ?"#,
         root_block_id,
         space_id,
     )
     .fetch_optional(pool)
     .await?;
-    if space_match.is_none() {
+    let Some(trashed) = trashed else {
         return Err(AppError::validation_coded(
             ValidationCode::PageNotInSpace,
             format!("block '{root_block_id}' not in current space '{space_id}'"),
         ));
+    };
+    if trashed {
+        return Err(AppError::NotFound("page is in the trash".into()));
     }
 
     let rows = sqlx::query_as!(

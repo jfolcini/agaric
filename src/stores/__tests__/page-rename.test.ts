@@ -10,8 +10,13 @@
  * click resurrected the stale title in the tab bar, persisted, across
  * restarts, while `PageHeader` rendered the new one.
  */
-import { beforeEach, describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 
+import {
+  _resetGraphStructureEventsForTest,
+  DEBOUNCE_MS,
+  getGraphStructureKey,
+} from '@/lib/graph-structure-events'
 import type { NameChange } from '@/lib/name-change-bus'
 import { subscribeToNameChanges } from '@/lib/name-change-bus'
 import { renamePage } from '@/stores/page-rename'
@@ -96,6 +101,20 @@ describe('renamePage fan-out', () => {
     expect(state.activeTabIndex).toBe(1)
     expect(state.tabs[0]?.pageStack.at(-1)).toEqual({ pageId: PAGE, title: 'New' })
     expect(state.tabs[0]?.label).toBe('New')
+  })
+
+  // #5250 — GraphView's cache and the unlinked-references query hold the old
+  // title until the structure counter moves; with or without a space.
+  it.each([SPACE, null])('bumps the graph-structure counter (spaceId %s)', (spaceId) => {
+    _resetGraphStructureEventsForTest()
+    vi.useFakeTimers()
+    try {
+      renamePage(PAGE, 'New', spaceId)
+      vi.advanceTimersByTime(DEBOUNCE_MS)
+      expect(getGraphStructureKey()).toBe(1)
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   // #4391 — `spaceId` is `string | null` because "no active space" is a real

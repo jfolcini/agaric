@@ -164,6 +164,41 @@ describe('usePageDeleteAction', () => {
     })
   })
 
+  // #5246 — a chip to a page nested under the deleted one renders deleted too,
+  // and goes live again with the Undo that cascade-restores it.
+  it('marks the cascaded nested pages deleted, and Undo brings them back', async () => {
+    stubInvoke({
+      delete_block: () =>
+        withOps({
+          block_id: 'PAGE_1',
+          deleted_at: 1767225600000,
+          descendants_affected: 2,
+          affected_page_ids: ['PAGE_1', 'NESTED_PAGE'],
+        }),
+      restore_blocks_by_ids: () => ({ affected_count: 2 }),
+      batch_resolve: () => [
+        { id: 'NESTED_PAGE', title: 'Nested', block_type: 'page', deleted: false },
+      ],
+    })
+    useResolveStore.getState().set('NESTED_PAGE', 'Nested', false)
+    const onRestored = vi.fn()
+    const handle = renderHarness()
+    act(() => {
+      handle.api.requestDelete('PAGE_1', 'Parent', { onRestored })
+    })
+    await userEvent.setup().click(await screen.findByRole('button', { name: /^Delete page$/i }))
+    await waitFor(() => expect(toast.success).toHaveBeenCalled())
+    expect(useResolveStore.getState().resolveStatus('NESTED_PAGE')).toBe('deleted')
+
+    act(() => {
+      lastUndoAction()()
+    })
+
+    await waitFor(() => {
+      expect(useResolveStore.getState().resolveStatus('NESTED_PAGE')).toBe('active')
+    })
+  })
+
   it('keeps the page deleted and skips onRestored when Undo restore fails', async () => {
     stubInvoke({
       delete_block: () =>

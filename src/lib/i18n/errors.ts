@@ -49,6 +49,8 @@ export const errors: Record<string, string> = {
   // backend rejects the space-scoped load with `validation`; this copy
   // replaces the raw `error.loadBlocksFailed` toast for that case.
   'error.pageNotInCurrentSpace': 'This page was moved to another space',
+  // #5243 — the same heal for a stale reference to a page in the trash.
+  'error.pageInTrash': 'This page is in the trash',
   'error.deleteBlockFailed': 'Failed to delete block',
   'error.reorderBlockFailed': 'Failed to reorder block',
   'error.moveBlockFailed': 'Failed to move block',

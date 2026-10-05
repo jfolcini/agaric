@@ -19,6 +19,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { makeBlockRow } from '@/__tests__/fixtures'
 import { type CommandReturns, strictInvokeFallback, stubInvoke } from '@/__tests__/helpers/invoke'
 import type { BlockRow, TagCacheRow } from '@/lib/bindings'
+import { unresolvedBlockLabel } from '@/lib/block-title'
 import { logger } from '@/lib/logger'
 import { GLOBAL_SPACE_ID, keyFor, useResolveStore } from '@/stores/resolve'
 import { useSpaceStore } from '@/stores/space'
@@ -1910,5 +1911,198 @@ describe('cache eviction', () => {
     expect(state.cache.has(keyFor(TEST_SPACE_ID, 'id-0'))).toBe(false)
     expect(state.cache.has(keyFor(TEST_SPACE_ID, 'at-capacity'))).toBe(true)
     expect(state.cache.has(keyFor(TEST_SPACE_ID, 'over-capacity'))).toBe(true)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// #5245 / #5246 — chips follow their target's edits, trash and restore
+// ---------------------------------------------------------------------------
+describe('targeted rescan re-resolves cached blocks no walk named (#5245)', () => {
+  it('folds a cached content block into the batch and re-titles it by its first line', async () => {
+    const batches: string[][] = []
+    stubInvoke(mockedInvoke, {
+      list_blocks: () => blockPage([pageRow('PAGE_1', 'Page One'), pageRow('PAGE_2', 'Page Two')]),
+      list_all_tags_in_space: () => [tagRow('TAG_1', 'tag-one')],
+      batch_resolve: (args) => {
+        const ids = (args['ids'] as string[] | undefined) ?? []
+        batches.push(ids)
+        return [
+          { id: 'PAGE_1', title: 'Page One', block_type: 'page', deleted: false },
+          {
+            id: 'BLOCK_X',
+            title: 'Buy oat milk\nsecond line',
+            block_type: 'content',
+            deleted: false,
+          },
+        ].filter((r) => ids.includes(r.id))
+      },
+    })
+    await useResolveStore.getState().preload(TEST_SPACE_ID)
+    useResolveStore.getState().set('BLOCK_X', 'Buy milk', false)
+
+    await useResolveStore.getState().preload(TEST_SPACE_ID, true, new Set(['PAGE_1']))
+
+    // The walked pages and the fetched tag stay out; only the cached block rides along.
+    expect(batches).toEqual([['PAGE_1', 'BLOCK_X']])
+    expect(useResolveStore.getState().resolveTitle('BLOCK_X')).toBe('Buy oat milk')
+  })
+
+  it('leaves an unresolved placeholder out of the batch', async () => {
+    const batches: string[][] = []
+    stubInvoke(mockedInvoke, {
+      list_blocks: () => blockPage([pageRow('PAGE_1', 'Page One')]),
+      list_all_tags_in_space: () => [],
+      batch_resolve: (args) => {
+        batches.push((args['ids'] as string[] | undefined) ?? [])
+        return []
+      },
+    })
+    await useResolveStore.getState().preload(TEST_SPACE_ID)
+    useResolveStore.getState().set('FOREIGN_X', '[[FOREIGN_...]]', true, false)
+
+    await useResolveStore.getState().preload(TEST_SPACE_ID, true, new Set(['PAGE_1']))
+
+    expect(batches).toEqual([['PAGE_1']])
+  })
+})
+
+describe('markDeleted (#5246)', () => {
+  it('flags only the cached entries, under the space it is given', () => {
+    useResolveStore.getState().set('PAGE_A', 'Page A', false)
+    useSpaceStore.setState({ currentSpaceId: OTHER_SPACE_ID })
+    useResolveStore.getState().set('PAGE_A', 'Page A elsewhere', false)
+    useSpaceStore.setState({ currentSpaceId: TEST_SPACE_ID })
+    const versionBefore = useResolveStore.getState().version
+
+    useResolveStore.getState().markDeleted(TEST_SPACE_ID, ['PAGE_A', 'UNCACHED'])
+
+    const { cache, version } = useResolveStore.getState()
+    expect(cache.get(keyFor(TEST_SPACE_ID, 'PAGE_A'))).toEqual({
+      title: 'Page A',
+      deleted: true,
+      resolved: true,
+    })
+    expect(cache.get(keyFor(OTHER_SPACE_ID, 'PAGE_A'))?.deleted).toBe(false)
+    expect(cache.has(keyFor(TEST_SPACE_ID, 'UNCACHED'))).toBe(false)
+    expect(version).toBe(versionBefore + 1)
+  })
+
+  it('does not bump version when every id is uncached or already deleted', () => {
+    useResolveStore.getState().set('PAGE_A', 'Page A', true)
+    const versionBefore = useResolveStore.getState().version
+
+    useResolveStore.getState().markDeleted(TEST_SPACE_ID, ['PAGE_A', 'UNCACHED'])
+
+    expect(useResolveStore.getState().version).toBe(versionBefore)
+  })
+})
+
+describe('markMovedOut (#5248)', () => {
+  it('turns only the cached entries under the given space into the unresolved one', () => {
+    useResolveStore.getState().set('PAGE_A', 'Page A', false)
+    useSpaceStore.setState({ currentSpaceId: OTHER_SPACE_ID })
+    useResolveStore.getState().set('PAGE_A', 'Page A elsewhere', false)
+    useSpaceStore.setState({ currentSpaceId: TEST_SPACE_ID })
+
+    useResolveStore.getState().markMovedOut(TEST_SPACE_ID, ['PAGE_A', 'UNCACHED'])
+
+    const { cache } = useResolveStore.getState()
+    expect(cache.get(keyFor(TEST_SPACE_ID, 'PAGE_A'))).toEqual({
+      title: unresolvedBlockLabel('PAGE_A'),
+      deleted: true,
+      resolved: false,
+    })
+    expect(cache.get(keyFor(OTHER_SPACE_ID, 'PAGE_A'))?.resolved).toBe(true)
+    expect(cache.has(keyFor(TEST_SPACE_ID, 'UNCACHED'))).toBe(false)
+  })
+})
+
+describe('refreshCachedBlocks (#5245)', () => {
+  it('re-titles and undeletes a cached block from the row, and adds no uncached one', () => {
+    useResolveStore.getState().set('BLOCK_X', 'Buy milk', true)
+
+    useResolveStore.getState().refreshCachedBlocks([
+      { id: 'BLOCK_X', block_type: 'content', content: 'Buy oat milk\nmore' },
+      { id: 'BLOCK_Y', block_type: 'content', content: 'never referenced' },
+    ])
+
+    const { cache } = useResolveStore.getState()
+    expect(cache.get(keyFor(TEST_SPACE_ID, 'BLOCK_X'))).toEqual({
+      title: 'Buy oat milk',
+      deleted: false,
+      resolved: true,
+    })
+    expect(cache.has(keyFor(TEST_SPACE_ID, 'BLOCK_Y'))).toBe(false)
+  })
+})
+
+describe('refreshDeleted (#5246)', () => {
+  it('re-resolves the entries cached as deleted and writes what the backend says', async () => {
+    const batches: string[][] = []
+    stubInvoke(mockedInvoke, {
+      batch_resolve: (args) => {
+        batches.push((args['ids'] as string[] | undefined) ?? [])
+        return [
+          { id: 'PAGE_RESTORED', title: 'Restored', block_type: 'page', deleted: false },
+          { id: 'PAGE_STILL_TRASHED', title: 'Trashed', block_type: 'page', deleted: true },
+        ]
+      },
+    })
+    useResolveStore.getState().set('PAGE_RESTORED', 'Restored', true)
+    useResolveStore.getState().set('PAGE_STILL_TRASHED', 'Trashed', true)
+    useResolveStore.getState().set('PAGE_LIVE', 'Live', false)
+
+    await useResolveStore.getState().refreshDeleted(TEST_SPACE_ID)
+
+    expect(batches).toEqual([['PAGE_RESTORED', 'PAGE_STILL_TRASHED']])
+    const { resolveStatus } = useResolveStore.getState()
+    expect(resolveStatus('PAGE_RESTORED')).toBe('active')
+    expect(resolveStatus('PAGE_STILL_TRASHED')).toBe('deleted')
+  })
+
+  it('writes nothing when the active space changed while the IPC was in flight', async () => {
+    let answer: (rows: CommandReturns['batch_resolve']) => void = () => {}
+    stubInvoke(mockedInvoke, {
+      batch_resolve: () =>
+        new Promise<CommandReturns['batch_resolve']>((resolve) => {
+          answer = resolve
+        }),
+    })
+    useResolveStore.getState().set('PAGE_A', 'Page A', true)
+
+    const pending = useResolveStore.getState().refreshDeleted(TEST_SPACE_ID)
+    await vi.waitFor(() => expect(mockedInvoke).toHaveBeenCalledTimes(1))
+    useSpaceStore.setState({ currentSpaceId: OTHER_SPACE_ID })
+    answer([{ id: 'PAGE_A', title: 'Page A', block_type: 'page', deleted: false }])
+    await pending
+
+    expect(useResolveStore.getState().cache.has(keyFor(OTHER_SPACE_ID, 'PAGE_A'))).toBe(false)
+  })
+
+  it('makes no IPC when nothing is cached as deleted', async () => {
+    useResolveStore.getState().set('PAGE_LIVE', 'Live', false)
+
+    await useResolveStore.getState().refreshDeleted(TEST_SPACE_ID)
+
+    expect(mockedInvoke).not.toHaveBeenCalled()
+  })
+
+  it('logs and keeps the entries when the IPC fails', async () => {
+    const warnSpy = vi.spyOn(logger, 'warn')
+    stubInvoke(mockedInvoke, {
+      batch_resolve: () => Promise.reject(new Error('backend down')),
+    })
+    useResolveStore.getState().set('PAGE_A', 'Page A', true)
+
+    await useResolveStore.getState().refreshDeleted(TEST_SPACE_ID)
+
+    expect(useResolveStore.getState().resolveStatus('PAGE_A')).toBe('deleted')
+    expect(warnSpy).toHaveBeenCalledWith(
+      'ResolveStore',
+      'refresh of trashed entries failed',
+      { spaceId: TEST_SPACE_ID },
+      expect.any(Error),
+    )
+    warnSpy.mockRestore()
   })
 })

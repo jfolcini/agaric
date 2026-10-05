@@ -2,7 +2,7 @@
  * Tests for useBlockTags hook — tag loading, adding, removing, and creating.
  *
  * Validates:
- * - allTags loads tag blocks on mount via listBlocks({ blockType: 'tag' })
+ * - allTags loads every tag in the space via listAllTagsInSpace
  * - appliedTagIds loads tags for given blockId via listTagsForBlock
  * - handleAddTag calls addTag IPC and updates appliedTagIds
  * - handleRemoveTag calls removeTag IPC and updates appliedTagIds
@@ -19,8 +19,15 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { StoreApi } from 'zustand'
 
 import { makeBlock, withOps } from '@/__tests__/fixtures'
-import { mockInvokeCommands, type TypedInvokeHandlers } from '@/__tests__/helpers/invoke'
+import {
+  type CommandReturns,
+  mockInvokeCommands,
+  type TypedInvokeHandlers,
+} from '@/__tests__/helpers/invoke'
 import { useBlockTags } from '@/hooks/useBlockTags'
+import { getGraphStructureKey } from '@/lib/graph-structure-events'
+import type { NameChange } from '@/lib/name-change-bus'
+import { invalidateNameCaches, subscribeToNameChanges } from '@/lib/name-change-bus'
 import { createPageBlockStore, PageBlockContext, type PageBlockState } from '@/stores/page-blocks'
 import { useResolveStore } from '@/stores/resolve'
 import { useSpaceStore } from '@/stores/space'
@@ -50,11 +57,15 @@ afterEach(() => {
   useSpaceStore.setState({ currentSpaceId: null })
 })
 
-const emptyPage = { items: [], next_cursor: null, has_more: false, total_count: null }
+type TagRow = CommandReturns['list_all_tags_in_space'][number]
+
+function tagRow(tagId: string, name: string): TagRow {
+  return { tag_id: tagId, name, usage_count: 0, updated_at: '2025-01-15T00:00:00Z' }
+}
 
 beforeEach(() => {
   vi.clearAllMocks()
-  stubInvoke({ list_blocks: () => emptyPage })
+  stubInvoke({ list_all_tags_in_space: () => [] })
   pageStore = createPageBlockStore('PAGE_1')
 })
 
@@ -63,60 +74,30 @@ beforeEach(() => {
 // ---------------------------------------------------------------------------
 
 describe('useBlockTags allTags', () => {
-  it('loads tag blocks on mount', async () => {
-    const tagBlocks = {
-      items: [
-        makeBlock({ id: 'TAG_1', block_type: 'tag' as const, content: 'Work', page_id: null }),
-        makeBlock({
-          id: 'TAG_2',
-          block_type: 'tag' as const,
-          content: 'Personal',
-          page_id: null,
-        }),
-      ],
-      next_cursor: null,
-      has_more: false,
-      total_count: null,
-    }
+  it('loads every tag in the space on mount (#5244)', async () => {
+    // #5244 — more than the 50 rows `listBlocks`' default page returned.
+    const rows = Array.from({ length: 60 }, (_, i) => tagRow(`TAG_${i}`, `tag-${i}`))
     // #2248 — an active space is required; seed one so the mount fetch fires.
     useSpaceStore.setState({ currentSpaceId: 'SPACE_1' })
     stubInvoke({
       list_inherited_tags_for_block: () => [],
-      list_blocks: () => tagBlocks,
+      list_all_tags_in_space: () => rows,
       list_tags_for_block: () => [],
     })
 
     const { result } = renderHook(() => useBlockTags('BLOCK_1'), { wrapper })
 
     await waitFor(() => {
-      expect(result.current.allTags).toHaveLength(2)
+      expect(result.current.allTags).toHaveLength(60)
     })
-
-    expect(result.current.allTags).toEqual([
-      { id: 'TAG_1', name: 'Work' },
-      { id: 'TAG_2', name: 'Personal' },
-    ])
-
-    expect(mockedInvoke).toHaveBeenCalledWith('list_blocks', {
-      request: {
-        parentId: null,
-        blockType: 'tag',
-        tagId: null,
-        date: null,
-        dateRange: null,
-        source: null,
-        excludeTodoStates: null,
-        cursor: null,
-        limit: null,
-      },
-      // #2248 — `useBlockTags` threads `currentSpaceId` through
-      // `requireActiveScope` into an active SpaceScope.
+    expect(result.current.allTags.at(-1)).toEqual({ id: 'TAG_59', name: 'tag-59' })
+    expect(mockedInvoke).toHaveBeenCalledWith('list_all_tags_in_space', {
       scope: { kind: 'active', space_id: 'SPACE_1' },
     })
   })
 
   it('short-circuits to an empty tag list without invoking when there is no active space (#2248)', async () => {
-    // No space seeded (currentSpaceId is null). `listBlocks` has no
+    // No space seeded (currentSpaceId is null). The tag listing has no
     // cross-space form, so the hook must NOT dispatch and must render empty.
     stubInvoke({
       list_inherited_tags_for_block: () => [],
@@ -130,19 +111,19 @@ describe('useBlockTags allTags', () => {
     })
 
     expect(result.current.allTags).toEqual([])
-    const listBlocksCalls = mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'list_blocks')
-    expect(listBlocksCalls).toHaveLength(0)
+    const listCalls = mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'list_all_tags_in_space')
+    expect(listCalls).toHaveLength(0)
   })
 
   it('shows toast error when loading tags fails', async () => {
-    // Without an active space the hook never calls `list_blocks` at all; the
+    // Without an active space the hook never lists the tags at all; the
     // toast this test names was previously raised by the *other* fetch, whose
     // untyped `list_inherited_tags_for_block` stub returned a page envelope
     // where the command returns `string[]`.
     useSpaceStore.setState({ currentSpaceId: 'SPACE_1' })
     stubInvoke({
       list_inherited_tags_for_block: () => [],
-      list_blocks: () => {
+      list_all_tags_in_space: () => {
         throw new Error('Network error')
       },
       list_tags_for_block: () => [],
@@ -167,7 +148,7 @@ describe('useBlockTags appliedTagIds', () => {
   it('loads tags for given blockId', async () => {
     stubInvoke({
       list_inherited_tags_for_block: () => [],
-      list_blocks: () => emptyPage,
+      list_all_tags_in_space: () => [],
       list_tags_for_block: () => ['TAG_1', 'TAG_3'],
     })
 
@@ -191,7 +172,7 @@ describe('useBlockTags appliedTagIds', () => {
   // be duplicated into the inherited set.
   it('partitions inherited tags excluding direct ones (direct wins)', async () => {
     stubInvoke({
-      list_blocks: () => emptyPage,
+      list_all_tags_in_space: () => [],
       list_tags_for_block: () => ['TAG_DIR', 'TAG_BOTH'],
       // TAG_BOTH is also inherited; it must be deduped out (direct wins).
       list_inherited_tags_for_block: () => ['TAG_INH', 'TAG_BOTH'],
@@ -219,7 +200,7 @@ describe('useBlockTags appliedTagIds', () => {
 
   it('resets appliedTagIds when blockId is null', async () => {
     stubInvoke({
-      list_blocks: () => emptyPage,
+      list_all_tags_in_space: () => [],
     })
 
     const { result } = renderHook(() => useBlockTags(null), { wrapper })
@@ -243,7 +224,7 @@ describe('useBlockTags appliedTagIds', () => {
   it('shows toast error when loading applied tags fails', async () => {
     stubInvoke({
       list_inherited_tags_for_block: () => [],
-      list_blocks: () => emptyPage,
+      list_all_tags_in_space: () => [],
       list_tags_for_block: () => {
         throw new Error('DB error')
       },
@@ -268,7 +249,7 @@ describe('useBlockTags handleAddTag', () => {
   it('calls addTag and updates appliedTagIds', async () => {
     stubInvoke({
       list_inherited_tags_for_block: () => [],
-      list_blocks: () => emptyPage,
+      list_all_tags_in_space: () => [],
       list_tags_for_block: () => [],
       add_tag: () => ({
         block_id: 'BLOCK_1',
@@ -297,7 +278,7 @@ describe('useBlockTags handleAddTag', () => {
 
   it('promotes an inherited-only tag to direct on add, removing it from inheritedTagIds (#1423)', async () => {
     stubInvoke({
-      list_blocks: () => emptyPage,
+      list_all_tags_in_space: () => [],
       list_tags_for_block: () => [],
       list_inherited_tags_for_block: () => ['TAG_INH'],
       add_tag: () => ({
@@ -327,7 +308,7 @@ describe('useBlockTags handleAddTag', () => {
 
   it('does nothing when blockId is null', async () => {
     stubInvoke({
-      list_blocks: () => emptyPage,
+      list_all_tags_in_space: () => [],
     })
 
     const { result } = renderHook(() => useBlockTags(null), { wrapper })
@@ -347,7 +328,7 @@ describe('useBlockTags handleAddTag', () => {
   it('shows toast error on failure', async () => {
     stubInvoke({
       list_inherited_tags_for_block: () => [],
-      list_blocks: () => emptyPage,
+      list_all_tags_in_space: () => [],
       list_tags_for_block: () => [],
       add_tag: () => {
         throw new Error('IPC failed')
@@ -375,7 +356,7 @@ describe('useBlockTags handleAddTag', () => {
 
     stubInvoke({
       list_inherited_tags_for_block: () => [],
-      list_blocks: () => emptyPage,
+      list_all_tags_in_space: () => [],
       list_tags_for_block: () => [],
       add_tag: () => ({
         block_id: 'BLOCK_1',
@@ -408,7 +389,7 @@ describe('useBlockTags handleAddTag', () => {
 
     stubInvoke({
       list_inherited_tags_for_block: () => [],
-      list_blocks: () => emptyPage,
+      list_all_tags_in_space: () => [],
       list_tags_for_block: () => [],
       add_tag: () => ({ block_id: 'BLOCK_1', tag_id: 'TAG_1', op_refs: [] }),
     })
@@ -434,7 +415,7 @@ describe('useBlockTags handleAddTag', () => {
 
     stubInvoke({
       list_inherited_tags_for_block: () => [],
-      list_blocks: () => emptyPage,
+      list_all_tags_in_space: () => [],
       list_tags_for_block: () => ['TAG_1'],
       remove_tag: () => ({ block_id: 'BLOCK_1', tag_id: 'TAG_1', op_refs: [] }),
     })
@@ -458,7 +439,7 @@ describe('useBlockTags handleAddTag', () => {
 
     stubInvoke({
       list_inherited_tags_for_block: () => [],
-      list_blocks: () => emptyPage,
+      list_all_tags_in_space: () => [],
       list_tags_for_block: () => [],
       add_tag: () => {
         throw new Error('IPC failed')
@@ -488,7 +469,7 @@ describe('useBlockTags handleRemoveTag', () => {
   it('calls removeTag and updates appliedTagIds', async () => {
     stubInvoke({
       list_inherited_tags_for_block: () => [],
-      list_blocks: () => emptyPage,
+      list_all_tags_in_space: () => [],
       list_tags_for_block: () => ['TAG_1', 'TAG_2'],
       remove_tag: () => ({
         block_id: 'BLOCK_1',
@@ -518,7 +499,7 @@ describe('useBlockTags handleRemoveTag', () => {
 
   it('does nothing when blockId is null', async () => {
     stubInvoke({
-      list_blocks: () => emptyPage,
+      list_all_tags_in_space: () => [],
     })
 
     const { result } = renderHook(() => useBlockTags(null), { wrapper })
@@ -538,7 +519,7 @@ describe('useBlockTags handleRemoveTag', () => {
   it('shows toast error on failure', async () => {
     stubInvoke({
       list_inherited_tags_for_block: () => [],
-      list_blocks: () => emptyPage,
+      list_all_tags_in_space: () => [],
       list_tags_for_block: () => ['TAG_1'],
       remove_tag: () => {
         throw new Error('IPC failed')
@@ -567,7 +548,7 @@ describe('useBlockTags handleRemoveTag', () => {
 
     stubInvoke({
       list_inherited_tags_for_block: () => [],
-      list_blocks: () => emptyPage,
+      list_all_tags_in_space: () => [],
       list_tags_for_block: () => ['TAG_1'],
       remove_tag: () => ({
         block_id: 'BLOCK_1',
@@ -596,7 +577,7 @@ describe('useBlockTags handleRemoveTag', () => {
 
     stubInvoke({
       list_inherited_tags_for_block: () => [],
-      list_blocks: () => emptyPage,
+      list_all_tags_in_space: () => [],
       list_tags_for_block: () => ['TAG_1'],
       remove_tag: () => {
         throw new Error('IPC failed')
@@ -633,7 +614,7 @@ describe('useBlockTags handleCreateTag', () => {
 
     stubInvoke({
       list_inherited_tags_for_block: () => [],
-      list_blocks: () => emptyPage,
+      list_all_tags_in_space: () => [],
       list_tags_for_block: () => [],
       // `create_block` returns the row inside the `op_refs` envelope.
       create_block: () => withOps(createdBlock),
@@ -685,7 +666,7 @@ describe('useBlockTags handleCreateTag', () => {
 
     stubInvoke({
       list_inherited_tags_for_block: () => [],
-      list_blocks: () => emptyPage,
+      list_all_tags_in_space: () => [],
       list_tags_for_block: () => [],
       create_block: () => withOps(createdBlock),
       add_tag: () => ({
@@ -719,7 +700,7 @@ describe('useBlockTags handleCreateTag', () => {
   it('does nothing for empty or whitespace-only name', async () => {
     stubInvoke({
       list_inherited_tags_for_block: () => [],
-      list_blocks: () => emptyPage,
+      list_all_tags_in_space: () => [],
       list_tags_for_block: () => [],
     })
 
@@ -746,7 +727,7 @@ describe('useBlockTags handleCreateTag', () => {
     })
 
     stubInvoke({
-      list_blocks: () => emptyPage,
+      list_all_tags_in_space: () => [],
       create_block: () => withOps(createdBlock),
     })
 
@@ -792,7 +773,7 @@ describe('useBlockTags handleCreateTag', () => {
 
     stubInvoke({
       list_inherited_tags_for_block: () => [],
-      list_blocks: () => emptyPage,
+      list_all_tags_in_space: () => [],
       list_tags_for_block: () => [],
       create_block: () => withOps(createdBlock),
       add_tag: () => ({
@@ -818,7 +799,7 @@ describe('useBlockTags handleCreateTag', () => {
   it('shows toast error on failure', async () => {
     stubInvoke({
       list_inherited_tags_for_block: () => [],
-      list_blocks: () => emptyPage,
+      list_all_tags_in_space: () => [],
       list_tags_for_block: () => [],
       create_block: () => {
         throw new Error('IPC failed')
@@ -844,7 +825,7 @@ describe('useBlockTags handleCreateTag', () => {
 
     stubInvoke({
       list_inherited_tags_for_block: () => [],
-      list_blocks: () => emptyPage,
+      list_all_tags_in_space: () => [],
       list_tags_for_block: () => [],
       create_block: () => {
         throw new Error('IPC failed')
@@ -879,7 +860,7 @@ describe('useBlockTags handleCreateTag', () => {
 
     stubInvoke({
       list_inherited_tags_for_block: () => [],
-      list_blocks: () => emptyPage,
+      list_all_tags_in_space: () => [],
       list_tags_for_block: () => [],
       create_block: () => withOps(createdBlock),
       add_tag: () => {
@@ -897,7 +878,8 @@ describe('useBlockTags handleCreateTag', () => {
       await result.current.handleCreateTag('PartialFail')
     })
 
-    expect(mockedToastError).toHaveBeenCalledWith('Failed to create tag')
+    // The tag exists, so the add's own failure is what the user is told.
+    expect(mockedToastError).toHaveBeenCalledWith('Failed to add tag')
     // allTags IS updated because setAllTags runs before addTag
     expect(result.current.allTags).toEqual([{ id: 'NEW_TAG_1', name: 'PartialFail' }])
     // appliedTagIds should NOT include the new tag
@@ -916,7 +898,7 @@ describe('useBlockTags loading state', () => {
     let resolveTagsForBlock!: (value: string[]) => void
     stubInvoke({
       list_inherited_tags_for_block: () => [],
-      list_blocks: () => emptyPage,
+      list_all_tags_in_space: () => [],
       list_tags_for_block: () =>
         new Promise<string[]>((resolve) => {
           resolveTagsForBlock = resolve
@@ -940,7 +922,7 @@ describe('useBlockTags loading state', () => {
     let rejectTagsForBlock!: (reason: Error) => void
     stubInvoke({
       list_inherited_tags_for_block: () => [],
-      list_blocks: () => emptyPage,
+      list_all_tags_in_space: () => [],
       list_tags_for_block: () =>
         new Promise<string[]>((_resolve, reject) => {
           rejectTagsForBlock = reject
@@ -960,7 +942,7 @@ describe('useBlockTags loading state', () => {
 
   it('loading becomes false immediately when blockId is null', async () => {
     stubInvoke({
-      list_blocks: () => emptyPage,
+      list_all_tags_in_space: () => [],
     })
 
     const { result } = renderHook(() => useBlockTags(null), { wrapper })
@@ -983,7 +965,7 @@ describe('useBlockTags staleness guards (#1518)', () => {
     // BLOCK_OLD write would overwrite BLOCK_NEW's tags (the #1518 leak).
     const resolvers = new Map<string, (value: string[]) => void>()
     stubInvoke({
-      list_blocks: () => emptyPage,
+      list_all_tags_in_space: () => [],
       list_inherited_tags_for_block: () => [],
       list_tags_for_block: (args) => {
         const blockId = (args as { blockId: string }).blockId
@@ -1022,38 +1004,21 @@ describe('useBlockTags staleness guards (#1518)', () => {
   })
 
   it('drops a stale space tag list that resolves after the newer space', async () => {
-    // SPACE_OLD's list_blocks is gated so it lands LAST; SPACE_NEW resolves
+    // SPACE_OLD's listing is gated so it lands LAST; SPACE_NEW resolves
     // immediately. The `getState()` re-check + cancelled guard must keep
     // SPACE_NEW's tags and discard the late SPACE_OLD response.
-    const newTags = {
-      items: [
-        makeBlock({ id: 'TAG_NEW', block_type: 'tag' as const, content: 'New', page_id: null }),
-      ],
-      next_cursor: null,
-      has_more: false,
-      total_count: null,
-    }
-    const oldTags = {
-      items: [
-        makeBlock({ id: 'TAG_OLD', block_type: 'tag' as const, content: 'Old', page_id: null }),
-      ],
-      next_cursor: null,
-      has_more: false,
-      total_count: null,
-    }
-
-    let resolveOld!: (value: typeof oldTags) => void
-    const oldPending = new Promise<typeof oldTags>((resolve) => {
+    let resolveOld!: (value: TagRow[]) => void
+    const oldPending = new Promise<TagRow[]>((resolve) => {
       resolveOld = resolve
     })
 
     stubInvoke({
       list_tags_for_block: () => [],
       list_inherited_tags_for_block: () => [],
-      list_blocks: (args) => {
+      list_all_tags_in_space: (args) => {
         const spaceId = (args as { scope: { space_id: string } }).scope.space_id
         if (spaceId === 'SPACE_OLD') return oldPending
-        return newTags
+        return [tagRow('TAG_NEW', 'New')]
       },
     })
 
@@ -1074,7 +1039,7 @@ describe('useBlockTags staleness guards (#1518)', () => {
     // Let the stale SPACE_OLD fetch resolve LAST — it must NOT clobber
     // SPACE_NEW (caught by either the cancelled flag or the getState check).
     await act(async () => {
-      resolveOld(oldTags)
+      resolveOld([tagRow('TAG_OLD', 'Old')])
     })
 
     expect(result.current.allTags).toEqual([{ id: 'TAG_NEW', name: 'New' }])
@@ -1088,28 +1053,22 @@ describe('useBlockTags staleness guards (#1518)', () => {
     // `cancelled` flag (tripped by the first SPACE_A effect's cleanup)
     // drops it. Removing `if (cancelled) return` from the space effect
     // makes this test fail; removing the `getState()` check does not.
-    let resolveStaleA: ((value: typeof emptyPage) => void) | null = null
-    const tagsFor = (id: string, name: string) => ({
-      items: [makeBlock({ id, block_type: 'tag' as const, content: name, page_id: null })],
-      next_cursor: null,
-      has_more: false,
-      total_count: null,
-    })
+    let resolveStaleA: ((value: TagRow[]) => void) | null = null
 
     stubInvoke({
       list_tags_for_block: () => [],
       list_inherited_tags_for_block: () => [],
-      list_blocks: (args) => {
+      list_all_tags_in_space: (args) => {
         const spaceId = (args as { scope: { space_id: string } }).scope.space_id
         // The FIRST SPACE_A fetch is gated so it can resolve last (stale).
         if (spaceId === 'SPACE_A' && resolveStaleA === null) {
-          return new Promise<typeof emptyPage>((resolve) => {
+          return new Promise<TagRow[]>((resolve) => {
             resolveStaleA = resolve
           })
         }
-        if (spaceId === 'SPACE_B') return tagsFor('TAG_B', 'B')
+        if (spaceId === 'SPACE_B') return [tagRow('TAG_B', 'B')]
         // The SECOND SPACE_A fetch (after switch-back) resolves immediately.
-        return tagsFor('TAG_A2', 'A2')
+        return [tagRow('TAG_A2', 'A2')]
       },
     })
 
@@ -1132,9 +1091,147 @@ describe('useBlockTags staleness guards (#1518)', () => {
     // SPACE_A again, so getState() matches the captured id — only the
     // cancelled flag prevents this stale write from clobbering TAG_A2.
     await act(async () => {
-      resolveStaleA?.({ items: [], next_cursor: null, has_more: false, total_count: null })
+      resolveStaleA?.([])
     })
 
     expect(result.current.allTags).toEqual([{ id: 'TAG_A2', name: 'A2' }])
+  })
+})
+
+// ---------------------------------------------------------------------------
+// #5244 — `useSyncEvents` announces a sync or MCP write as an `invalidated`
+// name change. #5250 — a header add/remove bumps the graph-structure counter
+// for the tag-filtered graph.
+// ---------------------------------------------------------------------------
+
+describe('useBlockTags out-of-band refresh', () => {
+  it('refetches the catalogue and the applied tags, keeping the chips meanwhile (#5244)', async () => {
+    useSpaceStore.setState({ currentSpaceId: 'SPACE_1' })
+    let catalogue = [tagRow('TAG_1', 'one')]
+    let pendingApplied: ((ids: string[]) => void) | null = null
+    let appliedCalls = 0
+    stubInvoke({
+      list_all_tags_in_space: () => catalogue,
+      list_inherited_tags_for_block: () => [],
+      list_tags_for_block: () => {
+        appliedCalls += 1
+        if (appliedCalls === 1) return ['TAG_1']
+        return new Promise<string[]>((resolve) => {
+          pendingApplied = resolve
+        })
+      },
+    })
+
+    const { result } = renderHook(() => useBlockTags('BLOCK_1'), { wrapper })
+    await waitFor(() => expect(result.current.appliedTagIds.has('TAG_1')).toBe(true))
+
+    catalogue = [tagRow('TAG_1', 'one'), tagRow('TAG_2', 'synced')]
+    act(() => invalidateNameCaches())
+
+    await waitFor(() => expect(pendingApplied).not.toBeNull())
+    expect(result.current.appliedTagIds.has('TAG_1')).toBe(true)
+    await waitFor(() =>
+      expect(result.current.allTags).toEqual([
+        { id: 'TAG_1', name: 'one' },
+        { id: 'TAG_2', name: 'synced' },
+      ]),
+    )
+
+    await act(async () => pendingApplied?.(['TAG_1', 'TAG_2']))
+    expect([...result.current.appliedTagIds]).toEqual(['TAG_1', 'TAG_2'])
+  })
+
+  it('bumps the counter after an add and after a remove (#5250)', async () => {
+    stubInvoke({
+      list_all_tags_in_space: () => [],
+      list_inherited_tags_for_block: () => [],
+      list_tags_for_block: () => [],
+      add_tag: () => ({ block_id: 'BLOCK_1', tag_id: 'TAG_1', op_refs: [] }),
+      remove_tag: () => ({ block_id: 'BLOCK_1', tag_id: 'TAG_1', op_refs: [] }),
+    })
+    const { result } = renderHook(() => useBlockTags('BLOCK_1'), { wrapper })
+    await waitFor(() => expect(result.current.loading).toBe(false))
+
+    await act(async () => result.current.handleAddTag('TAG_1'))
+    await waitFor(() => expect(getGraphStructureKey()).toBe(1))
+
+    await act(async () => result.current.handleRemoveTag('TAG_1'))
+    await waitFor(() => expect(getGraphStructureKey()).toBe(2))
+  })
+})
+
+// ---------------------------------------------------------------------------
+// #5236 — a header-created tag reaches the `#` picker caches, and a create the
+// backend answers with an EXISTING tag neither duplicates it nor re-adds it.
+// ---------------------------------------------------------------------------
+
+describe('useBlockTags handleCreateTag publishing and reuse (#5236)', () => {
+  const existing = makeBlock({ id: 'TAG_1', block_type: 'tag' as const, content: 'work' })
+
+  it('announces the created tag on the name-change bus', async () => {
+    useSpaceStore.setState({ currentSpaceId: 'SPACE_1' })
+    stubInvoke({
+      list_all_tags_in_space: () => [],
+      list_inherited_tags_for_block: () => [],
+      list_tags_for_block: () => [],
+      create_block: () => withOps(makeBlock({ id: 'NEW_TAG', block_type: 'tag' as const })),
+      add_tag: () => ({ block_id: 'BLOCK_1', tag_id: 'NEW_TAG', op_refs: [] }),
+    })
+    const changes: NameChange[] = []
+    const unsubscribe = subscribeToNameChanges((change) => changes.push(change))
+    try {
+      const { result } = renderHook(() => useBlockTags('BLOCK_1'), { wrapper })
+      await waitFor(() => expect(result.current.loading).toBe(false))
+
+      await act(async () => result.current.handleCreateTag('launch'))
+
+      expect(changes).toEqual([
+        { kind: 'added', entity: 'tag', id: 'NEW_TAG', name: 'launch', spaceId: 'SPACE_1' },
+      ])
+    } finally {
+      unsubscribe()
+    }
+  })
+
+  it('does not re-add or re-list a tag that is already applied', async () => {
+    useSpaceStore.setState({ currentSpaceId: 'SPACE_1' })
+    stubInvoke({
+      list_all_tags_in_space: () => [tagRow('TAG_1', 'work')],
+      list_inherited_tags_for_block: () => [],
+      list_tags_for_block: () => ['TAG_1'],
+      create_block: () => withOps(existing),
+      // The real `add_tag` rejects a tag that is already applied.
+      add_tag: () => {
+        throw new Error('tag already applied')
+      },
+    })
+    const { result } = renderHook(() => useBlockTags('BLOCK_1'), { wrapper })
+    await waitFor(() => expect(result.current.allTags).toHaveLength(1))
+    await waitFor(() => expect(result.current.appliedTagIds.has('TAG_1')).toBe(true))
+
+    await act(async () => result.current.handleCreateTag('work'))
+
+    expect(result.current.allTags).toEqual([{ id: 'TAG_1', name: 'work' }])
+    expect([...result.current.appliedTagIds]).toEqual(['TAG_1'])
+    expect(mockedToastError).not.toHaveBeenCalled()
+  })
+
+  it('applies an existing tag that was only inherited, promoting it to direct', async () => {
+    useSpaceStore.setState({ currentSpaceId: 'SPACE_1' })
+    stubInvoke({
+      list_all_tags_in_space: () => [tagRow('TAG_1', 'work')],
+      list_inherited_tags_for_block: () => ['TAG_1'],
+      list_tags_for_block: () => [],
+      create_block: () => withOps(existing),
+      add_tag: () => ({ block_id: 'BLOCK_1', tag_id: 'TAG_1', op_refs: [] }),
+    })
+    const { result } = renderHook(() => useBlockTags('BLOCK_1'), { wrapper })
+    await waitFor(() => expect(result.current.inheritedTagIds.has('TAG_1')).toBe(true))
+
+    await act(async () => result.current.handleCreateTag('work'))
+
+    expect(result.current.appliedTagIds.has('TAG_1')).toBe(true)
+    expect(result.current.inheritedTagIds.has('TAG_1')).toBe(false)
+    expect(result.current.allTags).toEqual([{ id: 'TAG_1', name: 'work' }])
   })
 })

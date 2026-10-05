@@ -598,9 +598,9 @@ const DECLARED_WRITERS: Record<
     note: 'new page — `Untitled` is the PERSISTED content passed to createPageInSpace, so it stays that untranslated literal',
   },
   'src/components/TagList.tsx': {
-    writes: 3,
+    writes: 2,
     kind: 'echo',
-    note: 'tag create / delete / rename',
+    note: 'tag create / delete (a rename goes through `renamePage`)',
   },
   'src/components/TrashView.tsx': {
     writes: 2,

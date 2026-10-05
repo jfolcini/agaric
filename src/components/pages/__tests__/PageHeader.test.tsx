@@ -27,6 +27,7 @@ import { TooltipProvider } from '@/components/ui/tooltip'
 import type { AppError } from '@/lib/app-error'
 import { writeText } from '@/lib/clipboard'
 import { t } from '@/lib/i18n'
+import { type NameChange, subscribeToNameChanges } from '@/lib/name-change-bus'
 import { useNavigationStore } from '@/stores/navigation'
 import { createPageBlockStore, PageBlockContext, type PageBlockState } from '@/stores/page-blocks'
 import { useResolveStore } from '@/stores/resolve'
@@ -175,6 +176,7 @@ beforeEach(() => {
   // Default: no tags exist, no tags applied
   mockedInvoke.mockImplementation(async (cmd: string) => {
     if (cmd === 'list_blocks') return emptyPage
+    if (cmd === 'list_all_tags_in_space') return []
     if (cmd === 'list_tags_for_block') return []
     if (cmd === 'get_properties') return []
     if (cmd === 'list_property_defs')
@@ -190,34 +192,16 @@ beforeEach(() => {
   })
 })
 
+function tagRow(tagId: string, name: string) {
+  return { tag_id: tagId, name, usage_count: 0, updated_at: '2025-01-15T00:00:00Z' }
+}
+
 /** Helper to set up invoke mock with tags */
 function setupTagMock(appliedIds: string[] = ['TAG_1'], aliases: string[] = []) {
   mockedInvoke.mockImplementation(async (cmd: string, args?: any) => {
-    if (cmd === 'list_blocks') {
-      return {
-        items: [
-          {
-            id: 'TAG_1',
-            block_type: 'tag',
-            content: 'urgent',
-            parent_id: null,
-            position: null,
-            deleted_at: null,
-          },
-          {
-            id: 'TAG_2',
-            block_type: 'tag',
-            content: 'review',
-            parent_id: null,
-            position: null,
-            deleted_at: null,
-          },
-        ],
-        next_cursor: null,
-        has_more: false,
-        total_count: null,
-      }
-    }
+    if (cmd === 'list_blocks') return emptyPage
+    if (cmd === 'list_all_tags_in_space')
+      return [tagRow('TAG_1', 'urgent'), tagRow('TAG_2', 'review')]
     if (cmd === 'list_tags_for_block') return appliedIds
     // #2468 — WithOps<TagResponse>: op_refs carries the appended op ref so
     // the hook's ref-addressed undo capture path is exercised.
@@ -528,31 +512,9 @@ describe('PageHeader tag management', () => {
   it('tag picker search matches accented tag when query is ASCII', async () => {
     const user = userEvent.setup()
     mockedInvoke.mockImplementation(async (cmd: string, _args?: any) => {
-      if (cmd === 'list_blocks') {
-        return {
-          items: [
-            {
-              id: 'TAG_CAFE',
-              block_type: 'tag',
-              content: 'café',
-              parent_id: null,
-              position: null,
-              deleted_at: null,
-            },
-            {
-              id: 'TAG_PRIO',
-              block_type: 'tag',
-              content: 'priority',
-              parent_id: null,
-              position: null,
-              deleted_at: null,
-            },
-          ],
-          next_cursor: null,
-          has_more: false,
-          total_count: null,
-        }
-      }
+      if (cmd === 'list_blocks') return emptyPage
+      if (cmd === 'list_all_tags_in_space')
+        return [tagRow('TAG_CAFE', 'café'), tagRow('TAG_PRIO', 'priority')]
       if (cmd === 'list_tags_for_block') return []
       if (cmd === 'get_properties') return []
       if (cmd === 'list_property_defs')
@@ -2111,6 +2073,7 @@ describe('PageHeader Move to space (Phase 2)', () => {
     }
     mockedInvoke.mockImplementation(async (cmd, args) => {
       if (cmd === 'list_blocks') return emptyPage
+      if (cmd === 'list_all_tags_in_space') return []
       if (cmd === 'list_tags_for_block') return []
       // useBlockTags also fetches inherited tags in parallel; leaving this
       // command unhandled (falls through to the default `return null` below)
@@ -2249,6 +2212,35 @@ describe('PageHeader Move to space (Phase 2)', () => {
     expect(mockedToastError).not.toHaveBeenCalled()
   })
 
+  // #5248 — the origin space must stop offering the page under `[[` and
+  // render its chips to it broken, without waiting for a space switch.
+  it('drops the moved page from the origin picker and renders its chips broken', async () => {
+    const user = userEvent.setup()
+    setupPageWithSpace('SPACE_PERSONAL')
+    useResolveStore.getState().set('PAGE_1', 'Test', false)
+    const changes: NameChange[] = []
+    const unsubscribe = subscribeToNameChanges((change) => changes.push(change))
+    try {
+      renderPageHeader(<PageHeader pageId="PAGE_1" title="Test" />)
+
+      await user.click(screen.getByRole('button', { name: /page actions/i }))
+      await user.click(await screen.findByText(/Move to space/i))
+      await user.click(await screen.findByRole('menuitem', { name: 'Work' }))
+
+      await waitFor(() => {
+        expect(useResolveStore.getState().resolveStatus('PAGE_1')).toBe('deleted')
+      })
+      expect(changes).toContainEqual({
+        kind: 'removed',
+        entity: 'page',
+        id: 'PAGE_1',
+        spaceId: 'SPACE_PERSONAL',
+      })
+    } finally {
+      unsubscribe()
+    }
+  })
+
   it('shows error toast when set_property rejects', async () => {
     const user = userEvent.setup()
     mockedInvoke.mockImplementation(async (cmd: string) => {
@@ -2270,6 +2262,7 @@ describe('PageHeader Move to space (Phase 2)', () => {
       if (cmd === 'set_property') throw new Error('write failed')
       return null
     })
+    useResolveStore.getState().set('PAGE_1', 'Test', false)
 
     renderPageHeader(<PageHeader pageId="PAGE_1" title="Test" />)
 
@@ -2280,6 +2273,8 @@ describe('PageHeader Move to space (Phase 2)', () => {
     await waitFor(() => {
       expect(mockedToastError).toHaveBeenCalledWith(expect.stringMatching(/Failed to move page/i))
     })
+    // #5248 — nothing moved, so its chips stay live.
+    expect(useResolveStore.getState().resolveStatus('PAGE_1')).toBe('active')
   })
 
   it('has no a11y violations with the Move to space sub-menu expanded', async () => {

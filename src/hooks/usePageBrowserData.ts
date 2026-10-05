@@ -87,6 +87,18 @@ function isInvalidFilterError(err: unknown): err is TypedAppError {
   return isAppError(err) && validationCode(err) === ValidationCode.InvalidFilter
 }
 
+const PAGE_BROWSER_QUERY_ROOT = 'pageBrowserData'
+
+/**
+ * #5258 — re-fetch the Pages list after an out-of-band write (a synced peer or
+ * an MCP agent) created, renamed or deleted pages; the local create and delete
+ * paths update it themselves. TanStack refetches every loaded page in order
+ * from page 1, recomputing each cursor from the fresh rows.
+ */
+export function invalidatePageBrowserData(): void {
+  void queryClient.invalidateQueries({ queryKey: [PAGE_BROWSER_QUERY_ROOT] })
+}
+
 interface UsePageBrowserDataParams {
   currentSpaceId: string | null
   spaceIsReady: boolean
@@ -150,7 +162,7 @@ export function usePageBrowserData({
   // TanStack deep-hashes it deterministically. Held in a ref too so the stable
   // `setPages` setter can target this exact cache entry without re-deriving.
   const queryKey = useMemo(
-    () => ['pageBrowserData', currentSpaceId, sortOption, wireFilters] as const,
+    () => [PAGE_BROWSER_QUERY_ROOT, currentSpaceId, sortOption, wireFilters] as const,
     [currentSpaceId, sortOption, wireFilters],
   )
   const queryKeyRef = useRef(queryKey)

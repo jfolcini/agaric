@@ -8805,3 +8805,479 @@ async fn undo_ops_reverses_move_of_appended_block() {
         "A is back at the slot its append resolved to"
     );
 }
+
+// ======================================================================
+// #5238 / #5240 / #5252 / #5259 — reverse-path parity with the forward path
+// ======================================================================
+
+/// Is `id` a node of `space`'s per-space doc right now?
+fn in_doc(state: &agaric_engine::loro::shared::LoroState, space: &str, id: &str) -> bool {
+    let space = SpaceId::from_trusted(space);
+    let mut guard = state.registry.for_space(&space, DEV).expect("for_space");
+    let present = guard
+        .engine_mut()
+        .read_block(id)
+        .expect("read_block")
+        .is_some();
+    drop(guard);
+    present
+}
+
+/// #5238 — undoing a "Move to space" must re-home the page's subtree between
+/// the per-space docs exactly as the forward op did: out of the destination
+/// doc, back into the source doc. The SQL-only reverse left it in the
+/// destination doc, so every later edit took the SQL-only fallback and never
+/// synced.
+///
+/// Counter-delta test: reads the process-global `sql_only_fallback::count()`
+/// (`src-tauri/tests/AGENTS.md` § "Process-global state"; nextest only).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn undo_move_to_space_rehomes_the_page_between_docs_5238() {
+    use agaric_engine::apply::sql_only_fallback;
+
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let state = mat.loro_state();
+    let page = space_page(&pool, &mat).await;
+    let child = append_child(&pool, &mat, &page, "body").await;
+    settle(&mat).await;
+    ensure_test_space_b(&pool).await;
+
+    // The header's "Move to space": A → B.
+    set_property_inner(
+        &pool,
+        DEV,
+        &mat,
+        page.as_str().into(),
+        "space".into(),
+        None,
+        None,
+        None,
+        Some(TEST_SPACE_B_ID.into()),
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+    for id in [page.as_str(), child.as_str()] {
+        assert!(
+            in_doc(state, TEST_SPACE_B_ID, id) && !in_doc(state, TEST_SPACE_ID, id),
+            "sanity: after the move {id} is in B's doc and out of A's"
+        );
+    }
+
+    // Ctrl+Z falls through to the positional undo, which picks the space op.
+    let undo = undo_page_op_inner(&pool, DEV, &mat, page.as_str().to_owned(), 0)
+        .await
+        .unwrap();
+    settle(&mat).await;
+    assert_eq!(undo.reversed_op_type, "set_property");
+
+    for id in [page.as_str(), child.as_str()] {
+        let space_id: Option<String> =
+            sqlx::query_scalar("SELECT space_id FROM blocks WHERE id = ?")
+                .bind(id)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(
+            space_id.as_deref(),
+            Some(TEST_SPACE_ID),
+            "{id}: SQL back in A"
+        );
+        assert!(
+            in_doc(state, TEST_SPACE_ID, id),
+            "{id}: the undo must hydrate the page back into A's doc"
+        );
+        assert!(
+            !in_doc(state, TEST_SPACE_B_ID, id),
+            "{id}: the undo must purge the page from B's doc"
+        );
+    }
+
+    // A later edit takes the engine path — not the SQL-only fallback that
+    // never syncs.
+    let fallbacks_before = sql_only_fallback::count();
+    edit_block_inner(&pool, DEV, &mat, child.clone(), "edited after undo".into())
+        .await
+        .unwrap();
+    settle(&mat).await;
+    assert_eq!(
+        sql_only_fallback::count() - fallbacks_before,
+        0,
+        "an edit after the undo must go through A's engine, not the SQL-only fallback"
+    );
+    let content = {
+        let space = SpaceId::from_trusted(TEST_SPACE_ID);
+        let mut guard = state.registry.for_space(&space, DEV).expect("for_space");
+        let content = guard
+            .engine_mut()
+            .read_block_content(child.as_str())
+            .expect("read_block_content");
+        drop(guard);
+        content
+    };
+    assert_eq!(
+        content.as_deref(),
+        Some("edited after undo"),
+        "A's doc carries the post-undo edit"
+    );
+
+    // Redo takes the same arm the other way: out of A's doc, back into B's.
+    let redo = redo_page_op_inner(
+        &pool,
+        DEV,
+        &mat,
+        undo.new_op_ref.device_id.clone(),
+        undo.new_op_ref.seq,
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+    assert!(redo.is_redo, "redo of the undone move");
+    for id in [page.as_str(), child.as_str()] {
+        assert!(
+            in_doc(state, TEST_SPACE_B_ID, id) && !in_doc(state, TEST_SPACE_ID, id),
+            "{id}: the redo must purge the page from A's doc and hydrate it into B's"
+        );
+    }
+    mat.shutdown();
+}
+
+/// #5259 — "first" mirrors `find_prior_property`: a page whose birth arrived
+/// as replicated audit rows has no LOCAL prior `set_property(space)`, so the
+/// reverse of its first local move would be `DeleteProperty(space)` — the page
+/// in no space. That move is not a positional target either.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn page_undo_skips_the_first_local_space_move_of_a_peer_born_page_5259() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let page = space_page(&pool, &mat).await;
+    settle(&mat).await;
+    ensure_test_space_b(&pool).await;
+    let birth: Vec<(String, i64)> =
+        sqlx::query_as("SELECT device_id, seq FROM op_log WHERE block_id = ?")
+            .bind(page.as_str())
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        birth.len(),
+        2,
+        "the birth is create_block + set_property(space)"
+    );
+    for (device_id, seq) in &birth {
+        mark_op_replicated(&pool, device_id, *seq).await;
+    }
+
+    set_property_inner(
+        &pool,
+        DEV,
+        &mat,
+        page.as_str().into(),
+        "space".into(),
+        None,
+        None,
+        None,
+        Some(TEST_SPACE_B_ID.into()),
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    let single = undo_page_op_inner(&pool, DEV, &mat, page.as_str().to_owned(), 0).await;
+    assert!(
+        matches!(single, Err(AppError::NotFound(_))),
+        "the move is not a positional target: {single:?}"
+    );
+    let group = undo_page_group_inner(&pool, DEV, &mat, page.as_str().to_owned(), 0, 60_000)
+        .await
+        .unwrap();
+    assert!(group.is_empty(), "nor does it seed a group");
+    let space_id: Option<String> = sqlx::query_scalar("SELECT space_id FROM blocks WHERE id = ?")
+        .bind(page.as_str())
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        space_id.as_deref(),
+        Some(TEST_SPACE_B_ID),
+        "the page keeps the space it was moved to"
+    );
+    mat.shutdown();
+}
+
+async fn inherited_rows(pool: &SqlitePool) -> Vec<(String, String, String)> {
+    sqlx::query_as(
+        "SELECT block_id, tag_id, inherited_from FROM block_tag_inherited \
+         ORDER BY block_id, tag_id",
+    )
+    .fetch_all(pool)
+    .await
+    .unwrap()
+}
+
+/// `block_tag_inherited` as the undo left it, asserted equal to a full
+/// rebuild, then returned for the scenario's own membership assertion.
+async fn inherited_after_undo_equals_rebuild(
+    pool: &SqlitePool,
+    what: &str,
+) -> Vec<(String, String, String)> {
+    let after_undo = inherited_rows(pool).await;
+    agaric_store::tag_inheritance::rebuild_all(pool)
+        .await
+        .unwrap();
+    let rebuilt = inherited_rows(pool).await;
+    assert_eq!(
+        after_undo, rebuilt,
+        "{what}: block_tag_inherited after the undo must equal a full rebuild"
+    );
+    rebuilt
+}
+
+/// A page with a tagged block `x`, a block `y`, and the tag — the #5240
+/// fixture. `y` is under `x` when `y_under_x`, else a sibling of it.
+async fn tagged_fixture(
+    pool: &SqlitePool,
+    mat: &Materializer,
+    y_under_x: bool,
+) -> (BlockId, BlockId, BlockId, BlockId) {
+    let page = space_page(pool, mat).await;
+    let x = append_child(pool, mat, &page, "x").await;
+    let y = append_child(pool, mat, if y_under_x { &x } else { &page }, "y").await;
+    let tag = BlockId::from_trusted("01TAG0000000000000000000T1");
+    insert_block(pool, tag.as_str(), "tag", "t", None, None).await;
+    (page, x, y, tag)
+}
+
+/// #5240 — undoing an add-tag must drop the tag the children inherited from it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn undo_add_tag_clears_the_inherited_tag_on_children_5240() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let (page, x, y, tag) = tagged_fixture(&pool, &mat, true).await;
+
+    add_tag_inner(&pool, DEV, &mat, x.clone(), tag.clone())
+        .await
+        .unwrap();
+    settle(&mat).await;
+    assert_eq!(
+        inherited_rows(&pool).await,
+        vec![(y.to_string(), tag.to_string(), x.to_string())],
+        "sanity: y inherits the tag from x"
+    );
+
+    let undo = undo_page_op_inner(&pool, DEV, &mat, page.as_str().to_owned(), 0)
+        .await
+        .unwrap();
+    settle(&mat).await;
+    assert_eq!(undo.reversed_op_type, "add_tag");
+    let rows = inherited_after_undo_equals_rebuild(&pool, "undo add-tag").await;
+    assert_eq!(rows, vec![], "y must no longer inherit the undone tag");
+    mat.shutdown();
+}
+
+/// #5240 — undoing an indent (a move under a tagged block) must drop the tag
+/// the block inherited while indented.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn undo_indent_clears_the_tag_inherited_while_indented_5240() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let (page, x, y, tag) = tagged_fixture(&pool, &mat, false).await;
+    add_tag_inner(&pool, DEV, &mat, x.clone(), tag.clone())
+        .await
+        .unwrap();
+    settle(&mat).await;
+
+    // Tab: y under x.
+    move_block_inner(&pool, DEV, &mat, y.clone(), Some(x.clone()), 0)
+        .await
+        .unwrap();
+    settle(&mat).await;
+    assert_eq!(
+        inherited_rows(&pool).await,
+        vec![(y.to_string(), tag.to_string(), x.to_string())],
+        "sanity: indented y inherits x's tag"
+    );
+
+    let undo = undo_page_op_inner(&pool, DEV, &mat, page.as_str().to_owned(), 0)
+        .await
+        .unwrap();
+    settle(&mat).await;
+    assert_eq!(undo.reversed_op_type, "move_block");
+    assert_eq!(live_children(&pool, &page).await, [x.as_str(), y.as_str()]);
+    let rows = inherited_after_undo_equals_rebuild(&pool, "undo indent").await;
+    assert_eq!(rows, vec![], "y back beside x must not inherit x's tag");
+    mat.shutdown();
+}
+
+/// #5240 — undoing an outdent (a move out from under a tagged block) must
+/// restore the tag the block inherits there.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn undo_outdent_restores_the_inherited_tag_5240() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let (page, x, y, tag) = tagged_fixture(&pool, &mat, true).await;
+    add_tag_inner(&pool, DEV, &mat, x.clone(), tag.clone())
+        .await
+        .unwrap();
+    settle(&mat).await;
+
+    // Shift-Tab: y out to the page.
+    move_block_inner(&pool, DEV, &mat, y.clone(), Some(page.clone()), 1)
+        .await
+        .unwrap();
+    settle(&mat).await;
+    assert_eq!(
+        inherited_rows(&pool).await,
+        vec![],
+        "sanity: outdented y inherits nothing"
+    );
+
+    let undo = undo_page_op_inner(&pool, DEV, &mat, page.as_str().to_owned(), 0)
+        .await
+        .unwrap();
+    settle(&mat).await;
+    assert_eq!(undo.reversed_op_type, "move_block");
+    assert_eq!(live_children(&pool, &x).await, [y.as_str()]);
+    let rows = inherited_after_undo_equals_rebuild(&pool, "undo outdent").await;
+    assert_eq!(
+        rows,
+        vec![(y.to_string(), tag.to_string(), x.to_string())],
+        "y back under x inherits x's tag again"
+    );
+    mat.shutdown();
+}
+
+/// #5252 — undoing a delete must re-link references written to a restored
+/// DESCENDANT while it was trashed, as the Trash restore does for the whole
+/// cohort (#4285). The undo path reindexed the seed alone.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn undo_delete_relinks_references_to_restored_children_5252() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let page = space_page(&pool, &mat).await;
+    let x = append_child(&pool, &mat, &page, "x").await;
+    let y = append_child(&pool, &mat, &x, "y").await;
+    let other =
+        create_page_in_space_inner(&pool, DEV, &mat, None, "Other".into(), TEST_SPACE_ID.into())
+            .await
+            .unwrap();
+    let referrer = append_child(&pool, &mat, &other, "r").await;
+    settle(&mat).await;
+
+    delete_block_inner(&pool, DEV, &mat, x.clone())
+        .await
+        .unwrap();
+    settle(&mat).await;
+    // Written while y is trashed: the link token has no live target.
+    edit_block_inner(&pool, DEV, &mat, referrer.clone(), format!("see [[{y}]]"))
+        .await
+        .unwrap();
+    settle(&mat).await;
+    let backlinks = get_backlinks_inner(&pool, y.clone(), None, None, &SpaceScope::Global)
+        .await
+        .unwrap();
+    assert_eq!(
+        backlinks.items.len(),
+        0,
+        "sanity: a trashed y has no backlinks"
+    );
+
+    let undo = undo_page_op_inner(&pool, DEV, &mat, page.as_str().to_owned(), 0)
+        .await
+        .unwrap();
+    settle(&mat).await;
+    assert_eq!(undo.reversed_op_type, "delete_block");
+    let backlinks = get_backlinks_inner(&pool, y.clone(), None, None, &SpaceScope::Global)
+        .await
+        .unwrap();
+    assert_eq!(
+        backlinks.items.len(),
+        1,
+        "the undone delete must re-link the reference to the restored child y"
+    );
+    assert_eq!(backlinks.items[0].id.as_str(), referrer.as_str());
+    mat.shutdown();
+}
+
+/// #5259 — positional undo stops at the page's birth: the root's own
+/// `create_block` and its first `set_property(space)` are never seeds or group
+/// members, so a Ctrl+Z past the page's content is a no-op instead of
+/// trashing the page (or stripping its space) while it stays open.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn page_undo_stops_at_the_pages_birth_5259() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let page = space_page(&pool, &mat).await;
+    let typed = append_child(&pool, &mat, &page, "typed").await;
+    settle(&mat).await;
+    let page_id = page.as_str().to_owned();
+
+    // Ctrl+Z: the typing goes — and ONLY the typing, although the birth ops
+    // sit inside the window.
+    let first = undo_page_group_inner(&pool, DEV, &mat, page_id.clone(), 0, 60_000)
+        .await
+        .unwrap();
+    settle(&mat).await;
+    assert_eq!(
+        first.len(),
+        1,
+        "the group holds the typed block's create alone"
+    );
+    assert_eq!(first[0].reversed_op_type, "create_block");
+    assert_eq!(first[0].reversed_op.seq, {
+        let seq: i64 = sqlx::query_scalar(
+            "SELECT seq FROM op_log WHERE op_type = 'create_block' AND block_id = ?",
+        )
+        .bind(typed.as_str())
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        seq
+    });
+
+    // Ctrl+Z again (the frontend advances the depth by the ops reverted):
+    // nothing left to undo, on both positional paths.
+    let second = undo_page_group_inner(&pool, DEV, &mat, page_id.clone(), 1, 60_000)
+        .await
+        .unwrap();
+    assert!(second.is_empty(), "past the content the group is empty");
+    let single = undo_page_op_inner(&pool, DEV, &mat, page_id.clone(), 1).await;
+    assert!(
+        matches!(single, Err(AppError::NotFound(_))),
+        "past the content there is no op at depth 1: {single:?}"
+    );
+
+    let (deleted_at, space_id): (Option<i64>, Option<String>) =
+        sqlx::query_as("SELECT deleted_at, space_id FROM blocks WHERE id = ?")
+            .bind(page.as_str())
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(deleted_at, None, "the page is not trashed");
+    assert_eq!(
+        space_id.as_deref(),
+        Some(TEST_SPACE_ID),
+        "the page keeps its space"
+    );
+    assert_eq!(live_children(&pool, &page).await, Vec::<String>::new());
+
+    // The History view still lists the page's creation.
+    let history = list_page_history_inner(&pool, page_id, None, &SpaceScope::Global, None, None)
+        .await
+        .unwrap();
+    assert_eq!(
+        history
+            .items
+            .iter()
+            .filter(|e| e.op_type == "create_block" && !e.is_replicated)
+            .count(),
+        2,
+        "History keeps the page's own create beside the typed block's"
+    );
+    mat.shutdown();
+}

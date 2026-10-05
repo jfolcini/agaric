@@ -122,7 +122,7 @@ describe('SearchPanel toggles', () => {
   // filters; only the remaining free text is the regex pattern.
   it('regex mode applies structural filters AND sends only the free text as the pattern', async () => {
     stubInvoke({
-      list_tags_by_prefix: () => [
+      list_all_tags_in_space: () => [
         { tag_id: 'TAG_WIP', name: 'wip', usage_count: 1, updated_at: '2025-01-01T00:00:00Z' },
       ],
     })
@@ -133,7 +133,7 @@ describe('SearchPanel toggles', () => {
     const input = screen.getByPlaceholderText(t('search.searchPlaceholderRegex'))
     typeAndSubmit(input, 'tag:wip foo.*')
 
-    // The tag name resolves asynchronously via `list_tags_by_prefix`;
+    // The tag name resolves asynchronously via `list_all_tags_in_space`;
     // wait until the resolved id reaches the IPC payload.
     await waitFor(() => {
       const filter = lastFilter()
@@ -148,7 +148,7 @@ describe('SearchPanel toggles', () => {
 
   it('regex mode still renders the tag chip parsed from the input', async () => {
     stubInvoke({
-      list_tags_by_prefix: () => [
+      list_all_tags_in_space: () => [
         { tag_id: 'TAG_WIP', name: 'wip', usage_count: 1, updated_at: '2025-01-01T00:00:00Z' },
       ],
     })
@@ -169,7 +169,7 @@ describe('SearchPanel toggles', () => {
 
   it('regex mode fires the IPC for a filter-only query (no free text)', async () => {
     stubInvoke({
-      list_tags_by_prefix: () => [
+      list_all_tags_in_space: () => [
         { tag_id: 'TAG_WIP', name: 'wip', usage_count: 1, updated_at: '2025-01-01T00:00:00Z' },
       ],
     })

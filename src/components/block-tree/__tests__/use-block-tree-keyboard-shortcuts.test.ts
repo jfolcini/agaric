@@ -259,6 +259,19 @@ describe('useBlockTreeKeyboardShortcuts', () => {
 
       expect(opts.rawSelectAll).not.toHaveBeenCalled()
     })
+
+    it('leaves Ctrl+A to a text field that has focus', () => {
+      const opts = makeOptions({ focusedBlockId: null })
+      renderHook(() => useBlockTreeKeyboardShortcuts(opts))
+      const input = document.createElement('input')
+      document.body.append(input)
+
+      const notCancelled = fireEvent.keyDown(input, { key: 'a', ctrlKey: true })
+      input.remove()
+
+      expect(opts.rawSelectAll).not.toHaveBeenCalled()
+      expect(notCancelled).toBe(true)
+    })
   })
 
   describe('Escape clears selection', () => {

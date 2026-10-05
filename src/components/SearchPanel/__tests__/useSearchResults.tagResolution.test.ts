@@ -27,10 +27,9 @@ vi.mock('@/lib/ipc-helpers', async (importOriginal) => {
   }
 })
 
-// `listTagsByPrefix` retired its hand-written wrapper (#4411) — `useTagResolution`
-// now calls `commands.listTagsByPrefix` directly and unwraps the `Result`
-// envelope, so the mock backs the `commands.*` surface and resolves the
-// `{ status: 'ok', data }` shape.
+// `useTagResolution` calls `commands.listAllTagsInSpace` directly (#5237 — the
+// space's own list) and unwraps the `Result` envelope, so the mock backs the
+// `commands.*` surface and resolves the `{ status: 'ok', data }` shape.
 const mockedListTags = vi.hoisted(() => vi.fn())
 const mockBatchResolve = vi.hoisted(() => vi.fn())
 vi.mock('@/lib/bindings', async (importOriginal) => {
@@ -39,7 +38,7 @@ vi.mock('@/lib/bindings', async (importOriginal) => {
     ...actual,
     commands: {
       ...actual.commands,
-      listTagsByPrefix: (...args: unknown[]) =>
+      listAllTagsInSpace: (...args: unknown[]) =>
         mockedListTags(...args).then((data: unknown) => ({ status: 'ok', data })),
       batchResolve: mockBatchResolve,
     },

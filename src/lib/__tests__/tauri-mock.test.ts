@@ -29,7 +29,7 @@ vi.mock('@/lib/logger', () => ({
 import { logger } from '@/lib/logger'
 import { clearMockErrors, injectMockError, resetMock, SEED_IDS, setupMock } from '@/lib/tauri-mock'
 import { deriveLinkEdges } from '@/lib/tauri-mock/link-scan'
-import { blocks, makeBlock, opLog, pageAliases, peerRefs } from '@/lib/tauri-mock/seed'
+import { blocks, makeBlock, opLog, pageAliases, peerRefs, todayDate } from '@/lib/tauri-mock/seed'
 
 /** Helper — call the captured IPC handler as if invoke() were called. */
 function invoke(cmd: string, args: Record<string, unknown> = {}): unknown {
@@ -2080,6 +2080,59 @@ describe('fixed-field commands', () => {
 
     const block = invoke('get_block', { blockId: SEED_IDS.BLOCK_GS_1 }) as Record<string, unknown>
     expect(block['due_date']).toBeNull()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// completed_at follows todo_state (backend `write_todo_timestamp_transitions_in_tx`)
+// ---------------------------------------------------------------------------
+
+describe('completed_at follows todo_state', () => {
+  const BLOCK = SEED_IDS.BLOCK_GS_1
+  const completedAt = (): unknown => {
+    const row = invoke('get_property', { blockId: BLOCK, key: 'completed_at' }) as Record<
+      string,
+      unknown
+    > | null
+    return row?.['value_date'] ?? null
+  }
+
+  it('is stamped today on the edge into DONE and cleared on the edge out', () => {
+    invoke('set_todo_state', { blockId: BLOCK, state: 'TODO' })
+    expect(completedAt()).toBeNull()
+    invoke('set_todo_state', { blockId: BLOCK, state: 'DONE' })
+    expect(completedAt()).toBe(todayDate())
+    invoke('set_todo_state', { blockId: BLOCK, state: 'CANCELLED' })
+    expect(completedAt()).toBeNull()
+  })
+
+  it('keeps a stale stamp between open states and clears it on un-tasking', () => {
+    invoke('set_todo_state', { blockId: BLOCK, state: 'TODO' })
+    invoke('set_property', {
+      blockId: BLOCK,
+      key: 'completed_at',
+      value: { value_date: '2026-01-01' },
+    })
+    invoke('set_todo_state', { blockId: BLOCK, state: 'DOING' })
+    expect(completedAt()).toBe('2026-01-01')
+    invoke('set_todo_state', { blockId: BLOCK, state: null })
+    expect(completedAt()).toBeNull()
+  })
+
+  it('appends no clear for a block that holds no stamp', () => {
+    invoke('set_todo_state', { blockId: BLOCK, state: 'TODO' })
+    const before = opLog.length
+    invoke('set_todo_state', { blockId: BLOCK, state: null })
+    expect(opLog.length).toBe(before + 1)
+  })
+
+  it('is stamped and cleared by both batch writers', () => {
+    invoke('set_todo_state_batch', { blockIds: [BLOCK], state: 'DONE' })
+    expect(completedAt()).toBe(todayDate())
+    invoke('set_property_batch', { blockIds: [BLOCK], key: 'todo_state', value: 'TODO' })
+    expect(completedAt()).toBeNull()
+    invoke('set_property_batch', { blockIds: [BLOCK], key: 'todo_state', value: 'DONE' })
+    expect(completedAt()).toBe(todayDate())
   })
 })
 

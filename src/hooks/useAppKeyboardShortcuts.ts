@@ -104,8 +104,8 @@ const JOURNAL_SHIFT_NEXT: Record<JournalMode, (d: Date) => Date> = {
 interface JournalShortcut {
   /** Shortcut id routed through `matchesShortcutBinding`. */
   readonly binding: string
-  /** Returns the next date for the current mode. */
-  readonly nextDate: (current: Date, mode: JournalMode) => Date
+  /** Runs the action against the current journal store snapshot. */
+  readonly run: (state: ReturnType<typeof useJournalStore.getState>) => void
   /** i18n key for the screen-reader announcement. */
   readonly announceKey: string
 }
@@ -118,17 +118,17 @@ interface JournalShortcut {
 const JOURNAL_SHORTCUTS: ReadonlyArray<JournalShortcut> = [
   {
     binding: 'prevDayWeekMonth',
-    nextDate: (d, mode) => JOURNAL_SHIFT_PREV[mode](d),
+    run: (s) => s.setCurrentDate(JOURNAL_SHIFT_PREV[s.mode](s.currentDate)),
     announceKey: 'announce.navigatedToPrevious',
   },
   {
     binding: 'nextDayWeekMonth',
-    nextDate: (d, mode) => JOURNAL_SHIFT_NEXT[mode](d),
+    run: (s) => s.setCurrentDate(JOURNAL_SHIFT_NEXT[s.mode](s.currentDate)),
     announceKey: 'announce.navigatedToNext',
   },
   {
     binding: 'goToToday',
-    nextDate: () => new Date(),
+    run: (s) => s.goToToday(),
     announceKey: 'announce.jumpedToToday',
   },
 ]
@@ -358,8 +358,7 @@ export function useAppKeyboardShortcuts({ t, isMobile }: UseAppKeyboardShortcuts
       if (!shortcut) return
 
       e.preventDefault()
-      const { mode, currentDate, setCurrentDate } = useJournalStore.getState()
-      setCurrentDate(shortcut.nextDate(currentDate, mode))
+      shortcut.run(useJournalStore.getState())
       announce(t(shortcut.announceKey))
     }
     document.addEventListener('keydown', handleJournalNav)

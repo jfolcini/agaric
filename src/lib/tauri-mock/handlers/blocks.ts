@@ -35,7 +35,7 @@ import {
   spaceRootGroup,
   validationRejection,
 } from '@/lib/tauri-mock/handlers/shared'
-import { resolveInboundNames } from '@/lib/tauri-mock/names'
+import { normalizeTagName, resolveInboundNames } from '@/lib/tauri-mock/names'
 import {
   attachmentBytes,
   attachments,
@@ -1132,8 +1132,38 @@ export const blocksHandlers = {
         `cannot create a block under tag '${parentId}': the tag view is read-only`,
       )
     }
+    // #5236 — a live tag already named `content` in the space is the answer:
+    // its own row back, nothing created, no op appended. The match is the
+    // engine's normalized identity (`find_live_tag_by_name_in_tx`), smallest
+    // id first, so a case variant resolves too.
+    if (blockType === 'tag' && spaceId !== null) {
+      const wanted = normalizeTagName((a['content'] as string) ?? '')
+      const existing = [...blocks.values()]
+        .filter(
+          (b) =>
+            b['block_type'] === 'tag' &&
+            !b['deleted_at'] &&
+            b['space_id'] === spaceId &&
+            b['content'] != null &&
+            normalizeTagName(b['content'] as string) === wanted,
+        )
+        .toSorted((x, y) => compareUtf8Bytes(x['id'] as string, y['id'] as string))[0]
+      if (existing) {
+        return {
+          ...existing,
+          id: existing['id'] as string,
+          op_refs: [] as { device_id: string; seq: number }[],
+        }
+      }
+    }
+    // A page or tag created at the root of an active space: the backend stamps
+    // the space in the same transaction (`create_page_in_space_inner`,
+    // `create_tag_in_space_inner`) and projects the block as a root of that
+    // space — its own page, ranked in the space's root group.
+    const scopedRoot =
+      spaceId !== null && parentId === null && (blockType === 'page' || blockType === 'tag')
     const createPageId =
-      blockType === 'page'
+      blockType === 'page' || scopedRoot
         ? id
         : createParent == null
           ? null
@@ -1161,12 +1191,20 @@ export const blocksHandlers = {
       // is the column `list_all_tags_in_space` filters on.
       space_id: (blockType === 'page' || blockType === 'tag') && spaceId !== null ? spaceId : null,
     }
+    // The root group is per space (`spaceRootGroup`); the global
+    // `parent_id = null` renumber below would rank a scoped root among every
+    // space's roots and overwrite their ranks.
+    const rootRank = scopedRoot ? spaceRootGroup(spaceId).length + 1 : null
     blocks.set(id, row)
-    // #400: `index` is a 0-based sibling slot; null appends (#5155: at the
-    // parent's live-child count). Insert at the slot and renumber the sibling
-    // group to dense 1-based positions.
-    const rawIndex = a['index'] as number | null | undefined
-    insertAtSlotAndRenumber(parentId, id, rawIndex == null ? appendSlot(parentId, id) : rawIndex)
+    if (rootRank === null) {
+      // #400: `index` is a 0-based sibling slot; null appends (#5155: at the
+      // parent's live-child count). Insert at the slot and renumber the sibling
+      // group to dense 1-based positions.
+      const rawIndex = a['index'] as number | null | undefined
+      insertAtSlotAndRenumber(parentId, id, rawIndex == null ? appendSlot(parentId, id) : rawIndex)
+    } else {
+      row.position = rootRank
+    }
     const position = row['position'] as number
     // Stamp the `space` ref property on new pages AND tags so the rest of the
     // scope-aware mock handlers that still read the legacy `space` property
@@ -1195,6 +1233,11 @@ export const blocksHandlers = {
       block_type: row.block_type,
       position,
     })
+    // The space stamp is a `set_property` op in the same transaction, so the
+    // backend's op log carries two ops for a scoped page or tag.
+    if ((blockType === 'page' || blockType === 'tag') && spaceId !== null) {
+      pushOp('set_property', { block_id: id, key: 'space', from_value: null })
+    }
     // #2468 — `WithOps<BlockRow>`: echo the appended op's ref so FE tests
     // exercise undo-ref capture. Spread copy: the stored block row must not
     // grow an `op_refs` field (list_blocks & co. return the stored rows).

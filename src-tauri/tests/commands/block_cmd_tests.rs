@@ -784,6 +784,150 @@ async fn create_block_non_page_ignores_space_id() {
     assert_eq!(block.content.as_deref(), Some("child"));
 }
 
+// ----------------------------------------------------------------------
+// #5236 — a tag name is unique per space at creation, mirroring the page
+// title rule (#4723): the header's "Create" and the `#name` input rule must
+// land on ONE tag, whichever cache each of them consulted.
+// ----------------------------------------------------------------------
+
+async fn create_tag(
+    pool: &SqlitePool,
+    mat: &Materializer,
+    name: &str,
+    space_ulid: &str,
+) -> BlockRow {
+    create_block_inner_with_space(
+        pool,
+        DEV,
+        mat,
+        "tag".into(),
+        name.into(),
+        None,
+        None,
+        &SpaceScope::Active(SpaceId::from_trusted(space_ulid)),
+        None,
+    )
+    .await
+    .expect("create tag in space")
+}
+
+async fn count_ops(pool: &SqlitePool) -> i64 {
+    sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM op_log")
+        .fetch_one(pool)
+        .await
+        .unwrap()
+}
+
+/// Live tag rows whose name folds (ASCII) to `name`, as `(id, space_id)`.
+async fn live_tags_named(pool: &SqlitePool, name: &str) -> Vec<(String, Option<String>)> {
+    sqlx::query_as::<_, (String, Option<String>)>(
+        "SELECT id, space_id FROM blocks \
+         WHERE block_type = 'tag' AND deleted_at IS NULL AND content = ? COLLATE NOCASE \
+         ORDER BY id",
+    )
+    .bind(name)
+    .fetch_all(pool)
+    .await
+    .unwrap()
+}
+
+/// A live tag already named `content` in the space — under the engine's
+/// normalized identity, so a case variant too — is the answer: the existing
+/// row back, no new row, no new op.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn create_block_tag_resolves_to_existing_name_in_same_space_5236() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    agaric_lib::spaces::bootstrap_spaces_for_test(&pool, DEV)
+        .await
+        .unwrap();
+    let personal = agaric_lib::spaces::bootstrap::SPACE_PERSONAL_ULID;
+
+    let first = create_tag(&pool, &mat, "project", personal).await;
+    settle(&mat).await;
+    let ops_before = count_ops(&pool).await;
+
+    let second = create_tag(&pool, &mat, "Project", personal).await;
+
+    assert_eq!(
+        second.id, first.id,
+        "same name in the same space resolves to the existing tag"
+    );
+    assert_eq!(
+        second.content.as_deref(),
+        Some("project"),
+        "the existing tag's own spelling comes back, not the request's"
+    );
+    assert_eq!(
+        count_ops(&pool).await,
+        ops_before,
+        "resolving appends no op"
+    );
+    assert_eq!(
+        live_tags_named(&pool, "project").await,
+        vec![(first.id.to_string(), Some(personal.to_owned()))],
+        "exactly one live `project` tag exists"
+    );
+}
+
+/// Uniqueness is per space: the same name in another space is a second tag,
+/// each stamped with its own space.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn create_block_tag_same_name_in_other_space_creates_5236() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    agaric_lib::spaces::bootstrap_spaces_for_test(&pool, DEV)
+        .await
+        .unwrap();
+    let personal = agaric_lib::spaces::bootstrap::SPACE_PERSONAL_ULID;
+    let work = agaric_lib::spaces::bootstrap::SPACE_WORK_ULID;
+
+    let in_personal = create_tag(&pool, &mat, "todo", personal).await;
+    settle(&mat).await;
+    let in_work = create_tag(&pool, &mat, "todo", work).await;
+
+    assert_ne!(
+        in_work.id, in_personal.id,
+        "a cross-space name pair is two tags"
+    );
+    assert_eq!(
+        live_tags_named(&pool, "todo").await,
+        vec![
+            (in_personal.id.to_string(), Some(personal.to_owned())),
+            (in_work.id.to_string(), Some(work.to_owned())),
+        ],
+        "one live `todo` per space, each in its own space"
+    );
+}
+
+/// Only LIVE tags hold a name: after the tag is soft-deleted the name is free
+/// again and a create makes a fresh tag.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn create_block_tag_reuses_name_of_deleted_tag_5236() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    agaric_lib::spaces::bootstrap_spaces_for_test(&pool, DEV)
+        .await
+        .unwrap();
+    let personal = agaric_lib::spaces::bootstrap::SPACE_PERSONAL_ULID;
+
+    let first = create_tag(&pool, &mat, "project", personal).await;
+    settle(&mat).await;
+    delete_block_inner(&pool, DEV, &mat, first.id.clone())
+        .await
+        .expect("delete the tag");
+    settle(&mat).await;
+
+    let second = create_tag(&pool, &mat, "project", personal).await;
+
+    assert_ne!(second.id, first.id, "a deleted tag does not hold its name");
+    assert_eq!(
+        live_tags_named(&pool, "project").await,
+        vec![(second.id.to_string(), Some(personal.to_owned()))],
+        "the fresh tag is the only live `project`"
+    );
+}
+
 // ======================================================================
 // edit_block
 // ======================================================================
@@ -8102,6 +8246,28 @@ async fn move_blocks_to_space_propagates_space_id_to_descendants_533() {
     );
 }
 
+/// Whether `space`'s per-space doc holds `id` (#5239 doc-membership probe).
+fn doc_holds(mat: &Materializer, space: &str, id: &str) -> bool {
+    let space = agaric_store::space::SpaceId::from_trusted(space);
+    let mut guard = mat
+        .loro_state()
+        .registry
+        .for_space(&space, DEV)
+        .expect("for_space");
+    guard.engine_mut().contains_block(id)
+}
+
+/// `id`'s parent in `space`'s per-space doc; `id` must be in it.
+fn doc_parent(mat: &Materializer, space: &str, id: &str) -> Option<String> {
+    let space = agaric_store::space::SpaceId::from_trusted(space);
+    let mut guard = mat
+        .loro_state()
+        .registry
+        .for_space(&space, DEV)
+        .expect("for_space");
+    guard.engine_mut().read_parent(id).expect("read_parent")
+}
+
 /// #4480 — the counterpart of the #533 test above, and the fact that decides
 /// what a batch move owes the `[[` picker's ORIGIN-space name cache.
 ///
@@ -8271,6 +8437,54 @@ async fn move_blocks_to_space_leaves_nested_pages_in_the_origin_space_4480() {
         !after_b.contains(&"MBS7_KID".to_string()),
         "the nested page must NOT appear in the destination space — it never \
          moved (got {after_b:?})"
+    );
+
+    // #5239 — the per-space docs agree with the columns above. Before the fix
+    // the old-doc prune deleted the whole LoroTree subtree, nested page
+    // included, and the hydration seeded it into B's doc: the nested page's
+    // edits then fell back to SQL-only and peers showed it in B.
+    for id in ["MBS7_KID", "MBS7_KIDCONTENT", "MBS7_SIB"] {
+        assert!(
+            doc_holds(&mat, "MBS7_SPACE_A", id),
+            "{id} stays in space A's doc"
+        );
+        assert!(
+            !doc_holds(&mat, "MBS7_SPACE_B", id),
+            "{id} never enters space B's doc"
+        );
+    }
+    for id in ["MBS7_PAGE", "MBS7_CONTENT"] {
+        assert!(
+            doc_holds(&mat, "MBS7_SPACE_B", id),
+            "{id} moves to space B's doc"
+        );
+        assert!(
+            !doc_holds(&mat, "MBS7_SPACE_A", id),
+            "{id} leaves space A's doc"
+        );
+    }
+    // Its parent left the doc, so the nested page is a root of A's doc now,
+    // its own subtree intact — and SQL says the same, a page cannot hang
+    // under a block of another space's doc.
+    assert_eq!(
+        doc_parent(&mat, "MBS7_SPACE_A", "MBS7_KID"),
+        None,
+        "the nested page is re-rooted in A's doc"
+    );
+    assert_eq!(
+        doc_parent(&mat, "MBS7_SPACE_A", "MBS7_KIDCONTENT").as_deref(),
+        Some("MBS7_KID"),
+        "the nested page's content child stays under it"
+    );
+    let kid_parent: Option<String> =
+        sqlx::query_scalar("SELECT parent_id FROM blocks WHERE id = ?")
+            .bind("MBS7_KID")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        kid_parent, None,
+        "SQL re-roots the nested page with the doc"
     );
 }
 

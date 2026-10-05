@@ -1223,6 +1223,20 @@ describe('CommandPalette — commands mode', () => {
     expect(announce).toHaveBeenCalledWith(t('announce.jumpedToToday'))
   })
 
+  it('selecting "go-to-today" from stream mode lands on today\'s daily page, like the Today button (#5260)', async () => {
+    useNavigationStore.setState({ currentView: 'journal' })
+    useJournalStore.setState({ mode: 'stream', currentDate: new Date(2020, 0, 1) })
+    render(<CommandPalette />)
+    openPalette()
+    fireEvent.click(screen.getByTestId('palette-mode-chip'))
+    await waitFor(() => {
+      expect(screen.getByTestId('palette-cmd-go-to-today')).toBeInTheDocument()
+    })
+    fireEvent.click(screen.getByTestId('palette-cmd-go-to-today'))
+    expect(useJournalStore.getState().mode).toBe('daily')
+    expect(useJournalStore.getState().currentDate.toDateString()).toBe(new Date().toDateString())
+  })
+
   it('selecting "go-to-today" from a non-journal view does NOT announce jumpedToToday itself (#2944 — avoids doubling up with the central view-change announcer, which owns that transition)', async () => {
     useNavigationStore.setState({ currentView: 'pages' })
     render(<CommandPalette />)

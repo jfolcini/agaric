@@ -138,6 +138,10 @@ const RETURN_SHAPE: Readonly<Record<string, ReturnShape>> = {
   // #5160 D11 — the row the property was set on; a text value under a `ref`
   // definition is read as the block it names, which only the command does.
   set_property: { idKey: 'id', attrs: [], lists: [] },
+  // #5074 — the row the state was set on. The `completed_at` it stamps or
+  // clears carries a clock date, so the snapshot drops it and a
+  // `query_by_property` step reads which blocks hold one.
+  set_todo_state: { idKey: 'id', attrs: ['todo_state'], lists: [] },
   // #5057 — the three batch COUNTERS answer with a bare number, which carries
   // no field to name it. The shape's single attribute names the scalar, so the
   // token reads `set_property_batch#updated=3` instead of exposing a synthetic
@@ -153,6 +157,13 @@ const RETURN_SHAPE: Readonly<Record<string, ReturnShape>> = {
     attrs: ['block_type', 'content', 'parent_id', 'position'],
     lists: [],
     rows: 'blocks',
+  },
+  // #5236 — the single create answers with the one row, under the batch's
+  // attributes; `op_refs` is dropped like every other `WithOps` envelope.
+  create_block: {
+    idKey: 'id',
+    attrs: ['block_type', 'content', 'parent_id', 'position'],
+    lists: [],
   },
   move_blocks_batch: {
     idKey: 'block_id',

@@ -22,6 +22,7 @@ import { properties, seedBlocks, SEED_IDS } from '@/lib/tauri-mock/seed'
 import { useNavigationStore } from '@/stores/navigation'
 import { createPageBlockStore, type PageBlockState } from '@/stores/page-blocks'
 import { useRecentPagesStore } from '@/stores/recent-pages'
+import { useResolveStore } from '@/stores/resolve'
 import { useSpaceStore } from '@/stores/space'
 import { selectPageStack, selectTabsForSpace, type Tab, useTabsStore } from '@/stores/tabs'
 
@@ -901,6 +902,57 @@ describe('PageBlockStore', () => {
       expect(useNavigationStore.getState().currentView).toBe('pages')
       expect(useRecentPagesStore.getState().recentPagesBySpace['SPACE_PERSONAL']).toEqual([])
     })
+
+    it('#5243 — following a stale reference to a TRASHED page heals with the trash notice', async () => {
+      // Real mock dispatch, so the rejection is the genuine `load_page_subtree`
+      // `not_found` for a trashed root.
+      seedBlocks()
+      useSpaceStore.setState({ currentSpaceId: 'SPACE_PERSONAL' })
+      mockedInvoke.mockImplementation(async (cmd: string, args?: InvokeArgs) => dispatch(cmd, args))
+      dispatch('delete_block', { blockId: SEED_IDS.PAGE_QUICK_NOTES })
+
+      // The trashed page tops the tab it was followed into, over a live page,
+      // and is still offered by the recents beside a live entry.
+      useNavigationStore.getState().setView('page-editor')
+      useTabsStore.setState({
+        tabs: [
+          tab('0', [
+            { pageId: SEED_IDS.PAGE_GETTING_STARTED, title: 'Getting Started' },
+            { pageId: SEED_IDS.PAGE_QUICK_NOTES, title: 'Quick Notes' },
+          ]),
+        ],
+        activeTabIndex: 0,
+      })
+      useRecentPagesStore.setState({
+        recentPages: [
+          { pageId: SEED_IDS.PAGE_QUICK_NOTES, title: 'Quick Notes' },
+          { pageId: SEED_IDS.PAGE_GETTING_STARTED, title: 'Getting Started' },
+        ],
+        recentPagesBySpace: {
+          SPACE_PERSONAL: [
+            { pageId: SEED_IDS.PAGE_QUICK_NOTES, title: 'Quick Notes' },
+            { pageId: SEED_IDS.PAGE_GETTING_STARTED, title: 'Getting Started' },
+          ],
+        },
+      })
+
+      await createPageBlockStore(SEED_IDS.PAGE_QUICK_NOTES).getState().load()
+
+      expect(toast.error).not.toHaveBeenCalled()
+      expect(toast.info).toHaveBeenCalledTimes(1)
+      expect(toast.info).toHaveBeenCalledWith(
+        translate('error.pageInTrash'),
+        expect.objectContaining({ id: 'page-in-trash' }),
+      )
+      // Popped back to the live page underneath; only the trashed entry left
+      // the recents.
+      expect(selectPageStack(useTabsStore.getState()).map((p) => p.pageId)).toEqual([
+        SEED_IDS.PAGE_GETTING_STARTED,
+      ])
+      expect(
+        useRecentPagesStore.getState().recentPagesBySpace['SPACE_PERSONAL']?.map((p) => p.pageId),
+      ).toEqual([SEED_IDS.PAGE_GETTING_STARTED])
+    })
   })
   describe('createBelow', () => {
     it('inserts a new block after the specified block', async () => {
@@ -1290,6 +1342,44 @@ describe('PageBlockStore', () => {
       await store.getState().remove('A')
 
       expect(mockGlobalSetState).not.toHaveBeenCalled()
+    })
+
+    // #5246 — a chip elsewhere that resolved the block, a child of it, or a
+    // page the cascade swept must render deleted once the delete commits.
+    it('marks the removed subtree and the cascaded pages deleted in the resolve cache', async () => {
+      useResolveStore.setState({ cache: new Map(), version: 0, _preloaded: false })
+      for (const id of ['A', 'A_CHILD', 'NESTED_PAGE', 'B']) {
+        useResolveStore.getState().set(id, id, false)
+      }
+      store.setState({
+        blocks: [
+          makeBlock({ id: 'A', depth: 0 }),
+          makeBlock({ id: 'A_CHILD', parent_id: 'A', depth: 1 }),
+          makeBlock({ id: 'B', depth: 0 }),
+        ],
+      })
+      stubInvoke(mockedInvoke, {
+        delete_block: () => ({ ...deleteResp('A'), affected_page_ids: ['NESTED_PAGE'] }),
+      })
+
+      await store.getState().remove('A')
+
+      const { resolveStatus } = useResolveStore.getState()
+      expect(resolveStatus('A')).toBe('deleted')
+      expect(resolveStatus('A_CHILD')).toBe('deleted')
+      expect(resolveStatus('NESTED_PAGE')).toBe('deleted')
+      expect(resolveStatus('B')).toBe('active')
+    })
+
+    it('leaves the resolve cache live when the delete fails', async () => {
+      useResolveStore.setState({ cache: new Map(), version: 0, _preloaded: false })
+      useResolveStore.getState().set('A', 'A', false)
+      store.setState({ blocks: [makeBlock({ id: 'A' })] })
+      stubInvoke(mockedInvoke, { delete_block: () => Promise.reject(new Error('delete failed')) })
+
+      await store.getState().remove('A')
+
+      expect(useResolveStore.getState().resolveStatus('A')).toBe('active')
     })
   })
   describe('appendBlock', () => {

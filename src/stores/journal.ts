@@ -50,6 +50,12 @@ interface JournalStore {
   goToDateAndScroll: (date: Date, scrollTarget: string) => void
   /** Navigate to daily view for a date and scroll to a specific panel. */
   goToDateAndPanel: (date: Date, panel: JournalPanel) => void
+  /**
+   * Jump to today for the current mode. Agenda and stream have no day to
+   * scroll to, so Today lands on today's daily page, where the writing
+   * happens; weekly and monthly scroll to today's section.
+   */
+  goToToday: () => void
   clearScrollTarget: () => void
 }
 
@@ -190,7 +196,7 @@ const journalSlice = createPerSpaceSlice<JournalStore, { date: Date; mode: Journ
 
 export const useJournalStore = create<JournalStore>()(
   persist(
-    (set) => ({
+    (set, get) => ({
       mode: 'daily',
       currentDate: new Date(),
       currentDateBySpace: {},
@@ -213,6 +219,13 @@ export const useJournalStore = create<JournalStore>()(
           ...journalSlice.applyActive(state, { date, mode: 'daily' }),
           scrollToPanel: panel,
         })),
+      goToToday: () => {
+        const { mode, navigateToDate, goToDateAndScroll, setCurrentDate } = get()
+        const today = new Date()
+        if (mode === 'agenda' || mode === 'stream') navigateToDate(today, 'daily')
+        else if (mode === 'weekly' || mode === 'monthly') goToDateAndScroll(today, dateToISO(today))
+        else setCurrentDate(today)
+      },
       clearScrollTarget: () => set({ scrollToDate: null, scrollToPanel: null }),
     }),
     {

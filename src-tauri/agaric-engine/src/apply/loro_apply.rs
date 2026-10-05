@@ -343,34 +343,19 @@ pub async fn apply_set_property_via_loro(
             // unregistered target #708 that the projection left unchanged) prunes
             // nothing — behaviour there is unchanged.
             //
-            // We call the engine method DIRECTLY, not `apply_purge_block_via_loro`
-            // (which additionally runs the SQL purge cascade): the SQL rows must
-            // SURVIVE — they now belong to the new space — so only the OLD doc's
-            // CRDT membership is removed here.
-            //
-            // #5100: the purge closes a gap in the OLD doc's sibling group, so
-            // every survivor that sat behind the departed block drops one dense
-            // rank there. Reproject that group's `blocks.position` in the same
-            // tx, exactly as the destination group is reprojected by the
-            // hydration below; otherwise SQL keeps the pre-move ranks and the
-            // #891 SQL/Loro parity guard fails on the first survivor. A block
-            // absent from the old engine (projected SQL-only) has no group
-            // there to reproject.
+            // The prune calls the engine method DIRECTLY, not
+            // `apply_purge_block_via_loro` (which additionally runs the SQL
+            // purge cascade): the SQL rows must SURVIVE — they now belong to
+            // the new space — so only the OLD doc's CRDT membership is removed.
             if let Some(old_space) = old_space.filter(|old| *old != new_space) {
-                let old_siblings = {
-                    let mut guard =
-                        state
-                            .registry
-                            .for_space_recording(&old_space, device_id, &state.revert)?;
-                    let engine = guard.engine_mut();
-                    let old_parent = engine.read_block(p.block_id.as_str())?.map(|s| s.parent_id);
-                    engine.apply_purge_block(p.block_id.as_str())?;
-                    match old_parent {
-                        Some(parent) => engine.children_ordered_block_ids(parent.as_deref())?,
-                        None => Vec::new(),
-                    }
-                };
-                projection::reproject_dense_positions(conn, &old_siblings).await?;
+                prune_subtree_from_space_doc(
+                    conn,
+                    state,
+                    device_id,
+                    p.block_id.as_str(),
+                    &old_space,
+                )
+                .await?;
             }
             hydrate_page_subtree_into_engine(conn, state, device_id, &p.block_id, &new_space)
                 .await?;
@@ -425,6 +410,64 @@ pub async fn apply_set_property_via_loro(
     }
 
     projection::project_set_property_to_sql(conn, p).await?;
+    Ok(())
+}
+
+/// #2907: drop `block_id`'s subtree from `old_space`'s doc before it is seeded
+/// into its new one, so no block is a member of two docs. #5239: a nested
+/// page keeps its own space (#4480), so it and its subtree stay in this doc —
+/// re-rooted, since their parent is leaving it — and SQL follows as it does
+/// for any reparent: `parent_id` NULL, because a page cannot hang under a
+/// block of another space's doc, and its subtree's inherited tags recomputed,
+/// because they came down that parent chain. #5100: the prune moves blocks
+/// between sibling groups, so every group it changed is reprojected to its
+/// dense rank in the same tx, exactly as the destination group is by the
+/// hydration that follows. A block absent from the old engine (projected
+/// SQL-only) has no group there to reproject.
+async fn prune_subtree_from_space_doc(
+    conn: &mut sqlx::SqliteConnection,
+    state: &crate::loro::shared::LoroState,
+    device_id: &str,
+    block_id: &str,
+    old_space: &agaric_store::space::SpaceId,
+) -> Result<(), AppError> {
+    use crate::loro::projection;
+
+    let (detached, groups) = {
+        let mut guard = state
+            .registry
+            .for_space_recording(old_space, device_id, &state.revert)?;
+        let engine = guard.engine_mut();
+        let old_parent = engine.read_block(block_id)?.map(|s| s.parent_id);
+        let detached = engine.detach_nested_pages(block_id)?;
+        engine.apply_purge_block(block_id)?;
+        let mut groups: Vec<Vec<String>> = Vec::new();
+        if let Some(parent) = &old_parent {
+            groups.push(engine.children_ordered_block_ids(parent.as_deref())?);
+        }
+        // The root forest, unless the departed block was itself a root and
+        // the group above already is it.
+        if !detached.is_empty() && !matches!(&old_parent, Some(None)) {
+            groups.push(engine.children_ordered_block_ids(None)?);
+        }
+        (detached, groups)
+    };
+    if !detached.is_empty() {
+        let detached_json = serde_json::to_string(&detached)?;
+        sqlx::query!(
+            "UPDATE blocks SET parent_id = NULL \
+             WHERE id IN (SELECT value FROM json_each(?))",
+            detached_json,
+        )
+        .execute(&mut *conn)
+        .await?;
+        for page in &detached {
+            tag_inheritance::recompute_subtree_inheritance(&mut *conn, page).await?;
+        }
+    }
+    for group in &groups {
+        projection::reproject_dense_positions(conn, group).await?;
+    }
     Ok(())
 }
 
@@ -604,7 +647,9 @@ fn seed_nodes_into_engine(
 /// ## Order & scope
 /// The subtree is read LIVE-only (`deleted_at IS NULL`), parent-before-child
 /// (depth-ordered recursive descent from the page), so every parent is present
-/// in the engine before its children are seeded.
+/// in the engine before its children are seeded. The walk stops at a nested
+/// page (#5239): a page keeps its own space (#4480) and enters a doc only
+/// through its own `space` op.
 ///
 /// ## Full seed (nodes + properties + tags)
 /// Seeding only tree nodes would zero the `EngineMissingTarget` counter but
@@ -644,18 +689,29 @@ async fn hydrate_page_subtree_into_engine(
     // 1. Read the whole owning-page group: LIVE rows only, parent-before-child
     //    (depth-ordered recursive descent from the page). The child ordering key
     //    is `position` so siblings seed in tree order.
-    //    dynamic-sql: a static `concat!` of the `descendants_cte_active!` macro
-    //    (a `const` recursive-CTE string) and a fixed SELECT — no runtime string
-    //    interpolation. Runtime `query_as` only because the CTE prefix comes
-    //    from the shared macro; mirrors `project_delete_block_to_sql`.
-    let rows: Vec<SubtreeRow> = sqlx::query_as(concat!(
-        agaric_store::descendants_cte_active!(),
-        "SELECT b.id, b.block_type, b.content, b.parent_id, b.position, \
+    //    #5239: the walk stops BEFORE a nested page — it keeps its own space
+    //    (#4480) and joins a doc only through its own `space` op — so the row
+    //    set is exactly the one `project_set_property_to_sql` stamps
+    //    (`id = ? OR page_id = ?`). depth<100: DESCENDANT_DEPTH_CAP, see
+    //    `block_descendants`; the shared macros carry no page stop, so the
+    //    CTE is spelled here.
+    //    dynamic-sql: runtime `query_as`, as the shared-macro form it
+    //    replaces was (the site count is unchanged).
+    let rows: Vec<SubtreeRow> = sqlx::query_as(
+        "WITH RECURSIVE descendants(id, depth) AS ( \
+             SELECT id, 0 FROM blocks WHERE id = ? \
+             UNION ALL \
+             SELECT b.id, d.depth + 1 FROM blocks b \
+             INNER JOIN descendants d ON b.parent_id = d.id \
+             WHERE b.deleted_at IS NULL AND d.depth < 100 \
+               AND b.block_type != 'page' \
+         ) \
+         SELECT b.id, b.block_type, b.content, b.parent_id, b.position, \
                 b.todo_state, b.priority, b.due_date, b.scheduled_date \
            FROM descendants d \
            JOIN blocks b ON b.id = d.id \
           ORDER BY d.depth ASC, b.position ASC",
-    ))
+    )
     .bind(page_id.as_str())
     .fetch_all(&mut *conn)
     .await?;

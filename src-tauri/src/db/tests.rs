@@ -6709,3 +6709,157 @@ async fn property_definitions_0120_allow_url_preserves_rows_and_admits_url_4710(
     .await
     .expect_err("0120 keeps the value_type set closed");
 }
+
+/// #5237 — 0121 rebuilds `tags_cache` as `UNIQUE (space_id, name)` and
+/// recomputes it from the live blocks: the same name in two spaces is two rows
+/// (the old vault-wide UNIQUE could hold only one), a byte-identical same-space
+/// duplicate keeps the smallest id, `usage_count` counts live holders, the
+/// table stays STRICT and the NOCASE prefix index survives the rebuild.
+#[tokio::test]
+async fn tags_cache_0121_unique_per_space_recomputes_rows_5237() {
+    let (pool, _dir) = unmigrated_pool().await;
+    apply_migrations_through(&pool, 0, 120).await;
+
+    let work = "01HZ00000000000000000SPWRK";
+    let home = "01HZ00000000000000000SPHOM";
+    for space in [work, home] {
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, page_id) VALUES (?, 'page', 'space', ?)",
+        )
+        .bind(space)
+        .bind(space)
+        .execute(&pool)
+        .await
+        .expect("seed space page");
+        sqlx::query("INSERT INTO spaces (id) VALUES (?)")
+            .bind(space)
+            .execute(&pool)
+            .await
+            .expect("register space");
+    }
+    let todo_work = "01HZ0000000000000000TODOW1";
+    let todo_home = "01HZ0000000000000000TODOH1";
+    let todo_home_dup = "01HZ0000000000000000TODOH2";
+    let todo_home_dead = "01HZ0000000000000000TODOHD";
+    for (id, space, deleted_at) in [
+        (todo_work, work, None),
+        (todo_home, home, None),
+        (todo_home_dup, home, None),
+        (todo_home_dead, home, Some(1_i64)),
+    ] {
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, space_id, deleted_at) \
+             VALUES (?, 'tag', 'todo', ?, ?)",
+        )
+        .bind(id)
+        .bind(space)
+        .bind(deleted_at)
+        .execute(&pool)
+        .await
+        .expect("seed tag");
+    }
+    // One live holder of Home's `todo`, one tombstoned holder of Work's.
+    let holder = "01HZ0000000000000000HOLDER";
+    let dead_holder = "01HZ0000000000000000HOLDRD";
+    sqlx::query("INSERT INTO blocks (id, block_type, content) VALUES (?, 'content', 'note')")
+        .bind(holder)
+        .execute(&pool)
+        .await
+        .expect("seed holder");
+    sqlx::query(
+        "INSERT INTO blocks (id, block_type, content, deleted_at) VALUES (?, 'content', 'x', 1)",
+    )
+    .bind(dead_holder)
+    .execute(&pool)
+    .await
+    .expect("seed dead holder");
+    for (block, tag) in [(holder, todo_home), (dead_holder, todo_work)] {
+        sqlx::query("INSERT INTO block_tags (block_id, tag_id) VALUES (?, ?)")
+            .bind(block)
+            .bind(tag)
+            .execute(&pool)
+            .await
+            .expect("seed block_tags");
+    }
+    // The pre-0121 cache: the vault-wide UNIQUE admits one `todo`, so the
+    // winner is cached and Home's own `todo` cannot be.
+    sqlx::query(
+        "INSERT INTO tags_cache (tag_id, name, usage_count, updated_at) \
+         VALUES (?, 'todo', 0, '2026-01-01T00:00:00Z')",
+    )
+    .bind(todo_work)
+    .execute(&pool)
+    .await
+    .expect("seed pre-0121 cache row");
+    sqlx::query(
+        "INSERT INTO tags_cache (tag_id, name, usage_count, updated_at) \
+         VALUES (?, 'todo', 0, '2026-01-01T00:00:00Z')",
+    )
+    .bind(todo_home)
+    .execute(&pool)
+    .await
+    .expect_err("pre-0121 `name` is UNIQUE across spaces — the #5237 premise");
+
+    apply_migrations_to_head(&pool, 120).await;
+
+    let rows: Vec<(String, Option<String>, String, i64)> = sqlx::query_as(
+        "SELECT tag_id, space_id, name, usage_count FROM tags_cache ORDER BY tag_id",
+    )
+    .fetch_all(&pool)
+    .await
+    .expect("read tags_cache after 0121");
+    assert_eq!(
+        rows,
+        vec![
+            (
+                todo_home.to_owned(),
+                Some(home.to_owned()),
+                "todo".to_owned(),
+                1
+            ),
+            (
+                todo_work.to_owned(),
+                Some(work.to_owned()),
+                "todo".to_owned(),
+                0
+            ),
+        ],
+        "0121 caches one `todo` per space with its live-holder count; the same-space \
+         duplicate (larger id) and the deleted tag get no row"
+    );
+    let stamped: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM tags_cache \
+         WHERE updated_at GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9].[0-9][0-9][0-9]Z'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        stamped, 2,
+        "updated_at is in now_rfc3339()'s millisecond `Z` form"
+    );
+    let strict: i64 =
+        sqlx::query_scalar("SELECT strict FROM pragma_table_list WHERE name = 'tags_cache'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(strict, 1, "0121 keeps tags_cache STRICT (0061)");
+    let nocase_index: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM sqlite_master \
+         WHERE type = 'index' AND name = 'idx_tags_cache_name_nocase'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(nocase_index, 1, "0121 recreates the 0050 prefix index");
+
+    sqlx::query(
+        "INSERT INTO tags_cache (tag_id, space_id, name, usage_count, updated_at) \
+         VALUES (?, ?, 'todo', 0, '2026-01-01T00:00:00Z')",
+    )
+    .bind(todo_home_dup)
+    .bind(home)
+    .execute(&pool)
+    .await
+    .expect_err("0121 keeps a name unique WITHIN a space");
+}

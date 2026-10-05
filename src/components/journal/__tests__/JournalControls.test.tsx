@@ -345,6 +345,27 @@ describe('JournalControls', () => {
     expect(useJournalStore.getState().scrollToDate).toBe(format(new Date(), 'yyyy-MM-dd'))
   })
 
+  // Agenda and stream have no day to scroll to, so Today lands on today's
+  // daily page.
+  it.each(['agenda', 'stream'] as const)(
+    'Today in %s mode switches to daily on today',
+    async (mode) => {
+      const user = userEvent.setup()
+      useJournalStore.setState({ mode, currentDate: new Date(2025, 5, 15) })
+      render(<JournalControls />)
+
+      await user.click(screen.getByRole('button', { name: /go to today/i }))
+
+      const state = useJournalStore.getState()
+      expect(state.mode).toBe('daily')
+      expect(format(state.currentDate, 'yyyy-MM-dd')).toBe(format(new Date(), 'yyyy-MM-dd'))
+      expect(screen.getByRole('tab', { name: /daily view/i })).toHaveAttribute(
+        'aria-selected',
+        'true',
+      )
+    },
+  )
+
   it('hides the prev/next nav in agenda mode', () => {
     useJournalStore.setState({
       mode: 'agenda',

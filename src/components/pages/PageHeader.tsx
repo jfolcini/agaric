@@ -41,6 +41,7 @@ import { notify } from '@/lib/notify'
 import { ValidationCode } from '@/lib/search-query/validation-codes'
 import { useNavigationStore } from '@/stores/navigation'
 import { usePageBlockStoreApi } from '@/stores/page-blocks'
+import { announcePagesMovedOut } from '@/stores/page-move'
 import { renamePage } from '@/stores/page-rename'
 import { useSpaceStore } from '@/stores/space'
 import { useTabsStore } from '@/stores/tabs'
@@ -316,6 +317,7 @@ export function PageHeader({ pageId, title, onBack, onEditSource, kebabRef }: Pa
       setKebabOpen(false)
       const target = availableSpaces.find((s) => s.id === targetSpaceId)
       const targetName = target?.name ?? ''
+      const originSpaceId = useSpaceStore.getState().currentSpaceId
       try {
         unwrap(
           await commands.setProperty(pageId, 'space', {
@@ -327,6 +329,7 @@ export function PageHeader({ pageId, title, onBack, onEditSource, kebabRef }: Pa
           }),
         )
         setPageSpaceId(targetSpaceId)
+        announcePagesMovedOut([pageId], originSpaceId)
         notify.success(t('space.movedToast', { space: targetName }))
         announce(t('announce.pageMoved'))
         // #2785 — do NOT `pageStore.getState().load()` here. `load()`

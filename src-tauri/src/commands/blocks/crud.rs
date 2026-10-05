@@ -315,6 +315,11 @@ pub async fn create_block_inner_with_space(
 /// legitimately-active space is always registered — the `is_space` INSERT fires
 /// the migration-0089 registration trigger).
 ///
+/// A live tag in `space_id` already named `content` is returned as-is
+/// (nothing created, no op appended, `client_id` unused): tag names are
+/// unique per space, under the same identity the cache and the engine key
+/// tags by (#5236; mirrors the page-title rule of #4723).
+///
 /// Unlike the page helper there is no parent/child cross-space check: manually
 /// created tags are top-level (`parent_id = None`). `parent_id` / `index` are
 /// threaded only for signature parity with the generic create path.
@@ -343,6 +348,20 @@ async fn create_tag_in_space_inner(
     //    `SetProperty(space)` projection below is guaranteed to pass the #708
     //    gate instead of being silently skipped.
     crate::commands::spaces::require_live_space_in_tx(&mut tx, &space_id).await?;
+
+    // #5236 — the header's "Create" and the `#name` input rule both land
+    // here, each trusting its own picker cache; the backend is the one place
+    // that sees both. An existing live same-name tag in the space (the
+    // smallest-id one under `normalize_tag_name`, the identity the cache and
+    // the engine key tags by) IS the answer: resolve to it, create nothing,
+    // append nothing.
+    let existing = crate::commands::pages::markdown::snapshot_tags_by_norm(&mut tx, &space_id)
+        .await?
+        .remove(&agaric_core::tag_norm::normalize_tag_name(&content));
+    if let Some(existing) = existing {
+        tx.commit_without_dispatch().await?;
+        return get_active_block_inner(pool, BlockId::from_trusted(&existing)).await;
+    }
 
     // 2. Create the tag block (`CreateBlock` op + materialized row).
     let (block, tag_op_record) = create_block_in_tx(

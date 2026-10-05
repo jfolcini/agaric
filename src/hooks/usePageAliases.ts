@@ -17,6 +17,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { announce } from '@/lib/announcer'
 import { unwrap } from '@/lib/app-error'
 import { commands } from '@/lib/bindings'
+import { recordGraphStructureChange } from '@/lib/graph-structure-events'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
 
@@ -43,6 +44,9 @@ export interface UsePageAliasesReturn {
  * Hook for managing the alias list of a single page. Fetches once per
  * `pageId` and reuses the same persistence helpers as the previous
  * inline implementation, including the same toast/announcer wiring.
+ *
+ * A committed write bumps the graph-structure counter (#5249): aliases are
+ * unlinked-reference search terms, and that panel refreshes on the counter.
  *
  * `t` is the `react-i18next` translator. Callers pass it through so the
  * hook stays framework-agnostic at the import boundary (it doesn't pull
@@ -81,7 +85,10 @@ export function usePageAliases(pageId: string, t: (key: string) => string): UseP
       commands
         .setPageAliases(pageId, next)
         .then(unwrap)
-        .then(() => setAliasInput(''))
+        .then(() => {
+          setAliasInput('')
+          recordGraphStructureChange()
+        })
         .catch((err: unknown) => {
           logger.error('PageHeader', 'Failed to update page aliases', { pageId }, err)
           notify.error(t('pageHeader.aliasUpdateFailed'))
@@ -105,6 +112,7 @@ export function usePageAliases(pageId: string, t: (key: string) => string): UseP
       commands
         .setPageAliases(pageId, next)
         .then(unwrap)
+        .then(() => recordGraphStructureChange())
         .catch((err: unknown) => {
           logger.error('PageHeader', 'Failed to update page aliases', { pageId }, err)
           notify.error(t('pageHeader.aliasUpdateFailed'))

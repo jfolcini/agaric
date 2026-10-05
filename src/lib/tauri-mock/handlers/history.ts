@@ -47,11 +47,17 @@ import {
 // reverting a `move_block` that had pulled a block INTO the named page sends it
 // back out mid-group, and `depth + i` stops indexing the ops this walk counted.
 // The backend enumerates once inside its write transaction for that reason.
-function enumerateUndoGroup(depth: number, windowMs: number, scope: Set<string>): MockOpLogEntry[] {
+function enumerateUndoGroup(
+  pageId: string,
+  depth: number,
+  windowMs: number,
+  scope: Set<string>,
+): MockOpLogEntry[] {
   // Newest-first ordering on (created_at DESC, seq DESC) — see
-  // `sortOpLogNewestFirst` (shared.ts).
+  // `sortOpLogNewestFirst` (shared.ts). #5259 — the page's birth ops are
+  // outside the row universe, as on the backend.
   const undoableOps = sortOpLogNewestFirst(
-    opLog.filter((o) => !o.is_undo && opInPageScope(o, scope)),
+    opLog.filter((o) => !o.is_undo && opInPageScope(o, scope) && !isPageBirthOp(o, pageId)),
   )
 
   // `undoableOps[depth]` is `undefined` for an out-of-range index, which is the
@@ -116,6 +122,41 @@ function opBlockId(entry: MockOpLogEntry): string | null {
   } catch {
     return null
   }
+}
+
+function opPropertyKey(entry: MockOpLogEntry): string | null {
+  try {
+    const key = (JSON.parse(entry.payload) as Record<string, unknown>)['key']
+    return typeof key === 'string' ? key : null
+  } catch {
+    return null
+  }
+}
+
+/**
+ * #5259 — a page's BIRTH ops are not positional-undo targets: the root's own
+ * `create_block` and its first `set_property(space)` (`create_page_in_space`
+ * appends both). Mirrors the `NOT (...)` pair on `find_positional_undo_target`
+ * (history.rs): page creation pushes no undo entry, so a Ctrl+Z past the page's
+ * content fell through to the positional walk and reversed the birth — a trashed
+ * root left open, or a page in no space. "First" means no earlier LOCAL
+ * `set_property(space)` on the root in `(created_at, seq)` order, `is_undo`
+ * rows included, exactly as the backend's `prior` probe counts them.
+ */
+function isPageBirthOp(entry: MockOpLogEntry, pageId: string): boolean {
+  if (opBlockId(entry) !== pageId) return false
+  if (entry.op_type === 'create_block') return true
+  if (entry.op_type !== 'set_property' || opPropertyKey(entry) !== 'space') return false
+  return !opLog.some(
+    (prior) =>
+      prior !== entry &&
+      prior.op_type === 'set_property' &&
+      prior['is_replicated'] !== true &&
+      opBlockId(prior) === pageId &&
+      opPropertyKey(prior) === 'space' &&
+      (prior.created_at < entry.created_at ||
+        (prior.created_at === entry.created_at && prior.seq < entry.seq)),
+  )
 }
 
 /**
@@ -349,7 +390,8 @@ export const historyHandlers = {
     // Enumerated ONCE, then reverted by ref: `applyUndoForTarget` addresses the
     // entry itself, so the group survives its own reverts moving a block out of
     // the page's scope. Re-entering `undo_page_op` per iteration did not.
-    const group = enumerateUndoGroup(depth, windowMs, pageSubtreeIds(a['pageId'] as string))
+    const pageId = a['pageId'] as string
+    const group = enumerateUndoGroup(pageId, depth, windowMs, pageSubtreeIds(pageId))
     return group.map((picked) => applyUndoForTarget(effectiveUndoTarget(picked)))
   },
 
@@ -405,9 +447,12 @@ export const historyHandlers = {
     // it `is_undo = 0`, "its effect is forward-equivalent"), so undo-after-redo
     // targets the redo. The prefix filter excluded it and targeted the op
     // BEFORE it instead.
-    const scope = pageSubtreeIds(a['pageId'] as string)
+    const pageId = a['pageId'] as string
+    const scope = pageSubtreeIds(pageId)
+    // #5259 — the page's birth ops are outside the row universe, as on the
+    // backend (`find_positional_undo_target`).
     const undoableOps = sortOpLogNewestFirst(
-      opLog.filter((o) => !o.is_undo && opInPageScope(o, scope)),
+      opLog.filter((o) => !o.is_undo && opInPageScope(o, scope) && !isPageBirthOp(o, pageId)),
     )
     // #5057 — a NEGATIVE depth is Validation, not NotFound. `undo_page_op_inner`
     // checks the sign BEFORE the lookup and returns

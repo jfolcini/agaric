@@ -1,0 +1,191 @@
+{
+  "description": "#5259 — positional undo stops at a page's BIRTH. `create_page_in_space` appends two ops in one transaction — the root's own `create_block` and its first `set_property(space)` — and page creation pushes no frontend undo entry, so a Ctrl+Z past the page's content fell through to `undo_page_group`, whose walk seeded on those two and reverted them: a soft-deleted root left open as a blank page, or (undoing the space assignment alone) a page in no space at all. Both enumeration queries now exclude the root's `create_block` and its first `set_property(space)` from the row universe (`find_positional_undo_target`, `enumerate_undo_group_in_tx`), so the first undo reverts the typing alone — the window here is wide enough to have swallowed all three — and the next positional undo, at the depth the frontend advanced to, refuses with `not_found` rather than reaching the birth (the empty group `undo_page_group` answers there is pinned by `page_undo_stops_at_the_pages_birth_5259`; a `[]` return is not a record the #3083 ratchet accepts). The settled snapshot is the evidence: the page row keeps `deleted_at: null`, the typed block is a tombstone, and the digest holds ONE reverse op, not three.",
+  "expected": {
+    "block_tags": [],
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Elsewhere",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B1",
+        "page_id": "B1",
+        "parent_id": null,
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "page",
+        "content": "Work",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B2",
+        "page_id": "B2",
+        "parent_id": null,
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "page",
+        "content": "Fresh",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B3",
+        "page_id": "B3",
+        "parent_id": null,
+        "position": 2,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "typed",
+        "deleted_at": "DELETED",
+        "due_date": null,
+        "id": "B4",
+        "page_id": "B3",
+        "parent_id": "B3",
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      }
+    ],
+    "op_log_digest": {
+      "count": 6,
+      "ops": [
+        {
+          "op_type": "create_block"
+        },
+        {
+          "key": "is_space",
+          "op_type": "set_property"
+        },
+        {
+          "op_type": "create_block"
+        },
+        {
+          "key": "space",
+          "op_type": "set_property"
+        },
+        {
+          "op_type": "create_block"
+        },
+        {
+          "op_type": "delete_block"
+        }
+      ]
+    },
+    "page_links": [],
+    "properties": [
+      {
+        "block_id": "B2",
+        "key": "is_space",
+        "value": "true",
+        "value_type": "Text"
+      }
+    ]
+  },
+  "expected_ops": [
+    {
+      "code": null,
+      "error": null,
+      "name": "a_space_to_be_born_in",
+      "returns": ["create_space#space_id=B2"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "the_page_is_born",
+      "returns": ["create_page_in_space#page_id=B3"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "ctrl_z_undoes_the_typing_only",
+      "returns": [
+        "undo_page_group#reversed_op_type=create_block#new_op_type=delete_block#is_redo=false"
+      ]
+    },
+    {
+      "code": null,
+      "error": "not_found",
+      "name": "single_positional_undo_refuses_past_the_content",
+      "returns": []
+    }
+  ],
+  "name": "undo_page_birth",
+  "ops": [
+    {
+      "args": {
+        "accentColor": null,
+        "name": "Work"
+      },
+      "command": "create_space",
+      "comment": "The space the page is born in, named `C1` by its `create_block`.",
+      "name": "a_space_to_be_born_in",
+      "via": "command"
+    },
+    {
+      "args": {
+        "content": "Fresh",
+        "parentId": null,
+        "spaceId": "C1"
+      },
+      "command": "create_page_in_space",
+      "comment": "The birth: `create_block` for the root (`C2`) and its first `set_property(space)`, in one transaction and so inside any undo window.",
+      "name": "the_page_is_born",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockType": "content",
+        "content": "typed",
+        "index": 0,
+        "parentId": "C2"
+      },
+      "command": "create_block",
+      "comment": "What the user typed after creating the page — the only op a Ctrl+Z should reach."
+    },
+    {
+      "args": {
+        "depth": 0,
+        "pageId": "C2",
+        "windowMs": 60000
+      },
+      "command": "undo_page_group",
+      "comment": "The window swallows every op this fixture made, so without the exclusion the group is THREE rows ending in the root's own create — the page trashed. With it, one row: the typing.",
+      "name": "ctrl_z_undoes_the_typing_only",
+      "via": "command"
+    },
+    {
+      "args": {
+        "pageId": "C2",
+        "undoDepth": 1
+      },
+      "command": "undo_page_op",
+      "comment": "The single-op positional path shares the row universe: past the content there is no op at depth 1, so it refuses rather than reaching the birth.",
+      "expect_error": "not_found",
+      "name": "single_positional_undo_refuses_past_the_content",
+      "via": "command"
+    }
+  ],
+  "seed": {
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Elsewhere",
+        "id": "S1",
+        "parent_id": null,
+        "position": 1
+      }
+    ],
+    "properties": [],
+    "tags": []
+  }
+}

@@ -19,6 +19,7 @@ import {
 } from '@/components/journal/AgendaView.helpers'
 import { ViewHeader } from '@/components/layout/ViewHeader'
 import { useAgendaPreferences } from '@/hooks/useAgendaPreferences'
+import { useBlockPropertyEvents } from '@/hooks/useBlockPropertyEvents'
 import {
   executeAgendaFilters,
   loadMoreAgendaFilters,
@@ -86,6 +87,8 @@ export function AgendaView({ onNavigateToPage }: AgendaViewProps): React.ReactEl
   const [agendaPageTitles, setAgendaPageTitles] = useState<Map<string, string>>(new Map())
   // Counter to force re-fetch after inline date edits (F-22)
   const [refreshKey, setRefreshKey] = useState(0)
+  // #5256 — and after a task changes anywhere else, a synced peer included.
+  const { invalidationKey } = useBlockPropertyEvents()
 
   // ── Agenda sort/group state (persisted in localStorage) ─────────────
   const {
@@ -135,7 +138,7 @@ export function AgendaView({ onNavigateToPage }: AgendaViewProps): React.ReactEl
     return () => {
       cancelled = true
     }
-  }, [agendaFilters, refreshKey, currentSpaceId])
+  }, [agendaFilters, refreshKey, invalidationKey, currentSpaceId])
 
   // ── Page-title resolution (#3340) ──────────────────────────────────
   // Keyed on `filteredBlocks`, NOT on the initial-query identity. Title

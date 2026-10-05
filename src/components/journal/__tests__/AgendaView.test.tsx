@@ -15,9 +15,10 @@
  *     loadMoreUnfilteredAgenda (no filters, #721)
  * 11. Sort/group controls pass through to AgendaResults
  * 12. A11y audit passes (axe)
+ * 13. A block-property change re-runs the query (#5256)
  */
 
-import { render, screen, waitFor } from '@testing-library/react'
+import { act, render, screen, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
@@ -151,6 +152,7 @@ import {
   loadMoreAgendaFilters,
   loadMoreUnfilteredAgenda,
 } from '@/lib/agenda-filters'
+import { recordBlockPropertyChange } from '@/lib/block-property-events'
 import { notify } from '@/lib/notify'
 
 const mockedNotifyRetry = vi.mocked(notify.retry)
@@ -448,6 +450,33 @@ describe('AgendaView', () => {
     })
 
     expect(screen.getByTestId('agenda-results')).toHaveAttribute('data-has-navigate', 'false')
+  })
+
+  // #5256 — a task ticked elsewhere, by a synced peer or by an MCP agent.
+  it('re-runs the agenda query when the block-property counter moves', async () => {
+    mockedExecuteAgendaFilters.mockResolvedValue({
+      blocks: [makeBlock({ id: 'B1' }), makeBlock({ id: 'B2' })],
+      hasMore: false,
+      cursor: null,
+    })
+    render(<AgendaView />)
+    await waitFor(() => {
+      expect(screen.getByTestId('agenda-results')).toHaveAttribute('data-block-count', '2')
+    })
+
+    mockedExecuteAgendaFilters.mockResolvedValue({
+      blocks: [makeBlock({ id: 'B2' })],
+      hasMore: false,
+      cursor: null,
+    })
+    act(() => {
+      recordBlockPropertyChange()
+    })
+
+    await waitFor(() => {
+      expect(screen.getByTestId('agenda-results')).toHaveAttribute('data-block-count', '1')
+    })
+    expect(mockedExecuteAgendaFilters).toHaveBeenCalledTimes(2)
   })
 
   // 8. Filter changes trigger re-fetch

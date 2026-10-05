@@ -112,9 +112,9 @@ export async function fetchAndCacheLinks(
     // styling fires; without this, an unknown id falls through to the
     // 'active' default and the chip silently renders as live.
     //
-    // #4238 — this is the ONE writer that stores `resolved: false`, and it is
-    // what the flag exists for: it is the only entry in the cache that stands
-    // for "nothing was returned" rather than "here is the row". Before #4238
+    // #4238 — this writer stores `resolved: false`, and it is what the flag
+    // exists for: an entry that stands for "nothing was returned" rather than
+    // "here is the row" (`markMovedOut` writes the same). Before #4238
     // that distinction was carried by the `[[id…]]` bytes alone, which is why
     // a resolved-but-BLANK row (a different thing entirely) had to imitate
     // them. The label is still stored so any direct `.title` reader agrees
@@ -145,7 +145,7 @@ export async function fetchAndCacheLinks(
  * guard, but including content because `[[ULID]]` tokens live there.
  */
 export function useBlockLinkResolve(
-  blocks: ReadonlyArray<{ id: string; content: string | null }>,
+  blocks: ReadonlyArray<{ id: string; block_type: string; content: string | null }>,
 ): void {
   // `\0` (NUL) separates a block's id from its content and `\x01` (SOH)
   // separates blocks, so the join is unambiguous for any id/content —
@@ -165,6 +165,8 @@ export function useBlockLinkResolve(
     let cancelled = false
     async function resolveUncachedLinks(): Promise<void> {
       try {
+        // #5245 — these rows are live and current, so chips already showing one follow it.
+        useResolveStore.getState().refreshCachedBlocks(blocks)
         const spaceId = useSpaceStore.getState().currentSpaceId
         const uncached = collectUncachedLinkIds(blocks, spaceId)
         if (uncached.size === 0) return

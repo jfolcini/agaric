@@ -30,6 +30,7 @@ import {
 import { TagFilterPanel } from '@/components/filters/TagFilterPanel'
 import type { TagCacheRow } from '@/lib/bindings'
 import { t } from '@/lib/i18n'
+import { notifyTagRemoved, notifyTagRenamed } from '@/lib/name-change-bus'
 import { useNavigationStore } from '@/stores/navigation'
 import { selectPageStack, useTabsStore } from '@/stores/tabs'
 
@@ -1742,5 +1743,75 @@ describe('TagFilterPanel — include inherited (#4548)', () => {
 
     const results = await axe(container)
     expect(results).toHaveNoViolations()
+  })
+})
+
+// #5254 — the Tags view renames and deletes tags above this panel without
+// unmounting it; both reach the panel through the name-change bus.
+describe('TagFilterPanel follows tag renames and deletes (#5254)', () => {
+  async function offerWork(): Promise<void> {
+    stubTagFilter({
+      list_tags_by_prefix: () => [makeTag({ tag_id: 'T1', name: 'work', usage_count: 5 })],
+    })
+    render(<TagFilterPanel />)
+    await typeAndWaitForTags(screen.getByPlaceholderText(t('tagFilter.searchPlaceholder')), 'wo')
+  }
+
+  async function addOffered(): Promise<void> {
+    await user.click(screen.getByRole('button', { name: t('tagFilter.addButton') }))
+    await vi.advanceTimersByTimeAsync(0)
+  }
+
+  async function selectWork(): Promise<void> {
+    await offerWork()
+    await addOffered()
+  }
+
+  it('relabels a selected tag that was renamed', async () => {
+    await selectWork()
+    expect(screen.getByLabelText(t('tagFilter.removeTagLabel', { name: 'work' }))).toBeVisible()
+
+    act(() => notifyTagRenamed('T1', 'job', 'SPACE_TEST'))
+
+    expect(screen.getByLabelText(t('tagFilter.removeTagLabel', { name: 'job' }))).toBeVisible()
+    expect(
+      screen.queryByLabelText(t('tagFilter.removeTagLabel', { name: 'work' })),
+    ).not.toBeInTheDocument()
+  })
+
+  it('selects a tag renamed while it was offered under its new name', async () => {
+    await offerWork()
+
+    act(() => notifyTagRenamed('T1', 'job', 'SPACE_TEST'))
+    await addOffered()
+
+    expect(screen.getByLabelText(t('tagFilter.removeTagLabel', { name: 'job' }))).toBeVisible()
+  })
+
+  it('drops a selected tag that was deleted, and does not offer it again', async () => {
+    await selectWork()
+
+    act(() => notifyTagRemoved('T1', 'SPACE_TEST'))
+
+    expect(
+      screen.queryByLabelText(t('tagFilter.removeTagLabel', { name: 'work' })),
+    ).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: t('tagFilter.addButton') })).not.toBeInTheDocument()
+  })
+
+  it('refetches the results when a tag a prefix pill matched is deleted', async () => {
+    let rows = [makeBlock({ id: 'B1', content: 'work note' })]
+    stubTagQuery(() => ({ items: rows, next_cursor: null, has_more: false, total_count: null }))
+    render(<TagFilterPanel />)
+    const input = screen.getByPlaceholderText(t('tagFilter.searchPlaceholder'))
+    fireEvent.change(input, { target: { value: 'wo' } })
+    fireEvent.keyDown(input, { key: 'Enter' })
+    expect(await screen.findByText('work note')).toBeInTheDocument()
+
+    rows = []
+    act(() => notifyTagRemoved('T1', 'SPACE_TEST'))
+
+    expect(await screen.findByText(t('tagFilter.noMatchesFound'))).toBeInTheDocument()
+    expect(screen.queryByText('work note')).not.toBeInTheDocument()
   })
 })

@@ -25,7 +25,7 @@
 import { createContext, createElement, useContext, useEffect, useRef } from 'react'
 import { createStore, type StoreApi, useStore } from 'zustand'
 
-import { unwrap, validationCode } from '@/lib/app-error'
+import { isNotFound, unwrap, validationCode } from '@/lib/app-error'
 import { commands } from '@/lib/bindings'
 import { i18n } from '@/lib/i18n'
 import { logger } from '@/lib/logger'
@@ -408,8 +408,11 @@ export function createPageBlockStore(pageId: string): StoreApi<PageBlockState> {
         // must NOT silently reroute into this heal. A well-formed id that
         // matches NO row (page hard-purged) surfaces the same
         // `PageNotInSpace` rejection — an equally dead reference for which
-        // this cleanup is the sane outcome.
-        if (validationCode(err) === ValidationCode.PageNotInSpace) {
+        // this cleanup is the sane outcome. #5243 — a TRASHED page is the
+        // same stale reference, refused as `kind: 'not_found'`; it heals
+        // identically under its own notice.
+        const trashed = isNotFound(err)
+        if (trashed || validationCode(err) === ValidationCode.PageNotInSpace) {
           // Heal only when the space this load was SCOPED to is still the
           // active space. The rejection can land after the user already
           // switched spaces (e.g. followed the page into its new home) —
@@ -419,10 +422,12 @@ export function createPageBlockStore(pageId: string): StoreApi<PageBlockState> {
           // wrong space. Skipping is safe: the heal is lazy by design and
           // re-fires the next time the stale reference is followed.
           if (useSpaceStore.getState().currentSpaceId !== spaceId) return
-          logger.warn('page-blocks', 'page not in current space — healing stale reference', {
+          logger.warn('page-blocks', 'stale page reference — healing', {
             rootParentId: rootParentId ?? '',
+            trashed,
           })
-          notify.info(i18n.t('error.pageNotInCurrentSpace'), { id: 'page-not-in-space' })
+          if (trashed) notify.info(i18n.t('error.pageInTrash'), { id: 'page-in-trash' })
+          else notify.info(i18n.t('error.pageNotInCurrentSpace'), { id: 'page-not-in-space' })
           useRecentPagesStore.getState().removeRecentPage(rootParentId)
           const tabsState = useTabsStore.getState()
           if (selectPageStack(tabsState).at(-1)?.pageId === rootParentId) {

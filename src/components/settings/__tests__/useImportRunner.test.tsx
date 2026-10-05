@@ -11,6 +11,7 @@ import type React from 'react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { useImportRunner } from '@/components/settings/useImportRunner'
+import { useCalendarPageDatesEpoch } from '@/hooks/useCalendarPageDates'
 import { hasPreference, PREFERENCES, readPreference } from '@/lib/preferences'
 import type { ImportUnit } from '@/lib/vault-import'
 
@@ -179,6 +180,41 @@ describe('useImportRunner', () => {
       warnings: ['skipped 1 encrypted item'],
       failures: [{ name: 'broken.enex', reason: 'not valid' }],
     })
+  })
+
+  // #5258 — an imported journal day must show in a journal calendar already open.
+  it.each([
+    ['re-fetches the journal calendar after a run that imported a page', true, 1],
+    ['leaves the journal calendar alone when every unit failed', false, 0],
+  ])('%s', async (_label, succeeds, expectedEpochMoves) => {
+    if (succeeds) {
+      mockImportMarkdown.mockResolvedValueOnce({
+        page_title: '2026-06-15',
+        blocks_created: 1,
+        properties_set: 0,
+        page_id: 'PAGE',
+        collapsed: [],
+        warnings: [],
+      })
+    } else {
+      mockImportMarkdown.mockRejectedValueOnce({ kind: 'validation', message: 'bad' })
+    }
+    const calendar = renderHook(() => useCalendarPageDatesEpoch())
+    const epochBefore = calendar.result.current
+
+    const { result } = renderHook(() => useImportRunner())
+    await act(async () => {
+      result.current.begin()
+      await result.current.run({
+        event: mkEvent(),
+        activeSpaceId: 'SPACE',
+        units: [unit('2026-06-15.md')],
+        notes: false,
+        loggerFailLabel: 'file import failed',
+      })
+    })
+
+    expect(calendar.result.current).toBe(epochBefore + expectedEpochMoves)
   })
 
   it("folds the blocks a Logseq page folded in that page's collapse layout", async () => {

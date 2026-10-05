@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT tag_id, name, usage_count FROM tags_cache",
+  "query": "SELECT tag_id, name, usage_count, space_id FROM tags_cache",
   "describe": {
     "columns": [
       {
@@ -35,6 +35,17 @@
             "name": "usage_count"
           }
         }
+      },
+      {
+        "name": "space_id",
+        "ordinal": 3,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "tags_cache",
+            "name": "space_id"
+          }
+        }
       }
     ],
     "parameters": {
@@ -43,8 +54,9 @@
     "nullable": [
       false,
       false,
-      false
+      false,
+      true
     ]
   },
-  "hash": "e4006eac721f1316950d134a39dc3c0d5146a7a8bcd10053f5db611db07dac2c"
+  "hash": "76c772e6f0f762f19ed2eab0879653f386be50ab36d6d193c2419e8381065254"
 }

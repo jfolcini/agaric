@@ -113,7 +113,9 @@ const BLOCK_2 = '01TESTBLOCK000000000BLOCK2'
 
 describe('useBlockLinkResolve', () => {
   it('does nothing when no uncached link tokens exist', async () => {
-    renderHook(() => useBlockLinkResolve([{ id: BLOCK_1, content: 'plain text' }]))
+    renderHook(() =>
+      useBlockLinkResolve([{ id: BLOCK_1, block_type: 'content', content: 'plain text' }]),
+    )
 
     // Allow the async effect's promise chain to settle.
     await new Promise<void>((r) => queueMicrotask(r))
@@ -125,7 +127,9 @@ describe('useBlockLinkResolve', () => {
       { id: ULID_A, title: 'Linked block A', block_type: 'content', deleted: false },
     ])
 
-    renderHook(() => useBlockLinkResolve([{ id: BLOCK_1, content: `see [[${ULID_A}]]` }]))
+    renderHook(() =>
+      useBlockLinkResolve([{ id: BLOCK_1, block_type: 'content', content: `see [[${ULID_A}]]` }]),
+    )
 
     await waitFor(() => {
       expect(mockedBatchResolve).toHaveBeenCalledWith([ULID_A], {
@@ -152,7 +156,11 @@ describe('useBlockLinkResolve', () => {
       { id: ULID_A, title: 'Referenced block', block_type: 'content', deleted: false },
     ])
 
-    renderHook(() => useBlockLinkResolve([{ id: BLOCK_1, content: `see ((${ULID_A})) above` }]))
+    renderHook(() =>
+      useBlockLinkResolve([
+        { id: BLOCK_1, block_type: 'content', content: `see ((${ULID_A})) above` },
+      ]),
+    )
 
     await waitFor(() => {
       expect(mockedBatchResolve).toHaveBeenCalledWith([ULID_A], {
@@ -169,7 +177,9 @@ describe('useBlockLinkResolve', () => {
     mockedBatchResolve.mockResolvedValueOnce([])
 
     renderHook(() =>
-      useBlockLinkResolve([{ id: BLOCK_1, content: `[[${ULID_A}]] and [[${ULID_B}]]` }]),
+      useBlockLinkResolve([
+        { id: BLOCK_1, block_type: 'content', content: `[[${ULID_A}]] and [[${ULID_B}]]` },
+      ]),
     )
 
     await waitFor(() => {
@@ -194,7 +204,7 @@ describe('useBlockLinkResolve', () => {
     )
 
     const { unmount } = renderHook(() =>
-      useBlockLinkResolve([{ id: BLOCK_1, content: `[[${ULID_A}]]` }]),
+      useBlockLinkResolve([{ id: BLOCK_1, block_type: 'content', content: `[[${ULID_A}]]` }]),
     )
 
     await waitFor(() => {
@@ -215,7 +225,9 @@ describe('useBlockLinkResolve', () => {
   it('logs and swallows transport failures from batchResolve', async () => {
     mockedBatchResolve.mockRejectedValueOnce(new Error('transport-fail'))
 
-    renderHook(() => useBlockLinkResolve([{ id: BLOCK_1, content: `[[${ULID_A}]]` }]))
+    renderHook(() =>
+      useBlockLinkResolve([{ id: BLOCK_1, block_type: 'content', content: `[[${ULID_A}]]` }]),
+    )
 
     await waitFor(() => {
       expect(mockedLoggerWarn).toHaveBeenCalledWith(
@@ -242,7 +254,9 @@ describe('useBlockLinkResolve — content-signature memo guard (#1266)', () => {
     const getStateSpy = vi.spyOn(useResolveStore, 'getState')
 
     const { rerender } = renderHook(({ blocks }) => useBlockLinkResolve(blocks), {
-      initialProps: { blocks: [{ id: BLOCK_1, content: `see [[${ULID_A}]]` }] },
+      initialProps: {
+        blocks: [{ id: BLOCK_1, block_type: 'content', content: `see [[${ULID_A}]]` }],
+      },
     })
 
     await waitFor(() => {
@@ -256,7 +270,7 @@ describe('useBlockLinkResolve — content-signature memo guard (#1266)', () => {
     // Reallocate the outer array AND the block object, but keep id +
     // content byte-identical (simulates a keystroke-flush / indent that
     // produces a fresh array without touching link content).
-    rerender({ blocks: [{ id: BLOCK_1, content: `see [[${ULID_A}]]` }] })
+    rerender({ blocks: [{ id: BLOCK_1, block_type: 'content', content: `see [[${ULID_A}]]` }] })
     await new Promise<void>((r) => queueMicrotask(r))
     await new Promise<void>((r) => queueMicrotask(r))
 
@@ -270,7 +284,7 @@ describe('useBlockLinkResolve — content-signature memo guard (#1266)', () => {
     mockedBatchResolve.mockResolvedValue([])
 
     const { rerender } = renderHook(({ blocks }) => useBlockLinkResolve(blocks), {
-      initialProps: { blocks: [{ id: BLOCK_1, content: 'no links yet' }] },
+      initialProps: { blocks: [{ id: BLOCK_1, block_type: 'content', content: 'no links yet' }] },
     })
 
     // No tokens initially → no IPC.
@@ -279,7 +293,7 @@ describe('useBlockLinkResolve — content-signature memo guard (#1266)', () => {
 
     // Edit the block to introduce a `[[ULID]]` token → signature changes
     // → effect re-fires → scan finds the uncached token → IPC fires.
-    rerender({ blocks: [{ id: BLOCK_1, content: `now [[${ULID_B}]]` }] })
+    rerender({ blocks: [{ id: BLOCK_1, block_type: 'content', content: `now [[${ULID_B}]]` }] })
 
     await waitFor(() => {
       expect(mockedBatchResolve).toHaveBeenCalledWith([ULID_B], {
@@ -300,8 +314,8 @@ describe('useBlockLinkResolve — content-signature memo guard (#1266)', () => {
     const { rerender } = renderHook(({ blocks }) => useBlockLinkResolve(blocks), {
       initialProps: {
         blocks: [
-          { id: BLOCK_1, content: `[[${ULID_A}]]` },
-          { id: BLOCK_2, content: 'plain' },
+          { id: BLOCK_1, block_type: 'content', content: `[[${ULID_A}]]` },
+          { id: BLOCK_2, block_type: 'content', content: 'plain' },
         ],
       },
     })
@@ -313,8 +327,8 @@ describe('useBlockLinkResolve — content-signature memo guard (#1266)', () => {
 
     rerender({
       blocks: [
-        { id: BLOCK_1, content: `[[${ULID_A}]]` },
-        { id: BLOCK_2, content: 'plain edited' },
+        { id: BLOCK_1, block_type: 'content', content: `[[${ULID_A}]]` },
+        { id: BLOCK_2, block_type: 'content', content: 'plain edited' },
       ],
     })
     await new Promise<void>((r) => queueMicrotask(r))
@@ -323,6 +337,34 @@ describe('useBlockLinkResolve — content-signature memo guard (#1266)', () => {
     // Signature changed → effect re-fired → scan re-ran, but ULID_A is
     // now cached and BLOCK_2 has no token → no additional IPC.
     expect(mockedBatchResolve.mock.calls.length).toBe(callsAfterFirst)
+  })
+})
+
+describe('useBlockLinkResolve — chips follow the tree’s own rows (#5245)', () => {
+  it('re-titles a cached entry when its block is edited, and undeletes it once back', async () => {
+    // Another block's `((BLOCK_1))` chip resolved it once; then it was deleted.
+    useResolveStore.getState().set(BLOCK_1, 'Buy milk', true)
+
+    const { rerender } = renderHook(({ blocks }) => useBlockLinkResolve(blocks), {
+      initialProps: { blocks: [{ id: BLOCK_2, block_type: 'content', content: 'other' }] },
+    })
+    await new Promise<void>((r) => queueMicrotask(r))
+    expect(useResolveStore.getState().resolveStatus(BLOCK_1)).toBe('deleted')
+
+    // Undo brings the block back into the tree, edited.
+    rerender({
+      blocks: [
+        { id: BLOCK_1, block_type: 'content', content: 'Buy oat milk\nsecond line' },
+        { id: BLOCK_2, block_type: 'content', content: 'other' },
+      ],
+    })
+
+    await waitFor(() => {
+      expect(useResolveStore.getState().resolveTitle(BLOCK_1)).toBe('Buy oat milk')
+    })
+    expect(useResolveStore.getState().resolveStatus(BLOCK_1)).toBe('active')
+    // A row no chip references stays out of the cache.
+    expect(useResolveStore.getState().has(BLOCK_2)).toBe(false)
   })
 })
 

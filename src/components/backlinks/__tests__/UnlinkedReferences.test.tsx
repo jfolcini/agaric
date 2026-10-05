@@ -16,7 +16,7 @@
  *  12. A11y audit passes
  */
 
-import { act, render, screen, waitFor } from '@testing-library/react'
+import { act, render, renderHook, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
@@ -55,6 +55,7 @@ const {
   mockListTagsByPrefix,
   mockListUnlinkedReferences,
   mockEditBlock,
+  mockSetPageAliases,
 } = vi.hoisted(() => ({
   mockListPropertyKeys: vi.fn(),
   mockListTagsByPrefix: vi.fn(),
@@ -62,6 +63,7 @@ const {
   mockGetPageAliases: vi.fn(),
   mockBatchResolve: vi.fn(),
   mockEditBlock: vi.fn(),
+  mockSetPageAliases: vi.fn(),
 }))
 
 vi.mock('@/lib/bindings', async () => {
@@ -77,6 +79,8 @@ vi.mock('@/lib/bindings', async () => {
         mockListUnlinkedReferences(...args).then((data: unknown) => ({ status: 'ok', data })),
       getPageAliases: (...args: unknown[]) =>
         mockGetPageAliases(...args).then((data: unknown) => ({ status: 'ok', data })),
+      setPageAliases: (...args: unknown[]) =>
+        mockSetPageAliases(...args).then((data: unknown) => ({ status: 'ok', data })),
       editBlock: (...args: unknown[]) =>
         mockEditBlock(...args).then((data: unknown) => ({ status: 'ok', data })),
       // Backs `useBacklinkResolution`, which turns the `[[ULID]]` tokens in a
@@ -155,9 +159,11 @@ vi.mock('@/components/pages/PageLink', () => ({
 
 import { UnlinkedReferences } from '@/components/backlinks/UnlinkedReferences'
 import { TooltipProvider } from '@/components/ui/tooltip'
+import { usePageAliases } from '@/hooks/usePageAliases'
 import { _resetPropertyKeysCacheForTest } from '@/hooks/usePropertyKeysCache'
 import { logger } from '@/lib/logger'
 import { queryClient } from '@/lib/query-client'
+import { renamePage } from '@/stores/page-rename'
 
 const mockedListUnlinked = mockListUnlinkedReferences
 const mockedEditBlock = mockEditBlock
@@ -1991,5 +1997,84 @@ describe('UnlinkedReferences', () => {
       'No title/alias match found for Link it',
       expect.objectContaining({ blockId: 'B1', pageId: 'PAGE1' }),
     )
+  })
+})
+
+// #5249 — the panel went stale after a rename or a new alias, so "Link it" on
+// a row it then showed (or would have shown) failed. The fakes read the title
+// and aliases live, as `eval_unlinked_references` and `get_page_aliases` do.
+describe('UnlinkedReferences — title and alias writes (#5249)', () => {
+  const PAGE = 'PAGE_FOO'
+  const SOURCE_BLOCKS = [
+    { id: 'B_FOO', content: 'A note about Foo' },
+    { id: 'B_BAR', content: 'A note about Bar' },
+    { id: 'B_BAZ', content: 'A note about Baz' },
+  ]
+  let title: string
+  let aliases: string[]
+
+  beforeEach(() => {
+    title = 'Foo'
+    aliases = []
+    mockedGetPageAliases.mockImplementation(async () => [...aliases])
+    mockSetPageAliases.mockImplementation(async (_pageId: string, next: string[]) => {
+      aliases = [...next]
+      return next
+    })
+    mockedListUnlinked.mockImplementation(async () => {
+      const terms = [title, ...aliases]
+      const blocks = SOURCE_BLOCKS.filter((b) => terms.some((term) => b.content.includes(term)))
+      return {
+        groups: blocks.length > 0 ? [makeGroup('SOURCE', 'Source Page', blocks)] : [],
+        next_cursor: null,
+        has_more: false,
+        total_count: blocks.length,
+        filtered_count: blocks.length,
+        truncated: false,
+      }
+    })
+  })
+
+  it('after a rename, lists mentions of the new title and links them', async () => {
+    const user = userEvent.setup()
+    const { rerender } = renderUnlinkedReferences({ pageId: PAGE, pageTitle: 'Foo' })
+    await user.click(await screen.findByRole('button', { name: /unlinked references/i }))
+    await screen.findByText('A note about Foo')
+
+    title = 'Bar'
+    act(() => {
+      renamePage(PAGE, 'Bar', null)
+    })
+    rerender(
+      <TooltipProvider>
+        <UnlinkedReferences pageId={PAGE} pageTitle="Bar" />
+      </TooltipProvider>,
+    )
+
+    await user.click(await screen.findByRole('button', { name: /Link it: A note about Bar/i }))
+
+    expect(mockedEditBlock).toHaveBeenCalledWith('B_BAR', 'A note about [[PAGE_FOO]]')
+    expect(screen.queryByText('A note about Foo')).not.toBeInTheDocument()
+  })
+
+  it('after an alias is added, "Link it" on an alias-only mention succeeds', async () => {
+    const user = userEvent.setup()
+    renderUnlinkedReferences({ pageId: PAGE, pageTitle: 'Foo' })
+    await user.click(await screen.findByRole('button', { name: /unlinked references/i }))
+    await screen.findByText('A note about Foo')
+
+    const header = renderHook(() => usePageAliases(PAGE, t))
+    act(() => {
+      header.result.current.setAliasInput('Baz')
+    })
+    act(() => {
+      header.result.current.handleAddAlias()
+    })
+
+    await user.click(await screen.findByRole('button', { name: /Link it: A note about Baz/i }))
+
+    await waitFor(() => {
+      expect(mockedEditBlock).toHaveBeenCalledWith('B_BAZ', 'A note about [[PAGE_FOO]]')
+    })
   })
 })

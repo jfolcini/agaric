@@ -31,9 +31,12 @@
 
 use super::common::*;
 use super::conformance::{resolve_op_arg_id, resolve_op_ref_label};
-use super::conformance_query::{PROJECTING_STEP, PROPERTY_DEF_ATTRS, relabel_token, row_token};
+use super::conformance_query::{
+    PROJECTING_STEP, PROPERTY_DEF_ATTRS, SPACE_TOKEN, relabel_token, row_token,
+};
 use agaric_core::ulid::{ActiveBlockId, AttachmentId, BlockId};
 use agaric_store::op::OpRef;
+use agaric_store::space::{SpaceId, SpaceScope};
 use serde::Serialize;
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
@@ -154,6 +157,10 @@ const RETURN_SHAPE: &[(&str, &str, &[&str], &[&str])] = &[
     // value, and a text value under a `ref` definition is read as the block
     // it names, which only the command does.
     ("set_property", "id", &[], &[]),
+    // #5074 — the row the state was set on. The `completed_at` it stamps or
+    // clears carries a clock date, so the snapshot drops it and a
+    // `query_by_property` step reads which blocks hold one.
+    ("set_todo_state", "id", &["todo_state"], &[]),
     // #5057 — the three batch COUNTERS answer with a bare `i64`, which carries
     // no field to name it. The shape's single attribute names the scalar, so
     // the token reads `set_property_batch#updated=3` instead of exposing a
@@ -171,6 +178,15 @@ const RETURN_SHAPE: &[(&str, &str, &[&str], &[&str])] = &[
     // mock does not model.
     (
         "create_blocks_batch",
+        "id",
+        &["block_type", "content", "parent_id", "position"],
+        &[],
+    ),
+    // #5236 — the single create answers with the one row, under the batch's
+    // attributes. The id is the record: a tag create that resolves to an
+    // existing same-name tag answers that tag's label and no new block.
+    (
+        "create_block",
         "id",
         &["block_type", "content", "parent_id", "position"],
         &[],
@@ -398,6 +414,28 @@ pub(super) async fn apply_op_via_command(
             .and_then(Value::as_i64)
             .unwrap_or_else(|| panic!("conformance op '{command}' is missing arg '{k}'"))
     };
+    // #5236 — a `SpaceScope` arg as the wire spells it. The `space_id` inside
+    // is a label like `spaceId` (`C<n>`, `S<n>`), or `$SPACE` for the harness
+    // space; an absent or `global` scope is `Global`. TS twin: `expandOpArgs`.
+    let scope = |k: &str| match arg(k) {
+        Some(Value::Object(scope))
+            if scope.get("kind").and_then(Value::as_str) == Some("active") =>
+        {
+            let label = scope
+                .get("space_id")
+                .and_then(Value::as_str)
+                .unwrap_or_else(|| {
+                    panic!("conformance op '{command}': an active scope needs 'space_id'")
+                });
+            let id = if label == SPACE_TOKEN {
+                TEST_SPACE_ID.to_owned()
+            } else {
+                resolve_op_arg_id(label, created_ids)
+            };
+            SpaceScope::Active(SpaceId::from_trusted(&id))
+        }
+        _ => SpaceScope::Global,
+    };
 
     match command {
         "delete_block" => to_json(delete_block_inner(pool, DEV, mat, block_id()).await),
@@ -466,6 +504,16 @@ pub(super) async fn apply_op_via_command(
                 block_ids(),
                 req_str("key"),
                 opt_str("value"),
+            )
+            .await,
+        ),
+        "set_todo_state" => to_json(
+            set_todo_state_inner(
+                pool,
+                DEV,
+                mat,
+                block_id().into_string().into(),
+                opt_str("state"),
             )
             .await,
         ),
@@ -747,6 +795,22 @@ pub(super) async fn apply_op_via_command(
         "create_blocks_batch" => {
             to_json(create_blocks_batch_inner(pool, DEV, mat, block_specs()).await)
         }
+        // The IPC's own shape: `blockType` / `content` are the caller's text,
+        // `parentId` a label, `scope` the space; the server mints the id.
+        "create_block" => to_json(
+            create_block_inner_with_space(
+                pool,
+                DEV,
+                mat,
+                req_str("blockType"),
+                req_str("content"),
+                arg_label_id("parentId").map(|id| BlockId::from(id.as_str())),
+                arg("index").and_then(Value::as_i64),
+                &scope("scope"),
+                None,
+            )
+            .await,
+        ),
         "duplicate_block" => to_json(duplicate_block_inner(pool, DEV, mat, block_id()).await),
         // `input` and `splice` are the caller's own text or blocks, so they
         // take no label expansion; only the anchor is a label. `splice` came
@@ -1161,7 +1225,7 @@ mod tests {
     /// vice versa, and the count is the one this module claims — so a
     /// mutating command cannot join one table without the other, and cannot
     /// join at all without this number moving.
-    const MUTATING_ARM_COUNT: usize = 44;
+    const MUTATING_ARM_COUNT: usize = 46;
 
     #[test]
     fn the_dispatcher_and_the_return_shape_table_name_the_same_commands() {

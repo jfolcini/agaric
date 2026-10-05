@@ -1,0 +1,347 @@
+{
+  "description": "`completed_at` is present iff `todo_state = 'DONE'` on every path that writes the state (`write_todo_timestamp_transitions_in_tx`, #5074): stamped on an edge into DONE, cleared on an edge out of it and when a DONE block stops being a task, and never written for an open state. The stamp carries today's date, which the snapshot and the op digest drop, so the ops run through the command leg (`via: \"command\"`; the payload replay writes only the `todo_state` column) and a `query_by_property` step reads WHICH blocks hold one. Seed: S1 (Tasks) > S2 (DONE), S3 (DONE then TODO), S4 (DONE then cleared), S5 (DOING), S6 (DONE by `set_todo_state_batch`), S7 (DONE by `set_property_batch`). Re-author `expected` / `expected_ops` / `expected_queries` via CONFORMANCE_UPDATE=1.",
+  "expected": {
+    "block_tags": [],
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Tasks",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B1",
+        "page_id": "B1",
+        "parent_id": null,
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "ship",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B2",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": "DONE"
+      },
+      {
+        "block_type": "content",
+        "content": "reopen",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B3",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 2,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": "TODO"
+      },
+      {
+        "block_type": "content",
+        "content": "untask",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B4",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 3,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "open",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B5",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 4,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": "DOING"
+      },
+      {
+        "block_type": "content",
+        "content": "batch",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B6",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 5,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": "DONE"
+      },
+      {
+        "block_type": "content",
+        "content": "property batch",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B7",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 6,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": "DONE"
+      }
+    ],
+    "op_log_digest": {
+      "count": 8,
+      "ops": [
+        {
+          "op_type": "set_todo_state"
+        },
+        {
+          "op_type": "set_todo_state"
+        },
+        {
+          "op_type": "set_todo_state"
+        },
+        {
+          "op_type": "set_todo_state"
+        },
+        {
+          "op_type": "set_todo_state"
+        },
+        {
+          "op_type": "set_todo_state"
+        },
+        {
+          "op_type": "set_todo_state"
+        },
+        {
+          "op_type": "set_todo_state"
+        }
+      ]
+    },
+    "page_links": [],
+    "properties": []
+  },
+  "expected_ops": [
+    {
+      "code": null,
+      "error": null,
+      "name": "done_stamps",
+      "returns": ["B2#todo_state=DONE"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "reopen_first_done",
+      "returns": ["B3#todo_state=DONE"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "reopen_clears",
+      "returns": ["B3#todo_state=TODO"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "untask_first_done",
+      "returns": ["B4#todo_state=DONE"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "untask_clears",
+      "returns": ["B4#todo_state=null"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "open_state_stamps_nothing",
+      "returns": ["B5#todo_state=DOING"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "todo_batch_stamps",
+      "returns": ["set_todo_state_batch#updated=1"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "property_batch_stamps",
+      "returns": ["set_property_batch#updated=1"]
+    }
+  ],
+  "expected_queries": [
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "completed_at_marks_exactly_the_done_blocks",
+      "rows": [
+        "B2#parent_id=B1#page_id=B1#position=1#deleted_at=null",
+        "B6#parent_id=B1#page_id=B1#position=5#deleted_at=null",
+        "B7#parent_id=B1#page_id=B1#position=6#deleted_at=null"
+      ],
+      "total_count": null
+    }
+  ],
+  "name": "set_todo_state_completed_at",
+  "ops": [
+    {
+      "args": {
+        "blockId": "S2",
+        "state": "DONE"
+      },
+      "command": "set_todo_state",
+      "name": "done_stamps",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockId": "S3",
+        "state": "DONE"
+      },
+      "command": "set_todo_state",
+      "name": "reopen_first_done",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockId": "S3",
+        "state": "TODO"
+      },
+      "command": "set_todo_state",
+      "comment": "The edge out of DONE clears the stamp.",
+      "name": "reopen_clears",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockId": "S4",
+        "state": "DONE"
+      },
+      "command": "set_todo_state",
+      "name": "untask_first_done",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockId": "S4",
+        "state": null
+      },
+      "command": "set_todo_state",
+      "comment": "A DONE block that stops being a task loses the stamp too.",
+      "name": "untask_clears",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockId": "S5",
+        "state": "DOING"
+      },
+      "command": "set_todo_state",
+      "comment": "An open state is not done: no stamp.",
+      "name": "open_state_stamps_nothing",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockIds": ["S6"],
+        "state": "DONE"
+      },
+      "command": "set_todo_state_batch",
+      "comment": "The batch writer runs the same transition per block.",
+      "name": "todo_batch_stamps",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockIds": ["S7"],
+        "key": "todo_state",
+        "value": "DONE"
+      },
+      "command": "set_property_batch",
+      "comment": "So does the property batch writer, for the `todo_state` key.",
+      "name": "property_batch_stamps",
+      "via": "command"
+    }
+  ],
+  "queries": [
+    {
+      "args": {
+        "request": {
+          "key": "completed_at",
+          "limit": 100
+        },
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
+      },
+      "command": "query_by_property",
+      "comment": "Exactly the blocks that END in DONE hold a `completed_at` (S2, S6, S7): S3 and S4 were stamped and cleared, S5 never was. No value predicate, so the token pins presence without the date.",
+      "name": "completed_at_marks_exactly_the_done_blocks"
+    }
+  ],
+  "seed": {
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Tasks",
+        "id": "S1",
+        "parent_id": null,
+        "position": 1
+      },
+      {
+        "block_type": "content",
+        "content": "ship",
+        "id": "S2",
+        "parent_id": "S1",
+        "position": 1
+      },
+      {
+        "block_type": "content",
+        "content": "reopen",
+        "id": "S3",
+        "parent_id": "S1",
+        "position": 2
+      },
+      {
+        "block_type": "content",
+        "content": "untask",
+        "id": "S4",
+        "parent_id": "S1",
+        "position": 3
+      },
+      {
+        "block_type": "content",
+        "content": "open",
+        "id": "S5",
+        "parent_id": "S1",
+        "position": 4
+      },
+      {
+        "block_type": "content",
+        "content": "batch",
+        "id": "S6",
+        "parent_id": "S1",
+        "position": 5
+      },
+      {
+        "block_type": "content",
+        "content": "property batch",
+        "id": "S7",
+        "parent_id": "S1",
+        "position": 6
+      }
+    ],
+    "properties": [],
+    "tags": []
+  }
+}

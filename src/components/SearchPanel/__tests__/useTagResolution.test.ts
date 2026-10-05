@@ -2,7 +2,7 @@
  * Tests for useTagResolution (#717).
  *
  * Validates the three resolution states the hook now reports:
- *  - `pending` — true while a name's prefix lookup is in flight, so the
+ *  - `pending` — true while the space's tag listing is in flight, so the
  *    caller can HOLD the search instead of firing it unfiltered.
  *  - resolved — exact (case-insensitive) match contributes its id.
  *  - unresolved — a settled lookup with no exact match sets
@@ -10,8 +10,8 @@
  *    looked up exactly once — no refetch loop).
  *
  * Also pins: a failed lookup IPC settles as unresolved (conservative —
- * Empty results beat unfiltered ones), and the space-switch cache
- * drop still re-resolves.
+ * Empty results beat unfiltered ones), the space-switch cache drop still
+ * re-resolves, and a tag name change re-resolves unknown names (#5255).
  *
  * NOTE: `tagNames` props are module-level constants — the resolve
  * effect's dep array includes `tagNames`, so an inline literal would
@@ -21,10 +21,10 @@
 import { act, renderHook, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-// `listTagsByPrefix` retired its hand-written wrapper (#4411); the hook now
-// calls `commands.listTagsByPrefix` from `@/lib/bindings` directly and
-// unwraps the `Result` envelope, so the mock intercepts THAT and resolves
-// the `{ status: 'ok', data }` shape.
+// The hook calls `commands.listAllTagsInSpace` from `@/lib/bindings` directly
+// (#5237 — the space's own list, not the unscoped prefix lookup) and unwraps
+// the `Result` envelope, so the mock intercepts THAT and resolves the
+// `{ status: 'ok', data }` shape.
 const mockedListTags = vi.hoisted(() => vi.fn())
 vi.mock('@/lib/bindings', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/lib/bindings')>()
@@ -32,7 +32,7 @@ vi.mock('@/lib/bindings', async (importOriginal) => {
     ...actual,
     commands: {
       ...actual.commands,
-      listTagsByPrefix: (...args: unknown[]) =>
+      listAllTagsInSpace: (...args: unknown[]) =>
         mockedListTags(...args).then((data: unknown) => ({ status: 'ok', data })),
     },
   }
@@ -44,12 +44,13 @@ vi.mock('@/lib/logger', () => ({
 
 import { useTagResolution } from '@/components/SearchPanel/useTagResolution'
 import type { TagCacheRow } from '@/lib/bindings'
+import { invalidateNameCaches, notifyPageRenamed, notifyTagAdded } from '@/lib/name-change-bus'
 
 const NO_NAMES: string[] = []
 const WIP: string[] = ['wip']
 const TYPO: string[] = ['typo']
 const WIP_AND_TYPO: string[] = ['wip', 'typo']
-const CASE_VARIANTS: string[] = ['Foo', 'foo']
+const WIP_AND_CASE_VARIANTS: string[] = ['wip', 'Foo', 'foo']
 
 function makeTag(overrides: Partial<TagCacheRow> = {}): TagCacheRow {
   return {
@@ -131,7 +132,7 @@ describe('useTagResolution', () => {
   })
 
   it('reports a partial outcome: resolved ids AND hasUnresolved together', async () => {
-    mockedListTags.mockImplementation(async (prefix: string) => (prefix === 'wip' ? [wipTag] : []))
+    mockedListTags.mockResolvedValue([wipTag])
 
     const { result } = renderHook(() => useTagResolution(WIP_AND_TYPO, 'SPACE_A'))
 
@@ -190,21 +191,76 @@ describe('useTagResolution', () => {
     })
   })
 
-  it('dedupes case-variant duplicate names to one lookup per cache key (#2275)', async () => {
-    // `tag:#Foo tag:#foo` yields ['Foo','foo']; both collapse to the lowercased
-    // cache key 'foo'. Before the fix each spelling fired its own prefix-lookup
-    // IPC. The dedupe keeps only the FIRST spelling, so 'foo' is never looked
-    // up — a discriminator robust to StrictMode's double-invoke.
-    mockedListTags.mockResolvedValue([])
+  // #5237 — a name is unique per space, so the lookup is the ACTIVE space's own
+  // listing: the unscoped prefix lookup answered whichever space's `wip` sorted
+  // first, and the space-scoped search then matched nothing. One listing
+  // settles every name, case variants (`tag:#Foo tag:#foo`, #2275) included.
+  it('resolves every name from one listing of the active space', async () => {
+    mockedListTags.mockResolvedValue([wipTag, makeTag({ tag_id: 'TAG_FOO', name: 'foo' })])
 
-    renderHook(() => useTagResolution(CASE_VARIANTS, 'SPACE_A'))
+    const { result } = renderHook(() => useTagResolution(WIP_AND_CASE_VARIANTS, 'SPACE_A'))
 
     await waitFor(() => {
-      expect(mockedListTags).toHaveBeenCalled()
+      expect(result.current).toEqual({
+        tagIds: ['TAG_WIP', 'TAG_FOO', 'TAG_FOO'],
+        pending: false,
+        hasUnresolved: false,
+      })
+    })
+    expect(mockedListTags).toHaveBeenCalledWith({ kind: 'active', space_id: 'SPACE_A' })
+  })
+
+  // #5255 — the tag a `tag:#typo` search names is created later: by a synced
+  // peer or an MCP agent (an `invalidated` name change), or by a local surface.
+  it.each([
+    ['an invalidated name change', () => invalidateNameCaches()],
+    ['a local tag creation', () => notifyTagAdded('TAG_TYPO', 'typo', 'SPACE_A')],
+  ])('re-resolves a name settled as unknown after %s', async (_label, publish) => {
+    mockedListTags.mockResolvedValue([])
+    const { result } = renderHook(() => useTagResolution(TYPO, 'SPACE_A'))
+    await waitFor(() => {
+      expect(result.current.hasUnresolved).toBe(true)
+    })
+    mockedListTags.mockResolvedValue([makeTag({ tag_id: 'TAG_TYPO', name: 'typo' })])
+
+    act(() => {
+      publish()
     })
 
-    const prefixes = mockedListTags.mock.calls.map((c) => c[0])
-    expect(prefixes).not.toContain('foo')
-    expect(prefixes.every((p) => p === 'Foo')).toBe(true)
+    await waitFor(() => {
+      expect(result.current).toEqual({ tagIds: ['TAG_TYPO'], pending: false, hasUnresolved: false })
+    })
+  })
+
+  it('keeps an unknown name settled across a page rename', async () => {
+    mockedListTags.mockResolvedValue([])
+    const { result } = renderHook(() => useTagResolution(TYPO, 'SPACE_A'))
+    await waitFor(() => {
+      expect(result.current.hasUnresolved).toBe(true)
+    })
+    const settledCallCount = mockedListTags.mock.calls.length
+
+    act(() => {
+      notifyPageRenamed('PAGE_1', 'typo', 'SPACE_A')
+    })
+
+    expect(result.current.pending).toBe(false)
+    expect(mockedListTags).toHaveBeenCalledTimes(settledCallCount)
+  })
+
+  it('keeps a resolved id across an invalidated name change, holding no search', async () => {
+    mockedListTags.mockResolvedValue([wipTag])
+    const { result } = renderHook(() => useTagResolution(WIP, 'SPACE_A'))
+    await waitFor(() => {
+      expect(result.current.tagIds).toEqual(['TAG_WIP'])
+    })
+    const settledCallCount = mockedListTags.mock.calls.length
+
+    act(() => {
+      invalidateNameCaches()
+    })
+
+    expect(result.current).toEqual({ tagIds: ['TAG_WIP'], pending: false, hasUnresolved: false })
+    expect(mockedListTags).toHaveBeenCalledTimes(settledCallCount)
   })
 })

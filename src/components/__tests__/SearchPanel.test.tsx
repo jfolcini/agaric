@@ -2307,10 +2307,10 @@ describe('SearchPanel', () => {
   // recovery when filter chips over-constrain to zero results.
   describe('no-results recovery action (#1103)', () => {
     it('shows a "Clear filters" button when filters are active and zero results', async () => {
-      // #4668 — `list_tags_by_prefix` returns `TagCacheRow[]`: no `color`, and
+      // #4668 — `list_all_tags_in_space` returns `TagCacheRow[]`: no `color`, and
       // `usage_count` / `updated_at` are not optional.
       stubInvoke({
-        list_tags_by_prefix: () => [
+        list_all_tags_in_space: () => [
           { tag_id: 'TAG_WIP', name: 'wip', usage_count: 1, updated_at: '2025-01-01T00:00:00Z' },
         ],
       })
@@ -2330,10 +2330,10 @@ describe('SearchPanel', () => {
 
     it('clicking "Clear filters" clears the active filters (calls handleClearAllFilters)', async () => {
       const user = userEvent.setup()
-      // #4668 — `list_tags_by_prefix` returns `TagCacheRow[]`: no `color`, and
+      // #4668 — `list_all_tags_in_space` returns `TagCacheRow[]`: no `color`, and
       // `usage_count` / `updated_at` are not optional.
       stubInvoke({
-        list_tags_by_prefix: () => [
+        list_all_tags_in_space: () => [
           { tag_id: 'TAG_WIP', name: 'wip', usage_count: 1, updated_at: '2025-01-01T00:00:00Z' },
         ],
       })
@@ -2383,10 +2383,10 @@ describe('SearchPanel', () => {
     })
 
     it('no-results state with an active filter has no axe violations', async () => {
-      // #4668 — `list_tags_by_prefix` returns `TagCacheRow[]`: no `color`, and
+      // #4668 — `list_all_tags_in_space` returns `TagCacheRow[]`: no `color`, and
       // `usage_count` / `updated_at` are not optional.
       stubInvoke({
-        list_tags_by_prefix: () => [
+        list_all_tags_in_space: () => [
           { tag_id: 'TAG_WIP', name: 'wip', usage_count: 1, updated_at: '2025-01-01T00:00:00Z' },
         ],
       })

@@ -10394,6 +10394,91 @@ async fn load_page_subtree_rejects_foreign_space() {
     }
 }
 
+/// #5243 — a trashed root is refused as `NotFound` rather than served as an
+/// empty page (its descendants are cascade-tombstoned), which made the editor
+/// seed a first block under a deleted parent. The live page in the same space
+/// still loads, and the space check still runs first.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn load_page_subtree_rejects_trashed_root_as_not_found() {
+    let (pool, _dir) = test_pool().await;
+    ensure_test_space(&pool).await;
+    ensure_test_space_b(&pool).await;
+
+    insert_block(
+        &pool,
+        "01HZPGTRSH000000000000000A",
+        "page",
+        "Trashed",
+        None,
+        Some(1),
+    )
+    .await;
+    insert_block(
+        &pool,
+        "01HZTRSHCHD00000000000000A",
+        "content",
+        "child",
+        Some("01HZPGTRSH000000000000000A"),
+        Some(1),
+    )
+    .await;
+    insert_block(
+        &pool,
+        "01HZPGKEEP00000000000000B0",
+        "page",
+        "Live",
+        None,
+        Some(2),
+    )
+    .await;
+    insert_block(
+        &pool,
+        "01HZKEEPCHD0000000000000B1",
+        "content",
+        "live child",
+        Some("01HZPGKEEP00000000000000B0"),
+        Some(1),
+    )
+    .await;
+    assign_to_space(&pool, "01HZPGTRSH000000000000000A", TEST_SPACE_ID).await;
+    assign_to_space(&pool, "01HZPGKEEP00000000000000B0", TEST_SPACE_ID).await;
+    // The page delete cascade: the root and its descendant share one stamp.
+    sqlx::query(
+        "UPDATE blocks SET deleted_at = 1778284800000 \
+         WHERE id = '01HZPGTRSH000000000000000A' OR page_id = '01HZPGTRSH000000000000000A'",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let err = load_page_subtree_inner(&pool, "01HZPGTRSH000000000000000A", TEST_SPACE_ID)
+        .await
+        .expect_err("a trashed root must be refused");
+    assert!(
+        matches!(err, AppError::NotFound(_)),
+        "a trashed root must surface as NotFound (the frontend heal keys on it), got {err:?}"
+    );
+
+    let live = load_page_subtree_inner(&pool, "01HZPGKEEP00000000000000B0", TEST_SPACE_ID)
+        .await
+        .expect("a live root in the same space must still load");
+    let ids: Vec<&str> = live.blocks.iter().map(|r| r.id.as_str()).collect();
+    assert_eq!(
+        ids,
+        vec!["01HZKEEPCHD0000000000000B1"],
+        "the live page must serve its one child"
+    );
+
+    let err = load_page_subtree_inner(&pool, "01HZPGTRSH000000000000000A", TEST_SPACE_B_ID)
+        .await
+        .expect_err("a trashed root asked for from another space must be refused");
+    assert_eq!(
+        err.validation_code(),
+        Some(agaric_core::error::ValidationCode::PageNotInSpace),
+        "the space check runs before the trash check, got {err:?}"
+    );
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn load_page_subtree_rejects_malformed_root_id() {
     let (pool, _dir) = test_pool().await;

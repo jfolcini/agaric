@@ -19,6 +19,7 @@
 import type React from 'react'
 import { useCallback, useRef, useState } from 'react'
 
+import { invalidateCalendarPageDates } from '@/hooks/useCalendarPageDates'
 import { unwrap } from '@/lib/app-error'
 import { commands } from '@/lib/bindings'
 import { importMarkdown } from '@/lib/ipc-helpers'
@@ -290,6 +291,9 @@ export function useImportRunner(): UseImportRunner {
         setBlocksProcessed(totalBlocks)
         setBytesProcessed(totalBytes)
       }
+
+      // #5258 — an imported journal day must not hide behind a cached range.
+      if (succeededFiles > 0) invalidateCalendarPageDates()
 
       // #1927 — the title to navigate to after a successful import. We resolve
       // it to a page id lazily in the View action (the result carries no

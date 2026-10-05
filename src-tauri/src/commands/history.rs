@@ -768,17 +768,20 @@ async fn require_reverse_attachment_bytes(
     })
 }
 
-/// The `fts_blocks` repair an [`apply_reverse_in_tx`] call owes once its
-/// transaction commits (#4733). Empty for every arm but the two cascade ones.
+/// The `fts_blocks` (#4733) and `block_links` (#5252) repair an
+/// [`apply_reverse_in_tx`] call owes once its transaction commits. Empty for
+/// every arm but the two cascade ones.
 ///
 /// The callers only `enqueue_background(op_record)`, which yields
-/// `UpdateFtsBlock` / `RemoveFtsBlock` for the SEED, and `RebuildFtsIndex` is
-/// a member of neither `FULL_CACHE_REBUILD_TASKS` nor
+/// `UpdateFtsBlock` / `RemoveFtsBlock` / `ReindexBlockLinks` for the SEED, and
+/// `RebuildFtsIndex` is a member of neither `FULL_CACHE_REBUILD_TASKS` nor
 /// `CONTENT_RESTORE_REBUILD_TASKS` — so nothing else reaches a cascade's
 /// descendants. Without this an undone delete restores a subtree the user
-/// cannot find until the next boot rebuild.
+/// cannot find until the next boot rebuild, and a reference written to a
+/// restored DESCENDANT while it was trashed stays unresolved (the repair the
+/// Trash restore runs for the whole cohort, #4285).
 #[derive(Debug, Default)]
-pub struct ReverseFtsFanout {
+pub struct ReverseCohortFanout {
     /// Ids the `DeleteBlock` arm tombstoned — their rows must go.
     pub deleted: Vec<String>,
     /// Ids the `RestoreBlock` arm un-deleted: the descendant cohort followed by
@@ -786,7 +789,7 @@ pub struct ReverseFtsFanout {
     pub restored: Vec<String>,
 }
 
-impl ReverseFtsFanout {
+impl ReverseCohortFanout {
     /// Fold another call's fan-out in, so a batch undo repairs ONCE over the
     /// union instead of once per op. `reindex_fts_for_ids` loads the tag and
     /// page reference maps per call (a full scan of both), and
@@ -802,6 +805,10 @@ impl ReverseFtsFanout {
     /// reconciles. Both helpers return immediately on an empty list, so the
     /// non-cascade arms cost nothing.
     pub async fn apply(&self, pool: &sqlx::SqlitePool) {
+        // #5252: links first, as `handlers::apply` orders the same pair.
+        // `restored` already carries the ancestor chain, so the second set
+        // the helper takes is empty.
+        crate::materializer::reindex_restored_cohort_links(pool, &self.restored, &[]).await;
         crate::materializer::remove_deleted_cohort_fts(pool, &self.deleted).await;
         crate::materializer::reindex_restored_cohort_fts(pool, &self.restored).await;
     }
@@ -836,10 +843,17 @@ impl ReverseFtsFanout {
 ///   * RestoreBlock (undo-of-delete / redo-of-create) — restore the cohort + the
 ///     restored ancestor chain;
 ///   * EditBlock — diff-splice back to the prior text;
-///   * SetProperty / DeleteProperty — set/clear the engine property (the
-///     column-backed `space` key is EXCLUDED, exactly as the forward path
-///     `apply_set_property_via_loro` never stores it in the engine property map);
+///   * SetProperty / DeleteProperty — set/clear the engine property. The
+///     column-backed `space` key never enters the property map: a
+///     `SetProperty(space)` reverse takes the forward cross-space path
+///     (`apply_set_property_via_loro`: old-doc purge + new-doc hydration,
+///     #5238); a `DeleteProperty(space)` reverse stays SQL-only like its
+///     forward op;
 ///   * AddTag / RemoveTag — mirror the tag association.
+///
+/// #5240 — every arm then re-derives `block_tag_inherited` in the same
+/// transaction (`tag_inheritance::apply_op_tag_inheritance`), as the forward
+/// commands do: nothing rebuilds it later.
 ///
 /// Attachment reverses (DeleteAttachment / RenameAttachment / AddAttachment) stay
 /// SQL-only: attachments are NOT modeled in the engine, so there is nothing to
@@ -865,8 +879,8 @@ pub async fn apply_reverse_in_tx(
     reverse_payload: &OpPayload,
     op_created_at: i64,
     app_data_dir: Option<&std::path::Path>,
-) -> Result<ReverseFtsFanout, AppError> {
-    let mut fanout = ReverseFtsFanout::default();
+) -> Result<ReverseCohortFanout, AppError> {
+    let mut fanout = ReverseCohortFanout::default();
     match reverse_payload {
         // Idempotency policy:
         //
@@ -889,14 +903,14 @@ pub async fn apply_reverse_in_tx(
         //     row; DeleteAttachment hard-DELETEs without a rows_affected check)
         OpPayload::DeleteBlock(p) => {
             // #4733: the same cohort owes an FTS removal after the commit —
-            // see [`ReverseFtsFanout`]. The seed's own `RemoveFtsBlock` covers
+            // see [`ReverseCohortFanout`]. The seed's own `RemoveFtsBlock` covers
             // only the seed.
             fanout.deleted =
                 apply_reverse_delete_block(tx, state, device_id, p, op_created_at).await?;
         }
         OpPayload::RestoreBlock(p) => {
             // #4733: everything this arm brought back to life owes an FTS
-            // re-index after the commit — see [`ReverseFtsFanout`]. Same
+            // re-index after the commit — see [`ReverseCohortFanout`]. Same
             // two sets the engine fan-out walked, for the same reason: the
             // seed's `UpdateFtsBlock` reaches the seed alone.
             fanout.restored = apply_reverse_restore_block(tx, state, device_id, p).await?;
@@ -964,6 +978,8 @@ pub async fn apply_reverse_in_tx(
             )));
         }
     }
+    // #5240: after the reverse SQL, so the recompute reads the reverted tree.
+    agaric_store::tag_inheritance::apply_op_tag_inheritance(tx, reverse_payload).await?;
     Ok(fanout)
 }
 
@@ -1273,31 +1289,34 @@ async fn apply_reverse_set_property(
     device_id: &str,
     p: &agaric_store::op::SetPropertyPayload,
 ) -> Result<(), AppError> {
+    // #5238: `space` is doc MEMBERSHIP, not an engine property, and its undo
+    // is a cross-space move like the forward op, so it takes the forward path
+    // (purge from the old space's doc, hydrate into the new one). SQL alone
+    // left the page in the destination doc, where every later edit fell back
+    // to SQL-only and never synced.
+    if p.key == agaric_store::op::SPACE_PROPERTY_KEY {
+        return agaric_engine::apply::loro_apply::apply_set_property_via_loro(
+            tx, state, device_id, p,
+        )
+        .await;
+    }
+
     agaric_engine::loro::projection::project_set_property_to_sql(tx, p).await?;
 
     // #2655: mirror the property write into the per-space engine's
     // property map, matching the forward `apply_set_property_via_loro`.
-    // The `space` key is EXCLUDED: it is column-backed in `blocks` (not a
-    // `block_properties` row) and its forward handling is the subtree
-    // hydration special-case — the forward path NEVER stores `space` in
-    // the engine property map, so applying it here would inject a spurious
-    // property. `space`-key reverses stay SQL-only (they cannot trip the
-    // block-scoped #1257 gate). Reserved non-space keys (todo_state /
-    // priority / due_date / scheduled_date) DO enter the engine map on the
-    // forward path, so they are driven here too. `PropertyValue::from(p)`
-    // recovers the native typed value by the same precedence the forward
-    // path uses.
-    if p.key != agaric_store::op::SPACE_PROPERTY_KEY {
-        let space_id = agaric_store::space::resolve_block_space(&mut **tx, &p.block_id).await?;
-        drive_reverse_engine(state, device_id, space_id, "set_property", |engine| {
-            if engine.read_block(p.block_id.as_str())?.is_some() {
-                let value = agaric_engine::loro::engine::PropertyValue::from(p);
-                engine.apply_set_property_typed(p.block_id.as_str(), &p.key, &value)?;
-            }
-            Ok(())
-        })?;
-    }
-    Ok(())
+    // Reserved keys (todo_state / priority / due_date / scheduled_date) DO
+    // enter the engine map on the forward path, so they are driven here too.
+    // `PropertyValue::from(p)` recovers the native typed value by the same
+    // precedence the forward path uses.
+    let space_id = agaric_store::space::resolve_block_space(&mut **tx, &p.block_id).await?;
+    drive_reverse_engine(state, device_id, space_id, "set_property", |engine| {
+        if engine.read_block(p.block_id.as_str())?.is_some() {
+            let value = agaric_engine::loro::engine::PropertyValue::from(p);
+            engine.apply_set_property_typed(p.block_id.as_str(), &p.key, &value)?;
+        }
+        Ok(())
+    })
 }
 
 /// `DeleteProperty` arm of [`apply_reverse_in_tx`].
@@ -1321,9 +1340,8 @@ async fn apply_reverse_delete_property(
 
     // #2655: clear the key from the per-space engine property map
     // (idempotent — no-ops when the key is absent), matching the forward
-    // `apply_delete_property_via_loro`. The `space` key is EXCLUDED for
-    // the same reason as the SetProperty arm (column-backed; never
-    // in the engine property map).
+    // `apply_delete_property_via_loro`. The `space` key is EXCLUDED: it is
+    // column-backed and never in the engine property map.
     if p.key != agaric_store::op::SPACE_PROPERTY_KEY {
         let space_id = agaric_store::space::resolve_block_space(&mut **tx, &p.block_id).await?;
         drive_reverse_engine(state, device_id, space_id, "delete_property", |engine| {
@@ -1515,7 +1533,7 @@ pub async fn revert_ops_inner(
     // non-reversible op aborts the whole revert (skip_non_reversible =
     // false). The discarded skip count is irrelevant on this path.
     let app_data_dir = materializer.app_data_dir();
-    let (results, _skipped, fts_fanout) = revert_ops_in_tx(
+    let (results, _skipped, cohort_fanout) = revert_ops_in_tx(
         &mut tx,
         pool,
         materializer.loro_state(),
@@ -1533,7 +1551,7 @@ pub async fn revert_ops_inner(
     // #4733: POST-COMMIT, and only here — an earlier `?` leaves the tx to roll
     // back, and repairing FTS for a cascade that never landed would be the
     // divergence this PR removes, inverted.
-    fts_fanout.apply(pool).await;
+    cohort_fanout.apply(pool).await;
 
     Ok(results)
 }
@@ -1555,9 +1573,9 @@ pub async fn revert_ops_inner(
 ///   * `true` (point-in-time restore) — non-reversible ops are SKIPPED and
 ///     COUNTED; the reversible remainder is applied.
 ///
-/// Returns `(results, non_reversible_skipped, fts_fanout)`. The skip count is
+/// Returns `(results, non_reversible_skipped, cohort_fanout)`. The skip count is
 /// always 0 when `skip_non_reversible` is `false` (such a batch errors out
-/// instead). The fan-out is the batch's merged [`ReverseFtsFanout`] — the
+/// instead). The fan-out is the batch's merged [`ReverseCohortFanout`] — the
 /// caller owns the commit, so it owns the post-commit repair, and MUST NOT run
 /// it on a path that rolls back.
 async fn revert_ops_in_tx(
@@ -1568,9 +1586,9 @@ async fn revert_ops_in_tx(
     ops: Vec<OpRef>,
     skip_non_reversible: bool,
     app_data_dir: Option<&std::path::Path>,
-) -> Result<(Vec<UndoResult>, u64, ReverseFtsFanout), AppError> {
+) -> Result<(Vec<UndoResult>, u64, ReverseCohortFanout), AppError> {
     if ops.is_empty() {
-        return Ok((vec![], 0, ReverseFtsFanout::default()));
+        return Ok((vec![], 0, ReverseCohortFanout::default()));
     }
 
     // C5 (#344): bound the batch size before any DB work. This is the
@@ -1592,7 +1610,7 @@ async fn revert_ops_in_tx(
     // Phase 2: Apply all reverses inside the caller's IMMEDIATE transaction.
     // Collected in APPLICATION order tagged with the original op's `created_at`,
     // then re-sorted newest-first to preserve the returned-order contract.
-    let (mut results_tagged, applied_skipped, fts_fanout) = apply_reverses_in_order(
+    let (mut results_tagged, applied_skipped, cohort_fanout) = apply_reverses_in_order(
         tx,
         state,
         device_id,
@@ -1612,7 +1630,7 @@ async fn revert_ops_in_tx(
     });
     let results: Vec<UndoResult> = results_tagged.into_iter().map(|(_, r)| r).collect();
 
-    Ok((results, computed_skipped + applied_skipped, fts_fanout))
+    Ok((results, computed_skipped + applied_skipped, cohort_fanout))
 }
 
 /// A reverse computed for one op of a batch, awaiting application:
@@ -1817,7 +1835,7 @@ fn plan_reverse_apply_order(reverses: &[PendingReverse]) -> ReverseApplyPlan<'_>
 /// in the plan's order inside the caller's IMMEDIATE transaction. Returns the
 /// results tagged with the reversed op's `created_at` (in APPLICATION order),
 /// the number of reverses skipped at preflight (always 0 unless
-/// `skip_non_reversible`), and the batch's merged [`ReverseFtsFanout`].
+/// `skip_non_reversible`), and the batch's merged [`ReverseCohortFanout`].
 async fn apply_reverses_in_order(
     tx: &mut CommandTx,
     state: &agaric_engine::loro::shared::LoroState,
@@ -1826,13 +1844,13 @@ async fn apply_reverses_in_order(
     plan: &ReverseApplyPlan<'_>,
     skip_non_reversible: bool,
     app_data_dir: Option<&std::path::Path>,
-) -> Result<(Vec<(i64, UndoResult)>, u64, ReverseFtsFanout), AppError> {
+) -> Result<(Vec<(i64, UndoResult)>, u64, ReverseCohortFanout), AppError> {
     use agaric_engine::reverse;
 
     let mut non_reversible_skipped: u64 = 0;
     let mut results_tagged: Vec<(i64, UndoResult)> = Vec::with_capacity(reverses.len());
-    // #4733: merged across the batch — see [`ReverseFtsFanout`].
-    let mut fts_fanout = ReverseFtsFanout::default();
+    // #4733: merged across the batch — see [`ReverseCohortFanout`].
+    let mut cohort_fanout = ReverseCohortFanout::default();
 
     for &idx in &plan.apply_order {
         let (op_ref, reverse_payload, created_at, reversed_op_type) = &reverses[idx];
@@ -1921,6 +1939,9 @@ async fn apply_reverses_in_order(
                 .map(|(&id, _)| id)
                 .collect();
             reverse_move_block(tx, state, device_id, p, &cross_frame_exclude).await?;
+            // #5240: this branch bypasses `apply_reverse_in_tx`, so it owes
+            // the same inherited-tag recompute for the moved subtree.
+            agaric_store::tag_inheritance::apply_op_tag_inheritance(tx, reverse_payload).await?;
         } else {
             // The #3706 byte-existence guard already ran as this loop's
             // preflight, so the `AddAttachment` arm's own check is a no-op
@@ -1928,7 +1949,7 @@ async fn apply_reverses_in_order(
             // two can never disagree if the preflight is ever narrowed.
             // #4733: fold this op's cascade lists into the batch's fan-out —
             // one repair over the union after the commit, not one per op.
-            fts_fanout.merge(
+            cohort_fanout.merge(
                 apply_reverse_in_tx(tx, state, device_id, reverse_payload, op_ts, app_data_dir)
                     .await?,
             );
@@ -1951,7 +1972,7 @@ async fn apply_reverses_in_order(
         tx.enqueue_background(op_record);
     }
 
-    Ok((results_tagged, non_reversible_skipped, fts_fanout))
+    Ok((results_tagged, non_reversible_skipped, cohort_fanout))
 }
 
 /// Restore a page to its state at a specific operation (point-in-time restore).
@@ -2097,7 +2118,7 @@ pub async fn restore_page_to_op_inner(
         (vec![], 0)
     } else {
         let app_data_dir = materializer.app_data_dir();
-        let (results, skipped, fts_fanout) = revert_ops_in_tx(
+        let (results, skipped, cohort_fanout) = revert_ops_in_tx(
             &mut tx,
             pool,
             materializer.loro_state(),
@@ -2115,7 +2136,7 @@ pub async fn restore_page_to_op_inner(
             tx.commit_and_dispatch(materializer).await?;
             // #4733: only on the COMMITTED branch — the rollback above undoes
             // the cascades this fan-out would otherwise repair FTS for.
-            fts_fanout.apply(pool).await;
+            cohort_fanout.apply(pool).await;
         }
         (results, skipped)
     };
@@ -2289,7 +2310,7 @@ pub async fn undo_page_op_inner(
     .await?;
 
     let app_data_dir = materializer.app_data_dir();
-    let fts_fanout = apply_reverse_in_tx(
+    let cohort_fanout = apply_reverse_in_tx(
         &mut tx,
         materializer.loro_state(),
         device_id,
@@ -2308,8 +2329,8 @@ pub async fn undo_page_op_inner(
 
     // #4733: POST-COMMIT FTS repair for the cascade this reverse ran. The
     // `enqueue_background(op_record)` above reaches the SEED only — see
-    // [`ReverseFtsFanout`].
-    fts_fanout.apply(pool).await;
+    // [`ReverseCohortFanout`].
+    cohort_fanout.apply(pool).await;
 
     Ok(UndoResult {
         reversed_op: target_ref,
@@ -2477,6 +2498,18 @@ async fn find_positional_undo_target(
     // `find_undo_group_inner` and `undo_page_group_inner` carry the
     // IDENTICAL predicate; all three MUST share one row-numbering universe
     // (see the #2549 note in `find_undo_group_inner`).
+    //
+    // #5259: the page's BIRTH ops — the root's own `create_block` and its
+    // first `set_property(space)` — are not undo targets. Page creation
+    // pushes no frontend undo entry, so a Ctrl+Z past the page's content fell
+    // through to this walk and reversed the birth: a trashed root left open,
+    // or a page in no space. Past the content there is nothing left to undo
+    // (empty group / `NotFound`), which the frontend treats as a no-op.
+    // "First" mirrors `reverse::property_ops::find_prior_property`: no
+    // earlier LOCAL (`is_replicated = 0`) `set_property(space)` on the root,
+    // because without one the reverse is `DeleteProperty(space)` — the
+    // no-space outcome — and that holds for a peer-born page's first local
+    // move too. Explicit `revert_ops` and `restore_page_to_op` are untouched.
     let target = sqlx::query_as!(
         HistoryEntry,
         "WITH RECURSIVE page_blocks(id, depth) AS ( \
@@ -2514,6 +2547,13 @@ async fn find_positional_undo_target(
            AND ol.is_undo = 0 \
            AND ol.is_replicated = 0 \
            AND (ol.origin = 'user' OR ol.origin LIKE 'agent:%') \
+           AND NOT (ol.block_id = ?1 AND (ol.op_type = 'create_block' OR ( \
+               ol.op_type = 'set_property' AND json_extract(ol.payload, '$.key') = 'space' \
+               AND NOT EXISTS (SELECT 1 FROM op_log prior WHERE prior.block_id = ?1 \
+                   AND prior.op_type = 'set_property' AND prior.is_replicated = 0 \
+                   AND json_extract(prior.payload, '$.key') = 'space' \
+                   AND (prior.created_at, prior.seq, prior.device_id) \
+                       < (ol.created_at, ol.seq, ol.device_id))))) \
          ORDER BY ol.created_at DESC, ol.seq DESC, ol.device_id DESC \
          LIMIT 1 OFFSET ?2",
         page_id,    // ?1
@@ -2621,7 +2661,7 @@ pub async fn redo_page_op_inner(
     // `revert_ops_in_tx`'s preflight, so the guard inside
     // `apply_reverse_in_tx` is what covers it.
     let app_data_dir = materializer.app_data_dir();
-    let fts_fanout = apply_reverse_in_tx(
+    let cohort_fanout = apply_reverse_in_tx(
         &mut tx,
         materializer.loro_state(),
         device_id,
@@ -2640,8 +2680,8 @@ pub async fn redo_page_op_inner(
 
     // #4733: POST-COMMIT FTS repair for the cascade this reverse ran. The
     // `enqueue_background(op_record)` above reaches the SEED only — see
-    // [`ReverseFtsFanout`].
-    fts_fanout.apply(pool).await;
+    // [`ReverseCohortFanout`].
+    cohort_fanout.apply(pool).await;
 
     Ok(UndoResult {
         reversed_op: undo_ref,
@@ -2764,6 +2804,10 @@ pub async fn find_undo_group_inner(
     // the same shared universe — see the note on `undo_page_op_inner`'s
     // target query. A boot-sweep `delete_block` (`origin = 'housekeeping'`)
     // must neither seed a group nor be counted into one.
+    //
+    // #5259: so is the page-birth exclusion (the root's `create_block` and
+    // first `set_property(space)`) — see the note on
+    // `find_positional_undo_target`.
     let count: Option<i64> = undo_group_size(pool, page_id, seed_rn, window_ms).await?;
 
     // `MAX(count_so_far)` is NULL when the seed row doesn't exist (depth
@@ -2830,6 +2874,13 @@ async fn undo_group_size(
                AND ol.is_undo = 0 \
                AND ol.is_replicated = 0 \
                AND (ol.origin = 'user' OR ol.origin LIKE 'agent:%') \
+               AND NOT (ol.block_id = ?1 AND (ol.op_type = 'create_block' OR ( \
+                   ol.op_type = 'set_property' AND json_extract(ol.payload, '$.key') = 'space' \
+                   AND NOT EXISTS (SELECT 1 FROM op_log prior WHERE prior.block_id = ?1 \
+                       AND prior.op_type = 'set_property' AND prior.is_replicated = 0 \
+                       AND json_extract(prior.payload, '$.key') = 'space' \
+                       AND (prior.created_at, prior.seq, prior.device_id) \
+                           < (ol.created_at, ol.seq, ol.device_id))))) \
          ), \
          walk(rn, device_id, created_at, count_so_far) AS ( \
              SELECT rn, device_id, created_at, 1 \
@@ -2936,7 +2987,7 @@ pub async fn undo_page_group_inner(
     // the ops newest-first and applies the reverses in that order; the
     // discarded skip count is always 0 on this path.
     let app_data_dir = materializer.app_data_dir();
-    let (results, _skipped, fts_fanout) = revert_ops_in_tx(
+    let (results, _skipped, cohort_fanout) = revert_ops_in_tx(
         &mut tx,
         pool,
         materializer.loro_state(),
@@ -2952,8 +3003,8 @@ pub async fn undo_page_group_inner(
     tx.commit_and_dispatch(materializer).await?;
 
     // #4733: POST-COMMIT FTS repair for the cascades the reverses ran — see
-    // [`ReverseFtsFanout`].
-    fts_fanout.apply(pool).await;
+    // [`ReverseCohortFanout`].
+    cohort_fanout.apply(pool).await;
 
     Ok(results)
 }
@@ -2986,13 +3037,17 @@ pub async fn undo_page_group_inner(
 /// frontend stack, so it is where a boot-sweep batch (`origin =
 /// 'housekeeping'`, newest ops on the page) would otherwise be seeded
 /// on and reverted wholesale. See the note on `find_positional_undo_target`.
+/// also #5259: the page-birth exclusion (the root's `create_block` and first
+/// `set_property(space)`) — same note. A group that would have seeded on the
+/// birth is empty, which the caller answers with `Ok(vec![])`.
 async fn enumerate_undo_group_in_tx(
     tx: &mut CommandTx,
     page_id: &str,
     seed_rn: i64,
     window_ms: i64,
 ) -> Result<Vec<OpRef>, AppError> {
-    let rows = sqlx::query!(
+    Ok(sqlx::query_as!(
+        OpRef,
         r#"WITH RECURSIVE page_blocks(id, depth) AS (
              SELECT id, 0 FROM blocks WHERE id = ?1
              UNION ALL
@@ -3030,6 +3085,13 @@ async fn enumerate_undo_group_in_tx(
                AND ol.is_undo = 0
                AND ol.is_replicated = 0
                AND (ol.origin = 'user' OR ol.origin LIKE 'agent:%')
+               AND NOT (ol.block_id = ?1 AND (ol.op_type = 'create_block' OR (
+                   ol.op_type = 'set_property' AND json_extract(ol.payload, '$.key') = 'space'
+                   AND NOT EXISTS (SELECT 1 FROM op_log prior WHERE prior.block_id = ?1
+                       AND prior.op_type = 'set_property' AND prior.is_replicated = 0
+                       AND json_extract(prior.payload, '$.key') = 'space'
+                       AND (prior.created_at, prior.seq, prior.device_id)
+                           < (ol.created_at, ol.seq, ol.device_id)))))
          ),
          walk(rn, device_id, seq, created_at, count_so_far) AS (
              SELECT rn, device_id, seq, created_at, 1
@@ -3051,16 +3113,7 @@ async fn enumerate_undo_group_in_tx(
         window_ms,
     )
     .fetch_all(&mut ***tx)
-    .await?;
-
-    let ops: Vec<OpRef> = rows
-        .into_iter()
-        .map(|r| OpRef {
-            device_id: r.device_id,
-            seq: r.seq,
-        })
-        .collect();
-    Ok(ops)
+    .await?)
 }
 
 /// #2468: ref-addressed interactive undo — revert an explicit set of op
@@ -3145,7 +3198,7 @@ pub async fn undo_ops_inner(
     // non-reversible op aborts the whole batch (the tx rolls back, nothing
     // is applied). The discarded skip count is always 0 on this path.
     let app_data_dir = materializer.app_data_dir();
-    let (results, _skipped, fts_fanout) = revert_ops_in_tx(
+    let (results, _skipped, cohort_fanout) = revert_ops_in_tx(
         &mut tx,
         pool,
         materializer.loro_state(),
@@ -3161,8 +3214,8 @@ pub async fn undo_ops_inner(
     tx.commit_and_dispatch(materializer).await?;
 
     // #4733: POST-COMMIT FTS repair for the cascades the reverses ran — see
-    // [`ReverseFtsFanout`].
-    fts_fanout.apply(pool).await;
+    // [`ReverseCohortFanout`].
+    cohort_fanout.apply(pool).await;
 
     Ok(results)
 }
@@ -5649,7 +5702,7 @@ mod tests {
         mat.shutdown();
     }
 
-    /// The other half, and the reason `ReverseFtsFanout` carries two lists:
+    /// The other half, and the reason `ReverseCohortFanout` carries two lists:
     /// redoing the delete (reverse-of-restore) must take the cohort back out.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn redoing_a_delete_de_indexes_the_whole_cohort_again_4733() {

@@ -12,6 +12,7 @@
  */
 
 import { fireEvent, renderHook, waitFor } from '@testing-library/react'
+import { format } from 'date-fns'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { useAppKeyboardShortcuts } from '@/hooks/useAppKeyboardShortcuts'
@@ -79,6 +80,7 @@ beforeEach(() => {
   useJournalStore.setState({
     mode: 'daily',
     currentDate: new Date('2025-01-15T00:00:00Z'),
+    scrollToDate: null,
   })
 })
 
@@ -354,6 +356,25 @@ describe('useAppKeyboardShortcuts — journal nav (document listener)', () => {
     } finally {
       vi.useRealTimers()
     }
+  })
+
+  // The shortcut and the header Today button share `goToToday` on the journal
+  // store, so the shortcut must pick the same destination the button does.
+  // The mode rules themselves are pinned on the store's goToToday (journal.test.ts).
+  it("Alt+T runs the store's goToToday: stream lands on today's daily page", () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date(2025, 5, 30, 12))
+    try {
+      useJournalStore.setState({ mode: 'stream' })
+      renderHook(() => useAppKeyboardShortcuts({ t, isMobile: false }))
+      fireEvent.keyDown(document, { key: 't', altKey: true })
+    } finally {
+      vi.useRealTimers()
+    }
+
+    const state = useJournalStore.getState()
+    expect(state.mode).toBe('daily')
+    expect(format(state.currentDate, 'yyyy-MM-dd')).toBe('2025-06-30')
   })
 
   it('does NOT fire when currentView !== "journal"', () => {
