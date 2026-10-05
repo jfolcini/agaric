@@ -150,7 +150,9 @@ export function TagList({ onTagClick }: TagListProps): React.ReactElement {
         usage_count: 0,
         updated_at: new Date().toISOString(),
       }
-      setTags((prev) => [newTag, ...prev])
+      // #5236 — the backend answers an existing name (a case variant too)
+      // with that tag, which this list already shows.
+      setTags((prev) => (prev.some((tag) => tag.tag_id === resp.id) ? prev : [newTag, ...prev]))
       setNewTagName('')
       // Update resolve cache so tag_ref nodes display the name, not ULID
       useResolveStore.getState().set(resp.id, name, false)

@@ -54,9 +54,12 @@ interface TagCacheRow {
  * What `tags_cache` holds, in `ORDER BY name` — SQLite's BINARY collation, so
  * a plain code-unit compare (`Zed` before `apple`). One row per live tag block
  * with content (`DESIRED_TAGS_SQL`); `usage_count` is the number of LIVE
- * holders. The backend also de-duplicates the cache by normalized name and
- * folds `block_tag_refs` into the count; the mock never populates refs, and
- * no fixture seeds two tags that share a fold, so neither is modelled here.
+ * holders. The name slot is `UNIQUE (space_id, name)` (migration 0121, #5237),
+ * so the same name in two spaces is two rows. The backend also de-duplicates
+ * the cache by normalized name within a space and folds `block_tag_refs` into
+ * the count; the mock never populates refs, and no fixture seeds two tags of
+ * one space that share a fold (`create_block` resolves to the existing one,
+ * #5236), so neither is modelled here.
  */
 function tagCacheRows(): TagCacheRow[] {
   const usage = new Map<string, number>()

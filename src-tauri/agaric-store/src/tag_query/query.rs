@@ -292,10 +292,13 @@ async fn exact_match_nocase(
 /// ([`agaric_core::tag_norm::normalize_tag_name`]) (#1990). SQLite cannot compute
 /// the full-Unicode fold, so this scans the bounded `tags_cache` and confirms
 /// `normalize_tag_name(name) == normalize_tag_name(prefix)` in Rust. The cache
-/// holds at most one row per normalized name (it is de-duplicated by
-/// `normalize_tag_name` in the rebuild — #1990), so at most one row matches;
-/// `ORDER BY tag_id` makes the scan pick the smallest-id row — the same winner
-/// the rebuild keeps — if a transient duplicate exists mid-rebuild. Only
+/// holds at most one row per `(space_id, normalized name)` (it is
+/// de-duplicated by `normalize_tag_name` within a space in the rebuild —
+/// #1990, #5237); `ORDER BY tag_id` makes the scan pick the smallest-id row —
+/// the same winner the rebuild keeps — if a transient duplicate exists
+/// mid-rebuild. Like [`list_tags_by_prefix`] this lookup is space-unscoped,
+/// so the same name in two spaces answers one of the two rows: a caller
+/// resolving a name IN a space reads [`list_all_tags_in_space`] instead. Only
 /// reached when the cheap NOCASE path missed.
 ///
 /// That `ORDER BY` is also load-bearing for the tests (#3456): its

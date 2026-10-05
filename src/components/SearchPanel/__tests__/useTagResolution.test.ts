@@ -2,7 +2,7 @@
  * Tests for useTagResolution (#717).
  *
  * Validates the three resolution states the hook now reports:
- *  - `pending` — true while a name's prefix lookup is in flight, so the
+ *  - `pending` — true while the space's tag listing is in flight, so the
  *    caller can HOLD the search instead of firing it unfiltered.
  *  - resolved — exact (case-insensitive) match contributes its id.
  *  - unresolved — a settled lookup with no exact match sets
@@ -21,10 +21,10 @@
 import { act, renderHook, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-// `listTagsByPrefix` retired its hand-written wrapper (#4411); the hook now
-// calls `commands.listTagsByPrefix` from `@/lib/bindings` directly and
-// unwraps the `Result` envelope, so the mock intercepts THAT and resolves
-// the `{ status: 'ok', data }` shape.
+// The hook calls `commands.listAllTagsInSpace` from `@/lib/bindings` directly
+// (#5237 — the space's own list, not the unscoped prefix lookup) and unwraps
+// the `Result` envelope, so the mock intercepts THAT and resolves the
+// `{ status: 'ok', data }` shape.
 const mockedListTags = vi.hoisted(() => vi.fn())
 vi.mock('@/lib/bindings', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/lib/bindings')>()
@@ -32,7 +32,7 @@ vi.mock('@/lib/bindings', async (importOriginal) => {
     ...actual,
     commands: {
       ...actual.commands,
-      listTagsByPrefix: (...args: unknown[]) =>
+      listAllTagsInSpace: (...args: unknown[]) =>
         mockedListTags(...args).then((data: unknown) => ({ status: 'ok', data })),
     },
   }
@@ -50,7 +50,7 @@ const NO_NAMES: string[] = []
 const WIP: string[] = ['wip']
 const TYPO: string[] = ['typo']
 const WIP_AND_TYPO: string[] = ['wip', 'typo']
-const CASE_VARIANTS: string[] = ['Foo', 'foo']
+const WIP_AND_CASE_VARIANTS: string[] = ['wip', 'Foo', 'foo']
 
 function makeTag(overrides: Partial<TagCacheRow> = {}): TagCacheRow {
   return {
@@ -132,7 +132,7 @@ describe('useTagResolution', () => {
   })
 
   it('reports a partial outcome: resolved ids AND hasUnresolved together', async () => {
-    mockedListTags.mockImplementation(async (prefix: string) => (prefix === 'wip' ? [wipTag] : []))
+    mockedListTags.mockResolvedValue([wipTag])
 
     const { result } = renderHook(() => useTagResolution(WIP_AND_TYPO, 'SPACE_A'))
 
@@ -191,22 +191,23 @@ describe('useTagResolution', () => {
     })
   })
 
-  it('dedupes case-variant duplicate names to one lookup per cache key (#2275)', async () => {
-    // `tag:#Foo tag:#foo` yields ['Foo','foo']; both collapse to the lowercased
-    // cache key 'foo'. Before the fix each spelling fired its own prefix-lookup
-    // IPC. The dedupe keeps only the FIRST spelling, so 'foo' is never looked
-    // up — a discriminator robust to StrictMode's double-invoke.
-    mockedListTags.mockResolvedValue([])
+  // #5237 — a name is unique per space, so the lookup is the ACTIVE space's own
+  // listing: the unscoped prefix lookup answered whichever space's `wip` sorted
+  // first, and the space-scoped search then matched nothing. One listing
+  // settles every name, case variants (`tag:#Foo tag:#foo`, #2275) included.
+  it('resolves every name from one listing of the active space', async () => {
+    mockedListTags.mockResolvedValue([wipTag, makeTag({ tag_id: 'TAG_FOO', name: 'foo' })])
 
-    renderHook(() => useTagResolution(CASE_VARIANTS, 'SPACE_A'))
+    const { result } = renderHook(() => useTagResolution(WIP_AND_CASE_VARIANTS, 'SPACE_A'))
 
     await waitFor(() => {
-      expect(mockedListTags).toHaveBeenCalled()
+      expect(result.current).toEqual({
+        tagIds: ['TAG_WIP', 'TAG_FOO', 'TAG_FOO'],
+        pending: false,
+        hasUnresolved: false,
+      })
     })
-
-    const prefixes = mockedListTags.mock.calls.map((c) => c[0])
-    expect(prefixes).not.toContain('foo')
-    expect(prefixes.every((p) => p === 'Foo')).toBe(true)
+    expect(mockedListTags).toHaveBeenCalledWith({ kind: 'active', space_id: 'SPACE_A' })
   })
 
   // #5255 — the tag a `tag:#typo` search names is created later: by a synced

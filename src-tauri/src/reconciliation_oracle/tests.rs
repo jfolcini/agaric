@@ -3494,6 +3494,60 @@ async fn tc_fixture() -> (sqlx::SqlitePool, TempDir) {
     (pool, dir)
 }
 
+/// #5237 — the dedup key is `(space_id, normalized name)`: the same name in
+/// two spaces is two rows, each carrying its own space, and production's
+/// rebuild writes exactly what the fold derives. A fold that still deduped
+/// vault-wide would drop the larger-id space's row and diverge here.
+#[tokio::test]
+async fn tags_cache_keeps_one_row_per_space_for_a_shared_name_5237() {
+    let (pool, _dir) = tc_fixture().await;
+    const WORK: &str = "01TCSPACEWORK5237000000000";
+    const HOME: &str = "01TCSPACEHOME5237000000000";
+    const TODO_WORK: &str = "01TCTODOWORK52370000000000";
+    const TODO_HOME: &str = "01TCTODOHOME52370000000000";
+    for space in [WORK, HOME] {
+        bl_insert_page(&pool, space, None).await;
+        bl_register_space(&pool, space).await;
+    }
+    for (id, space) in [(TODO_WORK, WORK), (TODO_HOME, HOME)] {
+        tc_insert_tag(&pool, id, Some("todo"), None).await;
+        // dynamic-sql: test-only fixture seed.
+        sqlx::query("UPDATE blocks SET space_id = ? WHERE id = ?")
+            .bind(space)
+            .bind(id)
+            .execute(&pool)
+            .await
+            .expect("stamp the tag's space");
+    }
+
+    let expected = rebuild_tags_cache_from_base(&pool, &dump_blocks(&pool).await.expect("dump"))
+        .await
+        .expect("from-base rebuild");
+    assert_eq!(
+        expected[TODO_WORK],
+        DerivedTagRow {
+            name: "todo".to_owned(),
+            usage_count: 0,
+            space_id: Some(WORK.to_owned()),
+        },
+        "Work's `todo` is its own row"
+    );
+    assert_eq!(
+        expected[TODO_HOME],
+        DerivedTagRow {
+            name: "todo".to_owned(),
+            usage_count: 0,
+            space_id: Some(HOME.to_owned()),
+        },
+        "Home's `todo` is its own row, not the loser of a vault-wide tie-break"
+    );
+
+    agaric_store::cache::rebuild_tags_cache(&pool)
+        .await
+        .expect("rebuild_tags_cache");
+    assert_tags_cache_reconciled(&pool, "two spaces sharing a tag name").await;
+}
+
 /// **The acceptance criterion.** `tags_cache` reconciles against a from-base
 /// fold, and every rule the fold transcribes is armed.
 #[tokio::test]

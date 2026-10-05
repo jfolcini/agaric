@@ -23,6 +23,7 @@ import {
   runCommandOp,
 } from '@/lib/tauri-mock/__tests__/conformance-command'
 import {
+  CONFORMANCE_SPACE_ID,
   type QueryResult,
   type QueryStep,
   relabelToken,
@@ -381,6 +382,19 @@ export function expandOpArgs(
     'spaceId',
   ]) {
     if (typeof out[key] === 'string') out[key] = resolveOpArgId(out[key] as string, createdIds)
+  }
+  // #5236 — `create_block` takes its space as the wire's `scope` object; the
+  // `space_id` inside is a label like `spaceId`, or `$SPACE` for the harness
+  // space. Mirror of the Rust runner's `scope()`.
+  const scope = out['scope']
+  if (scope != null && typeof scope === 'object') {
+    const spaceId = (scope as Record<string, unknown>)['space_id']
+    if (typeof spaceId === 'string') {
+      out['scope'] = {
+        ...scope,
+        space_id: spaceId === '$SPACE' ? CONFORMANCE_SPACE_ID : resolveOpArgId(spaceId, createdIds),
+      }
+    }
   }
   // #5057 — a batch command takes the SAME labels as a list, so each entry
   // expands exactly as the scalar keys above do. Mirror of the Rust runner's

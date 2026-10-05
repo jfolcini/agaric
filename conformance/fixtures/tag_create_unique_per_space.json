@@ -1,0 +1,211 @@
+{
+  "name": "tag_create_unique_per_space",
+  "description": "#5236 / #5237 — a tag NAME is unique per space at creation, and the tags cache keeps one row per space. The harness space seeds a `todo` tag (`S2`); a seed id is zero-padded, so it sorts below every minted ULID and is the row the old vault-wide `UNIQUE (name)` kept. The ops create a second space (`C1`) and run `create_block` with `blockType: tag` into it, as the IPC runs it (`via: command`, so the RETURN is the record): `todo` is a NEW tag (`C2`) because uniqueness is per space, and before 0121 it was exactly the tag the cache could not hold — the smaller-id `todo` in the harness space owned the slot, so `Work`'s Tags view, its filters and its `tag:#` search never saw it (#5237). Then `Todo` into the same space: a case variant, the identity `normalize_tag_name` folds, answers the SAME label and no second block (#5236: the header's \"Create\" and the `#name` input rule each trust their own picker cache, and only the backend sees both). The reads: the unscoped prefix list carries BOTH `todo` rows — under the old constraint it carried one — and the harness space's own listing names only ITS `todo`. A query step cannot name an op-created space (`expand_query_args` knows `$SPACE` and `S<n>`), so `Work`'s listing is pinned by its cache row in the prefix list, not by `list_all_tags_in_space`.",
+  "expected": {
+    "block_tags": [],
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Tags",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B1",
+        "page_id": "B1",
+        "parent_id": null,
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "tag",
+        "content": "todo",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B2",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "page",
+        "content": "Work",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B3",
+        "page_id": "B3",
+        "parent_id": null,
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "tag",
+        "content": "todo",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B4",
+        "page_id": "B4",
+        "parent_id": null,
+        "position": 2,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      }
+    ],
+    "op_log_digest": {
+      "count": 4,
+      "ops": [
+        {
+          "op_type": "create_block"
+        },
+        {
+          "key": "is_space",
+          "op_type": "set_property"
+        },
+        {
+          "op_type": "create_block"
+        },
+        {
+          "key": "space",
+          "op_type": "set_property"
+        }
+      ]
+    },
+    "page_links": [],
+    "properties": [
+      {
+        "block_id": "B3",
+        "key": "is_space",
+        "value": "true",
+        "value_type": "Text"
+      }
+    ]
+  },
+  "expected_ops": [
+    {
+      "code": null,
+      "error": null,
+      "name": "a_second_space",
+      "returns": ["create_space#space_id=B3"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "the_same_name_in_another_space_is_a_new_tag",
+      "returns": ["B4#block_type=tag#content=todo#parent_id=null#position=2"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "a_case_variant_resolves_to_the_existing_tag",
+      "returns": ["B4#block_type=tag#content=todo#parent_id=null#position=2"]
+    }
+  ],
+  "expected_queries": [
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": null,
+      "name": "the_prefix_list_carries_one_todo_per_space",
+      "rows": ["B2#name=todo#usage_count=0", "B4#name=todo#usage_count=0"],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": null,
+      "name": "the_harness_space_lists_only_its_own_todo",
+      "rows": ["B2#name=todo#usage_count=0"],
+      "total_count": null
+    }
+  ],
+  "ops": [
+    {
+      "args": {
+        "accentColor": null,
+        "name": "Work"
+      },
+      "command": "create_space",
+      "comment": "The second space. Its `todo` below gets a minted ULID, larger than the seeded `S2`: under the old vault-wide UNIQUE it was the loser, the tag its own space could not list.",
+      "name": "a_second_space",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockType": "tag",
+        "content": "todo",
+        "parentId": null,
+        "scope": {
+          "kind": "active",
+          "space_id": "C1"
+        }
+      },
+      "command": "create_block",
+      "comment": "The same name as the harness space's seeded tag, in ANOTHER space: a second tag — a new block, top-level (manually created tags have no parent), stamped into `C1` — because uniqueness is per space.",
+      "name": "the_same_name_in_another_space_is_a_new_tag",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockType": "tag",
+        "content": "Todo",
+        "parentId": null,
+        "scope": {
+          "kind": "active",
+          "space_id": "C1"
+        }
+      },
+      "command": "create_block",
+      "comment": "The same name in the same space, as a case variant: `normalize_tag_name` folds it, so this resolves to the tag above — same label, the EXISTING spelling (`todo`), no new block in the snapshot, no op in the digest. A stack that minted a second tag answers a new label here.",
+      "name": "a_case_variant_resolves_to_the_existing_tag",
+      "via": "command"
+    }
+  ],
+  "queries": [
+    {
+      "args": {
+        "prefix": "todo"
+      },
+      "command": "list_tags_by_prefix",
+      "comment": "The unscoped prefix scan carries BOTH spaces' `todo` rows: one per space, neither evicting the other. Under the pre-0121 cache the `Work` row could not exist — `UNIQUE (name)` was held by the smaller-id seeded tag.",
+      "name": "the_prefix_list_carries_one_todo_per_space",
+      "unordered": "two byte-identical names: `ORDER BY name` leaves their relative order to the tie-break between a seed id and a minted one"
+    },
+    {
+      "args": {
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
+      },
+      "command": "list_all_tags_in_space",
+      "comment": "The harness space lists its OWN `todo` and not `Work`'s: the listing is scoped by the tag block's space, and the cache row it reads is the per-space one.",
+      "name": "the_harness_space_lists_only_its_own_todo"
+    }
+  ],
+  "seed": {
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Tags",
+        "id": "S1",
+        "parent_id": null,
+        "position": 1
+      },
+      {
+        "block_type": "tag",
+        "content": "todo",
+        "id": "S2",
+        "parent_id": "S1",
+        "position": 1
+      }
+    ],
+    "properties": [],
+    "tags": []
+  }
+}

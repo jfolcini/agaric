@@ -244,6 +244,27 @@ describe('TagList', () => {
     expect(input).toHaveValue('')
   })
 
+  // #5236 — the backend answers an existing name in the space (a case variant
+  // too) with THAT tag, not a new one; the list already shows it.
+  it('lists a tag once when the create resolves to an existing tag', async () => {
+    const user = userEvent.setup()
+    stubTags([makeTag('T1', 'project')], {
+      create_block: () =>
+        withOps(makeBlockRow({ id: 'T1', block_type: 'tag', content: 'project', position: null })),
+    })
+
+    render(<TagList />)
+    expect(await screen.findByTestId('tag-item-project')).toBeInTheDocument()
+
+    await user.type(screen.getByPlaceholderText('New tag name...'), 'Project')
+    await user.click(screen.getByRole('button', { name: /Add Tag/i }))
+
+    await waitFor(() => {
+      expect(screen.getByPlaceholderText('New tag name...')).toHaveValue('')
+    })
+    expect(screen.getAllByTestId('tag-item-project')).toHaveLength(1)
+  })
+
   it('does not submit when input is empty', async () => {
     const user = userEvent.setup()
     stubTags([])

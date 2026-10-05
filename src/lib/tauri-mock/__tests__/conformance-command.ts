@@ -154,6 +154,13 @@ const RETURN_SHAPE: Readonly<Record<string, ReturnShape>> = {
     lists: [],
     rows: 'blocks',
   },
+  // #5236 — the single create answers with the one row, under the batch's
+  // attributes; `op_refs` is dropped like every other `WithOps` envelope.
+  create_block: {
+    idKey: 'id',
+    attrs: ['block_type', 'content', 'parent_id', 'position'],
+    lists: [],
+  },
   move_blocks_batch: {
     idKey: 'block_id',
     attrs: ['new_parent_id', 'new_position'],

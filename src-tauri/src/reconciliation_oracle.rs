@@ -1362,6 +1362,9 @@ pub struct DerivedTagRow {
     pub name: String,
     /// Distinct LIVE source blocks referencing this tag, explicitly or inline.
     pub usage_count: i64,
+    /// The tag block's own `blocks.space_id` (#5237): the name slot is
+    /// `UNIQUE (space_id, name)`, so this is half of the dedup key.
+    pub space_id: Option<String>,
 }
 
 async fn dump_block_tags(pool: &SqlitePool) -> Result<Vec<(String, String)>, AppError> {
@@ -1372,7 +1375,7 @@ async fn dump_block_tags(pool: &SqlitePool) -> Result<Vec<(String, String)>, App
 }
 
 async fn dump_tags_cache(pool: &SqlitePool) -> Result<BTreeMap<String, DerivedTagRow>, AppError> {
-    let rows = sqlx::query!("SELECT tag_id, name, usage_count FROM tags_cache")
+    let rows = sqlx::query!("SELECT tag_id, name, usage_count, space_id FROM tags_cache")
         .fetch_all(pool)
         .await?;
     Ok(rows
@@ -1383,6 +1386,7 @@ async fn dump_tags_cache(pool: &SqlitePool) -> Result<BTreeMap<String, DerivedTa
                 DerivedTagRow {
                     name: r.name,
                     usage_count: r.usage_count,
+                    space_id: r.space_id,
                 },
             )
         })
@@ -1401,9 +1405,10 @@ async fn dump_tags_cache(pool: &SqlitePool) -> Result<BTreeMap<String, DerivedTa
 ///     DISTINCT) of `block_tags` and `block_tag_refs`, each arm keeping only
 ///     pairs whose SOURCE block is live. A tag with no usages still gets a row,
 ///     via the `LEFT JOIN` + `COALESCE(…, 0)`;
-///   * duplicate names collapse (#626): `tags_cache.name` is UNIQUE but
-///     `blocks.content` is not, so among live tags sharing a name only the
-///     SMALLEST `id` survives. Identity is
+///   * duplicate names collapse (#626): `tags_cache` is `UNIQUE (space_id,
+///     name)` but `blocks.content` is not, so among live tags of ONE SPACE
+///     sharing a name only the SMALLEST `id` survives; the same name in
+///     another space is its own row (#5237). Identity is
 ///     [`agaric_core::tag_norm::normalize_tag_name`] — NFC → full-Unicode
 ///     lowercase → NFC — and NOT `COLLATE NOCASE`, which folds ASCII only and
 ///     split non-ASCII case-variants the sync engine had already merged
@@ -1452,11 +1457,11 @@ fn fold_tags_cache_from_base(
         usages.entry(tag_id).or_default().insert(source_id);
     }
 
-    // Survivors: smallest id per normalised name, among live named tags. The
-    // content travels WITH the winner: recovering it afterwards would need a
-    // fallback for the NULL the `else { continue }` above already excluded, and
-    // that fallback would assert `name: ""` instead of failing.
-    let mut winner_by_norm: BTreeMap<String, (&str, &str)> = BTreeMap::new();
+    // Survivors: smallest id per (space, normalised name), among live named
+    // tags. The content travels WITH the winner: recovering it afterwards
+    // would need a fallback for the NULL the `else { continue }` above already
+    // excluded, and that fallback would assert `name: ""` instead of failing.
+    let mut winner_by_norm: BTreeMap<(Option<&str>, String), (&str, &str)> = BTreeMap::new();
     for tag in blocks
         .iter()
         .filter(|b| b.block_type == "tag" && b.deleted_at.is_none())
@@ -1464,7 +1469,10 @@ fn fold_tags_cache_from_base(
         let Some(content) = tag.content.as_deref() else {
             continue;
         };
-        let key = agaric_core::tag_norm::normalize_tag_name(content);
+        let key = (
+            tag.space_id.as_deref(),
+            agaric_core::tag_norm::normalize_tag_name(content),
+        );
         winner_by_norm
             .entry(key)
             .and_modify(|held| {
@@ -1476,8 +1484,8 @@ fn fold_tags_cache_from_base(
     }
 
     winner_by_norm
-        .into_values()
-        .map(|(id, content)| {
+        .into_iter()
+        .map(|((space_id, _), (id, content))| {
             let usage_count = usages.get(id).map_or(0, |sources| {
                 i64::try_from(sources.len()).unwrap_or(i64::MAX)
             });
@@ -1486,6 +1494,7 @@ fn fold_tags_cache_from_base(
                 DerivedTagRow {
                     name: content.to_owned(),
                     usage_count,
+                    space_id: space_id.map(str::to_owned),
                 },
             )
         })
@@ -1534,6 +1543,13 @@ pub async fn reconcile_tags_cache(
                 actual: format!("{}", got.usage_count),
                 owner: TAGS_CACHE_OWNER,
             }),
+            Some(got) if got.space_id != want.space_id => out.push(Divergence {
+                artefact: "tags_cache.space_id",
+                key: tag_id.clone(),
+                expected: format!("{:?} (the tag block's own blocks.space_id)", want.space_id),
+                actual: format!("{:?}", got.space_id),
+                owner: TAGS_CACHE_OWNER,
+            }),
             Some(_) => {}
         }
     }
@@ -1546,7 +1562,7 @@ pub async fn reconcile_tags_cache(
             artefact: "tags_cache.row",
             key: tag_id.clone(),
             expected: "no row (the tag is deleted, has NULL content, or lost the #626 \
-                       duplicate-name tie-break to a smaller id)"
+                       duplicate-name tie-break to a smaller id in its space)"
                 .to_owned(),
             actual: "a row in tags_cache".to_owned(),
             owner: TAGS_CACHE_OWNER,

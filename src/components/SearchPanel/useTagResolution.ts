@@ -18,8 +18,8 @@
  *    one pretending the tag filter applied.
  *
  * Settled-but-unresolved names are cached as `null` entries, which also
- * prevents the resolve effect from re-firing the prefix lookup for the
- * same unknown name on every map identity change. A name-change event that
+ * prevents the resolve effect from re-firing the lookup for the same
+ * unknown name on every map identity change. A name-change event that
  * could have created the tag drops them again (#5255).
  *
  * The cache keys on the lowercased name only and is therefore
@@ -29,10 +29,10 @@
 import { useEffect, useMemo, useState } from 'react'
 
 import { unwrap } from '@/lib/app-error'
-import { commands } from '@/lib/bindings'
+import { commands, type TagCacheRow } from '@/lib/bindings'
 import { logger } from '@/lib/logger'
 import { subscribeToNameChanges } from '@/lib/name-change-bus'
-import { paginationLimit } from '@/lib/safe-limit'
+import { requireActiveScope } from '@/lib/space-scope'
 
 export interface TagResolution {
   /** Ids for the names that resolved. One entry per resolved input name. */
@@ -68,63 +68,47 @@ export function useTagResolution(
     return { tagIds, pending, hasUnresolved }
   }, [tagNames, tagNameMap])
 
-  // Resolve unsettled tag names via the prefix lookup. `null` entries
-  // count as settled, so an unknown name is not re-fetched on every map
-  // identity change — only after a name change drops it (below).
+  // Resolve unsettled tag names from the active space's own tag list, one
+  // listing for all of them. A name is unique per space, not per vault
+  // (#5237), so the unscoped prefix lookup could answer another space's id
+  // and the space-scoped search then matched nothing. `null` entries count
+  // as settled, so an unknown name is not re-fetched on every map identity
+  // change — only after a name change drops it (below). With no active space
+  // there is no search to resolve for (`useSearchResults` holds the query).
   useEffect(() => {
-    // #2275 — dedupe by lowercased cache key before the fan-out. The cache
-    // keys on the lowercased name, so case-variant duplicates
-    // (`tag:#Foo tag:#foo`) both pass a naive `!has(lower)` filter and would
-    // fire one prefix-lookup IPC each for the same key. Collapse to one entry
-    // per key (keeping the first original spelling for the prefix lookup).
-    const byKey = new Map<string, string>()
-    for (const n of tagNames) {
-      const lower = n.toLowerCase()
-      if (!tagNameMap.has(lower) && !byKey.has(lower)) byKey.set(lower, n)
-    }
-    const names = [...byKey.values()]
-    if (names.length === 0) return
-    let cancelled = false
-    Promise.all(
-      names.map((name) =>
-        commands
-          .listTagsByPrefix(name, paginationLimit(20))
-          .then(unwrap)
-          .catch(() => []),
-      ),
+    if (currentSpaceId == null) return
+    const unsettled = [...new Set(tagNames.map((n) => n.toLowerCase()))].filter(
+      (lower) => !tagNameMap.has(lower),
     )
-      .then((batches) => {
-        if (cancelled) return
-        setTagNameMap((prev) => {
-          const next = new Map(prev)
-          for (let i = 0; i < names.length; i++) {
-            const name = names[i]
-            const batch = batches[i]
-            if (!name || !batch) continue
-            const lower = name.toLowerCase()
-            const exact = batch.find((t) => t.name.toLowerCase() === lower)
-            // #717 — record the settled outcome either way: an exact match
-            // resolves to its id; no match (or a failed lookup, which the
-            // per-name `.catch` collapses to `[]`) settles as `null` so the
-            // caller can project a matches-nothing filter instead of
-            // silently dropping the tag constraint.
-            next.set(lower, exact ? exact.tag_id : null)
-          }
-          return next
-        })
+    if (unsettled.length === 0) return
+    let cancelled = false
+    // #717 — record the settled outcome either way: an exact match resolves
+    // to its id; no match settles as `null` so the caller can project a
+    // matches-nothing filter instead of silently dropping the tag constraint.
+    const settle = (tags: readonly TagCacheRow[]) => {
+      if (cancelled) return
+      setTagNameMap((prev) => {
+        const next = new Map(prev)
+        for (const lower of unsettled) {
+          const exact = tags.find((t) => t.name.toLowerCase() === lower)
+          next.set(lower, exact ? exact.tag_id : null)
+        }
+        return next
       })
-      .catch((err) => logger.warn('SearchPanel', 'tag resolution failed', undefined, err))
+    }
+    commands
+      .listAllTagsInSpace(requireActiveScope(currentSpaceId))
+      .then(unwrap)
+      .then(settle)
+      .catch((err: unknown) => {
+        // A failed lookup settles as unresolved: empty results beat
+        // unfiltered ones pretending the tag filter applied.
+        logger.warn('SearchPanel', 'tag resolution failed', { spaceId: currentSpaceId }, err)
+        settle([])
+      })
     return () => {
       cancelled = true
     }
-    // `currentSpaceId` is deliberately a dep even though the body doesn't
-    // read it: a space switch must run this cleanup (`cancelled = true`)
-    // synchronously in the SAME passive-effect flush that clears the
-    // cache below. Without it the cleanup only runs one commit later
-    // (after the cleared map re-triggers this effect), leaving a
-    // microtask gap where an in-flight OLD-space lookup can land and
-    // write old-space ids / null settles into the new space's cache —
-    // entries that count as settled and would never be re-resolved.
   }, [tagNames, tagNameMap, currentSpaceId])
 
   // Drop the space-scoped cache on space switch. The functional
