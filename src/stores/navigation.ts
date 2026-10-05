@@ -2,7 +2,7 @@
  * Navigation store — Zustand state for the active sidebar view + selected
  * Block highlight (split).
  *
- * Owns three pieces of state:
+ * Owns these pieces of state:
  *
  *  - `currentView` — which top-level view is rendered (`'journal'`,
  *    `'pages'`, `'page-editor'`, …). The active-space mirror of
@@ -20,6 +20,9 @@
  *    lives in `useTabsStore`) and consumed by `PageEditor` / `DailyView`
  *    on mount as a one-shot. NOT persisted — block-level selection is
  *    a transient UI affordance, not a layout choice.
+ *  - `navHistoryBySpace` — the header's Back / Forward history per space,
+ *    in memory only. Written by `./navigation-history`, which records and
+ *    replays it across this store, tabs and journal.
  *
  * Tab state (page stacks, tabsBySpace, activeTabIndex, navigateToPage,
  * goBack, openInNewTab, closeTab, switchTab, replacePage) lives in
@@ -41,6 +44,7 @@ import { persist } from 'zustand/middleware'
 
 import { safePersistStorage } from '@/lib/safe-persist-storage'
 import { createPerSpaceSlice } from '@/stores/createPerSpaceSlice'
+import type { JournalMode } from '@/stores/journal'
 import { LEGACY_SPACE_KEY } from '@/stores/space'
 import type { View } from '@/types/view'
 
@@ -48,6 +52,26 @@ import type { View } from '@/types/view'
 // consumers can depend on it without importing `stores/`. Re-exported here
 // unchanged so every existing importer of this module keeps working.
 export type { View } from '@/types/view'
+
+/**
+ * One step of the header's Back / Forward history: a journal period, a page
+ * in a given tab, or any other view. Recorded and replayed by
+ * `@/stores/navigation-history`.
+ */
+export type NavLocation =
+  | { kind: 'journal'; mode: JournalMode; date: string }
+  | { kind: 'page'; tabId: string; pageId: string; title: string }
+  | { kind: 'view'; view: Exclude<View, 'journal' | 'page-editor'> }
+
+export interface NavHistory {
+  entries: NavLocation[]
+  index: number
+}
+
+/** Oldest entries drop past this, so a long session cannot grow the list without bound. */
+export const MAX_NAV_HISTORY = 100
+
+const EMPTY_NAV_HISTORY: NavHistory = { entries: [], index: -1 }
 
 interface NavigationStore {
   /** Active sidebar / content view. Mirrors `currentViewBySpace[currentSpaceId]`. */
@@ -76,6 +100,12 @@ interface NavigationStore {
    * exactly once; NOT persisted (excluded from `partialize`).
    */
   pendingSettingsTab: string | null
+  /**
+   * Back / Forward history per space (a page id means nothing in another
+   * space). In memory only: excluded from `partialize`, so it starts empty
+   * on each launch.
+   */
+  navHistoryBySpace: Record<string, NavHistory>
 
   /** Switch sidebar view. DON'T touch tabs (preserve them across view changes). */
   setView: (view: View) => void
@@ -87,6 +117,8 @@ interface NavigationStore {
   setPendingPageBrowserFilter: (q: string | null) => void
   /** Write or clear the pending Settings-tab handoff slot (#734). */
   setPendingSettingsTab: (tab: string | null) => void
+  /** Replace a space's Back / Forward history. Written only by `@/stores/navigation-history`. */
+  setNavHistory: (spaceKey: string, history: NavHistory) => void
 }
 
 type NavigationState = NavigationStore
@@ -174,6 +206,11 @@ function coercePersistedNavigation(
   return { currentView, currentViewBySpace, selectedBlockId: null }
 }
 
+/** The Back / Forward history of `spaceKey`, empty when it has none yet. */
+export function selectNavHistory(state: NavigationState, spaceKey: string): NavHistory {
+  return state.navHistoryBySpace[spaceKey] ?? EMPTY_NAV_HISTORY
+}
+
 /**
  * Per-space view selector. Pass `currentSpaceId` from
  * `useSpaceStore`.
@@ -221,6 +258,7 @@ export const useNavigationStore = create<NavigationStore>()(
       selectedBlockId: null,
       pendingPageBrowserFilter: null,
       pendingSettingsTab: null,
+      navHistoryBySpace: {},
 
       setView: (view: View) => {
         set(navigationSlice.applyActive(get(), view))
@@ -240,6 +278,12 @@ export const useNavigationStore = create<NavigationStore>()(
 
       setPendingSettingsTab: (tab: string | null) => {
         set({ pendingSettingsTab: tab })
+      },
+
+      setNavHistory: (spaceKey: string, history: NavHistory) => {
+        set((state) => ({
+          navHistoryBySpace: { ...state.navHistoryBySpace, [spaceKey]: history },
+        }))
       },
     }),
     {

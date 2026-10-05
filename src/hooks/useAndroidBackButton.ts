@@ -19,8 +19,9 @@
  *   1. overlay open → close topmost overlay (`overlayBackHandler`)
  *   2. zoomed BlockTree → zoom out one level (registered by
  *      `useBlockZoom` at `BACK_PRIORITY_ZOOM` while zoomed)
- *   3. in-app history → page-stack `goBack()` / leave the editor for the
- *      view its stack was opened from / non-root view → journal
+ *   3. in-app history → the header's Back history; with none left (a fresh
+ *      launch), page-stack `goBack()` / leave the editor for the view its
+ *      stack was opened from / non-root view → journal
  *      (`navigationBackHandler`)
  *   4. nothing handled (true root: journal view, no zoom, no overlay) →
  *      exit the app via `@tauri-apps/plugin-process` `exit(0)`

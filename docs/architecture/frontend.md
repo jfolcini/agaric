@@ -58,7 +58,7 @@ Actions whose result gates a caller's follow-up decision resolve a **boolean**; 
 
 `src/components/pages/ViewDispatcher.tsx` is the single source of truth for which view renders. It switches on `useNavigationStore.currentView` (a 12-value enum: `journal | search | pages | tags | trash | status | history | templates | settings | graph | query | page-editor`).
 
-No router. Navigation is store-driven. `useTabsStore` owns the per-tab page stack; `useNavigationStore` owns the active view. `agaric://` deep links are parsed by the Rust backend, emitted as Tauri events, and dispatched into the nav / tabs stores by `useDeepLinkRouter`.
+No router. Navigation is store-driven. `useTabsStore` owns the per-tab page stack; `useNavigationStore` owns the active view and the per-space Back / Forward history, which `src/stores/navigation-history.ts` records and replays. `agaric://` deep links are parsed by the Rust backend, emitted as Tauri events, and dispatched into the nav / tabs stores by `useDeepLinkRouter`.
 
 **Lazy boundary.** Only `JournalPage` is eager-mounted. Every other view is `React.lazy()` + `<Suspense fallback={<ViewFallback />}>`. Each lazy view becomes its own Rollup chunk.
 

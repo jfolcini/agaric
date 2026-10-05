@@ -67,6 +67,7 @@ describe('useAndroidBackButton', () => {
       currentView: 'journal',
       currentViewBySpace: {},
       selectedBlockId: null,
+      navHistoryBySpace: {},
     })
     useTabsStore.setState({
       tabs: [{ id: '0', pageStack: [], label: '' }],

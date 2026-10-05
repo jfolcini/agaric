@@ -47,6 +47,8 @@ export const common: Record<string, string> = {
   // visible sidebar to "toggle", the control opens a navigation drawer, and
   // "menu" is the word touch users are scanning the header for.
   'sidebar.openMenu': 'Open navigation menu',
+  'nav.back': 'Back',
+  'nav.forward': 'Forward',
   'sidebar.newPageTooltip': 'New Page (Ctrl+N)',
   'sidebar.offline': 'Offline',
   'sidebar.syncTooltip': 'Sync all devices',

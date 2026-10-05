@@ -2,6 +2,7 @@ import { lazy, type ReactElement, Suspense, useCallback, useEffect, useRef, useS
 import { useTranslation } from 'react-i18next'
 
 import { FeatureErrorBoundary } from '@/components/common/FeatureErrorBoundary'
+import { HistoryNavButtons } from '@/components/common/HistoryNavButtons'
 import { GlobalDateControls, JournalControls } from '@/components/JournalPage'
 import { AppSidebar } from '@/components/layout/AppSidebar'
 import { QuickAccessBar } from '@/components/layout/QuickAccessBar'
@@ -538,6 +539,7 @@ function App() {
                   is where a navigation-drawer trigger is looked for. Renders
                   nothing on desktop. */}
               <MobileSidebarTrigger />
+              <HistoryNavButtons />
               {/* The header's own content wraps below `sm` for the non-journal
                   views (controls drop under a long title). The wrapping is
                   scoped to this wrapper so the hamburger stays on the leading
