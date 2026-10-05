@@ -56,6 +56,8 @@ import { logger } from '@/lib/logger'
 import { invalidateNameCaches, notifyPagesRemoved } from '@/lib/name-change-bus'
 import { notify } from '@/lib/notify'
 import { requireActiveScope } from '@/lib/space-scope'
+import { announcePagesMovedOut } from '@/stores/page-move'
+import { useResolveStore } from '@/stores/resolve'
 import { useSpaceStore } from '@/stores/space'
 
 export interface PageBrowserBatchToolbarProps {
@@ -213,12 +215,14 @@ export function PageBrowserBatchToolbar({
   // `usePageDeleteAction.handleUndo` uses; it cascade-restores each root's
   // subtree, which is exactly what `deleteBlocksByIds` cascaded away.
   const handleUndoTrash = useCallback(
-    (ids: string[]) => {
+    (ids: string[], spaceId: string | null) => {
       commands
         .restoreBlocksByIds(ids)
         .then(unwrap)
         .then(() => {
           onMutated()
+          // #5246 — the chips the trash struck through go live again.
+          void useResolveStore.getState().refreshDeleted(spaceId)
           // #4007 — the restored pages must become offerable again in the
           // `[[` picker, whose cache dropped them on the trash below.
           invalidateNameCaches()
@@ -283,10 +287,15 @@ export function PageBrowserBatchToolbar({
       //
       // #4558 — cascade is space-less, see notifyPageRemoved.
       notifyPagesRemoved(ids, currentSpaceId, cascadedPageIds)
+      // #5246 — and every chip to a trashed page renders deleted.
+      useResolveStore.getState().markDeleted(currentSpaceId, [...ids, ...cascadedPageIds])
       onClearSelection()
       onMutated()
       notify.success(t('pageBrowser.batch.trashed', { count }), {
-        action: { label: t('action.undo'), onClick: () => handleUndoTrash(ids) },
+        action: {
+          label: t('action.undo'),
+          onClick: () => handleUndoTrash(ids, currentSpaceId),
+        },
       })
     } catch (err) {
       logger.error('PageBrowserBatchToolbar', 'bulk trash failed', { count: ids.length }, err)
@@ -317,6 +326,8 @@ export function PageBrowserBatchToolbar({
     setBusy(true)
     try {
       const count = unwrap(await commands.addTagsByIds(selectedIds, selectedTagId))
+      // #5250 — a tag-filtered graph view reads the structure counter.
+      recordGraphStructureChange()
       closePickers()
       onClearSelection()
       onMutated()
@@ -373,7 +384,7 @@ export function PageBrowserBatchToolbar({
       // taste: the delete cascade walks `parent_id` with no page-boundary
       // stop, so it really does sweep nested pages out. Hence the union in
       // `handleTrash` and the plain `ids` cohort here.
-      notifyPagesRemoved(ids, currentSpaceId)
+      announcePagesMovedOut(ids, currentSpaceId)
       closePickers()
       onClearSelection()
       onMutated()

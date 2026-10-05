@@ -53,7 +53,7 @@ export function useRichContentCallbacks(): RichContentCallbacks {
     // #4515 — `!resolved` counts as deleted, mirroring
     // `useResolveStore.resolveStatus` (this reads the same entries): an entry
     // the backend never returned is a broken target, not a live chip. Inert
-    // today — the sole `resolved: false` writer also sets `deleted: true`.
+    // today — every `resolved: false` writer also sets `deleted: true`.
     if (cached) return cached.deleted || !cached.resolved ? 'deleted' : 'active'
     return 'active'
   }, [])

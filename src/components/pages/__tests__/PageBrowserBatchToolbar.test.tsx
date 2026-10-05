@@ -38,12 +38,14 @@ import { useBlockResolve } from '@/components/block-tree/use-block-resolve'
 import { PageBrowserBatchToolbar } from '@/components/pages/PageBrowserBatchToolbar'
 import {
   _resetGraphStructureEventsForTest,
+  DEBOUNCE_MS as GRAPH_DEBOUNCE_MS,
   getGraphStructureKey,
 } from '@/lib/graph-structure-events'
 import { t } from '@/lib/i18n'
 import type { NameChange } from '@/lib/name-change-bus'
 import { NAME_CACHE_FANOUT_MAX_IDS, subscribeToNameChanges } from '@/lib/name-change-bus'
 import { getStarredPages } from '@/lib/starred-pages'
+import { keyFor, useResolveStore } from '@/stores/resolve'
 import { useSpaceStore } from '@/stores/space'
 
 // Partial-mock the generated bindings so the bulk set-property path can be
@@ -1024,5 +1026,129 @@ describe('batch move-to-space — name-cache fan-out (#4450)', () => {
     const idsAfter = after.filter((i) => !i.isCreate).map((i) => i.id)
     expect(idsAfter).not.toContain('P_MOVED')
     expect(idsAfter).toContain('P_STAYS')
+  })
+})
+
+// #5246 / #5248 / #5250 — what the chips and the graph see after a batch action.
+describe('batch actions — resolve cache and graph', () => {
+  beforeEach(() => {
+    useResolveStore.setState({ cache: new Map(), version: 0, _preloaded: false })
+    for (const id of ['P1', 'P2', 'NESTED', 'UNTOUCHED']) {
+      useResolveStore.getState().set(id, `Page ${id}`, false)
+    }
+  })
+
+  async function confirmTrash(user: ReturnType<typeof userEvent.setup>): Promise<void> {
+    await user.click(screen.getByTestId('page-batch-trash-btn'))
+    await user.click(
+      await screen.findByRole('button', { name: t('pageBrowser.batch.trashConfirmAction') }),
+    )
+    await waitFor(() => {
+      expect(mockedToastSuccess).toHaveBeenCalled()
+    })
+  }
+
+  it('Trash renders the trashed and cascaded pages deleted; Undo brings them back', async () => {
+    const user = userEvent.setup()
+    stubInvoke({
+      delete_blocks_by_ids: () => trashReply(['P1', 'P2'], ['NESTED']),
+      restore_blocks_by_ids: () => ({ affected_count: 3 }),
+      batch_resolve: (args) =>
+        ((args['ids'] as string[] | undefined) ?? []).map((id) => ({
+          id,
+          title: `Page ${id}`,
+          block_type: 'page',
+          deleted: false,
+        })),
+    })
+    renderToolbar({ selectedIds: ['P1', 'P2'] })
+
+    await confirmTrash(user)
+
+    const status = (id: string) => useResolveStore.getState().resolveStatus(id)
+    expect(['P1', 'P2', 'NESTED', 'UNTOUCHED'].map(status)).toEqual([
+      'deleted',
+      'deleted',
+      'deleted',
+      'active',
+    ])
+
+    const call = mockedToastSuccess.mock.calls.at(-1)
+    ;(call?.[1] as { action?: { onClick?: () => void } } | undefined)?.action?.onClick?.()
+
+    await waitFor(() => {
+      expect(['P1', 'P2', 'NESTED'].map(status)).toEqual(['active', 'active', 'active'])
+    })
+  })
+
+  it('Move to space renders the moved pages broken in the origin space', async () => {
+    const user = userEvent.setup()
+    stubInvoke({ move_blocks_to_space: () => 1 })
+    renderToolbar({ selectedIds: ['P1'] })
+
+    await user.click(screen.getByTestId('page-batch-move-btn'))
+    await user.selectOptions(
+      await screen.findByRole('combobox', { name: t('pageBrowser.batch.spacePlaceholder') }),
+      'SPACE_OTHER',
+    )
+    await user.click(screen.getByTestId('page-batch-space-confirm'))
+
+    await waitFor(() => {
+      expect(useResolveStore.getState().cache.get(keyFor('SPACE_TEST', 'P1'))?.deleted).toBe(true)
+    })
+    expect(useResolveStore.getState().resolveStatus('P2')).toBe('active')
+  })
+
+  it('Add tag bumps the graph-structure counter', async () => {
+    const user = userEvent.setup()
+    stubInvoke({ list_all_tags_in_space: () => tagRows, add_tags_by_ids: () => 3 })
+    renderToolbar()
+    _resetGraphStructureEventsForTest()
+
+    await user.click(screen.getByTestId('page-batch-add-tag-btn'))
+    const select = await screen.findByRole('combobox', {
+      name: t('pageBrowser.batch.tagPlaceholder'),
+    })
+    await waitFor(() => {
+      expect(within(screenPicker()).getByRole('option', { name: 'alpha' })).toBeInTheDocument()
+    })
+    await user.selectOptions(select, 'TAG_A')
+    await user.click(screen.getByTestId('page-batch-tag-confirm'))
+
+    await waitFor(() => {
+      expect(getGraphStructureKey()).toBe(1)
+    })
+  })
+
+  it('a failed Add tag leaves the graph-structure counter alone', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    try {
+      const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime })
+      stubInvoke({
+        list_all_tags_in_space: () => tagRows,
+        add_tags_by_ids: () => Promise.reject(new Error('backend boom')),
+      })
+      renderToolbar()
+      _resetGraphStructureEventsForTest()
+
+      await user.click(screen.getByTestId('page-batch-add-tag-btn'))
+      const select = await screen.findByRole('combobox', {
+        name: t('pageBrowser.batch.tagPlaceholder'),
+      })
+      await waitFor(() => {
+        expect(within(screenPicker()).getByRole('option', { name: 'alpha' })).toBeInTheDocument()
+      })
+      await user.selectOptions(select, 'TAG_A')
+      await user.click(screen.getByTestId('page-batch-tag-confirm'))
+
+      await waitFor(() => {
+        expect(mockedToastError).toHaveBeenCalledWith(t('pageBrowser.batch.addTagFailed'))
+      })
+      // Past the counter's debounce, so a bump would have landed by now.
+      await vi.advanceTimersByTimeAsync(GRAPH_DEBOUNCE_MS + 1)
+      expect(getGraphStructureKey()).toBe(0)
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })

@@ -30,6 +30,7 @@ import { Button } from '@/components/ui/button'
 import { FeaturePageHeader } from '@/components/ui/feature-page-header'
 import { SearchInput } from '@/components/ui/search-input'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
+import { invalidateCalendarPageDates } from '@/hooks/useCalendarPageDates'
 import { useListKeyboardNavigation } from '@/hooks/useListKeyboardNavigation'
 import { useListMultiSelect } from '@/hooks/useListMultiSelect'
 import { useRichContentCallbacks, useTagClickHandler } from '@/hooks/useRichContentCallbacks'
@@ -251,6 +252,9 @@ export function TrashView(): React.ReactElement {
           // them and let the next picker read re-fetch.
           invalidateNameCaches()
         }
+        // #5246 — chips into the restored subtree go live; #5247 — a journal page is back.
+        void useResolveStore.getState().refreshDeleted(currentSpaceId)
+        invalidateCalendarPageDates()
         notify.success(t('trash.blockRestored'))
         announce(t('announce.blockRestored'))
       } catch (err) {
@@ -259,7 +263,7 @@ export function TrashView(): React.ReactElement {
         announce(t('announce.restoreFailed'))
       }
     },
-    [setBlocks, t],
+    [currentSpaceId, setBlocks, t],
   )
 
   const handlePurge = useCallback(
@@ -314,6 +318,8 @@ export function TrashView(): React.ReactElement {
       // #4007 — same as the single-row restore above: the picker caches have
       // no other way to learn a page/tag is offerable again.
       if (restoredNamedEntity) invalidateNameCaches()
+      void useResolveStore.getState().refreshDeleted(currentSpaceId) // #5246
+      invalidateCalendarPageDates() // #5247
     } catch (err) {
       // Surface the failure (matching the single-item path) and KEEP the
       // selection so the user can retry — clearing it here would silently
@@ -336,7 +342,7 @@ export function TrashView(): React.ReactElement {
       notify.success(t('trash.batchRestored', { count: restored }))
       announce(t('announce.batchRestored', { count: restored }))
     }
-  }, [blocks, selected, reload, clearSelection, t])
+  }, [blocks, selected, currentSpaceId, reload, clearSelection, t])
 
   // Sub-fix 8: gated entry point for the batch restore action.
   // Restores immediately for small selections; surfaces a confirmation
@@ -464,6 +470,8 @@ export function TrashView(): React.ReactElement {
         // them and let the next picker read re-fetch.
         invalidateNameCaches()
         recordGraphStructureChange() // #4963
+        void useResolveStore.getState().refreshDeleted(currentSpaceId) // #5246
+        invalidateCalendarPageDates() // #5247
         notify.success(t('trash.allRestored', { count: result.affected_count }))
         announce(t('announce.allRestored', { count: result.affected_count }))
       }
@@ -474,6 +482,8 @@ export function TrashView(): React.ReactElement {
       if (err instanceof PartialPurgeError && err.affectedCount > 0) {
         invalidateNameCaches()
         recordGraphStructureChange()
+        void useResolveStore.getState().refreshDeleted(currentSpaceId)
+        invalidateCalendarPageDates()
         reload()
         clearSelection()
         setConfirmRestoreAll(false)

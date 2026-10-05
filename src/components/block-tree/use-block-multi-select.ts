@@ -9,6 +9,7 @@ import { notifyPagesRemoved } from '@/lib/name-change-bus'
 import { notify } from '@/lib/notify'
 import { buildIndexById, getDragDescendants } from '@/lib/tree-utils'
 import type { PageBlockState } from '@/stores/page-blocks'
+import { useResolveStore } from '@/stores/resolve'
 import { useUndoStore } from '@/stores/undo'
 
 export interface UseBlockMultiSelectParams {
@@ -279,8 +280,8 @@ export function useBlockMultiSelect({
         // AT COMMIT TIME (#714 discipline), and `pageStore.setState` is
         // augmented to rebuild `blocksById` from the filtered array, so the
         // id→block map is reconciled in the same write.
+        const removed = new Set(ids)
         pageStore.setState((s) => {
-          const removed = new Set(ids)
           // #2041 — one shared `id → index` map for the whole selection, so
           // each root's descendant walk is an O(1) lookup instead of its own
           // `findIndex` scan over `s.blocks`.
@@ -292,6 +293,8 @@ export function useBlockMultiSelect({
           }
           return { blocks: s.blocks.filter((b) => !removed.has(b.id)) }
         })
+        // #5246 — chips pointing into the deleted subtrees render deleted.
+        useResolveStore.getState().markDeleted(currentSpaceId, [...removed, ...cascadedPageIds])
         // C4 (#217) — the batch delete appended DeleteBlock ops to the
         // page op-log (one per root), so Ctrl+Z genuinely reverses it
         // via undo_page_op. Mark a new action so the redo stack/depth

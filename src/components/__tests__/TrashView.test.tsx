@@ -19,7 +19,7 @@
  */
 
 import { invoke } from '@tauri-apps/api/core'
-import { act, render, screen, waitFor, within } from '@testing-library/react'
+import { act, render, renderHook, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { toast } from 'sonner'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
@@ -29,6 +29,10 @@ import { emptyPage, makeBlock } from '@/__tests__/fixtures'
 import { type TypedInvokeHandlers, mockInvokeCommands } from '@/__tests__/helpers/invoke'
 import { mockReactVirtual } from '@/__tests__/mocks/react-virtual'
 import { TrashView } from '@/components/TrashView'
+import {
+  __resetCalendarPageDatesForTests,
+  useCalendarPageDates,
+} from '@/hooks/useCalendarPageDates'
 import type { AppError } from '@/lib/app-error'
 import {
   _resetGraphStructureEventsForTest,
@@ -84,6 +88,19 @@ function stubInvoke(handlers: Readonly<TypedInvokeHandlers>) {
  * Helper: mock invoke to return items on list_trash and empty [] on batch_resolve.
  * Returns the page so callers can reference it.
  */
+/** Range fetches one fresh journal mount makes: 0 while its page map is cached, 1 once dropped. */
+async function journalFetchesOnMount(): Promise<number> {
+  const fetches = () =>
+    mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'list_journal_pages_in_range').length
+  const before = fetches()
+  const { result, unmount } = renderHook(() =>
+    useCalendarPageDates({ startDate: '2025-01-01', endDate: '2025-01-31' }),
+  )
+  await waitFor(() => expect(result.current.loading).toBe(false))
+  unmount()
+  return fetches() - before
+}
+
 function mockListAndResolve(items: ReturnType<typeof makeBlock>[], hasMore = false) {
   // #4668 — `PageResponse` always carries `total_count`; this literal omitted it.
   const page = {
@@ -103,6 +120,7 @@ function mockListAndResolve(items: ReturnType<typeof makeBlock>[], hasMore = fal
 beforeEach(() => {
   vi.clearAllMocks()
   useResolveStore.setState({ cache: new Map(), version: 0, _preloaded: false })
+  __resetCalendarPageDatesForTests()
   // `useResolveStore.set` keys entries by `${currentSpaceId}::${ulid}`.
   // Pin a deterministic test space so the `cache.get` assertions below
   // can compose the same prefix.
@@ -2214,14 +2232,21 @@ describe('TrashView', () => {
         has_more: false,
         total_count: null,
       }),
-      batch_resolve: () => [],
+      batch_resolve: (args) =>
+        ((args['ids'] as string[] | undefined) ?? [])
+          .filter((id) => id === 'B1')
+          .map((id) => ({ id, title: 'item 1', block_type: 'content', deleted: false })),
       restore_blocks_by_ids: () => {
         restoreCalls += 1
         if (restoreCalls === 1) return { affected_count: MAX_TRASH_BATCH_IDS }
         throw new Error('db error on second chunk')
       },
       trash_descendant_counts: () => ({}),
+      list_journal_pages_in_range: () => [],
     })
+    // #5246 / #5247 — the committed chunk's chips and journal pages are back too.
+    useResolveStore.getState().set('B1', 'item 1', true)
+    expect(await journalFetchesOnMount()).toBe(1)
 
     const changes: NameChange[] = []
     const unsubscribe = subscribeToNameChanges((c) => changes.push(c))
@@ -2246,6 +2271,8 @@ describe('TrashView', () => {
       // The two invalidations the failure path used to skip.
       await waitFor(() => expect(getGraphStructureKey()).toBe(1))
       expect(changes).toEqual([{ kind: 'invalidated' }])
+      await waitFor(() => expect(useResolveStore.getState().resolveStatus('B1')).toBe('active'))
+      expect(await journalFetchesOnMount()).toBe(1)
     } finally {
       unsubscribe()
     }
@@ -2995,5 +3022,90 @@ describe('TrashView  batch restore threshold tooltip', () => {
 
     const tooltip = await screen.findByRole('tooltip')
     expect(tooltip).toHaveTextContent('Confirms restore for more than 5 items')
+  })
+})
+
+// #5246 — a chip whose target the restore brought back (the row itself or a
+// descendant its cascade restored) goes live; #5247 — a journal page restored
+// here must reappear in the journal and calendar, whose page map is cached.
+describe('TrashView restores — chips and the journal page map', () => {
+  /** The row restored, plus a chip-cached child of it the listing never shows. */
+  function stubRestore(handlers: Readonly<TypedInvokeHandlers>) {
+    stubInvoke({
+      list_trash: () => ({
+        items: [makeBlock({ id: 'R1', content: 'restorable', deleted_at: 1736899200000 })],
+        next_cursor: null,
+        has_more: false,
+        total_count: null,
+      }),
+      trash_descendant_counts: () => ({}),
+      batch_resolve: (args) =>
+        ((args['ids'] as string[] | undefined) ?? [])
+          .filter((id) => id === 'R1' || id === 'R1_CHILD')
+          .map((id) => ({ id, title: id, block_type: 'content', deleted: false })),
+      list_journal_pages_in_range: () => [],
+      ...handlers,
+    })
+    useResolveStore.getState().set('R1', 'R1', true)
+    useResolveStore.getState().set('R1_CHILD', 'R1_CHILD', true)
+  }
+
+  async function expectChipsLiveAndJournalRefetched() {
+    await waitFor(() => {
+      expect(useResolveStore.getState().resolveStatus('R1_CHILD')).toBe('active')
+    })
+    expect(useResolveStore.getState().resolveStatus('R1')).toBe('active')
+    expect(await journalFetchesOnMount()).toBe(1)
+  }
+
+  it('single restore', async () => {
+    const user = userEvent.setup()
+    stubRestore({ restore_block: () => ({ block_id: 'R1', restored_count: 2 }) })
+    expect(await journalFetchesOnMount()).toBe(1)
+    render(<TrashView />)
+
+    await user.click(await screen.findByTestId('trash-restore-btn'))
+
+    await expectChipsLiveAndJournalRefetched()
+  })
+
+  it('batch restore', async () => {
+    const user = userEvent.setup()
+    stubRestore({ restore_blocks_by_ids: () => ({ affected_count: 2 }) })
+    expect(await journalFetchesOnMount()).toBe(1)
+    render(<TrashView />)
+
+    await user.click(await screen.findByTestId('trash-item-checkbox'))
+    await user.click(screen.getByRole('button', { name: /Restore selected/i }))
+
+    await expectChipsLiveAndJournalRefetched()
+  })
+
+  it('Restore all', async () => {
+    const user = userEvent.setup()
+    stubRestore({ restore_blocks_by_ids: () => ({ affected_count: 2 }) })
+    expect(await journalFetchesOnMount()).toBe(1)
+    render(<TrashView />)
+
+    await screen.findByText('restorable')
+    await user.click(screen.getByTestId('trash-restore-all-btn'))
+    await user.click(
+      within(screen.getByRole('alertdialog')).getByRole('button', { name: /^Restore$/i }),
+    )
+
+    await expectChipsLiveAndJournalRefetched()
+  })
+
+  it('a failed restore leaves the chips deleted and the page map alone', async () => {
+    const user = userEvent.setup()
+    stubRestore({ restore_block: () => Promise.reject(new Error('restore failed')) })
+    expect(await journalFetchesOnMount()).toBe(1)
+    render(<TrashView />)
+
+    await user.click(await screen.findByTestId('trash-restore-btn'))
+
+    await waitFor(() => expect(toast.error).toHaveBeenCalledWith('Failed to restore block'))
+    expect(useResolveStore.getState().resolveStatus('R1_CHILD')).toBe('deleted')
+    expect(await journalFetchesOnMount()).toBe(0)
   })
 })

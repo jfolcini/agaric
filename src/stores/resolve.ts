@@ -145,10 +145,11 @@ interface ResolveEntry {
    * answers "is this resolved" and the title answers "what do I render",
    * independently.
    *
-   * `false` is written by exactly one place: `fetchAndCacheLinks`'
-   * unreturned-target branch (`@/components/block-tree/use-block-link-resolve`),
-   * for an id `batch_resolve` did not hand back — foreign-space or genuinely
-   * unknown.
+   * `false` is written for an id that is not in the space: by
+   * `fetchAndCacheLinks`' unreturned-target branch
+   * (`@/components/block-tree/use-block-link-resolve`), for an id
+   * `batch_resolve` did not hand back — foreign-space or genuinely unknown —
+   * and by {@link ResolveStore.markMovedOut}, for a page that just left it.
    *
    * ## Why `set`/`batchSet` default it to `true`, and what that does NOT risk
    *
@@ -232,7 +233,8 @@ interface ResolveStore {
    * touched, as already computed by `reloadChangedPageStores`. When present
    * (and within {@link TARGETED_PRELOAD_MAX_IDS}) the PAGE half of the scan
    * collapses from a paginated walk of the whole space into ONE
-   * `batchResolve` of exactly those ids. The TAG half is unconditional either
+   * `batchResolve` of those ids plus the cached blocks no walk named (#5245).
+   * The TAG half is unconditional either
    * way: tags carry no changed-id signal, so skipping them would leave a
    * remotely-renamed tag rendering its old name until the next space switch.
    * Absent / empty / oversize sets fall back to the full walk — the same
@@ -331,6 +333,31 @@ interface ResolveStore {
    * broken-link UX) instead of stale-resolving from the cache.
    */
   clearAllForSpace: (prevSpaceId: string) => void
+  /**
+   * #5246 — flag the cached entries of `ids` under `spaceId` as deleted, after a delete
+   * commits. Uncached ids are skipped: their first resolve reads the backend's verdict anyway.
+   */
+  markDeleted: (spaceId: string | null, ids: readonly string[]) => void
+  /**
+   * #5248 — after pages move out of `spaceId`, turn its cached entries for them into the
+   * unresolved one `fetchAndCacheLinks` writes for a target in another space, so their chips
+   * render broken as in a fresh session, not "(deleted)" under the old title. Uncached ids
+   * are skipped, as in {@link ResolveStore.markDeleted}.
+   */
+  markMovedOut: (spaceId: string | null, ids: readonly string[]) => void
+  /**
+   * #5245 — re-title, and mark live, the cached entries of blocks the caller holds loaded
+   * (a mounted tree's rows), so a chip follows its target's edits and undeletes. Only cached
+   * ids are written.
+   */
+  refreshCachedBlocks: (
+    blocks: ReadonlyArray<{ id: string; block_type: string; content: string | null }>,
+  ) => void
+  /**
+   * #5246 — re-resolve every entry cached as deleted under `spaceId`, after a restore whose
+   * full cohort (cascaded descendants, "Restore all") the caller cannot name. Never rejects.
+   */
+  refreshDeleted: (spaceId: string | null) => Promise<void>
 }
 
 /**
@@ -402,6 +429,29 @@ export const useResolveStore = create<ResolveStore>((set, get) => {
   const inflightPreloads = new Map<string, PreloadEntry>()
 
   /**
+   * #5245 — per space, the page ids the last full walk listed plus every tag id a scan has
+   * fetched. Any other entry cached for the space (a content block, a trashed page) is one a
+   * page-id rescan cannot name, so a targeted rescan re-resolves those alongside.
+   */
+  const namedIds = new Map<string, Set<string>>()
+
+  /** Ids cached under `spaceId` that `keep` accepts, most recently written last, at most `max`. */
+  function cachedIds(
+    spaceId: string,
+    max: number,
+    keep: (id: string, entry: ResolveEntry) => boolean,
+  ): string[] {
+    const prefix = `${spaceId}::`
+    const ids: string[] = []
+    for (const [key, entry] of get().cache) {
+      if (!key.startsWith(prefix)) continue
+      const id = key.slice(prefix.length)
+      if (keep(id, entry)) ids.push(id)
+    }
+    return max > 0 ? ids.slice(-max) : []
+  }
+
+  /**
    * One pages+tags scan for `spaceId`. Never rejects (logs instead); resolves
    * `false` when the scan threw and applied nothing, `true` otherwise.
    *
@@ -425,21 +475,25 @@ export const useResolveStore = create<ResolveStore>((set, get) => {
         // does not return (purged, moved to another space) simply merge
         // nothing — the same outcome as the full walk, which is merge-only and
         // never removes a stale key either.
+        const targeted = new Set(targetedIds)
+        const known = namedIds.get(spaceId)
+        const cachedBlockIds = cachedIds(
+          spaceId,
+          TARGETED_PRELOAD_MAX_IDS - targetedIds.length,
+          (id, entry) => entry.resolved && !targeted.has(id) && known?.has(id) !== true,
+        )
         for (const resolved of unwrap(
-          await commands.batchResolve(targetedIds, { kind: 'active', space_id: spaceId }),
+          await commands.batchResolve([...targetedIds, ...cachedBlockIds], {
+            kind: 'active',
+            space_id: spaceId,
+          }),
         )) {
           fetchedPages.set(keyFor(spaceId, resolved.id), {
-            // #4239 — `resolveStoreTitle('page', …)` rather than the
-            // hardcoded `?? 'Untitled'` this used to carry. Two writers
-            // disagreeing about a blank title is the same value-diff churn
-            // as two disagreeing about a long one: the literal is
-            // untranslated (the sibling seeders use the `block.untitled`
-            // catalogue entry) and its test is `=== null`, so a
-            // whitespace-only page title stayed raw here and became
-            // "Untitled" everywhere else. Both halves now go through the one
-            // gate. `changedPageIds` carries page ids, hence the `'page'`
-            // literal — see the doc on `preload`.
-            title: resolveStoreTitle('page', resolved.title),
+            // #4239 — the shared gate rather than the hardcoded `?? 'Untitled'`
+            // this used to carry, so a blank title agrees with every other
+            // seeder. #5245 — keyed on the row's own type: the batch also
+            // carries cached content blocks, whose chips show a first line.
+            title: resolveStoreTitle(resolved.block_type, resolved.title),
             deleted: resolved.deleted,
             // #4238 — `batch_resolve` returned this row, so it IS resolved;
             // a blank `title` now means "a page with no name", not "no page".
@@ -449,6 +503,7 @@ export const useResolveStore = create<ResolveStore>((set, get) => {
       } else {
         // Fetch all pages with cursor-based pagination, scoped to the
         // Active space.
+        const walked = new Set<string>()
         let cursor: string | undefined
         let hasMore = true
         while (hasMore) {
@@ -469,6 +524,7 @@ export const useResolveStore = create<ResolveStore>((set, get) => {
             ),
           )
           for (const p of pagesResp.items) {
+            walked.add(p.id)
             fetchedPages.set(keyFor(spaceId, p.id), {
               // #4239 — see the targeted half above. `blockType: 'page'`
               // scopes this walk, so the `'page'` literal is exact.
@@ -480,6 +536,7 @@ export const useResolveStore = create<ResolveStore>((set, get) => {
           hasMore = pagesResp.has_more
           cursor = pagesResp.next_cursor ?? undefined
         }
+        namedIds.set(spaceId, walked)
       }
 
       // Fetch all tags in the active space. #1343 — `listAllTagsInSpace`
@@ -500,7 +557,10 @@ export const useResolveStore = create<ResolveStore>((set, get) => {
 
       const tags = unwrap(await commands.listAllTagsInSpace(requireActiveScope(spaceId)))
       const fetchedTags = new Map<string, ResolveEntry>()
+      const named = namedIds.get(spaceId) ?? new Set<string>()
+      namedIds.set(spaceId, named)
       for (const t of tags) {
+        named.add(t.tag_id)
         fetchedTags.set(keyFor(spaceId, t.tag_id), {
           // #4239 — the tag arm of the same gate. `untitledOr` is the
           // identity for any real name, so this only bites on a blank one,
@@ -762,7 +822,7 @@ export const useResolveStore = create<ResolveStore>((set, get) => {
         // #4515 — `!resolved` counts as deleted. An entry the backend never
         // returned is a broken target, and rendering it 'active' would put a
         // live-looking chip on the unresolved label that `resolveTitle` hands
-        // back for the same entry. Inert today (the sole `resolved: false`
+        // back for the same entry. Inert today (every `resolved: false`
         // writer also sets `deleted: true`) — see the interface docblock.
         return cached.deleted || !cached.resolved ? 'deleted' : 'active'
       }
@@ -782,5 +842,67 @@ export const useResolveStore = create<ResolveStore>((set, get) => {
         }
         return { cache, version: state.version + 1 }
       }),
+
+    markDeleted: (spaceId, ids) => {
+      const cache = get().cache
+      let changed = false
+      for (const id of ids) {
+        const key = keyFor(spaceId, id)
+        const cached = cache.get(key)
+        if (!cached || cached.deleted) continue
+        cache.set(key, { ...cached, deleted: true })
+        changed = true
+      }
+      if (changed) set((state) => ({ cache: state.cache, version: state.version + 1 }))
+    },
+
+    markMovedOut: (spaceId, ids) => {
+      const cache = get().cache
+      let changed = false
+      for (const id of ids) {
+        const key = keyFor(spaceId, id)
+        if (cache.get(key)?.resolved !== true) continue
+        cache.set(key, { title: unresolvedBlockLabel(id), deleted: true, resolved: false })
+        changed = true
+      }
+      if (changed) set((state) => ({ cache: state.cache, version: state.version + 1 }))
+    },
+
+    refreshCachedBlocks: (blocks) => {
+      const { batchSet, has } = get()
+      batchSet(
+        blocks
+          .filter((b) => has(b.id))
+          .map((b) => ({
+            id: b.id,
+            title: resolveStoreTitle(b.block_type, b.content),
+            deleted: false,
+          })),
+      )
+    },
+
+    refreshDeleted: async (spaceId) => {
+      if (spaceId == null) return
+      const ids = cachedIds(
+        spaceId,
+        TARGETED_PRELOAD_MAX_IDS,
+        (_id, entry) => entry.deleted && entry.resolved,
+      )
+      if (ids.length === 0) return
+      try {
+        const rows = unwrap(await commands.batchResolve(ids, { kind: 'active', space_id: spaceId }))
+        // `batchSet` writes under the active space; a switch mid-IPC flushed this one.
+        if (activeSpaceId() !== spaceId) return
+        get().batchSet(
+          rows.map((r) => ({
+            id: r.id,
+            title: resolveStoreTitle(r.block_type, r.title),
+            deleted: r.deleted,
+          })),
+        )
+      } catch (err) {
+        logger.warn('ResolveStore', 'refresh of trashed entries failed', { spaceId }, err)
+      }
+    },
   }
 })

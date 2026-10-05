@@ -144,6 +144,8 @@ export function usePageDeleteAction(): UsePageDeleteActionReturn {
         .then(unwrap)
         .then(() => {
           setResolveDeletedStatus(deletedTarget, false)
+          // #5246 — and the cascade the delete struck through with it.
+          void useResolveStore.getState().refreshDeleted(deletedTarget.originSpaceId)
           // #3626 — the page is back; the calendar's cached journal-page
           // ranges predate the restore and would keep its dot hidden.
           invalidateCalendarPageDates()
@@ -185,6 +187,8 @@ export function usePageDeleteAction(): UsePageDeleteActionReturn {
           await commands.deleteBlock(id),
         )
         setResolveDeletedStatus(target, true)
+        // #5246 — the nested pages the cascade trashed render deleted too.
+        useResolveStore.getState().markDeleted(originSpaceId, cascadedPageIds)
         // #4007 — the `[[` picker's page-name cache is filled once per space
         // and has no other delete signal; without this it keeps offering the
         // deleted page for the rest of the session.

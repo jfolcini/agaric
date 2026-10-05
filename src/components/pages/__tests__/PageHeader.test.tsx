@@ -27,6 +27,7 @@ import { TooltipProvider } from '@/components/ui/tooltip'
 import type { AppError } from '@/lib/app-error'
 import { writeText } from '@/lib/clipboard'
 import { t } from '@/lib/i18n'
+import { type NameChange, subscribeToNameChanges } from '@/lib/name-change-bus'
 import { useNavigationStore } from '@/stores/navigation'
 import { createPageBlockStore, PageBlockContext, type PageBlockState } from '@/stores/page-blocks'
 import { useResolveStore } from '@/stores/resolve'
@@ -2216,6 +2217,35 @@ describe('PageHeader Move to space (Phase 2)', () => {
     expect(mockedToastError).not.toHaveBeenCalled()
   })
 
+  // #5248 — the origin space must stop offering the page under `[[` and
+  // render its chips to it broken, without waiting for a space switch.
+  it('drops the moved page from the origin picker and renders its chips broken', async () => {
+    const user = userEvent.setup()
+    setupPageWithSpace('SPACE_PERSONAL')
+    useResolveStore.getState().set('PAGE_1', 'Test', false)
+    const changes: NameChange[] = []
+    const unsubscribe = subscribeToNameChanges((change) => changes.push(change))
+    try {
+      renderPageHeader(<PageHeader pageId="PAGE_1" title="Test" />)
+
+      await user.click(screen.getByRole('button', { name: /page actions/i }))
+      await user.click(await screen.findByText(/Move to space/i))
+      await user.click(await screen.findByRole('menuitem', { name: 'Work' }))
+
+      await waitFor(() => {
+        expect(useResolveStore.getState().resolveStatus('PAGE_1')).toBe('deleted')
+      })
+      expect(changes).toContainEqual({
+        kind: 'removed',
+        entity: 'page',
+        id: 'PAGE_1',
+        spaceId: 'SPACE_PERSONAL',
+      })
+    } finally {
+      unsubscribe()
+    }
+  })
+
   it('shows error toast when set_property rejects', async () => {
     const user = userEvent.setup()
     mockedInvoke.mockImplementation(async (cmd: string) => {
@@ -2237,6 +2267,7 @@ describe('PageHeader Move to space (Phase 2)', () => {
       if (cmd === 'set_property') throw new Error('write failed')
       return null
     })
+    useResolveStore.getState().set('PAGE_1', 'Test', false)
 
     renderPageHeader(<PageHeader pageId="PAGE_1" title="Test" />)
 
@@ -2247,6 +2278,8 @@ describe('PageHeader Move to space (Phase 2)', () => {
     await waitFor(() => {
       expect(mockedToastError).toHaveBeenCalledWith(expect.stringMatching(/Failed to move page/i))
     })
+    // #5248 — nothing moved, so its chips stay live.
+    expect(useResolveStore.getState().resolveStatus('PAGE_1')).toBe('active')
   })
 
   it('has no a11y violations with the Move to space sub-menu expanded', async () => {

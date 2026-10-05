@@ -23,6 +23,7 @@ import {
 import type { NameChange } from '@/lib/name-change-bus'
 import { NAME_CACHE_FANOUT_MAX_IDS, subscribeToNameChanges } from '@/lib/name-change-bus'
 import { createPageBlockStore, PageBlockContext, type PageBlockState } from '@/stores/page-blocks'
+import { useResolveStore } from '@/stores/resolve'
 import { useSpaceStore } from '@/stores/space'
 import { useUndoStore } from '@/stores/undo'
 
@@ -527,6 +528,40 @@ describe('useBlockMultiSelect handleBatchDelete', () => {
     })
 
     expect(result.current.batchDeleteConfirm).toBe(false)
+  })
+
+  // #5246 — a chip to a deleted root, to a child it took along, or to a page
+  // the cascade swept renders deleted; a chip to a surviving row stays live.
+  it('marks the deleted subtrees and the cascaded pages deleted in the resolve cache', async () => {
+    useSpaceStore.setState({ currentSpaceId: 'SPACE_TEST' })
+    useResolveStore.setState({ cache: new Map(), version: 0, _preloaded: false })
+    for (const id of ['BLOCK_1', 'CHILD_1', 'BLOCK_3', 'NESTED_PAGE']) {
+      useResolveStore.getState().set(id, id, false)
+    }
+    pageStore.setState({
+      blocks: [
+        makeBlock({ id: 'BLOCK_1', depth: 0 }),
+        makeBlock({ id: 'CHILD_1', parent_id: 'BLOCK_1', depth: 1 }),
+        makeBlock({ id: 'BLOCK_3', depth: 0 }),
+      ],
+    })
+    stubMultiSelectInvoke({
+      delete_blocks_by_ids: () => ({ deleted_count: 2, affected_page_ids: ['NESTED_PAGE'] }),
+    })
+    const { result } = renderHook(
+      () => useBlockMultiSelect(makeDefaultParams({ selectedBlockIds: ['BLOCK_1'] })),
+      { wrapper },
+    )
+
+    await act(async () => {
+      await result.current.handleBatchDelete()
+    })
+
+    const { resolveStatus } = useResolveStore.getState()
+    expect(resolveStatus('BLOCK_1')).toBe('deleted')
+    expect(resolveStatus('CHILD_1')).toBe('deleted')
+    expect(resolveStatus('NESTED_PAGE')).toBe('deleted')
+    expect(resolveStatus('BLOCK_3')).toBe('active')
   })
 })
 

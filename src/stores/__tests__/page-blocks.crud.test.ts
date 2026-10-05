@@ -22,6 +22,7 @@ import { properties, seedBlocks, SEED_IDS } from '@/lib/tauri-mock/seed'
 import { useNavigationStore } from '@/stores/navigation'
 import { createPageBlockStore, type PageBlockState } from '@/stores/page-blocks'
 import { useRecentPagesStore } from '@/stores/recent-pages'
+import { useResolveStore } from '@/stores/resolve'
 import { useSpaceStore } from '@/stores/space'
 import { selectPageStack, selectTabsForSpace, type Tab, useTabsStore } from '@/stores/tabs'
 
@@ -1290,6 +1291,44 @@ describe('PageBlockStore', () => {
       await store.getState().remove('A')
 
       expect(mockGlobalSetState).not.toHaveBeenCalled()
+    })
+
+    // #5246 — a chip elsewhere that resolved the block, a child of it, or a
+    // page the cascade swept must render deleted once the delete commits.
+    it('marks the removed subtree and the cascaded pages deleted in the resolve cache', async () => {
+      useResolveStore.setState({ cache: new Map(), version: 0, _preloaded: false })
+      for (const id of ['A', 'A_CHILD', 'NESTED_PAGE', 'B']) {
+        useResolveStore.getState().set(id, id, false)
+      }
+      store.setState({
+        blocks: [
+          makeBlock({ id: 'A', depth: 0 }),
+          makeBlock({ id: 'A_CHILD', parent_id: 'A', depth: 1 }),
+          makeBlock({ id: 'B', depth: 0 }),
+        ],
+      })
+      stubInvoke(mockedInvoke, {
+        delete_block: () => ({ ...deleteResp('A'), affected_page_ids: ['NESTED_PAGE'] }),
+      })
+
+      await store.getState().remove('A')
+
+      const { resolveStatus } = useResolveStore.getState()
+      expect(resolveStatus('A')).toBe('deleted')
+      expect(resolveStatus('A_CHILD')).toBe('deleted')
+      expect(resolveStatus('NESTED_PAGE')).toBe('deleted')
+      expect(resolveStatus('B')).toBe('active')
+    })
+
+    it('leaves the resolve cache live when the delete fails', async () => {
+      useResolveStore.setState({ cache: new Map(), version: 0, _preloaded: false })
+      useResolveStore.getState().set('A', 'A', false)
+      store.setState({ blocks: [makeBlock({ id: 'A' })] })
+      stubInvoke(mockedInvoke, { delete_block: () => Promise.reject(new Error('delete failed')) })
+
+      await store.getState().remove('A')
+
+      expect(useResolveStore.getState().resolveStatus('A')).toBe('active')
     })
   })
   describe('appendBlock', () => {

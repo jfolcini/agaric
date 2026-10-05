@@ -381,10 +381,13 @@ export function createReducers({
       let prevBlocks: FlatBlock[] | null = null
       let prevById: Map<string, FlatBlock> | null = null
       let provBlocks: FlatBlock[] | null = null
+      let removedIds: string[] = [blockId]
+      const spaceId = useSpaceStore.getState().currentSpaceId
       set((state) => {
         prevBlocks = state.blocks
         prevById = state.blocksById
         const descendants = getDragDescendants(state.blocks, blockId)
+        removedIds = [blockId, ...descendants]
         const newBlocks = state.blocks.filter((b) => b.id !== blockId && !descendants.has(b.id))
         provBlocks = newBlocks
         return {
@@ -413,6 +416,8 @@ export function createReducers({
             blocksById: cloneBlocksByIdWithout(state.blocksById, [blockId, ...descendants]),
           }
         })
+        // #5246 — chips pointing into the removed subtree render deleted.
+        useResolveStore.getState().markDeleted(spaceId, [...removedIds, ...resp.affected_page_ids])
         // Focus/selection cleanup is the caller's responsibility — all current
         // callers (handleDeleteBlock, handleMerge*, handleDiscard, BlockTree
         // empty-block cleanup) explicitly manage focus after remove() resolves.
