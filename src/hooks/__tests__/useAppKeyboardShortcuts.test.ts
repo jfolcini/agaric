@@ -12,6 +12,7 @@
  */
 
 import { fireEvent, renderHook, waitFor } from '@testing-library/react'
+import { format } from 'date-fns'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { useAppKeyboardShortcuts } from '@/hooks/useAppKeyboardShortcuts'
@@ -79,6 +80,7 @@ beforeEach(() => {
   useJournalStore.setState({
     mode: 'daily',
     currentDate: new Date('2025-01-15T00:00:00Z'),
+    scrollToDate: null,
   })
 })
 
@@ -354,6 +356,52 @@ describe('useAppKeyboardShortcuts — journal nav (document listener)', () => {
     } finally {
       vi.useRealTimers()
     }
+  })
+
+  // The shortcut and the header Today button share `goToToday` on the journal
+  // store, so the shortcut must pick the same destination the button does.
+  describe('Alt+T follows the mode like the Today button', () => {
+    const NOON_JUNE_30 = new Date(2025, 5, 30, 12)
+
+    function pressAltTOn(mode: 'daily' | 'weekly' | 'monthly' | 'agenda' | 'stream') {
+      vi.useFakeTimers()
+      vi.setSystemTime(NOON_JUNE_30)
+      try {
+        useJournalStore.setState({ mode })
+        renderHook(() => useAppKeyboardShortcuts({ t, isMobile: false }))
+        fireEvent.keyDown(document, { key: 't', altKey: true })
+      } finally {
+        vi.useRealTimers()
+      }
+      return useJournalStore.getState()
+    }
+
+    it.each(['agenda', 'stream'] as const)("%s mode lands on today's daily page", (mode) => {
+      const state = pressAltTOn(mode)
+
+      expect(state.mode).toBe('daily')
+      expect(format(state.currentDate, 'yyyy-MM-dd')).toBe('2025-06-30')
+      expect(state.scrollToDate).toBeNull()
+    })
+
+    it.each(['weekly', 'monthly'] as const)(
+      "%s mode keeps the mode and scrolls to today's section",
+      (mode) => {
+        const state = pressAltTOn(mode)
+
+        expect(state.mode).toBe(mode)
+        expect(format(state.currentDate, 'yyyy-MM-dd')).toBe('2025-06-30')
+        expect(state.scrollToDate).toBe('2025-06-30')
+      },
+    )
+
+    it('daily mode only sets the date', () => {
+      const state = pressAltTOn('daily')
+
+      expect(state.mode).toBe('daily')
+      expect(format(state.currentDate, 'yyyy-MM-dd')).toBe('2025-06-30')
+      expect(state.scrollToDate).toBeNull()
+    })
   })
 
   it('does NOT fire when currentView !== "journal"', () => {

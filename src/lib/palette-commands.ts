@@ -252,7 +252,7 @@ export const PALETTE_COMMANDS: readonly PaletteCommandSpec[] = [
       onClose()
       const wasAlreadyOnJournal = useNavigationStore.getState().currentView === 'journal'
       useNavigationStore.getState().setView('journal')
-      useJournalStore.getState().setCurrentDate(new Date())
+      useJournalStore.getState().goToToday()
       if (wasAlreadyOnJournal) {
         announce(t('announce.jumpedToToday'))
       }

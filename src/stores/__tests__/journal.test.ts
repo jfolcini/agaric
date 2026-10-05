@@ -11,7 +11,7 @@
  * subscriber side-effect, which needs careful isolation).
  */
 
-import { beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { parseISODate, useJournalStore } from '@/stores/journal'
 
@@ -120,6 +120,48 @@ describe('journal store', () => {
     expect(state.currentDate).toEqual(target)
     expect(state.mode).toBe('daily')
     expect(state.scrollToPanel).toBe('due')
+  })
+
+  describe('goToToday', () => {
+    const today = new Date(2026, 5, 10, 12)
+
+    beforeEach(() => {
+      vi.useFakeTimers({ toFake: ['Date'] })
+      vi.setSystemTime(today)
+    })
+
+    afterEach(() => {
+      vi.useRealTimers()
+    })
+
+    it.each(['agenda', 'stream'] as const)('%s switches to daily on today', (mode) => {
+      useJournalStore.setState({ mode })
+      useJournalStore.getState().goToToday()
+
+      const state = useJournalStore.getState()
+      expect(state.mode).toBe('daily')
+      expect(state.currentDate).toEqual(today)
+      expect(state.scrollToDate).toBeNull()
+    })
+
+    it.each(['weekly', 'monthly'] as const)('%s keeps the mode and scrolls to today', (mode) => {
+      useJournalStore.setState({ mode })
+      useJournalStore.getState().goToToday()
+
+      const state = useJournalStore.getState()
+      expect(state.mode).toBe(mode)
+      expect(state.currentDate).toEqual(today)
+      expect(state.scrollToDate).toBe('2026-06-10')
+    })
+
+    it('daily only sets the date', () => {
+      useJournalStore.getState().goToToday()
+
+      const state = useJournalStore.getState()
+      expect(state.mode).toBe('daily')
+      expect(state.currentDate).toEqual(today)
+      expect(state.scrollToDate).toBeNull()
+    })
   })
 
   it('clearScrollTarget clears both scrollToDate and scrollToPanel', () => {

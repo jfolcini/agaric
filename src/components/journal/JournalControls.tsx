@@ -30,7 +30,6 @@ import { Kbd } from '@/components/ui/kbd'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { getDateLocale } from '@/lib/date-locale'
 import {
-  formatDate,
   formatDateDisplay,
   formatWeekRange,
   getMaxJournalDate,
@@ -62,17 +61,16 @@ export function journalPanelId(mode: string): string {
 
 export function JournalControls(): React.ReactElement {
   const { t } = useTranslation()
-  const { mode, currentDate, setMode, setCurrentDate, navigateToDate, goToDateAndScroll } =
-    useJournalStore(
-      useShallow((s) => ({
-        mode: s.mode,
-        currentDate: s.currentDate,
-        setMode: s.setMode,
-        setCurrentDate: s.setCurrentDate,
-        navigateToDate: s.navigateToDate,
-        goToDateAndScroll: s.goToDateAndScroll,
-      })),
-    )
+  const { mode, currentDate, setMode, setCurrentDate, navigateToDate, goToToday } = useJournalStore(
+    useShallow((s) => ({
+      mode: s.mode,
+      currentDate: s.currentDate,
+      setMode: s.setMode,
+      setCurrentDate: s.setCurrentDate,
+      navigateToDate: s.navigateToDate,
+      goToToday: s.goToToday,
+    })),
+  )
   const [calendarOpen, setCalendarOpen] = useState(false)
   const tabRefs = useRef<Record<string, HTMLButtonElement | null>>({})
   // Roving-tabindex focus target — the tab that currently owns focus within
@@ -99,20 +97,6 @@ export function JournalControls(): React.ReactElement {
     if (mode === 'daily') setCurrentDate(addDays(currentDate, 1))
     else if (mode === 'weekly') setCurrentDate(addWeeks(currentDate, 1))
     else setCurrentDate(addMonths(currentDate, 1))
-  }
-
-  // Agenda and stream have no day to scroll to, so Today lands on today's
-  // daily page, where the writing happens.
-  function goToToday() {
-    const today = new Date()
-    if (mode === 'agenda' || mode === 'stream') {
-      setMode('daily')
-      setCurrentDate(today)
-    } else if (mode === 'weekly' || mode === 'monthly') {
-      goToDateAndScroll(today, formatDate(today))
-    } else {
-      setCurrentDate(today)
-    }
   }
 
   // WAI-ARIA tabs: horizontal roving tabindex with MANUAL activation (APG).
