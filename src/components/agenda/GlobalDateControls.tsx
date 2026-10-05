@@ -1,19 +1,14 @@
 /**
- * GlobalDateControls — compact Today + Agenda + calendar trio rendered in
- * the App header bar for date-relevant content/navigation views
- * (`pages`, `search`, `tags`, `query`).
+ * GlobalDateControls — the App header's journal shortcuts on every view but
+ * the journal itself (which renders `JournalControls`). Every handler calls
+ * `setView('journal')`.
  *
- * #1740: every handler here calls `setView('journal')`, so this is purely a
- * jump-to-journal-date affordance. It is intentionally NOT mounted on the
- * tool/admin views (settings, history, status, graph, trash, templates) or the
- * focused page-editor surface, where a bare calendar trio reads as
- * off-context. The allowlist that gates it lives in `App.tsx`
- * (`DATE_CONTROL_VIEWS`).
- *
- * Extracted from `JournalPage.tsx` under.
+ * Today is on every view: today's page is where most writing happens. The
+ * Agenda + calendar pair only joins it on the content/navigation views in
+ * `DATE_CONTROL_VIEWS`; on the tool/admin views and the page editor a bare
+ * calendar trio reads as off-context (#1740).
  */
 
-import { isSameDay } from 'date-fns'
 import { Calendar as CalendarIcon } from 'lucide-react'
 import type React from 'react'
 import { useState } from 'react'
@@ -23,16 +18,14 @@ import { useShallow } from 'zustand/react/shallow'
 import { JournalCalendarDropdown } from '@/components/journal/JournalCalendarDropdown'
 import { Button } from '@/components/ui/button'
 import { useJournalStore } from '@/stores/journal'
-import { useNavigationStore } from '@/stores/navigation'
+import { useNavigationStore, type View } from '@/stores/navigation'
+
+const DATE_CONTROL_VIEWS: ReadonlySet<View> = new Set<View>(['pages', 'search', 'tags', 'query'])
 
 export function GlobalDateControls(): React.ReactElement {
   const { t } = useTranslation()
-  const { currentDate, mode, navigateToDate } = useJournalStore(
-    useShallow((s) => ({
-      currentDate: s.currentDate,
-      mode: s.mode,
-      navigateToDate: s.navigateToDate,
-    })),
+  const { currentDate, navigateToDate } = useJournalStore(
+    useShallow((s) => ({ currentDate: s.currentDate, navigateToDate: s.navigateToDate })),
   )
   const { currentView, setView } = useNavigationStore(
     useShallow((s) => ({ currentView: s.currentView, setView: s.setView })),
@@ -50,15 +43,6 @@ export function GlobalDateControls(): React.ReactElement {
     setView('journal')
     navigateToDate(today, 'agenda')
   }
-
-  const isAgendaActive = currentView === 'journal' && mode === 'agenda'
-
-  // Hide the Today button when already on today's daily journal — the
-  // click would be a no-op. Only applies to daily mode inside the journal view;
-  // weekly/monthly still benefit from a scroll-to-today, and non-journal views
-  // should keep the jump-in affordance.
-  const todayButtonHidden =
-    currentView === 'journal' && mode === 'daily' && isSameDay(currentDate, new Date())
 
   function handleSelectDate(day: Date) {
     setView('journal')
@@ -82,47 +66,42 @@ export function GlobalDateControls(): React.ReactElement {
 
   return (
     <div className="flex items-center gap-1">
-      {!todayButtonHidden && (
-        <Button
-          variant="outline"
-          size="xs"
-          onClick={handleToday}
-          aria-label={t('journal.goToToday')}
-        >
-          {t('journal.today')}
-        </Button>
+      <Button variant="outline" size="xs" onClick={handleToday} aria-label={t('journal.goToToday')}>
+        {t('journal.today')}
+      </Button>
+      {DATE_CONTROL_VIEWS.has(currentView) && (
+        <>
+          <Button
+            variant="outline"
+            size="xs"
+            onClick={handleAgenda}
+            aria-label={t('journal.goToAgenda')}
+          >
+            {t('journal.agenda')}
+          </Button>
+          <div className="relative">
+            <Button
+              variant="ghost"
+              size="icon-xs"
+              aria-label={t('journal.openCalendar')}
+              aria-expanded={calendarOpen}
+              aria-haspopup="dialog"
+              onClick={() => setCalendarOpen((o) => !o)}
+            >
+              <CalendarIcon className="h-4 w-4" />
+            </Button>
+            {calendarOpen && (
+              <JournalCalendarDropdown
+                currentDate={currentDate}
+                onSelectDate={handleSelectDate}
+                onSelectWeek={handleSelectWeek}
+                onSelectMonth={handleSelectMonth}
+                onClose={() => setCalendarOpen(false)}
+              />
+            )}
+          </div>
+        </>
       )}
-      {!isAgendaActive && (
-        <Button
-          variant="outline"
-          size="xs"
-          onClick={handleAgenda}
-          aria-label={t('journal.goToAgenda')}
-        >
-          {t('journal.agenda')}
-        </Button>
-      )}
-      <div className="relative">
-        <Button
-          variant="ghost"
-          size="icon-xs"
-          aria-label={t('journal.openCalendar')}
-          aria-expanded={calendarOpen}
-          aria-haspopup="dialog"
-          onClick={() => setCalendarOpen((o) => !o)}
-        >
-          <CalendarIcon className="h-4 w-4" />
-        </Button>
-        {calendarOpen && (
-          <JournalCalendarDropdown
-            currentDate={currentDate}
-            onSelectDate={handleSelectDate}
-            onSelectWeek={handleSelectWeek}
-            onSelectMonth={handleSelectMonth}
-            onClose={() => setCalendarOpen(false)}
-          />
-        )}
-      </div>
     </div>
   )
 }

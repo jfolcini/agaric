@@ -12,13 +12,12 @@ import {
   format,
   isAfter,
   isBefore,
-  isSameDay,
   isSameMonth,
   subDays,
   subMonths,
   subWeeks,
 } from 'date-fns'
-import { Calendar as CalendarIcon, ChevronLeft, ChevronRight } from 'lucide-react'
+import { Calendar as CalendarIcon, ChevronLeft, ChevronRight, House } from 'lucide-react'
 import type React from 'react'
 import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -102,11 +101,11 @@ export function JournalControls(): React.ReactElement {
     else setCurrentDate(addMonths(currentDate, 1))
   }
 
-  // Shared by the header's Today button and the phone-width Today action
-  // inside the calendar dropdown, so the two can never drift apart.
+  // Agenda and stream have no day to scroll to, so Today lands on today's
+  // daily page, where the writing happens.
   function goToToday() {
     const today = new Date()
-    if (mode === 'agenda') {
+    if (mode === 'agenda' || mode === 'stream') {
       setMode('daily')
       setCurrentDate(today)
     } else if (mode === 'weekly' || mode === 'monthly') {
@@ -214,14 +213,6 @@ export function JournalControls(): React.ReactElement {
           ? t('journal.nextWeek')
           : t('journal.nextMonth'),
   }
-
-  // Hide the Today button when already on today's daily journal.
-  // JournalControls only renders inside `currentView === 'journal'`, so the
-  // view-level leg of the expression used in GlobalDateControls collapses here.
-  // #1415 — the stream is permanently top-anchored at today, so the Today
-  // button has no destination to jump to; hide it there too.
-  const todayButtonHidden =
-    (mode === 'daily' && isSameDay(currentDate, new Date())) || mode === 'stream'
 
   // #1415 — agenda and stream have no per-day date cursor: agenda is a task
   // panel, the stream scrolls a fixed today→past column. Both hide the
@@ -373,7 +364,7 @@ export function JournalControls(): React.ReactElement {
             >
               <CalendarIcon className="h-4 w-4 max-sm:hidden" aria-hidden="true" />
               <span
-                className="truncate max-sm:hidden sm:min-w-[100px] text-center"
+                className="truncate max-sm:hidden lg:min-w-[100px] text-center"
                 data-testid="date-display"
               >
                 {getDateDisplay()}
@@ -406,38 +397,34 @@ export function JournalControls(): React.ReactElement {
             </IconButton>
           </>
         )}
-        {!todayButtonHidden && (
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button
-                // `outline` stays: on desktop Today sits next to the Agenda
-                // button, which is also `outline`, so the pair reads as the
-                // row's two word-buttons against the ghost icons. The report
-                // that Today was "the only one with a border" was a PHONE
-                // observation — Agenda is `hidden sm:inline-flex`, so the
-                // border had no partner there. Rather than flatten the
-                // desktop pair, the phone row drops the button entirely
-                // (`max-sm:hidden`): it is the one control the 360px row has
-                // no room for, and the dropdown below re-offers it one tap
-                // deeper, where a phone user already goes to change dates.
-                variant="outline"
-                size="xs"
-                className="max-sm:hidden"
-                onClick={goToToday}
-                aria-label={t('journal.goToToday')}
-                aria-keyshortcuts={toAriaKeyshortcuts(todayShortcut)}
-              >
-                {t('journal.today')}
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent>
-              {t('journal.goToToday')}{' '}
-              <Kbd className="ml-1" aria-hidden="true">
-                {todayShortcut}
-              </Kbd>
-            </TooltipContent>
-          </Tooltip>
-        )}
+        {/* Always shown, on every mode and date: today's page is where most
+            writing happens, so the way back to it never moves or vanishes.
+            Below `md` it is a 24px ghost icon: the word squeezes the date
+            chip to one letter on a 360px phone, and on a 640-767px touch
+            screen the full-word tabs leave the chip no room either. `!`
+            because the outline variant's own classes otherwise win on source
+            order. */}
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              variant="outline"
+              size="xs"
+              className="max-md:w-6! max-md:px-0! max-md:border-transparent! max-md:bg-transparent! max-md:shadow-none! max-md:active:bg-accent/80!"
+              onClick={goToToday}
+              aria-label={t('journal.goToToday')}
+              aria-keyshortcuts={toAriaKeyshortcuts(todayShortcut)}
+            >
+              <House className="md:hidden" aria-hidden="true" />
+              <span className="max-md:hidden">{t('journal.today')}</span>
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent>
+            {t('journal.goToToday')}{' '}
+            <Kbd className="ml-1" aria-hidden="true">
+              {todayShortcut}
+            </Kbd>
+          </TooltipContent>
+        </Tooltip>
         {mode !== 'agenda' && (
           <Button
             variant="outline"
@@ -485,17 +472,6 @@ export function JournalControls(): React.ReactElement {
               navigateToDate(month, 'monthly')
               setCalendarOpen(false)
             }}
-            // Phone-only replacement for the header Today button hidden
-            // above. `undefined` when Today would be a no-op anyway, so the
-            // dropdown never offers a dead action.
-            onToday={
-              todayButtonHidden
-                ? undefined
-                : () => {
-                    goToToday()
-                    setCalendarOpen(false)
-                  }
-            }
             onClose={() => setCalendarOpen(false)}
           />
         )}

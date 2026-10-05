@@ -15,5 +15,8 @@ export const DIALOG_CONTENT_BASE =
 // wide content instead of respecting the viewport width, which can make modal
 // body content overflow horizontally without a horizontal scrollbar. The
 // important `block` override keeps children constrained to the viewport while
-// `px-6` restores the content gutter removed by each body's `-mx-6`.
-export const DIALOG_BODY_VIEWPORT_CLASS = 'px-6 [&>div]:!block'
+// `px-6` restores the content gutter removed by each body's `-mx-6`. `py-1`
+// does the same vertically against each body's `-my-1`: the viewport clips its
+// overflow, so without it a focused first or last field loses the top or
+// bottom of its 3px focus ring.
+export const DIALOG_BODY_VIEWPORT_CLASS = 'px-6 py-1 [&>div]:!block'

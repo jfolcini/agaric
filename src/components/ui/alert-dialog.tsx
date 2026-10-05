@@ -75,7 +75,7 @@ const AlertDialogBody = ({ ref, className, children, dir, ...props }: AlertDialo
     // 'ltr' | 'rtl' (no `undefined` under exactOptionalPropertyTypes), so
     // forward it only when it's a valid direction.
     {...(dir === 'ltr' || dir === 'rtl' ? { dir } : {})}
-    className={cn('flex-1 min-h-0 -mx-6', className)}
+    className={cn('flex-1 min-h-0 -mx-6 -my-1', className)}
     viewportClassName={DIALOG_BODY_VIEWPORT_CLASS}
     {...props}
   >

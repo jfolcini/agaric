@@ -2983,11 +2983,11 @@ describe('JournalPage', () => {
       expect(parent.className).toContain('items-center')
     })
 
-    // The previous shape (`min-w-[100px] sm:min-w-[140px]`)
-    // reserved 100 px (~28 % of a 360 px viewport) on phones for the date
-    // readout. The min-width is now gated on `sm:` so phones let the date
-    // determine its own width, while sm+ still gets a 100 px floor.
-    it('date display min-width is scoped to sm: breakpoint', async () => {
+    // A 100 px floor on the date readout overflows the chip wherever the row
+    // is tight: on phones, and on 640-1023px touch screens, where the
+    // full-word tabs and 44px targets leave the chip ~60px. Only `lg:` up
+    // has room for it.
+    it('date display min-width is scoped to the lg: breakpoint', async () => {
       mockEmptyResponses()
 
       renderJournal()
@@ -2997,8 +2997,8 @@ describe('JournalPage', () => {
       })
 
       const dateDisplay = screen.getByTestId('date-display')
-      expect(dateDisplay.className).toContain('sm:min-w-[100px]')
-      // No unguarded `min-w-[100px]` reservation on phones.
+      expect(dateDisplay.className).toContain('lg:min-w-[100px]')
+      // No unguarded `min-w-[100px]` reservation below lg.
       expect(dateDisplay.className).not.toMatch(/(?:^|\s)min-w-\[100px\]/)
     })
   })
@@ -3537,8 +3537,8 @@ describe('JournalPage', () => {
     })
   })
 
-  // ── redundant header buttons hidden when they are no-ops ─────
-  describe('redundant header buttons', () => {
+  // ── header buttons: Today always, Agenda only where it is not a no-op ─────
+  describe('header buttons', () => {
     beforeEach(() => {
       vi.useFakeTimers({ toFake: ['Date'] })
       vi.setSystemTime(new Date('2026-04-20T12:00:00'))
@@ -3551,69 +3551,6 @@ describe('JournalPage', () => {
     describe('GlobalDateControls', () => {
       beforeEach(() => {
         mockEmptyResponses()
-      })
-
-      it('hides Today when on journal view + daily mode + today', () => {
-        useNavigationStore.setState({
-          currentView: 'journal',
-          selectedBlockId: null,
-        })
-        useTabsStore.setState({
-          tabs: [{ id: '0', pageStack: [], label: '' }],
-          activeTabIndex: 0,
-        })
-        useJournalStore.setState({
-          mode: 'daily',
-          currentDate: new Date('2026-04-20T12:00:00'),
-          scrollToDate: null,
-          scrollToPanel: null,
-        })
-
-        render(<GlobalDateControls />)
-
-        expect(screen.queryByRole('button', { name: /go to today/i })).not.toBeInTheDocument()
-      })
-
-      it('shows Today when on journal view + daily mode + non-today date', () => {
-        useNavigationStore.setState({
-          currentView: 'journal',
-          selectedBlockId: null,
-        })
-        useTabsStore.setState({
-          tabs: [{ id: '0', pageStack: [], label: '' }],
-          activeTabIndex: 0,
-        })
-        useJournalStore.setState({
-          mode: 'daily',
-          currentDate: new Date('2026-04-19T12:00:00'),
-          scrollToDate: null,
-          scrollToPanel: null,
-        })
-
-        render(<GlobalDateControls />)
-
-        expect(screen.getByRole('button', { name: /go to today/i })).toBeInTheDocument()
-      })
-
-      it('hides Agenda when on journal view + agenda mode', () => {
-        useNavigationStore.setState({
-          currentView: 'journal',
-          selectedBlockId: null,
-        })
-        useTabsStore.setState({
-          tabs: [{ id: '0', pageStack: [], label: '' }],
-          activeTabIndex: 0,
-        })
-        useJournalStore.setState({
-          mode: 'agenda',
-          currentDate: new Date('2026-04-20T12:00:00'),
-          scrollToDate: null,
-          scrollToPanel: null,
-        })
-
-        render(<GlobalDateControls />)
-
-        expect(screen.queryByRole('button', { name: /go to agenda/i })).not.toBeInTheDocument()
       })
 
       it('shows Agenda when not on journal view', () => {
@@ -3669,7 +3606,7 @@ describe('JournalPage', () => {
     })
 
     describe('JournalControls', () => {
-      it('hides Today when mode=daily on today', () => {
+      it('shows Today when mode=daily on today', () => {
         useJournalStore.setState({
           mode: 'daily',
           currentDate: new Date('2026-04-20T12:00:00'),
@@ -3679,7 +3616,24 @@ describe('JournalPage', () => {
         mockEmptyResponses()
         renderJournal()
 
-        expect(screen.queryByRole('button', { name: /go to today/i })).not.toBeInTheDocument()
+        expect(screen.getByRole('button', { name: /go to today/i })).toBeInTheDocument()
+      })
+
+      it('Today in stream mode lands on the daily page for today', async () => {
+        const user = userEvent.setup()
+        useJournalStore.setState({
+          mode: 'stream',
+          currentDate: new Date('2026-04-10T12:00:00'),
+          scrollToDate: null,
+          scrollToPanel: null,
+        })
+        mockEmptyResponses()
+        renderJournal()
+
+        await user.click(screen.getByRole('button', { name: /go to today/i }))
+
+        expect(useJournalStore.getState().mode).toBe('daily')
+        expect(format(useJournalStore.getState().currentDate, 'yyyy-MM-dd')).toBe('2026-04-20')
       })
 
       it('shows Today when mode=daily on non-today date', () => {

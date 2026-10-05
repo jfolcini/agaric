@@ -238,15 +238,15 @@ describe('JournalControls', () => {
     expect(mockedInvoke).not.toHaveBeenCalledWith('list_journal_pages_in_range', expect.anything())
   })
 
-  // The date readout's min-width is gated on sm: so phones
-  // (e.g. 360 px wide) aren't penalized by a fixed 100 px reservation that
-  // wastes ~28 % of the viewport.
-  it('date display min-width is scoped to sm: breakpoint', () => {
+  // The date readout's 100 px floor is gated on lg: — below it the chip is
+  // squeezed (phones, 640-1023px touch screens) and the floor would push the
+  // centred text out over the chevrons.
+  it('date display min-width is scoped to the lg: breakpoint', () => {
     render(<JournalControls />)
 
     const dateDisplay = screen.getByTestId('date-display')
-    expect(dateDisplay.className).toContain('sm:min-w-[100px]')
-    // Must not have the unguarded min-w-[100px] reservation on phones.
+    expect(dateDisplay.className).toContain('lg:min-w-[100px]')
+    // Must not have the unguarded min-w-[100px] reservation below lg.
     expect(dateDisplay.className).not.toMatch(/(?:^|\s)min-w-\[100px\]/)
   })
 
@@ -348,29 +348,25 @@ describe('JournalControls', () => {
     expect(chip.getAttribute('aria-label')).toContain(full.textContent ?? '')
   })
 
-  // #7 — on a phone Today was the only bordered control on its row (its
-  // `outline` partner, the Agenda button, is `hidden sm:inline-flex`). It is
-  // also the one control the 360px row cannot afford. Rather than restyle the
-  // desktop pair, the phone row drops it and the calendar dropdown re-offers
-  // it — so the odd-one-out is gone AND the action is still reachable.
-  it('Today is desktop-only on the header row and is re-offered in the dropdown', async () => {
+  // Today is always on the header row: an icon below md, where the word
+  // would squeeze the date chip, and the word from md up. The calendar
+  // dropdown no longer carries a second copy.
+  it('Today stays on the header row and the dropdown has no duplicate', async () => {
     const user = userEvent.setup()
-    // Weekly mode: Today is meaningful (daily-on-today hides it entirely).
     useJournalStore.setState({ mode: 'weekly', currentDate: new Date(2025, 5, 15) })
     render(<JournalControls />)
 
     const today = screen.getByRole('button', { name: /go to today/i })
-    expect(today.className).toContain('max-sm:hidden')
+    expect(today.className).not.toMatch(/(?:^|\s)max-sm:hidden/)
+    expect(today.querySelector('svg.md\\:hidden')).not.toBeNull()
+    expect(today.querySelector('span.max-md\\:hidden')?.textContent).toBe('Today')
 
     await user.click(screen.getByRole('button', { name: /open calendar picker/i }))
     const dialog = await screen.findByRole('dialog', { name: /date picker/i })
-    const dropdownToday = within(dialog).getByRole('button', { name: /^today$/i })
-    // Phone-only: the header already shows Today from sm up.
-    expect(dropdownToday.parentElement?.className).toContain('sm:hidden')
+    expect(within(dialog).queryByRole('button', { name: /^today$/i })).not.toBeInTheDocument()
 
-    await user.click(dropdownToday)
-    // Weekly mode scrolls to today rather than switching mode — same handler
-    // the header button uses, which is the point of sharing `goToToday`.
+    await user.click(today)
+    // Weekly mode scrolls to today rather than switching mode.
     expect(useJournalStore.getState().scrollToDate).toBe(format(new Date(), 'yyyy-MM-dd'))
   })
 

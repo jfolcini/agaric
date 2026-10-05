@@ -2,7 +2,7 @@
  * Tests for GlobalDateControls component.
  *
  * Validates:
- *  - Renders Today button and calendar icon button
+ *  - Renders Today on every view; Agenda + calendar only on date-control views
  *  - Clicking Today navigates to journal daily view
  *  - Clicking calendar icon opens the calendar dropdown
  *  - a11y compliance
@@ -135,49 +135,19 @@ describe('GlobalDateControls', () => {
     expect(diff).toBeLessThan(5000)
   })
 
-  it('Agenda button is hidden (not in DOM) when on journal agenda view', () => {
-    useNavigationStore.setState({
-      currentView: 'journal',
-      selectedBlockId: null,
-    })
-    useTabsStore.setState({
-      tabs: [{ id: '0', pageStack: [], label: '' }],
-      activeTabIndex: 0,
-    })
-    useJournalStore.setState({
-      mode: 'agenda',
-      currentDate: new Date(2025, 5, 15),
-      scrollToDate: null,
-      scrollToPanel: null,
-    })
+  // Today is on every header; Agenda + calendar only on the views where a
+  // journal date is a plausible next step (#1740).
+  it('renders Today alone on a view outside the date-control set', async () => {
+    const user = userEvent.setup()
+    useNavigationStore.setState({ currentView: 'settings', selectedBlockId: null })
 
     render(<GlobalDateControls />)
 
-    // The Agenda button is removed from the DOM (not just restyled)
-    // when it would be a no-op.
     expect(screen.queryByRole('button', { name: /go to agenda/i })).not.toBeInTheDocument()
-  })
-
-  it('Agenda button does NOT have aria-current when not on agenda view', () => {
-    useNavigationStore.setState({
-      currentView: 'journal',
-      selectedBlockId: null,
-    })
-    useTabsStore.setState({
-      tabs: [{ id: '0', pageStack: [], label: '' }],
-      activeTabIndex: 0,
-    })
-    useJournalStore.setState({
-      mode: 'daily',
-      currentDate: new Date(2025, 5, 15),
-      scrollToDate: null,
-      scrollToPanel: null,
-    })
-
-    render(<GlobalDateControls />)
-
-    const agendaBtn = screen.getByRole('button', { name: /go to agenda/i })
-    expect(agendaBtn).not.toHaveAttribute('aria-current')
+    expect(screen.queryByRole('button', { name: /calendar/i })).not.toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: /go to today/i }))
+    expect(useNavigationStore.getState().currentView).toBe('journal')
+    expect(useJournalStore.getState().mode).toBe('daily')
   })
 
   it('Agenda button does NOT have aria-current when on agenda mode but different view', () => {

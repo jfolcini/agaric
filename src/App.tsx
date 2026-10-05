@@ -48,7 +48,7 @@ import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
 import { createUntitledPage } from '@/lib/untitled-page'
 import { cn } from '@/lib/utils'
-import { useNavigationStore, type View } from '@/stores/navigation'
+import { useNavigationStore } from '@/stores/navigation'
 import { useResolveStore } from '@/stores/resolve'
 import { useSpaceStore } from '@/stores/space'
 import { selectPageStack, useTabsStore } from '@/stores/tabs'
@@ -112,16 +112,6 @@ const SearchSheet = lazy(() =>
   import('@/components/mobile/SearchSheet').then((m) => ({ default: m.SearchSheet })),
 )
 
-// #1740 — `GlobalDateControls` is purely a jump-to-journal-date affordance
-// (every handler calls `setView('journal')`). It only belongs in headers of
-// views where landing on a journal date is a plausible next step — the
-// content/navigation surfaces (`pages`, `search`, `tags`, `query`). The
-// tool/admin views (settings, history, status, graph, trash, templates) and
-// the focused `page-editor` surface read a bare calendar trio as off-context,
-// so they no longer carry it. (`journal` itself renders `JournalControls`, not
-// this control, so it is intentionally absent here.)
-const DATE_CONTROL_VIEWS: ReadonlySet<View> = new Set<View>(['pages', 'search', 'tags', 'query'])
-
 /**
  * The mobile entry point to the nav sidebar.
  *
@@ -164,9 +154,10 @@ function MobileSidebarTrigger(): ReactElement | null {
  * fitting is done inside `JournalControls` (compact tab/step widths + a
  * truncating date chip); this wrapper just has to stop wrapping.
  *
- * Every other view keeps the below-sm stack — a long view title ("Advanced
- * Query") beside `GlobalDateControls` does NOT fit a 360px row, and forcing
- * it into one would trade a stacked header for a horizontal-overflow bug.
+ * Every other view WRAPS below sm instead: a short title, Today and the
+ * search trigger share one row, while a long title ("Advanced Query") beside
+ * the full `GlobalDateControls` trio pushes the controls onto a second row
+ * rather than overflowing a 360px screen.
  *
  * Module-level rather than an inline ternary in `App`: that function sits at
  * the repo's cyclomatic-complexity ceiling, and a layout choice is not what
@@ -175,7 +166,7 @@ function MobileSidebarTrigger(): ReactElement | null {
 function headerContentClass(isJournalView: boolean): string {
   return cn(
     'flex min-w-0 flex-1 gap-2 sm:flex-row sm:items-center',
-    isJournalView ? 'flex-row items-center max-sm:gap-0.5' : 'flex-col justify-center',
+    isJournalView ? 'flex-row items-center max-sm:gap-0.5' : 'flex-row flex-wrap items-center',
   )
 }
 
@@ -547,14 +538,10 @@ function App() {
                   is where a navigation-drawer trigger is looked for. Renders
                   nothing on desktop. */}
               <MobileSidebarTrigger />
-              {/* The header's own content stacks below `sm` for the non-journal
-                  views (title above its date controls). That stacking is scoped
-                  to this wrapper so the hamburger stays on the leading edge
-                  of the row instead of becoming a row of its own.
-                  `justify-center` matters only in the single-row case: the
-                  wrapper stretches to the hamburger's 44px height, and
-                  centring inside it lines a short view title up with the
-                  button rather than leaving it riding 20px high.
+              {/* The header's own content wraps below `sm` for the non-journal
+                  views (controls drop under a long title). The wrapping is
+                  scoped to this wrapper so the hamburger stays on the leading
+                  edge of the row instead of becoming a row of its own.
                   See `headerContentClass` for why journal is the exception. */}
               <div className={headerContentClass(currentView === 'journal')}>
                 {currentView === 'journal' ? (
@@ -581,7 +568,7 @@ function App() {
                       {headerLabel}
                     </HeaderLabelTag>
                     <div className="flex-1" />
-                    {DATE_CONTROL_VIEWS.has(currentView) && <GlobalDateControls />}
+                    <GlobalDateControls />
                   </>
                 )}
                 {/* Sole touch entry point for the unified search sheet.

@@ -157,6 +157,12 @@ for (const profile of PROFILES) {
       expect(size.h, 'hamburger height').toBeGreaterThanOrEqual(44)
 
       const sheet = await openMobileSidebar(page)
+      // A navigation pane, not a modal card: no rounded inward corners.
+      const radii = await sheet.evaluate((el) => {
+        const cs = getComputedStyle(el)
+        return [cs.borderTopRightRadius, cs.borderBottomRightRadius]
+      })
+      expect(radii).toEqual(['0px', '0px'])
       // Every top-level destination is reachable from inside the drawer.
       for (const view of VIEWS) {
         await expect(sheet.getByRole('button', { name: view, exact: true })).toBeVisible()
@@ -175,6 +181,45 @@ for (const profile of PROFILES) {
         'aria-current',
         'page',
       )
+    })
+
+    // Today is where most writing happens, so its button is on the header in
+    // every mode, today included. It used to be hidden below `sm` and on
+    // today's daily page; a text button squeezed the date chip to one letter.
+    test('Today stays on the journal header in every mode without crowding the date', async ({
+      page,
+    }) => {
+      await waitForBoot(page)
+      const header = page.locator('header').first()
+      const today = header.getByRole('button', { name: 'Go to today' })
+      for (const mode of ['Daily', 'Weekly', 'Monthly', 'Continuous stream', 'Agenda']) {
+        await header.getByRole('tab', { name: `${mode} view` }).click()
+        await expect(today, `Today in ${mode}`).toBeVisible()
+      }
+      await header.getByRole('tab', { name: 'Daily view' }).click()
+      const chip = header.getByRole('button', { name: /open calendar picker/i })
+      // Wide enough for the compact "Oct 5" label, not a single letter.
+      expect((await chip.boundingBox())?.width ?? 0).toBeGreaterThanOrEqual(32)
+      await expectNoHorizontalOverflow(page, undefined, `journal header @ ${profile.name}`)
+    })
+
+    // The dialog/sheet body scrolls inside a viewport that clips overflow, and
+    // it had side padding but none vertically: a focused first or last field
+    // lost the top and bottom of its 3px focus ring.
+    test('Quick capture keeps the whole focus ring of its textarea', async ({ page }) => {
+      await waitForBoot(page)
+      await page.getByRole('button', { name: 'Quick capture' }).click()
+      const textarea = page.getByTestId('quick-capture-textarea')
+      await expect(textarea).toBeFocused()
+      const gaps = await textarea.evaluate((el) => {
+        const viewport = el.closest('[data-radix-scroll-area-viewport]')
+        if (!viewport) throw new Error('textarea is not inside a ScrollArea viewport')
+        const t = el.getBoundingClientRect()
+        const v = viewport.getBoundingClientRect()
+        return { top: t.top - v.top, bottom: v.bottom - t.bottom }
+      })
+      expect(gaps.top, 'room above for the ring').toBeGreaterThanOrEqual(3)
+      expect(gaps.bottom, 'room below for the ring').toBeGreaterThanOrEqual(3)
     })
 
     test('Keyboard Shortcuts dialog has no horizontal overflow', async ({ page }) => {
