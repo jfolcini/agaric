@@ -19,8 +19,11 @@
  * Resolves issues #276, #386, #378.
  */
 
+import { invalidateCalendarPageDates } from '@/hooks/useCalendarPageDates'
+import { invalidatePageBrowserData } from '@/hooks/usePageBrowserData'
 import { useTauriEventListener } from '@/hooks/useTauriEventListener'
 import { announce } from '@/lib/announcer'
+import { recordBlockPropertyChange } from '@/lib/block-property-events'
 import { recordGraphStructureChange } from '@/lib/graph-structure-events'
 import { i18n } from '@/lib/i18n'
 import { logger } from '@/lib/logger'
@@ -28,9 +31,12 @@ import { invalidateNameCaches } from '@/lib/name-change-bus'
 import { notify } from '@/lib/notify'
 import { isPairingWindowRejection } from '@/lib/pairing-rejections'
 import { forEachLivePageStoreGroup } from '@/stores/page-blocks'
+import { renamePage } from '@/stores/page-rename'
+import { selectRecentPagesForSpace, useRecentPagesStore } from '@/stores/recent-pages'
 import { useResolveStore } from '@/stores/resolve'
 import { useSpaceStore } from '@/stores/space'
 import { useSyncStore } from '@/stores/sync'
+import { useTabsStore } from '@/stores/tabs'
 import { useUndoStore } from '@/stores/undo'
 
 /** Payload shapes from the Rust backend sync_events.rs */
@@ -96,6 +102,29 @@ export interface BlocksChangedPayload {
 }
 
 /**
+ * #5242 — carry an out-of-band page rename into the title copies the tabs and
+ * recents persist (the header, tab label, window title and recents strip read
+ * them). Only local renames reach `renamePage` otherwise. Reads the resolve
+ * cache the preload just refreshed; `targeted` null means it rescanned them all.
+ */
+function retitleHeldPages(targeted: ReadonlySet<string> | null, spaceId: string | null): void {
+  const held = [
+    ...useTabsStore.getState().tabs.flatMap((tab) => tab.pageStack),
+    ...selectRecentPagesForSpace(useRecentPagesStore.getState(), spaceId),
+  ]
+  const resolve = useResolveStore.getState()
+  const freshTitles = new Map<string, string>()
+  for (const { pageId, title } of held) {
+    if (targeted && !targeted.has(pageId)) continue
+    // `renamePage` re-seeds the resolve entry as not deleted, so leave a trashed page alone.
+    if (!resolve.isResolved(pageId) || resolve.resolveStatus(pageId) === 'deleted') continue
+    const fresh = resolve.resolveTitle(pageId)
+    if (fresh !== title) freshTitles.set(pageId, fresh)
+  }
+  for (const [pageId, title] of freshTitles) renamePage(pageId, title, spaceId)
+}
+
+/**
  * #1071 / #2505 — the shared targeted page-store reload. Given the set of
  * owning-page ids touched by an out-of-band write (a remote sync session or an
  * MCP write), reload + undo-re-anchor ONLY the mounted page stores whose id is
@@ -146,12 +175,28 @@ function reloadChangedPageStores(changedPageIds: string[] | undefined): void {
   // changed-id signal. `null` (the fallback branch) keeps the full scan.
   const refreshSpaceId = useSpaceStore.getState().currentSpaceId
   // `preload` catches its scan failures internally; never rejects.
-  void useResolveStore.getState().preload(refreshSpaceId ?? undefined, true, targeted ?? undefined)
+  void useResolveStore
+    .getState()
+    .preload(refreshSpaceId ?? undefined, true, targeted ?? undefined)
+    .then(() => {
+      retitleHeldPages(targeted, refreshSpaceId)
+    })
+    .catch((err: unknown) => {
+      logger.warn('useSyncEvents', 'retitling tabs and recents after sync failed', undefined, err)
+    })
 
   // #1530 — out-of-band ops also change the page-link graph topology; bump the
   // graph-structure signal so a mounted GraphView refetches (stale-while-
   // revalidate) instead of serving stale nodes/edges until the TTL.
   recordGraphStructureChange()
+
+  // #5256 — and task state: a peer's DONE or an MCP `add_tag` fires no
+  // `block:properties-changed` here, which is all the task panels refetch on.
+  recordBlockPropertyChange()
+
+  // #5258 — and pages themselves: the Pages list, and a journal day's page.
+  invalidatePageBrowserData()
+  invalidateCalendarPageDates()
 
   // #4007 — and they change page/tag NAMES. The picker's `pagesListRef` /
   // `tagsListRef` caches are filled once per space and only learn about

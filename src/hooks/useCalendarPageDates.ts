@@ -28,7 +28,7 @@
  * bounded by {@link PAGE_DATES_TTL_MS}.
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { unwrap } from '@/lib/app-error'
@@ -64,9 +64,9 @@ let cacheEpoch = 0
  * The explicit invalidations below cover the mutations this app performs
  * itself (a journal page created through the journal's own add-block flow is
  * MERGED into the cache; a page deleted or restored through the shared
- * page-delete flow drops it). They cannot cover a journal page that appears
- * or disappears by some other route — a page titled `2025-06-15` created from
- * the page browser, an import, a sync from another device. Before this cache
+ * page-delete flow, an import, a sync or an MCP write drops it). They cannot
+ * cover a journal page that appears or disappears by some other route — a
+ * page titled `2025-06-15` created from the page browser. Before this cache
  * every dropdown open was fresh, so an unbounded cache would turn a redundant
  * fetch into a permanently stale indicator; the TTL bounds that regression to
  * a minute while still collapsing the open → close → reopen burst the issue
@@ -81,17 +81,43 @@ export function __resetCalendarPageDatesForTests(): void {
   cacheEpoch += 1
 }
 
+const invalidationListeners = new Set<() => void>()
+
 /**
- * Drop every cached range so the next subscriber re-fetches (#3626). Call
+ * Drop every cached range and re-fetch the ones on screen (#3626, #5258). Call
  * after a mutation that can add or remove a journal page — the shared
- * page-delete/restore flow does. In-flight fetches are abandoned rather than
- * awaited: `cacheEpoch` makes their results non-cacheable, so the invalidation
- * cannot be overwritten by a response that predates it.
+ * page-delete/restore flow, an applied sync or MCP write, an import. In-flight
+ * fetches are abandoned rather than awaited: `cacheEpoch` makes their results
+ * non-cacheable, so the invalidation cannot be overwritten by a response that
+ * predates it.
  */
 export function invalidateCalendarPageDates(): void {
   inflightByKey.clear()
   resultByKey.clear()
   cacheEpoch += 1
+  for (const listener of invalidationListeners) listener()
+}
+
+function subscribeToInvalidations(listener: () => void): () => void {
+  invalidationListeners.add(listener)
+  return () => {
+    invalidationListeners.delete(listener)
+  }
+}
+
+/** Moves on every {@link invalidateCalendarPageDates}; a mounted page map re-fetches on it. */
+export function useCalendarPageDatesEpoch(): number {
+  return useSyncExternalStore(subscribeToInvalidations, () => cacheEpoch)
+}
+
+/**
+ * Whether two page maps hold the same entries. A re-fetch that changed nothing
+ * keeps the old map, so the memoised day sections built from it do not re-render.
+ */
+export function samePageMap(a: Map<string, string>, b: Map<string, string>): boolean {
+  if (a.size !== b.size) return false
+  for (const [dateStr, pageId] of a) if (b.get(dateStr) !== pageId) return false
+  return true
 }
 
 function makeKey(spaceId: string, startDate: string, endDate: string): string {
@@ -217,19 +243,27 @@ export function useCalendarPageDates(
   const [loading, setLoading] = useState(true)
   // Track mount state so we don't setState after unmount.
   const mountedRef = useRef(true)
+  const epoch = useCalendarPageDatesEpoch()
+  // The range on screen. An invalidation re-fetches it in place: blanking it
+  // would unmount the journal's day editors behind the loading skeleton.
+  const shownRangeRef = useRef<string | null>(null)
 
   useEffect(() => {
     mountedRef.current = true
     let cancelled = false
     const start = performance.now()
-    // oxlint-disable-next-line react/set-state-in-effect -- marks the shared range fetch in flight when the space or date range changes; the flag tracks that IPC, not render input; see #4407
-    setLoading(true)
-    setPageMap(new Map())
+    const rangeKey = `${currentSpaceId}|${startDate}|${endDate}`
+    if (shownRangeRef.current !== rangeKey) {
+      shownRangeRef.current = rangeKey
+      setLoading(true)
+      setPageMap(new Map())
+    }
     // b1 — `listJournalPagesInRange` is required-active: with no active
     // space there are no journal pages to show, so short-circuit locally
     // to an empty page map instead of dispatching (a Global scope is
     // rejected by the backend).
     if (currentSpaceId == null) {
+      // oxlint-disable-next-line react/set-state-in-effect -- settles the loading flag when no space is active, since `listJournalPagesInRange` is required-active and never runs; see #4407
       setLoading(false)
       return () => {
         cancelled = true
@@ -238,7 +272,7 @@ export function useCalendarPageDates(
     fetchPageMap(currentSpaceId, startDate, endDate)
       .then((map) => {
         if (cancelled || !mountedRef.current) return
-        setPageMap(map)
+        setPageMap((prev) => (samePageMap(prev, map) ? prev : map))
         logger.debug('useCalendarPageDates', 'journal pages loaded', {
           pageCount: map.size,
           startDate,
@@ -259,7 +293,7 @@ export function useCalendarPageDates(
       cancelled = true
       mountedRef.current = false
     }
-  }, [t, currentSpaceId, startDate, endDate])
+  }, [t, currentSpaceId, startDate, endDate, epoch])
 
   const addPage = useCallback(
     (dateStr: string, pageId: string) => {

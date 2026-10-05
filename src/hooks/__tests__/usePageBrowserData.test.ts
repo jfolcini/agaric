@@ -11,7 +11,7 @@ import { createElement, StrictMode, type ReactNode } from 'react'
 import { toast } from 'sonner'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { usePageBrowserData } from '@/hooks/usePageBrowserData'
+import { invalidatePageBrowserData, usePageBrowserData } from '@/hooks/usePageBrowserData'
 import type { SortOption } from '@/hooks/usePageBrowserSort'
 import type { BlockRow, FilterPrimitive, PageWithMetadataRow } from '@/lib/bindings'
 
@@ -292,5 +292,35 @@ describe('usePageBrowserData', () => {
     expect(mockedList).toHaveBeenCalledTimes(2)
     expect(result.current.pages.map((row) => row.id)).toEqual(['B'])
     expect(result.current.displayTotalCount).toBe(1)
+  })
+
+  // #5258 — a synced peer or an MCP agent creates a page while the Pages view is open.
+  it('invalidatePageBrowserData refetches every loaded page from page 1', async () => {
+    mockedList
+      .mockResolvedValueOnce(resp([page('A')], { cursor: 'C1', hasMore: true, total: 2 }))
+      .mockResolvedValueOnce(resp([page('B')]))
+      .mockResolvedValueOnce(
+        resp([page('NEW'), page('A')], { cursor: 'C2', hasMore: true, total: 3 }),
+      )
+      .mockResolvedValueOnce(resp([page('B')]))
+    const { result } = renderHook(() => usePageBrowserData(BASE))
+    await waitFor(() => expect(result.current.pages.map((row) => row.id)).toEqual(['A']))
+    await act(async () => {
+      result.current.loadMore()
+    })
+    await waitFor(() => expect(result.current.pages.map((row) => row.id)).toEqual(['A', 'B']))
+
+    act(() => {
+      invalidatePageBrowserData()
+    })
+
+    await waitFor(() =>
+      expect(result.current.pages.map((row) => row.id)).toEqual(['NEW', 'A', 'B']),
+    )
+    expect(result.current.displayTotalCount).toBe(3)
+    expect(mockedList).toHaveBeenCalledTimes(4)
+    // From page 1, then on the cursor the fresh first page handed back.
+    expect(mockedList.mock.calls[2]?.[1]).toBeNull()
+    expect(mockedList.mock.calls[3]?.[1]).toBe('C2')
   })
 })

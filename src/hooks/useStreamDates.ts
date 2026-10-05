@@ -26,6 +26,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { samePageMap, useCalendarPageDatesEpoch } from '@/hooks/useCalendarPageDates'
 import { unwrap } from '@/lib/app-error'
 import { commands } from '@/lib/bindings'
 import { formatDate, MIN_JOURNAL_DATE } from '@/lib/date-utils'
@@ -113,6 +114,10 @@ export function useStreamDates(): UseStreamDatesResult {
   // Distinguish the first fetch (full-screen skeleton) from a grow fetch
   // (older-batch spinner) without re-running the effect on the flag.
   const firstFetchRef = useRef(true)
+  // #5258 — a sync or MCP write can add a day's page; the calendar
+  // invalidation re-fetches the window in place, with neither spinner.
+  const epoch = useCalendarPageDatesEpoch()
+  const fetchedWindowRef = useRef<string | null>(null)
 
   const startDate = formatDate(subtractDays(today, oldestOffset))
   const endDate = formatDate(today)
@@ -121,8 +126,10 @@ export function useStreamDates(): UseStreamDatesResult {
     mountedRef.current = true
     let cancelled = false
     const isFirst = firstFetchRef.current
+    const windowKey = `${currentSpaceId}|${startDate}|${endDate}`
     if (isFirst) setLoading(true)
-    else setLoadingOlder(true)
+    else if (fetchedWindowRef.current !== windowKey) setLoadingOlder(true)
+    fetchedWindowRef.current = windowKey
 
     // b1 — `listJournalPagesInRange` is required-active: with no active
     // space there are no journal pages to show, so short-circuit locally
@@ -151,7 +158,7 @@ export function useStreamDates(): UseStreamDatesResult {
         for (const b of rows) {
           if (b.content) map.set(b.content, b.id)
         }
-        setPageMap(map)
+        setPageMap((prev) => (samePageMap(prev, map) ? prev : map))
       })
       .catch((err) => {
         if (cancelled || !mountedRef.current) return
@@ -169,7 +176,7 @@ export function useStreamDates(): UseStreamDatesResult {
       cancelled = true
       mountedRef.current = false
     }
-  }, [t, currentSpaceId, startDate, endDate])
+  }, [t, currentSpaceId, startDate, endDate, epoch])
 
   const addPage = useCallback((dateStr: string, pageId: string) => {
     setPageMap((prev) => {

@@ -4,9 +4,15 @@ import type { Root } from 'react-dom/client'
 import { createRoot } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { useCalendarPageDatesEpoch } from '@/hooks/useCalendarPageDates'
 import { mapBackendState, useSyncEvents } from '@/hooks/useSyncEvents'
+import { getBlockPropertyInvalidationKey } from '@/lib/block-property-events'
 import type { NameChange } from '@/lib/name-change-bus'
 import { subscribeToNameChanges } from '@/lib/name-change-bus'
+import { queryClient } from '@/lib/query-client'
+import { useRecentPagesStore } from '@/stores/recent-pages'
+import type { Tab } from '@/stores/tabs'
+import { useTabsStore } from '@/stores/tabs'
 
 // -- Hoisted mocks (vi.mock factories are hoisted above module scope) ---------
 
@@ -24,6 +30,7 @@ const {
   mockForEachLivePageStoreGroup,
   mockPreload,
   mockReanchorUndo,
+  mockResolvedPages,
 } = vi.hoisted(() => {
   const unlisten = vi.fn()
   const listen = vi.fn().mockResolvedValue(unlisten)
@@ -84,6 +91,9 @@ const {
 
   const preload = vi.fn().mockResolvedValue(undefined)
   const reanchorUndo = vi.fn()
+  // #5242 — what the preload left in the resolve cache. Unresolved by
+  // default, so only the retitle tests see any page as renamed.
+  const resolvedPages = new Map<string, { title: string; deleted: boolean }>()
 
   return {
     mockUnlisten: unlisten,
@@ -99,6 +109,7 @@ const {
     mockForEachLivePageStoreGroup: forEachLivePageStoreGroup,
     mockPreload: preload,
     mockReanchorUndo: reanchorUndo,
+    mockResolvedPages: resolvedPages,
   }
 })
 
@@ -138,6 +149,10 @@ vi.mock('@/stores/resolve', () => ({
   useResolveStore: {
     getState: vi.fn(() => ({
       preload: mockPreload,
+      isResolved: (id: string) => mockResolvedPages.has(id),
+      resolveStatus: (id: string) => (mockResolvedPages.get(id)?.deleted ? 'deleted' : 'active'),
+      resolveTitle: (id: string) => mockResolvedPages.get(id)?.title ?? `[[${id}]]`,
+      set: vi.fn(),
     })),
   },
 }))
@@ -148,6 +163,8 @@ vi.mock('@/stores/resolve', () => ({
 vi.mock('@/stores/space', () => ({
   useSpaceStore: {
     getState: vi.fn(() => ({ currentSpaceId: 'SPACE_TEST' })),
+    // The tabs and recents stores attach a space-switch subscriber on import.
+    subscribe: vi.fn(() => () => {}),
   },
 }))
 
@@ -213,6 +230,7 @@ beforeEach(() => {
   // Reset mock defaults
   mockListen.mockResolvedValue(mockUnlisten)
   mockLoad.mockResolvedValue(undefined)
+  mockResolvedPages.clear()
 })
 
 afterEach(() => {
@@ -1203,6 +1221,139 @@ describe('useSyncEvents', () => {
       })
 
       expect(mockedAnnounce).toHaveBeenCalledWith('Sync failed')
+
+      unmount()
+    })
+  })
+
+  // An out-of-band write refreshes the task panels (#5256), the journal's
+  // day→page map (#5258) and the persisted title copies (#5242), whichever of
+  // the two events carries it.
+  describe.each([
+    [
+      'sync:complete',
+      (changedPageIds?: string[]) => ({
+        type: 'complete',
+        remote_device_id: 'device-42',
+        ops_received: 1,
+        ops_sent: 0,
+        changed_blocks: 1,
+        ...(changedPageIds && { changed_page_ids: changedPageIds }),
+      }),
+    ],
+    [
+      'blocks:changed',
+      (changedPageIds?: string[]) => (changedPageIds ? { changed_page_ids: changedPageIds } : {}),
+    ],
+  ])('%s refreshes what reads the changed blocks', (eventName, payloadFor) => {
+    async function fire(changedPageIds?: string[]): Promise<{ unmount: () => void }> {
+      const hook = renderHook(() => useSyncEvents())
+      await vi.waitFor(() => {
+        expect(mockListen).toHaveBeenCalledTimes(3)
+      })
+      act(() => {
+        getListenerCallback(eventName)({ payload: payloadFor(changedPageIds) })
+      })
+      return hook
+    }
+
+    function holdInTabsAndRecents(entries: Array<{ pageId: string; title: string }>): void {
+      const tabs: Tab[] = [{ id: '0', pageStack: entries, label: entries.at(-1)?.title ?? '' }]
+      useTabsStore.setState({
+        tabs,
+        activeTabIndex: 0,
+        tabsBySpace: { SPACE_TEST: tabs },
+        activeTabIndexBySpace: { SPACE_TEST: 0 },
+      })
+      useRecentPagesStore.setState({
+        recentPages: entries,
+        recentPagesBySpace: { SPACE_TEST: entries },
+      })
+    }
+
+    function heldTitles(): { tabs: string[]; label: string; recents: string[] } {
+      const tab = useTabsStore.getState().tabs[0]
+      return {
+        tabs: tab?.pageStack.map((entry) => entry.title) ?? [],
+        label: tab?.label ?? '',
+        recents: (useRecentPagesStore.getState().recentPagesBySpace['SPACE_TEST'] ?? []).map(
+          (ref) => ref.title,
+        ),
+      }
+    }
+
+    it('bumps the block-property counter the task panels refetch on (#5256)', async () => {
+      const before = getBlockPropertyInvalidationKey()
+      const { unmount } = await fire(['PAGE_1'])
+
+      await vi.waitFor(() => {
+        expect(getBlockPropertyInvalidationKey()).toBe(before + 1)
+      })
+
+      unmount()
+    })
+
+    it('marks the Pages list for a refetch (#5258)', async () => {
+      const pagesKey = ['pageBrowserData', 'SPACE_TEST', 'default', []]
+      queryClient.setQueryData(pagesKey, { pages: [], pageParams: [] })
+      const { unmount } = await fire(['PAGE_1'])
+
+      expect(queryClient.getQueryState(pagesKey)?.isInvalidated).toBe(true)
+
+      unmount()
+    })
+
+    it('invalidates the journal calendar page dates (#5258)', async () => {
+      let epoch = -1
+      const probe = renderHook(() => {
+        epoch = useCalendarPageDatesEpoch()
+      })
+      const before = epoch
+      const { unmount } = await fire(['PAGE_1'])
+
+      expect(epoch).toBe(before + 1)
+
+      unmount()
+      probe.unmount()
+    })
+
+    it('retitles a renamed page in the tabs and recents, leaving pages outside the set (#5242)', async () => {
+      holdInTabsAndRecents([
+        { pageId: 'PAGE_2', title: 'Untouched' },
+        { pageId: 'PAGE_1', title: 'Foo' },
+      ])
+      mockResolvedPages.set('PAGE_1', { title: 'Bar', deleted: false })
+      mockResolvedPages.set('PAGE_2', { title: 'Renamed elsewhere', deleted: false })
+      const { unmount } = await fire(['PAGE_1'])
+
+      await vi.waitFor(() => {
+        expect(heldTitles()).toEqual({
+          tabs: ['Untouched', 'Bar'],
+          label: 'Bar',
+          recents: ['Untouched', 'Bar'],
+        })
+      })
+
+      unmount()
+    })
+
+    it('with no changed ids compares every held page, skipping trashed and unresolved ones (#5242)', async () => {
+      holdInTabsAndRecents([
+        { pageId: 'PAGE_TRASHED', title: 'Trashed' },
+        { pageId: 'PAGE_UNKNOWN', title: 'Unknown' },
+        { pageId: 'PAGE_1', title: 'Foo' },
+      ])
+      mockResolvedPages.set('PAGE_TRASHED', { title: 'Renamed then trashed', deleted: true })
+      mockResolvedPages.set('PAGE_1', { title: 'Bar', deleted: false })
+      const { unmount } = await fire()
+
+      await vi.waitFor(() => {
+        expect(heldTitles()).toEqual({
+          tabs: ['Trashed', 'Unknown', 'Bar'],
+          label: 'Bar',
+          recents: ['Trashed', 'Unknown', 'Bar'],
+        })
+      })
 
       unmount()
     })

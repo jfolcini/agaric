@@ -17,6 +17,8 @@ import { LoadingSkeleton } from '@/components/rendering/LoadingSkeleton'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { useBlockNavigation } from '@/hooks/useBlockNavigation'
+import { useBlockPropertyEvents } from '@/hooks/useBlockPropertyEvents'
+import { useInvalidateOnCounter } from '@/hooks/useInvalidateOnCounter'
 import { useLocalStoragePreference } from '@/hooks/useLocalStoragePreference'
 import { useToday } from '@/hooks/useToday'
 import { unwrap } from '@/lib/app-error'
@@ -288,46 +290,58 @@ export function UnfinishedTasks({
     () => ['unfinishedTasks', currentSpaceId, todayStr],
     [currentSpaceId, todayStr],
   )
-  const { data, isFetching, isError, hasNextPage, fetchNextPage, isFetchingNextPage, refetch } =
-    useInfiniteQuery(
-      {
-        queryKey,
-        queryFn: async ({ pageParam }): Promise<PageResponse<BlockRow>> => {
-          try {
-            return unwrap(
-              await commands.listUnfinishedTasks(
-                todayStr,
-                ['TODO', 'DOING'],
-                pageParam ?? null,
-                paginationLimit(200),
-                toSpaceScope(currentSpaceId),
-              ),
-            )
-          } catch (err) {
-            logger.warn('UnfinishedTasks', 'fetchUnfinished failed', undefined, err)
-            throw err
-          }
-        },
-        initialPageParam: undefined as string | undefined,
-        getNextPageParam: (last) =>
-          last.has_more && last.next_cursor != null ? last.next_cursor : undefined,
-        // usePaginatedQuery auto-loaded (drained) on every mount; preserve that.
-        refetchOnMount: 'always',
-        // Stale-while-revalidate parity: the old drain never cleared `blocks` on a
-        // deps change — only a fresh commit overwrote them. Retained here for
-        // consistency with the sibling migrations, but NOT load-bearing for this
-        // panel: the `loading` skeleton (below) already gates the whole render
-        // during a re-drain, so there is no visible list to keep alive.
-        placeholderData: keepPreviousData,
-        // Bound the cache: the key carries `todayStr`, which advances every
-        // calendar day, so a session left open across many days would mint a new
-        // (superseded, observer-less) entry per day and never collect it under the
-        // client's `gcTime: Infinity`. A finite `gcTime` collects the prior day's
-        // entry shortly after the rollover (same value/rationale as `DonePanel`).
-        gcTime: 5 * 60 * 1000,
+  // #5256 — a task ticked, re-dated or synced elsewhere moves the property
+  // counter; refetch in place rather than through a new key (see the hook).
+  const { invalidationKey } = useBlockPropertyEvents()
+  useInvalidateOnCounter(invalidationKey, queryKey)
+  const {
+    data,
+    isFetching,
+    isError,
+    isPlaceholderData,
+    hasNextPage,
+    fetchNextPage,
+    isFetchingNextPage,
+    refetch,
+  } = useInfiniteQuery(
+    {
+      queryKey,
+      queryFn: async ({ pageParam }): Promise<PageResponse<BlockRow>> => {
+        try {
+          return unwrap(
+            await commands.listUnfinishedTasks(
+              todayStr,
+              ['TODO', 'DOING'],
+              pageParam ?? null,
+              paginationLimit(200),
+              toSpaceScope(currentSpaceId),
+            ),
+          )
+        } catch (err) {
+          logger.warn('UnfinishedTasks', 'fetchUnfinished failed', undefined, err)
+          throw err
+        }
       },
-      queryClient,
-    )
+      initialPageParam: undefined as string | undefined,
+      getNextPageParam: (last) =>
+        last.has_more && last.next_cursor != null ? last.next_cursor : undefined,
+      // usePaginatedQuery auto-loaded (drained) on every mount; preserve that.
+      refetchOnMount: 'always',
+      // Stale-while-revalidate parity: the old drain never cleared `blocks` on a
+      // deps change — only a fresh commit overwrote them. Retained here for
+      // consistency with the sibling migrations, but NOT load-bearing for this
+      // panel: the `loading` skeleton (below) already gates the whole render
+      // during a re-drain, so there is no visible list to keep alive.
+      placeholderData: keepPreviousData,
+      // Bound the cache: the key carries `todayStr`, which advances every
+      // calendar day, so a session left open across many days would mint a new
+      // (superseded, observer-less) entry per day and never collect it under the
+      // client's `gcTime: Infinity`. A finite `gcTime` collects the prior day's
+      // entry shortly after the rollover (same value/rationale as `DonePanel`).
+      gcTime: 5 * 60 * 1000,
+    },
+    queryClient,
+  )
 
   // DRAIN: auto-follow the `next_cursor` chain to completion, bounded by
   // MAX_UNFINISHED_PAGES (25) so a non-advancing backend cursor can't spin
@@ -377,7 +391,13 @@ export function UnfinishedTasks({
   //   • cap hit (pages≥25) → draining false → loading=isFetching    → false
   //   • mid-drain failure  → isError true → draining false          → false
   //   • collapsed          → draining false → settles after page 1  → false
-  const loading = isFetching || draining
+  //   • counter refetch    → settled list stays up until it lands   → false
+  // The last row: TanStack commits a refetch's pages in one go, so the drained
+  // list can stay on screen (and keep a focused row) instead of flashing the
+  // skeleton on every task edit (#5256). A placeholder from the previous space
+  // or day is not that list.
+  const showsSettledList = blocks.length > 0 && !isPlaceholderData
+  const loading = (isFetching && !showsSettledList) || draining
 
   const { handleBlockClick, handleBlockKeyDown } = useBlockNavigation({
     onNavigateToPage,

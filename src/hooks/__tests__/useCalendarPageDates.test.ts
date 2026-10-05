@@ -22,9 +22,11 @@ import {
   __resetCalendarPageDatesForTests,
   invalidateCalendarPageDates,
   PAGE_DATES_TTL_MS,
+  samePageMap,
   useCalendarPageDates,
 } from '@/hooks/useCalendarPageDates'
 import type { BlockRow } from '@/lib/bindings'
+import { logger } from '@/lib/logger'
 import { useSpaceStore } from '@/stores/space'
 
 const mockedInvoke = vi.mocked(invoke)
@@ -339,16 +341,15 @@ describe('useCalendarPageDates', () => {
       })
     }
 
+    // Unmounted before the invalidation, so only the cache — not a mounted
+    // re-fetch (#5258) — decides whether the second subscriber fetches.
     const first = renderHook(() => useCalendarPageDates(RANGE))
+    first.unmount()
     invalidateCalendarPageDates()
     await act(async () => {
       release([])
       await Promise.resolve()
     })
-    await waitFor(() => {
-      expect(first.result.current.loading).toBe(false)
-    })
-    first.unmount()
 
     const second = renderHook(() => useCalendarPageDates(RANGE))
     await waitFor(() => {
@@ -438,5 +439,76 @@ describe('useCalendarPageDates', () => {
     })
 
     expect(juneAgain.result.current.pageMap.has('2025-07-04')).toBe(false)
+  })
+
+  // #5258 — a synced peer or an MCP agent writes a day's entry while the journal is open.
+  it('a mounted subscriber re-fetches in place on invalidateCalendarPageDates', async () => {
+    journalPagesResponse = () => [makePage({ id: 'P1', content: '2025-06-15' })]
+    const loadingSeen: boolean[] = []
+    const { result } = renderHook(() => {
+      const dates = useCalendarPageDates(RANGE)
+      loadingSeen.push(dates.loading)
+      return dates
+    })
+    await waitFor(() => {
+      expect(result.current.loading).toBe(false)
+    })
+    loadingSeen.length = 0
+    journalPagesResponse = () => [
+      makePage({ id: 'P1', content: '2025-06-15' }),
+      makePage({ id: 'P2', content: '2025-06-16' }),
+    ]
+
+    act(() => {
+      invalidateCalendarPageDates()
+    })
+
+    await waitFor(() => {
+      expect(result.current.pageMap.get('2025-06-16')).toBe('P2')
+    })
+    expect(result.current.pageMap.size).toBe(2)
+    // Never back to the skeleton: that would unmount the journal's day editors.
+    expect(loadingSeen).not.toContain(true)
+    expect(fetchCallCount()).toBe(2)
+  })
+
+  it('a re-fetch that finds the same pages keeps the same pageMap', async () => {
+    journalPagesResponse = () => [makePage({ id: 'P1', content: '2025-06-15' })]
+    const { result } = renderHook(() => useCalendarPageDates(RANGE))
+    await waitFor(() => {
+      expect(result.current.loading).toBe(false)
+    })
+    const before = result.current.pageMap
+
+    const debugSpy = vi.spyOn(logger, 'debug')
+
+    act(() => {
+      invalidateCalendarPageDates()
+    })
+
+    // Logged right after the re-fetch's `setPageMap`, so the map below is settled.
+    await waitFor(() => {
+      expect(debugSpy).toHaveBeenCalledWith(
+        'useCalendarPageDates',
+        'journal pages loaded',
+        expect.objectContaining({ pageCount: 1 }),
+      )
+    })
+    expect(fetchCallCount()).toBe(2)
+    expect(result.current.pageMap).toBe(before)
+    debugSpy.mockRestore()
+  })
+})
+
+describe('samePageMap', () => {
+  it('is true for maps with the same entries', () => {
+    expect(samePageMap(new Map([['2025-06-15', 'P1']]), new Map([['2025-06-15', 'P1']]))).toBe(true)
+  })
+
+  it('is false when a date maps to another page or the sizes differ', () => {
+    const a = new Map([['2025-06-15', 'P1']])
+    expect(samePageMap(a, new Map([['2025-06-15', 'P2']]))).toBe(false)
+    expect(samePageMap(a, new Map([...a, ['2025-06-16', 'P3']]))).toBe(false)
+    expect(samePageMap(new Map([...a, ['2025-06-16', 'P3']]), a)).toBe(false)
   })
 })

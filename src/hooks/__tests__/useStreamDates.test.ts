@@ -10,6 +10,7 @@
  * 4. `reachedEnd` flips true once the window reaches MIN_JOURNAL_DATE
  *    (and `loadOlder` then clamps).
  * 5. `addPage` merges a locally-created page without refetching.
+ * 6. A calendar page-dates invalidation re-fetches the window in place.
  */
 
 import { act, renderHook, waitFor } from '@testing-library/react'
@@ -42,6 +43,7 @@ vi.mock('@/stores/space', () => ({
     selector({ currentSpaceId: spaceRef.current }),
 }))
 
+import { invalidateCalendarPageDates } from '@/hooks/useCalendarPageDates'
 import { STREAM_BATCH_DAYS, STREAM_INITIAL_DAYS, useStreamDates } from '@/hooks/useStreamDates'
 
 const TODAY = new Date(2026, 5, 20) // Sat, Jun 20, 2026
@@ -115,6 +117,41 @@ describe('useStreamDates', () => {
     act(() => result.current.addPage('2026-06-20', 'new-page'))
     expect(result.current.pageMap.get('2026-06-20')).toBe('new-page')
     expect(listJournalPagesInRange.mock.calls.length).toBe(callsBefore)
+  })
+
+  // #5258 — a synced peer or an MCP agent writes a day's entry while the stream is open.
+  it('re-fetches the window in place when the calendar page dates are invalidated', async () => {
+    const busySeen: boolean[] = []
+    const { result } = renderHook(() => {
+      const stream = useStreamDates()
+      busySeen.push(stream.loading || stream.loadingOlder)
+      return stream
+    })
+    await waitFor(() => expect(result.current.loading).toBe(false))
+    busySeen.length = 0
+    listJournalPagesInRange.mockResolvedValue([{ id: 'p-19', content: '2026-06-19' }])
+
+    act(() => invalidateCalendarPageDates())
+
+    await waitFor(() => expect(result.current.pageMap.get('2026-06-19')).toBe('p-19'))
+    expect(result.current.dates).toHaveLength(STREAM_INITIAL_DAYS)
+    expect(busySeen).not.toContain(true)
+  })
+
+  it('a re-fetch that finds the same pages keeps the same pageMap', async () => {
+    listJournalPagesInRange.mockResolvedValue([{ id: 'p-19', content: '2026-06-19' }])
+    const { result } = renderHook(() => useStreamDates())
+    await waitFor(() => expect(result.current.pageMap.get('2026-06-19')).toBe('p-19'))
+    const before = result.current.pageMap
+
+    act(() => invalidateCalendarPageDates())
+    await waitFor(() => expect(listJournalPagesInRange).toHaveBeenCalledTimes(2))
+    // The mock resolves at once, so a macrotask later the re-fetch has settled.
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0))
+    })
+
+    expect(result.current.pageMap).toBe(before)
   })
 
   it('short-circuits to an empty pageMap with no active space, fetching nothing (b1)', async () => {

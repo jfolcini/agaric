@@ -19,7 +19,8 @@
  *
  * Settled-but-unresolved names are cached as `null` entries, which also
  * prevents the resolve effect from re-firing the prefix lookup for the
- * same unknown name on every map identity change.
+ * same unknown name on every map identity change. A name-change event that
+ * could have created the tag drops them again (#5255).
  *
  * The cache keys on the lowercased name only and is therefore
  * space-scoped: the same name can map to a different tag_id (or none) in
@@ -30,6 +31,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { unwrap } from '@/lib/app-error'
 import { commands } from '@/lib/bindings'
 import { logger } from '@/lib/logger'
+import { subscribeToNameChanges } from '@/lib/name-change-bus'
 import { paginationLimit } from '@/lib/safe-limit'
 
 export interface TagResolution {
@@ -67,8 +69,8 @@ export function useTagResolution(
   }, [tagNames, tagNameMap])
 
   // Resolve unsettled tag names via the prefix lookup. `null` entries
-  // count as settled, so unknown names are looked up exactly once per
-  // space (not re-fetched on every map identity change).
+  // count as settled, so an unknown name is not re-fetched on every map
+  // identity change — only after a name change drops it (below).
   useEffect(() => {
     // #2275 — dedupe by lowercased cache key before the fan-out. The cache
     // keys on the lowercased name, so case-variant duplicates
@@ -134,6 +136,24 @@ export function useTagResolution(
     // oxlint-disable-next-line react/set-state-in-effect -- drops the space-scoped tag-id cache on space switch; the map accumulates backend lookups, so it cannot be derived during render; see #4407
     setTagNameMap((prev) => (prev.size === 0 ? prev : new Map()))
   }, [currentSpaceId])
+
+  // #5255 — a name settled as unknown can come into existence later: a synced
+  // peer or an MCP agent creates the tag (`invalidated`), or a local surface
+  // creates or renames one. Drop the `null`s so the resolve effect looks them up
+  // again; resolved ids are left alone, so the search is not re-held each sync.
+  useEffect(
+    () =>
+      subscribeToNameChanges((change) => {
+        const mayNameUnknownTag =
+          change.kind === 'invalidated' || (change.entity === 'tag' && change.kind !== 'removed')
+        if (!mayNameUnknownTag) return
+        setTagNameMap((prev) => {
+          const resolvedOnly = new Map([...prev].filter(([, id]) => id !== null))
+          return resolvedOnly.size === prev.size ? prev : resolvedOnly
+        })
+      }),
+    [],
+  )
 
   return resolution
 }

@@ -20,6 +20,7 @@ import { axe } from 'vitest-axe'
 
 import { makeBlock } from '@/__tests__/fixtures'
 import type { BlockRow } from '@/lib/bindings'
+import { recordBlockPropertyChange } from '@/lib/block-property-events'
 import { formatCompactDate } from '@/lib/date-utils'
 import { t } from '@/lib/i18n'
 import { logger } from '@/lib/logger'
@@ -1369,6 +1370,87 @@ describe('UnfinishedTasks', () => {
       expect(body).toHaveTextContent(t('unfinished.loading'))
       // …and the button the user activated is still there to collapse again.
       expect(screen.getByRole('button', { expanded: true })).toBeInTheDocument()
+    })
+  })
+
+  // #5256 — a task ticked on another page, by a synced peer or by an MCP agent
+  // moves the block-property counter; nothing else tells this panel.
+  describe('refetch on the block-property counter (#5256)', () => {
+    it('drops a task completed elsewhere from the expanded panel', async () => {
+      const blocks = [makeYesterdayBlock(), makeOlderBlock()]
+      mockInvokeForBlocks(blocks)
+      render(<UnfinishedTasks />)
+      await waitFor(() => {
+        expect(screen.getByTestId('unfinished-tasks')).toBeInTheDocument()
+      })
+      await userEvent.setup().click(screen.getByRole('button', { expanded: false }))
+      expect(screen.getByText('Yesterday task')).toBeInTheDocument()
+
+      blocks[0] = { ...makeYesterdayBlock(), todo_state: 'DONE' }
+      act(() => {
+        recordBlockPropertyChange()
+      })
+
+      await waitFor(() => {
+        expect(screen.queryByText('Yesterday task')).not.toBeInTheDocument()
+      })
+      expect(screen.getByText('Older task')).toBeInTheDocument()
+    })
+
+    it('keeps the settled list on screen while the refetch is in flight', async () => {
+      mockInvokeForBlocks([makeYesterdayBlock()])
+      render(<UnfinishedTasks />)
+      await waitFor(() => {
+        expect(screen.getByTestId('unfinished-tasks')).toBeInTheDocument()
+      })
+      await userEvent.setup().click(screen.getByRole('button', { expanded: false }))
+      expect(screen.getByText('Yesterday task')).toBeInTheDocument()
+
+      let release: () => void = () => {}
+      mockedInvoke.mockImplementation((cmd: string) => {
+        if (cmd !== 'list_unfinished_tasks') return Promise.resolve([])
+        return new Promise((resolve) => {
+          release = () => resolve({ items: [], next_cursor: null, has_more: false })
+        })
+      })
+      act(() => {
+        recordBlockPropertyChange()
+      })
+      await waitFor(() => {
+        expect(
+          mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'list_unfinished_tasks'),
+        ).toHaveLength(2)
+      })
+
+      expect(screen.getByText('Yesterday task')).toBeInTheDocument()
+      expect(screen.queryByTestId('unfinished-tasks-body-loading')).not.toBeInTheDocument()
+
+      await act(async () => {
+        release()
+      })
+      await waitFor(() => {
+        expect(screen.queryByTestId('unfinished-tasks')).not.toBeInTheDocument()
+      })
+    })
+
+    it('shows the skeleton, not the previous space’s tasks, while a new space loads', async () => {
+      useSpaceStore.setState({ currentSpaceId: 'SPACE_A' })
+      mockInvokeForBlocks([makeYesterdayBlock()])
+      render(<UnfinishedTasks />)
+      await waitFor(() => {
+        expect(screen.getByTestId('unfinished-tasks')).toBeInTheDocument()
+      })
+      await userEvent.setup().click(screen.getByRole('button', { expanded: false }))
+      expect(screen.getByText('Yesterday task')).toBeInTheDocument()
+
+      mockedInvoke.mockImplementation(() => new Promise(() => {}))
+      await act(async () => {
+        useSpaceStore.setState({ currentSpaceId: 'SPACE_B' })
+      })
+
+      expect(screen.queryByText('Yesterday task')).not.toBeInTheDocument()
+      expect(screen.getByTestId('unfinished-tasks-body-loading')).toBeInTheDocument()
+      useSpaceStore.setState({ currentSpaceId: null })
     })
   })
 
