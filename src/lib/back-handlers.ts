@@ -7,6 +7,7 @@
  */
 
 import { useNavigationStore } from '@/stores/navigation'
+import { canNavigateBack, navigateBack, recordNextAsReplace } from '@/stores/navigation-history'
 import { exitViewForTab, useTabsStore } from '@/stores/tabs'
 
 /**
@@ -68,8 +69,10 @@ export function overlayBackHandler(): boolean {
 }
 
 /**
- * Step 3 — in-app navigation. Mirrors Android's "progressive collapse to
- * the start destination" convention:
+ * Step 3 — in-app navigation. Walks the header's Back history first, so the
+ * gesture and the ← button agree. With nothing left to go back to (a fresh
+ * launch), it falls back to Android's "progressive collapse to the start
+ * destination" convention:
  *
  *  - `page-editor` with a non-empty page stack → `useTabsStore.goBack()`
  *    (pops the stack; closes the tab / returns to the view the stack was
@@ -83,12 +86,19 @@ export function overlayBackHandler(): boolean {
  *    `journal` start destination.
  *  - `journal` → not handled (`false`): true root, the caller exits.
  *
- * The chain still terminates: the exit view is never `page-editor`, so the
- * next press falls into the non-`journal` → `journal` step and the one after
- * that declines.
+ * The chain still terminates: a fallback step replaces its history entry
+ * rather than pushing one, so it never gives Back an entry to return to; and
+ * the exit view is never `page-editor`, so the next press falls into the
+ * non-`journal` → `journal` step and the one after that declines.
  */
 export function navigationBackHandler(): boolean {
+  if (canNavigateBack()) {
+    navigateBack()
+    return true
+  }
   const nav = useNavigationStore.getState()
+  if (nav.currentView === 'journal') return false
+  recordNextAsReplace()
   if (nav.currentView === 'page-editor') {
     const tabsState = useTabsStore.getState()
     const activeTab = tabsState.tabs[tabsState.activeTabIndex]
@@ -100,9 +110,6 @@ export function navigationBackHandler(): boolean {
     nav.setView(exitViewForTab(activeTab))
     return true
   }
-  if (nav.currentView !== 'journal') {
-    nav.setView('journal')
-    return true
-  }
-  return false
+  nav.setView('journal')
+  return true
 }

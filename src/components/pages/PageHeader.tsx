@@ -5,7 +5,7 @@
  * and a tag badge row with an inline tag picker popover.
  */
 
-import { ArrowLeft, Smile } from 'lucide-react'
+import { Smile } from 'lucide-react'
 import type React from 'react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -519,17 +519,6 @@ export function PageHeader({ pageId, title, onBack, onEditSource, kebabRef }: Pa
               own, right-aligned, instead of running off-screen; the title
               keeps its minimum width (`PageTitleEditor`). */}
           <div className="flex flex-wrap items-center justify-end gap-2">
-            {onBack && (
-              <IconButton
-                variant="ghost"
-                size="icon-sm"
-                onClick={onBack}
-                ariaLabel={t('pageHeader.goBack')}
-                tooltip={t('pageHeader.goBack')}
-              >
-                <ArrowLeft className="h-4 w-4" />
-              </IconButton>
-            )}
             <PageTitleEditor
               title={title}
               editableTitle={editableTitle}

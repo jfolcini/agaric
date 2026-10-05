@@ -62,7 +62,7 @@ App
 
 ## Views
 
-`ViewDispatcher` switches on `useNavigationStore.currentView`. No router; no URL hash. `agaric://` deep links are parsed by the Rust backend, emitted as Tauri events, and dispatched into the nav / tabs stores. `useTabsStore` owns the per-tab page stack.
+`ViewDispatcher` switches on `useNavigationStore.currentView`. No router; no URL hash. `agaric://` deep links are parsed by the Rust backend, emitted as Tauri events, and dispatched into the nav / tabs stores. `useTabsStore` owns the per-tab page stack. The header's Back / Forward replay the per-space history in `src/stores/navigation-history.ts`.
 
 | View | What the user sees | Sidebar item |
 | --- | --- | --- |

@@ -59,9 +59,10 @@ export interface Tab {
    * (there is no meaningful route to return to in that case). Those fall back
    * to `DEFAULT_PAGE_EXIT_VIEW`.
    *
-   * This is deliberately ONE slot, not a browser-style view history: the page
-   * stack already provides multi-step back INSIDE the editor, and the only
-   * gap was the single hop out of it.
+   * This is deliberately ONE slot: the browser-style history behind the
+   * header's Back / Forward lives in `navigation-history`. This slot serves
+   * `goBack` — leaving a deleted or stale page, and Android's back gesture
+   * on a fresh launch with no history yet.
    */
   enteredFrom?: View | undefined
 }

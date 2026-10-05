@@ -183,20 +183,27 @@ for (const profile of PROFILES) {
       )
     })
 
-    // Today is where most writing happens, so its button is on the header in
-    // every mode, today included. It used to be hidden below `sm` and on
-    // today's daily page; a text button squeezed the date chip to one letter.
-    test('Today stays on the journal header in every mode without crowding the date', async ({
+    // Today, Back and Forward are on the journal header in every mode, today
+    // included. The five mode tabs are one menu here: next to the arrows they
+    // would squeeze the date chip to nothing.
+    test('Today, Back and Forward stay on the journal header without crowding the date', async ({
       page,
     }) => {
       await waitForBoot(page)
       const header = page.locator('header').first()
       const today = header.getByRole('button', { name: 'Go to today' })
-      for (const mode of ['Daily', 'Weekly', 'Monthly', 'Continuous stream', 'Agenda']) {
-        await header.getByRole('tab', { name: `${mode} view` }).click()
+      for (const mode of ['Day', 'Week', 'Month', 'Stream', 'Agenda']) {
+        await header.getByRole('button', { name: /^Journal view mode/ }).click()
+        await page.getByRole('button', { name: mode, exact: true }).click()
+        await expect(
+          header.getByRole('button', { name: `Journal view mode: ${mode}` }),
+        ).toBeVisible()
         await expect(today, `Today in ${mode}`).toBeVisible()
+        await expect(header.getByRole('button', { name: 'Back', exact: true })).toBeVisible()
+        await expect(header.getByRole('button', { name: 'Forward', exact: true })).toBeVisible()
       }
-      await header.getByRole('tab', { name: 'Daily view' }).click()
+      await header.getByRole('button', { name: /^Journal view mode/ }).click()
+      await page.getByRole('button', { name: 'Day', exact: true }).click()
       const chip = header.getByRole('button', { name: /open calendar picker/i })
       // Wide enough for the compact "Oct 5" label, not a single letter.
       expect((await chip.boundingBox())?.width ?? 0).toBeGreaterThanOrEqual(32)

@@ -20,14 +20,36 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { navigationBackHandler, overlayBackHandler } from '@/lib/back-handlers'
 import { useNavigationStore } from '@/stores/navigation'
+import { useResolveStore } from '@/stores/resolve'
 import { DEFAULT_PAGE_EXIT_VIEW, resetTabIdCounter, useTabsStore } from '@/stores/tabs'
+
+/** The view on screen, or the top page's id in the editor. */
+function screen(): string {
+  const view = useNavigationStore.getState().currentView
+  if (view !== 'page-editor') return view
+  const { tabs, activeTabIndex } = useTabsStore.getState()
+  return tabs[activeTabIndex]?.pageStack.at(-1)?.pageId ?? view
+}
+
+/** Presses back until the handler declines, returning where each handled press landed. */
+async function pressBackUntilDeclined(): Promise<string[]> {
+  const landed: string[] = []
+  for (let press = 0; press < 10; press++) {
+    if (!navigationBackHandler()) return landed
+    await Promise.resolve()
+    landed.push(screen())
+  }
+  throw new Error(`back never declined: ${landed.join(' → ')}`)
+}
 
 function resetStores() {
   resetTabIdCounter()
+  useResolveStore.setState({ cache: new Map() })
   useNavigationStore.setState({
     currentView: 'journal',
     currentViewBySpace: {},
     selectedBlockId: null,
+    navHistoryBySpace: {},
   })
   useTabsStore.setState({
     tabs: [{ id: '0', pageStack: [], label: '' }],
@@ -222,8 +244,62 @@ describe('navigationBackHandler', () => {
     expect(useNavigationStore.getState().currentView).toBe('journal')
   })
 
+  // The gesture and the header's Back button walk the same history.
+  it('walks the Back history before the fallback rules', async () => {
+    useNavigationStore.getState().setView('settings')
+    await Promise.resolve()
+    useNavigationStore.getState().setView('pages')
+    await Promise.resolve()
+
+    expect(navigationBackHandler()).toBe(true)
+    expect(useNavigationStore.getState().currentView).toBe('settings')
+  })
+
   it('declines at the journal root so the caller can exit', () => {
     expect(navigationBackHandler()).toBe(false)
     expect(useNavigationStore.getState().currentView).toBe('journal')
+  })
+
+  // A launch restores the last view with an empty history, so only the
+  // fallback rules have anywhere to go; repeated presses must still exit.
+  it('reaches the journal root from a restored view, then declines', async () => {
+    useNavigationStore.setState({ currentView: 'pages', navHistoryBySpace: {} })
+    await Promise.resolve()
+
+    expect(await pressBackUntilDeclined()).toEqual(['journal'])
+  })
+
+  it('unwinds a restored page stack to the journal root, then declines', async () => {
+    useTabsStore.setState({
+      tabs: [
+        {
+          id: '0',
+          pageStack: [
+            { pageId: 'X', title: 'Ex' },
+            { pageId: 'A', title: 'Ay' },
+          ],
+          label: 'Ay',
+        },
+      ],
+      activeTabIndex: 0,
+    })
+    useNavigationStore.setState({ currentView: 'page-editor', navHistoryBySpace: {} })
+    await Promise.resolve()
+
+    expect(await pressBackUntilDeclined()).toEqual(['X', DEFAULT_PAGE_EXIT_VIEW, 'journal'])
+  })
+
+  it('falls through to the fallback rules when every earlier entry is a deleted page', async () => {
+    useTabsStore.setState({
+      tabs: [{ id: '0', pageStack: [{ pageId: 'P1', title: 'One' }], label: 'One' }],
+      activeTabIndex: 0,
+    })
+    useNavigationStore.setState({ currentView: 'page-editor', navHistoryBySpace: {} })
+    await Promise.resolve()
+    useNavigationStore.getState().setView('settings')
+    await Promise.resolve()
+    useResolveStore.getState().set('P1', 'One', true)
+
+    expect(await pressBackUntilDeclined()).toEqual(['journal'])
   })
 })

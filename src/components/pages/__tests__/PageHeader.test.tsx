@@ -279,17 +279,12 @@ describe('PageHeader rendering', () => {
     expect(titleEl).toHaveTextContent('My Test Page')
   })
 
-  it('renders back button when onBack provided', () => {
+  // The app header's Back / Forward replaced the page's own back arrow;
+  // `onBack` now only leaves the page after a delete or a space move.
+  it('renders no back arrow of its own', () => {
     renderPageHeader(<PageHeader pageId="PAGE_1" title="My Page" onBack={() => {}} />)
 
-    const backBtn = screen.getByRole('button', { name: /go back/i })
-    expect(backBtn).toBeInTheDocument()
-  })
-
-  it('does not render back button when onBack omitted', () => {
-    renderPageHeader(<PageHeader pageId="PAGE_1" title="My Page" />)
-
-    expect(screen.queryByRole('button', { name: /go back/i })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /back/i })).not.toBeInTheDocument()
   })
 
   it('renders tag badges for applied tags', async () => {

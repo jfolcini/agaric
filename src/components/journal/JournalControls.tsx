@@ -24,6 +24,7 @@ import { useTranslation } from 'react-i18next'
 import { useShallow } from 'zustand/react/shallow'
 
 import { JournalCalendarDropdown } from '@/components/journal/JournalCalendarDropdown'
+import { JournalModeMenu } from '@/components/journal/JournalModeMenu'
 import { Button } from '@/components/ui/button'
 import { IconButton } from '@/components/ui/icon-button'
 import { Kbd } from '@/components/ui/kbd'
@@ -219,6 +220,20 @@ export function JournalControls(): React.ReactElement {
   // prev/next date stepper + date display (the stepper would have nothing to
   // move). The calendar picker stays available in both.
   const hidesDateNav = mode === 'agenda' || mode === 'stream'
+  const modeLabels: Record<JournalMode, string> = {
+    daily: t('journal.dayTab'),
+    weekly: t('journal.weekTab'),
+    monthly: t('journal.monthTab'),
+    stream: t('journal.streamTab'),
+    agenda: t('journal.agendaTab'),
+  }
+  const modeViewLabels: Record<JournalMode, string> = {
+    daily: t('journal.dailyView'),
+    weekly: t('journal.weeklyView'),
+    monthly: t('journal.monthlyView'),
+    stream: t('journal.streamView'),
+    agenda: t('journal.agendaView'),
+  }
   const previousShortcut = getShortcutKeys('prevDayWeekMonth')
   const nextShortcut = getShortcutKeys('nextDayWeekMonth')
   const todayShortcut = getShortcutKeys('goToToday')
@@ -236,74 +251,49 @@ export function JournalControls(): React.ReactElement {
       className="flex min-w-0 flex-1 items-center gap-2 max-sm:gap-0.5"
       data-testid="journal-header"
     >
-      {/* Mode switcher */}
+      {/* Mode switcher: tabs from lg up; below it one menu button, because
+          the five tabs next to Back / Forward, the date stepper and Today
+          leave the date chip no room on a phone or a touch tablet. */}
       <div
-        className="flex shrink-0 items-center gap-0.5 max-sm:gap-0"
+        className="flex shrink-0 items-center gap-0.5 max-lg:hidden"
         role="tablist"
         aria-label={t('journal.viewModeLabel')}
         tabIndex={-1}
         onKeyDown={handleTablistKeyDown}
       >
-        {JOURNAL_MODES.map((m) => {
-          const tabLabels: Record<string, string> = {
-            daily: t('journal.dayTab'),
-            weekly: t('journal.weekTab'),
-            monthly: t('journal.monthTab'),
-            stream: t('journal.streamTab'),
-            agenda: t('journal.agendaTab'),
-          }
-          const ariaLabels: Record<string, string> = {
-            daily: t('journal.dailyView'),
-            weekly: t('journal.weeklyView'),
-            monthly: t('journal.monthlyView'),
-            stream: t('journal.streamView'),
-            agenda: t('journal.agendaView'),
-          }
-          return (
-            <Button
-              key={m}
-              ref={(el) => {
-                tabRefs.current[m] = el
-              }}
-              variant={mode === m ? 'secondary' : 'ghost'}
-              size="xs"
-              // Phone width: a fixed 24px-wide square-ish tab around the
-              // single glyph below. The `xs` size's coarse-pointer override
-              // (`px-3`) made each tab 31-35px, so the five tabs alone ate
-              // 174px of the 284px the header gets at 360px. 24×44 clears the
-              // 24px WCAG 2.5.8 target floor and only the WIDTH shrinks — the
-              // 44px touch height is untouched. `!` because the coarse-pointer
-              // padding otherwise wins on source order (measured).
-              className="max-sm:w-6! max-sm:px-0!"
-              role="tab"
-              id={journalTabId(m)}
-              aria-selected={mode === m}
-              // Only the SELECTED tab points at a panel: JournalPage mounts the
-              // panel for the active mode only, so referencing an unmounted
-              // panel from inactive tabs would dangle (axe aria-valid-attr-value).
-              {...(mode === m ? { 'aria-controls': journalPanelId(m) } : {})}
-              aria-label={ariaLabels[m]}
-              // Roving tabindex: the focused tab (or the active tab when focus
-              // is elsewhere) is the single tab stop; arrows move focus among
-              // the rest. Manual activation — focus ≠ selection.
-              tabIndex={rovingMode === m ? 0 : -1}
-              onClick={() => setMode(m)}
-            >
-              {/* PEND: compact labels under ~480px so the four tabs don't
-                  crowd the calendar icon out of row 1 on phones. The
-                  `aria-label` above keeps the full word for screen readers. */}
-              <span className="hidden [@media(min-width:480px)]:inline">{tabLabels[m]}</span>
-              {/* Below 480px only the initial glyph shows; a native `title`
-                  surfaces the full mode name on hover so a sighted user can
-                  disambiguate (e.g. 'S' = Stream). The `aria-label` above
-                  already covers screen readers. */}
-              <span className="[@media(min-width:480px)]:hidden" title={ariaLabels[m]}>
-                {tabLabels[m]?.charAt(0)}
-              </span>
-            </Button>
-          )
-        })}
+        {JOURNAL_MODES.map((m) => (
+          <Button
+            key={m}
+            ref={(el) => {
+              tabRefs.current[m] = el
+            }}
+            variant={mode === m ? 'secondary' : 'ghost'}
+            size="xs"
+            role="tab"
+            id={journalTabId(m)}
+            aria-selected={mode === m}
+            // Only the SELECTED tab points at a panel: JournalPage mounts the
+            // panel for the active mode only, so referencing an unmounted
+            // panel from inactive tabs would dangle (axe aria-valid-attr-value).
+            {...(mode === m ? { 'aria-controls': journalPanelId(m) } : {})}
+            aria-label={modeViewLabels[m]}
+            // Roving tabindex: the focused tab (or the active tab when focus
+            // is elsewhere) is the single tab stop; arrows move focus among
+            // the rest. Manual activation — focus ≠ selection.
+            tabIndex={rovingMode === m ? 0 : -1}
+            onClick={() => setMode(m)}
+          >
+            {modeLabels[m]}
+          </Button>
+        ))}
       </div>
+      <JournalModeMenu
+        className="lg:hidden"
+        modes={JOURNAL_MODES}
+        mode={mode}
+        labels={modeLabels}
+        onSelect={setMode}
+      />
 
       <div className="hidden sm:block flex-1" />
 

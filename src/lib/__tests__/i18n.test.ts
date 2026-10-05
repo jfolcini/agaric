@@ -187,7 +187,8 @@ describe('key existence', () => {
 
     // Page Header
     'pageHeader.pageTitle',
-    'pageHeader.goBack',
+    'nav.back',
+    'nav.forward',
     'pageHeader.deletePage',
 
     // Page Browser
