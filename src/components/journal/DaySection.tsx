@@ -271,7 +271,7 @@ function DaySectionInner({
       // controls at once (#1243). The section-level group is also unnecessary:
       // `PageQuickActions variant="journal"` is `hoverReveal: false` (always
       // visible), so nothing depended on it.
-      className={cn(isToday && 'bg-accent/[0.08] px-3 py-2 -mx-3')}
+      className={cn(isToday && 'bg-accent/[0.08] px-3 py-2 -mx-3 rounded-lg')}
     >
       {/* Day heading — hidden in daily mode since header shows the date */}
       {!hideHeading && (

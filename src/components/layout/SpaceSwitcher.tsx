@@ -127,7 +127,7 @@ export function SpaceSwitcher(): React.JSX.Element {
               <SelectTrigger
                 aria-label={t('space.switch')}
                 className={cn(
-                  'w-full justify-between',
+                  'w-full *:data-[slot=select-value]:flex-1',
                   // Inherit the sidebar's tight typography while preserving
                   // the 44px touch target via the Select's built-in
                   // `[@media(pointer:coarse)]:h-11` rule.
@@ -151,7 +151,7 @@ export function SpaceSwitcher(): React.JSX.Element {
                   <span
                     aria-hidden="true"
                     data-testid="space-switcher-accent-dot"
-                    className="mr-2 h-2 w-2 shrink-0 rounded-full"
+                    className="h-2 w-2 shrink-0 rounded-full"
                     style={{ backgroundColor: accentVar(activeSpace.accent_color) }}
                   />
                 )}

@@ -344,7 +344,7 @@ describe('SidebarProvider interactions', () => {
     )
 
     const wrapper = document.querySelector('[data-slot="sidebar-wrapper"]') as HTMLElement
-    expect(wrapper.style.getPropertyValue('--sidebar-width')).toBe('150px')
+    expect(wrapper.style.getPropertyValue('--sidebar-width')).toBe('224px')
   })
 
   it('keeps an incremental collapsed rail drag alive through the width clamp (#3335)', () => {

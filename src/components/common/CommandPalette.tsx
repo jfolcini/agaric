@@ -132,6 +132,9 @@ export function CommandPalette(): React.ReactElement | null {
       <Content
         className={cn(
           'flex flex-col p-0',
+          // The shared close button is placed for a `p-6` dialog; centre it
+          // in the mode-chip row instead of across the row's bottom border.
+          '[&>[data-slot=dialog-close]]:top-2.5 [&>[data-slot=dialog-close]]:right-3',
           // Wider than the default `sm:max-w-lg` so 8 page-groups fit
           // comfortably without horizontal scrolling. The desktop dialog
           // keeps its narrower 80dvh cap; mobile uses the shared sheet cap.
