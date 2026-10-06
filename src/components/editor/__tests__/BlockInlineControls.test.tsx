@@ -246,8 +246,8 @@ describe('formatCompactDate', () => {
 })
 
 describe('dueDateColor', () => {
-  it('returns red classes for overdue dates', () => {
-    expect(dueDateColor('2000-01-01')).toContain('text-destructive')
+  it('returns alert-error classes for overdue dates', () => {
+    expect(dueDateColor('2000-01-01')).toContain('text-alert-error-foreground')
   })
 
   it('returns amber classes for today', () => {
