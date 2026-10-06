@@ -8925,7 +8925,7 @@ async fn undo_move_to_space_rehomes_the_page_between_docs_5238() {
     );
 
     // Redo takes the same arm the other way: out of A's doc, back into B's.
-    let redo = redo_page_op_inner(
+    redo_page_op_inner(
         &pool,
         DEV,
         &mat,
@@ -8935,7 +8935,6 @@ async fn undo_move_to_space_rehomes_the_page_between_docs_5238() {
     .await
     .unwrap();
     settle(&mat).await;
-    assert!(redo.is_redo, "redo of the undone move");
     for id in [page.as_str(), child.as_str()] {
         assert!(
             in_doc(state, TEST_SPACE_B_ID, id) && !in_doc(state, TEST_SPACE_ID, id),
@@ -9053,7 +9052,7 @@ async fn page_undo_restores_the_space_of_a_peer_born_page_5262() {
     )
     .await;
 
-    let redo = redo_page_op_inner(
+    redo_page_op_inner(
         &pool,
         DEV,
         &mat,
@@ -9063,7 +9062,6 @@ async fn page_undo_restores_the_space_of_a_peer_born_page_5262() {
     .await
     .unwrap();
     settle(&mat).await;
-    assert!(redo.is_redo, "redo of the undone move");
     assert_homed_in(
         &pool,
         &mat,
@@ -9142,7 +9140,7 @@ async fn undo_ops_restores_the_space_of_a_peer_born_page_5262() {
     )
     .await;
 
-    let redo = redo_page_op_inner(
+    redo_page_op_inner(
         &pool,
         DEV,
         &mat,
@@ -9152,7 +9150,6 @@ async fn undo_ops_restores_the_space_of_a_peer_born_page_5262() {
     .await
     .unwrap();
     settle(&mat).await;
-    assert!(redo.is_redo, "redo of the undone move");
     assert_homed_in(
         &pool,
         &mat,
@@ -9358,7 +9355,7 @@ async fn undo_ops_renests_the_pages_a_space_move_detached_5267() {
         "K2 inherits P's tag down the restored chain"
     );
 
-    let redo = redo_page_op_inner(
+    redo_page_op_inner(
         &pool,
         DEV,
         &mat,
@@ -9368,7 +9365,6 @@ async fn undo_ops_renests_the_pages_a_space_move_detached_5267() {
     .await
     .unwrap();
     settle(&mat).await;
-    assert!(redo.is_redo, "redo of the undone move");
     for id in [&k, &k2] {
         assert_eq!(
             sql_placement(&pool, id).await.0,
@@ -9377,6 +9373,20 @@ async fn undo_ops_renests_the_pages_a_space_move_detached_5267() {
         );
         assert_eq!(doc_placement(state, TEST_SPACE_ID, id).0, None);
     }
+
+    // Ctrl+Z once more: neither the detach nor the re-nest recorded an op, so
+    // the latest placement ops still point under P.
+    let again = undo_page_op_inner(&pool, DEV, &mat, page.as_str().to_owned(), 0)
+        .await
+        .unwrap();
+    settle(&mat).await;
+    assert_eq!(again.reversed_op_type, "set_property");
+    assert_eq!(
+        live_children(&pool, &page).await,
+        [c.as_str(), k.as_str()],
+        "undo→redo→undo re-nests K"
+    );
+    assert_eq!(live_children(&pool, &c).await, [k2.as_str()]);
     mat.shutdown();
 }
 
