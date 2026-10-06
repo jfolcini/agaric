@@ -184,6 +184,39 @@ void test('a clean run with no tracking issue at all never reaches the close', (
   )
 })
 
+// #5110 stayed open after its crash was fixed: the line was removed by hand, as
+// the body asks, so the next clean run had nothing to resolve and left it open.
+const EMPTIED_BODY = [
+  '<!-- fuzz-findings:begin -->',
+  '```',
+  '```',
+  '<!-- fuzz-findings:end -->',
+].join('\n')
+
+void test('a clean run closes an issue whose block was emptied by hand', () => {
+  const lines = runMain({
+    statuses: { fts_strip: 'ok', import_parse: 'ok' },
+    jobStatus: 'success',
+    knownBody: EMPTIED_BODY,
+  })
+  assert.ok(
+    lines.some((l) => l.startsWith('[dry-run] would CLOSE issue #0')),
+    `expected a close, got:\n${lines.join('\n')}`,
+  )
+})
+
+void test('a cancelled run does not close an issue whose block was emptied by hand', () => {
+  const lines = runMain({
+    statuses: { fts_strip: 'ok', import_parse: 'not_run' },
+    jobStatus: 'cancelled',
+    knownBody: EMPTIED_BODY,
+  })
+  assert.ok(
+    lines.some((l) => l.startsWith('no new fuzz findings')),
+    `expected a no-op, got:\n${lines.join('\n')}`,
+  )
+})
+
 // #5112 — a clean run disproves the run-shape lines in a MIXED set too. Leaving
 // them in the block was not inert: a finding id is the dedup key, so the stale
 // line swallowed the identical id from the next run that genuinely lost that

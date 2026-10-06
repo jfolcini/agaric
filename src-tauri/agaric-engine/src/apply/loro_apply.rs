@@ -471,6 +471,176 @@ async fn prune_subtree_from_space_doc(
     Ok(())
 }
 
+/// A page [`renest_pages_detached_by_space_move`] puts back, with the parent
+/// and 0-based slot its latest placement op recorded.
+struct RecordedPlacement {
+    page_id: String,
+    parent_id: String,
+    slot: usize,
+}
+
+/// #5267: the nested pages `prune_subtree_from_space_doc` re-rooted owe that
+/// to no op, so the reverse of the space move has nothing to replay for them
+/// and the hydration back stops at them (#5239): they stayed roots. Re-nest
+/// every live root page of `space_id` whose latest placement op —
+/// `create_block` or `move_block`, local or a peer's audit row — put it under
+/// `page_id` or a live block of `page_id`'s group, at the slot that op
+/// recorded. A page placed elsewhere since (an explicit move to the root
+/// included) keeps that placement. Only the reverse path calls this: moving
+/// the page back by hand does not re-nest.
+pub async fn renest_pages_detached_by_space_move(
+    conn: &mut sqlx::SqliteConnection,
+    state: &crate::loro::shared::LoroState,
+    device_id: &str,
+    page_id: &agaric_core::ulid::BlockId,
+    space_id: &agaric_store::space::SpaceId,
+) -> Result<(), AppError> {
+    for placement in recorded_placements_under(conn, page_id, space_id).await? {
+        if agaric_store::block_descendants::move_would_cycle(
+            &mut *conn,
+            &placement.page_id,
+            &placement.parent_id,
+        )
+        .await?
+        {
+            tracing::warn!(
+                page_id = %placement.page_id,
+                parent_id = %placement.parent_id,
+                "re-nest after a space-move undo: the recorded parent is now a descendant; \
+                 left at the root",
+            );
+            continue;
+        }
+        renest_page(conn, state, device_id, space_id, &placement).await?;
+    }
+    Ok(())
+}
+
+/// The live root pages of `space_id` whose latest placement op put them
+/// inside `page_id`'s group, lowest slot first per parent so each re-enters
+/// among the siblings already back — the order `revert_ops_in_tx` applies to
+/// batched reverse moves.
+async fn recorded_placements_under(
+    conn: &mut sqlx::SqliteConnection,
+    page_id: &agaric_core::ulid::BlockId,
+    space_id: &agaric_store::space::SpaceId,
+) -> Result<Vec<RecordedPlacement>, AppError> {
+    let page = page_id.as_str();
+    let space = space_id.as_str();
+    let rows = sqlx::query!(
+        r#"WITH placements AS (
+               SELECT ol.block_id, ol.op_type, ol.payload,
+                      ROW_NUMBER() OVER (
+                          PARTITION BY ol.block_id
+                          ORDER BY ol.created_at DESC, ol.seq DESC, ol.device_id DESC
+                      ) AS rn
+                 FROM op_log ol
+                 JOIN blocks b ON b.id = ol.block_id
+                WHERE b.space_id = ?1 AND b.block_type = 'page'
+                  AND b.parent_id IS NULL AND b.deleted_at IS NULL
+                  AND ol.op_type IN ('create_block', 'move_block')
+           )
+           SELECT block_id AS "block_id!: String",
+                  op_type AS "op_type!: String",
+                  payload AS "payload!: String"
+             FROM placements
+            WHERE rn = 1
+              AND COALESCE(json_extract(payload, '$.parent_id'),
+                           json_extract(payload, '$.new_parent_id'))
+                  IN (SELECT id FROM blocks
+                       WHERE (id = ?2 OR page_id = ?2) AND deleted_at IS NULL)"#,
+        space,
+        page,
+    )
+    .fetch_all(&mut *conn)
+    .await?;
+    let mut placements = Vec::with_capacity(rows.len());
+    for row in rows {
+        let (parent_id, slot) = recorded_slot(&row.op_type, &row.payload)?;
+        placements.push(RecordedPlacement {
+            page_id: row.block_id,
+            parent_id,
+            slot,
+        });
+    }
+    placements.sort_by(|a, b| (&a.parent_id, a.slot).cmp(&(&b.parent_id, b.slot)));
+    Ok(placements)
+}
+
+/// The parent and 0-based slot a placement op recorded. A pre-#400 op
+/// carries a 1-based `position` instead; a create with neither appended, so
+/// it re-enters at the end (the engine clamps the slot).
+fn recorded_slot(op_type: &str, payload: &str) -> Result<(String, usize), AppError> {
+    let (parent_id, index, position) = if op_type == OpType::CreateBlock.as_str() {
+        let p: CreateBlockPayload = serde_json::from_str(payload)?;
+        (p.parent_id, p.index, p.position)
+    } else {
+        let p: MoveBlockPayload = serde_json::from_str(payload)?;
+        (p.new_parent_id, p.new_index, Some(p.new_position))
+    };
+    let parent_id = parent_id.ok_or_else(|| {
+        AppError::validation(format!("{op_type} selected as a placement names no parent"))
+    })?;
+    let slot = index
+        .or_else(|| position.map(|p| p.saturating_sub(1)))
+        .unwrap_or(i64::MAX);
+    Ok((
+        parent_id.into_string(),
+        usize::try_from(slot).unwrap_or(usize::MAX),
+    ))
+}
+
+/// Put one detached page back under its recorded parent the way the prune
+/// took it out: the engine places it, both sibling groups that changed are
+/// reprojected to their dense rank, and its subtree's inherited tags come
+/// back down the parent chain.
+async fn renest_page(
+    conn: &mut sqlx::SqliteConnection,
+    state: &crate::loro::shared::LoroState,
+    device_id: &str,
+    space_id: &agaric_store::space::SpaceId,
+    placement: &RecordedPlacement,
+) -> Result<(), AppError> {
+    use crate::loro::projection;
+
+    let RecordedPlacement {
+        page_id,
+        parent_id,
+        slot,
+    } = placement;
+    let groups = {
+        let mut guard = state
+            .registry
+            .for_space_recording(space_id, device_id, &state.revert)?;
+        let engine = guard.engine_mut();
+        if !engine.contains_block(page_id) || !engine.contains_block(parent_id) {
+            tracing::warn!(
+                page_id,
+                parent_id,
+                "re-nest after a space-move undo: page or parent missing from the engine; \
+                 left at the root (boot replay reconciles)",
+            );
+            return Ok(());
+        }
+        engine.apply_move_block_to(page_id, Some(parent_id), *slot)?;
+        [
+            engine.children_ordered_block_ids(Some(parent_id))?,
+            engine.children_ordered_block_ids(None)?,
+        ]
+    };
+    sqlx::query!(
+        "UPDATE blocks SET parent_id = ? WHERE id = ?",
+        parent_id,
+        page_id,
+    )
+    .execute(&mut *conn)
+    .await?;
+    for group in &groups {
+        projection::reproject_dense_positions(conn, group).await?;
+    }
+    tag_inheritance::recompute_subtree_inheritance(conn, page_id).await
+}
+
 /// #4775: seed a space's own block — with its `is_space` / `accent_color`
 /// rows — into the space's own per-space engine, so the block travels to
 /// peers inside the doc it registers. Its `blocks.space_id` stays NULL: a

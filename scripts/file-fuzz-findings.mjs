@@ -649,7 +649,10 @@ export function isRetestedEachRun(id) {
  * re-reads. That mixed set is `clearDisprovedFindings`'.
  */
 function closeResolvedIssue({ args, repo, existingIssue, resolvedOnes, results, runUrl }) {
-  const summary = `${resolvedOnes.length} previously-known finding(s) resolved and none remain: ${resolvedOnes.join(', ')}`
+  const summary =
+    resolvedOnes.length > 0
+      ? `${resolvedOnes.length} previously-known finding(s) resolved and none remain: ${resolvedOnes.join(', ')}`
+      : 'every target passed and no finding is tracked'
   if (existingIssue.state === 'CLOSED') {
     console.log(`${summary} — tracking issue already closed, nothing to do`)
     return
@@ -853,7 +856,11 @@ export function main(argv = process.argv.slice(2)) {
   if (newOnes.length === 0) {
     // No `current.length === 0` here: every target reporting `ok` already means
     // `buildFindings` returned nothing, so the check could never fail.
-    if (allTargetsClean(results) && resolvedOnes.length > 0) {
+    // The second arm is a block emptied by hand, as this issue's body asks once
+    // a finding is fixed: nothing is left for a run to resolve, so without it
+    // the issue stayed open through every clean week.
+    const emptiedByHand = all.length === 0 && existingIssue?.state === 'OPEN'
+    if (allTargetsClean(results) && (resolvedOnes.length > 0 || emptiedByHand)) {
       // `all` is the retained set: a clean run has no findings of its own, so
       // `diffFindings` filled it with exactly the known lines it did not disprove.
       if (all.length === 0) {

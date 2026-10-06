@@ -723,10 +723,10 @@ async fn fetch_prior_property_batch(
             qb.push_bind(bid_upper);
             qb.push(" AND json_extract(payload, '$.key') = ");
             qb.push_bind(payload.key);
-            // #2549: `AND is_replicated = 0` — mirrors
-            // `property_ops::find_prior_property`; a never-applied audit row
-            // (#2495) must not resurrect a property value.
-            qb.push(" AND op_type IN ('set_property', 'delete_property') AND is_replicated = 0 AND (created_at < ");
+            // #2549: `AND is_replicated = 0` — mirrors `property_ops::find_prior_property`,
+            // its #5262 `space` carve-out included; a never-applied audit row
+            // (#2495) must not resurrect any other property value.
+            qb.push(" AND op_type IN ('set_property', 'delete_property') AND (is_replicated = 0 OR json_extract(payload, '$.key') = 'space') AND (created_at < ");
             qb.push_bind(record.created_at);
             qb.push(" OR (created_at = ");
             qb.push_bind(record.created_at);

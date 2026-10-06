@@ -8925,7 +8925,7 @@ async fn undo_move_to_space_rehomes_the_page_between_docs_5238() {
     );
 
     // Redo takes the same arm the other way: out of A's doc, back into B's.
-    let redo = redo_page_op_inner(
+    redo_page_op_inner(
         &pool,
         DEV,
         &mat,
@@ -8935,7 +8935,6 @@ async fn undo_move_to_space_rehomes_the_page_between_docs_5238() {
     .await
     .unwrap();
     settle(&mat).await;
-    assert!(redo.is_redo, "redo of the undone move");
     for id in [page.as_str(), child.as_str()] {
         assert!(
             in_doc(state, TEST_SPACE_B_ID, id) && !in_doc(state, TEST_SPACE_ID, id),
@@ -8945,36 +8944,64 @@ async fn undo_move_to_space_rehomes_the_page_between_docs_5238() {
     mat.shutdown();
 }
 
-/// #5259 — "first" mirrors `find_prior_property`: a page whose birth arrived
-/// as replicated audit rows has no LOCAL prior `set_property(space)`, so the
-/// reverse of its first local move would be `DeleteProperty(space)` — the page
-/// in no space. That move is not a positional target either.
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn page_undo_skips_the_first_local_space_move_of_a_peer_born_page_5259() {
-    let (pool, _dir) = test_pool().await;
-    let mat = Materializer::new(pool.clone());
-    let page = space_page(&pool, &mat).await;
-    settle(&mat).await;
-    ensure_test_space_b(&pool).await;
+/// `ids` live in `space` — the SQL column and the per-space docs agree — and
+/// are gone from `other`'s doc.
+async fn assert_homed_in(
+    pool: &SqlitePool,
+    mat: &Materializer,
+    ids: &[&BlockId],
+    space: &str,
+    other: &str,
+    when: &str,
+) {
+    for id in ids {
+        let space_id: Option<String> =
+            sqlx::query_scalar("SELECT space_id FROM blocks WHERE id = ?")
+                .bind(id.as_str())
+                .fetch_one(pool)
+                .await
+                .unwrap();
+        assert_eq!(space_id.as_deref(), Some(space), "{when}: {id} in SQL");
+        assert!(
+            in_doc(mat.loro_state(), space, id.as_str()),
+            "{when}: {id} must be in {space}'s doc"
+        );
+        assert!(
+            !in_doc(mat.loro_state(), other, id.as_str()),
+            "{when}: {id} must be out of {other}'s doc"
+        );
+    }
+}
+
+/// #5262 — a page in A with one block, born on a peer: the root's
+/// `create_block` + `set_property(space)` and the block's `create_block` are
+/// replicated audit rows. Then moved A → B here: the page's first LOCAL
+/// `set_property(space)`, whose only prior is the replicated birth.
+async fn peer_born_page_moved_to_b(pool: &SqlitePool, mat: &Materializer) -> (BlockId, BlockId) {
+    let page = space_page(pool, mat).await;
+    let block = append_child(pool, mat, &page, "body").await;
+    settle(mat).await;
+    ensure_test_space_b(pool).await;
     let birth: Vec<(String, i64)> =
-        sqlx::query_as("SELECT device_id, seq FROM op_log WHERE block_id = ?")
+        sqlx::query_as("SELECT device_id, seq FROM op_log WHERE block_id IN (?, ?)")
             .bind(page.as_str())
-            .fetch_all(&pool)
+            .bind(block.as_str())
+            .fetch_all(pool)
             .await
             .unwrap();
     assert_eq!(
         birth.len(),
-        2,
-        "the birth is create_block + set_property(space)"
+        3,
+        "the birth is the root's create_block + set_property(space) and the block's create_block"
     );
     for (device_id, seq) in &birth {
-        mark_op_replicated(&pool, device_id, *seq).await;
+        mark_op_replicated(pool, device_id, *seq).await;
     }
 
     set_property_inner(
-        &pool,
+        pool,
         DEV,
-        &mat,
+        mat,
         page.as_str().into(),
         "space".into(),
         None,
@@ -8986,17 +9013,540 @@ async fn page_undo_skips_the_first_local_space_move_of_a_peer_born_page_5259() {
     )
     .await
     .unwrap();
-    settle(&mat).await;
+    settle(mat).await;
+    assert_homed_in(
+        pool,
+        mat,
+        &[&page, &block],
+        TEST_SPACE_B_ID,
+        TEST_SPACE_ID,
+        "sanity: after the move",
+    )
+    .await;
+    (page, block)
+}
 
-    let single = undo_page_op_inner(&pool, DEV, &mat, page.as_str().to_owned(), 0).await;
-    assert!(
-        matches!(single, Err(AppError::NotFound(_))),
-        "the move is not a positional target: {single:?}"
-    );
-    let group = undo_page_group_inner(&pool, DEV, &mat, page.as_str().to_owned(), 0, 60_000)
+/// #5262 — the "first" in the #5259 birth exclusion mirrors
+/// `find_prior_property`, which for `space` counts a replicated prior: the
+/// peer's assignment is what placed the page in the doc this device received it
+/// through. So a peer-born page's first local move IS a positional target, and
+/// undoing it puts the page back where it arrived — not in no space.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn page_undo_restores_the_space_of_a_peer_born_page_5262() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let (page, block) = peer_born_page_moved_to_b(&pool, &mat).await;
+
+    let undo = undo_page_op_inner(&pool, DEV, &mat, page.as_str().to_owned(), 0)
         .await
         .unwrap();
-    assert!(group.is_empty(), "nor does it seed a group");
+    settle(&mat).await;
+    assert_eq!(undo.reversed_op_type, "set_property");
+    assert_homed_in(
+        &pool,
+        &mat,
+        &[&page, &block],
+        TEST_SPACE_ID,
+        TEST_SPACE_B_ID,
+        "after the undo",
+    )
+    .await;
+
+    redo_page_op_inner(
+        &pool,
+        DEV,
+        &mat,
+        undo.new_op_ref.device_id.clone(),
+        undo.new_op_ref.seq,
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+    assert_homed_in(
+        &pool,
+        &mat,
+        &[&page, &block],
+        TEST_SPACE_B_ID,
+        TEST_SPACE_ID,
+        "after the redo",
+    )
+    .await;
+    mat.shutdown();
+}
+
+/// #5262 — the group path shares the row universe: the move seeds a group of
+/// one (the replicated birth rows neither join nor break it) and the group
+/// undo re-homes the page the same way.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn page_undo_group_restores_the_space_of_a_peer_born_page_5262() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let (page, block) = peer_born_page_moved_to_b(&pool, &mat).await;
+    let page_id = page.as_str().to_owned();
+
+    assert_eq!(
+        find_undo_group_inner(&pool, &page_id, 0, 60_000)
+            .await
+            .unwrap(),
+        1,
+        "the move seeds a group of one"
+    );
+    let group = undo_page_group_inner(&pool, DEV, &mat, page_id, 0, 60_000)
+        .await
+        .unwrap();
+    settle(&mat).await;
+    assert_eq!(group.len(), 1, "the group holds the move alone");
+    assert_eq!(group[0].reversed_op_type, "set_property");
+    assert_homed_in(
+        &pool,
+        &mat,
+        &[&page, &block],
+        TEST_SPACE_ID,
+        TEST_SPACE_B_ID,
+        "after the group undo",
+    )
+    .await;
+    mat.shutdown();
+}
+
+/// #5262 — the ref-addressed undo (History view, `undo_op` / `undo_ops`) runs
+/// the batch kernel: same outcome, and the redo moves the page back.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn undo_ops_restores_the_space_of_a_peer_born_page_5262() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let (page, block) = peer_born_page_moved_to_b(&pool, &mat).await;
+    let (device_id, seq): (String, i64) = sqlx::query_as(
+        "SELECT device_id, seq FROM op_log WHERE block_id = ? AND is_replicated = 0",
+    )
+    .bind(page.as_str())
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    let results = undo_ops_inner(&pool, DEV, &mat, vec![OpRef { device_id, seq }])
+        .await
+        .unwrap();
+    settle(&mat).await;
+    assert_eq!(results.len(), 1, "one op reversed");
+    assert_eq!(results[0].reversed_op_type, "set_property");
+    assert_homed_in(
+        &pool,
+        &mat,
+        &[&page, &block],
+        TEST_SPACE_ID,
+        TEST_SPACE_B_ID,
+        "after the undo",
+    )
+    .await;
+
+    redo_page_op_inner(
+        &pool,
+        DEV,
+        &mat,
+        results[0].new_op_ref.device_id.clone(),
+        results[0].new_op_ref.seq,
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+    assert_homed_in(
+        &pool,
+        &mat,
+        &[&page, &block],
+        TEST_SPACE_B_ID,
+        TEST_SPACE_ID,
+        "after the redo",
+    )
+    .await;
+    mat.shutdown();
+}
+
+// ======================================================================
+// #5267 — undoing a space move re-nests the pages the move detached
+// ======================================================================
+
+/// `(parent_id, position)` of a block's SQL row.
+async fn sql_placement(pool: &SqlitePool, id: &BlockId) -> (Option<String>, Option<i64>) {
+    sqlx::query_as("SELECT parent_id, position FROM blocks WHERE id = ?")
+        .bind(id.as_str())
+        .fetch_one(pool)
+        .await
+        .unwrap()
+}
+
+/// `(parent_id, position)` of a block in `space`'s doc.
+fn doc_placement(
+    state: &agaric_engine::loro::shared::LoroState,
+    space: &str,
+    id: &BlockId,
+) -> (Option<String>, i64) {
+    let space = SpaceId::from_trusted(space);
+    let mut guard = state.registry.for_space(&space, DEV).expect("for_space");
+    let snapshot = guard
+        .engine_mut()
+        .read_block(id.as_str())
+        .expect("read_block")
+        .expect("block in the doc");
+    drop(guard);
+    (snapshot.parent_id, snapshot.position)
+}
+
+/// A page nested under `parent` in space A, created the way the app does
+/// (its create op records the slot it appended at).
+async fn nested_page(
+    pool: &SqlitePool,
+    mat: &Materializer,
+    parent: &BlockId,
+    title: &str,
+) -> BlockId {
+    create_page_in_space_inner(
+        pool,
+        DEV,
+        mat,
+        Some(parent.as_str().to_owned()),
+        title.into(),
+        TEST_SPACE_ID.into(),
+    )
+    .await
+    .unwrap()
+}
+
+/// The header's "Move to space" on `page`.
+async fn move_page_to(pool: &SqlitePool, mat: &Materializer, page: &BlockId, space: &str) {
+    set_property_inner(
+        pool,
+        DEV,
+        mat,
+        page.as_str().into(),
+        "space".into(),
+        None,
+        None,
+        None,
+        Some(space.into()),
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    settle(mat).await;
+}
+
+/// The ref of the newest local `set_property` op on `block`.
+async fn newest_set_property_ref(pool: &SqlitePool, block: &BlockId) -> OpRef {
+    let (device_id, seq): (String, i64) = sqlx::query_as(
+        "SELECT device_id, seq FROM op_log \
+         WHERE block_id = ? AND op_type = 'set_property' AND is_replicated = 0 \
+         ORDER BY created_at DESC, seq DESC LIMIT 1",
+    )
+    .bind(block.as_str())
+    .fetch_one(pool)
+    .await
+    .unwrap();
+    OpRef { device_id, seq }
+}
+
+async fn inherited_tag_count(pool: &SqlitePool, block: &BlockId, tag: &BlockId) -> i64 {
+    sqlx::query_scalar("SELECT COUNT(*) FROM block_tag_inherited WHERE block_id = ? AND tag_id = ?")
+        .bind(block.as_str())
+        .bind(tag.as_str())
+        .fetch_one(pool)
+        .await
+        .unwrap()
+}
+
+/// #5267 — moving P to B re-rooted K (nested under P) and K2 (nested under
+/// P's block C) in A, and no op recorded that, so undoing the move left them
+/// roots. The undo must put each back under its parent at the slot its
+/// LATEST placement op recorded, in A's doc and in SQL, with the tags
+/// inherited down that chain back. K's latest placement is a move to slot 1,
+/// not its create at slot 0, so the order pins which op was consulted. Redo
+/// detaches them again through the forward path.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn undo_ops_renests_the_pages_a_space_move_detached_5267() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let state = mat.loro_state();
+    let page = space_page(&pool, &mat).await;
+    let k = nested_page(&pool, &mat, &page, "K").await;
+    let c = append_child(&pool, &mat, &page, "body").await;
+    move_block_inner(&pool, DEV, &mat, k.clone(), Some(page.clone()), 1)
+        .await
+        .unwrap();
+    let k2 = nested_page(&pool, &mat, &c, "K2").await;
+    let tag = create_block_inner(&pool, DEV, &mat, "tag".into(), "label".into(), None, None)
+        .await
+        .unwrap()
+        .id;
+    add_tag_inner(&pool, DEV, &mat, page.clone(), tag.clone())
+        .await
+        .unwrap();
+    settle(&mat).await;
+    ensure_test_space_b(&pool).await;
+    assert_eq!(
+        live_children(&pool, &page).await,
+        [c.as_str(), k.as_str()],
+        "precondition: K was moved behind C"
+    );
+    assert_eq!(live_children(&pool, &c).await, [k2.as_str()]);
+    assert_eq!(
+        inherited_tag_count(&pool, &k2, &tag).await,
+        1,
+        "precondition: K2 inherits P's tag"
+    );
+
+    move_page_to(&pool, &mat, &page, TEST_SPACE_B_ID).await;
+    for id in [&k, &k2] {
+        assert_eq!(
+            sql_placement(&pool, id).await.0,
+            None,
+            "sanity: the move re-rooted {id} in A"
+        );
+        assert_eq!(doc_placement(state, TEST_SPACE_ID, id).0, None);
+    }
+    assert_eq!(
+        inherited_tag_count(&pool, &k2, &tag).await,
+        0,
+        "sanity: the detach dropped the inherited tag"
+    );
+
+    let results = undo_ops_inner(
+        &pool,
+        DEV,
+        &mat,
+        vec![newest_set_property_ref(&pool, &page).await],
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+    assert_eq!(results[0].reversed_op_type, "set_property");
+
+    assert_eq!(
+        live_children(&pool, &page).await,
+        [c.as_str(), k.as_str()],
+        "K is back under P at the slot its move recorded"
+    );
+    assert_eq!(
+        live_children(&pool, &c).await,
+        [k2.as_str()],
+        "K2 is back under C"
+    );
+    assert_eq!(
+        sql_placement(&pool, &k).await,
+        (Some(page.as_str().to_owned()), Some(2))
+    );
+    assert_eq!(
+        sql_placement(&pool, &k2).await,
+        (Some(c.as_str().to_owned()), Some(1))
+    );
+    assert_eq!(
+        doc_placement(state, TEST_SPACE_ID, &k),
+        (Some(page.as_str().to_owned()), 2),
+        "A's doc agrees: K second under P"
+    );
+    assert_eq!(
+        doc_placement(state, TEST_SPACE_ID, &k2),
+        (Some(c.as_str().to_owned()), 1),
+        "A's doc agrees: K2 under C"
+    );
+    assert_eq!(
+        inherited_tag_count(&pool, &k2, &tag).await,
+        1,
+        "K2 inherits P's tag down the restored chain"
+    );
+
+    redo_page_op_inner(
+        &pool,
+        DEV,
+        &mat,
+        results[0].new_op_ref.device_id.clone(),
+        results[0].new_op_ref.seq,
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+    for id in [&k, &k2] {
+        assert_eq!(
+            sql_placement(&pool, id).await.0,
+            None,
+            "the redo re-roots {id} again"
+        );
+        assert_eq!(doc_placement(state, TEST_SPACE_ID, id).0, None);
+    }
+
+    // Ctrl+Z once more: neither the detach nor the re-nest recorded an op, so
+    // the latest placement ops still point under P.
+    let again = undo_page_op_inner(&pool, DEV, &mat, page.as_str().to_owned(), 0)
+        .await
+        .unwrap();
+    settle(&mat).await;
+    assert_eq!(again.reversed_op_type, "set_property");
+    assert_eq!(
+        live_children(&pool, &page).await,
+        [c.as_str(), k.as_str()],
+        "undo→redo→undo re-nests K"
+    );
+    assert_eq!(live_children(&pool, &c).await, [k2.as_str()]);
+    mat.shutdown();
+}
+
+/// #5267 — the same through the Pages view's batch move and the positional
+/// page undo Ctrl+Z falls back to.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn page_undo_of_move_blocks_to_space_renests_the_detached_page_5267() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let state = mat.loro_state();
+    let page = space_page(&pool, &mat).await;
+    let c = append_child(&pool, &mat, &page, "body").await;
+    let k = nested_page(&pool, &mat, &page, "K").await;
+    settle(&mat).await;
+    ensure_test_space_b(&pool).await;
+    mark_block_as_space(&pool, TEST_SPACE_B_ID).await;
+
+    move_blocks_to_space_inner(&pool, DEV, &mat, vec![page.clone()], TEST_SPACE_B_ID.into())
+        .await
+        .unwrap();
+    settle(&mat).await;
+    assert_eq!(
+        sql_placement(&pool, &k).await.0,
+        None,
+        "sanity: the batch move re-rooted K"
+    );
+
+    let undo = undo_page_op_inner(&pool, DEV, &mat, page.as_str().to_owned(), 0)
+        .await
+        .unwrap();
+    settle(&mat).await;
+    assert_eq!(undo.reversed_op_type, "set_property");
+    assert_eq!(
+        live_children(&pool, &page).await,
+        [c.as_str(), k.as_str()],
+        "K is back under P at the slot its create recorded"
+    );
+    assert_eq!(
+        doc_placement(state, TEST_SPACE_ID, &k),
+        (Some(page.as_str().to_owned()), 2),
+        "A's doc agrees"
+    );
+    mat.shutdown();
+}
+
+/// #5267 — a detached page the user placed since keeps that placement: K
+/// was moved under another page Q, K2 to the root by an explicit move. Both
+/// latest placement ops point away from P, so the undo leaves them.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn undo_leaves_a_detached_page_placed_elsewhere_since_5267() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let page = space_page(&pool, &mat).await;
+    let k = nested_page(&pool, &mat, &page, "K").await;
+    let k2 = nested_page(&pool, &mat, &page, "K2").await;
+    let q = create_page_in_space_inner(&pool, DEV, &mat, None, "Q".into(), TEST_SPACE_ID.into())
+        .await
+        .unwrap();
+    settle(&mat).await;
+    ensure_test_space_b(&pool).await;
+
+    move_page_to(&pool, &mat, &page, TEST_SPACE_B_ID).await;
+    let space_op = newest_set_property_ref(&pool, &page).await;
+    move_block_inner(&pool, DEV, &mat, k.clone(), Some(q.clone()), 0)
+        .await
+        .unwrap();
+    move_block_inner(&pool, DEV, &mat, k2.clone(), None, 0)
+        .await
+        .unwrap();
+    settle(&mat).await;
+
+    undo_ops_inner(&pool, DEV, &mat, vec![space_op])
+        .await
+        .unwrap();
+    settle(&mat).await;
+    assert_eq!(
+        sql_placement(&pool, &k).await.0.as_deref(),
+        Some(q.as_str()),
+        "K stays under Q"
+    );
+    assert_eq!(
+        sql_placement(&pool, &k2).await.0,
+        None,
+        "K2 stays at the root it was moved to"
+    );
+    assert_eq!(
+        live_children(&pool, &page).await,
+        Vec::<String>::new(),
+        "nothing re-nested under P"
+    );
+    mat.shutdown();
+}
+
+/// #5267 — the placement consulted is the latest op on the page whoever
+/// authored it: a peer's `move_block` audit row (ingested, never applied
+/// locally) is the latest here and names slot 0, so the undo puts K first,
+/// not at the slot its own local create recorded.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn undo_renests_by_a_peer_placement_op_5267() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let page = space_page(&pool, &mat).await;
+    let c = append_child(&pool, &mat, &page, "body").await;
+    let k = nested_page(&pool, &mat, &page, "K").await;
+    settle(&mat).await;
+    ensure_test_space_b(&pool).await;
+    let after_local: i64 = sqlx::query_scalar("SELECT MAX(created_at) FROM op_log")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    append_replicated_op(
+        &pool,
+        "peer-5267",
+        1,
+        OpPayload::MoveBlock(agaric_store::op::MoveBlockPayload {
+            block_id: k.clone(),
+            new_parent_id: Some(page.clone()),
+            new_position: 1,
+            new_index: Some(0),
+        }),
+        after_local + 1,
+    )
+    .await;
+
+    move_page_to(&pool, &mat, &page, TEST_SPACE_B_ID).await;
+    assert_eq!(
+        sql_placement(&pool, &k).await.0,
+        None,
+        "sanity: the move re-rooted K"
+    );
+    undo_ops_inner(
+        &pool,
+        DEV,
+        &mat,
+        vec![newest_set_property_ref(&pool, &page).await],
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+    assert_eq!(
+        live_children(&pool, &page).await,
+        [k.as_str(), c.as_str()],
+        "K re-enters at the peer op's slot 0"
+    );
+    mat.shutdown();
+}
+
+/// #5267 — only an undo re-nests: moving P back to A by hand is a fresh
+/// forward move, and K stays the root the first move made it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn moving_a_page_back_by_hand_does_not_renest_5267() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let page = space_page(&pool, &mat).await;
+    let k = nested_page(&pool, &mat, &page, "K").await;
+    settle(&mat).await;
+    ensure_test_space_b(&pool).await;
+    move_page_to(&pool, &mat, &page, TEST_SPACE_B_ID).await;
+
+    move_page_to(&pool, &mat, &page, TEST_SPACE_ID).await;
     let space_id: Option<String> = sqlx::query_scalar("SELECT space_id FROM blocks WHERE id = ?")
         .bind(page.as_str())
         .fetch_one(&pool)
@@ -9004,8 +9554,13 @@ async fn page_undo_skips_the_first_local_space_move_of_a_peer_born_page_5259() {
         .unwrap();
     assert_eq!(
         space_id.as_deref(),
-        Some(TEST_SPACE_B_ID),
-        "the page keeps the space it was moved to"
+        Some(TEST_SPACE_ID),
+        "sanity: P is back in A"
+    );
+    assert_eq!(
+        sql_placement(&pool, &k).await.0,
+        None,
+        "K keeps the root the first move gave it"
     );
     mat.shutdown();
 }

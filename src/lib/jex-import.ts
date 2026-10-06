@@ -134,7 +134,9 @@ function readStringField(block: Uint8Array, offset: number, length: number): str
  * Parse a USTAR archive into its file members. Non-regular entries
  * (directories, symlinks, pax/GNU extended headers) are skipped; the two
  * trailing all-zero blocks terminate the scan. A truncated final block ends the
- * scan gracefully rather than throwing (partial-archive tolerance).
+ * scan gracefully rather than throwing (partial-archive tolerance). So does a
+ * negative size: it locates no next header, and stepping by it can send the
+ * cursor back over blocks already read, forever.
  */
 function readTar(archive: Uint8Array): TarEntry[] {
   const entries: TarEntry[] = []
@@ -156,13 +158,14 @@ function readTar(archive: Uint8Array): TarEntry[] {
     const prefix = readStringField(header, 345, 155)
     const fullName = prefix.length > 0 ? `${prefix}/${name}` : name
     const size = readOctalField(header, 124, 12)
+    if (size < 0) break
     const typeFlagByte = header[156] ?? 0
     // '0' (0x30) and NUL (0x00) both denote a regular file; '7' is contiguous.
     const isRegular = typeFlagByte === 0 || typeFlagByte === 0x30 || typeFlagByte === 0x37
 
     const dataStart = offset + BLOCK
     const dataEnd = dataStart + size
-    if (isRegular && name.length > 0 && dataEnd <= archive.length) {
+    if (isRegular && dataEnd <= archive.length) {
       entries.push({ name: fullName, data: archive.subarray(dataStart, dataEnd) })
     }
     // Advance past the header + data, rounded up to the next 512 boundary.
@@ -186,9 +189,11 @@ interface JoplinItem {
 /**
  * Split a Joplin item file into its content lines and metadata, mirroring
  * Joplin's own `unserialize`: walk the lines from the BOTTOM collecting the
- * trailing run of `key: value` metadata lines; the first blank line reached
- * ends the metadata block, and everything above it is the content. Returns null
- * when no `type_` metadata is present (not a recognizable Joplin item).
+ * trailing run of `key: value` metadata lines; the first line without a colon
+ * ends the metadata block, and it and everything above it are the content. In a
+ * well-formed item that line is the blank separator, which `normalizeBody`
+ * strips again. Returns null when no `type_` metadata is present (not a
+ * recognizable Joplin item).
  */
 function unserialize(text: string): JoplinItem | null {
   const lines = text.split('\n')
@@ -198,32 +203,23 @@ function unserialize(text: string): JoplinItem | null {
   while (lines.at(-1)?.trim() === '') lines.pop()
   const props: Record<string, string> = {}
   let readingProps = true
-  let separatorIndex = -1
+  let separatorIndex = 0
   for (let i = lines.length - 1; i >= 0; i--) {
     const line = lines[i] ?? ''
     if (readingProps) {
-      const trimmed = line.trim()
-      if (trimmed === '') {
-        // Blank line ends the metadata block; the content is everything above.
-        readingProps = false
-        separatorIndex = i
-        continue
-      }
-      const colon = trimmed.indexOf(':')
+      const colon = line.indexOf(':')
       if (colon < 0) {
-        // A non-`key: value` line inside the trailing block — treat everything
-        // from here up as content (defensive; a well-formed item won't hit this).
         readingProps = false
         separatorIndex = i + 1
         continue
       }
-      const key = trimmed.slice(0, colon).trim()
-      const value = trimmed.slice(colon + 1).trim()
-      if (key.length > 0) props[key] = value
+      const key = line.slice(0, colon).trim()
+      const value = line.slice(colon + 1).trim()
+      props[key] = value
     }
   }
   if (!('type_' in props)) return null
-  const contentLines = separatorIndex >= 0 ? lines.slice(0, separatorIndex) : []
+  const contentLines = lines.slice(0, separatorIndex)
   return { contentLines, props }
 }
 
@@ -236,8 +232,8 @@ function normalizeBody(lines: string[]): string {
 
 /** Parse a Joplin ISO-8601 (or epoch-ms) timestamp to epoch ms, or null. */
 function parseJoplinTime(raw: string | undefined): number | null {
-  if (raw === undefined || raw.trim() === '') return null
-  const ms = Date.parse(raw.trim())
+  if (raw === undefined) return null
+  const ms = Date.parse(raw)
   return Number.isNaN(ms) ? null : ms
 }
 
@@ -265,7 +261,7 @@ function mimeToExt(mime: string): string {
   }
   const mapped = known[mime]
   if (mapped !== undefined) return mapped
-  const sub = (mime.split('/')[1] ?? '').replace(/[^a-z0-9]+/gi, '').toLowerCase()
+  const sub = (mime.split('/')[1] ?? '').replace(/[^a-z0-9]/gi, '').toLowerCase()
   return sub.length > 0 && sub.length <= 5 ? sub : 'bin'
 }
 
@@ -302,9 +298,8 @@ function indexResources(
   const usedPaths = new Set<string>()
   for (const [id, { bytes, ext: fileExt }] of binaries) {
     const meta = metas.get(id)
-    const mime = meta?.mime && meta.mime.length > 0 ? meta.mime : 'application/octet-stream'
-    const ext =
-      fileExt.length > 0 ? fileExt : meta?.ext && meta.ext.length > 0 ? meta.ext : mimeToExt(mime)
+    const mime = meta?.mime ? meta.mime : 'application/octet-stream'
+    const ext = fileExt.length > 0 ? fileExt : meta?.ext ? meta.ext : mimeToExt(mime)
     const title = sanitizeResourceName(meta?.title ?? '')
     let candidate: string
     if (title.length > 0) {
@@ -346,7 +341,7 @@ function resolveFolderPath(
     depth++
     const folder = folders.get(current)
     if (folder === undefined) break
-    const title = folder.title.replace(/\s+/g, ' ').trim()
+    const title = folder.title.replace(/\s+/g, ' ')
     if (title.length > 0) parts.unshift(title)
     current = folder.parentId
   }
@@ -382,7 +377,7 @@ function splitMembers(entries: TarEntry[]): SplitMembers {
     const name = entry.name.replace(/\\/g, '/')
     if (name.startsWith('resources/')) {
       const base = name.slice('resources/'.length)
-      if (base.length === 0 || base.includes('/')) continue
+      if (base.includes('/')) continue
       const dot = base.lastIndexOf('.')
       const id = (dot === -1 ? base : base.slice(0, dot)).toLowerCase()
       const ext = dot === -1 ? '' : base.slice(dot + 1)
@@ -428,9 +423,9 @@ function classifyItems(itemTexts: string[]): ClassifiedItems {
         createdMs: parseJoplinTime(props['user_created_time'] ?? props['created_time']),
         updatedMs: parseJoplinTime(props['user_updated_time'] ?? props['updated_time']),
       })
-    } else if (props['type_'] === '2' && id.length > 0) {
+    } else if (props['type_'] === '2') {
       folders.set(id, { title: firstLine, parentId: (props['parent_id'] ?? '').toLowerCase() })
-    } else if (props['type_'] === '4' && id.length > 0) {
+    } else if (props['type_'] === '4') {
       resourceMetas.set(id, {
         mime: props['mime'] ?? '',
         ext: props['file_extension'] ?? '',
@@ -482,9 +477,7 @@ export function parseJex(archive: Uint8Array): JexParseResult {
 
   // Build note-id → page-title (namespaced) for internal link resolution.
   const noteTitleById = new Map<string, string>()
-  for (const raw of rawNotes) {
-    if (raw.id.length > 0) noteTitleById.set(raw.id, pageTitleFor(raw, folders))
-  }
+  for (const raw of rawNotes) noteTitleById.set(raw.id, pageTitleFor(raw, folders))
 
   // Rewrite each note body's `:/id` refs and collect its attachments.
   const notes: JexNote[] = rawNotes.map((raw) => {

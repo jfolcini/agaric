@@ -52,10 +52,18 @@ vi.mock('@/lib/bindings', async (importOriginal) => {
 
 const mockedInvoke = vi.mocked(invoke)
 
-/** Command-keyed `invoke`, with the search itself resolving empty by default. */
+/**
+ * Command-keyed `invoke`, with the search itself resolving empty by default.
+ * Typing a `tag:` token also starts the input's debounced tag autocomplete,
+ * which lands only if the test is still running when the timer fires.
+ */
 function stubInvoke(handlers: Readonly<TypedInvokeHandlers> = {}) {
   mockedInvoke.mockImplementation(
-    mockInvokeCommands({ search_blocks: () => emptyPage, ...handlers }),
+    mockInvokeCommands({
+      search_blocks: () => emptyPage,
+      list_tags_by_prefix: () => [],
+      ...handlers,
+    }),
   )
 }
 

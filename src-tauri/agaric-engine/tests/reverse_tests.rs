@@ -2984,6 +2984,63 @@ async fn compute_reverse_set_property_skips_replicated_prior_2549() {
     }
 }
 
+/// #5262 — the `space` carve-out of the #2549 rule above: a peer's
+/// `set_property(space)` is what placed the page in the space doc this device
+/// received it through, so it IS a value this device held. The reverse of the
+/// page's first local move must be the move back, on both kernels — where any
+/// other key with only a replicated prior still reverses to `DeleteProperty`
+/// (`compute_reverse_set_property_skips_replicated_prior_2549`).
+#[tokio::test]
+async fn compute_reverse_restores_the_replicated_prior_space_5262() {
+    let (pool, _dir) = test_pool().await;
+    let page = BlockId::test_id("BLK_5262_PAGE");
+    let space = |id: &str| {
+        OpPayload::SetProperty(SetPropertyPayload {
+            block_id: page.clone(),
+            key: "space".into(),
+            value_text: None,
+            value_num: None,
+            value_date: None,
+            value_ref: Some(BlockId::test_id(id)),
+            value_bool: None,
+        })
+    };
+
+    // The birth as sync stored it: an audit row this device never applied.
+    append_replicated_op(&pool, "remote-dev", 1, space("SPACE_A"), 1_000).await;
+    // The first local move — the op we reverse.
+    let moved = append_op(&pool, space("SPACE_B"), 2_000).await;
+
+    let expected = space("SPACE_A");
+    let single = compute_reverse(&pool, TEST_DEVICE, moved.seq)
+        .await
+        .unwrap();
+    assert_eq!(
+        single, expected,
+        "the single-op kernel must restore the space the peer assigned, not strip the page's space"
+    );
+
+    let records = get_op_records_batch(
+        &pool,
+        &[OpRef {
+            device_id: moved.device_id.clone(),
+            seq: moved.seq,
+        }],
+    )
+    .await
+    .unwrap();
+    let batched = compute_reverse_batch(&pool, &records)
+        .await
+        .unwrap()
+        .pop()
+        .expect("one reverse for one op")
+        .expect("the move is reversible");
+    assert_eq!(
+        batched, expected,
+        "the batch kernel must mirror the single-op kernel's `space` carve-out"
+    );
+}
+
 /// #3644: `EditBlockPayload::prev_edit` may name a REPLICATED audit row, and
 /// the reverse MUST follow it.
 ///
