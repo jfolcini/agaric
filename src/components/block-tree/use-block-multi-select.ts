@@ -1,6 +1,7 @@
 import type { TFunction } from 'i18next'
 import { useCallback, useRef, useState } from 'react'
-import type { StoreApi } from 'zustand'
+import { type StoreApi, useStore } from 'zustand'
+import { useShallow } from 'zustand/react/shallow'
 
 import { unwrap } from '@/lib/app-error'
 import { commands } from '@/lib/bindings'
@@ -42,6 +43,8 @@ export interface UseBlockMultiSelectParams {
 }
 
 export interface UseBlockMultiSelectReturn {
+  /** The selected ids `pageStore` holds — what the batch toolbar counts and acts on. */
+  ownedSelectedIds: string[]
   batchDeleteConfirm: boolean
   batchInProgress: boolean
   setBatchDeleteConfirm: (v: boolean) => void
@@ -66,6 +69,13 @@ export function useBlockMultiSelect({
   // Identity on every flag flip (#).
   const [batchInProgress, setBatchInProgress] = useState(false)
   const batchInProgressRef = useRef(false)
+  // #5273 — the selection is global and survives a journal day or space
+  // change, and the backend checks neither page nor space, so a batch over the
+  // raw ids would hit blocks on no screen.
+  const ownedSelectedIds = useStore(
+    pageStore,
+    useShallow((s) => selectedBlockIds.filter((id) => s.blocksById.has(id))),
+  )
 
   const handleBatchSetTodo = useCallback(
     async (state: string | null) => {
@@ -73,7 +83,7 @@ export function useBlockMultiSelect({
       batchInProgressRef.current = true
       setBatchInProgress(true)
       try {
-        const ids = [...selectedBlockIds]
+        const ids = ownedSelectedIds
         const idSet = new Set(ids)
         // Optimistic FE update — flip the badge instantly while the
         // single-IPC batch round-trips. On failure the catch below
@@ -120,7 +130,7 @@ export function useBlockMultiSelect({
         setBatchInProgress(false)
       }
     },
-    [selectedBlockIds, clearSelected, rootParentId, t, pageStore],
+    [ownedSelectedIds, clearSelected, rootParentId, t, pageStore],
   )
 
   // #1734 — cycle priority across the whole selection. Unlike TODO/delete there
@@ -134,7 +144,7 @@ export function useBlockMultiSelect({
     batchInProgressRef.current = true
     setBatchInProgress(true)
     try {
-      const ids = [...selectedBlockIds]
+      const ids = ownedSelectedIds
       for (const id of ids) {
         await Promise.resolve(handleTogglePriority(id))
       }
@@ -143,14 +153,14 @@ export function useBlockMultiSelect({
       batchInProgressRef.current = false
       setBatchInProgress(false)
     }
-  }, [selectedBlockIds, handleTogglePriority, clearSelected])
+  }, [ownedSelectedIds, handleTogglePriority, clearSelected])
 
   const handleBatchDelete = useCallback(async () => {
     if (batchInProgressRef.current) return
     batchInProgressRef.current = true
     setBatchInProgress(true)
     try {
-      const ids = [...selectedBlockIds]
+      const ids = ownedSelectedIds
       // #4524 review note 2 — captured HERE, alongside `ids` and before the
       // `deleteBlocksByIds` await below, not read fresh off the store after
       // it. Same value-at-the-moment-the-user-acted discipline the
@@ -176,7 +186,7 @@ export function useBlockMultiSelect({
       // endpoint `delete_blocks_by_ids` walks descendants in one
       // recursive CTE seeded from every root simultaneously, so
       // duplicate descendant ids in the input set are coalesced
-      // server-side. Send the raw selection unchanged.
+      // server-side. Send the owned selection unchanged.
       let successCount = 0
       let failCount = 0
       try {
@@ -323,9 +333,10 @@ export function useBlockMultiSelect({
       batchInProgressRef.current = false
       setBatchInProgress(false)
     }
-  }, [selectedBlockIds, clearSelected, rootParentId, t, pageStore, currentSpaceId])
+  }, [ownedSelectedIds, clearSelected, rootParentId, t, pageStore, currentSpaceId])
 
   return {
+    ownedSelectedIds,
     batchDeleteConfirm,
     batchInProgress,
     setBatchDeleteConfirm,

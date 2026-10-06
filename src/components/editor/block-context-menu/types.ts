@@ -89,10 +89,10 @@ export interface BlockContextMenuProps {
   activeBlockType?: BlockTypeToken | undefined
   /**
    * Fix 6 — the active multi-selection (global `selectedBlockIds`). When this
-   * contains more than one block AND includes the right-clicked block, the
-   * menu enters "bulk" mode: Delete / TODO / Priority / Move ops apply to the
-   * WHOLE selection instead of just this block. With no (or a single-block)
-   * selection the menu behaves exactly as before — single-block ops only.
+   * contains more than one block the page store holds AND includes the
+   * right-clicked block, the menu enters "bulk" mode: Delete / TODO / Priority /
+   * Move ops apply to those blocks instead of just this one. Otherwise the
+   * menu behaves exactly as before — single-block ops only.
    *
    * #1018 — normally OMITTED. The menu subscribes to the global selection
    * itself (below), so the per-row `SortableBlock` no longer has to subscribe
