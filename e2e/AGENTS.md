@@ -107,3 +107,12 @@ It flags any descendant whose `getBoundingClientRect().right` exceeds the target
 ## Header label selection
 
 `<FeaturePageHeader>` renders an `<h1>` with the same text as the App-shell `<header>`'s `data-testid="header-label"` span, so `header > getByText` hits both and trips strict mode. Use `page.getByTestId('header-label')` (reference: `editor-lifecycle.spec.ts`).
+
+## Performance runs
+
+`perf.spec.ts` is skipped unless `AGARIC_PERF=1`. It seeds a 500-page vault through the mock's IPC, drives the core journeys, and prints one row per journey: INP, long animation frames minus mock time, peak rendered blocks and DOM nodes, React commits, and main-thread time per bundle chunk. `AGARIC_PERF_CPU=4` throttles the CPU, `AGARIC_PERF_TRACE=1` saves a Chrome trace per journey, and the report lands in `test-results/perf-*`. It measures frontend cost in Chromium only. Backend query time comes from `AGARIC_OTEL=1` on the real app or the `interactive_slo` bench.
+
+```sh
+AGARIC_PERF=1 npx playwright test e2e/perf.spec.ts
+AGARIC_PERF=1 AGARIC_PERF_CPU=4 npx playwright test e2e/perf.spec.ts
+```

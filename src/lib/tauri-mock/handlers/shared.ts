@@ -989,6 +989,16 @@ export function encodeNextCursor(last: PageMetaRow, sort: string): string {
   return utf8ToBase64Url(JSON.stringify(cursorObj))
 }
 
+// Block id → MAX(created_at), rebuilt when `opLog` changes. A per-call scan
+// parsed every op once per page, which took seconds per call at 500 pages.
+// `opLog` is only appended to, cleared, or spliced, so length + ends detect it.
+let lastEditedIndex: {
+  len: number
+  first: unknown
+  last: unknown
+  map: Map<string, string>
+} | null = null
+
 /**
  * Scan `opLog` for the latest entry whose payload `block_id` is `blockId`,
  * i.e. `MAX(created_at) WHERE block_id = ?`. `null` when the block has no
@@ -1016,18 +1026,30 @@ export function encodeNextCursor(last: PageMetaRow, sort: string): string {
  * other op-log-free block, exactly as on the engine.
  */
 export function rawOpLogLastEditedAt(blockId: string): string | null {
-  let maxOp: string | null = null
-  for (const o of opLog) {
-    let payload: Record<string, unknown>
-    try {
-      payload = JSON.parse(o.payload) as Record<string, unknown>
-    } catch {
-      continue
+  const first = opLog[0]
+  const last = opLog.at(-1)
+  if (
+    !lastEditedIndex ||
+    lastEditedIndex.len !== opLog.length ||
+    lastEditedIndex.first !== first ||
+    lastEditedIndex.last !== last
+  ) {
+    const map = new Map<string, string>()
+    for (const o of opLog) {
+      let payload: Record<string, unknown>
+      try {
+        payload = JSON.parse(o.payload) as Record<string, unknown>
+      } catch {
+        continue
+      }
+      const id = payload['block_id']
+      if (typeof id !== 'string') continue
+      const cur = map.get(id)
+      if (cur === undefined || o.created_at > cur) map.set(id, o.created_at)
     }
-    if (payload['block_id'] !== blockId) continue
-    if (maxOp === null || o.created_at > maxOp) maxOp = o.created_at
+    lastEditedIndex = { len: opLog.length, first, last, map }
   }
-  return maxOp
+  return lastEditedIndex.map.get(blockId) ?? null
 }
 
 /**
