@@ -141,7 +141,7 @@ export function DiagnosticsCollector({
           overlay-stacking edge cases the parent migration is avoiding. */}
       <Dialog open={previewOpen} onOpenChange={onPreviewOpenChange}>
         <DialogContent
-          className="max-w-2xl"
+          className="sm:max-w-2xl"
           data-testid="bug-report-log-preview"
           aria-busy={previewLoading}
         >

@@ -400,7 +400,7 @@ export function BlockPropertyEditor({
                     // #976 (item 11) — `focus-ring-visible` gives keyboard users a
                     // visible focus indicator while navigating the listbox (the
                     // bg-accent below marks the STORED value, not the nav cursor).
-                    'text-left rounded px-2 py-1 text-sm hover:bg-accent transition-colors focus-ring-visible',
+                    'text-left rounded-sm px-2 py-1 text-sm hover:bg-accent transition-colors focus-ring-visible',
                     i === selectedIdx && 'bg-accent font-medium',
                     // The keyboard-active row gets the accent bg too so the nav
                     // cursor is visible even before the option is committed.
@@ -456,7 +456,7 @@ export function BlockPropertyEditor({
                     // #976 (item 11) — visible keyboard focus ring on the
                     // ref-picker option buttons, matching the select-options
                     // listbox and the shared app-wide pattern.
-                    'text-left rounded px-2 py-1 text-sm hover:bg-accent transition-colors truncate focus-ring-visible',
+                    'text-left rounded-sm px-2 py-1 text-sm hover:bg-accent transition-colors truncate focus-ring-visible',
                     page.id === editingProp.value && 'bg-accent font-medium',
                   )}
                   onClick={async () => {

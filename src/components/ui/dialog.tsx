@@ -98,7 +98,7 @@ const DialogHeader = ({ ref, className, ...props }: React.ComponentProps<'div'>)
   <div
     ref={ref}
     data-slot="dialog-header"
-    className={cn('flex flex-col gap-2 text-center sm:text-left', className)}
+    className={cn('flex flex-col gap-2 text-left', className)}
     {...props}
   />
 )
@@ -109,7 +109,7 @@ const DialogFooter = ({ ref, className, ...props }: React.ComponentProps<'div'>)
   <div
     ref={ref}
     data-slot="dialog-footer"
-    className={cn('flex flex-col-reverse gap-2 sm:flex-row sm:justify-end', className)}
+    className={cn('flex flex-col gap-2 sm:flex-row sm:justify-end', className)}
     {...props}
   />
 )

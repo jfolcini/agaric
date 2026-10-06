@@ -181,7 +181,7 @@ export function SpaceSwitcher(): React.JSX.Element {
             <div className="flex flex-col gap-0.5 text-xs">
               <span>{t('spaceSwitcher.shortcutHint')}</span>
               {availableSpaces.slice(0, 5).map((space, idx) => (
-                <span key={space.id} className="text-muted-foreground">
+                <span key={space.id} className="opacity-90">
                   {spaceHotkeyHint(idx)} {space.name}
                 </span>
               ))}

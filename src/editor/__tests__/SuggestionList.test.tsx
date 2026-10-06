@@ -407,6 +407,22 @@ describe('SuggestionList', () => {
     expect(anyOverflowY).toBeNull()
   })
 
+  it('keeps the scroll wrapper at viewport width so a long breadcrumb truncates instead of clipping', () => {
+    const { container } = render(<SuggestionList items={sampleItems} command={vi.fn()} />)
+
+    expect(container.querySelector('[data-slot="scroll-area-viewport"]')).toHaveClass(
+      '[&>div]:!block',
+    )
+  })
+
+  it('gives the list and the empty state one fixed width so the popup does not resize while typing', () => {
+    const { container, rerender } = render(<SuggestionList items={sampleItems} command={vi.fn()} />)
+    expect(container.querySelector('.suggestion-list')).toHaveClass('w-[22rem]')
+
+    rerender(<SuggestionList items={[]} command={vi.fn()} />)
+    expect(container.querySelector('.suggestion-empty')).toHaveClass('w-[22rem]')
+  })
+
   it('keyboard navigation still scrolls the selected item into view under ScrollArea', () => {
     const ref = createRef<SuggestionListRef>()
     const command = vi.fn()

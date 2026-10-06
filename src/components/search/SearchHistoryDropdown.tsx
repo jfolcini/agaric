@@ -89,14 +89,14 @@ export function SearchHistoryDropdown({
   return (
     <div
       data-testid="search-history-dropdown"
-      className="search-history-dropdown rounded-md border border-input bg-background shadow-(--shadow-floating)"
+      className="search-history-dropdown rounded-md border bg-popover p-1 text-popover-foreground shadow-(--shadow-floating)"
     >
-      <div className="flex items-center gap-2 px-3 py-1.5 text-xs font-medium text-muted-foreground">
+      <div className="flex items-center gap-2 px-2 py-1.5 text-xs font-medium text-muted-foreground">
         <Clock className="h-3.5 w-3.5" aria-hidden="true" />
         <span>{listboxLabel}</span>
       </div>
       {isEmpty && historyEnabled ? (
-        <p className="px-3 py-2 text-xs text-muted-foreground" data-testid="search-history-empty">
+        <p className="px-2 py-2 text-xs text-muted-foreground" data-testid="search-history-empty">
           {t('search.history.empty')}
         </p>
       ) : null}
@@ -161,13 +161,13 @@ export function SearchHistoryDropdown({
                 }
               }}
               className={cn(
-                'flex cursor-pointer items-center gap-2 px-3 py-1.5 text-sm [@media(pointer:coarse)]:min-h-11',
-                'hover:bg-accent/30 active:bg-accent/40 transition-colors',
+                'flex cursor-pointer items-center gap-2 rounded-sm px-2 py-1.5 text-sm [@media(pointer:coarse)]:min-h-11',
+                'hover:bg-accent hover:text-accent-foreground transition-colors',
                 'truncate',
               )}
               aria-label={t('search.history.entryLabel', { query: entry })}
             >
-              <span className="flex-1 truncate font-mono">{entry}</span>
+              <span className="flex-1 truncate">{entry}</span>
               {/* per-row delete as a pointer affordance. It is
                   `aria-hidden` on purpose: a real <button> inside
                   `role="option"` trips axe's nested-interactive rule
@@ -203,7 +203,7 @@ export function SearchHistoryDropdown({
       )}
       {!historyEnabled && (
         <p
-          className="px-3 py-2 text-xs italic text-muted-foreground"
+          className="px-2 py-2 text-xs italic text-muted-foreground"
           data-testid="search-history-disabled-notice"
         >
           {t('search.history.disabledNotice')}
@@ -222,9 +222,9 @@ export function SearchHistoryDropdown({
               e.preventDefault()
             }}
             className={cn(
-              'flex w-full items-center gap-2 px-3 py-1.5 text-xs text-muted-foreground [@media(pointer:coarse)]:min-h-11',
-              'hover:bg-accent/30 transition-colors',
-              'focus-ring-visible rounded-none',
+              'flex w-full items-center gap-2 px-2 py-1.5 text-xs text-muted-foreground [@media(pointer:coarse)]:min-h-11',
+              'hover:bg-accent transition-colors',
+              'focus-ring-visible rounded-sm',
             )}
           >
             <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />
@@ -240,9 +240,9 @@ export function SearchHistoryDropdown({
             e.preventDefault()
           }}
           className={cn(
-            'flex w-full items-center gap-2 px-3 py-1.5 text-xs text-muted-foreground [@media(pointer:coarse)]:min-h-11',
-            'hover:bg-accent/30 transition-colors',
-            'focus-ring-visible rounded-none',
+            'flex w-full items-center gap-2 px-2 py-1.5 text-xs text-muted-foreground [@media(pointer:coarse)]:min-h-11',
+            'hover:bg-accent transition-colors',
+            'focus-ring-visible rounded-sm',
           )}
         >
           {historyEnabled ? (

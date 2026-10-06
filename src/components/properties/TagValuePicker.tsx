@@ -181,14 +181,13 @@ export function TagValuePicker({
         aria-controls={isExpanded ? listboxId : undefined}
       />
       {isExpanded && (
-        <div className="absolute z-50 mt-1 w-full rounded-md border bg-popover shadow-(--shadow-floating)">
+        <div className="absolute z-50 mt-1 w-full rounded-md border bg-popover p-1 shadow-(--shadow-floating)">
           <ScrollArea className="max-h-40">
             <div
               ref={listRef}
               id={listboxId}
               // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- custom ARIA listbox driven by keyboard nav; <select>/<datalist> can't render the styled rows or support aria-activedescendant focus
               role="listbox"
-              className="py-1"
               aria-label={t('agendaFilter.tagSearchResults')}
             >
               {results.map((tag, idx) => (
@@ -200,7 +199,7 @@ export function TagValuePicker({
                   tabIndex={-1}
                   aria-selected={idx === activeIndex}
                   className={cn(
-                    'cursor-pointer px-2 py-1.5 text-xs hover:bg-accent',
+                    'cursor-pointer rounded-sm px-2 py-1.5 text-sm hover:bg-accent',
                     idx === activeIndex && 'bg-accent',
                   )}
                   onClick={() => handleSelect(tag)}

@@ -5,7 +5,7 @@ import type * as React from 'react'
 import { cn } from '@/lib/utils'
 
 const popoverMenuItemVariants = cva(
-  'w-full rounded-sm px-2 py-1.5 text-left text-xs hover:bg-accent cursor-pointer transition-colors [@media(pointer:coarse)]:min-h-11 focus-ring-visible',
+  'w-full rounded-sm px-2 py-1.5 text-left text-sm hover:bg-accent cursor-pointer transition-colors [@media(pointer:coarse)]:min-h-11 focus-ring-visible',
   {
     variants: {
       active: {

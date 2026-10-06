@@ -40,6 +40,10 @@ import { getShortcutKeys } from '@/lib/keyboard-config'
 /** Shared active-state class applied to toolbar buttons when their feature is on. */
 export const toolbarActiveClass = 'bg-accent text-accent-foreground'
 
+/** A row in a toolbar popover menu: the app's menu-row recipe on a ghost Button. */
+export const toolbarMenuRowClass =
+  'justify-start rounded-sm px-2 text-sm font-normal w-full active:scale-100 [@media(pointer:coarse)]:min-h-11'
+
 /** Languages available in the code block language selector popover. */
 export const CODE_LANGUAGES = [
   'javascript',

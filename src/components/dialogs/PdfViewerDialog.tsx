@@ -433,13 +433,18 @@ export function PdfViewerDialog({
   // PDF would vanish. So both paths set an explicit height, and the mobile one
   // states it in `dvh` (docs/UX.md — mobile chrome makes `vh` taller than the
   // visible area, which the desktop dialog never sees).
-  const contentClassName = parts.isMobile ? 'h-[90dvh]' : 'max-w-5xl h-[90vh] max-h-[90vh]'
+  // `min()` keeps the base 1rem side gutter on windows narrower than the 64rem cap.
+  const contentClassName = parts.isMobile
+    ? 'h-[90dvh]'
+    : 'sm:max-w-[min(64rem,calc(100%-2rem))] h-[90vh] max-h-[90vh]'
 
   return (
     <Root open={open} onOpenChange={onOpenChange}>
       <Content className={contentClassName}>
         <Header>
-          <Title>{filename}</Title>
+          <Title className="truncate pr-6" title={filename}>
+            {filename}
+          </Title>
           <Description className="sr-only">{t('pdfViewer.description', { filename })}</Description>
         </Header>
 

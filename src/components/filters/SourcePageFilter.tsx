@@ -133,7 +133,7 @@ export function SourcePageFilter({
             placeholder={t('sourceFilter.searchPlaceholder')}
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            className="h-7 text-xs"
+            className="h-8 text-sm focus-ring-soft"
             aria-label={t('sourceFilter.searchLabel')}
           />
           <ScrollArea className="max-h-48">
@@ -142,7 +142,7 @@ export function SourcePageFilter({
                 <button
                   key={page.pageId}
                   type="button"
-                  className="source-page-filter-item flex w-full items-center gap-2 rounded px-2 py-1 text-xs cursor-pointer hover:bg-accent/50 active:bg-accent/70"
+                  className="source-page-filter-item flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-sm cursor-pointer hover:bg-accent hover:text-accent-foreground"
                   onClick={(e) => handlePageClick(e, page.pageId)}
                   onKeyDown={(e) => handlePageKeyDown(e, page.pageId)}
                 >

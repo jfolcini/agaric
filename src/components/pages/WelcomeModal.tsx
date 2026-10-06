@@ -288,7 +288,10 @@ export function WelcomeModal() {
             {creating && <Spinner />}
             {t('welcome.createSamplePages')}
           </Button>
-          <Button onClick={handleDismiss}>{t('welcome.getStarted')}</Button>
+          {/* oxlint-disable-next-line jsx-a11y/no-autofocus -- Radix would otherwise focus the first tabbable, the secondary "Create sample pages", so Enter on open would create pages instead of dismissing */}
+          <Button autoFocus onClick={handleDismiss}>
+            {t('welcome.getStarted')}
+          </Button>
         </Footer>
       </Content>
     </Root>

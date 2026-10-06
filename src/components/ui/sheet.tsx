@@ -17,7 +17,7 @@ import { cn } from '@/lib/utils'
 // scrollable region without re-stating padding / overflow at every call
 // site — mirrors the DialogContent shape in `./dialog-shared.ts`.
 const SHEET_CONTENT_BASE =
-  'fixed z-50 flex flex-col overflow-hidden gap-4 bg-background p-6 shadow-(--shadow-overlay) transition ease-in-out data-[state=closed]:animate-out data-[state=closed]:duration-moderate data-[state=open]:animate-in data-[state=open]:duration-moderate'
+  'fixed z-50 flex flex-col overflow-hidden gap-4 bg-popover text-popover-foreground outline-none p-6 shadow-(--shadow-overlay) transition ease-in-out data-[state=closed]:animate-out data-[state=closed]:duration-moderate data-[state=open]:animate-in data-[state=open]:duration-moderate'
 
 function Sheet({ ...props }: React.ComponentProps<typeof SheetPrimitive.Root>) {
   return <SheetPrimitive.Root data-slot="sheet" {...props} />
@@ -134,7 +134,7 @@ const SheetHeader = ({ ref, className, ...props }: React.ComponentProps<'div'>) 
   <div
     ref={ref}
     data-slot="sheet-header"
-    className={cn('flex flex-col gap-1.5', className)}
+    className={cn('flex flex-col gap-2', className)}
     {...props}
   />
 )

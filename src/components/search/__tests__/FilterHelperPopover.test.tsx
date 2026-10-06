@@ -593,6 +593,23 @@ describe('FilterHelperPopover — property filter', () => {
 })
 
 // ---------------------------------------------------------------------------
+// Container padding
+// ---------------------------------------------------------------------------
+
+describe('FilterHelperPopover — container padding', () => {
+  it('uses the tight menu padding for the category list and form padding once a form opens', async () => {
+    const user = userEvent.setup()
+    renderPopover()
+    await user.click(screen.getByRole('button', { name: t('search.addFilter') }))
+    const content = await screen.findByRole('dialog', { name: t('search.addFilter') })
+    expect(content).toHaveClass('p-1')
+
+    await user.click(screen.getByText(t('search.filterCategory.pathInclude')))
+    expect(content).toHaveClass('p-3')
+  })
+})
+
+// ---------------------------------------------------------------------------
 // axe audits
 // ---------------------------------------------------------------------------
 

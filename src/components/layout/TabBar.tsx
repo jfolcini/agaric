@@ -313,7 +313,6 @@ export function TabBar(): React.ReactElement | null {
           <MenuPopoverContent
             align="start"
             sideOffset={4}
-            className="p-1"
             role="menu"
             tabIndex={-1}
             aria-label={t('tabs.tabList')}
@@ -337,7 +336,7 @@ export function TabBar(): React.ReactElement | null {
                 <div
                   key={tab.id}
                   role="none"
-                  className="flex w-full items-center gap-1 rounded hover:bg-accent data-[state=checked]:bg-accent/60"
+                  className="flex w-full items-center gap-1 rounded-sm hover:bg-accent data-[state=checked]:bg-accent/60"
                   data-state={isActive ? 'checked' : 'unchecked'}
                 >
                   <div
@@ -349,7 +348,7 @@ export function TabBar(): React.ReactElement | null {
                     data-state={isActive ? 'checked' : 'unchecked'}
                     tabIndex={dropdownFocusedIndex === activateIdx ? 0 : -1}
                     title={fullPath}
-                    className="flex flex-1 items-center gap-2 rounded px-2 py-1.5 text-left text-sm cursor-pointer touch-target focus-ring-visible"
+                    className="flex flex-1 items-center gap-2 rounded-sm px-2 py-1.5 text-left text-sm cursor-pointer touch-target focus-ring-visible"
                     onClick={() => {
                       switchTab(i)
                       setDropdownOpen(false)

@@ -185,6 +185,20 @@ describe('WelcomeModal', () => {
     ).toBeInTheDocument()
   })
 
+  // Enter on open must trigger the primary action, not "Create sample pages".
+  it('opens with focus on the primary Get Started button', () => {
+    render(<WelcomeModal />)
+
+    expect(screen.getByRole('button', { name: 'Get Started' })).toHaveFocus()
+  })
+
+  it('opens with focus on the primary Get Started button in the phone sheet', () => {
+    mockedUseIsMobile.mockReturnValue(true)
+    render(<WelcomeModal />)
+
+    expect(screen.getByRole('button', { name: 'Get Started' })).toHaveFocus()
+  })
+
   it('does NOT show when onboarding flag is set', () => {
     localStorage.setItem('agaric-onboarding-done', 'true')
 

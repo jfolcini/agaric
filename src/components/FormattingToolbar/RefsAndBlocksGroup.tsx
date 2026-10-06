@@ -18,6 +18,7 @@ import { type RenderMode, Tip, toolbarPressHandlers } from '@/components/Formatt
 import { TableOpsSelector } from '@/components/TableOpsSelector'
 import { Button } from '@/components/ui/button'
 import { Popover, PopoverAnchor, PopoverContent } from '@/components/ui/popover'
+import { toolbarMenuRowClass } from '@/lib/toolbar-config'
 
 interface FormatButtonProps {
   editor: Editor
@@ -61,7 +62,7 @@ export function renderFormatButton({
         aria-label={t('toolbar.format')}
         aria-haspopup="dialog"
         aria-expanded={open}
-        className="justify-start text-sm w-full [@media(pointer:coarse)]:min-h-11"
+        className={toolbarMenuRowClass}
         {...toolbarPressHandlers(() => setOpen((prev) => !prev))}
       >
         <Type className="h-3.5 w-3.5 mr-2" />
@@ -150,7 +151,7 @@ export function renderTurnIntoButton({
         aria-label={t('toolbar.turnInto')}
         aria-haspopup="menu"
         aria-expanded={open}
-        className="justify-start text-sm w-full [@media(pointer:coarse)]:min-h-11"
+        className={toolbarMenuRowClass}
         {...toolbarPressHandlers(() => setOpen((prev) => !prev))}
       >
         <Pilcrow className="h-3.5 w-3.5 mr-2" />
@@ -236,7 +237,7 @@ export function renderTableOpsButton({
         variant="ghost"
         size="sm"
         aria-label={t('toolbar.tableOps')}
-        className="justify-start text-sm w-full [@media(pointer:coarse)]:min-h-11"
+        className={toolbarMenuRowClass}
         {...toolbarPressHandlers(() => setOpen((prev) => !prev))}
       >
         <Table2 className="h-3.5 w-3.5 mr-2" />
@@ -318,7 +319,7 @@ export function renderTablePickerButton({
         variant="ghost"
         size="sm"
         aria-label={t('toolbar.insertTable')}
-        className="justify-start text-sm w-full [@media(pointer:coarse)]:min-h-11"
+        className={toolbarMenuRowClass}
         {...toolbarPressHandlers(() => setOpen((prev) => !prev))}
       >
         <Table className="h-3.5 w-3.5 mr-2" />

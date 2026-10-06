@@ -1,6 +1,6 @@
 /**
  * SpaceDeleteButton — delete-space affordance with emptiness gate +
- * confirmation AlertDialog.
+ * confirmation ConfirmDialog.
  *
  * Extracted from `SpaceRowEditor` (D-2). Renders both the
  * Trash icon button (with disabled-state tooltip when the gate
@@ -24,18 +24,8 @@ import { Trash2 } from 'lucide-react'
 import { useCallback, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from '@/components/ui/alert-dialog'
-import { Button, buttonVariants } from '@/components/ui/button'
-import { Spinner } from '@/components/ui/spinner'
+import { ConfirmDialog } from '@/components/dialogs/ConfirmDialog'
+import { Button } from '@/components/ui/button'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { unwrap } from '@/lib/app-error'
 import { commands } from '@/lib/bindings'
@@ -68,26 +58,20 @@ export function SpaceDeleteButton({
 }: SpaceDeleteButtonProps): React.JSX.Element {
   const { t } = useTranslation()
   const [confirmOpen, setConfirmOpen] = useState(false)
-  const [pending, setPending] = useState(false)
 
   const handleDeleteConfirm = useCallback(async () => {
-    // Guard against a fast double-click dispatching `deleteBlock` twice while
-    // the first IPC is still in flight (mirrors ConfirmDialog's isPending gate).
-    if (pending) return
-    setPending(true)
     try {
       unwrap(await commands.deleteBlock(spaceId))
-      // Only close on success — on failure the dialog stays open (recoverable)
-      // per the documented contract at the top of this file.
+      // Close before the refresh: a failed refresh must not re-arm Delete for a deleted space.
       setConfirmOpen(false)
       await onRefresh()
     } catch (err) {
       logger.error(LOG_MODULE, 'delete failed', { spaceId }, err)
       notify.error(t('space.deleteFailed'))
-    } finally {
-      setPending(false)
+      // ConfirmDialog stays open only on rejection, so a failed delete can be retried.
+      throw err
     }
-  }, [pending, spaceId, onRefresh, t])
+  }, [spaceId, onRefresh, t])
 
   const deleteDisabledReason: string | null = isLastSpace
     ? t('space.deleteLastTooltipDisabled')
@@ -127,37 +111,17 @@ export function SpaceDeleteButton({
           <TooltipContent side="left">{deleteDisabledReason}</TooltipContent>
         </Tooltip>
       )}
-      <AlertDialog open={confirmOpen} onOpenChange={setConfirmOpen}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>
-              {t('space.deleteConfirmTitle', { name: spaceName })}
-            </AlertDialogTitle>
-            <AlertDialogDescription>{t('space.deleteConfirmDescription')}</AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            {/* oxlint-disable-next-line jsx-a11y/no-autofocus -- intentional focus-on-open: destructive-delete confirmation focuses the safe Cancel button so an accidental Enter dismisses rather than deletes */}
-            <AlertDialogCancel autoFocus disabled={pending}>
-              {t('space.cancelLabel')}
-            </AlertDialogCancel>
-            <AlertDialogAction
-              className={buttonVariants({ variant: 'destructive' })}
-              disabled={pending}
-              // Radix `AlertDialogAction` auto-closes the dialog on click.
-              // preventDefault keeps it open while the async delete is in flight
-              // so the "stay open on rejection" contract holds — `handleDeleteConfirm`
-              // closes via `setConfirmOpen(false)` only on success.
-              onClick={(e) => {
-                e.preventDefault()
-                void handleDeleteConfirm()
-              }}
-            >
-              {pending && <Spinner />}
-              {t('action.delete')}
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+      <ConfirmDialog
+        open={confirmOpen}
+        onOpenChange={setConfirmOpen}
+        titleKey="space.deleteConfirmTitle"
+        descriptionKey="space.deleteConfirmDescription"
+        cancelKey="space.cancelLabel"
+        confirmKey="action.delete"
+        values={{ name: spaceName }}
+        variant="destructive"
+        onConfirm={handleDeleteConfirm}
+      />
     </>
   )
 }

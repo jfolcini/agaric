@@ -132,7 +132,7 @@ export function TemplatePicker({
             <button
               key={tp.id}
               type="button"
-              className="w-full text-left rounded px-2 py-1.5 text-sm hover:bg-accent transition-colors touch-target"
+              className="w-full text-left rounded-sm px-2 py-1.5 text-sm hover:bg-accent transition-colors touch-target"
               onClick={() => onSelect(tp.id)}
             >
               <span className="font-medium">{tp.content || t('block.untitled')}</span>

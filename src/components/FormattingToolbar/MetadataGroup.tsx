@@ -19,7 +19,7 @@ import type React from 'react'
 import { type RenderMode, Tip, toolbarPressHandlers } from '@/components/FormattingToolbar/shared'
 import { Button } from '@/components/ui/button'
 import { dispatchBlockEvent } from '@/lib/block-events'
-import { toolbarActiveClass } from '@/lib/toolbar-config'
+import { toolbarActiveClass, toolbarMenuRowClass } from '@/lib/toolbar-config'
 import { cn } from '@/lib/utils'
 
 interface CyclePriorityButtonProps {
@@ -59,10 +59,7 @@ export function renderCyclePriority({
         size="sm"
         aria-label={t('toolbar.cyclePriority')}
         aria-pressed={currentPriority != null}
-        className={cn(
-          'justify-start text-sm w-full [@media(pointer:coarse)]:min-h-11',
-          currentPriority != null && toolbarActiveClass,
-        )}
+        className={cn(toolbarMenuRowClass, currentPriority != null && toolbarActiveClass)}
         {...toolbarPressHandlers(() => {
           onCycle()
           onAfterOverflowAction()

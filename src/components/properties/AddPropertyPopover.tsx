@@ -162,6 +162,7 @@ export function AddPropertyPopover({
           setCreatingDef(false)
         }}
         aria-label={t('pageProperty.searchLabel')}
+        className="h-8 focus-ring-soft"
       />
       <ScrollArea className="max-h-[min(240px,40vh)]">
         {filteredDefs.map((def) => (
@@ -238,7 +239,7 @@ export function AddPropertyPopover({
             <SheetTitle>{t('pageProperty.addPropertyButton')}</SheetTitle>
             <SheetDescription>{t('pageProperty.pickerLabel')}</SheetDescription>
           </SheetHeader>
-          <div className="mt-4 space-y-2">{pickerBody}</div>
+          <div className="space-y-2">{pickerBody}</div>
         </SheetContent>
       </Sheet>
     )

@@ -15,7 +15,7 @@ export function FilterCategoryGroup({
 }): React.ReactElement {
   return (
     <div className="flex flex-col gap-1">
-      <span className="px-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+      <span className="px-2 pt-1.5 pb-1 text-xs font-medium uppercase tracking-wider text-muted-foreground">
         {label}
       </span>
       {children}
@@ -37,7 +37,7 @@ export function FilterMenuItem({
     <button
       type="button"
       onClick={onClick}
-      className="w-full rounded-sm px-2 py-1.5 text-left text-sm hover:bg-accent focus-ring-visible"
+      className="w-full rounded-sm px-2 py-1.5 text-left text-sm hover:bg-accent hover:text-accent-foreground focus-ring-visible"
     >
       {children}
       {description && (

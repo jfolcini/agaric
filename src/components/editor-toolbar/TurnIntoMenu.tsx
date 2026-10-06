@@ -30,7 +30,7 @@
 
 import type { Editor } from '@tiptap/react'
 import { useEditorState } from '@tiptap/react'
-import { ChevronRight, Minus } from 'lucide-react'
+import { Check, ChevronRight, Minus } from 'lucide-react'
 import type React from 'react'
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -43,7 +43,7 @@ import { Button } from '@/components/ui/button'
 import { Separator } from '@/components/ui/separator'
 import { dispatchBlockEvent } from '@/lib/block-events'
 import { TURN_INTO_OPTIONS, turnIntoTypeKey } from '@/lib/slash-commands'
-import { toolbarActiveClass } from '@/lib/toolbar-config'
+import { toolbarMenuRowClass } from '@/lib/toolbar-config'
 import { cn } from '@/lib/utils'
 
 interface TurnIntoMenuProps {
@@ -149,8 +149,6 @@ export function TurnIntoMenu({ editor, blockId, onClose }: TurnIntoMenuProps): R
   const disclosureFor = (blockType: string): DisclosureType | null =>
     blockType === 'code' ? 'code' : blockType === 'callout' ? 'callout' : null
 
-  const rowClass = 'justify-start text-sm w-full [@media(pointer:coarse)]:min-h-11'
-
   return (
     <div className="flex flex-col gap-0.5 min-w-44">
       <div role="menu" aria-label={t('toolbar.turnInto')} className="flex flex-col gap-0.5">
@@ -174,16 +172,18 @@ export function TurnIntoMenu({ editor, blockId, onClose }: TurnIntoMenuProps): R
                 aria-controls={isOpen ? panelId : undefined}
                 variant="ghost"
                 size="sm"
-                className={cn(rowClass, active && toolbarActiveClass)}
+                className={cn(toolbarMenuRowClass, active && 'font-medium')}
                 {...toolbarPressHandlers(() =>
                   setExpanded((cur) => (cur === disclosure ? null : disclosure)),
                 )}
               >
                 <opt.icon className="h-3.5 w-3.5 mr-2" />
                 <span>{t(turnIntoTypeKey(opt.blockType))}</span>
+                {active && <Check className="ml-auto h-3.5 w-3.5" aria-hidden="true" />}
                 <ChevronRight
                   className={cn(
-                    'ml-auto h-3.5 w-3.5 shrink-0 transition-transform',
+                    'h-3.5 w-3.5 shrink-0 transition-transform',
+                    active ? 'ml-1' : 'ml-auto',
                     isOpen && 'rotate-90',
                   )}
                 />
@@ -198,7 +198,7 @@ export function TurnIntoMenu({ editor, blockId, onClose }: TurnIntoMenuProps): R
               aria-checked={active ? 'true' : 'false'}
               variant="ghost"
               size="sm"
-              className={cn(rowClass, active && toolbarActiveClass)}
+              className={cn(toolbarMenuRowClass, active && 'font-medium')}
               {...toolbarPressHandlers(() => {
                 dispatchBlockEvent('TURN_INTO_BLOCK', { type: opt.blockType })
                 onClose()
@@ -206,6 +206,7 @@ export function TurnIntoMenu({ editor, blockId, onClose }: TurnIntoMenuProps): R
             >
               <opt.icon className="h-3.5 w-3.5 mr-2" />
               <span>{t(turnIntoTypeKey(opt.blockType))}</span>
+              {active && <Check className="ml-auto h-3.5 w-3.5" aria-hidden="true" />}
             </Button>
           )
         })}
@@ -214,7 +215,7 @@ export function TurnIntoMenu({ editor, blockId, onClose }: TurnIntoMenuProps): R
           variant="ghost"
           size="sm"
           aria-label={t('toolbar.divider')}
-          className={rowClass}
+          className={toolbarMenuRowClass}
           {...toolbarPressHandlers(() => {
             dispatchBlockEvent('INSERT_DIVIDER')
             onClose()

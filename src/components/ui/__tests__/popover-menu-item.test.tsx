@@ -52,6 +52,14 @@ describe('PopoverMenuItem', () => {
     expect(results).toHaveNoViolations()
   })
 
+  // Rows match the Select / context-menu row size (14px) rather than text-xs.
+  it('renders at text-sm like every other menu row', () => {
+    render(<PopoverMenuItem>Sized item</PopoverMenuItem>)
+    const btn = screen.getByRole('button', { name: 'Sized item' })
+    expect(btn.classList.contains('text-sm')).toBe(true)
+    expect(btn.classList.contains('text-xs')).toBe(false)
+  })
+
   it('includes coarse pointer touch-target class', () => {
     render(<PopoverMenuItem>Touch item</PopoverMenuItem>)
     const btn = screen.getByRole('button', { name: 'Touch item' })

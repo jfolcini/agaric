@@ -16,16 +16,7 @@ import { Signal, Trash2, X } from 'lucide-react'
 import type React from 'react'
 import { useTranslation } from 'react-i18next'
 
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from '@/components/ui/alert-dialog'
+import { ConfirmDialog } from '@/components/dialogs/ConfirmDialog'
 import { Button } from '@/components/ui/button'
 
 interface BlockBatchActionMenuProps {
@@ -124,24 +115,16 @@ export function BlockBatchActionMenu({
           <X className="h-3.5 w-3.5" />
         </Button>
       </div>
-      <AlertDialog open={batchDeleteConfirm} onOpenChange={onSetBatchDeleteConfirm}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>
-              {t('blockContext.deleteConfirmTitle', { count: selectedBlockIds.length })}
-            </AlertDialogTitle>
-            <AlertDialogDescription>
-              {t('blockContext.deleteConfirmDescription')}
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>{t('dialog.cancel')}</AlertDialogCancel>
-            <AlertDialogAction onClick={onBatchDelete}>
-              {t('blockContext.deleteConfirmAction')}
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+      <ConfirmDialog
+        open={batchDeleteConfirm}
+        onOpenChange={onSetBatchDeleteConfirm}
+        titleKey="blockContext.deleteConfirmTitle"
+        descriptionKey="blockContext.deleteConfirmDescription"
+        confirmKey="blockContext.deleteConfirmAction"
+        values={{ count: selectedBlockIds.length }}
+        variant="destructive"
+        onConfirm={onBatchDelete}
+      />
     </>
   )
 }

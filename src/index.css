@@ -596,7 +596,10 @@
   --secondary: oklch(0.3 0.04 210); /* base02 */
   --secondary-foreground: oklch(0.68 0.01 195);
   --muted: oklch(0.3 0.04 210);
-  --muted-foreground: oklch(0.62 0.01 200); /* base0 */
+  /* base0 lifted 0.62 → 0.66: dialogs, cards and popovers sit on the lifted
+   * --popover (L 0.27), where base0 was 4.1:1; 0.66 is ≈4.8:1 and still
+   * below --foreground (base1, 0.68). */
+  --muted-foreground: oklch(0.66 0.01 200);
   --accent: oklch(0.32 0.05 235);
   --accent-foreground: oklch(0.75 0.12 235);
   --destructive: oklch(0.59 0.22 30);
@@ -825,7 +828,9 @@
   --secondary: oklch(0.35 0.02 260); /* selection */
   --secondary-foreground: oklch(0.75 0.02 255);
   --muted: oklch(0.35 0.02 260);
-  --muted-foreground: oklch(0.65 0.02 260);
+  /* 0.65 → 0.70: on the lifted --popover (L 0.33) 0.65 was 3.8:1; 0.70 is
+   * ≈4.6:1 and still below --foreground (0.75). */
+  --muted-foreground: oklch(0.7 0.02 260);
   --accent: oklch(0.35 0.05 235);
   --accent-foreground: oklch(0.78 0.12 235);
   --destructive: oklch(0.7 0.16 25); /* red */

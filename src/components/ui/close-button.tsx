@@ -14,10 +14,10 @@ import { useTranslation } from 'react-i18next'
 // the hit-target OUTWARD via negative margins that cancel the button's own
 // padding — so the glyph lands exactly on the gutter line while the clickable
 // area (and 44px coarse touch target) expands past the frame instead of
-// pushing the glyph inward. `-m-1` cancels `p-1` (fine); `-m-2` cancels `p-2`
-// (coarse).
+// pushing the glyph inward. `-m-1` cancels `p-1` (fine); on coarse pointers the
+// 44px min box centres the 20px glyph, so `-m-3` cancels its 12px slack.
 const closeButtonClassName =
-  'absolute top-6 right-6 -m-1 [@media(pointer:coarse)]:-m-2 rounded-sm opacity-70 transition-opacity hover:opacity-100 focus-ring-visible disabled:pointer-events-none p-1 [@media(pointer:coarse)]:p-2 [@media(pointer:coarse)]:min-h-[44px] [@media(pointer:coarse)]:min-w-[44px] [@media(pointer:coarse)]:flex [@media(pointer:coarse)]:items-center [@media(pointer:coarse)]:justify-center'
+  'absolute top-6 right-6 -m-1 [@media(pointer:coarse)]:-m-3 rounded-sm opacity-70 transition-opacity hover:opacity-100 focus-ring-visible disabled:pointer-events-none p-1 [@media(pointer:coarse)]:p-2 [@media(pointer:coarse)]:min-h-[44px] [@media(pointer:coarse)]:min-w-[44px] [@media(pointer:coarse)]:flex [@media(pointer:coarse)]:items-center [@media(pointer:coarse)]:justify-center'
 
 const CloseButtonIcon = ({ ref, ...props }: React.ComponentProps<'span'>) => {
   const { t } = useTranslation()

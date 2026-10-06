@@ -18,9 +18,9 @@ import { BuiltinDateFields } from '@/components/properties/BuiltinDateFields'
 import { PropertyField } from '@/components/properties/PropertyField'
 import { PropertyRowEditor } from '@/components/properties/PropertyRowEditor'
 import { LoadingSkeleton } from '@/components/rendering/LoadingSkeleton'
-import { ScrollArea } from '@/components/ui/scroll-area'
 import {
   Sheet,
+  SheetBody,
   SheetContent,
   SheetDescription,
   SheetHeader,
@@ -307,13 +307,13 @@ export function BlockPropertyDrawer({
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent side="right" className="w-3/4 sm:w-80">
+      <SheetContent side="right">
         <SheetHeader>
           <SheetTitle>{t('property.drawerTitle')}</SheetTitle>
           <SheetDescription>{t('property.drawerDescription')}</SheetDescription>
         </SheetHeader>
-        <ScrollArea className="flex-1 overflow-hidden">
-          <div className="mt-4 space-y-3 px-4 pb-4">
+        <SheetBody>
+          <div className="space-y-3">
             {/* Built-in date fields from the blocks table (H-12) */}
             {!loading && (
               <BuiltinDateFields
@@ -391,7 +391,7 @@ export function BlockPropertyDrawer({
               disabledTooltip={t('properties.loadingPropertiesDisabled')}
             />
           </div>
-        </ScrollArea>
+        </SheetBody>
       </SheetContent>
     </Sheet>
   )

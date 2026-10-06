@@ -190,6 +190,19 @@ describe('PropertyDefinitionsList', () => {
     expect(screen.getByRole('button', { name: /Delete/i })).toBeInTheDocument()
   })
 
+  it('styles the delete confirm as destructive and focuses Cancel first', async () => {
+    const user = userEvent.setup()
+    stubDefs(pageOf([makePropDef('to-delete', 'text')]))
+
+    render(<PropertyDefinitionsList />)
+
+    await user.click(await screen.findByRole('button', { name: /Delete property to-delete/i }))
+
+    const confirmBtn = await screen.findByRole('button', { name: /^Delete$/i })
+    expect(confirmBtn).toHaveClass('bg-destructive')
+    expect(screen.getByRole('button', { name: /Cancel/i })).toHaveFocus()
+  })
+
   it('confirming delete removes the definition', async () => {
     const user = userEvent.setup()
     stubDefs(pageOf([makePropDef('to-delete', 'text')]))

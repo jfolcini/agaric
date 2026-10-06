@@ -58,6 +58,7 @@ import {
   type SkinToneId,
 } from '@/components/EmojiPicker/emoji-skin-tone'
 import { Input } from '@/components/ui/input'
+import { ScrollArea } from '@/components/ui/scroll-area'
 import {
   type EmojiDataset,
   type EmojiEntry,
@@ -65,6 +66,7 @@ import {
   matchEmojiQuery,
 } from '@/editor/emoji-data'
 import { useEmojiRecents } from '@/hooks/useEmojiRecents'
+import { useIsTouch } from '@/hooks/useIsTouch'
 import { useLocalStoragePreference } from '@/hooks/useLocalStoragePreference'
 import { useRovingTabindex } from '@/hooks/useRovingTabindex'
 import { logger } from '@/lib/logger'
@@ -76,6 +78,8 @@ const NO_TONABLE_BASES: ReadonlySet<string> = new Set()
 const SKIN_TONE_KEY = 'emoji_skin_tone'
 /** Emoji per grid row. A fixed column count keeps virtualization row-based. */
 const COLUMNS = 8
+/** 7 touch cells (44px, no gap) fit a 360px phone sheet's 312px content; 8 do not. */
+const TOUCH_COLUMNS = 7
 // #2057: emoji cells grow to the 44px coarse-pointer touch floor (`size-11`),
 // so the virtualizer reserves >=44px per row. `measureElement` corrects the
 // real height per row after mount; this is the pre-measure estimate. On fine
@@ -139,7 +143,7 @@ function groupLabel(t: (key: string) => string, group: string): string {
 
 /**
  * Flatten the (optionally searched) emoji into virtualizable rows: a header
- * row per group followed by `COLUMNS`-wide emoji rows. Search results are a
+ * row per group followed by `columns`-wide emoji rows. Search results are a
  * single unlabeled section (the match order is the relevance order, so group
  * headers would only add noise).
  *
@@ -150,6 +154,7 @@ function groupLabel(t: (key: string) => string, group: string): string {
 function buildRows(
   query: string,
   dataset: EmojiDataset | null,
+  columns: number,
 ): { rows: GridRow[]; total: number } {
   const rows: GridRow[] = []
   let total = 0
@@ -159,19 +164,19 @@ function buildRows(
   if (trimmed !== '') {
     const matches = matchEmojiQuery(dataset.flat, trimmed, 200)
     total = matches.length
-    for (let i = 0; i < matches.length; i += COLUMNS) {
-      rows.push({ kind: 'emoji', entries: matches.slice(i, i + COLUMNS), key: `s-${i}` })
+    for (let i = 0; i < matches.length; i += columns) {
+      rows.push({ kind: 'emoji', entries: matches.slice(i, i + columns), key: `s-${i}` })
     }
     return { rows, total }
   }
 
   for (const bucket of dataset.grouped) {
     rows.push({ kind: 'header', group: bucket.group, key: `h-${bucket.group}` })
-    for (let i = 0; i < bucket.emoji.length; i += COLUMNS) {
-      total += Math.min(COLUMNS, bucket.emoji.length - i)
+    for (let i = 0; i < bucket.emoji.length; i += columns) {
+      total += Math.min(columns, bucket.emoji.length - i)
       rows.push({
         kind: 'emoji',
-        entries: bucket.emoji.slice(i, i + COLUMNS),
+        entries: bucket.emoji.slice(i, i + columns),
         key: `${bucket.group}-${i}`,
       })
     }
@@ -241,7 +246,11 @@ export function EmojiPicker({ onSelect, className, autoFocusSearch = true }: Emo
   // toolbar of plain buttons with a single roving tab stop, mirroring
   // SkinToneSelector and the category tablist.
   const frequentRoving = useRovingTabindex()
-  const { rows, total } = useMemo(() => buildRows(query, dataset), [query, dataset])
+  const columns = useIsTouch() ? TOUCH_COLUMNS : COLUMNS
+  const { rows, total } = useMemo(
+    () => buildRows(query, dataset, columns),
+    [query, dataset, columns],
+  )
   const isSearching = query.trim() !== ''
   const noResults = isSearching && total === 0
 
@@ -421,7 +430,7 @@ export function EmojiPicker({ onSelect, className, autoFocusSearch = true }: Emo
           aria-label={t('emojiPicker.search')}
           // oxlint-disable-next-line jsx-a11y/no-autofocus -- intentional focus-on-open: the picker is an explicitly-invoked dialog and search-first is the primary interaction; mirrors SearchHeader. Caller can opt out via autoFocusSearch={false}.
           autoFocus={autoFocusSearch}
-          className="flex-1"
+          className="flex-1 focus-ring-soft"
           onKeyDown={(e) => {
             // ArrowDown from the search box drops into the grid.
             if (e.key === 'ArrowDown' && focusedRowIndex !== undefined) {
@@ -435,41 +444,45 @@ export function EmojiPicker({ onSelect, className, autoFocusSearch = true }: Emo
 
       {/* Category-jump tab strip (#286 polish). Hidden while searching (the
           flat ranked result list has no group structure). Each tab scrolls the
-          grid to its group header; the active group highlights as you scroll. */}
+          grid to its group header; the active group highlights as you scroll. The
+          viewport clips, so its padding (cancelled by the negative margin) keeps
+          the first/last/top tab's focus ring visible. */}
       {categoryTargets.length > 0 && (
-        <div
-          ref={categoryRoving.containerRef}
-          role="tablist"
-          aria-label={t('emojiPicker.categories')}
-          data-testid="emoji-categories"
-          className="flex items-center gap-0.5 border-b pb-1"
-          // Not a tab stop itself; the roving tab moves the single tabindex 0.
-          tabIndex={-1}
-          onKeyDown={categoryRoving.onKeyDown}
-          onFocus={categoryRoving.onFocus}
-        >
-          {categoryTargets.map(({ group, Icon, index }) => {
-            const active = group === activeGroup
-            return (
-              <button
-                key={group}
-                type="button"
-                role="tab"
-                aria-selected={active}
-                aria-label={groupLabel(t, group)}
-                title={groupLabel(t, group)}
-                data-active={active}
-                onClick={() => jumpToCategory(index)}
-                className={cn(
-                  'grid size-7 place-items-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground focus-ring-visible [@media(pointer:coarse)]:size-11 touch-target',
-                  active && 'bg-accent text-foreground',
-                )}
-              >
-                <Icon className="size-4" aria-hidden="true" />
-              </button>
-            )
-          })}
-        </div>
+        <ScrollArea orientation="horizontal" className="-mx-1 -mt-1" viewportClassName="px-1 pt-1">
+          <div
+            ref={categoryRoving.containerRef}
+            role="tablist"
+            aria-label={t('emojiPicker.categories')}
+            data-testid="emoji-categories"
+            className="flex items-center gap-0.5 border-b pb-1"
+            // Not a tab stop itself; the roving tab moves the single tabindex 0.
+            tabIndex={-1}
+            onKeyDown={categoryRoving.onKeyDown}
+            onFocus={categoryRoving.onFocus}
+          >
+            {categoryTargets.map(({ group, Icon, index }) => {
+              const active = group === activeGroup
+              return (
+                <button
+                  key={group}
+                  type="button"
+                  role="tab"
+                  aria-selected={active}
+                  aria-label={groupLabel(t, group)}
+                  title={groupLabel(t, group)}
+                  data-active={active}
+                  onClick={() => jumpToCategory(index)}
+                  className={cn(
+                    'grid size-7 place-items-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground focus-ring-visible [@media(pointer:coarse)]:size-11 touch-target',
+                    active && 'bg-accent text-foreground',
+                  )}
+                >
+                  <Icon className="size-4" aria-hidden="true" />
+                </button>
+              )
+            })}
+          </div>
+        </ScrollArea>
       )}
 
       {showFrequent && (
@@ -485,13 +498,13 @@ export function EmojiPicker({ onSelect, className, autoFocusSearch = true }: Emo
             ref={frequentRoving.containerRef}
             role="toolbar"
             aria-label={t('emojiPicker.frequentlyUsedRow')}
-            className="flex flex-wrap gap-0.5"
+            className="flex flex-wrap gap-0.5 [@media(pointer:coarse)]:gap-0"
             // Not a tab stop itself; the roving tab moves the single tabindex 0.
             tabIndex={-1}
             onKeyDown={frequentRoving.onKeyDown}
             onFocus={frequentRoving.onFocus}
           >
-            {frequent.slice(0, COLUMNS).map((char) => (
+            {frequent.slice(0, columns).map((char) => (
               <button
                 key={`frequent-${char}`}
                 type="button"
@@ -580,7 +593,7 @@ export function EmojiPicker({ onSelect, className, autoFocusSearch = true }: Emo
                       </p>
                     ) : (
                       /* oxlint-disable jsx-a11y/prefer-tag-over-role -- ARIA grid row + gridcells inside a virtualized absolutely-positioned grid; <table>/<tr>/<td> cannot host the transform-positioned rows the virtualizer requires (mirrors MonthlyView) */
-                      <div role="row" className="flex gap-0.5">
+                      <div role="row" className="flex gap-0.5 [@media(pointer:coarse)]:gap-0">
                         {row.entries.map((entry, col) => {
                           const char = applySkinTone(entry.char, skinTone, tonable)
                           const isFocused = vi.index === focusedRowIndex && col === focused.c

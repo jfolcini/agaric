@@ -493,3 +493,36 @@ describe('#759 mobile Sheet a11y description', () => {
     })
   })
 })
+
+// ---------------------------------------------------------------------------
+// Mobile drawer open focus — lands on the drawer, not its first control
+// ---------------------------------------------------------------------------
+
+describe('mobile drawer open focus', () => {
+  beforeEach(() => {
+    Object.defineProperty(window, 'innerWidth', {
+      value: 375,
+      configurable: true,
+      writable: true,
+    })
+  })
+
+  it('focuses the drawer itself, not its first control', async () => {
+    render(
+      <SidebarProvider>
+        <Sidebar>
+          <SidebarContent>
+            <button type="button">First control</button>
+          </SidebarContent>
+        </Sidebar>
+        <SidebarTrigger />
+      </SidebarProvider>,
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: t('sidebar.toggleSidebar') }))
+
+    const dialog = await screen.findByRole('dialog')
+    await waitFor(() => expect(dialog).toHaveFocus())
+    expect(screen.getByRole('button', { name: 'First control' })).not.toHaveFocus()
+  })
+})

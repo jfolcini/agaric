@@ -1,13 +1,14 @@
 import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import type React from 'react'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
 import type { PageHeaderMenuProps } from '@/components/pages/PageHeaderMenu'
 import { PageHeaderMenu } from '@/components/pages/PageHeaderMenu'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { t } from '@/lib/i18n'
+import { resetAllShortcuts, setCustomShortcut } from '@/lib/keyboard-config'
 
 vi.mock('lucide-react', () => ({
   BookTemplate: (props: React.SVGProps<SVGSVGElement>) => (
@@ -371,11 +372,22 @@ describe('PageHeaderMenu template toggle button', () => {
 })
 
 describe('PageHeaderMenu export shortcut hint', () => {
+  afterEach(() => resetAllShortcuts())
+
   it('shows Export as Markdown with keyboard shortcut hint', () => {
     renderMenu({ kebabOpen: true })
 
     expect(screen.getByText(/Export as Markdown/i)).toBeInTheDocument()
-    expect(screen.getByText('Ctrl + Shift + E')).toBeInTheDocument()
+    // Compact form (no spaces around `+`) that must not wrap.
+    expect(screen.getByText('Ctrl+Shift+E')).toHaveClass('whitespace-nowrap')
+  })
+
+  it('shows the user-rebound binding, not the default', () => {
+    setCustomShortcut('exportPageMarkdown', 'Ctrl + Alt + X')
+    renderMenu({ kebabOpen: true })
+
+    expect(screen.getByText('Ctrl+Alt+X')).toBeInTheDocument()
+    expect(screen.queryByText('Ctrl+Shift+E')).not.toBeInTheDocument()
   })
 })
 

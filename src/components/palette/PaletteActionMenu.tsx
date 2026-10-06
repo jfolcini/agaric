@@ -180,8 +180,8 @@ export function PaletteActionMenu({
           onClick={() => onAction(a.id)}
           data-testid={`palette-action-${a.id}`}
           className={cn(
-            'flex w-full items-center gap-2 rounded px-2 py-1.5 text-sm hover:bg-accent/40',
-            'focus:bg-accent/40 focus-ring-visible',
+            'flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-sm hover:bg-accent hover:text-accent-foreground',
+            'focus:bg-accent focus:text-accent-foreground focus-ring-visible',
             '[@media(pointer:coarse)]:min-h-[44px] [@media(pointer:coarse)]:py-2.5',
           )}
         >

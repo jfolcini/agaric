@@ -204,6 +204,15 @@ describe('BlockBatchActionMenu', () => {
     expect(props.onBatchDelete).toHaveBeenCalledTimes(1)
   })
 
+  it('styles the confirm action as destructive and focuses Cancel first', () => {
+    renderToolbar({ batchDeleteConfirm: true })
+
+    expect(screen.getByRole('button', { name: t('blockContext.deleteConfirmAction') })).toHaveClass(
+      'bg-destructive',
+    )
+    expect(screen.getByRole('button', { name: t('dialog.cancel') })).toHaveFocus()
+  })
+
   it('cancel in the dialog requests the dialog to close (onSetBatchDeleteConfirm(false))', async () => {
     const user = userEvent.setup()
     const { props } = renderToolbar({ batchDeleteConfirm: true })

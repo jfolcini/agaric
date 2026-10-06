@@ -269,6 +269,9 @@ describe('AppSidebar', () => {
       const tooltip = screen.getByRole('tooltip')
       expect(tooltip.textContent).toContain(t('sidebar.syncTooltip'))
       expect(tooltip.textContent).toContain(t('sidebar.lastSyncedNever'))
+      // Dimmed on the inverted tooltip surface; opacity-80 drops below 4.5:1 in
+      // solarized-dark and one-dark-pro.
+      expect(within(tooltip).getByText(t('sidebar.lastSyncedNever'))).toHaveClass('opacity-90')
     })
   })
 

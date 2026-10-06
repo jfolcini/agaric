@@ -69,7 +69,6 @@ export function SavedViewsDropdown({
         </PopoverTrigger>
         <MenuPopoverContent
           align="end"
-          className="p-1"
           data-testid="saved-views-menu"
           aria-label={t('pageBrowser.savedViews.trigger')}
         >

@@ -157,6 +157,20 @@ describe('Command (cmdk wrapper)', () => {
     expect(onSelect).not.toHaveBeenCalledWith('banana')
   })
 
+  // `.search-result-mark` fills with the same accent token as the active row, so
+  // marks inside it must be re-filled or the FTS5 highlight vanishes.
+  it('keyboard-active item uses the solid accent row and re-fills snippet marks', () => {
+    render(<Harness />)
+
+    const apple = screen.getByText('Apple').closest('[data-slot="command-item"]')
+    expect(apple).toHaveAttribute('aria-selected', 'true')
+    const tokens = apple?.classList
+    expect(tokens?.contains('aria-selected:bg-accent')).toBe(true)
+    expect(tokens?.contains('aria-selected:text-accent-foreground')).toBe(true)
+    expect(tokens?.contains('aria-selected:bg-accent/40')).toBe(false)
+    expect(tokens?.contains('aria-selected:[&_mark]:bg-background!')).toBe(true)
+  })
+
   it('CommandEmpty appears when no items match the filter', async () => {
     const user = userEvent.setup()
     render(<Harness shouldFilter />)

@@ -45,6 +45,7 @@ import type { TagCacheRow } from '@/lib/bindings'
 import { logger } from '@/lib/logger'
 import { paginationLimit } from '@/lib/safe-limit'
 import type { FilterToken } from '@/lib/search-query'
+import { cn } from '@/lib/utils'
 
 /**
  * #718 — a path glob cannot contain a literal `"` (mirrors
@@ -250,7 +251,11 @@ export function FilterHelperPopover({
           </span>
         </Button>
       </PopoverTrigger>
-      <PopoverContent align="start" className="w-72" aria-label={t('search.addFilter')}>
+      <PopoverContent
+        align="start"
+        className={cn('w-72', mode === 'menu' ? 'p-1' : 'p-3')}
+        aria-label={t('search.addFilter')}
+      >
         {mode === 'menu' && (
           <div data-testid="filter-helper-menu">
             {/* a role="menu" must contain only menuitem children
@@ -289,7 +294,9 @@ export function FilterHelperPopover({
                 <span className="ml-2 text-xs text-muted-foreground">prop:key=value</span>
               </PopoverMenuItem>
             </div>
-            <p className="mt-2 text-xs text-muted-foreground">{t('search.filterCategoryTip')}</p>
+            <p className="mt-2 px-2 text-xs text-muted-foreground">
+              {t('search.filterCategoryTip')}
+            </p>
           </div>
         )}
         {mode === 'tag' && (
@@ -299,6 +306,7 @@ export function FilterHelperPopover({
               value={tagQuery}
               onChange={(e) => handleTagQueryChange(e.target.value)}
               onKeyDown={handleTagKeyDown}
+              className="h-8 focus-ring-soft"
               placeholder={t('search.searchTags')}
               aria-label={t('search.searchTags')}
               // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- explicit role="combobox" on the tag-query <input> drives the aria-activedescendant listbox below; the native combobox mapping differs and would drop the aria-expanded/aria-controls wiring this custom popup relies on
@@ -346,7 +354,7 @@ export function FilterHelperPopover({
                       aria-selected={idx === activeIndex}
                       tabIndex={-1}
                       onClick={() => handleTagSelect(tag)}
-                      className="w-full text-left px-2 py-1 rounded hover:bg-muted focus-ring-visible text-sm [@media(pointer:coarse)]:min-h-11 data-[active=true]:bg-muted"
+                      className="w-full text-left px-2 py-1.5 rounded-sm hover:bg-accent focus-ring-visible text-sm [@media(pointer:coarse)]:min-h-11 data-[active=true]:bg-accent data-[active=true]:text-accent-foreground"
                       data-active={idx === activeIndex}
                     >
                       #{tag.name}

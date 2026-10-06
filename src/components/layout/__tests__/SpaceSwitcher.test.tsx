@@ -511,6 +511,12 @@ describe('SpaceSwitcher', () => {
       async () => {
         const personalHint = await screen.findAllByText(/Ctrl\+1\s+Personal/)
         expect(personalHint.length).toBeGreaterThanOrEqual(1)
+        // The tooltip surface is inverted: a fixed `text-muted-foreground` is
+        // unreadable on it, so the dim rows use opacity instead.
+        for (const row of personalHint) {
+          expect(row.classList.contains('opacity-90')).toBe(true)
+          expect(row.classList.contains('text-muted-foreground')).toBe(false)
+        }
         const workHint = await screen.findAllByText(/Ctrl\+2\s+Work/)
         expect(workHint.length).toBeGreaterThanOrEqual(1)
       },
