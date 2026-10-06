@@ -49,7 +49,6 @@ export function SavedViewsDropdown({
         <PopoverTrigger asChild>
           <Button
             variant="outline"
-            size="sm"
             className="w-auto min-w-[7rem]"
             aria-label={
               activeView
@@ -69,7 +68,7 @@ export function SavedViewsDropdown({
           </Button>
         </PopoverTrigger>
         <MenuPopoverContent
-          align="start"
+          align="end"
           className="p-1"
           data-testid="saved-views-menu"
           aria-label={t('pageBrowser.savedViews.trigger')}

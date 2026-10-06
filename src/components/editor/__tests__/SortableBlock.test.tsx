@@ -1292,7 +1292,7 @@ describe('SortableBlock priority badge', () => {
 
     const badge = container.querySelector('.priority-badge > span')
     expect(badge?.className).toContain('bg-priority-high')
-    expect(badge?.className).toContain('text-priority-foreground')
+    expect(badge?.className).toContain('text-priority-high-foreground')
   })
 
   it('applies blue styling for priority 3', () => {

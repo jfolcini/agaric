@@ -3,9 +3,9 @@
  *
  * Three `<button aria-pressed>` toggles next to the search input — VS
  * Code's `Aa` / `Ab|` / `.*` family for case-sensitive, whole-word, and
- * regex modes. Each toggle pairs a `lucide-react` icon with an
- * always-visible abbreviation label and a 44px hit area on coarse
- * pointers (AGENTS.md a11y invariant).
+ * regex modes. Each toggle is its always-visible abbreviation label
+ * (the lucide glyphs beside it drew the same `Aa` / `.*` twice) with a
+ * 44px hit area on coarse pointers (AGENTS.md a11y invariant).
  *
  * #154 the abbreviation is rendered as visible text rather than
  * relying on a hover tooltip: Radix tooltips don't fire on touch-tap, so
@@ -20,14 +20,9 @@
  *   - `aria-pressed` flips on click;
  *   - `role="toolbar"` on the container;
  *   - each toggle exposes its full label as an `aria-label`;
- *   - each toggle shows its visible abbreviation text;
- *   - the three icons render distinct DOM (so screenshot regressions
- *     can detect a swap).
- *
- * No `dangerouslySetInnerHTML`; icons come from `lucide-react`.
+ *   - each toggle shows its visible abbreviation text.
  */
 
-import { CaseSensitive, Regex, WholeWord } from 'lucide-react'
 import type React from 'react'
 import { useTranslation } from 'react-i18next'
 
@@ -53,7 +48,6 @@ interface ToggleSpec {
   /** Always-visible abbreviation (VS Code's `Aa` / `Ab|` / `.*`). */
   abbr: string
   testId: string
-  Icon: React.ComponentType<React.SVGProps<SVGSVGElement>>
 }
 
 const TOGGLES: ReadonlyArray<ToggleSpec> = [
@@ -62,21 +56,18 @@ const TOGGLES: ReadonlyArray<ToggleSpec> = [
     labelKey: 'search.toggle.caseSensitive',
     abbr: 'Aa',
     testId: 'search-toggle-case-sensitive',
-    Icon: CaseSensitive,
   },
   {
     key: 'wholeWord',
     labelKey: 'search.toggle.wholeWord',
     abbr: 'Ab|',
     testId: 'search-toggle-whole-word',
-    Icon: WholeWord,
   },
   {
     key: 'isRegex',
     labelKey: 'search.toggle.regex',
     abbr: '.*',
     testId: 'search-toggle-regex',
-    Icon: Regex,
   },
 ]
 
@@ -94,7 +85,7 @@ export function SearchToggleRow({
       data-testid="search-toggle-row"
       className="inline-flex items-center gap-1 rounded-md border border-input bg-background p-0.5"
     >
-      {TOGGLES.map(({ key, labelKey, abbr, testId, Icon }) => {
+      {TOGGLES.map(({ key, labelKey, abbr, testId }) => {
         const pressed = toggles[key]
         const label = t(labelKey)
         return (
@@ -129,7 +120,6 @@ export function SearchToggleRow({
               'disabled:pointer-events-none disabled:opacity-50',
             )}
           >
-            <Icon className="h-4 w-4 shrink-0" aria-hidden="true" />
             {/* #154 always-visible abbreviation, so the mode is
                 legible on touch with no tooltip/long-press. aria-hidden
                 because the button already has the full `aria-label`. */}

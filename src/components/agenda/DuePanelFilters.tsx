@@ -62,7 +62,7 @@ export function DuePanelFilters({
 
   return (
     <div
-      className="due-panel-filters flex items-center gap-1 px-2 py-1"
+      className="due-panel-filters flex flex-wrap items-center gap-1 px-2 py-1"
       data-testid="due-panel-filters"
     >
       {filterOptions.map((opt) => {
@@ -77,7 +77,7 @@ export function DuePanelFilters({
               <button
                 type="button"
                 className={cn(
-                  'rounded-full px-2.5 py-1 text-xs font-medium transition-colors [@media(pointer:coarse)]:min-h-[44px] [@media(pointer:coarse)]:min-w-[44px]',
+                  'whitespace-nowrap rounded-full px-2.5 py-1 text-xs font-medium transition-colors focus-ring-visible [@media(pointer:coarse)]:min-h-[44px] [@media(pointer:coarse)]:min-w-[44px]',
                   sourceFilter === opt.value
                     ? 'bg-primary text-primary-foreground'
                     : 'bg-muted text-muted-foreground hover:bg-muted/80',
@@ -98,7 +98,7 @@ export function DuePanelFilters({
       <button
         type="button"
         className={cn(
-          'text-xs px-1.5 py-0.5 rounded border transition-colors [@media(pointer:coarse)]:min-h-[44px] [@media(pointer:coarse)]:min-w-[44px]',
+          'whitespace-nowrap rounded-full border px-2.5 py-1 text-xs font-medium transition-colors focus-ring-visible [@media(pointer:coarse)]:min-h-[44px] [@media(pointer:coarse)]:min-w-[44px]',
           hideBeforeScheduled
             ? 'bg-primary/10 border-primary/30 text-primary'
             : 'border-muted-foreground/20 text-muted-foreground hover:bg-accent/50 active:bg-accent/70',

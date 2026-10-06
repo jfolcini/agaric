@@ -52,6 +52,7 @@
   --color-priority-high: var(--priority-high);
   --color-priority-normal: var(--priority-normal);
   --color-priority-foreground: var(--priority-foreground);
+  --color-priority-high-foreground: var(--priority-high-foreground);
   /* Operation type colors */
   --color-op-create: var(--op-create);
   --color-op-create-foreground: var(--op-create-foreground);
@@ -208,6 +209,8 @@
   --priority-high: oklch(0.8 0.16 90);
   --priority-normal: oklch(0.62 0.22 265);
   --priority-foreground: oklch(1 0 0);
+  /* White on the yellow P2 chip was 1.9:1; dark brown is ≈7.3:1. */
+  --priority-high-foreground: oklch(0.3 0.08 75);
   /* #929 — paired foreground for the DONE checkbox glyph, mirroring
      --priority-foreground (was a hardcoded text-white). The task-done bg is a
      saturated green across all themes, so a near-white glyph reads on every one.
@@ -387,6 +390,8 @@
   --priority-high: oklch(0.8 0.16 90);
   --priority-normal: oklch(0.62 0.22 265);
   --priority-foreground: oklch(1 0 0);
+  /* White on the yellow P2 chip was 1.9:1; dark brown is ≈7.3:1. */
+  --priority-high-foreground: oklch(0.3 0.08 75);
   /* Operation type colors */
   --op-create: oklch(0.19 0.02 163);
   --op-create-foreground: oklch(0.77 0.18 163);
@@ -519,6 +524,7 @@
   --priority-high: oklch(0.6 0.14 80);
   --priority-normal: oklch(0.61 0.13 235);
   --priority-foreground: oklch(0.97 0.02 85);
+  --priority-high-foreground: oklch(0.22 0.04 210); /* base03 */
   /* Operation type colors */
   --op-create: oklch(0.93 0.05 155);
   --op-create-foreground: oklch(0.45 0.14 135);
@@ -626,6 +632,7 @@
   --priority-high: oklch(0.65 0.14 80);
   --priority-normal: oklch(0.65 0.13 235);
   --priority-foreground: oklch(0.97 0.02 85);
+  --priority-high-foreground: oklch(0.22 0.04 210); /* base03 */
   /* Operation type colors */
   --op-create: oklch(0.28 0.05 135);
   --op-create-foreground: oklch(0.78 0.14 135);
@@ -1050,6 +1057,13 @@
      * the few native inputs match the per-theme accent on both engines
      * instead of falling back to each UA's default blue/grey. */
     accent-color: var(--primary);
+    color-scheme: light;
+  }
+
+  /* Without this the UA paints native checkboxes, scrollbars and date
+   * inputs in its light palette on every dark theme. */
+  .dark {
+    color-scheme: dark;
   }
 
   /* Focus-outline policy. The app signals keyboard focus exclusively via the
@@ -1119,8 +1133,8 @@
   border-left-color: var(--alert-note-border);
   background-color: var(--alert-note);
   padding: 0.5rem 1rem; /* py-2 px-4 — matches view-mode pl-4 py-2 */
-  border-top-right-radius: 0.375rem; /* rounded-r-md */
-  border-bottom-right-radius: 0.375rem;
+  border-top-right-radius: var(--radius-md); /* rounded-r-md */
+  border-bottom-right-radius: var(--radius-md);
   color: var(--foreground);
 }
 
@@ -1763,6 +1777,7 @@
     --priority-high: oklch(0.7 0.22 90);
     --priority-normal: oklch(0.5 0.28 265);
     --priority-foreground: oklch(1 0 0);
+    --priority-high-foreground: oklch(0.25 0.06 75);
   }
 
   /* A11Y-HC1 — second-pass token-coverage gap. The audit flagged that

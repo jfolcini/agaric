@@ -584,7 +584,7 @@ export function DuePanel({
                                 : ''
                             }
                             breadcrumbArrow={t('duePanel.breadcrumbArrow')}
-                            className="due-panel-item hover:bg-muted/50 active:bg-muted/70 ml-2"
+                            className="due-panel-item hover:bg-muted/50 active:bg-muted/70 ml-2 max-w-[calc(100%-0.5rem)]"
                             contentClassName="due-panel-item-text"
                             breadcrumbClassName="due-panel-breadcrumb"
                             testId="due-panel-item"

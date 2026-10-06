@@ -7,8 +7,6 @@
  * Each toggle shows its always-visible abbreviation (#154 —
  *   touch-safe, no tooltip reliance).
  * - `aria-pressed` reflects the controlled state and flips on click.
- * - All three toggles render distinct SVG icons (regression guard
- *   against a swap).
  * - axe finds no violations.
  */
 

@@ -210,7 +210,6 @@ export function PageBrowserHeader({
             <Tooltip>
               <TooltipTrigger asChild>
                 <SelectTrigger
-                  size="sm"
                   className="w-auto min-w-[7rem]"
                   aria-label={t('pageBrowser.sortLabel')}
                 >
@@ -252,7 +251,6 @@ export function PageBrowserHeader({
             <Tooltip>
               <TooltipTrigger asChild>
                 <SelectTrigger
-                  size="sm"
                   className="w-auto min-w-[7rem]"
                   aria-label={t('pageBrowser.densityLabel')}
                 >

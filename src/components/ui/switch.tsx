@@ -15,7 +15,9 @@ const Switch = ({
       'peer inline-flex h-5 w-9 shrink-0 cursor-pointer items-center rounded-full border border-transparent transition-colors',
       'focus-ring-visible',
       'disabled:cursor-not-allowed disabled:opacity-50',
-      'data-[state=checked]:bg-primary data-[state=unchecked]:bg-input',
+      // `bg-input` (L 0.93) under a white thumb on a white page read as no
+      // control at all; the muted-foreground tint keeps the off track visible.
+      'data-[state=checked]:bg-primary data-[state=unchecked]:bg-muted-foreground/40',
       '[@media(pointer:coarse)]:h-7 [@media(pointer:coarse)]:w-12',
       className,
     )}

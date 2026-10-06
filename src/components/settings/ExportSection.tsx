@@ -110,7 +110,7 @@ export function ExportSection(): React.ReactElement {
 
   return (
     <Card>
-      <CardHeader className="pb-3">
+      <CardHeader>
         <CardTitle
           className="export-panel-title flex items-center gap-2"
           data-testid="export-panel-title"

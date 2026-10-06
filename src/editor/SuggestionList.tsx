@@ -310,7 +310,7 @@ export const SuggestionList = ({
       key={item.id}
       id={`suggestion-${item.id}`}
       className={cn(
-        'suggestion-item flex w-full items-center rounded-md px-2 py-1.5 text-left text-sm transition-colors [@media(pointer:coarse)]:py-3 [@media(pointer:coarse)]:min-h-[44px] touch-target focus-outline',
+        'suggestion-item flex w-full items-center rounded-sm px-2 py-1.5 text-left text-sm transition-colors [@media(pointer:coarse)]:py-3 [@media(pointer:coarse)]:min-h-[44px] touch-target focus-outline',
         index === selectedIndex
           ? 'bg-accent text-accent-foreground'
           : 'hover:bg-accent hover:text-accent-foreground',
@@ -335,7 +335,7 @@ export const SuggestionList = ({
 
   return (
     <div
-      className="suggestion-list rounded-lg border bg-popover p-1 shadow-(--shadow-floating)"
+      className="suggestion-list rounded-md border bg-popover p-1 shadow-(--shadow-floating)"
       data-editor-portal
     >
       {/* #1102 — live result-count status. Announced on EVERY update (the

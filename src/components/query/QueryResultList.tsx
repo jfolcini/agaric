@@ -49,7 +49,7 @@ export function QueryResultList({
 
   return (
     <div
-      className="divide-y divide-muted-foreground/10"
+      className="divide-y divide-border"
       tabIndex={0}
       // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- custom listbox driven by aria-activedescendant + roving focus; <datalist>/<select> can't host the clickable result-row divs
       role="listbox"

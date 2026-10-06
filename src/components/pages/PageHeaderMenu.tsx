@@ -202,11 +202,11 @@ export function PageHeaderMenu({
         <TooltipTrigger asChild>
           <Button
             variant="ghost"
-            size="icon-xs"
+            size="icon-sm"
             aria-label={t('pageHeader.undoAction')}
             onClick={onUndo}
           >
-            <Undo2 className="h-3.5 w-3.5" />
+            <Undo2 className="h-4 w-4" />
           </Button>
         </TooltipTrigger>
         {/*  sub-fix 3: tier-aware undo tooltip. The same Ctrl+Z hits
@@ -224,12 +224,12 @@ export function PageHeaderMenu({
         <TooltipTrigger asChild>
           <Button
             variant="ghost"
-            size="icon-xs"
+            size="icon-sm"
             aria-label={t('pageHeader.redoAction')}
             disabled={!canRedo}
             onClick={onRedo}
           >
-            <Redo2 className="h-3.5 w-3.5" />
+            <Redo2 className="h-4 w-4" />
           </Button>
         </TooltipTrigger>
         <TooltipContent>
@@ -240,12 +240,12 @@ export function PageHeaderMenu({
         <TooltipTrigger asChild>
           <Button
             variant="ghost"
-            size="icon-xs"
+            size="icon-sm"
             onClick={onToggleTemplate}
             aria-label={t('pageHeader.toggleTemplate')}
             aria-pressed={isTemplate}
           >
-            <LayoutTemplate className={cn('h-3.5 w-3.5', isTemplate && 'text-primary')} />
+            <LayoutTemplate className={cn('h-4 w-4', isTemplate && 'text-primary')} />
           </Button>
         </TooltipTrigger>
         <TooltipContent>
@@ -257,10 +257,10 @@ export function PageHeaderMenu({
           <Button
             ref={kebabRef}
             variant="ghost"
-            size="icon-xs"
+            size="icon-sm"
             aria-label={t('pageHeader.pageActions')}
           >
-            <MoreVertical className="h-3.5 w-3.5" />
+            <MoreVertical className="h-4 w-4" />
           </Button>
         </PopoverTrigger>
         <MenuPopoverContent

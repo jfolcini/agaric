@@ -219,6 +219,23 @@ const DOCUMENTED_GUARANTEES: ReadonlyArray<{
     documented: 5.07,
   },
   {
+    // index.css :root: "White on the yellow P2 chip was 1.9:1; dark brown is ≈7.3:1."
+    name: 'light :root — --priority-high-foreground on --priority-high ≈7.3:1',
+    selector: ':root',
+    fg: 'priority-high-foreground',
+    bg: 'priority-high',
+    min: AA_NORMAL,
+    documented: 7.33,
+  },
+  {
+    name: 'dark .dark — --priority-high-foreground on --priority-high ≈7.3:1',
+    selector: '.dark',
+    fg: 'priority-high-foreground',
+    bg: 'priority-high',
+    min: AA_NORMAL,
+    documented: 7.33,
+  },
+  {
     // index.css ~466-468: "muted-foreground … L 0.58 → 0.50 raises it to ≈5.45:1"
     name: 'Solarized Light — --muted-foreground on --background ≈5.45:1',
     selector: '.theme-solarized-light',

@@ -126,8 +126,10 @@ export function ToolbarFrame({
         // #925 f3 — touch: pin above the keyboard (fixed, lifted via the
         // visualViewport effect); desktop: inline, beside its editor.
         isTouch
-          ? 'fixed inset-x-0 bottom-0 z-30 overflow-x-auto border-t bg-muted/95 backdrop-blur supports-backdrop-blur:bg-muted/80'
-          : cn('relative border-b', className),
+          ? 'fixed inset-x-0 bottom-0 z-30 overflow-x-auto border-t bg-muted/95 backdrop-blur supports-[backdrop-filter]:bg-muted/80'
+          : // `rounded-t-md` matches the `.block-editor` box it heads, which
+            // cannot clip it (`overflow-hidden` would cut ImageResizeToolbar).
+            cn('relative rounded-t-md border-b', className),
       )}
       data-testid={testId}
       data-pinned={isTouch ? 'true' : undefined}

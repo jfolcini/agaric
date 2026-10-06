@@ -373,7 +373,7 @@ export function ImportSection(): React.ReactElement {
 
   return (
     <Card>
-      <CardHeader className="pb-3">
+      <CardHeader>
         <CardTitle
           className="import-panel-title flex items-center gap-2"
           data-testid="import-panel-title"

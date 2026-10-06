@@ -131,7 +131,7 @@ export function KeyboardTab(): React.ReactElement {
   return (
     <div className="space-y-6" data-testid="keyboard-settings-tab">
       <Card>
-        <CardHeader className="pb-3">
+        <CardHeader>
           <CardTitle>{t('keyboard.settings.title')}</CardTitle>
           <CardDescription>{t('keyboard.settings.description')}</CardDescription>
         </CardHeader>

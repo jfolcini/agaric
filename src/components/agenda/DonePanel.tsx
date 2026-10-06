@@ -411,7 +411,7 @@ export function DonePanel({
                             }
                             breadcrumbArrow={t('donePanel.breadcrumbArrow')}
                             breadcrumbAsLink={false}
-                            className="done-panel-item hover:bg-muted/50 active:bg-muted/70 ml-2"
+                            className="done-panel-item hover:bg-muted/50 active:bg-muted/70 ml-2 max-w-[calc(100%-0.5rem)]"
                             contentClassName="done-panel-item-text"
                             breadcrumbClassName="done-panel-breadcrumb [@media(pointer:coarse)]:text-sm"
                             onClick={rowHandlers.onClick}

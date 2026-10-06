@@ -236,7 +236,7 @@ export function DeviceManagement(): React.ReactElement {
   return (
     <div className="device-management space-y-6">
       <Card>
-        <CardHeader className="pb-3">
+        <CardHeader>
           <CardTitle className="device-management-title flex items-center gap-2">
             <Smartphone className="h-4 w-4" />
             {t('device.title')}

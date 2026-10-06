@@ -28,7 +28,7 @@ describe('priorityColor: default levels', () => {
   })
 
   it('returns high classes for "2"', () => {
-    expect(priorityColor('2')).toBe('bg-priority-high text-priority-foreground')
+    expect(priorityColor('2')).toBe('bg-priority-high text-priority-high-foreground')
   })
 
   it('returns normal classes for "3"', () => {
@@ -48,7 +48,7 @@ describe('priorityColor: custom levels', () => {
   it('assigns urgent/high/normal to index 0/1/2', () => {
     setPriorityLevels(['A', 'B', 'C', 'D', 'E'])
     expect(priorityColor('A')).toBe('bg-priority-urgent text-priority-foreground')
-    expect(priorityColor('B')).toBe('bg-priority-high text-priority-foreground')
+    expect(priorityColor('B')).toBe('bg-priority-high text-priority-high-foreground')
     expect(priorityColor('C')).toBe('bg-priority-normal text-priority-foreground')
   })
 

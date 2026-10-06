@@ -74,7 +74,7 @@ function opBadgeClasses(opType: string): string {
     return 'bg-op-edit text-op-edit-foreground'
   }
   if (opType.startsWith('delete') || opType.startsWith('purge')) {
-    return 'bg-destructive/10 text-destructive'
+    return 'bg-alert-error text-alert-error-foreground'
   }
   if (opType.startsWith('move')) {
     return 'bg-op-move text-op-move-foreground'

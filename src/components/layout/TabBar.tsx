@@ -174,10 +174,10 @@ export function TabBar(): React.ReactElement | null {
   // page-editor view. In any other view we fall back to muted/outlined tokens
   // borrowed from `SidebarMenuButton`'s active state so the visual reads as
   // "you can click these to return to the editor".
-  const activeInEditorClass = 'bg-background border border-b-0 border-border font-medium'
+  const activeInEditorClass = 'bg-background border border-border font-medium shadow-xs'
   const activeOutsideEditorClass =
-    'bg-sidebar-accent text-sidebar-accent-foreground border border-b-0 border-sidebar-border'
-  const inactiveClass = 'text-muted-foreground hover:bg-accent/50'
+    'bg-sidebar-accent text-sidebar-accent-foreground border border-sidebar-border'
+  const inactiveClass = 'border border-transparent text-muted-foreground hover:bg-accent/50'
 
   function tabClassName(i: number): string {
     if (i !== activeTabIndex) return inactiveClass
@@ -272,7 +272,7 @@ export function TabBar(): React.ReactElement | null {
                 className={cn(
                   // `group` enables `group-hover:` on the chevron so
                   // hovering the active tab intensifies the dropdown hint.
-                  'group flex items-center gap-1 px-3 py-1 text-sm rounded-t-md truncate max-w-[120px] md:max-w-[200px] cursor-pointer select-none',
+                  'group flex items-center gap-1 px-3 py-1 text-sm rounded-md truncate max-w-[120px] md:max-w-[200px] cursor-pointer select-none',
                   'focus-ring-visible',
                   tabClassName(i),
                 )}

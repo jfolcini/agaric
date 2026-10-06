@@ -67,7 +67,7 @@ export function IntegrityCheckSection(): React.ReactElement {
 
   return (
     <Card>
-      <CardHeader className="pb-3">
+      <CardHeader>
         <CardTitle className="flex items-center gap-2" data-testid="integrity-panel-title">
           <ShieldCheck className="h-4 w-4" />
           {t('integrity.title')}

@@ -114,6 +114,7 @@ const SheetContent = ({
         {children}
         {showCloseButton && (
           <SheetPrimitive.Close
+            data-slot="sheet-close"
             className={cn(closeButtonClassName, 'data-[state=open]:bg-secondary')}
           >
             <CloseButtonIcon />

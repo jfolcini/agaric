@@ -91,7 +91,7 @@ export function HelpTab({ onReportBugClick }: HelpTabProps): React.ReactElement 
   return (
     <div className="space-y-6">
       <Card>
-        <CardHeader className="pb-3">
+        <CardHeader>
           <CardTitle>{t('help.reportBugTitle')}</CardTitle>
           <CardDescription>{t('help.reportBugDescription')}</CardDescription>
         </CardHeader>
@@ -106,7 +106,7 @@ export function HelpTab({ onReportBugClick }: HelpTabProps): React.ReactElement 
         </CardContent>
       </Card>
       <Card>
-        <CardHeader className="pb-3">
+        <CardHeader>
           <CardTitle>{t('help.updateTitle')}</CardTitle>
           <CardDescription>{t('help.updateDescription')}</CardDescription>
         </CardHeader>
@@ -146,7 +146,7 @@ export function HelpTab({ onReportBugClick }: HelpTabProps): React.ReactElement 
           quick-capture gestures after the one-time overlay is dismissed.
           Cross-platform: harmless on desktop, the discovery path on mobile. */}
       <Card>
-        <CardHeader className="pb-3">
+        <CardHeader>
           <CardTitle>{t('gestures.help.title')}</CardTitle>
           <CardDescription>{t('gestures.help.description')}</CardDescription>
         </CardHeader>

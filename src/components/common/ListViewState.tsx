@@ -53,11 +53,13 @@ export function ListErrorState({
 }): React.ReactElement {
   return (
     <div
-      className="flex items-start justify-between gap-3 rounded-lg border border-destructive/50 bg-destructive/5 p-4"
+      className="flex items-start justify-between gap-3 rounded-lg border border-alert-error-border bg-alert-error p-4"
       role="alert"
       data-testid={testId}
     >
-      <p className="text-sm font-medium text-destructive">{message ?? t('error.loadFailed')}</p>
+      <p className="text-sm font-medium text-alert-error-foreground">
+        {message ?? t('error.loadFailed')}
+      </p>
       {onRetry && (
         <Button variant="outline" size="sm" onClick={onRetry} data-testid={`${testId}-retry`}>
           {t('action.retry')}

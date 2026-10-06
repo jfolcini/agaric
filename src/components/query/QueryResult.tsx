@@ -313,7 +313,7 @@ export function QueryResult({
 
   return (
     <div
-      className="query-result my-1 rounded-lg border border-dashed border-muted-foreground/30 bg-muted/20 text-sm"
+      className="query-result my-1 rounded-lg border bg-muted/20 text-sm"
       data-testid="query-result"
     >
       {/* Header */}
@@ -358,7 +358,7 @@ export function QueryResult({
 
       {/* Results */}
       {!collapsed && (
-        <div className="border-t border-dashed border-muted-foreground/20">
+        <div className="border-t">
           {loading && (
             <div className="px-3 py-2">
               <LoadingSkeleton count={3} height="h-8" />

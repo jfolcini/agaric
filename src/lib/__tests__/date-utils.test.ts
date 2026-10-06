@@ -413,11 +413,11 @@ describe('dueDateColor', () => {
   })
 
   it('returns destructive classes for past dates', () => {
-    expect(dueDateColor('2025-12-31')).toBe('bg-destructive/10 text-destructive')
+    expect(dueDateColor('2025-12-31')).toBe('bg-alert-error text-alert-error-foreground')
   })
 
   it('returns destructive classes for the day before today', () => {
-    expect(dueDateColor('2026-04-09')).toBe('bg-destructive/10 text-destructive')
+    expect(dueDateColor('2026-04-09')).toBe('bg-alert-error text-alert-error-foreground')
   })
 
   it('returns status-pending classes for today', () => {

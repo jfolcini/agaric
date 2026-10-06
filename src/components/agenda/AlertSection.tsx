@@ -37,7 +37,7 @@ const variantConfig: Record<
     titleColor: 'overdue',
     keyPrefix: 'overdue',
     badgeState: 'overdue',
-    dateColor: 'text-destructive/60',
+    dateColor: 'text-alert-error-foreground',
   },
   pending: {
     sectionClass: 'upcoming-section mb-3',

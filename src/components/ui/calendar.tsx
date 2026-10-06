@@ -71,8 +71,12 @@ const BASE_CLASS_NAMES = {
   ),
   day_button: DAY_BUTTON_CLASS,
   range_end: 'day-range-end',
+  // react-day-picker v10 puts the `selected` class on the `<td>`, where the
+  // day's `[&[aria-selected]]:bg-accent` out-ranks a bare `bg-primary` and
+  // left cream text on a pale accent cell. The primary fill goes on the inner
+  // button instead (upstream shadcn's split): accent cell, primary button.
   selected:
-    'bg-primary text-primary-foreground hover:bg-primary hover:text-primary-foreground focus:bg-primary focus:text-primary-foreground rounded-md',
+    'rounded-md [&>button]:bg-primary [&>button]:text-primary-foreground [&>button]:hover:bg-primary [&>button]:hover:text-primary-foreground [&>button]:focus:bg-primary [&>button]:focus:text-primary-foreground',
   // When a day is BOTH today and selected, react-day-picker applies the `today`
   // and `selected` class sets to the SAME day cell. `today`'s accent fill and
   // `selected`'s primary fill are equal-specificity, so the winner used to
@@ -93,7 +97,8 @@ const BASE_CLASS_NAMES = {
   disabled: 'text-muted-foreground opacity-50',
   range_middle: 'aria-selected:bg-accent aria-selected:text-accent-foreground',
   hidden: 'invisible',
-  week_number: 'text-[0.7rem] text-muted-foreground w-8 text-center',
+  week_number:
+    'flex h-8 w-8 items-center justify-center text-[0.7rem] text-muted-foreground [@media(pointer:coarse)]:h-11',
   week_number_header: 'text-[0.7rem] text-muted-foreground w-8',
 } as const
 
