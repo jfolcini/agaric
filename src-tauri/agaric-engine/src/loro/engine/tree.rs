@@ -355,9 +355,7 @@ impl LoroEngine {
                 stack.extend(children);
             }
         }
-        if !detached.is_empty() {
-            self.doc.commit();
-        }
+        self.doc.commit();
         Ok(detached)
     }
     /// The live (non-hard-purged) tree nodes paired with their `block_id`
