@@ -2517,8 +2517,8 @@ describe('SortableBlock due date chip', () => {
     )
 
     const chip = container.querySelector('.due-date-chip')
-    expect(chip?.className).toContain('bg-destructive/10')
-    expect(chip?.className).toContain('text-destructive')
+    expect(chip?.className).toContain('bg-alert-error')
+    expect(chip?.className).toContain('text-alert-error-foreground')
   })
 
   it('applies muted styling for future dates', () => {
