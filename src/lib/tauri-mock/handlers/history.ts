@@ -139,9 +139,10 @@ function opPropertyKey(entry: MockOpLogEntry): string | null {
  * appends both). Mirrors the `NOT (...)` pair on `find_positional_undo_target`
  * (history.rs): page creation pushes no undo entry, so a Ctrl+Z past the page's
  * content fell through to the positional walk and reversed the birth — a trashed
- * root left open, or a page in no space. "First" means no earlier LOCAL
- * `set_property(space)` on the root in `(created_at, seq)` order, `is_undo`
- * rows included, exactly as the backend's `prior` probe counts them.
+ * root left open, or a page in no space. "First" means no earlier
+ * `set_property(space)` on the root in `(created_at, seq)` order, `is_undo` and
+ * replicated rows included (#5262: a peer's assignment is the space this device
+ * received the page in), exactly as the backend's `prior` probe counts them.
  */
 function isPageBirthOp(entry: MockOpLogEntry, pageId: string): boolean {
   if (opBlockId(entry) !== pageId) return false
@@ -151,7 +152,6 @@ function isPageBirthOp(entry: MockOpLogEntry, pageId: string): boolean {
     (prior) =>
       prior !== entry &&
       prior.op_type === 'set_property' &&
-      prior['is_replicated'] !== true &&
       opBlockId(prior) === pageId &&
       opPropertyKey(prior) === 'space' &&
       (prior.created_at < entry.created_at ||

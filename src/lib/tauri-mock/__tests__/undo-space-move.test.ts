@@ -104,6 +104,21 @@ describe('undoing a cross-space move (#5057)', () => {
     expect(memberships()).toEqual({ column: SPACE_A, property: SPACE_A })
   })
 
+  it('returns a peer-born page to the space it arrived in (#5262)', () => {
+    // The birth arrived by sync: a replicated audit row under the peer's device
+    // id. It is still the move's prior, so the move is not the page's birth and
+    // Ctrl+Z puts the page back in SPACE_A rather than refusing.
+    const birth = opLog.at(-1)
+    if (!birth) throw new Error('the seed appended no birth op')
+    birth.device_id = 'peer-device'
+    birth['is_replicated'] = true
+
+    expect(dispatch('move_blocks_to_space', { blockIds: [PAGE], spaceId: SPACE_B })).toBe(1)
+    dispatch('undo_page_op', { pageId: PAGE, undoDepth: 0 })
+
+    expect(memberships()).toEqual({ column: SPACE_A, property: SPACE_A })
+  })
+
   it('clears both records when the page had no space to begin with', () => {
     const row = blocks.get(PAGE)
     if (row) row['space_id'] = null

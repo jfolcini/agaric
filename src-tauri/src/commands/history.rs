@@ -2372,8 +2372,8 @@ async fn find_positional_undo_target(
     // only locally-authored ops. Replicated foreign audit rows (migration
     // 0099) appear in History but were never applied to local state, so
     // reversing one from the undo stack would mutate state that the op
-    // never produced. Reverting a foreign op stays legitimate ONLY as an
-    // explicit History-view action (`revert_ops`, deliberately unfiltered).
+    // never produced. The explicit History-view `revert_ops` refuses one too
+    // (`reject_replicated_targets` in `compute_reverses_newest_first`).
     // also #2549: this interactive-undo target-selection query calls
     // `reverse::compute_reverse` directly and never routes through
     // `revert_ops_in_tx`'s `reject_replicated_targets` guard, so the filter
@@ -2506,10 +2506,11 @@ async fn find_positional_undo_target(
     // or a page in no space. Past the content there is nothing left to undo
     // (empty group / `NotFound`), which the frontend treats as a no-op.
     // "First" mirrors `reverse::property_ops::find_prior_property`: no
-    // earlier LOCAL (`is_replicated = 0`) `set_property(space)` on the root,
-    // because without one the reverse is `DeleteProperty(space)` — the
-    // no-space outcome — and that holds for a peer-born page's first local
-    // move too. Explicit `revert_ops` and `restore_page_to_op` are untouched.
+    // earlier `set_property(space)` on the root, replicated ones included
+    // (#5262), because without one the reverse is `DeleteProperty(space)` —
+    // the no-space outcome. A peer-born page's first local move has its
+    // replicated birth as the prior, so Ctrl+Z undoes it back to that space.
+    // Explicit `revert_ops` and `restore_page_to_op` are untouched.
     let target = sqlx::query_as!(
         HistoryEntry,
         "WITH RECURSIVE page_blocks(id, depth) AS ( \
@@ -2550,7 +2551,7 @@ async fn find_positional_undo_target(
            AND NOT (ol.block_id = ?1 AND (ol.op_type = 'create_block' OR ( \
                ol.op_type = 'set_property' AND json_extract(ol.payload, '$.key') = 'space' \
                AND NOT EXISTS (SELECT 1 FROM op_log prior WHERE prior.block_id = ?1 \
-                   AND prior.op_type = 'set_property' AND prior.is_replicated = 0 \
+                   AND prior.op_type = 'set_property' \
                    AND json_extract(prior.payload, '$.key') = 'space' \
                    AND (prior.created_at, prior.seq, prior.device_id) \
                        < (ol.created_at, ol.seq, ol.device_id))))) \
@@ -2877,7 +2878,7 @@ async fn undo_group_size(
                AND NOT (ol.block_id = ?1 AND (ol.op_type = 'create_block' OR ( \
                    ol.op_type = 'set_property' AND json_extract(ol.payload, '$.key') = 'space' \
                    AND NOT EXISTS (SELECT 1 FROM op_log prior WHERE prior.block_id = ?1 \
-                       AND prior.op_type = 'set_property' AND prior.is_replicated = 0 \
+                       AND prior.op_type = 'set_property' \
                        AND json_extract(prior.payload, '$.key') = 'space' \
                        AND (prior.created_at, prior.seq, prior.device_id) \
                            < (ol.created_at, ol.seq, ol.device_id))))) \
@@ -3088,7 +3089,7 @@ async fn enumerate_undo_group_in_tx(
                AND NOT (ol.block_id = ?1 AND (ol.op_type = 'create_block' OR (
                    ol.op_type = 'set_property' AND json_extract(ol.payload, '$.key') = 'space'
                    AND NOT EXISTS (SELECT 1 FROM op_log prior WHERE prior.block_id = ?1
-                       AND prior.op_type = 'set_property' AND prior.is_replicated = 0
+                       AND prior.op_type = 'set_property'
                        AND json_extract(prior.payload, '$.key') = 'space'
                        AND (prior.created_at, prior.seq, prior.device_id)
                            < (ol.created_at, ol.seq, ol.device_id)))))
