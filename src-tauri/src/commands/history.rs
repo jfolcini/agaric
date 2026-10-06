@@ -1295,10 +1295,25 @@ async fn apply_reverse_set_property(
     // left the page in the destination doc, where every later edit fell back
     // to SQL-only and never synced.
     if p.key == agaric_store::op::SPACE_PROPERTY_KEY {
-        return agaric_engine::apply::loro_apply::apply_set_property_via_loro(
-            tx, state, device_id, p,
-        )
-        .await;
+        agaric_engine::apply::loro_apply::apply_set_property_via_loro(tx, state, device_id, p)
+            .await?;
+        // #5267: the forward move re-rooted the nested pages the hydration
+        // above stops at; only an undo puts them back, so this stays here
+        // rather than in the forward path.
+        if let Some(space) =
+            agaric_store::space::resolve_block_space(&mut **tx, &p.block_id).await?
+            && Some(space.as_str()) == p.value_ref.as_ref().map(BlockId::as_str)
+        {
+            agaric_engine::apply::loro_apply::renest_pages_detached_by_space_move(
+                tx,
+                state,
+                device_id,
+                &p.block_id,
+                &space,
+            )
+            .await?;
+        }
+        return Ok(());
     }
 
     agaric_engine::loro::projection::project_set_property_to_sql(tx, p).await?;

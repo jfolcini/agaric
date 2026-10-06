@@ -1,0 +1,50 @@
+{
+  "db_name": "SQLite",
+  "query": "WITH placements AS (\n               SELECT ol.block_id, ol.op_type, ol.payload,\n                      ROW_NUMBER() OVER (\n                          PARTITION BY ol.block_id\n                          ORDER BY ol.created_at DESC, ol.seq DESC, ol.device_id DESC\n                      ) AS rn\n                 FROM op_log ol\n                 JOIN blocks b ON b.id = ol.block_id\n                WHERE b.space_id = ?1 AND b.block_type = 'page'\n                  AND b.parent_id IS NULL AND b.deleted_at IS NULL\n                  AND ol.op_type IN ('create_block', 'move_block')\n           )\n           SELECT block_id AS \"block_id!: String\",\n                  op_type AS \"op_type!: String\",\n                  payload AS \"payload!: String\"\n             FROM placements\n            WHERE rn = 1\n              AND COALESCE(json_extract(payload, '$.parent_id'),\n                           json_extract(payload, '$.new_parent_id'))\n                  IN (SELECT id FROM blocks\n                       WHERE (id = ?2 OR page_id = ?2) AND deleted_at IS NULL)",
+  "describe": {
+    "columns": [
+      {
+        "name": "block_id!: String",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "op_log",
+            "name": "block_id"
+          }
+        }
+      },
+      {
+        "name": "op_type!: String",
+        "ordinal": 1,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "op_log",
+            "name": "op_type"
+          }
+        }
+      },
+      {
+        "name": "payload!: String",
+        "ordinal": 2,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "op_log",
+            "name": "payload"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      true,
+      false,
+      false
+    ]
+  },
+  "hash": "35a17626259c9ef71e5c7f15923c99baba3257a8c8f08e4ea50902128c60e379"
+}
