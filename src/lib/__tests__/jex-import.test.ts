@@ -19,40 +19,26 @@
  *  - how a header's numeric field is padded, and which item kinds a resource's
  *    vault name may come from.
  *
- * ACCEPTED GAPS (#4816, re-swept in #4691). What survives mutation here is
- * equivalent, not untested — seven shapes, none of them worth a test:
- *  - an operand or a narrowing the type system demands and the code cannot
- *    reach (`lines[i] ?? ''`, `.pop() ?? ''`, `c === undefined`,
- *    `cp !== undefined`): deleting one is a `tsc` error;
- *  - a normalization applied twice — `parseJoplinTime`'s `.trim()` on a value
- *    `unserialize` already trimmed, and the blank check in front of it that
- *    `Date.parse` answers with `NaN` anyway; `resolveFolderPath`'s trim of an
- *    already-trimmed notebook title;
- *  - a value tested twice — `meta?.mime` / `meta?.ext` re-checked with
- *    `.length > 0` behind the falsy test, the `current.length > 0` ahead of a
- *    `folders.get` that misses anyway, `separatorIndex >= 0` ahead of a
- *    `slice(0, 0)` that is already `[]`;
- *  - a guard whose failure nothing reads: `props['']`, the `id.length > 0` in
- *    `classifyItems` and `parseJex`, and an `id`/`parent_id` that falls back
- *    all key a map that is only ever read by lookup, and every lookup key is a
- *    32-hex ref; a member with an empty name matches neither `resources/` nor
- *    `<id>.md`; a `resources/` member whose base holds a further `/` takes a
- *    key no sanitized title can equal. `splitMembers`' `id.length > 0` is NOT
- *    one of them — its map is iterated, so a `''` key does claim a vault path,
- *    which is what the `resources/.png` test pins;
- *  - `unserialize`'s blank-line branch, whose separator index may run one line
- *    late: the only line that joins `contentLines` is the blank one, and
- *    `normalizeBody` strips it. Its no-colon sibling is not equivalent —
- *    shifting that index drops a real body line, and the `key: value` boundary
- *    test reddens;
- *  - `readTar` walking `offset - BLOCK`: reading on into a trailing partial
- *    header yields no member either way, because that member's data would
- *    start past the end of the archive. The comparison beside it is pinned —
- *    tightening `<=` to `<` reddens the last-block test;
- *  - a rewrite of a string that produces the same string — dropping the `+`
- *    from `mimeToExt`'s global character-class replace, and rewriting its
- *    `?? ''`, which like any other over-long subtype ends at `bin`.
+ * ACCEPTED GAPS (#4816, re-swept in #4691). Ten mutants survive. Seven are
+ * equivalent:
+ *  - unreachable operands `tsc` demands: `lines[i] ?? ''` (the index is in
+ *    bounds), `.pop() ?? ''` (`split` never returns `[]`), `c === undefined` (a
+ *    header block is always 512 bytes) and `cp !== undefined` (a `for…of`
+ *    character always has a code point);
+ *  - `raw === undefined` in `parseJoplinTime`: without it `Date.parse(undefined)`
+ *    is `NaN`, so still `null`;
+ *  - `mimeToExt`'s `?? ''` for a mime with no `/`: Stryker's stand-in has 14
+ *    letters, past the 5-letter cap, so it ends at `bin` as `''` does;
+ *  - `readTar` walking `offset - BLOCK`: a header the archive cuts short puts its
+ *    data past the end, and a negative size ends the scan, so it yields no member.
+ *
+ * Three are not equivalent and stay tracked: the `''` that a missing `id`, a
+ * note's missing `parent_id` and a notebook's missing `parent_id` fall back to.
+ * Another fallback text changes the result only for an archive that also uses
+ * that text as an id, so no realistic test tells them apart.
  */
+
+import { runInNewContext } from 'node:vm'
 
 import { describe, expect, it } from 'vitest'
 
@@ -534,6 +520,22 @@ describe('parseJex resource naming', () => {
     expect(parseJex(archive).notes[0]?.markdown).toBe('![r](.png)')
   })
 
+  it('ignores a file nested below resources/, even in a directory named like a resource', () => {
+    // Only a file directly under `resources/` is a resource. This one's path up
+    // to its last dot is a resource id, so read as one it would be embedded.
+    const id = '9e'.repeat(16)
+    const archive = buildTar([
+      itemMember(
+        EMBEDDER_ID,
+        joplinItem(`Embedder\n\n![r](:/${id})`, { id: EMBEDDER_ID, parent_id: '', type_: '1' }),
+      ),
+      { name: `resources/${id}.png/thumb`, data: HELLO_BYTES },
+    ])
+    const [note] = parseJex(archive).notes
+    expect(note?.markdown).toBe(`![r](:/${id})`)
+    expect(note?.attachments).toEqual([])
+  })
+
   it('takes a resource name only from a `type_: 4` item', () => {
     // Tags and note-tag links carry a title line too. Reading one as resource
     // metadata would let it name a vault file; the tag here shares the
@@ -772,6 +774,26 @@ describe('parseJex tar scan boundaries', () => {
     expect(notes[0]?.attachments.map((a) => a.bytes.length)).toEqual([0])
   })
 
+  it('ends the scan at a header whose size is negative', () => {
+    // -1000 (octal -1750) steps the cursor back onto this same header, so a
+    // corrupt export would hang the import. With no usable size, the members
+    // behind it cannot be located either.
+    const archive = buildTar([
+      noteMember('f1'.repeat(16), 'Before'),
+      { name: `${'f2'.repeat(16)}.md`, data: new Uint8Array(0), sizeField: '-1750' },
+      noteMember('f3'.repeat(16), 'After'),
+    ])
+    // A test timeout cannot interrupt a synchronous loop; the vm watchdog can,
+    // so a regression fails here instead of hanging the run.
+    const { notes, skipped } = runInNewContext(
+      'parse()',
+      { parse: () => parseJex(archive) },
+      { timeout: 2000 },
+    ) as ReturnType<typeof parseJex>
+    expect(notes.map((n) => n.title)).toEqual(['Before'])
+    expect(skipped).toBe(0)
+  })
+
   it('drops a member whose declared data runs past the end of the archive', () => {
     const full = buildTar([
       noteMember('c1'.repeat(16), 'First'),
@@ -961,6 +983,20 @@ describe('parseJex notebook hierarchy', () => {
   it('leaves a note at the root when its notebook is missing from the archive', () => {
     const archive = buildTar([childNote('d4'.repeat(16), 'Orphan', 'e5'.repeat(16))])
     expect(parseJex(archive).notes.map((n) => n.title)).toEqual(['Orphan'])
+  })
+
+  it('keeps a note or notebook with no parent_id at the root, beside a notebook with no id', () => {
+    // A missing `id` and a missing `parent_id` both read as the empty id. The
+    // empty parent is the root, so it must not find the id-less notebook.
+    const outer = 'f8'.repeat(16)
+    const unfiled = 'f9'.repeat(16)
+    const archive = buildTar([
+      itemMember('f7'.repeat(16), joplinItem('Nameless', { parent_id: '', type_: '2' })),
+      itemMember(outer, joplinItem('Outer', { id: outer, type_: '2' })),
+      itemMember(unfiled, joplinItem('Unfiled', { id: unfiled, type_: '1' })),
+      childNote('fa'.repeat(16), 'Inside', outer),
+    ])
+    expect(parseJex(archive).notes.map((n) => n.title)).toEqual(['Unfiled', 'Outer/Inside'])
   })
 
   it('collapses whitespace in a notebook title and skips an untitled notebook', () => {
