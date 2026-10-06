@@ -110,6 +110,24 @@ notes from session 1870, and the Dependabot bump #5266.
     found in review of #5261. #5262 needs two devices, which that lane cannot
     drive.
 
+## Found in CI
+
+The PR's first CI run failed on two problems this PR's changes did not
+cause.
+
+- **`npm audit`.** Three advisories were published after main's last
+  green run: source-map-js <1.2.2, smol-toml <=1.8.0, and katex <0.18.2.
+  The katex copies are nested under mermaid and micromark-extension-math.
+  - **Fix:** overrides. `source-map-js` gets a `^1.2.2` floor, the existing
+    `smol-toml` override moves to `^1.9.0`, and `katex: "$katex"` points
+    both at the app's pinned 0.18.7.
+  - **Checked:** the mermaid and KaTeX suites pass and `vite build`
+    succeeds.
+- **A race in a SearchPanel toggle test.** Typing `tag:wip` starts the
+  input's debounced `list_tags_by_prefix`. On a slow runner the call
+  landed before the test ended, unstubbed. The file's shared stub now
+  answers it. Holding the test past the debounce reproduces the failure.
+
 ## Verified
 
 The reviewer ran the full suites on the combined branch:
