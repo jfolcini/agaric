@@ -166,10 +166,12 @@
     "deepmerge-ts": "^8.0.1",
     "highlight.js": "^11.12.0",
     "js-yaml": "^4.2.0",
+    "katex": "$katex",
     "postcss": "^8.5.18",
     "qs": "^6.16.0",
     "serialize-javascript": "^7.0.5",
-    "smol-toml": "^1.8.0",
+    "smol-toml": "^1.9.0",
+    "source-map-js": "^1.2.2",
     "uuid": "^14.0.0"
   },
   "engines": {
