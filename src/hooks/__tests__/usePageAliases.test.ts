@@ -60,6 +60,8 @@ vi.mock('sonner', () => ({
   }),
 }))
 
+import { toast } from 'sonner'
+
 import { usePageAliases } from '@/hooks/usePageAliases'
 import { announce } from '@/lib/announcer'
 import { getGraphStructureKey } from '@/lib/graph-structure-events'
@@ -70,9 +72,8 @@ const t = (key: string) => key
 beforeEach(() => {
   vi.clearAllMocks()
   mockedGet.mockResolvedValue([])
-  // `setPageAliases` returns the persisted aliases; the hook ignores
-  // the return value, but the type system enforces a `string[]` here.
-  mockedSet.mockResolvedValue([])
+  // `setPageAliases` returns the aliases it stored; by default it stores all of them.
+  mockedSet.mockImplementation(async (_pageId: string, aliases: string[]) => aliases)
 })
 
 describe('usePageAliases — initial fetch', () => {
@@ -134,11 +135,60 @@ describe('usePageAliases — add / remove', () => {
     expect(result.current.aliases).toEqual(['Nickname'])
     expect(mockedSet).toHaveBeenCalledWith('page-1', ['Nickname'])
     expect(result.current.aliasInput).toBe('  Nickname  ')
-    expect(mockedAnnounce).toHaveBeenCalledWith('announce.aliasAdded')
 
     await waitFor(() => {
       expect(result.current.aliasInput).toBe('')
     })
+    expect(mockedAnnounce).toHaveBeenCalledWith('announce.aliasAdded')
+  })
+
+  it('drops an alias another page holds and says so instead of announcing it (#5280)', async () => {
+    mockedGet.mockResolvedValueOnce(['own'])
+    // The backend's INSERT OR IGNORE skips 'standup' and returns what it stored.
+    mockedSet.mockResolvedValueOnce(['own'])
+    const { result } = renderHook(() => usePageAliases('page-1', t))
+    await waitFor(() => {
+      expect(result.current.aliases).toEqual(['own'])
+    })
+
+    act(() => {
+      result.current.setAliasInput('standup')
+    })
+    act(() => {
+      result.current.handleAddAlias()
+    })
+
+    await waitFor(() => {
+      expect(result.current.aliases).toEqual(['own'])
+    })
+    expect(vi.mocked(toast.error).mock.calls.map((c) => c[0])).toEqual(['pageHeader.aliasTaken'])
+    expect(mockedAnnounce).toHaveBeenCalledWith('pageHeader.aliasTaken')
+    expect(mockedAnnounce).not.toHaveBeenCalledWith('announce.aliasAdded')
+    expect(result.current.aliasInput).toBe('standup')
+  })
+
+  it("does not call a case variant of the page's own alias taken (#5280)", async () => {
+    mockedGet.mockResolvedValueOnce(['Standup'])
+    // NOCASE uniqueness keeps the existing row and skips the variant.
+    mockedSet.mockResolvedValueOnce(['Standup'])
+    const { result } = renderHook(() => usePageAliases('page-1', t))
+    await waitFor(() => {
+      expect(result.current.aliases).toEqual(['Standup'])
+    })
+
+    act(() => {
+      result.current.setAliasInput('standup')
+    })
+    act(() => {
+      result.current.handleAddAlias()
+    })
+
+    await waitFor(() => {
+      expect(result.current.aliasInput).toBe('')
+    })
+    expect(result.current.aliases).toEqual(['Standup'])
+    expect(vi.mocked(toast.error)).not.toHaveBeenCalled()
+    expect(mockedAnnounce).toHaveBeenCalledWith('announce.aliasAdded')
   })
 
   it('handleAddAlias rolls back the optimistic list and keeps the draft when the write fails', async () => {

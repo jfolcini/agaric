@@ -77,17 +77,26 @@ export function usePageAliases(pageId: string, t: (key: string) => string): UseP
   const stopEditing = useCallback(() => setEditingAliases(false), [])
 
   const handleAddAlias = useCallback(() => {
-    if (aliasInput.trim()) {
+    const alias = aliasInput.trim()
+    if (alias) {
       const previous = aliases
-      const next = [...aliases, aliasInput.trim()]
+      const next = [...aliases, alias]
       setAliases(next)
-      announce(t('announce.aliasAdded'))
       commands
         .setPageAliases(pageId, next)
         .then(unwrap)
-        .then(() => {
-          setAliasInput('')
+        .then((saved) => {
+          // The write silently skips an alias another page holds, in any space or the
+          // Trash, and returns only what it stored (#5280).
+          setAliases((current) => (current === next ? saved : current))
           recordGraphStructureChange()
+          if (!saved.some((a) => a.toLowerCase() === alias.toLowerCase())) {
+            notify.error(t('pageHeader.aliasTaken'))
+            announce(t('pageHeader.aliasTaken'))
+            return
+          }
+          setAliasInput('')
+          announce(t('announce.aliasAdded'))
         })
         .catch((err: unknown) => {
           logger.error('PageHeader', 'Failed to update page aliases', { pageId }, err)
