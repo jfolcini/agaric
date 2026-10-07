@@ -1664,6 +1664,86 @@ async fn grouped_member_preview_left_join_equals_correlated_2269() {
     assert_eq!(members(find_group(&pr, "none")), none_set);
 }
 
+/// #5286 — compaction deletes old ops, so `Created` reads the ULID's own time
+/// even when a later op survives, and `LastEdited` (bucket and sort) falls back
+/// to that creation time when no op does.
+#[tokio::test]
+async fn created_and_last_edited_use_ulid_creation_time_5286() {
+    let (pool, _d) = test_pool().await;
+    seed(&pool).await;
+    // Created 2025-03-15, last edited 2025-04-01.
+    let edited = ulid::Ulid::from_parts(1_742_040_000_000, 1).to_string();
+    // Created 2025-05-20; its ops were compacted away.
+    let untouched = ulid::Ulid::from_parts(1_747_742_400_000, 1).to_string();
+    for id in [&edited, &untouched] {
+        insert_block(&pool, id, Some(SPACE), "content", None, None, Some(9)).await;
+    }
+    sqlx::query(
+        "INSERT INTO op_log (device_id, seq, hash, op_type, payload, created_at, block_id) \
+         VALUES ('dev', 1, 'h1', 'edit', '{}', 1743465600000, ?)",
+    )
+    .bind(&edited)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let buckets = |source: DateField| {
+        let pool = pool.clone();
+        async move {
+            let resp = compile_and_run(
+                &pool,
+                group_req(
+                    default_filter(),
+                    GroupKey::DateBucket {
+                        source,
+                        unit: DateBucketUnit::Month,
+                    },
+                ),
+            )
+            .await
+            .unwrap();
+            resp.groups
+                .iter()
+                .flat_map(|g| {
+                    g.members
+                        .iter()
+                        .map(|m| (m.block.id.as_str().to_string(), g.key.clone()))
+                })
+                .collect::<std::collections::BTreeMap<String, String>>()
+        }
+    };
+
+    let created = buckets(DateField::Created).await;
+    assert_eq!(created.get(&edited).map(String::as_str), Some("2025-03"));
+    assert_eq!(created.get(&untouched).map(String::as_str), Some("2025-05"));
+
+    let last_edited = buckets(DateField::LastEdited).await;
+    assert_eq!(
+        last_edited.get(&edited).map(String::as_str),
+        Some("2025-04")
+    );
+    assert_eq!(
+        last_edited.get(&untouched).map(String::as_str),
+        Some("2025-05")
+    );
+
+    let mut by_last_edited = req(default_filter());
+    by_last_edited.sort = vec![SortKey {
+        source: SortSource::Column {
+            name: SortColumn::LastEdited,
+        },
+        desc: false,
+    }];
+    let resp = compile_and_run(&pool, by_last_edited).await.unwrap();
+    let order: Vec<&str> = resp
+        .rows
+        .iter()
+        .map(|r| r.block.id.as_str())
+        .filter(|id| [edited.as_str(), untouched.as_str()].contains(id))
+        .collect();
+    assert_eq!(order, [edited.as_str(), untouched.as_str()]);
+}
+
 #[tokio::test]
 async fn group_pagination_pages_through_all_groups_once() {
     let (pool, _d) = test_pool().await;
@@ -2882,14 +2962,17 @@ async fn flat_last_edited_sort_is_correlated_index_seek_2304() {
     // `compile_and_run` composes it. If any position regressed to the
     // pre-aggregated derived-table join, a MATERIALIZE / full SCAN op_log node
     // would appear.
-    const LE: &str = "COALESCE((SELECT MAX(created_at) FROM op_log WHERE block_id = b.id), 0)";
+    let le = format!(
+        "COALESCE({}, 0)",
+        crate::filters::last_edited_ms_sql("b.id")
+    );
     let sql = format!(
         "EXPLAIN QUERY PLAN \
-         SELECT b.id, {LE} AS __last_edited \
+         SELECT b.id, {le} AS __last_edited \
          FROM blocks b \
          WHERE b.space_id = '{SPACE}' AND b.deleted_at IS NULL AND b.todo_state = 'TODO' \
-           AND {LE} <= 9999999999999 \
-         ORDER BY {LE} DESC, b.id DESC \
+           AND {le} <= 9999999999999 \
+         ORDER BY {le} DESC, b.id DESC \
          LIMIT 51"
     );
     let plan_rows: Vec<(i64, i64, i64, String)> = sqlx::query_as(sqlx::AssertSqlSafe(sql.as_str()))
@@ -2941,13 +3024,12 @@ async fn grouped_date_bucket_key_is_correlated_index_seek_2269() {
 
     // Representative grouped count statement (the same key expression is
     // repeated in the group-page and member-preview statements).
-    let plan_rows: Vec<(i64, i64, i64, String)> = sqlx::query_as(sqlx::AssertSqlSafe(
+    let plan_rows: Vec<(i64, i64, i64, String)> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "EXPLAIN QUERY PLAN SELECT COUNT(*) FROM (SELECT \
-           COALESCE(strftime('%Y-%m', (SELECT MAX(created_at) FROM op_log \
-           WHERE block_id = b.id) / 1000, 'unixepoch'), 'none') AS gkey \
-         FROM blocks b WHERE b.deleted_at IS NULL GROUP BY gkey)"
-            .to_string(),
-    ))
+           COALESCE(strftime('%Y-%m', {} / 1000, 'unixepoch'), 'none') AS gkey \
+         FROM blocks b WHERE b.deleted_at IS NULL GROUP BY gkey)",
+        crate::filters::last_edited_ms_sql("b.id")
+    )))
     .fetch_all(&pool)
     .await
     .unwrap();

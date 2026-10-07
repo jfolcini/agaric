@@ -166,11 +166,6 @@
   },
   {
     "file": "src/lib/tauri-mock/handlers/search.ts",
-    "ref": "agaric-store/src/filters/primitive.rs:1035-1052",
-    "reason": "Pre-existing at the #4184 partially-rooted-citation widening; not yet fixed."
-  },
-  {
-    "file": "src/lib/tauri-mock/handlers/search.ts",
     "ref": "agaric-store/src/fts/metadata_filter.rs:156-236",
     "reason": "Pre-existing at the #4184 partially-rooted-citation widening; not yet fixed."
   },
@@ -207,11 +202,6 @@
   {
     "file": "src/lib/tauri-mock/handlers/search.ts",
     "ref": "agaric-store/src/query/engine.rs:180-195",
-    "reason": "Pre-existing at the #4184 partially-rooted-citation widening; not yet fixed."
-  },
-  {
-    "file": "src/lib/tauri-mock/handlers/search.ts",
-    "ref": "agaric-store/src/query/engine.rs:229",
     "reason": "Pre-existing at the #4184 partially-rooted-citation widening; not yet fixed."
   },
   {
@@ -283,11 +273,6 @@
     "file": "src/lib/tauri-mock/handlers/shared.ts",
     "ref": "agaric-store/src/pagination/history.rs:180,222",
     "reason": "Pre-existing at the #4184 partially-rooted-citation widening; not yet fixed."
-  },
-  {
-    "file": "src/lib/tauri-mock/handlers/shared.ts",
-    "ref": "agaric-store/src/query/engine.rs:229",
-    "reason": "Newly VISIBLE at the #4220 inline-code-span pairing fix, not newly written. The old line-scoped span regex could not pair a backtick span across a newline, so a citation that shares a line with the CLOSE of a multi-line span \u2014 or that follows a span too short for the 2-character minimum \u2014 was mispaired and never reached the candidate list at all. Pre-existing; not yet fixed."
   },
   {
     "file": "src/stores/recent-pages.ts",

@@ -799,7 +799,8 @@ async fn recently_modified_includes_pages_without_op_log_at_tail() {
     let (pool, _dir) = test_pool().await;
     ensure_test_space(&pool).await;
     seed_page(&pool, "01PAGE000000000000000000A1", "WithOpLog").await;
-    seed_page(&pool, "01PAGE000000000000000000B1", "NoOpLog").await;
+    // 25 chars: not a ULID, so no creation-time floor (#5286) — the sentinel.
+    seed_page(&pool, "01PAGE00000000000000000B1", "NoOpLog").await;
     seed_op_log(&pool, "01PAGE000000000000000000A1", "2026-05-01T00:00:00Z").await;
 
     let resp =
@@ -858,6 +859,64 @@ async fn recently_modified_paginates_through_no_op_log_pages() {
         .collect();
     // C and D — the no-op-log pages — must appear, NOT be silently dropped.
     assert_eq!(contents2, vec!["C", "D"]);
+}
+
+// ── #5286: op-log compaction must not erase "last modified" ───────────────
+
+#[tokio::test]
+async fn compacted_pages_fall_back_to_their_ulid_creation_time_5286() {
+    let (pool, _dir) = test_pool().await;
+    ensure_test_space(&pool).await;
+    // Two pages last touched at creation, long before the 90-day retention
+    // window, and one created early but edited yesterday.
+    let jan_ms: i64 = 1_735_689_600_000; // 2025-01-01
+    let jun_ms: i64 = 1_748_736_000_000; // 2025-06-01
+    let jan = ulid::Ulid::from_parts(jan_ms.cast_unsigned(), 1).to_string();
+    let jun = ulid::Ulid::from_parts(jun_ms.cast_unsigned(), 1).to_string();
+    let edited = ulid::Ulid::from_parts(1_704_067_200_000, 1).to_string(); // 2024-01-01
+    let yesterday = (chrono::Utc::now() - chrono::Duration::days(1)).to_rfc3339();
+    seed_page(&pool, &jan, "Jan").await;
+    seed_page(&pool, &jun, "Jun").await;
+    seed_page(&pool, &edited, "Edited").await;
+    seed_op_log(&pool, &jan, "2025-01-01T00:00:00Z").await;
+    seed_op_log(&pool, &jun, "2025-06-01T00:00:00Z").await;
+    seed_op_log(&pool, &edited, &yesterday).await;
+
+    let compacted = agaric_lib::commands::compact_op_log_cmd_inner(&pool, 90)
+        .await
+        .unwrap();
+    assert_eq!(compacted.ops_deleted, 2, "only Jan's and Jun's ops are old");
+
+    let resp =
+        list_pages_with_metadata_inner(&pool, filter(PageSort::RecentlyModified), None, Some(50))
+            .await
+            .unwrap();
+    let rows: Vec<(&str, Option<i64>)> = resp
+        .items
+        .iter()
+        .map(|p| (p.content.as_deref().unwrap(), p.last_modified_at))
+        .collect();
+    assert_eq!(rows[1..], [("Jun", Some(jun_ms)), ("Jan", Some(jan_ms))]);
+    assert_eq!(rows[0].0, "Edited");
+
+    let june = filter_with(
+        PageSort::Alphabetical,
+        vec![FilterPrimitive::LastEdited {
+            spec: LastEditedSpec::Range {
+                start: "2025-06-01".into(),
+                end: "2025-06-30".into(),
+            },
+        }],
+    );
+    let resp = list_pages_with_metadata_inner(&pool, june, None, Some(50))
+        .await
+        .unwrap();
+    let contents: Vec<&str> = resp
+        .items
+        .iter()
+        .filter_map(|p| p.content.as_deref())
+        .collect();
+    assert_eq!(contents, vec!["Jun"], "edited at creation time");
 }
 
 // ── Soft-deleted pages excluded ───────────────────────────────────────────

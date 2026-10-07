@@ -1318,6 +1318,51 @@ describe('run_advanced_query — keyset walk over repeated never-edited rows (#3
   })
 })
 
+describe('run_advanced_query — a compacted block falls back to its ULID creation time (#5286)', () => {
+  const PAGE = id('K0')
+  const EDITED = id('K1')
+  // A real ULID minted at 2025-06-01T12:00:00.000Z whose ops compaction deleted.
+  const COMPACTED = '01JWNNSVG00000000000000001'
+  const TEXT_ONLY = { type: 'Leaf', primitive: { type: 'BlockType', values: ['text'] } }
+
+  beforeEach(() => {
+    clearMock()
+    blocks.set(PAGE, makeBlock(PAGE, 'page', 'Page', null, 0))
+    setSpace(PAGE, SPACE_A)
+    for (const blockId of [EDITED, COMPACTED]) {
+      const b = makeBlock(blockId, 'text', null, PAGE, 0)
+      b['page_id'] = PAGE
+      blocks.set(blockId, b)
+    }
+    opLog.push({
+      device_id: 'mock-device',
+      seq: 1,
+      op_type: 'UpdateBlock',
+      payload: JSON.stringify({ block_id: EDITED }),
+      created_at: '2024-01-01T00:00:00.000Z',
+      is_undo: false,
+    })
+  })
+
+  it('sorts it by creation time, after a block last edited before that', () => {
+    const byLastEdited = [{ source: { type: 'Column', name: 'lastEdited' } }]
+    expect(orderedIds({ filter: TEXT_ONLY, sort: byLastEdited })).toEqual([EDITED, COMPACTED])
+  })
+
+  it('a LastEdited filter treats it as edited at creation', () => {
+    const june = {
+      type: 'Leaf',
+      primitive: {
+        type: 'LastEdited',
+        spec: { type: 'Range', start: '2025-06-01T00:00:00.000Z', end: '2025-06-02T00:00:00.000Z' },
+      },
+    }
+    expect(orderedIds({ filter: { type: 'And', children: [TEXT_ONLY, june] } })).toEqual([
+      COMPACTED,
+    ])
+  })
+})
+
 /**
  * #3914 review note 3 — what the "safe degrade" for a SHORT cursor actually
  * degrades to, asserted in both directions instead of asserted in a comment.

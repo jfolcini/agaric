@@ -1879,14 +1879,13 @@ export type DateField =
 /**  `b.scheduled_date` (TEXT ISO `YYYY-MM-DD`). */
 "scheduled" | 
 /**
- *  Creation time. Derived from the EARLIEST `op_log.created_at`
- *  (epoch-ms) for the block; blocks with no op-log row have no created
- *  date → the `"none"` bucket.
+ *  Creation time: the epoch-ms embedded in the block's ULID id, as the
+ *  `Created` sort uses.
  */
 "created" | 
 /**
- *  Last-edited time. Derived from the LATEST `op_log.created_at`
- *  (epoch-ms) for the block; same no-op-log rule as `Created`.
+ *  Last-edited time: the LATEST `op_log.created_at` (epoch-ms) for the
+ *  block, else its creation time once compaction pruned its ops.
  */
 "lastEdited";
 
@@ -3046,12 +3045,10 @@ export type PageWithMetadataRow = {
 	scheduledDate: string | null,
 	pageId: PageId | null,
 	/**
-	 *  max(`op_log.created_at`) over the page itself, as INTEGER
-	 *  epoch-milliseconds (#109 Phase 2). None if the page has no op-log
-	 *  entries (which should never happen — every active page has at
-	 *  least its own creation row — but the column is `Option` to absorb
-	 *  edge cases like manually-imported rows without a synthesised
-	 *  op-log entry).
+	 *  max(`op_log.created_at`) over the page itself, else the page's ULID
+	 *  creation time once compaction has pruned its ops (#5286), as INTEGER
+	 *  epoch-milliseconds (#109 Phase 2). None only for a non-ULID id with
+	 *  no op-log entry.
 	 */
 	lastModifiedAt: number | null,
 	/**
@@ -3905,8 +3902,8 @@ export type SearchFilter = {
 	excludedPriorityFilter?: string[],
 	/**
 	 *  #1320-C — `last-edited:` time-window predicate. Resolved against
-	 *  each block's last `op_log.created_at` (epoch-ms `MAX(...)`,
-	 *  COALESCE'd to the epoch sentinel for blocks with no op-log row).
+	 *  each block's last `op_log.created_at` (epoch-ms `MAX(...)`, else the
+	 *  block's ULID creation time).
 	 *  `None` (the default) preserves the existing "no filter" behaviour.
 	 *  Compiled through [`crate::filters::primitive::SearchProjection`]
 	 *  (`compile_last_edited`) and spliced into the dynamic FTS WHERE via
@@ -4005,9 +4002,8 @@ export type SortColumn =
  */
 "created" | 
 /**
- *  Last-edited time: `MAX(op_log.created_at)` over the block, `COALESCE`d
- *  to the epoch sentinel for blocks with no op-log row (matching
- *  `PagesProjection::compile_last_edited`'s no-op-log rule).
+ *  Last-edited time: `MAX(op_log.created_at)` over the block, else its
+ *  ULID creation time (matching `PagesProjection::compile_last_edited`).
  */
 "lastEdited" | 
 /**  Sibling position (`b.position`). NULL positions sort last. */

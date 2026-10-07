@@ -26,4 +26,5 @@ pub use expr::{CompileExpr, FilterExpr};
 pub use primitive::{
     FilterPrimitive, LastEditedSpec, PAGES_ALLOWED_KEYS, PagesProjection, Projection,
     PropertyPredicate, PropertyValue, SEARCH_ALLOWED_KEYS, SearchProjection, WhereClause,
+    last_edited_ms_sql,
 };

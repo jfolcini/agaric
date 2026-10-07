@@ -287,8 +287,8 @@ impl StructuralFilterBuilder {
     /// #1320-C — `last-edited:` window filter routed through
     /// [`SearchProjection`] (`compile_last_edited`, which delegates to
     /// `PagesProjection`). The projection emits a
-    /// `COALESCE((SELECT MAX(created_at) FROM op_log WHERE block_id = b.id),
-    /// 0) <op> ?` comparison against the block's last-edit epoch-ms — so it
+    /// `COALESCE(<last_edited_ms_sql(b.id)>, 0) <op> ?` comparison against
+    /// the block's last-edit epoch-ms — so it
     /// references the block table via the hardcoded `b.` alias the three FTS
     /// builders use. Mirrors [`add_space_via_projection`]: build one
     /// [`FilterPrimitive::LastEdited`], compile it, and splice the
@@ -1406,6 +1406,10 @@ mod tests {
         // Byte-identical golden. Each fragment is spliced with `FTS_PREFIX`
         // ("\n           AND "); the bodies + `?N` numbers below are the exact
         // pre-refactor renumber output over this call sequence.
+        let last_edited_body = format!(
+            "COALESCE({}, 0) >= (CAST(strftime('%s', 'now', ?30) AS INTEGER) * 1000)",
+            crate::filters::last_edited_ms_sql("b.id")
+        );
         let bodies = [
             "b.parent_id = ?6",
             "b.id IN (SELECT block_id FROM block_tags WHERE tag_id = ?7)",
@@ -1425,7 +1429,7 @@ mod tests {
             "NOT EXISTS (SELECT 1 FROM block_properties WHERE block_id = b.id AND key = ?26)",
             "(b.due_date IS NOT NULL AND b.due_date <= ?27)",
             "(b.scheduled_date IS NOT NULL AND b.scheduled_date BETWEEN ?28 AND ?29)",
-            "COALESCE((SELECT MAX(created_at) FROM op_log WHERE block_id = b.id), 0) >= (CAST(strftime('%s', 'now', ?30) AS INTEGER) * 1000)",
+            last_edited_body.as_str(),
         ];
         let expected: String = bodies.iter().map(|b| format!("{FTS_PREFIX}{b}")).collect();
         assert_eq!(fb.sql(), expected, "assembled SQL must be byte-identical");

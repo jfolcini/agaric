@@ -23,7 +23,7 @@ import {
   metaRowMatchesExpr,
   metaRowMatchesFilter,
   pageRequestLimit,
-  rawOpLogLastEditedAt,
+  blockLastEditedAt,
   type PageMetaRow,
   type TypedHandlers,
   validationRejection,
@@ -256,7 +256,7 @@ interface MatchedEntry {
   b: Record<string, unknown>
   row: PageMetaRow
   /**
-   * Memoized {@link rawOpLogLastEditedAt} for this row — see
+   * Memoized {@link blockLastEditedAt} for this row — see
    * {@link rawLastEditedOf}. `undefined` means "not computed yet"; `null` is
    * the computed "no op-log activity" answer.
    */
@@ -273,7 +273,7 @@ interface MatchedEntry {
 }
 
 /**
- * `rawOpLogLastEditedAt(b.id)`, computed AT MOST ONCE per matched row.
+ * `blockLastEditedAt(b.id)`, computed AT MOST ONCE per matched row.
  *
  * That function linearly scans `opLog` with a `JSON.parse` per entry. Calling
  * it from inside the sort comparator (which is where the `lastEdited` getter
@@ -287,7 +287,7 @@ interface MatchedEntry {
  */
 function rawLastEditedOf(m: MatchedEntry): string | null {
   if (m.lastEditedRaw === undefined) {
-    m.lastEditedRaw = rawOpLogLastEditedAt(m.b['id'] as string)
+    m.lastEditedRaw = blockLastEditedAt(m.b['id'] as string)
   }
   return m.lastEditedRaw
 }
@@ -460,11 +460,10 @@ const SORT_COLUMN_GETTERS = new Map<string, (m: MatchedEntry) => SortValue>(
   Object.entries({
     // ULID id == creation order (`resolve_sort`'s `SortColumn::Created`).
     created: (m) => m.row.id,
-    // #3863 — reads `rawOpLogLastEditedAt`, memoized per row by
+    // #3863 — reads `blockLastEditedAt`, memoized per row by
     // `rawLastEditedOf` because this getter runs inside the sort comparator.
-    // The engine's `LastEdited` sort key is `COALESCE((SELECT MAX(created_at)
-    // FROM op_log WHERE block_id = b.id), 0)`
-    // (`agaric-store/src/query/engine.rs:229`) — NO other data source. This
+    // The engine's `LastEdited` sort key is `COALESCE(<last_edited_ms_sql>, 0)`
+    // (`agaric-store/src/query/engine.rs`) — NO other data source. This
     // used to be spelled `m.row.lastModifiedAt`, which then routed through
     // `pageLastModifiedAt`'s mock-only seeded-stamp fallback and made an
     // op-log-free block sort by a dev-preview timestamp the backend cannot
@@ -1473,7 +1472,7 @@ function searchStructuralCandidates(
   const includeGlobs = (filter['includePageGlobs'] as string[] | undefined) ?? []
   const excludeGlobs = (filter['excludePageGlobs'] as string[] | undefined) ?? []
   const metadata = searchMetadataPrimitives(filter)
-  // `rawOpLogLastEditedAt` linearly scans `opLog` with a `JSON.parse` per
+  // `blockLastEditedAt` linearly scans `opLog` with a `JSON.parse` per
   // entry, and only the `LastEdited` primitive reads the stamp — so pay for it
   // per row ONLY when such a primitive is in play (the same reason
   // {@link rawLastEditedOf} memoizes it on the advanced-query path).
@@ -1547,7 +1546,7 @@ function searchMetadataRow(b: Record<string, unknown>, withLastEdited: boolean):
     dueDate: (b['due_date'] as string | null) ?? null,
     scheduledDate: (b['scheduled_date'] as string | null) ?? null,
     pageId: (b['page_id'] as string | null) ?? null,
-    lastModifiedAt: withLastEdited ? rawOpLogLastEditedAt(id) : null,
+    lastModifiedAt: withLastEdited ? blockLastEditedAt(id) : null,
     inboundLinkCount: 0,
     childBlockCount: 0,
     hasOutboundLink: false,
@@ -2160,9 +2159,9 @@ export const searchHandlers = {
         (d) => d['page_id'] === b['id'] && !d['deleted_at'] && d['id'] !== b['id'],
       )
       const row = buildPageMetaRow(b, descendants, edges)
-      // #3888 note 3 — the `LastEdited` FILTER reads the same raw
-      // `MAX(op_log.created_at)` the `lastEdited` SORT does (`compile_last_edited`,
-      // `agaric-store/src/filters/primitive.rs:1035-1052`). #3863 fixed the sort
+      // #3888 note 3 — the `LastEdited` FILTER reads the same
+      // `blockLastEditedAt` the `lastEdited` SORT does (`compile_last_edited`,
+      // `agaric-store/src/filters/primitive.rs`). #3863 fixed the sort
       // getter alone, which left this one command's filter and sort reading
       // DIFFERENT data: a seeded, op-log-free block could pass `Rolling{30}` on a
       // stamp the backend cannot see and then sort at the never-edited sentinel in
@@ -2173,8 +2172,8 @@ export const searchHandlers = {
       // lazy, so a query with no `LastEdited` leaf and no `lastEdited` sort pays
       // for no op-log scan at all. That memo is the ONLY reason this override
       // still exists: `row.lastModifiedAt` (what `DEFAULT_LAST_EDITED_SOURCE`
-      // and therefore `list_pages_with_metadata` read) is the same raw op-log
-      // MAX since the seeded fallback was deleted in favour of real seeded
+      // and therefore `list_pages_with_metadata` read) is the same value
+      // since the seeded fallback was deleted in favour of real seeded
       // `op_log` rows (#3898 / #3884), so both arms of both commands are on
       // one engine-faithful source.
       const entry: MatchedEntry = { b, row }
