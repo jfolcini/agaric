@@ -5,8 +5,8 @@ use super::html_parser::{
     extract_domain, extract_meta_refresh_url, extract_origin, resolve_url, truncate_str,
 };
 use super::{
-    LinkMetadata, MAX_BODY_SIZE, cleanup_stale, fetch_metadata, get_cached, is_blocked_ip,
-    read_body_limited, upsert,
+    AppError, LinkMetadata, MAX_BODY_SIZE, cleanup_stale, fetch_metadata, get_cached,
+    is_blocked_ip, read_body_limited, upsert,
 };
 use crate::db::now_ms;
 use crate::test_support::test_pool;
@@ -983,7 +983,8 @@ async fn read_body_limited_returns_full_small_body() {
 // page's metadata, then cached. After M4, `fetch_metadata` returns
 // minimal metadata (no title, no description, no favicon) immediately
 // when the HTTP status is non-2xx — only `auth_required` is computed
-// (401/403) so the existing reauth UX keeps working.
+// (401/403) so the existing reauth UX keeps working. A 5xx or 429 is
+// an error instead (#5290).
 // ======================================================================
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -1066,37 +1067,31 @@ async fn fetch_metadata_401_marks_auth_required_without_parsing_body() {
     );
 }
 
+/// #5290: a 5xx or 429 is an error, and `fetch_link_metadata_inner` stores only
+/// an `Ok`, so the next hover or paste reaches the host again.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn fetch_metadata_500_returns_minimal_metadata() {
+async fn fetch_metadata_transient_status_is_an_error() {
     use wiremock::matchers::{method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
     let server = MockServer::start().await;
-    Mock::given(method("GET"))
-        .and(path("/server-error"))
-        .respond_with(
-            ResponseTemplate::new(500)
-                .set_body_string("<html><head><title>Server Error</title></head></html>"),
-        )
-        .mount(&server)
-        .await;
-
-    let url = format!("{}/server-error", server.uri());
-    let meta = fetch_metadata(&url)
-        .await
-        .expect("fetch_metadata must not error on 500");
-
-    assert_eq!(meta.title, None, "5xx body title must NOT be parsed");
-    assert!(
-        !meta.auth_required,
-        "5xx must not set auth_required (only 401/403 do)"
-    );
-    // 5xx is the "transient" bucket — both flags must be
-    // false so the frontend can infer "retry later".
-    assert!(
-        !meta.not_found,
-        "5xx must not set not_found — that bucket is reserved for terminal 404/410"
-    );
+    for status in [500_u16, 503, 429] {
+        Mock::given(method("GET"))
+            .and(path(format!("/{status}")))
+            .respond_with(
+                ResponseTemplate::new(status).set_body_raw("<title>Down</title>", "text/html"),
+            )
+            .mount(&server)
+            .await;
+        let url = format!("{}/{status}", server.uri());
+        let err = fetch_metadata(&url)
+            .await
+            .expect_err("a transient status must not become a cacheable row");
+        assert!(
+            matches!(&err, AppError::InvalidOperation(m) if *m == format!("HTTP {status}: {url}")),
+            "HTTP {status} must fail on its status, got: {err}"
+        );
+    }
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
