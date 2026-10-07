@@ -3797,6 +3797,93 @@ mod saturation_probe_tests {
         mat.shutdown();
     }
 
+    // #5295 — a block trashed BEFORE its page lists as its own trash root, and
+    // restoring it brings the page back through the #1884 chain walk. The
+    // page's own delete dropped its `pages_cache` row; the restore must put it
+    // back, or the page shows no counts and misses path filters.
+    const PC_PAGE: &str = "PAGES-CACHE-P";
+    const PC_BLOCK: &str = "PAGES-CACHE-B";
+
+    async fn page_cache_rows(pool: &SqlitePool) -> i64 {
+        sqlx::query_scalar("SELECT COUNT(*) FROM pages_cache WHERE page_id = ?")
+            .bind(PC_PAGE)
+            .fetch_one(pool)
+            .await
+            .unwrap()
+    }
+
+    /// Trash the block, then its page; returns the block's `deleted_at`.
+    async fn trash_block_then_its_page(pool: &SqlitePool, mat: &Materializer) -> i64 {
+        for (id, block_type, parent) in [
+            (PC_PAGE, "page", None),
+            (PC_BLOCK, "content", Some(PC_PAGE)),
+        ] {
+            sqlx::query(
+                "INSERT INTO blocks (id, block_type, content, parent_id) VALUES (?, ?, 'body', ?)",
+            )
+            .bind(id)
+            .bind(block_type)
+            .bind(parent)
+            .execute(pool)
+            .await
+            .unwrap();
+        }
+        agaric_store::cache::rebuild_pages_cache(pool)
+            .await
+            .unwrap();
+        assert_eq!(page_cache_rows(pool).await, 1, "seed: the page has its row");
+        let block_deleted_at = delete_block_inner(pool, DEV, mat, BlockId::from_trusted(PC_BLOCK))
+            .await
+            .unwrap()
+            .deleted_at;
+        delete_block_inner(pool, DEV, mat, BlockId::from_trusted(PC_PAGE))
+            .await
+            .unwrap();
+        mat.flush().await.unwrap();
+        assert_eq!(
+            page_cache_rows(pool).await,
+            0,
+            "seed: the page's delete drops its row"
+        );
+        block_deleted_at
+    }
+
+    #[tokio::test]
+    async fn restore_block_inner_brings_back_the_restored_page_cache_row_5295() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+        let deleted_at = trash_block_then_its_page(&pool, &mat).await;
+
+        restore_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            BlockId::from_trusted(PC_BLOCK),
+            deleted_at,
+        )
+        .await
+        .unwrap();
+        mat.flush().await.unwrap();
+
+        assert_eq!(page_cache_rows(&pool).await, 1);
+        mat.shutdown();
+    }
+
+    #[tokio::test]
+    async fn restore_blocks_by_ids_inner_brings_back_the_restored_page_cache_row_5295() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+        trash_block_then_its_page(&pool, &mat).await;
+
+        restore_blocks_by_ids_inner(&pool, DEV, &mat, vec![BlockId::from_trusted(PC_BLOCK)])
+            .await
+            .unwrap();
+        mat.flush().await.unwrap();
+
+        assert_eq!(page_cache_rows(&pool).await, 1);
+        mat.shutdown();
+    }
+
     #[tokio::test]
     async fn delete_blocks_by_ids_inner_de_indexes_the_whole_cohort_4733() {
         let (pool, _dir) = test_pool().await;

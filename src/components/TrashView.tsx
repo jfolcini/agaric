@@ -238,6 +238,9 @@ export function TrashView(): React.ReactElement {
         // consumer already filters `deleted_at IS NULL`.
         recordGraphStructureChange()
         setBlocks((prev) => prev.filter((b) => b.id !== block.id))
+        // #5295 — the restore also brings back a trashed ancestor, which lists
+        // as its own row.
+        reload()
         if (block.block_type === 'page' || block.block_type === 'tag') {
           // #4239 — the shared gate rather than a local `?? t('common.untitled')`.
           // Two catalogue entries spell the same placeholder (`common.untitled`
@@ -247,12 +250,13 @@ export function TrashView(): React.ReactElement {
           useResolveStore
             .getState()
             .set(block.id, resolveStoreTitle(block.block_type, block.content), false)
-          // #4007 — a restored page/tag is offerable again, and the picker
-          // caches DROPPED it when it was trashed (or never saw it at all).
-          // They are filled once per space, so nothing else re-adds it: drop
-          // them and let the next picker read re-fetch.
-          invalidateNameCaches()
         }
+        // #4007 — a restored page/tag is offerable again, and the picker
+        // caches DROPPED it when it was trashed (or never saw it at all).
+        // They are filled once per space, so nothing else re-adds it: drop
+        // them and let the next picker read re-fetch. Unconditional (#5295):
+        // a content block's restore can bring its trashed page back too.
+        invalidateNameCaches()
         // #5246 — chips into the restored subtree go live; #5247 — a journal page is back.
         void useResolveStore.getState().refreshDeleted(currentSpaceId)
         invalidateCalendarPageDates()
@@ -264,7 +268,7 @@ export function TrashView(): React.ReactElement {
         announce(t('announce.restoreFailed'))
       }
     },
-    [currentSpaceId, setBlocks, t],
+    [currentSpaceId, reload, setBlocks, t],
   )
 
   const handlePurge = useCallback(
@@ -309,19 +313,16 @@ export function TrashView(): React.ReactElement {
         await commands.restoreBlocksByIds(selectedBlocks.map((b) => b.id)),
       ).affected_count
       recordGraphStructureChange() // #4963
-      let restoredNamedEntity = false
       for (const block of selectedBlocks) {
         if (block.block_type === 'page' || block.block_type === 'tag') {
           // #4239 — same gate as the single-row restore above.
           useResolveStore
             .getState()
             .set(block.id, resolveStoreTitle(block.block_type, block.content), false)
-          restoredNamedEntity = true
         }
       }
-      // #4007 — same as the single-row restore above: the picker caches have
-      // no other way to learn a page/tag is offerable again.
-      if (restoredNamedEntity) invalidateNameCaches()
+      // #4007 / #5295 — same as the single-row restore above.
+      invalidateNameCaches()
       void useResolveStore.getState().refreshDeleted(currentSpaceId) // #5246
       invalidateCalendarPageDates() // #5247
     } catch (err) {

@@ -5590,11 +5590,8 @@ async fn delete_content_subtree_inheritance_matches_full_rebuild_2934() {
 /// scoped recompute CONVERGES with the full rebuild — the property the
 /// `*_converges_with_rebuild_3876` unit tests pin directly in `agaric-store`.
 ///
-/// `RebuildTagInheritanceCache` is still RETAINED for restore
-/// ([`CONTENT_RESTORE_REBUILD_TASKS`]): it is now redundant rather than
-/// load-bearing here, and dropping it is a separate change that must first
-/// audit the remaining restore-path divergence classes (e.g. the `inherited_from`
-/// provenance class of `add_tag_nested_diverges_from_rebuild_provenance_only_2669`).
+/// `RebuildTagInheritanceCache` is still RETAINED for restore, which takes the
+/// full rebuild set (#5295): it is now redundant rather than load-bearing here.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn restore_content_subtree_inheritance_matches_rebuild_3876() {
     let (pool, _dir) = test_pool().await;
