@@ -1966,7 +1966,7 @@ describe('SortableBlock long-press and context menu', () => {
     vi.useRealTimers()
   })
 
-  it('long-press touch opens context menu after 400ms delay', () => {
+  it('a still hold opens the context menu on release, not at the 400ms mark', () => {
     const { container } = render(
       <TestBlockActionsOverride actions={{ onDelete: vi.fn() }}>
         <SortableBlock
@@ -1979,25 +1979,20 @@ describe('SortableBlock long-press and context menu', () => {
     )
 
     const wrapper = container.querySelector('.sortable-block') as HTMLElement
-
-    // Context menu should not exist initially
     expect(screen.queryByTestId('block-context-menu')).not.toBeInTheDocument()
 
-    // Start touch
     fireEvent.touchStart(wrapper, {
       touches: [{ clientX: 100, clientY: 200 }],
     })
 
-    // Before delay, no context menu
+    // The hold is recognised at 400ms (the row lifts), but the finger has not
+    // decided yet: no menu while it is still down.
     act(() => {
-      vi.advanceTimersByTime(399)
+      vi.advanceTimersByTime(400)
     })
     expect(screen.queryByTestId('block-context-menu')).not.toBeInTheDocument()
 
-    // After full delay (400ms), context menu should appear
-    act(() => {
-      vi.advanceTimersByTime(1)
-    })
+    fireEvent.touchEnd(wrapper)
     expect(screen.getByTestId('block-context-menu')).toBeInTheDocument()
   })
 
@@ -2029,6 +2024,7 @@ describe('SortableBlock long-press and context menu', () => {
     act(() => {
       vi.advanceTimersByTime(500)
     })
+    fireEvent.touchEnd(wrapper)
 
     // Context menu should NOT appear (gesture was cancelled)
     expect(screen.queryByTestId('block-context-menu')).not.toBeInTheDocument()
@@ -2131,7 +2127,10 @@ describe('SortableBlock long-press and context menu', () => {
 // Drag-cancels-long-press tests (#116)
 // =========================================================================
 
-describe('SortableBlock drag cancels long-press', () => {
+// One hold, then the finger decides: the dnd drag activates at the same 400ms
+// as the hold (the lift), a release without moving opens the menu, a move
+// after the hold is the drag and opens nothing.
+describe('SortableBlock hold: the finger decides', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     vi.useFakeTimers()
@@ -2141,114 +2140,72 @@ describe('SortableBlock drag cancels long-press', () => {
     vi.useRealTimers()
   })
 
-  it('clears long-press timer when isDragging becomes true', () => {
-    // Start with isDragging = false
+  function renderRow() {
+    const makeUi = () => (
+      <TestBlockActionsOverride actions={{ onDelete: vi.fn() }}>
+        <SortableBlock
+          blockId="BLOCK_1"
+          content="hello"
+          isFocused={false}
+          rovingEditor={makeRovingEditor()}
+        />
+      </TestBlockActionsOverride>
+    )
+    const view = render(makeUi())
+    const wrapper = view.container.querySelector('.sortable-block') as HTMLElement
+    return { ...view, makeUi, wrapper }
+  }
+
+  it('a hold that lifted into a drag still opens the menu when released without moving', () => {
     mockUseSortable.mockReturnValue({ ...makeSortable(), isDragging: false })
+    const { wrapper, rerender, makeUi } = renderRow()
 
-    const { container, rerender } = render(
-      <TestBlockActionsOverride actions={{ onDelete: vi.fn() }}>
-        <SortableBlock
-          blockId="BLOCK_1"
-          content="hello"
-          isFocused={false}
-          rovingEditor={makeRovingEditor()}
-        />
-      </TestBlockActionsOverride>,
-    )
-
-    const wrapper = container.querySelector('.sortable-block') as HTMLElement
-
-    // Start a touch (starts the long-press timer)
     fireEvent.touchStart(wrapper, {
       touches: [{ clientX: 100, clientY: 200 }],
     })
-
-    // Simulate drag starting at 250ms (before long-press fires at 400ms)
-    act(() => {
-      vi.advanceTimersByTime(250)
-    })
-
-    // Re-render with isDragging = true (simulates dnd-kit activating drag)
-    mockUseSortable.mockReturnValue({ ...makeSortable(), isDragging: true })
-    rerender(
-      <TestBlockActionsOverride actions={{ onDelete: vi.fn() }}>
-        <SortableBlock
-          blockId="BLOCK_1"
-          content="hello"
-          isFocused={false}
-          rovingEditor={makeRovingEditor()}
-        />
-      </TestBlockActionsOverride>,
-    )
-
-    // Advance past the original long-press delay
-    act(() => {
-      vi.advanceTimersByTime(200)
-    })
-
-    // Context menu should NOT appear because drag cancelled the timer
-    expect(screen.queryByTestId('block-context-menu')).not.toBeInTheDocument()
-  })
-
-  it('does not open context menu if drag is active when long-press timeout fires', () => {
-    // Start with isDragging = true from the beginning
-    mockUseSortable.mockReturnValue({ ...makeSortable(), isDragging: true })
-
-    const { container } = render(
-      <TestBlockActionsOverride actions={{ onDelete: vi.fn() }}>
-        <SortableBlock
-          blockId="BLOCK_1"
-          content="hello"
-          isFocused={false}
-          rovingEditor={makeRovingEditor()}
-        />
-      </TestBlockActionsOverride>,
-    )
-
-    const wrapper = container.querySelector('.sortable-block') as HTMLElement
-
-    // Start touch (even though drag is already active)
-    fireEvent.touchStart(wrapper, {
-      touches: [{ clientX: 100, clientY: 200 }],
-    })
-
-    // Advance past the long-press delay
-    act(() => {
-      vi.advanceTimersByTime(500)
-    })
-
-    // Context menu should NOT appear because isDraggingRef is true
-    expect(screen.queryByTestId('block-context-menu')).not.toBeInTheDocument()
-  })
-
-  it('allows context menu when drag ends before long-press fires', () => {
-    // Start not dragging
-    mockUseSortable.mockReturnValue({ ...makeSortable(), isDragging: false })
-
-    const { container } = render(
-      <TestBlockActionsOverride actions={{ onDelete: vi.fn() }}>
-        <SortableBlock
-          blockId="BLOCK_1"
-          content="hello"
-          isFocused={false}
-          rovingEditor={makeRovingEditor()}
-        />
-      </TestBlockActionsOverride>,
-    )
-
-    const wrapper = container.querySelector('.sortable-block') as HTMLElement
-
-    // Start touch
-    fireEvent.touchStart(wrapper, {
-      touches: [{ clientX: 100, clientY: 200 }],
-    })
-
-    // Advance past the long-press delay (400ms) — no drag started
     act(() => {
       vi.advanceTimersByTime(400)
     })
+    // dnd-kit activates the drag at the hold (the lift).
+    mockUseSortable.mockReturnValue({ ...makeSortable(), isDragging: true })
+    rerender(makeUi())
+    expect(screen.queryByTestId('block-context-menu')).not.toBeInTheDocument()
 
-    // Context menu SHOULD appear because isDragging was never true
+    fireEvent.touchEnd(wrapper)
+    expect(screen.getByTestId('block-context-menu')).toBeInTheDocument()
+  })
+
+  it('a hold followed by a move is a drag: no menu on release', () => {
+    mockUseSortable.mockReturnValue({ ...makeSortable(), isDragging: false })
+    const { wrapper, rerender, makeUi } = renderRow()
+
+    fireEvent.touchStart(wrapper, {
+      touches: [{ clientX: 100, clientY: 200 }],
+    })
+    act(() => {
+      vi.advanceTimersByTime(400)
+    })
+    mockUseSortable.mockReturnValue({ ...makeSortable(), isDragging: true })
+    rerender(makeUi())
+
+    fireEvent.touchMove(wrapper, {
+      touches: [{ clientX: 100, clientY: 240 }],
+    })
+    fireEvent.touchEnd(wrapper)
+    expect(screen.queryByTestId('block-context-menu')).not.toBeInTheDocument()
+  })
+
+  it('a hold released without moving opens the menu even if no drag activated', () => {
+    mockUseSortable.mockReturnValue({ ...makeSortable(), isDragging: false })
+    const { wrapper } = renderRow()
+
+    fireEvent.touchStart(wrapper, {
+      touches: [{ clientX: 100, clientY: 200 }],
+    })
+    act(() => {
+      vi.advanceTimersByTime(400)
+    })
+    fireEvent.touchEnd(wrapper)
     expect(screen.getByTestId('block-context-menu')).toBeInTheDocument()
   })
 })
@@ -2351,7 +2308,7 @@ describe('SortableBlock touch gesture arbitration (findings 33/35)', () => {
     expect(swipeOnTouchEnd).not.toHaveBeenCalled()
   })
 
-  it('finding 35: a fired long-press claims the gesture — post-menu drags never reach the swipe recognizer', () => {
+  it('finding 35: the release that opens the menu claims the gesture — it never reaches the swipe recognizer', () => {
     mockUseSortable.mockReturnValue(makeSortable())
     const { wrapper } = renderRow()
 
@@ -2359,14 +2316,10 @@ describe('SortableBlock touch gesture arbitration (findings 33/35)', () => {
     act(() => {
       vi.advanceTimersByTime(400)
     })
+    fireEvent.touchEnd(wrapper)
     // The context menu opened at the finger …
     expect(screen.getByTestId('block-context-menu')).toBeInTheDocument()
-
-    // … so a continued horizontal drag (press-then-drag expectation) must not
-    // arm/dispatch the swipe bands behind the open menu.
-    fireEvent.touchMove(wrapper, { touches: [{ clientX: 170, clientY: 100 }] })
-    fireEvent.touchEnd(wrapper)
-    expect(swipeOnTouchMove).not.toHaveBeenCalled()
+    // … and the same release did not dispatch the swipe bands.
     expect(swipeOnTouchEnd).not.toHaveBeenCalled()
   })
 
@@ -4532,23 +4485,20 @@ describe(' responsive layout', () => {
   })
 })
 
-// ── #918 / #919: touch drag handle must be hittable on phones ────────────
+// ── #5332 item 10: touch rows — no control lane, the row is the activator ──
 //
-// On a fine-pointer device the gutter collapses to 0px below `md` and reveals
-// its controls on hover. A touch device has no hover, and the gutter renders a
-// dedicated drag grip — so collapsing to `w-0` / `overflow-hidden` clipped that
-// grip to zero width, leaving nothing to grab. These tests force coarse-pointer
-// (via `matchMedia('(pointer: coarse)')`, which drives both SortableBlock's
-// `isTouchDevice` gate and `useIsTouch`) and assert the grip is a real,
-// hittable, drag-activating target.
-describe('SortableBlock touch drag handle hittability (#918/#919)', () => {
+// On a coarse pointer there is no leading lane and no drag grip: text starts
+// where the row starts, a hold anywhere on the row lifts it (dnd-kit's
+// TouchSensor is wired to the row's `touchstart`), and a parent's collapse
+// chevron sits at the right end of the row. These tests force coarse-pointer
+// (`matchMedia('(pointer: coarse)')` + `maxTouchPoints`), which drives both
+// SortableBlock's `isTouchDevice` gate and `useIsTouch`.
+describe('SortableBlock touch rows (#5332 item 10)', () => {
   const originalMatchMedia = window.matchMedia
 
   beforeEach(() => {
     vi.clearAllMocks()
     mockUseSortable.mockReturnValue(makeSortable())
-    // Force coarse-pointer so `useIsTouch()` → true and SortableBlock's
-    // `isTouchDevice` gate suppresses the `w-0` collapse.
     window.matchMedia = vi.fn().mockImplementation((query: string) => ({
       matches: query === '(pointer: coarse)',
       media: query,
@@ -4559,7 +4509,7 @@ describe('SortableBlock touch drag handle hittability (#918/#919)', () => {
       removeEventListener: vi.fn(),
       dispatchEvent: vi.fn(),
     }))
-    // #1236: useIsTouch() now also requires navigator.maxTouchPoints > 0; the
+    // #1236: useIsTouch() also requires navigator.maxTouchPoints > 0; the
     // coarse-pointer alone (a WebKitGTK mouse) would otherwise resolve to fine.
     Object.defineProperty(navigator, 'maxTouchPoints', {
       value: 5,
@@ -4570,7 +4520,6 @@ describe('SortableBlock touch drag handle hittability (#918/#919)', () => {
 
   afterEach(() => {
     window.matchMedia = originalMatchMedia
-    // Reset so the simulated touch hardware doesn't leak to later tests.
     Object.defineProperty(navigator, 'maxTouchPoints', {
       value: 0,
       writable: true,
@@ -4578,87 +4527,105 @@ describe('SortableBlock touch drag handle hittability (#918/#919)', () => {
     })
   })
 
-  it('renders the touch drag grip and keeps it out of any w-0 / overflow-hidden wrapper', () => {
-    render(
-      <TestBlockActionsOverride actions={{ onDelete: vi.fn(), onShowHistory: vi.fn() }}>
+  function renderTouchRow(props: Partial<React.ComponentProps<typeof SortableBlock>> = {}) {
+    return render(
+      <TestBlockActionsOverride
+        actions={{ onDelete: vi.fn(), onShowHistory: vi.fn(), onToggleCollapse: vi.fn() }}
+      >
         <SortableBlock
-          blockId="BLOCK_TOUCH_GRIP"
-          content="touch grip"
+          blockId="BLOCK_TOUCH"
+          content="touch row"
           isFocused={false}
           rovingEditor={makeRovingEditor()}
+          {...props}
         />
       </TestBlockActionsOverride>,
     )
+  }
 
-    const dragHandle = screen.getByTestId('drag-handle')
-    expect(dragHandle).toBeInTheDocument()
-
-    // Walk every ancestor up to the sortable root — none may clip the grip to
-    // zero width. This is the assertion that fails on the original bug, where
-    // the grip lived inside the `max-md:w-0 max-md:overflow-hidden` gutter.
-    // We check exact class *tokens* (not substrings) so the legitimate
-    // `min-w-0` flex-shrink utility doesn't trip a false positive.
-    const clippingTokens = ['w-0', 'max-md:w-0', 'overflow-hidden', 'max-md:overflow-hidden']
-    const root = screen.getByTestId('sortable-block')
-    let node: HTMLElement | null = dragHandle
-    while (node && node !== root) {
-      for (const token of clippingTokens) {
-        expect(node.classList.contains(token)).toBe(false)
-      }
-      node = node.parentElement
-    }
+  it('renders no control lane and no drag grip at rest', () => {
+    const { container } = renderTouchRow()
+    expect(container.querySelector('.block-control-lane')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('drag-handle')).not.toBeInTheDocument()
+    expect(container.querySelector('.block-drag-bullet')).not.toBeInTheDocument()
+    // The text column is the first child after the (empty) inline controls.
+    const content = screen.getByTestId('swipe-content')
+    expect(content.children[0]?.className).toContain('inline-controls')
+    expect(content.children[1]?.className).toContain('flex-1')
   })
 
-  it('gives the touch grip a comfortable hit area (touch-target) and touch-action:none', () => {
-    render(
-      <TestBlockActionsOverride actions={{ onDelete: vi.fn(), onShowHistory: vi.fn() }}>
-        <SortableBlock
-          blockId="BLOCK_TOUCH_HIT"
-          content="touch hit"
-          isFocused={false}
-          rovingEditor={makeRovingEditor()}
-        />
-      </TestBlockActionsOverride>,
-    )
-
-    const dragHandle = screen.getByTestId('drag-handle')
-    // WCAG 2.5.5 minimum hit target (the `touch-target` utility expands to
-    // ≥44×44 under `(pointer: coarse)`).
-    expect(dragHandle.className).toContain('touch-target')
-    // `touch-none` → `touch-action: none`, so the browser yields the
-    // press-drag gesture to the dnd-kit activator instead of scrolling.
-    expect(dragHandle.className).toContain('touch-none')
-    // Calm at rest, not the hover-hidden desktop contract.
-    expect(dragHandle.className).not.toContain('opacity-0')
-    expect(dragHandle.className).not.toContain('pointer-events-none')
-  })
-
-  it('the touch grip is the dnd-kit activator (carries the drag listeners)', () => {
-    const onPointerDown = vi.fn()
-    // dnd-kit spreads `listeners`/`attributes` onto the activator element. We
-    // hand the touch grip a sentinel pointer-down listener + attribute and
-    // assert they land on it, proving it is the element that starts a drag.
+  it('the row carries the TouchSensor activator (touchstart), not dnd-kit attributes or keydown', () => {
+    const onTouchStart = vi.fn()
+    const onKeyDown = vi.fn()
     mockUseSortable.mockReturnValue({
       ...makeSortable(),
-      listeners: { onPointerDown },
-      attributes: { 'data-dnd-activator': 'touch-grip' } as never,
+      listeners: { onTouchStart, onKeyDown },
+      attributes: { 'data-dnd-activator': 'row', role: 'button', tabIndex: 0 } as never,
     })
+    renderTouchRow()
 
+    const row = screen.getByTestId('sortable-block')
+    fireEvent.touchStart(row, { touches: [{ clientX: 10, clientY: 10 }] })
+    expect(onTouchStart).toHaveBeenCalledTimes(1)
+
+    // A keydown bubbling up from the editor must not start a keyboard drag.
+    fireEvent.keyDown(row, { key: ' ' })
+    expect(onKeyDown).not.toHaveBeenCalled()
+    expect(row).not.toHaveAttribute('data-dnd-activator')
+    expect(row).not.toHaveAttribute('role')
+    expect(row).not.toHaveAttribute('tabindex')
+  })
+
+  it('a touch inside the mounted editor does not reach the activator (native selection owns it)', () => {
+    const onTouchStart = vi.fn()
+    mockUseSortable.mockReturnValue({ ...makeSortable(), listeners: { onTouchStart } })
+    renderTouchRow({ isFocused: true })
+
+    const editor = document.createElement('div')
+    editor.className = 'ProseMirror'
+    editor.setAttribute('contenteditable', 'true')
+    screen.getByTestId('editable-block-BLOCK_TOUCH').append(editor)
+
+    fireEvent.touchStart(editor, { touches: [{ clientX: 10, clientY: 10 }] })
+    expect(onTouchStart).not.toHaveBeenCalled()
+  })
+
+  it("a parent's collapse chevron sits after the text column; a leaf has none", () => {
+    const { unmount } = renderTouchRow({ hasChildren: true })
+    const chevron = screen.getByTestId('collapse-toggle')
+    const content = screen.getByTestId('swipe-content')
+    const textColumn = content.querySelector('.flex-1') as HTMLElement
+    expect(chevron.parentElement).toBe(content)
+    expect(textColumn.compareDocumentPosition(chevron) & Node.DOCUMENT_POSITION_FOLLOWING).toBe(
+      Node.DOCUMENT_POSITION_FOLLOWING,
+    )
+    // Always visible, a 44px target, no drag role.
+    expect(chevron.className).toContain('touch-target')
+    expect(chevron.className).not.toContain('opacity-0')
+    expect(chevron.className).not.toContain('touch-none')
+    expect(chevron.className).not.toContain('cursor-grab')
+    expect(chevron).toHaveAttribute('aria-expanded', 'true')
+    unmount()
+
+    renderTouchRow({ hasChildren: false })
+    expect(screen.queryByTestId('collapse-toggle')).not.toBeInTheDocument()
+  })
+
+  it('one tap on the touch chevron toggles collapse', () => {
+    const onToggleCollapse = vi.fn()
     render(
-      <TestBlockActionsOverride actions={{ onDelete: vi.fn(), onShowHistory: vi.fn() }}>
+      <TestBlockActionsOverride actions={{ onToggleCollapse }}>
         <SortableBlock
-          blockId="BLOCK_TOUCH_ACT"
-          content="touch activator"
+          blockId="BLOCK_TOUCH"
+          content="touch row"
           isFocused={false}
           rovingEditor={makeRovingEditor()}
+          hasChildren
         />
       </TestBlockActionsOverride>,
     )
-
-    const dragHandle = screen.getByTestId('drag-handle')
-    expect(dragHandle.getAttribute('data-dnd-activator')).toBe('touch-grip')
-    fireEvent.pointerDown(dragHandle)
-    expect(onPointerDown).toHaveBeenCalledTimes(1)
+    fireEvent.click(screen.getByTestId('collapse-toggle'))
+    expect(onToggleCollapse).toHaveBeenCalledWith('BLOCK_TOUCH')
   })
 })
 

@@ -363,8 +363,8 @@ export const common: Record<string, string> = {
   'gestures.swipe.title': 'Swipe a block',
   'gestures.swipe.desc':
     'Swipe right to indent, short-swipe left to outdent, or swipe further left to reveal delete.',
-  'gestures.longPress.title': 'Long-press a block',
-  'gestures.longPress.desc': 'Hold a block to open its menu — indent, dedent, move, and more.',
+  'gestures.longPress.title': 'Hold a block',
+  'gestures.longPress.desc': 'Hold a block, then drag to move it — or let go to open its menu.',
   'gestures.edgeSwipe.title': 'Swipe from the left edge',
   'gestures.edgeSwipe.desc':
     'Drag in from the left edge of the screen to open the navigation menu. The menu button at the top left opens it too.',

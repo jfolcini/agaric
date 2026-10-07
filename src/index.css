@@ -5,6 +5,8 @@
 @custom-variant dark (&:is(.dark *));
 
 @theme inline {
+  /* `max-w-reading`: about 80 characters of block text per line (#5332). */
+  --container-reading: 46rem;
   --color-background: var(--background);
   --color-foreground: var(--foreground);
   --color-card: var(--card);

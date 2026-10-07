@@ -1,15 +1,5 @@
-import type { DraggableAttributes, DraggableSyntheticListeners } from '@dnd-kit/core'
 import type { LucideIcon } from 'lucide-react'
-import {
-  Calendar,
-  CalendarDays,
-  Check,
-  ChevronRight,
-  GripVertical,
-  Paperclip,
-  Repeat,
-  X,
-} from 'lucide-react'
+import { Calendar, CalendarDays, Check, ChevronRight, Paperclip, Repeat, X } from 'lucide-react'
 import React from 'react'
 import { useTranslation } from 'react-i18next'
 
@@ -20,7 +10,6 @@ import { useIsMobile } from '@/hooks/useIsMobile'
 import { useIsTouch } from '@/hooks/useIsTouch'
 import { type BLOCK_EVENTS, dispatchBlockEvent } from '@/lib/block-events'
 import { dueDateColor, formatCompactDate } from '@/lib/date-utils'
-import { capturePreDragFocus } from '@/lib/pre-drag-focus'
 import { priorityColor } from '@/lib/priority-color'
 import { formatRepeatLabel } from '@/lib/repeat-utils'
 import { cn } from '@/lib/utils'
@@ -195,30 +184,17 @@ export interface BlockCollapseControlProps {
   blockId: string
   hasChildren: boolean
   isCollapsed: boolean
-  /** Coarse-pointer device — drives the chevron-as-drag-handle wiring below. */
+  /** Coarse pointer: the chevron sits at the right end of the row, always visible. */
   isTouch: boolean
   onToggleCollapse?: ((blockId: string) => void) | undefined
-  /**
-   * dnd-kit sortable `attributes`/`listeners`. Only wired on TOUCH, where this
-   * control doubles as the drag activator (#1968): the desktop drag handle is
-   * gone on phones, so a press-and-hold on the chevron (or the leaf bullet)
-   * starts a reorder while a tap still toggles collapse. On desktop the handle
-   * in `BlockGutterControls` stays the activator, so these are left unset.
-   */
-  dragAttributes?: DraggableAttributes | undefined
-  dragListeners?: DraggableSyntheticListeners | undefined
 }
 
 /**
- * The row-leading control in the tight gutter lane (#1968):
- *  - a block WITH children → the collapse chevron;
- *  - a leaf ON TOUCH → a small drag bullet (the chevron's stand-in as the
- *    touch reorder grip);
- *  - a leaf on DESKTOP → nothing (the lane's reserved 2-slot width keeps
- *    sibling text aligned and the desktop drag handle fills the text-adjacent
- *    slot, so no placeholder is needed).
- *
- * On touch this control is also the dnd-kit drag activator (see props).
+ * The collapse chevron of a block WITH children; a leaf renders nothing.
+ * Desktop: the row-leading control in the gutter lane (#1968), hover-revealed
+ * while expanded. Touch: after the block text at the right end of the row,
+ * always visible and centred on the first text line (#5332 item 10); the row
+ * itself is the touch drag activator, so the chevron only toggles.
  */
 export function BlockCollapseControl({
   blockId,
@@ -226,121 +202,80 @@ export function BlockCollapseControl({
   isCollapsed,
   isTouch,
   onToggleCollapse,
-  dragAttributes,
-  dragListeners,
 }: BlockCollapseControlProps): React.ReactElement | null {
   const { t } = useTranslation()
 
-  // #966 — snapshot the pre-drag focus before the press-blur clears it, then
-  // hand off to dnd-kit's own pointerdown so the 250ms touch delay sensor can
-  // still activate the drag. Mirrors `handleDragHandlePointerDown` in
-  // `BlockGutterControls`. Only used when this control is the touch activator.
-  const handleActivatorPointerDown = (e: React.PointerEvent<HTMLButtonElement>) => {
-    capturePreDragFocus(useBlockStore.getState().focusedBlockId)
-    dragListeners?.['onPointerDown']?.(e)
-  }
-  // On touch, spread the dnd-kit attributes/listeners onto the control and let
-  // it claim the press gesture (`touch-none`) so a hold starts a drag.
-  const touchDragProps = isTouch
-    ? { ...dragAttributes, ...dragListeners, onPointerDown: handleActivatorPointerDown }
-    : {}
+  if (!hasChildren) return null
 
-  if (hasChildren) {
-    return (
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <button
-            type="button"
-            className={cn(
-              'collapse-toggle flex-shrink-0 w-5 p-0.5 text-muted-foreground hover:text-foreground transition-opacity focus-ring-visible active:scale-95 touch-target',
-              // #1243: an EXPANDED parent hides its chevron at rest. Its
-              // children are already visible below, so a persistent caret
-              // just floats in the empty left gutter, detached from the
-              // block text (the "caret too far left" report). It reveals on
-              // the SAME per-block hover / focus-within / .block-active
-              // contract as the gutter controls and the zoom bullet, so the
-              // tree reads clean at rest and the toggle is right there the
-              // moment you engage a block. Touch has no hover → always shown.
-              !isCollapsed &&
-                !isTouch &&
-                'opacity-0 pointer-events-none group-hover:opacity-100 group-hover:pointer-events-auto group-focus-within:opacity-100 group-focus-within:pointer-events-auto [.block-active_&]:opacity-100 [.block-active_&]:pointer-events-auto focus-visible:opacity-100 focus-visible:pointer-events-auto',
-              // C4 (#216): the chevron signals collapsed/expanded by rotation
-              // alone, which colour-blind users (and anyone who misses the
-              // subtle 90° turn) can't reliably perceive, so the collapsed
-              // state needs a cue that is NOT the rotation. That cue now
-              // lives on the GLYPH: `solidWhenCollapsed` swaps the hairline
-              // outline chevron for a solid caret (see the ChevronToggle
-              // render below), a shape+fill difference — the strongest
-              // non-colour signal — reinforced here by the darker
-              // `text-foreground` ink. It replaces the boxed plate this line
-              // used to carry (`rounded-sm bg-muted/60 ring-1 ring-border`):
-              // on a phone the filled box around a gutter caret read as a
-              // stray button and looked like chrome bolted onto the outline,
-              // which is what the reporter objected to. Colour alone would be
-              // the weaker cue, hence the glyph swap doing the real work. A
-              // collapsed block ALSO stays visible at rest (above): it is the
-              // only affordance to reveal the hidden children.
-              isCollapsed && 'text-foreground',
-              // #1968: on touch the chevron is right-aligned (glyph hugs the
-              // text) and is the drag activator, so it must claim the press.
-              isTouch && 'flex items-center justify-end touch-none cursor-grab',
-              !isTouch && 'max-sm:flex max-sm:items-center max-sm:justify-center',
-            )}
-            // #1968: the touch chevron is also the drag activator, so the touch
-            // DnD e2e (`block-dnd-touch`, the only touch consumer of this id)
-            // finds it via `drag-handle`. Desktop keeps `collapse-toggle` (the
-            // id used by the desktop collapse specs).
-            data-testid={isTouch ? 'drag-handle' : 'collapse-toggle'}
-            data-collapsed={isCollapsed}
-            // The drag handle is a stable focus-fallback target for the context
-            // menu's `handleCloseWithFocus`; the touch activator carries it too.
-            {...(isTouch ? { 'data-context-trigger': 'true' } : {})}
-            // #1498: the gutter controls live OUTSIDE the contenteditable. With
-            // the block's ProseMirror editor focused, a plain click would first
-            // blur the editor (flush → re-render/remount) and the pending click
-            // gets swallowed — the control does nothing. preventDefault on
-            // mousedown retains editor focus (no blur → no flush) so the click
-            // fires and the caret stays put. Mirrors the Mermaid toggle (#1438).
-            onMouseDown={(e) => e.preventDefault()}
-            onClick={() => onToggleCollapse?.(blockId)}
-            aria-label={isCollapsed ? t('block.expandChildren') : t('block.collapseChildren')}
-            aria-expanded={!isCollapsed}
-            // D4 (#217): expose the Ctrl+. collapse/expand shortcut to AT. On
-            // touch, surface the reorder shortcut instead (this is the grip).
-            aria-keyshortcuts={t(
-              isTouch ? 'block.reorderKeyshortcuts' : 'block.collapseKeyshortcuts',
-            )}
-            {...touchDragProps}
-          >
-            <ChevronToggle isExpanded={!isCollapsed} size="lg" solidWhenCollapsed />
-          </button>
-        </TooltipTrigger>
-        <TooltipContent side="bottom" sideOffset={4}>
-          {isCollapsed ? t('block.expandTip') : t('block.collapseTip')}
-        </TooltipContent>
-      </Tooltip>
-    )
-  }
-
-  // Leaf on DESKTOP: render nothing. The lane reserves two control slots, so the
-  // hover-revealed drag handle fills the text-adjacent slot and text stays
-  // aligned — no placeholder needed (#1968 drops the old reserved span).
-  if (!isTouch) return null
-
-  // Leaf on TOUCH: a small drag bullet so EVERY block stays reorderable by
-  // long-press, even childless ones (the chevron's stand-in as the grip).
   return (
-    <button
-      type="button"
-      className="block-drag-bullet flex flex-shrink-0 items-center justify-end w-5 rounded-md text-muted-foreground/50 transition-colors active:scale-95 active:bg-accent active:text-foreground focus-ring-visible touch-none touch-target cursor-grab"
-      data-testid="drag-handle"
-      data-context-trigger="true"
-      aria-label={t('block.reorderTouchHint')}
-      aria-keyshortcuts={t('block.reorderKeyshortcuts')}
-      {...touchDragProps}
-    >
-      <GripVertical className="h-4 w-4 [@media(pointer:coarse)]:h-5 [@media(pointer:coarse)]:w-5" />
-    </button>
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <button
+          type="button"
+          className={cn(
+            'collapse-toggle flex-shrink-0 w-5 p-0.5 text-muted-foreground hover:text-foreground transition-opacity focus-ring-visible active:scale-95 touch-target',
+            // #1243: an EXPANDED parent hides its chevron at rest. Its
+            // children are already visible below, so a persistent caret
+            // just floats in the empty left gutter, detached from the
+            // block text (the "caret too far left" report). It reveals on
+            // the SAME per-block hover / focus-within / .block-active
+            // contract as the gutter controls and the zoom bullet, so the
+            // tree reads clean at rest and the toggle is right there the
+            // moment you engage a block. Touch has no hover → always shown.
+            !isCollapsed &&
+              !isTouch &&
+              'opacity-0 pointer-events-none group-hover:opacity-100 group-hover:pointer-events-auto group-focus-within:opacity-100 group-focus-within:pointer-events-auto [.block-active_&]:opacity-100 [.block-active_&]:pointer-events-auto focus-visible:opacity-100 focus-visible:pointer-events-auto',
+            // C4 (#216): the chevron signals collapsed/expanded by rotation
+            // alone, which colour-blind users (and anyone who misses the
+            // subtle 90° turn) can't reliably perceive, so the collapsed
+            // state needs a cue that is NOT the rotation. That cue now
+            // lives on the GLYPH: `solidWhenCollapsed` swaps the hairline
+            // outline chevron for a solid caret (see the ChevronToggle
+            // render below), a shape+fill difference — the strongest
+            // non-colour signal — reinforced here by the darker
+            // `text-foreground` ink. It replaces the boxed plate this line
+            // used to carry (`rounded-sm bg-muted/60 ring-1 ring-border`):
+            // on a phone the filled box around a gutter caret read as a
+            // stray button and looked like chrome bolted onto the outline,
+            // which is what the reporter objected to. Colour alone would be
+            // the weaker cue, hence the glyph swap doing the real work. A
+            // collapsed block ALSO stays visible at rest (above): it is the
+            // only affordance to reveal the hidden children.
+            isCollapsed && 'text-foreground',
+            // Touch: a 44px target at the row's top edge (the row is
+            // `items-start`), its glyph 8px down — the centre of the text's
+            // first line (`py-1` + half a 24px line), measured in
+            // `e2e/block-dnd-touch.spec.ts`. The text box is top-aligned too,
+            // so this holds for a single line and a wrap alike.
+            isTouch
+              ? 'flex items-start justify-center pt-2'
+              : 'max-sm:flex max-sm:items-center max-sm:justify-center',
+          )}
+          data-testid="collapse-toggle"
+          data-collapsed={isCollapsed}
+          // The context menu's `handleCloseWithFocus` falls back to this marker;
+          // on touch the chevron is the row's only persistent button.
+          {...(isTouch ? { 'data-context-trigger': 'true' } : {})}
+          // #1498: the gutter controls live OUTSIDE the contenteditable. With
+          // the block's ProseMirror editor focused, a plain click would first
+          // blur the editor (flush → re-render/remount) and the pending click
+          // gets swallowed — the control does nothing. preventDefault on
+          // mousedown retains editor focus (no blur → no flush) so the click
+          // fires and the caret stays put. Mirrors the Mermaid toggle (#1438).
+          onMouseDown={(e) => e.preventDefault()}
+          onClick={() => onToggleCollapse?.(blockId)}
+          aria-label={isCollapsed ? t('block.expandChildren') : t('block.collapseChildren')}
+          aria-expanded={!isCollapsed}
+          // D4 (#217): expose the Ctrl+. collapse/expand shortcut to AT.
+          aria-keyshortcuts={t('block.collapseKeyshortcuts')}
+        >
+          <ChevronToggle isExpanded={!isCollapsed} size="lg" solidWhenCollapsed />
+        </button>
+      </TooltipTrigger>
+      <TooltipContent side="bottom" sideOffset={4}>
+        {isCollapsed ? t('block.expandTip') : t('block.collapseTip')}
+      </TooltipContent>
+    </Tooltip>
   )
 }
 
@@ -591,7 +526,9 @@ export const BlockInlineControls = React.memo(
     return (
       <div
         className={cn(
-          'inline-controls flex items-center flex-shrink-0 gap-1 max-sm:flex-shrink max-sm:w-auto max-sm:gap-x-1',
+          // `min-h-8` is one text line box, so the checkbox centres on the
+          // first line of a wrapped block (#5332).
+          'inline-controls flex items-center flex-shrink-0 gap-1 min-h-8 max-sm:flex-shrink max-sm:w-auto max-sm:gap-x-1',
         )}
       >
         {/* Fix 6: in multiselect mode the task checkbox is suppressed on every
@@ -692,7 +629,10 @@ export const BlockMetadataRow = React.memo(
       // "metadata row / block text alignment") pins the relationship rather
       // than the literal, so changing the inset in one place fails loudly
       // instead of drifting.
-      <div className="block-metadata-row flex items-center flex-wrap gap-1 mt-0.5 px-3">
+      <div
+        className="block-metadata-row flex items-center flex-wrap gap-1 mt-0.5 px-3"
+        data-testid="block-metadata-row"
+      >
         {priority && (
           <PriorityBadge
             blockId={blockId}

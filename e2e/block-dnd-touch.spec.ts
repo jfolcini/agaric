@@ -1,28 +1,29 @@
 /**
- * E2E — TOUCH / narrow-viewport block drag-and-drop (#929 f2, #926 f3).
+ * E2E — TOUCH block rows: one hold, then the finger decides (#5332 item 10).
  *
  * Runs under an iPhone-class coarse-pointer + touch context so the product
  * takes its touch code paths:
- *   - `BlockGutterControls` renders the always-visible touch grip
- *     (`data-testid="drag-handle"`, regression guard for #729 / #927 f1 — the
- *     grip must be hittable at rest, not hover-revealed and not clipped).
- *   - `useBlockDnD` selects the press-and-hold PointerSensor
- *     (`{ delay: 250, tolerance: 5 }`), so a touch drag must hold past 250 ms
- *     before moving — `dragBlockTouch` does exactly that.
- *   - `useBlockTouchLongPress` opens the BlockContextMenu on a stationary
- *     400 ms press; its Move Up / Move Down actions reorder the block (#926 f3).
+ *   - no leading control lane and no drag grip: the text starts where the row
+ *     starts, and a parent's collapse chevron sits at the right end of the row;
+ *   - `useBlockDnD` wires a TouchSensor (`{ delay: 400, tolerance: 5 }`) to
+ *     the whole row, so a hold-then-move on the row body reorders;
+ *   - `useBlockTouchLongPress` shares the hold: a hold released without moving
+ *     opens the BlockContextMenu, whose Move Up / Move Down reorder;
+ *   - inside the mounted editor a hold is the native text selection.
  *
  * Correctness is asserted on the recorded `move_block` IPC (the deterministic
  * signal — the mock backend is more permissive than production), mirroring the
- * mouse spec.
+ * mouse spec. Gestures are real touches through CDP (`dragBlockTouch`,
+ * `touchLongPress` in helpers), since the sensor listens to touch events.
  */
 
-import { devices } from '@playwright/test'
+import { devices, type Locator } from '@playwright/test'
 
 import {
   clearInvokeCalls,
   dragBlockTouch,
   expect,
+  focusBlockById,
   getInvokeCalls,
   installIpcRecorder,
   openPageMobile,
@@ -50,7 +51,30 @@ async function moveCalls(
   return (await getInvokeCalls(page, 'move_block')) as never
 }
 
-test.describe('Block drag-and-drop (touch / narrow viewport)', () => {
+const rowOf = (page: import('@playwright/test').Page, id: string) =>
+  page.locator(`[data-testid="sortable-block"][data-block-id="${id}"]`)
+const staticOf = (id: string) => `[data-testid="block-static"][data-block-id="${id}"]`
+const activeMenu = (page: import('@playwright/test').Page) =>
+  page.getByRole('menu', { name: 'Block actions' }).last()
+
+async function box(locator: Locator) {
+  const b = await locator.boundingBox()
+  expect(b, 'element must have a layout box').not.toBeNull()
+  return b as { x: number; y: number; width: number; height: number }
+}
+
+/** Vertical centre of the first rendered text line. */
+function firstLineCentre(text: Locator): Promise<number> {
+  return text.evaluate((el) => {
+    const range = document.createRange()
+    range.selectNodeContents(el)
+    const rect = [...range.getClientRects()].find((r) => r.width > 0)
+    if (!rect) throw new Error('no text line')
+    return rect.top + rect.height / 2
+  })
+}
+
+test.describe('Block rows on touch (iPhone viewport)', () => {
   test.use({
     viewport: iPhone13.viewport,
     hasTouch: iPhone13.hasTouch,
@@ -64,111 +88,74 @@ test.describe('Block drag-and-drop (touch / narrow viewport)', () => {
     await installIpcRecorder(page)
   })
 
-  // #729 / #927 f1 regression guard: the touch grip must be a real, hittable
-  // control at rest (not the hover-hidden desktop GutterButton, and not clipped
-  // off the narrow gutter). We assert it is visible AND has a non-zero box.
-  test('the touch drag grip is visible and hittable at rest', async ({ page }) => {
+  // The 48px lane (44px slot + gap) is gone: the text starts at the row's edge
+  // (one `gap-1` after the empty inline-controls slot), and no grip is rendered.
+  test('text starts where the row starts: no control lane, no drag grip', async ({ page }) => {
     await openPageMobile(page, PAGE)
-    const block = page.locator('[data-testid="sortable-block"]').first()
-    const grip = block.locator('[data-testid="drag-handle"]')
+    const [gs1] = await blockIds(page)
+    const row = rowOf(page, gs1 as string)
 
-    await expect(grip).toBeVisible()
-    const box = await grip.boundingBox()
-    expect(box, 'touch grip must have a layout box').not.toBeNull()
-    expect(box?.width ?? 0).toBeGreaterThan(0)
-    expect(box?.height ?? 0).toBeGreaterThan(0)
+    await expect(row.locator('[data-testid="drag-handle"]')).toHaveCount(0)
+    await expect(row.locator('.block-control-lane')).toHaveCount(0)
+
+    const rowBox = await box(row)
+    const textBox = await box(row.getByTestId('block-static'))
+    expect(textBox.x - rowBox.x).toBeLessThanOrEqual(8)
   })
 
-  // #929 f2 — a press-and-hold touch drag emits a move_block and reorders.
-  //
-  // #968: this test was previously `test.skip`'d IN CI ONLY because under the
-  // GH runner's parallel/headless load it intermittently lost its rendered
-  // BlockTree rows mid-test (the failure snapshot showed the editor shell with
-  // ZERO sortable-block rows). Root cause: `BlockTree` renders a loading
-  // skeleton with no rows whenever the per-page store's `loading` flag is true,
-  // and the mobile navigation path can fire a SECOND `load()` (a fresh per-page
-  // store on a `PageEditor`/`BlockTree` re-mount as the search sheet tears down)
-  // shortly AFTER the first content row paints. `openPageMobile` only awaits the
-  // FIRST row, so the old test read `.nth(2)` straight into that transient blank
-  // window. The fix waits for a STABLE populated tree (`waitForStableBlockRows`
-  // held across consecutive samples with the skeleton gone) before reading ids /
-  // measuring boxes, then re-asserts the grip + target are still attached
-  // immediately before the drag.
-  //
-  // #1045: the drag previously targeted the 3rd row (`.nth(2)`) and waited for
-  // THREE hydrated rows. `SortableBlockWrapper` virtualizes the tree — off-
-  // screen blocks render as empty `block-placeholder` <li>s and only promote to
-  // `sortable-block` rows once on-screen (`viewport.isOffscreen`). The seeded
-  // "Getting Started" page has 5 root children (GS_1…GS_5). On the iPhone-13
-  // viewport (390×844) only the first rows that fit on screen hydrate; locally
-  // three settle, but the resource-starved GH CI runner deterministically
-  // hydrates only TWO `sortable-block` rows (GS_3 stays an off-screen
-  // placeholder) even after a 30s budget — so requiring 3 rows could never pass
-  // in CI. A 2-row reorder fully exercises the press-and-hold touch drag path,
-  // so the test now drags GS_2's grip ONTO GS_1 (the top row) and asserts both
-  // the emitted `move_block` (slot 0 / "move to top") AND the resulting visual
-  // order swap — using only the two rows that hydrate reliably in CI.
-  test('a touch drag reorders a block and emits move_block', async ({ page }) => {
+  // A hold on the row body (its static text) past 400 ms, then a vertical move
+  // onto the row above, reorders via dnd-kit and records move_block. Drags
+  // GS_2 onto GS_1 (the top row): only the first two rows hydrate reliably on
+  // the CI runner (#1045), and a 2-row reorder exercises the whole path.
+  test('hold, then move on the row body reorders the block and emits move_block', async ({
+    page,
+  }) => {
     await openPageMobile(page, PAGE)
-
-    // Wait until the two on-screen rows (GS_1, GS_2) have hydrated AND that
-    // count has held still — the tree is settled, not mid-(re)load and not a
-    // partial CI paint (the #968 transient-empty-render + #1045 incremental-
-    // paint guard). The 30s settle budget needs a per-test timeout above 30s.
+    // The tree must have settled (#968 transient-empty-render guard); the 30s
+    // settle budget needs a per-test timeout above 30s.
     test.setTimeout(45_000)
     await waitForStableBlockRows(page, 2)
 
     const ids = await blockIds(page)
     const gs2 = ids[1] as string
-
-    const target = page.locator('[data-testid="sortable-block"]').nth(0) // onto GS_1 (top)
+    const target = page.locator('[data-testid="sortable-block"]').nth(0)
+    const source = page.locator('[data-testid="sortable-block"]').nth(1).getByTestId('block-static')
+    await expect(source).toBeVisible()
     await expect(target).toBeVisible()
 
     await clearInvokeCalls(page)
-    // Grip of the SECOND row (GS_2) — drag it up over the first row.
-    const grip = page
-      .locator('[data-testid="sortable-block"]')
-      .nth(1)
-      .locator('[data-testid="drag-handle"]')
+    await dragBlockTouch(page, source, target)
 
-    // Re-assert both endpoints are still attached + visible at the instant we
-    // begin the drag: if a late `load()` blanked the tree between the stable-row
-    // wait and here, this surfaces it deterministically instead of letting
-    // `dragBlockTouch`'s `boundingBox()` resolve against a detached node.
-    await expect(grip).toBeVisible()
-    await expect(target).toBeVisible()
-
-    await dragBlockTouch(page, grip, target)
-
-    // The visual order swaps — GS_2 lands at the top (visual index 0).
+    // The visual order swaps — GS_2 lands at the top (visual index 0) …
     await expect.poll(async () => (await blockIds(page)).indexOf(gs2)).toBe(0)
-
-    // …and the recorded IPC carries GS_2 moving to slot 0 ("move to top", #400).
+    // … and the recorded IPC carries GS_2 moving to slot 0 ("move to top", #400).
     await expect.poll(async () => (await moveCalls(page)).length).toBeGreaterThan(0)
     const calls = await moveCalls(page)
     const mine = calls.find((c) => c.blockId === gs2) ?? calls.at(-1)
     expect(mine?.blockId).toBe(gs2)
     expect(mine?.newIndex).toBe(0)
+    // The hold itself moved nothing: no menu opened behind the drag.
+    await expect(page.getByRole('menu', { name: 'Block actions' })).toHaveCount(0)
   })
 
-  // #926 f3 — a stationary long-press on the block body opens the
-  // BlockContextMenu (no drag activator there → long-press wins), and "Move
-  // Down" reorders the block via the recorded move_block.
-  test('long-press opens the context menu and Move Down reorders the block', async ({ page }) => {
+  // The same hold released without moving opens the BlockContextMenu, and
+  // "Move Down" reorders the block via the recorded move_block.
+  test('hold, then release opens the context menu and Move Down reorders the block', async ({
+    page,
+  }) => {
     await openPageMobile(page, PAGE)
     const ids = await blockIds(page)
     const gs1 = ids[0] as string
 
     await clearInvokeCalls(page)
-    // Long-press the FIRST block's static body (not the grip — the long-press
-    // hook fires uncontested away from the drag activator).
-    await touchLongPress(page, `[data-testid="block-static"][data-block-id="${gs1}"]`)
+    await touchLongPress(page, staticOf(gs1))
 
-    const menu = page.getByRole('menu', { name: 'Block actions' })
+    const menu = activeMenu(page)
     await expect(menu).toBeVisible()
+    // A still release is a zero-movement drop: nothing moved.
+    expect(await moveCalls(page)).toHaveLength(0)
     // The structural-reorder actions (Indent / Dedent / Move up/down) all live
-    // behind the "Move & arrange" disclosure (2026-06-20); expand it. (Zoom is
-    // not asserted here.)
+    // behind the "Move & arrange" disclosure (2026-06-20); expand it.
     await menu.getByRole('menuitem', { name: 'Move & arrange' }).click()
     await expect(menu.getByRole('menuitem', { name: 'Indent' })).toBeVisible()
     await expect(menu.getByRole('menuitem', { name: 'Dedent' })).toBeVisible()
@@ -181,5 +168,98 @@ test.describe('Block drag-and-drop (touch / narrow viewport)', () => {
     await expect.poll(async () => (await moveCalls(page)).length).toBeGreaterThan(0)
     const calls = await moveCalls(page)
     expect(calls.some((c) => c.blockId === gs1)).toBe(true)
+    await expect.poll(async () => (await blockIds(page)).indexOf(gs1)).toBe(1)
+  })
+
+  // The hold lifts block B, which flushes and unmounts A's editor; the still
+  // release must not restore A's editor under B's menu (that pulled focus out
+  // of the menu and popped the keyboard). The menu stays open, with focus in it.
+  test("editing block A, a hold-release on block B leaves B's menu open and no editor mounted", async ({
+    page,
+  }) => {
+    await openPageMobile(page, PAGE)
+    const ids = await blockIds(page)
+    const gs1 = ids[0] as string
+    const gs2 = ids[1] as string
+
+    await focusBlockById(page, gs1)
+    await expect(page.getByTestId('block-editor')).toBeVisible()
+
+    await touchLongPress(page, staticOf(gs2))
+
+    const menu = activeMenu(page)
+    await expect(menu).toBeVisible()
+    await expect(page.getByTestId('block-editor')).toHaveCount(0)
+    await expect
+      .poll(() => page.evaluate(() => document.activeElement?.closest('[role="menu"]') !== null))
+      .toBe(true)
+    // Nothing re-mounts the editor or closes the menu once things settle.
+    await page.waitForTimeout(300)
+    await expect(menu).toBeVisible()
+    await expect(page.getByTestId('block-editor')).toHaveCount(0)
+    await expect(menu.getByRole('menuitem', { name: 'Delete' })).toBeVisible()
+  })
+
+  // A parent's chevron sits at the right end of its row, level with the first
+  // text line, and one tap toggles collapse. The seed has no nesting, so GS_2
+  // is nested under GS_1 through the menu's Indent first.
+  test("a parent's chevron sits right of the text on the first line, and one tap collapses", async ({
+    page,
+  }) => {
+    await openPageMobile(page, PAGE)
+    const ids = await blockIds(page)
+    const gs1 = ids[0] as string
+    const gs2 = ids[1] as string
+
+    await touchLongPress(page, staticOf(gs2))
+    const menu = activeMenu(page)
+    await expect(menu).toBeVisible()
+    await menu.getByRole('menuitem', { name: 'Move & arrange' }).click()
+    await menu.getByRole('menuitem', { name: 'Indent' }).click()
+    await expect(page.getByRole('menu', { name: 'Block actions' })).toHaveCount(0)
+
+    const parent = rowOf(page, gs1)
+    const chevron = parent.getByTestId('collapse-toggle')
+    await expect(chevron).toBeVisible()
+    await expect(chevron).toHaveAttribute('aria-expanded', 'true')
+    // Leaves carry no chevron.
+    await expect(rowOf(page, gs2).getByTestId('collapse-toggle')).toHaveCount(0)
+
+    const text = parent.getByTestId('block-static')
+    const textBox = await box(text)
+    const chevronBox = await box(chevron)
+    expect(chevronBox.x).toBeGreaterThanOrEqual(textBox.x + textBox.width)
+    expect(chevronBox.width).toBeGreaterThanOrEqual(44)
+    expect(chevronBox.height).toBeGreaterThanOrEqual(44)
+    // The glyph, not the 44px box, is what sits on the first line.
+    const glyphBox = await box(chevron.locator('[data-slot="chevron-toggle"]'))
+    const glyphCentre = glyphBox.y + glyphBox.height / 2
+    expect(Math.abs(glyphCentre - (await firstLineCentre(text)))).toBeLessThanOrEqual(1)
+
+    await chevron.tap()
+    await expect(chevron).toHaveAttribute('aria-expanded', 'false')
+    await expect(rowOf(page, gs2)).toHaveCount(0)
+
+    await chevron.tap()
+    await expect(chevron).toHaveAttribute('aria-expanded', 'true')
+    await expect(rowOf(page, gs2)).toBeVisible()
+  })
+
+  // Inside the mounted editor a hold is the platform's text selection: neither
+  // the drag (which would flush and unmount the editor) nor the menu may start.
+  test('a hold inside the focused editor opens no menu and keeps the editor mounted', async ({
+    page,
+  }) => {
+    await openPageMobile(page, PAGE)
+    const [gs1] = await blockIds(page)
+    await focusBlockById(page, gs1 as string)
+    const editor = page.locator('[data-testid="block-editor"] [contenteditable="true"]')
+    await expect(editor).toBeVisible()
+
+    await touchLongPress(page, '[data-testid="block-editor"] [contenteditable="true"]')
+
+    await page.waitForTimeout(300)
+    await expect(page.getByRole('menu', { name: 'Block actions' })).toHaveCount(0)
+    await expect(editor).toBeVisible()
   })
 })

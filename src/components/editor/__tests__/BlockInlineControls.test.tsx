@@ -444,9 +444,9 @@ describe('BlockInlineControls', () => {
   })
 })
 
-// #1968: the leading collapse chevron / leaf drag-bullet, extracted from
-// BlockInlineControls into the gutter lane. On touch it doubles as the drag
-// activator (long-press to reorder); on desktop a leaf renders nothing.
+// #1968: the collapse chevron, extracted from BlockInlineControls into the
+// gutter lane (desktop) and, on touch, rendered at the right end of the row. A
+// leaf renders nothing on either.
 describe('BlockCollapseControl (#1968)', () => {
   beforeEach(() => {
     vi.clearAllMocks()
@@ -526,44 +526,24 @@ describe('BlockCollapseControl (#1968)', () => {
     expect(chevron.className).toContain('max-sm:')
   })
 
-  // ── Touch: chevron / leaf bullet double as the drag activator ──────
-  it('on touch, the chevron is the drag activator: drag-handle id, touch-none, listeners', () => {
-    const dragListeners = { onPointerDown: vi.fn() }
-    renderCollapse(
-      makeCollapseProps({
-        hasChildren: true,
-        isTouch: true,
-        dragAttributes: { 'data-dnd-activator': 'chevron' } as never,
-        dragListeners,
-      }),
-    )
-    const activator = screen.getByTestId('drag-handle')
-    expect(activator).toHaveAttribute('data-dnd-activator', 'chevron')
-    expect(activator.className).toContain('touch-none')
-    expect(activator).toHaveAttribute('data-context-trigger', 'true')
-    // Tapping still toggles collapse; a hold (250ms sensor) drags.
-    fireEvent.pointerDown(activator)
-    expect(dragListeners.onPointerDown).toHaveBeenCalledTimes(1)
+  // ── Touch: a plain collapse toggle at the right end of the row (#5332 item 10) ──
+  it('on touch, the chevron is a plain, always-visible 44px collapse toggle', () => {
+    renderCollapse(makeCollapseProps({ hasChildren: true, isTouch: true }))
+    const chevron = screen.getByTestId('collapse-toggle')
+    expect(screen.queryByTestId('drag-handle')).not.toBeInTheDocument()
+    expect(chevron.className).toContain('touch-target')
+    expect(chevron.className).not.toContain('opacity-0')
+    expect(chevron.className).not.toContain('touch-none')
+    expect(chevron.className).not.toContain('cursor-grab')
+    expect(chevron).toHaveAttribute('data-context-trigger', 'true')
+    expect(chevron).toHaveAttribute('aria-keyshortcuts', t('block.collapseKeyshortcuts'))
+    expect(chevron).toHaveAttribute('aria-expanded', 'true')
   })
 
-  it('on touch, a leaf renders a drag bullet (grip) as the activator', () => {
-    const dragListeners = { onPointerDown: vi.fn() }
-    renderCollapse(
-      makeCollapseProps({
-        hasChildren: false,
-        isTouch: true,
-        dragAttributes: { 'data-dnd-activator': 'bullet' } as never,
-        dragListeners,
-      }),
-    )
-    const bullet = screen.getByTestId('drag-handle')
-    expect(bullet).toHaveAttribute('data-dnd-activator', 'bullet')
-    expect(bullet.className).toContain('touch-none')
-    expect(bullet.className).toContain('touch-target')
-    expect(bullet).toHaveAttribute('aria-label', t('block.reorderTouchHint'))
-    expect(screen.getByTestId('grip-vertical-icon')).toBeInTheDocument()
-    fireEvent.pointerDown(bullet)
-    expect(dragListeners.onPointerDown).toHaveBeenCalledTimes(1)
+  it('on touch, a leaf renders nothing (no drag bullet)', () => {
+    const { container } = renderCollapse(makeCollapseProps({ hasChildren: false, isTouch: true }))
+    expect(container).toBeEmptyDOMElement()
+    expect(screen.queryByTestId('grip-vertical-icon')).not.toBeInTheDocument()
   })
 })
 

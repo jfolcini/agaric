@@ -1,15 +1,66 @@
 import { act, renderHook } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { TOUCH_DRAG_TOLERANCE } from '@/components/block-tree/use-block-dnd'
 import {
+  isInsideEditableText,
   LONG_PRESS_DELAY,
   LONG_PRESS_MOVE_THRESHOLD,
   useBlockTouchLongPress,
 } from '@/components/block-tree/use-block-touch-long-press'
+import { haptic } from '@/lib/haptics'
+
+vi.mock('@/lib/haptics', () => ({ haptic: vi.fn() }))
+
+const mockedHaptic = vi.mocked(haptic)
+
+function setup(isDragging = false) {
+  const openContextMenu = vi.fn()
+  const isDraggingRef = { current: isDragging }
+  const hook = renderHook(() => useBlockTouchLongPress({ openContextMenu, isDraggingRef }))
+  return { ...hook, openContextMenu, isDraggingRef }
+}
+
+type Hook = ReturnType<typeof setup>
+
+function touchStart(
+  hook: Hook,
+  points: Array<{ x: number; y: number }>,
+  extra: Record<string, unknown> = {},
+) {
+  act(() => {
+    hook.result.current.handleTouchStart({
+      touches: points.map((p) => ({ clientX: p.x, clientY: p.y })),
+      ...extra,
+    } as unknown as React.TouchEvent)
+  })
+}
+
+function touchMove(hook: Hook, points: Array<{ x: number; y: number }>) {
+  act(() => {
+    hook.result.current.handleTouchMove({
+      touches: points.map((p) => ({ clientX: p.x, clientY: p.y })),
+    } as unknown as React.TouchEvent)
+  })
+}
+
+/** Dispatch a touchend; returns whether the hook prevented its default. */
+function touchEnd(hook: Hook): boolean {
+  const preventDefault = vi.fn()
+  act(() => {
+    hook.result.current.handleTouchEnd({ preventDefault } as unknown as React.TouchEvent)
+  })
+  return preventDefault.mock.calls.length > 0
+}
+
+function hold(ms = LONG_PRESS_DELAY) {
+  act(() => {
+    vi.advanceTimersByTime(ms)
+  })
+}
 
 describe('useBlockTouchLongPress', () => {
   beforeEach(() => {
+    vi.clearAllMocks()
     vi.useFakeTimers()
   })
 
@@ -17,473 +68,300 @@ describe('useBlockTouchLongPress', () => {
     vi.useRealTimers()
   })
 
-  it('exports correct LONG_PRESS_DELAY constant', () => {
+  it('exports the hold delay and drift threshold the drag sensor shares', () => {
     expect(LONG_PRESS_DELAY).toBe(400)
-  })
-
-  it('exports correct LONG_PRESS_MOVE_THRESHOLD constant', () => {
     expect(LONG_PRESS_MOVE_THRESHOLD).toBe(5)
   })
 
-  // Drift guard. While the long-press threshold was the looser 10 px, a 6-9 px
-  // finger drift inside the sensor's 250 ms delay CANCELLED the drag (tolerance
-  // exceeded) yet SURVIVED the long-press move check — so the context menu
-  // opened on a gesture the user had performed as a drag. Keep them equal.
-  it('LONG_PRESS_MOVE_THRESHOLD matches the drag sensor tolerance', () => {
-    expect(LONG_PRESS_MOVE_THRESHOLD).toBe(TOUCH_DRAG_TOLERANCE)
+  it('returns the row handlers', () => {
+    const hook = setup()
+    expect(Object.keys(hook.result.current).toSorted()).toEqual([
+      'handleContextMenu',
+      'handleTouchEnd',
+      'handleTouchMove',
+      'handleTouchStart',
+    ])
+    hook.unmount()
   })
 
-  it('aborts the long-press at the same drift that cancels a pending drag', () => {
-    const openContextMenu = vi.fn()
-    const isDraggingRef = { current: false }
+  // ── Hold, then the finger decides ───────────────────────────────────
 
-    const { result, unmount } = renderHook(() =>
-      useBlockTouchLongPress({ openContextMenu, isDraggingRef }),
-    )
+  it('does not open the menu at the hold mark; the menu opens on release', () => {
+    const hook = setup()
+    touchStart(hook, [{ x: 100, y: 200 }])
 
-    const div = document.createElement('div')
-    document.body.append(div)
+    hold()
+    expect(hook.openContextMenu).not.toHaveBeenCalled()
 
-    act(() => {
-      result.current.handleTouchStart({
-        touches: [{ clientX: 100, clientY: 100 }],
-        target: div,
-      } as unknown as React.TouchEvent)
-    })
-
-    // A 6 px drift: past the sensor's tolerance, so the drag is already dead.
-    act(() => {
-      result.current.handleTouchMove({
-        touches: [{ clientX: 106, clientY: 100 }],
-      } as unknown as React.TouchEvent)
-    })
-
-    act(() => {
-      vi.advanceTimersByTime(LONG_PRESS_DELAY)
-    })
-
-    expect(openContextMenu).not.toHaveBeenCalled()
-
-    document.body.removeChild(div)
-    unmount()
+    expect(touchEnd(hook)).toBe(true)
+    expect(hook.openContextMenu).toHaveBeenCalledOnce()
+    expect(hook.openContextMenu).toHaveBeenCalledWith(100, 200, undefined)
+    hook.unmount()
   })
 
-  it('returns all expected handler functions', () => {
-    const openContextMenu = vi.fn()
-    const isDraggingRef = { current: false }
+  // Chromium follows a tap's `touchend` with compat `mousedown` / `click`;
+  // after a hold they would move focus off the menu and focus the block under
+  // it. Preventing the release's default suppresses them, but only when the
+  // menu opens: a plain tap must keep its click (it focuses the block).
+  it('prevents the touchend default only when the release opens the menu', () => {
+    const hook = setup()
+    touchStart(hook, [{ x: 100, y: 200 }])
+    hold(LONG_PRESS_DELAY / 2)
+    expect(touchEnd(hook)).toBe(false)
 
-    const { result, unmount } = renderHook(() =>
-      useBlockTouchLongPress({ openContextMenu, isDraggingRef }),
-    )
+    touchStart(hook, [{ x: 100, y: 200 }])
+    hold()
+    touchMove(hook, [{ x: 100, y: 240 }])
+    expect(touchEnd(hook)).toBe(false)
 
-    expect(typeof result.current.handleTouchStart).toBe('function')
-    expect(typeof result.current.handleTouchEnd).toBe('function')
-    expect(typeof result.current.handleTouchMove).toBe('function')
-    expect(typeof result.current.handleContextMenu).toBe('function')
-    expect(typeof result.current.clearLongPress).toBe('function')
-
-    unmount()
+    touchStart(hook, [{ x: 100, y: 200 }])
+    hold()
+    expect(touchEnd(hook)).toBe(true)
+    expect(hook.openContextMenu).toHaveBeenCalledOnce()
+    hook.unmount()
   })
 
-  it('opens context menu after LONG_PRESS_DELAY', () => {
-    const openContextMenu = vi.fn()
-    const isDraggingRef = { current: false }
+  it('ticks the haptic once when the hold is recognised, before any release', () => {
+    const hook = setup()
+    touchStart(hook, [{ x: 100, y: 200 }])
 
-    const { result, unmount } = renderHook(() =>
-      useBlockTouchLongPress({ openContextMenu, isDraggingRef }),
-    )
+    hold(LONG_PRESS_DELAY - 1)
+    expect(mockedHaptic).not.toHaveBeenCalled()
+    hold(1)
+    expect(mockedHaptic).toHaveBeenCalledOnce()
+    expect(mockedHaptic).toHaveBeenCalledWith('tick')
 
-    const div = document.createElement('div')
-    document.body.append(div)
-
-    const touchEvent = {
-      touches: [{ clientX: 100, clientY: 200 }],
-      target: div,
-    } as unknown as React.TouchEvent
-
-    act(() => {
-      result.current.handleTouchStart(touchEvent)
-    })
-
-    expect(openContextMenu).not.toHaveBeenCalled()
-
-    act(() => {
-      vi.advanceTimersByTime(LONG_PRESS_DELAY)
-    })
-
-    expect(openContextMenu).toHaveBeenCalledOnce()
-    expect(openContextMenu).toHaveBeenCalledWith(100, 200, undefined)
-
-    document.body.removeChild(div)
-    unmount()
+    touchEnd(hook)
+    expect(mockedHaptic).toHaveBeenCalledOnce()
+    hook.unmount()
   })
 
-  it('does not open context menu if touch ends before delay', () => {
-    const openContextMenu = vi.fn()
-    const isDraggingRef = { current: false }
-
-    const { result, unmount } = renderHook(() =>
-      useBlockTouchLongPress({ openContextMenu, isDraggingRef }),
-    )
-
-    const touchEvent = {
-      touches: [{ clientX: 100, clientY: 200 }],
-    } as unknown as React.TouchEvent
-
-    act(() => {
-      result.current.handleTouchStart(touchEvent)
-    })
-
-    act(() => {
-      vi.advanceTimersByTime(LONG_PRESS_DELAY / 2)
-    })
-
-    act(() => {
-      result.current.handleTouchEnd()
-    })
-
-    act(() => {
-      vi.advanceTimersByTime(LONG_PRESS_DELAY)
-    })
-
-    expect(openContextMenu).not.toHaveBeenCalled()
-
-    unmount()
+  it('opens the menu on release while a drag is active (the lift IS the drag)', () => {
+    const hook = setup()
+    touchStart(hook, [{ x: 100, y: 200 }])
+    hold()
+    hook.isDraggingRef.current = true
+    touchEnd(hook)
+    expect(hook.openContextMenu).toHaveBeenCalledWith(100, 200, undefined)
+    hook.unmount()
   })
 
-  it('cancels long press when touch moves beyond threshold', () => {
-    const openContextMenu = vi.fn()
-    const isDraggingRef = { current: false }
-
-    const { result, unmount } = renderHook(() =>
-      useBlockTouchLongPress({ openContextMenu, isDraggingRef }),
-    )
-
-    act(() => {
-      result.current.handleTouchStart({
-        touches: [{ clientX: 100, clientY: 100 }],
-      } as unknown as React.TouchEvent)
-    })
-
-    act(() => {
-      result.current.handleTouchMove({
-        touches: [{ clientX: 100 + LONG_PRESS_MOVE_THRESHOLD + 1, clientY: 100 }],
-      } as unknown as React.TouchEvent)
-    })
-
-    act(() => {
-      vi.advanceTimersByTime(LONG_PRESS_DELAY)
-    })
-
-    expect(openContextMenu).not.toHaveBeenCalled()
-
-    unmount()
+  it('opens no menu when the finger moved past the threshold after the hold (a drag)', () => {
+    const hook = setup()
+    touchStart(hook, [{ x: 100, y: 200 }])
+    hold()
+    touchMove(hook, [{ x: 100, y: 200 + LONG_PRESS_MOVE_THRESHOLD + 1 }])
+    touchEnd(hook)
+    expect(hook.openContextMenu).not.toHaveBeenCalled()
+    hook.unmount()
   })
 
-  // #927 f5: the canonical scroll-conflict scenario — the user starts a
-  // vertical scroll. Pure vertical movement past the threshold must cancel
-  // the long-press so the scroll is not hijacked into a context menu.
-  it('cancels long press on vertical scroll (scroll intent wins)', () => {
-    const openContextMenu = vi.fn()
-    const isDraggingRef = { current: false }
-
-    const { result, unmount } = renderHook(() =>
-      useBlockTouchLongPress({ openContextMenu, isDraggingRef }),
-    )
-
-    act(() => {
-      result.current.handleTouchStart({
-        touches: [{ clientX: 100, clientY: 200 }],
-      } as unknown as React.TouchEvent)
-    })
-
-    // Pure vertical drag (no horizontal component) past the threshold —
-    // the classic "I'm scrolling" gesture, fired BEFORE the 400ms timer.
-    act(() => {
-      result.current.handleTouchMove({
-        touches: [{ clientX: 100, clientY: 200 + LONG_PRESS_MOVE_THRESHOLD + 1 }],
-      } as unknown as React.TouchEvent)
-    })
-
-    act(() => {
-      vi.advanceTimersByTime(LONG_PRESS_DELAY)
-    })
-
-    expect(openContextMenu).not.toHaveBeenCalled()
-
-    unmount()
+  it('still opens the menu after a post-hold jitter inside the threshold', () => {
+    const hook = setup()
+    touchStart(hook, [{ x: 100, y: 200 }])
+    hold()
+    // hypot(3, 2) ≈ 3.6 px — a held finger is never perfectly still.
+    touchMove(hook, [{ x: 103, y: 202 }])
+    touchEnd(hook)
+    expect(hook.openContextMenu).toHaveBeenCalledWith(100, 200, undefined)
+    hook.unmount()
   })
 
-  // #927 f5: a multi-step scroll — several small moves that individually stay
-  // under the threshold but cumulatively pass it — must still cancel, because
-  // the threshold is measured against the original touchstart, not the prior
-  // move. (Documents that we compare to the START, not the last position.)
-  it('cancels long press once cumulative vertical travel passes the threshold', () => {
-    const openContextMenu = vi.fn()
-    const isDraggingRef = { current: false }
-
-    const { result, unmount } = renderHook(() =>
-      useBlockTouchLongPress({ openContextMenu, isDraggingRef }),
-    )
-
-    act(() => {
-      result.current.handleTouchStart({
-        touches: [{ clientX: 100, clientY: 200 }],
-      } as unknown as React.TouchEvent)
-    })
-
-    // First small move stays within threshold — does not cancel yet.
-    act(() => {
-      result.current.handleTouchMove({
-        touches: [{ clientX: 100, clientY: 205 }],
-      } as unknown as React.TouchEvent)
-    })
-    // Second move crosses the threshold relative to the START position.
-    act(() => {
-      result.current.handleTouchMove({
-        touches: [{ clientX: 100, clientY: 212 }],
-      } as unknown as React.TouchEvent)
-    })
-
-    act(() => {
-      vi.advanceTimersByTime(LONG_PRESS_DELAY)
-    })
-
-    expect(openContextMenu).not.toHaveBeenCalled()
-
-    unmount()
+  it('opens the menu at the press point, not where the finger lifted', () => {
+    const hook = setup()
+    touchStart(hook, [{ x: 100, y: 200 }])
+    hold()
+    touchMove(hook, [{ x: 102, y: 198 }])
+    touchEnd(hook)
+    expect(hook.openContextMenu).toHaveBeenCalledWith(100, 200, undefined)
+    hook.unmount()
   })
 
-  it('does not cancel long press for small movements within threshold', () => {
-    const openContextMenu = vi.fn()
-    const isDraggingRef = { current: false }
+  // ── Before the hold ─────────────────────────────────────────────────
 
-    const { result, unmount } = renderHook(() =>
-      useBlockTouchLongPress({ openContextMenu, isDraggingRef }),
-    )
-
-    const div = document.createElement('div')
-    document.body.append(div)
-
-    act(() => {
-      result.current.handleTouchStart({
-        touches: [{ clientX: 100, clientY: 100 }],
-        target: div,
-      } as unknown as React.TouchEvent)
-    })
-
-    // hypot(3, 2) ≈ 3.6 px — jitter inside LONG_PRESS_MOVE_THRESHOLD (5 px),
-    // and inside the drag sensor's identical tolerance.
-    act(() => {
-      result.current.handleTouchMove({
-        touches: [{ clientX: 103, clientY: 102 }],
-      } as unknown as React.TouchEvent)
-    })
-
-    act(() => {
-      vi.advanceTimersByTime(LONG_PRESS_DELAY)
-    })
-
-    expect(openContextMenu).toHaveBeenCalledOnce()
-
-    document.body.removeChild(div)
-    unmount()
+  it('does not open the menu if the touch ends before the hold', () => {
+    const hook = setup()
+    touchStart(hook, [{ x: 100, y: 200 }])
+    hold(LONG_PRESS_DELAY / 2)
+    touchEnd(hook)
+    hold()
+    expect(hook.openContextMenu).not.toHaveBeenCalled()
+    expect(mockedHaptic).not.toHaveBeenCalled()
+    hook.unmount()
   })
 
-  it('does not open context menu if isDragging is true', () => {
-    const openContextMenu = vi.fn()
-    const isDraggingRef = { current: false }
-
-    const { result, unmount } = renderHook(() =>
-      useBlockTouchLongPress({ openContextMenu, isDraggingRef }),
-    )
-
-    act(() => {
-      result.current.handleTouchStart({
-        touches: [{ clientX: 100, clientY: 200 }],
-      } as unknown as React.TouchEvent)
-    })
-
-    isDraggingRef.current = true
-
-    act(() => {
-      vi.advanceTimersByTime(LONG_PRESS_DELAY)
-    })
-
-    expect(openContextMenu).not.toHaveBeenCalled()
-
-    unmount()
+  it('a move past the threshold before the hold cancels both the hold and the menu', () => {
+    const hook = setup()
+    touchStart(hook, [{ x: 100, y: 100 }])
+    touchMove(hook, [{ x: 100 + LONG_PRESS_MOVE_THRESHOLD + 1, y: 100 }])
+    hold()
+    expect(mockedHaptic).not.toHaveBeenCalled()
+    touchEnd(hook)
+    expect(hook.openContextMenu).not.toHaveBeenCalled()
+    hook.unmount()
   })
 
-  // ── #926 f2: documented gesture precedence — DRAG WINS over long-press ──
-  // The drag sensor's 250 ms delay elapses before the 400 ms long-press timer.
-  // When the drag activates, the consumer calls `clearLongPress()` (the eager
-  // cancel path). This asserts that cancelling the PENDING timer at t≈250 ms
-  // prevents the context menu even after the full 400 ms would have elapsed —
-  // distinct from the lazy `isDraggingRef` re-check at the 400 ms mark.
-  it('drag activation cancels the pending long-press timer (drag wins — #926 f2)', () => {
-    const openContextMenu = vi.fn()
-    const isDraggingRef = { current: false }
-
-    const { result, unmount } = renderHook(() =>
-      useBlockTouchLongPress({ openContextMenu, isDraggingRef }),
-    )
-
-    act(() => {
-      result.current.handleTouchStart({
-        touches: [{ clientX: 100, clientY: 200 }],
-      } as unknown as React.TouchEvent)
-    })
-
-    // Drag sensor activates at its 250 ms delay (< the 400 ms long-press).
-    act(() => {
-      vi.advanceTimersByTime(250)
-    })
-    expect(openContextMenu).not.toHaveBeenCalled() // timer still pending, hasn't fired
-
-    // Consumer's isDragging effect fires `clearLongPress()` on drag-start: the
-    // pending long-press timer is cancelled eagerly.
-    isDraggingRef.current = true
-    act(() => {
-      result.current.clearLongPress()
-    })
-
-    // Advance well past 400 ms: the cancelled timer must NOT open the menu.
-    act(() => {
-      vi.advanceTimersByTime(LONG_PRESS_DELAY)
-    })
-    expect(openContextMenu).not.toHaveBeenCalled()
-
-    unmount()
+  // #927 f5: the canonical scroll conflict — a vertical scroll must never be
+  // hijacked into a menu.
+  it('a vertical scroll before the hold cancels (scroll intent wins)', () => {
+    const hook = setup()
+    touchStart(hook, [{ x: 100, y: 200 }])
+    touchMove(hook, [{ x: 100, y: 200 + LONG_PRESS_MOVE_THRESHOLD + 1 }])
+    hold()
+    touchEnd(hook)
+    expect(hook.openContextMenu).not.toHaveBeenCalled()
+    hook.unmount()
   })
 
-  // ── #926 f2: the complementary case — ELSEWHERE the long-press WINS ──
-  // With no drag activator (block body), no drag ever activates, so the timer
-  // fires uncontested at 400 ms and opens the context menu (the touch path to
-  // Indent/Dedent/Move — #926 f4).
-  it('long-press wins when no drag activates (block body — #926 f2)', () => {
-    const openContextMenu = vi.fn()
-    const isDraggingRef = { current: false }
-
-    const { result, unmount } = renderHook(() =>
-      useBlockTouchLongPress({ openContextMenu, isDraggingRef }),
-    )
-
-    act(() => {
-      result.current.handleTouchStart({
-        touches: [{ clientX: 300, clientY: 400 }],
-        target: document.createElement('div'),
-      } as unknown as React.TouchEvent)
-    })
-
-    // No drag activates: advance to the full long-press delay.
-    act(() => {
-      vi.advanceTimersByTime(LONG_PRESS_DELAY)
-    })
-
-    expect(openContextMenu).toHaveBeenCalledTimes(1)
-
-    unmount()
+  // Drift is measured against the touchstart point, so several small moves
+  // that individually stay inside the threshold still add up.
+  it('cancels once cumulative travel passes the threshold', () => {
+    const hook = setup()
+    touchStart(hook, [{ x: 100, y: 200 }])
+    touchMove(hook, [{ x: 100, y: 205 }])
+    touchMove(hook, [{ x: 100, y: 212 }])
+    hold()
+    touchEnd(hook)
+    expect(hook.openContextMenu).not.toHaveBeenCalled()
+    hook.unmount()
   })
 
-  it('handleContextMenu prevents default and opens context menu', () => {
-    const openContextMenu = vi.fn()
-    const isDraggingRef = { current: false }
-
-    const { result, unmount } = renderHook(() =>
-      useBlockTouchLongPress({ openContextMenu, isDraggingRef }),
-    )
-
-    const div = document.createElement('div')
-    document.body.append(div)
-
-    const preventDefault = vi.fn()
-    const mouseEvent = {
-      preventDefault,
-      clientX: 300,
-      clientY: 400,
-      target: div,
-    } as unknown as React.MouseEvent
-
-    act(() => {
-      result.current.handleContextMenu(mouseEvent)
-    })
-
-    expect(preventDefault).toHaveBeenCalledOnce()
-    expect(openContextMenu).toHaveBeenCalledWith(300, 400, undefined)
-
-    document.body.removeChild(div)
-    unmount()
+  it('a pre-hold jitter inside the threshold does not cancel', () => {
+    const hook = setup()
+    touchStart(hook, [{ x: 100, y: 100 }])
+    touchMove(hook, [{ x: 103, y: 102 }])
+    hold()
+    touchEnd(hook)
+    expect(hook.openContextMenu).toHaveBeenCalledOnce()
+    hook.unmount()
   })
 
-  it('handles touch event with no touches gracefully', () => {
-    const openContextMenu = vi.fn()
-    const isDraggingRef = { current: false }
-
-    const { result, unmount } = renderHook(() =>
-      useBlockTouchLongPress({ openContextMenu, isDraggingRef }),
-    )
-
-    act(() => {
-      result.current.handleTouchStart({
-        touches: [],
-      } as unknown as React.TouchEvent)
-    })
-
-    act(() => {
-      vi.advanceTimersByTime(LONG_PRESS_DELAY)
-    })
-
-    expect(openContextMenu).not.toHaveBeenCalled()
-
-    unmount()
+  // The drift measure is dnd-kit's own (either axis past the threshold, not
+  // the radius): a diagonal (4, 4) drift the sensor tolerates must not end
+  // the press, or the row would lift with no menu on release.
+  it('a (4, 4) drift the drag sensor tolerates does not cancel the press', () => {
+    const hook = setup()
+    touchStart(hook, [{ x: 100, y: 100 }])
+    touchMove(hook, [{ x: 104, y: 104 }])
+    hold()
+    expect(mockedHaptic).toHaveBeenCalledOnce()
+    touchEnd(hook)
+    expect(hook.openContextMenu).toHaveBeenCalledWith(100, 100, undefined)
+    hook.unmount()
   })
 
-  it('handles touch move with no prior start gracefully', () => {
-    const openContextMenu = vi.fn()
-    const isDraggingRef = { current: false }
+  // ── Inside the mounted editor the native long-press owns the gesture ──
+  // A stationary long-press on its text is word selection (and the touch
+  // route to the selection bubble); arming the hold there wiped the selection
+  // via removeAllRanges and popped the block menu over the text mid-edit.
+  describe('touches inside the mounted editor', () => {
+    it('never holds, ticks or opens for a touch inside a .ProseMirror contenteditable', () => {
+      const hook = setup()
+      const editorEl = document.createElement('div')
+      editorEl.classList.add('ProseMirror')
+      editorEl.setAttribute('contenteditable', 'true')
+      const word = document.createElement('span')
+      editorEl.append(word)
+      document.body.append(editorEl)
+      const removeAllRanges = vi.fn()
+      const getSelectionSpy = vi
+        .spyOn(window, 'getSelection')
+        .mockReturnValue({ removeAllRanges } as unknown as Selection)
 
-    const { result, unmount } = renderHook(() =>
-      useBlockTouchLongPress({ openContextMenu, isDraggingRef }),
-    )
+      touchStart(hook, [{ x: 100, y: 200 }], { target: word })
+      hold()
+      touchEnd(hook)
 
-    act(() => {
-      result.current.handleTouchMove({
-        touches: [{ clientX: 200, clientY: 200 }],
-      } as unknown as React.TouchEvent)
+      expect(mockedHaptic).not.toHaveBeenCalled()
+      expect(removeAllRanges).not.toHaveBeenCalled()
+      expect(hook.openContextMenu).not.toHaveBeenCalled()
+
+      getSelectionSpy.mockRestore()
+      editorEl.remove()
+      hook.unmount()
     })
 
-    // Should not throw
-    expect(openContextMenu).not.toHaveBeenCalled()
-
-    unmount()
-  })
-
-  it('clearLongPress can be called safely when no timer is active', () => {
-    const openContextMenu = vi.fn()
-    const isDraggingRef = { current: false }
-
-    const { result, unmount } = renderHook(() =>
-      useBlockTouchLongPress({ openContextMenu, isDraggingRef }),
-    )
-
-    // Should not throw
-    act(() => {
-      result.current.clearLongPress()
+    it('still opens the menu for a hold on a static (non-editable) block body', () => {
+      const hook = setup()
+      const staticBody = document.createElement('div')
+      document.body.append(staticBody)
+      touchStart(hook, [{ x: 10, y: 20 }], { target: staticBody })
+      hold()
+      touchEnd(hook)
+      expect(hook.openContextMenu).toHaveBeenCalledWith(10, 20, undefined)
+      staticBody.remove()
+      hook.unmount()
     })
 
-    unmount()
+    it('isInsideEditableText is the shared gate for the drag activator', () => {
+      const editorEl = document.createElement('div')
+      editorEl.setAttribute('contenteditable', 'true')
+      const inner = document.createElement('span')
+      editorEl.append(inner)
+      const outside = document.createElement('div')
+      expect(isInsideEditableText(inner)).toBe(true)
+      expect(isInsideEditableText(editorEl)).toBe(true)
+      expect(isInsideEditableText(outside)).toBe(false)
+      expect(isInsideEditableText(null)).toBe(false)
+    })
   })
 
-  it('handleContextMenu passes linkUrl when clicking on an .external-link element', () => {
-    const openContextMenu = vi.fn()
-    const isDraggingRef = { current: false }
+  // ── Multi-touch: two fingers are a scroll or a pinch, never a hold ──
+  describe('multi-touch', () => {
+    it('does not open the menu when a second finger lands during the press', () => {
+      const hook = setup()
+      touchStart(hook, [{ x: 100, y: 100 }])
+      touchStart(hook, [
+        { x: 100, y: 100 },
+        { x: 140, y: 100 },
+      ])
+      hold(LONG_PRESS_DELAY * 2)
+      touchEnd(hook)
+      expect(mockedHaptic).not.toHaveBeenCalled()
+      expect(hook.openContextMenu).not.toHaveBeenCalled()
+      hook.unmount()
+    })
 
-    const { result, unmount } = renderHook(() =>
-      useBlockTouchLongPress({ openContextMenu, isDraggingRef }),
-    )
+    it('a second touchstart cancels the first press’s timer instead of orphaning it', () => {
+      const hook = setup()
+      touchStart(hook, [{ x: 100, y: 100 }])
+      touchStart(hook, [
+        { x: 100, y: 100 },
+        { x: 140, y: 100 },
+      ])
+      touchMove(hook, [
+        { x: 100, y: 130 },
+        { x: 140, y: 130 },
+      ])
+      hold()
+      touchEnd(hook)
+      expect(hook.openContextMenu).not.toHaveBeenCalled()
+      hook.unmount()
+    })
+  })
 
-    // Create a DOM structure with an external link
+  it('ignores a touchstart with no touches and a move with no prior start', () => {
+    const hook = setup()
+    touchStart(hook, [])
+    touchMove(hook, [{ x: 200, y: 200 }])
+    hold()
+    touchEnd(hook)
+    expect(hook.openContextMenu).not.toHaveBeenCalled()
+    hook.unmount()
+  })
+
+  it('a hold recognised before unmount opens nothing afterwards', () => {
+    const hook = setup()
+    touchStart(hook, [{ x: 100, y: 200 }])
+    hook.unmount()
+    hold()
+    expect(mockedHaptic).not.toHaveBeenCalled()
+  })
+
+  // ── Links: the menu carries the pressed link's url ──────────────────
+
+  it('passes the pressed .external-link href to the menu on release', () => {
+    const hook = setup()
     const link = document.createElement('a')
     link.classList.add('external-link')
     link.setAttribute('href', 'https://example.com')
@@ -491,453 +369,122 @@ describe('useBlockTouchLongPress', () => {
     link.append(span)
     document.body.append(link)
 
-    const preventDefault = vi.fn()
-    const mouseEvent = {
-      preventDefault,
-      clientX: 300,
-      clientY: 400,
-      target: span,
-    } as unknown as React.MouseEvent
+    touchStart(hook, [{ x: 30, y: 40 }], { target: span })
+    hold()
+    touchEnd(hook)
+    expect(hook.openContextMenu).toHaveBeenCalledWith(30, 40, 'https://example.com')
 
-    act(() => {
-      result.current.handleContextMenu(mouseEvent)
-    })
-
-    expect(preventDefault).toHaveBeenCalledOnce()
-    expect(openContextMenu).toHaveBeenCalledWith(300, 400, 'https://example.com')
-
-    document.body.removeChild(link)
-    unmount()
+    link.remove()
+    hook.unmount()
   })
 
-  it('handleContextMenu passes undefined linkUrl when clicking on a non-link element', () => {
-    const openContextMenu = vi.fn()
-    const isDraggingRef = { current: false }
+  // ── Native contextmenu (right-click, Android long-press) ────────────
 
-    const { result, unmount } = renderHook(() =>
-      useBlockTouchLongPress({ openContextMenu, isDraggingRef }),
-    )
-
+  it('handleContextMenu prevents default and opens the menu at the pointer', () => {
+    const hook = setup()
     const div = document.createElement('div')
     document.body.append(div)
-
-    const preventDefault = vi.fn()
-    const mouseEvent = {
-      preventDefault,
-      clientX: 100,
-      clientY: 200,
-      target: div,
-    } as unknown as React.MouseEvent
-
-    act(() => {
-      result.current.handleContextMenu(mouseEvent)
-    })
-
-    expect(preventDefault).toHaveBeenCalledOnce()
-    expect(openContextMenu).toHaveBeenCalledWith(100, 200, undefined)
-
-    document.body.removeChild(div)
-    unmount()
-  })
-
-  it('handleContextMenu reads data-href when href is absent', () => {
-    const openContextMenu = vi.fn()
-    const isDraggingRef = { current: false }
-
-    const { result, unmount } = renderHook(() =>
-      useBlockTouchLongPress({ openContextMenu, isDraggingRef }),
-    )
-
-    const span = document.createElement('span')
-    span.classList.add('external-link')
-    span.setAttribute('data-href', 'https://fallback.com')
-    document.body.append(span)
-
-    const preventDefault = vi.fn()
-    const mouseEvent = {
-      preventDefault,
-      clientX: 50,
-      clientY: 60,
-      target: span,
-    } as unknown as React.MouseEvent
-
-    act(() => {
-      result.current.handleContextMenu(mouseEvent)
-    })
-
-    expect(openContextMenu).toHaveBeenCalledWith(50, 60, 'https://fallback.com')
-
-    document.body.removeChild(span)
-    unmount()
-  })
-
-  // The long-press timer must call preventDefault on the stored
-  // touchstart event so the native text-select / magnifier UI doesn't
-  // race with the custom context menu on Android / iOS.
-  it('calls preventDefault on the stored touchstart event when the long-press fires', () => {
-    const openContextMenu = vi.fn()
-    const isDraggingRef = { current: false }
-
-    const { result, unmount } = renderHook(() =>
-      useBlockTouchLongPress({ openContextMenu, isDraggingRef }),
-    )
-
-    const preventDefault = vi.fn()
-    const div = document.createElement('div')
-    document.body.append(div)
-
-    const touchEvent = {
-      touches: [{ clientX: 100, clientY: 200 }],
-      target: div,
-      preventDefault,
-    } as unknown as React.TouchEvent
-
-    act(() => {
-      result.current.handleTouchStart(touchEvent)
-    })
-
-    // Before the threshold: preventDefault must NOT be called — the user
-    // might still scroll / lift their finger without triggering the menu.
-    expect(preventDefault).not.toHaveBeenCalled()
-
-    act(() => {
-      vi.advanceTimersByTime(LONG_PRESS_DELAY)
-    })
-
-    expect(preventDefault).toHaveBeenCalledOnce()
-    expect(openContextMenu).toHaveBeenCalledWith(100, 200, undefined)
-
-    document.body.removeChild(div)
-    unmount()
-  })
-
-  it('does NOT call preventDefault when the touch ends before the threshold', () => {
-    const openContextMenu = vi.fn()
-    const isDraggingRef = { current: false }
-
-    const { result, unmount } = renderHook(() =>
-      useBlockTouchLongPress({ openContextMenu, isDraggingRef }),
-    )
-
-    const preventDefault = vi.fn()
-    const touchEvent = {
-      touches: [{ clientX: 100, clientY: 200 }],
-      target: document.createElement('div'),
-      preventDefault,
-    } as unknown as React.TouchEvent
-
-    act(() => {
-      result.current.handleTouchStart(touchEvent)
-    })
-    act(() => {
-      vi.advanceTimersByTime(LONG_PRESS_DELAY / 2)
-    })
-    act(() => {
-      result.current.handleTouchEnd()
-    })
-    act(() => {
-      vi.advanceTimersByTime(LONG_PRESS_DELAY)
-    })
-
-    expect(preventDefault).not.toHaveBeenCalled()
-    expect(openContextMenu).not.toHaveBeenCalled()
-
-    unmount()
-  })
-
-  it('does NOT call preventDefault when the drag flag is set', () => {
-    const openContextMenu = vi.fn()
-    const isDraggingRef = { current: false }
-
-    const { result, unmount } = renderHook(() =>
-      useBlockTouchLongPress({ openContextMenu, isDraggingRef }),
-    )
-
     const preventDefault = vi.fn()
     act(() => {
-      result.current.handleTouchStart({
-        touches: [{ clientX: 100, clientY: 200 }],
-        preventDefault,
-      } as unknown as React.TouchEvent)
-    })
-
-    isDraggingRef.current = true
-
-    act(() => {
-      vi.advanceTimersByTime(LONG_PRESS_DELAY)
-    })
-
-    expect(preventDefault).not.toHaveBeenCalled()
-    expect(openContextMenu).not.toHaveBeenCalled()
-
-    unmount()
-  })
-
-  // ── Finding 36: long-press inside the mounted editor must NOT be hijacked ──
-  // The roving TipTap editor is the only contenteditable in the tree. A
-  // stationary long-press on its text is the native word-select gesture (and
-  // the touch route to the selection bubble menu); arming the 400ms timer there
-  // wiped the selection via removeAllRanges and popped the block menu over the
-  // text mid-editing.
-  describe('touches inside the mounted editor (finding 36)', () => {
-    it('does not open the context menu for a long-press inside a .ProseMirror contenteditable', () => {
-      const openContextMenu = vi.fn()
-      const isDraggingRef = { current: false }
-
-      const { result, unmount } = renderHook(() =>
-        useBlockTouchLongPress({ openContextMenu, isDraggingRef }),
-      )
-
-      // The mounted editor: <div class="ProseMirror" contenteditable="true">…
-      const editorEl = document.createElement('div')
-      editorEl.classList.add('ProseMirror')
-      editorEl.setAttribute('contenteditable', 'true')
-      const word = document.createElement('span')
-      editorEl.append(word)
-      document.body.append(editorEl)
-
-      // removeAllRanges spy — the hijack's destructive side effect.
-      const removeAllRanges = vi.fn()
-      const getSelectionSpy = vi
-        .spyOn(window, 'getSelection')
-        .mockReturnValue({ removeAllRanges } as unknown as Selection)
-
-      act(() => {
-        result.current.handleTouchStart({
-          touches: [{ clientX: 100, clientY: 200 }],
-          target: word,
-        } as unknown as React.TouchEvent)
-      })
-
-      act(() => {
-        vi.advanceTimersByTime(LONG_PRESS_DELAY)
-      })
-
-      expect(openContextMenu).not.toHaveBeenCalled()
-      expect(removeAllRanges).not.toHaveBeenCalled()
-
-      getSelectionSpy.mockRestore()
-      document.body.removeChild(editorEl)
-      unmount()
-    })
-
-    it('still opens the context menu for a long-press on a static (non-editable) block body', () => {
-      const openContextMenu = vi.fn()
-      const isDraggingRef = { current: false }
-
-      const { result, unmount } = renderHook(() =>
-        useBlockTouchLongPress({ openContextMenu, isDraggingRef }),
-      )
-
-      const staticBody = document.createElement('div')
-      document.body.append(staticBody)
-
-      act(() => {
-        result.current.handleTouchStart({
-          touches: [{ clientX: 10, clientY: 20 }],
-          target: staticBody,
-        } as unknown as React.TouchEvent)
-      })
-      act(() => {
-        vi.advanceTimersByTime(LONG_PRESS_DELAY)
-      })
-
-      expect(openContextMenu).toHaveBeenCalledOnce()
-
-      document.body.removeChild(staticBody)
-      unmount()
-    })
-  })
-
-  // ── Finding 38: a second touchstart before touchend must not orphan the
-  // pending timer. Two fingers landing on the same row is a scroll/pinch,
-  // never a context-menu press.
-  describe('multi-touch (finding 38)', () => {
-    it('does not open the menu when a two-finger scroll follows two touchstarts', () => {
-      const openContextMenu = vi.fn()
-      const isDraggingRef = { current: false }
-
-      const { result, unmount } = renderHook(() =>
-        useBlockTouchLongPress({ openContextMenu, isDraggingRef }),
-      )
-
-      // Finger 1 lands, arming timer T1.
-      act(() => {
-        result.current.handleTouchStart({
-          touches: [{ clientX: 100, clientY: 100 }],
-        } as unknown as React.TouchEvent)
-      })
-      // Finger 2 lands before finger 1 lifts — a second touchstart on the same
-      // row. Pre-fix this overwrote the timer ref WITHOUT cancelling T1.
-      act(() => {
-        result.current.handleTouchStart({
-          touches: [
-            { clientX: 100, clientY: 100 },
-            { clientX: 140, clientY: 100 },
-          ],
-        } as unknown as React.TouchEvent)
-      })
-      // The two-finger scroll moves past the cancel threshold.
-      act(() => {
-        result.current.handleTouchMove({
-          touches: [
-            { clientX: 100, clientY: 130 },
-            { clientX: 140, clientY: 130 },
-          ],
-        } as unknown as React.TouchEvent)
-      })
-
-      act(() => {
-        vi.advanceTimersByTime(LONG_PRESS_DELAY)
-      })
-
-      // Pre-fix: orphaned T1 fired here and opened the menu mid-scroll.
-      expect(openContextMenu).not.toHaveBeenCalled()
-
-      unmount()
-    })
-
-    it('does not open the menu (even once) for two stationary fingers', () => {
-      const openContextMenu = vi.fn()
-      const isDraggingRef = { current: false }
-
-      const { result, unmount } = renderHook(() =>
-        useBlockTouchLongPress({ openContextMenu, isDraggingRef }),
-      )
-
-      const div = document.createElement('div')
-      document.body.append(div)
-
-      act(() => {
-        result.current.handleTouchStart({
-          touches: [{ clientX: 100, clientY: 100 }],
-          target: div,
-        } as unknown as React.TouchEvent)
-      })
-      act(() => {
-        result.current.handleTouchStart({
-          touches: [
-            { clientX: 100, clientY: 100 },
-            { clientX: 140, clientY: 100 },
-          ],
-          target: div,
-        } as unknown as React.TouchEvent)
-      })
-
-      act(() => {
-        vi.advanceTimersByTime(LONG_PRESS_DELAY * 2)
-      })
-
-      // Pre-fix BOTH timers fired (T1 orphaned, T2 pending) — the menu opened
-      // twice. A multi-touch gesture must never open it at all.
-      expect(openContextMenu).not.toHaveBeenCalled()
-
-      document.body.removeChild(div)
-      unmount()
-    })
-  })
-
-  it('silently swallows preventDefault failures (passive listener safety)', () => {
-    const openContextMenu = vi.fn()
-    const isDraggingRef = { current: false }
-
-    const { result, unmount } = renderHook(() =>
-      useBlockTouchLongPress({ openContextMenu, isDraggingRef }),
-    )
-
-    const preventDefault = vi.fn(() => {
-      throw new Error('passive listener — preventDefault not allowed')
-    })
-    const div = document.createElement('div')
-    document.body.append(div)
-
-    act(() => {
-      result.current.handleTouchStart({
-        touches: [{ clientX: 100, clientY: 200 }],
-        target: div,
-        preventDefault,
-      } as unknown as React.TouchEvent)
-    })
-
-    // Must not throw — the hook swallows preventDefault errors.
-    expect(() => {
-      act(() => {
-        vi.advanceTimersByTime(LONG_PRESS_DELAY)
-      })
-    }).not.toThrow()
-
-    expect(openContextMenu).toHaveBeenCalledOnce()
-
-    document.body.removeChild(div)
-    unmount()
-  })
-  // BUG: dragging a block also opened the long-press menu. Android WebView
-  // fires a NATIVE `contextmenu` at ~500 ms on a held element; by then the
-  // drag activated (250 ms) and `clearLongPress()` killed our own timer, but
-  // the native event rides a separate path and used to open the menu ungated.
-  it('handleContextMenu does NOT open the menu while a drag is active', () => {
-    const openContextMenu = vi.fn()
-    const isDraggingRef = { current: true }
-
-    const { result, unmount } = renderHook(() =>
-      useBlockTouchLongPress({ openContextMenu, isDraggingRef }),
-    )
-
-    const div = document.createElement('div')
-    document.body.append(div)
-
-    const preventDefault = vi.fn()
-    act(() => {
-      result.current.handleContextMenu({
+      hook.result.current.handleContextMenu({
         preventDefault,
         clientX: 300,
         clientY: 400,
         target: div,
       } as unknown as React.MouseEvent)
     })
-
-    // The browser's own menu is still suppressed…
     expect(preventDefault).toHaveBeenCalledOnce()
-    // …but ours must not open behind the lift.
-    expect(openContextMenu).not.toHaveBeenCalled()
-
-    document.body.removeChild(div)
-    unmount()
+    expect(hook.openContextMenu).toHaveBeenCalledWith(300, 400, undefined)
+    div.remove()
+    hook.unmount()
   })
 
-  it('handleContextMenu opens again once the drag has ended', () => {
-    const openContextMenu = vi.fn()
-    const isDraggingRef = { current: true }
+  it('handleContextMenu reads data-href when href is absent', () => {
+    const hook = setup()
+    const span = document.createElement('span')
+    span.classList.add('external-link')
+    span.setAttribute('data-href', 'https://fallback.com')
+    document.body.append(span)
+    act(() => {
+      hook.result.current.handleContextMenu({
+        preventDefault: vi.fn(),
+        clientX: 50,
+        clientY: 60,
+        target: span,
+      } as unknown as React.MouseEvent)
+    })
+    expect(hook.openContextMenu).toHaveBeenCalledWith(50, 60, 'https://fallback.com')
+    span.remove()
+    hook.unmount()
+  })
 
-    const { result, unmount } = renderHook(() =>
-      useBlockTouchLongPress({ openContextMenu, isDraggingRef }),
-    )
-
+  // Android WebView fires a NATIVE `contextmenu` ~500 ms into a hold, by which
+  // time the drag has activated (400 ms); it must not also pop the menu.
+  it('handleContextMenu suppresses the browser menu but opens nothing while a drag is active', () => {
+    const hook = setup(true)
     const div = document.createElement('div')
     document.body.append(div)
-
+    const preventDefault = vi.fn()
     act(() => {
-      result.current.handleContextMenu({
+      hook.result.current.handleContextMenu({
+        preventDefault,
+        clientX: 300,
+        clientY: 400,
+        target: div,
+      } as unknown as React.MouseEvent)
+    })
+    expect(preventDefault).toHaveBeenCalledOnce()
+    expect(hook.openContextMenu).not.toHaveBeenCalled()
+
+    hook.isDraggingRef.current = false
+    act(() => {
+      hook.result.current.handleContextMenu({
         preventDefault: vi.fn(),
         clientX: 10,
         clientY: 20,
         target: div,
       } as unknown as React.MouseEvent)
     })
-    expect(openContextMenu).not.toHaveBeenCalled()
+    expect(hook.openContextMenu).toHaveBeenCalledWith(10, 20, undefined)
+    div.remove()
+    hook.unmount()
+  })
 
-    isDraggingRef.current = false
-    act(() => {
-      result.current.handleContextMenu({
-        preventDefault: vi.fn(),
-        clientX: 10,
-        clientY: 20,
-        target: div,
-      } as unknown as React.MouseEvent)
-    })
-    expect(openContextMenu).toHaveBeenCalledWith(10, 20, undefined)
+  // Android's native `contextmenu` fires at its own long-press timeout, which
+  // can land before OR after the 400 ms hold; either way the finger is still
+  // down, so the release must stay the one thing that opens the menu.
+  it('handleContextMenu opens nothing while a touch press is pending; the release opens it once', () => {
+    const hook = setup()
+    const div = document.createElement('div')
+    document.body.append(div)
+    const contextMenuAt = (ms: number) => {
+      hold(ms)
+      const preventDefault = vi.fn()
+      act(() => {
+        hook.result.current.handleContextMenu({
+          preventDefault,
+          clientX: 300,
+          clientY: 400,
+          target: div,
+        } as unknown as React.MouseEvent)
+      })
+      expect(preventDefault).toHaveBeenCalledOnce()
+    }
 
-    document.body.removeChild(div)
-    unmount()
+    touchStart(hook, [{ x: 100, y: 200 }], { target: div })
+    contextMenuAt(LONG_PRESS_DELAY - 10)
+    contextMenuAt(10)
+    expect(hook.openContextMenu).not.toHaveBeenCalled()
+
+    touchEnd(hook)
+    expect(hook.openContextMenu).toHaveBeenCalledOnce()
+    expect(hook.openContextMenu).toHaveBeenCalledWith(100, 200, undefined)
+
+    // The press is over: a later right-click opens as usual.
+    contextMenuAt(0)
+    expect(hook.openContextMenu).toHaveBeenCalledTimes(2)
+    expect(hook.openContextMenu).toHaveBeenLastCalledWith(300, 400, undefined)
+    div.remove()
+    hook.unmount()
   })
 })

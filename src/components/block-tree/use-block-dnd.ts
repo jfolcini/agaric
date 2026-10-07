@@ -15,12 +15,18 @@ import {
   type DragStartEvent,
   KeyboardSensor,
   PointerSensor,
+  TouchSensor,
   useSensor,
   useSensors,
 } from '@dnd-kit/core'
 import { sortableKeyboardCoordinates } from '@dnd-kit/sortable'
 import { type RefObject, useCallback, useLayoutEffect, useMemo, useRef, useState } from 'react'
 
+import {
+  exceedsThreshold,
+  LONG_PRESS_DELAY,
+  LONG_PRESS_MOVE_THRESHOLD,
+} from '@/components/block-tree/use-block-touch-long-press'
 import { INDENT_WIDTH } from '@/components/editor/SortableBlock'
 import { useAutoScrollOnDrag } from '@/hooks/useAutoScrollOnDrag'
 import { useIsTouch } from '@/hooks/useIsTouch'
@@ -37,26 +43,6 @@ import {
   simulateProjection,
 } from '@/lib/tree-utils'
 import type { MountedBlocks } from '@/lib/zoom-scope'
-
-/**
- * Press-and-hold delay (ms) before a COARSE-pointer drag activates.
- * Deliberately shorter than `LONG_PRESS_DELAY` (400 ms) so the drag wins the
- * arbitration on the handle — see the precedence block in
- * `use-block-touch-long-press.ts`.
- */
-export const TOUCH_DRAG_ACTIVATION_DELAY = 250
-
-/**
- * Finger drift (px) tolerated during `TOUCH_DRAG_ACTIVATION_DELAY` before the
- * PointerSensor CANCELS the pending drag.
- *
- * MUST stay equal to `LONG_PRESS_MOVE_THRESHOLD` (`use-block-touch-long-press.ts`).
- * When the long-press threshold was the looser 10 px, a 6–9 px drift in the
- * first 250 ms cancelled the drag (tolerance exceeded) yet SURVIVED the
- * long-press move check — so the context menu opened on a gesture the user had
- * performed as a drag. A drift-guard unit test asserts the two agree.
- */
-export const TOUCH_DRAG_TOLERANCE = 5
 
 /** Pointer travel (px) that activates a FINE-pointer drag (so a click still clicks). */
 export const MOUSE_DRAG_ACTIVATION_DISTANCE = 8
@@ -114,6 +100,11 @@ function resolveIndentWidth(): number {
   const raw = getComputedStyle(document.documentElement).getPropertyValue('--indent-width').trim()
   const parsed = Number.parseFloat(raw)
   return Number.isFinite(parsed) && parsed > 0 ? parsed : INDENT_WIDTH
+}
+
+/** A touch hold released within the drift the long-press hook tolerates. */
+function isStillTouchDrop({ activatorEvent, delta }: DragEndEvent): boolean {
+  return activatorEvent.type === 'touchstart' && !exceedsThreshold(delta.x, delta.y)
 }
 
 export interface UseBlockDnDReturn {
@@ -299,19 +290,22 @@ export function useBlockDnD({
   }, [activeId, overId, visibleItems])
 
   // ── DnD sensors ────────────────────────────────────────────────────
-  // #926 — discriminate the drag-activation by POINTER COARSENESS, not viewport
-  // width. The gutter/drag-handle already renders on `useIsTouch()` (pointer:
-  // coarse); using `useIsMobile()` (width < 768) here disagreed with it — a
-  // narrow desktop window got the 250ms press-and-hold sensor with a mouse
-  // (laggy), and a large touch tablet (width ≥ 768) got the 8px mouse sensor
-  // (drag fights scroll). Aligning to pointer:coarse fixes both edges.
-  // Coarse pointer → press-and-hold (250ms) so a drag doesn't fight scroll;
-  // fine pointer → 8px distance so a click still works.
+  // #926 — discriminated by POINTER COARSENESS (`useIsTouch`), the same signal
+  // the row's touch controls render on; viewport width disagreed with it on a
+  // narrow desktop window and on a large tablet.
+  //
+  // Coarse pointer: the whole row is the activator and a hold starts the drag,
+  // so it needs the TouchSensor. The PointerSensor only survives the browser's
+  // scroll takeover (`pointercancel`) under `touch-action: none`, which a row
+  // the page scrolls by cannot carry; the TouchSensor prevents `touchmove`
+  // itself once the hold has activated. Its delay and tolerance are the
+  // long-press hook's, so the hold, the menu and the drag are one gesture.
+  // Fine pointer: 8px of travel, so a click still clicks.
   const isTouch = useIsTouch()
   const sensors = useSensors(
-    useSensor(PointerSensor, {
+    useSensor(isTouch ? TouchSensor : PointerSensor, {
       activationConstraint: isTouch
-        ? { delay: TOUCH_DRAG_ACTIVATION_DELAY, tolerance: TOUCH_DRAG_TOLERANCE }
+        ? { delay: LONG_PRESS_DELAY, tolerance: LONG_PRESS_MOVE_THRESHOLD }
         : { distance: MOUSE_DRAG_ACTIVATION_DISTANCE },
     }),
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
@@ -378,10 +372,11 @@ export function useBlockDnD({
         return
       }
       // Capture before clearing: an over-self drop that moves nothing (below)
-      // restores this focus like the `!over` and Esc-cancel paths do. On touch
-      // the delay-only activation (250ms hold, zero movement) makes that path
-      // common — a slow chevron tap must not strand the editor blurred.
-      const preDragFocusedId = preDragFocusedIdRef.current
+      // restores this focus like the `!over` and Esc-cancel paths do. Not for a
+      // still touch hold-and-release: that gesture opens the block menu on
+      // `touchend` (`SortableBlock`), and refocusing the editor under it would
+      // pull focus out of the menu and pop the keyboard.
+      const preDragFocusedId = isStillTouchDrop(event) ? null : preDragFocusedIdRef.current
       preDragFocusedIdRef.current = null
 
       const blockId = active.id as string

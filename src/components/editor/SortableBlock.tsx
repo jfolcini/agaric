@@ -2,16 +2,21 @@
  * SortableBlock — drag-and-drop wrapper for blocks using @dnd-kit (p2-t9).
  *
  * Wraps EditableBlock with sortable behavior. Layout:
- * - Narrow gutter (68px): grip handle (hover-gated) + the multi-select checkbox
- *   (only while a selection is active), right-justified.
- * - Inline controls: collapse chevron (reserved slot) + task checkbox, leading
- *   the block text.
+ * - Desktop: a narrow control lane (grip handle, hover-gated; the multi-select
+ *   checkbox while a selection is active; the collapse chevron), then the task
+ *   checkbox, then the text.
+ * - Touch: no lane. The task checkbox, then the text; a parent's collapse
+ *   chevron sits at the right end of the row on the first text line. The row
+ *   itself takes the one touch gesture: hold, then drag to move or release to
+ *   open the menu (#5332 item 10).
  * - Below-block metadata row: priority badge, due / scheduled chips, repeat
  *   indicator, property chips and the attachment badge, left-aligned under the
  *   text and always visible.
  *
- *   Gutter: [grip] | Inline: [chevron?] [checkbox] [content]
- *                                                   [metadata row]
+ *   Desktop: [grip] [chevron?] | [checkbox] [content]
+ *                                           [metadata row]
+ *   Touch:   [checkbox] [content] [chevron?]
+ *                       [metadata row]
  *
  * History, Delete, Zoom and the indent/dedent + move ops live in the
  * right-click / long-press context menu (touch-friendly), not the gutter.
@@ -29,7 +34,10 @@ import { useBlockActions } from '@/components/block-tree/use-block-actions'
 import { useBlockContextMenu } from '@/components/block-tree/use-block-context-menu'
 import { useBlockResolvers } from '@/components/block-tree/use-block-resolvers'
 import { useBlockSwipeActions } from '@/components/block-tree/use-block-swipe-actions'
-import { useBlockTouchLongPress } from '@/components/block-tree/use-block-touch-long-press'
+import {
+  isInsideEditableText,
+  useBlockTouchLongPress,
+} from '@/components/block-tree/use-block-touch-long-press'
 import { BlockContextMenu } from '@/components/editor/BlockContextMenu'
 import { BlockGutterControls } from '@/components/editor/BlockGutterControls'
 import {
@@ -309,7 +317,9 @@ function SortableBlockBody(props: SortableBlockBodyProps): React.ReactElement {
   return (
     <div
       className={cn(
-        'flex items-stretch gap-1 w-full max-sm:items-start max-sm:flex-wrap max-sm:gap-x-1 max-sm:gap-y-1.5 min-w-0',
+        // `items-start` + the controls' `min-h-8` (one text line box: `py-1` +
+        // 24px line) keep the leading controls on the FIRST text line (#5332).
+        'flex items-start gap-1 w-full max-sm:flex-wrap max-sm:gap-x-1 max-sm:gap-y-1.5 min-w-0',
         // #1347: token-driven transition (respects prefers-reduced-motion).
         isSliding && 'swipe-content-sliding',
       )}
@@ -326,47 +336,39 @@ function SortableBlockBody(props: SortableBlockBodyProps): React.ReactElement {
         />
       )}
 
-      {/* ── Leading control lane — drag handle (desktop) + collapse
-            chevron / drag bullet (touch) ──────────────────────────── */}
-      {/* #1968: one tight, right-aligned lane replaces the old fixed 68px
-            gutter + reserved chevron placeholder. It reserves exactly TWO
-            control slots on desktop (drag handle + chevron) and ONE 44px
-            touch-target slot on touch (the chevron — or a leaf bullet —
-            which IS the drag activator, since the desktop handle is gone on
-            phones). `justify-end` keeps the glyphs hugging the text: on a
-            childless desktop block the hover-revealed drag handle simply
-            fills the text-adjacent slot, so sibling text stays aligned with
-            no empty gap and no placeholder. */}
-      <div
-        className={cn(
-          'block-control-lane relative z-10 flex flex-shrink-0 items-center justify-end gap-0.5',
-          isTouchDevice ? 'min-w-11' : 'min-w-12',
-        )}
-      >
-        <BlockGutterControls
-          blockId={blockId}
-          dragAttributes={attributes}
-          dragListeners={listeners}
-          isSelected={isSelected}
-          onSelect={onSelect}
-          // #1094: the gutter keeps its deliberate 500ms hover delay (longer
-          // than the 300ms app baseline) so tips don't flicker as the
-          // pointer crosses rows. The per-surface TooltipProvider that set
-          // this is gone; the override now rides on each gutter Tooltip.
-          tooltipDelayDuration={500}
-        />
-        <BlockCollapseControl
-          blockId={blockId}
-          hasChildren={hasChildren}
-          isCollapsed={isCollapsed}
-          isTouch={isTouchDevice}
-          onToggleCollapse={onToggleCollapse}
-          // On touch the chevron (or leaf bullet) is the drag activator; on
-          // desktop the handle above stays the activator, so leave these unset.
-          dragAttributes={isTouchDevice ? attributes : undefined}
-          dragListeners={isTouchDevice ? listeners : undefined}
-        />
-      </div>
+      {/* ── Leading control lane (desktop) — drag handle + collapse chevron ── */}
+      {/* #1968: one tight, right-aligned lane reserving two control slots
+            (drag handle + chevron). `justify-end` keeps the glyphs hugging the
+            text: on a childless block the hover-revealed drag handle fills the
+            text-adjacent slot, so sibling text stays aligned with no gap.
+            Touch reserves nothing: the row is the drag activator and the
+            chevron sits after the text, so only the multi-select checkbox
+            renders here, and only while a selection is active. */}
+      {isTouchDevice ? (
+        <BlockGutterControls blockId={blockId} isSelected={isSelected} onSelect={onSelect} />
+      ) : (
+        <div className="block-control-lane relative z-10 flex flex-shrink-0 items-center justify-end gap-0.5 min-h-8 min-w-12">
+          <BlockGutterControls
+            blockId={blockId}
+            dragAttributes={attributes}
+            dragListeners={listeners}
+            isSelected={isSelected}
+            onSelect={onSelect}
+            // #1094: the gutter keeps its deliberate 500ms hover delay (longer
+            // than the 300ms app baseline) so tips don't flicker as the
+            // pointer crosses rows. The per-surface TooltipProvider that set
+            // this is gone; the override now rides on each gutter Tooltip.
+            tooltipDelayDuration={500}
+          />
+          <BlockCollapseControl
+            blockId={blockId}
+            hasChildren={hasChildren}
+            isCollapsed={isCollapsed}
+            isTouch={false}
+            onToggleCollapse={onToggleCollapse}
+          />
+        </div>
+      )}
 
       {/* ── Inline controls — task checkbox, leading the block text ── */}
       <BlockInlineControls blockId={blockId} todoState={todoState} onToggleTodo={onToggleTodo} />
@@ -445,6 +447,17 @@ function SortableBlockBody(props: SortableBlockBodyProps): React.ReactElement {
           onEditKey={onEditKey}
         />
       </div>
+
+      {/* ── Collapse chevron (touch) — right end of the row, first text line ── */}
+      {isTouchDevice && (
+        <BlockCollapseControl
+          blockId={blockId}
+          hasChildren={hasChildren}
+          isCollapsed={isCollapsed}
+          isTouch
+          onToggleCollapse={onToggleCollapse}
+        />
+      )}
 
       {/* ── Collapsible attachment list ────────────────────────────── */}
       {showAttachments && attachmentCount > 0 && (
@@ -667,7 +680,7 @@ function SortableBlockInner({
     [openContextMenu, swipeReset],
   )
 
-  const { handleTouchStart, handleTouchEnd, handleTouchMove, handleContextMenu, clearLongPress } =
+  const { handleTouchStart, handleTouchEnd, handleTouchMove, handleContextMenu } =
     useBlockTouchLongPress({ openContextMenu: openContextMenuClaimingGesture, isDraggingRef })
 
   const isTouchDevice = useIsTouch()
@@ -681,13 +694,13 @@ function SortableBlockInner({
   // DailyView, the page editor, StreamView, MonthlyView are unaffected).
   // Native drag is desktop-only ("Drag-and-drop is intentionally
   // pointer-only", RescheduleDropZone.tsx): touch already has its own
-  // gesture vocabulary here (swipe-to-delete/indent/outdent, long-press
-  // context menu, dnd-kit reorder via the collapse chevron), so gating this
-  // off on `isTouchDevice` avoids adding a THIRD gesture system to that mix.
-  // dnd-kit's own pointer-based reorder drag is unaffected: its listeners
-  // are scoped to the grip handle button only (`BlockGutterControls`), which
-  // explicitly opts itself OUT of native drag (`draggable={false}`) so the
-  // two systems never race on the same element.
+  // gesture vocabulary here (swipe-to-delete/indent/outdent, hold-then-drag
+  // or hold-then-release for the menu), so gating this off on
+  // `isTouchDevice` avoids adding a THIRD gesture system to that mix.
+  // dnd-kit's desktop reorder drag is unaffected: its listeners are scoped
+  // to the grip handle button only (`BlockGutterControls`), which explicitly
+  // opts itself OUT of native drag (`draggable={false}`) so the two systems
+  // never race on the same element.
   // #2825 — reschedule-by-drag sets a `due_date`, which is only meaningful on
   // a task block. Require `todoState` (non-null/undefined) so plain text /
   // heading rows stay reorder-only and can't be dragged into acquiring a due
@@ -707,7 +720,6 @@ function SortableBlockInner({
   useEffect(() => {
     isDraggingRef.current = isDragging
     if (isDragging) {
-      clearLongPress()
       // Finding 33 — the dnd drag claims the in-progress touch gesture. The
       // touch stream keeps targeting this row for the whole drag, so without
       // the claim the swipe recognizer armed on the drag's horizontal moves
@@ -715,7 +727,7 @@ function SortableBlockInner({
       touchGestureClaimedRef.current = true
       swipeReset()
     }
-  }, [isDragging, clearLongPress, swipeReset])
+  }, [isDragging, swipeReset])
 
   const style: React.CSSProperties = {
     transform: CSS.Transform.toString(transform),
@@ -776,9 +788,18 @@ function SortableBlockInner({
         }
         handleTouchStart(e)
         swipeHandlers.onTouchStart(e)
+        // The row is the touch drag activator (dnd-kit TouchSensor: hold, then
+        // move), sharing the long-press hook's delay and tolerance — one hold,
+        // then the finger decides. Only the activator is wired, never dnd-kit's
+        // `attributes` or keyboard listener: a keydown bubbling up from the
+        // editor must not start a keyboard drag. Inside the mounted editor a
+        // hold is the native text selection, so the drag stays out of it too.
+        if (isTouchDevice && !isInsideEditableText(e.target)) {
+          listeners?.['onTouchStart']?.(e)
+        }
       }}
-      onTouchEnd={() => {
-        handleTouchEnd()
+      onTouchEnd={(e) => {
+        handleTouchEnd(e)
         // Findings 33/35 — a drag or fired long-press claimed this touch: its
         // release must not dispatch the swipe bands (indent/outdent/delete).
         if (!touchGestureClaimedRef.current) swipeHandlers.onTouchEnd()
