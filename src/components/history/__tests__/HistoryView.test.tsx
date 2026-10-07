@@ -45,6 +45,8 @@ import {
 } from '@/lib/graph-structure-events'
 import { t } from '@/lib/i18n'
 import { logger } from '@/lib/logger'
+import { propertyKeysQueryKey } from '@/lib/property-keys-cache'
+import { queryClient } from '@/lib/query-client'
 import { useSpaceStore } from '@/stores/space'
 
 // Mock CompactionCard so it doesn't make extra invoke calls in HistoryView tests
@@ -949,6 +951,32 @@ describe('HistoryView', () => {
 
     await waitFor(() => {
       expect(getGraphStructureKey()).toBe(1)
+    })
+  })
+
+  // A reverted `set_property` can add or remove a key, and fires no property event.
+  it('marks the property key and value lists stale after a successful revert (#5296)', async () => {
+    const user = userEvent.setup()
+    const page1 = {
+      items: [makeHistoryEntry(1, 'edit_block', { to_text: 'status:: active' }, 1736942400000)],
+      next_cursor: null,
+      has_more: false,
+      total_count: null,
+    }
+    stubRevertRun(page1, () => [])
+    const keys = propertyKeysQueryKey('SPACE_TEST')
+    queryClient.setQueryData(keys, ['status'])
+
+    render(<HistoryView />)
+    await screen.findByText('status:: active')
+
+    const items = screen.getAllByTestId(/^history-item-/)
+    await user.click(items[0] as HTMLElement)
+    await user.click(screen.getByRole('button', { name: /Revert selected/ }))
+    await user.click(screen.getByRole('button', { name: /^Revert$/ }))
+
+    await waitFor(() => {
+      expect(queryClient.getQueryState(keys)?.isInvalidated).toBe(true)
     })
   })
 

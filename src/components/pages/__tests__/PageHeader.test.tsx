@@ -28,6 +28,8 @@ import type { AppError } from '@/lib/app-error'
 import { writeText } from '@/lib/clipboard'
 import { t } from '@/lib/i18n'
 import { type NameChange, subscribeToNameChanges } from '@/lib/name-change-bus'
+import { propertyKeysQueryKey } from '@/lib/property-keys-cache'
+import { queryClient } from '@/lib/query-client'
 import { useNavigationStore } from '@/stores/navigation'
 import { createPageBlockStore, PageBlockContext, type PageBlockState } from '@/stores/page-blocks'
 import { useResolveStore } from '@/stores/resolve'
@@ -991,8 +993,10 @@ describe('PageHeader page-level undo/redo buttons', () => {
     expect(redoBtn).toBeInTheDocument()
   })
 
-  it('undo button issues one undo_page_group IPC (#2190)', async () => {
+  it('undo button issues one undo_page_group IPC (#2190) and marks the property lists stale (#5296)', async () => {
     const user = userEvent.setup()
+    const keys = propertyKeysQueryKey('SPACE_TEST')
+    queryClient.setQueryData(keys, ['status'])
 
     // Set up invoke mock so undo_page_group returns a one-op group
     mockedInvoke.mockImplementation(async (cmd: string) => {
@@ -1035,6 +1039,9 @@ describe('PageHeader page-level undo/redo buttons', () => {
         depth: 0,
         windowMs: expect.any(Number),
       })
+    })
+    await waitFor(() => {
+      expect(queryClient.getQueryState(keys)?.isInvalidated).toBe(true)
     })
   })
 })

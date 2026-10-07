@@ -30,6 +30,7 @@ import { logger } from '@/lib/logger'
 import { invalidateNameCaches } from '@/lib/name-change-bus'
 import { notify } from '@/lib/notify'
 import { isPairingWindowRejection } from '@/lib/pairing-rejections'
+import { invalidatePropertyCaches } from '@/lib/property-caches'
 import { forEachLivePageStoreGroup } from '@/stores/page-blocks'
 import { renamePage } from '@/stores/page-rename'
 import { selectRecentPagesForSpace, useRecentPagesStore } from '@/stores/recent-pages'
@@ -193,6 +194,7 @@ export function reloadChangedPageStores(changedPageIds: string[] | undefined): v
   // #5256 — and task state: a peer's DONE or an MCP `add_tag` fires no
   // `block:properties-changed` here, which is all the task panels refetch on.
   recordBlockPropertyChange()
+  invalidatePropertyCaches()
 
   // #5258 — and pages themselves: the Pages list, and a journal day's page.
   invalidatePageBrowserData()

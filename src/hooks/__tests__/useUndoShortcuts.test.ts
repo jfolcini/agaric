@@ -112,6 +112,8 @@ import { toast } from 'sonner'
 
 import { announce } from '@/lib/announcer'
 import { type NameChange, subscribeToNameChanges } from '@/lib/name-change-bus'
+import { propertyKeysQueryKey } from '@/lib/property-keys-cache'
+import { queryClient } from '@/lib/query-client'
 import { useBlockStore } from '@/stores/blocks'
 import { useNavigationStore } from '@/stores/navigation'
 import { keyFor, useResolveStore } from '@/stores/resolve'
@@ -923,6 +925,23 @@ describe('refresh after undo/redo', () => {
     })
 
     unsubscribe()
+    unmount()
+  })
+
+  // An undone `set_property` can add or remove a key, and fires no property event.
+  it('marks the property key and value lists stale after an undo (#5296)', async () => {
+    const keys = propertyKeysQueryKey('SPACE_TEST')
+    queryClient.setQueryData(keys, ['status'])
+    mockUndo.mockResolvedValueOnce({ type: 'undo' })
+
+    const { unmount } = renderHook(() => useUndoShortcuts())
+
+    fireEvent.keyDown(document, { key: 'z', ctrlKey: true })
+
+    await vi.waitFor(() => {
+      expect(queryClient.getQueryState(keys)?.isInvalidated).toBe(true)
+    })
+
     unmount()
   })
 

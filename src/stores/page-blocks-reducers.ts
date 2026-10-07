@@ -23,6 +23,7 @@ import { i18n } from '@/lib/i18n'
 import { logger } from '@/lib/logger'
 import { notifyPageAdded, notifyTagAdded } from '@/lib/name-change-bus'
 import { notify } from '@/lib/notify'
+import { invalidatePropertyCaches } from '@/lib/property-caches'
 import {
   buildIndexById,
   getDragDescendants,
@@ -1234,6 +1235,7 @@ export function createReducers({
       )
       notifyUndoNewAction(rootParentId, resp.op_refs)
       announceCreatedNames(resp.names_created, spaceId)
+      invalidatePropertyCaches()
       await get().load()
       return resp
     },

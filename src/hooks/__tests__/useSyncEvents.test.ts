@@ -9,6 +9,7 @@ import { mapBackendState, useSyncEvents } from '@/hooks/useSyncEvents'
 import { getBlockPropertyInvalidationKey } from '@/lib/block-property-events'
 import type { NameChange } from '@/lib/name-change-bus'
 import { subscribeToNameChanges } from '@/lib/name-change-bus'
+import { propertyKeysQueryKey } from '@/lib/property-keys-cache'
 import { queryClient } from '@/lib/query-client'
 import { useRecentPagesStore } from '@/stores/recent-pages'
 import type { Tab } from '@/stores/tabs'
@@ -1330,6 +1331,16 @@ describe('useSyncEvents', () => {
         expect(getBlockPropertyInvalidationKey()).toBe(before + 1)
       })
 
+      unmount()
+    })
+
+    it('marks the property key and value lists stale (#5296)', async () => {
+      const keys = propertyKeysQueryKey('SPACE_TEST')
+      queryClient.setQueryData(keys, ['status'])
+
+      const { unmount } = await fire(['PAGE_1'])
+
+      expect(queryClient.getQueryState(keys)?.isInvalidated).toBe(true)
       unmount()
     })
 

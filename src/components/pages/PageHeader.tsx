@@ -38,6 +38,7 @@ import { spliceEmojiIntoText } from '@/lib/insert-emoji-at-caret'
 import { matchesShortcutBinding } from '@/lib/keyboard-config'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
+import { invalidatePropertyCaches } from '@/lib/property-caches'
 import { ValidationCode } from '@/lib/search-query/validation-codes'
 import { useNavigationStore } from '@/stores/navigation'
 import { usePageBlockStoreApi } from '@/stores/page-blocks'
@@ -144,6 +145,7 @@ export function PageHeader({ pageId, title, onBack, onEditSource, kebabRef }: Pa
           if (result) {
             notify(t(successKey), { duration: 1500 })
             await pageStore.getState().load()
+            invalidatePropertyCaches()
             try {
               const pageBlock = unwrap(await commands.getBlock(pageId))
               if (pageBlock?.content) {
