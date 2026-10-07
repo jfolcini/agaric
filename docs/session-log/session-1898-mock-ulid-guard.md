@@ -1,7 +1,7 @@
-# Session 1898 — review note from #5319
+# Session 1898 — review notes from #5319 and #5321
 
-The reviewer approved #5319 (#5286) with one non-blocking note. It is carried
-here, per the sweep's follow-up rule.
+The reviewer approved #5319 (#5286) and #5321 (#5294) with one non-blocking
+note each. Both are carried here, per the sweep's follow-up rule.
 
 ## The note
 
@@ -12,6 +12,14 @@ here, per the sweep's follow-up rule.
   therefore got a timestamp in the mock and the sentinel on the backend.
 - `blockLastEditedAt` now applies the same guard: the length, and the
   backend's GLOB class as a regex.
+
+## The #5321 note
+
+- The note: graph filters saved under the bare `agaric:graph-filters` key are
+  no longer read once a space is active, so the old key stays in storage.
+- No change. The bare key is still the list used while no space is active,
+  so it is not dead data. A list saved there before #5321 was the cross-space
+  state that caused #5294, so not carrying it into a space is the intent.
 
 ## Verified
 
