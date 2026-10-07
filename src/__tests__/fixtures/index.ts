@@ -10,6 +10,7 @@ import type {
   HistoryEntry,
   PageHeading,
   PageWithMetadataRow,
+  PropertyRow,
   WithOps,
 } from '@/lib/bindings'
 import type { FlatBlock } from '@/lib/tree-utils'
@@ -96,6 +97,20 @@ export function makeBlockRow(overrides: Partial<BlockRow> & Pick<BlockRow, 'id'>
     due_date: null,
     scheduled_date: null,
     page_id: null,
+    ...overrides,
+  }
+}
+
+/** A property row; every value column is `null` unless given. */
+export function makePropertyRow(
+  overrides: Partial<PropertyRow> & Pick<PropertyRow, 'key'>,
+): PropertyRow {
+  return {
+    value_text: null,
+    value_num: null,
+    value_date: null,
+    value_ref: null,
+    value_bool: null,
     ...overrides,
   }
 }

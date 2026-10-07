@@ -41,7 +41,8 @@ vi.mock('@/lib/logger', () => ({
 vi.mock('@/editor/markdown-serializer', () => ({
   serialize: vi.fn(() => 'content'),
 }))
-vi.mock('@/lib/repeat-utils', () => ({
+vi.mock('@/lib/repeat-utils', async (importActual) => ({
+  ...(await importActual<typeof import('@/lib/repeat-utils')>()),
   formatRepeatLabel: vi.fn((v: string) => v),
 }))
 vi.mock('@/lib/template-utils', () => ({

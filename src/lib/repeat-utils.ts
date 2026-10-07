@@ -1,6 +1,8 @@
 import type { TFunction } from 'i18next'
 
-import { isAppError, validationCode } from '@/lib/app-error'
+import { isAppError, unwrap, validationCode } from '@/lib/app-error'
+import { commands } from '@/lib/bindings'
+import { logger } from '@/lib/logger'
 import { ValidationCode } from '@/lib/search-query/validation-codes'
 
 /**
@@ -18,6 +20,23 @@ import { ValidationCode } from '@/lib/search-query/validation-codes'
 export function invalidRepeatRuleMessage(err: unknown): string | null {
   if (validationCode(err) !== ValidationCode.InvalidRepeatRule) return null
   return isAppError(err) ? err.message : null
+}
+
+/**
+ * Reload the page after `blockId` moved to DONE, when it carries a `repeat` rule:
+ * `set_todo_state` creates the next occurrence as a sibling but reports only the
+ * completed block (#5285).
+ */
+export async function reloadIfRepeating(
+  blockId: string,
+  pageStore: { getState: () => { load: () => Promise<void> } },
+): Promise<void> {
+  try {
+    const repeat = unwrap(await commands.getProperty(blockId, 'repeat'))
+    if (repeat != null) await pageStore.getState().load()
+  } catch (err) {
+    logger.warn('repeat-utils', 'repeat lookup after DONE failed', { blockId }, err)
+  }
 }
 
 /**

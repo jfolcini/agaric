@@ -207,6 +207,8 @@ describe('useBlockFlush — checkbox markdown', () => {
         // Echo whatever cleaned text it was sent.
         return Promise.resolve({ ...block })
       }
+      // The repeat probe that follows a DONE (#5285); this task does not repeat.
+      if (cmd === 'get_property') return Promise.resolve(null)
       return strictInvokeFallback(cmd)
     })
 

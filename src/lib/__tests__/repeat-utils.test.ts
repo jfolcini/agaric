@@ -1,7 +1,11 @@
-import { describe, expect, it } from 'vitest'
+import { invoke } from '@tauri-apps/api/core'
+import { describe, expect, it, vi } from 'vitest'
 
+import { makePropertyRow } from '@/__tests__/fixtures'
+import { stubInvoke } from '@/__tests__/helpers/invoke'
 import { i18n } from '@/lib/i18n'
-import { formatRepeatLabel } from '@/lib/repeat-utils'
+import { logger } from '@/lib/logger'
+import { formatRepeatLabel, reloadIfRepeating } from '@/lib/repeat-utils'
 
 // Use the real i18n instance (initialized in test-setup.ts) so the test
 // exercises actual translated strings from the `en` resource bundle.
@@ -78,5 +82,47 @@ describe('formatRepeatLabel', () => {
     } finally {
       i18n.addResource('en', 'translation', 'repeat.daily', original)
     }
+  })
+})
+
+describe('reloadIfRepeating (#5285)', () => {
+  it.each([
+    [
+      'reloads the page when the block repeats',
+      makePropertyRow({ key: 'repeat', value_text: '+1w' }),
+      1,
+    ],
+    ['leaves the page alone when the block does not repeat', null, 0],
+  ])('%s', async (_name, repeat, loads) => {
+    stubInvoke(vi.mocked(invoke), {
+      get_property: (args) =>
+        args['blockId'] === 'BLOCK_1' && args['key'] === 'repeat' ? repeat : null,
+    })
+    const load = vi.fn(() => Promise.resolve())
+
+    await reloadIfRepeating('BLOCK_1', { getState: () => ({ load }) })
+
+    expect(load).toHaveBeenCalledTimes(loads)
+  })
+
+  it('logs a failed lookup and leaves the page alone', async () => {
+    stubInvoke(vi.mocked(invoke), {
+      get_property: () => {
+        throw new Error('pool busy')
+      },
+    })
+    const warn = vi.spyOn(logger, 'warn').mockImplementation(() => {})
+    const load = vi.fn(() => Promise.resolve())
+
+    await reloadIfRepeating('BLOCK_1', { getState: () => ({ load }) })
+
+    expect(load).not.toHaveBeenCalled()
+    expect(warn).toHaveBeenCalledWith(
+      'repeat-utils',
+      'repeat lookup after DONE failed',
+      { blockId: 'BLOCK_1' },
+      expect.any(Error),
+    )
+    warn.mockRestore()
   })
 })
