@@ -208,6 +208,10 @@ function reloadChangedPageStores(changedPageIds: string[] | undefined): void {
   // next picker read re-fetch, exactly as the resolve preload above does for
   // chip titles.
   invalidateNameCaches()
+
+  // #5283 — and spaces: a peer can create, rename, recolour or delete one. The
+  // refresh never rejects, and it moves off an active space a peer deleted.
+  void useSpaceStore.getState().refreshAvailableSpaces()
 }
 
 /** Map backend state strings to frontend SyncState enum. */

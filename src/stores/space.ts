@@ -102,6 +102,15 @@ function reconcileCurrentSpaceId(current: string | null, available: SpaceRow[]):
   return first ? first.id : null
 }
 
+function sameSpaces(a: SpaceRow[], b: SpaceRow[]): boolean {
+  return (
+    a.length === b.length &&
+    a.every(
+      (s, i) => s.id === b[i]?.id && s.name === b[i]?.name && s.accent_color === b[i]?.accent_color,
+    )
+  )
+}
+
 export const useSpaceStore = create<SpaceState>()(
   // `subscribeWithSelector` lets `createSpaceSubscriber` (and any future
   // narrow subscriber) listen on a single selector — currentSpaceId —
@@ -153,7 +162,10 @@ export const useSpaceStore = create<SpaceState>()(
               })
               return
             }
-            const spaces = raw
+            // Every sync tick refreshes (#5283); an unchanged list keeps its
+            // identity so subscribers don't re-render for nothing.
+            const prev = get().availableSpaces
+            const spaces = sameSpaces(prev, raw) ? prev : raw
             const prevCurrent = get().currentSpaceId
             const nextCurrent = reconcileCurrentSpaceId(prevCurrent, spaces)
             set({

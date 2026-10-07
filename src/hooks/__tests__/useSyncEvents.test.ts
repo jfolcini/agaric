@@ -160,9 +160,14 @@ vi.mock('@/stores/resolve', () => ({
 // `useSyncEvents.preload(spaceId, true)` reads
 // `useSpaceStore.currentSpaceId`. Mock with a deterministic
 // active-space id so the test asserts the spaceId arg is forwarded.
+const mockRefreshSpaces = vi.hoisted(() => vi.fn(async () => {}))
+
 vi.mock('@/stores/space', () => ({
   useSpaceStore: {
-    getState: vi.fn(() => ({ currentSpaceId: 'SPACE_TEST' })),
+    getState: vi.fn(() => ({
+      currentSpaceId: 'SPACE_TEST',
+      refreshAvailableSpaces: mockRefreshSpaces,
+    })),
     // The tabs and recents stores attach a space-switch subscriber on import.
     subscribe: vi.fn(() => () => {}),
   },
@@ -609,6 +614,28 @@ describe('useSyncEvents', () => {
       unmount()
     })
 
+    it('refreshes the space list when blocks changed (#5283)', async () => {
+      const { unmount } = renderHook(() => useSyncEvents())
+      await vi.waitFor(() => {
+        expect(mockListen).toHaveBeenCalledTimes(3)
+      })
+      mockRefreshSpaces.mockClear()
+
+      getListenerCallback('sync:complete')({
+        payload: {
+          type: 'complete',
+          remote_device_id: 'device-42',
+          ops_received: 5,
+          ops_sent: 0,
+          changed_blocks: 5,
+          changed_page_ids: ['PAGE_1'],
+        },
+      })
+
+      expect(mockRefreshSpaces).toHaveBeenCalledTimes(1)
+      unmount()
+    })
+
     it('does NOT invalidate the picker name caches on a converged no-op sync (#4007/#4305)', async () => {
       const changes: NameChange[] = []
       const unsubscribe = subscribeToNameChanges((c) => changes.push(c))
@@ -981,6 +1008,19 @@ describe('useSyncEvents', () => {
       expect(mockLoad).toHaveBeenCalledTimes(1)
       expect(mockLoad2).toHaveBeenCalledTimes(1)
 
+      unmount()
+    })
+
+    it('refreshes the space list (#5283)', async () => {
+      const { unmount } = renderHook(() => useSyncEvents())
+      await vi.waitFor(() => {
+        expect(mockListen).toHaveBeenCalledTimes(3)
+      })
+      mockRefreshSpaces.mockClear()
+
+      getListenerCallback('blocks:changed')({ payload: { changed_page_ids: ['PAGE_1'] } })
+
+      expect(mockRefreshSpaces).toHaveBeenCalledTimes(1)
       unmount()
     })
 
