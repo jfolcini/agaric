@@ -6306,7 +6306,7 @@ pub async fn import_markdown(
         filename,
         space_id.into_string(),
         vault_files,
-        Some(&progress),
+        Some(&crate::main_thread::UiChannel::new(app, progress)),
     )
     .await
     .map_err(sanitize_internal_error)

@@ -1,1 +1,14 @@
 too-many-lines-threshold = 70
+
+# Tauri's `tracing` feature makes these block until the main thread runs their
+# JS, and `emit` blocks holding Tauri's webview lock: off the main thread that
+# deadlocks against an in-flight IPC request. Route through `crate::main_thread`.
+disallowed-methods = [
+    { path = "tauri::Emitter::emit", reason = "use crate::main_thread::emit" },
+    { path = "tauri::Emitter::emit_to", reason = "use crate::main_thread::emit" },
+    { path = "tauri::Emitter::emit_filter", reason = "use crate::main_thread::emit" },
+    { path = "tauri::Emitter::emit_str", reason = "use crate::main_thread::emit" },
+    { path = "tauri::Emitter::emit_str_to", reason = "use crate::main_thread::emit" },
+    { path = "tauri::Emitter::emit_str_filter", reason = "use crate::main_thread::emit" },
+    { path = "tauri::ipc::Channel::send", reason = "use crate::main_thread::UiChannel" },
+]

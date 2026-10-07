@@ -553,6 +553,7 @@ pub async fn cancel_pairing(
 #[tauri::command]
 #[specta::specta]
 pub async fn start_sync(
+    app: tauri::AppHandle,
     peer_id: String,
     pool: State<'_, ReadPool>,
     device_id: State<'_, DeviceId>,
@@ -569,7 +570,7 @@ pub async fn start_sync(
         Box::new(move |inner| {
             std::sync::Arc::new(crate::sync_event_sinks::ChannelEventSink {
                 inner,
-                channel: progress,
+                channel: crate::main_thread::UiChannel::new(app, progress),
             })
         }),
     );

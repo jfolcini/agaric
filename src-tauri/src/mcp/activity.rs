@@ -304,15 +304,15 @@ impl<R: tauri::Runtime> fmt::Debug for TauriRuntimeEmitter<R> {
 
 impl<R: tauri::Runtime> ActivityEmitter for TauriRuntimeEmitter<R> {
     fn emit(&self, entry: &ActivityEntry) {
-        use tauri::Emitter;
-        if let Err(e) = self.handle.emit(MCP_ACTIVITY_EVENT, entry) {
+        let tool = entry.tool_name.clone();
+        crate::main_thread::emit_with(&self.handle, MCP_ACTIVITY_EVENT, entry.clone(), move |e| {
             tracing::warn!(
                 target: "mcp",
                 error = %e,
-                tool = %entry.tool_name,
+                tool = %tool,
                 "failed to emit mcp:activity event",
             );
-        }
+        });
     }
 }
 

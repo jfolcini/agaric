@@ -27,7 +27,7 @@
 //! `#[cfg(desktop)]` gate; the parser accepts both shapes on every platform.
 
 use serde::Serialize;
-use tauri::{AppHandle, Emitter, Listener, Runtime};
+use tauri::{AppHandle, Listener, Runtime};
 
 use agaric_core::ulid::BlockId;
 
@@ -270,22 +270,22 @@ pub fn register_deeplink_handlers<R: Runtime>(app: &AppHandle<R>) {
 /// visible in `agaric.log` without surfacing as user-facing errors.
 fn dispatch_url<R: Runtime>(app: &AppHandle<R>, raw: &str) {
     match parse_deep_link(raw) {
-        Ok(DeepLinkRoute::Block(id)) => emit_event(
+        Ok(DeepLinkRoute::Block(id)) => crate::main_thread::emit(
             app,
             EVENT_NAVIGATE_TO_BLOCK,
-            &BlockNavigatePayload {
+            BlockNavigatePayload {
                 id: id.into_string(),
             },
         ),
-        Ok(DeepLinkRoute::Page(id)) => emit_event(
+        Ok(DeepLinkRoute::Page(id)) => crate::main_thread::emit(
             app,
             EVENT_NAVIGATE_TO_PAGE,
-            &BlockNavigatePayload {
+            BlockNavigatePayload {
                 id: id.into_string(),
             },
         ),
         Ok(DeepLinkRoute::Settings(tab)) => {
-            emit_event(app, EVENT_OPEN_SETTINGS, &OpenSettingsPayload { tab });
+            crate::main_thread::emit(app, EVENT_OPEN_SETTINGS, OpenSettingsPayload { tab });
         }
         Err(e) => {
             tracing::warn!(
@@ -295,17 +295,6 @@ fn dispatch_url<R: Runtime>(app: &AppHandle<R>, raw: &str) {
                 "ignoring malformed or unsupported deep link",
             );
         }
-    }
-}
-
-fn emit_event<R: Runtime, P: Serialize + Clone>(app: &AppHandle<R>, name: &str, payload: &P) {
-    if let Err(e) = app.emit(name, payload.clone()) {
-        tracing::warn!(
-            target: "deeplink",
-            event = %name,
-            error = %e,
-            "failed to emit deep-link routing event",
-        );
     }
 }
 
