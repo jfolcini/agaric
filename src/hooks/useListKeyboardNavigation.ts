@@ -57,9 +57,13 @@ export interface UseListKeyboardNavigationOptions {
    * (a `document` listener, or keys bubbling up from controls inside): a handled
    * key moves DOM focus onto it, so the cursor's ring (shown while the container
    * has keyboard focus) appears wherever focus was when the key was pressed.
+   * Focus inside an overlay stays put: taking it would dismiss a popover.
    */
   listRef?: RefObject<HTMLElement | null>
 }
+
+const OVERLAY_SELECTOR =
+  '[data-radix-popper-content-wrapper], [role="dialog"], [role="alertdialog"]'
 
 export interface UseListKeyboardNavigationReturn {
   /** Currently focused item index */
@@ -252,7 +256,9 @@ export function useListKeyboardNavigation(
       if (!rule.matches(e, opts)) continue
       if (rule.preventDefault) e.preventDefault()
       rule.apply(setFocusedIndex, opts, focusedIndex)
-      options.listRef?.current?.focus({ preventScroll: true })
+      if (!document.activeElement?.closest(OVERLAY_SELECTOR)) {
+        options.listRef?.current?.focus({ preventScroll: true })
+      }
       return true
     }
     return false

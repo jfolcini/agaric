@@ -172,11 +172,6 @@ export function JournalPage({
 
   // ── Main render ─────────────────────────────────────────────────────
 
-  // PEND-UX item 5 — the configure-journal-template action lives in the shared
-  // `FeaturePageHeader` `actions` slot. Agenda mode renders no header here (see
-  // below), so templates never show an action there.
-  const showConfigureTemplateAction = !loading
-
   return (
     // `tabIndex={-1}` makes this a programmatic primary-focus / scroll target
     // (usePrimaryFocus, Ctrl+F host). It is NOT an interactive control, so it
@@ -199,7 +194,7 @@ export function JournalPage({
         <FeaturePageHeader
           title={t('sidebar.journal')}
           className="journal-page-header"
-          {...(showConfigureTemplateAction && {
+          {...(!loading && {
             actions: (
               <Tooltip>
                 <TooltipTrigger asChild>

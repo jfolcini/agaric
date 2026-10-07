@@ -51,7 +51,7 @@ test.describe('HistoryView batch revert', () => {
 
     // Click the first history item checkbox to select it
     const firstItem = page.locator('[data-history-item]').first()
-    const checkbox = firstItem.locator('input[type="checkbox"]')
+    const checkbox = firstItem.getByRole('checkbox')
     await checkbox.click()
 
     // Selection toolbar should appear with "Revert selected"
@@ -88,7 +88,7 @@ test.describe('HistoryView batch revert', () => {
       })
       .first()
     await expect(createEntry).toBeVisible()
-    const checkbox = createEntry.locator('input[type="checkbox"]')
+    const checkbox = createEntry.getByRole('checkbox')
     await checkbox.click()
 
     // Click "Revert selected"
@@ -129,7 +129,7 @@ test.describe('HistoryView batch revert', () => {
       })
       .first()
     await expect(deleteEntry).toBeVisible()
-    await deleteEntry.locator('input[type="checkbox"]').click()
+    await deleteEntry.getByRole('checkbox').click()
 
     // Revert
     await page.getByRole('button', { name: /Revert selected/i }).click()
@@ -151,7 +151,7 @@ test.describe('HistoryView batch revert', () => {
     // Navigate to History and select
     await page.getByRole('button', { name: 'History', exact: true }).click()
     await expect(page.locator('[data-history-item]').first()).toBeVisible({ timeout: 5000 })
-    await page.locator('[data-history-item]').first().locator('input[type="checkbox"]').click()
+    await page.locator('[data-history-item]').first().getByRole('checkbox').click()
 
     // Click revert
     await page.getByRole('button', { name: /Revert selected/i }).click()

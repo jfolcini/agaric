@@ -90,9 +90,7 @@ test.describe('HistoryView — restore to here', () => {
     // Extract the entry's seq from the checkbox's accessible name
     // ("Select operation create_block #<seq>") so we can assert the
     // exact wire args below without hardcoding a seq value.
-    const checkboxLabel = await firstItem
-      .locator('input[type="checkbox"]')
-      .getAttribute('aria-label')
+    const checkboxLabel = await firstItem.getByRole('checkbox').getAttribute('aria-label')
     const seqMatch = checkboxLabel?.match(/#(\d+)/)
     expect(seqMatch).not.toBeNull()
     const expectedSeq = Number(seqMatch?.[1])
