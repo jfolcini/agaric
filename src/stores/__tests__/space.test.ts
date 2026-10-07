@@ -74,6 +74,31 @@ describe('useSpaceStore', () => {
       expect(state.currentSpaceId).toBe(PERSONAL.id)
     })
 
+    it('keeps the same list when a refresh returns equal rows (#5283)', async () => {
+      mockedListSpaces.mockResolvedValueOnce([PERSONAL, WORK])
+      await useSpaceStore.getState().refreshAvailableSpaces()
+      const first = useSpaceStore.getState().availableSpaces
+
+      mockedListSpaces.mockResolvedValueOnce([{ ...PERSONAL }, { ...WORK }])
+      await useSpaceStore.getState().refreshAvailableSpaces()
+
+      expect(useSpaceStore.getState().availableSpaces).toBe(first)
+    })
+
+    it.each([
+      ['a rename', { ...WORK, name: 'Job' }],
+      ['a new accent', { ...WORK, accent_color: 'accent-rose' }],
+      ['a different space', { id: 'SPACE_NEW1', name: 'Work', accent_color: 'accent-blue' }],
+    ])('replaces the list on %s (#5283)', async (_label, changed) => {
+      mockedListSpaces.mockResolvedValueOnce([PERSONAL, WORK])
+      await useSpaceStore.getState().refreshAvailableSpaces()
+
+      mockedListSpaces.mockResolvedValueOnce([PERSONAL, changed])
+      await useSpaceStore.getState().refreshAvailableSpaces()
+
+      expect(useSpaceStore.getState().availableSpaces).toEqual([PERSONAL, changed])
+    })
+
     it('preserves a valid currentSpaceId across refresh', async () => {
       useSpaceStore.setState({ currentSpaceId: WORK.id })
       mockedListSpaces.mockResolvedValueOnce([PERSONAL, WORK])
