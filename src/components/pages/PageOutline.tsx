@@ -3,8 +3,8 @@
  *
  * Reads blocks from the per-page block store, extracts markdown headings
  * (# , ## , ### , etc.) and renders them as a hierarchical list inside a
- * slide-out Sheet. Clicking a heading smooth-scrolls to the corresponding
- * block element in the DOM.
+ * slide-out Sheet. Clicking a heading scrolls its block to the top of the
+ * view.
  */
 
 import { List } from 'lucide-react'
@@ -69,9 +69,13 @@ export function PageOutline() {
   const handleClick = (blockId: string) => {
     // Blocks render `data-block-id={blockId}`; the editable element's own `id`
     // is `editor-${blockId}`, so `getElementById(blockId)` never matched and the
-    // click was a silent no-op (#2211). Match PageEditor's link-navigation scroll.
+    // click was a silent no-op (#2211).
     const el = document.querySelector(`[data-block-id="${CSS.escape(blockId)}"]`)
-    if (el) scrollElementIntoView(el, { behavior: 'smooth', block: 'center' })
+    // Jump to the top, not a smooth scroll to the center: rows never scrolled
+    // into view are placeholders of estimated height (#5329) that grow as they
+    // hydrate, so a smooth scroll lands short by every row it passes, and a
+    // centered target is pushed down by the rows above it.
+    if (el) scrollElementIntoView(el, { block: 'start' })
   }
 
   return (

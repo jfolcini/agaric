@@ -36,9 +36,9 @@ import { SENTINEL_ID } from '@/lib/tree-utils'
 import { cn } from '@/lib/utils'
 
 /**
- * Rows rendered in full on a tree's first commit (#5329). Every row past this
- * mounts as a placeholder and hydrates once the viewport observer reports it
- * on screen. A 720 px viewport shows ~22 rows; 30 covers it with the 200 px
+ * Rows rendered in full as they mount (#5329). A row that mounts past this
+ * index starts as a placeholder and hydrates once the viewport observer
+ * reports it on screen. A 720 px viewport shows ~22 rows; 30 covers it with the 200 px
  * observer margin, and opening a 500-block page rendered all 500 before.
  */
 export const INITIAL_WINDOW_ROWS = 30

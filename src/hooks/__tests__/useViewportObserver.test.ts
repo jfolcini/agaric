@@ -1139,12 +1139,15 @@ describe('useViewportObserver', () => {
 
   it('seeds a row that attaches as a placeholder off-screen, and only that row (#5329)', () => {
     const { result, unmount } = renderHook(() => useViewportObserver())
+    const versionBefore = result.current.getWindowVersion()
 
     result.current.createObserveRef('FULL')(makeEl('FULL'))
     result.current.createObserveRef('DEFERRED')(makePlaceholderEl('DEFERRED'))
 
     expect(result.current.isOffscreen('FULL')).toBe(false)
     expect(result.current.isOffscreen('DEFERRED')).toBe(true)
+    // The metadata window hears about the seeded row, not the full one.
+    expect(result.current.getWindowVersion()).toBe(versionBefore + 1)
     // No measurement exists yet: the placeholder keeps its CSS estimate.
     expect(result.current.getHeight('DEFERRED')).toBeUndefined()
 

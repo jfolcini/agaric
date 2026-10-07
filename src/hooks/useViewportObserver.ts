@@ -127,17 +127,17 @@ export function useViewportObserver(rootMargin = '200px 0px'): ViewportObserver 
    * whatever scroller sits ABOVE it, and that answer would otherwise pin the
    * observer to the wrong box for the rest of the session with no event able to
    * correct it. The walk is one `getComputedStyle` pass per commit (see
-   * `commitScrollParentRef`); only a CHANGED answer rebuilds the observer,
+   * `scrollParentWalkedRef`); only a CHANGED answer rebuilds the observer,
    * which is what makes the rebuild rare rather than the walk.
    */
   const [rootEl, setRootEl] = useState<HTMLElement | null>(null)
   /**
-   * The scroll-parent answer shared by every row attaching in the same commit
-   * (#5330): the rows of one tree are siblings, so one `getComputedStyle` walk
-   * stands for all of them — 500 attaches used to walk 500 times, ~110 ms.
+   * True once a row attaching in the current commit has walked for the scroll
+   * parent (#5330): the rows of one tree are siblings, so one `getComputedStyle`
+   * walk stands for all of them — 500 attaches used to walk 500 times, ~110 ms.
    * Dropped on a microtask, so the next commit walks again; see `rootEl`.
    */
-  const commitScrollParentRef = useRef<{ found: HTMLElement | null } | null>(null)
+  const scrollParentWalkedRef = useRef(false)
   const heightsRef = useRef<Map<string, number>>(new Map())
   /**
    * Rows the observer has reported intersecting but not yet flipped on-screen
@@ -302,12 +302,17 @@ export function useViewportObserver(rootMargin = '200px 0px'): ViewportObserver 
           // #5329) is off-screen until the observer's first callback says
           // otherwise. Seeding it here is what lets that callback hydrate only
           // the rows that intersect instead of flipping the rest off.
-          if (el.dataset['placeholder'] !== undefined) offscreenIdsRef.current.add(id)
-          if (commitScrollParentRef.current === null) {
+          // The metadata window (#1268) learns of the seeded row too: when the
+          // first callback flips nothing, no other notification would reach it.
+          if (el.dataset['placeholder'] !== undefined) {
+            offscreenIdsRef.current.add(id)
+            notifyWindow()
+          }
+          if (!scrollParentWalkedRef.current) {
             const found = scrollParentY(el)
-            commitScrollParentRef.current = { found }
+            scrollParentWalkedRef.current = true
             queueMicrotask(() => {
-              commitScrollParentRef.current = null
+              scrollParentWalkedRef.current = false
             })
             // A row that finds no scroller says nothing about the container a
             // previous row found — it may simply have mounted outside it — so
@@ -349,7 +354,7 @@ export function useViewportObserver(rootMargin = '200px 0px'): ViewportObserver 
       refCallbacksRef.current.set(id, cb)
       return cb
     },
-    [notify],
+    [notify, notifyWindow],
   )
 
   const isOffscreen = useCallback(
