@@ -31,6 +31,7 @@ import { ScrollArea } from '@/components/ui/scroll-area'
 import { Spinner } from '@/components/ui/spinner'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import type { ActivityEntry } from '@/hooks/useMcpActivityFeed'
+import { reloadAfterRevert } from '@/hooks/useSyncEvents'
 import { isNonReversible, unwrap } from '@/lib/app-error'
 import { commands } from '@/lib/bindings'
 import { formatRelativeTime } from '@/lib/format-relative-time'
@@ -98,6 +99,7 @@ export function ActivityFeed({ entries }: ActivityFeedProps): React.ReactElement
       })
       try {
         unwrap(await commands.revertOps([opRef]))
+        reloadAfterRevert()
         notify.success(t('agentAccess.undoAgentOp.success'))
         // Mark this opRef's button as terminal-success so it
         // disappears from the feed. On error the key is NOT added, so
@@ -192,6 +194,7 @@ export function ActivityFeed({ entries }: ActivityFeedProps): React.ReactElement
     })
     try {
       unwrap(await commands.revertOps(target.ops))
+      reloadAfterRevert()
       notify.success(t('agentAccess.revertSession.success', { count: target.ops.length }))
       // Mark every opRef in the batch as terminal-success so
       // the session header + every per-entry Undo button in this
