@@ -21,7 +21,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { ListItem } from '@/components/ui/list-item'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
-import { isConflict, unwrap } from '@/lib/app-error'
+import { isConflict, unwrap, validationCode } from '@/lib/app-error'
 import type { TagCacheRow } from '@/lib/bindings'
 import { commands } from '@/lib/bindings'
 import { createBlock } from '@/lib/ipc-helpers'
@@ -34,6 +34,7 @@ import {
   subscribeToNameChanges,
 } from '@/lib/name-change-bus'
 import { notify } from '@/lib/notify'
+import { ValidationCode } from '@/lib/search-query/validation-codes'
 import { requireActiveScope } from '@/lib/space-scope'
 import {
   clearTagColor,
@@ -232,7 +233,10 @@ export function TagList({ onTagClick }: TagListProps): React.ReactElement {
       if (!renameTarget) return
       const trimmed = newName.trim()
       if (!trimmed) return
-      if (tags.some((tag) => tag.tag_id !== renameTarget.id && tag.name === trimmed)) {
+      // #5281 — the backend's tag identity, `normalize_tag_name`: NFC, lowercase, NFC.
+      const tagKey = (name: string) => name.normalize('NFC').toLowerCase().normalize('NFC')
+      const key = tagKey(trimmed)
+      if (tags.some((tag) => tag.tag_id !== renameTarget.id && tagKey(tag.name) === key)) {
         notify.error(t('tags.duplicateName'))
         return
       }
@@ -265,7 +269,9 @@ export function TagList({ onTagClick }: TagListProps): React.ReactElement {
         // Issue #106 — backend now emits a discriminated `conflict`
         // kind for unique-constraint violations. Surface the friendly
         // "already exists" message instead of "renameFailed: AppError".
-        if (isConflict(error)) {
+        // #5281 — a name another live tag of the space holds is refused
+        // coded, which the list above can miss when it is stale.
+        if (isConflict(error) || validationCode(error) === ValidationCode.DuplicatePageTitle) {
           notify.error(t('tags.duplicateName'))
         } else {
           notify.error(`${t('tags.renameFailed')}: ${String(error)}`)

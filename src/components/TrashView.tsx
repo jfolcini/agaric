@@ -39,7 +39,7 @@ import { useTrashDescendantCounts } from '@/hooks/useTrashDescendantCounts'
 import { useTrashFilter } from '@/hooks/useTrashFilter'
 import { useTrashListShortcuts } from '@/hooks/useTrashListShortcuts'
 import { announce } from '@/lib/announcer'
-import { isInvalidOperation, unwrap } from '@/lib/app-error'
+import { isInvalidOperation, unwrap, validationCode } from '@/lib/app-error'
 import type { BlockRow, PageResponse } from '@/lib/bindings'
 import { commands } from '@/lib/bindings'
 import { resolveStoreTitle } from '@/lib/block-title'
@@ -54,9 +54,20 @@ import { logger } from '@/lib/logger'
 import { invalidateNameCaches } from '@/lib/name-change-bus'
 import { notify } from '@/lib/notify'
 import { queryClient } from '@/lib/query-client'
+import { ValidationCode } from '@/lib/search-query/validation-codes'
 import { toSpaceScope } from '@/lib/space-scope'
 import { useResolveStore } from '@/stores/resolve'
 import { useSpaceStore } from '@/stores/space'
+
+/** #5281 — a restore is refused when a live tag in the space already holds the name. */
+function restoreFailureKey<K extends string>(
+  err: unknown,
+  fallback: K,
+): K | 'trash.restoreNameTaken' {
+  return validationCode(err) === ValidationCode.DuplicatePageTitle
+    ? 'trash.restoreNameTaken'
+    : fallback
+}
 
 export function TrashView(): React.ReactElement {
   const { t } = useTranslation()
@@ -264,7 +275,7 @@ export function TrashView(): React.ReactElement {
         announce(t('announce.blockRestored'))
       } catch (err) {
         logger.error('TrashView', 'Failed to restore block', { blockId: block.id }, err)
-        notify.error(t('trash.restoreFailed'))
+        notify.error(t(restoreFailureKey(err, 'trash.restoreFailed')))
         announce(t('announce.restoreFailed'))
       }
     },
@@ -330,7 +341,7 @@ export function TrashView(): React.ReactElement {
       // selection so the user can retry — clearing it here would silently
       // discard the user's selection on an error they couldn't see.
       logger.error('TrashView', 'Batch restore failed', { count: selectedBlocks.length }, err)
-      notify.error(t('trash.batchRestoreFailed'))
+      notify.error(t(restoreFailureKey(err, 'trash.batchRestoreFailed')))
       announce(t('announce.batchRestoreFailed'))
       // #3838 — the most likely cause is now a STALE LISTING: the backend
       // refuses a live id, and an id goes live when another window restores

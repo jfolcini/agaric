@@ -928,6 +928,269 @@ async fn create_block_tag_reuses_name_of_deleted_tag_5236() {
     );
 }
 
+// ----------------------------------------------------------------------
+// #5281 — the same per-space tag-name rule on rename and restore: either one
+// leaving two live tags under one normalized name hides one of them from the
+// tags cache, so both are refused with `DuplicatePageTitle`.
+// ----------------------------------------------------------------------
+
+fn assert_duplicate_name_refusal<T: std::fmt::Debug>(result: Result<T, AppError>) {
+    let err = result.expect_err("a duplicate tag name in the space must be refused");
+    assert_eq!(
+        err.validation_code(),
+        Some(agaric_core::error::ValidationCode::DuplicatePageTitle),
+        "refusal must carry the DuplicatePageTitle code; got: {err:?}"
+    );
+}
+
+async fn is_deleted(pool: &SqlitePool, id: &BlockId) -> bool {
+    sqlx::query_scalar::<_, Option<i64>>("SELECT deleted_at FROM blocks WHERE id = ?")
+        .bind(id.as_str())
+        .fetch_one(pool)
+        .await
+        .unwrap()
+        .is_some()
+}
+
+/// A tag in `space_ulid` named `name`, soft-deleted; returns it and its
+/// `deleted_at` (the restore ref).
+async fn trashed_tag(
+    pool: &SqlitePool,
+    mat: &Materializer,
+    name: &str,
+    space_ulid: &str,
+) -> (BlockId, i64) {
+    let tag = create_tag(pool, mat, name, space_ulid).await;
+    settle(mat).await;
+    let deleted = delete_block_inner(pool, DEV, mat, tag.id.clone())
+        .await
+        .expect("delete the tag");
+    settle(mat).await;
+    (tag.id, deleted.deleted_at)
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn edit_block_rejects_tag_rename_onto_live_tag_name_5281() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    agaric_lib::spaces::bootstrap_spaces_for_test(&pool, DEV)
+        .await
+        .unwrap();
+    let personal = agaric_lib::spaces::bootstrap::SPACE_PERSONAL_ULID;
+    let _meeting = create_tag(&pool, &mat, "meeting", personal).await;
+    let notes = create_tag(&pool, &mat, "notes", personal).await;
+    settle(&mat).await;
+    let ops_before = count_ops(&pool).await;
+
+    assert_duplicate_name_refusal(
+        edit_block_inner(&pool, DEV, &mat, notes.id.clone(), "meeting".into()).await,
+    );
+
+    assert_eq!(
+        page_content(&pool, &notes.id).await.as_deref(),
+        Some("notes")
+    );
+    assert_eq!(
+        count_ops(&pool).await,
+        ops_before,
+        "a refusal appends no op"
+    );
+}
+
+/// The identity is `normalize_tag_name`, so a case variant is the same name.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn edit_block_rejects_tag_rename_onto_case_variant_5281() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    agaric_lib::spaces::bootstrap_spaces_for_test(&pool, DEV)
+        .await
+        .unwrap();
+    let personal = agaric_lib::spaces::bootstrap::SPACE_PERSONAL_ULID;
+    let _meeting = create_tag(&pool, &mat, "meeting", personal).await;
+    let notes = create_tag(&pool, &mat, "notes", personal).await;
+    settle(&mat).await;
+
+    assert_duplicate_name_refusal(
+        edit_block_inner(&pool, DEV, &mat, notes.id.clone(), "Meeting".into()).await,
+    );
+
+    assert_eq!(
+        page_content(&pool, &notes.id).await.as_deref(),
+        Some("notes")
+    );
+}
+
+/// The tag being renamed is not its own clash.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn edit_block_allows_tag_rename_to_case_variant_of_itself_5281() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    agaric_lib::spaces::bootstrap_spaces_for_test(&pool, DEV)
+        .await
+        .unwrap();
+    let personal = agaric_lib::spaces::bootstrap::SPACE_PERSONAL_ULID;
+    let meeting = create_tag(&pool, &mat, "meeting", personal).await;
+    settle(&mat).await;
+
+    edit_block_inner(&pool, DEV, &mat, meeting.id.clone(), "Meeting".into())
+        .await
+        .expect("a tag may be renamed to a case variant of its own name");
+
+    assert_eq!(
+        page_content(&pool, &meeting.id).await.as_deref(),
+        Some("Meeting")
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn edit_block_allows_tag_name_held_in_other_space_5281() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    agaric_lib::spaces::bootstrap_spaces_for_test(&pool, DEV)
+        .await
+        .unwrap();
+    let personal = agaric_lib::spaces::bootstrap::SPACE_PERSONAL_ULID;
+    let work = agaric_lib::spaces::bootstrap::SPACE_WORK_ULID;
+    let _meeting = create_tag(&pool, &mat, "meeting", personal).await;
+    let notes = create_tag(&pool, &mat, "notes", work).await;
+    settle(&mat).await;
+
+    edit_block_inner(&pool, DEV, &mat, notes.id.clone(), "meeting".into())
+        .await
+        .expect("a cross-space tag-name pair is legitimate");
+
+    assert_eq!(
+        page_content(&pool, &notes.id).await.as_deref(),
+        Some("meeting")
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn edit_block_allows_tag_name_held_only_by_trashed_tag_5281() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    agaric_lib::spaces::bootstrap_spaces_for_test(&pool, DEV)
+        .await
+        .unwrap();
+    let personal = agaric_lib::spaces::bootstrap::SPACE_PERSONAL_ULID;
+    let _trashed = trashed_tag(&pool, &mat, "meeting", personal).await;
+    let notes = create_tag(&pool, &mat, "notes", personal).await;
+    settle(&mat).await;
+
+    edit_block_inner(&pool, DEV, &mat, notes.id.clone(), "meeting".into())
+        .await
+        .expect("a trashed tag does not hold its name");
+
+    assert_eq!(
+        page_content(&pool, &notes.id).await.as_deref(),
+        Some("meeting")
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn restore_block_rejects_tag_whose_name_a_live_tag_holds_5281() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    agaric_lib::spaces::bootstrap_spaces_for_test(&pool, DEV)
+        .await
+        .unwrap();
+    let personal = agaric_lib::spaces::bootstrap::SPACE_PERSONAL_ULID;
+    let (trashed, deleted_at) = trashed_tag(&pool, &mat, "meeting", personal).await;
+    let _live = create_tag(&pool, &mat, "Meeting", personal).await;
+    settle(&mat).await;
+    let ops_before = count_ops(&pool).await;
+
+    assert_duplicate_name_refusal(
+        restore_block_inner(&pool, DEV, &mat, trashed.clone(), deleted_at).await,
+    );
+
+    assert!(
+        is_deleted(&pool, &trashed).await,
+        "the tag stays in the trash"
+    );
+    assert_eq!(
+        count_ops(&pool).await,
+        ops_before,
+        "a refusal appends no op"
+    );
+}
+
+/// The batch is atomic: one clashing tag refuses the whole call, so the other
+/// listed block stays in the trash too.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn restore_blocks_by_ids_rejects_tag_whose_name_a_live_tag_holds_5281() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    agaric_lib::spaces::bootstrap_spaces_for_test(&pool, DEV)
+        .await
+        .unwrap();
+    let personal = agaric_lib::spaces::bootstrap::SPACE_PERSONAL_ULID;
+    let (bystander, _) = trashed_tag(&pool, &mat, "notes", personal).await;
+    let (trashed, _) = trashed_tag(&pool, &mat, "meeting", personal).await;
+    let _live = create_tag(&pool, &mat, "meeting", personal).await;
+    settle(&mat).await;
+    let ops_before = count_ops(&pool).await;
+
+    assert_duplicate_name_refusal(
+        restore_blocks_by_ids_inner(&pool, DEV, &mat, vec![bystander.clone(), trashed.clone()])
+            .await,
+    );
+
+    assert!(is_deleted(&pool, &bystander).await, "nothing is restored");
+    assert!(is_deleted(&pool, &trashed).await, "nothing is restored");
+    assert_eq!(
+        count_ops(&pool).await,
+        ops_before,
+        "a refusal appends no op"
+    );
+}
+
+/// Two trashed tags of one name revived by ONE batch would collide with each
+/// other, though no live tag holds the name beforehand.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn restore_blocks_by_ids_rejects_two_same_name_tags_in_one_batch_5281() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    agaric_lib::spaces::bootstrap_spaces_for_test(&pool, DEV)
+        .await
+        .unwrap();
+    let personal = agaric_lib::spaces::bootstrap::SPACE_PERSONAL_ULID;
+    let (first, _) = trashed_tag(&pool, &mat, "meeting", personal).await;
+    let (second, _) = trashed_tag(&pool, &mat, "meeting", personal).await;
+
+    assert_duplicate_name_refusal(
+        restore_blocks_by_ids_inner(&pool, DEV, &mat, vec![first.clone(), second.clone()]).await,
+    );
+
+    assert!(is_deleted(&pool, &first).await, "nothing is restored");
+    assert!(is_deleted(&pool, &second).await, "nothing is restored");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn restore_tag_without_a_live_namesake_succeeds_5281() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    agaric_lib::spaces::bootstrap_spaces_for_test(&pool, DEV)
+        .await
+        .unwrap();
+    let personal = agaric_lib::spaces::bootstrap::SPACE_PERSONAL_ULID;
+    let work = agaric_lib::spaces::bootstrap::SPACE_WORK_ULID;
+    let (single, deleted_at) = trashed_tag(&pool, &mat, "meeting", personal).await;
+    let (batched, _) = trashed_tag(&pool, &mat, "notes", personal).await;
+    let _elsewhere = create_tag(&pool, &mat, "meeting", work).await;
+    settle(&mat).await;
+
+    restore_block_inner(&pool, DEV, &mat, single.clone(), deleted_at)
+        .await
+        .expect("a namesake in another space does not block a restore");
+    restore_blocks_by_ids_inner(&pool, DEV, &mat, vec![batched.clone()])
+        .await
+        .expect("no live namesake, no refusal");
+
+    assert!(!is_deleted(&pool, &single).await);
+    assert!(!is_deleted(&pool, &batched).await);
+}
+
 // ======================================================================
 // edit_block
 // ======================================================================

@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT content AS \"content!\" FROM blocks\n           WHERE block_type = 'tag' AND deleted_at IS NULL AND content IS NOT NULL\n             AND space_id = ?1 AND id != ?2",
+  "describe": {
+    "columns": [
+      {
+        "name": "content!",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "blocks",
+            "name": "content"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      true
+    ]
+  },
+  "hash": "d7e650dbc9cd4eed892fab31350555955dc262185697f55d8f2b87d52cdcf523"
+}

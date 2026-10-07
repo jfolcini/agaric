@@ -942,6 +942,36 @@ describe('get_batch_properties', () => {
   })
 })
 
+// #5279 — the backend keeps a page's space in `blocks.space_id`, so no property
+// read returns a `space` row, not even right after a move.
+describe('property reads after a space move', () => {
+  it('return no space row while the page lands in the target space', () => {
+    const page = SEED_IDS.PAGE_GETTING_STARTED
+    const typed = { value_text: null, value_num: null, value_date: null, value_bool: null }
+    invoke('set_property', {
+      blockId: page,
+      key: 'category',
+      value: { ...typed, value_text: 'guide', value_ref: null },
+    })
+    const work = invoke('create_space', { name: 'Work', accentColor: null }) as string
+    invoke('set_property', { blockId: page, key: 'space', value: { ...typed, value_ref: work } })
+
+    const inWork = invoke('list_all_pages_in_space', {
+      scope: { kind: 'active', space_id: work },
+      tagIds: null,
+    }) as Array<{ id: string }>
+    expect(inWork.map((p) => p.id)).toEqual([page])
+    const props = invoke('get_properties', { blockId: page }) as Record<string, unknown>[]
+    expect(props.map((p) => p['key'])).toEqual(['category'])
+    expect(invoke('get_property', { blockId: page, key: 'space' })).toBeNull()
+    const batch = invoke('get_batch_properties', { blockIds: [page] }) as Record<
+      string,
+      Record<string, unknown>[]
+    >
+    expect(batch[page]?.map((p) => p['key'])).toEqual(['category'])
+  })
+})
+
 // ---------------------------------------------------------------------------
 // undo_page_op
 // ---------------------------------------------------------------------------

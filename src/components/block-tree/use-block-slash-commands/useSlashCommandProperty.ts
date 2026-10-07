@@ -23,11 +23,12 @@ import type {
 } from '@/components/block-tree/use-block-slash-commands/types'
 import { flushActiveDraft } from '@/lib/active-draft-flush'
 import { unwrap } from '@/lib/app-error'
+import { recordAttachmentInvalidation } from '@/lib/attachment-invalidation'
 import { commands } from '@/lib/bindings'
 import { guessMimeType, isAttachmentAllowed, readFileBytes } from '@/lib/file-utils'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
-import { formatRepeatLabel } from '@/lib/repeat-utils'
+import { formatRepeatLabel, reloadIfRepeating } from '@/lib/repeat-utils'
 
 async function handleTodoState(ctx: SlashCommandContext, state: string): Promise<void> {
   try {
@@ -37,8 +38,11 @@ async function handleTodoState(ctx: SlashCommandContext, state: string): Promise
     ctx.pageStore.setState((s) => ({
       blocks: s.blocks.map((b) => (b.id === ctx.blockId ? { ...b, todo_state: state } : b)),
     }))
-    // F-37: warn when completing a task that has unresolved dependencies
-    if (state === 'DONE') warnIfBlocked(ctx)
+    if (state === 'DONE') {
+      // F-37: warn when completing a task that has unresolved dependencies
+      warnIfBlocked(ctx)
+      await reloadIfRepeating(ctx.blockId, ctx.pageStore)
+    }
   } catch {
     notify.error(ctx.t('blockTree.setTaskStateFailed'))
   }
@@ -257,6 +261,7 @@ function handleAttach(ctx: SlashCommandContext): void {
       unwrap(
         await commands.addAttachmentWithBytes(ctx.blockId, filename, mimeType, Array.from(bytes)),
       )
+      recordAttachmentInvalidation()
       if (progressToastId !== undefined) notify.dismiss(progressToastId)
       notify.success(ctx.t('blockTree.attachedFileMessage', { filename }))
     } catch {

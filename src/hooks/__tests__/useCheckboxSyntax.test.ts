@@ -8,19 +8,22 @@
  *    reverted to the prior value (FE-H-7).
  */
 
+import { invoke } from '@tauri-apps/api/core'
 import { renderHook, waitFor } from '@testing-library/react'
 import type { TFunction } from 'i18next'
 import { act } from 'react'
 import { toast } from 'sonner'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createStore, type StoreApi } from 'zustand'
 
-import { makeBlock } from '@/__tests__/fixtures'
+import { makeBlock, makeBlockRow, makePropertyRow } from '@/__tests__/fixtures'
+import { mockInvokeCommands } from '@/__tests__/helpers/invoke'
 import { useCheckboxSyntax } from '@/hooks/useCheckboxSyntax'
 import { commands } from '@/lib/bindings'
-import type { AppError } from '@/lib/bindings'
+import type { AppError, PropertyRow } from '@/lib/bindings'
 import { logger } from '@/lib/logger'
-import type { PageBlockState } from '@/stores/page-blocks'
+import { createPageBlockStore, type PageBlockState } from '@/stores/page-blocks'
+import { useSpaceStore } from '@/stores/space'
 
 // #2927 — the hook calls the generated bindings directly, so the seam this
 // suite stubs is `commands.*` rather than the retired hand-written wrapper.
@@ -265,5 +268,82 @@ describe('useCheckboxSyntax', () => {
     })
 
     expect(mockedSetTodoState).toHaveBeenCalledTimes(2)
+  })
+})
+
+describe('useCheckboxSyntax — [x] on a repeating task (#5285)', () => {
+  const REPEAT = makePropertyRow({ key: 'repeat', value_text: '+1w' })
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    useSpaceStore.setState({ currentSpaceId: 'SPACE_1' })
+    // The page as the backend holds it after the DONE: the block and its next occurrence.
+    vi.mocked(invoke).mockImplementation(
+      mockInvokeCommands({
+        load_page_subtree: () => ({
+          blocks: [
+            makeBlockRow({ id: 'BLOCK_1', parent_id: 'PAGE_1', todo_state: 'DONE' }),
+            makeBlockRow({
+              id: 'BLOCK_NEXT',
+              parent_id: 'PAGE_1',
+              todo_state: 'TODO',
+              position: 2,
+            }),
+          ],
+          truncated: false,
+          total: 2,
+        }),
+      }),
+    )
+    mockedSetTodoState.mockResolvedValue({
+      status: 'ok',
+      data: makeBlockRow({ id: 'BLOCK_1', parent_id: 'PAGE_1', todo_state: 'DONE' }),
+    })
+  })
+
+  afterEach(() => {
+    useSpaceStore.setState({ currentSpaceId: null })
+  })
+
+  /** Types `[x]` on BLOCK_1 and lets every IPC the completion fires settle. */
+  async function completeTask(repeat: PropertyRow | null): Promise<StoreApi<PageBlockState>> {
+    mockedGetProperty.mockImplementation(async (_blockId, key) => ({
+      status: 'ok',
+      data: key === 'repeat' ? repeat : null,
+    }))
+    const pageStore = createPageBlockStore('PAGE_1')
+    pageStore.setState({
+      blocks: [makeBlock({ id: 'BLOCK_1', parent_id: 'PAGE_1', todo_state: 'TODO' })],
+    })
+    const { result } = renderHook(() =>
+      useCheckboxSyntax({
+        focusedBlockId: 'BLOCK_1',
+        rootParentId: 'PAGE_1',
+        pageStore,
+        t: ((k: string) => k) as unknown as TFunction,
+      }),
+    )
+    await act(async () => {
+      result.current('DONE')
+      await new Promise((resolve) => setTimeout(resolve, 0))
+    })
+    return pageStore
+  }
+
+  it.each([
+    ['shows the next occurrence of a repeating task', REPEAT, ['BLOCK_1', 'BLOCK_NEXT']],
+    ['does not reload for a task without repeat', null, ['BLOCK_1']],
+  ])('[x] %s', async (_name, repeat, ids) => {
+    const pageStore = await completeTask(repeat)
+
+    expect(pageStore.getState().blocks.map((b) => b.id)).toEqual(ids)
+  })
+
+  it('does not reload when set_todo_state fails', async () => {
+    mockedSetTodoState.mockRejectedValue(new Error('ipc failed'))
+
+    const pageStore = await completeTask(REPEAT)
+
+    expect(pageStore.getState().blocks.map((b) => b.id)).toEqual(['BLOCK_1'])
   })
 })

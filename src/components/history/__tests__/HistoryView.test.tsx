@@ -26,7 +26,7 @@ import { toast } from 'sonner'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
-import { emptyPage, makeHistoryEntry } from '@/__tests__/fixtures'
+import { emptyPage, makeHistoryEntry, makePage } from '@/__tests__/fixtures'
 import {
   type CommandReturns,
   deferred,
@@ -47,7 +47,11 @@ import { t } from '@/lib/i18n'
 import { logger } from '@/lib/logger'
 import { propertyKeysQueryKey } from '@/lib/property-keys-cache'
 import { queryClient } from '@/lib/query-client'
+import { useRecentPagesStore } from '@/stores/recent-pages'
+import { useResolveStore } from '@/stores/resolve'
 import { useSpaceStore } from '@/stores/space'
+import type { Tab } from '@/stores/tabs'
+import { useTabsStore } from '@/stores/tabs'
 
 // Mock CompactionCard so it doesn't make extra invoke calls in HistoryView tests
 vi.mock('@/components/templates/CompactionCard', () => ({
@@ -80,7 +84,11 @@ let historyHandlers: TypedInvokeHandlers = {}
 
 function stubHistory(extra: TypedInvokeHandlers = {}): void {
   historyHandlers = { ...historyHandlers, ...extra }
-  stubInvoke(mockedInvoke, historyHandlers)
+  // A successful revert reloads like a sync, which refreshes the space list.
+  stubInvoke(mockedInvoke, {
+    list_spaces: () => useSpaceStore.getState().availableSpaces,
+    ...historyHandlers,
+  })
 }
 
 /**
@@ -1982,5 +1990,142 @@ describe('HistoryView screen reader announcements', () => {
       const remountedToggle = await screen.findByRole('switch', { name: /All spaces/i })
       expect(remountedToggle).toBeChecked()
     })
+  })
+})
+
+// #5276 — a revert or restore-to-here rewrites pages behind every store's
+// back, so it must carry the change into the titles and deleted marks the
+// chips, tabs and recents hold, as a sync does.
+describe('HistoryView revert fan-out (#5276)', () => {
+  const page = {
+    items: [makeHistoryEntry(1, 'edit_block', { to_text: 'renamed back' }, 1736942400000)],
+    next_cursor: null,
+    has_more: false,
+    total_count: null,
+  }
+
+  beforeEach(() => {
+    useSpaceStore.setState({
+      currentSpaceId: 'SPACE_A',
+      availableSpaces: [{ id: 'SPACE_A', name: 'A', accent_color: null }],
+      isReady: true,
+    })
+    // Page "Alpha" renamed to "Beta", which the revert renames back, and a
+    // deleted block the revert brings back.
+    useResolveStore.setState({ cache: new Map(), version: 0, _preloaded: false })
+    useResolveStore.getState().set('PAGE_P', 'Beta', false)
+    useResolveStore.getState().set('BLOCK_B', 'Referenced block', true)
+    const held = [{ pageId: 'PAGE_P', title: 'Beta' }]
+    const tabs: Tab[] = [{ id: '0', pageStack: held, label: 'Beta' }]
+    useTabsStore.setState({
+      tabs,
+      activeTabIndex: 0,
+      tabsBySpace: { SPACE_A: tabs },
+      activeTabIndexBySpace: { SPACE_A: 0 },
+    })
+    useRecentPagesStore.setState({ recentPages: held, recentPagesBySpace: { SPACE_A: held } })
+    stubHistory({
+      list_blocks: () => ({
+        items: [makePage({ id: 'PAGE_P', content: 'Alpha' })],
+        next_cursor: null,
+        has_more: false,
+        total_count: null,
+      }),
+      list_all_tags_in_space: () => [],
+      batch_resolve: () => [
+        { id: 'BLOCK_B', title: 'Referenced block', block_type: 'content', deleted: false },
+      ],
+    })
+    _resetGraphStructureEventsForTest()
+  })
+
+  afterEach(() => {
+    useSpaceStore.setState({ currentSpaceId: null, availableSpaces: [], isReady: false })
+    useTabsStore.setState({
+      tabs: [{ id: '0', pageStack: [], label: '' }],
+      activeTabIndex: 0,
+      tabsBySpace: {},
+      activeTabIndexBySpace: {},
+    })
+    useRecentPagesStore.setState({ recentPages: [], recentPagesBySpace: {} })
+    useResolveStore.setState({ cache: new Map(), version: 0, _preloaded: false })
+  })
+
+  function heldState() {
+    const resolve = useResolveStore.getState()
+    const tab = useTabsStore.getState().tabs[0]
+    return {
+      chipTitle: resolve.resolveTitle('PAGE_P'),
+      blockStatus: resolve.resolveStatus('BLOCK_B'),
+      tabTitle: tab?.pageStack[0]?.title,
+      tabLabel: tab?.label,
+      recentTitle: useRecentPagesStore.getState().recentPagesBySpace['SPACE_A']?.[0]?.title,
+    }
+  }
+
+  const BEFORE = {
+    chipTitle: 'Beta',
+    blockStatus: 'deleted',
+    tabTitle: 'Beta',
+    tabLabel: 'Beta',
+    recentTitle: 'Beta',
+  }
+
+  async function confirmRevert(user: ReturnType<typeof userEvent.setup>): Promise<void> {
+    await user.click(screen.getAllByTestId(/^history-item-/)[0] as HTMLElement)
+    await user.click(screen.getByRole('button', { name: /Revert selected/ }))
+    await user.click(screen.getByRole('button', { name: /^Revert$/ }))
+  }
+
+  async function confirmRestore(user: ReturnType<typeof userEvent.setup>): Promise<void> {
+    await user.click(screen.getByRole('button', { name: /Reset to this point/i }))
+    await user.click(screen.getByRole('button', { name: /^Restore$/ }))
+  }
+
+  it.each([
+    ['revert', () => stubRevertRun(page, () => []), confirmRevert],
+    [
+      'restore to here',
+      () =>
+        stubRestoreRun(page, () => ({ ops_reverted: 1, non_reversible_skipped: 0, results: [] })),
+      confirmRestore,
+    ],
+  ])('a successful %s re-resolves held titles and deleted marks', async (_, stub, confirm) => {
+    const user = userEvent.setup()
+    stub()
+    render(<HistoryView />)
+    await screen.findByText('renamed back')
+    expect(heldState()).toEqual(BEFORE)
+
+    await confirm(user)
+
+    await waitFor(() => {
+      expect(heldState()).toEqual({
+        chipTitle: 'Alpha',
+        blockStatus: 'active',
+        tabTitle: 'Alpha',
+        tabLabel: 'Alpha',
+        recentTitle: 'Alpha',
+      })
+      expect(getGraphStructureKey()).toBe(1)
+    })
+  })
+
+  it('a failed revert leaves them alone', async () => {
+    const user = userEvent.setup()
+    stubRevertRun(page, () => Promise.reject(new Error('revert failed')))
+    render(<HistoryView />)
+    await screen.findByText('renamed back')
+
+    await confirmRevert(user)
+
+    await waitFor(() => {
+      expect(vi.mocked(toast.error)).toHaveBeenCalledWith(t('history.revertFailed'))
+    })
+    // The re-reads that would rewrite them start in the same tick as the fan-out.
+    const commandsCalled = mockedInvoke.mock.calls.map(([command]) => command)
+    expect(commandsCalled).not.toContain('list_blocks')
+    expect(commandsCalled).not.toContain('batch_resolve')
+    expect(heldState()).toEqual(BEFORE)
   })
 })

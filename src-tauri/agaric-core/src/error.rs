@@ -84,8 +84,10 @@ pub enum ValidationCode {
     /// point of validating at the point of entry.
     InvalidRepeatRule,
     /// Renaming a page to a title another live page in the same space
-    /// already carries (`edit_block_inner`, #4723). Coded so the title
-    /// editor can name the clash instead of the generic rename failure.
+    /// already carries (`edit_block_inner`, #4723), or renaming or restoring
+    /// a tag onto a name another live tag of its space holds (#5281; a tag
+    /// opens as a page, its name the title). Coded so the title editor can
+    /// name the clash instead of the generic rename failure.
     DuplicatePageTitle,
 }
 

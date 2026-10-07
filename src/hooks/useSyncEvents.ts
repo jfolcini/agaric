@@ -137,7 +137,7 @@ function retitleHeldPages(targeted: ReadonlySet<string> | null, spaceId: string 
  * ancestor) reload EVERY mounted store plus a full preload — when in doubt we
  * fall back rather than risk a missed update.
  */
-export function reloadChangedPageStores(changedPageIds: string[] | undefined): void {
+export function reloadChangedPageStores(changedPageIds?: string[]): void {
   const reanchorUndo = useUndoStore.getState().reanchorAfterRemoteOps
   const targeted =
     Array.isArray(changedPageIds) && changedPageIds.length > 0 ? new Set(changedPageIds) : null
@@ -214,6 +214,17 @@ export function reloadChangedPageStores(changedPageIds: string[] | undefined): v
   // #5283 — and spaces: a peer can create, rename, recolour or delete one. The
   // refresh never rejects, and it moves off an active space a peer deleted.
   void useSpaceStore.getState().refreshAvailableSpaces()
+}
+
+/**
+ * #5276 — the fan-out after a History revert / restore-to-here or an Agent access undo. Those
+ * rewrite pages behind every store's back as a sync does, with no event naming which, so this
+ * is the full reload plus a re-resolve of the entries cached as deleted: the reload's page walk
+ * lists pages only, so a block whose delete was reverted would keep its struck-through chips.
+ */
+export function reloadAfterRevert(): void {
+  reloadChangedPageStores()
+  void useResolveStore.getState().refreshDeleted(useSpaceStore.getState().currentSpaceId)
 }
 
 /** Map backend state strings to frontend SyncState enum. */

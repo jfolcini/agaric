@@ -951,6 +951,51 @@ function pasteRow(
   return row
 }
 
+/**
+ * #5281 — refuse naming `tagId` `name` when another live tag of its space holds
+ * that name under `normalizeTagName`. Mock twin of `reject_duplicate_tag_name`
+ * (`src-tauri/src/commands/blocks/crud.rs`).
+ */
+function rejectDuplicateTagName(tagId: string, name: string): void {
+  const spaceId = blocks.get(tagId)?.['space_id'] ?? null
+  if (spaceId === null) return
+  const wanted = normalizeTagName(name)
+  for (const b of blocks.values()) {
+    if (b['block_type'] !== 'tag' || b['deleted_at'] || b['id'] === tagId) continue
+    if (b['space_id'] !== spaceId || b['content'] == null) continue
+    if (normalizeTagName(b['content'] as string) !== wanted) continue
+    throw appErrorRejection({
+      kind: 'validation',
+      code: 'DuplicatePageTitle',
+      message: `a tag named '${name}' already exists in space '${spaceId as string}'`,
+    })
+  }
+}
+
+/**
+ * #5281 — run `restore`, then refuse it, undoing every row it revived, when it
+ * brought a tag back under a name another live tag of its space holds. Mock
+ * twin of `reject_restored_duplicate_tag_names`, which runs after the backend's
+ * writes inside the transaction its refusal rolls back.
+ */
+function restoreRefusingDuplicateTagNames<T>(restore: () => T): T {
+  const deletedBefore = new Map([...blocks].map(([id, b]) => [id, b['deleted_at']]))
+  const result = restore()
+  try {
+    for (const [id, b] of blocks) {
+      if (b['block_type'] !== 'tag' || b['deleted_at'] || !deletedBefore.get(id)) continue
+      if (b['content'] != null) rejectDuplicateTagName(id, b['content'] as string)
+    }
+  } catch (err) {
+    for (const [id, deletedAt] of deletedBefore) {
+      const b = blocks.get(id)
+      if (b && b['deleted_at'] !== deletedAt) b['deleted_at'] = deletedAt
+    }
+    throw err
+  }
+  return result
+}
+
 export const blocksHandlers = {
   // #3870 — mirrors `list_blocks_inner`'s DISPATCH CHAIN, not a conjunction of
   // filters: exactly one branch runs, and each brings its own `ORDER BY` and
@@ -1526,6 +1571,7 @@ export const blocksHandlers = {
         })
       }
     }
+    if (b['block_type'] === 'tag') rejectDuplicateTagName(blockId, a['toText'] as string)
     const oldContent = b['content'] as string | null
     b['content'] = a['toText'] as string
     const op = pushOp('edit_block', {
@@ -1654,7 +1700,7 @@ export const blocksHandlers = {
   restore_block: (args) => {
     const a = args as Record<string, unknown>
     const blockId = a['blockId'] as string
-    const restoredCount = restoreCohort(blocks, blockId)
+    const restoredCount = restoreRefusingDuplicateTagNames(() => restoreCohort(blocks, blockId))
     pushOp('restore_block', { block_id: blockId })
     return { block_id: blockId, restored_count: restoredCount }
   },
@@ -1724,16 +1770,15 @@ export const blocksHandlers = {
     // it — where the backend resolves every soft-deleted root up front and
     // appends exactly one op per root, overlap or not.
     const restoreRoots = ids.filter((id) => blocks.get(id)?.['deleted_at'])
-    let count = 0
-    for (const id of restoreRoots) {
-      // The SAME cohort restore the single-block handler runs: back down the
-      // exact cohort the delete tombstoned, then up the tombstoned ancestor
-      // chain. `affected_count` sums the DOWNWARD cohorts only — an ancestor
-      // dragged back to keep the row reachable is an effect, not a restore the
-      // caller asked for.
-      count += restoreCohort(blocks, id)
-      pushOp('restore_block', { block_id: id })
-    }
+    // The SAME cohort restore the single-block handler runs: back down the
+    // exact cohort the delete tombstoned, then up the tombstoned ancestor
+    // chain. `affected_count` sums the DOWNWARD cohorts only — an ancestor
+    // dragged back to keep the row reachable is an effect, not a restore the
+    // caller asked for.
+    const count = restoreRefusingDuplicateTagNames(() =>
+      restoreRoots.reduce((sum, id) => sum + restoreCohort(blocks, id), 0),
+    )
+    for (const id of restoreRoots) pushOp('restore_block', { block_id: id })
     return { affected_count: count }
   },
 

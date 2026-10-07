@@ -8,19 +8,28 @@ import { renderHook, waitFor } from '@testing-library/react'
 import { toast } from 'sonner'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { makeBlockRow } from '@/__tests__/fixtures'
-import { stubInvoke, type TypedInvokeHandlers } from '@/__tests__/helpers/invoke'
+import { makeBlockRow, makePropertyRow } from '@/__tests__/fixtures'
+import {
+  type CommandReturns,
+  stubInvoke,
+  type TypedInvokeHandlers,
+} from '@/__tests__/helpers/invoke'
 import { makeSyntheticCtx } from '@/components/block-tree/use-block-slash-commands/__tests__/test-utils'
 import { useSlashCommandProperty } from '@/components/block-tree/use-block-slash-commands/useSlashCommandProperty'
 import { registerActiveDraftFlush } from '@/lib/active-draft-flush'
+import { getAttachmentInvalidationKey } from '@/lib/attachment-invalidation'
 import { logger } from '@/lib/logger'
+import { useSpaceStore } from '@/stores/space'
 import { useUndoStore } from '@/stores/undo'
 
 vi.mock('@/lib/announcer', () => ({ announce: vi.fn() }))
 vi.mock('@/lib/logger', () => ({
   logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }))
-vi.mock('@/lib/repeat-utils', () => ({ formatRepeatLabel: vi.fn((v: string) => v) }))
+vi.mock('@/lib/repeat-utils', async (importActual) => ({
+  ...(await importActual<typeof import('@/lib/repeat-utils')>()),
+  formatRepeatLabel: vi.fn((v: string) => v),
+}))
 
 const mockedInvoke = vi.mocked(invoke)
 const originalOnNewAction = useUndoStore.getState().onNewAction
@@ -131,6 +140,64 @@ describe('useSlashCommandProperty — TODO state', () => {
     await result.current.exact['todo']?.(ctx, { id: 'todo', label: 'TODO' })
 
     expect(vi.mocked(toast.error)).toHaveBeenCalledWith('blockTree.setTaskStateFailed')
+  })
+})
+
+describe('useSlashCommandProperty — /done on a repeating task (#5285)', () => {
+  const REPEAT = makePropertyRow({ key: 'repeat', value_text: '+1w' })
+
+  /** The page as the backend holds it after the DONE: the block and its next occurrence. */
+  function stubCompletedRepeat(
+    repeat: CommandReturns['get_property'],
+    overrides: TypedInvokeHandlers = {},
+  ): void {
+    stubPropertySlashInvoke({
+      get_property: (args) => (args['key'] === 'repeat' ? repeat : null),
+      load_page_subtree: () => ({
+        blocks: [
+          makeBlockRow({ id: 'BLOCK_1', parent_id: 'PAGE_1', todo_state: 'DONE' }),
+          makeBlockRow({ id: 'BLOCK_NEXT', parent_id: 'PAGE_1', todo_state: 'TODO', position: 2 }),
+        ],
+        truncated: false,
+        total: 2,
+      }),
+      ...overrides,
+    })
+  }
+
+  beforeEach(() => {
+    useSpaceStore.setState({ currentSpaceId: 'SPACE_1' })
+  })
+
+  afterEach(() => {
+    useSpaceStore.setState({ currentSpaceId: null })
+  })
+
+  it.each([
+    ['shows the next occurrence of a repeating task', REPEAT, ['BLOCK_1', 'BLOCK_NEXT']],
+    ['does not reload for a task without repeat', null, ['BLOCK_1']],
+  ])('/done %s', async (_name, repeat, ids) => {
+    stubCompletedRepeat(repeat)
+    const { result } = renderHook(() => useSlashCommandProperty())
+    const { ctx, pageStore } = makeSyntheticCtx()
+
+    await result.current.exact['done']?.(ctx, { id: 'done', label: 'DONE' })
+
+    expect(pageStore.getState().blocks.map((b) => b.id)).toEqual(ids)
+  })
+
+  it('does not reload when set_todo_state fails', async () => {
+    stubCompletedRepeat(REPEAT, {
+      set_todo_state: () => {
+        throw new Error('fail')
+      },
+    })
+    const { result } = renderHook(() => useSlashCommandProperty())
+    const { ctx, pageStore } = makeSyntheticCtx()
+
+    await result.current.exact['done']?.(ctx, { id: 'done', label: 'DONE' })
+
+    expect(pageStore.getState().blocks.map((b) => b.id)).toEqual(['BLOCK_1'])
   })
 })
 
@@ -500,7 +567,25 @@ describe('useSlashCommandProperty — attach', () => {
     return { get: () => captured, restore: () => spy.mockRestore() }
   }
 
-  it('ships file bytes via add_attachment_with_bytes for an allowed file', async () => {
+  /** Picks `file` in the dialog `/attach` opens. */
+  async function attach(file: File): Promise<void> {
+    const input = interceptFileInput()
+    try {
+      const { result } = renderHook(() => useSlashCommandProperty())
+      const { ctx } = makeSyntheticCtx()
+      await result.current.exact['attach']?.(ctx, { id: 'attach', label: 'ATTACH' })
+      const el = input.get()
+      expect(el).not.toBeNull()
+      // oxlint-disable-next-line typescript/no-non-null-assertion -- guarded by expect(el).not.toBeNull() above
+      Object.defineProperty(el!, 'files', { value: [file] })
+      // oxlint-disable-next-line typescript/no-non-null-assertion -- guarded above
+      el!.dispatchEvent(new Event('change'))
+    } finally {
+      input.restore()
+    }
+  }
+
+  it('ships file bytes via add_attachment_with_bytes and invalidates the attachment lists (#5282)', async () => {
     stubPropertySlashInvoke({
       // `created_at` is epoch-ms (attachments.created_at is INTEGER since
       // migration 0081), not the ISO string the old literal carried.
@@ -514,31 +599,36 @@ describe('useSlashCommandProperty — attach', () => {
         created_at: 1_735_689_600_000,
       }),
     })
-    const input = interceptFileInput()
-    try {
-      const { result } = renderHook(() => useSlashCommandProperty())
-      const { ctx } = makeSyntheticCtx()
-      await result.current.exact['attach']?.(ctx, { id: 'attach', label: 'ATTACH' })
+    const before = getAttachmentInvalidationKey()
 
-      const el = input.get()
-      expect(el).not.toBeNull()
-      const file = new File([new Uint8Array([1, 2, 3, 4])], 'photo.png', { type: 'image/png' })
-      // oxlint-disable-next-line typescript/no-non-null-assertion -- guarded by expect(el).not.toBeNull() above
-      Object.defineProperty(el!, 'files', { value: [file] })
-      // oxlint-disable-next-line typescript/no-non-null-assertion -- guarded above
-      el!.dispatchEvent(new Event('change'))
+    await attach(new File([new Uint8Array([1, 2, 3, 4])], 'photo.png', { type: 'image/png' }))
 
-      await waitFor(() => {
-        expect(mockedInvoke).toHaveBeenCalledWith('add_attachment_with_bytes', {
-          blockId: 'BLOCK_1',
-          filename: 'photo.png',
-          mimeType: 'image/png',
-          bytes: [1, 2, 3, 4],
-        })
-      })
-    } finally {
-      input.restore()
-    }
+    await waitFor(() => {
+      expect(vi.mocked(toast.success)).toHaveBeenCalledWith(
+        'blockTree.attachedFileMessage:{"filename":"photo.png"}',
+      )
+    })
+    expect(mockedInvoke).toHaveBeenCalledWith('add_attachment_with_bytes', {
+      blockId: 'BLOCK_1',
+      filename: 'photo.png',
+      mimeType: 'image/png',
+      bytes: [1, 2, 3, 4],
+    })
+    expect(getAttachmentInvalidationKey()).toBe(before + 1)
+  })
+
+  it('a failed attach toasts the failure', async () => {
+    stubPropertySlashInvoke({
+      add_attachment_with_bytes: () => {
+        throw new Error('disk full')
+      },
+    })
+
+    await attach(new File([new Uint8Array([1, 2, 3, 4])], 'photo.png', { type: 'image/png' }))
+
+    await waitFor(() => {
+      expect(vi.mocked(toast.error)).toHaveBeenCalledWith('blockTree.attachFileFailed')
+    })
   })
 
   it('rejects a disallowed file type: no add IPC, surfaces an error toast', async () => {
