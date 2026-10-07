@@ -1,4 +1,4 @@
-# Session 1880 — keyboard jumps in virtualised agenda lists (#5302)
+# Session 1882 — keyboard jumps in virtualised agenda lists (#5302)
 
 This session continued session 1873 with a `/batch-issues` sweep.
 
