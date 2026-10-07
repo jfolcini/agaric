@@ -1039,11 +1039,12 @@ export function useBlockActionOrchestration({
         rovingEditorRef.current.unmount()
         // #4729 — Enter at the START of a line leaves the source block empty
         // (`before` is ''), and that blank line is the point of the keystroke.
-        // Exempt it from the focus-leave empty-block cleanup NOW, before the
-        // first await: `edit()` below empties the block optimistically, and a
-        // click elsewhere during its round trip moves focus off the source,
-        // which the cleanup would otherwise delete. Withdrawn on the failure
-        // paths, which restore the full unsplit content.
+        // Exempt it from the focus-leave empty-block cleanup NOW, before any
+        // await: the `edit()` after `createBelow` empties the block
+        // optimistically, and a click elsewhere during its round trip moves
+        // focus off the source, which the cleanup would otherwise delete.
+        // Withdrawn on the failure paths, which restore the full unsplit
+        // content.
         const leavesSourceEmpty = split.before.trim() === ''
         if (leavesSourceEmpty) preserveEmptyBlockIds?.current.add(focusedBlockId)
         // #5272 — create the after-text sibling BEFORE shortening the source.
