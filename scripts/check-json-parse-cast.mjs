@@ -71,10 +71,10 @@
 //
 // ─── Kill-date ────────────────────────────────────────────────────────
 //
-// REMOVE AFTER 0.15.0 (#4885). Bumped from 0.14.0 at the 0.14.0 cut;
+// REMOVE AFTER 0.16.0 (#4885). Bumped at the 0.14.0 and 0.15.0 cuts;
 // burning it down is its own PR, not a release's. This baseline exists to
 // reach `{}`, and nothing but someone happening to notice has ever pressed
-// it there. At 0.15.0 `remove-after-markers` fails on this line: give the
+// it there. At 0.16.0 `remove-after-markers` fails on this line: give the
 // remaining sites a real validator and delete this block, or bump the
 // version and say in the diff why not.
 //
