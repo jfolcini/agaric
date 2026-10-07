@@ -55,7 +55,6 @@ export const common: Record<string, string> = {
   'sidebar.syncing': 'Syncing...',
   // #4713 — the sidebar Bookmarks section over the one bookmark list.
   'bookmarks.title': 'Bookmarks',
-  'bookmarks.empty': 'No bookmarks',
   'bookmarks.emptyHint': 'Bookmark a page to keep it here.',
   'bookmarks.remove': 'Remove {{title}} from bookmarks',
   'space.switch': 'Switch space',

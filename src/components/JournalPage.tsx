@@ -172,11 +172,10 @@ export function JournalPage({
 
   // ── Main render ─────────────────────────────────────────────────────
 
-  // PEND-UX item 5 — the configure-journal-template action moves from a
-  // free-floating right-aligned button row into the shared
-  // `FeaturePageHeader` `actions` slot. The same agenda-mode visibility
-  // Guard is preserved (templates don't apply in agenda mode).
-  const showConfigureTemplateAction = !loading && mode !== 'agenda'
+  // PEND-UX item 5 — the configure-journal-template action lives in the shared
+  // `FeaturePageHeader` `actions` slot. Agenda mode renders no header here (see
+  // below), so templates never show an action there.
+  const showConfigureTemplateAction = !loading
 
   return (
     // `tabIndex={-1}` makes this a programmatic primary-focus / scroll target
@@ -193,29 +192,33 @@ export function JournalPage({
           shell header renders `<JournalControls />` instead of a label
           for journal mode, so this title is purely additive (no visual
           duplication). The configure-template button is surfaced as a
-          right-aligned action when available. */}
-      <FeaturePageHeader
-        title={t('sidebar.journal')}
-        className="journal-page-header"
-        {...(showConfigureTemplateAction && {
-          actions: (
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button
-                  variant="ghost"
-                  size="icon-xs"
-                  aria-label={t('space.configureJournalTemplate')}
-                  onClick={() => setManageOpen(true)}
-                  data-testid="journal-configure-template-trigger"
-                >
-                  <Settings2 className="h-4 w-4" />
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent>{t('space.configureJournalTemplate')}</TooltipContent>
-            </Tooltip>
-          ),
-        })}
-      />
+          right-aligned action when available. Agenda mode skips it:
+          `AgendaView` renders the title inside its `ViewHeader`, above the
+          sticky filter/sort bar, so it is the only `<h1>` there. */}
+      {mode !== 'agenda' && (
+        <FeaturePageHeader
+          title={t('sidebar.journal')}
+          className="journal-page-header"
+          {...(showConfigureTemplateAction && {
+            actions: (
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    variant="ghost"
+                    size="icon-xs"
+                    aria-label={t('space.configureJournalTemplate')}
+                    onClick={() => setManageOpen(true)}
+                    data-testid="journal-configure-template-trigger"
+                  >
+                    <Settings2 className="h-4 w-4" />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>{t('space.configureJournalTemplate')}</TooltipContent>
+              </Tooltip>
+            ),
+          })}
+        />
+      )}
 
       {/* View content — the tabpanel for the active mode tab. `id` +
           `aria-labelledby` complete the WAI-ARIA tab↔panel relationship with

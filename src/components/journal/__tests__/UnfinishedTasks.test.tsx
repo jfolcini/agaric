@@ -353,7 +353,7 @@ describe('UnfinishedTasks', () => {
     expect(screen.getByTestId('unfinished-group-yesterday')).toBeInTheDocument()
   })
 
-  it('shows count badge with total number of tasks', async () => {
+  it('shows the total number of tasks as a count', async () => {
     const blocks = [
       makeYesterdayBlock('Y1'),
       makeYesterdayBlock('Y2', 'Another yesterday task'),
@@ -367,8 +367,42 @@ describe('UnfinishedTasks', () => {
       expect(screen.getByTestId('unfinished-tasks')).toBeInTheDocument()
     })
 
-    // Total badge should show 3
-    expect(screen.getByText('3')).toBeInTheDocument()
+    // Total count reads "(3)" in the panel header
+    expect(screen.getByText('(3)')).toBeInTheDocument()
+  })
+
+  // Counts in every panel header are plain "(n)" text (CollapsiblePanelHeader
+  // label first, then the count) — never a Badge pill.
+  it('renders panel and group counts as plain (n) text, not Badges', async () => {
+    mockInvokeForBlocks([
+      makeYesterdayBlock('Y1'),
+      makeYesterdayBlock('Y2', 'Another yesterday task'),
+      makeOlderBlock(),
+    ])
+
+    render(<UnfinishedTasks />)
+
+    await waitFor(() => {
+      expect(screen.getByTestId('unfinished-tasks')).toBeInTheDocument()
+    })
+    await userEvent.setup().click(screen.getByRole('button', { expanded: false }))
+
+    const panelHeader = screen
+      .getByTestId('unfinished-tasks')
+      .querySelector('button[aria-expanded]')
+    expect(panelHeader).toHaveTextContent('(3)')
+    expect(panelHeader?.querySelector('[data-slot="badge"]')).toBeNull()
+
+    for (const [group, count] of [
+      ['yesterday', '(2)'],
+      ['older', '(1)'],
+    ] as const) {
+      const groupHeader = screen
+        .getByTestId(`unfinished-group-${group}`)
+        .querySelector('button[aria-expanded]')
+      expect(groupHeader).toHaveTextContent(count)
+      expect(groupHeader?.querySelector('[data-slot="badge"]')).toBeNull()
+    }
   })
 
   // #757 — listUnfinishedTasks is cursor-paginated (200-row pages capped by
@@ -412,7 +446,7 @@ describe('UnfinishedTasks', () => {
 
       // #3342 — collapsed, the drain has not run: one page only, and the badge
       // says so rather than claiming the partial count is the total.
-      expect(screen.getByText('3+')).toBeInTheDocument()
+      expect(screen.getByText('(3+)')).toBeInTheDocument()
       expect(mockedInvoke.mock.calls.filter((c) => c[0] === 'list_unfinished_tasks')).toHaveLength(
         1,
       )
@@ -421,7 +455,7 @@ describe('UnfinishedTasks', () => {
       // (pre-#757 it showed 3).
       await user.click(screen.getByRole('button', { expanded: false }))
       await waitFor(() => {
-        expect(screen.getByText('4')).toBeInTheDocument()
+        expect(screen.getByText('(4)')).toBeInTheDocument()
       })
 
       // Exactly two IPC pages, the second continuing the cursor chain.
@@ -479,7 +513,7 @@ describe('UnfinishedTasks', () => {
       })
       // The cap stops the drain with the chain still unfinished, so the badge
       // stays honest about being a lower bound.
-      expect(screen.getAllByText('25+').length).toBeGreaterThanOrEqual(1)
+      expect(screen.getAllByText('(25+)').length).toBeGreaterThanOrEqual(1)
     })
 
     // #3342 — the panel is collapsed by default and the rows only exist inside
@@ -506,7 +540,7 @@ describe('UnfinishedTasks', () => {
       expect(mockedInvoke.mock.calls.filter((c) => c[0] === 'list_unfinished_tasks')).toHaveLength(
         1,
       )
-      expect(screen.getByText('2+')).toBeInTheDocument()
+      expect(screen.getByText('(2+)')).toBeInTheDocument()
     })
   })
 
@@ -1311,7 +1345,7 @@ describe('UnfinishedTasks', () => {
 
       // Collapsed: "expand to load the rest" names the affordance in front of
       // the user, so it is exactly right here.
-      expect(screen.getByText('2+')).toBeInTheDocument()
+      expect(screen.getByText('(2+)')).toBeInTheDocument()
       expect(screen.getByText(t('unfinished.countPartialLabel', { n: 2 }))).toBeInTheDocument()
 
       await user.click(screen.getByRole('button', { expanded: false }))
@@ -1321,7 +1355,7 @@ describe('UnfinishedTasks', () => {
 
       // Still partial (the drain died on page 2), so the qualifier is still
       // needed — but the instruction it used to carry is now nonsense.
-      expect(screen.getByText('2+')).toBeInTheDocument()
+      expect(screen.getByText('(2+)')).toBeInTheDocument()
       expect(
         screen.queryByText(t('unfinished.countPartialLabel', { n: 2 })),
       ).not.toBeInTheDocument()

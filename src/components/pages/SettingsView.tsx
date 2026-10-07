@@ -41,6 +41,7 @@ import { GeneralTab } from '@/components/settings/GeneralTab'
 import { HelpTab } from '@/components/settings/HelpTab'
 import { KeyboardTab } from '@/components/settings/KeyboardTab'
 import { NotificationsTab } from '@/components/settings/NotificationsTab'
+import { Card, CardContent } from '@/components/ui/card'
 import { FeaturePageHeader } from '@/components/ui/feature-page-header'
 import { dispatchBugReport } from '@/lib/bug-report-events'
 import { PREFERENCES, readPreference, writePreference } from '@/lib/preferences'
@@ -299,7 +300,7 @@ export function SettingsView(): React.ReactElement {
             set its own (max-w-md / max-w-xl / none) plus a divergent
             vertical-rhythm token (space-y-4 vs space-y-6), so switching tabs
             visibly re-widthed and re-spaced the content. The width cap is unified
-            here; the panes' own roots now all use the same `space-y-6` rhythm. */}
+            here; panes that stack several Cards (Data, Help) space them with `space-y-6`. */}
         <div
           role="tabpanel"
           id={`settings-panel-${activeTab}`}
@@ -309,7 +310,13 @@ export function SettingsView(): React.ReactElement {
         >
           {activeTab === 'general' && <GeneralTab />}
 
-          {activeTab === 'properties' && <PropertyDefinitionsList />}
+          {activeTab === 'properties' && (
+            <Card>
+              <CardContent>
+                <PropertyDefinitionsList />
+              </CardContent>
+            </Card>
+          )}
 
           {activeTab === 'appearance' && <AppearanceTab />}
 

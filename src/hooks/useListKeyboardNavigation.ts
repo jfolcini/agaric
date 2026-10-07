@@ -14,6 +14,7 @@
 
 import {
   type Dispatch,
+  type RefObject,
   type SetStateAction,
   useEffect,
   useLayoutEffect,
@@ -51,6 +52,13 @@ export interface UseListKeyboardNavigationOptions {
   pageSize?: number
   /** Called when an item is selected (Enter or Space) */
   onSelect?: (index: number) => void
+  /**
+   * The list container, for lists whose keys arrive while DOM focus is elsewhere
+   * (a `document` listener, or keys bubbling up from controls inside): a handled
+   * key moves DOM focus onto it, so the cursor's ring (shown while the container
+   * has keyboard focus) appears wherever focus was when the key was pressed.
+   */
+  listRef?: RefObject<HTMLElement | null>
 }
 
 export interface UseListKeyboardNavigationReturn {
@@ -244,10 +252,32 @@ export function useListKeyboardNavigation(
       if (!rule.matches(e, opts)) continue
       if (rule.preventDefault) e.preventDefault()
       rule.apply(setFocusedIndex, opts, focusedIndex)
+      options.listRef?.current?.focus({ preventScroll: true })
       return true
     }
     return false
   }
 
   return { focusedIndex, setFocusedIndex, handleKeyDown }
+}
+
+/**
+ * Roving tabindex for a `[data-block-list-item]` row: when the keyboard moves the
+ * cursor onto this row off the row that held DOM focus (now `tabindex="-1"`),
+ * focus follows. The cursor ring then stays on the cursor across sub-lists, and
+ * the next key still reaches the list after a virtualiser unmounts the row focus
+ * started on.
+ */
+export function useRovingRowFocus<T extends HTMLElement>(
+  isCursor: boolean | undefined,
+): RefObject<T | null> {
+  const rowRef = useRef<T | null>(null)
+  useEffect(() => {
+    const row = rowRef.current
+    const active = document.activeElement
+    if (isCursor && row && active?.matches('[data-block-list-item][tabindex="-1"]')) {
+      row.focus({ preventScroll: true })
+    }
+  }, [isCursor])
+  return rowRef
 }

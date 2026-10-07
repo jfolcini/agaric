@@ -410,7 +410,7 @@ function PriorityBadge({
       <TooltipTrigger asChild>
         <button
           type="button"
-          className="priority-badge flex-shrink-0 p-0.5 transition-colors focus-ring-visible active:scale-95 touch-target max-sm:flex max-sm:items-center max-sm:justify-center"
+          className="priority-badge flex-shrink-0 p-0.5 transition-colors focus-ring-visible active:scale-95 touch-target flex items-center justify-center"
           data-testid="priority-badge"
           aria-label={t('block.priorityCycle', { level: priorityLabel(priority) })}
           // #976 (item 9) — the badge is a toggle button cycling the block's
@@ -427,7 +427,7 @@ function PriorityBadge({
         >
           <span
             className={cn(
-              'inline-flex items-center justify-center rounded px-1.5 py-0.5 text-xs font-bold max-sm:px-2.5 max-sm:py-1',
+              'inline-flex items-center justify-center rounded px-1.5 py-0.75 text-xs font-bold leading-none max-sm:px-2.5 max-sm:py-1',
               priorityColor(priority),
             )}
           >

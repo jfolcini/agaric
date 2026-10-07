@@ -30,6 +30,19 @@ describe('Badge', () => {
     expect(badge.className).toContain('text-xs')
   })
 
+  it('aligns digits with tabular-nums on every tone', () => {
+    render(
+      <>
+        <Badge>Default</Badge>
+        <Badge tone="priority" priorityLevel="1">
+          P1
+        </Badge>
+      </>,
+    )
+    expect(screen.getByText('Default')).toHaveClass('tabular-nums')
+    expect(screen.getByText('P1')).toHaveClass('tabular-nums')
+  })
+
   it('renders with secondary tone', () => {
     render(<Badge tone="secondary">Tag</Badge>)
     const badge = screen.getByText('Tag')

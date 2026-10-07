@@ -17,7 +17,9 @@ const Checkbox = ({
       ref={ref}
       data-slot="checkbox"
       className={cn(
-        'peer inline-flex size-4 shrink-0 items-center justify-center rounded-sm border border-input bg-background shadow-xs transition-colors',
+        // `--input` was ≈1.2:1 against the page; a checkbox's boundary needs 3:1 (WCAG
+        // 1.4.11): muted-foreground/80 is ≈3.3:1 in light, ≈5.2:1 in dark.
+        'peer inline-flex size-4 shrink-0 items-center justify-center rounded-sm border border-muted-foreground/80 bg-background shadow-xs transition-colors',
         'focus-ring-visible',
         'disabled:cursor-not-allowed disabled:opacity-50',
         'data-[state=checked]:bg-primary data-[state=checked]:border-primary data-[state=checked]:text-primary-foreground',

@@ -389,18 +389,22 @@ describe('HistoryListItem', () => {
 
   // -- Focus state -----------------------------------------------------------
 
-  it('shows focus ring when isFocused is true', () => {
+  // `list-cursor` is a tint at rest whose ring is gated in CSS on keyboard
+  // focus being in the list; jsdom cannot evaluate that gate, so the class
+  // contract is the assertion: the cursor never carries an inline ring.
+  it('marks the cursor row with list-cursor and no inline ring when isFocused is true', () => {
     renderInListbox(defaultProps({ isFocused: true }))
 
     const item = screen.getByTestId('history-item-0')
-    expect(item).toHaveClass('ring-2')
+    expect(item).toHaveClass('list-cursor')
+    expect(item).not.toHaveClass('ring-2')
   })
 
-  it('does not show focus ring when isFocused is false', () => {
+  it('does not mark the row as the cursor when isFocused is false', () => {
     renderInListbox(defaultProps({ isFocused: false }))
 
     const item = screen.getByTestId('history-item-0')
-    expect(item).not.toHaveClass('ring-2')
+    expect(item).not.toHaveClass('list-cursor')
   })
 
   it('has tabIndex=0 when focused', () => {
@@ -435,7 +439,49 @@ describe('HistoryListItem', () => {
 
     const checkbox = screen.getByRole('checkbox')
     await user.click(checkbox)
+    expect(onToggleSelection).toHaveBeenCalledTimes(1)
     expect(onToggleSelection).toHaveBeenCalledWith(0)
+  })
+
+  it('Space on the row toggles it once and stays off the document', async () => {
+    // The same document-level Space would toggle the cursor row (this one) back.
+    const user = userEvent.setup()
+    const onToggleSelection = vi.fn()
+    const documentKeydown = vi.fn()
+    document.addEventListener('keydown', documentKeydown)
+    try {
+      renderInListbox(defaultProps({ onToggleSelection, isFocused: true }))
+
+      screen.getByTestId('history-item-0').focus()
+      await user.keyboard(' ')
+
+      expect(onToggleSelection).toHaveBeenCalledTimes(1)
+      expect(onToggleSelection).toHaveBeenCalledWith(0)
+      expect(documentKeydown).not.toHaveBeenCalled()
+    } finally {
+      document.removeEventListener('keydown', documentKeydown)
+    }
+  })
+
+  it('Space on the checkbox toggles this row once and stays off the document', async () => {
+    // HistoryView's list shortcuts listen on `document`, and their Space toggles
+    // the CURSOR row; a checkbox Space reaching them would toggle a second row.
+    const user = userEvent.setup()
+    const onToggleSelection = vi.fn()
+    const documentKeydown = vi.fn()
+    document.addEventListener('keydown', documentKeydown)
+    try {
+      renderInListbox(defaultProps({ onToggleSelection }))
+
+      screen.getByRole('checkbox').focus()
+      await user.keyboard(' ')
+
+      expect(onToggleSelection).toHaveBeenCalledTimes(1)
+      expect(onToggleSelection).toHaveBeenCalledWith(0)
+      expect(documentKeydown).not.toHaveBeenCalled()
+    } finally {
+      document.removeEventListener('keydown', documentKeydown)
+    }
   })
 
   it('calls onToggleDiff when diff button is clicked', async () => {

@@ -291,7 +291,7 @@ export function StatusPanel(): React.ReactElement {
               height="h-20"
               loading
               ariaLabel={t('status.loadingLabel')}
-              className="status-panel-loading grid grid-cols-1 sm:grid-cols-2 gap-4 space-y-0"
+              className="status-panel-loading grid grid-cols-2 gap-4 space-y-0"
             />
           )}
 
@@ -299,7 +299,7 @@ export function StatusPanel(): React.ReactElement {
 
           {status && (
             <output className="status-panel-metrics block">
-              <dl className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <dl className="grid grid-cols-2 gap-4">
                 <MetricCard
                   className={cn('status-metric', queueHealthClasses(status.foreground_queue_depth))}
                   value={
@@ -435,7 +435,7 @@ export function StatusPanel(): React.ReactElement {
                   timeout guard. */}
               <SyncRetryButton state={syncState} />
 
-              <dl className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <dl className="grid grid-cols-2 gap-4">
                 <MetricCard
                   value={<span className="sync-peer-count">{syncPeers.length}</span>}
                   labelSlot={

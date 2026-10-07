@@ -12,7 +12,7 @@
  * Surfaces covered:
  *   1. TabBar dropdown switcher          (src/components/layout/TabBar.tsx)
  *   2. SourcePageFilter popover          (src/components/filters/SourcePageFilter.tsx)
- *   3. FilterHelperPopover (+ Filter)    (src/components/search/FilterHelperPopover.tsx)
+ *   3. FilterHelperPopover (Add filter)  (src/components/search/FilterHelperPopover.tsx)
  *   4. JournalCalendarDropdown           (src/components/journal/JournalCalendarDropdown.tsx)
  *   5. HasTagFilterForm tag picker       (src/components/backlink-filter/categories/HasTagFilterForm.tsx)
  *
@@ -164,11 +164,11 @@ test.describe('SourcePageFilter popover (#1171 surface 2)', () => {
 })
 
 // ===========================================================================
-// 3. FilterHelperPopover — search panel "+ Filter"
+// 3. FilterHelperPopover — search panel "Add filter"
 // ===========================================================================
 //
 // FilterHelperPopover (src/components/search/FilterHelperPopover.tsx) anchors
-// the "+ Filter" button (data-testid="add-filter-button", line 239) in the
+// the "Add filter" button (data-testid="add-filter-button", line 239) in the
 // SearchPanel. Clicking it opens the category menu (data-testid
 // "filter-helper-menu", line 250); picking "Tag" swaps the content in place to
 // the tag value form (data-testid "filter-helper-tag", line 291); selecting an

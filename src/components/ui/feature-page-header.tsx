@@ -5,12 +5,11 @@
  * Standardises the "feature page" landmark: every top-level view now
  * carries a real `<header>` + `<h1>` so screen readers can land on the
  * view title via heading navigation and assistive-tech users get a
- * consistent visual anchor across Journal / Trash / Settings / Status /
- * Graph / Templates (the six views that previously rolled their own ad-
- * hoc header markup or none at all). Existing `ViewHeader`-portaled
- * views (PageBrowser, HistoryView, SearchPanel, AgendaView, PageHeader)
- * remain unchanged — the portal mechanic is orthogonal to this visual
- * chrome.
+ * consistent visual anchor across Journal / Trash / Settings / Status.
+ * Graph and Templates, which have no actions, let the shell label be their
+ * h1 instead (`VIEW_HEADING_OWNER`). `ViewHeader`-portaled views
+ * (PageBrowser, HistoryView, SearchPanel, PageHeader) use the portal; agenda
+ * mode renders this header inside its `ViewHeader`.
  *
  * Layout:
  *   ┌─────────────────────────────────────────────────────────────┐
@@ -88,7 +87,10 @@ const FeaturePageHeader = ({
   >
     {breadcrumb != null && <div data-slot="feature-page-header-breadcrumb">{breadcrumb}</div>}
     <div className="flex items-center gap-2">
-      <h1 data-slot="feature-page-header-title" className="flex-1 truncate text-lg font-semibold">
+      <h1
+        data-slot="feature-page-header-title"
+        className="flex-1 truncate text-2xl font-semibold tracking-tight"
+      >
         {title}
       </h1>
       {actions != null && (

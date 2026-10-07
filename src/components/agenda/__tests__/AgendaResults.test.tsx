@@ -627,6 +627,26 @@ describe('AgendaResults', () => {
     expect(badges.length).toBe(4)
   })
 
+  it('renders group headers with the SectionGroupHeader primitive as <h2>, keeping the group colour', () => {
+    const blocks = [
+      makeBlock({ id: 'B1', todo_state: 'DOING', content: 'In progress' }),
+      makeBlock({ id: 'B2', todo_state: null, content: 'Unset' }),
+    ]
+
+    render(<AgendaResults {...defaultProps({ blocks })} groupBy="state" />)
+
+    const [doing, noState] = screen.getAllByTestId('agenda-group-header')
+    for (const header of [doing, noState]) {
+      expect(header?.tagName).toBe('H2')
+      expect(header).toHaveAttribute('data-slot', 'section-group-header')
+      expect(header).toHaveClass('bg-muted/50')
+    }
+    // The per-group colour replaces the primitive's default muted text.
+    expect(doing).toHaveClass('text-status-pending-foreground')
+    expect(doing).not.toHaveClass('text-muted-foreground')
+    expect(noState).toHaveClass('text-muted-foreground')
+  })
+
   it('groups by page when groupBy is page', () => {
     const blocks = [
       makeBlock({

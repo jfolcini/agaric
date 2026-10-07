@@ -20,6 +20,7 @@ import { axe } from 'vitest-axe'
 
 import { makeBlock as _makeBlock } from '@/__tests__/fixtures'
 import { UpcomingSection } from '@/components/agenda/UpcomingSection'
+import { formatCompactDate } from '@/lib/date-utils'
 import { t } from '@/lib/i18n'
 
 /** Shared factory + domain defaults for UpcomingSection tests. */
@@ -140,7 +141,8 @@ describe('UpcomingSection', () => {
       />,
     )
 
-    expect(screen.getByText('2025-07-15')).toBeInTheDocument()
+    expect(screen.getByText(formatCompactDate('2025-07-15'))).toBeInTheDocument()
+    expect(screen.queryByText('2025-07-15')).not.toBeInTheDocument()
   })
 
   it('does not navigate when parent_id is null', async () => {

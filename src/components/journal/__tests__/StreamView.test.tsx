@@ -207,6 +207,13 @@ describe('StreamView', () => {
     expect(screen.getByTestId('day-section-2026-06-20')).toHaveAttribute('data-has-page', 'true')
   })
 
+  it('separates days by spacing, not by divider rules', () => {
+    const { container } = render(<StreamView />)
+
+    expect(container.querySelectorAll('.border-t')).toHaveLength(0)
+    expect(screen.getByTestId('journal-stream')).toHaveClass('space-y-6')
+  })
+
   it('calls loadOlder when the sentinel intersects (scroll loads older days)', () => {
     render(<StreamView />)
     expect(mockStream.loadOlder).not.toHaveBeenCalled()

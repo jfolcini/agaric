@@ -148,6 +148,10 @@ import {
   JournalPage,
   MIN_JOURNAL_DATE,
 } from '@/components/JournalPage'
+import {
+  ViewHeaderOutletProvider,
+  ViewHeaderOutletSlot,
+} from '@/components/layout/ViewHeaderOutlet'
 import { __resetCalendarPageDatesForTests } from '@/hooks/useCalendarPageDates'
 import type { BlockRow } from '@/lib/bindings'
 import { useBlockStore } from '@/stores/blocks'
@@ -1841,6 +1845,61 @@ describe('JournalPage', () => {
         const results = await axe(container)
         expect(results).toHaveNoViolations()
       })
+    })
+
+    // The Journal title heading belongs ABOVE the sticky filter/sort bar. In
+    // agenda mode AgendaView owns it (inside its ViewHeader) and JournalPage
+    // renders none, so there is exactly one h1 and it precedes the filter bar.
+    it('renders exactly one h1 in agenda mode, before the filter bar', async () => {
+      useJournalStore.setState({ mode: 'agenda' })
+      mockEmptyResponses()
+
+      renderJournal()
+
+      const filterBuilder = await screen.findByTestId('agenda-filter-builder')
+      // getByRole throws on a second h1.
+      const heading = screen.getByRole('heading', { level: 1 })
+      expect(heading).toHaveTextContent('Journal')
+      expect(
+        heading.compareDocumentPosition(filterBuilder) & Node.DOCUMENT_POSITION_FOLLOWING,
+      ).toBeTruthy()
+    })
+
+    it('puts the agenda h1 in the view-header outlet, ahead of the filter bar', async () => {
+      useJournalStore.setState({ mode: 'agenda' })
+      mockEmptyResponses()
+
+      render(
+        <ViewHeaderOutletProvider>
+          <ViewHeaderOutletSlot />
+          <JournalControls />
+          <JournalPage />
+        </ViewHeaderOutletProvider>,
+      )
+
+      const filterBuilder = await screen.findByTestId('agenda-filter-builder')
+      const outlet = screen.getByTestId('view-header-outlet')
+      const heading = within(outlet).getByRole('heading', { level: 1 })
+      expect(heading).toHaveTextContent('Journal')
+      expect(screen.getAllByRole('heading', { level: 1 })).toHaveLength(1)
+      expect(outlet.contains(filterBuilder)).toBe(true)
+      expect(
+        heading.compareDocumentPosition(filterBuilder) & Node.DOCUMENT_POSITION_FOLLOWING,
+      ).toBeTruthy()
+    })
+
+    it('keeps the single JournalPage h1 outside agenda mode', async () => {
+      mockEmptyResponses()
+
+      renderJournal()
+
+      await waitFor(() => {
+        expect(screen.queryByTestId('loading-skeleton')).not.toBeInTheDocument()
+      })
+      const headings = screen.getAllByRole('heading', { level: 1 })
+      expect(headings).toHaveLength(1)
+      expect(headings[0]).toHaveTextContent('Journal')
+      expect(headings[0]?.closest('.journal-page-header')).not.toBeNull()
     })
   })
 

@@ -80,11 +80,11 @@ test.describe('Due date filtering', () => {
     // but the anchored form is consistent with the Scheduled filter below).
     const filterBar = duePanel.locator('[data-testid="due-panel-filters"]')
     await expect(filterBar).toBeVisible()
-    const dueFilter = filterBar.getByRole('button', { name: /^Due( \(\d+\))?$/ })
+    const dueFilter = filterBar.getByRole('radio', { name: /^Due( \(\d+\))?$/ })
     await dueFilter.click()
 
     // Wait for the filter to take effect
-    await expect(dueFilter).toHaveAttribute('aria-pressed', 'true')
+    await expect(dueFilter).toHaveAttribute('aria-checked', 'true')
 
     // Due-only, and not on today's page: BLOCK_PROJ_2 ("Fix login bug", due
     // today). BLOCK_DAILY_3/4/5 are due today but excluded via `excludePageId`
@@ -117,13 +117,13 @@ test.describe('Scheduled date filtering', () => {
     // excludes the neighbouring "Scheduled: show all" toggle button.
     const filterBar = duePanel.locator('[data-testid="due-panel-filters"]')
     await expect(filterBar).toBeVisible()
-    const scheduledFilter = filterBar.getByRole('button', {
+    const scheduledFilter = filterBar.getByRole('radio', {
       name: /^Scheduled( \(\d+\))?$/,
     })
     await scheduledFilter.click()
 
     // Verify the filter is active
-    await expect(scheduledFilter).toHaveAttribute('aria-pressed', 'true')
+    await expect(scheduledFilter).toHaveAttribute('aria-checked', 'true')
 
     // Scheduled-only block for today: BLOCK_PROJ_1 ("Ship v2.0 release")
     // Wait for the expected scheduled content to appear (deterministic wait
@@ -145,17 +145,17 @@ test.describe('Scheduled date filtering', () => {
     // Switch to "Scheduled" filter (fewer items). Regex tolerates the `(N)`
     // badge suffix but excludes the neighbouring "Scheduled: show all" toggle.
     const filterBar = duePanel.locator('[data-testid="due-panel-filters"]')
-    const scheduledFilter = filterBar.getByRole('button', {
+    const scheduledFilter = filterBar.getByRole('radio', {
       name: /^Scheduled( \(\d+\))?$/,
     })
     await scheduledFilter.click()
-    // Deterministic wait: filter is active (aria-pressed flips to true)
-    await expect(scheduledFilter).toHaveAttribute('aria-pressed', 'true')
+    // Deterministic wait: filter is active (aria-checked flips to true)
+    await expect(scheduledFilter).toHaveAttribute('aria-checked', 'true')
 
     // Switch back to "All" — regex tolerates `(N)` badge suffix.
-    const allFilter = filterBar.getByRole('button', { name: /^All( \(\d+\))?$/ })
+    const allFilter = filterBar.getByRole('radio', { name: /^All( \(\d+\))?$/ })
     await allFilter.click()
-    await expect(allFilter).toHaveAttribute('aria-pressed', 'true')
+    await expect(allFilter).toHaveAttribute('aria-checked', 'true')
 
     // Count should be restored to the initial value
     await expect(items.first()).toBeVisible({ timeout: 5000 })

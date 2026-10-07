@@ -1980,14 +1980,29 @@
   }
 }
 
-/* Single selection/focus recipe for block surfaces. Previously the
- * keyboard-focus / selection feedback was spelled three different ways
- * (`ring-2 ring-primary/50 bg-primary/5` on StaticBlock/EditableBlock vs
- * `ring-2 ring-inset ring-ring/50 bg-accent/30` on BlockListItem). Consumers
- * now apply the single `block-selected` class so selection looks identical
- * everywhere; surface-specific classes (rounded, etc.) stay at the call site. */
+/* Explicit block selection (StaticBlock / EditableBlock multi-select). */
 @utility block-selected {
   @apply ring-2 ring-inset ring-ring/50 bg-accent/30;
+}
+
+/* Keyboard cursor of a navigable list row. The cursor rests on row 0 before any
+ * key is pressed, so at rest it is only a tint (History's touch ↑/↓ and the
+ * document-level Space/Enter shortcuts act on it without focus); the ring (red
+ * like `--destructive`) shows while keyboard focus is on this row or a sibling
+ * row, or on the composite container (document-level lists move focus there on
+ * a navigation key). Not keyed off focus deeper in the container (Pages rows
+ * hold their own tabbable buttons) nor off any ancestor: the Journal container
+ * and #main-content take programmatic focus at boot and match :focus-visible
+ * then. The tint is an image layer so it sits over a row's own background. */
+@utility list-cursor {
+  background-image: linear-gradient(
+    color-mix(in oklab, var(--accent) 30%, transparent),
+    color-mix(in oklab, var(--accent) 30%, transparent)
+  );
+  :where(:has(> :focus-visible)) > &,
+  :where([role='grid'], [aria-activedescendant]):focus-visible & {
+    @apply outline-hidden ring-2 ring-inset ring-ring/50;
+  }
 }
 
 /* ── Touch-target utility ──────────────────────────────────────────── */

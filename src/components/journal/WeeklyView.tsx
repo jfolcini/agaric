@@ -46,12 +46,11 @@ export function WeeklyView({
     // sources — see `useRescheduleDragSource.tsx` for why this rides a
     // context instead of a prop threaded through the BlockTree layers.
     <RescheduleDragSourceProvider>
-      <div className="space-y-1">
-        {entries.map((entry, i) => {
+      <div className="space-y-6">
+        {entries.map((entry) => {
           const isToday = entry.dateStr === todayStr
           return (
             <RescheduleDropZone key={entry.dateStr} dateStr={entry.dateStr}>
-              {i > 0 && <div className="border-t border-border my-4" />}
               <DaySection
                 entry={entry}
                 headingLevel={isToday ? 'h2' : 'h3'}

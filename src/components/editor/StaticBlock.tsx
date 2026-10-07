@@ -166,7 +166,7 @@ function StaticBlockInner({
       {/* oxlint-disable-next-line jsx-a11y/no-static-element-interactions, jsx-a11y/click-events-have-key-events */}
       <div
         className={cn(
-          'block-static w-full min-h-[1.75rem] cursor-text rounded-md px-3 py-1 text-left text-sm transition-colors hover:bg-accent/50 [@media(pointer:coarse)]:min-h-[2.75rem]',
+          'block-static w-full min-h-[1.75rem] cursor-text rounded-md px-3 py-1 text-left leading-normal transition-colors hover:bg-accent/50 [@media(pointer:coarse)]:min-h-[2.75rem]',
           isSelected && 'block-selected',
         )}
         data-testid="block-static"

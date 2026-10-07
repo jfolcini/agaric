@@ -25,6 +25,7 @@ import {
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { useIsMobile } from '@/hooks/useIsMobile'
 import { t } from '@/lib/i18n'
+import { logger } from '@/lib/logger'
 
 vi.mock('@/lib/logger', () => ({
   logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
@@ -136,6 +137,37 @@ describe('SpaceDeleteButton', () => {
     await waitFor(() => {
       expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
     })
+  })
+
+  it('a refresh that fails after a successful delete is logged, not reported as a failed delete', async () => {
+    const user = userEvent.setup()
+    const onRefresh = vi.fn(() => Promise.reject(new Error('refresh failed')))
+    renderWithProvider(
+      <SpaceDeleteButton
+        spaceId="SPACE_1"
+        spaceName="Personal"
+        isLastSpace={false}
+        emptiness
+        onRefresh={onRefresh}
+      />,
+    )
+
+    await user.click(screen.getByRole('button', { name: t('space.deleteSpaceLabel') }))
+    await user.click(await screen.findByRole('button', { name: t('action.delete') }))
+
+    await waitFor(() => {
+      expect(onRefresh).toHaveBeenCalledTimes(1)
+    })
+    await waitFor(() => {
+      expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
+    })
+    expect(vi.mocked(toast.error)).not.toHaveBeenCalled()
+    expect(vi.mocked(logger.warn)).toHaveBeenCalledWith(
+      'components/SpaceManageDialog/SpaceDeleteButton',
+      'refresh after delete failed',
+      { spaceId: 'SPACE_1' },
+      expect.any(Error),
+    )
   })
 
   it('on a phone the confirmation is a sheet whose Delete is destructive and still deletes', async () => {

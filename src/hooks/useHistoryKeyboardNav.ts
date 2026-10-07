@@ -20,7 +20,7 @@ import { matchesShortcutBinding } from '@/lib/keyboard-config'
 export interface UseHistoryKeyboardNavOptions {
   /** Number of items in the list. */
   itemCount: number
-  /** Container ref — used to scroll the focused item into view. */
+  /** Container ref — scrolls the focused item into view and takes focus on a navigation key. */
   listRef: React.RefObject<HTMLDivElement | null>
   /** Whether the user has at least one entry selected (gates Enter). */
   hasSelection: boolean
@@ -58,6 +58,7 @@ export function useHistoryKeyboardNav({
     vim: true,
     homeEnd: true,
     pageUpDown: true,
+    listRef,
   })
 
   // Document-level shortcut handler. Mirrors the original effect body

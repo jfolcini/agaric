@@ -38,6 +38,16 @@ describe('PageAliasSection rendering', () => {
     expect(screen.getByText('DN')).toBeInTheDocument()
   })
 
+  it('styles the label like the muted "Properties" header beside it', () => {
+    render(<PageAliasSection {...defaultProps} aliases={['daily-note']} />)
+
+    expect(screen.getByText('Also known as:')).toHaveClass(
+      'text-sm',
+      'font-medium',
+      'text-muted-foreground',
+    )
+  })
+
   it('renders Edit button when not editing', () => {
     render(<PageAliasSection {...defaultProps} aliases={['my-alias']} />)
 

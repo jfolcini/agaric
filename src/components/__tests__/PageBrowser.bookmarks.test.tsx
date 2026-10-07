@@ -734,8 +734,8 @@ describe('PageBrowser', () => {
         '[data-page-tree-row][data-page-index="2"]',
       ) as HTMLElement | null
       expect(treeWrapper).not.toBeNull()
-      // Focus ring class applied via cn() when focusedIndex === pageIndex.
-      expect(treeWrapper?.className).toMatch(/ring-2/)
+      // Cursor class applied via cn() when focusedIndex === pageIndex.
+      expect(treeWrapper).toHaveClass('list-cursor')
 
       // End → wrap to last page row (the tree-page `work` row,
       // pageIndex 2). Already there — verify End is a no-op visually.
@@ -743,7 +743,7 @@ describe('PageBrowser', () => {
       const endWrapper = document.querySelector(
         '[data-page-tree-row][data-page-index="2"]',
       ) as HTMLElement | null
-      expect(endWrapper?.className).toMatch(/ring-2/)
+      expect(endWrapper).toHaveClass('list-cursor')
     })
 
     it('empty vault renders the EmptyState component (no section chrome)', async () => {

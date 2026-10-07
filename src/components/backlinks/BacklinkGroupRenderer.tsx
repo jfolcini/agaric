@@ -2,7 +2,7 @@
  * BacklinkGroupRenderer -- renders grouped backlink blocks with collapsible headers.
  *
  * Each group shows a page title header with expand/collapse toggle and a list of
- * block items with badges, rich content, and truncated IDs.
+ * block items: rich content, plus a type badge for non-content blocks.
  *
  * ## Sort asymmetry (deliberate)
  *
@@ -42,14 +42,6 @@ export interface BacklinkGroupRendererProps {
   resolveBlockTitle: (id: string) => string
   resolveBlockStatus: (id: string) => 'active' | 'deleted'
   resolveTagName: (id: string) => string
-  /**
-   * Marks the section as showing `t('references.linkedBadge')`
-   * (`[[ref]]`) or `t('references.unlinkedBadge')` (mention without link)
-   * backlinks. When provided, a small badge is
-   * rendered above the group list so users can tell the two sections apart
-   * at a glance. Optional to keep this component reusable.
-   */
-  linkType?: 'linked' | 'unlinked'
   /**
    * Block id of the row that currently holds the roving keyboard focus, or
    * `null`. Drives `aria-current` on the matching row so the roving position
@@ -204,13 +196,12 @@ function BacklinkRowInner({
       onFocus={handleRowEnter}
       onBlur={prefetchIntent.cancel}
     >
-      <Badge tone="secondary" className="linked-reference-item-type shrink-0">
-        {block.block_type}
-      </Badge>
+      {block.block_type !== 'content' && (
+        <Badge tone="secondary" className="linked-reference-item-type shrink-0">
+          {block.block_type}
+        </Badge>
+      )}
       <span className="linked-reference-item-text text-sm flex-1 truncate">{richContent}</span>
-      <span className="linked-reference-item-id text-xs text-muted-foreground font-mono">
-        {block.id.slice(0, 8)}...
-      </span>
     </li>
   )
 }
@@ -228,7 +219,6 @@ export function BacklinkGroupRenderer({
   resolveBlockTitle,
   resolveBlockStatus,
   resolveTagName,
-  linkType,
   focusedBlockId,
   rowDomId,
   anchorRefId,
@@ -237,57 +227,45 @@ export function BacklinkGroupRenderer({
   const onTagClick = useTagClickHandler()
 
   return (
-    <>
-      {linkType && (
-        <div className="flex justify-end px-2 pb-1">
-          <Badge
-            tone="outline"
-            className="linked-references-link-type-badge text-xs font-normal text-muted-foreground"
-          >
-            {linkType === 'linked' ? t('references.linkedBadge') : t('references.unlinkedBadge')}
-          </Badge>
-        </div>
+    <CollapsibleGroupList
+      groups={groups}
+      expandedGroups={expandedGroups}
+      onToggleGroup={onToggleGroup}
+      untitledLabel={t('references.untitled')}
+      groupClassName="linked-references-group"
+      headerClassName="linked-references-group-header flex w-full items-center gap-2 rounded-md px-3 py-1.5 text-sm font-medium hover:bg-accent/50 active:bg-accent/70 transition-colors"
+      listClassName="linked-references-blocks ml-4 mt-1 space-y-1"
+      listAriaLabel={(title) => t('references.backlinksFrom', { title })}
+      {...(onNavigateToPage && {
+        onPageTitleClick: (pageId: string, title: string) => onNavigateToPage(pageId, title),
+      })}
+      // #3316 item 3 — window each expanded group's rows.
+      virtualizeRows
+      activeBlockId={focusedBlockId ?? null}
+      renderBlock={(block, _group, virtualRow) => (
+        <BacklinkRow
+          key={block.id}
+          {...(virtualRow
+            ? {
+                style: virtualRow.style,
+                measureRef: virtualRow.measureRef,
+                dataIndex: virtualRow.index,
+                isLast: virtualRow.isLast,
+              }
+            : {})}
+          block={block}
+          onBlockClick={handleBlockClick}
+          onBlockKeyDown={handleBlockKeyDown}
+          onTagClick={onTagClick}
+          resolveBlockTitle={resolveBlockTitle}
+          resolveBlockStatus={resolveBlockStatus}
+          resolveTagName={resolveTagName}
+          emptyLabel={t('references.empty')}
+          domId={rowDomId ? rowDomId(block.id) : undefined}
+          isFocused={focusedBlockId != null && block.id === focusedBlockId}
+          anchorRefId={anchorRefId}
+        />
       )}
-      <CollapsibleGroupList
-        groups={groups}
-        expandedGroups={expandedGroups}
-        onToggleGroup={onToggleGroup}
-        untitledLabel={t('references.untitled')}
-        groupClassName="linked-references-group"
-        headerClassName="linked-references-group-header flex w-full items-center gap-2 rounded-md px-3 py-1.5 text-sm font-medium hover:bg-accent/50 active:bg-accent/70 transition-colors"
-        listClassName="linked-references-blocks ml-4 mt-1 space-y-1"
-        listAriaLabel={(title) => t('references.backlinksFrom', { title })}
-        {...(onNavigateToPage && {
-          onPageTitleClick: (pageId: string, title: string) => onNavigateToPage(pageId, title),
-        })}
-        // #3316 item 3 — window each expanded group's rows.
-        virtualizeRows
-        activeBlockId={focusedBlockId ?? null}
-        renderBlock={(block, _group, virtualRow) => (
-          <BacklinkRow
-            key={block.id}
-            {...(virtualRow
-              ? {
-                  style: virtualRow.style,
-                  measureRef: virtualRow.measureRef,
-                  dataIndex: virtualRow.index,
-                  isLast: virtualRow.isLast,
-                }
-              : {})}
-            block={block}
-            onBlockClick={handleBlockClick}
-            onBlockKeyDown={handleBlockKeyDown}
-            onTagClick={onTagClick}
-            resolveBlockTitle={resolveBlockTitle}
-            resolveBlockStatus={resolveBlockStatus}
-            resolveTagName={resolveTagName}
-            emptyLabel={t('references.empty')}
-            domId={rowDomId ? rowDomId(block.id) : undefined}
-            isFocused={focusedBlockId != null && block.id === focusedBlockId}
-            anchorRefId={anchorRefId}
-          />
-        )}
-      />
-    </>
+    />
   )
 }

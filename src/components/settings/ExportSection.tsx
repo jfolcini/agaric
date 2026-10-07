@@ -12,7 +12,7 @@ import { useCallback, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { downloadBlob, exportAllSpacesAsZip, exportGraphAsZip } from '@/lib/export-graph'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
@@ -118,9 +118,9 @@ export function ExportSection(): React.ReactElement {
           <Download className="h-4 w-4" />
           {t('data.exportTitle')}
         </CardTitle>
+        <CardDescription>{t('data.exportDesc')}</CardDescription>
       </CardHeader>
       <CardContent>
-        <p className="text-xs text-muted-foreground mb-3">{t('data.exportDesc')}</p>
         <Button variant="outline" size="sm" disabled={exporting} onClick={handleExportAll}>
           <Download className="h-3.5 w-3.5" />{' '}
           {exporting ? t('data.exporting') : t('data.exportButton')}

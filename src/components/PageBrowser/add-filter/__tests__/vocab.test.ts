@@ -11,7 +11,7 @@
  * `DATE_OPS` and `ALL_PROPERTY_OPS` are each exhaustive over their bindings
  * union (every variant is listed). `PROPERTY_OPS`, by contrast, deliberately
  * surfaces only a SUBSET of `ALL_PROPERTY_OPS` — the classic 4-operator set
- * the Pages browser's `+ Filter` popover has always offered (#4553 acceptance
+ * the Pages browser's Add filter popover has always offered (#4553 acceptance
  * criterion 7). The advanced surface derives its own (wider, type-driven)
  * subset via `propertyOpsForValueType`, which keys on the DECLARED
  * `value_type` and delegates to `propertyOpsForValueKind` for every type but

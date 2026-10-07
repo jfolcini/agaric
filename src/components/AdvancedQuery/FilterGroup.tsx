@@ -4,8 +4,8 @@
  * Renders one `BuilderGroupNode` from the advanced-query store: an And/Or
  * combinator toggle ("All" / "Any"), a NOT toggle, its ordered children (filter
  * leaves rendered as removable {@link FilterPill} chips, sub-groups rendered by
- * recursing into this same component), and the add affordances — "+ Filter"
- * (reusing the shared {@link AddFilterPopover}) and "+ Group". Each child carries
+ * recursing into this same component), and the add affordances — "Add filter"
+ * (reusing the shared {@link AddFilterPopover}) and "Add group". Each child carries
  * a per-child remove control and nested groups indent visually.
  *
  * The component is a thin, controlled view over the store: every edit dispatches
@@ -24,6 +24,7 @@ import { AddFilterPopover } from '@/components/PageBrowser/AddFilterPopover'
 import { pageFilterSummary } from '@/components/PageBrowser/PageBrowserFilterRow'
 import { Button } from '@/components/ui/button'
 import { FilterPill } from '@/components/ui/filter-pill'
+import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 import type { FilterPrimitive } from '@/lib/bindings'
 import { cn } from '@/lib/utils'
 import type {
@@ -72,42 +73,35 @@ function OpToggle({
   path: BuilderPath
 }): React.ReactElement {
   const { t } = useTranslation()
+  const options = [
+    {
+      value: 'And',
+      label: t('advancedQuery.builder.op.and'),
+      title: t('advancedQuery.builder.op.andTitle'),
+    },
+    {
+      value: 'Or',
+      label: t('advancedQuery.builder.op.or'),
+      title: t('advancedQuery.builder.op.orTitle'),
+    },
+  ] as const
   return (
-    <div
-      className="inline-flex rounded-md border"
-      role="radiogroup"
+    <ToggleGroup
+      type="single"
+      value={op}
+      onValueChange={(value) => {
+        // Radix reports re-clicking the active segment as '' (deselect); a group
+        // always has a combinator, so only And / Or are forwarded.
+        if (value === 'And' || value === 'Or') onSetGroupOp(path, value)
+      }}
       aria-label={t('advancedQuery.builder.opLabel')}
     >
-      {(['And', 'Or'] as const).map((value) => {
-        const selected = op === value
-        const label =
-          value === 'And' ? t('advancedQuery.builder.op.and') : t('advancedQuery.builder.op.or')
-        const title =
-          value === 'And'
-            ? t('advancedQuery.builder.op.andTitle')
-            : t('advancedQuery.builder.op.orTitle')
-        return (
-          <button
-            key={value}
-            type="button"
-            // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- a real radio <input> can't render as a flush segmented-toggle button; the radiogroup/radio/aria-checked semantics are explicit and accessible
-            role="radio"
-            aria-checked={selected}
-            aria-label={label}
-            title={title}
-            onClick={() => onSetGroupOp(path, value)}
-            className={cn(
-              'h-7 px-2.5 text-xs first:rounded-l-md last:rounded-r-md focus-ring-visible',
-              selected
-                ? 'bg-primary text-primary-foreground'
-                : 'bg-background hover:bg-accent hover:text-accent-foreground',
-            )}
-          >
-            {label}
-          </button>
-        )
-      })}
-    </div>
+      {options.map(({ value, label, title }) => (
+        <ToggleGroupItem key={value} value={value} aria-label={label} title={title}>
+          {label}
+        </ToggleGroupItem>
+      ))}
+    </ToggleGroup>
   )
 }
 

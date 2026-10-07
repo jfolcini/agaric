@@ -20,6 +20,7 @@ import { axe } from 'vitest-axe'
 
 import { makeBlock as _makeBlock } from '@/__tests__/fixtures'
 import { OverdueSection } from '@/components/agenda/OverdueSection'
+import { formatCompactDate } from '@/lib/date-utils'
 import { t } from '@/lib/i18n'
 
 /** Shared factory + domain defaults for OverdueSection tests. */
@@ -151,7 +152,8 @@ describe('OverdueSection', () => {
       />,
     )
 
-    expect(screen.getByText('2025-01-15')).toBeInTheDocument()
+    expect(screen.getByText(formatCompactDate('2025-01-15'))).toBeInTheDocument()
+    expect(screen.queryByText('2025-01-15')).not.toBeInTheDocument()
   })
 
   it('does not navigate when parent_id is null', async () => {
@@ -190,7 +192,7 @@ describe('OverdueSection', () => {
         />,
       )
 
-      expect(screen.getByText('2025-06-08')).toBeInTheDocument()
+      expect(screen.getByText('Jun 8')).toBeInTheDocument()
       expect(screen.getByText('(7d overdue)')).toBeInTheDocument()
     })
 
@@ -202,7 +204,7 @@ describe('OverdueSection', () => {
         />,
       )
 
-      expect(screen.getByText('2025-06-15')).toBeInTheDocument()
+      expect(screen.getByText('Jun 15')).toBeInTheDocument()
       expect(screen.queryByText(/\d+d overdue/)).not.toBeInTheDocument()
     })
   })

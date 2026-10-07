@@ -236,6 +236,30 @@ describe('DonePanel', () => {
     })
   })
 
+  // The group header is the shared SectionGroupHeader fill (`bg-muted/50`),
+  // same as DuePanel's — not a panel-local `bg-muted` override.
+  it('group headers use the SectionGroupHeader fill without a bg-muted override', async () => {
+    mockedQueryByProperty.mockResolvedValue({
+      items: [makeBlock({ id: 'A1', parent_id: 'PAGE1', page_id: 'PAGE1', content: 'one' })],
+      next_cursor: null,
+      has_more: false,
+      total_count: null,
+    })
+    mockedBatchResolve.mockResolvedValue([
+      { id: 'PAGE1', title: 'Alpha Page', block_type: 'page', deleted: false },
+    ])
+
+    render(<DonePanel date="2025-06-15" />)
+
+    await screen.findByText(t('donePanel.headerOne'))
+
+    const section = screen.getByLabelText(t('donePanel.completedItems'))
+    const header = section.querySelector('.done-panel-group-header')
+    expect(header).toHaveAttribute('data-slot', 'section-group-header')
+    expect(header).toHaveClass('bg-muted/50')
+    expect(header).not.toHaveClass('bg-muted')
+  })
+
   // 4. Sort blocks by ID descending within groups
   it('sorts blocks by ID descending within groups', async () => {
     mockedQueryByProperty.mockResolvedValue({

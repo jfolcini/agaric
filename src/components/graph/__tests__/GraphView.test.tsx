@@ -29,6 +29,7 @@ import {
   GraphView,
   setGraphCacheEntry,
 } from '@/components/graph/GraphView'
+import { useShouldShowMobileChrome } from '@/hooks/useShouldShowMobileChrome'
 import {
   _resetBlockPropertyEventsForTest,
   getBlockPropertyInvalidationKey,
@@ -96,6 +97,10 @@ vi.mock('@/hooks/useBlockPropertyEvents', async () => {
 // thin `useSyncExternalStore` adapter over it so a test can bump the structure
 // counter and observe GraphView refetch (incl. across an unmount, since the
 // counter is module-level).
+vi.mock('@/hooks/useShouldShowMobileChrome', () => ({
+  useShouldShowMobileChrome: vi.fn(() => false),
+}))
+
 vi.mock('@/hooks/useGraphStructureEvents', async () => {
   const react = await import('react')
   const store = await import('@/lib/graph-structure-events')
@@ -791,6 +796,26 @@ describe('GraphView', () => {
 
       const button = screen.getByRole('button', { name: /Zoom in/ })
       expect(button).toHaveAccessibleName(`${t('graph.zoomIn')} (+ / =)`)
+    })
+
+    it('sits the zoom controls bottom-left while the mobile quick-capture FAB holds bottom-right', async () => {
+      vi.mocked(useShouldShowMobileChrome).mockReturnValue(true)
+      mockGraphData()
+      render(<GraphView />)
+
+      const controls = await screen.findByTestId('graph-zoom-controls')
+      expect(controls).toHaveClass('left-3')
+      expect(controls).not.toHaveClass('right-3')
+      vi.mocked(useShouldShowMobileChrome).mockReturnValue(false)
+    })
+
+    it('keeps the zoom controls bottom-right on desktop', async () => {
+      mockGraphData()
+      render(<GraphView />)
+
+      const controls = await screen.findByTestId('graph-zoom-controls')
+      expect(controls).toHaveClass('right-3')
+      expect(controls).not.toHaveClass('left-3')
     })
 
     it('zoom-out button accessible name contains the shortcut binding', async () => {

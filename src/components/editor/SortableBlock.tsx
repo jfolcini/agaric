@@ -321,7 +321,7 @@ function SortableBlockBody(props: SortableBlockBodyProps): React.ReactElement {
       {/* Indent guide line for nested blocks */}
       {depth > 0 && (
         <div
-          className="absolute left-0 top-0 bottom-0 border-l border-border/20"
+          className="absolute left-0 top-0 bottom-0 border-l border-border"
           style={{ left: `calc(var(--indent-width) * ${depth - 1} + var(--indent-width) / 2)` }}
         />
       )}

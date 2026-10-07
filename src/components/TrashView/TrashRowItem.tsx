@@ -16,6 +16,7 @@ import { useTranslation } from 'react-i18next'
 import { renderRichContent } from '@/components/RichContentRenderer'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { Checkbox } from '@/components/ui/checkbox'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import type { RichContentCallbacks } from '@/hooks/useRichContentCallbacks'
 import type { BlockRow } from '@/lib/bindings'
@@ -119,13 +120,15 @@ export function TrashRowItem({
       className={cn(
         'trash-item flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 rounded-lg border bg-card p-4 transition-colors cursor-pointer',
         isSelected ? 'bg-accent/50 border-accent' : 'hover:bg-accent/50 active:bg-accent/70',
-        isFocused && 'ring-2 ring-inset ring-ring/50 bg-accent/30',
+        isFocused && 'list-cursor',
       )}
       data-testid="trash-item"
       onClick={(e) => onRowClick(block.id, e)}
       onKeyDown={(e) => {
         if (e.key === 'Enter' || e.key === ' ') {
           e.preventDefault()
+          // The list's document-level Space toggles the cursor row too.
+          e.stopPropagation()
           onToggleSelection(block.id)
         }
       }}
@@ -133,12 +136,13 @@ export function TrashRowItem({
     >
       {/* oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- gridcell in a CSS-grid aria grid; <td> requires table ancestry and breaks the flex layout */}
       <div role="gridcell" className="trash-item-content flex min-w-0 items-center gap-3 flex-wrap">
-        <input
-          type="checkbox"
+        <Checkbox
           checked={isSelected}
-          onChange={() => onToggleSelection(block.id)}
+          onCheckedChange={() => onToggleSelection(block.id)}
           onClick={(e) => e.stopPropagation()}
-          className="h-4 w-4 shrink-0 rounded border-border [@media(pointer:coarse)]:h-6 [@media(pointer:coarse)]:w-6"
+          // Keys stay on the checkbox: the list's document-level Space shortcut
+          // would otherwise toggle the cursor row as well as this one.
+          onKeyDown={(e) => e.stopPropagation()}
           aria-label={t('trash.selectItemLabel', {
             content: block.content ?? t('trash.emptyContent'),
           })}
@@ -205,9 +209,9 @@ export function TrashRowItem({
         <Tooltip>
           <TooltipTrigger asChild>
             <Button
-              variant="destructive"
+              variant="outline"
               size="sm"
-              className="trash-purge-btn [@media(pointer:coarse)]:h-10"
+              className="trash-purge-btn text-destructive hover:text-destructive [@media(pointer:coarse)]:h-10"
               data-testid="trash-purge-btn"
               onClick={() => onRequestPurge(block.id)}
               tabIndex={-1}

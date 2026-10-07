@@ -2,7 +2,7 @@
  * MetricCard — shared "rounded card with big number + label" tile.
  *
  * Replaces the recurring inline shape
- * `<div className="rounded-lg border bg-muted/30 p-4 text-center">` that
+ * `<div className="… border bg-muted/30 p-4 text-center">` that
  * appeared 5+ times in `StatusPanel.tsx` for sync / conflict / queue /
  * journal / peer counters, so the tile shape is defined once.
  *
@@ -79,7 +79,7 @@ const MetricCard = ({
     <div
       ref={ref}
       data-slot="metric-card"
-      className={cn('rounded-lg border bg-muted/30 p-4 text-center', toneClasses[tone], className)}
+      className={cn('rounded-md border bg-muted/30 p-4 text-center', toneClasses[tone], className)}
     >
       {Icon ? (
         <Icon aria-hidden="true" className="mx-auto mb-1 h-4 w-4 text-muted-foreground" />

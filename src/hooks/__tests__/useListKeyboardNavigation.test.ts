@@ -824,3 +824,40 @@ describe('resolveNavOptions', () => {
     expect(resolved.onSelect).toBeUndefined()
   })
 })
+
+describe('listRef (document-level consumers)', () => {
+  function mountList(): { list: HTMLDivElement; cleanup: () => void } {
+    const list = document.createElement('div')
+    list.tabIndex = -1
+    document.body.append(list)
+    return { list, cleanup: () => list.remove() }
+  }
+
+  it('a handled key moves DOM focus onto the list container', () => {
+    const { list, cleanup } = mountList()
+    const { result } = renderHook(() =>
+      useListKeyboardNavigation({ itemCount: 3, listRef: { current: list } }),
+    )
+
+    act(() => {
+      result.current.handleKeyDown(keyEvent('ArrowDown'))
+    })
+
+    expect(document.activeElement).toBe(list)
+    cleanup()
+  })
+
+  it('an unhandled key leaves DOM focus where it was', () => {
+    const { list, cleanup } = mountList()
+    const { result } = renderHook(() =>
+      useListKeyboardNavigation({ itemCount: 3, listRef: { current: list } }),
+    )
+
+    act(() => {
+      result.current.handleKeyDown(keyEvent('x'))
+    })
+
+    expect(document.activeElement).toBe(document.body)
+    cleanup()
+  })
+})

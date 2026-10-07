@@ -257,6 +257,22 @@ describe('AdvancedQueryView', () => {
     expect(screen.getByText('tag: project')).toBeInTheDocument()
   })
 
+  it('keeps the combinator when the active segment is clicked again', async () => {
+    const user = userEvent.setup()
+    render(<AdvancedQueryView />)
+    await screen.findByText('No blocks match these filters')
+
+    // Radix reports re-clicking the active segment as a deselect (''); the
+    // combinator must stay on one of And / Or.
+    await user.click(screen.getByRole('radio', { name: 'All' }))
+    expect(screen.getByRole('radio', { name: 'All' })).toHaveAttribute('aria-checked', 'true')
+
+    await user.click(screen.getByRole('radio', { name: 'Any' }))
+    await user.click(screen.getByRole('radio', { name: 'Any' }))
+    expect(screen.getByRole('radio', { name: 'Any' })).toHaveAttribute('aria-checked', 'true')
+    expect(screen.getByRole('radio', { name: 'All' })).toHaveAttribute('aria-checked', 'false')
+  })
+
   it('does NOT offer the Pages-only facets (Orphan/Stub/No inbound links)', async () => {
     const user = userEvent.setup()
     render(<AdvancedQueryView />)
@@ -278,8 +294,18 @@ describe('AdvancedQueryView', () => {
     await addTagLeaf(user, 'a')
     await addTagLeaf(user, 'b')
 
+    // The combinator is a single-select ToggleGroup: All is the active segment.
+    expect(screen.getByRole('radiogroup', { name: 'Combinator' })).toHaveAttribute(
+      'data-slot',
+      'toggle-group',
+    )
+    expect(screen.getByRole('radio', { name: 'All' })).toHaveAttribute('data-state', 'on')
+
     // Flip the root group's combinator from All (And) to Any (Or).
     await user.click(screen.getByRole('radio', { name: 'Any' }))
+    expect(screen.getByRole('radio', { name: 'Any' })).toHaveAttribute('aria-checked', 'true')
+    expect(screen.getByRole('radio', { name: 'Any' })).toHaveAttribute('data-state', 'on')
+    expect(screen.getByRole('radio', { name: 'All' })).toHaveAttribute('aria-checked', 'false')
 
     await waitFor(() => {
       expect(mockedInvoke).toHaveBeenCalledWith('run_advanced_query', {

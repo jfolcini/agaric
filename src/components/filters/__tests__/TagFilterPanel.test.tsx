@@ -166,6 +166,35 @@ describe('TagFilterPanel', () => {
     expect(findTagSpan(/work\/meeting/)).toBeInTheDocument()
   })
 
+  // `list-cursor` is a tint at rest whose ring is gated in CSS on the grid
+  // holding keyboard focus; jsdom cannot evaluate that gate, so the class
+  // contract is the assertion: the cursor never carries an inline ring.
+  it('marks the matching-tag cursor with list-cursor and moves it with ArrowDown', async () => {
+    stubTagFilter({
+      list_tags_by_prefix: () => [
+        makeTag({ tag_id: 'T1', name: 'work', usage_count: 5 }),
+        makeTag({ tag_id: 'T2', name: 'work/meeting', usage_count: 3 }),
+      ],
+    })
+
+    render(<TagFilterPanel />)
+    const input = screen.getByPlaceholderText(t('tagFilter.searchPlaceholder'))
+    await typeAndWaitForTags(input, 'work')
+
+    const rows = Array.from(document.querySelectorAll<HTMLElement>('[data-matching-tag]'))
+    expect(rows).toHaveLength(2)
+    expect(rows[0]).toHaveClass('list-cursor')
+    expect(rows[0]).not.toHaveClass('ring-2')
+    expect(rows[1]).not.toHaveClass('list-cursor')
+
+    // ArrowDown in the input moves focus into the grid; the next one moves the cursor.
+    input.focus()
+    await user.keyboard('{ArrowDown}{ArrowDown}')
+
+    expect(rows[1]).toHaveClass('list-cursor')
+    expect(rows[0]).not.toHaveClass('list-cursor')
+  })
+
   it('highlights matching prefix in tag names', async () => {
     stubTagFilter({
       list_tags_by_prefix: () => [
@@ -371,6 +400,10 @@ describe('TagFilterPanel', () => {
     })
 
     expect(screen.getByText('work note')).toBeInTheDocument()
+    const resultRow = document.querySelector('[data-result-item]')
+    // `p-0.5` is the band the inset ring paints in: the opaque card covers the rest.
+    expect(resultRow).toHaveClass('list-cursor', 'p-0.5')
+    expect(resultRow).not.toHaveClass('ring-2')
   })
 
   it('paginates results with Load more', async () => {

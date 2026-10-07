@@ -24,7 +24,7 @@ export interface FilterChipRowProps {
   filters: FilterToken[]
   onRemove: (index: number) => void
   onClearAll: () => void
-  /** Optional trailing slot (e.g. `+ Filter ▾` button). */
+  /** Optional trailing slot (e.g. the Add filter button). */
   trailing?: React.ReactNode
 }
 

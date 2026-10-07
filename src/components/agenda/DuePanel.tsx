@@ -33,6 +33,7 @@ import { SectionGroupHeader } from '@/components/ui/section-group-header'
 import { useBlockNavigation } from '@/hooks/useBlockNavigation'
 import { useDuePanelData } from '@/hooks/useDuePanelData'
 import { useKeyboardNavigableList } from '@/hooks/useKeyboardNavigableList'
+import { useRovingRowFocus } from '@/hooks/useListKeyboardNavigation'
 import { useLocalStoragePreference } from '@/hooks/useLocalStoragePreference'
 import { usePriorityLevels } from '@/hooks/usePriorityLevels'
 import {
@@ -176,12 +177,14 @@ function ProjectedEntryRowInner({
   // consuming it internally keeps the row's prop surface reference-stable so
   // only the two rows whose `isFocused` flips actually re-render.
   const callbacks = useRichContentCallbacks()
+  const rowRef = useRovingRowFocus<HTMLLIElement>(isFocused)
   const navigate = (): void => {
     if (!entry.block.page_id || !onNavigateToPage) return
     onNavigateToPage(entry.block.page_id, pageTitle, entry.block.id)
   }
   return (
     <ListItem
+      ref={rowRef}
       data-block-list-item
       data-testid="projected-entry"
       // #1520 — roving tabindex, mirroring the `BlockListItem` rows above: only
@@ -192,7 +195,7 @@ function ProjectedEntryRowInner({
         // Override ListItem's `gap-3 rounded-lg px-3 py-2 hover:bg-accent/50` chrome
         // with the muted dashed-border "projected" shape via tailwind-merge.
         'gap-2 rounded-md border border-dashed border-muted-foreground/20 bg-muted/30 px-2 py-1.5 text-sm text-muted-foreground cursor-pointer hover:bg-muted/50 active:bg-muted/70',
-        isFocused && 'ring-2 ring-inset ring-ring/50 bg-accent/30',
+        isFocused && 'list-cursor',
       )}
       onClick={navigate}
       onKeyDown={(e) => {
@@ -526,7 +529,7 @@ export function DuePanel({
                 {virtualRows.length > 0 && (
                   <ScrollArea
                     viewportRef={scrollParentRef}
-                    viewportClassName="due-panel-scroll max-h-[calc(100dvh-260px)] pr-2.5"
+                    viewportClassName="due-panel-scroll max-h-[calc(100dvh-260px)]"
                   >
                     <ul
                       className="due-panel-blocks relative m-0 p-0 list-none"

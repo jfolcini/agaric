@@ -11,6 +11,7 @@ import type React from 'react'
 import { useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { Card, CardContent } from '@/components/ui/card'
 import { FilterPill } from '@/components/ui/filter-pill'
 import { FormField } from '@/components/ui/form-field'
 import { Label } from '@/components/ui/label'
@@ -58,89 +59,91 @@ export function EditorTab(): React.ReactElement {
   const allowedHosts = [...allowlist].toSorted((a, b) => a.localeCompare(b))
 
   return (
-    <div className="space-y-6">
-      <ToggleRow
-        id="emoji-picker-toggle"
-        label={t('settings.editor.emojiPickerLabel')}
-        description={t('settings.editor.emojiPickerHelp')}
-        checked={emojiEnabled}
-        onCheckedChange={setEmojiEnabled}
-        data-testid="emoji-picker-toggle"
-      />
+    <Card>
+      <CardContent className="space-y-6">
+        <ToggleRow
+          id="emoji-picker-toggle"
+          label={t('settings.editor.emojiPickerLabel')}
+          description={t('settings.editor.emojiPickerHelp')}
+          checked={emojiEnabled}
+          onCheckedChange={setEmojiEnabled}
+          data-testid="emoji-picker-toggle"
+        />
 
-      {/* #912 — accessibility opt-out: turn off Tab-indent to restore Tab as
-          the focus-navigation key. Block indent stays on Ctrl/Cmd+Shift+Arrow. */}
-      <ToggleRow
-        id="tab-indent-toggle"
-        label={t('settings.editor.tabIndentLabel')}
-        description={t('settings.editor.tabIndentHelp')}
-        checked={tabIndents}
-        onCheckedChange={setTabIndents}
-        data-testid="tab-indent-toggle"
-      />
+        {/* #912 — accessibility opt-out: turn off Tab-indent to restore Tab as
+            the focus-navigation key. Block indent stays on Ctrl/Cmd+Shift+Arrow. */}
+        <ToggleRow
+          id="tab-indent-toggle"
+          label={t('settings.editor.tabIndentLabel')}
+          description={t('settings.editor.tabIndentHelp')}
+          checked={tabIndents}
+          onCheckedChange={setTabIndents}
+          data-testid="tab-indent-toggle"
+        />
 
-      {/* #1492 — external-image load policy (Always / Ask each time / Never).
-          Privacy-first default is "click" (ask each time): external http(s)
-          images show a placeholder until the user loads them; choosing Load
-          remembers the domain. Local/data/asset/same-origin images are never
-          gated. */}
-      <FormField
-        label={t('settings.editor.externalImageLabel')}
-        htmlFor="external-image-policy-select"
-        description={t('settings.editor.externalImageHelp')}
-      >
-        <Select value={policy} onValueChange={handlePolicyChange}>
-          <SelectTrigger
-            id="external-image-policy-select"
-            aria-label={t('settings.editor.externalImageLabel')}
-            data-testid="external-image-policy-select"
-          >
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="always">{t('settings.editor.externalImageAlways')}</SelectItem>
-            <SelectItem value="click">{t('settings.editor.externalImageClick')}</SelectItem>
-            <SelectItem value="never">{t('settings.editor.externalImageNever')}</SelectItem>
-          </SelectContent>
-        </Select>
-      </FormField>
+        {/* #1492 — external-image load policy (Always / Ask each time / Never).
+            Privacy-first default is "click" (ask each time): external http(s)
+            images show a placeholder until the user loads them; choosing Load
+            remembers the domain. Local/data/asset/same-origin images are never
+            gated. */}
+        <FormField
+          label={t('settings.editor.externalImageLabel')}
+          htmlFor="external-image-policy-select"
+          description={t('settings.editor.externalImageHelp')}
+        >
+          <Select value={policy} onValueChange={handlePolicyChange}>
+            <SelectTrigger
+              id="external-image-policy-select"
+              aria-label={t('settings.editor.externalImageLabel')}
+              data-testid="external-image-policy-select"
+            >
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="always">{t('settings.editor.externalImageAlways')}</SelectItem>
+              <SelectItem value="click">{t('settings.editor.externalImageClick')}</SelectItem>
+              <SelectItem value="never">{t('settings.editor.externalImageNever')}</SelectItem>
+            </SelectContent>
+          </Select>
+        </FormField>
 
-      {/* Managed domains — hosts remembered via "Load" in Ask-each-time mode.
-          Only surfaced when non-empty (keeps the tab clean for the common
-          default). Removing a host stops its images auto-loading. */}
-      {allowedHosts.length > 0 && (
-        <div className="space-y-2" data-testid="external-image-allowlist">
-          <Label muted={false}>{t('settings.editor.externalImageAllowedHosts')}</Label>
-          {/* Removable host chips via the shared FilterPill primitive (#1754) so
-              the remove control matches the design system (lucide X icon, 44px
-              coarse-pointer touch target, focus ring, accessible aria-label)
-              instead of a bespoke text-× button. */}
-          <ul className="flex flex-wrap gap-2 list-none m-0 p-0">
-            {allowedHosts.map((host) => (
-              <li key={host} className="contents">
-                <FilterPill
-                  label={host}
-                  onRemove={() => removeHost(host)}
-                  removeAriaLabel={t('settings.editor.externalImageRemoveHost', { host })}
-                  className="font-mono"
-                  data-testid={`external-image-host-${host}`}
-                />
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
+        {/* Managed domains — hosts remembered via "Load" in Ask-each-time mode.
+            Only surfaced when non-empty (keeps the tab clean for the common
+            default). Removing a host stops its images auto-loading. */}
+        {allowedHosts.length > 0 && (
+          <div className="space-y-2" data-testid="external-image-allowlist">
+            <Label muted={false}>{t('settings.editor.externalImageAllowedHosts')}</Label>
+            {/* Removable host chips via the shared FilterPill primitive (#1754) so
+                the remove control matches the design system (lucide X icon, 44px
+                coarse-pointer touch target, focus ring, accessible aria-label)
+                instead of a bespoke text-× button. */}
+            <ul className="flex flex-wrap gap-2 list-none m-0 p-0">
+              {allowedHosts.map((host) => (
+                <li key={host} className="contents">
+                  <FilterPill
+                    label={host}
+                    onRemove={() => removeHost(host)}
+                    removeAriaLabel={t('settings.editor.externalImageRemoveHost', { host })}
+                    className="font-mono"
+                    data-testid={`external-image-host-${host}`}
+                  />
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
 
-      {/* #3684 — the hover/focus link-preview fetch is the only outbound
-          request to a host chosen by note content rather than by the user. */}
-      <ToggleRow
-        id="link-preview-fetch-toggle"
-        label={t('settings.editor.linkPreviewLabel')}
-        description={t('settings.editor.linkPreviewHelp')}
-        checked={linkPreviewFetch}
-        onCheckedChange={setLinkPreviewFetch}
-        data-testid="link-preview-fetch-toggle"
-      />
-    </div>
+        {/* #3684 — the hover/focus link-preview fetch is the only outbound
+            request to a host chosen by note content rather than by the user. */}
+        <ToggleRow
+          id="link-preview-fetch-toggle"
+          label={t('settings.editor.linkPreviewLabel')}
+          description={t('settings.editor.linkPreviewHelp')}
+          checked={linkPreviewFetch}
+          onCheckedChange={setLinkPreviewFetch}
+          data-testid="link-preview-fetch-toggle"
+        />
+      </CardContent>
+    </Card>
   )
 }

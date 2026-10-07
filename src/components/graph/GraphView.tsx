@@ -27,11 +27,11 @@ import {
 import { LocalGraphControl } from '@/components/graph/LocalGraphControl'
 import { LoadingSkeleton } from '@/components/rendering/LoadingSkeleton'
 import { Button } from '@/components/ui/button'
-import { FeaturePageHeader } from '@/components/ui/feature-page-header'
 import { IconButton } from '@/components/ui/icon-button'
 import { useBlockPropertyEvents } from '@/hooks/useBlockPropertyEvents'
 import { useGraphSimulation } from '@/hooks/useGraphSimulation'
 import { useGraphStructureEvents } from '@/hooks/useGraphStructureEvents'
+import { useShouldShowMobileChrome } from '@/hooks/useShouldShowMobileChrome'
 import { unwrap } from '@/lib/app-error'
 import { commands } from '@/lib/bindings'
 import { applyGraphFilters, type GraphFilter } from '@/lib/graph-filters'
@@ -43,6 +43,7 @@ import {
 import { getShortcutKeys } from '@/lib/keyboard-config'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
+import { cn } from '@/lib/utils'
 import { useSpaceStore } from '@/stores/space'
 import { selectPageStack, useTabsStore } from '@/stores/tabs'
 
@@ -387,6 +388,7 @@ export function GraphView(): React.ReactElement {
   }, [localActive, seedPageId, localHops, filteredNodes, filteredEdges])
 
   // d3-force simulation + worker lifecycle + zoom handlers.
+  const showMobileChrome = useShouldShowMobileChrome()
   const { zoomIn, zoomOut, zoomReset } = useGraphSimulation({
     svgRef,
     nodes: displayNodes,
@@ -394,16 +396,9 @@ export function GraphView(): React.ReactElement {
     navigateToPage,
   })
 
-  // PEND-UX item 5 — wrap the loading / error / empty bodies in a flex
-  // column with the shared `<h1>` landmark so the page header stays
-  // consistent across all four render states (loading, error, no-pages,
-  // graph). Without this, only the populated graph carries a header and
-  // the four states render different top-level structures.
-  const headerNode = <FeaturePageHeader title={t('sidebar.graph')} className="graph-view-header" />
   if (loading)
     return (
       <div className="flex h-full min-h-0 flex-1 flex-col gap-4">
-        {headerNode}
         <LoadingSkeleton count={3} height="h-16" />
       </div>
     )
@@ -413,7 +408,6 @@ export function GraphView(): React.ReactElement {
   if (error)
     return (
       <div className="flex h-full min-h-0 flex-1 flex-col gap-4">
-        {headerNode}
         {/* #3315 item 4 — use EmptyState's existing `action` slot so the
             failure is recoverable in place, mirroring SearchPanel's
             `search-error-retry`. */}
@@ -438,14 +432,12 @@ export function GraphView(): React.ReactElement {
   if (nodes.length === 0)
     return (
       <div className="flex h-full min-h-0 flex-1 flex-col gap-4">
-        {headerNode}
         <EmptyState icon={Network} message={t('graph.noPages')} />
       </div>
     )
 
   return (
     <div className="flex h-full min-h-0 flex-1 flex-col gap-4">
-      {headerNode}
       <div
         className="graph-view relative h-full w-full flex-1 min-h-0 overflow-hidden rounded-lg border border-border bg-background"
         data-testid="graph-view"
@@ -540,7 +532,14 @@ export function GraphView(): React.ReactElement {
             />
           </div>
         )}
-        <div className="absolute bottom-3 right-3 flex flex-col gap-1">
+        {/* Bottom-left while the mobile quick-capture FAB holds the bottom-right corner. */}
+        <div
+          className={cn(
+            'absolute bottom-3 flex flex-col gap-1',
+            showMobileChrome ? 'left-3' : 'right-3',
+          )}
+          data-testid="graph-zoom-controls"
+        >
           <IconButton
             variant="outline"
             onClick={zoomIn}

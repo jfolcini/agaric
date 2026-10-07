@@ -90,7 +90,7 @@ export function MonthlyDayCell({
       className={cn(
         'relative bg-background p-1.5 min-h-[80px] [@media(pointer:coarse)]:min-h-[44px] transition-colors focus-ring-visible',
         isCurrentMonth && 'cursor-pointer hover:bg-accent/30 active:bg-accent/50',
-        !isCurrentMonth && 'opacity-40 pointer-events-none',
+        !isCurrentMonth && '[&>*]:opacity-40 pointer-events-none',
       )}
       onClick={handleClick}
       onKeyDown={handleKeyDown}

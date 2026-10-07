@@ -129,7 +129,7 @@ describe('PageBrowser', () => {
     // `overflow-hidden` does not clip its left/right legs.
     expect(pageBtn).toHaveClass('focus-visible:ring-inset')
   })
-  it('focused page row highlights with bg only — focus ring lives on the inner button', async () => {
+  it('focused page row carries the list-cursor recipe — the inner button keeps its own focus ring', async () => {
     stubPageRowInvoke(mockedInvoke, {
       list_pages_with_metadata: () => pageList([makePage({ id: 'P1', content: 'Inset Page' })]),
     })
@@ -146,14 +146,13 @@ describe('PageBrowser', () => {
       '[data-page-item][aria-selected="true"]',
     ) as HTMLElement | null
     expect(focusedRow).not.toBeNull()
-    // Row paints only the highlight background; the focus ring lives on the
-    // inner <button>'s `focus-ring-visible` to avoid double-stacking.
-    expect(focusedRow).toHaveClass('bg-accent/30')
+    // The row's ring comes from `list-cursor` (src/index.css), which shows it
+    // only while the grid itself has keyboard focus — never while the inner
+    // button does, so the two rings don't stack.
+    expect(focusedRow).toHaveClass('list-cursor')
     expect(focusedRow).not.toHaveClass('ring-2')
-    expect(focusedRow).not.toHaveClass('ring-ring/50')
 
-    // The inner button still carries the focus-visible ring so keyboard
-    // users see exactly one ring when the row is focused.
+    // The inner button carries its own focus-visible ring for Tab focus.
     const innerBtn = focusedRow
       ? within(focusedRow).getByRole('button', { name: /Inset Page/i })
       : null
@@ -294,11 +293,15 @@ describe('PageBrowser', () => {
       const grid = screen.getByRole('grid')
       // Initial state — focus on first page (Apple).
       expect(grid).toHaveAttribute('aria-activedescendant', 'page-row-P1')
+      expect(grid).not.toHaveFocus()
 
       // ArrowDown → focus moves to Banana. The grid's
-      // `aria-activedescendant` follows the focused row id.
+      // `aria-activedescendant` follows the focused row id, and the
+      // document-level key brings DOM focus to the grid so the cursor ring
+      // (gated on the grid's :focus-visible) shows.
       await user.keyboard('{ArrowDown}')
 
+      expect(grid).toHaveFocus()
       expect(grid).toHaveAttribute('aria-activedescendant', 'page-row-P2')
       const focusedAfter = document.querySelector(
         '[data-page-item][aria-selected="true"]',

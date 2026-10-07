@@ -1,5 +1,5 @@
 /**
- * `+ Filter ▾` helper popover.
+ * `Add filter` helper popover.
  *
  * Categorised picker for the structural filter types:
  *   - Tag — opens an inline tag-name list (server-side filtered).
@@ -26,6 +26,7 @@
  * dropped, so out-of-order IPC replies can never paint old suggestions.
  */
 
+import { ChevronDown, Plus } from 'lucide-react'
 import type React from 'react'
 import { useCallback, useId, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -242,13 +243,13 @@ export function FilterHelperPopover({
           variant="outline"
           size="sm"
           type="button"
+          className="h-7 gap-1 text-xs"
           data-testid="add-filter-button"
           aria-label={t('search.addFilter')}
         >
+          <Plus className="h-3 w-3" aria-hidden="true" />
           {t('search.addFilter')}
-          <span aria-hidden="true" className="ml-1">
-            ▾
-          </span>
+          <ChevronDown className="h-3 w-3" aria-hidden="true" />
         </Button>
       </PopoverTrigger>
       <PopoverContent

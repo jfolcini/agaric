@@ -26,7 +26,7 @@ import { useTranslation } from 'react-i18next'
 
 import { EmptyState } from '@/components/common/EmptyState'
 import { Button } from '@/components/ui/button'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Spinner } from '@/components/ui/spinner'
 import { ToggleRow } from '@/components/ui/toggle-row'
@@ -72,10 +72,9 @@ export function IntegrityCheckSection(): React.ReactElement {
           <ShieldCheck className="h-4 w-4" />
           {t('integrity.title')}
         </CardTitle>
+        <CardDescription>{t('integrity.description')}</CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
-        <p className="text-xs text-muted-foreground">{t('integrity.description')}</p>
-
         <ToggleRow
           id="integrity-check-toggle"
           label={t('integrity.toggleLabel')}

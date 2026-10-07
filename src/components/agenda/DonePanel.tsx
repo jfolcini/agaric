@@ -372,7 +372,7 @@ export function DonePanel({
                               style={rowStyle}
                               className="done-panel-group-header-row"
                             >
-                              <SectionGroupHeader className="done-panel-group-header bg-muted">
+                              <SectionGroupHeader className="done-panel-group-header">
                                 <PageLink
                                   pageId={row.group.pageId}
                                   title={row.group.title}

@@ -22,6 +22,7 @@ import { useTranslation } from 'react-i18next'
 import { HistoryItemCore } from '@/components/HistoryListItem/HistoryItemCore'
 import { DiffDisplay } from '@/components/rendering/DiffDisplay'
 import { Button } from '@/components/ui/button'
+import { Checkbox } from '@/components/ui/checkbox'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import type { DiffSpan, HistoryEntry } from '@/lib/bindings'
 import { cn } from '@/lib/utils'
@@ -121,13 +122,15 @@ function HistoryListItemInner({
       className={cn(
         'history-item flex flex-col gap-2 rounded-lg border p-4 cursor-pointer transition-colors',
         isSelected ? 'bg-accent/50 border-accent' : 'bg-card hover:bg-accent/30',
-        isFocused && 'ring-2 ring-inset ring-ring/50',
+        isFocused && 'list-cursor',
         isNonReversible && 'opacity-50',
       )}
       onClick={(e) => onRowClick(index, e)}
       onKeyDown={(e) => {
         if (e.key === ' ') {
           e.preventDefault()
+          // The list's document-level Space toggles the cursor row too.
+          e.stopPropagation()
           onToggleSelection(index)
         }
       }}
@@ -141,16 +144,14 @@ function HistoryListItemInner({
             selection paths (matches the existing test contract), but surface
             a clearly visible focus-ring on the checkbox so keyboard users
             can see when it owns focus and Space-toggle works deterministically. */}
-        <input
-          type="checkbox"
+        <Checkbox
           checked={isSelected}
           disabled={isNonReversible}
-          onChange={() => onToggleSelection(index)}
+          onCheckedChange={() => onToggleSelection(index)}
           onClick={(e) => e.stopPropagation()}
-          className={cn(
-            'h-4 w-4 shrink-0 rounded border-border [@media(pointer:coarse)]:size-11',
-            'focus-ring-visible',
-          )}
+          // Keys stay on the checkbox: the list's document-level Space shortcut
+          // would otherwise toggle the cursor row as well as this one.
+          onKeyDown={(e) => e.stopPropagation()}
           aria-label={t('history.selectOperationLabel', {
             opType: entry.op_type,
             seq: entry.seq,

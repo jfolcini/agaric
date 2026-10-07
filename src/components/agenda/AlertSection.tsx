@@ -18,6 +18,7 @@ import { SectionTitle, type SectionTitleColor } from '@/components/ui/section-ti
 import { useRichContentCallbacks } from '@/hooks/useRichContentCallbacks'
 import type { BlockRow } from '@/lib/bindings'
 import type { NavigateToPageFn } from '@/lib/block-events'
+import { formatCompactDate } from '@/lib/date-utils'
 import { cn } from '@/lib/utils'
 
 type AlertVariant = 'destructive' | 'pending'
@@ -166,7 +167,7 @@ export function AlertSection({
                   )}
                 </span>
                 <span className={cn('shrink-0 truncate text-xs', config.dateColor)}>
-                  <span>{block.due_date}</span>
+                  <span>{block.due_date && formatCompactDate(block.due_date)}</span>
                   {daysOverdue > 0 && (
                     <span className="text-muted-foreground ml-1">
                       ({t('duePanel.daysOverdue', { count: daysOverdue })})

@@ -19,6 +19,7 @@ import { BlockListItem } from '@/components/editor/BlockListItem'
 import { LoadingSkeleton } from '@/components/rendering/LoadingSkeleton'
 import { Button } from '@/components/ui/button'
 import { ScrollArea } from '@/components/ui/scroll-area'
+import { SectionGroupHeader } from '@/components/ui/section-group-header'
 import { BatchPropertiesProvider } from '@/hooks/useBatchPropertyRows'
 import { useBlockNavigation } from '@/hooks/useBlockNavigation'
 import { useBlockPropertyEvents } from '@/hooks/useBlockPropertyEvents'
@@ -502,8 +503,10 @@ export function AgendaResults({
                   // child of the surrounding `<ul>` (axe's `list` rule
                   // rejects non-`<li>` children, and `role="presentation"`
                   // on the `<li>` would also fail because it strips
-                  // the listitem role — see the inline `<h3>` below
-                  // which is what screen readers should land on).
+                  // the listitem role — see the inline `<h2>` below
+                  // which is what screen readers should land on; h2 because the
+                  // Journal h1 is the only heading above it, and axe's
+                  // heading-order rule rejects an h1 -> h3 jump).
                   <li
                     key={virtualRow.key}
                     data-index={virtualRow.index}
@@ -511,18 +514,17 @@ export function AgendaResults({
                     style={rowStyle}
                     className="agenda-group"
                   >
-                    <h3
-                      className={cn(
-                        'agenda-group-header text-sm font-semibold uppercase tracking-wide px-3 py-1',
-                        row.group.className ?? 'text-muted-foreground',
-                      )}
-                      data-testid="agenda-group-header"
+                    <SectionGroupHeader
+                      asChild
+                      className={cn('agenda-group-header', row.group.className)}
                     >
-                      {displayLabel}
-                      <span className="ml-1.5 text-muted-foreground font-normal">
-                        ({row.group.blocks.length})
-                      </span>
-                    </h3>
+                      <h2 data-testid="agenda-group-header">
+                        {displayLabel}
+                        <span className="ml-1.5 text-muted-foreground font-normal">
+                          ({row.group.blocks.length})
+                        </span>
+                      </h2>
+                    </SectionGroupHeader>
                   </li>
                 )
               }

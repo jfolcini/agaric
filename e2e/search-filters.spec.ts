@@ -1,5 +1,5 @@
 /**
- * E2E — search-view filters: the `+ Filter` builder (E2E-3), chip
+ * E2E — search-view filters: the Add filter builder (E2E-3), chip
  * lifecycle (E2E-4), and structured-DSL → IPC-param marshalling (E2E-6).
  *
  * The web+mock harness has no real SQL filtering (the mock `search_blocks`
@@ -48,7 +48,7 @@ async function searchUntil(
 }
 
 // ===========================================================================
-// E2E-3 — `+ Filter` builder popover
+// E2E-3 — Add filter builder popover
 // ===========================================================================
 
 test.describe('Filter helper popover (E2E-3)', () => {

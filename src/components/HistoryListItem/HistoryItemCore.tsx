@@ -200,7 +200,7 @@ export function HistoryItemCore({
     <>
       <div className="flex flex-col gap-0.5 min-w-0 flex-1">
         {/* Op type badge */}
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
           <Badge
             tone="outline"
             className={cn(

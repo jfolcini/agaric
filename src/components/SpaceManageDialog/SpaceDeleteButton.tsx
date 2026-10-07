@@ -62,14 +62,19 @@ export function SpaceDeleteButton({
   const handleDeleteConfirm = useCallback(async () => {
     try {
       unwrap(await commands.deleteBlock(spaceId))
-      // Close before the refresh: a failed refresh must not re-arm Delete for a deleted space.
-      setConfirmOpen(false)
-      await onRefresh()
     } catch (err) {
       logger.error(LOG_MODULE, 'delete failed', { spaceId }, err)
       notify.error(t('space.deleteFailed'))
       // ConfirmDialog stays open only on rejection, so a failed delete can be retried.
       throw err
+    }
+    // The space is gone from here on: a failed refresh must neither report the
+    // delete as failed nor re-arm Delete for it.
+    setConfirmOpen(false)
+    try {
+      await onRefresh()
+    } catch (err) {
+      logger.warn(LOG_MODULE, 'refresh after delete failed', { spaceId }, err)
     }
   }, [spaceId, onRefresh, t])
 

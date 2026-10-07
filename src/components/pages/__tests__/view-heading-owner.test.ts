@@ -85,15 +85,23 @@ describe('VIEW_HEADING_OWNER', () => {
     // The finding: pages / tags / history / query / search had NO heading at
     // all. Every one of them must now be shell-owned (the shell label becomes
     // the `<h1>`), and none of them may quietly regain a second one.
-    for (const view of ['pages', 'tags', 'history', 'query', 'search'] as const) {
+    for (const view of [
+      'pages',
+      'tags',
+      'history',
+      'query',
+      'search',
+      'graph',
+      'templates',
+    ] as const) {
       expect(VIEW_HEADING_OWNER[view]).toBe('shell')
       expect(rendersOwnHeading(view)).toBe(false)
     }
   })
 
-  it('keeps the six FeaturePageHeader views out of the shell heading', () => {
+  it('keeps the four FeaturePageHeader views out of the shell heading', () => {
     // Otherwise the same title is announced as two separate level-1 headings.
-    for (const view of ['journal', 'templates', 'trash', 'graph', 'status', 'settings'] as const) {
+    for (const view of ['journal', 'trash', 'status', 'settings'] as const) {
       expect(VIEW_HEADING_OWNER[view]).toBe('view')
       expect(shellOwnsHeading(view)).toBe(false)
     }

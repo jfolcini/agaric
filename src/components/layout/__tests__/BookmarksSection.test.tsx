@@ -184,8 +184,11 @@ describe('BookmarksSection', () => {
       renderSection()
 
       expect(bookmarkList()).toBeNull()
-      expect(screen.getByText(t('bookmarks.empty'))).toBeInTheDocument()
-      expect(screen.getByText(t('bookmarks.emptyHint'))).toBeInTheDocument()
+      // One quiet line, not a bordered empty-state box with its own landmark.
+      const hint = screen.getByText(t('bookmarks.emptyHint'))
+      expect(hint).toHaveClass('text-xs', 'text-muted-foreground')
+      expect(screen.queryByRole('region')).toBeNull()
+      expect(hint.closest('.border-dashed')).toBeNull()
     })
 
     /**
@@ -246,14 +249,14 @@ describe('BookmarksSection', () => {
         useResolveStore.getState().clearAllForSpace(SPACE_A)
       })
       // B does not hold it, and says so, so B is legitimately empty.
-      expect(await screen.findByText(t('bookmarks.empty'))).toBeInTheDocument()
+      expect(await screen.findByText(t('bookmarks.emptyHint'))).toBeInTheDocument()
 
       await act(async () => {
         useSpaceStore.setState({ currentSpaceId: SPACE_A })
       })
 
       expect(await screen.findByRole('button', { name: 'Brand New Page' })).toBeInTheDocument()
-      expect(screen.queryByText(t('bookmarks.empty'))).not.toBeInTheDocument()
+      expect(screen.queryByText(t('bookmarks.emptyHint'))).not.toBeInTheDocument()
       // Three asks: A, then B, then A again — the last because the answer A
       // had was thrown away with the cache.
       expect(resolveArgs()).toHaveLength(3)
@@ -278,7 +281,7 @@ describe('BookmarksSection', () => {
         expect(resolveArgs()).toHaveLength(1)
       })
       expect(bookmarkList()).toBeNull()
-      expect(screen.queryByText(t('bookmarks.empty'))).toBeNull()
+      expect(screen.queryByText(t('bookmarks.emptyHint'))).toBeNull()
     })
 
     it('shows the empty state once every bookmark has been looked up', async () => {
@@ -290,7 +293,7 @@ describe('BookmarksSection', () => {
 
       renderSection()
 
-      expect(await screen.findByText(t('bookmarks.empty'))).toBeInTheDocument()
+      expect(await screen.findByText(t('bookmarks.emptyHint'))).toBeInTheDocument()
       expect(bookmarkList()).toBeNull()
       // Asked once — an id the answer left out must not be asked for again on
       // every store write the answer triggers.
@@ -335,7 +338,7 @@ describe('BookmarksSection', () => {
         expect(warnSpy).toHaveBeenCalled()
       })
       expect(bookmarkList()).toBeNull()
-      expect(screen.queryByText(t('bookmarks.empty'))).toBeNull()
+      expect(screen.queryByText(t('bookmarks.emptyHint'))).toBeNull()
     })
   })
 
@@ -363,7 +366,7 @@ describe('BookmarksSection', () => {
       renderSection()
 
       expect(bookmarkList()).toBeNull()
-      expect(screen.getByText(t('bookmarks.empty'))).toBeInTheDocument()
+      expect(screen.getByText(t('bookmarks.emptyHint'))).toBeInTheDocument()
       expect(readBookmarkIds()).toEqual([])
       // Unbookmarked, not deleted — it is still a recent page.
       const slice = useRecentPagesStore.getState().recentPagesBySpace[SPACE_A] ?? []

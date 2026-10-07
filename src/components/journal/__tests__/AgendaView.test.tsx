@@ -837,6 +837,23 @@ describe('AgendaView', () => {
     expect(results).toHaveNoViolations()
   })
 
+  // JournalPage drops its own h1 in agenda mode, so AgendaView must put the
+  // Journal title at the top of the header it portals above the filter bar.
+  it('renders the Journal h1 before the filter and sort controls', async () => {
+    render(<AgendaView />)
+    const filterBuilder = await screen.findByTestId('agenda-filter-builder')
+
+    const heading = screen.getByRole('heading', { level: 1, name: 'Journal' })
+    expect(
+      heading.compareDocumentPosition(filterBuilder) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy()
+    expect(
+      heading.compareDocumentPosition(screen.getByTestId('agenda-sort-group-controls')) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy()
+    expect(screen.getAllByRole('heading', { level: 1 })).toHaveLength(1)
+  })
+
   // AgendaView's filter/sort header is now hoisted to the App-level
   // outlet via <ViewHeader>, so the per-view wrapper no longer uses sticky
   // positioning. The header content must still render (via the ViewHeader

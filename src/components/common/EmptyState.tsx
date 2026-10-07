@@ -37,12 +37,13 @@ export function EmptyState({
   return (
     <section
       aria-label={message}
-      className={cn(
-        'rounded-lg border border-dashed text-center text-sm text-muted-foreground',
-        compact ? 'p-6' : 'p-8',
-      )}
+      className={cn('text-center text-sm text-muted-foreground', compact ? 'p-6' : 'p-8')}
     >
-      {Icon && <Icon className="mx-auto mb-2 h-5 w-5" />}
+      {Icon && (
+        <div className="mx-auto mb-2 flex size-8 items-center justify-center rounded-full bg-muted [&>svg]:size-4">
+          <Icon />
+        </div>
+      )}
       <Heading className="text-sm font-medium">{message}</Heading>
       {description && <p className="mt-1">{description}</p>}
       {action}

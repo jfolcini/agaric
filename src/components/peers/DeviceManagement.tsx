@@ -272,7 +272,7 @@ export function DeviceManagement(): React.ReactElement {
           {deviceId && (
             <>
               {/* Local device ID */}
-              <dl className="device-id-section rounded-lg border bg-muted/30 p-4 mb-4">
+              <dl className="device-id-section rounded-md border bg-muted/30 p-4 mb-4">
                 <dt className="text-sm text-muted-foreground" data-testid="local-device-id-label">
                   {t('device.localDeviceIdLabel')}
                 </dt>

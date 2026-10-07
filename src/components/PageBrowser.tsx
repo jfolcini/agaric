@@ -393,6 +393,7 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
     itemCount: filteredPages.length,
     homeEnd: true,
     pageUpDown: true,
+    listRef,
     onSelect: (idx) => {
       const page = filteredPages[idx]
       if (page) onPageSelect?.(page.id, page.content ?? undefined)

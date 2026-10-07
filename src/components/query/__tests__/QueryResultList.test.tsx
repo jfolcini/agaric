@@ -221,11 +221,17 @@ describe('QueryResultList', () => {
     const options = screen.getAllByRole('option')
     expect(options[0]).toHaveAttribute('aria-selected', 'true')
     expect(options[1]).toHaveAttribute('aria-selected', 'false')
+    // The visible cursor is `list-cursor` on the row body (tint at rest, ring
+    // gated in CSS on the listbox's keyboard focus — not evaluable in jsdom).
+    expect(options[0]?.firstElementChild).toHaveClass('list-cursor')
+    expect(options[1]?.firstElementChild).not.toHaveClass('list-cursor')
 
     // ArrowDown moves to second item
     await user.keyboard('{ArrowDown}')
     expect(options[0]).toHaveAttribute('aria-selected', 'false')
     expect(options[1]).toHaveAttribute('aria-selected', 'true')
+    expect(options[1]?.firstElementChild).toHaveClass('list-cursor')
+    expect(options[0]?.firstElementChild).not.toHaveClass('list-cursor')
 
     // ArrowDown again moves to third item
     await user.keyboard('{ArrowDown}')

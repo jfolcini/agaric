@@ -59,6 +59,14 @@ describe('BlockBatchActionMenu', () => {
     expect(screen.queryByTestId('batch-toolbar')).not.toBeInTheDocument()
   })
 
+  it('wraps its actions so a phone-width viewport never scrolls sideways', () => {
+    renderToolbar()
+
+    // jsdom has no layout, so the class is all there is to pin: without
+    // flex-wrap the toolbar is wider than a 390px viewport.
+    expect(screen.getByTestId('batch-toolbar')).toHaveClass('flex', 'flex-wrap')
+  })
+
   it('renders the toolbar with the selected count when blocks are selected', () => {
     renderToolbar({ selectedBlockIds: ['A', 'B', 'C'] })
 

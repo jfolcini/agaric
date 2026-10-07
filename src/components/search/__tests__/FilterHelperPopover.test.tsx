@@ -97,6 +97,18 @@ describe('FilterHelperPopover — i18n', () => {
     expect(screen.getByText(t('search.filterCategoryTip'))).toBeInTheDocument()
   })
 
+  it('renders the trigger as the compact "Add filter" button the other filter bars use', () => {
+    renderPopover()
+    const trigger = screen.getByTestId('add-filter-button')
+    // Literal, not t(): pins the label text instead of echoing the catalog.
+    expect(trigger).toHaveTextContent(/^Add filter$/)
+    expect(trigger).toHaveClass('h-7', 'gap-1', 'text-xs')
+    // Plus before the label, ChevronDown after it; both decorative.
+    const icons = trigger.querySelectorAll('svg')
+    expect(icons).toHaveLength(2)
+    for (const icon of icons) expect(icon).toHaveAttribute('aria-hidden', 'true')
+  })
+
   it('renders the tag-picker "Back" button via t()', async () => {
     const user = userEvent.setup()
     renderPopover()

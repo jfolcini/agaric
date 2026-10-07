@@ -741,7 +741,7 @@ export function TagFilterPanel(): React.ReactElement {
                   tabIndex={-1}
                   className={cn(
                     'flex items-center justify-between rounded-md px-2 py-1.5 text-sm hover:bg-accent/50 active:bg-accent/70',
-                    isFocused && 'ring-2 ring-inset ring-ring/50 bg-accent/30',
+                    isFocused && 'list-cursor',
                   )}
                 >
                   {/* oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- gridcell inside aria grid widget; <td> requires table ancestry and breaks the flex layout */}
@@ -817,7 +817,9 @@ export function TagFilterPanel(): React.ReactElement {
                   aria-selected={isFocused}
                   data-result-item
                   tabIndex={-1}
-                  className={cn(isFocused && 'ring-2 ring-inset ring-ring/50 rounded-lg')}
+                  // The opaque card fills the row; the 2px band is where the
+                  // cursor's inset ring shows.
+                  className={cn('rounded-lg p-0.5', isFocused && 'list-cursor')}
                 >
                   {/* oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- gridcell in aria grid widget; <td> requires table ancestry and breaks the layout */}
                   <div role="gridcell">
