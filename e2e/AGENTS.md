@@ -110,7 +110,7 @@ It flags any descendant whose `getBoundingClientRect().right` exceeds the target
 
 ## Performance runs
 
-`perf.spec.ts` is skipped unless `AGARIC_PERF=1`. It seeds a 500-page vault through the mock's IPC, drives the core journeys, and prints one row per journey: INP, long animation frames minus mock time, peak rendered blocks and DOM nodes, React commits, and main-thread time per bundle chunk. `AGARIC_PERF_CPU=4` throttles the CPU, `AGARIC_PERF_TRACE=1` saves a Chrome trace per journey, and the report lands in `test-results/perf-*`. It measures frontend cost in Chromium only. Backend query time comes from `AGARIC_OTEL=1` on the real app or the `interactive_slo` bench.
+`perf.spec.ts`'s journey run is skipped unless `AGARIC_PERF=1`. It seeds a 500-page vault through the mock's IPC, drives the core journeys, and prints one row per journey: INP, long animation frames minus mock time, peak rendered blocks and DOM nodes, React commits, and main-thread time per bundle chunk. Its second test runs on every PR: `peakBlocks` is deterministic, so it pins that opening a 500-block page renders only the initial window in full (#5329). `AGARIC_PERF_CPU=4` throttles the CPU, `AGARIC_PERF_TRACE=1` saves a Chrome trace per journey, and the report lands in `test-results/perf-*`. It measures frontend cost in Chromium only. Backend query time comes from `AGARIC_OTEL=1` on the real app or the `interactive_slo` bench.
 
 ```sh
 AGARIC_PERF=1 npx playwright test e2e/perf.spec.ts

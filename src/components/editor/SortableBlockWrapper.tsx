@@ -37,6 +37,13 @@ export interface SortableBlockWrapperProps {
   isFocused: boolean
   /** True if this block is part of the active multi-selection. */
   isSelected: boolean
+  /**
+   * True for a row past `BlockListRenderer`'s initial window (#5329). Such a
+   * row mounts as a placeholder of estimated height and renders its block only
+   * once the viewport observer reports it on screen, instead of rendering in
+   * full on the first commit just to be swapped for a placeholder a frame later.
+   */
+  pastInitialWindow: boolean
 
   // ── DnD state (fallback only) ──────────────────────────────────────
   // #1267 — the live per-move drag state normally flows via the
@@ -84,6 +91,7 @@ function SortableBlockWrapperInner({
   block,
   isFocused,
   isSelected,
+  pastInitialWindow,
   projected = null,
   activeId = null,
   overId = null,
@@ -136,7 +144,7 @@ function SortableBlockWrapperInner({
   // churned on every flip and invalidated all N `React.memo`'d wrappers.)
   const offscreen = useSyncExternalStore(
     useCallback((onChange) => viewport.subscribe(block.id, onChange), [viewport, block.id]),
-    () => viewport.isOffscreen(block.id),
+    () => viewport.isOffscreen(block.id, pastInitialWindow),
   )
 
   // #923 — the drop indicator shows where the dragged block will land. It
@@ -174,7 +182,13 @@ function SortableBlockWrapperInner({
         // aria-expanded on listitem; only oxlint's static rule rejects it.
         // oxlint-disable-next-line jsx-a11y/role-supports-aria-props -- see note above; canonical control lives in BlockInlineControls
         aria-expanded={hasChildren ? !isCollapsed : undefined}
-        className="block-placeholder list-none m-0 p-0"
+        // `data-placeholder` is read by `useViewportObserver` when this row
+        // attaches: a row that mounts as a placeholder starts off-screen (#5329).
+        data-placeholder=""
+        // The min-height is the estimate for a row never measured (#5329): the
+        // shortest a `StaticBlock` row can be, in both pointer modes. A cached
+        // measurement in `style` overrides it.
+        className="block-placeholder list-none m-0 p-0 min-h-[1.75rem] [@media(pointer:coarse)]:min-h-[2.75rem]"
         style={{ minHeight: viewport.getHeight(block.id) }}
       />
     )

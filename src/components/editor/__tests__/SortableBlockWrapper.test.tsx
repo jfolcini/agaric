@@ -64,6 +64,7 @@ function makeProps(
     block: makeBlock({ id: 'BLK001', content: 'Hello', depth: 0 }),
     isFocused: false,
     isSelected: false,
+    pastInitialWindow: false,
     projected: null,
     activeId: null,
     overId: null,
@@ -152,6 +153,61 @@ describe('SortableBlockWrapper', () => {
     expect(screen.getByTestId('sortable-block-BLK001')).toBeInTheDocument()
     const li = container.querySelector('li[data-block-id="BLK001"]')
     expect(li?.classList.contains('block-placeholder')).toBe(false)
+  })
+
+  // #5329 — a row past the initial window asks the viewport for the
+  // off-screen answer WITH the start-off-screen flag, so its first render is a
+  // placeholder with the estimated height instead of the full block. The mock
+  // answers the flag the way the real hook does for a row that has not
+  // attached yet.
+  it('mounts as a placeholder of estimated height when past the initial window (#5329)', () => {
+    const viewport = {
+      isOffscreen: (_id: string, startsOffscreen = false) => startsOffscreen,
+      createObserveRef: () => vi.fn(),
+      getHeight: () => undefined,
+      subscribe: () => () => {},
+      subscribeWindow: () => () => {},
+      getWindowVersion: () => 0,
+    }
+    const { container } = renderInList(makeProps({ viewport, pastInitialWindow: true }))
+
+    expect(screen.queryByTestId('sortable-block-BLK001')).not.toBeInTheDocument()
+    const li = container.querySelector('li[data-block-id="BLK001"]') as HTMLElement
+    expect(li).toHaveClass('block-placeholder')
+    // The marker `useViewportObserver` reads at attach to seed the row off-screen.
+    expect(li).toHaveAttribute('data-placeholder')
+    // No measurement yet: the CSS estimate stands, no inline override.
+    expect(li).toHaveClass('min-h-[1.75rem]')
+    expect(li.style.minHeight).toBe('')
+  })
+
+  it('renders in full inside the initial window before any measurement (#5329)', () => {
+    const viewport = {
+      isOffscreen: (_id: string, startsOffscreen = false) => startsOffscreen,
+      createObserveRef: () => vi.fn(),
+      getHeight: () => undefined,
+      subscribe: () => () => {},
+      subscribeWindow: () => () => {},
+      getWindowVersion: () => 0,
+    }
+    const { container } = renderInList(makeProps({ viewport, pastInitialWindow: false }))
+
+    expect(screen.getByTestId('sortable-block-BLK001')).toBeInTheDocument()
+    expect(container.querySelector('li[data-placeholder]')).toBeNull()
+  })
+
+  it('renders the focused block in full even past the initial window (#5329)', () => {
+    const viewport = {
+      isOffscreen: (_id: string, startsOffscreen = false) => startsOffscreen,
+      createObserveRef: () => vi.fn(),
+      getHeight: () => undefined,
+      subscribe: () => () => {},
+      subscribeWindow: () => () => {},
+      getWindowVersion: () => 0,
+    }
+    renderInList(makeProps({ viewport, pastInitialWindow: true, isFocused: true }))
+
+    expect(screen.getByTestId('sortable-block-BLK001')).toBeInTheDocument()
   })
 
   it('sets aria-level, aria-setsize, and aria-posinset from props', () => {
@@ -526,6 +582,7 @@ describe('SortableBlockWrapper', () => {
     const { container } = renderInList(
       makeProps({
         viewport,
+        pastInitialWindow: true,
         hasChildren: true,
         isCollapsed: false,
         siblingSetsize: 1,

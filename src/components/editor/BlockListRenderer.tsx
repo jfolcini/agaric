@@ -35,6 +35,14 @@ import type { FlatBlock, Projection } from '@/lib/tree-utils'
 import { SENTINEL_ID } from '@/lib/tree-utils'
 import { cn } from '@/lib/utils'
 
+/**
+ * Rows rendered in full as they mount (#5329). A row that mounts past this
+ * index starts as a placeholder and hydrates once the viewport observer
+ * reports it on screen. A 720 px viewport shows ~22 rows; 30 covers it with the 200 px
+ * observer margin, and opening a 500-block page rendered all 500 before.
+ */
+export const INITIAL_WINDOW_ROWS = 30
+
 /** True iff two id→ordinal maps have identical entries (mirrors useListStyles.ts's `mapsEqual`). */
 function ordinalsEqual(a: Map<string, number>, b: Map<string, number>): boolean {
   if (a === b) return true
@@ -333,7 +341,7 @@ export function BlockListRenderer({
                 aria-label={t('blockTree.treeLabel')}
                 onPointerDown={onContainerPointerDown}
               >
-                {visibleItems.map((block) => {
+                {visibleItems.map((block, index) => {
                   const aria = siblingAriaProps.get(block.id)
                   return (
                     <SortableBlockWrapper
@@ -341,6 +349,7 @@ export function BlockListRenderer({
                       block={block}
                       isFocused={focusedBlockId === block.id}
                       isSelected={selectedSet.has(block.id)}
+                      pastInitialWindow={index >= INITIAL_WINDOW_ROWS}
                       viewport={viewport}
                       rovingEditor={rovingEditor}
                       hasChildren={hasChildrenSet.has(block.id)}

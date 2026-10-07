@@ -6,6 +6,17 @@
  * rootMargin buffer for smooth scrolling. Zero TipTap overhead
  * for off-screen blocks.
  *
+ * A block the observer has not reported yet counts as on-screen, so a page
+ * used to render every block in full once and then swap most of them for
+ * placeholders (#5329). A caller that knows a row sits past its initial
+ * window asks `isOffscreen(id, true)` instead and renders the placeholder
+ * with a `data-placeholder` marker; a row that attaches as a placeholder is
+ * seeded off-screen, so the first callback only has to hydrate the rows that
+ * actually intersect. Hydration is spread over frames,
+ * `HYDRATION_ROWS_PER_FRAME` rows per `requestAnimationFrame`, so a scroll
+ * tick that reveals thirty rows no longer renders all thirty in one task
+ * (#5330).
+ *
  * API: factory-per-id. `createObserveRef(id)` returns a memoized
  * ref callback scoped to that block id. When React calls the ref
  * with `null` (unmount) we unobserve the exact element that was
@@ -27,16 +38,32 @@
  *   // inside a per-row component:
  *   const offscreen = useSyncExternalStore(
  *     useCallback((cb) => viewport.subscribe(id, cb), [viewport, id]),
- *     () => viewport.isOffscreen(id),
+ *     () => viewport.isOffscreen(id, pastInitialWindow),
  *   )
- *   <div ref={viewport.createObserveRef(id)} data-block-id={id}>
- *     {offscreen ? <Placeholder height={viewport.getHeight(id)} /> : <Block />}
- *   </div>
+ *   offscreen
+ *     ? <div ref={viewport.createObserveRef(id)} data-block-id={id} data-placeholder=""
+ *            style={{ minHeight: viewport.getHeight(id) }} />
+ *     : <div ref={viewport.createObserveRef(id)} data-block-id={id}><Block /></div>
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import { scrollParentY } from '@/lib/scroll-parent'
+
+/**
+ * Rows hydrated (placeholder → full block) per animation frame (#5330). A
+ * wheel tick over a 500-block page revealed ~30 rows at 2.3–4.7 ms each,
+ * rendered in one task; four rows keep a frame at or under ~16 ms at 1× CPU.
+ */
+export const HYDRATION_ROWS_PER_FRAME = 4
+
+/**
+ * Measured row heights by id, kept across mounts (#5329). Returning to a page
+ * restores its scroll offset (#754), which lands on the row the user left only
+ * if the placeholders above it keep the heights they were measured at, not
+ * the estimate a never-rendered row gets.
+ */
+const measuredHeights = new Map<string, number>()
 
 export interface ViewportObserver {
   /**
@@ -46,8 +73,15 @@ export interface ViewportObserver {
    * won't churn observe/unobserve across renders.
    */
   createObserveRef: (id: string) => (el: HTMLElement | null) => void
-  /** True if the block has been measured and is outside the viewport + margin. */
-  isOffscreen: (id: string) => boolean
+  /**
+   * True if the block has been measured and is outside the viewport + margin.
+   *
+   * `startsOffscreen` (#5329): true for a row that mounts as a placeholder
+   * because it sits past the caller's initial window. Until its element has
+   * attached there is no measurement to read, so it counts as off-screen
+   * rather than on-screen; once attached the usual membership applies.
+   */
+  isOffscreen: (id: string, startsOffscreen?: boolean) => boolean
   /** Cached height for an off-screen block (px), or undefined if unknown. */
   getHeight: (id: string) => number | undefined
   /**
@@ -100,12 +134,25 @@ export function useViewportObserver(rootMargin = '200px 0px'): ViewportObserver 
    * leave. A row attaching while it is hidden walks straight past it to
    * whatever scroller sits ABOVE it, and that answer would otherwise pin the
    * observer to the wrong box for the rest of the session with no event able to
-   * correct it. The walk is one `getComputedStyle` pass per attach; only a
-   * CHANGED answer rebuilds the observer, which is what makes the rebuild rare
-   * rather than the walk.
+   * correct it. The walk is one `getComputedStyle` pass per commit (see
+   * `scrollParentWalkedRef`); only a CHANGED answer rebuilds the observer,
+   * which is what makes the rebuild rare rather than the walk.
    */
   const [rootEl, setRootEl] = useState<HTMLElement | null>(null)
-  const heightsRef = useRef<Map<string, number>>(new Map())
+  /**
+   * True once a row attaching in the current commit has walked for the scroll
+   * parent (#5330): the rows of one tree are siblings, so one `getComputedStyle`
+   * walk stands for all of them — 500 attaches used to walk 500 times, ~110 ms.
+   * Dropped on a microtask, so the next commit walks again; see `rootEl`.
+   */
+  const scrollParentWalkedRef = useRef(false)
+  /**
+   * Rows the observer has reported intersecting but not yet flipped on-screen
+   * (#5330). Drained `HYDRATION_ROWS_PER_FRAME` at a time, in report order, by
+   * the frame scheduled in `scheduleHydrationFrame`.
+   */
+  const pendingHydrationRef = useRef<Set<string>>(new Set())
+  const hydrationFrameRef = useRef<number | null>(null)
   const observerRef = useRef<IntersectionObserver | null>(null)
   /** id → currently-observed element. Lets the null-transition unobserve precisely. */
   const elementsByIdRef = useRef<Map<string, HTMLElement>>(new Map())
@@ -157,11 +204,36 @@ export function useViewportObserver(rootMargin = '200px 0px'): ViewportObserver 
     [notifyWindow],
   )
 
+  /**
+   * Flip the queued rows on-screen, `HYDRATION_ROWS_PER_FRAME` per frame
+   * (#5330). One observer callback flipped a whole scroll tick's worth of rows
+   * in a single task, and each flipped row renders its full block in that same
+   * task: 70–140 ms frames at 1× CPU, 1.3 s at 4×. The 200 px `rootMargin` is
+   * the lead time that lets the queue drain before a row reaches the screen.
+   */
+  const scheduleHydrationFrame = useCallback((): void => {
+    if (hydrationFrameRef.current !== null) return
+    hydrationFrameRef.current = requestAnimationFrame(function drain() {
+      hydrationFrameRef.current = null
+      const pending = pendingHydrationRef.current
+      let flipped = 0
+      for (const id of pending) {
+        if (flipped === HYDRATION_ROWS_PER_FRAME) break
+        pending.delete(id)
+        offscreenIdsRef.current.delete(id)
+        notify(id)
+        flipped += 1
+      }
+      if (pending.size > 0) hydrationFrameRef.current = requestAnimationFrame(drain)
+    })
+  }, [notify])
+
   useEffect(() => {
     // Capture the (stable) pending-prune set for the cleanup closure — the ref
     // never reassigns `.current`, so this is the same Set throughout, and it
     // keeps the linter from flagging a ref read inside cleanup.
     const pendingPrune = pendingPruneRef.current
+    const pendingHydration = pendingHydrationRef.current
     observerRef.current = new IntersectionObserver(
       (entries) => {
         // Mutate the ref-backed membership in place and notify only the ids
@@ -171,12 +243,16 @@ export function useViewportObserver(rootMargin = '200px 0px'): ViewportObserver 
           if (!id) continue
           const set = offscreenIdsRef.current
           if (entry.isIntersecting && set.has(id)) {
-            set.delete(id)
-            notify(id)
-          } else if (!entry.isIntersecting && !set.has(id)) {
-            heightsRef.current.set(id, entry.boundingClientRect.height)
-            set.add(id)
-            notify(id)
+            pendingHydration.add(id)
+            scheduleHydrationFrame()
+          } else if (!entry.isIntersecting) {
+            // A row scrolled back out before its frame came up stays a placeholder.
+            pendingHydration.delete(id)
+            if (!set.has(id)) {
+              measuredHeights.set(id, entry.boundingClientRect.height)
+              set.add(id)
+              notify(id)
+            }
           }
         }
       },
@@ -198,8 +274,15 @@ export function useViewportObserver(rootMargin = '200px 0px'): ViewportObserver 
       // Drop any deferred prunes — the whole hook is tearing down, so the
       // maps go with it; no microtask needs to fire after unmount.
       pendingPrune.clear()
+      // A rebuilt observer re-reports every element it observes, so dropping
+      // the queue here loses nothing; on unmount there is nothing to flip.
+      pendingHydration.clear()
+      if (hydrationFrameRef.current !== null) {
+        cancelAnimationFrame(hydrationFrameRef.current)
+        hydrationFrameRef.current = null
+      }
     }
-  }, [rootMargin, notify, rootEl])
+  }, [rootMargin, notify, rootEl, scheduleHydrationFrame])
 
   const createObserveRef = useCallback(
     (id: string) => {
@@ -222,17 +305,40 @@ export function useViewportObserver(rootMargin = '200px 0px'): ViewportObserver 
             observerRef.current?.unobserve(previous)
           }
           elementsByIdRef.current.set(id, el)
-          const found = scrollParentY(el)
-          // A row that finds no scroller says nothing about the container a
-          // previous row found — it may simply have mounted outside it — so an
-          // empty answer never downgrades an adopted root to the viewport. An
-          // unchanged one is React's own `Object.is` bail-out, not ours.
-          if (found !== null) setRootEl(found)
+          // A row that attaches as a placeholder (past the initial window,
+          // #5329) is off-screen until the observer's first callback says
+          // otherwise. Seeding it here is what lets that callback hydrate only
+          // the rows that intersect instead of flipping the rest off.
+          // The metadata window (#1268) learns of the seeded row too: when the
+          // first callback flips nothing, no other notification would reach it.
+          if (el.dataset['placeholder'] !== undefined) {
+            offscreenIdsRef.current.add(id)
+            notifyWindow()
+          }
+          if (!scrollParentWalkedRef.current) {
+            const found = scrollParentY(el)
+            scrollParentWalkedRef.current = true
+            queueMicrotask(() => {
+              scrollParentWalkedRef.current = false
+            })
+            // A row that finds no scroller says nothing about the container a
+            // previous row found — it may simply have mounted outside it — so
+            // an empty answer never downgrades an adopted root to the viewport.
+            // An unchanged one is React's own `Object.is` bail-out, not ours.
+            if (found !== null) setRootEl(found)
+          }
           observerRef.current?.observe(el)
         } else if (previous) {
+          // A full row is otherwise measured only when it scrolls out, so the
+          // rows still on screen when the user leaves are read as they detach
+          // (still laid out: React clears refs before removing the nodes).
+          if (!offscreenIdsRef.current.has(id)) {
+            const height = previous.getBoundingClientRect().height
+            if (height > 0) measuredHeights.set(id, height)
+          }
           observerRef.current?.unobserve(previous)
           elementsByIdRef.current.delete(id)
-          heightsRef.current.delete(id)
+          pendingHydrationRef.current.delete(id)
           // Defer pruning the memoized callback. A synchronous `null` is NOT a
           // reliable "the block left the tree" signal: React fires el→null→el for
           // a STILL-PRESENT node under StrictMode (dev) and during keyed-list /
@@ -261,12 +367,16 @@ export function useViewportObserver(rootMargin = '200px 0px'): ViewportObserver 
       refCallbacksRef.current.set(id, cb)
       return cb
     },
-    [notify],
+    [notify, notifyWindow],
   )
 
-  const isOffscreen = useCallback((id: string) => offscreenIdsRef.current.has(id), [])
+  const isOffscreen = useCallback(
+    (id: string, startsOffscreen = false) =>
+      offscreenIdsRef.current.has(id) || (startsOffscreen && !elementsByIdRef.current.has(id)),
+    [],
+  )
 
-  const getHeight = useCallback((id: string) => heightsRef.current.get(id), [])
+  const getHeight = useCallback((id: string) => measuredHeights.get(id), [])
 
   const subscribe = useCallback((id: string, callback: () => void) => {
     let subs = subscribersRef.current.get(id)

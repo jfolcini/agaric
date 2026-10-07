@@ -207,7 +207,7 @@ describe('PageOutline', () => {
     await user.click(screen.getByRole('button', { name: 'Open outline' }))
     await user.click(screen.getByText('Click me'))
 
-    expect(mockScrollIntoView).toHaveBeenCalledWith({ behavior: 'smooth', block: 'center' })
+    expect(mockScrollIntoView).toHaveBeenCalledWith({ block: 'start' })
 
     document.body.removeChild(realEl)
   })

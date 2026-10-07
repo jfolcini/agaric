@@ -29,13 +29,16 @@
  * Android WebView. Headless Chromium rasterizes in software, so a long frame
  * with no script in it is mostly paint and is not evidence of a real problem.
  * The run fails only when a journey cannot complete; it has no budgets.
+ *
+ * The second test is NOT opt-in: `peakBlocks` is deterministic, unlike the
+ * timings, so it pins the initial render window on every PR (#5329).
  */
 
 import { writeFileSync } from 'node:fs'
 
 import type { CDPSession, Page } from '@playwright/test'
 
-import { test } from './helpers'
+import { expect, test } from './helpers'
 
 const CPU = Number(process.env['AGARIC_PERF_CPU'] ?? 1)
 const PAGES = Number(process.env['AGARIC_PERF_PAGES'] ?? 500)
@@ -281,8 +284,8 @@ function makeMeasure(page: Page, cdp: CDPSession, rows: Row[]) {
 
 /** Seed the vault through the mock's IPC. Page `i`'s blocks link to page `i - 1`. */
 async function seedVault(page: Page): Promise<void> {
-  await page.evaluate(
-    async ({ pages, bigBlocks, bigTitle }) => {
+  const pageIds = await page.evaluate(
+    async ({ pages }) => {
       const internals = (window as unknown as Record<string, unknown>)['__TAURI_INTERNALS__'] as {
         invoke: (cmd: string, args: unknown) => Promise<unknown>
       }
@@ -309,21 +312,43 @@ async function seedVault(page: Page): Promise<void> {
           })),
         })
       }
+      return ids
+    },
+    { pages: PAGES },
+  )
+  await seedBigPage(page, pageIds)
+}
+
+/** Seed the `BIG_BLOCKS`-block page; its blocks link round-robin to `linkTargets`. */
+async function seedBigPage(page: Page, linkTargets: string[]): Promise<void> {
+  await page.evaluate(
+    async ({ bigBlocks, bigTitle, linkTargets: targets }) => {
+      const internals = (window as unknown as Record<string, unknown>)['__TAURI_INTERNALS__'] as {
+        invoke: (cmd: string, args: unknown) => Promise<unknown>
+      }
+      const invoke = (cmd: string, args: Record<string, unknown>) => internals.invoke(cmd, args)
+      const words = 'lorem ipsum dolor sit amet project meeting idea review draft notes'.split(' ')
+      const sentence = (n: number) =>
+        Array.from({ length: 8 + (n % 10) }, (_, k) => words[(n + k * 7) % words.length]).join(' ')
       const big = await invoke('create_page_in_space', {
         parentId: null,
         content: bigTitle,
         spaceId: 'SPACE_PERSONAL',
       })
       await invoke('create_blocks_batch', {
-        specs: Array.from({ length: bigBlocks }, (_, i) => ({
-          blockType: 'content',
-          content: `${i % 9 === 0 ? 'TODO ' : ''}${sentence(i)} **bold** \`code\` [[${ids[i % ids.length]}]]`,
-          parentId: big,
-          position: null,
-        })),
+        specs: Array.from({ length: bigBlocks }, (_, i) => {
+          const target = targets[i % Math.max(1, targets.length)]
+          const link = target ? ` [[${target}]]` : ''
+          return {
+            blockType: 'content',
+            content: `${i % 9 === 0 ? 'TODO ' : ''}${sentence(i)} **bold** \`code\`${link}`,
+            parentId: big,
+            position: null,
+          }
+        }),
       })
     },
-    { pages: PAGES, bigBlocks: BIG_BLOCKS, bigTitle: BIG_TITLE },
+    { bigBlocks: BIG_BLOCKS, bigTitle: BIG_TITLE, linkTargets },
   )
 }
 
@@ -413,4 +438,48 @@ test('perf: core journeys on a seeded vault', async ({ page }) => {
   )
   console.log(`\nperf (CPU ×${CPU}, ${PAGES} pages, ${BIG_BLOCKS}-block page)`)
   console.table(rows)
+})
+
+/**
+ * #5329 — the initial render window. Before it, opening the big page rendered
+ * every one of its blocks in full once (`peakBlocks` 500, a 1.2 s frame) and
+ * then swapped all but the visible ~22 for placeholders. Now the first commit
+ * renders `INITIAL_WINDOW_ROWS` (30) rows and the observer hydrates only what
+ * the 720 px viewport plus the 200 px margin reaches — about as many again at
+ * the placeholder estimate — a frame-budgeted few at a time (#5330). Twice the
+ * window is the bound; a regression to render-everything reads 500.
+ */
+const PEAK_RENDERED_BLOCKS_BOUND = 60
+
+test('opening a 500-block page renders only the initial window in full (#5329)', async ({
+  page,
+}) => {
+  const blocks = page.locator('[data-testid="block-static"]')
+  await page.addInitScript(installProbes)
+  await page.goto('/')
+  await blocks.first().waitFor()
+  await seedBigPage(page, [])
+  await page.evaluate(() => {
+    const probe = window.__perf__
+    if (probe) probe.peakBlocks = 0
+  })
+
+  await openViaPalette(page, BIG_TITLE)
+  await blocks.nth(10).waitFor()
+  // Let hydration settle: the peak is read once no frame has changed the
+  // rendered-block count for a while.
+  await expect
+    .poll(async () => {
+      const before = await blocks.count()
+      await page.evaluate(
+        () => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))),
+      )
+      return (await blocks.count()) === before
+    })
+    .toBe(true)
+
+  const peak = await page.evaluate(() => window.__perf__?.peakBlocks ?? -1)
+  // The lower bound proves the probe saw the page at all.
+  expect(peak).toBeGreaterThanOrEqual(10)
+  expect(peak).toBeLessThanOrEqual(PEAK_RENDERED_BLOCKS_BOUND)
 })

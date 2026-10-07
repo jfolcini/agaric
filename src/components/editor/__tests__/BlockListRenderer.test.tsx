@@ -61,7 +61,7 @@ vi.mock('@dnd-kit/core', () => ({
   useDroppable: () => ({ setNodeRef: vi.fn(), isOver: false }),
 }))
 
-import { BlockListRenderer } from '@/components/editor/BlockListRenderer'
+import { BlockListRenderer, INITIAL_WINDOW_ROWS } from '@/components/editor/BlockListRenderer'
 
 const noop = () => {}
 
@@ -116,6 +116,34 @@ describe('BlockListRenderer', () => {
     expect(screen.getByTestId('sortable-block-BLK001')).toBeInTheDocument()
     expect(screen.getByTestId('sortable-block-BLK002')).toBeInTheDocument()
     expect(container.querySelector('.block-tree')).toBeInTheDocument()
+  })
+
+  // #5329 — only the first `INITIAL_WINDOW_ROWS` rows render in full on the
+  // first commit; every row past them mounts as a placeholder until the
+  // viewport observer reports it on screen. The mock viewport answers the
+  // start-off-screen flag as the real hook does before any row has attached.
+  it('renders the initial window in full and the rows past it as placeholders (#5329)', () => {
+    const blocks = Array.from({ length: INITIAL_WINDOW_ROWS + 10 }, (_, i) =>
+      makeBlock({ id: `BLK_${i}`, content: `b${i}` }),
+    )
+    const viewport = {
+      isOffscreen: (_id: string, startsOffscreen = false) => startsOffscreen,
+      createObserveRef: () => vi.fn(),
+      getHeight: () => undefined,
+      subscribe: () => () => {},
+      subscribeWindow: () => () => {},
+      getWindowVersion: () => 0,
+    }
+    const { container } = render(
+      <BlockListRenderer {...makeProps({ visibleItems: blocks, blocks, viewport })} />,
+    )
+
+    expect(screen.getAllByTestId(/^sortable-block-/)).toHaveLength(INITIAL_WINDOW_ROWS)
+    expect(screen.getByTestId(`sortable-block-BLK_${INITIAL_WINDOW_ROWS - 1}`)).toBeInTheDocument()
+    expect(screen.queryByTestId(`sortable-block-BLK_${INITIAL_WINDOW_ROWS}`)).toBeNull()
+    const placeholders = container.querySelectorAll('li.block-placeholder[data-block-id]')
+    expect(placeholders).toHaveLength(10)
+    expect(placeholders[0]).toHaveAttribute('data-block-id', `BLK_${INITIAL_WINDOW_ROWS}`)
   })
 
   it('renders empty state when blocks array is empty and not loading', () => {
