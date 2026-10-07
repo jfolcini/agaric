@@ -231,7 +231,6 @@ dependencies = [
  "loro",
  "n0-error",
  "n0-future",
- "ndk-context",
  "qrcode",
  "rand 0.10.3",
  "serde",

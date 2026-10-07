@@ -2,8 +2,8 @@
 //!
 //! ## Why this lives in the app crate and not in `agaric-sync`
 //!
-//! The work is `agaric_sync::android_context`'s (that crate owns the `jni` /
-//! `ndk-context` dependencies); only the exported **symbol** lives here. The
+//! The work is `agaric_sync::android_context`'s (that crate owns the `jni`
+//! dependency); only the exported **symbol** lives here. The
 //! `.so` Android loads is `libagaric_lib.so` — the `cdylib` produced by *this*
 //! crate (`[lib] name = "agaric_lib"`, `crate-type = ["lib", "cdylib",
 //! "staticlib"]`), loaded by `WryActivity`'s
@@ -36,8 +36,8 @@ use std::ffi::c_void;
 /// JVM entry point, called once when `libagaric_lib.so` is loaded.
 ///
 /// Delegates to [`agaric_sync::android_context::jni_on_load`], which resolves
-/// the Application context and hands it plus the `JavaVM` to `ndk_context` so
-/// the multicast lock and iroh's DNS resolver can use them.
+/// the Application context and records it plus the `JavaVM` for the multicast
+/// lock and the network-block monitor.
 ///
 /// The return type is `jni::sys::jint`, spelled `i32` so the app crate does
 /// not take a direct `jni` dependency to name one function's return type — the
