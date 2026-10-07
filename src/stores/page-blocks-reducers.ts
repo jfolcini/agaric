@@ -463,51 +463,32 @@ export function createReducers({
         if (plan.kind === 'edit-only') {
           return await get().edit(blockId, plan.content)
         }
-        // Capture the pre-edit content so we can roll back the optimistic
-        // local update if the FIRST `createBelow` fails after `edit` already
-        // committed `plan.first` to local state. Without this, a partial-
-        // failure split silently truncates the original block to `plan.first`
-        // and the user's later content (`plan.rest`) is lost. If a later
-        // `createBelow` fails (e.g. block-3 creation in a 4-line split after
-        // blocks 1+2 succeeded), we leave the partial valid state alone —
-        // rolling back at that point would orphan the already-created blocks.
-        const previousContent = get().blocksById.get(blockId)?.content
-        // #730 — `edit()` resolves `false` (and rolls its optimistic update
-        // back internally) when the first-line write fails. The old code
-        // ignored that boolean and proceeded to create every `plan.rest`
-        // line below the reverted original — duplicating the user's pasted
-        // content. Abort the split before creating anything if the first
-        // edit didn't commit; the original block keeps its pre-paste content
-        // (edit() already restored it) and nothing downstream is created.
-        if (!(await get().edit(blockId, plan.first))) return false
+        // #5272 — create the after-parts BEFORE shortening the original. A
+        // `[[link]]` whose target lives in another space is accepted only
+        // while a live block of this page still holds it; shortening the
+        // original first removed the only holder, and the create was refused.
+        // Every failure below puts the page back as it was — the blocks
+        // created so far are deleted again and the original is never left
+        // shortened (#730, #2913) — and reports `false`, so the blur path
+        // keeps the draft, which holds the full unsplit markdown.
+        const createdIds: string[] = []
         let lastId = blockId
         for (const content of plan.rest) {
           const newId = await get().createBelow(lastId, content)
           if (newId === null) {
-            // createBelow failed (it logged + toasted internally). Only roll
-            // back when no new blocks were created yet — the `lastId === blockId`
-            // check is the durable signal for "first iteration failed."
-            if (lastId === blockId && previousContent != null) {
-              // #2913 — the first-line `edit(blockId, plan.first)` above already
-              // committed the truncated `plan.first` DURABLY to the backend. A
-              // local-only setState restore would show `previousContent` in the
-              // store while the DB still holds `plan.first`, so the next load()
-              // (sync tick, navigation, `blocks:changed`) silently truncates the
-              // visible block and loses the user's un-split `plan.rest` text.
-              // Issue a COMPENSATING backend edit so store AND backend
-              // re-converge on the full pre-split content; if that write also
-              // fails, reconcile exactly from the backend via load() — mirroring
-              // remove()'s failure fallback and edit()'s own rollback discipline.
-              if (!(await get().edit(blockId, previousContent))) {
-                await get().load()
-              }
-            }
-            // Some of the typed lines never reached the DB — report failure
-            // so the blur path keeps the draft (which holds the FULL
-            // unsplit markdown) for recovery.
+            // createBelow logged + toasted.
+            for (const id of createdIds) await get().remove(id)
             return false
           }
+          createdIds.push(newId)
           lastId = newId
+        }
+        // `edit()` resolves `false` and restores the original's content when
+        // the write fails; the after-parts below then duplicate text the
+        // original still holds.
+        if (!(await get().edit(blockId, plan.first))) {
+          for (const id of createdIds) await get().remove(id)
+          return false
         }
         return true
       } finally {

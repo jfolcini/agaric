@@ -1041,19 +1041,43 @@ export function useBlockActionOrchestration({
         // (`before` is ''), and that blank line is the point of the keystroke.
         // Exempt it from the focus-leave empty-block cleanup NOW, before the
         // first await: `edit()` below empties the block optimistically, and a
-        // click elsewhere during its round trip moves focus off the source —
-        // registering only after `createBelow` resolved would let the cleanup
-        // delete the source first, and `createBelow` then finds no anchor for
-        // the after-text. Withdrawn on the failure paths, which restore the
-        // full unsplit content.
+        // click elsewhere during its round trip moves focus off the source,
+        // which the cleanup would otherwise delete. Withdrawn on the failure
+        // paths, which restore the full unsplit content.
         const leavesSourceEmpty = split.before.trim() === ''
         if (leavesSourceEmpty) preserveEmptyBlockIds?.current.add(focusedBlockId)
+        // #5272 — create the after-text sibling BEFORE shortening the source.
+        // A `[[link]]` whose target lives in another space is accepted only
+        // while a live block of this page still holds it; saving `before`
+        // first removed the only holder of a link sitting after the caret,
+        // and the create was refused.
+        const newBlockId = await createBelow(focusedBlockId, split.after)
+        if (!newBlockId) {
+          // createBelow logged + toasted and nothing was written: re-mount the
+          // full unsplit content so the user has a place to type.
+          if (leavesSourceEmpty) preserveEmptyBlockIds?.current.delete(focusedBlockId)
+          rovingEditorRef.current.mount(focusedBlockId, savedContent)
+          return
+        }
         // #730 family — edit() RESOLVES false on failure (the store rolled the
-        // optimistic write back and toasted); it never rejects. Abort the
-        // split BEFORE creating anything, restoring the full unsplit content,
-        // so a failed before-caret save can't fork the block into stale text
-        // plus an orphan after-text sibling (mirrors splitBlock's #730 guard).
+        // optimistic write back and toasted); it never rejects. The source
+        // then still holds the after-text, so delete the sibling just created
+        // instead of leaving that text duplicated below the restored source.
         if (!(await edit(focusedBlockId, split.before))) {
+          try {
+            await remove(newBlockId)
+          } catch (err) {
+            // BlockTree's `remove` throws when the block is still in the store
+            // after a failed delete (the store toasted). The after-text is then
+            // held by both blocks, converged with the backend; the user still
+            // needs their editor back.
+            logger.warn(
+              'useBlockActionOrchestration',
+              'Split rollback left the after-text sibling behind',
+              { blockId: focusedBlockId, newBlockId },
+              err,
+            )
+          }
           if (leavesSourceEmpty) preserveEmptyBlockIds?.current.delete(focusedBlockId)
           rovingEditorRef.current.mount(focusedBlockId, savedContent)
           return
@@ -1074,21 +1098,13 @@ export function useBlockActionOrchestration({
         // append a SECOND `edit_block` op that clobbers the split we just
         // committed with the old, un-split content.
         discardDraft(focusedBlockId)
-        const newBlockId = await createBelow(focusedBlockId, split.after)
-        if (newBlockId) {
-          // NOT added to justCreatedBlockIds: the new block carries real
-          // content, so Discard must not auto-delete it as an empty stub. (The
-          // SOURCE's #4729 exemption was registered above, before the awaits;
-          // this `setFocused` is what consumes it.)
-          setFocused(newBlockId)
-          announce(t('announce.blockCreated'))
-          await continueListStyle(newBlockId, listStyle)
-        } else {
-          // Backend error — restore the original (unsplit) block so the user
-          // isn't left with a truncated block and no place to type.
-          if (leavesSourceEmpty) preserveEmptyBlockIds?.current.delete(focusedBlockId)
-          rovingEditorRef.current.mount(focusedBlockId, savedContent)
-        }
+        // NOT added to justCreatedBlockIds: the new block carries real
+        // content, so Discard must not auto-delete it as an empty stub. (The
+        // SOURCE's #4729 exemption was registered above, before the awaits;
+        // this `setFocused` is what consumes it.)
+        setFocused(newBlockId)
+        announce(t('announce.blockCreated'))
+        await continueListStyle(newBlockId, listStyle)
         return
       }
 
@@ -1138,6 +1154,7 @@ export function useBlockActionOrchestration({
     handleFlush,
     createBelow,
     edit,
+    remove,
     setFocused,
     justCreatedBlockIds,
     preserveEmptyBlockIds,
