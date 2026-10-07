@@ -23,6 +23,7 @@
  * `parse()` multi-block detector and the store's `planSplit` take the split path.
  */
 
+import type { InvokeArgs } from '@tauri-apps/api/core'
 import { invoke } from '@tauri-apps/api/core'
 import { act, renderHook } from '@testing-library/react'
 import type { TFunction } from 'i18next'
@@ -33,8 +34,12 @@ import { makeBlock } from '@/__tests__/fixtures'
 import { useBlockActionOrchestration } from '@/components/block-tree/use-block-action-orchestration'
 import { useBlockFlush } from '@/components/block-tree/use-block-flush'
 import type { RovingEditorHandle } from '@/editor/use-roving-editor'
+import { dispatch } from '@/lib/tauri-mock/handlers'
+import { blocks as mockBlocks, SEED_IDS, seedBlocks } from '@/lib/tauri-mock/seed'
 import type { MountedBlocks } from '@/lib/zoom-scope'
 import { createPageBlockStore, type PageBlockState } from '@/stores/page-blocks'
+import { useSpaceStore } from '@/stores/space'
+import { useUndoStore } from '@/stores/undo'
 
 const mockedInvoke = vi.mocked(invoke)
 
@@ -178,5 +183,140 @@ describe('#2914 — Enter on multi-block content does not race splitBlock vs cre
     // The content-bearing last block is NOT registered as a Discard-deletable
     // empty stub (parity with the caret-split path).
     expect(justCreatedBlockIds.current.size).toBe(0)
+  })
+})
+
+// #5272 — the backend accepts a `[[link]]` to a block in another space only
+// while a live block of the SAME page already holds that token
+// (`page_holds_token`, `cross_space_validation.rs`). The caret split used to
+// save the shortened source first, which removed the only holder of a link
+// sitting after the caret, so the after-text's create was refused. The tauri
+// mock does not model that rule (its `create_block` / `edit_block` scan no
+// content), so the pin here is the ORDER against the mock's real state: the
+// create lands while the source still holds the full text. Real store, real
+// mock dispatch; only the roving editor handle is a stub.
+describe('#5272 — a caret split creates the after-text before shortening the source', () => {
+  const { BLOCK_GS_1, PAGE_GETTING_STARTED, PAGE_QUICK_NOTES } = SEED_IDS
+  const LINK = `[[${PAGE_QUICK_NOTES}]]`
+  const PRE_SPLIT = `intro ${LINK} outro`
+  const AFTER = `${LINK} outro`
+
+  /** Route `invoke` to the real mock, except the commands `reject` names. */
+  function routeToMock(reject: string[], onCreate?: (args: Record<string, unknown>) => void): void {
+    mockedInvoke.mockImplementation(async (cmd: string, args?: InvokeArgs) => {
+      if (reject.includes(cmd)) throw new Error(`${cmd} failed`)
+      if (cmd === 'create_block') onCreate?.((args ?? {}) as Record<string, unknown>)
+      return dispatch(cmd, args)
+    })
+  }
+
+  /** Getting Started loaded off the real mock, the caret inside GS_1 right before the link. */
+  async function mountGettingStarted() {
+    seedBlocks()
+    useSpaceStore.setState({ currentSpaceId: 'SPACE_PERSONAL' })
+    useUndoStore.setState({ pages: new Map() })
+    dispatch('edit_block', { blockId: BLOCK_GS_1, toText: PRE_SPLIT })
+    routeToMock([])
+    const pageStore = createPageBlockStore(PAGE_GETTING_STARTED)
+    await pageStore.getState().load()
+    const idsBefore = pageStore.getState().blocks.map((b) => b.id)
+    const handle = makeHandle(BLOCK_GS_1, PRE_SPLIT)
+    handle.splitAtCaret = vi.fn(() => ({ before: 'intro', after: AFTER }))
+    const setFocused = vi.fn()
+    const s = pageStore.getState()
+    const { result } = renderHook(() =>
+      useBlockActionOrchestration({
+        focusedBlockId: BLOCK_GS_1,
+        collapsedVisible: pageStore.getState().blocks as unknown as MountedBlocks,
+        blocks: pageStore.getState().blocks,
+        rovingEditor: handle,
+        setFocused,
+        setSelected: vi.fn(),
+        handleFlush: vi.fn(() => null),
+        pageStore,
+        remove: s.remove,
+        moveBlocks: s.moveBlocks,
+        edit: s.edit,
+        indent: s.indent,
+        dedent: s.dedent,
+        moveUp: s.moveUp,
+        moveDown: s.moveDown,
+        createBelow: s.createBelow,
+        justCreatedBlockIds: { current: new Set<string>() },
+        discardDraft: vi.fn(),
+        t,
+      }),
+    )
+    return { pageStore, idsBefore, handle, setFocused, result }
+  }
+
+  it('creates the after-text while the backend still holds the full source, then shortens it', async () => {
+    const { pageStore, handle, setFocused, result } = await mountGettingStarted()
+    let sourceAtCreate: unknown = null
+    routeToMock([], () => {
+      sourceAtCreate = mockBlocks.get(BLOCK_GS_1)?.['content']
+    })
+
+    await act(async () => {
+      await result.current.handleEnterSave()
+    })
+
+    // The rule's precondition: when the create landed, a live block of the
+    // page (the source) still held the link token.
+    expect(sourceAtCreate).toBe(PRE_SPLIT)
+    // Both halves persisted — re-query the page from the mock.
+    await pageStore.getState().load()
+    const [first, second] = pageStore.getState().blocks
+    expect(first?.id).toBe(BLOCK_GS_1)
+    expect(first?.content).toBe('intro')
+    expect(second?.content).toBe(AFTER)
+    expect(mockBlocks.get(BLOCK_GS_1)?.['content']).toBe('intro')
+    expect(mockBlocks.get(second?.id ?? '')?.['deleted_at']).toBeNull()
+    // Focus follows the after-text, as before the reorder; no re-mount.
+    expect(setFocused).toHaveBeenCalledWith(second?.id)
+    expect(handle.mount).not.toHaveBeenCalled()
+    // Still one Ctrl+Z for the whole split.
+    expect(useUndoStore.getState().pages.get(PAGE_GETTING_STARTED)?.undoStack).toHaveLength(1)
+  })
+
+  it("deletes the created sibling when the source's save fails and re-mounts the full text", async () => {
+    const { pageStore, idsBefore, handle, setFocused, result } = await mountGettingStarted()
+    let createdId = ''
+    routeToMock(['edit_block'], (args) => {
+      createdId = args['blockId'] as string
+    })
+
+    await act(async () => {
+      await result.current.handleEnterSave()
+    })
+
+    // Backend: the sibling is soft-deleted, the source untouched.
+    expect(createdId).not.toBe('')
+    expect(mockBlocks.get(createdId)?.['deleted_at']).not.toBeNull()
+    expect(mockBlocks.get(BLOCK_GS_1)?.['content']).toBe(PRE_SPLIT)
+    // Store: back to the pre-split page, and a re-query agrees.
+    expect(pageStore.getState().blocks.map((b) => b.id)).toEqual(idsBefore)
+    await pageStore.getState().load()
+    expect(pageStore.getState().blocks.map((b) => b.id)).toEqual(idsBefore)
+    // The user keeps the complete text editable where they were.
+    expect(handle.mount).toHaveBeenCalledWith(BLOCK_GS_1, PRE_SPLIT)
+    expect(setFocused).not.toHaveBeenCalled()
+  })
+
+  it('writes nothing when the create fails and re-mounts the full text', async () => {
+    const { pageStore, idsBefore, handle, setFocused, result } = await mountGettingStarted()
+    const blockCount = mockBlocks.size
+    routeToMock(['create_block'])
+
+    await act(async () => {
+      await result.current.handleEnterSave()
+    })
+
+    expect(mockBlocks.size).toBe(blockCount)
+    expect(mockBlocks.get(BLOCK_GS_1)?.['content']).toBe(PRE_SPLIT)
+    expect(pageStore.getState().blocks.map((b) => b.id)).toEqual(idsBefore)
+    expect(pageStore.getState().blocksById.get(BLOCK_GS_1)?.content).toBe(PRE_SPLIT)
+    expect(handle.mount).toHaveBeenCalledWith(BLOCK_GS_1, PRE_SPLIT)
+    expect(setFocused).not.toHaveBeenCalled()
   })
 })

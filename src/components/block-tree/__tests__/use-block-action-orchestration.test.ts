@@ -1887,6 +1887,12 @@ describe('useBlockActionOrchestration handleEnterSave', () => {
     expect(params.setFocused).toHaveBeenCalledWith('NEW_1')
     // The legacy whole-block flush path must NOT run on a mid-text split.
     expect(params.handleFlush).not.toHaveBeenCalled()
+    // #5272 — the after-text is created BEFORE the source is shortened, so a
+    // cross-space link after the caret is still held by a live block of the
+    // page when the create is validated.
+    const createOrder = vi.mocked(params.createBelow).mock.invocationCallOrder[0] ?? -1
+    const editOrder = vi.mocked(params.edit).mock.invocationCallOrder[0] ?? -1
+    expect(createOrder).toBeLessThan(editOrder)
   })
 
   it('split-created block is NOT registered as a just-created empty stub', async () => {
@@ -1917,9 +1923,11 @@ describe('useBlockActionOrchestration handleEnterSave', () => {
   })
 
   // Store contract (#730 family): edit() RESOLVES false on failure — it never
-  // rejects. Ignoring the boolean let a failed before-caret save fall through
-  // to createBelow, forking the content (stale block + orphan after-text).
-  it('aborts the split and restores the full content when edit resolves false', async () => {
+  // rejects. Ignoring the boolean forked the content (stale block + orphan
+  // after-text). #5272 — the after-text sibling is created BEFORE the save, so
+  // on a failed save it is deleted again rather than left duplicating the text
+  // the restored source still holds.
+  it('deletes the created sibling and restores the full content when edit resolves false', async () => {
     const params = makeDefaultParams()
     params.rovingEditor.getMarkdown = vi.fn(() => 'hello world')
     params.rovingEditor.splitAtCaret = vi.fn(() => ({ before: 'hello ', after: 'world' }))
@@ -1930,14 +1938,43 @@ describe('useBlockActionOrchestration handleEnterSave', () => {
       await result.current.handleEnterSave()
     })
 
-    // The after-text block must NOT be created — the before-save didn't commit.
-    expect(params.createBelow).not.toHaveBeenCalled()
+    expect(params.createBelow).toHaveBeenCalledWith('B', 'world')
+    // The compensating delete follows the failed save.
+    expect(params.remove).toHaveBeenCalledWith('NEW_1')
+    const editOrder = vi.mocked(params.edit).mock.invocationCallOrder[0] ?? -1
+    const removeOrder = vi.mocked(params.remove).mock.invocationCallOrder[0] ?? -1
+    expect(editOrder).toBeLessThan(removeOrder)
     // The user keeps their complete, unsplit text editable.
     expect(params.rovingEditor.mount).toHaveBeenCalledWith('B', 'hello world')
     expect(params.setFocused).not.toHaveBeenCalled()
   })
 
-  it('restores the original block when a split createBelow fails', async () => {
+  // BlockTree's `remove` wrapper THROWS when the block is still in the store
+  // after a failed delete. The failure path must still finish: give the editor
+  // back with the full text and withdraw the #4729 exemption registered for an
+  // Enter at line start, or the user is stranded on an unmounted block.
+  it('re-mounts the full text and withdraws the empty-source exemption even when the compensating delete throws', async () => {
+    const preserveEmptyBlockIds = { current: new Set<string>() }
+    const params = makeDefaultParams({ preserveEmptyBlockIds })
+    params.rovingEditor.getMarkdown = vi.fn(() => 'hello world')
+    params.rovingEditor.splitAtCaret = vi.fn(() => ({ before: '', after: 'hello world' }))
+    params.edit = vi.fn(async () => false)
+    params.remove = vi.fn(async (): Promise<void> => {
+      throw new Error('remove incomplete: block still present after delete')
+    })
+    const { result } = renderHook(() => useBlockActionOrchestration(params))
+
+    await act(async () => {
+      await result.current.handleEnterSave()
+    })
+
+    expect(params.remove).toHaveBeenCalledWith('NEW_1')
+    expect(preserveEmptyBlockIds.current.has('B')).toBe(false)
+    expect(params.rovingEditor.mount).toHaveBeenCalledWith('B', 'hello world')
+    expect(params.setFocused).not.toHaveBeenCalled()
+  })
+
+  it('writes nothing and restores the original block when a split createBelow fails', async () => {
     const params = makeDefaultParams()
     params.rovingEditor.getMarkdown = vi.fn(() => 'helloworld')
     params.rovingEditor.splitAtCaret = vi.fn(() => ({ before: 'hello', after: 'world' }))
@@ -1948,6 +1985,10 @@ describe('useBlockActionOrchestration handleEnterSave', () => {
       await result.current.handleEnterSave()
     })
 
+    // #5272 — the create ran first and failed, so the source was never saved
+    // shortened and there is nothing to compensate.
+    expect(params.edit).not.toHaveBeenCalled()
+    expect(params.remove).not.toHaveBeenCalled()
     expect(params.rovingEditor.mount).toHaveBeenCalledWith('B', 'helloworld')
     expect(params.setFocused).not.toHaveBeenCalled()
   })
@@ -1988,7 +2029,7 @@ describe('useBlockActionOrchestration handleEnterSave', () => {
     expect(params.discardDraft).not.toHaveBeenCalled()
   })
 
-  it('still discards the departed block draft even when createBelow fails post-split', async () => {
+  it('does not discard the draft when createBelow fails (nothing was committed)', async () => {
     const params = makeDefaultParams()
     params.rovingEditor.getMarkdown = vi.fn(() => 'helloworld')
     params.rovingEditor.splitAtCaret = vi.fn(() => ({ before: 'hello', after: 'world' }))
@@ -1999,9 +2040,9 @@ describe('useBlockActionOrchestration handleEnterSave', () => {
       await result.current.handleEnterSave()
     })
 
-    // `split.before` already committed via `edit()` before createBelow ran,
-    // so the stale draft row is cleaned up regardless of createBelow's outcome.
-    expect(params.discardDraft).toHaveBeenCalledWith('B')
+    // #5272 — the create runs first; when it fails `edit()` never ran, so the
+    // pre-split draft row is still the crash-recovery copy of the user's text.
+    expect(params.discardDraft).not.toHaveBeenCalled()
   })
 
   it('does not discard any draft on the legacy (non-split) Enter path', async () => {

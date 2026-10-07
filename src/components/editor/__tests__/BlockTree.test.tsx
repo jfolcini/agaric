@@ -5621,11 +5621,11 @@ describe('BlockTree leaked-empty-block cleanup', () => {
   })
 
   it('keeps the source block when focus leaves it DURING the split round trip', async () => {
-    // Enter at line start empties the source optimistically and then awaits
-    // `edit_block`. A click elsewhere during that round trip moves focus off
-    // the already-empty source BEFORE `createBelow` has run — so the exemption
-    // must already be registered, or the cleanup deletes the source and the
-    // after-text has no anchor left to be created below.
+    // Enter at line start creates the after-text sibling (#5272), then empties
+    // the source optimistically and awaits `edit_block`. A click elsewhere
+    // during that round trip moves focus off the already-empty source — so the
+    // exemption must already be registered, or the cleanup deletes the source
+    // and the blank line the keystroke was for is gone.
     const editGate = deferred<CommandReturns['edit_block']>()
     const releaseEdit = () => editGate.resolve(withOps(makeBlockRow({ id: 'SRC', content: '' })))
     mockBareBackend({
