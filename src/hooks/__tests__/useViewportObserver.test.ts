@@ -10,50 +10,13 @@ import type { Root } from 'react-dom/client'
 import { createRoot } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import {
+  MockIntersectionObserver,
+  stubAnimationFrames,
+} from '@/__tests__/helpers/viewport-observer-mocks'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import type { ViewportObserver } from '@/hooks/useViewportObserver'
-import { useViewportObserver } from '@/hooks/useViewportObserver'
-
-// -- IntersectionObserver mock ------------------------------------------------
-
-type IOCallback = (entries: IntersectionObserverEntry[], observer: IntersectionObserver) => void
-
-class MockIntersectionObserver {
-  callback: IOCallback
-  rootMargin: string
-  root: Element | Document | null
-  observed = new Set<Element>()
-
-  static instances: MockIntersectionObserver[] = []
-
-  constructor(callback: IOCallback, options?: IntersectionObserverInit) {
-    this.callback = callback
-    this.rootMargin = options?.rootMargin ?? '0px'
-    this.root = options?.root ?? null
-    MockIntersectionObserver.instances.push(this)
-  }
-
-  observe(el: Element): void {
-    this.observed.add(el)
-  }
-
-  unobserve(el: Element): void {
-    this.observed.delete(el)
-  }
-
-  disconnect(): void {
-    this.observed.clear()
-  }
-
-  takeRecords(): IntersectionObserverEntry[] {
-    return []
-  }
-
-  /** Test helper — fire the callback with synthetic entries. */
-  trigger(entries: Partial<IntersectionObserverEntry>[]): void {
-    this.callback(entries as IntersectionObserverEntry[], this as unknown as IntersectionObserver)
-  }
-}
+import { HYDRATION_ROWS_PER_FRAME, useViewportObserver } from '@/hooks/useViewportObserver'
 
 // -- Minimal renderHook (no external deps needed) -----------------------------
 
@@ -94,11 +57,15 @@ function renderHook<T>(
 
 // -- Setup / teardown ---------------------------------------------------------
 
+/** Flip-on is spread across animation frames (#5330); tests run them by hand. */
+let frames: ReturnType<typeof stubAnimationFrames>
+
 beforeEach(() => {
   // Suppress "The current testing environment is not configured to support act(...)"
   ;(globalThis as any).IS_REACT_ACT_ENVIRONMENT = true
   MockIntersectionObserver.instances = []
   vi.stubGlobal('IntersectionObserver', MockIntersectionObserver)
+  frames = stubAnimationFrames()
 })
 
 afterEach(() => {
@@ -110,6 +77,20 @@ function makeEl(id: string): HTMLElement {
   const el = document.createElement('div')
   el.dataset['blockId'] = id
   return el
+}
+
+/** A row that mounted as a placeholder (past the initial window, #5329). */
+function makePlaceholderEl(id: string): HTMLElement {
+  const el = makeEl(id)
+  el.dataset['placeholder'] = ''
+  return el
+}
+
+/** Run one animation frame inside `act`, so the flips it applies reach React. */
+function runFrame(): void {
+  act(() => {
+    frames.runFrame()
+  })
 }
 
 // -- Tests --------------------------------------------------------------------
@@ -167,7 +148,7 @@ describe('useViewportObserver', () => {
     scroller.remove()
   })
 
-  it('an unchanged answer does not rebuild the observer (#5066)', () => {
+  it('an unchanged answer does not rebuild the observer (#5066)', async () => {
     const scroller = document.createElement('div')
     scroller.style.overflowY = 'auto'
     document.body.append(scroller)
@@ -182,12 +163,13 @@ describe('useViewportObserver', () => {
     })
     const afterFirst = MockIntersectionObserver.instances.length
 
+    await Promise.resolve()
     act(() => {
       result.current.createObserveRef('B2')(second)
     })
 
-    // The walk runs again, the answer is the same element, so nothing rebuilds.
-    // That is what keeps the rebuild rare — not skipping the walk.
+    // The walk runs again in this later commit, the answer is the same
+    // element, so nothing rebuilds. That is what keeps the rebuild rare.
     expect(MockIntersectionObserver.instances).toHaveLength(afterFirst)
 
     unmount()
@@ -199,8 +181,9 @@ describe('useViewportObserver', () => {
   // a passive effect, so a row attaching in that same commit walks past it and
   // finds whatever scroller sits ABOVE. Pinned with two plain divs so the test
   // states the mechanism rather than Radix's internals; the sibling below runs
-  // the real component.
-  it('re-derives the root when a nearer container becomes scrollable (#5066)', () => {
+  // the real component. The `await` between the attaches puts them in
+  // separate commits: rows attaching in ONE commit share a single walk (#5330).
+  it('re-derives the root when a nearer container becomes scrollable (#5066)', async () => {
     const outer = document.createElement('div')
     outer.style.overflowY = 'auto'
     const inner = document.createElement('div')
@@ -220,6 +203,7 @@ describe('useViewportObserver', () => {
     expect(MockIntersectionObserver.instances.at(-1)?.root).toBe(outer)
 
     inner.style.overflowY = 'scroll'
+    await Promise.resolve()
     act(() => {
       result.current.createObserveRef('B2')(second)
     })
@@ -251,7 +235,7 @@ describe('useViewportObserver', () => {
   // browser it is `ScrollAreaScrollbarHover` that enables the scrollbar on
   // pointerenter — after mount, and reversibly on leave, which is precisely why
   // the root cannot be decided once.
-  it('adopts the real ScrollArea viewport once it becomes scrollable (#5066)', () => {
+  it('adopts the real ScrollArea viewport once it becomes scrollable (#5066)', async () => {
     const { result, unmount } = renderHook(
       () => useViewportObserver(),
       (node) =>
@@ -284,6 +268,7 @@ describe('useViewportObserver', () => {
     viewport.style.overflowY = 'scroll'
     const second = makeEl('B2')
     viewport.append(second)
+    await Promise.resolve()
     act(() => {
       result.current.createObserveRef('B2')(second)
     })
@@ -718,7 +703,7 @@ describe('useViewportObserver', () => {
     })
     expect(result.current.isOffscreen('BLOCK_A')).toBe(true)
 
-    // Come back
+    // Come back — applied on the next animation frame (#5330).
     act(() => {
       obs.trigger([
         {
@@ -728,6 +713,8 @@ describe('useViewportObserver', () => {
         },
       ])
     })
+    expect(result.current.isOffscreen('BLOCK_A')).toBe(true)
+    runFrame()
     expect(result.current.isOffscreen('BLOCK_A')).toBe(false)
 
     unmount()
@@ -840,7 +827,8 @@ describe('useViewportObserver', () => {
 
     // A later, separate batch must schedule again. This pins the scheduled
     // flag reset after the first microtask; leaving it set would suppress all
-    // future BlockTree-level notifications.
+    // future BlockTree-level notifications. The flip back on lands on the
+    // next animation frame (#5330), so the frame is what bumps the version.
     act(() => {
       obs.trigger([
         {
@@ -850,6 +838,7 @@ describe('useViewportObserver', () => {
         },
       ])
     })
+    runFrame()
     expect(result.current.getWindowVersion()).toBe(before + 3)
     expect(subscriber).toHaveBeenCalledOnce()
     await act(async () => {
@@ -950,6 +939,7 @@ describe('useViewportObserver', () => {
         },
       ])
     })
+    runFrame()
 
     // Membership state is still correct…
     expect(result.current.isOffscreen('A')).toBe(false)
@@ -1125,7 +1115,174 @@ describe('useViewportObserver', () => {
     })
 
     expect(result.current.isOffscreen('A')).toBe(false)
+    expect(frames.pending()).toBe(0)
 
     unmount()
+  })
+
+  // ── #5329: rows past the initial window start as placeholders ─────────────
+
+  it('counts an unattached row as off-screen only when it starts off-screen (#5329)', () => {
+    const { result, unmount } = renderHook(() => useViewportObserver())
+
+    // Nothing has attached: the default answer is "on screen" (render in
+    // full), the initial-window answer is "off screen" (placeholder).
+    expect(result.current.isOffscreen('A')).toBe(false)
+    expect(result.current.isOffscreen('A', true)).toBe(true)
+
+    // Once a full row has attached, the flag no longer matters.
+    result.current.createObserveRef('A')(makeEl('A'))
+    expect(result.current.isOffscreen('A', true)).toBe(false)
+
+    unmount()
+  })
+
+  it('seeds a row that attaches as a placeholder off-screen, and only that row (#5329)', () => {
+    const { result, unmount } = renderHook(() => useViewportObserver())
+
+    result.current.createObserveRef('FULL')(makeEl('FULL'))
+    result.current.createObserveRef('DEFERRED')(makePlaceholderEl('DEFERRED'))
+
+    expect(result.current.isOffscreen('FULL')).toBe(false)
+    expect(result.current.isOffscreen('DEFERRED')).toBe(true)
+    // No measurement exists yet: the placeholder keeps its CSS estimate.
+    expect(result.current.getHeight('DEFERRED')).toBeUndefined()
+
+    // The first callback leaves a non-intersecting seeded row alone…
+    const obs = MockIntersectionObserver.instances[0] as MockIntersectionObserver
+    const notified = vi.fn()
+    const unsub = result.current.subscribe('DEFERRED', notified)
+    act(() => {
+      obs.trigger([
+        {
+          target: obs.observed.values().next().value as Element,
+          isIntersecting: false,
+          boundingClientRect: { height: 28 } as DOMRectReadOnly,
+        },
+      ])
+    })
+    expect(result.current.isOffscreen('DEFERRED')).toBe(true)
+    expect(notified).not.toHaveBeenCalled()
+
+    unsub()
+    unmount()
+  })
+
+  // ── #5330: hydration is spread across animation frames ────────────────────
+
+  it('hydrates at most HYDRATION_ROWS_PER_FRAME rows per frame, in report order (#5330)', () => {
+    const { result, unmount } = renderHook(() => useViewportObserver())
+    const total = HYDRATION_ROWS_PER_FRAME * 2 + 1
+    const ids = Array.from({ length: total }, (_, i) => `R${i}`)
+    const els = ids.map((id) => makePlaceholderEl(id))
+    ids.forEach((id, i) => result.current.createObserveRef(id)(els[i] as HTMLElement))
+    const notified: string[] = []
+    const unsubs = ids.map((id) => result.current.subscribe(id, () => notified.push(id)))
+
+    const obs = MockIntersectionObserver.instances[0] as MockIntersectionObserver
+    act(() => {
+      obs.reportAll(true)
+    })
+
+    // The callback itself flips nothing: the first rows wait for a frame.
+    expect(ids.filter((id) => !result.current.isOffscreen(id))).toEqual([])
+    expect(notified).toEqual([])
+
+    runFrame()
+    expect(ids.filter((id) => !result.current.isOffscreen(id))).toEqual(
+      ids.slice(0, HYDRATION_ROWS_PER_FRAME),
+    )
+    expect(notified).toEqual(ids.slice(0, HYDRATION_ROWS_PER_FRAME))
+
+    runFrame()
+    expect(ids.filter((id) => !result.current.isOffscreen(id))).toEqual(
+      ids.slice(0, HYDRATION_ROWS_PER_FRAME * 2),
+    )
+
+    runFrame()
+    expect(ids.filter((id) => !result.current.isOffscreen(id))).toEqual(ids)
+    expect(notified).toEqual(ids)
+    // The queue is drained: no frame is left scheduled.
+    expect(frames.pending()).toBe(0)
+
+    for (const unsub of unsubs) unsub()
+    unmount()
+  })
+
+  it('drops a row that scrolls back out before its frame from the hydration queue (#5330)', () => {
+    const { result, unmount } = renderHook(() => useViewportObserver())
+    const elA = makePlaceholderEl('A')
+    const elB = makePlaceholderEl('B')
+    result.current.createObserveRef('A')(elA)
+    result.current.createObserveRef('B')(elB)
+
+    const obs = MockIntersectionObserver.instances[0] as MockIntersectionObserver
+    act(() => {
+      obs.reportAll(true)
+      // A fast scroll: A left the margin again before the frame came up.
+      obs.trigger([
+        {
+          target: elA,
+          isIntersecting: false,
+          boundingClientRect: { height: 28 } as DOMRectReadOnly,
+        },
+      ])
+    })
+    runFrame()
+
+    expect(result.current.isOffscreen('A')).toBe(true)
+    expect(result.current.isOffscreen('B')).toBe(false)
+
+    unmount()
+  })
+
+  it('cancels a pending hydration frame when the hook unmounts (#5330)', () => {
+    const { result, unmount } = renderHook(() => useViewportObserver())
+    result.current.createObserveRef('A')(makePlaceholderEl('A'))
+    const obs = MockIntersectionObserver.instances[0] as MockIntersectionObserver
+    act(() => {
+      obs.reportAll(true)
+    })
+    expect(frames.pending()).toBe(1)
+
+    unmount()
+
+    expect(frames.pending()).toBe(0)
+  })
+
+  // ── #5330: one scroll-parent walk per commit ──────────────────────────────
+
+  it('walks for the scroll parent once per commit, not once per attaching row (#5330)', async () => {
+    const scroller = document.createElement('div')
+    scroller.style.overflowY = 'auto'
+    const list = document.createElement('ul')
+    scroller.append(list)
+    document.body.append(scroller)
+    const rows = Array.from({ length: 50 }, (_, i) => makeEl(`B${i}`))
+    list.append(...rows)
+
+    const { result, unmount } = renderHook(() => useViewportObserver())
+    const computed = vi.spyOn(window, 'getComputedStyle')
+
+    // Fifty rows attach in one commit: the walk reads two ancestors (the list,
+    // then the scroller) exactly once, not fifty times.
+    act(() => {
+      rows.forEach((row, i) => result.current.createObserveRef(`B${i}`)(row))
+    })
+    expect(computed).toHaveBeenCalledTimes(2)
+    expect(MockIntersectionObserver.instances.at(-1)?.root).toBe(scroller)
+
+    // A later commit walks again (#5066 relies on that).
+    await Promise.resolve()
+    const late = makeEl('LATE')
+    list.append(late)
+    act(() => {
+      result.current.createObserveRef('LATE')(late)
+    })
+    expect(computed).toHaveBeenCalledTimes(4)
+
+    computed.mockRestore()
+    unmount()
+    scroller.remove()
   })
 })
