@@ -303,6 +303,49 @@ describe('useJournalAutoCreate', () => {
     document.body.removeChild(input)
   })
 
+  it.each([
+    ['a button', '<button></button>'],
+    ['a link', '<a href="#x"></a>'],
+    ['a role=radio item', '<div role="radio"></div>'],
+  ])('leaves Enter on %s to the control (#5301)', async (_label, html) => {
+    const opts = makeOptions({ currentDate: pastDate })
+    renderHook(() => useJournalAutoCreate(opts))
+    const template = document.createElement('template')
+    template.innerHTML = html
+    const control = template.content.firstElementChild as HTMLElement
+    const child = document.createElement('span')
+    control.append(child)
+    document.body.append(control)
+
+    const event = new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true })
+    act(() => {
+      child.dispatchEvent(event)
+    })
+
+    await Promise.resolve()
+    expect(event.defaultPrevented).toBe(false)
+    expect(opts.handleAddBlock).not.toHaveBeenCalled()
+    const probes = mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'get_journal_page_by_date')
+    expect(probes).toHaveLength(0)
+    control.remove()
+  })
+
+  it('still creates on n from a focused button (#5301)', async () => {
+    const opts = makeOptions({ currentDate: pastDate })
+    renderHook(() => useJournalAutoCreate(opts))
+    const button = document.createElement('button')
+    document.body.append(button)
+
+    act(() => {
+      button.dispatchEvent(new KeyboardEvent('keydown', { key: 'n', bubbles: true }))
+    })
+
+    await waitFor(() => {
+      expect(opts.handleAddBlock).toHaveBeenCalledWith(pastDateStr)
+    })
+    button.remove()
+  })
+
   it('cleans up keyboard listener on unmount', async () => {
     const spy = vi.fn()
     // Past date: the mount-effect never creates, so a leaked listener
