@@ -1,4 +1,4 @@
-# Session 1884 — five medium findings from the stale-state audit
+# Session 1885 — five medium findings from the stale-state audit
 
 This session continues session 1874 after #5300 merged. It takes five of the
 medium-severity issues the audit filed (#5276, #5279, #5281, #5282, #5285).
