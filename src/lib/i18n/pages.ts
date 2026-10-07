@@ -71,6 +71,8 @@ export const pages: Record<string, string> = {
   'pageHeader.renameDuplicateTitle': 'A page with this title already exists in this space',
   'pageHeader.aliases': 'Also known as:',
   'pageHeader.aliasUpdateFailed': 'Failed to update aliases',
+  'pageHeader.aliasTaken':
+    'That alias is already used by another page, which may be in another space or in the Trash',
   'pageHeader.loadAliasesFailed': 'Failed to load aliases',
   'pageHeader.newAliasPlaceholder': 'New alias...',
   'pageHeader.newAliasInput': 'New alias input',
