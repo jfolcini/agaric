@@ -198,7 +198,9 @@ async fn resolve_or_create_journal_page(
     )
     .await?;
 
-    let (_block_after_prop, space_op_record) = set_property_in_tx(
+    // The space op is not dispatched: a fresh block has nothing to re-scope
+    // (#5275, the `space` arm of `push_property_op_invalidations`).
+    let (_block_after_prop, _space_op_record) = set_property_in_tx(
         &mut tx,
         materializer.loro_state(),
         device_id,
@@ -212,10 +214,9 @@ async fn resolve_or_create_journal_page(
     )
     .await?;
 
-    // Commit + fire-and-forget dispatch for both ops (mirrors the
+    // Commit + fire-and-forget dispatch for the create op (mirrors the
     // post-commit dispatch in `create_page_in_space`).
     tx.enqueue_background(page_op_record);
-    tx.enqueue_background(space_op_record);
     tx.commit_and_dispatch(materializer).await?;
 
     Ok(block)

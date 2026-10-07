@@ -463,3 +463,33 @@ fn dedup_emits_pages_cache_counts_after_pages_cache_in_mixed_batch() {
          (idx {cache_idx}) so a restored page's row exists before its counts recompute; got {out:?}",
     );
 }
+
+/// #5275 ordering guard. Boot's orphan-tag placement dispatches a `space`
+/// op (whose arm carries `RebuildTagsCache`) and then enqueues
+/// `RebuildBlockTagRefsCache` + `RebuildTagsCache`; `usage_count` UNIONs
+/// `block_tag_refs`, so the single `RebuildTagsCache` must run AFTER the refs
+/// rebuild, not at its keep-first position.
+#[test]
+fn dedup_emits_tags_cache_after_block_tag_refs_cache_5275() {
+    use std::mem::discriminant;
+    let tags = discriminant(&MaterializeTask::RebuildTagsCache);
+    let refs = discriminant(&MaterializeTask::RebuildBlockTagRefsCache);
+    let out = dedup_tasks(vec![
+        MaterializeTask::RebuildTagsCache, // the `space` op's dispatch
+        MaterializeTask::RebuildPagesCacheCounts,
+        MaterializeTask::RebuildBlockTagRefsCache, // the placement's own pair
+        MaterializeTask::RebuildTagsCache,
+    ]);
+    assert_eq!(
+        out.iter().filter(|t| discriminant(*t) == tags).count(),
+        1,
+        "RebuildTagsCache must collapse to exactly one; got {out:?}",
+    );
+    let tags_idx = out.iter().position(|t| discriminant(t) == tags).unwrap();
+    let refs_idx = out.iter().position(|t| discriminant(t) == refs).unwrap();
+    assert!(
+        tags_idx > refs_idx,
+        "RebuildTagsCache (idx {tags_idx}) must run AFTER RebuildBlockTagRefsCache \
+         (idx {refs_idx}) so usage_count sees the refs it UNIONs; got {out:?}",
+    );
+}

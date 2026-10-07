@@ -472,8 +472,10 @@ mod tests {
         let task = sink.last_task.lock().unwrap().take().expect("spawned");
         task.await.unwrap();
 
-        // The two tag-ref rebuilds and the drain barrier itself.
-        assert_eq!(view.drained.lock().unwrap().clone(), vec![before + 3]);
+        // The two tag-ref rebuilds, the `RebuildPagesCacheCounts` the placement's
+        // `space` op dispatches (#5275; its `RebuildTagsCache` collapses into the
+        // pair's), and the drain barrier itself.
+        assert_eq!(view.drained.lock().unwrap().clone(), vec![before + 4]);
         // ...and those rebuilds are what made the tag resolvable.
         let refs: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM block_tag_refs WHERE tag_id = ?")
             .bind(&tag_id)

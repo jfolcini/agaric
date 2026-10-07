@@ -8751,6 +8751,167 @@ async fn move_blocks_to_space_leaves_nested_pages_in_the_origin_space_4480() {
     );
 }
 
+/// #5275 — the Pages-view link counts and the Tags-view usage counts stop
+/// counting a page's blocks once it moves to another space. The
+/// `block_links` / `block_tags` / `block_tag_refs` rows survive the move by
+/// design, so this is the count statements' space predicate plus the
+/// rebuilds the `space` op must enqueue, exercised through the real path.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn move_blocks_to_space_rescopes_link_and_tag_counts_5275() {
+    use agaric_lib::commands::pages::{
+        ListPagesWithMetadataFilter, PageSort, list_pages_with_metadata_inner,
+    };
+
+    const SPACE_A: &str = "MBS8_SPACE_A";
+    const SPACE_B: &str = "MBS8_SPACE_B";
+
+    async fn inbound_count(pool: &SqlitePool, space_id: &str, page_id: &BlockId) -> i64 {
+        let filter = ListPagesWithMetadataFilter {
+            sort: PageSort::Alphabetical,
+            space_id: space_id.to_owned(),
+            filters: vec![],
+        };
+        let resp = list_pages_with_metadata_inner(pool, filter, None, Some(50))
+            .await
+            .unwrap();
+        resp.items
+            .iter()
+            .find(|row| row.id == *page_id)
+            .unwrap_or_else(|| panic!("page {page_id} must be listed in space {space_id}"))
+            .inbound_link_count
+    }
+
+    async fn usage_count(pool: &SqlitePool, space_id: &str, tag_id: &BlockId) -> i64 {
+        list_all_tags_in_space_inner(pool, space_id)
+            .await
+            .unwrap()
+            .iter()
+            .find(|row| row.tag_id == tag_id.as_str())
+            .unwrap_or_else(|| panic!("tag {tag_id} must be listed in space {space_id}"))
+            .usage_count
+    }
+
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    seed_space(&pool, SPACE_A).await;
+    seed_space(&pool, SPACE_B).await;
+    let in_a = SpaceScope::Active(SpaceId::from_trusted(SPACE_A));
+    let create = async |block_type: &str, content: String, parent: Option<BlockId>| {
+        create_block_inner_with_space(
+            &pool,
+            DEV,
+            &mat,
+            block_type.into(),
+            content,
+            parent,
+            None,
+            &in_a,
+            None,
+        )
+        .await
+        .unwrap()
+        .id
+    };
+
+    // All in A: target page T, source page S, tag x, and the page P that
+    // moves. P's block links to T and holds x both inline and explicitly;
+    // S's block links to P.
+    let target = create("page", "T".into(), None).await;
+    let source = create("page", "S".into(), None).await;
+    let moving = create("page", "P".into(), None).await;
+    let tag = create("tag", "x".into(), None).await;
+    let moving_block = create(
+        "content",
+        format!("see [[{target}]] #[{tag}]"),
+        Some(moving.clone()),
+    )
+    .await;
+    create("content", format!("see [[{moving}]]"), Some(source.clone())).await;
+    add_tag_inner(&pool, DEV, &mat, moving_block, tag.clone())
+        .await
+        .unwrap();
+    settle(&mat).await;
+
+    assert_eq!(
+        inbound_count(&pool, SPACE_A, &target).await,
+        1,
+        "P links to T"
+    );
+    assert_eq!(
+        inbound_count(&pool, SPACE_A, &moving).await,
+        1,
+        "S links to P"
+    );
+    assert_eq!(
+        usage_count(&pool, SPACE_A, &tag).await,
+        1,
+        "P's block holds x"
+    );
+
+    move_blocks_to_space_inner(&pool, DEV, &mat, vec![moving.clone()], SPACE_B.into())
+        .await
+        .unwrap();
+    settle(&mat).await;
+
+    assert_eq!(
+        inbound_count(&pool, SPACE_A, &target).await,
+        0,
+        "T's only linker left A, so A's Pages view must not count it"
+    );
+    assert_eq!(
+        inbound_count(&pool, SPACE_B, &moving).await,
+        0,
+        "P's only linker stayed in A, so B's Pages view must not count it"
+    );
+    assert_eq!(
+        usage_count(&pool, SPACE_A, &tag).await,
+        0,
+        "x's only holder left A, so A's Tags view must not count it"
+    );
+}
+
+/// #5275 — a page or tag create stamps `space` too, but that op is not
+/// dispatched: the `space` arm enqueues the two vault-wide count rebuilds a
+/// move needs, and a fresh block has nothing to re-scope.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn create_in_space_does_not_dispatch_the_space_op_5275() {
+    use std::sync::atomic::Ordering;
+
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    seed_space(&pool, "MBS9_SPACE").await;
+    let in_space = SpaceScope::Active(SpaceId::from_trusted("MBS9_SPACE"));
+    let bg = || mat.metrics().bg_processed.load(Ordering::Relaxed);
+    let create = async |block_type: &str, content: &str| {
+        create_block_inner_with_space(
+            &pool,
+            DEV,
+            &mat,
+            block_type.into(),
+            content.into(),
+            None,
+            None,
+            &in_space,
+            None,
+        )
+        .await
+        .unwrap();
+        settle(&mat).await;
+    };
+
+    let before = bg();
+    create("page", "P").await;
+    // RebuildPagesCache, UpdateFtsBlock, ReindexBlockLinks, ReindexBlockTagRefs
+    // and the flush barrier; nothing from the `space` op.
+    assert_eq!(bg() - before, 5);
+
+    let before = bg();
+    create("tag", "x").await;
+    // RebuildTagsCache, UpdateFtsBlock, SetBlockPageId, ReindexBlockLinks,
+    // ReindexBlockTagRefs and the flush barrier; nothing from the `space` op.
+    assert_eq!(bg() - before, 6);
+}
+
 /// Lenient batch: missing / soft-deleted ids are silently skipped; only
 /// the live subset is moved.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

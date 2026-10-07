@@ -1040,16 +1040,19 @@ async fn page_link_cache_rows(pool: &SqlitePool) -> i64 {
 /// `RebuildPagesCacheCounts` task?
 ///
 /// `maintain_pages_cache_counts_after_op` returns early for every COHORT op
-/// (#2042) and `materializer::dispatch` enqueues the rebuild instead. A driver
+/// (#2042) and `materializer::dispatch` enqueues the rebuild instead; a
+/// `space` op re-homes the whole page group the same way (#5275). A driver
 /// that skipped the deferred pass would be asserting against an un-settled
 /// state; one that ran it after EVERY op would let the full-table rebuild
 /// repair the synchronous arms and mask their bugs. So it runs exactly where
 /// production runs it.
 fn defers_pages_cache_counts(payload: &OpPayload) -> bool {
-    matches!(
-        payload,
-        OpPayload::DeleteBlock(_) | OpPayload::RestoreBlock(_) | OpPayload::PurgeBlock(_)
-    )
+    match payload {
+        OpPayload::DeleteBlock(_) | OpPayload::RestoreBlock(_) | OpPayload::PurgeBlock(_) => true,
+        OpPayload::SetProperty(p) => p.key == SPACE_PROPERTY_KEY,
+        OpPayload::DeleteProperty(p) => p.key == SPACE_PROPERTY_KEY,
+        _ => false,
+    }
 }
 
 proptest! {

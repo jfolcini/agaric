@@ -379,8 +379,10 @@ async fn create_tag_in_space_inner(
     tx.enqueue_background(tag_op_record);
 
     // 3. Stamp the space membership in the SAME tx. Emitted after the create
-    //    so peers materialize (create → set) in order.
-    let (_block, space_op_record) = set_property_in_tx(
+    //    so peers materialize (create → set) in order. Not dispatched: a fresh
+    //    block has nothing to re-scope (#5275, the `space` arm of
+    //    `push_property_op_invalidations`).
+    let (_block, _space_op_record) = set_property_in_tx(
         &mut tx,
         materializer.loro_state(),
         device_id,
@@ -393,7 +395,6 @@ async fn create_tag_in_space_inner(
         None,
     )
     .await?;
-    tx.enqueue_background(space_op_record);
 
     tx.commit_and_dispatch(materializer).await?;
     // Return the create-step BlockRow (its content is authoritative; the
