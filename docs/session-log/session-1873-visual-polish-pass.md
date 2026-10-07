@@ -1,4 +1,4 @@
-# Session 1872 — visual polish pass: elevation, surfaces, menus, lists and panels
+# Session 1873 — visual polish pass: elevation, surfaces, menus, lists and panels
 
 The user asked for a sleeker, more professional app. They named borders
 and shadows first, then asked for every panel, drawer, modal and picker
@@ -75,10 +75,10 @@ both themes and at phone width.
 - Pre-existing and left for later:
   - `useJournalAutoCreate.ts:62` calls `preventDefault()` on Enter for
     any non-editable target, so Enter does nothing on buttons in the
-    Journal day view.
+    Journal day view (#5301).
   - In Due, Done and Agenda lists longer than the virtual window,
     Home/End/PageUp/PageDown unmount the focused row before the target
-    row mounts, and focus falls to `<body>`.
+    row mounts, and focus falls to `<body>` (#5302).
   - The due-source radiogroup has no accessible name.
 
 ## Left for the maintainer
