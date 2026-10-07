@@ -31,7 +31,7 @@ import { useHistoryKeyboardNav } from '@/hooks/useHistoryKeyboardNav'
 import { entryKey, useHistorySelection } from '@/hooks/useHistorySelection'
 import { useLocalStoragePreference } from '@/hooks/useLocalStoragePreference'
 import { useRegisterPrimaryFocus } from '@/hooks/usePrimaryFocus'
-import { reloadAfterRevert } from '@/hooks/useSyncEvents'
+import { reloadChangedPageStores } from '@/hooks/useSyncEvents'
 import { unwrap } from '@/lib/app-error'
 import { recordAttachmentInvalidation } from '@/lib/attachment-invalidation'
 import type { HistoryEntry, PageResponse } from '@/lib/bindings'
@@ -281,7 +281,9 @@ export function HistoryView(): React.ReactElement {
     // mounted instance needs this separate signal or it keeps showing
     // pre-mutation filenames. See `@/lib/attachment-invalidation`.
     recordAttachmentInvalidation()
-    reloadAfterRevert()
+    // #5276 — a revert rewrites pages behind every store's back and no event names
+    // which, so reload everything held, as a sync without page ids does.
+    reloadChangedPageStores()
   }, [clearSelection, queryKey])
 
   // ── Render ───────────────────────────────────────────────────────

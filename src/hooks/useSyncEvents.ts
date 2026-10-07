@@ -191,16 +191,6 @@ export function reloadChangedPageStores(changedPageIds?: string[]): void {
   void useSpaceStore.getState().refreshAvailableSpaces()
 }
 
-/**
- * #5276 — the fan-out after a History revert / restore-to-here or an Agent access undo. Those
- * rewrite pages behind every store's back as a sync does, with no event naming which, so this
- * is the full reload. Its full walk also re-resolves every cached entry it does not list
- * (#5289), which covers a block whose delete or edit was reverted.
- */
-export function reloadAfterRevert(): void {
-  reloadChangedPageStores()
-}
-
 /** Map backend state strings to frontend SyncState enum. */
 export function mapBackendState(backendState: string): 'idle' | 'syncing' | 'error' {
   switch (backendState) {
