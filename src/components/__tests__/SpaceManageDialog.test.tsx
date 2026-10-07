@@ -706,10 +706,9 @@ describe('SpaceManageDialog', () => {
   // ── — IPC dedup contract ─────────────
   //
   // The emptiness probe (`list_blocks { spaceId, blockType:'page',
-  // limit:1 }`) is owned by `SpaceManageDialog` and keyed by
-  // `space.id`, so it fires exactly once per unique `space.id` for
-  // the whole lifetime of the dialog — not once per `SpaceRowEditor`
-  // mount.
+  // limit:1 }`) is owned by the dialog body and keyed by `space.id`,
+  // so it fires exactly once per unique `space.id` per open — not once
+  // per `SpaceRowEditor` mount.
   //
   // Collapsed the previous per-space
   // `get_properties(spaceId)` loop into a single
@@ -770,50 +769,86 @@ describe('SpaceManageDialog', () => {
     expect(new Set(batchedIds)).toEqual(new Set([PERSONAL.id, WORK.id, 'SPACE_3']))
   })
 
-  it('does not re-fetch on close + reopen with the same space.id set', async () => {
-    const { rerender } = render(<SpaceManageDialog open onOpenChange={() => {}} />)
-
-    // Settle the initial probes so the cache is populated.
-    await waitFor(() => {
-      const buttons = screen.getAllByRole('button', {
-        name: t('space.deleteSpaceLabel'),
-      })
-      for (const btn of buttons) expect(btn).not.toBeDisabled()
+  it('re-reads emptiness and the journal template on every open (#5284)', async () => {
+    let page: typeof emptyPage | typeof nonEmptyPage = nonEmptyPage
+    let template = 'old template'
+    mockedInvoke.mockImplementation(async (cmd: string, args?: unknown) => {
+      if (cmd === 'list_blocks') return page
+      if (cmd === 'list_spaces') return [PERSONAL, WORK]
+      if (cmd === 'get_batch_properties') {
+        const ids = (args as { blockIds: string[] }).blockIds
+        return Object.fromEntries(
+          ids.map((id) => [
+            id,
+            id === PERSONAL.id
+              ? [
+                  {
+                    key: 'journal_template',
+                    value_text: template,
+                    value_num: null,
+                    value_date: null,
+                    value_ref: null,
+                  },
+                ]
+              : [],
+          ]),
+        )
+      }
+      return null
     })
-    const initialListBlocks = mockedInvoke.mock.calls.filter(
-      ([cmd]) => cmd === 'list_blocks',
-    ).length
-    const initialBatchProperties = mockedInvoke.mock.calls.filter(
-      ([cmd]) => cmd === 'get_batch_properties',
-    ).length
-    expect(initialListBlocks).toBe(2)
-    // A single batched IPC covers both spaces.
-    expect(initialBatchProperties).toBe(1)
+    const deleteButtons = () => screen.getAllByRole('button', { name: t('space.deleteSpaceLabel') })
+    const personalTemplate = async () =>
+      (await screen.findAllByLabelText(t('space.journalTemplateLabel')))[0] as HTMLTextAreaElement
 
-    // Close the dialog — this unmounts every `SpaceRowEditor` via
-    // Radix (no `forceMount`), but the `SpaceManageDialog` parent
-    // (which owns the cache) stays mounted across the rerender.
+    const { rerender } = render(<SpaceManageDialog open onOpenChange={() => {}} />)
+    const first = await personalTemplate()
+    await waitFor(() => expect(first.value).toBe('old template'))
+    for (const btn of deleteButtons()) expect(btn).toBeDisabled()
+
     rerender(<SpaceManageDialog open={false} onOpenChange={() => {}} />)
     await waitFor(() => {
       expect(screen.queryByText(t('space.manageDialogTitle'))).not.toBeInTheDocument()
     })
+    // While closed, the spaces' pages move out and the template changes elsewhere.
+    page = emptyPage
+    template = 'new template'
 
-    // Reopen the dialog. Rows remount; without dedup they would
-    // re-fire both IPCs once per row.
     rerender(<SpaceManageDialog open onOpenChange={() => {}} />)
-    await screen.findByText(t('space.manageDialogTitle'))
-    // Flush any (incorrect) re-fetch microtasks before asserting.
-    await act(async () => {
-      await new Promise((r) => setTimeout(r, 0))
+    const reopened = await personalTemplate()
+    await waitFor(() => expect(reopened.value).toBe('new template'))
+    await waitFor(() => {
+      for (const btn of deleteButtons()) expect(btn).not.toBeDisabled()
+    })
+  })
+
+  it('keeps a probe result that lands after the space list changed (#5284)', async () => {
+    const pending: Array<(v: unknown) => void> = []
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'list_blocks') return new Promise((resolve) => pending.push(resolve))
+      if (cmd === 'list_spaces') return [PERSONAL, WORK]
+      if (cmd === 'get_batch_properties') return {}
+      return null
     })
 
-    // No additional IPC calls were made.
-    const finalListBlocks = mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'list_blocks').length
-    const finalBatchProperties = mockedInvoke.mock.calls.filter(
-      ([cmd]) => cmd === 'get_batch_properties',
-    ).length
-    expect(finalListBlocks).toBe(initialListBlocks)
-    expect(finalBatchProperties).toBe(initialBatchProperties)
+    render(<SpaceManageDialog open onOpenChange={() => {}} />)
+    await waitFor(() => expect(pending).toHaveLength(2))
+
+    // A refresh lands while both probes are in flight.
+    act(() => {
+      useSpaceStore.setState({
+        availableSpaces: [PERSONAL, WORK, { id: 'SPACE_3', name: 'Side', accent_color: null }],
+      })
+    })
+    await waitFor(() => expect(pending).toHaveLength(3))
+    await act(async () => {
+      for (const resolve of pending) resolve(emptyPage)
+    })
+
+    await waitFor(() => {
+      const buttons = screen.getAllByRole('button', { name: t('space.deleteSpaceLabel') })
+      expect(buttons).toHaveLength(3)
+      for (const btn of buttons) expect(btn).not.toBeDisabled()
+    })
   })
 
   // ── B-7 — cancellation guard on the per-space probe IIFEs ───
