@@ -77,6 +77,14 @@ export function useJournalAutoCreate({
       const dateStr = formatDate(currentDate)
       if (createdPages.has(dateStr)) return
       if (isEditableTarget(e.target)) return
+      // Enter on a focused control is its activation; claiming it swallows the click (#5301).
+      if (
+        e.key === 'Enter' &&
+        e.target instanceof Element &&
+        e.target.closest('button, a, [role="radio"]')
+      ) {
+        return
+      }
       const createKeys = getShortcutKeys('createJournalBlock')
         .split('/')
         .map((k) => k.trim().toLowerCase())
