@@ -615,7 +615,9 @@ export const TAG_FILTER_UNSATISFIABLE = Symbol('tag-filter-unsatisfiable')
 /**
  * Resolve every `tag` dimension in the filter list into a single
  * `TagFilterExpr` payload. One `listTagsByPrefix` IPC per
- * distinct prefix.
+ * distinct prefix, scoped to `spaceId` like the `filtered_blocks_query` it
+ * feeds: a name used in two spaces is two tags, and the other space's tag
+ * matches nothing in this one.
  *
  * Three outcomes (distinguishing the empty-input case from the
  * all-unresolved case is what #1594 turns on):
@@ -629,13 +631,16 @@ export const TAG_FILTER_UNSATISFIABLE = Symbol('tag-filter-unsatisfiable')
  */
 async function resolveTagFilters(
   filters: AgendaFilter[],
+  spaceId: string,
 ): Promise<TagFilterExpr | typeof TAG_FILTER_UNSATISFIABLE | undefined> {
   const tagValues = filters.filter((f) => f.dimension === 'tag').flatMap((f) => f.values)
   if (tagValues.length === 0) return undefined
 
   const tagIds: string[] = []
   for (const value of tagValues) {
-    const candidates = unwrap(await commands.listTagsByPrefix(value, PAGINATION_LIMIT))
+    const candidates = unwrap(
+      await commands.listTagsByPrefix(value, PAGINATION_LIMIT, toSpaceScope(spaceId)),
+    )
     const match = candidates.find((t) => t.name.toLowerCase() === value.toLowerCase())
     if (match) tagIds.push(match.tag_id)
   }
@@ -693,7 +698,7 @@ export async function executeAgendaFilters(
   //    Overdue-with-range combos, #720).
   const today = new Date()
   const { propertyFilters, postFilters } = translateFilters(filters, today)
-  const tagFilters = await resolveTagFilters(filters)
+  const tagFilters = await resolveTagFilters(filters, normalizedSpaceId)
 
   // A tag dimension whose values ALL failed to resolve is unsatisfiable;
   // because dimensions AND together, the whole query is empty — even if
@@ -758,7 +763,7 @@ export async function loadMoreAgendaFilters(
   const normalizedSpaceId = spaceId ?? ''
 
   const { propertyFilters, postFilters } = translateFilters(filters, today)
-  const tagFilters = await resolveTagFilters(filters)
+  const tagFilters = await resolveTagFilters(filters, normalizedSpaceId)
 
   // Mirror `executeAgendaFilters`: an all-unresolved tag dimension is
   // unsatisfiable and collapses the cross-dimension AND to empty (#1594).

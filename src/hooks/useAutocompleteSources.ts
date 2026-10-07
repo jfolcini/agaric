@@ -38,6 +38,7 @@ import {
 import { queryClient } from '@/lib/query-client'
 import { paginationLimit } from '@/lib/safe-limit'
 import type { AutocompleteAnchor } from '@/lib/search-query/autocomplete'
+import { requireActiveScope } from '@/lib/space-scope'
 import { TASK_STATE_AUTOCOMPLETE_VALUES } from '@/lib/task-states'
 
 export const STATE_VALUES = TASK_STATE_AUTOCOMPLETE_VALUES
@@ -252,8 +253,13 @@ export function useAutocompleteSources(
     setTagLoading(true)
     tagDebounceTimerRef.current = setTimeout(() => {
       tagDebounceTimerRef.current = null
+      if (spaceId == null) {
+        setTagItems([])
+        setTagLoading(false)
+        return
+      }
       commands
-        .listTagsByPrefix(query, paginationLimit(TAG_LIMIT))
+        .listTagsByPrefix(query, paginationLimit(TAG_LIMIT), requireActiveScope(spaceId))
         .then(unwrap)
         .then((rows) => {
           if (!tagGen.isCurrent(requestId)) return
@@ -277,7 +283,7 @@ export function useAutocompleteSources(
         tagDebounceTimerRef.current = null
       }
     }
-  }, [active, query, tagGen, surfaceFailureOnce, t])
+  }, [active, query, spaceId, tagGen, surfaceFailureOnce, t])
 
   if (anchor == null) {
     return { items: [], loading: false }

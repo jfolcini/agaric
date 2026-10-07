@@ -25,6 +25,7 @@ import type { TagCacheRow } from '@/lib/bindings'
 import { t } from '@/lib/i18n'
 import { logger } from '@/lib/logger'
 import { type FilterToken, parse, serialize, tokenSource } from '@/lib/search-query'
+import { useSpaceStore } from '@/stores/space'
 
 // `listTagsByPrefix` retired its hand-written wrapper (#4411); the popover
 // now calls `commands.listTagsByPrefix` directly and unwraps the `Result`
@@ -42,6 +43,8 @@ vi.mock('@/lib/bindings', async (importOriginal) => {
     },
   }
 })
+
+const ACTIVE_SCOPE = { kind: 'active', space_id: 'SPACE_TEST' }
 
 function tag(id: string, name: string): TagCacheRow {
   return { tag_id: id, name, usage_count: 0, updated_at: '' }
@@ -76,6 +79,7 @@ beforeEach(() => {
   // one-shot value leaks into the next test and starves its suggestions.
   vi.resetAllMocks()
   mockedListTags.mockResolvedValue([])
+  useSpaceStore.setState({ currentSpaceId: 'SPACE_TEST' })
 })
 
 afterEach(() => {
@@ -175,12 +179,12 @@ describe('FilterHelperPopover — tag fetch race guard (FE-A20)', () => {
     await user.click(screen.getByText(t('search.filterCategory.tag')))
     // prefill on open is immediate (un-debounced). `commands.listTagsByPrefix`
     // is positional: (prefix, limit).
-    expect(mockedListTags).toHaveBeenCalledWith('', 20)
+    expect(mockedListTags).toHaveBeenCalledWith('', 20, ACTIVE_SCOPE)
     mockedListTags.mockClear()
 
     await user.type(screen.getByRole('combobox'), 'work')
     await waitFor(() => {
-      expect(mockedListTags).toHaveBeenCalledWith('work', 20)
+      expect(mockedListTags).toHaveBeenCalledWith('work', 20, ACTIVE_SCOPE)
     })
     // Coalesced: exactly one typed-query fetch, not one per keystroke.
     expect(mockedListTags).toHaveBeenCalledTimes(1)

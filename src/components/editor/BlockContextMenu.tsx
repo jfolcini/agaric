@@ -36,6 +36,7 @@ import {
 import { useCallback, useEffect, useId, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useTranslation } from 'react-i18next'
+import { useShallow } from 'zustand/react/shallow'
 
 import {
   getPriorityLabel,
@@ -518,27 +519,22 @@ function buildContentCopyItems(ctx: MenuGroupContext): MenuItem[] {
     })
   }
 
-  // Multi-select only (`bulkIds` — >1 selected AND this block among them),
-  // matching the rest of the menu's bulk rows. Restricted to ids this page
-  // owns, the same ownership gate the `copyBlocks` chord applies, and sent as
-  // the selection roots: a selected descendant travels with its selected
-  // ancestor.
+  // Multi-select only (`bulkIds` — >1 owned selected AND this block among
+  // them), matching the rest of the menu's bulk rows, and sent as the
+  // selection roots: a selected descendant travels with its selected ancestor.
   if (bulkIds) {
-    const owned = bulkIds.filter((id) => blocks.some((b) => b.id === id))
-    if (owned.length > 1) {
-      items.push({
-        id: 'copySelectionContent',
-        label: t('contextMenu.copySelectionContent'),
-        icon: <CopyCheck className="h-3.5 w-3.5" />,
-        action: async () => {
-          const roots = computeSelectionRoots(blocks, owned)
-          await copySource(roots, true, t, 'contextMenu.selectionContentCopied', {
-            count: owned.length,
-          })
-          onClose()
-        },
-      })
-    }
+    items.push({
+      id: 'copySelectionContent',
+      label: t('contextMenu.copySelectionContent'),
+      icon: <CopyCheck className="h-3.5 w-3.5" />,
+      action: async () => {
+        const roots = computeSelectionRoots(blocks, bulkIds)
+        await copySource(roots, true, t, 'contextMenu.selectionContentCopied', {
+          count: bulkIds.length,
+        })
+        onClose()
+      },
+    })
   }
 
   return items
@@ -657,6 +653,11 @@ export function BlockContextMenu({
   // explicit prop (tests) overrides the store read.
   const selectedBlockIdsFromStore = useBlockStore((s) => s.selectedBlockIds)
   const selectedBlockIds = selectedBlockIdsProp ?? selectedBlockIdsFromStore
+  // #5273 — the selection is global and survives a journal day or space
+  // change; bulk ops must not reach selected blocks this page does not hold.
+  const ownedSelectedIds = usePageBlockStoreOptional(
+    useShallow((s) => selectedBlockIds.filter((id) => s.blocksById.has(id))),
+  )
   // The containing page's flat blocks — the serialization source for the
   // content-copy rows. `…Optional` because the menu is also rendered in
   // isolation by tests, with no `PageBlockStoreProvider` above it: there the
@@ -810,12 +811,11 @@ export function BlockContextMenu({
 
   // Fix 6 — "bulk" mode: the menu was opened on a block that is part of an
   // active multi-selection of >1 block. In that case Delete / TODO / Priority /
-  // Move apply to EVERY selected block. Single-block behaviour (no selection,
-  // or a selection that does not contain the right-clicked block) is unchanged.
+  // Move apply to EVERY selected block this page holds. Single-block behaviour
+  // (no selection, or a selection that does not contain the right-clicked
+  // block) is unchanged.
   const bulkIds =
-    selectedBlockIds && selectedBlockIds.length > 1 && selectedBlockIds.includes(blockId)
-      ? selectedBlockIds
-      : null
+    ownedSelectedIds.length > 1 && ownedSelectedIds.includes(blockId) ? ownedSelectedIds : null
   const isBulk = bulkIds !== null
 
   const handleAction = useCallback(

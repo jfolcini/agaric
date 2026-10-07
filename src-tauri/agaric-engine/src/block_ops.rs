@@ -297,6 +297,7 @@ async fn validate_parent_in_tx(
             block_id,
             &source_space,
             content,
+            pid,
         )
         .await?;
     }

@@ -32,6 +32,7 @@ import type { TagCacheRow } from '@/lib/bindings'
 import { t } from '@/lib/i18n'
 import { notifyTagRemoved, notifyTagRenamed } from '@/lib/name-change-bus'
 import { useNavigationStore } from '@/stores/navigation'
+import { useSpaceStore } from '@/stores/space'
 import { selectPageStack, useTabsStore } from '@/stores/tabs'
 
 const mockedInvoke = vi.mocked(invoke)
@@ -113,6 +114,7 @@ beforeEach(() => {
     tabs: [{ id: '0', pageStack: [], label: '' }],
     activeTabIndex: 0,
   })
+  useSpaceStore.setState({ currentSpaceId: 'SPACE_TEST' })
 })
 
 afterEach(() => {
@@ -161,6 +163,7 @@ describe('TagFilterPanel', () => {
     expect(mockedInvoke).toHaveBeenCalledWith('list_tags_by_prefix', {
       prefix: 'work',
       limit: null,
+      scope: { kind: 'active', space_id: 'SPACE_TEST' },
     })
 
     expect(findTagSpan(/work\/meeting/)).toBeInTheDocument()
@@ -395,7 +398,7 @@ describe('TagFilterPanel', () => {
       includeInherited: false,
       cursor: null,
       limit: 50,
-      scope: { kind: 'global' },
+      scope: { kind: 'active', space_id: 'SPACE_TEST' },
       blockType: null,
     })
 
@@ -452,7 +455,7 @@ describe('TagFilterPanel', () => {
       includeInherited: false,
       cursor: 'cursor_abc',
       limit: 50,
-      scope: { kind: 'global' },
+      scope: { kind: 'active', space_id: 'SPACE_TEST' },
       blockType: null,
     })
 
@@ -860,7 +863,7 @@ describe('TagFilterPanel', () => {
       includeInherited: false,
       cursor: null,
       limit: 50,
-      scope: { kind: 'global' },
+      scope: { kind: 'active', space_id: 'SPACE_TEST' },
       blockType: null,
     })
   })

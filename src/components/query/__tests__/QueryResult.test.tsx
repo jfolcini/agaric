@@ -12,6 +12,7 @@ import { encodeInlineQueryPayload } from '@/lib/inline-query-spec'
 import { buildFilters, parseQueryExpression } from '@/lib/query-utils'
 import { useNavigationStore } from '@/stores/navigation'
 import { createPageBlockStore, PageBlockContext } from '@/stores/page-blocks'
+import { useSpaceStore } from '@/stores/space'
 import { useTabsStore } from '@/stores/tabs'
 import { useUndoStore } from '@/stores/undo'
 
@@ -66,6 +67,7 @@ beforeEach(() => {
     tabs: [{ id: '0', pageStack: [], label: '' }],
     activeTabIndex: 0,
   })
+  useSpaceStore.setState({ currentSpaceId: 'SPACE_TEST' })
 })
 
 describe('parseQueryExpression', () => {

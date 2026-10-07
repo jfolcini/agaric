@@ -15,7 +15,9 @@ import { create } from 'zustand'
 
 import type { FlatBlock } from '@/lib/tree-utils'
 import type { MountedIds, SelectAllScopeIds } from '@/lib/zoom-scope'
+import { useJournalStore } from '@/stores/journal'
 import { useNavigationStore } from '@/stores/navigation'
+import { useSpaceStore } from '@/stores/space'
 import { selectPageStack, useTabsStore } from '@/stores/tabs'
 
 /**
@@ -280,15 +282,19 @@ export const useBlockStore = create<BlockStore>((set) => ({
 // delete silently soft-deleted the invisible page-A blocks (undo bookkeeping
 // registers only under the CURRENT page, so Ctrl+Z could not restore them).
 //
-// Clear the selection whenever the active page context — the current view or
-// the top of the active tab's page stack — changes. Module-level cross-store
-// subscriptions mirror the established `createPerSpaceSlice.attach` pattern.
+// Clear the selection whenever the active page context — the current view, the
+// top of the active tab's page stack, the journal day and mode, or the space —
+// changes. Module-level cross-store subscriptions mirror the established
+// `createPerSpaceSlice.attach` pattern.
 
 /** Key identifying "which blocks the user is looking at" for selection scope. */
 function activePageContextKey(): string {
   const view = useNavigationStore.getState().currentView
   const topPageId = selectPageStack(useTabsStore.getState()).at(-1)?.pageId ?? ''
-  return `${view} ${topPageId}`
+  const { mode, currentDate } = useJournalStore.getState()
+  const journalDay = view === 'journal' ? `${mode} ${currentDate.toDateString()}` : ''
+  const spaceId = useSpaceStore.getState().currentSpaceId
+  return `${view} ${topPageId} ${journalDay} ${spaceId}`
 }
 
 let lastPageContextKey = activePageContextKey()
@@ -303,3 +309,5 @@ function clearSelectionOnPageContextChange(): void {
 
 useNavigationStore.subscribe(clearSelectionOnPageContextChange)
 useTabsStore.subscribe(clearSelectionOnPageContextChange)
+useJournalStore.subscribe(clearSelectionOnPageContextChange)
+useSpaceStore.subscribe(clearSelectionOnPageContextChange)

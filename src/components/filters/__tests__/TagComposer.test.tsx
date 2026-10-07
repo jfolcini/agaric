@@ -15,6 +15,7 @@ import { TagComposer, type TagComposerCallbacks } from '@/components/filters/Tag
 import type { TagCacheRow } from '@/lib/bindings'
 import { t } from '@/lib/i18n'
 import { emptyTagBuilder } from '@/lib/tagExpr'
+import { useSpaceStore } from '@/stores/space'
 
 const mockedInvoke = vi.mocked(invoke)
 
@@ -47,6 +48,7 @@ async function openAndType(user: ReturnType<typeof userEvent.setup>, text: strin
 describe('TagComposer — tag typeahead IPC', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    useSpaceStore.setState({ currentSpaceId: 'SPACE_TEST' })
   })
   afterEach(() => {
     vi.clearAllMocks()

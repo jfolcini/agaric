@@ -1326,16 +1326,10 @@ export function useBlockResolve(): UseBlockResolveReturn {
       // Strip trailing ] so @tag] resolves to "tag", not "tag]"
       const q = query.replace(/\]+$/, '').toLowerCase().trim()
 
-      // #2543 — `listTagsByPrefix` is a space-UNSCOPED IPC (selects from
-      // `tags_cache` with no space filter), so the `#` picker used to
-      // surface every space's tags and (via the batchSet below) cache
-      // their names under the ACTIVE space's keys — a silent cross-space
-      // leak of the exact class #853/#2300 exist to prevent, even though
-      // resolve.ts documents tags as space-scoped just like pages.
-      // `listAllTagsInSpace` is the space-scoped equivalent (bounded by
-      // the space's intrinsic tag count); filtering down to the query
-      // happens client-side via the existing `matchSorter` call below,
-      // same as `searchPagesViaCache`'s cache-fallback strategy.
+      // `listAllTagsInSpace` lists the space's tags (bounded by the space's
+      // intrinsic tag count); filtering down to the query happens
+      // client-side via the existing `matchSorter` call below, same as
+      // `searchPagesViaCache`'s cache-fallback strategy.
       //
       // #3277 — mirrors `searchPagesViaCache`: fill `tagsListRef` once (on
       // the first call, or after a space switch clears it) and filter every

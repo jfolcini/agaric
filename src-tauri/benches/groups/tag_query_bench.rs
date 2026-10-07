@@ -310,20 +310,39 @@ fn bench_cte_vs_materialized(c: &mut Criterion) {
 // 7. list_tags_by_prefix — autocomplete-style prefix search
 // ---------------------------------------------------------------------------
 
-/// Seed N tag blocks with tag_cache entries for prefix benchmarking.
+/// The space the prefix-bench tags live in; the scan is space-scoped.
+const PREFIX_SPACE_ID: &str = "01BENCHPREFIXSPACE00000001";
+
+/// Seed N tag blocks in [`PREFIX_SPACE_ID`] with tag_cache entries for prefix
+/// benchmarking.
 async fn seed_tags_for_prefix(pool: &SqlitePool, n: usize) {
     let mut tx = pool.begin().await.unwrap();
+
+    // `blocks.space_id` REFERENCES spaces(id) (migration 0089).
+    sqlx::query("INSERT INTO blocks (id, block_type, content) VALUES (?, 'page', 'BenchSpace')")
+        .bind(PREFIX_SPACE_ID)
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO spaces (id) VALUES (?)")
+        .bind(PREFIX_SPACE_ID)
+        .execute(&mut *tx)
+        .await
+        .unwrap();
 
     for i in 0..n {
         let tag_id = format!("TAG{i:020}");
         let name = format!("bench-tag-{i:06}");
 
-        sqlx::query("INSERT INTO blocks (id, block_type, content) VALUES (?, 'tag', ?)")
-            .bind(&tag_id)
-            .bind(&name)
-            .execute(&mut *tx)
-            .await
-            .unwrap();
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, space_id) VALUES (?, 'tag', ?, ?)",
+        )
+        .bind(&tag_id)
+        .bind(&name)
+        .bind(PREFIX_SPACE_ID)
+        .execute(&mut *tx)
+        .await
+        .unwrap();
 
         sqlx::query(
             "INSERT INTO tags_cache (tag_id, name, usage_count, updated_at) \
@@ -354,8 +373,9 @@ fn bench_list_tags_by_prefix(c: &mut Criterion) {
 
         group.throughput(Throughput::Elements(count as u64));
         group.bench_with_input(BenchmarkId::from_parameter(count), &count, |b, _| {
-            b.to_async(&rt)
-                .iter(|| list_tags_by_prefix_inner(&pool, String::new(), Some(50)));
+            b.to_async(&rt).iter(|| {
+                list_tags_by_prefix_inner(&pool, PREFIX_SPACE_ID, String::new(), Some(50))
+            });
         });
     }
     group.finish();

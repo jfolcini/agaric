@@ -32,6 +32,7 @@ import { commands } from '@/lib/bindings'
 import type { NavigateToPageFn } from '@/lib/block-events'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
+import { requireActiveScope } from '@/lib/space-scope'
 import { useSpaceStore } from '@/stores/space'
 
 const BACKLINK_FOCUS_CLASSES = ['list-cursor'] as const
@@ -192,13 +193,15 @@ export function LinkedReferences({
     clearCache()
   }, [queryIdentity, invalidationKey, clearCache])
 
-  // Load tags on mount (B-6: cancellation flag avoids React 19
-  // strict-mode "state update on unmounted component" warnings on rapid
-  // mount/unmount).
+  // Load the active space's tags, again on every space switch (B-6:
+  // cancellation flag avoids React 19 strict-mode "state update on unmounted
+  // component" warnings on rapid mount/unmount, and drops a superseded space's
+  // reply).
   useEffect(() => {
+    if (currentSpaceId == null) return
     let cancelled = false
     commands
-      .listTagsByPrefix('', null)
+      .listTagsByPrefix('', null, requireActiveScope(currentSpaceId))
       .then(unwrap)
       .then((result) => {
         if (cancelled) return
@@ -212,7 +215,7 @@ export function LinkedReferences({
     return () => {
       cancelled = true
     }
-  }, [t])
+  }, [currentSpaceId, t])
 
   const toggleExpanded = useCallback(() => {
     setExpanded((prev) => !prev)

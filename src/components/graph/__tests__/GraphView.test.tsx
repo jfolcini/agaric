@@ -525,7 +525,7 @@ describe('GraphView', () => {
   // toast like the main graph fetch does.
   it('surfaces a toast when the tag-filter fetch fails (#2545)', async () => {
     mockedInvoke.mockImplementation((cmd: string) => {
-      if (cmd === 'list_tags_by_prefix') return Promise.reject(new Error('tags IPC offline'))
+      if (cmd === 'list_all_tags_in_space') return Promise.reject(new Error('tags IPC offline'))
       if (cmd === 'list_all_pages_in_space') return Promise.resolve([])
       if (cmd === 'list_page_links') return Promise.resolve(linksOf([]))
       if (cmd === 'list_template_page_ids_in_space') return Promise.resolve([])
@@ -539,6 +539,40 @@ describe('GraphView', () => {
         id: 'graph-tags',
       })
     })
+  })
+
+  // #5274 — the tag filter offers the ACTIVE space's tags and refetches them on
+  // a space switch: a name used in two spaces is two tags, and the previous
+  // space's id would match nothing in the new graph.
+  it("offers the new space's tags in the tag filter after a space switch (#5274)", async () => {
+    const tagNameBySpace: Record<string, string> = { SPACE_TEST: 'work', SPACE_OTHER: 'home' }
+    mockedInvoke.mockImplementation((cmd: string, args?: unknown) => {
+      if (cmd === 'list_all_tags_in_space') {
+        const { scope } = args as { scope: { space_id: string } }
+        const name = tagNameBySpace[scope.space_id]
+        return Promise.resolve([{ tag_id: `TAG_${name}`, name, usage_count: 1, updated_at: '' }])
+      }
+      if (cmd === 'list_all_pages_in_space')
+        return Promise.resolve([{ id: 'page-1', content: 'Page One' }])
+      if (cmd === 'list_page_links') return Promise.resolve(linksOf([]))
+      if (cmd === 'list_template_page_ids_in_space') return Promise.resolve([])
+      return Promise.resolve(null)
+    })
+
+    render(<GraphView />)
+    fireEvent.click(await screen.findByRole('button', { name: t('graph.filter.addFilter') }))
+    fireEvent.change(await screen.findByLabelText(t('graph.filter.selectDimension')), {
+      target: { value: 'tag' },
+    })
+    expect(await screen.findByRole('checkbox', { name: 'work' })).toBeInTheDocument()
+
+    // The open tag picker follows the switch.
+    await act(async () => {
+      useSpaceStore.setState({ currentSpaceId: 'SPACE_OTHER' })
+    })
+
+    expect(await screen.findByRole('checkbox', { name: 'home' })).toBeInTheDocument()
+    expect(screen.queryByRole('checkbox', { name: 'work' })).not.toBeInTheDocument()
   })
 
   it('shows error state on fetch failure', async () => {
@@ -1895,7 +1929,7 @@ describe('GraphView', () => {
       mockedInvoke.mockImplementation((cmd: string) => {
         if (cmd === 'list_all_pages_in_space') return Promise.resolve(pagesResponse.items)
         if (cmd === 'list_page_links') return Promise.resolve(linksOf([]))
-        if (cmd === 'list_tags_by_prefix')
+        if (cmd === 'list_all_tags_in_space')
           return Promise.resolve([
             { tag_id: 'tag-1', name: 'Work', usage_count: 5, updated_at: '' },
           ])
@@ -1930,7 +1964,7 @@ describe('GraphView', () => {
       mockedInvoke.mockImplementation((cmd: string) => {
         if (cmd === 'list_all_pages_in_space') return Promise.resolve(pagesResponse.items)
         if (cmd === 'list_page_links') return Promise.resolve(linksOf([]))
-        if (cmd === 'list_tags_by_prefix')
+        if (cmd === 'list_all_tags_in_space')
           return Promise.resolve([
             { tag_id: 'tag-1', name: 'Work', usage_count: 5, updated_at: '' },
           ])
@@ -1968,7 +2002,7 @@ describe('GraphView', () => {
       mockedInvoke.mockImplementation((cmd: string) => {
         if (cmd === 'list_all_pages_in_space') return Promise.resolve(pagesItems)
         if (cmd === 'list_page_links') return Promise.resolve(linksOf([]))
-        if (cmd === 'list_tags_by_prefix')
+        if (cmd === 'list_all_tags_in_space')
           return Promise.resolve([
             { tag_id: 'tag-1', name: 'Work', usage_count: 5, updated_at: '' },
           ])
@@ -2001,7 +2035,7 @@ describe('GraphView', () => {
             { id: 'page-2', content: 'Page Two' },
           ])
         if (cmd === 'list_page_links') return Promise.resolve(linksOf([]))
-        if (cmd === 'list_tags_by_prefix') return Promise.resolve([])
+        if (cmd === 'list_all_tags_in_space') return Promise.resolve([])
         if (cmd === 'list_template_page_ids_in_space') return Promise.resolve([])
         return Promise.resolve(null)
       })
@@ -2025,7 +2059,7 @@ describe('GraphView', () => {
         if (cmd === 'list_all_pages_in_space')
           return Promise.resolve([{ id: 'page-1', content: 'Page One' }])
         if (cmd === 'list_page_links') return Promise.resolve(linksOf([]))
-        if (cmd === 'list_tags_by_prefix') return Promise.resolve([])
+        if (cmd === 'list_all_tags_in_space') return Promise.resolve([])
         if (cmd === 'list_template_page_ids_in_space') return Promise.resolve([])
         return Promise.resolve(null)
       })

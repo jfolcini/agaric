@@ -17,6 +17,7 @@ import {
 import type { AdvancedQueryResponse, PageResponse, QueryResultRow } from '@/lib/bindings'
 import { i18n } from '@/lib/i18n'
 import { encodeInlineQueryPayload } from '@/lib/inline-query-spec'
+import { useSpaceStore } from '@/stores/space'
 
 const mockedInvoke = vi.mocked(invoke)
 
@@ -52,6 +53,7 @@ const projectTag = { tag_id: 'TAG_PROJECT', name: 'project', usage_count: 1, upd
 
 beforeEach(() => {
   vi.clearAllMocks()
+  useSpaceStore.setState({ currentSpaceId: 'SPACE_TEST' })
 })
 
 describe('useQueryExecution', () => {

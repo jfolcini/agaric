@@ -30,6 +30,7 @@ import { toast } from 'sonner'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
+import { makeBlock } from '@/__tests__/fixtures'
 import { stubInvoke } from '@/__tests__/helpers/invoke'
 import type { BlockActions } from '@/components/block-tree/use-block-actions'
 import { BlockContextMenu, type BlockContextMenuProps } from '@/components/editor/BlockContextMenu'
@@ -136,8 +137,8 @@ type MenuOverrides = { [K in keyof StructuralOverrides]?: StructuralOverrides[K]
 
 /**
  * `wrap` (optional) — wraps the menu in extra providers. Used by the
- * content-copy suite to supply a `PageBlockContext`; every other call site
- * renders the menu bare, exactly as before.
+ * content-copy and bulk-mode suites to supply a `PageBlockContext`; every other
+ * call site renders the menu bare.
  */
 function renderMenu(
   overrides: MenuOverrides = {},
@@ -201,6 +202,18 @@ function renderMenu(
   // Re-expose the action callbacks flat on `props` so existing assertions
   // (`props.onDelete`, `props.onMerge`, …) keep working unchanged.
   return { ...result, props: { ...finalProps, ...actions } }
+}
+
+/**
+ * #5273 — bulk mode spans only selected blocks the page store holds, so a bulk
+ * test mounts the menu under a page holding `ids` (pass as `renderMenu`'s `wrap`).
+ */
+function onPageHolding(ids: string[]) {
+  const store = createPageBlockStore('PAGE_1')
+  store.setState({ blocks: ids.map((id) => makeBlock({ id })) })
+  return (children: React.ReactElement) => (
+    <PageBlockContext.Provider value={store}>{children}</PageBlockContext.Provider>
+  )
 }
 
 // #1109 — Move up / Move down / Duplicate / Merge are collapsed behind a "Move &
@@ -618,11 +631,14 @@ describe('BlockContextMenu', () => {
 
     it('omits Duplicate in bulk (multi-selection) mode', async () => {
       const user = userEvent.setup()
-      renderMenu({
-        onDuplicate: vi.fn(),
-        blockId: 'BLOCK_01',
-        selectedBlockIds: ['BLOCK_01', 'BLOCK_02'],
-      })
+      renderMenu(
+        {
+          onDuplicate: vi.fn(),
+          blockId: 'BLOCK_01',
+          selectedBlockIds: ['BLOCK_01', 'BLOCK_02'],
+        },
+        onPageHolding(['BLOCK_01', 'BLOCK_02']),
+      )
       // Even with the disclosure expanded, Duplicate stays absent in bulk mode.
       await expandMoveArrange(user)
       expect(screen.queryByText(t('contextMenu.duplicate'))).not.toBeInTheDocument()
@@ -1825,11 +1841,12 @@ describe('BlockContextMenu actions bag (#1020)', () => {
 
 describe('BlockContextMenu bulk mode (Fix 6)', () => {
   const SELECTION = ['BLOCK_01', 'B2', 'B3']
+  const onPage = () => onPageHolding(SELECTION)
 
   it('Delete applies to EVERY selected id via the batch handler when in bulk mode', async () => {
     const user = userEvent.setup()
     const onBatchDelete = vi.fn()
-    const { props } = renderMenu({ selectedBlockIds: SELECTION, onBatchDelete })
+    const { props } = renderMenu({ selectedBlockIds: SELECTION, onBatchDelete }, onPage())
 
     // Label reflects the selection count.
     await user.click(screen.getByText(t('contextMenu.deleteSelected', { count: SELECTION.length })))
@@ -1842,7 +1859,7 @@ describe('BlockContextMenu bulk mode (Fix 6)', () => {
 
   it('Delete loops per-block onDelete for every selected id when no batch handler', async () => {
     const user = userEvent.setup()
-    const { props } = renderMenu({ selectedBlockIds: SELECTION })
+    const { props } = renderMenu({ selectedBlockIds: SELECTION }, onPage())
 
     await user.click(screen.getByText(t('contextMenu.deleteSelected', { count: SELECTION.length })))
 
@@ -1855,7 +1872,7 @@ describe('BlockContextMenu bulk mode (Fix 6)', () => {
 
   it('TODO cycle applies to every selected id in bulk mode', async () => {
     const user = userEvent.setup()
-    const { props } = renderMenu({ selectedBlockIds: SELECTION })
+    const { props } = renderMenu({ selectedBlockIds: SELECTION }, onPage())
 
     await user.click(screen.getByText(t('contextMenu.cycleTodoSelected')))
 
@@ -1867,7 +1884,7 @@ describe('BlockContextMenu bulk mode (Fix 6)', () => {
 
   it('Priority cycle applies to every selected id in bulk mode', async () => {
     const user = userEvent.setup()
-    const { props } = renderMenu({ selectedBlockIds: SELECTION })
+    const { props } = renderMenu({ selectedBlockIds: SELECTION }, onPage())
 
     await user.click(screen.getByText(t('contextMenu.cyclePrioritySelected')))
 
@@ -1879,7 +1896,7 @@ describe('BlockContextMenu bulk mode (Fix 6)', () => {
 
   it('Move applies to every selected id in bulk mode', async () => {
     const user = userEvent.setup()
-    const { props } = renderMenu({ selectedBlockIds: SELECTION })
+    const { props } = renderMenu({ selectedBlockIds: SELECTION }, onPage())
 
     // #1109 — Move up now lives behind the "Move & arrange" disclosure; expand
     // it first, then activate the (now-visible) Move up row.
@@ -1897,7 +1914,7 @@ describe('BlockContextMenu bulk mode (Fix 6)', () => {
   it('stays single-block when the right-clicked block is NOT in the selection', async () => {
     const user = userEvent.setup()
     // Selection of others; the menu opened on BLOCK_01 which is not selected.
-    const { props } = renderMenu({ selectedBlockIds: ['B2', 'B3'] })
+    const { props } = renderMenu({ selectedBlockIds: ['B2', 'B3'] }, onPage())
 
     // The single-block delete label is shown, not the "N selected" one.
     expect(
@@ -1911,11 +1928,39 @@ describe('BlockContextMenu bulk mode (Fix 6)', () => {
 
   it('stays single-block for a selection of exactly one block', async () => {
     const user = userEvent.setup()
-    const { props } = renderMenu({ selectedBlockIds: ['BLOCK_01'] })
+    const { props } = renderMenu({ selectedBlockIds: ['BLOCK_01'] }, onPage())
 
     await user.click(screen.getByText(t('contextMenu.delete')))
     expect(props.onDelete).toHaveBeenCalledWith('BLOCK_01')
     expect(props.onDelete).toHaveBeenCalledTimes(1)
+  })
+
+  // #5273 — a selection left over from another journal day or space.
+  it('counts and acts on only the selected blocks this page holds', async () => {
+    const user = userEvent.setup()
+    const { props } = renderMenu(
+      { selectedBlockIds: ['BLOCK_01', 'OTHER_DAY', 'B2'] },
+      onPageHolding(['BLOCK_01', 'B2']),
+    )
+
+    expect(screen.getByText(t('contextMenu.deleteSelected', { count: 2 }))).toBeInTheDocument()
+    await user.click(screen.getByText(t('contextMenu.cycleTodoSelected')))
+
+    expect(props.onToggleTodo).toHaveBeenCalledTimes(2)
+    expect(props.onToggleTodo).toHaveBeenCalledWith('BLOCK_01')
+    expect(props.onToggleTodo).toHaveBeenCalledWith('B2')
+  })
+
+  it('stays single-block when the other selected block is not on this page', async () => {
+    const user = userEvent.setup()
+    const { props } = renderMenu(
+      { selectedBlockIds: ['BLOCK_01', 'OTHER_DAY'] },
+      onPageHolding(['BLOCK_01']),
+    )
+
+    await user.click(screen.getByText(t('contextMenu.delete')))
+    expect(props.onDelete).toHaveBeenCalledTimes(1)
+    expect(props.onDelete).toHaveBeenCalledWith('BLOCK_01')
   })
 })
 
@@ -1935,7 +1980,7 @@ describe('BlockContextMenu store-driven bulk mode (#1018)', () => {
     // original full-array subscription was added to fix.
     useBlockStore.getState().setSelected(['BLOCK_01', 'B2'])
 
-    const { props } = renderMenu({ onBatchDelete: vi.fn() })
+    const { props } = renderMenu({ onBatchDelete: vi.fn() }, onPageHolding(['BLOCK_01', 'B2']))
 
     // Bulk-delete label reflects the store count — bulk mode engaged from the
     // store alone, with no `selectedBlockIds` prop.
@@ -1947,7 +1992,7 @@ describe('BlockContextMenu store-driven bulk mode (#1018)', () => {
     // Selection of OTHER blocks; menu opened on BLOCK_01 (not selected).
     useBlockStore.getState().setSelected(['B2', 'B3'])
 
-    renderMenu()
+    renderMenu({}, onPageHolding(['BLOCK_01', 'B2', 'B3']))
 
     expect(
       screen.queryByText(t('contextMenu.deleteSelected', { count: 2 })),
@@ -1957,7 +2002,7 @@ describe('BlockContextMenu store-driven bulk mode (#1018)', () => {
 
   it('stays single-block for an empty store selection', () => {
     // Default beforeEach already cleared the store.
-    renderMenu()
+    renderMenu({}, onPageHolding(['BLOCK_01']))
     expect(screen.getByText(t('contextMenu.delete'))).toBeInTheDocument()
   })
 
@@ -1966,10 +2011,10 @@ describe('BlockContextMenu store-driven bulk mode (#1018)', () => {
     // Store says single-block, but the explicit prop says bulk — prop wins.
     useBlockStore.getState().setSelected(['BLOCK_01'])
 
-    const { props } = renderMenu({
-      selectedBlockIds: ['BLOCK_01', 'B2', 'B3'],
-      onBatchDelete: vi.fn(),
-    })
+    const { props } = renderMenu(
+      { selectedBlockIds: ['BLOCK_01', 'B2', 'B3'], onBatchDelete: vi.fn() },
+      onPageHolding(['BLOCK_01', 'B2', 'B3']),
+    )
 
     await user.click(screen.getByText(t('contextMenu.deleteSelected', { count: 3 })))
     expect(props.onBatchDelete).toHaveBeenCalledTimes(1)

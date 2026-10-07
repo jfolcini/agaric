@@ -105,8 +105,10 @@ beforeEach(() => {
   blocks.set(PAGE_OTHER, makeBlock(PAGE_OTHER, 'page', 'Other', null, 1))
   setProp(PAGE_OTHER, 'space', { value_ref: OTHER_SPACE })
 
-  // A tag named "work".
-  blocks.set(TAG_WORK, makeBlock(TAG_WORK, 'tag', 'work', null, 1))
+  // A tag named "work", in SPACE (`list_tags_by_prefix` reads one space).
+  const tagWork = makeBlock(TAG_WORK, 'tag', 'work', null, 1)
+  tagWork['space_id'] = SPACE
+  blocks.set(TAG_WORK, tagWork)
 
   childBlock(B1, PAGE, { priority: '1', todo_state: 'TODO' })
   childBlock(B2, PAGE, {})
@@ -133,7 +135,9 @@ beforeEach(() => {
 
 const deps: InlineQueryResolveDeps = {
   resolveTagPrefix: async (prefix) =>
-    unwrap(await commands.listTagsByPrefix(prefix, null)).map((t) => t.tag_id),
+    unwrap(await commands.listTagsByPrefix(prefix, null, { kind: 'active', space_id: SPACE })).map(
+      (t) => t.tag_id,
+    ),
 }
 
 async function legacyIds(expr: string): Promise<string[]> {

@@ -164,6 +164,7 @@ import { _resetPropertyKeysCacheForTest } from '@/hooks/usePropertyKeysCache'
 import { logger } from '@/lib/logger'
 import { queryClient } from '@/lib/query-client'
 import { renamePage } from '@/stores/page-rename'
+import { useSpaceStore } from '@/stores/space'
 
 const mockedListUnlinked = mockListUnlinkedReferences
 const mockedEditBlock = mockEditBlock
@@ -236,6 +237,7 @@ beforeEach(() => {
   mockedListPropertyKeys.mockResolvedValue({ status: 'ok', data: [] } as never)
   // Legacy tests don't care about aliases — default to none.
   mockedGetPageAliases.mockResolvedValue([])
+  useSpaceStore.setState({ currentSpaceId: null })
 })
 
 /** Wrap UnlinkedReferences in TooltipProvider (required for filter icon button). */
@@ -1321,11 +1323,15 @@ describe('UnlinkedReferences', () => {
       truncated: false,
     }
     mockedListUnlinked.mockResolvedValue(resp)
+    useSpaceStore.setState({ currentSpaceId: 'SPACE_TEST' })
 
     renderUnlinkedReferences({ pageId: 'PAGE1', pageTitle: 'My Page' })
 
     await waitFor(() => {
-      expect(mockedListTagsByPrefix).toHaveBeenCalledWith('', null)
+      expect(mockedListTagsByPrefix).toHaveBeenCalledWith('', null, {
+        kind: 'active',
+        space_id: 'SPACE_TEST',
+      })
       expect(mockedListPropertyKeys).toHaveBeenCalled() // no-args by contract
     })
   })
@@ -1647,7 +1653,7 @@ describe('UnlinkedReferences', () => {
   })
 
   // ---------------------------------------------------------------------------
-  // B-6: cancellation flag on the mount-once `listTagsByPrefix` effect
+  // B-6: cancellation flag on the `listTagsByPrefix` effect
   // ---------------------------------------------------------------------------
 
   it('cancels the listTagsByPrefix promise on unmount (B-6)', async () => {
@@ -1658,12 +1664,16 @@ describe('UnlinkedReferences', () => {
           rejectTags = reject
         }),
     )
+    useSpaceStore.setState({ currentSpaceId: 'SPACE_TEST' })
 
     const { unmount } = renderUnlinkedReferences({ pageId: 'PAGE1', pageTitle: 'My Page' })
 
-    // Wait until the mount-once effect has fired the IPC call.
+    // Wait until the tag-load effect has fired the IPC call.
     await waitFor(() => {
-      expect(mockedListTagsByPrefix).toHaveBeenCalledWith('', null)
+      expect(mockedListTagsByPrefix).toHaveBeenCalledWith('', null, {
+        kind: 'active',
+        space_id: 'SPACE_TEST',
+      })
     })
 
     // Unmount before the promise settles — cleanup sets cancelled=true.

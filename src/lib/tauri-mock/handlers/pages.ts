@@ -1062,12 +1062,17 @@ export const pagesHandlers = {
 
     // Build the metadata-rich row for every page in the space.
     const rows: PageMetaRow[] = []
+    const byPage = new Map<unknown, Array<Record<string, unknown>>>()
+    for (const d of blocks.values()) {
+      if (d['deleted_at'] || d['id'] === d['page_id']) continue
+      const list = byPage.get(d['page_id'])
+      if (list) list.push(d)
+      else byPage.set(d['page_id'], [d])
+    }
     for (const b of blocks.values()) {
       if (b['block_type'] !== 'page' || b['deleted_at']) continue
       if (properties.get(b['id'] as string)?.get('space')?.['value_ref'] !== spaceId) continue
-      const descendants = Array.from(blocks.values()).filter(
-        (d) => d['page_id'] === b['id'] && !d['deleted_at'] && d['id'] !== b['id'],
-      )
+      const descendants = byPage.get(b['id']) ?? []
       rows.push(buildPageMetaRow(b, descendants, edges))
     }
 

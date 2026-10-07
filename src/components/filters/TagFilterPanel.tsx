@@ -33,6 +33,7 @@ import { logger } from '@/lib/logger'
 import { subscribeToNameChanges } from '@/lib/name-change-bus'
 import { notify } from '@/lib/notify'
 import { queryClient } from '@/lib/query-client'
+import { requireActiveScope } from '@/lib/space-scope'
 import { type TagQueryParams, compileTagExpr, tagBuilderHasLeaves } from '@/lib/tagExpr'
 import { cn } from '@/lib/utils'
 import { useSpaceStore } from '@/stores/space'
@@ -308,7 +309,11 @@ export function TagFilterPanel(): React.ReactElement {
   const searchTags = useCallback(
     async (p: string) => {
       try {
-        const tags = unwrap(await commands.listTagsByPrefix(p, null))
+        const spaceId = useSpaceStore.getState().currentSpaceId
+        const tags =
+          spaceId == null
+            ? []
+            : unwrap(await commands.listTagsByPrefix(p, null, requireActiveScope(spaceId)))
         setMatchingTags(
           tags.map((tag) => ({
             tag_id: tag.tag_id,

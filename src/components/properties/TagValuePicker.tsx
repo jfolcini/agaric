@@ -18,7 +18,9 @@ import { unwrap } from '@/lib/app-error'
 import { commands } from '@/lib/bindings'
 import { logger } from '@/lib/logger'
 import { paginationLimit } from '@/lib/safe-limit'
+import { requireActiveScope } from '@/lib/space-scope'
 import { cn } from '@/lib/utils'
+import { useSpaceStore } from '@/stores/space'
 
 interface TagResult {
   tag_id: string
@@ -43,7 +45,17 @@ export function TagValuePicker({
 
   const search = useCallback(async (prefix: string) => {
     try {
-      const tags = unwrap(await commands.listTagsByPrefix(prefix, paginationLimit(20)))
+      const spaceId = useSpaceStore.getState().currentSpaceId
+      const tags =
+        spaceId == null
+          ? []
+          : unwrap(
+              await commands.listTagsByPrefix(
+                prefix,
+                paginationLimit(20),
+                requireActiveScope(spaceId),
+              ),
+            )
       setResults(
         tags.map((tag) => ({
           tag_id: tag.tag_id,

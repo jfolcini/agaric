@@ -43,6 +43,7 @@ import {
 import { getShortcutKeys } from '@/lib/keyboard-config'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
+import { requireActiveScope } from '@/lib/space-scope'
 import { cn } from '@/lib/utils'
 import { useSpaceStore } from '@/stores/space'
 import { selectPageStack, useTabsStore } from '@/stores/tabs'
@@ -224,13 +225,19 @@ export function GraphView(): React.ReactElement {
     [currentSpaceId, tagFilterIds],
   )
 
-  // Fetch available tags on mount
+  // Fetch the active space's tags, again on every space switch. The filter
+  // bar has no search, so it needs every tag, not a capped prefix page.
   useEffect(() => {
+    if (currentSpaceId == null) return
+    let cancelled = false
     commands
-      .listTagsByPrefix('', null)
+      .listAllTagsInSpace(requireActiveScope(currentSpaceId))
       .then(unwrap)
-      .then((result) => setTags(result ?? []))
+      .then((result) => {
+        if (!cancelled) setTags(result ?? [])
+      })
       .catch((err) => {
+        if (cancelled) return
         logger.error('GraphView', 'Failed to load tags', undefined, err)
         // #2545: don't fail silently. A logger-only catch left the tag-filter
         // dropdown empty with zero user feedback (the user concludes they have
@@ -238,9 +245,10 @@ export function GraphView(): React.ReactElement {
         // so a remount can't stack duplicate toasts.
         notify.error(t('graph.tagsLoadFailed'), { id: 'graph-tags' })
       })
-    // `t` is referentially stable across renders (single-locale app), so this
-    // effect stays effectively mount-only while satisfying exhaustive-deps.
-  }, [t])
+    return () => {
+      cancelled = true
+    }
+  }, [currentSpaceId, t])
 
   // Fetch data with stale-while-revalidate caching
   useEffect(() => {

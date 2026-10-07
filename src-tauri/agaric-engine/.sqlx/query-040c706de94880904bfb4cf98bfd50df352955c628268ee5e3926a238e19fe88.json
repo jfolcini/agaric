@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT tag_id, name, usage_count, updated_at\n         FROM tags_cache ORDER BY tag_id",
+  "query": "SELECT tag_id, name, usage_count, updated_at\n         FROM tags_cache tc\n         WHERE name = ?1 COLLATE NOCASE\n           AND EXISTS (SELECT 1 FROM blocks b WHERE b.id = tc.tag_id AND b.space_id = ?2)\n         ORDER BY name LIMIT 1",
   "describe": {
     "columns": [
       {
@@ -49,7 +49,7 @@
       }
     ],
     "parameters": {
-      "Right": 0
+      "Right": 2
     },
     "nullable": [
       false,
@@ -58,5 +58,5 @@
       false
     ]
   },
-  "hash": "7f21ded407e7609c4c0b9548e2c4218af68c32524c6ed560007cb31d9563d8fe"
+  "hash": "040c706de94880904bfb4cf98bfd50df352955c628268ee5e3926a238e19fe88"
 }

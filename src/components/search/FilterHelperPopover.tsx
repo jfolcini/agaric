@@ -46,7 +46,9 @@ import type { TagCacheRow } from '@/lib/bindings'
 import { logger } from '@/lib/logger'
 import { paginationLimit } from '@/lib/safe-limit'
 import type { FilterToken } from '@/lib/search-query'
+import { requireActiveScope } from '@/lib/space-scope'
 import { cn } from '@/lib/utils'
+import { useSpaceStore } from '@/stores/space'
 
 /**
  * #718 — a path glob cannot contain a literal `"` (mirrors
@@ -137,7 +139,17 @@ export function FilterHelperPopover({
       const seq = ++requestSeq.current
       setTagLoading(true)
       try {
-        const tags = unwrap(await commands.listTagsByPrefix(q, paginationLimit(20)))
+        const spaceId = useSpaceStore.getState().currentSpaceId
+        const tags =
+          spaceId == null
+            ? []
+            : unwrap(
+                await commands.listTagsByPrefix(
+                  q,
+                  paginationLimit(20),
+                  requireActiveScope(spaceId),
+                ),
+              )
         // Drop superseded responses (FE-A20).
         if (seq !== requestSeq.current) return
         setTagSuggestions(tags)
