@@ -624,14 +624,15 @@ pub async fn query_by_tag_expr_inner(
     .await
 }
 
-/// List all tags matching a name prefix (autocomplete / UI).
+/// List the tags in `space_id` matching a name prefix (autocomplete / UI).
 #[instrument(skip(pool), err)]
 pub async fn list_tags_by_prefix_inner(
     pool: &SqlitePool,
+    space_id: &str,
     prefix: String,
     limit: Option<i64>,
 ) -> Result<Vec<TagCacheRow>, AppError> {
-    tag_query::list_tags_by_prefix(pool, &prefix, limit).await
+    tag_query::list_tags_by_prefix(pool, space_id, &prefix, limit).await
 }
 
 /// Return every tag in `space_id`, ordered by name.  No pagination,
@@ -1081,15 +1082,22 @@ pub async fn query_by_tag_expr(
     .map_err(sanitize_internal_error)
 }
 
-/// Tauri command: list tags matching a name prefix. Delegates to [`list_tags_by_prefix_inner`].
+/// Tauri command: list the active space's tags matching a name prefix.
+/// Delegates to [`list_tags_by_prefix_inner`].
+///
+/// `scope` is a required-active [`SpaceScope`]: a tag name is unique per
+/// space, so an unscoped scan answers one row per space for a shared name.
+/// [`SpaceScope::Global`] is rejected by [`SpaceScope::require_active`].
 #[tauri::command]
 #[specta::specta]
 pub async fn list_tags_by_prefix(
     pool: State<'_, ReadPool>,
     prefix: String,
     limit: Option<i64>,
+    scope: SpaceScope,
 ) -> Result<Vec<TagCacheRow>, AppError> {
-    list_tags_by_prefix_inner(&pool.0, prefix, limit)
+    let space_id = scope.require_active()?;
+    list_tags_by_prefix_inner(&pool.0, space_id.as_str(), prefix, limit)
         .await
         .map_err(sanitize_internal_error)
 }

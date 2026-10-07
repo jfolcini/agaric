@@ -208,8 +208,11 @@ describe('useAutocompleteSources', () => {
       await vi.advanceTimersByTimeAsync(150)
     })
 
-    // `commands.listTagsByPrefix` is positional: (prefix, limit).
-    expect(mockListTagsByPrefix).toHaveBeenCalledWith('pro', 20)
+    // `commands.listTagsByPrefix` is positional: (prefix, limit, scope).
+    expect(mockListTagsByPrefix).toHaveBeenCalledWith('pro', 20, {
+      kind: 'active',
+      space_id: 'S1',
+    })
     expect(result.current.items).toEqual([{ value: 'project-x' }, { value: 'project-y' }])
     expect(result.current.loading).toBe(false)
   })

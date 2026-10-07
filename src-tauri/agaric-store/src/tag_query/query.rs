@@ -276,13 +276,18 @@ const MAX_TAGS_PREFIX: i64 = 200;
 /// the two answers still differ rather than silently going vacuous.
 async fn exact_match_nocase(
     pool: &SqlitePool,
+    space_id: &str,
     prefix: &str,
 ) -> Result<Option<TagCacheRow>, AppError> {
     Ok(sqlx::query_as!(
         TagCacheRow,
         r#"SELECT tag_id, name, usage_count, updated_at
-         FROM tags_cache WHERE name = ?1 COLLATE NOCASE ORDER BY name LIMIT 1"#,
+         FROM tags_cache tc
+         WHERE name = ?1 COLLATE NOCASE
+           AND EXISTS (SELECT 1 FROM blocks b WHERE b.id = tc.tag_id AND b.space_id = ?2)
+         ORDER BY name LIMIT 1"#,
         prefix,
+        space_id,
     )
     .fetch_optional(pool)
     .await?)
@@ -296,10 +301,9 @@ async fn exact_match_nocase(
 /// de-duplicated by `normalize_tag_name` within a space in the rebuild —
 /// #1990, #5237); `ORDER BY tag_id` makes the scan pick the smallest-id row —
 /// the same winner the rebuild keeps — if a transient duplicate exists
-/// mid-rebuild. Like [`list_tags_by_prefix`] this lookup is space-unscoped,
-/// so the same name in two spaces answers one of the two rows: a caller
-/// resolving a name IN a space reads [`list_all_tags_in_space`] instead. Only
-/// reached when the cheap NOCASE path missed.
+/// mid-rebuild. Scoped to `space_id` like [`list_tags_by_prefix`], so the same
+/// name in another space never answers. Only reached when the cheap NOCASE
+/// path missed.
 ///
 /// That `ORDER BY` is also load-bearing for the tests (#3456): its
 /// disagreement with [`exact_match_nocase`]'s `ORDER BY name` is what makes
@@ -307,13 +311,17 @@ async fn exact_match_nocase(
 /// pins it directly.
 async fn exact_match_normalized(
     pool: &SqlitePool,
+    space_id: &str,
     prefix: &str,
 ) -> Result<Option<TagCacheRow>, AppError> {
     let target = agaric_core::tag_norm::normalize_tag_name(prefix);
     let rows = sqlx::query_as!(
         TagCacheRow,
         r#"SELECT tag_id, name, usage_count, updated_at
-         FROM tags_cache ORDER BY tag_id"#,
+         FROM tags_cache tc
+         WHERE EXISTS (SELECT 1 FROM blocks b WHERE b.id = tc.tag_id AND b.space_id = ?1)
+         ORDER BY tag_id"#,
+        space_id,
     )
     .fetch_all(pool)
     .await?;
@@ -322,13 +330,17 @@ async fn exact_match_normalized(
         .find(|r| agaric_core::tag_norm::normalize_tag_name(&r.name) == target))
 }
 
-/// List all tags whose name starts with `prefix`, ordered by name.
+/// List the tags in `space_id` whose name starts with `prefix`, ordered by
+/// name. Space membership is the tag block's `blocks.space_id`, the same
+/// column [`list_all_tags_in_space`] filters on; probing it per candidate row
+/// keeps the NOCASE prefix-index plan (migration 0050).
 ///
 /// `limit` must be in `[1, MAX_TAGS_PREFIX]` when supplied; a value
 /// outside that range surfaces as `AppError::Validation`. `None` falls
 /// through to `MAX_TAGS_PREFIX` as the default cap.
 pub async fn list_tags_by_prefix(
     pool: &SqlitePool,
+    space_id: &str,
     prefix: &str,
     limit: Option<i64>,
 ) -> Result<Vec<TagCacheRow>, AppError> {
@@ -347,8 +359,12 @@ pub async fn list_tags_by_prefix(
     let mut rows = sqlx::query_as!(
         TagCacheRow,
         r#"SELECT tag_id, name, usage_count, updated_at
-         FROM tags_cache WHERE name LIKE ?1 ESCAPE '\' ORDER BY name LIMIT ?2"#,
+         FROM tags_cache tc
+         WHERE name LIKE ?1 ESCAPE '\'
+           AND EXISTS (SELECT 1 FROM blocks b WHERE b.id = tc.tag_id AND b.space_id = ?2)
+         ORDER BY name LIMIT ?3"#,
         like_pattern,
+        space_id,
         effective_limit
     )
     .fetch_all(pool)
@@ -375,9 +391,9 @@ pub async fn list_tags_by_prefix(
         // fold in Rust. The cache holds at most one row per normalized name (it
         // is de-duplicated by `normalize_tag_name` in the rebuild), so the
         // fallback yields a single canonical row.
-        let exact = match exact_match_nocase(pool, prefix).await? {
+        let exact = match exact_match_nocase(pool, space_id, prefix).await? {
             Some(row) => Some(row),
-            None => exact_match_normalized(pool, prefix).await?,
+            None => exact_match_normalized(pool, space_id, prefix).await?,
         };
         if let Some(exact) = exact
             && !rows.iter().any(|r| r.tag_id == exact.tag_id)
@@ -392,7 +408,7 @@ pub async fn list_tags_by_prefix(
 /// the page's tail if that would breach `effective_limit` (#768, #1557).
 ///
 /// Extracted from [`list_tags_by_prefix`] so the insertion index is directly
-/// testable: `tags_cache.name` is `UNIQUE` (migration 0061), and the caller
+/// testable: `tags_cache.name` is `UNIQUE` per space (migration 0121), and the caller
 /// only splices a row whose `tag_id` is absent from `rows`, so a row whose
 /// name *equals* `exact.name` can never reach this code through the public
 /// API — yet that tie is exactly the case that distinguishes a `<`
@@ -566,6 +582,19 @@ mod tests {
     ) {
         sqlx::query("INSERT INTO blocks (id, block_type, content, parent_id, position) VALUES (?, ?, ?, ?, 1)")
             .bind(id).bind(block_type).bind(content).bind(parent_id).execute(pool).await.unwrap();
+    }
+
+    /// The space the `list_tags_by_prefix` tests seed their tags into.
+    const SPACE_A: &str = "01TAGSPACEA0000000000000001";
+    /// A second space, for the same-name-in-two-spaces cases.
+    const SPACE_B: &str = "01TAGSPACEB0000000000000002";
+
+    /// A tag block in `space_id` plus its `tags_cache` row.
+    async fn insert_tag_in_space(pool: &SqlitePool, space_id: &str, tag_id: &str, name: &str) {
+        ensure_space_block(pool, space_id).await;
+        insert_block(pool, tag_id, "tag", name).await;
+        insert_tag_cache(pool, tag_id, name, 1).await;
+        assign_tag_to_space(pool, tag_id, space_id).await;
     }
 
     /// Build a `Not`-nested chain wrapping a `Tag` leaf at the given
@@ -825,13 +854,12 @@ mod tests {
     #[tokio::test]
     async fn list_tags_by_prefix_returns_matching_tags() {
         let (pool, _dir) = test_pool().await;
-        insert_block(&pool, "TAG_WM", "tag", "work/meeting").await;
-        insert_block(&pool, "TAG_WE", "tag", "work/email").await;
-        insert_block(&pool, "TAG_P", "tag", "personal").await;
-        insert_tag_cache(&pool, "TAG_WM", "work/meeting", 5).await;
-        insert_tag_cache(&pool, "TAG_WE", "work/email", 3).await;
-        insert_tag_cache(&pool, "TAG_P", "personal", 10).await;
-        let result = list_tags_by_prefix(&pool, "work/", None).await.unwrap();
+        insert_tag_in_space(&pool, SPACE_A, "TAG_WM", "work/meeting").await;
+        insert_tag_in_space(&pool, SPACE_A, "TAG_WE", "work/email").await;
+        insert_tag_in_space(&pool, SPACE_A, "TAG_P", "personal").await;
+        let result = list_tags_by_prefix(&pool, SPACE_A, "work/", None)
+            .await
+            .unwrap();
         assert_eq!(result.len(), 2);
         assert_eq!(result[0].name, "work/email");
         assert_eq!(result[1].name, "work/meeting");
@@ -839,37 +867,38 @@ mod tests {
     #[tokio::test]
     async fn list_tags_by_prefix_empty_prefix_returns_all() {
         let (pool, _dir) = test_pool().await;
-        insert_block(&pool, "TAG_A", "tag", "alpha").await;
-        insert_block(&pool, "TAG_B", "tag", "beta").await;
-        insert_tag_cache(&pool, "TAG_A", "alpha", 1).await;
-        insert_tag_cache(&pool, "TAG_B", "beta", 2).await;
-        let result = list_tags_by_prefix(&pool, "", None).await.unwrap();
+        insert_tag_in_space(&pool, SPACE_A, "TAG_A", "alpha").await;
+        insert_tag_in_space(&pool, SPACE_A, "TAG_B", "beta").await;
+        let result = list_tags_by_prefix(&pool, SPACE_A, "", None).await.unwrap();
         assert_eq!(result.len(), 2);
     }
     #[tokio::test]
     async fn list_tags_by_prefix_no_match_returns_empty() {
         let (pool, _dir) = test_pool().await;
-        insert_block(&pool, "TAG_A", "tag", "alpha").await;
-        insert_tag_cache(&pool, "TAG_A", "alpha", 1).await;
-        let result = list_tags_by_prefix(&pool, "zzz", None).await.unwrap();
+        insert_tag_in_space(&pool, SPACE_A, "TAG_A", "alpha").await;
+        let result = list_tags_by_prefix(&pool, SPACE_A, "zzz", None)
+            .await
+            .unwrap();
         assert!(result.is_empty());
     }
     #[tokio::test]
     async fn list_tags_by_prefix_escapes_percent_in_prefix() {
         let (pool, _dir) = test_pool().await;
-        insert_block(&pool, "TAG_A", "tag", "100%_done").await;
-        insert_block(&pool, "TAG_B", "tag", "alpha").await;
-        insert_tag_cache(&pool, "TAG_A", "100%_done", 1).await;
-        insert_tag_cache(&pool, "TAG_B", "alpha", 2).await;
-        let result = list_tags_by_prefix(&pool, "%", None).await.unwrap();
+        insert_tag_in_space(&pool, SPACE_A, "TAG_A", "100%_done").await;
+        insert_tag_in_space(&pool, SPACE_A, "TAG_B", "alpha").await;
+        let result = list_tags_by_prefix(&pool, SPACE_A, "%", None)
+            .await
+            .unwrap();
         assert_eq!(result.len(), 0);
-        let result = list_tags_by_prefix(&pool, "100%", None).await.unwrap();
+        let result = list_tags_by_prefix(&pool, SPACE_A, "100%", None)
+            .await
+            .unwrap();
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].name, "100%_done");
     }
 
     /// The LIKE-prefix query in `list_tags_by_prefix`
-    /// (`WHERE name LIKE ?1 ESCAPE '\' ORDER BY name LIMIT ?2`) is hit
+    /// (`WHERE name LIKE ?1 ESCAPE '\' AND EXISTS (…) ORDER BY name LIMIT ?3`) is hit
     /// on every keystroke of every tag picker. SQLite's default LIKE is
     /// case-insensitive on ASCII, so the implicit BINARY index from
     /// `tags_cache.name UNIQUE` cannot satisfy the query. Migration 0050
@@ -886,10 +915,8 @@ mod tests {
         let (pool, _dir) = test_pool().await;
         // Populate a few rows so the planner has stats to reason about
         // (also makes the test fail loudly if it ever returned wrong rows).
-        insert_block(&pool, "TAG_A", "tag", "alpha").await;
-        insert_block(&pool, "TAG_B", "tag", "beta").await;
-        insert_tag_cache(&pool, "TAG_A", "alpha", 1).await;
-        insert_tag_cache(&pool, "TAG_B", "beta", 2).await;
+        insert_tag_in_space(&pool, SPACE_A, "TAG_A", "alpha").await;
+        insert_tag_in_space(&pool, SPACE_A, "TAG_B", "beta").await;
 
         // Mirror the exact query shape from `list_tags_by_prefix`. Use
         // dynamic `sqlx::query` (not `query!`) so the EXPLAIN prefix
@@ -897,9 +924,13 @@ mod tests {
         let rows = sqlx::query(
             r"EXPLAIN QUERY PLAN
                SELECT tag_id, name, usage_count, updated_at
-               FROM tags_cache WHERE name LIKE ?1 ESCAPE '\' ORDER BY name LIMIT ?2",
+               FROM tags_cache tc
+               WHERE name LIKE ?1 ESCAPE '\'
+                 AND EXISTS (SELECT 1 FROM blocks b WHERE b.id = tc.tag_id AND b.space_id = ?2)
+               ORDER BY name LIMIT ?3",
         )
         .bind("a%")
+        .bind(SPACE_A)
         .bind(50_i64)
         .fetch_all(&pool)
         .await
@@ -933,12 +964,10 @@ mod tests {
         for i in 1..=25 {
             let id = format!("TAGWIP{i:020}");
             let name = format!("WIP-{i}");
-            insert_block(&pool, &id, "tag", &name).await;
-            insert_tag_cache(&pool, &id, &name, 1).await;
+            insert_tag_in_space(&pool, SPACE_A, &id, &name).await;
         }
         // The lowercase exact match the user is resolving.
-        insert_block(&pool, "TAGWIPEXACT00000000000001A", "tag", "wip").await;
-        insert_tag_cache(&pool, "TAGWIPEXACT00000000000001A", "wip", 1).await;
+        insert_tag_in_space(&pool, SPACE_A, "TAGWIPEXACT00000000000001A", "wip").await;
 
         // Sanity: the bare prefix page (limit 20) does NOT contain the exact
         // match — it is pushed off by the 25 uppercase siblings. This is the
@@ -955,7 +984,9 @@ mod tests {
         );
 
         // With the fix, resolving `wip` at limit 20 returns the exact match.
-        let result = list_tags_by_prefix(&pool, "wip", Some(20)).await.unwrap();
+        let result = list_tags_by_prefix(&pool, SPACE_A, "wip", Some(20))
+            .await
+            .unwrap();
         assert!(
             result
                 .iter()
@@ -982,17 +1013,20 @@ mod tests {
 
         // The canonical tag is stored under capital sigma `Σ` (the smaller-id
         // winner of its normalized identity).
-        insert_block(&pool, "TAGSIGMACANONICAL000000001", "tag", "Σ").await;
-        insert_tag_cache(&pool, "TAGSIGMACANONICAL000000001", "Σ", 3).await;
+        insert_tag_in_space(&pool, SPACE_A, "TAGSIGMACANONICAL000000001", "Σ").await;
 
         // Sanity: the bare lowercase-sigma prefix scan does NOT find `Σ`.
-        let bare = list_tags_by_prefix(&pool, "σ", Some(20)).await.unwrap();
+        let bare = list_tags_by_prefix(&pool, SPACE_A, "σ", Some(20))
+            .await
+            .unwrap();
         // (depending on collation the LIKE may or may not match; assert via the
         // resolve below that the normalized fallback is what surfaces it.)
         let _ = &bare;
 
         // Resolving the lowercase-sigma query must surface the canonical `Σ`.
-        let result = list_tags_by_prefix(&pool, "σ", Some(20)).await.unwrap();
+        let result = list_tags_by_prefix(&pool, SPACE_A, "σ", Some(20))
+            .await
+            .unwrap();
         assert!(
             result
                 .iter()
@@ -1002,9 +1036,10 @@ mod tests {
         );
 
         // ASCII case behaviour (a subset) still works via the fast NOCASE path.
-        insert_block(&pool, "TAGASCIIWIP0000000000000AA", "tag", "WIP").await;
-        insert_tag_cache(&pool, "TAGASCIIWIP0000000000000AA", "WIP", 1).await;
-        let ascii = list_tags_by_prefix(&pool, "wip", Some(20)).await.unwrap();
+        insert_tag_in_space(&pool, SPACE_A, "TAGASCIIWIP0000000000000AA", "WIP").await;
+        let ascii = list_tags_by_prefix(&pool, SPACE_A, "wip", Some(20))
+            .await
+            .unwrap();
         assert!(
             ascii.iter().any(|r| r.name == "WIP"),
             "#1990: ASCII case-variant `wip` must still resolve `WIP`; got {ascii:?}"
@@ -1029,12 +1064,10 @@ mod tests {
         for i in 1..=3 {
             let id = format!("TAGFOO{i:020}");
             let name = format!("FOO-{i}");
-            insert_block(&pool, &id, "tag", &name).await;
-            insert_tag_cache(&pool, &id, &name, 1).await;
+            insert_tag_in_space(&pool, SPACE_A, &id, &name).await;
         }
         // The lowercase exact match — BINARY-sorts AFTER all uppercase `FOO-*`.
-        insert_block(&pool, "TAGFOOEXACT0000000000000001", "tag", "foo").await;
-        insert_tag_cache(&pool, "TAGFOOEXACT0000000000000001", "foo", 1).await;
+        insert_tag_in_space(&pool, SPACE_A, "TAGFOOEXACT0000000000000001", "foo").await;
 
         // Sanity: the bare limit-3 page is the three uppercase siblings; the
         // exact match is off-page, so the splice path runs.
@@ -1049,7 +1082,9 @@ mod tests {
             "fixture invariant: exact 'foo' must fall off the bare 3-row prefix page"
         );
 
-        let result = list_tags_by_prefix(&pool, "foo", Some(3)).await.unwrap();
+        let result = list_tags_by_prefix(&pool, SPACE_A, "foo", Some(3))
+            .await
+            .unwrap();
         let names: Vec<&str> = result.iter().map(|r| r.name.as_str()).collect();
 
         // #1557 contract: the spliced exact match lands in its BINARY-sorted
@@ -1085,13 +1120,12 @@ mod tests {
     #[tokio::test]
     async fn list_tags_by_prefix_rejects_out_of_range_limit() {
         let (pool, _dir) = test_pool().await;
-        insert_block(&pool, "TAGCAP00000000000000000001", "tag", "capped").await;
-        insert_tag_cache(&pool, "TAGCAP00000000000000000001", "capped", 1).await;
+        insert_tag_in_space(&pool, SPACE_A, "TAGCAP00000000000000000001", "capped").await;
 
         // Below the floor and above the ceiling both surface as validation
         // errors naming the bound — never a clamped or empty result.
         for bad in [0_i64, -1, MAX_TAGS_PREFIX + 1] {
-            let err = list_tags_by_prefix(&pool, "cap", Some(bad))
+            let err = list_tags_by_prefix(&pool, SPACE_A, "cap", Some(bad))
                 .await
                 .expect_err("out-of-range limit must be rejected, not clamped");
             assert!(
@@ -1106,14 +1140,16 @@ mod tests {
 
         // Both boundaries are inside the accepted range.
         for good in [1_i64, MAX_TAGS_PREFIX] {
-            let rows = list_tags_by_prefix(&pool, "cap", Some(good))
+            let rows = list_tags_by_prefix(&pool, SPACE_A, "cap", Some(good))
                 .await
                 .unwrap_or_else(|e| panic!("limit {good} is in range but was rejected: {e}"));
             assert_eq!(rows.len(), 1, "limit {good} must return the one match");
         }
 
         // `None` falls through to the default cap rather than erroring.
-        let defaulted = list_tags_by_prefix(&pool, "cap", None).await.unwrap();
+        let defaulted = list_tags_by_prefix(&pool, SPACE_A, "cap", None)
+            .await
+            .unwrap();
         assert_eq!(defaulted.len(), 1);
     }
 
@@ -1125,10 +1161,8 @@ mod tests {
     async fn seed_disagreeing_case_variants(pool: &SqlitePool) -> (&'static str, &'static str) {
         const FALLBACK_WINNER: &str = "TAGDUPEXACT0000000000000A1"; // `wip`
         const NOCASE_WINNER: &str = "TAGDUPEXACT0000000000000A2"; // `wiP`
-        insert_block(pool, FALLBACK_WINNER, "tag", "wip").await;
-        insert_tag_cache(pool, FALLBACK_WINNER, "wip", 1).await;
-        insert_block(pool, NOCASE_WINNER, "tag", "wiP").await;
-        insert_tag_cache(pool, NOCASE_WINNER, "wiP", 1).await;
+        insert_tag_in_space(pool, SPACE_A, FALLBACK_WINNER, "wip").await;
+        insert_tag_in_space(pool, SPACE_A, NOCASE_WINNER, "wiP").await;
         (FALLBACK_WINNER, NOCASE_WINNER)
     }
 
@@ -1149,7 +1183,7 @@ mod tests {
         let (pool, _dir) = test_pool().await;
         let (_, nocase_winner) = seed_disagreeing_case_variants(&pool).await;
 
-        let row = exact_match_nocase(&pool, "wip")
+        let row = exact_match_nocase(&pool, SPACE_A, "wip")
             .await
             .unwrap()
             .expect("the NOCASE fast path must resolve an ASCII case-variant");
@@ -1173,7 +1207,7 @@ mod tests {
         let (pool, _dir) = test_pool().await;
         let (fallback_winner, _) = seed_disagreeing_case_variants(&pool).await;
 
-        let row = exact_match_normalized(&pool, "wip")
+        let row = exact_match_normalized(&pool, SPACE_A, "wip")
             .await
             .unwrap()
             .expect("the normalized fallback must resolve an ASCII case-variant");
@@ -1209,8 +1243,7 @@ mod tests {
         for i in 1..=3 {
             let id = format!("TAGDUP{i:020}");
             let name = format!("WIP-{i}");
-            insert_block(&pool, &id, "tag", &name).await;
-            insert_tag_cache(&pool, &id, &name, 1).await;
+            insert_tag_in_space(&pool, SPACE_A, &id, &name).await;
         }
         let (_, nocase_winner) = seed_disagreeing_case_variants(&pool).await;
 
@@ -1231,11 +1264,11 @@ mod tests {
         // stops discriminating — it would keep passing with the fast path
         // ripped out, and nothing would say so. Fail here instead, naming the
         // reason, rather than letting the check quietly become unable to fail.
-        let nocase = exact_match_nocase(&pool, "wip")
+        let nocase = exact_match_nocase(&pool, SPACE_A, "wip")
             .await
             .unwrap()
             .expect("fixture: the NOCASE fast path must resolve `wip`");
-        let normalized = exact_match_normalized(&pool, "wip")
+        let normalized = exact_match_normalized(&pool, SPACE_A, "wip")
             .await
             .unwrap()
             .expect("fixture: the normalized fallback must resolve `wip`");
@@ -1249,7 +1282,9 @@ mod tests {
             nocase.tag_id
         );
 
-        let result = list_tags_by_prefix(&pool, "wip", Some(3)).await.unwrap();
+        let result = list_tags_by_prefix(&pool, SPACE_A, "wip", Some(3))
+            .await
+            .unwrap();
         let hoisted = result
             .iter()
             .find(|r| r.name.eq_ignore_ascii_case("wip"))
@@ -1264,6 +1299,53 @@ mod tests {
         assert_eq!(hoisted.name, "wiP");
         let names: Vec<&str> = result.iter().map(|r| r.name.as_str()).collect();
         assert_eq!(names, ["WIP-1", "WIP-2", "wiP"], "page stays name-sorted");
+    }
+
+    /// #5274 — a tag name is unique per space, so `todo` in two spaces is two
+    /// cache rows. The scan answers only the asked space's rows, on a prefix
+    /// page and on the empty-prefix listing alike.
+    #[tokio::test]
+    async fn list_tags_by_prefix_returns_only_the_spaces_row_for_a_shared_name() {
+        const TODO_A: &str = "TAGTODOA000000000000000001";
+        const TODO_B: &str = "TAGTODOB000000000000000001";
+        let (pool, _dir) = test_pool().await;
+        insert_tag_in_space(&pool, SPACE_A, TODO_A, "todo").await;
+        insert_tag_in_space(&pool, SPACE_B, TODO_B, "todo").await;
+        insert_tag_in_space(&pool, SPACE_B, "TAGTOBUYB00000000000000001", "tobuy").await;
+
+        let ids = |rows: &[TagCacheRow]| -> Vec<String> {
+            rows.iter().map(|r| r.tag_id.clone()).collect()
+        };
+        let prefix_a = list_tags_by_prefix(&pool, SPACE_A, "to", None)
+            .await
+            .unwrap();
+        assert_eq!(ids(&prefix_a), [TODO_A]);
+        let all_a = list_tags_by_prefix(&pool, SPACE_A, "", None).await.unwrap();
+        assert_eq!(ids(&all_a), [TODO_A]);
+        let exact_b = list_tags_by_prefix(&pool, SPACE_B, "todo", None)
+            .await
+            .unwrap();
+        assert_eq!(ids(&exact_b), [TODO_B]);
+    }
+
+    /// #5274 — the #768 / #1990 exact-match splice reads only the asked space:
+    /// another space's exact `wip` never joins this space's page. Space A has
+    /// no `wip`, so the NOCASE fast path misses and the normalized fallback
+    /// runs too; either one unscoped splices space B's row.
+    #[tokio::test]
+    async fn list_tags_by_prefix_never_splices_another_spaces_exact_match() {
+        let (pool, _dir) = test_pool().await;
+        for i in 1..=3 {
+            let id = format!("TAGWIPA{i:019}");
+            insert_tag_in_space(&pool, SPACE_A, &id, &format!("WIP-{i}")).await;
+        }
+        insert_tag_in_space(&pool, SPACE_B, "TAGWIPB000000000000000001", "wip").await;
+
+        let page = list_tags_by_prefix(&pool, SPACE_A, "wip", Some(3))
+            .await
+            .unwrap();
+        let names: Vec<&str> = page.iter().map(|r| r.name.as_str()).collect();
+        assert_eq!(names, ["WIP-1", "WIP-2", "WIP-3"]);
     }
 
     fn cache_row(tag_id: &str, name: &str) -> TagCacheRow {

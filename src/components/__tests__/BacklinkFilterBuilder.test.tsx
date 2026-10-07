@@ -33,12 +33,13 @@ import type { BacklinkFilterBuilderProps } from '@/components/BacklinkFilterBuil
 import { BacklinkFilterBuilder } from '@/components/BacklinkFilterBuilder'
 import { STATE_FILTER_VALUES } from '@/components/filters/forms/stateVocabulary'
 import type { BacklinkFilter } from '@/lib/bindings'
+import { useSpaceStore } from '@/stores/space'
 
 // Radix Select is mocked globally via the shared mock in src/test-setup.ts
 // (see src/__tests__/mocks/ui-select.tsx).
 
 // `HasTagFilterForm` calls `commands.listTagsByPrefix` from `@/lib/bindings`
-// directly (positional `(prefix, limit)`; the hand-written wrapper was
+// directly (positional `(prefix, limit, scope)`; the hand-written wrapper was
 // retired, #4411) and unwraps the `Result` envelope — resolve the
 // `{ status: 'ok', data }` shape.
 const { mockListTagsByPrefix } = vi.hoisted(() => ({
@@ -75,6 +76,7 @@ function renderBuilder(overrides?: Partial<BacklinkFilterBuilderProps>) {
 
 beforeEach(() => {
   vi.clearAllMocks()
+  useSpaceStore.setState({ currentSpaceId: 'SPACE_TEST' })
 })
 
 describe('BacklinkFilterBuilder', () => {
@@ -1317,8 +1319,11 @@ describe('BacklinkFilterBuilder', () => {
 
       // Wait for the debounced IPC call
       await waitFor(() => {
-        // `commands.listTagsByPrefix` is positional: (prefix, limit).
-        expect(mockListTagsByPrefix).toHaveBeenCalledWith('proj', 50)
+        // `commands.listTagsByPrefix` is positional: (prefix, limit, scope).
+        expect(mockListTagsByPrefix).toHaveBeenCalledWith('proj', 50, {
+          kind: 'active',
+          space_id: 'SPACE_TEST',
+        })
       })
     })
 

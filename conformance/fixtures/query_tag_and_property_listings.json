@@ -449,6 +449,14 @@
     },
     {
       "cursor": null,
+      "error": "validation",
+      "has_more": null,
+      "name": "tags_prefix_rejects_global_scope",
+      "rows": [],
+      "total_count": null
+    },
+    {
+      "cursor": null,
       "error": null,
       "has_more": null,
       "name": "property_keys_usage_ranked_then_key_asc",
@@ -699,7 +707,11 @@
     },
     {
       "args": {
-        "prefix": "ze"
+        "prefix": "ze",
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
       },
       "command": "list_tags_by_prefix",
       "comment": "`name LIKE 'ze%'` — SQLite's LIKE folds ASCII case, so `Zed` matches a lowercase prefix.",
@@ -707,7 +719,11 @@
     },
     {
       "args": {
-        "prefix": "wip"
+        "prefix": "wip",
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
       },
       "command": "list_tags_by_prefix",
       "comment": "Both case-variants match the fold, and the page is `ORDER BY name` BINARY: `WIP-1` before `wip`.",
@@ -716,7 +732,11 @@
     {
       "args": {
         "limit": 1,
-        "prefix": "wip"
+        "prefix": "wip",
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
       },
       "command": "list_tags_by_prefix",
       "comment": "#768: `LIMIT 1` over the BINARY-ordered page keeps `WIP-1` and would drop the exact match `wip`, so the exact (case-insensitive) match is fetched separately, the page's last row evicted to hold the cap, and `wip` spliced into name order. A mock that stops at the LIMIT page answers `WIP-1`.",
@@ -724,7 +744,11 @@
     },
     {
       "args": {
-        "prefix": "a_"
+        "prefix": "a_",
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
       },
       "command": "list_tags_by_prefix",
       "comment": "`escape_like`: the `_` in the prefix is a literal, not the LIKE single-character wildcard, so `axb` does not match.",
@@ -732,7 +756,11 @@
     },
     {
       "args": {
-        "prefix": ""
+        "prefix": "",
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
       },
       "command": "list_tags_by_prefix",
       "comment": "An empty prefix is `LIKE '%'`: every tag, BINARY order, under the default `MAX_TAGS_PREFIX` page.",
@@ -741,7 +769,11 @@
     {
       "args": {
         "limit": 0,
-        "prefix": ""
+        "prefix": "",
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
       },
       "command": "list_tags_by_prefix",
       "comment": "`limit` is validated, not clamped (invariant 10): 0 is refused.",
@@ -751,12 +783,28 @@
     {
       "args": {
         "limit": 201,
-        "prefix": ""
+        "prefix": "",
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
       },
       "command": "list_tags_by_prefix",
       "comment": "…and so is anything above `MAX_TAGS_PREFIX` (200).",
       "expect_error": "validation",
       "name": "tags_prefix_limit_over_cap_rejected"
+    },
+    {
+      "args": {
+        "prefix": "",
+        "scope": {
+          "kind": "global"
+        }
+      },
+      "command": "list_tags_by_prefix",
+      "comment": "`require_active`: a `Global` scope is refused with `validation`, not widened into every space's tags (#5274).",
+      "expect_error": "validation",
+      "name": "tags_prefix_rejects_global_scope"
     },
     {
       "args": {},
@@ -800,7 +848,11 @@
     },
     {
       "args": {
-        "prefix": "Ärg"
+        "prefix": "Ärg",
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
       },
       "command": "list_tags_by_prefix",
       "comment": "`name LIKE 'Ärg%'` folds `A`-`Z` and nothing else, so the capital-Ä prefix reaches `Ärger`.",
@@ -808,7 +860,11 @@
     },
     {
       "args": {
-        "prefix": "är"
+        "prefix": "är",
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
       },
       "command": "list_tags_by_prefix",
       "comment": "The other arm, and the one that discriminates: `LIKE 'är%'` does NOT fold `Ä` to `ä`, so it misses `Ärger`, and #1990's `normalize_tag_name` exact-match fallback needs the WHOLE name (`är` != `ärger`) so it does not rescue it either. A prefix filter that folds through `toLowerCase()` answers `Ärger` here. Empty on purpose; non-vacuous because the arm above serves a row through the same command.",

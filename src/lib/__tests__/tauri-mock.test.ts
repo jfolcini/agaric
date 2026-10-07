@@ -328,13 +328,17 @@ describe('list_blocks with parentId', () => {
 // ---------------------------------------------------------------------------
 
 describe('list_tags_by_prefix', () => {
+  const scope = { kind: 'active', space_id: 'SPACE_PERSONAL' } as const
+
   it('returns all tags when prefix is empty', () => {
-    const result = invoke('list_tags_by_prefix', { prefix: '' }) as Array<Record<string, unknown>>
+    const result = invoke('list_tags_by_prefix', { prefix: '', scope }) as Array<
+      Record<string, unknown>
+    >
     expect(result).toHaveLength(3)
   })
 
   it('filters tags by prefix (case-insensitive)', () => {
-    const result = invoke('list_tags_by_prefix', { prefix: 'per' }) as Array<
+    const result = invoke('list_tags_by_prefix', { prefix: 'per', scope }) as Array<
       Record<string, unknown>
     >
     expect(result).toHaveLength(1)
@@ -343,7 +347,7 @@ describe('list_tags_by_prefix', () => {
   })
 
   it('returns TagCacheRow shape', () => {
-    const result = invoke('list_tags_by_prefix', { prefix: 'work' }) as Array<
+    const result = invoke('list_tags_by_prefix', { prefix: 'work', scope }) as Array<
       Record<string, unknown>
     >
     expect(result).toHaveLength(1)
@@ -355,14 +359,14 @@ describe('list_tags_by_prefix', () => {
   })
 
   it('returns empty for non-matching prefix', () => {
-    const result = invoke('list_tags_by_prefix', { prefix: 'zzz' }) as Array<
+    const result = invoke('list_tags_by_prefix', { prefix: 'zzz', scope }) as Array<
       Record<string, unknown>
     >
     expect(result).toHaveLength(0)
   })
 
   it('matches case-insensitively', () => {
-    const result = invoke('list_tags_by_prefix', { prefix: 'WORK' }) as Array<
+    const result = invoke('list_tags_by_prefix', { prefix: 'WORK', scope }) as Array<
       Record<string, unknown>
     >
     expect(result).toHaveLength(1)
@@ -370,8 +374,8 @@ describe('list_tags_by_prefix', () => {
   })
 
   it('includes dynamically created tags', () => {
-    invoke('create_block', { blockType: 'tag', content: 'project-alpha' })
-    const result = invoke('list_tags_by_prefix', { prefix: 'project' }) as Array<
+    invoke('create_block', { blockType: 'tag', content: 'project-alpha', scope })
+    const result = invoke('list_tags_by_prefix', { prefix: 'project', scope }) as Array<
       Record<string, unknown>
     >
     expect(result).toHaveLength(1)

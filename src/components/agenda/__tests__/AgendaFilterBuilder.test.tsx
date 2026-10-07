@@ -42,6 +42,7 @@ import {
 import { _resetPropertyKeysCacheForTest } from '@/hooks/usePropertyKeysCache'
 import { getTaskStates } from '@/lib/filter-dimension-metadata'
 import { t } from '@/lib/i18n'
+import { useSpaceStore } from '@/stores/space'
 
 const mockedInvoke = vi.mocked(invoke)
 
@@ -77,6 +78,7 @@ beforeEach(() => {
   // cache. Reset between tests so each case observes its own
   // `invoke('list_property_keys')` fetch.
   _resetPropertyKeysCacheForTest()
+  useSpaceStore.setState({ currentSpaceId: 'SPACE_TEST' })
 })
 
 describe('AgendaFilterBuilder', () => {

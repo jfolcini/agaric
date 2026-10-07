@@ -25,6 +25,7 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import { SearchInput } from '@/components/ui/search-input'
 import { unwrap } from '@/lib/app-error'
 import { commands } from '@/lib/bindings'
+import { requireActiveScope } from '@/lib/space-scope'
 import {
   type TagBuilderGroup,
   type TagBuilderLeaf,
@@ -39,6 +40,7 @@ import {
   toggleNegated,
 } from '@/lib/tagExpr'
 import { cn } from '@/lib/utils'
+import { useSpaceStore } from '@/stores/space'
 
 export interface TagComposerCallbacks {
   /** Append a resolved tag leaf to the group `groupId`. */
@@ -200,12 +202,15 @@ function AddTagPopover({
 
   async function search(value: string): Promise<void> {
     const trimmed = value.trim()
-    if (!trimmed) {
+    const spaceId = useSpaceStore.getState().currentSpaceId
+    if (!trimmed || spaceId == null) {
       setMatches([])
       return
     }
     try {
-      const tags = unwrap(await commands.listTagsByPrefix(trimmed, null))
+      const tags = unwrap(
+        await commands.listTagsByPrefix(trimmed, null, requireActiveScope(spaceId)),
+      )
       setMatches(
         tags.map((tg) => ({ tag_id: tg.tag_id, name: tg.name, usage_count: tg.usage_count })),
       )

@@ -917,6 +917,31 @@ describe('executeAgendaFilters', () => {
       )
     })
 
+    // #5274 — a tag name is unique per space, so `todo` in two spaces is two
+    // tags. The lookup asks the active space, so the agenda resolves ITS
+    // `todo` even when the other space's row would come back first unscoped.
+    it("resolves a name shared by two spaces to the active space's tag (#5274)", async () => {
+      const spaceOfTag: Record<string, string> = { TAG_OTHER: 'SPACE_B', TAG_MINE: 'SPACE_A' }
+      const inSpaceBlock = makeBlock({ id: 'in-space' })
+      stubAgenda({
+        list_tags_by_prefix: (args) => {
+          const scope = args['scope'] as { space_id: string } | undefined
+          return [tagRow('TAG_OTHER', 'todo'), tagRow('TAG_MINE', 'todo')].filter(
+            (row) => scope === undefined || spaceOfTag[row.tag_id] === scope.space_id,
+          )
+        },
+        // The space-scoped query holds only SPACE_A's tagged block.
+        filtered_blocks_query: (args) => {
+          const tagIds = (args['tagFilters'] as { tagIds: string[] }).tagIds
+          return tagIds.includes('TAG_MINE') ? page([inSpaceBlock]) : emptyPage
+        },
+      })
+
+      const result = await executeAgendaFilters([{ dimension: 'tag', values: ['todo'] }], 'SPACE_A')
+
+      expect(result.blocks.map((b) => b.id)).toEqual(['in-space'])
+    })
+
     // H3 — pin the exactly-once tag-resolution path. Each prefix should
     // round-trip listTagsByPrefix exactly once, not per-call-site.
     it('resolves each tag name exactly once', async () => {

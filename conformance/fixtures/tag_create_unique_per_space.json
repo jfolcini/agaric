@@ -1,6 +1,6 @@
 {
   "name": "tag_create_unique_per_space",
-  "description": "#5236 / #5237 — a tag NAME is unique per space at creation, and the tags cache keeps one row per space. The harness space seeds a `todo` tag (`S2`); a seed id is zero-padded, so it sorts below every minted ULID and is the row the old vault-wide `UNIQUE (name)` kept. The ops create a second space (`C1`) and run `create_block` with `blockType: tag` into it, as the IPC runs it (`via: command`, so the RETURN is the record): `todo` is a NEW tag (`C2`) because uniqueness is per space, and before 0121 it was exactly the tag the cache could not hold — the smaller-id `todo` in the harness space owned the slot, so `Work`'s Tags view, its filters and its `tag:#` search never saw it (#5237). Then `Todo` into the same space: a case variant, the identity `normalize_tag_name` folds, answers the SAME label and no second block (#5236: the header's \"Create\" and the `#name` input rule each trust their own picker cache, and only the backend sees both). The reads: the unscoped prefix list carries BOTH `todo` rows — under the old constraint it carried one — and the harness space's own listing names only ITS `todo`. A query step cannot name an op-created space (`expand_query_args` knows `$SPACE` and `S<n>`), so `Work`'s listing is pinned by its cache row in the prefix list, not by `list_all_tags_in_space`.",
+  "description": "#5236 / #5237 — a tag NAME is unique per space at creation, and the tags cache keeps one row per space. The harness space seeds a `todo` tag (`S2`); a seed id is zero-padded, so it sorts below every minted ULID and is the row the old vault-wide `UNIQUE (name)` kept. The ops create a second space (`C1`) and run `create_block` with `blockType: tag` into it, as the IPC runs it (`via: command`, so the RETURN is the record): `todo` is a NEW tag (`C2`) because uniqueness is per space, and before 0121 it was exactly the tag the cache could not hold — the smaller-id `todo` in the harness space owned the slot, so `Work`'s Tags view, its filters and its `tag:#` search never saw it (#5237). Then `Todo` into the same space: a case variant, the identity `normalize_tag_name` folds, answers the SAME label and no second block (#5236: the header's \"Create\" and the `#name` input rule each trust their own picker cache, and only the backend sees both). The reads: the harness space's prefix scan and its own listing each name only ITS `todo`. A query step cannot name an op-created space (`expand_query_args` knows `$SPACE` and `S<n>`), so `Work`'s cache row is not read back here.",
   "expected": {
     "block_tags": [],
     "blocks": [
@@ -111,8 +111,8 @@
       "cursor": null,
       "error": null,
       "has_more": null,
-      "name": "the_prefix_list_carries_one_todo_per_space",
-      "rows": ["B2#name=todo#usage_count=0", "B4#name=todo#usage_count=0"],
+      "name": "the_prefix_list_names_only_the_spaces_own_todo",
+      "rows": ["B2#name=todo#usage_count=0"],
       "total_count": null
     },
     {
@@ -169,12 +169,15 @@
   "queries": [
     {
       "args": {
-        "prefix": "todo"
+        "prefix": "todo",
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
       },
       "command": "list_tags_by_prefix",
-      "comment": "The unscoped prefix scan carries BOTH spaces' `todo` rows: one per space, neither evicting the other. Under the pre-0121 cache the `Work` row could not exist — `UNIQUE (name)` was held by the smaller-id seeded tag.",
-      "name": "the_prefix_list_carries_one_todo_per_space",
-      "unordered": "two byte-identical names: `ORDER BY name` leaves their relative order to the tie-break between a seed id and a minted one"
+      "comment": "The prefix scan reads the asked space only (#5274): the cache holds a `todo` row per space, and the harness space's scan answers its OWN `todo` — neither `Work`'s row on the LIKE page nor `Work`'s spliced in as the exact match.",
+      "name": "the_prefix_list_names_only_the_spaces_own_todo"
     },
     {
       "args": {
