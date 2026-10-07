@@ -127,6 +127,72 @@ describe('PageBrowser', () => {
       }
     }
 
+    // ── #5294 — a saved view's tag chips from another space ─────────────
+    // Saved views are one list for every space, and a tag chip holds a tag id,
+    // which matches nothing in another space.
+    describe('#5294: applying a saved view', () => {
+      async function applyTaggedView(listSpaceTags: () => Promise<unknown>): Promise<void> {
+        const user = userEvent.setup()
+        const view = {
+          id: 'VIEW_1',
+          name: 'Tagged',
+          createdAt: '2026-01-01T00:00:00.000Z',
+          sort: 'alphabetical',
+          density: 'regular',
+          filters: [
+            { type: 'Tag', tag: 'TAG_HERE' },
+            { type: 'Tag', tag: 'TAG_ELSEWHERE' },
+          ],
+        }
+        localStorage.setItem(
+          'agaric:pages:savedViews:v1',
+          JSON.stringify({ schemaVersion: 1, views: [view] }),
+        )
+        mockedInvoke.mockImplementation((cmd: string) => {
+          if (cmd === 'resolve_page_by_alias') return Promise.resolve(null)
+          if (cmd === 'list_all_tags_in_space') return listSpaceTags()
+          if (cmd === 'list_pages_with_metadata') {
+            return Promise.resolve({
+              items: [metaPage('P1', 'Apple')],
+              next_cursor: null,
+              has_more: false,
+              total_count: 1,
+            })
+          }
+          return pageRowInvokeFallback(cmd)
+        })
+
+        render(<PageBrowser />)
+        await screen.findByText('Apple')
+        await user.click(await screen.findByTestId('saved-views-trigger'))
+        await user.click(
+          await screen.findByRole('button', {
+            name: t('pageBrowser.savedViews.apply', { name: 'Tagged' }),
+          }),
+        )
+      }
+
+      function appliedTagIds(): string[] {
+        return (usePageBrowserFiltersStore.getState().filtersBySpace['SPACE_TEST'] ?? []).flatMap(
+          (f) => (f.type === 'Tag' ? [f.tag] : []),
+        )
+      }
+
+      it('drops the tag chips whose tag is not in the active space', async () => {
+        await applyTaggedView(() =>
+          Promise.resolve([{ tag_id: 'TAG_HERE', name: 'here', usage_count: 1, updated_at: '' }]),
+        )
+
+        await waitFor(() => expect(appliedTagIds()).toEqual(['TAG_HERE']))
+      })
+
+      it('applies every chip when the space tags cannot be listed', async () => {
+        await applyTaggedView(() => Promise.reject(new Error('backend down')))
+
+        await waitFor(() => expect(appliedTagIds()).toEqual(['TAG_HERE', 'TAG_ELSEWHERE']))
+      })
+    })
+
     // ── #3339 — saved-view delete is undoable ───────────────────────────
     // The delete button sits one row-item away from the apply target and the
     // store is localStorage-only (no Trash, no restore path), so a mis-click
