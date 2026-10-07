@@ -56,7 +56,7 @@ pub struct LinkMetadata {
     /// (follow-up): `true` when the most recent
     /// fetch saw a terminal "this resource is gone" status (HTTP 404 or
     /// 410). Distinct from `auth_required` (401/403, transient
-    /// sign-in) and from "transient" (5xx — both flags false plus
+    /// sign-in) and from any other non-2xx (both flags false plus
     /// `title.is_none()`). The frontend uses this to render a "(not
     /// found)" tag and suppress the favicon.
     ///
@@ -415,7 +415,13 @@ pub async fn fetch_metadata(url: &str) -> Result<LinkMetadata, AppError> {
     let status = response.status().as_u16();
     let final_url = response.url().to_string();
 
-    // Short-circuit on non-2xx so 4xx/5xx HTML error pages
+    // A 5xx or 429 is transient: an error caches nothing, so the next hover
+    // or paste fetches again (#5290).
+    if response.status().is_server_error() || status == 429 {
+        return Err(AppError::InvalidOperation(format!("HTTP {status}: {url}")));
+    }
+
+    // Short-circuit on non-2xx so 4xx HTML error pages
     // (e.g. a 404 with `<title>Page not found</title>`) don't get parsed
     // and cached as the target page's metadata.
     //
@@ -423,8 +429,7 @@ pub async fn fetch_metadata(url: &str) -> Result<LinkMetadata, AppError> {
     // the frontend can render distinct UX:
     //   * `auth_required` (401/403): sign-in card / reauth flow
     //   * `not_found` (404/410): terminal "page is gone" presentation
-    //   * neither flag, `title.is_none()`: transient (5xx / other) —
-    //     the frontend infers "may retry later"
+    //   * neither flag, `title.is_none()`: any other non-2xx
     //
     // #628: key the error-state row under the **requested** `url`, not
     // `final_url` — the cache upsert keys on `meta.url` and every lookup

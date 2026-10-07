@@ -5,7 +5,7 @@ use super::coordinator::{
 };
 use super::{CreateBlockHint, MaterializeTask, TagOpHint};
 use agaric_core::error::AppError;
-use agaric_store::op::OpType;
+use agaric_store::op::{OpType, SPACE_PROPERTY_KEY};
 use agaric_store::op_log::OpRecord;
 use std::str::FromStr;
 use std::sync::Arc;
@@ -1858,7 +1858,8 @@ fn push_property_op_invalidations(
     tasks: &mut Vec<MaterializeTask>,
 ) {
     // Narrow invalidation by design: only the agenda caches depend on
-    // property values. Property values live in
+    // property values (plus the two space-scoped roll-ups on a `space`
+    // op, below). Property values live in
     // `block_properties.value_text` / `value_ref` and are never scanned
     // for link tokens, FTS text, or tag refs — that graph derives solely
     // from `blocks.content` — so no link/FTS/tag-ref rebuild is enqueued.
@@ -1890,6 +1891,18 @@ fn push_property_op_invalidations(
             }
             if projected_relevant {
                 tasks.push(MaterializeTask::RebuildProjectedAgendaCache);
+            }
+            // #5275: `space` re-homes the block's whole page group
+            // (`blocks.space_id`), and both roll-ups count only same-space
+            // sources, so the group's old links and tags must stop counting
+            // in the origin space. No per-page / per-tag task fits: the
+            // affected pages and tags are only known from the DB. A create
+            // stamps `space` too but does not dispatch that op (nothing to
+            // re-scope), so this arm fires only for a move, its undo, or
+            // boot's placement of a space-less block.
+            if key == SPACE_PROPERTY_KEY {
+                tasks.push(MaterializeTask::RebuildTagsCache);
+                tasks.push(MaterializeTask::RebuildPagesCacheCounts);
             }
         }
         Err(e) => {
@@ -3088,6 +3101,42 @@ mod tests {
         );
         let tasks = invalidations_for_op(&r, None, None).unwrap();
         assert_eq!(labels(&tasks), vec!["RebuildProjectedAgendaCache"]);
+    }
+
+    /// #5275: a `space` set re-homes the page group, so the space-scoped
+    /// link and tag roll-ups are rebuilt; it is not an agenda key.
+    #[test]
+    fn invalidations_for_op_set_property_space_rebuilds_link_and_tag_counts_5275() {
+        let r = make_record(
+            "set_property",
+            r#"{"block_id":"BLK1","key":"space","value_ref":"SPACEB"}"#,
+            Some("BLK1"),
+        );
+        let tasks = invalidations_for_op(&r, None, None).unwrap();
+        assert_eq!(
+            labels(&tasks),
+            vec!["RebuildTagsCache", "RebuildPagesCacheCounts"],
+        );
+    }
+
+    /// #5275: clearing `space` moves the group out of its space the same way
+    /// (plus the conservative agenda rebuild every `delete_property` keeps).
+    #[test]
+    fn invalidations_for_op_delete_property_space_rebuilds_link_and_tag_counts_5275() {
+        let r = make_record(
+            "delete_property",
+            r#"{"block_id":"BLK1","key":"space"}"#,
+            Some("BLK1"),
+        );
+        let tasks = invalidations_for_op(&r, None, None).unwrap();
+        assert_eq!(
+            labels(&tasks),
+            vec![
+                "RebuildAgendaCache",
+                "RebuildTagsCache",
+                "RebuildPagesCacheCounts"
+            ],
+        );
     }
 
     // ── move_block ───────────────────────────────────────────────────

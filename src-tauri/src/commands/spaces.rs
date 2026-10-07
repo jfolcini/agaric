@@ -302,8 +302,9 @@ pub async fn create_page_in_space_inner(
     // 3. Stamp the `space` ref property. Ops are emitted in the order
     //    (create → set) so a sync peer materializes them in the same
     //    order and never observes a page without its space property in
-    //    steady state.
-    let (_block, space_op_record) = set_property_in_tx(
+    //    steady state. Not dispatched: a fresh block has nothing to
+    //    re-scope (#5275, the `space` arm of `push_property_op_invalidations`).
+    let (_block, _space_op_record) = set_property_in_tx(
         &mut tx,
         materializer.loro_state(),
         device_id,
@@ -316,7 +317,6 @@ pub async fn create_page_in_space_inner(
         None,
     )
     .await?;
-    tx.enqueue_background(space_op_record);
 
     tx.commit_and_dispatch(materializer).await?;
     Ok(new_page_id)

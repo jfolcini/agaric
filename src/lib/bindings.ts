@@ -813,7 +813,7 @@ export const commands = {
 	 *  (follow-up): `true` when the most recent
 	 *  fetch saw a terminal "this resource is gone" status (HTTP 404 or
 	 *  410). Distinct from `auth_required` (401/403, transient
-	 *  sign-in) and from "transient" (5xx — both flags false plus
+	 *  sign-in) and from any other non-2xx (both flags false plus
 	 *  `title.is_none()`). The frontend uses this to render a "(not
 	 *  found)" tag and suppress the favicon.
 	 * 
@@ -2568,7 +2568,7 @@ export type LinkMetadata = {
 	 *  (follow-up): `true` when the most recent
 	 *  fetch saw a terminal "this resource is gone" status (HTTP 404 or
 	 *  410). Distinct from `auth_required` (401/403, transient
-	 *  sign-in) and from "transient" (5xx — both flags false plus
+	 *  sign-in) and from any other non-2xx (both flags false plus
 	 *  `title.is_none()`). The frontend uses this to render a "(not
 	 *  found)" tag and suppress the favicon.
 	 * 

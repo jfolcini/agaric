@@ -3901,14 +3901,16 @@ struct ImportCounters {
     chunks_committed: u64,
 }
 
-/// Stamp the reserved `space` ref property on a block the import just created,
-/// queueing its op for post-commit dispatch.
+/// Stamp the reserved `space` ref property on a block the import just created.
 ///
 /// Every block an import mints — the page itself, a create-if-missing wiki-link
 /// page, a resolve-or-create tag — must carry it: a tag with no space resolves
 /// to NO space and the cross-space gate in `reindex_block_tag_refs` then drops
 /// the inline `#[ULID]` ref, and a page without it is not a member of the
 /// import's space.
+///
+/// The op is not dispatched: a fresh block has nothing to re-scope (#5275, the
+/// `space` arm of `push_property_op_invalidations`).
 async fn stamp_space_property(
     tx: &mut CommandTx,
     materializer: &Materializer,
@@ -3916,7 +3918,7 @@ async fn stamp_space_property(
     block_id: String,
     space_id: &str,
 ) -> Result<(), AppError> {
-    let (_block, space_op) = set_property_in_tx(
+    let (_block, _space_op) = set_property_in_tx(
         &mut *tx,
         materializer.loro_state(),
         device_id,
@@ -3929,7 +3931,6 @@ async fn stamp_space_property(
         None,
     )
     .await?;
-    tx.enqueue_background(space_op);
     Ok(())
 }
 

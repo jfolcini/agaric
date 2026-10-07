@@ -8,10 +8,15 @@
 
 import { act, renderHook } from '@testing-library/react'
 import type React from 'react'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { useImportRunner } from '@/components/settings/useImportRunner'
 import { useCalendarPageDatesEpoch } from '@/hooks/useCalendarPageDates'
+import {
+  _resetGraphStructureEventsForTest,
+  DEBOUNCE_MS as GRAPH_DEBOUNCE_MS,
+  getGraphStructureKey,
+} from '@/lib/graph-structure-events'
 import { hasPreference, PREFERENCES, readPreference } from '@/lib/preferences'
 import { propertyKeysQueryKey } from '@/lib/property-keys-cache'
 import { queryClient } from '@/lib/query-client'
@@ -69,6 +74,11 @@ function mkEvent(): React.ChangeEvent<HTMLInputElement> {
 beforeEach(() => {
   vi.clearAllMocks()
   mockImportMarkdown.mockReset()
+  _resetGraphStructureEventsForTest()
+})
+
+afterEach(() => {
+  vi.useRealTimers()
 })
 
 describe('useImportRunner', () => {
@@ -185,15 +195,21 @@ describe('useImportRunner', () => {
   })
 
   // #5258 — an imported journal day must show in a journal calendar already open.
-  // #5296 — and an imported `key:: value` in the property pickers.
+  // #5296 — and an imported `key:: value` in the property pickers; #5292 — and an
+  // imported page or `[[link]]` in a Graph already open.
   it.each([
     [
-      're-fetches the journal calendar and property lists after a run that imported a page',
+      're-fetches the journal calendar, property lists and the Graph after a run that imported a page',
       true,
       1,
     ],
-    ['leaves the journal calendar and property lists alone when every unit failed', false, 0],
-  ])('%s', async (_label, succeeds, expectedEpochMoves) => {
+    [
+      'leaves the journal calendar, property lists and the Graph alone when every unit failed',
+      false,
+      0,
+    ],
+  ])('%s', async (_label, succeeds, expectedMoves) => {
+    vi.useFakeTimers()
     const keys = propertyKeysQueryKey('SPACE')
     queryClient.setQueryData(keys, ['status'])
     if (succeeds) {
@@ -223,8 +239,12 @@ describe('useImportRunner', () => {
       })
     })
 
-    expect(calendar.result.current).toBe(epochBefore + expectedEpochMoves)
+    expect(calendar.result.current).toBe(epochBefore + expectedMoves)
     expect(queryClient.getQueryState(keys)?.isInvalidated).toBe(succeeds)
+    act(() => {
+      vi.advanceTimersByTime(GRAPH_DEBOUNCE_MS + 1)
+    })
+    expect(getGraphStructureKey()).toBe(expectedMoves)
   })
 
   it("folds the blocks a Logseq page folded in that page's collapse layout", async () => {

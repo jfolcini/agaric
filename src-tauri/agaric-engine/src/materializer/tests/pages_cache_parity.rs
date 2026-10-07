@@ -31,8 +31,8 @@ use crate::materializer::handlers::{handle_background_task, handle_foreground_ta
 /// this oracle catches it while a `page_id`-keyed copy would not.
 ///
 /// `inbound_link_count` is computed against `block_links`; it shares the
-/// same-page/orphan exclusions with the recompute by necessity (those
-/// are the definition, not an implementation detail), so the parity
+/// same-page/orphan/same-space exclusions with the recompute by necessity
+/// (those are the definition, not an implementation detail), so the parity
 /// tests additionally pin it with hard-literal assertions.
 async fn canonical_counts(pool: &SqlitePool, page_id: &str) -> (i64, i64) {
     // child_block_count via structural tree walk (no page_id read).
@@ -64,8 +64,10 @@ async fn canonical_counts(pool: &SqlitePool, page_id: &str) -> (i64, i64) {
              WHERE descendant.page_id = ? AND descendant.deleted_at IS NULL \
                AND src.deleted_at IS NULL \
                AND src.page_id IS NOT NULL \
-               AND src.page_id != ?",
+               AND src.page_id != ? \
+               AND src.space_id IS (SELECT space_id FROM blocks WHERE id = ?)",
     )
+    .bind(page_id)
     .bind(page_id)
     .bind(page_id)
     .fetch_one(pool)

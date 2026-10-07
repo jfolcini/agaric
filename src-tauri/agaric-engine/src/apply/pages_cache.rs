@@ -51,12 +51,15 @@ use super::*;
 /// backlink count in `backlink/grouped.rs`, which evaluates one block's
 /// inbound edges): it counts distinct source blocks that link into the
 /// page or any of its descendants while EXCLUDING same-page/self links (a
-/// source whose own `page_id` is the target page) and deleted/orphan
-/// sources (`src.deleted_at IS NULL`, `src.page_id IS NOT NULL`). The
-/// original 0069 backfill omitted those exclusions and over-counted;
-/// migration 0070 re-backfills existing rows with this corrected shape,
-/// which is what makes `Orphan` / `HasNoInboundLinks` / `MostLinked` /
-/// the `↗N` badge agree with the live backlink panel.
+/// source whose own `page_id` is the target page), deleted/orphan
+/// sources (`src.deleted_at IS NULL`, `src.page_id IS NOT NULL`), and
+/// sources outside the page's space (`src.space_id IS page.space_id`,
+/// #5275: a `block_links` row survives a move to another space, and the
+/// backlink panel is space-scoped). The original 0069 backfill omitted
+/// those exclusions and over-counted; migration 0070 re-backfills existing
+/// rows with the corrected shape, which is what makes `Orphan` /
+/// `HasNoInboundLinks` / `MostLinked` / the `↗N` badge agree with the live
+/// backlink panel.
 /// #2200 test-only invocation counter for
 /// [`recompute_pages_cache_counts_for_pages`]. Lets the import-scaling tests
 /// assert the deferred flush recomputes ONCE per chunk instead of once per op.
@@ -105,11 +108,13 @@ pub async fn recompute_pages_cache_counts_for_pages(
                  SELECT COUNT(DISTINCT bl.source_id) FROM block_links bl \
                      JOIN blocks descendant ON bl.target_id = descendant.id \
                      JOIN blocks src ON src.id = bl.source_id \
+                     JOIN blocks page ON page.id = pages_cache.page_id \
                      WHERE descendant.page_id = pages_cache.page_id \
                        AND descendant.deleted_at IS NULL \
                        AND src.deleted_at IS NULL \
                        AND src.page_id IS NOT NULL \
                        AND src.page_id != pages_cache.page_id \
+                       AND src.space_id IS page.space_id \
              ), \
              child_block_count = ( \
                  SELECT COUNT(*) FROM blocks descendant \
