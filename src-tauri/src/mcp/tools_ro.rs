@@ -57,6 +57,7 @@
 //!   the failure into an actionable `-32602`.
 
 use std::future::Future;
+use std::sync::Arc;
 
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -69,6 +70,7 @@ use super::registry::{
     TOOL_LIST_PAGES, TOOL_LIST_PROPERTY_DEFS, TOOL_LIST_SPACES, TOOL_LIST_TAGS, TOOL_SEARCH,
     ToolDescription, ToolRegistry,
 };
+use super::view_notify::{NoopViewChangeEmitter, ViewChangeEmitter};
 use crate::commands::{
     get_active_block_inner, get_journal_page_by_date_inner, get_page_unscoped_inner,
     journal_for_date_inner, list_backlinks_grouped_inner, list_pages_inner,
@@ -424,6 +426,10 @@ pub struct ReadOnlyTools {
     /// Yet). Namespaced so future RW tools can stamp the same
     /// origin without a second field.
     device_id: String,
+    /// #5314: `journal_for_date` can create a page, and open views learn of a
+    /// write only through `blocks:changed`. Defaults to a no-op, as on
+    /// `ReadWriteTools`.
+    view_emitter: Arc<dyn ViewChangeEmitter>,
 }
 
 impl ReadOnlyTools {
@@ -448,7 +454,16 @@ impl ReadOnlyTools {
             writer_pool,
             materializer,
             device_id,
+            view_emitter: Arc::new(NoopViewChangeEmitter),
         }
+    }
+
+    /// Install the emitter that tells open views about a page `journal_for_date`
+    /// created (#5314). Production passes a `TauriViewChangeEmitter`.
+    #[must_use]
+    pub fn with_view_emitter(mut self, view_emitter: Arc<dyn ViewChangeEmitter>) -> Self {
+        self.view_emitter = view_emitter;
+        self
     }
 }
 
@@ -495,6 +510,7 @@ impl ToolRegistry for ReadOnlyTools {
         let writer_pool = self.writer_pool.clone();
         let materializer = self.materializer.clone();
         let device_id = self.device_id.clone();
+        let view_emitter = self.view_emitter.clone();
         scoped_dispatch(ctx, name, move |name| async move {
             match name.as_str() {
                 TOOL_LIST_PAGES => handle_list_pages(&pool, args).await,
@@ -517,8 +533,15 @@ impl ToolRegistry for ReadOnlyTools {
                     // INSERT path with `SQLITE_READONLY`, so the create
                     // branch must stay on the writer pool. The other eight
                     // tools stay on the reader pool only.
-                    handle_journal_for_date(&pool, &writer_pool, &materializer, &device_id, args)
-                        .await
+                    handle_journal_for_date(
+                        &pool,
+                        &writer_pool,
+                        &materializer,
+                        &device_id,
+                        view_emitter.as_ref(),
+                        args,
+                    )
+                    .await
                 }
                 TOOL_LIST_SPACES => handle_list_spaces(&pool, args).await,
                 other => Err(unknown_tool_error(other)),
@@ -1220,6 +1243,7 @@ async fn handle_journal_for_date(
     write_pool: &SqlitePool,
     materializer: &Materializer,
     device_id: &str,
+    view_emitter: &dyn ViewChangeEmitter,
     args: Value,
 ) -> Result<Value, AppError> {
     let args: JournalForDateArgs = parse_args(TOOL_JOURNAL_FOR_DATE, args)?;
@@ -1234,21 +1258,30 @@ async fn handle_journal_for_date(
     // case-sensitively, so a lowercase ULID previously surfaced as a
     // spurious "space not found" on this one tool.
     let space_id = normalize_ulid_arg(&args.space_id);
+    let formatted = date.format("%Y-%m-%d").to_string();
 
     if within_journal_create_window(date) {
+        // #5314 — a page this call creates must reach open views, as every
+        // RW tool's write does. A lost race to another creator only costs an
+        // extra reload.
+        let existed = get_journal_page_by_date_inner(read_pool, &formatted, &space_id)
+            .await?
+            .is_some();
         // In-window: preserve the pre-#2719 behaviour exactly — lookup
         // or create, idempotent per (space_id, date), on the writer pool
         // (required for the create branch; the lookup branch tolerates
         // the writer pool fine too, it just doesn't need `query_only`).
         let resp =
             journal_for_date_inner(write_pool, device_id, materializer, date, &space_id).await?;
+        if !existed {
+            view_emitter.emit_blocks_changed(vec![resp.id.as_str().to_owned()]);
+        }
         return to_tool_result(&resp);
     }
 
     // #2719 — out-of-window: this tool may NEVER create here. Fall back
     // to a pure read on the reader pool: return the page if it already
     // exists, otherwise NotFound rather than creating one.
-    let formatted = date.format("%Y-%m-%d").to_string();
     match get_journal_page_by_date_inner(read_pool, &formatted, &space_id).await? {
         Some(row) => to_tool_result(&row),
         None => Err(AppError::NotFound(format!(
