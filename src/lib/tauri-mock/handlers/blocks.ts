@@ -47,6 +47,7 @@ import {
   pageAliases,
   properties,
   pushOp,
+  todayDate,
 } from '@/lib/tauri-mock/seed'
 
 // #3091 — depth at which the backend refuses to purge a subtree. The recursive
@@ -2268,7 +2269,8 @@ export const blocksHandlers = {
     // Prefer today's daily page as the parent so the captured block
     // shows up where the UI expects it.  Fall back to the supplied
     // spaceId if the daily page is missing for any reason.
-    const todayIso = new Date().toISOString().slice(0, 10)
+    // Local date, like the seed's daily page and the backend's `chrono::Local`.
+    const todayIso = todayDate()
     let parentId: string | null = null
     for (const b of blocks.values()) {
       if (b['block_type'] === 'page' && b['content'] === todayIso) {

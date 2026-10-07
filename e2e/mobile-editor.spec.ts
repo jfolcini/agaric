@@ -246,6 +246,19 @@ test.describe('Mobile editor (iPhone 13 viewport)', () => {
     await expect.poll(async () => liveEditorBlockId(page)).not.toBe(startId)
   })
 
+  // #5291 — the capture writes past the open journal's page store, which
+  // kept showing the pre-capture day until the user navigated away and back.
+  test('Quick capture shows the block on the open journal without navigating', async ({ page }) => {
+    const captured = 'call Bob about the lease'
+    await page.getByRole('button', { name: 'Quick capture' }).click()
+    await page.getByTestId('quick-capture-textarea').fill(captured)
+    await page.getByTestId('quick-capture-save').click()
+    await expect(page.getByText("Captured to today's journal")).toBeVisible()
+    await expect(
+      page.locator('[data-testid="block-static"]').filter({ hasText: captured }),
+    ).toBeVisible()
+  })
+
   /**
    * Regression: a code block used to freeze the editor PERMANENTLY on mobile.
    *
