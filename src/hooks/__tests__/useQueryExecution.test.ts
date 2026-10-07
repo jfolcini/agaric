@@ -15,6 +15,11 @@ import {
   useQueryExecution,
 } from '@/hooks/useQueryExecution'
 import type { AdvancedQueryResponse, PageResponse, QueryResultRow } from '@/lib/bindings'
+import {
+  _resetBlockPropertyEventsForTest,
+  recordBlockPropertyChange,
+} from '@/lib/block-property-events'
+import { recordGraphStructureChange } from '@/lib/graph-structure-events'
 import { i18n } from '@/lib/i18n'
 import { encodeInlineQueryPayload } from '@/lib/inline-query-spec'
 import { useSpaceStore } from '@/stores/space'
@@ -848,5 +853,42 @@ describe('useQueryExecution — structured (v2) inline queries', () => {
     expect(out.items).toHaveLength(1)
     expect(out.nextCursor).toBe('CURSOR')
     expect(out.hasMore).toBe(true)
+  })
+})
+
+// #5298 — a query block stays mounted while the blocks it matches change.
+describe('useQueryExecution refresh axes', () => {
+  beforeEach(() => {
+    _resetBlockPropertyEventsForTest()
+  })
+
+  function stubTagRows(content: () => string): void {
+    stubInvoke({
+      run_advanced_query: () =>
+        advancedPage([makeBlock({ id: 'B1', content: content(), parent_id: 'P1', page_id: 'P1' })]),
+      list_tags_by_prefix: () => [projectTag],
+      batch_resolve: () => [],
+    })
+  }
+
+  it.each([
+    ['the graph structure', recordGraphStructureChange],
+    ['a block property', recordBlockPropertyChange],
+  ])('re-runs the query in place when %s changes', async (_axis, record) => {
+    let content = 'before'
+    stubTagRows(() => content)
+    const { result } = renderHook(() => useQueryExecution({ expression: 'type:tag expr:project' }))
+    await waitFor(() => {
+      expect(result.current.results[0]?.content).toBe('before')
+    })
+
+    content = 'after'
+    act(() => {
+      record()
+    })
+
+    await waitFor(() => {
+      expect(result.current.results[0]?.content).toBe('after')
+    })
   })
 })
