@@ -337,6 +337,48 @@ describe('TrashView', () => {
     })
   })
 
+  it("purging a page drops its earlier-trashed blocks' rows too (#5297)", async () => {
+    const user = userEvent.setup()
+    const page = makeBlock({
+      id: 'P1',
+      block_type: 'page',
+      content: 'Page P',
+      deleted_at: 1736899300000,
+    })
+    const earlier = makeBlock({
+      id: 'B1',
+      content: 'block B',
+      parent_id: 'P1',
+      deleted_at: 1736899200000,
+    })
+    let purged = false
+    stubInvoke({
+      list_trash: () => ({
+        items: purged ? [] : [page, earlier],
+        next_cursor: null,
+        has_more: false,
+        total_count: null,
+      }),
+      batch_resolve: () => [],
+      purge_block: () => {
+        // The backend erases the whole subtree, whatever each row's deleted_at.
+        purged = true
+        return { block_id: 'P1', purged_count: 2 }
+      },
+      trash_descendant_counts: () => ({}),
+    })
+
+    render(<TrashView />)
+    expect(await screen.findByText('block B')).toBeInTheDocument()
+
+    await user.click(screen.getAllByRole('button', { name: /^Purge$/i })[0] as HTMLElement)
+    await user.click(screen.getByRole('button', { name: /Yes/i }))
+
+    await waitFor(() => {
+      expect(screen.queryByText('block B')).not.toBeInTheDocument()
+    })
+  })
+
   it('shows Load More button when has_more is true', async () => {
     mockListAndResolve(
       [makeBlock({ id: 'B1', content: 'item 1', deleted_at: 1736899200000 })],
