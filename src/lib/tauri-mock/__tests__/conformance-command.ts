@@ -165,6 +165,9 @@ const RETURN_SHAPE: Readonly<Record<string, ReturnShape>> = {
     attrs: ['block_type', 'content', 'parent_id', 'position'],
     lists: [],
   },
+  // #5281 — the renamed row; a rename onto a name its space already holds is
+  // refused, which only the command sees.
+  edit_block: { idKey: 'id', attrs: ['content'], lists: [] },
   move_blocks_batch: {
     idKey: 'block_id',
     attrs: ['new_parent_id', 'new_position'],

@@ -485,8 +485,10 @@ pub(crate) async fn edit_block_in_tx(
 
     let existing = existing
         .ok_or_else(|| AppError::NotFound(format!("block '{block_id}' (not found or deleted)")))?;
-    if existing.block_type == "page" {
-        reject_duplicate_page_title(tx, &block_id, &to_text).await?;
+    match existing.block_type.as_str() {
+        "page" => reject_duplicate_page_title(tx, &block_id, &to_text).await?,
+        "tag" => reject_duplicate_tag_name(tx, &block_id, &to_text).await?,
+        _ => {}
     }
     let block_type = existing.block_type;
     let parent_id = existing.parent_id;
@@ -611,6 +613,68 @@ async fn reject_duplicate_page_title(
             ValidationCode::DuplicatePageTitle,
             format!("a page titled '{to_text}' already exists in space '{space_id}'"),
         ));
+    }
+    Ok(())
+}
+
+/// #5281 — tag names are unique per space under `normalize_tag_name`, the
+/// identity `tags_cache` keeps ONE row per: a second live tag holding a name
+/// vanishes from every tag surface while its blocks keep the chip. Refused
+/// with [`ValidationCode::DuplicatePageTitle`] — a tag opens as a page, and
+/// its name is that page's title. The tag itself is excluded, as for pages.
+async fn reject_duplicate_tag_name(
+    conn: &mut sqlx::SqliteConnection,
+    tag_id: &str,
+    name: &str,
+) -> Result<(), AppError> {
+    let space_id = sqlx::query_scalar!(
+        r#"SELECT space_id as "space_id?: String" FROM blocks WHERE id = ?"#,
+        tag_id
+    )
+    .fetch_one(&mut *conn)
+    .await?;
+    let Some(space_id) = space_id else {
+        return Ok(());
+    };
+    let other_names = sqlx::query_scalar!(
+        r#"SELECT content AS "content!" FROM blocks
+           WHERE block_type = 'tag' AND deleted_at IS NULL AND content IS NOT NULL
+             AND space_id = ?1 AND id != ?2"#,
+        space_id,
+        tag_id
+    )
+    .fetch_all(&mut *conn)
+    .await?;
+    let norm = agaric_core::tag_norm::normalize_tag_name(name);
+    if other_names
+        .iter()
+        .any(|other| agaric_core::tag_norm::normalize_tag_name(other) == norm)
+    {
+        return Err(AppError::validation_coded(
+            ValidationCode::DuplicatePageTitle,
+            format!("a tag named '{name}' already exists in space '{space_id}'"),
+        ));
+    }
+    Ok(())
+}
+
+/// [`reject_duplicate_tag_name`] for every tag among `restored`, run after a
+/// restore's writes so two tags one batch revives see each other.
+async fn reject_restored_duplicate_tag_names(
+    conn: &mut sqlx::SqliteConnection,
+    restored: &[&String],
+) -> Result<(), AppError> {
+    let restored_json = serde_json::to_string(restored)?;
+    let restored_tags = sqlx::query!(
+        r#"SELECT b.id AS "id!", b.content AS "content!" FROM json_each(?1) je
+           JOIN blocks b ON b.id = je.value
+           WHERE b.block_type = 'tag' AND b.content IS NOT NULL"#,
+        restored_json
+    )
+    .fetch_all(&mut *conn)
+    .await?;
+    for tag in restored_tags {
+        reject_duplicate_tag_name(conn, &tag.id, &tag.content).await?;
     }
     Ok(())
 }
@@ -1588,6 +1652,7 @@ async fn dispatch_restore_fanout(
 ///
 /// - [`AppError::NotFound`] — block does not exist
 /// - [`AppError::InvalidOperation`] — block is not deleted, or `deleted_at` timestamp mismatch
+/// - [`AppError::Validation`] — a restored tag's name is held by another live tag of its space (#5281)
 #[instrument(skip(pool, device_id, materializer), err)]
 pub async fn restore_block_inner(
     pool: &SqlitePool,
@@ -1737,6 +1802,9 @@ pub async fn restore_block_inner(
     // P-4: Recompute inherited tags for restored subtree
     agaric_store::tag_inheritance::recompute_subtree_inheritance(&mut tx, &inheritance_root)
         .await?;
+
+    let restored: Vec<&String> = restore_cohort.iter().chain(&restored_chain.chain).collect();
+    reject_restored_duplicate_tag_names(&mut tx, &restored).await?;
 
     // #2042: pages_cache counts for the restored subtree's pages are recomputed
     // by the background `RebuildPagesCacheCounts` task (enqueued via
@@ -2507,6 +2575,7 @@ async fn dispatch_restore_batch_fanout(
 ///
 /// - [`AppError::Validation`] — empty input list, or > [`MAX_BATCH_BLOCK_IDS`](agaric_store::pagination::MAX_BATCH_BLOCK_IDS) entries
 /// - [`AppError::InvalidOperation`] — an input id names a block that is not soft-deleted
+/// - [`AppError::Validation`] — a restored tag's name is held by another live tag of its space (#5281)
 #[instrument(skip(pool, device_id, materializer), err)]
 pub async fn restore_blocks_by_ids_inner(
     pool: &SqlitePool,
@@ -2647,6 +2716,12 @@ pub async fn restore_blocks_by_ids_inner(
         agaric_store::tag_inheritance::recompute_subtree_inheritance(&mut tx, inheritance_root)
             .await?;
     }
+
+    let restored: Vec<&String> = restore_fanout
+        .iter()
+        .flat_map(|(_, cohort, chain)| cohort.iter().chain(chain))
+        .collect();
+    reject_restored_duplicate_tag_names(&mut tx, &restored).await?;
 
     // #2042: pages_cache counts for the restored subtrees' pages are recomputed
     // by the background `RebuildPagesCacheCounts` task (enqueued per root via

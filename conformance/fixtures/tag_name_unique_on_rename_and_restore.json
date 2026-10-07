@@ -1,0 +1,263 @@
+{
+  "description": "#5281 — the per-space tag-name rule of #5236 holds on rename and restore too: a second live tag under one normalized name is the one the tags cache drops, so it vanishes from the Tags view, the `#` picker, `tag:#` search and the tag filters while its blocks keep the chip. The ops make a space (`C1`) and three tags in it (`meeting` C2, `notes` C3, `standup` C4) through the commands, so each tag carries its space on both stacks. Renaming `notes` to `Meeting`, a case variant `normalize_tag_name` folds onto C2's name, is refused with `DuplicatePageTitle` and writes nothing. Once C2 is trashed its name is free, and the same rename (to `meeting`) goes through. Restoring C2 now would put two live `meeting` tags in the space, so the batch that lists it is refused whole: C4, listed beside it, stays in the trash too, and neither refusal appends an op.",
+  "expected": {
+    "block_tags": [],
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Work",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B1",
+        "page_id": "B1",
+        "parent_id": null,
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "tag",
+        "content": "meeting",
+        "deleted_at": "DELETED",
+        "due_date": null,
+        "id": "B2",
+        "page_id": "B2",
+        "parent_id": null,
+        "position": 2,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "tag",
+        "content": "meeting",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B3",
+        "page_id": "B3",
+        "parent_id": null,
+        "position": 3,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "tag",
+        "content": "standup",
+        "deleted_at": "DELETED",
+        "due_date": null,
+        "id": "B4",
+        "page_id": "B4",
+        "parent_id": null,
+        "position": 4,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      }
+    ],
+    "op_log_digest": {
+      "count": 11,
+      "ops": [
+        {
+          "op_type": "create_block"
+        },
+        {
+          "key": "is_space",
+          "op_type": "set_property"
+        },
+        {
+          "op_type": "create_block"
+        },
+        {
+          "key": "space",
+          "op_type": "set_property"
+        },
+        {
+          "op_type": "create_block"
+        },
+        {
+          "key": "space",
+          "op_type": "set_property"
+        },
+        {
+          "op_type": "create_block"
+        },
+        {
+          "key": "space",
+          "op_type": "set_property"
+        },
+        {
+          "op_type": "delete_block"
+        },
+        {
+          "op_type": "edit_block"
+        },
+        {
+          "op_type": "delete_block"
+        }
+      ]
+    },
+    "page_links": [],
+    "properties": [
+      {
+        "block_id": "B1",
+        "key": "is_space",
+        "value": "true",
+        "value_type": "Text"
+      }
+    ]
+  },
+  "expected_ops": [
+    {
+      "code": null,
+      "error": null,
+      "name": "a_space",
+      "returns": ["create_space#space_id=B1"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "the_meeting_tag",
+      "returns": ["B2#block_type=tag#content=meeting#parent_id=null#position=2"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "the_notes_tag",
+      "returns": ["B3#block_type=tag#content=notes#parent_id=null#position=3"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "the_standup_tag",
+      "returns": ["B4#block_type=tag#content=standup#parent_id=null#position=4"]
+    },
+    {
+      "code": "DuplicatePageTitle",
+      "error": "validation",
+      "name": "a_rename_onto_a_live_tags_name_is_refused",
+      "returns": []
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "a_trashed_tag_does_not_hold_its_name",
+      "returns": ["B3#content=meeting"]
+    },
+    {
+      "code": "DuplicatePageTitle",
+      "error": "validation",
+      "name": "a_restore_onto_a_held_name_restores_nothing",
+      "returns": []
+    }
+  ],
+  "name": "tag_name_unique_on_rename_and_restore",
+  "ops": [
+    {
+      "args": {
+        "accentColor": null,
+        "name": "Work"
+      },
+      "command": "create_space",
+      "comment": "The space every tag below lives in.",
+      "name": "a_space",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockType": "tag",
+        "content": "meeting",
+        "parentId": null,
+        "scope": {
+          "kind": "active",
+          "space_id": "C1"
+        }
+      },
+      "command": "create_block",
+      "comment": "The tag whose name the renames and the restore below run into.",
+      "name": "the_meeting_tag",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockType": "tag",
+        "content": "notes",
+        "parentId": null,
+        "scope": {
+          "kind": "active",
+          "space_id": "C1"
+        }
+      },
+      "command": "create_block",
+      "comment": "The tag that gets renamed.",
+      "name": "the_notes_tag",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockType": "tag",
+        "content": "standup",
+        "parentId": null,
+        "scope": {
+          "kind": "active",
+          "space_id": "C1"
+        }
+      },
+      "command": "create_block",
+      "comment": "A bystander for the batch restore: trashed, listed, and still trashed after the refusal.",
+      "name": "the_standup_tag",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockId": "C3",
+        "toText": "Meeting"
+      },
+      "command": "edit_block",
+      "comment": "A case variant of the live `meeting` in the same space: refused, so `notes` keeps its name in the snapshot and the digest holds no edit before the next one.",
+      "expect_code": "DuplicatePageTitle",
+      "expect_error": "validation",
+      "name": "a_rename_onto_a_live_tags_name_is_refused",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockId": "C2"
+      },
+      "command": "delete_block"
+    },
+    {
+      "args": {
+        "blockId": "C3",
+        "toText": "meeting"
+      },
+      "command": "edit_block",
+      "comment": "Only a LIVE tag holds its name: with `meeting` trashed, the rename goes through.",
+      "name": "a_trashed_tag_does_not_hold_its_name",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockId": "C4"
+      },
+      "command": "delete_block"
+    },
+    {
+      "args": {
+        "blockIds": ["C4", "C2"]
+      },
+      "command": "restore_blocks_by_ids",
+      "comment": "Reviving the trashed `meeting` would put a second live `meeting` beside the renamed tag. The batch is one transaction, so `standup` stays trashed with it and no `restore_block` op is appended.",
+      "expect_code": "DuplicatePageTitle",
+      "expect_error": "validation",
+      "name": "a_restore_onto_a_held_name_restores_nothing",
+      "via": "command"
+    }
+  ],
+  "seed": {
+    "blocks": [],
+    "properties": [],
+    "tags": []
+  }
+}

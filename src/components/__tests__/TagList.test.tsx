@@ -570,6 +570,57 @@ describe('TagList', () => {
       // editBlock should not have been called (only the initial list call)
       expect(mockedInvoke).toHaveBeenCalledTimes(1)
     })
+
+    // #5281 — tag identity is case-folded (`normalize_tag_name`), so a case
+    // variant of another tag's name is that name.
+    it('prevents renaming to a case variant of an existing tag name', async () => {
+      const user = userEvent.setup()
+      stubTags([makeTag('T1', 'first-tag'), makeTag('T2', 'Second-Tag')])
+
+      render(<TagList />)
+
+      const tag = await screen.findByText('first-tag')
+      await user.click(findRenameButton(tag.closest('li') as HTMLElement))
+      const input = await screen.findByDisplayValue('first-tag')
+      await user.clear(input)
+      await user.type(input, 'second-TAG')
+      await user.click(screen.getByRole('button', { name: /Save/i }))
+
+      await waitFor(() => {
+        expect(mockedToastError).toHaveBeenCalledWith(t('tags.duplicateName'))
+      })
+      expect(mockedInvoke).toHaveBeenCalledTimes(1)
+    })
+
+    // #5281 — the list can be stale; the backend's coded refusal names the
+    // clash instead of the generic failure.
+    it('shows the duplicate-name toast when the backend refuses the rename', async () => {
+      const user = userEvent.setup()
+      stubTags([makeTag('T1', 'first-tag')], {
+        edit_block: () =>
+          Promise.reject({
+            kind: 'validation',
+            code: 'DuplicatePageTitle',
+            message: "a tag named 'taken' already exists in space 'SPACE_TEST'",
+          }),
+      })
+
+      render(<TagList />)
+
+      const tag = await screen.findByText('first-tag')
+      await user.click(findRenameButton(tag.closest('li') as HTMLElement))
+      const input = await screen.findByDisplayValue('first-tag')
+      await user.clear(input)
+      await user.type(input, 'taken')
+      await user.click(screen.getByRole('button', { name: /Save/i }))
+
+      await waitFor(() => {
+        expect(mockedToastError).toHaveBeenCalledWith(t('tags.duplicateName'))
+      })
+      expect(mockedToastError).not.toHaveBeenCalledWith(
+        expect.stringContaining('Failed to rename tag'),
+      )
+    })
   })
 
   // UX #7: Clickable tag names
