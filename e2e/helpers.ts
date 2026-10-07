@@ -893,9 +893,23 @@ export async function reopenPage(page: Page, title: string) {
   await openPage(page, title)
 }
 
+/**
+ * Click into a static block's bottom-right padding (`px-3 py-1`) to enter edit
+ * mode. The box centre is a tag or page chip on a block like GS_4 once the
+ * reading width (#5332) narrows the box, and a chip click navigates instead.
+ * The browser places the caret from the click point as the editor mounts, so
+ * this corner leaves it at the end of the text, as a click past the end of a
+ * short line always did.
+ */
+async function clickIntoStaticBlock(block: Locator): Promise<void> {
+  const box = await block.boundingBox()
+  if (!box) throw new Error('clickIntoStaticBlock: the block has no layout box')
+  await block.click({ position: { x: box.width - 6, y: box.height - 2 } })
+}
+
 /** Click a block to enter edit mode and wait for the TipTap editor. */
 export async function focusBlock(page: Page, index = 0) {
-  await page.locator('[data-testid="block-static"]').nth(index).click()
+  await clickIntoStaticBlock(page.locator('[data-testid="block-static"]').nth(index))
   const editor = page.locator('[data-testid="block-editor"] [contenteditable="true"]')
   await expect(editor).toBeVisible()
   await editor.focus()
@@ -919,7 +933,9 @@ export async function focusBlock(page: Page, index = 0) {
  * triggers a blur+focus race that intermittently leaves no editor mounted.
  */
 export async function focusBlockById(page: Page, blockId: string) {
-  await page.locator(`[data-testid="block-static"][data-block-id="${blockId}"]`).click()
+  await clickIntoStaticBlock(
+    page.locator(`[data-testid="block-static"][data-block-id="${blockId}"]`),
+  )
   const editor = page.locator('[data-testid="block-editor"] [contenteditable="true"]')
   await expect(editor).toBeVisible()
   await editor.focus()
@@ -1011,50 +1027,39 @@ export async function saveBlock(page: Page, via: 'Enter' | 'Escape' = 'Enter') {
 }
 
 // ---------------------------------------------------------------------------
-// dnd-kit drag helpers — split by sensor (#926 f6).
+// dnd-kit drag helpers — split by sensor (#926 f6, #5332 item 10).
 //
-// The product wires ONE @dnd-kit PointerSensor whose activation constraint is
-// chosen at runtime by pointer coarseness (`src/components/block-tree/use-block-dnd.ts`):
+// The product picks its @dnd-kit sensor by pointer coarseness
+// (`src/components/block-tree/use-block-dnd.ts`):
 //
-//   - FINE pointer (mouse / desktop): `{ distance: 8 }` — the drag activates as
-//     soon as the pointer travels 8 px. There is NO time delay, so the desktop
-//     helper must NOT burn an artificial hold (the old single helper paid the
-//     touch sensor's 250 ms on every desktop drag for no reason).
-//   - COARSE pointer (touch / narrow): `{ delay: 250, tolerance: 5 }` — a
-//     press-and-hold so a drag doesn't fight scrolling. The touch helper holds
-//     still past 250 ms BEFORE moving so the sensor latches the drag.
-//
-// Both paths still drive @dnd-kit through Playwright's pointer stream
-// (`page.mouse`), which under a `hasTouch` context emits the pointer events the
-// PointerSensor listens to. (@dnd-kit does NOT consume raw `touchstart` — those
-// belong to the product's own long-press / swipe React handlers, exercised via
-// `touchGesture` below, not these drag helpers.)
+//   - FINE pointer (mouse / desktop): a PointerSensor with `{ distance: 8 }` on
+//     the gutter grip — the drag activates as soon as the pointer travels 8 px,
+//     with no time delay, so the desktop helper burns no artificial hold.
+//   - COARSE pointer (touch): a TouchSensor with `{ delay: 400, tolerance: 5 }`
+//     on the WHOLE block row — hold still past 400 ms, then move. It listens to
+//     touch events, not the pointer stream, so the touch helper dispatches real
+//     touches through Chromium's own input pipeline (CDP `Input.dispatchTouchEvent`,
+//     see `withTouch` below), never `page.mouse`.
 // ---------------------------------------------------------------------------
 
-// Coarse-pointer PointerSensor delay (250 ms) + headroom; the touch drag must
-// out-wait it before moving. Do not lower without checking the sensor config.
-const DND_TOUCH_HOLD_MS = 350
-
 interface PointerDragOptions {
-  /** Hold still after pointerdown before moving (touch sensor delay). */
-  holdMs?: number
   /** Final horizontal pixel delta from source X (indent/dedent projection). */
   offsetX?: number
 }
 
 /**
- * Shared pointer-drag primitive backing both the desktop and touch helpers.
+ * Shared pointer-drag primitive backing the desktop helpers.
  *
- * Sequence: move to source center → pointerdown → (optional hold) → step
- * vertically to the target row → (optional) step horizontally for the
- * indent/dedent offset → settle → pointerup. Small inter-step pauses let
- * @dnd-kit's collision detection observe each new position.
+ * Sequence: move to source center → pointerdown → step vertically to the
+ * target row → (optional) step horizontally for the indent/dedent offset →
+ * settle → pointerup. Small inter-step pauses let @dnd-kit's collision
+ * detection observe each new position.
  */
 async function performPointerDrag(
   page: Page,
   source: Locator,
   target: Locator,
-  { holdMs = 0, offsetX = 0 }: PointerDragOptions = {},
+  { offsetX = 0 }: PointerDragOptions = {},
 ): Promise<void> {
   const sourceBox = await source.boundingBox()
   const targetBox = await target.boundingBox()
@@ -1067,11 +1072,6 @@ async function performPointerDrag(
 
   await page.mouse.move(sx, sy)
   await page.mouse.down()
-
-  // Touch path: hold still past the 250 ms press-and-hold activation delay.
-  // Desktop path (holdMs 0): the `{ distance: 8 }` sensor latches on movement
-  // alone, so we skip straight to the move.
-  if (holdMs > 0) await page.waitForTimeout(holdMs)
 
   const steps = 20
   // Phase 1 — vertical travel to the target row (no horizontal drift so the
@@ -1106,26 +1106,107 @@ export async function dragBlock(page: Page, source: Locator, target: Locator): P
   await performPointerDrag(page, source, target)
 }
 
+// ---------------------------------------------------------------------------
+// Real touches (#5332 item 10).
+//
+// One hold on a block row serves both the TouchSensor drag and the long-press
+// menu (`useBlockTouchLongPress`): hold 400 ms, then move to drag or lift to
+// open the menu. Both listen to touch events, so these helpers drive Chromium's
+// own touch pipeline through CDP — the sensor's target-bound listeners, React's
+// `onTouch*`, the compat mouse events and the native long-press all run as on a
+// device. Coordinates are viewport CSS pixels. Needs a `hasTouch` context.
+// ---------------------------------------------------------------------------
+
+// The 400 ms hold (`LONG_PRESS_DELAY`) + headroom: a touch drag or a menu press
+// must out-wait it before moving or lifting. Do not lower without checking it.
+const TOUCH_HOLD_MS = 550
+
+interface TouchPipeline {
+  start: (x: number, y: number) => Promise<void>
+  move: (x: number, y: number) => Promise<void>
+  end: () => Promise<void>
+}
+
+async function withTouch(page: Page, run: (touch: TouchPipeline) => Promise<void>): Promise<void> {
+  const cdp = await page.context().newCDPSession(page)
+  const dispatch = async (
+    type: 'touchStart' | 'touchMove' | 'touchEnd',
+    x?: number,
+    y?: number,
+  ): Promise<void> => {
+    await cdp.send('Input.dispatchTouchEvent', {
+      type,
+      touchPoints: x === undefined || y === undefined ? [] : [{ x, y }],
+    })
+  }
+  try {
+    await run({
+      start: (x, y) => dispatch('touchStart', x, y),
+      move: (x, y) => dispatch('touchMove', x, y),
+      end: () => dispatch('touchEnd'),
+    })
+  } finally {
+    await cdp.detach()
+  }
+}
+
+async function centerOf(locator: Locator, what: string): Promise<{ x: number; y: number }> {
+  const box = await locator.boundingBox()
+  if (!box) throw new Error(`${what}: no bounding box`)
+  return { x: box.x + box.width / 2, y: box.y + box.height / 2 }
+}
+
 /**
- * TOUCH drag (#926 f6) — press-and-hold past the 250 ms coarse-pointer delay,
- * then move. Use under a `hasTouch` / coarse-pointer context (the product
- * picks the press-and-hold sensor there). Vertical-only by default.
+ * TOUCH drag — hold `source` past the 400 ms delay, then move onto `target`.
+ * `source` is any point on the block row (the row is the activator), e.g. its
+ * `block-static` text. Vertical-only: no horizontal drift, so the projected
+ * depth stays put.
  */
 export async function dragBlockTouch(page: Page, source: Locator, target: Locator): Promise<void> {
-  await performPointerDrag(page, source, target, { holdMs: DND_TOUCH_HOLD_MS })
+  const from = await centerOf(source, 'dragBlockTouch source')
+  const to = await centerOf(target, 'dragBlockTouch target')
+  await withTouch(page, async (touch) => {
+    await touch.start(from.x, from.y)
+    await page.waitForTimeout(TOUCH_HOLD_MS)
+    const steps = 20
+    for (let i = 1; i <= steps; i++) {
+      await touch.move(from.x, from.y + (to.y - from.y) * (i / steps))
+      if (i % 5 === 0) await page.waitForTimeout(50)
+    }
+    // Settle so @dnd-kit processes the final "over" state before release.
+    await page.waitForTimeout(150)
+    await touch.end()
+  })
+}
+
+/**
+ * Hold the center of `selector` past the 400 ms delay and lift WITHOUT moving,
+ * so the row's hold opens the BlockContextMenu on release (a touch inside the
+ * mounted editor opens nothing: the native selection owns it). The press point
+ * doubles as the menu's anchor and is returned so callers can assert it.
+ */
+export async function touchLongPress(
+  page: Page,
+  selector: string,
+  holdMs = TOUCH_HOLD_MS,
+): Promise<{ x: number; y: number }> {
+  const point = await centerOf(page.locator(selector).first(), `touchLongPress ${selector}`)
+  await withTouch(page, async (touch) => {
+    await touch.start(point.x, point.y)
+    await page.waitForTimeout(holdMs)
+    await touch.end()
+  })
+  return point
 }
 
 // ---------------------------------------------------------------------------
-// Raw TouchEvent dispatch for the product's React touch handlers (#927 / #926).
+// Raw TouchEvent dispatch for the swipe recognizer (#927).
 //
-// The block row's long-press → context-menu (`useBlockTouchLongPress`) and
-// swipe gestures (`useBlockSwipeActions`) bind to React `onTouchStart` /
-// `onTouchMove` / `onTouchEnd`. Those are NOT pointer events — Playwright's
-// `page.mouse` / `page.touchscreen` stream won't drive them. We instead build
-// real `Touch` + `TouchEvent` objects in the page and dispatch them on the
-// target element; React's delegated listener at the document root picks them
-// up like a genuine finger. (@dnd-kit's PointerSensor is unaffected — it
-// listens for pointer events, so these touch streams don't trip a drag.)
+// `useBlockSwipeActions` binds to React `onTouchStart` / `onTouchMove` /
+// `onTouchEnd`. We build real `Touch` + `TouchEvent` objects in the page and
+// dispatch them on the target element; React's delegated listener at the
+// document root picks them up like a genuine finger. The row's TouchSensor
+// sees them too, and cancels its pending drag on the first move past 5 px.
 //
 // `selector` must resolve to a single element in the page (e.g. a
 // `data-testid`/`data-block-id` query). Coordinates are viewport CSS pixels.
@@ -1165,30 +1246,6 @@ async function dispatchTouch(
     },
     { selector, type, x, y },
   )
-}
-
-/**
- * Long-press the center of `selector` and hold past the 400 ms recognition
- * delay (`LONG_PRESS_DELAY`) WITHOUT moving, so `useBlockTouchLongPress` opens
- * the BlockContextMenu. The press point doubles as the menu's anchor.
- *
- * Returns the press coordinates so callers can assert anchor placement.
- */
-export async function touchLongPress(
-  page: Page,
-  selector: string,
-  holdMs = 550,
-): Promise<{ x: number; y: number }> {
-  const box = await page.locator(selector).first().boundingBox()
-  if (!box) throw new Error(`touchLongPress: no bounding box for ${selector}`)
-  const x = box.x + box.width / 2
-  const y = box.y + box.height / 2
-  await dispatchTouch(page, selector, 'touchstart', x, y)
-  // Hold still past the 400 ms long-press threshold. No touchmove is sent, so
-  // the move-cancel guard never trips.
-  await page.waitForTimeout(holdMs)
-  await dispatchTouch(page, selector, 'touchend', x, y)
-  return { x, y }
 }
 
 /**

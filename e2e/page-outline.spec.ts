@@ -35,7 +35,10 @@ test('the outline brings a heading far down a long page into view', async ({ pag
   await page.locator('[cmdk-input]').first().fill(TITLE)
   await page.locator('[cmdk-item]').filter({ hasText: TITLE }).first().click()
   await expect(page.locator('[aria-label="Page title"]')).toHaveText(TITLE)
-  await page.locator('[data-testid="block-static"]').nth(10).waitFor()
+  // The new page's tree has rendered. Not `nth(10)`: only the rows that fit
+  // the viewport hydrate, and at the reading width (#5332) a wrapped row is
+  // three lines, so nine rows fill 720px.
+  await page.locator('[data-testid="block-static"]').filter({ hasText: 'Heading 0' }).waitFor()
 
   await page.getByRole('button', { name: 'Open outline' }).click()
   await page.getByRole('button', { name: 'Heading 450', exact: true }).click()

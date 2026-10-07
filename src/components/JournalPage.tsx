@@ -222,8 +222,14 @@ export function JournalPage({
           skeleton) so the selected tab's `aria-controls` reference never
           dangles mid-load (axe aria-valid-attr-value). No `tabIndex` on the
           panel itself: it always contains focusable content, so a panel tab
-          stop would be a redundant/confusing extra stop. */}
-      <div role="tabpanel" id={journalPanelId(mode)} aria-labelledby={journalTabId(mode)}>
+          stop would be a redundant/confusing extra stop. The month grid is a
+          calendar, not text, so it keeps the full width. */}
+      <div
+        role="tabpanel"
+        id={journalPanelId(mode)}
+        aria-labelledby={journalTabId(mode)}
+        className={mode === 'monthly' ? undefined : 'max-w-reading'}
+      >
         {/* Loading indicator on initial fetch */}
         {loading && (
           <LoadingSkeleton count={3} height="h-10" loading data-testid="loading-skeleton" />

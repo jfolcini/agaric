@@ -145,18 +145,21 @@ describe('#216 B — drag handle a11y (BlockGutterControls)', () => {
     expect(handle.getAttribute('aria-label')?.length ?? 0).toBeGreaterThan(0)
   })
 
-  // #1968: on touch the drag activator moved off the gutter onto the leading
-  // chevron / leaf bullet (BlockCollapseControl). It still exposes the reorder
-  // keyshortcuts so AT users can move blocks without the gesture.
-  it('exposes aria-keyshortcuts on the touch drag activator (BlockCollapseControl)', () => {
+  // #5332 item 10: on touch there is no drag handle — the row itself is the
+  // activator — so the reorder shortcut is announced by the context menu's
+  // Move items. The chevron keeps the collapse shortcut; a leaf has no control.
+  it('on touch the chevron exposes the collapse shortcut and a leaf exposes no control', () => {
     setCoarse(true)
-    renderWithTooltip(
+    const { unmount } = renderWithTooltip(
+      <BlockCollapseControl blockId="b1" hasChildren isCollapsed={false} isTouch />,
+    )
+    expect(screen.queryByTestId('drag-handle')).not.toBeInTheDocument()
+    expect(screen.getByTestId('collapse-toggle')).toHaveAttribute('aria-keyshortcuts', 'Control+.')
+    unmount()
+    const { container } = renderWithTooltip(
       <BlockCollapseControl blockId="b1" hasChildren={false} isCollapsed={false} isTouch />,
     )
-    expect(screen.getByTestId('drag-handle')).toHaveAttribute(
-      'aria-keyshortcuts',
-      'Control+Shift+ArrowUp Control+Shift+ArrowDown',
-    )
+    expect(container).toBeEmptyDOMElement()
   })
 })
 

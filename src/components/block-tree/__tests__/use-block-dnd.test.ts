@@ -12,7 +12,7 @@
  * - handleDragCancel resets all DnD state
  * - activeDescendants memo excludes descendants from visibleItems
  * - projected memo calls getProjection when activeId and overId are set
- * - sensors are configured with PointerSensor and KeyboardSensor
+ * - sensors: PointerSensor (fine) / TouchSensor (coarse) + KeyboardSensor
  */
 
 import { act, renderHook } from '@testing-library/react'
@@ -22,6 +22,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 vi.mock('@dnd-kit/core', () => ({
   PointerSensor: 'PointerSensor',
+  TouchSensor: 'TouchSensor',
   KeyboardSensor: 'KeyboardSensor',
   useSensor: vi.fn((sensor: unknown, opts?: unknown) => ({ sensor, opts })),
   useSensors: vi.fn((...args: unknown[]) => args),
@@ -179,12 +180,22 @@ function makeDragOverEvent(overId: string | null) {
   return { over: overId ? { id: overId } : null } as { over: { id: string } | null }
 }
 
-/** Create a minimal DragEndEvent-like object. */
-function makeDragEndEvent(activeId: string, overId: string | null) {
+/**
+ * Create a minimal DragEndEvent-like object. Defaults to a mouse drop that
+ * travelled nowhere; `touch` makes it a TouchSensor drop with the given
+ * finger travel (px), the shape of a hold-and-release on a block row.
+ */
+function makeDragEndEvent(
+  activeId: string,
+  overId: string | null,
+  touch?: { x?: number; y?: number },
+) {
   return {
     active: { id: activeId },
     over: overId ? { id: overId } : null,
-  } as { active: { id: string }; over: { id: string } | null }
+    activatorEvent: { type: touch ? 'touchstart' : 'pointerdown' },
+    delta: { x: touch?.x ?? 0, y: touch?.y ?? 0 },
+  }
 }
 
 // ── Tests ────────────────────────────────────────────────────────────────
@@ -784,6 +795,58 @@ describe('useBlockDnD', () => {
       expect(params.setFocused).toHaveBeenLastCalledWith('B')
     })
 
+    // A still touch hold-and-release opens the block menu on `touchend`
+    // (SortableBlock); refocusing the editor under it would pull focus out of
+    // the menu and pop the keyboard.
+    it('does NOT restore the pre-drag focus for a still touch hold-and-release', () => {
+      const params = makeDefaultParams({ rovingEditor: { activeBlockId: 'A' } })
+      const { result } = renderHook(() => useBlockDnD(params))
+
+      act(() => {
+        result.current.handleDragStart(makeDragStartEvent('B') as never)
+      })
+      expect(params.setFocused).toHaveBeenLastCalledWith(null)
+      act(() => {
+        result.current.handleDragEnd(makeDragEndEvent('B', 'B', { y: 3 }) as never)
+      })
+
+      expect(params.reorder).not.toHaveBeenCalled()
+      expect(params.setFocused).toHaveBeenCalledOnce()
+      expect(params.setFocused).toHaveBeenLastCalledWith(null)
+    })
+
+    // "Still" is measured per axis, as the sensor's tolerance is: a (4, 4)
+    // release is within it even though its radius is not.
+    it('treats a diagonal (4, 4) touch release as still (per-axis, like the sensor)', () => {
+      const params = makeDefaultParams({ rovingEditor: { activeBlockId: 'A' } })
+      const { result } = renderHook(() => useBlockDnD(params))
+
+      act(() => {
+        result.current.handleDragStart(makeDragStartEvent('B') as never)
+      })
+      act(() => {
+        result.current.handleDragEnd(makeDragEndEvent('B', 'B', { x: 4, y: 4 }) as never)
+      })
+
+      expect(params.setFocused).toHaveBeenCalledOnce()
+      expect(params.setFocused).toHaveBeenLastCalledWith(null)
+    })
+
+    it('restores the pre-drag focus when a touch drag moved past the tolerance before releasing over itself', () => {
+      const params = makeDefaultParams({ rovingEditor: { activeBlockId: 'A' } })
+      const { result } = renderHook(() => useBlockDnD(params))
+
+      act(() => {
+        result.current.handleDragStart(makeDragStartEvent('B') as never)
+      })
+      act(() => {
+        result.current.handleDragEnd(makeDragEndEvent('B', 'B', { y: 8 }) as never)
+      })
+
+      expect(params.reorder).not.toHaveBeenCalled()
+      expect(params.setFocused).toHaveBeenLastCalledWith('A')
+    })
+
     it('does not set any focus on an over-self drop when nothing was focused pre-drag', () => {
       const params = makeDefaultParams({ rovingEditor: { activeBlockId: null } })
       const { result } = renderHook(() => useBlockDnD(params))
@@ -1098,7 +1161,11 @@ describe('useBlockDnD', () => {
       expect(sensors[1]?.opts).toHaveProperty('coordinateGetter')
     })
 
-    it('configures PointerSensor with delay constraint on touch (coarse pointer)', () => {
+    // The whole row is the touch activator, which the PointerSensor cannot
+    // carry: it only survives the browser's scroll takeover under
+    // `touch-action: none`. The TouchSensor shares the long-press hook's hold
+    // and drift, so the hold, the menu and the drag are one gesture.
+    it('configures TouchSensor with the 400 ms hold / 5 px tolerance on touch (coarse pointer)', () => {
       mockedUseIsTouch.mockReturnValue(true)
       const params = makeDefaultParams()
       const { result } = renderHook(() => useBlockDnD(params))
@@ -1107,10 +1174,9 @@ describe('useBlockDnD', () => {
 
       expect(sensors).toHaveLength(2)
 
-      // First sensor: PointerSensor with delay-only (long press to drag)
-      expect(sensors[0]?.sensor).toBe('PointerSensor')
+      expect(sensors[0]?.sensor).toBe('TouchSensor')
       expect(sensors[0]?.opts).toEqual({
-        activationConstraint: { delay: 250, tolerance: 5 },
+        activationConstraint: { delay: 400, tolerance: 5 },
       })
 
       // Second sensor: KeyboardSensor (unchanged)
@@ -1119,8 +1185,8 @@ describe('useBlockDnD', () => {
     })
 
     // ── #926 f4: a touch drag projects DEPTH (indent/dedent) for free ──
-    // The drag is a full @dnd-kit drag on touch (same PointerSensor, only the
-    // activation constraint differs). `handleDragMove`'s horizontal `delta.x`
+    // The drag is a full @dnd-kit drag on touch (the TouchSensor feeds the
+    // same handlers). `handleDragMove`'s horizontal `delta.x`
     // feeds `getProjection`'s offsetLeft on EVERY pointer type, so a coarse
     // pointer changing nesting is the same code path as a mouse — assert it
     // here so a future touch-only branch can't regress depth projection.

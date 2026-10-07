@@ -356,7 +356,7 @@ function PageEditorInner({
   return (
     <div
       ref={pageRef}
-      className="page-editor flex flex-col gap-3 min-w-0"
+      className="page-editor flex flex-col gap-3 min-w-0 max-w-reading"
       onPointerDown={handleBackgroundMouseDown}
     >
       {/* Header: back button + editable title + tag badges */}

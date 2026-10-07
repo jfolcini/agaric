@@ -62,7 +62,8 @@ Markdown shortcuts trigger as you type (`#`, `##`, ``` ` ```, `**bold**`, `_ital
 | Cycle task state | `Ctrl+Enter` |
 | Multi-select adjacent blocks | `Shift+Click`, `Ctrl+Click`, `Ctrl+A` (within page) |
 | Delete block | Toolbar → *Delete*, or `Ctrl+Backspace` on an empty block |
-| Drag to reorder | Drag the gutter handle |
+| Drag to reorder | Drag the gutter handle; on touch, hold a block, then drag it |
+| Block menu (touch) | Hold a block and let go |
 | Swipe-to-delete (touch) | Swipe left on a block |
 | Zoom into a block | `Alt+.`, toolbar → Zoom, or click the block-zoom breadcrumb (`Escape` zooms out) |
 
@@ -70,7 +71,7 @@ Markdown shortcuts trigger as you type (`#`, `##`, ``` ` ```, `**bold**`, `_ital
 
 ## Drag and drop
 
-Drag-handle on the left gutter (or anywhere with a long-press on touch). The drop indicator shows the projected nesting depth — horizontal offset during drag determines whether you're moving the block as a sibling, a child, or to an outer level. Offscreen blocks become zero-height placeholders to preserve scroll position. Auto-scroll engages when dragging near the top or bottom of the viewport.
+Drag-handle on the left gutter. On touch there is no handle: hold anywhere on a block for 400 ms (it lifts), then drag it; let go without moving and its menu opens instead. A parent's collapse chevron sits at the right end of its row there. The drop indicator shows the projected nesting depth — horizontal offset during drag determines whether you're moving the block as a sibling, a child, or to an outer level. Offscreen blocks become zero-height placeholders to preserve scroll position. Auto-scroll engages when dragging near the top or bottom of the viewport.
 
 You cannot drop a block into its own subtree.
 

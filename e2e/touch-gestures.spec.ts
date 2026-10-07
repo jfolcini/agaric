@@ -1,23 +1,23 @@
 /**
- * E2E — touch gestures on block rows (#927 f2).
+ * E2E — touch gestures on block rows (#927 f2, #5332 item 10).
  *
  * Runs under an iPhone-class coarse-pointer + touch context so the product's
  * touch-only surfaces and gesture hooks are live:
  *
- *   (a) long-press → BlockContextMenu. Zoom in is available for any block, and
- *       the structural ops (Indent / Dedent / Move) live behind the
- *       "Move & arrange" disclosure — `useBlockTouchLongPress`.
+ *   (a) hold a block and let go → BlockContextMenu. Zoom in is available for
+ *       any block, and the structural ops (Indent / Dedent / Move) live behind
+ *       the "Move & arrange" disclosure — `useBlockTouchLongPress`.
  *   (b) zoom into a block via the context-menu "Zoom in" item (the inline zoom
  *       bullet was removed 2026-06-20; zoom is menu-only now).
  *   (c) swipe-left-to-delete past the 200 px auto-delete threshold fires the
  *       delete + the Gmail-style "Undo" toast — `useBlockSwipeActions` +
  *       `SortableBlock`'s `handleSwipeDelete`.
  *   (d) History and Delete (moved off the gutter, 2026-06-20) are reachable
- *       from the long-press context menu.
+ *       from the hold-and-release context menu.
  *
- * Gestures are driven via real `TouchEvent`s (`touchLongPress` / `touchSwipe`
- * in helpers) because these handlers bind to React `onTouch*`, not the pointer
- * stream that @dnd-kit consumes.
+ * The hold is a real touch through CDP (`touchLongPress` in helpers) because
+ * the row's TouchSensor shares it; the swipe is dispatched as `TouchEvent`s
+ * (`touchSwipe`) straight to the React `onTouch*` handlers.
  */
 
 import { devices } from '@playwright/test'
@@ -59,11 +59,11 @@ test.describe('Touch gestures (iPhone viewport)', () => {
     await openPageMobile(page, PAGE)
   })
 
-  // (a) — long-press opens the menu. Zoom in is available for any block, and
+  // (a) — a hold released without moving opens the menu. Zoom in is available for any block, and
   // the structural ops live behind the "Move & arrange" disclosure. We expand
   // that disclosure to reach Indent and drive it (nesting GS_2 under GS_1) via
   // a pure touch path.
-  test('long-press opens BlockContextMenu with Zoom + Move & arrange (Indent/Dedent/Move)', async ({
+  test('hold-and-release opens BlockContextMenu with Zoom + Move & arrange (Indent/Dedent/Move)', async ({
     page,
   }) => {
     const ids = await blockIds(page)
@@ -72,7 +72,7 @@ test.describe('Touch gestures (iPhone viewport)', () => {
 
     // Scope to the ACTIVE (last-mounted) menu. The BlockContextMenu unmounts
     // via a fade/zoom animation, so when one menu is dismissed and the next is
-    // long-pressed open the two portals can briefly coexist — a root-level
+    // held open the two portals can briefly coexist — a root-level
     // `getByRole('menu')` then trips strict-mode ("resolved to 2 elements").
     // `.last()` always picks the freshly-opened menu (mirrors the `activeMenu`
     // helper in helpers.ts).
@@ -97,7 +97,7 @@ test.describe('Touch gestures (iPhone viewport)', () => {
     await page.keyboard.press('Escape')
     await expect(page.getByRole('menu', { name: 'Block actions' })).toHaveCount(0)
 
-    // Make GS_1 a parent: long-press GS_2 → Move & arrange → Indent (nests it).
+    // Make GS_1 a parent: hold GS_2 → Move & arrange → Indent (nests it).
     await touchLongPress(page, `[data-testid="block-static"][data-block-id="${gs2}"]`)
     menu = activeMenu()
     await expect(menu).toBeVisible()
@@ -150,8 +150,8 @@ test.describe('Touch gestures (iPhone viewport)', () => {
   })
 
   // (d) — History and Delete moved off the gutter (2026-06-20) into the
-  // long-press context menu. Assert both are reachable there on touch.
-  test('long-press menu surfaces History and Delete', async ({ page }) => {
+  // context menu. Assert both are reachable there on touch.
+  test('hold-and-release menu surfaces History and Delete', async ({ page }) => {
     const ids = await blockIds(page)
     const gs1 = ids[0] as string
     const activeMenu = () => page.getByRole('menu', { name: 'Block actions' }).last()

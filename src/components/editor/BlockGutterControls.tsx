@@ -233,10 +233,9 @@ export const BlockGutterControls = React.memo(
     )
 
     // ── Touch render — checkbox only ────────────────────────────────
-    // #1968: the touch drag handle is gone. The drag activator now lives on the
-    // leading collapse chevron (or, on leaves, a small bullet) — see
-    // `BlockCollapseControl`. So on touch this gutter renders ONLY the
-    // selection checkbox, and only while a multi-selection is active.
+    // The row itself is the touch drag activator (hold, then move — see
+    // `SortableBlock`), so on touch this renders ONLY the selection checkbox,
+    // and only while a multi-selection is active.
     if (isTouch) {
       return selectCheckbox ? (
         <div className="flex flex-col items-end gap-1">{selectCheckbox}</div>

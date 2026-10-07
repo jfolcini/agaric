@@ -17,7 +17,6 @@ export const block: Record<string, string> = {
   'block.taskState.cancelled': 'Cancelled',
   'block.reorder': 'Reorder block (drag or use keyboard)',
   'block.reorderTip': 'Reorder — Ctrl+Shift+↑/↓',
-  'block.reorderTouchHint': 'Press and hold to drag',
   'block.reorderKeyshortcuts': 'Control+Shift+ArrowUp Control+Shift+ArrowDown',
   'block.swipeRowDescription': 'Swipe left to delete this block',
   // B1 (#217): hover-revealed multi-select checkbox affordance.

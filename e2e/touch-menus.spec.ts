@@ -13,16 +13,14 @@
  *
  *   2. External-link LONG-PRESS context menu. The right-click path is covered by
  *      `external-link-context-menu.spec.ts`; this is the TOUCH long-press path.
- *      `useBlockTouchLongPress.handleTouchStart` reads `e.target.closest('.external-link')`
- *      at the 400 ms (`LONG_PRESS_DELAY`) mark and forwards its href as `linkUrl`,
- *      so `BlockContextMenu` surfaces the link-aware "Open link" / "Copy URL"
- *      items (only rendered when `linkUrl` is present).
+ *      `useBlockTouchLongPress` resolves `e.target.closest('.external-link')`
+ *      of the press and forwards its href as `linkUrl` when the hold is
+ *      released, so `BlockContextMenu` surfaces the link-aware "Open link" /
+ *      "Copy URL" items (only rendered when `linkUrl` is present).
  *
- * Touch gestures are driven via real `TouchEvent`s (`touchLongPress` in helpers)
- * because the long-press hook binds to React `onTouch*`, not the pointer stream.
- * `touchLongPress` defaults to a 550 ms hold — comfortably past the hook's
- * 400 ms `LONG_PRESS_DELAY` (see `src/components/block-tree/use-block-touch-long-press.ts` +
- * `src/components/block-tree/__tests__/use-block-touch-long-press.test.ts`); that is the SAME hold
+ * The hold is a real touch through CDP (`touchLongPress` in helpers): hold
+ * 550 ms — past the 400 ms `LONG_PRESS_DELAY` the row's drag sensor shares —
+ * then lift without moving, which is what opens the menu. The SAME hold
  * `touch-gestures.spec.ts` / `block-dnd-touch.spec.ts` rely on, so we inherit
  * the proven timing rather than invent our own.
  *
