@@ -267,7 +267,11 @@ describe('dropOtherSpacesTagChips', () => {
   })
 
   it('returns the chips unchanged when the space tags cannot be listed', async () => {
-    vi.mocked(invoke).mockRejectedValue(new Error('backend down'))
+    vi.mocked(invoke).mockImplementation(
+      mockInvokeCommands({
+        list_all_tags_in_space: () => Promise.reject(new Error('backend down')),
+      }),
+    )
 
     expect(await dropOtherSpacesTagChips(chips, 'SPACE_A')).toEqual(chips)
   })

@@ -40,3 +40,7 @@ built while #5319 (#5286) waited on CI.
   pass. `saved-pages-views.test.ts` and the PageBrowser suite pass after the
   helper moved, 40 tests.
 - `npm run typecheck` and type-aware oxlint pass.
+- CI's hand-stub ratchet failed the first push. The helper's rejection test
+  handed `vi.mocked(invoke)` a literal. It now stubs through
+  `mockInvokeCommands`. The ratchet passes, and the same mutation still turns
+  the test red.
