@@ -273,9 +273,8 @@ function SpaceManageDialogBody({ open }: { open: boolean }): React.JSX.Element {
   //  - present value = resolved successful fetch result
   //
   // Errors deliberately do *not* poison the cache: the key is removed
-  // from the in-flight set so the next render (e.g. after a re-open)
-  // Retries — same observable behaviour as the pre-existing row-local
-  // probes that re-fired on every mount.
+  // from the in-flight set so the next `availableSpaces` change retries
+  // it. A reopen is a fresh mount and probes every space anyway.
   const [emptinessBySpace, setEmptinessBySpace] = useState<Record<string, boolean>>({})
   const [journalTemplateBySpace, setJournalTemplateBySpace] = useState<Record<string, string>>({})
   const emptinessFetchedRef = useRef<Set<string>>(new Set())
@@ -335,10 +334,8 @@ function SpaceManageDialogBody({ open }: { open: boolean }): React.JSX.Element {
             // So `items.length === 0` correctly reflects emptiness.
             setEmptinessBySpace((prev) => ({ ...prev, [id]: result.items.length === 0 }))
           } catch (err) {
-            // On error, allow a retry on the next render so the user
-            // can recover by reopening the dialog. Delete stays
-            // disabled until a probe succeeds.
-            if (mountedRef.current) emptinessFetchedRef.current.delete(id)
+            // Delete stays disabled until a probe succeeds.
+            emptinessFetchedRef.current.delete(id)
             logger.warn(LOG_MODULE, 'failed to probe space emptiness', { spaceId: id }, err)
           }
         })()
@@ -368,9 +365,7 @@ function SpaceManageDialogBody({ open }: { open: boolean }): React.JSX.Element {
             return next
           })
         } catch (err) {
-          if (mountedRef.current) {
-            for (const id of journalIdsToFetch) journalTemplateFetchedRef.current.delete(id)
-          }
+          for (const id of journalIdsToFetch) journalTemplateFetchedRef.current.delete(id)
           logger.warn(
             LOG_MODULE,
             'failed to load journal template properties',
