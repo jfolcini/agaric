@@ -1183,6 +1183,18 @@ export function BlockTree({
     // window, which is what gates `handleDiscard`'s own auto-delete.
     justCreatedBlockIds.current.delete(prevId)
 
+    // #5278 — a reload kept this block's old text while it held focus. Left
+    // with nothing typed, show the synced text before the next edit mounts the
+    // old one. The store's copy is stale, so it can't judge emptiness either.
+    const stale = pageStore.getState().staleFocusedBlock
+    if (
+      stale?.id === prevId &&
+      pageStore.getState().blocksById.get(prevId)?.content === stale.content
+    ) {
+      void load()
+      return
+    }
+
     // A block deliberately left blank by one step of an interaction that is
     // about to write back into it — the source of an Enter-at-line-start split
     // (the user's blank line, not a leak: deleting it would make the keystroke
@@ -1201,7 +1213,7 @@ export function BlockTree({
       // delete the block out from under a caret that is already back in it.
       isStillBlurred: () => useBlockStore.getState().focusedBlockId !== prevId,
     })
-  }, [focusedBlockId, remove, pageStore, zoomedBlockId])
+  }, [focusedBlockId, remove, pageStore, zoomedBlockId, load])
 
   // ── Extracted keyboard shortcuts (document-level keydown listeners) ─
   useBlockTreeKeyboardShortcuts({
