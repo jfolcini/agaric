@@ -25,6 +25,7 @@ import { commands } from '@/lib/bindings'
 import { importMarkdown } from '@/lib/ipc-helpers'
 import { logger } from '@/lib/logger'
 import { PREFERENCES, writePreference } from '@/lib/preferences'
+import { invalidatePropertyCaches } from '@/lib/property-caches'
 import { toSpaceScope } from '@/lib/space-scope'
 import { type ImportUnit, importErrorReason } from '@/lib/vault-import'
 import { useTabsStore } from '@/stores/tabs'
@@ -293,7 +294,10 @@ export function useImportRunner(): UseImportRunner {
       }
 
       // #5258 — an imported journal day must not hide behind a cached range.
-      if (succeededFiles > 0) invalidateCalendarPageDates()
+      if (succeededFiles > 0) {
+        invalidateCalendarPageDates()
+        invalidatePropertyCaches()
+      }
 
       // #1927 — the title to navigate to after a successful import. We resolve
       // it to a page id lazily in the View action (the result carries no

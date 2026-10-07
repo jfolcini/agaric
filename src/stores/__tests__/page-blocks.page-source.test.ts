@@ -12,6 +12,8 @@ import { makeBlockRow } from '@/__tests__/fixtures'
 import { type CommandReturns, strictInvokeFallback, stubInvoke } from '@/__tests__/helpers/invoke'
 import type { OpRef, PageBuffer } from '@/lib/bindings'
 import { type NameChange, subscribeToNameChanges } from '@/lib/name-change-bus'
+import { propertyKeysQueryKey } from '@/lib/property-keys-cache'
+import { queryClient } from '@/lib/query-client'
 import { dispatch } from '@/lib/tauri-mock/handlers'
 import { SEED_IDS, seedBlocks } from '@/lib/tauri-mock/seed'
 import { createPageBlockStore, type PageBlockState } from '@/stores/page-blocks'
@@ -111,6 +113,20 @@ describe('page-blocks applyPageSource (#5140 Phase 4b)', () => {
     const page = useUndoStore.getState().pages.get('PAGE_1')
     expect(page?.undoStack).toEqual([])
     expect(page?.redoStack).toEqual([redoRef])
+  })
+
+  // A `key:: value` line sets the property without a property event.
+  it('marks the property key and value lists stale (#5296)', async () => {
+    const keys = propertyKeysQueryKey('SPACE_TEST')
+    queryClient.setQueryData(keys, ['status'])
+    stubInvoke(mockedInvoke, {
+      apply_page_source: () => report({ properties_set: 1 }),
+      load_page_subtree: emptySubtree,
+    })
+
+    await store.getState().applyPageSource('- a\n  owner:: Bob\n', '- a\n', false, ['X', null])
+
+    expect(queryClient.getQueryState(keys)?.isInvalidated).toBe(true)
   })
 
   it('announces each created page and tag in the space the save was made in, not the one live when it replies', async () => {

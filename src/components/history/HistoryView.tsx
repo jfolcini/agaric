@@ -40,6 +40,7 @@ import { PAGINATION_LIMIT } from '@/lib/constants'
 import { recordGraphStructureChange } from '@/lib/graph-structure-events'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
+import { invalidatePropertyCaches } from '@/lib/property-caches'
 import { queryClient } from '@/lib/query-client'
 import { toSpaceScope } from '@/lib/space-scope'
 import { useSpaceStore } from '@/stores/space'
@@ -269,6 +270,7 @@ export function HistoryView(): React.ReactElement {
   const reloadAfterMutation = useCallback(() => {
     clearSelection()
     void queryClient.resetQueries({ queryKey })
+    invalidatePropertyCaches()
     // #4335 review — a revert (`HistoryRevertDialog`) or restore
     // (`HistoryRestoreDialog`) can mutate `attachments` directly
     // (`rename_attachment` is now revertible; `restore_page_to_op_inner`
