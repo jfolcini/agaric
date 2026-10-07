@@ -1044,6 +1044,9 @@ function rawOpLogLastEditedAt(blockId: string): string | null {
   return lastEditedIndex.map.get(blockId) ?? null
 }
 
+/** `ulid_created_ms_sql`'s guard, with the id's length checked beside it. */
+const ULID_TIME_PREFIX = /^[0-7][0-9A-HJKMNP-TV-Z]{9}/
+
 /**
  * The engine's `last_edited_ms_sql` (`agaric-store/src/filters/primitive.rs`):
  * the newest op, else the creation time in the block's ULID, because
@@ -1054,6 +1057,7 @@ function rawOpLogLastEditedAt(blockId: string): string | null {
 export function blockLastEditedAt(blockId: string): string | null {
   const lastOp = rawOpLogLastEditedAt(blockId)
   if (lastOp !== null) return lastOp
+  if (blockId.length !== 26 || !ULID_TIME_PREFIX.test(blockId)) return null
   const createdMs = ulidToDate(blockId)?.getTime()
   return createdMs ? new Date(createdMs).toISOString() : null
 }
