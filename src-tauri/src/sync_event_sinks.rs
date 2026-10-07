@@ -23,7 +23,7 @@ pub struct TauriEventSink<R: tauri::Runtime>(pub tauri::AppHandle<R>);
 
 impl<R: tauri::Runtime> SyncEventSink for TauriEventSink<R> {
     fn on_sync_event(&self, event: SyncEvent) {
-        use tauri::{Emitter, Manager};
+        use tauri::Manager;
         let event_name = match &event {
             SyncEvent::Progress { .. } => EVENT_SYNC_PROGRESS,
             SyncEvent::Complete { .. } => EVENT_SYNC_COMPLETE,
@@ -80,9 +80,7 @@ impl<R: tauri::Runtime> SyncEventSink for TauriEventSink<R> {
             };
         }
 
-        if let Err(e) = self.0.emit(event_name, &event) {
-            tracing::warn!(%event_name, error = %e, "Failed to emit sync event");
-        }
+        crate::main_thread::emit(&self.0, event_name, event);
     }
 }
 
@@ -102,12 +100,12 @@ impl<R: tauri::Runtime> SyncEventSink for TauriEventSink<R> {
 /// Added the `FileProgress` variant: it goes to the
 /// channel only (no legacy `app.emit` listener to keep in lockstep) and
 /// is delivered as `SyncProgressUpdate::Files`.
-pub struct ChannelEventSink {
+pub struct ChannelEventSink<R: tauri::Runtime> {
     pub inner: std::sync::Arc<dyn SyncEventSink>,
-    pub channel: tauri::ipc::Channel<SyncProgressUpdate>,
+    pub channel: crate::main_thread::UiChannel<R, SyncProgressUpdate>,
 }
 
-impl SyncEventSink for ChannelEventSink {
+impl<R: tauri::Runtime> SyncEventSink for ChannelEventSink<R> {
     fn on_sync_event(&self, event: SyncEvent) {
         // Phase 2 — Progress events go to the channel ONLY. The
         // inner sink's `sync:progress` `app.emit` from Phase 1 has no
@@ -143,7 +141,7 @@ impl SyncEventSink for ChannelEventSink {
                 ops_received,
                 ops_sent,
             } => {
-                let _ = self.channel.send(SyncProgressUpdate::Sync {
+                self.channel.send(SyncProgressUpdate::Sync {
                     state,
                     remote_device_id,
                     ops_received: ops_received as u64,
@@ -167,7 +165,7 @@ impl SyncEventSink for ChannelEventSink {
                 // the toast decision is taken.
                 changed_blocks: _,
             } => {
-                let _ = self.channel.send(SyncProgressUpdate::Sync {
+                self.channel.send(SyncProgressUpdate::Sync {
                     state: "complete".to_string(),
                     remote_device_id,
                     ops_received: ops_received as u64,
@@ -178,7 +176,7 @@ impl SyncEventSink for ChannelEventSink {
                 message: _,
                 remote_device_id,
             } => {
-                let _ = self.channel.send(SyncProgressUpdate::Sync {
+                self.channel.send(SyncProgressUpdate::Sync {
                     state: "error".to_string(),
                     remote_device_id,
                     ops_received: 0,
@@ -193,7 +191,7 @@ impl SyncEventSink for ChannelEventSink {
                 bytes_done,
                 bytes_total,
             } => {
-                let _ = self.channel.send(SyncProgressUpdate::Files {
+                self.channel.send(SyncProgressUpdate::Files {
                     phase,
                     remote_device_id,
                     files_done,
@@ -225,6 +223,7 @@ mod tests {
     // semantics now and will be updated in lockstep with that change.
 
     use super::{ChannelEventSink, TauriEventSink};
+    use crate::main_thread::UiChannel;
     use agaric_sync::sync_events::{
         BindExposureStatus, BindExposureStatusState, EVENT_SYNC_INTERNET_FACING_BIND,
         EVENT_SYNC_MDNS_DISABLED, InternetFacingBind, MdnsStatus, MdnsStatusState,
@@ -239,7 +238,7 @@ mod tests {
     /// that wraps a JSON payload, which we deserialize back into the
     /// strongly-typed update.
     fn capturing_channel() -> (
-        tauri::ipc::Channel<SyncProgressUpdate>,
+        UiChannel<tauri::test::MockRuntime, SyncProgressUpdate>,
         Arc<std::sync::Mutex<Vec<serde_json::Value>>>,
     ) {
         // SyncProgressUpdate is serde_serialize-only (no Deserialize) so
@@ -264,7 +263,10 @@ mod tests {
             captured_clone.lock().unwrap().push(parsed);
             Ok(())
         });
-        (channel, captured)
+        // A mock app that is not running executes main-thread work inline,
+        // so a send lands in `captured` before `on_sync_event` returns.
+        let app = tauri::test::mock_app();
+        (UiChannel::new(app.handle().clone(), channel), captured)
     }
 
     #[test]

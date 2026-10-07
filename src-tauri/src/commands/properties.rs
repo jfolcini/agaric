@@ -83,20 +83,14 @@ fn emit_property_changed_event(
     changed_keys: Vec<String>,
 ) {
     use agaric_sync::sync_events::{EVENT_PROPERTY_CHANGED, PropertyChangedEvent};
-    use tauri::Emitter;
-    if let Err(e) = app.emit(
+    crate::main_thread::emit(
+        app,
         EVENT_PROPERTY_CHANGED,
         PropertyChangedEvent {
             block_id,
             changed_keys,
         },
-    ) {
-        tracing::warn!(
-            error = %e,
-            event = EVENT_PROPERTY_CHANGED,
-            "failed to emit property-changed event",
-        );
-    }
+    );
 }
 
 /// List all distinct property keys currently in use across all blocks.

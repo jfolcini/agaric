@@ -86,36 +86,22 @@ impl<R: tauri::Runtime> std::fmt::Debug for TauriViewChangeEmitter<R> {
 
 impl<R: tauri::Runtime> ViewChangeEmitter for TauriViewChangeEmitter<R> {
     fn emit_blocks_changed(&self, changed_page_ids: Vec<String>) {
-        use tauri::Emitter;
-        if let Err(e) = self.handle.emit(
+        crate::main_thread::emit(
+            &self.handle,
             EVENT_BLOCKS_CHANGED,
             BlocksChangedEvent { changed_page_ids },
-        ) {
-            tracing::warn!(
-                target: "mcp",
-                error = %e,
-                event = EVENT_BLOCKS_CHANGED,
-                "failed to emit blocks:changed event",
-            );
-        }
+        );
     }
 
     fn emit_property_changed(&self, block_id: String, changed_keys: Vec<String>) {
-        use tauri::Emitter;
-        if let Err(e) = self.handle.emit(
+        crate::main_thread::emit(
+            &self.handle,
             EVENT_PROPERTY_CHANGED,
             PropertyChangedEvent {
                 block_id,
                 changed_keys,
             },
-        ) {
-            tracing::warn!(
-                target: "mcp",
-                error = %e,
-                event = EVENT_PROPERTY_CHANGED,
-                "failed to emit property-changed event from MCP write",
-            );
-        }
+        );
     }
 }
 
@@ -166,5 +152,38 @@ impl ViewChangeEmitter for RecordingViewChangeEmitter {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .push((block_id, changed_keys));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    use agaric_sync::sync_events::EVENT_BLOCKS_CHANGED;
+    use tauri::Listener;
+
+    use super::{TauriViewChangeEmitter, ViewChangeEmitter};
+
+    /// An MCP write emits from a tokio worker. Off the main thread, Tauri's
+    /// `emit` holds its webview lock while waiting for the main thread to run
+    /// the event's JS, and deadlocks against any IPC request the main thread
+    /// is resolving.
+    #[test]
+    fn blocks_changed_from_a_worker_thread_is_emitted_on_the_main_thread() {
+        let (app, main_thread) = crate::main_thread::test_support::running_mock_app();
+        let (tx, rx) = std::sync::mpsc::channel();
+        app.listen(EVENT_BLOCKS_CHANGED, move |_| {
+            let _ = tx.send(std::thread::current().id());
+        });
+        let emitter = TauriViewChangeEmitter::new(app.clone());
+
+        std::thread::spawn(move || emitter.emit_blocks_changed(vec!["PAGE".into()]))
+            .join()
+            .expect("emitting thread panicked");
+
+        let emitted_on = rx
+            .recv_timeout(Duration::from_secs(10))
+            .expect("blocks:changed was never emitted");
+        assert_eq!(emitted_on, main_thread);
     }
 }

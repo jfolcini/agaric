@@ -19,10 +19,11 @@ pub mod deeplink;
 // `import` — the query-free markdown→spec parser lives in `agaric-engine`
 // (#2621, wave E4-import); consumers reach it via `agaric_engine::import::…`.
 // This app-side module hosts only the Tauri-integration seam
-// (`ImportProgressSink` + its `tauri::ipc::Channel` impl) which cannot live in
+// (`ImportProgressSink` + its `UiChannel` impl) which cannot live in
 // the framework-free engine crate.
 pub mod import;
 pub mod lifecycle;
+pub mod main_thread;
 pub mod maintenance;
 // #4502: the materializer lives in `agaric-engine`; the app-coupled half of
 // its tests stays here as `materializer_app_tests` (below).
@@ -1316,7 +1317,7 @@ fn surface_recovery_status<R: tauri::Runtime>(
     report: &recovery::RecoveryReport,
 ) {
     use recovery::{EVENT_RECOVERY_DEGRADED, RecoveryStatusState};
-    use tauri::{Emitter, Manager};
+    use tauri::Manager;
 
     let status = report.to_status();
 
@@ -1331,14 +1332,14 @@ fn surface_recovery_status<R: tauri::Runtime>(
     // Emit the durable signal. A late-registering frontend listener that
     // misses this event backfills the same status via `get_recovery_status`
     // on mount (the `useDeepLinkRouter`-style emit + query-on-mount shape).
-    if let Err(e) = app.emit(EVENT_RECOVERY_DEGRADED, status.clone()) {
+    main_thread::emit_with(app.handle(), EVENT_RECOVERY_DEGRADED, status, |e| {
         tracing::error!(
             error = %e,
             event = EVENT_RECOVERY_DEGRADED,
             "failed to emit recovery-degraded event — frontend will still \
              backfill via get_recovery_status on mount (#1255)"
         );
-    }
+    });
 }
 
 /// [`spawn_boot_cache_gating`]'s FTS check. An empty index with rows to index
