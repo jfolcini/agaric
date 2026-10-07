@@ -57,6 +57,14 @@ import { scrollParentY } from '@/lib/scroll-parent'
  */
 export const HYDRATION_ROWS_PER_FRAME = 4
 
+/**
+ * Measured row heights by id, kept across mounts (#5329). Returning to a page
+ * restores its scroll offset (#754), which lands on the row the user left only
+ * if the placeholders above it keep the heights they were measured at, not
+ * the estimate a never-rendered row gets.
+ */
+const measuredHeights = new Map<string, number>()
+
 export interface ViewportObserver {
   /**
    * Returns a memoized ref callback scoped to `id`. Calling
@@ -138,7 +146,6 @@ export function useViewportObserver(rootMargin = '200px 0px'): ViewportObserver 
    * Dropped on a microtask, so the next commit walks again; see `rootEl`.
    */
   const scrollParentWalkedRef = useRef(false)
-  const heightsRef = useRef<Map<string, number>>(new Map())
   /**
    * Rows the observer has reported intersecting but not yet flipped on-screen
    * (#5330). Drained `HYDRATION_ROWS_PER_FRAME` at a time, in report order, by
@@ -242,7 +249,7 @@ export function useViewportObserver(rootMargin = '200px 0px'): ViewportObserver 
             // A row scrolled back out before its frame came up stays a placeholder.
             pendingHydration.delete(id)
             if (!set.has(id)) {
-              heightsRef.current.set(id, entry.boundingClientRect.height)
+              measuredHeights.set(id, entry.boundingClientRect.height)
               set.add(id)
               notify(id)
             }
@@ -322,9 +329,15 @@ export function useViewportObserver(rootMargin = '200px 0px'): ViewportObserver 
           }
           observerRef.current?.observe(el)
         } else if (previous) {
+          // A full row is otherwise measured only when it scrolls out, so the
+          // rows still on screen when the user leaves are read as they detach
+          // (still laid out: React clears refs before removing the nodes).
+          if (!offscreenIdsRef.current.has(id)) {
+            const height = previous.getBoundingClientRect().height
+            if (height > 0) measuredHeights.set(id, height)
+          }
           observerRef.current?.unobserve(previous)
           elementsByIdRef.current.delete(id)
-          heightsRef.current.delete(id)
           pendingHydrationRef.current.delete(id)
           // Defer pruning the memoized callback. A synchronous `null` is NOT a
           // reliable "the block left the tree" signal: React fires el→null→el for
@@ -363,7 +376,7 @@ export function useViewportObserver(rootMargin = '200px 0px'): ViewportObserver 
     [],
   )
 
-  const getHeight = useCallback((id: string) => heightsRef.current.get(id), [])
+  const getHeight = useCallback((id: string) => measuredHeights.get(id), [])
 
   const subscribe = useCallback((id: string, callback: () => void) => {
     let subs = subscribersRef.current.get(id)

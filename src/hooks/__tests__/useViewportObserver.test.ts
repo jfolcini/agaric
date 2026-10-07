@@ -488,7 +488,7 @@ describe('useViewportObserver', () => {
     unmount()
   })
 
-  it('clears stale offscreen and height state when a block unmounts', () => {
+  it('clears stale offscreen state but keeps the measured height when a block unmounts', () => {
     const { result, unmount } = renderHook(() => useViewportObserver())
     const ref = result.current.createObserveRef('BLOCK_A')
     const el = makeEl('BLOCK_A')
@@ -509,15 +509,52 @@ describe('useViewportObserver', () => {
     expect(result.current.isOffscreen('BLOCK_A')).toBe(true)
     expect(result.current.getHeight('BLOCK_A')).toBe(77)
 
-    // Unmount → stale per-id state must be cleared
+    // Unmount → stale membership is cleared; the height outlives the row
+    // so a later mount's placeholder starts at it (#5329).
     act(() => {
       ref(null)
     })
 
     expect(result.current.isOffscreen('BLOCK_A')).toBe(false)
-    expect(result.current.getHeight('BLOCK_A')).toBeUndefined()
+    expect(result.current.getHeight('BLOCK_A')).toBe(77)
 
     unmount()
+  })
+
+  it('measures a full row as it detaches (#5329)', () => {
+    const { result, unmount } = renderHook(() => useViewportObserver())
+    const ref = result.current.createObserveRef('LEFT_ON_SCREEN')
+    const el = makeEl('LEFT_ON_SCREEN')
+    vi.spyOn(el, 'getBoundingClientRect').mockReturnValue({ height: 91 } as DOMRect)
+    ref(el)
+
+    act(() => {
+      ref(null)
+    })
+
+    expect(result.current.getHeight('LEFT_ON_SCREEN')).toBe(91)
+    unmount()
+  })
+
+  it('hands a row measured by one mount to the next (#5329)', () => {
+    const first = renderHook(() => useViewportObserver())
+    const el = makeEl('REMOUNTED')
+    first.result.current.createObserveRef('REMOUNTED')(el)
+    const obs = MockIntersectionObserver.instances.at(-1) as MockIntersectionObserver
+    act(() => {
+      obs.trigger([
+        {
+          target: el,
+          isIntersecting: false,
+          boundingClientRect: { height: 133 } as DOMRectReadOnly,
+        },
+      ])
+    })
+    first.unmount()
+
+    const second = renderHook(() => useViewportObserver())
+    expect(second.result.current.getHeight('REMOUNTED')).toBe(133)
+    second.unmount()
   })
 
   // ── #838: callback memo map must not leak ──────────────────────────────────

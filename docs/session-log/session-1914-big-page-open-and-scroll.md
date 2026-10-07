@@ -25,6 +25,12 @@ behind them to the scheduled SLO bench.
   view. The outline now jumps the heading to the top. A new e2e spec covers
   it.
 
+- **A regression found before merge.** Coming back to a long page of
+  wrapped paragraphs restored the old scroll offset over placeholders at
+  their estimate, so it landed some 80 rows below the row the user left.
+  Measured heights now outlive the tree, and a row still on screen is
+  measured as it detaches. `e2e/scroll-restore.spec.ts` covers it.
+
 ## Measured
 
 `e2e/perf.spec.ts` on a 500-block page in Chromium at 1× CPU:
