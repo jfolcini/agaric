@@ -10,6 +10,7 @@ import type React from 'react'
 import { useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { Card, CardContent } from '@/components/ui/card'
 import { FormField } from '@/components/ui/form-field'
 import {
   Select,
@@ -154,140 +155,142 @@ export function AppearanceTab(): React.ReactElement {
   )
 
   return (
-    <div className="space-y-6">
-      {/* Language (#4555). Above Theme because it changes every other label
-          on this screen. */}
-      <FormField
-        label={t('settings.languageLabel')}
-        htmlFor="language-select"
-        description={t('settings.languageHelp')}
-      >
-        <Select value={language} onValueChange={handleLanguageChange}>
-          <SelectTrigger id="language-select" aria-label={t('settings.languageLabel')}>
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="system">{t('settings.languageSystem')}</SelectItem>
-            <SelectItem value="en">{t('settings.languageEnglish')}</SelectItem>
-            <SelectItem value="es">{t('settings.languageSpanish')}</SelectItem>
-          </SelectContent>
-        </Select>
-      </FormField>
+    <Card>
+      <CardContent className="space-y-6">
+        {/* Language (#4555). Above Theme because it changes every other label
+            on this screen. */}
+        <FormField
+          label={t('settings.languageLabel')}
+          htmlFor="language-select"
+          description={t('settings.languageHelp')}
+        >
+          <Select value={language} onValueChange={handleLanguageChange}>
+            <SelectTrigger id="language-select" aria-label={t('settings.languageLabel')}>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="system">{t('settings.languageSystem')}</SelectItem>
+              <SelectItem value="en">{t('settings.languageEnglish')}</SelectItem>
+              <SelectItem value="es">{t('settings.languageSpanish')}</SelectItem>
+            </SelectContent>
+          </Select>
+        </FormField>
 
-      {/* Theme selector */}
-      <FormField label={t('settings.themeLabel')} htmlFor="theme-select">
-        <Select value={themeToSelect(theme)} onValueChange={handleThemeChange}>
-          <SelectTrigger id="theme-select" aria-label={t('settings.themeLabel')}>
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="light">{t('settings.themeLight')}</SelectItem>
-            <SelectItem value="dark">{t('settings.themeDark')}</SelectItem>
-            <SelectItem value="system">{t('settings.themeSystem')}</SelectItem>
-            <SelectItem value="solarized-light">{t('settings.themeSolarizedLight')}</SelectItem>
-            <SelectItem value="solarized-dark">{t('settings.themeSolarizedDark')}</SelectItem>
-            <SelectItem value="dracula">{t('settings.themeDracula')}</SelectItem>
-            <SelectItem value="one-dark-pro">{t('settings.themeOneDarkPro')}</SelectItem>
-          </SelectContent>
-        </Select>
-      </FormField>
+        {/* Theme selector */}
+        <FormField label={t('settings.themeLabel')} htmlFor="theme-select">
+          <Select value={themeToSelect(theme)} onValueChange={handleThemeChange}>
+            <SelectTrigger id="theme-select" aria-label={t('settings.themeLabel')}>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="light">{t('settings.themeLight')}</SelectItem>
+              <SelectItem value="dark">{t('settings.themeDark')}</SelectItem>
+              <SelectItem value="system">{t('settings.themeSystem')}</SelectItem>
+              <SelectItem value="solarized-light">{t('settings.themeSolarizedLight')}</SelectItem>
+              <SelectItem value="solarized-dark">{t('settings.themeSolarizedDark')}</SelectItem>
+              <SelectItem value="dracula">{t('settings.themeDracula')}</SelectItem>
+              <SelectItem value="one-dark-pro">{t('settings.themeOneDarkPro')}</SelectItem>
+            </SelectContent>
+          </Select>
+        </FormField>
 
-      {/* Font size selector */}
-      <FormField label={t('settings.fontSizeLabel')} htmlFor="font-size-select">
-        <Select value={fontSize} onValueChange={handleFontSizeChange}>
-          <SelectTrigger id="font-size-select" aria-label={t('settings.fontSizeLabel')}>
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="small">{t('settings.fontSizeSmall')}</SelectItem>
-            <SelectItem value="medium">{t('settings.fontSizeMedium')}</SelectItem>
-            <SelectItem value="large">{t('settings.fontSizeLarge')}</SelectItem>
-          </SelectContent>
-        </Select>
-      </FormField>
+        {/* Font size selector */}
+        <FormField label={t('settings.fontSizeLabel')} htmlFor="font-size-select">
+          <Select value={fontSize} onValueChange={handleFontSizeChange}>
+            <SelectTrigger id="font-size-select" aria-label={t('settings.fontSizeLabel')}>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="small">{t('settings.fontSizeSmall')}</SelectItem>
+              <SelectItem value="medium">{t('settings.fontSizeMedium')}</SelectItem>
+              <SelectItem value="large">{t('settings.fontSizeLarge')}</SelectItem>
+            </SelectContent>
+          </Select>
+        </FormField>
 
-      {/* Animation speed. A single knob over the design-system `--motion-scale`
-          token (see `useMotionPreference`): System follows the OS reduced-motion
-          setting, Fast halves every duration, Off disables animations. */}
-      <FormField
-        label={t('settings.motionLabel')}
-        htmlFor="motion-select"
-        description={t('settings.motionHelp')}
-      >
-        <Select value={motion} onValueChange={handleMotionChange}>
-          <SelectTrigger id="motion-select" aria-label={t('settings.motionLabel')}>
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="system">{t('settings.motionSystem')}</SelectItem>
-            <SelectItem value="full">{t('settings.motionFull')}</SelectItem>
-            <SelectItem value="fast">{t('settings.motionFast')}</SelectItem>
-            <SelectItem value="off">{t('settings.motionOff')}</SelectItem>
-          </SelectContent>
-        </Select>
-      </FormField>
+        {/* Animation speed. A single knob over the design-system `--motion-scale`
+            token (see `useMotionPreference`): System follows the OS reduced-motion
+            setting, Fast halves every duration, Off disables animations. */}
+        <FormField
+          label={t('settings.motionLabel')}
+          htmlFor="motion-select"
+          description={t('settings.motionHelp')}
+        >
+          <Select value={motion} onValueChange={handleMotionChange}>
+            <SelectTrigger id="motion-select" aria-label={t('settings.motionLabel')}>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="system">{t('settings.motionSystem')}</SelectItem>
+              <SelectItem value="full">{t('settings.motionFull')}</SelectItem>
+              <SelectItem value="fast">{t('settings.motionFast')}</SelectItem>
+              <SelectItem value="off">{t('settings.motionOff')}</SelectItem>
+            </SelectContent>
+          </Select>
+        </FormField>
 
-      {/* Tooltip delay (#2851). A separate axis from animation speed: how
-          long to hover before a tooltip opens. Only affects the app-level
-          baseline that most tooltips inherit — the deliberate per-surface
-          deviations (sidebar, toolbars, gutter) are unaffected. */}
-      <FormField
-        label={t('settings.tooltipDelayLabel')}
-        htmlFor="tooltip-delay-select"
-        description={t('settings.tooltipDelayHelp')}
-      >
-        <Select value={tooltipDelay} onValueChange={handleTooltipDelayChange}>
-          <SelectTrigger id="tooltip-delay-select" aria-label={t('settings.tooltipDelayLabel')}>
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="instant">{t('settings.tooltipDelayInstant')}</SelectItem>
-            <SelectItem value="fast">{t('settings.tooltipDelayFast')}</SelectItem>
-            <SelectItem value="default">{t('settings.tooltipDelayDefault')}</SelectItem>
-          </SelectContent>
-        </Select>
-      </FormField>
+        {/* Tooltip delay (#2851). A separate axis from animation speed: how
+            long to hover before a tooltip opens. Only affects the app-level
+            baseline that most tooltips inherit — the deliberate per-surface
+            deviations (sidebar, toolbars, gutter) are unaffected. */}
+        <FormField
+          label={t('settings.tooltipDelayLabel')}
+          htmlFor="tooltip-delay-select"
+          description={t('settings.tooltipDelayHelp')}
+        >
+          <Select value={tooltipDelay} onValueChange={handleTooltipDelayChange}>
+            <SelectTrigger id="tooltip-delay-select" aria-label={t('settings.tooltipDelayLabel')}>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="instant">{t('settings.tooltipDelayInstant')}</SelectItem>
+              <SelectItem value="fast">{t('settings.tooltipDelayFast')}</SelectItem>
+              <SelectItem value="default">{t('settings.tooltipDelayDefault')}</SelectItem>
+            </SelectContent>
+          </Select>
+        </FormField>
 
-      {/* Week-start preference. Previously a half-shipped feature
-          exposed only via the `week-start-preference` localStorage key.
-          Surfacing it in Appearance lets users pick Monday / Sunday-
-          first weeks without devtools. */}
-      <FormField label={t('settings.weekStartLabel')} htmlFor="week-start-select">
-        <Select value={String(weekStartsOn)} onValueChange={handleWeekStartChange}>
-          <SelectTrigger id="week-start-select" aria-label={t('settings.weekStartLabel')}>
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="1">{t('settings.weekStartMonday')}</SelectItem>
-            <SelectItem value="0">{t('settings.weekStartSunday')}</SelectItem>
-          </SelectContent>
-        </Select>
-      </FormField>
+        {/* Week-start preference. Previously a half-shipped feature
+            exposed only via the `week-start-preference` localStorage key.
+            Surfacing it in Appearance lets users pick Monday / Sunday-
+            first weeks without devtools. */}
+        <FormField label={t('settings.weekStartLabel')} htmlFor="week-start-select">
+          <Select value={String(weekStartsOn)} onValueChange={handleWeekStartChange}>
+            <SelectTrigger id="week-start-select" aria-label={t('settings.weekStartLabel')}>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="1">{t('settings.weekStartMonday')}</SelectItem>
+              <SelectItem value="0">{t('settings.weekStartSunday')}</SelectItem>
+            </SelectContent>
+          </Select>
+        </FormField>
 
-      {/* Journal date format (#1448). DISPLAY-ONLY: the stored journal page
-          content stays ISO `yyyy-MM-dd`; this only governs how titles render,
-          so switching it can never orphan an existing journal. */}
-      <FormField
-        label={t('settings.journalDateFormatLabel')}
-        htmlFor="journal-date-format-select"
-        description={t('settings.journalDateFormatHelp')}
-      >
-        <Select value={journalDateFormat} onValueChange={handleJournalDateFormatChange}>
-          <SelectTrigger
-            id="journal-date-format-select"
-            aria-label={t('settings.journalDateFormatLabel')}
-          >
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            {JOURNAL_DATE_FORMATS.map((fmt) => (
-              <SelectItem key={fmt} value={fmt}>
-                {t(JOURNAL_DATE_FORMAT_LABELS[fmt])}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-      </FormField>
-    </div>
+        {/* Journal date format (#1448). DISPLAY-ONLY: the stored journal page
+            content stays ISO `yyyy-MM-dd`; this only governs how titles render,
+            so switching it can never orphan an existing journal. */}
+        <FormField
+          label={t('settings.journalDateFormatLabel')}
+          htmlFor="journal-date-format-select"
+          description={t('settings.journalDateFormatHelp')}
+        >
+          <Select value={journalDateFormat} onValueChange={handleJournalDateFormatChange}>
+            <SelectTrigger
+              id="journal-date-format-select"
+              aria-label={t('settings.journalDateFormatLabel')}
+            >
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {JOURNAL_DATE_FORMATS.map((fmt) => (
+                <SelectItem key={fmt} value={fmt}>
+                  {t(JOURNAL_DATE_FORMAT_LABELS[fmt])}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </FormField>
+      </CardContent>
+    </Card>
   )
 }

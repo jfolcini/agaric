@@ -271,7 +271,7 @@ function DaySectionInner({
       // controls at once (#1243). The section-level group is also unnecessary:
       // `PageQuickActions variant="journal"` is `hoverReveal: false` (always
       // visible), so nothing depended on it.
-      className={cn(isToday && 'bg-accent/[0.08] px-3 py-2 -mx-3')}
+      className={cn(isToday && 'bg-accent/[0.08] px-3 py-2 -mx-3 rounded-lg')}
     >
       {/* Day heading — hidden in daily mode since header shows the date */}
       {!hideHeading && (
@@ -416,41 +416,8 @@ function DaySectionInner({
           </div>
         ))}
 
-      {/* DuePanel + DonePanel are date-keyed agenda queries — they
-          render in daily mode for any day regardless of whether a
-          journal page exists for that day (follow-up: the
-          journal page is no longer auto-created for past navigation,
-          so gating these on `entry.pageId` would silently hide overdue
-          tasks for past days).
-
-          LinkedReferences is page-keyed (backlinks into this page) so
-          stays gated on `entry.pageId` — there are no backlinks to a
-          page that doesn't exist. */}
-      {mode === 'daily' && (
-        <>
-          <div id="journal-due-panel">
-            <DuePanel
-              date={entry.dateStr}
-              onNavigateToPage={onNavigateToPage}
-              excludePageId={entry.pageId ?? undefined}
-            />
-          </div>
-          {entry.pageId && (
-            <div id="journal-references-panel">
-              <LinkedReferences targetId={entry.pageId} onNavigateToPage={onNavigateToPage} />
-            </div>
-          )}
-          <div id="journal-done-panel">
-            <DonePanel
-              date={entry.dateStr}
-              onNavigateToPage={onNavigateToPage}
-              excludePageId={entry.pageId ?? undefined}
-            />
-          </div>
-        </>
-      )}
-
-      {/* Empty state: compact for multi-day views, full for daily */}
+      {/* Empty state: compact for multi-day views, full for daily. Sits right under the day's
+          block tree, ahead of the agenda panels, so the CTA stays next to what it adds to. */}
       {!entry.pageId &&
         (compact ? (
           <EmptyState
@@ -494,6 +461,43 @@ function DaySectionInner({
       {entry.pageId && (
         <div className="mt-1">
           <AddBlockButton onClick={() => onAddBlock(entry.dateStr)} />
+        </div>
+      )}
+
+      {/* DuePanel + DonePanel are date-keyed agenda queries — they
+          render in daily mode for any day regardless of whether a
+          journal page exists for that day (follow-up: the
+          journal page is no longer auto-created for past navigation,
+          so gating these on `entry.pageId` would silently hide overdue
+          tasks for past days).
+
+          LinkedReferences is page-keyed (backlinks into this page) so
+          stays gated on `entry.pageId` — there are no backlinks to a
+          page that doesn't exist.
+
+          A panel with nothing to show renders null, leaving an empty wrapper
+          that would still take a flex gap, so `:empty` wrappers are hidden. */}
+      {mode === 'daily' && (
+        <div className="mt-6 flex flex-col gap-4 [&>:empty]:hidden">
+          <div id="journal-due-panel">
+            <DuePanel
+              date={entry.dateStr}
+              onNavigateToPage={onNavigateToPage}
+              excludePageId={entry.pageId ?? undefined}
+            />
+          </div>
+          {entry.pageId && (
+            <div id="journal-references-panel">
+              <LinkedReferences targetId={entry.pageId} onNavigateToPage={onNavigateToPage} />
+            </div>
+          )}
+          <div id="journal-done-panel">
+            <DonePanel
+              date={entry.dateStr}
+              onNavigateToPage={onNavigateToPage}
+              excludePageId={entry.pageId ?? undefined}
+            />
+          </div>
         </div>
       )}
 

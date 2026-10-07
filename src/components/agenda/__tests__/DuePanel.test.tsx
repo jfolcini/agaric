@@ -511,8 +511,8 @@ describe('DuePanel', () => {
         const tabStops = rows.filter((r) => r.getAttribute('tabindex') === '0')
         expect(tabStops).toHaveLength(1)
         expect(tabStops[0]).toHaveTextContent('row two')
-        // The focus ring (`block-selected`) follows the roving tab stop.
-        expect(tabStops[0]?.className).toContain('block-selected')
+        // The cursor (`list-cursor`) follows the roving tab stop.
+        expect(tabStops[0]?.className).toContain('list-cursor')
       })
     })
 
@@ -732,15 +732,15 @@ describe('DuePanel', () => {
 
     await screen.findByText('filter test block')
 
-    const allBtn = screen.getByRole('button', { name: /^All( \(\d+\))?$/ })
-    const dueBtn = screen.getByRole('button', { name: /^Due( \(\d+\))?$/ })
-    const scheduledBtn = screen.getByRole('button', { name: /^Scheduled( \(\d+\))?$/ })
-    const propsBtn = screen.getByRole('button', { name: /^Properties( \(\d+\))?$/ })
+    const allBtn = screen.getByRole('radio', { name: /^All( \(\d+\))?$/ })
+    const dueBtn = screen.getByRole('radio', { name: /^Due( \(\d+\))?$/ })
+    const scheduledBtn = screen.getByRole('radio', { name: /^Scheduled( \(\d+\))?$/ })
+    const propsBtn = screen.getByRole('radio', { name: /^Properties( \(\d+\))?$/ })
 
-    expect(allBtn).toHaveAttribute('aria-pressed', 'true')
-    expect(dueBtn).toHaveAttribute('aria-pressed', 'false')
-    expect(scheduledBtn).toHaveAttribute('aria-pressed', 'false')
-    expect(propsBtn).toHaveAttribute('aria-pressed', 'false')
+    expect(allBtn).toHaveAttribute('aria-checked', 'true')
+    expect(dueBtn).toHaveAttribute('aria-checked', 'false')
+    expect(scheduledBtn).toHaveAttribute('aria-checked', 'false')
+    expect(propsBtn).toHaveAttribute('aria-checked', 'false')
   })
 
   // 14. Clicking "Due" filter refetches with agendaSource
@@ -765,7 +765,7 @@ describe('DuePanel', () => {
       total_count: null,
     })
 
-    const dueBtn = screen.getByRole('button', { name: /^Due/ })
+    const dueBtn = screen.getByRole('radio', { name: /^Due/ })
     await user.click(dueBtn)
 
     await waitFor(() => {
@@ -775,7 +775,7 @@ describe('DuePanel', () => {
       )
     })
 
-    expect(dueBtn).toHaveAttribute('aria-pressed', 'true')
+    expect(dueBtn).toHaveAttribute('aria-checked', 'true')
   })
 
   // 15. Clicking "All" clears source filter
@@ -793,7 +793,7 @@ describe('DuePanel', () => {
     await screen.findByText('all filter block')
 
     // First click "Due" to set a filter
-    const dueBtn = screen.getByRole('button', { name: /^Due/ })
+    const dueBtn = screen.getByRole('radio', { name: /^Due/ })
     await user.click(dueBtn)
 
     await waitFor(() => {
@@ -812,7 +812,7 @@ describe('DuePanel', () => {
     })
 
     // Now click "All" to clear the filter
-    const allBtn = screen.getByRole('button', { name: /^All/ })
+    const allBtn = screen.getByRole('radio', { name: /^All/ })
     await user.click(allBtn)
 
     await waitFor(() => {
@@ -822,7 +822,7 @@ describe('DuePanel', () => {
       )
     })
 
-    expect(allBtn).toHaveAttribute('aria-pressed', 'true')
+    expect(allBtn).toHaveAttribute('aria-checked', 'true')
   })
 
   // 16. Clicking "Properties" filter fetches without agendaSource and filters client-side
@@ -849,7 +849,7 @@ describe('DuePanel', () => {
       total_count: null,
     })
 
-    const propsBtn = screen.getByRole('button', { name: /^Properties/ })
+    const propsBtn = screen.getByRole('radio', { name: /^Properties/ })
     await user.click(propsBtn)
 
     await waitFor(() => {
@@ -859,7 +859,7 @@ describe('DuePanel', () => {
       )
     })
 
-    expect(propsBtn).toHaveAttribute('aria-pressed', 'true')
+    expect(propsBtn).toHaveAttribute('aria-checked', 'true')
   })
 
   // 17. Properties filter shows only property-sourced blocks
@@ -890,7 +890,7 @@ describe('DuePanel', () => {
     expect(screen.getByText('property block')).toBeInTheDocument()
 
     // Click "Properties" filter
-    const propsBtn = screen.getByRole('button', { name: /^Properties/ })
+    const propsBtn = screen.getByRole('radio', { name: /^Properties/ })
     await user.click(propsBtn)
 
     // Only property-sourced block remains
@@ -1339,6 +1339,49 @@ describe('DuePanel', () => {
       expect(onNavigate).toHaveBeenCalledWith('PAGE2', 'Projected Page', 'PROJ_KB')
     })
 
+    // The cursor ring is gated on the cursor row's own :focus-visible, so DOM
+    // focus has to cross from the grouped <ul> into the projected one with it.
+    it('DOM focus follows the cursor from a grouped row into the projected list', async () => {
+      mockedListBlocks.mockResolvedValue({
+        items: [
+          makeBlock({ id: 'R1', content: 'Real task one', todo_state: 'TODO', page_id: 'P1' }),
+          makeBlock({ id: 'R2', content: 'Real task two', todo_state: 'TODO', page_id: 'P1' }),
+        ],
+        next_cursor: null,
+        has_more: false,
+        total_count: null,
+      })
+      mockedListProjectedAgenda.mockResolvedValue({
+        items: [
+          {
+            block: makeBlock({
+              id: 'PROJ_FF',
+              content: 'Projected follow target',
+              page_id: 'P2',
+              todo_state: 'TODO',
+              due_date: '2026-04-13',
+            }),
+            projected_date: '2026-04-13',
+            source: 'due_date',
+          },
+        ],
+        next_cursor: null,
+        has_more: false,
+        total_count: null,
+      })
+
+      const user = userEvent.setup()
+      render(<DuePanel date="2026-04-13" />)
+      await screen.findByText(/Projected follow target/)
+      const realRows = await screen.findAllByTestId('due-panel-item')
+      realRows[0]?.focus()
+
+      await user.keyboard('{ArrowDown}')
+      expect(realRows[1]).toHaveFocus()
+      await user.keyboard('{ArrowDown}')
+      expect(screen.getByTestId('projected-entry')).toHaveFocus()
+    })
+
     it('focused projected entry receives focus ring class', async () => {
       mockedListBlocks.mockResolvedValue(emptyResponse)
       mockedListProjectedAgenda.mockResolvedValue({
@@ -1364,9 +1407,12 @@ describe('DuePanel', () => {
       render(<DuePanel date="2026-04-13" />)
       await screen.findByText(/Focus target/)
 
-      // The single projected entry should be focused (index 0) by default
+      // The single projected entry is the cursor (index 0) by default. At rest
+      // it carries only `list-cursor`, whose ring is gated in CSS on keyboard
+      // focus being in the list — never an inline ring.
       const li = screen.getByTestId('projected-entry')
-      expect(li.className).toContain('ring-2')
+      expect(li.className).toContain('list-cursor')
+      expect(li.className).not.toContain('ring-2')
     })
 
     it('projected entries are deduplicated against real blocks', async () => {
@@ -1524,16 +1570,16 @@ describe('DuePanel', () => {
 
       // flat-items order (no real blocks): [PROJ_A (0), PROJ_B (1)].
       // focusedIndex starts at 0 → the FIRST projected row is the single tab
-      // stop and carries the focus ring; the second roves to -1.
+      // stop and carries the cursor; the second roves to -1.
       let rows = screen.getAllByTestId('projected-entry')
       expect(rows).toHaveLength(2)
       expect(rows[0]?.getAttribute('tabindex')).toBe('0')
-      expect(rows[0]?.className).toContain('ring-2')
+      expect(rows[0]?.className).toContain('list-cursor')
       expect(rows[1]?.getAttribute('tabindex')).toBe('-1')
-      expect(rows[1]?.className).not.toContain('ring-2')
+      expect(rows[1]?.className).not.toContain('list-cursor')
 
       // ArrowDown moves focus to the SECOND projected row. The memoized rows
-      // must reflect the new isFocused prop (memo is not stale): the ring and
+      // must reflect the new isFocused prop (memo is not stale): the cursor and
       // the single tab stop move to row B, and row A drops both.
       const navContainer = document.querySelector('.due-panel-content') as HTMLElement
       navContainer.focus()
@@ -1542,10 +1588,10 @@ describe('DuePanel', () => {
       await waitFor(() => {
         rows = screen.getAllByTestId('projected-entry')
         expect(rows[1]?.getAttribute('tabindex')).toBe('0')
-        expect(rows[1]?.className).toContain('ring-2')
+        expect(rows[1]?.className).toContain('list-cursor')
       })
       expect(rows[0]?.getAttribute('tabindex')).toBe('-1')
-      expect(rows[0]?.className).not.toContain('ring-2')
+      expect(rows[0]?.className).not.toContain('list-cursor')
     })
   })
 

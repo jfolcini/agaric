@@ -58,6 +58,21 @@ describe('PageTitleEditor rendering', () => {
     expect(ref.current?.textContent).toBe('My Page')
   })
 
+  it('sets the title in a real hierarchy step over the 16px body text', () => {
+    render(<PageTitleEditor {...defaultProps} />)
+
+    const el = screen.getByRole('textbox', { name: /page title/i })
+    expect(el).toHaveClass('text-3xl', 'font-semibold', 'leading-tight', 'tracking-tight')
+    expect(el).not.toHaveClass('text-xl')
+  })
+
+  it('rich-display branch has the same title metrics as the editing branch (no jump)', () => {
+    render(<PageTitleEditor {...defaultProps} title="Hello [[01HXXXXXXX]] world" />)
+
+    const el = screen.getByRole('textbox', { name: /page title/i })
+    expect(el).toHaveClass('text-3xl', 'font-semibold', 'leading-tight', 'tracking-tight')
+  })
+
   it('plain-text branch signals editability with cursor-text', () => {
     render(<PageTitleEditor {...defaultProps} />)
 

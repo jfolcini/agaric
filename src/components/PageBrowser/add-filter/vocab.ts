@@ -172,7 +172,7 @@ export const ALL_PROPERTY_OPS: ReadonlyArray<{ value: PropertyOpKind; labelKey: 
 ]
 
 /**
- * The classic four predicate kinds the Pages browser's `+ Filter` popover
+ * The classic four predicate kinds the Pages browser's Add filter popover
  * offers (`showAdvancedFacets` unset/false) — UNCHANGED since #1648/D24.
  * Kept as its own filter over {@link ALL_PROPERTY_OPS} (order: Eq, Ne, Exists,
  * NotExists) so the Pages surface cannot silently widen if the advanced

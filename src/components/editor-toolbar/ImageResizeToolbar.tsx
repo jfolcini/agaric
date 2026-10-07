@@ -137,7 +137,7 @@ export function ImageResizeToolbar({
       ref={containerRef}
       onKeyDown={rovingOnKeyDown}
       onFocus={rovingOnFocus}
-      className="absolute left-1/2 -translate-x-1/2 bottom-full mb-2 z-10 flex items-center gap-1 rounded-full bg-popover border border-border shadow-(--shadow-floating) px-2 py-1"
+      className="absolute left-1/2 -translate-x-1/2 bottom-full mb-2 z-10 flex items-center gap-1 rounded-md bg-popover border border-border shadow-(--shadow-floating) px-1 py-0.5"
       role="toolbar"
       aria-label={t('imageResize.toolbar')}
       data-testid="image-resize-toolbar"

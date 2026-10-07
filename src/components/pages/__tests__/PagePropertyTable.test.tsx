@@ -442,6 +442,20 @@ describe('PagePropertyTable property editing', () => {
     })
   })
 
+  it('styles the delete confirm as destructive and focuses Cancel first', async () => {
+    const user = userEvent.setup()
+    setupMock([makeProp('author', { value_text: 'Alice' })], [makeDef('author', 'text')])
+
+    render(<PagePropertyTable pageId="PAGE_1" />)
+    await user.click(screen.getByRole('button', { name: /Properties/ }))
+    await user.click(
+      await screen.findByLabelText(t('pageProperty.deletePropertyLabel', { key: 'author' })),
+    )
+
+    expect(await screen.findByRole('button', { name: /^Delete$/i })).toHaveClass('bg-destructive')
+    expect(screen.getByRole('button', { name: /^Cancel$/i })).toHaveFocus()
+  })
+
   it('hides delete button for non-deletable builtin properties', async () => {
     const user = userEvent.setup()
     setupMock(

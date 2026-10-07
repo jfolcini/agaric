@@ -22,6 +22,7 @@ import {
   DialogBody,
   DialogContent,
   DialogDescription,
+  DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
@@ -63,16 +64,12 @@ export function BlockDatePicker({
         data-testid="date-picker-popup"
         data-editor-portal=""
       >
-        {/* Radix requires DialogTitle for accessibility — visually hidden since aria-label is used */}
-        <DialogTitle className="sr-only">{t('journal.datePickerLabel')}</DialogTitle>
-        <DialogDescription className="sr-only">{t('dateChip.placeholder')}</DialogDescription>
+        <DialogHeader>
+          <DialogTitle>{t('journal.datePickerLabel')}</DialogTitle>
+          <DialogDescription className="sr-only">{t('dateChip.placeholder')}</DialogDescription>
+        </DialogHeader>
         <DialogBody>
-          {/* `pr-7` reserves room for the Dialog's absolute top-right close
-              button so it never overlaps the input. */}
-          <div className="flex flex-col gap-1.5 pb-3 pr-7">
-            <span aria-hidden className="text-xs font-medium text-muted-foreground">
-              {t('journal.datePickerLabel')}
-            </span>
+          <div className="flex flex-col gap-1.5 pb-3">
             <Input
               type="text"
               // Tame the focus treatment: the default red `border-ring` + 3px

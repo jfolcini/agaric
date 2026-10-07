@@ -16,6 +16,7 @@ import {
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { shortcutHint } from '@/components/editor/block-context-menu/hints'
 import { Button } from '@/components/ui/button'
 import { MenuPopoverContent } from '@/components/ui/menu-popover-content'
 import { Popover, PopoverTrigger } from '@/components/ui/popover'
@@ -202,11 +203,11 @@ export function PageHeaderMenu({
         <TooltipTrigger asChild>
           <Button
             variant="ghost"
-            size="icon-xs"
+            size="icon-sm"
             aria-label={t('pageHeader.undoAction')}
             onClick={onUndo}
           >
-            <Undo2 className="h-3.5 w-3.5" />
+            <Undo2 className="h-4 w-4" />
           </Button>
         </TooltipTrigger>
         {/*  sub-fix 3: tier-aware undo tooltip. The same Ctrl+Z hits
@@ -217,19 +218,19 @@ export function PageHeaderMenu({
           <div>
             {t('pageHeader.undoAction')} {getShortcutKeys('undoLastPageOp')}
           </div>
-          <div className="mt-1 text-xs opacity-80">{t('undo.tipPage')}</div>
+          <div className="mt-1 text-xs opacity-90">{t('undo.tipPage')}</div>
         </TooltipContent>
       </Tooltip>
       <Tooltip>
         <TooltipTrigger asChild>
           <Button
             variant="ghost"
-            size="icon-xs"
+            size="icon-sm"
             aria-label={t('pageHeader.redoAction')}
             disabled={!canRedo}
             onClick={onRedo}
           >
-            <Redo2 className="h-3.5 w-3.5" />
+            <Redo2 className="h-4 w-4" />
           </Button>
         </TooltipTrigger>
         <TooltipContent>
@@ -240,12 +241,12 @@ export function PageHeaderMenu({
         <TooltipTrigger asChild>
           <Button
             variant="ghost"
-            size="icon-xs"
+            size="icon-sm"
             onClick={onToggleTemplate}
             aria-label={t('pageHeader.toggleTemplate')}
             aria-pressed={isTemplate}
           >
-            <LayoutTemplate className={cn('h-3.5 w-3.5', isTemplate && 'text-primary')} />
+            <LayoutTemplate className={cn('h-4 w-4', isTemplate && 'text-primary')} />
           </Button>
         </TooltipTrigger>
         <TooltipContent>
@@ -257,15 +258,15 @@ export function PageHeaderMenu({
           <Button
             ref={kebabRef}
             variant="ghost"
-            size="icon-xs"
+            size="icon-sm"
             aria-label={t('pageHeader.pageActions')}
           >
-            <MoreVertical className="h-3.5 w-3.5" />
+            <MoreVertical className="h-4 w-4" />
           </Button>
         </PopoverTrigger>
         <MenuPopoverContent
           align="end"
-          className="p-1"
+          className="w-72"
           role="menu"
           tabIndex={-1}
           aria-label={t('pageHeader.pageActions')}
@@ -280,7 +281,7 @@ export function PageHeaderMenu({
             <>
               <button
                 type="button"
-                className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-sm hover:bg-accent touch-target focus-ring-visible"
+                className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-sm hover:bg-accent touch-target focus-ring-visible"
                 onClick={onOpenInNewTab}
                 {...menuItemProps('openInNewTab')}
               >
@@ -292,7 +293,7 @@ export function PageHeaderMenu({
           )}
           <button
             type="button"
-            className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-sm hover:bg-accent touch-target focus-ring-visible"
+            className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-sm hover:bg-accent touch-target focus-ring-visible"
             onClick={onAddAlias}
             {...menuItemProps('addAlias')}
           >
@@ -301,7 +302,7 @@ export function PageHeaderMenu({
           </button>
           <button
             type="button"
-            className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-sm hover:bg-accent touch-target focus-ring-visible"
+            className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-sm hover:bg-accent touch-target focus-ring-visible"
             onClick={onAddTag}
             {...menuItemProps('addTag')}
           >
@@ -310,7 +311,7 @@ export function PageHeaderMenu({
           </button>
           <button
             type="button"
-            className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-sm hover:bg-accent touch-target focus-ring-visible"
+            className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-sm hover:bg-accent touch-target focus-ring-visible"
             onClick={onAddProperty}
             {...menuItemProps('addProperty')}
           >
@@ -320,7 +321,7 @@ export function PageHeaderMenu({
           <hr className="my-1 h-px bg-border border-none" />
           <button
             type="button"
-            className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-sm hover:bg-accent touch-target focus-ring-visible"
+            className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-sm hover:bg-accent touch-target focus-ring-visible"
             onClick={onToggleTemplate}
             {...menuItemProps('toggleTemplate')}
           >
@@ -329,7 +330,7 @@ export function PageHeaderMenu({
           </button>
           <button
             type="button"
-            className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-sm hover:bg-accent touch-target focus-ring-visible"
+            className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-sm hover:bg-accent touch-target focus-ring-visible"
             onClick={onToggleJournalTemplate}
             {...menuItemProps('toggleJournalTemplate')}
           >
@@ -341,20 +342,20 @@ export function PageHeaderMenu({
           <hr className="my-1 h-px bg-border border-none" />
           <button
             type="button"
-            className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-sm hover:bg-accent touch-target focus-ring-visible"
+            className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-sm hover:bg-accent touch-target focus-ring-visible"
             onClick={onExport}
             {...menuItemProps('export')}
           >
             <Download className="h-3.5 w-3.5" />
             {t('pageHeader.exportMarkdown')}
-            <span className="ml-auto text-xs text-muted-foreground">
-              {getShortcutKeys('exportPageMarkdown')}
+            <span className="ml-auto shrink-0 whitespace-nowrap text-xs text-muted-foreground tabular-nums [@media(pointer:coarse)]:hidden">
+              {shortcutHint('exportPageMarkdown')}
             </span>
           </button>
           {onEditSource != null && (
             <button
               type="button"
-              className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-sm hover:bg-accent touch-target focus-ring-visible"
+              className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-sm hover:bg-accent touch-target focus-ring-visible"
               onClick={onEditSource}
               {...menuItemProps('editSource')}
             >
@@ -367,7 +368,7 @@ export function PageHeaderMenu({
               <hr className="my-1 h-px bg-border border-none" />
               <button
                 type="button"
-                className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-sm hover:bg-accent touch-target focus-ring-visible"
+                className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-sm hover:bg-accent touch-target focus-ring-visible"
                 aria-haspopup="menu"
                 aria-expanded={moveSubmenuOpen}
                 onClick={() => setMoveSubmenuOpen((open) => !open)}
@@ -391,7 +392,7 @@ export function PageHeaderMenu({
                       type="button"
                       role="menuitem"
                       title={target.name}
-                      className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-sm hover:bg-accent touch-target focus-ring-visible"
+                      className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-sm hover:bg-accent touch-target focus-ring-visible"
                       onClick={() => {
                         setMoveSubmenuOpen(false)
                         onMoveToSpace?.(target.id)
@@ -405,10 +406,10 @@ export function PageHeaderMenu({
             </>
           )}
           <hr className="my-1 h-px bg-border border-none" />
-          <div className="rounded bg-destructive/5 p-0.5">
+          <div className="rounded-md bg-destructive/5 p-0.5">
             <button
               type="button"
-              className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-sm text-destructive hover:bg-destructive/10 touch-target focus-ring-visible focus-visible:ring-destructive/50"
+              className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-sm text-destructive hover:bg-destructive/10 touch-target focus-ring-visible focus-visible:ring-destructive/50"
               onClick={onDeleteRequest}
               {...menuItemProps('delete')}
             >

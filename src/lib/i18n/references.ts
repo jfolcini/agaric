@@ -19,8 +19,6 @@ export const references: Record<string, string> = {
   'references.loadingMore': 'Loading more references',
   'references.loadMoreLabel': 'Load more references',
   'references.backlinksFrom': 'Backlinks from {{title}}',
-  'references.linkedBadge': 'Linked',
-  'references.unlinkedBadge': 'Unlinked',
   // #4551 — the link-kind segmented control above the backlink filter builder.
   'references.kindFilterLabel': 'Filter by link kind',
   'references.kindAll': 'All',
@@ -295,7 +293,7 @@ export const references: Record<string, string> = {
   'search.clearAll': 'Clear all',
   'search.filtersActive': 'Filters active',
   // Inline filter syntax + helper popover.
-  'search.addFilter': '+ Filter',
+  'search.addFilter': 'Add filter',
   'search.filterCategory.tag': 'Tag',
   'search.filterCategory.pathInclude': 'Page path (include)',
   'search.filterCategory.pathExclude': 'Page path (exclude)',
@@ -328,7 +326,7 @@ export const references: Record<string, string> = {
   'searchQuery.propExpectedKeyEqualsValue': "{{prefix}}: expected 'key=value'",
   'searchQuery.propKeyEmpty': '{{prefix}}: key cannot be empty',
   'search.filterSyntaxIntro':
-    'Filter syntax is live — type tag:#name or path:Journal/* in the search input, or use the + Filter button. Press ? for help.',
+    'Filter syntax is live — type tag:#name or path:Journal/* in the search input, or use the Add filter button. Press ? for help.',
   'search.searchTags': 'Search tags...',
   'search.searchPages': 'Search pages...',
   'search.noTagsFound': 'No tags found',
@@ -553,7 +551,7 @@ export const references: Record<string, string> = {
   // inline elements supplied via `<Trans components={{…}}>`.
   // -- Filter syntax --
   'search.help.filter.intro':
-    'Filters can be typed directly in the search input or added via the <mono>+ Filter ▾</mono> button. Filters AND-combine with the free-text portion.',
+    'Filters can be typed directly in the search input or added via the <mono>Add filter</mono> button. Filters AND-combine with the free-text portion.',
   'search.help.filter.col.token': 'Token',
   'search.help.filter.col.meaning': 'Meaning',
   'search.help.filter.cell.tagName': 'Block carries the tag `name`. Repeats AND.',

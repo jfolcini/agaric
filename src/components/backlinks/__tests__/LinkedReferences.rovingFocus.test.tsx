@@ -195,6 +195,20 @@ describe('LinkedReferences — roving focus under windowing (#3316 item 3)', () 
     expect(active?.getAttribute('data-backlink-item')).toBe(blockId(GROUP_SIZE - 1))
   })
 
+  // The ring is gated on the container's :focus-visible, so a navigation key
+  // that bubbles up from a row (every row is a tab stop) brings DOM focus to it.
+  it('an arrow key pressed on a row moves DOM focus onto the roving container', async () => {
+    const user = userEvent.setup()
+    const { container } = await renderPanel()
+    const row = container.querySelector<HTMLElement>(`[data-backlink-item="${blockId(0)}"]`)
+    row?.focus()
+    expect(row).toHaveFocus()
+
+    await user.keyboard('{ArrowDown}')
+
+    expect(rovingContainer(container)).toHaveFocus()
+  })
+
   it('wrap-around still paints the roving focus ring on the wrapped-to row', async () => {
     const user = userEvent.setup()
     const { container } = await renderPanel()
@@ -206,9 +220,9 @@ describe('LinkedReferences — roving focus under windowing (#3316 item 3)', () 
     await waitFor(() => {
       const active = container.querySelector(`[data-backlink-item="${blockId(GROUP_SIZE - 1)}"]`)
       expect(active).not.toBeNull()
-      // `useFocusedRowEffect` adds BACKLINK_FOCUS_CLASSES via the DOM lookup;
-      // LinkedReferences has no declarative fallback for the ring.
-      expect(active).toHaveClass('ring-2')
+      // `useFocusedRowEffect` adds BACKLINK_FOCUS_CLASSES (`list-cursor`) via
+      // the DOM lookup; LinkedReferences has no declarative fallback for it.
+      expect(active).toHaveClass('list-cursor')
     })
   })
 
@@ -226,7 +240,7 @@ describe('LinkedReferences — roving focus under windowing (#3316 item 3)', () 
 
     const lastSelector = `[data-backlink-item="${blockId(GROUP_SIZE - 1)}"]`
     await waitFor(() => {
-      expect(container.querySelector(lastSelector)).toHaveClass('ring-2')
+      expect(container.querySelector(lastSelector)).toHaveClass('list-cursor')
     })
     const anchored = container.querySelector(lastSelector)
 
@@ -238,7 +252,7 @@ describe('LinkedReferences — roving focus under windowing (#3316 item 3)', () 
     const windowed = container.querySelector(lastSelector)
     expect(windowed).not.toBeNull()
     // The user-visible symptom first: the ring must still be painted.
-    expect(windowed).toHaveClass('ring-2', 'ring-inset', 'bg-accent/30')
+    expect(windowed).toHaveClass('list-cursor')
     // …and the mechanism: same DOM node. A remount is what dropped the ring,
     // since `useFocusedRowEffect` applied it imperatively and does not re-run.
     expect(windowed).toBe(anchored)

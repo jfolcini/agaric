@@ -3,7 +3,7 @@
  *
  * Validates:
  *  - Renders one button per language + a "Plain text" button
- *  - Current language button is highlighted
+ *  - Current language button is marked with a check
  *  - Clicking a language when NOT in a code block calls
  *    `toggleCodeBlock().updateAttributes()` (two-step: convert + set language)
  *  - Clicking a language when already in a code block calls
@@ -77,7 +77,7 @@ describe('CodeLanguageSelector', () => {
       expect(screen.getByRole('button', { name: t('toolbar.plainText') })).toBeInTheDocument()
     })
 
-    it('highlights the currently selected language button', () => {
+    it('marks the currently selected language with a check, not a fill', () => {
       render(
         <CodeLanguageSelector
           editor={makeEditor()}
@@ -87,17 +87,21 @@ describe('CodeLanguageSelector', () => {
         />,
       )
 
-      // The `bg-accent` highlight is applied as a standalone class on the
-      // selected button; the Button base only contains `hover:bg-accent` and
-      // `dark:hover:bg-accent`, so we match on a whitespace-delimited token.
+      // `bg-accent` marks the keyboard cursor only; token match because the Button
+      // base carries `hover:bg-accent`.
       const rustBtn = screen.getByRole('button', { name: 'rust' })
-      expect(rustBtn.className).toMatch(/(^|\s)bg-accent(\s|$)/)
+      expect(rustBtn).toHaveAttribute('aria-current', 'true')
+      expect(rustBtn).toHaveClass('font-medium')
+      expect(rustBtn.querySelector('svg.lucide-check')).not.toBeNull()
+      expect(rustBtn.className).not.toMatch(/(^|\s)bg-accent(\s|$)/)
 
       const pythonBtn = screen.getByRole('button', { name: 'python' })
-      expect(pythonBtn.className).not.toMatch(/(^|\s)bg-accent(\s|$)/)
+      expect(pythonBtn).not.toHaveAttribute('aria-current')
+      expect(pythonBtn).not.toHaveClass('font-medium')
+      expect(pythonBtn.querySelector('svg.lucide-check')).toBeNull()
     })
 
-    it('highlights the Plain text button when in a code block with no language', () => {
+    it('marks the Plain text button as current when in a code block with no language', () => {
       render(
         <CodeLanguageSelector
           editor={makeEditor()}
@@ -108,10 +112,11 @@ describe('CodeLanguageSelector', () => {
       )
 
       const plainBtn = screen.getByRole('button', { name: t('toolbar.plainText') })
-      expect(plainBtn.className).toMatch(/(^|\s)bg-accent(\s|$)/)
+      expect(plainBtn).toHaveAttribute('aria-current', 'true')
+      expect(plainBtn.querySelector('svg.lucide-check')).not.toBeNull()
     })
 
-    it('does NOT highlight the Plain text button outside of a code block', () => {
+    it('does NOT mark the Plain text button as current outside of a code block', () => {
       render(
         <CodeLanguageSelector
           editor={makeEditor()}
@@ -122,7 +127,8 @@ describe('CodeLanguageSelector', () => {
       )
 
       const plainBtn = screen.getByRole('button', { name: t('toolbar.plainText') })
-      expect(plainBtn.className).not.toMatch(/(^|\s)bg-accent(\s|$)/)
+      expect(plainBtn).not.toHaveAttribute('aria-current')
+      expect(plainBtn.querySelector('svg.lucide-check')).toBeNull()
     })
   })
 

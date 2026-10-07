@@ -1,9 +1,11 @@
 /**
- * DuePanelFilters — source filter pills and hide-before-scheduled toggle.
+ * DuePanelFilters — source filter segments and hide-before-scheduled toggle.
  *
- * Renders the filter bar for DuePanel with source type pills
- * (All, Due, Scheduled, Properties) and a toggle for hiding
- * future-scheduled blocks.
+ * Renders the filter bar for DuePanel with a single-select ToggleGroup of
+ * source types (All, Due, Scheduled, Properties) and a toggle for hiding
+ * future-scheduled blocks. Both use the ToggleGroup look: a quiet `bg-secondary`
+ * active fill, because a brand-red fill reads as an error beside the red Overdue
+ * section.
  *
  * Extracted from DuePanel.tsx for testability (#651-R6).
  */
@@ -11,8 +13,13 @@
 import type React from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
-import { cn } from '@/lib/utils'
+
+// Radix ToggleGroup values are strings; the "All" source (no filter) is `null`
+// upstream, so it needs a string stand-in.
+const ALL_SOURCES = 'all'
+const HIDE_BEFORE_SCHEDULED = 'hide-before-scheduled'
 
 export interface DuePanelFiltersProps {
   sourceFilter: string | null
@@ -62,64 +69,72 @@ export function DuePanelFilters({
 
   return (
     <div
-      className="due-panel-filters flex items-center gap-1 px-2 py-1"
+      className="due-panel-filters flex flex-wrap items-center gap-2 px-2 py-1"
       data-testid="due-panel-filters"
     >
-      {filterOptions.map((opt) => {
-        const count = sourceCounts
-          ? opt.countKey === 'all'
-            ? sourceCounts.due + sourceCounts.scheduled + sourceCounts.property
-            : sourceCounts[opt.countKey]
-          : 0
-        return (
-          <Tooltip key={opt.label}>
-            <TooltipTrigger asChild>
-              <button
-                type="button"
-                className={cn(
-                  'rounded-full px-2.5 py-1 text-xs font-medium transition-colors [@media(pointer:coarse)]:min-h-[44px] [@media(pointer:coarse)]:min-w-[44px]',
-                  sourceFilter === opt.value
-                    ? 'bg-primary text-primary-foreground'
-                    : 'bg-muted text-muted-foreground hover:bg-muted/80',
-                )}
-                onClick={() => {
-                  onSourceFilterChange(opt.value)
-                }}
-                aria-pressed={sourceFilter === opt.value}
-              >
-                {opt.label}
-                {sourceCounts && count > 0 ? ` (${count})` : ''}
-              </button>
-            </TooltipTrigger>
-            <TooltipContent className="max-w-xs">{opt.tooltip}</TooltipContent>
-          </Tooltip>
-        )
-      })}
-      <button
-        type="button"
-        className={cn(
-          'text-xs px-1.5 py-0.5 rounded border transition-colors [@media(pointer:coarse)]:min-h-[44px] [@media(pointer:coarse)]:min-w-[44px]',
-          hideBeforeScheduled
-            ? 'bg-primary/10 border-primary/30 text-primary'
-            : 'border-muted-foreground/20 text-muted-foreground hover:bg-accent/50 active:bg-accent/70',
-        )}
-        onClick={onToggleHideBeforeScheduled}
-        title={
-          hideBeforeScheduled
-            ? t('duePanel.showingScheduledTodayTooltip')
-            : t('duePanel.showingAllTasksTooltip')
-        }
-        aria-label={
-          hideBeforeScheduled
-            ? t('duePanel.scheduledHideFutureButton')
-            : t('duePanel.scheduledShowAllButton')
-        }
-        aria-pressed={hideBeforeScheduled}
+      <ToggleGroup
+        type="single"
+        className="max-w-full flex-wrap"
+        value={sourceFilter ?? ALL_SOURCES}
+        onValueChange={(value) => {
+          // Radix reports clicking the active segment as '' (deselect); a
+          // source filter always has one active segment, so ignore it.
+          if (!value) return
+          onSourceFilterChange(value === ALL_SOURCES ? null : value)
+        }}
       >
-        {hideBeforeScheduled
-          ? t('duePanel.scheduledHideFutureButton')
-          : t('duePanel.scheduledShowAllButton')}
-      </button>
+        {filterOptions.map((opt) => {
+          const count = sourceCounts
+            ? opt.countKey === 'all'
+              ? sourceCounts.due + sourceCounts.scheduled + sourceCounts.property
+              : sourceCounts[opt.countKey]
+            : 0
+          return (
+            <Tooltip key={opt.label}>
+              {/* The trigger is a wrapper, not the item: TooltipTrigger writes its own
+                  `data-state` onto its child, which would overwrite the item's on/off
+                  state and lose the active fill. Trade: `aria-describedby` lands on the
+                  wrapper, so the hint is visual only (it still opens on keyboard focus). */}
+              <TooltipTrigger asChild>
+                <span className="inline-flex">
+                  <ToggleGroupItem
+                    value={opt.value ?? ALL_SOURCES}
+                    className="whitespace-nowrap [@media(pointer:coarse)]:px-3"
+                  >
+                    {opt.label}
+                    {sourceCounts && count > 0 ? ` (${count})` : ''}
+                  </ToggleGroupItem>
+                </span>
+              </TooltipTrigger>
+              <TooltipContent className="max-w-xs">{opt.tooltip}</TooltipContent>
+            </Tooltip>
+          )
+        })}
+      </ToggleGroup>
+      <ToggleGroup
+        type="multiple"
+        value={hideBeforeScheduled ? [HIDE_BEFORE_SCHEDULED] : []}
+        onValueChange={() => onToggleHideBeforeScheduled()}
+      >
+        <ToggleGroupItem
+          value={HIDE_BEFORE_SCHEDULED}
+          className="whitespace-nowrap"
+          title={
+            hideBeforeScheduled
+              ? t('duePanel.showingScheduledTodayTooltip')
+              : t('duePanel.showingAllTasksTooltip')
+          }
+          aria-label={
+            hideBeforeScheduled
+              ? t('duePanel.scheduledHideFutureButton')
+              : t('duePanel.scheduledShowAllButton')
+          }
+        >
+          {hideBeforeScheduled
+            ? t('duePanel.scheduledHideFutureButton')
+            : t('duePanel.scheduledShowAllButton')}
+        </ToggleGroupItem>
+      </ToggleGroup>
     </div>
   )
 }

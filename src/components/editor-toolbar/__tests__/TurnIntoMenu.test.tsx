@@ -260,3 +260,36 @@ describe('TurnIntoMenu — numbered/bullet-list active state reads listStyle (#4
     expect(numberedListRow()).toHaveAttribute('aria-checked', 'false')
   })
 })
+
+// The current type is marked with a trailing check, not a fill: the fill
+// (`bg-accent`) is also the hover and keyboard-row highlight, so a filled
+// current row read as a third highlighted row at once.
+describe('TurnIntoMenu — current type is marked with a check, not a fill', () => {
+  const hasFill = (row: HTMLElement): boolean => /(^|\s)bg-accent(\s|$)/.test(row.className)
+  const checkIn = (row: HTMLElement): Element | null => row.querySelector('svg.lucide-check')
+
+  it('shows a decorative check and no fill on the current one-shot row only', () => {
+    renderWithListStyle('bullet')
+    const current = bulletListRow()
+    expect(current).toHaveAttribute('aria-checked', 'true')
+    expect(checkIn(current)).toHaveAttribute('aria-hidden', 'true')
+    expect(hasFill(current)).toBe(false)
+    expect(current).toHaveClass('font-medium')
+
+    const other = numberedListRow()
+    expect(checkIn(other)).toBeNull()
+    expect(hasFill(other)).toBe(false)
+    expect(other).not.toHaveClass('font-medium')
+  })
+
+  it('shows the check on a current disclosure row, keeping its chevron', () => {
+    mockEditorState = { ...PARAGRAPH_STATE, codeBlock: true, codeLanguage: 'rust' }
+    render(<TurnIntoMenu editor={makeEditor()} onClose={vi.fn()} />)
+    const current = codeRow()
+    expect(checkIn(current)).toHaveAttribute('aria-hidden', 'true')
+    expect(current.querySelector('svg.lucide-chevron-right')).not.toBeNull()
+    expect(hasFill(current)).toBe(false)
+    expect(current).toHaveClass('font-medium')
+    expect(checkIn(calloutRow())).toBeNull()
+  })
+})

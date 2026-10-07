@@ -113,6 +113,10 @@ export interface SuggestionListRef {
   onKeyDown: (opts: { event: KeyboardEvent }) => boolean
 }
 
+// One width for the list and the empty state, so the popup does not resize as
+// the query moves between them.
+const POPUP_WIDTH = 'w-[22rem] max-w-[calc(100vw-2rem)]'
+
 export const SuggestionList = ({
   ref,
   items,
@@ -222,7 +226,10 @@ export const SuggestionList = ({
       // ("Tags: No results") rather than a bare, origin-less message. Mirrors
       // the listbox's `aria-label` below.
       <output
-        className="suggestion-empty p-2 text-sm text-muted-foreground"
+        className={cn(
+          'suggestion-empty block rounded-md border bg-popover px-3 py-2 text-sm text-muted-foreground shadow-(--shadow-floating)',
+          POPUP_WIDTH,
+        )}
         aria-live="polite"
         aria-label={label ?? 'Suggestions'}
       >
@@ -273,7 +280,7 @@ export const SuggestionList = ({
     }
     if (Icon) {
       return (
-        <span className={cn('flex items-center', item.breadcrumb && 'items-start')}>
+        <span className={cn('flex min-w-0 items-center', item.breadcrumb && 'items-start')}>
           <Icon className="mr-2 mt-0.5 h-4 w-4 shrink-0 text-muted-foreground [@media(pointer:coarse)]:h-[18px] [@media(pointer:coarse)]:w-[18px]" />
           {labelNode}
         </span>
@@ -310,7 +317,7 @@ export const SuggestionList = ({
       key={item.id}
       id={`suggestion-${item.id}`}
       className={cn(
-        'suggestion-item flex w-full items-center rounded-md px-2 py-1.5 text-left text-sm transition-colors [@media(pointer:coarse)]:py-3 [@media(pointer:coarse)]:min-h-[44px] touch-target focus-outline',
+        'suggestion-item flex w-full items-center rounded-sm px-2 py-1.5 text-left text-sm transition-colors [@media(pointer:coarse)]:py-3 [@media(pointer:coarse)]:min-h-[44px] touch-target focus-outline',
         index === selectedIndex
           ? 'bg-accent text-accent-foreground'
           : 'hover:bg-accent hover:text-accent-foreground',
@@ -335,7 +342,10 @@ export const SuggestionList = ({
 
   return (
     <div
-      className="suggestion-list rounded-lg border bg-popover p-1 shadow-(--shadow-floating)"
+      className={cn(
+        'suggestion-list rounded-md border bg-popover p-1 shadow-(--shadow-floating)',
+        POPUP_WIDTH,
+      )}
       data-editor-portal
     >
       {/* #1102 — live result-count status. Announced on EVERY update (the
@@ -345,7 +355,10 @@ export const SuggestionList = ({
       <output className="sr-only" aria-live="polite" data-testid="suggestion-status">
         {t('suggestion.results.count', { count: items.length })}
       </output>
-      <ScrollArea className="max-h-[min(300px,40vh)]">
+      {/* `[&>div]:!block` keeps Radix's `display: table` content wrapper at the
+          viewport width; otherwise a long breadcrumb widens it and every row
+          is clipped without an ellipsis. */}
+      <ScrollArea className="max-h-[min(300px,40vh)]" viewportClassName="[&>div]:!block">
         <div
           ref={listRef}
           // #1102 — stable id so the combobox contenteditable's `aria-controls`

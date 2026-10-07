@@ -1439,7 +1439,7 @@ describe('SearchPanel', () => {
   })
 
   // --- PageLink breadcrumb navigation ---
-  it('shows visible result count after search', async () => {
+  it('announces the result count sr-only while the visible count is the match summary', async () => {
     stubInvoke({
       search_blocks: () =>
         searchPage([makeSearchResult(), makeSearchResult({ id: 'B2', content: 'second result' })]),
@@ -1454,10 +1454,12 @@ describe('SearchPanel', () => {
       expect(screen.getByText(t('search.resultsCount', { count: 2 }))).toBeInTheDocument()
     })
 
-    // The result count should be visible (not sr-only)
+    // The status text only feeds the live region; the visible count is the
+    // "N matches in M pages" summary, so showing both would state it twice.
     const countSpan = screen.getByText(t('search.resultsCount', { count: 2 }))
-    expect(countSpan).not.toHaveClass('sr-only')
-    expect(countSpan).toHaveClass('text-xs')
+    expect(countSpan).toHaveClass('sr-only')
+    expect(countSpan.closest('[role="status"]')).toBe(screen.getByTestId('search-results-status'))
+    expect(screen.getByTestId('search-result-count-summary')).not.toHaveClass('sr-only')
   })
 
   it('renders search results with rich content (no mark highlight)', async () => {
@@ -2140,6 +2142,8 @@ describe('SearchPanel', () => {
         const count = screen.getByTestId('search-results-count')
         expect(count).toHaveTextContent(t('search.statusNoResults'))
         expect(status.contains(count)).toBe(true)
+        // The visible "No results" is the EmptyState; the status text only announces.
+        expect(count).toHaveClass('sr-only')
       })
     })
 
@@ -2169,6 +2173,7 @@ describe('SearchPanel', () => {
       await waitFor(() => {
         const count = screen.getByTestId('search-results-count')
         expect(count).toHaveTextContent(t('search.statusCleared'))
+        expect(count).toHaveClass('sr-only')
       })
 
       const status = screen.getByTestId('search-results-status')
@@ -2356,7 +2361,7 @@ describe('SearchPanel', () => {
       // handleClearAllFilters resets the query to the live free text, dropping
       // the filter token → the chip (and the recovery button) disappear. The
       // chip bar itself persists because it always renders its trailing
-      // `+ Filter` popover, so assert on the chip, not the bar.
+      // "Add filter" popover, so assert on the chip, not the bar.
       await waitFor(() => {
         expect(input.value).toBe('foo')
       })

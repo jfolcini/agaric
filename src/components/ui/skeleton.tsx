@@ -6,7 +6,7 @@ const Skeleton = ({ ref, className, ...props }: React.ComponentProps<'div'>) => 
   <div
     ref={ref}
     data-slot="skeleton"
-    className={cn('motion-safe:animate-pulse rounded-md bg-accent', className)}
+    className={cn('motion-safe:animate-pulse rounded-md bg-muted', className)}
     {...props}
   />
 )

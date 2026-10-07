@@ -122,7 +122,7 @@ export function TemplatePicker({
         // `focusedBlockId`, so `handleTemplateSelect` bails out with no
         // Template inserted and no toast. See -B.
         data-editor-portal=""
-        className="fixed z-50 rounded-md border bg-popover p-2 shadow-(--shadow-overlay) left-1/2 top-1/3 -translate-x-1/2 min-w-[200px] max-w-[calc(100vw-2rem)] sm:max-w-[300px] max-sm:left-2 max-sm:right-2 max-sm:translate-x-0"
+        className="fixed z-50 rounded-md border bg-popover p-2 shadow-(--shadow-floating) left-1/2 top-1/3 -translate-x-1/2 min-w-[200px] max-w-[calc(100vw-2rem)] sm:max-w-[300px] max-sm:left-2 max-sm:right-2 max-sm:translate-x-0"
       >
         <ScrollArea className="max-h-[60vh]">
           <p className="px-2 py-1.5 text-xs font-medium text-muted-foreground">
@@ -132,7 +132,7 @@ export function TemplatePicker({
             <button
               key={tp.id}
               type="button"
-              className="w-full text-left rounded px-2 py-1.5 text-sm hover:bg-accent transition-colors touch-target"
+              className="w-full text-left rounded-sm px-2 py-1.5 text-sm hover:bg-accent transition-colors touch-target"
               onClick={() => onSelect(tp.id)}
             >
               <span className="font-medium">{tp.content || t('block.untitled')}</span>

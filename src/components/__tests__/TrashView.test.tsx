@@ -2745,6 +2745,35 @@ describe('TrashView  batch toolbar interaction', () => {
   })
 
   // -- sub-fix 3: keyboard shortcuts ---------------------------------------
+  // The shortcuts listen on `document`; the cursor ring is gated on the grid's
+  // :focus-visible, so a navigation key brings DOM focus to the grid.
+  it('an arrow key pressed with focus outside the list moves DOM focus onto the grid', async () => {
+    const user = userEvent.setup()
+    stubInvoke({
+      list_trash: () => ({
+        items: [
+          makeBlock({ id: 'B1', content: 'item 1', deleted_at: 1736899200000 }),
+          makeBlock({ id: 'B2', content: 'item 2', deleted_at: 1736812800000 }),
+        ],
+        next_cursor: null,
+        has_more: false,
+        total_count: null,
+      }),
+      batch_resolve: () => [],
+      trash_descendant_counts: () => ({}),
+    })
+
+    render(<TrashView />)
+    await screen.findByText('item 1')
+    const grid = screen.getByRole('grid')
+    expect(grid).not.toHaveFocus()
+
+    await user.keyboard('{ArrowDown}')
+
+    expect(grid).toHaveFocus()
+    expect(grid).toHaveAttribute('aria-activedescendant', 'trash-item-B2')
+  })
+
   it('Shift+R triggers batch restore (gated by the >5 confirm)', async () => {
     const user = userEvent.setup()
     const blocks = [

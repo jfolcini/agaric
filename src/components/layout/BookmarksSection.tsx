@@ -29,7 +29,6 @@ import { type ReactElement, useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { CollapsiblePanelHeader } from '@/components/common/CollapsiblePanelHeader'
-import { EmptyState } from '@/components/common/EmptyState'
 import {
   SidebarGroup,
   SidebarGroupContent,
@@ -177,18 +176,12 @@ export function BookmarksSection(): ReactElement {
             // looked up, and none of them belong to this space. While one is
             // still pending this would tell a user with bookmarks that they
             // have none.
-            // The dashed empty box has no icon-rail layout, and the rail
-            // already hides the header that explains it.
+            // The hint has no icon-rail layout, and the rail already hides
+            // the header that explains it.
             pendingKey === '' ? (
-              <div className="group-data-[collapsible=icon]:hidden">
-                <EmptyState
-                  compact
-                  headingLevel="p"
-                  icon={Bookmark}
-                  message={t('bookmarks.empty')}
-                  description={t('bookmarks.emptyHint')}
-                />
-              </div>
+              <p className="px-2 text-xs text-muted-foreground group-data-[collapsible=icon]:hidden">
+                {t('bookmarks.emptyHint')}
+              </p>
             ) : null
           ) : (
             <SidebarMenu aria-label={t('bookmarks.title')}>

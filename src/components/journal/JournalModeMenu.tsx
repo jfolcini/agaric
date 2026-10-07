@@ -54,7 +54,7 @@ export function JournalModeMenu<M extends string>({
           <ChevronDown aria-hidden="true" />
         </Button>
       </PopoverTrigger>
-      <MenuPopoverContent align="start" className="w-40 p-1">
+      <MenuPopoverContent align="start" className="w-40">
         <ul
           className="m-0 flex list-none flex-col gap-0.5 p-0"
           aria-label={t('journal.viewModeLabel')}

@@ -18,6 +18,7 @@ import {
   processFilterResult,
 } from '@/components/journal/AgendaView.helpers'
 import { ViewHeader } from '@/components/layout/ViewHeader'
+import { FeaturePageHeader } from '@/components/ui/feature-page-header'
 import { useAgendaPreferences } from '@/hooks/useAgendaPreferences'
 import { useBlockPropertyEvents } from '@/hooks/useBlockPropertyEvents'
 import {
@@ -221,6 +222,9 @@ export function AgendaView({ onNavigateToPage }: AgendaViewProps): React.ReactEl
   return (
     <div className="agenda-view space-y-4" data-testid="agenda-view">
       <ViewHeader>
+        {/* In agenda mode JournalPage renders no heading of its own: the title
+            lives here so it sits above the filter/sort bar in the outlet. */}
+        <FeaturePageHeader title={t('sidebar.journal')} />
         <div className="agenda-view-header">
           <AgendaFilterBuilder filters={agendaFilters} onFiltersChange={setAgendaFilters} />
           <div className="border-t border-border/40 my-3" aria-hidden="true" />

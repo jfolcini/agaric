@@ -4,7 +4,7 @@
  * Validates:
  *  - Renders group header with title and block count
  *  - Expand/collapse toggling hides/shows blocks
- *  - Renders child block items with badge, content, truncated ID
+ *  - Renders child block items: content, plus a type badge only for non-content blocks
  *  - Handles multiple groups
  *  - Handles null page_title (shows "Untitled")
  *  - Clicking block item invokes handleBlockClick
@@ -182,14 +182,14 @@ describe('BacklinkGroupRenderer', () => {
     expect(onToggle).toHaveBeenCalledWith('P1')
   })
 
-  it('renders child blocks with badge, content, and truncated ID', () => {
+  it('renders a content block as its text alone: no type badge, no ULID fragment', () => {
     const groups = [
       makeGroup('P1', 'Page', [
         makeBlock({ id: '01HAAAAA00000000000001', content: 'My block text' }),
       ]),
     ]
 
-    render(
+    const { container } = render(
       <BacklinkGroupRenderer
         groups={groups}
         expandedGroups={{ P1: true }}
@@ -200,12 +200,36 @@ describe('BacklinkGroupRenderer', () => {
       />,
     )
 
-    // Badge
-    expect(screen.getByText('content')).toBeInTheDocument()
-    // Content
     expect(screen.getByText('My block text')).toBeInTheDocument()
-    // Truncated ID
-    expect(screen.getByText('01HAAAAA...')).toBeInTheDocument()
+    expect(container.querySelector('.linked-reference-item-type')).toBeNull()
+    expect(screen.queryByText('content')).not.toBeInTheDocument()
+    expect(container.querySelector('.linked-reference-item-id')).toBeNull()
+    expect(screen.queryByText(/01HAAAAA/)).not.toBeInTheDocument()
+  })
+
+  it('renders the block type badge for a non-content block', () => {
+    const groups = [
+      makeGroup('P1', 'Page', [
+        makeBlock({ id: 'B1', content: 'A tag row', block_type: 'tag' }),
+        makeBlock({ id: 'B2', content: 'Plain row' }),
+      ]),
+    ]
+
+    const { container } = render(
+      <BacklinkGroupRenderer
+        groups={groups}
+        expandedGroups={{ P1: true }}
+        onToggleGroup={vi.fn()}
+        handleBlockClick={vi.fn()}
+        handleBlockKeyDown={vi.fn()}
+        {...defaultResolvers}
+      />,
+    )
+
+    const badges = container.querySelectorAll('.linked-reference-item-type')
+    expect(badges).toHaveLength(1)
+    expect(badges[0]).toHaveTextContent('tag')
+    expect(screen.getByText('A tag row').closest('li')).toContainElement(badges[0] as HTMLElement)
   })
 
   it('handles null page_title with "Untitled"', () => {
@@ -372,67 +396,6 @@ describe('BacklinkGroupRenderer', () => {
     await waitFor(async () => {
       const results = await axe(container)
       expect(results).toHaveNoViolations()
-    })
-  })
-
-  // LinkType prop renders a "Linked" / "Unlinked" badge so users can
-  // tell the two backlink sections apart at a glance.
-  describe('linkType badge', () => {
-    it('renders "Linked" badge when linkType="linked"', () => {
-      const groups = [makeGroup('P1', 'Page', [makeBlock({ id: 'B1', content: 'block' })])]
-
-      render(
-        <BacklinkGroupRenderer
-          groups={groups}
-          expandedGroups={{ P1: true }}
-          onToggleGroup={vi.fn()}
-          handleBlockClick={vi.fn()}
-          handleBlockKeyDown={vi.fn()}
-          linkType="linked"
-          {...defaultResolvers}
-        />,
-      )
-
-      expect(screen.getByText('Linked')).toBeInTheDocument()
-      expect(screen.queryByText('Unlinked')).not.toBeInTheDocument()
-    })
-
-    it('renders "Unlinked" badge when linkType="unlinked"', () => {
-      const groups = [makeGroup('P1', 'Page', [makeBlock({ id: 'B1', content: 'block' })])]
-
-      render(
-        <BacklinkGroupRenderer
-          groups={groups}
-          expandedGroups={{ P1: true }}
-          onToggleGroup={vi.fn()}
-          handleBlockClick={vi.fn()}
-          handleBlockKeyDown={vi.fn()}
-          linkType="unlinked"
-          {...defaultResolvers}
-        />,
-      )
-
-      expect(screen.getByText('Unlinked')).toBeInTheDocument()
-      expect(screen.queryByText('Linked')).not.toBeInTheDocument()
-    })
-
-    it('does not render any link-type badge when linkType is omitted', () => {
-      const groups = [makeGroup('P1', 'Page', [makeBlock({ id: 'B1', content: 'block' })])]
-
-      const { container } = render(
-        <BacklinkGroupRenderer
-          groups={groups}
-          expandedGroups={{ P1: true }}
-          onToggleGroup={vi.fn()}
-          handleBlockClick={vi.fn()}
-          handleBlockKeyDown={vi.fn()}
-          {...defaultResolvers}
-        />,
-      )
-
-      expect(screen.queryByText('Linked')).not.toBeInTheDocument()
-      expect(screen.queryByText('Unlinked')).not.toBeInTheDocument()
-      expect(container.querySelector('.linked-references-link-type-badge')).toBeNull()
     })
   })
 

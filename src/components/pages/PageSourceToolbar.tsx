@@ -69,14 +69,14 @@ import {
   createMetadataButtons,
   createRefsAndBlocks,
   createStructureButtons,
-  type ToolbarButtonConfig,
   toolbarActiveClass,
+  toolbarMenuRowClass,
+  type ToolbarButtonConfig,
 } from '@/lib/toolbar-config'
 import { cn } from '@/lib/utils'
 
 const BLOCK_MENU = 'pageSource.blockMenu'
 const SAVE = 'action.save'
-const ROW_CLASS = 'justify-start text-sm w-full [@media(pointer:coarse)]:min-h-11'
 
 export interface PageSourceToolbarProps {
   editor: Editor
@@ -376,7 +376,7 @@ function BlockMenuButton({ mode, disabled, open, onOpen }: BlockMenuButtonProps)
   }
   if (mode === 'overflow') {
     return (
-      <Button variant="ghost" size="sm" className={ROW_CLASS} {...common}>
+      <Button variant="ghost" size="sm" className={toolbarMenuRowClass} {...common}>
         <GripVertical className="h-3.5 w-3.5 mr-2" />
         <span>{t('contextMenu.blockActions')}</span>
       </Button>
@@ -433,7 +433,7 @@ function SourceTurnIntoMenu({ editor, run, onClose }: SourceMenuProps & { onClos
             variant="ghost"
             size="sm"
             disabled={block === null}
-            className={cn(ROW_CLASS, active === type && toolbarActiveClass)}
+            className={cn(toolbarMenuRowClass, active === type && toolbarActiveClass)}
             {...toolbarPressHandlers(() => pick(type))}
           >
             <option.icon className="h-3.5 w-3.5 mr-2" />
@@ -446,7 +446,7 @@ function SourceTurnIntoMenu({ editor, run, onClose }: SourceMenuProps & { onClos
         variant="ghost"
         size="sm"
         disabled={block === null}
-        className={ROW_CLASS}
+        className={toolbarMenuRowClass}
         {...toolbarPressHandlers(() => pick('divider'))}
       >
         <Minus className="h-3.5 w-3.5 mr-2" />

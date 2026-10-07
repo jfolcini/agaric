@@ -124,15 +124,41 @@ describe('Button', () => {
 
   // -- active-press scale (#1012) ---------------------------------------------
 
-  // #1012: the press-compress scale lives once in the cva base as
-  // `active:scale-95` (matching the 26 app-wide scale-95 usages); icon
+  // #1012: the press-compress scale lives once in the cva base; icon
   // variants no longer re-declare it.
-  it('applies active:scale-95 from the base on every size', () => {
+  it('applies active:scale-[0.97] from the base on every size', () => {
     for (const size of ['default', 'sm', 'icon', 'icon-sm', 'icon-lg'] as const) {
       render(<Button size={size}>{`press-${size}`}</Button>)
       const btn = screen.getByRole('button', { name: `press-${size}` })
-      expect(btn.className).toContain('active:scale-95')
-      expect(btn.className).not.toContain('active:scale-[0.98]')
+      expect(btn.className).toContain('active:scale-[0.97]')
+      expect(btn.className).not.toContain('active:scale-95')
+    }
+  })
+
+  // -- transition + icon sizing ----------------------------------------------
+
+  // Tailwind v4 emits `active:scale-*` as the standalone `scale` property, which
+  // `transform` does not transition, so the narrowed list must name it.
+  it('transitions only paint properties plus the press scale, not `all`', () => {
+    const btn = renderButton('default')
+    expect(btn.className).not.toContain('transition-all')
+    expect(btn.className).toContain(
+      'transition-[color,background-color,border-color,box-shadow,opacity,transform,scale]',
+    )
+  })
+
+  // The compact sizes keep their own `size-3`; tailwind-merge must drop the base
+  // `size-4` for them.
+  it('sizes icons at size-4 by default and size-3 on the xs variants', () => {
+    const iconRule = "[&_svg:not([class*='size-'])]:size-"
+    const base = renderButton('default', 'base')
+    expect(base.className).toContain(`${iconRule}4`)
+    expect(base.className).not.toContain('1.2em')
+
+    for (const size of ['xs', 'icon-xs'] as const) {
+      const btn = renderButton(size, `compact-${size}`)
+      expect(btn.className).toContain(`${iconRule}3`)
+      expect(btn.className).not.toContain(`${iconRule}4`)
     }
   })
 

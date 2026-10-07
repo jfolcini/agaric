@@ -243,7 +243,7 @@ When ambiguity exists, autocomplete-open wins, then history recall, then result-
 - `src/components/SearchPanel/useSearchResults.ts` — extracted results pipeline: AST→IPC projection, TanStack `useInfiniteQuery` (with event-driven live-refresh via `useBlockPropertyEvents`), breadcrumbs, grouping, roving nav, navigation.
 - `src/components/SearchPanel/useSearchHistoryControls.ts` — extracted per-space history surface: store wiring, recall cycling, handlers.
 - `src/components/SearchPanel/searchFilterParams.ts` — pure AST→`searchBlocks` filter-param projection.
-- `src/components/search/filter-forms/` — `+ Filter` builder sub-forms (state / priority / due / scheduled / prop + include-exclude).
+- `src/components/search/filter-forms/` — Add filter builder sub-forms (state / priority / due / scheduled / prop + include-exclude).
 - `src/components/search/SearchResultGroups.tsx` — group orchestration over `CollapsibleGroupList` + `groupResultsByPage`.
 - `src/components/search/VirtualizedResultListbox.tsx` — per-group virtualized `role="listbox"`.
 - `src/components/search/SearchResultBlockRow.tsx` — snippet / offset → React-node renderer.
@@ -262,4 +262,4 @@ When ambiguity exists, autocomplete-open wins, then history recall, then result-
 - `src-tauri/migrations/0006_fts5_trigram.sql` — index definition + tokenizer config.
 - `src/lib/search-query/` — inline filter syntax parser, AST, serialiser, autocomplete.
 - `src/components/search/FilterChipRow.tsx` — AST → chip projection.
-- `src/components/search/FilterHelperPopover.tsx` — `+ Filter ▾` picker.
+- `src/components/search/FilterHelperPopover.tsx` — Add filter picker.

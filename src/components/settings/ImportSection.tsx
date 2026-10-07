@@ -23,7 +23,7 @@ import {
 } from '@/components/settings/BibliographySection'
 import { type FailedFile, useImportRunner } from '@/components/settings/useImportRunner'
 import { Button } from '@/components/ui/button'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { parseEnex } from '@/lib/enex-import'
 import { formatBytes } from '@/lib/format'
 import { parseJex } from '@/lib/jex-import'
@@ -373,7 +373,7 @@ export function ImportSection(): React.ReactElement {
 
   return (
     <Card>
-      <CardHeader className="pb-3">
+      <CardHeader>
         <CardTitle
           className="import-panel-title flex items-center gap-2"
           data-testid="import-panel-title"
@@ -381,9 +381,9 @@ export function ImportSection(): React.ReactElement {
           <Upload className="h-4 w-4" />
           {t('data.importTitle')}
         </CardTitle>
+        <CardDescription>{t('data.importDesc')}</CardDescription>
       </CardHeader>
       <CardContent>
-        <p className="text-xs text-muted-foreground mb-3">{t('data.importDesc')}</p>
         <div className="flex flex-wrap gap-2">
           <input
             type="file"

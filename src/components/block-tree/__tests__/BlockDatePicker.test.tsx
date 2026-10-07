@@ -92,6 +92,13 @@ describe('BlockDatePicker', () => {
     expect(dialog).toBeInTheDocument()
   })
 
+  it('shows one visible "Date picker" title instead of a hidden title plus a muted label', () => {
+    render(<BlockDatePicker onSelect={onSelect} onClose={onClose} />)
+
+    expect(screen.getAllByText('Date picker')).toHaveLength(1)
+    expect(screen.getByRole('heading', { name: 'Date picker' })).not.toHaveClass('sr-only')
+  })
+
   it('#976 f24 — date input uses the shared focus-ring-soft utility, not inline !important overrides', () => {
     render(<BlockDatePicker onSelect={onSelect} onClose={onClose} />)
 

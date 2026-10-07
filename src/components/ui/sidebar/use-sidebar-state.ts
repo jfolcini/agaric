@@ -22,7 +22,7 @@ import { PREFERENCES, readPreference, writePreference } from '@/lib/preferences'
 
 export const SIDEBAR_COOKIE_NAME = 'sidebar_state'
 export const SIDEBAR_COOKIE_MAX_AGE = 60 * 60 * 24 * 7
-export const SIDEBAR_WIDTH_DEFAULT = 150
+export const SIDEBAR_WIDTH_DEFAULT = 224
 export const SIDEBAR_WIDTH_MIN = 120
 
 export interface SidebarState {

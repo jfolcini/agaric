@@ -426,6 +426,11 @@ describe('UnlinkedReferences', () => {
     expect(container).toHaveAttribute('aria-activedescendant', 'unlinked-ref-row-B1')
     expect(row1).toHaveAttribute('aria-current', 'true')
     expect(row2).not.toHaveAttribute('aria-current')
+    // The cursor is `list-cursor` (tint at rest, ring gated in CSS on the
+    // container's keyboard focus — not evaluable in jsdom), never an inline ring.
+    expect(row1).toHaveClass('list-cursor')
+    expect(row1).not.toHaveClass('ring-2')
+    expect(row2).not.toHaveClass('list-cursor')
 
     container.focus()
     await user.keyboard('{ArrowDown}')
@@ -433,6 +438,38 @@ describe('UnlinkedReferences', () => {
     expect(container).toHaveAttribute('aria-activedescendant', 'unlinked-ref-row-B2')
     expect(row2).toHaveAttribute('aria-current', 'true')
     expect(row1).not.toHaveAttribute('aria-current')
+    expect(row2).toHaveClass('list-cursor')
+    expect(row1).not.toHaveClass('list-cursor')
+  })
+
+  // The ring is gated on the container's :focus-visible, so a navigation key
+  // that bubbles up from a control inside a row brings DOM focus to it.
+  it('an arrow key from a button inside a row moves DOM focus onto the container', async () => {
+    const user = userEvent.setup()
+    mockedListUnlinked.mockResolvedValue({
+      groups: [
+        makeGroup('P1', 'Source Page', [
+          { id: 'B1', content: 'mention one' },
+          { id: 'B2', content: 'mention two' },
+        ]),
+      ],
+      next_cursor: null,
+      has_more: false,
+      total_count: 2,
+      filtered_count: 2,
+      truncated: false,
+    })
+
+    renderUnlinkedReferences({ pageId: 'PAGE1', pageTitle: 'My Page' })
+    await user.click(screen.getByRole('button', { name: /unlinked references/i }))
+    const rowButton = (await screen.findByText('mention one')).closest('button') as HTMLElement
+    const container = rowButton.closest('[role="group"]') as HTMLElement
+    rowButton.focus()
+
+    await user.keyboard('{ArrowDown}')
+
+    expect(container).toHaveFocus()
+    expect(container).toHaveAttribute('aria-activedescendant', 'unlinked-ref-row-B2')
   })
 
   // 4. Renders groups with page titles and block counts
@@ -1520,37 +1557,8 @@ describe('UnlinkedReferences', () => {
   })
 
   // ---------------------------------------------------------------------------
-  // "Unlinked" section badge + active-filter count badge
+  // Active-filter count badge
   // ---------------------------------------------------------------------------
-
-  it('renders "Unlinked" section badge once expanded', async () => {
-    const user = userEvent.setup()
-    const resp = {
-      groups: [makeGroup('P1', 'Page One', [{ id: 'B1', content: 'mention text' }])],
-      next_cursor: null,
-      has_more: false,
-      total_count: 1,
-      filtered_count: 1,
-      truncated: false,
-    }
-    mockedListUnlinked.mockResolvedValue(resp)
-
-    const { container } = renderUnlinkedReferences({
-      pageId: 'PAGE1',
-      pageTitle: 'My Page',
-    })
-
-    // Collapsed by default — badge not visible.
-    expect(container.querySelector('.unlinked-references-link-type-badge')).toBeNull()
-
-    // Expand to reveal results and the badge.
-    await user.click(screen.getByRole('button', { name: /unlinked references/i }))
-    await screen.findByText('mention text')
-
-    const badge = container.querySelector('.unlinked-references-link-type-badge')
-    expect(badge).not.toBeNull()
-    expect(badge).toHaveTextContent('Unlinked')
-  })
 
   it('does not render filter count badge when no filters are active', async () => {
     const user = userEvent.setup()

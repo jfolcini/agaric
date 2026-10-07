@@ -48,9 +48,6 @@ import { cn } from '@/lib/utils'
 import { useResolveStore } from '@/stores/resolve'
 import { useSpaceStore } from '@/stores/space'
 
-const UNLINKED_FOCUS_CLASSES = 'ring-2 ring-inset ring-ring/50 bg-accent/30'
-const UNLINKED_FOCUS_CLASSES_ARR = UNLINKED_FOCUS_CLASSES.split(' ')
-
 /** Stable, unique DOM id for an unlinked-reference row (aria-activedescendant target). */
 function unlinkedRowDomId(blockId: string): string {
   return `unlinked-ref-row-${blockId}`
@@ -442,12 +439,15 @@ export function UnlinkedReferences({
     return flat
   }, [groups, expandedGroups])
 
+  const listRef = useRef<HTMLDivElement>(null)
   const {
     focusedIndex,
     setFocusedIndex,
     handleKeyDown: handleListKeyDown,
   } = useListKeyboardNavigation({
     itemCount: flatVisibleBlocks.length,
+    // Keys also bubble up from the group-header buttons and rows inside.
+    listRef,
     onSelect: (idx) => {
       const entry = flatVisibleBlocks[idx]
       if (!entry) return
@@ -457,15 +457,12 @@ export function UnlinkedReferences({
     },
   })
 
-  const listRef = useRef<HTMLDivElement>(null)
-
   const focusedBlockId = flatVisibleBlocks[focusedIndex]?.id ?? null
 
   useFocusedRowEffect({
     containerRef: listRef,
     focusedRowId: focusedBlockId,
     rowAttr: 'data-backlink-item',
-    focusClasses: UNLINKED_FOCUS_CLASSES_ARR,
     setFocusedIndex,
     resetDeps: [groups, expandedGroups, setFocusedIndex],
   })
@@ -583,12 +580,6 @@ export function UnlinkedReferences({
           >
             {() => (
               <>
-                {/* Linked-vs-Unlinked distinction badge */}
-                <div className="unlinked-references-link-type-badge flex justify-end px-2 pb-1">
-                  <Badge tone="outline" className="text-muted-foreground">
-                    {t('references.unlinkedBadge')}
-                  </Badge>
-                </div>
                 {/* Group list */}
                 {/* oxlint-disable-next-line jsx-a11y/no-noninteractive-element-interactions -- focusable group implements roving keyboard navigation over reference rows; keydown delegation belongs on the container */}
                 <div
@@ -649,7 +640,7 @@ export function UnlinkedReferences({
                           // slides. `virtualRow.isLast` is the real end of the
                           // group; the unvirtualized path keeps the CSS variant.
                           virtualRow ? virtualRow.isLast && 'border-b-0' : 'last:border-b-0',
-                          block.id === focusedBlockId && UNLINKED_FOCUS_CLASSES,
+                          block.id === focusedBlockId && 'list-cursor',
                         )}
                       >
                         <button

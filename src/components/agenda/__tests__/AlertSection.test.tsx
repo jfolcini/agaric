@@ -12,7 +12,8 @@
  *  - Navigation on click
  *  - Navigation on keyboard (Enter)
  *  - Does not navigate when parent_id is null
- *  - Renders due_date for each block
+ *  - Renders due_date for each block as the compact date chip text ("Jan 15"),
+ *    never the raw ISO string, keeping the overdue colour and "(Nd overdue)" text
  *  - Renders content as rich content, so a [[ULID]] page link is a titled
  *    pill and never a raw ULID (#4705)
  *  - Falls back to the empty-content marker for a blank block (#4705)
@@ -22,7 +23,7 @@
 
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
 import { makeBlock as _makeBlock } from '@/__tests__/fixtures'
@@ -247,35 +248,76 @@ describe('AlertSection', () => {
     expect(onNavigate).not.toHaveBeenCalled()
   })
 
-  it('renders due_date for each block', () => {
-    render(
-      <AlertSection
-        variant="destructive"
-        title="Overdue"
-        blocks={[makeBlock({ id: 'B1', due_date: '2025-01-15' })]}
-        pageTitles={defaultTitles}
-      />,
-    )
+  describe('due date', () => {
+    // Pin only `Date` so the compact formatter's same-year / other-year branch
+    // is deterministic without freezing timers the render path may use.
+    beforeEach(() => {
+      vi.useFakeTimers({ toFake: ['Date'] })
+      vi.setSystemTime(new Date('2025-06-15T12:00:00'))
+    })
 
-    expect(screen.getByText('2025-01-15')).toBeInTheDocument()
-  })
+    afterEach(() => {
+      vi.useRealTimers()
+    })
 
-  // The date span has `shrink-0` so flex compression won't
-  // truncate long localized relative-date strings on phones — pair it with
-  // `truncate` so the span clips with an ellipsis instead of overflowing.
-  it('date span has truncate in its className', () => {
-    render(
-      <AlertSection
-        variant="destructive"
-        title="Overdue"
-        blocks={[makeBlock({ id: 'B1', due_date: '2025-01-15' })]}
-        pageTitles={defaultTitles}
-      />,
-    )
+    it('renders due_date as the compact date, not the raw ISO string', () => {
+      render(
+        <AlertSection
+          variant="destructive"
+          title="Overdue"
+          blocks={[makeBlock({ id: 'B1', due_date: '2025-01-15' })]}
+          pageTitles={defaultTitles}
+        />,
+      )
 
-    const dateSpan = screen.getByText('2025-01-15').parentElement
-    expect(dateSpan).not.toBeNull()
-    expect(dateSpan?.className).toContain('truncate')
+      expect(screen.getByText('Jan 15')).toBeInTheDocument()
+      expect(screen.queryByText('2025-01-15')).not.toBeInTheDocument()
+    })
+
+    it('includes the year for a due date outside the current year', () => {
+      render(
+        <AlertSection
+          variant="pending"
+          title="Upcoming"
+          blocks={[makeBlock({ id: 'B1', due_date: '2026-01-15' })]}
+          pageTitles={defaultTitles}
+        />,
+      )
+
+      expect(screen.getByText('Jan 15, 2026')).toBeInTheDocument()
+    })
+
+    it('keeps the overdue colour and the "(Nd overdue)" text beside the compact date', () => {
+      render(
+        <AlertSection
+          variant="destructive"
+          title="Overdue"
+          blocks={[makeBlock({ id: 'B1', due_date: '2025-06-08' })]}
+          pageTitles={defaultTitles}
+        />,
+      )
+
+      expect(screen.getByText('Jun 8').parentElement).toHaveClass('text-alert-error-foreground')
+      expect(screen.getByText('(7d overdue)')).toBeInTheDocument()
+    })
+
+    // The date span has `shrink-0` so flex compression won't
+    // truncate long localized relative-date strings on phones — pair it with
+    // `truncate` so the span clips with an ellipsis instead of overflowing.
+    it('date span has truncate in its className', () => {
+      render(
+        <AlertSection
+          variant="destructive"
+          title="Overdue"
+          blocks={[makeBlock({ id: 'B1', due_date: '2025-01-15' })]}
+          pageTitles={defaultTitles}
+        />,
+      )
+
+      const dateSpan = screen.getByText('Jan 15').parentElement
+      expect(dateSpan).not.toBeNull()
+      expect(dateSpan?.className).toContain('truncate')
+    })
   })
 
   // #4705 — the row used to render `block.content` through `truncateContent`,

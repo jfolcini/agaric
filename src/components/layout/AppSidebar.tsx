@@ -295,7 +295,7 @@ function AppSidebarInner({
                           ? t('sidebar.syncing')
                           : t('sidebar.syncTooltip')}
                     </span>
-                    <span className="opacity-80">
+                    <span className="opacity-90">
                       {lastSyncedAt
                         ? t('sidebar.lastSynced', {
                             time: formatRelativeTime(lastSyncedAt, t),

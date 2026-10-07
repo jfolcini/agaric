@@ -13,9 +13,9 @@ import { renderKeys } from '@/components/common/render-keyboard-shortcut'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { ScrollArea } from '@/components/ui/scroll-area'
 import {
   Sheet,
+  SheetBody,
   SheetContent,
   SheetDescription,
   SheetFooter,
@@ -235,11 +235,11 @@ export function KeyboardShortcuts({
             onChange={(e) => setFilter(e.target.value)}
             placeholder={t('keyboard.filterPlaceholder')}
             aria-label={t('keyboard.filterLabel')}
-            className="mt-2"
+            className="mt-2 focus-ring-soft"
             data-testid="shortcuts-filter"
           />
         </SheetHeader>
-        <ScrollArea className="px-4 pb-4" data-testid="shortcuts-table">
+        <SheetBody data-testid="shortcuts-table">
           {/* #3501 — every `<table>` below MUST keep `table-fixed`. Radix's
               ScrollArea Viewport wraps its children in an internal
               `display: table; min-width: 100%` div so it can measure content
@@ -351,7 +351,7 @@ export function KeyboardShortcuts({
                   <tr>
                     <td
                       colSpan={2}
-                      className="sticky top-0 z-10 bg-background pt-4 pb-1 text-xs font-semibold uppercase tracking-wider text-muted-foreground"
+                      className="sticky top-0 z-10 bg-popover pt-4 pb-1 text-xs font-semibold uppercase tracking-wider text-muted-foreground"
                     >
                       {t(group.category)}
                     </td>
@@ -461,10 +461,10 @@ export function KeyboardShortcuts({
               ))}
             </tbody>
           </table>
-        </ScrollArea>
+        </SheetBody>
         {/*  sub-fix 7: footer link into Settings → Keyboard so users
             discover that shortcuts are customisable. */}
-        <SheetFooter className="border-t">
+        <SheetFooter className="border-t pt-4">
           <Button
             variant="outline"
             size="sm"

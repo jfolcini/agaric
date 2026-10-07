@@ -35,7 +35,7 @@ import { notify } from '@/lib/notify'
 import { requireActiveScope } from '@/lib/space-scope'
 import { useSpaceStore } from '@/stores/space'
 
-const BACKLINK_FOCUS_CLASSES = ['ring-2', 'ring-inset', 'ring-ring/50', 'bg-accent/30'] as const
+const BACKLINK_FOCUS_CLASSES = ['list-cursor'] as const
 
 /** Stable, unique DOM id for a linked-reference row (aria-activedescendant target). */
 function linkedRowDomId(blockId: string): string {
@@ -254,12 +254,15 @@ export function LinkedReferences({
     return flat
   }, [groups, groupExpanded])
 
+  const listRef = useRef<HTMLDivElement>(null)
   const {
     focusedIndex,
     setFocusedIndex,
     handleKeyDown: handleListKeyDown,
   } = useListKeyboardNavigation({
     itemCount: flatVisibleBlocks.length,
+    // Keys also bubble up from the group-header buttons and rows inside.
+    listRef,
     onSelect: (idx) => {
       const entry = flatVisibleBlocks[idx]
       if (!entry) return
@@ -268,8 +271,6 @@ export function LinkedReferences({
       if (block) handleBlockClick(block)
     },
   })
-
-  const listRef = useRef<HTMLDivElement>(null)
 
   const focusedBlockId = flatVisibleBlocks[focusedIndex]?.id ?? null
 
@@ -455,7 +456,6 @@ export function LinkedReferences({
                   resolveBlockTitle={resolveBlockTitle}
                   resolveBlockStatus={resolveBlockStatus}
                   resolveTagName={resolveTagName}
-                  linkType="linked"
                   focusedBlockId={focusedBlockId}
                   rowDomId={linkedRowDomId}
                   anchorRefId={targetId}

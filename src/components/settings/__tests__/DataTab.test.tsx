@@ -19,6 +19,7 @@ import { axe } from 'vitest-axe'
 
 import { DataTab } from '@/components/settings/DataTab'
 import type { SpaceRow } from '@/lib/bindings'
+import { t } from '@/lib/i18n'
 import { useSpaceStore } from '@/stores/space'
 
 const mockExportGraphAsZip = vi.fn()
@@ -122,6 +123,17 @@ describe('DataTab', () => {
     expect(screen.getByText('Choose Files')).toBeInTheDocument()
     expect(screen.getByText('Export All')).toBeInTheDocument()
   })
+
+  it.each([['data.importDesc'], ['data.exportDesc']] as const)(
+    '%s is the card description in the header, like the other tabs',
+    (key) => {
+      render(<DataTab />)
+
+      const description = screen.getByText(t(key))
+      expect(description).toHaveAttribute('data-slot', 'card-description')
+      expect(description.closest('[data-slot="card-header"]')).not.toBeNull()
+    },
+  )
 
   it('import button triggers file input click', async () => {
     const user = userEvent.setup()

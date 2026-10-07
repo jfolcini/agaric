@@ -17,7 +17,11 @@ import { i18n } from '@/lib/i18n'
 // reflects the full count so the spacer height stays honest.
 vi.mock('@tanstack/react-virtual', () => mockReactVirtual({ windowSize: 80 }))
 
+const mockUseIsTouch = vi.hoisted(() => vi.fn(() => false))
+vi.mock('@/hooks/useIsTouch', () => ({ useIsTouch: mockUseIsTouch }))
+
 beforeEach(() => {
+  mockUseIsTouch.mockReturnValue(false)
   localStorage.clear()
   clearEmojiRecents()
   localStorage.clear()
@@ -101,6 +105,51 @@ describe('<EmojiPicker>', () => {
     // Enter on the focused button selects it natively.
     await user.keyboard('{Enter}')
     expect(onSelect).toHaveBeenCalledTimes(1)
+  })
+
+  // The phone sheet's ~342px content fits 7 touch cells (44px) but not 8, so a
+  // coarse pointer lays the grid out 7 wide; ArrowDown must step by that width.
+  it.each([
+    { touch: true, columns: 7 },
+    { touch: false, columns: 8 },
+  ])(
+    'lays out $columns emoji per row and ArrowDown steps by $columns (touch=$touch)',
+    async ({ touch, columns }) => {
+      mockUseIsTouch.mockReturnValue(touch)
+      const user = userEvent.setup()
+      render(<EmojiPicker onSelect={vi.fn()} autoFocusSearch={false} />)
+      const grid = screen.getByRole('grid', { name: /emoji/i })
+      await within(grid).findByRole('gridcell', { name: 'grinning' })
+      const [firstRow] = within(grid).getAllByRole('row')
+      expect(within(firstRow as HTMLElement).getAllByRole('gridcell')).toHaveLength(columns)
+
+      const cells = within(grid).getAllByRole('gridcell')
+      cells[0]?.focus()
+      await user.keyboard('{ArrowDown}')
+      expect(cells[columns]).toHaveFocus()
+    },
+  )
+
+  it('shows at most one row of Frequently Used emoji for the column count', async () => {
+    mockUseIsTouch.mockReturnValue(true)
+    for (const char of ['😀', '🔥', '🚀', '👍', '❤️', '🎉', '🙏', '😂']) pushEmojiRecent(char)
+    render(<EmojiPicker onSelect={vi.fn()} autoFocusSearch={false} />)
+    const toolbar = screen.getByRole('toolbar', { name: /frequently used emoji/i })
+    expect(within(toolbar).getAllByRole('button')).toHaveLength(7)
+  })
+
+  it('keeps the category tabs in a horizontally scrolling viewport so they scroll instead of clipping', async () => {
+    render(<EmojiPicker onSelect={vi.fn()} autoFocusSearch={false} />)
+    const tablist = await screen.findByRole('tablist', { name: /emoji categories/i })
+    const viewport = tablist.closest('[data-slot="scroll-area-viewport"]')
+    expect(viewport).not.toBeNull()
+    expect(viewport).toHaveStyle({ overflowX: 'scroll' })
+  })
+
+  // The default 3px red ring on the auto-focused field reads as an error.
+  it('gives the search field the soft focus ring', () => {
+    render(<EmojiPicker onSelect={vi.fn()} />)
+    expect(screen.getByRole('searchbox', { name: /search emoji/i })).toHaveClass('focus-ring-soft')
   })
 
   it('fires onSelect with the chosen emoji char', async () => {

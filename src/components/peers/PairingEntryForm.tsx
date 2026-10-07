@@ -70,7 +70,7 @@ export function PairingEntryForm({
     <>
       <div className="relative my-4">
         <Separator />
-        <span className="pairing-separator absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 bg-background px-2 text-xs text-muted-foreground">
+        <span className="pairing-separator absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 bg-popover px-2 text-xs text-muted-foreground">
           {t('pairing.orSeparator')}
         </span>
       </div>

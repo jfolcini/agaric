@@ -14,7 +14,7 @@ import { Button } from '@/components/ui/button'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { getShortcutKeys } from '@/lib/keyboard-config'
 import type { ToolbarButtonConfig } from '@/lib/toolbar-config'
-import { toolbarActiveClass } from '@/lib/toolbar-config'
+import { toolbarActiveClass, toolbarMenuRowClass } from '@/lib/toolbar-config'
 import { cn } from '@/lib/utils'
 
 /** Render mode for each toolbar item. */
@@ -124,10 +124,7 @@ export function renderConfigButton(
         aria-label={t(btn.label)}
         aria-pressed={btn.activeKey ? isActive : undefined}
         disabled={disabled}
-        className={cn(
-          'justify-start text-sm w-full [@media(pointer:coarse)]:min-h-11',
-          isActive && toolbarActiveClass,
-        )}
+        className={cn(toolbarMenuRowClass, isActive && toolbarActiveClass)}
         {...toolbarPressHandlers(() => {
           btn.action()
           onAfterAction?.()

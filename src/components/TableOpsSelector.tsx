@@ -28,6 +28,8 @@ import { useTranslation } from 'react-i18next'
 import { toolbarPressHandlers } from '@/components/FormattingToolbar/shared'
 import { Button } from '@/components/ui/button'
 import { Separator } from '@/components/ui/separator'
+import { toolbarMenuRowClass } from '@/lib/toolbar-config'
+import { cn } from '@/lib/utils'
 
 export interface TableOpsSelectorProps {
   editor: Editor
@@ -106,11 +108,11 @@ export function TableOpsSelector({ editor, onClose }: TableOpsSelectorProps): Re
               variant="ghost"
               size="sm"
               role="menuitem"
-              className={
-                op.destructive
-                  ? 'justify-start text-sm gap-2 text-destructive hover:text-destructive'
-                  : 'justify-start text-sm gap-2'
-              }
+              className={cn(
+                toolbarMenuRowClass,
+                'gap-2',
+                op.destructive && 'text-destructive hover:text-destructive',
+              )}
               data-testid={`table-op-${op.id}`}
               {...toolbarPressHandlers(() => {
                 op.run(editor)

@@ -357,6 +357,7 @@ export function PagePropertyTable({ pageId, forceExpanded }: PagePropertyTablePr
         descriptionKey="property.deleteConfirmDesc"
         cancelKey="action.cancel"
         confirmKey="action.delete"
+        variant="destructive"
         onConfirm={handleConfirmDelete}
       />
     </div>

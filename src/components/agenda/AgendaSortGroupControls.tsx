@@ -61,7 +61,7 @@ function DropdownSelector<T extends string>({
           <span>{currentLabel ?? currentValue}</span>
         </button>
       </PopoverTrigger>
-      <MenuPopoverContent align="start" className="w-40 p-1">
+      <MenuPopoverContent align="start" className="w-40">
         <ul className="flex flex-col gap-0.5 list-none m-0 p-0" aria-label={t(label)}>
           {options.map((opt) => (
             <li key={opt.value}>

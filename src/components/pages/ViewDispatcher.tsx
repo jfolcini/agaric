@@ -113,9 +113,7 @@ const TrashView = lazy(() =>
  */
 export const VIEW_HEADING_OWNER: Readonly<Record<View, 'shell' | 'view'>> = {
   journal: 'view',
-  templates: 'view',
   trash: 'view',
-  graph: 'view',
   status: 'view',
   settings: 'view',
   // `page-editor` owns its title through `PageTitleEditor`'s labelled
@@ -127,6 +125,8 @@ export const VIEW_HEADING_OWNER: Readonly<Record<View, 'shell' | 'view'>> = {
   history: 'shell',
   query: 'shell',
   search: 'shell',
+  templates: 'shell',
+  graph: 'shell',
 }
 
 /** True when the shell's `header-label` element must carry the view's `<h1>`. */

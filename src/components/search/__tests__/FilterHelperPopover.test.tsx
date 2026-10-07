@@ -101,6 +101,18 @@ describe('FilterHelperPopover — i18n', () => {
     expect(screen.getByText(t('search.filterCategoryTip'))).toBeInTheDocument()
   })
 
+  it('renders the trigger as the compact "Add filter" button the other filter bars use', () => {
+    renderPopover()
+    const trigger = screen.getByTestId('add-filter-button')
+    // Literal, not t(): pins the label text instead of echoing the catalog.
+    expect(trigger).toHaveTextContent(/^Add filter$/)
+    expect(trigger).toHaveClass('h-7', 'gap-1', 'text-xs')
+    // Plus before the label, ChevronDown after it; both decorative.
+    const icons = trigger.querySelectorAll('svg')
+    expect(icons).toHaveLength(2)
+    for (const icon of icons) expect(icon).toHaveAttribute('aria-hidden', 'true')
+  })
+
   it('renders the tag-picker "Back" button via t()', async () => {
     const user = userEvent.setup()
     renderPopover()
@@ -593,6 +605,23 @@ describe('FilterHelperPopover — property filter', () => {
       },
       { timeout: 5000 },
     )
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Container padding
+// ---------------------------------------------------------------------------
+
+describe('FilterHelperPopover — container padding', () => {
+  it('uses the tight menu padding for the category list and form padding once a form opens', async () => {
+    const user = userEvent.setup()
+    renderPopover()
+    await user.click(screen.getByRole('button', { name: t('search.addFilter') }))
+    const content = await screen.findByRole('dialog', { name: t('search.addFilter') })
+    expect(content).toHaveClass('p-1')
+
+    await user.click(screen.getByText(t('search.filterCategory.pathInclude')))
+    expect(content).toHaveClass('p-3')
   })
 })
 

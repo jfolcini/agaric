@@ -35,7 +35,7 @@ const DialogOverlay = ({
     ref={ref}
     data-slot="dialog-overlay"
     className={cn(
-      'data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 fixed inset-0 z-50 bg-black/50 dark:bg-black/60',
+      'data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 fixed inset-0 z-50 bg-black/40 dark:bg-black/60',
       className,
     )}
     {...props}
@@ -59,7 +59,7 @@ const DialogContent = ({
       {...props}
     >
       {children}
-      <DialogPrimitive.Close className={closeButtonClassName}>
+      <DialogPrimitive.Close data-slot="dialog-close" className={closeButtonClassName}>
         <CloseButtonIcon />
       </DialogPrimitive.Close>
     </DialogPrimitive.Content>
@@ -98,7 +98,7 @@ const DialogHeader = ({ ref, className, ...props }: React.ComponentProps<'div'>)
   <div
     ref={ref}
     data-slot="dialog-header"
-    className={cn('flex flex-col gap-2 text-center sm:text-left', className)}
+    className={cn('flex flex-col gap-2 text-left', className)}
     {...props}
   />
 )
@@ -109,7 +109,7 @@ const DialogFooter = ({ ref, className, ...props }: React.ComponentProps<'div'>)
   <div
     ref={ref}
     data-slot="dialog-footer"
-    className={cn('flex flex-col-reverse gap-2 sm:flex-row sm:justify-end', className)}
+    className={cn('flex flex-col gap-2 sm:flex-row sm:justify-end', className)}
     {...props}
   />
 )

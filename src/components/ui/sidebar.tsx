@@ -216,6 +216,13 @@ const Sidebar = ({
             } as React.CSSProperties
           }
           side={side}
+          // Auto-focusing the first control (the space switcher) pops its
+          // keyboard tooltip over the logo on a phone. Focusing the drawer
+          // keeps the focus trap intact.
+          onOpenAutoFocus={(e) => {
+            e.preventDefault()
+            if (e.currentTarget instanceof HTMLElement) e.currentTarget.focus()
+          }}
         >
           <SheetHeader className="sr-only">
             <SheetTitle>{t('sidebar.label')}</SheetTitle>
@@ -443,7 +450,10 @@ const SidebarContent = ({
       'flex min-h-0 flex-1 flex-col group-data-[collapsible=icon]:overflow-hidden',
       className,
     )}
-    viewportClassName="flex flex-col gap-2"
+    // Radix wraps the content in a `display: table` div that grows to the
+    // widest label, so a narrowed sidebar scrolled sideways instead of
+    // truncating. Forcing it to `block` pins the nav to the sidebar width.
+    viewportClassName="flex flex-col gap-2 [&>div]:!block"
     {...props}
   >
     {children}
@@ -566,7 +576,7 @@ const sidebarMenuButtonVariants = cva(
   // pointer-fine default stays at `size-8` (32 px) because pointer precision
   // is higher. Only the desktop icon-collapsed rail reaches this now — below
   // the mobile breakpoint the sidebar is a Sheet with full-width rows.
-  'peer/menu-button flex w-full items-center gap-2 overflow-hidden rounded-md p-2 text-left text-sm transition-[width,height,padding] group-has-data-[sidebar=menu-action]/menu-item:pr-8 group-data-[collapsible=icon]:size-8! group-data-[collapsible=icon]:p-2! group-data-[collapsible=icon]:justify-center [@media(pointer:coarse)]:group-data-[collapsible=icon]:size-11! hover:bg-sidebar-accent hover:text-sidebar-accent-foreground focus-ring-visible active:bg-sidebar-accent active:text-sidebar-accent-foreground disabled:pointer-events-none disabled:opacity-50 aria-disabled:pointer-events-none aria-disabled:opacity-50 data-[active=true]:bg-sidebar-accent data-[active=true]:font-medium data-[active=true]:text-sidebar-accent-foreground data-[active=true]:rounded-l-none data-[active=true]:border-l-[3px] data-[active=true]:border-l-primary data-[active=true]:dark:border-l-4 group-data-[collapsible=icon]:data-[active=true]:rounded-md! group-data-[collapsible=icon]:data-[active=true]:border-l-0! data-[state=open]:hover:bg-sidebar-accent data-[state=open]:hover:text-sidebar-accent-foreground group-data-[collapsible=icon]:[&>span]:sr-only [&>span:last-child]:truncate [&>svg]:size-[1.2em] [&>svg]:shrink-0',
+  'peer/menu-button relative flex w-full items-center gap-2 overflow-hidden rounded-md p-2 text-left text-sm transition-[width,height,padding] group-has-data-[sidebar=menu-action]/menu-item:pr-8 group-data-[collapsible=icon]:size-8! group-data-[collapsible=icon]:p-2! group-data-[collapsible=icon]:justify-center [@media(pointer:coarse)]:group-data-[collapsible=icon]:size-11! hover:bg-sidebar-accent hover:text-sidebar-accent-foreground focus-ring-visible active:bg-sidebar-accent active:text-sidebar-accent-foreground disabled:pointer-events-none disabled:opacity-50 aria-disabled:pointer-events-none aria-disabled:opacity-50 data-[active=true]:bg-sidebar-accent data-[active=true]:font-medium data-[active=true]:text-sidebar-accent-foreground data-[active=true]:before:absolute data-[active=true]:before:inset-y-2 data-[active=true]:before:left-0 data-[active=true]:before:w-[3px] data-[active=true]:before:rounded-full data-[active=true]:before:bg-primary group-data-[collapsible=icon]:data-[active=true]:before:hidden data-[state=open]:hover:bg-sidebar-accent data-[state=open]:hover:text-sidebar-accent-foreground group-data-[collapsible=icon]:[&>span]:sr-only [&>span:last-child]:truncate [&>svg]:size-4 [&>svg]:shrink-0',
   {
     variants: {
       variant: {

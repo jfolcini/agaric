@@ -149,12 +149,11 @@ export function StreamView({ onNavigateToPage }: StreamViewProps): React.ReactEl
   }
 
   return (
-    <div className="space-y-1" data-testid="journal-stream" aria-label={t('journal.streamView')}>
-      {entries.map((entry, i) => {
+    <div className="space-y-6" data-testid="journal-stream" aria-label={t('journal.streamView')}>
+      {entries.map((entry) => {
         const isToday = entry.dateStr === todayStr
         return (
           <div key={entry.dateStr}>
-            {i > 0 && <div className="border-t border-border my-4" />}
             <DaySection
               entry={entry}
               headingLevel={isToday ? 'h2' : 'h3'}

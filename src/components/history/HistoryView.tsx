@@ -330,12 +330,12 @@ export function HistoryView(): React.ReactElement {
           category-specific detail line so users get actionable context. */}
       {error && (
         <div
-          className="history-error flex items-start justify-between gap-3 rounded-lg border border-destructive/50 bg-destructive/5 p-4"
+          className="history-error flex items-start justify-between gap-3 rounded-lg border border-alert-error-border bg-alert-error p-4"
           role="alert"
           data-error-category={errorCategory ?? 'unknown'}
         >
           <div className="flex flex-col gap-1">
-            <p className="text-sm font-medium text-destructive">{error}</p>
+            <p className="text-sm font-medium text-alert-error-foreground">{error}</p>
             <p className="text-xs text-muted-foreground" data-testid="history-error-detail">
               {errorCategory === 'server' ? t('history.errorServer') : t('history.errorUnknown')}
             </p>

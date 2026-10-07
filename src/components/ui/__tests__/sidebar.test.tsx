@@ -344,7 +344,7 @@ describe('SidebarProvider interactions', () => {
     )
 
     const wrapper = document.querySelector('[data-slot="sidebar-wrapper"]') as HTMLElement
-    expect(wrapper.style.getPropertyValue('--sidebar-width')).toBe('150px')
+    expect(wrapper.style.getPropertyValue('--sidebar-width')).toBe('224px')
   })
 
   it('keeps an incremental collapsed rail drag alive through the width clamp (#3335)', () => {
@@ -491,5 +491,38 @@ describe('#759 mobile Sheet a11y description', () => {
       const results = await axe(dialog)
       expect(results).toHaveNoViolations()
     })
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Mobile drawer open focus — lands on the drawer, not its first control
+// ---------------------------------------------------------------------------
+
+describe('mobile drawer open focus', () => {
+  beforeEach(() => {
+    Object.defineProperty(window, 'innerWidth', {
+      value: 375,
+      configurable: true,
+      writable: true,
+    })
+  })
+
+  it('focuses the drawer itself, not its first control', async () => {
+    render(
+      <SidebarProvider>
+        <Sidebar>
+          <SidebarContent>
+            <button type="button">First control</button>
+          </SidebarContent>
+        </Sidebar>
+        <SidebarTrigger />
+      </SidebarProvider>,
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: t('sidebar.toggleSidebar') }))
+
+    const dialog = await screen.findByRole('dialog')
+    await waitFor(() => expect(dialog).toHaveFocus())
+    expect(screen.getByRole('button', { name: 'First control' })).not.toHaveFocus()
   })
 })

@@ -234,7 +234,10 @@ describe('PageBrowserRowRenderer — tree-page rows', () => {
     expect(screen.getByRole('button', { name: /create.*projects/i })).toBeInTheDocument()
   })
 
-  it('marks the focused tree-page row via a focus ring on the wrapper', () => {
+  // `list-cursor` is a tint at rest whose ring is gated in CSS on the grid
+  // holding keyboard focus; jsdom cannot evaluate that gate, so the class
+  // contract is the assertion: the cursor never carries an inline ring.
+  it('marks the focused tree-page row with list-cursor, not an inline ring', () => {
     const treeRow: PageBrowserRow = {
       kind: 'tree-page',
       node: treeNode({ name: 'work', fullPath: 'work', pageId: 'tp-1', children: [] }),
@@ -243,7 +246,20 @@ describe('PageBrowserRowRenderer — tree-page rows', () => {
     }
     const { container } = renderRow(baseProps(treeRow, { focusedIndex: 2 }))
     const wrapper = container.querySelector('[data-page-tree-row]')
-    expect(wrapper?.className).toContain('ring-2')
+    expect(wrapper?.className).toContain('list-cursor')
+    expect(wrapper?.className).not.toContain('ring-2')
+  })
+
+  it('leaves a non-cursor tree-page row unmarked', () => {
+    const treeRow: PageBrowserRow = {
+      kind: 'tree-page',
+      node: treeNode({ name: 'work', fullPath: 'work', pageId: 'tp-1', children: [] }),
+      pageIndex: 2,
+      depth: 0,
+    }
+    const { container } = renderRow(baseProps(treeRow, { focusedIndex: 0 }))
+    const wrapper = container.querySelector('[data-page-tree-row]')
+    expect(wrapper?.className).not.toContain('list-cursor')
   })
 })
 

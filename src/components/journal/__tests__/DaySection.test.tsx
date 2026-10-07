@@ -402,6 +402,49 @@ describe('DaySection', () => {
     expect(screen.getByTestId('done-panel')).toHaveAttribute('data-date', '2025-06-15')
   })
 
+  // The add control belongs to the block tree it adds to, not to the agenda
+  // panels stacked under the day.
+  it('places "Add block" between the block tree and the Due, References and Done panels in daily mode', () => {
+    const entry = makeDayEntry({ pageId: 'PAGE_1', dateStr: '2025-06-15' })
+
+    render(<DaySection entry={entry} mode="daily" onAddBlock={noop} />)
+
+    const addBlock = screen.getByTestId('add-block-button')
+    const follows = (a: HTMLElement, b: HTMLElement) =>
+      Boolean(a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING)
+    expect(follows(screen.getByTestId('block-tree'), addBlock)).toBe(true)
+    expect(follows(addBlock, screen.getByTestId('due-panel'))).toBe(true)
+    expect(follows(addBlock, screen.getByTestId('linked-references'))).toBe(true)
+    expect(follows(addBlock, screen.getByTestId('done-panel'))).toBe(true)
+  })
+
+  it('places the empty state before the Due and Done panels when the day has no page', () => {
+    const entry = makeDayEntry({ pageId: null })
+
+    render(<DaySection entry={entry} mode="daily" onAddBlock={noop} />)
+
+    const emptyState = screen.getByTestId('empty-state')
+    expect(
+      emptyState.compareDocumentPosition(screen.getByTestId('due-panel')) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy()
+    expect(
+      emptyState.compareDocumentPosition(screen.getByTestId('done-panel')) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy()
+  })
+
+  it('stacks the daily panels with a consistent gap that skips panels that render nothing', () => {
+    const entry = makeDayEntry({ pageId: 'PAGE_1', dateStr: '2025-06-15' })
+
+    render(<DaySection entry={entry} mode="daily" onAddBlock={noop} />)
+
+    const stack = screen.getByTestId('due-panel').parentElement?.parentElement as HTMLElement
+    expect(stack).toHaveClass('mt-6', 'flex', 'flex-col', 'gap-4', '[&>:empty]:hidden')
+    expect(stack).toContainElement(screen.getByTestId('linked-references'))
+    expect(stack).toContainElement(screen.getByTestId('done-panel'))
+  })
+
   // 16. Does NOT render DuePanel/DonePanel in weekly mode
   it('does NOT render DuePanel/DonePanel in weekly mode', () => {
     const entry = makeDayEntry({ pageId: 'PAGE_1' })

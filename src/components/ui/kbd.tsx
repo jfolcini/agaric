@@ -38,7 +38,7 @@ import { cn } from '@/lib/utils'
 const kbdVariants = cva(
   // Absolute (not row-relative) colour tokens so the chip contrasts
   // regardless of the surrounding row's selection state (#1004).
-  'inline-flex items-center justify-center rounded border border-border bg-background font-mono leading-none text-foreground',
+  'inline-flex items-center justify-center whitespace-nowrap rounded border border-border bg-background font-mono leading-none text-foreground',
   {
     variants: {
       size: {

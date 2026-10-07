@@ -351,9 +351,7 @@ function DensityRowInner(props: DensityRowProps): React.ReactElement {
         density === 'compact' && 'py-1',
         density === 'regular' && 'py-2',
         density === 'expanded' && 'py-2.5',
-        // Row-highlight (background) only — the inner button paints its own
-        // `focus-ring-visible` ring for the actual focus affordance.
-        focused && 'bg-accent/30',
+        focused && 'list-cursor',
       )}
       style={rowStyle(virtualRowStart)}
     >

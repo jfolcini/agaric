@@ -62,6 +62,12 @@ describe('HistoryItemCore', () => {
     expect(screen.getByTestId('history-type-badge')).toHaveTextContent('edit_block')
   })
 
+  it('lets the badge/time/device meta row wrap instead of overflowing into the Diff button', () => {
+    renderCore(<HistoryItemCore entry={makeEntry(1, 'edit_block', { to_text: 'hi' })} />)
+    const metaRow = screen.getByTestId('history-type-badge').parentElement
+    expect(metaRow).toHaveClass('flex', 'flex-wrap', 'items-center', 'gap-x-2', 'gap-y-0.5')
+  })
+
   it('renders the truncated device id (8 chars)', () => {
     renderCore(<HistoryItemCore entry={makeEntry(1, 'edit_block', { to_text: 'hi' })} />)
     // device_id is 'DEVICE01XXXXXXXX' → first 8 chars

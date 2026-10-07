@@ -15,16 +15,19 @@ import { DebugModeRow } from '@/components/settings/DebugModeRow'
 import { QuickCaptureRow } from '@/components/settings/QuickCaptureRow'
 import { ResetOnboardingRow } from '@/components/settings/ResetOnboardingRow'
 import { ShowWelcomeTourRow } from '@/components/settings/ShowWelcomeTourRow'
+import { Card, CardContent } from '@/components/ui/card'
 
 export function GeneralTab(): React.ReactElement {
   return (
-    <div className="space-y-6">
-      <DeadlineWarningSection />
-      <AutostartRow />
-      <QuickCaptureRow />
-      <DebugModeRow />
-      <ResetOnboardingRow />
-      <ShowWelcomeTourRow />
-    </div>
+    <Card>
+      <CardContent className="space-y-6">
+        <DeadlineWarningSection />
+        <AutostartRow />
+        <QuickCaptureRow />
+        <DebugModeRow />
+        <ResetOnboardingRow />
+        <ShowWelcomeTourRow />
+      </CardContent>
+    </Card>
   )
 }

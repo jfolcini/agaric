@@ -24,7 +24,7 @@ export interface FilterChipRowProps {
   filters: FilterToken[]
   onRemove: (index: number) => void
   onClearAll: () => void
-  /** Optional trailing slot (e.g. `+ Filter ▾` button). */
+  /** Optional trailing slot (e.g. the Add filter button). */
   trailing?: React.ReactNode
 }
 
@@ -90,7 +90,7 @@ export function FilterChipRow({
     <div
       className={cn(
         'flex flex-wrap items-center gap-2',
-        hasFilters && 'rounded-lg border border-primary/30 bg-primary/5 p-2',
+        hasFilters && 'rounded-lg border bg-muted/40 p-2',
       )}
       data-testid="filter-chip-bar"
       // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- role="group" + aria-label on a flex-wrap chip container; <fieldset>/<details>/<hgroup> carry unwanted default rendering/semantics and would break the inline chip-bar layout

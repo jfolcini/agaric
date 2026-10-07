@@ -34,6 +34,7 @@ import {
 import { StatusIcon } from '@/components/ui/status-icon'
 import { useBlockReschedule } from '@/hooks/useBlockReschedule'
 import { useIsTouch } from '@/hooks/useIsTouch'
+import { useRovingRowFocus } from '@/hooks/useListKeyboardNavigation'
 import { useRichContentCallbacks, useTagClickHandler } from '@/hooks/useRichContentCallbacks'
 import { announce } from '@/lib/announcer'
 import { dueDateColor, formatCompactDate, formatDate, getTodayString } from '@/lib/date-utils'
@@ -79,7 +80,7 @@ function DueDateChipInner({
     <button
       type="button"
       className={cn(
-        'agenda-results-due inline-flex items-center rounded-full px-2 py-0.5 text-xs [@media(pointer:coarse)]:text-sm [@media(pointer:coarse)]:py-1 font-medium cursor-pointer hover:ring-1 hover:ring-ring',
+        'agenda-results-due inline-flex items-center gap-0.5 rounded-full px-1.5 py-0.5 text-xs font-medium leading-none [@media(pointer:coarse)]:text-sm [@media(pointer:coarse)]:py-1 cursor-pointer hover:ring-1 hover:ring-ring',
         dueDateColor(dueDate),
       )}
       onClick={(e) => e.stopPropagation()}
@@ -87,7 +88,7 @@ function DueDateChipInner({
       aria-label={t('dateChip.editDate')}
     >
       {/* surface overdue with an icon as well as a colour so colour-blind users perceive the state. */}
-      {overdue && <AlertCircle className="h-3 w-3 mr-1" aria-hidden="true" />}
+      {overdue && <AlertCircle className="h-3 w-3" aria-hidden="true" />}
       {formatCompactDate(dueDate)}
     </button>
   )
@@ -122,7 +123,7 @@ function DueDateChipInner({
               <SheetTitle>{t('dateChip.editDate')}</SheetTitle>
               <SheetDescription>{t('dateChip.inputLabel')}</SheetDescription>
             </SheetHeader>
-            <div className="mt-4">{editor}</div>
+            {editor}
           </SheetContent>
         )}
       </Sheet>
@@ -441,11 +442,19 @@ function BlockListItemInner({
   // stranded. Only an explicit `isFocused === false` removes a row from the
   // Tab order.
   const rovingTabIndex = isFocused === false ? -1 : 0
+  const rowRef = useRovingRowFocus<HTMLLIElement>(isFocused)
+  const setRowRef = useCallback(
+    (node: HTMLLIElement | null) => {
+      rowRef.current = node
+      liRef?.(node)
+    },
+    [rowRef, liRef],
+  )
 
   return (
     // oxlint-disable-next-line jsx-a11y/no-noninteractive-element-interactions -- this li is the focusable, keyboard-navigable list row itself (roving tabindex + Enter/Space activation via onKeyDown); the activation handlers belong on the row, and it can't become a <button> because it is a list item that contains nested interactive controls (date chip, reschedule button)
     <li
-      ref={liRef}
+      ref={setRowRef}
       style={style}
       data-index={dataIndex}
       className={cn(
@@ -454,7 +463,7 @@ function BlockListItemInner({
         // With touch-device padding don't get clipped at the bottom.
         '[@media(pointer:coarse)]:min-h-11',
         blockId && 'cursor-grab',
-        isFocused && 'block-selected',
+        isFocused && 'list-cursor',
         className,
       )}
       data-testid={testId}

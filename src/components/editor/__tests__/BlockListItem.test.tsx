@@ -574,9 +574,12 @@ describe('BlockListItem', () => {
 
 // ─── isFocused prop ────────────────────────────────────────────────────────
 describe('BlockListItem — isFocused prop', () => {
-  // Selection/focus feedback is now the single `block-selected`
-  // recipe @utility (src/index.css), not an inlined ring/bg class cluster.
-  it('applies the block-selected recipe when isFocused is true', () => {
+  // The keyboard cursor is the `list-cursor` @utility (src/index.css): a tint at
+  // rest, with the ring gated in CSS on keyboard focus being in the list. jsdom
+  // cannot evaluate that gate (`:focus-visible` / `:has()` against the Tailwind
+  // stylesheet), so these pin the class contract; the gate itself was checked in
+  // a real browser. `block-selected` is editor multi-selection, not the cursor.
+  it('applies the list-cursor recipe, not an inline ring, when isFocused is true', () => {
     render(
       <ul>
         <BlockListItem {...defaultProps({ isFocused: true })} />
@@ -584,10 +587,12 @@ describe('BlockListItem — isFocused prop', () => {
     )
 
     const li = screen.getByRole('listitem')
-    expect(li.className).toContain('block-selected')
+    expect(li.className).toContain('list-cursor')
+    expect(li.className).not.toContain('ring-2')
+    expect(li.className).not.toContain('block-selected')
   })
 
-  it('does not apply the block-selected recipe when isFocused is false', () => {
+  it('does not apply the list-cursor recipe when isFocused is false', () => {
     render(
       <ul>
         <BlockListItem {...defaultProps({ isFocused: false })} />
@@ -595,10 +600,10 @@ describe('BlockListItem — isFocused prop', () => {
     )
 
     const li = screen.getByRole('listitem')
-    expect(li.className).not.toContain('block-selected')
+    expect(li.className).not.toContain('list-cursor')
   })
 
-  it('does not apply the block-selected recipe by default (prop omitted)', () => {
+  it('does not apply the list-cursor recipe by default (prop omitted)', () => {
     render(
       <ul>
         <BlockListItem {...defaultProps()} />
@@ -606,7 +611,7 @@ describe('BlockListItem — isFocused prop', () => {
     )
 
     const li = screen.getByRole('listitem')
-    expect(li.className).not.toContain('block-selected')
+    expect(li.className).not.toContain('list-cursor')
   })
 })
 
@@ -666,6 +671,47 @@ describe('BlockListItem — roving tabindex (#1520)', () => {
     expect(tabStops).toHaveLength(1)
     expect(roved).toHaveLength(2)
     expect(tabStops[0]).toHaveTextContent('row 1')
+  })
+
+  // DOM focus follows the cursor, so the `list-cursor` ring (gated on the row's
+  // :focus-visible) stays on it across sub-lists, and the next key still reaches
+  // the list after a virtualiser unmounts the row focus started on.
+  function RovingList({ cursor }: { cursor: number }) {
+    return (
+      <ul>
+        {[0, 1].map((i) => (
+          <BlockListItem
+            key={i}
+            {...defaultProps({ content: `row ${i}`, isFocused: cursor === i })}
+          />
+        ))}
+      </ul>
+    )
+  }
+
+  it('moves DOM focus onto the new cursor row when the cursor leaves the focused row', () => {
+    const { rerender } = render(<RovingList cursor={0} />)
+    const rows = screen.getAllByRole('listitem')
+    rows[0]?.focus()
+
+    rerender(<RovingList cursor={1} />)
+
+    expect(rows[1]).toHaveFocus()
+  })
+
+  it('leaves focus alone when it is outside the list (e.g. #main-content at boot)', () => {
+    const outside = (cursor: number) => (
+      <>
+        <div tabIndex={-1} data-testid="outside" />
+        <RovingList cursor={cursor} />
+      </>
+    )
+    const { rerender } = render(outside(0))
+    screen.getByTestId('outside').focus()
+
+    rerender(outside(1))
+
+    expect(screen.getByTestId('outside')).toHaveFocus()
   })
 })
 

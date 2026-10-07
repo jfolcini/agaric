@@ -297,6 +297,16 @@ describe('StaticBlock', () => {
     expect(button?.classList.contains('min-h-[1.75rem]')).toBe(true)
   })
 
+  it('line-height matches the editor (leading-normal = .ProseMirror 1.5) so focus does not shift text', () => {
+    const { container } = render(
+      <TooltipProvider>
+        <StaticBlock blockId="B1" content="hello" onFocus={vi.fn()} />
+      </TooltipProvider>,
+    )
+    const block = container.querySelector('.block-static')
+    expect(block).toHaveClass('leading-normal')
+  })
+
   it('calls onFocus when the block wrapper is clicked', async () => {
     const onFocus = vi.fn()
     const user = userEvent.setup()
@@ -306,8 +316,8 @@ describe('StaticBlock', () => {
     expect(onFocus).toHaveBeenCalledWith('B1')
   })
 
-  // Selection feedback is the single `block-selected` recipe
-  // @utility (src/index.css), shared with BlockListItem / EditableBlock.
+  // Selection feedback is the `block-selected` @utility (src/index.css),
+  // shared with EditableBlock.
   it('applies the block-selected recipe when isSelected is true', () => {
     render(<StaticBlock blockId="B1" content="Sel" onFocus={vi.fn()} isSelected />)
     expect(screen.getByTestId('block-static').className).toContain('block-selected')

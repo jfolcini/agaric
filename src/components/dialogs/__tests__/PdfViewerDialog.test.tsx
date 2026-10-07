@@ -176,7 +176,7 @@ describe('PdfViewerDialog', () => {
     )
 
     const viewer = screen.getByRole('dialog')
-    expect(viewer).toHaveClass('max-w-5xl', 'h-[90vh]', 'max-h-[90vh]')
+    expect(viewer).toHaveClass('sm:max-w-[min(64rem,calc(100%-2rem))]', 'h-[90vh]', 'max-h-[90vh]')
     expect(viewer).not.toHaveClass('bottom-0')
     expect(viewer).not.toHaveClass('h-[90dvh]')
   })

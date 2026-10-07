@@ -216,20 +216,22 @@ describe('BlockPropertyDrawer', () => {
     expect(screen.queryByText('Block Properties')).not.toBeInTheDocument()
   })
 
-  // The SheetContent must inherit the responsive baseline.
-  // `w-80` alone clips a 360 px phone (320 px drawer leaves 40 px for content);
-  // `w-3/4 sm:w-80` keeps the desktop 320 px while making mobile 75% viewport.
-  it('SheetContent uses responsive width (w-3/4 sm:w-80)', () => {
+  // The SheetContent takes the default sheet width (75% of a phone, capped at
+  // `sm:max-w-sm` on desktop) instead of a narrower per-drawer override.
+  it('SheetContent uses the default sheet width, not a drawer-specific override', () => {
     setupMock()
     renderWithProvider(<BlockPropertyDrawer blockId="BLOCK_1" open onOpenChange={vi.fn()} />)
 
     const sheetContent = document.querySelector('[data-slot="sheet-content"]') as HTMLElement
     expect(sheetContent).not.toBeNull()
     expect(sheetContent.className).toContain('w-3/4')
-    expect(sheetContent.className).toContain('sm:w-80')
+    expect(sheetContent.className).toContain('sm:max-w-sm')
+    expect(sheetContent.className).not.toContain('sm:w-80')
   })
 
-  it('drawer body section has horizontal padding for consistent spacing', async () => {
+  // The body sits in SheetBody, which already indents it to the header's gutter;
+  // an extra `px-4` here would push it 16px right of the header line again.
+  it('drawer body sits in the SheetBody without its own horizontal padding', async () => {
     const props = [makeProp('status', { value_text: 'active' })]
     setupMock(props, [makeDef('status')])
 
@@ -239,12 +241,10 @@ describe('BlockPropertyDrawer', () => {
       expect(screen.getByText('status')).toBeInTheDocument()
     })
 
-    // The body container wraps property rows; verify it carries px-4 for padding
-    const statusEl = screen.getByText('status')
-    // The body div is the grandparent: body > row > span
-    const bodyDiv = statusEl.closest('.space-y-3')
+    const bodyDiv = screen.getByText('status').closest('.space-y-3')
     expect(bodyDiv).not.toBeNull()
-    expect(bodyDiv).toHaveClass('px-4')
+    expect(bodyDiv).not.toHaveClass('px-4')
+    expect(bodyDiv?.closest('[data-slot="sheet-body"]')).not.toBeNull()
   })
 
   it('wraps content in a ScrollArea for overflow scrolling', async () => {
@@ -257,8 +257,8 @@ describe('BlockPropertyDrawer', () => {
       expect(screen.getByText('status')).toBeInTheDocument()
     })
 
-    // ScrollArea renders with data-slot="scroll-area"
-    const scrollArea = document.querySelector('[data-slot="scroll-area"]')
+    // SheetBody is a ScrollArea and renders with data-slot="sheet-body"
+    const scrollArea = document.querySelector('[data-slot="sheet-body"]')
     expect(scrollArea).toBeInTheDocument()
 
     // The content div should be inside the scroll area

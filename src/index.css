@@ -52,6 +52,7 @@
   --color-priority-high: var(--priority-high);
   --color-priority-normal: var(--priority-normal);
   --color-priority-foreground: var(--priority-foreground);
+  --color-priority-high-foreground: var(--priority-high-foreground);
   /* Operation type colors */
   --color-op-create: var(--op-create);
   --color-op-create-foreground: var(--op-create-foreground);
@@ -208,6 +209,8 @@
   --priority-high: oklch(0.8 0.16 90);
   --priority-normal: oklch(0.62 0.22 265);
   --priority-foreground: oklch(1 0 0);
+  /* White on the yellow P2 chip was 1.9:1; dark brown is ≈7.3:1. */
+  --priority-high-foreground: oklch(0.3 0.08 75);
   /* #929 — paired foreground for the DONE checkbox glyph, mirroring
      --priority-foreground (was a hardcoded text-white). The task-done bg is a
      saturated green across all themes, so a near-white glyph reads on every one.
@@ -282,13 +285,13 @@
   --accent-slate: oklch(0.55 0.04 257);
   --accent-orange: oklch(0.7 0.18 50);
   --accent-current: var(--primary);
-  /* Elevation tier values (#1098) — light theme. These reproduce Tailwind's
-   * stock shadow-sm / shadow-md / shadow-lg exactly (the values the migrated
-   * components carried before this change), so perceived elevation is
-   * unchanged; tokenizing them just gives a single place to tune per theme. */
-  --elevation-resting: 0 1px 3px 0 rgb(0 0 0 / 0.1), 0 1px 2px -1px rgb(0 0 0 / 0.1);
-  --elevation-floating: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1);
-  --elevation-overlay: 0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -4px rgb(0 0 0 / 0.1);
+  /* Elevation tier values (#1098) — light theme. Each tier pairs a tight
+   * contact shadow with a wider ambient one, tinted toward the slate
+   * foreground rather than pure black, so surfaces lift softly instead of
+   * sitting on a grey smudge. */
+  --elevation-resting: 0 1px 2px -1px rgb(15 23 42 / 0.08), 0 1px 3px 0 rgb(15 23 42 / 0.06);
+  --elevation-floating: 0 2px 4px -2px rgb(15 23 42 / 0.08), 0 8px 20px -4px rgb(15 23 42 / 0.12);
+  --elevation-overlay: 0 4px 8px -4px rgb(15 23 42 / 0.1), 0 24px 48px -12px rgb(15 23 42 / 0.25);
   /* Animation/transition tokens.
    *
    * `--motion-scale` is the single global speed knob (Settings → Appearance →
@@ -344,7 +347,10 @@
   --accent-foreground: oklch(0.911 0.04 84.583);
   --destructive: oklch(0.577 0.245 27.325);
   --destructive-foreground: oklch(0.984 0.003 247.858);
-  --border: oklch(0.279 0.041 260.031);
+  /* Hairlines sit ~0.1 L above --background, the step the other dark themes
+   * use; at the --muted fill's L 0.279 every divider read as a solid rule.
+   * --input keeps the stronger value so field outlines stay findable. */
+  --border: oklch(0.235 0.041 260.031);
   --input: oklch(0.279 0.041 260.031);
   /* Dark theme background is `oklch(0.171 0.027 264.71)` (deep navy);
    * the original L=0.55 ring at /50 alpha composites toward L≈0.36 against it, leaving
@@ -359,13 +365,15 @@
   --chart-3: oklch(0.769 0.188 70.08);
   --chart-4: oklch(0.627 0.265 303.9);
   --chart-5: oklch(0.645 0.246 16.439);
-  --sidebar: oklch(0.129 0.042 264.695);
+  /* One step below --background, as in the other dark themes, so the
+   * sidebar reads as its own pane rather than a bordered strip of canvas. */
+  --sidebar: oklch(0.105 0.036 264.695);
   --sidebar-foreground: oklch(0.984 0.003 247.858);
   --sidebar-primary: oklch(0.55 0.188 28.71);
   --sidebar-primary-foreground: oklch(0.911 0.04 84.583);
   --sidebar-accent: oklch(0.25 0.03 28.71);
   --sidebar-accent-foreground: oklch(0.911 0.04 84.583);
-  --sidebar-border: oklch(0.279 0.041 260.031);
+  --sidebar-border: oklch(0.235 0.041 260.031);
   --sidebar-ring: oklch(0.55 0.188 28.71);
   /* Semantic badge colors */
   --status-done: oklch(0.25 0.05 155);
@@ -382,6 +390,8 @@
   --priority-high: oklch(0.8 0.16 90);
   --priority-normal: oklch(0.62 0.22 265);
   --priority-foreground: oklch(1 0 0);
+  /* White on the yellow P2 chip was 1.9:1; dark brown is ≈7.3:1. */
+  --priority-high-foreground: oklch(0.3 0.08 75);
   /* Operation type colors */
   --op-create: oklch(0.19 0.02 163);
   --op-create-foreground: oklch(0.77 0.18 163);
@@ -445,15 +455,18 @@
   --accent-slate: oklch(0.7 0.04 257);
   --accent-orange: oklch(0.76 0.18 50);
   --accent-current: var(--primary);
-  /* Elevation tier values (#1098) — dark theme. Held identical to :root for
-   * now to preserve the current appearance exactly (the migrated components
-   * never had a `dark:` shadow override; their stock Tailwind shadows did not
-   * vary by theme). This block is the single place to soften dark-mode
-   * shadows in future (dark surfaces generally want lighter shadows) without
-   * touching any component class string. */
-  --elevation-resting: 0 1px 3px 0 rgb(0 0 0 / 0.1), 0 1px 2px -1px rgb(0 0 0 / 0.1);
-  --elevation-floating: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1);
-  --elevation-overlay: 0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -4px rgb(0 0 0 / 0.1);
+  /* Elevation tier values (#1098) — dark theme. A 10%-black shadow vanishes
+   * on a near-black ground, so dark tiers run much denser, and the floating
+   * and overlay tiers add a 1px inset top highlight: the lit edge is what
+   * reads as "raised" once the shadow itself has nothing to darken. The
+   * other dark themes inherit these through `.dark`. */
+  --elevation-resting: 0 1px 2px 0 rgb(0 0 0 / 0.35);
+  --elevation-floating:
+    inset 0 1px 0 0 rgb(255 255 255 / 0.04), 0 2px 4px -2px rgb(0 0 0 / 0.4),
+    0 12px 24px -6px rgb(0 0 0 / 0.5);
+  --elevation-overlay:
+    inset 0 1px 0 0 rgb(255 255 255 / 0.05), 0 8px 16px -8px rgb(0 0 0 / 0.5),
+    0 32px 64px -16px rgb(0 0 0 / 0.7);
 }
 
 /* ── Solarized Light theme ────────────────────────────────── */
@@ -511,6 +524,7 @@
   --priority-high: oklch(0.6 0.14 80);
   --priority-normal: oklch(0.61 0.13 235);
   --priority-foreground: oklch(0.97 0.02 85);
+  --priority-high-foreground: oklch(0.22 0.04 210); /* base03 */
   /* Operation type colors */
   --op-create: oklch(0.93 0.05 155);
   --op-create-foreground: oklch(0.45 0.14 135);
@@ -582,7 +596,10 @@
   --secondary: oklch(0.3 0.04 210); /* base02 */
   --secondary-foreground: oklch(0.68 0.01 195);
   --muted: oklch(0.3 0.04 210);
-  --muted-foreground: oklch(0.62 0.01 200); /* base0 */
+  /* base0 lifted 0.62 → 0.66: dialogs, cards and popovers sit on the lifted
+   * --popover (L 0.27), where base0 was 4.1:1; 0.66 is ≈4.8:1 and still
+   * below --foreground (base1, 0.68). */
+  --muted-foreground: oklch(0.66 0.01 200);
   --accent: oklch(0.32 0.05 235);
   --accent-foreground: oklch(0.75 0.12 235);
   --destructive: oklch(0.59 0.22 30);
@@ -618,6 +635,7 @@
   --priority-high: oklch(0.65 0.14 80);
   --priority-normal: oklch(0.65 0.13 235);
   --priority-foreground: oklch(0.97 0.02 85);
+  --priority-high-foreground: oklch(0.22 0.04 210); /* base03 */
   /* Operation type colors */
   --op-create: oklch(0.28 0.05 135);
   --op-create-foreground: oklch(0.78 0.14 135);
@@ -810,7 +828,9 @@
   --secondary: oklch(0.35 0.02 260); /* selection */
   --secondary-foreground: oklch(0.75 0.02 255);
   --muted: oklch(0.35 0.02 260);
-  --muted-foreground: oklch(0.65 0.02 260);
+  /* 0.65 → 0.70: on the lifted --popover (L 0.33) 0.65 was 3.8:1; 0.70 is
+   * ≈4.6:1 and still below --foreground (0.75). */
+  --muted-foreground: oklch(0.7 0.02 260);
   --accent: oklch(0.35 0.05 235);
   --accent-foreground: oklch(0.78 0.12 235);
   --destructive: oklch(0.7 0.16 25); /* red */
@@ -1042,6 +1062,13 @@
      * the few native inputs match the per-theme accent on both engines
      * instead of falling back to each UA's default blue/grey. */
     accent-color: var(--primary);
+    color-scheme: light;
+  }
+
+  /* Without this the UA paints native checkboxes, scrollbars and date
+   * inputs in its light palette on every dark theme. */
+  .dark {
+    color-scheme: dark;
   }
 
   /* Focus-outline policy. The app signals keyboard focus exclusively via the
@@ -1111,8 +1138,8 @@
   border-left-color: var(--alert-note-border);
   background-color: var(--alert-note);
   padding: 0.5rem 1rem; /* py-2 px-4 — matches view-mode pl-4 py-2 */
-  border-top-right-radius: 0.375rem; /* rounded-r-md */
-  border-bottom-right-radius: 0.375rem;
+  border-top-right-radius: var(--radius-md); /* rounded-r-md */
+  border-bottom-right-radius: var(--radius-md);
   color: var(--foreground);
 }
 
@@ -1755,6 +1782,7 @@
     --priority-high: oklch(0.7 0.22 90);
     --priority-normal: oklch(0.5 0.28 265);
     --priority-foreground: oklch(1 0 0);
+    --priority-high-foreground: oklch(0.25 0.06 75);
   }
 
   /* A11Y-HC1 — second-pass token-coverage gap. The audit flagged that
@@ -1952,14 +1980,29 @@
   }
 }
 
-/* Single selection/focus recipe for block surfaces. Previously the
- * keyboard-focus / selection feedback was spelled three different ways
- * (`ring-2 ring-primary/50 bg-primary/5` on StaticBlock/EditableBlock vs
- * `ring-2 ring-inset ring-ring/50 bg-accent/30` on BlockListItem). Consumers
- * now apply the single `block-selected` class so selection looks identical
- * everywhere; surface-specific classes (rounded, etc.) stay at the call site. */
+/* Explicit block selection (StaticBlock / EditableBlock multi-select). */
 @utility block-selected {
   @apply ring-2 ring-inset ring-ring/50 bg-accent/30;
+}
+
+/* Keyboard cursor of a navigable list row. The cursor rests on row 0 before any
+ * key is pressed, so at rest it is only a tint (History's touch ↑/↓ and the
+ * document-level Space/Enter shortcuts act on it without focus); the ring (red
+ * like `--destructive`) shows while keyboard focus is on this row or a sibling
+ * row, or on the composite container (document-level lists move focus there on
+ * a navigation key). Not keyed off focus deeper in the container (Pages rows
+ * hold their own tabbable buttons) nor off any ancestor: the Journal container
+ * and #main-content take programmatic focus at boot and match :focus-visible
+ * then. The tint is an image layer so it sits over a row's own background. */
+@utility list-cursor {
+  background-image: linear-gradient(
+    color-mix(in oklab, var(--accent) 30%, transparent),
+    color-mix(in oklab, var(--accent) 30%, transparent)
+  );
+  :where(:has(> :focus-visible)) > &,
+  :where([role='grid'], [aria-activedescendant]):focus-visible & {
+    @apply outline-hidden ring-2 ring-inset ring-ring/50;
+  }
 }
 
 /* ── Touch-target utility ──────────────────────────────────────────── */

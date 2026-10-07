@@ -113,7 +113,7 @@ export function QueryResultTable({
             <th className="px-3 py-1.5 text-left font-medium text-muted-foreground">Page</th>
           </tr>
         </thead>
-        <tbody className="divide-y divide-muted-foreground/10">
+        <tbody className="divide-y divide-border">
           {results.map((block) => {
             const { title, displayMarkdown, pageTitle } = resolveBlockDisplay(
               block,

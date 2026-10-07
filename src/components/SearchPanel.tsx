@@ -762,10 +762,10 @@ export function SearchPanel(): React.ReactElement {
         <div
           role="alert"
           data-testid="search-error-state"
-          className="rounded-lg border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive"
+          className="rounded-lg border border-alert-error-border bg-alert-error p-3 text-sm text-alert-error-foreground"
         >
           <p className="font-medium">{t('search.errorTitle')}</p>
-          <p className="text-destructive/90">{t('search.errorBody')}</p>
+          <p className="opacity-90">{t('search.errorBody')}</p>
           {/* #2059 — mirror the zero-results "Clear filters" recovery: re-fire
               the current query from page 1 instead of leaving the user stuck. */}
           <Button

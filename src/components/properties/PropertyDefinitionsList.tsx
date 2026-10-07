@@ -400,6 +400,7 @@ export function PropertyDefinitionsList(): React.ReactElement {
         descriptionKey="propertiesView.deleteDesc"
         cancelKey="action.cancel"
         confirmKey="action.delete"
+        variant="destructive"
         onConfirm={handleConfirmDelete}
       />
     </div>

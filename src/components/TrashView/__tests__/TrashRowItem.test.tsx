@@ -158,6 +158,89 @@ describe('TrashRowItem', () => {
     expect(onRequestPurge).toHaveBeenCalledWith(block.id)
   })
 
+  // `list-cursor` is a tint at rest whose ring is gated in CSS on keyboard
+  // focus being in the grid; jsdom cannot evaluate that gate, so the class
+  // contract is the assertion: the cursor never carries an inline ring.
+  it('marks the cursor row with list-cursor and no inline ring', () => {
+    const { rerender } = renderRow({ isFocused: true })
+    const row = screen.getByTestId('trash-item')
+    expect(row).toHaveClass('list-cursor')
+    expect(row).not.toHaveClass('ring-2')
+
+    rerender(
+      <TrashRowItem
+        block={makeRow()}
+        isSelected={false}
+        isFocused={false}
+        pageLabel={null}
+        descendantCount={0}
+        callbacks={callbacks}
+        onTagClick={onTagClick}
+        onRowClick={vi.fn()}
+        onToggleSelection={vi.fn()}
+        onRestore={vi.fn()}
+        onRequestPurge={vi.fn()}
+      />,
+    )
+    expect(screen.getByTestId('trash-item')).not.toHaveClass('list-cursor')
+  })
+
+  it('checkbox reflects selection and toggles it once without a row click', async () => {
+    const user = userEvent.setup()
+    const onToggleSelection = vi.fn()
+    const onRowClick = vi.fn()
+    renderRow({ isSelected: true, onToggleSelection, onRowClick })
+
+    const checkbox = screen.getByRole('checkbox', { name: /deleted content/ })
+    expect(checkbox).toBeChecked()
+    await user.click(checkbox)
+
+    expect(onToggleSelection).toHaveBeenCalledTimes(1)
+    expect(onToggleSelection).toHaveBeenCalledWith('B1')
+    expect(onRowClick).not.toHaveBeenCalled()
+  })
+
+  it('Space on the checkbox toggles this row once and stays off the document', async () => {
+    // TrashView's list shortcuts listen on `document`, and their Space toggles
+    // the CURSOR row; a checkbox Space reaching them would toggle a second row.
+    const user = userEvent.setup()
+    const onToggleSelection = vi.fn()
+    const documentKeydown = vi.fn()
+    document.addEventListener('keydown', documentKeydown)
+    try {
+      renderRow({ onToggleSelection })
+
+      screen.getByTestId('trash-item-checkbox').focus()
+      await user.keyboard(' ')
+
+      expect(onToggleSelection).toHaveBeenCalledTimes(1)
+      expect(onToggleSelection).toHaveBeenCalledWith('B1')
+      expect(documentKeydown).not.toHaveBeenCalled()
+    } finally {
+      document.removeEventListener('keydown', documentKeydown)
+    }
+  })
+
+  it('Space on the row toggles it once and stays off the document', async () => {
+    // The same document-level Space would toggle the cursor row (this one) back.
+    const user = userEvent.setup()
+    const onToggleSelection = vi.fn()
+    const documentKeydown = vi.fn()
+    document.addEventListener('keydown', documentKeydown)
+    try {
+      renderRow({ onToggleSelection, isFocused: true })
+
+      screen.getByTestId('trash-item').focus()
+      await user.keyboard(' ')
+
+      expect(onToggleSelection).toHaveBeenCalledTimes(1)
+      expect(onToggleSelection).toHaveBeenCalledWith('B1')
+      expect(documentKeydown).not.toHaveBeenCalled()
+    } finally {
+      document.removeEventListener('keydown', documentKeydown)
+    }
+  })
+
   it('has no a11y violations', async () => {
     // `role="row"` requires a grid/table/rowgroup parent (aria-required-parent).
     // Mirror TrashListView: the row is a direct child of the `role="grid"`

@@ -16,16 +16,7 @@ import { Signal, Trash2, X } from 'lucide-react'
 import type React from 'react'
 import { useTranslation } from 'react-i18next'
 
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from '@/components/ui/alert-dialog'
+import { ConfirmDialog } from '@/components/dialogs/ConfirmDialog'
 import { Button } from '@/components/ui/button'
 
 interface BlockBatchActionMenuProps {
@@ -61,7 +52,7 @@ export function BlockBatchActionMenu({
   return (
     <>
       <div
-        className="batch-toolbar sticky top-0 z-10 flex items-center gap-2 rounded-lg border bg-background/95 backdrop-blur px-3 py-2 mb-2 shadow-(--shadow-resting)"
+        className="batch-toolbar sticky top-0 z-10 flex flex-wrap items-center gap-2 rounded-lg border bg-background/95 backdrop-blur px-3 py-2 mb-2 shadow-(--shadow-resting)"
         data-testid="batch-toolbar"
       >
         <span className="text-sm font-medium tabular-nums">
@@ -124,24 +115,16 @@ export function BlockBatchActionMenu({
           <X className="h-3.5 w-3.5" />
         </Button>
       </div>
-      <AlertDialog open={batchDeleteConfirm} onOpenChange={onSetBatchDeleteConfirm}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>
-              {t('blockContext.deleteConfirmTitle', { count: selectedBlockIds.length })}
-            </AlertDialogTitle>
-            <AlertDialogDescription>
-              {t('blockContext.deleteConfirmDescription')}
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>{t('dialog.cancel')}</AlertDialogCancel>
-            <AlertDialogAction onClick={onBatchDelete}>
-              {t('blockContext.deleteConfirmAction')}
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+      <ConfirmDialog
+        open={batchDeleteConfirm}
+        onOpenChange={onSetBatchDeleteConfirm}
+        titleKey="blockContext.deleteConfirmTitle"
+        descriptionKey="blockContext.deleteConfirmDescription"
+        confirmKey="blockContext.deleteConfirmAction"
+        values={{ count: selectedBlockIds.length }}
+        variant="destructive"
+        onConfirm={onBatchDelete}
+      />
     </>
   )
 }

@@ -401,7 +401,7 @@ export function BugReportDialog({
     <Root open={open} onOpenChange={onOpenChange}>
       {/* Dialog primitive bakes in flex flex-col + pinned
           header/footer + a scrollable DialogBody slot. */}
-      <Content className="max-w-2xl">
+      <Content className="sm:max-w-2xl">
         <Header>
           <Title>{t('bugReport.title')}</Title>
           <Description>{t('bugReport.description')}</Description>

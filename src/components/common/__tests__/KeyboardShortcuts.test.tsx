@@ -188,11 +188,14 @@ describe('KeyboardShortcuts', () => {
     expect(results).toHaveNoViolations()
   })
 
-  it('shortcuts table container is scrollable', () => {
+  // SheetBody (a ScrollArea) keeps the body on the header's gutter, and its
+  // viewport's `[&>div]:!block` is what the `table-fixed` invariant below relies on.
+  it('shortcuts table container is a scrollable SheetBody', () => {
     render(<KeyboardShortcuts open onOpenChange={vi.fn()} />)
 
     const table = screen.getByTestId('shortcuts-table')
-    expect(table.dataset['slot']).toBe('scroll-area')
+    expect(table.dataset['slot']).toBe('sheet-body')
+    expect(table.querySelector('[data-slot="scroll-area-viewport"]')).toHaveClass('[&>div]:!block')
   })
 
   // #3520 review (blocking): `table-fixed` alone stops a column growing,
@@ -241,7 +244,7 @@ describe('KeyboardShortcuts', () => {
 
   // Category headers stick to the top of the scroll viewport so the
   // user keeps category context mid-list. Pin the Tailwind classes that
-  // implement the sticky behavior + opaque background + layering.
+  // implement the sticky behavior + opaque sheet-surface background + layering.
   it('category headers are sticky to keep context while scrolling', () => {
     render(<KeyboardShortcuts open onOpenChange={vi.fn()} />)
 
@@ -251,7 +254,7 @@ describe('KeyboardShortcuts', () => {
     expect(cell.className).toContain('sticky')
     expect(cell.className).toContain('top-0')
     expect(cell.className).toContain('z-10')
-    expect(cell.className).toContain('bg-background')
+    expect(cell.className).toContain('bg-popover')
   })
 
   it('individual keys are rendered as separate kbd elements', () => {

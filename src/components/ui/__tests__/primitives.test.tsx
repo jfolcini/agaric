@@ -862,7 +862,7 @@ describe('IconButton', () => {
 })
 
 // ---------------------------------------------------------------------------
-// MetricCard — `rounded-lg border bg-muted/30 p-4 text-center` tile used in
+// MetricCard — `rounded-md border bg-muted/30 p-4 text-center` tile used in
 // StatusPanel for sync / queue / dispatch counters. Replaces 5+ inline copies.
 // ---------------------------------------------------------------------------
 
@@ -922,7 +922,8 @@ describe('MetricCard', () => {
   it('applies the always-on chrome (rounded, border, bg-muted/30, p-4, text-center)', () => {
     const { container } = render(<MetricCard label="X" value={1} />)
     const card = q(container, '[data-slot="metric-card"]')
-    expect(getClasses(card)).toContain('rounded-lg')
+    expect(getClasses(card)).toContain('rounded-md')
+    expect(getClasses(card)).not.toContain('rounded-lg')
     expect(getClasses(card)).toContain('border')
     expect(getClasses(card)).toContain('bg-muted/30')
     expect(getClasses(card)).toContain('p-4')
@@ -1121,6 +1122,13 @@ describe('FeaturePageHeader', () => {
     const heading = screen.getByRole('heading', { level: 1, name: 'Trash' })
     expect(heading).toBeInTheDocument()
     expect(heading.tagName).toBe('H1')
+  })
+
+  it('sizes the title a clear step above body text', () => {
+    render(<FeaturePageHeader title="Trash" />)
+    const heading = screen.getByRole('heading', { level: 1, name: 'Trash' })
+    expect(heading).toHaveClass('text-2xl', 'tracking-tight', 'font-semibold')
+    expect(heading).not.toHaveClass('text-lg')
   })
 
   it('wraps the title in a <header> landmark', () => {

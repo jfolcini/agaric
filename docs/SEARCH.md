@@ -7,7 +7,7 @@ Agaric ships with three complementary search surfaces:
 - **Find across pages (`Ctrl+Shift+F`)** — the full-text-search view that scans every block and page title in the current space.
 - **Palette (`Cmd/Ctrl+K`)** — quick navigation across pages and recent blocks (see [Quick palette](#quick-palette) below).
 
-For the across-pages surface: open the panel from the sidebar (or with `Ctrl+Shift+F`), type a query of three or more characters, and results stream in grouped by page. Matches inside snippets are highlighted; the page header doubles as a navigation target so you can jump straight to the parent. Structured filters can be typed directly into the input (`tag:#urgent path:Journal/*`) or added via the `+ Filter ▾` button above the chip row — see [Filter syntax](#filter-syntax) below.
+For the across-pages surface: open the panel from the sidebar (or with `Ctrl+Shift+F`), type a query of three or more characters, and results stream in grouped by page. Matches inside snippets are highlighted; the page header doubles as a navigation target so you can jump straight to the parent. Structured filters can be typed directly into the input (`tag:#urgent path:Journal/*`) or added via the **Add filter** button above the chip row — see [Filter syntax](#filter-syntax) below.
 
 For an in-app reference, click the `?` button in the search toolbar — it opens a help dialog covering the find-across-pages sections (Filter syntax, Toggles, Regex syntax, Boolean operators, and Tips). The Quick palette, In-page find, and Mobile sections below are documentation-only.
 
@@ -129,11 +129,11 @@ The tokeniser splits the query on whitespace, so a filter value that itself cont
 - `path:"GLOB WITH SPACES"` / `not-path:"GLOB WITH SPACES"` — e.g. `path:"Meeting Notes/*"` (#718).
 - `tag:#"TAG WITH SPACES"` — a multi-word tag name (importers create them from `#[[Tag With Space]]`) (#3288).
 
-The quotes are syntax, not part of the value: the parser strips one surrounding pair, and the serialiser re-adds quotes whenever the value contains whitespace (or is itself `"`-wrapped, so a stripped pair isn't stripped again on the next parse) — so chips, copy-paste, and the `+ Filter ▾` popover all round-trip exactly. Both quotes must be present; an unmatched leading `"` is kept as a literal character. An unquoted value simply ends at the first space (`path:Meeting Notes/*` is the chip `path:Meeting` plus the free text `Notes/*`).
+The quotes are syntax, not part of the value: the parser strips one surrounding pair, and the serialiser re-adds quotes whenever the value contains whitespace (or is itself `"`-wrapped, so a stripped pair isn't stripped again on the next parse) — so chips, copy-paste, and the Add filter popover all round-trip exactly. Both quotes must be present; an unmatched leading `"` is kept as a literal character. An unquoted value simply ends at the first space (`path:Meeting Notes/*` is the chip `path:Meeting` plus the free text `Notes/*`).
 
 The other filter values (`state:`, `priority:`, `due:`, `scheduled:` and their negations) have no whitespace in their vocabularies and take no quoting.
 
-There is no escape syntax for a literal `"` *inside* a quoted value. The `+ Filter ▾` forms therefore reject values containing `"` (both the property-value form (#152) and the path-glob form (#718)). A hand-typed value that mixes `"` with whitespace (e.g. `path:a" b"`) is parsed by the tokeniser's literal-quote rules and is not guaranteed to survive a serialise → re-parse cycle.
+There is no escape syntax for a literal `"` *inside* a quoted value. The Add filter forms therefore reject values containing `"` (both the property-value form (#152) and the path-glob form (#718)). A hand-typed value that mixes `"` with whitespace (e.g. `path:a" b"`) is parsed by the tokeniser's literal-quote rules and is not guaranteed to survive a serialise → re-parse cycle.
 
 ### Autocomplete
 

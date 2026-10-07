@@ -23,13 +23,20 @@ import {
   SpaceDeleteButton,
 } from '@/components/SpaceManageDialog/SpaceDeleteButton'
 import { TooltipProvider } from '@/components/ui/tooltip'
+import { useIsMobile } from '@/hooks/useIsMobile'
 import { t } from '@/lib/i18n'
+import { logger } from '@/lib/logger'
 
 vi.mock('@/lib/logger', () => ({
   logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }))
 
+vi.mock('@/hooks/useIsMobile', () => ({
+  useIsMobile: vi.fn(() => false),
+}))
+
 const mockedInvoke = vi.mocked(invoke)
+const mockedUseIsMobile = vi.mocked(useIsMobile)
 
 function renderWithProvider(ui: React.ReactNode) {
   return render(<TooltipProvider>{ui}</TooltipProvider>)
@@ -37,6 +44,7 @@ function renderWithProvider(ui: React.ReactNode) {
 
 beforeEach(() => {
   vi.clearAllMocks()
+  mockedUseIsMobile.mockReturnValue(false)
   mockedInvoke.mockImplementation(async (cmd: string) => {
     if (cmd === 'delete_block') return { affected_count: 1 }
     return null
@@ -97,9 +105,9 @@ describe('SpaceDeleteButton', () => {
     expect(screen.getByRole('button', { name: t('space.deleteSpaceLabel') })).toBeDisabled()
   })
 
-  it('click opens confirmation; confirm calls deleteBlock and refreshes', async () => {
+  it('confirm deletes, closes before the refresh settles, and refreshes', async () => {
     const user = userEvent.setup()
-    const onRefresh = vi.fn()
+    const onRefresh = vi.fn(() => new Promise<void>(() => {}))
     renderWithProvider(
       <SpaceDeleteButton
         spaceId="SPACE_1"
@@ -125,6 +133,70 @@ describe('SpaceDeleteButton', () => {
     })
     await waitFor(() => {
       expect(onRefresh).toHaveBeenCalledTimes(1)
+    })
+    await waitFor(() => {
+      expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
+    })
+  })
+
+  it('a refresh that fails after a successful delete is logged, not reported as a failed delete', async () => {
+    const user = userEvent.setup()
+    const onRefresh = vi.fn(() => Promise.reject(new Error('refresh failed')))
+    renderWithProvider(
+      <SpaceDeleteButton
+        spaceId="SPACE_1"
+        spaceName="Personal"
+        isLastSpace={false}
+        emptiness
+        onRefresh={onRefresh}
+      />,
+    )
+
+    await user.click(screen.getByRole('button', { name: t('space.deleteSpaceLabel') }))
+    await user.click(await screen.findByRole('button', { name: t('action.delete') }))
+
+    await waitFor(() => {
+      expect(onRefresh).toHaveBeenCalledTimes(1)
+    })
+    await waitFor(() => {
+      expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
+    })
+    expect(vi.mocked(toast.error)).not.toHaveBeenCalled()
+    expect(vi.mocked(logger.warn)).toHaveBeenCalledWith(
+      'components/SpaceManageDialog/SpaceDeleteButton',
+      'refresh after delete failed',
+      { spaceId: 'SPACE_1' },
+      expect.any(Error),
+    )
+  })
+
+  it('on a phone the confirmation is a sheet whose Delete is destructive and still deletes', async () => {
+    mockedUseIsMobile.mockReturnValue(true)
+    const user = userEvent.setup()
+    renderWithProvider(
+      <SpaceDeleteButton
+        spaceId="SPACE_1"
+        spaceName="Personal"
+        isLastSpace={false}
+        emptiness
+        onRefresh={() => {}}
+      />,
+    )
+
+    await user.click(screen.getByRole('button', { name: t('space.deleteSpaceLabel') }))
+    await screen.findByText(t('space.deleteConfirmTitle', { name: 'Personal' }))
+
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
+    const confirm = screen.getByRole('button', { name: t('action.delete') })
+    expect(confirm).toHaveClass('bg-destructive')
+    expect(screen.getByRole('button', { name: t('space.cancelLabel') })).toHaveFocus()
+
+    await user.click(confirm)
+    await waitFor(() => {
+      expect(mockedInvoke).toHaveBeenCalledWith(
+        'delete_block',
+        expect.objectContaining({ blockId: 'SPACE_1' }),
+      )
     })
   })
 
@@ -178,8 +250,7 @@ describe('SpaceDeleteButton', () => {
     })
 
     // Contract: on IPC failure the confirmation dialog STAYS OPEN so the user
-    // can retry without reopening the flow (recoverable failure). Radix
-    // AlertDialogAction would auto-close without the preventDefault opt-out.
+    // can retry without reopening the flow (recoverable failure).
     expect(screen.getByRole('alertdialog')).toBeInTheDocument()
     expect(
       screen.getByText(t('space.deleteConfirmTitle', { name: 'Personal' })),

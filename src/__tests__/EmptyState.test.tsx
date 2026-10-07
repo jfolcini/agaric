@@ -6,6 +6,7 @@
  *  - Renders with icon + message + description
  *  - Renders with action button
  *  - Compact variant applies smaller padding
+ *  - Icon sits in a muted circle and the section has no border
  *  - a11y compliance
  */
 
@@ -96,6 +97,18 @@ describe('EmptyState', () => {
 
     expect(wrapper.className).toContain('p-8')
     expect(wrapper.className).not.toContain('p-6')
+  })
+
+  it('renders the icon inside a muted circle and the section has no border', () => {
+    const { container } = render(<EmptyState icon={TestIcon} message="No items found" />)
+    const section = container.firstElementChild as HTMLElement
+    const circle = screen.getByTestId('test-icon').parentElement as HTMLElement
+
+    expect(circle).toHaveClass('size-8', 'rounded-full', 'bg-muted')
+    expect(circle.parentElement).toBe(section)
+    // `toHaveClass` matches whole tokens, so each border utility is named.
+    expect(section).not.toHaveClass('border')
+    expect(section).not.toHaveClass('border-dashed')
   })
 
   it('does not render icon when not provided', () => {

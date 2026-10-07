@@ -10,7 +10,7 @@
  *  - Null page_title renders "Untitled"
  *  - Group toggle collapses/expands blocks
  *  - Default expand state: all groups if ≤5, first 3 if >5
- *  - Block items with badge, content, truncated ID
+ *  - Block items: content only, no ULID fragment and no "content" type badge
  *  - Clicking block navigates to page
  *  - Keyboard navigation on blocks
  *  - Pagination (load more) with cursor
@@ -472,8 +472,8 @@ describe('LinkedReferences', () => {
     expect(screen.queryByText('block 7')).not.toBeInTheDocument()
   })
 
-  // 10. renders block items with badge, content, truncated ID
-  it('renders block items with badge, content, truncated ID', async () => {
+  // 10. renders block items as their content alone
+  it('renders block items with content only: no ULID fragment, no "content" type badge', async () => {
     const resp = {
       groups: [
         makeGroup('P1', 'Page One', [
@@ -490,12 +490,9 @@ describe('LinkedReferences', () => {
 
     renderLinkedReferences({ targetId: 'PAGE1' })
 
-    // Badge
-    expect(await screen.findByText('content')).toBeInTheDocument()
-    // Content
-    expect(screen.getByText('My block content')).toBeInTheDocument()
-    // Truncated ID
-    expect(screen.getByText('01HAAAAA...')).toBeInTheDocument()
+    expect(await screen.findByText('My block content')).toBeInTheDocument()
+    expect(screen.queryByText('content')).not.toBeInTheDocument()
+    expect(screen.queryByText(/01HAAAAA/)).not.toBeInTheDocument()
   })
 
   // 11. clicking block navigates to page
@@ -1562,10 +1559,10 @@ describe('LinkedReferences', () => {
   })
 
   // ---------------------------------------------------------------------------
-  // LinkType prop forwarded to BacklinkGroupRenderer renders "Linked"
+  // The panel header already names the kind, so the group list adds no badge
   // ---------------------------------------------------------------------------
 
-  it('renders "Linked" badge from BacklinkGroupRenderer', async () => {
+  it('does not repeat the section kind as a "Linked" badge inside the group list', async () => {
     const resp = {
       groups: [makeGroup('P1', 'Page One', [{ id: 'B1', content: 'block 1' }])],
       next_cursor: null,
@@ -1579,7 +1576,7 @@ describe('LinkedReferences', () => {
     renderLinkedReferences({ targetId: 'PAGE1' })
 
     await screen.findByText('Page One (1)')
-    expect(screen.getByText('Linked')).toBeInTheDocument()
+    expect(screen.queryByText('Linked')).not.toBeInTheDocument()
   })
 
   // ---------------------------------------------------------------------------

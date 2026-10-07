@@ -60,7 +60,7 @@ describe('useSidebarRailDrag', () => {
       result.current.onDoubleClick()
     })
 
-    expect(opts.setSidebarWidth).toHaveBeenCalledWith(150)
+    expect(opts.setSidebarWidth).toHaveBeenCalledWith(224)
     expect(opts.setOpen).toHaveBeenCalledWith(true)
   })
 

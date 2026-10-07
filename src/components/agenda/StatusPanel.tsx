@@ -233,7 +233,7 @@ function BoundedStalenessNotice({ status }: { status: StatusInfo }): React.React
 
   return (
     <div
-      className="status-panel-stale mt-4 flex flex-col gap-1 rounded-lg border border-status-pending bg-status-pending/10 p-4 text-sm text-status-pending-foreground"
+      className="status-panel-stale mt-4 flex flex-col gap-1 rounded-md border border-alert-warning-border bg-alert-warning p-4 text-sm text-alert-warning-foreground"
       data-testid="status-panel-stale"
     >
       <div className="flex items-start gap-2">
@@ -278,7 +278,7 @@ export function StatusPanel(): React.ReactElement {
       <FeaturePageHeader title={t('sidebar.status')} className="status-panel-header" />
 
       <Card>
-        <CardHeader className="pb-3">
+        <CardHeader>
           <CardTitle className="status-panel-title flex items-center gap-2">
             <Activity className="h-4 w-4" />
             {t('status.materializerStatusTitle')}
@@ -291,7 +291,7 @@ export function StatusPanel(): React.ReactElement {
               height="h-20"
               loading
               ariaLabel={t('status.loadingLabel')}
-              className="status-panel-loading grid grid-cols-1 sm:grid-cols-2 gap-4 space-y-0"
+              className="status-panel-loading grid grid-cols-2 gap-4 space-y-0"
             />
           )}
 
@@ -299,7 +299,7 @@ export function StatusPanel(): React.ReactElement {
 
           {status && (
             <output className="status-panel-metrics block">
-              <dl className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <dl className="grid grid-cols-2 gap-4">
                 <MetricCard
                   className={cn('status-metric', queueHealthClasses(status.foreground_queue_depth))}
                   value={
@@ -370,7 +370,7 @@ export function StatusPanel(): React.ReactElement {
               </dl>
 
               {hasErrors && (
-                <div className="status-panel-errors mt-4 flex flex-col gap-1 rounded-lg border border-destructive/20 bg-destructive/5 p-4 text-sm text-destructive">
+                <div className="status-panel-errors mt-4 flex flex-col gap-1 rounded-md border border-alert-error-border bg-alert-error p-4 text-sm text-alert-error-foreground">
                   <div className="flex items-start gap-2">
                     <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
                     <p>{errorSummaryText({ fgErrors, bgErrors }, t)}</p>
@@ -390,7 +390,7 @@ export function StatusPanel(): React.ReactElement {
       </Card>
 
       <Card>
-        <CardHeader className="pb-3">
+        <CardHeader>
           <CardTitle
             className="sync-panel-title flex items-center gap-2"
             data-testid="sync-panel-title"
@@ -435,7 +435,7 @@ export function StatusPanel(): React.ReactElement {
                   timeout guard. */}
               <SyncRetryButton state={syncState} />
 
-              <dl className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <dl className="grid grid-cols-2 gap-4">
                 <MetricCard
                   value={<span className="sync-peer-count">{syncPeers.length}</span>}
                   labelSlot={

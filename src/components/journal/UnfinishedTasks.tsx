@@ -14,7 +14,6 @@ import { useTranslation } from 'react-i18next'
 import { CollapsiblePanelHeader } from '@/components/common/CollapsiblePanelHeader'
 import { BlockListItem } from '@/components/editor/BlockListItem'
 import { LoadingSkeleton } from '@/components/rendering/LoadingSkeleton'
-import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { useBlockNavigation } from '@/hooks/useBlockNavigation'
 import { useBlockPropertyEvents } from '@/hooks/useBlockPropertyEvents'
@@ -502,9 +501,9 @@ export function UnfinishedTasks({
     <section aria-label={t('unfinished.sectionLabel')} data-testid="unfinished-tasks">
       <CollapsiblePanelHeader isCollapsed={collapsed} onToggle={handleToggle}>
         {t('unfinished.title')}
-        <Badge tone="secondary" className="ml-2">
-          {hasNextPage ? t('unfinished.countPartial', { n: blocks.length }) : blocks.length}
-          {/* `Badge` is a plain <span> (implicit role `generic`), which does not
+        <span className="font-normal tabular-nums">
+          ({hasNextPage ? t('unfinished.countPartial', { n: blocks.length }) : blocks.length})
+          {/* The count is a plain <span> (implicit role `generic`), which does not
               take `aria-label` — so the "at least N" qualifier has to be real
               text for AT rather than an attribute that is silently dropped.
 
@@ -512,7 +511,7 @@ export function UnfinishedTasks({
               to load the rest" is the *visual* affordance's promise, and
               reading it out to someone whose panel is already open told them
               to perform an action they had already performed. Expanded, the
-              badge can still be partial (the drain is mid-flight, the
+              count can still be partial (the drain is mid-flight, the
               MAX_UNFINISHED_PAGES cap was hit, or a page rejected), so the
               qualifier is still needed — it just has to say what is actually
               true of an open panel. */}
@@ -523,7 +522,7 @@ export function UnfinishedTasks({
                 : t('unfinished.countPartialLabelExpanded', { n: blocks.length })}
             </span>
           )}
-        </Badge>
+        </span>
       </CollapsiblePanelHeader>
 
       {/* Mid-drain failure: pages 1..k are committed and rendered, but the
@@ -579,9 +578,7 @@ export function UnfinishedTasks({
                   className="py-1"
                 >
                   <span className="text-xs uppercase tracking-wide">{t(group.i18nKey)}</span>
-                  <Badge tone="outline" className="ml-1.5 text-xs">
-                    {group.blocks.length}
-                  </Badge>
+                  <span className="text-xs font-normal tabular-nums">({group.blocks.length})</span>
                 </CollapsiblePanelHeader>
 
                 {!isGroupCollapsed && (

@@ -214,6 +214,7 @@ export function TrashView(): React.ReactElement {
     itemCount: filteredBlocks.length,
     homeEnd: true,
     pageUpDown: true,
+    listRef,
   })
 
   // Reset focused index when filter changes

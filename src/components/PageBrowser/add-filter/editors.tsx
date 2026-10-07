@@ -620,7 +620,7 @@ function PagePickerResults({
             <button
               key={page.id}
               type="button"
-              className="rounded px-2 py-1 text-left text-xs transition-colors hover:bg-accent focus-ring-visible truncate"
+              className="rounded-sm px-2 py-1.5 text-left text-sm transition-colors hover:bg-accent hover:text-accent-foreground focus-ring-visible truncate"
               onClick={() => onSelect(page.id)}
             >
               {/* `PageHeading.content` IS the page title; prefer it. Fall back
@@ -663,7 +663,7 @@ export function LinkTargetEditor({
     <div className="flex flex-col gap-2" data-testid="link-target-editor">
       <span className="px-1 text-xs font-medium">{label}</span>
       <Input
-        className="h-8 text-xs"
+        className="h-8 text-sm focus-ring-soft"
         value={search}
         onChange={(e) => setSearch(e.target.value)}
         placeholder={t('pageBrowser.filter.linkSearchPages')}
@@ -712,7 +712,7 @@ function PropertyRefValueInput({
   return (
     <div className="flex flex-col gap-1" data-testid="property-ref-value-input">
       <Input
-        className="h-8 text-xs"
+        className="h-8 text-sm focus-ring-soft"
         value={search}
         onChange={(e) => setSearch(e.target.value)}
         placeholder={t('pageBrowser.filter.linkSearchPages')}
@@ -796,7 +796,7 @@ export function TagPickerEditor({
     <div className="flex flex-col gap-2" data-testid="tag-picker-editor">
       <span className="px-1 text-xs font-medium">{label}</span>
       <Input
-        className="h-8 text-xs"
+        className="h-8 text-sm focus-ring-soft"
         value={search}
         onChange={(e) => setSearch(e.target.value)}
         placeholder={t('pageBrowser.filter.tagSearchPlaceholder')}
@@ -817,7 +817,7 @@ export function TagPickerEditor({
               <button
                 key={tag.tag_id}
                 type="button"
-                className="rounded px-2 py-1 text-left text-xs transition-colors hover:bg-accent focus-ring-visible truncate"
+                className="rounded-sm px-2 py-1.5 text-left text-sm transition-colors hover:bg-accent hover:text-accent-foreground focus-ring-visible truncate"
                 onClick={() => onSelect(tag.tag_id)}
               >
                 {tag.name}

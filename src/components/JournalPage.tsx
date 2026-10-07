@@ -172,12 +172,6 @@ export function JournalPage({
 
   // ── Main render ─────────────────────────────────────────────────────
 
-  // PEND-UX item 5 — the configure-journal-template action moves from a
-  // free-floating right-aligned button row into the shared
-  // `FeaturePageHeader` `actions` slot. The same agenda-mode visibility
-  // Guard is preserved (templates don't apply in agenda mode).
-  const showConfigureTemplateAction = !loading && mode !== 'agenda'
-
   return (
     // `tabIndex={-1}` makes this a programmatic primary-focus / scroll target
     // (usePrimaryFocus, Ctrl+F host). It is NOT an interactive control, so it
@@ -185,38 +179,41 @@ export function JournalPage({
     // (red, in-theme) outline around the ENTIRE journal whenever primary focus
     // landed here (#1243). A large panel taking keyboard focus shows no visible
     // ring — only the block the user actually edits gets a focus treatment.
-    // The browser's DEFAULT UA outline (painted on the programmatic `.focus()`
-    // App.tsx fires on view change / app start) is now suppressed globally by
-    // the `:focus:not(:focus-visible)` rule in the base layer, so no per-element
-    // `outline-none` is needed here.
-    <div ref={journalRef} tabIndex={-1} className="space-y-4">
+    // `outline-none` is still needed: at app start no pointer has moved yet, so
+    // the programmatic `.focus()` App.tsx fires matches `:focus-visible` and
+    // the base-layer `:focus:not(:focus-visible)` rule does not cover it.
+    <div ref={journalRef} tabIndex={-1} className="space-y-4 outline-none">
       {/* PEND-UX item 5 — `<h1>` landmark for the Journal view. The App-
           shell header renders `<JournalControls />` instead of a label
           for journal mode, so this title is purely additive (no visual
           duplication). The configure-template button is surfaced as a
-          right-aligned action when available. */}
-      <FeaturePageHeader
-        title={t('sidebar.journal')}
-        className="journal-page-header"
-        {...(showConfigureTemplateAction && {
-          actions: (
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button
-                  variant="ghost"
-                  size="icon-xs"
-                  aria-label={t('space.configureJournalTemplate')}
-                  onClick={() => setManageOpen(true)}
-                  data-testid="journal-configure-template-trigger"
-                >
-                  <Settings2 className="h-4 w-4" />
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent>{t('space.configureJournalTemplate')}</TooltipContent>
-            </Tooltip>
-          ),
-        })}
-      />
+          right-aligned action when available. Agenda mode skips it:
+          `AgendaView` renders the title inside its `ViewHeader`, above the
+          sticky filter/sort bar, so it is the only `<h1>` there. */}
+      {mode !== 'agenda' && (
+        <FeaturePageHeader
+          title={t('sidebar.journal')}
+          className="journal-page-header"
+          {...(!loading && {
+            actions: (
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    variant="ghost"
+                    size="icon-xs"
+                    aria-label={t('space.configureJournalTemplate')}
+                    onClick={() => setManageOpen(true)}
+                    data-testid="journal-configure-template-trigger"
+                  >
+                    <Settings2 className="h-4 w-4" />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>{t('space.configureJournalTemplate')}</TooltipContent>
+              </Tooltip>
+            ),
+          })}
+        />
+      )}
 
       {/* View content — the tabpanel for the active mode tab. `id` +
           `aria-labelledby` complete the WAI-ARIA tab↔panel relationship with

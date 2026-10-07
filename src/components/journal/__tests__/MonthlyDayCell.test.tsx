@@ -4,7 +4,7 @@
  * Validates:
  *  1. Renders date number
  *  2. Shows today highlight (bg-primary class)
- *  3. Adjacent month cell has opacity-40 and pointer-events-none
+ *  3. Adjacent month cell dims its content (not the cell) and has pointer-events-none
  *  4. Calls onNavigateToDate on click for current month
  *  5. Does NOT call onNavigateToDate for adjacent month
  *  6. Keyboard: Enter/Space triggers navigation
@@ -84,11 +84,19 @@ describe('MonthlyDayCell', () => {
     expect(dateSpan).toHaveTextContent('15')
   })
 
-  it('adjacent month cell has opacity-40 and pointer-events-none', () => {
+  it('adjacent month cell dims its content, keeps its background, and has pointer-events-none', () => {
     render(<MonthlyDayCell {...defaultProps} isCurrentMonth={false} />)
     const cell = screen.getByRole('gridcell')
-    expect(cell.className).toContain('opacity-40')
-    expect(cell.className).toContain('pointer-events-none')
+    // Dimming the cell itself lets the grid's `bg-border` show through as a grey slab.
+    expect(cell).not.toHaveClass('opacity-40')
+    expect(cell).toHaveClass('[&>*]:opacity-40')
+    expect(cell).toHaveClass('bg-background')
+    expect(cell).toHaveClass('pointer-events-none')
+  })
+
+  it('current month cell does not dim its content', () => {
+    render(<MonthlyDayCell {...defaultProps} />)
+    expect(screen.getByRole('gridcell')).not.toHaveClass('[&>*]:opacity-40')
   })
 
   it('calls onNavigateToDate on click for current month', async () => {

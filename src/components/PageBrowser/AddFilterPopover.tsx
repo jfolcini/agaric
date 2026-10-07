@@ -85,7 +85,7 @@ export interface AddFilterPopoverProps {
    * Dependency-INJECTED rather than imported so this popover imports neither
    * `HasParentMatchingEditor` nor `FilterGroup`; importing either would close an
    * import cycle (both reach back here via `advancedQuery.ts` /
-   * `PageBrowserFilterRow.tsx`, and through `FilterGroup`'s own "+ Filter"
+   * `PageBrowserFilterRow.tsx`, and through `FilterGroup`'s own "Add filter"
    * popover). `FilterGroup` passes a closure that renders the editor (wiring
    * `FilterGroup` itself in as the editor's recursive sub-builder). The
    * Pages-surface usages pass nothing, so the has-parent facet is not offered
@@ -153,7 +153,7 @@ export function AddFilterPopover({
 
   // #4553 Phase 1 — fetch the property-defs registry once the has-property
   // editor opens, but ONLY on the advanced surface (`showAdvancedFacets`):
-  // the Pages browser's `+ Filter` popover must keep its classic
+  // the Pages browser's Add filter popover must keep its classic
   // 4-operator/Text-only behaviour untouched (acceptance criterion 7), and
   // never issue this IPC call at all. `listPropertyDefs` is paginated; this
   // popover is single-page-by-design (mirrors `QueryBuilderModal`'s datalist

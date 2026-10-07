@@ -217,12 +217,13 @@ describe('WeeklyView', () => {
     }
   })
 
-  it('renders dividers between day sections', () => {
+  it('separates day sections by spacing, not by divider rules', () => {
     const { container } = render(<WeeklyView makeDayEntry={makeDayEntry} onAddBlock={vi.fn()} />)
 
-    // 6 dividers for 7 days (between each pair)
-    const dividers = container.querySelectorAll('.border-t')
-    expect(dividers).toHaveLength(6)
+    expect(container.querySelectorAll('.border-t')).toHaveLength(0)
+    const zones = screen.getAllByTestId(/^reschedule-drop-zone-/)
+    expect(zones).toHaveLength(7)
+    expect(zones[0]?.parentElement).toHaveClass('space-y-6')
   })
 
   it('re-renders when journal store currentDate changes', () => {

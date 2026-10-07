@@ -18,18 +18,20 @@
  *    Enter selects (delegated to `useListKeyboardNavigation`).
  *  - `PickerFilterInput` — the auto-focused filter box rendered at the top.
  *  - `PickerRow` — a ghost button row with the shared toolbar styling, an optional
- *    leading icon, and active / keyboard-focused highlight states.
+ *    leading icon, a current-value check, and a keyboard-focused highlight.
  *
  * Rows use `onPointerDown + preventDefault` (not onClick) so focus stays in the
  * editor and the focus-keyed block command bus still targets the focused block —
  * mirroring every other toolbar popover trigger.
  */
 
+import { Check } from 'lucide-react'
 import type React from 'react'
 
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { useListKeyboardNavigation } from '@/hooks/useListKeyboardNavigation'
+import { toolbarMenuRowClass } from '@/lib/toolbar-config'
 import { cn } from '@/lib/utils'
 
 export interface UseInlinePickerKeyboardOptions {
@@ -101,7 +103,7 @@ export function PickerFilterInput({
       value={value}
       onChange={(e) => onChange(e.target.value)}
       aria-label={ariaLabel}
-      className="mb-1"
+      className="mb-1 h-8 focus-ring-soft"
       onKeyDown={onKeyDown}
     />
   )
@@ -112,7 +114,7 @@ export interface PickerRowProps {
   label: React.ReactNode
   /** Optional leading icon component. */
   icon?: React.ComponentType<{ className?: string | undefined }> | undefined
-  /** Marks the row as the current value (persistent highlight). */
+  /** Marks the row as the current value: bold label and a trailing check, never a fill. */
   active?: boolean | undefined
   /** Marks the row as the keyboard-highlighted row. */
   focused?: boolean | undefined
@@ -135,9 +137,10 @@ export function PickerRow({
       variant="ghost"
       size="sm"
       data-testid={testId}
+      aria-current={active ? 'true' : undefined}
       className={cn(
-        'justify-start text-sm w-full [@media(pointer:coarse)]:min-h-11',
-        active && 'bg-accent',
+        toolbarMenuRowClass,
+        active && 'font-medium',
         focused && 'bg-accent text-accent-foreground',
       )}
       onPointerDown={(e) => {
@@ -145,8 +148,9 @@ export function PickerRow({
         onSelect()
       }}
     >
-      {Icon ? <Icon className="h-4 w-4 shrink-0 mr-2" /> : null}
+      {Icon ? <Icon className="h-3.5 w-3.5 shrink-0 mr-2" /> : null}
       <span>{label}</span>
+      {active && <Check className="ml-auto h-3.5 w-3.5" aria-hidden="true" />}
     </Button>
   )
 }

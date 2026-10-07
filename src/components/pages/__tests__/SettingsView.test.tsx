@@ -384,6 +384,20 @@ describe('SettingsView', () => {
     expect(fontSizeSelect).toBeInTheDocument()
   })
 
+  it.each([
+    ['settings.tabGeneral', () => screen.getByTestId('deadline-warning-section')],
+    ['settings.tabAppearance', () => screen.getByLabelText(t('settings.themeLabel'))],
+    ['settings.tabEditor', () => screen.getByTestId('emoji-picker-toggle')],
+    ['settings.tabProperties', () => screen.getByTestId('property-definitions-list')],
+  ] as const)('%s content sits on a card surface like the other tabs', async (tabKey, control) => {
+    const user = userEvent.setup()
+    render(<SettingsView />)
+
+    await user.click(screen.getByRole('tab', { name: t(tabKey) }))
+
+    expect(control().closest('[data-slot="card-content"]')).not.toBeNull()
+  })
+
   it('Sync tab shows device management', async () => {
     const user = userEvent.setup()
     render(<SettingsView />)

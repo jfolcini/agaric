@@ -74,7 +74,7 @@ function opBadgeClasses(opType: string): string {
     return 'bg-op-edit text-op-edit-foreground'
   }
   if (opType.startsWith('delete') || opType.startsWith('purge')) {
-    return 'bg-destructive/10 text-destructive'
+    return 'bg-alert-error text-alert-error-foreground'
   }
   if (opType.startsWith('move')) {
     return 'bg-op-move text-op-move-foreground'
@@ -200,7 +200,7 @@ export function HistoryItemCore({
     <>
       <div className="flex flex-col gap-0.5 min-w-0 flex-1">
         {/* Op type badge */}
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
           <Badge
             tone="outline"
             className={cn(

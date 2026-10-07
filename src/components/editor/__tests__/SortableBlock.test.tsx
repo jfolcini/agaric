@@ -1292,7 +1292,7 @@ describe('SortableBlock priority badge', () => {
 
     const badge = container.querySelector('.priority-badge > span')
     expect(badge?.className).toContain('bg-priority-high')
-    expect(badge?.className).toContain('text-priority-foreground')
+    expect(badge?.className).toContain('text-priority-high-foreground')
   })
 
   it('applies blue styling for priority 3', () => {
@@ -2517,8 +2517,8 @@ describe('SortableBlock due date chip', () => {
     )
 
     const chip = container.querySelector('.due-date-chip')
-    expect(chip?.className).toContain('bg-destructive/10')
-    expect(chip?.className).toContain('text-destructive')
+    expect(chip?.className).toContain('bg-alert-error')
+    expect(chip?.className).toContain('text-alert-error-foreground')
   })
 
   it('applies muted styling for future dates', () => {
@@ -4460,6 +4460,35 @@ describe(' responsive layout', () => {
 
     const wrapper = screen.getByTestId('sortable-block')
     expect(wrapper).toHaveClass('min-w-0')
+  })
+
+  it('nested block draws an indent guide at full border strength (visible in dark mode)', () => {
+    render(
+      <SortableBlock
+        blockId="BLOCK_NESTED"
+        content="nested"
+        isFocused={false}
+        depth={2}
+        rovingEditor={makeRovingEditor()}
+      />,
+    )
+
+    const guide = screen.getByTestId('swipe-content').querySelector('.border-l')
+    expect(guide).toHaveClass('border-border')
+  })
+
+  it('top-level block draws no indent guide', () => {
+    render(
+      <SortableBlock
+        blockId="BLOCK_TOP"
+        content="top"
+        isFocused={false}
+        depth={0}
+        rovingEditor={makeRovingEditor()}
+      />,
+    )
+
+    expect(screen.getByTestId('swipe-content').querySelector('.border-l')).toBeNull()
   })
 
   it('inner swipe-content wrapper has min-w-0 alongside w-full', () => {

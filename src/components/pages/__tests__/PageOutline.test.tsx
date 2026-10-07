@@ -137,6 +137,17 @@ describe('PageOutline', () => {
     expect(screen.getByText('No headings found')).toBeInTheDocument()
   })
 
+  it('renders the heading list inside the shared SheetBody so it aligns with the header', async () => {
+    const user = userEvent.setup()
+    renderOutline([makeBlock({ id: 'b1', content: '# Title' })])
+
+    await user.click(screen.getByRole('button', { name: 'Open outline' }))
+
+    const body = document.querySelector('[data-slot="sheet-body"]')
+    expect(body).not.toBeNull()
+    expect(body).toContainElement(screen.getByRole('navigation', { name: 'Page outline' }))
+  })
+
   it('renders heading list from blocks with heading prefixes', async () => {
     const user = userEvent.setup()
     renderOutline([

@@ -77,6 +77,14 @@ afterEach(() => {
 })
 
 describe('IntegrityCheckSection', () => {
+  it('shows its description as the card description in the header, like the other tabs', () => {
+    render(<IntegrityCheckSection />)
+
+    const description = screen.getByText(t('integrity.description'))
+    expect(description).toHaveAttribute('data-slot', 'card-description')
+    expect(description.closest('[data-slot="card-header"]')).not.toBeNull()
+  })
+
   it('renders off by default, with no way to run and nothing invoked', () => {
     render(<IntegrityCheckSection />)
 

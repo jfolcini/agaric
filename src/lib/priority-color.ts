@@ -13,7 +13,7 @@ import { getPriorityLevels } from '@/lib/priority-levels'
 
 const INDEX_COLORS = [
   'bg-priority-urgent text-priority-foreground',
-  'bg-priority-high text-priority-foreground',
+  'bg-priority-high text-priority-high-foreground',
   'bg-priority-normal text-priority-foreground',
 ] as const
 

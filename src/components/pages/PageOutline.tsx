@@ -12,9 +12,9 @@ import { useTranslation } from 'react-i18next'
 
 import { EmptyState } from '@/components/common/EmptyState'
 import { Button } from '@/components/ui/button'
-import { ScrollArea } from '@/components/ui/scroll-area'
 import {
   Sheet,
+  SheetBody,
   SheetContent,
   SheetDescription,
   SheetHeader,
@@ -95,7 +95,7 @@ export function PageOutline() {
           <SheetTitle>{t('outline.title')}</SheetTitle>
           <SheetDescription className="sr-only">{t('outline.navLabel')}</SheetDescription>
         </SheetHeader>
-        <ScrollArea className="flex-1 px-4 pb-4">
+        <SheetBody>
           {headings.length === 0 ? (
             <EmptyState compact message={t('pages.outline.empty')} />
           ) : (
@@ -120,7 +120,7 @@ export function PageOutline() {
               </ul>
             </nav>
           )}
-        </ScrollArea>
+        </SheetBody>
       </SheetContent>
     </Sheet>
   )

@@ -62,7 +62,7 @@ export function ModeChipRow({
   const hint = mode === 'search' ? t('palette.modeHint') : t('palette.modeBackHint')
   return (
     <div
-      className="flex items-center justify-between border-b px-3 py-1.5 text-xs"
+      className="flex items-center justify-between border-b py-1.5 pr-10 pl-3 text-xs"
       data-testid="palette-mode-row"
     >
       <button

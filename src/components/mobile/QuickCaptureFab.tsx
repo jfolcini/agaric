@@ -60,7 +60,7 @@ export function QuickCaptureFab({
       // Pinned bottom-right. The 5rem (80px) offset clears the bottom-fixed
       // touch FormattingToolbar (~47px) so the FAB never overlaps its
       // right-aligned "More" button, stacked on the iOS home-indicator inset.
-      className="fixed right-4 z-40 size-14 rounded-full shadow-(--shadow-overlay) bottom-[calc(5rem+var(--safe-area-bottom))]"
+      className="fixed right-4 z-40 size-14 rounded-full shadow-(--shadow-floating) bottom-[calc(5rem+var(--safe-area-bottom))]"
     >
       <PenLine className="size-6" aria-hidden="true" />
     </Button>

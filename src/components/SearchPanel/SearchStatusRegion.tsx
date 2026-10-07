@@ -86,8 +86,10 @@ export function SearchStatusRegion({
       aria-atomic="true"
       data-testid="search-results-status"
     >
+      {/* Announcement only: the match summary, EmptyState, error banner, header
+          spinner and the emptied input already show every state. */}
       {statusText !== null && (
-        <span className="text-xs text-muted-foreground" data-testid="search-results-count">
+        <span className="sr-only" data-testid="search-results-count">
           {statusText}
         </span>
       )}

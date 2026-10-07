@@ -81,6 +81,9 @@ export function HistoryListView({
     count: entries.length,
     getScrollElement: () => listRef.current,
     estimateSize,
+    // The rows are bordered cards; without a gap their borders doubled into
+    // 2px seams.
+    gap: 8,
     overscan: 5,
     getItemKey: (index) => {
       const entry = entries[index]

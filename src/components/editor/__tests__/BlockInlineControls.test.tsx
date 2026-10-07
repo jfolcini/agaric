@@ -246,8 +246,8 @@ describe('formatCompactDate', () => {
 })
 
 describe('dueDateColor', () => {
-  it('returns red classes for overdue dates', () => {
-    expect(dueDateColor('2000-01-01')).toContain('text-destructive')
+  it('returns alert-error classes for overdue dates', () => {
+    expect(dueDateColor('2000-01-01')).toContain('text-alert-error-foreground')
   })
 
   it('returns amber classes for today', () => {
@@ -576,6 +576,21 @@ describe('BlockMetadataRow', () => {
     renderMetadata(makeMetaProps({ priority: '1' }))
     expect(screen.getByTestId('priority-badge')).toBeInTheDocument()
     expect(screen.getByText('P1')).toBeInTheDocument()
+  })
+
+  // Date chips are 18px (14px icon + py-0.5); leading-none (12px) + py-0.75 (3px x 2) = 18px.
+  it('priority chip is sized to the same 18px as the date chips beside it', () => {
+    renderMetadata(makeMetaProps({ priority: '1' }))
+    const chip = screen.getByText('P1')
+    expect(chip).toHaveClass('leading-none', 'py-0.75', 'text-xs')
+  })
+
+  // A block-level button seats the chip on the 24px line-height strut, 2px below the
+  // flex-centred date chips; centring the chip in the button keeps them level.
+  it('priority chip is centred in its button at every breakpoint so it sits level with the date chips', () => {
+    renderMetadata(makeMetaProps({ priority: '1' }))
+    const button = screen.getByTestId('priority-badge')
+    expect(button).toHaveClass('flex', 'items-center', 'justify-center')
   })
 
   it('does not render priority badge when priority is null', () => {
@@ -966,8 +981,10 @@ describe('BlockMetadataRow', () => {
   it('indicator buttons use max-sm: classes instead of [@media(pointer:coarse)]', () => {
     renderMetadata(makeMetaProps({ priority: '1' }))
     const priorityBadge = screen.getByTestId('priority-badge')
+    const priorityChip = screen.getByText('P1')
     expect(priorityBadge.className).not.toContain('[@media(pointer:coarse)]')
-    expect(priorityBadge.className).toContain('max-sm:')
+    expect(priorityChip.className).not.toContain('[@media(pointer:coarse)]')
+    expect(priorityChip.className).toContain('max-sm:')
   })
 
   // #3882 — `block.attachments`/`block.attachmentsTip`/`block.showAllProperties`

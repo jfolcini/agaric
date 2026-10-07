@@ -174,10 +174,10 @@ export function TabBar(): React.ReactElement | null {
   // page-editor view. In any other view we fall back to muted/outlined tokens
   // borrowed from `SidebarMenuButton`'s active state so the visual reads as
   // "you can click these to return to the editor".
-  const activeInEditorClass = 'bg-background border border-b-0 border-border font-medium'
+  const activeInEditorClass = 'bg-background border border-border font-medium shadow-xs'
   const activeOutsideEditorClass =
-    'bg-sidebar-accent text-sidebar-accent-foreground border border-b-0 border-sidebar-border'
-  const inactiveClass = 'text-muted-foreground hover:bg-accent/50'
+    'bg-sidebar-accent text-sidebar-accent-foreground border border-sidebar-border'
+  const inactiveClass = 'border border-transparent text-muted-foreground hover:bg-accent/50'
 
   function tabClassName(i: number): string {
     if (i !== activeTabIndex) return inactiveClass
@@ -272,7 +272,7 @@ export function TabBar(): React.ReactElement | null {
                 className={cn(
                   // `group` enables `group-hover:` on the chevron so
                   // hovering the active tab intensifies the dropdown hint.
-                  'group flex items-center gap-1 px-3 py-1 text-sm rounded-t-md truncate max-w-[120px] md:max-w-[200px] cursor-pointer select-none',
+                  'group flex items-center gap-1 px-3 py-1 text-sm rounded-md truncate max-w-[120px] md:max-w-[200px] cursor-pointer select-none',
                   'focus-ring-visible',
                   tabClassName(i),
                 )}
@@ -313,7 +313,6 @@ export function TabBar(): React.ReactElement | null {
           <MenuPopoverContent
             align="start"
             sideOffset={4}
-            className="p-1"
             role="menu"
             tabIndex={-1}
             aria-label={t('tabs.tabList')}
@@ -337,7 +336,7 @@ export function TabBar(): React.ReactElement | null {
                 <div
                   key={tab.id}
                   role="none"
-                  className="flex w-full items-center gap-1 rounded hover:bg-accent data-[state=checked]:bg-accent/60"
+                  className="flex w-full items-center gap-1 rounded-sm hover:bg-accent data-[state=checked]:bg-accent/60"
                   data-state={isActive ? 'checked' : 'unchecked'}
                 >
                   <div
@@ -349,7 +348,7 @@ export function TabBar(): React.ReactElement | null {
                     data-state={isActive ? 'checked' : 'unchecked'}
                     tabIndex={dropdownFocusedIndex === activateIdx ? 0 : -1}
                     title={fullPath}
-                    className="flex flex-1 items-center gap-2 rounded px-2 py-1.5 text-left text-sm cursor-pointer touch-target focus-ring-visible"
+                    className="flex flex-1 items-center gap-2 rounded-sm px-2 py-1.5 text-left text-sm cursor-pointer touch-target focus-ring-visible"
                     onClick={() => {
                       switchTab(i)
                       setDropdownOpen(false)

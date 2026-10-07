@@ -241,17 +241,45 @@ describe('HistoryView', () => {
 
     // First item should be auto-focused on load
     const items = screen.getAllByTestId(/^history-item-/)
-    expect(items[0]).toHaveClass('ring-2')
+    expect(items[0]).toHaveClass('list-cursor')
 
     // Press ArrowDown to move to second item
     await user.keyboard('{ArrowDown}')
-    expect(items[0]).not.toHaveClass('ring-2')
-    expect(items[1]).toHaveClass('ring-2')
+    expect(items[0]).not.toHaveClass('list-cursor')
+    expect(items[1]).toHaveClass('list-cursor')
 
     // Press ArrowUp to go back
     await user.keyboard('{ArrowUp}')
-    expect(items[0]).toHaveClass('ring-2')
-    expect(items[1]).not.toHaveClass('ring-2')
+    expect(items[0]).toHaveClass('list-cursor')
+    expect(items[1]).not.toHaveClass('list-cursor')
+  })
+
+  // The shortcuts listen on `document`, so focus may be anywhere (e.g.
+  // #main-content after a sidebar click); the cursor ring is gated on the grid's
+  // :focus-visible, so a navigation key brings DOM focus to the grid.
+  it('an arrow key pressed with focus outside the list moves DOM focus onto the grid', async () => {
+    const user = userEvent.setup()
+    stubHistory({
+      list_page_history: () => ({
+        items: [
+          makeHistoryEntry(1, 'edit_block', { to_text: 'item 1' }),
+          makeHistoryEntry(2, 'edit_block', { to_text: 'item 2' }),
+        ],
+        next_cursor: null,
+        has_more: false,
+        total_count: null,
+      }),
+    })
+
+    render(<HistoryView />)
+    await screen.findByText('item 1')
+    const grid = screen.getByRole('grid')
+    expect(grid).not.toHaveFocus()
+
+    await user.keyboard('{ArrowDown}')
+
+    expect(grid).toHaveFocus()
+    expect(screen.getByTestId('history-item-1')).toHaveClass('list-cursor')
   })
 
   it('space toggles checkbox on focused item', async () => {
@@ -1011,7 +1039,7 @@ describe('HistoryView', () => {
 
   // -- Focus management edge cases (#187) -------------------------------------
 
-  it('focus ring resets when op type filter changes', async () => {
+  it('cursor resets when op type filter changes', async () => {
     const user = userEvent.setup()
     stubHistory({
       list_page_history: () => ({
@@ -1033,7 +1061,7 @@ describe('HistoryView', () => {
     await user.keyboard('{ArrowDown}')
     await user.keyboard('{ArrowDown}')
     const items = screen.getAllByTestId(/^history-item-/)
-    expect(items[1]).toHaveClass('ring-2')
+    expect(items[1]).toHaveClass('list-cursor')
 
     // Change op type filter — this triggers a reset
     const select = screen.getByRole('combobox', { name: /Filter by operation type/ })
@@ -1042,9 +1070,9 @@ describe('HistoryView', () => {
     // After filter change, entries reload and focus resets to first item (auto-focus)
     await waitFor(() => {
       const newItems = screen.getAllByTestId(/^history-item-/)
-      expect(newItems[0]).toHaveClass('ring-2')
-      // Second item should no longer have focus ring
-      expect(newItems[1]).not.toHaveClass('ring-2')
+      expect(newItems[0]).toHaveClass('list-cursor')
+      // Second item should no longer carry the cursor
+      expect(newItems[1]).not.toHaveClass('list-cursor')
     })
   })
 
@@ -1065,7 +1093,7 @@ describe('HistoryView', () => {
 
     // Navigate to focus the item
     await user.keyboard('{ArrowDown}')
-    expect(screen.getByTestId('history-item-0')).toHaveClass('ring-2')
+    expect(screen.getByTestId('history-item-0')).toHaveClass('list-cursor')
 
     // Change filter — resets focusedIndex to -1
     const select = screen.getByRole('combobox', { name: /Filter by operation type/ })
@@ -1083,7 +1111,7 @@ describe('HistoryView', () => {
     // ArrowDown from -1 should focus first item (index 0)
     await user.keyboard('{ArrowDown}')
     await waitFor(() => {
-      expect(screen.getByTestId('history-item-0')).toHaveClass('ring-2')
+      expect(screen.getByTestId('history-item-0')).toHaveClass('list-cursor')
     })
   })
 
@@ -1338,11 +1366,11 @@ describe('HistoryView', () => {
       await user.keyboard('{ArrowDown}')
       await user.keyboard('{ArrowDown}')
       const items = screen.getAllByTestId(/^history-item-/)
-      expect(items[2]).toHaveClass('ring-2')
+      expect(items[2]).toHaveClass('list-cursor')
 
       // Home should go back to first item
       await user.keyboard('{Home}')
-      expect(items[0]).toHaveClass('ring-2')
+      expect(items[0]).toHaveClass('list-cursor')
     })
 
     it('End key moves focus to last entry', async () => {
@@ -1366,7 +1394,7 @@ describe('HistoryView', () => {
       // End should go to last item
       await user.keyboard('{End}')
       const items = screen.getAllByTestId(/^history-item-/)
-      expect(items[2]).toHaveClass('ring-2')
+      expect(items[2]).toHaveClass('list-cursor')
     })
 
     it('PageDown jumps by 10 entries', async () => {
@@ -1394,7 +1422,7 @@ describe('HistoryView', () => {
       // PageDown should jump by 10
       await user.keyboard('{PageDown}')
       const items = screen.getAllByTestId(/^history-item-/)
-      expect(items[10]).toHaveClass('ring-2')
+      expect(items[10]).toHaveClass('list-cursor')
     })
 
     it('PageUp jumps back by 10 entries', async () => {
@@ -1422,11 +1450,11 @@ describe('HistoryView', () => {
       // Navigate to item 12 via End then ArrowUp a few times
       await user.keyboard('{End}')
       const items = screen.getAllByTestId(/^history-item-/)
-      expect(items[14]).toHaveClass('ring-2')
+      expect(items[14]).toHaveClass('list-cursor')
 
       // PageUp should jump back by 10
       await user.keyboard('{PageUp}')
-      expect(items[4]).toHaveClass('ring-2')
+      expect(items[4]).toHaveClass('list-cursor')
     })
   })
 
@@ -1580,12 +1608,12 @@ describe('HistoryView', () => {
 
       // First item is auto-focused on load.
       const items = screen.getAllByTestId(/^history-item-/)
-      expect(items[0]).toHaveClass('ring-2')
+      expect(items[0]).toHaveClass('list-cursor')
 
       await user.click(screen.getByRole('button', { name: t('history.touchNavNext') }))
 
-      expect(items[0]).not.toHaveClass('ring-2')
-      expect(items[1]).toHaveClass('ring-2')
+      expect(items[0]).not.toHaveClass('list-cursor')
+      expect(items[1]).toHaveClass('list-cursor')
     })
 
     it('disables ↑ at the first row and ↓ at the last row', async () => {
