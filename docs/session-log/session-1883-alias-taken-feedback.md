@@ -1,4 +1,4 @@
-# Session 1882 — a taken alias is reported, not silently dropped (#5280)
+# Session 1883 — a taken alias is reported, not silently dropped (#5280)
 
 This is the third `/batch-issues` batch of the session that logged 1877, 1879
 and 1880.
