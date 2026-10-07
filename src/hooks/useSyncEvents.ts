@@ -32,12 +32,10 @@ import { notify } from '@/lib/notify'
 import { isPairingWindowRejection } from '@/lib/pairing-rejections'
 import { invalidatePropertyCaches } from '@/lib/property-caches'
 import { forEachLivePageStoreGroup } from '@/stores/page-blocks'
-import { renamePage } from '@/stores/page-rename'
-import { selectRecentPagesForSpace, useRecentPagesStore } from '@/stores/recent-pages'
+import { retitleHeldPages } from '@/stores/page-rename'
 import { useResolveStore } from '@/stores/resolve'
 import { useSpaceStore } from '@/stores/space'
 import { useSyncStore } from '@/stores/sync'
-import { useTabsStore } from '@/stores/tabs'
 import { useUndoStore } from '@/stores/undo'
 
 /** Payload shapes from the Rust backend sync_events.rs */
@@ -100,29 +98,6 @@ export interface SyncErrorPayload {
  */
 export interface BlocksChangedPayload {
   changed_page_ids?: string[]
-}
-
-/**
- * #5242 — carry an out-of-band page rename into the title copies the tabs and
- * recents persist (the header, tab label, window title and recents strip read
- * them). Only local renames reach `renamePage` otherwise. Reads the resolve
- * cache the preload just refreshed; `targeted` null means it rescanned them all.
- */
-function retitleHeldPages(targeted: ReadonlySet<string> | null, spaceId: string | null): void {
-  const held = [
-    ...useTabsStore.getState().tabs.flatMap((tab) => tab.pageStack),
-    ...selectRecentPagesForSpace(useRecentPagesStore.getState(), spaceId),
-  ]
-  const resolve = useResolveStore.getState()
-  const freshTitles = new Map<string, string>()
-  for (const { pageId, title } of held) {
-    if (targeted && !targeted.has(pageId)) continue
-    // `renamePage` re-seeds the resolve entry as not deleted, so leave a trashed page alone.
-    if (!resolve.isResolved(pageId) || resolve.resolveStatus(pageId) === 'deleted') continue
-    const fresh = resolve.resolveTitle(pageId)
-    if (fresh !== title) freshTitles.set(pageId, fresh)
-  }
-  for (const [pageId, title] of freshTitles) renamePage(pageId, title, spaceId)
 }
 
 /**
@@ -219,12 +194,11 @@ export function reloadChangedPageStores(changedPageIds?: string[]): void {
 /**
  * #5276 — the fan-out after a History revert / restore-to-here or an Agent access undo. Those
  * rewrite pages behind every store's back as a sync does, with no event naming which, so this
- * is the full reload plus a re-resolve of the entries cached as deleted: the reload's page walk
- * lists pages only, so a block whose delete was reverted would keep its struck-through chips.
+ * is the full reload. Its full walk also re-resolves every cached entry it does not list
+ * (#5289), which covers a block whose delete or edit was reverted.
  */
 export function reloadAfterRevert(): void {
   reloadChangedPageStores()
-  void useResolveStore.getState().refreshDeleted(useSpaceStore.getState().currentSpaceId)
 }
 
 /** Map backend state strings to frontend SyncState enum. */

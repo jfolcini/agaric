@@ -345,6 +345,10 @@ describe('preload', () => {
     stubInvoke(mockedInvoke, {
       list_blocks: () => blockPage([pageRow('PAGE_1', 'Page One')]),
       list_all_tags_in_space: () => [],
+      // #5289 — the walk does not list it, so it is re-resolved.
+      batch_resolve: () => [
+        { id: 'PRE_EXISTING', title: 'Pre-existing Page', block_type: 'content', deleted: false },
+      ],
     })
 
     await useResolveStore.getState().preload(TEST_SPACE_ID)
@@ -357,7 +361,7 @@ describe('preload', () => {
       deleted: false,
       resolved: true,
     })
-    // Pre-existing entry (not returned by this fetch) survives the merge.
+    // Pre-existing entry (not walked) survives the merge.
     expect(state.cache.get(keyFor(TEST_SPACE_ID, 'PRE_EXISTING'))).toEqual({
       title: 'Pre-existing Page',
       deleted: false,
@@ -405,13 +409,17 @@ describe('preload', () => {
     stubInvoke(mockedInvoke, {
       list_blocks: () => blockPage(mockPages),
       list_all_tags_in_space: () => [],
+      // #5289 — the walk predates the create, so the page is re-resolved.
+      batch_resolve: () => [
+        { id: 'CREATED_DURING', title: 'New Page', block_type: 'page', deleted: false },
+      ],
     })
 
     await useResolveStore.getState().preload(TEST_SPACE_ID)
 
     const state = useResolveStore.getState()
     // The cache contains both the fetched page AND the page created
-    // during preload (the merge never drops non-fetched entries).
+    // during preload (an entry the walk missed is re-resolved, not dropped).
     expect(state.cache.get(keyFor(TEST_SPACE_ID, 'PAGE_1'))).toEqual({
       title: 'Page One',
       deleted: false,
@@ -799,19 +807,26 @@ describe('preload targeted rescan (#3321)', () => {
     expect(countCalls('list_blocks')).toBe(1)
   })
 
-  it('leaves a cached entry untouched when the backend returns no row for it', async () => {
+  it('turns a cached entry the backend no longer returns into the unresolved one (#5289)', async () => {
     const { missing } = installSpaceMock(3)
     await useResolveStore.getState().preload(TEST_SPACE_ID)
     const versionAfterBoot = useResolveStore.getState().version
 
-    // Purged, or moved to another space: `batch_resolve` drops the id.
+    // A peer purged it, or moved it to another space: `batch_resolve` drops the id.
     missing.add('PAGE_1')
-    await useResolveStore.getState().preload(TEST_SPACE_ID, true, new Set(['PAGE_1']))
+    await useResolveStore
+      .getState()
+      .preload(TEST_SPACE_ID, true, new Set(['PAGE_1', 'NEVER_CACHED']))
 
-    // Merge-only semantics, identical to the full walk: the stale entry stays
-    // rather than being wiped, and nothing re-renders.
-    expect(useResolveStore.getState().resolveTitle('PAGE_1')).toBe('Page 1')
-    expect(useResolveStore.getState().version).toBe(versionAfterBoot)
+    const { cache, resolveStatus, version } = useResolveStore.getState()
+    expect(cache.get(keyFor(TEST_SPACE_ID, 'PAGE_1'))).toEqual({
+      title: unresolvedBlockLabel('PAGE_1'),
+      deleted: true,
+      resolved: false,
+    })
+    expect(resolveStatus('PAGE_1')).toBe('deleted')
+    expect(cache.has(keyFor(TEST_SPACE_ID, 'NEVER_CACHED'))).toBe(false)
+    expect(version).toBe(versionAfterBoot + 1)
   })
 
   it('does not mark _preloaded — a targeted rescan is not a full preload', async () => {
@@ -853,7 +868,12 @@ describe('preload targeted rescan (#3321)', () => {
       batch_resolve: () => {
         throw new Error('transport failure')
       },
-      list_blocks: () => blockPage([pageRow('PAGE_1', 'Renamed by peer')]),
+      list_blocks: () =>
+        blockPage([
+          pageRow('PAGE_0', 'Page 0'),
+          pageRow('PAGE_1', 'Renamed by peer'),
+          pageRow('PAGE_2', 'Page 2'),
+        ]),
       list_all_tags_in_space: () => [],
     })
 
@@ -1963,6 +1983,170 @@ describe('targeted rescan re-resolves cached blocks no walk named (#5245)', () =
     await useResolveStore.getState().preload(TEST_SPACE_ID, true, new Set(['PAGE_1']))
 
     expect(batches).toEqual([['PAGE_1']])
+  })
+})
+
+describe('a scan re-resolves the cached entries it no longer names (#5289)', () => {
+  /**
+   * A space whose `list_blocks` walk and tag list name live rows only, as the real ones do,
+   * while `batch_resolve` also returns trashed rows and drops `gone` ones (purged or moved out).
+   */
+  function installBackend(rows: Array<{ id: string; title: string; block_type: string }>) {
+    const trashed = new Set<string>()
+    const gone = new Set<string>()
+    const batches: string[][] = []
+    const live = (type: string) =>
+      rows.filter((r) => r.block_type === type && !trashed.has(r.id) && !gone.has(r.id))
+    stubInvoke(mockedInvoke, {
+      list_blocks: () => blockPage(live('page').map((r) => pageRow(r.id, r.title))),
+      list_all_tags_in_space: () => live('tag').map((r) => tagRow(r.id, r.title)),
+      batch_resolve: (args) => {
+        const ids = (args['ids'] as string[] | undefined) ?? []
+        batches.push(ids)
+        return rows
+          .filter((r) => ids.includes(r.id) && !gone.has(r.id))
+          .map((r) => ({
+            id: r.id,
+            title: r.title,
+            block_type: r.block_type,
+            deleted: trashed.has(r.id),
+          }))
+      },
+    })
+    return { trashed, gone, batches }
+  }
+
+  it('strikes through a page a revert trashed, and breaks one a peer purged or moved out', async () => {
+    const backend = installBackend([
+      { id: 'PAGE_1', title: 'Page One', block_type: 'page' },
+      { id: 'PAGE_2', title: 'Page Two', block_type: 'page' },
+      { id: 'PAGE_3', title: 'Page Three', block_type: 'page' },
+    ])
+    await useResolveStore.getState().preload(TEST_SPACE_ID)
+
+    backend.trashed.add('PAGE_2')
+    backend.gone.add('PAGE_3')
+    await useResolveStore.getState().preload(TEST_SPACE_ID, true)
+
+    const { cache, resolveStatus } = useResolveStore.getState()
+    expect(cache.get(keyFor(TEST_SPACE_ID, 'PAGE_2'))).toEqual({
+      title: 'Page Two',
+      deleted: true,
+      resolved: true,
+    })
+    expect(cache.get(keyFor(TEST_SPACE_ID, 'PAGE_3'))).toEqual({
+      title: unresolvedBlockLabel('PAGE_3'),
+      deleted: true,
+      resolved: false,
+    })
+    expect(resolveStatus('PAGE_1')).toBe('active')
+  })
+
+  it('strikes through a tag a peer trashed, and breaks one a peer purged', async () => {
+    const backend = installBackend([
+      { id: 'TAG_1', title: 'tag-one', block_type: 'tag' },
+      { id: 'TAG_2', title: 'tag-two', block_type: 'tag' },
+      { id: 'TAG_3', title: 'tag-three', block_type: 'tag' },
+    ])
+    await useResolveStore.getState().preload(TEST_SPACE_ID)
+
+    backend.trashed.add('TAG_2')
+    backend.gone.add('TAG_3')
+    await useResolveStore.getState().preload(TEST_SPACE_ID, true)
+
+    const { cache, resolveStatus } = useResolveStore.getState()
+    expect(cache.get(keyFor(TEST_SPACE_ID, 'TAG_2'))).toEqual({
+      title: 'tag-two',
+      deleted: true,
+      resolved: true,
+    })
+    expect(cache.get(keyFor(TEST_SPACE_ID, 'TAG_3'))?.resolved).toBe(false)
+    expect(resolveStatus('TAG_3')).toBe('deleted')
+    expect(resolveStatus('TAG_1')).toBe('active')
+  })
+
+  it('asks only about the entries the walk misses, and re-titles a reverted block', async () => {
+    const backend = installBackend([
+      { id: 'PAGE_1', title: 'Page One', block_type: 'page' },
+      { id: 'TAG_1', title: 'tag-one', block_type: 'tag' },
+      { id: 'BLOCK_X', title: 'Buy oat milk', block_type: 'content' },
+    ])
+    await useResolveStore.getState().preload(TEST_SPACE_ID)
+    await useResolveStore.getState().preload(TEST_SPACE_ID, true)
+    expect(backend.batches).toEqual([])
+
+    // Cached before a revert that undid the block's delete and its edit.
+    useResolveStore.getState().set('BLOCK_X', 'Buy milk', true)
+    await useResolveStore.getState().preload(TEST_SPACE_ID, true)
+
+    expect(backend.batches).toEqual([['BLOCK_X']])
+    const { cache } = useResolveStore.getState()
+    expect(cache.get(keyFor(TEST_SPACE_ID, 'BLOCK_X'))).toEqual({
+      title: 'Buy oat milk',
+      deleted: false,
+      resolved: true,
+    })
+    expect(cache.get(keyFor(TEST_SPACE_ID, 'PAGE_1'))?.title).toBe('Page One')
+    expect(cache.get(keyFor(TEST_SPACE_ID, 'TAG_1'))?.title).toBe('tag-one')
+  })
+
+  it('on a targeted scan, strikes through a tag that left the list and breaks a purged one', async () => {
+    const backend = installBackend([
+      { id: 'PAGE_1', title: 'Page One', block_type: 'page' },
+      { id: 'TAG_1', title: 'tag-one', block_type: 'tag' },
+      { id: 'TAG_2', title: 'tag-two', block_type: 'tag' },
+      { id: 'TAG_3', title: 'tag-three', block_type: 'tag' },
+    ])
+    await useResolveStore.getState().preload(TEST_SPACE_ID)
+
+    // One sync session edited PAGE_1, trashed TAG_2 and purged TAG_3.
+    backend.trashed.add('TAG_2')
+    backend.gone.add('TAG_3')
+    await useResolveStore.getState().preload(TEST_SPACE_ID, true, new Set(['PAGE_1']))
+
+    const { cache, resolveStatus } = useResolveStore.getState()
+    expect(cache.get(keyFor(TEST_SPACE_ID, 'TAG_2'))).toEqual({
+      title: 'tag-two',
+      deleted: true,
+      resolved: true,
+    })
+    expect(cache.get(keyFor(TEST_SPACE_ID, 'TAG_3'))).toEqual({
+      title: unresolvedBlockLabel('TAG_3'),
+      deleted: true,
+      resolved: false,
+    })
+    expect(resolveStatus('TAG_1')).toBe('active')
+  })
+
+  it('on a targeted scan with no tag dropped, asks only about the changed pages', async () => {
+    const backend = installBackend([
+      { id: 'PAGE_1', title: 'Page One', block_type: 'page' },
+      { id: 'TAG_1', title: 'tag-one', block_type: 'tag' },
+    ])
+    await useResolveStore.getState().preload(TEST_SPACE_ID)
+
+    await useResolveStore.getState().preload(TEST_SPACE_ID, true, new Set(['PAGE_1']))
+
+    expect(backend.batches).toEqual([['PAGE_1']])
+  })
+
+  it('breaks a tag trashed in one targeted session and purged in a later one', async () => {
+    const backend = installBackend([
+      { id: 'PAGE_1', title: 'Page One', block_type: 'page' },
+      { id: 'TAG_1', title: 'tag-one', block_type: 'tag' },
+    ])
+    await useResolveStore.getState().preload(TEST_SPACE_ID)
+    backend.trashed.add('TAG_1')
+    await useResolveStore.getState().preload(TEST_SPACE_ID, true, new Set(['PAGE_1']))
+
+    backend.gone.add('TAG_1')
+    await useResolveStore.getState().preload(TEST_SPACE_ID, true, new Set(['PAGE_1']))
+
+    expect(useResolveStore.getState().cache.get(keyFor(TEST_SPACE_ID, 'TAG_1'))).toEqual({
+      title: unresolvedBlockLabel('TAG_1'),
+      deleted: true,
+      resolved: false,
+    })
   })
 })
 
