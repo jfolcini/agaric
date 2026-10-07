@@ -813,7 +813,7 @@ export const commands = {
 	 *  (follow-up): `true` when the most recent
 	 *  fetch saw a terminal "this resource is gone" status (HTTP 404 or
 	 *  410). Distinct from `auth_required` (401/403, transient
-	 *  sign-in) and from "transient" (5xx — both flags false plus
+	 *  sign-in) and from any other non-2xx (both flags false plus
 	 *  `title.is_none()`). The frontend uses this to render a "(not
 	 *  found)" tag and suppress the favicon.
 	 * 
@@ -2568,7 +2568,7 @@ export type LinkMetadata = {
 	 *  (follow-up): `true` when the most recent
 	 *  fetch saw a terminal "this resource is gone" status (HTTP 404 or
 	 *  410). Distinct from `auth_required` (401/403, transient
-	 *  sign-in) and from "transient" (5xx — both flags false plus
+	 *  sign-in) and from any other non-2xx (both flags false plus
 	 *  `title.is_none()`). The frontend uses this to render a "(not
 	 *  found)" tag and suppress the favicon.
 	 * 
@@ -4636,8 +4636,10 @@ export type ValidationCode =
 "InvalidRepeatRule" | 
 /**
  *  Renaming a page to a title another live page in the same space
- *  already carries (`edit_block_inner`, #4723). Coded so the title
- *  editor can name the clash instead of the generic rename failure.
+ *  already carries (`edit_block_inner`, #4723), or renaming or restoring
+ *  a tag onto a name another live tag of its space holds (#5281; a tag
+ *  opens as a page, its name the title). Coded so the title editor can
+ *  name the clash instead of the generic rename failure.
  */
 "DuplicatePageTitle";
 

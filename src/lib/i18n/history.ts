@@ -260,6 +260,7 @@ export const history: Record<string, string> = {
   'trash.batchHint': 'Tip: Shift+click to select a range',
   'trash.blockRestored': 'Block restored',
   'trash.restoreFailed': 'Failed to restore block',
+  'trash.restoreNameTaken': 'A tag with that name already exists. Rename it first, then restore.',
   'trash.blockPurged': 'Block permanently deleted',
   'trash.purgeFailed': 'Failed to purge block',
   'trash.loadFailed': 'Failed to load trash',

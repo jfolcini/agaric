@@ -928,6 +928,269 @@ async fn create_block_tag_reuses_name_of_deleted_tag_5236() {
     );
 }
 
+// ----------------------------------------------------------------------
+// #5281 — the same per-space tag-name rule on rename and restore: either one
+// leaving two live tags under one normalized name hides one of them from the
+// tags cache, so both are refused with `DuplicatePageTitle`.
+// ----------------------------------------------------------------------
+
+fn assert_duplicate_name_refusal<T: std::fmt::Debug>(result: Result<T, AppError>) {
+    let err = result.expect_err("a duplicate tag name in the space must be refused");
+    assert_eq!(
+        err.validation_code(),
+        Some(agaric_core::error::ValidationCode::DuplicatePageTitle),
+        "refusal must carry the DuplicatePageTitle code; got: {err:?}"
+    );
+}
+
+async fn is_deleted(pool: &SqlitePool, id: &BlockId) -> bool {
+    sqlx::query_scalar::<_, Option<i64>>("SELECT deleted_at FROM blocks WHERE id = ?")
+        .bind(id.as_str())
+        .fetch_one(pool)
+        .await
+        .unwrap()
+        .is_some()
+}
+
+/// A tag in `space_ulid` named `name`, soft-deleted; returns it and its
+/// `deleted_at` (the restore ref).
+async fn trashed_tag(
+    pool: &SqlitePool,
+    mat: &Materializer,
+    name: &str,
+    space_ulid: &str,
+) -> (BlockId, i64) {
+    let tag = create_tag(pool, mat, name, space_ulid).await;
+    settle(mat).await;
+    let deleted = delete_block_inner(pool, DEV, mat, tag.id.clone())
+        .await
+        .expect("delete the tag");
+    settle(mat).await;
+    (tag.id, deleted.deleted_at)
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn edit_block_rejects_tag_rename_onto_live_tag_name_5281() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    agaric_lib::spaces::bootstrap_spaces_for_test(&pool, DEV)
+        .await
+        .unwrap();
+    let personal = agaric_lib::spaces::bootstrap::SPACE_PERSONAL_ULID;
+    let _meeting = create_tag(&pool, &mat, "meeting", personal).await;
+    let notes = create_tag(&pool, &mat, "notes", personal).await;
+    settle(&mat).await;
+    let ops_before = count_ops(&pool).await;
+
+    assert_duplicate_name_refusal(
+        edit_block_inner(&pool, DEV, &mat, notes.id.clone(), "meeting".into()).await,
+    );
+
+    assert_eq!(
+        page_content(&pool, &notes.id).await.as_deref(),
+        Some("notes")
+    );
+    assert_eq!(
+        count_ops(&pool).await,
+        ops_before,
+        "a refusal appends no op"
+    );
+}
+
+/// The identity is `normalize_tag_name`, so a case variant is the same name.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn edit_block_rejects_tag_rename_onto_case_variant_5281() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    agaric_lib::spaces::bootstrap_spaces_for_test(&pool, DEV)
+        .await
+        .unwrap();
+    let personal = agaric_lib::spaces::bootstrap::SPACE_PERSONAL_ULID;
+    let _meeting = create_tag(&pool, &mat, "meeting", personal).await;
+    let notes = create_tag(&pool, &mat, "notes", personal).await;
+    settle(&mat).await;
+
+    assert_duplicate_name_refusal(
+        edit_block_inner(&pool, DEV, &mat, notes.id.clone(), "Meeting".into()).await,
+    );
+
+    assert_eq!(
+        page_content(&pool, &notes.id).await.as_deref(),
+        Some("notes")
+    );
+}
+
+/// The tag being renamed is not its own clash.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn edit_block_allows_tag_rename_to_case_variant_of_itself_5281() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    agaric_lib::spaces::bootstrap_spaces_for_test(&pool, DEV)
+        .await
+        .unwrap();
+    let personal = agaric_lib::spaces::bootstrap::SPACE_PERSONAL_ULID;
+    let meeting = create_tag(&pool, &mat, "meeting", personal).await;
+    settle(&mat).await;
+
+    edit_block_inner(&pool, DEV, &mat, meeting.id.clone(), "Meeting".into())
+        .await
+        .expect("a tag may be renamed to a case variant of its own name");
+
+    assert_eq!(
+        page_content(&pool, &meeting.id).await.as_deref(),
+        Some("Meeting")
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn edit_block_allows_tag_name_held_in_other_space_5281() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    agaric_lib::spaces::bootstrap_spaces_for_test(&pool, DEV)
+        .await
+        .unwrap();
+    let personal = agaric_lib::spaces::bootstrap::SPACE_PERSONAL_ULID;
+    let work = agaric_lib::spaces::bootstrap::SPACE_WORK_ULID;
+    let _meeting = create_tag(&pool, &mat, "meeting", personal).await;
+    let notes = create_tag(&pool, &mat, "notes", work).await;
+    settle(&mat).await;
+
+    edit_block_inner(&pool, DEV, &mat, notes.id.clone(), "meeting".into())
+        .await
+        .expect("a cross-space tag-name pair is legitimate");
+
+    assert_eq!(
+        page_content(&pool, &notes.id).await.as_deref(),
+        Some("meeting")
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn edit_block_allows_tag_name_held_only_by_trashed_tag_5281() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    agaric_lib::spaces::bootstrap_spaces_for_test(&pool, DEV)
+        .await
+        .unwrap();
+    let personal = agaric_lib::spaces::bootstrap::SPACE_PERSONAL_ULID;
+    let _trashed = trashed_tag(&pool, &mat, "meeting", personal).await;
+    let notes = create_tag(&pool, &mat, "notes", personal).await;
+    settle(&mat).await;
+
+    edit_block_inner(&pool, DEV, &mat, notes.id.clone(), "meeting".into())
+        .await
+        .expect("a trashed tag does not hold its name");
+
+    assert_eq!(
+        page_content(&pool, &notes.id).await.as_deref(),
+        Some("meeting")
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn restore_block_rejects_tag_whose_name_a_live_tag_holds_5281() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    agaric_lib::spaces::bootstrap_spaces_for_test(&pool, DEV)
+        .await
+        .unwrap();
+    let personal = agaric_lib::spaces::bootstrap::SPACE_PERSONAL_ULID;
+    let (trashed, deleted_at) = trashed_tag(&pool, &mat, "meeting", personal).await;
+    let _live = create_tag(&pool, &mat, "Meeting", personal).await;
+    settle(&mat).await;
+    let ops_before = count_ops(&pool).await;
+
+    assert_duplicate_name_refusal(
+        restore_block_inner(&pool, DEV, &mat, trashed.clone(), deleted_at).await,
+    );
+
+    assert!(
+        is_deleted(&pool, &trashed).await,
+        "the tag stays in the trash"
+    );
+    assert_eq!(
+        count_ops(&pool).await,
+        ops_before,
+        "a refusal appends no op"
+    );
+}
+
+/// The batch is atomic: one clashing tag refuses the whole call, so the other
+/// listed block stays in the trash too.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn restore_blocks_by_ids_rejects_tag_whose_name_a_live_tag_holds_5281() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    agaric_lib::spaces::bootstrap_spaces_for_test(&pool, DEV)
+        .await
+        .unwrap();
+    let personal = agaric_lib::spaces::bootstrap::SPACE_PERSONAL_ULID;
+    let (bystander, _) = trashed_tag(&pool, &mat, "notes", personal).await;
+    let (trashed, _) = trashed_tag(&pool, &mat, "meeting", personal).await;
+    let _live = create_tag(&pool, &mat, "meeting", personal).await;
+    settle(&mat).await;
+    let ops_before = count_ops(&pool).await;
+
+    assert_duplicate_name_refusal(
+        restore_blocks_by_ids_inner(&pool, DEV, &mat, vec![bystander.clone(), trashed.clone()])
+            .await,
+    );
+
+    assert!(is_deleted(&pool, &bystander).await, "nothing is restored");
+    assert!(is_deleted(&pool, &trashed).await, "nothing is restored");
+    assert_eq!(
+        count_ops(&pool).await,
+        ops_before,
+        "a refusal appends no op"
+    );
+}
+
+/// Two trashed tags of one name revived by ONE batch would collide with each
+/// other, though no live tag holds the name beforehand.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn restore_blocks_by_ids_rejects_two_same_name_tags_in_one_batch_5281() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    agaric_lib::spaces::bootstrap_spaces_for_test(&pool, DEV)
+        .await
+        .unwrap();
+    let personal = agaric_lib::spaces::bootstrap::SPACE_PERSONAL_ULID;
+    let (first, _) = trashed_tag(&pool, &mat, "meeting", personal).await;
+    let (second, _) = trashed_tag(&pool, &mat, "meeting", personal).await;
+
+    assert_duplicate_name_refusal(
+        restore_blocks_by_ids_inner(&pool, DEV, &mat, vec![first.clone(), second.clone()]).await,
+    );
+
+    assert!(is_deleted(&pool, &first).await, "nothing is restored");
+    assert!(is_deleted(&pool, &second).await, "nothing is restored");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn restore_tag_without_a_live_namesake_succeeds_5281() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    agaric_lib::spaces::bootstrap_spaces_for_test(&pool, DEV)
+        .await
+        .unwrap();
+    let personal = agaric_lib::spaces::bootstrap::SPACE_PERSONAL_ULID;
+    let work = agaric_lib::spaces::bootstrap::SPACE_WORK_ULID;
+    let (single, deleted_at) = trashed_tag(&pool, &mat, "meeting", personal).await;
+    let (batched, _) = trashed_tag(&pool, &mat, "notes", personal).await;
+    let _elsewhere = create_tag(&pool, &mat, "meeting", work).await;
+    settle(&mat).await;
+
+    restore_block_inner(&pool, DEV, &mat, single.clone(), deleted_at)
+        .await
+        .expect("a namesake in another space does not block a restore");
+    restore_blocks_by_ids_inner(&pool, DEV, &mat, vec![batched.clone()])
+        .await
+        .expect("no live namesake, no refusal");
+
+    assert!(!is_deleted(&pool, &single).await);
+    assert!(!is_deleted(&pool, &batched).await);
+}
+
 // ======================================================================
 // edit_block
 // ======================================================================
@@ -8486,6 +8749,167 @@ async fn move_blocks_to_space_leaves_nested_pages_in_the_origin_space_4480() {
         kid_parent, None,
         "SQL re-roots the nested page with the doc"
     );
+}
+
+/// #5275 — the Pages-view link counts and the Tags-view usage counts stop
+/// counting a page's blocks once it moves to another space. The
+/// `block_links` / `block_tags` / `block_tag_refs` rows survive the move by
+/// design, so this is the count statements' space predicate plus the
+/// rebuilds the `space` op must enqueue, exercised through the real path.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn move_blocks_to_space_rescopes_link_and_tag_counts_5275() {
+    use agaric_lib::commands::pages::{
+        ListPagesWithMetadataFilter, PageSort, list_pages_with_metadata_inner,
+    };
+
+    const SPACE_A: &str = "MBS8_SPACE_A";
+    const SPACE_B: &str = "MBS8_SPACE_B";
+
+    async fn inbound_count(pool: &SqlitePool, space_id: &str, page_id: &BlockId) -> i64 {
+        let filter = ListPagesWithMetadataFilter {
+            sort: PageSort::Alphabetical,
+            space_id: space_id.to_owned(),
+            filters: vec![],
+        };
+        let resp = list_pages_with_metadata_inner(pool, filter, None, Some(50))
+            .await
+            .unwrap();
+        resp.items
+            .iter()
+            .find(|row| row.id == *page_id)
+            .unwrap_or_else(|| panic!("page {page_id} must be listed in space {space_id}"))
+            .inbound_link_count
+    }
+
+    async fn usage_count(pool: &SqlitePool, space_id: &str, tag_id: &BlockId) -> i64 {
+        list_all_tags_in_space_inner(pool, space_id)
+            .await
+            .unwrap()
+            .iter()
+            .find(|row| row.tag_id == tag_id.as_str())
+            .unwrap_or_else(|| panic!("tag {tag_id} must be listed in space {space_id}"))
+            .usage_count
+    }
+
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    seed_space(&pool, SPACE_A).await;
+    seed_space(&pool, SPACE_B).await;
+    let in_a = SpaceScope::Active(SpaceId::from_trusted(SPACE_A));
+    let create = async |block_type: &str, content: String, parent: Option<BlockId>| {
+        create_block_inner_with_space(
+            &pool,
+            DEV,
+            &mat,
+            block_type.into(),
+            content,
+            parent,
+            None,
+            &in_a,
+            None,
+        )
+        .await
+        .unwrap()
+        .id
+    };
+
+    // All in A: target page T, source page S, tag x, and the page P that
+    // moves. P's block links to T and holds x both inline and explicitly;
+    // S's block links to P.
+    let target = create("page", "T".into(), None).await;
+    let source = create("page", "S".into(), None).await;
+    let moving = create("page", "P".into(), None).await;
+    let tag = create("tag", "x".into(), None).await;
+    let moving_block = create(
+        "content",
+        format!("see [[{target}]] #[{tag}]"),
+        Some(moving.clone()),
+    )
+    .await;
+    create("content", format!("see [[{moving}]]"), Some(source.clone())).await;
+    add_tag_inner(&pool, DEV, &mat, moving_block, tag.clone())
+        .await
+        .unwrap();
+    settle(&mat).await;
+
+    assert_eq!(
+        inbound_count(&pool, SPACE_A, &target).await,
+        1,
+        "P links to T"
+    );
+    assert_eq!(
+        inbound_count(&pool, SPACE_A, &moving).await,
+        1,
+        "S links to P"
+    );
+    assert_eq!(
+        usage_count(&pool, SPACE_A, &tag).await,
+        1,
+        "P's block holds x"
+    );
+
+    move_blocks_to_space_inner(&pool, DEV, &mat, vec![moving.clone()], SPACE_B.into())
+        .await
+        .unwrap();
+    settle(&mat).await;
+
+    assert_eq!(
+        inbound_count(&pool, SPACE_A, &target).await,
+        0,
+        "T's only linker left A, so A's Pages view must not count it"
+    );
+    assert_eq!(
+        inbound_count(&pool, SPACE_B, &moving).await,
+        0,
+        "P's only linker stayed in A, so B's Pages view must not count it"
+    );
+    assert_eq!(
+        usage_count(&pool, SPACE_A, &tag).await,
+        0,
+        "x's only holder left A, so A's Tags view must not count it"
+    );
+}
+
+/// #5275 — a page or tag create stamps `space` too, but that op is not
+/// dispatched: the `space` arm enqueues the two vault-wide count rebuilds a
+/// move needs, and a fresh block has nothing to re-scope.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn create_in_space_does_not_dispatch_the_space_op_5275() {
+    use std::sync::atomic::Ordering;
+
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    seed_space(&pool, "MBS9_SPACE").await;
+    let in_space = SpaceScope::Active(SpaceId::from_trusted("MBS9_SPACE"));
+    let bg = || mat.metrics().bg_processed.load(Ordering::Relaxed);
+    let create = async |block_type: &str, content: &str| {
+        create_block_inner_with_space(
+            &pool,
+            DEV,
+            &mat,
+            block_type.into(),
+            content.into(),
+            None,
+            None,
+            &in_space,
+            None,
+        )
+        .await
+        .unwrap();
+        settle(&mat).await;
+    };
+
+    let before = bg();
+    create("page", "P").await;
+    // RebuildPagesCache, UpdateFtsBlock, ReindexBlockLinks, ReindexBlockTagRefs
+    // and the flush barrier; nothing from the `space` op.
+    assert_eq!(bg() - before, 5);
+
+    let before = bg();
+    create("tag", "x").await;
+    // RebuildTagsCache, UpdateFtsBlock, SetBlockPageId, ReindexBlockLinks,
+    // ReindexBlockTagRefs and the flush barrier; nothing from the `space` op.
+    assert_eq!(bg() - before, 6);
 }
 
 /// Lenient batch: missing / soft-deleted ids are silently skipped; only

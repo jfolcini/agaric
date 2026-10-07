@@ -743,14 +743,16 @@ async fn settle_rebuilds(pool: &SqlitePool) {
 
 /// #2344 (fix b + machinery for fix a): a CROSS-SPACE MoveBlock re-derives the
 /// moved subtree's `space_id` AND `page_id` in-tx and recomputes the affected
-/// pages' counts — the moved subtree links to the destination page, so the
-/// destination page's `inbound_link_count` correctly drops to 0 (the link
-/// became same-page). The `space_id` re-derivation is the load-bearing REMOTE
-/// bug fix: the old page_id-only reparent left `space_id = SPACE_A` stale.
+/// pages' counts — the moved subtree links to a page in the destination space,
+/// so that page's `inbound_link_count` correctly rises from 0 (a cross-space
+/// link does not count, #5275) to 1 (the link became same-space, cross-page).
+/// The `space_id` re-derivation is the load-bearing REMOTE bug fix: the old
+/// page_id-only reparent left `space_id = SPACE_A` stale.
 #[tokio::test]
 async fn remote_apply_op_move_rederives_space_id_and_counts_in_tx_2344() {
     const PA: &str = "01HZ0000000000000000MVPGAA";
     const PB: &str = "01HZ0000000000000000MVPGBB";
+    const PT: &str = "01HZ0000000000000000MVPGTT";
     const M: &str = "01HZ0000000000000000MVMMMM";
     const MC: &str = "01HZ0000000000000000MVMCMC";
 
@@ -761,24 +763,26 @@ async fn remote_apply_op_move_rederives_space_id_and_counts_in_tx_2344() {
     seed_spaces_registry(&pool).await;
     let state = crate::loro::shared::LoroState::new();
 
-    // Space A: page PA -> content M -> content MC. Space B: page PB.
+    // Space A: page PA -> content M -> content MC. Space B: pages PB and PT.
     insert_block_row(&pool, PA, "page", None, 0, Some(PA), Some(SPACE_A)).await;
     insert_block_row(&pool, PB, "page", None, 1, Some(PB), Some(SPACE_B)).await;
+    insert_block_row(&pool, PT, "page", None, 2, Some(PT), Some(SPACE_B)).await;
     insert_block_row(&pool, M, "content", Some(PA), 0, Some(PA), Some(SPACE_A)).await;
     insert_block_row(&pool, MC, "content", Some(M), 0, Some(PA), Some(SPACE_A)).await;
-    // MC links to the destination page PB (a cross-page link before the move).
+    // MC links to PT in space B (a cross-space link before the move).
     sqlx::query("INSERT INTO block_links (source_id, target_id) VALUES (?, ?)")
         .bind(MC)
-        .bind(PB)
+        .bind(PT)
         .execute(&pool)
         .await
-        .expect("insert block_link MC->PB");
+        .expect("insert block_link MC->PT");
 
-    // Build the pre-move pages_cache: PA owns {M, MC} (2), PB owns {} (0) and
-    // MC's cross-page link into PB gives PB inbound_link_count = 1.
+    // Build the pre-move pages_cache: PA owns {M, MC} (2), PB and PT own {}
+    // (0); MC's link into PT is cross-space, so PT inbound_link_count = 0.
     settle_rebuilds(&pool).await;
     assert_eq!(cache_counts(&pool, PA).await, (0, 2), "pre: PA counts");
-    assert_eq!(cache_counts(&pool, PB).await, (1, 0), "pre: PB counts");
+    assert_eq!(cache_counts(&pool, PB).await, (0, 0), "pre: PB counts");
+    assert_eq!(cache_counts(&pool, PT).await, (0, 0), "pre: PT counts");
 
     // --- REMOTE cross-space MoveBlock: M (space A) -> under page PB (space B) ---
     move_via_apply_op_tx(&pool, &state, M, Some(PB), 0).await;
@@ -796,12 +800,17 @@ async fn remote_apply_op_move_rederives_space_id_and_counts_in_tx_2344() {
         "MC (descendant) page_id/space_id re-derived to destination in-tx"
     );
     // (fix a machinery) counts recomputed in-tx: PA emptied, PB gained the
-    // subtree, and MC's link to PB is now SAME-page so PB.inbound drops to 0.
+    // subtree, and MC's link to PT is now same-space so PT.inbound rises to 1.
     assert_eq!(cache_counts(&pool, PA).await, (0, 0), "post: PA emptied");
     assert_eq!(
         cache_counts(&pool, PB).await,
         (0, 2),
-        "post: PB gains subtree; same-page link no longer counts inbound"
+        "post: PB gains subtree"
+    );
+    assert_eq!(
+        cache_counts(&pool, PT).await,
+        (1, 0),
+        "post: MC's link into PT counts now that both are in space B"
     );
 
     // Settle (canonical vault-wide rebuilds) and assert the in-tx state already
@@ -826,6 +835,11 @@ async fn remote_apply_op_move_rederives_space_id_and_counts_in_tx_2344() {
         cache_counts(&pool, PB).await,
         (0, 2),
         "PB unchanged after settle"
+    );
+    assert_eq!(
+        cache_counts(&pool, PT).await,
+        (1, 0),
+        "PT unchanged after settle"
     );
 }
 
@@ -1773,14 +1787,16 @@ async fn cached_usage_count(pool: &SqlitePool, tag_id: &str) -> Option<i64> {
 async fn sweep_does_not_leave_the_tags_cache_over_counting_4200() {
     let (_dir, pool, state) = seed_engine_world("tags_cache_sweep.db").await;
 
-    // A live tag, held DIRECTLY by two blocks that the sweep will tombstone
+    // A live tag in the holders' space (usage counts same-space holders only,
+    // #5275), held DIRECTLY by two blocks that the sweep will tombstone
     // together (C1A is the move subject, G1A its child — the sweep stamps the
     // whole cohort, so both leave the count).
     sqlx::query(
-        "INSERT INTO blocks (id, block_type, content, parent_id, position) \
-         VALUES (?, 'tag', 'sweep-count-tag', NULL, 0)",
+        "INSERT INTO blocks (id, block_type, content, parent_id, position, space_id) \
+         VALUES (?, 'tag', 'sweep-count-tag', NULL, 0, ?)",
     )
     .bind(TAG_ID_4200)
+    .bind(SPACE_ID)
     .execute(&pool)
     .await
     .expect("insert tag block");

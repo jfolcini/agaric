@@ -191,6 +191,9 @@ const RETURN_SHAPE: &[(&str, &str, &[&str], &[&str])] = &[
         &["block_type", "content", "parent_id", "position"],
         &[],
     ),
+    // #5281 — the renamed row; a rename onto a name its space already holds
+    // is refused, which only the command sees.
+    ("edit_block", "id", &["content"], &[]),
     (
         "move_blocks_batch",
         "block_id",
@@ -811,6 +814,9 @@ pub(super) async fn apply_op_via_command(
             )
             .await,
         ),
+        "edit_block" => {
+            to_json(edit_block_inner(pool, DEV, mat, block_id(), req_str("toText")).await)
+        }
         "duplicate_block" => to_json(duplicate_block_inner(pool, DEV, mat, block_id()).await),
         // `input` and `splice` are the caller's own text or blocks, so they
         // take no label expansion; only the anchor is a label. `splice` came
@@ -1225,7 +1231,7 @@ mod tests {
     /// vice versa, and the count is the one this module claims — so a
     /// mutating command cannot join one table without the other, and cannot
     /// join at all without this number moving.
-    const MUTATING_ARM_COUNT: usize = 46;
+    const MUTATING_ARM_COUNT: usize = 47;
 
     #[test]
     fn the_dispatcher_and_the_return_shape_table_name_the_same_commands() {

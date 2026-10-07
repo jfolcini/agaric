@@ -63,6 +63,13 @@ export interface PageBlockState {
    */
   truncatedTotal: number | null
 
+  /**
+   * #5278 — the focused block a reload kept at its pre-reload text because the
+   * fresh text differed (a peer's edit, say), with the text it kept. Leaving
+   * the block without typing reloads it; `null` when no reload kept anything.
+   */
+  staleFocusedBlock: { id: string; content: FlatBlock['content'] } | null
+
   /** O(1) helper — `state.blocksById.get(id)`. */
   getBlockById: (id: string) => FlatBlock | undefined
 

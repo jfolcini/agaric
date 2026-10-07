@@ -134,11 +134,13 @@ pub(crate) async fn recompute_all_pages_cache_counts(
                      SELECT COUNT(DISTINCT bl.source_id) FROM block_links bl \
                          JOIN blocks descendant ON bl.target_id = descendant.id \
                          JOIN blocks src ON src.id = bl.source_id \
+                         JOIN blocks page ON page.id = p.page_id \
                          WHERE descendant.page_id = p.page_id \
                            AND descendant.deleted_at IS NULL \
                            AND src.deleted_at IS NULL \
                            AND src.page_id IS NOT NULL \
                            AND src.page_id != p.page_id \
+                           AND src.space_id IS page.space_id \
                  ), \
                  ( \
                      SELECT COUNT(*) FROM blocks descendant \

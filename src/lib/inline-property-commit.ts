@@ -56,7 +56,7 @@ import { logger } from '@/lib/logger'
 import { notifyTagAdded } from '@/lib/name-change-bus'
 import type { TagToken } from '@/lib/name-tokens'
 import { notify } from '@/lib/notify'
-import { invalidRepeatRuleMessage } from '@/lib/repeat-utils'
+import { invalidRepeatRuleMessage, reloadIfRepeating } from '@/lib/repeat-utils'
 import { requireActiveScope } from '@/lib/space-scope'
 import type { TodoState } from '@/lib/task-states'
 import type { FlatBlock } from '@/lib/tree-utils'
@@ -65,16 +65,18 @@ import { useSpaceStore } from '@/stores/space'
 import { useUndoStore } from '@/stores/undo'
 
 /**
- * The minimal structural surface `commitCheckboxState`'s optimistic write
- * needs from a page block store: a Zustand-style `setState` over an object
- * carrying `blocks`. Declared here (instead of importing the concrete
+ * The minimal structural surface `commitCheckboxState` needs from a page block
+ * store: a Zustand-style `setState` over an object carrying `blocks` for the
+ * optimistic write, and `getState().load()` for a repeating task's next
+ * occurrence. Declared here (instead of importing the concrete
  * `StoreApi<PageBlockState>` from `@/stores/page-blocks`) so this `lib/`
  * module never imports the `stores/` tier (#3121's lower-tier-never-imports-
- * higher rule) — the real page-block store's `setState` structurally
- * satisfies this as-is, so every caller passes it unchanged.
+ * higher rule) — the real page-block store structurally satisfies this
+ * as-is, so every caller passes it unchanged.
  */
 export interface PageBlockStoreLike {
   setState: (updater: (state: { blocks: FlatBlock[] }) => { blocks: FlatBlock[] }) => void
+  getState: () => { load: () => Promise<void> }
 }
 
 /** Per-block flush sequence tokens — see the module docstring. */
@@ -247,7 +249,8 @@ export async function commitInlineProperties(opts: {
  *   phantom checked box the backend never recorded.
  * - On SUCCESS: adopts the backend echo for `todo_state` (falls back to the
  *   sent state), optimistically writes it into `pageStore`, strips the
- *   marker via `edit(cleanContent)`, and nudges the undo stack.
+ *   marker via `edit(cleanContent)`, nudges the undo stack and, for DONE,
+ *   reloads the page if the task repeats (`reloadIfRepeating`).
  * - On FAILURE (state write rejected): persists the RAW content (marker
  *   intact) via `edit(content)` so the box stays re-parseable, and writes no
  *   optimistic state.
@@ -257,7 +260,8 @@ export async function commitInlineProperties(opts: {
  *   (the newer session owns the block's content + draft lifecycle), mirroring
  *   `commitInlineProperties`'s supersede handling.
  * - `pageStore` is optional: callers/tests that never produce checkbox-marker
- *   content may omit it; when present, only its `blocks` array is touched.
+ *   content may omit it; when present, only its `blocks` array and `load()`
+ *   are touched.
  *
  * Resolves `false` ONLY when the final content `edit()` failed (mirroring
  * `commitInlineProperties`'s draft-gating contract).
@@ -296,6 +300,7 @@ export async function commitCheckboxState(opts: {
       )
       return false as const
     })
+    if (todoState === 'DONE' && pageStore) await reloadIfRepeating(blockId, pageStore)
     return ok !== false
   } catch (err: unknown) {
     if (readFlushSeq(blockId) !== mySeq) {

@@ -243,6 +243,7 @@ export function ViewDispatcher({
   // reference is stable across renders, so the cost of subscribing at
   // this level is zero re-renders.
   const goBack = useTabsStore((s) => s.goBack)
+  const currentSpaceId = useSpaceStore((s) => s.currentSpaceId)
   switch (currentView) {
     case 'journal': {
       return (
@@ -327,7 +328,8 @@ export function ViewDispatcher({
       return (
         <FeatureErrorBoundary name="Graph" nameKey="sidebar.graph">
           <Suspense fallback={<ViewFallback />}>
-            <GraphView />
+            {/* #5294 — its filters hold tag ids of one space; remount on a switch. */}
+            <GraphView key={currentSpaceId ?? ''} />
           </Suspense>
         </FeatureErrorBoundary>
       )

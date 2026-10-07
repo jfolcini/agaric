@@ -128,7 +128,7 @@ A cursor whose `position` slot does not match the requested sort is rejected by 
 | Column | Definition | Index |
 |--------|------------|-------|
 | `last_modified_at` | `MAX(op_log.created_at)` for the page itself, else the page's ULID creation time once compaction has pruned its ops (#5286); not subtree-aware in v1 — the recursive-CTE variant is deferred (open question). | `idx_op_log_block_id` (migration 0030) |
-| `inbound_link_count` | Canonical definition: `COUNT(DISTINCT block_links.source_id)` where the target is the page or any of its descendants (walked via `blocks.page_id`). Served from `pages_cache`. | `idx_block_links_target` (migration 0001) |
+| `inbound_link_count` | Canonical definition: `COUNT(DISTINCT block_links.source_id)` where the target is the page or any of its descendants (walked via `blocks.page_id`) and the source is a live block on another page in the page's space (`src.space_id IS page.space_id` — a `block_links` row survives a move to another space, #5275). Served from `pages_cache`. | `idx_block_links_target` (migration 0001) |
 | `child_block_count` | Canonical definition: `COUNT(*)` non-deleted descendants where `page_id = page.id AND id != page.id`. Served from `pages_cache`. | `idx_blocks_page_id` |
 | `flags: PagePropertyFlags` | Typed struct with `has_tags` / `has_todo` / `has_scheduled` / `has_due` — each an `EXISTS` subquery that short-circuits on first match. Replaces the original bitmask shape (Round 1 review). | `idx_block_tags_block_id`, `idx_blocks_page_id` |
 

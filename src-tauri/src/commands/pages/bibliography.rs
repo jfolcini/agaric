@@ -475,8 +475,10 @@ async fn create_reference_page_in_tx(
 
     // Stamp the `space` ref property — same op order as
     // `create_page_in_space_inner` (create → set) so a sync peer never
-    // observes the page without its space membership.
-    let (_page_block, space_op) = set_property_in_tx(
+    // observes the page without its space membership. Not dispatched: a fresh
+    // block has nothing to re-scope (#5275, the `space` arm of
+    // `push_property_op_invalidations`).
+    let (_page_block, _space_op) = set_property_in_tx(
         tx,
         ctx.materializer.loro_state(),
         ctx.device_id,
@@ -489,7 +491,6 @@ async fn create_reference_page_in_tx(
         None,
     )
     .await?;
-    tx.enqueue_background(space_op);
     Ok(Some(page_id))
 }
 

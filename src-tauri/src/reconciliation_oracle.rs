@@ -494,7 +494,9 @@ pub struct PageCounts {
 ///   the page block itself.
 /// * `inbound_link_count[P]` — distinct link SOURCES that point at any live
 ///   block owned by `P`, excluding sources that are themselves deleted,
-///   orphaned (`page_id IS NULL`), or on page `P` (same-page/self links).
+///   orphaned (`page_id IS NULL`), on page `P` (same-page/self links), or
+///   outside `P`'s space (#5275 — a `block_links` row survives a move to
+///   another space, and the count must match the space-scoped panel).
 ///
 /// Folded in Rust over three flat row dumps: no `COUNT`, no `DISTINCT`, no
 /// `JOIN` is delegated to SQLite, so this cannot accidentally inherit a bug
@@ -588,6 +590,12 @@ pub async fn rebuild_pages_cache_counts_from_base(
             continue;
         };
         if source_page == page {
+            continue;
+        }
+        if by_id
+            .get(page)
+            .is_none_or(|p| p.space_id != source.space_id)
+        {
             continue;
         }
         sources.entry(page).or_default().insert(source_id.as_str());
@@ -1403,8 +1411,9 @@ async fn dump_tags_cache(pool: &SqlitePool) -> Result<BTreeMap<String, DerivedTa
 ///     a NULL-content tag gets no row at all;
 ///   * `usage_count` is `COUNT(*)` over the `UNION` (not `UNION ALL`, so
 ///     DISTINCT) of `block_tags` and `block_tag_refs`, each arm keeping only
-///     pairs whose SOURCE block is live. A tag with no usages still gets a row,
-///     via the `LEFT JOIN` + `COALESCE(…, 0)`;
+///     pairs whose SOURCE block is live and in the tag's own space (#5275 —
+///     the rows survive the block's move to another space). A tag with no
+///     usages still gets a row, via the `LEFT JOIN` + `COALESCE(…, 0)`;
 ///   * duplicate names collapse (#626): `tags_cache` is `UNIQUE (space_id,
 ///     name)` but `blocks.content` is not, so among live tags of ONE SPACE
 ///     sharing a name only the SMALLEST `id` survives; the same name in
@@ -1432,15 +1441,11 @@ fn fold_tags_cache_from_base(
     explicit: &[(String, String)],
     inline: &[(String, String)],
 ) -> BTreeMap<String, DerivedTagRow> {
-    let live: BTreeSet<&str> = blocks
-        .iter()
-        .filter(|b| b.deleted_at.is_none())
-        .map(|b| b.id.as_str())
-        .collect();
+    let by_id: BTreeMap<&str, &BaseBlock> = blocks.iter().map(|b| (b.id.as_str(), b)).collect();
 
-    // Distinct (tag, source) pairs from both arms, source-liveness enforced —
-    // the `UNION`'s dedup and each arm's `JOIN blocks … WHERE deleted_at IS
-    // NULL`.
+    // Distinct (tag, source) pairs from both arms, source-liveness and
+    // same-space enforced — the `UNION`'s dedup and each arm's `JOIN blocks …
+    // WHERE deleted_at IS NULL AND blk.space_id IS tag.space_id`.
     let mut usages: BTreeMap<&str, BTreeSet<&str>> = BTreeMap::new();
     for (source_id, tag_id) in explicit
         .iter()
@@ -1451,7 +1456,10 @@ fn fold_tags_cache_from_base(
                 .map(|(source_id, tag_id)| (source_id.as_str(), tag_id.as_str())),
         )
     {
-        if !live.contains(source_id) {
+        let (Some(source), Some(tag)) = (by_id.get(source_id), by_id.get(tag_id)) else {
+            continue;
+        };
+        if source.deleted_at.is_some() || source.space_id != tag.space_id {
             continue;
         }
         usages.entry(tag_id).or_default().insert(source_id);
@@ -1537,7 +1545,7 @@ pub async fn reconcile_tags_cache(
                 artefact: "tags_cache.usage_count",
                 key: tag_id.clone(),
                 expected: format!(
-                    "{} distinct live source block(s) across block_tags ∪ block_tag_refs",
+                    "{} distinct live same-space source block(s) across block_tags ∪ block_tag_refs",
                     want.usage_count
                 ),
                 actual: format!("{}", got.usage_count),

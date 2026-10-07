@@ -19,9 +19,11 @@ pub(super) fn dedup_tasks(tasks: Vec<MaterializeTask>) -> Vec<MaterializeTask> {
     let mut seen_frr: FxHashSet<Arc<str>> = FxHashSet::default();
     let mut seen_tu: FxHashSet<Arc<str>> = FxHashSet::default();
     let mut seen_spid: FxHashSet<Arc<str>> = FxHashSet::default();
-    // #2042: RebuildPagesCacheCounts is held aside and emitted exactly once at
-    // the END of the batch (see the arm + tail below).
-    let mut saw_pages_cache_counts = false;
+    // #2042 / #5275: RebuildPagesCacheCounts and RebuildTagsCache are held
+    // aside and emitted exactly once at the END of the batch (see the arms +
+    // tail below).
+    let mut tags_cache_tail = None;
+    let mut pages_cache_counts_tail = None;
     let mut result = Vec::with_capacity(tasks.len());
     for task in tasks {
         match &task {
@@ -100,9 +102,15 @@ pub(super) fn dedup_tasks(tasks: Vec<MaterializeTask>) -> Vec<MaterializeTask> {
             // consumer signals Barriers only after the whole batch drains
             // (`consumer::run_background`), so a trailing position still completes
             // before the flush barrier fires.
-            MaterializeTask::RebuildPagesCacheCounts => {
-                saw_pages_cache_counts = true;
-            }
+            MaterializeTask::RebuildPagesCacheCounts => pages_cache_counts_tail = Some(task),
+            // #5275: same dependency shape for `tags_cache.usage_count`, which
+            // UNIONs `block_tag_refs`. A `space` op's dispatch enqueues
+            // RebuildTagsCache ahead of the RebuildBlockTagRefsCache the same
+            // caller enqueues next (boot's orphan-tag placement), so under
+            // keep-first the count would be recomputed before the refs it
+            // UNIONs exist, and the later duplicate that would have fixed it
+            // is the one dedup drops.
+            MaterializeTask::RebuildTagsCache => tags_cache_tail = Some(task),
             _ => {
                 if seen_d.insert(mem::discriminant(&task)) {
                     result.push(task);
@@ -110,9 +118,8 @@ pub(super) fn dedup_tasks(tasks: Vec<MaterializeTask>) -> Vec<MaterializeTask> {
             }
         }
     }
-    if saw_pages_cache_counts {
-        result.push(MaterializeTask::RebuildPagesCacheCounts);
-    }
+    result.extend(tags_cache_tail);
+    result.extend(pages_cache_counts_tail);
     result
 }
 

@@ -20,6 +20,7 @@ import { i18n } from '@/lib/i18n'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
 import { getPriorityCycle } from '@/lib/priority-levels'
+import { reloadIfRepeating } from '@/lib/repeat-utils'
 import { nextTaskState, type TodoState } from '@/lib/task-states'
 import { usePageBlockStoreApi } from '@/stores/page-blocks'
 import { useUndoStore } from '@/stores/undo'
@@ -163,6 +164,7 @@ export function useBlockProperties(): UseBlockPropertiesReturn {
             state: nextState ? stateLabel(nextState) : 'none',
           }),
         )
+        if (nextState === 'DONE') await reloadIfRepeating(blockId, pageStore)
       }),
     [pageStore, enqueueTodoToggle],
   )

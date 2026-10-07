@@ -23,11 +23,16 @@ import { invoke } from '@tauri-apps/api/core'
 import { act, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { toast } from 'sonner'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
 import { makeBlock, makeHistoryEntry } from '@/__tests__/fixtures'
 import { HistoryPanel } from '@/components/history/HistoryPanel'
+import {
+  _resetGraphStructureEventsForTest,
+  DEBOUNCE_MS as GRAPH_DEBOUNCE_MS,
+  getGraphStructureKey,
+} from '@/lib/graph-structure-events'
 import { queryClient } from '@/lib/query-client'
 import { getPageStore, PageBlockStoreProvider } from '@/stores/page-blocks'
 import { useUndoStore } from '@/stores/undo'
@@ -802,6 +807,116 @@ describe('HistoryPanel', () => {
       await waitFor(() => {
         expect(toast.success).toHaveBeenCalledWith('Reverted successfully')
       })
+    })
+  })
+
+  // #5292 — a restored version can add or drop a `[[link]]`, and restore
+  // bypasses the page-store reducers that bump the graph-structure counter.
+  describe('restore invalidates the Graph (#5292)', () => {
+    beforeEach(() => {
+      _resetGraphStructureEventsForTest()
+    })
+
+    afterEach(() => {
+      vi.useRealTimers()
+    })
+
+    function setupGraphFixture(editBlock: () => unknown) {
+      setupInvokeRouter({
+        get_block_history: () => ({
+          items: [makeHistoryEntry(1, 'edit_block', { to_text: 'Old [[Link]]' })],
+          next_cursor: null,
+          has_more: false,
+          total_count: null,
+        }),
+        get_block: () => ({ id: 'BLOCK001', block_type: 'content', content: 'Current text' }),
+        edit_block: editBlock,
+        compute_block_vs_current_diff: () => [],
+        compute_edit_diff: () => [],
+      })
+    }
+
+    async function clickRestore(user: ReturnType<typeof userEvent.setup>) {
+      render(<HistoryPanel blockId="BLOCK001" />)
+      await user.click(await screen.findByTestId('block-history-row-0'))
+      await user.click(await screen.findByTestId('block-history-restore-0'))
+    }
+
+    async function toastUndoAction(): Promise<() => void> {
+      let onClick: (() => void) | undefined
+      await waitFor(() => {
+        const call = vi
+          .mocked(toast.success)
+          .mock.calls.find((c) => c[0] === 'Reverted successfully')
+        onClick = (call?.[1] as { action?: { onClick: () => void } } | undefined)?.action?.onClick
+        expect(onClick).toBeDefined()
+      })
+      return () => onClick?.()
+    }
+
+    it('a restore bumps the graph-structure counter', async () => {
+      setupGraphFixture(() => ({ id: 'BLOCK001', block_type: 'content', content: 'Old [[Link]]' }))
+
+      await clickRestore(userEvent.setup())
+
+      await waitFor(() => {
+        expect(getGraphStructureKey()).toBe(1)
+      })
+    })
+
+    it('a failed restore leaves the counter alone', async () => {
+      vi.useFakeTimers({ shouldAdvanceTime: true })
+      setupGraphFixture(() => {
+        throw new Error('edit failed')
+      })
+
+      await clickRestore(userEvent.setup({ advanceTimers: vi.advanceTimersByTime }))
+
+      await waitFor(() => {
+        expect(toast.error).toHaveBeenCalledWith('Failed to revert')
+      })
+      // Past the counter's debounce, so a bump would have landed by now.
+      await vi.advanceTimersByTimeAsync(GRAPH_DEBOUNCE_MS + 1)
+      expect(getGraphStructureKey()).toBe(0)
+    })
+
+    it("the toast's Undo bumps the counter too", async () => {
+      setupGraphFixture(() => ({ id: 'BLOCK001', block_type: 'content', content: 'whatever' }))
+
+      await clickRestore(userEvent.setup())
+      const undo = await toastUndoAction()
+      await waitFor(() => {
+        expect(getGraphStructureKey()).toBe(1)
+      })
+
+      undo()
+
+      await waitFor(() => {
+        expect(getGraphStructureKey()).toBe(2)
+      })
+    })
+
+    it("a failed toast Undo leaves the counter at the restore's bump", async () => {
+      vi.useFakeTimers({ shouldAdvanceTime: true })
+      let editCalls = 0
+      setupGraphFixture(() => {
+        editCalls += 1
+        if (editCalls > 1) throw new Error('undo failed')
+        return { id: 'BLOCK001', block_type: 'content', content: 'Old [[Link]]' }
+      })
+
+      await clickRestore(userEvent.setup({ advanceTimers: vi.advanceTimersByTime }))
+      const undo = await toastUndoAction()
+      await vi.advanceTimersByTimeAsync(GRAPH_DEBOUNCE_MS + 1)
+      expect(getGraphStructureKey()).toBe(1)
+
+      undo()
+
+      await waitFor(() => {
+        expect(toast.error).toHaveBeenCalledWith('Could not undo the restore')
+      })
+      await vi.advanceTimersByTimeAsync(GRAPH_DEBOUNCE_MS + 1)
+      expect(getGraphStructureKey()).toBe(1)
     })
   })
 

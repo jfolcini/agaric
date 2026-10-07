@@ -18,7 +18,7 @@ import { toast } from 'sonner'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { StoreApi } from 'zustand'
 
-import { makeBlock, makeBlockRow } from '@/__tests__/fixtures'
+import { makeBlock, makeBlockRow, makePropertyRow } from '@/__tests__/fixtures'
 import {
   type CommandReturns,
   deferred,
@@ -30,6 +30,7 @@ import { announce } from '@/lib/announcer'
 import { i18n } from '@/lib/i18n'
 import { __resetPriorityLevelsForTests, setPriorityLevels } from '@/lib/priority-levels'
 import { createPageBlockStore, PageBlockContext, type PageBlockState } from '@/stores/page-blocks'
+import { useSpaceStore } from '@/stores/space'
 import { useUndoStore } from '@/stores/undo'
 
 vi.mock('@/lib/announcer', () => ({ announce: vi.fn() }))
@@ -974,5 +975,68 @@ describe('useBlockProperties #2922 rapid toggle race', () => {
       block1.resolve(makeBlockRow({ id: 'BLOCK_1', todo_state: 'DOING' }))
     })
     expect(pageStore.getState().blocks.find((b) => b.id === 'BLOCK_1')?.todo_state).toBe('DOING')
+  })
+})
+
+describe('useBlockProperties handleToggleTodo — next occurrence of a repeating task (#5285)', () => {
+  const REPEAT = makePropertyRow({ key: 'repeat', value_text: '+1w' })
+
+  /** The page as the backend holds it after the DONE: the block and its next occurrence. */
+  function stubCompletedRepeat(
+    repeat: CommandReturns['get_property'],
+    overrides: TypedInvokeHandlers = {},
+  ): void {
+    stubPropertiesInvoke({
+      get_property: (args) => (args['key'] === 'repeat' ? repeat : null),
+      load_page_subtree: () => ({
+        blocks: [
+          makeBlockRow({ id: 'BLOCK_1', parent_id: 'PAGE_1', todo_state: 'DONE' }),
+          makeBlockRow({ id: 'BLOCK_NEXT', parent_id: 'PAGE_1', todo_state: 'TODO', position: 2 }),
+        ],
+        truncated: false,
+        total: 2,
+      }),
+      ...overrides,
+    })
+  }
+
+  beforeEach(() => {
+    useSpaceStore.setState({ currentSpaceId: 'SPACE_1' })
+    pageStore.setState({
+      blocks: [makeBlock({ id: 'BLOCK_1', parent_id: 'PAGE_1', todo_state: 'DOING' })],
+    })
+  })
+
+  afterEach(() => {
+    useSpaceStore.setState({ currentSpaceId: null })
+  })
+
+  it.each([
+    ['shows the next occurrence of a repeating task', REPEAT, ['BLOCK_1', 'BLOCK_NEXT']],
+    ['does not reload for a task without repeat', null, ['BLOCK_1']],
+  ])('DONE %s', async (_name, repeat, ids) => {
+    stubCompletedRepeat(repeat)
+    const { result } = renderHook(() => useBlockProperties(), { wrapper })
+
+    await act(async () => {
+      await result.current.handleToggleTodo('BLOCK_1')
+    })
+
+    expect(pageStore.getState().blocks.map((b) => b.id)).toEqual(ids)
+  })
+
+  it('does not reload when set_todo_state fails', async () => {
+    stubCompletedRepeat(REPEAT, {
+      set_todo_state: () => {
+        throw new Error('IPC failed')
+      },
+    })
+    const { result } = renderHook(() => useBlockProperties(), { wrapper })
+
+    await act(async () => {
+      await result.current.handleToggleTodo('BLOCK_1')
+    })
+
+    expect(pageStore.getState().blocks.map((b) => b.id)).toEqual(['BLOCK_1'])
   })
 })

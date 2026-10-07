@@ -12,15 +12,35 @@ import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { makePage } from '@/__tests__/fixtures'
 import { ActivityFeed } from '@/components/agent-access/ActivityFeed'
 import type { ActivityEntry } from '@/hooks/useMcpActivityFeed'
+import {
+  _resetGraphStructureEventsForTest,
+  getGraphStructureKey,
+} from '@/lib/graph-structure-events'
+import { t } from '@/lib/i18n'
 import { notify } from '@/lib/notify'
+import { useRecentPagesStore } from '@/stores/recent-pages'
+import { useResolveStore } from '@/stores/resolve'
+import { useSpaceStore } from '@/stores/space'
+import type { Tab } from '@/stores/tabs'
+import { useTabsStore } from '@/stores/tabs'
 
-const { mockRevert } = vi.hoisted(() => ({ mockRevert: vi.fn() }))
+const { mockRevert, mockListBlocks, mockListAllTagsInSpace, mockBatchResolve } = vi.hoisted(() => ({
+  mockRevert: vi.fn(),
+  mockListBlocks: vi.fn(),
+  mockListAllTagsInSpace: vi.fn(),
+  mockBatchResolve: vi.fn(),
+}))
 
 vi.mock('@/lib/bindings', () => ({
   commands: {
     revertOps: (...args: unknown[]) => mockRevert(...args),
+    // The resolve-cache re-reads a successful revert triggers (#5276).
+    listBlocks: (...args: unknown[]) => mockListBlocks(...args),
+    listAllTagsInSpace: (...args: unknown[]) => mockListAllTagsInSpace(...args),
+    batchResolve: (...args: unknown[]) => mockBatchResolve(...args),
   },
 }))
 
@@ -129,6 +149,140 @@ describe('ActivityFeed', () => {
         expect(mockNotify.error).toHaveBeenCalledWith('Could not undo agent action')
       })
       expect(mockNotify.error).not.toHaveBeenCalledWith('This agent action cannot be undone')
+    })
+  })
+
+  // #5276 — an agent's write reverted here rewrites pages behind every store's
+  // back, so the undo must carry the change into the titles and deleted marks
+  // the chips, tabs and recents hold, as a sync does.
+  describe('revert fan-out (#5276)', () => {
+    // The second op is the session's other agent write, so the session header renders.
+    const SESSION_MATE: ActivityEntry = { ...UNDOABLE, opRef: { device_id: 'dev-1', seq: 10 } }
+
+    beforeEach(() => {
+      useSpaceStore.setState({
+        currentSpaceId: 'SPACE_A',
+        availableSpaces: [{ id: 'SPACE_A', name: 'A', accent_color: null }],
+        isReady: true,
+      })
+      // The agent renamed page "Alpha" to "Beta" and deleted a referenced block.
+      useResolveStore.setState({ cache: new Map(), version: 0, _preloaded: false })
+      useResolveStore.getState().set('PAGE_P', 'Beta', false)
+      useResolveStore.getState().set('BLOCK_B', 'Referenced block', true)
+      const held = [{ pageId: 'PAGE_P', title: 'Beta' }]
+      const tabs: Tab[] = [{ id: '0', pageStack: held, label: 'Beta' }]
+      useTabsStore.setState({
+        tabs,
+        activeTabIndex: 0,
+        tabsBySpace: { SPACE_A: tabs },
+        activeTabIndexBySpace: { SPACE_A: 0 },
+      })
+      useRecentPagesStore.setState({ recentPages: held, recentPagesBySpace: { SPACE_A: held } })
+      mockListBlocks.mockResolvedValue(
+        ok({
+          items: [makePage({ id: 'PAGE_P', content: 'Alpha' })],
+          next_cursor: null,
+          has_more: false,
+          total_count: null,
+        }),
+      )
+      mockListAllTagsInSpace.mockResolvedValue(ok([]))
+      mockBatchResolve.mockResolvedValue(
+        ok([{ id: 'BLOCK_B', title: 'Referenced block', block_type: 'content', deleted: false }]),
+      )
+      _resetGraphStructureEventsForTest()
+    })
+
+    afterEach(() => {
+      useSpaceStore.setState({ currentSpaceId: null, availableSpaces: [], isReady: false })
+      useTabsStore.setState({
+        tabs: [{ id: '0', pageStack: [], label: '' }],
+        activeTabIndex: 0,
+        tabsBySpace: {},
+        activeTabIndexBySpace: {},
+      })
+      useRecentPagesStore.setState({ recentPages: [], recentPagesBySpace: {} })
+      useResolveStore.setState({ cache: new Map(), version: 0, _preloaded: false })
+    })
+
+    function heldState() {
+      const resolve = useResolveStore.getState()
+      const tab = useTabsStore.getState().tabs[0]
+      return {
+        chipTitle: resolve.resolveTitle('PAGE_P'),
+        blockStatus: resolve.resolveStatus('BLOCK_B'),
+        tabTitle: tab?.pageStack[0]?.title,
+        tabLabel: tab?.label,
+        recentTitle: useRecentPagesStore.getState().recentPagesBySpace['SPACE_A']?.[0]?.title,
+      }
+    }
+
+    const BEFORE = {
+      chipTitle: 'Beta',
+      blockStatus: 'deleted',
+      tabTitle: 'Beta',
+      tabLabel: 'Beta',
+      recentTitle: 'Beta',
+    }
+
+    async function undoOne(user: ReturnType<typeof userEvent.setup>): Promise<void> {
+      await user.click(screen.getByTestId('mcp-activity-undo'))
+    }
+
+    async function revertSession(user: ReturnType<typeof userEvent.setup>): Promise<void> {
+      await user.click(screen.getByTestId('mcp-activity-revert-session'))
+      await user.click(
+        screen.getByRole('button', { name: t('agentAccess.revertSession.confirmAction') }),
+      )
+    }
+
+    const REVERTS = [
+      ['Undo', [UNDOABLE], undoOne, 'agentAccess.undoAgentOp.failed'],
+      [
+        'Revert session',
+        [UNDOABLE, SESSION_MATE],
+        revertSession,
+        'agentAccess.revertSession.failed',
+      ],
+    ] as const
+
+    it.each(REVERTS)(
+      'a successful %s re-resolves held titles and deleted marks',
+      async (_, entries, revert) => {
+        const user = userEvent.setup()
+        mockRevert.mockResolvedValue(ok([]))
+        render(<ActivityFeed entries={[...entries]} />)
+        expect(heldState()).toEqual(BEFORE)
+
+        await revert(user)
+
+        await waitFor(() => {
+          expect(heldState()).toEqual({
+            chipTitle: 'Alpha',
+            blockStatus: 'active',
+            tabTitle: 'Alpha',
+            tabLabel: 'Alpha',
+            recentTitle: 'Alpha',
+          })
+          expect(getGraphStructureKey()).toBe(1)
+        })
+      },
+    )
+
+    it.each(REVERTS)('a failed %s leaves them alone', async (_, entries, revert, failedKey) => {
+      const user = userEvent.setup()
+      mockRevert.mockRejectedValue(new Error('ipc boom'))
+      render(<ActivityFeed entries={[...entries]} />)
+
+      await revert(user)
+
+      await waitFor(() => {
+        expect(mockNotify.error).toHaveBeenCalledWith(t(failedKey))
+      })
+      // The re-reads that would rewrite them start in the same tick as the fan-out.
+      expect(mockListBlocks).not.toHaveBeenCalled()
+      expect(mockBatchResolve).not.toHaveBeenCalled()
+      expect(heldState()).toEqual(BEFORE)
     })
   })
 })

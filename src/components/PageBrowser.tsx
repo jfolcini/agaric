@@ -51,7 +51,7 @@ import type { BlockRow } from '@/lib/bindings'
 import { matchesSearchFolded } from '@/lib/fold-for-search'
 import { notify } from '@/lib/notify'
 import type { SavedPagesView } from '@/lib/preferences'
-import type { PagesViewTuple } from '@/lib/saved-pages-views'
+import { dropOtherSpacesTagChips, type PagesViewTuple } from '@/lib/saved-pages-views'
 import { useSpaceStore } from '@/stores/space'
 
 const HEADER_ROW_HEIGHT = 36
@@ -248,13 +248,15 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
 
   const handleApplySavedView = useCallback(
     (view: SavedPagesView) => {
-      setSortOption(view.sort)
-      setDensity(view.density)
-      handleClearAllFilters()
-      for (const filter of view.filters) handleAddFilter(filter)
-      notify.success(t('pageBrowser.savedViews.applied', { name: view.name }))
+      void dropOtherSpacesTagChips(view.filters, currentSpaceId).then((viewFilters) => {
+        setSortOption(view.sort)
+        setDensity(view.density)
+        handleClearAllFilters()
+        for (const filter of viewFilters) handleAddFilter(filter)
+        notify.success(t('pageBrowser.savedViews.applied', { name: view.name }))
+      })
     },
-    [setSortOption, setDensity, handleClearAllFilters, handleAddFilter, t],
+    [currentSpaceId, setSortOption, setDensity, handleClearAllFilters, handleAddFilter, t],
   )
 
   const handleSaveCurrentView = useCallback(

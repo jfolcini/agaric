@@ -1,11 +1,11 @@
 /**
- * Tests for `usePageTemplateMeta` — template + space metadata hook
+ * Tests for `usePageTemplateMeta` — template metadata hook
  * extracted from `PageHeader` during the design-system maintainability
  * pass.
  *
  * Covers:
- *  1. Initial property load populates the four state slots.
- *  2. Missing properties default to `false` / `null`.
+ *  1. Initial property load populates the three state slots.
+ *  2. Missing properties default to `false`.
  *  3. `handleToggleTemplate` deletes the property when currently set
  *     and posts a `removed` toast; sets it otherwise.
  *  4. `handleToggleJournalTemplate` mirrors the same shape on its key.
@@ -73,11 +73,10 @@ const t = (key: string) => key
 interface Prop {
   key: string
   value_text?: string | null
-  value_ref?: string | null
 }
 
-// The real `PropertyRow` has more fields, but the hook only reads `key`,
-// `value_text`, and `value_ref`, so the partial shape is safe.
+// The real `PropertyRow` has more fields, but the hook only reads `key` and
+// `value_text`, so the partial shape is safe.
 const makeProps = (entries: Prop[]) => ({ status: 'ok' as const, data: entries })
 
 // The hook ignores `setProperty`'s `BlockRow` return value; an empty object
@@ -96,13 +95,12 @@ beforeEach(() => {
 })
 
 describe('usePageTemplateMeta — initial load', () => {
-  it('populates all four state slots from the property set', async () => {
+  it('populates all three state slots from the property set', async () => {
     mockedGet.mockResolvedValueOnce(
       makeProps([
         { key: 'template', value_text: 'true' },
         { key: 'journal-template', value_text: 'true' },
         { key: 'is_space', value_text: 'true' },
-        { key: 'space', value_ref: 'space-42' },
       ]),
     )
     const onAfterToggle = vi.fn()
@@ -113,10 +111,9 @@ describe('usePageTemplateMeta — initial load', () => {
     })
     expect(result.current.isJournalTemplate).toBe(true)
     expect(result.current.isSpaceBlock).toBe(true)
-    expect(result.current.pageSpaceId).toBe('space-42')
   })
 
-  it('defaults to false / null when properties are missing', async () => {
+  it('defaults to false when properties are missing', async () => {
     mockedGet.mockResolvedValueOnce(makeProps([]))
     const { result } = renderHook(() => usePageTemplateMeta('page-1', t, vi.fn()))
 
@@ -126,7 +123,6 @@ describe('usePageTemplateMeta — initial load', () => {
     expect(result.current.isTemplate).toBe(false)
     expect(result.current.isJournalTemplate).toBe(false)
     expect(result.current.isSpaceBlock).toBe(false)
-    expect(result.current.pageSpaceId).toBeNull()
   })
 
   it('skips the load when `pageId` is empty', () => {
@@ -219,21 +215,6 @@ describe('usePageTemplateMeta — toggle handlers', () => {
     // kebab menu closes.
     expect(result.current.isTemplate).toBe(false)
     expect(onAfterToggle).toHaveBeenCalledTimes(1)
-  })
-})
-
-describe('usePageTemplateMeta — setPageSpaceId', () => {
-  it('exposes a setter that updates `pageSpaceId`', async () => {
-    const { result } = renderHook(() => usePageTemplateMeta('page-1', t, vi.fn()))
-
-    await waitFor(() => {
-      expect(mockedGet).toHaveBeenCalled()
-    })
-
-    act(() => {
-      result.current.setPageSpaceId('space-77')
-    })
-    expect(result.current.pageSpaceId).toBe('space-77')
   })
 })
 

@@ -32,12 +32,10 @@ import { notify } from '@/lib/notify'
 import { isPairingWindowRejection } from '@/lib/pairing-rejections'
 import { invalidatePropertyCaches } from '@/lib/property-caches'
 import { forEachLivePageStoreGroup } from '@/stores/page-blocks'
-import { renamePage } from '@/stores/page-rename'
-import { selectRecentPagesForSpace, useRecentPagesStore } from '@/stores/recent-pages'
+import { retitleHeldPages } from '@/stores/page-rename'
 import { useResolveStore } from '@/stores/resolve'
 import { useSpaceStore } from '@/stores/space'
 import { useSyncStore } from '@/stores/sync'
-import { useTabsStore } from '@/stores/tabs'
 import { useUndoStore } from '@/stores/undo'
 
 /** Payload shapes from the Rust backend sync_events.rs */
@@ -103,29 +101,6 @@ export interface BlocksChangedPayload {
 }
 
 /**
- * #5242 — carry an out-of-band page rename into the title copies the tabs and
- * recents persist (the header, tab label, window title and recents strip read
- * them). Only local renames reach `renamePage` otherwise. Reads the resolve
- * cache the preload just refreshed; `targeted` null means it rescanned them all.
- */
-function retitleHeldPages(targeted: ReadonlySet<string> | null, spaceId: string | null): void {
-  const held = [
-    ...useTabsStore.getState().tabs.flatMap((tab) => tab.pageStack),
-    ...selectRecentPagesForSpace(useRecentPagesStore.getState(), spaceId),
-  ]
-  const resolve = useResolveStore.getState()
-  const freshTitles = new Map<string, string>()
-  for (const { pageId, title } of held) {
-    if (targeted && !targeted.has(pageId)) continue
-    // `renamePage` re-seeds the resolve entry as not deleted, so leave a trashed page alone.
-    if (!resolve.isResolved(pageId) || resolve.resolveStatus(pageId) === 'deleted') continue
-    const fresh = resolve.resolveTitle(pageId)
-    if (fresh !== title) freshTitles.set(pageId, fresh)
-  }
-  for (const [pageId, title] of freshTitles) renamePage(pageId, title, spaceId)
-}
-
-/**
  * #1071 / #2505 — the shared targeted page-store reload. Given the set of
  * owning-page ids touched by an out-of-band write (a remote sync session or an
  * MCP write), reload + undo-re-anchor ONLY the mounted page stores whose id is
@@ -137,7 +112,7 @@ function retitleHeldPages(targeted: ReadonlySet<string> | null, spaceId: string 
  * ancestor) reload EVERY mounted store plus a full preload — when in doubt we
  * fall back rather than risk a missed update.
  */
-export function reloadChangedPageStores(changedPageIds: string[] | undefined): void {
+export function reloadChangedPageStores(changedPageIds?: string[]): void {
   const reanchorUndo = useUndoStore.getState().reanchorAfterRemoteOps
   const targeted =
     Array.isArray(changedPageIds) && changedPageIds.length > 0 ? new Set(changedPageIds) : null
@@ -214,6 +189,16 @@ export function reloadChangedPageStores(changedPageIds: string[] | undefined): v
   // #5283 — and spaces: a peer can create, rename, recolour or delete one. The
   // refresh never rejects, and it moves off an active space a peer deleted.
   void useSpaceStore.getState().refreshAvailableSpaces()
+}
+
+/**
+ * #5276 — the fan-out after a History revert / restore-to-here or an Agent access undo. Those
+ * rewrite pages behind every store's back as a sync does, with no event naming which, so this
+ * is the full reload. Its full walk also re-resolves every cached entry it does not list
+ * (#5289), which covers a block whose delete or edit was reverted.
+ */
+export function reloadAfterRevert(): void {
+  reloadChangedPageStores()
 }
 
 /** Map backend state strings to frontend SyncState enum. */

@@ -22,6 +22,7 @@ import { useCallback, useRef, useState } from 'react'
 import { invalidateCalendarPageDates } from '@/hooks/useCalendarPageDates'
 import { unwrap } from '@/lib/app-error'
 import { commands } from '@/lib/bindings'
+import { recordGraphStructureChange } from '@/lib/graph-structure-events'
 import { importMarkdown } from '@/lib/ipc-helpers'
 import { logger } from '@/lib/logger'
 import { PREFERENCES, writePreference } from '@/lib/preferences'
@@ -297,6 +298,7 @@ export function useImportRunner(): UseImportRunner {
       if (succeededFiles > 0) {
         invalidateCalendarPageDates()
         invalidatePropertyCaches()
+        recordGraphStructureChange()
       }
 
       // #1927 — the title to navigate to after a successful import. We resolve

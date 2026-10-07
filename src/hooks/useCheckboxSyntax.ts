@@ -17,6 +17,7 @@ import { unwrap } from '@/lib/app-error'
 import { commands } from '@/lib/bindings'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
+import { reloadIfRepeating } from '@/lib/repeat-utils'
 import type { TodoState } from '@/lib/task-states'
 import type { PageBlockState } from '@/stores/page-blocks'
 import { useUndoStore } from '@/stores/undo'
@@ -70,6 +71,7 @@ export function useCheckboxSyntax({
               .catch((err) => {
                 logger.warn('useCheckboxSyntax', 'checkbox dependency check failed', undefined, err)
               })
+            void reloadIfRepeating(focusedBlockId, pageStore)
           }
         })
         .catch((err) => {

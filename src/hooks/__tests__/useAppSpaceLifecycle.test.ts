@@ -11,10 +11,12 @@ import { invoke } from '@tauri-apps/api/core'
 import { renderHook, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { makeBlockRow } from '@/__tests__/fixtures'
 import { mockInvokeCommands } from '@/__tests__/helpers/invoke'
 import { useAppSpaceLifecycle } from '@/hooks/useAppSpaceLifecycle'
 import { setWindowTitle } from '@/lib/platform/window'
 import { useNavigationStore } from '@/stores/navigation'
+import { selectRecentPagesForSpace, useRecentPagesStore } from '@/stores/recent-pages'
 import { useResolveStore } from '@/stores/resolve'
 import { useSpaceStore } from '@/stores/space'
 import { useTabsStore } from '@/stores/tabs'
@@ -58,7 +60,14 @@ beforeEach(() => {
     currentView: 'journal',
     currentViewBySpace: { SPACE_PERSONAL: 'journal', SPACE_WORK: 'journal' },
   })
-  useTabsStore.setState({ tabs: [{ id: '0', pageStack: [], label: '' }], activeTabIndex: 0 })
+  useTabsStore.setState({
+    tabs: [{ id: '0', pageStack: [], label: '' }],
+    activeTabIndex: 0,
+    tabsBySpace: {},
+    activeTabIndexBySpace: {},
+  })
+  useRecentPagesStore.setState({ recentPages: [], recentPagesBySpace: {} })
+  useResolveStore.setState({ cache: new Map(), version: 0, _preloaded: false })
 })
 
 afterEach(() => {
@@ -70,6 +79,45 @@ describe('useAppSpaceLifecycle — preload', () => {
     const preload = vi.spyOn(useResolveStore.getState(), 'preload')
     renderHook(() => useAppSpaceLifecycle())
     expect(preload).toHaveBeenCalledWith('SPACE_PERSONAL')
+  })
+})
+
+describe('useAppSpaceLifecycle — retitle on switch (#5277)', () => {
+  it('retitles the incoming space’s tabs and recents with a rename made while it was inactive', async () => {
+    const held = [{ pageId: 'PAGE_A', title: 'Alpha' }]
+    useTabsStore.setState({
+      tabsBySpace: { SPACE_WORK: [{ id: '1', pageStack: held, label: 'Alpha' }] },
+      activeTabIndexBySpace: { SPACE_WORK: 0 },
+    })
+    useRecentPagesStore.setState({ recentPagesBySpace: { SPACE_WORK: held } })
+    // A peer or an MCP agent renamed it to "Beta" while Personal was active.
+    vi.mocked(invoke).mockImplementation(
+      mockInvokeCommands({
+        list_blocks: (args) => {
+          const scope = args['scope'] as { space_id?: string } | undefined
+          const items =
+            scope?.space_id === 'SPACE_WORK'
+              ? [makeBlockRow({ id: 'PAGE_A', block_type: 'page', content: 'Beta' })]
+              : []
+          return { items, has_more: false, next_cursor: null, total_count: null }
+        },
+        list_all_tags_in_space: () => [],
+      }),
+    )
+    const { rerender } = renderHook(() => useAppSpaceLifecycle())
+
+    useSpaceStore.setState({ currentSpaceId: 'SPACE_WORK' })
+    rerender()
+
+    await waitFor(() => {
+      expect(useTabsStore.getState().tabsBySpace['SPACE_WORK']?.[0]).toMatchObject({
+        pageStack: [{ pageId: 'PAGE_A', title: 'Beta' }],
+        label: 'Beta',
+      })
+    })
+    expect(selectRecentPagesForSpace(useRecentPagesStore.getState(), 'SPACE_WORK')).toEqual([
+      { pageId: 'PAGE_A', title: 'Beta' },
+    ])
   })
 })
 

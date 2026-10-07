@@ -108,7 +108,7 @@ export function LinkPreviewTooltip({
   //   * not_found (404/410) — terminal, the page is gone. Same Globe,
   //     same URL, plus a muted "(not found)" tag so the user knows
   //     it's not a transient retry case.
-  //   * transient (5xx / other) — both flags false but title is null;
+  //   * any other non-2xx — both flags false but title is null;
   //     same fallback as a never-fetched URL.
   // Favicon is suppressed in all three cases (don't load a favicon for
   // a page that 404s, and don't surface a sign-in page's icon).

@@ -31,9 +31,11 @@
 import { useEffect, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { logger } from '@/lib/logger'
 import { NAV_ITEMS } from '@/lib/nav-items'
 import { setWindowTitle } from '@/lib/platform/window'
 import { useNavigationStore } from '@/stores/navigation'
+import { retitleHeldPages } from '@/stores/page-rename'
 import { useResolveStore } from '@/stores/resolve'
 import { useSpaceStore } from '@/stores/space'
 import { selectPageStack, useTabsStore } from '@/stores/tabs'
@@ -46,10 +48,21 @@ export function useAppSpaceLifecycle(): void {
   const pageStack = useTabsStore(selectPageStack)
 
   // Preload the resolve cache (pages + tags) once on app boot, and
-  // Again whenever the active space changes.
+  // Again whenever the active space changes. #5277 — then retitle the
+  // space's tabs and recents from it: a rename that synced in, or came from
+  // an MCP agent, while another space was active never reached them.
   useEffect(() => {
+    if (currentSpaceId == null) return
     // `preload` catches its scan failures internally; never rejects.
-    void useResolveStore.getState().preload(currentSpaceId ?? undefined)
+    void useResolveStore
+      .getState()
+      .preload(currentSpaceId)
+      .then(() => {
+        retitleHeldPages(null, currentSpaceId)
+      })
+      .catch((err: unknown) => {
+        logger.warn('useAppSpaceLifecycle', 'retitling tabs and recents failed', undefined, err)
+      })
   }, [currentSpaceId])
 
   // Cross-space link enforcement. Order matters: read

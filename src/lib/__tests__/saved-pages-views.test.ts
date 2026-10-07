@@ -11,12 +11,15 @@
  *  - `findMatchingSavedPagesView` / `viewMatchesTuple` structural equality
  */
 
+import { invoke } from '@tauri-apps/api/core'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { mockInvokeCommands } from '@/__tests__/helpers/invoke'
 import type { FilterPrimitive } from '@/lib/bindings'
 import { PREFERENCES } from '@/lib/preferences'
 import {
   deleteSavedPagesView,
+  dropOtherSpacesTagChips,
   findMatchingSavedPagesView,
   getSavedPagesViews,
   type PagesViewTuple,
@@ -240,5 +243,36 @@ describe('saved-pages-views', () => {
       expect(event.key).toBe(STORAGE_KEY)
       window.removeEventListener('storage', handler)
     })
+  })
+})
+
+// #5294 — a saved view applied in another space must not carry that space's tag ids.
+describe('dropOtherSpacesTagChips', () => {
+  const here = { tag_id: 'TAG_HERE', name: 'here', usage_count: 1, updated_at: '' }
+  const chips: FilterPrimitive[] = [
+    { type: 'Tag', tag: 'TAG_HERE' },
+    { type: 'TagOrRef', tag: 'TAG_ELSEWHERE' },
+    { type: 'Orphan' },
+  ]
+
+  it('keeps only the tag chips whose tag is in the space', async () => {
+    vi.mocked(invoke).mockImplementation(
+      mockInvokeCommands({ list_all_tags_in_space: () => [here] }),
+    )
+
+    expect(await dropOtherSpacesTagChips(chips, 'SPACE_A')).toEqual([
+      { type: 'Tag', tag: 'TAG_HERE' },
+      { type: 'Orphan' },
+    ])
+  })
+
+  it('returns the chips unchanged when the space tags cannot be listed', async () => {
+    vi.mocked(invoke).mockImplementation(
+      mockInvokeCommands({
+        list_all_tags_in_space: () => Promise.reject(new Error('backend down')),
+      }),
+    )
+
+    expect(await dropOtherSpacesTagChips(chips, 'SPACE_A')).toEqual(chips)
   })
 })

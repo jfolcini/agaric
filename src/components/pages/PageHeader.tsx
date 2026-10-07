@@ -164,8 +164,8 @@ export function PageHeader({ pageId, title, onBack, onEditSource, kebabRef }: Pa
   const [kebabOpen, setKebabOpen] = useState(false)
   const [forcePropertyExpanded, setForcePropertyExpanded] = useState(false)
 
-  // --- Template + space metadata (extracted to `usePageTemplateMeta`) ---
-  // The hook loads the four property-derived bits the kebab menu needs
+  // --- Template metadata (extracted to `usePageTemplateMeta`) ---
+  // The hook loads the three property-derived bits the kebab menu needs
   // and owns the template-toggle handlers; `closeKebab` is the
   // post-action hook used to dismiss the menu after a toggle resolves.
   const closeKebab = useCallback(() => setKebabOpen(false), [])
@@ -173,8 +173,6 @@ export function PageHeader({ pageId, title, onBack, onEditSource, kebabRef }: Pa
     isTemplate,
     isJournalTemplate,
     isSpaceBlock,
-    pageSpaceId,
-    setPageSpaceId,
     handleToggleTemplate,
     handleToggleJournalTemplate,
   } = usePageTemplateMeta(pageId, t, closeKebab)
@@ -291,9 +289,11 @@ export function PageHeader({ pageId, title, onBack, onEditSource, kebabRef }: Pa
   // peer creates/renames a space over sync. The list passed into the
   // menu is already sorted (the space store guarantees alphabetical
   // order from the backend `list_spaces_inner` query) so we just strip
-  // the current owner and hand the result to `PageHeaderMenu`.
+  // the current space — the editor only loads pages of the active space —
+  // and hand the result to `PageHeaderMenu`.
   const availableSpaces = useSpaceStore((s) => s.availableSpaces)
-  const moveTargets = availableSpaces.filter((s) => s.id !== pageSpaceId)
+  const currentSpaceId = useSpaceStore((s) => s.currentSpaceId)
+  const moveTargets = availableSpaces.filter((s) => s.id !== currentSpaceId)
 
   const handleMoveToSpace = useCallback(
     async (targetSpaceId: string) => {
@@ -311,7 +311,6 @@ export function PageHeader({ pageId, title, onBack, onEditSource, kebabRef }: Pa
             value_bool: null,
           }),
         )
-        setPageSpaceId(targetSpaceId)
         announcePagesMovedOut([pageId], originSpaceId)
         notify.success(t('space.movedToast', { space: targetName }))
         announce(t('announce.pageMoved'))
@@ -339,7 +338,7 @@ export function PageHeader({ pageId, title, onBack, onEditSource, kebabRef }: Pa
         announce(t('announce.pageMoveFailed'))
       }
     },
-    [availableSpaces, onBack, pageId, setPageSpaceId, t],
+    [availableSpaces, onBack, pageId, t],
   )
 
   // Sync editableTitle when prop changes (e.g., navigating to a different page)

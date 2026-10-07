@@ -167,8 +167,7 @@ beforeEach(() => {
   useResolveStore.setState({ cache: new Map(), version: 0, _preloaded: false })
   useUndoStore.setState({ pages: new Map() })
   // Phase 2 — seed two spaces so the "Move to space" sub-menu
-  // (which filters out the current owner) has a non-empty target list
-  // once a page's `space` property is populated.
+  // (which filters out the current space) has a non-empty target list.
   useSpaceStore.setState({
     currentSpaceId: 'SPACE_PERSONAL',
     availableSpaces: [
@@ -2062,17 +2061,17 @@ describe('PageHeader  header outlet migration', () => {
 // ── Move to space (Phase 2) ──────────────────────────────────────
 //
 // The kebab menu learns a new entry that reveals a sub-menu of every
-// space except the current owner. Selecting a target calls `setProperty`
+// space except the current one. Selecting a target calls `setProperty`
 // to rewrite `space=<targetSpaceId>` and fires a success toast. The
 // entry is hidden when the page itself is a space block (spaces can't
 // be nested inside other spaces).
 
 describe('PageHeader Move to space (Phase 2)', () => {
-  /** Install an invoke mock that returns a page owned by `spaceId`. */
-  function setupPageWithSpace(
-    spaceId: string,
-    opts: { isSpace?: boolean } = {},
-  ): typeof mockedInvoke {
+  /**
+   * Install an invoke mock for a page of the current space. Like the backend
+   * since #533, `get_properties` carries no `space` row.
+   */
+  function setupPage(opts: { isSpace?: boolean } = {}): typeof mockedInvoke {
     interface PropertyRow {
       key: string
       value_text: string | null
@@ -2091,15 +2090,7 @@ describe('PageHeader Move to space (Phase 2)', () => {
       // would otherwise misattribute to the move-to-space fix.
       if (cmd === 'list_inherited_tags_for_block') return []
       if (cmd === 'get_properties') {
-        const props: PropertyRow[] = [
-          {
-            key: 'space',
-            value_text: null,
-            value_num: null,
-            value_date: null,
-            value_ref: spaceId,
-          },
-        ]
+        const props: PropertyRow[] = []
         if (opts.isSpace) {
           props.push({
             key: 'is_space',
@@ -2125,7 +2116,7 @@ describe('PageHeader Move to space (Phase 2)', () => {
 
   it('renders the "Move to space" menu item when the page is a regular page', async () => {
     const user = userEvent.setup()
-    setupPageWithSpace('SPACE_PERSONAL')
+    setupPage()
 
     renderPageHeader(<PageHeader pageId="PAGE_1" title="Test" />)
 
@@ -2136,7 +2127,7 @@ describe('PageHeader Move to space (Phase 2)', () => {
 
   it('hides "Move to space" when the page is itself a space block', async () => {
     const user = userEvent.setup()
-    setupPageWithSpace('SPACE_PERSONAL', { isSpace: true })
+    setupPage({ isSpace: true })
 
     renderPageHeader(<PageHeader pageId="PAGE_1" title="Personal" />)
 
@@ -2148,9 +2139,11 @@ describe('PageHeader Move to space (Phase 2)', () => {
     expect(screen.queryByText(/Move to space/i)).not.toBeInTheDocument()
   })
 
-  it('sub-menu lists every space except the current owner (alphabetical)', async () => {
+  // #5279 — the current space comes from the space store, not a `space`
+  // property row the backend no longer returns.
+  it('sub-menu lists every space except the current one', async () => {
     const user = userEvent.setup()
-    setupPageWithSpace('SPACE_PERSONAL')
+    setupPage()
 
     renderPageHeader(<PageHeader pageId="PAGE_1" title="Test" />)
 
@@ -2158,14 +2151,28 @@ describe('PageHeader Move to space (Phase 2)', () => {
     await user.click(await screen.findByText(/Move to space/i))
 
     const submenu = await screen.findByRole('menu', { name: /Move to space/i })
-    // "Work" appears; "Personal" (the current owner) is filtered out.
-    expect(within(submenu).getByRole('menuitem', { name: 'Work' })).toBeInTheDocument()
-    expect(within(submenu).queryByRole('menuitem', { name: 'Personal' })).not.toBeInTheDocument()
+    const targets = within(submenu).getAllByRole('menuitem')
+    expect(targets.map((item) => item.textContent)).toEqual(['Work'])
+  })
+
+  it('hides "Move to space" when the current space is the only one', async () => {
+    const user = userEvent.setup()
+    setupPage()
+    useSpaceStore.setState({
+      availableSpaces: [{ id: 'SPACE_PERSONAL', name: 'Personal', accent_color: null }],
+    })
+
+    renderPageHeader(<PageHeader pageId="PAGE_1" title="Test" />)
+
+    await user.click(screen.getByRole('button', { name: /page actions/i }))
+    await screen.findByText(/Export as Markdown/i)
+
+    expect(screen.queryByText(/Move to space/i)).not.toBeInTheDocument()
   })
 
   it('click on a target fires set_property and shows the success toast', async () => {
     const user = userEvent.setup()
-    setupPageWithSpace('SPACE_PERSONAL')
+    setupPage()
 
     renderPageHeader(<PageHeader pageId="PAGE_1" title="Test" />)
 
@@ -2202,7 +2209,7 @@ describe('PageHeader Move to space (Phase 2)', () => {
   it('does not fire "Failed to load blocks" and navigates away via onBack after moving the current page (#2785)', async () => {
     const user = userEvent.setup()
     const onBack = vi.fn()
-    setupPageWithSpace('SPACE_PERSONAL')
+    setupPage()
 
     renderPageHeader(<PageHeader pageId="PAGE_1" title="Test" onBack={onBack} />)
 
@@ -2225,7 +2232,7 @@ describe('PageHeader Move to space (Phase 2)', () => {
   // render its chips to it broken, without waiting for a space switch.
   it('drops the moved page from the origin picker and renders its chips broken', async () => {
     const user = userEvent.setup()
-    setupPageWithSpace('SPACE_PERSONAL')
+    setupPage()
     useResolveStore.getState().set('PAGE_1', 'Test', false)
     const changes: NameChange[] = []
     const unsubscribe = subscribeToNameChanges((change) => changes.push(change))
@@ -2255,16 +2262,7 @@ describe('PageHeader Move to space (Phase 2)', () => {
     mockedInvoke.mockImplementation(async (cmd: string) => {
       if (cmd === 'list_blocks') return emptyPage
       if (cmd === 'list_tags_for_block') return []
-      if (cmd === 'get_properties')
-        return [
-          {
-            key: 'space',
-            value_text: null,
-            value_num: null,
-            value_date: null,
-            value_ref: 'SPACE_PERSONAL',
-          },
-        ]
+      if (cmd === 'get_properties') return []
       if (cmd === 'list_property_defs')
         return { items: [], next_cursor: null, has_more: false, total_count: null }
       if (cmd === 'get_page_aliases') return []
@@ -2288,7 +2286,7 @@ describe('PageHeader Move to space (Phase 2)', () => {
 
   it('has no a11y violations with the Move to space sub-menu expanded', async () => {
     const user = userEvent.setup()
-    setupPageWithSpace('SPACE_PERSONAL')
+    setupPage()
 
     const { container } = renderPageHeader(<PageHeader pageId="PAGE_1" title="Test" />)
 

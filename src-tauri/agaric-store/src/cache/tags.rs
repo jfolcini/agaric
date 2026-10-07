@@ -48,7 +48,11 @@ type TagRow = (String, String, i64, Option<String>);
 /// Semantics (preserved verbatim from the pre-M-2 full rebuild):
 ///   - `usage_count` counts DISTINCT `block_id`s from the UNION of
 ///     `block_tags` (explicit) ∪ `block_tag_refs` (inline `#[ULID]`).
-///   - Both joins enforce `deleted_at IS NULL` on the referenced block.
+///   - Both joins enforce `deleted_at IS NULL` on the referenced block and
+///     keep only blocks in the tag's own space (`blk.space_id IS
+///     tag.space_id`, #5275): a `block_tags` / `block_tag_refs` row
+///     survives the block's move to another space, and the Tags view is
+///     space-scoped.
 ///   - Tags with zero usage are included via the LEFT JOIN + COALESCE.
 ///
 /// Output is sorted by `b.id ASC` so the sort-merge diff in
@@ -99,12 +103,14 @@ const DESIRED_TAGS_SQL: &str = "SELECT b.id, b.content, COALESCE(t.cnt, 0) AS cn
                      SELECT bt.tag_id, bt.block_id
                      FROM block_tags bt
                      JOIN blocks blk ON blk.id = bt.block_id
-                     WHERE blk.deleted_at IS NULL
+                     JOIN blocks tag ON tag.id = bt.tag_id
+                     WHERE blk.deleted_at IS NULL AND blk.space_id IS tag.space_id
                      UNION
                      SELECT btr.tag_id, btr.source_id AS block_id
                      FROM block_tag_refs btr
                      JOIN blocks blk ON blk.id = btr.source_id
-                     WHERE blk.deleted_at IS NULL
+                     JOIN blocks tag ON tag.id = btr.tag_id
+                     WHERE blk.deleted_at IS NULL AND blk.space_id IS tag.space_id
                  )
                  GROUP BY tag_id
              ) t ON t.tag_id = b.id
@@ -154,12 +160,16 @@ const DESIRED_TAG_USAGE_SQL: &str =
                  SELECT bt.block_id
                  FROM block_tags bt
                  JOIN blocks blk ON blk.id = bt.block_id
-                 WHERE blk.deleted_at IS NULL AND bt.tag_id = ?1
+                 JOIN blocks tag ON tag.id = bt.tag_id
+                 WHERE blk.deleted_at IS NULL AND blk.space_id IS tag.space_id
+                   AND bt.tag_id = ?1
                  UNION
                  SELECT btr.source_id AS block_id
                  FROM block_tag_refs btr
                  JOIN blocks blk ON blk.id = btr.source_id
-                 WHERE blk.deleted_at IS NULL AND btr.tag_id = ?1
+                 JOIN blocks tag ON tag.id = btr.tag_id
+                 WHERE blk.deleted_at IS NULL AND blk.space_id IS tag.space_id
+                   AND btr.tag_id = ?1
              )
          ) t
          WHERE b.id = ?1
@@ -1307,8 +1317,17 @@ mod tests {
     async fn tags_cache_same_name_in_two_spaces_keeps_one_row_per_space_5237() {
         let (pool, _dir) = test_pool().await;
         seed_todo_in_two_spaces(&pool).await;
-        // Usage on the Home winner proves the count rides with its own row.
+        // Usage on the Home winner, from a Home block, proves the count rides
+        // with its own row.
         insert_content(&pool, "BLK5237000000000000000000A", "note").await;
+        sqlx::query!(
+            "UPDATE blocks SET space_id = ? WHERE id = ?",
+            SPACE_HOME,
+            "BLK5237000000000000000000A",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
         add_tag(&pool, "BLK5237000000000000000000A", TODO_HOME).await;
 
         let mut changes = Vec::new();
@@ -1381,6 +1400,74 @@ mod tests {
             snapshot(&pool).await,
             full_rebuild_snapshot(&pool).await,
             "scoped refresh must equal full rebuild"
+        );
+    }
+
+    /// #5275 — a block that left the tag's space (its `block_tags` /
+    /// `block_tag_refs` rows survive a move) no longer counts, on both the
+    /// scoped refresh and the full rebuild.
+    #[tokio::test]
+    async fn tag_usage_count_excludes_blocks_in_another_space_5275() {
+        let (pool, _dir) = test_pool().await;
+        insert_space(&pool, SPACE_WORK).await;
+        insert_space(&pool, SPACE_HOME).await;
+        insert_tag_in_space(&pool, TODO_WORK, "todo", SPACE_WORK).await;
+        // Two holders in Work; the one that will move holds the tag both
+        // explicitly and inline, so each UNION arm's space predicate is what
+        // drops it.
+        insert_content(&pool, "BLK5275A00000000000000000A", "stays").await;
+        insert_content(&pool, "BLK5275B00000000000000000B", "moves").await;
+        for id in ["BLK5275A00000000000000000A", "BLK5275B00000000000000000B"] {
+            sqlx::query!(
+                "UPDATE blocks SET space_id = ? WHERE id = ?",
+                SPACE_WORK,
+                id
+            )
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+        add_tag(&pool, "BLK5275A00000000000000000A", TODO_WORK).await;
+        add_tag(&pool, "BLK5275B00000000000000000B", TODO_WORK).await;
+        sqlx::query!(
+            "INSERT INTO block_tag_refs (source_id, tag_id) VALUES (?, ?)",
+            "BLK5275B00000000000000000B",
+            TODO_WORK,
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        refresh_tag_usage_count_impl(&pool, TODO_WORK)
+            .await
+            .unwrap();
+        assert_eq!(
+            snapshot(&pool).await,
+            vec![(TODO_WORK.to_owned(), "todo".to_owned(), 2)],
+            "both same-space holders count"
+        );
+
+        // The double holder moves to Home; its `block_tags` and
+        // `block_tag_refs` rows stay.
+        sqlx::query!(
+            "UPDATE blocks SET space_id = ? WHERE id = ?",
+            SPACE_HOME,
+            "BLK5275B00000000000000000B",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        refresh_tag_usage_count_impl(&pool, TODO_WORK)
+            .await
+            .unwrap();
+        assert_eq!(
+            snapshot(&pool).await,
+            vec![(TODO_WORK.to_owned(), "todo".to_owned(), 1)],
+            "the scoped refresh drops the holder that left the space"
+        );
+        assert_eq!(
+            full_rebuild_snapshot(&pool).await,
+            vec![(TODO_WORK.to_owned(), "todo".to_owned(), 1)],
+            "the full rebuild drops it too"
         );
     }
 }

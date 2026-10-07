@@ -52,6 +52,15 @@ const RESERVED_PROPERTY_COLUMN: Record<string, 'value_text' | 'value_date'> = {
   scheduled_date: 'value_date',
 }
 
+/**
+ * The block's `block_properties` rows as the backend returns them: without the
+ * mock's `space` membership row, which the backend keeps in `blocks.space_id`
+ * (#533).
+ */
+function blockPropertyRows(blockId: string): Record<string, unknown>[] {
+  return [...(properties.get(blockId)?.values() ?? [])].filter((row) => row['key'] !== 'space')
+}
+
 /** A `block_properties` row's typed value columns: the `from_value` its undo restores. */
 function typedValueOf(row: Record<string, unknown>): Record<string, unknown> {
   return {
@@ -429,10 +438,7 @@ export const propertiesHandlers = {
 
   get_properties: (args) => {
     const a = args as Record<string, unknown>
-    const blockId = a['blockId'] as string
-    const blockProps = properties.get(blockId)
-    if (!blockProps) return []
-    return [...blockProps.values()]
+    return blockPropertyRows(a['blockId'] as string)
   },
 
   // Single-key PK lookup. Returns the row or null.
@@ -440,8 +446,8 @@ export const propertiesHandlers = {
     const a = args as Record<string, unknown>
     const blockId = a['blockId'] as string
     const key = a['key'] as string
-    const propMap = properties.get(blockId)
-    return propMap?.get(key) ?? null
+    if (key === 'space') return null
+    return properties.get(blockId)?.get(key) ?? null
   },
 
   // #3872 — the map is keyed off the ROWS READ, not off the REQUEST:
@@ -455,9 +461,9 @@ export const propertiesHandlers = {
     const blockIds = a['blockIds'] as string[]
     const result: Record<string, Record<string, unknown>[]> = {}
     for (const id of blockIds) {
-      const blockProps = properties.get(id)
-      if (blockProps == null || blockProps.size === 0) continue
-      result[id] = [...blockProps.values()]
+      const rows = blockPropertyRows(id)
+      if (rows.length === 0) continue
+      result[id] = rows
     }
     return result
   },

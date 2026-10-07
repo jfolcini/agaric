@@ -18,7 +18,7 @@ import { type InvokeArgs, invoke } from '@tauri-apps/api/core'
 import { act, render, renderHook, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { toast } from 'sonner'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
 import { makeBlockRow } from '@/__tests__/fixtures'
@@ -26,7 +26,11 @@ import { type CommandReturns, deferred, stubInvoke } from '@/__tests__/helpers/i
 import { QuickCaptureDialog } from '@/components/dialogs/QuickCaptureDialog'
 import { useCalendarPageDatesEpoch } from '@/hooks/useCalendarPageDates'
 import { useIsMobile } from '@/hooks/useIsMobile'
-import { getGraphStructureKey } from '@/lib/graph-structure-events'
+import {
+  _resetGraphStructureEventsForTest,
+  DEBOUNCE_MS as GRAPH_DEBOUNCE_MS,
+  getGraphStructureKey,
+} from '@/lib/graph-structure-events'
 import { t } from '@/lib/i18n'
 import { dispatch } from '@/lib/tauri-mock/handlers'
 import { SEED_IDS, seedBlocks } from '@/lib/tauri-mock/seed'
@@ -47,6 +51,7 @@ const mockedUseIsMobile = vi.mocked(useIsMobile)
 
 beforeEach(() => {
   vi.clearAllMocks()
+  _resetGraphStructureEventsForTest()
   // Default to the desktop path so existing test bodies keep their semantics.
   mockedUseIsMobile.mockReturnValue(false)
   // QuickCaptureDialog reads `currentSpaceId` from
@@ -61,6 +66,10 @@ beforeEach(() => {
   // backend; a test that needs a failure overrides it.
   seedBlocks()
   mockedInvoke.mockImplementation(async (cmd: string, args?: InvokeArgs) => dispatch(cmd, args))
+})
+
+afterEach(() => {
+  vi.useRealTimers()
 })
 
 describe('QuickCaptureDialog', () => {
@@ -107,6 +116,10 @@ describe('QuickCaptureDialog', () => {
     })
     expect(onOpenChange).toHaveBeenCalledWith(false)
     expect(mockedToastSuccess).toHaveBeenCalledWith(t('quickCapture.successToast'))
+    // A captured `[[Page]]` is a new graph edge; the open Graph must refetch.
+    await waitFor(() => {
+      expect(getGraphStructureKey()).toBe(1)
+    })
   })
 
   it('Cmd/Ctrl + Enter submits the same as the Capture button', async () => {
@@ -141,7 +154,8 @@ describe('QuickCaptureDialog', () => {
 
   // Every component that calls IPC must have a mockRejectedValue test.
   it('shows an error toast and stays open when quick_capture_block fails', async () => {
-    const user = userEvent.setup()
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime })
     const onOpenChange = vi.fn()
     stubInvoke(mockedInvoke, {
       quick_capture_block: () => Promise.reject(new Error('disk full')),
@@ -158,6 +172,9 @@ describe('QuickCaptureDialog', () => {
     // can retry without retyping their captured note.
     const closeCalls = onOpenChange.mock.calls.filter((c) => c[0] === false)
     expect(closeCalls.length).toBe(0)
+    // Past the counter's debounce, so a bump would have landed by now.
+    await vi.advanceTimersByTimeAsync(GRAPH_DEBOUNCE_MS + 1)
+    expect(getGraphStructureKey()).toBe(0)
   })
 
   // Item #2281 — the Capture button must render the app-wide in-flight

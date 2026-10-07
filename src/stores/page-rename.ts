@@ -24,7 +24,7 @@
 
 import { recordGraphStructureChange } from '@/lib/graph-structure-events'
 import { notifyPageRenamed } from '@/lib/name-change-bus'
-import { useRecentPagesStore } from '@/stores/recent-pages'
+import { selectRecentPagesForSpace, useRecentPagesStore } from '@/stores/recent-pages'
 import { useResolveStore } from '@/stores/resolve'
 import { useTabsStore } from '@/stores/tabs'
 
@@ -89,4 +89,31 @@ export function renamePage(pageId: string, title: string, spaceId: string | null
   // #5250 — the graph's node labels and the unlinked-references search term
   // are the title, and both refresh on the structure counter.
   recordGraphStructureChange()
+}
+
+/**
+ * #5242 — carry an out-of-band page rename into the title copies the active space's tabs and
+ * recents persist (the header, tab label, window title and recents strip read them). Only local
+ * renames reach `renamePage` otherwise. Reads the resolve cache a preload just refreshed:
+ * `targeted` null means it rescanned them all. #5277 — also runs after each space switch's
+ * preload: a sync or MCP rename that landed while another space was active reached none of these.
+ */
+export function retitleHeldPages(
+  targeted: ReadonlySet<string> | null,
+  spaceId: string | null,
+): void {
+  const held = [
+    ...useTabsStore.getState().tabs.flatMap((tab) => tab.pageStack),
+    ...selectRecentPagesForSpace(useRecentPagesStore.getState(), spaceId),
+  ]
+  const resolve = useResolveStore.getState()
+  const freshTitles = new Map<string, string>()
+  for (const { pageId, title } of held) {
+    if (targeted && !targeted.has(pageId)) continue
+    // `renamePage` re-seeds the resolve entry as not deleted, so leave a trashed page alone.
+    if (!resolve.isResolved(pageId) || resolve.resolveStatus(pageId) === 'deleted') continue
+    const fresh = resolve.resolveTitle(pageId)
+    if (fresh !== title) freshTitles.set(pageId, fresh)
+  }
+  for (const [pageId, title] of freshTitles) renamePage(pageId, title, spaceId)
 }
