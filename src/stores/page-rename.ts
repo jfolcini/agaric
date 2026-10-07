@@ -46,12 +46,12 @@ import { useTabsStore } from '@/stores/tabs'
  * This function cannot capture the value itself. It is synchronous, so
  * "capture at entry" and "read at emit" are the same tick and the same
  * value — capturing here would be a no-op. The `await` that matters is in
- * every one of the five callers, BETWEEN the user's decision and this call:
- * `PageHeader.persistTitle` (after `editBlock`), `PageHeader`'s undo/redo
- * title refresh (after the undo IPC, `load()` and `getBlock`),
- * `HistoryPanel`'s restore and undo-restore (after `getBlock` / `editBlock`),
- * and `useUndoShortcuts.refreshAfterUndoRedo` (after the undo/redo IPC and
- * `load()`). A read taken here would therefore be a FRESH read at emit time.
+ * the callers, BETWEEN the user's decision and this call:
+ * `PageHeader.persistTitle` (after `editBlock`), `HistoryPanel`'s restore and
+ * undo-restore (after `getBlock` / `editBlock`), and
+ * `useUndoShortcuts.refreshAfterUndoRedo` (after the undo/redo IPC and
+ * `load()`; the page header's Undo/Redo buttons route through it too). A read
+ * taken here would therefore be a FRESH read at emit time.
  *
  * The name-change-bus docblock's "worse than no scoping" scenario — a rename
  * started in space A while the user switches to B gets labelled `B` and let

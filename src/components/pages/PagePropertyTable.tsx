@@ -7,7 +7,7 @@
  * creating new definitions.
  */
 
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useEffectEvent, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { CollapsiblePanelHeader } from '@/components/common/CollapsiblePanelHeader'
@@ -15,6 +15,7 @@ import { ConfirmDialog } from '@/components/dialogs/ConfirmDialog'
 import { AddPropertyPopover } from '@/components/properties/AddPropertyPopover'
 import { PropertyRowEditor } from '@/components/properties/PropertyRowEditor'
 import { LoadingSkeleton } from '@/components/rendering/LoadingSkeleton'
+import { useBlockPropertyEvents } from '@/hooks/useBlockPropertyEvents'
 import { usePropertySave } from '@/hooks/usePropertySave'
 import { unwrap } from '@/lib/app-error'
 import type { PropertyDefinition, PropertyRow } from '@/lib/bindings'
@@ -54,6 +55,26 @@ export function PagePropertyTable({ pageId, forceExpanded }: PagePropertyTablePr
   // user leaves it empty.
   const [draftKeys, setDraftKeys] = useState<Set<string>>(() => new Set())
 
+  // #5287 — sync, MCP and undo change page properties behind this table.
+  const { invalidationKey } = useBlockPropertyEvents()
+
+  useEffect(() => {
+    // oxlint-disable-next-line react/set-state-in-effect -- marks the per-page properties/definitions IPC load below pending; `loading` tracks that async round-trip, not a value derivable during render; see #4407
+    setLoading(true)
+    // #2792 — drop any unsaved draft rows from a previous page so they can't
+    // leak into this page's table (drafts are transient, never persisted).
+    // Mirrors `BlockPropertyDrawer`'s per-blockId draft reset (#2656).
+    setDraftKeys((prev) => (prev.size > 0 ? new Set() : prev))
+  }, [pageId])
+
+  // A refetch keeps this page's unsaved draft rows: the backend has no row for them.
+  const replaceStoredRows = useEffectEvent((stored: PropertyRow[]) => {
+    setProperties((prev) => [
+      ...stored,
+      ...prev.filter((p) => draftKeys.has(p.key) && !stored.some((s) => s.key === p.key)),
+    ])
+  })
+
   // Load properties and definitions in parallel.
   // `listPropertyDefs` is paginated; this surface is
   // single-page-by-design — the seeded property vocabulary fits
@@ -63,21 +84,19 @@ export function PagePropertyTable({ pageId, forceExpanded }: PagePropertyTablePr
   // and the failed slice falls back to an empty array so the user still sees
   // the half that loaded.
   useEffect(() => {
-    // oxlint-disable-next-line react/set-state-in-effect -- starts the per-page properties/definitions IPC load; `loading` tracks that async round-trip, not a value derivable during render; see #4407
-    setLoading(true)
-    // #2792 — drop any unsaved draft rows from a previous page so they can't
-    // leak into this page's table (drafts are transient, never persisted).
-    // Mirrors `BlockPropertyDrawer`'s per-blockId draft reset (#2656).
-    setDraftKeys((prev) => (prev.size > 0 ? new Set() : prev))
+    // A property event can start this load just before a page switch; the
+    // older page's answer must not land in the new page's table.
+    let active = true
     // `allSettled` never rejects; the handler below reports each slice's own
     // failure through `reportIpcError`.
     void Promise.allSettled([
       commands.getProperties(pageId).then(unwrap),
       commands.listPropertyDefs(null, null).then(unwrap),
     ]).then(([propsResult, defsResult]) => {
+      if (!active) return
       if (propsResult.status === 'fulfilled') {
         const props = propsResult.value
-        setProperties(Array.isArray(props) ? props : [])
+        replaceStoredRows(Array.isArray(props) ? props : [])
       } else {
         reportIpcError('PagePropertyTable', 'pageProperty.loadFailed', propsResult.reason, t, {
           pageId,
@@ -97,7 +116,10 @@ export function PagePropertyTable({ pageId, forceExpanded }: PagePropertyTablePr
       }
       setLoading(false)
     })
-  }, [pageId, t])
+    return () => {
+      active = false
+    }
+  }, [pageId, t, invalidationKey])
 
   // Auto-expand and open add-popover when forceExpanded transitions to true
   const prevForceRef = useRef(false)

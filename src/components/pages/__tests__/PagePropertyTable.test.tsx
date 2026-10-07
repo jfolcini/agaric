@@ -75,6 +75,8 @@ vi.mock('lucide-react', () => ({
 import { toast } from 'sonner'
 
 import { PagePropertyTable } from '@/components/pages/PagePropertyTable'
+import { performPageUndo } from '@/hooks/useUndoShortcuts'
+import { recordBlockPropertyChange } from '@/lib/block-property-events'
 import { t } from '@/lib/i18n'
 
 const mockedToastError = vi.mocked(toast.error)
@@ -1861,5 +1863,114 @@ describe('PagePropertyTable create-def flow against the real tauri-mock (#2804)'
     // The def itself was still created — only the value write was skipped.
     expect(propertyDefs.get('newfield')).toBeTruthy()
     expect(properties.get(PAGE_ID)?.get('newfield')).toBeUndefined()
+  })
+})
+
+// #5287 — sync, MCP and undo write page properties without going through this
+// table, so it refetches on the block-property counter.
+describe('PagePropertyTable refetch on property changes made elsewhere (#5287)', () => {
+  const PAGE_ID = SEED_IDS.PAGE_QUICK_NOTES
+  const valueLabel = (key: string) => t('pageProperty.valueLabel', { key })
+
+  beforeEach(() => {
+    seedBlocks()
+    properties.set(PAGE_ID, new Map())
+    mockedInvoke.mockImplementation(async (cmd: string, args?: InvokeArgs) => dispatch(cmd, args))
+  })
+
+  it('shows the value a page-level undo restored', async () => {
+    const user = userEvent.setup()
+    properties.set(PAGE_ID, new Map([['context', makeProp('context', { value_text: 'draft' })]]))
+    render(<PagePropertyTable pageId={PAGE_ID} forceExpanded />)
+
+    const input = await screen.findByLabelText(valueLabel('context'))
+    expect(input).toHaveValue('draft')
+    await user.clear(input)
+    await user.type(input, 'final')
+    await user.tab()
+    await waitFor(() => {
+      expect(properties.get(PAGE_ID)?.get('context')?.['value_text']).toBe('final')
+    })
+
+    await act(async () => {
+      expect(await performPageUndo(PAGE_ID)).toBe(true)
+    })
+
+    expect(properties.get(PAGE_ID)?.get('context')?.['value_text']).toBe('draft')
+    await waitFor(() => {
+      expect(screen.getByLabelText(valueLabel('context'))).toHaveValue('draft')
+    })
+  })
+
+  it('shows a property written behind it and keeps an unsaved draft row', async () => {
+    const user = userEvent.setup()
+    render(<PagePropertyTable pageId={PAGE_ID} forceExpanded />)
+
+    await user.click(await screen.findByText('Context'))
+    expect(await screen.findByLabelText(valueLabel('context'))).toBeInTheDocument()
+
+    // A synced device or an MCP agent sets `project` on this page.
+    dispatch('set_property', {
+      blockId: PAGE_ID,
+      key: 'project',
+      value: {
+        value_text: 'beta',
+        value_num: null,
+        value_date: null,
+        value_ref: null,
+        value_bool: null,
+      },
+    })
+    act(() => {
+      recordBlockPropertyChange()
+    })
+
+    await waitFor(() => {
+      expect(screen.getByLabelText(valueLabel('project'))).toHaveValue('beta')
+    })
+    expect(screen.getByLabelText(valueLabel('context'))).toBeInTheDocument()
+  })
+
+  it('drops an unsaved draft row when the page changes', async () => {
+    const OTHER = SEED_IDS.PAGE_PROJECTS
+    properties.set(OTHER, new Map([['reviewer', makeProp('reviewer', { value_text: 'x' })]]))
+    const user = userEvent.setup()
+    const { rerender } = render(<PagePropertyTable pageId={PAGE_ID} forceExpanded />)
+
+    await user.click(await screen.findByText('Context'))
+    expect(await screen.findByLabelText(valueLabel('context'))).toBeInTheDocument()
+
+    rerender(<PagePropertyTable pageId={OTHER} forceExpanded />)
+    await waitFor(() => {
+      expect(screen.getByLabelText(valueLabel('reviewer'))).toHaveValue('x')
+    })
+    expect(screen.queryByLabelText(valueLabel('context'))).not.toBeInTheDocument()
+  })
+
+  it('ignores the answer for a page it already left', async () => {
+    const OTHER = SEED_IDS.PAGE_PROJECTS
+    properties.set(PAGE_ID, new Map([['context', makeProp('context', { value_text: 'old' })]]))
+    properties.set(OTHER, new Map([['reviewer', makeProp('reviewer', { value_text: 'x' })]]))
+    let answerOldPage = () => {}
+    const oldPageAnswered = new Promise<void>((resolve) => {
+      answerOldPage = resolve
+    })
+    mockedInvoke.mockImplementation(async (cmd: string, args?: InvokeArgs) => {
+      if (cmd === 'get_properties' && (args as { blockId: string }).blockId === PAGE_ID) {
+        await oldPageAnswered
+      }
+      return dispatch(cmd, args)
+    })
+    const { rerender } = render(<PagePropertyTable pageId={PAGE_ID} forceExpanded />)
+    rerender(<PagePropertyTable pageId={OTHER} forceExpanded />)
+    expect(await screen.findByLabelText(valueLabel('reviewer'))).toHaveValue('x')
+
+    await act(async () => {
+      answerOldPage()
+      await oldPageAnswered
+    })
+
+    expect(screen.queryByLabelText(valueLabel('context'))).not.toBeInTheDocument()
+    expect(screen.getByLabelText(valueLabel('reviewer'))).toHaveValue('x')
   })
 })

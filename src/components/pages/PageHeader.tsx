@@ -27,6 +27,7 @@ import { useEmojiRecents } from '@/hooks/useEmojiRecents'
 import { usePageAliases } from '@/hooks/usePageAliases'
 import { usePageDeleteAction } from '@/hooks/usePageDeleteAction'
 import { usePageTemplateMeta } from '@/hooks/usePageTemplateMeta'
+import { refreshAfterUndoRedo } from '@/hooks/useUndoShortcuts'
 import { flushActiveDraft } from '@/lib/active-draft-flush'
 import { announce } from '@/lib/announcer'
 import { unwrap, validationCode } from '@/lib/app-error'
@@ -37,11 +38,10 @@ import { matchesSearchFolded } from '@/lib/fold-for-search'
 import { spliceEmojiIntoText } from '@/lib/insert-emoji-at-caret'
 import { matchesShortcutBinding } from '@/lib/keyboard-config'
 import { logger } from '@/lib/logger'
+import { invalidateNameCaches } from '@/lib/name-change-bus'
 import { notify } from '@/lib/notify'
-import { invalidatePropertyCaches } from '@/lib/property-caches'
 import { ValidationCode } from '@/lib/search-query/validation-codes'
 import { useNavigationStore } from '@/stores/navigation'
-import { usePageBlockStoreApi } from '@/stores/page-blocks'
 import { announcePagesMovedOut } from '@/stores/page-move'
 import { renamePage } from '@/stores/page-rename'
 import { useSpaceStore } from '@/stores/space'
@@ -60,7 +60,6 @@ export interface PageHeaderProps {
 
 export function PageHeader({ pageId, title, onBack, onEditSource, kebabRef }: PageHeaderProps) {
   const { t } = useTranslation()
-  const pageStore = usePageBlockStoreApi()
 
   // --- Page-delete flow (Part A) ---
   // `usePageDeleteAction` owns the confirm dialog + success-toast-with-
@@ -144,25 +143,7 @@ export function PageHeader({ pageId, title, onBack, onEditSource, kebabRef }: Pa
         .then(async (result) => {
           if (result) {
             notify(t(successKey), { duration: 1500 })
-            await pageStore.getState().load()
-            invalidatePropertyCaches()
-            try {
-              const pageBlock = unwrap(await commands.getBlock(pageId))
-              if (pageBlock?.content) {
-                // #3322 — one fan-out to every store that holds a title copy
-                // (tabs + recents + resolve); see `@/stores/page-rename`.
-                renamePage(pageId, pageBlock.content, spaceId)
-              }
-            } catch (err) {
-              logger.warn(
-                'PageHeader',
-                'Failed to refresh page title after undo/redo',
-                {
-                  pageId,
-                },
-                err,
-              )
-            }
+            await refreshAfterUndoRedo(pageId, spaceId)
           }
         })
         .catch((err: unknown) => {
@@ -170,7 +151,7 @@ export function PageHeader({ pageId, title, onBack, onEditSource, kebabRef }: Pa
           notify.error(t(errorKey))
         })
     },
-    [pageId, t, pageStore],
+    [pageId, t],
   )
 
   const handlePageUndo = createUndoRedoHandler('undo')
@@ -427,6 +408,9 @@ export function PageHeader({ pageId, title, onBack, onEditSource, kebabRef }: Pa
         // #3322 — one fan-out to every store that holds a title copy (tabs +
         // recents + resolve); see `@/stores/page-rename`.
         renamePage(pageId, newTitle, spaceId)
+        // #5287 — `renamePage` announces a page rename; the tag lists (the
+        // header's tag chips, the `#` picker) only reload on `invalidated`.
+        if (resp.block_type === 'tag') invalidateNameCaches()
         announce(t('announce.pageRenamed'))
         notify.success(t('pageHeader.pageRenamed'))
       } catch (err) {
