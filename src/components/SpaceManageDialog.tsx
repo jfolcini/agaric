@@ -236,6 +236,27 @@ export function SpaceManageDialog({
   onOpenChange,
 }: SpaceManageDialogProps): React.JSX.Element {
   const { t } = useTranslation()
+  const { Root, Content, Header, Title, Description } = useDialogOrSheet('dialog')
+  return (
+    <Root open={open} onOpenChange={onOpenChange}>
+      <Content data-testid="space-manage-dialog">
+        <Header>
+          <Title>{t('space.manageDialogTitle')}</Title>
+          <Description>{t('space.manageDialogDescription')}</Description>
+        </Header>
+        <SpaceManageDialogBody open={open} />
+      </Content>
+    </Root>
+  )
+}
+
+/**
+ * The rows and the per-space state they read. `Content` mounts this only while the
+ * dialog is open, so each open probes emptiness and the journal template afresh. Both
+ * callers keep the dialog mounted all session, and a cache that outlived a close
+ * showed what was true at app start (#5284).
+ */
+function SpaceManageDialogBody({ open }: { open: boolean }): React.JSX.Element {
   const availableSpaces = useSpaceStore((s) => s.availableSpaces)
   const refreshAvailableSpaces = useSpaceStore((s) => s.refreshAvailableSpaces)
 
@@ -245,9 +266,7 @@ export function SpaceManageDialog({
 
   // Both the per-space emptiness probe and the
   // journal-template fetch are owned here so each IPC fires once per
-  // unique `space.id` for the whole dialog lifetime, not once per row
-  // mount. Re-opening the dialog (which unmounts and remounts every
-  // `SpaceRowEditor` via Radix) is a cache hit.
+  // unique `space.id` per open, not once per row mount.
   //
   // Cache contract:
   //  - missing key   = not yet fetched (or last fetch errored)
@@ -262,14 +281,11 @@ export function SpaceManageDialog({
   const emptinessFetchedRef = useRef<Set<string>>(new Set())
   const journalTemplateFetchedRef = useRef<Set<string>>(new Set())
 
-  // B-7: cancellation flag prevents post-unmount setState on
-  // both async chains. Closing the dialog unmounts the content (Radix
-  // portal, no `forceMount`); without the guard the in-flight
-  // `listBlocks` / `getBatchProperties` IPCs resolved into setState
-  // calls on an unmounted component. The `emptinessFetchedRef` /
-  // `journalTemplateFetchedRef` dedup behavior is preserved — the
-  // catch path's `delete(id)` still gates on `active` so we don't
-  // re-open a slot for a dead component.
+  // B-7: `mountedRef` prevents post-unmount setState on both async
+  // chains. Closing the dialog unmounts this body (Radix portal, no
+  // `forceMount`). A result is dropped only on unmount: a space list
+  // change mid-flight must not drop it, or the id stays marked fetched
+  // and its row never gets a value (#5284).
   //
   // The per-space `getProperties(id)` loop was
   // collapsed into a single `getBatchProperties(ids)` call covering
@@ -277,8 +293,15 @@ export function SpaceManageDialog({
   // (`journal_template`); fanning out N IPCs to surface N single-key
   // values is wasteful. The `listBlocks` emptiness probe stays
   // per-space because no batched `list_blocks` shape exists yet.
+  const mountedRef = useRef(true)
   useEffect(() => {
-    let active = true
+    mountedRef.current = true
+    return () => {
+      mountedRef.current = false
+    }
+  }, [])
+
+  useEffect(() => {
     // Per-space emptiness probe — still one IPC per space.id (no
     // batched list_blocks shape today).
     for (const space of availableSpaces) {
@@ -303,7 +326,7 @@ export function SpaceManageDialog({
                 requireActiveScope(id),
               ),
             )
-            if (!active) return
+            if (!mountedRef.current) return
             // Spaces are themselves page blocks. The current
             // `listBlocks(blockType:'page', spaceId)` query returns
             // only pages whose `space` property points at the target —
@@ -315,7 +338,7 @@ export function SpaceManageDialog({
             // On error, allow a retry on the next render so the user
             // can recover by reopening the dialog. Delete stays
             // disabled until a probe succeeds.
-            if (active) emptinessFetchedRef.current.delete(id)
+            if (mountedRef.current) emptinessFetchedRef.current.delete(id)
             logger.warn(LOG_MODULE, 'failed to probe space emptiness', { spaceId: id }, err)
           }
         })()
@@ -334,7 +357,7 @@ export function SpaceManageDialog({
       void (async () => {
         try {
           const result = unwrap(await commands.getBatchProperties(journalIdsToFetch))
-          if (!active) return
+          if (!mountedRef.current) return
           setJournalTemplateBySpace((prev) => {
             const next = { ...prev }
             for (const id of journalIdsToFetch) {
@@ -345,7 +368,7 @@ export function SpaceManageDialog({
             return next
           })
         } catch (err) {
-          if (active) {
+          if (mountedRef.current) {
             for (const id of journalIdsToFetch) journalTemplateFetchedRef.current.delete(id)
           }
           logger.warn(
@@ -356,9 +379,6 @@ export function SpaceManageDialog({
           )
         }
       })()
-    }
-    return () => {
-      active = false
     }
   }, [availableSpaces])
 
@@ -388,23 +408,13 @@ export function SpaceManageDialog({
     ],
   )
 
-  const parts = useDialogOrSheet('dialog')
-  const { Root, Content, Header, Title, Description } = parts
   return (
-    <Root open={open} onOpenChange={onOpenChange}>
-      <Content data-testid="space-manage-dialog">
-        <Header>
-          <Title>{t('space.manageDialogTitle')}</Title>
-          <Description>{t('space.manageDialogDescription')}</Description>
-        </Header>
-        <DialogBody>
-          <SpaceOnboardingHint open={open} availableSpaceCount={availableSpaces.length} />
-          <div data-slot="space-manage-list">{rows}</div>
-          <div className="flex justify-end pt-2">
-            <CreateSpaceForm onCreated={handleRefresh} />
-          </div>
-        </DialogBody>
-      </Content>
-    </Root>
+    <DialogBody>
+      <SpaceOnboardingHint open={open} availableSpaceCount={availableSpaces.length} />
+      <div data-slot="space-manage-list">{rows}</div>
+      <div className="flex justify-end pt-2">
+        <CreateSpaceForm onCreated={handleRefresh} />
+      </div>
+    </DialogBody>
   )
 }
