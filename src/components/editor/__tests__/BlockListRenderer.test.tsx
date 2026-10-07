@@ -61,6 +61,7 @@ vi.mock('@dnd-kit/core', () => ({
   useDroppable: () => ({ setNodeRef: vi.fn(), isOver: false }),
 }))
 
+import { staticViewport } from '@/__tests__/helpers/viewport-observer-mocks'
 import { BlockListRenderer, INITIAL_WINDOW_ROWS } from '@/components/editor/BlockListRenderer'
 
 const noop = () => {}
@@ -80,14 +81,7 @@ function makeProps(overrides: Partial<React.ComponentProps<typeof BlockListRende
     activeId: null,
     overId: null,
     dropAfter: false,
-    viewport: {
-      isOffscreen: () => false,
-      createObserveRef: () => vi.fn(),
-      getHeight: () => 40,
-      subscribe: () => () => {},
-      subscribeWindow: () => () => {},
-      getWindowVersion: () => 0,
-    },
+    viewport: staticViewport({ getHeight: () => 40 }),
     rovingEditor: {
       editor: null,
       mount: vi.fn(),
@@ -126,14 +120,9 @@ describe('BlockListRenderer', () => {
     const blocks = Array.from({ length: INITIAL_WINDOW_ROWS + 10 }, (_, i) =>
       makeBlock({ id: `BLK_${i}`, content: `b${i}` }),
     )
-    const viewport = {
+    const viewport = staticViewport({
       isOffscreen: (_id: string, startsOffscreen = false) => startsOffscreen,
-      createObserveRef: () => vi.fn(),
-      getHeight: () => undefined,
-      subscribe: () => () => {},
-      subscribeWindow: () => () => {},
-      getWindowVersion: () => 0,
-    }
+    })
     const { container } = render(
       <BlockListRenderer {...makeProps({ visibleItems: blocks, blocks, viewport })} />,
     )
