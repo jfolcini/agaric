@@ -191,32 +191,10 @@ test.describe('WeeklyView — reschedule by drag (real gesture)', () => {
     // Resulting-state verification (not just the IPC call): rescheduling
     // writes `due_date` metadata, it does NOT move the block to a different
     // page — WeeklyView's per-day BlockTree shows each day's OWN journal
-    // page content (parent/page-ownership-driven), whereas "due today" is a
-    // separate, date-driven query (DuePanel, daily-mode only). So the block
-    // stays under today's page — same row, same day — but its own due-date
-    // chip must now reflect the new date instead of the old one (mirrors
-    // journal-panels.spec.ts's resulting-state check, which asserts via the
-    // date-driven Due panel since ITS drop target and source never
-    // co-render; here both ends of the drag ARE on screen, so asserting on
-    // the dragged row's own chip is the more direct signal).
-    //
-    // The mock `set_due_date` handler (tauri-mock/handlers.ts) mutates its
-    // in-memory block store directly — it does not emit the
-    // `block:properties-changed` Tauri event the real backend does — so the
-    // ALREADY-MOUNTED page-blocks store for today's page has no live signal
-    // to refetch. Switch away and back to weekly view (unmount/remount,
-    // NOT a page reload — a reload would reseed the mock's in-memory store
-    // and lose this very write) so `BlockTree`'s `load()` effect re-fetches
-    // fresh state.
-    await page.getByRole('tab', { name: 'Daily view' }).click()
-    await page.getByRole('tab', { name: 'Weekly view' }).click()
-    await page.locator(`#journal-${todayStr}`).scrollIntoViewIfNeeded()
-    const sourceRowAfterRefresh = page.locator(sourceSelector)
-    await expect(sourceRowAfterRefresh).toBeVisible({ timeout: 5000 })
-    await expect(sourceRowAfterRefresh.locator('.due-date-chip').first()).not.toHaveText(
-      dueDateChipBefore ?? '',
-      { timeout: 5000 },
-    )
+    // page content, so the block stays under today's page. Its due-date chip
+    // must update IN PLACE, without leaving weekly view: a remount would
+    // refetch the row and hide a stale page store (#5288).
+    await expect(dueDateChip).not.toHaveText(dueDateChipBefore ?? '', { timeout: 5000 })
   })
 
   test('dropping a task on the SAME day it already belongs to is a harmless no-op', async ({

@@ -11,13 +11,14 @@
  */
 
 import { invoke } from '@tauri-apps/api/core'
-import { act, renderHook } from '@testing-library/react'
+import { act, render, renderHook } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { makeBlockRow } from '@/__tests__/fixtures'
+import { makeBlock, makeBlockRow } from '@/__tests__/fixtures'
 import { mockInvokeCommands, type TypedInvokeHandlers } from '@/__tests__/helpers/invoke'
 import { useBlockReschedule } from '@/hooks/useBlockReschedule'
 import { logger } from '@/lib/logger'
+import { getPageStore, PageBlockStoreProvider } from '@/stores/page-blocks'
 
 const mockedInvoke = vi.mocked(invoke)
 
@@ -274,5 +275,103 @@ describe('useBlockReschedule.reschedule', () => {
       { blockId: 'BLOCK_1', date: '2026-04-15' },
       setterErr,
     )
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Reschedule — page store patch (#5288)
+// ---------------------------------------------------------------------------
+
+/**
+ * Mounts two page stores the way the weekly view does (one provider per day
+ * page): `PAGE_OWNER` holds `BLOCK_1`, `PAGE_OTHER` does not.
+ */
+function mountPageStores(ownedRow: { due_date: string | null; scheduled_date: string | null }) {
+  render(
+    <>
+      <PageBlockStoreProvider pageId="PAGE_OWNER">{null}</PageBlockStoreProvider>
+      <PageBlockStoreProvider pageId="PAGE_OTHER">{null}</PageBlockStoreProvider>
+    </>,
+  )
+  const owner = getPageStore('PAGE_OWNER')
+  const other = getPageStore('PAGE_OTHER')
+  if (!owner || !other) throw new Error('page stores not registered')
+  act(() => {
+    owner.setState({ blocks: [makeBlock({ id: 'BLOCK_1', page_id: 'PAGE_OWNER', ...ownedRow })] })
+    other.setState({
+      blocks: [makeBlock({ id: 'BLOCK_2', page_id: 'PAGE_OTHER', due_date: '2026-04-10' })],
+    })
+  })
+  return { owner, other }
+}
+
+describe('useBlockReschedule.reschedule — page store patch', () => {
+  it('writes the new due_date into the owning page store row', async () => {
+    const { owner } = mountPageStores({ due_date: '2026-04-10', scheduled_date: null })
+    stubInvoke({
+      get_block: () => makeBlockRow({ id: 'BLOCK_1', due_date: '2026-04-10' }),
+      set_due_date: () => block1,
+    })
+
+    const { result } = renderHook(() => useBlockReschedule())
+    await act(async () => {
+      await result.current.reschedule('BLOCK_1', '2026-04-15')
+    })
+
+    const row = owner.getState().blocksById.get('BLOCK_1')
+    expect(row?.due_date).toBe('2026-04-15')
+    expect(row?.scheduled_date).toBeNull()
+  })
+
+  it('writes the new scheduled_date into the owning page store row', async () => {
+    const { owner } = mountPageStores({ due_date: null, scheduled_date: '2026-04-10' })
+    stubInvoke({
+      get_block: () => makeBlockRow({ id: 'BLOCK_1', scheduled_date: '2026-04-10' }),
+      set_scheduled_date: () => block1,
+    })
+
+    const { result } = renderHook(() => useBlockReschedule())
+    await act(async () => {
+      await result.current.reschedule('BLOCK_1', '2026-04-15')
+    })
+
+    const row = owner.getState().blocksById.get('BLOCK_1')
+    expect(row?.scheduled_date).toBe('2026-04-15')
+    expect(row?.due_date).toBeNull()
+  })
+
+  it('leaves a page store that does not own the block untouched', async () => {
+    const { other } = mountPageStores({ due_date: '2026-04-10', scheduled_date: null })
+    const otherBlocksBefore = other.getState().blocks
+    stubInvoke({
+      get_block: () => makeBlockRow({ id: 'BLOCK_1', due_date: '2026-04-10' }),
+      set_due_date: () => block1,
+    })
+
+    const { result } = renderHook(() => useBlockReschedule())
+    await act(async () => {
+      await result.current.reschedule('BLOCK_1', '2026-04-15')
+    })
+
+    expect(other.getState().blocks).toBe(otherBlocksBefore)
+  })
+
+  it('leaves the owning page store row as it was when the setter rejects', async () => {
+    vi.spyOn(logger, 'warn').mockImplementation(() => {})
+    const { owner } = mountPageStores({ due_date: '2026-04-10', scheduled_date: null })
+    const setterErr = new Error('write failed')
+    stubInvoke({
+      get_block: () => makeBlockRow({ id: 'BLOCK_1', due_date: '2026-04-10' }),
+      set_due_date: () => Promise.reject(setterErr),
+    })
+
+    const { result } = renderHook(() => useBlockReschedule())
+    await expect(
+      act(async () => {
+        await result.current.reschedule('BLOCK_1', '2026-04-15')
+      }),
+    ).rejects.toBe(setterErr)
+
+    expect(owner.getState().blocksById.get('BLOCK_1')?.due_date).toBe('2026-04-10')
   })
 })
