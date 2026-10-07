@@ -1,10 +1,9 @@
 /**
- * usePageTemplateMeta — page-level template + space metadata for
- * `PageHeader`.
+ * usePageTemplateMeta — page-level template metadata for `PageHeader`.
  *
- * Loads the four property-derived booleans/refs the kebab menu and
+ * Loads the three property-derived booleans the kebab menu and
  * `t('space.moveTo')` sub-menu need (`isTemplate`, `isJournalTemplate`,
- * `isSpaceBlock`, `pageSpaceId`), and exposes the toggle handlers for
+ * `isSpaceBlock`), and exposes the toggle handlers for
  * the two template flags. The factory pattern (`createTemplateToggle`)
  * collapses the previously-duplicated template/journal-template
  * handlers into a single closure so adding a third template kind
@@ -26,10 +25,6 @@ export interface UsePageTemplateMetaReturn {
   isTemplate: boolean
   isJournalTemplate: boolean
   isSpaceBlock: boolean
-  /** The space id currently owning this page (or `null` for orphans). */
-  pageSpaceId: string | null
-  /** Setter used by the `t('space.moveTo')` flow once the move resolves. */
-  setPageSpaceId: (id: string | null) => void
   /** Toggle `template=true`; flips the local flag + persists. */
   handleToggleTemplate: () => Promise<void>
   /** Toggle `journal-template=true`; flips the local flag + persists. */
@@ -49,14 +44,9 @@ export function usePageTemplateMeta(
 ): UsePageTemplateMetaReturn {
   const [isTemplate, setIsTemplate] = useState(false)
   const [isJournalTemplate, setIsJournalTemplate] = useState(false)
-  // Phase 2 — `t('space.moveTo')` needs two bits of metadata that
-  // aren't derivable from props: whether the current page is itself a
-  // space block (moving spaces into spaces is nonsensical), and which
-  // space currently owns it (so the destination list can exclude it).
-  // Both come from the page's property set, loaded once and refreshed
-  // when the page changes.
+  // `t('space.moveTo')` is hidden on a space block: spaces cannot be
+  // moved into other spaces.
   const [isSpaceBlock, setIsSpaceBlock] = useState(false)
-  const [pageSpaceId, setPageSpaceId] = useState<string | null>(null)
 
   useEffect(() => {
     if (!pageId) return
@@ -69,8 +59,6 @@ export function usePageTemplateMeta(
           props.some((p) => p.key === 'journal-template' && p.value_text === 'true'),
         )
         setIsSpaceBlock(props.some((p) => p.key === 'is_space' && p.value_text === 'true'))
-        const spaceProp = props.find((p) => p.key === 'space')
-        setPageSpaceId(spaceProp?.value_ref ?? null)
       })
       .catch((err: unknown) => {
         logger.warn(
@@ -164,8 +152,6 @@ export function usePageTemplateMeta(
     isTemplate,
     isJournalTemplate,
     isSpaceBlock,
-    pageSpaceId,
-    setPageSpaceId,
     handleToggleTemplate,
     handleToggleJournalTemplate,
   }
