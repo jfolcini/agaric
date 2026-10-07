@@ -213,6 +213,7 @@ export function QueryResult({
     hasMore,
     loadingMore,
     pageTitles,
+    resultsUpdatedAt,
     handleLoadMore,
     fetchResults,
   } = useQueryExecution({ expression })
@@ -227,9 +228,6 @@ export function QueryResult({
   // Custom (non-reserved) properties are not carried on `BlockRow`; fetch them
   // for the result blocks only in table mode, where they become columns.
   const [customProps, setCustomProps] = useState<Map<string, Map<string, string>>>(new Map())
-  // Perf (#2041): memoize the joined result-id key so the O(n) map+join only
-  // recomputes when `results` changes, not on every render.
-  const resultIdsKey = useMemo(() => results.map((b) => b.id).join(','), [results])
   useEffect(() => {
     if (!tableMode || results.length === 0) {
       setCustomProps(new Map())
@@ -251,9 +249,10 @@ export function QueryResult({
     return () => {
       cancelled = true
     }
-    // resultIdsKey captures the result-set identity; tableMode gates the fetch.
+    // Keyed on every fetch, not on the result ids: a property change leaves the
+    // ids alone (#5298). `results` moves with it; tableMode gates the fetch.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tableMode, resultIdsKey, t, blockId])
+  }, [tableMode, resultsUpdatedAt, t, blockId])
 
   const { sortedResults, sortKey, sortDir, handleColumnSort } = useQuerySorting({
     results,

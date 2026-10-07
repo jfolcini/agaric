@@ -7,6 +7,10 @@ import { axe } from 'vitest-axe'
 
 import { makeBlock } from '@/__tests__/fixtures'
 import { detectColumns, QueryResult } from '@/components/query/QueryResult'
+import {
+  _resetBlockPropertyEventsForTest,
+  recordBlockPropertyChange,
+} from '@/lib/block-property-events'
 import { i18n } from '@/lib/i18n'
 import { encodeInlineQueryPayload } from '@/lib/inline-query-spec'
 import { buildFilters, parseQueryExpression } from '@/lib/query-utils'
@@ -845,6 +849,38 @@ describe('QueryResult – table mode', () => {
         await i18n.changeLanguage('en')
       })
     }
+  })
+
+  it('re-reads a custom property column when only that property changes (#5298)', async () => {
+    _resetBlockPropertyEventsForTest()
+    let context = 'home'
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'list_tags_by_prefix') return []
+      if (cmd === 'run_advanced_query') {
+        return {
+          rows: [makeBlock({ id: 'B1', content: 'Task A', parent_id: 'P1', page_id: 'P1' })],
+          nextCursor: null,
+          hasMore: false,
+          totalCount: null,
+        }
+      }
+      if (cmd === 'batch_resolve') return []
+      if (cmd === 'get_batch_properties') {
+        const row = { value_num: null, value_date: null, value_ref: null, value_bool: null }
+        return { B1: [{ ...row, key: 'context', value_text: context }] }
+      }
+      return null
+    })
+
+    render(<QueryResult expression={TABLE_EXPRESSION} />)
+    expect(await screen.findByText('home')).toBeInTheDocument()
+
+    context = 'work'
+    act(() => {
+      recordBlockPropertyChange()
+    })
+
+    expect(await screen.findByText('work')).toBeInTheDocument()
   })
 
   it('clicking column header sorts results', async () => {
