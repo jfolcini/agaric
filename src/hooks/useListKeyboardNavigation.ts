@@ -272,7 +272,8 @@ export function useListKeyboardNavigation(
  * cursor onto this row off the row that held DOM focus (now `tabindex="-1"`),
  * focus follows. The cursor ring then stays on the cursor across sub-lists, and
  * the next key still reaches the list after a virtualiser unmounts the row focus
- * started on.
+ * started on. The row also scrolls into view: after a Home/End jump only the
+ * virtualiser's inner list has scrolled, so the row can sit below the page fold.
  */
 export function useRovingRowFocus<T extends HTMLElement>(
   isCursor: boolean | undefined,
@@ -283,6 +284,7 @@ export function useRovingRowFocus<T extends HTMLElement>(
     const active = document.activeElement
     if (isCursor && row && active?.matches('[data-block-list-item][tabindex="-1"]')) {
       row.focus({ preventScroll: true })
+      row.scrollIntoView?.({ block: 'nearest' })
     }
   }, [isCursor])
   return rowRef

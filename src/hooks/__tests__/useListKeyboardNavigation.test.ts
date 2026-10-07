@@ -18,7 +18,11 @@
 import { act, renderHook } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
 
-import { resolveNavOptions, useListKeyboardNavigation } from '@/hooks/useListKeyboardNavigation'
+import {
+  resolveNavOptions,
+  useListKeyboardNavigation,
+  useRovingRowFocus,
+} from '@/hooks/useListKeyboardNavigation'
 
 function keyEvent(key: string): KeyboardEvent {
   return new KeyboardEvent('keydown', { key })
@@ -880,5 +884,33 @@ describe('listRef (document-level consumers)', () => {
     expect(document.activeElement).toBe(facet)
     popper.remove()
     cleanup()
+  })
+})
+
+describe('useRovingRowFocus', () => {
+  it('takes focus from the previous cursor row and scrolls itself into view', () => {
+    const previous = document.createElement('li')
+    previous.setAttribute('data-block-list-item', '')
+    previous.tabIndex = -1
+    const row = document.createElement('li')
+    row.tabIndex = 0
+    const scrollIntoView = vi.fn()
+    row.scrollIntoView = scrollIntoView
+    document.body.append(previous, row)
+    previous.focus()
+    const { result, rerender } = renderHook(
+      ({ isCursor }) => useRovingRowFocus<HTMLLIElement>(isCursor),
+      {
+        initialProps: { isCursor: false },
+      },
+    )
+    result.current.current = row
+
+    rerender({ isCursor: true })
+
+    expect(document.activeElement).toBe(row)
+    expect(scrollIntoView).toHaveBeenCalledWith({ block: 'nearest' })
+    previous.remove()
+    row.remove()
   })
 })

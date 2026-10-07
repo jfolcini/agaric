@@ -21,7 +21,12 @@
  * `flatItemIndex` = array index and no header rows.
  */
 
-import { type Virtualizer, useVirtualizer } from '@tanstack/react-virtual'
+import {
+  type Range,
+  type Virtualizer,
+  defaultRangeExtractor,
+  useVirtualizer,
+} from '@tanstack/react-virtual'
 import { type RefObject, useCallback, useEffect, useMemo, useRef } from 'react'
 
 export type VirtualGroupedRow<TGroup, TItem> =
@@ -129,12 +134,29 @@ export function useVirtualizedGroupedRows<TGroup, TItem extends { id: string }>(
     [virtualRows, headerHeight, itemHeight],
   )
 
+  // Unmounting the row that holds DOM focus drops focus to <body>, where keys no longer
+  // reach the list. A Home/End/PageUp/PageDown jump scrolls that row out of the window
+  // before the cursor's row scrolls in, so it stays mounted until `useRovingRowFocus`
+  // has handed focus to the cursor row.
+  const rangeExtractor = useCallback(
+    (range: Range) => {
+      const indexes = defaultRangeExtractor(range)
+      const focusedRow = document.activeElement?.closest('[data-index]')
+      if (!focusedRow || !scrollParentRef.current?.contains(focusedRow)) return indexes
+      const focusedRowIndex = Number(focusedRow.getAttribute('data-index'))
+      if (focusedRowIndex >= range.count || indexes.includes(focusedRowIndex)) return indexes
+      return [...indexes, focusedRowIndex].toSorted((a, b) => a - b)
+    },
+    [scrollParentRef],
+  )
+
   // oxlint-disable-next-line react/incompatible-library -- NOT the same argument as the six .tsx sites, and worth reading before copying one of them here. This file is `.ts`, outside the babel include in vite.config.ts (`/\.[jt]sx(?:$|\?)/`), so the React Compiler never processes it — and therefore never learns that its three consumers (DonePanel, DuePanel, AgendaResults, all `.tsx` and all compiled) touch an incompatible library. The skip-memoization bail-out the diagnostic relies on does NOT fire for them; only the shape of their code makes them safe. What actually crosses a memo boundary there is `liRef={virtualizer.measureElement}` into the memoed `BlockListItem`, and `measureElement` is assigned once in the Virtualizer constructor (virtual-core 3.17.8) so its identity never changes; `getVirtualItems()`/`getTotalSize()` are read in each consumer's own render body. The compiler-on check that structural argument cannot supply is e2e/agenda-virtualization.spec.ts, which runs the production build (`npm run build:e2e` leaves the compiler on) and asserts the agenda list both windows and RECYCLES rows while scrolling — the exact symptom a frozen `getVirtualItems()` memo would produce (#4409)
   const virtualizer = useVirtualizer<HTMLDivElement, Element>({
     count: virtualRows.length,
     getScrollElement: () => scrollParentRef.current,
     estimateSize,
     overscan: 5,
+    rangeExtractor,
     getItemKey: (index) => virtualRows[index]?.key ?? index,
   })
 

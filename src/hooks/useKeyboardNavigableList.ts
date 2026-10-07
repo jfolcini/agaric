@@ -51,7 +51,7 @@ export interface UseKeyboardNavigableListOptions {
    */
   resetKey?: unknown
   /**
-   * CSS selector used to locate items inside `listRef` for the
+   * CSS selector that identifies items inside `listRef` for the
    * scroll-into-view effect. Default: `[data-block-list-item]`.
    */
   itemSelector?: string
@@ -110,13 +110,14 @@ export function useKeyboardNavigableList<T extends HTMLElement = HTMLElement>(
   // the list — avoids hijacking the page's scroll position when the user
   // isn't actively keyboard-navigating (e.g. on initial mount or when a
   // filter change resets focusedIndex while focus is elsewhere).
+  // The focused item, not the Nth one: a virtualised list mounts only a window
+  // of its items. A mounted cursor row has already taken focus in its own
+  // effect (`useRovingRowFocus`; child effects run first). After a jump past
+  // the window, focus is still on the previous row; the virtualizer scrolls to
+  // the cursor row.
   useEffect(() => {
-    const list = listRef.current
-    if (!list) return
-    if (!list.contains(document.activeElement)) return
-    const items = list.querySelectorAll<HTMLElement>(itemSelector)
-    const el = items[focusedIndex]
-    if (!el?.scrollIntoView) return
+    const el = document.activeElement
+    if (!el?.matches(itemSelector) || !listRef.current?.contains(el)) return
 
     const reduced = shouldReduceMotion()
     const behavior: ScrollBehavior | undefined =

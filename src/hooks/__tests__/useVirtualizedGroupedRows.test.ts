@@ -17,27 +17,40 @@
  *    (past-the-grouped-portion, e.g. DuePanel's projected tail) indices no-op.
  *  - `virtualRows` identity survives re-renders with fresh inline accessor
  *    identities (accessors are latched in refs).
+ *  - The range extractor keeps the row holding DOM focus mounted after the
+ *    window scrolls past it (#5302), and only that list's own focused row.
  */
 
+import type { Range } from '@tanstack/react-virtual'
 import { renderHook } from '@testing-library/react'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { mockReactVirtual } from '@/__tests__/mocks/react-virtual'
 import { useVirtualizedGroupedRows } from '@/hooks/useVirtualizedGroupedRows'
 
-const { scrollToIndex, estimators } = vi.hoisted(() => ({
+const { scrollToIndex, estimators, rangeExtractors } = vi.hoisted(() => ({
   scrollToIndex: vi.fn(),
   estimators: [] as Array<(index: number) => number>,
+  rangeExtractors: [] as Array<(range: Range) => number[]>,
 }))
 
-vi.mock('@tanstack/react-virtual', () =>
-  mockReactVirtual({
+vi.mock('@tanstack/react-virtual', async (importOriginal) => {
+  const { useVirtualizer } = mockReactVirtual({
     scrollToIndex,
     onEstimateSize: (estimateSize) => {
       estimators.push(estimateSize)
     },
-  }),
-)
+  })
+  return {
+    ...(await importOriginal<typeof import('@tanstack/react-virtual')>()),
+    useVirtualizer: (
+      opts: Parameters<typeof useVirtualizer>[0] & { rangeExtractor: (range: Range) => number[] },
+    ) => {
+      rangeExtractors.push(opts.rangeExtractor)
+      return useVirtualizer(opts)
+    },
+  }
+})
 
 interface TestItem {
   id: string
@@ -85,6 +98,11 @@ function renderGroupedRows(initial: HookProps) {
 beforeEach(() => {
   scrollToIndex.mockClear()
   estimators.length = 0
+  rangeExtractors.length = 0
+})
+
+afterEach(() => {
+  document.body.innerHTML = ''
 })
 
 describe('useVirtualizedGroupedRows — row interleaving', () => {
@@ -227,5 +245,80 @@ describe('useVirtualizedGroupedRows — memo stability', () => {
     const firstRows = result.current.virtualRows
     rerender({ focusedIndex: 0 })
     expect(result.current.virtualRows).toBe(firstRows)
+  })
+})
+
+describe('useVirtualizedGroupedRows — focused row stays mounted (#5302)', () => {
+  // The visible window covers rows 0-2 of 50; row 40 was scrolled out of it.
+  const windowAtTop: Range = { startIndex: 0, endIndex: 2, overscan: 0, count: 50 }
+
+  function listRow(dataIndex: number): HTMLLIElement {
+    const row = document.createElement('li')
+    row.tabIndex = -1
+    row.dataset['index'] = String(dataIndex)
+    return row
+  }
+
+  function renderListWith(...rows: HTMLLIElement[]) {
+    const scrollParent = document.createElement('div')
+    scrollParent.append(...rows)
+    document.body.append(scrollParent)
+    renderHook(() =>
+      useVirtualizedGroupedRows({
+        groups: makeGroups(['A', 49]),
+        getGroupKey,
+        getGroupItems,
+        headerHeight: 32,
+        itemHeight: 44,
+        focusedIndex: -1,
+        scrollParentRef: { current: scrollParent },
+      }),
+    )
+    const rangeExtractor = rangeExtractors.at(-1)
+    if (!rangeExtractor) throw new Error('useVirtualizer was not given a rangeExtractor')
+    return rangeExtractor
+  }
+
+  it('keeps the row holding DOM focus in the range after the window scrolls past it', () => {
+    const focusedRow = listRow(40)
+    const rangeExtractor = renderListWith(focusedRow)
+    focusedRow.focus()
+
+    expect(rangeExtractor(windowAtTop)).toEqual([0, 1, 2, 40])
+  })
+
+  it('keeps a focused row above the window ahead of it, so DOM order stays list order', () => {
+    const focusedRow = listRow(5)
+    const rangeExtractor = renderListWith(focusedRow)
+    focusedRow.focus()
+
+    expect(rangeExtractor({ startIndex: 47, endIndex: 49, overscan: 0, count: 50 })).toEqual([
+      5, 47, 48, 49,
+    ])
+  })
+
+  it('adds no second copy of a focused row already inside the window', () => {
+    const focusedRow = listRow(1)
+    const rangeExtractor = renderListWith(focusedRow)
+    focusedRow.focus()
+
+    expect(rangeExtractor(windowAtTop)).toEqual([0, 1, 2])
+  })
+
+  it('adds nothing for a focused row in another list (Due and Done share the journal)', () => {
+    const rangeExtractor = renderListWith(listRow(40))
+    const otherListRow = listRow(40)
+    document.body.append(otherListRow)
+    otherListRow.focus()
+
+    expect(rangeExtractor(windowAtTop)).toEqual([0, 1, 2])
+  })
+
+  it('drops a focused row the list has shrunk past, which has no measurement to render', () => {
+    const focusedRow = listRow(60)
+    const rangeExtractor = renderListWith(focusedRow)
+    focusedRow.focus()
+
+    expect(rangeExtractor(windowAtTop)).toEqual([0, 1, 2])
   })
 })

@@ -8,7 +8,8 @@
  *  - Delegates ArrowDown / ArrowUp to the underlying primitive.
  *  - Resets focusedIndex to 0 when resetKey changes.
  *  - Calls scrollIntoView on the focused item when focus is inside
- *    the list.
+ *    the list — the focused one, not the Nth mounted one, since a
+ *    virtualised list mounts only a window of its items (#5302).
  *  - Skips scrollIntoView when focus is outside the list (avoids
  *    hijacking scroll position).
  *  - Respects prefers-reduced-motion: 'smooth' downgrades to 'auto'.
@@ -27,7 +28,6 @@ function keyEvent(key: string): KeyboardEvent {
 /** Build a list container with N items inside document.body and return both. */
 function buildList(itemCount: number, selector = 'data-block-list-item') {
   const list = document.createElement('div')
-  list.tabIndex = 0
   for (let i = 0; i < itemCount; i++) {
     const item = document.createElement('button')
     item.setAttribute(selector, '')
@@ -148,6 +148,9 @@ describe('useKeyboardNavigableList', () => {
     expect(result.current.focusedIndex).toBe(2)
   })
 
+  // The rows rove (`useRovingRowFocus`): the cursor row takes DOM focus in its
+  // own effect, which runs before this hook's, so these tests move focus in the
+  // same act() as the key.
   it('calls scrollIntoView on the focused item when focus is inside the list', () => {
     const { list, items } = buildList(3)
 
@@ -156,27 +159,41 @@ describe('useKeyboardNavigableList', () => {
     act(() => {
       result.current.listRef.current = list as HTMLDivElement
     })
-
-    // Focus the container so the focus-inside guard passes.
-    list.focus()
-    expect(document.activeElement).toBe(list)
+    items[0]?.focus()
 
     act(() => {
       result.current.handleKeyDown(keyEvent('ArrowDown'))
+      items[1]?.focus()
     })
 
     expect(result.current.focusedIndex).toBe(1)
-    // scrollIntoView should have been called on the second item.
-    expect(scrollSpy).toHaveBeenCalled()
-    const calledTargets = scrollSpy.mock.instances
-    expect(calledTargets).toContain(items[1])
+    expect(scrollSpy.mock.instances).toEqual([items[1]])
+  })
+
+  it('scrolls the focused row, not the Nth mounted one, when only a window is mounted', () => {
+    // A virtualised list of 30 with rows 20-29 mounted: End's row is items[9].
+    const { list, items } = buildList(10)
+
+    const { result } = renderHook(() => useKeyboardNavigableList(30, () => {}, { homeEnd: true }))
+
+    act(() => {
+      result.current.listRef.current = list as HTMLDivElement
+    })
+    items[0]?.focus()
+
+    act(() => {
+      result.current.handleKeyDown(keyEvent('End'))
+      items[9]?.focus()
+    })
+
+    expect(result.current.focusedIndex).toBe(29)
+    expect(scrollSpy.mock.instances).toEqual([items[9]])
   })
 
   it('does NOT call scrollIntoView when focus is outside the list', () => {
     const { list } = buildList(3)
-    // External element holds focus.
-    const outside = document.createElement('button')
-    document.body.append(outside)
+    // A row of another list on the page (Due and Done share the journal) holds focus.
+    const outside = buildList(1).items[0] as HTMLElement
     outside.focus()
     expect(document.activeElement).toBe(outside)
 
@@ -195,7 +212,7 @@ describe('useKeyboardNavigableList', () => {
   })
 
   it('respects prefers-reduced-motion: smooth downgrades to auto', () => {
-    const { list } = buildList(3)
+    const { list, items } = buildList(3)
 
     const originalMatchMedia = window.matchMedia
     window.matchMedia = vi.fn().mockImplementation((query: string) => ({
@@ -217,10 +234,11 @@ describe('useKeyboardNavigableList', () => {
       act(() => {
         result.current.listRef.current = list as HTMLDivElement
       })
-      list.focus()
+      items[0]?.focus()
 
       act(() => {
         result.current.handleKeyDown(keyEvent('ArrowDown'))
+        items[1]?.focus()
       })
 
       expect(scrollSpy).toHaveBeenCalledWith({ block: 'nearest', behavior: 'auto' })
@@ -230,7 +248,7 @@ describe('useKeyboardNavigableList', () => {
   })
 
   it('uses smooth behavior when reduced motion is NOT preferred', () => {
-    const { list } = buildList(3)
+    const { list, items } = buildList(3)
 
     const originalMatchMedia = window.matchMedia
     window.matchMedia = vi.fn().mockImplementation((query: string) => ({
@@ -252,10 +270,11 @@ describe('useKeyboardNavigableList', () => {
       act(() => {
         result.current.listRef.current = list as HTMLDivElement
       })
-      list.focus()
+      items[0]?.focus()
 
       act(() => {
         result.current.handleKeyDown(keyEvent('ArrowDown'))
+        items[1]?.focus()
       })
 
       expect(scrollSpy).toHaveBeenCalledWith({ block: 'nearest', behavior: 'smooth' })
@@ -266,11 +285,12 @@ describe('useKeyboardNavigableList', () => {
 
   it('honours a custom itemSelector', () => {
     const list = document.createElement('div')
-    list.tabIndex = 0
     const a = document.createElement('div')
     a.className = 'custom-item'
+    a.tabIndex = -1
     const b = document.createElement('div')
     b.className = 'custom-item'
+    b.tabIndex = -1
     list.append(a)
     list.append(b)
     document.body.append(list)
@@ -282,14 +302,15 @@ describe('useKeyboardNavigableList', () => {
     act(() => {
       result.current.listRef.current = list as HTMLDivElement
     })
-    list.focus()
+    a.focus()
 
     act(() => {
       result.current.handleKeyDown(keyEvent('ArrowDown'))
+      b.focus()
     })
 
     expect(result.current.focusedIndex).toBe(1)
-    expect(scrollSpy.mock.instances).toContain(b)
+    expect(scrollSpy.mock.instances).toEqual([b])
   })
 
   it('invokes onSelect with the current focusedIndex on Enter', () => {
