@@ -320,6 +320,69 @@ describe('BookmarksSection', () => {
     })
 
     /**
+     * #5293 — a trashed page stays in the `starred-pages` list (a restore must
+     * bring it back) but every click on it only toasts "in the trash", so the
+     * sidebar leaves it out.
+     */
+    it('does not list a bookmarked page that was deleted, and keeps it starred', () => {
+      bookmark([
+        { id: 'A', title: 'Alpha' },
+        { id: 'B', title: 'Bravo' },
+      ])
+      useResolveStore.getState().markDeleted(SPACE_A, ['A'])
+
+      renderSection()
+
+      expect(bookmarkLabels()).toEqual(['Bravo'])
+      expect(readBookmarkIds()).toEqual(['A', 'B'])
+      // Resolved-and-deleted is an answer, not a gap to look up.
+      expect(resolveArgs()).toHaveLength(0)
+    })
+
+    /**
+     * After a restart the cache is empty, so the deleted page is resolved on
+     * demand and `batch_resolve` hands the soft-deleted row back with
+     * `deleted: true`.
+     */
+    it('does not list a bookmark the backend returns as deleted', async () => {
+      writePreference(PREFERENCES.starredPages, ['A'])
+      vi.mocked(invoke).mockImplementation(
+        mockInvokeCommands({
+          batch_resolve: (args) =>
+            (args['ids'] as string[]).map((id) =>
+              Object.assign(resolvedRow(id, 'Alpha'), { deleted: true }),
+            ),
+        }),
+      )
+
+      renderSection()
+
+      expect(await screen.findByText(t('bookmarks.emptyHint'))).toBeInTheDocument()
+      expect(bookmarkList()).toBeNull()
+      expect(resolveArgs()).toHaveLength(1)
+    })
+
+    it('lists a deleted bookmark again once it is restored', async () => {
+      bookmark([{ id: 'A', title: 'Alpha' }])
+      useResolveStore.getState().markDeleted(SPACE_A, ['A'])
+
+      renderSection()
+      expect(bookmarkList()).toBeNull()
+
+      // What the trash view does after a restore.
+      vi.mocked(invoke).mockImplementation(
+        mockInvokeCommands({
+          batch_resolve: (args) => (args['ids'] as string[]).map((id) => resolvedRow(id, 'Alpha')),
+        }),
+      )
+      await act(async () => {
+        await useResolveStore.getState().refreshDeleted(SPACE_A)
+      })
+
+      expect(bookmarkLabels()).toEqual(['Alpha'])
+    })
+
+    /**
      * Rejection path. A lookup that never answered is not evidence of
      * emptiness, so the section stays blank rather than claiming the user has
      * no bookmarks, and the failure is logged rather than swallowed.
