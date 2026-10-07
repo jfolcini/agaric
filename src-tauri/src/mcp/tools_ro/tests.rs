@@ -1542,6 +1542,34 @@ async fn journal_for_date_happy_path_creates_page() {
     );
 }
 
+/// #5314 — a page `journal_for_date` creates must reach open views, as every
+/// RW tool's write does; a plain lookup emits nothing.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn journal_for_date_emits_blocks_changed_only_when_it_creates_5314() {
+    let (tools, mat, _dir) = mk_tools().await;
+    let emitter = Arc::new(crate::mcp::view_notify::RecordingViewChangeEmitter::new());
+    let tools = tools.with_view_emitter(emitter.clone());
+    let space = mk_space(&tools.pool, "Personal").await;
+    let date = chrono::Local::now()
+        .date_naive()
+        .format("%Y-%m-%d")
+        .to_string();
+    let args = json!({"date": date, "space_id": space});
+
+    let created = tools
+        .call_tool("journal_for_date", args.clone(), &test_ctx())
+        .await
+        .expect("create");
+    settle(&mat).await;
+    tools
+        .call_tool("journal_for_date", args, &test_ctx())
+        .await
+        .expect("lookup");
+
+    let page_id = created["id"].as_str().expect("id present").to_string();
+    assert_eq!(emitter.blocks_changed(), vec![vec![page_id]]);
+}
+
 /// The `journal_for_date` tool lives in the read-only
 /// group but emits a `CreateBlock` op on first read-of-the-day. Pin
 /// the wire-visible description so it leads with that side-effect

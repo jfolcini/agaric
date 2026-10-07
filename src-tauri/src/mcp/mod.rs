@@ -917,9 +917,13 @@ pub fn spawn_mcp_ro_task<R: tauri::Runtime>(
     }
 
     let socket_path = default_mcp_ro_socket_path(app_data_dir);
+    // #5314: `journal_for_date` can create a page; see the RW spawn below.
+    let view_emitter: Arc<dyn view_notify::ViewChangeEmitter> =
+        Arc::new(view_notify::TauriViewChangeEmitter::new(app_handle.clone()));
     let activity_ctx =
         activity::ActivityContext::from_app_handle_with_ring(app_handle, activity_ring);
-    let registry = tools_ro::ReadOnlyTools::new(read_pool, write_pool, materializer, device_id);
+    let registry = tools_ro::ReadOnlyTools::new(read_pool, write_pool, materializer, device_id)
+        .with_view_emitter(view_emitter);
     spawn_mcp_ro_task_with_registry(socket_path, registry, Some(activity_ctx), lifecycle);
 }
 
