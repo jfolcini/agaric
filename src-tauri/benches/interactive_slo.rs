@@ -67,11 +67,14 @@
 
 use criterion::{Criterion, criterion_group, criterion_main};
 
+use agaric_lib::commands::pages::{
+    ListPagesWithMetadataFilter, PageSort, list_pages_with_metadata_inner,
+};
 use agaric_lib::commands::{
     PAGE_LINKS_EDGE_CAP, batch_resolve_inner, count_agenda_batch_by_source_inner,
     count_backlinks_batch_inner, create_block_inner, export_page_markdown_inner, get_block_inner,
     get_properties_inner, list_blocks_inner, list_page_links_inner, list_projected_agenda_inner,
-    revert_ops_inner,
+    load_page_subtree_inner, revert_ops_inner,
 };
 use agaric_lib::db::init_pool;
 use agaric_lib::materializer::Materializer;
@@ -413,8 +416,10 @@ async fn seed_pages_with_links(pool: &SqlitePool, n: usize) {
 }
 
 /// Seed an export-target page with `n` child blocks of varying length.
-/// Mirrors `export_bench.rs::seed_page_with_children`.
-async fn seed_export_page(pool: &SqlitePool, page_id: &str, n: usize) {
+/// Mirrors `export_bench.rs::seed_page_with_children`. Returns the child ids
+/// in position order.
+async fn seed_export_page(pool: &SqlitePool, page_id: &str, n: usize) -> Vec<String> {
+    let mut ids = Vec::with_capacity(n);
     let mut tx = pool.begin().await.unwrap();
     sqlx::query(
         "INSERT INTO blocks (id, block_type, content, position, page_id) \
@@ -450,8 +455,10 @@ async fn seed_export_page(pool: &SqlitePool, page_id: &str, n: usize) {
         .execute(&mut *tx)
         .await
         .unwrap();
+        ids.push(id);
     }
     tx.commit().await.unwrap();
+    ids
 }
 
 /// Seed a production-realistic 100K shape for `batch_resolve`:
@@ -752,8 +759,9 @@ async fn seed_pages_cache_fixture(
 /// store — the `_LIVE` probe recomputes the same values on the fly. The
 /// space-owner page (`SLO_SPACE_ID`, `space_id IS NULL`) is excluded from both
 /// the cache fill and the queries, so it never pollutes the sorted set.
-async fn seed_pages_mostlinked_fixture(pool: &SqlitePool) {
-    seed_pages_cache_fixture(
+/// Returns the space's page ids in seed (= id) order.
+async fn seed_pages_mostlinked_fixture(pool: &SqlitePool) -> Vec<String> {
+    let page_ids = seed_pages_cache_fixture(
         pool,
         PAGES_CACHE_FIXTURE_PAGES,
         PAGES_CACHE_CHILDREN_PER_PAGE,
@@ -786,6 +794,7 @@ async fn seed_pages_mostlinked_fixture(pool: &SqlitePool) {
     .execute(pool)
     .await
     .unwrap();
+    page_ids
 }
 
 /// Deterministic, monotonic `op_log.created_at` (epoch ms) from a seq counter.
@@ -1554,6 +1563,139 @@ fn bench_export_page_markdown(c: &mut Criterion) {
     group.finish();
 
     assert_under_budget("export_page_markdown (2K children) @ 100K", &acc, BUDGET_MS);
+}
+
+/// `load_page_subtree` — open a 500-block page on top of a 100K background
+/// DB; runs on every page open. Budget: 20 ms, 2x the worst dev-box sample
+/// (4.67-10.31 ms); provisional until a `bench-slo` run measures it.
+fn bench_load_page_subtree(c: &mut Criterion) {
+    const BUDGET_MS: f64 = 20.0;
+    // Must be a valid ULID: load_page_subtree_inner parses the root id.
+    const PAGE_ID: &str = "01SSVBTREEPG00000000000001";
+    const CHILD_COUNT: usize = 500;
+
+    let rt = Runtime::new().unwrap();
+    let dir = TempDir::new().unwrap();
+    let pool = rt.block_on(fresh_pool(&dir, "slo_load_page_subtree"));
+    rt.block_on(seed_blocks_bulk(&pool, FIXTURE_SIZE));
+    let child_ids = rt.block_on(seed_export_page(&pool, PAGE_ID, CHILD_COUNT));
+    rt.block_on(assign_all_to_slo_space(&pool));
+
+    let observed = rt
+        .block_on(load_page_subtree_inner(&pool, PAGE_ID, SLO_SPACE_ID))
+        .unwrap();
+    let observed_ids: Vec<&str> = observed.blocks.iter().map(|row| row.id.as_str()).collect();
+    assert_eq!(
+        observed_ids, child_ids,
+        "load_page_subtree @ 100K: untimed probe must return exactly the 500 fixture children (#3304)"
+    );
+
+    let mut group = c.benchmark_group("interactive_slo");
+    group.sample_size(SAMPLE_SIZE);
+    let acc = Acc::new();
+    let acc_for_bench = acc.clone();
+
+    group.bench_function("load_page_subtree_500_in_100k", move |b| {
+        let acc = acc_for_bench.clone();
+        let pool = pool.clone();
+        b.to_async(&rt).iter_custom(move |iters| {
+            let pool = pool.clone();
+            let acc = acc.clone();
+            async move {
+                let start = Instant::now();
+                for _ in 0..iters {
+                    let _ = load_page_subtree_inner(&pool, PAGE_ID, SLO_SPACE_ID)
+                        .await
+                        .unwrap();
+                }
+                let elapsed = start.elapsed();
+                acc.record(elapsed, iters);
+                elapsed
+            }
+        });
+    });
+    group.finish();
+
+    assert_under_budget("load_page_subtree (500 blocks) @ 100K", &acc, BUDGET_MS);
+}
+
+/// `list_pages_with_metadata` — the pages view's first page over 10K pages /
+/// 100K blocks; runs on every pages-view open. Wire sort `default`: the view's
+/// default `alphabetical` sort sends it and re-sorts client-side.
+/// Budget: 10 ms, 2x the worst dev-box sample (4.67-4.92 ms); provisional
+/// until a `bench-slo` run measures it.
+fn bench_list_pages_with_metadata(c: &mut Criterion) {
+    const BUDGET_MS: f64 = 10.0;
+    const PAGE_SIZE: usize = 50;
+
+    let rt = Runtime::new().unwrap();
+    let dir = TempDir::new().unwrap();
+    let pool = rt.block_on(fresh_pool(&dir, "slo_list_pages_with_metadata"));
+    let page_ids = rt.block_on(seed_pages_mostlinked_fixture(&pool));
+    let filter = ListPagesWithMetadataFilter {
+        sort: PageSort::Default,
+        space_id: SLO_SPACE_ID.to_owned(),
+        filters: vec![],
+    };
+
+    let observed = rt
+        .block_on(list_pages_with_metadata_inner(
+            &pool,
+            filter.clone(),
+            None,
+            Some(PAGE_SIZE as i64),
+        ))
+        .unwrap();
+    let observed_ids: Vec<&str> = observed.items.iter().map(|row| row.id.as_str()).collect();
+    assert_eq!(
+        observed_ids,
+        page_ids[..PAGE_SIZE],
+        "list_pages_with_metadata @ 100K: untimed probe must return the first 50 fixture pages in id order (#3304)"
+    );
+    assert_eq!(
+        observed.total_count,
+        Some(PAGES_CACHE_FIXTURE_PAGES as i64),
+        "list_pages_with_metadata @ 100K: untimed probe must count every fixture page (#3304)"
+    );
+
+    let mut group = c.benchmark_group("interactive_slo");
+    group.sample_size(SAMPLE_SIZE);
+    let acc = Acc::new();
+    let acc_for_bench = acc.clone();
+
+    group.bench_function("list_pages_with_metadata_100k", move |b| {
+        let acc = acc_for_bench.clone();
+        let pool = pool.clone();
+        let filter = filter.clone();
+        b.to_async(&rt).iter_custom(move |iters| {
+            let pool = pool.clone();
+            let filter = filter.clone();
+            let acc = acc.clone();
+            async move {
+                let start = Instant::now();
+                for _ in 0..iters {
+                    let _ = list_pages_with_metadata_inner(
+                        &pool,
+                        filter.clone(),
+                        None,
+                        Some(PAGE_SIZE as i64),
+                    )
+                    .await
+                    .unwrap();
+                }
+                let elapsed = start.elapsed();
+                acc.record(elapsed, iters);
+                elapsed
+            }
+        });
+    });
+    group.finish();
+
+    assert_under_budget(
+        "list_pages_with_metadata (first page) @ 100K",
+        &acc,
+        BUDGET_MS,
+    );
 }
 
 /// `create_block` — one new content block on top of a 100K DB. Budget: 60 ms.
@@ -2343,6 +2485,8 @@ criterion_group!(
     bench_count_agenda_batch_by_source,
     bench_count_backlinks_batch,
     bench_export_page_markdown,
+    bench_load_page_subtree,
+    bench_list_pages_with_metadata,
     bench_revert_ops_50op_at_100k,
     bench_create_block,
     bench_list_page_links,
