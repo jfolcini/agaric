@@ -54,6 +54,7 @@ vi.mock('@/components/editor/SortableBlock', () => ({
   INDENT_WIDTH: 24,
 }))
 
+import { staticViewport } from '@/__tests__/helpers/viewport-observer-mocks'
 import { SortableBlockWrapper } from '@/components/editor/SortableBlockWrapper'
 
 /** Minimal props for SortableBlockWrapper — overrides merge on top. */
@@ -69,16 +70,7 @@ function makeProps(
     activeId: null,
     overId: null,
     dropAfter: false,
-    viewport: {
-      isOffscreen: () => false,
-      createObserveRef: () => vi.fn(),
-      getHeight: () => 40,
-      // #1067 — wrappers read offscreen state via useSyncExternalStore; these
-      // static mocks never flip, so subscribe is a no-op returning unsubscribe.
-      subscribe: () => () => {},
-      subscribeWindow: () => () => {},
-      getWindowVersion: () => 0,
-    },
+    viewport: staticViewport({ getHeight: () => 40 }),
     rovingEditor: {
       editor: null,
       mount: vi.fn(),
@@ -121,14 +113,10 @@ describe('SortableBlockWrapper', () => {
   })
 
   it('renders virtualized placeholder when offscreen and not focused', () => {
-    const viewport = {
+    const viewport = staticViewport({
       isOffscreen: (id: string) => id === 'BLK001',
-      createObserveRef: () => vi.fn(),
       getHeight: () => 120,
-      subscribe: () => () => {},
-      subscribeWindow: () => () => {},
-      getWindowVersion: () => 0,
-    }
+    })
     const { container } = renderInList(makeProps({ viewport }))
 
     expect(screen.queryByTestId('sortable-block-BLK001')).not.toBeInTheDocument()
@@ -139,14 +127,7 @@ describe('SortableBlockWrapper', () => {
   })
 
   it('renders full SortableBlock when focused, even if reported offscreen', () => {
-    const viewport = {
-      isOffscreen: () => true,
-      createObserveRef: () => vi.fn(),
-      getHeight: () => 120,
-      subscribe: () => () => {},
-      subscribeWindow: () => () => {},
-      getWindowVersion: () => 0,
-    }
+    const viewport = staticViewport({ isOffscreen: () => true, getHeight: () => 120 })
     const { container } = renderInList(makeProps({ viewport, isFocused: true }))
 
     // Focused block is never virtualized
@@ -161,14 +142,9 @@ describe('SortableBlockWrapper', () => {
   // answers the flag the way the real hook does for a row that has not
   // attached yet.
   it('mounts as a placeholder of estimated height when past the initial window (#5329)', () => {
-    const viewport = {
+    const viewport = staticViewport({
       isOffscreen: (_id: string, startsOffscreen = false) => startsOffscreen,
-      createObserveRef: () => vi.fn(),
-      getHeight: () => undefined,
-      subscribe: () => () => {},
-      subscribeWindow: () => () => {},
-      getWindowVersion: () => 0,
-    }
+    })
     const { container } = renderInList(makeProps({ viewport, pastInitialWindow: true }))
 
     expect(screen.queryByTestId('sortable-block-BLK001')).not.toBeInTheDocument()
@@ -182,14 +158,9 @@ describe('SortableBlockWrapper', () => {
   })
 
   it('renders in full inside the initial window before any measurement (#5329)', () => {
-    const viewport = {
+    const viewport = staticViewport({
       isOffscreen: (_id: string, startsOffscreen = false) => startsOffscreen,
-      createObserveRef: () => vi.fn(),
-      getHeight: () => undefined,
-      subscribe: () => () => {},
-      subscribeWindow: () => () => {},
-      getWindowVersion: () => 0,
-    }
+    })
     const { container } = renderInList(makeProps({ viewport, pastInitialWindow: false }))
 
     expect(screen.getByTestId('sortable-block-BLK001')).toBeInTheDocument()
@@ -197,14 +168,9 @@ describe('SortableBlockWrapper', () => {
   })
 
   it('renders the focused block in full even past the initial window (#5329)', () => {
-    const viewport = {
+    const viewport = staticViewport({
       isOffscreen: (_id: string, startsOffscreen = false) => startsOffscreen,
-      createObserveRef: () => vi.fn(),
-      getHeight: () => undefined,
-      subscribe: () => () => {},
-      subscribeWindow: () => () => {},
-      getWindowVersion: () => 0,
-    }
+    })
     renderInList(makeProps({ viewport, pastInitialWindow: true, isFocused: true }))
 
     expect(screen.getByTestId('sortable-block-BLK001')).toBeInTheDocument()
@@ -281,14 +247,7 @@ describe('SortableBlockWrapper', () => {
   })
 
   it('sets aria-expanded on placeholder as well when offscreen', () => {
-    const viewport = {
-      isOffscreen: () => true,
-      createObserveRef: () => vi.fn(),
-      getHeight: () => 40,
-      subscribe: () => () => {},
-      subscribeWindow: () => () => {},
-      getWindowVersion: () => 0,
-    }
+    const viewport = staticViewport({ isOffscreen: () => true, getHeight: () => 40 })
     const { container } = renderInList(
       makeProps({ viewport, hasChildren: true, isCollapsed: true }),
     )
@@ -571,18 +530,10 @@ describe('SortableBlockWrapper', () => {
   })
 
   it('has no a11y violations in the virtualized placeholder path', async () => {
-    const viewport = {
-      isOffscreen: () => true,
-      createObserveRef: () => vi.fn(),
-      getHeight: () => 80,
-      subscribe: () => () => {},
-      subscribeWindow: () => () => {},
-      getWindowVersion: () => 0,
-    }
+    const viewport = staticViewport({ isOffscreen: () => true, getHeight: () => 80 })
     const { container } = renderInList(
       makeProps({
         viewport,
-        pastInitialWindow: true,
         hasChildren: true,
         isCollapsed: false,
         siblingSetsize: 1,

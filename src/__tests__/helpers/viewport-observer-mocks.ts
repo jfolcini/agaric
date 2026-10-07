@@ -10,6 +10,8 @@
 
 import { vi } from 'vitest'
 
+import type { ViewportObserver } from '@/hooks/useViewportObserver'
+
 type IOCallback = (entries: IntersectionObserverEntry[], observer: IntersectionObserver) => void
 
 export class MockIntersectionObserver {
@@ -83,5 +85,22 @@ export function stubAnimationFrames(): { runFrame: () => void; pending: () => nu
       for (const cb of frame.values()) cb(performance.now())
     },
     pending: () => queue.size,
+  }
+}
+
+/**
+ * A `ViewportObserver` whose answers never change: every row on screen, no
+ * measured height, and no-op subscriptions. A test overrides the answers it
+ * is about.
+ */
+export function staticViewport(overrides: Partial<ViewportObserver> = {}): ViewportObserver {
+  return {
+    isOffscreen: () => false,
+    createObserveRef: () => vi.fn(),
+    getHeight: () => undefined,
+    subscribe: () => () => {},
+    subscribeWindow: () => () => {},
+    getWindowVersion: () => 0,
+    ...overrides,
   }
 }
