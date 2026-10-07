@@ -14,6 +14,7 @@ import type { GraphFilter } from '@/lib/graph-filters'
 import { t } from '@/lib/i18n'
 import { logger } from '@/lib/logger'
 import { __resetPriorityLevelsForTests, setPriorityLevels } from '@/lib/priority-levels'
+import { useSpaceStore } from '@/stores/space'
 
 // Silence the logger.warn calls emitted by readPersistedFilters /
 // writePersistedFilters when storage is corrupted or throws.
@@ -662,6 +663,34 @@ describe('GraphFilterBar', () => {
       await waitFor(() => {
         expect(screen.getByText(/Status.*TODO/)).toBeInTheDocument()
       })
+    })
+
+    // #5294 — a tag filter holds tag ids, which match nothing in another space.
+    it('keeps one filter list per space', async () => {
+      const user = userEvent.setup()
+      const keyA = `${STORAGE_KEY}:SPACE_A`
+      const keyB = `${STORAGE_KEY}:SPACE_B`
+      const listA = JSON.stringify([{ type: 'status', values: ['TODO'] }])
+      localStorage.setItem(keyA, listA)
+      try {
+        useSpaceStore.setState({ currentSpaceId: 'SPACE_B' })
+        const inB = render(<StatefulHarness />)
+        await user.selectOptions(screen.getByLabelText(t('graph.filter.selectDimension')), 'status')
+        await user.click(screen.getByRole('checkbox', { name: t('graph.filter.statusValue.DONE') }))
+        await user.click(screen.getByRole('button', { name: t('graph.filter.apply') }))
+        await waitFor(() => expect(localStorage.getItem(keyB)).not.toBeNull())
+        expect(screen.queryByText(/Status.*TODO/)).not.toBeInTheDocument()
+        expect(localStorage.getItem(keyA)).toBe(listA)
+        inB.unmount()
+
+        useSpaceStore.setState({ currentSpaceId: 'SPACE_A' })
+        render(<StatefulHarness />)
+        expect(await screen.findByText(/Status.*TODO/)).toBeInTheDocument()
+      } finally {
+        useSpaceStore.setState({ currentSpaceId: null })
+        localStorage.removeItem(keyA)
+        localStorage.removeItem(keyB)
+      }
     })
 
     it('writes the active filter list to localStorage on every change', async () => {

@@ -40,6 +40,7 @@ import {
 } from '@/lib/graph-filters'
 import { logger } from '@/lib/logger'
 import { cn } from '@/lib/utils'
+import { useSpaceStore } from '@/stores/space'
 
 /**
  * LocalStorage key for persisting the user's graph filters across
@@ -49,6 +50,14 @@ import { cn } from '@/lib/utils'
  * 'undefined'` so this component can render in non-browser test runners.
  */
 const STORAGE_KEY = 'agaric:graph-filters'
+
+/**
+ * One list per space (#5294): a tag filter holds tag ids, which match nothing
+ * in another space. Before a space is active there is no graph to filter.
+ */
+function graphFiltersStorageKey(spaceId: string | null): string {
+  return spaceId == null ? STORAGE_KEY : `${STORAGE_KEY}:${spaceId}`
+}
 
 /** Tag shape accepted by the tag-dimension selector. Compatible with `TagCacheRow`. */
 export interface GraphFilterBarTag {
@@ -133,10 +142,10 @@ function isLegacyGraphFilter(value: unknown): value is GraphFilter {
  * have recovered from disk.
  */
 
-function readPersistedFilters(): GraphFilter[] | null {
+function readPersistedFilters(key: string): GraphFilter[] | null {
   if (typeof window === 'undefined') return null
   try {
-    const raw = window.localStorage.getItem(STORAGE_KEY)
+    const raw = window.localStorage.getItem(key)
     if (!raw) return null
     const parsed: unknown = JSON.parse(raw)
     if (!Array.isArray(parsed)) return null
@@ -150,7 +159,7 @@ function readPersistedFilters(): GraphFilter[] | null {
       const { predicates, droppedCount } = parseFilterPredicates(parsed)
       if (droppedCount > 0) {
         logger.warn('GraphFilterBar', 'Dropped invalid persisted filter predicates', {
-          key: STORAGE_KEY,
+          key,
           droppedCount,
         })
         if (predicates.length === 0) {
@@ -167,12 +176,12 @@ function readPersistedFilters(): GraphFilter[] | null {
           // filters" — the outer catch's message. The heal is best-effort;
           // the cleaned `[]` is still returned either way.
           try {
-            window.localStorage.setItem(STORAGE_KEY, JSON.stringify(predicates))
+            window.localStorage.setItem(key, JSON.stringify(predicates))
           } catch (err) {
             logger.warn(
               'GraphFilterBar',
               'Failed to persist healed (self-cleaned) filters',
-              { key: STORAGE_KEY },
+              { key },
               err,
             )
           }
@@ -188,7 +197,7 @@ function readPersistedFilters(): GraphFilter[] | null {
     }
     if (legacyDroppedCount > 0) {
       logger.warn('GraphFilterBar', 'Dropped invalid persisted legacy filters', {
-        key: STORAGE_KEY,
+        key,
         droppedCount: legacyDroppedCount,
       })
       if (legacyFilters.length === 0) {
@@ -198,12 +207,12 @@ function readPersistedFilters(): GraphFilter[] | null {
         // too, in its own try/catch for the same write-vs-read attribution
         // reason as above.
         try {
-          window.localStorage.setItem(STORAGE_KEY, JSON.stringify(legacyFilters))
+          window.localStorage.setItem(key, JSON.stringify(legacyFilters))
         } catch (err) {
           logger.warn(
             'GraphFilterBar',
             'Failed to persist healed (self-cleaned) filters',
-            { key: STORAGE_KEY },
+            { key },
             err,
           )
         }
@@ -211,7 +220,7 @@ function readPersistedFilters(): GraphFilter[] | null {
     }
     return legacyFilters
   } catch (err) {
-    logger.warn('GraphFilterBar', 'Failed to read persisted filters', { key: STORAGE_KEY }, err)
+    logger.warn('GraphFilterBar', 'Failed to read persisted filters', { key }, err)
     return null
   }
 }
@@ -221,13 +230,13 @@ function readPersistedFilters(): GraphFilter[] | null {
  * `FilterPredicate[]`. No-ops on SSR / storage errors. See
  * `readPersistedFilters` for the round-trip contract.
  */
-function writePersistedFilters(filters: GraphFilter[]): void {
+function writePersistedFilters(filters: GraphFilter[], key: string): void {
   if (typeof window === 'undefined') return
   try {
     const canonical = graphFiltersToCanonical(filters)
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(canonical))
+    window.localStorage.setItem(key, JSON.stringify(canonical))
   } catch (err) {
-    logger.warn('GraphFilterBar', 'Failed to persist filters', { key: STORAGE_KEY }, err)
+    logger.warn('GraphFilterBar', 'Failed to persist filters', { key }, err)
   }
 }
 
@@ -595,8 +604,13 @@ export function GraphFilterBar({
   // persisted value with the parent's pre-hydration default (empty) state
   // before the hydration dispatch has propagated through the parent.
   const hasHydratedRef = useRef(false)
+  // Fixed for this mount: `ViewDispatcher` remounts the graph on a space
+  // switch, so one space's list is never written under another's key.
+  const [storageKey] = useState(() =>
+    graphFiltersStorageKey(useSpaceStore.getState().currentSpaceId),
+  )
   useEffect(() => {
-    const persisted = readPersistedFilters()
+    const persisted = readPersistedFilters(storageKey)
     if (persisted !== null && persisted.length > 0) {
       onFiltersChange(persisted)
     }
@@ -610,8 +624,8 @@ export function GraphFilterBar({
       hasHydratedRef.current = true
       return
     }
-    writePersistedFilters(filters)
-  }, [filters])
+    writePersistedFilters(filters, storageKey)
+  }, [filters, storageKey])
 
   const handleAdd = useCallback(
     (filter: GraphFilter) => {

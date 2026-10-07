@@ -40,9 +40,20 @@ vi.mock('@/components/JournalPage', () => ({
   JournalControls: () => <div />,
   GlobalDateControls: () => <div />,
 }))
-vi.mock('@/components/graph/GraphView', () => ({
-  GraphView: () => <div data-testid="graph-view-mock">graph</div>,
-}))
+const graphViewMounts = vi.hoisted(() => ({ count: 0 }))
+vi.mock('@/components/graph/GraphView', async () => {
+  const { useState } = await import('react')
+  return {
+    GraphView: () => {
+      const [mount] = useState(() => ++graphViewMounts.count)
+      return (
+        <div data-testid="graph-view-mock" data-mount={mount}>
+          graph
+        </div>
+      )
+    },
+  }
+})
 vi.mock('@/components/history/HistoryView', () => ({
   HistoryView: () => <div data-testid="history-view-mock">history</div>,
 }))
@@ -126,6 +137,19 @@ describe('ViewDispatcher — routing', () => {
   it.each(routes)('routes currentView=%s to its view component', async (view, testid) => {
     render(<ViewDispatcher {...defaultProps({ currentView: view })} />)
     expect(await screen.findByTestId(testid)).toBeInTheDocument()
+  })
+
+  // #5294 — the graph's filters hold one space's tag ids.
+  it('remounts the graph view when the space changes', async () => {
+    useSpaceStore.setState({ currentSpaceId: 'SPACE_A' })
+    render(<ViewDispatcher {...defaultProps({ currentView: 'graph' })} />)
+    const before = (await screen.findByTestId('graph-view-mock')).dataset['mount']
+
+    act(() => {
+      useSpaceStore.setState({ currentSpaceId: 'SPACE_B' })
+    })
+
+    expect(screen.getByTestId('graph-view-mock').dataset['mount']).not.toBe(before)
   })
 
   it('renders the page editor when activePage is set', async () => {

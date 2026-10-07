@@ -14,7 +14,10 @@
  * schema-mismatch recovery signal below.
  */
 
+import { unwrap } from '@/lib/app-error'
 import type { FilterPrimitive } from '@/lib/bindings'
+import { commands } from '@/lib/bindings'
+import { logger } from '@/lib/logger'
 import {
   PREFERENCES,
   peekPreferenceSchemaMismatch,
@@ -22,6 +25,7 @@ import {
   type SavedPagesView,
   writePreference,
 } from '@/lib/preferences'
+import { requireActiveScope } from '@/lib/space-scope'
 
 /** The `{ sort, density, filters }` tuple a saved view captures / restores. */
 export interface PagesViewTuple {
@@ -127,4 +131,26 @@ export function peekSavedPagesViewsSchemaMismatch(): boolean {
     PREFERENCES.savedPagesViews,
     PREFERENCES.savedPagesViews.defaultValue.schemaVersion,
   )
+}
+
+/**
+ * #5294 — saved views are one list for every space, and a tag chip holds a
+ * tag id, which matches nothing in another space. Applying a view drops those.
+ */
+export async function dropOtherSpacesTagChips(
+  filters: FilterPrimitive[],
+  spaceId: string | null,
+): Promise<FilterPrimitive[]> {
+  const hasTagChip = filters.some((f) => f.type === 'Tag' || f.type === 'TagOrRef')
+  if (spaceId == null || !hasTagChip) return filters
+  try {
+    const tags = unwrap(await commands.listAllTagsInSpace(requireActiveScope(spaceId)))
+    const spaceTagIds = new Set(tags.map((tag) => tag.tag_id))
+    return filters.filter(
+      (f) => (f.type !== 'Tag' && f.type !== 'TagOrRef') || spaceTagIds.has(f.tag),
+    )
+  } catch (err) {
+    logger.warn('saved-pages-views', 'Could not check a saved view’s tags', { spaceId }, err)
+    return filters
+  }
 }
