@@ -137,7 +137,8 @@ export function useVirtualizedGroupedRows<TGroup, TItem extends { id: string }>(
   // Unmounting the row that holds DOM focus drops focus to <body>, where keys no longer
   // reach the list. A Home/End/PageUp/PageDown jump scrolls that row out of the window
   // before the cursor's row scrolls in, so it stays mounted until `useRovingRowFocus`
-  // has handed focus to the cursor row.
+  // has handed focus to the cursor row. The virtualizer caches indexes per range, so
+  // that row stays mounted until the next scroll: one extra row, not a leak.
   const rangeExtractor = useCallback(
     (range: Range) => {
       const indexes = defaultRangeExtractor(range)

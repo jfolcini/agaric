@@ -98,8 +98,13 @@ export function BookmarksSection(): ReactElement {
     const resolved: Array<{ pageId: string; title: string }> = []
     const pending: string[] = []
     for (const id of starredIds) {
-      if (resolve.isResolved(id)) resolved.push({ pageId: id, title: resolve.resolveTitle(id) })
-      else if (!askedIds.has(id)) pending.push(id)
+      if (resolve.isResolved(id)) {
+        // A trashed page stays starred (a restore lists it again) but is not
+        // listed: every click on it would only toast "in the trash" (#5293).
+        if (resolve.resolveStatus(id) === 'active') {
+          resolved.push({ pageId: id, title: resolve.resolveTitle(id) })
+        }
+      } else if (!askedIds.has(id)) pending.push(id)
     }
     // A string, not the array: the effect below re-runs on identity, and this
     // memo recomputes on every `resolveVersion` bump — a page-picker keystroke

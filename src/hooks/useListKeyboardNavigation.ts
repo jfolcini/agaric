@@ -284,7 +284,7 @@ export function useRovingRowFocus<T extends HTMLElement>(
     const active = document.activeElement
     if (isCursor && row && active?.matches('[data-block-list-item][tabindex="-1"]')) {
       row.focus({ preventScroll: true })
-      row.scrollIntoView?.({ block: 'nearest' })
+      row.scrollIntoView({ block: 'nearest' })
     }
   }, [isCursor])
   return rowRef
