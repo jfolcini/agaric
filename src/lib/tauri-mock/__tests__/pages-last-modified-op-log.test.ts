@@ -386,26 +386,20 @@ describe('list_pages_with_metadata — a compacted page falls back to its ULID c
   const CREATED = '2025-06-01T12:00:00.000Z'
   const COMPACTED = '01JWNNSVG00000000000000001'
 
+  const spaceRow = (blockId: string) => ({
+    block_id: blockId,
+    key: 'space',
+    value_text: null,
+    value_num: null,
+    value_date: null,
+    value_ref: SPACE,
+    value_bool: null,
+  })
+
   beforeEach(() => {
     seedWithBulkPages(0)
     blocks.set(COMPACTED, makeBlock(COMPACTED, 'page', 'Compacted', null, 200))
-    properties.set(
-      COMPACTED,
-      new Map([
-        [
-          'space',
-          {
-            block_id: COMPACTED,
-            key: 'space',
-            value_text: null,
-            value_num: null,
-            value_date: null,
-            value_ref: SPACE,
-            value_bool: null,
-          },
-        ],
-      ]),
-    )
+    properties.set(COMPACTED, new Map([['space', spaceRow(COMPACTED)]]))
   })
 
   it('reports the creation time instead of null', () => {
@@ -419,6 +413,18 @@ describe('list_pages_with_metadata — a compacted page falls back to its ULID c
       spec: { type: 'Range', start: '2025-06-01T00:00:00.000Z', end: '2025-06-02T00:00:00.000Z' },
     }
     expect(titlesOf(listPages([june]))).toEqual(['Compacted'])
+  })
+
+  // `ulid_created_ms_sql` decodes only a 26-char id with an uppercase ULID time.
+  it.each([
+    ['25 chars', '01JWNNSVG0000000000000001'],
+    ['lowercase', '01jwnnsvg00000000000000001'],
+  ])('a %s id with no op stays null, as on the backend', (_shape, id) => {
+    blocks.set(id, makeBlock(id, 'page', 'Not a ULID', null, 201))
+    properties.set(id, new Map([['space', spaceRow(id)]]))
+    const row = listPages().items.find((r) => r.id === id)
+    expect(row).toBeDefined()
+    expect(row?.lastModifiedAt).toBeNull()
   })
 
   it('sorts by its creation time, ahead of a page with no stamp at all', () => {
