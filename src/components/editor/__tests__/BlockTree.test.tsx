@@ -5447,6 +5447,63 @@ describe('BlockTree leaked-empty-block cleanup', () => {
     })
   })
 
+  // #5278 — a sync reload kept A's pre-sync text while A held focus. Leaving A
+  // without typing must show the synced text, or the next edit of A mounts
+  // the old text and its save reverts the peer's edit.
+  describe('a block a reload kept stale', () => {
+    function arrange(storeContent: string) {
+      // The mount-time load stays suppressed; only a reload sees the peer's text.
+      let mounted = false
+      mockBareBackend({
+        load_page_subtree: () =>
+          mounted
+            ? {
+                blocks: [
+                  makeBlock({ id: 'A', parent_id: 'PAGE_1', content: 'peer text', position: 0 }),
+                  makeBlock({ id: 'B', parent_id: 'PAGE_1', content: 'other', position: 1 }),
+                ],
+                truncated: false,
+                total: 2,
+              }
+            : Promise.reject(new Error('test: load suppressed')),
+      })
+      pageStore.setState({
+        blocks: [
+          makeBlock({ id: 'A', content: storeContent, position: 0 }),
+          makeBlock({ id: 'B', content: 'other', position: 1 }),
+        ],
+        loading: false,
+        staleFocusedBlock: { id: 'A', content: 'old text' },
+      })
+      useBlockStore.setState({ focusedBlockId: 'A' })
+      renderBlockTree()
+      mounted = true
+    }
+
+    it('reloads it once focus leaves with nothing typed', async () => {
+      arrange('old text')
+
+      await act(async () => {
+        useBlockStore.setState({ focusedBlockId: 'B' })
+      })
+
+      await waitFor(() => {
+        expect(pageStore.getState().blocksById.get('A')?.content).toBe('peer text')
+      })
+    })
+
+    it('keeps what the user typed', async () => {
+      arrange('typed over it')
+
+      await act(async () => {
+        useBlockStore.setState({ focusedBlockId: 'B' })
+      })
+      await act(async () => {})
+
+      expect(pageStore.getState().blocksById.get('A')?.content).toBe('typed over it')
+    })
+  })
+
   it('leaves the newly focused block untouched when it deletes the one just left', async () => {
     pageStore.setState({
       blocks: [

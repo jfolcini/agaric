@@ -186,6 +186,7 @@ export function createPageBlockStore(pageId: string): StoreApi<PageBlockState> {
     rootParentId: pageId,
     loading: true,
     truncatedTotal: null,
+    staleFocusedBlock: null,
 
     getBlockById: (id: string) => get().blocksById.get(id),
 
@@ -289,10 +290,15 @@ export function createPageBlockStore(pageId: string): StoreApi<PageBlockState> {
         // Preserve focused block's content during sync reload to prevent
         // visual flash and store/editor divergence
         const focusedBlockId = useBlockStore.getState().focusedBlockId
+        let staleFocusedBlock: PageBlockState['staleFocusedBlock'] = null
         if (focusedBlockId) {
           const currentBlock = get().blocksById.get(focusedBlockId)
           if (currentBlock) {
-            if (newBlocks.some((b) => b.id === focusedBlockId)) {
+            const fresh = newBlocks.find((b) => b.id === focusedBlockId)
+            if (fresh) {
+              if (fresh.content !== currentBlock.content) {
+                staleFocusedBlock = { id: focusedBlockId, content: currentBlock.content }
+              }
               newBlocks = newBlocks.map((b) =>
                 b.id === focusedBlockId ? { ...b, content: currentBlock.content } : b,
               )
@@ -364,6 +370,7 @@ export function createPageBlockStore(pageId: string): StoreApi<PageBlockState> {
           blocksById: buildBlocksById(newBlocks),
           loading: false,
           truncatedTotal,
+          staleFocusedBlock,
         })
         logger.debug('page-blocks', 'page loaded', {
           pageId: rootParentId ?? '',

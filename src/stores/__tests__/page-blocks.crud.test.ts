@@ -336,6 +336,25 @@ describe('PageBlockStore', () => {
       expect(result.find((b) => b.id === 'A')?.content).toBe('user is typing here')
       // Non-focused block B should be updated from backend
       expect(result.find((b) => b.id === 'B')?.content).toBe('updated B from backend')
+      // #5278 — and the kept copy is recorded, so leaving A reloads it.
+      expect(store.getState().staleFocusedBlock).toEqual({
+        id: 'A',
+        content: 'user is typing here',
+      })
+    })
+
+    it('records no stale copy when the focused block matches the backend (#5278)', async () => {
+      const blockA = makeBlock({ id: 'A', parent_id: 'PAGE_1', content: 'same text' })
+      store.setState({ blocks: [blockA], staleFocusedBlock: { id: 'A', content: 'older text' } })
+      mockGlobalBlockState = { focusedBlockId: 'A', selectedBlockIds: [] }
+      stubInvoke(mockedInvoke, {
+        load_page_subtree: () =>
+          subtreeResp([makeBlock({ id: 'A', parent_id: 'PAGE_1', content: 'same text' })]),
+      })
+
+      await store.getState().load()
+
+      expect(store.getState().staleFocusedBlock).toBeNull()
     })
 
     it('updates non-focused blocks from backend during sync reload', async () => {

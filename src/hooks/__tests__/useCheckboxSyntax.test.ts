@@ -164,6 +164,7 @@ describe('useCheckboxSyntax', () => {
       rootParentId: 'R1',
       loading: false,
       truncatedTotal: null,
+      staleFocusedBlock: null,
       getBlockById: (id: string) => initialBlocks.find((b) => b.id === id),
       load: vi.fn(),
       createBelow: vi.fn(),
