@@ -1,35 +1,16 @@
 /**
- * Composite hook that wraps `useListKeyboardNavigation` with the
- * scroll-into-view pattern used by every keyboard-navigable list
- * panel in the app (DonePanel, DuePanel).
- *
- * Why a separate hook? The keyboard primitive only manages
- * `focusedIndex` + a key-event handler. Every consumer additionally
- * needs:
- *
- *   1. A list-container ref so the focus check can determine whether
- *      the user is actively keyboard-navigating.
- *   2. A `useEffect` that scrolls the focused item into view when
- *      focus is inside the list (avoids hijacking scroll position
- *      when focus is elsewhere).
- *
- * Item lookup uses a CSS selector (default `[data-block-list-item]`)
- * scoped under `listRef`. This matches the existing DOM-attribute
- * convention used by the agenda panels and avoids forcing every
- * caller to thread per-item refs.
- *
- * Honours `prefers-reduced-motion`: when the caller opts into smooth
- * scrolling via `scrollBehavior: 'smooth'`, the hook downgrades to
- * `'auto'` if the OS reports a reduced-motion preference.
+ * The keyboard primitive (`useListKeyboardNavigation`) plus the list-container
+ * ref every keyboard-navigable agenda panel (DonePanel, DuePanel) attaches.
+ * Scrolling belongs to the rows: `useRovingRowFocus` focuses the cursor row and
+ * scrolls it into view.
  */
 
-import { type Dispatch, type RefObject, type SetStateAction, useEffect, useRef } from 'react'
+import { type Dispatch, type RefObject, type SetStateAction, useRef } from 'react'
 
 import {
   type UseListKeyboardNavigationOptions,
   useListKeyboardNavigation,
 } from '@/hooks/useListKeyboardNavigation'
-import { shouldReduceMotion } from '@/lib/preferences'
 
 export interface UseKeyboardNavigableListOptions {
   /** Enable Home/End keys (default: false). */
@@ -50,18 +31,6 @@ export interface UseKeyboardNavigableListOptions {
    * clamp (see `useListKeyboardNavigation`).
    */
   resetKey?: unknown
-  /**
-   * CSS selector that identifies items inside `listRef` for the
-   * scroll-into-view effect. Default: `[data-block-list-item]`.
-   */
-  itemSelector?: string
-  /**
-   * Scroll behavior passed to `Element.scrollIntoView`. When set to
-   * `'smooth'`, the hook downgrades to `'auto'` under
-   * `prefers-reduced-motion: reduce`. Default: undefined (browser
-   * default).
-   */
-  scrollBehavior?: ScrollBehavior
 }
 
 export interface UseKeyboardNavigableListReturn<T extends HTMLElement = HTMLElement> {
@@ -73,23 +42,12 @@ export interface UseKeyboardNavigableListReturn<T extends HTMLElement = HTMLElem
   listRef: RefObject<T | null>
 }
 
-const DEFAULT_ITEM_SELECTOR = '[data-block-list-item]'
-
 export function useKeyboardNavigableList<T extends HTMLElement = HTMLElement>(
   itemCount: number,
   onSelect: (index: number) => void,
   options?: UseKeyboardNavigableListOptions,
 ): UseKeyboardNavigableListReturn<T> {
-  const {
-    homeEnd,
-    pageUpDown,
-    pageSize,
-    wrap,
-    horizontal,
-    resetKey,
-    itemSelector = DEFAULT_ITEM_SELECTOR,
-    scrollBehavior,
-  } = options ?? {}
+  const { homeEnd, pageUpDown, pageSize, wrap, horizontal, resetKey } = options ?? {}
 
   const listRef = useRef<T | null>(null)
 
@@ -105,26 +63,6 @@ export function useKeyboardNavigableList<T extends HTMLElement = HTMLElement>(
   }
 
   const { focusedIndex, setFocusedIndex, handleKeyDown } = useListKeyboardNavigation(navOptions)
-
-  // Scroll the focused item into view, but only when focus is actually inside
-  // the list — avoids hijacking the page's scroll position when the user
-  // isn't actively keyboard-navigating (e.g. on initial mount or when a
-  // filter change resets focusedIndex while focus is elsewhere).
-  // The focused item, not the Nth one: a virtualised list mounts only a window
-  // of its items. A mounted cursor row has already taken focus in its own
-  // effect (`useRovingRowFocus`; child effects run first). After a jump past
-  // the window, focus is still on the previous row; the virtualizer scrolls to
-  // the cursor row.
-  useEffect(() => {
-    const el = document.activeElement
-    if (!el?.matches(itemSelector) || !listRef.current?.contains(el)) return
-
-    const reduced = shouldReduceMotion()
-    const behavior: ScrollBehavior | undefined =
-      scrollBehavior === 'smooth' && reduced ? 'auto' : scrollBehavior
-
-    el.scrollIntoView(behavior ? { block: 'nearest', behavior } : { block: 'nearest' })
-  }, [focusedIndex, itemSelector, scrollBehavior])
 
   return { focusedIndex, setFocusedIndex, handleKeyDown, listRef }
 }
