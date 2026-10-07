@@ -1,6 +1,9 @@
 import { useInfiniteQuery } from '@tanstack/react-query'
 import { useCallback, useMemo } from 'react'
 
+import { useBlockPropertyEvents } from '@/hooks/useBlockPropertyEvents'
+import { useInvalidateOnCounter } from '@/hooks/useInvalidateOnCounter'
+import { useInvalidateOnGraphStructure } from '@/hooks/useInvalidateOnGraphStructure'
 import { unwrap } from '@/lib/app-error'
 import type { BlockRow, FilterExpr, PropertyFilter as WirePropertyFilter } from '@/lib/bindings'
 import { commands } from '@/lib/bindings'
@@ -29,6 +32,8 @@ interface UseQueryExecutionResult {
   hasMore: boolean
   loadingMore: boolean
   pageTitles: Map<string, string>
+  /** When the results last arrived; moves on every fetch, even one returning the same rows. */
+  resultsUpdatedAt: number
   handleLoadMore: () => void
   fetchResults: () => void
 }
@@ -314,6 +319,17 @@ export function useQueryExecution(options: UseQueryExecutionOptions): UseQueryEx
   const { expression } = options
   const currentSpaceId = useSpaceStore((s) => s.currentSpaceId)
 
+  // A tick, an edit or a peer's write elsewhere changes what the query matches
+  // while its block stays mounted (#5298). Both refresh axes invalidate this
+  // prefix rather than joining the key; see `useInvalidateOnCounter`.
+  const invalidationPrefix = useMemo(
+    () => ['queryExecution', currentSpaceId, expression],
+    [currentSpaceId, expression],
+  )
+  const { invalidationKey } = useBlockPropertyEvents()
+  useInvalidateOnGraphStructure(invalidationPrefix)
+  useInvalidateOnCounter(invalidationKey, invalidationPrefix)
+
   // #2596 pilot (proof point 2) — the hand-rolled infinite query (manual
   // cursor state + `useRef` monotonic race-guard + `useState`
   // loading/error/hasMore) is now a TanStack `useInfiniteQuery`. TanStack owns
@@ -324,6 +340,7 @@ export function useQueryExecution(options: UseQueryExecutionOptions): UseQueryEx
   // `QueryClientProvider` ancestor is required (see `query-client.ts`).
   const {
     data,
+    dataUpdatedAt,
     error: queryError,
     isLoading,
     isFetchingNextPage,
@@ -421,6 +438,7 @@ export function useQueryExecution(options: UseQueryExecutionOptions): UseQueryEx
     hasMore: hasNextPage,
     loadingMore: isFetchingNextPage,
     pageTitles,
+    resultsUpdatedAt: dataUpdatedAt,
     handleLoadMore,
     fetchResults,
   }

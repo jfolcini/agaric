@@ -3,6 +3,8 @@
  *
  *  - Renders Title + textarea + Capture / Cancel buttons.
  *  - Submitting via Capture button calls `quick_capture_block` and closes.
+ *  - A capture reloads the open journal page and bumps the graph / calendar
+ *    signals; a failed one reloads nothing (#5291).
  *  - Submitting via Cmd / Ctrl + Enter mirrors button submit.
  *  - Cancel button closes without invoking the IPC.
  *  - Empty / whitespace-only submissions are blocked (button disabled).
@@ -12,8 +14,8 @@
  *  - axe(container) accessibility audit.
  */
 
-import { invoke } from '@tauri-apps/api/core'
-import { render, screen, waitFor } from '@testing-library/react'
+import { type InvokeArgs, invoke } from '@tauri-apps/api/core'
+import { act, render, renderHook, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { toast } from 'sonner'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
@@ -22,8 +24,13 @@ import { axe } from 'vitest-axe'
 import { makeBlockRow } from '@/__tests__/fixtures'
 import { type CommandReturns, deferred, stubInvoke } from '@/__tests__/helpers/invoke'
 import { QuickCaptureDialog } from '@/components/dialogs/QuickCaptureDialog'
+import { useCalendarPageDatesEpoch } from '@/hooks/useCalendarPageDates'
 import { useIsMobile } from '@/hooks/useIsMobile'
+import { getGraphStructureKey } from '@/lib/graph-structure-events'
 import { t } from '@/lib/i18n'
+import { dispatch } from '@/lib/tauri-mock/handlers'
+import { SEED_IDS, seedBlocks } from '@/lib/tauri-mock/seed'
+import { getPageStore, PageBlockStoreProvider } from '@/stores/page-blocks'
 import { useSpaceStore } from '@/stores/space'
 
 // The dialog swaps to a bottom Sheet via `useDialogOrSheet`
@@ -50,6 +57,10 @@ beforeEach(() => {
     availableSpaces: [{ id: 'SPACE_PERSONAL', name: 'Personal', accent_color: null }],
     isReady: true,
   })
+  // A capture reloads the views it touched, so route IPC through the in-memory
+  // backend; a test that needs a failure overrides it.
+  seedBlocks()
+  mockedInvoke.mockImplementation(async (cmd: string, args?: InvokeArgs) => dispatch(cmd, args))
 })
 
 describe('QuickCaptureDialog', () => {
@@ -81,10 +92,6 @@ describe('QuickCaptureDialog', () => {
   it('clicking Capture invokes quick_capture_block with the trimmed content and closes the dialog', async () => {
     const user = userEvent.setup()
     const onOpenChange = vi.fn()
-    stubInvoke(mockedInvoke, {
-      quick_capture_block: () =>
-        makeBlockRow({ id: 'BLK_X', content: 'captured', parent_id: 'PARENT' }),
-    })
 
     render(<QuickCaptureDialog open onOpenChange={onOpenChange} />)
 
@@ -105,10 +112,6 @@ describe('QuickCaptureDialog', () => {
   it('Cmd/Ctrl + Enter submits the same as the Capture button', async () => {
     const user = userEvent.setup()
     const onOpenChange = vi.fn()
-    stubInvoke(mockedInvoke, {
-      quick_capture_block: () =>
-        makeBlockRow({ id: 'BLK_Y', content: 'hotkey-submit', parent_id: 'PARENT' }),
-    })
 
     render(<QuickCaptureDialog open onOpenChange={onOpenChange} />)
     const textarea = screen.getByTestId('quick-capture-textarea')
@@ -162,7 +165,9 @@ describe('QuickCaptureDialog', () => {
   it('shows an in-flight Spinner in the Capture button while the capture is pending', async () => {
     const user = userEvent.setup()
     const capture = deferred<CommandReturns['quick_capture_block']>()
-    stubInvoke(mockedInvoke, { quick_capture_block: () => capture.promise })
+    mockedInvoke.mockImplementation(async (cmd: string, args?: InvokeArgs) =>
+      cmd === 'quick_capture_block' ? capture.promise : dispatch(cmd, args),
+    )
 
     render(<QuickCaptureDialog open onOpenChange={() => {}} />)
     await user.type(screen.getByTestId('quick-capture-textarea'), 'pending capture')
@@ -177,6 +182,68 @@ describe('QuickCaptureDialog', () => {
     capture.resolve(
       makeBlockRow({ id: 'BLK_PENDING', content: 'pending capture', parent_id: 'PARENT' }),
     )
+  })
+
+  describe('after the capture settles (#5291)', () => {
+    const CAPTURED = 'call Bob about the lease'
+
+    async function renderOverLoadedDailyPage() {
+      render(
+        <>
+          <PageBlockStoreProvider pageId={SEED_IDS.PAGE_DAILY}>{null}</PageBlockStoreProvider>
+          <QuickCaptureDialog open onOpenChange={() => {}} />
+        </>,
+      )
+      const store = getPageStore(SEED_IDS.PAGE_DAILY)
+      if (!store) throw new Error('the daily page store did not register')
+      await act(() => store.getState().load())
+      return () => store.getState().blocks.map((b) => b.content)
+    }
+
+    async function capture(text: string) {
+      const user = userEvent.setup()
+      await user.type(screen.getByTestId('quick-capture-textarea'), text)
+      await user.click(screen.getByTestId('quick-capture-save'))
+    }
+
+    it('reloads the open page and bumps the graph and journal-date signals', async () => {
+      const dailyContents = await renderOverLoadedDailyPage()
+      expect(dailyContents()).not.toContain(CAPTURED)
+      const graphKeyBefore = getGraphStructureKey()
+      const epoch = renderHook(() => useCalendarPageDatesEpoch())
+      const epochBefore = epoch.result.current
+
+      await capture(CAPTURED)
+
+      await waitFor(() => expect(dailyContents()).toContain(CAPTURED))
+      await waitFor(() => expect(epoch.result.current).toBe(epochBefore + 1))
+      await waitFor(() => expect(getGraphStructureKey()).toBe(graphKeyBefore + 1))
+    })
+
+    it('reloads nothing when the capture fails', async () => {
+      mockedInvoke.mockImplementation(async (cmd: string, args?: InvokeArgs) => {
+        if (cmd === 'quick_capture_block') throw new Error('disk full')
+        return dispatch(cmd, args)
+      })
+      const dailyContents = await renderOverLoadedDailyPage()
+      // Lands in the backend behind the store's back, so only a reload shows it.
+      dispatch('create_block', {
+        blockType: 'content',
+        content: 'written elsewhere',
+        parentId: SEED_IDS.PAGE_DAILY,
+      })
+      const epoch = renderHook(() => useCalendarPageDatesEpoch())
+      const epochBefore = epoch.result.current
+
+      await capture(CAPTURED)
+
+      await waitFor(() => {
+        expect(mockedToastError).toHaveBeenCalledWith(t('quickCapture.failureToast'))
+      })
+      await waitFor(() => expect(screen.getByTestId('quick-capture-save')).toBeEnabled())
+      expect(dailyContents()).not.toContain('written elsewhere')
+      expect(epoch.result.current).toBe(epochBefore)
+    })
   })
 
   it('whitespace-only content keeps the Capture button disabled', async () => {

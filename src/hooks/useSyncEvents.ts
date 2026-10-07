@@ -30,6 +30,7 @@ import { logger } from '@/lib/logger'
 import { invalidateNameCaches } from '@/lib/name-change-bus'
 import { notify } from '@/lib/notify'
 import { isPairingWindowRejection } from '@/lib/pairing-rejections'
+import { invalidatePropertyCaches } from '@/lib/property-caches'
 import { forEachLivePageStoreGroup } from '@/stores/page-blocks'
 import { renamePage } from '@/stores/page-rename'
 import { selectRecentPagesForSpace, useRecentPagesStore } from '@/stores/recent-pages'
@@ -129,14 +130,14 @@ function retitleHeldPages(targeted: ReadonlySet<string> | null, spaceId: string 
  * owning-page ids touched by an out-of-band write (a remote sync session or an
  * MCP write), reload + undo-re-anchor ONLY the mounted page stores whose id is
  * in the set, then run one resolve-cache preload and bump the graph-structure
- * signal.
+ * signal. `QuickCaptureDialog` calls it for its own write too (#5291).
  *
  * FALLBACK: when `changedPageIds` is absent or empty (an older peer, the
  * snapshot-catch-up path, or an MCP write whose block had no resolvable page
  * ancestor) reload EVERY mounted store plus a full preload — when in doubt we
  * fall back rather than risk a missed update.
  */
-function reloadChangedPageStores(changedPageIds?: string[]): void {
+export function reloadChangedPageStores(changedPageIds?: string[]): void {
   const reanchorUndo = useUndoStore.getState().reanchorAfterRemoteOps
   const targeted =
     Array.isArray(changedPageIds) && changedPageIds.length > 0 ? new Set(changedPageIds) : null
@@ -193,6 +194,7 @@ function reloadChangedPageStores(changedPageIds?: string[]): void {
   // #5256 — and task state: a peer's DONE or an MCP `add_tag` fires no
   // `block:properties-changed` here, which is all the task panels refetch on.
   recordBlockPropertyChange()
+  invalidatePropertyCaches()
 
   // #5258 — and pages themselves: the Pages list, and a journal day's page.
   invalidatePageBrowserData()
@@ -208,6 +210,10 @@ function reloadChangedPageStores(changedPageIds?: string[]): void {
   // next picker read re-fetch, exactly as the resolve preload above does for
   // chip titles.
   invalidateNameCaches()
+
+  // #5283 — and spaces: a peer can create, rename, recolour or delete one. The
+  // refresh never rejects, and it moves off an active space a peer deleted.
+  void useSpaceStore.getState().refreshAvailableSpaces()
 }
 
 /**

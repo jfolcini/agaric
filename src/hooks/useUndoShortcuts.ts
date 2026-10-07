@@ -29,6 +29,7 @@ import { t as translate } from '@/lib/i18n'
 import { isEditableTarget, matchesShortcutBinding } from '@/lib/keyboard-config'
 import { invalidateNameCaches } from '@/lib/name-change-bus'
 import { notify } from '@/lib/notify'
+import { invalidatePropertyCaches } from '@/lib/property-caches'
 import { useBlockStore } from '@/stores/blocks'
 import { useNavigationStore } from '@/stores/navigation'
 import { getPageStore } from '@/stores/page-blocks'
@@ -79,6 +80,7 @@ import { useUndoStore } from '@/stores/undo'
 async function refreshAfterUndoRedo(pageId: string, spaceId: string | null): Promise<void> {
   await getPageStore(pageId)?.getState().load()
   invalidateNameCaches()
+  invalidatePropertyCaches()
   try {
     const pageBlock = unwrap(await commands.getBlock(pageId))
     if (pageBlock?.content) {

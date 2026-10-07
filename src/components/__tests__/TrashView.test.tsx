@@ -337,6 +337,48 @@ describe('TrashView', () => {
     })
   })
 
+  it("purging a page drops its earlier-trashed blocks' rows too (#5297)", async () => {
+    const user = userEvent.setup()
+    const page = makeBlock({
+      id: 'P1',
+      block_type: 'page',
+      content: 'Page P',
+      deleted_at: 1736899300000,
+    })
+    const earlier = makeBlock({
+      id: 'B1',
+      content: 'block B',
+      parent_id: 'P1',
+      deleted_at: 1736899200000,
+    })
+    let purged = false
+    stubInvoke({
+      list_trash: () => ({
+        items: purged ? [] : [page, earlier],
+        next_cursor: null,
+        has_more: false,
+        total_count: null,
+      }),
+      batch_resolve: () => [],
+      purge_block: () => {
+        // The backend erases the whole subtree, whatever each row's deleted_at.
+        purged = true
+        return { block_id: 'P1', purged_count: 2 }
+      },
+      trash_descendant_counts: () => ({}),
+    })
+
+    render(<TrashView />)
+    expect(await screen.findByText('block B')).toBeInTheDocument()
+
+    await user.click(screen.getAllByRole('button', { name: /^Purge$/i })[0] as HTMLElement)
+    await user.click(screen.getByRole('button', { name: /Yes/i }))
+
+    await waitFor(() => {
+      expect(screen.queryByText('block B')).not.toBeInTheDocument()
+    })
+  })
+
   it('shows Load More button when has_more is true', async () => {
     mockListAndResolve(
       [makeBlock({ id: 'B1', content: 'item 1', deleted_at: 1736899200000 })],
@@ -451,10 +493,19 @@ describe('TrashView', () => {
   it('removes block from list after successful restore', async () => {
     const user = userEvent.setup()
     const block = makeBlock({ id: 'B1', content: 'to restore', deleted_at: 1736899200000 })
+    let restored = false
     stubInvoke({
-      list_trash: () => ({ items: [block], next_cursor: null, has_more: false, total_count: null }),
+      list_trash: () => ({
+        items: restored ? [] : [block],
+        next_cursor: null,
+        has_more: false,
+        total_count: null,
+      }),
       batch_resolve: () => [],
-      restore_block: () => ({ block_id: 'B1', restored_count: 1 }),
+      restore_block: () => {
+        restored = true
+        return { block_id: 'B1', restored_count: 1 }
+      },
       trash_descendant_counts: () => ({}),
     })
 
@@ -503,18 +554,36 @@ describe('TrashView', () => {
     }
   })
 
-  it('does NOT invalidate the picker name caches for a non-page/tag restore (#4007)', async () => {
+  // #5295 — a block trashed before its page lists as its own row, and its
+  // restore brings the page back too (the #1884 ancestor walk). The page's row
+  // must leave the list, and the pickers must offer the page again.
+  it('restoring a block that brings its page back drops the page row and the picker name caches (#5295)', async () => {
     const user = userEvent.setup()
     const block = makeBlock({
       id: 'B1',
-      content: 'a plain block',
-      block_type: 'content',
+      content: 'block B',
+      parent_id: 'P1',
       deleted_at: 1736899200000,
     })
+    const page = makeBlock({
+      id: 'P1',
+      block_type: 'page',
+      content: 'Page P',
+      deleted_at: 1736899300000,
+    })
+    let restored = false
     stubInvoke({
-      list_trash: () => ({ items: [block], next_cursor: null, has_more: false, total_count: null }),
+      list_trash: () => ({
+        items: restored ? [] : [block, page],
+        next_cursor: null,
+        has_more: false,
+        total_count: null,
+      }),
       batch_resolve: () => [],
-      restore_block: () => ({ block_id: 'B1', restored_count: 1 }),
+      restore_block: () => {
+        restored = true
+        return { block_id: 'B1', restored_count: 1 }
+      },
       trash_descendant_counts: () => ({}),
     })
 
@@ -522,12 +591,17 @@ describe('TrashView', () => {
     const unsubscribe = subscribeToNameChanges((c) => changes.push(c))
     try {
       render(<TrashView />)
-      await user.click(await screen.findByTestId('trash-restore-btn'))
+      expect(await screen.findByText('Page P')).toBeInTheDocument()
+      await user.click(screen.getAllByTestId('trash-restore-btn')[0] as HTMLElement)
 
-      // The pickers only offer pages and tags — a content block coming back
-      // must not cost a full re-fetch of both name lists.
-      await waitFor(() => expect(toast.success).toHaveBeenCalled())
-      expect(changes).toEqual([])
+      await waitFor(() => {
+        expect(screen.queryByText('Page P')).not.toBeInTheDocument()
+      })
+      expect(mockedInvoke).toHaveBeenCalledWith('restore_block', {
+        blockId: 'B1',
+        deletedAtRef: 1736899200000,
+      })
+      expect(changes).toEqual([{ kind: 'invalidated' }])
     } finally {
       unsubscribe()
     }
@@ -675,10 +749,19 @@ describe('TrashView', () => {
   it('shows success toast after successful restore', async () => {
     const user = userEvent.setup()
     const block = makeBlock({ id: 'B1', content: 'to restore', deleted_at: 1736899200000 })
+    let restored = false
     stubInvoke({
-      list_trash: () => ({ items: [block], next_cursor: null, has_more: false, total_count: null }),
+      list_trash: () => ({
+        items: restored ? [] : [block],
+        next_cursor: null,
+        has_more: false,
+        total_count: null,
+      }),
       batch_resolve: () => [],
-      restore_block: () => ({ block_id: 'B1', restored_count: 1 }),
+      restore_block: () => {
+        restored = true
+        return { block_id: 'B1', restored_count: 1 }
+      },
       trash_descendant_counts: () => ({}),
     })
 
@@ -748,10 +831,19 @@ describe('TrashView', () => {
       content: 'content text',
       deleted_at: 1736942400000,
     })
+    let restored = false
     stubInvoke({
-      list_trash: () => ({ items: [block], next_cursor: null, has_more: false, total_count: null }),
+      list_trash: () => ({
+        items: restored ? [] : [block],
+        next_cursor: null,
+        has_more: false,
+        total_count: null,
+      }),
       batch_resolve: () => [],
-      restore_block: () => ({ block_id: 'C1', restored_count: 1 }),
+      restore_block: () => {
+        restored = true
+        return { block_id: 'C1', restored_count: 1 }
+      },
       trash_descendant_counts: () => ({}),
     })
 
@@ -941,6 +1033,30 @@ describe('TrashView', () => {
 
     // #4963 — the restored blocks are graph nodes/edges again.
     await waitFor(() => expect(getGraphStructureKey()).toBe(1))
+  })
+
+  // #5295 — a content block's restore can bring its trashed page back too.
+  it('batch restore of a content block drops the picker name caches (#5295)', async () => {
+    const user = userEvent.setup()
+    const block = makeBlock({ id: 'B1', content: 'item 1', deleted_at: 1736899200000 })
+    stubInvoke({
+      list_trash: () => ({ items: [block], next_cursor: null, has_more: false, total_count: null }),
+      batch_resolve: () => [],
+      restore_blocks_by_ids: () => ({ affected_count: 1 }),
+      trash_descendant_counts: () => ({}),
+    })
+
+    const changes: NameChange[] = []
+    const unsubscribe = subscribeToNameChanges((c) => changes.push(c))
+    try {
+      render(<TrashView />)
+      await user.click(await screen.findByTestId('trash-item-checkbox'))
+      await user.click(screen.getByRole('button', { name: /Restore selected/i }))
+
+      await waitFor(() => expect(changes).toEqual([{ kind: 'invalidated' }]))
+    } finally {
+      unsubscribe()
+    }
   })
 
   // #3860 — `trash.batchRestored` had the same missing-plural defect; pins

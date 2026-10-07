@@ -9,6 +9,7 @@ import { mapBackendState, useSyncEvents } from '@/hooks/useSyncEvents'
 import { getBlockPropertyInvalidationKey } from '@/lib/block-property-events'
 import type { NameChange } from '@/lib/name-change-bus'
 import { subscribeToNameChanges } from '@/lib/name-change-bus'
+import { propertyKeysQueryKey } from '@/lib/property-keys-cache'
 import { queryClient } from '@/lib/query-client'
 import { useRecentPagesStore } from '@/stores/recent-pages'
 import type { Tab } from '@/stores/tabs'
@@ -160,9 +161,14 @@ vi.mock('@/stores/resolve', () => ({
 // `useSyncEvents.preload(spaceId, true)` reads
 // `useSpaceStore.currentSpaceId`. Mock with a deterministic
 // active-space id so the test asserts the spaceId arg is forwarded.
+const mockRefreshSpaces = vi.hoisted(() => vi.fn(async () => {}))
+
 vi.mock('@/stores/space', () => ({
   useSpaceStore: {
-    getState: vi.fn(() => ({ currentSpaceId: 'SPACE_TEST' })),
+    getState: vi.fn(() => ({
+      currentSpaceId: 'SPACE_TEST',
+      refreshAvailableSpaces: mockRefreshSpaces,
+    })),
     // The tabs and recents stores attach a space-switch subscriber on import.
     subscribe: vi.fn(() => () => {}),
   },
@@ -609,6 +615,28 @@ describe('useSyncEvents', () => {
       unmount()
     })
 
+    it('refreshes the space list when blocks changed (#5283)', async () => {
+      const { unmount } = renderHook(() => useSyncEvents())
+      await vi.waitFor(() => {
+        expect(mockListen).toHaveBeenCalledTimes(3)
+      })
+      mockRefreshSpaces.mockClear()
+
+      getListenerCallback('sync:complete')({
+        payload: {
+          type: 'complete',
+          remote_device_id: 'device-42',
+          ops_received: 5,
+          ops_sent: 0,
+          changed_blocks: 5,
+          changed_page_ids: ['PAGE_1'],
+        },
+      })
+
+      expect(mockRefreshSpaces).toHaveBeenCalledTimes(1)
+      unmount()
+    })
+
     it('does NOT invalidate the picker name caches on a converged no-op sync (#4007/#4305)', async () => {
       const changes: NameChange[] = []
       const unsubscribe = subscribeToNameChanges((c) => changes.push(c))
@@ -984,6 +1012,19 @@ describe('useSyncEvents', () => {
       unmount()
     })
 
+    it('refreshes the space list (#5283)', async () => {
+      const { unmount } = renderHook(() => useSyncEvents())
+      await vi.waitFor(() => {
+        expect(mockListen).toHaveBeenCalledTimes(3)
+      })
+      mockRefreshSpaces.mockClear()
+
+      getListenerCallback('blocks:changed')({ payload: { changed_page_ids: ['PAGE_1'] } })
+
+      expect(mockRefreshSpaces).toHaveBeenCalledTimes(1)
+      unmount()
+    })
+
     // #4007 — an MCP write is out-of-band exactly like an inbound sync: no
     // local surface announces its renames/deletes on the name-change bus.
     it('invalidates the picker name caches (#4007)', async () => {
@@ -1290,6 +1331,16 @@ describe('useSyncEvents', () => {
         expect(getBlockPropertyInvalidationKey()).toBe(before + 1)
       })
 
+      unmount()
+    })
+
+    it('marks the property key and value lists stale (#5296)', async () => {
+      const keys = propertyKeysQueryKey('SPACE_TEST')
+      queryClient.setQueryData(keys, ['status'])
+
+      const { unmount } = await fire(['PAGE_1'])
+
+      expect(queryClient.getQueryState(keys)?.isInvalidated).toBe(true)
       unmount()
     })
 

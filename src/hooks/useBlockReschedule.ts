@@ -23,6 +23,7 @@ import { useCallback } from 'react'
 import { unwrap } from '@/lib/app-error'
 import { commands } from '@/lib/bindings'
 import { logger } from '@/lib/logger'
+import { forEachPageStore, storeOwnsBlock } from '@/stores/page-blocks'
 
 export type RescheduleField = 'due_date' | 'scheduled_date'
 
@@ -47,10 +48,22 @@ export interface UseBlockRescheduleReturn {
    * On `getBlock` failure (block not found, IPC drop, …) the lookup
    * is logged at `warn` level and we fall back to `due_date`. The
    * returned `field` reflects the field actually written so callers
-   * can branch their toast / announce copy. Throws if the underlying
-   * setter fails.
+   * can branch their toast / announce copy. On success the written
+   * field is patched into every mounted page store that owns the block.
+   * Throws if the underlying setter fails, leaving those stores untouched.
    */
   reschedule: (blockId: string, date: string) => Promise<RescheduleResult>
+}
+
+// Date chips read the native date column from the page store, and no
+// `block:properties-changed` target writes native columns back into it (#5288).
+function patchOwningPageStores(blockId: string, field: RescheduleField, date: string): void {
+  forEachPageStore((_pageId, store) => {
+    if (!storeOwnsBlock(store, blockId)) return
+    store.setState((s) => ({
+      blocks: s.blocks.map((b) => (b.id === blockId ? { ...b, [field]: date } : b)),
+    }))
+  })
 }
 
 export function useBlockReschedule(): UseBlockRescheduleReturn {
@@ -88,12 +101,11 @@ export function useBlockReschedule(): UseBlockRescheduleReturn {
           err,
         )
       }
-      if (useScheduledDate) {
-        await setScheduled(blockId, date)
-        return { field: 'scheduled_date' }
-      }
-      await setDue(blockId, date)
-      return { field: 'due_date' }
+      const field: RescheduleField = useScheduledDate ? 'scheduled_date' : 'due_date'
+      if (useScheduledDate) await setScheduled(blockId, date)
+      else await setDue(blockId, date)
+      patchOwningPageStores(blockId, field, date)
+      return { field }
     },
     [setDue, setScheduled],
   )

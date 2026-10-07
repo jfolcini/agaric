@@ -774,8 +774,8 @@ async fn require_reverse_attachment_bytes(
 ///
 /// The callers only `enqueue_background(op_record)`, which yields
 /// `UpdateFtsBlock` / `RemoveFtsBlock` / `ReindexBlockLinks` for the SEED, and
-/// `RebuildFtsIndex` is a member of neither `FULL_CACHE_REBUILD_TASKS` nor
-/// `CONTENT_RESTORE_REBUILD_TASKS` — so nothing else reaches a cascade's
+/// `RebuildFtsIndex` is not a member of `FULL_CACHE_REBUILD_TASKS` — so
+/// nothing else reaches a cascade's
 /// descendants. Without this an undone delete restores a subtree the user
 /// cannot find until the next boot rebuild, and a reference written to a
 /// restored DESCENDANT while it was trashed stays unresolved (the repair the
@@ -5627,8 +5627,8 @@ mod tests {
     // #4733 — the reverse path owes the same cohort fan-out the command
     // sites run. `apply_reverse_in_tx` cascades a whole subtree, but its
     // callers only `enqueue_background(op_record)`, which reaches the SEED;
-    // `RebuildFtsIndex` is in neither `FULL_CACHE_REBUILD_TASKS` nor
-    // `CONTENT_RESTORE_REBUILD_TASKS`, so nothing else gets there. Before
+    // `RebuildFtsIndex` is not in `FULL_CACHE_REBUILD_TASKS`, so nothing else
+    // gets there. Before
     // #4733 the restore half survived by accident — the matching delete left
     // the descendants' rows in place — and the moment the delete started
     // removing them, undoing it restored a subtree the user could not find

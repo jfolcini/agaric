@@ -45,6 +45,8 @@ import {
 } from '@/lib/graph-structure-events'
 import { t } from '@/lib/i18n'
 import { logger } from '@/lib/logger'
+import { propertyKeysQueryKey } from '@/lib/property-keys-cache'
+import { queryClient } from '@/lib/query-client'
 import { useRecentPagesStore } from '@/stores/recent-pages'
 import { useResolveStore } from '@/stores/resolve'
 import { useSpaceStore } from '@/stores/space'
@@ -82,7 +84,11 @@ let historyHandlers: TypedInvokeHandlers = {}
 
 function stubHistory(extra: TypedInvokeHandlers = {}): void {
   historyHandlers = { ...historyHandlers, ...extra }
-  stubInvoke(mockedInvoke, historyHandlers)
+  // A successful revert reloads like a sync, which refreshes the space list.
+  stubInvoke(mockedInvoke, {
+    list_spaces: () => useSpaceStore.getState().availableSpaces,
+    ...historyHandlers,
+  })
 }
 
 /**
@@ -953,6 +959,32 @@ describe('HistoryView', () => {
 
     await waitFor(() => {
       expect(getGraphStructureKey()).toBe(1)
+    })
+  })
+
+  // A reverted `set_property` can add or remove a key, and fires no property event.
+  it('marks the property key and value lists stale after a successful revert (#5296)', async () => {
+    const user = userEvent.setup()
+    const page1 = {
+      items: [makeHistoryEntry(1, 'edit_block', { to_text: 'status:: active' }, 1736942400000)],
+      next_cursor: null,
+      has_more: false,
+      total_count: null,
+    }
+    stubRevertRun(page1, () => [])
+    const keys = propertyKeysQueryKey('SPACE_TEST')
+    queryClient.setQueryData(keys, ['status'])
+
+    render(<HistoryView />)
+    await screen.findByText('status:: active')
+
+    const items = screen.getAllByTestId(/^history-item-/)
+    await user.click(items[0] as HTMLElement)
+    await user.click(screen.getByRole('button', { name: /Revert selected/ }))
+    await user.click(screen.getByRole('button', { name: /^Revert$/ }))
+
+    await waitFor(() => {
+      expect(queryClient.getQueryState(keys)?.isInvalidated).toBe(true)
     })
   })
 
