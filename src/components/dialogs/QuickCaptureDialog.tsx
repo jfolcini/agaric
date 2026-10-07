@@ -44,6 +44,7 @@ import { SheetBody } from '@/components/ui/sheet'
 import { Spinner } from '@/components/ui/spinner'
 import { Textarea } from '@/components/ui/textarea'
 import { useDialogOrSheet } from '@/hooks/useDialogOrSheet'
+import { reloadChangedPageStores } from '@/hooks/useSyncEvents'
 import { unwrap } from '@/lib/app-error'
 import { commands } from '@/lib/bindings'
 import { logger } from '@/lib/logger'
@@ -96,7 +97,9 @@ export function QuickCaptureDialog({
       if (spaceId == null) {
         throw new Error('No active space; cannot quick-capture')
       }
-      unwrap(await commands.quickCaptureBlock(trimmed, spaceId))
+      const row = unwrap(await commands.quickCaptureBlock(trimmed, spaceId))
+      // An out-of-band write (#5291): its op shifts the page's positional undo, so re-anchor too.
+      reloadChangedPageStores(row.page_id == null ? undefined : [row.page_id])
       notify.success(t('quickCapture.successToast'))
       onOpenChange(false)
     } catch (err) {

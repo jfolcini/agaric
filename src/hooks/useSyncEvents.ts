@@ -129,14 +129,14 @@ function retitleHeldPages(targeted: ReadonlySet<string> | null, spaceId: string 
  * owning-page ids touched by an out-of-band write (a remote sync session or an
  * MCP write), reload + undo-re-anchor ONLY the mounted page stores whose id is
  * in the set, then run one resolve-cache preload and bump the graph-structure
- * signal.
+ * signal. `QuickCaptureDialog` calls it for its own write too (#5291).
  *
  * FALLBACK: when `changedPageIds` is absent or empty (an older peer, the
  * snapshot-catch-up path, or an MCP write whose block had no resolvable page
  * ancestor) reload EVERY mounted store plus a full preload — when in doubt we
  * fall back rather than risk a missed update.
  */
-function reloadChangedPageStores(changedPageIds: string[] | undefined): void {
+export function reloadChangedPageStores(changedPageIds: string[] | undefined): void {
   const reanchorUndo = useUndoStore.getState().reanchorAfterRemoteOps
   const targeted =
     Array.isArray(changedPageIds) && changedPageIds.length > 0 ? new Set(changedPageIds) : null
