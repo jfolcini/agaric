@@ -5,6 +5,7 @@ import {
   expect,
   getInvokeCalls,
   installIpcRecorder,
+  navigateToView,
   openPage,
   test,
   waitForBoot,
@@ -50,7 +51,7 @@ test.describe('Trash bulk restore/purge', () => {
     }
     await expect(page.locator('[data-testid="sortable-block"]')).toHaveCount(countBefore - 2)
 
-    await page.getByRole('button', { name: /^Trash/ }).click()
+    await navigateToView(page, 'Trash')
     const rows = page.locator('[data-testid="trash-item"]')
     await expect(rows).toHaveCount(2)
 
@@ -87,7 +88,7 @@ test.describe('Trash bulk restore/purge', () => {
       await deleteBlockViaContextMenu(page, row)
     }
 
-    await page.getByRole('button', { name: /^Trash/ }).click()
+    await navigateToView(page, 'Trash')
     const rows = page.locator('[data-testid="trash-item"]')
     await expect(rows).toHaveCount(2)
 
@@ -133,7 +134,7 @@ test.describe('Trash bulk restore/purge', () => {
     await openPage(page, 'Quick Notes')
     await deleteBlockViaContextMenu(page, page.locator('[data-testid="sortable-block"]').first())
 
-    await page.getByRole('button', { name: /^Trash/ }).click()
+    await navigateToView(page, 'Trash')
     const rows = page.locator('[data-testid="trash-item"]')
     await expect(rows).toHaveCount(6)
 
@@ -170,7 +171,7 @@ test.describe('Trash — Restore all / Empty trash', () => {
       await deleteBlockViaContextMenu(page, row)
     }
 
-    await page.getByRole('button', { name: /^Trash/ }).click()
+    await navigateToView(page, 'Trash')
     await expect(page.locator('[data-testid="trash-item"]')).toHaveCount(3)
 
     await page.getByTestId('trash-empty-trash-btn').click()
@@ -215,7 +216,7 @@ test.describe('Trash — Restore all / Empty trash', () => {
       await deleteBlockViaContextMenu(page, row)
     }
 
-    await page.getByRole('button', { name: /^Trash/ }).click()
+    await navigateToView(page, 'Trash')
     await expect(page.locator('[data-testid="trash-item"]')).toHaveCount(2)
 
     await page.getByTestId('trash-restore-all-btn').click()
@@ -263,7 +264,7 @@ test.describe('Trash search', () => {
     await deleteBlockViaContextMenu(page, gs1)
     await deleteBlockViaContextMenu(page, gs3)
 
-    await page.getByRole('button', { name: /^Trash/ }).click()
+    await navigateToView(page, 'Trash')
     const rows = page.locator('[data-testid="trash-item"]')
     await expect(rows).toHaveCount(2)
 

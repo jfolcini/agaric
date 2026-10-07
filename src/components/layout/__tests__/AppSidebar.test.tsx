@@ -16,7 +16,7 @@ import { axe } from 'vitest-axe'
 import { AppSidebar, type AppSidebarProps } from '@/components/layout/AppSidebar'
 import { SidebarProvider, SidebarTrigger } from '@/components/ui/sidebar'
 import { t } from '@/lib/i18n'
-import { NAV_GROUPS, NAV_ITEMS } from '@/lib/nav-items'
+import { SETTINGS_NAV_ITEM, SIDEBAR_NAV_ITEMS } from '@/lib/nav-items'
 import { useRecentPagesStore } from '@/stores/recent-pages'
 import { useResolveStore } from '@/stores/resolve'
 import { useSpaceStore } from '@/stores/space'
@@ -31,20 +31,16 @@ function defaultProps(overrides: Partial<AppSidebarProps> = {}): AppSidebarProps
     onSelectView: vi.fn(),
     syncing: false,
     isOnline: true,
-    isDark: false,
-    currentTheme: 'auto',
-    onToggleTheme: vi.fn(),
     onNewPage: vi.fn(),
     onSyncClick: vi.fn(),
-    onShowShortcuts: vi.fn(),
     ...overrides,
   }
 }
 
 /**
- * `syncState`, `syncPeers`, `lastSyncedAt`, `availableSpaces`,
- * `currentSpaceId`, and the `trashCount` badge are read directly from
- * the zustand stores inside the sidebar rather than forwarded as props.
+ * `syncState`, `syncPeers`, `lastSyncedAt`, `availableSpaces` and
+ * `currentSpaceId` are read directly from the zustand stores inside the
+ * sidebar rather than forwarded as props.
  * Tests now seed those stores instead of injecting prop overrides.
  */
 function seedSyncStore({
@@ -117,42 +113,47 @@ describe('AppSidebar', () => {
     expect(screen.getByRole('combobox', { name: /Switch space/ })).toBeInTheDocument()
   })
 
-  // #1741 — the nav is grouped into labeled sections (Workspace / System)
-  // instead of one flat 11-item list, with Settings moved to the footer.
-  // Pin that every group label renders as a wired-up group label and that
-  // each group's menu is announced via aria-labelledby.
-  it('renders labeled nav groups wired to their menus (#1741)', () => {
+  // #5269 — the sidebar is cut down to the daily surfaces. Pin the whole row
+  // list, in order, so a row that creeps back (or goes missing) reddens this.
+  it('renders exactly New Page, the four daily views, Sync and Settings (#5269)', () => {
     renderSidebar()
 
-    for (const group of NAV_GROUPS) {
-      const labelEl = screen.getByText(t(group.labelKey))
-      expect(labelEl).toHaveAttribute('data-sidebar', 'group-label')
-
-      const labelId = labelEl.getAttribute('id')
-      expect(labelId).toBeTruthy()
-
-      // The group's menu must reference its label via aria-labelledby so
-      // assistive tech announces the section.
-      const menu = document.querySelector(`[aria-labelledby="${labelId}"]`)
-      expect(menu).not.toBeNull()
-    }
+    const rows = [...document.querySelectorAll('[data-sidebar="menu-button"]')].map(
+      (row) => row.textContent,
+    )
+    expect(rows).toEqual([
+      t('sidebar.newPage'),
+      ...SIDEBAR_NAV_ITEMS.map((item) => t(item.labelKey)),
+      t('sidebar.sync'),
+      t(SETTINGS_NAV_ITEM.labelKey),
+    ])
+    expect(SIDEBAR_NAV_ITEMS.map((item) => item.id)).toEqual(['journal', 'pages', 'search', 'tags'])
   })
 
-  // #1741 — grouping must not drop any destination: every NAV_ITEMS entry
-  // (the grouped Workspace/System items plus the footer Settings item) must
-  // still render exactly once.
-  it('keeps all nav items present after grouping (#1741)', () => {
+  it('puts New Page and the collapse toggle in the header, Sync and Settings in the footer (#5269)', () => {
     renderSidebar()
 
-    for (const item of NAV_ITEMS) {
-      expect(screen.getByText(t(item.labelKey))).toBeInTheDocument()
-    }
+    const header = document.querySelector('[data-sidebar="header"]') as HTMLElement
+    const footer = document.querySelector('[data-sidebar="footer"]') as HTMLElement
+    expect(within(header).getByRole('button', { name: t('sidebar.newPage') })).toBeInTheDocument()
+    expect(
+      within(header).getByRole('button', { name: t('sidebar.collapseSidebar') }),
+    ).toBeInTheDocument()
+    expect(within(footer).getByRole('button', { name: t('sidebar.sync') })).toBeInTheDocument()
+    expect(within(footer).getByRole('button', { name: t('sidebar.settings') })).toBeInTheDocument()
+  })
 
-    // Settings specifically lives in the footer now, not the main nav.
-    const settingsButton = screen
-      .getByText(t('sidebar.settings'))
-      .closest('[data-sidebar="menu-button"]')
-    expect(settingsButton?.closest('[data-sidebar="footer"]')).not.toBeNull()
+  it('collapses to the rail and expands back from the header toggle (#5269)', async () => {
+    const user = userEvent.setup()
+    renderSidebar()
+    const sidebar = document.querySelector('[data-slot="sidebar"]') as HTMLElement
+    expect(sidebar).toHaveAttribute('data-state', 'expanded')
+
+    await user.click(screen.getByRole('button', { name: t('sidebar.collapseSidebar') }))
+
+    expect(sidebar).toHaveAttribute('data-state', 'collapsed')
+    await user.click(screen.getByRole('button', { name: t('sidebar.expandSidebar') }))
+    expect(sidebar).toHaveAttribute('data-state', 'expanded')
   })
 
   it('calls onSelectView when a menu item is clicked', async () => {
@@ -177,20 +178,17 @@ describe('AppSidebar', () => {
     expect(journalButton).not.toHaveAttribute('aria-current', 'page')
   })
 
-  it('calls onNewPage / onSyncClick / onShowShortcuts from the footer actions', async () => {
+  it('calls onNewPage / onSyncClick from the New Page and Sync rows', async () => {
     const onNewPage = vi.fn()
     const onSyncClick = vi.fn()
-    const onShowShortcuts = vi.fn()
     const user = userEvent.setup()
-    renderSidebar({ onNewPage, onSyncClick, onShowShortcuts })
+    renderSidebar({ onNewPage, onSyncClick })
 
     await user.click(screen.getByText(t('sidebar.newPage')))
     await user.click(screen.getByText(t('sidebar.sync')))
-    await user.click(screen.getByText(t('sidebar.shortcuts')))
 
     expect(onNewPage).toHaveBeenCalledTimes(1)
     expect(onSyncClick).toHaveBeenCalledTimes(1)
-    expect(onShowShortcuts).toHaveBeenCalledTimes(1)
   })
 
   // "offline" (network problem) and "no peers" (pairing
@@ -281,89 +279,19 @@ describe('AppSidebar', () => {
     expect(results).toHaveNoViolations()
   })
 
-  // The theme-toggle button cycles auto → dark → light, but the
-  // generic "Toggle theme" tooltip gave no signal of the current state.
-  // The tooltip must now show the resolved theme name so the next click's
-  // outcome is predictable.
-  it('shows the current theme name in the theme-toggle tooltip', async () => {
-    const user = userEvent.setup()
-    render(
-      <SidebarProvider defaultOpen={false}>
-        <AppSidebar {...defaultProps({ currentTheme: 'dark', isDark: true })} />
-      </SidebarProvider>,
-    )
-
-    const themeBtn = screen.getByTestId('theme-toggle')
-    await user.hover(themeBtn)
-
-    await waitFor(() => {
-      const tooltip = screen.getByRole('tooltip')
-      expect(tooltip.textContent).toContain(
-        t('sidebar.toggleThemeWithCurrent', { current: t('sidebar.themeName.dark') }),
-      )
-      expect(tooltip.textContent).toContain(t('sidebar.themeName.dark'))
-    })
-  })
-
-  // The shortcuts button must surface the current keyboard
-  // binding in its tooltip so the affordance is discoverable without
-  // first opening the cheatsheet. The default binding is `?`.
-  it('shows the keyboard binding in the shortcuts button tooltip', async () => {
-    const user = userEvent.setup()
-    // Render with the sidebar collapsed so the SidebarMenuButton
-    // tooltip is not `hidden` (it is suppressed in the expanded state).
-    render(
+  it('has no a11y violations collapsed to the icon rail', async () => {
+    const { container } = render(
       <SidebarProvider defaultOpen={false}>
         <AppSidebar {...defaultProps()} />
       </SidebarProvider>,
     )
-
-    const shortcutsButton = screen
-      .getByText(t('sidebar.shortcuts'))
-      .closest('[data-sidebar="menu-button"]') as HTMLElement
-    expect(shortcutsButton).not.toBeNull()
-
-    await user.hover(shortcutsButton)
-
-    await waitFor(() => {
-      const tooltip = screen.getByRole('tooltip')
-      expect(tooltip.textContent).toMatch(/\?/)
-      expect(tooltip.textContent).toContain(t('sidebar.shortcuts'))
-    })
-  })
-
-  // #3882 — `sidebar.trashCount` interpolated {{count}} with no _one/_other
-  // plural forms, so a 1-item trash badge showed "1 items in trash".
-  // Hardcoded literal (not re-derived via t()) so a regression in the
-  // catalog's plural forms reddens this.
-  it('uses singular wording in the trash badge accessible name when trashCount is 1', async () => {
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'list_spaces')
-        return [{ id: 'SPACE_PERSONAL', name: 'Personal', accent_color: 'accent-emerald' }]
-      if (cmd === 'count_trash') return 1 as unknown as never
-      return emptyPage
-    })
-    renderSidebar()
-    await waitFor(() => {
-      expect(screen.getByLabelText('1 item in trash')).toBeInTheDocument()
-    })
-  })
-
-  it('uses plural wording in the trash badge accessible name when trashCount is more than 1', async () => {
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'list_spaces')
-        return [{ id: 'SPACE_PERSONAL', name: 'Personal', accent_color: 'accent-emerald' }]
-      if (cmd === 'count_trash') return 5 as unknown as never
-      return emptyPage
-    })
-    renderSidebar()
-    await waitFor(() => {
-      expect(screen.getByLabelText('5 items in trash')).toBeInTheDocument()
-    })
+    expect(screen.getByRole('button', { name: t('sidebar.expandSidebar') })).toBeInTheDocument()
+    const results = await axe(container)
+    expect(results).toHaveNoViolations()
   })
 
   // #4713 — the Bookmarks section is mounted in the sidebar's content, below
-  // the nav groups. Its own behaviour is covered by BookmarksSection.test.tsx;
+  // the nav list. Its own behaviour is covered by BookmarksSection.test.tsx;
   // this pins the wiring, which nothing else would catch.
   it('mounts the Bookmarks section listing the bookmarked pages (#4713)', () => {
     localStorage.setItem('starred-pages', JSON.stringify(['A']))
@@ -416,11 +344,14 @@ describe('AppSidebar — mobile Sheet dismissal', () => {
     })
   })
 
-  async function openMobileSheet(overrides: Partial<AppSidebarProps> = {}) {
+  async function openMobileSheet(
+    overrides: Partial<AppSidebarProps> = {},
+    { desktopOpen = true }: { desktopOpen?: boolean } = {},
+  ) {
     const props = defaultProps(overrides)
     const user = userEvent.setup()
     render(
-      <SidebarProvider>
+      <SidebarProvider defaultOpen={desktopOpen}>
         <AppSidebar {...props} />
         <SidebarTrigger />
       </SidebarProvider>,
@@ -456,29 +387,27 @@ describe('AppSidebar — mobile Sheet dismissal', () => {
     })
   })
 
-  it('closes the Sheet when "Shortcuts" opens its dialog', async () => {
+  it('keeps the Sheet open for the in-place sync action', async () => {
     mockMobileViewport()
     const { user, props } = await openMobileSheet()
 
-    // Otherwise the shortcuts dialog stacks on top of the still-open drawer.
-    await user.click(screen.getByRole('button', { name: t('sidebar.shortcuts') }))
+    await user.click(screen.getByRole('button', { name: t('sidebar.sync') }))
 
-    expect(props.onShowShortcuts).toHaveBeenCalled()
+    expect(props.onSyncClick).toHaveBeenCalled()
+    // The sync result shows in the sidebar's own status dot.
+    expect(document.querySelector('[data-mobile="true"]')).not.toBeNull()
+  })
+
+  // The desktop rail state means nothing in the Sheet: the toggle closes it.
+  it('names the header toggle "Collapse" in the Sheet, even when the desktop rail is collapsed', async () => {
+    mockMobileViewport()
+    const { user } = await openMobileSheet({}, { desktopOpen: false })
+
+    await user.click(screen.getByRole('button', { name: t('sidebar.collapseSidebar') }))
+
     await waitFor(() => {
       expect(document.querySelector('[data-mobile="true"]')).toBeNull()
     })
-  })
-
-  it('keeps the Sheet open for in-place toggles (theme)', async () => {
-    mockMobileViewport()
-    const { user, props } = await openMobileSheet()
-
-    await user.click(screen.getByTestId('theme-toggle'))
-
-    expect(props.onToggleTheme).toHaveBeenCalled()
-    // The theme change is visible in the sidebar itself; dismissing would
-    // throw the user out of the drawer for a setting they may cycle again.
-    expect(document.querySelector('[data-mobile="true"]')).not.toBeNull()
   })
 
   it('does not close on desktop, where the sidebar is pinned beside the content', async () => {

@@ -9,9 +9,6 @@
  *   `WelcomeModal` stay lazy-imported in App.tsx because they render
  *   OUTSIDE this switch (top-level overlays).
  * - The shared `<ViewFallback>` Suspense skeleton.
- * - The view-related counter hook (`useTrashCount`) — polls its IPC
- *   every 30 s with refetch on focus / visibility change, identical
- *   to the original.
  * - `useHeaderLabel` — used by the App shell header, exported so
  *   App.tsx can keep its existing import.
  *
@@ -20,7 +17,7 @@
  * This batch is a pure code move: behaviour is preserved verbatim.
  */
 
-import { lazy, type ReactElement, Suspense, useCallback } from 'react'
+import { lazy, type ReactElement, Suspense } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { EmptyState } from '@/components/common/EmptyState'
@@ -28,11 +25,7 @@ import { FeatureErrorBoundary } from '@/components/common/FeatureErrorBoundary'
 import { JournalPage } from '@/components/JournalPage'
 import { LoadingSkeleton } from '@/components/rendering/LoadingSkeleton'
 import { Button } from '@/components/ui/button'
-import { useItemCount } from '@/hooks/useItemCount'
-import { unwrap } from '@/lib/app-error'
-import { commands } from '@/lib/bindings'
 import { NAV_ITEMS } from '@/lib/nav-items'
-import { toSpaceScope } from '@/lib/space-scope'
 import { useNavigationStore, type View } from '@/stores/navigation'
 import { useSpaceStore } from '@/stores/space'
 import { type PageEntry, selectPageStack, useTabsStore } from '@/stores/tabs'
@@ -73,9 +66,6 @@ const SearchPanel = lazy(() =>
 const SettingsView = lazy(() =>
   import('@/components/pages/SettingsView').then((m) => ({ default: m.SettingsView })),
 )
-const StatusPanel = lazy(() =>
-  import('@/components/agenda/StatusPanel').then((m) => ({ default: m.StatusPanel })),
-)
 const TagsView = lazy(() => import('@/components/TagsView').then((m) => ({ default: m.TagsView })))
 const TemplatesView = lazy(() =>
   import('@/components/templates/TemplatesView').then((m) => ({ default: m.TemplatesView })),
@@ -114,7 +104,6 @@ const TrashView = lazy(() =>
 export const VIEW_HEADING_OWNER: Readonly<Record<View, 'shell' | 'view'>> = {
   journal: 'view',
   trash: 'view',
-  status: 'view',
   settings: 'view',
   // `page-editor` owns its title through `PageTitleEditor`'s labelled
   // contenteditable; `useHeaderLabel` already returns '' for it so the shell
@@ -145,26 +134,6 @@ export function useHeaderLabel(): string {
   }
   const item = NAV_ITEMS.find((navItem) => navItem.id === currentView)
   return item ? t(item.labelKey) : ''
-}
-
-/** Returns the number of trashed items. Polls every 30 s and on focus. */
-export function useTrashCount(): number {
-  const currentView = useNavigationStore((s) => s.currentView)
-  const currentSpaceId = useSpaceStore((s) => s.currentSpaceId)
-  const queryFn = useCallback(
-    () =>
-      // `countTrash` pushes the count into SQL so the trash badge stays
-      // accurate regardless of trash size. #2248 — trash is inherently
-      // space-scoped, so with no active space there is nothing to count:
-      // short-circuit to `0` locally instead of passing an empty-string
-      // sentinel to the backend (which would now reject a malformed scope).
-      currentSpaceId == null
-        ? Promise.resolve(0)
-        : commands.countTrash(toSpaceScope(currentSpaceId)).then(unwrap),
-    // oxlint-disable-next-line react-hooks/exhaustive-deps -- re-poll when view or space changes (user may have restored items / switched spaces)
-    [currentView, currentSpaceId],
-  )
-  return useItemCount(queryFn, 30_000)
 }
 
 /** Signature used by views that want to open another page. */
@@ -293,15 +262,6 @@ export function ViewDispatcher({
         <FeatureErrorBoundary name="Settings" nameKey="sidebar.settings">
           <Suspense fallback={<ViewFallback />}>
             <SettingsView />
-          </Suspense>
-        </FeatureErrorBoundary>
-      )
-    }
-    case 'status': {
-      return (
-        <FeatureErrorBoundary name="Status" nameKey="sidebar.status">
-          <Suspense fallback={<ViewFallback />}>
-            <StatusPanel />
           </Suspense>
         </FeatureErrorBoundary>
       )

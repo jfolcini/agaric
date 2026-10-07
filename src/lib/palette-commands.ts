@@ -38,10 +38,12 @@ import {
   Network,
   PanelLeftIcon,
   Settings as SettingsIcon,
+  SunMoon,
   Tag as TagIcon,
   Trash2,
 } from 'lucide-react'
 
+import { cycleThemePreference } from '@/hooks/useTheme'
 import { announce } from '@/lib/announcer'
 import { unwrap } from '@/lib/app-error'
 import { commands } from '@/lib/bindings'
@@ -80,12 +82,11 @@ export interface PaletteCommandSpec {
   run: (ctx: PaletteCommandContext) => void
 }
 
-// #2942 — the registry used to expose only 5 of the 11 `NAV_ITEMS`
-// destinations (`nav-items.ts`). The `go-<view>` entries below now mirror
-// every destination there EXCEPT `search`: `search-everywhere` below already
-// routes to the search view (with the added value of seeding the escalation
-// query), so a second plain `go-search` would just be a same-destination
-// duplicate with a different label.
+// #2942 — the `go-<view>` entries mirror every `NAV_ITEMS` destination
+// (`nav-items.ts`) EXCEPT `search`: `search-everywhere` below already routes
+// to the search view (with the added value of seeding the escalation query),
+// so a second plain `go-search` would just be a same-destination duplicate
+// with a different label. `go-status` opens the Settings › Status tab (#5269).
 export const PALETTE_COMMANDS: readonly PaletteCommandSpec[] = [
   {
     id: 'go-journal',
@@ -153,7 +154,9 @@ export const PALETTE_COMMANDS: readonly PaletteCommandSpec[] = [
     category: 'navigate',
     icon: Activity,
     run: ({ onClose }) => {
-      useNavigationStore.getState().setView('status')
+      const navigation = useNavigationStore.getState()
+      navigation.setPendingSettingsTab('status')
+      navigation.setView('settings')
       onClose()
     },
   },
@@ -271,6 +274,18 @@ export const PALETTE_COMMANDS: readonly PaletteCommandSpec[] = [
     shortcutId: 'toggleSidebar',
     run: ({ onClose }) => {
       window.dispatchEvent(new CustomEvent(TOGGLE_SIDEBAR_EVENT))
+      onClose()
+    },
+  },
+  {
+    // #5269 — the quick auto/dark/light cycle; Settings › Appearance picks
+    // any theme.
+    id: 'toggle-theme',
+    labelKey: 'palette.cmdToggleTheme',
+    category: 'action',
+    icon: SunMoon,
+    run: ({ onClose }) => {
+      cycleThemePreference()
       onClose()
     },
   },

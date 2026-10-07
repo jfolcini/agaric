@@ -1079,7 +1079,7 @@ describe('CommandPalette — commands mode', () => {
     })
   })
 
-  it('renders all 16 commands with navigate / action group containers (#2942)', async () => {
+  it('renders all 17 commands with navigate / action group containers (#2942)', async () => {
     render(<CommandPalette />)
     openPalette()
     fireEvent.click(screen.getByTestId('palette-mode-chip'))
@@ -1089,7 +1089,7 @@ describe('CommandPalette — commands mode', () => {
     expect(screen.getByTestId('palette-commands-action')).toBeInTheDocument()
     for (const id of [
       // navigate — one per NAV_ITEMS destination except `search` (see
-      // `search-everywhere` below).
+      // `search-everywhere` below), plus `go-status` (a Settings tab).
       'go-journal',
       'go-pages',
       'go-tags',
@@ -1105,6 +1105,7 @@ describe('CommandPalette — commands mode', () => {
       'create-new-page',
       'go-to-today',
       'toggle-sidebar',
+      'toggle-theme',
       'export-page-markdown',
       'keyboard-shortcuts',
     ]) {
@@ -1146,7 +1147,6 @@ describe('CommandPalette — commands mode', () => {
     ['go-graph', 'graph'],
     ['go-templates', 'templates'],
     ['go-query', 'query'],
-    ['go-status', 'status'],
   ] as const)('selecting "%s" calls setView("%s") and closes the palette', async (id, view) => {
     render(<CommandPalette />)
     openPalette()

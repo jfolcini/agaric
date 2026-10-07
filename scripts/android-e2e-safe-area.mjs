@@ -81,11 +81,12 @@ const ACTIVITY_CLASS = 'com.agaric.app.MainActivity'
 /** `t('sidebar.openMenu')` in `src/lib/i18n/common.ts` — the hamburger's aria-label. */
 const MENU_LABEL = 'Open navigation menu'
 /**
- * `t('sidebar.trash')`. The drawer-open marker has to be something that is
- * absent while the drawer is closed; the nav entries qualify and the sr-only
- * sheet title does not always surface as its own node.
+ * `t('sidebar.settings')` / `t('bookmarks.title')`. The drawer-open marker has
+ * to be something that is absent while the drawer is closed; the drawer-only
+ * entries qualify and the sr-only sheet title does not always surface as its
+ * own node.
  */
-const DRAWER_MARKERS = ['Trash', 'Templates', 'Advanced Query']
+const DRAWER_MARKERS = ['Settings', 'Bookmarks']
 /**
  * `t('gestures.coachmark.dismiss')` / `t('space.onboardingDismiss')`. A fresh
  * install opens on a modal onboarding dialog, which makes everything behind it
@@ -675,9 +676,9 @@ async function main() {
         '  If the geometry assertions above passed, the touch is being consumed by',
         '  something drawn over the app rather than by a layout overlap.',
         '',
-        '  Those markers are hardcoded English literals copied from `sidebar.trash`,',
-        '  `sidebar.templates` and `sidebar.query` in src/lib/i18n/common.ts; renaming',
-        '  one there produces this message with a drawer that opened correctly.',
+        '  Those markers are hardcoded English literals copied from `sidebar.settings`',
+        '  and `bookmarks.title` in src/lib/i18n/common.ts; renaming one there',
+        '  produces this message with a drawer that opened correctly.',
       ].join('\n'),
     )
   }

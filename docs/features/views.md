@@ -1,11 +1,11 @@
 <!-- markdownlint-disable MD060 -->
 # Views
 
-Agaric has a sidebar with a fixed set of nav items (the "views"), plus a **Page Editor** view that's reached by navigation rather than the sidebar. The nav is grouped: *Workspace* (Journal, Pages, Search, Tags, Graph, Templates, Query) and *System* (Status, History, Trash), with Settings in the footer. Every view is space-scoped — switching the active space refreshes what each shows. See [spaces.md](spaces.md) for the partition model.
+Agaric has a fixed set of views, plus a **Page Editor** view that's reached by navigation. The sidebar lists the daily ones — Journal, Pages, Search, Tags — with Settings in its footer. A row of buttons in the Pages header opens Tags, Graph, Query, Templates and Trash; History opens from Settings › Data, and Status is a Settings tab. Every view is space-scoped — switching the active space refreshes what each shows. See [spaces.md](spaces.md) for the partition model.
 
 The **Journal** view (default landing) and the **Agenda** mode inside it have their own file: [journal-and-agenda.md](journal-and-agenda.md).
 
-This file covers the other sidebar views and the page editor.
+This file covers the other views and the page editor.
 
 ## Search
 
@@ -34,7 +34,7 @@ Browse every page in the active space.
 - **Inline rename**: right-click → Rename, or click the page in the **PageEditor** and rename inline in the title. A title is unique within its space: renaming onto an existing title is refused, and creating one (including via `[[name]]`) opens the existing page.
 - **Starred pages**: starred pages appear in a separate flat list above the tree.
 
-To create a new page: sidebar footer → *New Page* button. The new page opens in the active tab.
+To create a new page: the *New Page* button at the top of the sidebar. The new page opens in the active tab.
 
 ## Tags
 
@@ -63,11 +63,11 @@ Soft-deleted pages and blocks. Deletes don't purge immediately — they land her
 - **Restore** a single item, or multi-select and batch-restore.
 - **Purge** a single item permanently (with confirmation), or batch-purge.
 - **Restore All / Empty Trash** in the header for the nuclear options.
-- The sidebar **Trash** entry shows a count badge; large purges may trigger a "non-reversible" warning dialog before confirming.
+- The Pages header's **Trash** button shows a count badge; large purges may trigger a "non-reversible" warning dialog before confirming.
 
 ## History
 
-Global operation log — every edit Agaric has applied, in reverse chronological order.
+Global operation log — every edit Agaric has applied, in reverse chronological order. Opened from Settings › Data › *Open edit history*.
 
 - **Op type icons** distinguish creates, edits, deletes, restores, properties, tags.
 - **Filter bar**: filter by op type, plus an "All spaces" scope toggle. There is no user-vs-agent or date-range filter; ops that arrived from another device are marked, but agent-authored ops are not distinguished from your own.
@@ -100,7 +100,7 @@ A force-directed graph of pages and the links between them.
 
 ## Status
 
-Materializer + sync metrics. Useful for diagnosing slowness.
+Materializer + sync metrics, in Settings › Status. Useful for diagnosing slowness.
 
 - **Materializer queue depth**: how far behind the read-side projection is (foreground and background queues).
 - **Op counts**: total ops; ops dispatched.
@@ -113,7 +113,7 @@ Tabbed configuration view. The tabs sit in a vertical rail, bucketed into four g
 
 - **Workspace**
   - **General** — deadline warning days, Quick Capture hotkey, launch-at-login, debug mode, reset onboarding.
-  - **Appearance** — theme, sidebar width, density.
+  - **Appearance** — theme (the palette's *Toggle theme* cycles auto / dark / light), sidebar width, density.
   - **Editor** — editor behaviour toggles (e.g. the `:` emoji picker).
   - **Keyboard** — full shortcut customisation (see [keyboard.md](keyboard.md)).
   - **Properties** — list of property definitions; rename, change type, edit select options.
@@ -121,8 +121,9 @@ Tabbed configuration view. The tabs sit in a vertical rail, bucketed into four g
   - **Notifications** — reminder / notification settings.
   - **Agent access** — MCP enable / disable + ActivityFeed + SessionRevertControls (see [agent-access.md](agent-access.md)).
 - **Data**
-  - **Data** — import / export (see [import-export.md](import-export.md)).
+  - **Data** — import / export (see [import-export.md](import-export.md)); *Open edit history* opens the History view.
   - **Sync & Devices** — pair / unpair / rename peers; manual addresses (see [sync.md](sync.md)).
+  - **Status** — materializer and sync metrics (see Status above).
 - **Help** — keyboard shortcut reference, *Report a Bug* button, app version.
 
 Tabs are deep-linkable via `?settings=<tab>` (parsed inside the Settings view itself, no router involved) and via `agaric://settings/<tab>`. The last-used tab persists in `localStorage`.

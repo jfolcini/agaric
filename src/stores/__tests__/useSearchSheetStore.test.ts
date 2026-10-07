@@ -75,7 +75,6 @@ describe('defaultModeForView', () => {
       'pages',
       'tags',
       'trash',
-      'status',
       'history',
       'templates',
       'settings',

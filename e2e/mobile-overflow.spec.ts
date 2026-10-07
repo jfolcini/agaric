@@ -37,6 +37,7 @@ import {
   expectNoHorizontalOverflow,
   focusBlock,
   navigateMobile,
+  navigateToView,
   openMobileSidebar,
   test,
   waitForBoot,
@@ -67,21 +68,18 @@ function pick(device: (typeof devices)[string]) {
   }
 }
 
-// Top-level views, keyed by the accessible name of their nav button inside
-// the sidebar drawer (the i18n `sidebar.*` label). `query`'s label is
-// "Advanced Query".
+// Top-level views, keyed by the label `navigateToView` takes (the i18n
+// `sidebar.*` label). The drawer lists only `SIDEBAR_VIEWS`. `query`'s label
+// is "Advanced Query"; Status is the Settings › Status tab.
+const SIDEBAR_VIEWS = ['Journal', 'Pages', 'Search', 'Tags', 'Settings'] as const
 const VIEWS = [
-  'Journal',
-  'Pages',
-  'Search',
-  'Tags',
+  ...SIDEBAR_VIEWS,
   'Graph',
   'Templates',
   'Advanced Query',
   'Status',
   'History',
   'Trash',
-  'Settings',
 ] as const
 
 for (const profile of PROFILES) {
@@ -92,12 +90,14 @@ for (const profile of PROFILES) {
       test(`${view} view has no horizontal overflow`, async ({ page }) => {
         await waitForBoot(page)
 
-        // Navigate via the header hamburger + sidebar drawer. The persistent
-        // 48px icon rail this file used to drive is gone — mobile has no
-        // sidebar in the layout at all, which is the width this sweep is now
-        // measuring. `navigateMobile` waits for the drawer to dismiss itself,
-        // so the measurement below runs against the view, not the overlay.
-        await navigateMobile(page, view)
+        // Navigate via the header hamburger + sidebar drawer (then the Pages
+        // header or Settings for views the sidebar does not list). The
+        // persistent 48px icon rail this file used to drive is gone — mobile
+        // has no sidebar in the layout at all, which is the width this sweep
+        // is now measuring. `navigateToView` waits for the drawer to dismiss
+        // itself, so the measurement below runs against the view, not the
+        // overlay.
+        await navigateToView(page, view)
         // Let the lazy view chunk resolve and layout settle before measuring.
         await page.waitForLoadState('networkidle')
         await page.waitForTimeout(250)
@@ -163,8 +163,8 @@ for (const profile of PROFILES) {
         return [cs.borderTopRightRadius, cs.borderBottomRightRadius]
       })
       expect(radii).toEqual(['0px', '0px'])
-      // Every top-level destination is reachable from inside the drawer.
-      for (const view of VIEWS) {
+      // Every sidebar destination is reachable from inside the drawer.
+      for (const view of SIDEBAR_VIEWS) {
         await expect(sheet.getByRole('button', { name: view, exact: true })).toBeVisible()
       }
       // Journal is the boot view and must be marked as current.
@@ -231,17 +231,8 @@ for (const profile of PROFILES) {
 
     test('Keyboard Shortcuts dialog has no horizontal overflow', async ({ page }) => {
       await waitForBoot(page)
-      const sheet = await openMobileSidebar(page)
-      const shortcutsBtn = sheet.getByRole('button', { name: 'Shortcuts', exact: true })
-      // Best-effort: if the trigger isn't reachable in this build, skip cleanly
-      // rather than fail the sweep on an unrelated gap.
-      if ((await shortcutsBtn.count()) === 0) {
-        test.skip(true, 'Shortcuts trigger not present')
-      }
-      // The sidebar drawer dismisses itself before the dialog opens, so the
-      // two overlays never stack (`AppSidebar`'s `dismissOnMobile`).
-      await shortcutsBtn.click()
-      await expect(sheet).toHaveCount(0)
+      await page.keyboard.type('?')
+      await expect(page.getByTestId('shortcuts-table')).toBeVisible()
 
       // useDialogOrSheet renders a Sheet on mobile; fall back to a role=dialog
       // if a plain dialog is used instead.

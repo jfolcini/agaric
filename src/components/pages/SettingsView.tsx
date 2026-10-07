@@ -8,6 +8,7 @@
  *  - Keyboard -- KeyboardTab
  *  - Data -- DataTab (lazy)
  *  - Sync & Devices -- DeviceManagement
+ *  - Status -- StatusPanel (#5269: formerly its own view)
  * Agent access -- AgentAccessTab
  * Help -- Report a bug; future home of About / updates
  *
@@ -31,6 +32,7 @@ import type React from 'react'
 import { lazy, Suspense, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { StatusPanel } from '@/components/agenda/StatusPanel'
 import { DeviceManagement } from '@/components/peers/DeviceManagement'
 import { PropertyDefinitionsList } from '@/components/properties/PropertyDefinitionsList'
 import { LoadingSkeleton } from '@/components/rendering/LoadingSkeleton'
@@ -63,6 +65,7 @@ type SettingsTab =
   | 'keyboard'
   | 'data'
   | 'sync'
+  | 'status'
   | 'agent'
   | 'notifications'
   | 'help'
@@ -75,6 +78,7 @@ const TAB_IDS: SettingsTab[] = [
   'keyboard',
   'data',
   'sync',
+  'status',
   'agent',
   'notifications',
   'help',
@@ -109,6 +113,7 @@ const TAB_LABEL_KEYS: Record<SettingsTab, string> = {
   keyboard: 'settings.tabKeyboard',
   data: 'settings.tabData',
   sync: 'settings.tabSync',
+  status: 'settings.tabStatus',
   agent: 'settings.tabAgentAccess',
   notifications: 'settings.tabNotifications',
   help: 'settings.tabHelp',
@@ -149,7 +154,7 @@ const TAB_GROUPS: readonly TabGroup[] = [
   {
     id: 'data',
     labelKey: 'settings.groupData',
-    tabs: ['data', 'sync'],
+    tabs: ['data', 'sync', 'status'],
   },
   {
     id: 'help',
@@ -331,6 +336,8 @@ export function SettingsView(): React.ReactElement {
           )}
 
           {activeTab === 'sync' && <DeviceManagement />}
+
+          {activeTab === 'status' && <StatusPanel />}
 
           {activeTab === 'agent' && <AgentAccessTab />}
 

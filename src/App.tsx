@@ -184,8 +184,8 @@ function App() {
   //   • `pageStack`        — derives `activePage` for both `viewKey` and
   //                           the ViewDispatcher page-editor branch.
   // Everything that the sidebar alone consumed (sync state, peers,
-  // last-synced timestamp, space roster, current space id, trash badge)
-  // is subscribed directly inside `AppSidebar` now — the leaf owns the
+  // last-synced timestamp, space roster, current space id) is subscribed
+  // directly inside `AppSidebar` now — the leaf owns the
   // subscription. `goBack` lives inside `ViewDispatcher`, the sole
   // consumer of the back action. `setView` and `navigateToPage` are
   // stable zustand actions, so subscribing here is a zero-rerender cost.
@@ -199,7 +199,7 @@ function App() {
   // renders its own (see `VIEW_HEADING_OWNER`). An empty label must never
   // become an empty heading, so a blank label stays a `<span>`.
   const HeaderLabelTag = headerLabel !== '' && shellOwnsHeading(currentView) ? 'h1' : 'span'
-  const { theme: currentTheme, isDark, toggleTheme } = useTheme()
+  const { isDark } = useTheme()
   // Apply the editor font-size preference from boot, before Settings mounts.
   useFontSize()
   // Apply the global animation-speed preference app-wide from boot (the Settings
@@ -525,12 +525,8 @@ function App() {
           onSelectView={setView}
           syncing={syncing}
           isOnline={isOnline}
-          isDark={isDark}
-          currentTheme={currentTheme}
-          onToggleTheme={toggleTheme}
           onNewPage={handleNewPage}
           onSyncClick={handleSyncClick}
-          onShowShortcuts={() => setShortcutsOpen(true)}
         />
         <SidebarInset>
           <ViewHeaderOutletProvider>
@@ -687,7 +683,7 @@ function App() {
         </Suspense>
       </FeatureErrorBoundary>
       {/* #754 — both overlays are gate-mounted so their lazy chunks stay
-          off the boot path. The `?` / sidebar-button open path lives in
+          off the boot path. The `?` / palette open path lives in
           `useAppDialogs` (the sheet can't open itself while unmounted);
           the welcome gate reads the onboarding flag once per session. */}
       {shortcutsOpen && (

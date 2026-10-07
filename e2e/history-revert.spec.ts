@@ -1,4 +1,11 @@
-import { deleteBlockViaContextMenu, expect, openPage, test, waitForBoot } from './helpers'
+import {
+  deleteBlockViaContextMenu,
+  expect,
+  navigateToView,
+  openPage,
+  test,
+  waitForBoot,
+} from './helpers'
 
 // HistoryView tests mutate and assert against the shared
 // mock op-log within a describe — same risk profile as undo-redo-blocks,
@@ -30,7 +37,7 @@ test.describe('HistoryView batch revert', () => {
     await expect(page.locator('[data-testid="sortable-block"]').last()).toBeVisible()
 
     // Navigate to History view
-    await page.getByRole('button', { name: 'History', exact: true }).click()
+    await navigateToView(page, 'History')
 
     // Verify history entries appear (op log should have create_block op at minimum)
     const historyItems = page.locator('[data-history-item]')
@@ -46,7 +53,7 @@ test.describe('HistoryView batch revert', () => {
     await expect(page.locator('[data-testid="sortable-block"]').last()).toBeVisible()
 
     // Navigate to History
-    await page.getByRole('button', { name: 'History', exact: true }).click()
+    await navigateToView(page, 'History')
     await expect(page.locator('[data-history-item]').first()).toBeVisible({ timeout: 5000 })
 
     // Click the first history item checkbox to select it
@@ -77,7 +84,7 @@ test.describe('HistoryView batch revert', () => {
     await expect(page.locator('[data-testid="sortable-block"]')).toHaveCount(countBefore + 1)
 
     // Navigate to History
-    await page.getByRole('button', { name: 'History', exact: true }).click()
+    await navigateToView(page, 'History')
     await expect(page.locator('[data-history-item]').first()).toBeVisible({ timeout: 5000 })
 
     // Find and select the create_block entry (most recent is first)
@@ -118,7 +125,7 @@ test.describe('HistoryView batch revert', () => {
     await expect(page.locator('[data-testid="sortable-block"]')).toHaveCount(countBefore - 1)
 
     // Navigate to History
-    await page.getByRole('button', { name: 'History', exact: true }).click()
+    await navigateToView(page, 'History')
     await expect(page.locator('[data-history-item]').first()).toBeVisible({ timeout: 5000 })
 
     // Find and select the delete_block entry
@@ -149,7 +156,7 @@ test.describe('HistoryView batch revert', () => {
     await expect(page.locator('[data-testid="sortable-block"]')).toHaveCount(blocksBefore + 1)
 
     // Navigate to History and select
-    await page.getByRole('button', { name: 'History', exact: true }).click()
+    await navigateToView(page, 'History')
     await expect(page.locator('[data-history-item]').first()).toBeVisible({ timeout: 5000 })
     await page.locator('[data-history-item]').first().getByRole('checkbox').click()
 

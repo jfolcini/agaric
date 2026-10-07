@@ -23,7 +23,7 @@
  * the new page appears in the PageBrowser list.
  */
 
-import { expect, test, waitForBoot } from './helpers'
+import { expect, navigateToView, test, waitForBoot } from './helpers'
 
 /** Open the Pages view via the sidebar nav button. */
 async function openPagesView(page: import('@playwright/test').Page) {
@@ -35,9 +35,9 @@ async function openPagesView(page: import('@playwright/test').Page) {
   await expect(page.getByRole('grid')).toBeVisible()
 }
 
-/** Open the Templates view via the sidebar nav button. */
+/** Open the Templates view via the Pages header button. */
 async function openTemplatesView(page: import('@playwright/test').Page) {
-  await page.getByRole('button', { name: 'Templates', exact: true }).click()
+  await navigateToView(page, 'Templates')
 }
 
 /** Open the Journal view via the sidebar nav button. */

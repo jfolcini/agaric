@@ -276,6 +276,9 @@ export const pages: Record<string, string> = {
   'pageBrowser.densityRegular': 'Regular',
   'pageBrowser.densityExpanded': 'Expanded',
   'pageBrowser.densityPersistedTooltip': 'Your density is saved across sessions',
+  // #5269 — the Pages header's Trash button while its count badge shows.
+  'pageBrowser.viewButtons.trashWithCount_one': 'Trash, {{count}} item',
+  'pageBrowser.viewButtons.trashWithCount_other': 'Trash, {{count}} items',
   // #2003 piece 1 — saved Pages views (sort + density + filters snapshot).
   'pageBrowser.savedViews.trigger': 'Saved views',
   'pageBrowser.savedViews.triggerActive': 'Saved views — {{name}} applied',

@@ -51,6 +51,7 @@ export const settings: Record<string, string> = {
     'Hovering or Tab-focusing an external link fetches its title and icon from that site, which tells the site you hold the link. Turn off to stop that fetch; previews already cached still show, and a link you paste or insert yourself is still fetched once.',
   'settings.tabSync': 'Sync & Devices',
   'settings.tabData': 'Data',
+  'settings.tabStatus': 'Status',
   // #4555 — UI language. `System` follows the device language list; the
   // other two pin a locale. English and Español are deliberately NOT
   // translated per locale: a language picker names each language in that

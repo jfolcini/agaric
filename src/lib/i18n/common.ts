@@ -25,22 +25,19 @@ export const common: Record<string, string> = {
   // `refreshAvailableSpaces()` hard-fails during boot (no prior snapshot)
   // and the caught value carries no readable message of its own.
   'boot.spacesLoadFailed': 'Could not load your spaces. Check your connection and try again.',
-  'sidebar.groupWorkspace': 'Workspace',
-  'sidebar.groupSystem': 'System',
   'sidebar.pages': 'Pages',
   'sidebar.journal': 'Journal',
   'sidebar.newPage': 'New Page',
   'sidebar.sync': 'Sync',
-  'sidebar.shortcuts': 'Shortcuts',
   'sidebar.search': 'Search',
   'sidebar.tags': 'Tags',
   'sidebar.trash': 'Trash',
-  'sidebar.status': 'Status',
   'sidebar.history': 'History',
   'sidebar.templates': 'Templates',
   'sidebar.graph': 'Graph',
   'sidebar.query': 'Advanced Query',
-  'sidebar.collapse': 'Collapse',
+  'sidebar.collapseSidebar': 'Collapse sidebar',
+  'sidebar.expandSidebar': 'Expand sidebar',
   'sidebar.toggleSidebar': 'Toggle Sidebar',
   // Accessible name for the mobile header hamburger. Deliberately NOT
   // `sidebar.toggleSidebar` ("Toggle Sidebar"): on a phone there is no
@@ -304,19 +301,8 @@ export const common: Record<string, string> = {
   'breadcrumb.showHidden': 'Show hidden breadcrumbs',
   'ui.close': 'Close',
   'ui.loading': 'Loading…',
-  'sidebar.toggleTheme': 'Toggle theme',
-  'sidebar.toggleThemeWithCurrent': 'Theme: {{current}} — click to cycle',
-  'sidebar.themeName.auto': 'Auto',
-  'sidebar.themeName.dark': 'Dark',
-  'sidebar.themeName.light': 'Light',
-  'sidebar.themeName.solarizedLight': 'Solarized Light',
-  'sidebar.themeName.solarizedDark': 'Solarized Dark',
-  'sidebar.themeName.dracula': 'Dracula',
-  'sidebar.themeName.oneDarkPro': 'One Dark Pro',
   'sidebar.themeDark': 'Dark mode',
   'sidebar.themeLight': 'Light mode',
-  'sidebar.trashCount_one': '{{count}} item in trash',
-  'sidebar.trashCount_other': '{{count}} items in trash',
   'sidebar.lastSynced': 'Last synced {{time}}',
   'sidebar.lastSyncedNever': 'Never synced',
   'sidebar.justNow': 'just now',
@@ -501,6 +487,10 @@ export const common: Record<string, string> = {
   // The vault genuinely has no spaces at all — distinct from a space that
   // simply has no pages, so an empty ZIP is never downloaded silently.
   'data.exportAllSpacesNoSpaces': 'No spaces to export',
+  // #5269 — Settings › Data's way into the History view.
+  'data.historyTitle': 'Edit history',
+  'data.historyDesc': 'Browse past changes and revert the ones you want undone.',
+  'data.historyButton': 'Open edit history',
   // #4886 — the reconciliation oracle, reachable from Settings → Data. It
   // rebuilds every derived table (page counts, links, tags, the agenda) from
   // your notes and reports the rows that disagree. Off by default: the sweep

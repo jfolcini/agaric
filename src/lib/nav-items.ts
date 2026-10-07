@@ -1,32 +1,18 @@
 /**
- * Shared sidebar navigation manifest.
+ * Navigation manifest: the views the app can route to, with their icon and
+ * label. A data manifest (icon component *references* + labels/ids) rather
+ * than a component, so it lives in `lib/` where the `hooks/` consumers
+ * (`useAppSpaceLifecycle`, `useViewChangeAnnouncer`) can read it without
+ * importing `components/` (lib-layering guard, #3121).
  *
- * Extracted from `App.tsx` so both the sidebar JSX
- * (`AppSidebar`) and the header-label hook (`useHeaderLabel` in
- * `App.tsx`) can read the same source of truth without forcing a
- * circular import between the two modules.
- *
- * #1741 — the items are now bucketed into labeled groups (Workspace /
- * System) so the sidebar renders as grouped sections rather than one
- * flat 11-item list, mirroring SettingsView's `TAB_GROUPS`. Settings is
- * pulled out as `SETTINGS_NAV_ITEM` and rendered in the footer alongside
- * the other utility actions. `NAV_ITEMS` remains a flat export of every
- * destination (the grouped items plus Settings) so the existing
- * lookups in `useHeaderLabel` / `ViewDispatcher` — which `.find()` by id
- * regardless of order — keep working unchanged.
- *
- * #4006 — moved down from components/common's former nav-items module
- * (deleted outright, no re-export left behind, so the old location is named
- * as prose rather than cited — there is no path there to keep honest): this
- * is a data manifest (icon component *references* + labels/ids), not a
- * component — it renders nothing — so it belongs in `lib/`, letting the two
- * `hooks/` consumers (`useAppSpaceLifecycle`, `useViewChangeAnnouncer`) read
- * it without importing `components/`, which the lib-layering guard (#3121)
- * forbids.
+ * #5269 — the sidebar lists only the daily surfaces (`SIDEBAR_NAV_ITEMS`)
+ * plus Settings in its footer. The other views are opened from the Pages
+ * header or Settings › Data; `NAV_ITEMS` still carries them, for those
+ * buttons and for the header label, window title and view-change
+ * announcement.
  */
 
 import {
-  Activity,
   Calendar,
   FileText,
   Funnel,
@@ -48,57 +34,32 @@ export interface NavItem {
   labelKey: string
 }
 
-export interface NavGroup {
-  /** Stable id used for the section wiring (aria-labelledby / keys). */
-  id: string
-  /** i18n key for the section header label. */
-  labelKey: string
-  items: NavItem[]
-}
-
-/**
- * Grouped sidebar nav — primary workspace surfaces vs. system/utility
- * destinations. `page-editor` is not listed (navigated to programmatically),
- * and Settings lives in the footer (see `SETTINGS_NAV_ITEM`).
- */
-export const NAV_GROUPS: NavGroup[] = [
-  {
-    id: 'workspace',
-    labelKey: 'sidebar.groupWorkspace',
-    items: [
-      { id: 'journal', icon: Calendar, labelKey: 'sidebar.journal' },
-      { id: 'pages', icon: FileText, labelKey: 'sidebar.pages' },
-      { id: 'search', icon: Search, labelKey: 'sidebar.search' },
-      { id: 'tags', icon: Tag, labelKey: 'sidebar.tags' },
-      { id: 'graph', icon: Network, labelKey: 'sidebar.graph' },
-      { id: 'templates', icon: LayoutTemplate, labelKey: 'sidebar.templates' },
-      { id: 'query', icon: Funnel, labelKey: 'sidebar.query' },
-    ],
-  },
-  {
-    id: 'system',
-    labelKey: 'sidebar.groupSystem',
-    items: [
-      { id: 'status', icon: Activity, labelKey: 'sidebar.status' },
-      { id: 'history', icon: History, labelKey: 'sidebar.history' },
-      { id: 'trash', icon: Trash2, labelKey: 'sidebar.trash' },
-    ],
-  },
+/** The sidebar's main list. `page-editor` is navigated to programmatically. */
+export const SIDEBAR_NAV_ITEMS: NavItem[] = [
+  { id: 'journal', icon: Calendar, labelKey: 'sidebar.journal' },
+  { id: 'pages', icon: FileText, labelKey: 'sidebar.pages' },
+  { id: 'search', icon: Search, labelKey: 'sidebar.search' },
+  { id: 'tags', icon: Tag, labelKey: 'sidebar.tags' },
 ]
 
-/** Settings — rendered in the sidebar footer rather than the main nav (#1741). */
+/** Settings — the sidebar footer's one nav destination. */
 export const SETTINGS_NAV_ITEM: NavItem = {
   id: 'settings',
   icon: Settings,
   labelKey: 'sidebar.settings',
 }
 
-/**
- * Flat list of every nav destination (grouped items + Settings). Kept as a
- * single array so id-keyed lookups (`useHeaderLabel`, `ViewDispatcher`) work
- * regardless of how the sidebar groups them visually.
- */
+const VIEWS_OUTSIDE_SIDEBAR: NavItem[] = [
+  { id: 'graph', icon: Network, labelKey: 'sidebar.graph' },
+  { id: 'templates', icon: LayoutTemplate, labelKey: 'sidebar.templates' },
+  { id: 'query', icon: Funnel, labelKey: 'sidebar.query' },
+  { id: 'history', icon: History, labelKey: 'sidebar.history' },
+  { id: 'trash', icon: Trash2, labelKey: 'sidebar.trash' },
+]
+
+/** Every routable view except `page-editor`, for id-keyed lookups. */
 export const NAV_ITEMS: NavItem[] = [
-  ...NAV_GROUPS.flatMap((group) => group.items),
+  ...SIDEBAR_NAV_ITEMS,
+  ...VIEWS_OUTSIDE_SIDEBAR,
   SETTINGS_NAV_ITEM,
 ]
