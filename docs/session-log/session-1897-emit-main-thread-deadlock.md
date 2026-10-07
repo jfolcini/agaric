@@ -1,4 +1,4 @@
-# Session 1895 — background events no longer freeze the app
+# Session 1897 — background events no longer freeze the app
 
 The maintainer's installed 0.14.0 AppImage froze for good after an agent wrote
 a 31-block page over the MCP RW socket in 140 ms. The session diagnosed the
