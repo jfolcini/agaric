@@ -196,12 +196,11 @@ pub enum DateField {
     Due,
     /// `b.scheduled_date` (TEXT ISO `YYYY-MM-DD`).
     Scheduled,
-    /// Creation time. Derived from the EARLIEST `op_log.created_at`
-    /// (epoch-ms) for the block; blocks with no op-log row have no created
-    /// date → the `"none"` bucket.
+    /// Creation time: the epoch-ms embedded in the block's ULID id, as the
+    /// `Created` sort uses.
     Created,
-    /// Last-edited time. Derived from the LATEST `op_log.created_at`
-    /// (epoch-ms) for the block; same no-op-log rule as `Created`.
+    /// Last-edited time: the LATEST `op_log.created_at` (epoch-ms) for the
+    /// block, else its creation time once compaction pruned its ops.
     LastEdited,
 }
 
@@ -370,9 +369,8 @@ pub enum SortColumn {
     /// Creation order. The block `id` is a ULID, whose lexical order is
     /// creation order, so `Created` maps to `b.id`.
     Created,
-    /// Last-edited time: `MAX(op_log.created_at)` over the block, `COALESCE`d
-    /// to the epoch sentinel for blocks with no op-log row (matching
-    /// `PagesProjection::compile_last_edited`'s no-op-log rule).
+    /// Last-edited time: `MAX(op_log.created_at)` over the block, else its
+    /// ULID creation time (matching `PagesProjection::compile_last_edited`).
     LastEdited,
     /// Sibling position (`b.position`). NULL positions sort last.
     Position,

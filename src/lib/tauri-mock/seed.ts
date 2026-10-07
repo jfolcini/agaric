@@ -162,14 +162,11 @@ export function pushOp(
  * Seed-time sibling of {@link pushOp} that takes an EXPLICIT `created_at`
  * instead of stamping "now".
  *
- * The backend has exactly ONE source for a page's `last_modified_at`: the
- * bare `(SELECT MAX(created_at) FROM op_log WHERE block_id = b.id)` subquery
- * `list_pages_with_metadata_inner` selects
- * (`src-tauri/src/commands/pages/metadata.rs:778`), which the
- * `RecentlyModified` keyset and `compile_last_edited`
- * (`agaric-store/src/filters/primitive.rs`) then COALESCE to an epoch
- * sentinel for COMPARISON only. There is no "seeded stamp" column, map, or
- * fallback anywhere on the backend.
+ * The backend derives a page's `last_modified_at` from
+ * `(SELECT MAX(created_at) FROM op_log WHERE block_id = b.id)`, falling back
+ * only to the creation time in the page's ULID (`last_edited_ms_sql`,
+ * `agaric-store/src/filters/primitive.rs`). There is no "seeded stamp"
+ * column, map, or fallback anywhere on the backend.
  *
  * This mock used to fake that with a mock-only `pageLastModified` map that
  * `pageLastModifiedAt` layered on top of the op-log scan, which is what made
@@ -177,8 +174,7 @@ export function pushOp(
  * FILTER (#3898) and its `RecentlyModified` SORT (#3884) — one root cause,
  * two symptoms. The map is gone: the seed now writes REAL `op_log` rows, so
  * `MAX(op_log.created_at)` *is* the intended last-edited stamp and the mock
- * reads it the way the engine does, through {@link rawOpLogLastEditedAt}
- * alone.
+ * reads it the way the engine does, through `blockLastEditedAt` (`shared.ts`).
  */
 export function pushOpAt(
   opType: string,

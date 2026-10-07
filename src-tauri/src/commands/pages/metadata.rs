@@ -7,6 +7,7 @@
 use serde::{Deserialize, Serialize};
 use specta::Type;
 use sqlx::SqlitePool;
+use std::sync::LazyLock;
 use tracing::instrument;
 
 use tauri::State;
@@ -15,7 +16,9 @@ use crate::db::ReadPool;
 use agaric_core::error::AppError;
 use agaric_core::error::ValidationCode;
 use agaric_core::ulid::{BlockId, PageId};
-use agaric_store::filters::{FilterPrimitive, PagesProjection, Projection, WhereClause};
+use agaric_store::filters::{
+    FilterPrimitive, PagesProjection, Projection, WhereClause, last_edited_ms_sql,
+};
 use agaric_store::pagination::{Cursor, PageRequest, PageResponse};
 
 use super::super::*;
@@ -26,7 +29,8 @@ use super::super::*;
 // Sibling IPC to `list_pages_inner`. Returns the same column shape as
 // `BlockRow` PLUS four metadata columns:
 //
-//   - `last_modified_at`: max(`op_log.created_at`) over the page itself.
+//   - `last_modified_at`: max(`op_log.created_at`) over the page itself,
+//     else its ULID creation time (`last_edited_ms_sql`).
 // Page-only (not subtree-aware) open-question 1 — the
 //     recursive-CTE variant is deferred until a benchmark says it's
 //     worth the cost.
@@ -161,12 +165,10 @@ pub struct PageWithMetadataRow {
     pub due_date: Option<String>,
     pub scheduled_date: Option<String>,
     pub page_id: Option<PageId>,
-    /// max(`op_log.created_at`) over the page itself, as INTEGER
-    /// epoch-milliseconds (#109 Phase 2). None if the page has no op-log
-    /// entries (which should never happen — every active page has at
-    /// least its own creation row — but the column is `Option` to absorb
-    /// edge cases like manually-imported rows without a synthesised
-    /// op-log entry).
+    /// max(`op_log.created_at`) over the page itself, else the page's ULID
+    /// creation time once compaction has pruned its ops (#5286), as INTEGER
+    /// epoch-milliseconds (#109 Phase 2). None only for a non-ULID id with
+    /// no op-log entry.
     pub last_modified_at: Option<i64>,
     /// COUNT of `block_links` targeting this page or any of its
     /// descendants. Always emitted (zero for un-linked pages).
@@ -310,10 +312,9 @@ enum SortKeyset {
     /// Used by `RecentlyModified`.
     StringDescNullCoalesced {
         /// SQL template with `{S}` as the sentinel bind placeholder.
-        /// E.g. `COALESCE((SELECT MAX(created_at) FROM op_log WHERE
-        /// block_id = b.id), ?{S})`. The composer substitutes `{S}`
-        /// with the actual bind position.
-        key_expr_template: &'static str,
+        /// E.g. `COALESCE(<last edited>, ?{S})`. The composer substitutes
+        /// `{S}` with the actual bind position.
+        key_expr_template: String,
         /// INTEGER epoch-ms written to the sentinel slot at runtime
         /// (#109 Phase 2; `last_modified_at` is now INTEGER).
         null_sentinel: i64,
@@ -347,7 +348,7 @@ fn keyset_for(sort: PageSort) -> SortKeyset {
         // (`#[ignore]`'d). Materialising `pages_cache.last_edited_at` is the
         // deferred remedy (see the `PageSort::RecentlyModified` comment).
         PageSort::RecentlyModified => SortKeyset::StringDescNullCoalesced {
-            key_expr_template: "COALESCE((SELECT MAX(created_at) FROM op_log WHERE block_id = b.id), ?{S})",
+            key_expr_template: format!("COALESCE({}, ?{{S}})", last_edited_ms_sql("b.id")),
             null_sentinel: LAST_MOD_NULL_SENTINEL,
         },
         // Read from the materialised `pages_cache` column
@@ -411,7 +412,7 @@ impl SortKeyset {
                 null_sentinel,
             } => push_null_coalesced_desc_keyset(
                 sql,
-                key_expr_template,
+                &key_expr_template,
                 null_sentinel,
                 cursor,
                 limit_plus_one,
@@ -810,12 +811,13 @@ fn compile_path_glob_clause(
 /// the badge-render cost for the visible rows, NOT this whole-space sort
 /// key. Do not read that number as license to drop the columns; see the
 /// KEEP rationale on `cache::pages::recompute_all_pages_cache_counts`.
-const PAGES_METADATA_BASE_SELECT: &str = r"SELECT
+static PAGES_METADATA_BASE_SELECT: LazyLock<String> = LazyLock::new(|| {
+    format!(
+        r"SELECT
                b.id, b.block_type, b.content, b.parent_id, b.position,
                b.deleted_at, b.todo_state, b.priority, b.due_date,
                b.scheduled_date, b.page_id,
-               (SELECT MAX(created_at) FROM op_log WHERE block_id = b.id)
-                   AS last_modified_at,
+               {} AS last_modified_at,
                COALESCE(pc.inbound_link_count, 0) AS inbound_link_count,
                COALESCE(pc.child_block_count, 0) AS child_block_count,
                EXISTS(SELECT 1 FROM block_tags WHERE block_id = b.id) AS has_tags,
@@ -836,7 +838,10 @@ const PAGES_METADATA_BASE_SELECT: &str = r"SELECT
            WHERE b.block_type = 'page'
              AND b.deleted_at IS NULL
              AND b.space_id = ?1
-        ";
+        ",
+        last_edited_ms_sql("b.id")
+    )
+});
 
 /// Test-only accessor that composes the **real** first-page
 /// (no cursor) SQL `list_pages_with_metadata_inner` emits for the given
@@ -856,7 +861,7 @@ pub fn compose_list_pages_with_metadata_sql(
     filter: &ListPagesWithMetadataFilter,
     limit_plus_one: i64,
 ) -> Result<String, AppError> {
-    let mut sql = String::from(PAGES_METADATA_BASE_SELECT);
+    let mut sql = PAGES_METADATA_BASE_SELECT.clone();
     let (filter_sql, filter_binds) = compile_pages_filters(&filter.filters)?;
     sql.push_str(&filter_sql);
     let base = 1 + filter_binds.len();
@@ -934,7 +939,7 @@ pub async fn list_pages_with_metadata_inner(
     // the ORDER BY / WHERE keyset depends on the runtime sort mode;
     // the compile-time macro would force four near-identical query
     // bodies.
-    let mut sql = String::from(PAGES_METADATA_BASE_SELECT);
+    let mut sql = PAGES_METADATA_BASE_SELECT.clone();
 
     // Splice the compound-filter WHERE clauses BEFORE the
     // keyset/ORDER BY/LIMIT. Their `?` placeholders land at positions

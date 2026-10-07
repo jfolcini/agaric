@@ -357,6 +357,36 @@ fn last_edited_bound_ms(value: &str, anchor: &str) -> Option<i64> {
         .map(|d| d.timestamp_millis())
 }
 
+/// SQL for the creation time (epoch-ms) embedded in a block id: a ULID's
+/// first 10 Crockford base32 chars are its big-endian creation ms. NULL when
+/// `id_expr` is not a 26-char ULID, so a caller's `COALESCE` falls through.
+pub fn ulid_created_ms_sql(id_expr: &str) -> String {
+    const CROCKFORD: &str = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
+    let time_chars = "[0-9A-HJKMNP-TV-Z]".repeat(9);
+    let digits: Vec<String> = (1..=10_u32)
+        .map(|i| {
+            let weight = 32_i64.pow(10 - i);
+            format!("(instr('{CROCKFORD}', substr({id_expr}, {i}, 1)) - 1) * {weight}")
+        })
+        .collect();
+    // `length`, not GLOB `?`: `SqlFragment` splits a fragment on every `?`.
+    format!(
+        "CASE WHEN length({id_expr}) = 26 AND {id_expr} GLOB '[0-7]{time_chars}*' \
+         THEN {} END",
+        digits.join(" + ")
+    )
+}
+
+/// SQL for a block's last-edited time (epoch-ms): its newest op, else its
+/// creation time. Op-log compaction deletes old ops, so the op log alone would
+/// make every block untouched for 90 days read as never edited (#5286).
+pub fn last_edited_ms_sql(id_expr: &str) -> String {
+    format!(
+        "COALESCE((SELECT MAX(created_at) FROM op_log WHERE block_id = {id_expr}), {})",
+        ulid_created_ms_sql(id_expr)
+    )
+}
+
 /// Snippet-rendering parameters threaded through to the FTS5 `snippet()`
 /// builtin. The SQL composition lives in `fts::search`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
@@ -1093,15 +1123,15 @@ impl Projection for PagesProjection {
         }
     }
     fn compile_last_edited(&self, spec: &LastEditedSpec, alias: &str) -> WhereClause {
-        // Uses op_log's last-modified-at expression for the page itself
-        // (`MAX(op_log.created_at)`). A future phase may swap to a
+        // Uses the page's own last-edited expression ([`last_edited_ms_sql`]:
+        // newest op, else ULID creation time). A future phase may swap to a
         // materialised `pages_cache.last_edited_at` column.
         //
-        // **No-op-log ⇒ epoch rule:** a page with no `op_log`
-        // row has a NULL `MAX(created_at)`. All three variants COALESCE that
+        // **Epoch rule:** only an id that is not a ULID AND has no `op_log`
+        // row leaves that expression NULL. All three variants COALESCE that
         // NULL to a common epoch sentinel (`0`, i.e. 1970-01-01 in the
         // INTEGER-epoch-ms scheme, #109) so the
-        // "no op-log ⇒ treated as edited at the epoch" rule is uniform:
+        // "treated as edited at the epoch" rule is uniform:
         //   - Rolling{N}   — epoch is far in the past, so it is `< now-N`
         //                    and the page is EXCLUDED (it wasn't edited
         //                    recently).
@@ -1109,8 +1139,8 @@ impl Projection for PagesProjection {
         //                    (it counts as "old").
         //   - Range{a,b}   — epoch is below any plausible `start`, so the
         //                    page is EXCLUDED (it falls outside the window).
-        // Without the shared sentinel, Rolling/Range would silently drop a
-        // no-op-log page (NULL comparisons → NULL → false) while OlderThan
+        // Without the shared sentinel, Rolling/Range would silently drop such
+        // a page (NULL comparisons → NULL → false) while OlderThan
         // included it — an asymmetry. The dates a Range binds are validated
         // upstream in `commands::pages::compile_pages_filters`.
         //
@@ -1143,19 +1173,17 @@ impl Projection for PagesProjection {
                 )
             })
         }
+        let last_edited = format!(
+            "COALESCE({}, {EPOCH})",
+            last_edited_ms_sql(&format!("{alias}.id"))
+        );
         match spec {
             LastEditedSpec::Rolling { days } => WhereClause::new(
-                format!(
-                    "COALESCE((SELECT MAX(created_at) FROM op_log WHERE block_id = {alias}.id), {EPOCH}) \
-                     >= (CAST(strftime('%s', 'now', ?) AS INTEGER) * 1000)"
-                ),
+                format!("{last_edited} >= (CAST(strftime('%s', 'now', ?) AS INTEGER) * 1000)"),
                 vec![Bind::Text(format!("-{days} days"))],
             ),
             LastEditedSpec::OlderThan { days } => WhereClause::new(
-                format!(
-                    "COALESCE((SELECT MAX(created_at) FROM op_log WHERE block_id = {alias}.id), {EPOCH}) \
-                     < (CAST(strftime('%s', 'now', ?) AS INTEGER) * 1000)"
-                ),
+                format!("{last_edited} < (CAST(strftime('%s', 'now', ?) AS INTEGER) * 1000)"),
                 vec![Bind::Text(format!("-{days} days"))],
             ),
             LastEditedSpec::Range { start, end } => {
@@ -1166,11 +1194,7 @@ impl Projection for PagesProjection {
                 let start_ms = to_ms(start, DAY_START);
                 let end_ms = to_ms(end, DAY_END);
                 WhereClause::new(
-                    format!(
-                        "COALESCE((SELECT MAX(created_at) FROM op_log WHERE block_id = {alias}.id), {EPOCH}) \
-                         >= ? AND COALESCE((SELECT MAX(created_at) FROM op_log WHERE block_id = {alias}.id), {EPOCH}) \
-                         <= ?"
-                    ),
+                    format!("{last_edited} >= ? AND {last_edited} <= ?"),
                     vec![Bind::Int(start_ms), Bind::Int(end_ms)],
                 )
             }
@@ -2726,6 +2750,47 @@ mod tests {
         });
         assert_eq!(contains_num.sql, "1=0");
         assert!(contains_num.binds.is_empty());
+    }
+
+    /// #5286 — SQLite decodes a ULID's creation ms exactly as the Rust
+    /// decoder does, and anything that is not a 26-char ULID decodes to NULL.
+    #[tokio::test]
+    async fn ulid_created_ms_sql_matches_rust_decoder() {
+        let pool = sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap();
+        let sql = format!("SELECT {}", ulid_created_ms_sql("?1"));
+        let fresh = ulid::Ulid::generate().to_string();
+        for id in [
+            "00000000000000000000000000",
+            "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+            "01J9Z3K4M5N6P7Q8R9S0T1V2W3",
+            "7ZZZZZZZZZZZZZZZZZZZZZZZZZ",
+            fresh.as_str(),
+        ] {
+            let got: Option<i64> = sqlx::query_scalar(sqlx::AssertSqlSafe(sql.as_str()))
+                .bind(id)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+            let want =
+                crate::backlink::filters::ulid_to_ms(id).map(|ms| i64::try_from(ms).unwrap());
+            assert!(want.is_some(), "{id} is a ULID");
+            assert_eq!(got, want, "decode of {id}");
+        }
+        for id in [
+            "FTS-COHORT-P",
+            "01B1000000000000000000000",
+            "01ARZ3NDEKTSV4RRFFQ69G5FAVX",
+            "01arz3ndektsv4rrffq69g5fav",
+            "01IRZ3NDEKTSV4RRFFQ69G5FAV",
+            "8ZZZZZZZZZZZZZZZZZZZZZZZZZ",
+        ] {
+            let got: Option<i64> = sqlx::query_scalar(sqlx::AssertSqlSafe(sql.as_str()))
+                .bind(id)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+            assert_eq!(got, None, "{id} is not a ULID");
+        }
     }
 }
 

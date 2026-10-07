@@ -189,8 +189,8 @@ pub struct SearchFilter {
     #[serde(default)]
     pub excluded_priority_filter: Vec<String>,
     /// #1320-C — `last-edited:` time-window predicate. Resolved against
-    /// each block's last `op_log.created_at` (epoch-ms `MAX(...)`,
-    /// COALESCE'd to the epoch sentinel for blocks with no op-log row).
+    /// each block's last `op_log.created_at` (epoch-ms `MAX(...)`, else the
+    /// block's ULID creation time).
     /// `None` (the default) preserves the existing "no filter" behaviour.
     /// Compiled through [`crate::filters::primitive::SearchProjection`]
     /// (`compile_last_edited`) and spliced into the dynamic FTS WHERE via

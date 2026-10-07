@@ -32,8 +32,9 @@
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
+use std::sync::LazyLock;
 
-use crate::filters::primitive::Bind;
+use crate::filters::primitive::{Bind, last_edited_ms_sql, ulid_created_ms_sql};
 use crate::filters::{CompileExpr, FilterExpr, SqlFragment};
 use crate::fts::sanitize_fts_query;
 use crate::pagination::ActiveBlockRow;
@@ -67,6 +68,11 @@ const CURSOR_VERSION: u8 = 1;
 // Sort exprs
 // ───────────────────────────────────────────────────────────────────────────
 
+/// The `LastEdited` sort key and `__last_edited` column. `0` covers a non-ULID
+/// id with no op, because `EngineRow::last_edited` is a non-NULL `i64`.
+static LAST_EDITED_EXPR: LazyLock<String> =
+    LazyLock::new(|| format!("COALESCE({}, 0)", last_edited_ms_sql("b.id")));
+
 /// A resolved sort term: the literal SQL expression to ORDER BY, its
 /// direction, and how to read its value off a fetched row for the cursor.
 struct SortTerm {
@@ -88,8 +94,7 @@ struct SortTerm {
 /// cardinality.
 ///
 /// The `LastEdited` sort key is deliberately NOT expressed as a join. It uses
-/// the correlated form `COALESCE((SELECT MAX(created_at) FROM op_log WHERE
-/// block_id = b.id), 0)` in all three positions instead. The former
+/// the correlated form [`LAST_EDITED_EXPR`] in all three positions instead. The former
 /// pre-aggregated `LEFT JOIN (SELECT block_id, MAX(created_at) … GROUP BY
 /// block_id)` MATERIALIZEs the WHOLE op_log (all ~500k rows) once per
 /// statement regardless of how selective the candidate WHERE is (~100ms vs
@@ -225,10 +230,7 @@ fn resolve_sort(
                     // MATERIALIZEs the whole op_log per statement regardless of
                     // candidate selectivity (~100ms vs ~0.3ms on a 100-block
                     // set), the #2269 cliff reverted in the grouped path.
-                    SortColumn::LastEdited => (
-                        "COALESCE((SELECT MAX(created_at) FROM op_log WHERE block_id = b.id), 0)",
-                        CursorKind::LastEditedMs,
-                    ),
+                    SortColumn::LastEdited => (LAST_EDITED_EXPR.as_str(), CursorKind::LastEditedMs),
                     SortColumn::Position => ("b.position", CursorKind::Position),
                     SortColumn::Priority => ("b.priority", CursorKind::Priority),
                     // Materialised once via the pages_cache LEFT JOIN
@@ -796,8 +798,7 @@ async fn fetch_flat_page(
         // sort emits in ORDER BY and the keyset WHERE (see `SortJoins`). The
         // pre-aggregated derived-table join was removed (#2304): it MATERIALIZEd
         // the whole op_log per statement regardless of candidate selectivity.
-        last_edited_select =
-            "COALESCE((SELECT MAX(created_at) FROM op_log WHERE block_id = b.id), 0)",
+        last_edited_select = LAST_EDITED_EXPR.as_str(),
         title_select = if sort_joins.title {
             "pc.title"
         } else {
@@ -1259,8 +1260,8 @@ fn group_key_expr(key: &GroupKey, pos: usize) -> (String, String, Option<Bind>) 
                     format!("strftime('{fmt}', b.scheduled_date)"),
                     String::new(),
                 ),
-                // op_log.created_at is epoch-ms; bucket the earliest (Created) /
-                // latest (LastEdited) op as a calendar date.
+                // Created is the ULID's embedded epoch-ms (as the Created sort);
+                // LastEdited is the newest op, else that creation time (#5286).
                 //
                 // DELIBERATELY a correlated scalar subquery, NOT a pre-aggregated
                 // `LEFT JOIN (SELECT block_id, MIN|MAX(created_at) … GROUP BY
@@ -1276,18 +1277,18 @@ fn group_key_expr(key: &GroupKey, pos: usize) -> (String, String, Option<Bind>) 
                 // up to 3× per row (SELECT / PARTITION BY / IN in the member
                 // preview) it is orders of magnitude cheaper for the filtered
                 // candidate sets grouped queries run over (#2269 review).
-                // NULL when the block has no op → the `none` bucket.
+                // NULL only for a non-ULID id with no op → the `none` bucket.
                 DateField::Created => (
                     format!(
-                        "strftime('{fmt}', (SELECT MIN(created_at) FROM op_log \
-                         WHERE block_id = b.id) / 1000, 'unixepoch')"
+                        "strftime('{fmt}', {} / 1000, 'unixepoch')",
+                        ulid_created_ms_sql("b.id")
                     ),
                     String::new(),
                 ),
                 DateField::LastEdited => (
                     format!(
-                        "strftime('{fmt}', (SELECT MAX(created_at) FROM op_log \
-                         WHERE block_id = b.id) / 1000, 'unixepoch')"
+                        "strftime('{fmt}', {} / 1000, 'unixepoch')",
+                        last_edited_ms_sql("b.id")
                     ),
                     String::new(),
                 ),

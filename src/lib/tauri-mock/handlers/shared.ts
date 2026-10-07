@@ -18,6 +18,7 @@
 
 import { utf8ToBase64Url } from '@/lib/base64url'
 import type { AppError, PageResponse, commands } from '@/lib/bindings'
+import { ulidToDate } from '@/lib/format'
 import { pageGlobFilterMatches } from '@/lib/search-query/glob-validate'
 import { compareNocase, compareUtf8Bytes, foldAsciiUppercase } from '@/lib/sqlite-collation'
 import { TASK_STATES } from '@/lib/task-states'
@@ -582,7 +583,7 @@ export function datePredicateMatches(
  * beyond the already-pinned per-primitive matrix.
  *
  * `lastEditedAt` is forwarded unchanged to every leaf. `run_advanced_query`
- * passes a memoizing {@link rawOpLogLastEditedAt} wrapper so its `LastEdited`
+ * passes a memoizing {@link blockLastEditedAt} wrapper so its `LastEdited`
  * filter and its `lastEdited` sort read the SAME column — #3863 fixed the sort
  * getter only, which left the two halves of one command reading different data
  * (#3888 review note 3).
@@ -775,16 +776,16 @@ export function hasPropertyMatches(r: PageMetaRow, f: Record<string, unknown>): 
 /**
  * Resolve the last-edited stamp a `LastEdited` filter reads for one row.
  *
- * Both answers in this mock are now the SAME VALUE — the raw
- * `MAX(op_log.created_at)` scan, exactly the data source `compile_last_edited`
- * (`src-tauri/agaric-store/src/filters/primitive.rs:1035-1052`) compiles to.
+ * Both answers in this mock are now the SAME VALUE — {@link blockLastEditedAt},
+ * exactly the data source `compile_last_edited`
+ * (`src-tauri/agaric-store/src/filters/primitive.rs`) compiles to.
  * This seam survives only as a MEMOIZATION hook, not a semantic choice:
  *
  *  - {@link DEFAULT_LAST_EDITED_SOURCE} reads `r.lastModifiedAt`, which
- *    `buildPageMetaRow` already populated from {@link rawOpLogLastEditedAt}.
+ *    `buildPageMetaRow` already populated from {@link blockLastEditedAt}.
  *    This is what `list_pages_with_metadata` uses.
  *  - `run_advanced_query` passes a per-row memoizing wrapper around
- *    {@link rawOpLogLastEditedAt} (`search.ts`), because it evaluates the
+ *    {@link blockLastEditedAt} (`search.ts`), because it evaluates the
  *    filter over EVERY active block rather than over pre-built page rows and
  *    would otherwise rescan `opLog` per comparison.
  *
@@ -796,7 +797,7 @@ export function hasPropertyMatches(r: PageMetaRow, f: Record<string, unknown>): 
  */
 export type LastEditedSource = (r: PageMetaRow) => string | null
 
-/** See {@link LastEditedSource} — the pre-computed op-log MAX on the row. */
+/** See {@link LastEditedSource} — the pre-computed last-edited stamp on the row. */
 export const DEFAULT_LAST_EDITED_SOURCE: LastEditedSource = (r) => r.lastModifiedAt
 
 /**
@@ -808,11 +809,11 @@ export const DEFAULT_LAST_EDITED_SOURCE: LastEditedSource = (r) => r.lastModifie
  *     as older, matching the backend's COALESCE-to-epoch rule),
  *   - `Range{start,end}` — modified within `[start, end]` (inclusive).
  *
- * The NULL handling matches the engine's "no op-log ⇒ epoch" rule exactly
+ * The NULL handling matches the engine's epoch-sentinel rule exactly
  * (Rolling EXCLUDES, OlderThan INCLUDES, Range EXCLUDES). `lastEditedAt` is a
  * {@link LastEditedSource} callback rather than a plain `r.lastModifiedAt`
  * read, but that seam is now a MEMOIZATION hook, not a semantic choice: both
- * callers resolve to the SAME raw `MAX(op_log.created_at)` value — see
+ * callers resolve to the SAME {@link blockLastEditedAt} value — see
  * {@link LastEditedSource}'s own doc for why the fork used to be real and no
  * longer is.
  */
@@ -852,12 +853,12 @@ export function lastEditedMatches(
 /**
  * Comparator mirroring the backend's per-sort keyset (id is the tiebreaker).
  *
- * `'recently-modified'` reads `lastModifiedAt`, i.e. the raw
- * `MAX(op_log.created_at)` {@link buildPageMetaRow} stored (#3884). Its
+ * `'recently-modified'` reads `lastModifiedAt`, i.e. the
+ * {@link blockLastEditedAt} value {@link buildPageMetaRow} stored (#3884). Its
  * `?? ''` is the mock's spelling of the engine's `LAST_MOD_NULL_SENTINEL`
  * COALESCE (`src-tauri/src/commands/pages/metadata.rs:220,349-351`): under a
  * DESC compare, the empty string sorts below every ISO timestamp exactly as
- * `0` sorts below every epoch-ms value, so op-log-free rows tie at the
+ * `0` sorts below every epoch-ms value, so rows with no stamp tie at the
  * sentinel and fall to the id tiebreaker — the engine's behaviour, not a
  * seeded ordering.
  *
@@ -1002,17 +1003,10 @@ let lastEditedIndex: {
 /**
  * Scan `opLog` for the latest entry whose payload `block_id` is `blockId`,
  * i.e. `MAX(created_at) WHERE block_id = ?`. `null` when the block has no
- * op-log activity. Mirrors the RAW subquery the engine uses for last-edited
- * everywhere it appears — verbatim in `run_advanced_query`'s `LastEdited`
- * sort key (`COALESCE((SELECT MAX(created_at) FROM op_log WHERE block_id =
- * b.id), 0)`, `agaric-store/src/query/engine.rs:229`) and reused by
- * `list_pages_with_metadata`'s `RecentlyModified` keyset
- * (`LAST_MOD_NULL_SENTINEL = 0`, `src-tauri/src/commands/pages/metadata.rs:220,351`).
- * NO other data source feeds this on the backend — a block with no op-log row
- * coalesces to the SAME epoch sentinel as every other op-log-free block.
+ * op-log activity. Read through {@link blockLastEditedAt}, which adds the
+ * engine's creation-time floor.
  *
- * This is now the SOLE last-edited source in the mock, for every command and
- * for both arms (filter and sort) of each. It used to compete with
+ * It used to compete with
  * `pageLastModifiedAt`, which layered a mock-only `pageLastModified` seeded
  * stamp on top: `run_advanced_query`'s sort getter was moved off that
  * fallback in #3863 and its `LastEdited` filter in #3888, leaving
@@ -1021,11 +1015,9 @@ let lastEditedIndex: {
  * symptoms. Both are closed by seeding REAL `op_log` rows instead
  * (`stampPageLastEdited`, `seed.ts`) and deleting the fallback and its map
  * outright, so there is no longer any code path by which a page's
- * last-edited value can come from anywhere but this scan. A block with no
- * op-log row is `null` here and coalesces to the same epoch sentinel as every
- * other op-log-free block, exactly as on the engine.
+ * last-edited value can come from anywhere but this scan and the ULID floor.
  */
-export function rawOpLogLastEditedAt(blockId: string): string | null {
+function rawOpLogLastEditedAt(blockId: string): string | null {
   const first = opLog[0]
   const last = opLog.at(-1)
   if (
@@ -1050,6 +1042,20 @@ export function rawOpLogLastEditedAt(blockId: string): string | null {
     lastEditedIndex = { len: opLog.length, first, last, map }
   }
   return lastEditedIndex.map.get(blockId) ?? null
+}
+
+/**
+ * The engine's `last_edited_ms_sql` (`agaric-store/src/filters/primitive.rs`):
+ * the newest op, else the creation time in the block's ULID, because
+ * compaction deletes ops older than 90 days (#5286). `null` for a non-ULID
+ * id with no op. A ULID time of 0 is also `null`: the engine's epoch `0` is
+ * this mock's `null` (see `cursorValueFor`).
+ */
+export function blockLastEditedAt(blockId: string): string | null {
+  const lastOp = rawOpLogLastEditedAt(blockId)
+  if (lastOp !== null) return lastOp
+  const createdMs = ulidToDate(blockId)?.getTime()
+  return createdMs ? new Date(createdMs).toISOString() : null
 }
 
 /**
@@ -1119,16 +1125,14 @@ export function buildPageMetaRow(
     dueDate: (b['due_date'] as string | null) ?? null,
     scheduledDate: (b['scheduled_date'] as string | null) ?? null,
     pageId: (b['page_id'] as string | null) ?? null,
-    // `last_modified_at` IS `MAX(op_log.created_at)` over this block and
-    // nothing else — the bare subquery `list_pages_with_metadata_inner`
-    // selects (`src-tauri/src/commands/pages/metadata.rs:778`), with no
-    // COALESCE and no seed analogue. `null` for a block with no op-log
-    // activity; the `last-edited:` filter and the `recently-modified` sort
-    // apply the engine's epoch-sentinel rule to that null themselves
-    // (`lastEditedMatches` / `compareMetaRows`). The seeded fixtures get
-    // comparable ISO timestamps by carrying real op-log rows
-    // (`stampPageLastEdited`, `seed.ts`), not by a fallback (#3884/#3898).
-    lastModifiedAt: rawOpLogLastEditedAt(pageId),
+    // `last_modified_at` is `MAX(op_log.created_at)` over this block, else
+    // its ULID creation time — what `list_pages_with_metadata_inner` selects.
+    // `null` only for a non-ULID id with no op; the `last-edited:` filter and
+    // the `recently-modified` sort apply the engine's epoch-sentinel rule to
+    // that null themselves (`lastEditedMatches` / `compareMetaRows`). The
+    // seeded fixtures get comparable ISO timestamps by carrying real op-log
+    // rows (`stampPageLastEdited`, `seed.ts`), not by a fallback (#3884/#3898).
+    lastModifiedAt: blockLastEditedAt(pageId),
     inboundLinkCount: inbound,
     childBlockCount: descendants.length,
     hasOutboundLink: hasOutbound,

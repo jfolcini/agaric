@@ -1,17 +1,18 @@
 /**
- * `list_pages_with_metadata` — `last_modified_at` comes from the op-log and
- * from nowhere else (#3884 + #3898).
+ * `list_pages_with_metadata` — `last_modified_at` comes from the op-log, else
+ * the page's ULID creation time, and from nowhere else (#3884 + #3898 + #5286).
  *
  * ## What this file guards
  *
  * The backend has exactly ONE last-edited source. The column
- * `list_pages_with_metadata_inner` selects is the bare
+ * `list_pages_with_metadata_inner` selects is
  *
- *     (SELECT MAX(created_at) FROM op_log WHERE block_id = b.id) AS last_modified_at
+ *     COALESCE((SELECT MAX(created_at) FROM op_log WHERE block_id = b.id), <ULID ms>)
  *
- * (`src-tauri/src/commands/pages/metadata.rs:778`) — no COALESCE, no
- * materialised stamp, no seed table. The two consumers each apply their own
- * epoch-sentinel rule to that value for COMPARISON only:
+ * (`last_edited_ms_sql`) — no materialised stamp, no seed table. The seed's
+ * ids all decode to the epoch, which this mock spells `null`, so sections 1-3
+ * see only the op-log half; section 4 pins the ULID half. The two consumers
+ * each apply their own epoch-sentinel rule to that value for COMPARISON only:
  *
  *  - the `RecentlyModified` keyset — `COALESCE(<that subquery>, ?{S})` with
  *    `LAST_MOD_NULL_SENTINEL = 0` (`src-tauri/src/commands/pages/metadata.rs:220,349-351`), so op-log-free
@@ -60,7 +61,9 @@ import { beforeEach, describe, expect, it } from 'vitest'
 import { dispatch } from '@/lib/tauri-mock/handlers'
 import {
   blocks,
+  makeBlock,
   opLog,
+  properties,
   SEED_IDS,
   seedBlocks,
   stampPageLastEdited,
@@ -370,5 +373,57 @@ describe('list_pages_with_metadata — the recently-modified sort reads the op-l
     const [first, second] = rows
     expect(first?.id.localeCompare(second?.id ?? '')).toBeLessThan(0)
     expect(new Set([first?.id, second?.id])).toEqual(new Set([bulk1, bulk2]))
+  })
+})
+
+// ===========================================================================
+// 4. The ULID creation-time floor (#5286)
+// ===========================================================================
+describe('list_pages_with_metadata — a compacted page falls back to its ULID creation time (#5286)', () => {
+  // A real ULID minted at 2025-06-01T12:00:00.000Z with no op-log row left,
+  // as compaction leaves it. The seed's own ids all decode to the epoch,
+  // which this mock spells `null`.
+  const CREATED = '2025-06-01T12:00:00.000Z'
+  const COMPACTED = '01JWNNSVG00000000000000001'
+
+  beforeEach(() => {
+    seedWithBulkPages(0)
+    blocks.set(COMPACTED, makeBlock(COMPACTED, 'page', 'Compacted', null, 200))
+    properties.set(
+      COMPACTED,
+      new Map([
+        [
+          'space',
+          {
+            block_id: COMPACTED,
+            key: 'space',
+            value_text: null,
+            value_num: null,
+            value_date: null,
+            value_ref: SPACE,
+            value_bool: null,
+          },
+        ],
+      ]),
+    )
+  })
+
+  it('reports the creation time instead of null', () => {
+    const row = listPages().items.find((r) => r.id === COMPACTED)
+    expect(row?.lastModifiedAt).toBe(CREATED)
+  })
+
+  it('a LastEdited Range around the creation day includes it', () => {
+    const june = {
+      type: 'LastEdited',
+      spec: { type: 'Range', start: '2025-06-01T00:00:00.000Z', end: '2025-06-02T00:00:00.000Z' },
+    }
+    expect(titlesOf(listPages([june]))).toEqual(['Compacted'])
+  })
+
+  it('sorts by its creation time, ahead of a page with no stamp at all', () => {
+    stripOpLogFor(SEED_IDS.PAGE_GETTING_STARTED)
+    const titles = titlesOf(listPages([], 'recently-modified'))
+    expect(titles.slice(-2)).toEqual(['Compacted', 'Getting Started'])
   })
 })
