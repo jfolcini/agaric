@@ -2,6 +2,7 @@ import {
   deleteBlockViaContextMenu,
   expect,
   focusBlock,
+  navigateToView,
   openPage,
   saveBlock,
   test,
@@ -275,7 +276,7 @@ test.describe('Trash list-view keyboard selection', () => {
     }
 
     // Navigate to Trash.
-    await page.getByRole('button', { name: /^Trash/ }).click()
+    await navigateToView(page, 'Trash')
     await expect(page.locator('[data-testid="trash-item"]').nth(1)).toBeVisible()
   }
 

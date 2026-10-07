@@ -1,7 +1,8 @@
 /**
  * StatusPanel — shows materializer status info (p2-t15, p2-t16).
  *
- * Standalone panel with no props. Polls getStatus() every 5 seconds.
+ * The Settings › Status tab's body (#5269), so it renders no `<h1>` of its
+ * own: SettingsView owns the page heading. Polls getStatus() every 5 seconds.
  * Displays 4 metrics: foreground queue depth, background queue depth,
  * grand-total ops dispatched (foreground + background combined), and the
  * background-only dispatched count.
@@ -16,7 +17,6 @@ import { useTranslation } from 'react-i18next'
 import { LoadingSkeleton } from '@/components/rendering/LoadingSkeleton'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
-import { FeaturePageHeader } from '@/components/ui/feature-page-header'
 import { MetricCard } from '@/components/ui/metric-card'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { usePollingQuery } from '@/hooks/usePollingQuery'
@@ -271,12 +271,6 @@ export function StatusPanel(): React.ReactElement {
 
   return (
     <div className="status-panel space-y-4">
-      {/* PEND-UX item 5 — top-level `<h1>` landmark consistent with the
-            other top-level views. The two existing CardHeader/CardTitle
-            elements (Materializer / Sync) remain as sub-section
-            headings beneath. */}
-      <FeaturePageHeader title={t('sidebar.status')} className="status-panel-header" />
-
       <Card>
         <CardHeader>
           <CardTitle className="status-panel-title flex items-center gap-2">

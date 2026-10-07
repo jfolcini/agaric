@@ -12,7 +12,12 @@
 import { act, renderHook } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { __resetThemeStoreForTests, type ThemePreference, useTheme } from '@/hooks/useTheme'
+import {
+  __resetThemeStoreForTests,
+  cycleThemePreference,
+  type ThemePreference,
+  useTheme,
+} from '@/hooks/useTheme'
 import type { AndroidThemeBridge } from '@/lib/platform/android-theme-bridge'
 
 // Mock matchMedia
@@ -75,28 +80,26 @@ describe('useTheme', () => {
     const { result } = renderHook(() => useTheme())
     expect(result.current.theme).toBe('auto')
 
-    act(() => result.current.toggleTheme())
+    act(() => cycleThemePreference())
     expect(result.current.theme).toBe('dark')
 
-    act(() => result.current.toggleTheme())
+    act(() => cycleThemePreference())
     expect(result.current.theme).toBe('light')
 
     // light→auto would be a no-op (both light), so skip to dark
-    act(() => result.current.toggleTheme())
+    act(() => cycleThemePreference())
     expect(result.current.theme).toBe('dark')
   })
 
   it('persists theme choice to localStorage', () => {
-    const { result } = renderHook(() => useTheme())
-
-    act(() => result.current.toggleTheme())
+    act(() => cycleThemePreference())
     expect(localStorage.getItem('theme-preference')).toBe('dark')
 
-    act(() => result.current.toggleTheme())
+    act(() => cycleThemePreference())
     expect(localStorage.getItem('theme-preference')).toBe('light')
 
     // light→auto skipped (both light with system=light), goes to dark
-    act(() => result.current.toggleTheme())
+    act(() => cycleThemePreference())
     expect(localStorage.getItem('theme-preference')).toBe('dark')
   })
 
@@ -154,7 +157,7 @@ describe('useTheme', () => {
     expect(result.current.isDark).toBe(true)
 
     // auto(dark) → dark would be a no-op, so skip to light
-    act(() => result.current.toggleTheme())
+    act(() => cycleThemePreference())
     expect(result.current.theme).toBe('light')
     expect(result.current.isDark).toBe(false)
   })
@@ -167,7 +170,7 @@ describe('useTheme', () => {
     expect(result.current.isDark).toBe(false)
 
     // light(light) → auto would be a no-op (both light with system=light), so skip to dark
-    act(() => result.current.toggleTheme())
+    act(() => cycleThemePreference())
     expect(result.current.theme).toBe('dark')
     expect(result.current.isDark).toBe(true)
   })
@@ -319,14 +322,14 @@ describe('useTheme', () => {
     })
   })
 
-  describe('toggleTheme from a custom theme re-enters the classic cycle', () => {
+  describe('cycleThemePreference from a custom theme re-enters the classic cycle', () => {
     it('toggling from solarized-dark moves to a non-dark classic state', () => {
       mockDarkQuery = false
       localStorage.setItem('theme-preference', 'solarized-dark')
       const { result } = renderHook(() => useTheme())
       expect(result.current.isDark).toBe(true)
 
-      act(() => result.current.toggleTheme())
+      act(() => cycleThemePreference())
       // prev is solarized-dark (dark). Classic cycle index is -1; first candidate
       // is 'auto' (system=light → light) which differs in isDark, so we land there.
       expect(result.current.theme).toBe('auto')
@@ -341,7 +344,7 @@ describe('useTheme', () => {
       const { result } = renderHook(() => useTheme())
       expect(result.current.isDark).toBe(true)
 
-      act(() => result.current.toggleTheme())
+      act(() => cycleThemePreference())
       expect(result.current.isDark).toBe(false)
       expect(document.documentElement.classList.contains('theme-dracula')).toBe(false)
     })
@@ -352,7 +355,7 @@ describe('useTheme', () => {
       const { result } = renderHook(() => useTheme())
       expect(result.current.isDark).toBe(false)
 
-      act(() => result.current.toggleTheme())
+      act(() => cycleThemePreference())
       expect(result.current.isDark).toBe(true)
       expect(document.documentElement.classList.contains('theme-solarized-light')).toBe(false)
       expect(document.documentElement.classList.contains('dark')).toBe(true)
@@ -412,18 +415,18 @@ describe('useTheme', () => {
       expect(document.documentElement.classList.contains('theme-dracula')).toBe(true)
     })
 
-    it('sidebar toggle cycles from the Settings choice, not a stale value', () => {
+    it('the cycle starts from the Settings choice, not a stale value', () => {
       mockDarkQuery = false
       const shell = renderHook(() => useTheme())
       const settings = renderHook(() => useTheme())
 
       act(() => settings.result.current.setTheme('dracula'))
 
-      // Toggling via the SHELL instance must start from 'dracula' (dark):
+      // The cycle must start from 'dracula' (dark):
       // first differing-isDark classic candidate with system=light is
       // 'auto' (light). Pre-#733 the shell cycled from its stale 'auto'
       // and persisted 'dark' over the user's Dracula pick.
-      act(() => shell.result.current.toggleTheme())
+      act(() => cycleThemePreference())
 
       expect(shell.result.current.theme).toBe('auto')
       expect(settings.result.current.theme).toBe('auto')

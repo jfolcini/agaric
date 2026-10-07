@@ -116,6 +116,8 @@ function stubInvoke(overrides: Readonly<TypedInvokeHandlers> = {}) {
       // Speculative row prefetch — fires on pointer dwell, not on any
       // assertion; modelled here so it can never stand in for a real call.
       load_page_subtree: () => ({ blocks: [], truncated: false, total: 0 }),
+      // #5269 — the header's Trash button polls the trash count for its badge.
+      count_trash: () => 0,
       ...overrides,
     }),
   )

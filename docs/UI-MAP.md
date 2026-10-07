@@ -64,19 +64,18 @@ App
 
 `ViewDispatcher` switches on `useNavigationStore.currentView`. No router; no URL hash. `agaric://` deep links are parsed by the Rust backend, emitted as Tauri events, and dispatched into the nav / tabs stores. `useTabsStore` owns the per-tab page stack. The header's Back / Forward replay the per-space history in `src/stores/navigation-history.ts`.
 
-| View | What the user sees | Sidebar item |
+| View | What the user sees | Opened from |
 | --- | --- | --- |
-| **Journal** | Eager-mounted; dated modes use the cursor to scope content, while Stream and Agenda hide the previous/next stepper and date display. | Calendar |
-| **Search** | Debounced + cursor-paginated FTS; filter chips for pages and tags. `Ctrl+Shift+F` also focuses it (`Ctrl+F` is in-page find, not this view). | Search |
-| **Pages** | Virtualised list of all page blocks; multi-select + delete. | FileText |
-| **Tags** | Tag CRUD + colour picker + filtered task panel. | Tag |
-| **Query** | Advanced-query builder (`AdvancedQuery/AdvancedQueryView.tsx`); navigate to saved/ad-hoc queries. | SlidersHorizontal |
-| **Settings** | Tabbed (incl. a **Properties** tab for property-definition CRUD); deep-linkable via the `?settings=<tab>` query string parsed inside `SettingsView` (no real router). | Settings |
-| **Trash** | Soft-deleted blocks; batch restore / purge; original-location breadcrumb. Badge polls periodically. | Trash |
-| **Status** | Materializer metrics (queue depths, op counts). Polls periodically. | Activity |
-| **History** | Global op log; multi-select revert; diff toggle. | History |
-| **Templates** | Template-tagged pages with first-block preview. | LayoutTemplate |
-| **Graph** | Force-directed page-relationship graph. Web Worker; reduced-motion friendly. | Network |
+| **Journal** | Eager-mounted; dated modes use the cursor to scope content, while Stream and Agenda hide the previous/next stepper and date display. | Sidebar |
+| **Search** | Debounced + cursor-paginated FTS; filter chips for pages and tags. `Ctrl+Shift+F` also focuses it (`Ctrl+F` is in-page find, not this view). | Sidebar |
+| **Pages** | Virtualised list of all page blocks; multi-select + delete. Its header carries the view buttons below. | Sidebar |
+| **Tags** | Tag CRUD + colour picker + filtered task panel. | Sidebar, Pages header |
+| **Query** | Advanced-query builder (`AdvancedQuery/AdvancedQueryView.tsx`); navigate to saved/ad-hoc queries. | Pages header |
+| **Settings** | Tabbed (incl. a **Properties** tab for property-definition CRUD, and a **Status** tab with materializer metrics — queue depths, op counts — that polls periodically); deep-linkable via the `?settings=<tab>` query string parsed inside `SettingsView` (no real router). | Sidebar footer |
+| **Trash** | Soft-deleted blocks; batch restore / purge; original-location breadcrumb. Its button's count badge polls periodically. | Pages header |
+| **History** | Global op log; multi-select revert; diff toggle. | Settings › Data |
+| **Templates** | Template-tagged pages with first-block preview. | Pages header |
+| **Graph** | Force-directed page-relationship graph. Web Worker; reduced-motion friendly. | Pages header |
 | **PageEditor** | Single page (title + BlockTree). Reached by navigation, not the sidebar. | — |
 
 The **DuePanel** and **DonePanel** are not separate views — they're children of the Journal modes (agenda, daily, weekly). Clicking a Due / Done badge scrolls into view inside the active mode rather than switching views.
@@ -112,7 +111,7 @@ Composed from category sub-hooks under `src/components/block-tree/use-block-slas
 
 ## Navigation chrome
 
-- **Sidebar** — header (logo + SpaceSwitcher), body (nav items), footer (action buttons). Open/closed state persists in a cookie; width in localStorage.
+- **Sidebar** — header (logo + collapse toggle, SpaceSwitcher, New page), body (Journal / Pages / Search / Tags, then Bookmarks), footer (the Sync row with the status dot and last-synced time, Settings). Open/closed state persists in a cookie; width in localStorage.
 - **PageHeader** owns the page title, alias section, tag row, property table, and a kebab menu. See `docs/UX.md` § App-specific features → Kebab menu for the canonical action list.
 - **Keyboard shortcuts** live in `src/lib/keyboard-config/catalog.ts`; rebindable entries are user-customisable in Settings → Keyboard, while structural bindings and picker triggers are not. See [Keyboard](features/keyboard.md) and [Pickers & Slash Menu](features/pickers-and-slash.md#the-pickers) for the current catalogs.
 - **Search surfaces**: three distinct entry points (mirrors README § Search):
@@ -145,7 +144,7 @@ All modal-style dialogs use `useDialogOrSheet`, which swaps to a bottom Sheet on
 ## Mobile / a11y posture
 
 - **44 px touch floor** via `[@media(pointer:coarse)]` classes (`min-h-11`, etc.). Enforced in `Button` variants and overflow menu rows. Inline indicators (collapse chevron, task marker, priority badge) intentionally use the `max-sm:` viewport breakpoint instead — they compete with content for space and are not touch-primary affordances. Don't unify the two — tests assert both.
-- **Sidebar mobile model**: Sheet overlay only — no persistent rail (retired so the 48 px it reserved goes to content). Opened by the header hamburger, the left-edge swipe, or `Ctrl+B`. Sheet auto-closes on nav-item tap.
+- **Sidebar mobile model**: Sheet overlay only — no persistent rail (retired so the 48 px it reserved goes to content). Opened by the header hamburger, the left-edge swipe, or `Ctrl+B`; closed by the collapse toggle in its header. Sheet auto-closes on nav-item tap.
 - **No Sheet ↔ Popover viewport swaps**. Radix Popover works on touch; Sheet is only for off-canvas navigation.
 - **ARIA, focus, announcer, reduced motion** — see `docs/UX.md` § Accessibility for the canonical rules. Notable here: roving tabindex (exactly one `tabindex=0` per group, arrows move it) is used in list-like chrome such as `RecentPagesStrip` and `TabBar`; the block editor's mount/unmount-by-focus is a different pattern, the "roving editor".
 

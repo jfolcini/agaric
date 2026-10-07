@@ -10,7 +10,6 @@ export type View =
   | 'pages'
   | 'tags'
   | 'trash'
-  | 'status'
   | 'history'
   | 'templates'
   | 'settings'

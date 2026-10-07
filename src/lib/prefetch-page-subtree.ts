@@ -27,11 +27,16 @@
  *    observe (let alone replay) a promise `load()` already consumed once.
  *  - Expiry is checked lazily on read (no timers) — an entry past its TTL
  *    is treated as absent and swept on the next read that touches it.
+ *  - A graph-structure change (`graph-structure-events`: delete, restore,
+ *    history revert, an applied sync batch) expires every entry parked
+ *    before it, so a page restored from the Trash never opens from the
+ *    pre-restore snapshot the Pages list parked on the way there.
  */
 
 import { unwrap } from '@/lib/app-error'
 import type { PageSubtree } from '@/lib/bindings'
 import { commands } from '@/lib/bindings'
+import { getRecordedGraphStructureChanges } from '@/lib/graph-structure-events'
 import { logger } from '@/lib/logger'
 
 /**
@@ -64,6 +69,7 @@ export const PAGE_PREFETCH_DWELL_MS = 120
 interface PrefetchEntry {
   promise: Promise<PageSubtree>
   expiresAt: number
+  structureChanges: number
 }
 
 const prefetchMap = new Map<string, PrefetchEntry>()
@@ -73,7 +79,11 @@ function keyFor(spaceId: string, pageId: string): string {
 }
 
 function isLive(entry: PrefetchEntry | undefined, now: number): entry is PrefetchEntry {
-  return entry != null && entry.expiresAt > now
+  return (
+    entry != null &&
+    entry.expiresAt > now &&
+    entry.structureChanges === getRecordedGraphStructureChanges()
+  )
 }
 
 /**
@@ -90,7 +100,7 @@ function isLive(entry: PrefetchEntry | undefined, now: number): entry is Prefetc
  */
 function sweepExpiredAndCountLive(now: number): number {
   for (const [key, entry] of prefetchMap) {
-    if (entry.expiresAt <= now) prefetchMap.delete(key)
+    if (!isLive(entry, now)) prefetchMap.delete(key)
   }
   return prefetchMap.size
 }
@@ -136,7 +146,11 @@ export function prefetchPageSubtree(spaceId: string, pageId: string): void {
       err,
     )
   })
-  prefetchMap.set(key, { promise, expiresAt: now + PREFETCH_TTL_MS })
+  prefetchMap.set(key, {
+    promise,
+    expiresAt: now + PREFETCH_TTL_MS,
+    structureChanges: getRecordedGraphStructureChanges(),
+  })
 }
 
 /**

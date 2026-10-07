@@ -2,6 +2,7 @@ import {
   deleteBlockViaContextMenu,
   expect,
   focusBlock,
+  navigateToView,
   openPage,
   test,
   waitForBoot,
@@ -159,7 +160,7 @@ test.describe('Trash', () => {
     await deleteBlockViaContextMenu(page, firstBlock)
 
     // Navigate to Trash
-    await page.getByRole('button', { name: /^Trash/ }).click()
+    await navigateToView(page, 'Trash')
 
     // Verify at least one trash item is visible
     await expect(page.locator('[data-testid="trash-item"]').first()).toBeVisible()
@@ -173,7 +174,7 @@ test.describe('Trash', () => {
     await deleteBlockViaContextMenu(page, firstBlock)
 
     // Navigate to Trash
-    await page.getByRole('button', { name: /^Trash/ }).click()
+    await navigateToView(page, 'Trash')
 
     // Verify trash has items
     await expect(page.locator('[data-testid="trash-item"]').first()).toBeVisible()
@@ -193,7 +194,7 @@ test.describe('Trash', () => {
     await deleteBlockViaContextMenu(page, firstBlock)
 
     // Navigate to Trash
-    await page.getByRole('button', { name: /^Trash/ }).click()
+    await navigateToView(page, 'Trash')
     await expect(page.locator('[data-testid="trash-item"]').first()).toBeVisible()
 
     // Click Purge on the first trash item
@@ -215,7 +216,7 @@ test.describe('Trash', () => {
     await deleteBlockViaContextMenu(page, firstBlock)
 
     // Navigate to Trash
-    await page.getByRole('button', { name: /^Trash/ }).click()
+    await navigateToView(page, 'Trash')
     await expect(page.locator('[data-testid="trash-item"]').first()).toBeVisible()
 
     // Click Purge → confirmation appears
@@ -240,7 +241,7 @@ test.describe('Trash', () => {
     await deleteBlockViaContextMenu(page, firstBlock)
 
     // Navigate to Trash
-    await page.getByRole('button', { name: /^Trash/ }).click()
+    await navigateToView(page, 'Trash')
     await expect(page.locator('[data-testid="trash-item"]').first()).toBeVisible()
 
     // Count trash items before purge
@@ -273,7 +274,7 @@ test.describe('Trash', () => {
     await deleteBlockViaContextMenu(page, firstBlock)
 
     // Navigate to Trash
-    await page.getByRole('button', { name: /^Trash/ }).click()
+    await navigateToView(page, 'Trash')
     await expect(page.locator('[data-testid="trash-item"]').first()).toBeVisible()
     const countBefore = await page.locator('[data-testid="trash-item"]').count()
 
@@ -302,11 +303,15 @@ test.describe('Sidebar', () => {
     const sidebar = page.locator('[data-slot="sidebar"]')
     await expect(sidebar).toHaveAttribute('data-state', 'expanded')
 
-    // Click the Collapse button in sidebar footer
-    await sidebar.getByRole('button', { name: 'Collapse', exact: true }).click()
+    // Click the collapse toggle in the sidebar header
+    await sidebar.getByRole('button', { name: 'Collapse sidebar', exact: true }).click()
 
     // Verify sidebar collapsed
     await expect(sidebar).toHaveAttribute('data-state', 'collapsed')
+
+    // The same toggle, now named for the opposite action, expands it again
+    await sidebar.getByRole('button', { name: 'Expand sidebar', exact: true }).click()
+    await expect(sidebar).toHaveAttribute('data-state', 'expanded')
   })
 })
 

@@ -83,6 +83,10 @@ vi.mock('@/components/settings/DataTab', () => ({
   DataTab: () => <div data-testid="data-settings-tab">Data Settings Content</div>,
 }))
 
+vi.mock('@/components/agenda/StatusPanel', () => ({
+  StatusPanel: () => <div data-testid="status-panel">Status Content</div>,
+}))
+
 // AgentAccessTab is rendered inside the "Agent access"
 // tab panel. Mock it as an inert marker so the SettingsView tests stay
 // focused on tab routing / theme / font-size behaviour.
@@ -182,11 +186,11 @@ describe('SettingsView', () => {
     })
   })
 
-  it('renders with 10 tabs', () => {
+  it('renders with 11 tabs', () => {
     render(<SettingsView />)
 
     const tabs = screen.getAllByRole('tab')
-    expect(tabs).toHaveLength(10)
+    expect(tabs).toHaveLength(11)
     // Every tab is still present and reachable, regardless of which group
     // it now lives in.
     const labels = tabs.map((tab) => tab.textContent)
@@ -199,6 +203,7 @@ describe('SettingsView', () => {
         t('settings.tabKeyboard'),
         t('settings.tabData'),
         t('settings.tabSync'),
+        t('settings.tabStatus'),
         t('settings.tabAgentAccess'),
         t('settings.tabNotifications'),
         t('settings.tabHelp'),
@@ -265,7 +270,7 @@ describe('SettingsView', () => {
         [
           'settings-group-data',
           t('settings.groupData'),
-          [t('settings.tabData'), t('settings.tabSync')],
+          [t('settings.tabData'), t('settings.tabSync'), t('settings.tabStatus')],
         ],
         ['settings-group-help', t('settings.groupHelp'), [t('settings.tabHelp')]],
       ]
@@ -299,6 +304,7 @@ describe('SettingsView', () => {
         t('settings.tabKeyboard'),
         t('settings.tabData'),
         t('settings.tabSync'),
+        t('settings.tabStatus'),
         t('settings.tabAgentAccess'),
         t('settings.tabNotifications'),
         t('settings.tabHelp'),
@@ -406,6 +412,18 @@ describe('SettingsView', () => {
     await user.click(syncTab)
 
     expect(screen.getByTestId('device-management')).toBeInTheDocument()
+  })
+
+  // #5269 — the former Status view lives in the Data & Sync group.
+  it('Status tab shows the status panel', async () => {
+    const user = userEvent.setup()
+    render(<SettingsView />)
+
+    await user.click(screen.getByRole('tab', { name: t('settings.tabStatus') }))
+
+    expect(
+      within(screen.getByTestId('settings-panel-status')).getByTestId('status-panel'),
+    ).toBeInTheDocument()
   })
 
   it('tab switching works', async () => {

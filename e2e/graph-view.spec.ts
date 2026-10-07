@@ -1,4 +1,4 @@
-import { expect, test } from './helpers'
+import { expect, navigateToView, test } from './helpers'
 
 /**
  * E2E tests for the GraphView component (F-33).
@@ -27,10 +27,7 @@ test.describe('Graph view', () => {
   })
 
   test('graph view renders SVG with nodes', async ({ page }) => {
-    await page
-      .locator('[data-slot="sidebar"]')
-      .getByRole('button', { name: 'Graph', exact: true })
-      .click()
+    await navigateToView(page, 'Graph')
 
     // Wait for the SVG to appear (loading skeleton resolves)
     await expect(page.locator('[data-testid="graph-svg"]')).toBeVisible()
@@ -43,10 +40,7 @@ test.describe('Graph view', () => {
   })
 
   test('graph view renders edges between linked pages', async ({ page }) => {
-    await page
-      .locator('[data-slot="sidebar"]')
-      .getByRole('button', { name: 'Graph', exact: true })
-      .click()
+    await navigateToView(page, 'Graph')
     await expect(page.locator('[data-testid="graph-svg"]')).toBeVisible()
 
     // Seed data has [[link]] references between pages (e.g. Getting Started ↔ Quick Notes),
@@ -58,10 +52,7 @@ test.describe('Graph view', () => {
   })
 
   test('clicking a node navigates to that page', async ({ page }) => {
-    await page
-      .locator('[data-slot="sidebar"]')
-      .getByRole('button', { name: 'Graph', exact: true })
-      .click()
+    await navigateToView(page, 'Graph')
     await expect(page.locator('[data-testid="graph-svg"]')).toBeVisible()
 
     // Target a non-date-titled page. `tabsStore.navigateToPage` routes
@@ -87,10 +78,7 @@ test.describe('Graph view', () => {
   })
 
   test('graph view shows the graph container with data-testid', async ({ page }) => {
-    await page
-      .locator('[data-slot="sidebar"]')
-      .getByRole('button', { name: 'Graph', exact: true })
-      .click()
+    await navigateToView(page, 'Graph')
 
     // The graph-view wrapper should appear once loading completes
     await expect(page.locator('[data-testid="graph-view"]')).toBeVisible()
@@ -101,10 +89,7 @@ test.describe('Graph view', () => {
   })
 
   test('graph view eventually renders after loading', async ({ page }) => {
-    await page
-      .locator('[data-slot="sidebar"]')
-      .getByRole('button', { name: 'Graph', exact: true })
-      .click()
+    await navigateToView(page, 'Graph')
 
     // The graph should eventually render — SVG becomes visible
     await expect(page.locator('[data-testid="graph-svg"]')).toBeVisible()
@@ -139,10 +124,7 @@ test.describe('Graph view', () => {
   // narrows the node set" end to end.
   // ---------------------------------------------------------------------
   test('the "Exclude templates" filter removes the template page node', async ({ page }) => {
-    await page
-      .locator('[data-slot="sidebar"]')
-      .getByRole('button', { name: 'Graph', exact: true })
-      .click()
+    await navigateToView(page, 'Graph')
     await expect(page.locator('[data-testid="graph-svg"]')).toBeVisible()
 
     const nodeGroups = page.locator('[data-testid="graph-view"] svg g.node')
@@ -186,10 +168,7 @@ test.describe('Graph view', () => {
   }
 
   test('the zoom in/out/reset buttons change the graph transform scale', async ({ page }) => {
-    await page
-      .locator('[data-slot="sidebar"]')
-      .getByRole('button', { name: 'Graph', exact: true })
-      .click()
+    await navigateToView(page, 'Graph')
     await expect(page.locator('[data-testid="graph-svg"]')).toBeVisible()
     await expect(page.locator('[data-testid="graph-view"] svg g.node').first()).toBeVisible()
 
@@ -213,10 +192,7 @@ test.describe('Graph view', () => {
   })
 
   test('wheel-zoom over the canvas changes the graph transform scale', async ({ page }) => {
-    await page
-      .locator('[data-slot="sidebar"]')
-      .getByRole('button', { name: 'Graph', exact: true })
-      .click()
+    await navigateToView(page, 'Graph')
     const svg = page.locator('[data-testid="graph-svg"]')
     await expect(svg).toBeVisible()
     await expect(page.locator('[data-testid="graph-view"] svg g.node').first()).toBeVisible()
@@ -237,10 +213,7 @@ test.describe('Graph view', () => {
   })
 
   test('dragging empty canvas pans the graph transform', async ({ page }) => {
-    await page
-      .locator('[data-slot="sidebar"]')
-      .getByRole('button', { name: 'Graph', exact: true })
-      .click()
+    await navigateToView(page, 'Graph')
     const svg = page.locator('[data-testid="graph-svg"]')
     await expect(svg).toBeVisible()
     await expect(page.locator('[data-testid="graph-view"] svg g.node').first()).toBeVisible()

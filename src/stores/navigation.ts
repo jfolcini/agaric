@@ -136,7 +136,6 @@ const ALL_VIEWS = Object.keys({
   pages: true,
   tags: true,
   trash: true,
-  status: true,
   history: true,
   templates: true,
   settings: true,

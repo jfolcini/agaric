@@ -1,4 +1,4 @@
-import { deleteBlockViaContextMenu, expect, test } from './helpers'
+import { deleteBlockViaContextMenu, expect, navigateToView, test } from './helpers'
 
 /**
  * Editor lifecycle: CRUD operations, navigation, persistence.
@@ -110,9 +110,9 @@ test.describe('Editor lifecycle', () => {
     await expect(page.getByText('Delete me')).not.toBeVisible()
   })
 
-  test('navigates between sidebar views', async ({ page }) => {
+  test('navigates between views', async ({ page }) => {
     // Use the dedicated `header-label` testid (the App.tsx shell header)
-    // so the assertions are unambiguous — TrashView, StatusPanel, and
+    // so the assertions are unambiguous — TrashView, SettingsView, and
     // friends now render their own `<header>` via `FeaturePageHeader`,
     // which made the previous `locator('header').getByText(...)` race
     // against an `<h1>` carrying the same text inside a sibling `<header>`.
@@ -125,13 +125,14 @@ test.describe('Editor lifecycle', () => {
       .click()
     await expect(headerLabel).toHaveText('Tags')
 
-    // Navigate to Trash
-    await page.getByRole('button', { name: /^Trash/ }).click()
+    // Navigate to Trash (Pages header button)
+    await navigateToView(page, 'Trash')
     await expect(headerLabel).toHaveText('Trash')
 
-    // Navigate to Status
-    await page.getByRole('button', { name: 'Status', exact: true }).click()
-    await expect(headerLabel).toHaveText('Status')
+    // Navigate to Status (a Settings tab)
+    await navigateToView(page, 'Status')
+    await expect(headerLabel).toHaveText('Settings')
+    await expect(page.getByTestId('settings-panel-status')).toBeVisible()
 
     // (Conflicts nav-item removed in Session 700 / Phase 5.)
 

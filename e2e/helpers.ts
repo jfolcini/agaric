@@ -571,14 +571,48 @@ export async function navigateMobile(page: Page, view: string) {
 }
 
 /**
- * Navigate to a top-level view at whatever width the page currently is.
+ * Views opened from a Pages header button rather than the sidebar (#5269),
+ * keyed by label. Trash's name gains its item count.
+ */
+const PAGES_HEADER_VIEWS: Readonly<Record<string, string | RegExp>> = {
+  Graph: 'Graph',
+  'Advanced Query': 'Advanced Query',
+  Templates: 'Templates',
+  Trash: /^Trash/,
+}
+
+/**
+ * Navigate to a view by its label at whatever width the page currently is.
  *
  * Desktop clicks the pinned sidebar; mobile goes through the hamburger. Use
  * this in specs that change viewport size mid-test, or that run at a width
  * near the 768px breakpoint — a hardcoded `[data-slot="sidebar"]` click is
- * simply unreachable below it now that the icon rail is gone.
+ * simply unreachable below it now that the icon rail is gone. Views outside
+ * the sidebar go through their #5269 home: `PAGES_HEADER_VIEWS` through
+ * Pages, Status through Settings › Status, History through Settings › Data.
  */
 export async function navigateToView(page: Page, view: string) {
+  const headerButtonName = PAGES_HEADER_VIEWS[view]
+  if (headerButtonName !== undefined) {
+    await navigateToView(page, 'Pages')
+    await page
+      .locator('.page-browser-header')
+      .getByRole('button', { name: headerButtonName, exact: true })
+      .click()
+    return
+  }
+  if (view === 'Status') {
+    await navigateToView(page, 'Settings')
+    await page.getByRole('tab', { name: 'Status', exact: true }).click()
+    await expect(page.getByTestId('settings-panel-status')).toBeVisible()
+    return
+  }
+  if (view === 'History') {
+    await navigateToView(page, 'Settings')
+    await page.getByRole('tab', { name: 'Data', exact: true }).click()
+    await page.getByRole('button', { name: 'Open edit history', exact: true }).click()
+    return
+  }
   const hamburger = page.getByTestId('mobile-sidebar-trigger')
   if (await hamburger.isVisible()) {
     await navigateMobile(page, view)
@@ -848,16 +882,14 @@ export async function readClipboard(page: Page): Promise<string> {
  * Used in undo/redo flows. Block-level undo (`useUndoShortcuts`) calls
  * `undoPageOp` against the mock, which mutates the mock's in-memory state,
  * but the frontend's `BlockTree` doesn't auto-refresh on undo. Navigating to
- * Status and back triggers a full re-render with the post-undo state.
- *
- * `exact: true` on the Status button is load-bearing: a "Toggle template
- * status" tooltip trigger also matches the accessible name "Status" by
- * substring otherwise, and Playwright strict-mode then fails with two
- * candidates.
+ * Tags and back triggers a full re-render with the post-undo state.
  */
 export async function reopenPage(page: Page, title: string) {
-  await page.getByRole('button', { name: 'Status', exact: true }).click()
-  await expect(page.locator('[data-testid="header-label"]')).toContainText('Status')
+  await page
+    .locator('[data-slot="sidebar"]')
+    .getByRole('button', { name: 'Tags', exact: true })
+    .click()
+  await expect(page.getByTestId('header-label')).toContainText('Tags')
   await openPage(page, title)
 }
 

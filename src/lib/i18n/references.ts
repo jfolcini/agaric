@@ -482,15 +482,15 @@ export const references: Record<string, string> = {
   'palette.modeChipLabel': 'Switch palette mode (current: {{mode}})',
   'palette.cmdGroupNavigate': 'Navigate',
   'palette.cmdGroupAction': 'Actions',
-  // #2942 — one entry per `NAV_ITEMS` destination (`nav-items.ts`), in the
-  // same order the sidebar renders them.
+  // #2942 — one entry per `NAV_ITEMS` destination (`nav-items.ts`), plus
+  // the Settings › Status tab (#5269).
   'palette.cmdGoJournal': 'Open Journal view',
   'palette.cmdGoPages': 'Open Pages view',
   'palette.cmdGoTags': 'Open Tags view',
   'palette.cmdGoGraph': 'Open Graph view',
   'palette.cmdGoTemplates': 'Open Templates view',
   'palette.cmdGoQuery': 'Open Query view',
-  'palette.cmdGoStatus': 'Open Status view',
+  'palette.cmdGoStatus': 'Open Status',
   'palette.cmdGoTrash': 'Open Trash',
   'palette.cmdGoHistory': 'Open History',
   'palette.cmdGoSettings': 'Open Settings',
@@ -500,6 +500,7 @@ export const references: Record<string, string> = {
   'palette.cmdCreateNewPage': 'Create new page',
   'palette.cmdGoToToday': 'Go to today',
   'palette.cmdToggleSidebar': 'Toggle sidebar',
+  'palette.cmdToggleTheme': 'Toggle theme',
   'palette.cmdExportPageMarkdown': 'Export page as Markdown',
   'palette.noActivePage': 'No page is open to export',
   'palette.cmdKeyboardShortcuts': 'Keyboard shortcuts',

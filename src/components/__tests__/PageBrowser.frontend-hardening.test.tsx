@@ -123,27 +123,29 @@ describe('PageBrowser', () => {
     // The mocked virtualizer renders all items, so the auto-load effect
     // fires a cursor page on mount. Page 1 resolves with `has_more: true`;
     // the cursor page never resolves, so `hasMore` stays true and the
-    // load-more footer remains mounted for the assertions.
+    // load-more footer remains mounted for the assertions. Keyed on the
+    // page query's own call count, so other mount-time IPC (the header's
+    // trash count) cannot take page 1's answer.
+    function stubFirstPageThenHang() {
+      let pageQueries = 0
+      mockedInvoke.mockImplementation((cmd: string) => {
+        if (cmd === 'resolve_page_by_alias') return Promise.resolve(null)
+        if (cmd === 'list_pages_with_metadata') {
+          pageQueries += 1
+          if (pageQueries > 1) return new Promise(() => undefined)
+          return Promise.resolve({
+            items: [metaPage('P1', 'Apple')],
+            next_cursor: 'cursor_abc',
+            has_more: true,
+            total_count: 50,
+          })
+        }
+        return pageRowInvokeFallback(cmd)
+      })
+    }
+
     it('D9: wraps the load-more button in a role=row > role=gridcell footer', async () => {
-      mockedInvoke
-        .mockImplementationOnce((cmd: string) => {
-          if (cmd === 'resolve_page_by_alias') return Promise.resolve(null)
-          if (cmd === 'list_pages_with_metadata') {
-            return Promise.resolve({
-              items: [metaPage('P1', 'Apple')],
-              next_cursor: 'cursor_abc',
-              has_more: true,
-              total_count: 50,
-            })
-          }
-          return pageRowInvokeFallback(cmd)
-        })
-        .mockImplementation((cmd: string) => {
-          if (cmd === 'resolve_page_by_alias') return Promise.resolve(null)
-          // Cursor page never resolves → hasMore stays true.
-          if (cmd === 'list_pages_with_metadata') return new Promise(() => undefined)
-          return pageRowInvokeFallback(cmd)
-        })
+      stubFirstPageThenHang()
 
       const { container } = render(<PageBrowser />)
       await screen.findByText('Apple')
@@ -169,24 +171,7 @@ describe('PageBrowser', () => {
     })
 
     it('D9: no axe violations in the hasMore (load-more visible) state', async () => {
-      mockedInvoke
-        .mockImplementationOnce((cmd: string) => {
-          if (cmd === 'resolve_page_by_alias') return Promise.resolve(null)
-          if (cmd === 'list_pages_with_metadata') {
-            return Promise.resolve({
-              items: [metaPage('P1', 'Apple')],
-              next_cursor: 'cursor_abc',
-              has_more: true,
-              total_count: 50,
-            })
-          }
-          return pageRowInvokeFallback(cmd)
-        })
-        .mockImplementation((cmd: string) => {
-          if (cmd === 'resolve_page_by_alias') return Promise.resolve(null)
-          if (cmd === 'list_pages_with_metadata') return new Promise(() => undefined)
-          return pageRowInvokeFallback(cmd)
-        })
+      stubFirstPageThenHang()
 
       const { container } = render(<PageBrowser />)
       await screen.findByText('Apple')

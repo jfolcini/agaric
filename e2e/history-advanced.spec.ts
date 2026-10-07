@@ -5,6 +5,7 @@ import {
   focusBlock,
   getInvokeCalls,
   installIpcRecorder,
+  navigateToView,
   openPage,
   test,
   waitForBoot,
@@ -57,7 +58,7 @@ test.describe('HistoryView — restore to here', () => {
     await page.getByRole('button', { name: 'Add block' }).click()
     await expect(page.locator('[data-testid="sortable-block"]').last()).toBeVisible()
 
-    await page.getByRole('button', { name: 'History', exact: true }).click()
+    await navigateToView(page, 'History')
     const firstItem = page.locator('[data-history-item]').first()
     await expect(firstItem).toBeVisible({ timeout: 5000 })
 
@@ -83,7 +84,7 @@ test.describe('HistoryView — restore to here', () => {
     await page.getByRole('button', { name: 'Add block' }).click()
     await expect(page.locator('[data-testid="sortable-block"]').last()).toBeVisible()
 
-    await page.getByRole('button', { name: 'History', exact: true }).click()
+    await navigateToView(page, 'History')
     const firstItem = page.locator('[data-history-item]').first()
     await expect(firstItem).toBeVisible({ timeout: 5000 })
 
@@ -133,7 +134,7 @@ test.describe('HistoryView — diff toggle', () => {
       'Updated welcome message',
     )
 
-    await page.getByRole('button', { name: 'History', exact: true }).click()
+    await navigateToView(page, 'History')
     const firstItem = page.locator('[data-history-item]').first()
     await expect(firstItem).toBeVisible({ timeout: 5000 })
     await expect(
@@ -162,7 +163,7 @@ test.describe('HistoryView — filter bar', () => {
     await page.getByRole('button', { name: 'Add block' }).click()
     await expect(page.locator('[data-testid="sortable-block"]').last()).toBeVisible()
 
-    await page.getByRole('button', { name: 'History', exact: true }).click()
+    await navigateToView(page, 'History')
     await expect(page.locator('[data-history-item]').first()).toBeVisible({ timeout: 5000 })
 
     await clearInvokeCalls(page)
@@ -192,7 +193,7 @@ test.describe('HistoryView — filter bar', () => {
   })
 
   test('"All spaces" toggle switches the list_page_history scope', async ({ page }) => {
-    await page.getByRole('button', { name: 'History', exact: true }).click()
+    await navigateToView(page, 'History')
     await expect(page.getByTestId('history-all-spaces-toggle')).toBeVisible()
 
     await clearInvokeCalls(page)
@@ -223,7 +224,7 @@ test.describe('HistoryView — op log compaction', () => {
     await page.getByRole('button', { name: 'Add block' }).click()
     await expect(page.locator('[data-testid="sortable-block"]').last()).toBeVisible()
 
-    await page.getByRole('button', { name: 'History', exact: true }).click()
+    await navigateToView(page, 'History')
 
     // `CompactionCard` auto-expands itself, once per mount, as soon as the
     // status reports `eligible_ops > 0` — and the seed stamps six page edits

@@ -1,21 +1,19 @@
-import { expect, test } from './helpers'
+import { expect, navigateToView, test, waitForBoot } from './helpers'
 
 // Sync UI tests share mocked peer / pairing state within the
 // describe block and are sensitive to parallel mock-state collisions.
 test.describe.configure({ mode: 'serial' })
 
 test.describe('Sync UI', () => {
-  // --- StatusPanel (materializer + sync summary) -------------------------
+  // --- StatusPanel (Settings › Status: materializer + sync summary) -------
   //
   // Moved DeviceManagement out of StatusPanel; the panel now only
   // exposes materializer stats and a high-level sync summary. The two
   // assertions below target what actually lives in StatusPanel today.
   test.describe('Status panel', () => {
     test.beforeEach(async ({ page }) => {
-      await page.goto('/')
-      await expect(page.getByRole('button', { name: 'Journal', exact: true })).toBeVisible()
-      await page.getByRole('button', { name: 'Status', exact: true }).click()
-      await expect(page.locator('header').getByText('Status')).toBeVisible()
+      await waitForBoot(page)
+      await navigateToView(page, 'Status')
     })
 
     test('shows sync status section', async ({ page }) => {

@@ -165,6 +165,17 @@ describe('StatusPanel', () => {
     expect(await screen.findByText('Materializer Status')).toBeInTheDocument()
   })
 
+  // #5269 — the panel is the body of Settings › Status, whose `<h1>` belongs
+  // to SettingsView; a second one would announce two page headings.
+  it('renders no page heading of its own', async () => {
+    stubInvoke({ get_status: () => mockStatus })
+
+    render(<StatusPanel />)
+
+    expect(await screen.findByText('Materializer Status')).toBeInTheDocument()
+    expect(screen.queryByRole('heading', { level: 1 })).not.toBeInTheDocument()
+  })
+
   describe('polling with fake timers', () => {
     beforeEach(() => {
       vi.useFakeTimers()

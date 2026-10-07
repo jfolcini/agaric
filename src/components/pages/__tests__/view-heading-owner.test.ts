@@ -48,7 +48,6 @@ const VIEW_SOURCE: Readonly<Record<View, string>> = {
   templates: 'components/templates/TemplatesView.tsx',
   trash: 'components/TrashView.tsx',
   graph: 'components/graph/GraphView.tsx',
-  status: 'components/agenda/StatusPanel.tsx',
   settings: 'components/pages/SettingsView.tsx',
   'page-editor': 'components/pages/PageHeader.tsx',
   pages: 'components/PageBrowser.tsx',
@@ -74,7 +73,7 @@ describe('VIEW_HEADING_OWNER', () => {
     // TypeScript catches a MISSING key, not a map that lost its pairing with
     // the `VIEW_SOURCE` table.
     expect(ALL_VIEWS.toSorted()).toEqual(Object.keys(VIEW_SOURCE).toSorted())
-    expect(ALL_VIEWS).toHaveLength(12)
+    expect(ALL_VIEWS).toHaveLength(11)
   })
 
   it.each(ALL_VIEWS)('view %s renders its own heading iff it is not shell-owned', (view) => {
@@ -99,9 +98,9 @@ describe('VIEW_HEADING_OWNER', () => {
     }
   })
 
-  it('keeps the four FeaturePageHeader views out of the shell heading', () => {
+  it('keeps the three FeaturePageHeader views out of the shell heading', () => {
     // Otherwise the same title is announced as two separate level-1 headings.
-    for (const view of ['journal', 'trash', 'status', 'settings'] as const) {
+    for (const view of ['journal', 'trash', 'settings'] as const) {
       expect(VIEW_HEADING_OWNER[view]).toBe('view')
       expect(shellOwnsHeading(view)).toBe(false)
     }

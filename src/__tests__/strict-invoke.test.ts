@@ -139,7 +139,7 @@ describe('mockInvokeCommands', () => {
       ),
     )
 
-    // The one modelled incidental call resolves…
+    // A modelled incidental call resolves…
     await expect(invoke('load_page_subtree')).resolves.toMatchObject({ truncated: false })
     // …everything else is still loud.
     await expect(invoke('create_block')).rejects.toThrow(/no mock registered/)

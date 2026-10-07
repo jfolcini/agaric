@@ -20,6 +20,7 @@ import { axe } from 'vitest-axe'
 import { DataTab } from '@/components/settings/DataTab'
 import type { SpaceRow } from '@/lib/bindings'
 import { t } from '@/lib/i18n'
+import { useNavigationStore } from '@/stores/navigation'
 import { useSpaceStore } from '@/stores/space'
 
 const mockExportGraphAsZip = vi.fn()
@@ -124,7 +125,7 @@ describe('DataTab', () => {
     expect(screen.getByText('Export All')).toBeInTheDocument()
   })
 
-  it.each([['data.importDesc'], ['data.exportDesc']] as const)(
+  it.each([['data.importDesc'], ['data.exportDesc'], ['data.historyDesc']] as const)(
     '%s is the card description in the header, like the other tabs',
     (key) => {
       render(<DataTab />)
@@ -134,6 +135,17 @@ describe('DataTab', () => {
       expect(description.closest('[data-slot="card-header"]')).not.toBeNull()
     },
   )
+
+  // #5269 — the History view's way in now that it left the sidebar.
+  it('the Edit history button opens the History view', async () => {
+    useNavigationStore.setState({ currentView: 'settings' })
+    const user = userEvent.setup()
+    render(<DataTab />)
+
+    await user.click(screen.getByRole('button', { name: t('data.historyButton') }))
+
+    expect(useNavigationStore.getState().currentView).toBe('history')
+  })
 
   it('import button triggers file input click', async () => {
     const user = userEvent.setup()

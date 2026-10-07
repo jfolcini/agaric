@@ -14,6 +14,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { PageSubtree } from '@/lib/bindings'
+import { recordGraphStructureChange } from '@/lib/graph-structure-events'
 
 // #2927 phase 7 — `prefetch-page-subtree` calls `commands.loadPageSubtree`
 // from `@/lib/bindings` directly. The spy still resolves/rejects with the
@@ -167,6 +168,25 @@ describe('prefetch-page-subtree', () => {
         vi.advanceTimersByTime(PREFETCH_TTL_MS + 1)
         expect(consumePrefetchedPageSubtree('SPACE_A', 'PAGE_1')).toBeNull()
       } finally {
+        vi.useRealTimers()
+      }
+    })
+
+    it('a graph-structure change expires every entry parked before it, without waiting for its debounce', () => {
+      vi.useFakeTimers()
+      try {
+        mockedLoadPageSubtree.mockReturnValue(new Promise(() => {}))
+        prefetchPageSubtree('SPACE_A', 'PAGE_1')
+
+        recordGraphStructureChange()
+        expect(consumePrefetchedPageSubtree('SPACE_A', 'PAGE_1')).toBeNull()
+
+        // The next intent parks a fresh fetch that the open can consume.
+        prefetchPageSubtree('SPACE_A', 'PAGE_1')
+        expect(mockedLoadPageSubtree).toHaveBeenCalledTimes(2)
+        expect(consumePrefetchedPageSubtree('SPACE_A', 'PAGE_1')).not.toBeNull()
+      } finally {
+        vi.clearAllTimers()
         vi.useRealTimers()
       }
     })

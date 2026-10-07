@@ -36,6 +36,7 @@ import type { NameChange } from '@/lib/name-change-bus'
 import { subscribeToNameChanges } from '@/lib/name-change-bus'
 import { SHOW_SHORTCUTS_EVENT } from '@/lib/overlay-events'
 import { getPaletteCommand, PALETTE_COMMANDS } from '@/lib/palette-commands'
+import { useNavigationStore } from '@/stores/navigation'
 import { useSpaceStore } from '@/stores/space'
 
 describe('PALETTE_COMMANDS — keyboard-shortcuts entry (#922)', () => {
@@ -142,5 +143,35 @@ describe('PALETTE_COMMANDS — create-new-page publishes to the name-change bus 
     } finally {
       unsubscribe()
     }
+  })
+})
+
+// #5269 — the sidebar's theme row and Status view are gone; these two
+// commands are their keyboard paths.
+describe('PALETTE_COMMANDS — toggle-theme and go-status (#5269)', () => {
+  beforeEach(() => {
+    localStorage.removeItem('theme-preference')
+    useNavigationStore.setState({ currentView: 'journal', pendingSettingsTab: null })
+  })
+
+  it('toggle-theme advances the stored theme preference and closes the palette', () => {
+    const onClose = vi.fn()
+
+    getPaletteCommand('toggle-theme')?.run({ onClose, onEscalate: vi.fn() })
+
+    // auto (light system) → dark, the next step that changes what is shown.
+    expect(localStorage.getItem('theme-preference')).toBe('dark')
+    expect(onClose).toHaveBeenCalledTimes(1)
+  })
+
+  it('go-status opens Settings with the Status tab requested', () => {
+    const onClose = vi.fn()
+
+    getPaletteCommand('go-status')?.run({ onClose, onEscalate: vi.fn() })
+
+    const navigation = useNavigationStore.getState()
+    expect(navigation.currentView).toBe('settings')
+    expect(navigation.pendingSettingsTab).toBe('status')
+    expect(onClose).toHaveBeenCalledTimes(1)
   })
 })

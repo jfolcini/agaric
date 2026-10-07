@@ -1,9 +1,11 @@
 /**
- * PageBrowserHeader — presentational header for `PageBrowser`.
+ * PageBrowserHeader — header for `PageBrowser`.
  *
- * Owns the create-page form, the search/filter input, and the sort
- * dropdown. All state lives in the orchestrator (`PageBrowser`) and is
- * passed in as props — this sibling is layout-only.
+ * Owns the row of buttons that open the page-adjacent views (#5269), the
+ * create-page form, the search/filter input, and the sort dropdown. The
+ * list state lives in the orchestrator (`PageBrowser`) and is passed in as
+ * props; the view buttons read the navigation store and the trash count
+ * themselves.
  *
  * Extracted from `PageBrowser.tsx`.
  */
@@ -13,7 +15,9 @@ import type React from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { SavedViewsDropdown } from '@/components/PageBrowser/SavedViewsDropdown'
+import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { IconButton } from '@/components/ui/icon-button'
 import { Label } from '@/components/ui/label'
 import { SearchInput } from '@/components/ui/search-input'
 import {
@@ -28,7 +32,14 @@ import { Spinner } from '@/components/ui/spinner'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import type { DensityMode } from '@/hooks/usePageBrowserDensity'
 import type { SortOption } from '@/hooks/usePageBrowserSort'
+import { useTrashCount } from '@/hooks/useTrashCount'
+import { NAV_ITEMS } from '@/lib/nav-items'
 import type { SavedPagesView } from '@/lib/preferences'
+import { useNavigationStore } from '@/stores/navigation'
+
+const VIEW_BUTTONS = (['tags', 'graph', 'query', 'templates', 'trash'] as const).flatMap((view) =>
+  NAV_ITEMS.filter((item) => item.id === view),
+)
 
 export interface PageBrowserHeaderProps {
   formRef: React.RefObject<HTMLFormElement | null>
@@ -117,6 +128,8 @@ export function PageBrowserHeader({
   onSaveCurrentView,
 }: PageBrowserHeaderProps): React.ReactElement {
   const { t } = useTranslation()
+  const setView = useNavigationStore((s) => s.setView)
+  const trashCount = useTrashCount()
   // PageBrowser pagination UX + small muted text near
   // the search input so users always know roughly how many pages
   // they're looking at. Three forms, each with a basis-consistent
@@ -152,6 +165,36 @@ export function PageBrowserHeader({
   })()
   return (
     <div className="page-browser-header space-y-2">
+      <div className="flex items-center gap-1">
+        {VIEW_BUTTONS.map(({ id: view, icon: Icon, labelKey }) => {
+          const label = t(labelKey)
+          const showTrashCount = view === 'trash' && trashCount > 0
+          return (
+            <IconButton
+              key={view}
+              variant="ghost"
+              className="relative"
+              tooltip={label}
+              // The name replaces the button's content for assistive tech, so
+              // the count the badge shows has to be in the name as well.
+              ariaLabel={
+                showTrashCount
+                  ? t('pageBrowser.viewButtons.trashWithCount', { count: trashCount })
+                  : label
+              }
+              onClick={() => setView(view)}
+            >
+              <Icon />
+              {showTrashCount && (
+                <Badge tone="secondary" size="xs" className="absolute -top-1 -right-1">
+                  {trashCount}
+                </Badge>
+              )}
+            </IconButton>
+          )
+        })}
+      </div>
+
       {/* Create page form */}
       <form
         ref={formRef}

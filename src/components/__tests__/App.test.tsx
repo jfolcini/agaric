@@ -4,7 +4,7 @@
  * Validates:
  *  - Renders with sidebar and default view (Journal)
  *  - Clicking nav items switches views
- *  - All views render (Journal, Pages, Tags, Trash, Status)
+ *  - All views render (Journal, Pages, Tags, Trash, Settings › Status)
  *  - a11y compliance
  */
 
@@ -26,6 +26,7 @@ import { logger } from '@/lib/logger'
 import type { NameChange } from '@/lib/name-change-bus'
 import { subscribeToNameChanges } from '@/lib/name-change-bus'
 import { CLOSE_ALL_OVERLAYS_EVENT } from '@/lib/overlay-events'
+import { getPaletteCommand } from '@/lib/palette-commands'
 import { setWindowTitle } from '@/lib/platform/window'
 import { __resetPriorityLevelsForTests, getPriorityLevels } from '@/lib/priority-levels'
 import { useBootStore } from '@/stores/boot'
@@ -178,8 +179,8 @@ beforeEach(() => {
   // non-empty list and leaves `currentSpaceId` intact.
   //
   // `get_status` returns a complete `StatusInfo` shape so the `<StatusPanel>`
-  // (mounted at shell level when the `currentView === 'status'`
-  // branch fires) doesn't render `undefined + undefined` (NaN) for the
+  // (mounted by the Settings › Status tab) doesn't render
+  // `undefined + undefined` (NaN) for the
   // `total_ops_dispatched + total_background_dispatched` sum at L231.
   mockedInvoke.mockImplementation(async (cmd: string) => {
     if (cmd === 'list_spaces')
@@ -226,13 +227,19 @@ describe('App', () => {
       expect(screen.getByRole('combobox', { name: /Switch space/ })).toBeInTheDocument()
     })
 
-    // Sidebar should have all 6 nav items
+    // #5269 — the daily surfaces plus Settings; the rest open elsewhere.
     const sidebar = getSidebar()
-    expect(sidebar.getByText(t('sidebar.journal'))).toBeInTheDocument()
-    expect(sidebar.getByText(t('sidebar.pages'))).toBeInTheDocument()
-    expect(sidebar.getByText(t('sidebar.tags'))).toBeInTheDocument()
-    expect(sidebar.getByText(t('sidebar.trash'))).toBeInTheDocument()
-    expect(sidebar.getByText(t('sidebar.status'))).toBeInTheDocument()
+    for (const key of [
+      'sidebar.journal',
+      'sidebar.pages',
+      'sidebar.search',
+      'sidebar.tags',
+      'sidebar.settings',
+    ]) {
+      expect(sidebar.getByRole('button', { name: t(key) })).toBeInTheDocument()
+    }
+    expect(sidebar.queryByText(t('sidebar.trash'))).not.toBeInTheDocument()
+    expect(sidebar.queryByText(t('sidebar.history'))).not.toBeInTheDocument()
   })
 
   it('renders the app branding', async () => {
@@ -328,16 +335,16 @@ describe('App', () => {
   })
 
   it('switches to Trash view', async () => {
-    const user = userEvent.setup()
     render(<App />)
 
     await waitFor(() => {
       expect(screen.getByRole('combobox', { name: /Switch space/ })).toBeInTheDocument()
     })
 
-    // Click Trash in sidebar
-    const sidebar = getSidebar()
-    await user.click(sidebar.getByText(t('sidebar.trash')))
+    // #5269 — Trash left the sidebar; the palette is one of its ways in.
+    act(() => {
+      getPaletteCommand('go-trash')?.run({ onClose: vi.fn(), onEscalate: vi.fn() })
+    })
 
     // TrashView should render its empty state
     await waitFor(() => {
@@ -345,7 +352,7 @@ describe('App', () => {
     })
   })
 
-  it('switches to Status view', async () => {
+  it('opens Status from the Settings tab rail (#5269)', async () => {
     const user = userEvent.setup()
 
     // Use mockImplementation to return appropriate data based on command
@@ -367,14 +374,32 @@ describe('App', () => {
       expect(screen.getByRole('combobox', { name: /Switch space/ })).toBeInTheDocument()
     })
 
-    // Click Status in sidebar
-    const sidebar = getSidebar()
-    await user.click(sidebar.getByText(t('sidebar.status')))
+    await user.click(getSidebar().getByRole('button', { name: t('sidebar.settings') }))
+    await user.click(await screen.findByRole('tab', { name: t('settings.tabStatus') }))
 
-    // StatusPanel should render
     await waitFor(() => {
       expect(screen.getByText(t('status.materializerStatusTitle'))).toBeInTheDocument()
     })
+  })
+
+  it('the go-status palette command lands on the Settings Status tab (#5269)', async () => {
+    // A tab persisted by an earlier test would open on Status without the handoff.
+    localStorage.removeItem('agaric-settings-active-tab')
+    render(<App />)
+    await waitFor(() => {
+      expect(screen.getByRole('combobox', { name: /Switch space/ })).toBeInTheDocument()
+    })
+
+    act(() => {
+      getPaletteCommand('go-status')?.run({ onClose: vi.fn(), onEscalate: vi.fn() })
+    })
+
+    expect(await screen.findByTestId('settings-panel-status')).toBeInTheDocument()
+    expect(screen.getByRole('tab', { name: t('settings.tabStatus') })).toHaveAttribute(
+      'aria-selected',
+      'true',
+    )
+    expect(await screen.findByText(t('status.materializerStatusTitle'))).toBeInTheDocument()
   })
 
   it('switches back to Journal from another view', async () => {
@@ -984,75 +1009,23 @@ describe('App', () => {
     })
   })
 
-  // ── Trash badge ─────────────────────────────────────────────────────────
-
-  describe('trash badge', () => {
-    it('shows trash badge with count when count_trash returns a positive number', async () => {
-      // The badge routes through the dedicated `count_trash` IPC (returns a
-      // plain `number`) so it stays accurate regardless of trash size.
-      mockedInvoke.mockImplementation(async (cmd: string) => {
-        if (cmd === 'count_trash') return 1 as unknown as never
-        // Keep the active space alive through boot reconcile — otherwise
-        // useTrashCount short-circuits to 0 (no active space) and never
-        // dispatches count_trash (#2248 SpaceScope migration).
-        if (cmd === 'list_spaces')
-          return [
-            { id: 'SPACE_PERSONAL', name: 'Personal', accent_color: 'accent-emerald' },
-          ] as unknown as never
-        return emptyPage
-      })
-
-      render(<App />)
-      await waitFor(() => {
-        expect(screen.getByRole('combobox', { name: /Switch space/ })).toBeInTheDocument()
-      })
-
-      // #3882 — `sidebar.trashCount` now carries plural forms; count === 1
-      // reads "1 item in trash", not "1 items in trash".
-      await waitFor(() => {
-        expect(screen.getByLabelText('1 item in trash')).toBeInTheDocument()
-      })
-    })
-
-    it('hides trash badge when no deleted items', async () => {
-      render(<App />)
-      await waitFor(() => {
-        expect(screen.getByRole('combobox', { name: /Switch space/ })).toBeInTheDocument()
-      })
-
-      await waitFor(() => {
-        expect(screen.queryByLabelText(/items? in trash/)).not.toBeInTheDocument()
-      })
-    })
-  })
-
   // ── Theme toggle ────────────────────────────────────────────────────────
 
-  describe('theme toggle', () => {
-    it('renders theme toggle button in sidebar footer', async () => {
-      render(<App />)
-      await waitFor(() => {
-        expect(screen.getByRole('combobox', { name: /Switch space/ })).toBeInTheDocument()
-      })
+  // #5269 — the sidebar's theme row became the palette's `toggle-theme`;
+  // App's `useTheme` instance is what applies the class.
+  it('the toggle-theme palette command switches the document theme', async () => {
+    render(<App />)
+    await waitFor(() => {
+      expect(screen.getByRole('combobox', { name: /Switch space/ })).toBeInTheDocument()
+    })
+    expect(document.documentElement.classList.contains('dark')).toBe(false)
 
-      const sidebar = getSidebar()
-      expect(sidebar.getByText(t('sidebar.toggleTheme'))).toBeInTheDocument()
+    act(() => {
+      getPaletteCommand('toggle-theme')?.run({ onClose: vi.fn(), onEscalate: vi.fn() })
     })
 
-    it('toggles theme on click', async () => {
-      const user = userEvent.setup()
-      render(<App />)
-      await waitFor(() => {
-        expect(screen.getByRole('combobox', { name: /Switch space/ })).toBeInTheDocument()
-      })
-
-      const sidebar = getSidebar()
-      const themeBtn = sidebar.getByTestId('theme-toggle')
-      await user.click(themeBtn)
-
-      // After first click: auto → dark
-      expect(document.documentElement.classList.contains('dark')).toBe(true)
-    })
+    // auto (light system) → dark
+    expect(document.documentElement.classList.contains('dark')).toBe(true)
   })
 
   // ── Sync status display ─────────────────────────────────────────────────
@@ -1464,21 +1437,6 @@ describe('App', () => {
       expect(within(shortcutsTable).getByText(t('keyboard.category.editing'))).toBeInTheDocument()
       expect(within(shortcutsTable).getByText(t('keyboard.category.global'))).toBeInTheDocument()
       expect(within(shortcutsTable).getByText(t('keyboard.category.journal'))).toBeInTheDocument()
-    })
-
-    it('clicking sidebar Shortcuts button also opens the panel', async () => {
-      const user = userEvent.setup()
-      render(<App />)
-      await waitFor(() => {
-        expect(screen.getByRole('combobox', { name: /Switch space/ })).toBeInTheDocument()
-      })
-
-      const sidebar = getSidebar()
-      await user.click(sidebar.getByText(t('sidebar.shortcuts')))
-
-      await waitFor(() => {
-        expect(screen.getByText(t('shortcuts.title'))).toBeInTheDocument()
-      })
     })
 
     // #754 — the sheet is gate-mounted (`shortcutsOpen &&`) so its lazy
@@ -1894,7 +1852,6 @@ describe('App', () => {
       'search',
       'graph',
       'trash',
-      'status',
       'history',
       'templates',
       'settings',
@@ -2709,8 +2666,8 @@ describe('App', () => {
   // #1740 — GlobalDateControls (Today/Agenda/calendar trio) is a pure
   // jump-to-journal affordance and should only appear in the header of
   // date-relevant content/navigation views (pages, search, tags, query).
-  // The tool/admin views (settings, history, status, graph, trash,
-  // templates) and the focused page-editor surface must NOT carry it.
+  // The tool/admin views (settings, history, graph, trash, templates) and
+  // the focused page-editor surface must NOT carry it.
   describe('GlobalDateControls header scoping (#1740)', () => {
     /** The header date-controls are identified by their calendar button. */
     function headerHasDateControls(): boolean {
@@ -2720,14 +2677,7 @@ describe('App', () => {
     }
 
     const RELEVANT_VIEWS = ['pages', 'search', 'tags', 'query'] as const
-    const UNRELATED_VIEWS = [
-      'settings',
-      'history',
-      'status',
-      'graph',
-      'trash',
-      'templates',
-    ] as const
+    const UNRELATED_VIEWS = ['settings', 'history', 'graph', 'trash', 'templates'] as const
 
     it.each(RELEVANT_VIEWS)('shows GlobalDateControls on the %s view', async (view) => {
       useNavigationStore.setState({ currentView: view, selectedBlockId: null })

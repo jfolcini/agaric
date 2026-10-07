@@ -5,6 +5,8 @@
  *   1. Density change handler fires with the chosen `DensityMode` value.
  *   2. All 7 `SortOption` items are reachable via the sort select.
  *   3. `axe(container)` reports no a11y violations.
+ *   4. The view buttons (#5269) open their views and the Trash button
+ *      carries the trash count.
  *
  * Radix Select is globally mocked to a native `<select>` tree in
  * `src/test-setup.ts`, so `userEvent.selectOptions` drives both
@@ -13,17 +15,21 @@
  * by accessible name.
  */
 
-import { render, screen } from '@testing-library/react'
+import { invoke } from '@tauri-apps/api/core'
+import { act, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { createRef } from 'react'
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
+import { mockInvokeCommands } from '@/__tests__/helpers/invoke'
 import {
   PageBrowserHeader,
   type PageBrowserHeaderProps,
 } from '@/components/PageBrowser/PageBrowserHeader'
 import { t } from '@/lib/i18n'
+import { useNavigationStore } from '@/stores/navigation'
+import { useSpaceStore } from '@/stores/space'
 
 function makeProps(overrides: Partial<PageBrowserHeaderProps> = {}): PageBrowserHeaderProps {
   return {
@@ -219,11 +225,88 @@ describe('PageBrowserHeader', () => {
   // ── header row wraps on narrow viewports ──────────────
   it('the search/sort/density row carries flex-wrap so it can wrap on mobile', () => {
     const { container } = render(<PageBrowserHeader {...makeProps()} />)
-    // The controls row is the second child of `.page-browser-header` (the
-    // create form is first). It must opt into wrapping rather than
-    // overflowing horizontally on a narrow viewport.
+    // The controls row is the only `flex-wrap` child of `.page-browser-header`
+    // (the view-button row and the create form come first). It must opt into
+    // wrapping rather than overflowing horizontally on a narrow viewport.
     const controlsRow = container.querySelector('.page-browser-header > div.flex-wrap')
     expect(controlsRow).not.toBeNull()
     expect(controlsRow).toHaveClass('flex-wrap')
+  })
+
+  // ── view buttons (#5269) ──────────────────────────────
+  describe('view buttons', () => {
+    const VIEW_BUTTONS = [
+      ['sidebar.tags', 'tags'],
+      ['sidebar.graph', 'graph'],
+      ['sidebar.query', 'query'],
+      ['sidebar.templates', 'templates'],
+      ['sidebar.trash', 'trash'],
+    ] as const
+
+    /** Render with an active space whose `count_trash` answers with `countTrash`. */
+    async function renderWithTrash(countTrash: () => number) {
+      useSpaceStore.setState({ currentSpaceId: 'SPACE_TEST' })
+      vi.mocked(invoke).mockImplementation(mockInvokeCommands({ count_trash: countTrash }))
+      const result = render(<PageBrowserHeader {...makeProps()} />)
+      await waitFor(() => {
+        expect(vi.mocked(invoke).mock.calls.some(([cmd]) => cmd === 'count_trash')).toBe(true)
+      })
+      // Let the count land in state before asserting on its absence.
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 0))
+      })
+      return result
+    }
+
+    beforeEach(() => {
+      useNavigationStore.setState({ currentView: 'pages' })
+    })
+
+    afterEach(() => {
+      vi.mocked(invoke).mockReset()
+      useSpaceStore.setState({ currentSpaceId: null })
+    })
+
+    it.each(VIEW_BUTTONS)('%s opens the %s view', async (labelKey, view) => {
+      const user = userEvent.setup()
+      render(<PageBrowserHeader {...makeProps()} />)
+
+      await user.click(screen.getByRole('button', { name: t(labelKey) }))
+
+      expect(useNavigationStore.getState().currentView).toBe(view)
+    })
+
+    it('the Trash button shows the trash count as a badge', async () => {
+      await renderWithTrash(() => 3)
+      const trash = screen.getByRole('button', {
+        name: t('pageBrowser.viewButtons.trashWithCount', { count: 3 }),
+      })
+      expect(within(trash).getByText('3')).toBeInTheDocument()
+    })
+
+    it('the Trash button shows no badge when the trash is empty', async () => {
+      await renderWithTrash(() => 0)
+      const trash = screen.getByRole('button', { name: t('sidebar.trash') })
+      expect(trash.querySelector('[data-slot="badge"]')).toBeNull()
+    })
+
+    it('the Trash button shows no badge when count_trash rejects', async () => {
+      await renderWithTrash(() => {
+        throw new Error('boom')
+      })
+      const trash = screen.getByRole('button', { name: t('sidebar.trash') })
+      expect(trash.querySelector('[data-slot="badge"]')).toBeNull()
+    })
+
+    it('has no axe violations with the trash badge present', async () => {
+      const { container } = await renderWithTrash(() => 3)
+      expect(
+        screen.getByRole('button', {
+          name: t('pageBrowser.viewButtons.trashWithCount', { count: 3 }),
+        }),
+      ).toBeInTheDocument()
+      const results = await axe(container)
+      expect(results).toHaveNoViolations()
+    })
   })
 })

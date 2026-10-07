@@ -5,6 +5,7 @@ import {
   deleteBlockViaContextMenu,
   expect,
   focusBlockById,
+  navigateToView,
   openPage,
   test,
   waitForBoot,
@@ -75,7 +76,7 @@ async function openFromPageList(page: Page, title: string): Promise<void> {
 }
 
 async function restoreAllFromTrash(page: Page): Promise<void> {
-  await page.getByRole('button', { name: /^Trash/ }).click()
+  await navigateToView(page, 'Trash')
   await page.getByTestId('trash-restore-all-btn').click()
   await activeAlertDialog(page).getByRole('button', { name: 'Restore', exact: true }).click()
   await expect(page.getByText('Nothing in trash. Deleted items will appear here.')).toBeVisible()

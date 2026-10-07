@@ -146,7 +146,6 @@ describe('useNavigationStore', () => {
         'pages',
         'tags',
         'trash',
-        'status',
         'history',
         'templates',
         'settings',
@@ -1517,6 +1516,17 @@ describe('useNavigationStore', () => {
         })
         expect(result.currentView).toBe('search')
         expect(result.currentViewBySpace).toEqual({ SPACE_A: 'pages' })
+      })
+
+      // #5269 — `status` became a Settings tab, so a blob persisted before
+      // that names a view that no longer exists.
+      it('falls back to journal for the retired status view', () => {
+        const result = mergeRun({
+          currentView: 'status',
+          currentViewBySpace: { SPACE_OLD: 'status', SPACE_OK: 'tags' },
+        })
+        expect(result.currentView).toBe('journal')
+        expect(result.currentViewBySpace).toEqual({ SPACE_OK: 'tags' })
       })
 
       it('falls back to defaults when storage is empty (undefined persisted)', () => {

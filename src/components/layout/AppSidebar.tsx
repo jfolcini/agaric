@@ -1,23 +1,24 @@
 /**
  * AppSidebar — sidebar shell extracted from App.tsx.
  *
- * Owns the sticky top space-switcher branding, the primary navigation
- * menu, and the bottom action strip (new page, sync, theme toggle,
- * shortcuts, collapse). `CollapseButton` and `syncDotClass` are
- * sidebar-internal helpers and live alongside the JSX they support.
+ * #5269 — holds only the daily surfaces: a header (branding + collapse
+ * toggle, space switcher, New page), one nav list (`SIDEBAR_NAV_ITEMS`)
+ * above Bookmarks, and a footer with the Sync row and Settings. The other
+ * views open from the Pages header or Settings. `CollapseButton` and
+ * `syncDotClass` are sidebar-internal helpers and live alongside the JSX
+ * they support.
  *
  * Subscription split (design-system perf review tier-3 #19):
- * pure shell-only zustand slices — `syncStore.{state,peers,lastSyncedAt}`,
- * `spaceStore.{availableSpaces,currentSpaceId}`, and the polling
- * `useTrashCount` badge — live INSIDE this component, not on App.tsx.
- * App's prop surface shrinks to the routing/action slices it actually
- * uses (current view, theme cycle, sync trigger, dialog openers); the
- * sidebar becomes the leaf subscriber for everything else, which keeps
- * the `React.memo` shallow-compare gate (Session 717) tight on the
+ * pure shell-only zustand slices — `syncStore.{state,peers,lastSyncedAt}`
+ * and `spaceStore.{availableSpaces,currentSpaceId}` — live INSIDE this
+ * component, not on App.tsx. App's prop surface shrinks to the
+ * routing/action slices it actually uses (current view, sync trigger, new
+ * page); the sidebar becomes the leaf subscriber for everything else, which
+ * keeps the `React.memo` shallow-compare gate (Session 717) tight on the
  * remaining props.
  */
 
-import { ChevronsLeft, Keyboard, Moon, Plus, RefreshCw, Sun, WifiOff } from 'lucide-react'
+import { ChevronsLeft, Plus, RefreshCw, WifiOff } from 'lucide-react'
 import { memo, type ReactElement } from 'react'
 import { useTranslation } from 'react-i18next'
 
@@ -25,26 +26,22 @@ import { FeatureErrorBoundary } from '@/components/common/FeatureErrorBoundary'
 import { SpaceAccentBadge } from '@/components/common/SpaceAccentBadge'
 import { BookmarksSection } from '@/components/layout/BookmarksSection'
 import { SpaceSwitcher } from '@/components/layout/SpaceSwitcher'
-import { useTrashCount } from '@/components/pages/ViewDispatcher'
+import { IconButton } from '@/components/ui/icon-button'
 import {
   Sidebar,
   SidebarContent,
   SidebarFooter,
   SidebarGroup,
   SidebarGroupContent,
-  SidebarGroupLabel,
   SidebarHeader,
   SidebarMenu,
-  SidebarMenuBadge,
   SidebarMenuButton,
   SidebarMenuItem,
   SidebarRail,
   useSidebar,
 } from '@/components/ui/sidebar'
-import { THEME_NAME_KEY, type ThemePreference } from '@/hooks/useTheme'
 import { formatRelativeTime } from '@/lib/format-relative-time'
-import { getShortcutKeys } from '@/lib/keyboard-config'
-import { NAV_GROUPS, type NavItem, SETTINGS_NAV_ITEM } from '@/lib/nav-items'
+import { type NavItem, SETTINGS_NAV_ITEM, SIDEBAR_NAV_ITEMS } from '@/lib/nav-items'
 import { cn } from '@/lib/utils'
 import type { View } from '@/stores/navigation'
 import { useSpaceStore } from '@/stores/space'
@@ -78,16 +75,21 @@ function syncDotClass(syncState: SyncState, hasPeers: boolean): string {
 
 function CollapseButton() {
   const { t } = useTranslation()
-  const { toggleSidebar } = useSidebar()
+  const { isMobile, state, toggleSidebar } = useSidebar()
+  // On mobile the button closes the Sheet, whatever the desktop state is.
+  const label =
+    state === 'collapsed' && !isMobile ? t('sidebar.expandSidebar') : t('sidebar.collapseSidebar')
   return (
-    <SidebarMenu>
-      <SidebarMenuItem>
-        <SidebarMenuButton tooltip={t('sidebar.toggleSidebar')} onClick={toggleSidebar}>
-          <ChevronsLeft className="transition-transform group-data-[state=collapsed]:rotate-180" />
-          <span>{t('sidebar.collapse')}</span>
-        </SidebarMenuButton>
-      </SidebarMenuItem>
-    </SidebarMenu>
+    <IconButton
+      variant="ghost"
+      size="icon-sm"
+      tooltip={label}
+      ariaLabel={label}
+      onClick={toggleSidebar}
+      className="ml-auto group-data-[collapsible=icon]:ml-0"
+    >
+      <ChevronsLeft className="transition-transform group-data-[state=collapsed]:rotate-180" />
+    </IconButton>
   )
 }
 
@@ -96,12 +98,8 @@ export interface AppSidebarProps {
   onSelectView: (view: Exclude<View, 'page-editor'>) => void
   syncing: boolean
   isOnline: boolean
-  isDark: boolean
-  currentTheme: ThemePreference
-  onToggleTheme: () => void
   onNewPage: () => void
   onSyncClick: () => void
-  onShowShortcuts: () => void
 }
 
 function AppSidebarInner({
@@ -109,51 +107,39 @@ function AppSidebarInner({
   onSelectView,
   syncing,
   isOnline,
-  isDark,
-  currentTheme,
-  onToggleTheme,
   onNewPage,
   onSyncClick,
-  onShowShortcuts,
 }: AppSidebarProps): ReactElement {
   const { t } = useTranslation()
-  // (tier-3): pushed-down zustand selectors. App.tsx no longer
-  // forwards these as props — the sidebar is the sole consumer of
-  // sync-store status, the space-store roster, and the trash badge
-  // count, so it owns the subscription. App's prop surface drops by 6
-  // (trashCount, syncState, syncPeers, lastSyncedAt, availableSpaces,
-  // currentSpaceId), tightening the `React.memo` shallow-compare gate
-  // (Session 717) and keeping unrelated App-shell rerenders (e.g. a
+  // (tier-3): pushed-down zustand selectors. The sidebar is the sole
+  // consumer of sync-store status and the space-store roster, so it owns
+  // the subscription, keeping unrelated App-shell rerenders (e.g. a
   // `currentView` flip) from washing through the sidebar.
   const syncState = useSyncStore((s) => s.state)
   const syncPeers = useSyncStore((s) => s.peers)
   const lastSyncedAt = useSyncStore((s) => s.lastSyncedAt)
   const availableSpaces = useSpaceStore((s) => s.availableSpaces)
   const currentSpaceId = useSpaceStore((s) => s.currentSpaceId)
-  const trashCount = useTrashCount()
   const { isMobile, setOpenMobile } = useSidebar()
+  const lastSyncedLabel = lastSyncedAt
+    ? t('sidebar.lastSynced', { time: formatRelativeTime(lastSyncedAt, t) })
+    : t('sidebar.lastSyncedNever')
 
   /**
    * On mobile the sidebar is a Sheet that overlays the content, so acting on
    * an item has to dismiss it — otherwise the user arrives at the new view
-   * with the drawer still covering it, or opens a dialog underneath a second
-   * overlay. Desktop keeps the sidebar pinned beside the content, where
-   * dismissing would be wrong, so this is a no-op there.
+   * with the drawer still covering it. Desktop keeps the sidebar pinned
+   * beside the content, where dismissing would be wrong, so this is a no-op
+   * there.
    *
-   * Applied to navigation and to the actions that take the user elsewhere
-   * (new page, shortcuts). Deliberately NOT applied to sync and theme, which
-   * are in-place toggles whose result is visible in the sidebar itself.
+   * Applied to navigation and to New page, which take the user elsewhere.
+   * Deliberately NOT applied to sync, an in-place action whose result is
+   * visible in the sidebar itself.
    */
   const dismissOnMobile = (): void => {
     if (isMobile) setOpenMobile(false)
   }
 
-  /**
-   * Render a single nav destination. Shared between the grouped main-nav
-   * sections and the footer Settings item (#1741) so the active-state,
-   * tooltip, trash badge, and status dot behaviour stay identical
-   * wherever an item appears.
-   */
   const renderNavItem = (item: NavItem): ReactElement => {
     const label = t(item.labelKey)
     return (
@@ -169,20 +155,6 @@ function AppSidebarInner({
         >
           <item.icon />
           <span>{label}</span>
-          {item.id === 'trash' && trashCount > 0 && (
-            <SidebarMenuBadge aria-label={t('sidebar.trashCount', { count: trashCount })}>
-              {trashCount}
-            </SidebarMenuBadge>
-          )}
-          {item.id === 'status' && (
-            <span
-              className={cn(
-                'ml-auto h-2.5 w-2.5 rounded-full',
-                syncDotClass(syncState, syncPeers.length > 0),
-              )}
-              aria-hidden="true"
-            />
-          )}
         </SidebarMenuButton>
       </SidebarMenuItem>
     )
@@ -198,17 +170,22 @@ function AppSidebarInner({
      * of a phone's width goes to content. See docs/UX.md § Mobile Sidebar.
      */
     <Sidebar collapsible="icon">
-      <SidebarHeader className="p-4 pb-2">
+      {/* The rail is 48px wide, so its header padding drops to fit the 32px
+          controls (badge, collapse toggle, New page). */}
+      <SidebarHeader className="p-4 pb-2 group-data-[collapsible=icon]:px-2">
         {/* Agaric branding — restored at the top of the sidebar above the
             SpaceSwitcher (BUG session 679). Originally removed in
             Phase 1 (c1548cfb) when the SpaceSwitcher replaced it; the
             user wants both visible: branding at the top for app identity,
-            space selector below for navigation context. */}
-        <div className="flex h-7 items-center gap-2 group-data-[collapsible=icon]:justify-center">
+            space selector below for navigation context. #5269 — the
+            collapse toggle sits at its end, stacked under the logo in the
+            rail. */}
+        <div className="flex min-h-7 items-center gap-2 group-data-[collapsible=icon]:flex-col">
           <img src="/agaric.svg" alt="Agaric" className="h-6 w-6 shrink-0" />
           <span className="text-base font-semibold leading-none tracking-tight group-data-[collapsible=icon]:hidden">
             Agaric
           </span>
+          <CollapseButton />
         </div>
         {/*
          * Phase 1: the SpaceSwitcher sits below the branding.
@@ -232,43 +209,10 @@ function AppSidebarInner({
         <div className="mt-2 group-data-[collapsible=icon]:hidden">
           <SpaceSwitcher />
         </div>
-      </SidebarHeader>
-      <SidebarContent>
-        <FeatureErrorBoundary name="Sidebar">
-          {/*
-           * #1741 — the nav is split into labeled groups (Workspace /
-           * System) instead of one flat list. Each `SidebarGroup` carries
-           * a `SidebarGroupLabel` wired to its menu via `aria-labelledby`,
-           * so assistive tech announces the section. Group labels collapse
-           * to zero height in icon mode (handled by `SidebarGroupLabel`),
-           * keeping the compact rail intact.
-           */}
-          {NAV_GROUPS.map((group) => {
-            const labelId = `sidebar-group-${group.id}`
-            return (
-              <SidebarGroup key={group.id}>
-                <SidebarGroupLabel id={labelId}>{t(group.labelKey)}</SidebarGroupLabel>
-                <SidebarGroupContent>
-                  <SidebarMenu aria-labelledby={labelId}>
-                    {group.items.map(renderNavItem)}
-                  </SidebarMenu>
-                </SidebarGroupContent>
-              </SidebarGroup>
-            )
-          })}
-          {/* #4713 — the pinned recent pages, as a collapsible section. Below
-              the fixed nav groups because its length varies with the user's
-              pins. */}
-          <BookmarksSection />
-        </FeatureErrorBoundary>
-      </SidebarContent>
-      <SidebarFooter>
-        <SidebarMenu>
-          {/* #1741 — Settings moved out of the mid-list main nav into the
-              footer with the other utility actions. */}
-          {renderNavItem(SETTINGS_NAV_ITEM)}
+        <SidebarMenu className="mt-2">
           <SidebarMenuItem>
             <SidebarMenuButton
+              variant="outline"
               tooltip={t('sidebar.newPageTooltip')}
               onClick={() => {
                 onNewPage()
@@ -279,6 +223,23 @@ function AppSidebarInner({
               <span>{t('sidebar.newPage')}</span>
             </SidebarMenuButton>
           </SidebarMenuItem>
+        </SidebarMenu>
+      </SidebarHeader>
+      <SidebarContent>
+        <FeatureErrorBoundary name="Sidebar">
+          {/* #5269 — four items need no group label. */}
+          <SidebarGroup>
+            <SidebarGroupContent>
+              <SidebarMenu>{SIDEBAR_NAV_ITEMS.map(renderNavItem)}</SidebarMenu>
+            </SidebarGroupContent>
+          </SidebarGroup>
+          {/* #4713 — the pinned recent pages, as a collapsible section. Below
+              the fixed nav because its length varies with the user's pins. */}
+          <BookmarksSection />
+        </FeatureErrorBoundary>
+      </SidebarContent>
+      <SidebarFooter>
+        <SidebarMenu>
           <SidebarMenuItem>
             <SidebarMenuButton
               // The visible "last synced" line below is hidden in
@@ -295,13 +256,7 @@ function AppSidebarInner({
                           ? t('sidebar.syncing')
                           : t('sidebar.syncTooltip')}
                     </span>
-                    <span className="opacity-90">
-                      {lastSyncedAt
-                        ? t('sidebar.lastSynced', {
-                            time: formatRelativeTime(lastSyncedAt, t),
-                          })
-                        : t('sidebar.lastSyncedNever')}
-                    </span>
+                    <span className="opacity-90">{lastSyncedLabel}</span>
                   </div>
                 ),
               }}
@@ -328,56 +283,11 @@ function AppSidebarInner({
               className="px-2 text-xs text-muted-foreground group-data-[collapsible=icon]:hidden"
               data-testid="last-synced"
             >
-              {lastSyncedAt
-                ? t('sidebar.lastSynced', { time: formatRelativeTime(lastSyncedAt, t) })
-                : t('sidebar.lastSyncedNever')}
+              {lastSyncedLabel}
             </span>
           </SidebarMenuItem>
-          <SidebarMenuItem>
-            {/*
-             * Surface the current theme in the tooltip so the
-             * 3-state cycle (auto / dark / light) is no longer silent.
-             * The visible label still reads `t('sidebar.toggleTheme')` so the
-             * expanded sidebar stays terse; only the tooltip carries
-             * the disambiguating state.
-             */}
-            <SidebarMenuButton
-              tooltip={t('sidebar.toggleThemeWithCurrent', {
-                current: t(THEME_NAME_KEY[currentTheme]),
-              })}
-              onClick={onToggleTheme}
-              data-testid="theme-toggle"
-            >
-              {isDark ? <Sun /> : <Moon />}
-              <span>{t('sidebar.toggleTheme')}</span>
-            </SidebarMenuButton>
-          </SidebarMenuItem>
-          <SidebarMenuItem>
-            {(() => {
-              // Surface the current keyboard binding in the
-              // tooltip so users discover the shortcut without having
-              // to open the cheatsheet first. Falls back to the bare
-              // label when the binding is unset to avoid a stray "()".
-              const shortcutKeys = getShortcutKeys('showShortcuts')
-              const tooltip = shortcutKeys
-                ? `${t('sidebar.shortcuts')} (${shortcutKeys})`
-                : t('sidebar.shortcuts')
-              return (
-                <SidebarMenuButton
-                  tooltip={tooltip}
-                  onClick={() => {
-                    onShowShortcuts()
-                    dismissOnMobile()
-                  }}
-                >
-                  <Keyboard />
-                  <span>{t('sidebar.shortcuts')}</span>
-                </SidebarMenuButton>
-              )
-            })()}
-          </SidebarMenuItem>
+          {renderNavItem(SETTINGS_NAV_ITEM)}
         </SidebarMenu>
-        <CollapseButton />
       </SidebarFooter>
       <SidebarRail />
     </Sidebar>
@@ -389,7 +299,7 @@ function AppSidebarInner({
  * top-level render (see design-system-perf-review-2026-05-09.md item 10).
  * Wrapping with `React.memo` collapses parent-driven rerenders to the
  * subset where a prop identity actually changed; intra-sidebar state
- * (sync dot colour, theme cycle) re-renders on its own subscriptions
+ * (sync dot colour) re-renders on its own subscriptions
  * through `SpaceSwitcher` and `useSidebar()`. Mirrors the
  * `BlockListItem` Inner/memo pattern used elsewhere in the tree.
  */

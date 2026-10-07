@@ -20,16 +20,15 @@
  * styles (e.g. `hljs` syntax highlighting overrides) still apply to the new
  * dark variants without duplication.
  *
- * Returns `{ theme, isDark, toggleTheme, setTheme }`:
- *   - `toggleTheme` cycles through `auto → dark → light` with smart skip
- *     (avoids visual no-ops) for the classic sidebar toggle button.
- *   - `setTheme(value)` sets a specific theme directly (used by the Settings
- *     Select which offers all 7 options).
+ * Returns `{ theme, isDark, setTheme }`; `setTheme(value)` sets a specific
+ * theme directly (used by the Settings Select which offers all 7 options).
+ * `cycleThemePreference` (the palette's `toggle-theme` command) cycles
+ * through `auto → dark → light` with smart skip (avoids visual no-ops).
  *
  * #733 — the preference lives in a MODULE-LEVEL store (localStorage as the
  * source of truth + a shared listener set), consumed via
  * `useSyncExternalStore`. The hook is mounted twice (App.tsx for the
- * sidebar toggle / Toaster, AppearanceTab for the Settings Select); the
+ * Toaster, AppearanceTab for the Settings Select); the
  * previous per-instance `useState` meant a Settings choice never reached
  * App's instance, so (a) the sidebar tooltip/icon went stale, (b) the
  * toggle cycled from the OLD value and persisted it over the Settings
@@ -72,26 +71,8 @@ const ALL_THEMES: readonly ThemePreference[] = [
   'one-dark-pro',
 ] as const
 
-/** Theme cycle for the sidebar toggle button (classic light/dark/auto only). */
+/** Theme cycle for `cycleThemePreference` (classic light/dark/auto only). */
 const CYCLE: ThemePreference[] = ['auto', 'dark', 'light']
-
-/**
- * i18n key for the human-readable display name of each theme. Used by the
- * Sidebar theme-toggle tooltip to surface the current theme.
- *
- * Hyphenated theme ids are mapped to camelCase i18n key segments because the
- * project i18n key convention (enforced in `src/lib/__tests__/i18n.test.ts`)
- * disallows dashes inside segments.
- */
-export const THEME_NAME_KEY: Record<ThemePreference, string> = {
-  auto: 'sidebar.themeName.auto',
-  dark: 'sidebar.themeName.dark',
-  light: 'sidebar.themeName.light',
-  'solarized-light': 'sidebar.themeName.solarizedLight',
-  'solarized-dark': 'sidebar.themeName.solarizedDark',
-  dracula: 'sidebar.themeName.dracula',
-  'one-dark-pro': 'sidebar.themeName.oneDarkPro',
-}
 
 /** Every CSS class the hook may add — cleared before applying the current one. */
 const THEME_CLASSES = [
@@ -221,10 +202,41 @@ function applyThemeClasses(resolved: ResolvedTheme) {
   }
 }
 
+/**
+ * Advance the preference one step through `auto → dark → light`, skipping a
+ * step that would not change the visible theme. Module-level so the palette
+ * (outside the React tree) and every hook instance share one cycle.
+ */
+export function cycleThemePreference(): void {
+  // Read both inputs LIVE from their stores — never from a render-time
+  // closure — so the cycle always starts from the preference the user
+  // most recently chose anywhere in the app (#733).
+  const prev = getPreferenceSnapshot()
+  const sd = getSystemDark()
+  const prevDark = isResolvedDark(resolveTheme(prev, sd))
+  // Start from prev's position in the classic CYCLE. If prev is outside
+  // CYCLE (one of the custom themes), `indexOf` returns -1 which causes
+  // `(-1 + 1) % 3 === 0 → 'auto'` — a sensible fallback that re-enters the
+  // classic cycle from the beginning.
+  const idx = CYCLE.indexOf(prev)
+  // Smart skip: advance through the cycle until we find a state
+  // that resolves to a different isDark value, avoiding visual no-ops.
+  for (let step = 1; step <= CYCLE.length; step++) {
+    const candidate = CYCLE[(idx + step) % CYCLE.length] as ThemePreference
+    const candidateDark = isResolvedDark(resolveTheme(candidate, sd))
+    if (candidateDark !== prevDark) {
+      setPreference(candidate)
+      return
+    }
+  }
+  // Fallback: advance one step (reached only if every cycle candidate
+  // matches prev's isDark, e.g. with 3 states it shouldn't happen).
+  setPreference(CYCLE[(idx + 1) % CYCLE.length] as ThemePreference)
+}
+
 export interface UseThemeReturn {
   theme: ThemePreference
   isDark: boolean
-  toggleTheme: () => void
   setTheme: (theme: ThemePreference) => void
 }
 
@@ -256,34 +268,7 @@ export function useTheme(): UseThemeReturn {
     setPreference(next)
   }, [])
 
-  const toggleTheme = useCallback(() => {
-    // Read both inputs LIVE from their stores — never from a render-time
-    // closure — so the cycle always starts from the preference the user
-    // most recently chose anywhere in the app (#733).
-    const prev = getPreferenceSnapshot()
-    const sd = getSystemDark()
-    const prevDark = isResolvedDark(resolveTheme(prev, sd))
-    // Start from prev's position in the classic CYCLE. If prev is outside
-    // CYCLE (one of the custom themes), `indexOf` returns -1 which causes
-    // `(-1 + 1) % 3 === 0 → 'auto'` — a sensible fallback that re-enters the
-    // classic cycle from the beginning.
-    const idx = CYCLE.indexOf(prev)
-    // Smart skip: advance through the cycle until we find a state
-    // that resolves to a different isDark value, avoiding visual no-ops.
-    for (let step = 1; step <= CYCLE.length; step++) {
-      const candidate = CYCLE[(idx + step) % CYCLE.length] as ThemePreference
-      const candidateDark = isResolvedDark(resolveTheme(candidate, sd))
-      if (candidateDark !== prevDark) {
-        setPreference(candidate)
-        return
-      }
-    }
-    // Fallback: advance one step (reached only if every cycle candidate
-    // matches prev's isDark, e.g. with 3 states it shouldn't happen).
-    setPreference(CYCLE[(idx + 1) % CYCLE.length] as ThemePreference)
-  }, [])
-
-  return { theme, isDark, toggleTheme, setTheme }
+  return { theme, isDark, setTheme }
 }
 
 /**

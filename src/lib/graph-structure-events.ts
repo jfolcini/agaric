@@ -38,6 +38,7 @@
 export const DEBOUNCE_MS = 150
 
 let structureKey = 0
+let recordedChanges = 0
 const subscribers = new Set<() => void>()
 let debounceTimer: ReturnType<typeof setTimeout> | null = null
 
@@ -52,6 +53,15 @@ function notify(): void {
  */
 export function getGraphStructureKey(): number {
   return structureKey
+}
+
+/**
+ * Count of `recordGraphStructureChange` calls so far. Unlike the key it moves
+ * synchronously, for a reader that must not serve a pre-mutation snapshot
+ * inside the debounce window.
+ */
+export function getRecordedGraphStructureChanges(): number {
+  return recordedChanges
 }
 
 /**
@@ -72,6 +82,7 @@ export function subscribeToGraphStructureEvents(cb: () => void): () => void {
  * settles, notifying subscribers.
  */
 export function recordGraphStructureChange(): void {
+  recordedChanges += 1
   if (debounceTimer) clearTimeout(debounceTimer)
   debounceTimer = setTimeout(() => {
     debounceTimer = null
@@ -87,6 +98,7 @@ export function recordGraphStructureChange(): void {
  */
 export function _resetGraphStructureEventsForTest(): void {
   structureKey = 0
+  recordedChanges = 0
   if (debounceTimer) {
     clearTimeout(debounceTimer)
     debounceTimer = null

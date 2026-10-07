@@ -104,6 +104,9 @@ export function takeUnstubbedInvokes(): string[] {
  * mock slot, and then falling through to a fallback resolving `undefined`, is
  * exactly what #3217 was.
  *
+ * The Pages header's Trash button polls `count_trash` for its badge (#5269),
+ * so every Pages-view render makes that call too; it answers an empty trash.
+ *
  * Everything else still goes to {@link strictInvokeFallback}.
  */
 export function pageRowInvokeFallback(command: string): Promise<unknown> {
@@ -112,6 +115,10 @@ export function pageRowInvokeFallback(command: string): Promise<unknown> {
     // drift this module exists to type.
     const empty: CommandReturns['load_page_subtree'] = { blocks: [], truncated: false, total: 0 }
     return Promise.resolve(empty)
+  }
+  if (command === 'count_trash') {
+    const emptyTrash: CommandReturns['count_trash'] = 0
+    return Promise.resolve(emptyTrash)
   }
   return strictInvokeFallback(command)
 }

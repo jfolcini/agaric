@@ -159,11 +159,11 @@ export function BookmarksSection(): ReactElement {
   return (
     <SidebarGroup data-testid="sidebar-bookmarks">
       {/*
-       * The sidebar's own nav groups use a static `SidebarGroupLabel`; this
-       * one has to disclose, so it borrows the app's disclosure header and
-       * takes the group-label metrics (h-8 / px-2 / text-xs) so the two read
-       * as one column. Hidden in the icon rail for the same reason
-       * `SidebarGroupLabel` is: there is no room for a text header there.
+       * Unlike a static `SidebarGroupLabel`, this header has to
+       * disclose, so it borrows the app's disclosure header and
+       * takes the group-label metrics (h-8 / px-2 / text-xs). Hidden in the
+       * icon rail for the same reason `SidebarGroupLabel` is: there is no
+       * room for a text header there.
        */}
       <CollapsiblePanelHeader
         isCollapsed={collapsed}
