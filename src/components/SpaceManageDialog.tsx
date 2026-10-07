@@ -349,7 +349,7 @@ function SpaceManageDialogBody({ open }: { open: boolean }): React.JSX.Element {
     if (journalIdsToFetch.length > 0) {
       // Reserve all ids up-front so a concurrent re-render doesn't
       // re-issue the batch. On error, release them again so the next
-      // render can retry.
+      // `availableSpaces` change can retry.
       for (const id of journalIdsToFetch) journalTemplateFetchedRef.current.add(id)
       void (async () => {
         try {
