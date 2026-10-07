@@ -34,6 +34,11 @@
 //! when BOTH the source and the target are assigned to a space — an
 //! orphan (unassigned) block is not "cross-space" to anything, so it is
 //! tolerated (mirrors the orphan-tag adoption in `add_tag`).
+//!
+//! Only a write that INTRODUCES a cross-space target is refused (#5272):
+//! "Move to space" leaves tokens whose target now lives elsewhere, and
+//! those render as broken chips, so a target the page's live blocks
+//! already hold passes the content scan.
 
 use crate::cache::{TAG_REF_RE, ULID_LINK_RE};
 use crate::db::MAX_SQL_PARAMS;
@@ -121,7 +126,14 @@ pub async fn validate_content_cross_space_refs(
     let Some(source_space) = source_space else {
         return Ok(());
     };
-    validate_content_refs_in_space(conn, source_block_id, &source_space, content).await
+    validate_content_refs_in_space(
+        conn,
+        source_block_id,
+        &source_space,
+        content,
+        source_block_id.as_str(),
+    )
+    .await
 }
 
 /// Space-explicit variant of [`validate_content_cross_space_refs`] for
@@ -132,12 +144,16 @@ pub async fn validate_content_cross_space_refs(
 /// otherwise resolve the space from even exists. The space is resolved from
 /// the parent there (the same resolution anchor the engine apply uses).
 ///
-/// `source_block_id` is used only for the error message.
+/// `source_block_id` is used only for the error message. `on_page_of` is a
+/// live block of the page the write lands on (the edited block, or the new
+/// block's parent): a cross-space target that page already holds is not
+/// introduced by this write (#5272), so it passes.
 pub async fn validate_content_refs_in_space(
     conn: &mut sqlx::SqliteConnection,
     source_block_id: &BlockId,
     source_space: &SpaceId,
     content: &str,
+    on_page_of: &str,
 ) -> Result<(), AppError> {
     // Collect all ULIDs referenced in the content (both link and tag-ref forms)
     let mut targets: Vec<&str> = Vec::new();
@@ -157,9 +173,10 @@ pub async fn validate_content_refs_in_space(
     // the map is an orphan (no space) and is tolerated — not cross-space yet.
     let target_spaces = resolve_block_spaces_batch(&mut *conn, &targets).await?;
     for target_str in targets {
-        // Only a target assigned to a DIFFERENT space is a violation.
+        // The page lookup runs only on the rare cross-space path.
         if let Some(target_space) = target_spaces.get(target_str)
             && target_space != source_space
+            && !page_holds_token(&mut *conn, on_page_of, target_str).await?
         {
             return Err(AppError::validation(format!(
                 "cross-space reference: block '{}' (space {}) references '{}' (space {})",
@@ -172,6 +189,26 @@ pub async fn validate_content_refs_in_space(
     }
 
     Ok(())
+}
+
+/// Whether a live block of `member`'s page holds `token` in its content.
+async fn page_holds_token(
+    conn: &mut sqlx::SqliteConnection,
+    member: &str,
+    token: &str,
+) -> Result<bool, AppError> {
+    let hit = sqlx::query!(
+        r#"SELECT 1 AS "hit: i32" FROM blocks
+           WHERE page_id = (SELECT page_id FROM blocks WHERE id = ?1)
+             AND deleted_at IS NULL
+             AND instr(content, ?2) > 0
+           LIMIT 1"#,
+        member,
+        token,
+    )
+    .fetch_optional(&mut *conn)
+    .await?;
+    Ok(hit.is_some())
 }
 
 /// Validate that a ref-type property value targets a block in the

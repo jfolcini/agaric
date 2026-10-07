@@ -27,6 +27,8 @@ import { unwrap } from '@/lib/app-error'
 import { commands } from '@/lib/bindings'
 import { PAGINATION_LIMIT } from '@/lib/constants'
 import { logger } from '@/lib/logger'
+import { requireActiveScope } from '@/lib/space-scope'
+import { useSpaceStore } from '@/stores/space'
 
 export interface HasTagFilterFormProps {
   tags: Array<{ id: string; name: string }>
@@ -44,9 +46,11 @@ export function HasTagFilterForm({ tags, ref }: HasTagFilterFormProps): React.Re
   useImperativeHandle(ref, () => ({ getState: () => ({ tagValue }) }), [tagValue])
 
   const debouncedTagSearch = useDebouncedCallback((query: string) => {
+    const spaceId = useSpaceStore.getState().currentSpaceId
+    if (spaceId == null) return
     setTagSearchLoading(true)
     commands
-      .listTagsByPrefix(query, PAGINATION_LIMIT)
+      .listTagsByPrefix(query, PAGINATION_LIMIT, requireActiveScope(spaceId))
       .then(unwrap)
       .then((rows) => {
         setTagSearchResults(rows.map((r) => ({ id: r.tag_id, name: r.name })))

@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT tag_id, name, usage_count, updated_at\n         FROM tags_cache WHERE name LIKE ?1 ESCAPE '\\' ORDER BY name LIMIT ?2",
+  "query": "SELECT tag_id, name, usage_count, updated_at\n         FROM tags_cache tc\n         WHERE name LIKE ?1 ESCAPE '\\'\n           AND EXISTS (SELECT 1 FROM blocks b WHERE b.id = tc.tag_id AND b.space_id = ?2)\n         ORDER BY name LIMIT ?3",
   "describe": {
     "columns": [
       {
@@ -49,7 +49,7 @@
       }
     ],
     "parameters": {
-      "Right": 2
+      "Right": 3
     },
     "nullable": [
       false,
@@ -58,5 +58,5 @@
       false
     ]
   },
-  "hash": "2d0919d3edf39174ec517acdf5d372b79e02e65e7bca639d2c2d47fc740d1ded"
+  "hash": "5061c2152db93d013fae8460fd35ae7e36789a729d58cc60b852c9a30d22865e"
 }

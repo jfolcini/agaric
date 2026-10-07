@@ -21,6 +21,7 @@ import { mockInvokeCommands, type TypedInvokeHandlers } from '@/__tests__/helper
 import { TagValuePicker } from '@/components/properties/TagValuePicker'
 import type { TagCacheRow } from '@/lib/bindings'
 import { logger } from '@/lib/logger'
+import { useSpaceStore } from '@/stores/space'
 
 const mockedInvoke = vi.mocked(invoke)
 
@@ -56,6 +57,7 @@ function mockTagSearch() {
 beforeEach(() => {
   vi.clearAllMocks()
   stubInvoke({ list_tags_by_prefix: () => [] })
+  useSpaceStore.setState({ currentSpaceId: 'SPACE_TEST' })
 })
 
 describe('TagValuePicker', () => {
@@ -384,6 +386,7 @@ describe('TagValuePicker', () => {
       expect(mockedInvoke).toHaveBeenLastCalledWith('list_tags_by_prefix', {
         prefix: 'wor',
         limit: 20,
+        scope: { kind: 'active', space_id: 'SPACE_TEST' },
       })
     })
 

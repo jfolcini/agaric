@@ -565,6 +565,55 @@ describe('useBlockMultiSelect handleBatchDelete', () => {
   })
 })
 
+// #5273 — the global selection survives a journal day or space change, so it
+// can hold ids this tree's store never loaded. The backend checks neither page
+// nor space, so every batch action must send only the ids this store holds.
+describe('useBlockMultiSelect acts only on selected ids this store holds (#5273)', () => {
+  const STALE_SELECTION = ['OTHER_DAY_1', 'BLOCK_1', 'OTHER_DAY_2', 'BLOCK_2']
+
+  it('batch TODO state sends only the owned ids', async () => {
+    const params = makeDefaultParams({ selectedBlockIds: STALE_SELECTION })
+    const { result } = renderHook(() => useBlockMultiSelect(params), { wrapper })
+
+    await act(async () => {
+      await result.current.handleBatchSetTodo('DONE')
+    })
+
+    expect(mockedInvoke).toHaveBeenCalledTimes(1)
+    expect(mockedInvoke).toHaveBeenCalledWith('set_todo_state_batch', {
+      blockIds: ['BLOCK_1', 'BLOCK_2'],
+      state: 'DONE',
+    })
+  })
+
+  it('batch delete sends only the owned ids', async () => {
+    const params = makeDefaultParams({ selectedBlockIds: STALE_SELECTION })
+    const { result } = renderHook(() => useBlockMultiSelect(params), { wrapper })
+
+    await act(async () => {
+      await result.current.handleBatchDelete()
+    })
+
+    expect(mockedInvoke).toHaveBeenCalledTimes(1)
+    expect(mockedInvoke).toHaveBeenCalledWith('delete_blocks_by_ids', {
+      blockIds: ['BLOCK_1', 'BLOCK_2'],
+    })
+  })
+
+  it('batch priority cycles only the owned ids', async () => {
+    const params = makeDefaultParams({ selectedBlockIds: STALE_SELECTION })
+    const { result } = renderHook(() => useBlockMultiSelect(params), { wrapper })
+
+    await act(async () => {
+      await result.current.handleBatchSetPriority()
+    })
+
+    expect(params.handleTogglePriority).toHaveBeenCalledTimes(2)
+    expect(params.handleTogglePriority).toHaveBeenCalledWith('BLOCK_1')
+    expect(params.handleTogglePriority).toHaveBeenCalledWith('BLOCK_2')
+  })
+})
+
 describe('useBlockMultiSelect undo notifications', () => {
   const onNewActionSpy = vi.fn()
 

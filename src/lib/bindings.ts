@@ -287,8 +287,15 @@ export const commands = {
 } | null, blockType: string | null, scope: SpaceScope, cursor: string | null, limit: number | null) => typedError<PageResponse<BlockRow>, AppError>(__TAURI_INVOKE("filtered_blocks_query", { propertyFilters, tagFilters, blockType, scope, cursor, limit })),
 	/**  Tauri command: list unfinished tasks before a given date. Delegates to [`list_unfinished_tasks_inner`]. */
 	listUnfinishedTasks: (beforeDate: string, todoStates: string[], cursor: string | null, limit: number | null, scope: SpaceScope) => typedError<PageResponse<BlockRow>, AppError>(__TAURI_INVOKE("list_unfinished_tasks", { beforeDate, todoStates, cursor, limit, scope })),
-	/**  Tauri command: list tags matching a name prefix. Delegates to [`list_tags_by_prefix_inner`]. */
-	listTagsByPrefix: (prefix: string, limit: number | null) => typedError<TagCacheRow[], AppError>(__TAURI_INVOKE("list_tags_by_prefix", { prefix, limit })),
+	/**
+	 *  Tauri command: list the active space's tags matching a name prefix.
+	 *  Delegates to [`list_tags_by_prefix_inner`].
+	 * 
+	 *  `scope` is a required-active [`SpaceScope`]: a tag name is unique per
+	 *  space, so an unscoped scan answers one row per space for a shared name.
+	 *  [`SpaceScope::Global`] is rejected by [`SpaceScope::require_active`].
+	 */
+	listTagsByPrefix: (prefix: string, limit: number | null, scope: SpaceScope) => typedError<TagCacheRow[], AppError>(__TAURI_INVOKE("list_tags_by_prefix", { prefix, limit, scope })),
 	/**
 	 *  Tauri command: list every tag in the active space as
 	 *  `TagCacheRow[]`. No pagination, no clamp.  Delegates to

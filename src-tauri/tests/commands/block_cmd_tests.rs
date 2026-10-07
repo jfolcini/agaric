@@ -9285,6 +9285,181 @@ async fn create_block_cross_space_content_rejected() {
     );
 }
 
+/// #5272 fixture: `page` and `target` start in space A, `block` under `page`
+/// links `target` while both are in A, then the real "Move to space" path
+/// moves `target` to space B, so the stored link is now cross-space. Returns
+/// `(page, target, block)`.
+async fn seed_link_made_cross_space_5272(
+    pool: &SqlitePool,
+    mat: &Materializer,
+) -> (BlockRow, BlockRow, BlockRow) {
+    seed_space(pool, "X5272_SPACE_A").await;
+    seed_space(pool, "X5272_SPACE_B").await;
+    let page = create_block_inner(pool, DEV, mat, "page".into(), "Home".into(), None, None)
+        .await
+        .unwrap();
+    let target = create_block_inner(pool, DEV, mat, "page".into(), "Target".into(), None, None)
+        .await
+        .unwrap();
+    move_blocks_to_space_inner(
+        pool,
+        DEV,
+        mat,
+        vec![page.id.clone(), target.id.clone()],
+        "X5272_SPACE_A".into(),
+    )
+    .await
+    .unwrap();
+    settle(mat).await;
+    let block = create_block_inner(
+        pool,
+        DEV,
+        mat,
+        "content".into(),
+        format!("see [[{}]]", target.id),
+        Some(page.id.clone()),
+        None,
+    )
+    .await
+    .expect("a same-space link is accepted");
+    move_blocks_to_space_inner(
+        pool,
+        DEV,
+        mat,
+        vec![target.id.clone()],
+        "X5272_SPACE_B".into(),
+    )
+    .await
+    .unwrap();
+    settle(mat).await;
+    (page, target, block)
+}
+
+/// #5272 — after "Move to space" a block holding a link whose target moved
+/// renders a broken chip and must stay editable: only a token the page did
+/// not already hold is a new cross-space reference.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn edit_block_keeps_link_made_cross_space_by_move_5272() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let (_page, target, block) = seed_link_made_cross_space_5272(&pool, &mat).await;
+
+    let kept = format!("see [[{}]]", target.id);
+    edit_block_inner(&pool, DEV, &mat, block.id.clone(), kept)
+        .await
+        .expect("an edit that keeps the stored link must save");
+    let appended = format!("see [[{}]] tomorrow", target.id);
+    edit_block_inner(&pool, DEV, &mat, block.id.clone(), appended.clone())
+        .await
+        .expect("an edit that adds text around the stored link must save");
+    let stored = get_block_inner(&pool, block.id.clone()).await.unwrap();
+    assert_eq!(
+        stored.content.as_deref(),
+        Some(appended.as_str()),
+        "the accepted edit must persist"
+    );
+
+    // A second space-B page the page never linked is still a new
+    // cross-space reference, even next to the tolerated one.
+    let other = create_block_inner(&pool, DEV, &mat, "page".into(), "Other".into(), None, None)
+        .await
+        .unwrap();
+    move_blocks_to_space_inner(
+        &pool,
+        DEV,
+        &mat,
+        vec![other.id.clone()],
+        "X5272_SPACE_B".into(),
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+    let result = edit_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        block.id.clone(),
+        format!("see [[{}]] and [[{}]]", target.id, other.id),
+    )
+    .await;
+    assert!(
+        matches!(result, Err(AppError::Validation { .. })),
+        "a link the page never held must still be refused, got {result:?}"
+    );
+    let stored = get_block_inner(&pool, block.id.clone()).await.unwrap();
+    assert_eq!(
+        stored.content.as_deref(),
+        Some(appended.as_str()),
+        "the refused edit must not persist"
+    );
+}
+
+/// #5272 — the create-side rule the recurrence sibling and the page-source
+/// save rely on: a new block may carry a cross-space token a live block of
+/// its page already holds. The scope is the page: another page in the same
+/// space that never held the token still refuses it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn create_block_accepts_cross_space_link_its_page_already_holds_5272() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let (page, target, _block) = seed_link_made_cross_space_5272(&pool, &mat).await;
+
+    let content = format!("also [[{}]]", target.id);
+    let created = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        content.clone(),
+        Some(page.id.clone()),
+        None,
+    )
+    .await
+    .expect("a create carrying a link its page already holds must save");
+    let stored = get_block_inner(&pool, created.id.clone()).await.unwrap();
+    assert_eq!(
+        stored.content.as_deref(),
+        Some(content.as_str()),
+        "the accepted create must persist"
+    );
+
+    let other_page = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "page".into(),
+        "Elsewhere".into(),
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    move_blocks_to_space_inner(
+        &pool,
+        DEV,
+        &mat,
+        vec![other_page.id.clone()],
+        "X5272_SPACE_A".into(),
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+    let result = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        content,
+        Some(other_page.id.clone()),
+        None,
+    )
+    .await;
+    assert!(
+        matches!(result, Err(AppError::Validation { .. })),
+        "a page that never held the link must still refuse it, got {result:?}"
+    );
+}
+
 // ======================================================================
 // Bytes-over-IPC attachment add/read
 // ======================================================================

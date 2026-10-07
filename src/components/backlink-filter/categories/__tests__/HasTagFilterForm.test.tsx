@@ -34,6 +34,7 @@ import { HasTagFilterForm } from '@/components/backlink-filter/categories/HasTag
 import type { TagCacheRow } from '@/lib/bindings'
 import { t } from '@/lib/i18n'
 import { logger } from '@/lib/logger'
+import { useSpaceStore } from '@/stores/space'
 
 const mockedInvoke = vi.mocked(invoke)
 
@@ -50,6 +51,7 @@ function stubTagSearch(rows: () => TagCacheRow[] | Promise<TagCacheRow[]>): void
 beforeEach(() => {
   vi.clearAllMocks()
   stubTagSearch(() => [])
+  useSpaceStore.setState({ currentSpaceId: 'SPACE_TEST' })
 })
 
 describe('HasTagFilterForm — happy path', () => {
@@ -70,6 +72,7 @@ describe('HasTagFilterForm — happy path', () => {
       expect(mockedInvoke).toHaveBeenCalledWith('list_tags_by_prefix', {
         prefix: 'be',
         limit: 50,
+        scope: { kind: 'active', space_id: 'SPACE_TEST' },
       })
     })
 

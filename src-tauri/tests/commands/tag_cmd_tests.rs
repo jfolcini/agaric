@@ -365,6 +365,7 @@ async fn insert_tag_cache(pool: &SqlitePool, tag_id: &str, name: &str, usage_cou
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn list_tags_by_prefix_inner_returns_matching() {
     let (pool, _dir) = test_pool().await;
+    ensure_test_space(&pool).await;
 
     insert_block(&pool, "TAG_WM", "tag", "work/meeting", None, None).await;
     insert_block(&pool, "TAG_WE", "tag", "work/email", None, None).await;
@@ -373,8 +374,11 @@ async fn list_tags_by_prefix_inner_returns_matching() {
     insert_tag_cache(&pool, "TAG_WM", "work/meeting", 5).await;
     insert_tag_cache(&pool, "TAG_WE", "work/email", 3).await;
     insert_tag_cache(&pool, "TAG_P", "personal", 10).await;
+    for tag in ["TAG_WM", "TAG_WE", "TAG_P"] {
+        assign_to_space(&pool, tag, TEST_SPACE_ID).await;
+    }
 
-    let result = list_tags_by_prefix_inner(&pool, "work/".into(), None)
+    let result = list_tags_by_prefix_inner(&pool, TEST_SPACE_ID, "work/".into(), None)
         .await
         .unwrap();
 
@@ -393,7 +397,7 @@ async fn list_tags_by_prefix_inner_returns_matching() {
 async fn list_tags_by_prefix_inner_empty_returns_empty() {
     let (pool, _dir) = test_pool().await;
 
-    let result = list_tags_by_prefix_inner(&pool, "nonexistent/".into(), None)
+    let result = list_tags_by_prefix_inner(&pool, TEST_SPACE_ID, "nonexistent/".into(), None)
         .await
         .unwrap();
 
@@ -406,6 +410,7 @@ async fn list_tags_by_prefix_inner_empty_returns_empty() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn list_tags_by_prefix_inner_respects_limit() {
     let (pool, _dir) = test_pool().await;
+    ensure_test_space(&pool).await;
 
     for i in 0..5 {
         insert_block(
@@ -418,9 +423,10 @@ async fn list_tags_by_prefix_inner_respects_limit() {
         )
         .await;
         insert_tag_cache(&pool, &format!("TAG_A{i}"), &format!("alpha{i}"), 1).await;
+        assign_to_space(&pool, &format!("TAG_A{i}"), TEST_SPACE_ID).await;
     }
 
-    let result = list_tags_by_prefix_inner(&pool, "alpha".into(), Some(2))
+    let result = list_tags_by_prefix_inner(&pool, TEST_SPACE_ID, "alpha".into(), Some(2))
         .await
         .unwrap();
     assert_eq!(result.len(), 2, "limit=2 should return exactly 2 tags");

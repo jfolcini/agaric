@@ -700,6 +700,7 @@ export function BlockTree({
   // rendered when the user clicked, not a fresh read after the IPC settles.
   const currentSpaceId = useSpaceStore((s) => s.currentSpaceId)
   const {
+    ownedSelectedIds,
     batchDeleteConfirm,
     batchInProgress,
     setBatchDeleteConfirm,
@@ -1478,7 +1479,7 @@ export function BlockTree({
               </div>
             )}
             <BlockBatchActionMenu
-              selectedBlockIds={selectedBlockIds}
+              selectedBlockIds={ownedSelectedIds}
               batchInProgress={batchInProgress}
               batchDeleteConfirm={batchDeleteConfirm}
               onBatchSetTodo={handleBatchSetTodo}

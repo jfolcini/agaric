@@ -3630,6 +3630,132 @@ async fn recurrence_daily_creates_next_occurrence() {
     mat.shutdown();
 }
 
+/// #5272 — DONE copies the task's content verbatim into the next occurrence.
+/// A link the task already held, made cross-space by "Move to space", is not
+/// a new cross-space reference, so the DONE must not roll back.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn recurrence_done_copies_link_made_cross_space_by_move_5272() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    for space in ["R5272_SPACE_A", "R5272_SPACE_B"] {
+        insert_block(&pool, space, "page", "Space", None, None).await;
+        mark_block_as_space(&pool, space).await;
+    }
+    let page = create_block_inner(&pool, DEV, &mat, "page".into(), "Home".into(), None, None)
+        .await
+        .unwrap();
+    let target = create_block_inner(&pool, DEV, &mat, "page".into(), "Plants".into(), None, None)
+        .await
+        .unwrap();
+    move_blocks_to_space_inner(
+        &pool,
+        DEV,
+        &mat,
+        vec![page.id.clone(), target.id.clone()],
+        "R5272_SPACE_A".into(),
+    )
+    .await
+    .unwrap();
+    mat.flush_background().await.unwrap();
+
+    let content = format!("water [[{}]]", target.id);
+    let task = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        content.clone(),
+        Some(page.id.clone()),
+        None,
+    )
+    .await
+    .unwrap();
+    set_todo_state_inner(
+        &pool,
+        DEV,
+        &mat,
+        task.id.as_str().into(),
+        Some("TODO".into()),
+    )
+    .await
+    .unwrap();
+    set_due_date_inner(
+        &pool,
+        DEV,
+        &mat,
+        task.id.as_str().into(),
+        Some("2025-06-15".into()),
+    )
+    .await
+    .unwrap();
+    set_repeat_property(&pool, DEV, &mat, task.id.as_str(), "daily").await;
+    mat.flush_background().await.unwrap();
+
+    // The linked page moves to space B: the task's stored link is now
+    // cross-space.
+    move_blocks_to_space_inner(
+        &pool,
+        DEV,
+        &mat,
+        vec![target.id.clone()],
+        "R5272_SPACE_B".into(),
+    )
+    .await
+    .unwrap();
+    mat.flush_background().await.unwrap();
+
+    set_todo_state_inner(
+        &pool,
+        DEV,
+        &mat,
+        task.id.as_str().into(),
+        Some("DONE".into()),
+    )
+    .await
+    .expect("DONE on a task whose stored link the move made cross-space must not roll back");
+    mat.flush_background().await.unwrap();
+
+    let original = get_block_inner(&pool, task.id.clone()).await.unwrap();
+    assert_eq!(
+        original.todo_state.as_deref(),
+        Some("DONE"),
+        "the original must be DONE"
+    );
+    let siblings: Vec<BlockRow> = sqlx::query_as!(
+        BlockRow,
+        r#"SELECT id as "id!: agaric_core::ulid::BlockId", block_type, content, parent_id as "parent_id: agaric_core::ulid::BlockId", position, deleted_at, todo_state, priority,
+                  due_date, scheduled_date, page_id as "page_id: agaric_core::ulid::BlockId"
+           FROM blocks WHERE parent_id = ? AND id != ? AND deleted_at IS NULL"#,
+        page.id,
+        task.id
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        siblings.len(),
+        1,
+        "DONE must create exactly one next occurrence"
+    );
+    assert_eq!(
+        siblings[0].content.as_deref(),
+        Some(content.as_str()),
+        "the next occurrence copies the content, link included"
+    );
+    assert_eq!(
+        siblings[0].todo_state.as_deref(),
+        Some("TODO"),
+        "the next occurrence is TODO"
+    );
+    assert_eq!(
+        siblings[0].due_date.as_deref(),
+        Some("2025-06-16"),
+        "the next occurrence's due date advances a day"
+    );
+
+    mat.shutdown();
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn recurrence_weekly_shifts_by_7_days() {
     let (pool, _dir) = test_pool().await;

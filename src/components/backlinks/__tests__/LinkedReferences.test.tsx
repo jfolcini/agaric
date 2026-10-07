@@ -48,6 +48,7 @@ import { recordGraphStructureChange } from '@/lib/graph-structure-events'
 import { t } from '@/lib/i18n'
 import { queryClient } from '@/lib/query-client'
 import { useNavigationStore } from '@/stores/navigation'
+import { useSpaceStore } from '@/stores/space'
 import { useTabsStore } from '@/stores/tabs'
 
 vi.mock('@/hooks/useBlockPropertyEvents', () => ({
@@ -221,6 +222,7 @@ beforeEach(() => {
     tabs: [{ id: '0', pageStack: [], label: '' }],
     activeTabIndex: 0,
   })
+  useSpaceStore.setState({ currentSpaceId: 'SPACE_TEST' })
 })
 
 /** Wrap LinkedReferences in TooltipProvider (required for icon button). */
@@ -716,7 +718,7 @@ describe('LinkedReferences', () => {
         sort: null,
         cursor: 'cursor_page2',
         limit: 50,
-        scope: { kind: 'global' },
+        scope: { kind: 'active', space_id: 'SPACE_TEST' },
         kind: null,
       })
     })
@@ -1039,7 +1041,7 @@ describe('LinkedReferences', () => {
         sort: null,
         cursor: null,
         limit: 50,
-        scope: { kind: 'global' },
+        scope: { kind: 'active', space_id: 'SPACE_TEST' },
         kind: null,
       })
     })
@@ -1067,7 +1069,7 @@ describe('LinkedReferences', () => {
         sort: null,
         cursor: null,
         limit: 50,
-        scope: { kind: 'global' },
+        scope: { kind: 'active', space_id: 'SPACE_TEST' },
         kind: null,
       })
     })
@@ -1176,7 +1178,7 @@ describe('LinkedReferences', () => {
         sort: null,
         cursor: null,
         limit: 50,
-        scope: { kind: 'global' },
+        scope: { kind: 'active', space_id: 'SPACE_TEST' },
         kind: null,
       })
     })
@@ -1357,7 +1359,7 @@ describe('LinkedReferences', () => {
         sort: null,
         cursor: null,
         limit: 50,
-        scope: { kind: 'global' },
+        scope: { kind: 'active', space_id: 'SPACE_TEST' },
         kind: null,
       })
     })
@@ -1965,7 +1967,7 @@ describe('LinkedReferences', () => {
   })
 
   // ---------------------------------------------------------------------------
-  // B-6: cancellation flag on the mount-once `listTagsByPrefix` effect
+  // B-6: cancellation flag on the `listTagsByPrefix` effect
   // ---------------------------------------------------------------------------
 
   it('cancels the listTagsByPrefix promise on unmount (B-6)', async () => {
@@ -1986,7 +1988,7 @@ describe('LinkedReferences', () => {
 
     const { unmount } = renderLinkedReferences({ targetId: 'PAGE1' })
 
-    // Wait until the mount-once effect has fired the IPC call.
+    // Wait until the tag-load effect has fired the IPC call.
     await waitFor(() => {
       expect(listTagsCalled).toBe(true)
     })

@@ -43,6 +43,7 @@ import { recordGraphStructureChange } from '@/lib/graph-structure-events'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
 import { queryClient } from '@/lib/query-client'
+import { requireActiveScope } from '@/lib/space-scope'
 import { cn } from '@/lib/utils'
 import { useResolveStore } from '@/stores/resolve'
 import { useSpaceStore } from '@/stores/space'
@@ -231,13 +232,15 @@ export function UnlinkedReferences({
     setExpandedGroups({})
   }
 
-  // Load tags on mount (B-6: cancellation flag avoids React 19
-  // strict-mode "state update on unmounted component" warnings on rapid
-  // mount/unmount).
+  // Load the active space's tags, again on every space switch (B-6:
+  // cancellation flag avoids React 19 strict-mode "state update on unmounted
+  // component" warnings on rapid mount/unmount, and drops a superseded space's
+  // reply).
   useEffect(() => {
+    if (currentSpaceId == null) return
     let cancelled = false
     commands
-      .listTagsByPrefix('', null)
+      .listTagsByPrefix('', null, requireActiveScope(currentSpaceId))
       .then(unwrap)
       .then((result) => {
         if (cancelled) return
@@ -250,7 +253,7 @@ export function UnlinkedReferences({
     return () => {
       cancelled = true
     }
-  }, [])
+  }, [currentSpaceId])
 
   // Load the page's aliases alongside the title so
   // `handleLinkIt` can rewrite alias-only mentions. Mirrors the

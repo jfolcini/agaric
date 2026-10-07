@@ -2,7 +2,9 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { MountedIds, SelectAllScopeIds } from '@/lib/zoom-scope'
 import { useBlockStore } from '@/stores/blocks'
+import { useJournalStore } from '@/stores/journal'
 import { useNavigationStore } from '@/stores/navigation'
+import { useSpaceStore } from '@/stores/space'
 import { useTabsStore } from '@/stores/tabs'
 
 /**
@@ -277,6 +279,45 @@ describe('useBlockStore', () => {
       useNavigationStore.getState().setSelectedBlockId('A1')
 
       expect(useBlockStore.getState().selectedBlockIds).toEqual(['A1'])
+    })
+
+    // #5273 — journal days share the view and the tab's top page, so a day
+    // change or a space switch must clear on its own.
+    it('clears the selection when the journal day changes', () => {
+      useNavigationStore.setState({ currentView: 'journal' })
+      useJournalStore.getState().navigateToDate(new Date(2026, 0, 10), 'daily')
+      useBlockStore.getState().toggleSelected('D1')
+
+      useJournalStore.getState().setCurrentDate(new Date(2026, 0, 9))
+
+      expect(useBlockStore.getState().selectedBlockIds).toEqual([])
+    })
+
+    it('clears the selection when the journal mode changes', () => {
+      useNavigationStore.setState({ currentView: 'journal' })
+      useJournalStore.getState().navigateToDate(new Date(2026, 0, 10), 'daily')
+      useBlockStore.getState().toggleSelected('D1')
+
+      useJournalStore.getState().setMode('weekly')
+
+      expect(useBlockStore.getState().selectedBlockIds).toEqual([])
+    })
+
+    it('keeps the selection when the journal day changes outside the journal view', () => {
+      useBlockStore.getState().toggleSelected('A1')
+
+      useJournalStore.getState().setCurrentDate(new Date(2026, 0, 9))
+
+      expect(useBlockStore.getState().selectedBlockIds).toEqual(['A1'])
+    })
+
+    it('clears the selection when the space changes', () => {
+      useSpaceStore.setState({ currentSpaceId: 'SPACE_A' })
+      useBlockStore.getState().toggleSelected('A1')
+
+      useSpaceStore.setState({ currentSpaceId: 'SPACE_B' })
+
+      expect(useBlockStore.getState().selectedBlockIds).toEqual([])
     })
   })
 

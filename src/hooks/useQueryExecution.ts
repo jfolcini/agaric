@@ -275,7 +275,11 @@ export async function resolveInlineQuery(
   const parsed = parseQueryExpression(expression)
   const resolved = await resolveLegacyQueryToFilterExpr(parsed, {
     resolveTagPrefix: async (prefix) =>
-      unwrap(await commands.listTagsByPrefix(prefix, null)).map((tag) => tag.tag_id),
+      spaceId
+        ? unwrap(await commands.listTagsByPrefix(prefix, null, requireActiveScope(spaceId))).map(
+            (tag) => tag.tag_id,
+          )
+        : [],
   })
   if (resolved.filterExpr != null) {
     return await fetchRichInlineQuery(resolved.filterExpr, pageCursor, spaceId)

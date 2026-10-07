@@ -345,13 +345,20 @@ export const tagsHandlers = {
     return evalTagQuery(a['expr'] as TagExprNode, a)
   },
 
-  // `tags_cache` prefix scan: `name LIKE ?1 ESCAPE '\\' ORDER BY name LIMIT ?2`
-  // (`tag_query::list_tags_by_prefix`). LIKE folds ASCII case, the prefix is
-  // a literal (`escape_like`), the limit is validated to `[1, MAX_TAGS_PREFIX]`
-  // and defaults to the cap, and #768 splices the exact (case-insensitive)
-  // match into name order when the LIMIT page left it out.
+  // `tags_cache` prefix scan over one space's tags: `name LIKE ?1 ESCAPE '\\'
+  // ORDER BY name LIMIT ?3` (`tag_query::list_tags_by_prefix`). LIKE folds
+  // ASCII case, the prefix is a literal (`escape_like`), the limit is validated
+  // to `[1, MAX_TAGS_PREFIX]` and defaults to the cap, and #768 splices the
+  // exact (case-insensitive) match into name order when the LIMIT page left it
+  // out. The space filter is `list_all_tags_in_space`'s, and so is the refusal
+  // of a `Global` scope.
   list_tags_by_prefix: (args) => {
     const a = args as Record<string, unknown>
+    const scope = a['scope'] as { kind: string; space_id?: string } | undefined
+    if (scope?.kind !== 'active' || !scope.space_id) {
+      throw validationRejection('list_tags_by_prefix requires an active space scope')
+    }
+    const spaceId = scope.space_id
     const prefix = (a['prefix'] as string | undefined) ?? ''
     const limit = (a['limit'] as number | null | undefined) ?? null
     if (limit !== null && (limit < 1 || limit > MAX_TAGS_PREFIX)) {
@@ -361,7 +368,7 @@ export const tagsHandlers = {
     }
     const effectiveLimit = limit ?? MAX_TAGS_PREFIX
     const asciiFolded = foldAsciiUppercase(prefix)
-    const cache = tagCacheRows()
+    const cache = tagCacheRows().filter((r) => blocks.get(r.tag_id)?.['space_id'] === spaceId)
     const rows = cache
       .filter((r) => foldAsciiUppercase(r.name).startsWith(asciiFolded))
       .slice(0, effectiveLimit)

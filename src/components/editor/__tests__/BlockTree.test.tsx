@@ -6488,6 +6488,38 @@ describe('BlockTree batch toolbar (#657)', () => {
     expect(screen.queryByText(/selected/)).not.toBeInTheDocument()
   })
 
+  // #5273 — a selection left over from another journal day or space.
+  it('counts only the selected blocks this tree holds', async () => {
+    const tree = [
+      makeBlock({ id: 'A', content: 'Alpha' }),
+      makeBlock({ id: 'B', depth: 1, content: 'Beta' }),
+    ]
+    pageStore.setState({ blocks: tree, loading: false })
+    useBlockStore.setState({
+      focusedBlockId: null,
+      selectedBlockIds: ['OTHER_DAY_1', 'A', 'OTHER_DAY_2', 'B'],
+    })
+
+    renderBlockTree()
+    await screen.findByTestId('sortable-block-A')
+
+    expect(screen.getByText('2 selected')).toBeInTheDocument()
+  })
+
+  it('hides the batch toolbar when no selected block is in this tree', async () => {
+    const tree = [makeBlock({ id: 'A', content: 'Alpha' })]
+    pageStore.setState({ blocks: tree, loading: false })
+    useBlockStore.setState({
+      focusedBlockId: null,
+      selectedBlockIds: ['OTHER_DAY_1', 'OTHER_DAY_2'],
+    })
+
+    renderBlockTree()
+    await screen.findByTestId('sortable-block-A')
+
+    expect(screen.queryByTestId('batch-toolbar')).not.toBeInTheDocument()
+  })
+
   it('batch delete shows confirmation dialog', async () => {
     const user = userEvent.setup()
     const tree = [

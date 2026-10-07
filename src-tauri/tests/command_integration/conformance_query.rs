@@ -1376,7 +1376,9 @@ async fn run_step(pool: &SqlitePool, args: &StepArgs<'_>) -> Result<RawResult, A
         "list_tags_by_prefix" => {
             let prefix: String = arg_or(args, "prefix");
             let limit: Option<i64> = opt_arg_as(args, "limit");
-            tag_rows(&list_tags_by_prefix_inner(pool, prefix, limit).await?)
+            let scope: SpaceScope = arg_req(args, "scope");
+            let space_id = scope.require_active()?;
+            tag_rows(&list_tags_by_prefix_inner(pool, space_id.as_str(), prefix, limit).await?)
         }
         "list_property_keys" => bare_scalars(&list_property_keys_inner(pool).await?),
         "list_property_values" => {
