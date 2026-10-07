@@ -302,8 +302,8 @@ describe('usePageDeleteAction', () => {
         withOps({
           block_id: 'PAGE_1',
           deleted_at: 1767225600000,
-          descendants_affected: 0,
-          affected_page_ids: [],
+          descendants_affected: 1,
+          affected_page_ids: ['PAGE_1'],
         }),
       restore_blocks_by_ids: () => ({ affected_count: 1 }),
     })
@@ -456,23 +456,21 @@ describe('single delete — cascaded nested pages (#4523)', () => {
   })
 
   // The fan-out is the UNION of the requested id and the reported cohort, not
-  // a replacement. `delete_block` errors on a missing or already-deleted seed
-  // rather than skipping it, so — unlike the batch arm — a successful reply
-  // always names the seed and this arm should never fire in production. It is
-  // pinned anyway because the cost is one `Set` entry and the failure it
-  // prevents is silent: swapping the union for `new Set(affected_page_ids)`
-  // would leave the deleted page itself in the picker the moment the backend's
-  // cohort ever came back narrower than the request.
+  // a replacement: swapping the union for `new Set(affected_page_ids)` would
+  // leave the seed in the picker whenever the cohort does not name it. The
+  // page cohort never names a tag, which is what the header's delete on a
+  // tag's own page sends (#5287), and only `invalidated` reloads the tag lists.
   it('still evicts the requested id when the cohort does not name it', async () => {
-    stubInvoke({ delete_block: () => deleteReply('PAGE_1', []) })
+    stubInvoke({ delete_block: () => deleteReply('TAG_1', []) })
     const { changes, unsubscribe } = recordChanges()
     try {
-      await confirmDelete('PAGE_1')
+      await confirmDelete('TAG_1')
       await waitFor(() => {
-        expect(changes).toHaveLength(1)
+        expect(changes).toHaveLength(2)
       })
       expect(changes).toEqual([
-        { kind: 'removed', entity: 'page', id: 'PAGE_1', spaceId: 'SPACE_A' },
+        { kind: 'removed', entity: 'page', id: 'TAG_1', spaceId: 'SPACE_A' },
+        { kind: 'invalidated' },
       ] satisfies NameChange[])
     } finally {
       unsubscribe()

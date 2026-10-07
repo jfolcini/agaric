@@ -25,8 +25,10 @@ import { useTranslation } from 'react-i18next'
 import { announce } from '@/lib/announcer'
 import { unwrap } from '@/lib/app-error'
 import { commands } from '@/lib/bindings'
+import { recordBlockPropertyChange } from '@/lib/block-property-events'
 import { t as translate } from '@/lib/i18n'
 import { isEditableTarget, matchesShortcutBinding } from '@/lib/keyboard-config'
+import { logger } from '@/lib/logger'
 import { invalidateNameCaches } from '@/lib/name-change-bus'
 import { notify } from '@/lib/notify'
 import { invalidatePropertyCaches } from '@/lib/property-caches'
@@ -74,13 +76,18 @@ import { useUndoStore } from '@/stores/undo'
  *
  * It runs BEFORE the title-refresh `try` below, not inside it: the cache drop
  * is a correctness obligation of the undo, while the `getBlock` title refresh
- * is documented best-effort and swallows its own failures. Ordering it after
+ * is documented best-effort and logs its own failures. Ordering it after
  * would silently make the obligation conditional on that best-effort IPC.
+ *
+ * #5287 — an undo emits no `block:properties-changed`, and the page store's
+ * reload excludes the page root, so the header's property table and template
+ * flags learn of a reverted page property only through the property counter.
  */
-async function refreshAfterUndoRedo(pageId: string, spaceId: string | null): Promise<void> {
+export async function refreshAfterUndoRedo(pageId: string, spaceId: string | null): Promise<void> {
   await getPageStore(pageId)?.getState().load()
   invalidateNameCaches()
   invalidatePropertyCaches()
+  recordBlockPropertyChange()
   try {
     const pageBlock = unwrap(await commands.getBlock(pageId))
     if (pageBlock?.content) {
@@ -88,8 +95,8 @@ async function refreshAfterUndoRedo(pageId: string, spaceId: string | null): Pro
       // recents + resolve); see `@/stores/page-rename`.
       renamePage(pageId, pageBlock.content, spaceId)
     }
-  } catch {
-    // Page title refresh is best-effort
+  } catch (err) {
+    logger.warn('useUndoShortcuts', 'Failed to refresh page title after undo/redo', { pageId }, err)
   }
 }
 

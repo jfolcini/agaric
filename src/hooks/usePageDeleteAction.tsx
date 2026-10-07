@@ -254,6 +254,10 @@ export function usePageDeleteAction(): UsePageDeleteActionReturn {
         //
         // #4558 — cascade is space-less, see notifyPageRemoved.
         notifyPagesRemoved([canonicalSeedId], originSpaceId, cascadedPageIds)
+        // #5287 — a seed outside the page cohort is a tag, deleted from its own
+        // page, and the tag lists (header chips, `#` picker) only reload on
+        // `invalidated`.
+        if (!cascadedPageIds.includes(canonicalSeedId)) invalidateNameCaches()
         // #3626 — a deleted page must stop lighting up the calendar. The
         // journal's own DaySection routes its delete through here too, so this
         // one call covers every surface that can remove a journal page.

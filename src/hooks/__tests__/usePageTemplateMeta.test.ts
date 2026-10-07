@@ -61,6 +61,9 @@ vi.mock('sonner', () => ({
 }))
 
 import { usePageTemplateMeta } from '@/hooks/usePageTemplateMeta'
+import { recordBlockPropertyChange } from '@/lib/block-property-events'
+import { dispatch } from '@/lib/tauri-mock/handlers'
+import { SEED_IDS, seedBlocks } from '@/lib/tauri-mock/seed'
 
 const mockedGet = mockGetProperties
 const mockedDelete = mockDeleteProperty
@@ -212,5 +215,69 @@ describe('usePageTemplateMeta — toggle handlers', () => {
     // kebab menu closes.
     expect(result.current.isTemplate).toBe(false)
     expect(onAfterToggle).toHaveBeenCalledTimes(1)
+  })
+})
+
+// #5287 — a synced device or an MCP agent can toggle `template` on the open
+// page; the flag must follow, or the next click writes a no-op.
+describe('usePageTemplateMeta — property changes made elsewhere', () => {
+  it('re-reads the flags from the backend when a property event lands', async () => {
+    seedBlocks()
+    const pageId = SEED_IDS.PAGE_QUICK_NOTES
+    mockedGet.mockImplementation(async (blockId: string) => ({
+      status: 'ok' as const,
+      data: dispatch('get_properties', { blockId }),
+    }))
+    const { result } = renderHook(() => usePageTemplateMeta(pageId, t, vi.fn()))
+    await waitFor(() => {
+      expect(mockedGet).toHaveBeenCalledTimes(1)
+    })
+    expect(result.current.isTemplate).toBe(false)
+
+    dispatch('set_property', {
+      blockId: pageId,
+      key: 'template',
+      value: {
+        value_text: 'true',
+        value_num: null,
+        value_date: null,
+        value_ref: null,
+        value_bool: null,
+      },
+    })
+    act(() => {
+      recordBlockPropertyChange()
+    })
+
+    await waitFor(() => {
+      expect(result.current.isTemplate).toBe(true)
+    })
+  })
+})
+
+describe('usePageTemplateMeta — page switch', () => {
+  it('ignores the answer for a page it already left', async () => {
+    let answerOldPage: (props: ReturnType<typeof makeProps>) => void = () => {}
+    mockedGet.mockImplementation((blockId: string) =>
+      blockId === 'page-old'
+        ? new Promise((resolve) => {
+            answerOldPage = resolve
+          })
+        : Promise.resolve(makeProps([])),
+    )
+    const { result, rerender } = renderHook(
+      ({ pageId }) => usePageTemplateMeta(pageId, t, vi.fn()),
+      { initialProps: { pageId: 'page-old' } },
+    )
+    rerender({ pageId: 'page-new' })
+    await waitFor(() => {
+      expect(mockedGet).toHaveBeenCalledWith('page-new')
+    })
+
+    await act(async () => {
+      answerOldPage(makeProps([{ key: 'template', value_text: 'true' }]))
+    })
+
+    expect(result.current.isTemplate).toBe(false)
   })
 })

@@ -16,6 +16,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
 
+import { useBlockPropertyEvents } from '@/hooks/useBlockPropertyEvents'
 import { unwrap } from '@/lib/app-error'
 import { commands } from '@/lib/bindings'
 import { logger } from '@/lib/logger'
@@ -45,15 +46,21 @@ export function usePageTemplateMeta(
   const [isTemplate, setIsTemplate] = useState(false)
   const [isJournalTemplate, setIsJournalTemplate] = useState(false)
   // `t('space.moveTo')` is hidden on a space block: spaces cannot be
-  // moved into other spaces.
+  // moved into other spaces. Refreshed when the page or (#5287: sync, MCP,
+  // undo) its properties change.
   const [isSpaceBlock, setIsSpaceBlock] = useState(false)
+  const { invalidationKey } = useBlockPropertyEvents()
 
   useEffect(() => {
     if (!pageId) return
+    // A property event can start this load just before a page switch; the
+    // older page's answer must not set the new page's flags.
+    let active = true
     commands
       .getProperties(pageId)
       .then(unwrap)
       .then((props) => {
+        if (!active) return
         setIsTemplate(props.some((p) => p.key === 'template' && p.value_text === 'true'))
         setIsJournalTemplate(
           props.some((p) => p.key === 'journal-template' && p.value_text === 'true'),
@@ -70,7 +77,10 @@ export function usePageTemplateMeta(
           err,
         )
       })
-  }, [pageId])
+    return () => {
+      active = false
+    }
+  }, [pageId, invalidationKey])
 
   // The factory was previously a plain function expression inside the
   // component body. Moving it under `useMemo` keyed on `pageId/t` keeps

@@ -30,6 +30,8 @@ import { t } from '@/lib/i18n'
 import { type NameChange, subscribeToNameChanges } from '@/lib/name-change-bus'
 import { propertyKeysQueryKey } from '@/lib/property-keys-cache'
 import { queryClient } from '@/lib/query-client'
+import { dispatch } from '@/lib/tauri-mock/handlers'
+import { blocks, blockTags, SEED_IDS, seedBlocks } from '@/lib/tauri-mock/seed'
 import { useNavigationStore } from '@/stores/navigation'
 import { createPageBlockStore, PageBlockContext, type PageBlockState } from '@/stores/page-blocks'
 import { useResolveStore } from '@/stores/resolve'
@@ -2569,5 +2571,87 @@ describe('PageHeader dedicated delete button (Part A)', () => {
     // single `usePageDeleteAction.confirmDialog` instance).
     const headings = await screen.findAllByRole('heading', { name: /^Delete page$/i })
     expect(headings).toHaveLength(1)
+  })
+})
+
+// #5287 — the header stays mounted across page navigation, so a change made
+// on another page, or by the header's own Undo, has to reach its tag chips.
+describe('PageHeader tag chips against the real tauri-mock (#5287)', () => {
+  const PAGE = SEED_IDS.PAGE_PROJECTS
+
+  beforeEach(() => {
+    seedBlocks()
+    blockTags.set(PAGE, new Set([SEED_IDS.TAG_WORK]))
+    pageStore = createPageBlockStore(PAGE)
+    mockedInvoke.mockImplementation(async (cmd: string, args?: InvokeArgs) => dispatch(cmd, args))
+  })
+
+  function headerFor(pageId: string, title: string): React.ReactElement {
+    return (
+      <TooltipProvider>
+        <PageBlockContext.Provider value={pageStore}>
+          <PageHeader pageId={pageId} title={title} />
+        </PageBlockContext.Provider>
+      </TooltipProvider>
+    )
+  }
+
+  it("shows a tag's new name after it is renamed on its own page", async () => {
+    const user = userEvent.setup()
+    const { rerender } = render(headerFor(PAGE, 'Projects'))
+    expect(await screen.findByText('work')).toBeInTheDocument()
+
+    rerender(headerFor(SEED_IDS.TAG_WORK, 'work'))
+    const titleEl = screen.getByRole('textbox', { name: /page title/i })
+    await user.clear(titleEl)
+    await user.type(titleEl, 'project')
+    await user.tab()
+    await waitFor(() => {
+      expect(blocks.get(SEED_IDS.TAG_WORK)?.['content']).toBe('project')
+    })
+
+    rerender(headerFor(PAGE, 'Projects'))
+    expect(await screen.findByText('project')).toBeInTheDocument()
+    expect(screen.queryByText('work')).not.toBeInTheDocument()
+  })
+
+  it('stops offering a tag deleted on its own page', async () => {
+    const user = userEvent.setup()
+    const { rerender } = render(headerFor(PAGE, 'Projects'))
+    expect(await screen.findByText('work')).toBeInTheDocument()
+
+    rerender(headerFor(SEED_IDS.TAG_IDEA, 'idea'))
+    await user.click(screen.getByRole('button', { name: /^delete page$/i }))
+    await user.click(await screen.findByRole('button', { name: /^Delete page$/i }))
+    await waitFor(() => {
+      expect(blocks.get(SEED_IDS.TAG_IDEA)?.['deleted_at']).toBeTruthy()
+    })
+
+    rerender(headerFor(PAGE, 'Projects'))
+    await user.click(await screen.findByRole('button', { name: /add tag/i }))
+    expect(await screen.findByText('personal')).toBeInTheDocument()
+    expect(screen.queryByText('idea')).not.toBeInTheDocument()
+  })
+
+  it('drops the chip of a tag the header Undo took back', async () => {
+    const user = userEvent.setup()
+    render(headerFor(PAGE, 'Projects'))
+    expect(await screen.findByText('work')).toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: /add tag/i }))
+    await user.click(await screen.findByText('idea'))
+    await waitFor(() => {
+      expect(blockTags.get(PAGE)?.has(SEED_IDS.TAG_IDEA)).toBe(true)
+    })
+    expect(await screen.findByText('idea')).toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: /undo last page action/i }))
+
+    await waitFor(() => {
+      expect(blockTags.get(PAGE)?.has(SEED_IDS.TAG_IDEA)).toBe(false)
+    })
+    await waitFor(() => {
+      expect(screen.queryByText('idea')).not.toBeInTheDocument()
+    })
   })
 })
