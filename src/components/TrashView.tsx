@@ -272,6 +272,9 @@ export function TrashView(): React.ReactElement {
       try {
         unwrap(await commands.purgeBlock(blockId))
         setBlocks((prev) => prev.filter((b) => b.id !== blockId))
+        // The purge erased the whole subtree, including descendants trashed
+        // earlier that list as their own rows (#5297).
+        reload()
         setConfirmPurgeId(null)
         notify.success(t('trash.blockPurged'))
         announce(t('announce.blockPurged'))
@@ -281,7 +284,7 @@ export function TrashView(): React.ReactElement {
         announce(t('announce.purgeFailed'))
       }
     },
-    [setBlocks, t],
+    [reload, setBlocks, t],
   )
 
   // ── Batch actions ────────────────────────────────────────────────
