@@ -58,8 +58,9 @@ vi.mock('@/lib/bindings', async (importOriginal) => {
 // jsdom's zero-height scroll container doesn't collapse the virtual
 // grouped-blocks list to zero rows. Returns every row so existing
 // assertions querying by content / role / test-id still see the full
-// list.
-vi.mock('@tanstack/react-virtual', () => mockReactVirtual())
+// list, unless a test sets `virtualWindow.size` to mount only the first rows.
+const virtualWindow = vi.hoisted(() => ({ size: null as number | null }))
+vi.mock('@tanstack/react-virtual', () => mockReactVirtual({ windowSize: () => virtualWindow.size }))
 
 vi.mock('@/components/RichContentRenderer', () => ({
   renderRichContent: vi.fn((markdown: string) => markdown),
@@ -122,6 +123,7 @@ const DATE = '2025-06-15'
 
 beforeEach(() => {
   vi.clearAllMocks()
+  virtualWindow.size = null
   clearProjectedCache()
   // #2248 — the agenda fetch (`listBlocksForAgenda`) requires an active space
   // and short-circuits to empty otherwise; seed one so `listBlocks` runs.
@@ -1380,6 +1382,57 @@ describe('DuePanel', () => {
       expect(realRows[1]).toHaveFocus()
       await user.keyboard('{ArrowDown}')
       expect(screen.getByTestId('projected-entry')).toHaveFocus()
+    })
+
+    // #5302 — a long list mounts only a window of its grouped rows, so the Nth
+    // mounted row is not item N: End found nothing to scroll and left the
+    // projected entry it focused below the fold.
+    it('End scrolls the projected entry into view when only some rows are mounted', async () => {
+      virtualWindow.size = 5
+      mockedListBlocks.mockResolvedValue({
+        items: Array.from({ length: 30 }, (_, i) =>
+          makeBlock({ id: `R${i}`, content: `Real task ${i}`, todo_state: 'TODO', page_id: 'P1' }),
+        ),
+        next_cursor: null,
+        has_more: false,
+        total_count: null,
+      })
+      mockedListProjectedAgenda.mockResolvedValue({
+        items: [
+          {
+            block: makeBlock({
+              id: 'PROJ_END',
+              content: 'Projected end target',
+              page_id: 'P2',
+              todo_state: 'TODO',
+              due_date: '2026-04-13',
+            }),
+            projected_date: '2026-04-13',
+            source: 'due_date',
+          },
+        ],
+        next_cursor: null,
+        has_more: false,
+        total_count: null,
+      })
+      const scrollSpy = vi.spyOn(Element.prototype, 'scrollIntoView').mockImplementation(() => {})
+
+      try {
+        const user = userEvent.setup()
+        render(<DuePanel date="2026-04-13" />)
+        await screen.findByText(/Projected end target/)
+        const realRows = await screen.findAllByTestId('due-panel-item')
+        expect(realRows).toHaveLength(4)
+        realRows[0]?.focus()
+
+        await user.keyboard('{End}')
+
+        const projected = screen.getByTestId('projected-entry')
+        expect(projected).toHaveFocus()
+        expect(scrollSpy.mock.instances).toContain(projected)
+      } finally {
+        scrollSpy.mockRestore()
+      }
     })
 
     it('focused projected entry receives focus ring class', async () => {
