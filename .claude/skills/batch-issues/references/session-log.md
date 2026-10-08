@@ -17,4 +17,4 @@ Take the larger. Never `ls | tail` (lexicographic past 999). The `session-log-nu
 
 **Plan issues:** `Closes #NN` in the commit only when the whole plan ships; otherwise a status comment on the issue. Reviewer corrections are comments on the issue, not edits to its body. Keep `docs/FEATURE-MAP.md` in sync when user-facing features change.
 
-Sessions 1–800 live in two frozen archive files in the same directory.
+Sessions up to the last full hundred live in frozen `sessions-NNNN-NNNN.md` archives in the same directory (README § Layout).

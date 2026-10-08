@@ -42,7 +42,7 @@ import { describe, expect, it } from 'vitest'
  * If the "masked" cases below ever start reporting `react(refs)`, oxlint has
  * changed and this is not a nuisance failure: the tree's 15 masked files
  * (measured in #4493; exact counts and the re-measurement method are in
- * docs/session-log/session-1437-the-lint-that-was-not-run.md) become
+ * docs/session-log/sessions-1401-1500.md § Session 1437) become
  * `react/refs` / `react/static-components` ERRORS at sites that carry no
  * suppression, because a suppression cannot be added while the masking holds
  * — `--report-unused-disable-directives-severity=error`, which `npm run

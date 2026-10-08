@@ -973,7 +973,7 @@ jobs:
         # baseline, so it counts as usable and its untested survivors go
         # missing from `missed.txt` without anything going red (#3364). The
         # measurements and the arithmetic are in
-        # `docs/session-log/session-1486-mutants-shard-matrix.md`; the results:
+        # `docs/session-log/sessions-1401-1500.md` § Session 1486; the results:
         #
         #   agaric-store   125 mutants, 42/shard →  3 shards  (cap 44)
         #   agaric-engine  566 mutants, 32/shard → 18 shards  (cap 44, est.)
