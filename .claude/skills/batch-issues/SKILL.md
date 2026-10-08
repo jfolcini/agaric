@@ -20,7 +20,7 @@ References, loaded only when needed:
 - Track loop state in the Task tools: one task per in-flight issue, one per pending-CI PR. It survives `/compact` (run it between batches, not mid-batch).
 - Run builders, reviewers, and discovery in subagents so the orchestrator keeps only the plan, the task list, and the merge decisions.
 - One heavy Rust build or gate at a time; fill the idle window with light work (frontend, docs, research). The orchestrator owns every long build, bench, and full-suite run as a tracked background task: a subagent's background job dies when its turn ends.
-- One worktree per agent. `git stash` and a push, falsification, or prek run in flight in a shared tree silently change what the other agent tests. Each worktree compiles its own `src-tauri/target` (about 20 GB in debug): check `df -h` before a build, reclaim with `rm -rf src-tauri/target/debug/incremental`, and never share one `CARGO_TARGET_DIR` between concurrently building trees.
+- One worktree per agent. `git stash` and a push, falsification, or prek run in flight in a shared tree silently change what the other agent tests. Each worktree compiles its own `src-tauri/target`: check `df -h` before a build, reclaim with `rm -rf src-tauri/target/debug/incremental`, and never share one `CARGO_TARGET_DIR` between concurrently building trees.
 
 ## 1. Plan
 
@@ -51,25 +51,12 @@ Each cell is a model and the Agent tool's `effort`. A harness whose Agent tool h
 | Typical scoped fix or feature in one domain | `opus` · `high` | `opus` · `high` |
 | High risk (migration, materializer, security, cross-cutting, ambiguous) | `opus` · `xhigh` | `sonnet` · `max` |
 
-Every builder cell sits on the Pareto frontier of Artificial Analysis's Intelligence Index against cost per task for Anthropic models (v4.3.2, checked 2026-10-08):
+Each builder cell is a point on the Pareto frontier of [Artificial Analysis's Intelligence Index](https://artificialanalysis.ai/) against cost per task for Anthropic models (v4.3.2). Models and efforts off the frontier, Fable 5.1 among them, do not build.
 
-| On the frontier | Index | Cost per task |
-| --- | --- | --- |
-| Haiku 5.5 `low` · `medium` · `high` · `xhigh` · `max` | 29 · 34 · 38 · 41 · 43 | $0.02 · $0.05 · $0.08 · $0.12 · $0.21 |
-| Sonnet 5.5 `high` | 47 | $0.88 |
-| Opus 5.5 `medium` · `high` · `xhigh` · `max` | 51 · 54 · 56 · 58 | $1.34 · $1.82 · $3.46 · $5.98 |
-
-Everything else scores lower for more. That includes Fable 5.1 at every effort (53 at `xhigh` for $5.98) and Sonnet 5.5 at `xhigh` (52 for $2.01, beaten by Opus `high`), so neither builds.
-
-- **Opus `high` is the knee.** `medium` → `high` buys 3 points for 36% more cost; `high` → `xhigh` buys 2 for 90% more.
-- **Long-horizon coding agrees.** DeepSWE (v1.1, 2026-09-22; it does not list the 5.5 models yet) has Opus 5 at:
-  - 72.8% at `high`, 73.2% at `xhigh` and 73.7% at `max`, all within its ±3–4% error;
-  - 68.9% at `medium` and 58.1% at `low`.
-
-  So effort below `high` costs real quality on code, and effort above it buys little. Opus 5 also beats Fable 5 there at every effort, for less.
-- **High risk pays for `xhigh`.** `max` adds 2 more points, but its first token can take about 12 minutes, so it is the last escalation, not a default.
-- **Sonnet `max` reviews high-risk diffs.** It is off the frontier on purpose. It is a second model, so builder and reviewer do not share blind spots, and it is Anthropic's best on Terminal-Bench 4.0 (63.6% against Opus 5.5's 59.6%).
-- **Haiku `high` does discovery** at a tenth of Sonnet `high`'s cost. Rerun on `sonnet` when its answer comes back thin or contradicts the code.
+- **Opus `high` is the knee.** Below it, quality drops sharply on code (DeepSWE agrees); above it, cost rises much faster than score.
+- **High risk pays for `xhigh`.** `max` is the last escalation, not a default, because its first token is slow.
+- **Sonnet `max` reviews high-risk diffs.** It is off the frontier on purpose: a second model, so builder and reviewer do not share blind spots, and Anthropic's strongest on Terminal-Bench.
+- **Haiku `high` does discovery**, the cheapest point that reads code reliably. Rerun on `sonnet` when its answer comes back thin or contradicts the code.
 
 Unsure: one row up. A builder that keeps failing is relaunched one step up the frontier (`sonnet` `high` → `opus` `high` → `opus` `xhigh` → `opus` `max`), not retried. Recheck the frontier when a model ships.
 
