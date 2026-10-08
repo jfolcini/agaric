@@ -1336,11 +1336,11 @@ export async function typeSlashCommand(page: Page, command: string) {
  * by directly manipulating the DOM Selection API, then dispatch a
  * `selectionchange` event so ProseMirror picks up the new range.
  *
- * Prefer this over `Shift+Arrow` keypress loops. Rapid-fire
- * `Shift+Arrow` presses drop increments on React 19 — the scheduler
- * may still be committing the prior selection update when the next
- * keystroke arrives, so the first (or last) press silently no-ops and
- * the resulting selection is off by one or more characters.
+ * Prefer this over `Arrow` / `Shift+Arrow` keypress loops. The browser
+ * moves a key-driven caret natively, and ProseMirror only takes it in on
+ * the next `selectionchange`, which fires a moment later (and may be
+ * coalesced), so an action dispatched straight after the last press still
+ * sees the earlier selection.
  *
  * `from` / `to` are character offsets into the block's text content,
  * counted from the start. Walks the visible text nodes in document
