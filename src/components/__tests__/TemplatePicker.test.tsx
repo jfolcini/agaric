@@ -60,6 +60,15 @@ describe('TemplatePicker', () => {
     expect(firstOption).toHaveClass('py-1.5')
   })
 
+  it('#5356 — option buttons use the inset focus ring so the ScrollArea cannot clip it', () => {
+    render(<TemplatePicker templatePages={templatePages} onSelect={onSelect} onClose={onClose} />)
+
+    for (const name of ['Meeting Notes', 'Weekly Review', 'Untitled']) {
+      const option = screen.getByText(name).closest('button')
+      expect(option).toHaveClass('focus-ring-visible', '[&:focus-visible]:ring-inset')
+    }
+  })
+
   it('calls onSelect when a template is clicked', async () => {
     const user = userEvent.setup()
 
