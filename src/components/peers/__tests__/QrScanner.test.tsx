@@ -5,14 +5,18 @@ import { axe } from 'vitest-axe'
 
 import { QrScanner } from '@/components/peers/QrScanner'
 import { t } from '@/lib/i18n'
+import { logger } from '@/lib/logger'
 
 // Configurable mock for html5-qrcode module
-let mockStartBehavior: 'error' | 'scan' | 'pending' = 'error'
+let mockStartBehavior: 'error' | 'scan' | 'pending' | 'hanging' = 'error'
 let mockScanData = ''
 // #758 item 2: number of decode callbacks fired per scan. The real library
 // keeps decoding frames (fps: 10) while the async stop() settles, so >1
 // simulates the duplicate-decode burst of a single physical scan.
 let mockScanFireCount = 1
+// 'hanging': start() stays pending (camera prompt open) until the test calls this.
+let mockRejection: unknown = new Error('Camera access denied')
+let releaseHangingStart: (() => void) | null = null
 
 const mockStop = vi.fn().mockResolvedValue(undefined)
 // #1615: capture the element id each Html5Qrcode instance is constructed with
@@ -20,20 +24,46 @@ const mockStop = vi.fn().mockResolvedValue(undefined)
 // scanners get distinct (non-colliding) ids.
 const constructedIds: string[] = []
 
+// Mirrors html5-qrcode (node_modules/html5-qrcode/esm/html5-qrcode.js):
+// - start() synchronously empties its element (clearElement, :127, :704-711)
+//   and only reaches SCANNING once the camera renders (:185-186).
+// - stop() THROWS a string, it does not reject, unless SCANNING (:226-229).
 vi.mock('html5-qrcode', () => ({
+  Html5QrcodeScannerState: { UNKNOWN: 0, NOT_STARTED: 1, SCANNING: 2, PAUSED: 3 },
   Html5Qrcode: class MockHtml5Qrcode {
+    private state = 1
+    private readonly elementId: string
     constructor(elementId: string) {
+      this.elementId = elementId
       constructedIds.push(elementId)
     }
-    async start(
+    getState() {
+      return this.state
+    }
+    start(
       _cameraConfig: unknown,
       _scanConfig: unknown,
       onSuccess?: (text: string) => void,
       _onFailure?: () => void,
     ) {
-      if (mockStartBehavior === 'error') {
-        throw new Error('Camera access denied')
+      const element = document.getElementById(this.elementId)
+      if (element) element.innerHTML = ''
+      const reachScanning = () => {
+        this.state = 2
+        element?.append(document.createElement('video'))
       }
+      if (mockStartBehavior === 'error') {
+        return Promise.reject(mockRejection)
+      }
+      if (mockStartBehavior === 'hanging') {
+        return new Promise<void>((resolve) => {
+          releaseHangingStart = () => {
+            reachScanning()
+            resolve()
+          }
+        })
+      }
+      reachScanning()
       // Simulate successful scan(s) after a microtask
       if (mockStartBehavior === 'scan' && onSuccess) {
         for (let i = 0; i < mockScanFireCount; i++) {
@@ -41,8 +71,12 @@ vi.mock('html5-qrcode', () => ({
         }
       }
       // 'pending': started but no scan result yet — scanner stays running
+      return Promise.resolve()
     }
-    async stop() {
+    stop() {
+      // oxlint-disable-next-line only-throw-error -- the library throws a bare string
+      if (this.state !== 2) throw 'Cannot stop, scanner is not running or paused.'
+      this.state = 1
       return mockStop()
     }
   },
@@ -54,6 +88,8 @@ beforeEach(() => {
   mockScanData = ''
   mockScanFireCount = 1
   constructedIds.length = 0
+  releaseHangingStart = null
+  mockRejection = new Error('Camera access denied')
   // jsdom leaves navigator.mediaDevices undefined; QrScanner now guards on it
   // and bails before touching html5-qrcode when getUserMedia is missing. Stub
   // a present API so the existing tests exercise the library path, not the
@@ -102,7 +138,8 @@ describe('QrScanner', () => {
     render(<QrScanner onScan={vi.fn()} />)
 
     const region = screen.getByLabelText('QR code scanner viewport')
-    const regionId = region.getAttribute('id')
+    // html5-qrcode renders into an empty child div, not the labelled section.
+    const regionId = region.firstElementChild?.getAttribute('id')
     expect(regionId).toBeTruthy()
     // Sanitized useId value: no colons (valid CSS selector / getElementById id).
     expect(regionId).not.toContain(':')
@@ -123,7 +160,7 @@ describe('QrScanner', () => {
     const regions = screen.getAllByLabelText('QR code scanner viewport')
     expect(regions).toHaveLength(2)
 
-    const [idA, idB] = regions.map((r) => r.getAttribute('id'))
+    const [idA, idB] = regions.map((r) => r.firstElementChild?.getAttribute('id'))
     expect(idA).toBeTruthy()
     expect(idB).toBeTruthy()
     expect(idA).not.toBe(idB)
@@ -353,6 +390,88 @@ describe('QrScanner', () => {
     unmount()
 
     // The cleanup effect should have called stop()
-    expect(mockStop).toHaveBeenCalled()
+    await waitFor(() => expect(mockStop).toHaveBeenCalled())
+  })
+
+  // Issue #5386: the real start() empties its element; React must own nothing in it.
+  it('keeps the preview rendered after start() empties its element (#5386)', async () => {
+    mockStartBehavior = 'pending'
+    const user = userEvent.setup()
+    const { container } = render(<QrScanner onScan={vi.fn()} />)
+
+    await user.click(screen.getByRole('button', { name: /scan qr code/i }))
+
+    expect(await screen.findByText(t('qrScanner.scanningMessage'))).toBeInTheDocument()
+    expect(container.querySelector('video')).not.toBeNull()
+    expect(await axe(container)).toHaveNoViolations()
+  })
+
+  it('unmount with a running camera stops it without throwing (#5386)', async () => {
+    mockStartBehavior = 'pending'
+    const user = userEvent.setup()
+    const { unmount } = render(<QrScanner onScan={vi.fn()} />)
+    await user.click(screen.getByRole('button', { name: /scan qr code/i }))
+    await screen.findByText(t('qrScanner.scanningMessage'))
+
+    expect(() => unmount()).not.toThrow()
+    await waitFor(() => expect(mockStop).toHaveBeenCalledTimes(1))
+  })
+
+  it('unmount while start is pending throws nothing and stops once start settles (#5386)', async () => {
+    mockStartBehavior = 'hanging'
+    const warn = vi.spyOn(logger, 'warn').mockImplementation(() => {})
+    const user = userEvent.setup()
+    const { unmount } = render(<QrScanner onScan={vi.fn()} />)
+    await user.click(screen.getByRole('button', { name: /scan qr code/i }))
+    await waitFor(() => expect(releaseHangingStart).not.toBeNull())
+
+    expect(() => unmount()).not.toThrow()
+    expect(mockStop).not.toHaveBeenCalled()
+
+    await act(async () => {
+      releaseHangingStart?.()
+    })
+    await waitFor(() => expect(mockStop).toHaveBeenCalledTimes(1))
+    // The not-yet-started camera is skipped, not stopped-and-logged as a failure.
+    expect(warn).not.toHaveBeenCalled()
+  })
+
+  it('a scan then unmount does not stop twice (#5386)', async () => {
+    mockStartBehavior = 'scan'
+    mockScanData = 'x'
+    const user = userEvent.setup()
+    const onScan = vi.fn()
+    const { unmount } = render(<QrScanner onScan={onScan} />)
+    await user.click(screen.getByRole('button', { name: /scan qr code/i }))
+    await waitFor(() => expect(onScan).toHaveBeenCalled())
+
+    await waitFor(() => expect(mockStop).toHaveBeenCalledTimes(1))
+    unmount()
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0))
+    })
+    expect(mockStop).toHaveBeenCalledTimes(1)
+  })
+
+  it('permission denied shows the denied message, logs, and notifies the parent (#5386)', async () => {
+    const warn = vi.spyOn(logger, 'warn').mockImplementation(() => {})
+    mockStartBehavior = 'error'
+    const denied = Object.assign(new Error('denied'), { name: 'NotAllowedError' })
+    const user = userEvent.setup()
+    const onCameraDenied = vi.fn()
+    mockRejection = denied
+    render(<QrScanner onScan={vi.fn()} onCameraDenied={onCameraDenied} />)
+
+    await user.click(screen.getByRole('button', { name: /scan qr code/i }))
+
+    expect(await screen.findByText(t('qrScanner.cameraDenied'))).toBeInTheDocument()
+    expect(onCameraDenied).toHaveBeenCalledTimes(1)
+    expect(warn).toHaveBeenCalledWith(
+      'QrScanner',
+      'Camera initialization failed',
+      undefined,
+      denied,
+    )
+    expect(await axe(document.body)).toHaveNoViolations()
   })
 })
