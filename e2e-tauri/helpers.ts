@@ -16,11 +16,12 @@
 //
 // Selector policy (all statically validated against component source):
 //   - `[data-slot="sidebar"]`               ui/sidebar.tsx (the nav shell)
-//   - `.//button[.//span[normalize-space(.)="<Label>"]]` scoped to the sidebar
-//     AppSidebar.tsx renderNavItem renders each nav destination as
-//     `<SidebarMenuButton><icon/><span>{label}</span>`, i.e. a `<button>`
-//     (ui/sidebar.tsx SidebarMenuButton: `Comp = 'button'`) whose only label
-//     `<span>` holds the i18n nav label (Journal / Tags / Pages / Settings).
+//   - `.//button[@aria-label="<Label>" or .//span[normalize-space(.)="<Label>"]]`
+//     scoped to the sidebar. AppSidebar.tsx renderNavItem renders each nav
+//     destination as `<SidebarMenuButton><icon/><span>{label}</span>`, i.e. a
+//     `<button>` (ui/sidebar.tsx SidebarMenuButton: `Comp = 'button'`) whose only
+//     label `<span>` holds the i18n nav label (Journal / Tags / Pages). Settings
+//     is an icon-only footer button named by its `aria-label` (#5332).
 //
 //     WHY XPATH, NOT `aria/<Label>` (the #155 first-live-run defect): WDIO's
 //     accessible-name selector matches document-wide and does NOT reliably
@@ -72,7 +73,7 @@ export type NavLabel = 'Journal' | 'Tags' | 'Pages' | 'Search' | 'Settings'
  */
 function sidebarNavButton(label: NavLabel | 'New Page') {
   const sidebar = $('[data-slot="sidebar"]')
-  return sidebar.$(`.//button[.//span[normalize-space(.)="${label}"]]`)
+  return sidebar.$(`.//button[@aria-label="${label}" or .//span[normalize-space(.)="${label}"]]`)
 }
 
 /**
