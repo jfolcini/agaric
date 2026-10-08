@@ -5,7 +5,6 @@
  * and a tag badge row with an inline tag picker popover.
  */
 
-import { Smile } from 'lucide-react'
 import type React from 'react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -21,7 +20,6 @@ import { PageQuickActions } from '@/components/pages/PageQuickActions'
 import { PageTagSection } from '@/components/pages/PageTagSection'
 import { PageTitleEditor } from '@/components/pages/PageTitleEditor'
 import { Breadcrumb, type BreadcrumbCrumb } from '@/components/ui/breadcrumb'
-import { IconButton } from '@/components/ui/icon-button'
 import { useBlockTags } from '@/hooks/useBlockTags'
 import { useEmojiRecents } from '@/hooks/useEmojiRecents'
 import { usePageAliases } from '@/hooks/usePageAliases'
@@ -55,21 +53,19 @@ export interface PageHeaderProps {
   /** Opens source mode; the kebab offers "Edit as Markdown" only with it. */
   onEditSource?: (() => void) | undefined
   /** The page-actions kebab, so focus can return to it. */
-  kebabRef?: React.Ref<HTMLButtonElement> | undefined
+  kebabRef?: React.RefObject<HTMLButtonElement | null> | undefined
 }
 
 export function PageHeader({ pageId, title, onBack, onEditSource, kebabRef }: PageHeaderProps) {
   const { t } = useTranslation()
+  const ownKebabRef = useRef<HTMLButtonElement>(null)
+  const kebab = kebabRef ?? ownKebabRef
 
   // --- Page-delete flow (Part A) ---
   // `usePageDeleteAction` owns the confirm dialog + success-toast-with-
-  // Undo wiring. The header has TWO delete entry points — the dedicated
-  // trash button in the quick-actions cluster AND the kebab "Delete
-  // page" item — and both route through `requestDelete()`. Because the
-  // hook renders a single `ConfirmDialog` instance, there is no double-
-  // confirm risk from the two trigger paths.
-  const { requestDelete, deletingId, confirmDialog: deleteConfirmDialog } = usePageDeleteAction()
-  const isDeletingThis = deletingId === pageId
+  // Undo wiring; the kebab "Delete page" item routes through
+  // `requestDelete()`.
+  const { requestDelete, confirmDialog: deleteConfirmDialog } = usePageDeleteAction()
 
   // --- Breadcrumb navigation for namespaced pages ---
   const navigateToNamespace = useCallback(() => {
@@ -98,6 +94,7 @@ export function PageHeader({ pageId, title, onBack, onEditSource, kebabRef }: Pa
   // even after focus moves to the dialog. Falls back to end-of-text.
   const titleCaretRef = useRef<number | null>(null)
   const [emojiPickerOpen, setEmojiPickerOpen] = useState(false)
+  const [outlineOpen, setOutlineOpen] = useState(false)
   const { push: pushEmojiRecent } = useEmojiRecents()
   const [tagQuery, setTagQuery] = useState('')
   const [showTagPicker, setShowTagPicker] = useState(false)
@@ -122,6 +119,12 @@ export function PageHeader({ pageId, title, onBack, onEditSource, kebabRef }: Pa
     setShowTagPicker(open)
   }, [])
 
+  // --- Kebab + property-expand state ---
+  // Delete-dialog state lives in `usePageDeleteAction` (see top of the
+  // component).
+  const [kebabOpen, setKebabOpen] = useState(false)
+  const [forcePropertyExpanded, setForcePropertyExpanded] = useState(false)
+
   // --- Page-level undo/redo ---
   const canRedo = useUndoStore((state) => {
     const pageState = state.pages.get(pageId)
@@ -130,6 +133,7 @@ export function PageHeader({ pageId, title, onBack, onEditSource, kebabRef }: Pa
 
   const createUndoRedoHandler = useCallback(
     (action: 'undo' | 'redo') => () => {
+      setKebabOpen(false)
       const successKey = action === 'undo' ? 'pageHeader.undone' : 'pageHeader.redone'
       const errorKey = action === 'undo' ? 'pageHeader.undoFailed' : 'pageHeader.redoFailed'
       const undoStore = useUndoStore.getState()
@@ -156,13 +160,6 @@ export function PageHeader({ pageId, title, onBack, onEditSource, kebabRef }: Pa
 
   const handlePageUndo = createUndoRedoHandler('undo')
   const handlePageRedo = createUndoRedoHandler('redo')
-
-  // --- Kebab + property-expand state ---
-  // Delete-dialog state lives in `usePageDeleteAction` (see top of the
-  // component); the kebab and the dedicated trash button both call its
-  // `requestDelete()` so only ONE `ConfirmDialog` ever mounts.
-  const [kebabOpen, setKebabOpen] = useState(false)
-  const [forcePropertyExpanded, setForcePropertyExpanded] = useState(false)
 
   // --- Template metadata (extracted to `usePageTemplateMeta`) ---
   // The hook loads the three property-derived bits the kebab menu needs
@@ -233,13 +230,10 @@ export function PageHeader({ pageId, title, onBack, onEditSource, kebabRef }: Pa
     return () => document.removeEventListener('keydown', handleExportShortcut)
   }, [copyPageMarkdownToClipboard])
 
-  // Both delete entry points (dedicated trash button + kebab "Delete
-  // page" item) call this. `usePageDeleteAction` opens its single
-  // ConfirmDialog and, on confirm, runs the IPC + emits the success
+  // The kebab "Delete page" item calls this. `usePageDeleteAction` opens
+  // its ConfirmDialog and, on confirm, runs the IPC + emits the success
   // toast with an Undo action. We pass `onDeleted` so the header can
-  // still navigate back + announce to AT — preserving the previous
-  // behaviour of `handleDeletePage`. The hook's own success toast
-  // covers the sighted-user feedback (was `notify.success(...)` here).
+  // still navigate back + announce to AT.
   const handleRequestDelete = useCallback(() => {
     setKebabOpen(false)
     requestDelete(pageId, title, {
@@ -268,6 +262,22 @@ export function PageHeader({ pageId, title, onBack, onEditSource, kebabRef }: Pa
     setForcePropertyExpanded(true)
     setKebabOpen(false)
   }, [])
+
+  const handleKebabOpenOutline = useCallback(() => {
+    setOutlineOpen(true)
+    setKebabOpen(false)
+  }, [])
+
+  const handleKebabInsertEmoji = useCallback(() => {
+    setEmojiPickerOpen(true)
+    setKebabOpen(false)
+  }, [])
+
+  // The outline sheet has no trigger of its own to return focus to.
+  const focusKebabOnOutlineClose = (e: Event) => {
+    e.preventDefault()
+    kebab.current?.focus()
+  }
 
   const handleEditSource = useMemo(
     () =>
@@ -503,9 +513,10 @@ export function PageHeader({ pageId, title, onBack, onEditSource, kebabRef }: Pa
     <>
       <ViewHeader>
         <div className="page-header space-y-2">
-          {/* Title row. On a phone the actions wrap onto a line of their
-              own, right-aligned, instead of running off-screen; the title
-              keeps its minimum width (`PageTitleEditor`). */}
+          {/* Title row: the title, the star and the page-actions kebab,
+              which holds every other page action. If the title is wider
+              than the row, the two icons wrap right-aligned below it; the
+              title keeps its minimum width (`PageTitleEditor`). */}
           <div className="flex flex-wrap items-center justify-end gap-2">
             <PageTitleEditor
               title={title}
@@ -516,31 +527,13 @@ export function PageHeader({ pageId, title, onBack, onEditSource, kebabRef }: Pa
               onKeyDown={handleTitleKeyDown}
               onKeyUp={handleTitleKeyUp}
             />
-            {/* #286 — insert a native emoji into the page title at the caret.
-                Opens the shared <EmojiPickerDialog>; the title contentEditable
-                blurs (saving any pending edit) before the picker opens, so the
-                handler splices at the last-known caret and persists itself. */}
-            <IconButton
-              variant="ghost"
-              size="icon-sm"
-              onClick={() => setEmojiPickerOpen(true)}
-              ariaLabel={t('pageHeader.insertEmoji')}
-              tooltip={t('pageHeader.insertEmoji')}
-            >
-              <Smile className="h-4 w-4" />
-            </IconButton>
-            {/*  Part A — unified star + dedicated delete affordance.
-                The kebab below KEEPS its "Delete page" item as a secondary
-                path; both routes call `requestDelete()` on the shared
-                `usePageDeleteAction` so only one ConfirmDialog mounts. */}
             <PageQuickActions
               pageId={pageId}
               title={title}
               variant="header"
-              deleting={isDeletingThis}
+              showDelete={false}
               onDeleteRequest={handleRequestDelete}
             />
-            <PageOutline />
             <PageHeaderMenu
               canRedo={canRedo}
               kebabOpen={kebabOpen}
@@ -548,6 +541,8 @@ export function PageHeader({ pageId, title, onBack, onEditSource, kebabRef }: Pa
               isJournalTemplate={isJournalTemplate}
               onUndo={handlePageUndo}
               onRedo={handlePageRedo}
+              onOpenOutline={handleKebabOpenOutline}
+              onInsertEmoji={handleKebabInsertEmoji}
               onKebabOpenChange={setKebabOpen}
               onAddAlias={handleKebabAddAlias}
               onAddTag={handleKebabAddTag}
@@ -556,7 +551,7 @@ export function PageHeader({ pageId, title, onBack, onEditSource, kebabRef }: Pa
               onToggleJournalTemplate={handleToggleJournalTemplate}
               onExport={handleExport}
               onEditSource={handleEditSource}
-              kebabRef={kebabRef}
+              kebabRef={kebab}
               onDeleteRequest={handleRequestDelete}
               onOpenInNewTab={handleOpenInNewTab}
               isSpaceBlock={isSpaceBlock}
@@ -614,14 +609,18 @@ export function PageHeader({ pageId, title, onBack, onEditSource, kebabRef }: Pa
         </div>
       </ViewHeader>
 
-      {/* Single delete-confirm dialog (Part A) — both the dedicated
-          trash button in the quick-actions cluster and the kebab "Delete
-          page" item route through `usePageDeleteAction.requestDelete`, so
-          only this dialog mounts. */}
       {deleteConfirmDialog}
 
-      {/* #286 — page-title emoji picker. Inserts the chosen emoji at the
-          title caret and persists. Shared dialog primitive (#319). */}
+      <PageOutline
+        open={outlineOpen}
+        onOpenChange={setOutlineOpen}
+        onCloseAutoFocus={focusKebabOnOutlineClose}
+      />
+
+      {/* #286 — page-title emoji picker. The title contentEditable blurs
+          (saving any pending edit) before the picker opens, so this inserts
+          the chosen emoji at the last-known title caret and persists. Shared
+          dialog primitive (#319). */}
       <EmojiPickerDialog
         open={emojiPickerOpen}
         onOpenChange={setEmojiPickerOpen}

@@ -104,12 +104,12 @@ const TrashView = lazy(() =>
 export const VIEW_HEADING_OWNER: Readonly<Record<View, 'shell' | 'view'>> = {
   journal: 'view',
   trash: 'view',
-  settings: 'view',
   // `page-editor` owns its title through `PageTitleEditor`'s labelled
   // contenteditable; `useHeaderLabel` already returns '' for it so the shell
   // never duplicates it.
   'page-editor': 'view',
   pages: 'shell',
+  settings: 'shell',
   tags: 'shell',
   history: 'shell',
   query: 'shell',

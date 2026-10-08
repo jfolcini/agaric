@@ -5,9 +5,9 @@
  * Standardises the "feature page" landmark: every top-level view now
  * carries a real `<header>` + `<h1>` so screen readers can land on the
  * view title via heading navigation and assistive-tech users get a
- * consistent visual anchor across Journal / Trash / Settings / Status.
- * Graph and Templates, which have no actions, let the shell label be their
- * h1 instead (`VIEW_HEADING_OWNER`). `ViewHeader`-portaled views
+ * consistent visual anchor across Journal and Trash. Settings, Graph and
+ * Templates, which have no actions, let the shell label be their h1 instead
+ * (`VIEW_HEADING_OWNER`). `ViewHeader`-portaled views
  * (PageBrowser, HistoryView, SearchPanel, PageHeader) use the portal; agenda
  * mode renders this header inside its `ViewHeader`.
  *

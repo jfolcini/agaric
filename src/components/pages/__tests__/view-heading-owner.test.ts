@@ -92,15 +92,16 @@ describe('VIEW_HEADING_OWNER', () => {
       'search',
       'graph',
       'templates',
+      'settings',
     ] as const) {
       expect(VIEW_HEADING_OWNER[view]).toBe('shell')
       expect(rendersOwnHeading(view)).toBe(false)
     }
   })
 
-  it('keeps the three FeaturePageHeader views out of the shell heading', () => {
+  it('keeps the two FeaturePageHeader views out of the shell heading', () => {
     // Otherwise the same title is announced as two separate level-1 headings.
-    for (const view of ['journal', 'trash', 'settings'] as const) {
+    for (const view of ['journal', 'trash'] as const) {
       expect(VIEW_HEADING_OWNER[view]).toBe('view')
       expect(shellOwnsHeading(view)).toBe(false)
     }

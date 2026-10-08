@@ -71,9 +71,12 @@ export function GlobalDateControls(): React.ReactElement {
       </Button>
       {DATE_CONTROL_VIEWS.has(currentView) && (
         <>
+          {/* Hidden on a phone, where it would wrap the header onto a second
+              row; Agenda stays in the journal's mode menu there. */}
           <Button
             variant="outline"
             size="xs"
+            className="hidden sm:inline-flex"
             onClick={handleAgenda}
             aria-label={t('journal.goToAgenda')}
           >

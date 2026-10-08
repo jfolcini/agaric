@@ -40,7 +40,8 @@ test('the outline brings a heading far down a long page into view', async ({ pag
   // three lines, so nine rows fill 720px.
   await page.locator('[data-testid="block-static"]').filter({ hasText: 'Heading 0' }).waitFor()
 
-  await page.getByRole('button', { name: 'Open outline' }).click()
+  await page.getByRole('button', { name: 'Page actions', exact: true }).click()
+  await page.getByRole('menuitem', { name: 'Open outline', exact: true }).click()
   await page.getByRole('button', { name: 'Heading 450', exact: true }).click()
 
   await expect(

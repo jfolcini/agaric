@@ -257,6 +257,12 @@ function renderPageHeader(el: React.ReactElement) {
   )
 }
 
+/** Open the page-actions menu and pick one of its items. */
+async function choosePageAction(user: ReturnType<typeof userEvent.setup>, name: RegExp) {
+  await user.click(screen.getByRole('button', { name: /page actions/i }))
+  await user.click(await screen.findByRole('menuitem', { name }))
+}
+
 describe('PageHeader rendering', () => {
   it('renders title', () => {
     renderPageHeader(<PageHeader pageId="PAGE_1" title="My Test Page" />)
@@ -310,11 +316,14 @@ describe('PageHeader title editing', () => {
     })
   })
 
-  it('renders an Insert emoji affordance in the title row', () => {
+  it('offers Insert emoji in the page-actions menu', async () => {
+    const user = userEvent.setup()
     setupTagMock([])
     renderPageHeader(<PageHeader pageId="PAGE_1" title="My Page" />)
 
-    expect(screen.getByRole('button', { name: /insert emoji/i })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /insert emoji/i })).toBeNull()
+    await user.click(screen.getByRole('button', { name: /page actions/i }))
+    expect(await screen.findByRole('menuitem', { name: /insert emoji/i })).toBeInTheDocument()
   })
 
   it('appends a picked emoji to the title and persists via edit_block', async () => {
@@ -324,7 +333,7 @@ describe('PageHeader title editing', () => {
     renderPageHeader(<PageHeader pageId="PAGE_1" title="Notes" />)
 
     // No caret captured (title never focused) → handler appends at end.
-    await user.click(screen.getByRole('button', { name: /insert emoji/i }))
+    await choosePageAction(user, /insert emoji/i)
     await user.click(screen.getByTestId('mock-emoji-pick'))
 
     await waitFor(() => {
@@ -979,22 +988,21 @@ describe('PageHeader alias display', () => {
 
 // ── Page-level undo / redo buttons ────────────────────────────────────────
 
-describe('PageHeader page-level undo/redo buttons', () => {
-  it('renders page undo button', () => {
+describe('PageHeader page-level undo/redo', () => {
+  it('offers undo and redo in the page-actions menu, not the title row', async () => {
+    const user = userEvent.setup()
     renderPageHeader(<PageHeader pageId="PAGE_1" title="My Page" />)
 
-    const undoBtn = screen.getByRole('button', { name: /undo last page action/i })
-    expect(undoBtn).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /undo last page action/i })).toBeNull()
+    expect(screen.queryByRole('button', { name: /redo last page action/i })).toBeNull()
+    await user.click(screen.getByRole('button', { name: /page actions/i }))
+    expect(
+      await screen.findByRole('menuitem', { name: /undo last page action/i }),
+    ).toBeInTheDocument()
+    expect(screen.getByRole('menuitem', { name: /redo last page action/i })).toBeInTheDocument()
   })
 
-  it('renders page redo button', () => {
-    renderPageHeader(<PageHeader pageId="PAGE_1" title="My Page" />)
-
-    const redoBtn = screen.getByRole('button', { name: /redo last page action/i })
-    expect(redoBtn).toBeInTheDocument()
-  })
-
-  it('undo button issues one undo_page_group IPC (#2190) and marks the property lists stale (#5296)', async () => {
+  it('undo item issues one undo_page_group IPC (#2190) and marks the property lists stale (#5296)', async () => {
     const user = userEvent.setup()
     const keys = propertyKeysQueryKey('SPACE_TEST')
     queryClient.setQueryData(keys, ['status'])
@@ -1031,9 +1039,11 @@ describe('PageHeader page-level undo/redo buttons', () => {
 
     renderPageHeader(<PageHeader pageId="PAGE_1" title="My Page" />)
 
-    const undoBtn = screen.getByRole('button', { name: /undo last page action/i })
-    await user.click(undoBtn)
+    await choosePageAction(user, /undo last page action/i)
 
+    await waitFor(() => {
+      expect(screen.queryByRole('menu', { name: /page actions/i })).toBeNull()
+    })
     await waitFor(() => {
       expect(mockedInvoke).toHaveBeenCalledWith('undo_page_group', {
         pageId: 'PAGE_1',
@@ -1126,6 +1136,23 @@ describe('PageHeader breadcrumb', () => {
 // ── Kebab menu (#639) ─────────────────────────────────────────────────────
 
 describe('PageHeader kebab menu (#639)', () => {
+  it('Open outline opens the outline sheet, and closing it returns focus to the kebab', async () => {
+    const user = userEvent.setup()
+    renderPageHeader(<PageHeader pageId="PAGE_1" title="My Page" />)
+
+    await choosePageAction(user, /open outline/i)
+    expect(await screen.findByRole('dialog', { name: t('outline.title') })).toBeInTheDocument()
+
+    await user.keyboard('{Escape}')
+
+    await waitFor(() => {
+      expect(screen.queryByRole('dialog', { name: t('outline.title') })).toBeNull()
+    })
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /page actions/i })).toHaveFocus()
+    })
+  })
+
   it('renders page actions menu button', async () => {
     renderPageHeader(<PageHeader pageId="PAGE_1" title="Test Page" />)
 
@@ -1394,8 +1421,7 @@ describe('PageHeader error paths', () => {
     })
 
     renderPageHeader(<PageHeader pageId="PAGE_1" title="My Page" />)
-    const undoBtn = screen.getByRole('button', { name: /undo last page action/i })
-    await user.click(undoBtn)
+    await choosePageAction(user, /undo last page action/i)
 
     await waitFor(() => {
       expect(mockedInvoke).toHaveBeenCalledWith('undo_page_group', {
@@ -1439,8 +1465,7 @@ describe('PageHeader error paths', () => {
     })
 
     renderPageHeader(<PageHeader pageId="PAGE_1" title="My Page" />)
-    const redoBtn = screen.getByRole('button', { name: /redo last page action/i })
-    await user.click(redoBtn)
+    await choosePageAction(user, /redo last page action/i)
 
     await waitFor(() => {
       expect(mockedInvoke).toHaveBeenCalledWith('redo_page_op', {
@@ -2439,29 +2464,23 @@ describe('PageHeader screen reader announcements', () => {
 })
 
 // ── Part A — dedicated delete button + Undo toast ──────────
-describe('PageHeader dedicated delete button (Part A)', () => {
-  it('renders the dedicated trash button next to the star in the title row', () => {
+describe('PageHeader delete from the page-actions menu', () => {
+  it('keeps Delete out of the title row: the star is the only inline page action', () => {
     renderPageHeader(<PageHeader pageId="PAGE_1" title="My Page" />)
 
-    // Exactly one star + one trash button live in the inline quick-actions
-    // cluster (the kebab "Delete page" item is inside a popup, not a button
-    // in the title row).
     expect(screen.getByRole('button', { name: /bookmark this page/i })).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /^delete page$/i })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /^delete page$/i })).toBeNull()
   })
 
-  it('clicking the dedicated trash button opens the confirm dialog (one dialog only — no double-confirm)', async () => {
+  it('the menu item opens the confirm dialog (one dialog only)', async () => {
     const user = userEvent.setup()
 
     renderPageHeader(<PageHeader pageId="PAGE_1" title="My Page" onBack={vi.fn()} />)
 
-    await user.click(screen.getByRole('button', { name: /^delete page$/i }))
+    await choosePageAction(user, /^delete page$/i)
 
-    // Exactly one AlertDialog mounts (scoped by the dialog title role).
     const headings = await screen.findAllByRole('heading', { name: /^Delete page$/i })
     expect(headings).toHaveLength(1)
-
-    // The dialog's destructive confirm is reachable.
     expect(screen.getByRole('button', { name: /^Delete page$/i })).toBeInTheDocument()
   })
 
@@ -2471,7 +2490,7 @@ describe('PageHeader dedicated delete button (Part A)', () => {
 
     renderPageHeader(<PageHeader pageId="PAGE_1" title="My Page" onBack={onBack} />)
 
-    await user.click(screen.getByRole('button', { name: /^delete page$/i }))
+    await choosePageAction(user, /^delete page$/i)
     const confirmBtn = await screen.findByRole('button', { name: /^Delete page$/i })
     await user.click(confirmBtn)
 
@@ -2490,8 +2509,6 @@ describe('PageHeader dedicated delete button (Part A)', () => {
       )
     })
 
-    // onBack was fired after successful delete — preserves the
-    // pre-refactor navigation contract.
     expect(onBack).toHaveBeenCalledTimes(1)
   })
 
@@ -2521,7 +2538,7 @@ describe('PageHeader dedicated delete button (Part A)', () => {
         />,
       )
 
-      await user.click(screen.getByRole('button', { name: /^delete page$/i }))
+      await choosePageAction(user, /^delete page$/i)
       await user.click(await screen.findByRole('button', { name: /^Delete page$/i }))
 
       await waitFor(() => {
@@ -2535,7 +2552,7 @@ describe('PageHeader dedicated delete button (Part A)', () => {
 
     renderPageHeader(<PageHeader pageId="PAGE_1" title="My Page" onBack={vi.fn()} />)
 
-    await user.click(screen.getByRole('button', { name: /^delete page$/i }))
+    await choosePageAction(user, /^delete page$/i)
     const confirmBtn = await screen.findByRole('button', { name: /^Delete page$/i })
     await user.click(confirmBtn)
 
@@ -2556,21 +2573,6 @@ describe('PageHeader dedicated delete button (Part A)', () => {
         blockIds: ['PAGE_1'],
       })
     })
-  })
-
-  it('kebab "Delete page" item routes through the same confirm dialog (no double-confirm)', async () => {
-    const user = userEvent.setup()
-
-    renderPageHeader(<PageHeader pageId="PAGE_1" title="My Page" onBack={vi.fn()} />)
-
-    // Open kebab + click the kebab's "Delete page" item.
-    await user.click(screen.getByRole('button', { name: /page actions/i }))
-    await user.click(await screen.findByText(/Delete page/i))
-
-    // Still exactly one dialog (kebab item and dedicated button share the
-    // single `usePageDeleteAction.confirmDialog` instance).
-    const headings = await screen.findAllByRole('heading', { name: /^Delete page$/i })
-    expect(headings).toHaveLength(1)
   })
 })
 
@@ -2595,6 +2597,28 @@ describe('PageHeader tag chips against the real tauri-mock (#5287)', () => {
       </TooltipProvider>
     )
   }
+
+  it('deletes the page from the page-actions menu', async () => {
+    const user = userEvent.setup()
+    const onBack = vi.fn()
+    render(
+      <TooltipProvider>
+        <PageBlockContext.Provider value={pageStore}>
+          <PageHeader pageId={PAGE} title="Projects" onBack={onBack} />
+        </PageBlockContext.Provider>
+      </TooltipProvider>,
+    )
+
+    await choosePageAction(user, /^delete page$/i)
+    await user.click(await screen.findByRole('button', { name: /^Delete page$/i }))
+
+    await waitFor(() => {
+      expect(onBack).toHaveBeenCalledOnce()
+    })
+    // Gone from every active read, and soft-deleted (in the trash), not purged.
+    await expect(async () => dispatch('get_block', { blockId: PAGE })).rejects.toThrow(/not found/)
+    expect(blocks.get(PAGE)?.['deleted_at']).toBeTruthy()
+  })
 
   it("shows a tag's new name after it is renamed on its own page", async () => {
     const user = userEvent.setup()
@@ -2621,7 +2645,7 @@ describe('PageHeader tag chips against the real tauri-mock (#5287)', () => {
     expect(await screen.findByText('work')).toBeInTheDocument()
 
     rerender(headerFor(SEED_IDS.TAG_IDEA, 'idea'))
-    await user.click(screen.getByRole('button', { name: /^delete page$/i }))
+    await choosePageAction(user, /^delete page$/i)
     await user.click(await screen.findByRole('button', { name: /^Delete page$/i }))
     await waitFor(() => {
       expect(blocks.get(SEED_IDS.TAG_IDEA)?.['deleted_at']).toBeTruthy()
@@ -2645,7 +2669,7 @@ describe('PageHeader tag chips against the real tauri-mock (#5287)', () => {
     })
     expect(await screen.findByText('idea')).toBeInTheDocument()
 
-    await user.click(screen.getByRole('button', { name: /undo last page action/i }))
+    await choosePageAction(user, /undo last page action/i)
 
     await waitFor(() => {
       expect(blockTags.get(PAGE)?.has(SEED_IDS.TAG_IDEA)).toBe(false)

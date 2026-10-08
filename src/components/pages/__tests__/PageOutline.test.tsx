@@ -20,14 +20,12 @@ import { createStore } from 'zustand'
 import { makeBlock } from '@/__tests__/fixtures'
 import { axe } from '@/__tests__/helpers/axe'
 import { extractHeadings, PageOutline } from '@/components/pages/PageOutline'
-import { TooltipProvider } from '@/components/ui/tooltip'
 import type { FlatBlock } from '@/stores/page-blocks'
 import { PageBlockContext, type PageBlockState } from '@/stores/page-blocks'
 
 // ── Mocks ────────────────────────────────────────────────────────────────
 
 vi.mock('lucide-react', () => ({
-  List: (props: Record<string, unknown>) => <svg data-testid="list-icon" {...props} />,
   X: () => <svg data-testid="x-icon" />,
   XIcon: (props: Record<string, unknown>) => <svg data-testid="x-icon" {...props} />,
 }))
@@ -71,9 +69,9 @@ function renderOutline(blocks: FlatBlock[]) {
   const store = createTestStore(blocks)
   return render(
     createElement(
-      TooltipProvider,
-      null,
-      createElement(PageBlockContext.Provider, { value: store }, createElement(PageOutline)),
+      PageBlockContext.Provider,
+      { value: store },
+      createElement(PageOutline, { open: true, onOpenChange: vi.fn() }),
     ),
   )
 }
@@ -128,29 +126,21 @@ describe('extractHeadings', () => {
 // ── PageOutline component tests ──────────────────────────────────────────
 
 describe('PageOutline', () => {
-  it('shows empty state when no headings found', async () => {
-    const user = userEvent.setup()
+  it('shows empty state when no headings found', () => {
     renderOutline([makeBlock({ id: 'b1', content: 'just text' })])
-
-    // Open the sheet
-    await user.click(screen.getByRole('button', { name: 'Open outline' }))
 
     expect(screen.getByText('No headings found')).toBeInTheDocument()
   })
 
-  it('renders the heading list inside the shared SheetBody so it aligns with the header', async () => {
-    const user = userEvent.setup()
+  it('renders the heading list inside the shared SheetBody so it aligns with the header', () => {
     renderOutline([makeBlock({ id: 'b1', content: '# Title' })])
-
-    await user.click(screen.getByRole('button', { name: 'Open outline' }))
 
     const body = document.querySelector('[data-slot="sheet-body"]')
     expect(body).not.toBeNull()
     expect(body).toContainElement(screen.getByRole('navigation', { name: 'Page outline' }))
   })
 
-  it('renders heading list from blocks with heading prefixes', async () => {
-    const user = userEvent.setup()
+  it('renders heading list from blocks with heading prefixes', () => {
     renderOutline([
       makeBlock({ id: 'b1', content: '# Title' }),
       makeBlock({ id: 'b2', content: '## Subtitle' }),
@@ -158,23 +148,18 @@ describe('PageOutline', () => {
       makeBlock({ id: 'b4', content: '### Deep' }),
     ])
 
-    await user.click(screen.getByRole('button', { name: 'Open outline' }))
-
     expect(screen.getByText('Title')).toBeInTheDocument()
     expect(screen.getByText('Subtitle')).toBeInTheDocument()
     expect(screen.getByText('Deep')).toBeInTheDocument()
     expect(screen.queryByText('plain text')).not.toBeInTheDocument()
   })
 
-  it('indents headings by level via paddingLeft', async () => {
-    const user = userEvent.setup()
+  it('indents headings by level via paddingLeft', () => {
     renderOutline([
       makeBlock({ id: 'b1', content: '# H1' }),
       makeBlock({ id: 'b2', content: '## H2' }),
       makeBlock({ id: 'b3', content: '### H3' }),
     ])
-
-    await user.click(screen.getByRole('button', { name: 'Open outline' }))
 
     const nav = screen.getByRole('navigation', { name: 'Page outline' })
     const items = within(nav).getAllByRole('listitem')
@@ -203,8 +188,6 @@ describe('PageOutline', () => {
     document.body.append(realEl)
 
     renderOutline([makeBlock({ id: 'b1', content: '# Click me' })])
-
-    await user.click(screen.getByRole('button', { name: 'Open outline' }))
     await user.click(screen.getByText('Click me'))
 
     expect(mockScrollIntoView).toHaveBeenCalledWith({ block: 'start' })
@@ -212,11 +195,8 @@ describe('PageOutline', () => {
     document.body.removeChild(realEl)
   })
 
-  it('heading buttons have ring-inset focus rings so they are not clipped by the inner ScrollArea', async () => {
-    const user = userEvent.setup()
+  it('heading buttons have ring-inset focus rings so they are not clipped by the inner ScrollArea', () => {
     renderOutline([makeBlock({ id: 'b1', content: '# Heading 1' })])
-
-    await user.click(screen.getByRole('button', { name: 'Open outline' }))
 
     const headingBtn = screen.getByRole('button', { name: 'Heading 1' })
     expect(headingBtn).toHaveClass('focus-ring-visible')
@@ -224,52 +204,20 @@ describe('PageOutline', () => {
   })
 
   it('passes axe a11y audit', async () => {
-    const user = userEvent.setup()
-    const { container } = renderOutline([
+    renderOutline([
       makeBlock({ id: 'b1', content: '# Accessible heading' }),
       makeBlock({ id: 'b2', content: '## Another heading' }),
     ])
 
-    await user.click(screen.getByRole('button', { name: 'Open outline' }))
-
-    const results = await axe(container)
+    // The sheet portals to `document.body`, outside the render container.
+    const results = await axe(document.body)
     expect(results).toHaveNoViolations()
   })
 
   it('passes axe a11y audit with empty state', async () => {
-    const user = userEvent.setup()
-    const { container } = renderOutline([makeBlock({ id: 'b1', content: 'no headings' })])
+    renderOutline([makeBlock({ id: 'b1', content: 'no headings' })])
 
-    await user.click(screen.getByRole('button', { name: 'Open outline' }))
-
-    const results = await axe(container)
+    const results = await axe(document.body)
     expect(results).toHaveNoViolations()
-  })
-
-  // ── trigger tooltip ────────────────────────────────────────────
-
-  describe('trigger tooltip', () => {
-    it('shows a tooltip with the localised label when hovering the trigger', async () => {
-      const user = userEvent.setup()
-      renderOutline([makeBlock({ id: 'b1', content: 'just text' })])
-
-      const trigger = screen.getByRole('button', { name: 'Open outline' })
-      await user.hover(trigger)
-
-      const tooltip = await screen.findByRole('tooltip')
-      expect(tooltip).toHaveTextContent('Open outline')
-    })
-
-    it('does not show the tooltip until the user hovers, and wires Tooltip primitives onto the trigger', () => {
-      // No hover yet → no tooltip role in the document. The trigger Button
-      // itself is composed via Radix `Slot` with the design-system Tooltip
-      // primitive (data-slot="tooltip-trigger"), so we don't reinvent
-      // hover/un-hover behaviour — that's covered by the Tooltip's own tests.
-      renderOutline([makeBlock({ id: 'b1', content: 'just text' })])
-
-      const trigger = screen.getByRole('button', { name: 'Open outline' })
-      expect(trigger).toHaveAttribute('data-slot', 'tooltip-trigger')
-      expect(screen.queryByRole('tooltip')).not.toBeInTheDocument()
-    })
   })
 })

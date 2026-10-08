@@ -419,8 +419,6 @@ export const pages: Record<string, string> = {
   'journal.legendDue': 'Due',
   'journal.legendScheduled': 'Scheduled',
   'journal.legendProperty': 'Property',
-  'pageHeader.toggleTemplate': 'Toggle template status',
-  'pageHeader.templateActive': 'Page is a template',
   'templates.removeConfirmTitle': 'Remove template status',
   'templates.removeConfirmDesc':
     'Remove template status from "{{name}}"? Pages already created from this template will not be affected.',
