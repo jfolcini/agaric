@@ -41,9 +41,9 @@ Delegate to the cheapest model that can do the item well: subagents keep the orc
 | --- | --- | --- |
 | Mechanical (docs, rename, copy, small UI polish, dep bump, comment sweep) | `sonnet` | `sonnet` |
 | Typical scoped fix or feature in one domain | `opus` | `opus` |
-| High risk (migration, materializer, security, cross-cutting, ambiguous) | `fable` | `fable` |
+| High risk (migration, materializer, security, cross-cutting, ambiguous) | `opus` | `fable` |
 
-Tiers follow Artificial Analysis's Anthropic provider page: Opus 5 scores within a few points of Fable 5.1 on its intelligence index at roughly half the price, and Sonnet 5 at a third of Opus's. Unsure: one tier up. A builder that keeps failing is relaunched one tier up (`sonnet` → `opus` → `fable`), not retried. Research and read-only discovery go to `sonnet` (Explore agent) regardless of the item's tier.
+Tiers follow Artificial Analysis's Intelligence Index (October 2026): Opus 5.5 leads at 58, Sonnet 5.5 scores 56 and Fable 5.1 53, at $4/$20, $2/$10 and $10/$50 per MTok in/out. Sonnet spends about 1.6× Opus's output tokens per task, so it is only about 20% cheaper per task: it builds what is plainly mechanical, Opus everything else. High-risk diffs get a reviewer from a different model so builder and reviewer do not share blind spots. Haiku 5.5 ($0.10/$0.50) has no index score yet, so it takes only research and read-only discovery (Explore agent) regardless of the item's tier; rerun on `sonnet` when its answer comes back thin or contradicts the code. Unsure: one tier up. A builder that keeps failing is relaunched one step up (`sonnet` → `opus` → `fable`), not retried. Recheck the index when a model ships.
 
 ## 2. Build
 
