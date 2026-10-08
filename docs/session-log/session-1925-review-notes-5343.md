@@ -1,4 +1,4 @@
-# Session 1923 — review notes from #5343
+# Session 1925 — review notes from #5343
 
 Follow-up to #5343 (session 1921, image resize). It fixes two more places
 where a control inside one of the editor's node views lost out to the
