@@ -37,24 +37,28 @@ export function QrScanner({ onScan, onError, onCameraDenied }: QrScannerProps) {
   const [scanning, setScanning] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const scannerRef = useRef<HTMLDivElement>(null)
-  const scannerInstanceRef = useRef<{ stop: () => Promise<void> } | null>(null)
+  // html5-qrcode throws (not rejects) from stop() unless the camera is running,
+  // so every stop goes through stopIfStarted.
+  const scannerInstanceRef = useRef<{ stopIfStarted: () => Promise<void> } | null>(null)
+  const unmountedRef = useRef(false)
   // #758 item 2: html5-qrcode keeps decoding frames (fps: 10) while the async
   // stop() settles, so the decode callback can fire multiple times for one
   // physical scan. Latch on the first decode and drop the rest.
   const hasScannedRef = useRef(false)
 
   // Cleanup scanner on unmount to prevent camera leaks
-  useEffect(
-    () => () => {
+  useEffect(() => {
+    unmountedRef.current = false
+    return () => {
+      unmountedRef.current = true
       if (scannerInstanceRef.current) {
-        scannerInstanceRef.current.stop().catch((err: unknown) => {
+        scannerInstanceRef.current.stopIfStarted().catch((err: unknown) => {
           logger.warn('QrScanner', 'Failed to stop scanner on unmount', undefined, err)
         })
         scannerInstanceRef.current = null
       }
-    },
-    [],
-  )
+    }
+  }, [])
 
   // Translate a getUserMedia / html5-qrcode failure into an actionable,
   // localized message. getUserMedia rejects with a DOMException whose `name`
@@ -98,12 +102,16 @@ export function QrScanner({ onScan, onError, onCameraDenied }: QrScannerProps) {
 
     try {
       // Dynamic import to avoid bundling html5-qrcode on desktop
-      const { Html5Qrcode } = await import('html5-qrcode')
+      const { Html5Qrcode, Html5QrcodeScannerState } = await import('html5-qrcode')
 
       if (!scannerRef.current) return
 
       const scanner = new Html5Qrcode(scannerRef.current.id)
-      scannerInstanceRef.current = scanner
+      const stopIfStarted = () =>
+        scanner.getState() === Html5QrcodeScannerState.NOT_STARTED
+          ? Promise.resolve()
+          : Promise.resolve().then(() => scanner.stop())
+      scannerInstanceRef.current = { stopIfStarted }
       hasScannedRef.current = false
       setScanning(true)
       setError(null)
@@ -118,7 +126,7 @@ export function QrScanner({ onScan, onError, onCameraDenied }: QrScannerProps) {
           if (hasScannedRef.current) return
           hasScannedRef.current = true
 
-          scanner.stop().catch((err: unknown) => {
+          stopIfStarted().catch((err: unknown) => {
             logger.warn('QrScanner', 'Failed to stop scanner after successful scan', undefined, err)
           })
           scannerInstanceRef.current = null
@@ -138,6 +146,11 @@ export function QrScanner({ onScan, onError, onCameraDenied }: QrScannerProps) {
           // QR code not detected in frame — normal, keep scanning
         },
       )
+      // Unmounted while start() was pending: the cleanup could not stop a
+      // camera that had not started yet.
+      if (unmountedRef.current) {
+        await stopIfStarted()
+      }
     } catch (err) {
       // Log the raw error for debugging, but surface a translated, cause-aware
       // message to the aria-live region (raw `err.message` is untranslated and
@@ -157,11 +170,11 @@ export function QrScanner({ onScan, onError, onCameraDenied }: QrScannerProps) {
   return (
     <div className="flex flex-col items-center gap-2">
       <section
-        id={scannerId}
-        ref={scannerRef}
-        className="w-full max-w-64 aspect-square bg-muted rounded-md flex items-center justify-center"
+        className="w-full max-w-64 aspect-square bg-muted rounded-md flex flex-col items-center justify-center"
         aria-label={t('qrScanner.viewportLabel')}
       >
+        {/* html5-qrcode empties this node on start(); React must render nothing in it. */}
+        <div id={scannerId} ref={scannerRef} className="w-full" />
         {!scanning && !error && (
           <p className="text-sm text-muted-foreground">{t('qrScanner.cameraPreview')}</p>
         )}
