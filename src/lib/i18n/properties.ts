@@ -272,7 +272,7 @@ export const properties: Record<string, string> = {
   'propertiesView.duplicateKey': 'A property with this key already exists',
   'propertiesView.deadlineWarning': 'Deadline Warning',
   'propertiesView.deadlineWarningDesc':
-    'Show tasks approaching their deadline in the DuePanel. Set to 0 to disable.',
+    "Show tasks due within this many days in the Agenda's Upcoming list. 0 turns it off.",
   'propertiesView.builtIn': 'Built-in',
   'propertiesView.clearSearch': 'Clear search',
   'propertiesView.deleteTooltip': 'Delete property',

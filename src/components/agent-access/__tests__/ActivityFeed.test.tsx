@@ -11,6 +11,7 @@
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { axe } from 'vitest-axe'
 
 import { makePage } from '@/__tests__/fixtures'
 import { ActivityFeed } from '@/components/agent-access/ActivityFeed'
@@ -78,6 +79,17 @@ afterEach(() => {
 })
 
 describe('ActivityFeed', () => {
+  it('titles the feed with an h3 and renders the empty message as a paragraph, not an h2', async () => {
+    const { container } = render(<ActivityFeed entries={[]} />)
+
+    expect(
+      screen.getByRole('heading', { level: 3, name: t('agentAccess.activityLabel') }),
+    ).toBeInTheDocument()
+    expect(screen.getByText(t('agentAccess.activityEmpty'))).toBeInTheDocument()
+    expect(screen.queryByRole('heading', { level: 2 })).not.toBeInTheDocument()
+    expect(await axe(container)).toHaveNoViolations()
+  })
+
   it('undoing an agent op fires revertOps and toasts success', async () => {
     const user = userEvent.setup()
     mockRevert.mockResolvedValue(ok([]))

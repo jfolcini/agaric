@@ -14,7 +14,6 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
-import { ScrollArea } from '@/components/ui/scroll-area'
 import {
   findConflicts,
   getCurrentShortcuts,
@@ -136,7 +135,7 @@ export function KeyboardTab(): React.ReactElement {
           <CardDescription>{t('keyboard.settings.description')}</CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
-          <ScrollArea className="max-h-[60dvh]">
+          <div>
             {[...grouped.entries()].map(([category, items]) => (
               <div key={category} className="mb-6">
                 <h4 className="text-xs font-medium text-muted-foreground mb-2">{t(category)}</h4>
@@ -280,7 +279,7 @@ export function KeyboardTab(): React.ReactElement {
                 </div>
               </div>
             ))}
-          </ScrollArea>
+          </div>
 
           {/* Empty binding validation message */}
           {editingId && !editValue.trim() && (

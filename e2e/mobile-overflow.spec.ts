@@ -39,6 +39,7 @@ import {
   navigateMobile,
   navigateToView,
   openMobileSidebar,
+  openSettingsTab,
   test,
   waitForBoot,
 } from './helpers'
@@ -249,9 +250,7 @@ for (const profile of PROFILES) {
 
       // Open the "Sync & Devices" settings tab, which hosts DeviceManagement
       // (mono device-id row, peers list, "Pair New Device").
-      const syncTab = page.getByRole('tab', { name: 'Sync & Devices', exact: true })
-      await expect(syncTab).toBeVisible()
-      await syncTab.click()
+      await openSettingsTab(page, 'Sync & Devices')
       await expect(page.getByTestId('settings-panel-sync')).toBeVisible()
       // The device id loads async; the pair button is gated on it.
       const pairBtn = page.locator('.device-pair-btn')
@@ -311,7 +310,7 @@ for (const profile of PROFILES) {
     test('paired device row fits its card and does not overflow', async ({ page }) => {
       await waitForBoot(page)
       await navigateMobile(page, 'Settings')
-      await page.getByRole('tab', { name: 'Sync & Devices', exact: true }).click()
+      await openSettingsTab(page, 'Sync & Devices')
       await expect(page.getByTestId('settings-panel-sync')).toBeVisible()
       const pairBtn = page.locator('.device-pair-btn')
       await expect(pairBtn).toBeVisible()

@@ -68,7 +68,7 @@ export function DeadlineWarningSection(): React.ReactElement {
           onChange={(e) => handleChange(Number.parseInt(e.target.value, 10))}
           onBlur={handleBlur}
         />
-        <span className="text-xs text-muted-foreground">{t('block.daysDisabledHint')}</span>
+        <span className="text-xs text-muted-foreground">{t('block.daysUnit')}</span>
       </div>
     </div>
   )
