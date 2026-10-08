@@ -57,6 +57,11 @@ Every cell sits on the Pareto frontier of Artificial Analysis's Intelligence Ind
 Everything else scores lower for more. That includes Fable 5.1 at every effort (53 at `xhigh` for $5.98) and Sonnet 5.5 at `xhigh` (52 for $2.01, beaten by Opus `high`), so neither builds.
 
 - **Opus `high` is the knee.** `medium` → `high` buys 3 points for 36% more cost; `high` → `xhigh` buys 2 for 90% more.
+- **Long-horizon coding agrees.** DeepSWE (v1.1, 2026-09-22; it does not list the 5.5 models yet) has Opus 5 at:
+  - 72.8% at `high`, 73.2% at `xhigh` and 73.7% at `max`, all within its ±3–4% error;
+  - 68.9% at `medium` and 58.1% at `low`.
+
+  So effort below `high` costs real quality on code, and effort above it buys little. Opus 5 also beats Fable 5 there at every effort, for less.
 - **High risk pays for `xhigh`.** `max` adds 2 more points, but its first token can take about 12 minutes, so it is the last escalation, not a default.
 - **Sonnet `max` reviews high-risk diffs.** It is a second model, so builder and reviewer do not share blind spots, and it is Anthropic's best on Terminal-Bench 4.0 (63.6% against Opus 5.5's 59.6%).
 - **Haiku `high` does discovery** at a tenth of Sonnet `high`'s cost. Rerun on `sonnet` when its answer comes back thin or contradicts the code.
