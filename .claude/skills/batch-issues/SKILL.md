@@ -37,13 +37,31 @@ Use a read-only Explore agent for discovery (`docs/FEATURE-MAP.md`, `docs/featur
 
 Delegate to the cheapest model that can do the item well: subagents keep the orchestrator's context small, run faster, and cost less. Score each item on cost (files, diff size, toolchain) and risk (migrations, materializer/concurrency, security paths, cross-cutting refactors, ambiguous scope). Risk wins.
 
+Each cell is a model and the Agent tool's `effort`:
+
 | Item | Builder | Reviewer |
 | --- | --- | --- |
-| Mechanical (docs, rename, copy, small UI polish, dep bump, comment sweep) | `sonnet` | `sonnet` |
-| Typical scoped fix or feature in one domain | `opus` | `opus` |
-| High risk (migration, materializer, security, cross-cutting, ambiguous) | `opus` | `fable` |
+| Research and read-only discovery (Explore agent), any tier | `haiku` · `high` | — |
+| Mechanical (docs, rename, copy, small UI polish, dep bump, comment sweep) | `sonnet` · `high` | `sonnet` · `high` |
+| Typical scoped fix or feature in one domain | `opus` · `high` | `opus` · `high` |
+| High risk (migration, materializer, security, cross-cutting, ambiguous) | `opus` · `xhigh` | `sonnet` · `max` |
 
-Tiers follow Artificial Analysis's Intelligence Index (October 2026): Opus 5.5 leads at 58, Sonnet 5.5 scores 56 and Fable 5.1 53, at $4/$20, $2/$10 and $10/$50 per MTok in/out. Sonnet spends about 1.6× Opus's output tokens per task, so it is only about 20% cheaper per task: it builds what is plainly mechanical, Opus everything else. High-risk diffs get a reviewer from a different model so builder and reviewer do not share blind spots. Haiku 5.5 ($0.10/$0.50) has no index score yet, so it takes only research and read-only discovery (Explore agent) regardless of the item's tier; rerun on `sonnet` when its answer comes back thin or contradicts the code. Unsure: one tier up. A builder that keeps failing is relaunched one step up (`sonnet` → `opus` → `fable`), not retried. Recheck the index when a model ships.
+Every cell sits on the Pareto frontier of Artificial Analysis's Intelligence Index against cost per task for Anthropic models (v4.3.2, checked 2026-10-08):
+
+| On the frontier | Index | Cost per task |
+| --- | --- | --- |
+| Haiku 5.5 `low` · `medium` · `high` · `xhigh` · `max` | 29 · 34 · 38 · 41 · 43 | $0.02 · $0.05 · $0.08 · $0.12 · $0.21 |
+| Sonnet 5.5 `high` | 47 | $0.88 |
+| Opus 5.5 `medium` · `high` · `xhigh` · `max` | 51 · 54 · 56 · 58 | $1.34 · $1.82 · $3.46 · $5.98 |
+
+Everything else scores lower for more. That includes Fable 5.1 at every effort (53 at `xhigh` for $5.98) and Sonnet 5.5 at `xhigh` (52 for $2.01, beaten by Opus `high`), so neither builds.
+
+- **Opus `high` is the knee.** `medium` → `high` buys 3 points for 36% more cost; `high` → `xhigh` buys 2 for 90% more.
+- **High risk pays for `xhigh`.** `max` adds 2 more points, but its first token can take about 12 minutes, so it is the last escalation, not a default.
+- **Sonnet `max` reviews high-risk diffs.** It is a second model, so builder and reviewer do not share blind spots, and it is Anthropic's best on Terminal-Bench 4.0 (63.6% against Opus 5.5's 59.6%).
+- **Haiku `high` does discovery** at a tenth of Sonnet `high`'s cost. Rerun on `sonnet` when its answer comes back thin or contradicts the code.
+
+Unsure: one row up. A builder that keeps failing is relaunched one step up the frontier (`sonnet` `high` → `opus` `high` → `opus` `xhigh` → `opus` `max`), not retried. Recheck the frontier when a model ships.
 
 ## 2. Build
 
