@@ -20,8 +20,8 @@ in the WebView constructor, which ours replaces either way.
 `e2e/search-sheet-mobile.spec.ts` gains a web-side case: with a simulated
 keyboard, the sheet and its input sit above it.
 
-Not verified on a device, and there is no local Kotlin lane; CI's Android
-build compiles it. The PR stays a draft until the device check in its body
-passes. The reviewer checked each claim against AOSP `View.java` /
-`WebView.java`, androidx `ViewCompat`, and Chromium's
-`AwDisplayCutoutController`.
+The maintainer tested it on their Android device: the keyboard now lifts the
+search sheet. Android 11 and WebViews older than M139 keep the old behaviour;
+none of the maintainer's devices are affected, so that limit is accepted
+rather than filed. There is no local Kotlin lane; CI's Android build compiles
+it.
