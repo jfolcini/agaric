@@ -608,6 +608,9 @@ export function useBlockKeyboard(editor: Editor | null, callbacks: BlockKeyboard
   const handleBeforeInput = useCallback(
     (event: InputEvent) => {
       if (!editor) return
+      // Input into a node view's control (a math source field) is that control's,
+      // as in `handleKeyDown`.
+      if (event.target !== editor.view.dom) return
       if (event.isComposing) return
 
       const it = event.inputType

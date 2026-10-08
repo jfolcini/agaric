@@ -5,7 +5,8 @@
  *   1. No active block -> bail
  *   2. Stale blur (editor moved to a different block) -> bail
  *   3. Early-persist for newly created (empty) blocks
- *   4. Portal / transient-UI guard (relatedTarget + visible-element scan)
+ *   4. Portal / transient-UI guard (relatedTarget in a portal or in the
+ *      editor wrapper + visible-element scan)
  *   5. Unmount -> save-or-split -> discard draft -> clear focus
  *
  * B-56: Step 4b now scopes the portal scan to elements OUTSIDE the editor
@@ -142,6 +143,10 @@ export function useEditorBlur(params: {
         logger.debug('EditorBlur', 'blur prevented — focus moved to portal', { blockId })
         return
       }
+      // Nor if focus stayed in the editor: from a control in it (an image's
+      // collapse toggle, the toolbar) back to the text, or the other way.
+      const wrapper = e.currentTarget as HTMLElement
+      if (wrapper.contains(related)) return
 
       // Step 4b: Also check if a portal-tagged overlay is currently visible
       // in the DOM OUTSIDE the editor wrapper. Elements inside the wrapper
@@ -151,7 +156,6 @@ export function useEditorBlur(params: {
       // so we use checkVisibility() which detects display:none,
       // visibility:hidden, and opacity:0. Falls back to offsetParent for
       // older browsers.
-      const wrapper = e.currentTarget as HTMLElement
       {
         const hasVisiblePopup = Array.from(
           document.querySelectorAll<HTMLElement>(EDITOR_PORTAL_SELECTOR),

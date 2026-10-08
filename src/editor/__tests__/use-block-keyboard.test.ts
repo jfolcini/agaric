@@ -1225,6 +1225,35 @@ describe('useBlockKeyboard — keys typed into a control inside a node view', ()
     expect(callbacks._calls).toEqual({ onEnterSave: 1 })
     cleanup()
   })
+
+  /** Whether a Backspace `beforeinput` on `target` keeps its default action. */
+  function backspaceInputReachesTarget(target: HTMLElement): boolean {
+    const event = new InputEvent('beforeinput', {
+      inputType: 'deleteContentBackward',
+      bubbles: true,
+      cancelable: true,
+    })
+    target.dispatchEvent(event)
+    return !event.defaultPrevented
+  }
+
+  it('leaves the control its Backspace input: the block does not merge', () => {
+    const { callbacks, control, cleanup } = setup()
+
+    expect(backspaceInputReachesTarget(control)).toBe(true)
+
+    expect(callbacks._calls).toEqual({})
+    cleanup()
+  })
+
+  it('still merges on a Backspace input in the contenteditable itself', () => {
+    const { editor, callbacks, cleanup } = setup()
+
+    expect(backspaceInputReachesTarget(editor.view.dom)).toBe(false)
+
+    expect(callbacks._calls).toEqual({ onMergeWithPrev: 1 })
+    cleanup()
+  })
 })
 
 // #915 — `beforeinput` fallback so Android Gboard (keyCode 229) can still

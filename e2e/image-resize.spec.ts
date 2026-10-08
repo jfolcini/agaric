@@ -5,8 +5,8 @@
  * and the caret in the text, so typing carries on after a drag; the handle's
  * keys must beat the block keyboard handler, which listens on the editor's DOM
  * above the node view's React portal and would take ArrowRight to the next
- * block; and Tab, when it moves focus, must reach the image's controls without
- * unmounting the editor.
+ * block; and Tab, when it moves focus, must reach the image's controls and come
+ * back to the text without unmounting the editor.
  */
 import { expect, focusBlock, openPage, saveBlock, test, waitForBoot } from './helpers'
 
@@ -56,7 +56,7 @@ test.describe('inline image resize (#4712)', () => {
     )
   })
 
-  test('with Tab-indent off, Tab reaches the collapse toggle and the editor stays', async ({
+  test('with Tab-indent off, Tab to the collapse toggle and back keeps the editor', async ({
     page,
   }) => {
     // Read on every keystroke, so it applies without a reload.
@@ -78,9 +78,17 @@ test.describe('inline image resize (#4712)', () => {
     await expect(nodeView.getByTestId('image-collapsed-label')).toHaveText('a cat')
     await expect(toggle).toBeFocused()
 
+    // Shift+Tab returns to the text, and typing lands in the block.
+    await page.keyboard.press('Shift+Tab')
+    await expect(editor).toBeFocused()
+    await page.keyboard.type('!')
+    await expect(editor).toContainText('done!')
+
     await saveBlock(page, 'Escape')
-    await expect(
-      page.locator('[data-testid="block-static"] [data-testid="image-collapsed-label"]'),
-    ).toHaveText('a cat')
+    const saved = page
+      .locator('[data-testid="block-static"]')
+      .filter({ has: page.getByTestId('image-collapsed-label') })
+    await expect(saved.getByTestId('image-collapsed-label')).toHaveText('a cat')
+    await expect(saved).toContainText('done!')
   })
 })

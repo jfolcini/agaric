@@ -24,7 +24,6 @@ import { afterEach, describe, expect, it, onTestFinished, vi } from 'vitest'
 
 import { axe } from '@/__tests__/helpers/axe'
 import { type BlockKeyboardCallbacks, useBlockKeyboard } from '@/editor/use-block-keyboard'
-import { EDITOR_PORTAL_SELECTOR } from '@/hooks/useEditorBlur'
 import { t } from '@/lib/i18n'
 
 vi.mock('@tiptap/react', () => ({
@@ -301,14 +300,6 @@ describe('ImageNodeView resize (#4712)', () => {
     const { handle } = renderNodeView('a cat')
     // fireEvent returns false when the handler called preventDefault.
     expect(fireEvent.pointerDown(handle(), { clientX: 0, pointerId: 1 })).toBe(false)
-  })
-
-  it('keeps the editor mounted when focus moves onto any of its controls', () => {
-    // `useEditorBlur` ignores a blur whose new focus target sits under this
-    // selector; without it, Tab onto the collapse toggle or the handle unmounts
-    // the node view and drops focus to the page.
-    render(<ImageNodeView {...makeProps('a cat', '/c.png')} />)
-    expect(screen.getByTestId('image-node-view').matches(EDITOR_PORTAL_SELECTOR)).toBe(true)
   })
 
   it('keeps every key but Escape from the block keyboard handler and the page', async () => {
