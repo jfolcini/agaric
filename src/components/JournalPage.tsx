@@ -36,6 +36,7 @@ import { useScrollToFocus } from '@/hooks/useScrollToFocus'
 import type { NavigateToPageFn } from '@/lib/block-events'
 import type { DayEntry } from '@/lib/date-utils'
 import { formatDate, formatJournalTitle, getCalendarMonthRange } from '@/lib/date-utils'
+import { cn } from '@/lib/utils'
 import { useJournalStore } from '@/stores/journal'
 import { useSpaceStore } from '@/stores/space'
 import { useInPageFindStore } from '@/stores/useInPageFindStore'
@@ -181,7 +182,14 @@ export function JournalPage({
     // `outline-none` is still needed: at app start no pointer has moved yet, so
     // the programmatic `.focus()` App.tsx fires matches `:focus-visible` and
     // the base-layer `:focus:not(:focus-visible)` rule does not cover it.
-    <div ref={journalRef} tabIndex={-1} className="space-y-4 outline-none">
+    // The reading cap sits here, not on the tabpanel, so the header's actions
+    // end at the column's right edge; the month grid is a calendar, not text,
+    // so it keeps the full width. `w-full`: auto margins turn off the stretch.
+    <div
+      ref={journalRef}
+      tabIndex={-1}
+      className={cn('space-y-4 outline-none', mode !== 'monthly' && 'w-full max-w-reading mx-auto')}
+    >
       {/* PEND-UX item 5 — `<h1>` landmark for the Journal view: the day
           itself in the day view, "Journal" in the multi-day modes. The App-
           shell header renders `<JournalControls />` instead of a label for
@@ -206,14 +214,8 @@ export function JournalPage({
           skeleton) so the selected tab's `aria-controls` reference never
           dangles mid-load (axe aria-valid-attr-value). No `tabIndex` on the
           panel itself: it always contains focusable content, so a panel tab
-          stop would be a redundant/confusing extra stop. The month grid is a
-          calendar, not text, so it keeps the full width. */}
-      <div
-        role="tabpanel"
-        id={journalPanelId(mode)}
-        aria-labelledby={journalTabId(mode)}
-        className={mode === 'monthly' ? undefined : 'max-w-reading'}
-      >
+          stop would be a redundant/confusing extra stop. */}
+      <div role="tabpanel" id={journalPanelId(mode)} aria-labelledby={journalTabId(mode)}>
         {/* Loading indicator on initial fetch */}
         {loading && (
           <LoadingSkeleton count={3} height="h-10" loading data-testid="loading-skeleton" />

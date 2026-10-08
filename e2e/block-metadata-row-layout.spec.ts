@@ -2,10 +2,11 @@
  * #5332 item 9 — a block's metadata chips stay on their own row under its text
  * at every width, the leading controls (task checkbox, drag handle) sit on the
  * FIRST line of a wrapped block, and the page editor and the journal's block
- * views are capped at the 46rem reading width. Item 7: on desktop the control
- * lane hangs in the margin, so a depth-0 checkbox lines up with the heading
- * above the tree. This is geometry, which happy-dom cannot measure, so it
- * asserts real layout boxes.
+ * views are capped at the 46rem reading width, centred in the content pane, with
+ * their header actions ending at the column's edge (#5354). Item 7: on desktop
+ * the control lane hangs in the margin, so a depth-0 checkbox lines up with the
+ * heading above the tree. This is geometry, which happy-dom cannot measure, so
+ * it asserts real layout boxes.
  */
 
 import { devices, type Locator, type Page } from '@playwright/test'
@@ -154,27 +155,102 @@ test.describe('Block metadata row layout, phone (#5332)', () => {
   })
 })
 
-test.describe('Reading width, desktop (#5332)', () => {
+/**
+ * The column's gaps to the content pane, the main scroll viewport's client box
+ * (right of the sidebar, left of any scrollbar). One layout pass reads both, so
+ * a sidebar still animating cannot skew them.
+ */
+function gapsInPane(column: Locator): Promise<{ left: number; right: number }> {
+  return column.evaluate((el) => {
+    const pane = document.querySelector(
+      '[data-slot="main-content"] > [data-slot="scroll-area-viewport"]',
+    )
+    if (!(pane instanceof HTMLElement)) throw new Error('main-content viewport not found')
+    const paneLeft = pane.getBoundingClientRect().left + pane.clientLeft
+    const r = el.getBoundingClientRect()
+    return { left: r.left - paneLeft, right: paneLeft + pane.clientWidth - r.right }
+  })
+}
+
+async function expectCentredInPane(column: Locator, what: string) {
+  const gaps = await gapsInPane(column)
+  expect(
+    Math.abs(gaps.left - gaps.right),
+    `${what}: left gap ${gaps.left} vs right gap ${gaps.right}, px`,
+  ).toBeLessThanOrEqual(1)
+}
+
+async function expectEndsAtRightEdge(action: Locator, column: Locator, what: string) {
+  const a = await box(action)
+  const c = await box(column)
+  expect(
+    Math.abs(a.x + a.width - (c.x + c.width)),
+    `${what} vs the column's right edge, px`,
+  ).toBeLessThanOrEqual(1)
+}
+
+async function setSidebar(page: Page, state: 'open' | 'collapsed') {
+  if (state === 'open') return
+  const sidebar = page.locator('[data-slot="sidebar"]')
+  await sidebar.getByRole('button', { name: 'Collapse sidebar', exact: true }).click()
+  await expect(sidebar).toHaveAttribute('data-state', 'collapsed')
+  // The pane widens with the sidebar's width transition; measure after it.
+  const gap = page.locator('[data-slot="sidebar-gap"]')
+  await expect.poll(() => gap.evaluate((el) => el.getAnimations().length)).toBe(0)
+}
+
+test.describe('Reading width, desktop (#5332, #5354)', () => {
   test.use({ viewport: { width: 1440, height: 900 } })
 
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
   })
 
-  test('the page editor is capped at the reading width', async ({ page }) => {
-    await openPage(page, PAGE)
-    expect((await box(page.locator('.page-editor'))).width).toBe(READING_WIDTH)
-  })
+  for (const sidebar of ['open', 'collapsed'] as const) {
+    test(`sidebar ${sidebar}: the page editor is capped and centred, its header actions end at its edge`, async ({
+      page,
+    }) => {
+      await openPage(page, PAGE)
+      await setSidebar(page, sidebar)
+      const column = page.locator('.page-editor')
+      expect((await box(column)).width).toBe(READING_WIDTH)
+      await expectCentredInPane(column, 'page editor')
 
-  test('journal block views are capped; the month grid keeps the full width', async ({ page }) => {
-    const panel = page.getByRole('tabpanel')
-    await page.getByRole('tab', { name: 'Daily view' }).click()
-    expect((await box(panel)).width).toBe(READING_WIDTH)
+      // Page actions is the last of the header's actions, right of the Star.
+      await expectEndsAtRightEdge(
+        page.getByRole('button', { name: 'Page actions', exact: true }),
+        column,
+        'Page actions',
+      )
+    })
 
-    await page.getByRole('tab', { name: 'Monthly view' }).click()
-    await expect(page.locator('[role="gridcell"]').first()).toBeVisible()
-    expect((await box(panel)).width).toBeGreaterThan(READING_WIDTH)
-  })
+    test(`sidebar ${sidebar}: journal day and stream are capped and centred, the month grid is full width`, async ({
+      page,
+    }) => {
+      await setSidebar(page, sidebar)
+      const panel = page.getByRole('tabpanel')
+      const templateButton = page.getByRole('button', {
+        name: 'Configure journal template',
+        exact: true,
+      })
+
+      await page.getByRole('tab', { name: 'Daily view' }).click()
+      await expect(templateButton).toBeVisible()
+      expect((await box(panel)).width).toBe(READING_WIDTH)
+      await expectCentredInPane(panel, 'daily column')
+      await expectEndsAtRightEdge(templateButton, panel, 'journal template button')
+
+      await page.getByRole('tab', { name: 'Continuous stream view' }).click()
+      const stream = page.getByTestId('journal-stream')
+      await expect(stream).toBeVisible()
+      expect((await box(stream)).width).toBe(READING_WIDTH)
+      await expectCentredInPane(stream, 'stream column')
+
+      await page.getByRole('tab', { name: 'Monthly view' }).click()
+      await expect(page.locator('[role="gridcell"]').first()).toBeVisible()
+      expect((await box(panel)).width).toBeGreaterThan(READING_WIDTH)
+    })
+  }
 })
 
 test.describe('Control lane hangs in the margin, desktop (#5332)', () => {

@@ -515,7 +515,9 @@ export function PageHeader({ pageId, title, onBack, onEditSource, kebabRef }: Pa
   return (
     <>
       <ViewHeader>
-        <div className="page-header space-y-2">
+        {/* Capped and centred like `.page-editor`, so the title and its
+            actions line up with the column below the outlet. */}
+        <div className="page-header space-y-2 max-w-reading mx-auto">
           {/* Title row: the title, the star and the page-actions kebab,
               which holds every other page action. If the title is wider
               than the row, the two icons wrap right-aligned below it; the
