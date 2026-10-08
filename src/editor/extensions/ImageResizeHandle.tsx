@@ -12,7 +12,7 @@
  */
 
 import type React from 'react'
-import { useEffect, useEffectEvent, useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 
 /** Narrowest width a resize sets; any smaller and the handle covers the image. */
 const MIN_WIDTH = 32
@@ -81,8 +81,11 @@ export function ImageResizeHandle({
     return () => observer.disconnect()
   }, [])
 
-  // An effect event, so the document listener below reads this render's width.
-  const resizeFromKey = useEffectEvent((e: KeyboardEvent) => {
+  // Keys stay with the handle, away from the page's shortcuts; Tab still moves
+  // focus by default. Escape never gets here: the block keyboard handler takes
+  // it first, to leave editing.
+  const onKeyDown = (e: React.KeyboardEvent) => {
+    e.stopPropagation()
     const direction = KEY_DIRECTION[e.key]
     if (direction !== undefined) {
       e.preventDefault()
@@ -92,26 +95,7 @@ export function ImageResizeHandle({
       e.preventDefault()
       onCommit(null)
     }
-  })
-
-  // The block keyboard handler listens in the capture phase on the editor's
-  // DOM, and React dispatches a node view's events from the view's own DOM
-  // below it, so even a React capture handler here runs after that handler has
-  // acted on the editor's stale selection (ArrowLeft → previous block,
-  // Backspace → merge or delete). A capture listener on `document` runs first,
-  // as for the MathNodeView source field. Every key but Escape — the editor's
-  // way out — stays here; Tab still moves focus by default.
-  useEffect(() => {
-    const handle = ref.current
-    if (handle === null) return undefined
-    const containKeys = (e: KeyboardEvent) => {
-      if (e.target !== handle || e.key === 'Escape') return
-      e.stopPropagation()
-      resizeFromKey(e)
-    }
-    document.addEventListener('keydown', containKeys, true)
-    return () => document.removeEventListener('keydown', containKeys, true)
-  }, [])
+  }
 
   const endDrag = (): Drag | null => {
     const drag = dragRef.current
@@ -130,9 +114,6 @@ export function ImageResizeHandle({
       aria-valuemin={MIN_WIDTH}
       aria-valuemax={range.max}
       aria-valuenow={range.width}
-      // Focus moving here blurs the contenteditable; the tag keeps
-      // `useEditorBlur` from flushing the block and unmounting this node view.
-      data-editor-portal=""
       className="touch-target absolute right-0 bottom-0 flex cursor-nwse-resize touch-none items-end justify-end rounded-sm transition-opacity focus-ring-visible opacity-0 group-hover/image:opacity-100 focus-visible:opacity-100 [@media(pointer:coarse)]:opacity-100"
       onPointerDown={(e) => {
         // Cancelling the press suppresses its mousedown, so the editor keeps
@@ -154,6 +135,7 @@ export function ImageResizeHandle({
       onTouchMove={stopTouch}
       onTouchEnd={stopTouch}
       onDoubleClick={() => onCommit(null)}
+      onKeyDown={onKeyDown}
     >
       <span
         aria-hidden="true"

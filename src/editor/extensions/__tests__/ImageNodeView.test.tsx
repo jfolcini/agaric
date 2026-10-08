@@ -16,12 +16,14 @@
  * render in the test environment (see components AGENTS.md).
  */
 
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, renderHook, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import type { Editor } from '@tiptap/core'
 import { createPortal } from 'react-dom'
 import { afterEach, describe, expect, it, onTestFinished, vi } from 'vitest'
 
 import { axe } from '@/__tests__/helpers/axe'
+import { type BlockKeyboardCallbacks, useBlockKeyboard } from '@/editor/use-block-keyboard'
 import { EDITOR_PORTAL_SELECTOR } from '@/hooks/useEditorBlur'
 import { t } from '@/lib/i18n'
 
@@ -301,24 +303,53 @@ describe('ImageNodeView resize (#4712)', () => {
     expect(fireEvent.pointerDown(handle(), { clientX: 0, pointerId: 1 })).toBe(false)
   })
 
-  it('keeps the editor mounted when focus moves onto the handle', () => {
+  it('keeps the editor mounted when focus moves onto any of its controls', () => {
     // `useEditorBlur` ignores a blur whose new focus target sits under this
-    // selector; without it, focusing the handle unmounts the node view.
-    const { handle } = renderNodeView('a cat')
-    expect(handle().closest(EDITOR_PORTAL_SELECTOR)).not.toBeNull()
+    // selector; without it, Tab onto the collapse toggle or the handle unmounts
+    // the node view and drops focus to the page.
+    render(<ImageNodeView {...makeProps('a cat', '/c.png')} />)
+    expect(screen.getByTestId('image-node-view').matches(EDITOR_PORTAL_SELECTOR)).toBe(true)
   })
 
-  it('keeps every key but Escape from the block keyboard handler', async () => {
+  it('keeps every key but Escape from the block keyboard handler and the page', async () => {
     layOutImageAt(300)
     const user = userEvent.setup()
     const { editorDom, updateAttributes, handle } = renderInEditor('a cat|300')
-    // The block keyboard handler's capture listener on the editor's DOM.
-    const blockKeyboard = vi.fn()
-    editorDom.addEventListener('keydown', blockKeyboard, true)
+    // The real block keyboard handler, with the caret at both ends of a
+    // non-empty block, where ArrowLeft, ArrowRight, Backspace and Enter all
+    // act on the block.
+    const blockActions = vi.fn()
+    const callbacks = Object.fromEntries(
+      [
+        'onFocusPrev',
+        'onFocusNext',
+        'onDeleteBlock',
+        'onIndent',
+        'onDedent',
+        'onFlush',
+        'onMergeWithPrev',
+        'onEnterSave',
+        'onEscapeSave',
+      ].map((name) => [name, () => blockActions(name)]),
+    ) as unknown as BlockKeyboardCallbacks
+    const editor = {
+      view: { dom: editorDom.firstElementChild },
+      state: { selection: { from: 1, to: 1, empty: true }, doc: { content: { size: 2 } } },
+      isEmpty: false,
+      isDestroyed: false,
+      on: () => {},
+      off: () => {},
+    } as unknown as Editor
+    renderHook(() => useBlockKeyboard(editor, callbacks))
+    // The page's own shortcuts listen on the document.
+    const pageShortcuts = vi.fn()
+    document.addEventListener('keydown', pageShortcuts)
+    onTestFinished(() => document.removeEventListener('keydown', pageShortcuts))
     handle.focus()
 
     await user.keyboard('{ArrowLeft}{ArrowRight}{Home}{Backspace}{Delete}{Enter}')
-    expect(blockKeyboard).not.toHaveBeenCalled()
+    expect(blockActions).not.toHaveBeenCalled()
+    expect(pageShortcuts).not.toHaveBeenCalled()
     expect(updateAttributes.mock.calls).toEqual([
       [{ alt: 'a cat|290' }],
       [{ alt: 'a cat|310' }],
@@ -326,24 +357,7 @@ describe('ImageNodeView resize (#4712)', () => {
     ])
 
     await user.keyboard('{Escape}')
-    expect(blockKeyboard).toHaveBeenCalledOnce()
-  })
-
-  it('leaves keys typed anywhere but the handle to the editor', async () => {
-    const user = userEvent.setup()
-    const { editorDom, updateAttributes } = renderInEditor('a cat|300')
-    // Stands in for the contenteditable the caret lives in.
-    const text = document.createElement('p')
-    text.tabIndex = 0
-    editorDom.append(text)
-    const blockKeyboard = vi.fn()
-    editorDom.addEventListener('keydown', blockKeyboard, true)
-    text.focus()
-
-    await user.keyboard('{ArrowRight}{Backspace}')
-
-    expect(blockKeyboard).toHaveBeenCalledTimes(2)
-    expect(updateAttributes).not.toHaveBeenCalled()
+    expect(blockActions.mock.calls).toEqual([['onEscapeSave']])
   })
 
   it('claims the keys it acts on, so the page does not scroll, but leaves Tab to move focus', () => {

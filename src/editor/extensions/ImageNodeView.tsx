@@ -51,6 +51,10 @@ export function ImageNodeView(props: NodeViewProps): React.ReactElement {
       // contentEditable=false — an atom; src/alt are edited as markdown text, not
       // as inline ProseMirror content.
       contentEditable={false}
+      // Focus moving onto a control in here (the collapse toggle, "Load", the
+      // resize handle) blurs the contenteditable; the tag keeps `useEditorBlur`
+      // from flushing the block and unmounting this node view.
+      data-editor-portal=""
     >
       <CollapsibleImage
         src={src}

@@ -33,13 +33,16 @@ survives editing the block, and an image index does not.
 
 Two things the code shape depends on:
 
-- **Keys go through a `document` capture listener.** `use-block-keyboard`
-  listens in the capture phase on the editor's parent. A TipTap node view
-  dispatches React events from its portal below that, so even a React
-  capture handler ran after ArrowLeft had already moved to the previous
-  block. MathNodeView solves this the same way. A real-Chromium check
-  found the bug after the unit tests had passed; the tests now mount
-  through a portal and were red against the first version.
+- **The block keyboard handler leaves the handle its keys.**
+  `use-block-keyboard` listens in the capture phase on the editor's
+  parent. A TipTap node view dispatches React events from its portal
+  below that, so the handler acted first and ArrowLeft moved to the
+  previous block. It now ignores a key whose target is inside the
+  contenteditable but is not the contenteditable itself, Escape aside,
+  so the handle takes its keys in a plain React `onKeyDown`. A
+  real-Chromium check found the bug after the unit tests had passed; the
+  tests now mount through a portal and were red against the first
+  version.
 - **`aria-valuemax` is the editor's width.** Without it ARIA's default of
   100 clamps `aria-valuenow`. The CDP accessibility tree reported 100 for
   a 300 px image.
@@ -48,11 +51,23 @@ Touch events stop at the handle. Without that, a leftward drag reaches
 the block row's swipe gesture, which deletes the block. This was checked
 under iPhone emulation.
 
+## Tab onto the image's controls
+
+With the Tab-indent preference off, Tab from the editor landed on the
+#4711 collapse toggle. The contenteditable blurred, `useEditorBlur` found
+no `data-editor-portal` above the toggle and unmounted the editor, so
+focus fell to `<body>`. With the editor kept mounted, the toggle's keys
+still went to the block keyboard handler: Enter saved the block and
+opened a new one instead of folding the image, and ArrowRight moved to
+the next block. Chromium showed both. The tag now sits on the image node
+view's wrapper, so every control in it (the toggle, "Load", the resize
+handle) keeps the editor mounted. It is not on `CollapsibleImage`, whose
+static copies would then count as open popups in `useEditorBlur`'s
+step 4b and block every unmount. The key guard above is the other half,
+and it replaced the handle's `document` listener.
+
 ## Not done
 
-- With the Tab-indent preference off, Tabbing from the editor onto the
-  #4711 collapse toggle unmounts the editor and drops focus to `<body>`.
-  That is pre-existing and outside this change.
 - A drag past the editor edge stores the dragged width, which is then
   drawn capped at the block width. That follows from resizing from what
   the reader sees, and the next resize starts from the drawn width.
@@ -72,3 +87,11 @@ under iPhone emulation.
     handle, all killed.
   - The e2e goes red when the key listener stops taking keys first, and
     when the pointerdown is no longer cancelled.
+- The Tab fix: a second e2e test turns Tab-indent off, tabs onto the
+  toggle, folds the image with Enter and leaves with Escape. It is red on
+  the previous code, without the wrapper's tag, without the key guard,
+  and without the guard's Escape exception, and so is the resize test
+  for the last three. The handle's key test now drives the real block
+  keyboard handler and passes against both the old `document` listener
+  and the new `onKeyDown`. Each new or changed unit test was red
+  against a mutant.

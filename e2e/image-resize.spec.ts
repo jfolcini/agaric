@@ -1,11 +1,12 @@
 /**
  * E2E for #4712 — resizing an inline image in the editor.
  *
- * Two things only a real browser shows: pressing the handle must leave focus
- * and the caret in the text, so typing carries on after a drag, and the
- * handle's keys must beat the block keyboard handler, which listens on the
- * editor's DOM above the node view's React portal and would take ArrowRight to
- * the next block.
+ * Three things only a real browser shows: pressing the handle must leave focus
+ * and the caret in the text, so typing carries on after a drag; the handle's
+ * keys must beat the block keyboard handler, which listens on the editor's DOM
+ * above the node view's React portal and would take ArrowRight to the next
+ * block; and Tab, when it moves focus, must reach the image's controls without
+ * unmounting the editor.
  */
 import { expect, focusBlock, openPage, saveBlock, test, waitForBoot } from './helpers'
 
@@ -53,5 +54,33 @@ test.describe('inline image resize (#4712)', () => {
       'width',
       '210px',
     )
+  })
+
+  test('with Tab-indent off, Tab reaches the collapse toggle and the editor stays', async ({
+    page,
+  }) => {
+    // Read on every keystroke, so it applies without a reload.
+    await page.evaluate(() => localStorage.setItem('agaric-tab-indents-blocks', 'false'))
+    const editor = await focusBlock(page)
+    await page.keyboard.press('Control+a')
+    await page.keyboard.press('Delete')
+    await editor.type(`![a cat](${IMG_URL}) done`)
+    const nodeView = page.getByTestId('image-node-view')
+    await expect(nodeView.locator('img[alt="a cat"]')).toBeVisible()
+
+    await page.keyboard.press('Tab')
+    const toggle = nodeView.getByTestId('image-collapse-toggle')
+    await expect(toggle).toBeFocused()
+    await expect(editor).toBeVisible()
+
+    // Enter presses the toggle instead of saving the block and opening the next.
+    await page.keyboard.press('Enter')
+    await expect(nodeView.getByTestId('image-collapsed-label')).toHaveText('a cat')
+    await expect(toggle).toBeFocused()
+
+    await saveBlock(page, 'Escape')
+    await expect(
+      page.locator('[data-testid="block-static"] [data-testid="image-collapsed-label"]'),
+    ).toHaveText('a cat')
   })
 })
