@@ -29,10 +29,9 @@ agaric-sync/src/sync_daemon/android_multicast.rs
 # (`blocked_transition`) carries no `unsafe` at all.
 agaric-sync/src/sync_daemon/android_network_block.rs
 
-# #3847: installs the process-global Android `JavaVM` + Application `Context`
-# from `JNI_OnLoad` (`ndk_context::initialize_android_context` and
-# `JavaVM::from_raw` are both `unsafe`). Without it the first sync task to ask
-# `ndk_context` for the context aborted the process.
+# #3847: records the Android `JavaVM` + Application `Context` from
+# `JNI_OnLoad` for the multicast lock and network-block monitor
+# (`JavaVM::from_raw` is `unsafe`).
 agaric-sync/src/android_context.rs
 
 # #3847: the exported `JNI_OnLoad` symbol itself. Must be defined in the crate
