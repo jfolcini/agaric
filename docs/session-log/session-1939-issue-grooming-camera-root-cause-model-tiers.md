@@ -9,6 +9,16 @@ Decisions the maintainer pushed further than the first draft: #5371 moves every 
 - In Chromium with a fake camera against the mock backend, *Scan QR code* replaces Settings with "An unexpected error occurred". html5-qrcode's `start()` empties the `<section>` React renders into (`innerHTML = ""`), React's commit then fails `removeChild`, and the unmount cleanup's `stop()` throws a bare string, which the boundary shows as its fallback. With the library given its own empty `w-full` container, the same run shows a live preview. A first attempt with an `absolute inset-0` container rendered a 0px video, because html5-qrcode forces `position: relative` and sizes the video from the container's width; that constraint is in the issue.
 - A PyGObject probe of WebKitGTK 2.52.6 configured as wry 0.57 does it showed `getUserMedia` rejected with `NotAllowedError` until a `permission-request` handler allows `UserMediaPermissionRequest`, after which a mock camera delivered 640×480 video. This corrects this session's own first draft of #5386, which blamed `enable-media-stream`: it is on by default in 2.52.
 
-`.claude/skills/batch-issues/SKILL.md` § Model selection is updated for Opus 5.5, Sonnet 5.5 and Haiku 5.5. On Artificial Analysis's Intelligence Index (October 2026), Opus 5.5 (58) now leads Sonnet 5.5 (56) and Fable 5.1 (53), so high-risk builds move from `fable` to `opus` with a `fable` reviewer, and Haiku 5.5, unscored so far, takes read-only discovery only.
+`.claude/skills/batch-issues/SKILL.md` § Model selection now picks a model *and* an effort per role, each a point on the Pareto frontier of Artificial Analysis's Intelligence Index (v4.3.2) against cost per task for Anthropic models, read on 2026-10-08:
+- **The frontier** is Haiku 5.5 at every effort ($0.02–$0.21, 29–43), Sonnet 5.5 `high` ($0.88, 47), then Opus 5.5 `medium` · `high` · `xhigh` · `max` ($1.34–$5.98, 51–58).
+- **Fable 5.1 is dominated** at every effort, so it no longer builds.
+- **The new table:**
+  - discovery: Haiku `high`;
+  - mechanical: Sonnet `high`;
+  - typical: Opus `high`, the knee;
+  - high risk: Opus `xhigh`, reviewed by Sonnet `max`, a second model that is Anthropic's best on Terminal-Bench 4.0 (63.6% against Opus 5.5's 59.6%).
+- **Escalation** steps up the frontier and ends at Opus `max`.
+
+An earlier commit on this branch kept `fable` as the high-risk reviewer and left Haiku unscored; the frontier read replaced both.
 
 Verified: no product code changed; the scanner file patched for the reproduction was restored from a backup and `cmp`-checked, and `git diff` was clean before the skill edit. No suites were run for this docs-only change.
