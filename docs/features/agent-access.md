@@ -30,7 +30,7 @@ There are **two sockets**: a read-only one and a read-write one, each with its o
 }
 ```
 
-To give an agent the write tools, add a second server entry pointing `AGARIC_MCP_SOCKET` at the read-write socket. Cursor and Continue use the same shape under their respective MCP config keys. While a toggle is on, the *Agent access* settings tab shows that socket's exact path for the current install and its connection count, with *Disconnect all* while any agent is connected; the read-only side can also copy a ready-made snippet.
+To give an agent the write tools, add a second server entry pointing `AGARIC_MCP_SOCKET` at the read-write socket. Cursor and Continue use the same shape under their respective MCP config keys. While a toggle is on, the *Agent access* settings tab shows that socket's exact path for the current install and its connection count, with *Disconnect all* while any agent is connected; the read-only card copies ready-made snippets for both sockets: a Claude Desktop JSON with an `agaric-ro` and an `agaric-rw` entry, and `claude mcp add` commands for Claude Code.
 
 ## What agents can do
 

@@ -43,7 +43,7 @@ test.describe('Agent access settings tab', () => {
     await roToggle.click()
     await expect(roSocket).toHaveText('/mock/agaric-mcp-ro.sock')
     await expect(claudeConfig).toBeVisible()
-    await expect(page.getByRole('button', { name: 'Copy generic MCP config' })).toBeVisible()
+    await expect(page.getByRole('button', { name: 'Copy Claude Code commands' })).toBeVisible()
     await expect(page.getByText('No active connections.')).toBeVisible()
     await expect(rwSocket).toHaveCount(0)
 

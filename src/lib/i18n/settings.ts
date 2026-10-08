@@ -192,8 +192,8 @@ export const settings: Record<string, string> = {
     'Copy the appropriate snippet into your agent\u2019s configuration file.',
   'agentAccess.copyClaudeConfigButton': 'Copy Claude Desktop config',
   'agentAccess.claudeConfigCopied': 'Claude Desktop config copied',
-  'agentAccess.copyGenericConfigButton': 'Copy generic MCP config',
-  'agentAccess.genericConfigCopied': 'Generic MCP config copied',
+  'agentAccess.copyClaudeCodeCommandsButton': 'Copy Claude Code commands',
+  'agentAccess.claudeCodeCommandsCopied': 'Claude Code commands copied',
   'agentAccess.activityLabel': 'Recent activity',
   'agentAccess.activityEmpty':
     'No agent activity yet. When an agent connects, tool calls appear here.',
