@@ -980,10 +980,10 @@ const LANGUAGE_PREFERENCE: PreferenceDefinition<LanguagePreference> = {
   serialize: identity,
 }
 
-/** Editor/UI font-size choices (`src/hooks/useFontSize.ts`). */
+/** Block-text font-size choices (`src/hooks/useFontSize.ts`). */
 export type FontSize = 'small' | 'medium' | 'large'
 
-/** `agaric-font-size` — device-scoped bare-string editor/UI font size. */
+/** `agaric-font-size` — device-scoped bare-string block text font size. */
 const FONT_SIZE_PREFERENCE: PreferenceDefinition<FontSize> = {
   key: 'agaric-font-size',
   scope: 'device',

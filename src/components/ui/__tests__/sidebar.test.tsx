@@ -8,10 +8,12 @@
  */
 
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { Bookmark, Home } from 'lucide-react'
 import * as React from 'react'
 import { beforeEach, describe, expect, it } from 'vitest'
 import { axe } from 'vitest-axe'
 
+import { paletteIconsOf } from '@/__tests__/helpers/palette-icons'
 import {
   Sidebar,
   SidebarContent,
@@ -412,6 +414,53 @@ describe('Sidebar a11y', () => {
         </Sidebar>
       </SidebarProvider>,
     )
+    const results = await axe(baseElement, {
+      rules: { region: { enabled: false } },
+    })
+    expect(results).toHaveNoViolations()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// #5368 — nav row icons take the theme's icon color
+// ---------------------------------------------------------------------------
+
+describe('SidebarMenuButton icons', () => {
+  beforeEach(() => {
+    Object.defineProperty(window, 'innerWidth', {
+      value: 1024,
+      configurable: true,
+      writable: true,
+    })
+  })
+
+  it('paints the row icon with text-icon, and an icon text-* class wins', async () => {
+    const { baseElement } = render(
+      <SidebarProvider defaultOpen>
+        <Sidebar>
+          <SidebarContent>
+            <SidebarMenu>
+              <SidebarMenuItem>
+                <SidebarMenuButton isActive>
+                  <Home data-testid="nav-icon" />
+                  <span>Journal</span>
+                </SidebarMenuButton>
+              </SidebarMenuItem>
+              <SidebarMenuItem>
+                <SidebarMenuButton>
+                  <Bookmark className="text-star" />
+                  <span>Starred</span>
+                </SidebarMenuButton>
+              </SidebarMenuItem>
+            </SidebarMenu>
+          </SidebarContent>
+        </Sidebar>
+      </SidebarProvider>,
+    )
+    expect(paletteIconsOf(screen.getByRole('button', { name: 'Journal' }))).toEqual([
+      screen.getByTestId('nav-icon'),
+    ])
+    expect(paletteIconsOf(screen.getByRole('button', { name: 'Starred' }))).toEqual([])
     const results = await axe(baseElement, {
       rules: { region: { enabled: false } },
     })

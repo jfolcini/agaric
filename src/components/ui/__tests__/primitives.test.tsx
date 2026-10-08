@@ -10,10 +10,12 @@
 
 import { act, fireEvent, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { Plus, Trash2, WifiOff } from 'lucide-react'
 import * as React from 'react'
 import { describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
+import { paletteIconsOf } from '@/__tests__/helpers/palette-icons'
 import { CardButton } from '@/components/ui/card-button'
 import { CloseButtonIcon, closeButtonClassName } from '@/components/ui/close-button'
 import { FeaturePageHeader } from '@/components/ui/feature-page-header'
@@ -797,6 +799,33 @@ describe('IconButton', () => {
     )
     const btn = screen.getByTestId('star-btn')
     expect(btn).toHaveAttribute('data-starred', 'true')
+  })
+
+  it('paints a ghost icon with text-icon unless the icon or button sets a text color (#5368)', async () => {
+    const { container } = render(
+      <>
+        <IconButton tooltip="Add" ariaLabel="Add" variant="ghost">
+          <Plus data-testid="tinted" />
+        </IconButton>
+        <IconButton tooltip="Offline" ariaLabel="Offline" variant="ghost">
+          <WifiOff className="text-muted-foreground" />
+        </IconButton>
+        <IconButton
+          tooltip="Delete"
+          ariaLabel="Delete"
+          variant="ghost"
+          className="text-destructive"
+        >
+          <Trash2 />
+        </IconButton>
+      </>,
+    )
+    expect(paletteIconsOf(screen.getByRole('button', { name: 'Add' }))).toEqual([
+      screen.getByTestId('tinted'),
+    ])
+    expect(paletteIconsOf(screen.getByRole('button', { name: 'Offline' }))).toEqual([])
+    expect(paletteIconsOf(screen.getByRole('button', { name: 'Delete' }))).toEqual([])
+    expect(await axe(container)).toHaveNoViolations()
   })
 
   // #1735: Radix hover tooltips never open on a coarse-pointer tap, so the

@@ -10,10 +10,12 @@
  */
 
 import { render, screen } from '@testing-library/react'
+import { Plus, Star } from 'lucide-react'
 import type * as React from 'react'
 import { describe, expect, it } from 'vitest'
 import { axe } from 'vitest-axe'
 
+import { paletteIconsOf } from '@/__tests__/helpers/palette-icons'
 import { Button } from '@/components/ui/button'
 
 /** Helper: render a Button with a given size and return the DOM element. */
@@ -160,6 +162,76 @@ describe('Button', () => {
       expect(btn.className).toContain(`${iconRule}3`)
       expect(btn.className).not.toContain(`${iconRule}4`)
     }
+  })
+
+  // -- palette icons (#5368) ---------------------------------------------------
+
+  it('paints ghost and outline icons with text-icon', () => {
+    for (const variant of ['ghost', 'outline'] as const) {
+      render(
+        <Button variant={variant}>
+          <Plus data-testid={`${variant}-icon`} />
+          {variant}
+        </Button>,
+      )
+      const btn = screen.getByRole('button', { name: variant })
+      expect(paletteIconsOf(btn)).toEqual([screen.getByTestId(`${variant}-icon`)])
+    }
+  })
+
+  it('leaves filled and link variants on their own text color', () => {
+    for (const variant of ['default', 'destructive', 'secondary', 'link'] as const) {
+      render(
+        <Button variant={variant}>
+          <Plus />
+          {variant}
+        </Button>,
+      )
+      expect(paletteIconsOf(screen.getByRole('button', { name: variant }))).toEqual([])
+    }
+  })
+
+  it('lets a text-* class on the icon win over text-icon', () => {
+    render(
+      <Button variant="ghost">
+        <Plus data-testid="plain" />
+        <Star className="text-star" />
+        Both
+      </Button>,
+    )
+    const btn = screen.getByRole('button', { name: 'Both' })
+    expect(paletteIconsOf(btn)).toEqual([screen.getByTestId('plain')])
+  })
+
+  it('lets a text-* class on the button reach its icons', () => {
+    render(
+      <Button variant="ghost" className="text-muted-foreground hover:text-destructive">
+        <Plus />
+        Delete
+      </Button>,
+    )
+    expect(paletteIconsOf(screen.getByRole('button', { name: 'Delete' }))).toEqual([])
+  })
+
+  it('keeps the tint when the button sets only a text size or alignment', () => {
+    render(
+      <Button variant="outline" className="text-xs text-left">
+        <Plus data-testid="sized-icon" />
+        Add filter
+      </Button>,
+    )
+    const btn = screen.getByRole('button', { name: 'Add filter' })
+    expect(paletteIconsOf(btn)).toEqual([screen.getByTestId('sized-icon')])
+  })
+
+  it('has no a11y violations with a palette icon', async () => {
+    const { container } = render(
+      <Button variant="ghost">
+        <Plus />
+        Add
+      </Button>,
+    )
+    expect(await axe(container)).toHaveNoViolations()
   })
 
   // -- children (#1030) -------------------------------------------------------

@@ -73,7 +73,9 @@ export function DateChip({
         dispatchBlockEvent(eventName)
       }}
     >
-      <Icon className="h-3.5 w-3.5 flex-shrink-0" />
+      {/* The chips pin text-xs, where 1em stays 12px at every font size, so
+          their icons size from the setting itself (#5369). */}
+      <Icon className="size-[calc(var(--agaric-font-size,1rem)*0.875)] flex-shrink-0" />
       {compact}
     </button>
   )
@@ -94,20 +96,20 @@ const TASK_CHECKBOX_STYLES: Record<string, CheckboxStyle> = {
   DONE: {
     className: 'task-checkbox-done border-task-done bg-task-done flex items-center justify-center',
     testId: 'task-checkbox-done',
-    icon: <Check className="h-3 w-3 text-task-done-foreground" />,
+    icon: <Check className="size-[0.75em] text-task-done-foreground" />,
   },
   DOING: {
     className:
       'task-checkbox-doing border-task-doing bg-task-doing/20 flex items-center justify-center',
     testId: 'task-checkbox-doing',
-    icon: <div className="h-1.5 w-1.5 rounded-sm bg-task-doing" />,
+    icon: <div className="size-[0.375em] rounded-sm bg-task-doing" />,
   },
   CANCELLED: {
     // CANCELLED is visually "closed but not completed" — muted grey with an X glyph.
     className:
       'task-checkbox-cancelled border-task-cancelled bg-task-cancelled/20 flex items-center justify-center',
     testId: 'task-checkbox-cancelled',
-    icon: <X className="h-3 w-3 text-task-cancelled" />,
+    icon: <X className="size-[0.75em] text-task-cancelled" />,
   },
   TODO: {
     className: 'task-checkbox-todo border-muted-foreground',
@@ -116,7 +118,7 @@ const TASK_CHECKBOX_STYLES: Record<string, CheckboxStyle> = {
   _custom: {
     className:
       'task-checkbox-custom border-task-custom bg-task-custom/20 flex items-center justify-center',
-    icon: <div className="h-1.5 w-1.5 rounded-full bg-task-custom" />,
+    icon: <div className="size-[0.375em] rounded-full bg-task-custom" />,
   },
   _empty: EMPTY_STYLE,
 }
@@ -126,7 +128,7 @@ export function TaskCheckbox({ state }: { state: string | null | undefined }) {
   const style = TASK_CHECKBOX_STYLES[key] ?? EMPTY_STYLE
   return (
     <div
-      className={cn('task-checkbox h-4 w-4 rounded border-2', style.className)}
+      className={cn('task-checkbox size-[1em] rounded border-2', style.className)}
       data-testid={style.testId}
     >
       {style.icon}
@@ -387,7 +389,7 @@ function RepeatIndicator({ repeatValue }: { repeatValue: string }): React.ReactE
       className="repeat-indicator flex items-center gap-0.5 rounded-full px-1.5 py-0.5 text-xs font-medium leading-none select-none bg-indicator-repeat text-indicator-repeat-foreground max-sm:px-2.5 max-sm:py-1"
       aria-label={t('block.repeats', { value: repeatValue })}
     >
-      <Repeat className="h-3 w-3 flex-shrink-0" />
+      <Repeat className="size-[calc(var(--agaric-font-size,1rem)*0.75)] flex-shrink-0" />
       {formatRepeatLabel(repeatValue, t)}
     </span>
   )
@@ -438,7 +440,10 @@ function InlineProperties({
               }}
             >
               +{filteredProperties.length - inlinePropLimit}
-              <ChevronRight className="h-3 w-3 ml-0.5 opacity-60" aria-hidden="true" />
+              <ChevronRight
+                className="size-[calc(var(--agaric-font-size,1rem)*0.75)] ml-0.5 opacity-60"
+                aria-hidden="true"
+              />
             </button>
           </TooltipTrigger>
           <TooltipContent side="bottom" sideOffset={4}>
@@ -480,7 +485,7 @@ function AttachmentBadge({
           onMouseDown={(e) => e.preventDefault()}
           onClick={onToggleAttachments}
         >
-          <Paperclip className="h-3 w-3 flex-shrink-0" />
+          <Paperclip className="size-[calc(var(--agaric-font-size,1rem)*0.75)] flex-shrink-0" />
           {attachmentCount}
         </button>
       </TooltipTrigger>

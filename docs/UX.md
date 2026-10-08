@@ -114,7 +114,7 @@ The cross-feature primitives most worth knowing (not exhaustive — see `src/com
 ## Conventional patterns
 
 - **Button hierarchy.** `outline` for the primary action. `ghost` for secondary / icon-only. `destructive` reserved for irreversible deletes (purge from trash, etc.) — restricted because misuse trains the user to ignore the colour.
-- **Icons.** Lucide only. One icon per action across the app (e.g., `Trash2` is delete everywhere — never `X` or `MinusCircle`).
+- **Icons.** Lucide only. One icon per action across the app (e.g., `Trash2` is delete everywhere — never `X` or `MinusCircle`). In ghost and outline buttons and sidebar nav rows, icons take `--icon`: their parent's ink in Light, Dark and high contrast, the palette accent in the alternate themes (3:1 on the page, hover, sidebar and active-row fills). A text color on the button, or any `text-*` class on the icon, keeps its own color, so semantic icons (delete, star, status) never pick up the tint; a text size or alignment on the button does not.
 - **Toasts.** Use `notify()` (wraps sonner) — never call sonner directly. Standard durations are defined in `src/lib/notify.ts` (short for ops feedback, longer for Undo / warnings). Partial-failure operations show a `Retry` action: `notify.error(msg, { action: { label: t('action.retry'), onClick: ... } })`.
 - **Confirmation dialogs.** Always Radix `AlertDialog` (via `ConfirmDialog`). Never a custom `<div>` — focus trap + Escape handling must work. Destructive variants focus Cancel by default.
 - **Mobile dialog swap.** `useDialogOrSheet` renders dialogs as bottom Sheets on phones, same `open` / `onOpenChange` API. AlertDialog auto-closes on action; Sheet needs explicit `onOpenChange(false)`.

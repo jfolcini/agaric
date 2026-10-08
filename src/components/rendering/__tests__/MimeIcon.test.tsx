@@ -43,8 +43,8 @@ describe('MimeIcon', () => {
   it('shares the canonical sizing classes used across attachment surfaces', () => {
     const { container } = render(<MimeIcon mimeType="text/plain" />)
     const svg = container.querySelector('svg')
-    expect(svg?.classList.value).toContain('h-4')
-    expect(svg?.classList.value).toContain('w-4')
+    // The font-size setting, not em: the chips that host it pin text-xs (#5369).
+    expect(svg?.classList.value).toContain('size-[var(--agaric-font-size,1rem)]')
     expect(svg?.classList.value).toContain('shrink-0')
     expect(svg?.classList.value).toContain('text-muted-foreground')
   })
