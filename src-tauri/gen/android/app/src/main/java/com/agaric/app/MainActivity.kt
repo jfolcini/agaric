@@ -7,6 +7,7 @@ import android.view.ViewGroup
 import android.webkit.JavascriptInterface
 import android.webkit.WebView
 import androidx.activity.enableEdgeToEdge
+import androidx.core.graphics.Insets
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
@@ -121,9 +122,8 @@ class MainActivity : TauriActivity() {
     ViewCompat.setOnApplyWindowInsetsListener(webView) { view, insets ->
       // systemBars() covers the status and navigation bars; displayCutout() is
       // unioned in so a notch taller than the status bar still clears.
-      val safe = insets.getInsets(
-        WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout(),
-      )
+      val padded = WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout()
+      val safe = insets.getInsets(padded)
       // There is deliberately NO `?: view` fallback here. Padding the WEBVIEW
       // insets the web content but leaves the webview itself occupying the bar
       // strip, so the status bar window keeps swallowing touches over the
@@ -173,9 +173,19 @@ class MainActivity : TauriActivity() {
       ) {
         host.setPadding(safe.left, safe.top, safe.right, safe.bottom)
       }
-      // Returned unconsumed: nothing else in this activity reads insets today,
-      // and consuming them would silently break anything that later does.
-      insets
+      // This listener replaces the webview's own `onApplyWindowInsets`, where
+      // Chromium reads the ime() inset and shrinks `window.visualViewport` by
+      // the overlap — the web layer's only keyboard signal
+      // (`src/lib/keyboard-inset.ts`). Forward the rest to it, with the types
+      // the host padding already cleared zeroed so the web content does not
+      // see them again as `env(safe-area-inset-*)` (#5353). Needs WebView
+      // M139+ and Android 12+: `WebView.onApplyWindowInsets` only delegates to
+      // Chromium from API 31, and on Android 11 Chromium's own listener is what
+      // this one replaced, so there the keyboard still covers the sheet.
+      ViewCompat.onApplyWindowInsets(
+        view,
+        WindowInsetsCompat.Builder(insets).setInsets(padded, Insets.NONE).build(),
+      )
     }
   }
 
