@@ -84,7 +84,8 @@ function renderCalloutBlock(
       data-testid="callout-block"
     >
       <div className={cn('flex items-center gap-1.5 font-semibold text-sm mb-1', config.textClass)}>
-        <CalloutIcon className="h-4 w-4 shrink-0" aria-hidden="true" />
+        {/* The header pins text-sm, so the icon sizes from the setting itself (#5369). */}
+        <CalloutIcon className="size-[var(--agaric-font-size,1rem)] shrink-0" aria-hidden="true" />
         <span>{i18n.t(`callout.${knownType}`)}</span>
       </div>
       <div className="text-foreground">{children}</div>

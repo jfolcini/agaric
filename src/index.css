@@ -30,6 +30,8 @@
   --color-border: var(--border);
   --color-input: var(--input);
   --color-ring: var(--ring);
+  /* Icons in ghost / outline buttons and sidebar nav rows (#5368). */
+  --color-icon: var(--icon);
   --color-chart-1: var(--chart-1);
   --color-chart-2: var(--chart-2);
   --color-chart-3: var(--chart-3);
@@ -189,6 +191,9 @@
   /* Blue, not the brand red, so focus and selection never read as an error.
    * Painted opaque: 4.2:1 on --background. */
   --ring: oklch(0.58 0.17 255);
+  /* Ink, the parent's own color: red is the today marks and blue is focus
+   * (#5332), so only the alternate themes give icons a palette color. */
+  --icon: currentColor;
   --chart-1: oklch(0.646 0.222 41.116);
   --chart-2: oklch(0.6 0.118 184.714);
   --chart-3: oklch(0.398 0.07 227.392);
@@ -504,6 +509,9 @@
   --border: oklch(0.9 0.03 85);
   --input: oklch(0.93 0.03 85);
   --ring: oklch(0.61 0.13 235);
+  /* Solarized blue darkened from 0.61, which was 2.8:1 on the active nav row;
+   * 0.56 clears 3:1 on --background, --accent, --sidebar and --sidebar-accent. */
+  --icon: oklch(0.56 0.13 235);
   --chart-1: oklch(0.6 0.14 80); /* yellow */
   --chart-2: oklch(0.6 0.19 40); /* orange */
   --chart-3: oklch(0.59 0.22 30); /* red */
@@ -615,6 +623,7 @@
   --border: oklch(0.3 0.04 210);
   --input: oklch(0.3 0.04 210);
   --ring: oklch(0.61 0.13 235);
+  --icon: oklch(0.61 0.13 235); /* blue */
   --chart-1: oklch(0.6 0.14 80);
   --chart-2: oklch(0.6 0.19 40);
   --chart-3: oklch(0.59 0.22 30);
@@ -735,6 +744,7 @@
   --border: oklch(0.37 0.03 275);
   --input: oklch(0.37 0.03 275);
   --ring: oklch(0.72 0.18 295);
+  --icon: oklch(0.72 0.18 295); /* purple */
   --chart-1: oklch(0.72 0.18 295); /* purple */
   --chart-2: oklch(0.74 0.22 335); /* pink */
   --chart-3: oklch(0.87 0.13 200); /* cyan */
@@ -843,6 +853,7 @@
   --border: oklch(0.35 0.02 260);
   --input: oklch(0.35 0.02 260);
   --ring: oklch(0.73 0.13 235);
+  --icon: oklch(0.73 0.13 235); /* blue */
   --chart-1: oklch(0.73 0.13 235); /* blue */
   --chart-2: oklch(0.77 0.13 135); /* green */
   --chart-3: oklch(0.68 0.18 300); /* purple */
@@ -1089,6 +1100,12 @@
 }
 
 /* ── TipTap / ProseMirror editor ───────────────────────────────────── */
+
+/* The row controls inherit the font-size setting along with the block text,
+ * so icons sized in em scale with it; the app chrome stays at 1rem. */
+.block-tree {
+  font-size: var(--agaric-font-size, 1rem);
+}
 
 /* Match static block padding so text doesn't jump on focus/blur. */
 .ProseMirror {
@@ -1709,6 +1726,12 @@
   :focus-visible {
     outline: 3px solid currentColor;
     outline-offset: 2px;
+  }
+
+  /* Icons go back to their parent's ink in every theme: a palette tint is
+   * the lower-contrast choice. Later than the theme blocks, so it wins. */
+  :root {
+    --icon: currentColor;
   }
 
   /* High-contrast siblings for the per-space accent palette.

@@ -332,21 +332,34 @@ type Theme = (typeof THEMES)[number]
 const HIGH_CONTRAST_ROOT = highContrastBody(':root')
 const HIGH_CONTRAST_DARK = highContrastBody('.dark')
 
-function resolveToken(theme: Theme, highContrast: boolean, token: string): Oklch {
+function cascade(theme: Theme, highContrast: boolean): string[] {
   const highContrastLayers = theme.dark
     ? [HIGH_CONTRAST_DARK, HIGH_CONTRAST_ROOT]
     : [HIGH_CONTRAST_ROOT]
-  const cascade = [
+  return [
     ...(highContrast ? highContrastLayers : []),
     themeBlock(theme.selector),
     ...(theme.dark ? [themeBlock('.dark')] : []),
     themeBlock(':root'),
   ]
-  for (const css of cascade) {
+}
+
+function resolveToken(theme: Theme, highContrast: boolean, token: string): Oklch {
+  for (const css of cascade(theme, highContrast)) {
     const value = findOklch(css, token)
     if (value) return value
   }
   throw new Error(`--${token} resolves to no oklch() value for ${theme.theme}`)
+}
+
+/** The raw value of the cascade-winning `--token` declaration, oklch() or not. */
+function resolveDeclaration(theme: Theme, highContrast: boolean, token: string): string {
+  for (const css of cascade(theme, highContrast)) {
+    const values = [...css.matchAll(new RegExp(`--${token}\\s*:\\s*([^;]+);`, 'g'))]
+    const last = values.at(-1)?.[1]
+    if (last !== undefined) return last.trim()
+  }
+  throw new Error(`--${token} is not declared for ${theme.theme}`)
 }
 
 const THEME_PAIRS = [
@@ -461,5 +474,41 @@ describe('crimson, link and muted text clears WCAG AA in the default themes (#53
       resolveToken(theme, highContrast, bg),
     )
     expect(ratio).toBeGreaterThanOrEqual(AA_NORMAL)
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────
+// Icons (#5368).
+//
+// The alternate themes tint the icons in ghost / outline buttons and sidebar
+// nav rows from their palette, so each tint must clear 3:1 on every fill those
+// icons sit on: the page, a hovered button, the sidebar and the active nav row.
+// Light, Dark and high contrast keep ink icons (`currentColor`), whose
+// contrast is the foreground's, already pinned above.
+// ─────────────────────────────────────────────────────────────────────────
+
+const ICON_GROUNDS = ['background', 'accent', 'sidebar', 'sidebar-accent'] as const
+
+const ICON_CASES = THEMES.slice(2).flatMap((theme) =>
+  ICON_GROUNDS.map((bg) => ({ theme, bg, label: theme.theme })),
+)
+
+const INK_ICON_CASES = [
+  ...THEMES.slice(0, 2).map((theme) => ({ theme, highContrast: false, label: theme.theme })),
+  ...THEMES.map((theme) => ({
+    theme,
+    highContrast: true,
+    label: `${theme.theme} (high contrast)`,
+  })),
+]
+
+describe('icons clear 3:1 on their fills in every theme (#5368)', () => {
+  it.each(ICON_CASES)('$label — --icon on --$bg', ({ theme, bg }) => {
+    const ratio = contrastRatio(resolveToken(theme, false, 'icon'), resolveToken(theme, false, bg))
+    expect(ratio).toBeGreaterThanOrEqual(NON_TEXT)
+  })
+
+  it.each(INK_ICON_CASES)('$label — icons keep their parent ink', ({ theme, highContrast }) => {
+    expect(resolveDeclaration(theme, highContrast, 'icon')).toBe('currentColor')
   })
 })

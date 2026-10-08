@@ -113,7 +113,7 @@ Tabbed configuration view. On desktop the tabs sit in a vertical rail, bucketed 
 
 - **Workspace**
   - **General** — deadline warning days, Quick Capture hotkey and launch-at-login (desktop), debug mode, reset spaces onboarding, show the welcome tour again.
-  - **Appearance** — language, theme (the palette's *Toggle theme* cycles auto / dark / light), font size, animations, tooltip delay, week start, journal date format.
+  - **Appearance** — language, theme (the palette's *Toggle theme* cycles auto / dark / light), font size, animations, tooltip delay, week start, journal date format. Font size scales note text and its row controls (checkboxes, gutter icons, chip and inline icons), not the app chrome: the sidebar, headers, toolbars and settings stay fixed.
   - **Editor** — the `:` emoji picker, *Tab indents blocks*, external images, link previews on hover.
   - **Keyboard** — full shortcut customisation (see [keyboard.md](keyboard.md)).
   - **Properties** — list of property definitions; rename, change type, edit select options.

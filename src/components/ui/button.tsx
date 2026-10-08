@@ -39,6 +39,9 @@ const buttonVariants = cva(
   },
 )
 
+/** Ghost and outline icons take the theme's icon color (#5368); a `text-*` on the icon wins. */
+const paletteIcons = "[&_svg:not([class*='text-'])]:text-icon"
+
 const Button = ({
   ref,
   className,
@@ -58,6 +61,12 @@ const Button = ({
     children?: React.ReactNode
   }) => {
   const Comp = asChild ? Slot.Root : 'button'
+  // A text color the caller sets on the button reaches its icons too, so a
+  // row action's red delete hover is not stopped at the glyph. tailwind-merge
+  // drops `text-icon` only for a color, so `text-xs` or `text-left` keep the tint.
+  const tintsIcons =
+    (variant === 'ghost' || variant === 'outline') &&
+    cn('text-icon', className).split(' ').includes('text-icon')
 
   return (
     <Comp
@@ -65,7 +74,7 @@ const Button = ({
       data-slot="button"
       data-variant={variant}
       data-size={size}
-      className={cn(buttonVariants({ variant, size }), className)}
+      className={cn(buttonVariants({ variant, size }), tintsIcons && paletteIcons, className)}
       {...props}
     />
   )

@@ -91,7 +91,7 @@ export const GutterButton = ({
         data-testid={testId}
         {...buttonProps}
       >
-        <Icon className="h-4 w-4" />
+        <Icon className="size-[1em]" />
       </button>
     </TooltipTrigger>
     <TooltipContent side="bottom" sideOffset={4}>
@@ -177,7 +177,7 @@ export const BlockGutterControls = React.memo(
               onClick={(e) => e.stopPropagation()}
               onPointerDown={(e) => e.stopPropagation()}
               className={cn(
-                'block-select-checkbox flex-shrink-0 h-3.5 w-3.5 rounded border-border cursor-pointer',
+                'block-select-checkbox flex-shrink-0 size-[0.875em] rounded border-border cursor-pointer',
                 'transition-opacity focus-ring-visible',
                 isSelected
                   ? // Selected → always visible (selection feedback).
