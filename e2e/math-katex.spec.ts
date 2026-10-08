@@ -67,4 +67,36 @@ test.describe('KaTeX math round-trip (#1437)', () => {
     // No KaTeX rendering for currency text.
     await expect(block.locator('.katex')).toHaveCount(0)
   })
+
+  // The source field sits inside the editor's DOM while the editor's caret
+  // stays at the block start, where Backspace would merge into the block above.
+  test('Backspace in the source field of math at a block start edits the source', async ({
+    page,
+  }) => {
+    const blocks = page.locator('[data-testid="sortable-block"]')
+    const count = await blocks.count()
+    const editor = await focusBlock(page, 1)
+    await page.keyboard.press('Control+a')
+    await page.keyboard.press('Delete')
+    await editor.type('$x+y$ tail')
+    // Home sometimes misses while KaTeX is still loading in.
+    await expect(editor.locator('.katex')).toBeVisible()
+    await page.keyboard.press('Home')
+    // The editor reads the moved caret a moment later; open the source once it has.
+    await page.waitForFunction(() => {
+      const dom = document.querySelector(
+        '[data-testid="block-editor"] [contenteditable="true"]',
+      ) as HTMLElement & { editor: { state: { selection: { from: number } } } }
+      return dom.editor.state.selection.from === 1
+    })
+    await editor.getByTestId('math-rendered').click()
+    const source = page.getByTestId('math-source-input')
+    await expect(source).toBeFocused()
+    await expect(source).toHaveValue('x+y')
+
+    await page.keyboard.press('Backspace')
+
+    await expect(source).toHaveValue('x+')
+    await expect(blocks).toHaveCount(count)
+  })
 })

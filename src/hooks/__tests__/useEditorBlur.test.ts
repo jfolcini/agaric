@@ -127,7 +127,8 @@ function makeRovingEditor(
 /** Create a minimal React.FocusEvent-like object for the hook's handleBlur. */
 function makeFocusEvent(
   relatedTarget: HTMLElement | null = null,
-  currentTarget: HTMLElement | null = null,
+  // A React handler always has its element; this one stands in for the editor wrapper.
+  currentTarget: HTMLElement = document.createElement('section'),
 ) {
   return { relatedTarget, currentTarget } as unknown as React.FocusEvent
 }
@@ -345,6 +346,51 @@ describe('useEditorBlur', () => {
 
       expect(mockUnmount).toHaveBeenCalledOnce()
       expect(mockEdit).toHaveBeenCalledWith('B1', 'changed')
+    })
+  })
+
+  // -- Focus moving within the editor wrapper -----------------------------
+
+  describe('focus moving within the editor wrapper', () => {
+    function setup() {
+      const unmount = vi.fn<() => string | null>(() => 'changed')
+      const edit = vi.fn()
+      const { result } = renderHook(() =>
+        useEditorBlur({
+          rovingEditor: makeRovingEditor({ activeBlockId: 'B1', unmount }),
+          blockId: 'B1',
+          edit,
+          splitBlock: vi.fn(),
+          setFocused: vi.fn(),
+          discardDraft: vi.fn(),
+        }),
+      )
+      const wrapper = document.createElement('section')
+      const contentEditable = document.createElement('div')
+      wrapper.append(contentEditable)
+      return { handleBlur: result.current.handleBlur, unmount, edit, wrapper, contentEditable }
+    }
+
+    it('keeps the editor when focus moves from a control in it back to the text', () => {
+      const { handleBlur, unmount, edit, wrapper, contentEditable } = setup()
+
+      act(() => {
+        handleBlur(makeFocusEvent(contentEditable, wrapper))
+      })
+
+      expect(unmount).not.toHaveBeenCalled()
+      expect(edit).not.toHaveBeenCalled()
+    })
+
+    it('unmounts and saves when focus moves out of the wrapper', () => {
+      const { handleBlur, unmount, edit, wrapper } = setup()
+
+      act(() => {
+        handleBlur(makeFocusEvent(document.createElement('button'), wrapper))
+      })
+
+      expect(unmount).toHaveBeenCalledOnce()
+      expect(edit).toHaveBeenCalledWith('B1', 'changed')
     })
   })
 
