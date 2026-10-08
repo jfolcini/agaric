@@ -337,9 +337,6 @@ describe('JournalPage — Delete page empties the day (#5358)', () => {
     await act(async () => {
       await new Promise((r) => setTimeout(r, 0))
     })
-    await act(async () => {
-      await new Promise((r) => setTimeout(r, 0))
-    })
     const day = todaySection()
     expect(within(day).getByText(emptyMessage)).toBeInTheDocument()
     expect(day.querySelector('[data-testid^="sortable-block-"]')).toBeNull()

@@ -1586,7 +1586,7 @@
    a left rail plus a low-contrast ground, and a header strip naming where
    the content actually lives. The embedded subtree re-bases its indentation
    to depth 0 inside the container (see `selectEmbeddedRows`) — it does not
-   continue the host page's indent guides. */
+   continue the host page's indentation. */
 .embed-container {
   @apply my-1 rounded-md;
   border-left: 2px solid var(--embed-rail);

@@ -226,7 +226,6 @@ describe('AgentAccessTab — rendering', () => {
       '/home/test/.local/share/com.agaric.app/mcp-rw.sock',
     )
 
-    // Copy buttons visible (RO-only — RW config copy is out of scope)
     expect(screen.getByRole('button', { name: /Copy Claude Desktop config/i })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /Copy Claude Code commands/i })).toBeInTheDocument()
 
