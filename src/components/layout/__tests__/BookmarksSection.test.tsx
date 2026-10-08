@@ -485,6 +485,71 @@ describe('BookmarksSection', () => {
     })
   })
 
+  describe('reordering', () => {
+    /**
+     * dnd-kit finds the row an arrow key moves to by measuring the rows, and
+     * happy-dom lays nothing out. Stack them 40px apart, in DOM order.
+     */
+    function layOutRows(): void {
+      vi.spyOn(Element.prototype, 'getBoundingClientRect').mockImplementation(function (
+        this: Element,
+      ) {
+        const row = this.closest('[data-sidebar="menu-item"]')
+        const index = row?.parentElement ? [...row.parentElement.children].indexOf(row) : 0
+        return new DOMRect(0, index * 40, 200, 32)
+      })
+    }
+
+    /**
+     * X is a bookmark this space does not list (the backend does not resolve
+     * it here). Alpha moves across it, so a move computed over the visible
+     * list and written back would drop it.
+     */
+    it('moves a bookmark with Space, ArrowDown, Space, durably, without opening it', async () => {
+      const user = userEvent.setup()
+      writePreference(PREFERENCES.starredPages, ['A', 'X', 'B', 'C'])
+      useResolveStore.getState().batchSet([
+        { id: 'A', title: 'Alpha', deleted: false },
+        { id: 'B', title: 'Bravo', deleted: false },
+        { id: 'C', title: 'Charlie', deleted: false },
+      ])
+      layOutRows()
+
+      const { unmount } = renderSection()
+      await waitFor(() => {
+        expect(resolveArgs()).toHaveLength(1)
+      })
+      screen.getByRole('button', { name: 'Alpha' }).focus()
+      await user.keyboard('[Space][ArrowDown][Space]')
+
+      expect(readBookmarkIds()).toEqual(['X', 'B', 'A', 'C'])
+      expect(bookmarkLabels()).toEqual(['Bravo', 'Alpha', 'Charlie'])
+      // Announced by title: dnd-kit's default reads the id (#2943).
+      expect(screen.getByRole('status')).toHaveTextContent('Alpha dropped over Bravo.')
+      expect(useTabsStore.getState().tabs[0]?.pageStack).toEqual([])
+
+      unmount()
+      renderSection()
+      expect(bookmarkLabels()).toEqual(['Bravo', 'Alpha', 'Charlie'])
+    })
+
+    it('still opens the page on Enter', async () => {
+      const user = userEvent.setup()
+      bookmark([
+        { id: 'A', title: 'Alpha' },
+        { id: 'B', title: 'Bravo' },
+      ])
+
+      renderSection()
+      screen.getByRole('button', { name: 'Alpha' }).focus()
+      await user.keyboard('{Enter}')
+
+      const tab = useTabsStore.getState().tabs[0]
+      expect(tab?.pageStack.at(-1)).toMatchObject({ pageId: 'A', title: 'Alpha' })
+      expect(readBookmarkIds()).toEqual(['A', 'B'])
+    })
+  })
+
   describe('accessibility', () => {
     it('has no a11y violations with bookmarks listed', async () => {
       bookmark([{ id: 'A', title: 'Alpha' }])

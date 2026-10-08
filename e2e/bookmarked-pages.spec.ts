@@ -1,4 +1,6 @@
-import { expect, test, waitForBoot } from './helpers'
+import { devices, type Locator, type Page } from '@playwright/test'
+
+import { dragBlock, dragBlockTouch, expect, openMobileSidebar, test, waitForBoot } from './helpers'
 
 /**
  * E2E coverage for the PageBrowser's unified
@@ -27,6 +29,27 @@ import { expect, test, waitForBoot } from './helpers'
  * on mount. Persistence lives in localStorage at the `starred-pages`
  * key.
  */
+
+// Seed ids (`src/lib/tauri-mock/seed.ts`), in the order the reorder specs bookmark them.
+const BOOKMARKED = [
+  '00000000000000000000PAGE02', // Quick Notes
+  '00000000000000000000PAGE04', // Projects
+  '00000000000000000000PAGE05', // Meetings
+]
+
+/** Bookmark the seed pages directly in storage, then boot so the sidebar reads them. */
+async function bookmarkSeedPages(page: Page): Promise<void> {
+  await page.evaluate(
+    (ids) => window.localStorage.setItem('starred-pages', JSON.stringify(ids)),
+    BOOKMARKED,
+  )
+  await waitForBoot(page)
+}
+
+/** The sidebar's bookmark rows (the open buttons, not the remove actions). */
+function sidebarBookmarkRows(scope: Page | Locator) {
+  return scope.getByTestId('sidebar-bookmarks').locator('[data-sidebar="menu-button"]')
+}
 
 async function openPagesView(page: import('@playwright/test').Page) {
   await page
@@ -210,5 +233,63 @@ test.describe(' + PageBrowser unified Bookmarks + Pages model', () => {
     await expect(page.locator('[data-page-section="pages"]')).toBeVisible()
     // The `work` namespace folder appears inside `Pages`.
     await expect(page.getByText('work', { exact: true })).toBeVisible()
+  })
+})
+
+/**
+ * #5359 — the sidebar is the one surface that shows the stored bookmark order,
+ * and dragging a row rewrites it. A drag is not a click: the page it moved
+ * must not open.
+ */
+test.describe('Sidebar bookmark reorder', () => {
+  test.beforeEach(async ({ page }) => {
+    await waitForBoot(page)
+    await bookmarkSeedPages(page)
+  })
+
+  test('a mouse drag reorders bookmarks, and the order survives a reload', async ({ page }) => {
+    const rows = sidebarBookmarkRows(page)
+    await expect(rows).toHaveText(['Quick Notes', 'Projects', 'Meetings'])
+
+    await dragBlock(page, rows.nth(2), rows.nth(0))
+
+    await expect(rows).toHaveText(['Meetings', 'Quick Notes', 'Projects'])
+    // Still on the journal: opening the page would swap this header for its title.
+    await expect(page.getByTestId('journal-header')).toBeVisible()
+
+    await page.reload()
+    await expect(sidebarBookmarkRows(page)).toHaveText(['Meetings', 'Quick Notes', 'Projects'])
+  })
+})
+
+test.describe('Sidebar bookmark reorder on touch (iPhone viewport)', () => {
+  const iPhone13 = devices['iPhone 13']
+  test.use({
+    viewport: iPhone13.viewport,
+    hasTouch: iPhone13.hasTouch,
+    isMobile: iPhone13.isMobile,
+  })
+
+  test.beforeEach(async ({ page }) => {
+    await waitForBoot(page)
+    await bookmarkSeedPages(page)
+  })
+
+  test('a hold-then-drag reorders bookmarks and leaves the drawer open', async ({ page }) => {
+    const drawer = await openMobileSidebar(page)
+    const rows = sidebarBookmarkRows(drawer)
+    await expect(rows).toHaveText(['Quick Notes', 'Projects', 'Meetings'])
+    await rows.nth(2).scrollIntoViewIfNeeded()
+
+    await dragBlockTouch(page, rows.nth(2), rows.nth(0))
+
+    await expect(rows).toHaveText(['Meetings', 'Quick Notes', 'Projects'])
+    // Opening a bookmark closes the drawer; a drag must not. `data-state`, not
+    // visibility: a closing drawer stays visible through its exit animation.
+    await expect(drawer).toHaveAttribute('data-state', 'open')
+
+    await page.reload()
+    const reopened = await openMobileSidebar(page)
+    await expect(sidebarBookmarkRows(reopened)).toHaveText(['Meetings', 'Quick Notes', 'Projects'])
   })
 })

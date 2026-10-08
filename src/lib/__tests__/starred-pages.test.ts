@@ -11,7 +11,18 @@
 
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { getStarredPages, isStarred, setStarred, toggleStarred } from '@/lib/starred-pages'
+import {
+  getStarredPages,
+  isStarred,
+  moveStarred,
+  setStarred,
+  toggleStarred,
+} from '@/lib/starred-pages'
+
+/** What a restart reads: the raw stored array, not anything held in memory. */
+function storedOrder(): unknown {
+  return JSON.parse(localStorage.getItem('starred-pages') ?? 'null')
+}
 
 beforeEach(() => {
   localStorage.removeItem('starred-pages')
@@ -92,6 +103,43 @@ describe('starred-pages', () => {
       toggleStarred('P1')
       const raw = localStorage.getItem('starred-pages')
       expect(raw).toBe(JSON.stringify(['P1']))
+    })
+  })
+
+  describe('moveStarred', () => {
+    it('moves a bookmark down to the slot of the one it is dropped on', () => {
+      localStorage.setItem('starred-pages', JSON.stringify(['A', 'B', 'C']))
+      moveStarred('A', 'C')
+      expect(storedOrder()).toEqual(['B', 'C', 'A'])
+    })
+
+    it('moves a bookmark up to the slot of the one it is dropped on', () => {
+      localStorage.setItem('starred-pages', JSON.stringify(['A', 'B', 'C']))
+      moveStarred('C', 'A')
+      expect(storedOrder()).toEqual(['C', 'A', 'B'])
+    })
+
+    /**
+     * The sidebar lists only the active space's live bookmarks; X stands for
+     * one it does not show (another space's, or a trashed page). A move
+     * computed over the visible list and written back would drop it.
+     */
+    it('keeps an id the sidebar does not show when moving across it, both ways', () => {
+      localStorage.setItem('starred-pages', JSON.stringify(['A', 'X', 'B']))
+      moveStarred('B', 'A')
+      expect(storedOrder()).toEqual(['B', 'A', 'X'])
+
+      localStorage.setItem('starred-pages', JSON.stringify(['A', 'X', 'B']))
+      moveStarred('A', 'B')
+      expect(storedOrder()).toEqual(['X', 'B', 'A'])
+    })
+
+    it('leaves the order alone when either id is not bookmarked', () => {
+      localStorage.setItem('starred-pages', JSON.stringify(['A', 'B', 'C']))
+      moveStarred('A', 'GONE')
+      expect(storedOrder()).toEqual(['A', 'B', 'C'])
+      moveStarred('GONE', 'A')
+      expect(storedOrder()).toEqual(['A', 'B', 'C'])
     })
   })
 

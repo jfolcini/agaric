@@ -1,6 +1,6 @@
 import type { Locator, Page } from '@playwright/test'
 
-import { expect, focusBlockById, openPage, test, waitForBoot } from './helpers'
+import { expect, focusBlockById, openPage, selectEditorRange, test, waitForBoot } from './helpers'
 
 /**
  * #5160 D4 — multi-line text pasted into a block is read as blocks and spliced
@@ -59,13 +59,17 @@ async function pasteText(editor: Locator, text: string): Promise<void> {
   }, text)
 }
 
-/** Focus GS_1 holding "Hello world" and put the caret after "Hello ". */
+/**
+ * Focus GS_1 holding "Hello world" and put the caret after "Hello ". Not by
+ * arrow keys: the editor reads a key-moved caret on the next `selectionchange`,
+ * which the browser fires a moment later, so a paste dispatched straight after
+ * the last press lands where the caret was before it.
+ */
 async function caretMidBlock(page: Page): Promise<Locator> {
   await ipc(page, 'edit_block', { blockId: GS1, toText: 'Hello world' })
   await openPage(page, PAGE)
   const editor = await focusBlockById(page, GS1)
-  await editor.press('End')
-  for (let i = 0; i < 'world'.length; i++) await editor.press('ArrowLeft')
+  await selectEditorRange(page, 'Hello '.length, 'Hello '.length)
   return editor
 }
 

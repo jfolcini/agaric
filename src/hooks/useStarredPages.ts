@@ -25,10 +25,13 @@
 import { useCallback, useMemo } from 'react'
 
 import { PREFERENCES, usePreference } from '@/lib/preferences'
-import { setStarred, toggleStarred } from '@/lib/starred-pages'
+import { moveStarred, setStarred, toggleStarred } from '@/lib/starred-pages'
 
 export interface UseStarredPagesReturn {
-  /** Current starred page IDs. Reference-stable while contents are unchanged. */
+  /**
+   * Current starred page IDs, iterating in the user's stored order.
+   * Reference-stable while contents are unchanged.
+   */
   starredIds: ReadonlySet<string>
   /** Convenience predicate. Stable when `starredIds` is. */
   isStarred: (pageId: string) => boolean
@@ -40,6 +43,8 @@ export interface UseStarredPagesReturn {
    * write-before-broadcast ordering.
    */
   setMany: (ids: string[], starred: boolean) => void
+  /** Move a bookmark to `overId`'s place in the stored order (a sortable drop). */
+  move: (pageId: string, overId: string) => void
 }
 
 export function useStarredPages(): UseStarredPagesReturn {
@@ -62,5 +67,5 @@ export function useStarredPages(): UseStarredPagesReturn {
     setStarred(ids, starred)
   }, [])
 
-  return { starredIds, isStarred, toggle, setMany }
+  return { starredIds, isStarred, toggle, setMany, move: moveStarred }
 }

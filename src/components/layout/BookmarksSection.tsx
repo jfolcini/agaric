@@ -19,15 +19,45 @@
  * Bookmarks are device-local (`localStorage`), so they do not sync. Moving
  * them into the DB is the follow-up #4713 defers.
  *
+ * The list shows the stored order, and dragging a row (or Space, arrows,
+ * Space) rewrites it (#5359). This is the only surface that shows that order;
+ * the Pages browser's Bookmarks group follows its own sort.
+ *
  * The disclosure state is a per-client view preference, so it lives in the
  * preferences registry (`PREFERENCES.bookmarksCollapsed`) rather than with
  * the bookmarks themselves.
  */
 
+import {
+  type Announcements,
+  closestCenter,
+  DndContext,
+  type DragEndEvent,
+  KeyboardCode,
+  KeyboardSensor,
+  type KeyboardSensorOptions,
+  PointerSensor,
+  TouchSensor,
+  type UniqueIdentifier,
+  useSensor,
+  useSensors,
+} from '@dnd-kit/core'
+import {
+  SortableContext,
+  sortableKeyboardCoordinates,
+  useSortable,
+  verticalListSortingStrategy,
+} from '@dnd-kit/sortable'
+import { CSS } from '@dnd-kit/utilities'
 import { Bookmark, BookmarkX } from 'lucide-react'
 import { type ReactElement, useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { MOUSE_DRAG_ACTIVATION_DISTANCE } from '@/components/block-tree/use-block-dnd'
+import {
+  LONG_PRESS_DELAY,
+  LONG_PRESS_MOVE_THRESHOLD,
+} from '@/components/block-tree/use-block-touch-long-press'
 import { CollapsiblePanelHeader } from '@/components/common/CollapsiblePanelHeader'
 import {
   SidebarGroup,
@@ -38,6 +68,7 @@ import {
   SidebarMenuItem,
   useSidebar,
 } from '@/components/ui/sidebar'
+import { useIsTouch } from '@/hooks/useIsTouch'
 import { useStarredPages } from '@/hooks/useStarredPages'
 import { unwrap } from '@/lib/app-error'
 import { commands } from '@/lib/bindings'
@@ -45,6 +76,7 @@ import { resolveStoreTitle } from '@/lib/block-title'
 import { logger } from '@/lib/logger'
 import { getPageDisplayName } from '@/lib/page-display'
 import { PREFERENCES, usePreference } from '@/lib/preferences'
+import { cn } from '@/lib/utils'
 import { useResolveStore } from '@/stores/resolve'
 import { useSpaceStore } from '@/stores/space'
 import { useTabsStore } from '@/stores/tabs'
@@ -52,11 +84,81 @@ import { useTabsStore } from '@/stores/tabs'
 /** Shared empty set, so a space with nothing asked yet keeps a stable identity. */
 const EMPTY_IDS: ReadonlySet<string> = new Set()
 
+/**
+ * Space picks a bookmark up; Enter is left to the button, so it still opens
+ * the page. Enter and Tab still drop one that is already up.
+ */
+const KEYBOARD_SENSOR_OPTIONS: KeyboardSensorOptions = {
+  coordinateGetter: sortableKeyboardCoordinates,
+  keyboardCodes: {
+    start: [KeyboardCode.Space],
+    cancel: [KeyboardCode.Esc],
+    end: [KeyboardCode.Space, KeyboardCode.Enter, KeyboardCode.Tab],
+  },
+}
+
+interface BookmarkEntry {
+  pageId: string
+  title: string
+}
+
+interface SortableBookmarkProps extends BookmarkEntry {
+  onOpen: (pageId: string, title: string) => void
+  onRemove: (pageId: string) => void
+}
+
+/** One bookmark row. The whole button is the drag handle; the remove action is not. */
+function SortableBookmark({ pageId, title, onOpen, onRemove }: SortableBookmarkProps) {
+  const { t } = useTranslation()
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    setActivatorNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({ id: pageId })
+  const fullTitle = title || t('recent.untitled')
+  const label = getPageDisplayName(fullTitle, 'leaf').label
+
+  return (
+    <SidebarMenuItem
+      ref={setNodeRef}
+      style={{ transform: CSS.Translate.toString(transform), transition }}
+      className={cn(isDragging && 'z-10 rounded-md bg-sidebar-accent')}
+    >
+      <SidebarMenuButton
+        ref={setActivatorNodeRef}
+        tooltip={fullTitle}
+        title={fullTitle}
+        {...attributes}
+        {...listeners}
+        onClick={() => onOpen(pageId, title)}
+      >
+        <Bookmark />
+        <span className="truncate">{label}</span>
+      </SidebarMenuButton>
+      <SidebarMenuAction
+        showOnHover
+        aria-label={t('bookmarks.remove', { title: fullTitle })}
+        // `SidebarMenuAction` already grows its hit area by
+        // `after:-inset-2` (36px) on the mobile breakpoint; -inset-3
+        // around the 20px button is the 44px touch target.
+        className="[@media(pointer:coarse)]:after:-inset-3"
+        onClick={() => onRemove(pageId)}
+      >
+        <BookmarkX />
+      </SidebarMenuAction>
+    </SidebarMenuItem>
+  )
+}
+
 export function BookmarksSection(): ReactElement {
   const { t } = useTranslation()
   const [collapsed, setCollapsed] = usePreference(PREFERENCES.bookmarksCollapsed)
 
-  const { starredIds, toggle } = useStarredPages()
+  const { starredIds, toggle, move } = useStarredPages()
   const currentSpaceId = useSpaceStore((s) => s.currentSpaceId)
   // Re-resolve when the cache lands new titles, a rename edits one, or a
   // space switch flushes the previous space's entries.
@@ -95,7 +197,7 @@ export function BookmarksSection(): ReactElement {
    */
   const { bookmarks, pendingKey } = useMemo(() => {
     const resolve = useResolveStore.getState()
-    const resolved: Array<{ pageId: string; title: string }> = []
+    const resolved: BookmarkEntry[] = []
     const pending: string[] = []
     for (const id of starredIds) {
       if (resolve.isResolved(id)) {
@@ -156,6 +258,51 @@ export function BookmarksSection(): ReactElement {
   const navigateToPage = useTabsStore((s) => s.navigateToPage)
   const { isMobile, setOpenMobile } = useSidebar()
 
+  // The block tree's pointer sensors (`use-block-dnd.ts`): on a coarse pointer
+  // the drag waits for the long-press hold, so a swipe still scrolls the
+  // drawer; on a fine one it waits for 8px of travel, so a click still opens
+  // the page.
+  const isTouch = useIsTouch()
+  const sensors = useSensors(
+    useSensor(isTouch ? TouchSensor : PointerSensor, {
+      activationConstraint: isTouch
+        ? { delay: LONG_PRESS_DELAY, tolerance: LONG_PRESS_MOVE_THRESHOLD }
+        : { distance: MOUSE_DRAG_ACTIVATION_DISTANCE },
+    }),
+    useSensor(KeyboardSensor, KEYBOARD_SENSOR_OPTIONS),
+  )
+
+  // dnd-kit's default announcements read the id, which here is a ULID (#2943).
+  const dndAccessibility = useMemo(() => {
+    const titleOf = (id: UniqueIdentifier): string =>
+      bookmarks.find((b) => b.pageId === id)?.title || t('recent.untitled')
+    const announcements: Announcements = {
+      onDragStart: ({ active }) => t('dnd.pickedUp', { block: titleOf(active.id) }),
+      onDragOver: ({ active, over }) =>
+        over
+          ? t('dnd.movedOver', { block: titleOf(active.id), target: titleOf(over.id) })
+          : t('dnd.movedOutside', { block: titleOf(active.id) }),
+      onDragEnd: ({ active, over }) =>
+        over
+          ? t('dnd.dropped', { block: titleOf(active.id), target: titleOf(over.id) })
+          : t('dnd.droppedOutside', { block: titleOf(active.id) }),
+      onDragCancel: ({ active }) => t('dnd.cancelled', { block: titleOf(active.id) }),
+    }
+    return {
+      announcements,
+      screenReaderInstructions: { draggable: t('bookmarks.reorderInstructions') },
+    }
+  }, [bookmarks, t])
+
+  const handleDragEnd = ({ active, over }: DragEndEvent) => {
+    if (over) move(String(active.id), String(over.id))
+  }
+
+  const openBookmark = (pageId: string, title: string) => {
+    navigateToPage(pageId, title)
+    if (isMobile) setOpenMobile(false)
+  }
+
   return (
     <SidebarGroup data-testid="sidebar-bookmarks">
       {/*
@@ -189,38 +336,29 @@ export function BookmarksSection(): ReactElement {
               </p>
             ) : null
           ) : (
-            <SidebarMenu aria-label={t('bookmarks.title')}>
-              {bookmarks.map((page) => {
-                const fullTitle = page.title || t('recent.untitled')
-                const label = getPageDisplayName(fullTitle, 'leaf').label
-                return (
-                  <SidebarMenuItem key={page.pageId}>
-                    <SidebarMenuButton
-                      tooltip={fullTitle}
-                      title={fullTitle}
-                      onClick={() => {
-                        navigateToPage(page.pageId, page.title)
-                        if (isMobile) setOpenMobile(false)
-                      }}
-                    >
-                      <Bookmark />
-                      <span className="truncate">{label}</span>
-                    </SidebarMenuButton>
-                    <SidebarMenuAction
-                      showOnHover
-                      aria-label={t('bookmarks.remove', { title: fullTitle })}
-                      // `SidebarMenuAction` already grows its hit area by
-                      // `after:-inset-2` (36px) on the mobile breakpoint; -inset-3
-                      // around the 20px button is the 44px touch target.
-                      className="[@media(pointer:coarse)]:after:-inset-3"
-                      onClick={() => toggle(page.pageId)}
-                    >
-                      <BookmarkX />
-                    </SidebarMenuAction>
-                  </SidebarMenuItem>
-                )
-              })}
-            </SidebarMenu>
+            <DndContext
+              sensors={sensors}
+              collisionDetection={closestCenter}
+              onDragEnd={handleDragEnd}
+              accessibility={dndAccessibility}
+            >
+              <SortableContext
+                items={bookmarks.map((b) => b.pageId)}
+                strategy={verticalListSortingStrategy}
+              >
+                <SidebarMenu aria-label={t('bookmarks.title')}>
+                  {bookmarks.map((page) => (
+                    <SortableBookmark
+                      key={page.pageId}
+                      pageId={page.pageId}
+                      title={page.title}
+                      onOpen={openBookmark}
+                      onRemove={toggle}
+                    />
+                  ))}
+                </SidebarMenu>
+              </SortableContext>
+            </DndContext>
           )}
         </SidebarGroupContent>
       )}
