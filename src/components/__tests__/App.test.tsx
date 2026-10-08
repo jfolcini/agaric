@@ -4,7 +4,7 @@
  * Validates:
  *  - Renders with sidebar and default view (Journal)
  *  - Clicking nav items switches views
- *  - All views render (Journal, Pages, Tags, Trash, Settings › Status)
+ *  - All views render (Journal, Pages, Tags, Trash, Settings › App health)
  *  - a11y compliance
  */
 
@@ -179,7 +179,7 @@ beforeEach(() => {
   // non-empty list and leaves `currentSpaceId` intact.
   //
   // `get_status` returns a complete `StatusInfo` shape so the `<StatusPanel>`
-  // (mounted by the Settings › Status tab) doesn't render
+  // (mounted by the Settings › App health tab) doesn't render
   // `undefined + undefined` (NaN) for the
   // `total_ops_dispatched + total_background_dispatched` sum at L231.
   mockedInvoke.mockImplementation(async (cmd: string) => {

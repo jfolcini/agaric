@@ -165,7 +165,7 @@ describe('StatusPanel', () => {
     expect(await screen.findByText('Materializer status')).toBeInTheDocument()
   })
 
-  // #5269 — the panel is the body of Settings › Status, whose `<h1>` belongs
+  // #5269 — the panel is the body of Settings › App health, whose `<h1>` belongs
   // to SettingsView; a second one would announce two page headings.
   it('renders no page heading of its own', async () => {
     stubInvoke({ get_status: () => mockStatus })

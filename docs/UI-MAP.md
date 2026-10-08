@@ -71,9 +71,9 @@ App
 | **Pages** | Virtualised list of all page blocks; multi-select + delete. Its header carries the view buttons below. | Sidebar |
 | **Tags** | Tag CRUD + colour picker + filtered task panel. | Sidebar, Pages header |
 | **Query** | Advanced-query builder (`AdvancedQuery/AdvancedQueryView.tsx`); navigate to saved/ad-hoc queries. | Pages header |
-| **Settings** | Tabbed (incl. a **Properties** tab for property-definition CRUD, and a **Status** tab with materializer metrics — queue depths, op counts — that polls periodically); deep-linkable via the `?settings=<tab>` query string parsed inside `SettingsView` (no real router). | Sidebar footer |
+| **Settings** | Tabbed (incl. a **Properties** tab for property-definition CRUD, an **App health** tab with materializer metrics — queue depths, op counts — that polls periodically, plus the integrity check, and an **Edit history** tab that opens History); deep-linkable via the `?settings=<tab>` query string parsed inside `SettingsView` (no real router). | Sidebar footer |
 | **Trash** | Soft-deleted blocks; batch restore / purge; original-location breadcrumb. Its button's count badge polls periodically. | Pages header |
-| **History** | Global op log; multi-select revert; diff toggle. | Settings › Data |
+| **History** | Global op log; multi-select revert; diff toggle. | Settings › Edit history |
 | **Templates** | Template-tagged pages with first-block preview. | Pages header |
 | **Graph** | Force-directed page-relationship graph. Web Worker; reduced-motion friendly. | Pages header |
 | **PageEditor** | Single page (title + BlockTree). Reached by navigation, not the sidebar. | — |

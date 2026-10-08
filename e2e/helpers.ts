@@ -589,7 +589,8 @@ const PAGES_HEADER_VIEWS: Readonly<Record<string, string | RegExp>> = {
  * near the 768px breakpoint — a hardcoded `[data-slot="sidebar"]` click is
  * simply unreachable below it now that the icon rail is gone. Views outside
  * the sidebar go through their #5269 home: `PAGES_HEADER_VIEWS` through
- * Pages, Status through Settings › Status, History through Settings › Data.
+ * Pages, Status through Settings › App health, History through Settings › Edit
+ * history.
  */
 export async function navigateToView(page: Page, view: string) {
   const headerButtonName = PAGES_HEADER_VIEWS[view]
@@ -603,13 +604,13 @@ export async function navigateToView(page: Page, view: string) {
   }
   if (view === 'Status') {
     await navigateToView(page, 'Settings')
-    await openSettingsTab(page, 'Status')
+    await openSettingsTab(page, 'App health')
     await expect(page.getByTestId('settings-panel-status')).toBeVisible()
     return
   }
   if (view === 'History') {
     await navigateToView(page, 'Settings')
-    await openSettingsTab(page, 'Data')
+    await openSettingsTab(page, 'Edit history')
     await page.getByRole('button', { name: 'Open edit history', exact: true }).click()
     return
   }

@@ -1,27 +1,27 @@
 /**
- * Tests for IntegrityCheckSection (#4886) — the Data tab's opt-in
- * reconciliation-oracle surface.
+ * Tests for IntegrityCheckSection (#4886, #5360) — the reconciliation oracle's
+ * card in Settings › App health.
  *
  * The load-bearing property is that the sweep is O(pages × blocks) and must
- * never run on its own: rendering the tab, and flipping the switch on, both
- * have to leave `compute_reconciliation_report` uncalled. Everything else —
- * the clean result, the diverged result, the copy hand-off, the rejection
- * path — is what the user sees once they press Run.
+ * never run on its own: rendering the card has to leave
+ * `compute_reconciliation_report` uncalled; the Run button is the opt-in.
+ * Everything else — the clean result, the diverged result, the copy hand-off,
+ * the rejection path — is what the user sees once they press Run.
  *
- * The preference is real `localStorage`, cleared between tests. No storage
- * spy: nothing here exercises a storage failure, and a spy that is not the
- * subject is one more thing to leak (`src/__tests__/AGENTS.md`).
+ * `SettingsView` owns the hook; the harness here does the same so the real
+ * hook + IPC path runs.
  */
 
 import { invoke } from '@tauri-apps/api/core'
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { toast } from 'sonner'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { axe } from '@/__tests__/helpers/axe'
 import { mockInvokeCommands } from '@/__tests__/helpers/invoke'
 import { IntegrityCheckSection } from '@/components/settings/IntegrityCheckSection'
+import { useReconciliationReport } from '@/hooks/useReconciliationReport'
 import type { ReconciliationReport } from '@/lib/bindings'
 import { writeText } from '@/lib/clipboard'
 import { t } from '@/lib/i18n'
@@ -58,10 +58,9 @@ const DIVERGED: ReconciliationReport = {
   ],
 }
 
-/** Turn the switch on and settle the write, without pressing Run. */
-async function enable(user: ReturnType<typeof userEvent.setup>): Promise<void> {
-  await user.click(screen.getByTestId('integrity-check-toggle'))
-  expect(await screen.findByTestId('integrity-run-button')).toBeInTheDocument()
+function Harness() {
+  const integrity = useReconciliationReport('IntegrityCheckSection.test')
+  return <IntegrityCheckSection {...integrity} />
 }
 
 beforeEach(() => {
@@ -72,53 +71,26 @@ beforeEach(() => {
   )
 })
 
-afterEach(() => {
-  localStorage.clear()
-})
-
 describe('IntegrityCheckSection', () => {
   it('shows its description as the card description in the header, like the other tabs', () => {
-    render(<IntegrityCheckSection />)
+    render(<Harness />)
 
     const description = screen.getByText(t('integrity.description'))
     expect(description).toHaveAttribute('data-slot', 'card-description')
     expect(description.closest('[data-slot="card-header"]')).not.toBeNull()
   })
 
-  it('renders off by default, with no way to run and nothing invoked', () => {
-    render(<IntegrityCheckSection />)
+  it('shows Run on mount with no switch, and sweeps nothing until it is pressed', () => {
+    render(<Harness />)
 
-    expect(screen.getByTestId('integrity-check-toggle')).not.toBeChecked()
-    expect(screen.queryByTestId('integrity-run-button')).not.toBeInTheDocument()
+    expect(screen.getByTestId('integrity-run-button')).toBeEnabled()
+    expect(screen.queryByRole('switch')).not.toBeInTheDocument()
     expect(mockedInvoke).not.toHaveBeenCalled()
-  })
-
-  it('turning the setting on reveals Run but does not sweep the vault', async () => {
-    const user = userEvent.setup()
-    render(<IntegrityCheckSection />)
-
-    await enable(user)
-
-    expect(screen.getByTestId('integrity-check-toggle')).toBeChecked()
-    // The whole reason the setting exists: enabling it costs nothing.
-    expect(mockedInvoke).not.toHaveBeenCalled()
-  })
-
-  it('persists the setting so the next mount comes back on', async () => {
-    const user = userEvent.setup()
-    const { unmount } = render(<IntegrityCheckSection />)
-    await enable(user)
-    unmount()
-
-    render(<IntegrityCheckSection />)
-    expect(screen.getByTestId('integrity-check-toggle')).toBeChecked()
-    expect(screen.getByTestId('integrity-run-button')).toBeInTheDocument()
   })
 
   it('reports a clean vault with the block count that makes it non-vacuous', async () => {
     const user = userEvent.setup()
-    render(<IntegrityCheckSection />)
-    await enable(user)
+    render(<Harness />)
 
     await user.click(screen.getByTestId('integrity-run-button'))
 
@@ -135,8 +107,7 @@ describe('IntegrityCheckSection', () => {
       mockInvokeCommands({ compute_reconciliation_report: () => DIVERGED }),
     )
     const user = userEvent.setup()
-    render(<IntegrityCheckSection />)
-    await enable(user)
+    render(<Harness />)
 
     await user.click(screen.getByTestId('integrity-run-button'))
 
@@ -166,8 +137,7 @@ describe('IntegrityCheckSection', () => {
       mockInvokeCommands({ compute_reconciliation_report: () => DIVERGED }),
     )
     const user = userEvent.setup()
-    render(<IntegrityCheckSection />)
-    await enable(user)
+    render(<Harness />)
     await user.click(screen.getByTestId('integrity-run-button'))
     await screen.findByTestId('integrity-summary')
 
@@ -188,8 +158,7 @@ describe('IntegrityCheckSection', () => {
   it('surfaces a clipboard failure instead of claiming the copy worked', async () => {
     const user = userEvent.setup()
     mockedWriteText.mockRejectedValue(new Error('clipboard unavailable'))
-    render(<IntegrityCheckSection />)
-    await enable(user)
+    render(<Harness />)
     await user.click(screen.getByTestId('integrity-run-button'))
     await screen.findByText(t('integrity.cleanTitle'))
 
@@ -211,8 +180,7 @@ describe('IntegrityCheckSection', () => {
       }),
     )
     const user = userEvent.setup()
-    render(<IntegrityCheckSection />)
-    await enable(user)
+    render(<Harness />)
 
     await user.click(screen.getByTestId('integrity-run-button'))
 
@@ -226,30 +194,12 @@ describe('IntegrityCheckSection', () => {
     expect(screen.getByTestId('integrity-run-button')).toBeEnabled()
   })
 
-  it('drops a stale result when the setting is turned back off', async () => {
-    mockedInvoke.mockImplementation(
-      mockInvokeCommands({ compute_reconciliation_report: () => DIVERGED }),
-    )
-    const user = userEvent.setup()
-    render(<IntegrityCheckSection />)
-    await enable(user)
-    await user.click(screen.getByTestId('integrity-run-button'))
-    await screen.findByTestId('integrity-summary')
-
-    await user.click(screen.getByTestId('integrity-check-toggle'))
-    await user.click(screen.getByTestId('integrity-check-toggle'))
-
-    expect(screen.getByTestId('integrity-run-button')).toBeInTheDocument()
-    expect(screen.queryByTestId('integrity-summary')).not.toBeInTheDocument()
-  })
-
   it('has no a11y violations with a result on screen', async () => {
     mockedInvoke.mockImplementation(
       mockInvokeCommands({ compute_reconciliation_report: () => DIVERGED }),
     )
     const user = userEvent.setup()
-    const { container } = render(<IntegrityCheckSection />)
-    await enable(user)
+    const { container } = render(<Harness />)
     await user.click(screen.getByTestId('integrity-run-button'))
     await screen.findByTestId('integrity-summary')
 

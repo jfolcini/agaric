@@ -5,14 +5,9 @@
  * `compute_reconciliation_report` rebuilds every derived artefact
  * (`pages_cache`, the link caches, `agenda_cache`, …) from the base tables
  * and diffs the result against the maintained state. It writes nothing and
- * takes the reader pool, but it is O(pages × blocks): it runs when a caller
- * asks and at no other time. Nothing here fires on mount.
- *
- * Two callers, one trigger each: the Data settings section runs it on a
- * button click, and the bug-report dialog runs it on open for a user who
- * turned the setting on. Both surface the failure the same way — the IPC
- * error is logged by `useIpcCommand` and toasted here — so neither has to
- * spell out the rejection path.
+ * takes the reader pool, but it is O(pages × blocks): it runs when the user
+ * presses Run in Settings › App health and at no other time. Nothing here fires on
+ * mount. A failure is logged by `useIpcCommand` and toasted here.
  */
 
 import { useCallback, useState } from 'react'
@@ -31,8 +26,6 @@ export interface UseReconciliationReportResult {
   running: boolean
   /** Start a run. Never rejects — a failure is logged, toasted, and consumed. */
   run: () => Promise<void>
-  /** Drop the held report (e.g. the caller was switched off). */
-  clear: () => void
 }
 
 export function useReconciliationReport(module: string): UseReconciliationReportResult {
@@ -55,9 +48,5 @@ export function useReconciliationReport(module: string): UseReconciliationReport
     await execute()
   }, [execute])
 
-  const clear = useCallback((): void => {
-    setReport(null)
-  }, [])
-
-  return { report, running: loading, run, clear }
+  return { report, running: loading, run }
 }

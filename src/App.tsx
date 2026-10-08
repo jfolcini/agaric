@@ -760,6 +760,7 @@ function App() {
                 ? {
                     initialTitle: bugReportPrefill.message,
                     initialDescription: bugReportPrefill.stack ?? '',
+                    integrityReport: bugReportPrefill.integrityReport,
                   }
                 : {})}
             />

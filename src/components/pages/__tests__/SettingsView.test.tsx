@@ -24,6 +24,7 @@ import { axe } from 'vitest-axe'
 
 import { mockInvokeCommands } from '@/__tests__/helpers/invoke'
 import { SettingsView } from '@/components/pages/SettingsView'
+import type { ReconciliationReport } from '@/lib/bindings'
 import { t } from '@/lib/i18n'
 import { useNavigationStore } from '@/stores/navigation'
 
@@ -162,11 +163,11 @@ describe('SettingsView', () => {
     )
   })
 
-  it('renders with 11 tabs', () => {
+  it('renders with 12 tabs', () => {
     render(<SettingsView />)
 
     const tabs = screen.getAllByRole('tab')
-    expect(tabs).toHaveLength(11)
+    expect(tabs).toHaveLength(12)
     // Every tab is still present and reachable, regardless of which group
     // it now lives in.
     const labels = tabs.map((tab) => tab.textContent)
@@ -178,6 +179,7 @@ describe('SettingsView', () => {
         t('settings.tabEditor'),
         t('settings.tabKeyboard'),
         t('settings.tabData'),
+        t('settings.tabHistory'),
         t('settings.tabSync'),
         t('settings.tabStatus'),
         t('settings.tabAgentAccess'),
@@ -246,9 +248,13 @@ describe('SettingsView', () => {
         [
           'settings-group-data',
           t('settings.groupData'),
-          [t('settings.tabData'), t('settings.tabSync'), t('settings.tabStatus')],
+          [t('settings.tabData'), t('settings.tabHistory'), t('settings.tabSync')],
         ],
-        ['settings-group-help', t('settings.groupHelp'), [t('settings.tabHelp')]],
+        [
+          'settings-group-help',
+          t('settings.groupHelp'),
+          [t('settings.tabHelp'), t('settings.tabStatus')],
+        ],
       ]
 
       for (const [headerId, headerText, tabNames] of expectations) {
@@ -279,6 +285,7 @@ describe('SettingsView', () => {
         t('settings.tabEditor'),
         t('settings.tabKeyboard'),
         t('settings.tabData'),
+        t('settings.tabHistory'),
         t('settings.tabSync'),
         t('settings.tabStatus'),
         t('settings.tabAgentAccess'),
@@ -357,9 +364,67 @@ describe('SettingsView', () => {
       await user.click(reportBtn)
 
       expect(listener).toHaveBeenCalledTimes(1)
+      // No check has run, so the report carries no integrity section (#5360).
+      expect(listener.mock.calls[0]?.[0].detail).toEqual({
+        message: '',
+        integrityReport: undefined,
+      })
     } finally {
       window.removeEventListener('agaric:report-bug', listener)
     }
+  })
+
+  // #5360 — the check runs in App health and Help's Report a bug carries its
+  // result: SettingsView holds it across the tab switch.
+  it('a check run in App health rides along with a bug report from Help', async () => {
+    const report: ReconciliationReport = {
+      blocks_scanned: 3,
+      today: '2026-10-08',
+      total_divergences: 0,
+      artefacts: [],
+    }
+    vi.mocked(invoke).mockImplementation(
+      mockInvokeCommands({ compute_reconciliation_report: () => report }),
+    )
+    const user = userEvent.setup()
+    const listener = vi.fn()
+    window.addEventListener('agaric:report-bug', listener)
+    try {
+      render(<SettingsView />)
+      await user.click(screen.getByRole('tab', { name: t('settings.tabStatus') }))
+      await user.click(screen.getByTestId('integrity-run-button'))
+      await screen.findByText(t('integrity.cleanTitle'))
+
+      await user.click(screen.getByRole('tab', { name: t('settings.tabHelp') }))
+      await user.click(screen.getByRole('button', { name: t('help.reportBugButton') }))
+
+      expect(listener).toHaveBeenCalledTimes(1)
+      expect(listener.mock.calls[0]?.[0].detail).toEqual({ message: '', integrityReport: report })
+    } finally {
+      window.removeEventListener('agaric:report-bug', listener)
+    }
+  })
+
+  // #5361 — Edit history has its own tab; it opens the full-page History view.
+  it('Edit history tab opens the History view', async () => {
+    useNavigationStore.setState({ currentView: 'settings' })
+    const user = userEvent.setup()
+    const { container } = render(<SettingsView />)
+
+    const historyTab = screen.getByRole('tab', { name: t('settings.tabHistory') })
+    await user.click(historyTab)
+    expect(historyTab).toHaveAttribute('aria-selected', 'true')
+
+    const panel = screen.getByTestId('settings-panel-history')
+    const open = within(panel).getByRole('button', { name: t('settings.history.openButton') })
+    expect(open.closest('[data-slot="setting-row"]')).toHaveTextContent(
+      t('settings.history.description'),
+    )
+    expect(await axe(container)).toHaveNoViolations()
+
+    await user.click(open)
+
+    expect(useNavigationStore.getState().currentView).toBe('history')
   })
 
   it('General tab shows deadline warning section by default (no TaskStatesSection)', () => {
@@ -419,16 +484,25 @@ describe('SettingsView', () => {
     expect(screen.getByTestId('device-management')).toBeInTheDocument()
   })
 
-  // #5269 — the former Status view lives in the Data & Sync group.
-  it('Status tab shows the status panel', async () => {
+  // #5269 — the former Status view is a Settings tab. #5360 — the tab is App
+  // health, in the Help group, and the integrity check follows the status
+  // panel with no enable switch: Run is the opt-in.
+  it('App health tab shows the status panel, then the integrity check', async () => {
     const user = userEvent.setup()
-    render(<SettingsView />)
+    const { container } = render(<SettingsView />)
 
     await user.click(screen.getByRole('tab', { name: t('settings.tabStatus') }))
 
-    expect(
-      within(screen.getByTestId('settings-panel-status')).getByTestId('status-panel'),
-    ).toBeInTheDocument()
+    const panel = within(screen.getByTestId('settings-panel-status'))
+    const statusPanel = panel.getByTestId('status-panel')
+    const run = panel.getByTestId('integrity-run-button')
+    expect(statusPanel.compareDocumentPosition(run) & Node.DOCUMENT_POSITION_FOLLOWING).toBe(
+      Node.DOCUMENT_POSITION_FOLLOWING,
+    )
+    expect(run).toBeEnabled()
+    expect(panel.queryByRole('switch')).not.toBeInTheDocument()
+    expect(vi.mocked(invoke)).not.toHaveBeenCalledWith('compute_reconciliation_report')
+    expect(await axe(container)).toHaveNoViolations()
   })
 
   it('tab switching works', async () => {

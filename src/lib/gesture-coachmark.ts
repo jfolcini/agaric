@@ -8,9 +8,8 @@
  * pulling it over the wire on every boot. Both helpers tolerate a
  * missing / disabled `localStorage` (private mode, sandboxed iframe).
  *
- * The shared, ordered gesture list (`GESTURE_ENTRIES`) is also exported
- * here so the first-run overlay and the persistent "Touch gestures" help
- * section render the SAME copy from a single source of truth.
+ * The ordered gesture list the overlay renders (`GESTURE_ENTRIES`) lives
+ * here too.
  */
 
 import type { LucideIcon } from 'lucide-react'
@@ -29,8 +28,7 @@ export function markGestureCoachMarkSeen(): void {
 }
 
 /**
- * One gesture row, keyed by i18n. The icon is a `lucide-react`
- * component reused across the coach-mark overlay and the help section.
+ * One gesture row, keyed by i18n, with its `lucide-react` icon.
  */
 export interface GestureEntry {
   readonly icon: LucideIcon
@@ -42,8 +40,6 @@ export interface GestureEntry {
  * Ordered list of the hidden mobile touch gestures Agaric already ships
  * (the gestures themselves are implemented elsewhere — see #927 swipe,
  * #926 long-press, the sidebar edge-swipe, and the quick-capture FAB).
- * Single source of truth for both the first-run overlay and the
- * persistent help reference.
  */
 export const GESTURE_ENTRIES: readonly GestureEntry[] = [
   {
