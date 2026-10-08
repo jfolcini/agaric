@@ -142,7 +142,7 @@ Before writing frontend code, check those four places for an existing primitive,
 - CVA variants + `cn()` (`src/lib/utils.ts`) for every component with variants; `Badge` is the reference.
 - Radix for every overlay (Select, Dialog, Popover, Tooltip, AlertDialog). Never hand-roll a dropdown or modal.
 - Semantic color tokens, never raw Tailwind colors where a token exists. `ScrollArea` for scrollable containers, never bare `overflow-auto`.
-- 44 px touch targets via `[@media(pointer:coarse)]`; `focus-visible:ring-[3px] focus-visible:ring-ring/50`; `aria-label` on every icon-only button, through `t()` i18n keys.
+- 44 px touch targets via `[@media(pointer:coarse)]`; focus rings via `focus-ring-visible` (opaque 3 px; a half-alpha `ring-ring/50` fails 3:1); `aria-label` on every icon-only button, through `t()` i18n keys.
 - `EmptyState` for empty lists, `LoadingSkeleton` for initial loads, `Spinner` for action feedback.
 - Anything that creates DOM outside React (portals, `ReactRenderer`, `computePosition`) logs failures via `logger.warn`, guards stale callbacks, and is listed in `EDITOR_PORTAL_SELECTORS` if it must not blur the editor. Reference: `src/editor/suggestion-renderer.ts`.
 - Searchable pickers and filter inputs debounce IPC with `useDebouncedCallback` at 300 ms; `cancel()` before the non-search path.

@@ -39,7 +39,7 @@ AGENTS.md. Paste the relevant command output if it's short.
 - [ ] If a `.sql` migration or an inline `sqlx::query!` was added or changed: **`just gen-sqlx`** re-run (never the bare `cargo sqlx prepare` — see AGENTS.md § Key Architectural Invariants #6) and **all four** regenerated `.sqlx/` caches committed in this PR
 - [ ] If a Tauri command signature or a `specta`-exported type changed: `cd src-tauri && cargo test -- specta_tests --ignored` re-run and the regenerated `src/lib/bindings.ts` is committed in this PR
 - [ ] If a UI primitive / pattern was added: it lives in the right layer (`src/components/ui/`, `src/components/`, or `src/hooks/`) and follows the CVA + Radix + `cn()` conventions in AGENTS.md § Mandatory patterns
-- [ ] All interactive elements meet the 44 px touch-target minimum and have `aria-label` (icon-only) / `focus-visible:ring-[3px]` styles per AGENTS.md
+- [ ] All interactive elements meet the 44 px touch-target minimum and have `aria-label` (icon-only) / `focus-ring-visible` styles per AGENTS.md
 
 ## Coupled-dependency awareness
 
