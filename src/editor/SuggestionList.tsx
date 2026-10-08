@@ -386,7 +386,7 @@ export const SuggestionList = ({
                     <>
                       {groupIdx > 0 && <hr className="border-t border-border/50 my-1" />}
                       <h3
-                        className="px-2 pt-1.5 pb-1 text-xs font-medium text-muted-foreground uppercase tracking-wider"
+                        className="px-2 pt-1.5 pb-1 text-xs font-medium text-muted-foreground"
                         data-testid="suggestion-category"
                       >
                         {t(group.category)}

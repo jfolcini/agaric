@@ -247,7 +247,7 @@ function AddFilterPopover({
           >
             {DIMENSION_GROUPS.map((group) => (
               <div key={group.labelKey}>
-                <p className="px-2 pb-1 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                <p className="px-2 pb-1 text-xs font-medium text-muted-foreground">
                   {t(group.labelKey)}
                 </p>
                 <ul className="flex flex-col gap-0.5 list-none m-0 p-0">

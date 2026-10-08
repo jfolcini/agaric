@@ -139,9 +139,7 @@ export function KeyboardTab(): React.ReactElement {
           <ScrollArea className="max-h-[60dvh]">
             {[...grouped.entries()].map(([category, items]) => (
               <div key={category} className="mb-6">
-                <h4 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2">
-                  {t(category)}
-                </h4>
+                <h4 className="text-xs font-medium text-muted-foreground mb-2">{t(category)}</h4>
                 <div className="space-y-1">
                   {items.map((shortcut) => {
                     const isEditing = editingId === shortcut.id

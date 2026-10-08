@@ -36,7 +36,7 @@ const NAV_BUTTON_CLASS = cn(
 )
 const DAY_BUTTON_CLASS = cn(
   buttonVariants({ variant: 'ghost' }),
-  'size-8 p-0 font-normal aria-selected:opacity-100 [@media(pointer:coarse)]:size-11',
+  'size-8 p-0 font-normal tabular-nums aria-selected:opacity-100 [@media(pointer:coarse)]:size-11',
 )
 
 // Hoisted to module scope: the entire `classNames` skeleton is composed of

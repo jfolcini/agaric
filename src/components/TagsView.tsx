@@ -27,7 +27,7 @@ export function TagsView({ onTagClick }: TagsViewProps): ReactElement {
       <TagList onTagClick={onTagClick} />
       <div className="flex items-center gap-4">
         <Separator className="flex-1" />
-        <span className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+        <span className="text-xs font-medium text-muted-foreground">
           {t('tagFilter.sectionLabel')}
         </span>
         <Separator className="flex-1" />

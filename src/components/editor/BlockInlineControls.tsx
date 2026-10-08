@@ -60,7 +60,7 @@ export function DateChip({
     <button
       type="button"
       className={cn(
-        `${chipClass} flex items-center gap-0.5 rounded-full px-1.5 py-0.5 text-xs font-medium leading-none select-none cursor-pointer`,
+        `${chipClass} flex items-center gap-0.5 rounded-full px-1.5 py-0.5 text-xs font-medium leading-none tabular-nums select-none cursor-pointer`,
         colorClass,
       )}
       title={label}

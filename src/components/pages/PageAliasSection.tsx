@@ -31,7 +31,7 @@ export function PageAliasSection({
   if (aliases.length === 0 && !editingAliases) return null
 
   return (
-    <div className="flex flex-wrap items-center gap-1.5 px-1">
+    <div className="flex flex-wrap items-center gap-1.5">
       {aliases.length > 0 && (
         <span className="text-sm font-medium text-muted-foreground">{t('pageHeader.aliases')}</span>
       )}

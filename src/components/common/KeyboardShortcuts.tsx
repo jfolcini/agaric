@@ -289,7 +289,7 @@ export function KeyboardShortcuts({
               <tr>
                 <th
                   colSpan={2}
-                  className="pb-1 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground"
+                  className="pb-1 text-left text-xs font-medium text-muted-foreground"
                   data-testid="essential-section-title"
                 >
                   {t('keyboard.category.essential')}
@@ -351,7 +351,7 @@ export function KeyboardShortcuts({
                   <tr>
                     <td
                       colSpan={2}
-                      className="sticky top-0 z-10 bg-popover pt-4 pb-1 text-xs font-semibold uppercase tracking-wider text-muted-foreground"
+                      className="sticky top-0 z-10 bg-popover pt-4 pb-1 text-xs font-medium text-muted-foreground"
                     >
                       {t(group.category)}
                     </td>

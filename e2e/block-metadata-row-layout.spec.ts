@@ -2,8 +2,10 @@
  * #5332 item 9 — a block's metadata chips stay on their own row under its text
  * at every width, the leading controls (task checkbox, drag handle) sit on the
  * FIRST line of a wrapped block, and the page editor and the journal's block
- * views are capped at the 46rem reading width. This is geometry, which
- * happy-dom cannot measure, so it asserts real layout boxes.
+ * views are capped at the 46rem reading width. Item 7: on desktop the control
+ * lane hangs in the margin, so a depth-0 checkbox lines up with the heading
+ * above the tree. This is geometry, which happy-dom cannot measure, so it
+ * asserts real layout boxes.
  */
 
 import { devices, type Locator, type Page } from '@playwright/test'
@@ -58,6 +60,34 @@ function lineCentres(text: Locator): Promise<number[]> {
 function expectOnLine(b: Box, lineCentre: number, what: string) {
   const offset = Math.abs(b.y + b.height / 2 - lineCentre)
   expect(offset, `${what} centre vs the first text line`).toBeLessThanOrEqual(1)
+}
+
+/** Left edge of the first rendered line of an element's text. */
+function textLeft(el: Locator): Promise<number> {
+  return el.evaluate((node) => {
+    const range = document.createRange()
+    range.selectNodeContents(node)
+    return range.getClientRects()[0]?.left ?? Number.NaN
+  })
+}
+
+/**
+ * The first depth-0 task's checkbox starts where the heading's text does, and
+ * the lane hanging left of it stays clear of the sidebar's resize rail, which
+ * reaches into the pane: a grip against the rail turns a near miss into a
+ * sidebar resize.
+ */
+async function expectCheckboxUnderHeading(page: Page, heading: Locator) {
+  const todo = page.getByTestId('task-checkbox-todo')
+  const row = page.locator('li[aria-level="1"]').filter({ has: todo }).first()
+  await expect(row.getByTestId('task-checkbox-todo')).toBeVisible()
+  await expect(heading).toBeVisible()
+  const offset = (await box(row.getByTestId('task-checkbox-todo'))).x - (await textLeft(heading))
+  expect(Math.abs(offset), 'checkbox vs heading text, px').toBeLessThanOrEqual(1)
+
+  const lane = await box(row.locator('.block-control-lane'))
+  const rail = await box(page.locator('[data-sidebar="rail"]'))
+  expect(lane.x, 'lane left vs the sidebar rail right, px').toBeGreaterThan(rail.x + rail.width)
 }
 
 const taskRow = (page: Page) => page.locator('[data-testid="sortable-block"]', { hasText: TASK })
@@ -144,5 +174,23 @@ test.describe('Reading width, desktop (#5332)', () => {
     await page.getByRole('tab', { name: 'Monthly view' }).click()
     await expect(page.locator('[role="gridcell"]').first()).toBeVisible()
     expect((await box(panel)).width).toBeGreaterThan(READING_WIDTH)
+  })
+})
+
+test.describe('Control lane hangs in the margin, desktop (#5332)', () => {
+  test.use({ viewport: { width: 1440, height: 900 } })
+
+  test.beforeEach(async ({ page }) => {
+    await waitForBoot(page)
+  })
+
+  test('a depth-0 checkbox lines up with the page title', async ({ page }) => {
+    await openPage(page, PAGE)
+    await expectCheckboxUnderHeading(page, page.getByRole('textbox', { name: 'Page title' }))
+  })
+
+  test('a depth-0 checkbox lines up with the journal day heading', async ({ page }) => {
+    await page.getByRole('tab', { name: 'Daily view' }).click()
+    await expectCheckboxUnderHeading(page, page.getByRole('heading', { level: 1 }))
   })
 })

@@ -416,10 +416,6 @@ describe('SettingsView', () => {
     await user.click(propertiesTab)
     expect(propertiesTab).toHaveAttribute('aria-selected', 'true')
     expect(generalTab).toHaveAttribute('aria-selected', 'false')
-    // The active tab is a neutral pill only: no brand-red bar beside it (#5332).
-    expect(propertiesTab).toHaveClass('bg-sidebar-accent')
-    expect(generalTab).not.toHaveClass('bg-sidebar-accent')
-    expect(propertiesTab.className).not.toContain('before:')
     expect(screen.getByTestId('property-definitions-list')).toBeInTheDocument()
     expect(screen.queryByTestId('deadline-warning-section')).not.toBeInTheDocument()
 

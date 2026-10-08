@@ -49,11 +49,11 @@ export function SearchModeGroups({
             <span className="flex-1 truncate">{group.pageTitle}</span>
             {group.hasPageNameMatch && (
               // Render the title-match signal as a small
-              // uppercase pill so it reads as metadata rather than as
+              // pill so it reads as metadata rather than as
               // an accidental subtitle. Matches Linear's match-source
               // pill convention.
               <span
-                className="shrink-0 rounded bg-muted px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wider text-muted-foreground"
+                className="shrink-0 rounded bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground"
                 data-testid="palette-title-match-tag"
               >
                 {t('palette.titleMatchTag')}

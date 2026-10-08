@@ -323,7 +323,14 @@ export function BlockListRenderer({
               />
             )
           ) : (
-            <div className="relative">
+            <div
+              // The desktop control lane hangs in the pane's left margin so a
+              // depth-0 checkbox lines up with the heading above the tree. 54px
+              // is `SortableBlock`'s lane (min-w-12) + gap-1 + the checkbox
+              // button's p-0.5; the media query matches the pane's wider left
+              // padding in `App.tsx`, which makes room for it.
+              className="relative md:pointer-fine:-ml-13.5"
+            >
               {/* B4 (#290): faint indent-boundary guides during a drag so the
               20px DEAD_ZONE_PX reads as deliberate snap-to-grid and the indent
               width is legible. Behind the rows (z-0) and pointer-events-none. */}
