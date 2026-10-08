@@ -101,7 +101,7 @@ export function RescheduleDropZone({
       data-testid={`reschedule-drop-zone-${dateStr}`}
       className={cn(
         'transition-colors rounded-lg',
-        isOver && 'ring-2 ring-primary bg-primary/5',
+        isOver && 'ring-2 ring-ring bg-ring/5',
         className,
       )}
     >

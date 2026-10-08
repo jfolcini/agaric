@@ -73,17 +73,17 @@ const PAIRS: ReadonlyArray<{
   bg: Oklch
   min: number
 }> = [
-  // ── Fixed in #744 ──────────────────────────────────────────────────
+  // ── Fixed in #744; ink since #5332 ─────────────────────────────────
   {
     name: 'light: --primary-foreground on --primary (Button label)',
-    fg: [0.911, 0.04, 84.583],
-    bg: [0.5, 0.188, 28.71],
+    fg: [0.985, 0.004, 70],
+    bg: [0.22, 0.01, 70],
     min: AA_NORMAL,
   },
   {
     name: 'dark: --primary-foreground on --primary (Button label)',
-    fg: [0.911, 0.04, 84.583],
-    bg: [0.5, 0.188, 28.71],
+    fg: [0.2, 0.006, 70],
+    bg: [0.93, 0.005, 70],
     min: AA_NORMAL,
   },
   {
@@ -95,8 +95,8 @@ const PAIRS: ReadonlyArray<{
   // ── Passing calibration pairs (left unchanged in #744) ─────────────
   {
     name: 'default: --muted-foreground on --background',
-    fg: [0.554, 0.046, 257.417],
-    bg: [1, 0, 0],
+    fg: [0.51, 0.02, 70],
+    bg: [0.99, 0.004, 70],
     min: AA_NORMAL,
   },
   // ── #1097: dark-family card/popover surfaces are tonally lifted above
@@ -104,8 +104,8 @@ const PAIRS: ReadonlyArray<{
   //    on the brighter (lower-contrast) surface. ──────────────────────────
   {
     name: 'dark: --card-foreground on lifted --card',
-    fg: [0.984, 0.003, 247.858],
-    bg: [0.18, 0.042, 264.695],
+    fg: [0.955, 0.004, 70],
+    bg: [0.235, 0.006, 70],
     min: AA_NORMAL,
   },
   {
@@ -224,40 +224,40 @@ const DOCUMENTED_GUARANTEES: ReadonlyArray<{
   documented: number
 }> = [
   {
-    // index.css ~159-163: "Darkening --primary L 0.55 → 0.50 raises it to ≈5.07:1"
-    name: 'light :root — --primary-foreground on --primary ≈5.07:1',
+    // index.css :root --primary: ink, "16.6:1"
+    name: 'light :root — --primary-foreground on --primary ≈16.59:1',
     selector: ':root',
     fg: 'primary-foreground',
     bg: 'primary',
     min: AA_NORMAL,
-    documented: 5.07,
+    documented: 16.59,
   },
   {
-    // index.css ~315: ".dark — same --primary-foreground/--primary pair as light"
-    name: 'dark .dark — --primary-foreground on --primary ≈5.07:1',
+    // index.css .dark --primary: "Ink inverts … 14.7:1"
+    name: 'dark .dark — --primary-foreground on --primary ≈14.73:1',
     selector: '.dark',
     fg: 'primary-foreground',
     bg: 'primary',
     min: AA_NORMAL,
-    documented: 5.07,
+    documented: 14.73,
   },
   {
-    // index.css :root --ring: "4.3:1 on --background"
-    name: 'light :root — --ring on --background ≈4.33:1',
+    // index.css :root --ring: "4.2:1 on --background"
+    name: 'light :root — --ring on --background ≈4.21:1',
     selector: ':root',
     fg: 'ring',
     bg: 'background',
     min: NON_TEXT,
-    documented: 4.33,
+    documented: 4.21,
   },
   {
-    // index.css .dark --ring: "8.1:1 on --background"
-    name: 'dark .dark — --ring on --background ≈8.13:1',
+    // index.css .dark --ring: "7.4:1 on --background"
+    name: 'dark .dark — --ring on --background ≈7.44:1',
     selector: '.dark',
     fg: 'ring',
     bg: 'background',
     min: NON_TEXT,
-    documented: 8.13,
+    documented: 7.44,
   },
   {
     // index.css .theme-solarized-dark: "0.66 is ≈4.8:1" on the lifted --popover
@@ -290,9 +290,9 @@ const DOCUMENTED_GUARANTEES: ReadonlyArray<{
 
 describe('documented CSS contrast guarantees hold in src/index.css (#1684)', () => {
   it('the parser locates a known token and theme block', () => {
-    // --background in :root is pure white (oklch(1 0 0)); a smoke test that the
+    // --background in :root is warm stone (#5332); a smoke test that the
     // brace-matching slice + token regex agree with the live stylesheet.
-    expect(readOklch(themeBlock(':root'), 'background')).toEqual([1, 0, 0])
+    expect(readOklch(themeBlock(':root'), 'background')).toEqual([0.99, 0.004, 70])
   })
 
   it.each(DOCUMENTED_GUARANTEES)(
@@ -351,6 +351,16 @@ function resolveToken(theme: Theme, highContrast: boolean, token: string): Oklch
 
 const THEME_PAIRS = [
   { pair: 'focus ring on the page', fg: 'ring', bg: 'background', min: NON_TEXT },
+  // --brand is inherited from :root / .dark by every theme (#5332).
+  { pair: 'brand mark label (today, FAB)', fg: 'brand-foreground', bg: 'brand', min: AA_NORMAL },
+  { pair: 'brand numeral on the page', fg: 'brand', bg: 'background', min: AA_NORMAL },
+  // Every theme: Button and Badge paint the fill opaque in dark themes too.
+  {
+    pair: 'destructive button label',
+    fg: 'destructive-foreground',
+    bg: 'destructive',
+    min: AA_NORMAL,
+  },
   { pair: 'P1 chip', fg: 'priority-urgent-foreground', bg: 'priority-urgent', min: AA_NORMAL },
   { pair: 'P2 chip', fg: 'priority-high-foreground', bg: 'priority-high', min: AA_NORMAL },
   { pair: 'P3 chip', fg: 'priority-normal-foreground', bg: 'priority-normal', min: AA_NORMAL },
@@ -413,5 +423,43 @@ describe('focus ring, chips and hover surfaces clear WCAG in every theme (#5332)
       resolveToken(theme, highContrast, bg),
     )
     expect(ratio).toBeGreaterThanOrEqual(min)
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────
+// Crimson, link and muted text in the default themes (#5332).
+//
+// Only Light and Dark: the alternate themes keep their own --destructive and
+// --muted-foreground. The destructive label is pinned in every theme above.
+// ─────────────────────────────────────────────────────────────────────────
+
+const DEFAULT_THEME_PAIRS = [
+  { pair: 'destructive text on the page', fg: 'destructive', bg: 'background' },
+  { pair: 'link text on the page', fg: 'foreground', bg: 'background' },
+  { pair: 'muted text on --muted (tag chip)', fg: 'muted-foreground', bg: 'muted' },
+  { pair: 'muted text on the page', fg: 'muted-foreground', bg: 'background' },
+  { pair: 'muted text on a hovered row', fg: 'muted-foreground', bg: 'accent' },
+] as const
+
+const DEFAULT_CASES = [false, true].flatMap((highContrast) =>
+  THEMES.slice(0, 2).flatMap((theme) =>
+    DEFAULT_THEME_PAIRS.map(({ pair, fg, bg }) => ({
+      pair,
+      fg,
+      bg,
+      theme,
+      label: `${theme.theme}${highContrast ? ' (high contrast)' : ''}`,
+      highContrast,
+    })),
+  ),
+)
+
+describe('crimson, link and muted text clears WCAG AA in the default themes (#5332)', () => {
+  it.each(DEFAULT_CASES)('$label — $pair', ({ theme, highContrast, fg, bg }) => {
+    const ratio = contrastRatio(
+      resolveToken(theme, highContrast, fg),
+      resolveToken(theme, highContrast, bg),
+    )
+    expect(ratio).toBeGreaterThanOrEqual(AA_NORMAL)
   })
 })

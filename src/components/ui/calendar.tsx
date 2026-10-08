@@ -92,7 +92,7 @@ const BASE_CLASS_NAMES = {
   // `:has([aria-selected])` check would never match (the attribute is on `&`,
   // not a child) and would fail to gate the accent on a selected-today cell.
   today:
-    'rounded-md ring-2 ring-primary/50 [&:not([aria-selected])]:bg-accent [&:not([aria-selected])]:text-accent-foreground',
+    'rounded-md ring-2 ring-brand/50 [&:not([aria-selected])]:bg-accent [&:not([aria-selected])]:text-accent-foreground',
   outside: 'outside text-muted-foreground aria-selected:text-muted-foreground opacity-50',
   disabled: 'text-muted-foreground opacity-50',
   range_middle: 'aria-selected:bg-accent aria-selected:text-accent-foreground',

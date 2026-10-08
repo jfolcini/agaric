@@ -4857,8 +4857,8 @@ describe('SortableBlock swipe-to-delete progressive cue', () => {
     expect(screen.queryByTestId('swipe-delete-action')).not.toBeInTheDocument()
     // …and a neutral outdent affordance takes its place.
     const overlay = screen.getByTestId('swipe-outdent-action')
-    expect(overlay.className).toContain('bg-primary/10')
-    expect(overlay.className).toContain('text-primary')
+    expect(overlay.className).toContain('bg-ring/10')
+    expect(overlay.className).toContain('text-ring')
     expect(overlay.className).not.toContain('bg-destructive')
     expect(screen.getByTestId('swipe-outdent-hint')).toHaveTextContent('Outdent')
   })
@@ -4886,9 +4886,9 @@ describe('SortableBlock swipe-to-delete progressive cue', () => {
     )
 
     const overlay = screen.getByTestId('swipe-indent-action')
-    // Neutral accent backdrop on the left edge — not the destructive delete cue.
-    expect(overlay.className).toContain('bg-primary/10')
-    expect(overlay.className).toContain('text-primary')
+    // Blue gesture backdrop on the left edge — not the destructive delete cue.
+    expect(overlay.className).toContain('bg-ring/10')
+    expect(overlay.className).toContain('text-ring')
     expect(overlay.className).toContain('left-0')
     expect(screen.getByTestId('swipe-indent-hint')).toHaveTextContent('Indent')
     // The delete backdrop is not rendered for a right (indent) swipe.

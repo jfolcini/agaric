@@ -305,18 +305,18 @@ describe('PageHeaderMenu template toggle button', () => {
     expect(onToggleTemplate).toHaveBeenCalledOnce()
   })
 
-  it('shows text-primary class on icon when isTemplate is true', () => {
+  it('shows text-ring class on icon when isTemplate is true', () => {
     renderMenu({ isTemplate: true })
 
     const icon = screen.getByTestId('layout-template-icon')
-    expect(icon.getAttribute('class')).toContain('text-primary')
+    expect(icon.getAttribute('class')).toContain('text-ring')
   })
 
-  it('does not show text-primary class on icon when isTemplate is false', () => {
+  it('does not show text-ring class on icon when isTemplate is false', () => {
     renderMenu({ isTemplate: false })
 
     const icon = screen.getByTestId('layout-template-icon')
-    expect(icon.getAttribute('class')).not.toContain('text-primary')
+    expect(icon.getAttribute('class')).not.toContain('text-ring')
   })
 
   it('has aria-pressed matching isTemplate state', () => {

@@ -159,6 +159,9 @@ test.describe('link chips follow their target', () => {
     await expect(refChip()).toContainText('(deleted)')
     await openFromPageList(page, 'Getting Started')
     await expect(linkChip()).toHaveAttribute('aria-label', 'Quick Notes (deleted)')
+    // Computed, not class presence: the live chip's underline rule ties on
+    // specificity with the deleted rule, so only source order keeps the strike.
+    await expect(linkChip()).toHaveCSS('text-decoration-line', 'line-through')
 
     await restoreAllFromTrash(page)
 
@@ -168,6 +171,7 @@ test.describe('link chips follow their target', () => {
     await expect(refChip()).not.toContainText('(deleted)')
     await openFromPageList(page, 'Getting Started')
     await expect(linkChip()).not.toHaveAttribute('aria-label')
+    await expect(linkChip()).toHaveCSS('text-decoration-line', 'underline')
   })
 
   test('a journal page restored from the trash shows on the journal again (#5247)', async ({

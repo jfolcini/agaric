@@ -23,6 +23,10 @@
   --color-accent-foreground: var(--accent-foreground);
   --color-destructive: var(--destructive);
   --color-destructive-foreground: var(--destructive-foreground);
+  /* The logo red. Only the journal "today" marks and the quick-capture FAB
+   * wear it (#5332); everything else is ink, so the red stays a signature. */
+  --color-brand: var(--brand);
+  --color-brand-foreground: var(--brand-foreground);
   --color-border: var(--border);
   --color-input: var(--input);
   --color-ring: var(--ring);
@@ -33,8 +37,6 @@
   --color-chart-5: var(--chart-5);
   --color-sidebar: var(--sidebar);
   --color-sidebar-foreground: var(--sidebar-foreground);
-  --color-sidebar-primary: var(--sidebar-primary);
-  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
   --color-sidebar-accent: var(--sidebar-accent);
   --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
   --color-sidebar-border: var(--sidebar-border);
@@ -130,21 +132,23 @@
   --shadow-overlay: var(--elevation-overlay);
   /* Radius-by-prominence scale (#1010). Larger radius = more prominent /
    * more "lifted" the surface. Apply by tier, not by component whim:
-   *   sm  (6px)  — concentric inner items (select/command rows, swatches)
+   *   sm  (4px)  — concentric inner items (select/command rows, swatches)
    *                nested inside an md/lg surface; always smaller than parent.
-   *   md  (8px)  — tight/transient floating surfaces: popover, select,
-   *                command, tooltip, dropdown/context menus, combobox.
-   *   lg  (10px) — in-flow cards (the default resting surface).
-   *   xl  (14px) — modals that float above everything: dialog,
+   *   md  (6px)  — buttons, inputs, rows, and tight/transient floating
+   *                surfaces: popover, select, command, tooltip, menus.
+   *   lg  (8px)  — in-flow cards (the default resting surface).
+   *   xl  (12px) — modals that float above everything: dialog,
    *                alert-dialog, sheet.
    * A contained card must never read rounder than the modal over it. */
   --radius-sm: calc(var(--radius) - 4px);
   --radius-md: calc(var(--radius) - 2px);
   --radius-lg: var(--radius);
   --radius-xl: calc(var(--radius) + 4px);
+  /* Inter Variable is bundled (`@fontsource-variable/inter`, imported in
+   * main.tsx) so every webview sets the same face. */
   --font-sans:
-    ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto,
-    'Helvetica Neue', Arial, 'Noto Sans', sans-serif, 'Apple Color Emoji', 'Segoe UI Emoji',
+    'Inter Variable', ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI',
+    Roboto, 'Helvetica Neue', Arial, 'Noto Sans', sans-serif, 'Apple Color Emoji', 'Segoe UI Emoji',
     'Segoe UI Symbol', 'Noto Color Emoji';
   --font-mono:
     ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New',
@@ -153,46 +157,50 @@
 
 /* ── Agaric light theme ────────────────────────────────────────────── */
 :root {
-  --background: oklch(1 0 0);
-  --foreground: oklch(0.129 0.042 264.695);
-  --card: oklch(1 0 0);
-  --card-foreground: oklch(0.129 0.042 264.695);
-  --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.129 0.042 264.695);
-  /* WCAG AA (#744): --primary-foreground on --primary was 4.09:1, below the
-   * 4.5:1 minimum for the text-sm font-medium Button label. Darkening --primary
-   * L 0.55 → 0.50 raises it to ≈5.07:1 while preserving the brand hue/chroma. */
-  --primary: oklch(0.5 0.188 28.71);
-  --primary-foreground: oklch(0.911 0.04 84.583);
-  --secondary: oklch(0.968 0.007 264.542);
-  --secondary-foreground: oklch(0.208 0.042 265.755);
-  --muted: oklch(0.968 0.007 264.542);
-  --muted-foreground: oklch(0.554 0.046 257.417);
-  /* Hover and active surfaces are neutral slate: a red tint made every hovered
-   * row and selected toggle read as an error (#5332). */
-  --accent: oklch(0.93 0.013 255.508);
-  --accent-foreground: oklch(0.208 0.042 265.755);
-  --destructive: oklch(0.577 0.245 27.325);
-  --destructive-foreground: oklch(0.984 0.003 247.858);
-  --border: oklch(0.929 0.013 255.508);
-  --input: oklch(0.929 0.013 255.508);
+  /* Neutrals are warm stone (hue 70, low chroma), not Tailwind slate: the
+   * blue cast fought the ink-and-red brand (#5332). */
+  --background: oklch(0.99 0.004 70);
+  --foreground: oklch(0.2 0.008 70);
+  --card: oklch(0.99 0.004 70);
+  --card-foreground: oklch(0.2 0.008 70);
+  --popover: oklch(0.99 0.004 70);
+  --popover-foreground: oklch(0.2 0.008 70);
+  /* Ink, not red: a red control fill made every default button read as a
+   * destructive one. The red lives in --brand (#5332). 16.6:1. */
+  --primary: oklch(0.22 0.01 70);
+  --primary-foreground: oklch(0.985 0.004 70);
+  --secondary: oklch(0.965 0.006 70);
+  --secondary-foreground: oklch(0.3 0.01 70);
+  --muted: oklch(0.965 0.006 70);
+  /* 5.2:1 on --muted, 4.7:1 on --accent, 5.6:1 on --background. */
+  --muted-foreground: oklch(0.51 0.02 70);
+  /* Hover and active surfaces are neutral: a red tint made every hovered row
+   * and selected toggle read as an error (#5332). */
+  --accent: oklch(0.93 0.008 70);
+  --accent-foreground: oklch(0.2 0.01 70);
+  /* Crimson, darker than the brand red so it is unmistakably a warning:
+   * 6.5:1 as text on --background, 6.4:1 under --destructive-foreground. */
+  --destructive: oklch(0.5 0.19 22);
+  --destructive-foreground: oklch(0.985 0.004 70);
+  --brand: oklch(0.52 0.19 28.7);
+  --brand-foreground: oklch(0.985 0.004 70);
+  --border: oklch(0.91 0.008 70);
+  --input: oklch(0.91 0.008 70);
   /* Blue, not the brand red, so focus and selection never read as an error.
-   * Painted opaque: 4.3:1 on --background. */
+   * Painted opaque: 4.2:1 on --background. */
   --ring: oklch(0.58 0.17 255);
   --chart-1: oklch(0.646 0.222 41.116);
   --chart-2: oklch(0.6 0.118 184.714);
   --chart-3: oklch(0.398 0.07 227.392);
   --chart-4: oklch(0.828 0.189 84.429);
   --chart-5: oklch(0.769 0.188 70.08);
-  --radius: 0.625rem;
-  --sidebar: oklch(0.984 0.003 247.858);
-  --sidebar-foreground: oklch(0.129 0.042 264.695);
-  --sidebar-primary: oklch(0.55 0.188 28.71);
-  --sidebar-primary-foreground: oklch(0.911 0.04 84.583);
+  --radius: 0.5rem;
+  --sidebar: oklch(0.975 0.005 70);
+  --sidebar-foreground: oklch(0.2 0.008 70);
   /* Active nav fill; hover uses half of it, so the two stay apart. */
-  --sidebar-accent: oklch(0.93 0.013 255.508);
-  --sidebar-accent-foreground: oklch(0.208 0.042 265.755);
-  --sidebar-border: oklch(0.929 0.013 255.508);
+  --sidebar-accent: oklch(0.93 0.008 70);
+  --sidebar-accent-foreground: oklch(0.2 0.01 70);
+  --sidebar-border: oklch(0.91 0.008 70);
   /* Semantic badge colors */
   --status-done: oklch(0.94 0.06 155);
   --status-done-foreground: oklch(0.33 0.1 155);
@@ -252,7 +260,7 @@
   /* Task checkbox state colors */
   --task-done: oklch(0.55 0.18 149);
   --task-doing: oklch(0.62 0.21 260);
-  --task-cancelled: oklch(0.6 0.02 260);
+  --task-cancelled: oklch(0.6 0.012 70);
   --task-custom: oklch(0.7 0.18 53);
   /* Highlight/search */
   --highlight: oklch(0.95 0.13 102);
@@ -275,7 +283,7 @@
    * token is bridged to `--accent-current` by the App-level effect on
    * every space change; downstream consumers (SpaceSwitcher trigger,
    * status-bar chip, accent badge) read `var(--accent-current, …)`.
-   * Default fallback is the brand `--primary` so an unscoped boot
+   * Default fallback is the ink `--primary` so an unscoped boot
    * still shows something sensible. */
   --accent-emerald: oklch(0.7 0.16 162);
   --accent-blue: oklch(0.62 0.17 252);
@@ -286,12 +294,15 @@
   --accent-orange: oklch(0.7 0.18 50);
   --accent-current: var(--primary);
   /* Elevation tier values (#1098) — light theme. Each tier pairs a tight
-   * contact shadow with a wider ambient one, tinted toward the slate
+   * contact shadow with a wider ambient one, tinted toward the warm
    * foreground rather than pure black, so surfaces lift softly instead of
    * sitting on a grey smudge. */
-  --elevation-resting: 0 1px 2px -1px rgb(15 23 42 / 0.08), 0 1px 3px 0 rgb(15 23 42 / 0.06);
-  --elevation-floating: 0 2px 4px -2px rgb(15 23 42 / 0.08), 0 8px 20px -4px rgb(15 23 42 / 0.12);
-  --elevation-overlay: 0 4px 8px -4px rgb(15 23 42 / 0.1), 0 24px 48px -12px rgb(15 23 42 / 0.25);
+  --elevation-resting:
+    0 1px 2px -1px oklch(0.25 0.015 70 / 0.08), 0 1px 3px 0 oklch(0.25 0.015 70 / 0.06);
+  --elevation-floating:
+    0 2px 4px -2px oklch(0.25 0.015 70 / 0.08), 0 8px 20px -4px oklch(0.25 0.015 70 / 0.12);
+  --elevation-overlay:
+    0 4px 8px -4px oklch(0.25 0.015 70 / 0.1), 0 24px 48px -12px oklch(0.25 0.015 70 / 0.25);
   /* Animation/transition tokens.
    *
    * `--motion-scale` is the single global speed knob (Settings → Appearance →
@@ -326,33 +337,39 @@
 
 /* ── Agaric dark theme ─────────────────────────────────────────────── */
 .dark {
-  --background: oklch(0.129 0.042 264.695);
-  --foreground: oklch(0.984 0.003 247.858);
+  /* Graphite (hue 70, low chroma), not navy, so dark mode is the same
+   * neutral ground as light (#5332). */
+  --background: oklch(0.19 0.005 70);
+  --foreground: oklch(0.955 0.004 70);
   /* #1097: lift card/popover one tonal step above --background so floating
    * surfaces read as elevated on a dark ground (where shadow alone is weak).
-   * Sits between --background (L 0.129) and --muted (L 0.279). */
-  --card: oklch(0.18 0.042 264.695);
-  --card-foreground: oklch(0.984 0.003 247.858);
-  --popover: oklch(0.18 0.042 264.695);
-  --popover-foreground: oklch(0.984 0.003 247.858);
-  /* WCAG AA (#744): same --primary-foreground/--primary pair as light mode was
-   * 4.09:1; L 0.55 → 0.50 lifts it to ≈5.07:1. */
-  --primary: oklch(0.5 0.188 28.71);
-  --primary-foreground: oklch(0.911 0.04 84.583);
-  --secondary: oklch(0.279 0.041 260.031);
-  --secondary-foreground: oklch(0.984 0.003 247.858);
-  --muted: oklch(0.279 0.041 260.031);
-  --muted-foreground: oklch(0.704 0.04 256.788);
-  --accent: oklch(0.3 0.041 260.031);
-  --accent-foreground: oklch(0.984 0.003 247.858);
-  --destructive: oklch(0.577 0.245 27.325);
-  --destructive-foreground: oklch(0.984 0.003 247.858);
+   * Sits between --background (L 0.19) and --muted (L 0.3). */
+  --card: oklch(0.235 0.006 70);
+  --card-foreground: oklch(0.955 0.004 70);
+  --popover: oklch(0.235 0.006 70);
+  --popover-foreground: oklch(0.955 0.004 70);
+  /* Ink inverts: near-white controls with near-black labels. 14.7:1. */
+  --primary: oklch(0.93 0.005 70);
+  --primary-foreground: oklch(0.2 0.006 70);
+  --secondary: oklch(0.3 0.007 70);
+  --secondary-foreground: oklch(0.955 0.004 70);
+  --muted: oklch(0.3 0.007 70);
+  /* 5.5:1 on --muted, 5.1:1 on --accent, 7.4:1 on --background. */
+  --muted-foreground: oklch(0.72 0.012 70);
+  --accent: oklch(0.32 0.008 70);
+  --accent-foreground: oklch(0.955 0.004 70);
+  /* Crimson lifted for the dark ground (5.9:1 as text on --background), so
+   * its label is dark too: a near-white one would sit at 2.8:1. */
+  --destructive: oklch(0.68 0.19 22);
+  --destructive-foreground: oklch(0.17 0.03 22);
+  --brand: oklch(0.68 0.18 28.7);
+  --brand-foreground: oklch(0.17 0.02 28.7);
   /* Hairlines sit ~0.1 L above --background, the step the other dark themes
-   * use; at the --muted fill's L 0.279 every divider read as a solid rule.
+   * use; at the --muted fill's L every divider read as a solid rule.
    * --input keeps the stronger value so field outlines stay findable. */
-  --border: oklch(0.235 0.041 260.031);
-  --input: oklch(0.279 0.041 260.031);
-  /* 8.1:1 on --background. */
+  --border: oklch(0.28 0.007 70);
+  --input: oklch(0.3 0.007 70);
+  /* 7.4:1 on --background. */
   --ring: oklch(0.72 0.13 255);
   --chart-1: oklch(0.488 0.243 264.376);
   --chart-2: oklch(0.696 0.17 162.48);
@@ -361,13 +378,11 @@
   --chart-5: oklch(0.645 0.246 16.439);
   /* One step below --background, as in the other dark themes, so the
    * sidebar reads as its own pane rather than a bordered strip of canvas. */
-  --sidebar: oklch(0.105 0.036 264.695);
-  --sidebar-foreground: oklch(0.984 0.003 247.858);
-  --sidebar-primary: oklch(0.55 0.188 28.71);
-  --sidebar-primary-foreground: oklch(0.911 0.04 84.583);
-  --sidebar-accent: oklch(0.25 0.041 260.031);
-  --sidebar-accent-foreground: oklch(0.984 0.003 247.858);
-  --sidebar-border: oklch(0.235 0.041 260.031);
+  --sidebar: oklch(0.16 0.005 70);
+  --sidebar-foreground: oklch(0.955 0.004 70);
+  --sidebar-accent: oklch(0.28 0.008 70);
+  --sidebar-accent-foreground: oklch(0.955 0.004 70);
+  --sidebar-border: oklch(0.28 0.007 70);
   /* Semantic badge colors */
   --status-done: oklch(0.25 0.05 155);
   --status-done-foreground: oklch(0.8 0.08 160);
@@ -420,7 +435,7 @@
   /* Task checkbox state colors */
   --task-done: oklch(0.74 0.17 149);
   --task-doing: oklch(0.7 0.18 260);
-  --task-cancelled: oklch(0.55 0.02 260);
+  --task-cancelled: oklch(0.55 0.012 70);
   --task-custom: oklch(0.7 0.18 53);
   /* Highlight/search */
   --highlight: oklch(0.55 0.14 66);
@@ -484,7 +499,7 @@
   --muted-foreground: oklch(0.5 0.02 210);
   --accent: oklch(0.93 0.04 235); /* base2 tinted blue */
   --accent-foreground: oklch(0.45 0.13 235);
-  --destructive: oklch(0.59 0.22 30); /* red */
+  --destructive: oklch(0.52 0.2 30); /* red, darkened so its light label clears AA */
   --destructive-foreground: oklch(0.97 0.02 85);
   --border: oklch(0.9 0.03 85);
   --input: oklch(0.93 0.03 85);
@@ -496,8 +511,6 @@
   --chart-5: oklch(0.62 0.1 190); /* cyan */
   --sidebar: oklch(0.93 0.03 85);
   --sidebar-foreground: oklch(0.45 0.02 210);
-  --sidebar-primary: oklch(0.61 0.13 235);
-  --sidebar-primary-foreground: oklch(0.97 0.02 85);
   --sidebar-accent: oklch(0.9 0.04 235);
   --sidebar-accent-foreground: oklch(0.45 0.13 235);
   --sidebar-border: oklch(0.88 0.03 85);
@@ -595,8 +608,10 @@
   --muted-foreground: oklch(0.66 0.01 200);
   --accent: oklch(0.32 0.05 235);
   --accent-foreground: oklch(0.75 0.12 235);
-  --destructive: oklch(0.59 0.22 30);
-  --destructive-foreground: oklch(0.92 0.02 85);
+  --destructive: oklch(0.65 0.19 30);
+  /* Dark label: Button/Badge paint the fill opaque, and a light label on
+     this red was 3.3:1. */
+  --destructive-foreground: oklch(0.18 0.04 210);
   --border: oklch(0.3 0.04 210);
   --input: oklch(0.3 0.04 210);
   --ring: oklch(0.61 0.13 235);
@@ -607,8 +622,6 @@
   --chart-5: oklch(0.62 0.1 190);
   --sidebar: oklch(0.2 0.04 210);
   --sidebar-foreground: oklch(0.68 0.01 195);
-  --sidebar-primary: oklch(0.61 0.13 235);
-  --sidebar-primary-foreground: oklch(0.22 0.04 210);
   --sidebar-accent: oklch(0.3 0.04 210);
   --sidebar-accent-foreground: oklch(0.75 0.12 235);
   --sidebar-border: oklch(0.28 0.04 210);
@@ -718,7 +731,7 @@
   --accent: oklch(0.37 0.07 335);
   --accent-foreground: oklch(0.85 0.18 335); /* pink */
   --destructive: oklch(0.68 0.22 25); /* red */
-  --destructive-foreground: oklch(0.96 0.01 90);
+  --destructive-foreground: oklch(0.22 0.03 275);
   --border: oklch(0.37 0.03 275);
   --input: oklch(0.37 0.03 275);
   --ring: oklch(0.72 0.18 295);
@@ -729,8 +742,6 @@
   --chart-5: oklch(0.82 0.12 70); /* orange */
   --sidebar: oklch(0.25 0.03 275);
   --sidebar-foreground: oklch(0.96 0.01 90);
-  --sidebar-primary: oklch(0.72 0.18 295);
-  --sidebar-primary-foreground: oklch(0.28 0.03 275);
   --sidebar-accent: oklch(0.37 0.03 275);
   --sidebar-accent-foreground: oklch(0.85 0.18 335);
   --sidebar-border: oklch(0.33 0.03 275);
@@ -828,7 +839,7 @@
   --accent: oklch(0.35 0.05 235);
   --accent-foreground: oklch(0.78 0.12 235);
   --destructive: oklch(0.7 0.16 25); /* red */
-  --destructive-foreground: oklch(0.9 0.02 255);
+  --destructive-foreground: oklch(0.29 0.02 260);
   --border: oklch(0.35 0.02 260);
   --input: oklch(0.35 0.02 260);
   --ring: oklch(0.73 0.13 235);
@@ -839,8 +850,6 @@
   --chart-5: oklch(0.71 0.09 195); /* cyan */
   --sidebar: oklch(0.25 0.02 260);
   --sidebar-foreground: oklch(0.75 0.02 255);
-  --sidebar-primary: oklch(0.73 0.13 235);
-  --sidebar-primary-foreground: oklch(0.29 0.02 260);
   --sidebar-accent: oklch(0.35 0.02 260);
   --sidebar-accent-foreground: oklch(0.78 0.12 235);
   --sidebar-border: oklch(0.32 0.02 260);
@@ -1307,7 +1316,7 @@
 }
 /* prosemirror-tables marks the active cell-selection range. */
 .ProseMirror .selectedCell {
-  @apply bg-primary/10;
+  @apply bg-ring/15;
 }
 
 /* Highlight mark inside the editor. TipTap's stock Highlight extension
@@ -1385,13 +1394,6 @@
 
 /* ── Inline token chip styles ──────────────────────────────────────── */
 
-/* Broken / deleted block link: visual affordance for [[ULID]] pointing
-   to a soft-deleted or purged block. */
-.block-link-deleted {
-  opacity: 0.6;
-  text-decoration: line-through;
-}
-
 /* Deleted tag reference: visual affordance for #[ULID] pointing to a
    soft-deleted or purged tag. */
 .tag-ref-deleted {
@@ -1415,26 +1417,33 @@
   margin-left: 0.25em;
 }
 
-/* Block link chips — [[ULID]] rendered as clickable page title chips */
+/* Page links — [[ULID]] rendered as the page title. Underlined running text,
+   like `.external-link`: a filled chip read as a button (#5332). */
 .block-link-chip {
-  @apply inline-flex items-center rounded-md bg-primary/20 text-primary font-semibold;
-  font-size: 0.85em;
-  padding: 0.15em 0.5em;
+  @apply rounded-xs font-medium text-foreground underline decoration-muted-foreground/60 underline-offset-2 transition-colors;
 }
 .block-link-chip:hover,
 .block-link-chip:active {
-  @apply bg-primary/30;
+  @apply decoration-foreground;
+}
+/* Broken / deleted block link: visual affordance for [[ULID]] pointing
+   to a soft-deleted or purged block. Below `.block-link-chip`: same
+   specificity, so its line-through must come later to beat the underline. */
+.block-link-deleted {
+  opacity: 0.6;
+  text-decoration: line-through;
 }
 
-/* Tag reference chips — #[ULID] rendered as tag name pills */
+/* Tag reference chips — #[ULID] rendered as tag name pills. Muted metadata,
+   not a strong fill, so a tagged line still reads as prose (#5332). */
 .tag-ref-chip {
-  @apply inline-flex items-center rounded-md bg-accent font-semibold text-accent-foreground;
+  @apply inline-flex items-center rounded-md bg-muted font-medium text-muted-foreground;
   font-size: 0.85em;
   padding: 0.15em 0.5em;
 }
 .tag-ref-chip:hover,
 .tag-ref-chip:active {
-  @apply bg-accent/80;
+  @apply bg-accent text-foreground;
 }
 
 /* Block ref chips — ((ULID)) rendered as content preview chips */
@@ -1467,8 +1476,8 @@
          scopes that to `inline-block`, and flexbox defines its own container
          baselines with no overflow clause. Chrome agrees: an inline-BLOCK
          control shifted 7.78px and grew the line box 25.81→33.41px, while
-         this `inline-flex` chip measured byte-identical to `.block-link-chip`
-         with and without it. So it did no harm HERE — but it only takes one
+         this `inline-flex` chip measured byte-identical to the then-`inline-flex`
+         `.block-link-chip` with and without it. So it did no harm HERE — but it only takes one
          engine reading the older rule to make block-ref chips sit at a
          different height from every sibling chip, and the declaration was
          buying nothing to offset that. */
@@ -1556,7 +1565,6 @@
 }
 
 @media (pointer: coarse) {
-  .block-link-chip,
   .block-ref-chip,
   .tag-ref-chip {
     font-size: 0.9em;
@@ -1566,11 +1574,11 @@
 
 /* External URL links — both in TipTap editor (a.external-link) and StaticBlock */
 .external-link {
-  @apply text-primary underline decoration-primary/50 underline-offset-1 transition-colors;
+  @apply text-foreground underline decoration-muted-foreground/60 underline-offset-2 transition-colors;
 }
 .external-link:hover,
 .external-link:active {
-  @apply decoration-primary text-primary/80;
+  @apply decoration-foreground;
 }
 
 /* ── Embed container (#4550) ───────────────────────────────────────── */
@@ -1903,14 +1911,14 @@
     --conflict-move-foreground: oklch(0.94 0.12 310);
 
     /* Task checkbox states — lift lightness + chroma so the glyph
-     * stays vivid against the deep navy surface. */
+     * stays vivid against the dark surface. */
     --task-done: oklch(0.85 0.25 149);
     --task-doing: oklch(0.82 0.24 260);
     --task-cancelled: oklch(0.75 0.04 260);
     --task-custom: oklch(0.82 0.22 53);
 
     /* Search highlight — saturate the marker so it reads as a band
-     * rather than a tint against the navy surface. */
+     * rather than a tint against the dark surface. */
     --highlight: oklch(0.7 0.22 66);
 
     /* Block-reference chip. */

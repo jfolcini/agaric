@@ -156,7 +156,7 @@ function SortableBlockWrapperInner({
   // edge. The indent (marginLeft) is kept on both placements.
   const dropIndicator = showDropIndicator ? (
     <div
-      className="drop-indicator h-[5px] bg-primary rounded-full ring-2 ring-primary/20"
+      className="drop-indicator h-[5px] bg-ring rounded-full ring-2 ring-ring/20"
       style={{
         marginLeft: `calc(var(--indent-width) * ${dropIndicatorDepth})`,
       }}
@@ -214,8 +214,9 @@ function SortableBlockWrapperInner({
         // 5px bar. Gated on the existing `showDropIndicator`, independent of
         // `isFocused`. Static class (no transition) — reduced-motion safe; no
         // `border-l-2` so it never collides with the focused block's
-        // `shadow-[inset_2px_0_0_var(--primary)]` left accent.
-        showDropIndicator && 'bg-primary/8',
+        // `shadow-[inset_2px_0_0_var(--primary)]` left accent. Drop cues use
+        // the blue `--ring` family: an ink bar read as a divider (#5332).
+        showDropIndicator && 'bg-ring/8',
       )}
     >
       {/* #923 — drop indicator ABOVE the row when the drop lands before it. */}

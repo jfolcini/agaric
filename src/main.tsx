@@ -5,6 +5,9 @@ import { createRoot } from 'react-dom/client'
 import { App } from '@/App.tsx'
 
 import '@/index.css'
+// Both axes (`opsz` + `wght`): the browser picks Inter's text or display cut
+// from the font size on its own (`font-optical-sizing: auto`).
+import '@fontsource-variable/inter/opsz.css'
 import { ErrorBoundary } from '@/components/common/ErrorBoundary'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { PrimaryFocusProvider } from '@/hooks/usePrimaryFocus'

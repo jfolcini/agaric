@@ -90,11 +90,11 @@ describe('Calendar', () => {
     /** The cell (`<td>`) for today's day-of-month in the rendered grid. */
     function todayCell(container: HTMLElement): Element {
       // The `today` modifier is what we are validating, and it always renders
-      // the `ring-primary/50` cue — so the today cell is the one carrying that
+      // the `ring-brand/50` cue — so the today cell is the one carrying that
       // ring. This is a more robust locator than matching the day-of-month
       // number (which can also appear in an adjacent month's overflow row).
       const td = Array.from(container.querySelectorAll('td')).find((cell) =>
-        cell.className.includes('ring-primary'),
+        cell.className.includes('ring-brand'),
       )
       if (!td) throw new Error('today cell not found')
       return td

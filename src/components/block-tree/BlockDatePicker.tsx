@@ -114,10 +114,8 @@ export function BlockDatePicker({
               onSelect={onSelect}
               className="p-0"
               classNames={{
-                // Calmer "today" marker — the shared default fills the cell with
-                // an accent fill + `ring-primary/50`, which clashes in the red
-                // theme. Use a subtle inset ring + primary-tinted numeral.
-                today: 'rounded-md font-semibold text-primary ring-1 ring-inset ring-primary/40',
+                // Calmer "today" marker than the shared accent fill.
+                today: 'rounded-md font-semibold text-brand ring-1 ring-inset ring-brand/40',
               }}
             />
           </div>

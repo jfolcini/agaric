@@ -37,7 +37,7 @@ export function EditorSurface({
       <SelectionBubbleMenu editor={ed} blockId={blockId} />
       <EditorContent editor={ed} />
       {isDragOver && (
-        <p className="px-3 pb-1 text-xs text-primary/70 select-none" aria-live="polite">
+        <p className="px-3 pb-1 text-xs text-muted-foreground select-none" aria-live="polite">
           {t('block.attachDropZoneCaption')}
         </p>
       )}

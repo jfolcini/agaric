@@ -1901,7 +1901,7 @@ describe('EditableBlock', () => {
       })
 
       expect(wrapper.className).toContain('ring-2')
-      expect(wrapper.className).toContain('ring-primary')
+      expect(wrapper.className).toContain('ring-ring')
     })
 
     it('removes drag-over styling on drag leave', () => {

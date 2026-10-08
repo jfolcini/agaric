@@ -5,8 +5,8 @@
  * shortcut chord (`useQuickCaptureShortcut`). That chord is a no-op on
  * phones / touch tablets, leaving the headline quick-capture feature
  * completely unreachable on those devices. This floating action button
- * is the touch affordance: a primary-coloured, elevated, rounded button
- * pinned to the bottom-right that opens the same dialog.
+ * is the touch affordance: a brand-red, elevated, rounded button pinned
+ * to the bottom-right that opens the same dialog.
  *
  * Gating mirrors the other touch-only entry points (`SearchSheetTrigger`):
  * it renders only when `useShouldShowMobileChrome()` is true (phone, or
@@ -60,7 +60,8 @@ export function QuickCaptureFab({
       // Pinned bottom-right. The 5rem (80px) offset clears the bottom-fixed
       // touch FormattingToolbar (~47px) so the FAB never overlaps its
       // right-aligned "More" button, stacked on the iOS home-indicator inset.
-      className="fixed right-4 z-40 size-14 rounded-full shadow-(--shadow-floating) bottom-[calc(5rem+var(--safe-area-bottom))]"
+      // Brand red: one of the two marks that wear it (#5332).
+      className="fixed right-4 z-40 size-14 rounded-full bg-brand text-brand-foreground hover:bg-brand/90 active:bg-brand/80 shadow-(--shadow-floating) bottom-[calc(5rem+var(--safe-area-bottom))]"
     >
       <PenLine className="size-6" aria-hidden="true" />
     </Button>

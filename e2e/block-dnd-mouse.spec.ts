@@ -285,11 +285,11 @@ test.describe('Drag visual layer (#923 f2)', () => {
     // #991 — the whole over-row carries the committed faint tint (Notion/Logseq
     // landing-row idiom), not just the 5px bar. The class resolves to a
     // non-transparent background-color while the drag is in flight.
-    await expect(overRow).toHaveClass(/bg-primary\/8/)
+    await expect(overRow).toHaveClass(/bg-ring\/8/)
 
     await page.mouse.up()
 
     // …and the tint is dropped once the drag ends (no over-target).
-    await expect(overRow).not.toHaveClass(/bg-primary\/8/)
+    await expect(overRow).not.toHaveClass(/bg-ring\/8/)
   })
 })

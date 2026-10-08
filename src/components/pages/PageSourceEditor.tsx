@@ -47,7 +47,7 @@ const LazyPageSourceBuffer = lazy(() =>
 // Styled here, not in the lazy buffer, so its chunk shares no design-system
 // module with startup that would split one off the startup chunks.
 const BUFFER_CLASS = cn(
-  'w-full rounded-md border border-input bg-transparent px-3 py-2 font-mono shadow-xs transition-[color,box-shadow] outline-hidden selection:bg-primary selection:text-primary-foreground dark:bg-input/30',
+  'w-full rounded-md border border-input bg-transparent px-3 py-2 font-mono shadow-xs transition-[color,box-shadow] outline-hidden dark:bg-input/30',
   SHARED_INPUT_CLASSES,
   // `.ProseMirror` sets a one-line min-height outside any layer.
   'min-h-[50vh]!',

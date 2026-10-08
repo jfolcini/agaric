@@ -161,7 +161,7 @@ function SwipeAffordances({
           className={cn(
             'absolute left-0 top-0 bottom-0 flex items-center justify-center gap-2 px-3',
             'transition-colors duration-normal',
-            'bg-primary/10 text-primary',
+            'bg-ring/10 text-ring',
           )}
           style={{ width: 80 }}
           data-testid="swipe-indent-action"
@@ -184,7 +184,7 @@ function SwipeAffordances({
           className={cn(
             'absolute right-0 top-0 bottom-0 flex items-center justify-center gap-2 px-3',
             'transition-colors duration-normal',
-            'bg-primary/10 text-primary',
+            'bg-ring/10 text-ring',
           )}
           style={{ width: 80 }}
           data-testid="swipe-outdent-action"
