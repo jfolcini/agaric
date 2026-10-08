@@ -472,9 +472,10 @@ overflow-checks = true
 # opened the sync dialog — where an unwinding build would have confined the
 # panic to that spawned task (and iroh-dns's `catch_unwind` on the same
 # uninitialized context would have degraded to fallback DNS rather than
-# taking the process down). The fix was to install the JNI context at
-# `JNI_OnLoad` and to make the guard checkable, not to change this flag —
-# but this flag is what escalated a contained failure into a crash.
+# taking the process down). The fix was to install the JNI context (tao now
+# does, from `WryActivity.onCreate`) and to make the guard checkable, not to
+# change this flag — but this flag is what escalated a contained failure into
+# a crash.
 #
 # So before keeping, tightening, or removing this key, ask the question the
 # grep was standing in for: does anything on a reachable path depend on

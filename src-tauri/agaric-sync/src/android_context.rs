@@ -1,53 +1,33 @@
 //! Process-global Android `JavaVM` + Application `Context` handles (#3847).
 //!
-//! ## Why this module exists
+//! ## The `ndk_context` global is tao's, not ours
 //!
-//! Several things in the sync stack reach for the Android context through
-//! the `ndk_context` process-global:
-//!
-//! - `crate::sync_daemon::android_multicast` — `WifiManager.MulticastLock`,
-//!   without which the discovery crate's UDP multicast sockets receive nothing.
-//! - `hickory-resolver`, via `iroh` → `iroh-dns` — reads the device's
-//!   configured nameservers through `LinkProperties.getDnsServers()`.
-//!
-//! That global is normally installed *before `main`* by a glue crate
-//! (`ndk-glue`, `android-activity`). **Tauri installs neither.** Its Android
-//! entry point is `WryActivity`'s `System.loadLibrary("agaric_lib")` and
-//! nothing on that path calls `ndk_context::initialize_android_context`, so
-//! on Android the global was simply never set.
-//!
-//! `ndk_context::android_context()` is not fallible — it `expect()`s the
-//! global — so the first sync task to touch it panicked, and because the
-//! release profile sets `panic = "abort"` that took the whole process down:
-//!
-//! ```text
-//! F libc : Fatal signal 6 (SIGABRT) in tid 8740 (tokio-rt-worker)
-//! F DEBUG: Abort message: 'android context was not initialized'
-//! ```
-//!
-//! ## How it is installed now
-//!
-//! `jni_on_load` does the install, driven by `JNI_OnLoad` — the JVM calls
-//! that the instant `libagaric_lib.so` is loaded, long before any of our Rust
-//! code runs. The exported `JNI_OnLoad` symbol itself lives in the **app**
-//! crate (`src-tauri/src/android_jni.rs`), not here: only the crate that
-//! produces the `cdylib` exports `#[unsafe(no_mangle)]` symbols
-//! unconditionally. A `JNI_OnLoad` defined in this rlib is exported only as
-//! long as the linker happens to pull this crate's objects in at all — a
-//! silent, action-at-a-distance failure mode we deliberately avoid.
+//! `hickory-resolver` (via `iroh` → `iroh-dns`) and `netdev` read the Android
+//! context through the `ndk_context` process-global, whose accessor
+//! `expect()`s it: under `panic = "abort"` a missing context is a SIGABRT.
+//! tao (0.37+) installs it from `WryActivity.onCreate`, before `main` runs any
+//! of our code. Never install it here too: `ndk-context` asserts on a second
+//! install, which aborted every Android launch of 0.15.0. This crate no longer
+//! depends on `ndk-context`, so that call cannot come back unnoticed.
 //!
 //! ## Why we keep our own copy of the handles
 //!
 //! `ndk-context 0.1.1` exposes **no** non-panicking accessor, so callers
-//! cannot probe whether the global is set — the fallible-looking API is not
-//! fallible. [`require`](crate::android_context::require) therefore reads the
-//! copy recorded here, which is empty until `jni_on_load` succeeds and is
-//! trivially empty on every non-Android target. Callers get an `Err` and
-//! degrade; nothing panics.
+//! cannot probe whether the global is set. Our own JNI callers (the multicast
+//! lock and the network-block monitor) go through
+//! [`require`](crate::android_context::require) instead, which reads the copy
+//! `jni_on_load` records here and is trivially empty on every non-Android
+//! target. Callers get an `Err` and degrade; nothing panics.
+//!
+//! `jni_on_load` is driven by `JNI_OnLoad`, which the JVM calls the instant
+//! `libagaric_lib.so` is loaded. The exported symbol lives in the **app**
+//! crate (`src-tauri/src/android_jni.rs`), not here: only the crate that
+//! produces the `cdylib` exports `#[unsafe(no_mangle)]` symbols
+//! unconditionally.
 
-// Installing the JNI context is inherently `unsafe`: it hands raw JVM
-// pointers to `ndk_context`. Every `unsafe` block below is justified inline
-// with a `// SAFETY:` comment. Listed in `src-tauri/unsafe-allowlist.txt`.
+// Wrapping the raw `JavaVM*` is inherently `unsafe`. Every `unsafe` block
+// below is justified inline with a `// SAFETY:` comment. Listed in
+// `src-tauri/unsafe-allowlist.txt`.
 #![allow(unsafe_code)]
 
 use std::ffi::c_void;
@@ -128,24 +108,15 @@ pub fn require() -> Result<AndroidContext, String> {
 /// Records why the context could not be installed (first reason wins).
 #[cfg(target_os = "android")]
 fn record_failure(reason: String) {
-    // Deliberately does NOT promise graceful degradation. OUR callers
-    // degrade — `MulticastLock::acquire` returns `Err` and the daemon runs
-    // without peer discovery. But `hickory-resolver` (via `iroh-dns`) and
-    // `netdev` call the panicking `ndk_context::android_context()` directly,
-    // and under `[profile.release] panic = "abort"` that is a SIGABRT, just
-    // from a different frame. The "iroh falls back to default nameservers"
-    // behaviour those crates document depends on unwinding, i.e. dev builds
-    // only. Saying otherwise here would repeat the exact conflation #3847
-    // was filed to correct.
     tracing::warn!(
         reason = %reason,
-        "Android context not installed; sync will run without a multicast lock, \
-         and any later iroh DNS lookup is expected to abort in a release build"
+        "Android context not installed; sync will run without a multicast lock \
+         or network-block reports"
     );
     let _ = INSTALL_FAILURE.set(reason);
 }
 
-/// Installs the process-global Android context. Call from `JNI_OnLoad` only.
+/// Records the Android context for [`require`]. Call from `JNI_OnLoad` only.
 ///
 /// Returns the JNI version to hand back to the JVM. This is **always**
 /// `JNI_VERSION_1_6`, including on failure: returning an unrecognised version
@@ -197,9 +168,9 @@ pub unsafe fn jni_on_load(vm: *mut c_void) -> jni::sys::jint {
             if app.as_raw().is_null() {
                 return Ok(None);
             }
-            // Promote to a global reference: the pointer we hand to
-            // `ndk_context` must stay valid for the whole process, and a
-            // local reference dies when this attach scope ends.
+            // Promote to a global reference: the pointer we record must stay
+            // valid for the whole process, and a local reference dies when
+            // this attach scope ends.
             Ok(Some(env.new_global_ref(app)?))
         },
     );
@@ -216,29 +187,16 @@ pub unsafe fn jni_on_load(vm: *mut c_void) -> jni::sys::jint {
         }
     };
 
-    // Deliberately leaks the global reference: `ndk_context` (and iroh, and
-    // our own multicast lock) hold this pointer for the process lifetime, so
-    // it must never be deleted.
+    // Deliberately leaks the global reference: our JNI callers hold this
+    // pointer for the process lifetime, so it must never be deleted.
     let context_ptr: *mut c_void = context.into_raw().cast();
 
-    let handles = AndroidContext {
+    // Recorded for `require` only, never handed to `ndk_context`: tao installs
+    // that global itself, and `ndk-context` asserts on a second install.
+    let _ = ANDROID_CONTEXT.set(AndroidContext {
         java_vm: vm as usize,
         context: context_ptr as usize,
-    };
-
-    // Winning this `set` is what makes the `initialize_android_context` call
-    // below exactly-once: `ndk-context` asserts on a second initialisation,
-    // and an assert here would abort the process just like the bug we are
-    // fixing.
-    if ANDROID_CONTEXT.set(handles).is_ok() {
-        // SAFETY: `vm` is the process-global `JavaVM*` and `context_ptr` is a
-        // JNI *global* reference to the Application object, so both stay
-        // valid until the process exits, as
-        // `initialize_android_context` requires. The `OnceLock` guard above
-        // guarantees this runs at most once.
-        unsafe { ndk_context::initialize_android_context(vm, context_ptr) };
-        tracing::info!("Android JavaVM + Application context installed from JNI_OnLoad");
-    }
+    });
 
     JNIVersion::V1_6.into()
 }

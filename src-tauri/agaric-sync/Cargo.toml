@@ -126,16 +126,16 @@ qrcode = { version = "0.14", default-features = false, features = ["svg"] }
 # set. Moved with the sync-only stack from the app crate (#2621 Sync-D).
 [package.metadata.cargo-machete]
 ignored = [
-    "jni",         # Android-only: JNI bridge for the WiFi multicast lock (sync_daemon/android_multicast.rs).
-    "ndk-context", # Android-only: NDK runtime context handle for the JNI calls.
+    "jni", # Android-only: JNI bridge for the WiFi multicast lock (sync_daemon/android_multicast.rs).
 ]
 
 # Android-only: acquire WifiManager.MulticastLock so the discovery crate's UDP
 # multicast sockets receive packets (sync_daemon/android_multicast.rs). Gated on
 # target_os = "android" so desktop builds do not pull these transitive deps.
+# No `ndk-context`: tao installs that global, and a second install aborts
+# (android_context.rs).
 [target.'cfg(target_os = "android")'.dependencies]
 jni = "0.22"
-ndk-context = "0.1"
 
 [dev-dependencies]
 # `device`'s tests build config-dir fixtures under a `TempDir`; the snapshot /
