@@ -76,7 +76,7 @@ pub(super) fn text_property(key: &str, value: &str) -> FrontmatterRow {
     }
 }
 
-fn ref_property(key: &str, target: &str) -> FrontmatterRow {
+pub(super) fn ref_property(key: &str, target: &str) -> FrontmatterRow {
     FrontmatterRow {
         value_text: None,
         value_ref: Some(target.into()),

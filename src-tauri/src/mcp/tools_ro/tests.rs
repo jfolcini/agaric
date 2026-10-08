@@ -55,18 +55,18 @@ async fn settle(mat: &Materializer) {
 }
 
 // -------------------------------------------------------------------
-// list_tools — snapshot of the 10-tool wire contract
+// list_tools — snapshot of the 11-tool wire contract
 // -------------------------------------------------------------------
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn list_tools_advertises_ten_tools() {
+async fn list_tools_advertises_eleven_tools() {
     let (tools, _mat, _dir) = mk_tools().await;
     let descs = tools.list_tools();
     let names: Vec<&str> = descs.iter().map(|d| d.name.as_str()).collect();
     assert_eq!(
         names.len(),
-        10,
-        "ReadOnlyTools exposes exactly ten tools (v1 nine + #633 list_spaces)"
+        11,
+        "ReadOnlyTools exposes exactly eleven tools (v1 nine + #633 list_spaces + #5375 get_page_markdown)"
     );
     assert_eq!(
         names,
@@ -81,6 +81,7 @@ async fn list_tools_advertises_ten_tools() {
             "get_agenda",
             "journal_for_date",
             "list_spaces",
+            "get_page_markdown",
         ],
         "tool order is part of the wire contract — do not re-order (new tools append)",
     );
@@ -3067,5 +3068,266 @@ async fn list_pages_does_not_populate_last_append() {
     assert!(
         captured.is_empty(),
         "RO tool `list_pages` must not populate LAST_APPEND; got {captured:?}",
+    );
+}
+
+// -------------------------------------------------------------------
+// #5377 — `get_block` / `get_page` carry properties, tags and aliases
+// -------------------------------------------------------------------
+
+/// A page marked `template:: true`, with an alias and a tag, shows all three
+/// on `get_block` and on `get_page`'s `page`.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn get_block_and_get_page_return_properties_tags_and_aliases_5377() {
+    let (tools, mat, _dir) = mk_tools().await;
+    let page = create_block_inner(
+        &tools.pool,
+        DEV,
+        &mat,
+        "page".into(),
+        "Daily".into(),
+        None,
+        Some(0),
+    )
+    .await
+    .unwrap();
+    let tag = create_block_inner(
+        &tools.pool,
+        DEV,
+        &mat,
+        "tag".into(),
+        "work".into(),
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+    crate::spaces::bootstrap_spaces_for_test(&tools.pool, DEV)
+        .await
+        .unwrap();
+    crate::commands::set_property_inner(
+        &tools.pool,
+        DEV,
+        &mat,
+        page.id.as_str().into(),
+        "template".into(),
+        Some("true".into()),
+        None,
+        None,
+        None,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    crate::commands::set_page_aliases_inner(&tools.pool, page.id.as_str(), vec!["Day".into()])
+        .await
+        .unwrap();
+    crate::commands::add_tag_inner(&tools.pool, DEV, &mat, page.id.clone(), tag.id.clone())
+        .await
+        .unwrap();
+    settle(&mat).await;
+
+    let block = tools
+        .call_tool(
+            "get_block",
+            json!({"block_id": page.id.clone()}),
+            &test_ctx(),
+        )
+        .await
+        .unwrap();
+    let read = tools
+        .call_tool("get_page", json!({"page_id": page.id.clone()}), &test_ctx())
+        .await
+        .unwrap();
+    for got in [&block, &read["page"]] {
+        assert_eq!(got["id"], page.id.as_str());
+        assert_eq!(
+            got["properties"],
+            json!([{
+                "key": "template",
+                "value_text": "true",
+                "value_num": null,
+                "value_date": null,
+                "value_ref": null,
+                "value_bool": null,
+            }]),
+            "got {got}"
+        );
+        assert_eq!(got["tags"], json!([tag.id.as_str()]), "got {got}");
+        assert_eq!(got["aliases"], json!(["Day"]), "got {got}");
+    }
+}
+
+/// None of them reads as empty arrays; a block that is not a page has no
+/// `aliases` at all.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn get_block_without_properties_tags_or_aliases_returns_empty_arrays_5377() {
+    let (tools, mat, _dir) = mk_tools().await;
+    let page = create_block_inner(
+        &tools.pool,
+        DEV,
+        &mat,
+        "page".into(),
+        "Bare".into(),
+        None,
+        Some(0),
+    )
+    .await
+    .unwrap();
+    let content = create_block_inner(
+        &tools.pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "c".into(),
+        Some(page.id.clone()),
+        Some(0),
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    let page_row = tools
+        .call_tool("get_block", json!({"block_id": page.id}), &test_ctx())
+        .await
+        .unwrap();
+    assert_eq!(page_row["properties"], json!([]), "got {page_row}");
+    assert_eq!(page_row["tags"], json!([]), "got {page_row}");
+    assert_eq!(page_row["aliases"], json!([]), "got {page_row}");
+
+    let content_row = tools
+        .call_tool("get_block", json!({"block_id": content.id}), &test_ctx())
+        .await
+        .unwrap();
+    assert_eq!(content_row["properties"], json!([]), "got {content_row}");
+    assert_eq!(content_row["tags"], json!([]), "got {content_row}");
+    assert!(content_row.get("aliases").is_none(), "got {content_row}");
+}
+
+// -------------------------------------------------------------------
+// #5375 — `get_page_markdown`
+// -------------------------------------------------------------------
+
+/// The page as an agent reads it: the title, the front matter, a link as the
+/// linked page's title, and the block's `^ID`. The id is accepted in lower
+/// case and echoed canonical, and the activity summary has the id prefix and
+/// the line count, never the text.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn get_page_markdown_happy_path_5375() {
+    let (tools, mat, _dir) = mk_tools().await;
+    let other = create_block_inner(
+        &tools.pool,
+        DEV,
+        &mat,
+        "page".into(),
+        "Other".into(),
+        None,
+        Some(0),
+    )
+    .await
+    .unwrap();
+    let page = create_block_inner(
+        &tools.pool,
+        DEV,
+        &mat,
+        "page".into(),
+        "Plan".into(),
+        None,
+        Some(1),
+    )
+    .await
+    .unwrap();
+    let child = create_block_inner(
+        &tools.pool,
+        DEV,
+        &mat,
+        "content".into(),
+        format!("see [[{}]]", other.id.as_str()),
+        Some(page.id.clone()),
+        Some(0),
+    )
+    .await
+    .unwrap();
+    crate::commands::set_page_aliases_inner(&tools.pool, page.id.as_str(), vec!["Plan B".into()])
+        .await
+        .unwrap();
+    settle(&mat).await;
+
+    let args = json!({"page_id": page.id.as_str().to_lowercase()});
+    let result = tools
+        .call_tool("get_page_markdown", args.clone(), &test_ctx())
+        .await
+        .expect("happy path");
+    assert_eq!(result["page_id"], page.id.as_str());
+    assert_eq!(
+        result["markdown"],
+        format!(
+            "# Plan\n\n---\naliases: [Plan B]\n---\n\n- see [[Other]] ^{}\n",
+            child.id.as_str()
+        )
+    );
+    assert_eq!(
+        crate::mcp::summarise::summarise("get_page_markdown", &args, &result),
+        format!("get_page_markdown — {} (7 lines)", &page.id.as_str()[..8])
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn get_page_markdown_unknown_page_is_not_found_5375() {
+    let (tools, _mat, _dir) = mk_tools().await;
+    let err = tools
+        .call_tool(
+            "get_page_markdown",
+            json!({"page_id": BlockId::new().into_string()}),
+            &test_ctx(),
+        )
+        .await
+        .expect_err("an unknown page must error");
+    assert!(
+        matches!(err, AppError::NotFound(_)),
+        "an unknown page must surface as AppError::NotFound (→ -32001), got {err:?}",
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn get_page_markdown_on_a_content_block_is_validation_5375() {
+    let (tools, mat, _dir) = mk_tools().await;
+    let page = create_block_inner(
+        &tools.pool,
+        DEV,
+        &mat,
+        "page".into(),
+        "P".into(),
+        None,
+        Some(0),
+    )
+    .await
+    .unwrap();
+    let content = create_block_inner(
+        &tools.pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "c".into(),
+        Some(page.id),
+        Some(0),
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    let err = tools
+        .call_tool(
+            "get_page_markdown",
+            json!({"page_id": content.id}),
+            &test_ctx(),
+        )
+        .await
+        .expect_err("a content block is not a page");
+    assert!(
+        matches!(err, AppError::Validation { .. }),
+        "a non-page must surface as AppError::Validation (→ -32602), got {err:?}",
     );
 }

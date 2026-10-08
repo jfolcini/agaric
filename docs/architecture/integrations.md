@@ -22,7 +22,7 @@ The `agaric-mcp` binary is a stdio↔socket bridge bundled with the app. Agents 
 
 Two separate sockets, two marker files (`mcp-ro-enabled` / `mcp-rw-enabled`):
 
-- **Read-only**: list pages, get page, search, get block, list backlinks, list tags, list property definitions, get agenda, fetch journal page by date, list spaces.
+- **Read-only**: list pages, get page, read a page as Markdown, search, get block, list backlinks, list tags, list property definitions, get agenda, fetch journal page by date, list spaces.
 - **Read-write**: append block, update block content, set property, add tag, create page, delete block — plus `list_spaces`, which both surfaces expose.
 
 `list_spaces` returns `{ id, name, is_default }` for every space; it is the discovery surface for the `space_id` that `search` / `journal_for_date` / every mutating RW tool require. Wire names live as `TOOL_*` constants in `src-tauri/src/mcp/registry.rs`; the authoritative advertised and dispatched sets are `list_tool_descriptions()` and the `call_tool()` match arms in `tools_ro.rs` / `tools_rw.rs`.
@@ -47,7 +47,7 @@ Splitting by R/W lets users disable writes while keeping reads on.
 
 Read-only tools follow three `space_id` patterns: it is required by `search` and
 `journal_for_date`, optional for `list_backlinks` and `get_agenda`, and absent from `list_pages`,
-`get_page`, `get_block`, `list_tags`, `list_property_defs`, and `list_spaces`. Every mutating
+`get_page`, `get_page_markdown`, `get_block`, `list_tags`, `list_property_defs`, and `list_spaces`. Every mutating
 read-write tool requires an agent-supplied `space_id`: existing-block mutations validate that the
 target belongs to the claimed space, while `create_page` uses it to select the destination space.
 Neither use is an authorization boundary. See [Agent Access → Space scoping](../features/agent-access.md#space-scoping-reads-are-vault-wide-writes-are-space-scoped)

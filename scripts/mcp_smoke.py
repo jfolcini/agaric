@@ -8,7 +8,7 @@
 # ///
 """Manual MCP wire-compat smoke test for the v1 read-only tool surface.
 
-Exercises every MCP read tool (the v1 nine plus #633 `list_spaces`)
+Exercises every MCP read tool (the v1 nine, #633 `list_spaces`, #5375 `get_page_markdown`)
 against a running
 ``cargo tauri dev`` build of Agaric, using the same Python MCP SDK that
 real agents (Claude Desktop, Cursor, Continue, …) use — so the harness
@@ -61,7 +61,8 @@ WINDOWS_PIPE_PATH = r"\\.\pipe\agaric-mcp-ro"
 
 # Exact tool surface — order is part of the wire contract, mirror of
 # `src-tauri/src/mcp/tools_ro.rs::ReadOnlyTools::list_tools()`.
-# v1 nine tools + `list_spaces` (#633, space discovery).
+# v1 nine tools + `list_spaces` (#633, space discovery) + `get_page_markdown`
+# (#5375, the page as Markdown).
 EXPECTED_TOOLS: tuple[str, ...] = (
     "list_pages",
     "get_page",
@@ -73,6 +74,7 @@ EXPECTED_TOOLS: tuple[str, ...] = (
     "get_agenda",
     "journal_for_date",
     "list_spaces",
+    "get_page_markdown",
 )
 
 
@@ -175,6 +177,16 @@ SPACE_ROW_SCHEMA: dict[str, Any] = {
     },
 }
 
+# #5375 — `get_page_markdown`: the page as Markdown text.
+PAGE_MARKDOWN_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "required": ["page_id", "markdown"],
+    "properties": {
+        "page_id": {"type": "string"},
+        "markdown": {"type": "string"},
+    },
+}
+
 TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
     "list_pages": PAGE_RESPONSE_SCHEMA,
     "get_page": PAGE_SUBTREE_SCHEMA,
@@ -186,6 +198,7 @@ TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
     "get_agenda": {"type": "array"},
     "journal_for_date": BLOCK_ROW_SCHEMA,
     "list_spaces": {"type": "array", "items": SPACE_ROW_SCHEMA},
+    "get_page_markdown": PAGE_MARKDOWN_SCHEMA,
 }
 
 
@@ -429,13 +442,16 @@ async def run_smoke(socket_path: Path) -> int:
                     session, "get_block", {"block_id": seed_id}, failures
                 )
                 await call_and_validate(
+                    session, "get_page_markdown", {"page_id": seed_id}, failures
+                )
+                await call_and_validate(
                     session,
                     "list_backlinks",
                     {"block_id": seed_id, "limit": 10},
                     failures,
                 )
             else:
-                for dep in ("get_page", "get_block", "list_backlinks"):
+                for dep in ("get_page", "get_block", "get_page_markdown", "list_backlinks"):
                     failures.append(
                         (
                             dep,

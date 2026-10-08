@@ -12,15 +12,16 @@
 //! | Tool | Backing `*_inner` | Notes |
 //! |------|-------------------|-------|
 //! | `list_pages` | [`list_pages_inner`] | Cursor paginated. Limits outside `[1, 100]` are rejected. |
-//! | `get_page` | [`get_page_inner`](crate::commands::get_page_inner) | Composes `get_active_block_inner` + paginated subtree via `page_id`. soft-deleted pages → `NotFound`. |
+//! | `get_page` | [`get_page_inner`](crate::commands::get_page_inner) | Composes `get_active_block_inner` + paginated subtree via `page_id`; `page` carries its properties, tags and aliases (#5377). soft-deleted pages → `NotFound`. |
 //! | `search` | [`search_blocks_inner`] | FTS5. Result count capped at 50, snippet length at 512 chars. |
-//! | `get_block` | [`get_active_block_inner`] | soft-deleted blocks → `NotFound`. |
+//! | `get_block` | [`get_active_block_inner`] | Plus the block's properties, tags and, for a page, aliases (#5377). soft-deleted blocks → `NotFound`. |
 //! | `list_backlinks` | [`list_backlinks_grouped_inner`] | Grouped by source page. |
 //! | `list_tags` | [`list_tags_inner`] | Cursor paginated. Limits outside `[1, 100]` are rejected. |
 //! | `list_property_defs` | [`list_property_defs_inner`] | Typed property schema; cursor paginated. |
 //! | `get_agenda` | [`list_projected_agenda_inner`] | Date-range agenda projection. |
 //! | `journal_for_date` | [`journal_for_date_inner`] | Idempotent date → page lookup with a **bounded create carve-out (#2719)**: for `date` within today ± [`JOURNAL_CREATE_WINDOW_MONTHS`] months, creates the missing page on first call (single `CreateBlock`+`SetProperty` op pair, origin `agent:<name>`); outside that window the tool never creates — it returns an existing page as a pure read or `AppError::NotFound`. See [`ReadOnlyTools`] and `handle_journal_for_date` below. |
 //! | `list_spaces` | [`list_spaces_registry_inner`] | #633 — space discovery for agents. Returns `{ id, name, is_default }` per live space from the canonical `spaces` registry (#804). |
+//! | `get_page_markdown` | [`get_page_for_agent_inner`] | #5375 — the whole page as Markdown, ids written as names and every block with its `^ID`. No pagination, as the export. |
 //!
 //! # Actor scoping
 //!
@@ -59,27 +60,29 @@
 use std::future::Future;
 use std::sync::Arc;
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sqlx::SqlitePool;
 
 use super::dispatch::{scoped_dispatch, unknown_tool_error};
 use super::handler_utils::{normalize_ulid_arg, parse_args, to_tool_result};
 use super::registry::{
-    TOOL_GET_AGENDA, TOOL_GET_BLOCK, TOOL_GET_PAGE, TOOL_JOURNAL_FOR_DATE, TOOL_LIST_BACKLINKS,
-    TOOL_LIST_PAGES, TOOL_LIST_PROPERTY_DEFS, TOOL_LIST_SPACES, TOOL_LIST_TAGS, TOOL_SEARCH,
-    ToolDescription, ToolRegistry,
+    TOOL_GET_AGENDA, TOOL_GET_BLOCK, TOOL_GET_PAGE, TOOL_GET_PAGE_MARKDOWN, TOOL_JOURNAL_FOR_DATE,
+    TOOL_LIST_BACKLINKS, TOOL_LIST_PAGES, TOOL_LIST_PROPERTY_DEFS, TOOL_LIST_SPACES,
+    TOOL_LIST_TAGS, TOOL_SEARCH, ToolDescription, ToolRegistry,
 };
 use super::view_notify::{NoopViewChangeEmitter, ViewChangeEmitter};
 use crate::commands::{
-    get_active_block_inner, get_journal_page_by_date_inner, get_page_unscoped_inner,
+    PropertyRow, get_active_block_inner, get_journal_page_by_date_inner, get_page_aliases_inner,
+    get_page_for_agent_inner, get_page_unscoped_inner, get_properties_inner,
     journal_for_date_inner, list_backlinks_grouped_inner, list_pages_inner,
     list_projected_agenda_inner, list_property_defs_inner, list_spaces_registry_inner,
-    list_tags_inner, search_blocks_inner,
+    list_tags_for_block_inner, list_tags_inner, search_blocks_inner,
 };
 use crate::materializer::Materializer;
 use agaric_core::error::AppError;
 use agaric_core::ulid::BlockId;
+use agaric_store::pagination::BlockRow;
 use agaric_store::space::{SpaceId, SpaceScope};
 use agaric_store::task_locals::ActorContext;
 
@@ -304,6 +307,12 @@ struct GetBlockArgs {
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
+struct GetPageMarkdownArgs {
+    page_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct ListBacklinksArgs {
     block_id: String,
     #[serde(default)]
@@ -485,6 +494,7 @@ pub(crate) fn list_tool_descriptions() -> Vec<ToolDescription> {
         tool_desc_get_agenda(),
         tool_desc_journal_for_date(),
         tool_desc_list_spaces(),
+        tool_desc_get_page_markdown(),
     ]
 }
 
@@ -544,6 +554,7 @@ impl ToolRegistry for ReadOnlyTools {
                     .await
                 }
                 TOOL_LIST_SPACES => handle_list_spaces(&pool, args).await,
+                TOOL_GET_PAGE_MARKDOWN => handle_get_page_markdown(&pool, args).await,
                 other => Err(unknown_tool_error(other)),
             }
         })
@@ -578,7 +589,9 @@ fn tool_desc_get_page() -> ToolDescription {
     ToolDescription {
         name: TOOL_GET_PAGE.to_string(),
         description:
-            "Fetch a page and a paginated slice of its non-conflict subtree (grandchildren included)."
+            "Fetch a page and a paginated slice of its non-conflict subtree (grandchildren \
+             included). `page` also carries `properties` (every property row, raw), `tags` \
+             (tag ULIDs; `list_tags` names them) and `aliases`; the children are plain rows."
                 .to_string(),
         input_schema: json!({
             "type": "object",
@@ -711,9 +724,10 @@ fn tool_desc_search() -> ToolDescription {
 fn tool_desc_get_block() -> ToolDescription {
     ToolDescription {
         name: TOOL_GET_BLOCK.to_string(),
-        description:
-            "Fetch a single block by ULID. Returns the BlockRow; soft-deleted (tombstoned) blocks are excluded."
-                .to_string(),
+        description: "Fetch a single block by ULID. Returns the BlockRow plus `properties` (every \
+             property row, raw), `tags` (tag ULIDs; `list_tags` names them) and, for a page, \
+             `aliases`; soft-deleted (tombstoned) blocks are excluded."
+            .to_string(),
         input_schema: json!({
             "type": "object",
             "additionalProperties": false,
@@ -877,6 +891,27 @@ fn tool_desc_list_spaces() -> ToolDescription {
     }
 }
 
+fn tool_desc_get_page_markdown() -> ToolDescription {
+    ToolDescription {
+        name: TOOL_GET_PAGE_MARKDOWN.to_string(),
+        description: "Read a whole page as Markdown, returned as { page_id, markdown }: a \
+             `# Title` line, YAML front matter with the page's aliases, tags and properties, \
+             then the block outline with each block's `key:: value` properties under it. Links, \
+             tags and ref-typed values are written as names, for reading; a name can be \
+             ambiguous, so write links by ULID (`[[ULID]]`, `#[ULID]`). Each block ends with \
+             `^ULID`, the block_id update_block_content takes. No pagination."
+            .to_string(),
+        input_schema: json!({
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["page_id"],
+            "properties": {
+                "page_id": { "type": "string", "description": "ULID of the page block." },
+            },
+        }),
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Handler implementations
 //
@@ -937,7 +972,46 @@ async fn handle_get_page(pool: &SqlitePool, args: Value) -> Result<Value, AppErr
     // construction, and the helper preserves the
     // unknown-id / wrong-type / unscoped error categories.
     let resp = get_page_unscoped_inner(pool, &page_id, args.cursor, limit).await?;
-    to_tool_result(&resp)
+    let page = with_metadata(pool, resp.page.clone()).await?;
+    let mut result = to_tool_result(&resp)?;
+    result["page"] = to_tool_result(&page)?;
+    Ok(result)
+}
+
+/// A block as `get_block` and `get_page` return it (#5377): its row, every
+/// `block_properties` row it has, the ids of the tags applied to it, and, for
+/// a page, its aliases.
+#[derive(Serialize)]
+struct BlockWithMetadata {
+    #[serde(flatten)]
+    block: BlockRow,
+    properties: Vec<PropertyRow>,
+    tags: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    aliases: Option<Vec<String>>,
+}
+
+async fn with_metadata(pool: &SqlitePool, block: BlockRow) -> Result<BlockWithMetadata, AppError> {
+    let properties = get_properties_inner(pool, block.id.clone()).await?;
+    let tags = list_tags_for_block_inner(pool, block.id.clone()).await?;
+    let aliases = if block.block_type == "page" {
+        Some(get_page_aliases_inner(pool, block.id.as_str()).await?)
+    } else {
+        None
+    };
+    Ok(BlockWithMetadata {
+        block,
+        properties,
+        tags,
+        aliases,
+    })
+}
+
+async fn handle_get_page_markdown(pool: &SqlitePool, args: Value) -> Result<Value, AppError> {
+    let args: GetPageMarkdownArgs = parse_args(TOOL_GET_PAGE_MARKDOWN, args)?;
+    let page_id = normalize_ulid_arg(&args.page_id);
+    let markdown = get_page_for_agent_inner(pool, &page_id).await?;
+    Ok(json!({ "page_id": page_id, "markdown": markdown }))
 }
 
 /// The SQLite bind-parameter budget: `tag_ids` plus every filter vector.
@@ -1145,8 +1219,8 @@ async fn handle_get_block(pool: &SqlitePool, args: Value) -> Result<Value, AppEr
     // `get_active_block_inner` (not `get_block_inner`) so an
     // agent cannot fetch tombstoned rows. The MCP read surface
     // mirrors the Tauri IPC `get_block` command's contract.
-    let resp = get_active_block_inner(pool, block_id.into()).await?;
-    to_tool_result(&resp)
+    let block = get_active_block_inner(pool, block_id.into()).await?;
+    to_tool_result(&with_metadata(pool, block).await?)
 }
 
 async fn handle_list_backlinks(pool: &SqlitePool, args: Value) -> Result<Value, AppError> {
