@@ -50,9 +50,9 @@ default-run = "agaric"
 # in the final binary.
 [package.metadata.cargo-machete]
 ignored = [
-    # #2621 Sync-D: the sync-only deps (qrcode, if-addrs, jni,
-    # ndk-context) moved to `agaric-sync/Cargo.toml` along with the code that
-    # uses them; the mTLS-era ones (rcgen, tokio-tungstenite, tokio-rustls,
+    # #2621 Sync-D: the sync-only deps (qrcode, if-addrs, jni) moved to
+    # `agaric-sync/Cargo.toml` along with the code that uses them; the
+    # mTLS-era ones (rcgen, tokio-tungstenite, tokio-rustls,
     # x509-parser) were deleted outright by the iroh cutover. What remains
     # here is used by app production code (or shared TLS/crypto) but sits behind
     # conditional compilation the static analyzer can't see under the default
@@ -354,9 +354,9 @@ tokio = { version = "1", features = ["macros", "rt", "rt-multi-thread", "test-ut
 
 # #2621 Sync-D: the Android WiFi-multicast-lock JNI bridge
 # (`sync_daemon/android_multicast.rs`) moved to `agaric-sync`, taking its
-# Android-only `jni` / `ndk-context` deps with it. No app-crate code references
-# them any longer, so the `[target.'cfg(target_os = "android")'.dependencies]`
-# table was dropped here.
+# Android-only `jni` dep with it. No app-crate code references it any longer,
+# so the `[target.'cfg(target_os = "android")'.dependencies]` table was dropped
+# here.
 
 # #4283 — `O_NOFOLLOW` / `O_NONBLOCK` for the bug-report log reader
 # (commands/bug_report.rs). `OpenOptionsExt::custom_flags` takes raw `open(2)`
