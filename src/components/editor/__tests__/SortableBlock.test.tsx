@@ -4415,28 +4415,13 @@ describe(' responsive layout', () => {
     expect(wrapper).toHaveClass('min-w-0')
   })
 
-  it('nested block draws an indent guide at full border strength (visible in dark mode)', () => {
+  it('nested block draws no resting indent guide (#5355)', () => {
     render(
       <SortableBlock
         blockId="BLOCK_NESTED"
         content="nested"
         isFocused={false}
         depth={2}
-        rovingEditor={makeRovingEditor()}
-      />,
-    )
-
-    const guide = screen.getByTestId('swipe-content').querySelector('.border-l')
-    expect(guide).toHaveClass('border-border')
-  })
-
-  it('top-level block draws no indent guide', () => {
-    render(
-      <SortableBlock
-        blockId="BLOCK_TOP"
-        content="top"
-        isFocused={false}
-        depth={0}
         rovingEditor={makeRovingEditor()}
       />,
     )
