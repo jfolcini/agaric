@@ -132,6 +132,24 @@ describe('image — round-trip stability (#1434)', () => {
     ])
   })
 
+  // #4712 — the resize width rides in the alt (Obsidian's `|width`), so the
+  // parser and serializer must carry it as plain alt text, byte for byte.
+  it('a sized image `![cat|300](x.png)` keeps `cat|300` as its alt and round-trips', () => {
+    const md = '![cat|300](x.png)'
+    expect(firstParaContent(md)).toEqual([
+      { type: 'image', attrs: { alt: 'cat|300', src: 'x.png' } },
+    ])
+    expect(serialize(parse(md))).toBe(md)
+  })
+
+  it('an Obsidian `![cat|300x200](x.png)` round-trips byte-identical', () => {
+    const md = '![cat|300x200](x.png)'
+    expect(firstParaContent(md)).toEqual([
+      { type: 'image', attrs: { alt: 'cat|300x200', src: 'x.png' } },
+    ])
+    expect(serialize(parse(md))).toBe(md)
+  })
+
   it('the attachment-ref form `![alt](attachment:<id>)` round-trips (#1434)', () => {
     // A pasted/dropped image references its attachment by id; the serializer
     // treats the ref as an opaque URL, so it round-trips byte-for-byte.

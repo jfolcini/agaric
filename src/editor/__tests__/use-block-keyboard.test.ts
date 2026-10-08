@@ -1158,6 +1158,75 @@ describe('useBlockKeyboard — Tab-indent accessibility opt-out', () => {
   })
 })
 
+// A focused control inside a node view (an image's collapse toggle or resize
+// handle) sits inside the editor's DOM, under the capture listener, while the
+// editor's selection stays wherever the caret was.
+describe('useBlockKeyboard — keys typed into a control inside a node view', () => {
+  function setup() {
+    const element = document.createElement('div')
+    document.body.append(element)
+    const editor = new Editor({
+      element,
+      extensions: [Document, Paragraph, Text],
+      content: {
+        type: 'doc',
+        content: [{ type: 'paragraph', content: [{ type: 'text', text: 'hello' }] }],
+      },
+    })
+    // Caret at the start of a non-empty block, where every key below acts.
+    editor.commands.setTextSelection(1)
+    const callbacks = makeCallbacks()
+    const { unmount } = renderHook(() => useBlockKeyboard(editor, callbacks))
+    const control = document.createElement('button')
+    editor.view.dom.append(control)
+    const cleanup = () => {
+      control.remove()
+      unmount()
+      editor.destroy()
+      element.remove()
+    }
+    return { editor, callbacks, control, cleanup }
+  }
+
+  /** Whether a keydown on `target` reaches it with its default action intact. */
+  function reachesTarget(target: HTMLElement, key: string): boolean {
+    const event = new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true })
+    let reached = false
+    target.addEventListener('keydown', () => (reached = !event.defaultPrevented), { once: true })
+    target.dispatchEvent(event)
+    return reached
+  }
+
+  it('leaves the control its keys: no block rule runs', () => {
+    const { callbacks, control, cleanup } = setup()
+
+    for (const key of ['Enter', 'ArrowLeft', 'ArrowUp', 'Backspace', 'Tab']) {
+      expect(reachesTarget(control, key)).toBe(true)
+    }
+
+    expect(callbacks._calls).toEqual({})
+    cleanup()
+  })
+
+  it('still leaves editing on Escape from the control', () => {
+    const { callbacks, control, cleanup } = setup()
+
+    expect(reachesTarget(control, 'Escape')).toBe(false)
+
+    expect(callbacks._calls).toEqual({ onEscapeSave: 1 })
+    cleanup()
+  })
+
+  it('still runs the block rules for a key typed in the contenteditable itself', () => {
+    const { editor, callbacks, cleanup } = setup()
+
+    expect(reachesTarget(editor.view.dom, 'Enter')).toBe(false)
+
+    expect(callbacks._calls).toEqual({ onEnterSave: 1 })
+    cleanup()
+  })
+})
+
 // #915 — `beforeinput` fallback so Android Gboard (keyCode 229) can still
 // create/delete/merge blocks even when `handleKeyDown` bails.
 describe('useBlockKeyboard — beforeinput fallback (#915)', () => {

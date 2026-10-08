@@ -4,6 +4,7 @@ import { CollapsibleImage } from '@/components/rendering/CollapsibleImage'
 import { GatedImage } from '@/components/rendering/GatedImage'
 import type { RenderContext } from '@/components/RichContentRenderer/context'
 import type { ImageNode } from '@/editor/types'
+import { parseImageAlt } from '@/lib/image-alt-size'
 
 /**
  * Static (read-only) render of a markdown `![alt](url)` image (#1434, #1492).
@@ -28,10 +29,14 @@ import type { ImageNode } from '@/editor/types'
  * toggle, on purpose: honouring a fold with no way to undo it would leave a
  * search result or a drag overlay showing a chip the reader cannot open, in a
  * place whose whole job is to preview the content.
+ *
+ * Both surfaces draw the image at the width its alt's `|width` suffix carries
+ * (#4712), and show the alt without it.
  */
 export function renderImage(node: ImageNode, key: string, ctx: RenderContext): React.ReactElement {
+  const { text, width } = parseImageAlt(node.attrs.alt)
   if (ctx.interactive !== true) {
-    return <GatedImage key={key} src={node.attrs.src} alt={node.attrs.alt} />
+    return <GatedImage key={key} src={node.attrs.src} alt={text} width={width} />
   }
-  return <CollapsibleImage key={key} src={node.attrs.src} alt={node.attrs.alt} />
+  return <CollapsibleImage key={key} src={node.attrs.src} alt={text} width={width} />
 }

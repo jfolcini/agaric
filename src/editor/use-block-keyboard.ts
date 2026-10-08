@@ -503,6 +503,13 @@ export function useBlockKeyboard(editor: Editor | null, callbacks: BlockKeyboard
     (event: KeyboardEvent) => {
       if (!editor) return
 
+      // A key typed into a control inside a node view (an image's collapse
+      // toggle or resize handle) belongs to that control: the block rules
+      // would act on the editor's stale selection. Escape still leaves editing.
+      const dom = editor.view.dom
+      const target = event.target as Node
+      if (event.key !== 'Escape' && target !== dom && dom.contains(target)) return
+
       // IME / composition guard: while a CJK (or other) input-method
       // candidate is open, Enter confirms the candidate, Backspace/Arrows
       // navigate it, etc. Intercepting those here would split/merge/navigate

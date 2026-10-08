@@ -28,7 +28,8 @@ import { cn } from '@/lib/utils'
 const MAX_LABEL_CHARS = 40
 
 /**
- * Identifying text for the collapsed chip: the alt, else the src's filename,
+ * Identifying text for an image — the collapsed chip, and the names of the
+ * toggle and the editor's resize handle: the alt, else the src's filename,
  * else the src — capped, because a `data:` src is unbounded.
  *
  * A `data:` src reaches the chip through the FILENAME branch, not the src one:
@@ -36,7 +37,7 @@ const MAX_LABEL_CHARS = 40
  * is why the cap has to sit outside the branches. The bare-src branch is for a
  * src with no path segment left to take — one ending in `/`, or empty.
  */
-function collapsedLabel(alt: string, src: string): string {
+export function imageLabel(alt: string, src: string): string {
   const filename = src.split(/[?#]/)[0]?.split('/').pop()?.trim() ?? ''
   const raw = alt.trim() !== '' ? alt.trim() : filename !== '' ? filename : src
   return raw.length > MAX_LABEL_CHARS ? `${raw.slice(0, MAX_LABEL_CHARS)}…` : raw
@@ -44,15 +45,22 @@ function collapsedLabel(alt: string, src: string): string {
 
 export interface CollapsibleImageProps {
   src: string
+  /** The alt text, already stripped of its `|width` suffix (`parseImageAlt`). */
   alt: string
+  /** Display width in px (#4712); forwarded to `GatedImage`. */
+  width?: number | null
   /** Extra classes for the real `<img>`; forwarded to `GatedImage`. */
   imgClassName?: string
+  /** Forwarded to `GatedImage`, so it is gone while the image is collapsed. */
+  resizeHandle?: React.ReactNode
 }
 
 export function CollapsibleImage({
   src,
   alt,
+  width = null,
   imgClassName,
+  resizeHandle,
 }: CollapsibleImageProps): React.ReactElement {
   const { t } = useTranslation()
   const [collapsedKeys, setCollapsedKeys] = usePreference(PREFERENCES.imageCollapse)
@@ -65,7 +73,7 @@ export function CollapsibleImage({
   // every megabyte-sized src on the page for one toggle.
   const key = useMemo(() => imageCollapseKey(src), [src])
   const collapsed = collapsedKeys.includes(key)
-  const label = collapsedLabel(alt, src)
+  const label = imageLabel(alt, src)
 
   // Folding is a view action on the image, never on whatever contains it. Every
   // surface that renders block content interactively wraps the row in its own
@@ -128,7 +136,13 @@ export function CollapsibleImage({
           {label}
         </span>
       ) : (
-        <GatedImage src={src} alt={alt} {...(imgClassName === undefined ? {} : { imgClassName })} />
+        <GatedImage
+          src={src}
+          alt={alt}
+          width={width}
+          resizeHandle={resizeHandle}
+          {...(imgClassName === undefined ? {} : { imgClassName })}
+        />
       )}
     </span>
   )
