@@ -626,8 +626,7 @@ test.describe('Global shortcuts', () => {
     }).toPass({ timeout: 10000 })
 
     // Also verify the sheet title (SheetTitle renders `shortcuts.title`,
-    // i.e. "Quick Reference" — not "Keyboard Shortcuts", which only appears
-    // in the Settings view).
+    // i.e. "Quick Reference").
     await expect(page.getByRole('heading', { name: 'Quick Reference' })).toBeVisible()
   })
 })

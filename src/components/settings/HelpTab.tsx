@@ -9,7 +9,7 @@
  * graph — that was the source of the INEFFECTIVE_DYNAMIC_IMPORT
  * warning that defeated App.tsx's `React.lazy` for the dialog.
  *
- * The Updates card reads the persisted last-check outcome reactively via
+ * The Updates row reads the persisted last-check outcome reactively via
  * `useUpdateStatus()` (owned by `useUpdateCheck`) so it always shows state —
  * "Up to date", "Update available", "Last check failed", or "Checking…" —
  * plus a relative "last checked" time, and calls `checkForUpdatesNow()` when
@@ -26,6 +26,7 @@ import { useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import { SettingRow } from '@/components/ui/setting-row'
 import { checkForUpdatesNow, useUpdateStatus } from '@/hooks/useUpdateCheck'
 import { formatRelativeTime } from '@/lib/format-relative-time'
 import { GESTURE_ENTRIES } from '@/lib/gesture-coachmark'
@@ -37,9 +38,9 @@ interface HelpTabProps {
 }
 
 /**
- * Human-readable status line for the Updates card, derived from the persisted
+ * Human-readable status line for the Updates row, derived from the persisted
  * `UpdateStatusValue`. Uses `t()` for every branch (no hardcoded English) so
- * the card reflects whichever outcome the boot / manual check last recorded.
+ * the row reflects whichever outcome the boot / manual check last recorded.
  */
 function updateStatusLabel(status: UpdateStatusValue, checking: boolean, t: TFunction): string {
   if (checking || status.status === 'checking') return t('help.updateCheckingLabel')
@@ -91,53 +92,53 @@ export function HelpTab({ onReportBugClick }: HelpTabProps): React.ReactElement 
   return (
     <div className="space-y-6">
       <Card>
-        <CardHeader>
-          <CardTitle>{t('help.reportBugTitle')}</CardTitle>
-          <CardDescription>{t('help.reportBugDescription')}</CardDescription>
-        </CardHeader>
-        <CardContent>
-          <Button
-            variant="outline"
-            onClick={onReportBugClick}
-            aria-label={t('help.reportBugButton')}
-          >
-            {t('help.reportBugButton')}
-          </Button>
-        </CardContent>
-      </Card>
-      <Card>
-        <CardHeader>
-          <CardTitle>{t('help.updateTitle')}</CardTitle>
-          <CardDescription>{t('help.updateDescription')}</CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-2">
-          {mobile ? (
-            <p className="text-sm text-muted-foreground">{t('help.updateMobileHint')}</p>
-          ) : (
-            <>
-              <Button
-                variant="outline"
-                onClick={handleCheckNow}
-                disabled={busy}
-                aria-label={t('help.updateCheckNowButton')}
-              >
-                {busy ? t('help.updateCheckingLabel') : t('help.updateCheckNowButton')}
-              </Button>
-              {/* Persistent status — `<output>` is an implicit polite live
-                  region (role="status"), so a boot check completing (or
-                  failing) while Settings is open is announced, not silent. */}
-              <output
-                className={
-                  isError ? 'block text-sm text-destructive' : 'block text-sm text-muted-foreground'
-                }
-              >
-                {statusLabel}
-              </output>
-              {lastCheckedLabel != null && (
-                <p className="text-xs text-muted-foreground">{lastCheckedLabel}</p>
+        <CardContent className="space-y-6">
+          <SettingRow label={t('help.reportBugTitle')} description={t('help.reportBugDescription')}>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={onReportBugClick}
+              aria-label={t('help.reportBugButton')}
+            >
+              {t('help.reportBugButton')}
+            </Button>
+          </SettingRow>
+          <div className="space-y-1">
+            <SettingRow label={t('help.updateTitle')} description={t('help.updateDescription')}>
+              {mobile ? null : (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={handleCheckNow}
+                  disabled={busy}
+                  aria-label={t('help.updateCheckNowButton')}
+                >
+                  {busy ? t('help.updateCheckingLabel') : t('help.updateCheckNowButton')}
+                </Button>
               )}
-            </>
-          )}
+            </SettingRow>
+            {mobile ? (
+              <p className="text-sm text-muted-foreground">{t('help.updateMobileHint')}</p>
+            ) : (
+              <>
+                {/* Persistent status — `<output>` is an implicit polite live
+                    region (role="status"), so a boot check completing (or
+                    failing) while Settings is open is announced, not silent. */}
+                <output
+                  className={
+                    isError
+                      ? 'block text-sm text-destructive'
+                      : 'block text-sm text-muted-foreground'
+                  }
+                >
+                  {statusLabel}
+                </output>
+                {lastCheckedLabel != null && (
+                  <p className="text-xs text-muted-foreground">{lastCheckedLabel}</p>
+                )}
+              </>
+            )}
+          </div>
         </CardContent>
       </Card>
       {/* #1422 — persistent "Touch gestures" reference. Mirrors the

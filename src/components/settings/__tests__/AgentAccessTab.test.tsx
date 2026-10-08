@@ -5,6 +5,8 @@
  *  - Renders the happy-path layout (RO toggle, socket path, copy
  *    buttons, activity empty state, kill switch, RW toggle, RW socket
  *    path, RW kill switch).
+ *  - Each channel's socket path, config and kill switch render only while
+ *    its toggle is on; the activity feed renders regardless.
  *  - RO toggle on/off roundtrips through `invoke('mcp_set_enabled', …)`.
  *  - RW toggle on/off roundtrips through `invoke('mcp_rw_set_enabled',
  *    …)`.
@@ -193,13 +195,17 @@ afterEach(() => {
 
 describe('AgentAccessTab — rendering', () => {
   it('renders every section once the status loads', async () => {
-    setupInvoke(makeStatus({ enabled: true, active_connections: 0 }))
+    setupInvoke(
+      makeStatus({ enabled: true, active_connections: 0 }),
+      makeRwStatus({ enabled: true, active_connections: 0 }),
+    )
 
     render(<AgentAccessTab />)
 
     // Section headings
-    expect(await screen.findByText('Agent access')).toBeInTheDocument()
-    expect(screen.getByText('Read-only access')).toBeInTheDocument()
+    expect(await screen.findByText('Read-only access')).toBeInTheDocument()
+    // The tab rail already names the tab; the panel does not repeat it.
+    expect(screen.queryByText('Agent access')).not.toBeInTheDocument()
     expect(screen.getByText('Socket path')).toBeInTheDocument()
     expect(screen.getByText('Agent configuration')).toBeInTheDocument()
     expect(screen.getByText('Recent activity')).toBeInTheDocument()
@@ -229,21 +235,20 @@ describe('AgentAccessTab — rendering', () => {
     expect(screen.getByText(/No active read-write connections\./)).toBeInTheDocument()
   })
 
-  it('titles the label-less sections with h3 headings', async () => {
-    setupInvoke(makeStatus({ enabled: true, active_connections: 0 }))
+  // The page h1 is "Settings" and the panel has no title of its own, so these are h2.
+  it('titles the label-less sections with h2 headings and nothing else', async () => {
+    setupInvoke(makeStatus({ enabled: true }), makeRwStatus({ enabled: true }))
 
     render(<AgentAccessTab />)
 
-    for (const name of [
-      'Agent configuration',
-      'Recent activity',
-      'Connections',
-      'Read-write connections',
-    ]) {
-      expect(await screen.findByRole('heading', { level: 3, name })).toBeInTheDocument()
-    }
-    // The empty feed's message is a paragraph, not an h2.
-    expect(screen.queryByRole('heading', { level: 2 })).not.toBeInTheDocument()
+    await screen.findByRole('heading', { name: 'Agent configuration' })
+    // The empty feed's message is a paragraph, not a heading.
+    expect(screen.getAllByRole('heading').map((h) => [h.tagName, h.textContent])).toEqual([
+      ['H2', 'Agent configuration'],
+      ['H2', 'Connections'],
+      ['H2', 'Read-write connections'],
+      ['H2', 'Recent activity'],
+    ])
   })
 
   it('renders loading skeleton before status loads', () => {
@@ -267,6 +272,61 @@ describe('AgentAccessTab — rendering', () => {
       },
       { timeout: 5000 },
     )
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Gated on the toggle
+// ---------------------------------------------------------------------------
+
+describe('AgentAccessTab — content gated on the toggle', () => {
+  it('shows only the toggles and the activity feed while both channels are off', async () => {
+    setupInvoke(makeStatus({ enabled: false }), makeRwStatus({ enabled: false }))
+    render(<AgentAccessTab />)
+    await screen.findByText('Read-only access')
+
+    expect(screen.queryByTestId('mcp-socket-path')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('mcp-rw-socket-path')).not.toBeInTheDocument()
+    expect(screen.queryByText('Agent configuration')).not.toBeInTheDocument()
+    expect(screen.queryByText('Connections')).not.toBeInTheDocument()
+    expect(screen.queryByText('Read-write connections')).not.toBeInTheDocument()
+    // Past agent writes stay revertable after access is turned off.
+    expect(screen.getByRole('heading', { level: 2, name: 'Recent activity' })).toBeInTheDocument()
+  })
+
+  it('shows the socket path, config and connections only for a channel that is on', async () => {
+    setupInvoke(makeStatus({ enabled: true }), makeRwStatus({ enabled: false }))
+    render(<AgentAccessTab />)
+
+    expect(await screen.findByTestId('mcp-socket-path')).toBeInTheDocument()
+    expect(screen.getByText('Agent configuration')).toBeInTheDocument()
+    expect(screen.getByText('Connections')).toBeInTheDocument()
+    expect(screen.queryByTestId('mcp-rw-socket-path')).not.toBeInTheDocument()
+    expect(screen.queryByText('Read-write connections')).not.toBeInTheDocument()
+  })
+
+  it('reveals the RO section when its toggle is switched on', async () => {
+    const user = userEvent.setup()
+    let roEnabled = false
+    mockedInvoke.mockImplementation(async (cmd: string, args?: unknown) => {
+      if (cmd === 'get_mcp_status') return makeStatus({ enabled: roEnabled })
+      if (cmd === 'get_mcp_rw_status') return makeRwStatus()
+      if (cmd === 'mcp_set_enabled') {
+        roEnabled = (args as { enabled: boolean }).enabled
+        return null
+      }
+      return undefined
+    })
+    render(<AgentAccessTab />)
+    const toggle = await screen.findByRole('switch', { name: 'Read-only access' })
+    expect(screen.queryByTestId('mcp-socket-path')).not.toBeInTheDocument()
+
+    await user.click(toggle)
+
+    expect(await screen.findByTestId('mcp-socket-path')).toHaveTextContent(
+      '/home/test/.local/share/com.agaric.app/mcp-ro.sock',
+    )
+    expect(screen.getByRole('button', { name: /Copy Claude Desktop config/i })).toBeInTheDocument()
   })
 })
 
@@ -434,7 +494,7 @@ describe('AgentAccessTab — RW warning badge', () => {
 describe('AgentAccessTab — copy buttons', () => {
   it('copies the socket path to the clipboard', async () => {
     const user = userEvent.setup()
-    setupInvoke(makeStatus())
+    setupInvoke(makeStatus({ enabled: true }))
 
     render(<AgentAccessTab />)
     const copyBtn = await screen.findByRole('button', { name: 'Copy socket path' })
@@ -450,7 +510,7 @@ describe('AgentAccessTab — copy buttons', () => {
 
   it('copies the RW socket path to the clipboard', async () => {
     const user = userEvent.setup()
-    setupInvoke(makeStatus(), makeRwStatus())
+    setupInvoke(makeStatus(), makeRwStatus({ enabled: true }))
 
     render(<AgentAccessTab />)
     const copyBtn = await screen.findByRole('button', { name: 'Copy read-write socket path' })
@@ -466,7 +526,7 @@ describe('AgentAccessTab — copy buttons', () => {
 
   it('copies the Claude Desktop config as valid JSON', async () => {
     const user = userEvent.setup()
-    setupInvoke(makeStatus())
+    setupInvoke(makeStatus({ enabled: true }))
 
     render(<AgentAccessTab />)
     const btn = await screen.findByRole('button', { name: /Copy Claude Desktop config/i })
@@ -490,7 +550,7 @@ describe('AgentAccessTab — copy buttons', () => {
 
   it('copies the generic MCP config as valid JSON', async () => {
     const user = userEvent.setup()
-    setupInvoke(makeStatus())
+    setupInvoke(makeStatus({ enabled: true }))
 
     render(<AgentAccessTab />)
     const btn = await screen.findByRole('button', { name: /Copy generic MCP config/i })
@@ -510,7 +570,7 @@ describe('AgentAccessTab — copy buttons', () => {
 
   it('logs and toasts on clipboard failure', async () => {
     const user = userEvent.setup()
-    setupInvoke(makeStatus())
+    setupInvoke(makeStatus({ enabled: true }))
 
     render(<AgentAccessTab />)
     const btn = await screen.findByRole('button', { name: /Copy Claude Desktop config/i })
@@ -1786,21 +1846,29 @@ describe('AgentAccessTab — touch discoverability', () => {
 // ---------------------------------------------------------------------------
 
 describe('AgentAccessTab — kill switch', () => {
-  it('disables the disconnect button when no connections are active', async () => {
-    setupInvoke(makeStatus({ active_connections: 0 }))
+  it('hides the disconnect button when no connections are active', async () => {
+    setupInvoke(makeStatus({ enabled: true, active_connections: 0 }))
+    render(<AgentAccessTab />)
+
+    expect(await screen.findByText('No active connections.')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Disconnect all' })).not.toBeInTheDocument()
+  })
+
+  it('shows an outline disconnect button while a connection is active', async () => {
+    setupInvoke(makeStatus({ enabled: true, active_connections: 1 }))
     render(<AgentAccessTab />)
 
     const btn = await screen.findByRole('button', { name: 'Disconnect all' })
-    expect(btn).toBeDisabled()
+    expect(btn).toBeEnabled()
+    expect(btn).toHaveAttribute('data-variant', 'outline')
   })
 
   it('fires mcp_disconnect_all after confirming the dialog', async () => {
     const user = userEvent.setup()
-    setupInvoke(makeStatus({ active_connections: 3 }))
+    setupInvoke(makeStatus({ enabled: true, active_connections: 3 }))
 
     render(<AgentAccessTab />)
     const btn = await screen.findByRole('button', { name: 'Disconnect all' })
-    expect(btn).not.toBeDisabled()
 
     await user.click(btn)
 
@@ -1818,7 +1886,7 @@ describe('AgentAccessTab — kill switch', () => {
   it('logs and toasts when mcp_disconnect_all rejects', async () => {
     const user = userEvent.setup()
     mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'get_mcp_status') return makeStatus({ active_connections: 1 })
+      if (cmd === 'get_mcp_status') return makeStatus({ enabled: true, active_connections: 1 })
       if (cmd === 'get_mcp_rw_status') return makeRwStatus()
       if (cmd === 'mcp_disconnect_all') throw new Error('backend exploded')
       return undefined
@@ -1849,21 +1917,23 @@ describe('AgentAccessTab — kill switch', () => {
 // ---------------------------------------------------------------------------
 
 describe('AgentAccessTab — RW kill switch', () => {
-  it('disables the RW disconnect button when no RW connections are active', async () => {
-    setupInvoke(makeStatus(), makeRwStatus({ active_connections: 0 }))
+  it('hides the RW disconnect button when no RW connections are active', async () => {
+    setupInvoke(makeStatus(), makeRwStatus({ enabled: true, active_connections: 0 }))
     render(<AgentAccessTab />)
 
-    const btn = await screen.findByRole('button', { name: 'Disconnect all read-write' })
-    expect(btn).toBeDisabled()
+    expect(await screen.findByText('No active read-write connections.')).toBeInTheDocument()
+    expect(
+      screen.queryByRole('button', { name: 'Disconnect all read-write' }),
+    ).not.toBeInTheDocument()
   })
 
   it('fires mcp_rw_disconnect_all after confirming the dialog and reloads status', async () => {
     const user = userEvent.setup()
-    setupInvoke(makeStatus(), makeRwStatus({ active_connections: 2 }))
+    setupInvoke(makeStatus(), makeRwStatus({ enabled: true, active_connections: 2 }))
 
     render(<AgentAccessTab />)
     const btn = await screen.findByRole('button', { name: 'Disconnect all read-write' })
-    expect(btn).not.toBeDisabled()
+    expect(btn).toHaveAttribute('data-variant', 'outline')
 
     await user.click(btn)
 
@@ -1891,7 +1961,7 @@ describe('AgentAccessTab — RW kill switch', () => {
     const user = userEvent.setup()
     mockedInvoke.mockImplementation(async (cmd: string) => {
       if (cmd === 'get_mcp_status') return makeStatus()
-      if (cmd === 'get_mcp_rw_status') return makeRwStatus({ active_connections: 1 })
+      if (cmd === 'get_mcp_rw_status') return makeRwStatus({ enabled: true, active_connections: 1 })
       if (cmd === 'mcp_rw_disconnect_all') throw new Error('rw backend exploded')
       return undefined
     })
@@ -1967,10 +2037,10 @@ describe('AgentAccessTab — status load error', () => {
     // RO side renders normally with no banner.
     expect(await screen.findByText('Read-only access')).toBeInTheDocument()
     expect(screen.queryByText('Failed to load MCP status')).not.toBeInTheDocument()
-    // RW side still renders its shell (label + socket path code block
-    // + kill switch) even though its status failed to load.
+    // RW side still renders its toggle; with no status it reads as off, so
+    // the socket path and kill switch stay hidden.
     expect(screen.getByText('Read-write access')).toBeInTheDocument()
-    expect(screen.getByTestId('mcp-rw-socket-path')).toBeInTheDocument()
+    expect(screen.queryByTestId('mcp-rw-socket-path')).not.toBeInTheDocument()
     // Logger captured the RW failure.
     expect(mockedLoggerError).toHaveBeenCalledWith(
       'AgentAccessSettingsTab',

@@ -16,7 +16,7 @@ import { expect, test, waitForBoot } from './helpers'
  *
  * The Settings → Keyboard editor is a typed `<Input>` behind a Pencil
  * button (`aria-label="Edit shortcut for {action}"`), NOT a keystroke-
- * capture control — `src/components/settings/KeyboardTab.tsx:141-193` confirms `onChange` on a
+ * capture control — `src/components/settings/KeyboardTab.tsx` confirms `onChange` on a
  * plain text field, saved via Enter or the Save button.
  */
 
@@ -31,10 +31,10 @@ async function openKeyboardSettings(page: import('@playwright/test').Page) {
 /**
  * Locate a shortcut's row by its (translated) description text.
  *
- * `src/components/settings/KeyboardTab.tsx:151-156` renders one row `<div>` per catalog entry whose
- * DIRECT children are the keys/description/actions columns — only the row
- * div itself has `[data-testid="kbd-keys-column"]` as a direct child (every
- * ancestor — ScrollArea/Card/CardContent/etc — only contains it as a deep
+ * `src/components/settings/KeyboardTab.tsx` renders one row `<div>` per catalog entry whose
+ * DIRECT children are the name/keys/actions columns — only the row div
+ * itself has `[data-testid="kbd-keys-column"]` as a direct child (every
+ * ancestor — Card/CardContent/etc — only contains it as a deep
  * descendant), so `:has(> ...)` pins to exactly the repeated row elements,
  * and `.filter({ hasText })` narrows to the one matching shortcut.
  */
@@ -56,7 +56,7 @@ test.describe('Keyboard shortcut customization', () => {
     await row.getByRole('button', { name: 'Save', exact: true }).click()
 
     // Display updated: the new modifier shows, and the "Customized" badge
-    // appears (KeyboardTab.tsx:198-205).
+    // appears.
     await expect(row.getByTestId('kbd-keys-column')).toContainText('Alt')
     await expect(row.getByText('Customized')).toBeVisible()
 

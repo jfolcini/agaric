@@ -30,10 +30,10 @@ test.describe('Settings on a phone', () => {
     await navigateMobile(page, 'Settings')
 
     await page.getByRole('combobox', { name: 'Settings', exact: true }).click()
-    await page.getByRole('option', { name: 'Sync & Devices', exact: true }).click()
+    await page.getByRole('option', { name: 'Sync & devices', exact: true }).click()
 
     await expect(page.getByTestId('settings-panel-sync')).toBeVisible()
-    await expect(page.getByRole('button', { name: 'Pair New Device' })).toBeInViewport({
+    await expect(page.getByRole('button', { name: 'Pair new device' })).toBeInViewport({
       ratio: 1,
     })
   })

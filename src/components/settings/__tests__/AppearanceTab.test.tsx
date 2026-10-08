@@ -34,6 +34,13 @@ afterEach(async () => {
 })
 
 describe('AppearanceTab — tooltip delay', () => {
+  it('labels the select by its row and describes it with the help text', () => {
+    render(<AppearanceTab />)
+    expect(screen.getByLabelText(t('settings.tooltipDelayLabel'))).toHaveAccessibleDescription(
+      t('settings.tooltipDelayHelp'),
+    )
+  })
+
   it('defaults to "Default" when nothing is stored', () => {
     render(<AppearanceTab />)
     const select = screen.getByLabelText(t('settings.tooltipDelayLabel'))

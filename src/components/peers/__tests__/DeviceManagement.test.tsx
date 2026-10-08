@@ -4,8 +4,8 @@
  * Validates:
  *  - Renders local device ID
  *  - Shows list of paired peers
- *  - "Pair New Device" button exists
- *  - "Sync Now" button calls startSync
+ *  - "Pair new device" button exists
+ *  - "Sync now" button calls startSync
  *  - "Unpair" button calls deletePeerRef after confirmation
  *  - Error handling
  *  - Peer list refresh after pairing dialog closes
@@ -191,12 +191,12 @@ describe('DeviceManagement', () => {
     render(<DeviceManagement />)
 
     expect(await screen.findByText(mockDeviceId)).toBeInTheDocument()
-    expect(screen.getByText('Local Device ID')).toBeInTheDocument()
+    expect(screen.getByText('Local device ID')).toBeInTheDocument()
   })
 
   it('exposes stable testids on the local device id label and value', async () => {
     // e2e/sync-ui.spec.ts targets these test-ids instead of the English
-    // label text (which has been i18n-ified to "Local Device ID"). Keep
+    // label text (which has been i18n-ified to "Local device ID"). Keep
     // them in sync if renaming the UI string.
     mockInvokeByCommand({
       get_device_id: () => mockDeviceId,
@@ -211,8 +211,19 @@ describe('DeviceManagement', () => {
     expect(valueEl.tagName).toBe('SPAN')
 
     const labelEl = screen.getByTestId('local-device-id-label')
-    expect(labelEl).toHaveTextContent('Local Device ID')
-    expect(labelEl.tagName).toBe('DT')
+    expect(labelEl).toHaveTextContent('Local device ID')
+  })
+
+  it('does not repeat the tab name as a panel title', async () => {
+    mockInvokeByCommand({
+      get_device_id: () => mockDeviceId,
+      list_peer_refs: () => [],
+    })
+
+    render(<DeviceManagement />)
+
+    await screen.findByText(mockDeviceId)
+    expect(screen.queryByText('Device Management')).not.toBeInTheDocument()
   })
 
   it('shows list of paired peers', async () => {
@@ -228,10 +239,10 @@ describe('DeviceManagement', () => {
     expect(screen.getByText('peer-def-098...')).toBeInTheDocument()
 
     // Show peer count
-    expect(screen.getByText('Paired Devices (2)')).toBeInTheDocument()
+    expect(screen.getByText('Paired devices (2)')).toBeInTheDocument()
   })
 
-  it('"Pair New Device" button exists', async () => {
+  it('"Pair new device" button exists', async () => {
     mockInvokeByCommand({
       get_device_id: () => mockDeviceId,
       list_peer_refs: () => [],
@@ -239,11 +250,13 @@ describe('DeviceManagement', () => {
 
     render(<DeviceManagement />)
 
-    const btn = await screen.findByRole('button', { name: /Pair New Device/i })
-    expect(btn).toBeInTheDocument()
+    const btn = await screen.findByRole('button', { name: /Pair new device/i })
+    // The panel's one primary action, at the size of every other Settings button.
+    expect(btn).toHaveAttribute('data-variant', 'default')
+    expect(btn).toHaveAttribute('data-size', 'sm')
   })
 
-  it('"Pair New Device" button opens PairingDialog', async () => {
+  it('"Pair new device" button opens PairingDialog', async () => {
     const user = userEvent.setup()
     mockInvokeByCommand({
       get_device_id: () => mockDeviceId,
@@ -252,13 +265,13 @@ describe('DeviceManagement', () => {
 
     render(<DeviceManagement />)
 
-    const btn = await screen.findByRole('button', { name: /Pair New Device/i })
+    const btn = await screen.findByRole('button', { name: /Pair new device/i })
     await user.click(btn)
 
     expect(screen.getByTestId('pairing-dialog')).toBeInTheDocument()
   })
 
-  it('"Sync Now" button calls startSync', async () => {
+  it('"Sync now" button calls startSync', async () => {
     const user = userEvent.setup()
     mockInvokeByCommand({
       get_device_id: () => mockDeviceId,
@@ -277,7 +290,7 @@ describe('DeviceManagement', () => {
     // Wait for peers to load
     await screen.findByText('peer-abc-123...')
 
-    const syncBtns = screen.getAllByRole('button', { name: /Sync Now/i })
+    const syncBtns = screen.getAllByRole('button', { name: /Sync now/i })
     await user.click(syncBtns[0] as HTMLElement)
 
     await waitFor(() => {
@@ -332,7 +345,9 @@ describe('DeviceManagement', () => {
 
     render(<DeviceManagement />)
 
-    expect(await screen.findByText(/No paired devices/i)).toBeInTheDocument()
+    // e2e/sync-ui.spec.ts locates the empty state by this testid.
+    expect(await screen.findByTestId('device-no-peers')).toHaveTextContent(/No paired devices/i)
+    expect(screen.getByRole('region', { name: /No paired devices/i })).toBeInTheDocument()
   })
 
   it('shows error when loading fails', async () => {
@@ -415,7 +430,7 @@ describe('DeviceManagement', () => {
     // Wait for peers to load
     await screen.findByText('peer-abc-123...')
 
-    const syncBtns = screen.getAllByRole('button', { name: /Sync Now/i })
+    const syncBtns = screen.getAllByRole('button', { name: /Sync now/i })
     await user.click(syncBtns[0] as HTMLElement)
 
     await waitFor(() => {
@@ -450,7 +465,7 @@ describe('DeviceManagement', () => {
 
     await screen.findByText('peer-abc-123...')
 
-    const syncBtns = screen.getAllByRole('button', { name: /Sync Now/i })
+    const syncBtns = screen.getAllByRole('button', { name: /Sync now/i })
     await user.click(syncBtns[0] as HTMLElement)
 
     // Wait for the visible error to appear first
@@ -484,7 +499,7 @@ describe('DeviceManagement', () => {
 
     await screen.findByText('Pixel 8')
 
-    const syncBtns = screen.getAllByRole('button', { name: /Sync Now/i })
+    const syncBtns = screen.getAllByRole('button', { name: /Sync now/i })
     await user.click(syncBtns[0] as HTMLElement)
 
     await waitFor(() => {
@@ -522,7 +537,7 @@ describe('DeviceManagement', () => {
     expect(initialCallCount).toBe(1)
 
     // Open pairing dialog
-    const pairBtn = screen.getByRole('button', { name: /Pair New Device/i })
+    const pairBtn = screen.getByRole('button', { name: /Pair new device/i })
     await user.click(pairBtn)
     expect(screen.getByTestId('pairing-dialog')).toBeInTheDocument()
 
@@ -599,7 +614,7 @@ describe('DeviceManagement', () => {
       // loadData mocks resolve via microtasks (not timers), so data is already loaded
       expect(screen.getByText('peer-abc-123...')).toBeInTheDocument()
 
-      const syncBtns = screen.getAllByRole('button', { name: /Sync Now/i })
+      const syncBtns = screen.getAllByRole('button', { name: /Sync now/i })
 
       // Use fireEvent instead of userEvent — userEvent waits for the async
       // handler to settle which can't happen until we advance the timer.
@@ -635,7 +650,7 @@ describe('DeviceManagement', () => {
     expect(unpairBtns[1]).toHaveAttribute('aria-label', 'Unpair device peer-def-098...')
   })
 
-  it('uses gap-2 spacing between Sync Now and Unpair buttons', async () => {
+  it('uses gap-2 spacing between Sync now and Unpair buttons', async () => {
     mockInvokeByCommand({
       get_device_id: () => mockDeviceId,
       list_peer_refs: () => mockPeers,
@@ -698,7 +713,7 @@ describe('DeviceManagement', () => {
 
     await screen.findByText('peer-abc-123...')
 
-    const syncBtns = screen.getAllByRole('button', { name: /Sync Now/i })
+    const syncBtns = screen.getAllByRole('button', { name: /Sync now/i })
     await user.click(syncBtns[0] as HTMLElement)
 
     await waitFor(() => {
@@ -706,9 +721,9 @@ describe('DeviceManagement', () => {
     })
   })
 
-  // --- Sync All tests (#379) ---
+  // --- Sync all tests (#379) ---
 
-  it('shows Sync All button when 2+ peers exist', async () => {
+  it('shows Sync all button when 2+ peers exist', async () => {
     mockInvokeByCommand({
       get_device_id: () => mockDeviceId,
       list_peer_refs: () => mockPeers,
@@ -720,7 +735,7 @@ describe('DeviceManagement', () => {
     })
   })
 
-  it('hides Sync All button when fewer than 2 peers', async () => {
+  it('hides Sync all button when fewer than 2 peers', async () => {
     mockInvokeByCommand({
       get_device_id: () => 'device-123',
       list_peer_refs: () => [makePeerRef({ peer_id: 'peer-1' })],
@@ -732,7 +747,7 @@ describe('DeviceManagement', () => {
     expect(container.querySelector('.device-sync-all-btn')).toBeNull()
   })
 
-  it('Sync All calls startSync for each peer sequentially', async () => {
+  it('Sync all calls startSync for each peer sequentially', async () => {
     const syncCalls: string[] = []
     mockInvokeByCommand({
       get_device_id: () => 'device-123',
@@ -779,7 +794,7 @@ describe('DeviceManagement', () => {
     expect(results).toHaveNoViolations()
   })
 
-  it('Sync All continues when first peer fails (#421)', async () => {
+  it('Sync all continues when first peer fails (#421)', async () => {
     const syncCalls: string[] = []
     mockInvokeByCommand({
       get_device_id: () => 'device-123',
@@ -832,7 +847,7 @@ describe('DeviceManagement', () => {
     await screen.findByText('peer-abc-123...')
 
     // Trigger a sync error
-    const syncBtns = screen.getAllByRole('button', { name: /Sync Now/i })
+    const syncBtns = screen.getAllByRole('button', { name: /Sync now/i })
     await user.click(syncBtns[0] as HTMLElement)
 
     // Wait for error to appear
@@ -863,7 +878,7 @@ describe('DeviceManagement', () => {
 
     await screen.findByText('peer-abc-123...')
 
-    const syncBtns = screen.getAllByRole('button', { name: /Sync Now/i })
+    const syncBtns = screen.getAllByRole('button', { name: /Sync now/i })
     await user.click(syncBtns[0] as HTMLElement)
 
     await waitFor(() => {
@@ -1257,7 +1272,7 @@ describe('DeviceManagement', () => {
       await screen.findByText(mockDeviceId)
       const hint = container.querySelector('.manual-ip-hint')
       expect(hint).toBeTruthy()
-      expect(hint?.textContent).toContain('mDNS discovery')
+      expect(hint?.textContent).toContain('set its address below')
     })
   })
 
@@ -1529,7 +1544,7 @@ describe('DeviceManagement', () => {
   // Replaces the old `flex-wrap` contract: three nowrap buttons wrapping into
   // a tall stack was the bug, not the fix. Measured in a real browser, the
   // card is only ~230px wide at a 360px viewport (~196px of action area) while
-  // `Sync Now` + `Unpair` need 264px side by side — so they stack full-width
+  // `Sync now` + `Unpair` need 264px side by side — so they stack full-width
   // on mobile and become a row at `sm:`.
   it('peer action buttons stack full-width on mobile and become a row at sm', async () => {
     mockInvokeByCommand({
@@ -1631,7 +1646,7 @@ describe('DeviceManagement', () => {
       render(<DeviceManagement />)
       await screen.findByText('peer-abc-123...')
 
-      const syncBtns = screen.getAllByRole('button', { name: /Sync Now/i })
+      const syncBtns = screen.getAllByRole('button', { name: /Sync now/i })
       await user.click(syncBtns[0] as HTMLElement)
 
       // t('device.syncTimedOut')
@@ -1642,7 +1657,7 @@ describe('DeviceManagement', () => {
       })
     })
 
-    it('surfaces device.syncFailedForList (interpolated) when Sync All has failures', async () => {
+    it('surfaces device.syncFailedForList (interpolated) when Sync all has failures', async () => {
       mockInvokeByCommand({
         get_device_id: () => mockDeviceId,
         list_peer_refs: () => mockPeers,

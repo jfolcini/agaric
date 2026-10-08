@@ -248,9 +248,9 @@ for (const profile of PROFILES) {
       await waitForBoot(page)
       await navigateMobile(page, 'Settings')
 
-      // Open the "Sync & Devices" settings tab, which hosts DeviceManagement
-      // (mono device-id row, peers list, "Pair New Device").
-      await openSettingsTab(page, 'Sync & Devices')
+      // Open the "Sync & devices" settings tab, which hosts DeviceManagement
+      // (mono device-id row, peers list, "Pair new device").
+      await openSettingsTab(page, 'Sync & devices')
       await expect(page.getByTestId('settings-panel-sync')).toBeVisible()
       // The device id loads async; the pair button is gated on it.
       const pairBtn = page.locator('.device-pair-btn')
@@ -287,10 +287,23 @@ for (const profile of PROFILES) {
       // also what declares the joiner role (replacing the old chooser).
       await dialog.getByRole('button', { name: /have a code from the other device/i }).click()
       await expect(
-        dialog.getByRole('button', { name: 'Type Passphrase', exact: true }),
+        dialog.getByRole('button', { name: 'Type passphrase', exact: true }),
       ).toBeVisible()
       await page.waitForTimeout(150)
       await expectNoHorizontalOverflow(page, dialog, `Pairing dialog · joiner @ ${profile.name}`)
+    })
+
+    // With read-write access on, its one-line warning badge ran past the card.
+    test('Agent access with both channels on has no horizontal overflow', async ({ page }) => {
+      await waitForBoot(page)
+      await navigateMobile(page, 'Settings')
+      await openSettingsTab(page, 'Agent access')
+      const panel = page.getByTestId('settings-panel-agent')
+      await panel.getByRole('switch', { name: 'Read-only access' }).click()
+      await panel.getByRole('switch', { name: 'Read-write access' }).click()
+      await expect(panel.getByTestId('mcp-rw-warning-badge')).toBeVisible()
+      await expect(panel.getByTestId('mcp-rw-socket-path')).toBeVisible()
+      await expectNoHorizontalOverflow(page, panel, `Settings · Agent access @ ${profile.name}`)
     })
 
     // The only test in this file that materializes a PEER. Every other sync
@@ -310,7 +323,7 @@ for (const profile of PROFILES) {
     test('paired device row fits its card and does not overflow', async ({ page }) => {
       await waitForBoot(page)
       await navigateMobile(page, 'Settings')
-      await openSettingsTab(page, 'Sync & Devices')
+      await openSettingsTab(page, 'Sync & devices')
       await expect(page.getByTestId('settings-panel-sync')).toBeVisible()
       const pairBtn = page.locator('.device-pair-btn')
       await expect(pairBtn).toBeVisible()
@@ -320,7 +333,7 @@ for (const profile of PROFILES) {
       await pairBtn.click()
       const sheet = activeSheet(page)
       await sheet.getByRole('button', { name: /have a code from the other device/i }).click()
-      await sheet.getByRole('button', { name: 'Type Passphrase', exact: true }).click()
+      await sheet.getByRole('button', { name: 'Type passphrase', exact: true }).click()
       const words = ['alpha', 'bravo', 'charlie', 'delta']
       const inputs = sheet.locator('input')
       for (const [i, word] of words.entries()) await inputs.nth(i).fill(word)

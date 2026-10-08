@@ -3561,6 +3561,23 @@ describe('get_mcp_status', () => {
     expect(typeof status['socket_path']).toBe('string')
     expect(status['active_connections']).toBe(0)
   })
+
+  it('reports the last mcp_set_enabled call, leaving RW untouched', () => {
+    invoke('mcp_set_enabled', { enabled: true })
+    expect((invoke('get_mcp_status', {}) as Record<string, unknown>)['enabled']).toBe(true)
+    expect((invoke('get_mcp_rw_status', {}) as Record<string, unknown>)['enabled']).toBe(false)
+
+    invoke('mcp_set_enabled', { enabled: false })
+    expect((invoke('get_mcp_status', {}) as Record<string, unknown>)['enabled']).toBe(false)
+  })
+
+  it('is reset to disabled by resetMock', () => {
+    invoke('mcp_set_enabled', { enabled: true })
+    invoke('mcp_rw_set_enabled', { enabled: true })
+    resetMock()
+    expect((invoke('get_mcp_status', {}) as Record<string, unknown>)['enabled']).toBe(false)
+    expect((invoke('get_mcp_rw_status', {}) as Record<string, unknown>)['enabled']).toBe(false)
+  })
 })
 
 describe('mcp_set_enabled', () => {
@@ -3590,6 +3607,12 @@ describe('get_mcp_rw_status', () => {
     expect(status['enabled']).toBe(false)
     expect(typeof status['socket_path']).toBe('string')
     expect(status['active_connections']).toBe(0)
+  })
+
+  it('reports the last mcp_rw_set_enabled call, leaving RO untouched', () => {
+    invoke('mcp_rw_set_enabled', { enabled: true })
+    expect((invoke('get_mcp_rw_status', {}) as Record<string, unknown>)['enabled']).toBe(true)
+    expect((invoke('get_mcp_status', {}) as Record<string, unknown>)['enabled']).toBe(false)
   })
 })
 

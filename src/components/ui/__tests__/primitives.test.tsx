@@ -17,7 +17,6 @@ import { axe } from 'vitest-axe'
 import { CardButton } from '@/components/ui/card-button'
 import { CloseButtonIcon, closeButtonClassName } from '@/components/ui/close-button'
 import { FeaturePageHeader } from '@/components/ui/feature-page-header'
-import { FormField } from '@/components/ui/form-field'
 import { IconButton } from '@/components/ui/icon-button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -1008,101 +1007,6 @@ describe('SectionGroupHeader', () => {
 
   it('has no a11y violations', async () => {
     const { container } = render(<SectionGroupHeader>Doing</SectionGroupHeader>)
-    const results = await axe(container)
-    expect(results).toHaveNoViolations()
-  })
-})
-
-// ---------------------------------------------------------------------------
-// FormField — label + control + description/error wrapper for settings tabs.
-// Pairs with the shared `Label` primitive so typography stays consistent.
-// ---------------------------------------------------------------------------
-
-describe('FormField', () => {
-  it('renders the label text', () => {
-    render(
-      <FormField label="Theme" htmlFor="theme-select">
-        <input id="theme-select" aria-label="Theme" />
-      </FormField>,
-    )
-    expect(screen.getByText('Theme')).toBeInTheDocument()
-  })
-
-  it('associates the label with the control via htmlFor', () => {
-    render(
-      <FormField label="Theme" htmlFor="theme-select">
-        <input id="theme-select" data-testid="control" aria-label="Theme" />
-      </FormField>,
-    )
-    const label = screen.getByText('Theme')
-    expect(label).toHaveAttribute('for', 'theme-select')
-    // getByLabelText resolves through the for/id association.
-    expect(screen.getByLabelText('Theme')).toBe(screen.getByTestId('control'))
-  })
-
-  it('renders the children control', () => {
-    render(
-      <FormField label="Theme" htmlFor="t">
-        <input id="t" data-testid="theme-input" aria-label="Theme" />
-      </FormField>,
-    )
-    expect(screen.getByTestId('theme-input')).toBeInTheDocument()
-  })
-
-  it('renders the description when provided and no error', () => {
-    render(
-      <FormField label="Theme" description="Pick a UI theme" htmlFor="t">
-        <input id="t" aria-label="Theme" />
-      </FormField>,
-    )
-    expect(screen.getByText('Pick a UI theme')).toBeInTheDocument()
-  })
-
-  it('renders the error in place of the description when both are provided', () => {
-    render(
-      <FormField label="Theme" description="Pick one" error="Required" htmlFor="t">
-        <input id="t" aria-label="Theme" />
-      </FormField>,
-    )
-    expect(screen.getByText('Required')).toBeInTheDocument()
-    expect(screen.queryByText('Pick one')).not.toBeInTheDocument()
-  })
-
-  it('marks the error message with role="alert"', () => {
-    render(
-      <FormField label="Theme" error="Required" htmlFor="t">
-        <input id="t" aria-label="Theme" />
-      </FormField>,
-    )
-    expect(screen.getByRole('alert')).toHaveTextContent('Required')
-  })
-
-  it('emits data-slot="form-field"', () => {
-    const { container } = render(
-      <FormField label="Theme" htmlFor="t">
-        <input id="t" aria-label="Theme" />
-      </FormField>,
-    )
-    expect(container.querySelector('[data-slot="form-field"]')).toBeInTheDocument()
-  })
-
-  it('merges custom className on the wrapper', () => {
-    const { container } = render(
-      <FormField label="Theme" htmlFor="t" className="my-field">
-        <input id="t" aria-label="Theme" />
-      </FormField>,
-    )
-    const wrapper = q(container, '[data-slot="form-field"]')
-    expect(getClasses(wrapper)).toContain('my-field')
-    expect(getClasses(wrapper)).toContain('space-y-2')
-  })
-
-  it('has no a11y violations', async () => {
-    const { container } = render(
-      <FormField label="Theme" description="Pick one" htmlFor="theme-select">
-        <input id="theme-select" aria-label="Theme" />
-      </FormField>,
-    )
     const results = await axe(container)
     expect(results).toHaveNoViolations()
   })

@@ -83,7 +83,7 @@ async function openPairNewDevice(
   await beforeOpen?.()
   await page.getByRole('button', { name: /pair new device/i }).click()
   const dialog = activeDialog(page)
-  await expect(dialog.getByText('Pair Device')).toBeVisible()
+  await expect(dialog.getByText('Pair device')).toBeVisible()
   return dialog
 }
 
@@ -179,7 +179,7 @@ test.describe('Sync pairing flows', () => {
     // appears in the device list" assertion this file's header used to
     // record as structurally unreachable.
     // Scoped to the row's own name element: an unscoped text match also
-    // hits the "Paired Devices (1)" section heading.
+    // hits the "Paired devices (1)" section heading.
     await expect(page.locator('[data-testid="settings-panel-sync"] .device-peer-name')).toHaveText(
       'Paired Device',
     )
@@ -263,7 +263,7 @@ test.describe('Sync pairing flows', () => {
 
     await page.getByRole('button', { name: /pair new device/i }).click()
     const dialog = activeDialog(page)
-    await expect(dialog.getByText('Pair Device')).toBeVisible()
+    await expect(dialog.getByText('Pair device')).toBeVisible()
     // #3463: the dialog opens directly on the host path — no chooser click
     // needed before the countdown appears.
     await expect(dialog.locator('.pairing-countdown')).toContainText('5:00')

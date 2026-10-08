@@ -16,7 +16,7 @@ export const settings: Record<string, string> = {
     'Show technical error codes in notifications. Keep this off for everyday use; turn it on to capture the code when reporting a problem.',
   'settings.resetOnboarding.title': 'Reset spaces onboarding',
   'settings.resetOnboarding.description':
-    'Show the spaces onboarding banner again the next time you open Manage Spaces.',
+    'Show the spaces onboarding banner again the next time you open Manage spaces.',
   'settings.resetOnboarding.button': 'Reset',
   'settings.resetOnboarding.success': 'Onboarding will show again on next visit',
   // #3308 — re-entry into the first-run welcome tour. Distinct from
@@ -35,11 +35,11 @@ export const settings: Record<string, string> = {
     'Type : followed by a shortcode (e.g. :joy) to insert an emoji inline. Turn off to type a literal colon with no popup.',
   'settings.editor.tabIndentLabel': 'Tab indents blocks',
   'settings.editor.tabIndentHelp':
-    'Use Tab and Shift+Tab to indent and outdent blocks (like Logseq and Notion). Turn off for accessibility to keep Tab as the focus-navigation key — block indenting then stays on Ctrl/Cmd+Shift+Arrow. Press Escape any time to leave the editor.',
+    'Tab and Shift+Tab indent and outdent blocks. Turn off to keep Tab for moving focus and indent with Ctrl/Cmd+Shift+Arrow instead. Press Escape to leave the editor.',
   // #1492 — external-image load policy (privacy-first default: Click).
   'settings.editor.externalImageLabel': 'External images',
   'settings.editor.externalImageHelp':
-    'Controls whether images hosted on external websites are loaded. Loading an external image tells that website you opened the page. In Click mode, choosing Load remembers that domain so its images load automatically next time. Local, pasted, and attachment images are never affected.',
+    'Loading an image from another website tells that site you opened the page. Choosing Load on a blocked image remembers its domain for next time. Local, pasted, and attachment images are never affected.',
   'settings.editor.externalImageAlways': 'Always load',
   'settings.editor.externalImageClick': 'Ask each time (recommended)',
   'settings.editor.externalImageNever': 'Never load',
@@ -48,8 +48,8 @@ export const settings: Record<string, string> = {
   'settings.editor.externalImageRemoveHost': 'Remove {{host}}',
   'settings.editor.linkPreviewLabel': 'Fetch link previews on hover',
   'settings.editor.linkPreviewHelp':
-    'Hovering or Tab-focusing an external link fetches its title and icon from that site, which tells the site you hold the link. Turn off to stop that fetch; previews already cached still show, and a link you paste or insert yourself is still fetched once.',
-  'settings.tabSync': 'Sync & Devices',
+    'Hovering or focusing an external link fetches its title and icon, which tells that site you have the link. When off, cached previews still show, and a link you paste or insert is still fetched once.',
+  'settings.tabSync': 'Sync & devices',
   'settings.tabData': 'Data',
   'settings.tabStatus': 'Status',
   // #4555 — UI language. `System` follows the device language list; the
@@ -70,7 +70,7 @@ export const settings: Record<string, string> = {
   'settings.themeSolarizedDark': 'Solarized Dark',
   'settings.themeDracula': 'Dracula',
   'settings.themeOneDarkPro': 'One Dark Pro',
-  'settings.fontSizeLabel': 'Font Size',
+  'settings.fontSizeLabel': 'Font size',
   'settings.fontSizeSmall': 'Small',
   'settings.fontSizeMedium': 'Medium',
   'settings.fontSizeLarge': 'Large',
@@ -102,12 +102,11 @@ export const settings: Record<string, string> = {
   'quickCapture.failureToast': "Couldn't save quick capture",
   'settings.tabHelp': 'Help',
   'settings.tabNotifications': 'Notifications',
-  'notifications.title': 'Notifications',
   'notifications.description':
     'Get a native OS notification on the day a task is due, and send yourself a test to confirm they reach you.',
   'notifications.enableLabel': 'Remind me about due tasks',
   'notifications.enableDescription':
-    'When on, each open task is announced once on its due date, at the reminder time below, while Agaric is running (minimised counts; closed does not). Reminders are per device.',
+    'Each open task is announced once on its due date, at the reminder time below, while Agaric is running or minimized. Reminders are per device.',
   'notifications.reminderTimeLabel': 'Reminder time',
   'notifications.reminderTimeDescription':
     'Local time at which a task due today is announced. Opening Agaric later in the day still announces it once.',
@@ -175,13 +174,12 @@ export const settings: Record<string, string> = {
     "Couldn't open your browser, and the URL couldn't be copied to the clipboard. Use the Copy report button and open GitHub manually.",
   'bugReport.reportCrashTitle': 'Report this crash',
   'settings.tabAgentAccess': 'Agent access',
-  'agentAccess.title': 'Agent access',
   'agentAccess.description':
-    'Allow local agents (Claude Desktop, Cursor, Continue, …) to connect over local sockets. Two independent servers are available: a read-only socket for search / query tools, and a read-write socket for create / edit / tag / delete tools. Each toggle is off by default.',
+    'Let agents on this computer (Claude Desktop, Cursor, Continue, …) connect over local sockets. Read-only and read-write access are separate switches, both off by default.',
   'agentAccess.loadFailed': 'Failed to load MCP status',
   'agentAccess.roToggleLabel': 'Read-only access',
   'agentAccess.roToggleDescription':
-    'Expose read tools (search, get_page, list_backlinks, …) on a local socket. Note: RO tools may create a journal page for a date within ~12 months of today on first access; the resulting op is reversible from the activity feed.',
+    'Let agents search and read your notes over a local socket. Reading a journal date within a year of today may create that page; you can undo it from the activity feed.',
   'agentAccess.toggleOnSuccess': 'Read-only agent access enabled',
   'agentAccess.toggleOffSuccess': 'Read-only agent access disabled',
   'agentAccess.toggleFailed': 'Failed to toggle agent access',
@@ -265,7 +263,7 @@ export const settings: Record<string, string> = {
   'settings.weekStartUpdated': 'Week now starts on {{day}}',
   'settings.journalDateFormatLabel': 'Journal date format',
   'settings.journalDateFormatHelp':
-    'How journal page titles are displayed. The page is always stored as YYYY-MM-DD, so changing this is safe and never affects existing journals.',
+    'How journal titles are shown. Pages are always stored as YYYY-MM-DD, so changing this never affects existing journals.',
   'settings.journalDateFormatLocale': 'Localized (e.g. Wed, Jun 17 2026)',
   'settings.journalDateFormatIso': 'YYYY-MM-DD (e.g. 2026-06-17)',
   'settings.journalDateFormatLong': 'Month D, YYYY (e.g. June 17, 2026)',

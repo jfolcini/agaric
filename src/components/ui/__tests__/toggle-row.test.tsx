@@ -5,6 +5,7 @@
  *  - Renders label + help text + a switch
  *  - The Switch is named by its Label for a11y — `getByRole('switch', { name })`
  *    resolves via the `htmlFor`/`id` association
+ *  - The Switch is described by the help text (`aria-describedby`)
  *  - Toggling fires `onCheckedChange` with the next state
  *  - `disabled` forwards to the Switch
  *  - `data-testid` forwards onto the Switch
@@ -42,6 +43,14 @@ describe('ToggleRow', () => {
     // htmlFor/id wiring (and aria-label) name the control.
     const toggle = screen.getByRole('switch', { name: 'Enable feature' })
     expect(toggle).toHaveAttribute('id', 'sample-toggle')
+  })
+
+  it('describes the Switch with the help text', () => {
+    render(<ToggleRow {...defaultProps} />)
+
+    expect(screen.getByRole('switch')).toHaveAccessibleDescription(
+      'Turns the sample feature on or off.',
+    )
   })
 
   it('reflects the checked state', () => {

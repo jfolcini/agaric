@@ -16,6 +16,7 @@ import { ConfirmDialog } from '@/components/dialogs/ConfirmDialog'
 import { LoadingSkeleton } from '@/components/rendering/LoadingSkeleton'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { IconButton } from '@/components/ui/icon-button'
 import { Input } from '@/components/ui/input'
 import { ListItem } from '@/components/ui/list-item'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
@@ -186,8 +187,6 @@ export function PropertyDefinitionsList(): React.ReactElement {
 
   return (
     <div className="space-y-6">
-      <h2 className="text-lg font-semibold">{t('propertiesView.title')}</h2>
-
       {/* Search input */}
       <div className="relative">
         <Search
@@ -217,7 +216,7 @@ export function PropertyDefinitionsList(): React.ReactElement {
           value={newKey}
           onChange={(e) => setNewKey(e.target.value)}
           placeholder={t('propertiesView.createKey')}
-          className="flex-1"
+          className="sm:flex-1"
           aria-label={t('propertiesView.createKey')}
           aria-describedby={
             newKey.trim() && definitions.some((d) => d.key === newKey.trim())
@@ -226,10 +225,7 @@ export function PropertyDefinitionsList(): React.ReactElement {
           }
         />
         <Select value={newType} onValueChange={setNewType}>
-          <SelectTrigger
-            className="rounded-md border bg-background px-3 py-2 text-sm sm:w-36"
-            aria-label={t('propertiesView.createType')}
-          >
+          <SelectTrigger className="sm:w-36" aria-label={t('propertiesView.createType')}>
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
@@ -240,6 +236,7 @@ export function PropertyDefinitionsList(): React.ReactElement {
             ))}
           </SelectContent>
         </Select>
+        {/* Default size: it shares a row with an h-9 input and select. */}
         <Button
           type="submit"
           variant="outline"
@@ -247,7 +244,7 @@ export function PropertyDefinitionsList(): React.ReactElement {
             !newKey.trim() || isCreating || definitions.some((d) => d.key === newKey.trim())
           }
         >
-          <Plus className="h-4 w-4" /> {t('propertiesView.create')}
+          <Plus /> {t('propertiesView.create')}
         </Button>
       </form>
       {newKey.trim() && definitions.some((d) => d.key === newKey.trim()) && (
@@ -321,10 +318,10 @@ export function PropertyDefinitionsList(): React.ReactElement {
                       <PopoverTrigger asChild>
                         <Button
                           variant="ghost"
-                          size="sm"
+                          size="xs"
                           aria-label={t('propertiesView.editOptionsTooltip')}
                         >
-                          <Settings2 className="h-3.5 w-3.5 mr-1" />
+                          <Settings2 />
                           {t('propertiesView.editOptions')}
                         </Button>
                       </PopoverTrigger>
@@ -366,20 +363,16 @@ export function PropertyDefinitionsList(): React.ReactElement {
                       {t('propertiesView.builtIn')}
                     </Badge>
                   ) : (
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <Button
-                          variant="ghost"
-                          size="icon-xs"
-                          aria-label={t('properties.deleteDefinition', { key: def.key })}
-                          className="shrink-0 [@media(pointer:coarse)]:opacity-100 touch-target [@media(pointer:coarse)]:min-w-[44px] focus-visible:opacity-100 text-muted-foreground hover:text-destructive active:text-destructive active:scale-95"
-                          onClick={() => setDeleteTarget(def.key)}
-                        >
-                          <Trash2 className="h-3.5 w-3.5" />
-                        </Button>
-                      </TooltipTrigger>
-                      <TooltipContent>{t('propertiesView.deleteTooltip')}</TooltipContent>
-                    </Tooltip>
+                    <IconButton
+                      variant="ghost"
+                      size="icon-xs"
+                      tooltip={t('propertiesView.deleteTooltip')}
+                      ariaLabel={t('properties.deleteDefinition', { key: def.key })}
+                      className="text-muted-foreground hover:text-destructive active:text-destructive active:scale-95"
+                      onClick={() => setDeleteTarget(def.key)}
+                    >
+                      <Trash2 />
+                    </IconButton>
                   )}
                 </ListItem>
               ))}

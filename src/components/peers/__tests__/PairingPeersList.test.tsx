@@ -2,7 +2,7 @@
  * Tests for PairingPeersList component.
  *
  * Validates:
- *  - Shows "Paired Devices" heading
+ *  - Shows "Paired devices" heading
  *  - Shows "No paired devices yet." when empty
  *  - Renders peer IDs in the list
  *  - Shows last synced time for peers
@@ -64,16 +64,18 @@ if (firstPeer === undefined) throw new Error('mockPeers fixture must have at lea
 if (secondPeer === undefined) throw new Error('mockPeers fixture must have at least two peers')
 
 describe('PairingPeersList', () => {
-  it('shows "Paired Devices" heading', () => {
+  it('shows "Paired devices" heading', () => {
     render(<PairingPeersList peers={[]} onUnpair={vi.fn()} />)
 
-    expect(screen.getByText('Paired Devices')).toBeInTheDocument()
+    expect(screen.getByText('Paired devices')).toBeInTheDocument()
   })
 
   it('shows "No paired devices yet." when empty', () => {
     render(<PairingPeersList peers={[]} onUnpair={vi.fn()} />)
 
-    expect(screen.getByText('No paired devices yet.')).toBeInTheDocument()
+    expect(screen.getByRole('region', { name: 'No paired devices yet.' })).toHaveTextContent(
+      'No paired devices yet.',
+    )
   })
 
   it('renders peer IDs in the list', () => {
@@ -204,6 +206,8 @@ describe('PairingPeersList', () => {
 
     const unpairBtns = screen.getAllByRole('button', { name: /Unpair/i })
     expect(unpairBtns.length).toBe(2)
+    // Outline triggers; only the confirm dialog's button is red.
+    for (const btn of unpairBtns) expect(btn).toHaveAttribute('data-variant', 'outline')
   })
 
   it('calls onUnpair with correct peer ID when clicking Unpair', async () => {

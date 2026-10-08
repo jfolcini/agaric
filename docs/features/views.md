@@ -85,7 +85,7 @@ Pages tagged as templates.
 - **Browse**: each template is a page; the row shows a preview of its first child block.
 - **Insert a template**: in any block, type `/template` → **TemplatePicker** → pick. The template's children land under the current block.
 - **Toggle template status**: open the page → **PageHeaderMenu** kebab → *Toggle template*.
-- **Per-space journal template**: separate from the templates view — set in [spaces.md](spaces.md) → *Manage Spaces…*.
+- **Per-space journal template**: separate from the templates view — set in [spaces.md](spaces.md) → *Manage spaces…*.
 
 ## Graph
 
@@ -104,27 +104,27 @@ Materializer + sync metrics, in Settings › Status. Useful for diagnosing slown
 
 - **Materializer queue depth**: how far behind the read-side projection is (foreground and background queues).
 - **Op counts**: total ops; ops dispatched.
-- **Sync state**: the overall state, last successful sync, and peer count — aggregated, not per peer. For per-peer status and errors, go to Settings → Sync & Devices.
+- **Sync state**: the overall state, last successful sync, and peer count — aggregated, not per peer. For per-peer status and errors, go to Settings → Sync & devices.
 - Polls the backend periodically.
 
 ## Settings
 
-Tabbed configuration view. The tabs sit in a vertical rail, bucketed into four groups:
+Tabbed configuration view. On desktop the tabs sit in a vertical rail, bucketed into four groups; on a phone a grouped picker at the top replaces the rail. Each tab is named once, by the rail: panels carry no title of their own. Settings are rows, with the label and description on the left and the control on the right (stacked on a phone).
 
 - **Workspace**
-  - **General** — deadline warning days, Quick Capture hotkey, launch-at-login, debug mode, reset onboarding.
-  - **Appearance** — theme (the palette's *Toggle theme* cycles auto / dark / light), sidebar width, density.
-  - **Editor** — editor behaviour toggles (e.g. the `:` emoji picker).
+  - **General** — deadline warning days, Quick Capture hotkey and launch-at-login (desktop), debug mode, reset spaces onboarding, show the welcome tour again.
+  - **Appearance** — language, theme (the palette's *Toggle theme* cycles auto / dark / light), font size, animations, tooltip delay, week start, journal date format.
+  - **Editor** — the `:` emoji picker, *Tab indents blocks*, external images, link previews on hover.
   - **Keyboard** — full shortcut customisation (see [keyboard.md](keyboard.md)).
   - **Properties** — list of property definitions; rename, change type, edit select options.
 - **Integrations**
-  - **Notifications** — reminder / notification settings.
-  - **Agent access** — MCP enable / disable + ActivityFeed + SessionRevertControls (see [agent-access.md](agent-access.md)).
-- **Data**
-  - **Data** — import / export (see [import-export.md](import-export.md)); *Open edit history* opens the History view.
-  - **Sync & Devices** — pair / unpair / rename peers; manual addresses (see [sync.md](sync.md)).
+  - **Notifications** — due-task reminders, the reminder time, the OS permission and a test notification.
+  - **Agent access** — read-only and read-write switches; each shows its socket path and connections only while it is on. The activity feed with SessionRevertControls is a separate card, shown whether or not access is on (see [agent-access.md](agent-access.md)).
+- **Data & sync**
+  - **Data** — import / export (see [import-export.md](import-export.md)), the integrity check; *Open edit history* opens the History view.
+  - **Sync & devices** — pair / unpair / rename peers; manual addresses (see [sync.md](sync.md)).
   - **Status** — materializer and sync metrics (see Status above).
-- **Help** — keyboard shortcut reference, *Report a Bug* button, app version.
+- **Help** — *Report a bug*, update check, touch gesture reference.
 
 Tabs are deep-linkable via `?settings=<tab>` (parsed inside the Settings view itself, no router involved) and via `agaric://settings/<tab>`. The last-used tab persists in `localStorage`.
 

@@ -24,10 +24,9 @@ import { expect, test } from './helpers'
  *      ≥ 2 undoable ops) — UNBLOCKED here (second test): two `mcp:activity`
  *      events sharing a `sessionId`, both agent-authored RW successes with
  *      an `opRef`, are enough to cross the ≥ 2 threshold purely via events.
- *   4. Persisted toggle state (`mcp_set_enabled` optimistic flip reverting
- *      because `get_mcp_status` is a stateless mock handler) — STILL
- *      BLOCKED. That gap is orthogonal to the event bus (#2683's fix
- *      doesn't touch command statefulness) and is out of scope here.
+ *
+ * The feed renders with both access toggles off, which is how every test
+ * here reaches it.
  */
 
 interface MockEventWindow extends Window {

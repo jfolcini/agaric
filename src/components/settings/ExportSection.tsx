@@ -12,7 +12,8 @@ import { useCallback, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { SettingRow } from '@/components/ui/setting-row'
 import { downloadBlob, exportAllSpacesAsZip, exportGraphAsZip } from '@/lib/export-graph'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
@@ -111,34 +112,32 @@ export function ExportSection(): React.ReactElement {
   return (
     <Card>
       <CardHeader>
-        <CardTitle
-          className="export-panel-title flex items-center gap-2"
-          data-testid="export-panel-title"
-        >
-          <Download className="h-4 w-4" />
+        <CardTitle className="export-panel-title" data-testid="export-panel-title">
           {t('data.exportTitle')}
         </CardTitle>
-        <CardDescription>{t('data.exportDesc')}</CardDescription>
       </CardHeader>
-      <CardContent>
-        <Button variant="outline" size="sm" disabled={exporting} onClick={handleExportAll}>
-          <Download className="h-3.5 w-3.5" />{' '}
-          {exporting ? t('data.exporting') : t('data.exportButton')}
-        </Button>
-        {/* #2964 — whole-vault export: every space, one top-level ZIP
-            folder per space. A separate action from "Export All" above,
-            which only ever sees the currently-active space. */}
-        <p className="text-xs text-muted-foreground mt-3 mb-3">{t('data.exportAllSpacesDesc')}</p>
-        <Button
-          variant="outline"
-          size="sm"
-          disabled={exportingAllSpaces}
-          onClick={handleExportAllSpaces}
-          data-testid="export-all-spaces-button"
+      <CardContent className="space-y-4">
+        <SettingRow label={t('data.exportCurrentSpaceLabel')} description={t('data.exportDesc')}>
+          <Button variant="outline" size="sm" disabled={exporting} onClick={handleExportAll}>
+            <Download />
+            {exporting ? t('data.exporting') : t('data.exportButton')}
+          </Button>
+        </SettingRow>
+        <SettingRow
+          label={t('data.exportAllSpacesLabel')}
+          description={t('data.exportAllSpacesDesc')}
         >
-          <Download className="h-3.5 w-3.5" />{' '}
-          {exportingAllSpaces ? t('data.exportingAllSpaces') : t('data.exportAllSpacesButton')}
-        </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={exportingAllSpaces}
+            onClick={handleExportAllSpaces}
+            data-testid="export-all-spaces-button"
+          >
+            <Download />
+            {exportingAllSpaces ? t('data.exportingAllSpaces') : t('data.exportAllSpacesButton')}
+          </Button>
+        </SettingRow>
       </CardContent>
     </Card>
   )

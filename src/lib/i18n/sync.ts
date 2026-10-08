@@ -72,7 +72,7 @@ export const sync: Record<string, string> = {
     'This device paused the app\u2019s network access. Keep the screen on and this app open while pairing.',
   'pairing.qrScannedMessage': 'QR code scanned \u2014 verify and tap Pair',
   'pairing.closeDialogLabel': 'Close pairing dialog',
-  'pairing.dialogTitle': 'Pair Device',
+  'pairing.dialogTitle': 'Pair device',
   // #3463 — the dialog opens directly on the host path (this device's own
   // code); these two strings label the affordance that switches roles.
   // Choosing "have a code" is what declares the joiner role, replacing the
@@ -87,8 +87,8 @@ export const sync: Record<string, string> = {
   'pairing.sessionExpired': 'Session expired',
   'pairing.retryButton': 'Retry',
   'pairing.orSeparator': 'OR',
-  'pairing.typePassphraseButton': 'Type Passphrase',
-  'pairing.scanQrCodeButton': 'Scan QR Code',
+  'pairing.typePassphraseButton': 'Type passphrase',
+  'pairing.scanQrCodeButton': 'Scan QR code',
   'pairing.recommendedBadge': 'Recommended',
   'pairing.wordPlaceholder': '{{ordinal}} word',
   'pairing.wordLabel': 'Passphrase word {{num}}',
@@ -100,7 +100,7 @@ export const sync: Record<string, string> = {
   'pairing.loadingScannerMessage': 'Loading scanner...',
   'pairing.cancelButton': 'Cancel',
   'pairing.pairButton': 'Pair',
-  'pairing.pairedDevicesTitle': 'Paired Devices',
+  'pairing.pairedDevicesTitle': 'Paired devices',
   'pairing.noPairedDevices': 'No paired devices yet.',
   'pairing.cameraDeniedFallback': 'Camera access denied \u2014 switched to manual entry',
   'pairing.confirmCloseTitle': 'Cancel pairing?',
@@ -115,16 +115,15 @@ export const sync: Record<string, string> = {
   'pairing.copyPassphraseAriaLabel': 'Copy passphrase',
   'pairing.passphraseCopied': 'Passphrase copied',
   'pairing.passphraseCopyFailed': 'Failed to copy passphrase',
-  'device.title': 'Device Management',
-  'device.localDeviceIdLabel': 'Local Device ID',
+  'device.localDeviceIdLabel': 'Local device ID',
   'device.deviceIdCopied': 'Device ID copied',
   'device.copyFailed': 'Failed to copy to clipboard',
   'device.copyDeviceIdLabel': 'Copy device ID to clipboard',
-  'device.pairNewDeviceButton': 'Pair New Device',
-  'device.pairedDevicesTitle': 'Paired Devices',
+  'device.pairNewDeviceButton': 'Pair new device',
+  'device.pairedDevicesTitle': 'Paired devices',
   'device.syncAllLabel': 'Sync with all paired devices',
-  'device.syncAllButton': 'Sync All',
-  'device.noPairedDevices': 'No paired devices. Click "Pair New Device" to get started.',
+  'device.syncAllButton': 'Sync all',
+  'device.noPairedDevices': 'No paired devices yet. Use "Pair new device" to add one.',
   // Shown once mDNS init has failed. It points at the QR because the v2 payload
   // carries the peer's endpoint_id and ip:port (#4037), so a first-ever pair
   // needs no multicast.
@@ -159,14 +158,14 @@ export const sync: Record<string, string> = {
   // server" says what it does to someone who has never heard of one.
   'device.internetRelayLabel': 'Local network, with an internet fallback',
   'device.internetRelayDescription':
-    "If your devices can't reach each other directly — a VPN or a restrictive network is in the way — sync goes through a connection server on the internet instead. Your notes stay encrypted end to end and the server cannot read them, but it does see which of your devices are talking and how much data moves. Agaric still uses your local network whenever it works. Turn this on for both devices; it takes effect the next time Agaric starts.",
+    "When your devices can't reach each other directly, such as behind a VPN, sync goes through a connection server on the internet. Your notes stay encrypted so it can't read them, but it sees which of your devices are talking and how much data moves. Turn this on for both devices; it takes effect the next time Agaric starts.",
   'device.internetRelayLoadFailed': 'Failed to load the internet fallback setting',
   'device.internetRelaySaveFailed': 'Failed to save the internet fallback setting',
   'device.noAddress': 'No address',
   'device.editAddressLabel': 'Edit address for {{name}}',
   'device.renameDeviceLabel': 'Rename device {{name}}',
   'device.syncNowLabel': 'Sync now with device {{name}}',
-  'device.syncNowButton': 'Sync Now',
+  'device.syncNowButton': 'Sync now',
   'device.unpairDeviceLabel': 'Unpair device {{name}}',
   'device.unpairButton': 'Unpair',
   'device.loadingMessage': 'Loading device information...',
@@ -196,8 +195,8 @@ export const sync: Record<string, string> = {
   'device.resetCount_other': '{{count}} resets',
   'qrScanner.viewportLabel': 'QR code scanner viewport',
   'qrScanner.cameraPreview': 'Camera preview',
-  'qrScanner.retryCameraButton': 'Retry Camera',
-  'qrScanner.scanQrCodeButton': 'Scan QR Code',
+  'qrScanner.retryCameraButton': 'Retry camera',
+  'qrScanner.scanQrCodeButton': 'Scan QR code',
   'qrScanner.scanningMessage': 'Scanning...',
   'qrScanner.cameraError': 'Camera access failed. Check camera permissions and try again.',
   'qrScanner.cameraUnavailable':

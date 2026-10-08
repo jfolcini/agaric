@@ -11,7 +11,6 @@ import { useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { Card, CardContent } from '@/components/ui/card'
-import { FormField } from '@/components/ui/form-field'
 import {
   Select,
   SelectContent,
@@ -19,6 +18,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
+import { SettingRow, settingDescriptionId } from '@/components/ui/setting-row'
 import { type FontSize, useFontSize } from '@/hooks/useFontSize'
 import {
   JOURNAL_DATE_FORMATS,
@@ -55,6 +55,11 @@ const JOURNAL_DATE_FORMAT_LABELS: Record<JournalDateFormat, string> = {
   'dd/MM/yyyy': 'settings.journalDateFormatSlash',
   'EEE, MMM d': 'settings.journalDateFormatWeekday',
 }
+
+// The trigger fills a phone row; from `sm` up it sits beside the label at a
+// fixed width instead of stretching across the panel. The journal date format
+// is wider because its option labels carry a worked example.
+const SELECT_TRIGGER_WIDTH = 'sm:w-48'
 
 /** Map the existing useTheme preference names to user-facing select values. */
 function themeToSelect(theme: ThemePreference): ThemeSelectValue {
@@ -159,13 +164,17 @@ export function AppearanceTab(): React.ReactElement {
       <CardContent className="space-y-6">
         {/* Language (#4555). Above Theme because it changes every other label
             on this screen. */}
-        <FormField
+        <SettingRow
           label={t('settings.languageLabel')}
-          htmlFor="language-select"
+          controlId="language-select"
           description={t('settings.languageHelp')}
         >
           <Select value={language} onValueChange={handleLanguageChange}>
-            <SelectTrigger id="language-select" aria-label={t('settings.languageLabel')}>
+            <SelectTrigger
+              id="language-select"
+              className={SELECT_TRIGGER_WIDTH}
+              aria-describedby={settingDescriptionId('language-select')}
+            >
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
@@ -174,12 +183,12 @@ export function AppearanceTab(): React.ReactElement {
               <SelectItem value="es">{t('settings.languageSpanish')}</SelectItem>
             </SelectContent>
           </Select>
-        </FormField>
+        </SettingRow>
 
         {/* Theme selector */}
-        <FormField label={t('settings.themeLabel')} htmlFor="theme-select">
+        <SettingRow label={t('settings.themeLabel')} controlId="theme-select">
           <Select value={themeToSelect(theme)} onValueChange={handleThemeChange}>
-            <SelectTrigger id="theme-select" aria-label={t('settings.themeLabel')}>
+            <SelectTrigger id="theme-select" className={SELECT_TRIGGER_WIDTH}>
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
@@ -192,12 +201,12 @@ export function AppearanceTab(): React.ReactElement {
               <SelectItem value="one-dark-pro">{t('settings.themeOneDarkPro')}</SelectItem>
             </SelectContent>
           </Select>
-        </FormField>
+        </SettingRow>
 
         {/* Font size selector */}
-        <FormField label={t('settings.fontSizeLabel')} htmlFor="font-size-select">
+        <SettingRow label={t('settings.fontSizeLabel')} controlId="font-size-select">
           <Select value={fontSize} onValueChange={handleFontSizeChange}>
-            <SelectTrigger id="font-size-select" aria-label={t('settings.fontSizeLabel')}>
+            <SelectTrigger id="font-size-select" className={SELECT_TRIGGER_WIDTH}>
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
@@ -206,18 +215,22 @@ export function AppearanceTab(): React.ReactElement {
               <SelectItem value="large">{t('settings.fontSizeLarge')}</SelectItem>
             </SelectContent>
           </Select>
-        </FormField>
+        </SettingRow>
 
         {/* Animation speed. A single knob over the design-system `--motion-scale`
             token (see `useMotionPreference`): System follows the OS reduced-motion
             setting, Fast halves every duration, Off disables animations. */}
-        <FormField
+        <SettingRow
           label={t('settings.motionLabel')}
-          htmlFor="motion-select"
+          controlId="motion-select"
           description={t('settings.motionHelp')}
         >
           <Select value={motion} onValueChange={handleMotionChange}>
-            <SelectTrigger id="motion-select" aria-label={t('settings.motionLabel')}>
+            <SelectTrigger
+              id="motion-select"
+              className={SELECT_TRIGGER_WIDTH}
+              aria-describedby={settingDescriptionId('motion-select')}
+            >
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
@@ -227,19 +240,23 @@ export function AppearanceTab(): React.ReactElement {
               <SelectItem value="off">{t('settings.motionOff')}</SelectItem>
             </SelectContent>
           </Select>
-        </FormField>
+        </SettingRow>
 
         {/* Tooltip delay (#2851). A separate axis from animation speed: how
             long to hover before a tooltip opens. Only affects the app-level
             baseline that most tooltips inherit — the deliberate per-surface
             deviations (sidebar, toolbars, gutter) are unaffected. */}
-        <FormField
+        <SettingRow
           label={t('settings.tooltipDelayLabel')}
-          htmlFor="tooltip-delay-select"
+          controlId="tooltip-delay-select"
           description={t('settings.tooltipDelayHelp')}
         >
           <Select value={tooltipDelay} onValueChange={handleTooltipDelayChange}>
-            <SelectTrigger id="tooltip-delay-select" aria-label={t('settings.tooltipDelayLabel')}>
+            <SelectTrigger
+              id="tooltip-delay-select"
+              className={SELECT_TRIGGER_WIDTH}
+              aria-describedby={settingDescriptionId('tooltip-delay-select')}
+            >
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
@@ -248,15 +265,15 @@ export function AppearanceTab(): React.ReactElement {
               <SelectItem value="default">{t('settings.tooltipDelayDefault')}</SelectItem>
             </SelectContent>
           </Select>
-        </FormField>
+        </SettingRow>
 
         {/* Week-start preference. Previously a half-shipped feature
             exposed only via the `week-start-preference` localStorage key.
             Surfacing it in Appearance lets users pick Monday / Sunday-
             first weeks without devtools. */}
-        <FormField label={t('settings.weekStartLabel')} htmlFor="week-start-select">
+        <SettingRow label={t('settings.weekStartLabel')} controlId="week-start-select">
           <Select value={String(weekStartsOn)} onValueChange={handleWeekStartChange}>
-            <SelectTrigger id="week-start-select" aria-label={t('settings.weekStartLabel')}>
+            <SelectTrigger id="week-start-select" className={SELECT_TRIGGER_WIDTH}>
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
@@ -264,20 +281,21 @@ export function AppearanceTab(): React.ReactElement {
               <SelectItem value="0">{t('settings.weekStartSunday')}</SelectItem>
             </SelectContent>
           </Select>
-        </FormField>
+        </SettingRow>
 
         {/* Journal date format (#1448). DISPLAY-ONLY: the stored journal page
             content stays ISO `yyyy-MM-dd`; this only governs how titles render,
             so switching it can never orphan an existing journal. */}
-        <FormField
+        <SettingRow
           label={t('settings.journalDateFormatLabel')}
-          htmlFor="journal-date-format-select"
+          controlId="journal-date-format-select"
           description={t('settings.journalDateFormatHelp')}
         >
           <Select value={journalDateFormat} onValueChange={handleJournalDateFormatChange}>
             <SelectTrigger
               id="journal-date-format-select"
-              aria-label={t('settings.journalDateFormatLabel')}
+              className="sm:w-72"
+              aria-describedby={settingDescriptionId('journal-date-format-select')}
             >
               <SelectValue />
             </SelectTrigger>
@@ -289,7 +307,7 @@ export function AppearanceTab(): React.ReactElement {
               ))}
             </SelectContent>
           </Select>
-        </FormField>
+        </SettingRow>
       </CardContent>
     </Card>
   )

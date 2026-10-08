@@ -374,17 +374,17 @@ export const common: Record<string, string> = {
   'dialog.confirm': 'Confirm',
   'data.importTitle': 'Import',
   'data.importDesc': 'Import Logseq, Obsidian, or Markdown files as pages.',
-  'data.importButton': 'Choose Files',
+  'data.importButton': 'Choose files',
   // #1927 — second affordance: a `webkitdirectory` picker so a whole
   // folder/vault can be imported (folder hierarchy → page namespace).
-  'data.importFolderButton': 'Import Folder',
+  'data.importFolderButton': 'Import folder',
   // #2510 — dedicated, discoverable Obsidian-vault affordance. Drives the
   // SAME `webkitdirectory` folder pick + import pipeline as `importFolderButton`
   // (wikilinks, tags, embeds, frontmatter, folders, and — since #2510 item 1 —
   // `^block-id` anchors all resolve on import); the separate, explicitly-named
   // button makes Obsidian support discoverable rather than hidden behind the
-  // generic "Import Folder" label.
-  'data.importObsidianButton': 'Import Obsidian Vault',
+  // generic "Import folder" label.
+  'data.importObsidianButton': 'Import Obsidian vault',
   // #1282 — third affordance: import Evernote `.enex` exports. Each note in
   // the file becomes its own page (ENML → Markdown, frontend-only).
   'data.importEnexButton': 'Import Evernote (.enex)',
@@ -401,7 +401,13 @@ export const common: Record<string, string> = {
   'data.importJexSkipped_other': 'Skipped {{count}} unreadable or encrypted items.',
   // #1454 — fifth affordance: import a BibTeX (`.bib`) or CSL-JSON
   // (`.json`) bibliography. One reference page per entry.
-  'data.importBibliographyButton': 'Import Bibliography (.bib/.json)',
+  'data.importBibliographyButton': 'Import bibliography (.bib/.json)',
+  'data.importFilesLabel': 'Markdown files',
+  'data.importFolderLabel': 'Folder',
+  'data.importObsidianLabel': 'Obsidian vault',
+  'data.importEnexLabel': 'Evernote',
+  'data.importJexLabel': 'Joplin',
+  'data.importBibliographyLabel': 'Bibliography',
   // #1454 — success toast + result-panel summary. `count` drives the plural
   // (pages created); `skipped` is the entries the backend skipped.
   'data.importBibliographyResult_one': 'Imported {{count}} reference page ({{skipped}} skipped)',
@@ -462,9 +468,11 @@ export const common: Record<string, string> = {
   // Accessible names for the two progress bars (#1929).
   'data.importFileProgressLabel': 'File import progress',
   'data.importBlockProgressLabel': 'Block import progress',
-  'data.exportTitle': 'Export All Pages',
+  'data.exportTitle': 'Export all pages',
   'data.exportDesc': 'Download all pages as a ZIP of Markdown files.',
-  'data.exportButton': 'Export All',
+  'data.exportButton': 'Export all',
+  'data.exportCurrentSpaceLabel': 'Current space',
+  'data.exportAllSpacesLabel': 'All spaces',
   'data.exporting': 'Exporting...',
   'data.exportSuccess': 'Export complete',
   'data.exportFailed': 'Export failed',
@@ -479,7 +487,7 @@ export const common: Record<string, string> = {
   // one ZIP, one top-level folder per space. Separate from the
   // `data.export*` keys above, which only ever cover the active space.
   'data.exportAllSpacesDesc': 'Download every space as a single ZIP, with one folder per space.',
-  'data.exportAllSpacesButton': 'Export All Spaces',
+  'data.exportAllSpacesButton': 'Export all spaces',
   'data.exportingAllSpaces': 'Exporting all spaces...',
   'data.exportAllSpacesSuccess_one': 'Exported {{count}} space',
   'data.exportAllSpacesSuccess_other': 'Exported {{count}} spaces',
@@ -497,10 +505,10 @@ export const common: Record<string, string> = {
   // reads the whole vault, so it only ever runs when the user asks.
   'integrity.title': 'Integrity check',
   'integrity.description':
-    'Rebuilds the tables Agaric derives from your notes — page counts, links, tags, the agenda — and reports any row that disagrees. Your notes are only read, never changed.',
+    'Rebuilds page counts, links, tags, and the agenda from your notes and reports any row that disagrees. Your notes are only read, never changed.',
   'integrity.toggleLabel': 'Enable the integrity check',
   'integrity.toggleHelp':
-    'Off by default. Turning it on adds the Run button below, and includes the result in any bug report you file. The check reads your whole vault, so it can take a while on a large one.',
+    'Adds a Run check button below and includes the result in bug reports. The check reads your whole vault, so it can take a while on a large one.',
   'integrity.runButton': 'Run check',
   'integrity.running': 'Checking…',
   'integrity.resultLabel': 'Integrity check result',

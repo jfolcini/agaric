@@ -13,6 +13,7 @@ import { beforeEach, describe, expect, it } from 'vitest'
 import { axe } from 'vitest-axe'
 
 import { DeadlineWarningSection } from '@/components/agenda/DeadlineWarningSection'
+import { t } from '@/lib/i18n'
 
 beforeEach(() => {
   localStorage.removeItem('agaric:deadlineWarningDays')
@@ -24,6 +25,14 @@ describe('DeadlineWarningSection', () => {
 
     const input = screen.getByRole('spinbutton', { name: /Deadline warning/i })
     expect(input).toHaveValue(0)
+  })
+
+  it('describes the input with the help text', () => {
+    render(<DeadlineWarningSection />)
+
+    expect(
+      screen.getByRole('spinbutton', { name: /Deadline warning/i }),
+    ).toHaveAccessibleDescription(t('propertiesView.deadlineWarningDesc'))
   })
 
   it('renders threshold from localStorage', () => {

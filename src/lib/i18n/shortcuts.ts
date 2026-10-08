@@ -148,7 +148,6 @@ export const shortcuts: Record<string, string> = {
   'keyboard.syntax.emoji': 'Emoji picker',
   'keyboard.syntax.properties': 'Block properties',
   'keyboard.syntax.underline': 'Underline',
-  'keyboard.settings.title': 'Keyboard Shortcuts',
   'keyboard.settings.description':
     'Customize keyboard shortcuts. Click the edit button to change a binding.',
   'keyboard.settings.editShortcutFor': 'Edit shortcut for {{action}}',
@@ -156,7 +155,7 @@ export const shortcuts: Record<string, string> = {
   'keyboard.settings.cancelButton': 'Cancel',
   'keyboard.settings.resetButton': 'Reset to default',
   'keyboard.settings.resetShortcutFor': 'Reset {{action}} to default',
-  'keyboard.settings.resetAllButton': 'Reset All to Defaults',
+  'keyboard.settings.resetAllButton': 'Reset all to defaults',
   'keyboard.settings.resetAllConfirm': 'Reset all keyboard shortcuts to their default bindings?',
   'keyboard.settings.resetAllTitle': 'Reset all shortcuts?',
   'keyboard.settings.conflictWarning': 'Conflicts with: {{shortcuts}}',

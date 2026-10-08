@@ -24,32 +24,28 @@ import type React from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
+import { SettingRow } from '@/components/ui/setting-row'
 import { notify } from '@/lib/notify'
 import { resetOnboarding } from '@/lib/onboarding'
 
 export function ShowWelcomeTourRow(): React.ReactElement {
   const { t } = useTranslation()
   return (
-    <div className="space-y-1.5">
-      <div className="flex items-center justify-between gap-3">
-        <div className="space-y-0.5">
-          <p className="text-sm font-medium">{t('settings.showWelcomeTour.title')}</p>
-          <p className="text-xs text-muted-foreground">
-            {t('settings.showWelcomeTour.description')}
-          </p>
-        </div>
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={() => {
-            resetOnboarding()
-            notify.success(t('settings.showWelcomeTour.success'))
-          }}
-          data-testid="show-welcome-tour-btn"
-        >
-          {t('settings.showWelcomeTour.button')}
-        </Button>
-      </div>
-    </div>
+    <SettingRow
+      label={t('settings.showWelcomeTour.title')}
+      description={t('settings.showWelcomeTour.description')}
+    >
+      <Button
+        variant="outline"
+        size="sm"
+        onClick={() => {
+          resetOnboarding()
+          notify.success(t('settings.showWelcomeTour.success'))
+        }}
+        data-testid="show-welcome-tour-btn"
+      >
+        {t('settings.showWelcomeTour.button')}
+      </Button>
+    </SettingRow>
   )
 }

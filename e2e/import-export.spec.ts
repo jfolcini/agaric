@@ -11,7 +11,7 @@ import { expect, getInvokeCalls, installIpcRecorder, openPage, test, waitForBoot
  *  3. Export preserves block structure — export page with multiple blocks, verify hierarchy
  *  4. Export includes tags and links — verify #[tag_id] and [[block_id]] tokens in export
  *  5. Round-trip fidelity — export a page, verify content matches original blocks
- *  6. Export all pages as ZIP (#2707) — trigger Settings → Data → "Export All",
+ *  6. Export all pages as ZIP (#2707) — trigger Settings → Data → "Export all",
  *     capture the real browser download, and unzip it (via the same `jszip`
  *     package the app itself uses) to assert the namespace hierarchy round-trips.
  *  7. Import warning summary (#2707) — the mock's `import_markdown` handler always
@@ -136,7 +136,7 @@ test.describe('Export all pages as ZIP', () => {
     await waitForBoot(page)
   })
 
-  test('Export All downloads a ZIP whose entries mirror the page set', async ({ page }) => {
+  test('Export all downloads a ZIP whose entries mirror the page set', async ({ page }) => {
     await installIpcRecorder(page)
     await page.getByRole('button', { name: 'Settings', exact: true }).click()
     await page.getByRole('tab', { name: 'Data' }).click()
@@ -144,7 +144,7 @@ test.describe('Export all pages as ZIP', () => {
 
     const [download] = await Promise.all([
       page.waitForEvent('download'),
-      page.getByRole('button', { name: 'Export All', exact: true }).click(),
+      page.getByRole('button', { name: 'Export all', exact: true }).click(),
     ])
 
     // Filename: `agaric-export-<space>-<date>.zip` (DataTab.tsx handleExportAll).

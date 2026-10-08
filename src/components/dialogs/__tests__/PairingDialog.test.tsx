@@ -301,7 +301,7 @@ describe('PairingDialog', () => {
   it('renders without crashing when closed', () => {
     render(<PairingDialog open={false} onOpenChange={vi.fn()} />)
     // Should render nothing visible
-    expect(screen.queryByText('Pair Device')).not.toBeInTheDocument()
+    expect(screen.queryByText('Pair device')).not.toBeInTheDocument()
   })
 
   // -----------------------------------------------------------------------
@@ -314,7 +314,7 @@ describe('PairingDialog', () => {
 
       render(<PairingDialog open onOpenChange={vi.fn()} />)
 
-      expect(await screen.findByText('Pair Device')).toBeInTheDocument()
+      expect(await screen.findByText('Pair device')).toBeInTheDocument()
       // Host screen renders immediately — no upfront role question.
       expect(await screen.findByText('alpha bravo charlie delta')).toBeInTheDocument()
       expect(
@@ -554,7 +554,7 @@ describe('PairingDialog', () => {
     render(<PairingDialog open onOpenChange={vi.fn()} />)
 
     // Wait for loading to finish
-    await screen.findByText('Paired Devices')
+    await screen.findByText('Paired devices')
 
     // Check peer IDs are shown
     expect(await screen.findByText('peer-abc-123...')).toBeInTheDocument()
@@ -902,7 +902,7 @@ describe('PairingDialog', () => {
   it('dialog has aria-labelledby pointing to the title', async () => {
     render(<PairingDialog open onOpenChange={vi.fn()} />)
 
-    await screen.findByText('Pair Device')
+    await screen.findByText('Pair device')
 
     const dialog = screen.getByRole('dialog')
     expect(dialog).toBeTruthy()
@@ -911,7 +911,7 @@ describe('PairingDialog', () => {
     const labelledBy = dialog.getAttribute('aria-labelledby')
     expect(labelledBy).toBeTruthy()
     const titleEl = document.getElementById(labelledBy as string)
-    expect(titleEl?.textContent).toBe('Pair Device')
+    expect(titleEl?.textContent).toBe('Pair device')
   })
 
   // -----------------------------------------------------------------------
@@ -3078,7 +3078,7 @@ describe('PairingDialog', () => {
 
       render(<PairingDialog open onOpenChange={vi.fn()} />)
 
-      expect(await screen.findByText('Pair Device')).toBeInTheDocument()
+      expect(await screen.findByText('Pair device')).toBeInTheDocument()
       await selectHostRole(user)
       expect(await screen.findByText('alpha bravo charlie delta')).toBeInTheDocument()
     })
@@ -3093,7 +3093,7 @@ describe('PairingDialog', () => {
 
       render(<PairingDialog open onOpenChange={vi.fn()} />)
 
-      expect(await screen.findByText('Pair Device')).toBeInTheDocument()
+      expect(await screen.findByText('Pair device')).toBeInTheDocument()
       await selectHostRole(user)
       expect(await screen.findByText('alpha bravo charlie delta')).toBeInTheDocument()
     })
@@ -3143,7 +3143,7 @@ describe('PairingDialog', () => {
 
     it('renders the translated catalog string, not the daemon’s key and not English prose', async () => {
       render(<PairingDialog open onOpenChange={vi.fn()} />)
-      await screen.findByText('Pair Device')
+      await screen.findByText('Pair device')
       await waitFor(() => {
         expect(mockListen).toHaveBeenCalledWith('sync:network_blocked', expect.any(Function))
       })
@@ -3162,7 +3162,7 @@ describe('PairingDialog', () => {
 
     it('clears the banner when the OS restores access', async () => {
       render(<PairingDialog open onOpenChange={vi.fn()} />)
-      await screen.findByText('Pair Device')
+      await screen.findByText('Pair device')
       await waitFor(() => {
         expect(mockListen).toHaveBeenCalledWith('sync:network_blocked', expect.any(Function))
       })
@@ -3194,7 +3194,7 @@ describe('PairingDialog', () => {
      */
     it('keeps the banner across a close and reopen, with no second listener or query', async () => {
       const { rerender } = render(<PairingDialog open onOpenChange={vi.fn()} />)
-      await screen.findByText('Pair Device')
+      await screen.findByText('Pair device')
       await waitFor(() => {
         expect(mockListen).toHaveBeenCalledWith('sync:network_blocked', expect.any(Function))
       })
@@ -3236,7 +3236,7 @@ describe('PairingDialog', () => {
       })
 
       render(<PairingDialog open onOpenChange={vi.fn()} />)
-      await screen.findByText('Pair Device')
+      await screen.findByText('Pair device')
 
       const banner = await screen.findByTestId('pairing-network-blocked')
       expect(banner).toHaveTextContent(
@@ -3256,7 +3256,7 @@ describe('PairingDialog', () => {
       })
 
       render(<PairingDialog open onOpenChange={vi.fn()} />)
-      await screen.findByText('Pair Device')
+      await screen.findByText('Pair device')
       expect(await screen.findByTestId('pairing-network-blocked')).toBeInTheDocument()
 
       await emitNetworkBlock({ blocked: false, reason_key: null })
@@ -3276,7 +3276,7 @@ describe('PairingDialog', () => {
       })
 
       const { container } = render(<PairingDialog open onOpenChange={vi.fn()} />)
-      await screen.findByText('Pair Device')
+      await screen.findByText('Pair device')
       await screen.findByTestId('pairing-network-blocked')
 
       const results = await axe(container)
@@ -3303,9 +3303,9 @@ describe('PairingDialog', () => {
       scannedPayload.current = payload
       render(<PairingDialog open onOpenChange={vi.fn()} />)
       await selectJoinerRole(user)
-      await user.click(await screen.findByRole('button', { name: /Scan QR Code/i }))
+      await user.click(await screen.findByRole('button', { name: /Scan QR code/i }))
       await user.click(await screen.findByTestId('mock-qr-scan'))
-      await user.click(await screen.findByRole('button', { name: /Type Passphrase/i }))
+      await user.click(await screen.findByRole('button', { name: /Type passphrase/i }))
     }
 
     function expectWordsFilled() {
@@ -3525,7 +3525,7 @@ describe('PairingDialog', () => {
       scannedPayload.current = ''
       const { container } = render(<PairingDialog open onOpenChange={vi.fn()} />)
       await selectJoinerRole(user)
-      await user.click(await screen.findByRole('button', { name: /Scan QR Code/i }))
+      await user.click(await screen.findByRole('button', { name: /Scan QR code/i }))
       await screen.findByTestId('mock-qr-scan')
 
       const results = await axe(container)

@@ -9,6 +9,7 @@ import { useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { Input } from '@/components/ui/input'
+import { SettingRow, settingDescriptionId } from '@/components/ui/setting-row'
 import { notify } from '@/lib/notify'
 import { PREFERENCES, usePreference } from '@/lib/preferences'
 
@@ -54,22 +55,25 @@ export function DeadlineWarningSection(): React.ReactElement {
   )
 
   return (
-    <div className="space-y-2">
-      <h3 className="text-sm font-medium">{t('propertiesView.deadlineWarning')}</h3>
-      <p className="text-xs text-muted-foreground">{t('propertiesView.deadlineWarningDesc')}</p>
+    <SettingRow
+      label={t('propertiesView.deadlineWarning')}
+      description={t('propertiesView.deadlineWarningDesc')}
+      controlId="deadline-warning-days"
+    >
       <div className="flex items-center gap-2">
         <Input
+          id="deadline-warning-days"
           type="number"
           className="h-7 w-20 text-sm"
           min={DEADLINE_WARNING_MIN}
           max={DEADLINE_WARNING_MAX}
           value={days}
-          aria-label={t('propertiesView.deadlineWarning')}
+          aria-describedby={settingDescriptionId('deadline-warning-days')}
           onChange={(e) => handleChange(Number.parseInt(e.target.value, 10))}
           onBlur={handleBlur}
         />
         <span className="text-xs text-muted-foreground">{t('block.daysUnit')}</span>
       </div>
-    </div>
+    </SettingRow>
   )
 }

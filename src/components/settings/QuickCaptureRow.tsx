@@ -35,7 +35,9 @@ import { useCallback, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
-import { Label } from '@/components/ui/label'
+import { Input } from '@/components/ui/input'
+import { Kbd } from '@/components/ui/kbd'
+import { SettingRow, settingDescriptionId } from '@/components/ui/setting-row'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
 import { isMobilePlatform } from '@/lib/platform'
@@ -127,26 +129,23 @@ export function QuickCaptureRow(): React.ReactElement | null {
   if (isMobilePlatform()) return null
 
   return (
-    <div
-      className="flex items-start justify-between gap-4"
-      data-testid="quick-capture-settings-row"
-    >
-      <div className="flex-1 space-y-1">
-        <Label htmlFor="quick-capture-shortcut" muted={false}>
-          {t('settings.quickCapture.label')}
-        </Label>
-        <p className="text-xs text-muted-foreground">{t('settings.quickCapture.description')}</p>
+    <div data-testid="quick-capture-settings-row">
+      <SettingRow
+        label={t('settings.quickCapture.label')}
+        description={t('settings.quickCapture.description')}
+        controlId="quick-capture-shortcut"
+      >
         {editing ? (
-          <div className="flex items-center gap-2 pt-2">
-            <input
+          <div className="flex items-center gap-2">
+            <Input
               id="quick-capture-shortcut"
               type="text"
               value={draft}
               onChange={(e) => setDraft(e.target.value)}
               placeholder={defaultQuickCaptureShortcut()}
-              aria-label={t('settings.quickCapture.label')}
               disabled={pending}
-              className="flex-1 rounded-md border border-input bg-transparent px-3 py-1.5 text-sm shadow-xs focus-visible:border-ring focus-ring-visible"
+              className="h-8 w-40"
+              aria-describedby={settingDescriptionId('quick-capture-shortcut')}
               data-testid="quick-capture-shortcut-input"
             />
             <Button
@@ -170,27 +169,22 @@ export function QuickCaptureRow(): React.ReactElement | null {
             </Button>
           </div>
         ) : (
-          <div className="flex items-center gap-3 pt-1">
-            <code
-              className="rounded-md border border-border bg-muted/30 px-2 py-0.5 font-mono text-xs"
-              data-testid="quick-capture-shortcut-binding"
-            >
+          <div className="flex items-center gap-3">
+            <Kbd size="md" data-testid="quick-capture-shortcut-binding">
               {shortcut}
-            </code>
+            </Kbd>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handleEdit}
+              aria-label={t('settings.quickCapture.editButton')}
+              data-testid="quick-capture-shortcut-edit"
+            >
+              {t('settings.quickCapture.editButton')}
+            </Button>
           </div>
         )}
-      </div>
-      {!editing && (
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={handleEdit}
-          aria-label={t('settings.quickCapture.editButton')}
-          data-testid="quick-capture-shortcut-edit"
-        >
-          {t('settings.quickCapture.editButton')}
-        </Button>
-      )}
+      </SettingRow>
     </div>
   )
 }
