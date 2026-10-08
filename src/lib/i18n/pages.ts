@@ -275,15 +275,10 @@ export const pages: Record<string, string> = {
   'pageBrowser.frontendSortHint': 'Sorted within loaded pages',
   'pageBrowser.frontendSortHintTooltip':
     'This order covers the pages loaded so far. Scroll to load more pages for the full global order.',
-  'pageBrowser.densityLabel': 'Row density',
-  'pageBrowser.densityCompact': 'Compact',
-  'pageBrowser.densityRegular': 'Regular',
-  'pageBrowser.densityExpanded': 'Expanded',
-  'pageBrowser.densityPersistedTooltip': 'Your density is saved across sessions',
   // #5269 — the Pages header's Trash button while its count badge shows.
   'pageBrowser.viewButtons.trashWithCount_one': 'Trash, {{count}} item',
   'pageBrowser.viewButtons.trashWithCount_other': 'Trash, {{count}} items',
-  // #2003 piece 1 — saved Pages views (sort + density + filters snapshot).
+  // #2003 piece 1 — saved Pages views (sort + filters snapshot).
   'pageBrowser.savedViews.trigger': 'Saved views',
   'pageBrowser.savedViews.triggerActive': 'Saved views — {{name}} applied',
   'pageBrowser.savedViews.empty': 'No saved views yet',
@@ -297,7 +292,7 @@ export const pages: Record<string, string> = {
     'Saved views from a newer version of Agaric could not be loaded and were reset.',
   'pageBrowser.savedViews.dialogTitle': 'Save current view',
   'pageBrowser.savedViews.dialogDescription':
-    'Saves the current sort, density, and filters so you can reapply them later.',
+    'Saves the current sort and filters so you can reapply them later.',
   'pageBrowser.savedViews.namePlaceholder': 'View name…',
   'pageBrowser.savedViews.nameLabel': 'Name',
   'pageBrowser.savedViews.nameEmpty': 'Enter a name for this view',
@@ -453,7 +448,7 @@ export const pages: Record<string, string> = {
   'pagesTree.empty': 'No child pages.',
   'pagesTree.ariaLabel': 'Child pages of {{title}}',
   'pageProperty.tableErrorBoundary': 'Failed to load properties.',
-  // DensityRow metadata badges + density tooltip
+  // PageRow metadata badges
   'pageBrowser.metadata.inbound_one': '{{count}} inbound link',
   'pageBrowser.metadata.inbound_other': '{{count}} inbound links',
   'pageBrowser.metadata.children_one': '{{count}} child block',

@@ -5,7 +5,7 @@
  *   - `PageHeader` (variant: 'header')  — page-editor chrome; star only,
  *     its delete lives in the page-actions menu.
  *   - journal `DaySection` (variant: 'journal') — day-header chrome.
- *   - (future) Pages-list `DensityRow` (variant: 'row').
+ *   - (future) Pages-list `PageRow` (variant: 'row').
  *
  * Principle (Part A): star is a safe, reversible toggle → always
  * visible. Delete is destructive → wrapped in a ConfirmDialog upstream,
@@ -23,7 +23,7 @@
  *   - Bookmark: `aria-pressed`, state-driven `aria-label`, fills when set.
  *   - Delete: state-driven `aria-label` (always "Delete page" for now).
  *   - 44 px touch targets on coarse pointers via the standard
- *     `[@media(pointer:coarse)]:h-11` pattern (reused from DensityRow).
+ *     `[@media(pointer:coarse)]:h-11` pattern (reused from PageRow).
  *   - Focus-visible rings inherited from `IconButton` → `Button`.
  *
  * Layout variants:
@@ -34,7 +34,7 @@
  *     group-hover, so a live UX review asked for them to render
  *     unconditionally (same as 'header', just the smaller `icon-xs` size).
  *   - 'row' — `icon-xs`, same hover-reveal as journal. Kept here so a
- * Future `DensityRow` refactor (deferred) can switch
+ * Future `PageRow` refactor (deferred) can switch
  *     without touching this file's surface area.
  */
 

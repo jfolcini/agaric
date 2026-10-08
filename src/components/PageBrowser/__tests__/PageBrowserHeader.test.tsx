@@ -2,15 +2,14 @@
  * Tests for `PageBrowserHeader` (Phase 2 extension).
  *
  * Coverage:
- *   1. Density change handler fires with the chosen `DensityMode` value.
- *   2. All 7 `SortOption` items are reachable via the sort select.
- *   3. `axe(container)` reports no a11y violations.
- *   4. The view buttons (#5269) open their views and the Trash button
+ *   1. All 7 `SortOption` items are reachable via the sort select.
+ *   2. `axe(container)` reports no a11y violations.
+ *   3. The view buttons (#5269) open their views and the Trash button
  *      carries the trash count.
  *
  * Radix Select is globally mocked to a native `<select>` tree in
- * `src/test-setup.ts`, so `userEvent.selectOptions` drives both
- * selects directly. The trigger's `aria-label` is forwarded onto
+ * `src/test-setup.ts`, so `userEvent.selectOptions` drives the
+ * sort select directly. The trigger's `aria-label` is forwarded onto
  * the native `<select>` by the mock, which gives us a stable handle
  * by accessible name.
  */
@@ -44,8 +43,6 @@ function makeProps(overrides: Partial<PageBrowserHeaderProps> = {}): PageBrowser
     onFilterTextChange: vi.fn(),
     sortOption: 'alphabetical',
     onSortChange: vi.fn(),
-    density: 'regular',
-    onDensityChange: vi.fn(),
     savedViews: [],
     activeSavedView: null,
     onApplySavedView: vi.fn(),
@@ -56,19 +53,6 @@ function makeProps(overrides: Partial<PageBrowserHeaderProps> = {}): PageBrowser
 }
 
 describe('PageBrowserHeader', () => {
-  it('fires onDensityChange with the chosen DensityMode', async () => {
-    const onDensityChange = vi.fn()
-    render(<PageBrowserHeader {...makeProps({ onDensityChange })} />)
-
-    const densitySelect = screen.getByRole('combobox', {
-      name: t('pageBrowser.densityLabel'),
-    })
-    await userEvent.selectOptions(densitySelect, 'compact')
-
-    expect(onDensityChange).toHaveBeenCalledTimes(1)
-    expect(onDensityChange).toHaveBeenCalledWith('compact')
-  })
-
   it('exposes all 7 sort modes in the sort select', () => {
     render(<PageBrowserHeader {...makeProps()} />)
 
@@ -100,16 +84,6 @@ describe('PageBrowserHeader', () => {
     await userEvent.selectOptions(sortSelect, 'most-linked')
 
     expect(onSortChange).toHaveBeenCalledWith('most-linked')
-  })
-
-  it('exposes all 3 density modes in the density select', () => {
-    render(<PageBrowserHeader {...makeProps()} />)
-
-    const densitySelect = screen.getByRole('combobox', {
-      name: t('pageBrowser.densityLabel'),
-    })
-    const options = Array.from(densitySelect.querySelectorAll('option')).map((opt) => opt.value)
-    expect(options).toEqual(['compact', 'regular', 'expanded'])
   })
 
   it('has no axe violations', async () => {
@@ -223,7 +197,7 @@ describe('PageBrowserHeader', () => {
   })
 
   // ── header row wraps on narrow viewports ──────────────
-  it('the search/sort/density row carries flex-wrap so it can wrap on mobile', () => {
+  it('the search/sort row carries flex-wrap so it can wrap on mobile', () => {
     const { container } = render(<PageBrowserHeader {...makeProps()} />)
     // The controls row is the only `flex-wrap` child of `.page-browser-header`
     // (the view-button row and the create form come first). It must opt into

@@ -2018,14 +2018,14 @@
 
 /* ── PageBrowser namespace gutter ──────────────────────────────────────
  * The `Pages` list interleaves two row shapes: a flat page row
- * (`DensityRow`) and a namespace subtree (`PageTreeItem`). Only the flat
+ * (`PageRow`) and a namespace subtree (`PageTreeItem`). Only the flat
  * row carries leading affordances — the multi-select checkbox and the
  * star toggle — and both keep their layout width while invisible, so its
  * title starts well right of an un-guttered subtree. Without this gutter
  * a top-level page sits DEEPER than a page nested inside a namespace and
  * reads as that namespace's child.
  *
- * Mirrors DensityRow's leading run — px-3 + checkbox + gap-3 + star
+ * Mirrors PageRow's leading run — px-3 + checkbox + gap-3 + star
  * button + gap-3 — at both pointer sizes (`size-4` / `size-6` fine,
  * `min-w-11` / `size-11` coarse). `pages-namespace-indent.spec.ts`
  * measures the two shapes against each other, so drift on either side

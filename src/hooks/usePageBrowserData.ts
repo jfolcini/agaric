@@ -115,7 +115,7 @@ interface UsePageBrowserDataResult {
   // raw `BlockRow`. The grouping pipeline reads only the shared
   // `BlockRow` fields, so callers can treat the unified shape as
   // `BlockRow`. The metadata fields (when present) flow through
-  // unchanged and `<DensityRow>` reads them via a typed cast in
+  // unchanged and `<PageRow>` reads them via a typed cast in
   // `PageBrowserRowRenderer`.
   pages: (BlockRow | PageWithMetadataRow)[]
   loading: boolean

@@ -19,7 +19,7 @@ How the system is built. Companion to:
 | ↳ Schema-design lessons learned | [`architecture/schema-lessons.md`](architecture/schema-lessons.md) |
 | Content format, serializer, editor architecture, undo/redo | [`architecture/editor-and-content.md`](architecture/editor-and-content.md) |
 | Frontend architecture + spaces (stores, ViewDispatcher, per-space slicing) | [`architecture/frontend.md`](architecture/frontend.md) |
-| Pages view (density, sort modes, grooming) | [`architecture/pages-view.md`](architecture/pages-view.md) |
+| Pages view (page rows, sort modes, grooming) | [`architecture/pages-view.md`](architecture/pages-view.md) |
 | Filters (compound grooming + agenda filter model) | [`architecture/filters.md`](architecture/filters.md) |
 | CRDT convergence + snapshots + crash recovery | [`architecture/crdt-and-recovery.md`](architecture/crdt-and-recovery.md) |
 | ↳ Converging the `sql_only` apply fallback with the projection helpers | [`architecture/sql-only-convergence.md`](architecture/sql-only-convergence.md) |

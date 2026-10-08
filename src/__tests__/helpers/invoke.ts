@@ -95,7 +95,7 @@ export function takeUnstubbedInvokes(): string[] {
 /**
  * Dispatcher tail for suites that render page rows.
  *
- * `DensityRow` prefetches a page subtree once the pointer has dwelt on a row
+ * `PageRow` prefetches a page subtree once the pointer has dwelt on a row
  * for `PAGE_PREFETCH_DWELL_MS` (120ms) — see `@/lib/prefetch-page-subtree`.
  * `userEvent` interactions cross that threshold as an ordinary side effect on
  * a loaded machine, so `load_page_subtree` is a genuine IPC call in suites

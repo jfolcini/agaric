@@ -272,9 +272,8 @@ Detail: [`docs/architecture/search.md`](docs/architecture/search.md).
 Detail: [`docs/architecture/pages-view.md`](docs/architecture/pages-view.md).
 
 1. `list_pages_with_metadata` rejects stale cursors with `ValidationCode::RequiresRefresh`; the frontend drops the cursor and refetches page 1. New sort keys reuse the existing `Cursor` slots (`deleted_at`, `seq`, `position`, `id`), never new fields.
-2. Density lives under the `page-browser-density` localStorage key; row heights only in `DENSITY_ROW_HEIGHT` (`src/hooks/usePageBrowserDensity.ts`); rows carry `data-density`.
-3. `DensityRow` stays inside `src/components/PageBrowser/`.
-4. Sort comparators do not allocate; materialize lookups before `Array.sort`.
+2. `PageRow` stays inside `src/components/PageBrowser/`.
+3. Sort comparators do not allocate; materialize lookups before `Array.sort`.
 
 ## Filters
 
