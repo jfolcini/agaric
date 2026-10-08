@@ -8,8 +8,8 @@
  *   1. Read-only access toggle (backed by the `mcp-ro-enabled` marker
  *      file; toggling fires `mcp_set_enabled`).
  *   2. RO socket path display + copy button.
- *   3. Copy-config buttons for Claude Desktop + generic MCP clients
- *      (RO socket — RW config snippets are out of scope for slice 2).
+ *   3. Copy buttons for the Claude Desktop JSON and the Claude Code
+ *      `mcp add` commands (one server per surface, RO and RW).
  *   4. RO kill switch — disconnect every live RO agent connection
  *      (shown only while one is live; wrapped in an AlertDialog confirmation).
  *   5. Read-write access toggle (backed by the `mcp-rw-enabled` marker
@@ -217,41 +217,45 @@ export function AgentAccessTab(): React.ReactElement {
   }, [executeDisconnectAllRw])
 
   const socketPath = status?.socket_path ?? ''
+  const rwSocketPath = rwStatus?.socket_path ?? ''
 
-  // The Claude Desktop config snippet. Docs-only per the decision
-  // — we copy the JSON to the clipboard and let the user paste it into
-  // `claude_desktop_config.json` themselves.
+  // One server per surface: the RO and RW sockets are separate, so a single
+  // entry can only ever reach one of them. The RW entry is omitted while the
+  // RW status is unavailable.
   const claudeConfigJson = useMemo(
     () =>
       JSON.stringify(
         {
           mcpServers: {
-            agaric: {
+            'agaric-ro': {
               command: 'agaric-mcp',
               env: { AGARIC_MCP_SOCKET: socketPath },
             },
+            ...(rwSocketPath !== '' && {
+              'agaric-rw': {
+                command: 'agaric-mcp',
+                env: { AGARIC_MCP_SOCKET: rwSocketPath },
+              },
+            }),
           },
         },
         null,
         2,
       ),
-    [socketPath],
+    [socketPath, rwSocketPath],
   )
 
-  // Generic MCP client config — flat shape without the `mcpServers`
-  // wrapper so clients that embed the server definition directly can
-  // use it.
-  const genericConfigJson = useMemo(
+  // The name comes before `--` so `claude mcp add` never mistakes it for an
+  // option value; the path is quoted because app-data dirs can contain spaces.
+  const claudeCodeCommands = useMemo(
     () =>
-      JSON.stringify(
-        {
-          command: 'agaric-mcp',
-          env: { AGARIC_MCP_SOCKET: socketPath },
-        },
-        null,
-        2,
-      ),
-    [socketPath],
+      [
+        `claude mcp add -s user agaric-ro -- agaric-mcp --socket "${socketPath}"`,
+        ...(rwSocketPath !== ''
+          ? [`claude mcp add -s user agaric-rw -- agaric-mcp --socket "${rwSocketPath}"`]
+          : []),
+      ].join('\n'),
+    [socketPath, rwSocketPath],
   )
 
   const copyToClipboard = useCallback(
@@ -313,10 +317,10 @@ export function AgentAccessTab(): React.ReactElement {
                   variant="outline"
                   size="sm"
                   onClick={() =>
-                    void copyToClipboard(genericConfigJson, 'agentAccess.genericConfigCopied')
+                    void copyToClipboard(claudeCodeCommands, 'agentAccess.claudeCodeCommandsCopied')
                   }
                 >
-                  {t('agentAccess.copyGenericConfigButton')}
+                  {t('agentAccess.copyClaudeCodeCommandsButton')}
                 </Button>
               </div>
             </div>

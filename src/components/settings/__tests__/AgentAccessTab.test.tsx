@@ -107,6 +107,9 @@ interface McpStatus {
 
 type McpRwStatus = McpStatus
 
+const RO_SOCKET = '/home/test/.local/share/com.agaric.app/mcp-ro.sock'
+const RW_SOCKET = '/home/test/.local/share/com.agaric.app/mcp-rw.sock'
+
 function makeStatus(overrides: Partial<McpStatus> = {}): McpStatus {
   return {
     enabled: false,
@@ -225,7 +228,7 @@ describe('AgentAccessTab — rendering', () => {
 
     // Copy buttons visible (RO-only — RW config copy is out of scope)
     expect(screen.getByRole('button', { name: /Copy Claude Desktop config/i })).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /Copy generic MCP config/i })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /Copy Claude Code commands/i })).toBeInTheDocument()
 
     // Retired placeholder — "Coming in v2" must no longer render.
     expect(screen.queryByText('Coming in v2')).not.toBeInTheDocument()
@@ -539,33 +542,35 @@ describe('AgentAccessTab — copy buttons', () => {
     const parsed = JSON.parse(written)
     expect(parsed).toEqual({
       mcpServers: {
-        agaric: {
+        'agaric-ro': {
           command: 'agaric-mcp',
-          env: { AGARIC_MCP_SOCKET: '/home/test/.local/share/com.agaric.app/mcp-ro.sock' },
+          env: { AGARIC_MCP_SOCKET: RO_SOCKET },
+        },
+        'agaric-rw': {
+          command: 'agaric-mcp',
+          env: { AGARIC_MCP_SOCKET: RW_SOCKET },
         },
       },
     })
     expect(mockedToastSuccess).toHaveBeenCalledWith('Claude Desktop config copied')
   })
 
-  it('copies the generic MCP config as valid JSON', async () => {
+  it('copies one claude mcp add command per surface', async () => {
     const user = userEvent.setup()
     setupInvoke(makeStatus({ enabled: true }))
 
     render(<AgentAccessTab />)
-    const btn = await screen.findByRole('button', { name: /Copy generic MCP config/i })
+    const btn = await screen.findByRole('button', { name: /Copy Claude Code commands/i })
     await user.click(btn)
 
     await waitFor(() => {
       expect(clipboardWriteText).toHaveBeenCalledTimes(1)
     })
-    const written = clipboardWriteText.mock.calls[0]?.[0] as string
-    const parsed = JSON.parse(written)
-    expect(parsed).toEqual({
-      command: 'agaric-mcp',
-      env: { AGARIC_MCP_SOCKET: '/home/test/.local/share/com.agaric.app/mcp-ro.sock' },
-    })
-    expect(mockedToastSuccess).toHaveBeenCalledWith('Generic MCP config copied')
+    expect(clipboardWriteText.mock.calls[0]?.[0]).toBe(
+      `claude mcp add -s user agaric-ro -- agaric-mcp --socket "${RO_SOCKET}"\n` +
+        `claude mcp add -s user agaric-rw -- agaric-mcp --socket "${RW_SOCKET}"`,
+    )
+    expect(mockedToastSuccess).toHaveBeenCalledWith('Claude Code commands copied')
   })
 
   it('logs and toasts on clipboard failure', async () => {
