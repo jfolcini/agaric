@@ -354,6 +354,13 @@ const THEME_PAIRS = [
   // --brand is inherited from :root / .dark by every theme (#5332).
   { pair: 'brand mark label (today, FAB)', fg: 'brand-foreground', bg: 'brand', min: AA_NORMAL },
   { pair: 'brand numeral on the page', fg: 'brand', bg: 'background', min: AA_NORMAL },
+  // Every theme: Button and Badge paint the fill opaque in dark themes too.
+  {
+    pair: 'destructive button label',
+    fg: 'destructive-foreground',
+    bg: 'destructive',
+    min: AA_NORMAL,
+  },
   { pair: 'P1 chip', fg: 'priority-urgent-foreground', bg: 'priority-urgent', min: AA_NORMAL },
   { pair: 'P2 chip', fg: 'priority-high-foreground', bg: 'priority-high', min: AA_NORMAL },
   { pair: 'P3 chip', fg: 'priority-normal-foreground', bg: 'priority-normal', min: AA_NORMAL },
@@ -423,12 +430,11 @@ describe('focus ring, chips and hover surfaces clear WCAG in every theme (#5332)
 // Crimson, link and muted text in the default themes (#5332).
 //
 // Only Light and Dark: the alternate themes keep their own --destructive and
-// --muted-foreground.
+// --muted-foreground. The destructive label is pinned in every theme above.
 // ─────────────────────────────────────────────────────────────────────────
 
 const DEFAULT_THEME_PAIRS = [
   { pair: 'destructive text on the page', fg: 'destructive', bg: 'background' },
-  { pair: 'destructive button label', fg: 'destructive-foreground', bg: 'destructive' },
   { pair: 'link text on the page', fg: 'foreground', bg: 'background' },
   { pair: 'muted text on --muted (tag chip)', fg: 'muted-foreground', bg: 'muted' },
   { pair: 'muted text on the page', fg: 'muted-foreground', bg: 'background' },
