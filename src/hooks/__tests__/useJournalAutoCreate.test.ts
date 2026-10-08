@@ -124,6 +124,33 @@ describe('useJournalAutoCreate', () => {
     expect(opts.handleAddBlock).toHaveBeenCalledTimes(1)
   })
 
+  it('does not auto-create when the page was created while the probe was out', async () => {
+    let answerProbe: (page: BlockRow | null) => void = () => {}
+    mockedInvoke.mockImplementation(
+      mockInvokeCommands({
+        get_journal_page_by_date: () =>
+          new Promise<BlockRow | null>((resolve) => {
+            answerProbe = resolve
+          }),
+      }),
+    )
+    const opts = makeOptions()
+    const { rerender } = renderHook((props) => useJournalAutoCreate(props), {
+      initialProps: opts,
+    })
+    await waitFor(() => {
+      expect(mockedInvoke).toHaveBeenCalledWith('get_journal_page_by_date', expect.anything())
+    })
+
+    // "Add your first block" created today's page before the probe answered.
+    rerender({ ...opts, createdPages: new Map([[todayStr, 'created-page-id']]) })
+    await act(async () => {
+      answerProbe(null)
+    })
+
+    expect(opts.handleAddBlock).not.toHaveBeenCalled()
+  })
+
   // The shortcut tests below run on a *past* date so the mount-effect
   // stays inert (it only fires for today) and the keydown path is
   // exercised in isolation. Since #755 the keydown path shares the

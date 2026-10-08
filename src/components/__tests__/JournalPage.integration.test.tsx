@@ -23,7 +23,9 @@
  */
 
 import { invoke } from '@tauri-apps/api/core'
-import { act, render, waitFor } from '@testing-library/react'
+import type { InvokeArgs } from '@tauri-apps/api/core'
+import { act, render, screen, waitFor, within } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { format } from 'date-fns'
 import type React from 'react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
@@ -111,8 +113,15 @@ vi.mock('@/components/backlinks/LinkedReferences', () => ({
 
 import { JournalControls, JournalPage } from '@/components/JournalPage'
 import { __resetCalendarPageDatesForTests } from '@/hooks/useCalendarPageDates'
+import { DEFAULT_JOURNAL_DATE_FORMAT } from '@/hooks/useJournalDateFormat'
+import { unwrap } from '@/lib/app-error'
+import { commands } from '@/lib/bindings'
+import { formatJournalTitle } from '@/lib/date-utils'
+import { t } from '@/lib/i18n'
+import { dispatch } from '@/lib/tauri-mock/handlers'
+import { SEED_IDS, seedBlocks } from '@/lib/tauri-mock/seed'
 import { useBlockStore } from '@/stores/blocks'
-import { useJournalStore } from '@/stores/journal'
+import { type JournalMode, useJournalStore } from '@/stores/journal'
 import { useSpaceStore } from '@/stores/space'
 
 const mockedInvoke = vi.mocked(invoke)
@@ -275,5 +284,127 @@ describe('JournalPage / BlockTree integration — auto-create race', () => {
 
     const results = await axe(container)
     expect(results).toHaveNoViolations()
+  })
+})
+
+// #5358 — the day header's Delete page soft-deleted the page, but the day kept
+// rendering its blocks until a reload. Driven through the tauri-mock, so the
+// delete cascade and every re-read are its real handlers.
+describe('JournalPage — Delete page empties the day (#5358)', () => {
+  const PERSONAL = 'SPACE_PERSONAL'
+  const todayStr = formatDate(new Date())
+
+  beforeEach(() => {
+    seedBlocks()
+    useSpaceStore.setState({
+      currentSpaceId: PERSONAL,
+      availableSpaces: [{ id: PERSONAL, name: 'Personal', accent_color: null }],
+      isReady: true,
+    })
+    mockedInvoke.mockImplementation(async (cmd: string, args?: InvokeArgs) => dispatch(cmd, args))
+  })
+
+  function renderJournalWithEditorLink() {
+    // Daily mode shows the page quick actions only beside "Open in editor".
+    return render(
+      <>
+        <JournalControls />
+        <JournalPage onNavigateToPage={vi.fn()} />
+      </>,
+    )
+  }
+
+  function todaySection(): HTMLElement {
+    const section = document.getElementById(`journal-${todayStr}`)
+    if (!section) throw new Error(`no day section for ${todayStr}`)
+    return section
+  }
+
+  async function deleteTodayPage(user: ReturnType<typeof userEvent.setup>): Promise<void> {
+    await user.click(
+      await within(todaySection()).findByRole('button', { name: t('pageHeader.deletePage') }),
+    )
+    const dialog = await screen.findByRole('alertdialog')
+    await user.click(within(dialog).getByRole('button', { name: t('pageHeader.deletePage') }))
+  }
+
+  async function expectTodayEmpty(mode: JournalMode): Promise<void> {
+    const date = formatJournalTitle(todayStr, DEFAULT_JOURNAL_DATE_FORMAT)
+    const emptyMessage = t(mode === 'daily' ? 'journal.noBlocks' : 'agenda.day.empty', { date })
+    expect(await within(todaySection()).findByText(emptyMessage)).toBeInTheDocument()
+    // Let anything the empty day sets off (the arrival auto-create) settle
+    // before checking that the empty state is what stayed.
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 0))
+    })
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 0))
+    })
+    const day = todaySection()
+    expect(within(day).getByText(emptyMessage)).toBeInTheDocument()
+    expect(day.querySelector('[data-testid^="sortable-block-"]')).toBeNull()
+    expect(day.querySelector('[data-testid="day-section-lazy-placeholder"]')).toBeNull()
+    const livePage = unwrap(
+      await commands.getJournalPageByDate(todayStr, { kind: 'active', space_id: PERSONAL }),
+    )
+    expect(livePage).toBeNull()
+  }
+
+  it('empties a day whose page existed before the journal opened', async () => {
+    const user = userEvent.setup()
+    renderJournalWithEditorLink()
+    expect(
+      await within(await waitFor(todaySection)).findByTestId(
+        `sortable-block-${SEED_IDS.BLOCK_DAILY_1}`,
+      ),
+    ).toBeInTheDocument()
+
+    await deleteTodayPage(user)
+
+    await expectTodayEmpty('daily')
+  })
+
+  it.each<JournalMode>(['daily', 'weekly', 'stream'])(
+    'empties a day whose page the %s view created this session',
+    async (mode) => {
+      const user = userEvent.setup()
+      unwrap(await commands.deleteBlock(SEED_IDS.PAGE_DAILY))
+      useJournalStore.setState({ mode })
+      renderJournalWithEditorLink()
+      const day = await waitFor(todaySection)
+      if (mode === 'daily') {
+        // Today's page is auto-created on arrival, seeded with one block.
+        await waitFor(() => {
+          expect(day.querySelector('[data-testid^="sortable-block-"]')).not.toBeNull()
+        })
+      } else {
+        await user.click(await within(day).findByRole('button', { name: t('agenda.day.addBlock') }))
+      }
+
+      await deleteTodayPage(user)
+
+      await expectTodayEmpty(mode)
+    },
+  )
+
+  it('lets the create shortcut start the day again after its auto-created page is deleted', async () => {
+    const user = userEvent.setup()
+    unwrap(await commands.deleteBlock(SEED_IDS.PAGE_DAILY))
+    renderJournalWithEditorLink()
+    const day = await waitFor(todaySection)
+    await waitFor(() => {
+      expect(day.querySelector('[data-testid^="sortable-block-"]')).not.toBeNull()
+    })
+    await deleteTodayPage(user)
+    await expectTodayEmpty('daily')
+
+    await user.keyboard('n')
+
+    await waitFor(async () => {
+      const livePage = unwrap(
+        await commands.getJournalPageByDate(todayStr, { kind: 'active', space_id: PERSONAL }),
+      )
+      expect(livePage).not.toBeNull()
+    })
   })
 })

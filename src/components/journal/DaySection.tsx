@@ -44,6 +44,7 @@ interface DaySectionProps {
   backlinkCounts?: Record<string, number> | undefined
   onNavigateToPage?: ((pageId: string, title?: string) => void) | undefined
   onAddBlock: (dateStr: string) => void
+  onPageDeleted?: ((dateStr: string) => void) | undefined
   /**
    * When `true`, defer mounting the heavy `BlockTree` (and its
    * `PageBlockStoreProvider`) until the section enters the viewport.
@@ -152,6 +153,7 @@ function DaySectionInner({
   backlinkCounts = EMPTY_COUNTS,
   onNavigateToPage,
   onAddBlock,
+  onPageDeleted,
   lazyMount = false,
   onVisible,
   mounted = false,
@@ -185,9 +187,10 @@ function DaySectionInner({
           descriptionKey: 'journal.deleteDayDescription',
           values: { date: entry.displayDate },
         },
+        onDeleted: () => onPageDeleted?.(entry.dateStr),
       })
     },
-    [entry.dateStr, entry.displayDate, requestDelete],
+    [entry.dateStr, entry.displayDate, onPageDeleted, requestDelete],
   )
 
   // Lazy-mount the BlockTree only when (a) the caller opted in via

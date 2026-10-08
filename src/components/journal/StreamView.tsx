@@ -73,7 +73,7 @@ export function StreamView({ onNavigateToPage }: StreamViewProps): React.ReactEl
   const { journalDateFormat } = useJournalDateFormat()
   const { dates, pageMap, loading, loadingOlder, reachedEnd, loadOlder, addPage } = useStreamDates()
 
-  const { createdPages, handleAddBlock } = useJournalBlockCreation({
+  const { createdPages, handleAddBlock, forgetCreatedPage } = useJournalBlockCreation({
     pageMap,
     onPageCreated: addPage,
   })
@@ -161,6 +161,7 @@ export function StreamView({ onNavigateToPage }: StreamViewProps): React.ReactEl
               mode="stream"
               onNavigateToPage={onNavigateToPage}
               onAddBlock={handleAddBlock}
+              onPageDeleted={forgetCreatedPage}
               lazyMount
               mounted={mountWindow.isMounted(entry.dateStr)}
               onVisible={mountWindow.markVisible}

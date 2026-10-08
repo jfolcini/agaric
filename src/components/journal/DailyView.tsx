@@ -16,12 +16,14 @@ interface DailyViewProps {
   entry: DayEntry
   onNavigateToPage?: ((pageId: string, title?: string) => void) | undefined
   onAddBlock: (dateStr: string) => void
+  onPageDeleted?: ((dateStr: string) => void) | undefined
 }
 
 export function DailyView({
   entry,
   onNavigateToPage,
   onAddBlock,
+  onPageDeleted,
 }: DailyViewProps): React.ReactElement {
   const isToday = entry.dateStr === useToday()
 
@@ -56,6 +58,7 @@ export function DailyView({
         mode="daily"
         onNavigateToPage={onNavigateToPage}
         onAddBlock={onAddBlock}
+        onPageDeleted={onPageDeleted}
       />
     </div>
   )

@@ -17,12 +17,14 @@ interface WeeklyViewProps {
   makeDayEntry: (d: Date) => DayEntry
   onNavigateToPage?: ((pageId: string, title?: string) => void) | undefined
   onAddBlock: (dateStr: string) => void
+  onPageDeleted?: ((dateStr: string) => void) | undefined
 }
 
 export function WeeklyView({
   makeDayEntry,
   onNavigateToPage,
   onAddBlock,
+  onPageDeleted,
 }: WeeklyViewProps): React.ReactElement {
   const currentDate = useJournalStore((s) => s.currentDate)
   const todayStr = formatDate(new Date())
@@ -60,6 +62,7 @@ export function WeeklyView({
                 backlinkCounts={backlinkCounts}
                 onNavigateToPage={onNavigateToPage}
                 onAddBlock={onAddBlock}
+                onPageDeleted={onPageDeleted}
                 lazyMount
               />
             </RescheduleDropZone>
