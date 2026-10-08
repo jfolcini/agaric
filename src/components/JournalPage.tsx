@@ -183,16 +183,15 @@ export function JournalPage({
     // the programmatic `.focus()` App.tsx fires matches `:focus-visible` and
     // the base-layer `:focus:not(:focus-visible)` rule does not cover it.
     <div ref={journalRef} tabIndex={-1} className="space-y-4 outline-none">
-      {/* PEND-UX item 5 — `<h1>` landmark for the Journal view. The App-
-          shell header renders `<JournalControls />` instead of a label
-          for journal mode, so this title is purely additive (no visual
-          duplication). The configure-template button is surfaced as a
-          right-aligned action when available. Agenda mode skips it:
-          `AgendaView` renders the title inside its `ViewHeader`, above the
-          sticky filter/sort bar, so it is the only `<h1>` there. */}
+      {/* PEND-UX item 5 — `<h1>` landmark for the Journal view: the day
+          itself in the day view, "Journal" in the multi-day modes. The App-
+          shell header renders `<JournalControls />` instead of a label for
+          journal mode. Agenda mode skips it: `AgendaView` renders the title
+          inside its `ViewHeader`, above the sticky filter/sort bar, so it is
+          the only `<h1>` there. */}
       {mode !== 'agenda' && (
         <FeaturePageHeader
-          title={t('sidebar.journal')}
+          title={mode === 'daily' ? makeDayEntry(currentDate).displayDate : t('sidebar.journal')}
           className="journal-page-header"
           {...(!loading && {
             actions: (

@@ -2,7 +2,8 @@
  * PageQuickActions — unified star + delete affordance for page surfaces.
  *
  * Single source of truth for the inline page-action cluster shared by:
- *   - `PageHeader` (variant: 'header')  — page-editor chrome.
+ *   - `PageHeader` (variant: 'header')  — page-editor chrome; star only,
+ *     its delete lives in the page-actions menu.
  *   - journal `DaySection` (variant: 'journal') — day-header chrome.
  *   - (future) Pages-list `DensityRow` (variant: 'row').
  *
@@ -16,10 +17,7 @@
  *   - `useStarredPages()` for the bookmark toggle.
  *   - `usePageDeleteAction()` (owned by the host) for the delete flow —
  *     this component just calls the `onDeleteRequest` callback the host
- *     wires to `requestDelete`. Centralising the dialog in the host is
- *     what avoids double-confirm dialogs when a host has multiple delete
- *     entry points (PageHeader has the dedicated trash button AND the
- *     kebab "Delete page" item; only one dialog ever renders).
+ *     wires to `requestDelete`.
  *
  * a11y:
  *   - Bookmark: `aria-pressed`, state-driven `aria-label`, fills when set.

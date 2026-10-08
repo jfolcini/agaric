@@ -27,7 +27,6 @@
  * `onWheel` (deltaY→scrollLeft) workaround.
  */
 
-import { ChevronRight } from 'lucide-react'
 import type React from 'react'
 import { lazy, Suspense, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -44,7 +43,6 @@ import { HelpTab } from '@/components/settings/HelpTab'
 import { KeyboardTab } from '@/components/settings/KeyboardTab'
 import { NotificationsTab } from '@/components/settings/NotificationsTab'
 import { Card, CardContent } from '@/components/ui/card'
-import { FeaturePageHeader } from '@/components/ui/feature-page-header'
 import { dispatchBugReport } from '@/lib/bug-report-events'
 import { PREFERENCES, readPreference, writePreference } from '@/lib/preferences'
 import { getSettingsTabFromUrl, setSettingsTabInUrl } from '@/lib/url-state'
@@ -217,25 +215,6 @@ export function SettingsView(): React.ReactElement {
 
   return (
     <div className="settings-view space-y-6">
-      {/* PEND-UX item 5 — `FeaturePageHeader` carries the `<h1>` landmark
-          + the  breadcrumb. The `<nav>` keeps its aria-label so
-          existing role="navigation" assertions in SettingsView.test.tsx
-          continue to resolve unchanged. */}
-      <FeaturePageHeader
-        title={t('sidebar.settings')}
-        className="settings-view-header"
-        breadcrumb={
-          <nav
-            aria-label={t('sidebar.settings')}
-            className="flex items-center gap-1 text-sm text-muted-foreground"
-          >
-            <span>{t('sidebar.settings')}</span>
-            <ChevronRight className="h-3.5 w-3.5" aria-hidden="true" />
-            <span className="text-foreground font-medium">{t(TAB_LABEL_KEYS[activeTab])}</span>
-          </nav>
-        }
-      />
-
       {/* #1108 — grouped settings layout. A vertical rail on the left holds
           the tabs bucketed into labeled sections (Workspace / Integrations /
           Data & Sync / Help); the active tab's panel renders to the right.

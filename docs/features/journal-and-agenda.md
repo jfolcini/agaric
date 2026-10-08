@@ -25,7 +25,7 @@ Per-space: every space has its own date cursor and mode. Switching spaces restor
 | Next day / week / month | `Alt+→` |
 | Jump to today | `Alt+T` (or *Today* button in the Journal header) |
 | Pick a date | Calendar icon → date picker |
-| Open Agenda mode | *Agenda* button in the Journal header |
+| Open Agenda mode | *Agenda* tab in the Journal header (its view menu on narrow screens) |
 
 The date picker shows **coloured dots** on days that already have content: one dot per source type (page / due / scheduled / property). Hovering reveals the count. Empty days are unmarked.
 

@@ -6,7 +6,7 @@
  * Tests for SpaceTopStripe.
  *
  * Validates:
- *  - Renders a fixed-position 3px stripe when a space is active.
+ *  - Renders a fixed-position 2px stripe when a space is active.
  *  - `data-space-id` matches the active space's id.
  *  - `style.backgroundColor` references the active `accent_color` token.
  *  - Falls back to `var(--accent-current)` when `accent_color` is null/empty.

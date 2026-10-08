@@ -27,12 +27,12 @@ If you click the Sync button before any device is paired, the **NoPeersDialog** 
 
 ## What the user sees
 
-- **Sidebar Sync row** (footer), the one place the status dot is drawn:
+- **Sidebar Sync icon** (footer), the one place the status dot is drawn:
   - Grey: idle.
   - Spinning + blue: syncing now.
   - Red: last attempt failed (toast offers *Retry*).
   - Strikethrough WiFi: offline.
-- **"Last synced N ago"** under the Sync row; with the sidebar collapsed to its icon rail, the row's tooltip carries it with the state instead.
+- **"Last synced N ago"** in the Sync icon's tooltip, with the state.
 - **Settings › Status**: the overall sync state, the last successful sync, and the peer count.
 - **Per-peer progress** while a sync is running (operations sent / received, then attachment-file transfer with byte progress).
 - **Retry toast** per peer on failure — partial failures don't blow up the whole batch.

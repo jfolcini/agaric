@@ -1125,11 +1125,9 @@ describe('App', () => {
           expect(screen.getByRole('combobox', { name: /Switch space/ })).toBeInTheDocument()
         })
 
-        // Click the sidebar Sync button (the one with text "Sync" inside
-        // the sidebar — there's also a tooltip; scope to the sidebar to
-        // avoid grabbing the tooltip text).
+        // Click the sidebar Sync button, scoped to the sidebar.
         const sidebar = getSidebar()
-        await user.click(sidebar.getByText(t('sidebar.sync')))
+        await user.click(sidebar.getByRole('button', { name: t('sidebar.sync') }))
 
         // Dialog opens with the i18n-keyed title + body + actions.
         const dialog = await screen.findByRole('alertdialog')
@@ -1173,7 +1171,7 @@ describe('App', () => {
         })
 
         const sidebar = getSidebar()
-        await user.click(sidebar.getByText(t('sidebar.sync')))
+        await user.click(sidebar.getByRole('button', { name: t('sidebar.sync') }))
 
         // Give the async listPeerRefs round-trip a tick to settle, then
         // assert the dialog never mounted. We check the title text rather
@@ -1209,7 +1207,7 @@ describe('App', () => {
         })
 
         const sidebar = getSidebar()
-        await user.click(sidebar.getByText(t('sidebar.sync')))
+        await user.click(sidebar.getByRole('button', { name: t('sidebar.sync') }))
 
         // The listPeerRefs IPC was attempted, so the guard ran. Failure
         // falls through to syncAll() — the user still gets a sync
@@ -1240,7 +1238,7 @@ describe('App', () => {
         })
 
         const sidebar = getSidebar()
-        await user.click(sidebar.getByText(t('sidebar.sync')))
+        await user.click(sidebar.getByRole('button', { name: t('sidebar.sync') }))
 
         const dialog = await screen.findByRole('alertdialog')
         await user.click(within(dialog).getByRole('button', { name: t('sync.noPeersCta') }))
@@ -1278,7 +1276,7 @@ describe('App', () => {
         })
 
         const sidebar = getSidebar()
-        await user.click(sidebar.getByText(t('sidebar.sync')))
+        await user.click(sidebar.getByRole('button', { name: t('sidebar.sync') }))
 
         const dialog = await screen.findByRole('alertdialog')
         await user.click(within(dialog).getByRole('button', { name: t('sync.noPeersCta') }))
@@ -1306,7 +1304,7 @@ describe('App', () => {
         })
 
         const sidebar = getSidebar()
-        await user.click(sidebar.getByText(t('sidebar.sync')))
+        await user.click(sidebar.getByRole('button', { name: t('sidebar.sync') }))
 
         const dialog = await screen.findByRole('alertdialog')
         await user.click(within(dialog).getByRole('button', { name: t('sync.noPeersCancel') }))

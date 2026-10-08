@@ -6,9 +6,11 @@ import {
   FolderOutput,
   LayoutTemplate,
   Link,
+  List,
   MoreVertical,
   Redo2,
   Settings2,
+  Smile,
   Tag,
   Trash2,
   Undo2,
@@ -22,14 +24,18 @@ import { MenuPopoverContent } from '@/components/ui/menu-popover-content'
 import { Popover, PopoverTrigger } from '@/components/ui/popover'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { useIsMobile } from '@/hooks/useIsMobile'
-import { getShortcutKeys } from '@/lib/keyboard-config'
-import { cn } from '@/lib/utils'
 
 /** A space shown in the "Move to space" sub-menu. */
 export interface MoveTargetSpace {
   id: string
   name: string
 }
+
+const MENU_ITEM_CLASS =
+  'flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-sm hover:bg-accent touch-target focus-ring-visible disabled:pointer-events-none disabled:opacity-50'
+
+const SHORTCUT_HINT_CLASS =
+  'ml-auto shrink-0 whitespace-nowrap text-xs text-muted-foreground tabular-nums [@media(pointer:coarse)]:hidden'
 
 export interface PageHeaderMenuProps {
   canRedo: boolean
@@ -38,6 +44,8 @@ export interface PageHeaderMenuProps {
   isJournalTemplate: boolean
   onUndo: () => void
   onRedo: () => void
+  onOpenOutline: () => void
+  onInsertEmoji: () => void
   onKebabOpenChange: (open: boolean) => void
   onAddAlias: () => void
   onAddTag: () => void
@@ -74,6 +82,8 @@ export function PageHeaderMenu({
   isJournalTemplate,
   onUndo,
   onRedo,
+  onOpenOutline,
+  onInsertEmoji,
   onKebabOpenChange,
   onAddAlias,
   onAddTag,
@@ -114,8 +124,13 @@ export function PageHeaderMenu({
   const [activeId, setActiveId] = useState<string | null>(null)
 
   // Ordered top-level menuitem ids — mirrors the conditional render order.
+  // A disabled Redo cannot take focus, so it leaves the roving set.
   const orderedIds: string[] = [
     ...(onOpenInNewTab != null && !isMobile ? ['openInNewTab'] : []),
+    'undo',
+    ...(canRedo ? ['redo'] : []),
+    'openOutline',
+    'insertEmoji',
     'addAlias',
     'addTag',
     'addProperty',
@@ -198,228 +213,215 @@ export function PageHeaderMenu({
   })
 
   return (
-    <div className="flex items-center gap-1">
+    <Popover open={kebabOpen} onOpenChange={onKebabOpenChange}>
       <Tooltip>
         <TooltipTrigger asChild>
-          <Button
-            variant="ghost"
-            size="icon-sm"
-            aria-label={t('pageHeader.undoAction')}
-            onClick={onUndo}
-          >
-            <Undo2 className="h-4 w-4" />
-          </Button>
+          <PopoverTrigger asChild>
+            <Button
+              ref={kebabRef}
+              variant="ghost"
+              size="icon-sm"
+              aria-label={t('pageHeader.pageActions')}
+            >
+              <MoreVertical className="h-4 w-4" />
+            </Button>
+          </PopoverTrigger>
         </TooltipTrigger>
-        {/*  sub-fix 3: tier-aware undo tooltip. The same Ctrl+Z hits
-            either the editor-undo (within current block) when an editable
-            field is focused or the page-undo (last op-log entry) when not.
-            We expose this so users can predict which tier will fire. */}
-        <TooltipContent>
-          <div>
-            {t('pageHeader.undoAction')} {getShortcutKeys('undoLastPageOp')}
-          </div>
-          <div className="mt-1 text-xs opacity-90">{t('undo.tipPage')}</div>
-        </TooltipContent>
+        <TooltipContent>{t('pageHeader.pageActions')}</TooltipContent>
       </Tooltip>
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <Button
-            variant="ghost"
-            size="icon-sm"
-            aria-label={t('pageHeader.redoAction')}
-            disabled={!canRedo}
-            onClick={onRedo}
-          >
-            <Redo2 className="h-4 w-4" />
-          </Button>
-        </TooltipTrigger>
-        <TooltipContent>
-          {t('pageHeader.redoAction')} {getShortcutKeys('redoLastUndoneOp')}
-        </TooltipContent>
-      </Tooltip>
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <Button
-            variant="ghost"
-            size="icon-sm"
-            onClick={onToggleTemplate}
-            aria-label={t('pageHeader.toggleTemplate')}
-            aria-pressed={isTemplate}
-          >
-            {/* `--ring`, not ink: ink is the icon's resting colour (#5332). */}
-            <LayoutTemplate className={cn('h-4 w-4', isTemplate && 'text-ring')} />
-          </Button>
-        </TooltipTrigger>
-        <TooltipContent>
-          {isTemplate ? t('pageHeader.templateActive') : t('pageHeader.toggleTemplate')}
-        </TooltipContent>
-      </Tooltip>
-      <Popover open={kebabOpen} onOpenChange={onKebabOpenChange}>
-        <PopoverTrigger asChild>
-          <Button
-            ref={kebabRef}
-            variant="ghost"
-            size="icon-sm"
-            aria-label={t('pageHeader.pageActions')}
-          >
-            <MoreVertical className="h-4 w-4" />
-          </Button>
-        </PopoverTrigger>
-        <MenuPopoverContent
-          align="end"
-          className="w-72"
-          role="menu"
-          tabIndex={-1}
-          aria-label={t('pageHeader.pageActions')}
-          onKeyDown={handleMenuKeyDown}
-          // Back to the kebab only when closing left focus nowhere: a row that
-          // focused something (Edit as Markdown's textarea) keeps it.
-          onCloseAutoFocus={(e) => {
-            if (document.activeElement !== document.body) e.preventDefault()
-          }}
+      <MenuPopoverContent
+        align="end"
+        className="w-80"
+        role="menu"
+        tabIndex={-1}
+        aria-label={t('pageHeader.pageActions')}
+        onKeyDown={handleMenuKeyDown}
+        // Back to the kebab only when closing left focus nowhere: a row that
+        // focused something (Edit as Markdown's textarea) keeps it.
+        onCloseAutoFocus={(e) => {
+          if (document.activeElement !== document.body) e.preventDefault()
+        }}
+      >
+        {onOpenInNewTab != null && !isMobile && (
+          <>
+            <button
+              type="button"
+              className={MENU_ITEM_CLASS}
+              onClick={onOpenInNewTab}
+              {...menuItemProps('openInNewTab')}
+            >
+              <ExternalLink className="h-3.5 w-3.5" />
+              {t('tabs.openInNewTab')}
+            </button>
+            <hr className="my-1 h-px bg-border border-none" />
+          </>
+        )}
+        <button
+          type="button"
+          className={MENU_ITEM_CLASS}
+          onClick={onUndo}
+          {...menuItemProps('undo')}
         >
-          {onOpenInNewTab != null && !isMobile && (
-            <>
-              <button
-                type="button"
-                className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-sm hover:bg-accent touch-target focus-ring-visible"
-                onClick={onOpenInNewTab}
-                {...menuItemProps('openInNewTab')}
-              >
-                <ExternalLink className="h-3.5 w-3.5" />
-                {t('tabs.openInNewTab')}
-              </button>
-              <hr className="my-1 h-px bg-border border-none" />
-            </>
-          )}
+          <Undo2 className="h-3.5 w-3.5" />
+          {t('pageHeader.undoAction')}
+          <span className={SHORTCUT_HINT_CLASS}>{shortcutHint('undoLastPageOp')}</span>
+        </button>
+        <button
+          type="button"
+          className={MENU_ITEM_CLASS}
+          disabled={!canRedo}
+          onClick={onRedo}
+          {...menuItemProps('redo')}
+        >
+          <Redo2 className="h-3.5 w-3.5" />
+          {t('pageHeader.redoAction')}
+          <span className={SHORTCUT_HINT_CLASS}>{shortcutHint('redoLastUndoneOp')}</span>
+        </button>
+        <hr className="my-1 h-px bg-border border-none" />
+        <button
+          type="button"
+          className={MENU_ITEM_CLASS}
+          onClick={onOpenOutline}
+          {...menuItemProps('openOutline')}
+        >
+          <List className="h-3.5 w-3.5" />
+          {t('pageHeader.openOutline')}
+        </button>
+        <button
+          type="button"
+          className={MENU_ITEM_CLASS}
+          onClick={onInsertEmoji}
+          {...menuItemProps('insertEmoji')}
+        >
+          <Smile className="h-3.5 w-3.5" />
+          {t('pageHeader.insertEmoji')}
+        </button>
+        <hr className="my-1 h-px bg-border border-none" />
+        <button
+          type="button"
+          className={MENU_ITEM_CLASS}
+          onClick={onAddAlias}
+          {...menuItemProps('addAlias')}
+        >
+          <Link className="h-3.5 w-3.5" />
+          {t('pageHeader.menuAddAlias')}
+        </button>
+        <button
+          type="button"
+          className={MENU_ITEM_CLASS}
+          onClick={onAddTag}
+          {...menuItemProps('addTag')}
+        >
+          <Tag className="h-3.5 w-3.5" />
+          {t('pageHeader.menuAddTag')}
+        </button>
+        <button
+          type="button"
+          className={MENU_ITEM_CLASS}
+          onClick={onAddProperty}
+          {...menuItemProps('addProperty')}
+        >
+          <Settings2 className="h-3.5 w-3.5" />
+          {t('pageHeader.menuAddProperty')}
+        </button>
+        <hr className="my-1 h-px bg-border border-none" />
+        <button
+          type="button"
+          className={MENU_ITEM_CLASS}
+          onClick={onToggleTemplate}
+          {...menuItemProps('toggleTemplate')}
+        >
+          <LayoutTemplate className="h-3.5 w-3.5" />
+          {isTemplate ? t('pageHeader.removeTemplate') : t('pageHeader.saveAsTemplate')}
+        </button>
+        <button
+          type="button"
+          className={MENU_ITEM_CLASS}
+          onClick={onToggleJournalTemplate}
+          {...menuItemProps('toggleJournalTemplate')}
+        >
+          <BookTemplate className="h-3.5 w-3.5" />
+          {isJournalTemplate
+            ? t('pageHeader.removeJournalTemplate')
+            : t('pageHeader.setJournalTemplate')}
+        </button>
+        <hr className="my-1 h-px bg-border border-none" />
+        <button
+          type="button"
+          className={MENU_ITEM_CLASS}
+          onClick={onExport}
+          {...menuItemProps('export')}
+        >
+          <Download className="h-3.5 w-3.5" />
+          {t('pageHeader.exportMarkdown')}
+          <span className={SHORTCUT_HINT_CLASS}>{shortcutHint('exportPageMarkdown')}</span>
+        </button>
+        {onEditSource != null && (
           <button
             type="button"
-            className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-sm hover:bg-accent touch-target focus-ring-visible"
-            onClick={onAddAlias}
-            {...menuItemProps('addAlias')}
+            className={MENU_ITEM_CLASS}
+            onClick={onEditSource}
+            {...menuItemProps('editSource')}
           >
-            <Link className="h-3.5 w-3.5" />
-            {t('pageHeader.menuAddAlias')}
+            <FileCode className="h-3.5 w-3.5" />
+            {t('pageSource.edit')}
           </button>
-          <button
-            type="button"
-            className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-sm hover:bg-accent touch-target focus-ring-visible"
-            onClick={onAddTag}
-            {...menuItemProps('addTag')}
-          >
-            <Tag className="h-3.5 w-3.5" />
-            {t('pageHeader.menuAddTag')}
-          </button>
-          <button
-            type="button"
-            className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-sm hover:bg-accent touch-target focus-ring-visible"
-            onClick={onAddProperty}
-            {...menuItemProps('addProperty')}
-          >
-            <Settings2 className="h-3.5 w-3.5" />
-            {t('pageHeader.menuAddProperty')}
-          </button>
-          <hr className="my-1 h-px bg-border border-none" />
-          <button
-            type="button"
-            className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-sm hover:bg-accent touch-target focus-ring-visible"
-            onClick={onToggleTemplate}
-            {...menuItemProps('toggleTemplate')}
-          >
-            <LayoutTemplate className="h-3.5 w-3.5" />
-            {isTemplate ? t('pageHeader.removeTemplate') : t('pageHeader.saveAsTemplate')}
-          </button>
-          <button
-            type="button"
-            className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-sm hover:bg-accent touch-target focus-ring-visible"
-            onClick={onToggleJournalTemplate}
-            {...menuItemProps('toggleJournalTemplate')}
-          >
-            <BookTemplate className="h-3.5 w-3.5" />
-            {isJournalTemplate
-              ? t('pageHeader.removeJournalTemplate')
-              : t('pageHeader.setJournalTemplate')}
-          </button>
-          <hr className="my-1 h-px bg-border border-none" />
-          <button
-            type="button"
-            className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-sm hover:bg-accent touch-target focus-ring-visible"
-            onClick={onExport}
-            {...menuItemProps('export')}
-          >
-            <Download className="h-3.5 w-3.5" />
-            {t('pageHeader.exportMarkdown')}
-            <span className="ml-auto shrink-0 whitespace-nowrap text-xs text-muted-foreground tabular-nums [@media(pointer:coarse)]:hidden">
-              {shortcutHint('exportPageMarkdown')}
-            </span>
-          </button>
-          {onEditSource != null && (
+        )}
+        {showMoveEntry && (
+          <>
+            <hr className="my-1 h-px bg-border border-none" />
             <button
               type="button"
-              className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-sm hover:bg-accent touch-target focus-ring-visible"
-              onClick={onEditSource}
-              {...menuItemProps('editSource')}
+              className={MENU_ITEM_CLASS}
+              aria-haspopup="menu"
+              aria-expanded={moveSubmenuOpen}
+              onClick={() => setMoveSubmenuOpen((open) => !open)}
+              {...menuItemProps('moveTo')}
             >
-              <FileCode className="h-3.5 w-3.5" />
-              {t('pageSource.edit')}
+              <FolderOutput className="h-3.5 w-3.5" />
+              {t('space.moveTo')}
+              <span className="ml-auto text-xs text-muted-foreground" aria-hidden="true">
+                {moveSubmenuOpen ? '▾' : '▸'}
+              </span>
             </button>
-          )}
-          {showMoveEntry && (
-            <>
-              <hr className="my-1 h-px bg-border border-none" />
-              <button
-                type="button"
-                className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-sm hover:bg-accent touch-target focus-ring-visible"
-                aria-haspopup="menu"
-                aria-expanded={moveSubmenuOpen}
-                onClick={() => setMoveSubmenuOpen((open) => !open)}
-                {...menuItemProps('moveTo')}
+            {moveSubmenuOpen && (
+              <div
+                role="menu"
+                aria-label={t('space.moveTo')}
+                className="pl-4 mt-0.5 flex flex-col gap-0.5"
               >
-                <FolderOutput className="h-3.5 w-3.5" />
-                {t('space.moveTo')}
-                <span className="ml-auto text-xs text-muted-foreground" aria-hidden="true">
-                  {moveSubmenuOpen ? '▾' : '▸'}
-                </span>
-              </button>
-              {moveSubmenuOpen && (
-                <div
-                  role="menu"
-                  aria-label={t('space.moveTo')}
-                  className="pl-4 mt-0.5 flex flex-col gap-0.5"
-                >
-                  {moveTargets.map((target) => (
-                    <button
-                      key={target.id}
-                      type="button"
-                      role="menuitem"
-                      title={target.name}
-                      className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-sm hover:bg-accent touch-target focus-ring-visible"
-                      onClick={() => {
-                        setMoveSubmenuOpen(false)
-                        onMoveToSpace?.(target.id)
-                      }}
-                    >
-                      <span className="line-clamp-1">{target.name}</span>
-                    </button>
-                  ))}
-                </div>
-              )}
-            </>
-          )}
-          <hr className="my-1 h-px bg-border border-none" />
-          <div className="rounded-md bg-destructive/5 p-0.5">
-            <button
-              type="button"
-              className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-sm text-destructive hover:bg-destructive/10 touch-target focus-ring-visible focus-visible:ring-destructive/50"
-              onClick={onDeleteRequest}
-              {...menuItemProps('delete')}
-            >
-              <Trash2 className="h-3.5 w-3.5" />
-              {t('pageHeader.deletePage')}
-            </button>
-          </div>
-        </MenuPopoverContent>
-      </Popover>
-    </div>
+                {moveTargets.map((target) => (
+                  <button
+                    key={target.id}
+                    type="button"
+                    role="menuitem"
+                    title={target.name}
+                    className={MENU_ITEM_CLASS}
+                    onClick={() => {
+                      setMoveSubmenuOpen(false)
+                      onMoveToSpace?.(target.id)
+                    }}
+                  >
+                    <span className="line-clamp-1">{target.name}</span>
+                  </button>
+                ))}
+              </div>
+            )}
+          </>
+        )}
+        <hr className="my-1 h-px bg-border border-none" />
+        <div className="rounded-md bg-destructive/5 p-0.5">
+          <button
+            type="button"
+            className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-sm text-destructive hover:bg-destructive/10 touch-target focus-ring-visible focus-visible:ring-destructive/50"
+            onClick={onDeleteRequest}
+            {...menuItemProps('delete')}
+          >
+            <Trash2 className="h-3.5 w-3.5" />
+            {t('pageHeader.deletePage')}
+          </button>
+        </div>
+      </MenuPopoverContent>
+    </Popover>
   )
 }

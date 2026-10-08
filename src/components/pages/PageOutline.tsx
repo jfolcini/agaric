@@ -4,14 +4,12 @@
  * Reads blocks from the per-page block store, extracts markdown headings
  * (# , ## , ### , etc.) and renders them as a hierarchical list inside a
  * slide-out Sheet. Clicking a heading scrolls its block to the top of the
- * view.
+ * view. The page-actions menu opens it.
  */
 
-import { List } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 
 import { EmptyState } from '@/components/common/EmptyState'
-import { Button } from '@/components/ui/button'
 import {
   Sheet,
   SheetBody,
@@ -19,9 +17,7 @@ import {
   SheetDescription,
   SheetHeader,
   SheetTitle,
-  SheetTrigger,
 } from '@/components/ui/sheet'
-import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { scrollElementIntoView } from '@/lib/scroll-into-view'
 import { cn } from '@/lib/utils'
 import type { FlatBlock } from '@/stores/page-blocks'
@@ -61,7 +57,13 @@ export function extractHeadings(blocks: FlatBlock[]): HeadingEntry[] {
 
 // ── PageOutline component ────────────────────────────────────────────────
 
-export function PageOutline() {
+export interface PageOutlineProps {
+  open: boolean
+  onOpenChange: (open: boolean) => void
+  onCloseAutoFocus?: ((e: Event) => void) | undefined
+}
+
+export function PageOutline({ open, onOpenChange, onCloseAutoFocus }: PageOutlineProps) {
   const { t } = useTranslation()
   const blocks = usePageBlockStore((s) => s.blocks)
   const headings = extractHeadings(blocks)
@@ -79,22 +81,8 @@ export function PageOutline() {
   }
 
   return (
-    <Sheet>
-      {/* pair the icon-only outline trigger with a Tooltip so the
-          aria-label is also discoverable by sighted mouse users on hover.
-          Tooltip wraps SheetTrigger; both use Radix `Slot` (asChild) so the
-          hover and click handlers compose onto the same Button. */}
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <SheetTrigger asChild>
-            <Button variant="ghost" size="icon" aria-label={t('pageHeader.openOutline')}>
-              <List className="h-4 w-4" />
-            </Button>
-          </SheetTrigger>
-        </TooltipTrigger>
-        <TooltipContent>{t('pageHeader.openOutline')}</TooltipContent>
-      </Tooltip>
-      <SheetContent side="right">
+    <Sheet open={open} onOpenChange={onOpenChange}>
+      <SheetContent side="right" onCloseAutoFocus={onCloseAutoFocus}>
         <SheetHeader>
           <SheetTitle>{t('outline.title')}</SheetTitle>
           <SheetDescription className="sr-only">{t('outline.navLabel')}</SheetDescription>

@@ -1,5 +1,5 @@
 /**
- * SpaceTopStripe — full-width 3px accent stripe pinned to the top of
+ * SpaceTopStripe — full-width 2px accent stripe pinned to the top of
  * The viewport.
  *
  * Replaces the sidebar-footer `SpaceStatusChip` with a
@@ -45,7 +45,7 @@ export function SpaceTopStripe(): React.JSX.Element | null {
       data-testid="space-top-stripe"
       data-space-id={active.id}
       aria-hidden="true"
-      className="fixed top-[var(--safe-area-top)] left-0 right-0 h-[3px] z-40 pointer-events-none"
+      className="fixed top-[var(--safe-area-top)] left-0 right-0 h-[2px] z-40 pointer-events-none"
       style={{ backgroundColor }}
     />
   )

@@ -138,7 +138,7 @@ The cross-feature primitives most worth knowing (not exhaustive — see `src/com
 - **Agenda projection.** The agenda view dedupes overdue tasks against the projected (cached) view. `DeadlineWarningSection` surfaces near-future tasks that may slip.
 - **Templates.** Template-tagged pages (`template = true` property). The template picker (slash command + button) inserts the template's child blocks under the current block; dynamic variables substitute on insertion.
 - **Property drawer.** Sheet slide-in (or popover on desktop) with one `PropertyRowEditor` per property + the built-in date fields at the top. Blur-to-save semantics; add via `AddPropertyPopover`.
-- **Kebab menu.** `PageHeaderMenu` is the canonical placement for page-level actions (Undo, Redo, Move to space, Add alias, Add tag, Export, Trash, Template). Don't sprinkle these actions elsewhere.
+- **Kebab menu.** `PageHeaderMenu` is the canonical placement for page-level actions (Undo, Redo, Outline, Insert emoji, Move to space, Add alias, Add tag, Export, Trash, Template). Don't sprinkle these actions elsewhere.
 - **GraphView.** d3-force in a Web Worker (fallback to main thread). Keyboard nav + reduced-motion checks both honoured.
 - **MCP.** Read-only + read-write tool modules under `src-tauri/src/mcp/{tools_ro,tools_rw}/`. Agent activity UI in `src/components/agent-access/` (`ActivityFeed`, `McpStatusSection`, `SessionRevertControls`).
 

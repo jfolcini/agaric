@@ -513,7 +513,7 @@ function App() {
         {t('accessibility.skipToMain')}
       </a>
       {/*
-       * Full-width 3px accent stripe pinned to the top of
+       * Full-width 2px accent stripe pinned to the top of
        * the viewport. Sits above the sidebar/content so it remains
        * visible regardless of sidebar state. Decorative; identity
        * is announced by the SpaceSwitcher / OS title.
@@ -530,7 +530,7 @@ function App() {
         />
         <SidebarInset>
           <ViewHeaderOutletProvider>
-            <header className="flex min-h-14 shrink-0 sm:items-center gap-2 border-b bg-background px-4 py-2 sm:py-0">
+            <header className="flex min-h-12 shrink-0 sm:items-center gap-2 border-b bg-background px-4 py-px sm:py-0">
               {/* Leads the header row, before the view title, because that
                   is where a navigation-drawer trigger is looked for. Renders
                   nothing on desktop. */}

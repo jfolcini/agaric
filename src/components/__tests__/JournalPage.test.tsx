@@ -1888,7 +1888,8 @@ describe('JournalPage', () => {
       ).toBeTruthy()
     })
 
-    it('keeps the single JournalPage h1 outside agenda mode', async () => {
+    it('titles the day view with the date as its single h1', async () => {
+      useJournalStore.setState({ mode: 'daily', currentDate: new Date('2026-04-19T12:00:00') })
       mockEmptyResponses()
 
       renderJournal()
@@ -1898,8 +1899,22 @@ describe('JournalPage', () => {
       })
       const headings = screen.getAllByRole('heading', { level: 1 })
       expect(headings).toHaveLength(1)
-      expect(headings[0]).toHaveTextContent('Journal')
+      expect(headings[0]).toHaveTextContent(/^Sun, Apr 19, 2026$/)
       expect(headings[0]?.closest('.journal-page-header')).not.toBeNull()
+    })
+
+    it('keeps "Journal" as the single h1 of the multi-day views', async () => {
+      useJournalStore.setState({ mode: 'weekly', currentDate: new Date('2026-04-19T12:00:00') })
+      mockEmptyResponses()
+
+      renderJournal()
+
+      await waitFor(() => {
+        expect(screen.queryByTestId('loading-skeleton')).not.toBeInTheDocument()
+      })
+      const headings = screen.getAllByRole('heading', { level: 1 })
+      expect(headings).toHaveLength(1)
+      expect(headings[0]).toHaveTextContent(/^Journal$/)
     })
   })
 
@@ -3734,7 +3749,7 @@ describe('JournalPage', () => {
         expect(screen.getByRole('button', { name: /go to today/i })).toBeInTheDocument()
       })
 
-      it('hides Agenda button in agenda mode but keeps Today + calendar visible', () => {
+      it('keeps Today + calendar visible in agenda mode', () => {
         useJournalStore.setState({
           mode: 'agenda',
           currentDate: new Date('2026-04-20T12:00:00'),
@@ -3749,46 +3764,24 @@ describe('JournalPage', () => {
         expect(screen.getByRole('button', { name: /open calendar picker/i })).toBeInTheDocument()
       })
 
-      it('shows Agenda button in daily mode', () => {
-        useJournalStore.setState({
-          mode: 'daily',
-          currentDate: new Date('2026-04-19T12:00:00'),
-          scrollToDate: null,
-          scrollToPanel: null,
-        })
-        mockEmptyResponses()
-        renderJournal()
+      it.each(['daily', 'weekly', 'monthly'] as const)(
+        'offers Agenda once in %s mode: as a mode tab, with no separate button',
+        (mode) => {
+          useJournalStore.setState({
+            mode,
+            currentDate: new Date('2026-04-20T12:00:00'),
+            scrollToDate: null,
+            scrollToPanel: null,
+          })
+          mockEmptyResponses()
+          renderJournal()
 
-        expect(screen.getByRole('button', { name: /go to agenda/i })).toBeInTheDocument()
-      })
+          expect(screen.queryByRole('button', { name: /go to agenda/i })).not.toBeInTheDocument()
+          expect(screen.getAllByRole('tab', { name: /agenda view/i })).toHaveLength(1)
+        },
+      )
 
-      it('shows Agenda button in weekly mode', () => {
-        useJournalStore.setState({
-          mode: 'weekly',
-          currentDate: new Date('2026-04-20T12:00:00'),
-          scrollToDate: null,
-          scrollToPanel: null,
-        })
-        mockEmptyResponses()
-        renderJournal()
-
-        expect(screen.getByRole('button', { name: /go to agenda/i })).toBeInTheDocument()
-      })
-
-      it('shows Agenda button in monthly mode', () => {
-        useJournalStore.setState({
-          mode: 'monthly',
-          currentDate: new Date('2026-04-20T12:00:00'),
-          scrollToDate: null,
-          scrollToPanel: null,
-        })
-        mockEmptyResponses()
-        renderJournal()
-
-        expect(screen.getByRole('button', { name: /go to agenda/i })).toBeInTheDocument()
-      })
-
-      it('clicking Agenda calls navigateToDate(today, "agenda")', async () => {
+      it('clicking the Agenda tab switches to agenda mode', async () => {
         useJournalStore.setState({
           mode: 'daily',
           currentDate: new Date('2026-04-19T12:00:00'),
@@ -3799,10 +3792,9 @@ describe('JournalPage', () => {
         const user = userEvent.setup()
 
         renderJournal()
-        await user.click(screen.getByRole('button', { name: /go to agenda/i }))
+        await user.click(screen.getByRole('tab', { name: /agenda view/i }))
 
         expect(useJournalStore.getState().mode).toBe('agenda')
-        expect(format(useJournalStore.getState().currentDate, 'yyyy-MM-dd')).toBe('2026-04-20')
       })
 
       it('mode-switcher Agenda tab remains rendered in daily mode', () => {

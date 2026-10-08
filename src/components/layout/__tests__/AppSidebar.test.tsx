@@ -8,7 +8,7 @@
  */
 
 import { invoke } from '@tauri-apps/api/core'
-import { render, screen, waitFor, within } from '@testing-library/react'
+import { act, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
@@ -115,7 +115,7 @@ describe('AppSidebar', () => {
 
   // #5269 — the sidebar is cut down to the daily surfaces. Pin the whole row
   // list, in order, so a row that creeps back (or goes missing) reddens this.
-  it('renders exactly New Page, the four daily views, Sync and Settings (#5269)', () => {
+  it('renders exactly New Page and the four daily views as rows, Sync and Settings as one footer row of icons (#5269)', () => {
     renderSidebar()
 
     const rows = [...document.querySelectorAll('[data-sidebar="menu-button"]')].map(
@@ -124,10 +124,53 @@ describe('AppSidebar', () => {
     expect(rows).toEqual([
       t('sidebar.newPage'),
       ...SIDEBAR_NAV_ITEMS.map((item) => t(item.labelKey)),
+    ])
+    expect(SIDEBAR_NAV_ITEMS.map((item) => item.id)).toEqual(['journal', 'pages', 'search', 'tags'])
+
+    const footer = document.querySelector('[data-sidebar="footer"]') as HTMLElement
+    const icons = within(footer).getAllByRole('button')
+    expect(icons.map((button) => button.getAttribute('aria-label'))).toEqual([
       t('sidebar.sync'),
       t(SETTINGS_NAV_ITEM.labelKey),
     ])
-    expect(SIDEBAR_NAV_ITEMS.map((item) => item.id)).toEqual(['journal', 'pages', 'search', 'tags'])
+    expect(icons.map((button) => button.textContent)).toEqual(['', ''])
+  })
+
+  it('reaches Sync and Settings in the footer by keyboard, after the nav', async () => {
+    const user = userEvent.setup()
+    renderSidebar()
+
+    const reached: string[] = []
+    for (let i = 0; i < 30 && reached.length < 2; i++) {
+      await user.tab()
+      const focused = document.activeElement
+      if (focused?.closest('[data-sidebar="footer"]')) {
+        reached.push(focused.getAttribute('aria-label') ?? '')
+      }
+    }
+
+    expect(reached).toEqual([t('sidebar.sync'), t(SETTINGS_NAV_ITEM.labelKey)])
+  })
+
+  it('opens Settings from the footer and marks it as the current view', async () => {
+    const onSelectView = vi.fn()
+    const user = userEvent.setup()
+    const { rerender, props } = renderSidebar({ onSelectView })
+
+    const settings = screen.getByRole('button', { name: t(SETTINGS_NAV_ITEM.labelKey) })
+    expect(settings).not.toHaveAttribute('aria-current')
+    await user.click(settings)
+    expect(onSelectView).toHaveBeenCalledWith('settings')
+
+    rerender(
+      <SidebarProvider>
+        <AppSidebar {...props} currentView="settings" />
+      </SidebarProvider>,
+    )
+    expect(screen.getByRole('button', { name: t(SETTINGS_NAV_ITEM.labelKey) })).toHaveAttribute(
+      'aria-current',
+      'page',
+    )
   })
 
   it('puts New Page and the collapse toggle in the header, Sync and Settings in the footer (#5269)', () => {
@@ -189,7 +232,7 @@ describe('AppSidebar', () => {
     renderSidebar({ onNewPage, onSyncClick })
 
     await user.click(screen.getByText(t('sidebar.newPage')))
-    await user.click(screen.getByText(t('sidebar.sync')))
+    await user.click(screen.getByRole('button', { name: t('sidebar.sync') }))
 
     expect(onNewPage).toHaveBeenCalledTimes(1)
     expect(onSyncClick).toHaveBeenCalledTimes(1)
@@ -245,11 +288,9 @@ describe('AppSidebar', () => {
     expect(unpairedClass).not.toContain('bg-sync-idle')
   })
 
-  // The visible "last synced" timestamp is hidden in
-  // icon-collapsed mode (`group-data-[collapsible=icon]:hidden`).
-  // Pin that the same text is folded into the sync button tooltip
-  // so the affordance survives the collapse.
-  it('includes the last synced status in the sync button tooltip', async () => {
+  // The footer is icons only, so the "last synced" line lives in the sync
+  // button's tooltip and, for screen readers, its description.
+  it('includes the last synced status in the sync button tooltip and description', async () => {
     const user = userEvent.setup()
     // `lastSyncedAt` lives in the store now; the default
     // reset in `beforeEach` already leaves it as `null`, so no extra
@@ -260,10 +301,8 @@ describe('AppSidebar', () => {
       </SidebarProvider>,
     )
 
-    const syncButton = screen
-      .getByText(t('sidebar.sync'))
-      .closest('[data-sidebar="menu-button"]') as HTMLElement
-    expect(syncButton).not.toBeNull()
+    const syncButton = screen.getByRole('button', { name: t('sidebar.sync') })
+    expect(syncButton).toHaveAccessibleDescription(t('sidebar.lastSyncedNever'))
 
     await user.hover(syncButton)
 
@@ -275,6 +314,22 @@ describe('AppSidebar', () => {
       // solarized-dark and one-dark-pro.
       expect(within(tooltip).getByText(t('sidebar.lastSyncedNever'))).toHaveClass('opacity-90')
     })
+  })
+
+  it('keeps an offline Sync focusable, so its tooltip can say why it does nothing', async () => {
+    const user = userEvent.setup()
+    const { props } = renderSidebar({ isOnline: false })
+
+    const offline = screen.getByRole('button', { name: t('sidebar.offline') })
+    expect(offline).toHaveAttribute('aria-disabled', 'true')
+    act(() => offline.focus())
+
+    expect(offline).toHaveFocus()
+    const tooltip = await screen.findByRole('tooltip')
+    expect(tooltip).toHaveTextContent(t('sidebar.offline'))
+    expect(tooltip).toHaveTextContent(t('sidebar.lastSyncedNever'))
+    await user.click(offline)
+    expect(props.onSyncClick).not.toHaveBeenCalled()
   })
 
   it('has no a11y violations', async () => {
@@ -386,6 +441,18 @@ describe('AppSidebar — mobile Sheet dismissal', () => {
     await user.click(screen.getByRole('button', { name: t('sidebar.newPage') }))
 
     expect(props.onNewPage).toHaveBeenCalled()
+    await waitFor(() => {
+      expect(document.querySelector('[data-mobile="true"]')).toBeNull()
+    })
+  })
+
+  it('closes the Sheet when Settings is chosen from the footer', async () => {
+    mockMobileViewport()
+    const { user, props } = await openMobileSheet()
+
+    await user.click(screen.getByRole('button', { name: t('sidebar.settings') }))
+
+    expect(props.onSelectView).toHaveBeenCalledWith('settings')
     await waitFor(() => {
       expect(document.querySelector('[data-mobile="true"]')).toBeNull()
     })

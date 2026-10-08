@@ -3,7 +3,7 @@
  *
  * #5269 — holds only the daily surfaces: a header (branding + collapse
  * toggle, space switcher, New page), one nav list (`SIDEBAR_NAV_ITEMS`)
- * above Bookmarks, and a footer with the Sync row and Settings. The other
+ * above Bookmarks, and a footer row with the Sync and Settings icons. The other
  * views open from the Pages header or Settings. `CollapseButton` and
  * `syncDotClass` are sidebar-internal helpers and live alongside the JSX
  * they support.
@@ -73,6 +73,8 @@ function syncDotClass(syncState: SyncState, hasPeers: boolean): string {
   }
 }
 
+const LAST_SYNCED_ID = 'sidebar-last-synced'
+
 function CollapseButton() {
   const { t } = useTranslation()
   const { isMobile, state, toggleSidebar } = useSidebar()
@@ -124,6 +126,7 @@ function AppSidebarInner({
   const lastSyncedLabel = lastSyncedAt
     ? t('sidebar.lastSynced', { time: formatRelativeTime(lastSyncedAt, t) })
     : t('sidebar.lastSyncedNever')
+  const syncUnavailable = syncing || !isOnline
 
   /**
    * On mobile the sidebar is a Sheet that overlays the content, so acting on
@@ -239,55 +242,74 @@ function AppSidebarInner({
         </FeatureErrorBoundary>
       </SidebarContent>
       <SidebarFooter>
-        <SidebarMenu>
-          <SidebarMenuItem>
-            <SidebarMenuButton
-              // The visible "last synced" line below is hidden in
-              // icon-collapsed mode, so fold the same text into the tooltip
-              // (which is only rendered when collapsed). Users get the
-              // timestamp in both modes without duplication on screen.
-              tooltip={{
-                children: (
-                  <div className="flex flex-col gap-0.5">
-                    <span>
-                      {!isOnline
-                        ? t('sidebar.offline')
-                        : syncing
-                          ? t('sidebar.syncing')
-                          : t('sidebar.syncTooltip')}
-                    </span>
-                    <span className="opacity-90">{lastSyncedLabel}</span>
-                  </div>
-                ),
-              }}
-              onClick={onSyncClick}
-              disabled={syncing || !isOnline}
-            >
+        {/* One row of icons; it stacks in the 48px rail. The sync state is
+            the icon (spinner, offline) plus the dot, and the "last synced"
+            line lives in the tooltip and the button's description. Hover
+            paints the nav rows' lighter fill, so it never matches the active
+            Settings pill. */}
+        <div className="flex items-center gap-1 group-data-[collapsible=icon]:flex-col">
+          <IconButton
+            variant="ghost"
+            size="icon-sm"
+            className="hover:bg-sidebar-accent/50 aria-disabled:opacity-50"
+            ariaLabel={isOnline ? t('sidebar.sync') : t('sidebar.offline')}
+            aria-describedby={LAST_SYNCED_ID}
+            tooltip={
+              <div className="flex flex-col gap-0.5">
+                <span>
+                  {!isOnline
+                    ? t('sidebar.offline')
+                    : syncing
+                      ? t('sidebar.syncing')
+                      : t('sidebar.syncTooltip')}
+                </span>
+                <span className="opacity-90">{lastSyncedLabel}</span>
+              </div>
+            }
+            // `aria-disabled`, not `disabled`: a disabled button takes no hover
+            // or focus, so the offline / syncing tooltip could never show.
+            aria-disabled={syncUnavailable}
+            onClick={syncUnavailable ? undefined : onSyncClick}
+          >
+            <span className="relative inline-flex">
               {!isOnline ? (
-                <WifiOff className="h-4 w-4 text-muted-foreground" />
+                <WifiOff className="text-muted-foreground" />
               ) : (
                 <RefreshCw className={syncing ? 'animate-spin' : ''} />
               )}
-              <span>{isOnline ? t('sidebar.sync') : t('sidebar.offline')}</span>
               <span
                 className={cn(
-                  'sync-button-status-dot ml-auto h-2.5 w-2.5 rounded-full',
+                  'sync-button-status-dot absolute -top-1 -right-1 h-2 w-2 rounded-full',
                   syncDotClass(syncState, syncPeers.length > 0),
                 )}
                 data-testid="sync-button-status-dot"
                 data-sync-state={syncState}
                 aria-hidden="true"
               />
-            </SidebarMenuButton>
-            <span
-              className="px-2 text-xs text-muted-foreground group-data-[collapsible=icon]:hidden"
-              data-testid="last-synced"
-            >
-              {lastSyncedLabel}
             </span>
-          </SidebarMenuItem>
-          {renderNavItem(SETTINGS_NAV_ITEM)}
-        </SidebarMenu>
+          </IconButton>
+          <span id={LAST_SYNCED_ID} className="sr-only" data-testid="last-synced">
+            {lastSyncedLabel}
+          </span>
+          <IconButton
+            variant="ghost"
+            size="icon-sm"
+            className={cn(
+              'hover:bg-sidebar-accent/50',
+              currentView === SETTINGS_NAV_ITEM.id &&
+                'bg-sidebar-accent text-sidebar-accent-foreground hover:bg-sidebar-accent',
+            )}
+            ariaLabel={t(SETTINGS_NAV_ITEM.labelKey)}
+            tooltip={t(SETTINGS_NAV_ITEM.labelKey)}
+            aria-current={currentView === SETTINGS_NAV_ITEM.id ? 'page' : undefined}
+            onClick={() => {
+              onSelectView(SETTINGS_NAV_ITEM.id)
+              dismissOnMobile()
+            }}
+          >
+            <SETTINGS_NAV_ITEM.icon />
+          </IconButton>
+        </div>
       </SidebarFooter>
       <SidebarRail />
     </Sidebar>

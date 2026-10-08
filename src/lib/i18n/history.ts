@@ -156,8 +156,6 @@ export const history: Record<string, string> = {
   'trash.clearFilter': 'Clear filter',
   'trash.itemsInBatch_one': '+{{count}} block',
   'trash.itemsInBatch_other': '+{{count}} blocks',
-  'undo.tipEditor': 'Inside an editor: undoes the current edit',
-  'undo.tipPage': 'Outside an editor: undoes the last page operation',
   // #2941 — Ctrl+Z/Ctrl+Y in Journal view (the default landing view) used to
   // silently no-op: journal days ARE pages (per-page undo already works via
   // the swipe-to-delete "Undo" toast, which pins to the day's own pageId read

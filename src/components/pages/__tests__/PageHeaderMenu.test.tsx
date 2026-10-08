@@ -30,11 +30,13 @@ vi.mock('lucide-react', () => ({
     <svg data-testid="layout-template-icon" {...props} />
   ),
   Link: (props: React.SVGProps<SVGSVGElement>) => <svg data-testid="link-icon" {...props} />,
+  List: (props: React.SVGProps<SVGSVGElement>) => <svg data-testid="list-icon" {...props} />,
   MoreVertical: () => <svg data-testid="more-vertical-icon" />,
   Redo2: () => <svg data-testid="redo2-icon" />,
   Settings2: (props: React.SVGProps<SVGSVGElement>) => (
     <svg data-testid="settings2-icon" {...props} />
   ),
+  Smile: (props: React.SVGProps<SVGSVGElement>) => <svg data-testid="smile-icon" {...props} />,
   Tag: (props: React.SVGProps<SVGSVGElement>) => <svg data-testid="tag-icon" {...props} />,
   Trash2: (props: React.SVGProps<SVGSVGElement>) => <svg data-testid="trash2-icon" {...props} />,
   Undo2: () => <svg data-testid="undo2-icon" />,
@@ -47,6 +49,8 @@ const defaultProps: PageHeaderMenuProps = {
   isJournalTemplate: false,
   onUndo: vi.fn(),
   onRedo: vi.fn(),
+  onOpenOutline: vi.fn(),
+  onInsertEmoji: vi.fn(),
   onKebabOpenChange: vi.fn(),
   onAddAlias: vi.fn(),
   onAddTag: vi.fn(),
@@ -71,39 +75,47 @@ beforeEach(() => {
 })
 
 describe('PageHeaderMenu rendering', () => {
-  it('renders undo button', () => {
+  it('shows only the page-actions trigger at rest', () => {
     renderMenu()
 
-    expect(screen.getByRole('button', { name: /undo last page action/i })).toBeInTheDocument()
+    expect(screen.getAllByRole('button').map((b) => b.getAttribute('aria-label'))).toEqual([
+      t('pageHeader.pageActions'),
+    ])
   })
 
-  it('renders redo button', () => {
+  it('labels the page-actions trigger with a tooltip', async () => {
+    const user = userEvent.setup()
     renderMenu()
 
-    expect(screen.getByRole('button', { name: /redo last page action/i })).toBeInTheDocument()
+    await user.hover(screen.getByRole('button', { name: /page actions/i }))
+
+    expect(await screen.findByRole('tooltip')).toHaveTextContent(t('pageHeader.pageActions'))
   })
 
-  it('disables redo button when canRedo is false', () => {
-    renderMenu({ canRedo: false })
+  it('offers undo and redo as menu items', () => {
+    renderMenu({ kebabOpen: true })
 
-    expect(screen.getByRole('button', { name: /redo last page action/i })).toBeDisabled()
+    expect(screen.getByRole('menuitem', { name: /undo last page action/i })).toBeInTheDocument()
+    expect(screen.getByRole('menuitem', { name: /redo last page action/i })).toBeInTheDocument()
   })
 
-  it('enables redo button when canRedo is true', () => {
-    renderMenu({ canRedo: true })
+  it('disables the redo item when canRedo is false', () => {
+    renderMenu({ kebabOpen: true, canRedo: false })
 
-    expect(screen.getByRole('button', { name: /redo last page action/i })).not.toBeDisabled()
+    expect(screen.getByRole('menuitem', { name: /redo last page action/i })).toBeDisabled()
   })
 
-  it('renders page actions button', () => {
-    renderMenu()
+  it('enables the redo item when canRedo is true', () => {
+    renderMenu({ kebabOpen: true, canRedo: true })
 
-    expect(screen.getByRole('button', { name: /page actions/i })).toBeInTheDocument()
+    expect(screen.getByRole('menuitem', { name: /redo last page action/i })).not.toBeDisabled()
   })
 
   it('shows menu items when kebabOpen is true', () => {
     renderMenu({ kebabOpen: true })
 
+    expect(screen.getByText(t('pageHeader.openOutline'))).toBeInTheDocument()
+    expect(screen.getByText(t('pageHeader.insertEmoji'))).toBeInTheDocument()
     expect(screen.getByText('Add alias')).toBeInTheDocument()
     expect(screen.getByText('Add tag')).toBeInTheDocument()
     expect(screen.getByText('Add property')).toBeInTheDocument()
@@ -129,24 +141,44 @@ describe('PageHeaderMenu rendering', () => {
 })
 
 describe('PageHeaderMenu interaction', () => {
-  it('calls onUndo when undo button clicked', async () => {
+  it('calls onUndo when the undo item is clicked', async () => {
     const onUndo = vi.fn()
     const user = userEvent.setup()
 
-    renderMenu({ onUndo })
+    renderMenu({ kebabOpen: true, onUndo })
 
-    await user.click(screen.getByRole('button', { name: /undo last page action/i }))
+    await user.click(screen.getByRole('menuitem', { name: /undo last page action/i }))
     expect(onUndo).toHaveBeenCalledOnce()
   })
 
-  it('calls onRedo when redo button clicked', async () => {
+  it('calls onRedo when the redo item is clicked', async () => {
     const onRedo = vi.fn()
     const user = userEvent.setup()
 
-    renderMenu({ canRedo: true, onRedo })
+    renderMenu({ kebabOpen: true, canRedo: true, onRedo })
 
-    await user.click(screen.getByRole('button', { name: /redo last page action/i }))
+    await user.click(screen.getByRole('menuitem', { name: /redo last page action/i }))
     expect(onRedo).toHaveBeenCalledOnce()
+  })
+
+  it('calls onOpenOutline when "Open outline" is clicked', async () => {
+    const onOpenOutline = vi.fn()
+    const user = userEvent.setup()
+
+    renderMenu({ kebabOpen: true, onOpenOutline })
+
+    await user.click(screen.getByRole('menuitem', { name: t('pageHeader.openOutline') }))
+    expect(onOpenOutline).toHaveBeenCalledOnce()
+  })
+
+  it('calls onInsertEmoji when "Insert emoji" is clicked', async () => {
+    const onInsertEmoji = vi.fn()
+    const user = userEvent.setup()
+
+    renderMenu({ kebabOpen: true, onInsertEmoji })
+
+    await user.click(screen.getByRole('menuitem', { name: t('pageHeader.insertEmoji') }))
+    expect(onInsertEmoji).toHaveBeenCalledOnce()
   })
 
   it('calls onAddAlias when "Add alias" clicked', async () => {
@@ -226,7 +258,7 @@ describe('PageHeaderMenu interaction', () => {
     const menu = screen.getByRole('menu', { name: /page actions/i })
     expect(within(menu).queryByRole('menuitem', { name: t('pageSource.edit') })).toBeNull()
     await waitFor(() => {
-      expect(within(menu).getByText('Add alias').closest('button')).toHaveFocus()
+      expect(within(menu).getByRole('menuitem', { name: /undo last page action/i })).toHaveFocus()
     })
     await user.keyboard('{End}')
     await user.keyboard('{ArrowUp}')
@@ -287,90 +319,6 @@ describe('PageHeaderMenu accessibility', () => {
   })
 })
 
-describe('PageHeaderMenu template toggle button', () => {
-  it('renders with correct aria-label', () => {
-    renderMenu()
-
-    const btn = screen.getByRole('button', { name: /toggle template status/i })
-    expect(btn).toBeInTheDocument()
-  })
-
-  it('calls onToggleTemplate when clicked', async () => {
-    const onToggleTemplate = vi.fn()
-    const user = userEvent.setup()
-
-    renderMenu({ onToggleTemplate })
-
-    await user.click(screen.getByRole('button', { name: /toggle template status/i }))
-    expect(onToggleTemplate).toHaveBeenCalledOnce()
-  })
-
-  it('shows text-ring class on icon when isTemplate is true', () => {
-    renderMenu({ isTemplate: true })
-
-    const icon = screen.getByTestId('layout-template-icon')
-    expect(icon.getAttribute('class')).toContain('text-ring')
-  })
-
-  it('does not show text-ring class on icon when isTemplate is false', () => {
-    renderMenu({ isTemplate: false })
-
-    const icon = screen.getByTestId('layout-template-icon')
-    expect(icon.getAttribute('class')).not.toContain('text-ring')
-  })
-
-  it('has aria-pressed matching isTemplate state', () => {
-    const { rerender } = render(
-      <TooltipProvider>
-        <PageHeaderMenu {...defaultProps} isTemplate={false} />
-      </TooltipProvider>,
-    )
-
-    const btn = screen.getByRole('button', { name: /toggle template status/i })
-    expect(btn).toHaveAttribute('aria-pressed', 'false')
-
-    rerender(
-      <TooltipProvider>
-        <PageHeaderMenu {...defaultProps} isTemplate />
-      </TooltipProvider>,
-    )
-    expect(btn).toHaveAttribute('aria-pressed', 'true')
-  })
-
-  it('shows correct tooltip text when isTemplate is false', async () => {
-    const user = userEvent.setup()
-
-    renderMenu({ isTemplate: false })
-
-    await user.hover(screen.getByRole('button', { name: /toggle template status/i }))
-
-    await waitFor(() => {
-      const tooltipElements = screen.getAllByText(/toggle template status/i)
-      expect(tooltipElements.length).toBeGreaterThanOrEqual(1)
-    })
-  })
-
-  it('shows correct tooltip text when isTemplate is true', async () => {
-    const user = userEvent.setup()
-
-    renderMenu({ isTemplate: true })
-
-    await user.hover(screen.getByRole('button', { name: /toggle template status/i }))
-
-    await waitFor(() => {
-      const tooltipElements = screen.getAllByText(/page is a template/i)
-      expect(tooltipElements.length).toBeGreaterThanOrEqual(1)
-    })
-  })
-
-  it('has no a11y violations', async () => {
-    const { container } = renderMenu()
-
-    const results = await axe(container)
-    expect(results).toHaveNoViolations()
-  })
-})
-
 describe('PageHeaderMenu export shortcut hint', () => {
   afterEach(() => resetAllShortcuts())
 
@@ -404,9 +352,10 @@ describe('PageHeaderMenu ARIA menu semantics (CR-A11Y #151)', () => {
 
     const menu = screen.getByRole('menu', { name: /page actions/i })
     const items = within(menu).getAllByRole('menuitem')
-    // addAlias, addTag, addProperty, toggleTemplate, toggleJournalTemplate,
-    // export, editSource, delete = 8 (no openInNewTab / no move entry by default).
-    expect(items).toHaveLength(8)
+    // undo, redo, openOutline, insertEmoji, addAlias, addTag, addProperty,
+    // toggleTemplate, toggleJournalTemplate, export, editSource, delete = 12
+    // (no openInNewTab / no move entry by default).
+    expect(items).toHaveLength(12)
     expect(within(menu).getByText('Add alias').closest('button')).toHaveAttribute(
       'role',
       'menuitem',
@@ -422,7 +371,7 @@ describe('PageHeaderMenu ARIA menu semantics (CR-A11Y #151)', () => {
     renderMenu({ kebabOpen: true })
 
     const menu = screen.getByRole('menu', { name: /page actions/i })
-    const firstItem = within(menu).getByText('Add alias').closest('button')
+    const firstItem = within(menu).getByRole('menuitem', { name: /undo last page action/i })
     await waitFor(() => {
       expect(firstItem).toHaveFocus()
     })
@@ -432,7 +381,7 @@ describe('PageHeaderMenu ARIA menu semantics (CR-A11Y #151)', () => {
     renderMenu({ kebabOpen: true })
 
     const menu = screen.getByRole('menu', { name: /page actions/i })
-    const firstItem = within(menu).getByText('Add alias').closest('button')
+    const firstItem = within(menu).getByRole('menuitem', { name: /undo last page action/i })
     await waitFor(() => {
       expect(firstItem).toHaveFocus()
     })
@@ -442,18 +391,30 @@ describe('PageHeaderMenu ARIA menu semantics (CR-A11Y #151)', () => {
     expect(tag).toHaveAttribute('tabindex', '-1')
   })
 
-  it('ArrowDown moves focus to the next menuitem', async () => {
+  it('ArrowDown moves focus from Undo to Redo when there is something to redo', async () => {
     const user = userEvent.setup()
-    renderMenu({ kebabOpen: true })
+    renderMenu({ kebabOpen: true, canRedo: true })
 
     const menu = screen.getByRole('menu', { name: /page actions/i })
-    const firstItem = within(menu).getByText('Add alias').closest('button')
     await waitFor(() => {
-      expect(firstItem).toHaveFocus()
+      expect(within(menu).getByRole('menuitem', { name: /undo last page action/i })).toHaveFocus()
     })
 
     await user.keyboard('{ArrowDown}')
-    expect(within(menu).getByText('Add tag').closest('button')).toHaveFocus()
+    expect(within(menu).getByRole('menuitem', { name: /redo last page action/i })).toHaveFocus()
+  })
+
+  it('ArrowDown skips a disabled Redo', async () => {
+    const user = userEvent.setup()
+    renderMenu({ kebabOpen: true, canRedo: false })
+
+    const menu = screen.getByRole('menu', { name: /page actions/i })
+    await waitFor(() => {
+      expect(within(menu).getByRole('menuitem', { name: /undo last page action/i })).toHaveFocus()
+    })
+
+    await user.keyboard('{ArrowDown}')
+    expect(within(menu).getByRole('menuitem', { name: t('pageHeader.openOutline') })).toHaveFocus()
   })
 
   it('ArrowUp from the first item wraps to the last (delete)', async () => {
@@ -462,7 +423,7 @@ describe('PageHeaderMenu ARIA menu semantics (CR-A11Y #151)', () => {
 
     const menu = screen.getByRole('menu', { name: /page actions/i })
     await waitFor(() => {
-      expect(within(menu).getByText('Add alias').closest('button')).toHaveFocus()
+      expect(within(menu).getByRole('menuitem', { name: /undo last page action/i })).toHaveFocus()
     })
 
     await user.keyboard('{ArrowUp}')
@@ -479,7 +440,7 @@ describe('PageHeaderMenu ARIA menu semantics (CR-A11Y #151)', () => {
 
     const menu = screen.getByRole('menu', { name: /page actions/i })
     await waitFor(() => {
-      expect(within(menu).getByText('Add alias').closest('button')).toHaveFocus()
+      expect(within(menu).getByRole('menuitem', { name: /undo last page action/i })).toHaveFocus()
     })
 
     await user.keyboard('{End}')
@@ -490,7 +451,7 @@ describe('PageHeaderMenu ARIA menu semantics (CR-A11Y #151)', () => {
     ).toHaveFocus()
 
     await user.keyboard('{Home}')
-    expect(within(menu).getByText('Add alias').closest('button')).toHaveFocus()
+    expect(within(menu).getByRole('menuitem', { name: /undo last page action/i })).toHaveFocus()
   })
 
   it('ArrowUp from delete lands on Edit as Markdown, just after export', async () => {
@@ -499,7 +460,7 @@ describe('PageHeaderMenu ARIA menu semantics (CR-A11Y #151)', () => {
 
     const menu = screen.getByRole('menu', { name: /page actions/i })
     await waitFor(() => {
-      expect(within(menu).getByText('Add alias').closest('button')).toHaveFocus()
+      expect(within(menu).getByRole('menuitem', { name: /undo last page action/i })).toHaveFocus()
     })
 
     await user.keyboard('{End}')
@@ -514,25 +475,25 @@ describe('PageHeaderMenu ARIA menu semantics (CR-A11Y #151)', () => {
   })
 
   it('still fires the click callback after keyboard navigation', async () => {
-    const onAddTag = vi.fn()
+    const onOpenOutline = vi.fn()
     const user = userEvent.setup()
-    renderMenu({ kebabOpen: true, onAddTag })
+    renderMenu({ kebabOpen: true, onOpenOutline })
 
     const menu = screen.getByRole('menu', { name: /page actions/i })
     await waitFor(() => {
-      expect(within(menu).getByText('Add alias').closest('button')).toHaveFocus()
+      expect(within(menu).getByRole('menuitem', { name: /undo last page action/i })).toHaveFocus()
     })
 
     await user.keyboard('{ArrowDown}')
     await user.keyboard('{Enter}')
-    expect(onAddTag).toHaveBeenCalledOnce()
+    expect(onOpenOutline).toHaveBeenCalledOnce()
   })
 
   it('includes the open-in-new-tab menuitem when the callback is provided', () => {
     renderMenu({ kebabOpen: true, onOpenInNewTab: vi.fn() })
 
     const menu = screen.getByRole('menu', { name: /page actions/i })
-    expect(within(menu).getAllByRole('menuitem')).toHaveLength(9)
+    expect(within(menu).getAllByRole('menuitem')).toHaveLength(13)
   })
 
   it('keeps the move-to-space sub-menu working without counting its items in the top-level set', async () => {
@@ -548,8 +509,8 @@ describe('PageHeaderMenu ARIA menu semantics (CR-A11Y #151)', () => {
     })
 
     const topMenu = screen.getByRole('menu', { name: /page actions/i })
-    // 8 default + the move-to entry = 9 top-level menuitems.
-    expect(within(topMenu).getAllByRole('menuitem')).toHaveLength(9)
+    // 12 default + the move-to entry = 13 top-level menuitems.
+    expect(within(topMenu).getAllByRole('menuitem')).toHaveLength(13)
 
     // Expand the sub-menu and pick a target.
     await user.click(within(topMenu).getByText(/move to/i))

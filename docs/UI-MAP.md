@@ -41,7 +41,7 @@ Names below are how we refer to each surface in conversation. They mostly match 
 ```text
 App
 ├── BootGate                     (loading / error gate)
-├── SpaceTopStripe               (3px accent bar)
+├── SpaceTopStripe               (2px accent bar)
 ├── SidebarProvider
 │   ├── AppSidebar               (collapsible left rail)
 │   └── SidebarInset
@@ -111,7 +111,7 @@ Composed from category sub-hooks under `src/components/block-tree/use-block-slas
 
 ## Navigation chrome
 
-- **Sidebar** — header (logo + collapse toggle, SpaceSwitcher, New page), body (Journal / Pages / Search / Tags, then Bookmarks), footer (the Sync row with the status dot and last-synced time, Settings). Open/closed state persists in a cookie; width in localStorage.
+- **Sidebar** — header (logo + collapse toggle, SpaceSwitcher, New page), body (Journal / Pages / Search / Tags, then Bookmarks), footer (one row of icons: Sync, with the status dot and the last-synced time in its tooltip, and Settings). Open/closed state persists in a cookie; width in localStorage.
 - **PageHeader** owns the page title, alias section, tag row, property table, and a kebab menu. See `docs/UX.md` § App-specific features → Kebab menu for the canonical action list.
 - **Keyboard shortcuts** live in `src/lib/keyboard-config/catalog.ts`; rebindable entries are user-customisable in Settings → Keyboard, while structural bindings and picker triggers are not. See [Keyboard](features/keyboard.md) and [Pickers & Slash Menu](features/pickers-and-slash.md#the-pickers) for the current catalogs.
 - **Search surfaces**: three distinct entry points (mirrors README § Search):

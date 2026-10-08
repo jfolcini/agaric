@@ -78,7 +78,7 @@ export function SearchHeader({
         onSubmit={onSubmit}
         // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- role="search" must stay on the <form> that owns onSubmit; the <search> element is not a form-submitting element, so swapping would lose submit handling
         role="search"
-        className="search-panel-header flex flex-col sm:flex-row sm:items-center gap-2"
+        className="search-panel-header flex flex-wrap items-center gap-2"
       >
         <SearchInput
           ref={inputRef}
@@ -95,6 +95,9 @@ export function SearchHeader({
           aria-errormessage={invalid && inlineError ? 'search-inline-error' : undefined}
           aria-describedby={regexMode ? 'search-regex-hint' : undefined}
           className={regexMode ? 'flex-1 font-mono' : 'flex-1'}
+          // On a phone the input takes the first row and the toggles,
+          // submit and help share the second, instead of a row each.
+          wrapperClassName="max-sm:w-full"
           // oxlint-disable-next-line jsx-a11y/no-autofocus -- intentional focus-on-open: search input gets focus when the search panel opens so the user can type the query immediately
           autoFocus
           {...comboboxAttrs}

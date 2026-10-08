@@ -1,6 +1,6 @@
 /**
- * JournalControls — mode switcher + prev/next/today + agenda + calendar
- * rendered in the App header for the journal view.
+ * JournalControls — mode switcher + prev/next/today + calendar rendered in
+ * the App header for the journal view.
  *
  * Extracted from `JournalPage.tsx` under.
  */
@@ -235,11 +235,12 @@ export function JournalControls(): React.ReactElement {
       className="flex min-w-0 flex-1 items-center gap-2 max-sm:gap-0.5"
       data-testid="journal-header"
     >
-      {/* Mode switcher: tabs from lg up; below it one menu button, because
-          the five tabs next to Back / Forward, the date stepper and Today
-          leave the date chip no room on a phone or a touch tablet. */}
+      {/* Mode switcher: a segmented tablist from lg up; below it one menu
+          button, because the five tabs next to Back / Forward, the date
+          stepper and Today leave the date chip no room on a phone or a touch
+          tablet. */}
       <div
-        className="flex shrink-0 items-center gap-0.5 max-lg:hidden"
+        className="flex shrink-0 items-center gap-0.5 rounded-md border border-input bg-background p-0.5 max-lg:hidden"
         role="tablist"
         aria-label={t('journal.viewModeLabel')}
         tabIndex={-1}
@@ -282,8 +283,8 @@ export function JournalControls(): React.ReactElement {
       <div className="hidden sm:block flex-1" />
 
       {/* Date navigation — prev/next/date-display hidden in agenda mode (no
-          date context), but Today + Agenda + calendar stay visible so the
-          user can jump back into dated views.
+          date context), but Today + calendar stay visible so the user can
+          jump back into dated views.
           `relative` anchors the calendar dropdown to the whole cluster: the
           trigger is the date chip in dated modes and the standalone icon in
           agenda/stream, and anchoring the popover to their shared parent lets
@@ -399,19 +400,6 @@ export function JournalControls(): React.ReactElement {
             </Kbd>
           </TooltipContent>
         </Tooltip>
-        {mode !== 'agenda' && (
-          <Button
-            variant="outline"
-            size="xs"
-            className="hidden sm:inline-flex"
-            onClick={() => {
-              navigateToDate(new Date(), 'agenda')
-            }}
-            aria-label={t('journal.goToAgenda')}
-          >
-            {t('journal.agenda')}
-          </Button>
-        )}
         {/* Agenda / stream have no date chip to hang the picker on, so they
             keep the standalone calendar icon. Every other mode reaches the
             same dropdown through the date chip above. */}
