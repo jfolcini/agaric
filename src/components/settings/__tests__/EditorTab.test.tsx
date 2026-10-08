@@ -71,6 +71,9 @@ describe('EditorTab', () => {
       )
       render(<EditorTab />)
 
+      expect(
+        screen.getByRole('heading', { level: 3, name: 'Allowed image domains' }),
+      ).toBeInTheDocument()
       // Sorted, design-system pill (role="group") per host with a lucide-X
       // remove button addressable by its accessible label.
       expect(screen.getByTestId('external-image-host-example.com')).toBeInTheDocument()

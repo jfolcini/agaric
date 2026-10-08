@@ -14,7 +14,6 @@ import { useTranslation } from 'react-i18next'
 import { Card, CardContent } from '@/components/ui/card'
 import { FilterPill } from '@/components/ui/filter-pill'
 import { FormField } from '@/components/ui/form-field'
-import { Label } from '@/components/ui/label'
 import {
   Select,
   SelectContent,
@@ -112,7 +111,9 @@ export function EditorTab(): React.ReactElement {
             default). Removing a host stops its images auto-loading. */}
         {allowedHosts.length > 0 && (
           <div className="space-y-2" data-testid="external-image-allowlist">
-            <Label muted={false}>{t('settings.editor.externalImageAllowedHosts')}</Label>
+            <h3 className="text-sm font-medium">
+              {t('settings.editor.externalImageAllowedHosts')}
+            </h3>
             {/* Removable host chips via the shared FilterPill primitive (#1754) so
                 the remove control matches the design system (lucide X icon, 44px
                 coarse-pointer touch target, focus ring, accessible aria-label)

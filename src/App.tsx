@@ -631,11 +631,14 @@ function App() {
               // `md:pointer-fine:pl-16`, here and on the chrome rows above, is
               // room for the block tree's control lane, which hangs left of
               // the text column on desktop (`BlockListRenderer`).
-              // Where `QuickCaptureFab` shows, it floats 5rem up and is up to
-              // 3.5rem tall; 9rem keeps the last control clear of it.
+              // Where `QuickCaptureFab` shows, it floats 5rem up and is 3.5rem
+              // tall; 9rem keeps the last control clear of it (the `md:` copy
+              // outranks `md:p-6`). Graph's canvas fills the viewport instead
+              // and runs under the button, its zoom controls on the far side.
               viewportClassName={cn(
                 'p-4 md:p-6 md:pointer-fine:pl-16 focus-ring-visible pb-[calc(1rem+var(--safe-area-bottom))] md:pb-[calc(1.5rem+var(--safe-area-bottom))] scroll-pb-[var(--safe-area-bottom)]',
                 shouldShowMobileChrome &&
+                  currentView !== 'graph' &&
                   'pb-[calc(9rem+var(--safe-area-bottom))] md:pb-[calc(9rem+var(--safe-area-bottom))]',
               )}
               data-slot="main-content"

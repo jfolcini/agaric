@@ -4,7 +4,8 @@
  * Below `sm` the tab rail stacked ~500px above the panel, so a tab tap changed
  * a panel the user could not see; phones now pick the tab from a Select. The
  * quick-capture button floats over the bottom of the scroll viewport, so the
- * viewport carries enough bottom padding for the last control to clear it.
+ * viewport carries enough bottom padding for the last control to clear it,
+ * except on Graph, whose canvas fills the viewport.
  */
 
 import { devices } from '@playwright/test'
@@ -36,6 +37,24 @@ test.describe('Settings on a phone', () => {
       ratio: 1,
     })
   })
+
+  test('every tab option is a 44px touch target and the list needs no scrolling', async ({
+    page,
+  }) => {
+    await waitForBoot(page)
+    await navigateMobile(page, 'Settings')
+    await page.getByRole('combobox', { name: 'Settings', exact: true }).click()
+
+    const options = page.getByRole('option')
+    await expect(options).toHaveCount(11)
+    for (const option of await options.all()) {
+      await expect(option).toBeInViewport({ ratio: 1 })
+      // Polled: the list zooms in from 95%, so an early read is a few px short.
+      await expect
+        .poll(async () => (await option.boundingBox())?.height ?? 0)
+        .toBeGreaterThanOrEqual(44)
+    }
+  })
 })
 
 // The device's own 390x664 viewport: at 844px the General tab fits without
@@ -61,6 +80,25 @@ test.describe('Settings on a phone, scrolled to the end', () => {
       control.y + control.height,
       `Show tour ends at ${control.y + control.height}px, the FAB starts at ${fab.y}px`,
     ).toBeLessThanOrEqual(fab.y)
+  })
+})
+
+test.describe('Graph on a phone', () => {
+  test.use({ ...phone, viewport: iPhone13.viewport })
+
+  test('the canvas still runs under the quick-capture button', async ({ page }) => {
+    await waitForBoot(page)
+    await navigateToView(page, 'Graph')
+    const graph = page.getByTestId('graph-view')
+    await expect(graph).toBeVisible()
+
+    const canvas = await graph.boundingBox()
+    const fab = await page.getByTestId('quick-capture-fab').boundingBox()
+    if (canvas === null || fab === null) throw new Error('the graph or the FAB has no box')
+    expect(
+      canvas.y + canvas.height,
+      `the graph ends at ${canvas.y + canvas.height}px, the FAB at ${fab.y + fab.height}px`,
+    ).toBeGreaterThan(fab.y + fab.height)
   })
 })
 

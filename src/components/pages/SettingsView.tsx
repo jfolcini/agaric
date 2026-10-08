@@ -235,7 +235,8 @@ export function SettingsView(): React.ReactElement {
           <SelectTrigger aria-label={t('sidebar.settings')} className="sm:hidden">
             <SelectValue />
           </SelectTrigger>
-          <SelectContent>
+          {/* All eleven tabs fit on a phone; the shared 24rem cap would hide Status and Help. */}
+          <SelectContent className="max-h-(--radix-select-content-available-height)">
             {TAB_GROUPS.map((group) => (
               <SelectGroup key={group.id}>
                 <SelectLabel>{t(group.labelKey)}</SelectLabel>
