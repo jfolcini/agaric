@@ -101,7 +101,7 @@ export const block: Record<string, string> = {
   'status.addressInvalidWithFormat':
     'Invalid address format. Expected host:port (e.g., {{format}}).',
   'status.manualIpHint':
-    "Pairing needs both devices on the same local network; you can't pair by typing an address. If a paired device later stops being found, set its address below.",
+    "Pairing needs both devices on the same local network; you can't pair by typing an address. If a paired device on this network later stops being found, set its address below.",
   'status.importTitle': 'Import',
   'status.importDesc':
     'Import Logseq or Markdown files. Pages are created from filenames, blocks from indented list items.',

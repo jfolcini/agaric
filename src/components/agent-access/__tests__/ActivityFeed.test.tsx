@@ -79,14 +79,13 @@ afterEach(() => {
 })
 
 describe('ActivityFeed', () => {
-  it('titles the feed with an h3 and renders the empty message as a paragraph, not an h2', async () => {
+  it('titles the feed with an h2 and renders the empty message as a paragraph, not a heading', async () => {
     const { container } = render(<ActivityFeed entries={[]} />)
 
-    expect(
-      screen.getByRole('heading', { level: 3, name: t('agentAccess.activityLabel') }),
-    ).toBeInTheDocument()
+    expect(screen.getAllByRole('heading')).toEqual([
+      screen.getByRole('heading', { level: 2, name: t('agentAccess.activityLabel') }),
+    ])
     expect(screen.getByText(t('agentAccess.activityEmpty'))).toBeInTheDocument()
-    expect(screen.queryByRole('heading', { level: 2 })).not.toBeInTheDocument()
     expect(await axe(container)).toHaveNoViolations()
   })
 

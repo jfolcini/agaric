@@ -293,6 +293,19 @@ for (const profile of PROFILES) {
       await expectNoHorizontalOverflow(page, dialog, `Pairing dialog · joiner @ ${profile.name}`)
     })
 
+    // With read-write access on, its one-line warning badge ran past the card.
+    test('Agent access with both channels on has no horizontal overflow', async ({ page }) => {
+      await waitForBoot(page)
+      await navigateMobile(page, 'Settings')
+      await openSettingsTab(page, 'Agent access')
+      const panel = page.getByTestId('settings-panel-agent')
+      await panel.getByRole('switch', { name: 'Read-only access' }).click()
+      await panel.getByRole('switch', { name: 'Read-write access' }).click()
+      await expect(panel.getByTestId('mcp-rw-warning-badge')).toBeVisible()
+      await expect(panel.getByTestId('mcp-rw-socket-path')).toBeVisible()
+      await expectNoHorizontalOverflow(page, panel, `Settings · Agent access @ ${profile.name}`)
+    })
+
     // The only test in this file that materializes a PEER. Every other sync
     // assertion above runs against an empty device list, so `PeerListItem`'s
     // own layout was never measured — which is exactly how it shipped with

@@ -113,10 +113,10 @@ describe('NotificationsTab', () => {
     expect(input).toHaveAccessibleDescription(t('notifications.reminderTimeDescription'))
   })
 
-  it('titles the permission section with an h3, since its label controls nothing', async () => {
+  it('titles the permission section with an h2, since its label controls nothing', async () => {
     await renderLoaded()
     expect(
-      screen.getByRole('heading', { level: 3, name: t('notifications.permissionLabel') }),
+      screen.getByRole('heading', { level: 2, name: t('notifications.permissionLabel') }),
     ).toBeInTheDocument()
   })
 

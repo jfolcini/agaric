@@ -231,7 +231,7 @@ export function ActivityFeed({ entries }: ActivityFeedProps): React.ReactElement
 
   return (
     <div className="space-y-2">
-      <h3 className="text-sm font-medium">{t('agentAccess.activityLabel')}</h3>
+      <h2 className="text-sm font-medium">{t('agentAccess.activityLabel')}</h2>
       {entries.length === 0 ? (
         <EmptyState message={t('agentAccess.activityEmpty')} compact headingLevel="p" />
       ) : (

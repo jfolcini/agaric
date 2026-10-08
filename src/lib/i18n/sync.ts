@@ -158,7 +158,7 @@ export const sync: Record<string, string> = {
   // server" says what it does to someone who has never heard of one.
   'device.internetRelayLabel': 'Local network, with an internet fallback',
   'device.internetRelayDescription':
-    "When your devices can't reach each other directly, such as behind a VPN, sync goes through a connection server on the internet. It can't read your encrypted notes, but it sees which of your devices are talking and how much data moves. Turn this on for both devices; it takes effect the next time Agaric starts.",
+    "When your devices can't reach each other directly, such as behind a VPN, sync goes through a connection server on the internet. Your notes stay encrypted so it can't read them, but it sees which of your devices are talking and how much data moves. Turn this on for both devices; it takes effect the next time Agaric starts.",
   'device.internetRelayLoadFailed': 'Failed to load the internet fallback setting',
   'device.internetRelaySaveFailed': 'Failed to save the internet fallback setting',
   'device.noAddress': 'No address',

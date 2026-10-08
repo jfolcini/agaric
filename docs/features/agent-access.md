@@ -30,7 +30,7 @@ There are **two sockets**: a read-only one and a read-write one, each with its o
 }
 ```
 
-To give an agent the write tools, add a second server entry pointing `AGARIC_MCP_SOCKET` at the read-write socket. Cursor and Continue use the same shape under their respective MCP config keys. The *Agent access* settings tab shows the exact socket paths for the current install and can copy a ready-made read-only snippet.
+To give an agent the write tools, add a second server entry pointing `AGARIC_MCP_SOCKET` at the read-write socket. Cursor and Continue use the same shape under their respective MCP config keys. While a toggle is on, the *Agent access* settings tab shows that socket's exact path for the current install and its connection count, with *Disconnect all* while any agent is connected; the read-only side can also copy a ready-made snippet.
 
 ## What agents can do
 
@@ -67,7 +67,7 @@ This is intentional for reads (agents are treated as whole-vault readers) and is
 
 ## Activity feed
 
-The **ActivityFeed** in the Settings → Agent access tab streams a window of recent tool invocations. Each entry shows:
+The **ActivityFeed** in the Settings → Agent access tab streams a window of recent tool invocations. It has its own card and stays visible with both toggles off, so past agent writes can still be undone. Each entry shows:
 
 - Relative timestamp (*"3s ago"*).
 - Tool name and a short, field-filtered summary using the real output shape (for example,

@@ -113,14 +113,18 @@ export function McpStatusSection({
   return (
     <>
       {/* Toggle row */}
-      <div className="flex items-start justify-between gap-4">
+      <div className="flex items-center justify-between gap-4">
         <div className="flex-1">
           <div className="flex items-center gap-2 flex-wrap">
             <Label htmlFor={toggleId} muted={false}>
               {t(toggleLabelKey)}
             </Label>
             {isRw && effectiveStatus.enabled && (
-              <Badge tone="destructive" data-testid="mcp-rw-warning-badge">
+              <Badge
+                tone="destructive"
+                className="shrink whitespace-normal"
+                data-testid="mcp-rw-warning-badge"
+              >
                 {t('agentAccess.rwEnabledWarning')}
               </Badge>
             )}
@@ -169,7 +173,7 @@ export function McpStatusSection({
 
           {/* Kill switch */}
           <div className="space-y-2">
-            <h3 className="text-sm font-medium">{t(killSwitchLabelKey)}</h3>
+            <h2 className="text-sm font-medium">{t(killSwitchLabelKey)}</h2>
             <p className="text-xs text-muted-foreground">
               {effectiveStatus.active_connections === 0
                 ? t(killSwitchDescriptionNoneKey)

@@ -235,21 +235,20 @@ describe('AgentAccessTab — rendering', () => {
     expect(screen.getByText(/No active read-write connections\./)).toBeInTheDocument()
   })
 
-  it('titles the label-less sections with h3 headings', async () => {
+  // The page h1 is "Settings" and the panel has no title of its own, so these are h2.
+  it('titles the label-less sections with h2 headings and nothing else', async () => {
     setupInvoke(makeStatus({ enabled: true }), makeRwStatus({ enabled: true }))
 
     render(<AgentAccessTab />)
 
-    for (const name of [
-      'Agent configuration',
-      'Recent activity',
-      'Connections',
-      'Read-write connections',
-    ]) {
-      expect(await screen.findByRole('heading', { level: 3, name })).toBeInTheDocument()
-    }
-    // The empty feed's message is a paragraph, not an h2.
-    expect(screen.queryByRole('heading', { level: 2 })).not.toBeInTheDocument()
+    await screen.findByRole('heading', { name: 'Agent configuration' })
+    // The empty feed's message is a paragraph, not a heading.
+    expect(screen.getAllByRole('heading').map((h) => [h.tagName, h.textContent])).toEqual([
+      ['H2', 'Agent configuration'],
+      ['H2', 'Connections'],
+      ['H2', 'Read-write connections'],
+      ['H2', 'Recent activity'],
+    ])
   })
 
   it('renders loading skeleton before status loads', () => {
@@ -292,7 +291,7 @@ describe('AgentAccessTab — content gated on the toggle', () => {
     expect(screen.queryByText('Connections')).not.toBeInTheDocument()
     expect(screen.queryByText('Read-write connections')).not.toBeInTheDocument()
     // Past agent writes stay revertable after access is turned off.
-    expect(screen.getByRole('heading', { level: 3, name: 'Recent activity' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { level: 2, name: 'Recent activity' })).toBeInTheDocument()
   })
 
   it('shows the socket path, config and connections only for a channel that is on', async () => {

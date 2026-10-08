@@ -269,8 +269,9 @@ export function DeviceManagement(): React.ReactElement {
 
           {deviceId && (
             <>
+              {/* The copy icon is small enough to stay beside the ID on phones too. */}
               <SettingRow
-                className="mb-4"
+                className="mb-4 flex-row items-center gap-4"
                 label={
                   <span data-testid="local-device-id-label">{t('device.localDeviceIdLabel')}</span>
                 }
@@ -367,9 +368,9 @@ export function DeviceManagement(): React.ReactElement {
 
               {/* Paired peers list */}
               <div className="device-peers">
-                <h3 className="text-sm font-medium mb-2">
+                <h2 className="text-sm font-medium mb-2">
                   {t('device.pairedDevicesTitle')} ({peers.length})
-                </h3>
+                </h2>
 
                 {peers.length >= 2 && (
                   <Button

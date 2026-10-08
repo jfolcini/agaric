@@ -161,7 +161,7 @@ export function NotificationsTab(): React.ReactElement {
 
           {/* Permission + test affordances */}
           <div className="space-y-2">
-            <h3 className="text-sm font-medium">{t('notifications.permissionLabel')}</h3>
+            <h2 className="text-sm font-medium">{t('notifications.permissionLabel')}</h2>
             <p className="text-xs text-muted-foreground">
               {t('notifications.permissionDescription')}
             </p>

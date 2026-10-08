@@ -297,7 +297,7 @@ export function AgentAccessTab(): React.ReactElement {
           >
             {/* Copy-config buttons */}
             <div className="space-y-2">
-              <h3 className="text-sm font-medium">{t('agentAccess.configLabel')}</h3>
+              <h2 className="text-sm font-medium">{t('agentAccess.configLabel')}</h2>
               <p className="text-xs text-muted-foreground">{t('agentAccess.configDescription')}</p>
               <div className="flex flex-wrap gap-2">
                 <Button

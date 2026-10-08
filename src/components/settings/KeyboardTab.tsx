@@ -138,14 +138,13 @@ export function KeyboardTab(): React.ReactElement {
           <div>
             {[...grouped.entries()].map(([category, items]) => (
               <div key={category} className="mb-6">
-                <h4 className="text-xs font-medium text-muted-foreground mb-2">{t(category)}</h4>
+                <h2 className="text-xs font-medium text-muted-foreground mb-2">{t(category)}</h2>
                 <div className="space-y-1">
                   {items.map((shortcut) => {
                     const isEditing = editingId === shortcut.id
                     const conflictNames = getConflictsForId(shortcut.id)
 
                     return (
-                      // Phones: the name takes the first line, keys and actions share the second.
                       <div
                         key={shortcut.id}
                         className="flex flex-wrap items-center gap-x-2 gap-y-1 py-2 sm:flex-nowrap"

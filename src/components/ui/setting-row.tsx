@@ -42,9 +42,9 @@ export function SettingRow({
         className,
       )}
     >
-      <div className="min-w-0 space-y-1 sm:flex-1">
+      <div className="min-w-0 flex-1 space-y-1">
         {controlId ? (
-          <Label htmlFor={controlId} muted={false}>
+          <Label htmlFor={controlId} muted={false} className="block">
             {label}
           </Label>
         ) : (

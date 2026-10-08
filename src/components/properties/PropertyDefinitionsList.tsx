@@ -236,10 +236,10 @@ export function PropertyDefinitionsList(): React.ReactElement {
             ))}
           </SelectContent>
         </Select>
+        {/* Default size: it shares a row with an h-9 input and select. */}
         <Button
           type="submit"
           variant="outline"
-          size="sm"
           disabled={
             !newKey.trim() || isCreating || definitions.some((d) => d.key === newKey.trim())
           }

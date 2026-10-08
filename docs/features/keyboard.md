@@ -5,7 +5,7 @@ Every action in Agaric is keyboard-reachable. The catalog below lists the shortc
 
 ## Where to customise
 
-Settings → Keyboard. Each entry shows its current binding and a "Record" button. Conflicts surface inline as you record. Resetting an entry restores its default. Customisations persist in local storage and propagate live to other open tabs / windows.
+Settings → Keyboard. Each row shows the action, then its current keys, then an edit button that opens a field for typing the new binding (`Ctrl + Shift + K`). A binding Agaric cannot read is flagged as you type; one that clashes with another shortcut is flagged on its row once saved. A customised row also has *Reset to default*, and *Reset all to defaults* resets every row. Customisations persist in local storage and propagate live to other open tabs / windows.
 
 ## What's not rebindable
 
