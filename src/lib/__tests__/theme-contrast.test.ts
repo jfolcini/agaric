@@ -351,6 +351,9 @@ function resolveToken(theme: Theme, highContrast: boolean, token: string): Oklch
 
 const THEME_PAIRS = [
   { pair: 'focus ring on the page', fg: 'ring', bg: 'background', min: NON_TEXT },
+  // --brand is inherited from :root / .dark by every theme (#5332).
+  { pair: 'brand mark label (today, FAB)', fg: 'brand-foreground', bg: 'brand', min: AA_NORMAL },
+  { pair: 'brand numeral on the page', fg: 'brand', bg: 'background', min: AA_NORMAL },
   { pair: 'P1 chip', fg: 'priority-urgent-foreground', bg: 'priority-urgent', min: AA_NORMAL },
   { pair: 'P2 chip', fg: 'priority-high-foreground', bg: 'priority-high', min: AA_NORMAL },
   { pair: 'P3 chip', fg: 'priority-normal-foreground', bg: 'priority-normal', min: AA_NORMAL },
@@ -417,15 +420,13 @@ describe('focus ring, chips and hover surfaces clear WCAG in every theme (#5332)
 })
 
 // ─────────────────────────────────────────────────────────────────────────
-// Ink, brand red, crimson and muted text in the default themes (#5332).
+// Crimson, link and muted text in the default themes (#5332).
 //
-// Only Light and Dark: the alternate themes keep their own --primary and
-// --destructive, and the brand marks are measured where they ship.
+// Only Light and Dark: the alternate themes keep their own --destructive and
+// --muted-foreground.
 // ─────────────────────────────────────────────────────────────────────────
 
 const DEFAULT_THEME_PAIRS = [
-  { pair: 'brand mark label (today, FAB)', fg: 'brand-foreground', bg: 'brand' },
-  { pair: 'brand numeral on the page', fg: 'brand', bg: 'background' },
   { pair: 'destructive text on the page', fg: 'destructive', bg: 'background' },
   { pair: 'destructive button label', fg: 'destructive-foreground', bg: 'destructive' },
   { pair: 'link text on the page', fg: 'foreground', bg: 'background' },
@@ -447,7 +448,7 @@ const DEFAULT_CASES = [false, true].flatMap((highContrast) =>
   ),
 )
 
-describe('ink, brand and crimson text clears WCAG AA in the default themes (#5332)', () => {
+describe('crimson, link and muted text clears WCAG AA in the default themes (#5332)', () => {
   it.each(DEFAULT_CASES)('$label — $pair', ({ theme, highContrast, fg, bg }) => {
     const ratio = contrastRatio(
       resolveToken(theme, highContrast, fg),

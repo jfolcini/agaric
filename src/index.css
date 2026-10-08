@@ -37,8 +37,6 @@
   --color-chart-5: var(--chart-5);
   --color-sidebar: var(--sidebar);
   --color-sidebar-foreground: var(--sidebar-foreground);
-  --color-sidebar-primary: var(--sidebar-primary);
-  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
   --color-sidebar-accent: var(--sidebar-accent);
   --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
   --color-sidebar-border: var(--sidebar-border);
@@ -199,8 +197,6 @@
   --radius: 0.5rem;
   --sidebar: oklch(0.975 0.005 70);
   --sidebar-foreground: oklch(0.2 0.008 70);
-  --sidebar-primary: oklch(0.22 0.01 70);
-  --sidebar-primary-foreground: oklch(0.985 0.004 70);
   /* Active nav fill; hover uses half of it, so the two stay apart. */
   --sidebar-accent: oklch(0.93 0.008 70);
   --sidebar-accent-foreground: oklch(0.2 0.01 70);
@@ -384,8 +380,6 @@
    * sidebar reads as its own pane rather than a bordered strip of canvas. */
   --sidebar: oklch(0.16 0.005 70);
   --sidebar-foreground: oklch(0.955 0.004 70);
-  --sidebar-primary: oklch(0.93 0.005 70);
-  --sidebar-primary-foreground: oklch(0.2 0.006 70);
   --sidebar-accent: oklch(0.28 0.008 70);
   --sidebar-accent-foreground: oklch(0.955 0.004 70);
   --sidebar-border: oklch(0.28 0.007 70);
@@ -517,8 +511,6 @@
   --chart-5: oklch(0.62 0.1 190); /* cyan */
   --sidebar: oklch(0.93 0.03 85);
   --sidebar-foreground: oklch(0.45 0.02 210);
-  --sidebar-primary: oklch(0.61 0.13 235);
-  --sidebar-primary-foreground: oklch(0.97 0.02 85);
   --sidebar-accent: oklch(0.9 0.04 235);
   --sidebar-accent-foreground: oklch(0.45 0.13 235);
   --sidebar-border: oklch(0.88 0.03 85);
@@ -628,8 +620,6 @@
   --chart-5: oklch(0.62 0.1 190);
   --sidebar: oklch(0.2 0.04 210);
   --sidebar-foreground: oklch(0.68 0.01 195);
-  --sidebar-primary: oklch(0.61 0.13 235);
-  --sidebar-primary-foreground: oklch(0.22 0.04 210);
   --sidebar-accent: oklch(0.3 0.04 210);
   --sidebar-accent-foreground: oklch(0.75 0.12 235);
   --sidebar-border: oklch(0.28 0.04 210);
@@ -750,8 +740,6 @@
   --chart-5: oklch(0.82 0.12 70); /* orange */
   --sidebar: oklch(0.25 0.03 275);
   --sidebar-foreground: oklch(0.96 0.01 90);
-  --sidebar-primary: oklch(0.72 0.18 295);
-  --sidebar-primary-foreground: oklch(0.28 0.03 275);
   --sidebar-accent: oklch(0.37 0.03 275);
   --sidebar-accent-foreground: oklch(0.85 0.18 335);
   --sidebar-border: oklch(0.33 0.03 275);
@@ -860,8 +848,6 @@
   --chart-5: oklch(0.71 0.09 195); /* cyan */
   --sidebar: oklch(0.25 0.02 260);
   --sidebar-foreground: oklch(0.75 0.02 255);
-  --sidebar-primary: oklch(0.73 0.13 235);
-  --sidebar-primary-foreground: oklch(0.29 0.02 260);
   --sidebar-accent: oklch(0.35 0.02 260);
   --sidebar-accent-foreground: oklch(0.78 0.12 235);
   --sidebar-border: oklch(0.32 0.02 260);

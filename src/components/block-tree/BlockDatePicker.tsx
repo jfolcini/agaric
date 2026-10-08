@@ -114,8 +114,7 @@ export function BlockDatePicker({
               onSelect={onSelect}
               className="p-0"
               classNames={{
-                // Calmer "today" marker than the shared accent fill: an inset
-                // ring and a brand-red numeral.
+                // Calmer "today" marker than the shared accent fill.
                 today: 'rounded-md font-semibold text-brand ring-1 ring-inset ring-brand/40',
               }}
             />

@@ -170,7 +170,7 @@ function NegateToggle({
       className={cn(
         'h-7 rounded-md border px-1.5 text-[10px] font-semibold uppercase leading-none focus-ring-visible',
         negated
-          ? 'border-destructive bg-destructive text-white'
+          ? 'border-destructive bg-destructive text-destructive-foreground'
           : 'bg-background text-muted-foreground hover:bg-accent hover:text-accent-foreground',
       )}
     >
