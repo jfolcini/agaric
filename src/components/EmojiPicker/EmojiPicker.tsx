@@ -430,7 +430,7 @@ export function EmojiPicker({ onSelect, className, autoFocusSearch = true }: Emo
           aria-label={t('emojiPicker.search')}
           // oxlint-disable-next-line jsx-a11y/no-autofocus -- intentional focus-on-open: the picker is an explicitly-invoked dialog and search-first is the primary interaction; mirrors SearchHeader. Caller can opt out via autoFocusSearch={false}.
           autoFocus={autoFocusSearch}
-          className="flex-1 focus-ring-soft"
+          className="flex-1"
           onKeyDown={(e) => {
             // ArrowDown from the search box drops into the grid.
             if (e.key === 'ArrowDown' && focusedRowIndex !== undefined) {

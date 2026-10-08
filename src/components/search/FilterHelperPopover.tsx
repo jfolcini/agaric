@@ -319,7 +319,7 @@ export function FilterHelperPopover({
               value={tagQuery}
               onChange={(e) => handleTagQueryChange(e.target.value)}
               onKeyDown={handleTagKeyDown}
-              className="h-8 focus-ring-soft"
+              className="h-8"
               placeholder={t('search.searchTags')}
               aria-label={t('search.searchTags')}
               // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- explicit role="combobox" on the tag-query <input> drives the aria-activedescendant listbox below; the native combobox mapping differs and would drop the aria-expanded/aria-controls wiring this custom popup relies on

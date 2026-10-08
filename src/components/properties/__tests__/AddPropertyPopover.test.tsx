@@ -67,14 +67,13 @@ describe('AddPropertyPopover', () => {
     expect(screen.getByTestId('add-property-sheet')).not.toHaveClass('max-h-[80vh]')
   })
 
-  // An auto-focused picker field in the default 3px red ring reads as an error;
-  // the sheet body must also not add its own top margin on top of the header gap.
-  it.each([false, true])('search field uses the soft focus ring (touch=%s)', (touch) => {
+  // The sheet body must not add its own top margin on top of the header gap.
+  it.each([false, true])('search field sits directly under the header (touch=%s)', (touch) => {
     mockUseIsTouch.mockReturnValue(touch)
     render(<AddPropertyPopover definitions={[]} onAdd={vi.fn()} open onOpenChange={vi.fn()} />)
 
     const search = screen.getByRole('textbox', { name: 'Search definitions' })
-    expect(search).toHaveClass('h-8', 'focus-ring-soft')
+    expect(search).toHaveClass('h-8')
     expect(search.parentElement).not.toHaveClass('mt-4')
   })
 

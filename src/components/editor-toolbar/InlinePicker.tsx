@@ -103,7 +103,7 @@ export function PickerFilterInput({
       value={value}
       onChange={(e) => onChange(e.target.value)}
       aria-label={ariaLabel}
-      className="mb-1 h-8 focus-ring-soft"
+      className="mb-1 h-8"
       onKeyDown={onKeyDown}
     />
   )

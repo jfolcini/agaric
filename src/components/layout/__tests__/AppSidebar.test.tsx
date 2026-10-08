@@ -176,6 +176,10 @@ describe('AppSidebar', () => {
 
     expect(pagesButton).toHaveAttribute('aria-current', 'page')
     expect(journalButton).not.toHaveAttribute('aria-current', 'page')
+    // The active item is a neutral pill only: no brand-red bar beside it (#5332).
+    expect(pagesButton).toHaveAttribute('data-active', 'true')
+    expect(pagesButton).toHaveClass('data-[active=true]:bg-sidebar-accent')
+    expect(pagesButton?.className).not.toContain('before:')
   })
 
   it('calls onNewPage / onSyncClick from the New Page and Sync rows', async () => {

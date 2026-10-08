@@ -146,12 +146,6 @@ describe('<EmojiPicker>', () => {
     expect(viewport).toHaveStyle({ overflowX: 'scroll' })
   })
 
-  // The default 3px red ring on the auto-focused field reads as an error.
-  it('gives the search field the soft focus ring', () => {
-    render(<EmojiPicker onSelect={vi.fn()} />)
-    expect(screen.getByRole('searchbox', { name: /search emoji/i })).toHaveClass('focus-ring-soft')
-  })
-
   it('fires onSelect with the chosen emoji char', async () => {
     const user = userEvent.setup()
     const onSelect = vi.fn()

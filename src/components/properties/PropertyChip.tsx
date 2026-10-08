@@ -142,7 +142,7 @@ export function PropertyChip({
         // these against the recipe's tokens deterministically (last wins).
         'gap-0.5 px-1.5 leading-none select-none touch-target [@media(pointer:coarse)]:px-2 [@media(pointer:coarse)]:py-0.5',
         'bg-muted text-muted-foreground',
-        'focus-within:ring-[3px] focus-within:ring-ring/50',
+        'focus-within:ring-[3px] focus-within:ring-ring',
         onClick && 'hover:bg-accent/50 active:bg-accent/70 transition-colors',
         className,
       )}

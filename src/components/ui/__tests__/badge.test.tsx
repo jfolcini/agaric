@@ -189,7 +189,7 @@ describe('Badge', () => {
       )
       const badge = screen.getByText('P1')
       expect(badge.className).toContain('bg-priority-urgent')
-      expect(badge.className).toContain('text-priority-foreground')
+      expect(badge.className).toContain('text-priority-urgent-foreground')
     })
 
     it('applies high colour for priority "2"', () => {

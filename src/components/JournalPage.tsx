@@ -176,8 +176,8 @@ export function JournalPage({
     // `tabIndex={-1}` makes this a programmatic primary-focus / scroll target
     // (usePrimaryFocus, Ctrl+F host). It is NOT an interactive control, so it
     // must NOT paint a focus ring: `focus-ring-visible` drew a 3px `--ring`
-    // (red, in-theme) outline around the ENTIRE journal whenever primary focus
-    // landed here (#1243). A large panel taking keyboard focus shows no visible
+    // outline around the ENTIRE journal whenever primary focus landed here
+    // (#1243). A large panel taking keyboard focus shows no visible
     // ring — only the block the user actually edits gets a focus treatment.
     // `outline-none` is still needed: at app start no pointer has moved yet, so
     // the programmatic `.focus()` App.tsx fires matches `:focus-visible` and

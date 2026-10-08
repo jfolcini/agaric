@@ -133,7 +133,7 @@ export function SourcePageFilter({
             placeholder={t('sourceFilter.searchPlaceholder')}
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            className="h-8 text-sm focus-ring-soft"
+            className="h-8 text-sm"
             aria-label={t('sourceFilter.searchLabel')}
           />
           <ScrollArea className="max-h-48">

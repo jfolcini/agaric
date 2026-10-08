@@ -424,12 +424,12 @@ describe('dueDateColor', () => {
     expect(dueDateColor('2026-04-10')).toBe('bg-status-pending text-status-pending-foreground')
   })
 
-  it('returns muted classes for the day after today', () => {
-    expect(dueDateColor('2026-04-11')).toBe('bg-muted text-muted-foreground')
+  it('returns neutral classes for the day after today', () => {
+    expect(dueDateColor('2026-04-11')).toBe('bg-secondary text-secondary-foreground')
   })
 
-  it('returns muted classes for far-future dates', () => {
-    expect(dueDateColor('2099-12-31')).toBe('bg-muted text-muted-foreground')
+  it('returns neutral classes for far-future dates', () => {
+    expect(dueDateColor('2099-12-31')).toBe('bg-secondary text-secondary-foreground')
   })
 })
 

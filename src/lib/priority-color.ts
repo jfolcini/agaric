@@ -12,9 +12,9 @@
 import { getPriorityLevels } from '@/lib/priority-levels'
 
 const INDEX_COLORS = [
-  'bg-priority-urgent text-priority-foreground',
+  'bg-priority-urgent text-priority-urgent-foreground',
   'bg-priority-high text-priority-high-foreground',
-  'bg-priority-normal text-priority-foreground',
+  'bg-priority-normal text-priority-normal-foreground',
 ] as const
 
 export function priorityColor(p: string | null): string {

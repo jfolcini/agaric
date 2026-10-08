@@ -35,9 +35,9 @@ const HIGHLIGHT_CURRENT = 'find-match-current'
 
 /**
  * Styles for the two named highlights. Injected once at runtime (see the
- * module docstring for why these don't live in `src/index.css`). Uses the
- * same accent contrast pair as `.search-result-mark` so search-result and
- * in-page-find highlighting share a visual language. The current-match
+ * module docstring for why these don't live in `src/index.css`). Every match
+ * takes the neutral `--accent` pair, so it stays distinct from an amber user
+ * highlight (`--highlight`) in the same text. The current-match
  * pseudo wins on overlap because it's registered after the all-matches
  * highlight and carries the heavier (underlined) style. `::highlight()`
  * paints over text without inserting boxes, so there's no reflow as the

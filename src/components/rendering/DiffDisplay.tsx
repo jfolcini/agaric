@@ -199,7 +199,7 @@ export function DiffDisplay({ spans }: DiffDisplayProps): React.ReactElement {
                       // (via ::before so it stays out of textContent and the a11y
                       // tree — the <del> element already conveys the semantics).
                       "before:content-['−'] before:mr-0.5 before:font-semibold before:no-underline",
-                      isActiveHunk && 'ring-2 ring-inset ring-ring/60 rounded-sm',
+                      isActiveHunk && 'ring-2 ring-inset ring-ring rounded-sm',
                     )}
                   >
                     {content}
@@ -219,7 +219,7 @@ export function DiffDisplay({ spans }: DiffDisplayProps): React.ReactElement {
                       // (via ::before so it stays out of textContent and the a11y
                       // tree — the <ins> element already conveys the semantics).
                       "before:content-['+'] before:mr-0.5 before:font-semibold",
-                      isActiveHunk && 'ring-2 ring-inset ring-ring/60 rounded-sm',
+                      isActiveHunk && 'ring-2 ring-inset ring-ring rounded-sm',
                     )}
                   >
                     {content}

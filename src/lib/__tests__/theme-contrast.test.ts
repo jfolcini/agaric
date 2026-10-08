@@ -62,6 +62,8 @@ function contrastRatio(fg: Oklch, bg: Oklch): number {
 }
 
 const AA_NORMAL = 4.5
+/** WCAG 1.4.11 minimum for a non-text indicator such as the focus ring. */
+const NON_TEXT = 3
 
 // Body-text token pairs mirrored from src/index.css. `min` is the WCAG ratio
 // the pair must clear for the text size it renders at (all normal text → 4.5).
@@ -95,12 +97,6 @@ const PAIRS: ReadonlyArray<{
     name: 'default: --muted-foreground on --background',
     fg: [0.554, 0.046, 257.417],
     bg: [1, 0, 0],
-    min: AA_NORMAL,
-  },
-  {
-    name: 'light: --accent-foreground on --accent',
-    fg: [0.377, 0.136, 28.584],
-    bg: [0.93, 0.02, 28.71],
     min: AA_NORMAL,
   },
   // ── #1097: dark-family card/popover surfaces are tonally lifted above
@@ -172,22 +168,49 @@ function themeBlock(selector: string): string {
   const re = new RegExp(`(^|\\n)\\s*${selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*\\{`)
   const m = re.exec(CSS_SOURCE)
   if (!m) throw new Error(`theme selector not found in index.css: ${selector}`)
-  const start = m.index + m[0].length
-  let depth = 1
-  let i = start
-  for (; i < CSS_SOURCE.length && depth > 0; i++) {
-    if (CSS_SOURCE[i] === '{') depth++
-    else if (CSS_SOURCE[i] === '}') depth--
-  }
-  return CSS_SOURCE.slice(start, i - 1)
+  return blockBody(CSS_SOURCE, m.index + m[0].length)
 }
 
-/** Read the first `--token: oklch(...)` value declared inside a theme block. */
+/** The body of the block whose opening `{` ends just before `start`. */
+function blockBody(css: string, start: number): string {
+  let depth = 1
+  let i = start
+  for (; i < css.length && depth > 0; i++) {
+    if (css[i] === '{') depth++
+    else if (css[i] === '}') depth--
+  }
+  return css.slice(start, i - 1)
+}
+
+/** The last `--token: oklch(...)` declared in `css` (later declarations win). */
+function findOklch(css: string, token: string): Oklch | undefined {
+  const re = new RegExp(`--${token}\\s*:\\s*oklch\\(\\s*([\\d.]+)\\s+([\\d.]+)\\s+([\\d.]+)`, 'g')
+  let last: Oklch | undefined
+  for (const m of css.matchAll(re)) last = [Number(m[1]), Number(m[2]), Number(m[3])]
+  return last
+}
+
 function readOklch(block: string, token: string): Oklch {
-  const re = new RegExp(`--${token}\\s*:\\s*oklch\\(\\s*([\\d.]+)\\s+([\\d.]+)\\s+([\\d.]+)`)
-  const m = re.exec(block)
-  if (!m) throw new Error(`token --${token} (oklch) not found in theme block`)
-  return [Number(m[1]), Number(m[2]), Number(m[3])]
+  const value = findOklch(block, token)
+  if (!value) throw new Error(`token --${token} (oklch) not found in theme block`)
+  return value
+}
+
+/**
+ * Every rule body inside `@media (prefers-contrast: more)` whose selector list
+ * names `selector`, concatenated in source order so `findOklch` sees the
+ * cascade winner last.
+ */
+function highContrastBody(selector: ':root' | '.dark'): string {
+  const css = CSS_SOURCE.replace(/\/\*[\s\S]*?\*\//g, '')
+  let out = ''
+  for (const media of css.matchAll(/@media \(prefers-contrast: more\) \{/g)) {
+    const body = blockBody(css, media.index + media[0].length)
+    for (const rule of body.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
+      if ((rule[1] ?? '').split(',').some((s) => s.trim() === selector)) out += rule[2]
+    }
+  }
+  return out
 }
 
 // Each entry mirrors a contrast guarantee asserted in an index.css comment.
@@ -219,21 +242,22 @@ const DOCUMENTED_GUARANTEES: ReadonlyArray<{
     documented: 5.07,
   },
   {
-    // index.css :root: "White on the yellow P2 chip was 1.9:1; dark brown is ≈7.3:1."
-    name: 'light :root — --priority-high-foreground on --priority-high ≈7.3:1',
+    // index.css :root --ring: "4.3:1 on --background"
+    name: 'light :root — --ring on --background ≈4.33:1',
     selector: ':root',
-    fg: 'priority-high-foreground',
-    bg: 'priority-high',
-    min: AA_NORMAL,
-    documented: 7.33,
+    fg: 'ring',
+    bg: 'background',
+    min: NON_TEXT,
+    documented: 4.33,
   },
   {
-    name: 'dark .dark — --priority-high-foreground on --priority-high ≈7.3:1',
+    // index.css .dark --ring: "8.1:1 on --background"
+    name: 'dark .dark — --ring on --background ≈8.13:1',
     selector: '.dark',
-    fg: 'priority-high-foreground',
-    bg: 'priority-high',
-    min: AA_NORMAL,
-    documented: 7.33,
+    fg: 'ring',
+    bg: 'background',
+    min: NON_TEXT,
+    documented: 8.13,
   },
   {
     // index.css .theme-solarized-dark: "0.66 is ≈4.8:1" on the lifted --popover
@@ -283,4 +307,111 @@ describe('documented CSS contrast guarantees hold in src/index.css (#1684)', () 
       expect(ratio).toBeCloseTo(documented, 1)
     },
   )
+})
+
+// ─────────────────────────────────────────────────────────────────────────
+// Focus ring, chips and hover surfaces in every theme (#5332).
+//
+// Each token resolves through the cascade the page sees: a `prefers-contrast:
+// more` override first (it comes later in index.css than every theme block),
+// then the theme's own block, then `.dark` for the dark themes (`useTheme`
+// sets both classes), then `:root`.
+// ─────────────────────────────────────────────────────────────────────────
+
+const THEMES = [
+  { theme: 'Light', selector: ':root', dark: false },
+  { theme: 'Dark', selector: '.dark', dark: true },
+  { theme: 'Solarized Light', selector: '.theme-solarized-light', dark: false },
+  { theme: 'Solarized Dark', selector: '.theme-solarized-dark', dark: true },
+  { theme: 'Dracula', selector: '.theme-dracula', dark: true },
+  { theme: 'One Dark Pro', selector: '.theme-one-dark-pro', dark: true },
+] as const
+
+type Theme = (typeof THEMES)[number]
+
+const HIGH_CONTRAST_ROOT = highContrastBody(':root')
+const HIGH_CONTRAST_DARK = highContrastBody('.dark')
+
+function resolveToken(theme: Theme, highContrast: boolean, token: string): Oklch {
+  const highContrastLayers = theme.dark
+    ? [HIGH_CONTRAST_DARK, HIGH_CONTRAST_ROOT]
+    : [HIGH_CONTRAST_ROOT]
+  const cascade = [
+    ...(highContrast ? highContrastLayers : []),
+    themeBlock(theme.selector),
+    ...(theme.dark ? [themeBlock('.dark')] : []),
+    themeBlock(':root'),
+  ]
+  for (const css of cascade) {
+    const value = findOklch(css, token)
+    if (value) return value
+  }
+  throw new Error(`--${token} resolves to no oklch() value for ${theme.theme}`)
+}
+
+const THEME_PAIRS = [
+  { pair: 'focus ring on the page', fg: 'ring', bg: 'background', min: NON_TEXT },
+  { pair: 'P1 chip', fg: 'priority-urgent-foreground', bg: 'priority-urgent', min: AA_NORMAL },
+  { pair: 'P2 chip', fg: 'priority-high-foreground', bg: 'priority-high', min: AA_NORMAL },
+  { pair: 'P3 chip', fg: 'priority-normal-foreground', bg: 'priority-normal', min: AA_NORMAL },
+  {
+    pair: 'scheduled / future due chip',
+    fg: 'secondary-foreground',
+    bg: 'secondary',
+    min: AA_NORMAL,
+  },
+  {
+    pair: 'today due chip and search match',
+    fg: 'status-pending-foreground',
+    bg: 'status-pending',
+    min: AA_NORMAL,
+  },
+  { pair: 'overdue due chip', fg: 'alert-error-foreground', bg: 'alert-error', min: AA_NORMAL },
+  { pair: 'hover / selected surface', fg: 'accent-foreground', bg: 'accent', min: AA_NORMAL },
+  {
+    pair: 'sidebar hover / active item',
+    fg: 'sidebar-accent-foreground',
+    bg: 'sidebar-accent',
+    min: AA_NORMAL,
+  },
+] as const
+
+const CASES = [false, true].flatMap((highContrast) =>
+  THEMES.flatMap((theme) =>
+    THEME_PAIRS.map(({ pair, fg, bg, min }) => ({
+      pair,
+      fg,
+      bg,
+      min,
+      theme,
+      label: `${theme.theme}${highContrast ? ' (high contrast)' : ''}`,
+      highContrast,
+    })),
+  ),
+)
+
+describe('focus ring, chips and hover surfaces clear WCAG in every theme (#5332)', () => {
+  it('the high-contrast reader finds the overrides, not the base theme', () => {
+    // Without this, a parser that found nothing would re-measure the base
+    // theme under every "(high contrast)" label and pass.
+    expect(readOklch(HIGH_CONTRAST_ROOT, 'ring')).not.toEqual(
+      readOklch(themeBlock(':root'), 'ring'),
+    )
+    expect(readOklch(HIGH_CONTRAST_DARK, 'ring')).not.toEqual(
+      readOklch(themeBlock('.dark'), 'ring'),
+    )
+  })
+
+  it('index.css paints the ring opaque, which the ring ratios assume', () => {
+    // A `ring-ring/50` composites toward the page: 2.6:1 in light (#5332).
+    expect(CSS_SOURCE).not.toMatch(/ring-ring\/\d/)
+  })
+
+  it.each(CASES)('$label — $pair', ({ theme, highContrast, fg, bg, min }) => {
+    const ratio = contrastRatio(
+      resolveToken(theme, highContrast, fg),
+      resolveToken(theme, highContrast, bg),
+    )
+    expect(ratio).toBeGreaterThanOrEqual(min)
+  })
 })

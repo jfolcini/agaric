@@ -38,7 +38,6 @@
   --color-sidebar-accent: var(--sidebar-accent);
   --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
   --color-sidebar-border: var(--sidebar-border);
-  --color-sidebar-ring: var(--sidebar-ring);
   /* Semantic badge colors (status, conflict, priority) */
   --color-status-done: var(--status-done);
   --color-status-done-foreground: var(--status-done-foreground);
@@ -51,10 +50,11 @@
   --color-conflict-move: var(--conflict-move);
   --color-conflict-move-foreground: var(--conflict-move-foreground);
   --color-priority-urgent: var(--priority-urgent);
+  --color-priority-urgent-foreground: var(--priority-urgent-foreground);
   --color-priority-high: var(--priority-high);
-  --color-priority-normal: var(--priority-normal);
-  --color-priority-foreground: var(--priority-foreground);
   --color-priority-high-foreground: var(--priority-high-foreground);
+  --color-priority-normal: var(--priority-normal);
+  --color-priority-normal-foreground: var(--priority-normal-foreground);
   /* Operation type colors */
   --color-op-create: var(--op-create);
   --color-op-create-foreground: var(--op-create-foreground);
@@ -168,20 +168,17 @@
   --secondary-foreground: oklch(0.208 0.042 265.755);
   --muted: oklch(0.968 0.007 264.542);
   --muted-foreground: oklch(0.554 0.046 257.417);
-  --accent: oklch(0.93 0.02 28.71);
-  --accent-foreground: oklch(0.377 0.136 28.584);
+  /* Hover and active surfaces are neutral slate: a red tint made every hovered
+   * row and selected toggle read as an error (#5332). */
+  --accent: oklch(0.93 0.013 255.508);
+  --accent-foreground: oklch(0.208 0.042 265.755);
   --destructive: oklch(0.577 0.245 27.325);
   --destructive-foreground: oklch(0.984 0.003 247.858);
   --border: oklch(0.929 0.013 255.508);
   --input: oklch(0.929 0.013 255.508);
-  /* Focus ring is consumed at /50 opacity (`focus-visible:ring-ring/50`),
-   * which composites the ring colour against the background. On light mode the L=0.55
-   * red-orange at 50% alpha against L=1.0 white perceives at roughly L≈0.78, well below
-   * the WCAG 2.4.7 3:1 non-text minimum if chroma is also middling. Lift chroma from
-   * 0.188 → 0.25 (matching the `prefers-contrast: more` precedent at lines 1112-1121,
-   * e.g. accent-rose `0.55 0.25 12`) so the saturated red carries the indicator even
-   * after the alpha blend. Lightness stays at 0.55 to keep the brand hue. */
-  --ring: oklch(0.55 0.25 28.71);
+  /* Blue, not the brand red, so focus and selection never read as an error.
+   * Painted opaque: 4.3:1 on --background. */
+  --ring: oklch(0.58 0.17 255);
   --chart-1: oklch(0.646 0.222 41.116);
   --chart-2: oklch(0.6 0.118 184.714);
   --chart-3: oklch(0.398 0.07 227.392);
@@ -192,10 +189,10 @@
   --sidebar-foreground: oklch(0.129 0.042 264.695);
   --sidebar-primary: oklch(0.55 0.188 28.71);
   --sidebar-primary-foreground: oklch(0.911 0.04 84.583);
-  --sidebar-accent: oklch(0.968 0.012 28.71);
-  --sidebar-accent-foreground: oklch(0.377 0.136 28.584);
+  /* Active nav fill; hover uses half of it, so the two stay apart. */
+  --sidebar-accent: oklch(0.93 0.013 255.508);
+  --sidebar-accent-foreground: oklch(0.208 0.042 265.755);
   --sidebar-border: oklch(0.929 0.013 255.508);
-  --sidebar-ring: oklch(0.55 0.188 28.71);
   /* Semantic badge colors */
   --status-done: oklch(0.94 0.06 155);
   --status-done-foreground: oklch(0.33 0.1 155);
@@ -207,15 +204,16 @@
   --conflict-text-foreground: oklch(0.45 0.1 70);
   --conflict-move: oklch(0.93 0.05 310);
   --conflict-move-foreground: oklch(0.35 0.1 310);
-  --priority-urgent: oklch(0.64 0.22 25);
-  --priority-high: oklch(0.8 0.16 90);
-  --priority-normal: oklch(0.62 0.22 265);
-  --priority-foreground: oklch(1 0 0);
-  /* White on the yellow P2 chip was 1.9:1; dark brown is ≈7.3:1. */
-  --priority-high-foreground: oklch(0.3 0.08 75);
-  /* #929 — paired foreground for the DONE checkbox glyph, mirroring
-     --priority-foreground (was a hardcoded text-white). The task-done bg is a
-     saturated green across all themes, so a near-white glyph reads on every one.
+  /* Soft chips with dark text: white on the solid P1 / P3 chips was 3.7:1. */
+  --priority-urgent: oklch(0.94 0.05 25);
+  --priority-urgent-foreground: oklch(0.45 0.18 25);
+  --priority-high: oklch(0.95 0.08 90);
+  --priority-high-foreground: oklch(0.42 0.1 70);
+  --priority-normal: oklch(0.94 0.04 265);
+  --priority-normal-foreground: oklch(0.45 0.18 265);
+  /* #929 — paired foreground for the DONE checkbox glyph (was a hardcoded
+     text-white). The task-done bg is a saturated green across all themes, so a
+     near-white glyph reads on every one.
      Defined once in the base :root; it cascades to every theme (none override it
      today) and a theme can override it if it ever needs a different contrast. */
   --task-done-foreground: oklch(1 0 0);
@@ -345,8 +343,8 @@
   --secondary-foreground: oklch(0.984 0.003 247.858);
   --muted: oklch(0.279 0.041 260.031);
   --muted-foreground: oklch(0.704 0.04 256.788);
-  --accent: oklch(0.3 0.04 28.71);
-  --accent-foreground: oklch(0.911 0.04 84.583);
+  --accent: oklch(0.3 0.041 260.031);
+  --accent-foreground: oklch(0.984 0.003 247.858);
   --destructive: oklch(0.577 0.245 27.325);
   --destructive-foreground: oklch(0.984 0.003 247.858);
   /* Hairlines sit ~0.1 L above --background, the step the other dark themes
@@ -354,14 +352,8 @@
    * --input keeps the stronger value so field outlines stay findable. */
   --border: oklch(0.235 0.041 260.031);
   --input: oklch(0.279 0.041 260.031);
-  /* Dark theme background is `oklch(0.171 0.027 264.71)` (deep navy);
-   * the original L=0.55 ring at /50 alpha composites toward L≈0.36 against it, leaving
-   * the focus indicator visually muddy. Lift lightness to 0.68 (still red-orange, well
-   * clear of the navy bg lightness) and chroma to 0.22 so the ring stays bright and
-   * saturated post-blend. Diverges from `:root --ring` deliberately — the same token
-   * needs different values in each theme to clear the 3:1 non-text contrast threshold
-   * once the /50 alpha is applied. */
-  --ring: oklch(0.68 0.22 28.71);
+  /* 8.1:1 on --background. */
+  --ring: oklch(0.72 0.13 255);
   --chart-1: oklch(0.488 0.243 264.376);
   --chart-2: oklch(0.696 0.17 162.48);
   --chart-3: oklch(0.769 0.188 70.08);
@@ -373,10 +365,9 @@
   --sidebar-foreground: oklch(0.984 0.003 247.858);
   --sidebar-primary: oklch(0.55 0.188 28.71);
   --sidebar-primary-foreground: oklch(0.911 0.04 84.583);
-  --sidebar-accent: oklch(0.25 0.03 28.71);
-  --sidebar-accent-foreground: oklch(0.911 0.04 84.583);
+  --sidebar-accent: oklch(0.25 0.041 260.031);
+  --sidebar-accent-foreground: oklch(0.984 0.003 247.858);
   --sidebar-border: oklch(0.235 0.041 260.031);
-  --sidebar-ring: oklch(0.55 0.188 28.71);
   /* Semantic badge colors */
   --status-done: oklch(0.25 0.05 155);
   --status-done-foreground: oklch(0.8 0.08 160);
@@ -388,12 +379,12 @@
   --conflict-text-foreground: oklch(0.82 0.08 80);
   --conflict-move: oklch(0.25 0.04 310);
   --conflict-move-foreground: oklch(0.8 0.06 310);
-  --priority-urgent: oklch(0.64 0.22 25);
-  --priority-high: oklch(0.8 0.16 90);
-  --priority-normal: oklch(0.62 0.22 265);
-  --priority-foreground: oklch(1 0 0);
-  /* White on the yellow P2 chip was 1.9:1; dark brown is ≈7.3:1. */
-  --priority-high-foreground: oklch(0.3 0.08 75);
+  --priority-urgent: oklch(0.3 0.08 25);
+  --priority-urgent-foreground: oklch(0.85 0.1 25);
+  --priority-high: oklch(0.3 0.06 85);
+  --priority-high-foreground: oklch(0.88 0.12 90);
+  --priority-normal: oklch(0.3 0.07 265);
+  --priority-normal-foreground: oklch(0.85 0.09 265);
   /* Operation type colors */
   --op-create: oklch(0.19 0.02 163);
   --op-create-foreground: oklch(0.77 0.18 163);
@@ -510,7 +501,6 @@
   --sidebar-accent: oklch(0.9 0.04 235);
   --sidebar-accent-foreground: oklch(0.45 0.13 235);
   --sidebar-border: oklch(0.88 0.03 85);
-  --sidebar-ring: oklch(0.61 0.13 235);
   /* Semantic badge colors */
   --status-done: oklch(0.9 0.08 125);
   --status-done-foreground: oklch(0.45 0.16 125);
@@ -522,11 +512,12 @@
   --conflict-text-foreground: oklch(0.5 0.18 40);
   --conflict-move: oklch(0.9 0.06 295);
   --conflict-move-foreground: oklch(0.44 0.14 285);
-  --priority-urgent: oklch(0.59 0.22 30);
-  --priority-high: oklch(0.6 0.14 80);
-  --priority-normal: oklch(0.61 0.13 235);
-  --priority-foreground: oklch(0.97 0.02 85);
-  --priority-high-foreground: oklch(0.22 0.04 210); /* base03 */
+  --priority-urgent: oklch(0.92 0.06 30);
+  --priority-urgent-foreground: oklch(0.48 0.19 30);
+  --priority-high: oklch(0.93 0.08 85);
+  --priority-high-foreground: oklch(0.45 0.11 75);
+  --priority-normal: oklch(0.92 0.05 235);
+  --priority-normal-foreground: oklch(0.45 0.13 235);
   /* Operation type colors */
   --op-create: oklch(0.93 0.05 155);
   --op-create-foreground: oklch(0.45 0.14 135);
@@ -554,7 +545,7 @@
   --alert-tip-foreground: oklch(0.48 0.14 135);
   --alert-tip-border: oklch(0.78 0.12 145);
   --alert-error: oklch(0.93 0.07 30);
-  --alert-error-foreground: oklch(0.55 0.2 30);
+  --alert-error-foreground: oklch(0.5 0.2 30);
   --alert-error-border: oklch(0.78 0.13 30);
   --alert-note: oklch(0.93 0.02 85);
   --alert-note-foreground: oklch(0.51 0.02 210);
@@ -621,7 +612,6 @@
   --sidebar-accent: oklch(0.3 0.04 210);
   --sidebar-accent-foreground: oklch(0.75 0.12 235);
   --sidebar-border: oklch(0.28 0.04 210);
-  --sidebar-ring: oklch(0.61 0.13 235);
   /* Semantic badge colors */
   --status-done: oklch(0.28 0.06 135);
   --status-done-foreground: oklch(0.78 0.14 125);
@@ -633,11 +623,12 @@
   --conflict-text-foreground: oklch(0.78 0.14 55);
   --conflict-move: oklch(0.3 0.06 295);
   --conflict-move-foreground: oklch(0.76 0.14 285);
-  --priority-urgent: oklch(0.6 0.22 30);
-  --priority-high: oklch(0.65 0.14 80);
-  --priority-normal: oklch(0.65 0.13 235);
-  --priority-foreground: oklch(0.97 0.02 85);
-  --priority-high-foreground: oklch(0.22 0.04 210); /* base03 */
+  --priority-urgent: oklch(0.3 0.08 30);
+  --priority-urgent-foreground: oklch(0.82 0.12 30);
+  --priority-high: oklch(0.3 0.06 85);
+  --priority-high-foreground: oklch(0.84 0.13 85);
+  --priority-normal: oklch(0.3 0.06 235);
+  --priority-normal-foreground: oklch(0.8 0.11 235);
   /* Operation type colors */
   --op-create: oklch(0.28 0.05 135);
   --op-create-foreground: oklch(0.78 0.14 135);
@@ -743,7 +734,6 @@
   --sidebar-accent: oklch(0.37 0.03 275);
   --sidebar-accent-foreground: oklch(0.85 0.18 335);
   --sidebar-border: oklch(0.33 0.03 275);
-  --sidebar-ring: oklch(0.72 0.18 295);
   /* Semantic badge colors */
   --status-done: oklch(0.35 0.08 145);
   --status-done-foreground: oklch(0.87 0.23 145);
@@ -755,10 +745,12 @@
   --conflict-text-foreground: oklch(0.82 0.12 70);
   --conflict-move: oklch(0.35 0.08 335);
   --conflict-move-foreground: oklch(0.82 0.18 335);
-  --priority-urgent: oklch(0.68 0.22 25);
-  --priority-high: oklch(0.82 0.12 70);
-  --priority-normal: oklch(0.72 0.18 295);
-  --priority-foreground: oklch(0.28 0.03 275);
+  --priority-urgent: oklch(0.36 0.09 25);
+  --priority-urgent-foreground: oklch(0.86 0.12 25);
+  --priority-high: oklch(0.36 0.07 70);
+  --priority-high-foreground: oklch(0.88 0.11 70);
+  --priority-normal: oklch(0.36 0.08 295);
+  --priority-normal-foreground: oklch(0.85 0.11 295);
   /* Operation type colors */
   --op-create: oklch(0.32 0.08 145);
   --op-create-foreground: oklch(0.87 0.23 145);
@@ -852,7 +844,6 @@
   --sidebar-accent: oklch(0.35 0.02 260);
   --sidebar-accent-foreground: oklch(0.78 0.12 235);
   --sidebar-border: oklch(0.32 0.02 260);
-  --sidebar-ring: oklch(0.73 0.13 235);
   /* Semantic badge colors */
   --status-done: oklch(0.33 0.06 135);
   --status-done-foreground: oklch(0.77 0.13 135);
@@ -864,10 +855,12 @@
   --conflict-text-foreground: oklch(0.72 0.11 60);
   --conflict-move: oklch(0.33 0.07 300);
   --conflict-move-foreground: oklch(0.7 0.17 300);
-  --priority-urgent: oklch(0.7 0.16 25);
-  --priority-high: oklch(0.81 0.12 80);
-  --priority-normal: oklch(0.73 0.13 235);
-  --priority-foreground: oklch(0.29 0.02 260);
+  --priority-urgent: oklch(0.35 0.07 25);
+  --priority-urgent-foreground: oklch(0.82 0.11 25);
+  --priority-high: oklch(0.35 0.06 80);
+  --priority-high-foreground: oklch(0.85 0.11 80);
+  --priority-normal: oklch(0.35 0.06 235);
+  --priority-normal-foreground: oklch(0.82 0.1 235);
   /* Operation type colors */
   --op-create: oklch(0.32 0.05 135);
   --op-create-foreground: oklch(0.77 0.13 135);
@@ -1325,8 +1318,8 @@
    fully-themed `--highlight` amber token (`bg-highlight`) instead of raw
    `bg-yellow-*` literals, so a highlight looks identical editing vs reading
    across every theme + high-contrast. This amber user-highlight is
-   intentionally DISTINCT from the search-match semantic, which uses
-   `--accent` (`.search-result-mark`). */
+   intentionally DISTINCT from the search-match semantic
+   (`.search-result-mark`). */
 .ProseMirror mark {
   @apply bg-highlight rounded px-0.5;
 }
@@ -1539,21 +1532,19 @@
 .block-link-chip:focus-visible,
 .tag-ref-chip:focus-visible,
 .block-ref-chip:focus-visible {
-  @apply outline-hidden ring-[3px] ring-ring/50;
+  @apply outline-hidden ring-[3px] ring-ring;
 }
 /* #5082 — this selector out-specifies the accessibility block's
    `:focus-visible` outline, so without re-stating it here a focused chip
-   showed only a /50 ring while an UNFOCUSED `.ref-chip-anchor` beside it wore
+   showed only its ring while an UNFOCUSED `.ref-chip-anchor` beside it wore
    an opaque 2px outline: focus read weaker than its absence. `outline-solid`
    readmits that outline as a second cue, because the ring is a box-shadow and
-   `forced-colors` — the same users — drops box-shadows entirely. The ring goes
-   opaque so focus stays in `--ring`'s hue, distinct from the anchor
-   outline's `currentColor`. */
+   `forced-colors` — the same users — drops box-shadows entirely. */
 @media (prefers-contrast: more) {
   .block-link-chip:focus-visible,
   .tag-ref-chip:focus-visible,
   .block-ref-chip:focus-visible {
-    @apply outline-solid ring-ring;
+    @apply outline-solid;
     /* The width belongs to this (0,2,0) selector, not to the accessibility
        block's bare `:focus-visible`: that rule is (0,1,0), exactly tying
        `.ref-chip-anchor`'s permanent 2px, so a FOCUSED anchor chip outweighed
@@ -1594,7 +1585,7 @@
   background: var(--embed-surface);
 }
 .embed-container:focus-visible {
-  @apply outline-hidden ring-[3px] ring-ring/50;
+  @apply outline-hidden ring-[3px] ring-ring;
 }
 .embed-header {
   @apply border-b border-border/40;
@@ -1756,6 +1747,13 @@
     --indicator-scheduled-foreground: oklch(0.36 0.24 303);
     --indicator-repeat: oklch(0.88 0.08 272);
     --indicator-repeat-foreground: oklch(0.34 0.3 277);
+
+    --priority-urgent: oklch(0.9 0.08 25);
+    --priority-urgent-foreground: oklch(0.35 0.2 25);
+    --priority-high: oklch(0.92 0.12 90);
+    --priority-high-foreground: oklch(0.33 0.1 70);
+    --priority-normal: oklch(0.9 0.07 265);
+    --priority-normal-foreground: oklch(0.35 0.22 265);
   }
 
   /* Dark theme — push backgrounds slightly brighter (away from the
@@ -1772,19 +1770,13 @@
     --indicator-scheduled-foreground: oklch(0.85 0.24 302);
     --indicator-repeat: oklch(0.3 0.08 279);
     --indicator-repeat-foreground: oklch(0.82 0.26 274);
-  }
 
-  /* Priority palette — the base values are intentionally identical
-   * across light and dark (they're foreground-on-foreground chips with
-   * a shared white `--priority-foreground`), so a single rule covers
-   * both modes, matching the accent block's convention above. */
-  :root,
-  .dark {
-    --priority-urgent: oklch(0.55 0.28 25);
-    --priority-high: oklch(0.7 0.22 90);
-    --priority-normal: oklch(0.5 0.28 265);
-    --priority-foreground: oklch(1 0 0);
-    --priority-high-foreground: oklch(0.25 0.06 75);
+    --priority-urgent: oklch(0.34 0.12 25);
+    --priority-urgent-foreground: oklch(0.94 0.07 25);
+    --priority-high: oklch(0.34 0.1 90);
+    --priority-high-foreground: oklch(0.95 0.1 95);
+    --priority-normal: oklch(0.34 0.12 265);
+    --priority-normal-foreground: oklch(0.93 0.07 265);
   }
 
   /* A11Y-HC1 — second-pass token-coverage gap. The audit flagged that
@@ -1800,9 +1792,7 @@
 
   /* Light theme — darker, more saturated surfaces; deeper foregrounds. */
   :root {
-    /* Focus ring: lift chroma + drop lightness so the /50 alpha blend
-     * over the white page still clears WCAG 2.4.7 3:1. */
-    --ring: oklch(0.5 0.3 28.71);
+    --ring: oklch(0.5 0.2 255);
 
     /* Alerts (callouts): bg slightly darker than page, fg/border deeper. */
     --alert-info: oklch(0.94 0.06 255);
@@ -1869,9 +1859,7 @@
 
   /* Dark theme — brighter, more saturated surfaces; lifted foregrounds. */
   .dark {
-    /* Focus ring: keep red-orange hue, lift L + chroma so the /50 alpha
-     * blend over the navy bg stays clearly above the surface. */
-    --ring: oklch(0.75 0.25 28.71);
+    --ring: oklch(0.8 0.12 255);
 
     /* Alerts (callouts). */
     --alert-info: oklch(0.36 0.14 268);
@@ -1950,15 +1938,11 @@
  * removed — BlockGutterControls was its last consumer and is now migrated to
  * `focus-ring-visible`. */
 
-/* Form-control / interactive-element focus ring. Replaces the
- * verbatim three-class string `focus-visible:outline-hidden
- * focus-visible:ring-[3px] focus-visible:ring-ring/50` that was previously
- * inlined across ~50 files. Consumers add this as a single `focus-ring-visible`
- * class. Folds in L12 (a few `outline-none` callsites that lacked a
- * focus-visible replacement). */
+/* Form-control / interactive-element focus ring. Opaque: at /50 the ring was
+ * 2.6:1 against the page, under the 3:1 non-text minimum (#5332). */
 @utility focus-ring-visible {
   &:focus-visible {
-    @apply outline-hidden ring-[3px] ring-ring/50;
+    @apply outline-hidden ring-[3px] ring-ring;
   }
 }
 
@@ -1968,32 +1952,18 @@
   }
 }
 
-/* #976 f24: soft focus treatment for date pickers. The default `focus-ring-visible`
- * (border-ring + 3px ring-ring/50) reads as an error/"alarm" inside the red theme
- * (ring ≈ destructive). This soft variant — a low-opacity border + a 2px
- * low-opacity ring — keeps a clear focus cue without the alarm. Formalized from
- * the inline `!important` overrides that previously lived on `BlockDatePicker`'s
- * Input. The `!important` is intentional and CENTRALIZED here: it overrides the
- * `focus-ring-visible` that `Input` always applies internally, so consumers add a
- * single class instead of repeating three `!`-prefixed utilities at the call site. */
-@utility focus-ring-soft {
-  &:focus-visible {
-    @apply !border-ring/40 !ring-2 !ring-ring/30;
-  }
-}
-
 /* Explicit block selection (StaticBlock / EditableBlock multi-select). */
 @utility block-selected {
-  @apply ring-2 ring-inset ring-ring/50 bg-accent/30;
+  @apply ring-2 ring-inset ring-ring bg-ring/15;
 }
 
 /* Keyboard cursor of a navigable list row. The cursor rests on row 0 before any
  * key is pressed, so at rest it is only a tint (History's touch ↑/↓ and the
- * document-level Space/Enter shortcuts act on it without focus); the ring (red
- * like `--destructive`) shows while keyboard focus is on this row or a sibling
- * row, or on the composite container (document-level lists move focus there on
- * a navigation key). Not keyed off focus deeper in the container (Pages rows
- * hold their own tabbable buttons) nor off any ancestor: the Journal container
+ * document-level Space/Enter shortcuts act on it without focus); the ring shows
+ * while keyboard focus is on this row or a sibling row, or on the composite
+ * container (document-level lists move focus there on a navigation key). Not
+ * keyed off focus deeper in the container (Pages rows hold their own tabbable
+ * buttons) nor off any ancestor: the Journal container
  * and #main-content take programmatic focus at boot and match :focus-visible
  * then. The tint is an image layer so it sits over a row's own background. */
 @utility list-cursor {
@@ -2003,7 +1973,7 @@
   );
   :where(:has(> :focus-visible)) > &,
   :where([role='grid'], [aria-activedescendant]):focus-visible & {
-    @apply outline-hidden ring-2 ring-inset ring-ring/50;
+    @apply outline-hidden ring-2 ring-inset ring-ring;
   }
 }
 
@@ -2308,26 +2278,14 @@
  * The component never invokes `dangerouslySetInnerHTML`; the highlight is
  * a real `<mark>` React node.
  *
- * Contrast pair (locked in by Open question #1):
- *
- *   - Light: `--accent` (≈ oklch(0.93 0.02 28.71)) background on
- *     `--accent-foreground` (≈ oklch(0.377 0.136 28.584)) text. The
- *     accent-foreground hue is darkened to L≈0.38 against a near-white
- *     ground (L≈0.93), which lands well above the WCAG AA 4.5:1
- *     small-text contrast threshold (estimated contrast ≈ 7.1:1 by
- *     APCA / relative-luminance calculators).
- *   - Dark: same `--accent` / `--accent-foreground` tokens swap via the
- *     `.dark` theme block (`--accent: oklch(0.3 0.04 28.71)`,
- *     `--accent-foreground: oklch(0.911 0.04 84.583)`). The L≈0.91 on
- *     L≈0.30 lands at ≈8.0:1, also clearing AA.
- *
- * The pair is the existing brand accent, no new tokens introduced. Bold
- * weight on top of the accent fill makes the highlight scan-friendly
- * even at the smallest font size used in the result list (text-sm).
+ * Not `--accent`: that is the neutral hover / selected-row fill, so a match
+ * would vanish inside the selected result. `--status-pending` is the soft
+ * yellow chip pair, ≥ 4.5:1 in every theme (`theme-contrast.test.ts`). Bold
+ * weight on top of the fill keeps it scan-friendly at text-sm.
  */
 .search-result-mark {
-  background-color: var(--accent);
-  color: var(--accent-foreground);
+  background-color: var(--status-pending);
+  color: var(--status-pending-foreground);
   font-weight: 600;
   border-radius: 0.125rem;
   padding-inline: 0.125rem;
@@ -2349,7 +2307,5 @@
  * the valid Custom Highlight API `::highlight()` pseudo-element and warned on
  * every build. The styles now live with the feature that owns them and are
  * injected at runtime — see `ensureHighlightStyles` in
- * `src/lib/in-page-find/highlighter.ts`. They use the same accent contrast
- * pair as `.search-result-mark` (above) so the two surfaces share a visual
- * language.
+ * `src/lib/in-page-find/highlighter.ts`.
  */

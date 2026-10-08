@@ -256,8 +256,8 @@ describe('dueDateColor', () => {
     expect(dueDateColor(today)).toContain('text-status-pending-foreground')
   })
 
-  it('returns muted classes for future dates', () => {
-    expect(dueDateColor('2099-12-31')).toContain('bg-muted')
+  it('returns neutral classes for future dates', () => {
+    expect(dueDateColor('2099-12-31')).toContain('bg-secondary')
   })
 })
 
