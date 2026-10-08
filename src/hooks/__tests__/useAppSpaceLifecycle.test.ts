@@ -1,20 +1,25 @@
 /**
  * Unit tests for useAppSpaceLifecycle (stretch).
  *
- * Validates the three space-driven side-effects in isolation:
- * Preload, cross-space link enforcement, and
- * Visual identity. Integration coverage of the App-level
- * wiring stays in `App.test.tsx`.
+ * Validates the four space-driven side-effects in isolation:
+ * Preload, cross-space link enforcement, visual identity and the
+ * one-time deletion of the retired text journal templates. Integration
+ * coverage of the App-level wiring stays in `App.test.tsx`.
  */
 
-import { invoke } from '@tauri-apps/api/core'
-import { renderHook, waitFor } from '@testing-library/react'
+import { invoke, type InvokeArgs } from '@tauri-apps/api/core'
+import { act, renderHook, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { makeBlockRow } from '@/__tests__/fixtures'
 import { mockInvokeCommands } from '@/__tests__/helpers/invoke'
 import { useAppSpaceLifecycle } from '@/hooks/useAppSpaceLifecycle'
+import { unwrap } from '@/lib/app-error'
+import { commands } from '@/lib/bindings'
 import { setWindowTitle } from '@/lib/platform/window'
+import { PREFERENCES, readPreference, writePreference } from '@/lib/preferences'
+import { dispatch } from '@/lib/tauri-mock/handlers'
+import { seedBlocks } from '@/lib/tauri-mock/seed'
 import { useNavigationStore } from '@/stores/navigation'
 import { selectRecentPagesForSpace, useRecentPagesStore } from '@/stores/recent-pages'
 import { useResolveStore } from '@/stores/resolve'
@@ -28,6 +33,9 @@ vi.mock('@/lib/platform/window', () => ({
 beforeEach(() => {
   vi.clearAllMocks()
   document.documentElement.style.removeProperty('--accent-current')
+  localStorage.clear()
+  // Only the #5373 suite below runs the text journal template deletion.
+  writePreference(PREFERENCES.spaceTextJournalTemplatesDeleted, true)
 
   // #3225 — the hook's mount effect runs the resolve store's real
   // `preload(spaceId)`, which pages through `list_blocks` and then fetches
@@ -224,5 +232,58 @@ describe('useAppSpaceLifecycle — visual identity', () => {
         'My Great Page \u00B7 Personal \u00B7 Agaric',
       )
     })
+  })
+})
+
+describe('useAppSpaceLifecycle — retired text journal templates (#5373)', () => {
+  beforeEach(async () => {
+    localStorage.clear()
+    seedBlocks()
+    vi.mocked(invoke).mockImplementation(async (cmd: string, args?: InvokeArgs) =>
+      dispatch(cmd, args),
+    )
+    unwrap(
+      await commands.setProperty('SPACE_PERSONAL', 'journal_template', {
+        value_text: 'Notes',
+        value_num: null,
+        value_date: null,
+        value_ref: null,
+        value_bool: null,
+      }),
+    )
+  })
+
+  it('deletes the spaces\u2019 text journal templates once the spaces load', async () => {
+    useSpaceStore.setState({ availableSpaces: [] })
+    renderHook(() => useAppSpaceLifecycle())
+    act(() => {
+      useSpaceStore.setState({
+        availableSpaces: [
+          { id: 'SPACE_PERSONAL', name: 'Personal', accent_color: 'accent-emerald' },
+        ],
+      })
+    })
+
+    await waitFor(() => {
+      expect(readPreference(PREFERENCES.spaceTextJournalTemplatesDeleted)).toBe(true)
+    })
+    expect(unwrap(await commands.getProperty('SPACE_PERSONAL', 'journal_template'))).toBeNull()
+  })
+
+  it('deletes once when the space list is replaced while the deletion is in flight', async () => {
+    renderHook(() => useAppSpaceLifecycle())
+    act(() => {
+      useSpaceStore.setState({
+        availableSpaces: [
+          { id: 'SPACE_PERSONAL', name: 'Personal', accent_color: 'accent-emerald' },
+        ],
+      })
+    })
+
+    await waitFor(() => {
+      expect(readPreference(PREFERENCES.spaceTextJournalTemplatesDeleted)).toBe(true)
+    })
+    const deletes = vi.mocked(invoke).mock.calls.filter(([cmd]) => cmd === 'delete_property')
+    expect(deletes).toHaveLength(1)
   })
 })

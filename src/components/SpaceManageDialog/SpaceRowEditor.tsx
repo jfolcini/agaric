@@ -1,14 +1,12 @@
 /**
  * SpaceRowEditor — per-row orchestrator. D-2 reduced this from
- * a ~600-line monolith mixing five orthogonal concerns (rename,
- * accent, delete, journal-template, onboarding-hint) to a thin shell
- * composing four focused sub-components. The onboarding hint lifted
- * to a sibling at the dialog level rather than being recomputed per
- * row.
+ * a ~600-line monolith mixing orthogonal concerns (rename, accent,
+ * delete, onboarding-hint) to a thin shell composing focused
+ * sub-components. The onboarding hint lifted to a sibling at the dialog
+ * level rather than being recomputed per row.
  *
- * Emptiness + journal-template state is owned by `SpaceManageDialog`
- * So the IPCs fire once per `space.id`, not once per row
- * mount.
+ * Emptiness state is owned by `SpaceManageDialog` so the IPC fires once
+ * per `space.id`, not once per row mount.
  */
 
 import { SpaceAccentPicker } from '@/components/SpaceManageDialog/SpaceAccentPicker'
@@ -16,7 +14,6 @@ import {
   SpaceDeleteBlockedHint,
   SpaceDeleteButton,
 } from '@/components/SpaceManageDialog/SpaceDeleteButton'
-import { SpaceJournalTemplateEditor } from '@/components/SpaceManageDialog/SpaceJournalTemplateEditor'
 import { SpaceNameEditor } from '@/components/SpaceManageDialog/SpaceNameEditor'
 import type { SpaceRow } from '@/lib/bindings'
 
@@ -32,20 +29,6 @@ export interface SpaceRowEditorProps {
    * no pages, Delete enabled. `false` = ≥1 page, Delete disabled.
    */
   emptiness: boolean | null
-  /**
-   * Initial value of the per-space `journal_template` property,
-   * Fetched once per `space.id` by the parent. `undefined`
-   * = parent has not resolved yet → the journal-template editor is
-   * not mounted (the loading seam is explicit at this gate, replacing
-   * the old `journalTemplateInitializedRef` flag inside the editor).
-   */
-  initialJournalTemplate: string | undefined
-  /**
-   * Notify the parent so its cache reflects the new committed value,
-   * and so a subsequent re-mount (dialog re-open) does not show stale
-   * data from before this edit.
-   */
-  onJournalTemplateCommitted: (spaceId: string, value: string) => void
 }
 
 export function SpaceRowEditor({
@@ -53,8 +36,6 @@ export function SpaceRowEditor({
   isLastSpace,
   onRefresh,
   emptiness,
-  initialJournalTemplate,
-  onJournalTemplateCommitted,
 }: SpaceRowEditorProps): React.JSX.Element {
   return (
     <div data-slot="space-manage-row" className="flex flex-col gap-2 border-b py-3 last:border-b-0">
@@ -70,13 +51,6 @@ export function SpaceRowEditor({
       </div>
       <SpaceDeleteBlockedHint emptiness={emptiness} isLastSpace={isLastSpace} />
       <SpaceAccentPicker spaceId={space.id} initialAccent={space.accent_color} />
-      {initialJournalTemplate !== undefined && (
-        <SpaceJournalTemplateEditor
-          spaceId={space.id}
-          initialValue={initialJournalTemplate}
-          onCommitted={onJournalTemplateCommitted}
-        />
-      )}
     </div>
   )
 }

@@ -2,7 +2,7 @@
  * useAppSpaceLifecycle — space-driven side-effects extracted from
  * App.tsx (stretch).
  *
- * Three effects, each retained as a separate `useEffect` to preserve
+ * Four effects, each retained as a separate `useEffect` to preserve
  * the decoupling that the original App.tsx comments call out:
  *
  * 1. Resolve cache preload — preload pages + tags for the
@@ -21,6 +21,9 @@
  *    `"<Page/View> · <SpaceName> · Agaric"`, reactive to view/page
  *    changes as well as space changes. `setWindowTitle` no-ops
  *    outside Tauri (vitest jsdom).
+ * 4. Once the spaces load, delete their retired text journal
+ *    templates (#5373) — once per session, and done for good once
+ *    the device records it.
  *
  * The hook subscribes internally to `useSpaceStore` for the space
  * inputs (App.tsx already subscribes for AppSidebar; the redundant
@@ -34,6 +37,7 @@ import { useTranslation } from 'react-i18next'
 import { logger } from '@/lib/logger'
 import { NAV_ITEMS } from '@/lib/nav-items'
 import { setWindowTitle } from '@/lib/platform/window'
+import { deleteSpaceTextJournalTemplates } from '@/lib/template-utils'
 import { useNavigationStore } from '@/stores/navigation'
 import { retitleHeldPages } from '@/stores/page-rename'
 import { useResolveStore } from '@/stores/resolve'
@@ -81,6 +85,15 @@ export function useAppSpaceLifecycle(): void {
     }
     prevSpaceIdRef.current = currentSpaceId
   }, [currentSpaceId])
+
+  // The space list is replaced on every refresh; a second run while the first
+  // is in flight would append a duplicate delete op for each space.
+  const textJournalTemplateCleanupStartedRef = useRef(false)
+  useEffect(() => {
+    if (availableSpaces.length === 0 || textJournalTemplateCleanupStartedRef.current) return
+    textJournalTemplateCleanupStartedRef.current = true
+    void deleteSpaceTextJournalTemplates(availableSpaces.map((space) => space.id))
+  }, [availableSpaces])
 
   // Visual identity. Kept in its own effect (not folded
   // into the cache-flush effect above) so the two concerns stay

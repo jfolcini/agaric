@@ -11,7 +11,7 @@ A **space** is a user-defined context that groups pages — typical setups are *
 - **Create a new space** — open *Manage spaces…* (last item in the SpaceSwitcher dropdown) → use the create form. Pick a name and an accent colour.
 - **Rename a space** — inline edit in the *Manage spaces…* dialog.
 - **Change a space's accent colour** — pick a swatch (emerald, blue, violet, amber, rose, slate) in *Manage spaces…*. The colour shows up in the sidebar header, the top stripe, the badge in collapsed mode, and the OS window title.
-- **Set a per-space journal template** — paste markdown into the *Journal template* textarea inside *Manage spaces…*. New daily pages in that space are pre-populated with the template's child blocks.
+- **Set the space's journal template** — the journal's *Configure journal template* button opens the space's journal template page. When the space has none, it lists the space's template pages to pick from, plus *New journal template*. New daily pages in that space get a copy of the template page's blocks, nesting included. The page kebab's *Set as journal template* does the same from the page.
 - **Delete a space** — only available when the space contains no live pages (and never for the last remaining space). Confirmation required. To delete a non-empty space: first use *Move to space* on each page (or batch-move from the Pages view), then return to *Manage spaces…* and delete.
 - **Move a page between spaces** — open the page's **PageHeaderMenu** (kebab) → *Move to space* → pick the destination. The editor navigates back (the moved page is no longer valid in the origin space); the active space does **not** switch to follow the page. Stale references left behind in the origin space — an old tab still holding the page, or its *Recently visited* entry — heal lazily: following one shows a soft *"This page was moved to another space"* notice, drops the stale entry, and lands you back on a valid view instead of raising an error.
 
@@ -62,4 +62,4 @@ If you opened Agaric before spaces existed, your existing pages migrated automat
 - **The active space dictates `Ctrl+1`…`Ctrl+9` mapping.** The first space alphabetically is `Ctrl+1`, etc. Adding or renaming a space can change the hotkey order.
 - **Deletion is guarded.** Even if the UI shows the *Delete* button enabled in a race, the backend rejects deleting a non-empty space. Move the pages out first.
 - **`Move to space` is the only safe cross-space move.** Direct property edits on `space` can leave broken links — use the kebab menu action.
-- **Templates apply at journal-page creation time only.** Editing a space's template later doesn't retroactively fill past daily pages.
+- **Templates apply at journal-page creation time only.** Editing the journal template page later doesn't retroactively fill past daily pages.

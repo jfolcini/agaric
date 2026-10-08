@@ -12,7 +12,6 @@
  * lets the user jump to any date. Days with content are highlighted.
  */
 
-import { Settings2 } from 'lucide-react'
 import type React from 'react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -21,15 +20,13 @@ import { useShallow } from 'zustand/react/shallow'
 import { AgendaView } from '@/components/journal/AgendaView'
 import { DailyView } from '@/components/journal/DailyView'
 import { journalPanelId, journalTabId } from '@/components/journal/JournalControls'
+import { JournalTemplateButton } from '@/components/journal/JournalTemplateButton'
 import { MonthlyView } from '@/components/journal/MonthlyView'
 import { StreamView } from '@/components/journal/StreamView'
 import { WeeklyView } from '@/components/journal/WeeklyView'
 import { LinkPreviewTooltip } from '@/components/LinkPreviewTooltip'
 import { LoadingSkeleton } from '@/components/rendering/LoadingSkeleton'
-import { SpaceManageDialog } from '@/components/SpaceManageDialog'
-import { Button } from '@/components/ui/button'
 import { FeaturePageHeader } from '@/components/ui/feature-page-header'
-import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { useCalendarPageDates } from '@/hooks/useCalendarPageDates'
 import { useJournalAutoCreate } from '@/hooks/useJournalAutoCreate'
 import { useJournalBlockCreation } from '@/hooks/useJournalBlockCreation'
@@ -88,11 +85,6 @@ export function JournalPage({
   // the ISO `dateStr` (see makeDayEntry); only the rendered `displayDate` honors
   // this preference.
   const { journalDateFormat } = useJournalDateFormat()
-  // Surface the per-space journal-template configuration from the
-  // Journal view itself; previously only reachable through Manage Spaces.
-  // SpaceManageDialog has no scroll-to-section prop, so the dialog opens at
-  // the top and the user navigates to the template field from there.
-  const [manageOpen, setManageOpen] = useState(false)
   const { createdPages, handleAddBlock, forgetCreatedPage } = useJournalBlockCreation({
     pageMap,
     onPageCreated: addPage,
@@ -200,24 +192,10 @@ export function JournalPage({
         <FeaturePageHeader
           title={mode === 'daily' ? makeDayEntry(currentDate).displayDate : t('sidebar.journal')}
           className="journal-page-header"
-          {...(!loading && {
-            actions: (
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Button
-                    variant="ghost"
-                    size="icon-xs"
-                    aria-label={t('space.configureJournalTemplate')}
-                    onClick={() => setManageOpen(true)}
-                    data-testid="journal-configure-template-trigger"
-                  >
-                    <Settings2 className="h-4 w-4" />
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent>{t('space.configureJournalTemplate')}</TooltipContent>
-              </Tooltip>
-            ),
-          })}
+          {...(!loading &&
+            onNavigateToPage != null && {
+              actions: <JournalTemplateButton onNavigateToPage={onNavigateToPage} />,
+            })}
         />
       )}
 
@@ -266,10 +244,6 @@ export function JournalPage({
 
       {/* Link preview tooltip — covers all external links in journal */}
       <LinkPreviewTooltip container={journalContainerEl} />
-
-      {/* manage-spaces dialog hosts the per-space `journal_template`
-          textarea (see SpaceManageDialog L425-444). */}
-      <SpaceManageDialog open={manageOpen} onOpenChange={setManageOpen} />
     </div>
   )
 }

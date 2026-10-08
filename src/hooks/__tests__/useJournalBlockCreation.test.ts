@@ -7,8 +7,8 @@
  *    is configured for the active space
  *  - Skips page creation when an entry already exists in pageMap
  *  - Skips page creation when an entry already exists in createdPages (local)
- * Loads per-space template when configured
- *  - Falls back to legacy `journal-template` page when per-space is empty
+ *  - Copies the space's `journal-template` page, nesting included, into a
+ *    new journal page
  *  - Surfaces a toast on errors and bails out gracefully
  *  - Refuses to create a page without an active space
  *
@@ -18,7 +18,7 @@
  * to race that effect and produce two blocks for the same page.
  */
 
-import { invoke } from '@tauri-apps/api/core'
+import { invoke, type InvokeArgs } from '@tauri-apps/api/core'
 import { act, renderHook, waitFor } from '@testing-library/react'
 import { toast } from 'sonner'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
@@ -26,26 +26,24 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { makeBlockRow, withOps } from '@/__tests__/fixtures'
 import { mockInvokeCommands, type TypedInvokeHandlers } from '@/__tests__/helpers/invoke'
 import { useJournalBlockCreation } from '@/hooks/useJournalBlockCreation'
+import { unwrap } from '@/lib/app-error'
 import type { WithOps } from '@/lib/bindings'
 import type { BlockRow } from '@/lib/bindings'
+import { commands } from '@/lib/bindings'
+import { createBlock } from '@/lib/ipc-helpers'
 import type { NameChange } from '@/lib/name-change-bus'
 import { subscribeToNameChanges } from '@/lib/name-change-bus'
+import { dispatch } from '@/lib/tauri-mock/handlers'
+import { seedBlocks } from '@/lib/tauri-mock/seed'
 import { useBlockStore } from '@/stores/blocks'
 import { useSpaceStore } from '@/stores/space'
 
 vi.mock('@/lib/template-utils', () => ({
   loadJournalTemplate: vi.fn(async () => ({ template: null, duplicateWarning: null })),
-  loadJournalTemplateForSpace: vi.fn(async () => null),
   insertTemplateBlocks: vi.fn(async () => []),
-  insertTemplateBlocksFromString: vi.fn(async () => []),
 }))
 
-import {
-  insertTemplateBlocks,
-  insertTemplateBlocksFromString,
-  loadJournalTemplate,
-  loadJournalTemplateForSpace,
-} from '@/lib/template-utils'
+import { insertTemplateBlocks, loadJournalTemplate } from '@/lib/template-utils'
 
 const mockedInvoke = vi.mocked(invoke)
 
@@ -59,9 +57,13 @@ function createdBlock(parentId: string, position: number): WithOps<BlockRow> {
 }
 
 const mockedLoadJournalTemplate = vi.mocked(loadJournalTemplate)
-const mockedLoadJournalTemplateForSpace = vi.mocked(loadJournalTemplateForSpace)
 const mockedInsertTemplateBlocks = vi.mocked(insertTemplateBlocks)
-const mockedInsertTemplateBlocksFromString = vi.mocked(insertTemplateBlocksFromString)
+
+const journalTemplatePage: BlockRow = makeBlockRow({
+  id: 'TMPL',
+  block_type: 'page',
+  content: 'Tmpl',
+})
 
 beforeEach(() => {
   vi.clearAllMocks()
@@ -71,9 +73,7 @@ beforeEach(() => {
     isReady: true,
   })
   mockedLoadJournalTemplate.mockResolvedValue({ template: null, duplicateWarning: null })
-  mockedLoadJournalTemplateForSpace.mockResolvedValue(null)
   mockedInsertTemplateBlocks.mockResolvedValue([])
-  mockedInsertTemplateBlocksFromString.mockResolvedValue([])
   useBlockStore.setState({
     focusedBlockId: null,
     selectedBlockIds: [],
@@ -220,74 +220,11 @@ describe('useJournalBlockCreation', () => {
     expect(pageCreatedCalls).toHaveLength(0)
   })
 
-  it('uses the per-space journal template when configured', async () => {
-    mockedLoadJournalTemplateForSpace.mockResolvedValue('# Daily plan\n- ')
-    mockedInsertTemplateBlocksFromString.mockResolvedValue(['ID1', 'ID2'])
-
-    stubInvoke({ create_page_in_space: () => 'PNEW' })
-
-    const { result } = setup()
-
-    await act(async () => {
-      await result.current.handleAddBlock('2025-06-15')
-    })
-
-    expect(mockedLoadJournalTemplateForSpace).toHaveBeenCalledWith('SPACE_TEST')
-    expect(mockedInsertTemplateBlocksFromString).toHaveBeenCalledWith('# Daily plan\n- ', 'PNEW', {
-      pageTitle: '2025-06-15',
-    })
-    // Did NOT fall through to the legacy template path
-    expect(mockedLoadJournalTemplate).not.toHaveBeenCalled()
-    // Did NOT create a blank content block (template inserts its own blocks)
-    const createBlockCalls = mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'create_block')
-    expect(createBlockCalls).toHaveLength(0)
-  })
-
-  it('falls back to the legacy journal template when per-space is empty', async () => {
-    mockedLoadJournalTemplateForSpace.mockResolvedValue(null)
-    mockedLoadJournalTemplate.mockResolvedValue({
-      template: {
-        id: 'TMPL',
-        block_type: 'page',
-        content: 'Tmpl',
-        parent_id: null,
-        position: 0,
-        deleted_at: null,
-        todo_state: null,
-        priority: null,
-        due_date: null,
-        scheduled_date: null,
-        page_id: null,
-      },
-      duplicateWarning: null,
-    })
-    mockedInsertTemplateBlocks.mockResolvedValue(['T1'])
-
-    stubInvoke({ create_page_in_space: () => 'PNEW' })
-
-    const { result } = setup()
-
-    await act(async () => {
-      await result.current.handleAddBlock('2025-06-15')
-    })
-
-    expect(mockedLoadJournalTemplateForSpace).toHaveBeenCalled()
-    expect(mockedLoadJournalTemplate).toHaveBeenCalled()
-    // Phase 4 — `insertTemplateBlocks` now accepts `spaceId` as
-    // its third positional arg (the active space scopes the recursive
-    // copy walk).
-    expect(mockedInsertTemplateBlocks).toHaveBeenCalledWith('TMPL', 'PNEW', 'SPACE_TEST', {
-      pageTitle: '2025-06-15',
-    })
-  })
-
   it('does not call createBlock when no template is configured', async () => {
-    // Explicit regression: when both per-space and legacy
-    // template loaders return empty, the hook must not call
-    // `create_block`. Seed-block creation is delegated to
+    // Explicit regression: when the space has no journal template, the
+    // hook must not call `create_block`. Seed-block creation is delegated to
     // `BlockTree.autoCreateFirstBlock`, which observes the empty page
     // when DaySection mounts BlockTree after `setCreatedPages` fires.
-    mockedLoadJournalTemplateForSpace.mockResolvedValue(null)
     mockedLoadJournalTemplate.mockResolvedValue({ template: null, duplicateWarning: null })
 
     stubInvoke({ create_page_in_space: () => 'PNEW' })
@@ -476,7 +413,7 @@ describe('useJournalBlockCreation', () => {
     expect(state.selectionFocusId).toBeNull()
   })
 
-  it('routes template-seeded focus through setFocused too (per-space template branch)', async () => {
+  it('routes template-seeded focus through setFocused too', async () => {
     useBlockStore.setState({
       focusedBlockId: null,
       selectedBlockIds: ['OTHER_A'],
@@ -484,8 +421,11 @@ describe('useJournalBlockCreation', () => {
       selectionFocusId: 'OTHER_A',
     })
 
-    mockedLoadJournalTemplateForSpace.mockResolvedValue('# Daily plan\n- ')
-    mockedInsertTemplateBlocksFromString.mockResolvedValue(['ID1', 'ID2'])
+    mockedLoadJournalTemplate.mockResolvedValue({
+      template: journalTemplatePage,
+      duplicateWarning: null,
+    })
+    mockedInsertTemplateBlocks.mockResolvedValue(['ID1', 'ID2'])
 
     stubInvoke({ create_page_in_space: () => 'PNEW' })
 
@@ -500,5 +440,60 @@ describe('useJournalBlockCreation', () => {
     expect(state.selectedBlockIds).toEqual([])
     expect(state.selectionAnchorId).toBeNull()
     expect(state.selectionFocusId).toBeNull()
+  })
+})
+
+describe('useJournalBlockCreation — journal template page', () => {
+  const SPACE = 'SPACE_PERSONAL'
+  const DATE = '2031-01-02'
+
+  beforeEach(async () => {
+    seedBlocks()
+    useSpaceStore.setState({
+      currentSpaceId: SPACE,
+      availableSpaces: [{ id: SPACE, name: 'Personal', accent_color: null }],
+      isReady: true,
+    })
+    mockedInvoke.mockImplementation(async (cmd: string, args?: InvokeArgs) => dispatch(cmd, args))
+    const actual =
+      await vi.importActual<typeof import('@/lib/template-utils')>('@/lib/template-utils')
+    mockedLoadJournalTemplate.mockImplementation(actual.loadJournalTemplate)
+    mockedInsertTemplateBlocks.mockImplementation(actual.insertTemplateBlocks)
+  })
+
+  // #5373 — the text template this replaced flattened every line to the top
+  // level; the page template must keep its nesting.
+  it("copies the template page's nested blocks into a new journal page", async () => {
+    const templateId = unwrap(await commands.createPageInSpace(null, 'Daily template', SPACE))
+    unwrap(
+      await commands.setProperty(templateId, 'journal-template', {
+        value_text: 'true',
+        value_num: null,
+        value_date: null,
+        value_ref: null,
+        value_bool: null,
+      }),
+    )
+    const notes = await createBlock({
+      blockType: 'content',
+      content: 'Notes',
+      parentId: templateId,
+    })
+    await createBlock({ blockType: 'content', content: 'nested idea', parentId: notes.id })
+
+    const { result } = setup()
+    await act(async () => {
+      await result.current.handleAddBlock(DATE)
+    })
+
+    const journalPageId = result.current.createdPages.get(DATE)
+    if (journalPageId == null) throw new Error('no journal page was created')
+    const { blocks } = unwrap(
+      await commands.loadPageSubtree(journalPageId, { kind: 'active', space_id: SPACE }),
+    )
+    const copiedNotes = blocks.find((b) => b.content === 'Notes')
+    const copiedNested = blocks.find((b) => b.content === 'nested idea')
+    expect(copiedNotes?.parent_id).toBe(journalPageId)
+    expect(copiedNested?.parent_id).toBe(copiedNotes?.id)
   })
 })

@@ -1,8 +1,11 @@
+import type { Page } from '@playwright/test'
+
 import {
   activePopover,
   activeRoleDialog,
   expect,
   focusBlock,
+  navigateToView,
   openPage,
   test,
   typeSlashCommand,
@@ -24,6 +27,7 @@ test.describe.configure({ mode: 'serial' })
  *  4. Apply template to a page (inserts template children)
  *  5. Template variable expansion (<% today %> becomes current date)
  *  6. Set/remove journal template via kebab menu
+ *  7. Pick the journal template from the journal; a new day copies it, nesting included
  *
  * Seed data (tauri-mock.ts):
  *   PAGE_TMPL_MEETING ("Meeting Notes Template") — 3 child blocks:
@@ -38,6 +42,21 @@ test.describe.configure({ mode: 'serial' })
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+/** Call the mock backend directly, to seed state and read it back. */
+function ipc<T>(page: Page, cmd: string, args: Record<string, unknown>): Promise<T> {
+  return page.evaluate(
+    ({ c, a }) => {
+      const invoke = (
+        window as unknown as {
+          __TAURI_INTERNALS__: { invoke: (c: string, a?: unknown) => Promise<unknown> }
+        }
+      ).__TAURI_INTERNALS__.invoke
+      return invoke(c, a)
+    },
+    { c: cmd, a: args },
+  ) as Promise<T>
+}
 
 /** Open the kebab (page actions) menu on the current page. */
 async function openKebabMenu(page: import('@playwright/test').Page) {
@@ -322,5 +341,69 @@ test.describe('Journal template toggle', () => {
     // Re-open kebab
     await openKebabMenu(page)
     await expect(activePopover(page).getByText('Remove journal template')).toBeVisible()
+  })
+})
+
+// ===========================================================================
+// 7. Journal template from the journal (#5373)
+// ===========================================================================
+
+test.describe('Journal template button', () => {
+  const SPACE_SCOPE = { kind: 'active', space_id: 'SPACE_PERSONAL' }
+  const BLOCK_TMPL_ATTENDEES = '0000000000000000000BLOCK20'
+  const NESTED = 'Nested under attendees'
+
+  interface Row {
+    id: string
+    parent_id: string | null
+    content: string | null
+  }
+
+  test.beforeEach(async ({ page }) => {
+    await waitForBoot(page)
+  })
+
+  test('a template page picked from the journal seeds a new day with its nested blocks', async ({
+    page,
+  }) => {
+    await ipc(page, 'create_block', {
+      blockType: 'content',
+      content: NESTED,
+      parentId: BLOCK_TMPL_ATTENDEES,
+      index: null,
+      scope: { kind: 'global' },
+      blockId: null,
+    })
+
+    await navigateToView(page, 'Journal')
+    await page.getByRole('button', { name: 'Configure journal template' }).click()
+    await activePopover(page).getByRole('button', { name: 'Meeting Notes Template' }).click()
+    await expect(page.locator('[aria-label="Page title"]')).toHaveText('Meeting Notes Template')
+
+    await navigateToView(page, 'Journal')
+    await page.getByRole('button', { name: 'Next day' }).click()
+    await page.getByRole('button', { name: 'Add your first block' }).click()
+    await expect(page.locator('[data-testid="sortable-block"]', { hasText: NESTED })).toBeVisible()
+
+    const tomorrow = await page.evaluate(() => {
+      const d = new Date()
+      d.setDate(d.getDate() + 1)
+      const mm = String(d.getMonth() + 1).padStart(2, '0')
+      const dd = String(d.getDate()).padStart(2, '0')
+      return `${d.getFullYear()}-${mm}-${dd}`
+    })
+    const dayPage = await ipc<Row | null>(page, 'get_journal_page_by_date', {
+      date: tomorrow,
+      scope: SPACE_SCOPE,
+    })
+    expect(dayPage).not.toBeNull()
+    const { blocks } = await ipc<{ blocks: Row[] }>(page, 'load_page_subtree', {
+      rootBlockId: dayPage?.id,
+      scope: SPACE_SCOPE,
+    })
+    const attendees = blocks.find((b) => b.content === '## Attendees')
+    const nested = blocks.find((b) => b.content === NESTED)
+    expect(attendees?.parent_id).toBe(dayPage?.id)
+    expect(nested?.parent_id).toBe(attendees?.id)
   })
 })

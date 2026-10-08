@@ -85,7 +85,7 @@ Pages tagged as templates.
 - **Browse**: each template is a page; the row shows a preview of its first child block.
 - **Insert a template**: in any block, type `/template` → **TemplatePicker** → pick. The template's children land under the current block.
 - **Toggle template status**: open the page → **PageHeaderMenu** kebab → *Toggle template*.
-- **Per-space journal template**: separate from the templates view — set in [spaces.md](spaces.md) → *Manage spaces…*.
+- **Journal template**: the template page new daily pages in the space copy, nesting included; it carries a *Journal template* badge. Set it from the page kebab (*Set as journal template*) or the journal's *Configure journal template* button — see [spaces.md](spaces.md).
 
 ## Graph
 

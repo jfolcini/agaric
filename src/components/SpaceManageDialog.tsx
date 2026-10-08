@@ -29,14 +29,13 @@
  * the hint never reappears. Owned by `SpaceOnboardingHint` — hoisted
  * out of the per-row editor since it is dialog-wide.
  *
- * **Per-row editor decomposition** — the per-row editor used to mix five
- * orthogonal concerns (rename / accent / journal-template / delete /
- * onboarding-hint) in a 600-line `SpaceRowEditor`. Each concern now
- * lives in its own file under `./SpaceManageDialog/`. The dialog
- * shell (this file) is responsible for shared state ownership: the
- * emptiness probe + journal-template fetch caches keyed by
- * `space.id`. See `./SpaceManageDialog/SpaceRowEditor.tsx` for the
- * thin orchestrator that composes the four extracted parts.
+ * **Per-row editor decomposition** — the per-row editor used to mix
+ * orthogonal concerns (rename / accent / delete / onboarding-hint) in a
+ * 600-line `SpaceRowEditor`. Each concern now lives in its own file under
+ * `./SpaceManageDialog/`. The dialog shell (this file) owns the emptiness
+ * probe cache keyed by `space.id`. See
+ * `./SpaceManageDialog/SpaceRowEditor.tsx` for the thin orchestrator that
+ * composes the extracted parts.
  *
  * Reuses existing primitives — no new dialog primitive, no new store.
  * `useSpaceStore.refreshAvailableSpaces()` is the single refresh seam
@@ -252,9 +251,9 @@ export function SpaceManageDialog({
 
 /**
  * The rows and the per-space state they read. `Content` mounts this only while the
- * dialog is open, so each open probes emptiness and the journal template afresh. Both
- * callers keep the dialog mounted all session, and a cache that outlived a close
- * showed what was true at app start (#5284).
+ * dialog is open, so each open probes emptiness afresh. Both callers keep the dialog
+ * mounted all session, and a cache that outlived a close showed what was true at app
+ * start (#5284).
  */
 function SpaceManageDialogBody({ open }: { open: boolean }): React.JSX.Element {
   const availableSpaces = useSpaceStore((s) => s.availableSpaces)
@@ -264,9 +263,8 @@ function SpaceManageDialogBody({ open }: { open: boolean }): React.JSX.Element {
     await refreshAvailableSpaces()
   }, [refreshAvailableSpaces])
 
-  // Both the per-space emptiness probe and the
-  // journal-template fetch are owned here so each IPC fires once per
-  // unique `space.id` per open, not once per row mount.
+  // The per-space emptiness probe is owned here so each IPC fires once
+  // per unique `space.id` per open, not once per row mount.
   //
   // Cache contract:
   //  - missing key   = not yet fetched (or last fetch errored)
@@ -276,22 +274,14 @@ function SpaceManageDialogBody({ open }: { open: boolean }): React.JSX.Element {
   // from the in-flight set so the next `availableSpaces` change retries
   // it. A reopen is a fresh mount and probes every space anyway.
   const [emptinessBySpace, setEmptinessBySpace] = useState<Record<string, boolean>>({})
-  const [journalTemplateBySpace, setJournalTemplateBySpace] = useState<Record<string, string>>({})
   const emptinessFetchedRef = useRef<Set<string>>(new Set())
-  const journalTemplateFetchedRef = useRef<Set<string>>(new Set())
 
-  // B-7: `mountedRef` prevents post-unmount setState on both async
-  // chains. Closing the dialog unmounts this body (Radix portal, no
+  // B-7: `mountedRef` prevents post-unmount setState on the async
+  // probes. Closing the dialog unmounts this body (Radix portal, no
   // `forceMount`). A result is dropped only on unmount: a space list
   // change mid-flight must not drop it, or the id stays marked fetched
-  // and its row never gets a value (#5284).
-  //
-  // The per-space `getProperties(id)` loop was
-  // collapsed into a single `getBatchProperties(ids)` call covering
-  // every un-fetched space id at once. Each row only reads one key
-  // (`journal_template`); fanning out N IPCs to surface N single-key
-  // values is wasteful. The `listBlocks` emptiness probe stays
-  // per-space because no batched `list_blocks` shape exists yet.
+  // and its row never gets a value (#5284). The `listBlocks` emptiness
+  // probe is per-space because no batched `list_blocks` shape exists yet.
   const mountedRef = useRef(true)
   useEffect(() => {
     mountedRef.current = true
@@ -341,45 +331,7 @@ function SpaceManageDialogBody({ open }: { open: boolean }): React.JSX.Element {
         })()
       }
     }
-    // Single-IPC batched journal-template fetch — covers every
-    // un-fetched space id in one `getBatchProperties` call.
-    const journalIdsToFetch = availableSpaces
-      .map((s) => s.id)
-      .filter((id) => !journalTemplateFetchedRef.current.has(id))
-    if (journalIdsToFetch.length > 0) {
-      // Reserve all ids up-front so a concurrent re-render doesn't
-      // re-issue the batch. On error, release them again so the next
-      // `availableSpaces` change can retry.
-      for (const id of journalIdsToFetch) journalTemplateFetchedRef.current.add(id)
-      void (async () => {
-        try {
-          const result = unwrap(await commands.getBatchProperties(journalIdsToFetch))
-          if (!mountedRef.current) return
-          setJournalTemplateBySpace((prev) => {
-            const next = { ...prev }
-            for (const id of journalIdsToFetch) {
-              const props = result[id] ?? []
-              const row = props.find((p) => p.key === 'journal_template')
-              next[id] = row?.value_text ?? ''
-            }
-            return next
-          })
-        } catch (err) {
-          for (const id of journalIdsToFetch) journalTemplateFetchedRef.current.delete(id)
-          logger.warn(
-            LOG_MODULE,
-            'failed to load journal template properties',
-            { spaceIds: journalIdsToFetch },
-            err,
-          )
-        }
-      })()
-    }
   }, [availableSpaces])
-
-  const handleJournalTemplateCommitted = useCallback((spaceId: string, value: string) => {
-    setJournalTemplateBySpace((prev) => ({ ...prev, [spaceId]: value }))
-  }, [])
 
   const rows = useMemo(
     () =>
@@ -390,17 +342,9 @@ function SpaceManageDialogBody({ open }: { open: boolean }): React.JSX.Element {
           isLastSpace={availableSpaces.length === 1}
           onRefresh={handleRefresh}
           emptiness={emptinessBySpace[space.id] ?? null}
-          initialJournalTemplate={journalTemplateBySpace[space.id]}
-          onJournalTemplateCommitted={handleJournalTemplateCommitted}
         />
       )),
-    [
-      availableSpaces,
-      handleRefresh,
-      emptinessBySpace,
-      journalTemplateBySpace,
-      handleJournalTemplateCommitted,
-    ],
+    [availableSpaces, handleRefresh, emptinessBySpace],
   )
 
   return (
