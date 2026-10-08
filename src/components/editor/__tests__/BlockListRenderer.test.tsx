@@ -302,7 +302,7 @@ describe('BlockListRenderer', () => {
     const target = screen.getByTestId('drag-indent-guide-1')
     expect(target).toHaveAttribute('data-target', 'true')
     expect(target.className).toContain('w-0.5')
-    expect(target.className).toContain('bg-primary/70')
+    expect(target.className).toContain('bg-ring/70')
 
     // Non-target guides stay faint and thin.
     for (const level of [2, 3]) {
@@ -362,7 +362,7 @@ describe('BlockListRenderer', () => {
     )
 
     const sentinelLi = container.querySelector('li[aria-hidden]')
-    expect(sentinelLi?.className).toContain('bg-primary/8')
+    expect(sentinelLi?.className).toContain('bg-ring/8')
   })
 
   it('does not tint the sentinel drop zone when it is not the over-target (#991)', () => {
@@ -374,7 +374,7 @@ describe('BlockListRenderer', () => {
     )
 
     const sentinelLi = container.querySelector('li[aria-hidden]')
-    expect(sentinelLi?.className).not.toContain('bg-primary/8')
+    expect(sentinelLi?.className).not.toContain('bg-ring/8')
   })
 
   it('does not render empty state when blocks exist', () => {

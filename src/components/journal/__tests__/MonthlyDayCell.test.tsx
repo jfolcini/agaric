@@ -3,7 +3,7 @@
  *
  * Validates:
  *  1. Renders date number
- *  2. Shows today highlight (bg-primary class)
+ *  2. Shows today highlight (bg-brand class)
  *  3. Adjacent month cell dims its content (not the cell) and has pointer-events-none
  *  4. Calls onNavigateToDate on click for current month
  *  5. Does NOT call onNavigateToDate for adjacent month
@@ -76,10 +76,10 @@ describe('MonthlyDayCell', () => {
     expect(screen.getByText('15')).toBeInTheDocument()
   })
 
-  it('shows today highlight with bg-primary class', () => {
+  it('shows today highlight with bg-brand class', () => {
     const { container } = render(<MonthlyDayCell {...defaultProps} isToday />)
-    // The date number span should have bg-primary when isToday
-    const dateSpan = container.querySelector('.bg-primary')
+    // Today is one of the two brand-red marks (#5332), not an ink fill.
+    const dateSpan = container.querySelector('.bg-brand')
     expect(dateSpan).toBeInTheDocument()
     expect(dateSpan).toHaveTextContent('15')
   })

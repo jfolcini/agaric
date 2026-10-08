@@ -128,7 +128,7 @@ describe('RescheduleDropZone', () => {
     fireEvent.dragOver(zone, { dataTransfer: makeDataTransfer('block-1') })
 
     expect(zone.className).toContain('ring-2')
-    expect(zone.className).toContain('ring-primary')
+    expect(zone.className).toContain('ring-ring')
   })
 
   it('clears visual feedback on dragLeave', () => {

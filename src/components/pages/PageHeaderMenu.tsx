@@ -246,7 +246,8 @@ export function PageHeaderMenu({
             aria-label={t('pageHeader.toggleTemplate')}
             aria-pressed={isTemplate}
           >
-            <LayoutTemplate className={cn('h-4 w-4', isTemplate && 'text-primary')} />
+            {/* `--ring`, not ink: ink is the icon's resting colour (#5332). */}
+            <LayoutTemplate className={cn('h-4 w-4', isTemplate && 'text-ring')} />
           </Button>
         </TooltipTrigger>
         <TooltipContent>

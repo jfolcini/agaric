@@ -122,7 +122,7 @@ export function TablePicker({ editor, onClose }: TablePickerProps): React.ReactE
                     data-testid={`table-cell-${r}-${c}`}
                     className={
                       active
-                        ? 'h-5 w-5 rounded-sm border border-primary bg-primary/30'
+                        ? 'h-5 w-5 rounded-sm border border-ring bg-ring/30'
                         : 'h-5 w-5 rounded-sm border border-border bg-muted/30'
                     }
                     onPointerEnter={() => {

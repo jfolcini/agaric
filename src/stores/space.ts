@@ -30,8 +30,7 @@ const LOG_MODULE = 'stores/space'
  * Fallback accent token used when no space is active yet
  * (boot pre-bootstrap edge case) or when the active space carries no
  * `accent_color` property. `accent-blue` matches the Work seed default
- * and lines up with the brand `--primary` so the UI feels coherent
- * when nothing has been picked.
+ * so the UI feels coherent when nothing has been picked.
  */
 export const DEFAULT_ACCENT_TOKEN = 'accent-blue'
 

@@ -393,7 +393,7 @@ export function BlockListRenderer({
  *
  * #993 — resting guides stay faint (`w-px bg-primary/15`); the single line at
  * the level the projection will land on (`activeDepth`) is drawn bold
- * (`w-0.5 bg-primary/70`) so the snap target is legible during rapid moves
+ * (`w-0.5 bg-ring/70`) so the snap target is legible during rapid moves
  * without darkening every line into clutter. No animation. `activeDepth` is
  * the in-scope `projected.depth` (0-based) or null when there's no projection.
  */
@@ -420,7 +420,7 @@ function DragIndentGuides({
             data-target={isTarget ? 'true' : undefined}
             className={cn(
               'absolute inset-y-0',
-              isTarget ? 'w-0.5 bg-primary/70' : 'w-px bg-primary/15',
+              isTarget ? 'w-0.5 bg-ring/70' : 'w-px bg-primary/15',
             )}
             style={{ left: `calc(var(--indent-width) * ${level})` }}
           />
@@ -480,13 +480,13 @@ function SentinelDropZone({
   return (
     <li
       ref={setNodeRef}
-      className={cn('list-none m-0 p-0', showDropIndicator && 'bg-primary/8')}
+      className={cn('list-none m-0 p-0', showDropIndicator && 'bg-ring/8')}
       aria-hidden
     >
       {/* Drop indicator when hovering over sentinel */}
       {showDropIndicator && (
         <div
-          className="drop-indicator h-[5px] bg-primary rounded-full ring-2 ring-primary/20"
+          className="drop-indicator h-[5px] bg-ring rounded-full ring-2 ring-ring/20"
           style={{ marginLeft: 0 }}
         />
       )}

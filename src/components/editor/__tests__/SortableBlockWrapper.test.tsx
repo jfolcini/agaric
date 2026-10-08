@@ -375,7 +375,7 @@ describe('SortableBlockWrapper', () => {
 
   // ── #991 — committed row-level drop-over tint ──────────────────────
 
-  it('tints the over-row with bg-primary/8 when showDropIndicator is true (#991)', () => {
+  it('tints the over-row with bg-ring/8 when showDropIndicator is true (#991)', () => {
     const { container } = renderInList(
       makeProps({
         activeId: 'BLK999',
@@ -385,7 +385,7 @@ describe('SortableBlockWrapper', () => {
     )
 
     const li = container.querySelector('li[data-block-id="BLK001"]')
-    expect(li?.className).toContain('bg-primary/8')
+    expect(li?.className).toContain('bg-ring/8')
     // Must NOT add a left border that would collide with the focused block's
     // inset-shadow accent.
     expect(li?.className).not.toContain('border-l')
@@ -402,7 +402,7 @@ describe('SortableBlockWrapper', () => {
     )
 
     const li = container.querySelector('li[data-block-id="BLK001"]')
-    expect(li?.className).toContain('bg-primary/8')
+    expect(li?.className).toContain('bg-ring/8')
   })
 
   it('does not tint the row when it is the active drag target (#991)', () => {
@@ -415,7 +415,7 @@ describe('SortableBlockWrapper', () => {
     )
 
     const li = container.querySelector('li[data-block-id="BLK001"]')
-    expect(li?.className).not.toContain('bg-primary/8')
+    expect(li?.className).not.toContain('bg-ring/8')
   })
 
   it('does not tint the row when it is not the over-target (#991)', () => {
@@ -428,7 +428,7 @@ describe('SortableBlockWrapper', () => {
     )
 
     const li = container.querySelector('li[data-block-id="BLK001"]')
-    expect(li?.className).not.toContain('bg-primary/8')
+    expect(li?.className).not.toContain('bg-ring/8')
   })
 
   it('uses projected depth for the active drag target', () => {
