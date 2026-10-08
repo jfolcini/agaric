@@ -1,6 +1,6 @@
 # Playwright e2e patterns
 
-> E2E against a browser-served build with the JS tauri mock — not the Tauri runtime. Cross-cutting test conventions: [`src/__tests__/AGENTS.md`](../src/__tests__/AGENTS.md). Specs that need the real Rust backend live in `e2e-tauri/` (WebdriverIO + tauri-driver, [`wdio.conf.ts`](../wdio.conf.ts)).
+> E2E against a browser-served build with the JS tauri mock — not the Tauri runtime. Cross-cutting test conventions: [`src/__tests__/AGENTS.md`](../src/__tests__/AGENTS.md). Specs that need the real Rust backend: [`e2e-tauri/AGENTS.md`](../e2e-tauri/AGENTS.md).
 
 ## Configuration
 
@@ -17,34 +17,31 @@ npm run test:e2e:ui                           # Playwright UI mode
 npm run typecheck:e2e                         # tsc for this directory only
 ```
 
-### Type-checking
+`e2e/**/*.ts` belongs to [`tsconfig.e2e.json`](../tsconfig.e2e.json), so `tsc -b` covers it at `src/` strictness. A new sibling TypeScript directory must be claimed by a tsconfig project (check with `npx tsc -p <cfg> --listFiles | grep -c "/<dir>/"`); the editor type-checks files no gate does.
 
-`e2e/**/*.ts` belongs to [`tsconfig.e2e.json`](../tsconfig.e2e.json), referenced from `tsconfig.json`, so `tsc -b` (prek hook, CI typecheck, `npm run build`) covers it at `src/` strictness. `tsconfig.wdio.json` covers `e2e-tauri/`, not this directory. A new sibling TypeScript directory must be claimed by a project — verify with `npx tsc -p <cfg> --listFiles | grep -c "/<dir>/"`, since the editor type-checks files that no gate does.
+### One run at a time on :5173
 
-### Kill any stale server on :5173 first
-
-`reuseExistingServer` is on locally, so Playwright attaches to whatever already listens on :5173 — a leftover `npm run dev` or an older `vite preview` means the run tests the wrong bundle.
+`reuseExistingServer` is on locally, so Playwright attaches to whatever already listens on :5173: a leftover `npm run dev` or older `vite preview` means testing the wrong bundle, and a concurrent run shares or kills the first one's server. Before a run, kill the PID from `lsof -ti :5173`, never `pkill -f`, which also matches unrelated shells.
 
 ## Mock backend
 
-`src/lib/tauri-mock/` is an in-memory backend that activates when `window.__TAURI_INTERNALS__` is absent (`src/lib/tauri-mock.ts` is a re-export shim). It seeds fixed pages and blocks, exports `SEED_IDS` and `resetMock()`, and resets on page reload — `page.reload()` is how specs verify persistence.
+`src/lib/tauri-mock/` is an in-memory backend that activates when `window.__TAURI_INTERNALS__` is absent. It seeds fixed pages and blocks and exports `SEED_IDS` and `resetMock()`. `page.reload()` re-seeds it, so a spec verifies persistence by navigating away and back (`reopenPage`), never by reloading.
 
 ## The mock is a contract, not a convenience
 
-`src/lib/tauri-mock/` is a hand-maintained second implementation of the Rust backend and drifts silently, so a Playwright green proves nothing about backend parity. The conformance harness does:
+Root rule: [AGENTS.md § Testing invariants](../AGENTS.md#testing-invariants-anti-drift). A Playwright green proves nothing about backend parity; the conformance harness does.
 
-- **Every state-mutating handler must be pinned by a fixture** in `conformance/fixtures/`: ops replayed against a backend-authored `expected`, asserted by both `src-tauri/tests/command_integration/conformance.rs` and `src/lib/tauri-mock/__tests__/conformance.test.ts`.
-- [`conformance-coverage.test.ts`](../src/lib/tauri-mock/__tests__/conformance-coverage.test.ts) is the ratchet: a new mutating command fails the suite unless it gains a fixture or a `NO_FIXTURE_ALLOWLIST` waiver with a written reason (stale or read-only waivers also fail).
-- Workflow: write the fixture (seed + ops + optional `scenarios` tags) without `expected`, then:
+- [`conformance-coverage.test.ts`](../src/lib/tauri-mock/__tests__/conformance-coverage.test.ts) fails a new mutating command unless it gains a fixture in `conformance/fixtures/` or a `NO_FIXTURE_ALLOWLIST` waiver with a written reason (stale or read-only waivers also fail).
+- Write the fixture (seed + ops + optional `scenarios` tags) without `expected`, then:
 
   ```sh
   cd src-tauri && CONFORMANCE_UPDATE=1 cargo nextest run -E 'test(conformance_fixtures_match_backend)'
-  npx vitest run src/lib/tauri-mock
+  npx vitest run src/lib/tauri-mock src/lib/__tests__/tauri-mock.test.ts
   ```
 
-  Red `conformance.test.ts` means the mock diverges: fix `src/lib/tauri-mock/handlers.ts`, never the backend. A divergence unsafe to mirror becomes a `.skip` with a `// DRIFT(#763)` comment plus an issue.
-- Real IPC round-trips: `e2e-tauri/` (`.github/workflows/e2e-tauri-weekly.yml`) and `src-tauri/tests/commands/`.
-- Assert on re-queried settled state, not on which mock call fired — a `setProperty`-was-called assertion once passed while the tag vanished in the real backend.
+  Red `conformance.test.ts` means the mock diverges: fix the handler under `src/lib/tauri-mock/handlers/`, never the backend. A divergence unsafe to mirror becomes a `.skip` with a `// DRIFT(#763)` comment plus an issue.
+- Author handler behaviour from the Rust command, not from the issue or the existing mock, and reject what the backend rejects (out-of-range `limit`, unknown ids, refusals); a clamp turns a backend error the user hits into a green test. Then grep for tests that encode the old behaviour and run all of `src/lib`.
+- Order and fold like SQLite: `BINARY` is UTF-8 byte order and `NOCASE` folds ASCII only, so mock sorts use `compareUtf8Bytes` / `compareNocase` (`src/lib/sqlite-collation.ts`), never `localeCompare`, `toLowerCase` or `<` on user text.
 
 ## Patterns
 
@@ -66,8 +63,21 @@ test('edits a block', async ({ page }) => {
 - Select with `data-testid` / `data-slot`, not CSS classes.
 - `installIpcRecorder` / `getInvokeCalls` / `clearInvokeCalls` assert on IPC traffic.
 - `fullyParallel` is on; a spec whose tests share global state sets `test.describe.configure({ mode: 'serial' })`.
+- Changing a shared control's visibility, a label, a selector or seed data, or removing a behaviour: grep `e2e/` (including `helpers.ts`), `e2e-tauri/` and `scripts/` (`android-e2e-safe-area.mjs`) in the same PR, and run the specs it hits. A spec may assert the bug itself; re-premise it rather than keep the bug.
+- Mobile behaviour keys on the user agent (`src/lib/platform/index.ts`), not the viewport. A mobile spec sets the whole device (`viewport`, `userAgent`, `isMobile`, `hasTouch` from `devices['iPhone 13']`, as `mobile-editor.spec.ts` does).
+- Focus on a hidden element, Escape-listener order, CSS specificity and forced-colors are invisible to the vitest DOM; reproduce them here, and assert focus with `toBeFocused()`.
 
-## Portal-scoped helpers — critical for stable e2e
+## Flakes
+
+- Reproduce before fixing ([standard 6](../src/__tests__/AGENTS.md#quality-standards)): `npx playwright test e2e/<file>.spec.ts --repeat-each=30 --workers=8 --retries=0` (local `retries: 2` hides it), under CPU load or CDP `Emulation.setCPUThrottlingRate`. The same assertion failing every time points at ordering, not a race.
+- Do not build caret state from mid-stream `Home` / `End` / `ArrowLeft`: a dropped key is invisible. Type the whole string, assert it (`toHaveText`), then place the caret with `selectEditorRange`.
+- `expect(promise).resolves`, `locator.evaluateAll`, `allTextContents` and `count()` read once and never retry. Use web-first matchers (`toHaveCount`, `toHaveText([...])`) or `expect.poll`.
+- Assert the thing under test before any remount or navigation, which re-fetch and hide stale UI; a persistence round-trip is a separate assertion. `toContainText` passes with extra text, and a negative matcher (`toBeHidden`, `not.toBeVisible`) passes for unrelated reasons; see either go red without the fix.
+- Click a block through `focusBlock` / `focusBlockById`, which hit a corner: a centre click lands on a chip or link.
+- `dispatchEvent('click')` where `.click()` cannot land: an atomic inline NodeView (headless Chromium delivers no DOM `click`, see `inner-links.spec.ts`), or a button that scroll auto-load unmounts mid-click (`pages-view.spec.ts`).
+- A button beside the focused editor that loses clicks moved when the editor blurred. Fix the product with `onMouseDown={(e) => e.preventDefault()}` (`AddBlockButton.tsx`), not the spec.
+
+## Portal-scoped helpers
 
 Radix portals mount to `document.body`; under parallel runs a vanilla `getByRole('dialog')` resolves to two elements or a stale subtree. Always use the `active*` helpers from `e2e/helpers.ts`, which scope to the newest portal via `.last()`:
 
@@ -81,8 +91,6 @@ Radix portals mount to `document.body`; under parallel runs a vanilla `getByRole
 | `activeRoleDialog(page)` | generic `[role="dialog"]` when no `data-slot` exists (e.g. `TemplatePicker`) |
 | `activeSuggestionPopup(page)` | `[data-testid="suggestion-popup"]` (TipTap) |
 | `activeSuggestionList(page)` | `[data-testid="suggestion-list"]` (its `role="listbox"` child) |
-
-Check `e2e/helpers.ts` for the current set — it evolves.
 
 ## Undo / redo e2e helpers
 
@@ -100,7 +108,7 @@ The `test` fixture from `./helpers` collects console + `pageerror` output and fa
 
 `expectNoHorizontalOverflow(page, target?, label?)` (`e2e/helpers.ts`) asserts a surface — a dialog/sheet locator, or the document when `target` is omitted — doesn't bleed past its right edge. `mobile-overflow.spec.ts` runs it across the app's views at phone widths; call it directly for a surface that renders differently on mobile.
 
-It flags any descendant whose `getBoundingClientRect().right` exceeds the target's, judging `position: absolute` children against their CSS containing block (`position`, `transform`, Tailwind v4's `translate`/`scale`/`rotate` longhands, `filter`, `contain`, `content-visibility`, …) rather than their DOM parent. `container-type` is deliberately excluded; `fixed`/`sticky` descendants are skipped. Every entry has a paired fixture in `horizontal-overflow-helper.spec.ts` — add one when you change the list.
+It judges `position: absolute` children against their CSS containing block, not their DOM parent, and skips `fixed`/`sticky` descendants. Each containing-block trigger it recognises has a paired fixture in `horizontal-overflow-helper.spec.ts`; add one when you change the list.
 
 `data-overflow-clip="intentional"` marks a container whose `overflow-x: hidden|clip` is deliberate (fixed-width panel, thumbnail); its descendants are excluded like `overflow-x: auto|scroll` regions. The walk checks computed style, so the attribute alone does nothing. Never put it on `target` itself, and a `position: static` marker doesn't cover an absolutely-positioned descendant.
 
@@ -110,7 +118,7 @@ It flags any descendant whose `getBoundingClientRect().right` exceeds the target
 
 ## Performance runs
 
-`perf.spec.ts`'s journey run is skipped unless `AGARIC_PERF=1`. It seeds a 500-page vault through the mock's IPC, drives the core journeys, and prints one row per journey: INP, long animation frames minus mock time, peak rendered blocks and DOM nodes, React commits, and main-thread time per bundle chunk. Its second test runs on every PR: `peakBlocks` is deterministic, so it pins that opening a 500-block page renders only the initial window in full (#5329). `AGARIC_PERF_CPU=4` throttles the CPU, `AGARIC_PERF_TRACE=1` saves a Chrome trace per journey, and the report lands in `test-results/perf-*`. It measures frontend cost in Chromium only. Backend query time comes from `AGARIC_OTEL=1` on the real app or the `interactive_slo` bench.
+`perf.spec.ts`'s journey run is skipped unless `AGARIC_PERF=1`: it seeds a 500-page vault through the mock and prints per-journey frontend cost (INP, long animation frames, peak rendered blocks, React commits, main-thread time per chunk) to `test-results/perf-*`. Its second test runs on every PR and pins that opening a 500-block page renders only the initial window (#5329). `AGARIC_PERF_CPU=4` throttles the CPU; `AGARIC_PERF_TRACE=1` saves a Chrome trace per journey. Backend query time comes from `AGARIC_OTEL=1` on the real app or the `interactive_slo` bench.
 
 ```sh
 AGARIC_PERF=1 npx playwright test e2e/perf.spec.ts

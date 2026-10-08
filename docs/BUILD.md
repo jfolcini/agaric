@@ -13,7 +13,7 @@ prek run --all-files                     # run every CI gate locally (or: just c
 
 **`scripts/setup.sh` is the single canonical dev-environment setup — run it and it handles the repository-managed toolchain.** `npm run setup` and `just setup` are exact aliases for it (use whichever you have; `just` is optional). It is idempotent, so re-run it any time. It provisions the Node version pinned in [`.nvmrc`](../.nvmrc) via `nvm` when your active `node` does not satisfy the `engines.node` range, runs `npm ci`, copies `src-tauri/.env.example` to the gitignored `.env` beside it (sqlx reads `DATABASE_URL` at compile time), seeds the sidecar placeholder, provisions the local dev DB via `scripts/setup-dev-db.sh`, and installs the prek hook toolchain via `scripts/setup-hooks.sh` (see [Hook toolchain](#hook-toolchain) below). System package installation stays opt-in so normal local setup never invokes a privileged package manager; Claude's remote hook supplies `--install-system-deps` on its disposable Linux VM. The sidecar placeholder is also re-run automatically by `beforeDevCommand`, so `cargo tauri dev` needs no manual prep step after the platform prerequisites are present. On Claude's cloud VMs setup runs automatically — see [Claude Code on the web](#claude-code-on-the-web).
 
-Tests: `npx vitest run` (frontend), `cd src-tauri && cargo nextest run --workspace` (backend — bare form omits `agaric-core`/`store`/`engine`/`sync`/`observability`/`diagnostics`, #3212), `npx playwright test` (e2e), `cargo bench --bench interactive_slo` (warm latency mean-budget gate).
+Tests: `npx vitest run` (frontend), `cd src-tauri && cargo nextest run --workspace` (backend; `--workspace` is mandatory, see AGENTS.md), `npx playwright test` (e2e), `cargo bench --bench interactive_slo` (warm latency mean-budget gate).
 
 ## After-clone setup
 
@@ -36,6 +36,13 @@ A few specifics for that environment:
 - **Faster startup (optional).** `SessionStart` hooks run on every session and aren't filesystem-cached. For the quickest starts you can *also* paste `bash scripts/setup.sh --install-system-deps` into your environment's **Setup script** field in the web UI: setup scripts run once and Anthropic snapshots the result, so the system and heavy cargo-tool installs land in the cache instead of re-running each session. The committed hook still guarantees bootstrap even if you skip this.
 - **Network.** `npm ci`, `nvm install` (`nodejs.org`), and `nvm.sh` (`raw.githubusercontent.com`) all use hosts on the default **Trusted** allowlist, so bootstrap works at every network-access level. Only `git clone` of third-party repos is blocked — the GitHub git proxy scopes the credential to this repo, independent of the network level.
 - **prek's git-cloned hooks.** Because of that git scoping, prek's three hooks built from upstream repos — `gitleaks`, `actionlint`, and `conventional-pre-commit` — can't be provisioned in a sandboxed session, so `scripts/setup-hooks.sh` leaves the git hooks **unwired** there (commits keep working; those three still run in CI). Every `language = "system"` hook works once its host binary is installed. Locally, with normal git access, all hooks wire up.
+
+### Cloud container: disk, memory, tools
+
+- **Disk.** Every worktree builds its own large `target/`; check `df -h` before a full run, and reclaim with `rm -rf src-tauri/target/debug/incremental` or by deleting finished worktrees' `target/`. `CARGO_PROFILE_DEV_DEBUG=0` (test builds inherit it) shrinks the tree; set it for the whole session, because toggling it rebuilds everything. "linking with `cc` failed" mid-build usually means ENOSPC, not a broken toolchain.
+- **Never share `CARGO_TARGET_DIR` between worktrees.** Workspace crates get the same artifact names in every checkout, so one tree can take another's artifacts as fresh and test the wrong source.
+- **Memory.** One cargo process at a time ([AGENTS.md § Pre-commit & CI](../AGENTS.md#pre-commit--ci)). A killed `just gen-sqlx` can leave `.sqlx/` entries deleted: `git checkout -- src-tauri/.sqlx src-tauri/agaric-store/.sqlx src-tauri/agaric-engine/.sqlx src-tauri/agaric-sync/.sqlx`, then re-run it.
+- **cargo-nextest when binstall is blocked.** binstall's source-build fallback needs a newer rustc than the pin (see [Hook toolchain](#hook-toolchain)); use the prebuilt tarball: `curl -LsSf https://get.nexte.st/latest/linux | tar zxf - -C "${CARGO_HOME:-$HOME/.cargo}/bin"`.
 
 ### Hook toolchain
 
@@ -160,10 +167,10 @@ cargo bench --bench interactive_slo              # warm latency mean budgets at 
   a per-change gate. Why `[profile.release]` itself cannot run tests is documented on the
   profile in `src-tauri/Cargo.toml` (#4677).
 
-- **Frontend** tests use Vitest + jsdom + `@testing-library/react`. Every component test must include an `axe(container)` audit (enforced by the `axe-presence` prek hook).
+- **Frontend** tests use Vitest + happy-dom (default; some files opt into jsdom) + `@testing-library/react`. Every component test must include an `axe(container)` audit (enforced by the `axe-presence` prek hook).
 - **Backend** tests use `cargo-nextest` with insta snapshots. Materializer tests use the `test_pool()` + `TempDir` fixture; multi-thread runtime is `#[tokio::test(flavor = "multi_thread", worker_threads = 2)]`. Snapshot updates: `cargo insta review`.
 - **E2E** specs cover smoke flows, editor lifecycle, keyboard navigation, sync round-trip, and view dispatches. Specs live in `e2e/`.
-- **Bench gates**: the product target is ≤200 ms p95 for interactive commands at 100K blocks; `interactive_slo` supports it by enforcing an accumulated mean against the per-command budgets defined in that bench, not by measuring per-call p95. It runs warm in the scheduled `bench-slo` lane. The sharded `bench-smoke` lane **smoke-runs every non-SLO bench once** (`--test`) so a drifted seed/fixture fails CI instead of rotting silently (#978 — validates fixtures, not perf); `interactive_slo` is deliberately excluded because cold `--test` timings can trip its budgets falsely. To reproduce the smoke lane, build once (`cd src-tauri && cargo bench --no-run`) and run the non-SLO prebuilt `target/release/deps/<bench>-<hash> --test` binaries; run `cargo bench --bench interactive_slo` warm for its budget verdict. The exact loop and the cargo #6313 build-race it dodges are in `src-tauri/benches/AGENTS.md`.
+- **Bench gates**: the product target is ≤200 ms p95 for interactive commands at 100K blocks; `interactive_slo` supports it by enforcing an accumulated mean against the per-command budgets defined in that bench, not by measuring per-call p95. It runs warm in the scheduled `bench-slo` lane. The sharded `bench-smoke` lane **smoke-runs every non-SLO bench once** (`--test`) so a drifted seed/fixture fails CI instead of rotting silently (#978 — validates fixtures, not perf); `interactive_slo` is deliberately excluded because cold `--test` timings can trip its budgets falsely. Run either lane by dispatching `scheduled-deep-checks.yml` rather than building the release bench graph locally; see `src-tauri/benches/AGENTS.md`.
 
 ### Mutation testing (nightly)
 
