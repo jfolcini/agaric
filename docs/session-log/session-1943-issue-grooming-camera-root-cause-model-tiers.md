@@ -1,4 +1,4 @@
-# Session 1940 — Issue grooming, camera root cause, model tiers for the 5.5 lineup
+# Session 1943 — Issue grooming, camera root cause, model tiers for the 5.5 lineup
 
 The maintainer filed 27 one- or two-line issues (#5353–#5379) and asked for them to be fleshed out. The seven already claimed (#5353, #5355, #5356, #5358, #5367, #5374 with open PRs or `in-progress`, and #5357, superseded by #5373) were left alone. The other twenty (#5354, #5359–#5366, #5368–#5373, #5375–#5379) now carry the problem, verified `file:line` pointers, the smallest change that reuses existing code, acceptance tests, and a **Decisions** block at the top recording the maintainer's calls. Research ran in six parallel read-only agents; their load-bearing claims were spot-checked against the code before posting, and one wrong line (what `anchor_free` does, #5363) was corrected after posting.
 
@@ -20,4 +20,18 @@ Decisions the maintainer pushed further than the first draft: #5371 moves every 
 - **Escalation** steps up the frontier and ends at Opus `max`.
 - **DeepSWE** (v1.1, no 5.5 rows yet) corroborates the knee on long-horizon coding: Opus 5 is flat from `high` to `max` within error (72.8–73.7%) and drops at `medium` (68.9%) and `low` (58.1%), and Opus 5 beats Fable 5 at every effort for less.
 
-Verified: no product code changed; the scanner file patched for the reproduction was restored from a backup and `cmp`-checked, and `git diff` was clean before the skill edit. No suites were run for this docs-only change.
+Sessions 1–1900 were folded into frozen `sessions-NNNN-NNNN.md` archives of 100 (the two older multi-hundred archives split into them). Before archiving, all 1,940 logs were mined for friction by parallel readers, and the findings were folded into the AGENTS.md files and the batch-issues skill, then pruned in a second pass:
+- **What recurred most** were concrete versions of rules already on the books, so they land as trap lists in the nested files rather than as new principles:
+  - tests and guards that could not fail;
+  - guard scripts grown far past their cited defect;
+  - issue premises nobody re-checked against main;
+  - container disk and OOM from parallel builds;
+  - mock-versus-backend drift;
+  - materializer and op-interpreter lockstep.
+- **New files:** `src/editor/AGENTS.md`, `src/stores/AGENTS.md`, `src-tauri/agaric-engine/src/materializer/AGENTS.md`.
+- **Corrected guidance:**
+  - "do not run clippy by hand; the hooks do" was false wherever hooks were unwired, so it now says to run workspace clippy before handing off Rust;
+  - `usePaginatedQuery` and `EDITOR_PORTAL_SELECTORS` were gone from the code;
+  - the e2e handlers path and the e2e-tauri trigger were stale.
+
+Verified: no product code changed; the scanner file patched for the reproduction was restored from a backup and `cmp`-checked, and `git diff` was clean before the skill edit. No suites were run for these docs-only changes; the link and doc-path checks pass.

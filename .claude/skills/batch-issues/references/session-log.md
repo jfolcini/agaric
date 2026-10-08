@@ -1,20 +1,7 @@
 # Session log — numbering and format
 
-One file per session at `docs/session-log/session-NNNN-<slug>.md`, `NNNN` unpadded.
+`docs/session-log/README.md` owns layout, numbering, and immutability; this file covers what the loop adds.
 
-**Number:** any unused number in `(max, max + 10]`, where `max` is the numeric max over your branch and `origin/main`:
+**Number:** one log per PR. The `session-log-numbering` guard sees only your branch and `origin/main`, not sibling unmerged branches, so parallel builders that each pick a number collide. The orchestrator assigns every in-flight PR a distinct number from the README's window before builders launch; builders never pick one.
 
-```sh
-ls docs/session-log | grep -oP 'session-\K[0-9]+' | sort -n | tail -1
-git ls-tree -r --name-only origin/main -- docs/session-log | grep -oP 'session-\K[0-9]+' | sort -n | tail -1
-```
-
-Take the larger. Never `ls | tail` (lexicographic past 999). The `session-log-numbering` pre-commit guard enforces the window and uniqueness; a window failure usually means a stale base, so fetch and rebase before renumbering.
-
-**Immutability:** never edit, rename, or delete a merged session file (`session-log-immutable` guard). A correction goes in the new session's log as a back-reference.
-
-**Format:** the first line is `# Session NNNN — <title>` (a real H1; the guard greps for it). Then prose: what the session set out to do, what it found or corrected, what shipped (PR numbers), what was verified (the suites actually run, with real counts). No metadata table, no template.
-
-**Plan issues:** `Closes #NN` in the commit only when the whole plan ships; otherwise a status comment on the issue. Reviewer corrections are comments on the issue, not edits to its body. Keep `docs/FEATURE-MAP.md` in sync when user-facing features change.
-
-Sessions up to the last full hundred live in frozen `sessions-NNNN-NNNN.md` archives in the same directory (README § Layout).
+**Format:** the first line is `# Session NNNN — <title>` (a real H1; the guard checks it against the filename). Then short prose for a future agent: what the session set out to do, the decisions and traps, what shipped (PR numbers), and which suites actually ran. Not a review diary: no round-by-round narrative, tables, counts, workflow snippets, or metadata.

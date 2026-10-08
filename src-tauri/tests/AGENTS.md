@@ -1,6 +1,6 @@
 # Rust backend test patterns
 
-> See also: root [`AGENTS.md`](../../AGENTS.md) for the architectural invariants tests must respect; [`../src/commands/AGENTS.md`](../src/commands/AGENTS.md), [`../src/mcp/AGENTS.md`](../src/mcp/AGENTS.md), [`../migrations/AGENTS.md`](../migrations/AGENTS.md) for backend-tree rules; [`../../src/__tests__/AGENTS.md`](../../src/__tests__/AGENTS.md) for frontend tests.
+> Backend-tree rules: [`commands`](../src/commands/AGENTS.md), [`mcp`](../src/mcp/AGENTS.md), [`migrations`](../migrations/AGENTS.md). Frontend tests: [`src/__tests__`](../../src/__tests__/AGENTS.md).
 
 ## Test layers
 
@@ -14,72 +14,51 @@
 
 ### The three integration-test binaries
 
-`src-tauri/tests/` holds `app_tests/`, `commands/` and `command_integration/`,
-each a directory with a `main.rs` root and its suites as sibling modules. The
-`main.rs` shape is load-bearing: for a *crate root*, `mod foo;` resolves against
-the root's own directory, so a `tests/commands.rs` root would look for
-`tests/foo.rs`, not `tests/commands/foo.rs` (E0583). Cargo auto-discovers
-`tests/<name>/main.rs` and names the binary `<name>`, so no `[[test]]` entry is
-needed.
-
-One binary per group, not per file: every integration-test root links
-`agaric_lib` afresh, and the module tree gives the same isolation for free.
-Inside them `crate::` means the test binary, so lib paths are `agaric_lib::`,
-and anything they reach must be visible to an external crate — either `pub`, or
-`#[cfg(any(test, feature = "test-util"))]` where it must stay out of a release
-build (`commands::tests::common` is the fixture that takes this route).
-
-`src-tauri/src/lib.rs` also carries `specta_tests` (TypeScript binding verification) and the `log_bridge_tests` / `boot_path_tests` / `log_dir_tests` modules.
+`src-tauri/tests/` holds `app_tests/`, `commands/` and `command_integration/`, each a `main.rs` root with its suites as sibling modules (a `tests/commands.rs` root would resolve `mod foo;` to `tests/foo.rs`, E0583). Add a suite as a module of an existing binary, not a new binary: each root links `agaric_lib` afresh. Inside them lib paths are `agaric_lib::`, so anything reached must be `pub` or `#[cfg(any(test, feature = "test-util"))]` (`commands::tests::common` takes the latter route).
 
 ## Running tests
 
-Package is `agaric`; lib target is `agaric_lib`. Filter with `-p agaric` / `package(agaric)`; `agaric_lib` is only an import path in benches and integration tests.
+The package is `agaric` (filter with `-p agaric` / `package(agaric)`); `agaric_lib` is only the import path.
 
 ```bash
-. "$HOME/.cargo/env"                                  # once per shell on this machine
-
-cargo nextest run --workspace                         # THE runner. Bare `cargo nextest run` is
-                                                      # package-scoped to `agaric` and silently skips
-                                                      # the other six workspace members (#3212).
-cargo test --doc --workspace                          # doctests only — nextest cannot run them
+. "$HOME/.cargo/env"                                  # once per shell if cargo is not on PATH
+cargo test --doc --workspace                          # doctests; nextest cannot run them
 
 cargo nextest run --workspace -E 'test(create_block_returns)'   # by name substring
 cargo nextest run -p agaric -E 'test(op_log::)'                 # by module
 cargo nextest run -p agaric -E 'binary(command_integration)'    # one whole test binary
-cargo nextest run -p agaric -E 'test(convergence)'
 
 cargo insta test                                      # writes .snap.new for changed snapshots
 cargo insta review                                    # accept / reject
-
-cargo nextest run -p agaric -E 'test(specta_tests::)' --run-ignored=only   # regenerate src/lib/bindings.ts
 ```
 
-Use nextest, not plain `cargo test`, for anything in the `command_integration` binary or under `materializer::handlers::` — see "Process-global state". `cargo test` runs a crate's tests as threads in one process; nextest gives each test its own process.
+Selectors that silently run nothing or the wrong set:
 
-Nextest configuration lives in `src-tauri/.config/nextest.toml`: `fail-fast = false`, `retries = 1` (`2` in the `ci` profile), `slow-timeout` 30s (60s in CI), and a single-threaded `spy-counter-serial` test group for the counter-delta handler tests.
+- `cargo nextest run 'test(x)'` without `-E` is a name-substring filter for the literal `test(x)` and matches zero tests.
+- `cargo test` filters are substrings: `integration_tests` also selects `command_integration_tests`.
+- A test file not declared with `mod` in its `main.rs` (or parent module) is never compiled, so its filter matches zero tests.
+- Read the reported test count, not the exit code. When the only failures are the tests you just wrote, suspect a stale binary from an OOM-killed build: compare the count against the source, then `cargo clean -p <crate>` and rerun before touching code.
 
 ## Process-global state
 
-A test that touches something global to the OS process must not assume it is alone in the process. Under plain `cargo test` such a test can pass vacuously (satisfied by a leftover from an earlier test), fail on an ordering it did not cause, or flip between runs (#4102). `cargo nextest run` isolates each test in its own process, which is why it is the required runner.
+Plain `cargo test` runs a crate's tests as threads in one process, so a test touching process-global state can pass vacuously, fail on another test's ordering, or flip between runs (#4102). nextest gives each test its own process; use it for these two shapes:
 
-Two classes in this crate:
-
-1. **The `tracing` subscriber and `log::max_level()`.** `init_logging` in `src-tauri/src/lib.rs` installs the process-wide subscriber via `try_init().ok()` and calls `init_log_bridge`. `log_bridge_tests`, `boot_path_tests` and `log_dir_tests` assert on that shared state and need a clean process.
-2. **Counter-delta tests.** Any test that reads a process-global counter, does its work, reads it again and asserts on the difference. The counter here is `sql_only_fallback::count()` (re-exported as `crate::materializer::sql_only_fallback_count()`), a monotonic `AtomicU64`; the assertion is nearly always `delta == 0`, proving the op took the engine path rather than the SQL-only fallback (#891). A sibling test's fallback event in the same process flips the delta for a test that never touched the fallback. This is a shape, not a module list — find the current readers with:
+1. **The `tracing` subscriber and `log::max_level()`.** `init_logging` (`src-tauri/src/lib.rs`) installs them process-wide; `log_bridge_tests`, `boot_path_tests` and `log_dir_tests` need a clean process.
+2. **Counter-delta tests**: read a process-global counter, act, read again, assert on the difference. Here that is `sql_only_fallback::count()` (re-exported as `sql_only_fallback_count()`), usually asserting `delta == 0` to prove the op took the engine path (#891); a sibling's fallback in the same process flips it. Find the current readers with:
 
    ```sh
    grep -rnE 'sql_only_fallback(::count|_count)\(\)' src-tauri/src src-tauri/tests src-tauri/agaric-engine/src
    ```
 
-   `src-tauri/agaric-engine/src/materializer/coordinator.rs` is the production reader, not a hazard. The mechanism is documented in `src-tauri/agaric-engine/src/loro/shared.rs`.
+   `coordinator.rs` is the production reader, not a hazard.
 
-Root `AGENTS.md` states the same rule under "Running tests efficiently" and defers here for the grep; keep the two agreeing. The old rationale (a shared process-global Loro engine registry) was fixed in #2249 — do not reinstate it. When adding a test of either shape, say so in its doc comment.
+A new test of either shape says so in its doc comment.
 
 ## Fixtures
 
 ### Database
 
-Every DB-backed test defines a module-local `test_pool()`:
+DB-backed tests use `test_pool()` (shared in `commands::tests::common`, or a module-local copy of the same shape):
 
 ```rust
 async fn test_pool() -> (SqlitePool, TempDir) {
@@ -89,7 +68,7 @@ async fn test_pool() -> (SqlitePool, TempDir) {
 }
 ```
 
-Bind `_dir` so the `TempDir` outlives the pool: `let (pool, _dir) = test_pool().await;`. `let (pool, _) = …` drops the directory immediately and the SQLite file vanishes. Tests needing split read/write pools use `test_pools()` in `src-tauri/src/db/tests.rs`, returning `(DbPools, TempDir)`.
+Bind `let (pool, _dir) = test_pool().await;`: `let (pool, _) = …` drops the `TempDir` at once and the SQLite file vanishes. Split read/write pools: `test_pools()` in `src-tauri/src/db/tests.rs`.
 
 ### Async attribute
 
@@ -99,24 +78,16 @@ Bind `_dir` so the `TempDir` outlives the pool: `let (pool, _dir) = test_pool().
 #[test]                                                       // pure logic (serde, hashing)
 ```
 
-Materializer tests require `multi_thread`: the single-threaded executor deadlocks because background tasks cannot progress.
+Materializer tests need `multi_thread`; on the single-threaded executor background tasks cannot progress and the test deadlocks.
 
 ### Materializer settle
 
-After ops that dispatch background cache-rebuild work (edit / delete / restore / purge / create page / create tag), sleep before the next write to avoid SQLite write-lock contention with the background consumer:
-
-```rust
-async fn settle() {
-    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-}
-```
-
-Not needed after creating content blocks. `materializer.flush_background().await` waits for the queue to drain; `apply_snapshot` enqueues a full rebuild, so tests asserting on cache state after a restore must flush first. `Materializer::wait_for_initial_block_count_cache` (startup population, call before overwriting `cached_block_count`) and `wait_for_pending_block_count_refreshes` (in-flight refreshes, e.g. after an FTS optimize) gate the block-count cache.
+After ops that dispatch background cache work (edit, delete, restore, purge, create page or tag, `apply_snapshot`), call `materializer.flush_background().await` (the shared `settle(&mat)`) before the next write or any cache assertion; a fixed sleep races the consumer. For the block-count cache, `Materializer::wait_for_initial_block_count_cache` waits for startup population (call it before overwriting `cached_block_count`) and `wait_for_pending_block_count_refreshes` for in-flight refreshes.
 
 ### Naming and helpers
 
 - Test names read as assertions, no `test_` prefix: `edit_deleted_block_returns_not_found`. Snapshot tests: `snapshot_<what>`.
-- Fixture constants (`DEV`, `FIXED_TS`, `FAKE_HASH`) and helpers (`test_pool`, `insert_block`, `make_create_payload`) are module-local. Duplication is intentional; there is no shared test utility crate.
+- Shared fixtures (`DEV`, `FIXED_TS`, `TEST_SPACE_ID`, `test_pool`, `insert_block`, `settle`, the space helpers) live in `commands::tests::common` (`src-tauri/src/commands/tests/common.rs`); the `tests/commands/` suites reach them through `prelude.rs`. Use them before writing a module-local copy.
 - ULID fixtures uppercase (Crockford base32, blake3 determinism). Positions 1-based.
 
 ### Assertions
@@ -127,21 +98,31 @@ assert_eq!(err.validation_code(), Some(ValidationCode::InvalidGlob));   // typed
 ```
 
 - Every assertion carries a message.
-- Exact counts: `assert_eq!(count, 5)`, never `assert!(count >= 1)` — inequality hides duplicate-result and missing-filter bugs.
 - Every command tests nonexistent ID → `NotFound`, deleted block → `NotFound`, invalid input → `Validation`.
 - State-changing ops verify the op log: count, `op_type`, payload, hash chain. The log is append-only; reverse ops (`src-tauri/agaric-engine/tests/reverse_tests.rs`) are appended, never mutate existing records. Non-reversible ops return `AppError::NonReversible`, not a panic.
 - Recursive-CTE tests verify `is_conflict = 0` and `depth < 100` (root `AGENTS.md` invariant #9).
 
+### Test shapes that stay green with the fix reverted
+
+- The fixture INSERTs into a derived table (`block_tag_refs`, a cache) instead of seeding the inputs through the production write path, so it reaches a state production never produces.
+- An FK `ON DELETE CASCADE` removes the rows the code under test was supposed to remove.
+- The test runs an inline copy of the SQL instead of calling the production function.
+- The assertion holds for two reasons (an absence check on a message nothing emits; a reused block that already had the asserted state). Seed a fresh block for each pin.
+- A scale or perf test sized too small for the regression to show. Inject the regression and confirm it reds.
+- Two tasks meant to overlap, ordered by a sleep. Use a readiness handshake (`tokio::sync::oneshot`).
+
+`#[should_panic]` on a `debug_assert!` needs `#[cfg(debug_assertions)]`, or it fails under `just test-be-release`.
+
 ### Determinism
 
 - `FIXED_TS` over `now()`; `append_local_op_at` (caller timestamp) over `append_local_op` (wall clock).
-- `now_rfc3339()` has millisecond precision: two calls in the same ms collide. Sleep 2ms or use constants before `assert_ne!` on timestamps.
+- `now_rfc3339()` has millisecond precision, so two calls can collide; use constants before `assert_ne!` on timestamps.
 - `FxHashSet` iteration order is unstable: use `BTreeSet` or sort before comparing.
-- `settle()` avoids lock contention; it is not a timing assertion.
+- After changing a proptest generator, run it at volume (about 20000 cases, a few times). `PROPTEST_CASES` is ignored by a `with_cases(N)` or `cases: N` config, so raise the constant locally. Delete any `proptest-regressions/*.txt` seed that recorded a mutant rather than a real defect.
 
 ## Snapshot testing (insta)
 
-Snapshots live in a `snapshots/` directory beside the tests (`src-tauri/tests/commands/snapshots/`, `src-tauri/src/mcp/tools_ro/snapshots/`, `src-tauri/agaric-store/src/snapshots/`, …). File name: `agaric_lib__<module>__tests__<test_name>.snap` for in-lib app-crate modules, `commands__snapshot_tests__<test_name>.snap` for the `tests/commands/` binary, `agaric_store__…` for `agaric-store`. A new snapshot-testing module gets its own sibling `snapshots/`.
+Snapshots live in a `snapshots/` directory beside the tests; a new snapshot-testing module gets its own.
 
 Redact non-deterministic fields:
 
@@ -155,7 +136,7 @@ insta::assert_yaml_snapshot!(resp, {
 });
 ```
 
-For deterministic data, no redaction needed — values that appear verbatim in a `.rs` source file are allowlisted by the `snapshot-redaction` pre-commit guard (`prek.toml`).
+Deterministic values need no redaction: the `snapshot-redaction` hook allowlists values that appear verbatim in a `.rs` file.
 
 Named snapshots in loops: `insta::assert_yaml_snapshot!(format!("op_payload_json_{tag}"), value)`.
 
@@ -166,19 +147,17 @@ Named snapshots in loops: `insta::assert_yaml_snapshot!(format!("op_payload_json
 ```bash
 cd src-tauri && CONFORMANCE_UPDATE=1 cargo nextest run -E 'test(conformance_fixtures_match_backend)'
 npx vitest run src/lib/tauri-mock     # from the repo root; red means the mock diverges — fix the mock, not the backend
+npx oxfmt --write conformance/fixtures/   # from the repo root
 ```
+
+- The update run rewrites every fixture in serde's layout. The `oxfmt` pass puts untouched ones back byte-for-byte; `git checkout -- conformance/fixtures/` would also revert the fixture you meant to change. Never parse and redump fixture JSON with Python: it expands arrays and escapes non-ASCII.
+- A payload-replayed op pins the resulting state, not the command's return value. When the return value matters, use `"via": "command"`.
+- Seed so the wrong answer differs from insertion order; otherwise an unsorted result passes an ordering pin.
+
+## Mutants
+
+An equivalent (unkillable) mutant is recorded in its tracking issue's `mutation-accepted` block (`scripts/file-mutation-survivors.mjs`), not chased with tests.
 
 ## Benchmarks
 
-Pattern: one `TempDir` + DB per bench, `Runtime::block_on` for setup, `b.to_async(&rt).iter(...)`, `materializer.shutdown()` after each group, `BenchmarkId::from_parameter` for size sweeps. Bench files are separate crates, so `*_inner` may need `pub`.
-
-Run the bench before committing, not just `cargo check --bench`: a hand-seeded raw-SQL fixture that has drifted from the schema compiles fine and panics on execution (#1233). No PR gate runs benches; `.github/workflows/scheduled-deep-checks.yml` runs them weekly, so a break surfaces a week later on someone else's PR. `src-tauri/benches/AGENTS.md` § "Run benches without the E0308 build race" has the exact loop.
-
-## Before committing
-
-- `_dir` bound; correct tokio flavor; `settle()` / `flush_background()` after materializer-triggering ops.
-- Snapshot redactions in place.
-- SQL changes: `just gen-sqlx` run and every regenerated `.sqlx/` file (all four crates) committed.
-- Tauri command types changed: regenerate `src/lib/bindings.ts` (command above).
-- New command params: update every call site in `src-tauri/tests/command_integration/`; the compiler finds them.
-- No `unwrap()` outside test code; no `.ok()` swallowing errors on core paths. Mutex poisoning: `.unwrap_or_else(|e| e.into_inner())`.
+See [`../benches/AGENTS.md`](../benches/AGENTS.md). `cargo check --bench` proves nothing about a bench, and no PR gate runs them.

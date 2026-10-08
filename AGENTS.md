@@ -18,6 +18,7 @@ Read this section first. It outranks everything below it and every nested `AGENT
 - **Reviews judge impact.** A finding needs a concrete failure and a named victim. Otherwise fix it if trivial, or let it go. Filing an issue is the last resort, not the default. Over-building is a finding too: a helper, option, abstraction, or paragraph the fix did not need is deleted, not defended. On an approved, green PR a non-blocking note never causes a push by itself: merge as it stands, then act on the notes in a follow-up PR that batches them across the PRs merged in that sweep. Every push to an approved branch is another review round; one follow-up for several PRs is one.
 - **Say it once.** A rule and its one reason, in the same breath. No war stories, no archaeology. An issue number is a pointer, not a justification.
 - **Names do the explaining.** A comment says why, never what; when the what needs a comment, rename.
+- **No figures that rot.** No line numbers, counts, or measurements in comments or docs unless a committed command regenerates them; name a symbol instead. Correcting a claim means fixing every copy of it.
 - **Prefer deleting.** Removing a hook, a fallback, a config knob, or a paragraph needs no more justification than this section.
 
 ## Documentation Map
@@ -28,13 +29,7 @@ Read this section first. It outranks everything below it and every nested `AGENT
 | [docs/BUILD.md](docs/BUILD.md) | Build guide: prerequisites, platforms, Android, CI, troubleshooting |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Deep-dive index: data model, op log, materializer, editor, sync, search |
 | [docs/FEATURE-MAP.md](docs/FEATURE-MAP.md) | Feature inventory: schema, commands, sync, editor, stores, testing |
-| [`src-tauri/tests/AGENTS.md`](src-tauri/tests/AGENTS.md) | Rust test fixtures and pitfalls |
-| [`src/__tests__/AGENTS.md`](src/__tests__/AGENTS.md) | Frontend test conventions, with per-type splits in [`src/components/__tests__/AGENTS.md`](src/components/__tests__/AGENTS.md) and [`src/stores/__tests__/AGENTS.md`](src/stores/__tests__/AGENTS.md) |
-| [`e2e/AGENTS.md`](e2e/AGENTS.md) | Playwright e2e against the mock backend |
-| [`src-tauri/migrations/AGENTS.md`](src-tauri/migrations/AGENTS.md) | SQL migration rules |
-| [`src-tauri/benches/AGENTS.md`](src-tauri/benches/AGENTS.md) | Criterion benches and the weekly lanes |
-| [`src-tauri/src/commands/AGENTS.md`](src-tauri/src/commands/AGENTS.md) | Tauri command patterns |
-| [`src-tauri/src/mcp/AGENTS.md`](src-tauri/src/mcp/AGENTS.md) | MCP server rules |
+| Nested `AGENTS.md`: read before working there | Frontend: [`src/__tests__`](src/__tests__/AGENTS.md), [`src/components/__tests__`](src/components/__tests__/AGENTS.md), [`src/stores`](src/stores/AGENTS.md), [`src/stores/__tests__`](src/stores/__tests__/AGENTS.md), [`src/editor`](src/editor/AGENTS.md), [`e2e`](e2e/AGENTS.md), [`e2e-tauri`](e2e-tauri/AGENTS.md). Backend: [`src-tauri/tests`](src-tauri/tests/AGENTS.md), [`src-tauri/migrations`](src-tauri/migrations/AGENTS.md), [`src-tauri/benches`](src-tauri/benches/AGENTS.md), [`src-tauri/src/commands`](src-tauri/src/commands/AGENTS.md), [`src-tauri/src/mcp`](src-tauri/src/mcp/AGENTS.md), [`agaric-engine/src/materializer`](src-tauri/agaric-engine/src/materializer/AGENTS.md) |
 | [GitHub Issues](https://github.com/jfolcini/agaric/issues) | Backlog |
 
 ## Build Commands
@@ -46,7 +41,7 @@ bash scripts/setup.sh                            # one-command dev-env setup (= 
 npm run dev                                      # browser + tauri mock, ~50 ms HMR — pure UI work
 cargo tauri dev                                  # desktop app with hot reload — backend work
 npm run test                                     # vitest
-npm run typecheck                                # tsc -b across all four tsconfig projects
+npm run typecheck                                # tsc -b across every tsconfig project
 cd src-tauri && cargo nextest run --workspace    # Rust tests
 npx playwright test                              # e2e (see e2e/)
 cargo tauri android build --target aarch64 --debug
@@ -57,11 +52,11 @@ scripts/push.sh                                  # push after a Rust change (run
 Four commands have a wrong-but-plausible form. Use the right one:
 
 - **`npm run typecheck`, never `npx tsc --noEmit`.** The root tsconfig is solution-style, and `--noEmit` without `-b` checks an empty program and exits 0 (#3805).
-- **`cargo nextest run --workspace`, never the bare form.** Bare `cargo nextest run` is scoped to the `agaric` package and silently skips `agaric-store`, `agaric-engine`, `agaric-sync`, `agaric-core` (#3212). Same for `cargo mutants --workspace`. `-p <crate>` is narrower still: it does not compile the dependent crates at all, so a green `-p` run says nothing about whether the change breaks a consumer — not even its signatures. Most boundary oracles also live in the app crate, so they do not run under `-p` either (#3443).
+- **`cargo nextest run --workspace`, never the bare form.** Bare `cargo nextest run` covers only the `agaric` package and silently skips every other workspace member (#3212); same for `cargo mutants --workspace`. `-p <crate>` is narrower still: it compiles no dependent crate and runs none of the boundary oracles in the app crate, so a green `-p` run says nothing about consumers (#3443).
 - **`just gen-sqlx`, never `cargo sqlx prepare`.** Four `.sqlx/` caches must move together (invariant 6).
-- **`scripts/push.sh` for anything touching `.rs`, not raw `git push`.** Raw push holds the connection open through the multi-minute pre-push verify and GitHub drops it. `SKIP_CI_VERIFY='<real reason>' git push` skips the verify when it would only repeat what CI runs on the PR (docs, CI or tooling-only ranges, a re-push after a review nit, a range already run through the full suite); CI is the merge gate.
+- **`scripts/push.sh` for anything touching `.rs`, not raw `git push`.** Raw push holds the connection open through the multi-minute pre-push verify and GitHub drops it. `SKIP_CI_VERIFY='<real reason>' git push` skips the verify when it would only repeat CI (docs, CI or tooling-only ranges, a re-push after a review nit, a range already run through the full suite); CI is the merge gate.
 
-Setup auto-runs on Claude Code on the web via [`.claude/hooks/session-start.sh`](.claude/hooks/session-start.sh).
+Cloud sessions run setup automatically; their disk, memory, and hook-wiring limits are in [docs/BUILD.md](docs/BUILD.md#claude-code-on-the-web).
 
 ## Key Architectural Invariants
 
@@ -81,7 +76,7 @@ Setup auto-runs on Claude Code on the web via [`.claude/hooks/session-start.sh`]
 No new tables, op types, Zustand stores, materializer queues, or sync message types without explicit maintainer approval. Nearly every feature fits the existing model:
 
 - **Properties are the extension point.** New per-block metadata goes in `block_properties` + `property_definitions`, not new columns. Check `INTERNAL_PROPERTY_KEYS` (`src/lib/block-utils.ts`) before adding a reserved key.
-- **Hot-path properties may be promoted to native columns** only when a measured JOIN cost justifies it and the access is per page load (`todo_state`, `priority`, `due_date`, `scheduled_date`, `page_id` today). The property row stays the source of truth; the column is a cache.
+- **Hot-path properties may be promoted to native columns** only when a measured JOIN cost justifies it and the access is per page load (`todo_state`, `priority`, `due_date`, `scheduled_date`, `space_id` today). The column is then the only SQL copy: `block_properties` rejects a promoted key by `CHECK` (migration 0088).
 - Slash commands, filter dimensions, and UI components are additive and cheap. Prefer them.
 - If a feature seems to need a migration, op type, or store, stop and ask.
 
@@ -89,7 +84,8 @@ No new tables, op types, Zustand stores, materializer queues, or sync message ty
 
 Some dependencies ship as a stack. Move the whole stack in one commit, or leave it alone and file a `dependencies` issue if the coupled bump needs a major we cannot take.
 
-- **Tauri:** `tauri`, `tauri-build`, every `tauri-plugin-*`, `@tauri-apps/api`, `@tauri-apps/cli`, every `@tauri-apps/plugin-*`. The Android toolchain pins (AGP, Gradle wrapper, KGP, `src-tauri/gen/android/buildSrc/`) belong to `tauri-cli`; regenerate with `cargo tauri android init`, never hand-edit.
+- **Tauri:** `tauri`, `tauri-build`, every `tauri-plugin-*`, `@tauri-apps/api`, `@tauri-apps/cli`, every `@tauri-apps/plugin-*`. The Android toolchain pins (AGP, Gradle wrapper, KGP, `src-tauri/gen/android/buildSrc/`) belong to `tauri-cli`; regenerate with `cargo tauri android init`, never hand-edit. A bump that moves `wry` or `tao` can change Android JNI initialisation (`src-tauri/agaric-sync/src/android_context.rs`), which CI never runs: read upstream's Android changes and launch the APK before merging.
+- **pdfjs-dist:** re-vendor `public/pdf.worker.min.mjs` and bump the pin in `e2e/pdfjs-v6-smoke.spec.ts` (recipe in its header); a mismatch surfaces only as a bare `UnknownErrorException`.
 - **React:** `react`, `react-dom`, `@types/react*`, `@testing-library/react`, and every React peer (`@tiptap/react`, `@radix-ui/react-*`, `react-day-picker`, `react-i18next`, …).
 - **TipTap:** every `@tiptap/*` on one version line. **Radix:** every `@radix-ui/*` on one major. **StrykerJS:** `@stryker-mutator/core` and `@stryker-mutator/vitest-runner` pin each other exactly, so a split bump fails `npm ci`.
 - **SQLx + `.sqlx/` caches:** bump the crate and run `just gen-sqlx` in the same commit.
@@ -119,7 +115,6 @@ Single user, multiple devices they own, no cloud. There is no malicious actor.
 
 - **State:** Zustand stores in `src/stores/`. `usePageBlockStore` is a per-page factory (`createPageBlockStore(pageId)` + `PageBlockContext`); `useBlockStore` holds focus and selection only.
 - **Editor:** one roving TipTap instance per mounted `BlockTree` (invariant 4) with the extensions in `src/editor/extensions/`. Serializer: `src/editor/markdown-serializer.ts`, no external deps.
-- **Sync hooks:** `useSyncTrigger`, `useSyncEvents`, `useOnlineStatus`.
 - **Logging:** `src/lib/logger.ts` dual-writes console + Rust IPC. Never swallow errors silently; `.catch(() => {})` is banned, use `logger.warn` / `logger.error`.
 - **Style:** 2-space indent, single quotes, no semicolons, 100 columns (oxfmt).
 
@@ -132,7 +127,7 @@ There is a design system. Use it, extend it, do not bypass it.
 | Design tokens | `src/index.css` | OKLch colors, spacing, semantic status/priority tokens, themes, `prefers-contrast` / `prefers-reduced-motion` |
 | UI primitives | `src/components/ui/` | Radix + CVA wrappers: Button, IconButton, Select, Dialog, Popover, Badge, Input, ScrollArea, Tooltip, Spinner, … |
 | Shared components | `src/components/` (non-page) | EmptyState, LoadingSkeleton, ConfirmDialog, LoadMoreButton, SearchablePopover, RichContentRenderer, … |
-| Shared hooks | `src/hooks/` | usePaginatedQuery, useListKeyboardNavigation, useDebouncedCallback, usePropertySave, … |
+| Shared hooks | `src/hooks/` | useListKeyboardNavigation, useDebouncedCallback, usePropertySave, …; paginated lists use TanStack `useInfiniteQuery` with `src/lib/query-client.ts` |
 | Page components | `src/components/` (top level) | JournalPage, PageBrowser, HistoryView, SearchPanel |
 
 Before writing frontend code, check those four places for an existing primitive, component, hook, or token. If nothing fits, add the reusable piece in the right layer, then use it.
@@ -144,7 +139,7 @@ Before writing frontend code, check those four places for an existing primitive,
 - Semantic color tokens, never raw Tailwind colors where a token exists. `ScrollArea` for scrollable containers, never bare `overflow-auto`.
 - 44 px touch targets via `[@media(pointer:coarse)]`; focus rings via `focus-ring-visible` (opaque 3 px; a half-alpha `ring-ring/50` fails 3:1); `aria-label` on every icon-only button, through `t()` i18n keys.
 - `EmptyState` for empty lists, `LoadingSkeleton` for initial loads, `Spinner` for action feedback.
-- Anything that creates DOM outside React (portals, `ReactRenderer`, `computePosition`) logs failures via `logger.warn`, guards stale callbacks, and is listed in `EDITOR_PORTAL_SELECTORS` if it must not blur the editor. Reference: `src/editor/suggestion-renderer.ts`.
+- Anything that creates DOM outside React (portals, `ReactRenderer`, `computePosition`) logs failures via `logger.warn`, guards stale callbacks, and carries `data-editor-portal` on its outermost element if it must not blur the editor (`src/hooks/useEditorBlur.ts`). Reference: `src/editor/suggestion-renderer.ts`.
 - Searchable pickers and filter inputs debounce IPC with `useDebouncedCallback` at 300 ms; `cancel()` before the non-search path.
 - Import `INTERNAL_PROPERTY_KEYS` (`src/lib/block-utils.ts`) and `NON_DELETABLE_PROPERTIES` (`src/lib/property-save-utils.ts`, mirrors `is_builtin_property_key` in Rust); never redeclare them inline.
 - React 19: `ref` is a normal prop (`ref?: React.Ref<T>`); no `React.forwardRef`, no `React.ComponentRef`, no ambient `JSX.*`.
@@ -158,8 +153,8 @@ Components past ~500 lines: extract hooks first, then presentational sub-compone
 ## Backend Architecture
 
 - **Errors:** `AppError` (`src-tauri/agaric-core/src/error.rs`) serializes to `{ kind, message, code? }`; `Validation` carries a structured `ValidationCode` (construct with `AppError::validation_coded`, read with `validationCode(err)` in TS).
-- **Undo:** in-editor via ProseMirror history; page-level via `reverse.rs` inverse ops. `purge_block` and `delete_attachment` are non-reversible.
-- **Materializer:** foreground queue (256, core tables + `BatchApplyOps`) and background queue (1024, caches/FTS). Failed or dropped tasks persist to `materializer_retry_queue` and are retried with backoff (a task that ran and failed: 1 min → 1 h cap; a task a saturated queue shed before it ran: 1 → 5 min cap, #4208); `ApplyOp` rows are a correctness backstop, cache rebuilds are staleness backstops. `ApplyOp` / `BatchApplyOps` handlers propagate errors for retry, never `.ok()` them.
+- **Undo:** in-editor via ProseMirror history; page-level via inverse ops in `agaric-engine/src/reverse/`. `purge_block` has no inverse; point-in-time restore also skips `delete_attachment`.
+- **Materializer:** foreground queue (256, core tables + `BatchApplyOps`) and background queue (1024, caches/FTS). Failed or dropped tasks persist to `materializer_retry_queue` and are retried with backoff (shorter for tasks a saturated queue shed before they ran, #4208); `ApplyOp` rows are a correctness backstop, cache rebuilds are staleness backstops. `ApplyOp` / `BatchApplyOps` handlers propagate errors for retry, never `.ok()` them.
 - **Tag inheritance:** materialized `block_tag_inherited`, maintained transactionally plus a background rebuild.
 - **Commands:** `src-tauri/src/commands/`, one module per domain; every command pairs a thin `#[tauri::command]` wrapper with a `*_inner(&SqlitePool, …)` function. Recipe: [`src-tauri/src/commands/AGENTS.md`](src-tauri/src/commands/AGENTS.md).
 - **Sync:** `sync_daemon/` (mDNS discovery, QUIC server, `SyncOrchestrator`, per-peer `SyncScheduler`) over iroh in `transport/`. `endpoint::lan_only` keeps iroh's relay and DNS publishing off; its guard tests exist so a `cargo update` cannot re-enable them. `transport/identity.rs` holds the persistent device key that `peer_refs.endpoint_id` pins against.
@@ -173,10 +168,11 @@ Components past ~500 lines: extract hooks first, then presentational sub-compone
 5. An invariant on a write or sync path is `assert!` or `return Err`, active in every build; a violation that only shows in release is silent data corruption (#412, #3726). `debug_assert!` only where the check is measured as hot (`hash.rs`, #1600), and never with side effects, because release builds compile the body out. Sweep: #4638.
 6. A function stays under 70 code lines (`clippy::too_many_lines`, threshold in `src-tauri/clippy.toml`). Existing violators carry `#[expect(clippy::too_many_lines)]`, which fails the build once the function is split, so the count only goes down; test and bench code is exempt at the crate root. Sweep: #4639.
 7. Release builds keep `overflow-checks` on, so a wrap aborts instead of corrupting. Arithmetic on a value decoded from a peer or a file uses `checked_*` and returns `AppError::Validation`; intended wrap says `wrapping_*`. Sweep: #4640.
+8. Slice user text on char boundaries (`char_indices`, `split_at_checked`), never by byte arithmetic: a mid-character index panics, and release builds abort on panic.
 
 ## TypeScript Bindings (specta)
 
-`src/lib/bindings.ts` is generated from the Rust command surface. New code imports from `@/lib/bindings`; the hand-written wrapper layer that used to sit on top of it is gone (#2927) and the small permanent floor that remains lives in `@/lib/ipc-helpers`. Regenerate after any command signature, arg/return type, or command-list change (the `ts_bindings_up_to_date` test fails on drift), including doc-comment-only changes:
+`src/lib/bindings.ts` is generated from the Rust command surface. New code imports from `@/lib/bindings`; the few hand-written helpers live in `@/lib/ipc-helpers`. Regenerate after any command signature, arg/return type, or command-list change (the `ts_bindings_up_to_date` test fails on drift), including doc-comment-only changes:
 
 ```bash
 cd src-tauri && cargo test -- specta_tests --ignored     # or: just gen-bindings
@@ -197,13 +193,13 @@ The hook list in `prek.toml` is capped (`scripts/check-hook-budget.mjs`). Adding
 2. Nothing else already catches it (`rustc`, `tsc`, `oxlint`, `clippy`, `sqruff`, `typos`, `knip`, a test, another guard).
 3. It runs in under 500 ms, or is CI-only (`stages = ["manual"]`).
 4. It fails loudly: file, line, fix.
-5. It fails closed: an input shape it cannot parse is a violation, not a skipped line.
+5. It fails closed: an input it cannot parse, or a scan that could not look (empty selector, missing root, unreadable file), is a violation, never "found nothing".
 
-Every hook carries a `# WHY: <defect class> — <#issue>` line directly above it. Adding a guard means deleting or justifying every guard it overlaps. A self-test exists only for a guard that parses source with its own parser; anything else that needs tests gets a vitest file. A guard that has never fired on a real defect is a liability: delete it. Deleting a guard needs no justification beyond this section.
+Every hook carries a `# WHY: <defect class> — <#issue>` line directly above it. Adding a guard means deleting or justifying every guard it overlaps. A self-test exists only for a guard that parses source with its own parser; anything else that needs tests gets a vitest file. A guard that has never fired on a real defect is a liability: delete it. Deleting a guard needs no justification beyond this section. Review of a guard PR stops once it catches its cited defect and fails closed; inputs only our own files produce are not findings.
 
 ## Releases
 
-Maintainer only. `scripts/release.sh <version>` runs the preflight, the local release-build check, and `scripts/bump-version.sh <version> --commit --tag --push`, which bumps every version manifest (including `src-tauri/fuzz/Cargo.lock`), signs the commit and tag, and pushes. The tag push publishes; never push a release tag on the maintainer's behalf, never hand-edit manifests, and do not add a CI bump button backed by a PAT. A tag that fails `verify-version`: delete it (`git push --delete origin <tag> && git tag -d <tag>`) and re-cut. Guide: [docs/BUILD.md § Releasing](docs/BUILD.md#releasing).
+Maintainer only, through `scripts/release.sh <version>`; the tag push publishes. Never push a release tag on the maintainer's behalf, never hand-edit version manifests, and do not add a CI bump button backed by a PAT. Guide: [docs/BUILD.md § Releasing](docs/BUILD.md#releasing).
 
 ## Testing
 
@@ -218,7 +214,7 @@ Maintainer only. `scripts/release.sh <version>` runs the preflight, the local re
 
 ### Acceptance is falsification
 
-A test that cannot fail covers nothing. Before calling a test done, break the code it covers, see it go red, restore. Falsify against a copy (`cp f /tmp/f.bak`, mutate, run, restore, `cmp`), never in place: stubs left by an interrupted run have shipped (#4287, #4018, #4204). Run `git diff` before your final message. Where mutation testing reaches the code, a killed mutant is the strongest form:
+A test that cannot fail covers nothing. Before calling a test done, break the code it covers, see it go red, restore. Falsify against a copy (`cp f /tmp/f.bak`, mutate, `cmp` to confirm the mutation applied, run, restore, `cmp`), never in place: stubs left by an interrupted run have shipped (#4287). The red must be the assertion you predicted; a build break or startup failure is not a kill. Run `git diff` before your final message. Where mutation testing reaches the code, a killed mutant is the strongest form:
 
 ```bash
 node scripts/run-mutation.mjs <module>       # frontend
@@ -236,13 +232,15 @@ The browser/e2e Tauri mock (`src/lib/tauri-mock/`) is a hand-maintained second i
 1. **Assert durable, re-queried effect, never call shape.** `expect(invoke).toHaveBeenCalledWith(…)` proves the frontend asked, not that anything persisted. Persist, re-query, assert the state.
 2. **The mock is a contract pinned by conformance fixtures.** Every state-mutating handler is driven by a `conformance/fixtures/*.json` fixture whose `expected` is authored by the backend (`CONFORMANCE_UPDATE=1 cargo nextest run -E 'test(conformance_fixtures_match_backend)'`) and asserted by both sides. Read commands are pinned through `queries` steps the same way; `conformance-coverage.test.ts` fails a new command without a fixture or a reasoned waiver. Wiring: `conformance_query.rs` + the `WIRE` table in `conformance-query.ts`.
 3. **A migration that touches a table the mock references updates the mock in the same PR.**
-4. **A bug that reached a user lands a spec in `e2e-tauri/`.** That lane runs the real backend, so it is the only frontend surface with no second implementation between the test and the truth, and a bug that shipped is by definition one the mock-backed estate did not catch. #3081 is the worked example: a real atomicity defect (a committed tag create, then a swallowed `SetProperty(space)`) that the mock never exhibited because it was still reading the `block_properties(key='space')` rows migrations 0087/0088 retired. That lane now runs on pull requests but is still not a required context (#4671 item 2), so pair the spec with one that BLOCKS — on its own it will not stop the PR that reintroduces the bug from merging.
+4. **A bug that reached a user lands a spec in `e2e-tauri/`.** That lane runs the real backend, the only frontend surface with no second implementation between the test and the truth, and a bug that shipped is one the mock-backed estate missed. It runs on pull requests but is not a required context (#4671), so pair the spec with one in a lane that blocks.
 
 ### Running tests efficiently
 
 - Rust: `cd src-tauri && cargo nextest run --workspace -E 'test(name)'`. Use nextest, not `cargo test`, for anything that reads a process-global counter and asserts on the delta (`tests/command_integration/conformance.rs` does); see `src-tauri/tests/AGENTS.md` § "Process-global state".
-- TS: `npx vitest run <paths>`.
-- Do not run clippy/fmt/oxlint/oxfmt by hand; the hooks do.
+- TS: `npx vitest run <paths>`. Vitest does not type-check; run `npm run typecheck` too.
+- A filter that selects zero tests exits 0 (vitest `-t`; nextest under `--no-tests=pass`, as in `scripts/test-related-rust.sh`). Read the count on the summary line, never an exit code through a pipe.
+- A whole-workspace nextest run can outlast a foreground tool call: split it with `--partition count:1/2` and `count:2/2`, or run it in the background.
+- The hooks run fmt and oxlint at commit and clippy at push, and only when wired (cloud sessions can leave them unwired). Before handing off a Rust change, run `cd src-tauri && cargo clippy --workspace --all-targets -- -D warnings` yourself; `--lib` skips test code and `-p` skips the other crates.
 
 ### Verifying UI at runtime
 
@@ -258,7 +256,7 @@ Strict settings are project-wide; do not weaken them.
 
 ## Performance Conventions
 
-Baseline at 100K blocks: PK lookups ~23 µs; paginated lists stay flat; batch via `json_each()`. Lazy hash computation was rejected because the sync protocol verifies hashes up front. When replacing a query implementation, keep the old one as a `#[cfg(test)]` oracle and assert both agree. Background rebuilds read from the reader pool and take a write connection only for the final transaction.
+At 100K blocks paginated lists stay flat; batch via `json_each()`. Lazy hash computation was rejected because the sync protocol verifies hashes up front. A performance claim needs a committed harness that reproduces it; report direction and noise band, never a delta inside its noise. When replacing a query implementation, keep the old one as a `#[cfg(test)]` oracle and assert both agree. Background rebuilds read from the reader pool and take a write connection only for the final transaction.
 
 ## Search & FTS
 
@@ -287,7 +285,7 @@ Detail: [`docs/architecture/filters.md`](docs/architecture/filters.md). A `Filte
 - Debug and release APKs build, install, and run. Release uses R8; verify keep-rules when adding reflection-based deps.
 - Diagnose with `adb logcat | grep RustStdoutStderr`; it works on a release build. Only `run-as` needs a debuggable build.
 - Generated project: `src-tauri/gen/android/`. Min SDK 30, target 36, NDK 27, Java 17. 64-bit only (`aarch64`, `x86_64`); do not re-add 32-bit targets.
-- Emulator: `emulator -avd spike_test -gpu host &`. DB path: `/data/data/com.agaric.app/notes.db`. ADB recipes: [docs/BUILD.md](docs/BUILD.md#installing-on-emulator).
+- Emulator: `emulator -avd spike_test -gpu host &`. DB path: `/data/data/com.agaric.app/notes.db`. More in [docs/BUILD.md](docs/BUILD.md#android).
 
 ## State Files
 

@@ -7,36 +7,25 @@ Criterion benches under `src-tauri/benches/`. `interactive_slo` additionally enf
 `.github/workflows/scheduled-deep-checks.yml` (weekly Monday cron + `workflow_dispatch`, not per-PR) runs two lanes:
 
 - **`bench-smoke`** — sharded. Each shard builds its slice with `cargo bench --no-run --bench …`, then runs every binary once with `--test` (criterion's single-shot, no-measurement mode). A fixture that drifted from the schema panics here. This validates seeds, not perf.
-- **`bench-slo`** — warm-runs the benches listed in the workflow's `SLO_BENCHES` env (currently `interactive_slo`) plus the `#[ignore]`d 20k-row gates. Separate from the smoke shards so a smoke timeout cannot skip it, and excluded from the cold `--test` loop so `assert_under_budget` is not tripped by cold timings. The `slo_include_problem` dispatch input also measures the cache/counterfactual probes.
+- **`bench-slo`** — warm-runs the workflow's `SLO_BENCHES` (`interactive_slo`) plus the `#[ignore]`d 20k-row gates, apart from the smoke shards so a smoke timeout cannot skip it and cold timings cannot trip `assert_under_budget`. The `slo_include_problem` dispatch input adds the cache/counterfactual probes.
 
-## Run benches without the E0308 build race
+## Verifying a bench change: CI is the arbiter
 
-`cargo bench --bench <name> -- --test` intermittently fails with:
-
-```
-error[E0308]: mismatched types ... expected `Pool<Sqlite>`, found a different `Pool<Sqlite>`
-warning: output filename collision at .../libagaric_lib.rlib
-```
-
-This is cargo #6313, not your code: `agaric`'s `[lib]` has several crate-types that race to write `target/release/deps/libagaric_lib.*`, so a bench can link a second `sqlx` instance. Every per-`--bench` recompile re-rolls the dice. Build once, then run the prebuilt binaries:
+Do not compile the release bench graph locally: `[profile.release]` is thin LTO with `codegen-units = 1`, which takes hours and gets OOM-killed on a shared box. Dispatch the lane on your branch instead; a non-`main` dispatch is a dry run that files nothing:
 
 ```bash
-cd src-tauri
-cargo bench --no-run                                  # one cohesive build; if it flakes, rerun it
-for name in $(grep -A1 '^\[\[bench\]\]' Cargo.toml \
-    | sed -n 's/^name = "\(.*\)"/\1/p' | grep -vx interactive_slo); do
-  bin=$(ls -t "target/release/deps/${name}-"* | grep -vE '\.(d|so|dwp)$' | head -1)
-  echo "smoke $name"; "$bin" --test || { echo "FAILED: $name"; break; }
-done
+gh workflow run scheduled-deep-checks.yml --ref <branch> -f lanes=bench-smoke   # or bench-slo
 ```
 
-A non-zero exit or `panicked at` is a real fixture failure. Themed binaries with heavy 100K-seed groups (e.g. `core_bench`) are slow under cold `--test`; to smoke one group, filter: `"$bin" --test cache`.
+A non-zero exit or `panicked at` in `bench-smoke` is a real fixture failure. An `assert_under_budget` failure under cold `--test` is not (cold runs inflate heavy benches 10x or more); only the warm `bench-slo` number gates.
 
-## Cold `--test` vs warm budgets
-
-`--test` runs each bench once, cold, which inflates heavy benches 10x or more. An `assert_under_budget` failure under `--test` is not a verdict. Decide with a warm run — `cargo bench --bench interactive_slo` — and gate only on that number.
+The `#[ignore]`d gates in `bench-slo` run under nextest's `profile.default` (no `--profile`), so they are killed at 2x30s; a slow one needs an override in `src-tauri/.config/nextest.toml`.
 
 Optional probes: `if problem_skipped("<name> @ 100K") { return }` gates the cache and MostLinked probes behind `SLO_INCLUDE_PROBLEM=1`; the permanently over-budget revert probe has its own `SLO_INCLUDE_REVERT=1`.
+
+Before quoting a measured number in docs or a PR, check the fixture seeded what the bench claims; a dangling FK or a wrong scale changes the number, not the build.
+
+Smoke shards build once with `cargo bench --no-run` and run the prebuilt binaries; separate `cargo bench --bench <name>` calls race on `libagaric_lib.*` (cargo #6313) and fail with `E0308 ... expected Pool<Sqlite>, found a different Pool<Sqlite>`.
 
 ## Shape probes: observe results outside timing
 
@@ -46,11 +35,11 @@ Do not preflight a mutator against the measured fixture (it changes the advertis
 
 Put the same probe on any non-SLO bench whose fixture can degrade into a cheaper shape (`bench_export_page_markdown` in `src-tauri/benches/groups/export_bench.rs` is the model); those run in the `--test` lane, so the check fires every week.
 
-**Placement:** in the outer bench function's own body, after the seeder and outside every `bench_function` / `bench_with_input` / `iter_custom` closure. That body runs under both `--test` and a name filter, which is what makes the assertion load-bearing. Position relative to `c.benchmark_group(..)` does not matter — a parameterized group necessarily probes each fixture after opening the group.
+**Placement:** in the outer bench function's body, after the seeder and outside every `bench_function` / `bench_with_input` / `iter_custom` closure, because only that body runs under both `--test` and a name filter.
 
 ## Seeding fixtures: the schema-drift checklist
 
-Seeders use raw `sqlx::query(...)` and must match the live schema. Classes that have bitten:
+Seeders use raw `sqlx::query(...)` and must match the live schema:
 
 - **`op_log.created_at` is `INTEGER` epoch-ms** (migration 0079) — bind an `i64`, not an RFC-3339 string; the STRICT table rejects TEXT.
 - **Reserved property keys** `('todo_state','priority','due_date','scheduled_date','space')` are `blocks` columns; migration 0088's `key_not_reserved` CHECK rejects them in `block_properties`. Use a free-form key or set the column.
@@ -59,20 +48,18 @@ Seeders use raw `sqlx::query(...)` and must match the live schema. Classes that 
 - **Ids passed to commands must be valid ULIDs** — 26 chars Crockford base32, no `I/L/O/U`. `SpaceId::from_trusted` skips validation; a command path does not.
 - **`op_log.block_id`** must be set on rows feeding revert/undo — `find_prior_text` filters on the column, not on `json_extract(payload)`.
 
-Fixing one class usually exposes the next; rerun `--test` until clean.
-
-## Pre-commit
-
-The `cargo fmt` pre-commit hook rewrites unformatted bench code in place and aborts the commit; re-stage and commit again. A `--check` companion runs at pre-push. Confirm HEAD advanced — under `rtk` a hook abort can look like success.
+Fixing one class usually exposes the next; rerun the smoke lane until clean.
 
 ## Layout: themed binaries + `groups/`
 
-Groups live verbatim in `src-tauri/benches/groups/<name>.rs` and are pulled into five themed binaries (`engine_bench`, `query_bench`, `agenda_bench`, `io_bench`, `core_bench`) via `#[path = "groups/<name>.rs"] mod <name>;` and one `criterion_main!` each — one link per theme instead of one per group. Every `benchmark_group` / `bench_function` / `BenchmarkId` string is unchanged, so baselines in `target/criterion/` (keyed by id) keep resolving.
+Groups live in `src-tauri/benches/groups/<name>.rs` and are pulled into five themed binaries (`engine_bench`, `query_bench`, `agenda_bench`, `io_bench`, `core_bench`) via `#[path = "groups/<name>.rs"] mod <name>;`, one link per theme. Keep `benchmark_group` / `bench_function` / `BenchmarkId` strings stable: `target/criterion/` baselines are keyed by them.
 
 Two benches stay standalone: `interactive_slo` (CI invokes it by name; never fold it in) and `loro_vs_sql_reads` (hand-rolled `fn main()`, not criterion).
 
-Run one group by filtering its themed binary: `cargo bench --bench core_bench -- hash`. CI and the smoke loop enumerate `[[bench]]` names dynamically, so new themed binaries are picked up automatically.
+Pattern: one `TempDir` + DB per bench, `Runtime::block_on` for setup, `b.to_async(&rt).iter(...)`, `materializer.shutdown()` after each group, `BenchmarkId::from_parameter` for size sweeps. Benches are external crates, so `*_inner` may need `pub`.
+
+Select a group with a name filter on its themed binary (`core_bench -- hash`). CI enumerates `[[bench]]` names, so a new themed binary needs no workflow change.
 
 ## Seeders are duplicated per group, on purpose
 
-Each `groups/*.rs` carries its own `fresh_pool`, `seed_*`, `ts_for`. Sibling mods in the same binary do not collide. When you change a seeding pattern, grep the sibling files and keep them in sync.
+Each `groups/*.rs` carries its own `fresh_pool`, `seed_*`, `ts_for`. When you change a seeding pattern, grep the sibling files and keep them in sync.
