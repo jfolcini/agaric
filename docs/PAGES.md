@@ -12,7 +12,7 @@ Compound filters live in a chip row above the page list. You add a chip from the
 The chip set is split into two groups, mirroring the popover:
 
 - **Filters** (shared with Search): Tag, Page path, Has property, the Last-edited buckets, and Priority. A `tag:` chip applied here returns the same pages whose blocks the Search surface returns for the same tag — the two surfaces share one filter engine and never drift.
-- **Pages** (grooming facets that only make sense at page granularity): Orphan, Stub, and No inbound links.
+- **Pages** (grooming facets that only make sense at page granularity): Orphan, Stub, No inbound links, and Exclude journal pages.
 
 The chip row is always present — it rides the same `list_pages_with_metadata` code path as the list itself. It lives in `src/components/PageBrowser/PageBrowserFilterRow.tsx`, fed by the Add-filter popover in `src/components/PageBrowser/AddFilterPopover.tsx`.
 
@@ -31,6 +31,7 @@ These describe a page's connectivity or emptiness — concepts that only exist a
 | **Orphan** | A page with **no inbound links *and* no outbound links** — nothing points to it and it points to nothing. Prime archival / merge candidate. | Surface every disconnected page so you can decide whether to keep, merge, or archive it. |
 | **Stub** | An empty-but-named page: **zero non-title descendants**. The page exists and has a title, but no content blocks under it. | Find the named placeholders you created and never filled in. |
 | **No inbound links** | A page with **zero backlinks** — nobody has linked *to* it yet (its own outbound links don't count). The looser sibling of Orphan. | Discover pages that exist in the space but aren't woven into your link graph. |
+| **Exclude journal pages** | Hides every page titled exactly `YYYY-MM-DD`. It is an exclude **Page path** glob, `[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]`, so `2026-10-08 notes` stays. **On by default** in a space with no saved chips; remove it like any chip and the removal is remembered. *Reveal in Pages view* on a journal page removes it. | Keep the daily pages from burying the pages you curate. |
 
 Two notes on the link counting, so the results aren't surprising:
 
@@ -95,5 +96,5 @@ The list collapses to pages edited in the last seven days. Pair it with the **Re
 - **The search box is separate from the chips.** The name-substring box at the top of the Pages view filters by page title only — it is *not* a query input. Typing `tag:urgent` into it searches for a page literally titled "tag:urgent" (almost always zero results), because the Pages input does **not** parse inline filter syntax. Structured filters live exclusively in chips. This is a deliberate split: the Pages box is a "jump to the page I half-remember the name of" affordance, and mixing prefix syntax into it would force users to memorise prefixes for a view that should be obvious at first paint. (The Search surface *does* parse inline `tag:` / `path:` syntax, because Search has a real query that composes naturally with filters — see [Search](SEARCH.md).)
 - **An invalid filter returns zero results, not an error.** A Tag chip pointing at a tag that no longer exists simply matches nothing; the chip still renders with the value you gave it, so you can remove it. The backend does not round-trip every chip for validation.
 - **Negation and exclusion are built in.** The Pages **Add filter** popover builds both affirmative and negated forms: a **Page path** is an *include* glob by default and an *exclude* glob when you tick **Exclude**, and **Has property** offers *exists* / *doesn't exist* and *is* / *is not* (see the **Page path** and **Has property** rows above). The same negated forms also render correctly when they arrive from a saved view.
-- **Empty state.** With no chips applied, the Pages view shows every page in the active space, sorted by your current sort and paginated normally — identical to the no-filter view. An empty chip row renders just the **Add filter** button.
+- **Empty state.** With no chips applied, the Pages view shows every page in the active space, sorted by your current sort and paginated normally — identical to the no-filter view. An empty chip row renders just the **Add filter** button. A space starts with the **Exclude journal pages** chip, so remove it (or **Clear all**) to see journal pages too.
 - **Pages-only facets vs Search.** The Orphan / Stub / No-inbound-links facets are never offered on the Search surface; conversely, Search-only facets (regex, case-sensitive, whole-word, snippet) are never offered here. The per-surface allow-list that enforces this is documented alongside the filter primitives in `src-tauri/agaric-store/src/filters/primitive.rs`.

@@ -152,6 +152,7 @@ export const references: Record<string, string> = {
   'graph.filter.hasScheduledDate': 'Has scheduled date',
   'graph.filter.hasBacklinks': 'Has backlinks',
   'graph.filter.excludeTemplates': 'Exclude templates',
+  'graph.filter.excludeJournal': 'Exclude journal pages',
   'graph.filter.yes': 'Yes',
   'graph.filter.no': 'No',
   'graph.filter.removeFilter': 'Remove {{label}} filter',

@@ -483,6 +483,7 @@ export const pages: Record<string, string> = {
   'pageBrowser.filter.facetOrphan': 'Orphan',
   'pageBrowser.filter.facetStub': 'Stub',
   'pageBrowser.filter.facetHasNoInboundLinks': 'No inbound links',
+  'pageBrowser.filter.facetExcludeJournalPages': 'Exclude journal pages',
   'pageBrowser.filter.lastEdited.today': 'Edited today',
   'pageBrowser.filter.lastEdited.thisWeek': 'Edited this week',
   'pageBrowser.filter.lastEdited.thisMonth': 'Edited this month',
@@ -550,6 +551,7 @@ export const pages: Record<string, string> = {
   'pageBrowser.filter.facetStubDesc': 'A titled page with no content blocks.',
   'pageBrowser.filter.facetHasNoInboundLinksDesc':
     'Nothing links to this page (it may still link out).',
+  'pageBrowser.filter.facetExcludeJournalPagesDesc': 'Hide pages titled with a date (YYYY-MM-DD).',
   // Short descriptions for the value-bearing facets so they read
   // as clearly as the boolean ones in the Add-Filter popover.
   'pageBrowser.filter.facetTagDesc': 'Pages carrying the tag you pick.',

@@ -52,6 +52,7 @@ import { matchesSearchFolded } from '@/lib/fold-for-search'
 import { notify } from '@/lib/notify'
 import type { SavedPagesView } from '@/lib/preferences'
 import { dropOtherSpacesTagChips, type PagesViewTuple } from '@/lib/saved-pages-views'
+import { isExcludeJournalPagesFilter } from '@/stores/pageBrowserFilters'
 import { useSpaceStore } from '@/stores/space'
 
 const HEADER_ROW_HEIGHT = 36
@@ -557,7 +558,9 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
   // expose both booleans separately rather than the combined `isFiltering`.
   const hasTextQuery = filterText.trim().length > 0
   const hasChipFilters = filters.length > 0
-  const isFiltering = hasTextQuery || hasChipFilters
+  // The default journal chip alone (#5370) does not count: an empty space
+  // still gets the create-first state, and namespace folders still collapse.
+  const isFiltering = hasTextQuery || !filters.every(isExcludeJournalPagesFilter)
   // The list viewport shows the "No matching pages" status (instead of
   // the virtualized rows) whenever an active filter resolves to zero
   // rows. Drives both the body branch and the grid-role suppression.

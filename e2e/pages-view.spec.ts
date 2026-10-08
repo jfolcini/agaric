@@ -71,6 +71,19 @@ async function bootPages(page: Page, opts: BootOpts = {}): Promise<void> {
       window.localStorage.setItem('__mockFacetFixture', 'true')
     })
   }
+  // The counts in this file are for the full seed, so start as a user who
+  // removed the default journal chip; that chip has its own describe (#5370).
+  await page.addInitScript(() => {
+    const key = 'agaric:page-browser-filters'
+    if (window.localStorage.getItem(key) !== null) return
+    window.localStorage.setItem(
+      key,
+      JSON.stringify({
+        state: { filtersBySpace: { SPACE_PERSONAL: [] }, nextAddId: 0 },
+        version: 1,
+      }),
+    )
+  })
   await waitForBoot(page)
   await openPagesView(page)
 }
@@ -188,6 +201,32 @@ async function scrollGridToBottom(page: Page) {
     el.scrollTop = el.scrollHeight
   })
 }
+
+// ===========================================================================
+// 0. Journal pages are hidden by default (#5370)
+// ===========================================================================
+test.describe('default journal chip', () => {
+  test('hides the daily page; removing the chip shows it and survives a reload', async ({
+    page,
+  }) => {
+    await waitForBoot(page)
+    await openPagesView(page)
+    const chip = page.getByRole('group', { name: 'Filter: Exclude journal pages' })
+    const daily = pageTitleLocator(page).filter({ hasText: localDateStr(new Date()) })
+    await expect(chip).toBeVisible()
+    await expect(countChip(page)).toHaveText('5 matching pages')
+    await expect(daily).toHaveCount(0)
+
+    await chip.getByRole('button', { name: 'Remove filter Exclude journal pages' }).click()
+    await expect(countChip(page)).toHaveText('6 pages')
+    await expect(daily).toHaveCount(1)
+
+    await page.reload()
+    await openPagesView(page)
+    await expect(countChip(page)).toHaveText('6 pages')
+    await expect(chip).toHaveCount(0)
+  })
+})
 
 // ===========================================================================
 // 1. Each facet narrows

@@ -221,7 +221,8 @@ export function isFilterPredicate(value: unknown): value is FilterPredicate {
     case 'orphan':
     case 'stub':
     case 'hasNoInboundLinks':
-    case 'excludeTemplates': {
+    case 'excludeTemplates':
+    case 'excludeJournal': {
       return true
     }
     default: {

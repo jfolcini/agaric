@@ -7,6 +7,7 @@ import {
   focusBlockById,
   navigateToView,
   openPage,
+  showJournalPages,
   test,
   waitForBoot,
 } from './helpers'
@@ -193,6 +194,7 @@ test.describe('link chips follow their target', () => {
     await expect(await todaysStandup()).toBeVisible()
 
     await openPagesView(page)
+    await showJournalPages(page)
     const row = page.locator('[data-page-item]').filter({ hasText: today })
     await row.getByRole('button', { name: 'Delete page' }).click()
     await activeAlertDialog(page).getByRole('button', { name: 'Delete', exact: true }).click()

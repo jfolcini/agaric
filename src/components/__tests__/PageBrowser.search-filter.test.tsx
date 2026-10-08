@@ -78,7 +78,8 @@ beforeEach(() => {
   // persists to localStorage (#1750); reset both the in-memory slice and the
   // persisted key so chips added in one test don't leak into the next.
   localStorage.removeItem('agaric:page-browser-filters')
-  usePageBrowserFiltersStore.setState({ filtersBySpace: {}, nextAddId: 0 })
+  // An empty slice, not an absent one: absent is the default journal chip (#5370).
+  usePageBrowserFiltersStore.setState({ filtersBySpace: { SPACE_TEST: [] }, nextAddId: 0 })
   // Phase 2 — PageBrowser now gates its render and page query
   // on `useSpaceStore.isReady`. Seed the store so tests exercise the
   // real code path rather than the loading skeleton.
@@ -572,6 +573,29 @@ describe('PageBrowser', () => {
         const results = await axe(container)
         expect(results).toHaveNoViolations()
       })
+    })
+
+    it('renders the no-match state when a chip beside the default journal chip narrows to zero (#5370)', async () => {
+      usePageBrowserFiltersStore.setState({
+        filtersBySpace: {
+          SPACE_TEST: [
+            {
+              type: 'PathGlob',
+              pattern: '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]',
+              exclude: true,
+              _addId: 1,
+            },
+            { type: 'Stub', _addId: 2 },
+          ],
+        },
+        nextAddId: 2,
+      })
+      stubPageRowInvoke(mockedInvoke, { list_pages_with_metadata: () => emptyPage })
+
+      render(<PageBrowser />)
+
+      await screen.findByText(t('pageBrowser.noMatches'))
+      expect(screen.queryByText(t('pageBrowser.noPages'))).not.toBeInTheDocument()
     })
 
     it('announces filter add and remove in a polite live region (P1-F1)', async () => {

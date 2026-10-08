@@ -29,6 +29,7 @@ Browse every page in the active space.
 - **Tree view** (default): pages organised by `/`-delimited namespace, e.g. `Projects/Website/Backlog`. Folders show a count badge and a `+` button to create a child page inline.
 - **Flat view**: every page, no hierarchy.
 - **Sort dropdown**: Alphabetical, Recent, Created, Recently modified, Most linked, Most content.
+- **Filter chips** narrow the list ([../PAGES.md](../PAGES.md)). A space starts with *Exclude journal pages*, which hides the `YYYY-MM-DD` pages until you remove it.
 - **Virtualised list**: scrolls smoothly even with thousands of pages.
 - **Multi-select** pages with `Ctrl/Shift+Click`; **batch delete** with confirmation.
 - **Inline rename**: right-click → Rename, or click the page in the **PageEditor** and rename inline in the title. A title is unique within its space: renaming onto an existing title is refused, and creating one (including via `[[name]]`) opens the existing page.
@@ -92,7 +93,7 @@ Pages tagged as templates.
 A force-directed graph of pages and the links between them.
 
 - **Nodes** are pages; **edges** are `[[link]]` references.
-- **Filter bar** in the header: filter by tag, task status, priority, presence of a due date, presence of a scheduled date, presence of backlinks, and exclude templates. Filters stack as removable pills; there is no date-range or content-match filter.
+- **Filter bar** in the header: filter by tag, task status, priority, presence of a due date, presence of a scheduled date, presence of backlinks, exclude templates, and exclude journal pages (pages titled `YYYY-MM-DD`). Filters stack as removable pills; there is no date-range or content-match filter. A space with no saved graph filters starts with *Exclude journal pages*; removing it is remembered per space.
 - **Zoom / pan** with mouse / trackpad / touch.
 - **Click a node** to navigate to its page.
 - **Web Worker**: the simulation runs in a worker so the main thread stays responsive on large graphs. Falls back to the main thread if Web Workers are unavailable.

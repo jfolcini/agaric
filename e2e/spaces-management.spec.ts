@@ -66,7 +66,7 @@
  *      attempted here.
  */
 
-import { expect, openPage, test, waitForBoot } from './helpers'
+import { expect, openPage, showJournalPages, test, waitForBoot } from './helpers'
 
 const SWITCH_SPACE = 'Switch space'
 const MANAGE_SPACES = 'Manage spaces…'
@@ -188,7 +188,10 @@ test.describe('Spaces — create, switch, content isolation', () => {
       const d = new Date()
       return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
     })
-    await openPagesView(page)
+    // Work's only page is that journal page, hidden by the default chip, so
+    // the grid only renders once the chip is removed.
+    await clickPagesNav(page)
+    await showJournalPages(page)
     await expect(
       page.locator('[data-page-item]').filter({ hasText: new RegExp(todayStr) }),
     ).toBeVisible()

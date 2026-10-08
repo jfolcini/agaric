@@ -269,6 +269,12 @@ export function isDateFormattedPage(title: string): boolean {
   return /^\d{4}-\d{2}-\d{2}$/.test(title)
 }
 
+/**
+ * `isDateFormattedPage` as a backend `PathGlob` pattern. The `[` keeps the
+ * backend from substring-wrapping it, so it matches the whole title only.
+ */
+export const JOURNAL_PAGE_GLOB = '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]'
+
 export interface DayEntry {
   date: Date
   dateStr: string

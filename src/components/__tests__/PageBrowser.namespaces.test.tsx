@@ -75,7 +75,8 @@ beforeEach(() => {
   // persists to localStorage (#1750); reset both the in-memory slice and the
   // persisted key so chips added in one test don't leak into the next.
   localStorage.removeItem('agaric:page-browser-filters')
-  usePageBrowserFiltersStore.setState({ filtersBySpace: {}, nextAddId: 0 })
+  // An empty slice, not an absent one: absent is the default journal chip (#5370).
+  usePageBrowserFiltersStore.setState({ filtersBySpace: { SPACE_TEST: [] }, nextAddId: 0 })
   // Phase 2 — PageBrowser now gates its render and page query
   // on `useSpaceStore.isReady`. Seed the store so tests exercise the
   // real code path rather than the loading skeleton.
@@ -184,6 +185,27 @@ describe('PageBrowser', () => {
       // Children should reappear
       expect(screen.getByText('project-a')).toBeInTheDocument()
       expect(screen.getByText('project-b')).toBeInTheDocument()
+    })
+
+    it('namespace folders stay collapsible under the default journal chip (#5370)', async () => {
+      usePageBrowserFiltersStore.setState({ filtersBySpace: {}, nextAddId: 0 })
+      const user = userEvent.setup()
+      stubPageRowInvoke(mockedInvoke, {
+        list_pages_with_metadata: () =>
+          pageList([
+            makePage({ id: 'P1', content: 'work/project-a' }),
+            makePage({ id: 'P2', content: 'work/project-b' }),
+          ]),
+      })
+
+      render(<PageBrowser />)
+
+      expect(await screen.findByText('project-a')).toBeInTheDocument()
+      expect(
+        screen.getByRole('group', { name: 'Filter: Exclude journal pages' }),
+      ).toBeInTheDocument()
+      await user.click(screen.getByText('work'))
+      expect(screen.queryByText('project-a')).not.toBeInTheDocument()
     })
 
     it('fires onPageSelect with full path when a tree leaf is clicked', async () => {

@@ -14,6 +14,14 @@ import { expect, navigateToView, test } from './helpers'
  * - Page title after navigation: `[aria-label="Page title"]`
  */
 
+/** Local YYYY-MM-DD, matching the seed's `todayDate()` journal page title. */
+function localDateStr(d: Date): string {
+  const y = d.getFullYear()
+  const m = String(d.getMonth() + 1).padStart(2, '0')
+  const day = String(d.getDate()).padStart(2, '0')
+  return `${y}-${m}-${day}`
+}
+
 test.describe('Graph view', () => {
   // GraphView initial render legitimately goes through a d3 worker
   // Startup path that can exceed the 3s global `expect` timeout on
@@ -105,9 +113,10 @@ test.describe('Graph view', () => {
   // Filter bar (#2713) — `GraphFilterBar` narrows the rendered node set.
   //
   // No "content match" filter test: there is no content/full-text dimension
-  // in `GraphFilter` (`src/lib/graph-filters.ts` lines ~44-52 — only `tag` /
+  // in `GraphFilter` (`src/lib/graph-filters.ts` — only `tag` /
   // `status` / `priority` / `hasDueDate` / `hasScheduledDate` /
-  // `hasBacklinks` / `excludeTemplates`) or in `GraphFilterBar.tsx` to drive.
+  // `hasBacklinks` / `excludeTemplates` / `excludeJournal`) or in
+  // `GraphFilterBar.tsx` to drive.
   // docs/features/views.md previously advertised a "by content match" filter
   // that never existed; that drift was corrected (#2761) to describe the
   // real filter surface, so there is nothing left for this spec to cover.
@@ -129,6 +138,9 @@ test.describe('Graph view', () => {
 
     const nodeGroups = page.locator('[data-testid="graph-view"] svg g.node')
     await expect(nodeGroups.first()).toBeVisible()
+    // Drop the default journal filter (#5370) so the counts are about templates alone.
+    await page.getByRole('button', { name: 'Clear all' }).click()
+    await expect(nodeGroups.filter({ hasText: localDateStr(new Date()) })).toHaveCount(1)
     const before = await nodeGroups.count()
 
     const templateNode = nodeGroups.filter({ hasText: 'Meeting Notes Template' })
@@ -152,6 +164,31 @@ test.describe('Graph view', () => {
     await page.getByRole('button', { name: 'Clear all' }).click()
     await expect(templateNode).toHaveCount(1)
     await expect.poll(() => nodeGroups.count()).toBe(before)
+  })
+
+  test('journal pages are filtered out by default; removing the pill persists (#5370)', async ({
+    page,
+  }) => {
+    await navigateToView(page, 'Graph')
+    await expect(page.locator('[data-testid="graph-svg"]')).toBeVisible()
+
+    const nodeGroups = page.locator('[data-testid="graph-view"] svg g.node')
+    const journalNode = nodeGroups.filter({ hasText: localDateStr(new Date()) })
+    const pill = page.getByRole('group', { name: 'Exclude journal pages' })
+    await expect(nodeGroups.filter({ hasText: 'Getting Started' })).toHaveCount(1)
+    await expect(pill).toBeVisible()
+    await expect(journalNode).toHaveCount(0)
+
+    await page.getByRole('button', { name: 'Remove Exclude journal pages filter' }).click()
+    await expect(pill).toHaveCount(0)
+    await expect(journalNode).toHaveCount(1)
+
+    await page.reload()
+    await expect(page.getByRole('button', { name: 'Journal', exact: true })).toBeVisible()
+    await navigateToView(page, 'Graph')
+    await expect(nodeGroups.filter({ hasText: 'Getting Started' })).toHaveCount(1)
+    await expect(journalNode).toHaveCount(1)
+    await expect(pill).toHaveCount(0)
   })
 
   // ---------------------------------------------------------------------

@@ -159,6 +159,10 @@ describe('isFilterPredicate', () => {
     it('accepts excludeTemplates with no other fields', () => {
       expect(isFilterPredicate({ kind: 'excludeTemplates' })).toBe(true)
     })
+
+    it('accepts excludeJournal with no other fields', () => {
+      expect(isFilterPredicate({ kind: 'excludeJournal' })).toBe(true)
+    })
   })
 
   describe('property', () => {
@@ -246,6 +250,7 @@ describe('parseFilterPredicates', () => {
       { type: 'hasScheduledDate', value: false },
       { type: 'hasBacklinks', value: true },
       { type: 'excludeTemplates', value: true },
+      { type: 'excludeJournal', value: true },
     ]
     const canonical = graphFiltersToCanonical(filters)
     // Sanity: the fixture actually produced a non-trivial payload (the

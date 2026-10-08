@@ -16,7 +16,8 @@
  * - `excludeTemplates` with `value: true` removes nodes where
  *   `is_template === true`. `value: false` is a no-op by design — users who
  *   want only templates should add an `isTemplate` filter instead (not
- * Implemented; out of scope for).
+ * Implemented; out of scope for). `excludeJournal` is the same shape over
+ *   `is_journal`.
  * - `tag` with an empty `tagIds` array is treated as a no-op.
  */
 
@@ -37,6 +38,7 @@ export interface GraphFilterableNode {
   scheduled_date?: string | null | undefined
   tag_ids?: string[] | undefined
   is_template?: boolean | undefined
+  is_journal?: boolean | undefined
   backlink_count?: number | undefined
 }
 
@@ -48,6 +50,7 @@ export type GraphFilter =
   | { type: 'hasScheduledDate'; value: boolean }
   | { type: 'hasBacklinks'; value: boolean }
   | { type: 'excludeTemplates'; value: boolean }
+  | { type: 'excludeJournal'; value: boolean }
 
 /**
  * Returns `true` when the node passes the filter, `false` otherwise.
@@ -109,6 +112,11 @@ export function nodeMatchesFilter<N extends GraphFilterableNode>(
       // Exclude only when is_template is *explicitly* true; unknown → keep.
       return node.is_template !== true
     }
+
+    case 'excludeJournal': {
+      if (!filter.value) return true
+      return node.is_journal !== true
+    }
   }
 }
 
@@ -156,6 +164,9 @@ export function getGraphFilterKey(filter: GraphFilter): string {
     case 'excludeTemplates': {
       return `excludeTemplates:${filter.value}`
     }
+    case 'excludeJournal': {
+      return `excludeJournal:${filter.value}`
+    }
   }
 }
 
@@ -168,6 +179,7 @@ export const GRAPH_FILTER_TYPES = [
   'hasScheduledDate',
   'hasBacklinks',
   'excludeTemplates',
+  'excludeJournal',
 ] as const satisfies readonly GraphFilter['type'][]
 
 export type GraphFilterType = (typeof GRAPH_FILTER_TYPES)[number]
