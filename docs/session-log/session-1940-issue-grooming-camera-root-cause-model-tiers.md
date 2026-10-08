@@ -1,4 +1,4 @@
-# Session 1939 — Issue grooming, camera root cause, model tiers for the 5.5 lineup
+# Session 1940 — Issue grooming, camera root cause, model tiers for the 5.5 lineup
 
 The maintainer filed 27 one- or two-line issues (#5353–#5379) and asked for them to be fleshed out. The seven already claimed (#5353, #5355, #5356, #5358, #5367, #5374 with open PRs or `in-progress`, and #5357, superseded by #5373) were left alone. The other twenty (#5354, #5359–#5366, #5368–#5373, #5375–#5379) now carry the problem, verified `file:line` pointers, the smallest change that reuses existing code, acceptance tests, and a **Decisions** block at the top recording the maintainer's calls. Research ran in six parallel read-only agents; their load-bearing claims were spot-checked against the code before posting, and one wrong line (what `anchor_free` does, #5363) was corrected after posting.
 
