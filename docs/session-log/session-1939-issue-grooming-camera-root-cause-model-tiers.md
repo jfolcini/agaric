@@ -18,5 +18,6 @@ Decisions the maintainer pushed further than the first draft: #5371 moves every 
   - typical: Opus `high`, the knee;
   - high risk: Opus `xhigh`, reviewed by Sonnet `max`, a second model that is Anthropic's best on Terminal-Bench 4.0 (63.6% against Opus 5.5's 59.6%).
 - **Escalation** steps up the frontier and ends at Opus `max`.
+- **DeepSWE** (v1.1, no 5.5 rows yet) corroborates the knee on long-horizon coding: Opus 5 is flat from `high` to `max` within error (72.8–73.7%) and drops at `medium` (68.9%) and `low` (58.1%), and Opus 5 beats Fable 5 at every effort for less.
 
 Verified: no product code changed; the scanner file patched for the reproduction was restored from a backup and `cmp`-checked, and `git diff` was clean before the skill edit. No suites were run for this docs-only change.
