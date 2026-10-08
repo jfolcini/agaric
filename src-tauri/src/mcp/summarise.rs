@@ -38,9 +38,9 @@ use serde_json::Value;
 
 use super::registry::{
     TOOL_ADD_TAG, TOOL_APPEND_BLOCK, TOOL_CREATE_PAGE, TOOL_DELETE_BLOCK, TOOL_GET_AGENDA,
-    TOOL_GET_BLOCK, TOOL_GET_PAGE, TOOL_JOURNAL_FOR_DATE, TOOL_LIST_BACKLINKS, TOOL_LIST_PAGES,
-    TOOL_LIST_PROPERTY_DEFS, TOOL_LIST_SPACES, TOOL_LIST_TAGS, TOOL_SEARCH, TOOL_SET_PROPERTY,
-    TOOL_UPDATE_BLOCK_CONTENT,
+    TOOL_GET_BLOCK, TOOL_GET_PAGE, TOOL_GET_PAGE_MARKDOWN, TOOL_JOURNAL_FOR_DATE,
+    TOOL_LIST_BACKLINKS, TOOL_LIST_PAGES, TOOL_LIST_PROPERTY_DEFS, TOOL_LIST_SPACES,
+    TOOL_LIST_TAGS, TOOL_SEARCH, TOOL_SET_PROPERTY, TOOL_UPDATE_BLOCK_CONTENT,
 };
 
 /// Number of leading characters of a ULID we expose in summary strings.
@@ -95,6 +95,7 @@ pub fn summarise(name: &str, args: &Value, result: &Value) -> String {
         TOOL_GET_AGENDA => summarise_get_agenda(args, result),
         TOOL_JOURNAL_FOR_DATE => summarise_journal_for_date(args, result),
         TOOL_LIST_SPACES => summarise_list_spaces(args, result),
+        TOOL_GET_PAGE_MARKDOWN => summarise_get_page_markdown(args, result),
         // ---- read-write (tools_rw) ----
         TOOL_APPEND_BLOCK => summarise_append_block(args, result),
         TOOL_UPDATE_BLOCK_CONTENT => summarise_update_block_content(args, result),
@@ -286,6 +287,19 @@ pub fn summarise_list_spaces(_args: &Value, result: &Value) -> String {
     )
 }
 
+/// `get_page_markdown — <id-prefix> (N lines)` (#5375). Never includes the
+/// markdown, which is the page's content.
+pub fn summarise_get_page_markdown(_args: &Value, result: &Value) -> String {
+    let prefix = ulid_prefix(str_field(result, "page_id").unwrap_or(""));
+    let n = str_field(result, "markdown").map_or(0, |md| md.lines().count());
+    let lines = if n == 1 { "line" } else { "lines" };
+    if prefix.is_empty() {
+        format!("get_page_markdown — {n} {lines}")
+    } else {
+        format!("get_page_markdown — {prefix} ({n} {lines})")
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Read-write summarisers
 // ---------------------------------------------------------------------------
@@ -443,6 +457,7 @@ mod tests {
         "SECRET_TEXT_VALUE",
         "SECRET_TAG_NAME",
         "SECRET_QUERY",
+        "SECRET_ALIAS",
     ];
 
     fn assert_no_secrets(summary: &str) {
@@ -746,6 +761,27 @@ mod tests {
     }
 
     #[test]
+    fn get_page_markdown_includes_prefix_and_line_count_only() {
+        let result = json!({
+            "page_id": ULID_A,
+            "markdown": format!(
+                "# SECRET_TITLE\n\n---\naliases: [SECRET_ALIAS]\n---\n\n- SECRET_BLOCK_CONTENT ^{ULID_B}\n"
+            ),
+        });
+        let s = summarise_get_page_markdown(&json!({"page_id": ULID_A}), &result);
+        assert_eq!(
+            s,
+            format!(
+                "get_page_markdown — {} (7 lines)",
+                &ULID_A[..ULID_PREFIX_LEN]
+            )
+        );
+        assert_no_secrets(&s);
+        assert_no_full_ulid(&s, ULID_A);
+        assert_no_full_ulid(&s, ULID_B);
+    }
+
+    #[test]
     fn journal_for_date_combines_date_and_prefix() {
         let args = json!({ "date": "2025-01-15" });
         let result = json!({ "id": ULID_A, "content": "SECRET_TITLE" });
@@ -1000,8 +1036,21 @@ mod tests {
             "content": "SECRET_BLOCK_CONTENT",
             "parent_id": ULID_B,
             "items": [{ "id": ULID_A, "content": "SECRET_BLOCK_CONTENT" }],
-            "page": { "id": ULID_A, "content": "SECRET_TITLE" },
+            "page": {
+                "id": ULID_A,
+                "content": "SECRET_TITLE",
+                "properties": [{ "key": "notes", "value_text": "SECRET_TEXT_VALUE" }],
+                "tags": [ULID_TAG],
+                "aliases": ["SECRET_ALIAS"],
+            },
             "children": [{ "id": ULID_B, "content": "SECRET_BLOCK_CONTENT" }],
+            // #5377 — `get_block` carries the block's properties, tags and aliases.
+            "properties": [{ "key": "notes", "value_text": "SECRET_TEXT_VALUE" }],
+            "tags": [ULID_TAG],
+            "aliases": ["SECRET_ALIAS"],
+            // #5375 — `get_page_markdown` returns the page as text.
+            "page_id": ULID_A,
+            "markdown": "# SECRET_TITLE\n\n---\naliases: [SECRET_ALIAS]\n---\n\n- SECRET_BLOCK_CONTENT\n",
             "groups": [
                 { "page_id": ULID_B, "page_title": "SECRET_TITLE", "blocks": [{}] }
             ],

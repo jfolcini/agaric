@@ -36,8 +36,13 @@ To give an agent the write tools, add a second server entry pointing `AGARIC_MCP
 
 The MCP surface is split into:
 
-- **Read-only tools** (always available when MCP is enabled): list pages, get page, search, get block, list backlinks, list tags, list property definitions, get agenda, list spaces, fetch a journal page by date. One carve-out: `journal_for_date` **creates** the journal page if it doesn't exist yet and the date is near today — the only read-registry tool with a write side effect.
+- **Read-only tools** (always available when MCP is enabled): list pages, get page, read a page as Markdown, search, get block, list backlinks, list tags, list property definitions, get agenda, list spaces, fetch a journal page by date. One carve-out: `journal_for_date` **creates** the journal page if it doesn't exist yet and the date is near today — the only read-registry tool with a write side effect.
 - **Read-write tools**: append block, update block content, set property, add tag, create page, delete block. Separate from read-only so you can disable writes while keeping reads on.
+
+What the page reads return:
+
+- `get_block` returns the block's row plus `properties` (every property row, raw, `template` included), `tags` (tag ULIDs; `list_tags` maps them to names) and, for a page, `aliases`. `get_page` adds the same three to its `page`; its children are plain rows. A block with none of them gets empty arrays.
+- `get_page_markdown` returns `{ page_id, markdown }`: the whole page, unpaginated, as `# Title`, YAML front matter (aliases, tags, properties), then the block outline with each block's `key:: value` properties. Links, tags and ref-typed values are written as names, for reading; a name can be ambiguous, so an agent writes links by ULID. Every block ends with its `^ULID`, the id `update_block_content` takes.
 
 Every tool call:
 
@@ -57,7 +62,7 @@ The read-only and read-write surfaces treat spaces differently **by design**, an
   | --- | --- | --- |
   | **`space_id` required** | `search`, `journal_for_date` | The call runs inside the named space; results are confined to that space. |
   | **`space_id` optional** | `list_backlinks`, `get_agenda` | Pass a `space_id` to confine the result; omit it for the cross-space (whole-vault) view. |
-  | **`space_id` absent** | `list_pages`, `get_page`, `get_block`, `list_tags`, `list_property_defs`, `list_spaces` | No space argument exists; these tools always span every space. Fetch-by-ULID (`get_page` / `get_block`) and enumeration (`list_pages`) therefore reach **any** space's data. |
+  | **`space_id` absent** | `list_pages`, `get_page`, `get_page_markdown`, `get_block`, `list_tags`, `list_property_defs`, `list_spaces` | No space argument exists; these tools always span every space. Fetch-by-ULID (`get_page` / `get_page_markdown` / `get_block`) and enumeration (`list_pages`) therefore reach **any** space's data. |
 
 ### Security implication
 

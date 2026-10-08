@@ -976,12 +976,16 @@ enum PageRead {
 /// `import::parse_source_outline` reads back as exactly this tree: every block
 /// carries its `^ID`, and ids stay raw unless a name reads back to the same
 /// id. `Clipboard` is `Source` for text that leaves the app: a block carries
-/// its `^ID` only when it would not read back without it.
+/// its `^ID` only when it would not read back without it. `Agent` is the page
+/// an MCP agent reads (#5375): the export's names, which may be ambiguous, and
+/// every block's `^ID` written as source mode writes it, so the agent can name
+/// the block it edits next.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum RenderMode {
     Export,
     Source,
     Clipboard,
+    Agent,
 }
 
 /// Emits one block as `<indent>- <content>` — the *exact* shape
@@ -1018,7 +1022,7 @@ fn render_block(
             let resolved = export_block_text(content, &id, data);
             push_block_bullet(output, &indent, &list_marker, &task_marker, &resolved, mode);
         }
-        RenderMode::Source | RenderMode::Clipboard => {
+        RenderMode::Source | RenderMode::Clipboard | RenderMode::Agent => {
             push_source_bullet(
                 output,
                 block,
@@ -1071,7 +1075,7 @@ fn render_block(
     // carry as it is (#5160 X5).
     let no_titles = HashMap::new();
     let (ref_titles, write_value): (_, fn(&str) -> String) = match mode {
-        RenderMode::Export => (ref_titles, str::to_string),
+        RenderMode::Export | RenderMode::Agent => (ref_titles, str::to_string),
         RenderMode::Source | RenderMode::Clipboard => {
             (&no_titles, import::write_source_property_value)
         }
@@ -1119,6 +1123,17 @@ fn task_marker(block: &BlockRow) -> String {
 /// to names and links, inline queries made readable, and an anchor when a
 /// same-page ref points at the block.
 fn export_block_text(content: &str, id: &str, data: &PageExportData) -> String {
+    stamp_block_anchor_marker(
+        named_block_text(content, data),
+        id,
+        &data.same_page_ref_targets,
+    )
+}
+
+/// A block's content with its tag, page and block ids resolved to names and
+/// links and its inline queries made readable, as an export writes it, less
+/// the export's anchor.
+fn named_block_text(content: &str, data: &PageExportData) -> String {
     let resolved = resolve_ulids_for_export(
         content,
         &data.tag_names,
@@ -1127,16 +1142,15 @@ fn export_block_text(content: &str, id: &str, data: &PageExportData) -> String {
     );
     // #2968 — rewrite structured `{{query v2:…}}` payloads to the readable,
     // roundtrip-safe `v2n:` names form (resolving embedded tag/page ULIDs).
-    let resolved = super::inline_query_md::rewrite_inline_queries_for_export(
+    super::inline_query_md::rewrite_inline_queries_for_export(
         &resolved,
         &data.tag_names,
         &data.page_titles,
-    );
-    stamp_block_anchor_marker(resolved, id, &data.same_page_ref_targets)
+    )
 }
 
 /// A block's bullet as source mode writes it, with its own `^ID`, or as the
-/// clipboard does.
+/// clipboard does, or, for an agent, with its `^ID` and the export's names.
 ///
 /// Whether a name may replace an id depends on whether the parser will read
 /// the block as code, which the bullet's fence tracking decides; so the raw
@@ -1152,6 +1166,11 @@ fn push_source_bullet(
 ) {
     let id = block.id.as_str();
     let content = block.content.as_deref().unwrap_or("");
+    if mode == RenderMode::Agent {
+        let named = named_block_text(content, data);
+        push_anchored_source_bullet(output, indent, list_marker, task_marker, &named, id);
+        return;
+    }
     let push = if mode == RenderMode::Clipboard {
         push_clipboard_bullet
     } else {
@@ -1402,6 +1421,16 @@ fn render_page_markdown(page_id: &str, data: &PageExportData) -> String {
 /// its block tree. The title and page attachments have their own UIs.
 fn render_page_source(data: &PageExportData) -> String {
     render_page_source_ids(data).0
+}
+
+/// The page as an MCP agent reads it (#5375): `# Title`, the export's front
+/// matter, then the block tree in [`RenderMode::Agent`].
+fn render_page_for_agent(data: &PageExportData) -> String {
+    let title = data.page.content.as_deref().unwrap_or("Untitled");
+    let mut output = format!("# {title}\n\n");
+    render_frontmatter(&mut output, data);
+    render_block_tree(&mut output, data.page.id.as_str(), data, RenderMode::Agent);
+    output
 }
 
 /// [`render_page_source`], with the ids of the blocks it holds in order.
@@ -2283,6 +2312,24 @@ pub async fn get_page_source_inner(pool: &SqlitePool, page_id: &str) -> Result<S
     Ok(render_page_source(&data))
 }
 
+/// The page as the MCP `get_page_markdown` tool returns it (#5375):
+/// `render_page_for_agent` over the export's read, in one snapshot.
+///
+/// # Errors
+///
+/// As [`export_page_markdown_inner`].
+#[instrument(skip(pool), err)]
+pub async fn get_page_for_agent_inner(
+    pool: &SqlitePool,
+    page_id: &str,
+) -> Result<String, AppError> {
+    BlockId::from_string(page_id)?;
+    let mut tx = pool.begin().await?;
+    let data = load_page_export_data(&mut tx, page_id, PageRead::Export).await?;
+    tx.commit().await?;
+    Ok(render_page_for_agent(&data))
+}
+
 /// A page's source buffer as the ids-beside-the-text editor reads it (#5160
 /// A): the anchored `source`, which a save sends back as its `base_source`,
 /// and the same buffer as `text`, its anchors removed, with the id each line
@@ -3097,7 +3144,9 @@ fn push_block_bullet(
 ) -> CodeLines {
     let fence_opener = match mode {
         RenderMode::Export => import::fence_opener,
-        RenderMode::Source | RenderMode::Clipboard => import::source_fence_opener,
+        RenderMode::Source | RenderMode::Clipboard | RenderMode::Agent => {
+            import::source_fence_opener
+        }
     };
 
     let mut lines = resolved.split('\n');
@@ -7403,5 +7452,85 @@ mod tests {
             collect_inbound_tag_names(&parsed.blocks).is_empty(),
             "…and no tag either, which was already true — the two must agree"
         );
+    }
+
+    /// #5375 — the page an MCP agent reads (`render_page_for_agent`).
+    mod agent_page {
+        use super::super::source_tests::{PAGE, page_data, ref_property, row, text_property};
+        use super::*;
+
+        const PARENT: &str = "01J0000000000000000000000A";
+        const CHILD: &str = "01J0000000000000000000000B";
+        const LINKED: &str = "01J00000000000000000PAGEL1";
+        const PROJECT: &str = "01J00000000000000000PAGEP1";
+        const OWNER: &str = "01J00000000000000000PAGEW1";
+        const WORK: &str = "01J000000000000000000TAGT1";
+
+        fn names(pairs: &[(&str, &str)]) -> HashMap<String, String> {
+            pairs
+                .iter()
+                .map(|(id, name)| (id.to_string(), name.to_string()))
+                .collect()
+        }
+
+        /// The title, the front matter, every id as its name, the nesting,
+        /// and a `^ID` on every block.
+        #[test]
+        fn every_ref_is_a_name_and_every_block_has_its_id() {
+            let mut data = page_data(vec![
+                row(PARENT, PAGE, 1, &format!("plan #[{WORK}]")),
+                row(CHILD, PARENT, 1, &format!("see [[{LINKED}]]")),
+            ]);
+            data.properties = vec![
+                text_property("status", "active"),
+                ref_property("project", PROJECT),
+            ];
+            data.aliases = vec!["Plan B".into()];
+            data.tag_names_fm = vec!["work".into()];
+            data.tag_names = names(&[(WORK, "work")]);
+            data.page_titles = names(&[(LINKED, "Linked Page")]);
+            data.ref_titles = names(&[(PROJECT, "Project Alpha"), (OWNER, "Ada")]);
+            data.descendant_properties
+                .insert(CHILD.into(), vec![ref_property("owner", OWNER)]);
+            assert_eq!(
+                render_page_for_agent(&data),
+                format!(
+                    "# Title\n\n---\naliases: [Plan B]\ntags: [work]\nstatus: active\n\
+                     project: Project Alpha\n---\n\n- plan #work ^{PARENT}\n  \
+                     - see [[Linked Page]] ^{CHILD}\n    owner:: Ada\n"
+                )
+            );
+        }
+
+        /// A title two pages share is still written as the name, which source
+        /// mode would not write, and the block keeps its `^ID`.
+        #[test]
+        fn two_pages_that_share_a_title_are_both_named() {
+            const TWIN: &str = "01J00000000000000000PAGEL2";
+            let content = format!("[[{LINKED}]] or [[{TWIN}]]");
+            let mut data = page_data(vec![row(PARENT, PAGE, 1, &content)]);
+            data.page_titles = names(&[(LINKED, "Dup"), (TWIN, "Dup")]);
+            assert_eq!(
+                render_page_for_agent(&data),
+                format!("# Title\n\n- [[Dup]] or [[Dup]] ^{PARENT}\n")
+            );
+        }
+
+        /// A block a same-page ref points at carries its own `^ID` once, not
+        /// the export's anchor as well.
+        #[test]
+        fn a_same_page_ref_target_has_one_anchor() {
+            let mut data = page_data(vec![
+                row(PARENT, PAGE, 1, &format!("see (({CHILD}))")),
+                row(CHILD, PAGE, 2, "target"),
+            ]);
+            data.block_ref_replacement
+                .insert(CHILD.into(), format!("[[#^{CHILD}]]"));
+            data.same_page_ref_targets.insert(CHILD.into());
+            assert_eq!(
+                render_page_for_agent(&data),
+                format!("# Title\n\n- see [[#^{CHILD}]] ^{PARENT}\n- target ^{CHILD}\n")
+            );
+        }
     }
 }

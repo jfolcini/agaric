@@ -16,7 +16,7 @@ expression: wire
         type: integer
     type: object
   name: list_pages
-- description: Fetch a page and a paginated slice of its non-conflict subtree (grandchildren included).
+- description: "Fetch a page and a paginated slice of its non-conflict subtree (grandchildren included). `page` also carries `properties` (every property row, raw), `tags` (tag ULIDs; `list_tags` names them) and `aliases`; the children are plain rows."
   inputSchema:
     additionalProperties: false
     properties:
@@ -139,7 +139,7 @@ expression: wire
       - space_id
     type: object
   name: search
-- description: Fetch a single block by ULID. Returns the BlockRow; soft-deleted (tombstoned) blocks are excluded.
+- description: "Fetch a single block by ULID. Returns the BlockRow plus `properties` (every property row, raw), `tags` (tag ULIDs; `list_tags` names them) and, for a page, `aliases`; soft-deleted (tombstoned) blocks are excluded."
   inputSchema:
     additionalProperties: false
     properties:
@@ -246,3 +246,14 @@ expression: wire
     properties: {}
     type: object
   name: list_spaces
+- description: "Read a whole page as Markdown, returned as { page_id, markdown }: a `# Title` line, YAML front matter with the page's aliases, tags and properties, then the block outline with each block's `key:: value` properties under it. Links, tags and ref-typed values are written as names, for reading; a name can be ambiguous, so write links by ULID (`[[ULID]]`, `#[ULID]`). Each block ends with `^ULID`, the block_id update_block_content takes. No pagination."
+  inputSchema:
+    additionalProperties: false
+    properties:
+      page_id:
+        description: ULID of the page block.
+        type: string
+    required:
+      - page_id
+    type: object
+  name: get_page_markdown
