@@ -8,7 +8,7 @@
  */
 
 import { invoke } from '@tauri-apps/api/core'
-import { render, screen, waitFor, within } from '@testing-library/react'
+import { act, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
@@ -314,6 +314,22 @@ describe('AppSidebar', () => {
       // solarized-dark and one-dark-pro.
       expect(within(tooltip).getByText(t('sidebar.lastSyncedNever'))).toHaveClass('opacity-90')
     })
+  })
+
+  it('keeps an offline Sync focusable, so its tooltip can say why it does nothing', async () => {
+    const user = userEvent.setup()
+    const { props } = renderSidebar({ isOnline: false })
+
+    const offline = screen.getByRole('button', { name: t('sidebar.offline') })
+    expect(offline).toHaveAttribute('aria-disabled', 'true')
+    act(() => offline.focus())
+
+    expect(offline).toHaveFocus()
+    const tooltip = await screen.findByRole('tooltip')
+    expect(tooltip).toHaveTextContent(t('sidebar.offline'))
+    expect(tooltip).toHaveTextContent(t('sidebar.lastSyncedNever'))
+    await user.click(offline)
+    expect(props.onSyncClick).not.toHaveBeenCalled()
   })
 
   it('has no a11y violations', async () => {

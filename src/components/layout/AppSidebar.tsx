@@ -126,6 +126,7 @@ function AppSidebarInner({
   const lastSyncedLabel = lastSyncedAt
     ? t('sidebar.lastSynced', { time: formatRelativeTime(lastSyncedAt, t) })
     : t('sidebar.lastSyncedNever')
+  const syncUnavailable = syncing || !isOnline
 
   /**
    * On mobile the sidebar is a Sheet that overlays the content, so acting on
@@ -243,11 +244,14 @@ function AppSidebarInner({
       <SidebarFooter>
         {/* One row of icons; it stacks in the 48px rail. The sync state is
             the icon (spinner, offline) plus the dot, and the "last synced"
-            line lives in the tooltip and the button's description. */}
+            line lives in the tooltip and the button's description. Hover
+            paints the nav rows' lighter fill, so it never matches the active
+            Settings pill. */}
         <div className="flex items-center gap-1 group-data-[collapsible=icon]:flex-col">
           <IconButton
             variant="ghost"
             size="icon-sm"
+            className="hover:bg-sidebar-accent/50 aria-disabled:opacity-50"
             ariaLabel={isOnline ? t('sidebar.sync') : t('sidebar.offline')}
             aria-describedby={LAST_SYNCED_ID}
             tooltip={
@@ -262,8 +266,10 @@ function AppSidebarInner({
                 <span className="opacity-90">{lastSyncedLabel}</span>
               </div>
             }
-            onClick={onSyncClick}
-            disabled={syncing || !isOnline}
+            // `aria-disabled`, not `disabled`: a disabled button takes no hover
+            // or focus, so the offline / syncing tooltip could never show.
+            aria-disabled={syncUnavailable}
+            onClick={syncUnavailable ? undefined : onSyncClick}
           >
             <span className="relative inline-flex">
               {!isOnline ? (
@@ -289,8 +295,9 @@ function AppSidebarInner({
             variant="ghost"
             size="icon-sm"
             className={cn(
+              'hover:bg-sidebar-accent/50',
               currentView === SETTINGS_NAV_ITEM.id &&
-                'bg-sidebar-accent text-sidebar-accent-foreground',
+                'bg-sidebar-accent text-sidebar-accent-foreground hover:bg-sidebar-accent',
             )}
             ariaLabel={t(SETTINGS_NAV_ITEM.labelKey)}
             tooltip={t(SETTINGS_NAV_ITEM.labelKey)}

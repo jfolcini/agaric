@@ -2484,6 +2484,22 @@ describe('PageHeader delete from the page-actions menu', () => {
     expect(screen.getByRole('button', { name: /^Delete page$/i })).toBeInTheDocument()
   })
 
+  it('cancelling the confirm dialog returns focus to the page-actions kebab', async () => {
+    const user = userEvent.setup()
+
+    renderPageHeader(<PageHeader pageId="PAGE_1" title="My Page" onBack={vi.fn()} />)
+
+    await choosePageAction(user, /^delete page$/i)
+    await user.click(await screen.findByRole('button', { name: /^cancel$/i }))
+
+    await waitFor(() => {
+      expect(screen.queryByRole('alertdialog')).toBeNull()
+    })
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /page actions/i })).toHaveFocus()
+    })
+  })
+
   it('confirms delete, fires the success toast with an Undo action, and navigates back', async () => {
     const user = userEvent.setup()
     const onBack = vi.fn()

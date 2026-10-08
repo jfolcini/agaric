@@ -233,8 +233,11 @@ export function PageHeader({ pageId, title, onBack, onEditSource, kebabRef }: Pa
   // The kebab "Delete page" item calls this. `usePageDeleteAction` opens
   // its ConfirmDialog and, on confirm, runs the IPC + emits the success
   // toast with an Undo action. We pass `onDeleted` so the header can
-  // still navigate back + announce to AT.
-  const handleRequestDelete = useCallback(() => {
+  // still navigate back + announce to AT. The ConfirmDialog hands focus
+  // back on cancel to whatever held it when it opened, and the menu item is
+  // gone by then, so the kebab takes focus first.
+  const handleRequestDelete = () => {
+    kebab.current?.focus()
     setKebabOpen(false)
     requestDelete(pageId, title, {
       onDeleted: () => {
@@ -245,7 +248,7 @@ export function PageHeader({ pageId, title, onBack, onEditSource, kebabRef }: Pa
         announce(t('announce.pageDeleteFailed'))
       },
     })
-  }, [onBack, pageId, requestDelete, t, title])
+  }
 
   const handleKebabAddAlias = useCallback(() => {
     startEditingAliases()

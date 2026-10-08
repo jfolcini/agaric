@@ -19,7 +19,7 @@ A **space** is a user-defined context that groups pages — typical setups are *
 
 - **Sidebar header**: the active space's name (replaces the static "Agaric" branding).
 - **SpaceAccentBadge** (collapsed sidebar): coloured circle with the space's first letter on its accent fill.
-- **3 px top stripe** in the space's accent colour across the top of the window.
+- **2 px top stripe** in the space's accent colour across the top of the window.
 - **OS window title**: `<Page or View> · <SpaceName> · Agaric`.
 - **Onboarding banner** in *Manage Spaces…* while you still have only the seeded Personal / Work spaces.
 - **Hotkey hints** (e.g. `Ctrl+1` / `⌘1`) on the first nine rows of the SpaceSwitcher dropdown.

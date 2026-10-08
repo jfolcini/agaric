@@ -1,7 +1,8 @@
 /**
  * #5332 — the active nav item is a neutral pill with no bar, so its fill is
  * the only thing telling it apart from a hovered item. Hover must paint a
- * lighter fill than active, in the app sidebar and in the Settings tab rail.
+ * lighter fill than active, in the app sidebar (its nav rows and its footer
+ * icons) and in the Settings tab rail.
  */
 
 import type { Locator, Page } from '@playwright/test'
@@ -38,6 +39,20 @@ for (const theme of ['light', 'dark'] as const) {
         page,
         active,
         sidebar.getByRole('button', { name: 'Journal', exact: true }),
+      )
+    })
+
+    test('app sidebar footer', async ({ page }) => {
+      // The footer icons are Buttons, which fade their fill: compare end states.
+      await page.addStyleTag({ content: '* { transition: none !important; }' })
+      const footer = page.locator('[data-sidebar="footer"]')
+      const settings = footer.getByRole('button', { name: 'Settings', exact: true })
+      await settings.click()
+      await expect(settings).toHaveAttribute('aria-current', 'page')
+      await expectHoverDiffersFromActive(
+        page,
+        settings,
+        footer.getByRole('button', { name: 'Sync', exact: true }),
       )
     })
 
