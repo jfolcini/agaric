@@ -158,7 +158,7 @@ for (const profile of PROFILES) {
       expect(size.h, 'hamburger height').toBeGreaterThanOrEqual(44)
 
       const sheet = await openMobileSidebar(page)
-      // A navigation pane, not a modal card: no rounded inward corners.
+      // Sheets have square corners (#5367).
       const radii = await sheet.evaluate((el) => {
         const cs = getComputedStyle(el)
         return [cs.borderTopRightRadius, cs.borderBottomRightRadius]

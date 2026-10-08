@@ -207,9 +207,7 @@ const Sidebar = ({
           data-sidebar="sidebar"
           data-slot="sidebar"
           data-mobile="true"
-          // `rounded-none`: the drawer is the app's navigation pane, not a
-          // modal card, so it drops the Sheet's rounded inward corners.
-          className="w-(--sidebar-width) rounded-none bg-sidebar p-0 text-sidebar-foreground [&>button]:hidden"
+          className="w-(--sidebar-width) bg-sidebar p-0 text-sidebar-foreground [&>button]:hidden"
           style={
             {
               '--sidebar-width': SIDEBAR_WIDTH_MOBILE,

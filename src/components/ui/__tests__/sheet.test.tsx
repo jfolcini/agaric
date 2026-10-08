@@ -183,6 +183,19 @@ describe('SheetContent base classes', () => {
     expect(dialog).not.toHaveClass('max-h-[calc(100dvh-2rem)]')
   })
 
+  it.each(['top', 'right', 'bottom', 'left'] as const)('%s sheets have square corners', (side) => {
+    render(
+      <Sheet open>
+        <SheetContent side={side} aria-describedby={undefined}>
+          <SheetHeader>
+            <SheetTitle>{side} Sheet</SheetTitle>
+          </SheetHeader>
+        </SheetContent>
+      </Sheet>,
+    )
+    expect(screen.getByRole('dialog').className).not.toMatch(/\brounded/)
+  })
+
   // Both side-anchored arms, not just one: they are `h-full` already, so the
   // edge-anchored cap would be dead weight there — and a regression that added
   // it to only one side would otherwise slip through.
