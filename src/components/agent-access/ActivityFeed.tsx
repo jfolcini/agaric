@@ -325,7 +325,7 @@ export function ActivityFeed({ entries }: ActivityFeedProps): React.ReactElement
                                 <Spinner size="sm" />
                               ) : (
                                 <>
-                                  <Undo2 className="h-3.5 w-3.5" />
+                                  <Undo2 />
                                   {/*
                                    * Hidden by default (icon-only on
                                    * desktop), revealed on coarse pointers so

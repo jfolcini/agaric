@@ -120,6 +120,18 @@ describe('QuickCaptureRow — capability gate (#742)', () => {
     )
   })
 
+  it('shows the chord as one key chip and names the edit input by the row label', () => {
+    render(<QuickCaptureRow />)
+    const binding = screen.getByTestId('quick-capture-shortcut-binding')
+    expect(binding.tagName).toBe('KBD')
+    expect(binding).toHaveTextContent('Ctrl+Alt+N')
+
+    fireEvent.click(screen.getByTestId('quick-capture-shortcut-edit'))
+    const input = screen.getByLabelText(t('settings.quickCapture.label'))
+    expect(input).toBe(screen.getByTestId('quick-capture-shortcut-input'))
+    expect(input).toHaveAccessibleDescription(t('settings.quickCapture.description'))
+  })
+
   it('surfaces notify.error when the chord fails to register (IPC error path)', async () => {
     // Probing the new chord can reject (e.g. the chord is already claimed
     // by another app); the save handler catches and surfaces saveFailed.

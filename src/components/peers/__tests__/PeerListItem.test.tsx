@@ -130,7 +130,7 @@ describe('PeerListItem', () => {
 
     render(<PeerListItem peer={peer} {...defaultProps} onSyncNow={onSyncNow} />)
 
-    const syncBtn = screen.getByRole('button', { name: /Sync Now/i })
+    const syncBtn = screen.getByRole('button', { name: /Sync now/i })
     await user.click(syncBtn)
 
     expect(onSyncNow).toHaveBeenCalledWith('peer-abc-1234567890')
@@ -144,9 +144,26 @@ describe('PeerListItem', () => {
     render(<PeerListItem peer={peer} {...defaultProps} onUnpair={onUnpair} />)
 
     const unpairBtn = screen.getByRole('button', { name: /Unpair/i })
+    // Outline trigger; only the confirm dialog's button is red.
+    expect(unpairBtn).toHaveAttribute('data-variant', 'outline')
     await user.click(unpairBtn)
 
     expect(onUnpair).toHaveBeenCalledWith('peer-abc-1234567890')
+  })
+
+  it('shows the icon-only rename and edit-address labels as tooltips on focus', async () => {
+    const user = userEvent.setup()
+    render(<PeerListItem peer={makePeer({ device_name: 'Work Laptop' })} {...defaultProps} />)
+
+    await user.tab()
+    expect(screen.getByRole('button', { name: 'Rename device Work Laptop' })).toHaveFocus()
+    expect(await screen.findByRole('tooltip')).toHaveTextContent('Rename device Work Laptop')
+
+    await user.tab()
+    expect(screen.getByRole('button', { name: 'Edit address for Work Laptop' })).toHaveFocus()
+    await waitFor(() => {
+      expect(screen.getByRole('tooltip')).toHaveTextContent('Edit address for Work Laptop')
+    })
   })
 
   it('disables sync button when syncing this peer', () => {
@@ -154,7 +171,7 @@ describe('PeerListItem', () => {
 
     render(<PeerListItem peer={peer} {...defaultProps} syncingPeerId="peer-abc-1234567890" />)
 
-    const syncBtn = screen.getByRole('button', { name: /Sync Now/i })
+    const syncBtn = screen.getByRole('button', { name: /Sync now/i })
     expect(syncBtn).toBeDisabled()
   })
 
@@ -626,7 +643,7 @@ describe('PeerListItem — last-sync activity (#4084)', () => {
       <PeerListItem peer={peer} {...defaultProps} onSyncNow={onSyncNow} />,
     )
 
-    await user.click(screen.getByRole('button', { name: /Sync Now/i }))
+    await user.click(screen.getByRole('button', { name: /Sync now/i }))
     expect(onSyncNow).toHaveBeenCalledWith('peer-abc-1234567890')
 
     const results = await axe(container)

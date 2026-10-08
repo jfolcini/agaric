@@ -19,31 +19,27 @@ import { useTranslation } from 'react-i18next'
 
 import { resetOnboardingSeen } from '@/components/SpaceManageDialog'
 import { Button } from '@/components/ui/button'
+import { SettingRow } from '@/components/ui/setting-row'
 import { notify } from '@/lib/notify'
 
 export function ResetOnboardingRow(): React.ReactElement {
   const { t } = useTranslation()
   return (
-    <div className="space-y-1.5">
-      <div className="flex items-center justify-between gap-3">
-        <div className="space-y-0.5">
-          <p className="text-sm font-medium">{t('settings.resetOnboarding.title')}</p>
-          <p className="text-xs text-muted-foreground">
-            {t('settings.resetOnboarding.description')}
-          </p>
-        </div>
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={() => {
-            resetOnboardingSeen()
-            notify.success(t('settings.resetOnboarding.success'))
-          }}
-          data-testid="reset-onboarding-btn"
-        >
-          {t('settings.resetOnboarding.button')}
-        </Button>
-      </div>
-    </div>
+    <SettingRow
+      label={t('settings.resetOnboarding.title')}
+      description={t('settings.resetOnboarding.description')}
+    >
+      <Button
+        variant="outline"
+        size="sm"
+        onClick={() => {
+          resetOnboardingSeen()
+          notify.success(t('settings.resetOnboarding.success'))
+        }}
+        data-testid="reset-onboarding-btn"
+      >
+        {t('settings.resetOnboarding.button')}
+      </Button>
+    </SettingRow>
   )
 }

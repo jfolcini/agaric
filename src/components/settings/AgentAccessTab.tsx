@@ -10,15 +10,19 @@
  *   2. RO socket path display + copy button.
  *   3. Copy-config buttons for Claude Desktop + generic MCP clients
  *      (RO socket — RW config snippets are out of scope for slice 2).
- *   4. Recent activity feed (rolling 100-entry subscription to the
- *      `mcp:activity` Tauri event).
- *   5. RO kill switch — disconnect every live RO agent connection
- *      (no-op if none are live; wrapped in an AlertDialog confirmation).
- *   6. Read-write access toggle (backed by the `mcp-rw-enabled` marker
+ *   4. RO kill switch — disconnect every live RO agent connection
+ *      (shown only while one is live; wrapped in an AlertDialog confirmation).
+ *   5. Read-write access toggle (backed by the `mcp-rw-enabled` marker
  *      file; toggling fires `mcp_rw_set_enabled`). Displays a destructive
  *      warning badge while enabled.
- *   7. RW socket path display + copy button.
- *   8. RW kill switch — disconnect every live RW agent connection.
+ *   6. RW socket path display + copy button.
+ *   7. RW kill switch — disconnect every live RW agent connection.
+ *   8. Recent activity feed (rolling 100-entry subscription to the
+ *      `mcp:activity` Tauri event), in its own card and always shown: its
+ *      Undo buttons revert past agent writes, which still matters after
+ *      access is turned off.
+ *
+ * Items 2–4 and 6–7 render only while their toggle is on.
  *
  * The backend exposes the following Tauri commands consumed here:
  *   - `get_mcp_status` / `get_mcp_rw_status` → `{ enabled, socket_path,
@@ -42,7 +46,7 @@ import type { McpRwStatus, McpStatus } from '@/components/agent-access/McpStatus
 import { McpStatusSection } from '@/components/agent-access/McpStatusSection'
 import { LoadingSkeleton } from '@/components/rendering/LoadingSkeleton'
 import { Button } from '@/components/ui/button'
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import { Card, CardContent } from '@/components/ui/card'
 import { useIpcCommand } from '@/hooks/useIpcCommand'
 import { useMcpActivityFeed } from '@/hooks/useMcpActivityFeed'
 import { unwrap } from '@/lib/app-error'
@@ -274,18 +278,16 @@ export function AgentAccessTab(): React.ReactElement {
   return (
     <div className="agent-access-tab space-y-6">
       <Card>
-        <CardHeader>
-          <CardTitle>{t('agentAccess.title')}</CardTitle>
-          <CardDescription>{t('agentAccess.description')}</CardDescription>
-        </CardHeader>
         <CardContent className="space-y-6">
+          <p className="text-sm text-muted-foreground">{t('agentAccess.description')}</p>
+
           {error !== null && (
             <p className="text-sm text-destructive" role="alert">
               {error}
             </p>
           )}
 
-          {/* Read-only access section (toggle + socket path + activity + kill switch) */}
+          {/* Read-only access section (toggle + socket path + config + kill switch) */}
           <McpStatusSection
             variant="ro"
             status={status}
@@ -318,9 +320,6 @@ export function AgentAccessTab(): React.ReactElement {
                 </Button>
               </div>
             </div>
-
-            {/* Activity feed */}
-            <ActivityFeed entries={entries} />
           </McpStatusSection>
 
           {/* Read-write access section (toggle + socket path + kill switch) */}
@@ -331,6 +330,12 @@ export function AgentAccessTab(): React.ReactElement {
             onCopySocket={(path) => void copyToClipboard(path, 'agentAccess.rwSocketPathCopied')}
             onDisconnect={() => void handleDisconnectAllRw()}
           />
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardContent>
+          <ActivityFeed entries={entries} />
         </CardContent>
       </Card>
     </div>

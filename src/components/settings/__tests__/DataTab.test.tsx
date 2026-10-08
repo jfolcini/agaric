@@ -120,21 +120,39 @@ describe('DataTab', () => {
     render(<DataTab />)
 
     expect(screen.getByText('Import')).toBeInTheDocument()
-    expect(screen.getByText('Export All Pages')).toBeInTheDocument()
-    expect(screen.getByText('Choose Files')).toBeInTheDocument()
-    expect(screen.getByText('Export All')).toBeInTheDocument()
+    expect(screen.getByText('Export all pages')).toBeInTheDocument()
+    expect(screen.getByText('Choose files')).toBeInTheDocument()
+    expect(screen.getByText('Export all')).toBeInTheDocument()
   })
 
-  it.each([['data.importDesc'], ['data.exportDesc'], ['data.historyDesc']] as const)(
-    '%s is the card description in the header, like the other tabs',
-    (key) => {
-      render(<DataTab />)
+  it('data.importDesc is the card description in the header, like the other tabs', () => {
+    render(<DataTab />)
 
-      const description = screen.getByText(t(key))
-      expect(description).toHaveAttribute('data-slot', 'card-description')
-      expect(description.closest('[data-slot="card-header"]')).not.toBeNull()
-    },
-  )
+    const description = screen.getByText(t('data.importDesc'))
+    expect(description).toHaveAttribute('data-slot', 'card-description')
+    expect(description.closest('[data-slot="card-header"]')).not.toBeNull()
+  })
+
+  // #5345 — one action per row: each import kind, each export and the
+  // history link sits beside the text that says what it does.
+  it.each([
+    ['data.importFilesLabel', 'data.importButton'],
+    ['data.importFolderLabel', 'data.importFolderButton'],
+    ['data.importObsidianLabel', 'data.importObsidianButton'],
+    ['data.importEnexLabel', 'data.importEnexButton'],
+    ['data.importJexLabel', 'data.importJexButton'],
+    ['data.importBibliographyLabel', 'data.importBibliographyButton'],
+    ['data.exportDesc', 'data.exportButton'],
+    ['data.exportAllSpacesDesc', 'data.exportAllSpacesButton'],
+    ['data.historyDesc', 'data.historyButton'],
+  ] as const)('%s shares a row with the %s button', (textKey, buttonKey) => {
+    render(<DataTab />)
+
+    const row = screen.getByText(t(textKey)).closest('[data-slot="setting-row"]')
+    expect(row).not.toBeNull()
+    expect(row).toContainElement(screen.getByRole('button', { name: t(buttonKey) }))
+    expect(row?.querySelectorAll('button')).toHaveLength(1)
+  })
 
   // #5269 — the History view's way in now that it left the sidebar.
   it('the Edit history button opens the History view', async () => {
@@ -154,7 +172,7 @@ describe('DataTab', () => {
     const fileInput = screen.getByTestId('import-file-input') as HTMLInputElement
     const clickSpy = vi.spyOn(fileInput, 'click')
 
-    const importBtn = screen.getByRole('button', { name: /Choose Files/i })
+    const importBtn = screen.getByRole('button', { name: /Choose files/i })
     await user.click(importBtn)
 
     expect(clickSpy).toHaveBeenCalled()
@@ -213,7 +231,7 @@ describe('DataTab', () => {
 
     render(<DataTab />)
 
-    const importBtn = screen.getByRole('button', { name: /Choose Files/i })
+    const importBtn = screen.getByRole('button', { name: /Choose files/i })
     expect(importBtn).toBeDisabled()
   })
 
@@ -241,8 +259,8 @@ describe('DataTab', () => {
     // The disabled button references the hint via `aria-describedby`,
     // so a screen reader reading the focused button also hears the
     // reason. This is the contract — without it the button is just
-    // "Choose Files, dimmed" with no explanation.
-    const importBtn = screen.getByRole('button', { name: /Choose Files/i })
+    // "Choose files, dimmed" with no explanation.
+    const importBtn = screen.getByRole('button', { name: /Choose files/i })
     expect(importBtn).toHaveAttribute('aria-describedby', hint.id)
   })
 
@@ -253,7 +271,7 @@ describe('DataTab', () => {
     render(<DataTab />)
 
     expect(screen.queryByTestId('import-space-not-ready-hint')).not.toBeInTheDocument()
-    const importBtn = screen.getByRole('button', { name: /Choose Files/i })
+    const importBtn = screen.getByRole('button', { name: /Choose files/i })
     expect(importBtn).not.toBeDisabled()
     expect(importBtn).not.toHaveAttribute('aria-describedby')
   })
@@ -365,11 +383,11 @@ describe('DataTab', () => {
 
     render(<DataTab />)
 
-    // Exact string match (not `/Export All/i`, #2964) — the new
-    // "Export All Spaces" button's accessible name contains "Export All" as
+    // Exact string match (not `/Export all/i`, #2964) — the new
+    // "Export all spaces" button's accessible name contains "Export all" as
     // a substring, which a substring-matching regex would ambiguously match
     // too. An exact-name match still targets this single-space button only.
-    const exportBtn = screen.getByRole('button', { name: 'Export All' })
+    const exportBtn = screen.getByRole('button', { name: 'Export all' })
     await user.click(exportBtn)
 
     await waitFor(() => {
@@ -405,11 +423,11 @@ describe('DataTab', () => {
 
     render(<DataTab />)
 
-    // Exact string match (not `/Export All/i`, #2964) — the new
-    // "Export All Spaces" button's accessible name contains "Export All" as
+    // Exact string match (not `/Export all/i`, #2964) — the new
+    // "Export all spaces" button's accessible name contains "Export all" as
     // a substring, which a substring-matching regex would ambiguously match
     // too. An exact-name match still targets this single-space button only.
-    const exportBtn = screen.getByRole('button', { name: 'Export All' })
+    const exportBtn = screen.getByRole('button', { name: 'Export all' })
     await user.click(exportBtn)
 
     await waitFor(() => {
@@ -429,11 +447,11 @@ describe('DataTab', () => {
 
     render(<DataTab />)
 
-    // Exact string match (not `/Export All/i`, #2964) — the new
-    // "Export All Spaces" button's accessible name contains "Export All" as
+    // Exact string match (not `/Export all/i`, #2964) — the new
+    // "Export all spaces" button's accessible name contains "Export all" as
     // a substring, which a substring-matching regex would ambiguously match
     // too. An exact-name match still targets this single-space button only.
-    const exportBtn = screen.getByRole('button', { name: 'Export All' })
+    const exportBtn = screen.getByRole('button', { name: 'Export all' })
     await user.click(exportBtn)
 
     await waitFor(() => {
@@ -457,11 +475,11 @@ describe('DataTab', () => {
 
     render(<DataTab />)
 
-    // Exact string match (not `/Export All/i`, #2964) — the new
-    // "Export All Spaces" button's accessible name contains "Export All" as
+    // Exact string match (not `/Export all/i`, #2964) — the new
+    // "Export all spaces" button's accessible name contains "Export all" as
     // a substring, which a substring-matching regex would ambiguously match
     // too. An exact-name match still targets this single-space button only.
-    const exportBtn = screen.getByRole('button', { name: 'Export All' })
+    const exportBtn = screen.getByRole('button', { name: 'Export all' })
     await user.click(exportBtn)
 
     await waitFor(() => {
@@ -491,11 +509,11 @@ describe('DataTab', () => {
 
     render(<DataTab />)
 
-    // Exact string match (not `/Export All/i`, #2964) — the new
-    // "Export All Spaces" button's accessible name contains "Export All" as
+    // Exact string match (not `/Export all/i`, #2964) — the new
+    // "Export all spaces" button's accessible name contains "Export all" as
     // a substring, which a substring-matching regex would ambiguously match
     // too. An exact-name match still targets this single-space button only.
-    const exportBtn = screen.getByRole('button', { name: 'Export All' })
+    const exportBtn = screen.getByRole('button', { name: 'Export all' })
     await user.click(exportBtn)
 
     await waitFor(() => {
@@ -505,7 +523,7 @@ describe('DataTab', () => {
   })
 
   // #2964 — whole-vault "Export all spaces" action, a sibling of the
-  // single active-space "Export All" button above (which
+  // single active-space "Export all" button above (which
   // `exportAllSpacesAsZip` never touches, and vice versa).
   describe('export all spaces (#2964)', () => {
     it('the new button triggers exportAllSpacesAsZip and downloads the ZIP, leaving the single-space button untouched', async () => {
@@ -521,7 +539,7 @@ describe('DataTab', () => {
 
       render(<DataTab />)
 
-      const exportAllSpacesBtn = screen.getByRole('button', { name: 'Export All Spaces' })
+      const exportAllSpacesBtn = screen.getByRole('button', { name: 'Export all spaces' })
       await user.click(exportAllSpacesBtn)
 
       await waitFor(() => {
@@ -537,7 +555,7 @@ describe('DataTab', () => {
       expect(mockExportGraphAsZip).not.toHaveBeenCalled()
     })
 
-    it('the old single-space "Export All" button still triggers exportGraphAsZip only', async () => {
+    it('the old single-space "Export all" button still triggers exportGraphAsZip only', async () => {
       const user = userEvent.setup()
       const mockBlob = new Blob(['zip'], { type: 'application/zip' })
       mockExportGraphAsZip.mockResolvedValueOnce({
@@ -549,7 +567,7 @@ describe('DataTab', () => {
 
       render(<DataTab />)
 
-      const exportBtn = screen.getByRole('button', { name: 'Export All' })
+      const exportBtn = screen.getByRole('button', { name: 'Export all' })
       await user.click(exportBtn)
 
       await waitFor(() => {
@@ -570,7 +588,7 @@ describe('DataTab', () => {
 
       render(<DataTab />)
 
-      const exportAllSpacesBtn = screen.getByRole('button', { name: 'Export All Spaces' })
+      const exportAllSpacesBtn = screen.getByRole('button', { name: 'Export all spaces' })
       await user.click(exportAllSpacesBtn)
 
       await waitFor(() => {
@@ -583,7 +601,7 @@ describe('DataTab', () => {
       // handler `return`ed from inside the `try` before its trailing
       // `setExportingAllSpaces(false)`, which is not in a `finally`.
       await waitFor(() => {
-        expect(screen.getByRole('button', { name: 'Export All Spaces' })).not.toBeDisabled()
+        expect(screen.getByRole('button', { name: 'Export all spaces' })).not.toBeDisabled()
       })
     })
 
@@ -600,7 +618,7 @@ describe('DataTab', () => {
 
       render(<DataTab />)
 
-      const exportAllSpacesBtn = screen.getByRole('button', { name: 'Export All Spaces' })
+      const exportAllSpacesBtn = screen.getByRole('button', { name: 'Export all spaces' })
       await user.click(exportAllSpacesBtn)
 
       await waitFor(() => {
@@ -618,7 +636,7 @@ describe('DataTab', () => {
 
       render(<DataTab />)
 
-      const exportAllSpacesBtn = screen.getByRole('button', { name: 'Export All Spaces' })
+      const exportAllSpacesBtn = screen.getByRole('button', { name: 'Export all spaces' })
       await user.click(exportAllSpacesBtn)
 
       await waitFor(() => {
@@ -630,7 +648,7 @@ describe('DataTab', () => {
     it('has no a11y violations in the export card with the new button present', async () => {
       const { container } = render(<DataTab />)
 
-      expect(screen.getByRole('button', { name: 'Export All Spaces' })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'Export all spaces' })).toBeInTheDocument()
 
       await waitFor(async () => {
         const results = await axe(container)
@@ -1143,7 +1161,7 @@ describe('DataTab', () => {
     // jsdom lowercases the attribute; assert presence (value is empty string).
     expect(folderInput.hasAttribute('webkitdirectory')).toBe(true)
 
-    // A dedicated button drives it, distinct from "Choose Files".
+    // A dedicated button drives it, distinct from "Choose files".
     expect(screen.getByTestId('import-folder-button')).toBeInTheDocument()
   })
 
@@ -1151,7 +1169,7 @@ describe('DataTab', () => {
   // explicitly-named entry point. Like the generic folder button its input must
   // carry `webkitdirectory` (a vault is a folder pick), and a distinct,
   // Obsidian-labelled button must drive it so vault support is not hidden behind
-  // the generic "Import Folder" label.
+  // the generic "Import folder" label.
   it('exposes a dedicated Obsidian vault affordance carrying webkitdirectory (#2510)', () => {
     render(<DataTab />)
 
@@ -1160,11 +1178,11 @@ describe('DataTab', () => {
     expect(vaultInput.hasAttribute('webkitdirectory')).toBe(true)
 
     // A distinct, discoverable button, labelled for Obsidian and separate from
-    // the generic "Import Folder" / "Choose Files" affordances.
+    // the generic "Import folder" / "Choose files" affordances.
     const vaultBtn = screen.getByTestId('import-obsidian-button')
     expect(vaultBtn).toBeInTheDocument()
-    expect(vaultBtn).toHaveTextContent('Import Obsidian Vault')
-    expect(screen.getByRole('button', { name: /Import Obsidian Vault/i })).toBeInTheDocument()
+    expect(vaultBtn).toHaveTextContent('Import Obsidian vault')
+    expect(screen.getByRole('button', { name: /Import Obsidian vault/i })).toBeInTheDocument()
   })
 
   // #2510 — clicking the Obsidian button opens ITS folder picker (the dedicated
@@ -1950,7 +1968,7 @@ describe('DataTab', () => {
 
       const btn = screen.getByTestId('import-bib-button')
       expect(btn).toBeInTheDocument()
-      expect(btn).toHaveTextContent('Import Bibliography (.bib/.json)')
+      expect(btn).toHaveTextContent('Import bibliography (.bib/.json)')
     })
 
     it('clicking the bibliography button opens the file input', async () => {

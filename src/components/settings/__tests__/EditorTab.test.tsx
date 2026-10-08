@@ -6,6 +6,7 @@ import { axe } from 'vitest-axe'
 import { EditorTab } from '@/components/settings/EditorTab'
 import { EMOJI_PICKER_ENABLED_KEY } from '@/lib/editor-preferences'
 import { EXTERNAL_IMAGE_ALLOWLIST_KEY } from '@/lib/external-image-policy'
+import { t } from '@/lib/i18n'
 import { PREFERENCES, readPreference, writePreference } from '@/lib/preferences'
 
 describe('EditorTab', () => {
@@ -53,6 +54,13 @@ describe('EditorTab', () => {
     expect(screen.getByTestId('link-preview-fetch-toggle')).not.toBeChecked()
   })
 
+  it('labels the external-image select by its row and describes it with the help text', () => {
+    render(<EditorTab />)
+    const select = screen.getByLabelText(t('settings.editor.externalImageLabel'))
+    expect(select).toBe(screen.getByTestId('external-image-policy-select'))
+    expect(select).toHaveAccessibleDescription(t('settings.editor.externalImageHelp'))
+  })
+
   it('has no a11y violations', async () => {
     const { container } = render(<EditorTab />)
     expect(await axe(container)).toHaveNoViolations()
@@ -72,7 +80,7 @@ describe('EditorTab', () => {
       render(<EditorTab />)
 
       expect(
-        screen.getByRole('heading', { level: 3, name: 'Allowed image domains' }),
+        screen.getByRole('heading', { level: 2, name: 'Allowed image domains' }),
       ).toBeInTheDocument()
       // Sorted, design-system pill (role="group") per host with a lucide-X
       // remove button addressable by its accessible label.

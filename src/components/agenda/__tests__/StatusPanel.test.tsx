@@ -151,10 +151,10 @@ describe('StatusPanel', () => {
     expect(screen.getByText('15')).toBeInTheDocument()
 
     // Labels
-    expect(screen.getByText('Foreground Queue')).toBeInTheDocument()
-    expect(screen.getByText('Background Queue')).toBeInTheDocument()
-    expect(screen.getByText('Ops Processed')).toBeInTheDocument()
-    expect(screen.getByText('Background Dispatched')).toBeInTheDocument()
+    expect(screen.getByText('Foreground queue')).toBeInTheDocument()
+    expect(screen.getByText('Background queue')).toBeInTheDocument()
+    expect(screen.getByText('Ops processed')).toBeInTheDocument()
+    expect(screen.getByText('Background dispatched')).toBeInTheDocument()
   })
 
   it('renders the panel title', async () => {
@@ -162,7 +162,7 @@ describe('StatusPanel', () => {
 
     render(<StatusPanel />)
 
-    expect(await screen.findByText('Materializer Status')).toBeInTheDocument()
+    expect(await screen.findByText('Materializer status')).toBeInTheDocument()
   })
 
   // #5269 — the panel is the body of Settings › Status, whose `<h1>` belongs
@@ -172,7 +172,7 @@ describe('StatusPanel', () => {
 
     render(<StatusPanel />)
 
-    expect(await screen.findByText('Materializer Status')).toBeInTheDocument()
+    expect(await screen.findByText('Materializer status')).toBeInTheDocument()
     expect(screen.queryByRole('heading', { level: 1 })).not.toBeInTheDocument()
   })
 
@@ -288,7 +288,7 @@ describe('StatusPanel', () => {
       expect(screen.getByText('Failed to load status')).toBeInTheDocument()
     })
     // Metrics should not render since status is still null
-    expect(screen.queryByText('Foreground Queue')).not.toBeInTheDocument()
+    expect(screen.queryByText('Foreground queue')).not.toBeInTheDocument()
   })
 
   it('shows error alongside status when poll fails after initial success', async () => {
@@ -307,7 +307,7 @@ describe('StatusPanel', () => {
 
     // Status metrics should be visible
     expect(screen.getByText('3')).toBeInTheDocument()
-    expect(screen.getByText('Foreground Queue')).toBeInTheDocument()
+    expect(screen.getByText('Foreground queue')).toBeInTheDocument()
 
     // No error initially
     expect(screen.queryByText('Failed to load status')).not.toBeInTheDocument()
@@ -319,7 +319,7 @@ describe('StatusPanel', () => {
 
     // Error should now be visible alongside the status metrics
     expect(screen.getByText('Failed to load status')).toBeInTheDocument()
-    expect(screen.getByText('Foreground Queue')).toBeInTheDocument()
+    expect(screen.getByText('Foreground queue')).toBeInTheDocument()
 
     vi.useRealTimers()
   })
@@ -376,7 +376,7 @@ describe('StatusPanel', () => {
 
       render(<StatusPanel />)
 
-      await screen.findByText('Foreground Queue')
+      await screen.findByText('Foreground queue')
       expect(screen.queryByText(/foreground error/)).not.toBeInTheDocument()
       expect(screen.queryByText(/background error/)).not.toBeInTheDocument()
     })
@@ -389,7 +389,7 @@ describe('StatusPanel', () => {
 
       render(<StatusPanel />)
 
-      await screen.findByText('Foreground Queue')
+      await screen.findByText('Foreground queue')
       expect(screen.queryByText(/foreground error/)).not.toBeInTheDocument()
     })
 
@@ -464,7 +464,7 @@ describe('StatusPanel', () => {
 
       render(<StatusPanel />)
 
-      await screen.findByText('Foreground Queue')
+      await screen.findByText('Foreground queue')
       expect(screen.queryByTestId('status-panel-stale')).not.toBeInTheDocument()
     })
 
@@ -479,7 +479,7 @@ describe('StatusPanel', () => {
 
       render(<StatusPanel />)
 
-      await screen.findByText('Foreground Queue')
+      await screen.findByText('Foreground queue')
       expect(screen.queryByTestId('status-panel-stale')).not.toBeInTheDocument()
     })
 
@@ -494,7 +494,7 @@ describe('StatusPanel', () => {
 
       render(<StatusPanel />)
 
-      await screen.findByText('Foreground Queue')
+      await screen.findByText('Foreground queue')
       expect(screen.queryByTestId('status-panel-stale')).not.toBeInTheDocument()
     })
   })
@@ -524,14 +524,15 @@ describe('StatusPanel', () => {
 
       render(<StatusPanel />)
 
-      await screen.findByText('Foreground Queue')
+      await screen.findByText('Foreground queue')
       const peaks = screen.getAllByText(/Peak: 0/)
       expect(peaks).toHaveLength(2)
     })
   })
 
   describe('health color classes', () => {
-    it('applies green accent when queue depth is 0', async () => {
+    // #5345 — an empty queue is the normal state, so it gets no accent.
+    it('applies no accent when queue depth is 0', async () => {
       stubInvoke({
         get_status: () => ({
           ...mockStatus,
@@ -548,12 +549,13 @@ describe('StatusPanel', () => {
 
       const { container } = render(<StatusPanel />)
 
-      await screen.findByText('Foreground Queue')
+      await screen.findByText('Foreground queue')
       const metricCards = container.querySelectorAll('.status-metric')
-      expect(metricCards[0]?.className).toContain('border-status-done')
-      expect(metricCards[0]?.className).toContain('text-status-done-foreground')
-      expect(metricCards[1]?.className).toContain('border-status-done')
-      expect(metricCards[1]?.className).toContain('text-status-done-foreground')
+      expect(metricCards).toHaveLength(4)
+      for (const card of [metricCards[0], metricCards[1]]) {
+        expect(card?.className).not.toContain('border-status-')
+        expect(card?.className).not.toContain('text-status-')
+      }
     })
 
     it('applies no health accent for queue depth 1-10', async () => {
@@ -562,7 +564,7 @@ describe('StatusPanel', () => {
 
       const { container } = render(<StatusPanel />)
 
-      await screen.findByText('Foreground Queue')
+      await screen.findByText('Foreground queue')
       const metricCards = container.querySelectorAll('.status-metric')
       expect(metricCards[0]?.className).not.toContain('border-status-done')
       expect(metricCards[0]?.className).not.toContain('border-status-pending')
@@ -587,7 +589,7 @@ describe('StatusPanel', () => {
 
       const { container } = render(<StatusPanel />)
 
-      await screen.findByText('Foreground Queue')
+      await screen.findByText('Foreground queue')
       const metricCards = container.querySelectorAll('.status-metric')
       expect(metricCards[0]?.className).toContain('border-status-pending')
       expect(metricCards[0]?.className).toContain('text-status-pending-foreground')
@@ -603,7 +605,7 @@ describe('StatusPanel', () => {
 
       render(<StatusPanel />)
 
-      const fgLabel = await screen.findByText('Foreground Queue')
+      const fgLabel = await screen.findByText('Foreground queue')
       await user.hover(fgLabel)
 
       await waitFor(() => {
@@ -619,15 +621,15 @@ describe('StatusPanel', () => {
 
       const { container } = render(<StatusPanel />)
 
-      await screen.findByText('Foreground Queue')
+      await screen.findByText('Foreground queue')
 
       // All 4 labels should be wrapped in tooltip trigger spans with cursor-help
       const tooltipTriggers = container.querySelectorAll('.cursor-help')
       expect(tooltipTriggers).toHaveLength(4)
-      expect(tooltipTriggers[0]?.textContent).toBe('Foreground Queue')
-      expect(tooltipTriggers[1]?.textContent).toBe('Background Queue')
-      expect(tooltipTriggers[2]?.textContent).toBe('Ops Processed')
-      expect(tooltipTriggers[3]?.textContent).toBe('Background Dispatched')
+      expect(tooltipTriggers[0]?.textContent).toBe('Foreground queue')
+      expect(tooltipTriggers[1]?.textContent).toBe('Background queue')
+      expect(tooltipTriggers[2]?.textContent).toBe('Ops processed')
+      expect(tooltipTriggers[3]?.textContent).toBe('Background dispatched')
     })
   })
 
@@ -637,7 +639,7 @@ describe('StatusPanel', () => {
 
       const { container } = render(<StatusPanel />)
 
-      await screen.findByText('Foreground Queue')
+      await screen.findByText('Foreground queue')
 
       const tooltipTriggers = container.querySelectorAll('.cursor-help')
       expect(tooltipTriggers).toHaveLength(4)
@@ -647,7 +649,7 @@ describe('StatusPanel', () => {
     })
   })
 
-  describe('Last Synced display', () => {
+  describe('Last synced display', () => {
     it('shows relative time when lastSyncedAt is set', async () => {
       stubInvoke({ get_status: () => mockStatus })
       mockSyncStoreState.peers = [{ peer_id: 'peer-1' }]
@@ -655,7 +657,7 @@ describe('StatusPanel', () => {
 
       render(<StatusPanel />)
 
-      await screen.findByText('Foreground Queue')
+      await screen.findByText('Foreground queue')
 
       // formatRelativeTime (i18n) resolves sidebar.minutesAgo -> "5m ago"
       const lastSyncedEl = document.querySelector('.sync-last-synced')
@@ -669,7 +671,7 @@ describe('StatusPanel', () => {
 
       render(<StatusPanel />)
 
-      await screen.findByText('Foreground Queue')
+      await screen.findByText('Foreground queue')
 
       const lastSyncedEl = document.querySelector('.sync-last-synced')
       expect(lastSyncedEl?.textContent).toBe('--')
@@ -681,7 +683,7 @@ describe('StatusPanel', () => {
       // Default mock has peers: [] — should show "Not configured"
       stubInvoke({ get_status: () => mockStatus })
       render(<StatusPanel />)
-      await screen.findByText('Materializer Status')
+      await screen.findByText('Materializer status')
       expect(screen.getByText('Not configured')).toBeInTheDocument()
     })
 
@@ -690,7 +692,7 @@ describe('StatusPanel', () => {
       mockSyncStoreState.state = 'idle'
       stubInvoke({ get_status: () => mockStatus })
       render(<StatusPanel />)
-      await screen.findByText('Materializer Status')
+      await screen.findByText('Materializer status')
       expect(screen.getByText('Idle')).toBeInTheDocument()
     })
 
@@ -703,7 +705,7 @@ describe('StatusPanel', () => {
       mockSyncStoreState.state = 'idle'
       stubInvoke({ get_status: () => mockStatus })
       const { container } = render(<StatusPanel />)
-      await screen.findByText('Materializer Status')
+      await screen.findByText('Materializer status')
 
       expect(screen.queryByTestId('sync-panel-not-configured')).not.toBeInTheDocument()
       expect(container.querySelector('.sync-panel-details')).toBeInTheDocument()
@@ -719,7 +721,7 @@ describe('StatusPanel', () => {
       mockSyncStoreState.error = 'Connection lost'
       stubInvoke({ get_status: () => mockStatus })
       render(<StatusPanel />)
-      await screen.findByText('Materializer Status')
+      await screen.findByText('Materializer status')
       expect(screen.getByText('Connection lost')).toBeInTheDocument()
       // The sync error must be a live region so screen readers announce it.
       const alert = screen.getByRole('alert')
@@ -736,7 +738,7 @@ describe('StatusPanel', () => {
         mockSyncStoreState.error = 'Connection lost'
         stubInvoke({ get_status: () => mockStatus })
         render(<StatusPanel />)
-        await screen.findByText('Materializer Status')
+        await screen.findByText('Materializer status')
 
         const retry = screen.getByTestId('sync-panel-retry')
         expect(retry).toBeInTheDocument()
@@ -749,7 +751,7 @@ describe('StatusPanel', () => {
         mockSyncStoreState.state = 'idle'
         stubInvoke({ get_status: () => mockStatus })
         render(<StatusPanel />)
-        await screen.findByText('Materializer Status')
+        await screen.findByText('Materializer status')
         expect(screen.queryByTestId('sync-panel-retry')).not.toBeInTheDocument()
       })
 
@@ -763,7 +765,7 @@ describe('StatusPanel', () => {
         // returns `SyncSessionInfo` (#4668).
         stubInvoke({ get_status: () => mockStatus, start_sync: () => mockSyncSession })
         render(<StatusPanel />)
-        await screen.findByText('Materializer Status')
+        await screen.findByText('Materializer status')
 
         await user.click(screen.getByTestId('sync-panel-retry'))
 
@@ -791,7 +793,7 @@ describe('StatusPanel', () => {
         mockSyncStoreState.error = 'Connection lost'
         stubInvoke({ get_status: () => mockStatus })
         const { container } = render(<StatusPanel />)
-        await screen.findByText('Materializer Status')
+        await screen.findByText('Materializer status')
         await screen.findByTestId('sync-panel-retry')
 
         const results = await axe(container)
@@ -806,7 +808,7 @@ describe('StatusPanel', () => {
       mockSyncStoreState.opsSent = 17
       stubInvoke({ get_status: () => mockStatus })
       render(<StatusPanel />)
-      await screen.findByText('Materializer Status')
+      await screen.findByText('Materializer status')
       expect(screen.getByText('Peers')).toBeInTheDocument()
       const peerCount = document.querySelector('.sync-peer-count')
       expect(peerCount?.textContent).toBe('2')
@@ -821,7 +823,7 @@ describe('StatusPanel', () => {
       mockSyncStoreState.state = 'syncing'
       stubInvoke({ get_status: () => mockStatus })
       render(<StatusPanel />)
-      await screen.findByText('Materializer Status')
+      await screen.findByText('Materializer status')
       expect(screen.getByText('Syncing...')).toBeInTheDocument()
     })
 
@@ -870,9 +872,9 @@ describe('StatusPanel', () => {
       stubInvoke({ get_status: () => mockStatus })
       const user = userEvent.setup()
       render(<StatusPanel />)
-      await screen.findByText('Materializer Status')
-      // Hover over "Ops Received" metric label
-      const label = screen.getByText('Ops Received')
+      await screen.findByText('Materializer status')
+      // Hover over "Ops received" metric label
+      const label = screen.getByText('Ops received')
       await user.hover(label)
       await waitFor(() => {
         const matches = screen.getAllByText(/sync messages received from peers/i)

@@ -23,6 +23,7 @@ import { useTranslation } from 'react-i18next'
 
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { IconButton } from '@/components/ui/icon-button'
 import { Input } from '@/components/ui/input'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { Spinner } from '@/components/ui/spinner'
@@ -68,6 +69,8 @@ export function PeerListItem({
   // peer supplied over the wire, then its truncated id. Resolved once so the
   // heading, the rename label and the address-edit label cannot disagree.
   const displayName = peerDisplayName(peer)
+  const renameLabel = t('device.renameDeviceLabel', { name: displayName })
+  const editAddressLabel = t('device.editAddressLabel', { name: displayName })
 
   // #4297 — non-null means this peer has told us, on the wire, that it holds
   // no pairing with this device: it was unpaired from the other end and this
@@ -134,18 +137,17 @@ export function PeerListItem({
                 right-aligns it against the card edge. */}
             <div className="flex min-w-0 items-center gap-2">
               <p className="device-peer-name min-w-0 text-sm font-medium truncate">{displayName}</p>
-              <Button
+              <IconButton
                 variant="ghost"
-                size="sm"
+                size="icon-sm"
                 className="device-rename-btn touch-target ml-auto shrink-0"
                 onClick={() => onRename(peer.peer_id)}
                 disabled={renamingPeerId === peer.peer_id}
-                aria-label={t('device.renameDeviceLabel', {
-                  name: displayName,
-                })}
+                tooltip={renameLabel}
+                ariaLabel={renameLabel}
               >
                 {renamingPeerId === peer.peer_id ? <Spinner /> : <Pencil />}
-              </Button>
+              </IconButton>
             </div>
             {/* #4298: the id line is the SUBTITLE under a name, so it is shown
               whenever the row has a name to be the subtitle of — the user's
@@ -238,16 +240,15 @@ export function PeerListItem({
             }}
           >
             <PopoverTrigger asChild>
-              <Button
+              <IconButton
                 variant="ghost"
                 size="icon-xs"
                 className="peer-address-edit"
-                aria-label={t('device.editAddressLabel', {
-                  name: displayName,
-                })}
+                tooltip={editAddressLabel}
+                ariaLabel={editAddressLabel}
               >
                 <Pencil />
-              </Button>
+              </IconButton>
             </PopoverTrigger>
             <PopoverContent
               className="w-64 max-w-[calc(100vw-2rem)] p-3 space-y-2"
@@ -310,9 +311,8 @@ export function PeerListItem({
       {/* Measured in a real browser: at a 360px viewport this card is only
           230px wide (the 48px mobile rail + panel/card padding eat the rest),
           leaving ~196px of action area — while `Sync Now` + `Unpair` need
-          264px side by side. So they stack full-width on mobile, the idiom
-          this panel already uses for `.device-pair-btn` / `.device-sync-all-btn`
-          and `PairingEntryForm`. They return to a row at `sm:` and up.
+          264px side by side. So they stack full-width on mobile, as
+          `PairingEntryForm` does. They return to a row at `sm:` and up.
           NB: no `touch-target` here — its `min-width:44px` would replace the
           flex item's implicit `min-width:auto` and let a button shrink below
           its own `whitespace-nowrap` label. `size="sm"` already supplies the
@@ -331,11 +331,11 @@ export function PeerListItem({
             name: displayName,
           })}
         >
-          {syncingPeerId === peer.peer_id ? <Spinner /> : <RefreshCw className="h-3.5 w-3.5" />}
+          {syncingPeerId === peer.peer_id ? <Spinner /> : <RefreshCw />}
           {t('device.syncNowButton')}
         </Button>
         <Button
-          variant="destructive"
+          variant="outline"
           size="sm"
           className="device-unpair-btn w-full sm:w-auto"
           onClick={() => onUnpair(peer.peer_id)}
@@ -343,7 +343,7 @@ export function PeerListItem({
             name: displayName,
           })}
         >
-          <Unplug className="h-3.5 w-3.5" />
+          <Unplug />
           {t('device.unpairButton')}
         </Button>
       </div>

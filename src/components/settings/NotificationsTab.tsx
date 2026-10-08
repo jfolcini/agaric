@@ -26,9 +26,9 @@ import { useCallback, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import { Card, CardContent, CardDescription, CardHeader } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
+import { SettingRow, settingDescriptionId } from '@/components/ui/setting-row'
 import { Spinner } from '@/components/ui/spinner'
 import { ToggleRow } from '@/components/ui/toggle-row'
 import { unwrap } from '@/lib/app-error'
@@ -127,7 +127,6 @@ export function NotificationsTab(): React.ReactElement {
     <div className="notifications-tab space-y-6">
       <Card>
         <CardHeader>
-          <CardTitle>{t('notifications.title')}</CardTitle>
           <CardDescription>{t('notifications.description')}</CardDescription>
         </CardHeader>
         <CardContent className="space-y-6">
@@ -140,13 +139,11 @@ export function NotificationsTab(): React.ReactElement {
             data-testid="notifications-enabled-switch"
           />
 
-          <div className="space-y-2">
-            <Label htmlFor="notifications-reminder-time" muted={false}>
-              {t('notifications.reminderTimeLabel')}
-            </Label>
-            <p className="text-xs text-muted-foreground">
-              {t('notifications.reminderTimeDescription')}
-            </p>
+          <SettingRow
+            label={t('notifications.reminderTimeLabel')}
+            description={t('notifications.reminderTimeDescription')}
+            controlId="notifications-reminder-time"
+          >
             <Input
               id="notifications-reminder-time"
               type="time"
@@ -157,9 +154,10 @@ export function NotificationsTab(): React.ReactElement {
                 if (HH_MM.test(next)) void save({ enabled, time: next })
               }}
               className="w-40"
+              aria-describedby={settingDescriptionId('notifications-reminder-time')}
               data-testid="notifications-reminder-time"
             />
-          </div>
+          </SettingRow>
 
           {/* Permission + test affordances */}
           <div className="space-y-2">

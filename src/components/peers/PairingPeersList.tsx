@@ -12,6 +12,7 @@ import type React from 'react'
 import { useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { EmptyState } from '@/components/common/EmptyState'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
@@ -48,7 +49,7 @@ export function PairingPeersList({ peers, onUnpair }: PairingPeersListProps): Re
       <div className="pairing-peers">
         <h3 className="text-sm font-medium mb-2">{t('pairing.pairedDevicesTitle')}</h3>
         {sortedPeers.length === 0 ? (
-          <p className="text-sm text-muted-foreground">{t('pairing.noPairedDevices')}</p>
+          <EmptyState compact headingLevel="p" message={t('pairing.noPairedDevices')} />
         ) : (
           <ScrollArea className="max-h-48">
             <div className="space-y-2">
@@ -149,7 +150,7 @@ export function PairingPeersList({ peers, onUnpair }: PairingPeersListProps): Re
                         </div>
                       </div>
                       <Button
-                        variant="destructive"
+                        variant="outline"
                         size="sm"
                         onClick={() => onUnpair(peer.peer_id)}
                         className="pairing-unpair-btn shrink-0 touch-target"

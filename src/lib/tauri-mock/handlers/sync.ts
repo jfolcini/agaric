@@ -16,7 +16,7 @@ import {
   returnUndefined,
   validationRejection,
 } from '@/lib/tauri-mock/handlers/shared'
-import { appSettings, fakeId, pairingPeerReveal, peerRefs } from '@/lib/tauri-mock/seed'
+import { appSettings, fakeId, mcpEnabled, pairingPeerReveal, peerRefs } from '@/lib/tauri-mock/seed'
 
 /** #4549 — the `app_settings` key `get_sync_relay_settings_inner` reads; `'1'` = on. */
 const INTERNET_RELAY_KEY = 'sync.internet_relay'
@@ -298,14 +298,15 @@ export const syncHandlers = {
   // ---------------------------------------------------------------------------
 
   get_mcp_status: () => ({
-    enabled: false,
+    enabled: mcpEnabled.ro,
     socket_path: '/mock/agaric-mcp-ro.sock',
     active_connections: 0,
   }),
 
   mcp_set_enabled: (args) => {
     const a = args as Record<string, unknown>
-    return (a['enabled'] as boolean) ?? false
+    mcpEnabled.ro = (a['enabled'] as boolean) ?? false
+    return mcpEnabled.ro
   },
 
   mcp_disconnect_all: returnNull,
@@ -315,14 +316,15 @@ export const syncHandlers = {
   get_mcp_recent_activity: () => [],
 
   get_mcp_rw_status: () => ({
-    enabled: false,
+    enabled: mcpEnabled.rw,
     socket_path: '/mock/agaric-mcp-rw.sock',
     active_connections: 0,
   }),
 
   mcp_rw_set_enabled: (args) => {
     const a = args as Record<string, unknown>
-    return (a['enabled'] as boolean) ?? false
+    mcpEnabled.rw = (a['enabled'] as boolean) ?? false
+    return mcpEnabled.rw
   },
 
   mcp_rw_disconnect_all: returnNull,

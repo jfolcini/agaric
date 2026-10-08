@@ -13,7 +13,6 @@ import { useTranslation } from 'react-i18next'
 
 import { Card, CardContent } from '@/components/ui/card'
 import { FilterPill } from '@/components/ui/filter-pill'
-import { FormField } from '@/components/ui/form-field'
 import {
   Select,
   SelectContent,
@@ -21,6 +20,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
+import { SettingRow, settingDescriptionId } from '@/components/ui/setting-row'
 import { ToggleRow } from '@/components/ui/toggle-row'
 import { useExternalImageAllowlist, useExternalImagePolicy } from '@/hooks/useExternalImagePolicy'
 import { useLocalStoragePreference } from '@/hooks/useLocalStoragePreference'
@@ -85,15 +85,16 @@ export function EditorTab(): React.ReactElement {
             images show a placeholder until the user loads them; choosing Load
             remembers the domain. Local/data/asset/same-origin images are never
             gated. */}
-        <FormField
+        <SettingRow
           label={t('settings.editor.externalImageLabel')}
-          htmlFor="external-image-policy-select"
+          controlId="external-image-policy-select"
           description={t('settings.editor.externalImageHelp')}
         >
           <Select value={policy} onValueChange={handlePolicyChange}>
             <SelectTrigger
               id="external-image-policy-select"
-              aria-label={t('settings.editor.externalImageLabel')}
+              className="sm:w-72"
+              aria-describedby={settingDescriptionId('external-image-policy-select')}
               data-testid="external-image-policy-select"
             >
               <SelectValue />
@@ -104,16 +105,16 @@ export function EditorTab(): React.ReactElement {
               <SelectItem value="never">{t('settings.editor.externalImageNever')}</SelectItem>
             </SelectContent>
           </Select>
-        </FormField>
+        </SettingRow>
 
         {/* Managed domains — hosts remembered via "Load" in Ask-each-time mode.
             Only surfaced when non-empty (keeps the tab clean for the common
             default). Removing a host stops its images auto-loading. */}
         {allowedHosts.length > 0 && (
           <div className="space-y-2" data-testid="external-image-allowlist">
-            <h3 className="text-sm font-medium">
+            <h2 className="text-sm font-medium">
               {t('settings.editor.externalImageAllowedHosts')}
-            </h3>
+            </h2>
             {/* Removable host chips via the shared FilterPill primitive (#1754) so
                 the remove control matches the design system (lucide X icon, 44px
                 coarse-pointer touch target, focus ring, accessible aria-label)

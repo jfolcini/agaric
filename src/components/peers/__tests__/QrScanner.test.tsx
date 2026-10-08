@@ -224,14 +224,14 @@ describe('QrScanner', () => {
     expect(onCameraDenied).not.toHaveBeenCalled()
   })
 
-  it('shows Retry Camera button after error', async () => {
+  it('shows Retry camera button after error', async () => {
     const user = userEvent.setup()
     render(<QrScanner onScan={vi.fn()} onError={vi.fn()} />)
 
     const scanBtn = screen.getByRole('button', { name: /scan qr code/i })
     await user.click(scanBtn)
 
-    // After error, button text should change to "Retry Camera"
+    // After error, button text should change to "Retry camera"
     expect(await screen.findByRole('button', { name: /retry camera/i })).toBeInTheDocument()
   })
 

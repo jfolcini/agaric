@@ -68,10 +68,7 @@ export function IntegrityCheckSection(): React.ReactElement {
   return (
     <Card>
       <CardHeader>
-        <CardTitle className="flex items-center gap-2" data-testid="integrity-panel-title">
-          <ShieldCheck className="h-4 w-4" />
-          {t('integrity.title')}
-        </CardTitle>
+        <CardTitle data-testid="integrity-panel-title">{t('integrity.title')}</CardTitle>
         <CardDescription>{t('integrity.description')}</CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
@@ -95,7 +92,7 @@ export function IntegrityCheckSection(): React.ReactElement {
               }}
               data-testid="integrity-run-button"
             >
-              {running ? <Spinner /> : <ShieldCheck className="h-3.5 w-3.5" />}
+              {running ? <Spinner /> : <ShieldCheck />}
               {running ? t('integrity.running') : t('integrity.runButton')}
             </Button>
 
@@ -158,7 +155,7 @@ export function IntegrityCheckSection(): React.ReactElement {
                   }}
                   data-testid="integrity-copy-button"
                 >
-                  <Copy className="h-3.5 w-3.5" />
+                  <Copy />
                   {t('integrity.copyButton')}
                 </Button>
               )}

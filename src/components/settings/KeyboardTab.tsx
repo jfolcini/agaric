@@ -8,12 +8,13 @@ import type React from 'react'
 import { useCallback, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
-import { renderKeys } from '@/components/common/render-keyboard-shortcut'
 import { ConfirmDialog } from '@/components/dialogs/ConfirmDialog'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import { Card, CardContent, CardDescription, CardHeader } from '@/components/ui/card'
+import { IconButton } from '@/components/ui/icon-button'
 import { Input } from '@/components/ui/input'
+import { KbdChord } from '@/components/ui/kbd'
 import {
   findConflicts,
   getCurrentShortcuts,
@@ -131,7 +132,6 @@ export function KeyboardTab(): React.ReactElement {
     <div className="space-y-6" data-testid="keyboard-settings-tab">
       <Card>
         <CardHeader>
-          <CardTitle>{t('keyboard.settings.title')}</CardTitle>
           <CardDescription>{t('keyboard.settings.description')}</CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
@@ -145,12 +145,24 @@ export function KeyboardTab(): React.ReactElement {
                     const conflictNames = getConflictsForId(shortcut.id)
 
                     return (
+                      // Phones: the name takes the first line, keys and actions share the second.
                       <div
                         key={shortcut.id}
-                        className="flex flex-col sm:flex-row sm:items-center gap-2 py-2 px-2 rounded hover:bg-accent/50"
+                        className="flex flex-wrap items-center gap-x-2 gap-y-1 py-2 sm:flex-nowrap"
                       >
-                        {/* Keys column */}
-                        <div className="w-full sm:w-56 sm:shrink-0" data-testid="kbd-keys-column">
+                        <div className="w-full text-sm sm:w-auto sm:min-w-0 sm:flex-1">
+                          {t(shortcut.description)}
+                          {shortcut.condition && (
+                            <small className="text-xs text-muted-foreground ml-1">
+                              ({t(shortcut.condition)})
+                            </small>
+                          )}
+                        </div>
+
+                        <div
+                          className="min-w-0 flex-1 sm:w-56 sm:flex-none"
+                          data-testid="kbd-keys-column"
+                        >
                           {isEditing ? (
                             <>
                               <div className="flex items-center gap-1">
@@ -179,23 +191,25 @@ export function KeyboardTab(): React.ReactElement {
                                     }
                                   }}
                                 />
-                                <Button
+                                <IconButton
                                   variant="ghost"
                                   size="icon-xs"
                                   onClick={saveEdit}
                                   disabled={!editValue.trim() || inlineError}
-                                  aria-label={t('keyboard.settings.saveButton')}
+                                  tooltip={t('keyboard.settings.saveButton')}
+                                  ariaLabel={t('keyboard.settings.saveButton')}
                                 >
-                                  <Check className="h-3 w-3" />
-                                </Button>
-                                <Button
+                                  <Check />
+                                </IconButton>
+                                <IconButton
                                   variant="ghost"
                                   size="icon-xs"
                                   onClick={cancelEdit}
-                                  aria-label={t('keyboard.settings.cancelButton')}
+                                  tooltip={t('keyboard.settings.cancelButton')}
+                                  ariaLabel={t('keyboard.settings.cancelButton')}
                                 >
-                                  <X className="h-3 w-3" />
-                                </Button>
+                                  <X />
+                                </IconButton>
                               </div>
                               {inlineError && (
                                 <p
@@ -214,7 +228,7 @@ export function KeyboardTab(): React.ReactElement {
                             </>
                           ) : (
                             <span className="inline-flex flex-wrap items-center gap-1">
-                              {renderKeys(shortcut.keys)}
+                              <KbdChord keys={shortcut.keys} size="sm" />
                               {shortcut.isCustom && (
                                 <Badge tone="secondary" className="ml-1">
                                   {t('keyboard.settings.customized')}
@@ -223,7 +237,6 @@ export function KeyboardTab(): React.ReactElement {
                             </span>
                           )}
 
-                          {/* Conflict warning (): inline inside the keys column */}
                           {conflictNames && conflictNames.length > 0 && !isEditing && (
                             <div className="text-xs text-alert-warning-foreground mt-1">
                               {t('keyboard.settings.conflictWarning', {
@@ -233,44 +246,37 @@ export function KeyboardTab(): React.ReactElement {
                           )}
                         </div>
 
-                        {/* Description column */}
-                        <div className="w-full sm:flex-1 text-sm text-muted-foreground">
-                          {t(shortcut.description)}
-                          {shortcut.condition && (
-                            <small className="text-xs text-muted-foreground ml-1">
-                              ({t(shortcut.condition)})
-                            </small>
-                          )}
-                        </div>
-
-                        {/* Actions column — #724: documentation-only entries
-                            (rebindable: false) get NO edit affordance; their
-                            triggers are hardcoded at the consumption site and
-                            a saved override would never be honoured. */}
-                        <div className="flex items-center gap-1 shrink-0">
-                          {!isEditing && shortcut.rebindable !== false && (
+                        {/* #724: documentation-only entries (rebindable: false)
+                            get NO edit affordance; their triggers are hardcoded
+                            at the consumption site and a saved override would
+                            never be honoured. */}
+                        <div className="flex shrink-0 items-center justify-end gap-1 sm:w-36">
+                          {shortcut.isCustom && !isEditing && (
                             <Button
                               variant="ghost"
-                              size="icon-xs"
-                              onClick={() => startEdit(shortcut.id, shortcut.keys)}
-                              aria-label={t('keyboard.settings.editShortcutFor', {
-                                action: t(shortcut.description),
-                              })}
-                            >
-                              <Pencil className="h-3 w-3" />
-                            </Button>
-                          )}
-                          {shortcut.isCustom && !isEditing && (
-                            <button
-                              type="button"
-                              className="text-xs text-primary underline decoration-muted-foreground/60 hover:decoration-current focus-ring-visible rounded-sm [@media(pointer:coarse)]:min-h-[44px]"
+                              size="xs"
                               onClick={() => handleReset(shortcut.id)}
                               aria-label={t('keyboard.settings.resetShortcutFor', {
                                 action: t(shortcut.description),
                               })}
                             >
                               {t('keyboard.settings.resetButton')}
-                            </button>
+                            </Button>
+                          )}
+                          {!isEditing && shortcut.rebindable !== false && (
+                            <IconButton
+                              variant="ghost"
+                              size="icon-xs"
+                              onClick={() => startEdit(shortcut.id, shortcut.keys)}
+                              tooltip={t('keyboard.settings.editShortcutFor', {
+                                action: t(shortcut.description),
+                              })}
+                              ariaLabel={t('keyboard.settings.editShortcutFor', {
+                                action: t(shortcut.description),
+                              })}
+                            >
+                              <Pencil />
+                            </IconButton>
                           )}
                         </div>
                       </div>

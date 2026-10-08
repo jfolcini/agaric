@@ -18,7 +18,7 @@ test.describe('Sync UI', () => {
 
     test('shows sync status section', async ({ page }) => {
       await expect(page.locator('[data-testid="sync-panel-title"]')).toBeVisible()
-      await expect(page.getByText('Sync Status')).toBeVisible()
+      await expect(page.getByText('Sync status')).toBeVisible()
     })
 
     test('shows not configured when no peers', async ({ page }) => {
@@ -27,16 +27,16 @@ test.describe('Sync UI', () => {
     })
   })
 
-  // --- DeviceManagement (Settings → Sync & Devices) ----------------------
+  // --- DeviceManagement (Settings → Sync & devices) ----------------------
   //
   // DeviceManagement was removed from StatusPanel and kept only in
-  // SettingsView under the "Sync & Devices" tab. All pairing / device-id /
+  // SettingsView under the "Sync & devices" tab. All pairing / device-id /
   // paired-peer-list surfaces now live here.
   test.describe('Device management', () => {
     test.beforeEach(async ({ page }) => {
       await page.goto('/')
       await expect(page.getByRole('button', { name: 'Journal', exact: true })).toBeVisible()
-      // Navigate to Settings and open the Sync & Devices tab
+      // Navigate to Settings and open the Sync & devices tab
       await page.getByRole('button', { name: 'Settings', exact: true }).click()
       await expect(page.locator('header').getByText('Settings')).toBeVisible()
       await page.getByRole('tab', { name: /Sync.*Devices/i }).click()
@@ -44,7 +44,7 @@ test.describe('Sync UI', () => {
     })
 
     test('shows device management', async ({ page }) => {
-      // DeviceManagement exposes the "Local Device ID" label (i18n key
+      // DeviceManagement exposes the "Local device ID" label (i18n key
       // `device.localDeviceIdLabel`). Assert via test-id to avoid coupling
       // to the English label text.
       await expect(page.locator('[data-testid="local-device-id-label"]')).toBeVisible()
@@ -56,18 +56,18 @@ test.describe('Sync UI', () => {
       await expect(page.locator('[data-testid="local-device-id-value"]')).toHaveText(/mock-device/)
     })
 
-    test('Pair New Device button exists and opens dialog', async ({ page }) => {
+    test('Pair new device button exists and opens dialog', async ({ page }) => {
       const pairBtn = page.getByRole('button', { name: /pair new device/i })
       await expect(pairBtn).toBeVisible()
       await pairBtn.click()
 
       // PairingDialog should open and show QR code or passphrase
-      await expect(page.getByText('Pair Device')).toBeVisible()
+      await expect(page.getByText('Pair device')).toBeVisible()
     })
 
     test('Pairing dialog shows QR code and passphrase on the host path', async ({ page }) => {
       await page.getByRole('button', { name: /pair new device/i }).click()
-      await expect(page.getByText('Pair Device')).toBeVisible()
+      await expect(page.getByText('Pair device')).toBeVisible()
       // #3463: the dialog opens directly on the host path (this device's own
       // code) — no chooser click needed.
 
@@ -79,7 +79,7 @@ test.describe('Sync UI', () => {
 
     test('Pairing dialog has word entry inputs on the joiner path', async ({ page }) => {
       await page.getByRole('button', { name: /pair new device/i }).click()
-      await expect(page.getByText('Pair Device')).toBeVisible()
+      await expect(page.getByText('Pair device')).toBeVisible()
       // #3463: switching to the joiner path is what declares that role —
       // the affordance on the host screen replaces the old upfront chooser.
       await page.getByRole('button', { name: /have a code from the other device/i }).click()
@@ -100,7 +100,7 @@ test.describe('Sync UI', () => {
       page,
     }) => {
       await page.getByRole('button', { name: /pair new device/i }).click()
-      await expect(page.getByText('Pair Device')).toBeVisible()
+      await expect(page.getByText('Pair device')).toBeVisible()
       // Host path arms a live pairing window as soon as the QR/passphrase
       // is on screen (mock `start_pairing` resolves successfully).
       await expect(page.getByText(/alpha/i)).toBeVisible()
@@ -118,19 +118,19 @@ test.describe('Sync UI', () => {
       // The guard intercepted the close: the confirmation appears, and the
       // pairing dialog underneath is still open with its live window intact.
       await expect(page.getByText('Cancel pairing?')).toBeVisible()
-      await expect(page.getByText('Pair Device')).toBeVisible()
+      await expect(page.getByText('Pair device')).toBeVisible()
 
       // Confirming tears down the pairing window and closes the dialog.
       await page.getByRole('button', { name: /^Cancel pairing$/i }).click()
       await expect(page.getByText('Cancel pairing?')).not.toBeVisible()
-      await expect(page.getByText('Pair Device')).not.toBeVisible()
+      await expect(page.getByText('Pair device')).not.toBeVisible()
     })
 
     test('Pairing dialog close guard: choosing "Keep pairing" leaves the dialog open', async ({
       page,
     }) => {
       await page.getByRole('button', { name: /pair new device/i }).click()
-      await expect(page.getByText('Pair Device')).toBeVisible()
+      await expect(page.getByText('Pair device')).toBeVisible()
       await expect(page.getByText(/alpha/i)).toBeVisible()
 
       await page.keyboard.press('Escape')
@@ -140,7 +140,7 @@ test.describe('Sync UI', () => {
       // must leave the live window's contents (QR/passphrase) intact.
       await page.getByRole('button', { name: /Keep pairing/i }).click()
       await expect(page.getByText('Cancel pairing?')).not.toBeVisible()
-      await expect(page.getByText('Pair Device')).toBeVisible()
+      await expect(page.getByText('Pair device')).toBeVisible()
       await expect(page.getByText(/alpha/i)).toBeVisible()
     })
 

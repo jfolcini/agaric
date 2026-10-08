@@ -80,6 +80,22 @@ describe('HelpTab', () => {
     expect(screen.getByText(t('help.updateLastCheckedNever'))).toBeInTheDocument()
   })
 
+  // #5345 — each action sits in one setting row with the title and description it acts on.
+  it('pairs each button with its title and description in a setting row', () => {
+    render(<HelpTab onReportBugClick={vi.fn()} />)
+
+    const bugRow = screen
+      .getByRole('button', { name: t('help.reportBugButton') })
+      .closest('[data-slot="setting-row"]')
+    expect(bugRow).toHaveTextContent(t('help.reportBugDescription'))
+
+    const updateRow = screen
+      .getByRole('button', { name: t('help.updateCheckNowButton') })
+      .closest('[data-slot="setting-row"]')
+    expect(updateRow).toHaveTextContent(t('help.updateTitle'))
+    expect(updateRow).toHaveTextContent(t('help.updateDescription'))
+  })
+
   it('replaces the button with the mobile hint on mobile UA', () => {
     setUserAgent(ANDROID_UA)
     render(<HelpTab onReportBugClick={vi.fn()} />)

@@ -24,6 +24,7 @@ import {
 import { type FailedFile, useImportRunner } from '@/components/settings/useImportRunner'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import { SettingRow } from '@/components/ui/setting-row'
 import { parseEnex } from '@/lib/enex-import'
 import { formatBytes } from '@/lib/format'
 import { parseJex } from '@/lib/jex-import'
@@ -374,181 +375,198 @@ export function ImportSection(): React.ReactElement {
   return (
     <Card>
       <CardHeader>
-        <CardTitle
-          className="import-panel-title flex items-center gap-2"
-          data-testid="import-panel-title"
-        >
-          <Upload className="h-4 w-4" />
+        <CardTitle className="import-panel-title" data-testid="import-panel-title">
           {t('data.importTitle')}
         </CardTitle>
         <CardDescription>{t('data.importDesc')}</CardDescription>
       </CardHeader>
       <CardContent>
-        <div className="flex flex-wrap gap-2">
-          <input
-            type="file"
-            accept=".md"
-            multiple
-            ref={fileInputRef}
-            className="hidden"
-            onChange={handleFileImport}
-            data-testid="import-file-input"
-            aria-label={t('data.importButton')}
-          />
-          {/* #1927 — second, separate input carrying `webkitdirectory`
-              so the OS opens a folder picker. This is what populates
-              `file.webkitRelativePath`, the only way the #1446
-              folder→namespace mapping can ever trigger; the `.md`-only
-              input above never sets it. `webkitdirectory` is not in the
-              React DOM typings, so spread it as a lowercased attribute. */}
-          <input
-            type="file"
-            {...{ webkitdirectory: '', directory: '' }}
-            ref={folderInputRef}
-            className="hidden"
-            onChange={handleFileImport}
-            data-testid="import-folder-input"
-            aria-label={t('data.importFolderButton')}
-          />
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => fileInputRef.current?.click()}
-            // `import_markdown` now requires a
-            // valid `space_id`; gate the button on the SpaceStore
-            // having an active space so we never call the IPC with
-            // an empty string. On the rare first-boot path before
-            // hydration, `currentSpaceId` is null and the button
-            // stays disabled. The visible hint below + the `title`
-            // attribute surface WHY (the disabled button itself
-            // can't fire hover events on most browsers because
-            // `disabled:pointer-events-none`, so we don't rely on
-            // the tooltip alone).
-            disabled={importDisabled}
-            title={importGatedTitle}
-            aria-describedby={importGatedDescribedBy}
-          >
-            <Upload className="h-3.5 w-3.5" />{' '}
-            {importing ? t('data.importingMessage') : t('data.importButton')}
-          </Button>
-          {/* #1927 — folder/vault import affordance. Same gating + flow
-              as the files button; only the source input differs. */}
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => folderInputRef.current?.click()}
-            disabled={importDisabled}
-            title={importGatedTitle}
-            aria-describedby={importGatedDescribedBy}
-            data-testid="import-folder-button"
-          >
-            <FolderUp className="h-3.5 w-3.5" /> {t('data.importFolderButton')}
-          </Button>
+        <div className="space-y-4">
+          <SettingRow label={t('data.importFilesLabel')}>
+            <input
+              type="file"
+              accept=".md"
+              multiple
+              ref={fileInputRef}
+              className="hidden"
+              onChange={handleFileImport}
+              data-testid="import-file-input"
+              aria-label={t('data.importButton')}
+            />
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => fileInputRef.current?.click()}
+              // `import_markdown` now requires a
+              // valid `space_id`; gate the button on the SpaceStore
+              // having an active space so we never call the IPC with
+              // an empty string. On the rare first-boot path before
+              // hydration, `currentSpaceId` is null and the button
+              // stays disabled. The visible hint below + the `title`
+              // attribute surface WHY (the disabled button itself
+              // can't fire hover events on most browsers because
+              // `disabled:pointer-events-none`, so we don't rely on
+              // the tooltip alone).
+              disabled={importDisabled}
+              title={importGatedTitle}
+              aria-describedby={importGatedDescribedBy}
+            >
+              <Upload />
+              {importing ? t('data.importingMessage') : t('data.importButton')}
+            </Button>
+          </SettingRow>
+          {/* #1927 — folder/vault import affordance. Same gating + flow as the
+              files button; only the source input differs. Its input carries
+              `webkitdirectory` so the OS opens a folder picker, which is what
+              populates `file.webkitRelativePath`, the only way the #1446
+              folder→namespace mapping can ever trigger. `webkitdirectory` is
+              not in the React DOM typings, so spread it as a lowercased
+              attribute. */}
+          <SettingRow label={t('data.importFolderLabel')}>
+            <input
+              type="file"
+              {...{ webkitdirectory: '', directory: '' }}
+              ref={folderInputRef}
+              className="hidden"
+              onChange={handleFileImport}
+              data-testid="import-folder-input"
+              aria-label={t('data.importFolderButton')}
+            />
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => folderInputRef.current?.click()}
+              disabled={importDisabled}
+              title={importGatedTitle}
+              aria-describedby={importGatedDescribedBy}
+              data-testid="import-folder-button"
+            >
+              <FolderUp />
+              {t('data.importFolderButton')}
+            </Button>
+          </SettingRow>
           {/* #2510 — dedicated "Import Obsidian vault" affordance. A vault is
               a folder pick, so it reuses the SAME `webkitdirectory` input +
               `handleFileImport` flow as the generic folder button; the
               explicit Obsidian label/icon makes the (already-working)
-              Obsidian support discoverable. `webkitdirectory` is not in the
-              React DOM typings, so spread it as a lowercased attribute. */}
-          <input
-            type="file"
-            {...{ webkitdirectory: '', directory: '' }}
-            ref={obsidianVaultInputRef}
-            className="hidden"
-            onChange={handleFileImport}
-            data-testid="import-obsidian-input"
-            aria-label={t('data.importObsidianButton')}
-          />
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => obsidianVaultInputRef.current?.click()}
-            disabled={importDisabled}
-            title={importGatedTitle}
-            aria-describedby={importGatedDescribedBy}
-            data-testid="import-obsidian-button"
-          >
-            <Vault className="h-3.5 w-3.5" /> {t('data.importObsidianButton')}
-          </Button>
+              Obsidian support discoverable. */}
+          <SettingRow label={t('data.importObsidianLabel')}>
+            <input
+              type="file"
+              {...{ webkitdirectory: '', directory: '' }}
+              ref={obsidianVaultInputRef}
+              className="hidden"
+              onChange={handleFileImport}
+              data-testid="import-obsidian-input"
+              aria-label={t('data.importObsidianButton')}
+            />
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => obsidianVaultInputRef.current?.click()}
+              disabled={importDisabled}
+              title={importGatedTitle}
+              aria-describedby={importGatedDescribedBy}
+              data-testid="import-obsidian-button"
+            >
+              <Vault />
+              {t('data.importObsidianButton')}
+            </Button>
+          </SettingRow>
           {/* #1282 — Evernote `.enex` import affordance. Same gating + flow
               as the files button; each note in the picked file(s) becomes a
               page via the shared `importMarkdown` IPC. */}
-          <input
-            type="file"
-            accept=".enex"
-            multiple
-            ref={enexInputRef}
-            className="hidden"
-            onChange={handleEnexImport}
-            data-testid="import-enex-input"
-            aria-label={t('data.importEnexButton')}
-          />
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => enexInputRef.current?.click()}
-            disabled={importDisabled}
-            title={importGatedTitle}
-            aria-describedby={importGatedDescribedBy}
-            data-testid="import-enex-button"
-          >
-            <FileUp className="h-3.5 w-3.5" /> {t('data.importEnexButton')}
-          </Button>
+          <SettingRow label={t('data.importEnexLabel')}>
+            <input
+              type="file"
+              accept=".enex"
+              multiple
+              ref={enexInputRef}
+              className="hidden"
+              onChange={handleEnexImport}
+              data-testid="import-enex-input"
+              aria-label={t('data.importEnexButton')}
+            />
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => enexInputRef.current?.click()}
+              disabled={importDisabled}
+              title={importGatedTitle}
+              aria-describedby={importGatedDescribedBy}
+              data-testid="import-enex-button"
+            >
+              <FileUp />
+              {t('data.importEnexButton')}
+            </Button>
+          </SettingRow>
           {/* #2513 (part 2) — Joplin `.jex` import affordance. Same gating +
               flow as the Evernote button; each note in the picked archive
               becomes a page via the shared `importMarkdown` IPC. */}
-          <input
-            type="file"
-            accept=".jex"
-            multiple
-            ref={jexInputRef}
-            className="hidden"
-            onChange={handleJexImport}
-            data-testid="import-jex-input"
-            aria-label={t('data.importJexButton')}
-          />
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => jexInputRef.current?.click()}
-            disabled={importDisabled}
-            title={importGatedTitle}
-            aria-describedby={importGatedDescribedBy}
-            data-testid="import-jex-button"
-          >
-            <FileUp className="h-3.5 w-3.5" /> {t('data.importJexButton')}
-          </Button>
+          <SettingRow label={t('data.importJexLabel')}>
+            <input
+              type="file"
+              accept=".jex"
+              multiple
+              ref={jexInputRef}
+              className="hidden"
+              onChange={handleJexImport}
+              data-testid="import-jex-input"
+              aria-label={t('data.importJexButton')}
+            />
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => jexInputRef.current?.click()}
+              disabled={importDisabled}
+              title={importGatedTitle}
+              aria-describedby={importGatedDescribedBy}
+              data-testid="import-jex-button"
+            >
+              <FileUp />
+              {t('data.importJexButton')}
+            </Button>
+          </SettingRow>
           {/* #1454 — bibliography import affordance. Same gating + flow as
               the other import buttons; a single `.bib`/`.json` pick maps to
               one `import_bibliography` IPC (one page per entry). */}
-          <input
-            type="file"
-            accept=".bib,.json"
-            ref={bibInputRef}
-            className="hidden"
-            onChange={handleBibliographyImport}
-            data-testid="import-bib-input"
-            aria-label={t('data.importBibliographyButton')}
-          />
+          <SettingRow label={t('data.importBibliographyLabel')}>
+            <input
+              type="file"
+              accept=".bib,.json"
+              ref={bibInputRef}
+              className="hidden"
+              onChange={handleBibliographyImport}
+              data-testid="import-bib-input"
+              aria-label={t('data.importBibliographyButton')}
+            />
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => bibInputRef.current?.click()}
+              disabled={importDisabled}
+              title={importGatedTitle}
+              aria-describedby={importGatedDescribedBy}
+              data-testid="import-bib-button"
+            >
+              <Library />
+              {t('data.importBibliographyButton')}
+            </Button>
+          </SettingRow>
+        </div>
+        {/* #1927 — Cancel is only shown while a run is in flight. It
+            sets the abort flag the file loop checks between files. */}
+        {importing && (
           <Button
             variant="outline"
             size="sm"
-            onClick={() => bibInputRef.current?.click()}
-            disabled={importDisabled}
-            title={importGatedTitle}
-            aria-describedby={importGatedDescribedBy}
-            data-testid="import-bib-button"
+            className="mt-4"
+            onClick={cancel}
+            data-testid="import-cancel-button"
           >
-            <Library className="h-3.5 w-3.5" /> {t('data.importBibliographyButton')}
+            {t('data.importCancelButton')}
           </Button>
-          {/* #1927 — Cancel is only shown while a run is in flight. It
-              sets the abort flag the file loop checks between files. */}
-          {importing && (
-            <Button variant="outline" size="sm" onClick={cancel} data-testid="import-cancel-button">
-              {t('data.importCancelButton')}
-            </Button>
-          )}
-        </div>
+        )}
         {/* #1927 — surface the import target so the destination space is
             never silent. Only meaningful once a space is active (the
             not-ready hint covers the null case). */}

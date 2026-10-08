@@ -203,7 +203,7 @@ describe('KeyboardTab', () => {
     const user = userEvent.setup()
     render(<KeyboardTab />)
 
-    const resetAllButton = screen.getByRole('button', { name: 'Reset All to Defaults' })
+    const resetAllButton = screen.getByRole('button', { name: 'Reset all to defaults' })
     await user.click(resetAllButton)
 
     // Confirmation dialog should appear
@@ -214,7 +214,7 @@ describe('KeyboardTab', () => {
     })
 
     // Click the action button in the dialog
-    const confirmButton = screen.getAllByRole('button', { name: 'Reset All to Defaults' })
+    const confirmButton = screen.getAllByRole('button', { name: 'Reset all to defaults' })
     // The last one is the dialog action button
     await user.click(confirmButton.at(-1) as HTMLElement)
 
@@ -375,9 +375,23 @@ describe('KeyboardTab', () => {
       ancestor = ancestor.parentElement
     }
     expect(ancestor).not.toBeNull()
-    // The keys-column ancestor must be the actual styled column wrapper (sm:w-56 sm:shrink-0).
-    expect(ancestor?.className).toMatch(/sm:w-56/)
-    expect(ancestor?.className).toMatch(/sm:shrink-0/)
+  })
+
+  // #5345 — a row reads like a setting: what the shortcut does, then its keys, then the
+  // actions. The keys column stays a direct child of the row (e2e locates rows by it).
+  it('orders each row as action name, keys, then actions', () => {
+    render(<KeyboardTab />)
+
+    const name = screen.getByText(t('keyboard.indentBlock'))
+    const row = name.parentElement as HTMLElement
+    const reset = screen.getByRole('button', {
+      name: t('keyboard.settings.resetShortcutFor', { action: t('keyboard.indentBlock') }),
+    })
+
+    expect(row.children[0]).toBe(name)
+    expect(row.children[1]).toHaveAttribute('data-testid', 'kbd-keys-column')
+    expect(row.children[1]).toHaveTextContent('Arrow Right')
+    expect(row.children[2]).toContainElement(reset)
   })
 
   it('empty-binding error is wired to the input via aria-describedby + aria-invalid', async () => {
@@ -509,17 +523,6 @@ describe('KeyboardTab', () => {
     expect(screen.getByRole('alert')).toHaveTextContent(
       t('keyboard.settings.validationModifierOnly'),
     )
-  })
-
-  // #1092: the reset-shortcut link button uses the canonical focus-ring-visible
-  // utility, not the legacy 2px ring.
-  it('#1092: reset-shortcut button uses focus-ring-visible (no legacy 2px ring)', () => {
-    render(<KeyboardTab />)
-    // indentBlock is custom, so its "Reset to default" link button is present.
-    const resetBtn = screen.getByText('Reset to default')
-    expect(resetBtn.className).toContain('focus-ring-visible')
-    expect(resetBtn.className).not.toContain('focus-visible:ring-2')
-    expect(resetBtn.className).not.toContain('focus-visible:ring-ring')
   })
 
   it('has no a11y violations', async () => {

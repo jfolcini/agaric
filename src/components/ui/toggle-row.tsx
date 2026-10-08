@@ -1,20 +1,13 @@
 /**
- * ToggleRow — horizontal `flex items-start justify-between gap-4` row with a
- * labelled description on the left and a `Switch` on the right.
+ * ToggleRow — a {@link SettingRow} whose control is a `Switch` (#1653, #5345).
  *
- * This is the canonical "setting toggle row" extracted from the copies that had
- * drifted across the settings tabs (EditorTab ×2, NotificationsTab, AutostartRow
- * — #1653). The deliberate non-fit for {@link FormField}, which is a *vertical*
- * label-above-control stack; this primitive is the *horizontal* toggle layout.
- *
- * Accessibility: the `id` is wired to both the `Label`'s `htmlFor` and the
- * `Switch`'s `id`, so the switch is named by its label. The same text is also
- * passed as the Switch's `aria-label`, matching the prior inline markup.
+ * The `id` is the Switch's id, so the row's `Label htmlFor` names it and its
+ * description describes it. The label is also the Switch's `aria-label`.
  */
 
 import type React from 'react'
 
-import { Label } from '@/components/ui/label'
+import { SettingRow, settingDescriptionId } from '@/components/ui/setting-row'
 import { Switch } from '@/components/ui/switch'
 
 export interface ToggleRowProps {
@@ -44,21 +37,22 @@ export function ToggleRow({
   'data-testid': dataTestid,
 }: ToggleRowProps): React.ReactElement {
   return (
-    <div className="flex items-start justify-between gap-4">
-      <div className="flex-1 space-y-1">
-        <Label htmlFor={id} muted={false}>
-          {label}
-        </Label>
-        <p className="text-xs text-muted-foreground">{description}</p>
-      </div>
+    // A switch is small enough to stay beside its label on phones too.
+    <SettingRow
+      label={label}
+      description={description}
+      controlId={id}
+      className="flex-row items-center gap-4"
+    >
       <Switch
         id={id}
         checked={checked}
         onCheckedChange={onCheckedChange}
         disabled={disabled}
         aria-label={label}
+        aria-describedby={description ? settingDescriptionId(id) : undefined}
         data-testid={dataTestid}
       />
-    </div>
+    </SettingRow>
   )
 }

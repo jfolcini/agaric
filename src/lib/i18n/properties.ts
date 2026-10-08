@@ -251,7 +251,6 @@ export const properties: Record<string, string> = {
   'property.errorCreate': 'Failed to create property definition',
   'property.errorUpdate': 'Failed to update options',
   'property.errorDelete': 'Failed to delete property definition',
-  'propertiesView.title': 'Property Definitions',
   'propertiesView.search': 'Search properties...',
   'propertiesView.empty': 'No property definitions yet',
   'propertiesView.createKey': 'Property key',
@@ -270,7 +269,7 @@ export const properties: Record<string, string> = {
   'propertiesView.add': 'Add',
   'propertiesView.taskStatesReload': 'Reload the page to apply changes.',
   'propertiesView.duplicateKey': 'A property with this key already exists',
-  'propertiesView.deadlineWarning': 'Deadline Warning',
+  'propertiesView.deadlineWarning': 'Deadline warning',
   'propertiesView.deadlineWarningDesc':
     "Show tasks due within this many days in the Agenda's Upcoming list. 0 turns it off.",
   'propertiesView.builtIn': 'Built-in',

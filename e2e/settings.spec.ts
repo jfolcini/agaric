@@ -33,7 +33,7 @@ test.describe('Settings panel', () => {
       'Agent access',
       // Data & Sync
       'Data',
-      'Sync & Devices',
+      'Sync & devices',
       'Status',
       // Help
       'Help',
@@ -81,10 +81,8 @@ test.describe('Settings panel', () => {
     await expect(page.locator('[data-testid="settings-panel-keyboard"]')).toBeVisible()
     await expect(page.locator('[data-testid="keyboard-settings-tab"]')).toBeVisible()
 
-    // Should show the title and at least one kbd element (shortcut key).
-    // `CardTitle` is a `<div>` (not a `<h2>`/`<h3>` — the card primitive
-    // uses a styled div), so use a content locator instead of role=heading.
-    await expect(page.getByText('Keyboard Shortcuts', { exact: true })).toBeVisible()
+    // The tab names the panel, so it has no title of its own (#5345).
+    await expect(page.getByRole('button', { name: 'Reset all to defaults' })).toBeVisible()
     await expect(page.locator('kbd').first()).toBeVisible()
   })
 
@@ -187,13 +185,16 @@ test.describe('Settings panel', () => {
 
     const roToggle = page.getByRole('switch', { name: 'Read-only access' })
     const rwToggle = page.getByRole('switch', { name: 'Read-write access' })
+    const roSocket = page.locator('[data-testid="mcp-socket-path"]')
     await expect(roToggle).toBeVisible()
     await expect(rwToggle).toBeVisible()
-    await expect(page.locator('[data-testid="mcp-socket-path"]')).toBeVisible()
-    await expect(page.locator('[data-testid="mcp-rw-socket-path"]')).toBeVisible()
+    // Socket paths show only while their toggle is on.
+    await expect(roSocket).toHaveCount(0)
+    await expect(page.locator('[data-testid="mcp-rw-socket-path"]')).toHaveCount(0)
 
     await roToggle.click()
     await expect(page.getByText('Read-only agent access enabled')).toBeVisible()
+    await expect(roSocket).toBeVisible()
   })
 
   // #2687 — the `?settings=<tab>` deep link (docs/features/views.md:114)

@@ -100,6 +100,19 @@ describe('NotificationsTab', () => {
     expect(screen.getByTestId('notifications-request-permission-button')).toBeEnabled()
   })
 
+  it('names the tab once: no panel title repeats "Notifications"', async () => {
+    await renderLoaded()
+    expect(screen.queryByText('Notifications')).not.toBeInTheDocument()
+    expect(screen.getByText(t('notifications.description'))).toBeInTheDocument()
+  })
+
+  it('labels the reminder time by its row and describes it with the help text', async () => {
+    await renderLoaded()
+    const input = screen.getByLabelText(t('notifications.reminderTimeLabel'))
+    expect(input).toBe(screen.getByTestId('notifications-reminder-time'))
+    expect(input).toHaveAccessibleDescription(t('notifications.reminderTimeDescription'))
+  })
+
   it('titles the permission section with an h3, since its label controls nothing', async () => {
     await renderLoaded()
     expect(

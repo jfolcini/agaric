@@ -258,8 +258,9 @@ test.describe('Property definitions view', () => {
       .click()
     await page.getByRole('tab', { name: 'Properties' }).click()
 
-    // Should show the "Property Definitions" heading
-    await expect(page.getByText('Property Definitions')).toBeVisible()
+    await expect(
+      page.locator('[data-testid="settings-panel-properties"]').getByLabel('Search properties...'),
+    ).toBeVisible()
 
     // Seed definitions: context (text) and project (select) — scope to
     // the settings panel so the sidebar's own <ul><li> menu doesn't match.
@@ -278,7 +279,9 @@ test.describe('Property definitions view', () => {
       .getByRole('button', { name: 'Settings', exact: true })
       .click()
     await page.getByRole('tab', { name: 'Properties' }).click()
-    await expect(page.getByText('Property Definitions')).toBeVisible()
+    await expect(
+      page.locator('[data-testid="settings-panel-properties"]').getByLabel('Search properties...'),
+    ).toBeVisible()
 
     // Type into the search input
     const settingsPanel = page.locator('[data-testid="settings-panel-properties"]')
@@ -301,7 +304,9 @@ test.describe('Property definitions view', () => {
       .getByRole('button', { name: 'Settings', exact: true })
       .click()
     await page.getByRole('tab', { name: 'Properties' }).click()
-    await expect(page.getByText('Property Definitions')).toBeVisible()
+    await expect(
+      page.locator('[data-testid="settings-panel-properties"]').getByLabel('Search properties...'),
+    ).toBeVisible()
 
     // Fill in the create form (scoped to the settings panel so the sidebar's
     // "New Page" button / other UI doesn't confuse the locator).
@@ -339,7 +344,9 @@ test.describe('Property definitions view', () => {
       .getByRole('button', { name: 'Settings', exact: true })
       .click()
     await page.getByRole('tab', { name: 'Properties' }).click()
-    await expect(page.getByText('Property Definitions')).toBeVisible()
+    await expect(
+      page.locator('[data-testid="settings-panel-properties"]').getByLabel('Search properties...'),
+    ).toBeVisible()
 
     const settingsPanel = page.locator('[data-testid="settings-panel-properties"]')
 
@@ -381,7 +388,9 @@ test.describe('Property definitions view', () => {
       .getByRole('button', { name: 'Settings', exact: true })
       .click()
     await page.getByRole('tab', { name: 'Properties' }).click()
-    await expect(page.getByText('Property Definitions')).toBeVisible()
+    await expect(
+      page.locator('[data-testid="settings-panel-properties"]').getByLabel('Search properties...'),
+    ).toBeVisible()
 
     // The "project" definition (type: select) should have an "Edit options" button
     const settingsPanel = page.locator('[data-testid="settings-panel-properties"]')

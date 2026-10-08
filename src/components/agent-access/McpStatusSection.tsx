@@ -5,9 +5,13 @@
  * Wraps the original RO / RW sections (toggle row, socket-path display
  * with copy button, and kill-switch row + confirm dialog) in a single
  * variant-aware component.  AgentAccessSettingsTab.tsx instantiates it
- * twice — once for RO (with copy-config + activity feed slotted in via
- * `children` between the socket path and the kill switch) and once for
- * RW (no children — the RW section has no copy-config or feed).
+ * twice — once for RO (with copy-config slotted in via `children`
+ * between the socket path and the kill switch) and once for RW (no
+ * children — the RW section has no copy-config).
+ *
+ * Everything below the toggle renders only while the channel is on: a
+ * socket path, a config snippet and a connection count describe a server
+ * that is not running when it is off.
  *
  * The kill-switch confirm-dialog state lives inside this component
  * because each variant has its own destructive flow with its own copy.
@@ -25,6 +29,7 @@ import { useTranslation } from 'react-i18next'
 import { ConfirmDialog } from '@/components/dialogs/ConfirmDialog'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { IconButton } from '@/components/ui/icon-button'
 import { Label } from '@/components/ui/label'
 import { Switch } from '@/components/ui/switch'
 
@@ -131,54 +136,60 @@ export function McpStatusSection({
         />
       </div>
 
-      {/* Socket path */}
-      <div className="space-y-2">
-        <Label htmlFor={socketPathId} muted={false}>
-          {t(socketPathLabelKey)}
-        </Label>
-        <div className="flex items-center gap-2">
-          <code
-            id={socketPathId}
-            className="flex-1 rounded-md border bg-muted/30 px-3 py-2 text-xs font-mono break-all"
-            data-testid={socketPathTestId}
-          >
-            {socketPath || '\u00A0'}
-          </code>
-          <Button
-            variant="ghost"
-            size="icon-sm"
-            className="shrink-0"
-            onClick={() => onCopySocket(socketPath)}
-            aria-label={t(copySocketLabelKey)}
-            disabled={!socketPath}
-          >
-            <Copy className="h-3.5 w-3.5" />
-          </Button>
-        </div>
-      </div>
+      {effectiveStatus.enabled && (
+        <>
+          {/* Socket path */}
+          <div className="space-y-2">
+            <Label htmlFor={socketPathId} muted={false}>
+              {t(socketPathLabelKey)}
+            </Label>
+            <div className="flex items-center gap-2">
+              <code
+                id={socketPathId}
+                className="flex-1 rounded-md border bg-muted/30 px-3 py-2 text-xs font-mono break-all"
+                data-testid={socketPathTestId}
+              >
+                {socketPath || '\u00A0'}
+              </code>
+              <IconButton
+                variant="ghost"
+                size="icon-sm"
+                className="shrink-0"
+                onClick={() => onCopySocket(socketPath)}
+                tooltip={t(copySocketLabelKey)}
+                ariaLabel={t(copySocketLabelKey)}
+                disabled={!socketPath}
+              >
+                <Copy />
+              </IconButton>
+            </div>
+          </div>
 
-      {children}
+          {children}
 
-      {/* Kill switch */}
-      <div className="space-y-2">
-        <h3 className="text-sm font-medium">{t(killSwitchLabelKey)}</h3>
-        <p className="text-xs text-muted-foreground">
-          {effectiveStatus.active_connections === 0
-            ? t(killSwitchDescriptionNoneKey)
-            : t(killSwitchDescriptionKey, {
-                count: effectiveStatus.active_connections,
-              })}
-        </p>
-        <Button
-          variant="destructive"
-          size="sm"
-          onClick={() => setConfirmOpen(true)}
-          disabled={effectiveStatus.active_connections === 0}
-          aria-label={t(killSwitchButtonKey)}
-        >
-          {t(killSwitchButtonKey)}
-        </Button>
-      </div>
+          {/* Kill switch */}
+          <div className="space-y-2">
+            <h3 className="text-sm font-medium">{t(killSwitchLabelKey)}</h3>
+            <p className="text-xs text-muted-foreground">
+              {effectiveStatus.active_connections === 0
+                ? t(killSwitchDescriptionNoneKey)
+                : t(killSwitchDescriptionKey, {
+                    count: effectiveStatus.active_connections,
+                  })}
+            </p>
+            {effectiveStatus.active_connections > 0 && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setConfirmOpen(true)}
+                aria-label={t(killSwitchButtonKey)}
+              >
+                {t(killSwitchButtonKey)}
+              </Button>
+            )}
+          </div>
+        </>
+      )}
 
       <ConfirmDialog
         open={confirmOpen}

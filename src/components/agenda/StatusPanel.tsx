@@ -9,7 +9,7 @@
  */
 
 import type { TFunction } from 'i18next'
-import { Activity, AlertCircle, AlertTriangle, CheckCircle2, RefreshCw } from 'lucide-react'
+import { AlertCircle, AlertTriangle, CheckCircle2, RefreshCw } from 'lucide-react'
 import type React from 'react'
 import { useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -31,9 +31,7 @@ import { cn } from '@/lib/utils'
 import { type SyncState, useSyncStore } from '@/stores/sync'
 
 function queueHealthClasses(depth: number): string {
-  if (depth === 0) return 'border-status-done text-status-done-foreground'
-  if (depth > 10) return 'border-status-pending text-status-pending-foreground'
-  return ''
+  return depth > 10 ? 'border-status-pending text-status-pending-foreground' : ''
 }
 
 /**
@@ -204,7 +202,7 @@ function SyncRetryButton({ state }: { state: SyncState }): React.ReactElement | 
       aria-label={t('status.syncRetryLabel')}
       data-testid="sync-panel-retry"
     >
-      <RefreshCw className={cn('h-3.5 w-3.5', retrying && 'animate-spin')} />
+      <RefreshCw className={cn(retrying && 'animate-spin')} />
       {retrying ? t('status.syncRetryingButton') : t('status.syncRetryButton')}
     </Button>
   )
@@ -273,8 +271,7 @@ export function StatusPanel(): React.ReactElement {
     <div className="status-panel space-y-4">
       <Card>
         <CardHeader>
-          <CardTitle className="status-panel-title flex items-center gap-2">
-            <Activity className="h-4 w-4" />
+          <CardTitle className="status-panel-title">
             {t('status.materializerStatusTitle')}
           </CardTitle>
         </CardHeader>
@@ -385,11 +382,7 @@ export function StatusPanel(): React.ReactElement {
 
       <Card>
         <CardHeader>
-          <CardTitle
-            className="sync-panel-title flex items-center gap-2"
-            data-testid="sync-panel-title"
-          >
-            <RefreshCw className="h-4 w-4" />
+          <CardTitle className="sync-panel-title" data-testid="sync-panel-title">
             {t('status.syncStatusTitle')}
           </CardTitle>
         </CardHeader>

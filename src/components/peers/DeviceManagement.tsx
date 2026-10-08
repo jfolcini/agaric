@@ -11,11 +11,12 @@
  * Follows StatusPanel.tsx layout patterns.
  */
 
-import { Copy, Globe, RefreshCw, ShieldAlert, Smartphone, X } from 'lucide-react'
+import { Copy, Globe, RefreshCw, ShieldAlert, X } from 'lucide-react'
 import type React from 'react'
 import { useCallback, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { EmptyState } from '@/components/common/EmptyState'
 import { ListViewState } from '@/components/common/ListViewState'
 import { PairingDialog } from '@/components/dialogs/PairingDialog'
 import { RenameDialog } from '@/components/dialogs/RenameDialog'
@@ -24,7 +25,9 @@ import { InternetRelaySetting } from '@/components/peers/InternetRelaySetting'
 import { PeerListItem } from '@/components/peers/PeerListItem'
 import { LoadingSkeleton } from '@/components/rendering/LoadingSkeleton'
 import { Button } from '@/components/ui/button'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Card, CardContent } from '@/components/ui/card'
+import { IconButton } from '@/components/ui/icon-button'
+import { SettingRow } from '@/components/ui/setting-row'
 import { Spinner } from '@/components/ui/spinner'
 import { useBindExposure } from '@/hooks/useBindExposure'
 import { useIpcCommand } from '@/hooks/useIpcCommand'
@@ -236,12 +239,6 @@ export function DeviceManagement(): React.ReactElement {
   return (
     <div className="device-management space-y-6">
       <Card>
-        <CardHeader>
-          <CardTitle className="device-management-title flex items-center gap-2">
-            <Smartphone className="h-4 w-4" />
-            {t('device.title')}
-          </CardTitle>
-        </CardHeader>
         <CardContent>
           {loading && !deviceId && (
             <div aria-busy="true">
@@ -258,46 +255,48 @@ export function DeviceManagement(): React.ReactElement {
               <Button variant="outline" size="sm" onClick={() => loadData()}>
                 {t('device.retryButton')}
               </Button>
-              <Button
+              <IconButton
                 variant="ghost"
-                size="sm"
+                size="icon-sm"
                 onClick={() => setError(null)}
-                aria-label={t('device.dismissErrorLabel')}
+                tooltip={t('device.dismissErrorLabel')}
+                ariaLabel={t('device.dismissErrorLabel')}
               >
-                <X className="h-4 w-4" />
-              </Button>
+                <X />
+              </IconButton>
             </div>
           )}
 
           {deviceId && (
             <>
-              {/* Local device ID */}
-              <dl className="device-id-section rounded-md border bg-muted/30 p-4 mb-4">
-                <dt className="text-sm text-muted-foreground" data-testid="local-device-id-label">
-                  {t('device.localDeviceIdLabel')}
-                </dt>
-                <dd className="device-id-value flex items-center gap-2 text-sm font-mono mt-1">
-                  <span className="break-all" data-testid="local-device-id-value">
+              <SettingRow
+                className="mb-4"
+                label={
+                  <span data-testid="local-device-id-label">{t('device.localDeviceIdLabel')}</span>
+                }
+                description={
+                  <span className="font-mono break-all" data-testid="local-device-id-value">
                     {deviceId}
                   </span>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className="shrink-0 h-7 w-7 p-0"
-                    onClick={async () => {
-                      try {
-                        await writeText(deviceId)
-                        notify.success(t('device.deviceIdCopied'))
-                      } catch (err) {
-                        reportIpcError('DeviceManagement', 'device.copyFailed', err, t)
-                      }
-                    }}
-                    aria-label={t('device.copyDeviceIdLabel')}
-                  >
-                    <Copy className="h-3.5 w-3.5" />
-                  </Button>
-                </dd>
-              </dl>
+                }
+              >
+                <IconButton
+                  variant="ghost"
+                  size="icon-sm"
+                  onClick={async () => {
+                    try {
+                      await writeText(deviceId)
+                      notify.success(t('device.deviceIdCopied'))
+                    } catch (err) {
+                      reportIpcError('DeviceManagement', 'device.copyFailed', err, t)
+                    }
+                  }}
+                  tooltip={t('device.copyDeviceIdLabel')}
+                  ariaLabel={t('device.copyDeviceIdLabel')}
+                >
+                  <Copy />
+                </IconButton>
+              </SettingRow>
 
               {/* #2506 — mDNS-disabled banner. Only rendered once the daemon
                   has actually reported a failed init (live event or
@@ -359,8 +358,9 @@ export function DeviceManagement(): React.ReactElement {
 
               {/* Pair New Device button */}
               <Button
+                size="sm"
                 onClick={() => setPairingOpen(true)}
-                className="device-pair-btn w-full mb-4 touch-target"
+                className="device-pair-btn mb-4"
               >
                 {t('device.pairNewDeviceButton')}
               </Button>
@@ -375,12 +375,12 @@ export function DeviceManagement(): React.ReactElement {
                   <Button
                     variant="outline"
                     size="sm"
-                    className="device-sync-all-btn w-full mb-2 touch-target"
+                    className="device-sync-all-btn mb-2"
                     onClick={handleSyncAll}
                     disabled={syncingAll || syncingPeerId !== null}
                     aria-label={t('device.syncAllLabel')}
                   >
-                    {syncingAll ? <Spinner /> : <RefreshCw className="h-3.5 w-3.5" />}
+                    {syncingAll ? <Spinner /> : <RefreshCw />}
                     {t('device.syncAllButton')}
                   </Button>
                 )}
@@ -390,12 +390,9 @@ export function DeviceManagement(): React.ReactElement {
                   items={peers}
                   skeleton={null}
                   empty={
-                    <p
-                      className="device-no-peers text-sm text-muted-foreground"
-                      data-testid="device-no-peers"
-                    >
-                      {t('device.noPairedDevices')}
-                    </p>
+                    <div data-testid="device-no-peers">
+                      <EmptyState compact headingLevel="p" message={t('device.noPairedDevices')} />
+                    </div>
                   }
                 >
                   {(items) => (

@@ -215,7 +215,6 @@ describe('key existence', () => {
     'pageProperty.booleanType',
 
     // Properties view
-    'propertiesView.title',
     'propertiesView.create',
 
     // Tags
