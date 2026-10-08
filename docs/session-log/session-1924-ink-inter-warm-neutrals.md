@@ -1,4 +1,4 @@
-# Session 1923: ink primary, Inter, warm neutrals, tighter radius (#5332 items 3–5)
+# Session 1924: ink primary, Inter, warm neutrals, tighter radius (#5332 items 3–5)
 
 This is the brand batch of the #5332 design plan. The maintainer decided all of it this session:
 - item 3: Option A, ink primary;
@@ -41,6 +41,10 @@ The red active-nav bar the issue gave to `--brand` was already gone: the maintai
 
 **Cleanup**
 - The unused `--sidebar-primary` pair is deleted from every theme.
+
+**Found by the PR's review**
+- Dropping `/60` also reached the alternate dark themes, which carry `.dark`: their light destructive labels on an opaque red were 3.3:1 (Solarized Dark), 2.6:1 (Dracula) and 2.2:1 (One Dark Pro). They now take a dark label in their own background hue, and Solarized Dark's red lightens to 0.65. Solarized Light, already 3.8:1 without any `/60`, darkens its red to 0.52. The destructive-label pin moved into the every-theme matrix and went red on the old CSS in all four themes.
+- The attach-drop caption is muted text (5.6:1) instead of `text-ring`, which is 4.2:1 as small text.
 
 ## How it was built and verified
 - A builder, then a separate reviewer.
