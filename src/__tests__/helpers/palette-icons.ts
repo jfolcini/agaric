@@ -8,6 +8,9 @@
 export function paletteIconsOf(el: Element): Element[] {
   const rule = [...el.classList].find((c) => c.endsWith(']:text-icon'))
   if (rule === undefined) return []
-  const selector = rule.slice(1, -']:text-icon'.length).replaceAll('_', ' ').replace('&', ':scope')
+  const selector = rule
+    .slice(1, -']:text-icon'.length)
+    .replaceAll('_', ' ')
+    .replaceAll('&', ':scope')
   return [...el.querySelectorAll(selector)]
 }
