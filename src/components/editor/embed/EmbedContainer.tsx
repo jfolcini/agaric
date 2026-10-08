@@ -767,7 +767,7 @@ function EmbedShell({
           // key. The other two controls stay opted out.
           <button
             type="button"
-            className="embed-unlock-toggle shrink-0 inline-flex items-center gap-1 rounded px-1.5 py-0.5 hover:bg-accent focus-visible:outline-hidden focus-visible:ring-[3px] focus-visible:ring-ring/50 [@media(pointer:coarse)]:min-h-11 [@media(pointer:coarse)]:min-w-11"
+            className="embed-unlock-toggle shrink-0 inline-flex items-center gap-1 rounded px-1.5 py-0.5 hover:bg-accent focus-ring-visible [@media(pointer:coarse)]:min-h-11 [@media(pointer:coarse)]:min-w-11"
             aria-pressed={unlocked}
             aria-label={unlocked ? t('embed.lock') : t('embed.unlock')}
             data-testid="embed-unlock-toggle"

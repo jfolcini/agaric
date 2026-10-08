@@ -72,13 +72,7 @@ export function BlockDatePicker({
           <div className="flex flex-col gap-1.5 pb-3">
             <Input
               type="text"
-              // Tame the focus treatment: the default red `border-ring` + 3px
-              // `ring-ring/50` doubles up into something that reads as an error
-              // in the red theme (ring ≈ destructive). The shared
-              // `focus-ring-soft` utility (index.css, #976 f24) keeps a clear
-              // focus cue without the alarm — replacing the inline `!important`
-              // overrides this previously inlined.
-              className="w-full focus-ring-soft"
+              className="w-full"
               placeholder={t('dateChip.placeholder')}
               value={dateTextInput}
               onChange={(e) => {
@@ -121,7 +115,7 @@ export function BlockDatePicker({
               className="p-0"
               classNames={{
                 // Calmer "today" marker — the shared default fills the cell with
-                // a pink accent + `ring-primary/50`, which clashes in the red
+                // an accent fill + `ring-primary/50`, which clashes in the red
                 // theme. Use a subtle inset ring + primary-tinted numeral.
                 today: 'rounded-md font-semibold text-primary ring-1 ring-inset ring-primary/40',
               }}

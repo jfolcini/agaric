@@ -113,9 +113,7 @@ const CommandItem = ({
   <CommandPrimitive.Item
     data-slot="command-item"
     className={cn(
-      // `.search-result-mark` also fills with `--accent`, so on the active row it is
-      // re-filled with `bg-background`; `!` because that rule is unlayered.
-      "relative flex cursor-default select-none items-center rounded-sm px-2 py-1.5 text-sm outline-none aria-selected:bg-accent aria-selected:text-accent-foreground aria-selected:[&_mark]:bg-background! data-[disabled='true']:pointer-events-none data-[disabled='true']:opacity-50 [@media(pointer:coarse)]:py-2.5 [@media(pointer:coarse)]:text-base",
+      "relative flex cursor-default select-none items-center rounded-sm px-2 py-1.5 text-sm outline-none aria-selected:bg-accent aria-selected:text-accent-foreground data-[disabled='true']:pointer-events-none data-[disabled='true']:opacity-50 [@media(pointer:coarse)]:py-2.5 [@media(pointer:coarse)]:text-base",
       className,
     )}
     {...props}

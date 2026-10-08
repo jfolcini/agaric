@@ -162,7 +162,7 @@ export function AddPropertyPopover({
           setCreatingDef(false)
         }}
         aria-label={t('pageProperty.searchLabel')}
-        className="h-8 focus-ring-soft"
+        className="h-8"
       />
       <ScrollArea className="max-h-[min(240px,40vh)]">
         {filteredDefs.map((def) => (

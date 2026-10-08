@@ -235,7 +235,7 @@ export function KeyboardShortcuts({
             onChange={(e) => setFilter(e.target.value)}
             placeholder={t('keyboard.filterPlaceholder')}
             aria-label={t('keyboard.filterLabel')}
-            className="mt-2 focus-ring-soft"
+            className="mt-2"
             data-testid="shortcuts-filter"
           />
         </SheetHeader>

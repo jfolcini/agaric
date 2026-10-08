@@ -281,12 +281,11 @@ export function SettingsView(): React.ReactElement {
                   aria-controls={`settings-panel-${tab}`}
                   aria-describedby={`settings-group-${group.id}`}
                   className={cn(
-                    // Mirrors the app sidebar's active item (#1232): the
-                    // `sidebar-accent` tint plus an inset `primary` bar that
-                    // takes no layout space, so the label does not shift.
-                    'relative w-full rounded-md px-3 py-1.5 text-left text-sm font-medium transition-colors',
+                    // Same neutral `sidebar-accent` pill as the app sidebar's
+                    // active item (#5332).
+                    'w-full rounded-md px-3 py-1.5 text-left text-sm font-medium transition-colors',
                     activeTab === tab
-                      ? 'bg-sidebar-accent text-sidebar-accent-foreground before:absolute before:inset-y-1.5 before:left-0 before:w-[3px] before:rounded-full before:bg-primary'
+                      ? 'bg-sidebar-accent text-sidebar-accent-foreground'
                       : 'text-muted-foreground hover:bg-muted/50 hover:text-foreground',
                   )}
                   onClick={() => setActiveTab(tab)}

@@ -654,15 +654,15 @@ export const BlockMetadataRow = React.memo(
 
         {scheduledDate && (
           // The due-date chip uses `dueDateColor(dueDate)` to colour-code
-          // overdue / today / future tasks because a due date is meaningful
-          // in all three temporal states. The scheduled date is intentionally
-          // static (`bg-date-scheduled`) — Org-mode's SCHEDULED semantics are
-          // future-only ("don't start before this date"), so there is no
-          // past/today/future distinction to surface visually.
+          // overdue / today tasks because a due date is meaningful in every
+          // temporal state. The scheduled date is always neutral — Org-mode's
+          // SCHEDULED semantics are future-only ("don't start before this
+          // date"), so there is no past/today state to surface. The icon, not
+          // a hue, tells it apart from a future due date.
           <DateChip
             date={scheduledDate}
             icon={Calendar}
-            colorClass="bg-date-scheduled text-date-scheduled-foreground"
+            colorClass="bg-secondary text-secondary-foreground"
             eventName="OPEN_SCHEDULED_DATE_PICKER"
             i18nKey="block.scheduledDate"
             chipClass="scheduled-chip"

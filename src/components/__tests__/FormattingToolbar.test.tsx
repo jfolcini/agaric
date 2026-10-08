@@ -540,7 +540,7 @@ describe('FormattingToolbar', () => {
       expect(btn.textContent).toContain('P1')
       const dot = btn.querySelector('.rounded-full')
       expect(dot).toBeInTheDocument()
-      expect(dot?.className).toContain('bg-priority-urgent')
+      expect(dot?.className).toContain('bg-priority-urgent-foreground')
       expect(btn).toHaveAttribute('aria-pressed', 'true')
       expect(btn.className).toContain('bg-accent')
     })
@@ -551,7 +551,7 @@ describe('FormattingToolbar', () => {
       expect(btn.textContent).toContain('P2')
       const dot = btn.querySelector('.rounded-full')
       expect(dot).toBeInTheDocument()
-      expect(dot?.className).toContain('bg-priority-high')
+      expect(dot?.className).toContain('bg-priority-high-foreground')
       expect(btn).toHaveAttribute('aria-pressed', 'true')
     })
 
@@ -561,7 +561,7 @@ describe('FormattingToolbar', () => {
       expect(btn.textContent).toContain('P3')
       const dot = btn.querySelector('.rounded-full')
       expect(dot).toBeInTheDocument()
-      expect(dot?.className).toContain('bg-priority-normal')
+      expect(dot?.className).toContain('bg-priority-normal-foreground')
       expect(btn).toHaveAttribute('aria-pressed', 'true')
     })
 

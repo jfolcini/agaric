@@ -663,7 +663,7 @@ export function LinkTargetEditor({
     <div className="flex flex-col gap-2" data-testid="link-target-editor">
       <span className="px-1 text-xs font-medium">{label}</span>
       <Input
-        className="h-8 text-sm focus-ring-soft"
+        className="h-8 text-sm"
         value={search}
         onChange={(e) => setSearch(e.target.value)}
         placeholder={t('pageBrowser.filter.linkSearchPages')}
@@ -712,7 +712,7 @@ function PropertyRefValueInput({
   return (
     <div className="flex flex-col gap-1" data-testid="property-ref-value-input">
       <Input
-        className="h-8 text-sm focus-ring-soft"
+        className="h-8 text-sm"
         value={search}
         onChange={(e) => setSearch(e.target.value)}
         placeholder={t('pageBrowser.filter.linkSearchPages')}
@@ -796,7 +796,7 @@ export function TagPickerEditor({
     <div className="flex flex-col gap-2" data-testid="tag-picker-editor">
       <span className="px-1 text-xs font-medium">{label}</span>
       <Input
-        className="h-8 text-sm focus-ring-soft"
+        className="h-8 text-sm"
         value={search}
         onChange={(e) => setSearch(e.target.value)}
         placeholder={t('pageBrowser.filter.tagSearchPlaceholder')}

@@ -1276,7 +1276,7 @@ describe('SortableBlock priority badge', () => {
 
     const badge = container.querySelector('.priority-badge > span')
     expect(badge?.className).toContain('bg-priority-urgent')
-    expect(badge?.className).toContain('text-priority-foreground')
+    expect(badge?.className).toContain('text-priority-urgent-foreground')
   })
 
   it('applies yellow styling for priority 2', () => {
@@ -1308,7 +1308,7 @@ describe('SortableBlock priority badge', () => {
 
     const badge = container.querySelector('.priority-badge > span')
     expect(badge?.className).toContain('bg-priority-normal')
-    expect(badge?.className).toContain('text-priority-foreground')
+    expect(badge?.className).toContain('text-priority-normal-foreground')
   })
 
   it('does not render priority badge when priority is null (hidden)', () => {
@@ -2474,7 +2474,7 @@ describe('SortableBlock due date chip', () => {
     expect(chip?.className).toContain('text-alert-error-foreground')
   })
 
-  it('applies muted styling for future dates', () => {
+  it('renders a future due date as a neutral chip', () => {
     // Use a date far in the future
     const { container } = render(
       <SortableBlock
@@ -2487,8 +2487,8 @@ describe('SortableBlock due date chip', () => {
     )
 
     const chip = container.querySelector('.due-date-chip')
-    expect(chip?.className).toContain('bg-muted')
-    expect(chip?.className).toContain('text-muted-foreground')
+    expect(chip?.className).toContain('bg-secondary')
+    expect(chip?.className).toContain('text-secondary-foreground')
   })
 
   it('renders due date chip after priority badge when both are set', () => {
@@ -2713,7 +2713,7 @@ describe('SortableBlock scheduled date chip', () => {
     expect(chip).toBeInTheDocument()
   })
 
-  it('applies purple styling for scheduled date', () => {
+  it('renders the scheduled date as a neutral chip', () => {
     const { container } = render(
       <SortableBlock
         blockId="BLOCK_1"
@@ -2725,8 +2725,8 @@ describe('SortableBlock scheduled date chip', () => {
     )
 
     const chip = container.querySelector('.scheduled-chip')
-    expect(chip?.className).toContain('bg-date-scheduled')
-    expect(chip?.className).toContain('text-date-scheduled-foreground')
+    expect(chip?.className).toContain('bg-secondary')
+    expect(chip?.className).toContain('text-secondary-foreground')
   })
 
   it('renders both due date and scheduled date chips when both are set', () => {

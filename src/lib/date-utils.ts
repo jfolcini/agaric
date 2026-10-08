@@ -252,14 +252,16 @@ export function getCalendarMonthRange(date: Date): { startDate: string; endDate:
  * Color classes for a YYYY-MM-DD due-date string.
  *
  * Past → alert-error (overdue), today → status-pending (warning),
- * future → muted (informational). Used by the inline due-date chip in
- * `BlockInlineControls` and the agenda results list.
+ * future → neutral, like the scheduled chip: only overdue and today carry a
+ * hue. `secondary`, not `muted`: muted text on `--muted` is under 4.5:1.
+ * Used by the inline due-date chip in `BlockInlineControls` and the agenda
+ * results list.
  */
 export function dueDateColor(dateStr: string): string {
   const todayStr = getTodayString()
   if (dateStr < todayStr) return 'bg-alert-error text-alert-error-foreground'
   if (dateStr === todayStr) return 'bg-status-pending text-status-pending-foreground'
-  return 'bg-muted text-muted-foreground'
+  return 'bg-secondary text-secondary-foreground'
 }
 
 /** Check if a string is a YYYY-MM-DD date page title. */

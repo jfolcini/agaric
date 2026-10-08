@@ -134,7 +134,7 @@ test.describe('High-contrast focus on reference chips', () => {
     expect(focused.outlineWidth).toBe('3px')
   })
 
-  test('the default-mode focus ring is untouched', async ({ page }) => {
+  test('the default-mode focus is the opaque ring alone, with no outline', async ({ page }) => {
     await openPage(page, 'Getting Started')
     const chip = bodyChip(page)
     await expect(chip).toBeVisible()
@@ -144,9 +144,8 @@ test.describe('High-contrast focus on reference chips', () => {
     const focused = await paintOf(chip)
     expect(focused.focusVisible).toBe(true)
     expect(focused.outlineStyle).toBe('none')
-    // Present AND half-alpha: `not.toBe(opaque)` alone would also pass if the
-    // ring had disappeared, which is the other way to lose focus here.
-    expect(focused.ring).not.toBeNull()
-    expect(focused.ring).not.toBe(await opaqueRing(page))
+    // Opaque: at half alpha the ring was 2.6:1 against the page, under the
+    // 3:1 non-text minimum (#5332).
+    expect(focused.ring).toBe(await opaqueRing(page))
   })
 })

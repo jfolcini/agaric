@@ -132,8 +132,8 @@ function applyTextMarks(node: TextNode, ctx: RenderContext, key: string): React.
     // instead of raw `bg-yellow-*` literals. The editor `<mark>`
     // (`.ProseMirror mark`, index.css) is kept aligned to the same token so
     // a highlight looks identical editing vs reading across every theme +
-    // high-contrast. This is DISTINCT from the search-match semantic, which
-    // uses `--accent` (`.search-result-mark`); the split is intentional.
+    // high-contrast. This is DISTINCT from the search-match semantic
+    // (`.search-result-mark`); the split is intentional.
     content = <mark className="bg-highlight rounded px-0.5">{content}</mark>
   }
   if (hasItalic) {

@@ -16,7 +16,7 @@ import { expect, openPage, test, waitForBoot } from './helpers'
  *
  * Selection mechanics:
  *   - Ctrl+Click on a static block toggles it in/out of selection
- *   - Selected blocks get the `block-selected` utility (ring-2 ring-inset ring-ring/50 bg-accent/30) on [data-testid="block-static"]
+ *   - Selected blocks get the `block-selected` utility on [data-testid="block-static"]
  *   - Batch toolbar (`.batch-toolbar`) appears when selectedBlockIds.length > 0
  *   - Ctrl+A selects all blocks (only when no block is focused/editing)
  */

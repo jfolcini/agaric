@@ -318,7 +318,7 @@ describe('PropertyChip', () => {
     // Wrapper carries the focus-within ring so tabbing into either sibling
     // button lights up the whole pill — no double rings on individual buttons.
     expect(chip?.className).toContain('focus-within:ring-[3px]')
-    expect(chip?.className).toContain('focus-within:ring-ring/50')
+    expect(chip).toHaveClass('focus-within:ring-ring')
   })
 
   // Each inner button now also paints the standard focus-visible ring
