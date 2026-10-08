@@ -57,7 +57,7 @@
 # guard exists to avoid — and both answers are the same anyway: deleting a
 # merged log destroys the record more completely than editing it does.
 # The one legitimate `D` is an archive compaction (folding merged logs
-# into `docs/session-log/2026-sessions-401-800.md` and friends); that is a
+# into `docs/session-log/sessions-NNNN-NNNN.md` archives); that is a
 # deliberate, rare, maintainer operation and the error message names the
 # `SKIP=` override for it.
 #
