@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react'
+import { useCallback, useEffect, useEffectEvent, useRef } from 'react'
 
 import { unwrap } from '@/lib/app-error'
 import { commands } from '@/lib/bindings'
@@ -27,7 +27,7 @@ export function useJournalAutoCreate({
   spaceId,
   createdPages,
   handleAddBlock,
-}: UseJournalAutoCreateOptions): void {
+}: UseJournalAutoCreateOptions): (dateStr: string) => void {
   const autoCreatedRef = useRef<string | null>(null)
 
   // Auto-create *today*'s page on mount when the journal opens in daily mode.
@@ -38,6 +38,13 @@ export function useJournalAutoCreate({
   // on the journal and finding today's page ready to type into — and leaves
   // backfilling old dates to the explicit `n`/`Enter` shortcut or the
   // `Add block` button.
+  //
+  // The page state is read, not depended on: re-running whenever the page map
+  // changed re-created today's page the moment the user deleted it (#5358).
+  // It is read again when the probe lands, because the user may have created
+  // the page through "Add your first block" while the probe was out.
+  const hasCreatedPage = useEffectEvent((dateStr: string) => createdPages.has(dateStr))
+  const createPage = useEffectEvent(handleAddBlock)
   useEffect(() => {
     if (loading) return
     if (mode !== 'daily') return
@@ -46,7 +53,7 @@ export function useJournalAutoCreate({
     const dateStr = formatDate(currentDate)
     if (dateStr !== formatDate(new Date())) return
     if (autoCreatedRef.current === dateStr) return
-    if (createdPages.has(dateStr)) return
+    if (hasCreatedPage(dateStr)) return
     let cancelled = false
     commands
       .getJournalPageByDate(dateStr, { kind: 'active', space_id: spaceId })
@@ -55,8 +62,9 @@ export function useJournalAutoCreate({
         if (cancelled) return
         if (page != null) return
         if (autoCreatedRef.current === dateStr) return
+        if (hasCreatedPage(dateStr)) return
         autoCreatedRef.current = dateStr
-        handleAddBlock(dateStr)
+        createPage(dateStr)
       })
       .catch(() => {
         // Probe failure leaves the page un-auto-created for this render.
@@ -66,7 +74,7 @@ export function useJournalAutoCreate({
     return () => {
       cancelled = true
     }
-  }, [loading, mode, currentDate, spaceId, createdPages, handleAddBlock])
+  }, [loading, mode, currentDate, spaceId])
 
   // Keyboard shortcut for new block in daily mode.
   useEffect(() => {
@@ -113,4 +121,10 @@ export function useJournalAutoCreate({
     document.addEventListener('keydown', handleKeyDown)
     return () => document.removeEventListener('keydown', handleKeyDown)
   }, [mode, currentDate, spaceId, createdPages, handleAddBlock])
+
+  // Once a claimed date's page is deleted, the claim would leave the create
+  // shortcut dead on that empty day for the rest of the session.
+  return useCallback((dateStr: string) => {
+    if (autoCreatedRef.current === dateStr) autoCreatedRef.current = null
+  }, [])
 }

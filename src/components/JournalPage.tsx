@@ -93,7 +93,7 @@ export function JournalPage({
   // SpaceManageDialog has no scroll-to-section prop, so the dialog opens at
   // the top and the user navigates to the template field from there.
   const [manageOpen, setManageOpen] = useState(false)
-  const { createdPages, handleAddBlock } = useJournalBlockCreation({
+  const { createdPages, handleAddBlock, forgetCreatedPage } = useJournalBlockCreation({
     pageMap,
     onPageCreated: addPage,
   })
@@ -133,7 +133,7 @@ export function JournalPage({
 
   // Auto-create the displayed day's page on mount / date change in daily mode
   // + keyboard shortcuts (Enter/n) to create a page when none exists
-  useJournalAutoCreate({
+  const forgetAutoCreatedPage = useJournalAutoCreate({
     loading,
     mode,
     currentDate,
@@ -143,6 +143,13 @@ export function JournalPage({
     createdPages,
     handleAddBlock,
   })
+  const forgetDeletedPage = useCallback(
+    (dateStr: string) => {
+      forgetCreatedPage(dateStr)
+      forgetAutoCreatedPage(dateStr)
+    },
+    [forgetCreatedPage, forgetAutoCreatedPage],
+  )
 
   // ── Link preview tooltip — covers all blocks in the journal view ────
   // Same container element also doubles as the in-page-find
@@ -238,6 +245,7 @@ export function JournalPage({
             entry={makeDayEntry(currentDate)}
             onNavigateToPage={onNavigateToPage}
             onAddBlock={handleAddBlock}
+            onPageDeleted={forgetDeletedPage}
           />
         )}
         {!loading && mode === 'weekly' && (
@@ -245,6 +253,7 @@ export function JournalPage({
             makeDayEntry={makeDayEntry}
             onNavigateToPage={onNavigateToPage}
             onAddBlock={handleAddBlock}
+            onPageDeleted={forgetDeletedPage}
           />
         )}
         {!loading && mode === 'monthly' && <MonthlyView makeDayEntry={makeDayEntry} />}

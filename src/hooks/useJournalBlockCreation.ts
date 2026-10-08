@@ -22,6 +22,8 @@
  *    BlockTree immediately, before any refetch lands).
  *  - `handleAddBlock(dateStr)` — the orchestrator; idempotent against
  *    `pageMap`/`createdPages`, surface-level error reporting via notify.
+ *  - `forgetCreatedPage(dateStr)` — drop a deleted page from `createdPages`,
+ *    which would otherwise keep rendering it over the re-fetched `pageMap`.
  */
 import { useCallback, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -54,6 +56,8 @@ export interface UseJournalBlockCreationResult {
   createdPages: Map<string, string>
   /** Add a new block under `dateStr`'s page, creating the page if needed. */
   handleAddBlock: (dateStr: string) => Promise<void>
+  /** Forget `dateStr`'s locally-created page once it has been deleted (#5358). */
+  forgetCreatedPage: (dateStr: string) => void
 }
 
 export function useJournalBlockCreation({
@@ -213,5 +217,14 @@ export function useJournalBlockCreation({
     [createdPages, pageMap, onPageCreated, t],
   )
 
-  return { createdPages, handleAddBlock }
+  const forgetCreatedPage = useCallback((dateStr: string) => {
+    setCreatedPages((prev) => {
+      if (!prev.has(dateStr)) return prev
+      const next = new Map(prev)
+      next.delete(dateStr)
+      return next
+    })
+  }, [])
+
+  return { createdPages, handleAddBlock, forgetCreatedPage }
 }
