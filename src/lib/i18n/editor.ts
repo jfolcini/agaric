@@ -49,6 +49,8 @@ export const editor: Record<string, string> = {
   // #4711 — per-client collapse toggle on an inline image.
   'editor.image.collapse': 'Collapse image {{name}}',
   'editor.image.expand': 'Expand image {{name}}',
+  // #4712 — the editor's resize handle on an inline image.
+  'editor.image.resize': 'Resize image {{name}}',
   'slash.repeatSet': 'Set repeat to {{value}}',
   'slash.repeatFailed': 'Failed to set repeat',
   'slash.repeatRemoved': 'Repeat removed',

@@ -99,15 +99,22 @@ function BrokenImage({ alt, src }: { alt: string; src: string }): React.ReactEle
 
 export interface GatedImageProps {
   src: string
+  /** The alt text, already stripped of its `|width` suffix (`parseImageAlt`). */
   alt: string
+  /** Display width in px (#4712); `null` keeps the natural size. */
+  width?: number | null
   /** Extra classes for the real `<img>` (node view vs. static differ slightly). */
   imgClassName?: string
+  /** Drawn on the real `<img>`'s corner — never on a placeholder (#4712). */
+  resizeHandle?: React.ReactNode
 }
 
 export function GatedImage({
   src,
   alt,
+  width = null,
   imgClassName = 'image-rendered inline-block max-w-full align-middle',
+  resizeHandle,
 }: GatedImageProps): React.ReactElement {
   const { t } = useTranslation()
   const { policy } = useExternalImagePolicy()
@@ -118,6 +125,33 @@ export function GatedImage({
   // this is inert (`resolvedUrl === null`, `attachmentError === false`).
   const isAttachment = isAttachmentRef(src)
   const { url: resolvedUrl, error: attachmentError } = useResolvedAttachmentSrc(src)
+
+  const renderImg = (imgSrc: string): React.ReactElement => {
+    const img = (
+      <img
+        src={imgSrc}
+        alt={alt}
+        className={imgClassName}
+        // Width only: height stays auto so the aspect ratio holds, and the
+        // class's `max-w-full` still fits a wider image to its block.
+        style={width === null ? undefined : { width }}
+        data-testid="image-rendered"
+        // Defer offscreen fetches + decode off the main thread to cut layout
+        // shift on image-heavy trees (#1642).
+        loading="lazy"
+        decoding="async"
+        // #1434 broken-image fallback (alt/URL placeholder) on load error.
+        onError={() => setFailed(true)}
+      />
+    )
+    if (resizeHandle === undefined) return img
+    return (
+      <span className="relative inline-block max-w-full align-middle">
+        {img}
+        {resizeHandle}
+      </span>
+    )
+  }
 
   // Broken-image fallback (#1434) once the real <img> errors out, or the
   // attachment bytes failed to load.
@@ -132,17 +166,7 @@ export function GatedImage({
     if (resolvedUrl === null) {
       return <BrokenImage alt={alt} src={src} />
     }
-    return (
-      <img
-        src={resolvedUrl}
-        alt={alt}
-        className={imgClassName}
-        data-testid="image-rendered"
-        loading="lazy"
-        decoding="async"
-        onError={() => setFailed(true)}
-      />
-    )
+    return renderImg(resolvedUrl)
   }
 
   // The exact external host, or null for local/same-origin/malformed.
@@ -150,21 +174,7 @@ export function GatedImage({
   const allowed = shouldLoadExternalImage(src, policy, allowlist)
 
   if (allowed) {
-    return (
-      <img
-        src={src}
-        alt={alt}
-        className={imgClassName}
-        data-testid="image-rendered"
-        // Defer offscreen fetches + decode off the main thread to cut layout
-        // shift on image-heavy trees (#1642). Intrinsic dimensions aren't known
-        // here (ImageNode.attrs carry only { alt, src }), so none are reserved.
-        loading="lazy"
-        decoding="async"
-        // #1434 broken-image fallback (alt/URL placeholder) on load error.
-        onError={() => setFailed(true)}
-      />
-    )
+    return renderImg(src)
   }
 
   // Not allowed → privacy placeholder. `host === null` here means a malformed

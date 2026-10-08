@@ -15,17 +15,33 @@
  * `GatedImage`. Collapsing is a per-client view preference — it writes nothing
  * to the block — so the markdown round-trip below is untouched by it.
  *
- * SCOPE: render + markdown round-trip only; `src` is an opaque URL.
+ * Resizing (#4712) is document content: the handle writes the width into the
+ * alt as Obsidian's `|width` suffix (`image-alt-size`), so `![alt|300](url)`
+ * round-trips through the parser and serializer unchanged.
  */
 
 import { type NodeViewProps, NodeViewWrapper } from '@tiptap/react'
+import { useState } from 'react'
+import { useTranslation } from 'react-i18next'
 
-import { CollapsibleImage } from '@/components/rendering/CollapsibleImage'
+import { CollapsibleImage, imageLabel } from '@/components/rendering/CollapsibleImage'
+import { ImageResizeHandle } from '@/editor/extensions/ImageResizeHandle'
+import { formatImageAlt, parseImageAlt } from '@/lib/image-alt-size'
 
 export function ImageNodeView(props: NodeViewProps): React.ReactElement {
-  const { node } = props
+  const { node, updateAttributes } = props
+  const { t } = useTranslation()
   const src = (node.attrs['src'] as string | undefined) ?? ''
   const alt = (node.attrs['alt'] as string | undefined) ?? ''
+  const { text, width } = parseImageAlt(alt)
+  // The in-flight drag's width, shown until the gesture commits.
+  const [previewWidth, setPreviewWidth] = useState<number | null>(null)
+
+  const commitWidth = (next: number | null) => {
+    const nextAlt = formatImageAlt(text, next)
+    // An unchanged alt would still be a transaction: an undo step that does nothing.
+    if (nextAlt !== alt) updateAttributes({ alt: nextAlt })
+  }
 
   return (
     <NodeViewWrapper
@@ -36,7 +52,20 @@ export function ImageNodeView(props: NodeViewProps): React.ReactElement {
       // as inline ProseMirror content.
       contentEditable={false}
     >
-      <CollapsibleImage src={src} alt={alt} imgClassName="image-rendered max-w-full" />
+      <CollapsibleImage
+        src={src}
+        alt={text}
+        width={previewWidth ?? width}
+        // `block` drops the inline baseline gap, so the handle sits on the corner.
+        imgClassName="image-rendered block max-w-full"
+        resizeHandle={
+          <ImageResizeHandle
+            label={t('editor.image.resize', { name: imageLabel(text, src) })}
+            onPreview={setPreviewWidth}
+            onCommit={commitWidth}
+          />
+        }
+      />
     </NodeViewWrapper>
   )
 }

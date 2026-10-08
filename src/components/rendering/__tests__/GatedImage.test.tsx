@@ -54,6 +54,39 @@ describe('GatedImage — local/data srcs always load', () => {
   })
 })
 
+describe('GatedImage — width and resize handle (#4712)', () => {
+  it('draws the <img> at the given width, and at its natural size without one', () => {
+    const { rerender } = render(<GatedImage src="/c.png" alt="a cat" width={300} />)
+    expect((screen.getByTestId('image-rendered') as HTMLImageElement).style.width).toBe('300px')
+
+    rerender(<GatedImage src="/c.png" alt="a cat" width={null} />)
+    expect(screen.getByTestId('image-rendered').getAttribute('style')).toBeNull()
+  })
+
+  it('draws the resize handle beside the real <img>', () => {
+    render(
+      <GatedImage src="/c.png" alt="a cat" resizeHandle={<span data-testid="resize-handle" />} />,
+    )
+    const img = screen.getByTestId('image-rendered')
+    expect(screen.getByTestId('resize-handle').parentElement).toBe(img.parentElement)
+  })
+
+  it('puts no resize handle on a withheld or broken image', () => {
+    const handle = <span data-testid="resize-handle" />
+    const { unmount } = render(
+      <GatedImage src="https://images.example.com/cat.png" alt="cat" resizeHandle={handle} />,
+    )
+    expect(screen.getByTestId('image-external-blocked')).toBeTruthy()
+    expect(screen.queryByTestId('resize-handle')).toBeNull()
+    unmount()
+
+    render(<GatedImage src="/missing.png" alt="cat" resizeHandle={handle} />)
+    fireEvent.error(screen.getByTestId('image-rendered'))
+    expect(screen.getByTestId('image-broken')).toBeTruthy()
+    expect(screen.queryByTestId('resize-handle')).toBeNull()
+  })
+})
+
 describe('GatedImage — click mode (default)', () => {
   it('shows a placeholder with the domain and a Load button (no <img>)', () => {
     render(<GatedImage src="https://images.example.com/cat.png" alt="cat" />)

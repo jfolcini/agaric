@@ -15,6 +15,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import type { RenderContext } from '@/components/RichContentRenderer/context'
 import { renderImage } from '@/components/RichContentRenderer/marks/image'
 import type { ImageNode } from '@/editor/types'
+import { t } from '@/lib/i18n'
 
 function imageNode(alt: string, src: string): ImageNode {
   return { type: 'image', attrs: { alt, src } }
@@ -79,6 +80,30 @@ describe('renderImage (#1434/#1492)', () => {
     expect(container.querySelector('img')).toBeNull()
     expect(getByTestId('image-collapsed-label').textContent).toBe('a cat')
     expect(queryByTestId('image-rendered')).toBeNull()
+  })
+
+  // #4712: the alt's `|width` suffix is a size, not words for the reader.
+  it('draws `![a cat|300](…)` 300px wide and labels it `a cat` everywhere', async () => {
+    const user = userEvent.setup()
+    const { container, getByTestId } = render(
+      <>{renderImage(imageNode('a cat|300', '/c.png'), 'k', INTERACTIVE)}</>,
+    )
+    const img = container.querySelector('img') as HTMLImageElement
+    expect(img.getAttribute('alt')).toBe('a cat')
+    expect(img.style.width).toBe('300px')
+    expect(getByTestId('image-collapse-toggle').getAttribute('aria-label')).toBe(
+      t('editor.image.collapse', { name: 'a cat' }),
+    )
+
+    await user.click(getByTestId('image-collapse-toggle'))
+    expect(getByTestId('image-collapsed-label').textContent).toBe('a cat')
+  })
+
+  it('draws `![a cat|300](…)` 300px wide with alt `a cat` on a non-interactive surface', () => {
+    const { container } = render(<>{renderImage(imageNode('a cat|300', '/c.png'), 'k', INERT)}</>)
+    const img = container.querySelector('img') as HTMLImageElement
+    expect(img.getAttribute('alt')).toBe('a cat')
+    expect(img.style.width).toBe('300px')
   })
 
   // #4859 — `ResultCard` wraps its whole row in a native <button> and passes

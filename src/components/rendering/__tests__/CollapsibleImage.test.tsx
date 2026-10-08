@@ -161,6 +161,29 @@ describe('CollapsibleImage', () => {
     expect(onRowClick).not.toHaveBeenCalled()
   })
 
+  it('draws the image at the width it is given (#4712)', () => {
+    render(<CollapsibleImage src="/c.png" alt="a cat" width={300} />)
+    expect((screen.getByTestId('image-rendered') as HTMLImageElement).style.width).toBe('300px')
+  })
+
+  it('drops the resize handle while collapsed and restores it on expand (#4712)', async () => {
+    const user = userEvent.setup()
+    render(
+      <CollapsibleImage
+        src="/c.png"
+        alt="a cat"
+        resizeHandle={<span data-testid="resize-handle" />}
+      />,
+    )
+    expect(screen.getByTestId('resize-handle')).toBeInTheDocument()
+
+    await user.click(screen.getByTestId('image-collapse-toggle'))
+    expect(screen.queryByTestId('resize-handle')).toBeNull()
+
+    await user.click(screen.getByTestId('image-collapse-toggle'))
+    expect(screen.getByTestId('resize-handle')).toBeInTheDocument()
+  })
+
   it('has no a11y violations while expanded', async () => {
     const { container } = render(<CollapsibleImage src="/c.png" alt="a cat" />)
     await waitFor(async () => {
