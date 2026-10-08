@@ -15,6 +15,7 @@ async function expectHoverDiffersFromActive(page: Page, active: Locator, other: 
   await page.mouse.move(0, 0)
   const restFill = await fill(other)
   const activeFill = await fill(active)
+  expect(activeFill, 'active vs an item at rest').not.toBe(restFill)
   await other.hover()
   await expect.poll(() => fill(other)).not.toBe(restFill)
   const hoverFill = await fill(other)

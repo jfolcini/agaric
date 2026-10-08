@@ -577,7 +577,7 @@ export function UnfinishedTasks({
                   onToggle={() => handleGroupToggle(group.key)}
                   className="py-1"
                 >
-                  <span className="text-xs uppercase tracking-wide">{t(group.i18nKey)}</span>
+                  <span className="text-xs font-medium">{t(group.i18nKey)}</span>
                   <span className="text-xs font-normal tabular-nums">({group.blocks.length})</span>
                 </CollapsiblePanelHeader>
 

@@ -246,7 +246,7 @@ export function SettingsView(): React.ReactElement {
               <span
                 id={`settings-group-${group.id}`}
                 role="presentation"
-                className="px-3 pb-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground"
+                className="px-3 pb-1 text-xs font-medium text-muted-foreground"
               >
                 {t(group.labelKey)}
               </span>

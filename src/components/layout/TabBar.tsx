@@ -232,9 +232,9 @@ export function TabBar(): React.ReactElement | null {
       <div
         role="tablist"
         aria-label={t('tabs.tabList')}
-        // Left edge matches `<header>` (px-4) and the Recent / ViewHeaderOutletSlot
-        // rows below (px-4 md:px-6) so the full chrome stack aligns vertically.
-        className="flex items-center gap-1 px-4 md:px-6 py-1 min-w-0"
+        // Left edge matches the Recent / ViewHeaderOutletSlot rows below so the
+        // chrome stack aligns vertically.
+        className="flex items-center gap-1 px-4 md:px-6 md:pointer-fine:pl-16 py-1 min-w-0"
       >
         <Popover open={dropdownOpen} onOpenChange={setDropdownOpen}>
           {tabs.map((tab, i) => {

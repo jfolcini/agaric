@@ -40,17 +40,16 @@
  *
  * ── Principled deviation from AGENTS.md "Mandatory patterns" ──────────────
  *
- * AGENTS.md instructs: "Focus management: use `focus-visible:ring-[3px]
- * focus-visible:ring-ring/50` consistently". This file deliberately deviates
- * for the breadcrumb crumb buttons — they render with `focus-visible:underline`
- * + `focus-visible:outline-hidden` instead of the form-control ring. The ring
- * rule applies to interactive form controls (Button, Input, Select); breadcrumb
- * crumbs are wayfinding text-links and the conventional focus indicator for a
- * text-link is an underline, not a 3 px ring. Pairing this with the underline
- * hover treatment makes the trail read as a path of links rather than a button
- * Bar. The popover's interior menu items keep
- * the standard form-control ring (they are inside a menu surface, not on the
- * trail).
+ * Interactive controls take the 3px `focus-ring-visible` ring. This file
+ * deliberately deviates for the breadcrumb crumb buttons — they render with
+ * `focus-visible:underline` + `focus-visible:outline-hidden` instead of the
+ * form-control ring. The ring rule applies to interactive form controls
+ * (Button, Input, Select); breadcrumb crumbs are wayfinding text-links and the
+ * conventional focus indicator for a text-link is an underline, not a 3 px
+ * ring. Pairing this with the underline hover treatment makes the trail read as
+ * a path of links rather than a button bar. The popover's interior menu items
+ * keep the standard form-control ring (they are inside a menu surface, not on
+ * the trail).
  *
  * Text-link crumb segments keep `focus-visible:underline`.
  * Icon-only triggers (`BreadcrumbHome`, `OverflowPopover`) use the standard

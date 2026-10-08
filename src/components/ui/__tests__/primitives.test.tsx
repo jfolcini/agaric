@@ -971,14 +971,13 @@ describe('SectionGroupHeader', () => {
     expect(container.querySelector('[data-slot="section-group-header"]')).toBeInTheDocument()
   })
 
-  it('applies the chip chrome (uppercase, bg-muted/50, rounded, tracking-wide)', () => {
+  it('applies the chip chrome (bg-muted/50, rounded) and the section-label weight', () => {
     const { container } = render(<SectionGroupHeader>Doing</SectionGroupHeader>)
     const el = q(container, '[data-slot="section-group-header"]')
-    expect(getClasses(el)).toContain('uppercase')
-    expect(getClasses(el)).toContain('tracking-wide')
     expect(getClasses(el)).toContain('bg-muted/50')
     expect(getClasses(el)).toContain('rounded')
-    expect(getClasses(el)).toContain('font-semibold')
+    expect(getClasses(el)).toContain('font-medium')
+    expect(getClasses(el)).not.toContain('uppercase')
   })
 
   it('merges custom className', () => {

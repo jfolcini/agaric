@@ -23,8 +23,10 @@ function hasInlineTokens(text: string): boolean {
   return text.includes('[[') || text.includes('#[')
 }
 
+// `-ml-1` hangs the hover plate's padding in the margin, so the title text
+// sits on the column edge with the tags and the block checkboxes below.
 const TITLE_CLASS = cn(
-  'flex-1 min-w-48 text-3xl font-semibold leading-tight tracking-tight outline-hidden rounded-md px-1 cursor-text',
+  'flex-1 min-w-48 -ml-1 text-3xl font-semibold leading-tight tracking-tight outline-hidden rounded-md px-1 cursor-text',
   'focus:ring-2 focus:ring-ring',
   'hover:bg-accent/5 focus-within:bg-accent/5 transition-colors',
 )

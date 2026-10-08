@@ -119,7 +119,7 @@ function HeaderRow({
       <div
         // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- CSS-grid cell inside role="row"; a real <td> needs a <table> and breaks the flex layout
         role="gridcell"
-        className="flex items-center gap-2 px-3 pt-2 pb-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground"
+        className="flex items-center gap-2 px-3 pt-2 pb-1 text-xs font-medium text-muted-foreground"
       >
         {isStarredHeader ? (
           <Bookmark className="h-3.5 w-3.5 text-star" aria-hidden="true" fill="currentColor" />

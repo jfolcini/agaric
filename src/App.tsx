@@ -619,7 +619,7 @@ function App() {
              * visible as the view scrolls, without relying on sticky
              * positioning at all.
              */}
-            <ViewHeaderOutletSlot className="border-b border-border/40 px-4 md:px-6 py-3 space-y-2" />
+            <ViewHeaderOutletSlot className="border-b border-border/40 px-4 md:px-6 md:pointer-fine:pl-16 py-3 space-y-2" />
             <ScrollArea
               viewportRef={setMainContentViewport}
               className="flex-1"
@@ -628,7 +628,10 @@ function App() {
               // under the iPhone home indicator / Android gesture bar.
               // `scroll-pb-[env(…)]` extends the scroll end so keyboard
               // scroll-into-view stops short of the inset as well.
-              viewportClassName="p-4 md:p-6 focus-ring-visible pb-[calc(1rem+var(--safe-area-bottom))] md:pb-[calc(1.5rem+var(--safe-area-bottom))] scroll-pb-[var(--safe-area-bottom)]"
+              // `md:pointer-fine:pl-16`, here and on the chrome rows above, is
+              // room for the block tree's control lane, which hangs left of
+              // the text column on desktop (`BlockListRenderer`).
+              viewportClassName="p-4 md:p-6 md:pointer-fine:pl-16 focus-ring-visible pb-[calc(1rem+var(--safe-area-bottom))] md:pb-[calc(1.5rem+var(--safe-area-bottom))] scroll-pb-[var(--safe-area-bottom)]"
               data-slot="main-content"
             >
               <div

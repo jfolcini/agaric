@@ -9,8 +9,9 @@
  *    background. It carries semantic heading weight (`color` prop maps
  *    to status tokens, label + numeric count layout).
  *  - The sites consolidated here use a chip-like
- *    `px-3 py-1 ... bg-muted/50 rounded` shape with `uppercase` +
- *    `tracking-wide` typography. They are *visual* sub-section
+ *    `px-3 py-1 ... bg-muted/50 rounded` shape with the app-wide
+ *    section-label typography (`text-xs font-medium text-muted-foreground`,
+ *    sentence case, no letter-spacing). They are *visual* sub-section
  *    breakers, not document headings — different role, different
  *    spacing, different background.
  *  - Folding both into one primitive with a `density`/`variant` flag
@@ -46,7 +47,7 @@ const SectionGroupHeader = ({
       ref={ref}
       data-slot="section-group-header"
       className={cn(
-        'px-3 py-1 text-xs font-semibold uppercase text-muted-foreground tracking-wide bg-muted/50 rounded [@media(pointer:coarse)]:text-sm',
+        'px-3 py-1 text-xs font-medium text-muted-foreground bg-muted/50 rounded [@media(pointer:coarse)]:text-sm',
         className,
       )}
       {...props}
