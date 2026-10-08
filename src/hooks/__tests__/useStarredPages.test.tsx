@@ -140,6 +140,20 @@ describe('useStarredPages', () => {
     expect(b.result.current.isStarred('P1')).toBe(false)
   })
 
+  it('move() reorders starredIds in every instance and persists the order', () => {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(['P1', 'P2', 'P3']))
+    const a = renderHook(() => useStarredPages())
+    const b = renderHook(() => useStarredPages())
+
+    act(() => {
+      a.result.current.move('P3', 'P1')
+    })
+
+    expect([...a.result.current.starredIds]).toEqual(['P3', 'P1', 'P2'])
+    expect([...b.result.current.starredIds]).toEqual(['P3', 'P1', 'P2'])
+    expect(localStorage.getItem(STORAGE_KEY)).toBe(JSON.stringify(['P3', 'P1', 'P2']))
+  })
+
   it('falls back to an empty set when localStorage holds a malformed value', () => {
     localStorage.setItem(STORAGE_KEY, '{not-valid-json')
 

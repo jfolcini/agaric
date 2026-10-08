@@ -42,6 +42,22 @@ export function toggleStarred(pageId: string): void {
 }
 
 /**
+ * Move `pageId` to `overId`'s index, as a sortable drop does.
+ *
+ * Indices are taken in the FULL stored array, not the list a surface shows:
+ * the sidebar lists only the active space's live bookmarks, and writing that
+ * back would drop every other space's bookmarks and the trashed ones.
+ */
+export function moveStarred(pageId: string, overId: string): void {
+  const pages = getStarredPages()
+  const from = pages.indexOf(pageId)
+  const to = pages.indexOf(overId)
+  if (from === -1 || to === -1) return
+  pages.splice(to, 0, ...pages.splice(from, 1))
+  writePreference(PREFERENCES.starredPages, pages)
+}
+
+/**
  * Bulk-set the starred state of many pages in one write.
  *
  * Adds every id in `ids` when `starred` is true, or removes every id when

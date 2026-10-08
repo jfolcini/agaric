@@ -54,6 +54,8 @@ export const common: Record<string, string> = {
   'bookmarks.title': 'Bookmarks',
   'bookmarks.emptyHint': 'Bookmark a page to keep it here.',
   'bookmarks.remove': 'Remove {{title}} from bookmarks',
+  'bookmarks.reorderInstructions':
+    'To reorder a bookmark, press space to pick it up, use the up and down arrow keys to move it, and press space again to drop it. Press escape to cancel. Press enter to open the page.',
   'space.switch': 'Switch space',
   'space.manage': 'Manage spaces…',
   'space.moveTo': 'Move to space',
