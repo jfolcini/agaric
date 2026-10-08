@@ -227,7 +227,6 @@ type PropertyEditorProps = Pick<
 interface SortableBlockBodyProps extends ResolverProps, PropertyEditorProps {
   blockId: string
   content: string
-  depth: number
   isFocused: boolean
   isTouchDevice: boolean
   swipeTranslateX: number
@@ -257,7 +256,7 @@ interface SortableBlockBodyProps extends ResolverProps, PropertyEditorProps {
 }
 
 /**
- * The sliding content wrapper: indent guide + narrow gutter + inline controls +
+ * The sliding content wrapper: narrow gutter + inline controls +
  * property editor + editor body + collapsible attachment list. Extracted to a
  * pure subcomponent so its branchy presentational logic (slide transform,
  * gutter collapse, line-through-on-done, attachment list) lives outside
@@ -268,7 +267,6 @@ function SortableBlockBody(props: SortableBlockBodyProps): React.ReactElement {
   const {
     blockId,
     content,
-    depth,
     isFocused,
     isTouchDevice,
     swipeTranslateX,
@@ -328,14 +326,6 @@ function SortableBlockBody(props: SortableBlockBodyProps): React.ReactElement {
         transform: isSliding ? `translateX(${swipeTranslateX}px)` : undefined,
       }}
     >
-      {/* Indent guide line for nested blocks */}
-      {depth > 0 && (
-        <div
-          className="absolute left-0 top-0 bottom-0 border-l border-border"
-          style={{ left: `calc(var(--indent-width) * ${depth - 1} + var(--indent-width) / 2)` }}
-        />
-      )}
-
       {/* ── Leading control lane (desktop) — drag handle + collapse chevron ── */}
       {/* #1968: one tight, right-aligned lane reserving two control slots
             (drag handle + chevron). `justify-end` keeps the glyphs hugging the
@@ -833,7 +823,6 @@ function SortableBlockInner({
       <SortableBlockBody
         blockId={blockId}
         content={content}
-        depth={depth}
         isFocused={isFocused}
         isTouchDevice={isTouchDevice}
         swipeTranslateX={swipeTranslateX}
