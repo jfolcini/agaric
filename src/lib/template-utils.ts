@@ -6,6 +6,7 @@ import type { BlockRow, CreateBlockSpec } from '@/lib/bindings'
 import { commands } from '@/lib/bindings'
 import { getDateLocale } from '@/lib/date-locale'
 import { logger } from '@/lib/logger'
+import { PREFERENCES, readPreference, writePreference } from '@/lib/preferences'
 import { paginationLimit } from '@/lib/safe-limit'
 import { requireActiveScope, toSpaceScope } from '@/lib/space-scope'
 
@@ -504,75 +505,33 @@ export async function insertTemplateBlocks(
   return ids.filter((id): id is string => typeof id === 'string')
 }
 
-/**
- * Load the per-space journal template (text property `journal_template`
- * on the space block itself). Returns the markdown string or null if
- * the property is not set.
- *
- * Distinct from the legacy `journal-template` page property — this one
- * Lives directly on the space block as its `value_text`.
- * makes this take precedence over the legacy global template page when
- * a daily journal page is created inside the space.
- */
-export async function loadJournalTemplateForSpace(spaceId: string): Promise<string | null> {
-  // Single-key PK lookup against `block_properties`
-  // instead of fetching the whole vocabulary just to read one row.
-  const row = unwrap(await commands.getProperty(spaceId, 'journal_template'))
-  return row?.value_text ?? null
-}
+const SPACE_TEXT_JOURNAL_TEMPLATE_KEY = 'journal_template'
 
 /**
- * Parse a markdown template string and create one content block per
- * non-empty line under `parentId`. Variables (`<% today %>`,
- * `<% time %>`, `<% datetime %>`, `<% page title %>`) are expanded on
- * each line. Returns the IDs of all created blocks.
+ * #5373 — delete the retired per-space text journal templates once per device.
  *
- * Replaces the per-line `createBlock` IPC loop
- * with one `createBlocksBatch` call. A 10-line journal template that
- * previously fired 10 IPCs now fires 1. Atomicity changes: a single
- * malformed line (e.g. oversize content) now rolls the whole template
- * back instead of partially landing the prefix. The previous per-line
- * try/catch fall-through is gone — for a journal template every line
- * is well-formed user-authored markdown, and partial inserts were a
- * symptom of the legacy per-IPC failure model rather than a desired
- * UX.
+ * Ordinary `DeleteProperty` ops rather than a SQL migration: property state
+ * lives in the op log and Loro, which a migration editing `block_properties`
+ * would skip. Marked done only after every delete lands, so a failure is
+ * retried on the next boot.
  */
-export async function insertTemplateBlocksFromString(
-  template: string,
-  parentId: string,
-  context?: { pageTitle?: string },
-): Promise<string[]> {
-  // Split, then drop leading/trailing whitespace-only lines but keep
-  // interior blank lines absent (we filter those per-line below).
-  const lines = template.split('\n')
-  let start = 0
-  let end = lines.length
-  while (start < end && (lines[start] ?? '').trim() === '') start += 1
-  while (end > start && (lines[end - 1] ?? '').trim() === '') end -= 1
-  const specs: CreateBlockSpec[] = []
-  for (let i = start; i < end; i += 1) {
-    const line = lines[i] ?? ''
-    if (line.trim() === '') continue
-    const expanded = expandTemplateVariables(line, context ?? {})
-    specs.push({
-      blockType: 'content',
-      content: expanded,
-      parentId,
-      position: null,
-      properties: {},
-    })
-  }
-  if (specs.length === 0) return []
+export async function deleteSpaceTextJournalTemplates(spaceIds: string[]): Promise<void> {
+  if (readPreference(PREFERENCES.spaceTextJournalTemplatesDeleted)) return
   try {
-    const { blocks: created } = unwrap(await commands.createBlocksBatch(specs))
-    return created.map((b) => b.id)
+    const propertiesBySpace = unwrap(await commands.getBatchProperties(spaceIds))
+    for (const spaceId of spaceIds) {
+      const properties = propertiesBySpace[spaceId] ?? []
+      if (properties.some((p) => p.key === SPACE_TEXT_JOURNAL_TEMPLATE_KEY)) {
+        unwrap(await commands.deleteProperty(spaceId, SPACE_TEXT_JOURNAL_TEMPLATE_KEY))
+      }
+    }
+    writePreference(PREFERENCES.spaceTextJournalTemplatesDeleted, true)
   } catch (err) {
     logger.warn(
       'template-utils',
-      'journal template batch insert failed',
-      { lineCount: specs.length },
+      'deleting the per-space text journal templates failed; retrying next boot',
+      { spaceIds },
       err,
     )
-    return []
   }
 }

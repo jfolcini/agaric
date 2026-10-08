@@ -565,6 +565,20 @@ const SPACE_ONBOARDING_SEEN_PREFERENCE: PreferenceDefinition<boolean> = {
   serialize: () => 'true',
 }
 
+/**
+ * `agaric:space-text-journal-templates-deleted` — this device has deleted the
+ * retired per-space `journal_template` values (#5373,
+ * `deleteSpaceTextJournalTemplates` in `src/lib/template-utils.ts`).
+ */
+const SPACE_TEXT_JOURNAL_TEMPLATES_DELETED_PREFERENCE: PreferenceDefinition<boolean> = {
+  key: 'agaric:space-text-journal-templates-deleted',
+  scope: 'device',
+  version: 1,
+  defaultValue: false,
+  parse: (raw) => raw === 'true',
+  serialize: () => 'true',
+}
+
 /** `tag-colors` — tag id -> CSS color/accent-token map (`src/lib/tag-colors.ts`). */
 const TAG_COLORS_PREFERENCE: PreferenceDefinition<Record<string, string>> = {
   key: 'tag-colors',
@@ -1434,6 +1448,7 @@ export const PREFERENCES = {
   gestureCoachmarkSeen: GESTURE_COACHMARK_SEEN_PREFERENCE,
   onboardingDone: ONBOARDING_DONE_PREFERENCE,
   spaceOnboardingSeen: SPACE_ONBOARDING_SEEN_PREFERENCE,
+  spaceTextJournalTemplatesDeleted: SPACE_TEXT_JOURNAL_TEMPLATES_DELETED_PREFERENCE,
   tagColors: TAG_COLORS_PREFERENCE,
   pinnedSearchScope: PINNED_SEARCH_SCOPE_PREFERENCE,
   emojiPickerEnabled: EMOJI_PICKER_ENABLED_PREFERENCE,

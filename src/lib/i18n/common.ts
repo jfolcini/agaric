@@ -81,19 +81,6 @@ export const common: Record<string, string> = {
   'space.deleteFailed': 'Failed to delete space',
   'space.renameFailed': 'Failed to rename space',
   'space.accentFailed': 'Failed to update accent color',
-  'space.journalTemplateLabel': 'Journal template',
-  'space.journalTemplatePlaceholder':
-    'Optional. Each non-empty line becomes a block on this space\u2019s daily notes. Variables: <% today %>, <% time %>, <% datetime %>, <% page title %>',
-  'space.journalTemplateFailed': 'Could not save journal template',
-  'space.journalTemplateHint':
-    'Tip: per-space template overrides the global journal-template page.',
-  'space.journalTemplateExamplesLabel': 'Examples',
-  'space.journalTemplateExample1Title': 'Daily notes scaffold',
-  'space.journalTemplateExample1': '# <% today %>\n\nNotes:\n\nTasks:\n',
-  'space.journalTemplateExample2Title': 'Standup template',
-  'space.journalTemplateExample2': '## <% today %> standup\n\nYesterday:\n\nToday:\n\nBlockers:',
-  // Entry from JournalPage that deep-links into SpaceManageDialog.
-  'space.configureJournalTemplate': 'Configure journal template',
   'space.createSpaceLabel': 'Create new space',
   'space.createSpaceCta': 'Create',
   'space.createSpaceFailed': 'Failed to create space',

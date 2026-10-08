@@ -1,4 +1,4 @@
-import { invoke } from '@tauri-apps/api/core'
+import { invoke, type InvokeArgs } from '@tauri-apps/api/core'
 import { es } from 'date-fns/locale'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -8,15 +8,20 @@ import {
   mockInvokeCommands,
   type TypedInvokeHandlers,
 } from '@/__tests__/helpers/invoke'
-import type { BlockRow } from '@/lib/bindings'
+import { unwrap } from '@/lib/app-error'
+import type { BlockRow, PropertyRow } from '@/lib/bindings'
+import { commands } from '@/lib/bindings'
 import { i18n } from '@/lib/i18n'
 import { registerDateLocale, __unregisterDateLocaleForTests } from '@/lib/i18n/locales'
+import { logger } from '@/lib/logger'
+import { PREFERENCES, readPreference } from '@/lib/preferences'
+import { dispatch } from '@/lib/tauri-mock/handlers'
+import { seedBlocks } from '@/lib/tauri-mock/seed'
 import {
+  deleteSpaceTextJournalTemplates,
   expandTemplateVariables,
   insertTemplateBlocks,
-  insertTemplateBlocksFromString,
   loadJournalTemplate,
-  loadJournalTemplateForSpace,
   loadTemplatePages,
   loadTemplatePagesWithPreview,
 } from '@/lib/template-utils'
@@ -723,203 +728,85 @@ describe('expandTemplateVariables — resolver map (#1450 Phase 1)', () => {
   })
 })
 
-describe('loadJournalTemplateForSpace', () => {
-  it('returns null when the journal_template property is absent', async () => {
-    // Backend returns `null` for the missing row
-    // (single-key PK lookup), not an empty list of unrelated rows.
-    stubTemplates({ get_property: () => null })
+describe('deleteSpaceTextJournalTemplates', () => {
+  const SPACE = 'SPACE_PERSONAL'
 
-    const result = await loadJournalTemplateForSpace('SPACE_1')
-
-    expect(result).toBeNull()
-    expect(mockedInvoke).toHaveBeenCalledWith('get_property', {
-      blockId: 'SPACE_1',
-      key: 'journal_template',
-    })
-  })
-
-  it('returns value_text when journal_template is set', async () => {
-    // Single-row return shape from `get_property`.
-    stubTemplates({
-      get_property: () => ({
-        key: 'journal_template',
-        value_text: '## Standup\n- TODOs',
+  async function setTextTemplate(): Promise<void> {
+    unwrap(
+      await commands.setProperty(SPACE, 'journal_template', {
+        value_text: '- Notes\n  - nested',
         value_num: null,
         value_date: null,
         value_ref: null,
         value_bool: null,
       }),
-    })
-
-    const result = await loadJournalTemplateForSpace('SPACE_1')
-
-    expect(result).toBe('## Standup\n- TODOs')
-    expect(mockedInvoke).toHaveBeenCalledWith('get_property', {
-      blockId: 'SPACE_1',
-      key: 'journal_template',
-    })
-  })
-
-  it('reads journal_template directly via PK lookup', async () => {
-    // The SQL WHERE-key filter is the backend's
-    // job; the FE just trusts the row it gets back. This test pins
-    // that the `journal_template` row is read directly via the PK
-    // lookup (no client-side `find` over the full vocabulary).
-    stubTemplates({
-      get_property: () => ({
-        key: 'journal_template',
-        value_text: 'Daily focus',
-        value_num: null,
-        value_date: null,
-        value_ref: null,
-        value_bool: null,
-      }),
-    })
-
-    const result = await loadJournalTemplateForSpace('SPACE_1')
-
-    expect(result).toBe('Daily focus')
-    expect(mockedInvoke).toHaveBeenCalledWith('get_property', {
-      blockId: 'SPACE_1',
-      key: 'journal_template',
-    })
-  })
-
-  it('returns null when value_text is null', async () => {
-    stubTemplates({
-      get_property: () => ({
-        key: 'journal_template',
-        value_text: null,
-        value_num: null,
-        value_date: null,
-        value_ref: null,
-        value_bool: null,
-      }),
-    })
-
-    const result = await loadJournalTemplateForSpace('SPACE_1')
-
-    expect(result).toBeNull()
-  })
-})
-
-describe('insertTemplateBlocksFromString', () => {
-  it('creates one block per non-empty line via a single batch IPC', async () => {
-    // N markdown lines collapse to ONE
-    // `create_blocks_batch` IPC. The previous N `create_block` IPCs
-    // are gone.
-    stubTemplates({
-      create_blocks_batch: () =>
-        withOps({
-          blocks: [
-            makeBlockRow({ id: 'NEW1', content: 'Morning standup' }),
-            makeBlockRow({ id: 'NEW2', content: 'TODOs' }),
-          ],
-        }),
-    })
-
-    const ids = await insertTemplateBlocksFromString('Morning standup\nTODOs', 'PARENT')
-
-    expect(ids).toEqual(['NEW1', 'NEW2'])
-    // Exactly ONE create_blocks_batch call carrying both lines.
-    const batchCalls = mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'create_blocks_batch')
-    expect(batchCalls).toHaveLength(1)
-    expect(batchCalls[0]?.[1]).toMatchObject({
-      specs: [
-        expect.objectContaining({
-          blockType: 'content',
-          content: 'Morning standup',
-          parentId: 'PARENT',
-        }),
-        expect.objectContaining({
-          blockType: 'content',
-          content: 'TODOs',
-          parentId: 'PARENT',
-        }),
-      ],
-    })
-    // Anti-backslide guard: NO per-line `create_block` IPC fires.
-    const perLineCreateCalls = mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'create_block')
-    expect(perLineCreateCalls).toHaveLength(0)
-  })
-
-  it('expands template variables on each line', async () => {
-    stubTemplates({
-      create_blocks_batch: () =>
-        withOps({
-          blocks: [
-            makeBlockRow({ id: 'NEW1', content: '' }),
-            makeBlockRow({ id: 'NEW2', content: '' }),
-          ],
-        }),
-    })
-
-    const now = new Date()
-    const yyyy = now.getFullYear()
-    const mm = String(now.getMonth() + 1).padStart(2, '0')
-    const dd = String(now.getDate()).padStart(2, '0')
-    const today = `${yyyy}-${mm}-${dd}`
-
-    await insertTemplateBlocksFromString('Date: <% today %>\nPage: <% page title %>', 'PARENT', {
-      pageTitle: 'My Daily',
-    })
-
-    const batchCalls = mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'create_blocks_batch')
-    expect(batchCalls).toHaveLength(1)
-    const specs = (batchCalls[0]?.[1] as { specs: Array<{ content: string }> } | undefined)?.specs
-    expect(specs?.[0]?.content).toBe(`Date: ${today}`)
-    expect(specs?.[1]?.content).toBe('Page: My Daily')
-  })
-
-  it('skips blank lines and surrounding whitespace', async () => {
-    stubTemplates({
-      create_blocks_batch: () =>
-        withOps({
-          blocks: [
-            makeBlockRow({ id: 'NEW1', content: 'A' }),
-            makeBlockRow({ id: 'NEW2', content: 'B' }),
-          ],
-        }),
-    })
-
-    // Leading blank, trailing blank, internal blank line, whitespace-only line.
-    const ids = await insertTemplateBlocksFromString('\n\n  \nA\n\n   \nB\n\n', 'PARENT')
-
-    expect(ids).toEqual(['NEW1', 'NEW2'])
-    const batchCalls = mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'create_blocks_batch')
-    expect(batchCalls).toHaveLength(1)
-    const specs = (batchCalls[0]?.[1] as { specs: Array<{ content: string }> } | undefined)?.specs
-    expect(specs).toHaveLength(2)
-  })
-
-  it('returns empty list and logs a warning when the batch IPC fails', async () => {
-    // Atomicity flipped from per-line to per-batch.
-    // A batch failure rolls the whole template back; the wrapper logs
-    // and returns `[]` rather than partially landing the prefix.
-    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
-
-    stubTemplates({
-      create_blocks_batch: () => Promise.reject(new Error('batch insert failed')),
-    })
-
-    const ids = await insertTemplateBlocksFromString('A\nB\nC', 'PARENT')
-
-    expect(ids).toEqual([])
-    const batchCalls = mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'create_blocks_batch')
-    expect(batchCalls).toHaveLength(1)
-    expect(warnSpy).toHaveBeenCalledWith(
-      expect.stringContaining('journal template batch insert failed'),
     )
+  }
 
-    warnSpy.mockRestore()
+  async function textTemplate(): Promise<PropertyRow | null> {
+    return unwrap(await commands.getProperty(SPACE, 'journal_template'))
+  }
+
+  beforeEach(() => {
+    localStorage.clear()
+    seedBlocks()
+    mockedInvoke.mockImplementation(async (cmd: string, args?: InvokeArgs) => dispatch(cmd, args))
   })
 
-  it('returns an empty array for an empty template string without firing any IPC', async () => {
-    const ids = await insertTemplateBlocksFromString('   \n\n  ', 'PARENT')
-    expect(ids).toEqual([])
-    const batchCalls = mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'create_blocks_batch')
-    expect(batchCalls).toHaveLength(0)
-    const perLineCreateCalls = mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'create_block')
-    expect(perLineCreateCalls).toHaveLength(0)
+  it('deletes the text template from the space and records the device as done', async () => {
+    await setTextTemplate()
+
+    await deleteSpaceTextJournalTemplates([SPACE])
+
+    expect(await textTemplate()).toBeNull()
+    expect(readPreference(PREFERENCES.spaceTextJournalTemplatesDeleted)).toBe(true)
+  })
+
+  it('does nothing on a later run once the device is done', async () => {
+    await deleteSpaceTextJournalTemplates([SPACE])
+    // A text template that syncs in afterwards is left alone: this device is done.
+    await setTextTemplate()
+
+    await deleteSpaceTextJournalTemplates([SPACE])
+
+    expect(await textTemplate()).not.toBeNull()
+  })
+
+  it('appends no delete op for a space without a text template', async () => {
+    await deleteSpaceTextJournalTemplates([SPACE])
+
+    const deletes = mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'delete_property')
+    expect(deletes).toHaveLength(0)
+    expect(readPreference(PREFERENCES.spaceTextJournalTemplatesDeleted)).toBe(true)
+  })
+
+  it('leaves the device not done when a delete fails, so the next boot retries', async () => {
+    stubTemplates({
+      get_batch_properties: () => ({
+        [SPACE]: [
+          {
+            key: 'journal_template',
+            value_text: 'Notes',
+            value_num: null,
+            value_date: null,
+            value_ref: null,
+            value_bool: null,
+          },
+        ],
+      }),
+      delete_property: () => Promise.reject(new Error('backend down')),
+    })
+    const warn = vi.spyOn(logger, 'warn')
+
+    await deleteSpaceTextJournalTemplates([SPACE])
+
+    expect(readPreference(PREFERENCES.spaceTextJournalTemplatesDeleted)).toBe(false)
+    expect(warn).toHaveBeenCalledWith(
+      'template-utils',
+      'deleting the per-space text journal templates failed; retrying next boot',
+      { spaceIds: [SPACE] },
+      expect.any(Error),
+    )
+    warn.mockRestore()
   })
 })

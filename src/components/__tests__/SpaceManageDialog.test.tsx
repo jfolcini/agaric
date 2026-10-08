@@ -91,11 +91,6 @@ function setupDefaultIpcMocks() {
     if (cmd === 'edit_block') return null
     if (cmd === 'set_property') return null
     if (cmd === 'delete_property') return null
-    // Per-space `journal_template` lookup. Tier
-    // 2.4b: collapsed N `get_properties(spaceId)` calls into one
-    // `get_batch_properties(spaceIds)` call. Default to no properties
-    // for any space so textareas start empty.
-    if (cmd === 'get_batch_properties') return {}
     if (cmd === 'delete_block') return { affected_count: 1 }
     if (cmd === 'create_space') return 'SPACE_NEW_ID'
     return null
@@ -164,7 +159,6 @@ describe('SpaceManageDialog', () => {
       if (cmd === 'list_spaces') return [PERSONAL, WORK]
       if (cmd === 'edit_block') throw new Error('IPC offline')
       if (cmd === 'set_property') return null
-      if (cmd === 'get_batch_properties') return {}
       return null
     })
 
@@ -285,7 +279,6 @@ describe('SpaceManageDialog', () => {
     mockedInvoke.mockImplementation(async (cmd: string) => {
       if (cmd === 'list_blocks') return nonEmptyPage
       if (cmd === 'list_spaces') return [PERSONAL, WORK]
-      if (cmd === 'get_batch_properties') return {}
       return null
     })
 
@@ -316,7 +309,6 @@ describe('SpaceManageDialog', () => {
     mockedInvoke.mockImplementation(async (cmd: string) => {
       if (cmd === 'list_blocks') return nonEmptyPage
       if (cmd === 'list_spaces') return [PERSONAL, WORK]
-      if (cmd === 'get_batch_properties') return {}
       return null
     })
 
@@ -501,221 +493,14 @@ describe('SpaceManageDialog', () => {
     expect(screen.queryByText(t('space.onboardingTitle'))).not.toBeInTheDocument()
   })
 
-  // ── Per-space journal template ──────────────────────────
-
-  it('journal template textarea pre-populates from existing property', async () => {
-    // Seed the batched `get_batch_properties` call so PERSONAL.id has
-    // a `journal_template` row; WORK returns no properties.
-    mockedInvoke.mockImplementation(async (cmd: string, args?: unknown) => {
-      if (cmd === 'list_blocks') return emptyPage
-      if (cmd === 'list_spaces') return [PERSONAL, WORK]
-      if (cmd === 'get_batch_properties') {
-        const ids = (args as { blockIds: string[] }).blockIds
-        const out: Record<string, unknown[]> = {}
-        for (const id of ids) {
-          out[id] =
-            id === PERSONAL.id
-              ? [
-                  {
-                    key: 'journal_template',
-                    value_text: '## Standup\n- TODOs',
-                    value_num: null,
-                    value_date: null,
-                    value_ref: null,
-                  },
-                ]
-              : []
-        }
-        return out
-      }
-      return null
-    })
-
-    render(<SpaceManageDialog open onOpenChange={() => {}} />)
-
-    // The Personal row's textarea must mount with the seeded value.
-    // Use findAllByLabelText because both rows render the same label;
-    // the personal row is the first one.
-    const textareas = await screen.findAllByLabelText(t('space.journalTemplateLabel'))
-    const personalTextarea = textareas[0] as HTMLTextAreaElement
-    expect(personalTextarea.tagName.toLowerCase()).toBe('textarea')
-    await waitFor(() => {
-      expect(personalTextarea.value).toBe('## Standup\n- TODOs')
-    })
-  })
-
-  it('saving journal template calls setProperty with the entered value on blur', async () => {
-    const user = userEvent.setup()
-    render(<SpaceManageDialog open onOpenChange={() => {}} />)
-
-    // The Personal row textarea (first one, since both rows render the
-    // same label). Find by aria-label, scoped to the row that matches
-    // the personal input.
-    const textareas = await screen.findAllByLabelText(t('space.journalTemplateLabel'))
-    const personalTextarea = textareas[0] as HTMLTextAreaElement
-    await user.click(personalTextarea)
-    await user.type(personalTextarea, 'Daily focus')
-    // Blur via tabbing out — onBlur fires the commit.
-    await user.tab()
-
-    await waitFor(() => {
-      expect(mockedInvoke).toHaveBeenCalledWith(
-        'set_property',
-        expect.objectContaining({
-          blockId: PERSONAL.id,
-          key: 'journal_template',
-          value: expect.objectContaining({ value_text: 'Daily focus' }),
-        }),
-      )
-    })
-  })
-
-  it('clearing journal template calls deleteProperty on blur', async () => {
-    // Seed with an existing template so clearing is meaningful.
-    mockedInvoke.mockImplementation(async (cmd: string, args?: unknown) => {
-      if (cmd === 'list_blocks') return emptyPage
-      if (cmd === 'list_spaces') return [PERSONAL, WORK]
-      if (cmd === 'get_batch_properties') {
-        const ids = (args as { blockIds: string[] }).blockIds
-        const out: Record<string, unknown[]> = {}
-        for (const id of ids) {
-          out[id] =
-            id === PERSONAL.id
-              ? [
-                  {
-                    key: 'journal_template',
-                    value_text: 'Existing template',
-                    value_num: null,
-                    value_date: null,
-                    value_ref: null,
-                  },
-                ]
-              : []
-        }
-        return out
-      }
-      if (cmd === 'delete_property') return null
-      if (cmd === 'set_property') return null
-      return null
-    })
-
-    const user = userEvent.setup()
-    render(<SpaceManageDialog open onOpenChange={() => {}} />)
-
-    const textareas = await screen.findAllByLabelText(t('space.journalTemplateLabel'))
-    const textarea = textareas[0] as HTMLTextAreaElement
-    await waitFor(() => {
-      expect(textarea.value).toBe('Existing template')
-    })
-    await user.clear(textarea)
-    await user.tab()
-
-    await waitFor(() => {
-      expect(mockedInvoke).toHaveBeenCalledWith(
-        'delete_property',
-        expect.objectContaining({ blockId: PERSONAL.id, key: 'journal_template' }),
-      )
-    })
-  })
-
-  it('setProperty failure shows toast and reverts to previous value', async () => {
-    // Seed with an existing committed value so we can verify the revert.
-    mockedInvoke.mockImplementation(async (cmd: string, args?: unknown) => {
-      if (cmd === 'list_blocks') return emptyPage
-      if (cmd === 'list_spaces') return [PERSONAL, WORK]
-      if (cmd === 'get_batch_properties') {
-        const ids = (args as { blockIds: string[] }).blockIds
-        const out: Record<string, unknown[]> = {}
-        for (const id of ids) {
-          out[id] =
-            id === PERSONAL.id
-              ? [
-                  {
-                    key: 'journal_template',
-                    value_text: 'Original',
-                    value_num: null,
-                    value_date: null,
-                    value_ref: null,
-                  },
-                ]
-              : []
-        }
-        return out
-      }
-      if (cmd === 'set_property') throw new Error('IPC offline')
-      return null
-    })
-
-    const user = userEvent.setup()
-    render(<SpaceManageDialog open onOpenChange={() => {}} />)
-
-    const textareas = await screen.findAllByLabelText(t('space.journalTemplateLabel'))
-    const textarea = textareas[0] as HTMLTextAreaElement
-    await waitFor(() => {
-      expect(textarea.value).toBe('Original')
-    })
-    await user.click(textarea)
-    await user.clear(textarea)
-    await user.type(textarea, 'Edited but failing')
-    await user.tab()
-
-    // Sonner is globally mocked — toast.error is a vi.fn().
-    await waitFor(() => {
-      expect(vi.mocked(toast.error)).toHaveBeenCalledWith(t('space.journalTemplateFailed'))
-    })
-    // Revert: textarea reflects the previously-committed value.
-    await waitFor(() => {
-      expect(textarea.value).toBe('Original')
-    })
-  })
-
-  // The journal-template textarea placeholder mentions
-  // `<% today %>` etc., but users had no concrete examples. A
-  // collapsible <details> panel below the hint surfaces 1-2 sample
-  // templates. Closed by default; native disclosure widget so it is
-  // keyboard accessible without extra ARIA.
-  it('renders a collapsible Examples panel that expands to show templates with variables', async () => {
-    const user = userEvent.setup()
-    render(<SpaceManageDialog open onOpenChange={() => {}} />)
-
-    // Disclosure widgets render once per row. Pick the first
-    // (Personal). Closed by default → `open` attribute absent.
-    const panels = await screen.findAllByTestId('journal-template-examples')
-    expect(panels.length).toBeGreaterThanOrEqual(1)
-    const panel = panels[0] as HTMLDetailsElement
-    expect(panel.open).toBe(false)
-
-    // The summary (toggle) is rendered with the i18n label even while
-    // the panel is collapsed. Both example titles live inside the
-    // `<details>` body — they exist in the DOM regardless of open
-    // state, so we click the summary first and then assert content to
-    // mirror what an end user actually sees.
-    const summary = within(panel).getByText(t('space.journalTemplateExamplesLabel'))
-    await user.click(summary)
-    await waitFor(() => {
-      expect(panel.open).toBe(true)
-    })
-
-    expect(within(panel).getByText(t('space.journalTemplateExample1Title'))).toBeInTheDocument()
-    expect(within(panel).getByText(t('space.journalTemplateExample2Title'))).toBeInTheDocument()
-    // At least one of the example bodies must reference the
-    // `<% today %>` variable so users see a working interpolation.
-    expect(panel.textContent ?? '').toContain('<% today %>')
-  })
-
   // ── — IPC dedup contract ─────────────
   //
   // The emptiness probe (`list_blocks { spaceId, blockType:'page',
   // limit:1 }`) is owned by the dialog body and keyed by `space.id`,
   // so it fires exactly once per unique `space.id` per open — not once
   // per `SpaceRowEditor` mount.
-  //
-  // Collapsed the previous per-space
-  // `get_properties(spaceId)` loop into a single
-  // `get_batch_properties(spaceIds)` call covering every un-fetched
-  // space in one IPC.
 
-  it('fires the emptiness probe per space.id and the journal-template fetch as ONE batch ()', async () => {
+  it('fires the emptiness probe once per space.id', async () => {
     useSpaceStore.setState({
       currentSpaceId: PERSONAL.id,
       availableSpaces: [PERSONAL, WORK, { id: 'SPACE_3', name: 'Side', accent_color: null }],
@@ -724,9 +509,7 @@ describe('SpaceManageDialog', () => {
 
     render(<SpaceManageDialog open onOpenChange={() => {}} />)
 
-    // Wait for both IPC chains to settle: the textareas mount empty
-    // and only resolve once `get_batch_properties` resolves; the
-    // Delete buttons start disabled and only enable once
+    // The Delete buttons start disabled and only enable once
     // `list_blocks` resolves with an empty page.
     await waitFor(() => {
       const buttons = screen.getAllByRole('button', {
@@ -736,25 +519,10 @@ describe('SpaceManageDialog', () => {
       for (const btn of buttons) expect(btn).not.toBeDisabled()
     })
 
-    // `list_blocks` still fires once per space.id (no batched
-    // emptiness probe today). The journal-template fetch fires
-    // exactly ONCE — a single `get_batch_properties` covering all
-    // three space ids — replacing the previous 3 `get_properties`
-    // calls.
+    // `list_blocks` fires once per space.id (no batched emptiness
+    // probe today).
     const listBlocksCalls = mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'list_blocks')
-    const batchPropertiesCalls = mockedInvoke.mock.calls.filter(
-      ([cmd]) => cmd === 'get_batch_properties',
-    )
     expect(listBlocksCalls).toHaveLength(3)
-    expect(batchPropertiesCalls).toHaveLength(1)
-
-    // Regression guard against backslide to the per-space
-    // `get_properties` loop: the dropped fan-out path must NOT fire
-    // when the batch path is in use.
-    const perBlockPropertyCalls = mockedInvoke.mock.calls.filter(
-      ([cmd]) => cmd === 'get_properties',
-    )
-    expect(perBlockPropertyCalls).toHaveLength(0)
 
     // Each space.id appears exactly once in the listBlocks call args
     // — proves dedup is keyed on space.id, not just call count.
@@ -763,59 +531,31 @@ describe('SpaceManageDialog', () => {
       ([, args]) => (args as { scope: { space_id: string } }).scope.space_id,
     )
     expect(new Set(listBlocksSpaceIds)).toEqual(new Set([PERSONAL.id, WORK.id, 'SPACE_3']))
-
-    // The single batch call covers all three space ids.
-    const batchedIds = (batchPropertiesCalls[0] as [string, { blockIds: string[] }])[1].blockIds
-    expect(new Set(batchedIds)).toEqual(new Set([PERSONAL.id, WORK.id, 'SPACE_3']))
   })
 
-  it('re-reads emptiness and the journal template on every open (#5284)', async () => {
+  it('re-reads emptiness on every open (#5284)', async () => {
     let page: typeof emptyPage | typeof nonEmptyPage = nonEmptyPage
-    let template = 'old template'
-    mockedInvoke.mockImplementation(async (cmd: string, args?: unknown) => {
+    mockedInvoke.mockImplementation(async (cmd: string) => {
       if (cmd === 'list_blocks') return page
       if (cmd === 'list_spaces') return [PERSONAL, WORK]
-      if (cmd === 'get_batch_properties') {
-        const ids = (args as { blockIds: string[] }).blockIds
-        return Object.fromEntries(
-          ids.map((id) => [
-            id,
-            id === PERSONAL.id
-              ? [
-                  {
-                    key: 'journal_template',
-                    value_text: template,
-                    value_num: null,
-                    value_date: null,
-                    value_ref: null,
-                  },
-                ]
-              : [],
-          ]),
-        )
-      }
       return null
     })
     const deleteButtons = () => screen.getAllByRole('button', { name: t('space.deleteSpaceLabel') })
-    const personalTemplate = async () =>
-      (await screen.findAllByLabelText(t('space.journalTemplateLabel')))[0] as HTMLTextAreaElement
 
     const { rerender } = render(<SpaceManageDialog open onOpenChange={() => {}} />)
-    const first = await personalTemplate()
-    await waitFor(() => expect(first.value).toBe('old template'))
+    await waitFor(() => {
+      expect(screen.getAllByTestId('space-delete-blocked-hint')).toHaveLength(2)
+    })
     for (const btn of deleteButtons()) expect(btn).toBeDisabled()
 
     rerender(<SpaceManageDialog open={false} onOpenChange={() => {}} />)
     await waitFor(() => {
       expect(screen.queryByText(t('space.manageDialogTitle'))).not.toBeInTheDocument()
     })
-    // While closed, the spaces' pages move out and the template changes elsewhere.
+    // While closed, the spaces' pages move out.
     page = emptyPage
-    template = 'new template'
 
     rerender(<SpaceManageDialog open onOpenChange={() => {}} />)
-    const reopened = await personalTemplate()
-    await waitFor(() => expect(reopened.value).toBe('new template'))
     await waitFor(() => {
       for (const btn of deleteButtons()) expect(btn).not.toBeDisabled()
     })
@@ -826,7 +566,6 @@ describe('SpaceManageDialog', () => {
     mockedInvoke.mockImplementation(async (cmd: string) => {
       if (cmd === 'list_blocks') return new Promise((resolve) => pending.push(resolve))
       if (cmd === 'list_spaces') return [PERSONAL, WORK]
-      if (cmd === 'get_batch_properties') return {}
       return null
     })
 
@@ -853,27 +592,21 @@ describe('SpaceManageDialog', () => {
 
   // ── B-7 — cancellation guard on the per-space probe IIFEs ───
   //
-  // Both `void async` IIFEs inside the `useEffect` resolve into
-  // `setEmptinessBySpace` / `setJournalTemplateBySpace` calls. Closing
-  // the dialog unmounts the content (Radix, no `forceMount`); without
-  // the `active` flag those resolutions wrote state on an unmounted
+  // The `void async` IIFEs inside the `useEffect` resolve into
+  // `setEmptinessBySpace` calls. Closing the dialog unmounts the
+  // content (Radix, no `forceMount`); without the `active` flag those
+  // resolutions wrote state on an unmounted
   // component (React 19 strict-mode warning surface). This test
   // exercises the post-unmount resolution path: it must complete
   // cleanly with no React warnings on `console.error` and no logger
   // calls (success path returns early, never reaching the catch).
-  it('cancels in-flight emptiness/journal-template probes on unmount (B-7)', async () => {
+  it('cancels in-flight emptiness probes on unmount (B-7)', async () => {
     let resolveBlocks!: (v: unknown) => void
-    let resolveProps!: (v: unknown) => void
     mockedInvoke.mockImplementation(async (cmd: string) => {
       if (cmd === 'list_spaces') return [PERSONAL, WORK]
       if (cmd === 'list_blocks') {
         return new Promise((resolve) => {
           resolveBlocks = resolve
-        })
-      }
-      if (cmd === 'get_batch_properties') {
-        return new Promise((resolve) => {
-          resolveProps = resolve
         })
       }
       return null
@@ -883,35 +616,24 @@ describe('SpaceManageDialog', () => {
 
     const { unmount } = render(<SpaceManageDialog open onOpenChange={() => {}} />)
 
-    // Wait for both async chains to fire their respective IPC calls.
     await waitFor(() => {
       expect(mockedInvoke.mock.calls.some(([cmd]) => cmd === 'list_blocks')).toBe(true)
-      expect(mockedInvoke.mock.calls.some(([cmd]) => cmd === 'get_batch_properties')).toBe(true)
     })
 
-    // Unmount before either probe resolves — cleanup sets active=false.
+    // Unmount before the probe resolves — cleanup sets active=false.
     unmount()
 
-    // Resolve both deferred IPCs post-unmount and let the microtask
+    // Resolve the deferred IPC post-unmount and let the microtask
     // chain settle inside `act(async)`.
     await act(async () => {
       resolveBlocks(emptyPage)
-      resolveProps({})
     })
 
     // Cancellation guard short-circuits the success path: no
-    // `setEmptinessBySpace` / `setJournalTemplateBySpace` runs, and
-    // therefore no `logger.warn` for the emptiness/journal-template
-    // catch paths (the catches never fire either).
+    // `setEmptinessBySpace` runs, and the catch never fires.
     expect(vi.mocked(logger.warn)).not.toHaveBeenCalledWith(
       expect.any(String),
       'failed to probe space emptiness',
-      expect.anything(),
-      expect.anything(),
-    )
-    expect(vi.mocked(logger.warn)).not.toHaveBeenCalledWith(
-      expect.any(String),
-      'failed to load journal template properties',
       expect.anything(),
       expect.anything(),
     )

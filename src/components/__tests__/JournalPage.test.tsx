@@ -105,18 +105,6 @@ vi.mock('@/components/agenda/AgendaResults', () => ({
   ),
 }))
 
-// ── Mock SpaceManageDialog ─────────────────────────────────
-// Render a sentinel only when `open === true` so the new
-// configure-template entry can be exercised without pulling the dialog's
-// internals into this suite.
-vi.mock('@/components/SpaceManageDialog', () => ({
-  SpaceManageDialog: ({ open }: { open: boolean; onOpenChange: (open: boolean) => void }) =>
-    open ? (
-      // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- test mock mirrors SpaceManageDialog's ARIA dialog role
-      <div role="dialog" aria-label="Manage spaces" data-testid="space-manage-mock" />
-    ) : null,
-}))
-
 // ── Mock MonthlyDayCell ─────────────────────────────────────
 vi.mock('@/components/journal/MonthlyDayCell', () => ({
   MonthlyDayCell: (props: Record<string, unknown>) => {
@@ -154,6 +142,7 @@ import {
 } from '@/components/layout/ViewHeaderOutlet'
 import { __resetCalendarPageDatesForTests } from '@/hooks/useCalendarPageDates'
 import type { BlockRow } from '@/lib/bindings'
+import { t } from '@/lib/i18n'
 import { useBlockStore } from '@/stores/blocks'
 import { useJournalStore } from '@/stores/journal'
 import { useNavigationStore } from '@/stores/navigation'
@@ -2756,192 +2745,6 @@ describe('JournalPage', () => {
     })
   })
 
-  // ── Per-space journal template ──────────────────────────
-
-  describe('per-space journal template', () => {
-    /**
-     * Build an IPC dispatcher modelling: per-space `journal_template`
-     * property + optional legacy `journal-template` page. Both
-     * surfaces hit the same `create_page_in_space` and `create_block`
-     * mocks so the assertion can pin down which template ran by
-     * inspecting the resulting `create_block` call sequence.
-     */
-    function makePerSpaceMock(opts: {
-      perSpaceTemplate: string | null
-      legacyTemplatePage: boolean
-    }) {
-      return async (cmd: string, args?: unknown): Promise<unknown> => {
-        const bug48 = bug48EmptyResponse(cmd)
-        if (bug48 !== BUG48_NOT_HANDLED) return bug48
-        if (cmd === 'list_blocks') return templateListBlocksResponse(args)
-        if (cmd === 'load_page_subtree') return templateLoadPageSubtreeResponse(args)
-        if (cmd === 'get_property') {
-          // Single-key PK lookup. Returns PropertyRow | null.
-          const a = (args as { blockId: string; key: string } | undefined) ?? {
-            blockId: '',
-            key: '',
-          }
-          if (a.key !== 'journal_template' || opts.perSpaceTemplate == null) return null
-          return {
-            key: 'journal_template',
-            value_text: opts.perSpaceTemplate,
-            value_num: null,
-            value_date: null,
-            value_ref: null,
-            value_bool: null,
-          }
-        }
-        if (cmd === 'query_by_property') {
-          if (opts.legacyTemplatePage) return templateQueryByPropertyResponse(args)
-          return emptyPage
-        }
-        if (cmd === 'create_page_in_space') return 'DP-PS'
-        if (cmd === 'create_blocks_batch') {
-          // `insertTemplateBlocksFromString`
-          // (per-space) and `insertTemplateBlocks` (legacy page) both
-          // call this batch IPC. Return one BlockRow per spec.
-          return templateCreateBlocksBatchResponse(args)
-        }
-        if (cmd === 'create_block') {
-          const params = args as { blockType: string; content?: string; parentId?: string }
-          return {
-            id: `NEW-${params.content?.replace(/\s+/g, '-') ?? 'block'}`,
-            block_type: params.blockType,
-            content: params.content ?? '',
-            parent_id: params.parentId,
-            position: 0,
-          }
-        }
-        return emptyPage
-      }
-    }
-
-    it('per-space journal template applies on new daily page creation', async () => {
-      mockedInvoke.mockImplementation(
-        makePerSpaceMock({
-          perSpaceTemplate: 'Morning standup\nTODOs',
-          legacyTemplatePage: false,
-        }),
-      )
-
-      renderJournal()
-
-      // Page is created via `create_page_in_space` for today.
-      await waitFor(() => {
-        expect(mockedInvoke).toHaveBeenCalledWith(
-          'create_page_in_space',
-          expect.objectContaining({ spaceId: 'SPACE_TEST' }),
-        )
-      })
-
-      // Per-space property lookup hits get_property with the space id + key.
-      await waitFor(() => {
-        expect(mockedInvoke).toHaveBeenCalledWith('get_property', {
-          blockId: 'SPACE_TEST',
-          key: 'journal_template',
-        })
-      })
-
-      // `insertTemplateBlocksFromString` collapses
-      // the per-line `create_block` loop into a single
-      // `create_blocks_batch` IPC. Both lines must land in one batch's
-      // `specs` array.
-      await waitFor(() => {
-        const batchCalls = mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'create_blocks_batch')
-        expect(batchCalls.length).toBeGreaterThan(0)
-      })
-      const batchSpecs = mockedInvoke.mock.calls
-        .filter(([cmd]) => cmd === 'create_blocks_batch')
-        .flatMap(([, args]) => (args as { specs: Array<Record<string, unknown>> }).specs)
-      expect(batchSpecs).toEqual(
-        expect.arrayContaining([
-          expect.objectContaining({
-            blockType: 'content',
-            content: 'Morning standup',
-            parentId: 'DP-PS',
-          }),
-          expect.objectContaining({
-            blockType: 'content',
-            content: 'TODOs',
-            parentId: 'DP-PS',
-          }),
-        ]),
-      )
-    })
-
-    it('per-space journal template takes precedence over legacy global journal-template', async () => {
-      mockedInvoke.mockImplementation(
-        makePerSpaceMock({
-          perSpaceTemplate: 'Morning standup\nTODOs',
-          legacyTemplatePage: true,
-        }),
-      )
-
-      renderJournal()
-
-      // Both surfaces use `create_blocks_batch`.
-      // The per-space content blocks must land in some batch's specs.
-      await waitFor(() => {
-        const batchCalls = mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'create_blocks_batch')
-        expect(batchCalls.length).toBeGreaterThan(0)
-      })
-      const allBatchSpecs = mockedInvoke.mock.calls
-        .filter(([cmd]) => cmd === 'create_blocks_batch')
-        .flatMap(([, args]) => (args as { specs: Array<Record<string, unknown>> }).specs)
-      expect(allBatchSpecs).toEqual(
-        expect.arrayContaining([
-          expect.objectContaining({ content: 'Morning standup' }),
-          expect.objectContaining({ content: 'TODOs' }),
-        ]),
-      )
-
-      // ...and the legacy template's children (`## Morning Review`,
-      // `## Tasks`) must NOT have been copied. Ensures the
-      // pre-existing legacy `insertTemplateBlocks` path was skipped.
-      const legacyContentSpecs = allBatchSpecs.filter(
-        (s) => s['content'] === '## Morning Review' || s['content'] === '## Tasks',
-      )
-      expect(legacyContentSpecs).toHaveLength(0)
-    })
-
-    it('falls back to legacy journal-template when per-space property absent', async () => {
-      mockedInvoke.mockImplementation(
-        makePerSpaceMock({ perSpaceTemplate: null, legacyTemplatePage: true }),
-      )
-
-      renderJournal()
-
-      // Legacy path: query_by_property('journal-template') is hit AND
-      // its child blocks (`## Morning Review`, `## Tasks`) are copied
-      // Via `create_blocks_batch`.
-      await waitFor(() => {
-        expect(mockedInvoke).toHaveBeenCalledWith(
-          'query_by_property',
-          // #2277 item 7 — query params nest under `request`.
-          expect.objectContaining({
-            request: expect.objectContaining({
-              key: 'journal-template',
-              valueText: 'true',
-            }),
-          }),
-        )
-      })
-      await waitFor(() => {
-        const batchCalls = mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'create_blocks_batch')
-        expect(batchCalls.length).toBeGreaterThan(0)
-      })
-      const legacyBatchSpecs = mockedInvoke.mock.calls
-        .filter(([cmd]) => cmd === 'create_blocks_batch')
-        .flatMap(([, args]) => (args as { specs: Array<Record<string, unknown>> }).specs)
-      expect(legacyBatchSpecs).toEqual(
-        expect.arrayContaining([
-          expect.objectContaining({ blockType: 'content', content: '## Morning Review' }),
-          expect.objectContaining({ blockType: 'content', content: '## Tasks' }),
-        ]),
-      )
-    })
-  })
-
   // ── Keyboard shortcut for new block (#633) ──────────────────────────
 
   describe('keyboard shortcut for new block (#633)', () => {
@@ -3940,30 +3743,25 @@ describe('JournalPage', () => {
     })
   })
 
-  // ── Configure journal template entry ───────────────────────
+  // ── Journal template button (#5373) ───────────────────────
 
-  describe('configure journal template entry', () => {
-    it('renders the entry and clicking it opens the SpaceManageDialog', async () => {
-      const user = userEvent.setup()
+  describe('journal template button', () => {
+    it('sits in the header when the journal can open pages', async () => {
       mockEmptyResponses()
 
-      renderJournal()
+      const { unmount } = renderJournal({ onNavigateToPage: vi.fn() })
 
+      expect(
+        await screen.findByRole('button', { name: t('journal.configureTemplate') }),
+      ).toBeInTheDocument()
+      unmount()
+      renderJournal()
       await waitFor(() => {
         expect(screen.queryByTestId('loading-skeleton')).not.toBeInTheDocument()
       })
-
-      // Dialog is closed initially.
-      expect(screen.queryByTestId('space-manage-mock')).not.toBeInTheDocument()
-
-      // The entry is rendered inside JournalPage (data-testid keeps the
-      // assertion unambiguous if a sibling control exposes the same label).
-      const trigger = screen.getByTestId('journal-configure-template-trigger')
-      expect(trigger).toHaveAccessibleName(/configure journal template/i)
-
-      await user.click(trigger)
-
-      expect(screen.getByTestId('space-manage-mock')).toBeInTheDocument()
+      expect(
+        screen.queryByRole('button', { name: t('journal.configureTemplate') }),
+      ).not.toBeInTheDocument()
     })
   })
 })

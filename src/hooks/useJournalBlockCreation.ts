@@ -6,7 +6,7 @@
  * Previously inlined as `handleAddBlock` in `JournalPage.tsx`.
  * Extracted to keep the page component slim while preserving the
  * single-function ordering that handles atomic create-page-then-block,
- * optimistic state propagation, error rollback and per-space template
+ * optimistic state propagation, error rollback and journal-template
  * seeding.
  *
  * Inputs:
@@ -34,12 +34,7 @@ import { createBlock } from '@/lib/ipc-helpers'
 import { logger } from '@/lib/logger'
 import { notifyPageAdded } from '@/lib/name-change-bus'
 import { notify } from '@/lib/notify'
-import {
-  insertTemplateBlocks,
-  insertTemplateBlocksFromString,
-  loadJournalTemplate,
-  loadJournalTemplateForSpace,
-} from '@/lib/template-utils'
+import { insertTemplateBlocks, loadJournalTemplate } from '@/lib/template-utils'
 import { useBlockStore } from '@/stores/blocks'
 import { getPageStore } from '@/stores/page-blocks'
 import { useResolveStore } from '@/stores/resolve'
@@ -125,28 +120,14 @@ export function useJournalBlockCreation({
         }
 
         if (isNewPage) {
-          // Per-space `journal_template` text property on the
-          // space block takes precedence over the legacy global
-          // `journal-template` page. Falls through to the legacy path on
-          // any failure (defensive: a broken per-space property must not
-          // strand the user with no journal blocks at all).
-          let perSpaceTemplate: string | null = null
           const currentSpaceId = useSpaceStore.getState().currentSpaceId
-          if (currentSpaceId != null) {
-            try {
-              perSpaceTemplate = await loadJournalTemplateForSpace(currentSpaceId)
-            } catch (err) {
-              logger.warn(
-                'useJournalBlockCreation',
-                'per-space journal template load failed; falling back to legacy',
-                { spaceId: currentSpaceId },
-                err,
-              )
-            }
+          const { template: journalTemplate, duplicateWarning } =
+            await loadJournalTemplate(currentSpaceId)
+          if (duplicateWarning) {
+            notify.warning(duplicateWarning)
           }
-
-          if (perSpaceTemplate != null && perSpaceTemplate.trim() !== '') {
-            const ids = await insertTemplateBlocksFromString(perSpaceTemplate, pageId, {
+          if (journalTemplate) {
+            const ids = await insertTemplateBlocks(journalTemplate.id, pageId, currentSpaceId, {
               pageTitle: dateStr,
             })
             await getPageStore(pageId)?.getState().load()
@@ -159,34 +140,17 @@ export function useJournalBlockCreation({
               // selection-populating action pays that cost in reverse.
               useBlockStore.getState().setFocused(ids[0] ?? null)
             }
-          } else {
-            const { template: journalTemplate, duplicateWarning } =
-              await loadJournalTemplate(currentSpaceId)
-            if (duplicateWarning) {
-              notify.warning(duplicateWarning)
-            }
-            if (journalTemplate) {
-              const ids = await insertTemplateBlocks(journalTemplate.id, pageId, currentSpaceId, {
-                pageTitle: dateStr,
-              })
-              await getPageStore(pageId)?.getState().load()
-              if (ids.length > 0) {
-                // #2543 — setFocused, see comment above.
-                useBlockStore.getState().setFocused(ids[0] ?? null)
-              }
-            }
-            // No `else` branch. When neither a per-space nor a
-            // legacy journal template is configured, BlockTree's
-            // `autoCreateFirstBlock` effect is the single owner of seed-
-            // block creation: on mount it observes `blocks.length === 0`
-            // and creates exactly one empty content block (and sets
-            // focus). A fallback `createBlock` here used to race that
-            // effect and produced two blocks for the same fresh page.
           }
+          // No `else` branch. When no journal template is configured,
+          // BlockTree's `autoCreateFirstBlock` effect is the single owner of
+          // seed-block creation: on mount it observes `blocks.length === 0`
+          // and creates exactly one empty content block (and sets focus). A
+          // fallback `createBlock` here used to race that effect and produced
+          // two blocks for the same fresh page.
 
           // Fire page-render notifications now that the
           // template branch has settled (either seeded blocks via
-          // `insertTemplateBlocks*` and reloaded the per-page store, or
+          // `insertTemplateBlocks` and reloaded the per-page store, or
           // intentionally no-oped so BlockTree owns seeding). DaySection
           // mounts BlockTree only after `createdPages` is updated, so
           // BlockTree's `autoCreateFirstBlock` effect observes a

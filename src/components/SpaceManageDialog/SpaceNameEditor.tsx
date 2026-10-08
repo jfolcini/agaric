@@ -10,12 +10,10 @@
  * rename, or `refreshAvailableSpaces` returning server truth) — UNLESS
  * the input is currently focused, i.e. the user has an in-flight edit.
  * Skipping the re-sync while focused prevents a mid-type parent refresh
- * from clobbering the unsaved draft. This is the guarded-re-sync arm of
- * the policy reconciliation: the sibling `SpaceJournalTemplateEditor`
- * reads its value once (read-once + remount-via-key); the name editor
- * keeps a re-sync because its row is keyed by `space.id`, which is
- * stable across a rename, so a plain read-once model would never pick
- * up an external rename without a dialog re-open.
+ * from clobbering the unsaved draft. The re-sync is needed because the
+ * row is keyed by `space.id`, which is stable across a rename, so a plain
+ * read-once model would never pick up an external rename without a
+ * dialog re-open.
  *
  * Behaviour preservation contract (callers must keep this in mind):
  *  - Blur OR Enter commits.
