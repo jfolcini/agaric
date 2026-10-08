@@ -5,7 +5,7 @@ import { expect, navigateToView, test, waitForBoot } from './helpers'
 test.describe.configure({ mode: 'serial' })
 
 test.describe('Sync UI', () => {
-  // --- StatusPanel (Settings › Status: materializer + sync summary) -------
+  // --- StatusPanel (Settings › App health: materializer + sync summary) ---
   //
   // Moved DeviceManagement out of StatusPanel; the panel now only
   // exposes materializer stats and a high-level sync summary. The two

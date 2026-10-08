@@ -7,10 +7,12 @@
  * Appearance -- theme selector (7 themes) + font size selector
  *  - Keyboard -- KeyboardTab
  *  - Data -- DataTab (lazy)
+ *  - Edit history -- a row into the History view (#5361)
  *  - Sync & Devices -- DeviceManagement
- *  - Status -- StatusPanel (#5269: formerly its own view)
+ *  - App health (id `status`) -- StatusPanel (#5269: formerly its own view)
+ *    + IntegrityCheckSection (#5360)
  * Agent access -- AgentAccessTab
- * Help -- Report a bug; future home of About / updates
+ * Help -- Report a bug; updates
  *
  * (in progress): the General / Appearance / Help tabs and the
  * AutostartRow / QuickCaptureRow blocks have been lifted to siblings
@@ -27,6 +29,7 @@
  * `onWheel` (deltaY→scrollLeft) workaround.
  */
 
+import { History } from 'lucide-react'
 import type React from 'react'
 import { lazy, Suspense, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -40,8 +43,10 @@ import { AppearanceTab } from '@/components/settings/AppearanceTab'
 import { EditorTab } from '@/components/settings/EditorTab'
 import { GeneralTab } from '@/components/settings/GeneralTab'
 import { HelpTab } from '@/components/settings/HelpTab'
+import { IntegrityCheckSection } from '@/components/settings/IntegrityCheckSection'
 import { KeyboardTab } from '@/components/settings/KeyboardTab'
 import { NotificationsTab } from '@/components/settings/NotificationsTab'
+import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import {
   Select,
@@ -52,6 +57,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
+import { SettingRow } from '@/components/ui/setting-row'
+import { useReconciliationReport } from '@/hooks/useReconciliationReport'
 import { dispatchBugReport } from '@/lib/bug-report-events'
 import { PREFERENCES, readPreference, writePreference } from '@/lib/preferences'
 import { getSettingsTabFromUrl, setSettingsTabInUrl } from '@/lib/url-state'
@@ -71,6 +78,7 @@ type SettingsTab =
   | 'editor'
   | 'keyboard'
   | 'data'
+  | 'history'
   | 'sync'
   | 'status'
   | 'agent'
@@ -84,6 +92,7 @@ const TAB_IDS: SettingsTab[] = [
   'editor',
   'keyboard',
   'data',
+  'history',
   'sync',
   'status',
   'agent',
@@ -119,6 +128,7 @@ const TAB_LABEL_KEYS: Record<SettingsTab, string> = {
   editor: 'settings.tabEditor',
   keyboard: 'settings.tabKeyboard',
   data: 'settings.tabData',
+  history: 'settings.tabHistory',
   sync: 'settings.tabSync',
   status: 'settings.tabStatus',
   agent: 'settings.tabAgentAccess',
@@ -161,18 +171,22 @@ const TAB_GROUPS: readonly TabGroup[] = [
   {
     id: 'data',
     labelKey: 'settings.groupData',
-    tabs: ['data', 'sync', 'status'],
+    tabs: ['data', 'history', 'sync'],
   },
   {
     id: 'help',
     labelKey: 'settings.groupHelp',
-    tabs: ['help'],
+    tabs: ['help', 'status'],
   },
 ]
 
 export function SettingsView(): React.ReactElement {
   const { t } = useTranslation()
   const [activeTab, setActiveTab] = useState<SettingsTab>(readActiveTab)
+  const setView = useNavigationStore((s) => s.setView)
+  // Held here, not in the App health tab that runs it, so Help's Report a bug
+  // can carry the latest result (#5360).
+  const integrity = useReconciliationReport('SettingsView')
 
   // #734 — consume the pending-tab handoff slot. The deep-link router and
   // the NoPeersDialog CTA write it before flipping the view to
@@ -235,7 +249,7 @@ export function SettingsView(): React.ReactElement {
           <SelectTrigger aria-label={t('sidebar.settings')} className="sm:hidden">
             <SelectValue />
           </SelectTrigger>
-          {/* All eleven tabs fit on a phone; the shared 24rem cap would hide Status and Help. */}
+          {/* All twelve tabs fit on a phone; the shared 24rem cap would hide the last ones. */}
           <SelectContent className="max-h-(--radix-select-content-available-height)">
             {TAB_GROUPS.map((group) => (
               <SelectGroup key={group.id}>
@@ -340,16 +354,44 @@ export function SettingsView(): React.ReactElement {
             </Suspense>
           )}
 
+          {/* HistoryView is a full-page view: it portals its filter bar into the
+              shell header and takes Space / Enter / arrows on `document`, so the
+              tab opens it rather than hosting it. */}
+          {activeTab === 'history' && (
+            <Card>
+              <CardContent>
+                <SettingRow
+                  label={t('settings.history.label')}
+                  description={t('settings.history.description')}
+                >
+                  <Button variant="outline" size="sm" onClick={() => setView('history')}>
+                    <History />
+                    {t('settings.history.openButton')}
+                  </Button>
+                </SettingRow>
+              </CardContent>
+            </Card>
+          )}
+
           {activeTab === 'sync' && <DeviceManagement />}
 
-          {activeTab === 'status' && <StatusPanel />}
+          {activeTab === 'status' && (
+            <div className="space-y-4">
+              <StatusPanel />
+              <IntegrityCheckSection {...integrity} />
+            </div>
+          )}
 
           {activeTab === 'agent' && <AgentAccessTab />}
 
           {activeTab === 'notifications' && <NotificationsTab />}
 
           {activeTab === 'help' && (
-            <HelpTab onReportBugClick={() => dispatchBugReport({ message: '' })} />
+            <HelpTab
+              onReportBugClick={() =>
+                dispatchBugReport({ message: '', integrityReport: integrity.report ?? undefined })
+              }
+            />
           )}
         </div>
       </div>

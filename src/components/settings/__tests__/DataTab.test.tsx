@@ -20,7 +20,6 @@ import { axe } from 'vitest-axe'
 import { DataTab } from '@/components/settings/DataTab'
 import type { SpaceRow } from '@/lib/bindings'
 import { t } from '@/lib/i18n'
-import { useNavigationStore } from '@/stores/navigation'
 import { useSpaceStore } from '@/stores/space'
 
 const mockExportGraphAsZip = vi.fn()
@@ -133,8 +132,8 @@ describe('DataTab', () => {
     expect(description.closest('[data-slot="card-header"]')).not.toBeNull()
   })
 
-  // #5345 — one action per row: each import kind, each export and the
-  // history link sits beside the text that says what it does.
+  // #5345 — one action per row: each import kind and each export sits beside
+  // the text that says what it does.
   it.each([
     ['data.importFilesLabel', 'data.importButton'],
     ['data.importFolderLabel', 'data.importFolderButton'],
@@ -144,7 +143,6 @@ describe('DataTab', () => {
     ['data.importBibliographyLabel', 'data.importBibliographyButton'],
     ['data.exportDesc', 'data.exportButton'],
     ['data.exportAllSpacesDesc', 'data.exportAllSpacesButton'],
-    ['data.historyDesc', 'data.historyButton'],
   ] as const)('%s shares a row with the %s button', (textKey, buttonKey) => {
     render(<DataTab />)
 
@@ -152,17 +150,6 @@ describe('DataTab', () => {
     expect(row).not.toBeNull()
     expect(row).toContainElement(screen.getByRole('button', { name: t(buttonKey) }))
     expect(row?.querySelectorAll('button')).toHaveLength(1)
-  })
-
-  // #5269 — the History view's way in now that it left the sidebar.
-  it('the Edit history button opens the History view', async () => {
-    useNavigationStore.setState({ currentView: 'settings' })
-    const user = userEvent.setup()
-    render(<DataTab />)
-
-    await user.click(screen.getByRole('button', { name: t('data.historyButton') }))
-
-    expect(useNavigationStore.getState().currentView).toBe('history')
   })
 
   it('import button triggers file input click', async () => {

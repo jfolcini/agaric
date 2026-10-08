@@ -177,8 +177,8 @@ export function formatIntegrityReport(report: ReconciliationReport): string {
 export interface FormatReportBodyParams {
   metadata: BugReport
   description: string
-  /** #4886: the reconciliation-oracle report, when the user has the integrity
-   *  check turned on. Absent means the check is off — it is opt-in by
+  /** #4886: the reconciliation-oracle report, when the user ran the integrity
+   *  check before reporting (#5360). Absent means no run — it is opt-in by
    *  construction, so an absent section has exactly one meaning and needs no
    *  "unavailable" placeholder the way the always-rendered retry-queue line
    *  does. */

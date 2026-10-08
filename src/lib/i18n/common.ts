@@ -338,17 +338,12 @@ export const common: Record<string, string> = {
   'tabs.nextTab': 'Next tab',
   'tabs.previousTab': 'Previous tab',
   'quickCapture.fabLabel': 'Quick capture',
-  // #1422 — mobile touch-gesture discoverability. The same gesture
-  // copy is shared by the first-run coach-mark overlay
-  // (`gestures.coachmark.*` chrome + `gestures.*.title/desc` rows) and the
-  // persistent "Touch gestures" help section.
+  // #1422 — mobile touch-gesture discoverability: the first-run coach-mark
+  // overlay (`gestures.coachmark.*` chrome + `gestures.*.title/desc` rows).
   'gestures.coachmark.title': 'Touch gestures',
   'gestures.coachmark.description':
-    'Agaric has a few hidden touch gestures. Here are the essentials — you can find them again under Settings › Help.',
+    'Agaric has a few hidden touch gestures. Here are the essentials.',
   'gestures.coachmark.dismiss': 'Got it',
-  'gestures.help.title': 'Touch gestures',
-  'gestures.help.description':
-    'Quick reference for the touch gestures available on phones and tablets.',
   'gestures.swipe.title': 'Swipe a block',
   'gestures.swipe.desc':
     'Swipe right to indent, short-swipe left to outdent, or swipe further left to reveal delete.',
@@ -484,20 +479,13 @@ export const common: Record<string, string> = {
   // The vault genuinely has no spaces at all — distinct from a space that
   // simply has no pages, so an empty ZIP is never downloaded silently.
   'data.exportAllSpacesNoSpaces': 'No spaces to export',
-  // #5269 — Settings › Data's way into the History view.
-  'data.historyTitle': 'Edit history',
-  'data.historyDesc': 'Browse past changes and revert the ones you want undone.',
-  'data.historyButton': 'Open edit history',
-  // #4886 — the reconciliation oracle, reachable from Settings → Data. It
+  // #4886 — the reconciliation oracle, in Settings › App health (#5360). It
   // rebuilds every derived table (page counts, links, tags, the agenda) from
-  // your notes and reports the rows that disagree. Off by default: the sweep
-  // reads the whole vault, so it only ever runs when the user asks.
+  // your notes and reports the rows that disagree. The sweep reads the whole
+  // vault, so it only ever runs when the user presses Run.
   'integrity.title': 'Integrity check',
   'integrity.description':
-    'Rebuilds page counts, links, tags, and the agenda from your notes and reports any row that disagrees. Your notes are only read, never changed.',
-  'integrity.toggleLabel': 'Enable the integrity check',
-  'integrity.toggleHelp':
-    'Adds a Run check button below and includes the result in bug reports. The check reads your whole vault, so it can take a while on a large one.',
+    'Rebuilds page counts, links, tags, and the agenda from your notes and reports any row that disagrees. It only reads your notes, and can take a while on a large vault.',
   'integrity.runButton': 'Run check',
   'integrity.running': 'Checking…',
   'integrity.resultLabel': 'Integrity check result',

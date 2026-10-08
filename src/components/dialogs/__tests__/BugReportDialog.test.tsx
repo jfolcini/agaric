@@ -12,10 +12,10 @@
  */
 
 import { invoke } from '@tauri-apps/api/core'
-import { act, render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { toast } from 'sonner'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
 import { BugReportDialog } from '@/components/dialogs/BugReportDialog'
@@ -23,7 +23,6 @@ import { useIsMobile } from '@/hooks/useIsMobile'
 import type { BugReport, ReconciliationReport } from '@/lib/bindings'
 import { writeText } from '@/lib/clipboard'
 import { t } from '@/lib/i18n'
-import { PREFERENCES, writePreference } from '@/lib/preferences'
 
 // UseDialogOrSheet branches on useIsMobile. Default to the
 // desktop (Dialog) path so the pre-existing test bodies keep their
@@ -963,11 +962,10 @@ describe('BugReportDialog', () => {
     })
   })
 
-  // ─── #4886: the opt-in reconciliation oracle ────────────────
+  // ─── #4886 / #5360: the integrity check ──────────────────────
   //
-  // Off by default, so the sweep must not fire for a user who never asked
-  // for it — every other test in this file leaves the preference alone and
-  // would fail on an unstubbed `compute_reconciliation_report` if it did.
+  // The dialog never runs the whole-vault sweep itself: a section appears only
+  // when Help's Report a bug hands in the result of a check run in App health.
   describe('integrity check', () => {
     const REPORT: ReconciliationReport = {
       blocks_scanned: 1200,
@@ -976,35 +974,20 @@ describe('BugReportDialog', () => {
       artefacts: [{ artefact: 'pages_cache.child_block_count', count: 4, sample_keys: ['01ARZ'] }],
     }
 
-    function armReconciliation(): void {
-      mockedInvoke.mockImplementation(async (cmd: string) => {
-        if (cmd === 'collect_bug_report_metadata') return sampleMetadata
-        if (cmd === 'compute_reconciliation_report') return REPORT
-        if (cmd === 'read_logs_for_report') return []
-        return null
-      })
-    }
-
-    afterEach(() => {
-      localStorage.clear()
-    })
-
-    it('does not sweep the vault when the setting is off', async () => {
+    it('does not sweep the vault on open, and carries no section without a run', async () => {
       render(<BugReportDialog open onOpenChange={() => {}} />)
 
       await screen.findByRole('dialog')
       await waitFor(() => {
-        expect(mockedInvoke).toHaveBeenCalledWith('collect_bug_report_metadata')
+        expect(screen.getByTestId('bug-report-preview')).toHaveTextContent('## Environment')
       })
       expect(mockedInvoke).not.toHaveBeenCalledWith('compute_reconciliation_report')
       expect(screen.getByTestId('bug-report-preview')).not.toHaveTextContent('Integrity check')
     })
 
-    it('carries the divergence section into the body when the setting is on', async () => {
-      writePreference(PREFERENCES.integrityCheck, true)
-      armReconciliation()
-
-      render(<BugReportDialog open onOpenChange={() => {}} />)
+    it('carries a handed-in result into the preview and the GitHub issue form', async () => {
+      const user = userEvent.setup()
+      render(<BugReportDialog open onOpenChange={() => {}} integrityReport={REPORT} />)
 
       await screen.findByRole('dialog')
       await waitFor(() => {
@@ -1012,21 +995,7 @@ describe('BugReportDialog', () => {
           '4 divergences over 1200 blocks scanned, 2026-09-09.',
         )
       })
-      expect(screen.getByTestId('bug-report-preview')).toHaveTextContent(
-        'pages_cache.child_block_count',
-      )
-    })
-
-    it('prefills the GitHub issue form with the section, not only the preview', async () => {
-      const user = userEvent.setup()
-      writePreference(PREFERENCES.integrityCheck, true)
-      armReconciliation()
-
-      render(<BugReportDialog open onOpenChange={() => {}} />)
-      await screen.findByRole('dialog')
-      await waitFor(() => {
-        expect(screen.getByTestId('bug-report-preview')).toHaveTextContent('Integrity check')
-      })
+      expect(mockedInvoke).not.toHaveBeenCalledWith('compute_reconciliation_report')
 
       await user.click(screen.getByRole('checkbox', { name: t('bugReport.confirmCheckbox') }))
       await user.click(screen.getByTestId('bug-report-open-github'))
@@ -1037,73 +1006,6 @@ describe('BugReportDialog', () => {
       const notes = new URL(openUrlMock.mock.calls[0]?.[0] ?? '').searchParams.get('notes') ?? ''
       expect(notes).toContain('## Integrity check')
       expect(notes).toContain('`pages_cache.child_block_count` — 4 rows: 01ARZ')
-    })
-
-    it('holds the submit gate shut while the sweep the user asked for is still running', async () => {
-      const user = userEvent.setup()
-      writePreference(PREFERENCES.integrityCheck, true)
-      let releaseSweep!: (r: ReconciliationReport) => void
-      const sweep = new Promise<ReconciliationReport>((resolve) => {
-        releaseSweep = resolve
-      })
-      mockedInvoke.mockImplementation(async (cmd: string) => {
-        if (cmd === 'collect_bug_report_metadata') return sampleMetadata
-        if (cmd === 'compute_reconciliation_report') return sweep
-        if (cmd === 'read_logs_for_report') return []
-        return null
-      })
-
-      render(<BugReportDialog open onOpenChange={() => {}} />)
-      await screen.findByRole('dialog')
-      await user.click(screen.getByRole('checkbox', { name: t('bugReport.confirmCheckbox') }))
-
-      // Metadata has landed and the box is ticked — the only thing still
-      // holding the button is the sweep.
-      await waitFor(() => {
-        expect(screen.getByTestId('bug-report-preview')).toHaveTextContent('## Environment')
-      })
-      expect(screen.getByTestId('bug-report-open-github')).toBeDisabled()
-
-      await act(async () => {
-        releaseSweep(REPORT)
-        await sweep
-      })
-
-      await waitFor(() => {
-        expect(screen.getByTestId('bug-report-open-github')).toBeEnabled()
-      })
-      expect(screen.getByTestId('bug-report-preview')).toHaveTextContent('Integrity check')
-    })
-
-    it('keeps the report filable when the sweep fails', async () => {
-      writePreference(PREFERENCES.integrityCheck, true)
-      mockedInvoke.mockImplementation(async (cmd: string) => {
-        if (cmd === 'collect_bug_report_metadata') return sampleMetadata
-        if (cmd === 'compute_reconciliation_report') {
-          // `AppError::Database` arrives as a plain object; `typedError`
-          // rethrows only real `Error`s.
-          return Promise.reject({ kind: 'database', message: 'no such table: agenda_cache' })
-        }
-        if (cmd === 'read_logs_for_report') return []
-        return null
-      })
-
-      render(<BugReportDialog open onOpenChange={() => {}} />)
-
-      await screen.findByRole('dialog')
-      await waitFor(() => {
-        expect(mockedToastError).toHaveBeenCalledWith(t('integrity.runFailed'))
-      })
-      // The body still assembles, and the submit gate reopens, so a failed
-      // integrity sweep never blocks the bug report it was meant to enrich.
-      expect(screen.getByTestId('bug-report-preview')).toHaveTextContent('## Environment')
-      expect(screen.getByTestId('bug-report-preview')).not.toHaveTextContent('Integrity check')
-      await userEvent
-        .setup()
-        .click(screen.getByRole('checkbox', { name: t('bugReport.confirmCheckbox') }))
-      await waitFor(() => {
-        expect(screen.getByTestId('bug-report-open-github')).toBeEnabled()
-      })
     })
   })
 })

@@ -51,7 +51,13 @@ export const settings: Record<string, string> = {
     'Hovering or focusing an external link fetches its title and icon, which tells that site you have the link. When off, cached previews still show, and a link you paste or insert is still fetched once.',
   'settings.tabSync': 'Sync & devices',
   'settings.tabData': 'Data',
-  'settings.tabStatus': 'Status',
+  // #5361 — the tab is a way into the History view, which stays a full page.
+  'settings.tabHistory': 'Edit history',
+  'settings.history.label': 'Browse and revert changes',
+  'settings.history.description': 'See past changes to your notes and undo the ones you want.',
+  'settings.history.openButton': 'Open edit history',
+  // #5360 — the `status` id stays for `?settings=status`, deep links and `go-status`.
+  'settings.tabStatus': 'App health',
   // #4555 — UI language. `System` follows the device language list; the
   // other two pin a locale. English and Español are deliberately NOT
   // translated per locale: a language picker names each language in that

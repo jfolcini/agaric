@@ -71,7 +71,7 @@ function pick(device: (typeof devices)[string]) {
 
 // Top-level views, keyed by the label `navigateToView` takes (the i18n
 // `sidebar.*` label). The drawer lists only `SIDEBAR_VIEWS`. `query`'s label
-// is "Advanced Query"; Status is the Settings › Status tab.
+// is "Advanced Query"; Status is the Settings › App health tab.
 const SIDEBAR_VIEWS = ['Journal', 'Pages', 'Search', 'Tags', 'Settings'] as const
 const VIEWS = [
   ...SIDEBAR_VIEWS,

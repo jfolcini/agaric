@@ -15,6 +15,8 @@
  *.
  */
 
+import type { ReconciliationReport } from '@/lib/bindings'
+
 export const BUG_REPORT_EVENT = 'agaric:report-bug'
 
 export interface BugReportEventDetail {
@@ -22,6 +24,8 @@ export interface BugReportEventDetail {
   message: string
   /** Optional stack trace to pre-fill as the report description. */
   stack?: string
+  /** The integrity check the user ran in Settings › App health before reporting (#5360). */
+  integrityReport?: ReconciliationReport | undefined
 }
 
 /**

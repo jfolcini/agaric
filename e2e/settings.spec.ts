@@ -14,13 +14,13 @@ test.describe('Settings panel', () => {
     await expect(page.getByRole('tablist')).toBeVisible()
   })
 
-  // #2687 — SettingsView defines 11 tabs (TAB_IDS in SettingsView.tsx),
+  // #2687 — SettingsView defines 12 tabs (TAB_IDS in SettingsView.tsx),
   // grouped into four rail sections (Workspace / Integrations / Data & Sync
   // / Help). This test used to check only 6 under a misleading "All 6 tabs"
   // title, silently never opening Editor, Notifications, Agent access, or
   // Help. Listed here in the same order as TAB_GROUPS so the loop below
   // walks the rail top-to-bottom.
-  test('All 11 tabs are visible and clickable', async ({ page }) => {
+  test('All 12 tabs are visible and clickable', async ({ page }) => {
     const tabNames = [
       // Workspace
       'General',
@@ -33,10 +33,11 @@ test.describe('Settings panel', () => {
       'Agent access',
       // Data & Sync
       'Data',
+      'Edit history',
       'Sync & devices',
-      'Status',
       // Help
       'Help',
+      'App health',
     ]
     for (const name of tabNames) {
       const tab = page.getByRole('tab', { name })
@@ -163,15 +164,29 @@ test.describe('Settings panel', () => {
     const reportBugButton = page.getByRole('button', { name: 'Report a bug' })
     await expect(reportBugButton).toBeVisible()
     await expect(page.getByRole('button', { name: 'Check for updates now' })).toBeVisible()
-    // The gesture-reference card (#1422) also lives on this tab. `exact:
-    // true` — the card description also contains "touch gestures".
-    await expect(page.getByText('Touch gestures', { exact: true })).toBeVisible()
 
     // Representative interaction: click through to the real dialog (rather
     // than dispatching the underlying window event directly, which is all
     // bug-report-dialog.spec.ts exercises).
     await reportBugButton.click()
     await expect(page.getByTestId('bug-report-body')).toBeVisible()
+  })
+
+  // #5360 — the result of a Run in App health rides along with a bug report
+  // filed from Help.
+  test('App health runs the integrity check and a bug report from Help carries it', async ({
+    page,
+  }) => {
+    await page.getByRole('tab', { name: 'App health' }).click()
+    const panel = page.locator('[data-testid="settings-panel-status"]')
+    await expect(panel.getByTestId('sync-panel-title')).toBeVisible()
+
+    await panel.getByRole('button', { name: 'Run check' }).click()
+    await expect(panel.getByText('Everything matches')).toBeVisible()
+
+    await page.getByRole('tab', { name: 'Help' }).click()
+    await page.getByRole('button', { name: 'Report a bug' }).click()
+    await expect(page.getByTestId('bug-report-preview')).toContainText('## Integrity check')
   })
 
   // #2687 / #2686 — Agent access tab was never opened by any spec. Deeper

@@ -25,11 +25,10 @@ import { useCallback, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import { Card, CardContent } from '@/components/ui/card'
 import { SettingRow } from '@/components/ui/setting-row'
 import { checkForUpdatesNow, useUpdateStatus } from '@/hooks/useUpdateCheck'
 import { formatRelativeTime } from '@/lib/format-relative-time'
-import { GESTURE_ENTRIES } from '@/lib/gesture-coachmark'
 import { isMobilePlatform } from '@/lib/platform'
 import type { UpdateStatusValue } from '@/lib/preferences'
 
@@ -139,39 +138,6 @@ export function HelpTab({ onReportBugClick }: HelpTabProps): React.ReactElement 
               </>
             )}
           </div>
-        </CardContent>
-      </Card>
-      {/* #1422 — persistent "Touch gestures" reference. Mirrors the
-          first-run coach-mark copy (shared `GESTURE_ENTRIES` source) so
-          users can re-find the hidden swipe / long-press / edge-swipe /
-          quick-capture gestures after the one-time overlay is dismissed.
-          Cross-platform: harmless on desktop, the discovery path on mobile. */}
-      <Card>
-        <CardHeader>
-          <CardTitle>{t('gestures.help.title')}</CardTitle>
-          <CardDescription>{t('gestures.help.description')}</CardDescription>
-        </CardHeader>
-        <CardContent>
-          {/*
-            oxlint-disable-next-line jsx-a11y/no-redundant-roles -- explicit
-            role="list" is required because Safari + VoiceOver strip the
-            implicit list role from a <ul> with `list-style: none`
-            (Tailwind `list-none`). Matches WelcomeModal / .
-          */}
-          <ul role="list" className="grid list-none gap-4 pl-0">
-            {GESTURE_ENTRIES.map((entry) => (
-              <li key={entry.titleKey} className="flex items-start gap-3">
-                <entry.icon
-                  className="mt-0.5 h-5 w-5 shrink-0 text-muted-foreground"
-                  aria-hidden="true"
-                />
-                <div>
-                  <p className="text-sm font-medium">{t(entry.titleKey)}</p>
-                  <p className="text-sm text-muted-foreground">{t(entry.descKey)}</p>
-                </div>
-              </li>
-            ))}
-          </ul>
         </CardContent>
       </Card>
     </div>

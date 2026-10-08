@@ -86,7 +86,7 @@ export interface PaletteCommandSpec {
 // (`nav-items.ts`) EXCEPT `search`: `search-everywhere` below already routes
 // to the search view (with the added value of seeding the escalation query),
 // so a second plain `go-search` would just be a same-destination duplicate
-// with a different label. `go-status` opens the Settings › Status tab (#5269).
+// with a different label. `go-status` opens the Settings › App health tab (#5269, #5360).
 export const PALETTE_COMMANDS: readonly PaletteCommandSpec[] = [
   {
     id: 'go-journal',

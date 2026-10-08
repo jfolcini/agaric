@@ -1,7 +1,7 @@
 <!-- markdownlint-disable MD060 -->
 # Views
 
-Agaric has a fixed set of views, plus a **Page Editor** view that's reached by navigation. The sidebar lists the daily ones — Journal, Pages, Search, Tags — with Settings in its footer. A row of buttons in the Pages header opens Tags, Graph, Query, Templates and Trash; History opens from Settings › Data, and Status is a Settings tab. Every view is space-scoped — switching the active space refreshes what each shows. See [spaces.md](spaces.md) for the partition model.
+Agaric has a fixed set of views, plus a **Page Editor** view that's reached by navigation. The sidebar lists the daily ones — Journal, Pages, Search, Tags — with Settings in its footer. A row of buttons in the Pages header opens Tags, Graph, Query, Templates and Trash; History opens from Settings › Edit history, and Status lives in the Settings › App health tab. Every view is space-scoped — switching the active space refreshes what each shows. See [spaces.md](spaces.md) for the partition model.
 
 The **Journal** view (default landing) and the **Agenda** mode inside it have their own file: [journal-and-agenda.md](journal-and-agenda.md).
 
@@ -67,7 +67,7 @@ Soft-deleted pages and blocks. Deletes don't purge immediately — they land her
 
 ## History
 
-Global operation log — every edit Agaric has applied, in reverse chronological order. Opened from Settings › Data › *Open edit history*.
+Global operation log — every edit Agaric has applied, in reverse chronological order. Opened from Settings › Edit history › *Open edit history*.
 
 - **Op type icons** distinguish creates, edits, deletes, restores, properties, tags.
 - **Filter bar**: filter by op type, plus an "All spaces" scope toggle. There is no user-vs-agent or date-range filter; ops that arrived from another device are marked, but agent-authored ops are not distinguished from your own.
@@ -100,7 +100,7 @@ A force-directed graph of pages and the links between them.
 
 ## Status
 
-Materializer + sync metrics, in Settings › Status. Useful for diagnosing slowness.
+Materializer + sync metrics, in Settings › App health. Useful for diagnosing slowness.
 
 - **Materializer queue depth**: how far behind the read-side projection is (foreground and background queues).
 - **Op counts**: total ops; ops dispatched.
@@ -121,10 +121,12 @@ Tabbed configuration view. On desktop the tabs sit in a vertical rail, bucketed 
   - **Notifications** — due-task reminders, the reminder time, the OS permission and a test notification.
   - **Agent access** — read-only and read-write switches; each shows its socket path and connections only while it is on. The activity feed with SessionRevertControls is a separate card, shown whether or not access is on (see [agent-access.md](agent-access.md)).
 - **Data & sync**
-  - **Data** — import / export (see [import-export.md](import-export.md)), the integrity check; *Open edit history* opens the History view.
+  - **Data** — import / export (see [import-export.md](import-export.md)).
+  - **Edit history** — *Open edit history* opens the History view.
   - **Sync & devices** — pair / unpair / rename peers; manual addresses (see [sync.md](sync.md)).
-  - **Status** — materializer and sync metrics (see Status above).
-- **Help** — *Report a bug*, update check, touch gesture reference.
+- **Help**
+  - **Help** — *Report a bug*, update check.
+  - **App health** — materializer and sync metrics (see Status above), and the integrity check: *Run check* rebuilds every derived table from your notes and lists the rows that disagree. A bug report filed from Help afterwards carries the result, until you leave Settings. The tab's id is still `status`.
 
 Tabs are deep-linkable via `?settings=<tab>` (parsed inside the Settings view itself, no router involved) and via `agaric://settings/<tab>`. The last-used tab persists in `localStorage`.
 

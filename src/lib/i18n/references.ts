@@ -483,14 +483,14 @@ export const references: Record<string, string> = {
   'palette.cmdGroupNavigate': 'Navigate',
   'palette.cmdGroupAction': 'Actions',
   // #2942 — one entry per `NAV_ITEMS` destination (`nav-items.ts`), plus
-  // the Settings › Status tab (#5269).
+  // the Settings › App health tab (#5269, #5360).
   'palette.cmdGoJournal': 'Open Journal view',
   'palette.cmdGoPages': 'Open Pages view',
   'palette.cmdGoTags': 'Open Tags view',
   'palette.cmdGoGraph': 'Open Graph view',
   'palette.cmdGoTemplates': 'Open Templates view',
   'palette.cmdGoQuery': 'Open Query view',
-  'palette.cmdGoStatus': 'Open Status',
+  'palette.cmdGoStatus': 'Open App health',
   'palette.cmdGoTrash': 'Open Trash',
   'palette.cmdGoHistory': 'Open History',
   'palette.cmdGoSettings': 'Open Settings',

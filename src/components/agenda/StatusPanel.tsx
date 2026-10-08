@@ -1,8 +1,9 @@
 /**
  * StatusPanel — shows materializer status info (p2-t15, p2-t16).
  *
- * The Settings › Status tab's body (#5269), so it renders no `<h1>` of its
- * own: SettingsView owns the page heading. Polls getStatus() every 5 seconds.
+ * The Settings › App health tab's body (#5269), above the integrity check
+ * (#5360), so it renders no `<h1>` of its own: SettingsView owns the page
+ * heading. Polls getStatus() every 5 seconds.
  * Displays 4 metrics: foreground queue depth, background queue depth,
  * grand-total ops dispatched (foreground + background combined), and the
  * background-only dispatched count.
