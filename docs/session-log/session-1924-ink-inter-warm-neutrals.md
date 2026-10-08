@@ -45,6 +45,7 @@ The red active-nav bar the issue gave to `--brand` was already gone: the maintai
 **Found by the PR's review**
 - Dropping `/60` also reached the alternate dark themes, which carry `.dark`: their light destructive labels on an opaque red were 3.3:1 (Solarized Dark), 2.6:1 (Dracula) and 2.2:1 (One Dark Pro). They now take a dark label in their own background hue, and Solarized Dark's red lightens to 0.65. Solarized Light, already 3.8:1 without any `/60`, darkens its red to 0.52. The destructive-label pin moved into the every-theme matrix and went red on the old CSS in all four themes.
 - The attach-drop caption is muted text (5.6:1) instead of `text-ring`, which is 4.2:1 as small text.
+- A `[[link]]` to a deleted page rendered underlined, not struck through: the new `.block-link-chip` underline came after `.block-link-deleted` at the same specificity. The deleted rule now sits below the chip rule. `link-chip-lifecycle.spec.ts` pins the computed `text-decoration-line` for both the deleted and the restored chip, and went red (`underline`) on the old order.
 
 ## How it was built and verified
 - A builder, then a separate reviewer.

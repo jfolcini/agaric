@@ -1394,13 +1394,6 @@
 
 /* ── Inline token chip styles ──────────────────────────────────────── */
 
-/* Broken / deleted block link: visual affordance for [[ULID]] pointing
-   to a soft-deleted or purged block. */
-.block-link-deleted {
-  opacity: 0.6;
-  text-decoration: line-through;
-}
-
 /* Deleted tag reference: visual affordance for #[ULID] pointing to a
    soft-deleted or purged tag. */
 .tag-ref-deleted {
@@ -1432,6 +1425,13 @@
 .block-link-chip:hover,
 .block-link-chip:active {
   @apply decoration-foreground;
+}
+/* Broken / deleted block link: visual affordance for [[ULID]] pointing
+   to a soft-deleted or purged block. Below `.block-link-chip`: same
+   specificity, so its line-through must come later to beat the underline. */
+.block-link-deleted {
+  opacity: 0.6;
+  text-decoration: line-through;
 }
 
 /* Tag reference chips — #[ULID] rendered as tag name pills. Muted metadata,
@@ -1476,8 +1476,8 @@
          scopes that to `inline-block`, and flexbox defines its own container
          baselines with no overflow clause. Chrome agrees: an inline-BLOCK
          control shifted 7.78px and grew the line box 25.81→33.41px, while
-         this `inline-flex` chip measured byte-identical to `.block-link-chip`
-         with and without it. So it did no harm HERE — but it only takes one
+         this `inline-flex` chip measured byte-identical to the then-`inline-flex`
+         `.block-link-chip` with and without it. So it did no harm HERE — but it only takes one
          engine reading the older rule to make block-ref chips sit at a
          different height from every sibling chip, and the declaration was
          buying nothing to offset that. */
