@@ -46,7 +46,7 @@ Each cell is a model and the Agent tool's `effort`:
 | Typical scoped fix or feature in one domain | `opus` · `high` | `opus` · `high` |
 | High risk (migration, materializer, security, cross-cutting, ambiguous) | `opus` · `xhigh` | `sonnet` · `max` |
 
-Every cell sits on the Pareto frontier of Artificial Analysis's Intelligence Index against cost per task for Anthropic models (v4.3.2, checked 2026-10-08):
+Every builder cell sits on the Pareto frontier of Artificial Analysis's Intelligence Index against cost per task for Anthropic models (v4.3.2, checked 2026-10-08):
 
 | On the frontier | Index | Cost per task |
 | --- | --- | --- |
@@ -63,7 +63,7 @@ Everything else scores lower for more. That includes Fable 5.1 at every effort (
 
   So effort below `high` costs real quality on code, and effort above it buys little. Opus 5 also beats Fable 5 there at every effort, for less.
 - **High risk pays for `xhigh`.** `max` adds 2 more points, but its first token can take about 12 minutes, so it is the last escalation, not a default.
-- **Sonnet `max` reviews high-risk diffs.** It is a second model, so builder and reviewer do not share blind spots, and it is Anthropic's best on Terminal-Bench 4.0 (63.6% against Opus 5.5's 59.6%).
+- **Sonnet `max` reviews high-risk diffs.** It is off the frontier on purpose. It is a second model, so builder and reviewer do not share blind spots, and it is Anthropic's best on Terminal-Bench 4.0 (63.6% against Opus 5.5's 59.6%).
 - **Haiku `high` does discovery** at a tenth of Sonnet `high`'s cost. Rerun on `sonnet` when its answer comes back thin or contradicts the code.
 
 Unsure: one row up. A builder that keeps failing is relaunched one step up the frontier (`sonnet` `high` → `opus` `high` → `opus` `xhigh` → `opus` `max`), not retried. Recheck the frontier when a model ships.
