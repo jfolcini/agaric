@@ -78,10 +78,16 @@ describe('DeadlineWarningSection', () => {
     expect(localStorage.getItem('agaric:deadlineWarningDays')).toBe('14')
   })
 
-  it('renders description text', () => {
+  it('describes the setting in Agenda terms and labels the unit as plain "days"', () => {
     render(<DeadlineWarningSection />)
 
-    expect(screen.getByText('days (0 = disabled)')).toBeInTheDocument()
+    expect(
+      screen.getByText(
+        "Show tasks due within this many days in the Agenda's Upcoming list. 0 turns it off.",
+      ),
+    ).toBeInTheDocument()
+    expect(screen.getByText('days')).toBeInTheDocument()
+    expect(screen.queryByText(/DuePanel|0 = disabled/)).not.toBeInTheDocument()
   })
 
   it('has no a11y violations', async () => {

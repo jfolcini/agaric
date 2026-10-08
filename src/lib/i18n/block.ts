@@ -242,6 +242,6 @@ export const block: Record<string, string> = {
     'This will soft-delete the selected blocks. They can be restored from the trash.',
   'blockContext.deleteConfirmAction': 'Yes, delete',
   'task.noneState': 'none',
-  'block.daysDisabledHint': 'days (0 = disabled)',
+  'block.daysUnit': 'days',
   'block.repeatStatus': 'Repeats {{value}}',
 }

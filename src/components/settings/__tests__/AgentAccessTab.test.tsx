@@ -229,6 +229,23 @@ describe('AgentAccessTab — rendering', () => {
     expect(screen.getByText(/No active read-write connections\./)).toBeInTheDocument()
   })
 
+  it('titles the label-less sections with h3 headings', async () => {
+    setupInvoke(makeStatus({ enabled: true, active_connections: 0 }))
+
+    render(<AgentAccessTab />)
+
+    for (const name of [
+      'Agent configuration',
+      'Recent activity',
+      'Connections',
+      'Read-write connections',
+    ]) {
+      expect(await screen.findByRole('heading', { level: 3, name })).toBeInTheDocument()
+    }
+    // The empty feed's message is a paragraph, not an h2.
+    expect(screen.queryByRole('heading', { level: 2 })).not.toBeInTheDocument()
+  })
+
   it('renders loading skeleton before status loads', () => {
     mockedInvoke.mockReturnValueOnce(new Promise(() => {}))
     const { container } = render(<AgentAccessTab />)

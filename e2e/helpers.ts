@@ -603,13 +603,13 @@ export async function navigateToView(page: Page, view: string) {
   }
   if (view === 'Status') {
     await navigateToView(page, 'Settings')
-    await page.getByRole('tab', { name: 'Status', exact: true }).click()
+    await openSettingsTab(page, 'Status')
     await expect(page.getByTestId('settings-panel-status')).toBeVisible()
     return
   }
   if (view === 'History') {
     await navigateToView(page, 'Settings')
-    await page.getByRole('tab', { name: 'Data', exact: true }).click()
+    await openSettingsTab(page, 'Data')
     await page.getByRole('button', { name: 'Open edit history', exact: true }).click()
     return
   }
@@ -622,6 +622,22 @@ export async function navigateToView(page: Page, view: string) {
     .locator('[data-slot="sidebar"]')
     .getByRole('button', { name: view, exact: true })
     .click()
+}
+
+/**
+ * Open a Settings tab at whatever width the page is: the tab rail from the
+ * `sm` breakpoint up, the tab Select below it.
+ */
+export async function openSettingsTab(page: Page, name: string) {
+  const tab = page.getByRole('tab', { name, exact: true })
+  const select = page.getByRole('combobox', { name: 'Settings', exact: true })
+  await expect(tab.or(select)).toBeVisible()
+  if (await tab.isVisible()) {
+    await tab.click()
+    return
+  }
+  await select.click()
+  await page.getByRole('option', { name, exact: true }).click()
 }
 
 /** Navigate to the page editor for a given page title. */

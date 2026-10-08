@@ -43,6 +43,15 @@ import { HelpTab } from '@/components/settings/HelpTab'
 import { KeyboardTab } from '@/components/settings/KeyboardTab'
 import { NotificationsTab } from '@/components/settings/NotificationsTab'
 import { Card, CardContent } from '@/components/ui/card'
+import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectLabel,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
 import { dispatchBugReport } from '@/lib/bug-report-events'
 import { PREFERENCES, readPreference, writePreference } from '@/lib/preferences'
 import { getSettingsTabFromUrl, setSettingsTabInUrl } from '@/lib/url-state'
@@ -217,11 +226,28 @@ export function SettingsView(): React.ReactElement {
     <div className="settings-view space-y-6">
       {/* #1108 — grouped settings layout. A vertical rail on the left holds
           the tabs bucketed into labeled sections (Workspace / Integrations /
-          Data & Sync / Help); the active tab's panel renders to the right.
-          The rail wraps under the panel on narrow screens (sm:flex-row), so
-          there is no horizontal overflow and the old `onWheel`
-          deltaY→scrollLeft workaround is gone. */}
+          Data & Sync / Help); the active tab's panel renders to the right. */}
       <div className="flex flex-col gap-6 sm:flex-row sm:items-start">
+        {/* Below `sm` the stacked rail is ~500px tall and pushes the panel
+            below the fold, so a tab tap looks like it did nothing. Phones
+            pick the tab from this Select instead; the rail is hidden. */}
+        <Select value={activeTab} onValueChange={(tab) => setActiveTab(tab as SettingsTab)}>
+          <SelectTrigger aria-label={t('sidebar.settings')} className="sm:hidden">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {TAB_GROUPS.map((group) => (
+              <SelectGroup key={group.id}>
+                <SelectLabel>{t(group.labelKey)}</SelectLabel>
+                {group.tabs.map((tab) => (
+                  <SelectItem key={tab} value={tab}>
+                    {t(TAB_LABEL_KEYS[tab])}
+                  </SelectItem>
+                ))}
+              </SelectGroup>
+            ))}
+          </SelectContent>
+        </Select>
         {/* The whole rail is one tablist; each section is a labeled group of
             tabs so screen-reader users hear the grouping without the tabs
             losing their flat `role="tab"` membership. */}
@@ -229,7 +255,7 @@ export function SettingsView(): React.ReactElement {
           role="tablist"
           aria-label={t('sidebar.settings')}
           aria-orientation="vertical"
-          className="flex flex-col gap-4 sm:w-48 sm:shrink-0"
+          className="hidden flex-col gap-4 sm:flex sm:w-48 sm:shrink-0"
           data-testid="settings-tab-rail"
         >
           {TAB_GROUPS.map((group) => (
@@ -262,7 +288,7 @@ export function SettingsView(): React.ReactElement {
                   className={cn(
                     // Same neutral `sidebar-accent` pill as the app sidebar's
                     // active item (#5332).
-                    'w-full rounded-md px-3 py-1.5 text-left text-sm font-medium transition-colors',
+                    'w-full rounded-md px-3 py-1.5 text-left text-sm font-medium transition-colors [@media(pointer:coarse)]:min-h-11',
                     activeTab === tab
                       ? 'bg-sidebar-accent text-sidebar-accent-foreground'
                       : 'text-muted-foreground hover:bg-muted/50 hover:text-foreground',

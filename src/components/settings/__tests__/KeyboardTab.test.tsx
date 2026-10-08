@@ -531,14 +531,13 @@ describe('KeyboardTab', () => {
     })
   })
 
-  // Uses `dvh` (dynamic viewport height) so the scroll area
-  // does not flicker as the mobile address bar collapses/expands.
-  it('scroll area uses 60dvh, not 60vh', () => {
+  // The ~97 rows scroll with the page; a nested scroll box cut through rows on
+  // desktop and left 3-5 rows visible on a phone.
+  it('lists every shortcut without a nested scroll container', () => {
     const { container } = render(<KeyboardTab />)
-    const scrollArea = container.querySelector('[data-slot="scroll-area"]') as HTMLElement | null
-    expect(scrollArea).not.toBeNull()
-    expect(scrollArea?.className).toContain('max-h-[60dvh]')
-    expect(scrollArea?.className).not.toContain('max-h-[60vh]')
+    expect(container.querySelector('[data-slot="scroll-area"]')).toBeNull()
+    expect(screen.getByText(t('keyboard.moveToPreviousBlock'))).toBeInTheDocument()
+    expect(screen.getByText(t('keyboard.tagPicker'))).toBeInTheDocument()
   })
 
   it('renders the Ctrl token as ⌘ on macOS', async () => {

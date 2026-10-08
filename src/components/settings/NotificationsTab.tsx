@@ -156,14 +156,14 @@ export function NotificationsTab(): React.ReactElement {
                 const next = e.target.value
                 if (HH_MM.test(next)) void save({ enabled, time: next })
               }}
-              className="w-32"
+              className="w-40"
               data-testid="notifications-reminder-time"
             />
           </div>
 
           {/* Permission + test affordances */}
           <div className="space-y-2">
-            <Label muted={false}>{t('notifications.permissionLabel')}</Label>
+            <h3 className="text-sm font-medium">{t('notifications.permissionLabel')}</h3>
             <p className="text-xs text-muted-foreground">
               {t('notifications.permissionDescription')}
             </p>

@@ -26,7 +26,6 @@ import { EmptyState } from '@/components/common/EmptyState'
 import { ConfirmDialog } from '@/components/dialogs/ConfirmDialog'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { Label } from '@/components/ui/label'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Spinner } from '@/components/ui/spinner'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
@@ -232,9 +231,9 @@ export function ActivityFeed({ entries }: ActivityFeedProps): React.ReactElement
 
   return (
     <div className="space-y-2">
-      <Label muted={false}>{t('agentAccess.activityLabel')}</Label>
+      <h3 className="text-sm font-medium">{t('agentAccess.activityLabel')}</h3>
       {entries.length === 0 ? (
-        <EmptyState message={t('agentAccess.activityEmpty')} compact />
+        <EmptyState message={t('agentAccess.activityEmpty')} compact headingLevel="p" />
       ) : (
         <ScrollArea className="h-[280px] rounded-md border" data-testid="mcp-activity-feed">
           {/*

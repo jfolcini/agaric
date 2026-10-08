@@ -161,7 +161,7 @@ export function McpStatusSection({
 
       {/* Kill switch */}
       <div className="space-y-2">
-        <Label muted={false}>{t(killSwitchLabelKey)}</Label>
+        <h3 className="text-sm font-medium">{t(killSwitchLabelKey)}</h3>
         <p className="text-xs text-muted-foreground">
           {effectiveStatus.active_connections === 0
             ? t(killSwitchDescriptionNoneKey)

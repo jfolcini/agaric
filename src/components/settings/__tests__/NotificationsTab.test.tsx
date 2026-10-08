@@ -24,6 +24,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
 import { NotificationsTab } from '@/components/settings/NotificationsTab'
+import { t } from '@/lib/i18n'
 import { ensureNotificationPermission } from '@/lib/platform/notifications'
 
 vi.mock('@/lib/platform/notifications', () => ({
@@ -97,6 +98,13 @@ describe('NotificationsTab', () => {
     expect(screen.getByTestId('notifications-reminder-time')).toBeDisabled()
     expect(screen.getByTestId('notifications-reminder-time')).toHaveValue('09:00')
     expect(screen.getByTestId('notifications-request-permission-button')).toBeEnabled()
+  })
+
+  it('titles the permission section with an h3, since its label controls nothing', async () => {
+    await renderLoaded()
+    expect(
+      screen.getByRole('heading', { level: 3, name: t('notifications.permissionLabel') }),
+    ).toBeInTheDocument()
   })
 
   it('toggling persists the switch and enables the test button and time input', async () => {

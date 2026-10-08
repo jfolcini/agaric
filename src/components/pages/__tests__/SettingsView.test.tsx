@@ -301,6 +301,35 @@ describe('SettingsView', () => {
     })
   })
 
+  // #5344 — below `sm` the rail is CSS-hidden and this Select picks the tab.
+  // happy-dom applies no Tailwind, so both render here and the Select is
+  // driven directly; the width split itself is pinned by
+  // e2e/settings-phone.spec.ts.
+  describe('phone tab Select (#5344)', () => {
+    it('offers every tab in rail order and switches the panel', async () => {
+      const user = userEvent.setup()
+      const { container } = render(<SettingsView />)
+
+      const select = screen.getByRole('combobox', { name: t('sidebar.settings') })
+      expect(
+        within(select)
+          .getAllByRole('option')
+          .map((option) => option.textContent),
+      ).toEqual(screen.getAllByRole('tab').map((tab) => tab.textContent))
+      expect(select).toHaveValue('general')
+
+      await user.selectOptions(select, 'status')
+
+      expect(screen.getByRole('tabpanel')).toHaveAttribute('id', 'settings-panel-status')
+      expect(screen.getByTestId('status-panel')).toBeInTheDocument()
+      expect(screen.getByRole('tab', { name: t('settings.tabStatus') })).toHaveAttribute(
+        'aria-selected',
+        'true',
+      )
+      expect(await axe(container)).toHaveNoViolations()
+    })
+  })
+
   it('Notifications tab renders the NotificationsTab panel', async () => {
     const user = userEvent.setup()
     render(<SettingsView />)
