@@ -163,7 +163,7 @@ export const agenda: Record<string, string> = {
   'unfinished.sectionLabel': 'Unfinished tasks from previous days',
   'unfinished.empty': 'No unfinished tasks — you\u2019re all caught up!',
   'unfinished.yesterday': 'Yesterday',
-  'unfinished.thisWeek': 'This Week',
+  'unfinished.thisWeek': 'This week',
   'unfinished.older': 'Older',
   'unfinished.untitled': 'Untitled',
   'unfinished.breadcrumbArrow': '\u2192',

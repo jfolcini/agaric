@@ -257,7 +257,7 @@ export const settings: Record<string, string> = {
   // ones (and remove the horizontal-overflow wheel workaround).
   'settings.groupWorkspace': 'Workspace',
   'settings.groupIntegrations': 'Integrations',
-  'settings.groupData': 'Data & Sync',
+  'settings.groupData': 'Data & sync',
   'settings.groupHelp': 'Help',
   'settings.weekStartLabel': 'Week starts on',
   'settings.weekStartMonday': 'Monday',
