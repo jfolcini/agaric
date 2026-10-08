@@ -1,4 +1,4 @@
-# Session 1940 — the QR scanner no longer crashes Settings (#5386, frontend slice)
+# Session 1942 — the QR scanner no longer crashes Settings (#5386, frontend slice)
 
 Pairing's QR scanner threw Settings into the error boundary ("An unexpected
 error occurred") instead of showing the camera or a camera error. #5386 also
