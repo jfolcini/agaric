@@ -106,12 +106,15 @@ interface PageBrowserProps {
 function PageBrowserSettledEmptyState({
   isError,
   isFiltering,
+  journalPagesHidden,
   isCreating,
   onRetry,
   onCreatePage,
 }: {
   isError: boolean
   isFiltering: boolean
+  /** The default journal chip is on, so the space may hold journal pages (#5370). */
+  journalPagesHidden: boolean
   isCreating: boolean
   onRetry: () => void
   onCreatePage: () => void
@@ -130,7 +133,9 @@ function PageBrowserSettledEmptyState({
   return (
     <EmptyState
       icon={FileText}
-      message={t('pageBrowser.noPages')}
+      message={
+        journalPagesHidden ? t('pageBrowser.noPagesOutsideJournal') : t('pageBrowser.noPages')
+      }
       action={
         <Button
           variant="ghost"
@@ -646,6 +651,7 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
         <PageBrowserSettledEmptyState
           isError={isError}
           isFiltering={isFiltering}
+          journalPagesHidden={hasChipFilters}
           isCreating={isCreating}
           onRetry={reload}
           onCreatePage={handleCreatePage}

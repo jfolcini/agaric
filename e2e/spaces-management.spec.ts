@@ -191,6 +191,7 @@ test.describe('Spaces — create, switch, content isolation', () => {
     // Work's only page is that journal page, hidden by the default chip, so
     // the grid only renders once the chip is removed.
     await clickPagesNav(page)
+    await expect(page.getByText('No pages outside the journal yet.')).toBeVisible()
     await showJournalPages(page)
     await expect(
       page.locator('[data-page-item]').filter({ hasText: new RegExp(todayStr) }),

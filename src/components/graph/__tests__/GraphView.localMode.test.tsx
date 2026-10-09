@@ -148,6 +148,40 @@ describe('GraphView local-graph mode (#1429)', () => {
     expect(screen.queryByTestId('graph-no-matches')).not.toBeInTheDocument()
   })
 
+  // "Open in new tab" puts a journal page on a tab's stack without the
+  // Journal redirect, so it can seed local mode under the default journal filter.
+  it('keeps a journal-page seed the default journal filter hides (#5370)', async () => {
+    localStorage.removeItem('agaric:graph-filters:SPACE_TEST')
+    const pages = [
+      ...PAGES,
+      { id: 'day', content: '2026-10-08', block_type: 'page' },
+      { id: 'other-day', content: '2026-10-07', block_type: 'page' },
+    ]
+    const links = [
+      ...LINKS,
+      { source_id: 'day', target_id: 'hub' },
+      { source_id: 'hub', target_id: 'other-day' },
+    ]
+    mockedInvoke.mockImplementation((cmd: string) => {
+      if (cmd === 'list_all_pages_in_space') return Promise.resolve(pages)
+      if (cmd === 'list_page_links')
+        return Promise.resolve({ edges: links, total: links.length, truncated: false })
+      if (cmd === 'list_template_page_ids_in_space') return Promise.resolve([])
+      return Promise.resolve(null)
+    })
+    seedTab('day')
+    await renderGraph()
+    await waitFor(() =>
+      expect(captured.nodes.map((n) => n.id).toSorted()).toEqual(['a', 'b', 'c', 'hub', 'island']),
+    )
+
+    fireEvent.click(screen.getByTestId('local-graph-toggle'))
+    // day(0) → hub(1) → a(2); other-day is 2 hops away but still a hidden journal page.
+    await waitFor(() =>
+      expect(captured.nodes.map((n) => n.id).toSorted()).toEqual(['a', 'day', 'hub']),
+    )
+  })
+
   it('restores the full graph when focus mode is turned off', async () => {
     await renderGraph()
     const toggle = screen.getByTestId('local-graph-toggle')
