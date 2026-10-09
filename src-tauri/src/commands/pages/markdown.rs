@@ -2528,12 +2528,18 @@ pub async fn duplicate_block_inner(
 /// caller writes, and one undo reverts both. Returns the created rows,
 /// depth-first.
 ///
+/// The copy refuses BEFORE its first insert, as `Ok(Err(why))`, when a
+/// copied value doesn't read back from the source grammar (a carriage return
+/// in the text) or when the copy would append more ops than one undo
+/// reverts: the caller's transaction holds nothing of the copy then, so the
+/// caller may go on without it. The op count is exact for the fresh blocks
+/// the copy creates: the block, each property, and the one stamp a task
+/// state writes (`created_at` or `completed_at`).
+///
 /// # Errors
 ///
 /// - [`AppError::NotFound`] — `source_page_id` is not a live page
-/// - [`AppError::Validation`] — a copied value doesn't read back from the
-///   source grammar (a carriage return in the text), the copy would append
-///   more ops than one undo reverts, or a copied block would be nested past
+/// - [`AppError::Validation`] — a copied block would be nested past
 ///   `MAX_BLOCK_DEPTH`
 pub(crate) async fn copy_page_blocks_in_tx(
     tx: &mut CommandTx,
@@ -2542,19 +2548,27 @@ pub(crate) async fn copy_page_blocks_in_tx(
     source_page_id: &str,
     dest_page_id: &str,
     expand: impl Fn(&str) -> String,
-) -> Result<Vec<BlockRow>, AppError> {
+) -> Result<Result<Vec<BlockRow>, String>, AppError> {
     let data = load_page_export_data(tx, source_page_id, PageRead::Duplicate).await?;
     let mut source = String::new();
     let ids = render_block_tree(&mut source, source_page_id, &data, RenderMode::Source);
     if ids.is_empty() {
-        return Ok(Vec::new());
+        return Ok(Ok(Vec::new()));
     }
     let mut parsed = import::parse_source_outline(&source);
     let anchors = parsed.blocks.iter().map(|b| b.block_anchor.as_deref());
     if !anchors.eq(ids.iter().map(|id| Some(id.as_str()))) {
-        return Err(AppError::validation(format!(
+        return Ok(Err(format!(
             "page '{source_page_id}' holds a value that cannot be copied"
         )));
+    }
+    let ops: usize = parsed
+        .blocks
+        .iter()
+        .map(|b| 1 + b.properties.len() + usize::from(parsed_todo_state(b).is_some()))
+        .sum();
+    if let Err(e) = crate::commands::ensure_batch_within_cap("ops", tx.pending_len() + ops) {
+        return Ok(Err(e.to_string()));
     }
     for block in &mut parsed.blocks {
         block.content = expand(&block.content);
@@ -2570,6 +2584,7 @@ pub(crate) async fn copy_page_blocks_in_tx(
         &lines,
     ))
     .await
+    .map(Ok)
 }
 
 /// What a paste carries: clipboard text, or blocks already split.

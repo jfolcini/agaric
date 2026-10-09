@@ -45,3 +45,26 @@ backend seeded would make `autoCreateFirstBlock` add a block. #5438's two park
 tests now drive `first_child_for_blocks` (empty, seeded), plus a failing-probe
 arm, which goes red with the probe check removed. The five journal suites
 pass (201 tests).
+
+Review fix (same PR): a template the copy refuses no longer blocks the day.
+The undo-cap check moved before the first insert (the op count of a fresh
+copy is exact), so `copy_page_blocks_in_tx` refuses only before writing;
+`apply_journal_template_in_tx` turns a refusal into a `warn` and an empty
+day in the same transaction, as a trashed template already does. Quick
+Capture and `journal_for_date` keep working with a broken template.
+
+The variables the Templates view documents are ported to the backend:
+`<% today:FORMAT %>`, `<% time:FORMAT %>`, `<% datetime:FORMAT %>`,
+`<% date+N %>`/`<% date-N %>` (counted from the day), `<% weekday %>`,
+`<% month %>`, `<% isoweek %>`, and their `{{ }}` spellings. FORMAT takes the
+date-fns token subset the old code accepted, mapped to chrono; an unknown
+token falls back to the default form. Names are English. `{{cursor}}` is
+stripped and focus stays on the first block, as the journal path did before.
+The mock mirrors it; `journal_template_day.json` pins the expanded values,
+cross-checked against an independent Python oracle.
+
+Verified: fallback removed → both refusal tests red; cap pre-check removed,
+`EEEE`→`%a`, offset sign flipped, unknown token → empty → their tests and the
+fixture red; TS mirror mutations red. Full nextest 6,765 passed (five load
+timeouts passed alone); clippy, fmt, offline sqlx check clean; vitest 519
+passed.

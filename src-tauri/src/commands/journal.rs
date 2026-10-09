@@ -1,6 +1,6 @@
 //! Journal command handlers — daily page navigation.
 
-use chrono::{NaiveDate, NaiveTime};
+use chrono::{Datelike, NaiveDate, NaiveTime};
 use sqlx::SqlitePool;
 use tauri::State;
 use tracing::instrument;
@@ -281,10 +281,15 @@ async fn find_journal_template_in_tx(
 
 /// Copy the space's journal template under the day page `page_id` (#5395),
 /// in the caller's transaction, so the day and its template land or roll back
-/// together and one undo reverts both. No template, or one in the trash,
-/// leaves the day empty. Every creator of a day page calls this: the journal
-/// view and the date picker through [`crate::commands::create_page_in_space_inner`],
-/// Quick Capture and the MCP `journal_for_date` tool through
+/// together and one undo reverts both. No template, one in the trash, or one
+/// the copy refuses (a value that does not read back from the source grammar,
+/// a copy over the undo-op cap) leaves the day empty with a warning: the day
+/// is what Quick Capture and `journal_for_date` need, and a template that
+/// blocked it would block every day until it was fixed. The copy refuses
+/// before its first insert, so an empty day never carries part of the
+/// template. Every creator of a day page calls this: the journal view and the
+/// date picker through [`crate::commands::create_page_in_space_inner`], Quick
+/// Capture and the MCP `journal_for_date` tool through
 /// [`resolve_or_create_journal_page`].
 ///
 /// The variables expand against `date`, the day being created, not the
@@ -305,7 +310,7 @@ pub(crate) async fn apply_journal_template_in_tx(
     let day = NaiveDate::parse_from_str(date, "%Y-%m-%d")
         .map_err(|_| AppError::validation(format!("expected YYYY-MM-DD, got '{date}'")))?;
     let time = chrono::Local::now().time();
-    crate::commands::pages::copy_page_blocks_in_tx(
+    let copied = crate::commands::pages::copy_page_blocks_in_tx(
         tx,
         materializer,
         device_id,
@@ -313,38 +318,138 @@ pub(crate) async fn apply_journal_template_in_tx(
         page_id,
         |content| expand_journal_template_variables(content, day, time),
     )
-    .await
+    .await?;
+    Ok(copied.unwrap_or_else(|why| {
+        tracing::warn!(
+            target: "journal",
+            template_id = %template_id,
+            space_id,
+            why,
+            "the journal template cannot be copied; creating an empty day"
+        );
+        Vec::new()
+    }))
 }
 
-/// Expand one block's template variables for the day `day` (#5395): `<% today
-/// %>`, `<% time %>`, `<% datetime %>` and `<% page title %>`, with the
-/// `{{date}}`, `{{time}}` and `{{title}}` spellings of the `/template` grammar,
-/// and `{{cursor}}` stripped. A name is case-insensitive and its inner
-/// whitespace collapses. A `:FORMAT` suffix is dropped and the token takes its
-/// default form: the frontend's date-fns formats have no twin here, and a
-/// literal token in every new day is worse than a default date. Any other
-/// token stays as written.
+/// Expand one block's template variables for the day `day` (#5395), the
+/// names the Templates view lists: `<% today %>`, `<% time %>`,
+/// `<% datetime %>`, `<% page title %>`, `<% weekday %>`, `<% month %>`,
+/// `<% isoweek %>` and `<% date+N %>` / `<% date-N %>`, N days from the day;
+/// the `{{date}}`, `{{time}}` and `{{title}}` spellings of the `/template`
+/// grammar take the same names, and `{{cursor}}` is stripped. A name is
+/// case-insensitive and its inner whitespace collapses. A date or time name
+/// takes a `:FORMAT` suffix in the date-fns tokens [`format_date_fns`] knows
+/// (`<% today:EEEE, MMMM d %>`); a format with a token it does not know gives
+/// the default form, never a literal token in every new day. Day and month
+/// names are English. Any other token stays as written.
 fn expand_journal_template_variables(content: &str, day: NaiveDate, time: NaiveTime) -> String {
     let resolve = |body: &str| -> Option<String> {
-        let head = body.split(':').next().unwrap_or_default();
+        let (head, format) = match body.split_once(':') {
+            Some((head, format)) => (head, Some(format.trim())),
+            None => (body, None),
+        };
         let name = head
             .split_whitespace()
             .collect::<Vec<_>>()
             .join(" ")
             .to_ascii_lowercase();
-        let date = day.format("%Y-%m-%d");
-        let clock = time.format("%H:%M");
+        let format = format.filter(|format| !format.is_empty());
+        let formatted = |at: NaiveDate, default: String| {
+            format
+                .and_then(|format| format_date_fns(at.and_time(time), format))
+                .unwrap_or(default)
+        };
+        let date = day.format("%Y-%m-%d").to_string();
+        let clock = time.format("%H:%M").to_string();
         match name.as_str() {
-            "today" | "date" => Some(date.to_string()),
-            "time" => Some(clock.to_string()),
-            "datetime" => Some(format!("{date} {clock}")),
-            "page title" | "title" => Some(date.to_string()),
+            "today" | "date" => Some(formatted(day, date)),
+            "time" => Some(formatted(day, clock)),
+            "datetime" => Some(formatted(day, format!("{date} {clock}"))),
+            "page title" | "title" => Some(date),
+            "weekday" => Some(formatted(day, day.format("%A").to_string())),
+            "month" => Some(formatted(day, day.format("%B").to_string())),
+            "isoweek" => Some(day.iso_week().week().to_string()),
             "cursor" => Some(String::new()),
-            _ => None,
+            _ => {
+                let offset = name.strip_prefix("date")?;
+                let days: i64 = match offset.as_bytes().first()? {
+                    b'+' => offset[1..].parse().ok()?,
+                    b'-' => offset.parse().ok()?,
+                    _ => return None,
+                };
+                let at =
+                    chrono::Duration::try_days(days).and_then(|d| day.checked_add_signed(d))?;
+                Some(formatted(at, at.format("%Y-%m-%d").to_string()))
+            }
         }
     };
     let expanded = expand_tokens(content, "<%", "%>", resolve);
     expand_tokens(&expanded, "{{", "}}", resolve)
+}
+
+/// Format `at` with a date-fns pattern, the tokens the Templates view's
+/// examples and the `/template` path's tests use, each mapped to its chrono
+/// twin: `yyyy` / `YYYY` and `yy` (year), `MMMM`, `MMM`, `MM` and `M` (month
+/// name, short name, padded and plain number), `dd` / `DD` and `d` (day),
+/// `EEEE` and `E`–`EEE` (weekday name and short name), `HH` / `H`, `hh` / `h`
+/// (24- and 12-hour), `mm` / `m`, `ss` / `s` and `a` (AM/PM). Text in single
+/// quotes and any other non-letter is literal, as in date-fns. `None` for a
+/// run of letters that is none of these: the caller then takes the default
+/// form rather than guessing.
+fn format_date_fns(at: chrono::NaiveDateTime, pattern: &str) -> Option<String> {
+    let mut spec = String::with_capacity(pattern.len() * 2);
+    let mut chars = pattern.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '\'' {
+            loop {
+                match chars.next()? {
+                    '\'' if chars.peek() == Some(&'\'') => {
+                        chars.next();
+                        spec.push('\'');
+                    }
+                    '\'' => break,
+                    '%' => spec.push_str("%%"),
+                    literal => spec.push(literal),
+                }
+            }
+            continue;
+        }
+        if !c.is_ascii_alphabetic() {
+            if c == '%' {
+                spec.push('%');
+            }
+            spec.push(c);
+            continue;
+        }
+        let mut run = 1;
+        while chars.peek() == Some(&c) {
+            chars.next();
+            run += 1;
+        }
+        spec.push_str(match (c, run) {
+            ('y' | 'Y', 4) => "%Y",
+            ('y', 2) => "%y",
+            ('M', 4) => "%B",
+            ('M', 3) => "%b",
+            ('M', 2) => "%m",
+            ('M', 1) => "%-m",
+            ('d' | 'D', 2) => "%d",
+            ('d', 1) => "%-d",
+            ('E', 4) => "%A",
+            ('E', 1..=3) => "%a",
+            ('H', 2) => "%H",
+            ('H', 1) => "%-H",
+            ('h', 2) => "%I",
+            ('h', 1) => "%-I",
+            ('m', 2) => "%M",
+            ('m', 1) => "%-M",
+            ('s', 2) => "%S",
+            ('s', 1) => "%-S",
+            ('a', 1) => "%p",
+            _ => return None,
+        });
+    }
+    Some(at.format(&spec).to_string())
 }
 
 /// Replace each `open`…`close` token in `content` by what `resolve` makes of
@@ -1386,37 +1491,74 @@ mod tests {
         mat.shutdown();
     }
 
+    /// The day exists, empty, and Quick Capture lands on today's: a template
+    /// the copy refuses never blocks a day.
+    async fn assert_refused_template_gives_empty_days(
+        pool: &SqlitePool,
+        mat: &Materializer,
+        space: &str,
+    ) {
+        let day = NaiveDate::parse_from_str(DAY, "%Y-%m-%d").unwrap();
+        let page = journal_for_date_inner(pool, DEV, mat, day, space)
+            .await
+            .expect("a refused template never blocks the day");
+        let captured = quick_capture_block_inner(pool, DEV, mat, "captured".into(), space)
+            .await
+            .expect("nor Quick Capture");
+        mat.flush_background().await.unwrap();
+
+        assert_eq!(page_blocks(pool, page.id.as_str()).await, vec![]);
+        assert_eq!(
+            count_journal_pages_for_date_in_space(pool, DAY, space).await,
+            1
+        );
+        let today_page = captured.parent_id.unwrap().into_string();
+        assert_eq!(
+            page_blocks(pool, &today_page).await,
+            vec![("captured".to_owned(), today_page.clone(), 1)],
+            "the capture is the only block of today's page"
+        );
+    }
+
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn a_template_the_copy_refuses_leaves_no_day() {
+    async fn a_template_the_copy_refuses_creates_an_empty_day() {
         // A carriage return does not read back from the source grammar, so
-        // the copy refuses after the page and its space were applied, and the
-        // refusal rolls the page back with it.
+        // the copy refuses; the refusal comes before its first insert, so the
+        // day commits without it.
         let (pool, _dir) = test_pool().await;
         let mat = Materializer::new(pool.clone());
         let space = mk_space(&pool, "Personal").await;
         let template = seed_template(&pool, &mat, &space).await;
         child(&pool, &mat, &template, "one\r- two").await;
 
-        let day = NaiveDate::parse_from_str(DAY, "%Y-%m-%d").unwrap();
-        let err = journal_for_date_inner(&pool, DEV, &mat, day, &space)
-            .await
-            .expect_err("the copy must refuse");
-        assert!(matches!(err, AppError::Validation { .. }), "{err:?}");
-        mat.flush_background().await.unwrap();
+        assert_refused_template_gives_empty_days(&pool, &mat, &space).await;
 
-        assert_eq!(
-            count_journal_pages_for_date_in_space(&pool, DAY, &space).await,
-            0,
-            "no page survives a refused copy"
-        );
-        let ops: i64 = sqlx::query_scalar!(
-            r#"SELECT COUNT(*) as "c: i64" FROM op_log
-               WHERE json_extract(payload, '$.content') LIKE '%2031-01-02%'"#,
-        )
-        .fetch_one(&pool)
-        .await
-        .unwrap();
-        assert_eq!(ops, 0, "no op of the day survives either");
+        mat.shutdown();
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_template_over_the_op_cap_creates_an_empty_day() {
+        // The three seeded blocks plus a thousand more exceed what one undo
+        // reverts; the copy counts its ops before the first insert, so the
+        // day commits without any of them rather than a thousand of them.
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+        let space = mk_space(&pool, "Personal").await;
+        let template = seed_template(&pool, &mat, &space).await;
+        let specs = (0..agaric_store::pagination::MAX_BATCH_BLOCK_IDS)
+            .map(|i| crate::commands::CreateBlockSpec {
+                block_type: "content".into(),
+                content: format!("line {i}"),
+                parent_id: Some(BlockId::from_trusted(&template)),
+                position: None,
+                properties: std::collections::HashMap::new(),
+            })
+            .collect();
+        crate::commands::create_blocks_batch_inner(&pool, DEV, &mat, specs)
+            .await
+            .expect("a batch at the cap is within it");
+
+        assert_refused_template_gives_empty_days(&pool, &mat, &space).await;
 
         mat.shutdown();
     }
@@ -1590,14 +1732,80 @@ mod tests {
             expand("{{date}} {{ time }} {{title}}x{{cursor}}"),
             "2031-01-02 09:05 2031-01-02x"
         );
-        // A format is dropped for the default form, never left literal.
-        assert_eq!(expand("<% today:MMMM d, yyyy %>"), "2031-01-02");
-        assert_eq!(expand("{{date:HH:mm}}"), "2031-01-02");
+        assert_eq!(
+            expand("<% weekday %> <% month %> <% isoweek %> <% WEEKDAY %>"),
+            "Thursday January 1 Thursday"
+        );
         // What is not a variable stays as written.
         assert_eq!(
-            expand("<% weekday %> {{foo}} <% open {{ x }}"),
-            "<% weekday %> {{foo}} <% open {{ x }}"
+            expand("<% season %> {{foo}} <% open {{ x }} <% date+x %> <% date + 1 %>"),
+            "<% season %> {{foo}} <% open {{ x }} <% date+x %> <% date + 1 %>"
         );
         assert_eq!(expand("plain"), "plain");
+    }
+
+    #[test]
+    fn journal_template_offsets_count_from_the_day() {
+        let day = NaiveDate::from_ymd_opt(2031, 1, 2).unwrap();
+        let time = NaiveTime::from_hms_opt(9, 5, 0).unwrap();
+        let expand = |s: &str| expand_journal_template_variables(s, day, time);
+        assert_eq!(expand("<% date+1 %>"), "2031-01-03");
+        assert_eq!(expand("<% date+30 %>"), "2031-02-01");
+        assert_eq!(expand("<% date-1 %>"), "2031-01-01");
+        assert_eq!(expand("<% date-2 %>"), "2030-12-31");
+        assert_eq!(expand("<% date-0 %>|{{ DATE+7 }}"), "2031-01-02|2031-01-09");
+        assert_eq!(expand("<% date+7:EEEE %>"), "Thursday");
+        // An offset no calendar holds is not a variable.
+        assert_eq!(expand("<% date+99999999999 %>"), "<% date+99999999999 %>");
+    }
+
+    #[test]
+    fn journal_template_formats_take_date_fns_tokens() {
+        let day = NaiveDate::from_ymd_opt(2031, 1, 2).unwrap();
+        let time = NaiveTime::from_hms_opt(21, 5, 7).unwrap();
+        let expand = |s: &str| expand_journal_template_variables(s, day, time);
+        // Each token the table knows, against the day being created.
+        assert_eq!(expand("<% today:yyyy|YYYY|yy %>"), "2031|2031|31");
+        assert_eq!(expand("<% today:MMMM|MMM|MM|M %>"), "January|Jan|01|1");
+        assert_eq!(expand("<% today:dd|DD|d %>"), "02|02|2");
+        assert_eq!(expand("<% today:EEEE|EEE|EE|E %>"), "Thursday|Thu|Thu|Thu");
+        assert_eq!(
+            expand("<% time:HH|H|hh|h|mm|m|ss|s|a %>"),
+            "21|21|09|9|05|5|07|7|PM"
+        );
+        // The Templates view's examples and the shapes the old path's tests
+        // pinned, on today, time, datetime and the `{{ }}` spelling.
+        assert_eq!(expand("<% today:DD/MM/YYYY %>"), "02/01/2031");
+        assert_eq!(expand("<% today: MMMM d, yyyy %>"), "January 2, 2031");
+        assert_eq!(expand("<% time:HH:mm %>"), "21:05");
+        assert_eq!(
+            expand("<% datetime:yyyy-MM-dd HH:mm %>"),
+            "2031-01-02 21:05"
+        );
+        assert_eq!(
+            expand("{{date:YYYY/MM/DD}} {{date:MMM d, yyyy}}"),
+            "2031/01/02 Jan 2, 2031"
+        );
+        assert_eq!(expand("<% weekday:EEE %> <% month:MM %>"), "Thu 01");
+        // Quoted text is literal, as is any non-letter; `%` cannot reach chrono.
+        assert_eq!(
+            expand("<% today:'Week of' d 'o''clock' 100% %>"),
+            "Week of 2 o'clock 100%"
+        );
+        // A format with a token the table does not know, or none at all,
+        // gives the default form, never a literal token in every day.
+        assert_eq!(expand("<% today:ooooo %>"), "2031-01-02");
+        assert_eq!(expand("<% today:yyyyy %>"), "2031-01-02");
+        assert_eq!(expand("<% today:'unterminated %>"), "2031-01-02");
+        assert_eq!(
+            expand("<% time:x %> <% datetime:Q %>"),
+            "21:05 2031-01-02 21:05"
+        );
+        assert_eq!(expand("<% today: %> {{date:}}"), "2031-01-02 2031-01-02");
+        // A format on a name that takes none is ignored.
+        assert_eq!(
+            expand("<% isoweek:yyyy %> <% page title:d %>"),
+            "1 2031-01-02"
+        );
     }
 }

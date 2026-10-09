@@ -16,6 +16,9 @@
  * command surface.
  */
 
+import { format as formatDateFns, getISOWeek } from 'date-fns'
+import { enUS } from 'date-fns/locale'
+
 import { utf8ToBase64Url } from '@/lib/base64url'
 import type { AppError, PageResponse, commands } from '@/lib/bindings'
 import { ulidToDate } from '@/lib/format'
@@ -234,38 +237,143 @@ function copyJournalTemplateBlocks(dayPageId: string, spaceId: string | null, da
 
 /**
  * Mirror of `expand_journal_template_variables`: `<% today %>`, `<% time %>`,
- * `<% datetime %>`, `<% page title %>`, the `{{date}}` / `{{time}}` /
- * `{{title}}` spellings, and `{{cursor}}` stripped. Name case-insensitive,
- * inner whitespace collapsed, a `:FORMAT` suffix dropped; anything else stays.
+ * `<% datetime %>`, `<% page title %>`, `<% weekday %>`, `<% month %>`,
+ * `<% isoweek %>`, `<% date+N %>` / `<% date-N %>`, the `{{date}}` /
+ * `{{time}}` / `{{title}}` spellings, and `{{cursor}}` stripped. Name
+ * case-insensitive, inner whitespace collapsed; a date or time name takes a
+ * `:FORMAT` in the tokens `formatDateFnsSubset` knows, any other format giving
+ * the default form; anything else stays. Names are English, as chrono's are.
  */
 export function expandJournalTemplateVariables(content: string, date: string): string {
   const now = new Date()
-  const clock = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`
+  const [year, month, day] = date.split('-').map(Number) as [number, number, number]
+  const at = (offsetDays: number): Date =>
+    new Date(year, month - 1, day + offsetDays, now.getHours(), now.getMinutes(), now.getSeconds())
+  const isoDate = (d: Date): string => formatDateFns(d, 'yyyy-MM-dd')
+  const clock = formatDateFns(at(0), 'HH:mm')
   const resolve = (whole: string, body: string): string => {
-    const head = body.split(':')[0] ?? ''
+    const colon = body.indexOf(':')
+    const head = colon === -1 ? body : body.slice(0, colon)
+    const format = colon === -1 ? '' : body.slice(colon + 1).trim()
     const name = head.trim().split(/\s+/).join(' ').toLowerCase()
+    const formatted = (d: Date, fallback: string): string =>
+      (format.length > 0 ? formatDateFnsSubset(d, format) : null) ?? fallback
     switch (name) {
       case 'today':
-      case 'date':
+      case 'date': {
+        return formatted(at(0), date)
+      }
+      case 'time': {
+        return formatted(at(0), clock)
+      }
+      case 'datetime': {
+        return formatted(at(0), `${date} ${clock}`)
+      }
       case 'page title':
       case 'title': {
         return date
       }
-      case 'time': {
-        return clock
+      case 'weekday': {
+        return formatted(at(0), formatDateFns(at(0), 'EEEE'))
       }
-      case 'datetime': {
-        return `${date} ${clock}`
+      case 'month': {
+        return formatted(at(0), formatDateFns(at(0), 'MMMM'))
+      }
+      case 'isoweek': {
+        return String(getISOWeek(at(0)))
       }
       case 'cursor': {
         return ''
       }
       default: {
-        return whole
+        const offset = /^date([+-]\d+)$/.exec(name)
+        if (offset === null) return whole
+        const target = at(Number(offset[1]))
+        if (Number.isNaN(target.getTime())) return whole
+        return formatted(target, isoDate(target))
       }
     }
   }
   return content.replace(/<%([\s\S]*?)%>/g, resolve).replace(/\{\{([\s\S]*?)\}\}/g, resolve)
+}
+
+/** The date-fns tokens `format_date_fns` knows, by letter and run length. */
+const JOURNAL_FORMAT_TOKENS: ReadonlyMap<string, string> = new Map([
+  ['y4', 'yyyy'],
+  ['Y4', 'yyyy'],
+  ['y2', 'yy'],
+  ['M4', 'MMMM'],
+  ['M3', 'MMM'],
+  ['M2', 'MM'],
+  ['M1', 'M'],
+  ['d2', 'dd'],
+  ['D2', 'dd'],
+  ['d1', 'd'],
+  ['E4', 'EEEE'],
+  ['E3', 'EEE'],
+  ['E2', 'EEE'],
+  ['E1', 'EEE'],
+  ['H2', 'HH'],
+  ['H1', 'H'],
+  ['h2', 'hh'],
+  ['h1', 'h'],
+  ['m2', 'mm'],
+  ['m1', 'm'],
+  ['s2', 'ss'],
+  ['s1', 's'],
+  ['a1', 'a'],
+])
+
+/**
+ * Mirror of `format_date_fns`: `pattern` in the tokens `JOURNAL_FORMAT_TOKENS`
+ * lists, single-quoted text and any non-letter literal; `null` for a run of
+ * letters it does not know or a quote nothing closes. Formats in `en-US`
+ * whatever the app locale: the backend's names are chrono's English ones.
+ */
+function formatDateFnsSubset(d: Date, pattern: string): string | null {
+  let spec = ''
+  // Literal text gathered until the next token, quoted once: two quoted runs
+  // side by side (`','' '`) would read to date-fns as an escaped quote.
+  let literal = ''
+  let i = 0
+  while (i < pattern.length) {
+    const c = pattern[i] as string
+    if (c === "'") {
+      i += 1
+      for (;;) {
+        if (i >= pattern.length) return null
+        if (pattern[i] === "'" && pattern[i + 1] === "'") {
+          literal += "'"
+          i += 2
+        } else if (pattern[i] === "'") {
+          i += 1
+          break
+        } else {
+          literal += pattern[i]
+          i += 1
+        }
+      }
+      continue
+    }
+    if (!/[A-Za-z]/.test(c)) {
+      literal += c
+      i += 1
+      continue
+    }
+    let run = 1
+    while (pattern[i + run] === c) run += 1
+    const token = JOURNAL_FORMAT_TOKENS.get(`${c}${run}`)
+    if (token === undefined) return null
+    spec += quoteLiteral(literal) + token
+    literal = ''
+    i += run
+  }
+  return formatDateFns(d, spec + quoteLiteral(literal), { locale: enUS })
+}
+
+/** `text` as a date-fns literal: quoted, with its own quotes doubled. */
+function quoteLiteral(text: string): string {
+  return text.length === 0 ? '' : `'${text.replaceAll("'", "''")}'`
 }
 
 /** Shorthand for a mock `invalid_operation` rejection — mirrors `AppError::InvalidOperation(...)` (#2463 kind-parity rule). */
