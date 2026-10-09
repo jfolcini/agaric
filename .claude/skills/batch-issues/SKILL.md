@@ -11,7 +11,7 @@ The bar for everything below is `AGENTS.md` § How we work. Three deletions and 
 
 References, loaded only when needed:
 
-- `references/pitfalls.md` — failure modes with a concrete recovery (stacked PRs, Dependabot branches, moving-ref resets, lint traps, stale `dev.db`, path-keyed guards, shell traps).
+- `references/pitfalls.md` — failure modes with a concrete recovery (stacked PRs, Dependabot branches, moving-ref resets, lint traps, stale `dev.db`, path-keyed guards, shell traps, `gh` in a cloud session). In a cloud session `gh pr` and `gh issue` fail with HTTP 403; use the `gh api` forms there.
 - `references/session-log.md` — session-log numbering and format.
 - `references/codegen-and-sql.md` — `.sqlx` and specta regeneration.
 

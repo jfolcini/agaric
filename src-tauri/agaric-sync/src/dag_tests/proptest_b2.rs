@@ -76,7 +76,7 @@
 //! of its length, so the 10k-step termination path is exercised just as
 //! thoroughly. Each valid-chain case still seeds up to 16 harness ops and
 //! runs `find_lca` over every head pair ([`CHAIN_LEN`] unchanged).
-//! Bump via `PROPTEST_CASES` for a deeper local search.
+//! Raise [`B2_CASES`] for a deeper local search.
 
 use super::*;
 use agaric_engine::proptest_db_harness::{HARNESS_DEVICE, op_chain_strategy, seed_chain};

@@ -69,7 +69,7 @@ use agaric_engine::reverse::{compute_reverse, compute_reverse_batch, get_op_reco
 
 /// Each case builds two fresh migrated databases, so the budget is kept low
 /// deliberately; the value is in running the relation over many SHAPES, not in
-/// exhausting the space. Bump locally with `PROPTEST_CASES`.
+/// exhausting the space. Raise it locally for a deeper search.
 const REVERSE_CASES: u32 = 12;
 const CHAIN_LEN: std::ops::RangeInclusive<usize> = 1..=12;
 

@@ -34,8 +34,8 @@
 //! reverse computations per case. At 256 cases this pushed the single
 //! test toward the 30 s nextest slow-timeout on a cold target; 64 cases
 //! runs comfortably (a few seconds) while still exploring thousands of
-//! distinct chains across a CI run. Bump via `PROPTEST_CASES` env if a
-//! deeper search is wanted locally.
+//! distinct chains across a CI run. Raise [`B1_CASES`] if a deeper
+//! search is wanted locally.
 
 use agaric_core::error::AppError;
 use agaric_engine::proptest_db_harness::{

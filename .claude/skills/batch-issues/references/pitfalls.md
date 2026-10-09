@@ -24,6 +24,18 @@ Worktrees share one `.git`, so `origin/main` can advance under you. Resetting on
 
 Dependabot force-pushes its branch on rebase or supersession, sometimes under a new PR number, and a human commit on it vanishes. A fix that stands alone (a test assertion, an `overrides` entry) goes in its own PR off `main`. One that cannot (a relock without the bump is meaningless) goes on the Dependabot branch: comment on the PR with what broke and what you did, verify the push by SHA, and merge with `gh pr merge <n> --squash --subject "<human commit subject>"` so the diagnosis is the headline.
 
+## `gh` in a cloud session
+
+GitHub GraphQL returns 403 from a Claude Code cloud session, so every `gh pr` and `gh issue` subcommand fails there; `gh api` REST works. With `R=repos/jfolcini/agaric`:
+
+- PR board: `gh api "$R/pulls?state=open&per_page=100" --jq '.[] | [.number, .user.login, .title] | @tsv'`
+- Checks: `gh api "$R/commits/<head sha>/check-runs?per_page=100" --jq '.check_runs[] | [.name, .status, .conclusion, .id] | @tsv'`, with the sha from `gh api $R/pulls/<n> --jq .head.sha`. `dco` and `validate-all` are both check runs.
+- Failed log: `gh api $R/actions/jobs/<id>/logs`, with the failed row's `id` from the checks query.
+- Issue with comments: `gh api $R/issues/<n> --jq .body`, then `gh api "$R/issues/<n>/comments?per_page=100" --jq '.[].body'`.
+- Review bodies: `gh api "$R/pulls/<n>/reviews?per_page=100" --jq '.[].body'`.
+- Open a PR: `gh api $R/pulls -f base=main -f head=<branch> -f title='<title>' -F body=@"$file"`.
+- Merge: `gh api -X PUT $R/pulls/<n>/merge -f merge_method=squash`, then `gh api -X DELETE $R/git/refs/heads/<branch>`.
+
 ## Lint and format
 
 - `oxfmt --write` reflows JSX and detaches an `oxlint-disable-next-line` from the line it covered. Use a `/* oxlint-disable rule -- reason */ … /* oxlint-enable rule */` pair, and re-run `npx oxlint` after formatting.
