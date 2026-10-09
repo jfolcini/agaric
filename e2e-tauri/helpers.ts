@@ -466,7 +466,7 @@ export async function openNewPage(): Promise<void> {
 /**
  * Re-open a page from the Pages view by its exact title. The title is the
  * `span.page-browser-item-title` inside the row's `button.page-browser-item`
- * (PageBrowser/DensityRow.tsx); the button itself also holds the metadata
+ * (PageBrowser/PageRow.tsx); the button itself also holds the metadata
  * span, so the match is on the title span and the click bubbles to the
  * button. The page editor is ready once its title textbox is displayed. This
  * is the durable-read hop for page-editor specs: PageEditor and its BlockTree

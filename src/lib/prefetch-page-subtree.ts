@@ -60,7 +60,7 @@ export const MAX_INFLIGHT_PREFETCHES = 4
 /**
  * Shared hover/focus dwell threshold (ms) before an intent handler actually
  * calls {@link prefetchPageSubtree}. Every intent surface (`PageLink`,
- * `DensityRow`, `CommandPalette`, `LinkedReferences`) debounces on this same
+ * `PageRow`, `CommandPalette`, `LinkedReferences`) debounces on this same
  * constant via `useDebouncedCallback` so a cursor sweeping across a list (or
  * arrow-key traversal in the palette) doesn't fan out one IPC per row.
  */

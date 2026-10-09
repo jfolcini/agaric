@@ -1,14 +1,11 @@
 // @vitest-environment jsdom
-// Split from the PageBrowser.test.tsx monolith (#2929). Concern: density
-// rows.
-// The pin is also load-bearing for the `Storage.prototype` spy below, which
-// only intercepts under jsdom. Un-pinning on monolith grounds means rewriting
-// that spy first — src/__tests__/AGENTS.md says how.
+// Split from the PageBrowser.test.tsx monolith (#2929). Concern: page rows
+// and the metadata IPC behind them.
 
 import { invoke } from '@tauri-apps/api/core'
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
 import { pageRowInvokeFallback } from '@/__tests__/helpers/invoke'
@@ -17,37 +14,10 @@ import { PageBrowser } from '@/components/PageBrowser'
 import { usePageBrowserFiltersStore } from '@/stores/pageBrowserFilters'
 import { useSpaceStore } from '@/stores/space'
 
-// Capture every `estimateSize` callback passed to `useVirtualizer` so the
-// Referential-stability test can assert the function identity
-// is unchanged across re-renders that don't change `groupedRows`.
-//
-// The captured signature is the production one (`(index: number) => number`),
-// but the mock invokes it without args throughout this test file (legacy
-// Zero-arg invocation predates the change). The `(...args: never[])`
-// type lets both calling conventions type-check cleanly without `any`.
-type EstimateSizeFn = (...args: never[]) => number
-const capturedEstimateSizes: Array<EstimateSizeFn> = []
-
-// PageBrowser pagination UX (2026-05-14) — `vi.mock` is hoisted to
-// the top of the file before module-level `const`s, so a mock that
-// references a captured spy has to declare the spy via
-// `vi.hoisted(…)` (which IS hoisted alongside the mocks).
-const { scrollToOffsetMock } = vi.hoisted(() => ({
-  scrollToOffsetMock: vi.fn(),
-}))
-
 // Mock @tanstack/react-virtual via the shared helper
 // (src/__tests__/mocks/react-virtual.ts) to render all items (jsdom has
-// zero-height containers). `onEstimateSize` captures each estimator so the
-// size assertions can replay it; `scrollToOffset` uses the hoisted spy so the
-// scroll-restoration test can assert it fired with the saved offset
-// (PageBrowser pagination UX 2026-05-14).
-vi.mock('@tanstack/react-virtual', () =>
-  mockReactVirtual({
-    onEstimateSize: (estimateSize) => capturedEstimateSizes.push(estimateSize as EstimateSizeFn),
-    scrollToOffset: scrollToOffsetMock,
-  }),
-)
+// zero-height containers).
+vi.mock('@tanstack/react-virtual', () => mockReactVirtual())
 
 // Radix Select is mocked globally via the shared mock in src/test-setup.ts
 // (see src/__tests__/mocks/ui-select.tsx).
@@ -65,13 +35,8 @@ const mockedInvoke = vi.mocked(invoke)
 
 beforeEach(() => {
   vi.clearAllMocks()
-  capturedEstimateSizes.length = 0
-  scrollToOffsetMock.mockClear()
-  // PageBrowser pagination UX (2026-05-14) — scroll-restoration tests
-  // round-trip values through sessionStorage; isolate each test.
   sessionStorage.clear()
   localStorage.removeItem('page-browser-sort')
-  localStorage.removeItem('page-browser-density')
   localStorage.removeItem('starred-pages')
   // Compound-filter chips now live in a module-global per-space store that
   // persists to localStorage (#1750); reset both the in-memory slice and the
@@ -98,11 +63,7 @@ beforeEach(() => {
 })
 
 describe('PageBrowser', () => {
-  describe('density rows', () => {
-    afterEach(() => {
-      localStorage.removeItem('page-browser-density')
-    })
-
+  describe('page rows', () => {
     /** Shape that mirrors what `list_pages_with_metadata` returns. */
     function makeMetaPage(overrides: {
       id: string
@@ -162,7 +123,7 @@ describe('PageBrowser', () => {
       expect(listBlocksCalls).toHaveLength(0)
     })
 
-    it('renders leaf rows via <DensityRow> at the default `regular` density', async () => {
+    it('renders leaf rows via <PageRow>', async () => {
       mockedInvoke.mockImplementation((cmd: string) => {
         if (cmd === 'resolve_page_by_alias') return Promise.resolve(null)
         if (cmd === 'list_pages_with_metadata') {
@@ -179,127 +140,7 @@ describe('PageBrowser', () => {
       const { container } = render(<PageBrowser />)
       await screen.findByText('Apple')
 
-      const densityRows = container.querySelectorAll('[data-page-item][data-density]')
-      expect(densityRows.length).toBeGreaterThan(0)
-      expect(densityRows[0]?.getAttribute('data-density')).toBe('regular')
-    })
-
-    it('switching density via the header Select updates every leaf row', async () => {
-      const user = userEvent.setup()
-      mockedInvoke.mockImplementation((cmd: string) => {
-        if (cmd === 'resolve_page_by_alias') return Promise.resolve(null)
-        if (cmd === 'list_pages_with_metadata') {
-          return Promise.resolve({
-            items: [
-              makeMetaPage({ id: 'P1', content: 'Apple' }),
-              makeMetaPage({ id: 'P2', content: 'Banana' }),
-            ],
-            next_cursor: null,
-            has_more: false,
-            total_count: 2,
-          })
-        }
-        return pageRowInvokeFallback(cmd)
-      })
-
-      const { container } = render(<PageBrowser />)
-      await screen.findByText('Apple')
-
-      const densitySelect = screen.getByRole('combobox', { name: /row density/i })
-      await user.selectOptions(densitySelect, 'compact')
-
-      await waitFor(() => {
-        const rows = container.querySelectorAll('[data-page-item][data-density]')
-        expect(rows.length).toBeGreaterThan(0)
-        for (const r of rows) {
-          expect(r.getAttribute('data-density')).toBe('compact')
-        }
-      })
-    })
-
-    it('density persists across remount via localStorage', async () => {
-      const user = userEvent.setup()
-      mockedInvoke.mockImplementation((cmd: string) => {
-        if (cmd === 'resolve_page_by_alias') return Promise.resolve(null)
-        if (cmd === 'list_pages_with_metadata') {
-          return Promise.resolve({
-            items: [makeMetaPage({ id: 'P1', content: 'Apple' })],
-            next_cursor: null,
-            has_more: false,
-            total_count: 1,
-          })
-        }
-        return pageRowInvokeFallback(cmd)
-      })
-
-      const first = render(<PageBrowser />)
-      await screen.findByText('Apple')
-
-      const densitySelect = screen.getByRole('combobox', { name: /row density/i })
-      await user.selectOptions(densitySelect, 'expanded')
-
-      // Wait for the row to pick up the new density.
-      await waitFor(() => {
-        const row = first.container.querySelector('[data-page-item][data-density]')
-        expect(row?.getAttribute('data-density')).toBe('expanded')
-      })
-
-      // Sanity: the preference was written to localStorage.
-      expect(localStorage.getItem('page-browser-density')).toBe('expanded')
-
-      first.unmount()
-
-      const second = render(<PageBrowser />)
-      await screen.findByText('Apple')
-
-      const row = second.container.querySelector('[data-page-item][data-density]')
-      expect(row?.getAttribute('data-density')).toBe('expanded')
-    })
-
-    it('density toggle invalidates the saved scroll offset (sessionStorage.removeItem fires)', async () => {
-      const user = userEvent.setup()
-      // Seed a stored offset for the active space so the restore effect
-      // fires and `restoredRef.current` flips to `true` BEFORE the
-      // density change — only then does the clear effect fire.
-      sessionStorage.setItem('pageBrowser:scrollOffset:SPACE_TEST', '60')
-
-      const removeItemSpy = vi.spyOn(Storage.prototype, 'removeItem')
-
-      mockedInvoke.mockImplementation((cmd: string) => {
-        if (cmd === 'resolve_page_by_alias') return Promise.resolve(null)
-        if (cmd === 'list_pages_with_metadata') {
-          return Promise.resolve({
-            items: [
-              makeMetaPage({ id: 'P1', content: 'Apple' }),
-              makeMetaPage({ id: 'P2', content: 'Banana' }),
-              makeMetaPage({ id: 'P3', content: 'Cherry' }),
-            ],
-            next_cursor: null,
-            has_more: false,
-            total_count: 3,
-          })
-        }
-        return pageRowInvokeFallback(cmd)
-      })
-
-      render(<PageBrowser />)
-      await screen.findByText('Apple')
-
-      // Wait for restoration to finish before flipping density (else
-      // the clear effect short-circuits on `restoredRef === false`).
-      await waitFor(() => expect(scrollToOffsetMock).toHaveBeenCalled())
-
-      removeItemSpy.mockClear()
-
-      const densitySelect = screen.getByRole('combobox', { name: /row density/i })
-      await user.selectOptions(densitySelect, 'compact')
-
-      await waitFor(() => {
-        const calls = removeItemSpy.mock.calls.map((c) => c[0])
-        expect(calls).toContain('pageBrowser:scrollOffset:SPACE_TEST')
-      })
-
-      removeItemSpy.mockRestore()
+      expect(container.querySelectorAll('[data-page-item]')).toHaveLength(1)
     })
 
     it('selecting `most-linked` sort passes `sort: most-linked` to the IPC', async () => {
@@ -467,7 +308,7 @@ describe('PageBrowser', () => {
       expect(cursoredCallCount).toBeGreaterThanOrEqual(1)
     })
 
-    it('a11y audit passes at every density', async () => {
+    it('a11y audit passes', async () => {
       mockedInvoke.mockImplementation((cmd: string) => {
         if (cmd === 'resolve_page_by_alias') return Promise.resolve(null)
         if (cmd === 'list_pages_with_metadata') {
@@ -484,30 +325,10 @@ describe('PageBrowser', () => {
         return pageRowInvokeFallback(cmd)
       })
 
-      const user = userEvent.setup()
       const { container } = render(<PageBrowser />)
       await screen.findByText('Accessible page')
 
-      // Audit at the default `regular` density first.
-      let results = await axe(container)
-      expect(results).toHaveNoViolations()
-
-      // Then `compact` and `expanded`.
-      const densitySelect = screen.getByRole('combobox', { name: /row density/i })
-      await user.selectOptions(densitySelect, 'compact')
-      await waitFor(() => {
-        const r = container.querySelector('[data-page-item][data-density]')
-        expect(r?.getAttribute('data-density')).toBe('compact')
-      })
-      results = await axe(container)
-      expect(results).toHaveNoViolations()
-
-      await user.selectOptions(densitySelect, 'expanded')
-      await waitFor(() => {
-        const r = container.querySelector('[data-page-item][data-density]')
-        expect(r?.getAttribute('data-density')).toBe('expanded')
-      })
-      results = await axe(container)
+      const results = await axe(container)
       expect(results).toHaveNoViolations()
     })
   })

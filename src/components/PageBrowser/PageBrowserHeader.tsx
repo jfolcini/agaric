@@ -10,7 +10,7 @@
  * Extracted from `PageBrowser.tsx`.
  */
 
-import { Plus, Rows3, Search } from 'lucide-react'
+import { Plus, Search } from 'lucide-react'
 import type React from 'react'
 import { useTranslation } from 'react-i18next'
 
@@ -30,7 +30,6 @@ import {
 } from '@/components/ui/select'
 import { Spinner } from '@/components/ui/spinner'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
-import type { DensityMode } from '@/hooks/usePageBrowserDensity'
 import type { SortOption } from '@/hooks/usePageBrowserSort'
 import { useTrashCount } from '@/hooks/useTrashCount'
 import { NAV_ITEMS } from '@/lib/nav-items'
@@ -54,12 +53,6 @@ export interface PageBrowserHeaderProps {
   onFilterTextChange: (value: string) => void
   sortOption: SortOption
   onSortChange: (value: SortOption) => void
-  /**
-   * Current density mode. Persisted in localStorage via
-   * `usePageBrowserDensity`; passed in by `PageBrowser` orchestrator.
-   */
-  density: DensityMode
-  onDensityChange: (value: DensityMode) => void
   /**
    * Total number of pages available (from the backend `total_count`).
    * When omitted, the count chip is not rendered.
@@ -93,7 +86,7 @@ export interface PageBrowserHeaderProps {
    * `default` or the server-side sorts, nor when fully loaded.
    */
   frontendSortAtScale?: boolean
-  /** Saved Pages views (#2003 piece 1) — sort/density/filters snapshots. */
+  /** Saved Pages views (#2003 piece 1) — sort/filters snapshots. */
   savedViews: SavedPagesView[]
   /** The saved view matching the current tuple, or `null` if none matches. */
   activeSavedView: SavedPagesView | null
@@ -114,8 +107,6 @@ export function PageBrowserHeader({
   onFilterTextChange,
   sortOption,
   onSortChange,
-  density,
-  onDensityChange,
   totalCount,
   filteredCount,
   hasTextQuery,
@@ -222,7 +213,7 @@ export function PageBrowserHeader({
       </form>
 
       {/* Search/filter input + sort dropdown */}
-      {/* `flex-wrap` lets the search/sort/density controls
+      {/* `flex-wrap` lets the search/sort/saved-views controls
           stack onto a second line on narrow viewports instead of
           overflowing. The search field keeps a sensible min-width so it
           never collapses to an unusable sliver before wrapping. */}
@@ -290,25 +281,6 @@ export function PageBrowserHeader({
               <TooltipContent>{t('pageBrowser.frontendSortHintTooltip')}</TooltipContent>
             </Tooltip>
           )}
-          <Select value={density} onValueChange={(v) => onDensityChange(v as DensityMode)}>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <SelectTrigger
-                  className="w-auto min-w-[7rem]"
-                  aria-label={t('pageBrowser.densityLabel')}
-                >
-                  <Rows3 className="h-4 w-4 text-muted-foreground" aria-hidden="true" />
-                  <SelectValue />
-                </SelectTrigger>
-              </TooltipTrigger>
-              <TooltipContent>{t('pageBrowser.densityPersistedTooltip')}</TooltipContent>
-            </Tooltip>
-            <SelectContent>
-              <SelectItem value="compact">{t('pageBrowser.densityCompact')}</SelectItem>
-              <SelectItem value="regular">{t('pageBrowser.densityRegular')}</SelectItem>
-              <SelectItem value="expanded">{t('pageBrowser.densityExpanded')}</SelectItem>
-            </SelectContent>
-          </Select>
           <SavedViewsDropdown
             views={savedViews}
             activeView={activeSavedView}

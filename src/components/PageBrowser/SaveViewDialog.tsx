@@ -1,11 +1,11 @@
 /**
  * SaveViewDialog — name-entry modal for saving the Pages view's current
- * `{ sort, density, filters }` tuple as a named saved view (#2003 piece 1).
+ * `{ sort, filters }` tuple as a named saved view (#2003 piece 1).
  *
  * Deliberately simpler than `RenameDialog`: desktop-only (no
  * `useDialogOrSheet` mobile Sheet variant — the Pages view saved-views
  * feature is a power-user desktop affordance, matching the rest of
- * `PageBrowserHeader`'s sort/density controls, which have no mobile Sheet
+ * `PageBrowserHeader`'s sort control, which has no mobile Sheet
  * fallback either). Validates only non-empty + a length cap; uniqueness is
  * NOT enforced — saving two views with the same name is allowed (they get
  * distinct ids), same as most "save as" flows.

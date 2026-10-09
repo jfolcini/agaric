@@ -6,7 +6,7 @@
  *
  * Every preference registered here is **device-local only**. These values
  * live in `localStorage` and deliberately **never sync between devices** — no
- * IPC, no block property, no server round-trip. A user's density/sort choice
+ * IPC, no block property, no server round-trip. A user's sort choice
  * on their laptop is independent of the same choice on their desktop, and a
  * fresh install starts from `defaultValue`. This is by design (mirrors
  * `tag-colors.ts` / `starred-pages.ts`): these are chrome/ergonomics knobs,
@@ -343,16 +343,13 @@ export function usePreference<T>(
 
 // ── Concrete definitions ───────────────────────────────────────────────────
 //
-// The `DensityMode` / `SortOption` domain types are DEFINED here (not in the
-// hooks) and re-exported by `usePageBrowserDensity` / `usePageBrowserSort` for
-// their public API. The hooks import the preference *values* from this module,
-// so if this module imported the types back from the hooks — even type-only —
-// the import-cycle guard (`scripts/check-import-cycles.mjs`, which counts
-// `import type` edges) would flag a cycle. Owning the types here keeps every
-// edge pointing one way: hooks → preferences.
-
-/** Pages view row-chrome density. */
-export type DensityMode = 'compact' | 'regular' | 'expanded'
+// The `SortOption` domain type is DEFINED here (not in the hook) and
+// re-exported by `usePageBrowserSort` for its public API. The hook imports the
+// preference *value* from this module, so if this module imported the type back
+// from the hook — even type-only — the import-cycle guard
+// (`scripts/check-import-cycles.mjs`, which counts `import type` edges) would
+// flag a cycle. Owning the type here keeps every edge pointing one way:
+// hooks → preferences.
 
 /** Pages view sort option. 3 legacy + 4 new. */
 export type SortOption =
@@ -363,17 +360,6 @@ export type SortOption =
   | 'most-linked'
   | 'most-content'
   | 'default'
-
-const ALL_DENSITIES: ReadonlyArray<DensityMode> = ['compact', 'regular', 'expanded']
-
-/**
- * Allowlist guard for the `page-browser-density` value. Throws on anything
- * outside the known modes so callers reset to the default.
- */
-function parseDensity(raw: string): DensityMode {
-  if ((ALL_DENSITIES as readonly string[]).includes(raw)) return raw as DensityMode
-  throw new Error(`invalid density: ${raw}`)
-}
 
 const ALL_SORTS: ReadonlyArray<SortOption> = [
   'alphabetical',
@@ -396,7 +382,7 @@ function parseSort(raw: string): SortOption {
   throw new Error(`invalid sort option: ${raw}`)
 }
 
-/** Identity serializer — density/sort persist as the bare option string. */
+/** Identity serializer for the bare-string preferences. */
 function identity<T extends string>(value: T): string {
   return value
 }
@@ -474,20 +460,6 @@ const JOURNAL_DATE_FORMAT_PREFERENCE: PreferenceDefinition<JournalDateFormat> = 
     if ((JOURNAL_DATE_FORMATS as readonly string[]).includes(raw)) return raw as JournalDateFormat
     throw new Error(`invalid journal date format: ${raw}`)
   },
-  serialize: identity,
-}
-
-/**
- * `page-browser-density` — the Pages view row-chrome density. Device-scoped,
- * bare-string format (no JSON envelope), matching the pre-registry on-disk
- * shape so existing users' stored values keep working untouched.
- */
-const DENSITY_PREFERENCE: PreferenceDefinition<DensityMode> = {
-  key: 'page-browser-density',
-  scope: 'device',
-  version: 1,
-  defaultValue: 'regular',
-  parse: parseDensity,
   serialize: identity,
 }
 
@@ -714,7 +686,7 @@ const STARRED_PAGES_PREFERENCE: PreferenceDefinition<string[]> = {
 }
 
 /**
- * A saved Pages-view snapshot: sort + density + compound filter chips,
+ * A saved Pages-view snapshot: sort + compound filter chips,
  * captured under a user-chosen name (#2003 piece 1). `filters` stores
  * `FilterPrimitive[]` verbatim — no `_addId` (that's a React-key-only field
  * `usePageBrowserFilters` adds locally, stripped before persisting here,
@@ -728,7 +700,6 @@ export interface SavedPagesView {
   /** ISO timestamp of creation. */
   createdAt: string
   sort: SortOption
-  density: DensityMode
   filters: FilterPrimitive[]
 }
 
@@ -764,7 +735,6 @@ function isSavedPagesViewLike(value: unknown): value is SavedPagesView {
     typeof v['name'] === 'string' &&
     typeof v['createdAt'] === 'string' &&
     (ALL_SORTS as readonly string[]).includes(v['sort'] as string) &&
-    (ALL_DENSITIES as readonly string[]).includes(v['density'] as string) &&
     Array.isArray(v['filters']) &&
     v['filters'].every(isFilterPrimitiveLike)
   )
@@ -797,7 +767,7 @@ function parseSavedPagesViewsPayload(raw: string): SavedPagesViewsPayload {
 
 /**
  * `agaric:pages:savedViews:v1` — user-named Pages-view snapshots (sort +
- * density + filters), #2003 piece 1. Device-scoped; JSON envelope (unlike
+ * filters), #2003 piece 1. Device-scoped; JSON envelope (unlike
  * the bare-string preferences above) because the payload is structured and
  * this is a brand-new key with no pre-registry on-disk shape to preserve.
  */
@@ -1417,7 +1387,6 @@ const PAGE_SOURCE_DRAFT_PREFERENCE: PreferenceDefinition<PageSourceDraft | null>
  * here (see module docstring) so preferences stay discoverable in one place.
  */
 export const PREFERENCES = {
-  density: DENSITY_PREFERENCE,
   sort: SORT_PREFERENCE,
   weekStart: WEEK_START_PREFERENCE,
   journalDateFormat: JOURNAL_DATE_FORMAT_PREFERENCE,

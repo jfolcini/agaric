@@ -27,7 +27,7 @@
  * `SpaceSwitcher` renders), filtering out the current space.
  *
  * Saved views (#2003 item 1) are a separate piece — persisted
- * `{sort, density, filters}` view snapshots — implemented in
+ * `{sort, filters}` view snapshots — implemented in
  * `src/lib/saved-pages-views.ts` / `SavedViewsDropdown` / `SaveViewDialog`,
  * not in this toolbar.
  */

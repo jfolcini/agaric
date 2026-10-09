@@ -1,25 +1,13 @@
 /**
- * `DensityRow`.
+ * `PageRow`.
  *
- * Pages-view leaf row that renders one page at one of three densities:
- *
- *  - `compact`  (32 px) — title + relative-modified-time only; other
- *                         metadata reachable via the row's `title` tooltip.
- *  - `regular`  (44 px) — title + ↗ inbound link count + ⊟ child-block
- *                         count + relative time + first property-flag
- *                         badge (if any). Matches today's row height so
- *                         the virtualizer does not re-measure on first
- *                         flag flip. Default.
- *  - `expanded` (~68 px) — title on line 1; full metadata row on line 2;
- *                         *all* property-flag badges rendered.
+ * Pages-view leaf row for one page: title + ↗ inbound link count + ⊟
+ * child-block count + relative modified time + the first property-flag
+ * badge (if any).
  *
  * Inputs are typed primitive props (no objects with reference identity
  * that change across renders) so `React.memo`'s shallow compare can hit
  * across parent re-renders. Mirrors the pattern in `BlockListItem`.
- *
- * The wrapping `<div role="row">` carries `data-density={density}` so
- * integration tests can assert which mode is active without reading the
- * computed style.
  */
 
 import { Bookmark, FileText, Trash2 } from 'lucide-react'
@@ -31,12 +19,11 @@ import { DuplicateTitleCue } from '@/components/common/DuplicateTitleCue'
 import { HighlightMatch } from '@/components/common/HighlightMatch'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
-import type { DensityMode } from '@/hooks/usePageBrowserDensity'
 import { usePagePrefetchIntent } from '@/hooks/usePagePrefetchIntent'
 import type { ViewportObserver } from '@/hooks/useViewportObserver'
 import { cn } from '@/lib/utils'
 
-export interface DensityRowProps {
+export interface PageRowProps {
   // ── Page identity ───────────────────────────────────────────────────
   /** Stable page id — drives `id="page-row-…"` and the focused-row aria
    * activedescendant link. */
@@ -47,9 +34,7 @@ export interface DensityRowProps {
    * not filtering. */
   filterText: string
 
-  // ── Density + virtualizer chrome ───────────────────────────────────
-  /** Active density mode. Drives `data-density` and metadata layout. */
-  density: DensityMode
+  // ── Virtualizer chrome ─────────────────────────────────────────────
   /** Virtualizer row index (data-index for the virtualizer's
    * `measureElement` ref). */
   virtualRowIndex: number
@@ -79,20 +64,16 @@ export interface DensityRowProps {
    * renders every colliding page instead of dropping all but the last,
    * so two rows can read `Agaric`. Renders the page's creation date —
    * decoded from the ULID, the one property that reliably differs —
-   * after the title so the rows can be told apart. Shown at EVERY
-   * density, including `compact`: this is identity, not metadata, and
-   * hiding it behind the tooltip would leave the compact list ambiguous.
+   * after the title so the rows can be told apart.
    */
   duplicateTitle: boolean
 
   // ── Typed metadata primitives (Phase 1 IPC columns) ────────
   /** Epoch-ms from `last_modified_at` (#109 Phase 2). `null` renders "never". */
   lastModifiedAt: number | null
-  /** Inbound link count. Zero suppresses the ↗ badge in `regular` /
-   * `expanded`. */
+  /** Inbound link count. Zero suppresses the ↗ badge. */
   inboundLinkCount: number
-  /** Descendant non-deleted block count. Zero suppresses the ⊟ badge in
-   * `regular` / `expanded`. */
+  /** Descendant non-deleted block count. Zero suppresses the ⊟ badge. */
   childBlockCount: number
   /** Page itself carries `block_tags`. */
   hasTags: boolean
@@ -119,8 +100,7 @@ export interface DensityRowProps {
   /** Called when the leading star button is clicked. */
   onToggleStar: (pageId: string) => void
   /** Called when the trailing delete button is clicked. `null` clears
-   * the parent's dialog target (kept for API parity with the legacy
-   * `PageRow` callback). */
+   * the parent's dialog target. */
   onDeleteRequest: (target: { id: string; name: string } | null) => void
 
   // ── Prefetch (#2850) ─────────────────────────────────────────────────
@@ -207,9 +187,9 @@ function PropertyFlagBadge({ token, label }: PropertyFlagBadgeProps): React.Reac
   )
 }
 
-/** Build the ordered list of flag tokens this row should render. Pure
- * — exported only so the test file can assert against the same
- * allowlist without depending on render output. */
+/** Build the ordered list of flag tokens a page carries; the row renders
+ * the first. Pure — exported only so the test file can assert against the
+ * same allowlist without depending on render output. */
 export function collectFlagTokens(props: {
   hasTags: boolean
   hasTodo: boolean
@@ -224,13 +204,12 @@ export function collectFlagTokens(props: {
   return out
 }
 
-function DensityRowInner(props: DensityRowProps): React.ReactElement {
+function PageRowInner(props: PageRowProps): React.ReactElement {
   const { t } = useTranslation()
   const {
     pageId,
     title: rawTitle,
     filterText,
-    density,
     virtualRowIndex,
     virtualRowStart,
     measureElement,
@@ -297,34 +276,9 @@ function DensityRowInner(props: DensityRowProps): React.ReactElement {
     [viewport, pageId, measureElement],
   )
 
-  // Metadata pieces, computed once so the compact-tooltip path and the
-  // regular/expanded rendering reuse the same strings.
   const relative = formatRelativeShort(lastModifiedAt)
   const relativeLabel = relative === '' ? t('pageBrowser.metadata.never') : relative
-  const inboundText = t('pageBrowser.metadata.inbound', { count: inboundLinkCount })
-  const childrenText = t('pageBrowser.metadata.children', { count: childBlockCount })
-  const flagTokens = collectFlagTokens({ hasTags, hasTodo, hasScheduled, hasDue })
-
-  // Compact density folds the full metadata into the row's `title`
-  // tooltip so users keep access to ↗ / ⊟ / flags without the extra
-  // chrome. Regular / expanded use the visible badge cluster, so the
-  // tooltip stays the bare title (matching today's `PageRow`).
-  // Edge case: suppress `↗ 0` / `⊟ 0` in the tooltip the same
-  // way the visible badges do — assemble the tail conditionally so
-  // an empty page doesn't read "0 inbound links, 0 child blocks".
-  const tooltipText = (() => {
-    if (density !== 'compact') return title
-    const tail: string[] = []
-    if (inboundLinkCount > 0) tail.push(inboundText)
-    if (childBlockCount > 0) tail.push(childrenText)
-    tail.push(t('pageBrowser.metadata.lastModified', { relative: relativeLabel }))
-    return `${title} — ${tail.join(', ')}`
-  })()
-
-  const showInbound = inboundLinkCount > 0 && density !== 'compact'
-  const showChildren = childBlockCount > 0 && density !== 'compact'
-  const visibleFlags =
-    density === 'compact' ? [] : density === 'regular' ? flagTokens.slice(0, 1) : flagTokens
+  const firstFlag = collectFlagTokens({ hasTags, hasTodo, hasScheduled, hasDue })[0]
 
   return (
     <div
@@ -337,7 +291,6 @@ function DensityRowInner(props: DensityRowProps): React.ReactElement {
       role="row"
       aria-selected={focused}
       data-page-item
-      data-density={density}
       data-starred={starred}
       data-selected={multiSelected}
       tabIndex={-1}
@@ -347,10 +300,7 @@ function DensityRowInner(props: DensityRowProps): React.ReactElement {
       onMouseEnter={() => prefetchIntent.schedule(pageId)}
       onMouseLeave={prefetchIntent.cancel}
       className={cn(
-        'group flex w-full items-center gap-3 rounded-lg px-3 text-left text-sm transition-colors hover:bg-accent/50',
-        density === 'compact' && 'py-1',
-        density === 'regular' && 'py-2',
-        density === 'expanded' && 'py-2.5',
+        'group flex w-full items-center gap-3 rounded-lg px-3 py-2 text-left text-sm transition-colors hover:bg-accent/50',
         focused && 'list-cursor',
       )}
       style={rowStyle(virtualRowStart)}
@@ -391,21 +341,16 @@ function DensityRowInner(props: DensityRowProps): React.ReactElement {
         </Button>
         <button
           type="button"
-          className={cn(
-            'page-browser-item flex flex-1 min-w-0 border-none bg-transparent p-0 text-left text-sm cursor-pointer focus-ring-visible focus-visible:ring-inset',
-            density === 'expanded' ? 'flex-col items-start gap-1' : 'items-center gap-3',
-          )}
+          className="page-browser-item flex flex-1 min-w-0 items-center gap-3 border-none bg-transparent p-0 text-left text-sm cursor-pointer focus-ring-visible focus-visible:ring-inset"
           onClick={() => onSelect(pageId, title)}
           // #2850 — keyboard focus intent (mirrors the row's hover intent
           // above); this button is the row's actual focusable element.
           onFocus={() => prefetchIntent.schedule(pageId)}
           onBlur={prefetchIntent.cancel}
         >
-          <span
-            className={cn('flex items-center gap-3 min-w-0', density === 'expanded' && 'w-full')}
-          >
+          <span className="flex items-center gap-3 min-w-0">
             <FileText className="h-4 w-4 shrink-0 text-muted-foreground" />
-            <span className="page-browser-item-title truncate" title={tooltipText}>
+            <span className="page-browser-item-title truncate" title={title}>
               <HighlightMatch text={title} filterText={trimmedFilter} />
               {showAliasBadge && (
                 <span className="alias-badge text-xs text-muted-foreground">(alias)</span>
@@ -413,43 +358,36 @@ function DensityRowInner(props: DensityRowProps): React.ReactElement {
               {duplicateTitle && <DuplicateTitleCue pageId={pageId} className="ml-2" />}
             </span>
           </span>
-          {/* Metadata row.
-           *   - Regular: inline (same line as title) on the right.
-           *   - Expanded: a second line under the title.
-           *   - Compact: hidden — tooltip-only access.
-           */}
-          {density !== 'compact' && (
-            <span
-              data-page-metadata
-              className={cn(
-                'flex shrink-0 items-center gap-2 text-xs text-muted-foreground',
-                density === 'regular' && 'ml-auto pl-2',
-                density === 'expanded' && 'pl-7 w-full',
-              )}
-            >
-              {showInbound && (
-                <span data-metadata-inbound className="max-sm:hidden">
-                  <span aria-hidden="true">{`${inboundLinkCount} ↗`}</span>
-                  <span className="sr-only">{inboundText}</span>
-                </span>
-              )}
-              {showChildren && (
-                <span data-metadata-children className="max-sm:hidden">
-                  <span aria-hidden="true">{`${childBlockCount} ⊟`}</span>
-                  <span className="sr-only">{childrenText}</span>
-                </span>
-              )}
-              <span data-metadata-relative>
-                <span aria-hidden="true">{relativeLabel}</span>
+          <span
+            data-page-metadata
+            className="ml-auto flex shrink-0 items-center gap-2 pl-2 text-xs text-muted-foreground"
+          >
+            {inboundLinkCount > 0 && (
+              <span data-metadata-inbound className="max-sm:hidden">
+                <span aria-hidden="true">{`${inboundLinkCount} ↗`}</span>
                 <span className="sr-only">
-                  {t('pageBrowser.metadata.lastModified', { relative: relativeLabel })}
+                  {t('pageBrowser.metadata.inbound', { count: inboundLinkCount })}
                 </span>
               </span>
-              {visibleFlags.map((flag) => (
-                <PropertyFlagBadge key={flag} token={flag} label={t(FLAG_LABEL_KEY[flag])} />
-              ))}
+            )}
+            {childBlockCount > 0 && (
+              <span data-metadata-children className="max-sm:hidden">
+                <span aria-hidden="true">{`${childBlockCount} ⊟`}</span>
+                <span className="sr-only">
+                  {t('pageBrowser.metadata.children', { count: childBlockCount })}
+                </span>
+              </span>
+            )}
+            <span data-metadata-relative>
+              <span aria-hidden="true">{relativeLabel}</span>
+              <span className="sr-only">
+                {t('pageBrowser.metadata.lastModified', { relative: relativeLabel })}
+              </span>
             </span>
-          )}
+            {firstFlag && (
+              <PropertyFlagBadge token={firstFlag} label={t(FLAG_LABEL_KEY[firstFlag])} />
+            )}
+          </span>
         </button>
       </div>
       {/* oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- gridcell focus is delegated to inner action buttons; CSS-grid cell would break as a <td> without a <table> */}
@@ -487,9 +425,9 @@ const FLAG_LABEL_KEY: Record<'tags' | 'todos' | 'scheduled' | 'due', string> = {
 }
 
 /**
- * Memoised `DensityRow`. All props are primitives (or stable
+ * Memoised `PageRow`. All props are primitives (or stable
  * callbacks/refs from the parent) so the default shallow compare hits
  * across parent re-renders.
  */
-export const DensityRow = memo(DensityRowInner)
-DensityRow.displayName = 'DensityRow'
+export const PageRow = memo(PageRowInner)
+PageRow.displayName = 'PageRow'

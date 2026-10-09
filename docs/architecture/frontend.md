@@ -145,7 +145,7 @@ Drafts, undo stacks (per-page, not per-space — `useUndoStore` is not space-par
 
 ### Preferences registry (device scope, not synced)
 
-`localStorage` is a SECOND persistence tier, distinct from the SQL tier and from the Zustand `persist`-backed stores above. `src/lib/preferences.ts` (#2466) is its typed, central registry of `localStorage`-backed preferences (`page-browser-density`, `page-browser-sort`, `starred-pages`, `tag-colors`, per-space recent searches/commands, per-page block-collapse state, …). `scripts/check-raw-local-storage.mjs` fails a raw `localStorage.getItem`/`setItem`/`removeItem`/`clear` call outside a small grandfathered list, so a new preference has to go through the registry.
+`localStorage` is a SECOND persistence tier, distinct from the SQL tier and from the Zustand `persist`-backed stores above. `src/lib/preferences.ts` (#2466) is its typed, central registry of `localStorage`-backed preferences (`page-browser-sort`, `starred-pages`, `tag-colors`, per-space recent searches/commands, per-page block-collapse state, …). `scripts/check-raw-local-storage.mjs` fails a raw `localStorage.getItem`/`setItem`/`removeItem`/`clear` call outside a small grandfathered list, so a new preference has to go through the registry.
 
 The contract:
 

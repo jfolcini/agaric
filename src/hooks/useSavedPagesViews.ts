@@ -30,7 +30,7 @@ export interface UseSavedPagesViewsReturn {
   views: SavedPagesView[]
   /**
    * The saved view (if any) whose captured tuple structurally matches
-   * `currentTuple`, or `null` when the current sort/density/filters combo
+   * `currentTuple`, or `null` when the current sort/filters combo
    * doesn't match any saved view. `null` when `currentTuple` was omitted.
    */
   activeView: SavedPagesView | null

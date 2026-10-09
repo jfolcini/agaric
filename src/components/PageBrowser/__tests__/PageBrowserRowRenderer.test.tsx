@@ -6,7 +6,7 @@
  *
  *   - `header`    → `HeaderRow`     (section header: Starred / Pages)
  *   - `tree-page` → `TreePageRow`   (recursive `PageTreeItem` wrapper)
- *   - `page`      → `DensityPageRow` (metadata-aware, density-aware leaf)
+ *   - `page`      → `FlatPageRow`   (metadata-aware `PageRow` leaf)
  *
  * These tests drive each branch.
  *
@@ -28,7 +28,7 @@ import type { ViewportObserver } from '@/hooks/useViewportObserver'
 import type { BlockRow } from '@/lib/bindings'
 import type { PageTreeNode } from '@/lib/page-tree'
 
-/** #2850 — no-op `ViewportObserver` stub (see `DensityRow.test.tsx`). */
+/** #2850 — no-op `ViewportObserver` stub (see `PageRow.test.tsx`). */
 function makeMockViewport(): ViewportObserver {
   return {
     createObserveRef: () => () => {},
@@ -114,7 +114,6 @@ function baseProps(
     onPageSelect: vi.fn(),
     onCreateUnder: vi.fn(),
     onDeleteRequest: vi.fn(),
-    density: 'regular',
     selectedIds: new Set<string>(),
     onToggleMultiSelect: vi.fn(),
     viewport: makeMockViewport(),
@@ -131,26 +130,19 @@ function renderRow(props: PageBrowserRowRendererProps) {
   )
 }
 
-describe('PageBrowserRowRenderer — page leaf (DensityRow)', () => {
+describe('PageBrowserRowRenderer — page leaf (PageRow)', () => {
   const pageRow: Extract<PageBrowserRow, { kind: 'page' }> = {
     kind: 'page',
     page: blockRow({ id: 'leaf-1', content: 'Project Alpha' }),
     pageIndex: 0,
   }
 
-  it('renders the DensityRow leaf variant (data-density present)', () => {
-    const { container } = renderRow(baseProps(pageRow, { density: 'regular' }))
-    const densityLeaf = container.querySelector('[data-page-item][data-density="regular"]')
-    expect(densityLeaf).not.toBeNull()
-    // The DensityRow uses a stable id derived from the page id.
+  it('renders the PageRow leaf variant', () => {
+    const { container } = renderRow(baseProps(pageRow))
+    expect(container.querySelector('[data-page-item]')).not.toBeNull()
+    // The PageRow uses a stable id derived from the page id.
     expect(container.querySelector('#page-row-leaf-1')).not.toBeNull()
     expect(screen.getByText('Project Alpha')).toBeInTheDocument()
-  })
-
-  it('threads the active density through to the DensityRow body', () => {
-    const { container } = renderRow(baseProps(pageRow, { density: 'compact' }))
-    expect(container.querySelector('[data-page-item][data-density="compact"]')).not.toBeNull()
-    expect(container.querySelector('[data-page-item][data-density="regular"]')).toBeNull()
   })
 })
 
@@ -370,35 +362,29 @@ describe('PageBrowserRowRenderer — duplicate titles (#4709)', () => {
     expect(container.querySelector('[data-duplicate-title-cue]')).toBeNull()
   })
 
-  it('shows the creation date on a duplicate-title flat row at every density', () => {
+  it('shows the creation date on a duplicate-title flat row', () => {
     const pageId = `${ulidPrefixForMs(Date.UTC(2026, 4, 5, 12))}0123456789ABCDEF`
-    for (const density of ['compact', 'regular', 'expanded'] as const) {
-      const { container, unmount } = renderRow(
-        baseProps(
-          {
-            kind: 'page',
-            page: blockRow({ id: pageId, content: 'Agaric' }),
-            pageIndex: 0,
-            duplicateTitle: true,
-          },
-          { density },
-        ),
-      )
-      const cue = container.querySelector('[data-duplicate-title-cue]')
-      expect(cue?.textContent, `density=${density}`).toMatch(/May 5, 2026, \d{1,2}:\d{2}\s?(AM|PM)/)
-      unmount()
-    }
+    const { container } = renderRow(
+      baseProps({
+        kind: 'page',
+        page: blockRow({ id: pageId, content: 'Agaric' }),
+        pageIndex: 0,
+        duplicateTitle: true,
+      }),
+    )
+    const cue = container.querySelector('[data-duplicate-title-cue]')
+    expect(cue?.textContent).toMatch(/May 5, 2026, \d{1,2}:\d{2}\s?(AM|PM)/)
   })
 })
 
 describe('PageBrowserRowRenderer — a11y', () => {
-  it('has no a11y violations for a density leaf row', async () => {
+  it('has no a11y violations for a page leaf row', async () => {
     const pageRow: PageBrowserRow = {
       kind: 'page',
       page: blockRow({ id: 'leaf-axe', content: 'Roadmap' }),
       pageIndex: 0,
     }
-    const { container } = renderRow(baseProps(pageRow, { density: 'regular' }))
+    const { container } = renderRow(baseProps(pageRow))
     await waitFor(async () => {
       const results = await axe(container)
       expect(results).toHaveNoViolations()

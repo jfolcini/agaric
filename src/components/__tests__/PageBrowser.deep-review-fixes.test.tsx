@@ -73,7 +73,6 @@ beforeEach(() => {
   // round-trip values through sessionStorage; isolate each test.
   sessionStorage.clear()
   localStorage.removeItem('page-browser-sort')
-  localStorage.removeItem('page-browser-density')
   localStorage.removeItem('starred-pages')
   // Compound-filter chips now live in a module-global per-space store that
   // persists to localStorage (#1750); reset both the in-memory slice and the
@@ -139,7 +138,6 @@ describe('PageBrowser', () => {
           name: 'Tagged',
           createdAt: '2026-01-01T00:00:00.000Z',
           sort: 'alphabetical',
-          density: 'regular',
           filters: [
             { type: 'Tag', tag: 'TAG_HERE' },
             { type: 'Tag', tag: 'TAG_ELSEWHERE' },
@@ -210,7 +208,7 @@ describe('PageBrowser', () => {
     // ── #3339 — saved-view delete is undoable ───────────────────────────
     // The delete button sits one row-item away from the apply target and the
     // store is localStorage-only (no Trash, no restore path), so a mis-click
-    // used to destroy the whole {name, sort, density, filters} tuple for good.
+    // used to destroy the whole {name, sort, filters} tuple for good.
     it('#3339: deleting a saved view offers an Undo that restores the tuple', async () => {
       const user = userEvent.setup()
       const savedView = {
@@ -218,7 +216,6 @@ describe('PageBrowser', () => {
         name: 'My view',
         createdAt: '2026-01-01T00:00:00.000Z',
         sort: 'alphabetical',
-        density: 'regular',
         filters: [{ type: 'Orphan' }],
       }
       localStorage.setItem(
@@ -273,7 +270,6 @@ describe('PageBrowser', () => {
       expect(restored[0]).toMatchObject({
         name: 'My view',
         sort: 'alphabetical',
-        density: 'regular',
         filters: [{ type: 'Orphan' }],
       })
     })

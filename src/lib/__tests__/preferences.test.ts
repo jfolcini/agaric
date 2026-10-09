@@ -1,8 +1,7 @@
 /**
  * Tests for the preferences registry (`src/lib/preferences.ts`): the pure
  * `effectiveKey` / `readPreference` / `writePreference` helpers and the
- * `usePreference` hook. Reset conventions mirror
- * `hooks/__tests__/usePageBrowserDensity.test.ts` (localStorage.clear).
+ * `usePreference` hook.
  */
 
 import { act, renderHook } from '@testing-library/react'

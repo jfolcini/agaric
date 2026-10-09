@@ -1,7 +1,7 @@
 /**
  * SavedViewsDropdown — list/apply/delete UI for named Pages-view snapshots
- * (#2003 piece 1). Slotted into `PageBrowserHeader`'s search/sort/density
- * row, next to the density `Select`.
+ * (#2003 piece 1). Slotted into `PageBrowserHeader`'s search/sort row,
+ * next to the sort `Select`.
  *
  * Pure presentational + its own transient popover/dialog-open state (mirrors
  * `PageHeaderMenu`'s `moveSubmenuOpen` — it's idiomatic in this codebase for

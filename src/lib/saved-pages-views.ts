@@ -1,6 +1,6 @@
 /**
  * Saved Pages views — localStorage-backed named snapshots of the Pages
- * view's `{ sort, density, filters }` tuple (#2003 piece 1).
+ * view's `{ sort, filters }` tuple (#2003 piece 1).
  *
  * Mirrors `starred-pages.ts`: a thin pure adapter over the `PREFERENCES`
  * registry (`PREFERENCES.savedPagesViews`, see `src/lib/preferences.ts`),
@@ -27,10 +27,9 @@ import {
 } from '@/lib/preferences'
 import { requireActiveScope } from '@/lib/space-scope'
 
-/** The `{ sort, density, filters }` tuple a saved view captures / restores. */
+/** The `{ sort, filters }` tuple a saved view captures / restores. */
 export interface PagesViewTuple {
   sort: SavedPagesView['sort']
-  density: SavedPagesView['density']
   filters: FilterPrimitive[]
 }
 
@@ -52,7 +51,6 @@ export function savePagesView(name: string, tuple: PagesViewTuple): SavedPagesVi
     name,
     createdAt: new Date().toISOString(),
     sort: tuple.sort,
-    density: tuple.density,
     filters: tuple.filters,
   }
   writePreference(PREFERENCES.savedPagesViews, {
@@ -77,13 +75,9 @@ function filtersEqual(a: FilterPrimitive[], b: FilterPrimitive[]): boolean {
   return JSON.stringify(a) === JSON.stringify(b)
 }
 
-/** Structural equality between a saved view and a live `{ sort, density, filters }` tuple. */
+/** Structural equality between a saved view and a live `{ sort, filters }` tuple. */
 export function viewMatchesTuple(view: SavedPagesView, tuple: PagesViewTuple): boolean {
-  return (
-    view.sort === tuple.sort &&
-    view.density === tuple.density &&
-    filtersEqual(view.filters, tuple.filters)
-  )
+  return view.sort === tuple.sort && filtersEqual(view.filters, tuple.filters)
 }
 
 /**

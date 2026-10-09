@@ -3,7 +3,7 @@
 
 The Pages view is the canonical "show me every page in this space" surface — a flat, sortable, paginated list of every page in the active space. Beyond the name-substring search box at the top, it offers a row of **compound filter chips** that narrow the list *server-side*: instead of scrolling, you stack a few filters ("orphaned pages edited long ago") and the backend returns exactly that set.
 
-This page documents the user-facing filter vocabulary. For the data flow behind the list (the metadata IPC, the seven sort modes, density rows), see [Pages view architecture](architecture/pages-view.md). The same filter primitives power the find-across-pages surface — see [Search](SEARCH.md) for the query-input side of that story.
+This page documents the user-facing filter vocabulary. For the data flow behind the list (the metadata IPC, the seven sort modes, the page rows), see [Pages view architecture](architecture/pages-view.md). The same filter primitives power the find-across-pages surface — see [Search](SEARCH.md) for the query-input side of that story.
 
 ## Overview
 
@@ -15,8 +15,6 @@ The chip set is split into two groups, mirroring the popover:
 - **Pages** (grooming facets that only make sense at page granularity): Orphan, Stub, No inbound links, and Exclude journal pages.
 
 The chip row is always present — it rides the same `list_pages_with_metadata` code path as the list itself. It lives in `src/components/PageBrowser/PageBrowserFilterRow.tsx`, fed by the Add-filter popover in `src/components/PageBrowser/AddFilterPopover.tsx`.
-
-Row chrome is a separate, orthogonal preference: **density** (`compact` / `regular` / `expanded`, default `regular`) persists per device via `src/lib/preferences.ts` and is read through `src/hooks/usePageBrowserDensity.ts`. It changes how much metadata each row shows; it does not affect filtering.
 
 ## Filter facets
 

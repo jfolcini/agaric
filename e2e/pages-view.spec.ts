@@ -191,11 +191,6 @@ async function selectSort(page: Page, optionName: string) {
   await expect(page.getByRole('listbox')).toHaveCount(0)
 }
 
-async function selectDensity(page: Page, optionName: 'Compact' | 'Regular' | 'Expanded') {
-  await page.getByRole('combobox', { name: 'Row density' }).click()
-  await page.getByRole('option', { name: optionName, exact: true }).click()
-}
-
 async function scrollGridToBottom(page: Page) {
   await grid(page).evaluate((el) => {
     el.scrollTop = el.scrollHeight
@@ -680,46 +675,6 @@ test.describe('sort', () => {
 })
 
 // ===========================================================================
-// 8. Density
-// ===========================================================================
-test.describe('density', () => {
-  test('toggling density changes the rows and persists across reload', async ({ page }) => {
-    await bootPages(page)
-    const firstRow = grid(page).locator('[data-page-item]').first()
-    // Default density.
-    await expect(firstRow).toHaveAttribute('data-density', 'regular')
-
-    // Compact — metadata badges fold into the tooltip (no visible metadata).
-    await selectDensity(page, 'Compact')
-    await expect(grid(page).locator('[data-page-item]').first()).toHaveAttribute(
-      'data-density',
-      'compact',
-    )
-    await expect(
-      grid(page).locator('[data-page-item]').first().locator('[data-page-metadata]'),
-    ).toHaveCount(0)
-
-    // Expanded — full metadata row is present.
-    await selectDensity(page, 'Expanded')
-    await expect(grid(page).locator('[data-page-item]').first()).toHaveAttribute(
-      'data-density',
-      'expanded',
-    )
-    await expect(
-      grid(page).locator('[data-page-item]').first().locator('[data-page-metadata]'),
-    ).toBeVisible()
-
-    // Persist across reload.
-    await page.reload()
-    await openPagesView(page)
-    await expect(grid(page).locator('[data-page-item]').first()).toHaveAttribute(
-      'data-density',
-      'expanded',
-    )
-  })
-})
-
-// ===========================================================================
 // 9. Pagination / virtualization (extends, doesn't duplicate, pages-filter)
 // ===========================================================================
 test.describe('pagination / virtualization', () => {
@@ -876,14 +831,13 @@ test.describe('CRUD + grooming', () => {
 })
 
 // ===========================================================================
-// 11. Chip-row + density rows
+// 11. Chip-row + page rows
 // ===========================================================================
-test.describe('chip-row + density rows', () => {
-  test('renders the chip-row + density rows', async ({ page }) => {
+test.describe('chip-row + page rows', () => {
+  test('renders the chip-row + page rows', async ({ page }) => {
     await bootPages(page)
     await expect(page.getByRole('button', { name: 'Add filter' })).toBeVisible()
-    // Density rows expose `data-density`.
-    await expect(grid(page).locator('[data-page-item][data-density]').first()).toBeVisible()
+    await expect(grid(page).locator('[data-page-item]').first()).toBeVisible()
   })
 })
 
@@ -891,7 +845,7 @@ test.describe('chip-row + density rows', () => {
 // 12. Metadata badges
 // ===========================================================================
 test.describe('metadata badges', () => {
-  test('inbound / children / last-modified render on regular-density rows', async ({ page }) => {
+  test('inbound / children / last-modified render on page rows', async ({ page }) => {
     await bootPages(page)
     // Getting Started: 1 inbound link, 5 child blocks, a relative-time stamp.
     const row = grid(page).locator('[data-page-item]:has-text("Getting Started")')
@@ -1163,17 +1117,13 @@ test.describe('responsive', () => {
   test('narrow viewport wraps the header controls instead of overflowing', async ({ page }) => {
     await page.setViewportSize({ width: 420, height: 900 })
     await bootPages(page)
-    // The search/sort/density row uses flex-wrap; on a narrow viewport the
-    // sort and density controls drop below the search field rather than
-    // overflowing. Assert the row is taller than a single control (wrapped)
-    // and that every control stays inside the viewport width.
+    // The search/sort row uses flex-wrap; on a narrow viewport the sort
+    // control drops below the search field rather than overflowing. Assert
+    // the control stays inside the viewport width.
     const sortBox = await page.getByRole('combobox', { name: 'Sort order' }).boundingBox()
-    const densityBox = await page.getByRole('combobox', { name: 'Row density' }).boundingBox()
     expect(sortBox).not.toBeNull()
-    expect(densityBox).not.toBeNull()
-    if (sortBox && densityBox) {
+    if (sortBox) {
       expect(sortBox.x + sortBox.width).toBeLessThanOrEqual(420 + 1)
-      expect(densityBox.x + densityBox.width).toBeLessThanOrEqual(420 + 1)
     }
     // The list still renders the seed pages at this width.
     await expect(grid(page).getByText('Getting Started', { exact: true })).toBeVisible()
