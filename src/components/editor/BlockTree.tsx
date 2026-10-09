@@ -492,7 +492,6 @@ export function BlockTree({
   })
 
   // ── Enter-creates-block refs ───────────────────────────────────────
-  const justCreatedBlockIds = useRef(new Set<string>())
   const prevFocusedRef = useRef<string | null>(null)
   // #4729 — ids the empty-block cleanup below must skip exactly once. Two
   // writers, both cases of "one step of an interaction deliberately leaves the
@@ -1054,7 +1053,6 @@ export function BlockTree({
     moveUp,
     moveDown,
     createBelow,
-    justCreatedBlockIds,
     preserveEmptyBlockIds,
     discardDraft: handleDiscardDraft,
     t,
@@ -1161,14 +1159,13 @@ export function BlockTree({
 
   // ── Empty-block cleanup: drop a leaked empty block on focus-leave ───
   // #4729 Part 1. This effect used to fire ONLY for blocks the user had just
-  // created with Enter (`justCreatedBlockIds`) and checked only that the
-  // content was blank. Both halves of that were wrong: every OTHER way of
-  // leaving a block empty (clearing its text and clicking away, the add-block
-  // button, a template row) leaked a permanent row — 47% of the live content
-  // blocks in a real vault are empty and 106 of them sit stranded between two
-  // non-empty blocks — while a just-created block that had been given a due
-  // date from the gutter was deleted anyway, because blank content was the
-  // only test.
+  // created with Enter and checked only that the content was blank. Both
+  // halves of that were wrong: every OTHER way of leaving a block empty
+  // (clearing its text and clicking away, the add-block button, a template
+  // row) leaked a permanent row — 47% of the live content blocks in a real
+  // vault are empty and 106 of them sit stranded between two non-empty blocks
+  // — while a just-created block that had been given a due date from the
+  // gutter was deleted anyway, because blank content was the only test.
   //
   // Both are now the shared predicate in `empty-block-cleanup.ts` (the same
   // one the backend boot sweep uses), which also carries the "carries nothing"
@@ -1178,10 +1175,6 @@ export function BlockTree({
     const prevId = prevFocusedRef.current
     prevFocusedRef.current = focusedBlockId
     if (!prevId || prevId === focusedBlockId) return
-
-    // Bookkeeping unchanged — leaving a block closes its "just created"
-    // window, which is what gates `handleDiscard`'s own auto-delete.
-    justCreatedBlockIds.current.delete(prevId)
 
     // #5278 — a reload kept this block's old text while it held focus. Left
     // with nothing typed, show the synced text before the next edit mounts the

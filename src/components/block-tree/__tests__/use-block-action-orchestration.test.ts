@@ -137,7 +137,6 @@ function makeDefaultParams(
     moveUp: vi.fn(async () => true),
     moveDown: vi.fn(async () => true),
     createBelow: vi.fn(async () => 'NEW_1' as string | null),
-    justCreatedBlockIds: { current: new Set<string>() },
     discardDraft: vi.fn(),
     t: vi.fn((key: string) => key) as unknown as TFunction,
     ...rest,
@@ -1813,17 +1812,6 @@ describe('useBlockActionOrchestration handleEnterSave', () => {
     expect(params.setFocused).toHaveBeenCalledWith('NEW_1')
   })
 
-  it('adds new block to justCreatedBlockIds', async () => {
-    const params = makeDefaultParams()
-    const { result } = renderHook(() => useBlockActionOrchestration(params))
-
-    await act(async () => {
-      await result.current.handleEnterSave()
-    })
-
-    expect(params.justCreatedBlockIds.current.has('NEW_1')).toBe(true)
-  })
-
   it('does nothing when focusedBlockId is null', async () => {
     const params = makeDefaultParams({ focusedBlockId: null })
     const { result } = renderHook(() => useBlockActionOrchestration(params))
@@ -1895,19 +1883,6 @@ describe('useBlockActionOrchestration handleEnterSave', () => {
     expect(createOrder).toBeLessThan(editOrder)
   })
 
-  it('split-created block is NOT registered as a just-created empty stub', async () => {
-    const params = makeDefaultParams()
-    params.rovingEditor.splitAtCaret = vi.fn(() => ({ before: 'hello', after: 'world' }))
-    const { result } = renderHook(() => useBlockActionOrchestration(params))
-
-    await act(async () => {
-      await result.current.handleEnterSave()
-    })
-
-    // It carries real content, so Discard must not auto-delete it.
-    expect(params.justCreatedBlockIds.current.has('NEW_1')).toBe(false)
-  })
-
   it('caret at end (after === "") uses the legacy empty-block path', async () => {
     const params = makeDefaultParams()
     params.rovingEditor.splitAtCaret = vi.fn(() => ({ before: 'hello', after: '' }))
@@ -1919,7 +1894,6 @@ describe('useBlockActionOrchestration handleEnterSave', () => {
 
     expect(params.handleFlush).toHaveBeenCalled()
     expect(params.createBelow).toHaveBeenCalledWith('B')
-    expect(params.justCreatedBlockIds.current.has('NEW_1')).toBe(true)
   })
 
   // Store contract (#730 family): edit() RESOLVES false on failure — it never
@@ -2145,7 +2119,10 @@ describe('useBlockActionOrchestration handleDiscard', () => {
     expect(params.setFocused).not.toHaveBeenCalled()
   })
 
-  it('removes just-created empty block on discard', () => {
+  // #5412 — Discard used to delete the blank stub Enter had just created,
+  // without the cleanup's guards, so a file pasted into it went to Trash with
+  // it. Unfocusing hands the block to BlockTree's leaked-empty-block cleanup.
+  it('does not delete an untouched blank stub itself', () => {
     const emptyB = [
       makeBlock({ id: 'A', depth: 0, content: 'Alpha' }),
       makeBlock({ id: 'B', depth: 0, content: '' }),
@@ -2154,91 +2131,8 @@ describe('useBlockActionOrchestration handleDiscard', () => {
     const params = makeDefaultParams({
       focusedBlockId: 'B',
       collapsedVisible: emptyB,
-      // The untouched stub: empty in the STORE too, which is what the removal
-      // is gated on (#4577).
       blocks: emptyB,
     })
-    params.justCreatedBlockIds.current.add('B')
-    params.rovingEditor.unmount = vi.fn(() => null)
-    const { result } = renderHook(() => useBlockActionOrchestration(params))
-
-    act(() => {
-      result.current.handleDiscard()
-    })
-
-    expect(params.remove).toHaveBeenCalledWith('B')
-    expect(params.justCreatedBlockIds.current.has('B')).toBe(false)
-    expect(params.setFocused).toHaveBeenCalledWith(null)
-  })
-
-  it('does not remove block that was not just created', () => {
-    const params = makeDefaultParams({
-      focusedBlockId: 'B',
-      collapsedVisible: [
-        makeBlock({ id: 'A', depth: 0, content: 'Alpha' }),
-        makeBlock({ id: 'B', depth: 0, content: '' }),
-        makeBlock({ id: 'C', depth: 0, content: 'Charlie' }),
-      ],
-    })
-    // B is NOT in justCreatedBlockIds
-    params.rovingEditor.unmount = vi.fn(() => null)
-    const { result } = renderHook(() => useBlockActionOrchestration(params))
-
-    act(() => {
-      result.current.handleDiscard()
-    })
-
-    expect(params.remove).not.toHaveBeenCalled()
-    expect(params.setFocused).toHaveBeenCalledWith(null)
-  })
-
-  it('does not remove just-created block when user has typed content', () => {
-    const typedB = [
-      makeBlock({ id: 'A', depth: 0, content: 'Alpha' }),
-      makeBlock({ id: 'B', depth: 0, content: 'buy milk' }),
-      makeBlock({ id: 'C', depth: 0, content: 'Charlie' }),
-    ]
-    const params = makeDefaultParams({
-      focusedBlockId: 'B',
-      collapsedVisible: typedB,
-      // #4577 — the typed text is in the STORE (an earlier debounced commit
-      // put it there), not only in the unmount delta.
-      blocks: typedB,
-    })
-    params.justCreatedBlockIds.current.add('B')
-    // unmount returns non-null → the tail typed since that commit is discarded
-    params.rovingEditor.unmount = vi.fn(() => 'buy milk and eggs')
-    const { result } = renderHook(() => useBlockActionOrchestration(params))
-
-    act(() => {
-      result.current.handleDiscard()
-    })
-
-    // Block should NOT be removed because user had typed content
-    expect(params.remove).not.toHaveBeenCalled()
-    expect(params.setFocused).toHaveBeenCalledWith(null)
-  })
-
-  // #4577 — the flushing slash commands (`/todo`, `/numbered-list`, `/effort`,
-  // …) await `flushActiveDraft()`, whose `commitNow()` calls `markCommitted(md)`
-  // and so REBASES the roving editor's delta baseline. `unmount()` then reports
-  // null for a block the user filled in. Gating the removal on the unmount delta
-  // alone soft-deleted the whole block — text and the property the command had
-  // just written.
-  it('does not remove a just-created block whose content the flush already committed', () => {
-    const committedB = [
-      makeBlock({ id: 'A', depth: 0, content: 'Alpha' }),
-      makeBlock({ id: 'B', depth: 0, content: 'buy milk' }),
-      makeBlock({ id: 'C', depth: 0, content: 'Charlie' }),
-    ]
-    const params = makeDefaultParams({
-      focusedBlockId: 'B',
-      collapsedVisible: committedB,
-      blocks: committedB,
-    })
-    params.justCreatedBlockIds.current.add('B')
-    // The flush already committed 'buy milk' and rebased the baseline, so the
-    // unmount delta is empty — exactly as it is after `/todo`.
     params.rovingEditor.unmount = vi.fn(() => null)
     const { result } = renderHook(() => useBlockActionOrchestration(params))
 
