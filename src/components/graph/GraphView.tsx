@@ -35,14 +35,11 @@ import { useShouldShowMobileChrome } from '@/hooks/useShouldShowMobileChrome'
 import { unwrap } from '@/lib/app-error'
 import { commands } from '@/lib/bindings'
 import { applyGraphFilters, type GraphFilter } from '@/lib/graph-filters'
-import {
-  computeLocalGraph,
-  DEFAULT_LOCAL_GRAPH_HOPS,
-  type LocalGraphHops,
-} from '@/lib/graph-neighborhood'
+import { computeLocalGraph, type LocalGraphHops } from '@/lib/graph-neighborhood'
 import { getShortcutKeys } from '@/lib/keyboard-config'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
+import { PREFERENCES, readPreference, writePreference } from '@/lib/preferences'
 import { requireActiveScope } from '@/lib/space-scope'
 import { cn } from '@/lib/utils'
 import { useSpaceStore } from '@/stores/space'
@@ -200,10 +197,20 @@ export function GraphView(): React.ReactElement {
   const [filters, setFilters] = useState<GraphFilter[]>([{ type: 'excludeJournal', value: true }])
 
   // Local-graph mode (#1429): when active, the graph is filtered to the
-  // `localHops`-neighborhood of the page open in the active tab. Defaults to
-  // OFF so the global graph's behavior is unchanged.
-  const [localMode, setLocalMode] = useState(false)
-  const [localHops, setLocalHops] = useState<LocalGraphHops>(DEFAULT_LOCAL_GRAPH_HOPS)
+  // `localHops`-neighborhood of the page open in the active tab. Mode and depth
+  // persist per space (#5433), so the graph reopens as it was left; before a
+  // space is known there is nothing to read or keep.
+  const [storedLocal] = useState(() =>
+    currentSpaceId == null
+      ? PREFERENCES.graphLocal.defaultValue
+      : readPreference(PREFERENCES.graphLocal, currentSpaceId),
+  )
+  const [localMode, setLocalMode] = useState(storedLocal.active)
+  const [localHops, setLocalHops] = useState<LocalGraphHops>(storedLocal.hops)
+  useEffect(() => {
+    if (currentSpaceId == null) return
+    writePreference(PREFERENCES.graphLocal, { active: localMode, hops: localHops }, currentSpaceId)
+  }, [currentSpaceId, localMode, localHops])
 
   // The "current page" = the top of the active tab's page stack. `null` when
   // the active tab has no page open (e.g. a view tab), which disables the
@@ -381,12 +388,15 @@ export function GraphView(): React.ReactElement {
 
   // Local-graph layer (#1429): when focus mode is active and a page is open,
   // narrow the (already filter-applied) graph to the seed's N-hop neighborhood.
-  // Reuses the same node/edge shapes so the renderer is untouched. Falls back
-  // to the full filtered graph whenever the seed page isn't a visible node.
+  // Reuses the same node/edge shapes so the renderer is untouched. A seed the
+  // filters hide leaves nothing to show, and the overlay below says so.
   const seedLabel = useMemo(() => {
     if (seedPageId === null) return null
     return nodes.find((n) => n.id === seedPageId)?.label ?? seedEntry?.title ?? null
   }, [nodes, seedPageId, seedEntry])
+
+  // A tag opens in the page editor too, but the graph's nodes are pages only.
+  const seedIsTag = tags.some((tag) => tag.tag_id === seedPageId)
 
   // #1752: when the active tab loses its page (seed becomes `null`), clear
   // local-graph mode in state. Otherwise the boolean lingers as `true` —
@@ -535,9 +545,10 @@ export function GraphView(): React.ReactElement {
          * cleared and its simulation torn down by `useGraphSimulation`. The
          * SVG stays mounted (so the filter bar above remains usable to widen
          * the filter), and this overlay surfaces the empty state. Guarded on
-         * `filteredNodes.length === 0` rather than `nodes.length === 0` (which
+         * `displayNodes.length === 0` rather than `nodes.length === 0` (which
          * the top-level branch above already handles) so it fires precisely
-         * for the "filtered to zero" case.
+         * for the "filtered to zero" case, including a local-mode seed the
+         * filters hide.
          */}
         {displayNodes.length === 0 && (
           <div
@@ -546,7 +557,13 @@ export function GraphView(): React.ReactElement {
           >
             <EmptyState
               icon={Network}
-              message={localActive ? t('graph.local.noNeighbors') : t('graph.noMatches')}
+              message={
+                localActive
+                  ? t(seedIsTag ? 'graph.local.seedIsTag' : 'graph.local.seedHidden', {
+                      page: seedLabel,
+                    })
+                  : t('graph.noMatches')
+              }
             />
           </div>
         )}

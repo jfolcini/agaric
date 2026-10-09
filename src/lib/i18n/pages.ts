@@ -433,6 +433,7 @@ export const pages: Record<string, string> = {
   'metadata.blockCount_other': '{{count}} blocks',
   'metadata.created': 'Created {{date}}',
   'pageHeader.openOutline': 'Open outline',
+  'pageHeader.showInGraph': 'Show in graph',
   'outline.title': 'Outline',
   'outline.empty': 'No headings found',
   'outline.navLabel': 'Page outline',

@@ -42,6 +42,7 @@ import { ValidationCode } from '@/lib/search-query/validation-codes'
 import { useNavigationStore } from '@/stores/navigation'
 import { announcePagesMovedOut } from '@/stores/page-move'
 import { renamePage } from '@/stores/page-rename'
+import { showPageInGraph } from '@/stores/show-page-in-graph'
 import { useSpaceStore } from '@/stores/space'
 import { useTabsStore } from '@/stores/tabs'
 import { useUndoStore } from '@/stores/undo'
@@ -218,16 +219,19 @@ export function PageHeader({ pageId, title, onBack, onEditSource, kebabRef }: Pa
     setKebabOpen(false)
   }, [copyPageMarkdownToClipboard])
 
-  // --- Keyboard shortcut for export (Ctrl+Shift+E) ---
+  // --- Page shortcuts: export as Markdown, show in graph ---
   useEffect(() => {
-    function handleExportShortcut(e: KeyboardEvent) {
+    function handlePageShortcut(e: KeyboardEvent) {
       if (matchesShortcutBinding(e, 'exportPageMarkdown')) {
         e.preventDefault()
         void copyPageMarkdownToClipboard()
+      } else if (matchesShortcutBinding(e, 'showPageInGraph')) {
+        e.preventDefault()
+        showPageInGraph()
       }
     }
-    document.addEventListener('keydown', handleExportShortcut)
-    return () => document.removeEventListener('keydown', handleExportShortcut)
+    document.addEventListener('keydown', handlePageShortcut)
+    return () => document.removeEventListener('keydown', handlePageShortcut)
   }, [copyPageMarkdownToClipboard])
 
   // The kebab "Delete page" item calls this. `usePageDeleteAction` opens
@@ -269,6 +273,11 @@ export function PageHeader({ pageId, title, onBack, onEditSource, kebabRef }: Pa
   const handleKebabOpenOutline = useCallback(() => {
     setOutlineOpen(true)
     setKebabOpen(false)
+  }, [])
+
+  const handleKebabShowInGraph = useCallback(() => {
+    setKebabOpen(false)
+    showPageInGraph()
   }, [])
 
   const handleKebabInsertEmoji = useCallback(() => {
@@ -547,6 +556,7 @@ export function PageHeader({ pageId, title, onBack, onEditSource, kebabRef }: Pa
               onUndo={handlePageUndo}
               onRedo={handlePageRedo}
               onOpenOutline={handleKebabOpenOutline}
+              onShowInGraph={handleKebabShowInGraph}
               onInsertEmoji={handleKebabInsertEmoji}
               onKebabOpenChange={setKebabOpen}
               onAddAlias={handleKebabAddAlias}
