@@ -83,7 +83,10 @@ async function leaveBlankBlockFor(marker: string): Promise<string | null> {
   return markedId
 }
 
-describe('Agaric real-backend attachment-only block (#5412)', () => {
+// Skipped until the lane's window has focus (#5457): the cleanup is gated on
+// `document.hasFocus()`, which is false here, so the control case cannot pass and
+// the survive case would pass without the cleanup ever running.
+describe.skip('Agaric real-backend attachment-only block (#5412)', () => {
   it('control: the same sequence cleans up a blank block holding nothing', async () => {
     await waitForAppReady()
     await markedBlockThenBlankSibling(CONTROL_MARKER)
