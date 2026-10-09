@@ -836,6 +836,14 @@ async fn delete_property_core(
         )));
     }
 
+    // #5378 — read before the delete: the stamps it clears depend on the
+    // state being left.
+    let prior_task = if key == "todo_state" {
+        Some(properties::prior_task_state_in_tx(&mut tx, &block_id).await?)
+    } else {
+        None
+    };
+
     // 3. Append DeleteProperty op
     let del_payload = DeletePropertyPayload {
         block_id: BlockId::from_trusted(&block_id),
@@ -870,6 +878,17 @@ async fn delete_property_core(
     // `apply_op_tx`'s count maintenance is a no-op and the effects are empty).
     crate::materializer::apply_op_projected(&mut tx, &op_record, materializer.loro_state(), false)
         .await?;
+    if let Some(prior) = prior_task {
+        properties::write_todo_timestamp_transitions_in_tx(
+            &mut tx,
+            materializer.loro_state(),
+            device_id,
+            &block_id,
+            &prior,
+            None,
+        )
+        .await?;
+    }
     let bounds = if key == "repeat" {
         properties::delete_repeat_bounds_in_tx(
             &mut tx,

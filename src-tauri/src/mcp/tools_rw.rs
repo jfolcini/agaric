@@ -15,10 +15,13 @@
 //! | `append_markdown` | [`append_markdown_inner`] | A Markdown outline under `parent_id`, read and resolved as paste does: an unmatched `[[Name]]` / `#name` creates the page or tag. |
 //! | `update_block_content` | [`edit_block_inner`] | |
 //! | `set_property` | [`set_property_inner`] | Exactly one of `value_*` must be provided. |
-//! | `add_tag` | [`add_tag_inner`] | Tag block must already exist — no tag creation. |
+//! | `add_tag` | [`add_tag_inner`] | Tag block must already exist in the block's space. |
 //! | `create_page` | [`create_block_inner`] | `block_type = "page"`, `parent_id = None`. |
 //! | `delete_block` | [`delete_block_inner`] | Soft delete. Reversible via `reverse.rs`. |
 //! | `list_spaces` | [`list_spaces_registry_inner`] | #2728 — pure read, no `*_inner` mutation. Registered here too (mirroring `tools_ro.rs`) so an RW-only agent can discover the `space_id` every tool above requires. |
+//! | `move_page_to_space` | [`move_blocks_to_space_inner`] | Page blocks only: a page moves with its descendants. |
+//! | `create_tag` | [`create_block_inner_with_space`] | `block_type = "tag"`; returns the space's same-name tag when one exists. |
+//! | `delete_property` | [`delete_property_inner`] | Rejects `space`; the inner refuses system-managed keys. |
 //!
 //! # Actor scoping
 //!
@@ -31,11 +34,10 @@
 //! # What is deliberately NOT exposed
 //!
 //! - `purge_block` / `delete_attachment` (non-reversible)
-//! - Tag creation (blocks with `block_type = 'tag'`), bar the tags an
-//!   `append_markdown` names, which it creates as paste does
 //! - Property-definition mutation
-//! - Space membership (the reserved `space` property key, #3301): setting it
-//!   is the canonical cross-space move, not a content write
+//! - The reserved `space` property key through `set_property` /
+//!   `delete_property` (#3301): space membership changes only through
+//!   `move_page_to_space`
 //! - Conflict resolution, compaction, recovery
 //! - Anything that touches sync peers or the device id
 //!
@@ -53,13 +55,16 @@ use super::handler_utils::{
     normalize_ulid_arg, parse_args, to_tool_result, validate_block_in_space,
 };
 use super::registry::{
-    TOOL_ADD_TAG, TOOL_APPEND_BLOCK, TOOL_APPEND_MARKDOWN, TOOL_CREATE_PAGE, TOOL_DELETE_BLOCK,
-    TOOL_LIST_SPACES, TOOL_SET_PROPERTY, TOOL_UPDATE_BLOCK_CONTENT, ToolDescription, ToolRegistry,
+    TOOL_ADD_TAG, TOOL_APPEND_BLOCK, TOOL_APPEND_MARKDOWN, TOOL_CREATE_PAGE, TOOL_CREATE_TAG,
+    TOOL_DELETE_BLOCK, TOOL_DELETE_PROPERTY, TOOL_LIST_SPACES, TOOL_MOVE_PAGE_TO_SPACE,
+    TOOL_SET_PROPERTY, TOOL_UPDATE_BLOCK_CONTENT, ToolDescription, ToolRegistry,
 };
 use super::view_notify::{NoopViewChangeEmitter, ViewChangeEmitter};
 use crate::commands::{
-    add_tag_inner, append_markdown_inner, create_block_inner, create_block_inner_with_space,
-    delete_block_inner, edit_block_inner, list_spaces_registry_inner, set_property_inner,
+    DeletePropertyResponse, add_tag_inner, append_markdown_inner, create_block_inner,
+    create_block_inner_with_space, delete_block_inner, delete_property_inner, edit_block_inner,
+    get_active_block_inner, list_spaces_registry_inner, move_blocks_to_space_inner,
+    set_property_inner,
 };
 use crate::materializer::Materializer;
 use agaric_core::error::AppError;
@@ -165,6 +170,29 @@ struct DeleteBlockArgs {
 #[serde(deny_unknown_fields)]
 struct ListSpacesArgs {}
 
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct MovePageToSpaceArgs {
+    page_id: String,
+    space_id: String,
+    target_space_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CreateTagArgs {
+    name: String,
+    space_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct DeletePropertyArgs {
+    block_id: String,
+    key: String,
+    space_id: String,
+}
+
 // ---------------------------------------------------------------------------
 // ReadWriteTools
 // ---------------------------------------------------------------------------
@@ -190,9 +218,9 @@ pub struct ReadWriteTools {
 
 impl ReadWriteTools {
     /// Construct a read-write registry. `pool` must be the *writer* pool
-    /// — every tool but `list_spaces` mutates. (`list_spaces`, #2728, is a
-    /// pure read — see `handle_list_spaces` — but still runs against this
-    /// same pool for simplicity; it issues no writes.)
+    /// — every tool but `list_spaces` mutates. (`list_spaces` is a pure
+    /// read — see `handle_list_spaces` — but still runs against this same
+    /// pool for simplicity; it issues no writes.)
     ///
     /// The view-change emitter defaults to a no-op; production callers chain
     /// [`with_view_emitter`](Self::with_view_emitter) to route change
@@ -238,6 +266,10 @@ pub(crate) fn list_tool_descriptions() -> Vec<ToolDescription> {
         // `space_id` every other tool requires.
         tool_desc_list_spaces(),
         tool_desc_append_markdown(),
+        // #5378 — appended last so the order above holds.
+        tool_desc_move_page_to_space(),
+        tool_desc_create_tag(),
+        tool_desc_delete_property(),
     ]
 }
 
@@ -285,6 +317,15 @@ impl ToolRegistry for ReadWriteTools {
                 TOOL_LIST_SPACES => handle_list_spaces(&pool, args).await,
                 TOOL_APPEND_MARKDOWN => {
                     handle_append_markdown(&pool, &materializer, &device_id, emitter, args).await
+                }
+                TOOL_MOVE_PAGE_TO_SPACE => {
+                    handle_move_page_to_space(&pool, &materializer, &device_id, emitter, args).await
+                }
+                TOOL_CREATE_TAG => {
+                    handle_create_tag(&pool, &materializer, &device_id, emitter, args).await
+                }
+                TOOL_DELETE_PROPERTY => {
+                    handle_delete_property(&pool, &materializer, &device_id, emitter, args).await
                 }
                 other => Err(unknown_tool_error(other)),
             }
@@ -422,8 +463,8 @@ fn tool_desc_set_property() -> ToolDescription {
 fn tool_desc_add_tag() -> ToolDescription {
     ToolDescription {
         name: TOOL_ADD_TAG.to_string(),
-        description: "Apply an existing tag to a block. Does NOT create tags — the tag block \
-                      must already exist (create tags from the UI)."
+        description: "Apply an existing tag to a block. The tag block must already exist — \
+                      `create_tag` makes one."
             .to_string(),
         input_schema: json!({
             "type": "object",
@@ -434,7 +475,7 @@ fn tool_desc_add_tag() -> ToolDescription {
                 "tag_id":   { "type": "string", "description": "ULID of an existing tag block." },
                 "space_id": {
                     "type": "string",
-                    "description": "ULID of the space the agent is operating in. The tag application is rejected with a Validation error if `block_id`'s owning page lives in a different space. (Tags themselves are global — `tag_id` is not space-scoped.)",
+                    "description": "ULID of the space the agent is operating in. The tag application is rejected with a Validation error if `block_id`'s owning page lives in a different space. `tag_id` must be a tag of the same space.",
                 },
             },
         }),
@@ -511,6 +552,70 @@ fn tool_desc_list_spaces() -> ToolDescription {
             "type": "object",
             "additionalProperties": false,
             "properties": {},
+        }),
+    }
+}
+
+fn tool_desc_move_page_to_space() -> ToolDescription {
+    ToolDescription {
+        name: TOOL_MOVE_PAGE_TO_SPACE.to_string(),
+        description: "Move a page, with every block under it, to another space. Reversible via \
+                      page history."
+            .to_string(),
+        input_schema: json!({
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["page_id", "space_id", "target_space_id"],
+            "properties": {
+                "page_id": { "type": "string", "description": "ULID of the page to move. Only page blocks move; a content block stays with its page." },
+                "space_id": {
+                    "type": "string",
+                    "description": "ULID of the space the agent is operating in. The move is rejected with a Validation error if `page_id` lives in a different space.",
+                },
+                "target_space_id": { "type": "string", "description": "ULID of the live space to move the page into (see list_spaces)." },
+            },
+        }),
+    }
+}
+
+fn tool_desc_create_tag() -> ToolDescription {
+    ToolDescription {
+        name: TOOL_CREATE_TAG.to_string(),
+        description: "Create a tag in the given space, or, when the space already has a live \
+                      tag with that name, return that tag. Apply it with add_tag."
+            .to_string(),
+        input_schema: json!({
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["name", "space_id"],
+            "properties": {
+                "name": { "type": "string", "description": "Tag name (becomes the tag's content)." },
+                "space_id": { "type": "string", "description": "ULID of the space the tag belongs to." },
+            },
+        }),
+    }
+}
+
+fn tool_desc_delete_property() -> ToolDescription {
+    ToolDescription {
+        name: TOOL_DELETE_PROPERTY.to_string(),
+        description: "Delete a property from a block. Reversible via page history. The task \
+                      keys behave as in the app: deleting `todo_state` un-tasks the block, and \
+                      deleting `repeat` removes its end conditions too. The bookkeeping keys \
+                      `created_at`, `completed_at`, `repeat-seq` and `repeat-origin` are refused."
+            .to_string(),
+        input_schema: json!({
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["block_id", "key", "space_id"],
+            "properties": {
+                "block_id": { "type": "string", "description": "ULID of the target block." },
+                "key": { "type": "string", "description": "Property key to delete. The reserved key `space` is rejected — use move_page_to_space." },
+                "space_id": {
+                    "type": "string",
+                    "description": "ULID of the space the agent is operating in. The delete is rejected with a Validation error if `block_id`'s owning page lives in a different space.",
+                },
+            },
         }),
     }
 }
@@ -769,9 +874,9 @@ async fn handle_add_tag(
     let tag_id = normalize_ulid_arg(&args.tag_id);
     let space_id = normalize_ulid_arg(&args.space_id);
     // Refuse cross-space writes at the MCP boundary. We
-    // validate only the target `block_id`; tags themselves are global
-    // (no `space` property by design), so validating `tag_id` would
-    // reject every legitimate add_tag call.
+    // validate only the target `block_id`: `add_tag_inner` itself rejects
+    // a tag of another space and adopts a space-less one, which
+    // `validate_block_in_space` would refuse.
     validate_block_in_space(pool, &block_id, &space_id).await?;
     let resp = add_tag_inner(
         pool,
@@ -859,6 +964,101 @@ async fn handle_list_spaces(pool: &SqlitePool, args: Value) -> Result<Value, App
     let _args: ListSpacesArgs = parse_args(TOOL_LIST_SPACES, args)?;
     let resp = list_spaces_registry_inner(pool).await?;
     to_tool_result(&resp)
+}
+
+async fn handle_move_page_to_space(
+    pool: &SqlitePool,
+    materializer: &Materializer,
+    device_id: &str,
+    emitter: &dyn ViewChangeEmitter,
+    args: Value,
+) -> Result<Value, AppError> {
+    let args: MovePageToSpaceArgs = parse_args(TOOL_MOVE_PAGE_TO_SPACE, args)?;
+    let page_id = BlockId::from_string(&args.page_id)?;
+    let space_id = normalize_ulid_arg(&args.space_id);
+    let target_space_id = SpaceId::from_string(args.target_space_id)?;
+    validate_block_in_space(pool, page_id.as_str(), &space_id).await?;
+    // The engine refuses `space` on a content block; a top-level tag would
+    // pass it, and moving one strands the blocks of the old space it tags.
+    let page = get_active_block_inner(pool, page_id.clone()).await?;
+    if page.block_type != "page" {
+        return Err(AppError::validation(format!(
+            "tool `{TOOL_MOVE_PAGE_TO_SPACE}`: block '{page_id}' is a {} block; only pages move \
+             between spaces",
+            page.block_type,
+        )));
+    }
+    move_blocks_to_space_inner(
+        pool,
+        device_id,
+        materializer,
+        vec![page_id.clone()],
+        target_space_id.as_str().to_owned(),
+    )
+    .await?;
+    emit_blocks_changed_for(pool, emitter, page_id.clone()).await;
+    to_tool_result(&json!({
+        "page_id": page_id.as_str(),
+        "space_id": target_space_id.as_str(),
+    }))
+}
+
+async fn handle_create_tag(
+    pool: &SqlitePool,
+    materializer: &Materializer,
+    device_id: &str,
+    emitter: &dyn ViewChangeEmitter,
+    args: Value,
+) -> Result<Value, AppError> {
+    let args: CreateTagArgs = parse_args(TOOL_CREATE_TAG, args)?;
+    let space_id = normalize_ulid_arg(&args.space_id);
+    let scope = SpaceScope::Active(SpaceId::from_string(space_id)?);
+    let resp = create_block_inner_with_space(
+        pool,
+        device_id,
+        materializer,
+        "tag".to_string(),
+        args.name,
+        None,
+        None,
+        &scope,
+        None,
+    )
+    .await?;
+    emit_blocks_changed_for(pool, emitter, resp.id.clone()).await;
+    to_tool_result(&resp)
+}
+
+async fn handle_delete_property(
+    pool: &SqlitePool,
+    materializer: &Materializer,
+    device_id: &str,
+    emitter: &dyn ViewChangeEmitter,
+    args: Value,
+) -> Result<Value, AppError> {
+    let args: DeletePropertyArgs = parse_args(TOOL_DELETE_PROPERTY, args)?;
+    // #3301 — deleting `space` clears the page's membership, hiding it from
+    // every space-scoped view; space changes go through `move_page_to_space`.
+    if args.key == agaric_store::op::SPACE_PROPERTY_KEY {
+        return Err(AppError::validation(format!(
+            "tool `{TOOL_DELETE_PROPERTY}`: `{}` is space membership, not a content property; \
+             use `{TOOL_MOVE_PAGE_TO_SPACE}`",
+            agaric_store::op::SPACE_PROPERTY_KEY,
+        )));
+    }
+    let block_id = normalize_ulid_arg(&args.block_id);
+    let space_id = normalize_ulid_arg(&args.space_id);
+    validate_block_in_space(pool, &block_id, &space_id).await?;
+    let active_id = crate::ulid::verify_active(pool, &BlockId::from_trusted(&block_id)).await?;
+    let deleted_keys =
+        delete_property_inner(pool, device_id, materializer, active_id, args.key.clone()).await?;
+    // Same `block:properties-changed` payload as the local `delete_property`.
+    emit_blocks_changed_for(pool, emitter, BlockId::from_trusted(&block_id)).await;
+    emitter.emit_property_changed(block_id.clone(), deleted_keys);
+    to_tool_result(&DeletePropertyResponse {
+        block_id,
+        key: args.key,
+    })
 }
 
 // ---------------------------------------------------------------------------

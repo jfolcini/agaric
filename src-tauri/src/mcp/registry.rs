@@ -76,6 +76,9 @@ pub(crate) const TOOL_SET_PROPERTY: &str = "set_property";
 pub(crate) const TOOL_ADD_TAG: &str = "add_tag";
 pub(crate) const TOOL_CREATE_PAGE: &str = "create_page";
 pub(crate) const TOOL_DELETE_BLOCK: &str = "delete_block";
+pub(crate) const TOOL_MOVE_PAGE_TO_SPACE: &str = "move_page_to_space";
+pub(crate) const TOOL_CREATE_TAG: &str = "create_tag";
+pub(crate) const TOOL_DELETE_PROPERTY: &str = "delete_property";
 
 /// Metadata returned by [`ToolRegistry::list_tools`] — one entry per
 /// advertised tool. The JSON shape matches MCP's `tools/list` response:

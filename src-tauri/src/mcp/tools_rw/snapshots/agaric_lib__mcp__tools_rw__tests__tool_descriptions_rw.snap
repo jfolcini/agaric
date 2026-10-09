@@ -78,7 +78,7 @@ expression: wire
       - space_id
     type: object
   name: set_property
-- description: Apply an existing tag to a block. Does NOT create tags — the tag block must already exist (create tags from the UI).
+- description: "Apply an existing tag to a block. The tag block must already exist — `create_tag` makes one."
   inputSchema:
     additionalProperties: false
     properties:
@@ -86,7 +86,7 @@ expression: wire
         description: ULID of the block to tag.
         type: string
       space_id:
-        description: "ULID of the space the agent is operating in. The tag application is rejected with a Validation error if `block_id`'s owning page lives in a different space. (Tags themselves are global — `tag_id` is not space-scoped.)"
+        description: "ULID of the space the agent is operating in. The tag application is rejected with a Validation error if `block_id`'s owning page lives in a different space. `tag_id` must be a tag of the same space."
         type: string
       tag_id:
         description: ULID of an existing tag block.
@@ -156,3 +156,56 @@ expression: wire
       - space_id
     type: object
   name: append_markdown
+- description: "Move a page, with every block under it, to another space. Reversible via page history."
+  inputSchema:
+    additionalProperties: false
+    properties:
+      page_id:
+        description: ULID of the page to move. Only page blocks move; a content block stays with its page.
+        type: string
+      space_id:
+        description: "ULID of the space the agent is operating in. The move is rejected with a Validation error if `page_id` lives in a different space."
+        type: string
+      target_space_id:
+        description: ULID of the live space to move the page into (see list_spaces).
+        type: string
+    required:
+      - page_id
+      - space_id
+      - target_space_id
+    type: object
+  name: move_page_to_space
+- description: "Create a tag in the given space, or, when the space already has a live tag with that name, return that tag. Apply it with add_tag."
+  inputSchema:
+    additionalProperties: false
+    properties:
+      name:
+        description: "Tag name (becomes the tag's content)."
+        type: string
+      space_id:
+        description: ULID of the space the tag belongs to.
+        type: string
+    required:
+      - name
+      - space_id
+    type: object
+  name: create_tag
+- description: "Delete a property from a block. Reversible via page history. The task keys behave as in the app: deleting `todo_state` un-tasks the block, and deleting `repeat` removes its end conditions too. The bookkeeping keys `created_at`, `completed_at`, `repeat-seq` and `repeat-origin` are refused."
+  inputSchema:
+    additionalProperties: false
+    properties:
+      block_id:
+        description: ULID of the target block.
+        type: string
+      key:
+        description: "Property key to delete. The reserved key `space` is rejected — use move_page_to_space."
+        type: string
+      space_id:
+        description: "ULID of the space the agent is operating in. The delete is rejected with a Validation error if `block_id`'s owning page lives in a different space."
+        type: string
+    required:
+      - block_id
+      - key
+      - space_id
+    type: object
+  name: delete_property
