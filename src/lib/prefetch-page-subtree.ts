@@ -154,6 +154,21 @@ export function prefetchPageSubtree(spaceId: string, pageId: string): void {
 }
 
 /**
+ * #5438 — park an already-empty subtree for a page created this instant, so
+ * the BlockTree that mounts for it skips the `load_page_subtree` round trip
+ * that would return nothing. Same single-consumption, TTL and
+ * structure-change rules as a speculative entry; not counted against the cap
+ * because it is certain to be consumed, not a guess.
+ */
+export function parkEmptyPageSubtree(spaceId: string, pageId: string): void {
+  prefetchMap.set(keyFor(spaceId, pageId), {
+    promise: Promise.resolve({ blocks: [], truncated: false, total: 0 }),
+    expiresAt: Date.now() + PREFETCH_TTL_MS,
+    structureChanges: getRecordedGraphStructureChanges(),
+  })
+}
+
+/**
  * Single-consumption read for `page-blocks.ts` `load()`. Returns the live
  * parked promise for `(spaceId, pageId)` and DELETES the entry so no other
  * consumer can observe it again — a later reload (sync/undo/blocks:changed)

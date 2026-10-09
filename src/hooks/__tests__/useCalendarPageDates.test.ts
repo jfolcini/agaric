@@ -22,6 +22,7 @@ import {
   __resetCalendarPageDatesForTests,
   invalidateCalendarPageDates,
   PAGE_DATES_TTL_MS,
+  prefetchCalendarPageDates,
   samePageMap,
   useCalendarPageDates,
 } from '@/hooks/useCalendarPageDates'
@@ -76,9 +77,57 @@ describe('useCalendarPageDates', () => {
 
     expect(result.current.pageMap.size).toBe(0)
     expect(result.current.loading).toBe(true)
+    expect(result.current.fetchedThisMount).toBe(false)
 
     await waitFor(() => {
       expect(result.current.loading).toBe(false)
+    })
+    // #5438 — the map came from this mount's own round trip.
+    expect(result.current.fetchedThisMount).toBe(true)
+  })
+
+  describe('boot prefetch seed (#5438)', () => {
+    it('seeds synchronously from a settled prefetch and counts it as this mount’s fetch', async () => {
+      journalPagesResponse = () => [makePage({ id: 'P1', content: '2025-06-15' })]
+      await prefetchCalendarPageDates(SPACE_ID, RANGE.startDate, RANGE.endDate)
+
+      const { result } = renderHook(() => useCalendarPageDates(RANGE))
+
+      // No loading frame: the map is there on the first render.
+      expect(result.current.loading).toBe(false)
+      expect(result.current.pageMap.get('2025-06-15')).toBe('P1')
+      expect(result.current.fetchedThisMount).toBe(true)
+      // The effect's cache hit settles without a second round trip or a
+      // change of mind.
+      await act(async () => {})
+      expect(result.current.fetchedThisMount).toBe(true)
+      expect(result.current.loading).toBe(false)
+      expect(fetchCallCount()).toBe(1)
+    })
+
+    it('a later mount served from the cache is not this mount’s fetch', async () => {
+      const first = renderHook(() => useCalendarPageDates(RANGE))
+      await waitFor(() => {
+        expect(first.result.current.loading).toBe(false)
+      })
+      expect(first.result.current.fetchedThisMount).toBe(true)
+      first.unmount()
+
+      const second = renderHook(() => useCalendarPageDates(RANGE))
+      expect(second.result.current.loading).toBe(false)
+      expect(second.result.current.fetchedThisMount).toBe(false)
+      await act(async () => {})
+      expect(second.result.current.fetchedThisMount).toBe(false)
+      expect(fetchCallCount()).toBe(1)
+
+      // An invalidation re-fetches in place, and that round trip is this mount's.
+      act(() => {
+        invalidateCalendarPageDates()
+      })
+      await waitFor(() => {
+        expect(second.result.current.fetchedThisMount).toBe(true)
+      })
+      expect(fetchCallCount()).toBe(2)
     })
   })
 

@@ -118,6 +118,7 @@ import { unwrap } from '@/lib/app-error'
 import { commands } from '@/lib/bindings'
 import { formatJournalTitle } from '@/lib/date-utils'
 import { t } from '@/lib/i18n'
+import { _resetPrefetchPageSubtreeForTest } from '@/lib/prefetch-page-subtree'
 import { dispatch } from '@/lib/tauri-mock/handlers'
 import { SEED_IDS, seedBlocks } from '@/lib/tauri-mock/seed'
 import { useBlockStore } from '@/stores/blocks'
@@ -138,6 +139,7 @@ if (!HTMLElement.prototype.scrollIntoView) {
 beforeEach(() => {
   vi.clearAllMocks()
   __resetCalendarPageDatesForTests()
+  _resetPrefetchPageSubtreeForTest()
   useBlockStore.setState({ focusedBlockId: null, selectedBlockIds: [] })
   useJournalStore.setState({
     mode: 'daily',
@@ -244,6 +246,23 @@ describe('JournalPage / BlockTree integration — auto-create race', () => {
     // daily page — this guards against a future regression where the
     // surviving auto-creator targets the wrong parent.
     expect(createBlockCalls[0]?.[1]).toMatchObject({ parentId: 'DP_NEW' })
+
+    // #5438 — exactly one page; the page map this mount fetched answered
+    // the `get_journal_page_by_date` probe, and the page created this
+    // instant was not re-read before its first block was created.
+    expect(mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'create_page_in_space')).toHaveLength(
+      1,
+    )
+    expect(
+      mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'get_journal_page_by_date'),
+    ).toHaveLength(0)
+    expect(
+      mockedInvoke.mock.calls.filter(
+        ([cmd, args]) =>
+          cmd === 'load_page_subtree' &&
+          (args as { rootBlockId?: string } | undefined)?.rootBlockId === 'DP_NEW',
+      ),
+    ).toHaveLength(0)
 
     // Focus lands on the block created by the surviving auto-creator
     // (BlockTree.autoCreateFirstBlock under Option 1a).

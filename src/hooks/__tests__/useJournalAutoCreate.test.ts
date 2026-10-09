@@ -35,12 +35,72 @@ function makeOptions(overrides: Partial<Parameters<typeof useJournalAutoCreate>[
     currentDate: new Date(),
     spaceId: 'SPACE_TEST',
     createdPages: new Map<string, string>(),
+    // #5438 — a map served from an earlier mount's cache: the probe arm.
+    // The fresh-map arm sets `pageMapFetchedThisMount` explicitly.
+    pageMap: new Map<string, string>(),
+    pageMapFetchedThisMount: false,
     handleAddBlock: vi.fn(),
     ...overrides,
   }
 }
 
+function probeCalls() {
+  return mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'get_journal_page_by_date')
+}
+
 describe('useJournalAutoCreate', () => {
+  describe('page map fetched by this mount (#5438)', () => {
+    it('creates today without probing when the fresh map lacks it', async () => {
+      const opts = makeOptions({ pageMapFetchedThisMount: true })
+      renderHook(() => useJournalAutoCreate(opts))
+      await waitFor(() => {
+        expect(opts.handleAddBlock).toHaveBeenCalledWith(todayStr)
+      })
+      expect(opts.handleAddBlock).toHaveBeenCalledTimes(1)
+      expect(probeCalls()).toHaveLength(0)
+    })
+
+    it('neither probes nor creates when the fresh map already has today', async () => {
+      const opts = makeOptions({
+        pageMapFetchedThisMount: true,
+        pageMap: new Map([[todayStr, 'P_TODAY']]),
+      })
+      renderHook(() => useJournalAutoCreate(opts))
+      await Promise.resolve()
+      await Promise.resolve()
+      expect(opts.handleAddBlock).not.toHaveBeenCalled()
+      expect(probeCalls()).toHaveLength(0)
+    })
+
+    it('re-probes a map served from an earlier mount, even when it lacks today', async () => {
+      const opts = makeOptions({ pageMapFetchedThisMount: false })
+      renderHook(() => useJournalAutoCreate(opts))
+      await waitFor(() => {
+        expect(opts.handleAddBlock).toHaveBeenCalledWith(todayStr)
+      })
+      expect(probeCalls()).toHaveLength(1)
+    })
+
+    it('a create from the fresh map claims the date, so the shortcut does not create again', async () => {
+      const opts = makeOptions({ pageMapFetchedThisMount: true })
+      renderHook(() => useJournalAutoCreate(opts))
+      await waitFor(() => {
+        expect(opts.handleAddBlock).toHaveBeenCalledTimes(1)
+      })
+
+      act(() => {
+        document.dispatchEvent(new KeyboardEvent('keydown', { key: 'n', bubbles: true }))
+      })
+      // The shortcut probes (`null` = no page) and then bails on the claim.
+      await waitFor(() => {
+        expect(probeCalls()).toHaveLength(1)
+      })
+      await Promise.resolve()
+      await Promise.resolve()
+      expect(opts.handleAddBlock).toHaveBeenCalledTimes(1)
+    })
+  })
+
   it('auto-creates page on mount in daily mode when no page exists for today', async () => {
     const opts = makeOptions()
     renderHook(() => useJournalAutoCreate(opts))

@@ -1200,13 +1200,15 @@ describe('JournalPage', () => {
 
   it('shows empty state when page listing fails', async () => {
     // The backend is down for the whole journal load: the range listing, the
-    // auto-create probe's page creation, and the overdue-task read all fail.
+    // auto-create probe's page creation, the template lookup that runs
+    // alongside it (#5438), and the overdue-task read all fail.
     // The positional `mockRejectedValueOnce` this replaces only covered the
     // first invoke; the rest were answered by the previous test's leaked
     // catch-all implementation (`vi.clearAllMocks()` does not reset one).
     stubJournal({
       list_journal_pages_in_range: () => Promise.reject(new Error('Failed to load')),
       create_page_in_space: () => Promise.reject(new Error('Failed to load')),
+      query_by_property: () => Promise.reject(new Error('Failed to load')),
       list_unfinished_tasks: () => Promise.reject(new Error('Failed to load')),
     })
 
@@ -2732,6 +2734,15 @@ describe('JournalPage', () => {
       const tasks = batchSpecs?.find((s) => s['content'] === '## Tasks')
       expect(morningReview).toMatchObject({ blockType: 'content', parentId: 'DP-TMPL' })
       expect(tasks).toMatchObject({ blockType: 'content', parentId: 'DP-TMPL' })
+
+      // #5438 — exactly one page, and no `get_journal_page_by_date` probe:
+      // the page map this mount fetched already said today had none.
+      expect(
+        mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'create_page_in_space'),
+      ).toHaveLength(1)
+      expect(
+        mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'get_journal_page_by_date'),
+      ).toHaveLength(0)
 
       // No empty-content content specs should appear (regression guard
       // for the legacy "extra blank seed block" bug).

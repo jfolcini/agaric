@@ -32,11 +32,47 @@
 
 import { create } from 'zustand'
 
+import { prefetchCalendarPageDates } from '@/lib/calendar-page-dates-cache'
+import { formatDate, getCalendarMonthRange } from '@/lib/date-utils'
 import { formatErrorForDisplay } from '@/lib/error-display'
 import { i18n } from '@/lib/i18n'
+import { logger } from '@/lib/logger'
+import { prefetchPageSubtree } from '@/lib/prefetch-page-subtree'
+import { useJournalStore } from '@/stores/journal'
+import { useNavigationStore } from '@/stores/navigation'
 import { useSpaceStore } from '@/stores/space'
 
 type BootState = 'booting' | 'ready' | 'error'
+
+/**
+ * #5438 — start the first journal view's fetches alongside `list_spaces`
+ * instead of one render after it: the month's page map, then today's
+ * subtree. The persisted space id is only a hint; the space the app lands in
+ * comes from `refreshAvailableSpaces`, and when the two differ the prefetch
+ * is never read (one caught IPC). `useCalendarPageDates` seeds from the
+ * settled page map; `page-blocks.ts` `load()` consumes the subtree once.
+ */
+function prefetchBootJournal(): void {
+  const spaceId = useSpaceStore.getState().currentSpaceId
+  if (spaceId == null) return
+  if (useNavigationStore.getState().currentView !== 'journal') return
+  const { mode, currentDate } = useJournalStore.getState()
+  if (mode !== 'daily') return
+  const { startDate, endDate } = getCalendarMonthRange(currentDate)
+  prefetchCalendarPageDates(spaceId, startDate, endDate)
+    .then((map) => {
+      const pageId = map.get(formatDate(currentDate))
+      if (pageId) prefetchPageSubtree(spaceId, pageId)
+    })
+    .catch((err: unknown) => {
+      logger.warn(
+        'stores/boot',
+        'journal prefetch failed; the view fetches fresh',
+        { spaceId },
+        err,
+      )
+    })
+}
 
 interface BootStore {
   state: BootState
@@ -61,6 +97,7 @@ export const useBootStore = create<BootStore>((set) => ({
     // resolves for the happy path AND the soft-failure path, and records
     // its outcome for the hard-failure path instead of throwing. Read
     // that outcome after the await settles rather than try/catch.
+    prefetchBootJournal()
     await useSpaceStore.getState().refreshAvailableSpaces()
     const outcome = useSpaceStore.getState().lastRefreshOutcome
     if (outcome.kind === 'hard-error') {
