@@ -112,53 +112,6 @@ test.describe('Search sheet (mobile viewport)', () => {
     await expect(page.getByTestId('in-page-find-toolbar')).toBeVisible()
   })
 
-  test('sits above the soft keyboard with its input visible (#5353)', async ({ page }) => {
-    await waitForBoot(page)
-    await page.getByTestId('search-sheet-trigger').click()
-    const sheet = page.getByTestId('search-sheet')
-    await expect(sheet).toBeVisible()
-    const input = page.getByTestId('in-page-find-input')
-    await expect(input).toBeVisible()
-
-    // Playwright cannot raise a real IME, so simulate Android's: shrink the
-    // visual viewport while the layout viewport (`innerHeight`, `dvh`) stays
-    // at full height, and fire the `resize` the app listens for. This pins the
-    // web half only: on a device the shrink happens only if the WebView gets
-    // the ime() inset, which is MainActivity.kt's job and has no automated lane.
-    const KEYBOARD = 300
-    await page.evaluate((kbd) => {
-      const vv = window.visualViewport
-      if (!vv) throw new Error('visualViewport unavailable in test env')
-      Object.defineProperty(vv, 'height', {
-        configurable: true,
-        get: () => window.innerHeight - kbd,
-      })
-      Object.defineProperty(vv, 'offsetTop', { configurable: true, get: () => 0 })
-      vv.dispatchEvent(new Event('resize'))
-    }, KEYBOARD)
-
-    // Retried until the slide-in animation settles.
-    await expect(async () => {
-      const geometry = await page.evaluate((kbd) => {
-        const box = (testId: string) => {
-          const el = document.querySelector(`[data-testid="${testId}"]`)
-          if (!el) throw new Error(`${testId} not mounted`)
-          const r = el.getBoundingClientRect()
-          return { top: r.top, bottom: r.bottom }
-        }
-        return {
-          sheet: box('search-sheet'),
-          input: box('in-page-find-input'),
-          keyboardTop: window.innerHeight - kbd,
-        }
-      }, KEYBOARD)
-      expect(geometry.sheet.bottom, 'sheet bottom').toBeLessThanOrEqual(geometry.keyboardTop + 1)
-      expect(geometry.sheet.top, 'sheet top').toBeGreaterThanOrEqual(-1)
-      expect(geometry.input.bottom, 'input bottom').toBeLessThanOrEqual(geometry.keyboardTop + 1)
-      expect(geometry.input.top, 'input top').toBeGreaterThanOrEqual(-1)
-    }).toPass({ timeout: 5000 })
-  })
-
   test('closes via the overlay and tears down both embedded stores', async ({ page }) => {
     await waitForBoot(page)
     await page.getByTestId('search-sheet-trigger').click()

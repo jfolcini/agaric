@@ -355,10 +355,20 @@ export function GraphView(): React.ReactElement {
     setRetryNonce((n) => n + 1)
   }, [])
 
+  const localActive = localMode && seedPageId !== null
+
   // Client-side filtering (status, priority, has-date, has-backlinks, exclude-templates).
   // Tag filter is pass-through here because tag_ids is not populated on nodes
-  // — the tag dimension is enforced by the server-side fetch above.
-  const filteredNodes = useMemo(() => applyGraphFilters(nodes, filters), [nodes, filters])
+  // — the tag dimension is enforced by the server-side fetch above. A journal
+  // page open in a tab still seeds local mode: the default journal filter would
+  // drop the seed, and local mode would fall back to the whole graph (#5370).
+  const filteredNodes = useMemo(() => {
+    const kept = applyGraphFilters(nodes, filters)
+    const seed = localActive ? nodes.find((n) => n.id === seedPageId) : undefined
+    if (seed === undefined || kept.includes(seed)) return kept
+    const seedFilters = filters.filter((f) => f.type !== 'excludeJournal')
+    return applyGraphFilters([seed], seedFilters).length > 0 ? [...kept, seed] : kept
+  }, [nodes, filters, localActive, seedPageId])
   const filteredEdges = useMemo(() => {
     if (filteredNodes.length === nodes.length) return edges
     const visibleIds = new Set(filteredNodes.map((n) => n.id))
@@ -377,8 +387,6 @@ export function GraphView(): React.ReactElement {
     if (seedPageId === null) return null
     return nodes.find((n) => n.id === seedPageId)?.label ?? seedEntry?.title ?? null
   }, [nodes, seedPageId, seedEntry])
-
-  const localActive = localMode && seedPageId !== null
 
   // #1752: when the active tab loses its page (seed becomes `null`), clear
   // local-graph mode in state. Otherwise the boolean lingers as `true` —

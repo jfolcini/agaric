@@ -436,21 +436,34 @@ describe('QrScanner', () => {
     expect(warn).not.toHaveBeenCalled()
   })
 
-  it('a scan then unmount does not stop twice (#5386)', async () => {
-    mockStartBehavior = 'scan'
-    mockScanData = 'x'
+  it('a stop that fails after unmount is logged, not reported to the gone parent as a camera error', async () => {
+    mockStartBehavior = 'hanging'
+    const stopFailure = new Error('stop failed')
+    mockStop.mockRejectedValueOnce(stopFailure)
+    const warn = vi.spyOn(logger, 'warn').mockImplementation(() => {})
+    const onError = vi.fn()
+    const onCameraDenied = vi.fn()
     const user = userEvent.setup()
-    const onScan = vi.fn()
-    const { unmount } = render(<QrScanner onScan={onScan} />)
+    const { unmount } = render(
+      <QrScanner onScan={vi.fn()} onError={onError} onCameraDenied={onCameraDenied} />,
+    )
     await user.click(screen.getByRole('button', { name: /scan qr code/i }))
-    await waitFor(() => expect(onScan).toHaveBeenCalled())
-
-    await waitFor(() => expect(mockStop).toHaveBeenCalledTimes(1))
+    await waitFor(() => expect(releaseHangingStart).not.toBeNull())
     unmount()
+
     await act(async () => {
-      await new Promise((resolve) => setTimeout(resolve, 0))
+      releaseHangingStart?.()
     })
-    expect(mockStop).toHaveBeenCalledTimes(1)
+    await waitFor(() =>
+      expect(warn).toHaveBeenCalledWith(
+        'QrScanner',
+        'Failed to stop scanner on unmount',
+        undefined,
+        stopFailure,
+      ),
+    )
+    expect(onError).not.toHaveBeenCalled()
+    expect(onCameraDenied).not.toHaveBeenCalled()
   })
 
   it('permission denied shows the denied message, logs, and notifies the parent (#5386)', async () => {

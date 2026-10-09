@@ -229,6 +229,8 @@ export const pages: Record<string, string> = {
   'pageBrowser.newPagePlaceholder': 'New page name...',
   'pageBrowser.newPage': 'New Page',
   'pageBrowser.noPages': 'No pages yet.',
+  // True with or without journal pages: the default chip hides them (#5370).
+  'pageBrowser.noPagesOutsideJournal': 'No pages outside the journal yet.',
   'pageEditor.empty.message': 'No page open',
   'pageEditor.empty.description':
     "This space doesn't have a page open yet. Head to the Journal to start writing, or browse your pages.",

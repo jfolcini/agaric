@@ -147,9 +147,11 @@ export function QrScanner({ onScan, onError, onCameraDenied }: QrScannerProps) {
         },
       )
       // Unmounted while start() was pending: the cleanup could not stop a
-      // camera that had not started yet.
+      // camera that had not started yet. A failure here is not an init failure.
       if (unmountedRef.current) {
-        await stopIfStarted()
+        stopIfStarted().catch((err: unknown) => {
+          logger.warn('QrScanner', 'Failed to stop scanner on unmount', undefined, err)
+        })
       }
     } catch (err) {
       // Log the raw error for debugging, but surface a translated, cause-aware

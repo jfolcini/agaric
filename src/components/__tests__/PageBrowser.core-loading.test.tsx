@@ -188,13 +188,15 @@ describe('PageBrowser', () => {
 
     expect(await screen.findByText(/No pages yet/)).toBeInTheDocument()
   })
-  it('keeps the create-first empty state under the default journal chip (#5370)', async () => {
+  it('under the default journal chip, the create-first state does not claim the space is empty (#5370)', async () => {
     usePageBrowserFiltersStore.setState({ filtersBySpace: {}, nextAddId: 0 })
     stubInvoke({ list_pages_with_metadata: () => emptyPage })
 
     const { container } = render(<PageBrowser />)
 
-    expect(await screen.findByText(/No pages yet/)).toBeInTheDocument()
+    // The chip may be hiding journal pages, so "No pages yet" could be false.
+    expect(await screen.findByText('No pages outside the journal yet.')).toBeInTheDocument()
+    expect(screen.queryByText(/No pages yet/)).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: /Create your first page/i })).toBeInTheDocument()
     expect(screen.queryByText('No matching pages')).not.toBeInTheDocument()
     // The chip stays, so journal pages are one click away.
