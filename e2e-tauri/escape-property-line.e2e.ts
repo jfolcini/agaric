@@ -48,7 +48,10 @@ const BLANK_STATIC = '[data-testid="block-static"] .block-placeholder'
 // is "stripped and stored".
 const VALUE_CHIP = `[data-testid="property-chip"]*=${VALUE}`
 
-describe('Agaric real-backend Escape on a property-only block (#5448)', () => {
+// Skipped until the lane's window has focus (#5457): the cleanup is gated on
+// `document.hasFocus()`, which is false here, so the control case cannot pass and
+// the survive case would pass without the cleanup ever running.
+describe.skip('Agaric real-backend Escape on a property-only block (#5448)', () => {
   it('control: Escape on a blank block an Enter created cleans it up', async () => {
     await waitForAppReady()
     await navigateTo('Journal')
