@@ -113,7 +113,8 @@ Materializer + sync metrics, in Settings › App health. Useful for diagnosing s
 Tabbed configuration view. On desktop the tabs sit in a vertical rail, bucketed into four groups; on a phone a grouped picker at the top replaces the rail. Each tab is named once, by the rail: panels carry no title of their own. Settings are rows, with the label and description on the left and the control on the right (stacked on a phone).
 
 - **Workspace**
-  - **General** — deadline warning days, Quick Capture hotkey and launch-at-login (desktop), debug mode, reset spaces onboarding, show the welcome tour again.
+  - **General** — deadline warning days, Quick Capture hotkey and launch-at-login (desktop), debug mode, show the welcome tour again.
+  - **Spaces** — the space this device opens in (*Open on launch*: last used or one space), and create, rename, recolour or delete spaces (see [spaces.md](spaces.md)). The SpaceSwitcher's *Manage spaces…* opens it.
   - **Appearance** — language, theme (the palette's *Toggle theme* cycles auto / dark / light), font size, animations, tooltip delay, week start, journal date format. Font size scales note text and its row controls (checkboxes, gutter icons, chip and inline icons), not the app chrome: the sidebar, headers, toolbars and settings stay fixed.
   - **Editor** — the `:` emoji picker, *Tab indents blocks*, external images, link previews on hover.
   - **Keyboard** — full shortcut customisation (see [keyboard.md](keyboard.md)).

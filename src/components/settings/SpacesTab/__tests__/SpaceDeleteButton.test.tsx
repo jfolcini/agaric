@@ -21,7 +21,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   SpaceDeleteBlockedHint,
   SpaceDeleteButton,
-} from '@/components/SpaceManageDialog/SpaceDeleteButton'
+} from '@/components/settings/SpacesTab/SpaceDeleteButton'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { useIsMobile } from '@/hooks/useIsMobile'
 import { t } from '@/lib/i18n'
@@ -163,7 +163,7 @@ describe('SpaceDeleteButton', () => {
     })
     expect(vi.mocked(toast.error)).not.toHaveBeenCalled()
     expect(vi.mocked(logger.warn)).toHaveBeenCalledWith(
-      'components/SpaceManageDialog/SpaceDeleteButton',
+      'components/settings/SpacesTab/SpaceDeleteButton',
       'refresh after delete failed',
       { spaceId: 'SPACE_1' },
       expect.any(Error),

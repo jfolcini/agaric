@@ -82,17 +82,16 @@ async function switchToSpace(page: Page, name: string): Promise<void> {
   await page.getByRole('option', { name, exact: true }).click()
 }
 
+/** Create a space in Settings › Spaces; the app stays on Settings and on the active space. */
 async function createSpace(page: Page, name: string): Promise<void> {
   await page.getByRole('combobox', { name: 'Switch space', exact: true }).click()
   await page.mouse.move(0, 0)
   await page.getByRole('option', { name: 'Manage spaces…', exact: true }).click()
-  const dialog = page.getByTestId('space-manage-dialog')
-  await dialog.getByRole('button', { name: 'Create new space', exact: true }).click()
-  await dialog.getByPlaceholder('New space name').fill(name)
-  await dialog.getByRole('button', { name: 'Create', exact: true }).click()
-  await expect(dialog.getByRole('textbox', { name: 'Rename space' }).last()).toHaveValue(name)
-  await dialog.getByRole('button', { name: 'Close', exact: true }).click()
-  await expect(dialog).not.toBeVisible()
+  const panel = page.getByTestId('settings-panel-spaces')
+  await panel.getByRole('button', { name: 'Create new space', exact: true }).click()
+  await panel.getByPlaceholder('New space name').fill(name)
+  await panel.getByRole('button', { name: 'Create', exact: true }).click()
+  await expect(panel.getByRole('textbox', { name: 'Rename space' }).last()).toHaveValue(name)
 }
 
 async function createTagInList(page: Page, name: string): Promise<void> {
@@ -107,10 +106,10 @@ test.describe('Tags view follows the active space (#5257)', () => {
   })
 
   test('switching back lists that space, and a delete purges only its tag', async ({ page }) => {
+    await createSpace(page, 'Work')
     await navigateToView(page, 'Tags')
     await expect(page.getByTestId('tag-item-idea')).toBeVisible()
 
-    await createSpace(page, 'Work')
     await switchToSpace(page, 'Work')
     await navigateToView(page, 'Tags')
     await expect(page.getByTestId('tag-item-idea')).toHaveCount(0)

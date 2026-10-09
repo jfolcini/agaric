@@ -14,19 +14,20 @@ export const settings: Record<string, string> = {
   'settings.debugMode.label': 'Debug mode',
   'settings.debugMode.description':
     'Show technical error codes in notifications. Keep this off for everyday use; turn it on to capture the code when reporting a problem.',
-  'settings.resetOnboarding.title': 'Reset spaces onboarding',
-  'settings.resetOnboarding.description':
-    'Show the spaces onboarding banner again the next time you open Manage spaces.',
-  'settings.resetOnboarding.button': 'Reset',
-  'settings.resetOnboarding.success': 'Onboarding will show again on next visit',
-  // #3308 — re-entry into the first-run welcome tour. Distinct from
-  // `settings.resetOnboarding.*` above, which resets the Manage-Spaces hint.
+  // #3308 — re-entry into the first-run welcome tour.
   'settings.showWelcomeTour.title': 'Show the welcome tour again',
   'settings.showWelcomeTour.description':
     'Re-open the first-run welcome window, including the option to create the sample pages.',
   'settings.showWelcomeTour.button': 'Show tour',
   'settings.showWelcomeTour.success': 'Welcome tour reopened',
   'settings.tabGeneral': 'General',
+  'settings.tabSpaces': 'Spaces',
+  'settings.spaces.description':
+    'Spaces keep separate contexts, such as work and personal, apart. Pages, journals, tags and links never cross between spaces. Switch spaces from the top of the sidebar.',
+  'settings.spaces.openOnLaunchLabel': 'Open on launch',
+  'settings.spaces.openOnLaunchHelp':
+    'The space this device opens in when Agaric starts. Last used keeps the space you were in.',
+  'settings.spaces.lastUsed': 'Last used',
   'settings.tabProperties': 'Properties',
   'settings.tabAppearance': 'Appearance',
   'settings.tabEditor': 'Editor',

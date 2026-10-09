@@ -22,7 +22,7 @@ import { axe } from '@/__tests__/helpers/axe'
 import {
   ACCENT_SWATCHES,
   SpaceAccentPicker,
-} from '@/components/SpaceManageDialog/SpaceAccentPicker'
+} from '@/components/settings/SpacesTab/SpaceAccentPicker'
 import { t } from '@/lib/i18n'
 
 vi.mock('@/lib/logger', () => ({

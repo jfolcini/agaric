@@ -80,6 +80,10 @@ vi.mock('@/components/settings/KeyboardTab', () => ({
   KeyboardTab: () => <div data-testid="keyboard-settings-tab">Keyboard Settings Content</div>,
 }))
 
+vi.mock('@/components/settings/SpacesTab', () => ({
+  SpacesTab: () => <div data-testid="spaces-settings-tab">Spaces Settings Content</div>,
+}))
+
 vi.mock('@/components/settings/DataTab', () => ({
   DataTab: () => <div data-testid="data-settings-tab">Data Settings Content</div>,
 }))
@@ -163,17 +167,18 @@ describe('SettingsView', () => {
     )
   })
 
-  it('renders with 12 tabs', () => {
+  it('renders with 13 tabs', () => {
     render(<SettingsView />)
 
     const tabs = screen.getAllByRole('tab')
-    expect(tabs).toHaveLength(12)
+    expect(tabs).toHaveLength(13)
     // Every tab is still present and reachable, regardless of which group
     // it now lives in.
     const labels = tabs.map((tab) => tab.textContent)
     expect(labels).toEqual(
       expect.arrayContaining([
         t('settings.tabGeneral'),
+        t('settings.tabSpaces'),
         t('settings.tabProperties'),
         t('settings.tabAppearance'),
         t('settings.tabEditor'),
@@ -234,6 +239,7 @@ describe('SettingsView', () => {
           t('settings.groupWorkspace'),
           [
             t('settings.tabGeneral'),
+            t('settings.tabSpaces'),
             t('settings.tabAppearance'),
             t('settings.tabEditor'),
             t('settings.tabKeyboard'),
@@ -280,6 +286,7 @@ describe('SettingsView', () => {
 
       const allTabNames = [
         t('settings.tabGeneral'),
+        t('settings.tabSpaces'),
         t('settings.tabProperties'),
         t('settings.tabAppearance'),
         t('settings.tabEditor'),
@@ -1099,6 +1106,21 @@ describe('SettingsView', () => {
         expect(screen.getByTestId('settings-panel-keyboard')).toBeInTheDocument()
       })
       expect(useNavigationStore.getState().pendingSettingsTab).toBeNull()
+    })
+
+    it('lands on the Spaces tab, as the space switcher requests (#5362)', async () => {
+      render(<SettingsView />)
+
+      useNavigationStore.getState().setPendingSettingsTab('spaces')
+
+      await waitFor(() => {
+        expect(screen.getByTestId('settings-panel-spaces')).toBeInTheDocument()
+      })
+      expect(screen.getByTestId('spaces-settings-tab')).toBeInTheDocument()
+      expect(screen.getByRole('tab', { name: t('settings.tabSpaces') })).toHaveAttribute(
+        'aria-selected',
+        'true',
+      )
     })
 
     it('drops unknown tab names but still clears the slot', async () => {

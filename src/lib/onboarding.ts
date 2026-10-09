@@ -48,9 +48,8 @@ export function markOnboardingDone(): void {
  * REMOVES the key rather than writing `false`: `PREFERENCES.onboardingDone`
  * uses the legacy presence-means-done format (`parse: () => true`,
  * `serialize: () => 'true'`), so `writePreference(..., false)` would still
- * persist the string `'true'` and leave onboarding done. This mirrors
- * `resetOnboardingSeen` (the spaces-hint reset), which clears its flag the
- * same way — see `preferences.ts`, "removePreference".
+ * persist the string `'true'` and leave onboarding done — see
+ * `preferences.ts`, "removePreference".
  */
 export function resetOnboarding(): void {
   removePreference(PREFERENCES.onboardingDone)

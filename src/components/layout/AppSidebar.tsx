@@ -135,7 +135,8 @@ function AppSidebarInner({
    * beside the content, where dismissing would be wrong, so this is a no-op
    * there.
    *
-   * Applied to navigation and to New page, which take the user elsewhere.
+   * Applied to navigation, to New page and to the SpaceSwitcher's Settings ›
+   * Spaces items, which take the user elsewhere.
    * Deliberately NOT applied to sync, an in-place action whose result is
    * visible in the sidebar itself.
    */
@@ -210,7 +211,7 @@ function AppSidebarInner({
           })()}
         </div>
         <div className="mt-2 group-data-[collapsible=icon]:hidden">
-          <SpaceSwitcher />
+          <SpaceSwitcher onNavigate={dismissOnMobile} />
         </div>
         <SidebarMenu className="mt-2">
           <SidebarMenuItem>

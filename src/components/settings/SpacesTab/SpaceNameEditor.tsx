@@ -12,8 +12,8 @@
  * Skipping the re-sync while focused prevents a mid-type parent refresh
  * from clobbering the unsaved draft. The re-sync is needed because the
  * row is keyed by `space.id`, which is stable across a rename, so a plain
- * read-once model would never pick up an external rename without a
- * dialog re-open.
+ * read-once model would never pick up an external rename without
+ * leaving the tab and coming back.
  *
  * Behaviour preservation contract (callers must keep this in mind):
  *  - Blur OR Enter commits.
@@ -33,7 +33,7 @@ import { commands } from '@/lib/bindings'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
 
-const LOG_MODULE = 'components/SpaceManageDialog/SpaceNameEditor'
+const LOG_MODULE = 'components/settings/SpacesTab/SpaceNameEditor'
 
 interface SpaceNameEditorProps {
   spaceId: string

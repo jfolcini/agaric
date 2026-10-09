@@ -11,10 +11,6 @@
  * immediately (via `SHOW_WELCOME_EVENT`, see `@/lib/onboarding`) → toast
  * confirmation.
  *
- * Deliberately NOT the same thing as the neighbouring `ResetOnboardingRow`,
- * which resets the Manage-Spaces hint (`agaric:space-onboarding-seen-v1`).
- * Two different flags, two different surfaces.
- *
  * Stays visible on every platform — the welcome modal ships in the
  * cross-platform dialog/sheet, so the reset is equally useful on desktop,
  * mobile, and browser-dev.

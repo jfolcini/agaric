@@ -14,16 +14,17 @@ test.describe('Settings panel', () => {
     await expect(page.getByRole('tablist')).toBeVisible()
   })
 
-  // #2687 — SettingsView defines 12 tabs (TAB_IDS in SettingsView.tsx),
+  // #2687 — SettingsView defines 13 tabs (TAB_IDS in SettingsView.tsx),
   // grouped into four rail sections (Workspace / Integrations / Data & Sync
   // / Help). This test used to check only 6 under a misleading "All 6 tabs"
   // title, silently never opening Editor, Notifications, Agent access, or
   // Help. Listed here in the same order as TAB_GROUPS so the loop below
   // walks the rail top-to-bottom.
-  test('All 12 tabs are visible and clickable', async ({ page }) => {
+  test('All 13 tabs are visible and clickable', async ({ page }) => {
     const tabNames = [
       // Workspace
       'General',
+      'Spaces',
       'Appearance',
       'Editor',
       'Keyboard',

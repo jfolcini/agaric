@@ -1,20 +1,16 @@
 /**
- * SpaceRowEditor — per-row orchestrator. D-2 reduced this from
- * a ~600-line monolith mixing orthogonal concerns (rename, accent,
- * delete, onboarding-hint) to a thin shell composing focused
- * sub-components. The onboarding hint lifted to a sibling at the dialog
- * level rather than being recomputed per row.
+ * SpaceRowEditor — one Settings › Spaces row: rename, delete and accent.
  *
- * Emptiness state is owned by `SpaceManageDialog` so the IPC fires once
+ * Emptiness state is owned by `SpacesTab` so the IPC fires once
  * per `space.id`, not once per row mount.
  */
 
-import { SpaceAccentPicker } from '@/components/SpaceManageDialog/SpaceAccentPicker'
+import { SpaceAccentPicker } from '@/components/settings/SpacesTab/SpaceAccentPicker'
 import {
   SpaceDeleteBlockedHint,
   SpaceDeleteButton,
-} from '@/components/SpaceManageDialog/SpaceDeleteButton'
-import { SpaceNameEditor } from '@/components/SpaceManageDialog/SpaceNameEditor'
+} from '@/components/settings/SpacesTab/SpaceDeleteButton'
+import { SpaceNameEditor } from '@/components/settings/SpacesTab/SpaceNameEditor'
 import type { SpaceRow } from '@/lib/bindings'
 
 export interface SpaceRowEditorProps {
