@@ -18,7 +18,7 @@
 //! | `list_backlinks` | [`list_backlinks_grouped_inner`] | Grouped by source page. |
 //! | `list_tags` | [`list_tags_inner`] | Cursor paginated. Limits outside `[1, 100]` are rejected. |
 //! | `list_property_defs` | [`list_property_defs_inner`] | Typed property schema; cursor paginated. |
-//! | `get_agenda` | [`list_projected_agenda_inner`] | Date-range agenda projection. |
+//! | `get_agenda` | [`agenda_range_inner`] | Dated blocks in the range plus projected repeats, one row each. |
 //! | `journal_for_date` | [`journal_for_date_inner`] | Idempotent date → page lookup with a **bounded create carve-out (#2719)**: for `date` within today ± [`JOURNAL_CREATE_WINDOW_MONTHS`] months, creates the missing page on first call (single `CreateBlock`+`SetProperty` op pair, origin `agent:<name>`); outside that window the tool never creates — it returns an existing page as a pure read or `AppError::NotFound`. See [`ReadOnlyTools`] and `handle_journal_for_date` below. |
 //! | `list_spaces` | [`list_spaces_registry_inner`] | #633 — space discovery for agents. Returns `{ id, name, is_default }` per live space from the canonical `spaces` registry (#804). |
 //! | `get_page_markdown` | [`get_page_for_agent_inner`] | #5375 — the whole page as Markdown, ids written as names and every block with its `^ID`. No pagination, as the export. |
@@ -73,11 +73,11 @@ use super::registry::{
 };
 use super::view_notify::{NoopViewChangeEmitter, ViewChangeEmitter};
 use crate::commands::{
-    PropertyRow, get_active_block_inner, get_journal_page_by_date_inner, get_page_aliases_inner,
-    get_page_for_agent_inner, get_page_unscoped_inner, get_properties_inner,
-    journal_for_date_inner, list_backlinks_grouped_inner, list_pages_inner,
-    list_projected_agenda_inner, list_property_defs_inner, list_spaces_registry_inner,
-    list_tags_for_block_inner, list_tags_inner, search_blocks_inner,
+    PropertyRow, agenda_range_inner, get_active_block_inner, get_journal_page_by_date_inner,
+    get_page_aliases_inner, get_page_for_agent_inner, get_page_unscoped_inner,
+    get_properties_inner, journal_for_date_inner, list_backlinks_grouped_inner, list_pages_inner,
+    list_property_defs_inner, list_spaces_registry_inner, list_tags_for_block_inner,
+    list_tags_inner, search_blocks_inner,
 };
 use crate::materializer::Materializer;
 use agaric_core::error::AppError;
@@ -113,7 +113,7 @@ pub const SEARCH_SNIPPET_CAP: usize = 512;
 /// Cap for `get_agenda`'s `limit` — advertised in the tool schema and
 /// Enforced strictly at the tool boundary: out-of-range values
 /// surface as [`AppError::Validation`]. The matching ceiling baked
-/// into [`list_projected_agenda_inner`] remains as a defense-in-depth
+/// into [`agenda_range_inner`] remains as a defense-in-depth
 /// backstop for any non-MCP caller.
 pub const AGENDA_RESULT_CAP: i64 = 500;
 
@@ -818,7 +818,11 @@ fn tool_desc_get_agenda() -> ToolDescription {
     ToolDescription {
         name: TOOL_GET_AGENDA.to_string(),
         description:
-            "Project the agenda (repeating tasks + due/scheduled blocks) for a date range."
+            "Agenda for an inclusive date range: every block whose due or scheduled date falls \
+             in the range (done tasks excluded), plus each future occurrence of a repeating \
+             task in the range. One row per (date, block, source): `source` names the date \
+             field (`due_date` or `scheduled_date`); `projected` is false for the block's own \
+             date and true for a future occurrence of a repeating task."
                 .to_string(),
         input_schema: json!({
             "type": "object",
@@ -1268,7 +1272,7 @@ async fn handle_get_agenda(pool: &SqlitePool, args: Value) -> Result<Value, AppE
         Some(id) => SpaceScope::Active(SpaceId::from_string(id)?),
         None => SpaceScope::Global,
     };
-    let resp = list_projected_agenda_inner(
+    let resp = agenda_range_inner(
         pool,
         args.start_date,
         args.end_date,
