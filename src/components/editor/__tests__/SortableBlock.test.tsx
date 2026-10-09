@@ -311,7 +311,9 @@ vi.mock('@/components/block-tree/use-block-swipe-actions', () => ({
 import userEvent from '@testing-library/user-event'
 
 import { TestBlockActionsOverride } from '@/components/__tests__/_test-utils/TestBlockActionsOverride'
+import { BlockResolversProvider } from '@/components/block-tree/use-block-resolvers'
 import { SortableBlock } from '@/components/editor/SortableBlock'
+import { unresolvedBlockLabel } from '@/lib/block-title'
 import { useBlockStore } from '@/stores/blocks'
 import { PageBlockStoreProvider } from '@/stores/page-blocks'
 import { useSpaceStore } from '@/stores/space'
@@ -2774,6 +2776,35 @@ describe('SortableBlock property chips', () => {
     expect(screen.getByTestId('property-chip-assignee')).toBeInTheDocument()
     expect(screen.getByTestId('property-chip-effort')).toHaveTextContent('effort:2h')
     expect(screen.getByTestId('property-chip-assignee')).toHaveTextContent('assignee:Alice')
+  })
+
+  // #5449 — inside the block tree a title lookup that misses answers
+  // `[[xxxxxxxx...]]`, which is what every text and select chip used to show.
+  it('shows text and select values as stored inside the block tree resolvers', () => {
+    render(
+      <BlockResolversProvider
+        value={{
+          resolveBlockTitle: unresolvedBlockLabel,
+          resolveTagName: (id) => id,
+          resolveBlockStatus: () => 'active',
+          resolveTagStatus: () => 'active',
+        }}
+      >
+        <SortableBlock
+          blockId="BLOCK_1"
+          content="hello"
+          isFocused={false}
+          rovingEditor={makeRovingEditor()}
+          properties={[
+            { key: 'context', value: '@office' },
+            { key: 'project', value: 'alpha' },
+          ]}
+        />
+      </BlockResolversProvider>,
+    )
+
+    expect(screen.getByTestId('property-chip-context')).toHaveTextContent(/^context:@office$/)
+    expect(screen.getByTestId('property-chip-project')).toHaveTextContent(/^project:alpha$/)
   })
 
   it('does not render property chips when properties is undefined', () => {

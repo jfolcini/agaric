@@ -21,6 +21,19 @@ export function formatPropertyName(key: string): string {
   return key.replace(/[-_]/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase())
 }
 
+/**
+ * The options JSON `create_property_def` requires for a select, read from a
+ * comma-separated list. `null` when the list names no option: the backend
+ * refuses a select without one.
+ */
+export function selectOptionsJson(list: string): string | null {
+  const options = list
+    .split(',')
+    .map((option) => option.trim())
+    .filter((option) => option !== '')
+  return options.length > 0 ? JSON.stringify(options) : null
+}
+
 /** Icon lookup for built-in property keys. Returns `undefined` for custom keys. */
 export const BUILTIN_PROPERTY_ICONS: Record<string, LucideIcon> = {
   due_date: CalendarCheck2,

@@ -174,7 +174,6 @@ export interface BlockMetadataRowProps {
    * than hidden inside this component.
    */
   maxInlineProperties?: number | undefined
-  resolveBlockTitle?: ((id: string) => string) | undefined
   attachmentCount: number
   showAttachments: boolean
   onToggleAttachments: () => void
@@ -399,31 +398,26 @@ function RepeatIndicator({ repeatValue }: { repeatValue: string }): React.ReactE
 function InlineProperties({
   filteredProperties,
   inlinePropLimit,
-  resolveBlockTitle,
   onEditProp,
   onEditKey,
 }: {
   filteredProperties: Array<{ key: string; value: string }>
   inlinePropLimit: number
-  resolveBlockTitle?: ((id: string) => string) | undefined
   onEditProp: (prop: { key: string; value: string }) => void
   onEditKey: (keyInfo: { oldKey: string; value: string }) => void
 }): React.ReactElement {
   const { t } = useTranslation()
   return (
     <>
-      {filteredProperties.slice(0, inlinePropLimit).map((p) => {
-        const displayValue = resolveBlockTitle ? resolveBlockTitle(p.value) || p.value : p.value
-        return (
-          <PropertyChip
-            key={p.key}
-            propKey={p.key}
-            value={displayValue}
-            onClick={() => onEditProp({ key: p.key, value: p.value })}
-            onKeyClick={() => onEditKey({ oldKey: p.key, value: p.value })}
-          />
-        )
-      })}
+      {filteredProperties.slice(0, inlinePropLimit).map((p) => (
+        <PropertyChip
+          key={p.key}
+          propKey={p.key}
+          value={p.value}
+          onClick={() => onEditProp({ key: p.key, value: p.value })}
+          onKeyClick={() => onEditKey({ oldKey: p.key, value: p.value })}
+        />
+      ))}
       {filteredProperties.length > inlinePropLimit && (
         <Tooltip>
           <TooltipTrigger asChild>
@@ -568,7 +562,6 @@ export const BlockMetadataRow = React.memo(
     properties,
     filteredProperties,
     maxInlineProperties,
-    resolveBlockTitle,
     attachmentCount,
     showAttachments,
     onToggleAttachments,
@@ -680,7 +673,6 @@ export const BlockMetadataRow = React.memo(
           <InlineProperties
             filteredProperties={filteredProperties}
             inlinePropLimit={inlinePropLimit}
-            resolveBlockTitle={resolveBlockTitle}
             onEditProp={onEditProp}
             onEditKey={onEditKey}
           />
