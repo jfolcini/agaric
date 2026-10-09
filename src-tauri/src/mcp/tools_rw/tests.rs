@@ -2216,7 +2216,7 @@ async fn move_page_to_space_target_not_a_live_space_rejected() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn create_tag_creates_in_space_and_reuses_the_name() {
-    let (tools, mat, pool, space, _dir) = mk_tools().await;
+    let (tools, mat, pool, space, emitter, _dir) = mk_tools_recording().await;
 
     let first = tools
         .call_tool(
@@ -2247,6 +2247,52 @@ async fn create_tag_creates_in_space_and_reuses_the_name() {
         tag_id.as_str(),
         "the space's tag is returned, not a second one"
     );
+    assert_eq!(
+        emitter.blocks_changed(),
+        Vec::<Vec<String>>::new(),
+        "a tag is on no page, so no open page reloads",
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn delete_property_cross_space_rejected() {
+    let (tools, mat, pool, space_a, _dir) = mk_tools().await;
+    let space_b = mk_space(&pool, " space B").await;
+    let block = mk_in_space_content_block(&pool, &mat, &space_b, "task").await;
+    set_property_inner(
+        &pool,
+        DEV,
+        &mat,
+        block.id.as_str().into(),
+        "assignee".into(),
+        Some("alice".into()),
+        None,
+        None,
+        None,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    let err = tools
+        .call_tool(
+            "delete_property",
+            json!({"block_id": block.id.as_str(), "key": "assignee", "space_id": space_a}),
+            &test_ctx_agent(),
+        )
+        .await
+        .expect_err("a block of another space must not lose a property");
+    assert!(matches!(err, AppError::Validation { .. }), "got {err:?}");
+    let kept: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM block_properties WHERE block_id = ? AND key = 'assignee'",
+    )
+    .bind(block.id.as_str())
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(kept, 1);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

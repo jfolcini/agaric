@@ -2153,6 +2153,13 @@ describe('completed_at follows todo_state', () => {
     expect(completedAt()).toBeNull()
   })
 
+  it('clears when todo_state is deleted from a DONE block', () => {
+    invoke('set_todo_state', { blockId: BLOCK, state: 'DONE' })
+    expect(completedAt()).toBe(todayDate())
+    invoke('delete_property', { blockId: BLOCK, key: 'todo_state' })
+    expect(completedAt()).toBeNull()
+  })
+
   it('appends no clear for a block that holds no stamp', () => {
     invoke('set_todo_state', { blockId: BLOCK, state: 'TODO' })
     const before = opLog.length

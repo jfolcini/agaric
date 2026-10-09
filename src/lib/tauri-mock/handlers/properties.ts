@@ -416,8 +416,11 @@ export const propertiesHandlers = {
     // reserved-key delete was a silent no-op that left the column set.
     if (RESERVED_PROPERTY_COLUMN[key] !== undefined) {
       const b = blocks.get(blockId)
+      const fromValue = (b?.[key] as string | null | undefined) ?? null
       if (b) b[key] = null
       const op = pushOp('delete_property', { block_id: blockId, key, from_value: null })
+      // #5378 — `delete_property_core` clears the task stamps with the state.
+      if (b && key === 'todo_state') writeCompletedAtTransition(blockId, fromValue, null)
       return {
         block_id: blockId,
         key,

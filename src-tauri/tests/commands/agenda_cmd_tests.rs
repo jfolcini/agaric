@@ -5487,6 +5487,8 @@ async fn agenda_range_rejects_end_before_start_5393() {
 /// Walking every page at every page size returns exactly the single-page
 /// result: dated and projected rows share dates (and blocks), so page
 /// boundaries land between the two halves and between the two sources.
+/// `PG_E` and `PG_F` sort after the last projected row, so the walk's tail
+/// continues only on the dated half's own lookahead.
 #[tokio::test]
 async fn agenda_range_cursor_walk_matches_single_page_5393() {
     let (pool, _dir) = test_pool().await;
@@ -5510,6 +5512,8 @@ async fn agenda_range_cursor_walk_matches_single_page_5393() {
     insert_dated_block(&pool, "PG_C", Some("TODO"), Some("2026-03-02"), None).await;
     insert_repeat_rule(&pool, "PG_C", "daily").await;
     insert_dated_block(&pool, "PG_D", None, None, Some("2026-03-03")).await;
+    insert_dated_block(&pool, "PG_E", None, None, Some("2026-03-04")).await;
+    insert_dated_block(&pool, "PG_F", None, None, Some("2026-03-04")).await;
 
     let (start, end) = ("2026-03-01", "2026-03-04");
     let whole = agenda_range_inner(
@@ -5539,6 +5543,8 @@ async fn agenda_range_cursor_walk_matches_single_page_5393() {
             row("2026-03-04", "PG_A", "due_date", true),
             row("2026-03-04", "PG_A", "scheduled_date", true),
             row("2026-03-04", "PG_C", "due_date", true),
+            row("2026-03-04", "PG_E", "scheduled_date", false),
+            row("2026-03-04", "PG_F", "scheduled_date", false),
         ]
     );
 
