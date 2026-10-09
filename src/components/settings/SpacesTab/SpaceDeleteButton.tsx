@@ -32,7 +32,7 @@ import { commands } from '@/lib/bindings'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
 
-const LOG_MODULE = 'components/SpaceManageDialog/SpaceDeleteButton'
+const LOG_MODULE = 'components/settings/SpacesTab/SpaceDeleteButton'
 
 interface SpaceDeleteButtonProps {
   spaceId: string

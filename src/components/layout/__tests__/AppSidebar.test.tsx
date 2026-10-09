@@ -17,6 +17,7 @@ import { AppSidebar, type AppSidebarProps } from '@/components/layout/AppSidebar
 import { SidebarProvider, SidebarTrigger } from '@/components/ui/sidebar'
 import { t } from '@/lib/i18n'
 import { SETTINGS_NAV_ITEM, SIDEBAR_NAV_ITEMS } from '@/lib/nav-items'
+import { useNavigationStore } from '@/stores/navigation'
 import { useRecentPagesStore } from '@/stores/recent-pages'
 import { useResolveStore } from '@/stores/resolve'
 import { useSpaceStore } from '@/stores/space'
@@ -450,6 +451,19 @@ describe('AppSidebar — mobile Sheet dismissal', () => {
     await user.click(screen.getByRole('button', { name: t('sidebar.settings') }))
 
     expect(props.onSelectView).toHaveBeenCalledWith('settings')
+    await waitFor(() => {
+      expect(document.querySelector('[data-mobile="true"]')).toBeNull()
+    })
+  })
+
+  it('closes the Sheet when the space switcher opens Settings › Spaces', async () => {
+    mockMobileViewport()
+    useNavigationStore.setState({ currentView: 'journal', pendingSettingsTab: null })
+    const { user } = await openMobileSheet()
+
+    await user.selectOptions(screen.getByRole('combobox', { name: /Switch space/ }), '__manage__')
+
+    expect(useNavigationStore.getState().pendingSettingsTab).toBe('spaces')
     await waitFor(() => {
       expect(document.querySelector('[data-mobile="true"]')).toBeNull()
     })

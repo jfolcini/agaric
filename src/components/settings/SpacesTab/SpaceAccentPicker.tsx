@@ -5,7 +5,7 @@
  * `setProperty(accent_color, token)` op against the space block. The
  * selection state is local — the parent's only concern is providing
  * `spaceId`; nothing flows back up because the accent token is not
- * surfaced anywhere outside the dialog (`refreshAvailableSpaces`
+ * surfaced anywhere else in the tab (`refreshAvailableSpaces`
  * picks it up via the next `list_spaces` call).
  *
  * Behaviour preservation contract:
@@ -26,7 +26,7 @@ import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
 import { cn } from '@/lib/utils'
 
-const LOG_MODULE = 'components/SpaceManageDialog/SpaceAccentPicker'
+const LOG_MODULE = 'components/settings/SpacesTab/SpaceAccentPicker'
 
 /**
  * Palette tokens consumed by. Stored verbatim in the

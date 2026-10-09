@@ -17,7 +17,7 @@ Source layout:
 | --- | --- |
 | `src/components/ui/`           | shadcn-style primitives. Check here first before building anything new.                                         |
 | `src/components/`              | Domain components.                                                                                              |
-| `src/components/<Feature>/`    | Per-feature sub-component directories (e.g. `FormattingToolbar/`, `properties/PropertyRowEditor/`, `SpaceManageDialog/`).  |
+| `src/components/<Feature>/`    | Per-feature sub-component directories (e.g. `FormattingToolbar/`, `properties/PropertyRowEditor/`, `settings/SpacesTab/`).  |
 | `src/editor/`                  | TipTap extensions, nodes, marks, plugins.                                                                       |
 | `src/hooks/`                   | Reusable hooks. Slash-command logic lives under `src/components/block-tree/use-block-slash-commands/`.                             |
 | `src/stores/`                  | Zustand stores, one per concern. Per-page stores use the factory + context pattern.                             |

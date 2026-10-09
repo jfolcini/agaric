@@ -15,7 +15,7 @@
  *
  * #2921 — the `error` state now has a real production driver. The space
  * store's `refreshAvailableSpaces()` never rejects (non-boot callers —
- * `SpaceSwitcher`'s fire-and-forget mount refresh, `SpaceManageDialog`'s
+ * `SpaceSwitcher`'s fire-and-forget mount refresh, `SpacesTab`'s
  * awaited-but-uncaught refresh — rely on that contract) but records a
  * `lastRefreshOutcome` of `{ kind: 'hard-error', error }` when it hit a
  * HARD failure (`listSpaces()` rejected AND there is no usable prior

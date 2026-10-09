@@ -115,7 +115,7 @@
   /* Legibility outline for icons sized down onto an arbitrary accent
    * fill (e.g. the Check glyph on the space-accent swatch grid). This
    * is intentionally a 1-px dark halo, not a brand shadow — keeping it
-   * a token so the two SpaceManageDialog call sites don't drift. */
+   * a token so the two Settings › Spaces call sites don't drift. */
   --shadow-accent-stroke: 0 0 1.5px rgb(0 0 0 / 0.9);
   /* Elevation-by-prominence scale (#1098). The third prominence axis
    * alongside radius and motion. Larger shadow = more "lifted" the surface.

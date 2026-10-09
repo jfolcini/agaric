@@ -32,9 +32,9 @@
  *
  *   1. **Delete-after-emptying a space** (suggested scenario "delete is
  *      blocked for a non-empty space and allowed after moving pages out")
- *      is NOT exercisable. `SpaceManageDialog`'s emptiness probe calls
+ *      is NOT exercisable. `SpacesTab`'s emptiness probe calls
  *      `listBlocks({ blockType: 'page', spaceId })`
- *      (src/components/SpaceManageDialog.tsx); the mock's `list_blocks`
+ *      (src/components/settings/SpacesTab.tsx); the mock's `list_blocks`
  *      handler (src/lib/tauri-mock/handlers.ts:1278) ignores the
  *      `scope`/`spaceId` argument entirely and returns EVERY non-deleted
  *      page block in the whole mock vault. Because seed pages always
@@ -110,35 +110,36 @@ async function switchToSpace(page: import('@playwright/test').Page, name: string
   await selectSwitcherOption(page, name)
 }
 
+/** Open Settings › Spaces from the switcher's *Manage spaces…* item; returns the tab panel. */
+async function openSpacesSettings(
+  page: import('@playwright/test').Page,
+): Promise<import('@playwright/test').Locator> {
+  await selectSwitcherOption(page, MANAGE_SPACES)
+  const panel = page.getByTestId('settings-panel-spaces')
+  await expect(panel).toBeVisible()
+  return panel
+}
+
 /**
- * Open Manage Spaces, create a space with the given name via the inline
- * create form, and leave the dialog open (returns its locator). The new
- * row's presence is asserted before returning.
+ * Open Settings › Spaces and create a space with the given name via the
+ * inline create form (returns the tab panel). The new row's presence is
+ * asserted before returning.
  */
-async function createSpaceViaDialog(
+async function createSpaceInSettings(
   page: import('@playwright/test').Page,
   name: string,
 ): Promise<import('@playwright/test').Locator> {
-  await selectSwitcherOption(page, MANAGE_SPACES)
-  const dialog = page.getByTestId('space-manage-dialog')
-  await expect(dialog).toBeVisible()
-  await dialog.getByRole('button', { name: 'Create new space', exact: true }).click()
-  await dialog.getByPlaceholder('New space name').fill(name)
-  await dialog.getByRole('button', { name: 'Create', exact: true }).click()
+  const panel = await openSpacesSettings(page)
+  await panel.getByRole('button', { name: 'Create new space', exact: true }).click()
+  await panel.getByPlaceholder('New space name').fill(name)
+  await panel.getByRole('button', { name: 'Create', exact: true }).click()
   // The new row's name lives inside an `<input value=…>` (SpaceNameEditor),
   // not a text node — `getByText` never matches it. Assert via the input's
   // value instead. `.last()` assumes `name` sorts alphabetically AFTER
   // "Personal" (rows render in `list_spaces`'s alphabetical order, #2684)
   // — true for every caller in this file ("Work", "Work Renamed").
-  await expect(dialog.getByRole('textbox', { name: 'Rename space' }).last()).toHaveValue(name)
-  return dialog
-}
-
-/** Close the Manage Spaces dialog via its built-in close button. */
-async function closeManageDialog(page: import('@playwright/test').Page): Promise<void> {
-  const dialog = page.getByTestId('space-manage-dialog')
-  await dialog.getByRole('button', { name: 'Close', exact: true }).click()
-  await expect(dialog).not.toBeVisible()
+  await expect(panel.getByRole('textbox', { name: 'Rename space' }).last()).toHaveValue(name)
+  return panel
 }
 
 test.describe('Spaces — create, switch, content isolation', () => {
@@ -146,7 +147,7 @@ test.describe('Spaces — create, switch, content isolation', () => {
     await waitForBoot(page)
   })
 
-  test('creating a space via Manage Spaces adds it to the switcher and switching re-scopes the Pages list', async ({
+  test('creating a space in Settings › Spaces adds it to the switcher and switching re-scopes the Pages list', async ({
     page,
   }) => {
     // Baseline: the seeded "Getting Started" page is visible in Personal.
@@ -155,8 +156,7 @@ test.describe('Spaces — create, switch, content isolation', () => {
       page.locator('[data-page-item]').filter({ hasText: 'Getting Started' }),
     ).toBeVisible()
 
-    await createSpaceViaDialog(page, 'Work')
-    await closeManageDialog(page)
+    await createSpaceInSettings(page, 'Work')
 
     // The switcher trigger now lists Work as a selectable option.
     await page.getByRole('combobox', { name: SWITCH_SPACE, exact: true }).click()
@@ -203,8 +203,7 @@ test.describe('Spaces — create, switch, content isolation', () => {
   })
 
   test('Ctrl+2 switches to the second space by alphabetical index', async ({ page }) => {
-    await createSpaceViaDialog(page, 'Work')
-    await closeManageDialog(page)
+    await createSpaceInSettings(page, 'Work')
 
     // "Personal" < "Work" alphabetically, so Personal is Ctrl+1 (current
     // space, no-op — see keyboard-collisions.spec.ts) and Work is Ctrl+2.
@@ -228,11 +227,11 @@ test.describe('Spaces — rename, recolour, delete', () => {
   test('renaming and recolouring a newly created space updates the switcher and the top accent stripe', async ({
     page,
   }) => {
-    const dialog = await createSpaceViaDialog(page, 'Work')
+    const panel = await createSpaceInSettings(page, 'Work')
 
     // Rows render alphabetically (list_spaces sorts by name, #2684):
     // Personal (0), Work (1).
-    const workRow = dialog.locator('[data-slot="space-manage-row"]').nth(1)
+    const workRow = panel.locator('[data-slot="space-manage-row"]').nth(1)
     const nameInput = workRow.getByRole('textbox', { name: 'Rename space' })
     await expect(nameInput).toHaveValue('Work')
 
@@ -253,8 +252,6 @@ test.describe('Spaces — rename, recolour, delete', () => {
     await nameInput.press('Enter')
     await expect(nameInput).toHaveValue('Work Renamed')
 
-    await closeManageDialog(page)
-
     await switchToSpace(page, 'Work Renamed')
 
     // Switcher's accent dot and the top stripe both carry the new token.
@@ -269,9 +266,8 @@ test.describe('Spaces — rename, recolour, delete', () => {
     page,
   }) => {
     // Sole space: the last-space guard disables Delete outright.
-    await selectSwitcherOption(page, MANAGE_SPACES)
-    const dialog = page.getByTestId('space-manage-dialog')
-    await expect(dialog.getByRole('button', { name: 'Delete space', exact: true })).toBeDisabled()
+    const panel = await openSpacesSettings(page)
+    await expect(panel.getByRole('button', { name: 'Delete space', exact: true })).toBeDisabled()
 
     // Create a second, never-populated space. In the real backend this
     // would be immediately deletable; under this mock it is not — see the
@@ -279,15 +275,47 @@ test.describe('Spaces — rename, recolour, delete', () => {
     // emptiness probe always sees the globally-seeded pages and reports
     // "non-empty" for every space). Asserting the CURRENT behaviour here,
     // not the real one.
-    await dialog.getByRole('button', { name: 'Create new space', exact: true }).click()
-    await dialog.getByPlaceholder('New space name').fill('Empty Space')
-    await dialog.getByRole('button', { name: 'Create', exact: true }).click()
+    await panel.getByRole('button', { name: 'Create new space', exact: true }).click()
+    await panel.getByPlaceholder('New space name').fill('Empty Space')
+    await panel.getByRole('button', { name: 'Create', exact: true }).click()
     // Rows render alphabetically (#2684): "Empty Space" < "Personal", so
     // the new row is first.
-    const newRow = dialog.locator('[data-slot="space-manage-row"]').first()
+    const newRow = panel.locator('[data-slot="space-manage-row"]').first()
     await expect(newRow.getByRole('textbox', { name: 'Rename space' })).toHaveValue('Empty Space')
     await expect(newRow.getByRole('button', { name: 'Delete space', exact: true })).toBeDisabled()
     await expect(newRow.getByTestId('space-delete-blocked-hint')).toBeVisible()
+  })
+})
+
+// #5362 — "Open on launch" is a device preference read by the first space
+// reconcile after boot. A reload re-seeds the mock, so the second space comes
+// from the `__mockWorkSpace` opt-in seed, not from the create form.
+test.describe('Spaces — open on launch', () => {
+  test.beforeEach(async ({ page }) => {
+    await page.addInitScript(() => window.localStorage.setItem('__mockWorkSpace', 'true'))
+    await waitForBoot(page)
+  })
+
+  test('a reload opens the default space, not the space last used', async ({ page }) => {
+    const switcher = page.getByRole('combobox', { name: SWITCH_SPACE, exact: true })
+    await expect(switcher).toContainText('Personal')
+
+    const panel = await openSpacesSettings(page)
+    const openOnLaunch = panel.getByRole('combobox', { name: 'Open on launch', exact: true })
+    await expect(openOnLaunch).toContainText('Last used')
+    await openOnLaunch.click()
+    await page.getByRole('option', { name: 'Work', exact: true }).click()
+    await expect(openOnLaunch).toContainText('Work')
+    // Choosing it does not switch now: Personal stays the space last used.
+    await expect(switcher).toContainText('Personal')
+
+    await page.reload()
+
+    await expect(page.getByTestId('space-top-stripe')).toHaveAttribute(
+      'data-space-id',
+      'SPACE_WORK',
+    )
+    await expect(switcher).toContainText('Work')
   })
 })
 
@@ -299,8 +327,7 @@ test.describe('Spaces — move a page between spaces', () => {
   test('Move to space relocates a page — it disappears from the origin space and appears in the destination', async ({
     page,
   }) => {
-    await createSpaceViaDialog(page, 'Work')
-    await closeManageDialog(page)
+    await createSpaceInSettings(page, 'Work')
 
     await openPage(page, 'Getting Started')
     await page.getByRole('button', { name: 'Page actions', exact: true }).click()
@@ -356,8 +383,7 @@ test.describe('Spaces — move a page between spaces', () => {
   test('moving a page opened from a parent page pops back to the parent within the tab (#2803)', async ({
     page,
   }) => {
-    await createSpaceViaDialog(page, 'Work')
-    await closeManageDialog(page)
+    await createSpaceInSettings(page, 'Work')
 
     // Stack depth 2: Quick Notes underneath, Getting Started opened on top
     // of it (the `openPage` helper always navigates via the Pages view, so
@@ -396,8 +422,7 @@ test.describe('Spaces — move a page between spaces', () => {
   test('moving a page that is the only entry on the tab stack lands on the Pages view (#2803)', async ({
     page,
   }) => {
-    await createSpaceViaDialog(page, 'Work')
-    await closeManageDialog(page)
+    await createSpaceInSettings(page, 'Work')
 
     // Stack depth 1: a single `openPage` call from a fresh boot makes the
     // moved page the tab's ONLY stack entry.
@@ -430,8 +455,7 @@ test.describe('Spaces — move a page between spaces', () => {
   test('following a stale old-space reference to a moved page heals with a soft notice, not the raw error toast (#2802)', async ({
     page,
   }) => {
-    await createSpaceViaDialog(page, 'Work')
-    await closeManageDialog(page)
+    await createSpaceInSettings(page, 'Work')
 
     // Land on Quick Notes first so the tab stack has a sane page underneath,
     // then open Getting Started on top of it: stack = [Quick Notes,

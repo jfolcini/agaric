@@ -95,7 +95,7 @@
  *
  * `removePreference` clears a stored value outright (vs. writing the
  * default) — used where "never configured" is a distinct, meaningful state
- * from "explicitly reset" (e.g. `clearPathHistory`, `resetOnboardingSeen`).
+ * from "explicitly reset" (e.g. `clearPathHistory`, `resetOnboarding`).
  *
  * ## Adding a preference
  *
@@ -550,19 +550,17 @@ const ONBOARDING_DONE_PREFERENCE: PreferenceDefinition<boolean> = {
 }
 
 /**
- * `agaric:space-onboarding-seen-v1` — manage-spaces dialog onboarding banner
- * dismissed (`src/components/SpaceManageDialog/SpaceOnboardingHint.tsx`). Do
- * NOT rename — pre-existing users have this exact key set; renaming would
- * re-show the banner after upgrade. Exact-match `'true'` (not mere
- * presence) — mirrors the original reader.
+ * `agaric:default-space` — the space this device opens in on launch (#5362).
+ * Empty on disk = Last used: launch keeps the space the device was on. Read by
+ * `useSpaceStore`'s first reconcile; reset to Last used once the space is gone.
  */
-const SPACE_ONBOARDING_SEEN_PREFERENCE: PreferenceDefinition<boolean> = {
-  key: 'agaric:space-onboarding-seen-v1',
+const DEFAULT_SPACE_PREFERENCE: PreferenceDefinition<string | null> = {
+  key: 'agaric:default-space',
   scope: 'device',
   version: 1,
-  defaultValue: false,
-  parse: (raw) => raw === 'true',
-  serialize: () => 'true',
+  defaultValue: null,
+  parse: (raw) => (raw === '' ? null : raw),
+  serialize: (value) => value ?? '',
 }
 
 /**
@@ -1425,7 +1423,7 @@ export const PREFERENCES = {
   journalDateFormat: JOURNAL_DATE_FORMAT_PREFERENCE,
   gestureCoachmarkSeen: GESTURE_COACHMARK_SEEN_PREFERENCE,
   onboardingDone: ONBOARDING_DONE_PREFERENCE,
-  spaceOnboardingSeen: SPACE_ONBOARDING_SEEN_PREFERENCE,
+  defaultSpace: DEFAULT_SPACE_PREFERENCE,
   spaceTextJournalTemplatesDeleted: SPACE_TEXT_JOURNAL_TEMPLATES_DELETED_PREFERENCE,
   tagColors: TAG_COLORS_PREFERENCE,
   pinnedSearchScope: PINNED_SEARCH_SCOPE_PREFERENCE,

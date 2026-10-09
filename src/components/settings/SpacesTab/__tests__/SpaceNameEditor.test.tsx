@@ -21,7 +21,7 @@ import userEvent from '@testing-library/user-event'
 import { toast } from 'sonner'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { SpaceNameEditor } from '@/components/SpaceManageDialog/SpaceNameEditor'
+import { SpaceNameEditor } from '@/components/settings/SpacesTab/SpaceNameEditor'
 import { t } from '@/lib/i18n'
 
 vi.mock('@/lib/logger', () => ({
