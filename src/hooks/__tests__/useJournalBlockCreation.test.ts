@@ -33,6 +33,10 @@ import { commands } from '@/lib/bindings'
 import { createBlock } from '@/lib/ipc-helpers'
 import type { NameChange } from '@/lib/name-change-bus'
 import { subscribeToNameChanges } from '@/lib/name-change-bus'
+import {
+  _resetPrefetchPageSubtreeForTest,
+  consumePrefetchedPageSubtree,
+} from '@/lib/prefetch-page-subtree'
 import { dispatch } from '@/lib/tauri-mock/handlers'
 import { seedBlocks } from '@/lib/tauri-mock/seed'
 import { useBlockStore } from '@/stores/blocks'
@@ -67,6 +71,7 @@ const journalTemplatePage: BlockRow = makeBlockRow({
 
 beforeEach(() => {
   vi.clearAllMocks()
+  _resetPrefetchPageSubtreeForTest()
   useSpaceStore.setState({
     currentSpaceId: 'SPACE_TEST',
     availableSpaces: [{ id: 'SPACE_TEST', name: 'Test', accent_color: null }],
@@ -145,6 +150,92 @@ describe('useJournalBlockCreation', () => {
     expect(pageCreatedCalls).toEqual([{ dateStr: '2025-06-15', pageId: 'PNEW' }])
     // createdPages map updated
     expect(result.current.createdPages.get('2025-06-15')).toBe('PNEW')
+  })
+
+  // #5438 — the template lookup does not depend on the new page id.
+  it('runs the template lookup while create_page_in_space is still out', async () => {
+    let resolveCreate: (id: string) => void = () => {}
+    stubInvoke({
+      create_page_in_space: () =>
+        new Promise<string>((resolve) => {
+          resolveCreate = resolve
+        }),
+    })
+
+    const { result } = setup()
+    let pending: Promise<void> = Promise.resolve()
+    act(() => {
+      pending = result.current.handleAddBlock('2025-06-15')
+    })
+
+    expect(mockedLoadJournalTemplate).toHaveBeenCalledWith('SPACE_TEST')
+
+    await act(async () => {
+      resolveCreate('PNEW')
+      await pending
+    })
+    expect(mockedLoadJournalTemplate).toHaveBeenCalledTimes(1)
+    expect(result.current.createdPages.get('2025-06-15')).toBe('PNEW')
+  })
+
+  // #5460 review — the page exists once `create_page_in_space` resolves, so
+  // the picker caches hear about it even when its template cannot be read.
+  it('announces the created page before a failed template lookup is surfaced', async () => {
+    mockedLoadJournalTemplate.mockRejectedValue(new Error('template lookup boom'))
+    stubInvoke({ create_page_in_space: () => 'PNEW' })
+
+    const changes: NameChange[] = []
+    const unsubscribe = subscribeToNameChanges((c) => changes.push(c))
+    const { result, pageCreatedCalls } = setup()
+    try {
+      await act(async () => {
+        await result.current.handleAddBlock('2025-06-15')
+      })
+    } finally {
+      unsubscribe()
+    }
+
+    expect(changes).toEqual([
+      { kind: 'added', entity: 'page', id: 'PNEW', name: '2025-06-15', spaceId: 'SPACE_TEST' },
+    ])
+    // The failure itself is still reported, and the page is not rendered as seeded.
+    expect(vi.mocked(toast.error)).toHaveBeenCalledTimes(1)
+    expect(pageCreatedCalls).toEqual([])
+    expect(result.current.createdPages.size).toBe(0)
+  })
+
+  it('parks an empty subtree for a template-less new page, so its first load skips the IPC (#5438)', async () => {
+    stubInvoke({ create_page_in_space: () => 'PNEW' })
+
+    const { result } = setup()
+    await act(async () => {
+      await result.current.handleAddBlock('2025-06-15')
+    })
+
+    await expect(consumePrefetchedPageSubtree('SPACE_TEST', 'PNEW')).resolves.toEqual({
+      blocks: [],
+      truncated: false,
+      total: 0,
+    })
+  })
+
+  it('parks nothing when a template seeded the page (#5438)', async () => {
+    mockedLoadJournalTemplate.mockResolvedValue({
+      template: journalTemplatePage,
+      duplicateWarning: null,
+    })
+    mockedInsertTemplateBlocks.mockResolvedValue(['T1'])
+    stubInvoke({ create_page_in_space: () => 'PNEW' })
+
+    const { result } = setup()
+    await act(async () => {
+      await result.current.handleAddBlock('2025-06-15')
+    })
+
+    expect(mockedInsertTemplateBlocks).toHaveBeenCalledWith('TMPL', 'PNEW', 'SPACE_TEST', {
+      pageTitle: '2025-06-15',
+    })
+    expect(consumePrefetchedPageSubtree('SPACE_TEST', 'PNEW')).toBeNull()
   })
 
   // #4358 / #4338 — this hook creates a date page in exactly the way the

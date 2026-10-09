@@ -34,6 +34,7 @@ import { createBlock } from '@/lib/ipc-helpers'
 import { logger } from '@/lib/logger'
 import { notifyPageAdded } from '@/lib/name-change-bus'
 import { notify } from '@/lib/notify'
+import { parkEmptyPageSubtree } from '@/lib/prefetch-page-subtree'
 import { insertTemplateBlocks, loadJournalTemplate } from '@/lib/template-utils'
 import { useBlockStore } from '@/stores/blocks'
 import { getPageStore } from '@/stores/page-blocks'
@@ -77,6 +78,10 @@ export function useJournalBlockCreation({
       try {
         let pageId = createdPages.get(dateStr) ?? pageMap.get(dateStr) ?? null
         const isNewPage = !pageId
+        let journalTemplateLookup: Awaited<ReturnType<typeof loadJournalTemplate>> = {
+          template: null,
+          duplicateWarning: null,
+        }
 
         if (!pageId) {
           // H-3b — route page creation through `createPageInSpace`
@@ -92,6 +97,12 @@ export function useJournalBlockCreation({
             // before Journal mounts; this branch is a defence-in-depth.
             throw new Error('No active space; cannot create journal page')
           }
+          // #5438 — the template lookup does not depend on the new page id,
+          // so it runs alongside the create. It is awaited only after the
+          // page is announced below (a page that exists is announced even
+          // when its template cannot be read), and `allSettled` keeps a
+          // rejection that lands first from going unhandled meanwhile.
+          const templateLookup = Promise.allSettled([loadJournalTemplate(currentSpaceId)])
           const newId = unwrap(await commands.createPageInSpace(null, dateStr, currentSpaceId))
           // Defensive: if the IPC returned a non-string (mock leak, schema
           // drift, …) treat it as a failure so we don't seed `createdPages`
@@ -108,6 +119,14 @@ export function useJournalBlockCreation({
           // notification, so it does not re-render `JournalPage` and cannot
           // race `autoCreateFirstBlock` the way the deferred group below can.
           notifyPageAdded(newId, dateStr, currentSpaceId)
+          const [settled] = await templateLookup
+          if (settled.status === 'rejected') throw settled.reason
+          journalTemplateLookup = settled.value
+          // #5438 — without a template the page is empty: BlockTree's first
+          // load takes this instead of a `load_page_subtree` round trip.
+          // After `notifyPageAdded`, which counts the new page as a graph
+          // change; an entry parked before it would read as stale.
+          if (settled.value.template == null) parkEmptyPageSubtree(currentSpaceId, newId)
           pageId = newId
           // Page-render notification (`setCreatedPages` /
           // `onPageCreated` / `useResolveStore.set`) is deferred to the
@@ -121,8 +140,7 @@ export function useJournalBlockCreation({
 
         if (isNewPage) {
           const currentSpaceId = useSpaceStore.getState().currentSpaceId
-          const { template: journalTemplate, duplicateWarning } =
-            await loadJournalTemplate(currentSpaceId)
+          const { template: journalTemplate, duplicateWarning } = journalTemplateLookup
           if (duplicateWarning) {
             notify.warning(duplicateWarning)
           }

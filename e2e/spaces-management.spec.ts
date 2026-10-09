@@ -66,7 +66,15 @@
  *      attempted here.
  */
 
-import { expect, openPage, showJournalPages, test, waitForBoot } from './helpers'
+import {
+  expect,
+  getInvokeCalls,
+  installIpcRecorder,
+  openPage,
+  showJournalPages,
+  test,
+  waitForBoot,
+} from './helpers'
 
 const SWITCH_SPACE = 'Switch space'
 const MANAGE_SPACES = 'Manage spaces…'
@@ -204,6 +212,71 @@ test.describe('Spaces — create, switch, content isolation', () => {
     await expect(
       page.locator('[data-page-item]').filter({ hasText: 'Getting Started' }),
     ).toBeVisible()
+  })
+
+  // #5460 review — the journal stays mounted across a switch between two
+  // spaces that are both on the journal view, and the switch lands in one
+  // render with the new space's date. The page map it still holds is the old
+  // space's; read as the new space's it created a second page for today.
+  test('switching to a space whose journal is on today reuses its existing page', async ({
+    page,
+  }) => {
+    const dateDisplay = page.locator('[data-testid="date-display"]')
+    const { todayStr, yesterdayStr } = await page.evaluate(() => {
+      const toIso = (d: Date) =>
+        `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+      const today = new Date()
+      const yesterday = new Date(today)
+      yesterday.setDate(yesterday.getDate() - 1)
+      return { todayStr: toIso(today), yesterdayStr: toIso(yesterday) }
+    })
+
+    // Personal's journal persisted on yesterday: it boots there, so today's
+    // page is never auto-created and Personal's page map lacks today.
+    await page.addInitScript(
+      (blob) => localStorage.setItem('agaric:journal', blob),
+      JSON.stringify({
+        state: { currentDateBySpace: { SPACE_PERSONAL: yesterdayStr }, modeBySpace: {} },
+        version: 1,
+      }),
+    )
+    await waitForBoot(page)
+    const yesterdayText = (await dateDisplay.textContent()) ?? ''
+
+    // Work's journal auto-creates today's page on first visit.
+    await createSpaceInSettings(page, 'Work')
+    await switchToSpace(page, 'Work')
+    await page.getByRole('button', { name: 'Journal', exact: true }).click()
+    await expect(page.locator('[data-testid="block-tree"]').first()).toBeVisible()
+    const todayText = (await dateDisplay.textContent()) ?? ''
+    expect(todayText).not.toBe(yesterdayText)
+
+    // Back on Personal's journal, still yesterday: nothing auto-creates. The
+    // remount happens past the page-map cache TTL (`PAGE_DATES_TTL_MS`), so
+    // the map it holds is its own round trip, the one the shortcut trusts.
+    await page.clock.install()
+    await switchToSpace(page, 'Personal')
+    await page.clock.runFor(61_000)
+    await page.getByRole('button', { name: 'Journal', exact: true }).click()
+    await expect(dateDisplay).toHaveText(yesterdayText)
+
+    await installIpcRecorder(page)
+    await switchToSpace(page, 'Work')
+    await expect(dateDisplay).toHaveText(todayText)
+    await expect(page.locator('[data-testid="block-tree"]').first()).toBeVisible()
+    // The decision for Work came from a probe scoped to Work, not from
+    // Personal's map (Work's own month is still cached, so no range fetch).
+    await expect
+      .poll(async () => (await getInvokeCalls(page, 'get_journal_page_by_date')).length)
+      .toBeGreaterThan(0)
+    expect(await getInvokeCalls(page, 'create_page_in_space')).toEqual([])
+
+    // Durable: Work holds exactly one page for today.
+    await clickPagesNav(page)
+    await showJournalPages(page)
+    await expect(
+      page.locator('[data-page-item]').filter({ hasText: new RegExp(todayStr) }),
+    ).toHaveCount(1)
   })
 
   test('Ctrl+2 switches to the second space by alphabetical index', async ({ page }) => {

@@ -80,7 +80,7 @@ export function JournalPage({
     })),
   )
   const calendarRange = useMemo(() => getCalendarMonthRange(currentDate), [currentDate])
-  const { pageMap, loading, addPage } = useCalendarPageDates(calendarRange)
+  const { pageMap, loading, fetchedThisMount, addPage } = useCalendarPageDates(calendarRange)
   const currentSpaceId = useSpaceStore((s) => s.currentSpaceId)
   // #1448 — DISPLAY-ONLY journal title format. The lookup/identity key stays
   // the ISO `dateStr` (see makeDayEntry); only the rendered `displayDate` honors
@@ -134,6 +134,8 @@ export function JournalPage({
     // required-active probe when there is no active space.
     spaceId: currentSpaceId,
     createdPages,
+    pageMap,
+    pageMapFetchedThisMount: fetchedThisMount,
     handleAddBlock,
   })
   const forgetDeletedPage = useCallback(
