@@ -140,8 +140,11 @@ function setReservedColumnProperty(
   // `done`) fails instead of landing raw on the column.
   assertValidReservedPropertyValue(key, channel, channelValue)
   const b = blocks.get(blockId)
+  const fromValue = (b?.[key] as string | null | undefined) ?? null
   if (b) b[key] = channelValue
   const op = pushOp('set_property', { block_id: blockId, key, from_value: null })
+  // #5394 — `set_property_inner` routes `todo_state` through `set_todo_state_inner`.
+  if (b && key === 'todo_state') writeCompletedAtTransition(blockId, fromValue, channelValue)
   return b ? { ...b, op_refs: [{ device_id: op.device_id, seq: op.seq }] } : null
 }
 

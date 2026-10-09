@@ -112,7 +112,9 @@ pub async fn list_property_values_inner(
 /// Set (upsert) a property on a block.
 ///
 /// Thin wrapper around [`set_property_in_tx`] that manages the transaction
-/// lifecycle and dispatches background work. A `value_text` under a `ref`
+/// lifecycle and dispatches background work. `todo_state` goes through
+/// [`set_todo_state_inner`] instead, so it stamps and recurs as the app's
+/// checkbox does; a clear (no value) is a clear there too. A `value_text` under a `ref`
 /// definition is the block its id, `[[Title]]` or title names in the block's
 /// space (#5160 D11), and is refused when it names none or two.
 ///
@@ -164,6 +166,33 @@ pub async fn set_property_inner(
                  value_ref / value_bool must be provided (got {provided})"
             )));
         }
+    }
+    // #5394 — a state set through the generic path (MCP `set_property`, the
+    // property drawer) owes the stamps and the next occurrence a click owes.
+    // `priority`, `due_date` and `scheduled_date` need no routing: their
+    // dedicated setters only validate what `set_property_in_tx` validates.
+    if key == "todo_state" {
+        if value_num.is_some()
+            || value_date.is_some()
+            || value_ref.is_some()
+            || value_bool.is_some()
+        {
+            return Err(AppError::validation(
+                "Property 'todo_state' requires value_text, not \
+                 value_date/value_num/value_ref/value_bool."
+                    .into(),
+            ));
+        }
+        // Boxed: inlined, it makes the `set_property` wrapper's future trip
+        // `clippy::large_futures`.
+        return Box::pin(set_todo_state_inner(
+            pool,
+            device_id,
+            materializer,
+            block_id,
+            value_text,
+        ))
+        .await;
     }
     // #3647 — validate the `repeat` recurrence grammar HERE, at the user's
     // point of entry, so a malformed rule fails where it was typed.

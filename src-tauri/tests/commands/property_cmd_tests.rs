@@ -1933,6 +1933,217 @@ async fn set_property_routes_reserved_key_to_blocks_column() {
     mat.shutdown();
 }
 
+/// `todo_state` through the generic path an MCP agent takes, with the op refs
+/// it appended: the group one activity-feed entry stands for.
+async fn set_todo_state_via_property(
+    pool: &SqlitePool,
+    mat: &Materializer,
+    block_id: &str,
+    state: &str,
+) -> Result<Vec<agaric_store::op::OpRef>, AppError> {
+    capture_op_refs(set_property_inner(
+        pool,
+        DEV,
+        mat,
+        block_id.into(),
+        "todo_state".into(),
+        Some(state.into()),
+        None,
+        None,
+        None,
+        None,
+        None,
+    ))
+    .await
+    .map(|resp| resp.op_refs)
+}
+
+async fn has_completed_at(pool: &SqlitePool, block_id: &str) -> bool {
+    sqlx::query_scalar(
+        "SELECT EXISTS (SELECT 1 FROM block_properties WHERE block_id = ? AND key = 'completed_at')",
+    )
+    .bind(block_id)
+    .fetch_one(pool)
+    .await
+    .unwrap()
+}
+
+/// #5394 — the Done panel selects on `completed_at`, so a DONE set through
+/// `set_property` must stamp it as the checkbox does, and reopening clears it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn set_property_todo_state_stamps_and_clears_completed_at_5394() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let block = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "ship it".into(),
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    let id = block.id.as_str();
+
+    set_todo_state_via_property(&pool, &mat, id, "TODO")
+        .await
+        .unwrap();
+    set_todo_state_via_property(&pool, &mat, id, "DONE")
+        .await
+        .unwrap();
+    assert!(
+        has_completed_at(&pool, id).await,
+        "DONE stamps completed_at"
+    );
+
+    set_todo_state_via_property(&pool, &mat, id, "TODO")
+        .await
+        .unwrap();
+    assert!(
+        !has_completed_at(&pool, id).await,
+        "back to TODO clears completed_at"
+    );
+    mat.shutdown();
+}
+
+/// #5394 — completing a weekly task through `set_property` creates its next
+/// occurrence a week on, and reverting the refs that one call appended (what a
+/// single activity-feed entry carries) undoes the completion and the
+/// occurrence together.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn set_property_todo_state_done_spawns_next_occurrence_and_reverts_as_one_5394() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let block = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "weekly review".into(),
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    let id = block.id.as_str();
+    set_todo_state_via_property(&pool, &mat, id, "TODO")
+        .await
+        .unwrap();
+    set_property_inner(
+        &pool,
+        DEV,
+        &mat,
+        id.into(),
+        "due_date".into(),
+        None,
+        None,
+        Some("2025-06-14".into()),
+        None,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    set_repeat_property(&pool, DEV, &mat, id, "weekly").await;
+
+    let group = set_todo_state_via_property(&pool, &mat, id, "DONE")
+        .await
+        .unwrap();
+    mat.flush_background().await.unwrap();
+    let next: Option<(Option<String>, Option<String>)> = sqlx::query_as(
+        "SELECT todo_state, due_date FROM blocks WHERE id != ? AND deleted_at IS NULL",
+    )
+    .bind(id)
+    .fetch_optional(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        next,
+        Some((Some("TODO".into()), Some("2025-06-21".into()))),
+        "the next occurrence is an open task due a week later"
+    );
+
+    revert_ops_inner(&pool, DEV, &mat, group).await.unwrap();
+    mat.flush_background().await.unwrap();
+    let state: Option<String> = sqlx::query_scalar("SELECT todo_state FROM blocks WHERE id = ?")
+        .bind(id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(state.as_deref(), Some("TODO"));
+    assert!(!has_completed_at(&pool, id).await, "the stamp is undone");
+    let live: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM blocks WHERE deleted_at IS NULL")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(live, 1, "the next occurrence is undone with the completion");
+    mat.shutdown();
+}
+
+/// #5394 — `todo_state` takes `value_text` only. Another slot must be refused,
+/// never read as the clear an absent `value_text` means to the state setter.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn set_property_todo_state_rejects_unknown_state_and_non_text_values_5394() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let block = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "task".into(),
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    let id = block.id.as_str();
+    set_todo_state_via_property(&pool, &mat, id, "TODO")
+        .await
+        .unwrap();
+
+    let err = set_todo_state_via_property(&pool, &mat, id, "SHIPPED")
+        .await
+        .expect_err("an unknown state is refused");
+    assert!(matches!(err, AppError::Validation { .. }), "{err:?}");
+
+    let slots = [
+        (Some(1.0), None, None),
+        (None, Some(id.to_owned()), None),
+        (None, None, Some(true)),
+    ];
+    for (value_num, value_ref, value_bool) in slots {
+        let err = set_property_inner(
+            &pool,
+            DEV,
+            &mat,
+            id.into(),
+            "todo_state".into(),
+            None,
+            value_num,
+            None,
+            value_ref,
+            value_bool,
+            None,
+        )
+        .await
+        .expect_err("a non-text todo_state is refused");
+        assert!(
+            matches!(err, AppError::Validation { ref message, .. } if message.contains("requires value_text")),
+            "{err:?}"
+        );
+    }
+    let state: Option<String> = sqlx::query_scalar("SELECT todo_state FROM blocks WHERE id = ?")
+        .bind(id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(state.as_deref(), Some("TODO"), "nothing was cleared");
+    mat.shutdown();
+}
+
 // ======================================================================
 // set_property — date format / reserved key / property_definitions type
 // ======================================================================
