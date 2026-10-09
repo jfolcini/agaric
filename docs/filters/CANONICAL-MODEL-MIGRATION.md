@@ -51,6 +51,7 @@ block-type* — is implemented across **four independent type vocabularies** and
 | Has-backlinks (bool) | — | — | ✅ `hasBacklinks` | — |
 | Orphan / Stub / No-inbound | — | ✅ | — | — |
 | Exclude templates | — | — | ✅ `excludeTemplates` | — |
+| Exclude journal pages | — | ✅ (`PathGlob` exclude) | ✅ `excludeJournal` | — |
 | Compound And/Or/Not | ✅ (wire) | ✅ `FilterExpr` | — (list AND) | — (field AND) |
 
 **Key observation:** `FilterPrimitive` (surface 2) is the de-facto *unified
@@ -58,7 +59,7 @@ backend vocabulary* — its own doc comments note that backlink leaves "route to
 its shapes, and it is the most complete of the four. The canonical model is
 therefore largely a **frontend mirror** of `FilterPrimitive`, widened to also
 absorb the backlink-only (`tagPrefix`, `sourcePage`, `contains`) and graph-only
-(`hasBacklinks`, `excludeTemplates`) categories.
+(`hasBacklinks`, `excludeTemplates`, `excludeJournal`) categories.
 
 ### Shared pieces (build on these, don't re-invent)
 

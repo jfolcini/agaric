@@ -53,6 +53,8 @@ vi.mock('@/components/ui/popover', () => ({
   ),
 }))
 
+const JOURNAL_GLOB = '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]'
+
 let nextId = 0
 function withKey(f: FilterPrimitive): PageFilterWithKey {
   return { ...f, _addId: ++nextId }
@@ -79,6 +81,18 @@ describe('pageFilterSummary', () => {
       'PathGlob exclude=true',
       { type: 'PathGlob', pattern: 'Projects/*', exclude: true },
       'not path: Projects/*',
+    ],
+    // #5370 — the exact journal-glob exclude chip gets its own label; its
+    // include twin is an ordinary path chip.
+    [
+      'PathGlob journal exclude',
+      { type: 'PathGlob', pattern: JOURNAL_GLOB, exclude: true },
+      'Exclude journal pages',
+    ],
+    [
+      'PathGlob journal include',
+      { type: 'PathGlob', pattern: JOURNAL_GLOB, exclude: false },
+      `path: ${JOURNAL_GLOB}`,
     ],
     // HasProperty — every predicate arm, incl. the `=`/`≠` glyph distinction
     // and a Ref-valued Eq (the summary renders Ref values too, even though the
@@ -502,6 +516,24 @@ describe('PageBrowserFilterRow', () => {
     )
     await userEvent.click(screen.getByRole('button', { name: 'Clear all filters' }))
     expect(onClearAll).toHaveBeenCalledTimes(1)
+  })
+
+  it('renders the journal chip under its own label, removable (#5370)', async () => {
+    const onRemoveFilter = vi.fn<(i: number) => void>()
+    const { container } = render(
+      <PageBrowserFilterRow
+        filters={[withKey({ type: 'PathGlob', pattern: JOURNAL_GLOB, exclude: true })]}
+        onAddFilter={vi.fn()}
+        onRemoveFilter={onRemoveFilter}
+        onClearAll={vi.fn()}
+      />,
+    )
+    expect(screen.getByRole('group', { name: 'Filter: Exclude journal pages' })).toBeInTheDocument()
+    expect(await axe(container)).toHaveNoViolations()
+    await userEvent.click(
+      screen.getByRole('button', { name: 'Remove filter Exclude journal pages' }),
+    )
+    expect(onRemoveFilter).toHaveBeenCalledWith(0)
   })
 
   it('has no a11y violations', async () => {

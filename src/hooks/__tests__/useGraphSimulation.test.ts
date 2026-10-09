@@ -194,6 +194,7 @@ function makeNodes(): GraphNode[] {
       due_date: null,
       scheduled_date: null,
       is_template: false,
+      is_journal: false,
       backlink_count: 0,
     },
     {
@@ -204,6 +205,7 @@ function makeNodes(): GraphNode[] {
       due_date: null,
       scheduled_date: null,
       is_template: false,
+      is_journal: false,
       backlink_count: 0,
     },
   ]

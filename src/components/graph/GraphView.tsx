@@ -195,7 +195,9 @@ export function GraphView(): React.ReactElement {
   const [edgesTotal, setEdgesTotal] = useState(0)
   const [edgesTruncated, setEdgesTruncated] = useState(false)
   const [tags, setTags] = useState<Array<{ tag_id: string; name: string }>>([])
-  const [filters, setFilters] = useState<GraphFilter[]>([])
+  // What a space with no stored graph filters shows (#5370); `GraphFilterBar`
+  // replaces it with the stored list, even an empty one.
+  const [filters, setFilters] = useState<GraphFilter[]>([{ type: 'excludeJournal', value: true }])
 
   // Local-graph mode (#1429): when active, the graph is filtered to the
   // `localHops`-neighborhood of the page open in the active tab. Defaults to

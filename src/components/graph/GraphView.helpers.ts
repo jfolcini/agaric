@@ -10,6 +10,7 @@
 import { unwrap } from '@/lib/app-error'
 import { commands } from '@/lib/bindings'
 import type { PageHeading } from '@/lib/bindings'
+import { isDateFormattedPage } from '@/lib/date-utils'
 import type { GraphEdge, GraphFetchResult, GraphNode } from '@/lib/graph-types'
 import { t } from '@/lib/i18n'
 import { requireActiveScope, toSpaceScope } from '@/lib/space-scope'
@@ -59,6 +60,7 @@ function buildNodes(
     due_date: p.due_date,
     scheduled_date: p.scheduled_date,
     is_template: templateIds.has(p.id),
+    is_journal: isDateFormattedPage(p.content ?? ''),
     backlink_count: backlinksTruncated ? undefined : (backlinkCounts.get(p.id) ?? 0),
   }))
 }

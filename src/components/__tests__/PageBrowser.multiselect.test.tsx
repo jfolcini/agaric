@@ -87,7 +87,8 @@ beforeEach(() => {
   vi.clearAllMocks()
   sessionStorage.clear()
   localStorage.removeItem('starred-pages')
-  usePageBrowserFiltersStore.setState({ filtersBySpace: {}, nextAddId: 0 })
+  // An empty slice, not an absent one: absent is the default journal chip (#5370).
+  usePageBrowserFiltersStore.setState({ filtersBySpace: { SPACE_TEST: [] }, nextAddId: 0 })
   useSpaceStore.setState({
     currentSpaceId: 'SPACE_TEST',
     availableSpaces: [

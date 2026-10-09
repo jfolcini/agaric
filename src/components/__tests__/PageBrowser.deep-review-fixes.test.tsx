@@ -80,7 +80,8 @@ beforeEach(() => {
   // persisted key so chips added in one test don't leak into the next.
   localStorage.removeItem('agaric:page-browser-filters')
   localStorage.removeItem('agaric:pages:savedViews:v1')
-  usePageBrowserFiltersStore.setState({ filtersBySpace: {}, nextAddId: 0 })
+  // An empty slice, not an absent one: absent is the default journal chip (#5370).
+  usePageBrowserFiltersStore.setState({ filtersBySpace: { SPACE_TEST: [] }, nextAddId: 0 })
   // Phase 2 — PageBrowser now gates its render and page query
   // on `useSpaceStore.isReady`. Seed the store so tests exercise the
   // real code path rather than the loading skeleton.
@@ -190,6 +191,19 @@ describe('PageBrowser', () => {
         await applyTaggedView(() => Promise.reject(new Error('backend down')))
 
         await waitFor(() => expect(appliedTagIds()).toEqual(['TAG_HERE', 'TAG_ELSEWHERE']))
+      })
+
+      it('replaces the default journal chip of a space with nothing stored (#5370)', async () => {
+        usePageBrowserFiltersStore.setState({ filtersBySpace: {}, nextAddId: 0 })
+        await applyTaggedView(() =>
+          Promise.resolve([{ tag_id: 'TAG_HERE', name: 'here', usage_count: 1, updated_at: '' }]),
+        )
+
+        await waitFor(() =>
+          expect(usePageBrowserFiltersStore.getState().filtersBySpace['SPACE_TEST']).toEqual([
+            { type: 'Tag', tag: 'TAG_HERE', _addId: 1 },
+          ]),
+        )
       })
     })
 
