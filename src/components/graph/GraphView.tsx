@@ -214,7 +214,7 @@ export function GraphView(): React.ReactElement {
 
   // The "current page" = the top of the active tab's page stack. `null` when
   // the active tab has no page open (e.g. a view tab), which disables the
-  // focus toggle.
+  // focus toggle. Its node carries the graph's one accent (#5429).
   const pageStack = useTabsStore(selectPageStack)
   const seedEntry = pageStack.length > 0 ? pageStack.at(-1) : null
   const seedPageId = seedEntry?.pageId ?? null
@@ -422,6 +422,7 @@ export function GraphView(): React.ReactElement {
     nodes: displayNodes,
     edges: displayEdges,
     navigateToPage,
+    currentPageId: seedPageId,
   })
 
   if (loading)

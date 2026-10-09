@@ -17,6 +17,7 @@ export interface UseGraphRenderElementsArgs {
   nodes: GraphNode[]
   edges: GraphEdge[]
   navigateToPage: (id: string, label: string) => void
+  currentPageId: string | null
 }
 
 export type RenderGraphFn = (svg: SVGSVGElement) => RenderResult
@@ -25,9 +26,10 @@ export function useGraphRenderElements({
   nodes,
   edges,
   navigateToPage,
+  currentPageId,
 }: UseGraphRenderElementsArgs): RenderGraphFn {
   return useCallback(
-    (svg: SVGSVGElement) => renderGraphElements(svg, nodes, edges, navigateToPage),
-    [nodes, edges, navigateToPage],
+    (svg: SVGSVGElement) => renderGraphElements(svg, nodes, edges, navigateToPage, currentPageId),
+    [nodes, edges, navigateToPage, currentPageId],
   )
 }
