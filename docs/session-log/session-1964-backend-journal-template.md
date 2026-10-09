@@ -35,3 +35,13 @@ and `cmp`-checked). `cargo nextest run --workspace` 6,738 passed (five
 timed out under load and passed alone); clippy, offline sqlx check, `sqlx
 prepare --check` and fmt clean; vitest targets, typecheck, oxlint and
 oxfmt clean.
+
+Rebased onto #5438 (#5460), which had made the frontend run the template
+lookup alongside page creation and park an empty subtree when there was no
+template. With the backend owning the template, the frontend lookup goes, and
+the park now follows the first-child probe: it parks only when the probe
+succeeded and found nothing, since parking an empty subtree for a day the
+backend seeded would make `autoCreateFirstBlock` add a block. #5438's two park
+tests now drive `first_child_for_blocks` (empty, seeded), plus a failing-probe
+arm, which goes red with the probe check removed. The five journal suites
+pass (201 tests).
