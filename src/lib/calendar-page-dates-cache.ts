@@ -117,7 +117,7 @@ export function claimSettled(spaceId: string, startDate: string, endDate: string
   return true
 }
 
-export async function doFetch(
+async function doFetch(
   spaceId: string,
   startDate: string,
   endDate: string,
@@ -166,6 +166,10 @@ export function mergeIntoCache(spaceId: string, dateStr: string, pageId: string)
  * round trips, and the `hasContent` dots blanked and repainted on every open.
  * The settled result is now retained under the same key, bounded by
  * {@link PAGE_DATES_TTL_MS} and dropped by {@link invalidateCalendarPageDates}.
+ *
+ * #5438 — the boot store calls this before any subscriber mounts, so the
+ * fetch overlaps `list_spaces`; the first `useCalendarPageDates` for the same
+ * range seeds from the settled result without a round trip.
  */
 export function fetchPageMap(
   spaceId: string,
@@ -205,19 +209,6 @@ export function fetchPageMap(
     }
   }, clear)
   return promise
-}
-
-/**
- * #5438 — start (or join) the range fetch before any subscriber mounts, so
- * boot can overlap it with `list_spaces`. The first `useCalendarPageDates`
- * for the same range seeds from the settled result without a round trip.
- */
-export function prefetchCalendarPageDates(
-  spaceId: string,
-  startDate: string,
-  endDate: string,
-): Promise<Map<string, string>> {
-  return fetchPageMap(spaceId, startDate, endDate)
 }
 
 /** The cache epoch, bumped on every invalidation (read by `useCalendarPageDatesEpoch`). */

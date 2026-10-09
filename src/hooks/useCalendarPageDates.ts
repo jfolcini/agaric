@@ -47,9 +47,9 @@ import { useSpaceStore } from '@/stores/space'
 
 export {
   __resetCalendarPageDatesForTests,
+  fetchPageMap,
   invalidateCalendarPageDates,
   PAGE_DATES_TTL_MS,
-  prefetchCalendarPageDates,
   samePageMap,
 } from '@/lib/calendar-page-dates-cache'
 
@@ -78,6 +78,11 @@ export interface UseCalendarPageDatesResult {
    * served from the cache a previous mount filled may predate a journal page
    * created by another route (see {@link PAGE_DATES_TTL_MS}), so a caller
    * that creates on absence re-probes unless this is true.
+   *
+   * Tied to the space and range it was fetched for: in the render where
+   * either changes it is already false, although `pageMap` and `loading`
+   * still describe the previous key until the effect below catches up
+   * (`JournalPage` stays mounted across a space switch).
    */
   fetchedThisMount: boolean
   /** Merge a locally-created page into the map without re-fetching. */
@@ -95,6 +100,7 @@ export function useCalendarPageDates(
   const { startDate, endDate } = opts
   const { t } = useTranslation()
   const currentSpaceId = useSpaceStore((s) => s.currentSpaceId)
+  const rangeKey = `${currentSpaceId}|${startDate}|${endDate}`
   // #5438 — a range the boot prefetch (or an earlier mount) already settled
   // renders on the first frame instead of behind the loading skeleton.
   const [seed] = useState(() =>
@@ -102,21 +108,22 @@ export function useCalendarPageDates(
   )
   const [pageMap, setPageMap] = useState<Map<string, string>>(seed?.map ?? new Map())
   const [loading, setLoading] = useState(seed == null)
-  const [fetchedThisMount, setFetchedThisMount] = useState(seed != null && !seed.claimed)
+  // The key whose round trip this mount owns; compared against `rangeKey` at
+  // render time so a space or range change reads as not-fresh at once.
+  const [fetchedKey, setFetchedKey] = useState<string | null>(
+    seed != null && !seed.claimed ? rangeKey : null,
+  )
   // Track mount state so we don't setState after unmount.
   const mountedRef = useRef(true)
   const epoch = useCalendarPageDatesEpoch()
   // The range on screen. An invalidation re-fetches it in place: blanking it
   // would unmount the journal's day editors behind the loading skeleton.
-  const shownRangeRef = useRef<string | null>(
-    seed == null ? null : `${currentSpaceId}|${startDate}|${endDate}`,
-  )
+  const shownRangeRef = useRef<string | null>(seed == null ? null : rangeKey)
 
   useEffect(() => {
     mountedRef.current = true
     let cancelled = false
     const start = performance.now()
-    const rangeKey = `${currentSpaceId}|${startDate}|${endDate}`
     if (shownRangeRef.current !== rangeKey) {
       shownRangeRef.current = rangeKey
       setLoading(true)
@@ -136,7 +143,7 @@ export function useCalendarPageDates(
     fetchPageMap(currentSpaceId, startDate, endDate)
       .then((map) => {
         if (cancelled || !mountedRef.current) return
-        setFetchedThisMount(claimSettled(currentSpaceId, startDate, endDate))
+        setFetchedKey(claimSettled(currentSpaceId, startDate, endDate) ? rangeKey : null)
         setPageMap((prev) => (samePageMap(prev, map) ? prev : map))
         logger.debug('useCalendarPageDates', 'journal pages loaded', {
           pageCount: map.size,
@@ -158,7 +165,7 @@ export function useCalendarPageDates(
       cancelled = true
       mountedRef.current = false
     }
-  }, [t, currentSpaceId, startDate, endDate, epoch])
+  }, [t, currentSpaceId, startDate, endDate, rangeKey, epoch])
 
   const addPage = useCallback(
     (dateStr: string, pageId: string) => {
@@ -187,5 +194,11 @@ export function useCalendarPageDates(
     return days
   }, [pageMap])
 
-  return { pageMap, highlightedDays, loading, fetchedThisMount, addPage }
+  return {
+    pageMap,
+    highlightedDays,
+    loading,
+    fetchedThisMount: fetchedKey === rangeKey,
+    addPage,
+  }
 }

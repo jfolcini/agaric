@@ -36,3 +36,13 @@ a template), all red, restored and `cmp`-checked. Full vitest 20,810 passed;
 Playwright journal and spaces specs 17/17; typecheck, oxlint and oxfmt
 clean. #5395 moves the template into the backend; it gates the park on the
 backend having created no template blocks.
+
+Review fix (same PR): the "this mount fetched the map" flag was not tied to
+the space and range it was fetched for. `JournalPage` stays mounted across a
+space switch, so in the render where the space (or the month, via Today)
+changed, the old map read as fresh and could create a duplicate day page in a
+space that already had one. The flag now compares the fetched key with the
+current one. The template lookup no longer gates `notifyPageAdded`, and the
+`prefetchCalendarPageDates` alias is gone (`fetchPageMap` is exported).
+Verified: the untied flag reddens four hook tests and the new two-space e2e;
+full vitest green in two shards; Playwright journal and spaces 18/18.

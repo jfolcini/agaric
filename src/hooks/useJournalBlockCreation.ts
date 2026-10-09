@@ -98,13 +98,12 @@ export function useJournalBlockCreation({
             throw new Error('No active space; cannot create journal page')
           }
           // #5438 — the template lookup does not depend on the new page id,
-          // so it runs alongside the create instead of after it.
-          const [created, lookup] = await Promise.all([
-            commands.createPageInSpace(null, dateStr, currentSpaceId),
-            loadJournalTemplate(currentSpaceId),
-          ])
-          journalTemplateLookup = lookup
-          const newId = unwrap(created)
+          // so it runs alongside the create. It is awaited only after the
+          // page is announced below (a page that exists is announced even
+          // when its template cannot be read), and `allSettled` keeps a
+          // rejection that lands first from going unhandled meanwhile.
+          const templateLookup = Promise.allSettled([loadJournalTemplate(currentSpaceId)])
+          const newId = unwrap(await commands.createPageInSpace(null, dateStr, currentSpaceId))
           // Defensive: if the IPC returned a non-string (mock leak, schema
           // drift, …) treat it as a failure so we don't seed `createdPages`
           // with a non-string and render a phantom page.
@@ -120,11 +119,14 @@ export function useJournalBlockCreation({
           // notification, so it does not re-render `JournalPage` and cannot
           // race `autoCreateFirstBlock` the way the deferred group below can.
           notifyPageAdded(newId, dateStr, currentSpaceId)
+          const [settled] = await templateLookup
+          if (settled.status === 'rejected') throw settled.reason
+          journalTemplateLookup = settled.value
           // #5438 — without a template the page is empty: BlockTree's first
           // load takes this instead of a `load_page_subtree` round trip.
           // After `notifyPageAdded`, which counts the new page as a graph
           // change; an entry parked before it would read as stale.
-          if (lookup.template == null) parkEmptyPageSubtree(currentSpaceId, newId)
+          if (settled.value.template == null) parkEmptyPageSubtree(currentSpaceId, newId)
           pageId = newId
           // Page-render notification (`setCreatedPages` /
           // `onPageCreated` / `useResolveStore.set`) is deferred to the

@@ -178,6 +178,32 @@ describe('useJournalBlockCreation', () => {
     expect(result.current.createdPages.get('2025-06-15')).toBe('PNEW')
   })
 
+  // #5460 review — the page exists once `create_page_in_space` resolves, so
+  // the picker caches hear about it even when its template cannot be read.
+  it('announces the created page before a failed template lookup is surfaced', async () => {
+    mockedLoadJournalTemplate.mockRejectedValue(new Error('template lookup boom'))
+    stubInvoke({ create_page_in_space: () => 'PNEW' })
+
+    const changes: NameChange[] = []
+    const unsubscribe = subscribeToNameChanges((c) => changes.push(c))
+    const { result, pageCreatedCalls } = setup()
+    try {
+      await act(async () => {
+        await result.current.handleAddBlock('2025-06-15')
+      })
+    } finally {
+      unsubscribe()
+    }
+
+    expect(changes).toEqual([
+      { kind: 'added', entity: 'page', id: 'PNEW', name: '2025-06-15', spaceId: 'SPACE_TEST' },
+    ])
+    // The failure itself is still reported, and the page is not rendered as seeded.
+    expect(vi.mocked(toast.error)).toHaveBeenCalledTimes(1)
+    expect(pageCreatedCalls).toEqual([])
+    expect(result.current.createdPages.size).toBe(0)
+  })
+
   it('parks an empty subtree for a template-less new page, so its first load skips the IPC (#5438)', async () => {
     stubInvoke({ create_page_in_space: () => 'PNEW' })
 

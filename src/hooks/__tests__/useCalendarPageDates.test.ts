@@ -20,9 +20,9 @@ import { makePage } from '@/__tests__/fixtures'
 import { mockInvokeCommands } from '@/__tests__/helpers/invoke'
 import {
   __resetCalendarPageDatesForTests,
+  fetchPageMap,
   invalidateCalendarPageDates,
   PAGE_DATES_TTL_MS,
-  prefetchCalendarPageDates,
   samePageMap,
   useCalendarPageDates,
 } from '@/hooks/useCalendarPageDates'
@@ -89,7 +89,7 @@ describe('useCalendarPageDates', () => {
   describe('boot prefetch seed (#5438)', () => {
     it('seeds synchronously from a settled prefetch and counts it as this mount’s fetch', async () => {
       journalPagesResponse = () => [makePage({ id: 'P1', content: '2025-06-15' })]
-      await prefetchCalendarPageDates(SPACE_ID, RANGE.startDate, RANGE.endDate)
+      await fetchPageMap(SPACE_ID, RANGE.startDate, RANGE.endDate)
 
       const { result } = renderHook(() => useCalendarPageDates(RANGE))
 
@@ -127,6 +127,118 @@ describe('useCalendarPageDates', () => {
       await waitFor(() => {
         expect(second.result.current.fetchedThisMount).toBe(true)
       })
+      expect(fetchCallCount()).toBe(2)
+    })
+  })
+
+  // #5460 review — `JournalPage` stays mounted across a space switch, and the
+  // hook only blanks `loading` / `pageMap` in its effect, one render later.
+  // The flag is read in that same render by `useJournalAutoCreate`, which
+  // would otherwise take the old space's map as the new space's answer and
+  // create a second page for today.
+  describe('fetchedThisMount is tied to the space and range it was fetched for', () => {
+    interface Seen {
+      spaceId: string | null
+      range: string
+      fetched: boolean
+      loading: boolean
+      map: Map<string, string>
+    }
+
+    /** One entry per render, so the switch render itself can be inspected. */
+    function renderObserved(initialRange = RANGE) {
+      const seen: Seen[] = []
+      const rendered = renderHook(
+        (range: { startDate: string; endDate: string }) => {
+          const spaceId = useSpaceStore((s) => s.currentSpaceId)
+          const dates = useCalendarPageDates(range)
+          seen.push({
+            spaceId,
+            range: range.startDate,
+            fetched: dates.fetchedThisMount,
+            loading: dates.loading,
+            map: dates.pageMap,
+          })
+          return dates
+        },
+        { initialProps: initialRange },
+      )
+      return { ...rendered, seen }
+    }
+
+    it('a space switch reads as not fetched in the very render it happens', async () => {
+      journalPagesResponse = () => [makePage({ id: 'P_A', content: '2025-06-15' })]
+      const { result, seen } = renderObserved()
+      await waitFor(() => {
+        expect(result.current.fetchedThisMount).toBe(true)
+      })
+      const mapA = result.current.pageMap
+      journalPagesResponse = () => [makePage({ id: 'P_B', content: '2025-06-16' })]
+
+      act(() => {
+        useSpaceStore.setState({ currentSpaceId: 'SPACE_B' })
+      })
+
+      // The switch render still carries space A's map with `loading` false;
+      // the flag is the only thing that says it is not B's.
+      const switchRender = seen.find((r) => r.spaceId === 'SPACE_B')
+      expect(switchRender).toMatchObject({ fetched: false, loading: false, map: mapA })
+      // Every render under B before B's own fetch lands reads as not fresh.
+      for (const underB of seen.filter((r) => r.spaceId === 'SPACE_B' && r.map === mapA)) {
+        expect(underB.fetched).toBe(false)
+      }
+
+      await waitFor(() => {
+        expect(result.current.pageMap.get('2025-06-16')).toBe('P_B')
+      })
+      expect(result.current.fetchedThisMount).toBe(true)
+      expect(mockedInvoke).toHaveBeenCalledWith(
+        'list_journal_pages_in_range',
+        expect.objectContaining({ scope: { kind: 'active', space_id: 'SPACE_B' } }),
+      )
+    })
+
+    it('a range change reads as not fetched in the very render it happens', async () => {
+      journalPagesResponse = () => [makePage({ id: 'P_JUNE', content: '2025-06-15' })]
+      const { result, rerender, seen } = renderObserved()
+      await waitFor(() => {
+        expect(result.current.fetchedThisMount).toBe(true)
+      })
+      const juneMap = result.current.pageMap
+      journalPagesResponse = () => [makePage({ id: 'P_JULY', content: '2025-07-04' })]
+
+      rerender({ startDate: '2025-07-01', endDate: '2025-07-31' })
+
+      const switchRender = seen.find((r) => r.range === '2025-07-01')
+      expect(switchRender).toMatchObject({ fetched: false, loading: false, map: juneMap })
+      for (const underJuly of seen.filter((r) => r.range === '2025-07-01' && r.map === juneMap)) {
+        expect(underJuly.fetched).toBe(false)
+      }
+
+      await waitFor(() => {
+        expect(result.current.pageMap.get('2025-07-04')).toBe('P_JULY')
+      })
+      expect(result.current.fetchedThisMount).toBe(true)
+      expect(fetchCallCount()).toBe(2)
+    })
+
+    it('a switch back to a range this mount already fetched is served from the cache, so it is not fresh', async () => {
+      const { result, rerender } = renderObserved()
+      await waitFor(() => {
+        expect(result.current.fetchedThisMount).toBe(true)
+      })
+      rerender({ startDate: '2025-07-01', endDate: '2025-07-31' })
+      await waitFor(() => {
+        expect(result.current.fetchedThisMount).toBe(true)
+      })
+
+      rerender(RANGE)
+      await waitFor(() => {
+        expect(result.current.loading).toBe(false)
+      })
+      // June's entry was claimed by this mount's first read; the cache hit
+      // is not a round trip, so a caller that creates on absence must probe.
+      expect(result.current.fetchedThisMount).toBe(false)
       expect(fetchCallCount()).toBe(2)
     })
   })

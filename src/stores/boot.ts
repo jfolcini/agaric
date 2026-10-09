@@ -32,7 +32,7 @@
 
 import { create } from 'zustand'
 
-import { prefetchCalendarPageDates } from '@/lib/calendar-page-dates-cache'
+import { fetchPageMap } from '@/lib/calendar-page-dates-cache'
 import { formatDate, getCalendarMonthRange } from '@/lib/date-utils'
 import { formatErrorForDisplay } from '@/lib/error-display'
 import { i18n } from '@/lib/i18n'
@@ -59,7 +59,7 @@ function prefetchBootJournal(): void {
   const { mode, currentDate } = useJournalStore.getState()
   if (mode !== 'daily') return
   const { startDate, endDate } = getCalendarMonthRange(currentDate)
-  prefetchCalendarPageDates(spaceId, startDate, endDate)
+  fetchPageMap(spaceId, startDate, endDate)
     .then((map) => {
       const pageId = map.get(formatDate(currentDate))
       if (pageId) prefetchPageSubtree(spaceId, pageId)
