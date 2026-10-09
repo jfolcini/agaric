@@ -3961,6 +3961,7 @@ const PA_NODATE: &str = "01PANODATE3345000000000000";
 const PA_FINISHED: &str = "01PAFNSHED3345000000000000";
 const PA_LIMITED: &str = "01PAXLMTED3345000000000000";
 const PA_BOTH: &str = "01PABOTH334500000000000000";
+const PA_PAST: &str = "01PAPAST542100000000000000";
 
 /// The pinned reference date. Production reads `Local::now()`; every assertion
 /// here passes this same date to both the rebuild and the oracle, which is the
@@ -4012,6 +4013,11 @@ async fn pa_fixture() -> (sqlx::SqlitePool, TempDir) {
     bl_insert_content(&pool, PA_BOTH, PA_PAGE, None, "both").await;
     ag_set_columns(&pool, PA_BOTH, Some("2026-01-01"), Some("2026-01-01")).await;
     pa_text_property(&pool, PA_BOTH, "repeat", "+1d").await;
+
+    // Based before the backward window (#5421), so it fills that window too.
+    bl_insert_content(&pool, PA_PAST, PA_PAGE, None, "past").await;
+    ag_set_columns(&pool, PA_PAST, Some("2025-09-03"), None).await;
+    pa_text_property(&pool, PA_PAST, "repeat", "+1d").await;
 
     // `repeat-count` bounds the series.
     bl_insert_content(&pool, PA_LIMITED, PA_PAGE, None, "limited").await;
@@ -4097,7 +4103,7 @@ async fn projected_agenda_reconciles_and_reports_a_dropped_occurrence_3345() {
     blocks.dedup();
     assert_eq!(
         blocks,
-        vec![PA_BOTH, PA_DAILY, PA_LIMITED],
+        vec![PA_BOTH, PA_DAILY, PA_PAST, PA_LIMITED],
         "DONE, deleted, template-owned, rule-less, EMPTY-rule and date-less blocks \
          must all contribute nothing; got {blocks:?}"
     );
@@ -4110,6 +4116,11 @@ async fn projected_agenda_reconciles_and_reports_a_dropped_occurrence_3345() {
         pa_count(&expected, PA_BOTH),
         horizon * 2,
         "the cap is per SOURCE, so due_date and scheduled_date each get a full horizon"
+    );
+    assert_eq!(
+        pa_count(&expected, PA_PAST),
+        usize::try_from(agaric_store::cache::BACKWARD_WINDOW_DAYS).expect("fits usize") + horizon,
+        "a series based before the backward window fills all of it, then the horizon"
     );
     assert_eq!(
         pa_count(&expected, PA_LIMITED),

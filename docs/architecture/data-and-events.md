@@ -163,7 +163,7 @@ Rebuilt by the materializer; never read-through:
 | `tags_cache` | Per-tag aggregate (usage, descendant count) | tag-touching ops | Yes — `RebuildTagsCache` is a persisted global task |
 | `pages_cache` | Per-page aggregate | page-touching ops | Yes — `RebuildPagesCache` is a persisted global task |
 | `agenda_cache` | Per-date task index | due / scheduled / completed property writes | Yes — `RebuildAgendaCache` is a persisted global task |
-| `projected_agenda_cache` | Future occurrences of repeating tasks | repeat-property writes | Yes — `RebuildProjectedAgendaCache` is a persisted global task |
+| `projected_agenda_cache` | Occurrences of repeating tasks, 90 days back through the horizon | repeat-property writes | Yes — `RebuildProjectedAgendaCache` is a persisted global task |
 | `fts_blocks` (FTS5 virtual table) | Tokenised block content for search | edit_block, materializer post-commit | Yes for incremental per-block reindex (`UpdateFtsBlock` is persisted); **no** for a full reindex — `RebuildFtsIndex` is one of the "truly non-retryable" tasks and is silently dropped on failure/saturation, not queued for a later sweep |
 
 **Rebuild order is load-bearing.** `rebuild_page_ids` MUST run before `rebuild_agenda_cache` / `rebuild_projected_agenda_cache` (the date-by-page joins depend on the denormalised column). `rebuild_block_tag_refs_cache` runs before `rebuild_tags_cache`. The materializer's task graph enforces this.

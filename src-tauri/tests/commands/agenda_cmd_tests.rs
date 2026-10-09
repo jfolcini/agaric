@@ -3515,8 +3515,8 @@ async fn projected_agenda_beyond_horizon_falls_back_to_on_the_fly() {
 // horizon) — 217 ms at the 100K SLO fixture — every time a user's window
 // legitimately holds no projected occurrences. Since #2601 the horizon row
 // says exactly when the cache is authoritative, so the expansion is skipped
-// for ranges inside `[rebuild_today, rebuild_today + HORIZON_DAYS]` and kept
-// everywhere else.
+// for ranges inside `[rebuild_today - BACKWARD_WINDOW_DAYS, rebuild_today +
+// HORIZON_DAYS]` (the backward part since #5421) and kept everywhere else.
 //
 // The two tests below pin both sides of that boundary. They deliberately
 // DELETE a materialized row so the cache disagrees with the projector: that
@@ -3651,23 +3651,235 @@ async fn projected_agenda_range_straddling_rebuild_today_keeps_the_past_half_326
     assert!(!page.has_more);
 }
 
-/// The lower bound of the guarantee. The rebuild projects from its own
-/// `today` forward, so occurrences BEFORE that date were never materialized —
-/// an empty cache result there means "not covered", not "nothing to show",
-/// and the on-the-fly fallback must still run.
+// ======================================================================
+// #5421 — the backward window: past days read the cache
+// ======================================================================
+
+/// Insert a non-DONE repeating block with the given date columns and rule.
+async fn insert_repeater(
+    pool: &SqlitePool,
+    id: &str,
+    due: Option<chrono::NaiveDate>,
+    scheduled: Option<chrono::NaiveDate>,
+    rule: &str,
+) {
+    let ymd = |d: chrono::NaiveDate| d.format("%Y-%m-%d").to_string();
+    sqlx::query(
+        "INSERT INTO blocks (id, block_type, content, todo_state, due_date, scheduled_date)
+         VALUES (?, 'content', 'repeater', 'TODO', ?, ?)",
+    )
+    .bind(id)
+    .bind(due.map(ymd))
+    .bind(scheduled.map(ymd))
+    .execute(pool)
+    .await
+    .unwrap();
+    sqlx::query("INSERT INTO block_properties (block_id, key, value_text) VALUES (?, 'repeat', ?)")
+        .bind(id)
+        .bind(rule)
+        .execute(pool)
+        .await
+        .unwrap();
+}
+
+/// A past range inside `[rebuild_today - BACKWARD_WINDOW_DAYS, rebuild_today)`
+/// is read from the cache, which must answer it exactly as the on-the-fly
+/// projector the old routing used — kept as the oracle.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn projected_agenda_past_window_is_read_from_the_cache_5421() {
+    let (pool, _dir) = test_pool().await;
+    let today = chrono::NaiveDate::from_ymd_opt(2050, 4, 6).unwrap();
+    let ago = |n: i64| today - chrono::Duration::days(n);
+    let ymd = |d: chrono::NaiveDate| d.format("%Y-%m-%d").to_string();
+
+    // Every repeat surface, based in the past.
+    insert_repeater(
+        &pool,
+        "PA5421A0000000000000000000",
+        Some(ago(100)),
+        None,
+        "daily",
+    )
+    .await;
+    sqlx::query(
+        "INSERT INTO block_properties (block_id, key, value_num) \
+         VALUES ('PA5421A0000000000000000000', 'repeat-count', 50)",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    insert_repeater(
+        &pool,
+        "PA5421B0000000000000000000",
+        None,
+        Some(ago(60)),
+        "weekly",
+    )
+    .await;
+    sqlx::query(
+        "INSERT INTO block_properties (block_id, key, value_date) \
+         VALUES ('PA5421B0000000000000000000', 'repeat-until', ?)",
+    )
+    .bind(ymd(ago(10)))
+    .execute(&pool)
+    .await
+    .unwrap();
+    insert_repeater(
+        &pool,
+        "PA5421C0000000000000000000",
+        Some(ago(45)),
+        None,
+        "+3d",
+    )
+    .await;
+    insert_repeater(
+        &pool,
+        "PA5421D0000000000000000000",
+        Some(ago(20)),
+        None,
+        ".+1w",
+    )
+    .await;
+    insert_repeater(
+        &pool,
+        "PA5421E0000000000000000000",
+        Some(ago(20)),
+        None,
+        "++1w",
+    )
+    .await;
+    insert_repeater(
+        &pool,
+        "PA5421F0000000000000000000",
+        Some(ago(5)),
+        Some(ago(5)),
+        "daily",
+    )
+    .await;
+    insert_repeater(
+        &pool,
+        "PA5421G0000000000000000000",
+        Some(ago(200)),
+        None,
+        "monthly",
+    )
+    .await;
+    insert_repeater(
+        &pool,
+        "PA5421H0000000000000000000",
+        Some(ago(30)),
+        None,
+        "daily",
+    )
+    .await;
+    sqlx::query("UPDATE blocks SET todo_state = 'DONE' WHERE id = 'PA5421H0000000000000000000'")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    agaric_store::cache::rebuild_projected_agenda_cache_with_today(&pool, today)
+        .await
+        .unwrap();
+
+    let window = agaric_store::cache::BACKWARD_WINDOW_DAYS;
+    let (start, end) = (ago(window), ago(1));
+    let mut cached: Vec<(String, String, String)> = Vec::new();
+    let mut cursor: Option<String> = None;
+    loop {
+        let page = list_projected_agenda_inner_with_today(
+            &pool,
+            ymd(start),
+            ymd(end),
+            cursor.clone(),
+            Some(7),
+            &SpaceScope::Global,
+            today,
+        )
+        .await
+        .unwrap();
+        cached.extend(page.items.iter().map(entry_key));
+        match page.next_cursor {
+            Some(c) => cursor = Some(c),
+            None => break,
+        }
+    }
+    let projected: Vec<(String, String, String)> =
+        list_projected_agenda_on_the_fly(&pool, start, end, 500, today, None, None)
+            .await
+            .unwrap()
+            .items
+            .iter()
+            .map(entry_key)
+            .collect();
+
+    // A: 41 of its 50 counted days fall in the window; B: 7 weekly until
+    // T-10; C: 14 every third day; F: 4 days x 2 sources; G: 3 months; the
+    // today-anchored D/E project nothing before today and DONE H is skipped.
+    assert_eq!(
+        cached.len(),
+        73,
+        "cache rows over the past window: {cached:?}"
+    );
+    assert_eq!(
+        cached, projected,
+        "the cache must answer a past range exactly as the on-the-fly projector"
+    );
+    let b_dates: Vec<&str> = cached
+        .iter()
+        .filter(|(_, id, _)| id == "PA5421B0000000000000000000")
+        .map(|(date, _, _)| date.as_str())
+        .collect();
+    let b_expected: Vec<String> = [53, 46, 39, 32, 25, 18, 11].map(|n| ymd(ago(n))).to_vec();
+    assert_eq!(
+        b_dates, b_expected,
+        "a weekly task appears on its past days"
+    );
+
+    // Which branch answered: punch the one row on the window's first day out of
+    // the cache. The projector would still produce it; the cache cannot.
+    let deleted = sqlx::query("DELETE FROM projected_agenda_cache WHERE projected_date = ?")
+        .bind(ymd(start))
+        .execute(&pool)
+        .await
+        .unwrap()
+        .rows_affected();
+    assert_eq!(deleted, 1, "fixture: only A occurs on {start}");
+    let page = list_projected_agenda_inner_with_today(
+        &pool,
+        ymd(start),
+        ymd(start),
+        None,
+        Some(200),
+        &SpaceScope::Global,
+        today,
+    )
+    .await
+    .unwrap();
+    assert!(
+        page.items.is_empty(),
+        "a range starting on the window's first day must be read from the cache; \
+         got {:?}",
+        page.items.iter().map(entry_key).collect::<Vec<_>>()
+    );
+}
+
+/// The other arm: a range starting one day before the backward window is not
+/// covered, so the projector answers it even though the cache holds most of it.
 #[tokio::test]
-async fn projected_agenda_empty_window_before_rebuild_today_still_expands() {
+async fn projected_agenda_range_before_the_backward_window_still_expands_5421() {
     let (pool, _dir) = test_pool().await;
     let pinned_today = chrono::NaiveDate::from_ymd_opt(2050, 4, 6).unwrap();
-    let base = chrono::NaiveDate::from_ymd_opt(2050, 3, 30).unwrap();
-    seed_daily_repeater_and_rebuild(&pool, "PA3160B0000000000000000000", base, pinned_today).await;
+    let base = chrono::NaiveDate::from_ymd_opt(2049, 12, 1).unwrap();
+    seed_daily_repeater_and_rebuild(&pool, "PA5421X0000000000000000000", base, pinned_today).await;
 
-    // Wholly before the rebuild's reference date: the cache holds nothing
-    // here (`project_block_into` starts at `today`), but the daily rule does
-    // occur on each of these days.
-    let start = "2050-04-01".to_string();
-    let end = "2050-04-05".to_string();
-    let empty: i64 = sqlx::query_scalar(
+    let ago = |n: i64| {
+        (pinned_today - chrono::Duration::days(n))
+            .format("%Y-%m-%d")
+            .to_string()
+    };
+    let window = agaric_store::cache::BACKWARD_WINDOW_DAYS;
+    let (start, end) = (ago(window + 1), ago(window - 3));
+    let cached: i64 = sqlx::query_scalar(
         "SELECT COUNT(*) FROM projected_agenda_cache WHERE projected_date BETWEEN ? AND ?",
     )
     .bind(&start)
@@ -3675,7 +3887,7 @@ async fn projected_agenda_empty_window_before_rebuild_today_still_expands() {
     .fetch_one(&pool)
     .await
     .unwrap();
-    assert_eq!(empty, 0, "fixture: pre-rebuild-today dates are not cached");
+    assert_eq!(cached, 4, "fixture: every day but the first is cached");
 
     let page = list_projected_agenda_inner_with_today(
         &pool,
@@ -3697,14 +3909,66 @@ async fn projected_agenda_empty_window_before_rebuild_today_still_expands() {
     assert_eq!(
         dates,
         vec![
-            "2050-04-01",
-            "2050-04-02",
-            "2050-04-03",
-            "2050-04-04",
-            "2050-04-05"
+            "2050-01-05",
+            "2050-01-06",
+            "2050-01-07",
+            "2050-01-08",
+            "2050-01-09"
         ],
-        "a range reaching before the rebuild's `today` is NOT covered by the \
-         cache, so the on-the-fly fallback must still answer it (#3160)"
+        "a range reaching before the backward window is NOT covered by the \
+         cache, so the on-the-fly projector must answer all of it (#5421)"
+    );
+}
+
+/// After midnight, before the rollover rebuild runs, the cache still holds the
+/// window ITS rebuild wrote, one day earlier than today's. The floor follows
+/// the stored rebuild date, so that first day keeps reading the cache.
+#[tokio::test]
+async fn projected_agenda_backward_window_follows_the_rebuild_date_5421() {
+    let (pool, _dir) = test_pool().await;
+    let rebuilt_on = chrono::NaiveDate::from_ymd_opt(2050, 4, 5).unwrap();
+    let read_today = rebuilt_on + chrono::Duration::days(1);
+    let base = chrono::NaiveDate::from_ymd_opt(2049, 12, 1).unwrap();
+    seed_daily_repeater_and_rebuild(&pool, "PA5421Y0000000000000000000", base, rebuilt_on).await;
+
+    let ymd = |d: chrono::NaiveDate| d.format("%Y-%m-%d").to_string();
+    let floor = rebuilt_on - chrono::Duration::days(agaric_store::cache::BACKWARD_WINDOW_DAYS);
+    let next = floor + chrono::Duration::days(1);
+    // Punch the floor day out of the cache; the projector would still produce
+    // it. `next` keeps the page non-empty, so the stale-cache empty-window
+    // fallback cannot answer instead.
+    let deleted = sqlx::query("DELETE FROM projected_agenda_cache WHERE projected_date = ?")
+        .bind(ymd(floor))
+        .execute(&pool)
+        .await
+        .unwrap()
+        .rows_affected();
+    assert_eq!(
+        deleted, 1,
+        "fixture: the rebuild must have materialized {floor}"
+    );
+
+    let page = list_projected_agenda_inner_with_today(
+        &pool,
+        ymd(floor),
+        ymd(next),
+        None,
+        Some(200),
+        &SpaceScope::Global,
+        read_today,
+    )
+    .await
+    .unwrap();
+
+    let dates: Vec<&str> = page
+        .items
+        .iter()
+        .map(|e| e.projected_date.as_str())
+        .collect();
+    assert_eq!(
+        dates,
+        vec![ymd(next).as_str()],
+        "a range starting at the stale rebuild's window floor must be read from the cache"
     );
 }
 

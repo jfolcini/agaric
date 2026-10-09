@@ -187,15 +187,14 @@ async fn read_projected_agenda_horizon(
 
     // #3160 — the *lower* end of the same guarantee, plus its freshness.
     //
-    // Lower end: the rebuild projects with `range_start = today`
-    // (`cache::projected_agenda::project_block_into`), so occurrences BEFORE
-    // the rebuild's reference date are never materialized. The
-    // guaranteed-complete span is the closed interval
-    // `[rebuild_today, horizon_date]`, and `rebuild_today` is read straight
-    // off the row the rebuild wrote (migration 0105) — NOT derived as
-    // `horizon_date - HORIZON_DAYS`, which would decode stale rows to the
-    // wrong date the moment that constant is retuned, with nothing
-    // invalidating the row on upgrade.
+    // Lower end: the rebuild materializes from
+    // `today - BACKWARD_WINDOW_DAYS` (#5421), so the guaranteed-complete span
+    // is the closed interval
+    // `[rebuild_today - BACKWARD_WINDOW_DAYS, horizon_date]`, and
+    // `rebuild_today` is read straight off the row the rebuild wrote
+    // (migration 0105) — NOT derived as `horizon_date - HORIZON_DAYS`, which
+    // would decode stale rows to the wrong date the moment that constant is
+    // retuned, with nothing invalidating the row on upgrade.
     //
     // Freshness: `rebuild_today` must still BE today. Default-mode rules
     // (`daily` / `+1w` / `monthly` / …) project from the block's own base
@@ -486,12 +485,22 @@ pub async fn list_projected_agenda_inner_with_today(
         read_projected_agenda_horizon(pool, &end_date).await?;
 
     // #3260 — route on BOTH ends of the guarantee. The cache holds nothing
-    // before the rebuild's reference date, so a range that starts before
-    // today and ends inside the horizon used to be served from the cache
-    // with its past half silently missing: non-empty, `has_more: false`, and
-    // the empty-window probe below never fires. Reachable through the MCP
-    // `get_agenda` tool, which forwards its dates verbatim.
-    if !(cache_covers_range && range_start >= today) {
+    // before its backward window, so a range that starts earlier and ends
+    // inside the horizon would be served with its past part silently
+    // missing: non-empty, `has_more: false`, and the empty-window probe below
+    // never fires. Reachable through the MCP `get_agenda` tool, which
+    // forwards its dates verbatim.
+    //
+    // #5421 — the floor is the stored `rebuild_today`, not `today`: it is the
+    // date the rows were projected from, so a rebuild still pending after
+    // midnight keeps the window it actually wrote. A pre-0105 row has no
+    // `rebuild_today` and keeps the forward-only floor of `today`. A row
+    // written by a pre-#5421 binary claims a backward window it never
+    // materialized until the boot rebuild replaces it.
+    let cache_floor = rebuild_today.map_or(today, |r| {
+        r - chrono::Duration::days(agaric_store::cache::BACKWARD_WINDOW_DAYS)
+    });
+    if !(cache_covers_range && range_start >= cache_floor) {
         return list_projected_agenda_on_the_fly(
             pool,
             range_start,
@@ -902,7 +911,8 @@ fn project_repeating_block_into_map(
 ///
 /// Used as a fallback when `projected_agenda_cache` is empty (e.g. first boot
 /// before the materializer has populated the cache) OR when the query reaches
-/// past the bounded materialization horizon (#2601) — see the horizon guard
+/// past the bounded materialization horizon (#2601) or starts before its
+/// backward window (#5421) — see the horizon guard
 /// in [`list_projected_agenda_inner`]. This path applies no occurrence-count
 /// cap, so it is exhaustive within `[range_start, range_end]` for any range.
 ///
@@ -976,10 +986,7 @@ pub async fn list_projected_agenda_on_the_fly(
     // A pre-#3206 cursor carries no `source`; that page falls back to the old
     // two-term test, matching what the cache path's SQL does when it binds a
     // NULL `?8`, so the two branches stay swappable mid-pagination.
-    let cursor_key: Option<(&str, &str, Option<&str>)> = after.as_ref().map(|c| {
-        let (block_id, source) = c.projected_agenda_key();
-        (c.deleted_at.as_deref().unwrap_or(""), block_id, source)
-    });
+    let after = after.cloned();
 
     // safe: `limit` is the [1, 500]-clamped per-page cap (i64 → usize on
     // 64-bit). Captured once here so the inline cursor / cap checks below
@@ -992,22 +999,32 @@ pub async fn list_projected_agenda_on_the_fly(
     // bounded.
     let max_entries = limit_usize.saturating_add(1);
 
-    let mut entries_map: BTreeMap<(String, String, String), ActiveProjectedAgendaEntry> =
-        BTreeMap::new();
-
-    let bounds = ProjectedPageBounds {
-        cursor_key,
-        max_entries,
-    };
     let window = ProjectionWindow {
         today,
         range_start,
         range_end,
     };
 
-    for block in &rows {
-        project_repeating_block_into_map(block, &window, &bounds, &mut entries_map);
-    }
+    // #5421 — the expansion is O(repeating blocks × range) CPU work; on the
+    // async worker it would stall every other command sharing that thread.
+    let entries_map = tokio::task::spawn_blocking(move || {
+        let cursor_key: Option<(&str, &str, Option<&str>)> = after.as_ref().map(|c| {
+            let (block_id, source) = c.projected_agenda_key();
+            (c.deleted_at.as_deref().unwrap_or(""), block_id, source)
+        });
+        let bounds = ProjectedPageBounds {
+            cursor_key,
+            max_entries,
+        };
+        let mut entries_map: BTreeMap<(String, String, String), ActiveProjectedAgendaEntry> =
+            BTreeMap::new();
+        for block in &rows {
+            project_repeating_block_into_map(block, &window, &bounds, &mut entries_map);
+        }
+        entries_map
+    })
+    .await
+    .map_err(|e| AppError::Internal(format!("projected agenda expansion failed: {e}")))?;
 
     // BTreeMap iteration order is the (date, id, source) lex order — the
     // same comparator the old `entries.sort_by(...)` enforced post-hoc.
