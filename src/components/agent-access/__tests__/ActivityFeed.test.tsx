@@ -115,6 +115,78 @@ describe('ActivityFeed', () => {
     expect(screen.getByTestId('mcp-activity-undo')).toBeInTheDocument()
   })
 
+  // #5394 — one tool call can write several ops (a DONE stamps `completed_at`
+  // and creates the next occurrence); undoing the entry must revert all of
+  // them, and the call still counts as one action.
+  describe('multi-op entries (#5394)', () => {
+    const MULTI_OP: ActivityEntry = {
+      ...UNDOABLE,
+      toolName: 'set_property',
+      opRef: { device_id: 'dev-1', seq: 20 },
+      additionalOpRefs: [
+        { device_id: 'dev-1', seq: 21 },
+        { device_id: 'dev-1', seq: 22 },
+      ],
+    }
+
+    it('Undo reverts every op the call wrote', async () => {
+      const user = userEvent.setup()
+      mockRevert.mockResolvedValue(ok([]))
+      const { container } = render(<ActivityFeed entries={[MULTI_OP]} />)
+      expect(screen.queryByTestId('mcp-activity-session-header')).not.toBeInTheDocument()
+
+      await user.click(screen.getByTestId('mcp-activity-undo'))
+
+      await waitFor(() => {
+        expect(mockRevert).toHaveBeenCalledWith([
+          { device_id: 'dev-1', seq: 20 },
+          { device_id: 'dev-1', seq: 21 },
+          { device_id: 'dev-1', seq: 22 },
+        ])
+      })
+      expect(await axe(container)).toHaveNoViolations()
+    })
+
+    it('Revert session reverts every op of every action, counted per action', async () => {
+      const user = userEvent.setup()
+      mockRevert.mockResolvedValue(ok([]))
+      render(<ActivityFeed entries={[MULTI_OP, UNDOABLE]} />)
+      expect(screen.getByTestId('mcp-activity-session-header')).toHaveTextContent(
+        t('agentAccess.revertSession.headerLabel', { count: 2 }),
+      )
+
+      await user.click(screen.getByTestId('mcp-activity-revert-session'))
+      await user.click(
+        screen.getByRole('button', { name: t('agentAccess.revertSession.confirmAction') }),
+      )
+
+      await waitFor(() => {
+        expect(mockRevert).toHaveBeenCalledWith([
+          { device_id: 'dev-1', seq: 20 },
+          { device_id: 'dev-1', seq: 21 },
+          { device_id: 'dev-1', seq: 22 },
+          { device_id: 'dev-1', seq: 9 },
+        ])
+        expect(mockNotify.success).toHaveBeenCalledWith(
+          t('agentAccess.revertSession.success', { count: 2 }),
+        )
+      })
+    })
+
+    it('a rejected multi-op Undo keeps the entry for retry', async () => {
+      const user = userEvent.setup()
+      mockRevert.mockRejectedValueOnce(new Error('ipc boom'))
+      render(<ActivityFeed entries={[MULTI_OP]} />)
+
+      await user.click(screen.getByTestId('mcp-activity-undo'))
+
+      await waitFor(() => {
+        expect(mockNotify.error).toHaveBeenCalledWith(t('agentAccess.undoAgentOp.failed'))
+      })
+      expect(screen.getByTestId('mcp-activity-undo')).toBeInTheDocument()
+    })
+  })
+
   // #3546 — the non-reversible branch narrows with the SHARED
   // `isNonReversible` predicate from `@/lib/app-error`, not a local
   // re-implementation. The two were not equivalent: the local copy accepted
