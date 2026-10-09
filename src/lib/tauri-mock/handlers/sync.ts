@@ -160,7 +160,10 @@ export const syncHandlers = {
     // `ORDER BY synced_at DESC`, and SQLite sorts NULLs last under DESC. The
     // mock answered insertion order until `query_peer_refs.json` pinned the
     // sort (#3830); `toSorted` is stable, so ties keep insertion order.
-    return Array.from(peerRefs.values()).toSorted(bySyncedAtDesc)
+    // Copies, as the wire delivers: a live row that `update_peer_name` or
+    // `set_peer_address` mutates keeps its identity, so a memoized row render
+    // keeps showing the old values.
+    return Array.from(peerRefs.values(), (row) => ({ ...row })).toSorted(bySyncedAtDesc)
   },
   delete_peer_ref: (args) => {
     const a = args as Record<string, unknown>

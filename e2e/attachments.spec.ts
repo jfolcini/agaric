@@ -1,4 +1,19 @@
-import { expect, openPage, test, waitForBoot } from './helpers'
+import { truncate, writeFile } from 'node:fs/promises'
+
+import type { FileChooser, Page } from '@playwright/test'
+
+import {
+  activeSuggestionList,
+  blurEditors,
+  expect,
+  focusBlockById,
+  navigateToView,
+  openPage,
+  reopenPage,
+  test,
+  typeSlashCommand,
+  waitForBoot,
+} from './helpers'
 
 /**
  * E2E tests for the attachments lifecycle.
@@ -7,6 +22,9 @@ import { expect, openPage, test, waitForBoot } from './helpers'
  *   1. Empty state — no attachment badges when blocks have no attachments
  *   2. Attachment section exists — badge appears, toggles list, shows details
  *   3. Delete attachment — two-click confirmation flow removes attachment
+ *   4. Rename attachment — survives reopening the page; History lists the op
+ *   5. `/attach` through the file chooser — an allowed file attaches; a
+ *      disallowed type or an oversized file is refused with a toast and no row
  *
  * Seed data (tauri-mock.ts):
  *   BLOCK_GS_1 ('0000000000000000000BLOCK01') — first child of "Getting Started"
@@ -40,6 +58,26 @@ async function addMockAttachment(
     },
     { blockId, filename, mimeType, sizeBytes },
   )
+}
+
+/** A block's attachment rows as the mock backend holds them, not as the UI last rendered them. */
+async function listAttachmentRows(
+  page: Page,
+  blockId: string,
+): Promise<Array<{ filename: string; mime_type: string; size_bytes: number }>> {
+  return page.evaluate(async (bId) => {
+    const invoke = (
+      window as unknown as {
+        __TAURI_INTERNALS__: { invoke: (c: string, a?: unknown) => Promise<unknown> }
+      }
+    ).__TAURI_INTERNALS__.invoke
+    const rows = (await invoke('list_attachments', { blockId: bId })) as Array<{
+      filename: string
+      mime_type: string
+      size_bytes: number
+    }>
+    return rows.map(({ filename, mime_type, size_bytes }) => ({ filename, mime_type, size_bytes }))
+  }, blockId)
 }
 
 // ===========================================================================
@@ -171,5 +209,144 @@ test.describe('Delete attachment', () => {
     // Confirm the deletion by waiting for both surfaces to disappear.
     await expect(page.getByTestId('attachment-badge')).toHaveCount(0)
     await expect(page.getByRole('list', { name: 'Attachments' })).toHaveCount(0)
+  })
+})
+
+// ===========================================================================
+// 4. Rename attachment
+// ===========================================================================
+
+test.describe('Rename attachment', () => {
+  test.beforeEach(async ({ page }) => {
+    await waitForBoot(page)
+  })
+
+  test('a renamed attachment keeps its new name after reopening the page, and History lists the rename', async ({
+    page,
+  }) => {
+    await addMockAttachment(page, BLOCK_GS_1, 'notes.pdf', 'application/pdf', 24576)
+    await openPage(page, 'Getting Started')
+
+    await page.getByRole('button', { name: '1 attachment', exact: true }).click()
+    const list = page.getByRole('list', { name: 'Attachments' })
+    await list.getByRole('listitem').filter({ hasText: 'notes.pdf' }).hover()
+    await page.getByRole('button', { name: 'Rename attachment notes.pdf', exact: true }).click()
+    const input = page.getByRole('textbox', { name: 'Rename attachment notes.pdf', exact: true })
+    await input.fill('renamed.pdf')
+    await input.press('Enter')
+
+    await expect(list.getByText('renamed.pdf', { exact: true })).toBeVisible()
+    await expect
+      .poll(() => listAttachmentRows(page, BLOCK_GS_1))
+      .toEqual([{ filename: 'renamed.pdf', mime_type: 'application/pdf', size_bytes: 24576 }])
+
+    await reopenPage(page, 'Getting Started')
+    await page.getByRole('button', { name: '1 attachment', exact: true }).click()
+    const reopened = page.getByRole('list', { name: 'Attachments' })
+    await expect(reopened.getByText('renamed.pdf', { exact: true })).toBeVisible()
+    await expect(reopened.getByText('notes.pdf', { exact: true })).toHaveCount(0)
+
+    await navigateToView(page, 'History')
+    const renameEntry = page.locator('[data-history-item]').filter({
+      has: page.getByTestId('history-type-badge').filter({ hasText: 'rename_attachment' }),
+    })
+    await expect(renameEntry).toHaveCount(1)
+    await expect(renameEntry).toContainText('notes.pdf → renamed.pdf')
+  })
+})
+
+// ===========================================================================
+// 5. /attach through the file chooser
+// ===========================================================================
+
+/** `MAX_ATTACHMENT_BYTES` in `src/lib/file-utils.ts`. */
+const MAX_ATTACHMENT_BYTES = 52_428_800
+
+const HELLO_TXT = {
+  name: 'hello.txt',
+  mimeType: 'text/plain',
+  buffer: Buffer.from('hello, agaric'),
+}
+
+function toast(page: Page, text: string) {
+  return page.locator('[data-sonner-toast]').getByText(text, { exact: true })
+}
+
+/** Run `/attach` on BLOCK_GS_1 and answer the file chooser it opens with `files`. */
+async function attachThroughSlashCommand(
+  page: Page,
+  files: Parameters<FileChooser['setFiles']>[0],
+) {
+  await focusBlockById(page, BLOCK_GS_1)
+  await typeSlashCommand(page, 'attach')
+  const chooserOpened = page.waitForEvent('filechooser')
+  await activeSuggestionList(page)
+    .getByRole('option', { name: /ATTACH — Attach file to block/ })
+    .click()
+  await (await chooserOpened).setFiles(files)
+}
+
+/**
+ * A refusal writes nothing, so there is no event to wait on before reading the
+ * block's rows, and a read straight after the toast would run ahead of any
+ * upload a broken guard let through. An allowed attach issued afterwards is the
+ * anchor: once its row has landed, the block must hold that row alone.
+ */
+async function expectOnlyALaterAllowedAttachLands(page: Page) {
+  await blurEditors(page)
+  await attachThroughSlashCommand(page, HELLO_TXT)
+  await expect(toast(page, 'Attached "hello.txt"')).toBeVisible()
+  const rows = await listAttachmentRows(page, BLOCK_GS_1)
+  expect(rows.map((row) => row.filename)).toEqual(['hello.txt'])
+}
+
+test.describe('/attach through the file chooser', () => {
+  test.beforeEach(async ({ page }) => {
+    await waitForBoot(page)
+    await openPage(page, 'Getting Started')
+  })
+
+  test('an allowed file attaches to the block', async ({ page }) => {
+    await attachThroughSlashCommand(page, HELLO_TXT)
+
+    await expect(toast(page, 'Attached "hello.txt"')).toBeVisible()
+    await expect
+      .poll(() => listAttachmentRows(page, BLOCK_GS_1))
+      .toEqual([{ filename: 'hello.txt', mime_type: 'text/plain', size_bytes: 13 }])
+    await expect(page.getByRole('button', { name: '1 attachment', exact: true })).toBeVisible()
+  })
+
+  test('a disallowed type is refused with a toast and leaves no attachment row', async ({
+    page,
+  }) => {
+    await attachThroughSlashCommand(page, {
+      name: 'setup.exe',
+      mimeType: 'application/x-msdownload',
+      buffer: Buffer.from('MZ'),
+    })
+
+    await expect(
+      toast(
+        page,
+        'application/x-msdownload cannot be attached — allowed: images, text, PDF, JSON, ZIP, TAR',
+      ),
+    ).toBeVisible()
+    await expectOnlyALaterAllowedAttachLands(page)
+  })
+
+  test('a file over the size cap is refused with a toast and leaves no attachment row', async ({
+    page,
+  }, testInfo) => {
+    // A path, not a Buffer: Playwright refuses a buffer payload of 50 MiB or
+    // more, and the cap is exactly 50 MiB. `truncate` extends the empty file
+    // sparsely, so nothing is written to disk.
+    const oversized = testInfo.outputPath('oversized.png')
+    await writeFile(oversized, '')
+    await truncate(oversized, MAX_ATTACHMENT_BYTES + 1)
+
+    await attachThroughSlashCommand(page, oversized)
+
+    await expect(toast(page, 'File is 50.0 MB — max is 50 MB')).toBeVisible()
+    await expectOnlyALaterAllowedAttachLands(page)
   })
 })
