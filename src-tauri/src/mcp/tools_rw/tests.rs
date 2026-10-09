@@ -67,8 +67,9 @@ async fn list_tools_advertises_six_tools() {
     let names: Vec<&str> = descs.iter().map(|d| d.name.as_str()).collect();
     assert_eq!(
         names.len(),
-        7,
-        "ReadWriteTools exposes the six v2 write tools plus #2728's list_spaces"
+        8,
+        "ReadWriteTools exposes the v2 write tools, #2728's list_spaces and #5376's \
+         append_markdown"
     );
     assert_eq!(
         names,
@@ -80,8 +81,9 @@ async fn list_tools_advertises_six_tools() {
             "create_page",
             "delete_block",
             "list_spaces",
+            "append_markdown",
         ],
-        "tool order is part of the wire contract — do not re-order (list_spaces appended last)",
+        "tool order is part of the wire contract — do not re-order (new tools append last)",
     );
 }
 
@@ -263,6 +265,104 @@ async fn append_block_position_one_maps_to_first_child() {
         .expect("position 1 must succeed");
     assert_eq!(result["parent_id"], parent.id.as_str());
     assert_eq!(result["content"], "first");
+}
+
+// -------------------------------------------------------------------
+// append_markdown (#5376)
+// -------------------------------------------------------------------
+
+/// The live children of `parent`, as their content, in order.
+async fn child_contents(pool: &SqlitePool, parent: &str) -> Vec<String> {
+    sqlx::query_scalar(
+        "SELECT content FROM blocks WHERE parent_id = ? AND deleted_at IS NULL \
+         ORDER BY position, id",
+    )
+    .bind(parent)
+    .fetch_all(pool)
+    .await
+    .unwrap()
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn append_markdown_lands_the_outline_at_its_position() {
+    let (tools, mat, pool, space, emitter, _dir) = mk_tools_recording().await;
+    let page = mk_page(&pool, &mat, &space, "Page").await;
+    create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "last".into(),
+        Some(BlockId::from_trusted(&page)),
+        None,
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    let result = tools
+        .call_tool(
+            "append_markdown",
+            json!({
+                "parent_id": page.to_lowercase(),
+                "markdown": "# Head\n\n- item\n",
+                "position": 1,
+                "space_id": space,
+            }),
+            &test_ctx_agent(),
+        )
+        .await
+        .expect("happy path");
+    settle(&mat).await;
+
+    let blocks = result["blocks"].as_array().expect("blocks array");
+    assert_eq!(blocks.len(), 2, "the heading and its item, got {blocks:?}");
+    assert_eq!(blocks[0]["parent_id"], page.as_str());
+    assert_eq!(
+        blocks[1]["parent_id"], blocks[0]["id"],
+        "the item nests under the heading"
+    );
+    assert_eq!(
+        child_contents(&pool, &page).await,
+        ["# Head", "last"],
+        "position 1 lands the outline before the existing child"
+    );
+    assert_eq!(emitter.blocks_changed(), vec![vec![page.clone()]]);
+
+    let err = tools
+        .call_tool(
+            "append_markdown",
+            json!({"parent_id": page, "markdown": "- x", "position": 0, "space_id": space}),
+            &test_ctx_agent(),
+        )
+        .await
+        .expect_err("position 0 must be rejected");
+    assert!(matches!(err, AppError::Validation { .. }), "got {err:?}");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn append_markdown_cross_space_rejected() {
+    let (tools, mat, pool, space_a, _dir) = mk_tools().await;
+    let space_b = mk_space(&pool, " space B").await;
+    let page_b = mk_page(&pool, &mat, &space_b, "PageB").await;
+    settle(&mat).await;
+
+    let err = tools
+        .call_tool(
+            "append_markdown",
+            json!({"parent_id": page_b, "markdown": "- x", "space_id": space_a}),
+            &test_ctx_agent(),
+        )
+        .await
+        .expect_err("cross-space append must be denied");
+    assert!(
+        matches!(err, AppError::Validation { .. }),
+        "cross-space append must surface as Validation (→ -32602), got {err:?}",
+    );
+    assert!(
+        child_contents(&pool, &page_b).await.is_empty(),
+        "nothing was appended"
+    );
 }
 
 // -------------------------------------------------------------------

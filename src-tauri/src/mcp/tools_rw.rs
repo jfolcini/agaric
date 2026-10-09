@@ -12,6 +12,7 @@
 //! | Tool | Backing `*_inner` | Notes |
 //! |------|-------------------|-------|
 //! | `append_block` | [`create_block_inner`] | `block_type` hard-coded to `"content"`. `parent_id` required. |
+//! | `append_markdown` | [`append_markdown_inner`] | A Markdown outline under `parent_id`, read and resolved as paste does: an unmatched `[[Name]]` / `#name` creates the page or tag. |
 //! | `update_block_content` | [`edit_block_inner`] | |
 //! | `set_property` | [`set_property_inner`] | Exactly one of `value_*` must be provided. |
 //! | `add_tag` | [`add_tag_inner`] | Tag block must already exist — no tag creation. |
@@ -30,7 +31,8 @@
 //! # What is deliberately NOT exposed
 //!
 //! - `purge_block` / `delete_attachment` (non-reversible)
-//! - Tag creation (blocks with `block_type = 'tag'`)
+//! - Tag creation (blocks with `block_type = 'tag'`), bar the tags an
+//!   `append_markdown` names, which it creates as paste does
 //! - Property-definition mutation
 //! - Space membership (the reserved `space` property key, #3301): setting it
 //!   is the canonical cross-space move, not a content write
@@ -51,13 +53,13 @@ use super::handler_utils::{
     normalize_ulid_arg, parse_args, to_tool_result, validate_block_in_space,
 };
 use super::registry::{
-    TOOL_ADD_TAG, TOOL_APPEND_BLOCK, TOOL_CREATE_PAGE, TOOL_DELETE_BLOCK, TOOL_LIST_SPACES,
-    TOOL_SET_PROPERTY, TOOL_UPDATE_BLOCK_CONTENT, ToolDescription, ToolRegistry,
+    TOOL_ADD_TAG, TOOL_APPEND_BLOCK, TOOL_APPEND_MARKDOWN, TOOL_CREATE_PAGE, TOOL_DELETE_BLOCK,
+    TOOL_LIST_SPACES, TOOL_SET_PROPERTY, TOOL_UPDATE_BLOCK_CONTENT, ToolDescription, ToolRegistry,
 };
 use super::view_notify::{NoopViewChangeEmitter, ViewChangeEmitter};
 use crate::commands::{
-    add_tag_inner, create_block_inner, create_block_inner_with_space, delete_block_inner,
-    edit_block_inner, list_spaces_registry_inner, set_property_inner,
+    add_tag_inner, append_markdown_inner, create_block_inner, create_block_inner_with_space,
+    delete_block_inner, edit_block_inner, list_spaces_registry_inner, set_property_inner,
 };
 use crate::materializer::Materializer;
 use agaric_core::error::AppError;
@@ -87,6 +89,16 @@ use agaric_store::task_locals::ActorContext;
 struct AppendBlockArgs {
     parent_id: String,
     content: String,
+    #[serde(default)]
+    position: Option<i64>,
+    space_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct AppendMarkdownArgs {
+    parent_id: String,
+    markdown: String,
     #[serde(default)]
     position: Option<i64>,
     space_id: String,
@@ -178,10 +190,9 @@ pub struct ReadWriteTools {
 
 impl ReadWriteTools {
     /// Construct a read-write registry. `pool` must be the *writer* pool
-    /// — the six write tools all mutate. (#2728 added a seventh,
-    /// `list_spaces`, which is a pure read — see `handle_list_spaces` — but
-    /// still runs against this same pool for simplicity; it issues no
-    /// writes.)
+    /// — every tool but `list_spaces` mutates. (`list_spaces`, #2728, is a
+    /// pure read — see `handle_list_spaces` — but still runs against this
+    /// same pool for simplicity; it issues no writes.)
     ///
     /// The view-change emitter defaults to a no-op; production callers chain
     /// [`with_view_emitter`](Self::with_view_emitter) to route change
@@ -226,6 +237,7 @@ pub(crate) fn list_tool_descriptions() -> Vec<ToolDescription> {
         // solely to the RW socket has an in-band way to discover the
         // `space_id` every other tool requires.
         tool_desc_list_spaces(),
+        tool_desc_append_markdown(),
     ]
 }
 
@@ -271,6 +283,9 @@ impl ToolRegistry for ReadWriteTools {
                 // #2728 — pure read, no mutation: takes only `&pool`, unlike
                 // every other arm above.
                 TOOL_LIST_SPACES => handle_list_spaces(&pool, args).await,
+                TOOL_APPEND_MARKDOWN => {
+                    handle_append_markdown(&pool, &materializer, &device_id, emitter, args).await
+                }
                 other => Err(unknown_tool_error(other)),
             }
         })
@@ -304,6 +319,45 @@ fn tool_desc_append_block() -> ToolDescription {
                     "type": "integer",
                     "minimum": 1,
                     "description": "Optional 1-based sibling position. Defaults to append (end).",
+                },
+                "space_id": {
+                    "type": "string",
+                    "description": "ULID of the space the agent is operating in. The append is rejected with a Validation error if `parent_id`'s owning page lives in a different space.",
+                },
+            },
+        }),
+    }
+}
+
+fn tool_desc_append_markdown() -> ToolDescription {
+    ToolDescription {
+        name: TOOL_APPEND_MARKDOWN.to_string(),
+        description: format!(
+            "Append a Markdown outline under an existing parent in one call, as one undo, \
+             exactly as a paste in the app lands it: list items nest by indentation, a heading \
+             outside a list owns what follows it, a fenced code block stays one block, a \
+             `- [ ]` checkbox is a task, and `key:: value` lines are properties. A `[[Name]]` \
+             or `#name` that matches no page or tag in the parent's space creates that page or \
+             tag there. A call that would write more than {} operations is refused; split it.",
+            agaric_store::pagination::MAX_BATCH_BLOCK_IDS,
+        ),
+        input_schema: json!({
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["parent_id", "markdown", "space_id"],
+            "properties": {
+                "parent_id": {
+                    "type": "string",
+                    "description": "ULID of the parent block or page the outline lands under.",
+                },
+                "markdown": {
+                    "type": "string",
+                    "description": "The Markdown outline to append.",
+                },
+                "position": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "description": "Optional 1-based sibling position of the first top-level block. Defaults to append (end).",
                 },
                 "space_id": {
                     "type": "string",
@@ -552,6 +606,40 @@ async fn handle_append_block(
     // The appended block shares its parent's owning page, so resolve from the
     // freshly-created block id (BlockRow.id).
     emit_blocks_changed_for(pool, emitter, resp.id.clone()).await;
+    to_tool_result(&resp)
+}
+
+async fn handle_append_markdown(
+    pool: &SqlitePool,
+    materializer: &Materializer,
+    device_id: &str,
+    emitter: &dyn ViewChangeEmitter,
+    args: Value,
+) -> Result<Value, AppError> {
+    let args: AppendMarkdownArgs = parse_args(TOOL_APPEND_MARKDOWN, args)?;
+    let parent_id = normalize_ulid_arg(&args.parent_id);
+    let space_id = normalize_ulid_arg(&args.space_id);
+    validate_block_in_space(pool, &parent_id, &space_id).await?;
+    // The same 1-based contract and refusal as `append_block` (#1606, #400).
+    if let Some(p) = args.position
+        && p < 1
+    {
+        return Err(AppError::validation(format!(
+            "tool `{TOOL_APPEND_MARKDOWN}`: position must be >= 1 (1-based), got {p}"
+        )));
+    }
+    let index = args.position.map(|p| p - 1);
+    let parent = BlockId::from_trusted(&parent_id);
+    let resp = append_markdown_inner(
+        pool,
+        device_id,
+        materializer,
+        parent.clone(),
+        &args.markdown,
+        index,
+    )
+    .await?;
+    emit_blocks_changed_for(pool, emitter, parent).await;
     to_tool_result(&resp)
 }
 

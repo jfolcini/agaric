@@ -2704,15 +2704,12 @@ pub async fn paste_blocks_inner(
             anchor.block_type
         )));
     }
-    let (lines, mut warnings) = read_pasted_properties(&mut tx, &anchor, &mut blocks).await?;
-    // Both passes are boxed for the reason `duplicate_block_inner` gives.
-    let (mut tx, mut created) = Box::pin(resolve_pasted_names(
+    let (mut tx, lines, warnings, mut created) = Box::pin(read_pasted_blocks(
         tx,
         materializer,
         device_id,
         &anchor,
         &mut blocks,
-        &mut warnings,
     ))
     .await?;
     let parent_id = anchor.parent_id.map(BlockId::into_string);
@@ -2755,6 +2752,91 @@ pub async fn paste_blocks_inner(
         blocks: created,
         warnings,
     })
+}
+
+/// Append `markdown` under `parent_id` (#5376) exactly as a paste lands it,
+/// as one transaction and so one undo: read by [`import::parse_pasted_text`],
+/// names resolved in the parent's space, creating the page or tag no name
+/// there matches, and property lines read as [`paste_blocks_inner`] reads
+/// them. The top-level blocks land in order from the 0-based `index` among
+/// the parent's children, or at the end with none; each deeper one under its
+/// parsed parent. Returns the pages and tags the names created, then the
+/// appended blocks in document order.
+///
+/// # Errors
+///
+/// - [`AppError::Ulid`] — `parent_id` is not a ULID
+/// - [`AppError::NotFound`] — no block has that id
+/// - [`AppError::Validation`] — the markdown holds no block, the parent is
+///   soft-deleted, the append would append more ops than one undo reverts,
+///   or a block would be nested past `MAX_BLOCK_DEPTH`
+#[instrument(skip(pool, device_id, materializer, markdown), err)]
+pub async fn append_markdown_inner(
+    pool: &SqlitePool,
+    device_id: &str,
+    materializer: &Materializer,
+    parent_id: BlockId,
+    markdown: &str,
+    index: Option<i64>,
+) -> Result<PastedBlocks, AppError> {
+    let parent_id = BlockId::from_string(parent_id.into_string())?;
+    let mut blocks = import::parse_pasted_text(markdown);
+    if blocks.is_empty() {
+        return Err(AppError::validation("there is nothing to append".into()));
+    }
+    let mut tx = CommandTx::begin_immediate(pool, "append_markdown").await?;
+    // #2604 — rollback-safe engine apply (rewind on tx abort).
+    tx.arm_engine_rollback(materializer.loro_state());
+    let parent =
+        agaric_engine::block_ops::fetch_live_block_in_tx(&mut tx, parent_id.as_str()).await?;
+    let (mut tx, lines, warnings, mut created) = Box::pin(read_pasted_blocks(
+        tx,
+        materializer,
+        device_id,
+        &parent,
+        &mut blocks,
+    ))
+    .await?;
+    let appended = Box::pin(create_parsed_blocks(
+        &mut tx,
+        materializer,
+        device_id,
+        Some(parent_id.into_string()),
+        index,
+        &blocks,
+        &lines,
+    ))
+    .await?;
+    tx.commit_and_dispatch(materializer).await?;
+    created.extend(appended);
+    Ok(PastedBlocks {
+        blocks: created,
+        warnings,
+    })
+}
+
+/// Read the property lines of `blocks` and resolve the names they write, in
+/// `placement`'s space: the lines, the warnings naming what stayed text, and
+/// the pages and tags created.
+async fn read_pasted_blocks(
+    mut tx: CommandTx,
+    materializer: &Materializer,
+    device_id: &str,
+    placement: &BlockRow,
+    blocks: &mut [import::ParsedBlock],
+) -> Result<(CommandTx, PropertyLines, Vec<String>, Vec<BlockRow>), AppError> {
+    let (lines, mut warnings) = read_pasted_properties(&mut tx, placement, blocks).await?;
+    // Boxed for the reason `duplicate_block_inner` gives.
+    let (tx, created) = Box::pin(resolve_pasted_names(
+        tx,
+        materializer,
+        device_id,
+        placement,
+        blocks,
+        &mut warnings,
+    ))
+    .await?;
+    Ok((tx, lines, warnings, created))
 }
 
 /// Read the property lines of `blocks`, pasted after `anchor`, in its space

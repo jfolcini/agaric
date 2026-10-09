@@ -70,6 +70,7 @@ pub(crate) const TOOL_GET_PAGE_MARKDOWN: &str = "get_page_markdown";
 
 // Read-write tool names (`tools_rw.rs`).
 pub(crate) const TOOL_APPEND_BLOCK: &str = "append_block";
+pub(crate) const TOOL_APPEND_MARKDOWN: &str = "append_markdown";
 pub(crate) const TOOL_UPDATE_BLOCK_CONTENT: &str = "update_block_content";
 pub(crate) const TOOL_SET_PROPERTY: &str = "set_property";
 pub(crate) const TOOL_ADD_TAG: &str = "add_tag";

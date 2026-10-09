@@ -37,8 +37,8 @@
 use serde_json::Value;
 
 use super::registry::{
-    TOOL_ADD_TAG, TOOL_APPEND_BLOCK, TOOL_CREATE_PAGE, TOOL_DELETE_BLOCK, TOOL_GET_AGENDA,
-    TOOL_GET_BLOCK, TOOL_GET_PAGE, TOOL_GET_PAGE_MARKDOWN, TOOL_JOURNAL_FOR_DATE,
+    TOOL_ADD_TAG, TOOL_APPEND_BLOCK, TOOL_APPEND_MARKDOWN, TOOL_CREATE_PAGE, TOOL_DELETE_BLOCK,
+    TOOL_GET_AGENDA, TOOL_GET_BLOCK, TOOL_GET_PAGE, TOOL_GET_PAGE_MARKDOWN, TOOL_JOURNAL_FOR_DATE,
     TOOL_LIST_BACKLINKS, TOOL_LIST_PAGES, TOOL_LIST_PROPERTY_DEFS, TOOL_LIST_SPACES,
     TOOL_LIST_TAGS, TOOL_SEARCH, TOOL_SET_PROPERTY, TOOL_UPDATE_BLOCK_CONTENT,
 };
@@ -98,6 +98,7 @@ pub fn summarise(name: &str, args: &Value, result: &Value) -> String {
         TOOL_GET_PAGE_MARKDOWN => summarise_get_page_markdown(args, result),
         // ---- read-write (tools_rw) ----
         TOOL_APPEND_BLOCK => summarise_append_block(args, result),
+        TOOL_APPEND_MARKDOWN => summarise_append_markdown(args, result),
         TOOL_UPDATE_BLOCK_CONTENT => summarise_update_block_content(args, result),
         TOOL_SET_PROPERTY => summarise_set_property(args, result),
         TOOL_ADD_TAG => summarise_add_tag(args, result),
@@ -317,6 +318,40 @@ pub fn summarise_append_block(args: &Value, result: &Value) -> String {
         (true, false) => format!("append_block — added under {parent_prefix}"),
         (true, true) => "append_block".to_string(),
     }
+}
+
+/// `append_markdown — N block(s) under <parent-prefix>`, with the pages and
+/// tags its names created counted. Never embeds the markdown, a block's
+/// content, a created page's or tag's name, or a warning (which names them).
+pub fn summarise_append_markdown(args: &Value, result: &Value) -> String {
+    let parent_prefix = ulid_prefix(str_field(args, "parent_id").unwrap_or(""));
+    let rows = result
+        .get("blocks")
+        .and_then(Value::as_array)
+        .map_or(&[][..], Vec::as_slice);
+    let count = |kind: &str| {
+        rows.iter()
+            .filter(|row| str_field(row, "block_type") == Some(kind))
+            .count()
+    };
+    let plural =
+        |n: usize, one: &str, many: &str| format!("{n} {}", if n == 1 { one } else { many });
+    let mut summary = format!(
+        "append_markdown — {}",
+        plural(count("content"), "block", "blocks")
+    );
+    if !parent_prefix.is_empty() {
+        summary.push_str(&format!(" under {parent_prefix}"));
+    }
+    let (pages, tags) = (count("page"), count("tag"));
+    if pages + tags > 0 {
+        summary.push_str(&format!(
+            " (created {}, {})",
+            plural(pages, "page", "pages"),
+            plural(tags, "tag", "tags")
+        ));
+    }
+    summary
 }
 
 /// `update_block_content — updated <id-prefix>`. Never embeds the new
@@ -802,6 +837,32 @@ mod tests {
     // -----------------------------------------------------------------
 
     #[test]
+    fn append_markdown_counts_blocks_and_created_names_and_omits_their_text() {
+        let args = json!({
+            "parent_id": ULID_B,
+            "markdown": "- SECRET_BLOCK_CONTENT [[SECRET_TITLE]] #SECRET_TAG_NAME",
+        });
+        let result = json!({
+            "blocks": [
+                { "id": ULID_A, "block_type": "page", "content": "SECRET_TITLE" },
+                { "id": ULID_TAG, "block_type": "tag", "content": "SECRET_TAG_NAME" },
+                { "id": ULID_A, "block_type": "content", "content": "SECRET_BLOCK_CONTENT" },
+                { "id": ULID_A, "block_type": "content", "content": "SECRET_BLOCK_CONTENT" },
+            ],
+            "warnings": ["SECRET_TEXT_VALUE"],
+        });
+        let s = summarise_append_markdown(&args, &result);
+        assert_eq!(
+            s,
+            format!(
+                "append_markdown — 2 blocks under {} (created 1 page, 1 tag)",
+                &ULID_B[..ULID_PREFIX_LEN]
+            )
+        );
+        assert_no_secrets(&s);
+    }
+
+    #[test]
     fn append_block_includes_both_prefixes_and_omits_content() {
         let args = json!({ "parent_id": ULID_B, "content": "SECRET_BLOCK_CONTENT" });
         let result = json!({
@@ -1013,6 +1074,7 @@ mod tests {
             "query": "SECRET_QUERY",
             "title": "SECRET_TITLE",
             "content": "SECRET_BLOCK_CONTENT",
+            "markdown": "- SECRET_BLOCK_CONTENT [[SECRET_TITLE]] #SECRET_TAG_NAME",
             "value_text": "SECRET_TEXT_VALUE",
             "block_id": ULID_A,
             "parent_id": ULID_B,
@@ -1051,6 +1113,13 @@ mod tests {
             // #5375 — `get_page_markdown` returns the page as text.
             "page_id": ULID_A,
             "markdown": "# SECRET_TITLE\n\n---\naliases: [SECRET_ALIAS]\n---\n\n- SECRET_BLOCK_CONTENT\n",
+            // #5376 — `append_markdown` returns the rows it wrote and warnings
+            // naming what stayed text.
+            "blocks": [
+                { "id": ULID_A, "block_type": "page", "content": "SECRET_TITLE" },
+                { "id": ULID_B, "block_type": "content", "content": "SECRET_BLOCK_CONTENT" }
+            ],
+            "warnings": ["SECRET_TAG_NAME", "SECRET_TEXT_VALUE"],
             "groups": [
                 { "page_id": ULID_B, "page_title": "SECRET_TITLE", "blocks": [{}] }
             ],

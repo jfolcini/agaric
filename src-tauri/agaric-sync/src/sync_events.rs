@@ -342,9 +342,8 @@ pub struct PropertyChangedEvent {
 /// does not flow through a page store's own optimistic path — changes content
 /// on one or more pages, so any open view rendering those pages reloads.
 ///
-/// Today the sole producer is the MCP read-write tool surface
-/// (`append_block` / `update_block_content` / `set_property` / `add_tag` /
-/// `create_page` / `delete_block`): those land in SQL + the Loro engine but,
+/// Today the sole producer is the MCP read-write tool surface: its writes
+/// land in SQL + the Loro engine but,
 /// before #2505, emitted only `mcp:activity`, so an open page displaying the
 /// affected block never learned about the write (stale until navigate-away-
 /// and-back — `sync:complete` never fires for a same-device write). Any future
