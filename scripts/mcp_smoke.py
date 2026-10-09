@@ -195,7 +195,7 @@ TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
     "list_backlinks": GROUPED_BACKLINK_SCHEMA,
     "list_tags": {"type": "array"},
     "list_property_defs": {"type": "array", "items": PROPERTY_DEF_SCHEMA},
-    "get_agenda": {"type": "array"},
+    "get_agenda": {"type": "object", "required": ["items", "has_more"]},
     "journal_for_date": BLOCK_ROW_SCHEMA,
     "list_spaces": {"type": "array", "items": SPACE_ROW_SCHEMA},
     "get_page_markdown": PAGE_MARKDOWN_SCHEMA,

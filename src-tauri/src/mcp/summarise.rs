@@ -247,7 +247,7 @@ pub fn summarise_list_property_defs(_args: &Value, result: &Value) -> String {
 /// `get_agenda — N entr(y|ies) (start..end)`. Dates are not user
 /// content; entry counts are structural.
 ///
-/// `list_projected_agenda_inner` is now cursor-paginated, so the
+/// `agenda_range_inner` is cursor-paginated, so the
 /// result is a `PageResponse { items, next_cursor, has_more }` rather
 /// than a top-level array. Count via `array_len(result, "items")`.
 pub fn summarise_get_agenda(args: &Value, result: &Value) -> String {

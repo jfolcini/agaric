@@ -65,8 +65,9 @@ pub mod tags;
 
 // Tauri command handlers and testable _inner functions — explicitly re-exported.
 pub use agenda::{
-    count_agenda_batch_by_source, count_agenda_batch_by_source_inner, list_projected_agenda,
-    list_projected_agenda_inner, list_undated_tasks, list_undated_tasks_inner,
+    agenda_range_inner, count_agenda_batch_by_source, count_agenda_batch_by_source_inner,
+    list_projected_agenda, list_projected_agenda_inner, list_undated_tasks,
+    list_undated_tasks_inner,
 };
 // `_on_the_fly` exposed for date-clock-pinned regression tests.
 // Tests bypass the cache (which itself reads `chrono::Local::now()` and

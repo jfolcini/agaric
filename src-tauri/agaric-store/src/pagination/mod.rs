@@ -501,6 +501,19 @@ pub struct ActiveProjectedAgendaEntry {
     pub source: String, // "due_date" or "scheduled_date"
 }
 
+/// One row of the MCP `get_agenda` range: a block's own due or scheduled
+/// date (`projected: false`) or a future occurrence of a repeating task
+/// (`projected: true`). Built by `commands::agenda::agenda_range_inner`.
+#[derive(Debug, Clone, Serialize, specta::Type)]
+pub struct AgendaRangeEntry {
+    pub block: ActiveBlockRow,
+    /// YYYY-MM-DD.
+    pub date: String,
+    /// Which date column the row comes from: "due_date" or "scheduled_date".
+    pub source: String,
+    pub projected: bool,
+}
+
 impl From<ActiveProjectedAgendaEntry> for ProjectedAgendaEntry {
     fn from(active: ActiveProjectedAgendaEntry) -> Self {
         Self {

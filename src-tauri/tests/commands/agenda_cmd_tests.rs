@@ -5319,3 +5319,254 @@ async fn list_blocks_rejects_exclude_todo_states_off_the_agenda_date_branch() {
     .unwrap();
     assert_eq!(ok.items.len(), 1);
 }
+
+// =====================================================================
+// agenda_range_inner — MCP `get_agenda`: dated blocks + projected repeats
+// (#5393)
+// =====================================================================
+
+/// Seed a block straight into `blocks`, bypassing the materializer, so the
+/// projected half runs the deterministic on-the-fly projector.
+async fn insert_dated_block(
+    pool: &SqlitePool,
+    id: &str,
+    todo_state: Option<&str>,
+    due_date: Option<&str>,
+    scheduled_date: Option<&str>,
+) {
+    sqlx::query(
+        "INSERT INTO blocks (id, block_type, content, todo_state, due_date, scheduled_date)
+         VALUES (?, 'content', 'dated', ?, ?, ?)",
+    )
+    .bind(id)
+    .bind(todo_state)
+    .bind(due_date)
+    .bind(scheduled_date)
+    .execute(pool)
+    .await
+    .unwrap();
+}
+
+async fn insert_repeat_rule(pool: &SqlitePool, id: &str, rule: &str) {
+    sqlx::query("INSERT INTO block_properties (block_id, key, value_text) VALUES (?, 'repeat', ?)")
+        .bind(id)
+        .bind(rule)
+        .execute(pool)
+        .await
+        .unwrap();
+}
+
+/// `(date, block_id, source, projected)` of every row, in page order.
+fn range_rows(
+    page: &PageResponse<agaric_store::pagination::AgendaRangeEntry>,
+) -> Vec<(String, String, String, bool)> {
+    page.items
+        .iter()
+        .map(|e| {
+            (
+                e.date.clone(),
+                e.block.id.as_str().to_string(),
+                e.source.clone(),
+                e.projected,
+            )
+        })
+        .collect()
+}
+
+fn row(date: &str, id: &str, source: &str, projected: bool) -> (String, String, String, bool) {
+    (date.into(), id.into(), source.into(), projected)
+}
+
+#[tokio::test]
+async fn agenda_range_returns_dated_and_projected_rows_once_5393() {
+    let (pool, _dir) = test_pool().await;
+    insert_dated_block(&pool, "AR_TODO", Some("TODO"), Some("2026-03-04"), None).await;
+    // A dated block need not be a task.
+    insert_dated_block(&pool, "AR_SCHED", None, None, Some("2026-03-05")).await;
+    insert_dated_block(&pool, "AR_WEEKLY", Some("TODO"), Some("2026-03-03"), None).await;
+    insert_repeat_rule(&pool, "AR_WEEKLY", "weekly").await;
+    insert_dated_block(&pool, "AR_DONE", Some("DONE"), Some("2026-03-06"), None).await;
+    insert_dated_block(&pool, "AR_FIRST", Some("TODO"), Some("2026-03-02"), None).await;
+    insert_dated_block(&pool, "AR_LAST", Some("TODO"), None, Some("2026-03-15")).await;
+    insert_dated_block(&pool, "AR_BEFORE", Some("TODO"), Some("2026-03-01"), None).await;
+    insert_dated_block(&pool, "AR_AFTER", Some("TODO"), None, Some("2026-03-16")).await;
+    insert_dated_block(&pool, "AR_GONE", Some("TODO"), Some("2026-03-07"), None).await;
+    sqlx::query("UPDATE blocks SET deleted_at = 1 WHERE id = 'AR_GONE'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query(
+        "INSERT INTO blocks (id, block_type, content, page_id) VALUES ('AR_TPL_PAGE', 'page', 'tpl', 'AR_TPL_PAGE')",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO block_properties (block_id, key, value_text) VALUES ('AR_TPL_PAGE', 'template', 'true')",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    insert_dated_block(&pool, "AR_TPL", Some("TODO"), Some("2026-03-08"), None).await;
+    sqlx::query(
+        "UPDATE blocks SET parent_id = 'AR_TPL_PAGE', page_id = 'AR_TPL_PAGE' WHERE id = 'AR_TPL'",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let page = agenda_range_inner(
+        &pool,
+        "2026-03-02".into(),
+        "2026-03-15".into(),
+        None,
+        None,
+        &SpaceScope::Global,
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(
+        range_rows(&page),
+        vec![
+            row("2026-03-02", "AR_FIRST", "due_date", false),
+            row("2026-03-03", "AR_WEEKLY", "due_date", false),
+            row("2026-03-04", "AR_TODO", "due_date", false),
+            row("2026-03-05", "AR_SCHED", "scheduled_date", false),
+            row("2026-03-10", "AR_WEEKLY", "due_date", true),
+            row("2026-03-15", "AR_LAST", "scheduled_date", false),
+        ]
+    );
+    assert!(!page.has_more);
+    assert_eq!(page.next_cursor, None);
+}
+
+/// A `.+` rule projects from today, so a base date of `today + 7` projects
+/// onto itself: the block's own date must come back once, as the dated row.
+#[tokio::test]
+async fn agenda_range_dot_plus_base_date_appears_once_5393() {
+    let (pool, _dir) = test_pool().await;
+    let today = chrono::Local::now().date_naive();
+    let day = |n: i64| {
+        (today + chrono::Duration::days(n))
+            .format("%Y-%m-%d")
+            .to_string()
+    };
+    insert_dated_block(&pool, "AR_DOTPLUS", Some("TODO"), Some(&day(7)), None).await;
+    insert_repeat_rule(&pool, "AR_DOTPLUS", ".+1w").await;
+
+    let page = agenda_range_inner(&pool, day(0), day(14), None, None, &SpaceScope::Global)
+        .await
+        .unwrap();
+
+    assert_eq!(
+        range_rows(&page),
+        vec![
+            row(&day(7), "AR_DOTPLUS", "due_date", false),
+            row(&day(14), "AR_DOTPLUS", "due_date", true),
+        ]
+    );
+}
+
+#[tokio::test]
+async fn agenda_range_rejects_end_before_start_5393() {
+    let (pool, _dir) = test_pool().await;
+    let err = agenda_range_inner(
+        &pool,
+        "2026-05-01".into(),
+        "2026-04-30".into(),
+        None,
+        None,
+        &SpaceScope::Global,
+    )
+    .await
+    .expect_err("end < start");
+    assert!(matches!(err, AppError::Validation { .. }), "got {err:?}");
+}
+
+/// Walking every page at every page size returns exactly the single-page
+/// result: dated and projected rows share dates (and blocks), so page
+/// boundaries land between the two halves and between the two sources.
+#[tokio::test]
+async fn agenda_range_cursor_walk_matches_single_page_5393() {
+    let (pool, _dir) = test_pool().await;
+    insert_dated_block(
+        &pool,
+        "PG_A",
+        Some("TODO"),
+        Some("2026-03-01"),
+        Some("2026-03-02"),
+    )
+    .await;
+    insert_repeat_rule(&pool, "PG_A", "daily").await;
+    insert_dated_block(
+        &pool,
+        "PG_B",
+        Some("TODO"),
+        Some("2026-03-02"),
+        Some("2026-03-02"),
+    )
+    .await;
+    insert_dated_block(&pool, "PG_C", Some("TODO"), Some("2026-03-02"), None).await;
+    insert_repeat_rule(&pool, "PG_C", "daily").await;
+    insert_dated_block(&pool, "PG_D", None, None, Some("2026-03-03")).await;
+
+    let (start, end) = ("2026-03-01", "2026-03-04");
+    let whole = agenda_range_inner(
+        &pool,
+        start.into(),
+        end.into(),
+        None,
+        Some(500),
+        &SpaceScope::Global,
+    )
+    .await
+    .unwrap();
+    let whole = range_rows(&whole);
+    assert_eq!(
+        whole,
+        vec![
+            row("2026-03-01", "PG_A", "due_date", false),
+            row("2026-03-02", "PG_A", "due_date", true),
+            row("2026-03-02", "PG_A", "scheduled_date", false),
+            row("2026-03-02", "PG_B", "due_date", false),
+            row("2026-03-02", "PG_B", "scheduled_date", false),
+            row("2026-03-02", "PG_C", "due_date", false),
+            row("2026-03-03", "PG_A", "due_date", true),
+            row("2026-03-03", "PG_A", "scheduled_date", true),
+            row("2026-03-03", "PG_C", "due_date", true),
+            row("2026-03-03", "PG_D", "scheduled_date", false),
+            row("2026-03-04", "PG_A", "due_date", true),
+            row("2026-03-04", "PG_A", "scheduled_date", true),
+            row("2026-03-04", "PG_C", "due_date", true),
+        ]
+    );
+
+    for limit in 1..=whole.len() {
+        let mut walked = Vec::new();
+        let mut cursor = None;
+        loop {
+            let page = agenda_range_inner(
+                &pool,
+                start.into(),
+                end.into(),
+                cursor,
+                Some(i64::try_from(limit).unwrap()),
+                &SpaceScope::Global,
+            )
+            .await
+            .unwrap();
+            assert!(page.items.len() <= limit, "limit {limit}: page over limit");
+            walked.extend(range_rows(&page));
+            if !page.has_more {
+                break;
+            }
+            cursor = page.next_cursor;
+            assert!(cursor.is_some(), "limit {limit}: has_more without a cursor");
+        }
+        assert_eq!(
+            walked, whole,
+            "limit {limit}: walk differs from single page"
+        );
+    }
+}

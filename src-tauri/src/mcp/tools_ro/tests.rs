@@ -1490,6 +1490,63 @@ async fn get_agenda_happy_path() {
     assert!(result["next_cursor"].is_null());
 }
 
+/// #5393 — `get_agenda` returns dated blocks as well as projected repeats.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn get_agenda_returns_dated_and_projected_rows() {
+    let (tools, _mat, _dir) = mk_tools().await;
+    // Raw inserts keep the projected cache empty, so the on-the-fly
+    // projector answers from the base dates alone.
+    sqlx::query(
+        "INSERT INTO blocks (id, block_type, content, todo_state, due_date, scheduled_date) VALUES
+         ('GA_ONEOFF', 'content', 'one-off', 'TODO', '2025-01-10', NULL),
+         ('GA_WEEKLY', 'content', 'weekly', 'TODO', '2025-01-20', NULL),
+         ('GA_SCHED', 'content', 'scheduled', NULL, NULL, '2025-01-15')",
+    )
+    .execute(&tools.pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO block_properties (block_id, key, value_text) VALUES ('GA_WEEKLY', 'repeat', 'weekly')",
+    )
+    .execute(&tools.pool)
+    .await
+    .unwrap();
+
+    let result = tools
+        .call_tool(
+            "get_agenda",
+            json!({"start_date": "2025-01-01", "end_date": "2025-01-31"}),
+            &test_ctx(),
+        )
+        .await
+        .expect("happy path");
+    let rows: Vec<(String, String, String, bool)> = result["items"]
+        .as_array()
+        .expect("agenda items array")
+        .iter()
+        .map(|e| {
+            (
+                e["date"].as_str().unwrap().to_string(),
+                e["block"]["id"].as_str().unwrap().to_string(),
+                e["source"].as_str().unwrap().to_string(),
+                e["projected"].as_bool().unwrap(),
+            )
+        })
+        .collect();
+    let row =
+        |d: &str, id: &str, s: &str, p: bool| (d.to_string(), id.to_string(), s.to_string(), p);
+    assert_eq!(
+        rows,
+        vec![
+            row("2025-01-10", "GA_ONEOFF", "due_date", false),
+            row("2025-01-15", "GA_SCHED", "scheduled_date", false),
+            row("2025-01-20", "GA_WEEKLY", "due_date", false),
+            row("2025-01-27", "GA_WEEKLY", "due_date", true),
+        ]
+    );
+    assert_eq!(result["has_more"], false);
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn get_agenda_invalid_date_returns_validation() {
     let (tools, _mat, _dir) = mk_tools().await;
@@ -2950,8 +3007,8 @@ async fn snapshot_get_agenda_response_shape() {
 
     // I-MCP-6: seed a single repeating block so the projection has at
     // least one entry to surface. With an empty DB the response is
-    // `[]`, which never exercises the populated `ProjectedAgendaEntry`
-    // wire shape (`block` / `projected_date` / `source`) — letting a
+    // `[]`, which never exercises the populated `AgendaRangeEntry`
+    // wire shape (`block` / `date` / `source` / `projected`) — letting a
     // future field rename slip through silently.
     let task = create_block_inner(
         &tools.pool,
