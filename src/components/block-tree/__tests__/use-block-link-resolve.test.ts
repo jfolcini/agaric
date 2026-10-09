@@ -1,12 +1,13 @@
 /**
  * Tests for useBlockLinkResolve — scans loaded blocks for `[[ULID]]`
  * tokens not yet in the resolve cache and batch-fetches them via the
- * `batchResolve` IPC. Covers cache-membership filtering,
- * space scoping, cancellation on unmount, and graceful error handling.
+ * `batchResolve` IPC. Covers cache-membership filtering, space scoping,
+ * answers that land after the rows moved on (#5443), and graceful error
+ * handling.
  */
 
 import { renderHook, waitFor } from '@testing-library/react'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 // #2927 phase 5 — the hook now calls the generated `commands.batchResolve`, so
 // mocking only the hand-written wrapper no longer intercepts. Back the
@@ -194,7 +195,7 @@ describe('useBlockLinkResolve', () => {
     })
   })
 
-  it('cancels caching when the hook unmounts before the promise settles', async () => {
+  it('keeps an answer that lands after the hook unmounted (#5443)', async () => {
     let resolveBatch: (value: ResolvedBlock[]) => void = () => {}
     mockedBatchResolve.mockImplementationOnce(
       () =>
@@ -211,15 +212,12 @@ describe('useBlockLinkResolve', () => {
       expect(mockedBatchResolve).toHaveBeenCalledTimes(1)
     })
 
-    // Unmount before the promise resolves; subsequent .set() writes must
-    // be skipped because the cancellation flag flips.
     unmount()
     resolveBatch([{ id: ULID_A, title: 'Late', block_type: 'content', deleted: false }])
 
-    await new Promise<void>((r) => queueMicrotask(r))
-    await new Promise<void>((r) => queueMicrotask(r))
-
-    expect(useResolveStore.getState().cache.size).toBe(0)
+    await waitFor(() => {
+      expect(useResolveStore.getState().resolveTitle(ULID_A)).toBe('Late')
+    })
   })
 
   it('logs and swallows transport failures from batchResolve', async () => {
@@ -337,6 +335,111 @@ describe('useBlockLinkResolve — content-signature memo guard (#1266)', () => {
     // Signature changed → effect re-fired → scan re-ran, but ULID_A is
     // now cached and BLOCK_2 has no token → no additional IPC.
     expect(mockedBatchResolve.mock.calls.length).toBe(callsAfterFirst)
+  })
+})
+
+describe('useBlockLinkResolve — answers that land after the rows moved on (#5443)', () => {
+  interface HeldCall {
+    ids: string[]
+    resolve: (rows: ResolvedBlock[]) => void
+  }
+
+  afterEach(() => {
+    mockedBatchResolve.mockReset()
+  })
+
+  /** Every call stays unanswered until the test answers it. */
+  function holdBatchResolve(): HeldCall[] {
+    const held: HeldCall[] = []
+    mockedBatchResolve.mockImplementation(
+      (ids: string[]) =>
+        new Promise<ResolvedBlock[]>((resolve) => {
+          held.push({ ids, resolve })
+        }),
+    )
+    return held
+  }
+
+  const resolved = (id: string, title: string): ResolvedBlock => ({
+    id,
+    title,
+    block_type: 'content',
+    deleted: false,
+  })
+  const rowLinking = (id: string, target: string) => ({
+    id,
+    block_type: 'content',
+    content: `see [[${target}]]`,
+  })
+
+  it('keeps an answer for its ids after the rows moved on, and does not ask for them again', async () => {
+    const held = holdBatchResolve()
+    const { rerender } = renderHook(({ blocks }) => useBlockLinkResolve(blocks), {
+      initialProps: { blocks: [rowLinking(BLOCK_1, ULID_A)] },
+    })
+    await waitFor(() => expect(held).toHaveLength(1))
+
+    rerender({ blocks: [rowLinking(BLOCK_2, ULID_B)] })
+    await waitFor(() => expect(held).toHaveLength(2))
+    held[0]?.resolve([resolved(ULID_A, 'Target A')])
+    held[1]?.resolve([resolved(ULID_B, 'Target B')])
+    await waitFor(() => {
+      expect(useResolveStore.getState().resolveTitle(ULID_A)).toBe('Target A')
+    })
+
+    rerender({ blocks: [rowLinking(BLOCK_1, ULID_A), rowLinking(BLOCK_2, ULID_B)] })
+    await new Promise<void>((r) => queueMicrotask(r))
+    expect(held.map((c) => c.ids)).toEqual([[ULID_A], [ULID_B]])
+  })
+
+  it('does not ask again for an id whose answer is still in flight', async () => {
+    const held = holdBatchResolve()
+    const { rerender } = renderHook(({ blocks }) => useBlockLinkResolve(blocks), {
+      initialProps: { blocks: [rowLinking(BLOCK_1, ULID_A)] },
+    })
+    await waitFor(() => expect(held).toHaveLength(1))
+
+    rerender({ blocks: [rowLinking(BLOCK_1, ULID_A), rowLinking(BLOCK_2, ULID_B)] })
+    await waitFor(() => expect(held).toHaveLength(2))
+    expect(held.map((c) => c.ids)).toEqual([[ULID_A], [ULID_B]])
+  })
+
+  it('a space switch drops the answer in flight and asks again in the new space', async () => {
+    const held = holdBatchResolve()
+    const { rerender } = renderHook(({ blocks }) => useBlockLinkResolve(blocks), {
+      initialProps: { blocks: [rowLinking(BLOCK_1, ULID_A)] },
+    })
+    await waitFor(() => expect(held).toHaveLength(1))
+
+    useSpaceStore.setState({ currentSpaceId: 'SPACE_OTHER' })
+    rerender({ blocks: [{ ...rowLinking(BLOCK_1, ULID_A), content: `again [[${ULID_A}]]` }] })
+    await waitFor(() => expect(held).toHaveLength(2))
+    expect(held[1]?.ids).toEqual([ULID_A])
+
+    held[1]?.resolve([resolved(ULID_A, 'From the second space')])
+    await waitFor(() => {
+      expect(useResolveStore.getState().resolveTitle(ULID_A)).toBe('From the second space')
+    })
+    held[0]?.resolve([resolved(ULID_A, 'From the first space')])
+    await new Promise<void>((r) => queueMicrotask(r))
+    await new Promise<void>((r) => queueMicrotask(r))
+    expect(useResolveStore.getState().resolveTitle(ULID_A)).toBe('From the second space')
+    expect(useResolveStore.getState().cache.size).toBe(1)
+  })
+
+  it('asks again for an id once its answer landed and the cache dropped it', async () => {
+    const held = holdBatchResolve()
+    const { rerender } = renderHook(({ blocks }) => useBlockLinkResolve(blocks), {
+      initialProps: { blocks: [rowLinking(BLOCK_1, ULID_A)] },
+    })
+    await waitFor(() => expect(held).toHaveLength(1))
+    held[0]?.resolve([resolved(ULID_A, 'Target A')])
+    await waitFor(() => expect(useResolveStore.getState().has(ULID_A)).toBe(true))
+
+    useResolveStore.getState().clearAllForSpace(TEST_SPACE_ID)
+    rerender({ blocks: [{ ...rowLinking(BLOCK_1, ULID_A), content: `again [[${ULID_A}]]` }] })
+    await waitFor(() => expect(held).toHaveLength(2))
+    expect(held[1]?.ids).toEqual([ULID_A])
   })
 })
 
