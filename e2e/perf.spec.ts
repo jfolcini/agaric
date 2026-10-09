@@ -30,15 +30,16 @@
  * with no script in it is mostly paint and is not evidence of a real problem.
  * The run fails only when a journey cannot complete; it has no budgets.
  *
- * The second test is NOT opt-in: `peakBlocks` is deterministic, unlike the
- * timings, so it pins the initial render window on every PR (#5329).
+ * The other tests are NOT opt-in: rendered-row and IPC counts are
+ * deterministic, unlike the timings, so they pin the big page's initial render
+ * window (#5329) and what opening each list view costs (#5366) on every PR.
  */
 
 import { writeFileSync } from 'node:fs'
 
 import type { CDPSession, Page } from '@playwright/test'
 
-import { expect, test } from './helpers'
+import { expect, navigateToView, test } from './helpers'
 
 const CPU = Number(process.env['AGARIC_PERF_CPU'] ?? 1)
 const PAGES = Number(process.env['AGARIC_PERF_PAGES'] ?? 500)
@@ -50,10 +51,14 @@ interface PerfProbe {
   loaf: Array<{ start: number; duration: number; scripts: number }>
   events: Array<{ id: number; duration: number }>
   mock: Array<{ start: number; dur: number }>
-  ipc: number
+  /** Every IPC command name, in call order. */
+  ipc: string[]
   commits: number
   peakBlocks: number
   peakNodes: number
+  /** What `peakRows` counts; the #5366 tests set it. */
+  rowSelector: string | null
+  peakRows: number
 }
 
 declare global {
@@ -68,10 +73,12 @@ function installProbes(): void {
     loaf: [],
     events: [],
     mock: [],
-    ipc: 0,
+    ipc: [],
     commits: 0,
     peakBlocks: 0,
     peakNodes: 0,
+    rowSelector: null,
+    peakRows: 0,
   }
   window.__perf__ = probe
   new PerformanceObserver((list) => {
@@ -91,6 +98,9 @@ function installProbes(): void {
       document.querySelectorAll('[data-testid="block-static"]').length,
     )
     probe.peakNodes = Math.max(probe.peakNodes, document.getElementsByTagName('*').length)
+    if (probe.rowSelector) {
+      probe.peakRows = Math.max(probe.peakRows, document.querySelectorAll(probe.rowSelector).length)
+    }
   }
   new MutationObserver(sample).observe(document, { childList: true, subtree: true })
 
@@ -116,7 +126,7 @@ function installProbes(): void {
     (inner: Invoke): Invoke =>
     (cmd, args, opts) =>
       new Promise((resolve, reject) => {
-        probe.ipc += 1
+        probe.ipc.push(cmd)
         setTimeout(() => {
           const t0 = performance.now()
           try {
@@ -210,7 +220,7 @@ function makeMeasure(page: Page, cdp: CDPSession, rows: Row[]) {
         loaf: p.loaf.length,
         events: p.events.length,
         mock: p.mock.length,
-        ipc: p.ipc,
+        ipc: p.ipc.length,
         commits: p.commits,
       }
       p.peakBlocks = 0
@@ -255,7 +265,7 @@ function makeMeasure(page: Page, cdp: CDPSession, rows: Row[]) {
         appFrames: frames.filter((ms) => ms >= 50),
         inp: perInteraction.size > 0 ? Math.max(...perInteraction.values()) : null,
         mockMs: mock.reduce((a, t) => a + t.dur, 0),
-        ipc: p.ipc - m.ipc,
+        ipc: p.ipc.length - m.ipc,
         commits: p.commits - m.commits,
         peakBlocks: p.peakBlocks,
         peakNodes: p.peakNodes,
@@ -483,3 +493,164 @@ test('opening a 500-block page renders only the initial window in full (#5329)',
   expect(peak).toBeGreaterThanOrEqual(10)
   expect(peak).toBeLessThanOrEqual(PEAK_RENDERED_BLOCKS_BOUND)
 })
+
+/**
+ * #5366 — opening each list view on `SEEDED_ROWS` rows. The rendered rows stay
+ * under the #5329 bound: a view that renders every row reads about 500. The
+ * view's IPC from the click until it settles is pinned to the measured count,
+ * so a call per row, even per rendered row, fails it. A deliberate change to a
+ * view's open path re-measures and updates its `ipcOnOpen`.
+ */
+const SEEDED_ROWS = 500
+/** Outlasts every timer on an open path: the search debounce (300 ms), the prefetch dwell (120 ms). */
+const QUIET_MS = 1000
+
+interface ListView {
+  name: string
+  /** One rendered data row. */
+  rows: string
+  ipcOnOpen: number
+  seed: (page: Page) => Promise<unknown>
+  open: (page: Page) => Promise<void>
+}
+
+const indices = Array.from({ length: SEEDED_ROWS }, (_, i) => String(i).padStart(4, '0'))
+
+/** Send one `cmd` call per `calls` entry through the mock's IPC, in order. */
+async function invokeEach(
+  page: Page,
+  cmd: string,
+  calls: Array<Record<string, unknown>>,
+): Promise<void> {
+  await page.evaluate(
+    async ({ cmd: name, calls: argsList }) => {
+      const internals = (window as unknown as Record<string, unknown>)['__TAURI_INTERNALS__'] as {
+        invoke: (cmd: string, args: unknown) => Promise<unknown>
+      }
+      for (const args of argsList) await internals.invoke(name, args)
+    },
+    { cmd, calls },
+  )
+}
+
+const LIST_VIEWS: ListView[] = [
+  {
+    name: 'Agenda',
+    rows: '[data-testid="agenda-results-item"]',
+    // filtered_blocks_query, get_batch_properties, batch_resolve
+    ipcOnOpen: 3,
+    seed: (page) =>
+      page.evaluate((n) => {
+        ;(
+          window as unknown as { __addMockAgendaItems: (count: number) => string[] }
+        ).__addMockAgendaItems(n)
+      }, SEEDED_ROWS),
+    open: (page) => page.getByRole('tab', { name: 'Agenda view' }).click(),
+  },
+  {
+    name: 'Pages',
+    rows: '[id^="page-row-"]',
+    // set_title, count_trash, list_pages_with_metadata, then load_page_subtree
+    // for the first MAX_INFLIGHT_PREFETCHES (4) rows in view. The fixed 1280×720
+    // viewport holds more than 4. #5446 makes that prefetch touch-only: 3 then.
+    ipcOnOpen: 7,
+    seed: (page) =>
+      invokeEach(
+        page,
+        'create_page_in_space',
+        indices.map((i) => ({
+          parentId: null,
+          content: `Perf page ${i}`,
+          spaceId: 'SPACE_PERSONAL',
+        })),
+      ),
+    open: (page) => navigateToView(page, 'Pages'),
+  },
+  {
+    name: 'Tags',
+    rows: '[data-testid^="tag-item-"]',
+    // set_title, list_all_tags_in_space
+    ipcOnOpen: 2,
+    seed: (page) =>
+      invokeEach(
+        page,
+        'create_block',
+        indices.map((i) => ({
+          blockType: 'tag',
+          content: `perf-tag-${i}`,
+          parentId: null,
+          index: null,
+          scope: { kind: 'active', space_id: 'SPACE_PERSONAL' },
+          blockId: null,
+        })),
+      ),
+    open: (page) => navigateToView(page, 'Tags'),
+  },
+  {
+    name: 'Search',
+    rows: '[data-testid^="search-result-row-"]',
+    // set_title, search_blocks, resolve_page_by_alias, batch_resolve
+    ipcOnOpen: 4,
+    // Every block of the big page holds `**bold**`.
+    seed: (page) => seedBigPage(page, []),
+    open: async (page) => {
+      await navigateToView(page, 'Search')
+      await page.getByPlaceholder('Search blocks...').fill('bold')
+    },
+  },
+]
+
+/** Resolves once neither the `rows` count nor the IPC log has moved for `QUIET_MS`. */
+async function settle(page: Page, rows: string): Promise<void> {
+  const state = () =>
+    page.evaluate(
+      (selector) => `${document.querySelectorAll(selector).length}:${window.__perf__?.ipc.length}`,
+      rows,
+    )
+  await expect
+    .poll(
+      async () => {
+        const before = await state()
+        await page.waitForTimeout(QUIET_MS)
+        return (await state()) === before
+      },
+      { timeout: 30_000 },
+    )
+    .toBe(true)
+}
+
+for (const view of LIST_VIEWS) {
+  test(`opening ${view.name} on ${SEEDED_ROWS} rows renders a window and pins its IPC (#5366)`, async ({
+    page,
+  }) => {
+    await page.addInitScript(installProbes)
+    await page.goto('/')
+    await page.locator('[data-testid="block-static"]').first().waitFor()
+    await view.seed(page)
+    // The boot sync (`useSyncTrigger`) fires 2 s after mount; wait it out so a
+    // quick seed cannot leave it to land inside the measured window.
+    await expect
+      .poll(() => page.evaluate(() => window.__perf__?.ipc.includes('list_peer_refs')))
+      .toBe(true)
+    await settle(page, view.rows)
+
+    const mark = await page.evaluate((selector) => {
+      const probe = window.__perf__ as PerfProbe
+      probe.rowSelector = selector
+      probe.peakRows = 0
+      return probe.ipc.length
+    }, view.rows)
+    await view.open(page)
+    await page.locator(view.rows).first().waitFor()
+    await settle(page, view.rows)
+    const { peakRows, calls } = await page.evaluate((from) => {
+      const probe = window.__perf__ as PerfProbe
+      return { peakRows: probe.peakRows, calls: probe.ipc.slice(from) }
+    }, mark)
+
+    // The lower bound proves the probe saw the view at all.
+    expect(peakRows).toBeGreaterThanOrEqual(10)
+    expect(peakRows).toBeLessThanOrEqual(PEAK_RENDERED_BLOCKS_BOUND)
+    expect(calls.length, calls.join(', ')).toBe(view.ipcOnOpen)
+  })
+}

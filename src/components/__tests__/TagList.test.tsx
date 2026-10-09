@@ -34,6 +34,7 @@ import {
   type TypedInvokeHandlers,
   mockInvokeCommands,
 } from '@/__tests__/helpers/invoke'
+import { mockReactVirtual } from '@/__tests__/mocks/react-virtual'
 import { TagList } from '@/components/TagList'
 import { t } from '@/lib/i18n'
 import type { NameChange } from '@/lib/name-change-bus'
@@ -41,6 +42,11 @@ import { invalidateNameCaches, subscribeToNameChanges } from '@/lib/name-change-
 import { selectRecentPagesForSpace, useRecentPagesStore } from '@/stores/recent-pages'
 import { useSpaceStore } from '@/stores/space'
 import { useTabsStore } from '@/stores/tabs'
+
+// jsdom gives the scroll viewport no height, so the real virtualizer mounts no
+// rows. Every row renders unless a test sets `virtualWindow.size`.
+const virtualWindow = vi.hoisted(() => ({ size: null as number | null }))
+vi.mock('@tanstack/react-virtual', () => mockReactVirtual({ windowSize: () => virtualWindow.size }))
 
 const mockedInvoke = vi.mocked(invoke)
 const mockedToastError = vi.mocked(toast.error)
@@ -92,6 +98,7 @@ function findColorButton(tagRow: HTMLElement): HTMLButtonElement {
 
 beforeEach(() => {
   vi.clearAllMocks()
+  virtualWindow.size = null
   localStorage.removeItem('tag-colors')
   // b1 — `list_all_tags_in_space` is required-active; seed an active space
   // so the tag-list load runs.
@@ -811,6 +818,59 @@ describe('TagList', () => {
     const { container } = render(<TagList />)
 
     await waitFor(async () => {
+      const results = await axe(container)
+      expect(results).toHaveNoViolations()
+    })
+  })
+
+  // #5366 — a long list mounts only the virtualizer's window. Scrolling the
+  // window into place on focus is browser behaviour, covered by
+  // e2e/tag-list-virtualization.spec.ts.
+  describe('virtualized list (#5366)', () => {
+    const manyTags = Array.from({ length: 500 }, (_, i) =>
+      makeTag(`T${i}`, `tag-${String(i).padStart(3, '0')}`),
+    )
+
+    it('mounts only the window and sizes the list for every tag', async () => {
+      virtualWindow.size = 10
+      stubTags(manyTags)
+
+      render(<TagList />)
+
+      expect(await screen.findByTestId('tag-item-tag-009')).toBeInTheDocument()
+      expect(screen.queryByTestId('tag-item-tag-010')).not.toBeInTheDocument()
+      const rows = screen.getAllByRole('listitem')
+      expect(rows).toHaveLength(10)
+      expect(rows[0]).toHaveAttribute('aria-setsize', '500')
+      expect(rows[0]).toHaveAttribute('aria-posinset', '1')
+      expect(rows[9]).toHaveAttribute('aria-posinset', '10')
+      // The mock sums the 40 px estimate over all 500 rows.
+      expect(screen.getByRole('list')).toHaveStyle({ height: '20000px' })
+    })
+
+    it('Tab moves from one row into the next and back', async () => {
+      const user = userEvent.setup()
+      virtualWindow.size = 3
+      stubTags(manyTags)
+
+      render(<TagList />)
+
+      const first = await screen.findByTestId('tag-item-tag-000')
+      act(() => first.focus())
+      // Each row holds four tab stops: the tag, its color, rename and delete.
+      for (let i = 0; i < 4; i++) await user.tab()
+      expect(screen.getByTestId('tag-item-tag-001')).toHaveFocus()
+      await user.tab({ shift: true })
+      expect(findTrashButton(first.closest('li') as HTMLElement)).toHaveFocus()
+    })
+
+    it('has no a11y violations with a windowed list', async () => {
+      virtualWindow.size = 10
+      stubTags(manyTags)
+
+      const { container } = render(<TagList />)
+
+      await screen.findByTestId('tag-item-tag-009')
       const results = await axe(container)
       expect(results).toHaveNoViolations()
     })

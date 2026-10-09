@@ -118,7 +118,7 @@ It judges `position: absolute` children against their CSS containing block, not 
 
 ## Performance runs
 
-`perf.spec.ts`'s journey run is skipped unless `AGARIC_PERF=1`: it seeds a 500-page vault through the mock and prints per-journey frontend cost (INP, long animation frames, peak rendered blocks, React commits, main-thread time per chunk) to `test-results/perf-*`. Its second test runs on every PR and pins that opening a 500-block page renders only the initial window (#5329). `AGARIC_PERF_CPU=4` throttles the CPU; `AGARIC_PERF_TRACE=1` saves a Chrome trace per journey. Backend query time comes from `AGARIC_OTEL=1` on the real app or the `interactive_slo` bench.
+`perf.spec.ts`'s journey run is skipped unless `AGARIC_PERF=1`: it seeds a 500-page vault through the mock and prints per-journey frontend cost (INP, long animation frames, peak rendered blocks, React commits, main-thread time per chunk) to `test-results/perf-*`. Its other tests run on every PR: opening a 500-block page renders only the initial window (#5329), and opening Agenda, Pages, Tags or Search on 500 seeded rows renders at most 60 rows and makes exactly the view's `ipcOnOpen` IPC calls (#5366). A deliberate change to a view's open path re-measures that count from the failure message, which lists the calls. `AGARIC_PERF_CPU=4` throttles the CPU; `AGARIC_PERF_TRACE=1` saves a Chrome trace per journey. Backend query time comes from `AGARIC_OTEL=1` on the real app or the `interactive_slo` bench.
 
 ```sh
 AGARIC_PERF=1 npx playwright test e2e/perf.spec.ts
