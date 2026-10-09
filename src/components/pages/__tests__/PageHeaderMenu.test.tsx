@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from '@testing-library/react'
+import { cleanup, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import type React from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -32,6 +32,7 @@ vi.mock('lucide-react', () => ({
   Link: (props: React.SVGProps<SVGSVGElement>) => <svg data-testid="link-icon" {...props} />,
   List: (props: React.SVGProps<SVGSVGElement>) => <svg data-testid="list-icon" {...props} />,
   MoreVertical: () => <svg data-testid="more-vertical-icon" />,
+  Network: (props: React.SVGProps<SVGSVGElement>) => <svg data-testid="network-icon" {...props} />,
   Redo2: () => <svg data-testid="redo2-icon" />,
   Settings2: (props: React.SVGProps<SVGSVGElement>) => (
     <svg data-testid="settings2-icon" {...props} />
@@ -50,6 +51,7 @@ const defaultProps: PageHeaderMenuProps = {
   onUndo: vi.fn(),
   onRedo: vi.fn(),
   onOpenOutline: vi.fn(),
+  onShowInGraph: vi.fn(),
   onInsertEmoji: vi.fn(),
   onKebabOpenChange: vi.fn(),
   onAddAlias: vi.fn(),
@@ -115,6 +117,7 @@ describe('PageHeaderMenu rendering', () => {
     renderMenu({ kebabOpen: true })
 
     expect(screen.getByText(t('pageHeader.openOutline'))).toBeInTheDocument()
+    expect(screen.getByText(t('pageHeader.showInGraph'))).toBeInTheDocument()
     expect(screen.getByText(t('pageHeader.insertEmoji'))).toBeInTheDocument()
     expect(screen.getByText('Add alias')).toBeInTheDocument()
     expect(screen.getByText('Add tag')).toBeInTheDocument()
@@ -169,6 +172,26 @@ describe('PageHeaderMenu interaction', () => {
 
     await user.click(screen.getByRole('menuitem', { name: t('pageHeader.openOutline') }))
     expect(onOpenOutline).toHaveBeenCalledOnce()
+  })
+
+  it('calls onShowInGraph from the "Show in graph" item, reached by arrow key after Open outline', async () => {
+    const onShowInGraph = vi.fn()
+    const user = userEvent.setup()
+    renderMenu({ kebabOpen: true, onShowInGraph })
+
+    const menu = screen.getByRole('menu', { name: /page actions/i })
+    await waitFor(() => {
+      expect(within(menu).getByRole('menuitem', { name: /undo last page action/i })).toHaveFocus()
+    })
+    await user.keyboard('{ArrowDown}')
+    expect(within(menu).getByRole('menuitem', { name: t('pageHeader.openOutline') })).toHaveFocus()
+    await user.keyboard('{ArrowDown}')
+    const item = within(menu).getByRole('menuitem', { name: /^Show in graph/ })
+    expect(item).toHaveFocus()
+    expect(item).toHaveClass('touch-target')
+    await user.keyboard('{Enter}')
+
+    expect(onShowInGraph).toHaveBeenCalledOnce()
   })
 
   it('calls onInsertEmoji when "Insert emoji" is clicked', async () => {
@@ -330,6 +353,17 @@ describe('PageHeaderMenu export shortcut hint', () => {
     expect(screen.getByText('Ctrl+Shift+E')).toHaveClass('whitespace-nowrap')
   })
 
+  it('shows Show in graph with its rebindable shortcut hint', () => {
+    renderMenu({ kebabOpen: true })
+    expect(screen.getByText('Ctrl+Shift+G')).toBeInTheDocument()
+
+    cleanup()
+    setCustomShortcut('showPageInGraph', 'Ctrl + Alt + G')
+    renderMenu({ kebabOpen: true })
+    expect(screen.getByText('Ctrl+Alt+G')).toBeInTheDocument()
+    expect(screen.queryByText('Ctrl+Shift+G')).not.toBeInTheDocument()
+  })
+
   it('shows the user-rebound binding, not the default', () => {
     setCustomShortcut('exportPageMarkdown', 'Ctrl + Alt + X')
     renderMenu({ kebabOpen: true })
@@ -352,10 +386,10 @@ describe('PageHeaderMenu ARIA menu semantics (CR-A11Y #151)', () => {
 
     const menu = screen.getByRole('menu', { name: /page actions/i })
     const items = within(menu).getAllByRole('menuitem')
-    // undo, redo, openOutline, insertEmoji, addAlias, addTag, addProperty,
-    // toggleTemplate, toggleJournalTemplate, export, editSource, delete = 12
-    // (no openInNewTab / no move entry by default).
-    expect(items).toHaveLength(12)
+    // undo, redo, openOutline, showInGraph, insertEmoji, addAlias, addTag,
+    // addProperty, toggleTemplate, toggleJournalTemplate, export, editSource,
+    // delete = 13 (no openInNewTab / no move entry by default).
+    expect(items).toHaveLength(13)
     expect(within(menu).getByText('Add alias').closest('button')).toHaveAttribute(
       'role',
       'menuitem',
@@ -493,7 +527,7 @@ describe('PageHeaderMenu ARIA menu semantics (CR-A11Y #151)', () => {
     renderMenu({ kebabOpen: true, onOpenInNewTab: vi.fn() })
 
     const menu = screen.getByRole('menu', { name: /page actions/i })
-    expect(within(menu).getAllByRole('menuitem')).toHaveLength(13)
+    expect(within(menu).getAllByRole('menuitem')).toHaveLength(14)
   })
 
   it('keeps the move-to-space sub-menu working without counting its items in the top-level set', async () => {
@@ -509,8 +543,8 @@ describe('PageHeaderMenu ARIA menu semantics (CR-A11Y #151)', () => {
     })
 
     const topMenu = screen.getByRole('menu', { name: /page actions/i })
-    // 12 default + the move-to entry = 13 top-level menuitems.
-    expect(within(topMenu).getAllByRole('menuitem')).toHaveLength(13)
+    // 13 default + the move-to entry = 14 top-level menuitems.
+    expect(within(topMenu).getAllByRole('menuitem')).toHaveLength(14)
 
     // Expand the sub-menu and pick a target.
     await user.click(within(topMenu).getByText(/move to/i))

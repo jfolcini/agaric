@@ -94,6 +94,7 @@ A force-directed graph of pages and the links between them.
 
 - **Nodes** are pages; **edges** are `[[link]]` references.
 - **Filter bar** in the header: filter by tag, task status, priority, presence of a due date, presence of a scheduled date, presence of backlinks, exclude templates, and exclude journal pages (pages titled `YYYY-MM-DD`). Filters stack as removable pills; there is no date-range or content-match filter. A space with no saved graph filters starts with *Exclude journal pages*; removing it is remembered per space.
+- **Local graph**: *Focus on this page* narrows the graph to the open page's 1- or 2-hop neighbourhood. *Show in graph* in the page kebab (palette: *Show this page in graph*, `Ctrl+Shift+G`) opens it from the page; mode and depth are remembered per space, and a page the filters hide says so.
 - **Zoom / pan** with mouse / trackpad / touch.
 - **Click a node** to navigate to its page.
 - **Web Worker**: the simulation runs in a worker so the main thread stays responsive on large graphs. Falls back to the main thread if Web Workers are unavailable.
@@ -144,7 +145,7 @@ The view that opens when you navigate to a single page. Not a sidebar entry — 
 - **Block tree**: the editor proper. See [editor.md](editor.md).
 - **Outline** (TOC): sheet slide-out, opened from the page kebab menu, showing the page's heading hierarchy.
 - **Linked / Unlinked references** below the block tree: see [tags-and-links.md](tags-and-links.md).
-- **Page kebab menu (PageHeaderMenu)**: Undo, Redo, Open outline, Insert emoji, Move to space, Add alias, Add tag, Export as Markdown, Edit as Markdown (the page as one markdown buffer, in place of its blocks; see [editor.md](editor.md#edit-as-markdown)), Send to Trash, Toggle template.
+- **Page kebab menu (PageHeaderMenu)**: Undo, Redo, Open outline, Show in graph, Insert emoji, Move to space, Add alias, Add tag, Export as Markdown, Edit as Markdown (the page as one markdown buffer, in place of its blocks; see [editor.md](editor.md#edit-as-markdown)), Send to Trash, Toggle template.
 - **Zoom into a block** to focus on a sub-tree: breadcrumb at the top, click parts to zoom out.
 - **Image lightbox / PDF viewer**: opens for inline attachments.
 

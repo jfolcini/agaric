@@ -1,4 +1,4 @@
-import { expect, navigateToView, test } from './helpers'
+import { expect, navigateToView, openPage, test } from './helpers'
 
 /**
  * E2E tests for the GraphView component (F-33).
@@ -83,6 +83,25 @@ test.describe('Graph view', () => {
 
     // After clicking, the app navigates to the page editor — page title should be visible
     await expect(page.locator('[aria-label="Page title"]')).toBeVisible()
+  })
+
+  // #5433 — one action from a page lands on its local graph. The seed links
+  // Getting Started <-> Quick Notes and nothing else, so its neighbourhood is
+  // exactly those two of the graph's pages.
+  test('Show in graph on a page opens the graph on that page', async ({ page }) => {
+    await openPage(page, 'Getting Started')
+    await page.getByRole('button', { name: 'Page actions', exact: true }).click()
+    await page.getByRole('menuitem', { name: /^Show in graph/ }).click()
+
+    await expect(page.locator('[data-testid="graph-svg"]')).toBeVisible()
+    await expect(page.getByTestId('local-graph-toggle')).toHaveAttribute('aria-pressed', 'true')
+    await expect(page.getByTestId('local-graph-seed-label')).toHaveText(
+      'Showing neighbors of "Getting Started"',
+    )
+    const nodeGroups = page.locator('[data-testid="graph-view"] svg g.node')
+    await expect(nodeGroups.filter({ hasText: 'Getting Started' })).toHaveCount(1)
+    await expect(nodeGroups.filter({ hasText: 'Quick Notes' })).toHaveCount(1)
+    await expect(nodeGroups).toHaveCount(2)
   })
 
   test('graph view shows the graph container with data-testid', async ({ page }) => {

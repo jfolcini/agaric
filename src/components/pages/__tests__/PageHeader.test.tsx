@@ -28,6 +28,7 @@ import type { AppError } from '@/lib/app-error'
 import { writeText } from '@/lib/clipboard'
 import { t } from '@/lib/i18n'
 import { type NameChange, subscribeToNameChanges } from '@/lib/name-change-bus'
+import { PREFERENCES, readPreference } from '@/lib/preferences'
 import { propertyKeysQueryKey } from '@/lib/property-keys-cache'
 import { queryClient } from '@/lib/query-client'
 import { dispatch } from '@/lib/tauri-mock/handlers'
@@ -106,6 +107,7 @@ vi.mock('lucide-react', () => ({
   Loader2: (props: Record<string, unknown>) => <svg data-testid="loader2-icon" {...props} />,
   MapPin: () => <svg data-testid="map-pin-icon" />,
   MoreVertical: () => <svg data-testid="more-vertical-icon" />,
+  Network: () => <svg data-testid="network-icon" />,
   Pencil: (props: Record<string, unknown>) => <svg data-testid="pencil-icon" {...props} />,
   Plus: () => <svg data-testid="plus-icon" />,
   Redo2: () => <svg data-testid="redo2-icon" />,
@@ -1738,6 +1740,41 @@ describe('PageHeader export keyboard shortcut', () => {
         pageId: 'PAGE_1',
       })
     })
+  })
+})
+
+// ── Show in graph (#5433) ────────────────────────────────────────
+
+describe('PageHeader show in graph', () => {
+  beforeEach(() => {
+    localStorage.removeItem('agaric:graph-local:SPACE_PERSONAL')
+    // The outer beforeEach seeds the tab before switching space, and the first
+    // switch swaps in that space's (empty) tabs: re-seed so the page is open.
+    useTabsStore.setState({
+      tabs: [{ id: '0', pageStack: [{ pageId: 'PAGE_1', title: 'My Page' }], label: 'My Page' }],
+      activeTabIndex: 0,
+    })
+  })
+
+  it('the page-actions item opens the graph in local mode for the active space', async () => {
+    const user = userEvent.setup()
+    renderPageHeader(<PageHeader pageId="PAGE_1" title="My Page" />)
+
+    await choosePageAction(user, /^show in graph/i)
+
+    expect(useNavigationStore.getState().currentView).toBe('graph')
+    expect(readPreference(PREFERENCES.graphLocal, 'SPACE_PERSONAL').active).toBe(true)
+  })
+
+  it('Ctrl+Shift+G does the same from anywhere on the page', () => {
+    renderPageHeader(<PageHeader pageId="PAGE_1" title="My Page" />)
+
+    document.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'G', ctrlKey: true, shiftKey: true, bubbles: true }),
+    )
+
+    expect(useNavigationStore.getState().currentView).toBe('graph')
+    expect(readPreference(PREFERENCES.graphLocal, 'SPACE_PERSONAL').active).toBe(true)
   })
 })
 

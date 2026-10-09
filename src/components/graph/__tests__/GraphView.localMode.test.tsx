@@ -14,13 +14,16 @@
  */
 
 import { invoke } from '@tauri-apps/api/core'
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
 import { clearGraphCache, GraphView } from '@/components/graph/GraphView'
 import type { GraphEdge, GraphNode } from '@/lib/graph-types'
+import { logger } from '@/lib/logger'
+import { type LocalGraphPreference, PREFERENCES, writePreference } from '@/lib/preferences'
 import { useNavigationStore } from '@/stores/navigation'
+import { showPageInGraph } from '@/stores/show-page-in-graph'
 import { useSpaceStore } from '@/stores/space'
 import { useTabsStore } from '@/stores/tabs'
 
@@ -68,9 +71,13 @@ function seedTab(pageId: string | null): void {
   })
 }
 
+let templateIds: string[] = []
+
 beforeEach(() => {
   vi.clearAllMocks()
   clearGraphCache()
+  localStorage.clear()
+  templateIds = []
   captured = { nodes: [], edges: [] }
   // b1 — GraphView's page/template fetches are required-active; seed an
   // active space so `fetchGraphData` dispatches instead of short-circuiting
@@ -89,7 +96,8 @@ beforeEach(() => {
     // envelope (edges + true total + truncated flag).
     if (cmd === 'list_page_links')
       return Promise.resolve({ edges: LINKS, total: LINKS.length, truncated: false })
-    if (cmd === 'list_template_page_ids_in_space') return Promise.resolve([])
+    if (cmd === 'list_template_page_ids_in_space') return Promise.resolve(templateIds)
+    if (cmd === 'list_all_tags_in_space') return Promise.resolve([{ tag_id: 'work', name: 'work' }])
     return Promise.resolve(null)
   })
 })
@@ -223,6 +231,110 @@ describe('GraphView local-graph mode (#1429)', () => {
     await waitFor(() => expect(captured.nodes.length).toBe(3))
     // Client-side filter only — no new backend query.
     expect(mockedInvoke.mock.calls.length).toBe(callsBefore)
+  })
+
+  // #5433 — the page's "Show in graph" action persists the mode and switches
+  // view; GraphView must mount straight into the page's neighborhood.
+  it('opens in local mode on the open page after Show in graph', async () => {
+    useNavigationStore.setState({ currentView: 'page-editor' })
+    showPageInGraph()
+    expect(useNavigationStore.getState().currentView).toBe('graph')
+
+    await renderGraph()
+
+    await waitFor(() =>
+      expect(captured.nodes.map((n) => n.id).toSorted()).toEqual(['a', 'b', 'hub']),
+    )
+    expect(screen.getByTestId('local-graph-toggle')).toHaveAttribute('aria-pressed', 'true')
+    expect(screen.getByTestId('local-graph-seed-label')).toHaveTextContent(
+      'Showing neighbors of "Hub"',
+    )
+  })
+
+  it('remembers mode and depth across remounts, per space (#5433)', async () => {
+    const first = render(<GraphView />)
+    await waitFor(() => expect(screen.getByTestId('graph-view')).toBeInTheDocument())
+    fireEvent.click(screen.getByTestId('local-graph-toggle'))
+    fireEvent.click(screen.getByRole('radio', { name: '1 hop' }))
+    await waitFor(() => expect(captured.nodes.map((n) => n.id).toSorted()).toEqual(['a', 'hub']))
+    first.unmount()
+
+    await renderGraph()
+    await waitFor(() => expect(captured.nodes.map((n) => n.id).toSorted()).toEqual(['a', 'hub']))
+    expect(screen.getByTestId('local-graph-toggle')).toHaveAttribute('aria-pressed', 'true')
+    cleanup()
+
+    // Another space keeps its own mode: never visited, so the global graph.
+    act(() => {
+      useSpaceStore.setState({ currentSpaceId: 'SPACE_OTHER' })
+    })
+    seedTab('hub')
+    await renderGraph()
+    await waitFor(() => expect(captured.nodes.length).toBe(5))
+    expect(screen.getByTestId('local-graph-toggle')).toHaveAttribute('aria-pressed', 'false')
+  })
+
+  it('falls back to the global graph with a warning when storage cannot be read (#5433)', async () => {
+    writePreference<LocalGraphPreference>(
+      PREFERENCES.graphLocal,
+      { active: true, hops: 1 },
+      'SPACE_TEST',
+    )
+    const realGetItem = window.localStorage.getItem.bind(window.localStorage)
+    const getItem = vi.spyOn(window.localStorage, 'getItem').mockImplementation((key: string) => {
+      if (key.startsWith('agaric:graph-local')) throw new Error('storage unavailable')
+      return realGetItem(key)
+    })
+    try {
+      await renderGraph()
+      await waitFor(() => expect(captured.nodes.length).toBe(5))
+      expect(screen.getByTestId('local-graph-toggle')).toHaveAttribute('aria-pressed', 'false')
+      expect(vi.mocked(logger.warn)).toHaveBeenCalledWith(
+        'preference:agaric:graph-local',
+        'Failed to read localStorage preference',
+        { key: 'agaric:graph-local:SPACE_TEST' },
+        expect.any(Error),
+      )
+    } finally {
+      getItem.mockRestore()
+    }
+  })
+
+  it('says the seed is hidden when the filters remove it, instead of showing the global graph (#5433)', async () => {
+    templateIds = ['hub']
+    localStorage.setItem(
+      'agaric:graph-filters:SPACE_TEST',
+      JSON.stringify([{ type: 'excludeTemplates', value: true }]),
+    )
+    writePreference<LocalGraphPreference>(
+      PREFERENCES.graphLocal,
+      { active: true, hops: 2 },
+      'SPACE_TEST',
+    )
+
+    await renderGraph()
+
+    expect(await screen.findByTestId('graph-no-matches')).toHaveTextContent(
+      '"Hub" is hidden by the active filters',
+    )
+    expect(captured.nodes).toEqual([])
+  })
+
+  it('says a tag seed is not a page instead of blaming the filters (#5433)', async () => {
+    seedTab('work')
+    writePreference<LocalGraphPreference>(
+      PREFERENCES.graphLocal,
+      { active: true, hops: 2 },
+      'SPACE_TEST',
+    )
+
+    await renderGraph()
+
+    await waitFor(() =>
+      expect(screen.getByTestId('graph-no-matches')).toHaveTextContent(
+        '"work" is a tag, and the graph shows only pages',
+      ),
+    )
   })
 
   it('has no a11y violations with the local-graph control present', async () => {

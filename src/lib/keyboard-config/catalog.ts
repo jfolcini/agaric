@@ -623,6 +623,13 @@ export const DEFAULT_SHORTCUTS: ShortcutBinding[] = [
     condition: 'keyboard.condition.inPageEditor',
   },
   {
+    id: 'showPageInGraph',
+    keys: 'Ctrl + Shift + G',
+    category: 'keyboard.category.pageEditor',
+    description: 'keyboard.showPageInGraph',
+    condition: 'keyboard.condition.inPageEditor',
+  },
+  {
     id: 'savePageSource',
     keys: 'Ctrl + S',
     category: 'keyboard.category.pageEditor',

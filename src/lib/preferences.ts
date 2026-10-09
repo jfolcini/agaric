@@ -113,6 +113,11 @@ import {
   useLocalStoragePreference,
 } from '@/hooks/useLocalStoragePreference'
 import type { FilterPrimitive, PageBuffer } from '@/lib/bindings'
+import {
+  DEFAULT_LOCAL_GRAPH_HOPS,
+  LOCAL_GRAPH_HOP_OPTIONS,
+  type LocalGraphHops,
+} from '@/lib/graph-neighborhood'
 import { isLanguagePreference, type LanguagePreference } from '@/lib/i18n/locales'
 import { logger } from '@/lib/logger'
 
@@ -1122,6 +1127,34 @@ const PATH_HISTORY_PREFERENCE: PreferenceDefinition<string[]> = {
   serialize: jsonSerialize<string[]>,
 }
 
+/** The graph's local mode and its hop depth (#5433). */
+export interface LocalGraphPreference {
+  active: boolean
+  hops: LocalGraphHops
+}
+
+/**
+ * `agaric:graph-local:<spaceId>` — the graph's local mode and depth, kept per
+ * space beside its filters (`agaric:graph-filters:<spaceId>`) so the graph
+ * reopens in the mode it was left in (#5433).
+ */
+const GRAPH_LOCAL_PREFERENCE: PreferenceDefinition<LocalGraphPreference> = {
+  key: 'agaric:graph-local',
+  scope: 'space',
+  version: 1,
+  defaultValue: { active: false, hops: DEFAULT_LOCAL_GRAPH_HOPS },
+  parse: (raw) => {
+    const parsed = (JSON.parse(raw) ?? {}) as Record<string, unknown>
+    const active = parsed['active']
+    const hops = LOCAL_GRAPH_HOP_OPTIONS.find((option) => option === parsed['hops'])
+    if (typeof active !== 'boolean' || hops === undefined) {
+      throw new Error('invalid local-graph preference')
+    }
+    return { active, hops }
+  },
+  serialize: jsonSerialize<LocalGraphPreference>,
+}
+
 /**
  * `recent_searches:<spaceId>` — per-space MRU of recent search terms
  * (`src/lib/recent-searches.ts`). Space-keyed.
@@ -1416,6 +1449,7 @@ export const PREFERENCES = {
   settingsActiveTab: SETTINGS_ACTIVE_TAB_PREFERENCE,
   blockCollapseLegacy: BLOCK_COLLAPSE_LEGACY_PREFERENCE,
   pathHistory: PATH_HISTORY_PREFERENCE,
+  graphLocal: GRAPH_LOCAL_PREFERENCE,
   recentSearches: RECENT_SEARCHES_PREFERENCE,
   recentCommandsPalette: RECENT_COMMANDS_PALETTE_PREFERENCE,
   recentCommandsSlash: RECENT_COMMANDS_SLASH_PREFERENCE,
