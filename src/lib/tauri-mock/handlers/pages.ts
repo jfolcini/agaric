@@ -27,14 +27,13 @@ import {
   buildPageMetaRow,
   compareMetaRows,
   comparePositionThenId,
+  createPageInSpace,
   deriveLinkEdges,
   encodeNextCursor,
-  findLivePageByTitle,
   metaRowMatchesFilter,
   notFoundRejection,
   ownerSpaceOf,
   sortDiscriminator,
-  spaceRootGroup,
   validationRejection,
 } from '@/lib/tauri-mock/handlers/shared'
 import { tagsHandlers } from '@/lib/tauri-mock/handlers/tags'
@@ -79,30 +78,6 @@ function listPagesWithMetadataLimit(raw: unknown): number {
     )
   }
   return limit
-}
-
-/**
- * The dense 1-based rank a block appended to `parentId`'s children takes.
- *
- * Two rules the backend applies and a plain `siblings.length` does not.
- * Positions are DENSE and 1-BASED (`insertAtSlotAndRenumber`), and a
- * SOFT-DELETED sibling keeps its slot (#4669, #419), so tombstones count.
- *
- * At the ROOT the group is also per SPACE ({@link spaceRootGroup}), not the
- * whole `parent_id = NULL` set. That is why a new space comes out at 1 and the
- * first page created inside it at 2.
- *
- * The rank survives only until the next ROOT renumber: `insertAtSlotAndRenumber(null, …)`
- * densifies the whole cross-space `parent_id = null` group and overwrites it.
- */
-function nextDenseRank(parentId: string | null, spaceId: string | null): number {
-  if (parentId === null) return spaceRootGroup(spaceId).length + 1
-  let siblings = 0
-  for (const b of blocks.values()) {
-    if ((b['parent_id'] as string | null) !== parentId) continue
-    siblings += 1
-  }
-  return siblings + 1
 }
 
 type OpRefs = Array<{ device_id: string; seq: number }>
@@ -1225,57 +1200,11 @@ export const pagesHandlers = {
   // active space.
   create_page_in_space: (args) => {
     const a = args as Record<string, unknown>
-    const parentId = (a['parentId'] as string | null) ?? null
-    const spaceId = (a['spaceId'] as string | null) ?? null
-    const content = (a['content'] as string) ?? null
-    // #4723 — a title is unique among live pages of one space: an existing
-    // title resolves to that page (no row, no op), as the backend does.
-    const existing = findLivePageByTitle(content, spaceId)
-    if (existing !== null) return existing
-    const id = fakeId()
-    const position = nextDenseRank(parentId, spaceId)
-    const row = {
-      id,
-      block_type: 'page',
-      content,
-      parent_id: parentId,
-      page_id: id,
-      position,
-      deleted_at: null,
-      todo_state: null,
-      priority: null,
-      due_date: null,
-      scheduled_date: null,
-      // #3081 — the `blocks.space_id` column, which the alias readers below
-      // scope on; the `space` property stays for the handlers that read it.
-      space_id: spaceId,
-    }
-    blocks.set(id, row)
-    if (spaceId) {
-      if (!properties.has(id)) properties.set(id, new Map())
-      properties.get(id)?.set('space', {
-        block_id: id,
-        key: 'space',
-        value_text: null,
-        value_num: null,
-        value_date: null,
-        value_ref: spaceId,
-        value_bool: null,
-      })
-    }
-    pushOp('create_block', {
-      block_id: id,
-      content: row.content,
-      parent_id: parentId,
-      block_type: 'page',
-      position,
-    })
-    // #5057 — the backend sets the page's space through `set_property` inside
-    // the SAME transaction, so its op log carries two ops, not one. The mock
-    // appended only the `create_block` until a conformance fixture compared
-    // the two digests.
-    if (spaceId) pushOp('set_property', { block_id: id, key: 'space', from_value: null })
-    return id
+    return createPageInSpace(
+      (a['parentId'] as string | null) ?? null,
+      (a['content'] as string) ?? null,
+      (a['spaceId'] as string | null) ?? null,
+    )
   },
 
   // Atomic space-creation IPC. Accepts `name` and optional

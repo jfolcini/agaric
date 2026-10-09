@@ -7,8 +7,9 @@
  *    is configured for the active space
  *  - Skips page creation when an entry already exists in pageMap
  *  - Skips page creation when an entry already exists in createdPages (local)
- *  - Copies the space's `journal-template` page, nesting included, into a
- *    new journal page
+ *  - Renders the day the backend created, journal template included
+ *    (#5395), and focuses its first block without inserting the template
+ *    a second time
  *  - Surfaces a toast on errors and bails out gracefully
  *  - Refuses to create a page without an active space
  *
@@ -42,13 +43,6 @@ import { seedBlocks } from '@/lib/tauri-mock/seed'
 import { useBlockStore } from '@/stores/blocks'
 import { useSpaceStore } from '@/stores/space'
 
-vi.mock('@/lib/template-utils', () => ({
-  loadJournalTemplate: vi.fn(async () => ({ template: null, duplicateWarning: null })),
-  insertTemplateBlocks: vi.fn(async () => []),
-}))
-
-import { insertTemplateBlocks, loadJournalTemplate } from '@/lib/template-utils'
-
 const mockedInvoke = vi.mocked(invoke)
 
 function stubInvoke(handlers: Readonly<TypedInvokeHandlers>): void {
@@ -60,15 +54,6 @@ function createdBlock(parentId: string, position: number): WithOps<BlockRow> {
   return withOps(makeBlockRow({ id: 'B1', content: '', parent_id: parentId, position }))
 }
 
-const mockedLoadJournalTemplate = vi.mocked(loadJournalTemplate)
-const mockedInsertTemplateBlocks = vi.mocked(insertTemplateBlocks)
-
-const journalTemplatePage: BlockRow = makeBlockRow({
-  id: 'TMPL',
-  block_type: 'page',
-  content: 'Tmpl',
-})
-
 beforeEach(() => {
   vi.clearAllMocks()
   _resetPrefetchPageSubtreeForTest()
@@ -77,8 +62,6 @@ beforeEach(() => {
     availableSpaces: [{ id: 'SPACE_TEST', name: 'Test', accent_color: null }],
     isReady: true,
   })
-  mockedLoadJournalTemplate.mockResolvedValue({ template: null, duplicateWarning: null })
-  mockedInsertTemplateBlocks.mockResolvedValue([])
   useBlockStore.setState({
     focusedBlockId: null,
     selectedBlockIds: [],
@@ -126,7 +109,7 @@ describe('useJournalBlockCreation', () => {
     // `BlockTree.autoCreateFirstBlock` is the single owner of that
     // seed-block create; calling it here too raced and produced two
     // blocks for the same page.
-    stubInvoke({ create_page_in_space: () => 'PNEW' })
+    stubInvoke({ create_page_in_space: () => 'PNEW', first_child_for_blocks: () => ({}) })
 
     const { result, pageCreatedCalls } = setup()
 
@@ -152,60 +135,8 @@ describe('useJournalBlockCreation', () => {
     expect(result.current.createdPages.get('2025-06-15')).toBe('PNEW')
   })
 
-  // #5438 — the template lookup does not depend on the new page id.
-  it('runs the template lookup while create_page_in_space is still out', async () => {
-    let resolveCreate: (id: string) => void = () => {}
-    stubInvoke({
-      create_page_in_space: () =>
-        new Promise<string>((resolve) => {
-          resolveCreate = resolve
-        }),
-    })
-
-    const { result } = setup()
-    let pending: Promise<void> = Promise.resolve()
-    act(() => {
-      pending = result.current.handleAddBlock('2025-06-15')
-    })
-
-    expect(mockedLoadJournalTemplate).toHaveBeenCalledWith('SPACE_TEST')
-
-    await act(async () => {
-      resolveCreate('PNEW')
-      await pending
-    })
-    expect(mockedLoadJournalTemplate).toHaveBeenCalledTimes(1)
-    expect(result.current.createdPages.get('2025-06-15')).toBe('PNEW')
-  })
-
-  // #5460 review — the page exists once `create_page_in_space` resolves, so
-  // the picker caches hear about it even when its template cannot be read.
-  it('announces the created page before a failed template lookup is surfaced', async () => {
-    mockedLoadJournalTemplate.mockRejectedValue(new Error('template lookup boom'))
-    stubInvoke({ create_page_in_space: () => 'PNEW' })
-
-    const changes: NameChange[] = []
-    const unsubscribe = subscribeToNameChanges((c) => changes.push(c))
-    const { result, pageCreatedCalls } = setup()
-    try {
-      await act(async () => {
-        await result.current.handleAddBlock('2025-06-15')
-      })
-    } finally {
-      unsubscribe()
-    }
-
-    expect(changes).toEqual([
-      { kind: 'added', entity: 'page', id: 'PNEW', name: '2025-06-15', spaceId: 'SPACE_TEST' },
-    ])
-    // The failure itself is still reported, and the page is not rendered as seeded.
-    expect(vi.mocked(toast.error)).toHaveBeenCalledTimes(1)
-    expect(pageCreatedCalls).toEqual([])
-    expect(result.current.createdPages.size).toBe(0)
-  })
-
-  it('parks an empty subtree for a template-less new page, so its first load skips the IPC (#5438)', async () => {
-    stubInvoke({ create_page_in_space: () => 'PNEW' })
+  it('parks an empty subtree for a day the backend left empty, so its first load skips the IPC (#5438)', async () => {
+    stubInvoke({ create_page_in_space: () => 'PNEW', first_child_for_blocks: () => ({}) })
 
     const { result } = setup()
     await act(async () => {
@@ -219,23 +150,34 @@ describe('useJournalBlockCreation', () => {
     })
   })
 
-  it('parks nothing when a template seeded the page (#5438)', async () => {
-    mockedLoadJournalTemplate.mockResolvedValue({
-      template: journalTemplatePage,
-      duplicateWarning: null,
+  it('parks nothing when the backend seeded the day from its template (#5438)', async () => {
+    stubInvoke({
+      create_page_in_space: () => 'PNEW',
+      first_child_for_blocks: () => ({ PNEW: makeBlockRow({ id: 'T1', parent_id: 'PNEW' }) }),
     })
-    mockedInsertTemplateBlocks.mockResolvedValue(['T1'])
-    stubInvoke({ create_page_in_space: () => 'PNEW' })
 
     const { result } = setup()
     await act(async () => {
       await result.current.handleAddBlock('2025-06-15')
     })
 
-    expect(mockedInsertTemplateBlocks).toHaveBeenCalledWith('TMPL', 'PNEW', 'SPACE_TEST', {
-      pageTitle: '2025-06-15',
-    })
     expect(consumePrefetchedPageSubtree('SPACE_TEST', 'PNEW')).toBeNull()
+    expect(useBlockStore.getState().focusedBlockId).toBe('T1')
+  })
+
+  it('parks nothing when the first-child probe fails, so a seeded day is never read as empty (#5438)', async () => {
+    stubInvoke({
+      create_page_in_space: () => 'PNEW',
+      first_child_for_blocks: () => Promise.reject(new Error('probe boom')),
+    })
+
+    const { result } = setup()
+    await act(async () => {
+      await result.current.handleAddBlock('2025-06-15')
+    })
+
+    expect(consumePrefetchedPageSubtree('SPACE_TEST', 'PNEW')).toBeNull()
+    expect(result.current.createdPages.get('2025-06-15')).toBe('PNEW')
   })
 
   // #4358 / #4338 — this hook creates a date page in exactly the way the
@@ -244,7 +186,7 @@ describe('useJournalBlockCreation', () => {
   // bus emission it did not reach the picker's cache at all: a journal day
   // the user is looking at was unfindable by the name it displays.
   it("publishes an 'added' event for the date page it creates", async () => {
-    stubInvoke({ create_page_in_space: () => 'PNEW' })
+    stubInvoke({ create_page_in_space: () => 'PNEW', first_child_for_blocks: () => ({}) })
 
     const changes: NameChange[] = []
     const unsubscribe = subscribeToNameChanges((c) => changes.push(c))
@@ -316,9 +258,7 @@ describe('useJournalBlockCreation', () => {
     // hook must not call `create_block`. Seed-block creation is delegated to
     // `BlockTree.autoCreateFirstBlock`, which observes the empty page
     // when DaySection mounts BlockTree after `setCreatedPages` fires.
-    mockedLoadJournalTemplate.mockResolvedValue({ template: null, duplicateWarning: null })
-
-    stubInvoke({ create_page_in_space: () => 'PNEW' })
+    stubInvoke({ create_page_in_space: () => 'PNEW', first_child_for_blocks: () => ({}) })
 
     const { result, pageCreatedCalls } = setup()
 
@@ -374,9 +314,30 @@ describe('useJournalBlockCreation', () => {
     })
   })
 
+  // #5395 — the probe only decides the caret; the day it cannot read still
+  // renders, and no error toast blames a page that was created.
+  it('renders the day and focuses nothing when the first-child probe rejects', async () => {
+    stubInvoke({
+      create_page_in_space: () => 'PNEW',
+      first_child_for_blocks: () => Promise.reject(new Error('backend down')),
+    })
+
+    const { result, pageCreatedCalls } = setup()
+
+    await act(async () => {
+      await result.current.handleAddBlock('2025-06-15')
+    })
+
+    expect(result.current.createdPages.get('2025-06-15')).toBe('PNEW')
+    expect(pageCreatedCalls).toEqual([{ dateStr: '2025-06-15', pageId: 'PNEW' }])
+    expect(useBlockStore.getState().focusedBlockId).toBeNull()
+    expect(vi.mocked(toast.error)).not.toHaveBeenCalled()
+  })
+
   it('does not re-create a page once it exists in createdPages (idempotent)', async () => {
     stubInvoke({
       create_page_in_space: () => 'PNEW',
+      first_child_for_blocks: () => ({}),
       create_block: () => createdBlock('PNEW', 0),
     })
 
@@ -415,6 +376,7 @@ describe('useJournalBlockCreation', () => {
         new Promise<string>((resolve) => {
           resolvers.push(resolve)
         }),
+      first_child_for_blocks: () => ({}),
     })
 
     const { result } = setup()
@@ -512,13 +474,10 @@ describe('useJournalBlockCreation', () => {
       selectionFocusId: 'OTHER_A',
     })
 
-    mockedLoadJournalTemplate.mockResolvedValue({
-      template: journalTemplatePage,
-      duplicateWarning: null,
+    stubInvoke({
+      create_page_in_space: () => 'PNEW',
+      first_child_for_blocks: () => ({ PNEW: makeBlockRow({ id: 'ID1', parent_id: 'PNEW' }) }),
     })
-    mockedInsertTemplateBlocks.mockResolvedValue(['ID1', 'ID2'])
-
-    stubInvoke({ create_page_in_space: () => 'PNEW' })
 
     const { result } = setup()
 
@@ -546,15 +505,9 @@ describe('useJournalBlockCreation — journal template page', () => {
       isReady: true,
     })
     mockedInvoke.mockImplementation(async (cmd: string, args?: InvokeArgs) => dispatch(cmd, args))
-    const actual =
-      await vi.importActual<typeof import('@/lib/template-utils')>('@/lib/template-utils')
-    mockedLoadJournalTemplate.mockImplementation(actual.loadJournalTemplate)
-    mockedInsertTemplateBlocks.mockImplementation(actual.insertTemplateBlocks)
   })
 
-  // #5373 — the text template this replaced flattened every line to the top
-  // level; the page template must keep its nesting.
-  it("copies the template page's nested blocks into a new journal page", async () => {
+  async function seedJournalTemplate(): Promise<string> {
     const templateId = unwrap(await commands.createPageInSpace(null, 'Daily template', SPACE))
     unwrap(
       await commands.setProperty(templateId, 'journal-template', {
@@ -565,6 +518,13 @@ describe('useJournalBlockCreation — journal template page', () => {
         value_bool: null,
       }),
     )
+    return templateId
+  }
+
+  // #5373 — the text template this replaced flattened every line to the top
+  // level; the page template must keep its nesting.
+  it("copies the template page's nested blocks into a new journal page", async () => {
+    const templateId = await seedJournalTemplate()
     const notes = await createBlock({
       blockType: 'content',
       content: 'Notes',
@@ -586,5 +546,31 @@ describe('useJournalBlockCreation — journal template page', () => {
     const copiedNested = blocks.find((b) => b.content === 'nested idea')
     expect(copiedNotes?.parent_id).toBe(journalPageId)
     expect(copiedNested?.parent_id).toBe(copiedNotes?.id)
+  })
+
+  // #5395 — the backend copies the template when it creates the day; the
+  // hook renders that day and must not insert the template a second time.
+  it('renders a backend-created day once, variables expanded, and focuses its first block', async () => {
+    const templateId = await seedJournalTemplate()
+    await createBlock({
+      blockType: 'content',
+      content: 'Notes for <% page title %>',
+      parentId: templateId,
+    })
+    await createBlock({ blockType: 'content', content: 'Later', parentId: templateId })
+
+    const { result } = setup()
+    await act(async () => {
+      await result.current.handleAddBlock(DATE)
+    })
+
+    const journalPageId = result.current.createdPages.get(DATE)
+    if (journalPageId == null) throw new Error('no journal page was created')
+    const { blocks } = unwrap(
+      await commands.loadPageSubtree(journalPageId, { kind: 'active', space_id: SPACE }),
+    )
+    expect(blocks.map((b) => b.content)).toEqual(['Notes for 2031-01-02', 'Later'])
+    const first = blocks[0]
+    expect(useBlockStore.getState().focusedBlockId).toBe(first?.id)
   })
 })

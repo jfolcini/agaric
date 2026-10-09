@@ -1,13 +1,13 @@
 /**
  * useJournalBlockCreation — orchestrates the daily-journal page-create +
- * template-load + block-insert flow used by JournalPage's "add block"
- * affordances and the auto-create-on-mount path.
+ * block-insert flow used by JournalPage's "add block" affordances and the
+ * auto-create-on-mount path. The journal template is the backend's: a new
+ * day is born with it (#5395), and this hook only focuses its first block.
  *
  * Previously inlined as `handleAddBlock` in `JournalPage.tsx`.
  * Extracted to keep the page component slim while preserving the
  * single-function ordering that handles atomic create-page-then-block,
- * optimistic state propagation, error rollback and journal-template
- * seeding.
+ * optimistic state propagation and error rollback.
  *
  * Inputs:
  *  - `pageMap` — the `dateStr→pageId` lookup owned by the caller (so the
@@ -29,13 +29,12 @@ import { useCallback, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { unwrap } from '@/lib/app-error'
-import { commands } from '@/lib/bindings'
+import { type BlockRow, commands } from '@/lib/bindings'
 import { createBlock } from '@/lib/ipc-helpers'
 import { logger } from '@/lib/logger'
 import { notifyPageAdded } from '@/lib/name-change-bus'
 import { notify } from '@/lib/notify'
 import { parkEmptyPageSubtree } from '@/lib/prefetch-page-subtree'
-import { insertTemplateBlocks, loadJournalTemplate } from '@/lib/template-utils'
 import { useBlockStore } from '@/stores/blocks'
 import { getPageStore } from '@/stores/page-blocks'
 import { useResolveStore } from '@/stores/resolve'
@@ -63,8 +62,8 @@ export function useJournalBlockCreation({
   const { t } = useTranslation()
   const [createdPages, setCreatedPages] = useState<Map<string, string>>(new Map())
   // #2543 — in-flight guard, mirroring useJournalAutoCreate's #755
-  // `autoCreatedRef` guard. `createdPages` is only updated AFTER the whole
-  // page-create + template-load sequence settles, so two invocations for
+  // `autoCreatedRef` guard. `createdPages` is only updated AFTER the
+  // page-create IPC settles, so two invocations for
   // the same dateStr fired before the first resolves (double-click on
   // "Add block") both see no pageId and both create a page (or, on the
   // existing-page branch, both create an empty block). Bail on the second
@@ -78,10 +77,6 @@ export function useJournalBlockCreation({
       try {
         let pageId = createdPages.get(dateStr) ?? pageMap.get(dateStr) ?? null
         const isNewPage = !pageId
-        let journalTemplateLookup: Awaited<ReturnType<typeof loadJournalTemplate>> = {
-          template: null,
-          duplicateWarning: null,
-        }
 
         if (!pageId) {
           // H-3b — route page creation through `createPageInSpace`
@@ -97,12 +92,6 @@ export function useJournalBlockCreation({
             // before Journal mounts; this branch is a defence-in-depth.
             throw new Error('No active space; cannot create journal page')
           }
-          // #5438 — the template lookup does not depend on the new page id,
-          // so it runs alongside the create. It is awaited only after the
-          // page is announced below (a page that exists is announced even
-          // when its template cannot be read), and `allSettled` keeps a
-          // rejection that lands first from going unhandled meanwhile.
-          const templateLookup = Promise.allSettled([loadJournalTemplate(currentSpaceId)])
           const newId = unwrap(await commands.createPageInSpace(null, dateStr, currentSpaceId))
           // Defensive: if the IPC returned a non-string (mock leak, schema
           // drift, …) treat it as a failure so we don't seed `createdPages`
@@ -119,14 +108,6 @@ export function useJournalBlockCreation({
           // notification, so it does not re-render `JournalPage` and cannot
           // race `autoCreateFirstBlock` the way the deferred group below can.
           notifyPageAdded(newId, dateStr, currentSpaceId)
-          const [settled] = await templateLookup
-          if (settled.status === 'rejected') throw settled.reason
-          journalTemplateLookup = settled.value
-          // #5438 — without a template the page is empty: BlockTree's first
-          // load takes this instead of a `load_page_subtree` round trip.
-          // After `notifyPageAdded`, which counts the new page as a graph
-          // change; an entry parked before it would read as stale.
-          if (settled.value.template == null) parkEmptyPageSubtree(currentSpaceId, newId)
           pageId = newId
           // Page-render notification (`setCreatedPages` /
           // `onPageCreated` / `useResolveStore.set`) is deferred to the
@@ -139,46 +120,48 @@ export function useJournalBlockCreation({
         }
 
         if (isNewPage) {
-          const currentSpaceId = useSpaceStore.getState().currentSpaceId
-          const { template: journalTemplate, duplicateWarning } = journalTemplateLookup
-          if (duplicateWarning) {
-            notify.warning(duplicateWarning)
+          // #5395 — the backend copies the space's journal template under a
+          // new day inside `create_page_in_space` (a date title names a day),
+          // so the day renders what the backend created and nothing is
+          // inserted here. DaySection mounts BlockTree only after
+          // `createdPages` is updated, and the effect it runs on mount,
+          // `autoCreateFirstBlock`, is the single owner of seed-block
+          // creation: with the template it sees blocks and short-circuits;
+          // with none it creates exactly one empty block and focuses it. A
+          // second `createBlock` here used to race it and produced two
+          // blocks for the same fresh page.
+          //
+          // What the backend put on the day is probed before the render
+          // notifications, so it is known by the time BlockTree mounts; a
+          // failing probe costs the caret, never the day.
+          let first: BlockRow | undefined
+          let probed = false
+          try {
+            first = unwrap(await commands.firstChildForBlocks([pageId]))[pageId]
+            probed = true
+          } catch (err) {
+            logger.warn('useJournalBlockCreation', 'first-child probe failed', { pageId }, err)
           }
-          if (journalTemplate) {
-            const ids = await insertTemplateBlocks(journalTemplate.id, pageId, currentSpaceId, {
-              pageTitle: dateStr,
-            })
-            await getPageStore(pageId)?.getState().load()
-            if (ids.length > 0) {
-              // #2543 — route through setFocused (not a raw setState
-              // partial) so the #2465 focus/selection mutual-exclusivity
-              // invariant holds: setFocused atomically clears
-              // selectedBlockIds/selectionAnchorId/selectionFocusId along
-              // with setting focus, exactly like every other
-              // selection-populating action pays that cost in reverse.
-              useBlockStore.getState().setFocused(ids[0] ?? null)
-            }
-          }
-          // No `else` branch. When no journal template is configured,
-          // BlockTree's `autoCreateFirstBlock` effect is the single owner of
-          // seed-block creation: on mount it observes `blocks.length === 0`
-          // and creates exactly one empty content block (and sets focus). A
-          // fallback `createBlock` here used to race that effect and produced
-          // two blocks for the same fresh page.
-
-          // Fire page-render notifications now that the
-          // template branch has settled (either seeded blocks via
-          // `insertTemplateBlocks` and reloaded the per-page store, or
-          // intentionally no-oped so BlockTree owns seeding). DaySection
-          // mounts BlockTree only after `createdPages` is updated, so
-          // BlockTree's `autoCreateFirstBlock` effect observes a
-          // consistent block list:
-          //   - template path: blocks.length > 0 → effect short-circuits;
-          //   - no-template path: blocks.length === 0 → effect creates
-          //     exactly one seed block.
+          // #5438 — a day the backend left empty (no journal template): BlockTree's
+          // first load takes this instead of a `load_page_subtree` round trip.
+          // Only after a successful probe: parking an empty subtree for a day
+          // the backend seeded would make `autoCreateFirstBlock` add a block.
+          const spaceId = useSpaceStore.getState().currentSpaceId
+          if (probed && first === undefined && spaceId != null)
+            parkEmptyPageSubtree(spaceId, pageId)
           setCreatedPages((prev) => new Map(prev).set(dateStr, pageId as string))
           onPageCreated(dateStr, pageId)
           useResolveStore.getState().set(pageId, dateStr, false)
+          // The caret lands on the template's first block, as it did when
+          // this hook inserted the template itself.
+          if (first) {
+            // #2543 — route through setFocused (not a raw setState
+            // partial) so the #2465 focus/selection mutual-exclusivity
+            // invariant holds: setFocused atomically clears
+            // selectedBlockIds/selectionAnchorId/selectionFocusId along
+            // with setting focus.
+            useBlockStore.getState().setFocused(first.id)
+          }
         } else {
           const block = await createBlock({
             blockType: 'content',

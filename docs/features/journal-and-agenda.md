@@ -17,6 +17,8 @@ stepper and date display while keeping the calendar picker available:
 
 Per-space: every space has its own date cursor and mode. Switching spaces restores wherever you left off.
 
+A new day is born with the space's journal template, whichever way it is created — the journal, Quick Capture, a date link or picker, or an agent (see [spaces.md](spaces.md)). An existing day is never filled in after the fact.
+
 ## Navigation
 
 | Action | Trigger |

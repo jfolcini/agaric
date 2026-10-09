@@ -2519,6 +2519,59 @@ pub async fn duplicate_block_inner(
     Ok(created)
 }
 
+/// Copy `source_page_id`'s blocks under `dest_page_id` as Duplicate copies a
+/// subtree (#5395): rendered as a source buffer and parsed back, so the copy
+/// carries content with its raw refs, list markers, task states, dates and
+/// custom properties, nesting included; a nested page is not copied. `expand`
+/// rewrites each block's content before it is written. Every op rides the
+/// caller's transaction, so the copy lands or rolls back with whatever the
+/// caller writes, and one undo reverts both. Returns the created rows,
+/// depth-first.
+///
+/// # Errors
+///
+/// - [`AppError::NotFound`] — `source_page_id` is not a live page
+/// - [`AppError::Validation`] — a copied value doesn't read back from the
+///   source grammar (a carriage return in the text), the copy would append
+///   more ops than one undo reverts, or a copied block would be nested past
+///   `MAX_BLOCK_DEPTH`
+pub(crate) async fn copy_page_blocks_in_tx(
+    tx: &mut CommandTx,
+    materializer: &Materializer,
+    device_id: &str,
+    source_page_id: &str,
+    dest_page_id: &str,
+    expand: impl Fn(&str) -> String,
+) -> Result<Vec<BlockRow>, AppError> {
+    let data = load_page_export_data(tx, source_page_id, PageRead::Duplicate).await?;
+    let mut source = String::new();
+    let ids = render_block_tree(&mut source, source_page_id, &data, RenderMode::Source);
+    if ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    let mut parsed = import::parse_source_outline(&source);
+    let anchors = parsed.blocks.iter().map(|b| b.block_anchor.as_deref());
+    if !anchors.eq(ids.iter().map(|id| Some(id.as_str()))) {
+        return Err(AppError::validation(format!(
+            "page '{source_page_id}' holds a value that cannot be copied"
+        )));
+    }
+    for block in &mut parsed.blocks {
+        block.content = expand(&block.content);
+    }
+    let lines = PropertyLines::load(tx, PropertyWrite::Copy).await?;
+    Box::pin(create_parsed_blocks(
+        tx,
+        materializer,
+        device_id,
+        Some(dest_page_id.to_owned()),
+        None,
+        &parsed.blocks,
+        &lines,
+    ))
+    .await
+}
+
 /// What a paste carries: clipboard text, or blocks already split.
 #[derive(Debug, Clone, Deserialize, Type)]
 #[serde(tag = "kind", rename_all = "snake_case")]
