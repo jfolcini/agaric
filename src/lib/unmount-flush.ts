@@ -66,6 +66,32 @@ import { type InlinePropertyLine, parseInlineProperties } from '@/lib/inline-pro
 import { scanNameTokens, type TagToken } from '@/lib/name-tokens'
 import type { TodoState } from '@/lib/task-states'
 
+// #5448 — the saves whose text write lands only after an IPC answers (the
+// checkbox and property branches), keyed by block id. Until that write lands
+// the page store still holds the block's pre-edit content — blank, for a new
+// block the line was typed into — so BlockTree's empty-block cleanup awaits
+// the entry (`settlePendingSaves`) before probing, instead of deleting the
+// block out from under the commit. Module-level for the reason
+// `flushSeqByBlock` is: the three save paths live in different components.
+const pendingSaves = new Map<string, Promise<boolean>>()
+
+function trackPendingSave(blockId: string, outcome: Promise<boolean>): Promise<boolean> {
+  pendingSaves.set(blockId, outcome)
+  // Guard on identity so a newer save that replaced this entry is kept.
+  const settled = () => {
+    if (pendingSaves.get(blockId) === outcome) pendingSaves.delete(blockId)
+  }
+  void outcome.then(settled, settled)
+  return outcome
+}
+
+/** Resolves once no save of `blockId` that defers its text write is in flight. */
+export async function settlePendingSaves(blockId: string): Promise<void> {
+  for (let pending = pendingSaves.get(blockId); pending; pending = pendingSaves.get(blockId)) {
+    await pending
+  }
+}
+
 export type UnmountFlushResult =
   | { kind: 'split'; outcome: Promise<boolean> | void }
   | { kind: 'checkbox'; outcome: Promise<boolean> }
@@ -166,30 +192,36 @@ export function runUnmountFlush(deps: UnmountFlushDeps): UnmountFlushResult {
   // 2. Checkbox — a leading GFM task marker the edit typed folds into `todo_state`.
   if (classified.kind === 'checkbox') {
     const mySeq = bumpFlushSeq(blockId)
-    const outcome = commitCheckboxState({
+    const outcome = trackPendingSave(
       blockId,
-      content: changed,
-      cleanContent: classified.cleanContent,
-      todoState: classified.todoState,
-      mySeq,
-      edit,
-      pageStore,
-      rootParentId,
-    })
+      commitCheckboxState({
+        blockId,
+        content: changed,
+        cleanContent: classified.cleanContent,
+        todoState: classified.todoState,
+        mySeq,
+        edit,
+        pageStore,
+        rootParentId,
+      }),
+    )
     return { kind: 'checkbox', outcome }
   }
 
   // 3. Inline `key:: value` properties the edit added.
   if (classified.kind === 'property') {
     const mySeq = bumpFlushSeq(blockId)
-    const outcome = commitInlineProperties({
+    const outcome = trackPendingSave(
       blockId,
-      content: changed,
-      inlineProps: classified.inlineProps,
-      mySeq,
-      edit,
-      rootParentId,
-    })
+      commitInlineProperties({
+        blockId,
+        content: changed,
+        inlineProps: classified.inlineProps,
+        mySeq,
+        edit,
+        rootParentId,
+      }),
+    )
     return { kind: 'property', outcome }
   }
 

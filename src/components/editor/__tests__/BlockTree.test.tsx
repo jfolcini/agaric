@@ -117,6 +117,9 @@ vi.mock('@/hooks/useLazyRovingEditor', () => ({
         editor: useMockEditor ? mockEditor : null,
         mount: mockMount,
         unmount: mockUnmount,
+        // What the real handle holds before a mount: the flush classifies
+        // `unmount()`'s content against it (#5160 D2).
+        originalMarkdown: '',
         getMarkdown: mockGetMarkdown,
         splitAtCaret: mockSplitAtCaret,
         listMarker: mockListMarker,
@@ -5417,6 +5420,113 @@ describe('BlockTree leaked-empty-block cleanup', () => {
   beforeEach(() => {
     mockedInvoke.mockReset()
     mockBareBackend()
+  })
+
+  // #5448 — Escape on a new block whose only text is a `key:: value` line
+  // takes the property branch of the flush, which writes the stripped (or
+  // kept) text only after `set_property` answers; the cleanup used to see a
+  // blank block with no property in that window and delete it.
+  describe('a new block holding only a `key:: value` line, left with Escape (#5448)', () => {
+    function arrange(answer: 'accept' | 'refuse') {
+      const answered = deferred<undefined>()
+      let stored: CommandReturns['get_properties'] = []
+      mockBareBackend({
+        get_property_def: () => ({
+          key: 'context',
+          value_type: 'text',
+          options: null,
+          created_at: '0',
+        }),
+        set_property: async (args) => {
+          await answered.promise
+          if (answer === 'refuse') throw new Error('refused')
+          stored = [
+            {
+              key: 'context',
+              value_text: 'home',
+              value_num: null,
+              value_date: null,
+              value_ref: null,
+              value_bool: null,
+            },
+          ]
+          return withOps(makeBlockRow({ id: argBlockId(args) }))
+        },
+        get_properties: () => stored,
+      })
+      pageStore.setState({
+        blocks: [
+          makeBlock({ id: 'A', content: 'before', position: 0 }),
+          makeBlock({ id: 'NEW', content: '', position: 1 }),
+        ],
+        loading: false,
+      })
+      useBlockStore.setState({ focusedBlockId: 'NEW' })
+      mockActiveBlockId = 'NEW'
+      mockGetMarkdownReturn = 'context:: home'
+      mockUnmountReturn = 'context:: home'
+      renderBlockTree()
+      return answered
+    }
+
+    async function pressEscape(): Promise<void> {
+      await waitFor(() => {
+        expect(capturedBlockKeyboardOpts?.['onEscapeSave']).toBeDefined()
+      })
+      await act(async () => {
+        ;(capturedBlockKeyboardOpts as { onEscapeSave: () => void }).onEscapeSave()
+      })
+    }
+
+    /** The cleanup's probe and the commit's write, in the order `invoke` saw them. */
+    function order(): { probe: number; write: number } {
+      const names = mockedInvoke.mock.calls.map(([cmd]) => cmd)
+      return { probe: names.indexOf('get_properties'), write: names.indexOf('set_property') }
+    }
+
+    it('keeps the block and stores the accepted value', async () => {
+      const answered = arrange('accept')
+      await pressEscape()
+      expect(useBlockStore.getState().focusedBlockId).toBeNull()
+      expect(useBlockStore.getState().selectedBlockIds).toEqual(['NEW'])
+
+      await act(async () => {
+        answered.resolve(undefined)
+      })
+      await waitFor(() => {
+        expect(mockedInvoke).toHaveBeenCalledWith('edit_block', { blockId: 'NEW', toText: '' })
+      })
+      await waitFor(() => {
+        expect(mockedInvoke).toHaveBeenCalledWith('get_properties', { blockId: 'NEW' })
+      })
+      await act(async () => {})
+
+      // The probe ran once the property was stored, so it found it.
+      const { probe, write } = order()
+      expect(write).toBeGreaterThanOrEqual(0)
+      expect(probe).toBeGreaterThan(write)
+      expect(mockedInvoke).not.toHaveBeenCalledWith('delete_block', { blockId: 'NEW' })
+      expect(pageStore.getState().blocksById.get('NEW')?.content).toBe('')
+    })
+
+    it('keeps the block with the refused line as its text', async () => {
+      const answered = arrange('refuse')
+      await pressEscape()
+
+      await act(async () => {
+        answered.resolve(undefined)
+      })
+      await waitFor(() => {
+        expect(mockedInvoke).toHaveBeenCalledWith('edit_block', {
+          blockId: 'NEW',
+          toText: 'context:: home',
+        })
+      })
+      await act(async () => {})
+
+      expect(mockedInvoke).not.toHaveBeenCalledWith('delete_block', { blockId: 'NEW' })
+      expect(pageStore.getState().blocksById.get('NEW')?.content).toBe('context:: home')
+    })
   })
 
   it('deletes a pre-existing empty block stranded mid-page when focus leaves it', async () => {

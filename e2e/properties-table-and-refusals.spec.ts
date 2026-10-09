@@ -86,19 +86,28 @@ test.describe('Inline property refused by the backend', () => {
     await openPage(page, 'Getting Started')
   })
 
-  /** Pick `project` through the `::` picker and give it a value outside its options. */
-  async function typeRefusedLine(page: Page): Promise<void> {
+  /** Pick `key` through the `::` picker and type `value` after it. */
+  async function typePropertyLine(page: Page, key: string, value: string): Promise<void> {
     await page.keyboard.type('::', { delay: 30 })
     await expect(page.getByTestId('suggestion-popup')).toBeVisible()
-    await page.keyboard.type('proj', { delay: 30 })
+    await page.keyboard.type(key.slice(0, 4), { delay: 30 })
     await expect(
-      page
-        .getByTestId('suggestion-list')
-        .getByTestId('suggestion-item')
-        .filter({ hasText: 'project' }),
+      page.getByTestId('suggestion-list').getByTestId('suggestion-item').filter({ hasText: key }),
     ).toBeVisible()
     await page.keyboard.press('Enter')
-    await page.keyboard.type('delta', { delay: 30 })
+    await page.keyboard.type(value, { delay: 30 })
+  }
+
+  /** Enter at the end of the first block: the new, focused block below it. */
+  async function newBlockAfterFirst(page: Page): Promise<string> {
+    const editor = await focusBlock(page)
+    await editor.press('End')
+    await editor.press('Enter')
+    const editing = page.locator('[data-testid="sortable-block"]:has([data-testid="block-editor"])')
+    await expect.poll(() => editing.getAttribute('data-block-id')).not.toBe(GS_1)
+    const blockId = await editing.getAttribute('data-block-id')
+    if (blockId === null) throw new Error('the new block has no id')
+    return blockId
   }
 
   /** The stored content, or `'deleted'` once `get_block` no longer finds a live row. */
@@ -116,7 +125,7 @@ test.describe('Inline property refused by the backend', () => {
     const editor = await focusBlock(page)
     await editor.press('End')
     await editor.press('Shift+Enter')
-    await typeRefusedLine(page)
+    await typePropertyLine(page, 'project', 'delta')
     await saveBlock(page, 'Escape')
 
     const kept = 'Welcome to Agaric! This is your personal knowledge base.\nproject:: delta'
@@ -137,25 +146,35 @@ test.describe('Inline property refused by the backend', () => {
     expectLoggedThenClear(page, 'Failed to set inline property from :: syntax')
   })
 
-  // Bug: Escape takes the async property branch, which writes the text only
-  // after `set_property` answers; the empty-block cleanup runs first, sees a
-  // blank block with no properties and deletes it.
-  // #5448: Escape deletes a new block whose only text is a key:: value line.
-  test.fail('a new block holding only the refused line keeps it after Escape', async ({ page }) => {
-    const editor = await focusBlock(page)
-    await editor.press('End')
-    await editor.press('Enter')
-    const editing = page.locator('[data-testid="sortable-block"]:has([data-testid="block-editor"])')
-    await expect.poll(() => editing.getAttribute('data-block-id')).not.toBe(GS_1)
-    const blockId = await editing.getAttribute('data-block-id')
-    if (blockId === null) throw new Error('the new block has no id')
-    await typeRefusedLine(page)
+  // #5448 — Escape takes the async property branch, which writes the text
+  // only after `set_property` answers; the empty-block cleanup waits for that
+  // write instead of deleting the blank, property-less block in the window.
+  test('a new block holding only the refused line keeps it after Escape', async ({ page }) => {
+    const blockId = await newBlockAfterFirst(page)
+    await typePropertyLine(page, 'project', 'delta')
     await page.keyboard.press('Escape')
 
     await expect(toasts(page, 'project:: delta')).toBeVisible()
     await expect.poll(() => storedContent(page, blockId)).toBe('project:: delta')
+    expect(await storedProperties(page, blockId)).toEqual({})
 
     expectLoggedThenClear(page, 'Failed to set inline property from :: syntax')
+  })
+
+  test('a new block holding only an accepted line keeps it as the property after Escape', async ({
+    page,
+  }) => {
+    const blockId = await newBlockAfterFirst(page)
+    await typePropertyLine(page, 'context', 'home')
+    await page.keyboard.press('Escape')
+
+    await expect.poll(() => storedProperties(page, blockId)).toEqual({ context: 'home' })
+    expect(await storedContent(page, blockId)).toBe('')
+
+    await reopenPage(page, 'Getting Started')
+    const row = page.locator(`[data-testid="sortable-block"][data-block-id="${blockId}"]`)
+    await expect(row.getByTestId('property-chip').filter({ hasText: 'home' })).toBeVisible()
+    expect(await storedContent(page, blockId)).toBe('')
   })
 })
 
