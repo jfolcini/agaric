@@ -339,7 +339,10 @@ fn tool_desc_set_property() -> ToolDescription {
     ToolDescription {
         name: TOOL_SET_PROPERTY.to_string(),
         description: "Set (upsert) a typed property on a block. Exactly one of value_text / \
-                      value_num / value_date / value_ref / value_bool must be provided."
+                      value_num / value_date / value_ref / value_bool must be provided. The task \
+                      keys behave as in the app: `todo_state` and `priority` take value_text, \
+                      `due_date` and `scheduled_date` take value_date, and `todo_state = DONE` \
+                      stamps `completed_at` and creates a repeating task's next occurrence."
             .to_string(),
         input_schema: json!({
             "type": "object",

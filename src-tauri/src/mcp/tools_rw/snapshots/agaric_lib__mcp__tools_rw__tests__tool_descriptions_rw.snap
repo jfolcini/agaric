@@ -44,7 +44,7 @@ expression: wire
       - space_id
     type: object
   name: update_block_content
-- description: Set (upsert) a typed property on a block. Exactly one of value_text / value_num / value_date / value_ref / value_bool must be provided.
+- description: "Set (upsert) a typed property on a block. Exactly one of value_text / value_num / value_date / value_ref / value_bool must be provided. The task keys behave as in the app: `todo_state` and `priority` take value_text, `due_date` and `scheduled_date` take value_date, and `todo_state = DONE` stamps `completed_at` and creates a repeating task's next occurrence."
   inputSchema:
     additionalProperties: false
     properties:

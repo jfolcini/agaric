@@ -4576,7 +4576,15 @@ async fn undo_set_todo_state_restores_blocks_column_604() {
     let ops = op_log::get_ops_since(&ReadPool(pool.clone()), DEV, 0)
         .await
         .unwrap();
-    let set_ops: Vec<_> = ops.iter().filter(|o| o.op_type == "set_property").collect();
+    // Since #5394 the sets also stamp `created_at` / `completed_at`.
+    let set_ops: Vec<_> = ops
+        .iter()
+        .filter(|o| {
+            o.op_type == "set_property"
+                && serde_json::from_str::<serde_json::Value>(&o.payload).unwrap()["key"]
+                    == "todo_state"
+        })
+        .collect();
     let second_set = set_ops.last().unwrap();
     let undo_results = revert_ops_inner(
         &pool,
