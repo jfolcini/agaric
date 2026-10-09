@@ -137,6 +137,13 @@ function lastBatchPropertiesIds(): string[] {
   return last?.[1]?.blockIds ?? []
 }
 
+/** Every id any `get_batch_properties` call asked for — each is asked once (#5443). */
+function requestedBatchPropertiesIds(): string[] {
+  return mockedInvoke.mock.calls
+    .filter(([cmd]) => cmd === 'get_batch_properties')
+    .flatMap(([, args]) => (args as { blockIds?: string[] } | undefined)?.blockIds ?? [])
+}
+
 beforeEach(() => {
   vi.clearAllMocks()
   excludedIdsCalls.length = 0
@@ -202,12 +209,13 @@ describe('BlockTree mount-cap exclusion identity across focus moves (#3277)', ()
     // Focus a row PAST the mount cap (simulating a link-navigation jump
     // before `useBlockMountLimit` has expanded to reach it).
     const excludedFocusId = `BLK_${INITIAL_MOUNT_LIMIT + 10}`
+    expect(requestedBatchPropertiesIds()).not.toContain(excludedFocusId)
     act(() => {
       useBlockStore.setState({ focusedBlockId: excludedFocusId })
     })
 
     await waitFor(() => {
-      expect(lastBatchPropertiesIds()).toContain(excludedFocusId)
+      expect(requestedBatchPropertiesIds()).toContain(excludedFocusId)
     })
   })
 })

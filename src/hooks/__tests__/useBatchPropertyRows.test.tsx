@@ -19,6 +19,9 @@
  *    the data context value updates once per settle (the loading blip
  *    doesn't re-render data-only consumers, since it lives in a separate
  *    context).
+ *  - #5443: an answer that lands after the window moved on is kept for its
+ *    ids; an id in flight is not asked for twice; an invalidation or a space
+ *    switch drops what was asked before it.
  */
 
 import { invoke } from '@tauri-apps/api/core'
@@ -353,53 +356,6 @@ describe('useBatchPropertyRows', () => {
       })
     }
 
-    it('clears loading when a superseded fetch is followed by an all-cached window (stranded-loading regression)', async () => {
-      // First settle: [A] resolves normally and is cached.
-      mockBatchInvoke()
-      const loadingStates: boolean[] = []
-      function LoadingProbe() {
-        loadingStates.push(useBatchPropertyRowsLoading())
-        return null
-      }
-      const { rerender } = render(
-        <BatchPropertiesProvider blockIds={['A']}>
-          <LoadingProbe />
-        </BatchPropertiesProvider>,
-      )
-      await waitFor(() => expect(loadingStates.at(-1)).toBe(false))
-
-      // Second settle: [A, B] — only B is fetched; hold its promise open so
-      // the fetch is still in flight when the window changes again.
-      let resolveB: ((v: Record<string, PropertyRow[]>) => void) | undefined
-      stubInvoke({
-        get_batch_properties: () =>
-          new Promise<Record<string, PropertyRow[]>>((res) => {
-            resolveB = res
-          }),
-      })
-      rerender(
-        <BatchPropertiesProvider blockIds={['A', 'B']}>
-          <LoadingProbe />
-        </BatchPropertiesProvider>,
-      )
-      await waitFor(() => expect(loadingStates.at(-1)).toBe(true))
-
-      // Third settle BEFORE B resolves: back to the fully-cached [A].
-      // idsToFetch is empty; loading must reset even though B's in-flight
-      // fetch will be stale-guarded and never call setLoading(false).
-      rerender(
-        <BatchPropertiesProvider blockIds={['A']}>
-          <LoadingProbe />
-        </BatchPropertiesProvider>,
-      )
-      await waitFor(() => expect(loadingStates.at(-1)).toBe(false))
-
-      // The superseded resolution must not flip loading back on.
-      resolveB?.({ B: [] })
-      await Promise.resolve()
-      expect(loadingStates.at(-1)).toBe(false)
-    })
-
     it('only fetches ids NOT already cached when the window overlaps', async () => {
       mockBatchInvoke()
 
@@ -647,6 +603,137 @@ describe('useBatchPropertyRows', () => {
       // that precedes the data landing does not re-render a consumer that
       // only reads `useBatchPropertyRows()`.
       expect(observed.length - rendersAfterRerenderCommit).toBe(1)
+    })
+  })
+
+  // -------------------------------------------------------------------------
+  // #5443 — answers that land after the window moved on
+  // -------------------------------------------------------------------------
+
+  describe('answers that land after the window moved on (#5443)', () => {
+    interface HeldCall {
+      ids: string[]
+      resolve: (record: Record<string, PropertyRow[]>) => void
+    }
+
+    /** Every call stays unanswered until the test answers it. */
+    function holdBatchInvoke(): HeldCall[] {
+      const held: HeldCall[] = []
+      stubInvoke({
+        get_batch_properties: (args) =>
+          new Promise<Record<string, PropertyRow[]>>((resolve) => {
+            held.push({ ids: (args as { blockIds: string[] }).blockIds, resolve })
+          }),
+      })
+      return held
+    }
+
+    function rowsFor(ids: string[], value: string): Record<string, PropertyRow[]> {
+      return Object.fromEntries(ids.map((id) => [id, [makeRow({ value_text: value })]]))
+    }
+
+    function renderProvider(blockIds: string[], invalidationKey = 'k|S1') {
+      const observed: Array<BatchPropertiesValue | null> = []
+      const loading: boolean[] = []
+      function LoadingProbe() {
+        loading.push(useBatchPropertyRowsLoading())
+        return null
+      }
+      const tree = (ids: string[], key: string) => (
+        <BatchPropertiesProvider blockIds={ids} invalidationKey={key}>
+          <Probe onResult={(v) => observed.push(v)} />
+          <LoadingProbe />
+        </BatchPropertiesProvider>
+      )
+      const { rerender } = render(tree(blockIds, invalidationKey))
+      return {
+        observed,
+        loading,
+        rerender: (ids: string[], key = invalidationKey) => rerender(tree(ids, key)),
+      }
+    }
+
+    it('keeps an answer for its ids after the window moved on, and does not ask for them again', async () => {
+      const held = holdBatchInvoke()
+      const { observed, loading, rerender } = renderProvider(['A'])
+      await waitFor(() => expect(held).toHaveLength(1))
+
+      rerender(['B'])
+      await waitFor(() => expect(held).toHaveLength(2))
+      await act(async () => {
+        held[0]?.resolve(rowsFor(['A'], 'a'))
+        held[1]?.resolve(rowsFor(['B'], 'b'))
+      })
+
+      expect(observed.at(-1)?.get('A')?.[0]?.value_text).toBe('a')
+      expect(observed.at(-1)?.get('B')?.[0]?.value_text).toBe('b')
+      expect(loading.at(-1)).toBe(false)
+
+      rerender(['A', 'B'])
+      await act(async () => {})
+      expect(held.map((c) => c.ids)).toEqual([['A'], ['B']])
+    })
+
+    it('does not ask again for an id whose answer is still in flight', async () => {
+      const held = holdBatchInvoke()
+      const { observed, loading, rerender } = renderProvider(['A'])
+      await waitFor(() => expect(held).toHaveLength(1))
+
+      rerender(['A', 'B'])
+      await waitFor(() => expect(held).toHaveLength(2))
+      expect(held.map((c) => c.ids)).toEqual([['A'], ['B']])
+      expect(loading.at(-1)).toBe(true)
+
+      await act(async () => {
+        held[0]?.resolve(rowsFor(['A'], 'a'))
+      })
+      expect(loading.at(-1)).toBe(true)
+      await act(async () => {
+        held[1]?.resolve(rowsFor(['B'], 'b'))
+      })
+      expect(observed.at(-1)?.get('A')?.[0]?.value_text).toBe('a')
+      expect(loading.at(-1)).toBe(false)
+    })
+
+    it('an invalidation asks again and drops the answer asked for before it', async () => {
+      const held = holdBatchInvoke()
+      const { observed, rerender } = renderProvider(['A'], 'k0|S1')
+      await waitFor(() => expect(held).toHaveLength(1))
+
+      // A `block:properties-changed` bump while A's first answer is in flight.
+      rerender(['A'], 'k1|S1')
+      await waitFor(() => expect(held).toHaveLength(2))
+      expect(held.map((c) => c.ids)).toEqual([['A'], ['A']])
+
+      await act(async () => {
+        held[1]?.resolve(rowsFor(['A'], 'after'))
+      })
+      await act(async () => {
+        held[0]?.resolve(rowsFor(['A'], 'before'))
+      })
+      expect(observed.at(-1)?.get('A')?.[0]?.value_text).toBe('after')
+    })
+
+    it('a space switch drops what was in flight, so those ids are asked for again', async () => {
+      const held = holdBatchInvoke()
+      const { observed, loading, rerender } = renderProvider(['A', 'B'], 'k|S1')
+      await waitFor(() => expect(held).toHaveLength(1))
+
+      // Every id in view is already asked for: no new call, still loading.
+      rerender(['A'])
+      expect(loading.at(-1)).toBe(true)
+      rerender(['A'], 'k|S2')
+      await waitFor(() => expect(held).toHaveLength(2))
+      await act(async () => {
+        held[0]?.resolve(rowsFor(['A', 'B'], 'S1'))
+        held[1]?.resolve(rowsFor(['A'], 'S2'))
+      })
+      expect(observed.at(-1)?.get('A')?.[0]?.value_text).toBe('S2')
+      expect(observed.at(-1)?.get('B')).toBeUndefined()
+
+      rerender(['A', 'B'], 'k|S2')
+      await waitFor(() => expect(held).toHaveLength(3))
+      expect(held.map((c) => c.ids)).toEqual([['A', 'B'], ['A'], ['B']])
     })
   })
 })
