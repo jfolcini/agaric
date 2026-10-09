@@ -13,6 +13,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mockGetProperties = vi.fn()
 const mockListTagsForBlock = vi.fn()
+const mockListAttachments = vi.fn()
 const mockGetBacklinks = vi.fn()
 
 vi.mock('@/lib/bindings', async (importOriginal) => {
@@ -25,12 +26,15 @@ vi.mock('@/lib/bindings', async (importOriginal) => {
         mockGetProperties(...args).then((data: unknown) => ({ status: 'ok', data })),
       listTagsForBlock: (...args: unknown[]) =>
         mockListTagsForBlock(...args).then((data: unknown) => ({ status: 'ok', data })),
+      listAttachments: (...args: unknown[]) =>
+        mockListAttachments(...args).then((data: unknown) => ({ status: 'ok', data })),
       getBacklinks: (...args: unknown[]) =>
         mockGetBacklinks(...args).then((data: unknown) => ({ status: 'ok', data })),
     },
   }
 })
 
+import type { AttachmentRow } from '@/lib/bindings'
 import { deleteBlockIfLeakedEmpty, isLeakedEmptyCandidate } from '@/lib/empty-block-cleanup'
 import type { FlatBlock } from '@/lib/tree-utils'
 
@@ -88,6 +92,7 @@ beforeEach(() => {
   // Default: the block carries nothing. Each guard test overrides one probe.
   mockGetProperties.mockReset().mockResolvedValue([])
   mockListTagsForBlock.mockReset().mockResolvedValue([])
+  mockListAttachments.mockReset().mockResolvedValue([])
   mockGetBacklinks.mockReset().mockResolvedValue({ items: [], next_cursor: null })
 })
 
@@ -201,6 +206,40 @@ describe('guard — has a tag', () => {
   it('survives: a tag can be attached without any content text', async () => {
     mockListTagsForBlock.mockResolvedValue(['01TAG00000000000000000000'])
     const { remove } = await runCleanup(leakedPage())
+    expect(remove).not.toHaveBeenCalled()
+  })
+})
+
+describe('guard — has an attachment', () => {
+  const attachment: AttachmentRow = {
+    id: 'ATT',
+    block_id: 'EMPTY',
+    mime_type: 'audio/webm',
+    filename: 'voice-note.webm',
+    size_bytes: 2048,
+    fs_path: 'attachments/ATT.webm',
+    created_at: 1_735_689_600_000,
+  }
+
+  it('survives while it holds an attachment, and is cleaned up once that is deleted', async () => {
+    // `/attach` or a file drop into a blank block leaves no text: the
+    // attachment IS the content (#5412).
+    let attachments = [attachment]
+    mockListAttachments.mockImplementation(async (blockId: string) =>
+      blockId === 'EMPTY' ? attachments : [],
+    )
+    const kept = await runCleanup(leakedPage())
+    expect(kept.remove).not.toHaveBeenCalled()
+
+    attachments = []
+    const cleaned = await runCleanup(leakedPage())
+    expect(cleaned.remove).toHaveBeenCalledWith('EMPTY', { undoable: false })
+  })
+
+  it('keeps the block when the attachment probe fails', async () => {
+    mockListAttachments.mockRejectedValue(new Error('pool busy'))
+    const { remove, deleted } = await runCleanup(leakedPage())
+    expect(deleted).toBe(false)
     expect(remove).not.toHaveBeenCalled()
   })
 })
@@ -340,6 +379,7 @@ describe('deleteBlockIfLeakedEmpty — liveness and races', () => {
     await runCleanup(leakedPage({ content: 'has text' }))
     expect(mockGetProperties).not.toHaveBeenCalled()
     expect(mockListTagsForBlock).not.toHaveBeenCalled()
+    expect(mockListAttachments).not.toHaveBeenCalled()
     expect(mockGetBacklinks).not.toHaveBeenCalled()
   })
 })

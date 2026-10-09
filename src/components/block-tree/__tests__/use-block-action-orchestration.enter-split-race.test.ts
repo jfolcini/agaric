@@ -105,7 +105,6 @@ beforeEach(() => {
 describe('#2914 — Enter on multi-block content does not race splitBlock vs createBelow', () => {
   it('awaits the split, skips the extra empty createBelow, and focuses the last split block', async () => {
     const setFocused = vi.fn()
-    const justCreatedBlockIds = { current: new Set<string>() }
     // Blank-line separated: a single newline is a line inside one paragraph
     // (#5160 D2) and would not split at all.
     const handle = makeHandle('A', 'alpha\n\nbravo\n\ncharlie')
@@ -139,7 +138,6 @@ describe('#2914 — Enter on multi-block content does not race splitBlock vs cre
         moveUp: store.getState().moveUp,
         moveDown: store.getState().moveDown,
         createBelow: store.getState().createBelow,
-        justCreatedBlockIds,
         discardDraft: vi.fn(),
         t,
       })
@@ -179,10 +177,6 @@ describe('#2914 — Enter on multi-block content does not race splitBlock vs cre
     expect(lastSplit?.content).toBe('charlie')
     expect(setFocused).toHaveBeenCalledTimes(1)
     expect(setFocused).toHaveBeenCalledWith(lastSplit?.id)
-
-    // The content-bearing last block is NOT registered as a Discard-deletable
-    // empty stub (parity with the caret-split path).
-    expect(justCreatedBlockIds.current.size).toBe(0)
   })
 })
 
@@ -242,7 +236,6 @@ describe('#5272 — a caret split creates the after-text before shortening the s
         moveUp: s.moveUp,
         moveDown: s.moveDown,
         createBelow: s.createBelow,
-        justCreatedBlockIds: { current: new Set<string>() },
         discardDraft: vi.fn(),
         t,
       }),

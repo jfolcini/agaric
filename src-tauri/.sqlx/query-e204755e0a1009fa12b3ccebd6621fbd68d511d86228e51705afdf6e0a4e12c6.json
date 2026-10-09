@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO attachments (id, block_id, mime_type, filename, size_bytes, fs_path, created_at) VALUES (?, ?, 'audio/webm', 'voice-note.webm', 2048, ?, 0)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 3
+    },
+    "nullable": []
+  },
+  "hash": "e204755e0a1009fa12b3ccebd6621fbd68d511d86228e51705afdf6e0a4e12c6"
+}
