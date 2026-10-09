@@ -35,7 +35,6 @@
  * rebuilding them all (visible as flicker on every filter click).
  */
 
-import { select } from 'd3-selection'
 import type React from 'react'
 import { useEffect, useRef, useState } from 'react'
 
@@ -44,13 +43,10 @@ import { useGraphRenderElements } from '@/hooks/useGraphRenderElements'
 import { useGraphWorkerSimulation } from '@/hooks/useGraphWorkerSimulation'
 import { useGraphZoom } from '@/hooks/useGraphZoom'
 import {
-  applyRovingTabindex,
-  attachNodeRovingKeys,
   createApplyPositions,
   DEFAULT_HEIGHT,
   DEFAULT_WIDTH,
-  type LinkSel,
-  type NodeSel,
+  patchGraphSelections,
   type RenderResult,
   type SimulationCtx,
   type SimulationHandle,
@@ -69,207 +65,6 @@ export interface UseGraphSimulationResult {
   zoomIn: () => void
   zoomOut: () => void
   zoomReset: () => void
-}
-
-/**
- * SVG attribute constants — kept in sync with `graph-sim-helpers.ts`'s
- * `drawEdges`/`drawNodes`. Duplicated here because the patch effect
- * cannot reuse those private helpers (they live behind
- * `renderGraphElements` which `selectAll('*').remove()`s the SVG —
- * exactly what the patch must avoid). If `graph-sim-helpers.ts`'s
- * drawing constants change, mirror them here.
- */
-const NODE_HIT_RADIUS = 22
-const NODE_RADIUS = 6
-const NODE_HOVER_RADIUS = 8
-const NODE_ACTIVE_RADIUS = 5
-const EDGE_WIDTH_MAX = 6
-const EDGE_WIDTH_BASE = 1
-const EDGE_OPACITY_BASE = 0.5
-const EDGE_OPACITY_STEP = 0.1
-const DIMMED_NODE_OPACITY = '0.3'
-const DIMMED_EDGE_OPACITY = '0.15'
-const LABEL_TRUNCATE_LEN = 20
-
-function truncateLabel(label: string): string {
-  return label.length > LABEL_TRUNCATE_LEN ? `${label.slice(0, LABEL_TRUNCATE_LEN)}…` : label
-}
-
-/**
- * Patch the persistent `g` selection with new nodes/edges via d3's
- * data-join, keyed by node id so existing DOM elements survive filter
- * changes. Returns refreshed `LinkSel`/`NodeSel` for the caller to feed
- * the new simulation context.
- *
- * The UPDATE branch keeps existing children (hit-area, circle, text,
- * title) intact; only the label `<text>`/`<title>` text content is
- * refreshed for renamed pages. The ENTER branch recreates the same
- * sub-tree as `drawNodes` in graph-sim-helpers. EXIT removes
- * filtered-out nodes.
- *
- * Listeners (click, keydown, focus, blur, mouseenter/leave,
- * pointerdown/up) are re-bound on the merged selection so handler
- * closures pick up the latest `navigateToPage`.
- *
- * Joins are scoped to the dedicated layer groups created by
- * `renderGraphElements` (`g.edges-layer` / `g.nodes-layer`) so ENTERing
- * `<line>` elements append inside the edge layer — which precedes the
- * node layer in document order — and never paint over nodes
- * (#758 item 4).
- *
- * @internal exported for direct DOM-level tests only.
- */
-export function patchGraphSelections(
-  g: RenderResult['g'],
-  simNodes: GraphNode[],
-  simEdges: GraphEdge[],
-  navigateToPage: (id: string, label: string) => void,
-): { link: LinkSel; node: NodeSel } {
-  const edgeLayer = g.select<SVGGElement>('g.edges-layer')
-  const nodeLayer = g.select<SVGGElement>('g.nodes-layer')
-
-  // ── Edges ────────────────────────────────────────────────────────
-  const link: LinkSel = edgeLayer
-    .selectAll<SVGLineElement, GraphEdge>('line')
-    .data(simEdges, (d: GraphEdge) => {
-      const s = typeof d.source === 'string' ? d.source : (d.source as GraphNode).id
-      const t = typeof d.target === 'string' ? d.target : (d.target as GraphNode).id
-      return `${s}->${t}`
-    })
-    .join('line')
-    .attr('stroke', 'var(--muted-foreground)')
-    .attr('stroke-opacity', (d: GraphEdge) => {
-      const count = Math.max(1, d.ref_count ?? 1)
-      return Math.min(EDGE_OPACITY_BASE + EDGE_OPACITY_STEP * count, 1)
-    })
-    .attr('stroke-width', (d: GraphEdge) => {
-      const count = Math.max(1, d.ref_count ?? 1)
-      return Math.min(EDGE_WIDTH_BASE + Math.log2(count), EDGE_WIDTH_MAX)
-    })
-
-  // ── Nodes ────────────────────────────────────────────────────────
-  const node: NodeSel = nodeLayer
-    .selectAll<SVGGElement, GraphNode>('g.node')
-    .data(simNodes, (d: GraphNode) => d.id)
-    .join(
-      (enter) => {
-        const grp = enter
-          .append('g')
-          .attr('class', 'node')
-          // #1725 — roving tabindex (set below via applyRovingTabindex) +
-          // explicit per-node aria-label so the accessible name doesn't rely
-          // solely on the child <title>.
-          .attr('role', 'button')
-          .attr('aria-label', (d) => d.label)
-          .style('cursor', 'pointer')
-
-        grp
-          .append('circle')
-          .attr('r', NODE_HIT_RADIUS)
-          .attr('fill', 'transparent')
-          .style('pointer-events', 'all')
-          .attr('class', 'hit-area')
-
-        grp.append('circle').attr('r', NODE_RADIUS).attr('fill', 'var(--primary)')
-
-        grp
-          .append('text')
-          .text((d) => truncateLabel(d.label))
-          .attr('dx', 10)
-          .attr('dy', 4)
-          .attr('fill', 'var(--foreground)')
-          .attr('font-size', '12px')
-          .style('pointer-events', 'none')
-          .style('user-select', 'none')
-
-        grp.append('title').text((d) => d.label)
-        return grp
-      },
-      (update) => {
-        // Refresh label text for renamed pages — datum reference
-        // changed, even though the DOM element is the same.
-        update.select<SVGTextElement>('text').text((d) => truncateLabel(d.label))
-        update.select<SVGTitleElement>('title').text((d) => d.label)
-        // #1725 — keep the explicit accessible name in sync on rename.
-        update.attr('aria-label', (d) => d.label)
-        return update
-      },
-      (exit) => exit.remove(),
-    )
-
-  // #1725 — (re)establish the roving tabindex on the merged selection and
-  // bind Arrow/Home/End navigation. Mirrors `renderGraphElements` so the
-  // patch path (filter toggles) keeps the single-Tab-stop behaviour. Run
-  // before the activation/focus listeners below so all handlers attach to
-  // the same merged selection.
-  applyRovingTabindex(node)
-  attachNodeRovingKeys(node)
-
-  // ── Listeners (re-bound each patch so closures pick up the latest
-  // `navigateToPage`). d3's `.on()` replaces existing handlers, so this
-  // does not accumulate listeners across patches.
-  node.on('click', (_event, d) => {
-    navigateToPage(d.id, d.label)
-  })
-  node.on('keydown', (event, d) => {
-    if (event.key === 'Enter' || event.key === ' ') {
-      event.preventDefault()
-      navigateToPage(d.id, d.label)
-    }
-  })
-
-  node.on('focus', function () {
-    select(this).select('circle:nth-child(2)').attr('stroke', 'var(--ring)').attr('stroke-width', 2)
-    select(this).select('text').attr('font-size', '14px').attr('font-weight', '600')
-  })
-  node.on('blur', function () {
-    select(this).select('circle:nth-child(2)').attr('stroke', null).attr('stroke-width', null)
-    select(this).select('text').attr('font-size', '12px').attr('font-weight', null)
-  })
-
-  node.on('mouseenter', function () {
-    const self = select(this)
-    self.select('circle:nth-child(2)').attr('r', NODE_HOVER_RADIUS)
-    self
-      .select('text')
-      .attr('font-size', '14px')
-      .attr('font-weight', '600')
-      .style('paint-order', 'stroke')
-      .attr('stroke', 'var(--background)')
-      .attr('stroke-width', '3px')
-    node
-      .filter(function () {
-        return this !== self.node()
-      })
-      .style('opacity', DIMMED_NODE_OPACITY)
-    link.style('opacity', (d: GraphEdge) => {
-      const src = typeof d.source === 'string' ? d.source : (d.source as GraphNode).id
-      const tgt = typeof d.target === 'string' ? d.target : (d.target as GraphNode).id
-      const nodeId = self.datum() as GraphNode
-      return src === nodeId.id || tgt === nodeId.id ? '1' : DIMMED_EDGE_OPACITY
-    })
-  })
-  node.on('mouseleave', function () {
-    const self = select(this)
-    self.select('circle:nth-child(2)').attr('r', NODE_RADIUS)
-    self
-      .select('text')
-      .attr('font-size', '12px')
-      .attr('font-weight', null)
-      .style('paint-order', null)
-      .attr('stroke', null)
-      .attr('stroke-width', null)
-    node.style('opacity', null)
-    link.style('opacity', null)
-  })
-  node.on('pointerdown', function () {
-    select(this).select('circle:nth-child(2)').attr('r', NODE_ACTIVE_RADIUS)
-  })
-  node.on('pointerup', function () {
-    select(this).select('circle:nth-child(2)').attr('r', NODE_HOVER_RADIUS)
-  })
-
-  return { link, node }
 }
 
 /**

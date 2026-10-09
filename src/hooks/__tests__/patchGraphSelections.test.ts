@@ -13,11 +13,14 @@
  * live in their own file).
  */
 
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 
 import type { GraphEdge, GraphNode } from '@/components/graph/GraphView.helpers'
-import { patchGraphSelections } from '@/hooks/useGraphSimulation'
-import { applyRovingTabindex, renderGraphElements } from '@/lib/graph-sim-helpers'
+import {
+  applyRovingTabindex,
+  patchGraphSelections,
+  renderGraphElements,
+} from '@/lib/graph-sim-helpers'
 
 function makeSvg(): SVGSVGElement {
   return document.createElementNS('http://www.w3.org/2000/svg', 'svg') as SVGSVGElement
@@ -129,5 +132,73 @@ describe('patchGraphSelections — #1725 accessible name on the filter-toggle pa
     patchGraphSelections(rendered.g, [makeNode('a', 'New name')], [], () => {})
 
     expect(svg.querySelector('g.node')?.getAttribute('aria-label')).toBe('New name')
+  })
+})
+
+describe('patchGraphSelections — one draw path for the first render and patches (#5427)', () => {
+  it('a node and edge ENTERed by a patch match the first render, in markup and in every listener', () => {
+    const nodes = [makeNode('a', 'Alpha'), makeNode('b', 'A page title longer than twenty')]
+    const edges: GraphEdge[] = [{ source: 'a', target: 'b', ref_count: 3 }]
+    const firstNavigate = vi.fn()
+    const patchNavigate = vi.fn()
+
+    const first = makeSvg()
+    renderGraphElements(first, nodes, edges, firstNavigate)
+
+    // 'b' and the edge are absent from the first render and ENTER via the patch.
+    const patched = makeSvg()
+    const rendered = renderGraphElements(patched, [makeNode('a', 'Alpha')], [], patchNavigate)
+    patchGraphSelections(rendered.g, nodes, edges, patchNavigate)
+
+    expect(patched.innerHTML).toBe(first.innerHTML)
+
+    const nodeB = (svg: SVGSVGElement): Element => svg.querySelectorAll('g.node')[1] as Element
+    const events: Array<() => Event> = [
+      () => new Event('focus'),
+      () => new Event('mouseenter'),
+      () => new Event('pointerdown'),
+      () => new Event('pointerup'),
+      () => new Event('mouseleave'),
+      () => new Event('blur'),
+      // Roving: End moves tabindex="0" from 'a' to 'b'.
+      () => new KeyboardEvent('keydown', { key: 'End', cancelable: true }),
+    ]
+    for (const makeEvent of events) {
+      const before = first.innerHTML
+      nodeB(first).dispatchEvent(makeEvent())
+      nodeB(patched).dispatchEvent(makeEvent())
+      // Every replayed event restyles the graph, so equality below is not two no-ops.
+      expect(first.innerHTML, makeEvent().type).not.toBe(before)
+      expect(patched.innerHTML, makeEvent().type).toBe(first.innerHTML)
+    }
+
+    for (const svg of [first, patched]) {
+      nodeB(svg).dispatchEvent(new Event('click'))
+      nodeB(svg).dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', cancelable: true }))
+    }
+    const opened = ['b', 'A page title longer than twenty']
+    expect(firstNavigate.mock.calls).toEqual([opened, opened])
+    expect(patchNavigate.mock.calls).toEqual([opened, opened])
+  })
+
+  it('every patch re-binds a kept node to the latest navigate, without stacking listeners', () => {
+    const svg = makeSvg()
+    const nodes = [makeNode('a', 'Alpha')]
+    const [renderNavigate, patchNavigate, latestNavigate] = [vi.fn(), vi.fn(), vi.fn()]
+
+    const rendered = renderGraphElements(svg, nodes, [], renderNavigate)
+    patchGraphSelections(rendered.g, nodes, [], patchNavigate)
+    patchGraphSelections(rendered.g, nodes, [], latestNavigate)
+
+    const nodeA = svg.querySelector('g.node') as Element
+    nodeA.dispatchEvent(new Event('click'))
+    nodeA.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', cancelable: true }))
+
+    expect(renderNavigate).not.toHaveBeenCalled()
+    expect(patchNavigate).not.toHaveBeenCalled()
+    expect(latestNavigate.mock.calls).toEqual([
+      ['a', 'Alpha'],
+      ['a', 'Alpha'],
+    ])
   })
 })
