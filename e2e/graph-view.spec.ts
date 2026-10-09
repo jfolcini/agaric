@@ -75,7 +75,7 @@ test.describe('Graph view', () => {
 
     // Click the hit-area circle (44px target, `pointer-events: all`) rather than
     // the `<g class="node">` group. The group's bounding-box center falls on the
-    // label text (drawn at `dx=10, dy=4` with `pointer-events: none`), so a
+    // label text (drawn right of the node, with `pointer-events: none`), so a
     // default-centered click there passes through to the `<svg>`. The hit-area
     // circle is centered at the node origin, so its bbox center is hittable.
     const hitArea = nodeGroup.locator('circle.hit-area')
@@ -300,5 +300,106 @@ test.describe('Graph view', () => {
     // Dragged right+up -> positive x translate, negative y translate.
     expect(Number(m?.[1])).toBeGreaterThan(0)
     expect(Number(m?.[2])).toBeLessThan(0)
+  })
+
+  // ---------------------------------------------------------------------
+  // Visual encoding (#5428, #5429): edges are faint hairlines at every zoom,
+  // a node's size follows its link count, and the page open in the active
+  // tab carries the one accent.
+  // ---------------------------------------------------------------------
+  test('edges stay a 1 px hairline on screen as the view zooms in (#5428)', async ({ page }) => {
+    await navigateToView(page, 'Graph')
+    const edges = page.locator('[data-testid="graph-view"] svg line')
+    await expect(edges.first()).toBeVisible()
+    const g = page.locator('[data-testid="graph-svg"] > g').first()
+
+    // A non-scaling stroke keeps its width on screen; any other stroke is
+    // scaled by the zoom transform on its way there.
+    const onScreen = () =>
+      edges.evaluateAll((lines) =>
+        lines.map((line) => {
+          const style = getComputedStyle(line)
+          const ctm = (line as SVGGraphicsElement).getScreenCTM()
+          const scale = ctm ? Math.hypot(ctm.a, ctm.b) : Number.NaN
+          const width = Number.parseFloat(style.strokeWidth)
+          const nonScaling = style.getPropertyValue('vector-effect') === 'non-scaling-stroke'
+          return { scale, width: nonScaling ? width : width * scale }
+        }),
+      )
+
+    const before = await onScreen()
+    for (const scale of [1.3, 1.69, 2.197]) {
+      await page.getByRole('button', { name: /^Zoom in/ }).click()
+      await expect
+        .poll(async () => parseScale(await g.getAttribute('transform')))
+        .toBeCloseTo(scale, 3)
+    }
+    const after = await onScreen()
+
+    expect(before.length).toBeGreaterThan(0)
+    expect(after).toHaveLength(before.length)
+    expect((after[0]?.scale ?? 0) / (before[0]?.scale ?? 1)).toBeCloseTo(2.197, 2)
+    expect([...before, ...after].map((edge) => edge.width)).toEqual(
+      [...before, ...after].map(() => 1),
+    )
+  })
+
+  test('a linked page draws a larger node than an unlinked one (#5429)', async ({ page }) => {
+    await navigateToView(page, 'Graph')
+    const nodeGroups = page.locator('[data-testid="graph-view"] svg g.node')
+    const radius = async (title: string) =>
+      Number(
+        await nodeGroups
+          .filter({ hasText: title })
+          .locator('circle:not(.hit-area)')
+          .getAttribute('r'),
+      )
+
+    // Getting Started and Quick Notes link to each other; Projects links nowhere.
+    await expect(nodeGroups.filter({ hasText: 'Getting Started' })).toHaveCount(1)
+    await expect(nodeGroups.filter({ hasText: 'Projects' })).toHaveCount(1)
+    expect(await radius('Getting Started')).toBeGreaterThan(await radius('Projects'))
+  })
+
+  test('the page open in the active tab carries the accent (#5429)', async ({ page }) => {
+    const current = page.locator('[data-testid="graph-view"] svg g.node[aria-current="page"]')
+
+    /** Each node's painted fill, and the two graph tokens as the browser resolves them. */
+    const fills = () =>
+      page.getByTestId('graph-svg').evaluate((svg) => {
+        const resolve = (token: string) => {
+          const probe = document.createElementNS('http://www.w3.org/2000/svg', 'circle')
+          probe.setAttribute('fill', `var(${token})`)
+          svg.append(probe)
+          const fill = getComputedStyle(probe).fill
+          probe.remove()
+          return fill
+        }
+        const nodes = Array.from(svg.querySelectorAll('g.node')).map((g) => {
+          const dot = g.querySelector('circle:not(.hit-area)')
+          return [g.getAttribute('aria-label'), dot ? getComputedStyle(dot).fill : 'missing']
+        })
+        return {
+          accent: resolve('--graph-accent'),
+          neutral: resolve('--graph-node'),
+          nodes: Object.fromEntries(nodes) as Record<string, string>,
+        }
+      })
+
+    for (const [open, other] of [
+      ['Quick Notes', 'Getting Started'],
+      ['Getting Started', 'Quick Notes'],
+    ] as const) {
+      await openPage(page, open)
+      await navigateToView(page, 'Graph')
+      await expect(current).toHaveCount(1)
+      await expect(current).toHaveAttribute('aria-label', open)
+
+      const { accent, neutral, nodes } = await fills()
+      expect(accent).not.toBe(neutral)
+      expect(nodes[open]).toBe(accent)
+      expect(nodes[other]).toBe(neutral)
+      expect(Object.values(nodes).filter((fill) => fill === accent)).toHaveLength(1)
+    }
   })
 })

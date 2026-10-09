@@ -93,6 +93,7 @@ Pages tagged as templates.
 A force-directed graph of pages and the links between them.
 
 - **Nodes** are pages; **edges** are `[[link]]` references.
+- **Node size** grows with the page's links on screen, in and out; the page open in the active tab is marked in the accent colour. Edges are faint hairlines that stay one pixel wide at every zoom.
 - **Filter bar** in the header: filter by tag, task status, priority, presence of a due date, presence of a scheduled date, presence of backlinks, exclude templates, and exclude journal pages (pages titled `YYYY-MM-DD`). Filters stack as removable pills; there is no date-range or content-match filter. A space with no saved graph filters starts with *Exclude journal pages*; removing it is remembered per space.
 - **Local graph**: *Focus on this page* narrows the graph to the open page's 1- or 2-hop neighbourhood. *Show in graph* in the page kebab (palette: *Show this page in graph*, `Ctrl+Shift+G`) opens it from the page; mode and depth are remembered per space, and a page the filters hide says so.
 - **Zoom / pan** with mouse / trackpad / touch.

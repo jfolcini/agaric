@@ -9,7 +9,9 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import {
   createZoomKeyHandler,
+  nodeRadius,
   packPositions,
+  patchGraphSelections,
   reducedMotionDuration,
   renderGraphElements,
   unpackPositions,
@@ -62,6 +64,168 @@ describe('renderGraphElements — dedicated paint layers (#758 item 4)', () => {
       (edgeLayer as Element).compareDocumentPosition(nodeLayer as Element) &
         Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBeTruthy()
+  })
+})
+
+describe('renderGraphElements — edges recede (#5428)', () => {
+  const nodes = ['a', 'b', 'c', 'd', 'e', 'f'].map((id) => makeNode(id, id.toUpperCase()))
+  const edges: GraphEdge[] = [
+    { source: 'a', target: 'b', ref_count: 1 },
+    { source: 'a', target: 'c', ref_count: 2 },
+    { source: 'a', target: 'd', ref_count: 5 },
+    { source: 'a', target: 'e', ref_count: 6 },
+    { source: 'a', target: 'f', ref_count: 40 },
+  ]
+
+  it('draws every edge as a 1 px hairline that zooming does not thicken', () => {
+    const svg = makeSvg()
+    renderGraphElements(svg, nodes, edges, () => {})
+
+    const lines = Array.from(svg.querySelectorAll('line'))
+    expect(lines).toHaveLength(5)
+    for (const line of lines) {
+      expect(line.getAttribute('stroke')).toBe('var(--graph-edge)')
+      expect(line.getAttribute('stroke-width')).toBe('1')
+      expect(line.getAttribute('vector-effect')).toBe('non-scaling-stroke')
+    }
+  })
+
+  it('starts faint and lets ref_count darken an edge a little, capped at 0.45', () => {
+    const svg = makeSvg()
+    renderGraphElements(svg, nodes, edges, () => {})
+
+    const opacities = Array.from(svg.querySelectorAll('line')).map((line) =>
+      Number(line.getAttribute('stroke-opacity')),
+    )
+    const expected = [0.2, 0.25, 0.4, 0.45, 0.45]
+    expect(opacities).toHaveLength(expected.length)
+    expected.forEach((opacity, i) => expect(opacities[i]).toBeCloseTo(opacity))
+  })
+})
+
+describe('nodeRadius — node size from link count (#5429)', () => {
+  it('an unlinked page is the smallest node, and the scale caps at 12', () => {
+    expect(nodeRadius(0)).toBe(3)
+    expect(nodeRadius(36)).toBe(12)
+    expect(nodeRadius(10_000)).toBe(12)
+  })
+
+  it('grows with every link up to the cap, so area tracks the link count', () => {
+    for (let degree = 0; degree < 36; degree++) {
+      expect(nodeRadius(degree + 1)).toBeGreaterThan(nodeRadius(degree))
+    }
+    // Four times the links, twice the growth: the radius grows with √degree.
+    expect(nodeRadius(16) - 3).toBeCloseTo(2 * (nodeRadius(4) - 3))
+  })
+})
+
+describe('renderGraphElements — node size and the current-page accent (#5429)', () => {
+  // Hub links out to A and B and in from C: three links, in and out.
+  const nodes = [
+    makeNode('hub', 'Hub'),
+    makeNode('a', 'A'),
+    makeNode('b', 'B'),
+    makeNode('c', 'C'),
+    makeNode('orphan', 'Orphan'),
+  ]
+  const edges: GraphEdge[] = [
+    { source: 'hub', target: 'a', ref_count: 1 },
+    { source: 'hub', target: 'b', ref_count: 1 },
+    { source: 'c', target: 'hub', ref_count: 1 },
+  ]
+
+  function dot(svg: SVGSVGElement, label: string): Element {
+    const circle = svg.querySelector(`g.node[aria-label="${label}"] > circle:nth-child(2)`)
+    if (!circle) throw new Error(`no node labelled ${label}`)
+    return circle
+  }
+
+  const radius = (svg: SVGSVGElement, label: string): number =>
+    Number(dot(svg, label).getAttribute('r'))
+
+  function paint(svg: SVGSVGElement): Array<[string | null, string | null, string | null]> {
+    return Array.from(svg.querySelectorAll('g.node')).map((g) => [
+      g.getAttribute('aria-label'),
+      g.querySelector('circle:nth-child(2)')?.getAttribute('fill') ?? null,
+      g.getAttribute('aria-current'),
+    ])
+  }
+
+  it('sizes each node by the links it has on screen, in and out', () => {
+    const svg = makeSvg()
+    renderGraphElements(svg, nodes, edges, () => {})
+
+    expect(radius(svg, 'Hub')).toBe(nodeRadius(3))
+    expect(radius(svg, 'A')).toBe(nodeRadius(1))
+    expect(radius(svg, 'C')).toBe(nodeRadius(1))
+    expect(radius(svg, 'Orphan')).toBe(nodeRadius(0))
+  })
+
+  it('a patch that drops links shrinks the nodes that lost them', () => {
+    const svg = makeSvg()
+    const rendered = renderGraphElements(svg, nodes, edges, () => {})
+
+    patchGraphSelections(rendered.g, nodes, [], () => {})
+
+    expect(radius(svg, 'Hub')).toBe(nodeRadius(0))
+  })
+
+  it('gives the current page the accent and every other node the neutral tone', () => {
+    const svg = makeSvg()
+    renderGraphElements(svg, nodes, edges, () => {}, 'a')
+
+    expect(paint(svg)).toEqual([
+      ['Hub', 'var(--graph-node)', null],
+      ['A', 'var(--graph-accent)', 'page'],
+      ['B', 'var(--graph-node)', null],
+      ['C', 'var(--graph-node)', null],
+      ['Orphan', 'var(--graph-node)', null],
+    ])
+  })
+
+  it('accents no node when the active tab has no page open', () => {
+    const svg = makeSvg()
+    renderGraphElements(svg, nodes, edges, () => {}, null)
+
+    expect(paint(svg).map(([, fill, current]) => [fill, current])).toEqual(
+      nodes.map(() => ['var(--graph-node)', null]),
+    )
+  })
+
+  it("starts a hub's label clear of its node, hovered or not", () => {
+    const leaves = Array.from({ length: 36 }, (_, i) => makeNode(`leaf${i}`, `Leaf ${i}`))
+    const spokes: GraphEdge[] = leaves.map((leaf) => ({
+      source: 'hub',
+      target: leaf.id,
+      ref_count: 1,
+    }))
+    const svg = makeSvg()
+    renderGraphElements(svg, [makeNode('hub', 'Hub'), ...leaves], spokes, () => {})
+
+    const label = svg.querySelector('g.node[aria-label="Hub"] > text')
+    expect(radius(svg, 'Hub')).toBe(12)
+    expect(Number(label?.getAttribute('dx'))).toBeGreaterThan(12 + 2)
+  })
+
+  it('hover and press resize a node from its own radius, so hover never shrinks a hub', () => {
+    const leaves = Array.from({ length: 16 }, (_, i) => makeNode(`leaf${i}`, `Leaf ${i}`))
+    const spokes: GraphEdge[] = leaves.map((leaf) => ({
+      source: 'hub',
+      target: leaf.id,
+      ref_count: 1,
+    }))
+    const svg = makeSvg()
+    renderGraphElements(svg, [makeNode('hub', 'Hub'), ...leaves], spokes, () => {})
+    const hub = svg.querySelector('g.node[aria-label="Hub"]') as Element
+    const at = nodeRadius(16)
+    expect(at).toBeGreaterThan(8)
+
+    const radii = ['mouseenter', 'pointerdown', 'pointerup', 'mouseleave'].map((type) => {
+      hub.dispatchEvent(new Event(type))
+      return radius(svg, 'Hub')
+    })
+
+    expect(radii).toEqual([at + 2, at - 1, at + 2, at])
   })
 })
 
