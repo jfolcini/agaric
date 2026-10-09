@@ -23,10 +23,10 @@ const REBUILD_CHUNK: usize = MAX_SQL_PARAMS / 3; // 333
 /// buffer and flushes the buffer to the DB once it crosses
 /// `CHUNK_SIZE` entries, then clears the buffer and continues with the
 /// next block. Peak buffer memory is `CHUNK_SIZE + max-projections-per-block`
-/// ⇒ ~500KB instead of ~18MB. Since #2601 the per-block ceiling is
-/// `HORIZON_OCCURRENCES × 2 sources = 182` entries (was `365 × 2 = 730`
-/// under the old calendar window), so the `+ 1024` headroom on the buffer
-/// capacity still comfortably absorbs one block's worth past a flush.
+/// ⇒ ~500KB instead of ~18MB. The per-block ceiling is
+/// `(BACKWARD_WINDOW_DAYS + HORIZON_OCCURRENCES) × 2 sources = 362` entries
+/// (a daily block across both windows), so the `+ 1024` headroom on the
+/// buffer capacity still absorbs one block's worth past a flush.
 ///
 /// Trade-off: chunk-flushing means a partial rebuild that fails after
 /// the first flush would leave the cache half-written if the rebuild
@@ -68,6 +68,17 @@ pub const HORIZON_OCCURRENCES: usize = 13 * 7;
 #[allow(clippy::cast_possible_wrap)]
 pub const HORIZON_DAYS: i64 = HORIZON_OCCURRENCES as i64 - 1;
 
+/// #5421 — the days BEFORE the rebuild's reference date that are
+/// materialized too, so the Due panel of a recent past journal day is an
+/// index scan instead of an on-the-fly expansion of every repeating block.
+///
+/// Every occurrence in `[today - BACKWARD_WINDOW_DAYS, today - 1]` is
+/// written, uncapped: a calendar span is complete for every cadence by
+/// construction. `list_projected_agenda_inner` reads the cache for a range
+/// starting at or after `rebuild_today - BACKWARD_WINDOW_DAYS`; anything
+/// older is projected on the fly.
+pub const BACKWARD_WINDOW_DAYS: i64 = 90;
+
 // ---------------------------------------------------------------------------
 // rebuild_projected_agenda_cache (P-16)
 // ---------------------------------------------------------------------------
@@ -96,8 +107,10 @@ struct CacheRepeatingRow {
 ///
 /// 1. Fetches all repeating blocks (non-DONE, non-deleted, has repeat property,
 ///    has at least one date column).
-/// 2. For each block, projects the next `HORIZON_OCCURRENCES` (91) future
-///    occurrences per date source from today (#2601 bounded horizon).
+/// 2. For each block, projects every occurrence in the
+///    `BACKWARD_WINDOW_DAYS` before today (#5421), then the next
+///    `HORIZON_OCCURRENCES` (91) occurrences per date source from today
+///    (#2601 bounded horizon).
 /// 3. Respects end conditions (repeat-until, repeat-count).
 /// 4. Writes projected entries via DELETE + INSERT in a single transaction,
 ///    and advertises the guaranteed-complete horizon in the same tx.
@@ -302,8 +315,8 @@ async fn flush_projection_chunk(
 /// span newer than the rows backing it.
 ///
 /// `rebuild_today` (migration 0105) is the reference date this rebuild
-/// projected from — the *lower* end of the span, since
-/// [`project_block_into`] passes `range_start = today`. It is stored rather
+/// projected from; the span runs from `rebuild_today - BACKWARD_WINDOW_DAYS`
+/// (#5421) to `horizon_date`. It is stored rather
 /// than left to the reader to derive as `horizon_date - HORIZON_DAYS`: that
 /// inverse silently decodes stale rows to the wrong date the moment
 /// `HORIZON_OCCURRENCES` is retuned, and nothing invalidates the row on
@@ -348,14 +361,16 @@ async fn write_horizon(
 /// that wires the shared helper's `emit` closure into the chunk-flush
 /// buffer.
 ///
-/// The cache passes `range_start = today`, a far-future `range_end`
-/// sentinel, and `max_emitted = Some(HORIZON_OCCURRENCES)` (#2601), so the
-/// emit set is the next N future occurrences per source rather than every
-/// occurrence in a fixed calendar window. Both rebuild paths must produce
+/// Two passes over the same series: the backward window
+/// `[today - BACKWARD_WINDOW_DAYS, today - 1]`, uncapped (#5421), then
+/// `range_start = today` with a far-future `range_end` sentinel and
+/// `max_emitted = Some(HORIZON_OCCURRENCES)` (#2601), so the forward emit set
+/// is the next N occurrences per source rather than every occurrence in a
+/// fixed calendar window. Both rebuild paths must produce
 /// Identical entries for identical inputs (invariant #7 + the
 /// Parity test in `agenda_cmd_tests`). The on-the-fly path passes
 /// `max_emitted = None` and its own query range, so the two stay in parity
-/// for any query whose end lands within the guaranteed horizon.
+/// for any query inside the guaranteed span.
 fn project_block_into(
     block: &CacheRepeatingRow,
     today: chrono::NaiveDate,
@@ -382,7 +397,17 @@ fn project_block_into(
         _ => None,
     };
 
-    let block_id = &block.id;
+    let block_id = block.id.as_str();
+    let mut push = |projected: chrono::NaiveDate, source_name: &'static str| {
+        out.push((
+            block_id.to_string(),
+            projected.format("%Y-%m-%d").to_string(),
+            source_name.to_string(),
+        ));
+    };
+    // The backward window, uncapped. The occurrence-count cap below counts
+    // only what a pass emits, so it needs a pass of its own starting at
+    // `today`.
     crate::recurrence_math::project_block_dates(
         block.due_date.as_deref(),
         block.scheduled_date.as_deref(),
@@ -390,7 +415,18 @@ fn project_block_into(
         until_date,
         remaining,
         today,
-        // range_start = today: only future occurrences are materialized.
+        today - chrono::Duration::days(BACKWARD_WINDOW_DAYS),
+        today - chrono::Duration::days(1),
+        None,
+        &mut push,
+    );
+    crate::recurrence_math::project_block_dates(
+        block.due_date.as_deref(),
+        block.scheduled_date.as_deref(),
+        rule,
+        until_date,
+        remaining,
+        today,
         today,
         // range_end sentinel — the occurrence-count cap below is the sole
         // horizon bound, so a sparse cadence (e.g. yearly) still gets its
@@ -398,15 +434,9 @@ fn project_block_into(
         // calendar window. `shift_date_once` returning `None` near the date
         // ceiling terminates the loop safely before this bound is reached.
         chrono::NaiveDate::MAX,
-        // Materialize exactly the next N future occurrences per source.
+        // Materialize exactly the next N occurrences per source.
         Some(HORIZON_OCCURRENCES),
-        |projected, source_name| {
-            out.push((
-                block_id.as_str().to_string(),
-                projected.format("%Y-%m-%d").to_string(),
-                source_name.to_string(),
-            ));
-        },
+        &mut push,
     );
 }
 
@@ -877,6 +907,43 @@ mod tests {
             rows.last().unwrap().1,
             last_date,
             "last canonical date must be today+HORIZON_OCCURRENCES"
+        );
+    }
+
+    /// #5421 — the rebuild also writes every occurrence in the
+    /// `BACKWARD_WINDOW_DAYS` before its reference date, and nothing earlier,
+    /// without eating into the forward `HORIZON_OCCURRENCES`.
+    #[tokio::test]
+    async fn rebuild_materializes_the_backward_window_5421() {
+        let (pool, _dir) = test_pool().await;
+        let today = chrono::NaiveDate::from_ymd_opt(2050, 4, 6).unwrap();
+        let ymd = |d: chrono::NaiveDate| d.format("%Y-%m-%d").to_string();
+
+        // Daily, based well before the window: an occurrence on every day of it.
+        let base = today - chrono::Duration::days(120);
+        insert_repeating_block(&pool, "BACKWIN1", &ymd(base), "daily", None).await;
+        rebuild_projected_agenda_cache_with_today(&pool, today)
+            .await
+            .unwrap();
+
+        let (past, min_date): (i64, String) = sqlx::query_as(
+            "SELECT COUNT(*), MIN(projected_date) FROM projected_agenda_cache \
+             WHERE projected_date < ?",
+        )
+        .bind(ymd(today))
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(past, BACKWARD_WINDOW_DAYS, "one row per day of the window");
+        assert_eq!(
+            min_date,
+            ymd(today - chrono::Duration::days(BACKWARD_WINDOW_DAYS)),
+            "the window starts exactly BACKWARD_WINDOW_DAYS before today"
+        );
+        assert_eq!(
+            count_cache_rows(&pool).await,
+            BACKWARD_WINDOW_DAYS + i64::try_from(HORIZON_OCCURRENCES).unwrap(),
+            "the forward horizon keeps its full HORIZON_OCCURRENCES rows"
         );
     }
 

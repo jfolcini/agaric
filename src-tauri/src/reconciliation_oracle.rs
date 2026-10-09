@@ -1913,8 +1913,10 @@ async fn dump_projected_agenda_cache(
 ///   * `remaining` is `count - seq` when both are present and `count > seq`,
 ///     `count` when `seq` is absent, and `0` when `count <= seq` — the arm that
 ///     silently stops a finished series;
-///   * the window is `range_start = today` with `NaiveDate::MAX` as the end
-///     sentinel, capped at `HORIZON_OCCURRENCES` occurrences PER SOURCE.
+///   * two windows: every occurrence in
+///     `[today - BACKWARD_WINDOW_DAYS, today - 1]`, uncapped (#5421), then
+///     `range_start = today` with `NaiveDate::MAX` as the end sentinel, capped
+///     at `HORIZON_OCCURRENCES` occurrences PER SOURCE.
 ///
 /// So a divergence here means the wrong blocks were projected, or the right
 /// ones with the wrong bounds — not that a `RRULE` was expanded incorrectly.
@@ -2004,6 +2006,25 @@ fn fold_projected_agenda_from_base(
 
         let remaining = remaining_occurrences(repeat_count, repeat_seq);
 
+        let mut insert = |projected: chrono::NaiveDate, source: &'static str| {
+            out.insert((
+                block.id.clone(),
+                projected.format("%Y-%m-%d").to_string(),
+                source.to_owned(),
+            ));
+        };
+        agaric_store::recurrence_math::project_block_dates(
+            block.due_date.as_deref(),
+            block.scheduled_date.as_deref(),
+            rule,
+            repeat_until,
+            remaining,
+            today,
+            today - chrono::Duration::days(agaric_store::cache::BACKWARD_WINDOW_DAYS),
+            today - chrono::Duration::days(1),
+            None,
+            &mut insert,
+        );
         agaric_store::recurrence_math::project_block_dates(
             block.due_date.as_deref(),
             block.scheduled_date.as_deref(),
@@ -2014,13 +2035,7 @@ fn fold_projected_agenda_from_base(
             today,
             chrono::NaiveDate::MAX,
             Some(agaric_store::cache::HORIZON_OCCURRENCES),
-            |projected, source| {
-                out.insert((
-                    block.id.clone(),
-                    projected.format("%Y-%m-%d").to_string(),
-                    source.to_owned(),
-                ));
-            },
+            &mut insert,
         );
     }
     out
