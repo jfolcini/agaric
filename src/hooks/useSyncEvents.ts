@@ -337,8 +337,7 @@ export function useSyncEvents(): void {
   )
 
   // #2505 — `blocks:changed` is the out-of-band local-write signal. An MCP
-  // read-write tool (append_block / update_block_content / set_property /
-  // add_tag / create_page / delete_block) commits and emits this event; unlike
+  // read-write tool commits and emits this event; unlike
   // a page store's own optimistic write, no mounted store learns about it
   // otherwise (the write is local, so `sync:complete` never fires). Route it
   // through the SAME targeted-reload path the `sync:complete` handler uses so

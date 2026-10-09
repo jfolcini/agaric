@@ -6949,6 +6949,207 @@ async fn paste_blocks_refusals() {
 }
 
 // ----------------------------------------------------------------------
+// append_markdown — an outline appended under a parent as paste lands it
+// (#5376)
+// ----------------------------------------------------------------------
+
+/// Each row's content and its parent's content (`None` for `top`).
+fn outline_shape(rows: &[BlockRow], top: &BlockId) -> Vec<(String, Option<String>)> {
+    let content_of = |id: &BlockId| {
+        rows.iter()
+            .find(|r| &r.id == id)
+            .and_then(|r| r.content.clone())
+    };
+    rows.iter()
+        .map(|r| {
+            let parent = r
+                .parent_id
+                .as_ref()
+                .expect("an appended block has a parent");
+            let parent = if parent == top {
+                None
+            } else {
+                content_of(parent)
+            };
+            (r.content.clone().unwrap_or_default(), parent)
+        })
+        .collect()
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn append_markdown_lands_an_outline_under_an_empty_page() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let page = dup_page(&pool, &mat, "Dest").await;
+    settle(&mat).await;
+
+    let rows = append_markdown_inner(
+        &pool,
+        DEV,
+        &mat,
+        page.clone(),
+        "# Plan\n\nIntro\n\n## Steps\n\n- one\n  - one a\n    effort:: 1h\n- two\n\n# Next\n",
+        None,
+    )
+    .await
+    .unwrap()
+    .blocks;
+    settle(&mat).await;
+
+    let some = |s: &str| Some(s.to_owned());
+    assert_eq!(
+        outline_shape(&rows, &page),
+        vec![
+            ("# Plan".to_owned(), None),
+            ("Intro".to_owned(), some("# Plan")),
+            ("## Steps".to_owned(), some("# Plan")),
+            ("one".to_owned(), some("## Steps")),
+            ("one a".to_owned(), some("one")),
+            ("two".to_owned(), some("## Steps")),
+            ("# Next".to_owned(), None),
+        ],
+        "each block lands under its parsed parent, in document order"
+    );
+    let top: Vec<String> = dup_children(&pool, &page)
+        .await
+        .into_iter()
+        .map(|(_, content)| content)
+        .collect();
+    assert_eq!(
+        top,
+        ["# Plan", "# Next"],
+        "the headings are the page's children, in order"
+    );
+    assert_eq!(
+        dup_storage(&pool, &rows[4].id).await,
+        vec![
+            "columns todo=None priority=None scheduled=None due=None".to_owned(),
+            "effort text=Some(\"1h\") num=None date=None ref=None bool=None".to_owned(),
+        ],
+        "the property line is a property of its block"
+    );
+}
+
+/// An unmatched `[[Name]]` creates the page in the parent's space, and the
+/// block links to it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn append_markdown_creates_an_unmatched_page_in_the_parents_space() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let page = dup_page(&pool, &mat, "Dest").await;
+    settle(&mat).await;
+
+    let rows = append_markdown_inner(&pool, DEV, &mat, page.clone(), "- see [[New page]]", None)
+        .await
+        .unwrap()
+        .blocks;
+    settle(&mat).await;
+
+    let shape: Vec<(&str, Option<&str>)> = rows
+        .iter()
+        .map(|r| (r.block_type.as_str(), r.content.as_deref()))
+        .collect();
+    let new_page = &rows[0].id;
+    assert_eq!(
+        shape,
+        vec![
+            ("page", Some("New page")),
+            ("content", Some(format!("see [[{new_page}]]").as_str())),
+        ],
+        "the created page comes first, then the block linking to it"
+    );
+    let space: Option<String> = sqlx::query_scalar("SELECT space_id FROM blocks WHERE id = ?")
+        .bind(new_page.as_str())
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        space.as_deref(),
+        Some(TEST_SPACE_ID),
+        "the page is in the parent's space"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn append_markdown_op_refs_undo_the_whole_append_with_what_it_created() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let page = dup_page(&pool, &mat, "Dest").await;
+    settle(&mat).await;
+
+    let resp = capture_op_refs(append_markdown_inner(
+        &pool,
+        DEV,
+        &mat,
+        page.clone(),
+        "- see [[New Page]] #fresh\n  - child\n",
+        None,
+    ))
+    .await
+    .unwrap();
+    settle(&mat).await;
+    let ids: Vec<&str> = resp.inner.blocks.iter().map(|b| b.id.as_str()).collect();
+    assert_eq!(ids.len(), 4, "a page, a tag and two blocks were appended");
+
+    undo_ops_inner(&pool, DEV, &mat, resp.op_refs.clone())
+        .await
+        .unwrap();
+    settle(&mat).await;
+
+    let live: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM blocks WHERE id IN (SELECT value FROM json_each(?)) \
+         AND deleted_at IS NULL",
+    )
+    .bind(serde_json::to_string(&ids).unwrap())
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        live, 0,
+        "undoing the refs removes the page, the tag and the blocks"
+    );
+    assert!(
+        dup_children(&pool, &page).await.is_empty(),
+        "the page is empty again"
+    );
+}
+
+/// Markdown holding no block is refused, and so are 1001 bullets, one create
+/// each: one more op than one undo reverts.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn append_markdown_refusals_write_nothing() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let page = dup_page(&pool, &mat, "Dest").await;
+    settle(&mat).await;
+    let too_many: String = (0..=pagination::MAX_BATCH_BLOCK_IDS)
+        .map(|i| format!("- line {i}\n"))
+        .collect();
+    let before = dup_counts(&pool).await;
+
+    for (what, markdown) in [
+        ("empty", ""),
+        ("blank", " \n\t\n"),
+        ("over the cap", &too_many),
+    ] {
+        let result = append_markdown_inner(&pool, DEV, &mat, page.clone(), markdown, None).await;
+        assert!(
+            matches!(result, Err(AppError::Validation { .. })),
+            "{what} markdown is refused, got {result:?}"
+        );
+    }
+    assert_eq!(
+        dup_counts(&pool).await,
+        before,
+        "no refusal writes anything"
+    );
+    assert!(
+        dup_engine_children(&mat, &page).is_empty(),
+        "the engine rolled back the blocks it had applied"
+    );
+}
+
+// ----------------------------------------------------------------------
 // paste_blocks with a splice — a paste into a block's text (#5160 D4)
 // ----------------------------------------------------------------------
 
