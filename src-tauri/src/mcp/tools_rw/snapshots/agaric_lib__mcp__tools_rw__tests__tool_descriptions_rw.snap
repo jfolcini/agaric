@@ -156,7 +156,7 @@ expression: wire
       - space_id
     type: object
   name: append_markdown
-- description: "Move a page, with every block under it, to another space. Reversible via page history."
+- description: "Move a page, with its content blocks, to another space. Reversible via page history."
   inputSchema:
     additionalProperties: false
     properties:

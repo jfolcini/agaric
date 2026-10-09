@@ -7114,8 +7114,9 @@ async fn append_markdown_op_refs_undo_the_whole_append_with_what_it_created() {
     );
 }
 
-/// Markdown holding no block is refused, and so are 1001 bullets, one create
-/// each: one more op than one undo reverts.
+/// An unknown or trashed parent is refused, as is Markdown holding no block
+/// or one bullet past `MAX_BATCH_BLOCK_IDS` (one create each: one more op than
+/// one undo reverts).
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn append_markdown_refusals_write_nothing() {
     let (pool, _dir) = test_pool().await;

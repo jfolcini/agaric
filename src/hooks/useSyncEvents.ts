@@ -88,11 +88,12 @@ export interface SyncErrorPayload {
 
 /**
  * #2505 — payload of the `blocks:changed` event (Rust `BlocksChangedEvent`,
- * `src-tauri/agaric-sync/src/sync_events.rs`). Emitted after an MCP read-write tool commits,
- * and after a sync session's post-sync cache rebuild drains, so open views reload the
- * touched pages. `changed_page_ids` carries the IDENTICAL semantics as
- * `SyncCompletePayload.changed_page_ids` (#1071), which is what lets this
- * handler reuse the exact same `reloadChangedPageStores` targeted-reload path.
+ * `src-tauri/agaric-sync/src/sync_events.rs`). Emitted after an MCP
+ * read-write tool commits, and after a sync session's post-sync cache rebuild
+ * drains, so open views reload the touched pages. `changed_page_ids` carries
+ * the IDENTICAL semantics as `SyncCompletePayload.changed_page_ids` (#1071),
+ * which is what lets this handler reuse the exact same
+ * `reloadChangedPageStores` targeted-reload path.
  * Serialize-only on the Rust side (rides the Tauri event, not specta), so this
  * hand-written shape is the single source of truth.
  */

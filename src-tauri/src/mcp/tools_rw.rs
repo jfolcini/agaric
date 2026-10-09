@@ -19,7 +19,7 @@
 //! | `create_page` | [`create_block_inner`] | `block_type = "page"`, `parent_id = None`. |
 //! | `delete_block` | [`delete_block_inner`] | Soft delete. Reversible via `reverse.rs`. |
 //! | `list_spaces` | [`list_spaces_registry_inner`] | #2728 — pure read, no `*_inner` mutation. Registered here too (mirroring `tools_ro.rs`) so an RW-only agent can discover the `space_id` every tool above requires. |
-//! | `move_page_to_space` | [`move_blocks_to_space_inner`] | Page blocks only: a page moves with its descendants. |
+//! | `move_page_to_space` | [`move_blocks_to_space_inner`] | Page blocks only: a page moves with its content blocks. |
 //! | `create_tag` | [`create_block_inner_with_space`] | `block_type = "tag"`; returns the space's same-name tag when one exists. |
 //! | `delete_property` | [`delete_property_inner`] | Rejects `space`; the inner refuses system-managed keys. |
 //!
@@ -258,8 +258,8 @@ pub(crate) fn list_tool_descriptions() -> Vec<ToolDescription> {
         tool_desc_add_tag(),
         tool_desc_create_page(),
         tool_desc_delete_block(),
-        // #2728 — appended last so the wire-contract ordering of the tools
-        // above is preserved for existing clients; `list_spaces` is the
+        // #2728 — appended after them so the wire-contract ordering of the
+        // tools above is preserved for existing clients; `list_spaces` is the
         // one PURE-READ tool on this otherwise-mutating registry (see
         // `handle_list_spaces`), registered here so an agent connected
         // solely to the RW socket has an in-band way to discover the
@@ -321,9 +321,7 @@ impl ToolRegistry for ReadWriteTools {
                 TOOL_MOVE_PAGE_TO_SPACE => {
                     handle_move_page_to_space(&pool, &materializer, &device_id, emitter, args).await
                 }
-                TOOL_CREATE_TAG => {
-                    handle_create_tag(&pool, &materializer, &device_id, emitter, args).await
-                }
+                TOOL_CREATE_TAG => handle_create_tag(&pool, &materializer, &device_id, args).await,
                 TOOL_DELETE_PROPERTY => {
                     handle_delete_property(&pool, &materializer, &device_id, emitter, args).await
                 }
@@ -559,7 +557,7 @@ fn tool_desc_list_spaces() -> ToolDescription {
 fn tool_desc_move_page_to_space() -> ToolDescription {
     ToolDescription {
         name: TOOL_MOVE_PAGE_TO_SPACE.to_string(),
-        description: "Move a page, with every block under it, to another space. Reversible via \
+        description: "Move a page, with its content blocks, to another space. Reversible via \
                       page history."
             .to_string(),
         input_schema: json!({
@@ -1003,11 +1001,12 @@ async fn handle_move_page_to_space(
     }))
 }
 
+/// Emits no `blocks:changed`: a tag sits on no page, and an empty page set
+/// reloads every mounted page store.
 async fn handle_create_tag(
     pool: &SqlitePool,
     materializer: &Materializer,
     device_id: &str,
-    emitter: &dyn ViewChangeEmitter,
     args: Value,
 ) -> Result<Value, AppError> {
     let args: CreateTagArgs = parse_args(TOOL_CREATE_TAG, args)?;
@@ -1025,7 +1024,6 @@ async fn handle_create_tag(
         None,
     )
     .await?;
-    emit_blocks_changed_for(pool, emitter, resp.id.clone()).await;
     to_tool_result(&resp)
 }
 

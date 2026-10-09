@@ -1078,7 +1078,7 @@ pub async fn list_projected_agenda(
 
 /// The MCP `get_agenda` range: every live block whose `due_date` or
 /// `scheduled_date` falls in `[start_date, end_date]` (both inclusive; DONE
-/// tasks excluded, as the Due panel excludes them), plus the future
+/// tasks excluded, as the Due panel excludes them), plus the later
 /// occurrences [`list_projected_agenda_inner`] projects for repeating tasks.
 ///
 /// Each `(date, block_id, source)` appears once. A projected occurrence can

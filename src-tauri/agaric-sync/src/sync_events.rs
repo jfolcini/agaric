@@ -346,8 +346,8 @@ pub struct PropertyChangedEvent {
 /// SQL + the Loro engine but, before #2505, emitted only `mcp:activity`, so an
 /// open page displaying the affected block never learned about the write
 /// (stale until navigate-away-and-back — `sync:complete` never fires for a
-/// same-device write). And `SpacePlacementSink`, after an inbound sync session
-/// once its post-sync cache rebuild has drained (#5251). Any future
+/// same-device write). And `SpacePlacementSink`, once the post-sync cache
+/// rebuild after an inbound sync session has drained (#5251). Any future
 /// out-of-band local write path (deep-link-driven mutations, automations)
 /// should funnel through this **one** signal rather than minting a new one.
 pub const EVENT_BLOCKS_CHANGED: &str = "blocks:changed";
