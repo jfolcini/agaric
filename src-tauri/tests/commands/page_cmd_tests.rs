@@ -7121,12 +7121,27 @@ async fn append_markdown_refusals_write_nothing() {
     let (pool, _dir) = test_pool().await;
     let mat = Materializer::new(pool.clone());
     let page = dup_page(&pool, &mat, "Dest").await;
+    let elsewhere = dup_page(&pool, &mat, "Elsewhere").await;
+    let trashed = dup_child(&pool, &mat, &elsewhere, "trashed").await;
+    delete_block_inner(&pool, DEV, &mat, trashed.clone())
+        .await
+        .unwrap();
     settle(&mat).await;
     let too_many: String = (0..=pagination::MAX_BATCH_BLOCK_IDS)
         .map(|i| format!("- line {i}\n"))
         .collect();
     let before = dup_counts(&pool).await;
 
+    let unknown = append_markdown_inner(&pool, DEV, &mat, BlockId::new(), "- x", None).await;
+    assert!(
+        matches!(unknown, Err(AppError::NotFound(_))),
+        "an unknown parent is NotFound, got {unknown:?}"
+    );
+    let result = append_markdown_inner(&pool, DEV, &mat, trashed, "- x", None).await;
+    assert!(
+        matches!(result, Err(AppError::Validation { .. })),
+        "a trashed parent is refused, got {result:?}"
+    );
     for (what, markdown) in [
         ("empty", ""),
         ("blank", " \n\t\n"),

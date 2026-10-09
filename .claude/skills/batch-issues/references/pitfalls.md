@@ -34,7 +34,7 @@ GitHub GraphQL returns 403 from a Claude Code cloud session, so every `gh pr` an
 - Issue with comments: `gh api $R/issues/<n> --jq .body`, then `gh api "$R/issues/<n>/comments?per_page=100" --jq '.[].body'`.
 - Review bodies: `gh api "$R/pulls/<n>/reviews?per_page=100" --jq '.[].body'`.
 - Open a PR: `gh api $R/pulls -f base=main -f head=<branch> -f title='<title>' -F body=@"$file"`.
-- Merge: `gh api -X PUT $R/pulls/<n>/merge -f merge_method=squash`, then `gh api -X DELETE $R/git/refs/heads/<branch>`.
+- Merge: `gh api -X PUT $R/pulls/<n>/merge -f merge_method=squash`; mark a draft ready first with `gh api -X POST $R/pulls/<n>/ccr/ready_for_review`. The repo deletes the merged head branch itself (the proxy refuses ref deletion with 403).
 
 ## Lint and format
 

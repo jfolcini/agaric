@@ -258,7 +258,7 @@ pub(crate) fn list_tool_descriptions() -> Vec<ToolDescription> {
         tool_desc_add_tag(),
         tool_desc_create_page(),
         tool_desc_delete_block(),
-        // #2728 — appended last so the six-tool wire-contract ordering
+        // #2728 — appended last so the wire-contract ordering of the tools
         // above is preserved for existing clients; `list_spaces` is the
         // one PURE-READ tool on this otherwise-mutating registry (see
         // `handle_list_spaces`), registered here so an agent connected
