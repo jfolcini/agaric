@@ -12,10 +12,10 @@ import { invoke } from '@tauri-apps/api/core'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { makeBlockRow, withOps } from '@/__tests__/fixtures'
-import { mockInvokeCommands } from '@/__tests__/helpers/invoke'
+import { deferred, mockInvokeCommands } from '@/__tests__/helpers/invoke'
 import type { TagCacheRow } from '@/lib/bindings'
 import { bumpFlushSeq } from '@/lib/inline-property-commit'
-import { classifyUnmountFlush, runUnmountFlush } from '@/lib/unmount-flush'
+import { classifyUnmountFlush, runUnmountFlush, settlePendingSaves } from '@/lib/unmount-flush'
 import { useSpaceStore } from '@/stores/space'
 
 function run(loaded: string, changed: string, saved = true) {
@@ -108,6 +108,57 @@ describe('runUnmountFlush classifies the edit against the loaded content (#5160)
     await result.outcome
     expect(result.kind).toBe('checkbox')
     expect(edit).toHaveBeenCalledExactlyOnceWith('BLOCK', 'buy milk')
+  })
+})
+
+// #5448 — the branches that write the text only after an IPC answers are
+// registered per block, so the empty-block cleanup can wait for them.
+describe('settlePendingSaves', () => {
+  it('resolves at once for a block with no save in flight', async () => {
+    await expect(settlePendingSaves('NOBODY')).resolves.toBeUndefined()
+  })
+
+  it.each([
+    { line: 'key:: v', ipc: 'set_property' as const, saved: '' },
+    { line: '- [ ] ', ipc: 'set_todo_state' as const, saved: '' },
+  ])(
+    'waits for a typed `$line` until its $ipc has answered and the text is written',
+    async ({ line, ipc, saved }) => {
+      const answer = deferred<undefined>()
+      vi.mocked(invoke).mockImplementation(
+        mockInvokeCommands({
+          get_property_def: () => null,
+          list_property_defs: () => ({
+            items: [],
+            next_cursor: null,
+            has_more: false,
+            total_count: null,
+          }),
+          [ipc]: () => answer.promise,
+        }),
+      )
+      const { result, edit } = run('', line)
+      let settled = false
+      const waiting = settlePendingSaves('BLOCK').then(() => {
+        settled = true
+      })
+      await Promise.resolve()
+      expect(settled).toBe(false)
+      expect(edit).not.toHaveBeenCalled()
+
+      answer.resolve(undefined)
+      await waiting
+      expect(edit).toHaveBeenCalledExactlyOnceWith('BLOCK', saved)
+      await result.outcome
+      // Settled: a second wait does not block on the finished save.
+      await expect(settlePendingSaves('BLOCK')).resolves.toBeUndefined()
+    },
+  )
+
+  it('a plain edit, which writes its text synchronously, registers nothing', async () => {
+    const { result } = run('', 'plain text')
+    await expect(settlePendingSaves('BLOCK')).resolves.toBeUndefined()
+    await result.outcome
   })
 })
 

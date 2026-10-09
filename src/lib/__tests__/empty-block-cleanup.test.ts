@@ -34,9 +34,14 @@ vi.mock('@/lib/bindings', async (importOriginal) => {
   }
 })
 
+import { invoke } from '@tauri-apps/api/core'
+
+import { makeBlockRow, makePropertyRow, withOps } from '@/__tests__/fixtures'
+import { deferred, mockInvokeCommands } from '@/__tests__/helpers/invoke'
 import type { AttachmentRow } from '@/lib/bindings'
 import { deleteBlockIfLeakedEmpty, isLeakedEmptyCandidate } from '@/lib/empty-block-cleanup'
 import type { FlatBlock } from '@/lib/tree-utils'
+import { runUnmountFlush } from '@/lib/unmount-flush'
 
 function makeBlock(over: Partial<FlatBlock> & { id: string }): FlatBlock {
   return {
@@ -381,6 +386,103 @@ describe('deleteBlockIfLeakedEmpty — liveness and races', () => {
     expect(mockListTagsForBlock).not.toHaveBeenCalled()
     expect(mockListAttachments).not.toHaveBeenCalled()
     expect(mockGetBacklinks).not.toHaveBeenCalled()
+  })
+})
+
+// =========================================================================
+// #5448 — a save that writes the text only after its property IPC answers
+// =========================================================================
+
+describe('a block whose `key:: value` save is still in flight (#5448)', () => {
+  /**
+   * Escape (or any flush) on a new block holding only `context:: home`: the
+   * store still shows the block blank, and the stripped (or kept) text is
+   * written only once `set_property` has answered. `settle` answers it.
+   */
+  function flushPropertyLine(blocks: FlatBlock[], answer: 'accept' | 'refuse') {
+    let stored: ReturnType<typeof makePropertyRow>[] = []
+    const asked = deferred<undefined>()
+    const answered = deferred<undefined>()
+    vi.mocked(invoke).mockImplementation(
+      mockInvokeCommands({
+        get_property_def: () => ({
+          key: 'context',
+          value_type: 'text',
+          options: null,
+          created_at: '0',
+        }),
+        set_property: async () => {
+          asked.resolve(undefined)
+          await answered.promise
+          if (answer === 'refuse') throw new Error('refused')
+          stored = [makePropertyRow({ key: 'context', value_text: 'home' })]
+          return withOps(makeBlockRow({ id: 'EMPTY' }))
+        },
+      }),
+    )
+    mockGetProperties.mockImplementation(async () => stored)
+    const edit = vi.fn(async (blockId: string, content: string) => {
+      const idx = blocks.findIndex((b) => b.id === blockId)
+      blocks[idx] = makeBlock({ ...blocks[idx], id: blockId, content })
+      return true
+    })
+    const { outcome } = runUnmountFlush({
+      blockId: 'EMPTY',
+      loaded: '',
+      changed: 'context:: home',
+      edit,
+      splitBlock: vi.fn(),
+      rootParentId: null,
+    })
+    /** Answer `set_property` once the commit has asked, i.e. after a probe not waiting would have run. */
+    const settle = async () => {
+      await asked.promise
+      answered.resolve(undefined)
+    }
+    return { settle, edit, outcome }
+  }
+
+  it('keeps the block whose value was accepted: the probe runs after the property is stored', async () => {
+    const blocks = leakedPage({ content: '' })
+    const { settle, edit } = flushPropertyLine(blocks, 'accept')
+
+    const cleanup = runCleanup(blocks)
+    await settle()
+    // The probe was not issued while the property was not yet stored.
+    expect(mockGetProperties).not.toHaveBeenCalled()
+
+    const { remove, deleted } = await cleanup
+    expect(deleted).toBe(false)
+    expect(remove).not.toHaveBeenCalled()
+    expect(edit).toHaveBeenCalledExactlyOnceWith('EMPTY', '')
+    expect(mockGetProperties).toHaveBeenCalledTimes(1)
+  })
+
+  it('keeps the block whose value was refused: the line stays as its text', async () => {
+    const blocks = leakedPage({ content: '' })
+    const { settle, edit } = flushPropertyLine(blocks, 'refuse')
+
+    const cleanup = runCleanup(blocks)
+    await settle()
+    expect(mockGetProperties).not.toHaveBeenCalled()
+
+    const { remove, deleted } = await cleanup
+    expect(deleted).toBe(false)
+    expect(remove).not.toHaveBeenCalled()
+    expect(edit).toHaveBeenCalledExactlyOnceWith('EMPTY', 'context:: home')
+  })
+
+  it('still cleans the block once the save has landed and it is really empty', async () => {
+    const blocks = leakedPage({ content: '' })
+    const { settle, outcome } = flushPropertyLine(blocks, 'accept')
+    await settle()
+    await outcome
+    // The user then removed the property: blank text, nothing stored.
+    mockGetProperties.mockResolvedValue([])
+
+    const { remove, deleted } = await runCleanup(blocks)
+    expect(deleted).toBe(true)
+    expect(remove).toHaveBeenCalledWith('EMPTY', { undoable: false })
   })
 })
 

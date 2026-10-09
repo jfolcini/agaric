@@ -42,9 +42,11 @@
  * ## Ordering
  *
  * Local guards run first and reject the overwhelming majority for free; only a
- * genuinely blank, childless, metadata-free block pays the four IPCs. Every
- * IPC failure resolves to "keep the block" — the safe direction, since the
- * backend boot sweep is the backstop for anything blur misses.
+ * genuinely blank, childless, metadata-free block pays the four IPCs, and only
+ * once any save of it that defers its text write past an IPC (a typed
+ * `key:: value` line or task marker, #5448) has landed. Every IPC failure
+ * resolves to "keep the block" — the safe direction, since the backend boot
+ * sweep is the backstop for anything blur misses.
  */
 
 import { unwrap } from '@/lib/app-error'
@@ -53,6 +55,7 @@ import { logger } from '@/lib/logger'
 import { paginationLimit } from '@/lib/safe-limit'
 import { toSpaceScope } from '@/lib/space-scope'
 import { type FlatBlock, getDragDescendants } from '@/lib/tree-utils'
+import { settlePendingSaves } from '@/lib/unmount-flush'
 
 export interface EmptyBlockGuardInput {
   /** The page store's full flat tree (NOT the zoom/collapse projection). */
@@ -218,6 +221,19 @@ export async function deleteBlockIfLeakedEmpty({
   if (isPageTruncated()) return false
 
   if (!isLeakedEmptyCandidate({ blocks: readBlocks(), blockId, zoomedBlockId })) return false
+
+  // #5448 — a `key:: value` line or a task marker typed into the block is
+  // saved only after its property IPC answers (`runUnmountFlush`); until then
+  // the store shows the block blank and the probe finds no property. Decide
+  // on the settled block: the kept text fails the re-check below, the stored
+  // property fails the probe.
+  try {
+    await settlePendingSaves(blockId)
+  } catch (err: unknown) {
+    logger.warn('emptyBlockCleanup', 'pending save rejected — keeping the block', { blockId }, err)
+    return false
+  }
+
   if (!(await carriesNothing(blockId))) return false
 
   // Re-decide on the post-await world (see `isLeakedEmptyCandidate`).
