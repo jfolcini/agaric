@@ -37,10 +37,11 @@
 use serde_json::Value;
 
 use super::registry::{
-    TOOL_ADD_TAG, TOOL_APPEND_BLOCK, TOOL_APPEND_MARKDOWN, TOOL_CREATE_PAGE, TOOL_DELETE_BLOCK,
-    TOOL_GET_AGENDA, TOOL_GET_BLOCK, TOOL_GET_PAGE, TOOL_GET_PAGE_MARKDOWN, TOOL_JOURNAL_FOR_DATE,
-    TOOL_LIST_BACKLINKS, TOOL_LIST_PAGES, TOOL_LIST_PROPERTY_DEFS, TOOL_LIST_SPACES,
-    TOOL_LIST_TAGS, TOOL_SEARCH, TOOL_SET_PROPERTY, TOOL_UPDATE_BLOCK_CONTENT,
+    TOOL_ADD_TAG, TOOL_APPEND_BLOCK, TOOL_APPEND_MARKDOWN, TOOL_CREATE_PAGE, TOOL_CREATE_TAG,
+    TOOL_DELETE_BLOCK, TOOL_DELETE_PROPERTY, TOOL_GET_AGENDA, TOOL_GET_BLOCK, TOOL_GET_PAGE,
+    TOOL_GET_PAGE_MARKDOWN, TOOL_JOURNAL_FOR_DATE, TOOL_LIST_BACKLINKS, TOOL_LIST_PAGES,
+    TOOL_LIST_PROPERTY_DEFS, TOOL_LIST_SPACES, TOOL_LIST_TAGS, TOOL_MOVE_PAGE_TO_SPACE,
+    TOOL_SEARCH, TOOL_SET_PROPERTY, TOOL_UPDATE_BLOCK_CONTENT,
 };
 
 /// Number of leading characters of a ULID we expose in summary strings.
@@ -104,6 +105,9 @@ pub fn summarise(name: &str, args: &Value, result: &Value) -> String {
         TOOL_ADD_TAG => summarise_add_tag(args, result),
         TOOL_CREATE_PAGE => summarise_create_page(args, result),
         TOOL_DELETE_BLOCK => summarise_delete_block(args, result),
+        TOOL_MOVE_PAGE_TO_SPACE => summarise_move_page_to_space(args, result),
+        TOOL_CREATE_TAG => summarise_create_tag(args, result),
+        TOOL_DELETE_PROPERTY => summarise_delete_property(args, result),
         // Defensive default — keeps the activity feed working when
         // someone adds a new tool without a summariser. This is the
         // pre-existing behaviour for every entry. The privacy
@@ -463,6 +467,41 @@ pub fn summarise_delete_block(args: &Value, result: &Value) -> String {
         format!("delete_block — {descendants} {descendant_word}")
     } else {
         format!("delete_block — deleted {prefix} ({descendants} {descendant_word})")
+    }
+}
+
+/// `move_page_to_space — moved <page-prefix> to <space-prefix>`.
+pub fn summarise_move_page_to_space(args: &Value, _result: &Value) -> String {
+    let page = ulid_prefix(str_field(args, "page_id").unwrap_or(""));
+    let target = ulid_prefix(str_field(args, "target_space_id").unwrap_or(""));
+    match (page.is_empty(), target.is_empty()) {
+        (false, false) => format!("move_page_to_space — moved {page} to {target}"),
+        (false, true) => format!("move_page_to_space — moved {page}"),
+        (true, false) => format!("move_page_to_space — to {target}"),
+        (true, true) => "move_page_to_space".to_string(),
+    }
+}
+
+/// `create_tag — created <id-prefix>`. Never embeds the tag name — it is
+/// user content.
+pub fn summarise_create_tag(_args: &Value, result: &Value) -> String {
+    let prefix = ulid_prefix(str_field(result, "id").unwrap_or(""));
+    if prefix.is_empty() {
+        "create_tag".to_string()
+    } else {
+        format!("create_tag — created {prefix}")
+    }
+}
+
+/// `delete_property — deleted <key> on <block-prefix>`. The key is schema.
+pub fn summarise_delete_property(args: &Value, _result: &Value) -> String {
+    let key = str_field(args, "key").unwrap_or("");
+    let block = ulid_prefix(str_field(args, "block_id").unwrap_or(""));
+    match (key.is_empty(), block.is_empty()) {
+        (false, false) => format!("delete_property — deleted {key} on {block}"),
+        (false, true) => format!("delete_property — deleted {key}"),
+        (true, false) => format!("delete_property — on {block}"),
+        (true, true) => "delete_property".to_string(),
     }
 }
 
@@ -1051,6 +1090,47 @@ mod tests {
         assert!(s.ends_with("(1 descendant)"));
     }
 
+    #[test]
+    fn move_page_to_space_includes_both_prefixes() {
+        let args = json!({ "page_id": ULID_A, "space_id": ULID_REF, "target_space_id": ULID_B });
+        let result = json!({ "page_id": ULID_A, "space_id": ULID_B });
+        let s = summarise_move_page_to_space(&args, &result);
+        assert_eq!(
+            s,
+            format!(
+                "move_page_to_space — moved {} to {}",
+                &ULID_A[..ULID_PREFIX_LEN],
+                &ULID_B[..ULID_PREFIX_LEN],
+            ),
+        );
+    }
+
+    #[test]
+    fn create_tag_includes_prefix_and_omits_name() {
+        let args = json!({ "name": "SECRET_TAG_NAME", "space_id": ULID_B });
+        let result = json!({ "id": ULID_TAG, "block_type": "tag", "content": "SECRET_TAG_NAME" });
+        let s = summarise_create_tag(&args, &result);
+        assert_eq!(
+            s,
+            format!("create_tag — created {}", &ULID_TAG[..ULID_PREFIX_LEN]),
+        );
+        assert_no_secrets(&s);
+    }
+
+    #[test]
+    fn delete_property_includes_key_and_block_prefix() {
+        let args = json!({ "block_id": ULID_A, "key": "effort", "space_id": ULID_B });
+        let result = json!({ "block_id": ULID_A, "key": "effort" });
+        let s = summarise_delete_property(&args, &result);
+        assert_eq!(
+            s,
+            format!(
+                "delete_property — deleted effort on {}",
+                &ULID_A[..ULID_PREFIX_LEN]
+            ),
+        );
+    }
+
     // -----------------------------------------------------------------
     // Cross-cutting privacy guard — every public summariser must
     // refuse to leak the secret payloads regardless of how they appear
@@ -1080,6 +1160,10 @@ mod tests {
             "parent_id": ULID_B,
             "tag_id": ULID_TAG,
             "page_id": ULID_A,
+            // #5378 — `create_tag` / `move_page_to_space` args.
+            "name": "SECRET_TAG_NAME",
+            "space_id": ULID_B,
+            "target_space_id": ULID_B,
             "key": "notes",
             "date": "2025-01-15",
             "start_date": "2025-01-01",

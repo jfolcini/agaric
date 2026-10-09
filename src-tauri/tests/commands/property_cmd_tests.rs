@@ -9528,3 +9528,46 @@ async fn create_property_def_refuses_ref_and_boolean_over_stored_text_4399() {
 
     mat.shutdown();
 }
+
+/// #5378 — deleting `todo_state` (the MCP `delete_property` tool) un-tasks the
+/// block as the app's clear does: the `created_at` / `completed_at` stamps go
+/// with the state, so the Done panel stops listing it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn delete_property_todo_state_clears_task_stamps_5378() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let block = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "ship it".into(),
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    let id = block.id.as_str();
+    for state in ["TODO", "DONE"] {
+        set_todo_state_inner(&pool, DEV, &mat, id.into(), Some(state.into()))
+            .await
+            .unwrap();
+    }
+
+    delete_property_inner(&pool, DEV, &mat, id.into(), "todo_state".into())
+        .await
+        .unwrap();
+
+    let stamps: Vec<String> = sqlx::query_scalar(
+        "SELECT key FROM block_properties WHERE block_id = ? \
+         AND key IN ('created_at', 'completed_at') ORDER BY key",
+    )
+    .bind(id)
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(stamps, Vec::<String>::new(), "the task stamps are cleared");
+    let b = get_block_inner(&pool, block.id.clone()).await.unwrap();
+    assert_eq!(b.todo_state, None);
+    mat.shutdown();
+}

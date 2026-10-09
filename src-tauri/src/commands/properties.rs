@@ -282,7 +282,7 @@ pub(crate) struct PriorTaskState {
 ///
 /// # Errors
 /// Returns [`AppError`] if the query fails.
-async fn prior_task_state_in_tx(
+pub(crate) async fn prior_task_state_in_tx(
     conn: &mut sqlx::SqliteConnection,
     block_id: &str,
 ) -> Result<PriorTaskState, AppError> {
@@ -1225,8 +1225,9 @@ const SYSTEM_MANAGED_PROPERTY_KEYS: [&str; 4] =
 ///
 /// Appends a `DeleteProperty` op and removes the row from `block_properties`.
 /// Deleting `repeat` also deletes the `repeat-until`, `repeat-count` and
-/// `repeat-seq` the block holds, in the same transaction. Returns every key
-/// deleted, `key` first.
+/// `repeat-seq` the block holds, in the same transaction; deleting
+/// `todo_state` clears the task's `created_at` / `completed_at` stamps, as the
+/// app's clear does. Returns `key` and the repeat bounds deleted with it.
 ///
 /// # Errors
 ///
