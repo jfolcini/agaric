@@ -1864,6 +1864,37 @@ describe('PagePropertyTable create-def flow against the real tauri-mock (#2804)'
     expect(propertyDefs.get('newfield')).toBeTruthy()
     expect(properties.get(PAGE_ID)?.get('newfield')).toBeUndefined()
   })
+
+  // #5449 — the backend refuses a select definition without options.
+  it('creates a select def only with its options, then saves one of them', async () => {
+    const user = userEvent.setup()
+    render(<PagePropertyTable pageId={PAGE_ID} forceExpanded />)
+
+    await user.type(await screen.findByLabelText(t('pageProperty.searchLabel')), 'size')
+    await user.click(await screen.findByText(/Create "size"/))
+    await user.selectOptions(
+      await screen.findByLabelText(t('pageProperty.valueTypeLabel')),
+      'select',
+    )
+    const create = screen.getByRole('button', { name: /create definition/i })
+    expect(create).toBeDisabled()
+
+    await user.type(screen.getByLabelText(t('properties.newSelectOptions')), 'small, large')
+    await user.click(create)
+    await user.selectOptions(
+      await screen.findByLabelText(t('pageProperty.valueLabel', { key: 'size' })),
+      'large',
+    )
+
+    await waitFor(() => {
+      expect(properties.get(PAGE_ID)?.get('size')?.['value_text']).toBe('large')
+    })
+    expect(propertyDefs.get('size')).toMatchObject({
+      value_type: 'select',
+      options: '["small","large"]',
+    })
+    expect(mockedToastError).not.toHaveBeenCalled()
+  })
 })
 
 // #5287 — sync, MCP and undo write page properties without going through this

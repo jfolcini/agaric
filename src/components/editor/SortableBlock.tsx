@@ -44,7 +44,6 @@ import {
   BlockCollapseControl,
   BlockInlineControls,
   BlockMetadataRow,
-  type BlockMetadataRowProps,
   getInlinePropertyLimit,
 } from '@/components/editor/BlockInlineControls'
 import {
@@ -202,8 +201,9 @@ function SwipeAffordances({
   )
 }
 
-/** Resolver callbacks shared by the inline controls and the editor body. */
-type ResolverProps = Pick<BlockMetadataRowProps, 'resolveBlockTitle'> & {
+/** Resolver callbacks forwarded to the editor body. */
+interface ResolverProps {
+  resolveBlockTitle?: ((id: string) => string) | undefined
   resolveTagName?: ((id: string) => string) | undefined
   resolveBlockStatus?: ((id: string) => 'active' | 'deleted') | undefined
   resolveTagStatus?: ((id: string) => 'active' | 'deleted') | undefined
@@ -429,7 +429,6 @@ function SortableBlockBody(props: SortableBlockBodyProps): React.ReactElement {
           properties={properties}
           filteredProperties={filteredProperties}
           maxInlineProperties={maxInlineProperties}
-          resolveBlockTitle={resolveBlockTitle}
           attachmentCount={attachmentCount}
           showAttachments={showAttachments}
           onToggleAttachments={onToggleAttachments}

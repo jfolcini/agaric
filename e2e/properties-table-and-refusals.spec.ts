@@ -302,7 +302,9 @@ test.describe('Select definition options and in-use delete', () => {
     await expect(confirm.getByText('Delete this property definition?')).toBeVisible()
     await confirm.getByRole('button', { name: 'Delete', exact: true }).click()
 
-    await expect(toasts(page, 'Failed to delete property definition')).toBeVisible()
+    await expect(
+      toasts(page, "cannot delete property definition 'project': 2 block_properties row(s)"),
+    ).toBeVisible()
     await expect(projectRow(page)).toBeVisible()
     expect(await storedOptions(page, 'project')).toEqual(['alpha', 'beta', 'gamma'])
     expect(await storedProperties(page, MTG_1)).toMatchObject({ project: 'alpha' })

@@ -774,11 +774,14 @@ export const propertiesHandlers = {
       throw validationRejection(`property key '${key}' is built in and cannot be deleted`)
     }
     // A definition still referenced by a live `block_properties` row is
-    // refused rather than orphaning the rows.
-    for (const perBlock of properties.values()) {
-      if (perBlock.has(key)) {
-        throw validationRejection(`property key '${key}' is still in use and cannot be deleted`)
-      }
+    // refused rather than orphaning the rows, in the backend's words: the
+    // Settings screen shows them.
+    const inUse = [...properties.values()].filter((perBlock) => perBlock.has(key)).length
+    if (inUse > 0) {
+      throw validationRejection(
+        `cannot delete property definition '${key}': ${inUse} block_properties row(s) reference ` +
+          'this key. Clear them first via set_property(value=None) on each affected block.',
+      )
     }
     if (!propertyDefs.has(key)) throw notFoundRejection(`property_definitions ('${key}')`)
     propertyDefs.delete(key)

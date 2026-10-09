@@ -251,9 +251,9 @@ export function PagePropertyTable({ pageId, forceExpanded }: PagePropertyTablePr
   )
 
   const handleCreateDef = useCallback(
-    async (key: string, valueType: string) => {
+    async (key: string, valueType: string, options: string | null) => {
       try {
-        const newDef = unwrap(await commands.createPropertyDef(key, valueType, null))
+        const newDef = unwrap(await commands.createPropertyDef(key, valueType, options))
         setDefinitions((prev) => [...prev, newDef])
         // #2804 — same rationale as `handleAddFromDef`: a brand-new
         // text/select/url def has no valid empty initializer, so add a draft
