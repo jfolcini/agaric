@@ -24,6 +24,7 @@ import { StaticBlock } from '@/components/editor/StaticBlock'
 import { clearRichContentParseCache } from '@/components/RichContentRenderer'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import type { AttachmentRow, PropertyRow } from '@/lib/bindings'
+import { useSpaceStore } from '@/stores/space'
 
 vi.mock('@/lib/open-url', () => ({ openUrl: vi.fn() }))
 
@@ -234,6 +235,8 @@ class AutoEnterIntersectionObserver {
 
 describe('StaticBlock', () => {
   beforeEach(() => {
+    // #5415 — every space-scoped IPC carries the active space.
+    useSpaceStore.setState({ currentSpaceId: 'SPACE_1' })
     vi.clearAllMocks()
     // #2193: flush the module-level markdown parse LRU so a `DocNode` cached by
     // an earlier test (real parse) can't be served in place of this test's

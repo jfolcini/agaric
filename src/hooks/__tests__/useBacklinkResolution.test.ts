@@ -75,9 +75,9 @@ beforeEach(() => {
   // Fresh shared store per test — the hook now delegates all real resolution
   // to `useResolveStore`, so isolate its cache between cases.
   useResolveStore.setState({ cache: new Map(), version: 0, _preloaded: false })
-  // Default: no active space — `keyFor(null, id)` resolves to the
-  // `__global__::id` slot so existing tests behave as before.
-  useSpaceStore.setState({ ...initialSpaceState, currentSpaceId: null })
+  // #5415 — resolution carries the active space; the no-space arm below
+  // clears it explicitly.
+  useSpaceStore.setState({ ...initialSpaceState, currentSpaceId: 'SPACE_1' })
 })
 
 afterEach(() => {
@@ -108,7 +108,10 @@ describe('useBacklinkResolution', () => {
     const { result } = renderHook(() => useBacklinkResolution(groups))
 
     await waitFor(() => {
-      expect(mockedBatchResolve).toHaveBeenCalledWith([ULID_A], { kind: 'global' })
+      expect(mockedBatchResolve).toHaveBeenCalledWith([ULID_A], {
+        kind: 'active',
+        space_id: 'SPACE_1',
+      })
     })
 
     await waitFor(() => {
@@ -133,7 +136,10 @@ describe('useBacklinkResolution', () => {
     const { result } = renderHook(() => useBacklinkResolution(groups))
 
     await waitFor(() => {
-      expect(mockedBatchResolve).toHaveBeenCalledWith([ULID_A], { kind: 'global' })
+      expect(mockedBatchResolve).toHaveBeenCalledWith([ULID_A], {
+        kind: 'active',
+        space_id: 'SPACE_1',
+      })
     })
 
     await waitFor(() => {
@@ -336,7 +342,8 @@ describe('useBacklinkResolution', () => {
 
     await waitFor(() => {
       expect(mockedBatchResolve).toHaveBeenCalledWith(expect.arrayContaining([ULID_A, ULID_B]), {
-        kind: 'global',
+        kind: 'active',
+        space_id: 'SPACE_1',
       })
     })
 
@@ -435,22 +442,27 @@ describe('useBacklinkResolution', () => {
         space_id: 'SPACE_AAAA',
       })
     })
-    expect(mockedBatchResolve).not.toHaveBeenCalledWith([ULID_A], { kind: 'global' })
+    expect(mockedBatchResolve).not.toHaveBeenCalledWith([ULID_A], {
+      kind: 'active',
+      space_id: 'SPACE_1',
+    })
   })
 
-  it('falls back to global scope when there is no active space', async () => {
-    // Default beforeEach state: currentSpaceId is null.
+  // #5415 — an unverifiable target is not trusted: nothing is dispatched
+  // until the space store hydrates.
+  it('dispatches nothing while there is no active space', async () => {
+    useSpaceStore.setState({ ...initialSpaceState, currentSpaceId: null })
     mockedBatchResolve.mockResolvedValue([
       { id: ULID_A, title: 'Some Title', block_type: 'page', deleted: false },
     ])
 
     const groups: BacklinkGroup[] = [makeGroup([{ id: 'B1', content: `[[${ULID_A}]]` }])]
 
-    renderHook(() => useBacklinkResolution(groups))
+    const { result, rerender } = renderHook(() => useBacklinkResolution(groups))
+    rerender()
 
-    await waitFor(() => {
-      expect(mockedBatchResolve).toHaveBeenCalledWith([ULID_A], { kind: 'global' })
-    })
+    expect(mockedBatchResolve).not.toHaveBeenCalled()
+    expect(result.current.resolveBlockTitle(ULID_A)).toBe(`[[${ULID_A.slice(0, 8)}...]]`)
   })
 
   it('does not re-fetch an id that was already attempted-but-unresolved', async () => {
@@ -580,7 +592,9 @@ describe('useBacklinkResolution — stored title is normalised at the seed (#422
     expect(accessibleName).toBe(`${expectedTitle} (deleted)`)
 
     // And the seed itself — the raw multi-line content never reaches the store.
-    expect(useResolveStore.getState().cache.get(keyFor(null, ULID_A))?.title).toBe(expectedTitle)
+    expect(useResolveStore.getState().cache.get(keyFor('SPACE_1', ULID_A))?.title).toBe(
+      expectedTitle,
+    )
   })
 
   /**
@@ -620,7 +634,7 @@ describe('useBacklinkResolution — stored title is normalised at the seed (#422
     // The parity pin, against the literal — `searchBlockRefs`,
     // `fetchAndCacheLinks` and `handleNavigate` all write exactly this for the
     // same row (`resolve-store-title-seed-parity.test.ts` drives all four).
-    const entry = useResolveStore.getState().cache.get(keyFor(null, ULID_A))
+    const entry = useResolveStore.getState().cache.get(keyFor('SPACE_1', ULID_A))
     expect(entry?.title).toBe('Untitled')
     expect(result.current.resolveBlockTitle(ULID_A)).toBe('Untitled')
     // …and the row is RESOLVED. This is the half that used to have nowhere to
@@ -686,7 +700,9 @@ describe('useBacklinkResolution — stored title is normalised at the seed (#422
     await waitFor(() => {
       expect(useResolveStore.getState().has(ULID_TAG)).toBe(true)
     })
-    expect(useResolveStore.getState().cache.get(keyFor(null, ULID_TAG))?.title).toBe('Untitled')
+    expect(useResolveStore.getState().cache.get(keyFor('SPACE_1', ULID_TAG))?.title).toBe(
+      'Untitled',
+    )
     expect(result.current.resolveTagName(ULID_TAG)).toBe('Untitled')
   })
 
@@ -773,7 +789,7 @@ describe('useBacklinkResolution — stored title is normalised at the seed (#422
     // for the same page under the same `${spaceId}::${ulid}` key (`p.content`,
     // raw). Any divergence makes the two writers flip the entry — and bump
     // `version` — on every pass.
-    expect(useResolveStore.getState().cache.get(keyFor(null, ULID_PAGE))?.title).toBe(
+    expect(useResolveStore.getState().cache.get(keyFor('SPACE_1', ULID_PAGE))?.title).toBe(
       NAMESPACED_PAGE_TITLE,
     )
   })
@@ -801,7 +817,9 @@ describe('useBacklinkResolution — stored title is normalised at the seed (#422
     )
     expect(screen.getByTestId('tag-ref-chip').textContent).toBe(longTagName)
     // `useResolveStore.preload` writes `t.name` raw under this same key.
-    expect(useResolveStore.getState().cache.get(keyFor(null, ULID_TAG))?.title).toBe(longTagName)
+    expect(useResolveStore.getState().cache.get(keyFor('SPACE_1', ULID_TAG))?.title).toBe(
+      longTagName,
+    )
   })
 
   it('does not flip a page entry preload already seeded (no version churn)', async () => {
@@ -833,7 +851,7 @@ describe('useBacklinkResolution — stored title is normalised at the seed (#422
     // nothing and leaves `version` alone; a normalised seed would differ on
     // this 62-char title, flip the entry and re-render every subscriber.
     await waitFor(() => {
-      expect(useResolveStore.getState().cache.get(keyFor(null, ULID_PAGE))?.title).toBe(
+      expect(useResolveStore.getState().cache.get(keyFor('SPACE_1', ULID_PAGE))?.title).toBe(
         NAMESPACED_PAGE_TITLE,
       )
     })

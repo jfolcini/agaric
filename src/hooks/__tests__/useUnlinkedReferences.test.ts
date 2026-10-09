@@ -52,7 +52,7 @@ function baseParams(
     pageId: 'PAGE1',
     filters: [],
     sort: null,
-    spaceId: null,
+    spaceId: 'SPACE_1',
     ...overrides,
   }
 }
@@ -184,7 +184,14 @@ describe('useUnlinkedReferences', () => {
     expect(result.current.isError).toBe(false)
     // The exported query key mirrors the hook's read location exactly. The
     // trailing element is the #3316 item-2 group limit (20 = panel expanded).
-    expect(result.current.queryKey).toEqual(['unlinkedReferences', null, 'PAGE1', [], null, 20])
+    expect(result.current.queryKey).toEqual([
+      'unlinkedReferences',
+      'SPACE_1',
+      'PAGE1',
+      [],
+      null,
+      20,
+    ])
   })
 
   it('load-more: appends + merges by page_id without mutating prior objects', async () => {
@@ -505,7 +512,13 @@ describe('useUnlinkedReferences', () => {
       expect(result.current.loading).toBe(false)
     })
 
-    expect(result.current.queryKeyPrefix).toEqual(['unlinkedReferences', null, 'PAGE1', [], null])
+    expect(result.current.queryKeyPrefix).toEqual([
+      'unlinkedReferences',
+      'SPACE_1',
+      'PAGE1',
+      [],
+      null,
+    ])
     // It is exactly the read key minus the trailing group limit, so
     // `setQueriesData` prefix-matching cannot drift from where the hook reads.
     expect(result.current.queryKey).toEqual([...result.current.queryKeyPrefix, 20])
@@ -535,5 +548,20 @@ describe('useUnlinkedReferences', () => {
     expect(entry).toBeDefined()
     expect(entry?.gcTime).toBe(5 * 60 * 1000)
     expect(entry?.gcTime).toBeLessThan(Number.POSITIVE_INFINITY)
+  })
+})
+
+// #5415 — the unlinked-reference query carries the active space; with none
+// known it resolves to an empty page without dispatching.
+describe('useUnlinkedReferences — no active space', () => {
+  it('resolves empty without an IPC', async () => {
+    mockedInvoke.mockImplementation(mockInvokeCommands({}))
+    const { result } = renderHook(() => useUnlinkedReferences(baseParams({ spaceId: null })))
+
+    await waitFor(() => {
+      expect(result.current.loading).toBe(false)
+    })
+    expect(result.current.groups).toEqual([])
+    expect(mockedInvoke).not.toHaveBeenCalled()
   })
 })

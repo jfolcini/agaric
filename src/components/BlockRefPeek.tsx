@@ -52,7 +52,7 @@ import { writeText } from '@/lib/clipboard'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
 import { queryClient } from '@/lib/query-client'
-import { toSpaceScope } from '@/lib/space-scope'
+import { requireActiveScope } from '@/lib/space-scope'
 import { cn } from '@/lib/utils'
 import { useSpaceStore } from '@/stores/space'
 
@@ -77,7 +77,7 @@ type PeekTarget =
     }
 
 async function fetchPeekTarget(refId: string, spaceId: string): Promise<PeekTarget> {
-  const scope = toSpaceScope(spaceId)
+  const scope = requireActiveScope(spaceId)
   try {
     const resolved = unwrap(await commands.batchResolve([refId], scope))
     const row = resolved.find((r) => r.id === refId)

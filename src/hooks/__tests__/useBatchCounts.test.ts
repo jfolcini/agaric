@@ -19,7 +19,7 @@ import { toast } from 'sonner'
 
 import { useBatchCounts } from '@/hooks/useBatchCounts'
 import { recordGraphStructureChange } from '@/lib/graph-structure-events'
-import { toSpaceScope } from '@/lib/space-scope'
+import { requireActiveScope } from '@/lib/space-scope'
 import { useSpaceStore } from '@/stores/space'
 
 const mockedCountAgendaBatchBySource = mockCountAgendaBatchBySource
@@ -53,13 +53,41 @@ function makeDayEntry(dateStr: string, pageId: string | null = null): DayEntry {
 
 beforeEach(() => {
   vi.clearAllMocks()
-  // Reset the space store so each test starts from a clean
-  // `currentSpaceId: null` state (cross-space / Global). Tests that
-  // exercise the active-space branch set it explicitly.
-  useSpaceStore.setState({ currentSpaceId: null })
+  // #5415 — every count IPC carries the active space; tests that exercise
+  // the no-space arm clear it explicitly.
+  useSpaceStore.setState({ currentSpaceId: 'SPACE_1' })
 })
 
 describe('useBatchCounts', () => {
+  // #5415 — with no active space the hook dispatches nothing: a count sent
+  // without a space would have to default or widen, and neither is allowed.
+  it('dispatches no IPC while no space is active', async () => {
+    useSpaceStore.setState({ currentSpaceId: null })
+    mockedCountAgendaBatchBySource.mockResolvedValue(ok({ '2025-01-06': {} }))
+    mockedCountBacklinksBatch.mockResolvedValue(ok({ 'page-1': 1 }))
+
+    const { result, rerender } = renderHook(() =>
+      useBatchCounts([makeDayEntry('2025-01-06', 'page-1')]),
+    )
+    rerender()
+
+    expect(mockedCountAgendaBatchBySource).not.toHaveBeenCalled()
+    expect(mockedCountBacklinksBatch).not.toHaveBeenCalled()
+    expect(result.current.backlinkCounts).toEqual({})
+
+    // Hydration is the trigger: the same entries fetch once a space is known.
+    act(() => {
+      useSpaceStore.setState({ currentSpaceId: 'SPACE_1' })
+    })
+    await waitFor(() => {
+      expect(result.current.backlinkCounts).toEqual({ 'page-1': 1 })
+    })
+    expect(mockedCountBacklinksBatch).toHaveBeenCalledWith(
+      ['page-1'],
+      requireActiveScope('SPACE_1'),
+    )
+  })
+
   it('returns empty counts initially', () => {
     mockedCountAgendaBatchBySource.mockReturnValue(new Promise(() => {}))
     const { result } = renderHook(() => useBatchCounts([]))
@@ -97,11 +125,14 @@ describe('useBatchCounts', () => {
     expect(result.current.backlinkCounts).toEqual({ 'page-1': 5, 'page-2': 2 })
     expect(mockedCountAgendaBatchBySource).toHaveBeenCalledWith(
       ['2025-01-06', '2025-01-07'],
-      toSpaceScope(null),
+      requireActiveScope('SPACE_1'),
     )
     // SpaceId must be forwarded so badge counts
     // exclude source blocks the user can't see (cross-space).
-    expect(mockedCountBacklinksBatch).toHaveBeenCalledWith(['page-1', 'page-2'], toSpaceScope(null))
+    expect(mockedCountBacklinksBatch).toHaveBeenCalledWith(
+      ['page-1', 'page-2'],
+      requireActiveScope('SPACE_1'),
+    )
   })
 
   // A `[[link]]` typed, pasted or synced moves the badge counts without any
@@ -131,7 +162,7 @@ describe('useBatchCounts', () => {
     const { result } = renderHook(() => useBatchCounts([]))
 
     await waitFor(() => {
-      expect(mockedCountAgendaBatchBySource).toHaveBeenCalledWith([], toSpaceScope(null))
+      expect(mockedCountAgendaBatchBySource).toHaveBeenCalledWith([], requireActiveScope('SPACE_1'))
     })
 
     expect(result.current.agendaCounts).toEqual({})
@@ -238,11 +269,14 @@ describe('useBatchCounts', () => {
     renderHook(() => useBatchCounts(entries))
 
     await waitFor(() => {
-      expect(mockedCountBacklinksBatch).toHaveBeenCalledWith(['page-1'], toSpaceScope('SPACE_ABC'))
+      expect(mockedCountBacklinksBatch).toHaveBeenCalledWith(
+        ['page-1'],
+        requireActiveScope('SPACE_ABC'),
+      )
     })
     expect(mockedCountAgendaBatchBySource).toHaveBeenCalledWith(
       ['2025-01-06'],
-      toSpaceScope('SPACE_ABC'),
+      requireActiveScope('SPACE_ABC'),
     )
   })
 
@@ -293,7 +327,7 @@ describe('useBatchCounts', () => {
     })
     expect(mockedCountAgendaBatchBySource).toHaveBeenLastCalledWith(
       ['2025-02-06'],
-      toSpaceScope(null),
+      requireActiveScope('SPACE_1'),
     )
   })
 
@@ -316,7 +350,10 @@ describe('useBatchCounts', () => {
     rerender()
 
     await waitFor(() => {
-      expect(mockedCountBacklinksBatch).toHaveBeenCalledWith(['page-1'], toSpaceScope(null))
+      expect(mockedCountBacklinksBatch).toHaveBeenCalledWith(
+        ['page-1'],
+        requireActiveScope('SPACE_1'),
+      )
     })
     expect(mockedCountAgendaBatchBySource).toHaveBeenCalledTimes(2)
   })

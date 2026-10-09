@@ -29,6 +29,7 @@
 import { useInfiniteQuery } from '@tanstack/react-query'
 import { useCallback, useMemo, useRef } from 'react'
 
+import { EMPTY_GROUPED_RESPONSE } from '@/hooks/useBacklinkGroups'
 import { useInvalidateOnGraphStructure } from '@/hooks/useInvalidateOnGraphStructure'
 import { unwrap } from '@/lib/app-error'
 import type {
@@ -41,7 +42,7 @@ import { commands } from '@/lib/bindings'
 import { logger } from '@/lib/logger'
 import { queryClient } from '@/lib/query-client'
 import { paginationLimit } from '@/lib/safe-limit'
-import { toSpaceScope } from '@/lib/space-scope'
+import { requireActiveScope } from '@/lib/space-scope'
 
 /**
  * Groups requested per page once the panel is open. Unchanged from the value
@@ -149,6 +150,8 @@ export function useUnlinkedReferences(
       {
         queryKey,
         queryFn: async ({ pageParam }): Promise<GroupedBacklinkResponse> => {
+          // #5415 — no active space: nothing to list, never dispatch.
+          if (spaceId == null) return EMPTY_GROUPED_RESPONSE
           try {
             return unwrap(
               await commands.listUnlinkedReferences(
@@ -157,7 +160,7 @@ export function useUnlinkedReferences(
                 sort,
                 pageParam ?? null,
                 groupLimit,
-                toSpaceScope(spaceId),
+                requireActiveScope(spaceId),
               ),
             )
           } catch (err) {

@@ -41,7 +41,9 @@ import { commands } from '@/lib/bindings'
 import { logger } from '@/lib/logger'
 import { getCurrentDeepLink } from '@/lib/platform/deep-link'
 import { PREFERENCES, writePreference } from '@/lib/preferences'
+import { requireActiveScope } from '@/lib/space-scope'
 import { useNavigationStore } from '@/stores/navigation'
+import { useSpaceStore } from '@/stores/space'
 import { useTabsStore } from '@/stores/tabs'
 
 /** Backend `deeplink:navigate-to-block` / `deeplink:navigate-to-page` payload. */
@@ -108,13 +110,45 @@ export type NavigateTargetKind = 'block' | 'page'
  */
 const MAX_ANCESTOR_HOPS = 100
 
-/** Forward to the tabs store, logging (never throwing) on failure. */
-function safeNavigateToPage(
+/**
+ * #5415 — the space `pageId` lives in, or `null` when no listed space holds
+ * it (space-less row, or the IPC failed). A link carries no space, so each
+ * known space is asked with its own active scope; `batchResolve` returns the
+ * id only from the space that owns it.
+ */
+async function resolveSpaceOf(pageId: string): Promise<string | null> {
+  const hits = await Promise.all(
+    useSpaceStore.getState().availableSpaces.map(async (space) => {
+      const rows = unwrap(await commands.batchResolve([pageId], requireActiveScope(space.id)))
+      return rows.some((r) => r.id === pageId) ? space.id : null
+    }),
+  )
+  return hits.find((id) => id !== null) ?? null
+}
+
+/**
+ * Switch to the page's own space, then forward to the tabs store, logging
+ * (never throwing) on failure. The switch happens BEFORE `navigateToPage`
+ * because tabs are partitioned per space: navigating first would open the
+ * page in the outgoing space's tab list, where its load is refused.
+ */
+async function safeNavigateToPage(
   eventName: string,
   pageId: string,
   title: string,
   blockId?: string,
-): void {
+): Promise<void> {
+  try {
+    const targetSpace = await resolveSpaceOf(pageId)
+    const { currentSpaceId, setCurrentSpace } = useSpaceStore.getState()
+    if (targetSpace === null) {
+      logger.warn('deeplink', `${eventName} target space unresolved`, { pageId })
+    } else if (targetSpace !== currentSpaceId) {
+      setCurrentSpace(targetSpace)
+    }
+  } catch (err) {
+    logger.warn('deeplink', `${eventName} target space resolution failed`, { pageId }, err)
+  }
   try {
     if (blockId === undefined) {
       useTabsStore.getState().navigateToPage(pageId, title)
@@ -165,7 +199,7 @@ export async function handleNavigatePayload(
   try {
     let block = unwrap(await commands.getBlock(payload.id))
     if (kind === 'page' || block.block_type === 'page') {
-      safeNavigateToPage(eventName, payload.id, block.content ?? '')
+      await safeNavigateToPage(eventName, payload.id, block.content ?? '')
       return
     }
     // BLOCK target — prefer the denormalized `page_id` column: ONE extra
@@ -174,7 +208,7 @@ export async function handleNavigatePayload(
     // killing the chain mid-walk.
     if (block.page_id !== null && block.page_id !== payload.id) {
       const page = unwrap(await commands.getBlock(block.page_id))
-      safeNavigateToPage(eventName, page.id, page.content ?? '', payload.id)
+      await safeNavigateToPage(eventName, page.id, page.content ?? '', payload.id)
       return
     }
     // No usable `page_id` (orphaned subtree / legacy rows) — walk the
@@ -184,11 +218,11 @@ export async function handleNavigatePayload(
     for (let hop = 0; block.parent_id !== null && hop < MAX_ANCESTOR_HOPS; hop++) {
       block = unwrap(await commands.getBlock(block.parent_id))
       if (block.block_type === 'page') {
-        safeNavigateToPage(eventName, block.id, block.content ?? '', payload.id)
+        await safeNavigateToPage(eventName, block.id, block.content ?? '', payload.id)
         return
       }
     }
-    safeNavigateToPage(
+    await safeNavigateToPage(
       eventName,
       block.id,
       block.content ?? '',
@@ -199,7 +233,7 @@ export async function handleNavigatePayload(
     // pre-#734 behaviour so the link still opens SOMETHING the views
     // can re-resolve on mount.
     logger.warn('deeplink', `${eventName} target resolution failed`, { id: payload.id }, err)
-    safeNavigateToPage(eventName, payload.id, '')
+    await safeNavigateToPage(eventName, payload.id, '')
   }
 }
 

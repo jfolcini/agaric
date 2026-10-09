@@ -17,6 +17,7 @@ import { unwrap } from '@/lib/app-error'
 import { commands } from '@/lib/bindings'
 import { resolveStoreTitle, unresolvedBlockLabel } from '@/lib/block-title'
 import { logger } from '@/lib/logger'
+import { requireActiveScope } from '@/lib/space-scope'
 import { keyFor, useResolveStore } from '@/stores/resolve'
 import { useSpaceStore } from '@/stores/space'
 
@@ -64,24 +65,20 @@ export function collectUncachedLinkIds(
  * Logs and swallows transport errors; honours a cancellation predicate so
  * the caller can drop an answer that no longer applies.
  *
- * Pass `spaceId` to scope the resolve to the active space.
- * Foreign-space targets are filtered out by the backend; we mark them
- * as `deleted: true` placeholders here so the chip's `resolveStatus`
- * lookup hits a cached entry and renders via the broken-link UX
- * instead of the active default.
+ * The resolve is scoped to the active `spaceId`. Foreign-space targets are
+ * filtered out by the backend; we mark them as `deleted: true` placeholders
+ * here so the chip's `resolveStatus` lookup hits a cached entry and renders
+ * via the broken-link UX instead of the active default. With no active space
+ * (store not hydrated) nothing is dispatched (#5415).
  */
 export async function fetchAndCacheLinks(
   ids: ReadonlySet<string>,
   spaceId: string | null,
   isCancelled: () => boolean,
 ): Promise<void> {
+  if (spaceId == null) return
   try {
-    const resolved = unwrap(
-      await commands.batchResolve(
-        [...ids],
-        spaceId == null ? { kind: 'global' } : { kind: 'active', space_id: spaceId },
-      ),
-    )
+    const resolved = unwrap(await commands.batchResolve([...ids], requireActiveScope(spaceId)))
     if (isCancelled()) return
     const store = useResolveStore.getState()
     const resolvedIds = new Set(resolved.map((r) => r.id))

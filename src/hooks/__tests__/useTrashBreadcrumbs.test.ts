@@ -4,7 +4,7 @@
  * deletedPage fallback for purged or missing pages.
  */
 
-import { renderHook, waitFor } from '@testing-library/react'
+import { act, renderHook, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 // #2927 phase 5 — the hook now calls the generated `commands.batchResolve`, so
@@ -38,14 +38,39 @@ import { makeBlock } from '@/__tests__/fixtures'
 import { useTrashBreadcrumbs } from '@/hooks/useTrashBreadcrumbs'
 import type { BlockRow, ResolvedBlock } from '@/lib/bindings'
 import { logger } from '@/lib/logger'
+import { useSpaceStore } from '@/stores/space'
 
 const mockedLoggerWarn = vi.mocked(logger.warn)
 
 beforeEach(() => {
   vi.clearAllMocks()
+  // #5415 — breadcrumb resolution carries the active space.
+  useSpaceStore.setState({ currentSpaceId: 'SPACE_1' })
 })
 
 describe('useTrashBreadcrumbs', () => {
+  it('dispatches nothing while there is no active space, then resolves once one hydrates', async () => {
+    useSpaceStore.setState({ currentSpaceId: null })
+    mockedBatchResolve.mockResolvedValue([
+      { id: 'P1', title: 'Page One', block_type: 'page', deleted: false },
+    ] satisfies ResolvedBlock[])
+    const blocks: BlockRow[] = [makeBlock({ id: 'A', page_id: 'P1' })]
+    const { result, rerender } = renderHook(() => useTrashBreadcrumbs(blocks))
+    rerender()
+
+    expect(mockedBatchResolve).not.toHaveBeenCalled()
+    expect(result.current(blocks[0] as BlockRow)).toBe(null)
+
+    // Hydration is the trigger: the same blocks resolve once a space is known.
+    act(() => {
+      useSpaceStore.setState({ currentSpaceId: 'SPACE_1' })
+    })
+    await waitFor(() => {
+      expect(result.current(blocks[0] as BlockRow)).toBe('Page One')
+    })
+    expect(mockedBatchResolve).toHaveBeenCalledWith(['P1'], { kind: 'active', space_id: 'SPACE_1' })
+  })
+
   it('returns null for blocks without a page_id and never invokes batchResolve', () => {
     const blocks: BlockRow[] = [makeBlock({ id: 'A', page_id: null })]
     const { result } = renderHook(() => useTrashBreadcrumbs(blocks))
@@ -62,7 +87,7 @@ describe('useTrashBreadcrumbs', () => {
 
     const { result } = renderHook(() => useTrashBreadcrumbs(blocks))
 
-    expect(mockedBatchResolve).toHaveBeenCalledWith(['P1'], { kind: 'global' })
+    expect(mockedBatchResolve).toHaveBeenCalledWith(['P1'], { kind: 'active', space_id: 'SPACE_1' })
     // Before resolve flushes: page map empty, getPageLabel returns null.
     expect(result.current(blocks[0] as BlockRow)).toBe(null)
 

@@ -31,7 +31,7 @@ async function seedTasksDueToday(page: Page): Promise<void> {
           content: `long task ${String(i).padStart(2, '0')}`,
           parentId,
           index: null,
-          scope: { kind: 'global' },
+          scope: { kind: 'active', space_id: 'SPACE_PERSONAL' },
           blockId: null,
         })) as { id: string }
         await invoke('set_todo_state', { blockId: block.id, state: 'TODO' })

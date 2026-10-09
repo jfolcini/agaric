@@ -28,7 +28,9 @@ import { unwrap } from '@/lib/app-error'
 import type { PropertyRow } from '@/lib/bindings'
 import { commands } from '@/lib/bindings'
 import { logger } from '@/lib/logger'
+import { requireActiveScope } from '@/lib/space-scope'
 import { cn } from '@/lib/utils'
+import { useSpaceStore } from '@/stores/space'
 
 export interface DependencyIndicatorProps {
   /** Block ID to check for blocked_by property */
@@ -58,6 +60,10 @@ export function DependencyIndicator({
   // cache yet" (initial fetch still pending or block missing from
   // batch). Empty array means "fetched, no properties".
   const providerProps = batchProperties?.get(blockId)
+  // #5415 — the blocker's title resolves in the active space; subscribing
+  // (rather than reading the store inside the effect) re-runs the lookup once
+  // the space hydrates.
+  const currentSpaceId = useSpaceStore((s) => s.currentSpaceId)
 
   useEffect(() => {
     let cancelled = false
@@ -102,10 +108,17 @@ export function DependencyIndicator({
 
         setHasBlockedBy(true)
 
-        // Try to resolve the title of the blocking task
+        // Try to resolve the title of the blocking task. Scoped to the active
+        // space (#5415): a blocker left in another space by "Move to space"
+        // keeps the generic tooltip, as a cross-space link renders broken.
+        // With no space known the tooltip stays generic too.
+        if (currentSpaceId == null) return
         try {
           const resolved = unwrap(
-            await commands.batchResolve([blockedByProp.value_ref], { kind: 'global' }),
+            await commands.batchResolve(
+              [blockedByProp.value_ref],
+              requireActiveScope(currentSpaceId),
+            ),
           )
           if (!cancelled && resolved.length > 0 && resolved[0]?.title) {
             setBlockedByTitle(resolved[0].title)
@@ -134,7 +147,14 @@ export function DependencyIndicator({
     return () => {
       cancelled = true
     }
-  }, [blockId, propertiesCache, batchProperties, batchPropertiesLoading, providerProps])
+  }, [
+    blockId,
+    propertiesCache,
+    batchProperties,
+    batchPropertiesLoading,
+    providerProps,
+    currentSpaceId,
+  ])
 
   if (!hasBlockedBy) return null
 

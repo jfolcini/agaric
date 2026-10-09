@@ -47,6 +47,7 @@ import { queryClient } from '@/lib/query-client'
 import { reportIpcError } from '@/lib/report-ipc-error'
 import { astToFilterProjection, type SearchQueryAST } from '@/lib/search-query'
 import { ValidationCode } from '@/lib/search-query/validation-codes'
+import { requireActiveScope } from '@/lib/space-scope'
 import {
   type RecentPage,
   selectRecentPagesForSpace,
@@ -220,16 +221,15 @@ export function useSearchResults({
       // synchronously inside the callback, so the invoke patch parents the backend
       // command span under this span. Attributes are opaque booleans — never the
       // query text. `is_paged` distinguishes first-page from loadMore.
-      queryFn: async ({ pageParam, signal }): Promise<PageResponse<SearchBlockRow>> =>
-        traceInteraction(
+      queryFn: async ({ pageParam, signal }): Promise<PageResponse<SearchBlockRow>> => {
+        // #5415 — the `enabled` guard already holds the query until a space is
+        // active; this is the same decision at the dispatch point, never `''`.
+        if (currentSpaceId == null) {
+          return { items: [], next_cursor: null, has_more: false, total_count: null }
+        }
+        return traceInteraction(
           INTERACTIONS.SEARCH,
           () =>
-            // #2248 c — `searchBlocks` is space-scoped and rejects an empty space
-            // (`requireActiveScope` throws). The `enabled` guard holds the query
-            // until `currentSpaceId != null`, so the `?? ''` fallback is only a
-            // type-level defensive default that can never be reached — a null space
-            // means "don't search" (query stays disabled), not "match nothing".
-            //
             // FORWARD the AbortSignal (search-cancellation parity): TanStack aborts
             // a superseded fetch's `signal` on a key change, so `searchBlocks` stops
             // waiting on its backend scan instead of running it to completion.
@@ -239,7 +239,7 @@ export function useSearchResults({
                 ...filterParams,
                 cursor: pageParam,
                 limit: PAGINATION_LIMIT,
-                spaceId: currentSpaceId ?? '',
+                spaceId: currentSpaceId,
                 caseSensitive: toggles.caseSensitive,
                 wholeWord: toggles.wholeWord,
                 isRegex: toggles.isRegex,
@@ -252,7 +252,8 @@ export function useSearchResults({
             whole_word: toggles.wholeWord,
             is_paged: pageParam != null,
           },
-        ),
+        )
+      },
       initialPageParam: undefined as string | undefined,
       getNextPageParam: (last) =>
         last.has_more && last.next_cursor != null ? last.next_cursor : undefined,
@@ -414,6 +415,7 @@ export function useSearchResults({
   useEffect(() => {
     // Only resolve page ids we haven't already resolved or
     // already attempted (#153).
+    if (currentSpaceId == null) return
     const parentIds = [
       ...new Set(results.map((b) => b.page_id).filter((id): id is string => id != null)),
     ].filter((id) => !pageTitles.has(id) && !attemptedBreadcrumbIdsRef.current.has(id))
@@ -423,7 +425,7 @@ export function useSearchResults({
     // `loadMore`.
     for (const id of parentIds) attemptedBreadcrumbIdsRef.current.add(id)
     commands
-      .batchResolve(parentIds, { kind: 'global' })
+      .batchResolve(parentIds, requireActiveScope(currentSpaceId))
       .then(unwrap)
       .then((resolved) => {
         if (Array.isArray(resolved)) {
@@ -456,7 +458,7 @@ export function useSearchResults({
     // `pageTitles` participates so the already-resolved filter above sees the
     // latest map; the empty-`parentIds` guard makes the follow-up a no-op.
     // `t` is referentially stable (single-locale app), listed for exhaustive-deps.
-  }, [results, pageTitles, t])
+  }, [results, pageTitles, t, currentSpaceId])
 
   // A monotonic "navigation generation". Each click claims the next
   // generation; only the latest may resolve the spinner / perform the

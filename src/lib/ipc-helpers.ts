@@ -46,7 +46,7 @@ import type {
 } from '@/lib/bindings'
 import { PAGINATION_LIMIT } from '@/lib/constants'
 import type { SafeLimit } from '@/lib/safe-limit'
-import { requireActiveScope, toSpaceScope } from '@/lib/space-scope'
+import { requireActiveScope } from '@/lib/space-scope'
 
 // ---------------------------------------------------------------------------
 // Client-side abort plumbing (no IPC)
@@ -132,7 +132,7 @@ async function collectAllTrashRootIds(spaceId: string): Promise<string[]> {
   let cursor: string | null = null
   for (;;) {
     const page: PageResponse<BlockRow> = unwrap(
-      await commands.listTrash(cursor, PAGINATION_LIMIT, toSpaceScope(spaceId)),
+      await commands.listTrash(cursor, PAGINATION_LIMIT, requireActiveScope(spaceId)),
     )
     ids.push(...page.items.map((b: BlockRow) => b.id))
     if (!page.has_more || page.next_cursor == null) break
@@ -339,14 +339,11 @@ export async function readAttachment(attachmentId: string): Promise<Uint8Array> 
 
 /** Create a new block. Returns the created block with its generated ID.
  *
- * When `blockType === 'page'`, `spaceId` is REQUIRED. The backend rejects
- * page-typed creates without a space ULID with `AppError::Validation`. For
- * page creation, prefer the explicit `commands.createPageInSpace` IPC — it
- * makes the invariant readable at the callsite. The optional `spaceId` here
- * exists so callers stuck on `createBlock` can still satisfy the invariant
- * (and so the specta-bound IPC parameter list matches the Rust signature).
- *
- * Other block types (`content`, `tag`) ignore `spaceId`.
+ * `spaceId` is the active space (#5415): a page or root tag is stamped into
+ * it atomically on the backend; for page creation prefer the explicit
+ * `commands.createPageInSpace` IPC, which makes the invariant readable at
+ * the callsite. A caller with no active space refuses the create instead
+ * of calling this.
  */
 export async function createBlock(params: {
   blockType: string
@@ -354,7 +351,7 @@ export async function createBlock(params: {
   parentId?: string | undefined
   /** #400: 0-based sibling slot among `parentId`'s children; omit to append. */
   index?: number | undefined
-  spaceId?: string | undefined
+  spaceId: string
   /**
    * #2849 PR2 — optional client-generated ULID for optimistic create. When
    * supplied it MUST be a well-formed ULID (see `newBlockId`): the backend uses
@@ -369,7 +366,7 @@ export async function createBlock(params: {
       params.content,
       params.parentId ?? null,
       params.index ?? null,
-      toSpaceScope(params.spaceId),
+      requireActiveScope(params.spaceId),
       params.blockId ?? null,
     ),
   )

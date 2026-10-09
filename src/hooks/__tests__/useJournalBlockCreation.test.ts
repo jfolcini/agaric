@@ -304,7 +304,7 @@ describe('useJournalBlockCreation', () => {
       content: '',
       parentId: 'PEXIST',
       index: null,
-      scope: { kind: 'global' },
+      scope: { kind: 'active', space_id: 'SPACE_TEST' },
       // #2849 PR2 — direct createBlock supplies no client id (null).
       blockId: null,
     })
@@ -569,8 +569,14 @@ describe('useJournalBlockCreation — journal template page', () => {
       blockType: 'content',
       content: 'Notes',
       parentId: templateId,
+      spaceId: 'SPACE_TEST',
     })
-    await createBlock({ blockType: 'content', content: 'nested idea', parentId: notes.id })
+    await createBlock({
+      blockType: 'content',
+      content: 'nested idea',
+      parentId: notes.id,
+      spaceId: 'SPACE_TEST',
+    })
 
     const { result } = setup()
     await act(async () => {

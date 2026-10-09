@@ -31,10 +31,22 @@ import { clearMockErrors, injectMockError, resetMock, SEED_IDS, setupMock } from
 import { deriveLinkEdges } from '@/lib/tauri-mock/link-scan'
 import { blocks, makeBlock, opLog, pageAliases, peerRefs, todayDate } from '@/lib/tauri-mock/seed'
 
-/** Helper — call the captured IPC handler as if invoke() were called. */
+/**
+ * Helper — call the captured IPC handler as if invoke() were called.
+ *
+ * #5415 — `list_blocks` and a page `create_block` have no cross-space form
+ * (`require_active`), so a call that names no scope is sent in the seed space
+ * every row in this file belongs to.
+ */
 function invoke(cmd: string, args: Record<string, unknown> = {}): unknown {
   if (!ipcHandler) throw new Error('setupMock() was not called — no IPC handler captured')
-  return ipcHandler(cmd, args)
+  const needsSpace =
+    cmd === 'list_blocks' || (cmd === 'create_block' && args['blockType'] === 'page')
+  const scoped =
+    needsSpace && args['scope'] === undefined
+      ? { ...args, scope: { kind: 'active', space_id: 'SPACE_PERSONAL' } }
+      : args
+  return ipcHandler(cmd, scoped)
 }
 
 /**
@@ -4634,5 +4646,21 @@ describe('list_pages_with_metadata — inbound same-page exclusion', () => {
         (e) => e.sourceId === SEED_IDS.BLOCK_GS_2 && e.targetId === SEED_IDS.PAGE_QUICK_NOTES,
       ),
     ).toHaveLength(1)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// #5415 — `list_blocks` has no cross-space form: the backend rejects a global
+// scope via `require_active`, and the mock refuses the same call instead of
+// widening.
+// ---------------------------------------------------------------------------
+describe('list_blocks scope', () => {
+  it('refuses a global scope, mirroring require_active', () => {
+    expect(() =>
+      invoke('list_blocks', {
+        request: { parentId: SEED_IDS.PAGE_GETTING_STARTED, limit: 10 },
+        scope: { kind: 'global' },
+      }),
+    ).toThrow(/list_blocks requires an active space scope/)
   })
 })

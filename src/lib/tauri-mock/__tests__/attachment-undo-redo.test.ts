@@ -39,6 +39,7 @@ function newPageId(): string {
     blockType: 'page',
     content: 'Uploads',
     position: null,
+    scope: { kind: 'active', space_id: 'SPACE_PERSONAL' },
   }) as Record<string, unknown>
   return created['id'] as string
 }

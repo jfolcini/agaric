@@ -38,6 +38,7 @@ import type { FilterPrimitive } from '@/lib/bindings'
 import { commands } from '@/lib/bindings'
 import type { PageFilterWithKey } from '@/lib/filters/page-filter-with-key'
 import { logger } from '@/lib/logger'
+import { requireActiveScope } from '@/lib/space-scope'
 import { useNavigationStore } from '@/stores/navigation'
 import { selectPageFiltersForSpace, usePageBrowserFiltersStore } from '@/stores/pageBrowserFilters'
 import { useResolveStore } from '@/stores/resolve'
@@ -169,14 +170,16 @@ export function usePageBrowserFilters(currentSpaceId: string | null): UsePageBro
       return
     }
     const myReqId = ++aliasReqIdRef.current
+    // #5415 — no active space: nothing to resolve against, never dispatch.
+    if (currentSpaceId == null) {
+      setAliasMatchId(null)
+      return
+    }
     const query = filterText.trim()
-    // Pass `spaceId: currentSpaceId` so an alias
-    // pointing at a foreign-space page does not surface here.
+    // Scoped to the active space so an alias pointing at a foreign-space page
+    // does not surface here.
     commands
-      .resolvePageByAlias(
-        query,
-        currentSpaceId == null ? { kind: 'global' } : { kind: 'active', space_id: currentSpaceId },
-      )
+      .resolvePageByAlias(query, requireActiveScope(currentSpaceId))
       .then(unwrap)
       .then((result) => {
         if (myReqId !== aliasReqIdRef.current) return

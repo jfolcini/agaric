@@ -42,9 +42,10 @@ import { LoadingSkeleton } from '@/components/rendering/LoadingSkeleton'
 import { Button } from '@/components/ui/button'
 import { useAdvancedQuery } from '@/hooks/useAdvancedQuery'
 import { unwrap } from '@/lib/app-error'
-import type { AggregateSpec, FilterPrimitive, GroupSpec, SortKey, SpaceScope } from '@/lib/bindings'
+import type { AggregateSpec, FilterPrimitive, GroupSpec, SortKey } from '@/lib/bindings'
 import { commands } from '@/lib/bindings'
 import { notify } from '@/lib/notify'
+import { requireActiveScope } from '@/lib/space-scope'
 import { cn } from '@/lib/utils'
 import {
   type BuilderPath,
@@ -135,9 +136,19 @@ export function AdvancedQueryView({ onNavigate }: AdvancedQueryViewProps): React
     async (name: string): Promise<void> => {
       try {
         const spec = serializeQuerySpec(builder, controls)
-        const scope: SpaceScope =
-          currentSpaceId == null ? { kind: 'global' } : { kind: 'active', space_id: currentSpaceId }
-        const block = unwrap(await commands.createBlock('content', name, null, null, scope, null))
+        // #5415 — no active space means no space to save the view in; refuse
+        // through the catch below rather than create a space-less marker.
+        if (currentSpaceId == null) throw new Error('No active space; cannot save view')
+        const block = unwrap(
+          await commands.createBlock(
+            'content',
+            name,
+            null,
+            null,
+            requireActiveScope(currentSpaceId),
+            null,
+          ),
+        )
         unwrap(
           await commands.setProperty(block.id, VIEW_TYPE_KEY, {
             value_text: QUERY_VIEW_MARKER,

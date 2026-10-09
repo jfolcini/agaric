@@ -21,7 +21,7 @@ import { PAGINATION_LIMIT } from '@/lib/constants'
 import { formatDate, getDateRangeForFilter } from '@/lib/date-utils'
 import type { AgendaFilter } from '@/lib/filter-dimension-metadata'
 import { paginationLimit, type SafeLimit } from '@/lib/safe-limit'
-import { toSpaceScope } from '@/lib/space-scope'
+import { requireActiveScope } from '@/lib/space-scope'
 
 /**
  * Per-page limit for agenda queries — pinned to `PageRequest::new`'s
@@ -31,6 +31,9 @@ import { toSpaceScope } from '@/lib/space-scope'
  * `filtered_blocks_query` call.
  */
 export const AGENDA_QUERY_LIMIT: SafeLimit = paginationLimit(200)
+
+/** #5415 — with no active space there is nothing to list; never dispatch. */
+const EMPTY_RESULT: ExecuteFiltersResult = { blocks: [], hasMore: false, cursor: null }
 
 // ---------------------------------------------------------------------------
 // Types
@@ -158,7 +161,7 @@ async function fetchUnfilteredAgendaPage(
               valueDateRange: null,
               excludeTodoStates: null,
             },
-            toSpaceScope(spaceId),
+            requireActiveScope(spaceId),
           )
           .then(unwrap)
       : Promise.resolve<PageResponse<BlockRow> | null>(null),
@@ -179,13 +182,13 @@ async function fetchUnfilteredAgendaPage(
               valueDateRange: null,
               excludeTodoStates: null,
             },
-            toSpaceScope(spaceId),
+            requireActiveScope(spaceId),
           )
           .then(unwrap)
       : Promise.resolve<PageResponse<BlockRow> | null>(null),
     state.undated !== undefined
       ? commands
-          .listUndatedTasks(state.undated ?? null, AGENDA_QUERY_LIMIT, toSpaceScope(spaceId))
+          .listUndatedTasks(state.undated ?? null, AGENDA_QUERY_LIMIT, requireActiveScope(spaceId))
           .then(unwrap)
       : Promise.resolve<PageResponse<BlockRow> | null>(null),
   ])
@@ -227,9 +230,10 @@ export async function loadMoreUnfilteredAgenda(
   cursor: string,
   spaceId: string | null,
 ): Promise<ExecuteFiltersResult> {
+  if (spaceId == null) return EMPTY_RESULT
   const state = decodeUnfilteredCursor(cursor)
-  if (!state) return { blocks: [], hasMore: false, cursor: null }
-  return fetchUnfilteredAgendaPage(state, spaceId ?? '')
+  if (!state) return EMPTY_RESULT
+  return fetchUnfilteredAgendaPage(state, spaceId)
 }
 
 // ---------------------------------------------------------------------------
@@ -587,7 +591,7 @@ async function fetchFilteredBlocksWindow(
         propertyFilters,
         tagFilters ?? null,
         null,
-        toSpaceScope(spaceId),
+        requireActiveScope(spaceId),
         cursor ?? null,
         AGENDA_QUERY_LIMIT,
       ),
@@ -639,7 +643,7 @@ async function resolveTagFilters(
   const tagIds: string[] = []
   for (const value of tagValues) {
     const candidates = unwrap(
-      await commands.listTagsByPrefix(value, PAGINATION_LIMIT, toSpaceScope(spaceId)),
+      await commands.listTagsByPrefix(value, PAGINATION_LIMIT, requireActiveScope(spaceId)),
     )
     const match = candidates.find((t) => t.name.toLowerCase() === value.toLowerCase())
     if (match) tagIds.push(match.tag_id)
@@ -669,26 +673,19 @@ async function resolveTagFilters(
  *   OR together (#720); tag filters union via `mode: 'or'` across
  *   resolved tag IDs.
  *
- * `spaceId` (Phase 4) — when set, scopes every dispatched IPC
- * to the active space; when `null` the call is cross-space (legacy).
- * Normalized to `''` at this boundary so internal helpers can take
- * `spaceId: string` (see FE-L-12).
+ * `spaceId` — the active space every dispatched IPC is scoped to; `null`
+ * (store not hydrated) returns an empty result without dispatching (#5415).
  */
 export async function executeAgendaFilters(
   filters: AgendaFilter[],
   spaceId: string | null,
 ): Promise<ExecuteFiltersResult> {
-  // FE-L-12 — normalize once at the public boundary. Every internal
-  // helper takes `spaceId: string`; none of them re-apply the fallback.
-  const normalizedSpaceId = spaceId ?? ''
+  if (spaceId == null) return EMPTY_RESULT
 
   if (filters.length === 0) {
     // Default: blocks with due_date or scheduled_date, plus undated
     // tasks. #721 — one windowed page per source; `null` = first page.
-    return fetchUnfilteredAgendaPage(
-      { due: null, scheduled: null, undated: null },
-      normalizedSpaceId,
-    )
+    return fetchUnfilteredAgendaPage({ due: null, scheduled: null, undated: null }, spaceId)
   }
 
   // ── Active-filter path: translate every dimension into the single
@@ -698,7 +695,7 @@ export async function executeAgendaFilters(
   //    Overdue-with-range combos, #720).
   const today = new Date()
   const { propertyFilters, postFilters } = translateFilters(filters, today)
-  const tagFilters = await resolveTagFilters(filters, normalizedSpaceId)
+  const tagFilters = await resolveTagFilters(filters, spaceId)
 
   // A tag dimension whose values ALL failed to resolve is unsatisfiable;
   // because dimensions AND together, the whole query is empty — even if
@@ -718,12 +715,7 @@ export async function executeAgendaFilters(
     return { blocks: [], hasMore: false, cursor: null, today }
   }
 
-  const window = await fetchFilteredBlocksWindow(
-    propertyFilters,
-    tagFilters,
-    postFilters,
-    normalizedSpaceId,
-  )
+  const window = await fetchFilteredBlocksWindow(propertyFilters, tagFilters, postFilters, spaceId)
   return { ...window, today }
 }
 
@@ -745,7 +737,6 @@ export async function executeAgendaFilters(
  * Mirror semantics of `executeAgendaFilters`:
  * - Same `propertyFilters` / `tagFilters` translation per dimension.
  * - Same short-circuit when every dimension resolves to nothing.
- * - Same `spaceId` normalization at the boundary (FE-L-12).
  *
  * `today` (#720) — the reference date page 1's translation used
  * (`ExecuteFiltersResult.today`). Threading it through keeps every page
@@ -760,10 +751,10 @@ export async function loadMoreAgendaFilters(
   spaceId: string | null,
   today: Date = new Date(),
 ): Promise<ExecuteFiltersResult> {
-  const normalizedSpaceId = spaceId ?? ''
+  if (spaceId == null) return { ...EMPTY_RESULT, today }
 
   const { propertyFilters, postFilters } = translateFilters(filters, today)
-  const tagFilters = await resolveTagFilters(filters, normalizedSpaceId)
+  const tagFilters = await resolveTagFilters(filters, spaceId)
 
   // Mirror `executeAgendaFilters`: an all-unresolved tag dimension is
   // unsatisfiable and collapses the cross-dimension AND to empty (#1594).
@@ -782,7 +773,7 @@ export async function loadMoreAgendaFilters(
     propertyFilters,
     tagFilters,
     postFilters,
-    normalizedSpaceId,
+    spaceId,
     cursor,
   )
   return { ...window, today }

@@ -25,6 +25,7 @@ import {
   reversePayloadFor,
   sortOpLogNewestFirst,
   validationRejection,
+  readSpaceScope,
 } from '@/lib/tauri-mock/handlers/shared'
 import { applyRevertForOp } from '@/lib/tauri-mock/revert'
 import {
@@ -345,8 +346,7 @@ export const historyHandlers = {
     const a = (args ?? {}) as Record<string, unknown>
     const pageId = (a['pageId'] as string | undefined) ?? GLOBAL_HISTORY_PAGE_ID
     const opTypeFilter = (a['opTypeFilter'] as string | null | undefined) ?? null
-    const scope = a['scope'] as { kind: string; space_id?: string } | undefined
-    const spaceId = scope?.kind === 'active' ? (scope.space_id ?? null) : null
+    const spaceId = readSpaceScope(a)
     // The backend runs exactly one of two branches, and `space_id` belongs to
     // only one of them: a real `page_id` scopes through the recursive
     // `page_blocks` CTE and IGNORES the space (a page is itself space-bound),

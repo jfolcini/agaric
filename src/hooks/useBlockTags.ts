@@ -7,6 +7,7 @@ import { i18n } from '@/lib/i18n'
 import { logger } from '@/lib/logger'
 import { notifyTagAdded, subscribeToNameChanges } from '@/lib/name-change-bus'
 import { notify } from '@/lib/notify'
+import { requireActiveScope } from '@/lib/space-scope'
 import { usePageBlockStoreApi } from '@/stores/page-blocks'
 import { useResolveStore } from '@/stores/resolve'
 import { useSpaceStore } from '@/stores/space'
@@ -215,15 +216,11 @@ export function useBlockTags(blockId: string | null): UseBlockTagsReturn {
       const spaceId = useSpaceStore.getState().currentSpaceId
       let tagId: string
       try {
+        // #5415 — no active space means no space to create the tag in; refuse
+        // through the catch below rather than create a space-less tag.
+        if (spaceId == null) throw new Error('No active space; cannot create tag')
         const resp = unwrap(
-          await commands.createBlock(
-            'tag',
-            trimmed,
-            null,
-            null,
-            spaceId == null ? { kind: 'global' } : { kind: 'active', space_id: spaceId },
-            null,
-          ),
+          await commands.createBlock('tag', trimmed, null, null, requireActiveScope(spaceId), null),
         )
         tagId = resp.id
       } catch (error) {

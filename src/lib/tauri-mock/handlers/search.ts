@@ -27,6 +27,7 @@ import {
   type PageMetaRow,
   type TypedHandlers,
   validationRejection,
+  readSpaceScope,
 } from '@/lib/tauri-mock/handlers/shared'
 import { blockTags, blocks, properties } from '@/lib/tauri-mock/seed'
 
@@ -2621,8 +2622,7 @@ export const searchHandlers = {
     // `toSpaceScope(spaceId)` and the literal `spaceId` arg is no
     // longer present. Active scope: drop blocks whose owning page does
     // not carry `space = ?spaceId`. Global: unfiltered.
-    const scope = a['scope'] as { kind: string; space_id?: string } | undefined
-    const spaceId = scope?.kind === 'active' ? (scope.space_id ?? null) : null
+    const spaceId = readSpaceScope(a)
 
     const items = Array.from(blocks.values()).filter((b) => {
       if (b['deleted_at']) return false
@@ -2664,8 +2664,7 @@ export const searchHandlers = {
     const tagFilters = (a['tagFilters'] as Record<string, unknown> | null) ?? null
     const blockType = (a['blockType'] as string | null) ?? null
     // Honour `scope: SpaceScope` (mirrors `filtered_blocks_query_inner`).
-    const scope = a['scope'] as { kind: string; space_id?: string } | undefined
-    const spaceId = scope?.kind === 'active' ? (scope.space_id ?? null) : null
+    const spaceId = readSpaceScope(a)
 
     const items = [...blocks.values()].filter((b) => {
       if (b['deleted_at']) return false

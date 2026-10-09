@@ -3,7 +3,7 @@ import { useCallback } from 'react'
 import { useItemCount } from '@/hooks/useItemCount'
 import { unwrap } from '@/lib/app-error'
 import { commands } from '@/lib/bindings'
-import { toSpaceScope } from '@/lib/space-scope'
+import { requireActiveScope } from '@/lib/space-scope'
 import { useSpaceStore } from '@/stores/space'
 
 /** Returns the number of trashed items. Polls every 30 s and on focus. */
@@ -18,7 +18,7 @@ export function useTrashCount(): number {
       // sentinel to the backend (which would now reject a malformed scope).
       currentSpaceId == null
         ? Promise.resolve(0)
-        : commands.countTrash(toSpaceScope(currentSpaceId)).then(unwrap),
+        : commands.countTrash(requireActiveScope(currentSpaceId)).then(unwrap),
     [currentSpaceId],
   )
   return useItemCount(queryFn, 30_000)
