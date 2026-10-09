@@ -93,8 +93,8 @@ use crate::materializer::{
     dispatch_restore_descendants,
 };
 
-/// Low case counts keep the suite fast (the apply pipeline is DB-bound). Bump
-/// locally via `PROPTEST_CASES` for a deeper search.
+/// Low case counts keep the suite fast (the apply pipeline is DB-bound). Raise
+/// these locally for a deeper search.
 const B2_CASES: u32 = 48;
 const B3_CASES: u32 = 32;
 const B4_CASES: u32 = 32;
@@ -105,7 +105,7 @@ const B5_CASES: u32 = 32;
 /// #3345 B6 (reconciliation oracle) runs the from-base rebuild after EVERY op
 /// of the chain, so its per-case cost grows with chain length. Kept low
 /// deliberately — the oracle's value is in being run on every generated shape,
-/// not in exhausting the space; bump with `PROPTEST_CASES` for a deeper search.
+/// not in exhausting the space; raise it locally for a deeper search.
 const B6_CASES: u32 = 16;
 
 /// Short op chains: a handful of ops already exercises create / edit / move /

@@ -582,8 +582,8 @@ async fn drive_blob_sequence(actions: &[BlobAction]) -> Result<OracleCoverage, S
 }
 
 /// Low case count keeps the suite fast (each case builds a pool, writes real
-/// files and runs a real directory-walking GC per step). Bump locally with
-/// `PROPTEST_CASES` for a deeper search.
+/// files and runs a real directory-walking GC per step). Raise it locally
+/// for a deeper search.
 const BLOB_CASES: u32 = 12;
 
 proptest! {

@@ -123,7 +123,7 @@
 //! random forests; 32 randomized cases × trees up to 20 nodes (with ~1-in-5
 //! pre-deleted blocks and multi-level subtrees) still exercises deep
 //! cascades, mixed active/tombstoned descendants, and the
-//! restore-by-timestamp cohort selection. Bump via `PROPTEST_CASES` for a
+//! restore-by-timestamp cohort selection. Raise [`B3_CASES`] for a
 //! deeper local search.
 
 use crate::commands::blocks::crud::{delete_block_inner, restore_block_inner};
