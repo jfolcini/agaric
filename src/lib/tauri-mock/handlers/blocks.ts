@@ -22,6 +22,7 @@ import {
   appendSlot,
   assertValidReservedPropertyValue,
   comparePositionThenId,
+  createPageInSpace,
   deleteCohort,
   findLivePageByTitle,
   insertAtSlotAndRenumber,
@@ -2302,42 +2303,28 @@ export const blocksHandlers = {
   // ---------------------------------------------------------------------------
   // Quick capture
   //
-  // Creates a content block under today's daily page in the requested
-  // space and returns the new BlockRow. The mock uses the seeded
-  // `PAGE_DAILY` as the parent when available so the new block shows up
-  // in the daily-page list_blocks query like the real backend would.
+  // Appends a content block to today's daily page in the requested space,
+  // creating the day first when it is missing — born with the space's
+  // journal template, as `createPageInSpace` mirrors (#5395) — and returns
+  // the new BlockRow.
   // ---------------------------------------------------------------------------
 
   quick_capture_block: (args) => {
     const a = args as Record<string, unknown>
     const content = (a['content'] as string) ?? ''
-    // Prefer today's daily page as the parent so the captured block
-    // shows up where the UI expects it.  Fall back to the supplied
-    // spaceId if the daily page is missing for any reason.
+    const spaceId = (a['spaceId'] as string | null) ?? null
     // Local date, like the seed's daily page and the backend's `chrono::Local`.
     const todayIso = todayDate()
-    let parentId: string | null = null
-    for (const b of blocks.values()) {
-      if (b['block_type'] === 'page' && b['content'] === todayIso) {
-        parentId = b['id'] as string
-        break
-      }
-    }
-    if (parentId == null) {
-      parentId = (a['spaceId'] as string | null) ?? null
-    }
+    const parentId =
+      findLivePageByTitle(todayIso, spaceId) ?? createPageInSpace(null, todayIso, spaceId)
     const id = fakeId()
-    const siblings = [...blocks.values()].filter(
-      (b) => b['parent_id'] === parentId && !b['deleted_at'],
-    )
-    const position = siblings.length
     const row = {
       id,
       block_type: 'content',
       content,
       parent_id: parentId,
       page_id: parentId,
-      position,
+      position: 0,
       deleted_at: null,
       todo_state: null,
       priority: null,
@@ -2345,12 +2332,13 @@ export const blocksHandlers = {
       scheduled_date: null,
     }
     blocks.set(id, row)
+    insertAtSlotAndRenumber(parentId, id, appendSlot(parentId, id))
     pushOp('create_block', {
       block_id: id,
       content,
       parent_id: parentId,
       block_type: 'content',
-      position,
+      position: row.position,
     })
     return row
   },

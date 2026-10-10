@@ -36,6 +36,7 @@ import {
   blocks,
   blockTagRefs,
   blockTags,
+  fakeId,
   type MockOpLogEntry,
   opLog,
   properties,
@@ -75,6 +76,196 @@ export function findLivePageByTitle(
     return id
   }
   return null
+}
+
+/**
+ * The dense 1-based rank a block appended to `parentId`'s children takes.
+ *
+ * Two rules the backend applies and a plain `siblings.length` does not.
+ * Positions are DENSE and 1-BASED (`insertAtSlotAndRenumber`), and a
+ * SOFT-DELETED sibling keeps its slot (#4669, #419), so tombstones count.
+ *
+ * At the ROOT the group is also per SPACE ({@link spaceRootGroup}), not the
+ * whole `parent_id = NULL` set. That is why a new space comes out at 1 and the
+ * first page created inside it at 2.
+ *
+ * The rank survives only until the next ROOT renumber: `insertAtSlotAndRenumber(null, …)`
+ * densifies the whole cross-space `parent_id = null` group and overwrites it.
+ */
+export function nextDenseRank(parentId: string | null, spaceId: string | null): number {
+  if (parentId === null) return spaceRootGroup(spaceId).length + 1
+  let siblings = 0
+  for (const b of blocks.values()) {
+    if ((b['parent_id'] as string | null) !== parentId) continue
+    siblings += 1
+  }
+  return siblings + 1
+}
+
+/**
+ * Mirror of `create_page_in_space_inner`: a page in `spaceId` titled
+ * `content`, its `space` stamped in the same step. An existing title resolves
+ * to that page (#4723). A date title names a journal day, so the page is born
+ * with the space's journal template ({@link copyJournalTemplateBlocks},
+ * #5395), as the backend does for the journal view, Quick Capture and the MCP
+ * `journal_for_date` tool alike. Returns the page id.
+ */
+export function createPageInSpace(
+  parentId: string | null,
+  content: string | null,
+  spaceId: string | null,
+): string {
+  const existing = findLivePageByTitle(content, spaceId)
+  if (existing !== null) return existing
+  const id = fakeId()
+  const position = nextDenseRank(parentId, spaceId)
+  const row = {
+    id,
+    block_type: 'page',
+    content,
+    parent_id: parentId,
+    page_id: id,
+    position,
+    deleted_at: null,
+    todo_state: null,
+    priority: null,
+    due_date: null,
+    scheduled_date: null,
+    // #3081 — the `blocks.space_id` column, which the alias readers below
+    // scope on; the `space` property stays for the handlers that read it.
+    space_id: spaceId,
+  }
+  blocks.set(id, row)
+  if (spaceId) {
+    if (!properties.has(id)) properties.set(id, new Map())
+    properties.get(id)?.set('space', {
+      block_id: id,
+      key: 'space',
+      value_text: null,
+      value_num: null,
+      value_date: null,
+      value_ref: spaceId,
+      value_bool: null,
+    })
+  }
+  pushOp('create_block', {
+    block_id: id,
+    content: row.content,
+    parent_id: parentId,
+    block_type: 'page',
+    position,
+  })
+  // #5057 — the backend sets the page's space through `set_property` inside
+  // the SAME transaction, so its op log carries two ops, not one. The mock
+  // appended only the `create_block` until a conformance fixture compared
+  // the two digests.
+  if (spaceId) pushOp('set_property', { block_id: id, key: 'space', from_value: null })
+  if (content !== null && isJournalDayTitle(content)) {
+    copyJournalTemplateBlocks(id, spaceId, content)
+  }
+  return id
+}
+
+/** `YYYY-MM-DD` and a real calendar day: the backend's `validate_date_format`. */
+function isJournalDayTitle(title: string): boolean {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(title)
+  if (m === null) return false
+  const [year, month, day] = [Number(m[1]), Number(m[2]), Number(m[3])]
+  const d = new Date(year, month - 1, day)
+  return d.getFullYear() === year && d.getMonth() === month - 1 && d.getDate() === day
+}
+
+/**
+ * #5395 — mirror of `apply_journal_template_in_tx`: the live page of `spaceId`
+ * flagged `journal-template = true` with the smallest id is the template, and
+ * its content blocks are copied under the day page `dayPageId`, nesting
+ * included, each with its variables expanded against `date`. DELIBERATE
+ * APPROXIMATION: the backend copies as Duplicate does, properties and task
+ * stamps included; the mock copies content and nesting only.
+ */
+function copyJournalTemplateBlocks(dayPageId: string, spaceId: string | null, date: string): void {
+  const template = [...blocks.values()]
+    .filter(
+      (b) =>
+        b['block_type'] === 'page' &&
+        !b['deleted_at'] &&
+        ownerSpaceOf(b) === spaceId &&
+        properties.get(b['id'] as string)?.get('journal-template')?.['value_text'] === 'true',
+    )
+    .toSorted((x, y) => compareUtf8Bytes(x['id'] as string, y['id'] as string))[0]
+  if (template === undefined) return
+  const templateId = template['id'] as string
+  const copyChildren = (sourceParent: string, destParent: string): void => {
+    const children = [...blocks.values()]
+      .filter(
+        (b) => b['parent_id'] === sourceParent && !b['deleted_at'] && b['block_type'] === 'content',
+      )
+      .toSorted(comparePositionThenId)
+    for (const source of children) {
+      const id = fakeId()
+      const row = {
+        id,
+        block_type: 'content',
+        content: expandJournalTemplateVariables((source['content'] as string | null) ?? '', date),
+        parent_id: destParent,
+        page_id: dayPageId,
+        position: 0,
+        deleted_at: null,
+        todo_state: null,
+        priority: null,
+        due_date: null,
+        scheduled_date: null,
+        space_id: null,
+      }
+      blocks.set(id, row)
+      insertAtSlotAndRenumber(destParent, id, appendSlot(destParent, id))
+      pushOp('create_block', {
+        block_id: id,
+        content: row.content,
+        parent_id: destParent,
+        block_type: 'content',
+        position: row.position,
+      })
+      copyChildren(source['id'] as string, id)
+    }
+  }
+  copyChildren(templateId, dayPageId)
+}
+
+/**
+ * Mirror of `expand_journal_template_variables`: `<% today %>`, `<% time %>`,
+ * `<% datetime %>`, `<% page title %>`, the `{{date}}` / `{{time}}` /
+ * `{{title}}` spellings, and `{{cursor}}` stripped. Name case-insensitive,
+ * inner whitespace collapsed, a `:FORMAT` suffix dropped; anything else stays.
+ */
+export function expandJournalTemplateVariables(content: string, date: string): string {
+  const now = new Date()
+  const clock = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`
+  const resolve = (whole: string, body: string): string => {
+    const head = body.split(':')[0] ?? ''
+    const name = head.trim().split(/\s+/).join(' ').toLowerCase()
+    switch (name) {
+      case 'today':
+      case 'date':
+      case 'page title':
+      case 'title': {
+        return date
+      }
+      case 'time': {
+        return clock
+      }
+      case 'datetime': {
+        return `${date} ${clock}`
+      }
+      case 'cursor': {
+        return ''
+      }
+      default: {
+        return whole
+      }
+    }
+  }
+  return content.replace(/<%([\s\S]*?)%>/g, resolve).replace(/\{\{([\s\S]*?)\}\}/g, resolve)
 }
 
 /** Shorthand for a mock `invalid_operation` rejection — mirrors `AppError::InvalidOperation(...)` (#2463 kind-parity rule). */

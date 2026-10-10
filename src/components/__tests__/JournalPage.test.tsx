@@ -277,160 +277,6 @@ function renderJournal(props?: { onNavigateToPage?: (pageId: string, title?: str
 // Extracted to keep the caller's mockImplementation under the cognitive
 // complexity limit. Each helper models one command's response shape.
 
-/** `list_blocks` response when loading the template page's children. */
-function templateListBlocksResponse(args: unknown): unknown {
-  // #2277 item 7 — list_blocks params now nest under `request`.
-  const params = (args as { request?: { parentId?: string } } | undefined)?.request
-  if (params?.parentId === 'TMPL-PAGE') {
-    return {
-      items: [
-        {
-          id: 'TC1',
-          block_type: 'content',
-          content: '## Morning Review',
-          parent_id: 'TMPL-PAGE',
-          position: 0,
-        },
-        {
-          id: 'TC2',
-          block_type: 'content',
-          content: '## Tasks',
-          parent_id: 'TMPL-PAGE',
-          position: 1,
-        },
-      ],
-      next_cursor: null,
-      has_more: false,
-      total_count: null,
-    }
-  }
-  return emptyPage
-}
-
-/**
- * `load_page_subtree` response used by `insertTemplateBlocks` after
- * limit-clamp-followup.  #1258 — the command now returns the `PageSubtree`
- * wrapper `{ blocks, truncated, total }` (the root is excluded by contract
- * — see `tauri.ts:loadPageSubtree`).
- */
-function templateLoadPageSubtreeResponse(args: unknown): unknown {
-  const params = args as { rootBlockId?: string } | undefined
-  if (params?.rootBlockId === 'TMPL-PAGE') {
-    const blocks = [
-      {
-        id: 'TC1',
-        block_type: 'content',
-        content: '## Morning Review',
-        parent_id: 'TMPL-PAGE',
-        position: 0,
-      },
-      {
-        id: 'TC2',
-        block_type: 'content',
-        content: '## Tasks',
-        parent_id: 'TMPL-PAGE',
-        position: 1,
-      },
-    ]
-    return { blocks, truncated: false, total: blocks.length }
-  }
-  return { blocks: [], truncated: false, total: 0 }
-}
-
-/** `query_by_property` response that advertises the journal template page. */
-function templateQueryByPropertyResponse(args: unknown): unknown {
-  // #2277 item 7 — query_by_property params now nest under `request`.
-  const params = (args as { request: { key: string } }).request
-  if (params.key === 'journal-template') {
-    return {
-      items: [
-        {
-          id: 'TMPL-PAGE',
-          block_type: 'page',
-          content: 'Journal Template',
-        },
-      ],
-      next_cursor: null,
-      has_more: false,
-      total_count: null,
-    }
-  }
-  return emptyPage
-}
-
-/** `create_block` response for non-page blocks created under the daily page. */
-function templateCreateBlockResponse(args: unknown, todayStr: string): unknown {
-  const params = args as { blockType: string; content?: string; parentId?: string }
-  if (params.blockType === 'page') {
-    // Legacy path retained for the helper unit tests below; the
-    // production callsite now routes pages through
-    // `create_page_in_space`.
-    return {
-      id: 'DP-TMPL',
-      block_type: 'page',
-      content: todayStr,
-      parent_id: null,
-      position: null,
-    }
-  }
-  if (params.blockType === 'content') {
-    return {
-      id: `NEW-${params.content?.replace(/\s+/g, '-') ?? 'block'}`,
-      block_type: 'content',
-      content: params.content ?? '',
-      parent_id: params.parentId,
-      position: 0,
-    }
-  }
-  return emptyPage
-}
-
-/**
- * `create_blocks_batch` response. Returns one
- * BlockRow per spec under `blocks` (plus empty `op_refs`), mirroring the
- * per-spec creation that the legacy per-line `create_block` loop produced. Test code can find the spec
- * for a given content string via the same `mockedInvoke.mock.calls`
- * filter pattern, just looking inside `args.specs[*]` instead of the
- * top-level args.
- */
-function templateCreateBlocksBatchResponse(args: unknown): unknown {
-  const params = args as
-    | { specs?: Array<{ blockType: string; content?: string; parentId?: string }> }
-    | undefined
-  const specs = params?.specs ?? []
-  return {
-    blocks: specs.map((s) => ({
-      id: `NEW-${s.content?.replace(/\s+/g, '-') ?? 'block'}`,
-      block_type: s.blockType,
-      content: s.content ?? '',
-      parent_id: s.parentId,
-      position: 0,
-    })),
-    op_refs: [],
-  }
-}
-
-/** Dispatcher used by the `auto-create applies journal template` test. */
-function makeJournalTemplateMockImpl(todayStr: string) {
-  return async (cmd: string, args?: unknown): Promise<unknown> => {
-    const bug48 = bug48EmptyResponse(cmd)
-    if (bug48 !== BUG48_NOT_HANDLED) return bug48
-    if (cmd === 'list_blocks') return templateListBlocksResponse(args)
-    if (cmd === 'load_page_subtree') return templateLoadPageSubtreeResponse(args)
-    if (cmd === 'query_by_property') return templateQueryByPropertyResponse(args)
-    // H-3b — JournalPage now routes page creation through
-    // `create_page_in_space`. The IPC returns the new page ULID as a
-    // plain string (see backend `create_page_in_space` Tauri command).
-    if (cmd === 'create_page_in_space') return 'DP-TMPL'
-    // `insertTemplateBlocks` issues one
-    // `create_blocks_batch` IPC per depth level instead of N
-    // `create_block` calls.
-    if (cmd === 'create_blocks_batch') return templateCreateBlocksBatchResponse(args)
-    if (cmd === 'create_block') return templateCreateBlockResponse(args, todayStr)
-    return emptyPage
-  }
-}
-
 describe('JournalPage', () => {
   // ── Daily Mode (default) ────────────────────────────────────────────
 
@@ -2679,10 +2525,28 @@ describe('JournalPage', () => {
       expect(createPageCalls).toHaveLength(0)
     })
 
-    it('auto-create applies journal template when it exists', async () => {
+    it("focuses the first block the backend put on today's page (#5395)", async () => {
+      // The journal template is copied by the backend inside
+      // `create_page_in_space`; the frontend inserts nothing and only moves
+      // the caret to the day's first block.
       const todayStr = formatDate(new Date())
 
-      mockedInvoke.mockImplementation(makeJournalTemplateMockImpl(todayStr))
+      mockedInvoke.mockImplementation(async (cmd: string) => {
+        const bug48 = bug48EmptyResponse(cmd)
+        if (bug48 !== BUG48_NOT_HANDLED) return bug48
+        if (cmd === 'create_page_in_space') return 'DP-TMPL'
+        if (cmd === 'first_child_for_blocks') {
+          return {
+            'DP-TMPL': makeBlockRow({
+              id: 'TC1',
+              content: '## Morning Review',
+              parent_id: 'DP-TMPL',
+              position: 1,
+            }),
+          }
+        }
+        return emptyPage
+      })
 
       renderJournal()
 
@@ -2693,47 +2557,16 @@ describe('JournalPage', () => {
           spaceId: 'SPACE_TEST',
         })
       })
-
       await waitFor(() => {
-        expect(mockedInvoke).toHaveBeenCalledWith(
-          'query_by_property',
-          // #2277 item 7 — query params nest under `request`.
-          expect.objectContaining({
-            request: expect.objectContaining({
-              key: 'journal-template',
-              valueText: 'true',
-            }),
-          }),
-        )
+        expect(useBlockStore.getState().focusedBlockId).toBe('TC1')
       })
 
-      // limit-clamp-followup — `insertTemplateBlocks` now fetches the
-      // whole template subtree via `load_page_subtree(rootBlockId)`
-      // instead of recursing through `list_blocks(parentId)`.
-      await waitFor(() => {
-        expect(mockedInvoke).toHaveBeenCalledWith(
-          'load_page_subtree',
-          expect.objectContaining({
-            rootBlockId: 'TMPL-PAGE',
-          }),
-        )
-      })
-
-      // `insertTemplateBlocks` collapses the per-child
-      // `create_block` loop into a single `create_blocks_batch` per
-      // depth level. The two top-level template children land in one
-      // batch; assert on the `specs` array.
-      await waitFor(() => {
-        const batchCalls = mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'create_blocks_batch')
-        expect(batchCalls.length).toBeGreaterThan(0)
-      })
-      const batchCall = mockedInvoke.mock.calls.find(([cmd]) => cmd === 'create_blocks_batch')
-      const batchSpecs = (batchCall?.[1] as { specs: Array<Record<string, unknown>> } | undefined)
-        ?.specs
-      const morningReview = batchSpecs?.find((s) => s['content'] === '## Morning Review')
-      const tasks = batchSpecs?.find((s) => s['content'] === '## Tasks')
-      expect(morningReview).toMatchObject({ blockType: 'content', parentId: 'DP-TMPL' })
-      expect(tasks).toMatchObject({ blockType: 'content', parentId: 'DP-TMPL' })
+      const inserted = mockedInvoke.mock.calls.filter(([cmd]) =>
+        ['query_by_property', 'load_page_subtree', 'create_blocks_batch', 'create_block'].includes(
+          cmd,
+        ),
+      )
+      expect(inserted).toHaveLength(0)
 
       // #5438 — exactly one page, and no `get_journal_page_by_date` probe:
       // the page map this mount fetched already said today had none.
@@ -2743,16 +2576,6 @@ describe('JournalPage', () => {
       expect(
         mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'get_journal_page_by_date'),
       ).toHaveLength(0)
-
-      // No empty-content content specs should appear (regression guard
-      // for the legacy "extra blank seed block" bug).
-      const emptyBlockSpecs = mockedInvoke.mock.calls
-        .filter(([cmd]) => cmd === 'create_blocks_batch')
-        .flatMap(
-          ([, args]) => (args as { specs: Array<{ blockType: string; content: string }> }).specs,
-        )
-        .filter((s) => s.blockType === 'content' && s.content === '')
-      expect(emptyBlockSpecs).toHaveLength(0)
     })
   })
 
@@ -3246,89 +3069,6 @@ describe('JournalPage', () => {
         expect(scheduledDots).toHaveLength(2)
         expect(propDots).toHaveLength(2)
       })
-    })
-  })
-
-  // ── Smoke tests for journal-template mock helpers ──────────────────
-
-  describe('journal template mock helpers', () => {
-    it('templateListBlocksResponse: returns the template children for TMPL-PAGE', () => {
-      const result = templateListBlocksResponse({ request: { parentId: 'TMPL-PAGE' } }) as {
-        items: Array<{ id: string; content: string }>
-        has_more: boolean
-      }
-      expect(result.items).toHaveLength(2)
-      expect(result.items[0]?.id).toBe('TC1')
-      expect(result.items[0]?.content).toBe('## Morning Review')
-      expect(result.items[1]?.id).toBe('TC2')
-      expect(result.items[1]?.content).toBe('## Tasks')
-      expect(result.has_more).toBe(false)
-    })
-
-    it('templateListBlocksResponse: returns emptyPage for any other parentId', () => {
-      expect(templateListBlocksResponse({ request: { parentId: 'OTHER-PAGE' } })).toBe(emptyPage)
-      expect(templateListBlocksResponse({ request: {} })).toBe(emptyPage)
-    })
-
-    it('templateQueryByPropertyResponse: returns the template page for `journal-template` key', () => {
-      const result = templateQueryByPropertyResponse({ request: { key: 'journal-template' } }) as {
-        items: Array<{ id: string; content: string }>
-      }
-      expect(result.items).toHaveLength(1)
-      expect(result.items[0]?.id).toBe('TMPL-PAGE')
-      expect(result.items[0]?.content).toBe('Journal Template')
-    })
-
-    it('templateQueryByPropertyResponse: returns emptyPage for any other key', () => {
-      expect(templateQueryByPropertyResponse({ request: { key: 'something-else' } })).toBe(
-        emptyPage,
-      )
-    })
-
-    it('templateCreateBlockResponse: returns a daily page when blockType is `page`', () => {
-      const result = templateCreateBlockResponse({ blockType: 'page' }, '2024-01-15') as {
-        id: string
-        content: string
-        parent_id: null
-      }
-      expect(result.id).toBe('DP-TMPL')
-      expect(result.content).toBe('2024-01-15')
-      expect(result.parent_id).toBe(null)
-    })
-
-    it('templateCreateBlockResponse: returns a derived content block when blockType is `content`', () => {
-      const result = templateCreateBlockResponse(
-        { blockType: 'content', content: '## Morning Review', parentId: 'DP-TMPL' },
-        '2024-01-15',
-      ) as { id: string; content: string; parent_id: string }
-      expect(result.id).toBe('NEW-##-Morning-Review')
-      expect(result.content).toBe('## Morning Review')
-      expect(result.parent_id).toBe('DP-TMPL')
-    })
-
-    it('templateCreateBlockResponse: falls back to emptyPage for unknown blockType', () => {
-      expect(templateCreateBlockResponse({ blockType: 'mystery' }, '2024-01-15')).toBe(emptyPage)
-    })
-
-    it('makeJournalTemplateMockImpl: dispatches each supported command', async () => {
-      const impl = makeJournalTemplateMockImpl('2024-01-15')
-      const listResult = (await impl('list_blocks', { request: { parentId: 'TMPL-PAGE' } })) as {
-        items: Array<unknown>
-      }
-      expect(listResult.items).toHaveLength(2)
-
-      const queryResult = (await impl('query_by_property', {
-        request: { key: 'journal-template' },
-      })) as {
-        items: Array<unknown>
-      }
-      expect(queryResult.items).toHaveLength(1)
-
-      const pageResult = (await impl('create_block', { blockType: 'page' })) as { id: string }
-      expect(pageResult.id).toBe('DP-TMPL')
-
-      // Falls through to emptyPage for unknown commands.
-      expect(await impl('something_else')).toBe(emptyPage)
     })
   })
 

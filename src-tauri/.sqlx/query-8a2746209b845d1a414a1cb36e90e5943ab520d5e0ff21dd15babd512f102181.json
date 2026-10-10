@@ -1,0 +1,33 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT b.id as \"id!: String\", b.deleted_at IS NOT NULL as \"trashed!: bool\"\n           FROM blocks b\n           JOIN block_properties bp\n             ON bp.block_id = b.id\n            AND bp.key = 'journal-template'\n            AND bp.value_text = 'true'\n           WHERE b.block_type = 'page'\n             AND b.space_id = ?1\n           ORDER BY b.id ASC",
+  "describe": {
+    "columns": [
+      {
+        "name": "id!: String",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "blocks",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "name": "trashed!: bool",
+        "ordinal": 1,
+        "type_info": "Integer",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false,
+      false
+    ]
+  },
+  "hash": "8a2746209b845d1a414a1cb36e90e5943ab520d5e0ff21dd15babd512f102181"
+}

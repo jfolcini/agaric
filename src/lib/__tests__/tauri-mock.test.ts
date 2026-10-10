@@ -3762,19 +3762,17 @@ describe('first_child_for_blocks', () => {
 // ---------------------------------------------------------------------------
 
 describe('quick_capture_block', () => {
-  it('creates a content block under the daily page (or spaceId fallback) and pushes a create_block op', () => {
+  it("creates a content block under the space's daily page and pushes a create_block op", () => {
     const result = invoke('quick_capture_block', {
       content: 'hi',
-      spaceId: SEED_IDS.PAGE_GETTING_STARTED,
+      spaceId: 'SPACE_PERSONAL',
     }) as Record<string, unknown>
 
     expect(result['content']).toBe('hi')
     expect(result['block_type']).toBe('content')
-    // Either the daily page (preferred) or the spaceId fallback is acceptable —
-    // the daily-page lookup matches `new Date().toISOString().slice(0, 10)` (UTC),
-    // while seed-data daily content uses local-time YYYY-MM-DD, so depending on
-    // the test runner's TZ the two may not match and the fallback applies.
-    expect([SEED_IDS.PAGE_DAILY, SEED_IDS.PAGE_GETTING_STARTED]).toContain(result['parent_id'])
+    // The seed's daily page is titled with the LOCAL date, as `todayDate()`
+    // names the day, so the capture lands on it rather than on a new day.
+    expect(result['parent_id']).toBe(SEED_IDS.PAGE_DAILY)
 
     // Verify the create_block op was pushed to the op log (matches the
     // create_block test pattern at lines 1130-1133).
