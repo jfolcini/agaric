@@ -12,7 +12,7 @@ import { unwrap } from '@/lib/app-error'
 import { commands } from '@/lib/bindings'
 import { formatDate, getCalendarMonthRange, getWeekOptions } from '@/lib/date-utils'
 import { logger } from '@/lib/logger'
-import { toSpaceScope } from '@/lib/space-scope'
+import { requireActiveScope } from '@/lib/space-scope'
 import { cn } from '@/lib/utils'
 import { useSpaceStore } from '@/stores/space'
 
@@ -149,9 +149,14 @@ export function JournalCalendarDropdown({
     // oxlint-disable-next-line react/set-state-in-effect -- arms `aria-busy` for the agenda-count IPC this effect fires for the displayed month; loading tracks that request; see #4407
     setAgendaLoading(true)
     setAgendaBySource({})
+    // #5415 — no active space: nothing to count, never dispatch.
+    if (currentSpaceId == null) {
+      setAgendaLoading(false)
+      return
+    }
     const dates = getCalendarDateRange(displayedMonth)
     commands
-      .countAgendaBatchBySource(dates, toSpaceScope(currentSpaceId))
+      .countAgendaBatchBySource(dates, requireActiveScope(currentSpaceId))
       .then(unwrap)
       .then((data) => {
         if (!cancelled) {

@@ -53,7 +53,7 @@ import { unwrap } from '@/lib/app-error'
 import { commands } from '@/lib/bindings'
 import { logger } from '@/lib/logger'
 import { paginationLimit } from '@/lib/safe-limit'
-import { toSpaceScope } from '@/lib/space-scope'
+import { requireActiveScope } from '@/lib/space-scope'
 import { type FlatBlock, getDragDescendants } from '@/lib/tree-utils'
 import { settlePendingSaves } from '@/lib/unmount-flush'
 
@@ -129,17 +129,23 @@ export function isLeakedEmptyCandidate({
  * block-refs and `[[id]]` links). A rejected query resolves `false` — an
  * unknown answer must never authorise a delete.
  *
- * The backlink query uses the GLOBAL scope on purpose: a reference from
- * another space still means somebody is pointing at this block.
+ * The backlink query is scoped to the active space (#5415). A write that would
+ * introduce a cross-space link is refused, so the active space holds every
+ * referrer except one "Move to space" left behind — and that one already
+ * renders as a broken chip. No active space is an unknown answer — the block
+ * stays.
  */
-async function carriesNothing(blockId: string): Promise<boolean> {
+async function carriesNothing(blockId: string, spaceId: string | null): Promise<boolean> {
+  if (spaceId == null) return false
   try {
     const [properties, tags, attachments, backlinks] = await Promise.all([
       commands.getProperties(blockId).then(unwrap),
       commands.listTagsForBlock(blockId).then(unwrap),
       commands.listAttachments(blockId).then(unwrap),
       // limit 1 — presence is the whole question.
-      commands.getBacklinks(blockId, null, paginationLimit(1), toSpaceScope(null)).then(unwrap),
+      commands
+        .getBacklinks(blockId, null, paginationLimit(1), requireActiveScope(spaceId))
+        .then(unwrap),
     ])
     return (
       properties.length === 0 &&
@@ -158,6 +164,8 @@ export interface DeleteIfLeakedEmptyParams {
   blockId: string
   /** Active zoom root, or `null` at page level. Guard 7's second arm. */
   zoomedBlockId: string | null
+  /** The active space the backlink probe is scoped to; `null` keeps the block. */
+  spaceId: string | null
   /**
    * The page store's `remove` action (or BlockTree's verifying wrapper around
    * it). Deleting MUST go through it: it appends the `delete_block` op that
@@ -203,6 +211,7 @@ export interface DeleteIfLeakedEmptyParams {
 export async function deleteBlockIfLeakedEmpty({
   blockId,
   zoomedBlockId,
+  spaceId,
   remove,
   readBlocks,
   isPageTruncated,
@@ -234,7 +243,7 @@ export async function deleteBlockIfLeakedEmpty({
     return false
   }
 
-  if (!(await carriesNothing(blockId))) return false
+  if (!(await carriesNothing(blockId, spaceId))) return false
 
   // Re-decide on the post-await world (see `isLeakedEmptyCandidate`).
   if (!isStillBlurred()) return false

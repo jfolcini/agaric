@@ -154,6 +154,7 @@ import {
 } from '@/lib/agenda-filters'
 import { recordBlockPropertyChange } from '@/lib/block-property-events'
 import { notify } from '@/lib/notify'
+import { useSpaceStore } from '@/stores/space'
 
 const mockedNotifyRetry = vi.mocked(notify.retry)
 const mockedExecuteAgendaFilters = vi.mocked(executeAgendaFilters)
@@ -174,6 +175,8 @@ const makeBlock = (overrides: Parameters<typeof _makeBlock>[0] = {}) =>
 
 beforeEach(() => {
   vi.clearAllMocks()
+  // #5415 — page-title resolution carries the active space.
+  useSpaceStore.setState({ currentSpaceId: 'SPACE_1' })
   filterChangeRef.current = null
   clearFiltersRef.current = null
   loadMoreRef.current = null
@@ -384,7 +387,10 @@ describe('AgendaView', () => {
       )
     })
 
-    expect(mockedBatchResolve).toHaveBeenCalledWith(['PAGE1', 'PAGE2'], { kind: 'global' })
+    expect(mockedBatchResolve).toHaveBeenCalledWith(['PAGE1', 'PAGE2'], {
+      kind: 'active',
+      space_id: 'SPACE_1',
+    })
   })
 
   // 6b. Resolves page_ids for page grouping
@@ -496,10 +502,10 @@ describe('AgendaView', () => {
     expect(mockedExecuteAgendaFilters).toHaveBeenCalledTimes(1)
     // Agenda now opens with a TODO+DOING status filter by default.
     // Phase 4 — `executeAgendaFilters` now takes `spaceId` as
-    // its second positional arg (`null` here because no space is seeded).
+    // its second positional arg (the seeded space).
     expect(mockedExecuteAgendaFilters).toHaveBeenCalledWith(
       [{ dimension: 'status', values: ['TODO', 'DOING'] }],
-      null,
+      'SPACE_1',
     )
 
     // Simulate filter change from AgendaFilterBuilder
@@ -517,10 +523,10 @@ describe('AgendaView', () => {
 
     expect(mockedExecuteAgendaFilters).toHaveBeenCalledTimes(2)
     // Phase 4 — `executeAgendaFilters` now takes `spaceId` as
-    // its second positional arg (`null` here, no seeded space).
+    // its second positional arg (the seeded space).
     expect(mockedExecuteAgendaFilters).toHaveBeenLastCalledWith(
       [{ dimension: 'status', values: ['TODO'] }],
-      null,
+      'SPACE_1',
     )
   })
 
@@ -617,10 +623,10 @@ describe('AgendaView', () => {
     await waitFor(() => {
       expect(mockedExecuteAgendaFilters).toHaveBeenLastCalledWith(
         [{ dimension: 'status', values: ['TODO', 'DOING'] }],
-        null,
+        'SPACE_1',
       )
     })
-    expect(mockedExecuteAgendaFilters).not.toHaveBeenLastCalledWith([], null)
+    expect(mockedExecuteAgendaFilters).not.toHaveBeenLastCalledWith([], 'SPACE_1')
   })
 
   // 10. Load more — with active filters, routes through loadMoreAgendaFilters
@@ -661,7 +667,7 @@ describe('AgendaView', () => {
       expect(mockedLoadMoreAgendaFilters).toHaveBeenCalledWith(
         [{ dimension: 'status', values: ['TODO', 'DOING'] }],
         'cursor_page2',
-        null,
+        'SPACE_1',
         page1Today,
       )
     })
@@ -715,7 +721,7 @@ describe('AgendaView', () => {
     await waitFor(() => {
       expect(mockedLoadMoreUnfilteredAgenda).toHaveBeenCalledWith(
         'agenda-unfiltered:{"due":"DUE_C2"}',
-        null,
+        'SPACE_1',
       )
     })
 
@@ -775,13 +781,13 @@ describe('AgendaView', () => {
 
     // The backend query should be called with the active-states filter,
     // Not an empty array (which would include DONE). Phase 4
-    // adds `spaceId` (null here, no seeded space).
+    // adds `spaceId` (the seeded space).
     expect(mockedExecuteAgendaFilters).toHaveBeenCalledWith(
       [{ dimension: 'status', values: ['TODO', 'DOING'] }],
-      null,
+      'SPACE_1',
     )
     // Explicitly: the default must NOT be an empty filter array.
-    expect(mockedExecuteAgendaFilters).not.toHaveBeenCalledWith([], null)
+    expect(mockedExecuteAgendaFilters).not.toHaveBeenCalledWith([], 'SPACE_1')
   })
 
   // 13. hasMore passed to AgendaResults

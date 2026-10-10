@@ -63,7 +63,10 @@ function setProp(blockId: string, key: string, value: Partial<PropertyRow>): voi
 }
 
 function childrenOf(parentId: string): Row[] {
-  const page = dispatch('list_blocks', { request: { parentId, limit: 100 } }) as { items: Row[] }
+  const page = dispatch('list_blocks', {
+    request: { parentId, limit: 100 },
+    scope: { kind: 'active', space_id: 'SPACE_PERSONAL' },
+  }) as { items: Row[] }
   return page.items
 }
 

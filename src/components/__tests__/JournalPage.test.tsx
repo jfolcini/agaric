@@ -981,7 +981,7 @@ describe('JournalPage', () => {
           content: '',
           parentId: 'DP1',
           index: null,
-          scope: { kind: 'global' },
+          scope: { kind: 'active', space_id: 'SPACE_TEST' },
           // #2849 PR2 — direct createBlock supplies no client id (null).
           blockId: null,
         })

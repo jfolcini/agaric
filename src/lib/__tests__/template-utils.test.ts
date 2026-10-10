@@ -71,7 +71,7 @@ describe('loadTemplatePages', () => {
         ]),
     })
 
-    const result = await loadTemplatePages(null)
+    const result = await loadTemplatePages('SPACE_1')
 
     // `blockType: 'page'` is pushed into SQL via
     // Tier 3.4's `query_by_property` push-down, so the IPC carries it
@@ -91,7 +91,7 @@ describe('loadTemplatePages', () => {
         valueDateRange: null,
         excludeTodoStates: null,
       },
-      scope: { kind: 'global' },
+      scope: { kind: 'active', space_id: 'SPACE_1' },
     })
     expect(result).toHaveLength(2)
     expect(result[0]?.id).toBe('T1')
@@ -101,7 +101,7 @@ describe('loadTemplatePages', () => {
   it('returns empty array when no templates exist', async () => {
     stubTemplates({ query_by_property: () => propertyPage([]) })
 
-    const result = await loadTemplatePages(null)
+    const result = await loadTemplatePages('SPACE_1')
     expect(result).toHaveLength(0)
   })
 })
@@ -373,7 +373,7 @@ describe('loadJournalTemplate', () => {
         ]),
     })
 
-    const { template, duplicateWarning } = await loadJournalTemplate(null)
+    const { template, duplicateWarning } = await loadJournalTemplate('SPACE_1')
 
     expect(template).not.toBeNull()
     expect(template?.id).toBe('JT1')
@@ -392,7 +392,7 @@ describe('loadJournalTemplate', () => {
   it('returns null when no journal template exists', async () => {
     stubTemplates({ query_by_property: () => propertyPage([]) })
 
-    const { template, duplicateWarning } = await loadJournalTemplate(null)
+    const { template, duplicateWarning } = await loadJournalTemplate('SPACE_1')
     expect(template).toBeNull()
     expect(duplicateWarning).toBeNull()
   })
@@ -406,7 +406,7 @@ describe('loadJournalTemplate', () => {
         ]),
     })
 
-    const { template, duplicateWarning } = await loadJournalTemplate(null)
+    const { template, duplicateWarning } = await loadJournalTemplate('SPACE_1')
 
     expect(template).not.toBeNull()
     expect(template?.id).toBe('JT1')
@@ -421,7 +421,7 @@ describe('loadJournalTemplate', () => {
         propertyPage([makeBlockRow({ id: 'JT1', block_type: 'page', content: 'Only Journal' })]),
     })
 
-    const { duplicateWarning } = await loadJournalTemplate(null)
+    const { duplicateWarning } = await loadJournalTemplate('SPACE_1')
     expect(duplicateWarning).toBeNull()
   })
 })
@@ -438,7 +438,7 @@ describe('loadTemplatePagesWithPreview', () => {
       }),
     })
 
-    const result = await loadTemplatePagesWithPreview(null)
+    const result = await loadTemplatePagesWithPreview('SPACE_1')
     expect(result).toHaveLength(1)
     expect(result[0]?.preview).toBe('## Attendees')
     // \u2014 single batch IPC for previews. The per-template
@@ -458,7 +458,7 @@ describe('loadTemplatePagesWithPreview', () => {
       first_child_for_blocks: () => ({}),
     })
 
-    const result = await loadTemplatePagesWithPreview(null)
+    const result = await loadTemplatePagesWithPreview('SPACE_1')
     expect(result[0]?.preview).toBeNull()
   })
 
@@ -472,7 +472,7 @@ describe('loadTemplatePagesWithPreview', () => {
       }),
     })
 
-    const result = await loadTemplatePagesWithPreview(null)
+    const result = await loadTemplatePagesWithPreview('SPACE_1')
     expect(result[0]?.preview).toBe(`${'A'.repeat(60)}\u2026`)
   })
 
@@ -484,7 +484,7 @@ describe('loadTemplatePagesWithPreview', () => {
       first_child_for_blocks: () => Promise.reject(new Error('first_child_for_blocks failed')),
     })
 
-    const result = await loadTemplatePagesWithPreview(null)
+    const result = await loadTemplatePagesWithPreview('SPACE_1')
     expect(result[0]?.preview).toBeNull()
   })
 
@@ -503,7 +503,7 @@ describe('loadTemplatePagesWithPreview', () => {
       }),
     })
 
-    const result = await loadTemplatePagesWithPreview(null)
+    const result = await loadTemplatePagesWithPreview('SPACE_1')
 
     expect(result).toHaveLength(3)
     expect(result[0]?.preview).toBe('first-A')
@@ -808,5 +808,17 @@ describe('deleteSpaceTextJournalTemplates', () => {
       expect.any(Error),
     )
     warn.mockRestore()
+  })
+})
+
+// #5415 — template lookups carry the active space; with none known they
+// resolve empty without dispatching.
+describe('template lookups — no active space', () => {
+  it('loadTemplatePages / loadJournalTemplate resolve empty without an IPC', async () => {
+    stubTemplates({})
+
+    expect(await loadTemplatePages(null)).toEqual([])
+    expect(await loadJournalTemplate(null)).toEqual({ template: null, duplicateWarning: null })
+    expect(mockedInvoke).not.toHaveBeenCalled()
   })
 })

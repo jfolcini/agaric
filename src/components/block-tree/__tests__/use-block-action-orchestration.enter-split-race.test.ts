@@ -66,6 +66,8 @@ function makeHandle(blockId: string, content: string): RovingEditorHandle {
 let store: StoreApi<PageBlockState>
 
 beforeEach(() => {
+  // #5415 — every space-scoped IPC carries the active space.
+  useSpaceStore.setState({ currentSpaceId: 'SPACE_1' })
   vi.clearAllMocks()
   store = createPageBlockStore('PAGE_1')
   store.setState({

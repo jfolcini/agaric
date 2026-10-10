@@ -94,6 +94,7 @@ import { _resetPropertyKeysCacheForTest } from '@/hooks/usePropertyKeysCache'
 import type { GroupedBacklinkResponse } from '@/lib/bindings'
 import { t } from '@/lib/i18n'
 import { queryClient } from '@/lib/query-client'
+import { useSpaceStore } from '@/stores/space'
 
 const mockedListUnlinked = mockListUnlinkedReferences
 const mockedEditBlock = mockEditBlock
@@ -129,6 +130,8 @@ function makeResponse(opts: { ids: string[]; total: number; filtered: number }) 
 }
 
 beforeEach(() => {
+  // #5415 — every space-scoped IPC carries the active space.
+  useSpaceStore.setState({ currentSpaceId: 'SPACE_1' })
   vi.clearAllMocks()
   virtualWindow.size = null
   queryClient.clear()

@@ -55,7 +55,7 @@ import { invalidateNameCaches } from '@/lib/name-change-bus'
 import { notify } from '@/lib/notify'
 import { queryClient } from '@/lib/query-client'
 import { ValidationCode } from '@/lib/search-query/validation-codes'
-import { toSpaceScope } from '@/lib/space-scope'
+import { requireActiveScope } from '@/lib/space-scope'
 import { useResolveStore } from '@/stores/resolve'
 import { useSpaceStore } from '@/stores/space'
 
@@ -114,7 +114,7 @@ export function TrashView(): React.ReactElement {
           await commands.listTrash(
             pageParam ?? null,
             PAGINATION_LIMIT,
-            toSpaceScope(currentSpaceId),
+            requireActiveScope(currentSpaceId),
           ),
         )
       },

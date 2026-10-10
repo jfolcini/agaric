@@ -64,6 +64,19 @@ afterEach(() => {
 })
 
 describe('useAdvancedQuery — D2 inputs', () => {
+  // #5415 — the engine requires a space; with none known nothing runs.
+  it('dispatches nothing while there is no active space', async () => {
+    useSpaceStore.setState({ currentSpaceId: null })
+    const { result } = renderHook(() => useAdvancedQuery({ filters: [] }))
+
+    await waitFor(() => {
+      expect(result.current.loading).toBe(false)
+    })
+    expect(result.current.results).toEqual([])
+    expect(mockedRun).not.toHaveBeenCalled()
+    expect(mockedResolve).not.toHaveBeenCalled()
+  })
+
   it('omits the optional inputs entirely when unset (minimal wire shape)', async () => {
     renderHook(() => useAdvancedQuery({ filters: [] }))
     await waitFor(() => expect(mockedRun).toHaveBeenCalled())

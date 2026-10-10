@@ -5269,7 +5269,7 @@ describe('BlockTree Enter creates new sibling block', () => {
           parentId: null,
           // #400: createBelow inserts at afterBlock's slot (0) + 1.
           index: 1,
-          scope: { kind: 'global' },
+          scope: { kind: 'active', space_id: 'SPACE_TEST' },
           blockId: newId,
         }),
       )
@@ -6967,7 +6967,7 @@ describe('H-9: auto-create first block on empty page', () => {
         content: '',
         parentId: 'PAGE_1',
         index: null,
-        scope: { kind: 'global' },
+        scope: { kind: 'active', space_id: 'SPACE_TEST' },
         // #2849 PR2 — auto-create supplies no client id (null).
         blockId: null,
       })
@@ -7127,7 +7127,7 @@ describe('H-9: auto-create first block on empty page', () => {
         content: '',
         parentId: 'PAGE_1',
         index: null,
-        scope: { kind: 'global' },
+        scope: { kind: 'active', space_id: 'SPACE_TEST' },
         // #2849 PR2 — auto-create supplies no client id (null).
         blockId: null,
       })
@@ -7150,7 +7150,7 @@ describe('H-9: auto-create first block on empty page', () => {
         content: '',
         parentId: 'PAGE_1',
         index: null,
-        scope: { kind: 'global' },
+        scope: { kind: 'active', space_id: 'SPACE_TEST' },
         // #2849 PR2 — auto-create supplies no client id (null).
         blockId: null,
       })

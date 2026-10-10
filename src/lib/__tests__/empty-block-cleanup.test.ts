@@ -42,6 +42,7 @@ import type { AttachmentRow } from '@/lib/bindings'
 import { deleteBlockIfLeakedEmpty, isLeakedEmptyCandidate } from '@/lib/empty-block-cleanup'
 import type { FlatBlock } from '@/lib/tree-utils'
 import { runUnmountFlush } from '@/lib/unmount-flush'
+import { useSpaceStore } from '@/stores/space'
 
 function makeBlock(over: Partial<FlatBlock> & { id: string }): FlatBlock {
   return {
@@ -85,6 +86,7 @@ async function runCleanup(
   const deleted = await deleteBlockIfLeakedEmpty({
     blockId,
     zoomedBlockId: opts.zoomedBlockId ?? null,
+    spaceId: useSpaceStore.getState().currentSpaceId,
     remove,
     readBlocks: () => blocks,
     isPageTruncated: () => opts.truncated ?? false,
@@ -94,6 +96,8 @@ async function runCleanup(
 }
 
 beforeEach(() => {
+  // #5415 — the backlink probe carries the active space.
+  useSpaceStore.setState({ currentSpaceId: 'SPACE_1' })
   // Default: the block carries nothing. Each guard test overrides one probe.
   mockGetProperties.mockReset().mockResolvedValue([])
   mockListTagsForBlock.mockReset().mockResolvedValue([])
@@ -259,9 +263,21 @@ describe('guard — referenced by another block', () => {
     expect(remove).not.toHaveBeenCalled()
   })
 
-  it('asks the backlink index globally — a ref from another space still holds', async () => {
+  it('asks the backlink index in the active space — links never cross spaces', async () => {
     await runCleanup(leakedPage())
-    expect(mockGetBacklinks).toHaveBeenCalledWith('EMPTY', null, 1, { kind: 'global' })
+    expect(mockGetBacklinks).toHaveBeenCalledWith('EMPTY', null, 1, {
+      kind: 'active',
+      space_id: 'SPACE_1',
+    })
+  })
+
+  // #5415 — no active space is an unknown answer, and an unknown answer never
+  // authorises a delete.
+  it('survives when no space is active: the probe is not even sent', async () => {
+    useSpaceStore.setState({ currentSpaceId: null })
+    const { remove } = await runCleanup(leakedPage())
+    expect(remove).not.toHaveBeenCalled()
+    expect(mockGetBacklinks).not.toHaveBeenCalled()
   })
 })
 
@@ -372,6 +388,7 @@ describe('deleteBlockIfLeakedEmpty — liveness and races', () => {
       deleteBlockIfLeakedEmpty({
         blockId: 'EMPTY',
         zoomedBlockId: null,
+        spaceId: useSpaceStore.getState().currentSpaceId,
         remove,
         readBlocks: () => blocks,
         isPageTruncated: () => false,

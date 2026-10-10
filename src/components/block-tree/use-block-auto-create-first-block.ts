@@ -19,8 +19,10 @@ import { unwrap } from '@/lib/app-error'
 import { commands } from '@/lib/bindings'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
+import { requireActiveScope } from '@/lib/space-scope'
 import { useBlockStore } from '@/stores/blocks'
 import type { usePageBlockStoreApi } from '@/stores/page-blocks'
+import { useSpaceStore } from '@/stores/space'
 
 type TFn = TFunction
 
@@ -52,15 +54,19 @@ export function useBlockAutoCreateFirstBlock({
   t,
 }: UseBlockAutoCreateFirstBlockParams): void {
   const autoCreatedForRef = useRef<string | null>(null)
+  // #5415 — the seed is created in the active space; subscribing re-runs the
+  // effect once the space hydrates (the page load does not).
+  const spaceId = useSpaceStore((s) => s.currentSpaceId)
 
   useEffect(() => {
     if (!enabled) return
     if (loading || blocksLength > 0 || !rootParentId) return
     if (autoCreatedForRef.current === rootParentId) return
+    if (spaceId == null) return
     autoCreatedForRef.current = rootParentId
 
     commands
-      .createBlock('content', '', rootParentId, null, { kind: 'global' }, null)
+      .createBlock('content', '', rootParentId, null, requireActiveScope(spaceId), null)
       .then(unwrap)
       .then((result) => {
         const current = pageStore.getState()
@@ -118,5 +124,5 @@ export function useBlockAutoCreateFirstBlock({
           autoCreatedForRef.current = null
         }
       })
-  }, [enabled, loading, blocksLength, rootParentId, t, pageStore])
+  }, [enabled, loading, blocksLength, rootParentId, spaceId, t, pageStore])
 }

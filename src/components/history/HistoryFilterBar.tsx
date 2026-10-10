@@ -2,10 +2,6 @@
  * HistoryFilterBar --- operation type filter dropdown for the history view.
  *
  * Extracted from HistoryView for testability.
- *
- * Phase 8 — also hosts the `t('history.allSpacesToggle')` toggle. The toggle is
- * controlled (state owned by HistoryView, *not* persisted) so every
- * History session starts current-space-only by design.
  */
 
 import { HelpCircle, X } from 'lucide-react'
@@ -13,7 +9,6 @@ import type React from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { IconButton } from '@/components/ui/icon-button'
-import { Label } from '@/components/ui/label'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import {
   Select,
@@ -22,7 +17,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
-import { Switch } from '@/components/ui/switch'
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -65,17 +59,6 @@ const OP_TYPES = [
 export interface HistoryFilterBarProps {
   opTypeFilter: string | null
   onFilterChange: (filter: string | null) => void
-  /**
-   * Phase 8 — controlled `t('history.allSpacesToggle')` toggle. Optional: when
-   * BOTH `showAllSpaces` and `onShowAllSpacesChange` are provided the
-   * toggle renders; otherwise it is hidden. The per-page consumer
-   * (`HistoryPanel`) omits both because per-page mode already
-   * implicitly scopes to a single space (the page's owning space) and
-   * The SQL ignores `space_id` for non-`"__all__"` page IDs.
-   */
-  showAllSpaces?: boolean
-  /** Callback when the user flips the `t('history.allSpacesToggle')` switch. */
-  onShowAllSpacesChange?: (next: boolean) => void
 }
 
 // ---------------------------------------------------------------------------
@@ -85,8 +68,6 @@ export interface HistoryFilterBarProps {
 export function HistoryFilterBar({
   opTypeFilter,
   onFilterChange,
-  showAllSpaces,
-  onShowAllSpacesChange,
 }: HistoryFilterBarProps): React.ReactElement {
   const { t } = useTranslation()
 
@@ -169,33 +150,6 @@ export function HistoryFilterBar({
         >
           <X className="h-3.5 w-3.5" />
         </IconButton>
-      )}
-      {/*  Phase 8 — "All spaces" toggle.
-          Off by default in HistoryView; flipping on drops the
-          space-membership filter from the IPC and surfaces ops from
-          every space. State is controlled by the parent and not
-          persisted across History sessions. The toggle is hidden when
-          either prop is omitted (e.g., per-page HistoryPanel mode). */}
-      {showAllSpaces !== undefined && onShowAllSpacesChange !== undefined && (
-        <div
-          className="history-filter-bar-all-spaces ml-auto flex items-center gap-2"
-          title={t('history.allSpacesTooltip')}
-        >
-          <Label
-            htmlFor="history-all-spaces-toggle"
-            muted={false}
-            className="text-sm font-medium text-muted-foreground"
-          >
-            {t('history.allSpacesToggle')}
-          </Label>
-          <Switch
-            id="history-all-spaces-toggle"
-            checked={showAllSpaces}
-            onCheckedChange={onShowAllSpacesChange}
-            aria-label={t('history.allSpacesToggle')}
-            data-testid="history-all-spaces-toggle"
-          />
-        </div>
       )}
     </div>
   )

@@ -20,7 +20,7 @@
  */
 
 import { invoke } from '@tauri-apps/api/core'
-import { render, screen, waitFor } from '@testing-library/react'
+import { act, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { toast } from 'sonner'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -84,9 +84,12 @@ let historyHandlers: TypedInvokeHandlers = {}
 
 function stubHistory(extra: TypedInvokeHandlers = {}): void {
   historyHandlers = { ...historyHandlers, ...extra }
-  // A successful revert reloads like a sync, which refreshes the space list.
+  // A successful revert reloads like a sync, which refreshes the space list;
+  // with a space active (#5415) the resolve-store preload also scans pages.
   stubInvoke(mockedInvoke, {
     list_spaces: () => useSpaceStore.getState().availableSpaces,
+    list_blocks: () => ({ items: [], next_cursor: null, has_more: false, total_count: null }),
+    list_all_tags_in_space: () => [],
     ...historyHandlers,
   })
 }
@@ -134,6 +137,12 @@ beforeEach(() => {
   historyHandlers = {}
   stubHistory({ list_page_history: () => emptyPage })
   _resetAttachmentInvalidationForTest()
+  // #5415 — the history IPC carries the active space; the no-space arm
+  // below clears it.
+  useSpaceStore.setState({
+    currentSpaceId: 'SPACE_1',
+    availableSpaces: [{ id: 'SPACE_1', name: 'Space 1', accent_color: null }],
+  })
 })
 
 describe('HistoryView', () => {
@@ -142,7 +151,7 @@ describe('HistoryView', () => {
 
     render(<HistoryView />)
 
-    expect(await screen.findByText(t('history.noEntriesFound'))).toBeInTheDocument()
+    expect(await screen.findByText(t('history.emptyCurrentSpace'))).toBeInTheDocument()
   })
 
   it('renders history entries with correct badges, timestamps, previews', async () => {
@@ -457,7 +466,7 @@ describe('HistoryView', () => {
       expect(mockedInvoke).toHaveBeenCalledWith('list_page_history', {
         pageId: '__all__',
         opTypeFilter: null,
-        scope: { kind: 'global' },
+        scope: { kind: 'active', space_id: 'SPACE_1' },
         cursor: 'cursor_page2',
         limit: 50,
       })
@@ -477,7 +486,7 @@ describe('HistoryView', () => {
       expect(mockedInvoke).toHaveBeenCalledWith('list_page_history', {
         pageId: '__all__',
         opTypeFilter: null,
-        scope: { kind: 'global' },
+        scope: { kind: 'active', space_id: 'SPACE_1' },
         cursor: null,
         limit: 50,
       })
@@ -491,7 +500,7 @@ describe('HistoryView', () => {
       expect(mockedInvoke).toHaveBeenCalledWith('list_page_history', {
         pageId: '__all__',
         opTypeFilter: 'edit_block',
-        scope: { kind: 'global' },
+        scope: { kind: 'active', space_id: 'SPACE_1' },
         cursor: null,
         limit: 50,
       })
@@ -667,7 +676,7 @@ describe('HistoryView', () => {
       expect(mockedInvoke).toHaveBeenCalledWith('list_page_history', {
         pageId: '__all__',
         opTypeFilter: null,
-        scope: { kind: 'global' },
+        scope: { kind: 'active', space_id: 'SPACE_1' },
         cursor: null,
         limit: 50,
       })
@@ -713,7 +722,6 @@ describe('HistoryView', () => {
     await waitFor(() => {
       expect(screen.getByRole('alert')).toHaveTextContent(t('history.loadFailed'))
     })
-    expect(screen.queryByText(t('history.noEntriesFound'))).not.toBeInTheDocument()
     expect(screen.queryByText(t('history.emptyCurrentSpace'))).not.toBeInTheDocument()
   })
 
@@ -1801,7 +1809,7 @@ describe('HistoryView screen reader announcements', () => {
 
         render(<HistoryView />)
 
-        expect(await screen.findByText(t('history.noEntriesFound'))).toBeInTheDocument()
+        expect(await screen.findByText(t('history.emptyCurrentSpace'))).toBeInTheDocument()
         expect(screen.queryByRole('alert')).not.toBeInTheDocument()
         expect(screen.queryByRole('button', { name: /Retry/i })).not.toBeInTheDocument()
         expect(loggerError).not.toHaveBeenCalled()
@@ -1843,36 +1851,11 @@ describe('HistoryView screen reader announcements', () => {
   })
 
   // ===========================================================================
-  // Phase 8 — current-space scoping with "All spaces" toggle.
-  //
-  // The default behaviour is current-space-only: HistoryView reads
-  // `currentSpaceId` from `useSpaceStore` and passes it through `scope`
-  // (Phase 3) on the IPC. Toggling "All spaces" drops the
-  // filter (passes `scope: { kind: 'global' }` so the backend returns
-  // Ops from every space). added localStorage persistence for
-  // the toggle — see the dedicated describe block below for that contract.
+  // #5415 — space scoping. The IPC carries the active space; with none known
+  // nothing is dispatched, and hydration is what triggers the first fetch.
   // ===========================================================================
-  describe(' Phase 8 — space scoping', () => {
-    afterEach(() => {
-      // Reset the space store after each test to avoid bleed across the
-      // rest of the suite (the store is shared module-level state).
-      useSpaceStore.setState({
-        currentSpaceId: null,
-        availableSpaces: [],
-        isReady: false,
-      })
-      // The "All spaces" toggle is now persisted to
-      // localStorage, so a flipped toggle in one test would otherwise
-      // leak `true` into the next test's initial render.
-      localStorage.removeItem('agaric:history:allSpacesToggle')
-    })
-
-    it('passes the current space id to the IPC by default', async () => {
-      useSpaceStore.setState({
-        currentSpaceId: 'SPACE_PERSONAL',
-        availableSpaces: [{ id: 'SPACE_PERSONAL', name: 'Personal', accent_color: null }],
-        isReady: true,
-      })
+  describe('space scoping (#5415)', () => {
+    it('passes the current space id to the IPC', async () => {
       stubHistory({ list_page_history: () => emptyPage })
 
       render(<HistoryView />)
@@ -1881,114 +1864,38 @@ describe('HistoryView screen reader announcements', () => {
         expect(mockedInvoke).toHaveBeenCalledWith('list_page_history', {
           pageId: '__all__',
           opTypeFilter: null,
-          scope: { kind: 'active', space_id: 'SPACE_PERSONAL' },
+          scope: { kind: 'active', space_id: 'SPACE_1' },
           cursor: null,
           limit: 50,
         })
       })
     })
 
-    it('toggling "All spaces" drops the space filter (passes scope: global)', async () => {
-      const user = userEvent.setup()
-      useSpaceStore.setState({
-        currentSpaceId: 'SPACE_PERSONAL',
-        availableSpaces: [{ id: 'SPACE_PERSONAL', name: 'Personal', accent_color: null }],
-        isReady: true,
-      })
+    it('dispatches nothing while there is no active space, then fetches once one hydrates', async () => {
+      useSpaceStore.setState({ currentSpaceId: null, availableSpaces: [] })
       stubHistory({ list_page_history: () => emptyPage })
 
       render(<HistoryView />)
 
-      // First call uses the current space.
-      await waitFor(() => {
-        expect(mockedInvoke).toHaveBeenCalledWith('list_page_history', {
-          pageId: '__all__',
-          opTypeFilter: null,
-          scope: { kind: 'active', space_id: 'SPACE_PERSONAL' },
-          cursor: null,
-          limit: 50,
-        })
-      })
-
-      // Flip the "All spaces" Switch ON.
-      const toggle = screen.getByRole('switch', { name: /All spaces/i })
-      await user.click(toggle)
-
-      // After the toggle the IPC must be re-issued WITHOUT the space
-      // filter (scope: { kind: 'global' } in the wire payload).
-      await waitFor(() => {
-        expect(mockedInvoke).toHaveBeenCalledWith('list_page_history', {
-          pageId: '__all__',
-          opTypeFilter: null,
-          scope: { kind: 'global' },
-          cursor: null,
-          limit: 50,
-        })
-      })
-    })
-
-    it('shows the "current space" empty-state copy when scoped, and switches to the cross-space copy when toggled', async () => {
-      const user = userEvent.setup()
-      useSpaceStore.setState({
-        currentSpaceId: 'SPACE_PERSONAL',
-        availableSpaces: [{ id: 'SPACE_PERSONAL', name: 'Personal', accent_color: null }],
-        isReady: true,
-      })
-      // Both the initial scoped query AND the post-toggle "All spaces"
-      // query return empty pages so we can compare empty-state copy
-      // either side of the toggle.
-      stubHistory({ list_page_history: () => emptyPage })
-
-      render(<HistoryView />)
-
-      // Default scoped state ⇒ the Phase 8 copy nudges the user
-      // toward the toggle.
       expect(await screen.findByText(t('history.emptyCurrentSpace'))).toBeInTheDocument()
-      expect(screen.queryByText(t('history.noEntriesFound'))).not.toBeInTheDocument()
+      expect(mockedInvoke).not.toHaveBeenCalledWith('list_page_history', expect.anything())
 
-      // Flip the toggle. The empty state must switch to the generic
-      // cross-space copy — there's no "toggle further" suggestion to
-      // make in the all-spaces view.
-      await user.click(screen.getByRole('switch', { name: /All spaces/i }))
+      act(() => {
+        useSpaceStore.setState({
+          currentSpaceId: 'SPACE_1',
+          availableSpaces: [{ id: 'SPACE_1', name: 'Space 1', accent_color: null }],
+        })
+      })
 
-      expect(await screen.findByText(t('history.noEntriesFound'))).toBeInTheDocument()
-      expect(screen.queryByText(t('history.emptyCurrentSpace'))).not.toBeInTheDocument()
-    })
-  })
-
-  // ===========================================================================
-  // "All spaces" toggle persists across remounts via localStorage.
-  //
-  // Power users who routinely audit cross-space history previously had to
-  // re-flip the toggle every visit. The toggle now reads/writes
-  // `agaric:history:allSpacesToggle` so its state survives session restarts.
-  // ===========================================================================
-  describe('All spaces toggle persistence', () => {
-    afterEach(() => {
-      localStorage.removeItem('agaric:history:allSpacesToggle')
-    })
-
-    it('persists the "All spaces" toggle state across remounts', async () => {
-      const user = userEvent.setup()
-      stubHistory({ list_page_history: () => emptyPage })
-
-      const { unmount } = render(<HistoryView />)
-
-      // Initial render reflects the default (off).
-      const toggle = await screen.findByRole('switch', { name: /All spaces/i })
-      expect(toggle).not.toBeChecked()
-
-      // Flip the toggle ON; the hook writes `true` to localStorage.
-      await user.click(toggle)
-      expect(toggle).toBeChecked()
-
-      // Unmount and remount — a fresh HistoryView instance should read the
-      // persisted value back from localStorage.
-      unmount()
-      render(<HistoryView />)
-
-      const remountedToggle = await screen.findByRole('switch', { name: /All spaces/i })
-      expect(remountedToggle).toBeChecked()
+      await waitFor(() => {
+        expect(mockedInvoke).toHaveBeenCalledWith('list_page_history', {
+          pageId: '__all__',
+          opTypeFilter: null,
+          scope: { kind: 'active', space_id: 'SPACE_1' },
+          cursor: null,
+          limit: 50,
+        })
+      })
     })
   })
 })

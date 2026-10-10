@@ -237,7 +237,8 @@ beforeEach(() => {
   mockedListPropertyKeys.mockResolvedValue({ status: 'ok', data: [] } as never)
   // Legacy tests don't care about aliases — default to none.
   mockedGetPageAliases.mockResolvedValue([])
-  useSpaceStore.setState({ currentSpaceId: null })
+  // #5415 — every space-scoped IPC carries the active space.
+  useSpaceStore.setState({ currentSpaceId: 'SPACE_1' })
 })
 
 /** Wrap UnlinkedReferences in TooltipProvider (required for filter icon button). */
@@ -276,7 +277,7 @@ describe('UnlinkedReferences', () => {
         null,
         null,
         expect.any(Number),
-        { kind: 'global' },
+        { kind: 'active', space_id: 'SPACE_1' },
       )
     })
 
@@ -384,7 +385,8 @@ describe('UnlinkedReferences', () => {
     // Should call the API
     await waitFor(() => {
       expect(mockedListUnlinked).toHaveBeenCalledWith('PAGE1', null, null, null, 20, {
-        kind: 'global',
+        kind: 'active',
+        space_id: 'SPACE_1',
       })
     })
 
@@ -810,7 +812,8 @@ describe('UnlinkedReferences', () => {
     // Should have called with cursor
     await waitFor(() => {
       expect(mockedListUnlinked).toHaveBeenCalledWith('PAGE1', null, null, 'cursor_page2', 20, {
-        kind: 'global',
+        kind: 'active',
+        space_id: 'SPACE_1',
       })
     })
 
@@ -915,7 +918,8 @@ describe('UnlinkedReferences', () => {
 
     await waitFor(() => {
       expect(mockedListUnlinked).toHaveBeenCalledWith('PAGE2', null, null, null, 20, {
-        kind: 'global',
+        kind: 'active',
+        space_id: 'SPACE_1',
       })
     })
   })
@@ -935,7 +939,7 @@ describe('UnlinkedReferences', () => {
         null,
         null,
         expect.any(Number),
-        { kind: 'global' },
+        { kind: 'active', space_id: 'SPACE_1' },
       )
     })
 
@@ -1245,7 +1249,7 @@ describe('UnlinkedReferences', () => {
         null,
         null,
         expect.any(Number),
-        { kind: 'global' },
+        { kind: 'active', space_id: 'SPACE_1' },
       )
     })
 
@@ -1429,7 +1433,8 @@ describe('UnlinkedReferences', () => {
 
     // Initial fetch had no filters
     expect(mockedListUnlinked).toHaveBeenCalledWith('PAGE1', null, null, null, expect.any(Number), {
-      kind: 'global',
+      kind: 'active',
+      space_id: 'SPACE_1',
     })
 
     mockedListUnlinked.mockClear()
@@ -1445,7 +1450,7 @@ describe('UnlinkedReferences', () => {
         null,
         null,
         20,
-        { kind: 'global' },
+        { kind: 'active', space_id: 'SPACE_1' },
       )
     })
   })
@@ -1480,7 +1485,7 @@ describe('UnlinkedReferences', () => {
         { type: 'Created', dir: 'Desc' },
         null,
         20,
-        { kind: 'global' },
+        { kind: 'active', space_id: 'SPACE_1' },
       )
     })
   })
@@ -1501,7 +1506,7 @@ describe('UnlinkedReferences', () => {
         null,
         null,
         expect.any(Number),
-        { kind: 'global' },
+        { kind: 'active', space_id: 'SPACE_1' },
       )
     })
 

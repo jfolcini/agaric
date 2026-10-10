@@ -129,7 +129,7 @@ async function ensureSamplePage(
   for (const key of bodyKeys) {
     const content = t(key)
     if (existingBodies.has(content)) continue
-    await createBlock({ blockType: 'content', content, parentId: pageId, index })
+    await createBlock({ blockType: 'content', content, parentId: pageId, index, spaceId })
     index += 1
   }
 

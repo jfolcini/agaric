@@ -40,6 +40,7 @@ function ipc<T>(page: Page, cmd: string, args: unknown): Promise<T> {
 async function childrenOf(page: Page, parentId: string): Promise<Row[]> {
   const resp = await ipc<{ items: Row[] }>(page, 'list_blocks', {
     request: { parentId, limit: 100 },
+    scope: { kind: 'active', space_id: 'SPACE_PERSONAL' },
   })
   return resp.items
 }

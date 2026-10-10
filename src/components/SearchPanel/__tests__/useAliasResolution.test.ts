@@ -116,14 +116,16 @@ describe('useAliasResolution', () => {
     expect(mockedGetBlock).toHaveBeenCalledWith('BLOCK_A')
   })
 
-  it('passes a null spaceId through', async () => {
+  // #5415 — no active space: the alias is not resolved against anything.
+  it('dispatches nothing while no space is active', async () => {
     mockedResolveAlias.mockResolvedValue(null)
 
-    renderHook(() => useAliasResolution('apollo', EMPTY_RESULTS, null))
+    const { result, rerender } = renderHook(() => useAliasResolution('apollo', EMPTY_RESULTS, null))
+    rerender()
 
-    await waitFor(() => {
-      expect(mockedResolveAlias).toHaveBeenCalledWith('apollo', { kind: 'global' })
-    })
+    expect(mockedResolveAlias).not.toHaveBeenCalled()
+    expect(result.current.aliasMatch).toBeNull()
+    expect(result.current.aliasQuery).toBe('')
   })
 
   it('returns null when resolvePageByAlias yields null', async () => {

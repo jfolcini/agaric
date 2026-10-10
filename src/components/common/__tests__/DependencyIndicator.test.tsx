@@ -11,7 +11,7 @@
  *     from the provider instead.
  */
 
-import { render, screen, waitFor } from '@testing-library/react'
+import { act, render, screen, waitFor } from '@testing-library/react'
 import type React from 'react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
@@ -54,6 +54,7 @@ import {
   type DependencyIndicatorProps,
 } from '@/components/common/DependencyIndicator'
 import { BatchPropertiesProvider } from '@/hooks/useBatchPropertyRows'
+import { useSpaceStore } from '@/stores/space'
 
 function makeCache(): React.RefObject<Map<string, unknown[]>> {
   return { current: new Map() }
@@ -73,6 +74,38 @@ describe('DependencyIndicator', () => {
     mockGetProperties.mockResolvedValue([])
     mockGetBatchProperties.mockResolvedValue({})
     mockBatchResolve.mockResolvedValue([])
+    // #5415 — the blocker's title is resolved in the active space.
+    useSpaceStore.setState({ currentSpaceId: 'SPACE_1' })
+  })
+
+  it('resolves the blocker in the active space, and not at all while no space is known', async () => {
+    const blockedBy = {
+      key: 'blocked_by',
+      value_text: null,
+      value_num: null,
+      value_date: null,
+      value_ref: 'BLOCKING_BLOCK',
+    }
+    mockGetProperties.mockResolvedValue([blockedBy])
+    mockBatchResolve.mockResolvedValue([
+      { id: 'BLOCKING_BLOCK', title: 'Fix login bug', block_type: 'block', deleted: false },
+    ])
+
+    useSpaceStore.setState({ currentSpaceId: null })
+    render(<DependencyIndicator {...defaultProps()} />)
+    await screen.findByTestId('dependency-indicator')
+    expect(mockBatchResolve).not.toHaveBeenCalled()
+
+    // Hydration is the trigger: the mounted indicator resolves without a remount.
+    act(() => {
+      useSpaceStore.setState({ currentSpaceId: 'SPACE_1' })
+    })
+    await waitFor(() => {
+      expect(mockBatchResolve).toHaveBeenCalledWith(['BLOCKING_BLOCK'], {
+        kind: 'active',
+        space_id: 'SPACE_1',
+      })
+    })
   })
 
   it('shows nothing when block has no blocked_by property', async () => {
