@@ -1199,6 +1199,7 @@ export function BlockTree({
     void deleteBlockIfLeakedEmpty({
       blockId: prevId,
       zoomedBlockId,
+      spaceId: useSpaceStore.getState().currentSpaceId,
       remove,
       readBlocks: () => pageStore.getState().blocks,
       isPageTruncated: () => pageStore.getState().truncatedTotal !== null,

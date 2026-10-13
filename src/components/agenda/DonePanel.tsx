@@ -37,7 +37,7 @@ import type { NavigateToPageFn } from '@/lib/block-events'
 import { PAGINATION_LIMIT } from '@/lib/constants'
 import { logger } from '@/lib/logger'
 import { queryClient } from '@/lib/query-client'
-import { toSpaceScope } from '@/lib/space-scope'
+import { requireActiveScope } from '@/lib/space-scope'
 import { useSpaceStore } from '@/stores/space'
 
 export interface DonePanelProps {
@@ -90,6 +90,10 @@ export function DonePanel({
         invalidationKey,
       ],
       queryFn: async ({ pageParam }): Promise<PageResponse<BlockRow>> => {
+        // #5415 — no active space: nothing to list, never dispatch.
+        if (currentSpaceId == null) {
+          return { items: [], next_cursor: null, has_more: false, total_count: null }
+        }
         try {
           return unwrap(
             await commands.queryByProperty(
@@ -107,7 +111,7 @@ export function DonePanel({
                 valueDateRange: null,
                 excludeTodoStates: null,
               },
-              toSpaceScope(currentSpaceId),
+              requireActiveScope(currentSpaceId),
             ),
           )
         } catch (err) {
@@ -165,11 +169,12 @@ export function DonePanel({
   // (never rebuilt) so a later partial/failed resolve can't drop a title already
   // resolved for a still-visible page from an earlier cursor page.
   useEffect(() => {
+    if (currentSpaceId == null) return
     const uniqueParentIds = collectUniqueParentIds(blocks)
     if (uniqueParentIds.length === 0) return
     let cancelled = false
     commands
-      .batchResolve(uniqueParentIds, { kind: 'global' })
+      .batchResolve(uniqueParentIds, requireActiveScope(currentSpaceId))
       .then(unwrap)
       .then((resolved) => {
         if (cancelled) return
@@ -182,7 +187,7 @@ export function DonePanel({
     return () => {
       cancelled = true
     }
-  }, [blocks, t])
+  }, [blocks, t, currentSpaceId])
 
   // Re-expand the panel when the fetch identity changes (new day / space /
   // filter / block-property invalidation), matching the pre-refactor mount reset.

@@ -8,13 +8,13 @@ import { getDateLocale } from '@/lib/date-locale'
 import { logger } from '@/lib/logger'
 import { PREFERENCES, readPreference, writePreference } from '@/lib/preferences'
 import { paginationLimit } from '@/lib/safe-limit'
-import { requireActiveScope, toSpaceScope } from '@/lib/space-scope'
+import { requireActiveScope } from '@/lib/space-scope'
 
 /**
  * Load all pages marked as templates (property `template` = 'true').
  *
- * `spaceId` (Phase 4) — when set, restricts templates to the
- * active space. `null` keeps the cross-space (legacy) behaviour.
+ * `spaceId` — the active space; `null` (store not hydrated) returns no
+ * templates without dispatching (#5415).
  *
  * `blockType: 'page'` is pushed into SQL via
  * Tier 3.4's `query_by_property` push-down filter. The previous
@@ -22,6 +22,7 @@ import { requireActiveScope, toSpaceScope } from '@/lib/space-scope'
  * non-page rows that the backend now drops at query time.
  */
 export async function loadTemplatePages(spaceId: string | null): Promise<BlockRow[]> {
+  if (spaceId == null) return []
   const resp = unwrap(
     await commands.queryByProperty(
       {
@@ -38,7 +39,7 @@ export async function loadTemplatePages(spaceId: string | null): Promise<BlockRo
         valueDateRange: null,
         excludeTodoStates: null,
       },
-      toSpaceScope(spaceId),
+      requireActiveScope(spaceId),
     ),
   )
   return resp.items
@@ -49,8 +50,8 @@ export async function loadTemplatePages(spaceId: string | null): Promise<BlockRo
  * Returns the first matching page (or null) and an optional warning when
  * multiple journal templates are found so the caller can surface it to the user.
  *
- * `spaceId` (Phase 4) — when set, restricts the search to the
- * active space.
+ * `spaceId` — the active space; `null` (store not hydrated) returns no
+ * template without dispatching (#5415).
  *
  * `blockType: 'page'` is pushed into SQL so non-page
  * rows are dropped at query time rather than via a JS-side filter.
@@ -59,6 +60,7 @@ export async function loadJournalTemplate(spaceId: string | null): Promise<{
   template: BlockRow | null
   duplicateWarning: string | null
 }> {
+  if (spaceId == null) return { template: null, duplicateWarning: null }
   const resp = unwrap(
     await commands.queryByProperty(
       {
@@ -75,7 +77,7 @@ export async function loadJournalTemplate(spaceId: string | null): Promise<{
         valueDateRange: null,
         excludeTodoStates: null,
       },
-      toSpaceScope(spaceId),
+      requireActiveScope(spaceId),
     ),
   )
   const pages = resp.items

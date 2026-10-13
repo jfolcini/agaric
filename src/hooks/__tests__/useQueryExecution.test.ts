@@ -461,7 +461,7 @@ describe('fetchTagQuery', () => {
         }),
     })
 
-    const result = await fetchTagQuery({ expr: 'project' })
+    const result = await fetchTagQuery({ expr: 'project' }, undefined, 'SPACE_1')
 
     expect(result.items).toHaveLength(1)
     expect(result.items[0]?.id).toBe('B1')
@@ -476,7 +476,7 @@ describe('fetchTagQuery', () => {
   it('passes no prefixes when expr is empty', async () => {
     stubInvoke({ query_by_tags: () => page([]) })
 
-    await fetchTagQuery({})
+    await fetchTagQuery({}, undefined, 'SPACE_1')
 
     expect(mockedInvoke).toHaveBeenCalledWith(
       'query_by_tags',
@@ -487,7 +487,7 @@ describe('fetchTagQuery', () => {
   it('forwards pageCursor for pagination', async () => {
     stubInvoke({ query_by_tags: () => page([]) })
 
-    await fetchTagQuery({ expr: 'project' }, 'CURSOR123')
+    await fetchTagQuery({ expr: 'project' }, 'CURSOR123', 'SPACE_1')
 
     expect(mockedInvoke).toHaveBeenCalledWith(
       'query_by_tags',
@@ -498,7 +498,9 @@ describe('fetchTagQuery', () => {
   it('propagates backend rejection', async () => {
     stubInvoke({ query_by_tags: () => Promise.reject(new Error('backend down')) })
 
-    await expect(fetchTagQuery({ expr: 'project' })).rejects.toThrow('backend down')
+    await expect(fetchTagQuery({ expr: 'project' }, undefined, 'SPACE_1')).rejects.toThrow(
+      'backend down',
+    )
   })
 })
 
@@ -508,7 +510,7 @@ describe('fetchPropertyQuery', () => {
       query_by_property: () => page([makeBlock({ id: 'B1', content: 'High priority' })]),
     })
 
-    const result = await fetchPropertyQuery({ key: 'priority', value: '1' })
+    const result = await fetchPropertyQuery({ key: 'priority', value: '1' }, undefined, 'SPACE_1')
 
     expect(result.items).toHaveLength(1)
     expect(result.nextCursor).toBeNull()
@@ -525,7 +527,7 @@ describe('fetchPropertyQuery', () => {
   it('uses valueDate when a date param is provided', async () => {
     stubInvoke({ query_by_property: () => page([]) })
 
-    await fetchPropertyQuery({ key: 'due_date', date: '2025-06-15' })
+    await fetchPropertyQuery({ key: 'due_date', date: '2025-06-15' }, undefined, 'SPACE_1')
 
     expect(mockedInvoke).toHaveBeenCalledWith(
       'query_by_property',
@@ -536,8 +538,10 @@ describe('fetchPropertyQuery', () => {
   })
 
   it('throws QueryValidationError when key is missing', async () => {
-    await expect(fetchPropertyQuery({})).rejects.toBeInstanceOf(QueryValidationError)
-    await expect(fetchPropertyQuery({})).rejects.toThrow(
+    await expect(fetchPropertyQuery({}, undefined, 'SPACE_1')).rejects.toBeInstanceOf(
+      QueryValidationError,
+    )
+    await expect(fetchPropertyQuery({}, undefined, 'SPACE_1')).rejects.toThrow(
       /Property query requires key:NAME parameter/,
     )
     expect(mockedInvoke).not.toHaveBeenCalled()
@@ -546,7 +550,9 @@ describe('fetchPropertyQuery', () => {
   it('propagates backend rejection', async () => {
     stubInvoke({ query_by_property: () => Promise.reject(new Error('db fail')) })
 
-    await expect(fetchPropertyQuery({ key: 'priority' })).rejects.toThrow('db fail')
+    await expect(fetchPropertyQuery({ key: 'priority' }, undefined, 'SPACE_1')).rejects.toThrow(
+      'db fail',
+    )
   })
 })
 
@@ -602,7 +608,7 @@ describe('fetchBacklinksQuery', () => {
 // 200-row sub-query cap was applied BEFORE the JS intersection.
 describe('fetchFilteredQuery', () => {
   it('short-circuits to empty result when no filters are supplied (no IPC)', async () => {
-    const result = await fetchFilteredQuery([], [])
+    const result = await fetchFilteredQuery([], [], 'SPACE_1')
 
     expect(result.items).toHaveLength(0)
     expect(result.nextCursor).toBeNull()
@@ -615,7 +621,11 @@ describe('fetchFilteredQuery', () => {
     // `total_count` is not optional on `PageResponse`; the old literal omitted it.
     stubInvoke({ filtered_blocks_query: () => page(blocks) })
 
-    const result = await fetchFilteredQuery([{ key: 'priority', value: '1', operator: 'eq' }], [])
+    const result = await fetchFilteredQuery(
+      [{ key: 'priority', value: '1', operator: 'eq' }],
+      [],
+      'SPACE_1',
+    )
 
     expect(result.items).toHaveLength(2)
     expect(result.items.map((b) => b.id)).toEqual(['B1', 'B2'])
@@ -639,6 +649,7 @@ describe('fetchFilteredQuery', () => {
         { key: 'priority', value: '1', operator: 'eq' },
       ],
       [],
+      'SPACE_1',
     )
 
     expect(result.items).toHaveLength(1)
@@ -659,7 +670,7 @@ describe('fetchFilteredQuery', () => {
   it('bundles tag filters into a single tagFilters arg (no parallel tag IPCs)', async () => {
     stubInvoke({ filtered_blocks_query: () => page([makeBlock({ id: 'B1' })]) })
 
-    const result = await fetchFilteredQuery([], ['alpha', 'beta'])
+    const result = await fetchFilteredQuery([], ['alpha', 'beta'], 'SPACE_1')
 
     expect(result.items).toHaveLength(1)
     expect(mockedInvoke).toHaveBeenCalledOnce()
@@ -675,7 +686,7 @@ describe('fetchFilteredQuery', () => {
     stubInvoke({ filtered_blocks_query: () => Promise.reject(new Error('sub-query failed')) })
 
     await expect(
-      fetchFilteredQuery([{ key: 'priority', value: '1', operator: 'eq' }], []),
+      fetchFilteredQuery([{ key: 'priority', value: '1', operator: 'eq' }], [], 'SPACE_1'),
     ).rejects.toThrow('sub-query failed')
   })
 
@@ -706,6 +717,7 @@ describe('fetchFilteredQuery', () => {
         { key: 'target', value: 'rare', operator: 'eq' },
       ],
       [],
+      'SPACE_1',
     )
 
     expect(result.items).toHaveLength(1)
@@ -718,12 +730,16 @@ describe('dispatchQuery', () => {
   it('routes tag queries to query_by_tags', async () => {
     stubInvoke({ query_by_tags: () => page([]) })
 
-    await dispatchQuery({
-      type: 'tag',
-      params: { expr: 'x' },
-      propertyFilters: [],
-      tagFilters: [],
-    })
+    await dispatchQuery(
+      {
+        type: 'tag',
+        params: { expr: 'x' },
+        propertyFilters: [],
+        tagFilters: [],
+      },
+      undefined,
+      'SPACE_1',
+    )
 
     expect(mockedInvoke).toHaveBeenCalledWith('query_by_tags', expect.anything())
   })
@@ -731,12 +747,16 @@ describe('dispatchQuery', () => {
   it('routes property queries to query_by_property', async () => {
     stubInvoke({ query_by_property: () => page([]) })
 
-    await dispatchQuery({
-      type: 'property',
-      params: { key: 'priority' },
-      propertyFilters: [],
-      tagFilters: [],
-    })
+    await dispatchQuery(
+      {
+        type: 'property',
+        params: { key: 'priority' },
+        propertyFilters: [],
+        tagFilters: [],
+      },
+      undefined,
+      'SPACE_1',
+    )
 
     expect(mockedInvoke).toHaveBeenCalledWith('query_by_property', expect.anything())
   })
@@ -768,12 +788,16 @@ describe('dispatchQuery', () => {
   it('routes filtered queries to a single filtered_blocks_query IPC (Tier 2.10b)', async () => {
     stubInvoke({ filtered_blocks_query: () => page([]) })
 
-    await dispatchQuery({
-      type: 'filtered',
-      params: {},
-      propertyFilters: [{ key: 'priority', value: '1', operator: 'eq' }],
-      tagFilters: ['alpha'],
-    })
+    await dispatchQuery(
+      {
+        type: 'filtered',
+        params: {},
+        propertyFilters: [{ key: 'priority', value: '1', operator: 'eq' }],
+        tagFilters: ['alpha'],
+      },
+      undefined,
+      'SPACE_1',
+    )
 
     // ONE IPC — composes property + tag filters into a single SQL
     // EXISTS-chain on the backend.
@@ -890,5 +914,22 @@ describe('useQueryExecution refresh axes', () => {
     await waitFor(() => {
       expect(result.current.results[0]?.content).toBe('after')
     })
+  })
+})
+
+// #5415 — every fetch helper carries the active space; with none known each
+// resolves to an empty result without dispatching.
+describe('fetch helpers — no active space', () => {
+  it('resolve empty without an IPC', async () => {
+    stubInvoke({})
+    const empty = { items: [], nextCursor: null, hasMore: false }
+
+    expect(await fetchTagQuery({ expr: 'project' }, undefined, null)).toEqual(empty)
+    expect(await fetchPropertyQuery({ key: 'priority' }, undefined, null)).toEqual(empty)
+    expect(
+      await fetchFilteredQuery([{ key: 'priority', value: '1', operator: 'eq' }], [], null),
+    ).toEqual(empty)
+    expect(await fetchBacklinksQuery({ target: 'T1' }, undefined, null)).toEqual(empty)
+    expect(mockedInvoke).not.toHaveBeenCalled()
   })
 })

@@ -29,7 +29,7 @@ import { unwrap } from '@/lib/app-error'
 import { commands } from '@/lib/bindings'
 import { PAGINATION_LIMIT } from '@/lib/constants'
 import { notify } from '@/lib/notify'
-import { toSpaceScope } from '@/lib/space-scope'
+import { requireActiveScope } from '@/lib/space-scope'
 import { parseQuerySpec, useAdvancedQueryStore } from '@/stores/advancedQuery'
 
 /** Marker property key + value identifying a saved query view. */
@@ -79,6 +79,12 @@ export function SavedViews({
   const refresh = useCallback(async (): Promise<void> => {
     setLoading(true)
     setListError(false)
+    // #5415 — no active space: nothing to list, never dispatch.
+    if (spaceId == null) {
+      setViews([])
+      setLoading(false)
+      return
+    }
     try {
       const resp = unwrap(
         await commands.queryByProperty(
@@ -96,7 +102,7 @@ export function SavedViews({
             valueDateRange: null,
             excludeTodoStates: null,
           },
-          toSpaceScope(spaceId),
+          requireActiveScope(spaceId),
         ),
       )
       setViews(

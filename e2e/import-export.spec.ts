@@ -523,6 +523,7 @@ test.describe('Round-trip fidelity', () => {
         }
       ).__TAURI_INTERNALS__.invoke
       return invoke('list_blocks', {
+        scope: { kind: 'active', space_id: 'SPACE_PERSONAL' },
         blockType: 'page',
         parentId: null,
         showDeleted: null,

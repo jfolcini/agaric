@@ -627,3 +627,15 @@ describe('fetchAndCacheLinks — single-batchSet writeback (#1072)', () => {
     expect(useResolveStore.getState().version).toBe(versionBefore)
   })
 })
+
+// #5415 — with no active space a link target cannot be verified, so nothing is
+// dispatched and nothing is cached.
+describe('fetchAndCacheLinks — no active space', () => {
+  it('dispatches nothing and caches nothing', async () => {
+    const ids = new Set(['01ARZ3NDEKTSV4RRFFQ69G5FAV'])
+    await fetchAndCacheLinks(ids, null, () => false)
+
+    expect(mockedBatchResolve).not.toHaveBeenCalled()
+    expect(useResolveStore.getState().cache.size).toBe(0)
+  })
+})
