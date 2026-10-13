@@ -29,6 +29,7 @@ import { commands } from '@/lib/bindings'
 import { t } from '@/lib/i18n'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
+import { requireActiveScope } from '@/lib/space-scope'
 import { useSpaceStore } from '@/stores/space'
 
 // #5441 — lazy: only agenda mode renders this view, so the filter builder and its
@@ -161,11 +162,12 @@ export function AgendaView({ onNavigateToPage }: AgendaViewProps): React.ReactEl
   // degrades to the "Untitled" fallback rather than failing the whole view —
   // the blocks themselves loaded fine.
   useEffect(() => {
+    if (currentSpaceId == null) return
     const pageIds = collectUniquePageIds(filteredBlocks)
     if (pageIds.length === 0) return
     let cancelled = false
     commands
-      .batchResolve(pageIds, { kind: 'global' })
+      .batchResolve(pageIds, requireActiveScope(currentSpaceId))
       .then(unwrap)
       .then((resolved) => {
         if (cancelled) return
@@ -177,7 +179,7 @@ export function AgendaView({ onNavigateToPage }: AgendaViewProps): React.ReactEl
     return () => {
       cancelled = true
     }
-  }, [filteredBlocks])
+  }, [filteredBlocks, currentSpaceId])
 
   /**
    * Load the next page of agenda results.

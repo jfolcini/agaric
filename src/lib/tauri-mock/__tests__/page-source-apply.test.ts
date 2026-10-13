@@ -114,7 +114,10 @@ function refusal(args: { source: string; pageId?: string; baseSource?: string })
 }
 
 function children(parentId: string): Row[] {
-  const page = dispatch('list_blocks', { request: { parentId, limit: 100 } }) as { items: Row[] }
+  const page = dispatch('list_blocks', {
+    request: { parentId, limit: 100 },
+    scope: { kind: 'active', space_id: 'SPACE_PERSONAL' },
+  }) as { items: Row[] }
   return page.items
 }
 

@@ -11,6 +11,7 @@ import {
   SETTINGS_ACTIVE_TAB_KEY,
   useDeepLinkRouter,
 } from '@/hooks/useDeepLinkRouter'
+import { useSpaceStore } from '@/stores/space'
 
 // -- Hoisted mocks (vi.mock factories are hoisted above module scope) ---------
 
@@ -22,6 +23,7 @@ const {
   mockSetPendingSettingsTab,
   mockGetCurrentDeepLink,
   mockGetBlock,
+  mockBatchResolve,
 } = vi.hoisted(() => {
   const unlisten = vi.fn()
   const listen = vi.fn().mockResolvedValue(unlisten)
@@ -30,6 +32,7 @@ const {
   const setPendingSettingsTab = vi.fn()
   const getCurrentDeepLink = vi.fn().mockResolvedValue(null)
   const getBlock = vi.fn()
+  const batchResolve = vi.fn()
   return {
     mockUnlisten: unlisten,
     mockListen: listen,
@@ -38,6 +41,7 @@ const {
     mockSetPendingSettingsTab: setPendingSettingsTab,
     mockGetCurrentDeepLink: getCurrentDeepLink,
     mockGetBlock: getBlock,
+    mockBatchResolve: batchResolve,
   }
 })
 
@@ -76,6 +80,8 @@ vi.mock('@/lib/bindings', async (importOriginal) => {
       ...actual.commands,
       getBlock: (...args: unknown[]) =>
         mockGetBlock(...args).then((data: unknown) => ({ status: 'ok', data })),
+      batchResolve: (...args: unknown[]) =>
+        mockBatchResolve(...args).then((data: unknown) => ({ status: 'ok', data })),
     },
   }
 })
@@ -833,5 +839,63 @@ describe('dispatchLaunchUrl', () => {
     dispatchLaunchUrl('https://agaric.app/o/block')
     await Promise.resolve()
     expect(mockNavigateToPage).not.toHaveBeenCalled()
+  })
+})
+
+// =============================================================================
+// #5415 — a deep link carries no space, so the router resolves the page's own
+// space and switches to it before navigating.
+// =============================================================================
+
+describe('deep links switch to the target page’s space (#5415)', () => {
+  const SPACE_A = 'SPACEA0000000000000000000A'
+  const SPACE_B = 'SPACEB0000000000000000000B'
+
+  beforeEach(() => {
+    useSpaceStore.setState({
+      currentSpaceId: SPACE_A,
+      availableSpaces: [
+        { id: SPACE_A, name: 'A', accent_color: null },
+        { id: SPACE_B, name: 'B', accent_color: null },
+      ],
+      isReady: true,
+    })
+    mockGetBlock.mockImplementation(async (id: string) => makeBlock({ id, content: 'Notes' }))
+  })
+
+  it('a link to a page in space B while in space A switches to B, then opens the page', async () => {
+    // Only space B's scoped resolve returns the page.
+    mockBatchResolve.mockImplementation(async (ids: string[], scope: { space_id: string }) =>
+      scope.space_id === SPACE_B ? ids.map((id) => ({ id, title: 'Notes' })) : [],
+    )
+
+    await handleNavigatePayload({ id: PAGE_ID }, DEEPLINK_EVENT_NAVIGATE_TO_PAGE, 'page')
+
+    expect(useSpaceStore.getState().currentSpaceId).toBe(SPACE_B)
+    expect(mockNavigateToPage).toHaveBeenCalledWith(PAGE_ID, 'Notes')
+    // Every probe carried exactly one space — never a global scope.
+    for (const call of mockBatchResolve.mock.calls) {
+      expect(call[1]).toEqual({ kind: 'active', space_id: expect.any(String) })
+    }
+  })
+
+  it('a link to a page in the active space stays in it', async () => {
+    mockBatchResolve.mockImplementation(async (ids: string[], scope: { space_id: string }) =>
+      scope.space_id === SPACE_A ? ids.map((id) => ({ id, title: 'Notes' })) : [],
+    )
+
+    await handleNavigatePayload({ id: PAGE_ID }, DEEPLINK_EVENT_NAVIGATE_TO_PAGE, 'page')
+
+    expect(useSpaceStore.getState().currentSpaceId).toBe(SPACE_A)
+    expect(mockNavigateToPage).toHaveBeenCalledWith(PAGE_ID, 'Notes')
+  })
+
+  it('a page no listed space owns still opens, in the active space', async () => {
+    mockBatchResolve.mockResolvedValue([])
+
+    await handleNavigatePayload({ id: PAGE_ID }, DEEPLINK_EVENT_NAVIGATE_TO_PAGE, 'page')
+
+    expect(useSpaceStore.getState().currentSpaceId).toBe(SPACE_A)
+    expect(mockNavigateToPage).toHaveBeenCalledWith(PAGE_ID, 'Notes')
   })
 })

@@ -19,6 +19,7 @@ import { axe } from 'vitest-axe'
 import { stubInvoke } from '@/__tests__/helpers/invoke'
 import { JournalCalendarDropdown } from '@/components/journal/JournalCalendarDropdown'
 import { logger } from '@/lib/logger'
+import { useSpaceStore } from '@/stores/space'
 
 // Mock the heavy react-day-picker Calendar with a minimal interactive stub that
 // exposes a day button (to exercise the date-select dismiss path) while keeping
@@ -69,8 +70,14 @@ function Harness({ onClose }: { onClose?: () => void } = {}) {
 
 beforeEach(() => {
   vi.clearAllMocks()
-  // The only command the dropdown fires: per-date agenda counts by source.
-  stubInvoke(mockedInvoke, { count_agenda_batch_by_source: () => ({}) })
+  // #5415 — the agenda-count IPC carries the active space.
+  useSpaceStore.setState({ currentSpaceId: 'SPACE_1' })
+  // The two reads the dropdown fires for the displayed month: per-date agenda
+  // counts by source, and the journal pages to highlight.
+  stubInvoke(mockedInvoke, {
+    count_agenda_batch_by_source: () => ({}),
+    list_journal_pages_in_range: () => [],
+  })
 })
 
 describe('JournalCalendarDropdown focus restoration (#1101)', () => {

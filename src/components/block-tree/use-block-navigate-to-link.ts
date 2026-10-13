@@ -22,7 +22,7 @@ import type { NavigateToPageFn } from '@/lib/block-events'
 import { resolveStoreTitle } from '@/lib/block-title'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
-import { toSpaceScope } from '@/lib/space-scope'
+import { requireActiveScope } from '@/lib/space-scope'
 import { useResolveStore } from '@/stores/resolve'
 import { useSpaceStore } from '@/stores/space'
 
@@ -106,7 +106,7 @@ export function useBlockNavigateToLink({
         const spaceId = useSpaceStore.getState().currentSpaceId
         const inActiveSpace =
           spaceId != null &&
-          unwrap(await commands.batchResolve([targetId], toSpaceScope(spaceId))).some(
+          unwrap(await commands.batchResolve([targetId], requireActiveScope(spaceId))).some(
             (r) => r.id === targetId,
           )
         if (!inActiveSpace) {

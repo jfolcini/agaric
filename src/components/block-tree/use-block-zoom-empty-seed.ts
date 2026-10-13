@@ -30,10 +30,12 @@ import { unwrap } from '@/lib/app-error'
 import { commands } from '@/lib/bindings'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
+import { requireActiveScope } from '@/lib/space-scope'
 import type { FlatBlock } from '@/lib/tree-utils'
 import { getDragDescendants } from '@/lib/tree-utils'
 import { useBlockStore } from '@/stores/blocks'
 import { type PageBlockState, usePageBlockStoreApi } from '@/stores/page-blocks'
+import { useSpaceStore } from '@/stores/space'
 
 export interface UseBlockZoomEmptySeedParams {
   /** When false the effect is a no-op (e.g. weekly/monthly journal views). */
@@ -86,6 +88,10 @@ export function useBlockZoomEmptySeed({
     }
   }, [zoomedBlockId, pageStore])
 
+  // #5415 — the seed is created in the active space; subscribing re-runs the
+  // effect once the space hydrates (the page load does not).
+  const spaceId = useSpaceStore((s) => s.currentSpaceId)
+
   useEffect(() => {
     if (!enabled) return
     if (loading || zoomedBlockId == null) return
@@ -98,11 +104,12 @@ export function useBlockZoomEmptySeed({
     // has a usable view, so leave it alone.
     if (!zoomRoot) return
     if (hasChildrenInState(state.blocks, zoomedBlockId)) return
+    if (spaceId == null) return
 
     inFlightRootsRef.current.add(zoomedBlockId)
 
     commands
-      .createBlock('content', '', zoomedBlockId, null, { kind: 'global' }, null)
+      .createBlock('content', '', zoomedBlockId, null, requireActiveScope(spaceId), null)
       .then(unwrap)
       .then((result) => {
         const current = pageStore.getState()
@@ -158,5 +165,5 @@ export function useBlockZoomEmptySeed({
           inFlightRootsRef.current.delete(zoomedBlockId)
         }
       })
-  }, [enabled, loading, zoomedBlockId, zoomRootHasChildren, pageStore, t])
+  }, [enabled, loading, zoomedBlockId, zoomRootHasChildren, spaceId, pageStore, t])
 }

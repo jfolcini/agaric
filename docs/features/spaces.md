@@ -37,7 +37,7 @@ When you switch spaces, you re-scope:
 | Tags view + tag filter panel | yes |
 | Agenda (all panels: filter, sort, group, projection, Due, Done) | yes |
 | Backlinks (linked + unlinked) + filter dimensions | yes |
-| History view | yes (toggle to *All spaces* via switch in the filter bar) |
+| History view | yes |
 | Templates view | yes |
 | Journal — date, mode, content | yes (each space has its own daily / weekly / monthly cursor) |
 | Recent pages strip | yes |

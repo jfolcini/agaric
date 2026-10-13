@@ -53,6 +53,7 @@ import { toast } from 'sonner'
 import { announce } from '@/lib/announcer'
 import type { HistoryEntry, OpRef, PageResponse } from '@/lib/bindings'
 import { logger } from '@/lib/logger'
+import { useSpaceStore } from '@/stores/space'
 
 const mockedUndoPageGroup = spies.undoPageGroup
 const mockedUndoOp = spies.undoOp
@@ -1769,6 +1770,19 @@ describe('useUndoStore', () => {
 
     beforeEach(() => {
       mockLoad.mockClear()
+      // #5415 — the history scan carries the active space.
+      useSpaceStore.setState({ currentSpaceId: 'SPACE_1' })
+    })
+
+    // #5415 — no active space: the undo is refused before any IPC.
+    it('refuses without an active space: no history scan, no undo op', async () => {
+      useSpaceStore.setState({ currentSpaceId: null })
+
+      await useUndoStore.getState().undoDeleteOf('page1', 'BLOCK_SWIPE', mockLoad)
+
+      expect(mockedListPageHistory).not.toHaveBeenCalled()
+      expect(mockedUndoOp).not.toHaveBeenCalled()
+      expect(mockLoad).not.toHaveBeenCalled()
     })
 
     it('undoes the delete by its exact (device_id, seq) ref', async () => {
