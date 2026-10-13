@@ -30,7 +30,17 @@ import { commands } from '@/lib/bindings'
 import { PAGINATION_LIMIT } from '@/lib/constants'
 import { logger } from '@/lib/logger'
 import { queryClient } from '@/lib/query-client'
-import { toSpaceScope } from '@/lib/space-scope'
+import { requireActiveScope } from '@/lib/space-scope'
+
+/** #5415 — the page a grouped-backlink query resolves to while no space is active. */
+export const EMPTY_GROUPED_RESPONSE: GroupedBacklinkResponse = {
+  groups: [],
+  next_cursor: null,
+  has_more: false,
+  total_count: 0,
+  filtered_count: 0,
+  truncated: false,
+}
 
 export interface UseBacklinkGroupsParams {
   /**
@@ -119,6 +129,8 @@ export function useBacklinkGroups(params: UseBacklinkGroupsParams): UseBacklinkG
           kind,
         ],
         queryFn: async ({ pageParam }): Promise<GroupedBacklinkResponse> => {
+          // #5415 — no active space: nothing to list, never dispatch.
+          if (spaceId == null) return EMPTY_GROUPED_RESPONSE
           try {
             // Build combined filters: advanced filters + source page filter.
             const allFilters = [...filters]
@@ -136,7 +148,7 @@ export function useBacklinkGroups(params: UseBacklinkGroupsParams): UseBacklinkG
                 sort,
                 pageParam ?? null,
                 PAGINATION_LIMIT,
-                toSpaceScope(spaceId),
+                requireActiveScope(spaceId),
                 kind,
               ),
             )

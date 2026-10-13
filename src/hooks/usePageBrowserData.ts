@@ -184,12 +184,13 @@ export function usePageBrowserData({
     {
       queryKey,
       queryFn: async ({ pageParam }): Promise<PageResponse<BlockRow | PageWithMetadataRow>> => {
-        // Phase 4 — the IPC requires a `spaceId`. The `?? ''` fallback is
-        // intentional pre-bootstrap behaviour: the empty string forces a
-        // no-match SQL filter (returning an empty page) instead of a runtime
-        // null deref. The `enabled: spaceIsReady` gate below normally
-        // prevents this branch from firing.
-        const spaceId = currentSpaceId ?? ''
+        // #5415 — the IPC requires a space; with none known, nothing is
+        // dispatched. The `enabled: spaceIsReady` gate below normally holds
+        // the query before this branch fires.
+        if (currentSpaceId == null) {
+          return { items: [], next_cursor: null, has_more: false, total_count: null }
+        }
+        const spaceId = currentSpaceId
         // Phase 3 — metadata-rich payload + server-derived sort. The wire
         // sort enum is a 4-member subset of the frontend's 7
         // (`pageSortWireFor` does the mapping); the frontend-only sorts

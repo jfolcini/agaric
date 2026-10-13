@@ -15,7 +15,7 @@ import { parseDate } from '@/lib/parse-date'
 import { queryClient } from '@/lib/query-client'
 import { type PropertyFilter, parseQueryExpression } from '@/lib/query-utils'
 import { listBlocksLimit, paginationLimit } from '@/lib/safe-limit'
-import { requireActiveScope, toSpaceScope } from '@/lib/space-scope'
+import { requireActiveScope } from '@/lib/space-scope'
 import { useSpaceStore } from '@/stores/space'
 
 /** Number of items per paginated request. */
@@ -45,6 +45,9 @@ export interface QueryFetchResult {
   hasMore: boolean
 }
 
+/** #5415 — with no active space nothing is dispatched; every helper resolves to this. */
+const EMPTY_FETCH_RESULT: QueryFetchResult = { items: [], nextCursor: null, hasMore: false }
+
 /** Thrown by a fetch helper when the parsed expression is missing required
  *  parameters (e.g. `key:` for property queries). The dispatcher also throws
  *  this for unknown query types. Distinct from arbitrary backend rejection so
@@ -62,6 +65,7 @@ export async function fetchTagQuery(
   pageCursor?: string,
   spaceId?: string | null,
 ): Promise<QueryFetchResult> {
+  if (!spaceId) return EMPTY_FETCH_RESULT
   const tagExpr = params['expr'] ?? ''
   const resp = unwrap(
     await commands.queryByTags(
@@ -71,7 +75,7 @@ export async function fetchTagQuery(
       null,
       pageCursor ?? null,
       paginationLimit(PAGE_SIZE),
-      toSpaceScope(spaceId ?? null),
+      requireActiveScope(spaceId),
       null,
     ),
   )
@@ -87,6 +91,7 @@ export async function fetchPropertyQuery(
   if (!params['key']) {
     throw new QueryValidationError(t('query.propertyRequiresKey'))
   }
+  if (!spaceId) return EMPTY_FETCH_RESULT
   const resp = unwrap(
     await commands.queryByProperty(
       {
@@ -103,7 +108,7 @@ export async function fetchPropertyQuery(
         valueDateRange: null,
         excludeTodoStates: null,
       },
-      toSpaceScope(spaceId),
+      requireActiveScope(spaceId),
     ),
   )
   return { items: resp.items, nextCursor: resp.next_cursor, hasMore: resp.has_more }
@@ -118,12 +123,7 @@ export async function fetchBacklinksQuery(
   if (!params['target']) {
     throw new QueryValidationError(t('query.backlinksRequiresTarget'))
   }
-  // #2248 — `listBlocks` requires an active space; there is no cross-space
-  // listing. With no active space, return an empty page rather than invoking
-  // (which would throw in `requireActiveScope`).
-  if (!spaceId) {
-    return { items: [], nextCursor: null, hasMore: false }
-  }
+  if (!spaceId) return EMPTY_FETCH_RESULT
   const resp = unwrap(
     await commands.listBlocks(
       {
@@ -170,8 +170,9 @@ export async function fetchFilteredQuery(
     // backend would now reject the empty-input case with `Validation`,
     // so preserve the legacy short-circuit so consumers can still ask
     // "are there any active filters?" without paying a round-trip.
-    return { items: [], nextCursor: null, hasMore: false }
+    return EMPTY_FETCH_RESULT
   }
+  if (!spaceId) return EMPTY_FETCH_RESULT
 
   const marshalledFilters: WirePropertyFilter[] = propertyFilters.map((pf) => {
     const resolvedDate = parseDate(pf.value)
@@ -189,7 +190,7 @@ export async function fetchFilteredQuery(
       marshalledFilters,
       tagFilters.length > 0 ? { tagIds: [], prefixes: tagFilters, mode: 'or' } : null,
       null,
-      toSpaceScope(spaceId),
+      requireActiveScope(spaceId),
       pageCursor ?? null,
       paginationLimit(PAGE_SIZE),
     ),
@@ -246,9 +247,10 @@ export async function fetchRichInlineQuery(
   pageCursor?: string,
   spaceId?: string | null,
 ): Promise<QueryFetchResult> {
+  if (!spaceId) return EMPTY_FETCH_RESULT
   const response = unwrap(
     await commands.runAdvancedQuery({
-      spaceId: spaceId ?? '',
+      spaceId,
       filter,
       limit: PAGE_SIZE,
       ...(pageCursor != null ? { cursor: pageCursor } : {}),
@@ -293,10 +295,12 @@ export async function resolveInlineQuery(
 }
 
 /** Resolve parent-page titles for a batch of blocks into a fresh Map. */
-async function resolvePageTitles(items: BlockRow[]): Promise<Map<string, string>> {
+async function resolvePageTitles(items: BlockRow[], spaceId: string): Promise<Map<string, string>> {
   const parentIds = items.map((b) => b.page_id).filter((id): id is string => id != null)
   if (parentIds.length === 0) return new Map()
-  const resolved = unwrap(await commands.batchResolve([...new Set(parentIds)], { kind: 'global' }))
+  const resolved = unwrap(
+    await commands.batchResolve([...new Set(parentIds)], requireActiveScope(spaceId)),
+  )
   const titleMap = new Map<string, string>()
   for (const r of resolved) {
     if (r.title) titleMap.set(r.id, r.title)
@@ -358,13 +362,15 @@ export function useQueryExecution(options: UseQueryExecutionOptions): UseQueryEx
       //      filters, key-only, unknown) keeps the original legacy dispatch.
       // Page-title resolution is folded IN so each page carries its own titles.
       queryFn: async ({ pageParam }): Promise<QueryPage> => {
+        // #5415 — no active space: nothing runs.
+        if (currentSpaceId == null) return { ...EMPTY_FETCH_RESULT, titles: new Map() }
         try {
           const result = await resolveInlineQuery(
             expression,
             pageParam ?? undefined,
             currentSpaceId,
           )
-          const titles = await resolvePageTitles(result.items)
+          const titles = await resolvePageTitles(result.items, currentSpaceId)
           return {
             items: result.items,
             nextCursor: result.nextCursor,

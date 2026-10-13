@@ -29,7 +29,6 @@ import { IconButton } from '@/components/ui/icon-button'
 import { useHistoryDiffToggle } from '@/hooks/useHistoryDiffToggle'
 import { useHistoryKeyboardNav } from '@/hooks/useHistoryKeyboardNav'
 import { entryKey, useHistorySelection } from '@/hooks/useHistorySelection'
-import { useLocalStoragePreference } from '@/hooks/useLocalStoragePreference'
 import { useRegisterPrimaryFocus } from '@/hooks/usePrimaryFocus'
 import { reloadChangedPageStores } from '@/hooks/useSyncEvents'
 import { unwrap } from '@/lib/app-error'
@@ -42,7 +41,7 @@ import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
 import { invalidatePropertyCaches } from '@/lib/property-caches'
 import { queryClient } from '@/lib/query-client'
-import { toSpaceScope } from '@/lib/space-scope'
+import { requireActiveScope } from '@/lib/space-scope'
 import { useSpaceStore } from '@/stores/space'
 
 export function HistoryView(): React.ReactElement {
@@ -51,19 +50,9 @@ export function HistoryView(): React.ReactElement {
   const [confirmRevert, setConfirmRevert] = useState(false)
   const [restoreTarget, setRestoreTarget] = useState<HistoryEntry | null>(null)
   const [confirmRestore, setConfirmRestore] = useState(false)
-  // Phase 8 — current-space scoping. Default `false` ⇒ pass the
-  // current space id so only ops on pages in this space are returned.
-  // Toggling on drops the filter (cross-space `t('history.allSpacesToggle')` mode).
-  //
-  // Opt-in localStorage persistence so power users who audit
-  // cross-space history don't have to re-flip the toggle every visit.
-  // `useLocalStoragePreference` falls back to in-memory state when
-  // localStorage is unavailable (private mode / quota exceeded).
+  // #5415 — history is read in the active space, like every other view; the
+  // former *All spaces* switch was the one cross-space read left in the app.
   const currentSpaceId = useSpaceStore((s) => s.currentSpaceId)
-  const [showAllSpaces, setShowAllSpaces] = useLocalStoragePreference<boolean>(
-    'agaric:history:allSpacesToggle',
-    false,
-  )
   const { expandedKeys, diffCache, loadingDiffs, handleToggleDiff } = useHistoryDiffToggle<string>(
     (entry) => entryKey(entry),
   )
@@ -75,15 +64,10 @@ export function HistoryView(): React.ReactElement {
   useRegisterPrimaryFocus(listRef)
 
   // ── Data loading ─────────────────────────────────────────────────
-  // Phase 8 — when `t('history.allSpacesToggle')` is off, narrow the IPC to the
-  // current space. When on (or when no current space exists yet), pass
-  // `undefined` so the backend returns ops from every space.
-  const effectiveSpaceId = showAllSpaces ? undefined : (currentSpaceId ?? undefined)
-
   // #2634 — migrated off `usePaginatedQuery` onto TanStack `useInfiniteQuery`
   // directly (staged retirement of the generic hook; matching the merged
   // `HistoryPanel` / `DonePanel` pattern). The query key carries the real fetch
-  // inputs (op-type filter + effective space), so a filter/scope change is a
+  // inputs (op-type filter + active space), so a filter/scope change is a
   // fresh query — reproducing the old request-id guard: a late load-more
   // response for a superseded filter/scope lands in that key's (now
   // observer-less) cache entry instead of being grafted onto the new list
@@ -91,8 +75,8 @@ export function HistoryView(): React.ReactElement {
   // none is forwarded. Exported so `reloadAfterMutation` can reset this exact
   // cache entry without re-deriving (and risking drift from) the key.
   const queryKey = useMemo(
-    () => ['pageHistory', opTypeFilter, effectiveSpaceId ?? null],
-    [opTypeFilter, effectiveSpaceId],
+    () => ['pageHistory', opTypeFilter, currentSpaceId],
+    [opTypeFilter, currentSpaceId],
   )
   const {
     data,
@@ -108,12 +92,16 @@ export function HistoryView(): React.ReactElement {
     {
       queryKey,
       queryFn: async ({ pageParam }): Promise<PageResponse<HistoryEntry>> => {
+        // #5415 — no active space: nothing to list, never dispatch.
+        if (currentSpaceId == null) {
+          return { items: [], next_cursor: null, has_more: false, total_count: null }
+        }
         try {
           const result = unwrap(
             await commands.listPageHistory(
               '__all__',
               opTypeFilter ?? null,
-              toSpaceScope(effectiveSpaceId),
+              requireActiveScope(currentSpaceId),
               pageParam ?? null,
               PAGINATION_LIMIT,
             ),
@@ -128,7 +116,7 @@ export function HistoryView(): React.ReactElement {
               {
                 category,
                 opTypeFilter: opTypeFilter ?? null,
-                spaceId: effectiveSpaceId ?? null,
+                spaceId: currentSpaceId,
                 cursor: pageParam ?? null,
               },
               err,
@@ -237,14 +225,13 @@ export function HistoryView(): React.ReactElement {
     onClearSelection: clearSelection,
   })
 
-  // Reset selection + focus when filter changes (entries are replaced
-  // By the paginated query). Phase 8 — also resets when the
-  // space scope flips so a stale selection from the previous scope
-  // doesn't leak into the new one.
+  // Reset selection + focus when the filter or the active space changes
+  // (entries are replaced by the paginated query), so a stale selection from
+  // the previous scope doesn't leak into the new one.
   useEffect(() => {
     clearSelection()
     setFocusedIndex(0)
-  }, [opTypeFilter, effectiveSpaceId, setFocusedIndex, clearSelection])
+  }, [opTypeFilter, currentSpaceId, setFocusedIndex, clearSelection])
 
   // Glue selection+focus row click together for HistoryListView.
   const handleRowClick = useCallback(
@@ -300,12 +287,7 @@ export function HistoryView(): React.ReactElement {
       <ViewHeader>
         <div className="history-view-header space-y-2">
           {/* Filter bar */}
-          <HistoryFilterBar
-            opTypeFilter={opTypeFilter}
-            onFilterChange={setOpTypeFilter}
-            showAllSpaces={showAllSpaces}
-            onShowAllSpacesChange={setShowAllSpaces}
-          />
+          <HistoryFilterBar opTypeFilter={opTypeFilter} onFilterChange={setOpTypeFilter} />
 
           {/* Selection toolbar — only render when items are selected so that
               batch actions (revert, clear) disappear after completion. Keeps
@@ -348,21 +330,9 @@ export function HistoryView(): React.ReactElement {
         </div>
       )}
 
-      {/* Empty state.
-           Phase 8 — when scoped to the current space, surface the
-          "Toggle 'All spaces' to see history from other spaces." hint
-          so users understand why the list is empty and how to expand
-          the scope. The cross-space ("All spaces" on) empty state keeps
-          the existing generic copy. */}
+      {/* Empty state. */}
       {!loading && !error && entries.length === 0 && (
-        <EmptyState
-          icon={Clock}
-          message={
-            !showAllSpaces && currentSpaceId !== null
-              ? t('history.emptyCurrentSpace')
-              : t('history.noEntriesFound')
-          }
-        />
+        <EmptyState icon={Clock} message={t('history.emptyCurrentSpace')} />
       )}
 
       <HistoryListView

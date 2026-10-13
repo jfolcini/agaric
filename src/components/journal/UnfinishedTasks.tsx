@@ -28,7 +28,7 @@ import { t as translate } from '@/lib/i18n'
 import { logger } from '@/lib/logger'
 import { queryClient } from '@/lib/query-client'
 import { paginationLimit } from '@/lib/safe-limit'
-import { toSpaceScope } from '@/lib/space-scope'
+import { requireActiveScope } from '@/lib/space-scope'
 import { useSpaceStore } from '@/stores/space'
 
 // ── Constants ──────────────────────────────────────────────────────────
@@ -212,11 +212,14 @@ function parseGroupCollapsed(raw: string): Record<string, boolean> {
 }
 
 /** Resolve a set of page IDs to title map. Returns empty map on failure. */
-async function resolvePageTitles(parentIds: string[]): Promise<Map<string, string>> {
+async function resolvePageTitles(
+  parentIds: string[],
+  spaceId: string,
+): Promise<Map<string, string>> {
   const titles = new Map<string, string>()
   if (parentIds.length === 0) return titles
   try {
-    const resolved = unwrap(await commands.batchResolve(parentIds, { kind: 'global' }))
+    const resolved = unwrap(await commands.batchResolve(parentIds, requireActiveScope(spaceId)))
     for (const r of resolved) {
       titles.set(r.id, r.title ?? translate('common.untitled'))
     }
@@ -306,6 +309,10 @@ export function UnfinishedTasks({
     {
       queryKey,
       queryFn: async ({ pageParam }): Promise<PageResponse<BlockRow>> => {
+        // #5415 — no active space: nothing to list, never dispatch.
+        if (currentSpaceId == null) {
+          return { items: [], next_cursor: null, has_more: false, total_count: null }
+        }
         try {
           return unwrap(
             await commands.listUnfinishedTasks(
@@ -313,7 +320,7 @@ export function UnfinishedTasks({
               ['TODO', 'DOING'],
               pageParam ?? null,
               paginationLimit(200),
-              toSpaceScope(currentSpaceId),
+              requireActiveScope(currentSpaceId),
             ),
           )
         } catch (err) {
@@ -419,7 +426,7 @@ export function UnfinishedTasks({
   useEffect(() => {
     if (loading) return
     const parentIds = [...new Set(blocks.map((b) => b.page_id).filter(Boolean))] as string[]
-    if (parentIds.length === 0) {
+    if (parentIds.length === 0 || currentSpaceId == null) {
       // oxlint-disable-next-line react/set-state-in-effect -- clears resolved breadcrumb titles in the no-parents branch of this async resolve effect; titles come from a batch IPC; see #4407
       setPageTitles(new Map())
       return
@@ -427,13 +434,13 @@ export function UnfinishedTasks({
     let cancelled = false
     // `resolvePageTitles` swallows its own errors (returns an empty map), and
     // the handler below only sets state — nothing here can reject.
-    void resolvePageTitles(parentIds).then((titles) => {
+    void resolvePageTitles(parentIds, currentSpaceId).then((titles) => {
       if (!cancelled) setPageTitles(titles)
     })
     return () => {
       cancelled = true
     }
-  }, [blocks, loading])
+  }, [blocks, loading, currentSpaceId])
 
   const groups = useMemo(() => groupByAge(blocks, todayStr), [blocks, todayStr])
 

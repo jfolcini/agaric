@@ -42,6 +42,7 @@ import type {
 import { t } from '@/lib/i18n'
 import { logger } from '@/lib/logger'
 import { queryClient } from '@/lib/query-client'
+import { requireActiveScope } from '@/lib/space-scope'
 import { useSpaceStore } from '@/stores/space'
 
 /** Number of rows per paginated request. */
@@ -120,12 +121,15 @@ export function primitivesToFilterExpr(prims: FilterPrimitive[]): FilterExpr {
  */
 async function resolvePageTitles(
   items: BlockRow[],
+  spaceId: string,
   extraIds: readonly string[] = [],
 ): Promise<Map<string, string>> {
   const parentIds = items.map((b) => b.page_id).filter((id): id is string => id != null)
   const allIds = [...parentIds, ...extraIds]
   if (allIds.length === 0) return new Map()
-  const resolved = unwrap(await commands.batchResolve([...new Set(allIds)], { kind: 'global' }))
+  const resolved = unwrap(
+    await commands.batchResolve([...new Set(allIds)], requireActiveScope(spaceId)),
+  )
   const titleMap = new Map<string, string>()
   for (const r of resolved) {
     if (r.title) titleMap.set(r.id, r.title)
@@ -155,7 +159,7 @@ interface QueryInputs {
  */
 function buildQueryArgs(
   inputs: QueryInputs,
-  currentSpaceId: string | null,
+  currentSpaceId: string,
   trimmedFulltext: string,
   pageCursor: string | undefined,
 ): { request: AdvancedQueryRequest; groupBy: GroupSpec | null } {
@@ -175,12 +179,10 @@ function buildQueryArgs(
   // conjunction entirely. Other callers pass only `filters`, so `filterExpr` is
   // absent and we wrap the flat list as an `And` of Leaves.
   const filter = filterExpr != null ? filterExpr : primitivesToFilterExpr(filters)
-  // Phase 4 parity: the engine requires a space. The `?? ''` fallback is
-  // intentional pre-bootstrap behaviour — an empty string forces a no-match SQL
-  // filter rather than a runtime null deref. Optional engine inputs are omitted
-  // (not sent as empty) when unset so the request stays the minimal wire shape.
+  // Optional engine inputs are omitted (not sent as empty) when unset so the
+  // request stays the minimal wire shape.
   const request: AdvancedQueryRequest = {
-    spaceId: currentSpaceId ?? '',
+    spaceId: currentSpaceId,
     filter,
     limit: PAGE_SIZE,
     ...(trimmedFulltext !== '' ? { fulltext: trimmedFulltext } : {}),
@@ -256,6 +258,18 @@ export function useAdvancedQuery(options: UseAdvancedQueryOptions): UseAdvancedQ
         aggregatesKey,
       ],
       queryFn: async ({ pageParam }): Promise<AdvancedQueryPage> => {
+        // #5415 — the engine requires a space; with none known, nothing runs.
+        if (currentSpaceId == null) {
+          return {
+            rows: [],
+            groups: null,
+            nextCursor: null,
+            hasMore: false,
+            totalCount: null,
+            aggregates: null,
+            titles: new Map(),
+          }
+        }
         try {
           // Assemble the wire request from the LIVE inputs (captured by this
           // render's closure — the `queryKey` guarantees a fresh closure per
@@ -286,7 +300,7 @@ export function useAdvancedQuery(options: UseAdvancedQueryOptions): UseAdvancedQ
               groupKeyType === 'Tag' || groupKeyType === 'Page'
                 ? pageGroups.map((g) => g.key).filter((k) => k !== 'none')
                 : []
-            const titles = await resolvePageTitles(memberRows, groupKeyIds)
+            const titles = await resolvePageTitles(memberRows, currentSpaceId, groupKeyIds)
             return {
               rows: [],
               groups: pageGroups,
@@ -302,7 +316,7 @@ export function useAdvancedQuery(options: UseAdvancedQueryOptions): UseAdvancedQ
           // wire-compatible with `BlockRow` (identical 12 columns), so render
           // the rows directly.
           const items = response.rows as unknown as BlockRow[]
-          const titles = await resolvePageTitles(items)
+          const titles = await resolvePageTitles(items, currentSpaceId)
           return {
             rows: items,
             groups: null,

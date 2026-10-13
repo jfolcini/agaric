@@ -24,6 +24,7 @@ import type { BacklinkGroup, ResolvedBlock } from '@/lib/bindings'
 import { commands } from '@/lib/bindings'
 import { resolveStoreTitle, unresolvedBlockLabel, unresolvedTagLabel } from '@/lib/block-title'
 import { logger } from '@/lib/logger'
+import { requireActiveScope } from '@/lib/space-scope'
 import { keyFor, useResolveStore } from '@/stores/resolve'
 import { useSpaceStore } from '@/stores/space'
 
@@ -160,18 +161,16 @@ export function useBacklinkResolution(groups: BacklinkGroup[]): UseBacklinkResol
       force ? true : !store.has(id) && !attemptedRef.current.has(keyFor(currentSpaceId, id)),
     )
     if (idsToResolve.length === 0) return
+    // #5415 — fail closed until the space store hydrates: an unverifiable
+    // target must not be trusted (mirrors use-block-link-resolve.ts).
+    if (currentSpaceId == null) return
 
     let cancelled = false
 
-    // #2543 — scope resolution to the CURRENT space (foreign-space targets then
-    // fall into the broken-link UX via the attempted-unresolved set below),
-    // falling back to the literal 'global' only when no space is active
-    // (pre-bootstrap / trash-like surfaces), mirroring useBlockLinkResolve.ts.
+    // #2543 — scope resolution to the CURRENT space; foreign-space targets
+    // fall into the broken-link UX via the attempted-unresolved set below.
     commands
-      .batchResolve(
-        idsToResolve,
-        currentSpaceId == null ? { kind: 'global' } : { kind: 'active', space_id: currentSpaceId },
-      )
+      .batchResolve(idsToResolve, requireActiveScope(currentSpaceId))
       .then(unwrap)
       .then((resolved) => {
         if (cancelled) return

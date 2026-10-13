@@ -154,6 +154,20 @@ beforeEach(() => {
 })
 
 describe('DonePanel', () => {
+  // #5415 — no active space: nothing is listed and nothing is dispatched.
+  it('dispatches nothing and renders nothing while there is no active space', async () => {
+    useSpaceStore.setState({ currentSpaceId: null })
+
+    const { container } = render(<DonePanel date="2025-06-15" />)
+    await waitFor(() => {
+      expect(container.querySelector('[aria-busy="true"]')).toBeNull()
+    })
+
+    expect(mockedQueryByProperty).not.toHaveBeenCalled()
+    expect(mockedBatchResolve).not.toHaveBeenCalled()
+    expect(screen.queryByText(t('donePanel.header', { count: 0 }))).not.toBeInTheDocument()
+  })
+
   // 1. Renders with items showing count header ("3 Completed")
   it('renders header with correct count', async () => {
     mockedQueryByProperty.mockResolvedValue({

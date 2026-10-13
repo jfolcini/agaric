@@ -371,7 +371,7 @@ test.describe('Journal template button', () => {
       content: NESTED,
       parentId: BLOCK_TMPL_ATTENDEES,
       index: null,
-      scope: { kind: 'global' },
+      scope: { kind: 'active', space_id: 'SPACE_PERSONAL' },
       blockId: null,
     })
 
