@@ -29,7 +29,7 @@ import { notifyPageAdded } from '@/lib/name-change-bus'
 import { notify } from '@/lib/notify'
 import { reportIpcError } from '@/lib/report-ipc-error'
 import { paginationLimit } from '@/lib/safe-limit'
-import { toSpaceScope } from '@/lib/space-scope'
+import { requireActiveScope } from '@/lib/space-scope'
 import { loadTemplatePagesWithPreview } from '@/lib/template-utils'
 import { cn } from '@/lib/utils'
 import { useSpaceStore } from '@/stores/space'
@@ -77,6 +77,12 @@ export function TemplatesView(): React.ReactElement {
   const loadTemplates = useCallback(async () => {
     setLoading(true)
     setLoadError(false)
+    // #5415 — no active space: nothing to list, never dispatch.
+    if (currentSpaceId == null) {
+      setTemplates([])
+      setLoading(false)
+      return
+    }
     try {
       const pages = await loadTemplatePagesWithPreview(currentSpaceId)
       // `blockType: 'page'` is pushed into SQL via
@@ -103,7 +109,7 @@ export function TemplatesView(): React.ReactElement {
             valueDateRange: null,
             excludeTodoStates: null,
           },
-          toSpaceScope(currentSpaceId),
+          requireActiveScope(currentSpaceId),
         ),
       )
       const journalIds = new Set(journalResp.items.map((b) => b.id))

@@ -36,6 +36,8 @@ import {
   sortDiscriminator,
   spaceRootGroup,
   validationRejection,
+  readActiveSpaceScope,
+  readSpaceScope,
 } from '@/lib/tauri-mock/handlers/shared'
 import { tagsHandlers } from '@/lib/tauri-mock/handlers/tags'
 import {
@@ -899,11 +901,7 @@ export const pagesHandlers = {
   get_journal_page_by_date: (args) => {
     const a = args as Record<string, unknown>
     const date = a['date'] as string
-    // b1 — IPC arg is now `scope: SpaceScope`. Recover the active space
-    // id; a `global` scope yields `null`, which the loop treats as a
-    // no-match filter (the backend rejects Global via `require_active`).
-    const scope = a['scope'] as { kind: string; space_id?: string } | undefined
-    const spaceId = scope?.kind === 'active' ? (scope.space_id ?? null) : null
+    const spaceId = readActiveSpaceScope('get_journal_page_by_date', a)
     for (const b of blocks.values()) {
       if (b['block_type'] !== 'page') continue
       if (b['deleted_at']) continue
@@ -924,9 +922,7 @@ export const pagesHandlers = {
     const a = args as Record<string, unknown>
     const startDate = a['startDate'] as string
     const endDate = a['endDate'] as string
-    // b1 — `scope: SpaceScope`. `global` → null → no-match filter.
-    const scope = a['scope'] as { kind: string; space_id?: string } | undefined
-    const spaceId = scope?.kind === 'active' ? (scope.space_id ?? null) : null
+    const spaceId = readActiveSpaceScope('list_journal_pages_in_range', a)
     const datePattern = /^\d{4}-\d{2}-\d{2}$/
     const items: Record<string, unknown>[] = []
     for (const b of blocks.values()) {
@@ -958,9 +954,7 @@ export const pagesHandlers = {
   // direct-tag filter; inherited tags intentionally not modelled here).
   list_all_pages_in_space: (args) => {
     const a = args as Record<string, unknown>
-    // b1 — `scope: SpaceScope`. `global` → null → no-match filter.
-    const scope = a['scope'] as { kind: string; space_id?: string } | undefined
-    const spaceId = scope?.kind === 'active' ? (scope.space_id ?? null) : null
+    const spaceId = readActiveSpaceScope('list_all_pages_in_space', a)
     const rawTagIds = a['tagIds'] as string[] | null | undefined
     const tagFilter = rawTagIds && rawTagIds.length > 0 ? new Set(rawTagIds) : null
     const items: Array<{ id: string; content: string | null }> = []
@@ -999,10 +993,7 @@ export const pagesHandlers = {
   load_page_subtree: (args) => {
     const a = args as Record<string, unknown>
     const rootBlockId = a['rootBlockId'] as string
-    // b1 — `scope: SpaceScope`. `global` → null (backend rejects Global
-    // via `require_active`); the membership check below then throws.
-    const scope = a['scope'] as { kind: string; space_id?: string } | undefined
-    const spaceId = scope?.kind === 'active' ? (scope.space_id ?? null) : null
+    const spaceId = readActiveSpaceScope('load_page_subtree', a)
     // Space-membership check — mirrors the backend.
     const rootProps = properties.get(rootBlockId)
     const rootSpace = rootProps?.get('space')
@@ -1138,9 +1129,7 @@ export const pagesHandlers = {
   // No pagination, no clamp; the graph view uses this to flag templates.
   list_template_page_ids_in_space: (args) => {
     const a = args as Record<string, unknown>
-    // b1 — `scope: SpaceScope`. `global` → null → no-match filter.
-    const scope = a['scope'] as { kind: string; space_id?: string } | undefined
-    const spaceId = scope?.kind === 'active' ? (scope.space_id ?? null) : null
+    const spaceId = readActiveSpaceScope('list_template_page_ids_in_space', a)
     const ids: string[] = []
     for (const b of blocks.values()) {
       if (b['block_type'] !== 'page') continue
@@ -1160,8 +1149,7 @@ export const pagesHandlers = {
     // Honour `scope: SpaceScope` (mirrors
     // `list_undated_tasks_inner`).
     const a = (args ?? {}) as Record<string, unknown>
-    const scope = a['scope'] as { kind: string; space_id?: string } | undefined
-    const spaceId = scope?.kind === 'active' ? (scope.space_id ?? null) : null
+    const spaceId = readSpaceScope(a)
     const items = [...blocks.values()].filter((b) => {
       if (b['deleted_at']) return false
       if (b['todo_state'] === null) return false
@@ -1403,8 +1391,7 @@ export const pagesHandlers = {
     // alias pointing at a foreign-space page does not surface when the
     // caller is scoped to the active space. Global keeps the
     // cross-space lookup so the MCP / agent surfaces don't regress.
-    const scope = a['scope'] as { kind: string; space_id?: string } | undefined
-    const spaceId = scope?.kind === 'active' ? (scope.space_id ?? null) : null
+    const spaceId = readSpaceScope(a)
     for (const [pid, aliases] of pageAliases.entries()) {
       if (aliases.some((al) => foldAsciiUppercase(al) === alias)) {
         const page = blocks.get(pid)
@@ -1436,8 +1423,7 @@ export const pagesHandlers = {
     const limit = (a['limit'] as number | null) ?? 50
     // Phase 3 — IPC arg shape: `scope: SpaceScope`. Recover the
     // legacy `spaceId | null` shape for the active-space-scoping branch.
-    const scope = a['scope'] as { kind: string; space_id?: string } | undefined
-    const spaceId = scope?.kind === 'active' ? (scope.space_id ?? null) : null
+    const spaceId = readSpaceScope(a)
 
     const rows: Array<[string, string, string | null]> = []
     for (const [pid, aliases] of pageAliases.entries()) {

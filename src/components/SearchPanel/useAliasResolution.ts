@@ -18,7 +18,7 @@ import { isNotFound, unwrap } from '@/lib/app-error'
 import type { BlockRow } from '@/lib/bindings'
 import { commands } from '@/lib/bindings'
 import { logger } from '@/lib/logger'
-import { toSpaceScope } from '@/lib/space-scope'
+import { requireActiveScope } from '@/lib/space-scope'
 
 export interface AliasResolution {
   /**
@@ -64,12 +64,17 @@ export function useAliasResolution(
       setAliasQuery('')
       return
     }
+    // #5415 — no active space: nothing to resolve against, never dispatch.
+    if (currentSpaceId == null) {
+      setAliasMatch(null)
+      setAliasQuery('')
+      return
+    }
     let cancelled = false
-    // Pass `spaceId: currentSpaceId` so an alias
-    // pointing at a foreign-space page does not surface here. Mirrors
-    // The active-space scoping the prefix picker already uses.
+    // Scoped to the active space so an alias pointing at a foreign-space page
+    // does not surface here. Mirrors the prefix picker.
     commands
-      .resolvePageByAlias(trimmed, toSpaceScope(currentSpaceId))
+      .resolvePageByAlias(trimmed, requireActiveScope(currentSpaceId))
       .then(unwrap)
       .then(async (result) => {
         if (cancelled) return

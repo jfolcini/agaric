@@ -155,11 +155,10 @@ export function TagList({ onTagClick }: TagListProps): React.ReactElement {
       // atomic create there is no swallow-on-failure window: a scoping failure
       // now fails the whole create and surfaces via the catch below.
       const spaceId = useSpaceStore.getState().currentSpaceId
-      const resp = await createBlock({
-        blockType: 'tag',
-        content: name,
-        ...(spaceId != null && { spaceId }),
-      })
+      // #5415 — no active space means no space to create the tag in; refuse
+      // through the catch below rather than create a space-less tag.
+      if (spaceId == null) throw new Error('No active space; cannot create tag')
+      const resp = await createBlock({ blockType: 'tag', content: name, spaceId })
       const newTag: TagCacheRow = {
         tag_id: resp.id,
         name: resp.content ?? name,
@@ -176,16 +175,7 @@ export function TagList({ onTagClick }: TagListProps): React.ReactElement {
       // (see `handleDeleteTag` / the rename handler below); the CREATE was
       // the one mutation it made silently, so a warm `#`-picker cache kept
       // missing a tag created here for the rest of the session.
-      //
-      // #4391 — no active space (the same `spaceId == null` branch the
-      // `createBlock` call above already handles) means an UNSCOPED tag: no
-      // space's picker cache should show it, so there is nothing to notify.
-      // Skipping and falling back to `invalidateNameCaches()` (what the two
-      // handlers below do) are equivalent with no active space, and the
-      // reason is written down once, in the "When the caller has NO active
-      // space" section of `src/lib/name-change-bus.ts` — read that before
-      // picking either for a new call site.
-      if (spaceId != null) notifyTagAdded(resp.id, newTag.name, spaceId)
+      notifyTagAdded(resp.id, newTag.name, spaceId)
     } catch (error) {
       logger.error('TagList', 'failed to create tag', { name }, error)
       // Issue #106 — surface unique-constraint violations distinctly so

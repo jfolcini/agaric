@@ -7,7 +7,7 @@ import { commands } from '@/lib/bindings'
 import type { DayEntry } from '@/lib/date-utils'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
-import { toSpaceScope } from '@/lib/space-scope'
+import { requireActiveScope } from '@/lib/space-scope'
 import { useSpaceStore } from '@/stores/space'
 
 export function useBatchCounts(entries: DayEntry[]) {
@@ -40,15 +40,18 @@ export function useBatchCounts(entries: DayEntry[]) {
   const { structureKey } = useGraphStructureEvents()
 
   useEffect(() => {
+    // #5415 — no active space: nothing to count, never dispatch.
+    if (currentSpaceId == null) return
+    const scope = requireActiveScope(currentSpaceId)
     let cancelled = false
     async function fetchCounts() {
       const [bySource, backlinks] = await Promise.all([
-        commands.countAgendaBatchBySource(dates, toSpaceScope(currentSpaceId)).then(unwrap),
+        commands.countAgendaBatchBySource(dates, scope).then(unwrap),
         // Thread the active space into
         // `count_backlinks_batch` so badge counts on cross-linked pages
         // exclude source blocks the user can't see.
         pageIds.length > 0
-          ? commands.countBacklinksBatch(pageIds, toSpaceScope(currentSpaceId)).then(unwrap)
+          ? commands.countBacklinksBatch(pageIds, scope).then(unwrap)
           : Promise.resolve({} as Record<string, number>),
       ])
       if (!cancelled) {

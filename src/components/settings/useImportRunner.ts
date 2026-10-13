@@ -27,7 +27,7 @@ import { importMarkdown } from '@/lib/ipc-helpers'
 import { logger } from '@/lib/logger'
 import { PREFERENCES, writePreference } from '@/lib/preferences'
 import { invalidatePropertyCaches } from '@/lib/property-caches'
-import { toSpaceScope } from '@/lib/space-scope'
+import { requireActiveScope } from '@/lib/space-scope'
 import { type ImportUnit, importErrorReason } from '@/lib/vault-import'
 import { useTabsStore } from '@/stores/tabs'
 
@@ -165,7 +165,7 @@ export function useImportRunner(): UseImportRunner {
   const goToImportedPage = useCallback(
     async (title: string, spaceId: string) => {
       try {
-        const hit = unwrap(await commands.resolvePageByAlias(title, toSpaceScope(spaceId)))
+        const hit = unwrap(await commands.resolvePageByAlias(title, requireActiveScope(spaceId)))
         if (hit) {
           const [pageId, resolvedTitle] = hit
           navigateToPage(pageId, resolvedTitle ?? title)

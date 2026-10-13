@@ -132,6 +132,8 @@ import { effectiveDisplayDate, UnfinishedTasks } from '@/components/journal/Unfi
 beforeEach(() => {
   vi.clearAllMocks()
   localStorage.clear()
+  // #5415 — the task listing carries the active space.
+  useSpaceStore.setState({ currentSpaceId: 'SPACE_1' })
   // The panel reads the module-level TanStack singleton, and its query key is
   // (space, day) — identical across these tests. Without a clear, a prior
   // test's cached pages satisfy the next render instantly while
@@ -947,14 +949,12 @@ describe('UnfinishedTasks', () => {
       scoped.unmount()
 
       mockedInvoke.mockClear()
+      // #5415 — no active space: nothing is listed and nothing is dispatched.
       useSpaceStore.setState({ currentSpaceId: null })
-      render(<UnfinishedTasks />)
-      await waitFor(() => {
-        expect(mockedInvoke).toHaveBeenCalledWith(
-          'list_unfinished_tasks',
-          expect.objectContaining({ scope: { kind: 'global' } }),
-        )
-      })
+      const { rerender } = render(<UnfinishedTasks />)
+      rerender(<UnfinishedTasks />)
+      expect(mockedInvoke).not.toHaveBeenCalledWith('list_unfinished_tasks', expect.anything())
+      expect(screen.queryByTestId('unfinished-tasks')).not.toBeInTheDocument()
     })
 
     // #826 — the fetch `.catch` previously called setBlocks([]) unconditionally.

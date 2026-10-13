@@ -146,7 +146,7 @@ describe('executeAgendaFilters', () => {
         },
       })
 
-      const result = await executeAgendaFilters([], null)
+      const result = await executeAgendaFilters([], 'SPACE_1')
 
       expect(result.blocks).toHaveLength(2)
       expect(result.blocks.map((b) => b.id)).toEqual(['due-1', 'sched-1'])
@@ -155,7 +155,7 @@ describe('executeAgendaFilters', () => {
     })
 
     it('does NOT dispatch filtered_blocks_query when filters are empty', async () => {
-      await executeAgendaFilters([], null)
+      await executeAgendaFilters([], 'SPACE_1')
       expect(filteredCalls()).toHaveLength(0)
     })
 
@@ -172,14 +172,14 @@ describe('executeAgendaFilters', () => {
         query_by_property: () => page([block]),
       })
 
-      const result = await executeAgendaFilters([], null)
+      const result = await executeAgendaFilters([], 'SPACE_1')
 
       expect(result.blocks).toHaveLength(1)
       expect(result.blocks[0]?.id).toBe('both-1')
     })
 
     it('returns empty when no dated blocks exist', async () => {
-      const result = await executeAgendaFilters([], null)
+      const result = await executeAgendaFilters([], 'SPACE_1')
       expect(result.blocks).toHaveLength(0)
     })
 
@@ -204,7 +204,7 @@ describe('executeAgendaFilters', () => {
         },
       })
 
-      const result = await executeAgendaFilters([], null)
+      const result = await executeAgendaFilters([], 'SPACE_1')
 
       expect(result.blocks).toHaveLength(2)
       expect(result.blocks.map((b) => b.id)).toEqual(['due-1', 'undated-1'])
@@ -227,7 +227,7 @@ describe('executeAgendaFilters', () => {
         },
       })
 
-      const result = await executeAgendaFilters([], null)
+      const result = await executeAgendaFilters([], 'SPACE_1')
 
       // Exactly ONE window — no exhaustion walk.
       expect(undatedCallCount).toBe(1)
@@ -258,13 +258,13 @@ describe('executeAgendaFilters', () => {
         },
       })
 
-      const page1 = await executeAgendaFilters([], null)
+      const page1 = await executeAgendaFilters([], 'SPACE_1')
       expect(page1.blocks.map((b) => b.id)).toEqual(['due-1', 'sched-1'])
       expect(page1.hasMore).toBe(true)
       expect(page1.cursor).not.toBeNull()
 
       mockedInvoke.mockClear()
-      const page2 = await loadMoreUnfilteredAgenda(page1.cursor as string, null)
+      const page2 = await loadMoreUnfilteredAgenda(page1.cursor as string, 'SPACE_1')
 
       // Only the due_date source had more pages — the exhausted
       // scheduled_date / undated sources are not re-queried.
@@ -282,7 +282,7 @@ describe('executeAgendaFilters', () => {
     })
 
     it('#721: loadMoreUnfilteredAgenda rejects a foreign (non-composite) cursor', async () => {
-      const result = await loadMoreUnfilteredAgenda('SOME_BACKEND_KEYSET_CURSOR', null)
+      const result = await loadMoreUnfilteredAgenda('SOME_BACKEND_KEYSET_CURSOR', 'SPACE_1')
       expect(result.blocks).toHaveLength(0)
       expect(result.hasMore).toBe(false)
       expect(result.cursor).toBeNull()
@@ -296,7 +296,7 @@ describe('executeAgendaFilters', () => {
     // `queryByProperty` as a bogus backend cursor.
     it('#3881: loadMoreUnfilteredAgenda rejects a well-formed-JSON cursor whose field is wrong-typed', async () => {
       const cursor = `agenda-unfiltered:${JSON.stringify({ due: 42, scheduled: null })}`
-      const result = await loadMoreUnfilteredAgenda(cursor, null)
+      const result = await loadMoreUnfilteredAgenda(cursor, 'SPACE_1')
       expect(result.blocks).toHaveLength(0)
       expect(result.hasMore).toBe(false)
       expect(result.cursor).toBeNull()
@@ -315,7 +315,7 @@ describe('executeAgendaFilters', () => {
         filtered_blocks_query: () => page([block]),
       })
 
-      await executeAgendaFilters([{ dimension: 'status', values: ['TODO'] }], null)
+      await executeAgendaFilters([{ dimension: 'status', values: ['TODO'] }], 'SPACE_1')
 
       const cmds = mockedInvoke.mock.calls.map(([cmd]) => cmd)
       expect(cmds.filter((c) => c === 'list_undated_tasks')).toHaveLength(0)
@@ -337,7 +337,7 @@ describe('executeAgendaFilters', () => {
 
       const result = await executeAgendaFilters(
         [{ dimension: 'status', values: ['TODO', 'DOING'] }],
-        null,
+        'SPACE_1',
       )
 
       expect(result.blocks).toHaveLength(2)
@@ -354,7 +354,7 @@ describe('executeAgendaFilters', () => {
           ],
           tagFilters: null,
           blockType: null,
-          scope: { kind: 'active', space_id: '' },
+          scope: { kind: 'active', space_id: 'SPACE_1' },
           cursor: null,
           limit: 200,
         }),
@@ -362,7 +362,7 @@ describe('executeAgendaFilters', () => {
     })
 
     it('skips IPC entirely when status values list is empty', async () => {
-      const result = await executeAgendaFilters([{ dimension: 'status', values: [] }], null)
+      const result = await executeAgendaFilters([{ dimension: 'status', values: [] }], 'SPACE_1')
       expect(result.blocks).toHaveLength(0)
       expect(filteredCalls()).toHaveLength(0)
     })
@@ -379,7 +379,7 @@ describe('executeAgendaFilters', () => {
 
       const result = await executeAgendaFilters(
         [{ dimension: 'priority', values: ['1', '2'] }],
-        null,
+        'SPACE_1',
       )
 
       expect(result.blocks).toHaveLength(2)
@@ -399,7 +399,7 @@ describe('executeAgendaFilters', () => {
     })
 
     it('skips IPC entirely when priority values list is empty', async () => {
-      const result = await executeAgendaFilters([{ dimension: 'priority', values: [] }], null)
+      const result = await executeAgendaFilters([{ dimension: 'priority', values: [] }], 'SPACE_1')
       expect(result.blocks).toHaveLength(0)
       expect(filteredCalls()).toHaveLength(0)
     })
@@ -415,7 +415,10 @@ describe('executeAgendaFilters', () => {
         filtered_blocks_query: () => page([block]),
       })
 
-      const result = await executeAgendaFilters([{ dimension: 'dueDate', values: ['Today'] }], null)
+      const result = await executeAgendaFilters(
+        [{ dimension: 'dueDate', values: ['Today'] }],
+        'SPACE_1',
+      )
 
       expect(result.blocks).toHaveLength(1)
       expect(mockedInvoke).toHaveBeenCalledWith(
@@ -436,7 +439,7 @@ describe('executeAgendaFilters', () => {
       vi.useFakeTimers()
       vi.setSystemTime(new Date('2025-03-12T12:00:00')) // Wednesday
 
-      await executeAgendaFilters([{ dimension: 'dueDate', values: ['This week'] }], null)
+      await executeAgendaFilters([{ dimension: 'dueDate', values: ['This week'] }], 'SPACE_1')
 
       // Mon..Sun = 2025-03-10..2025-03-16; half-open: [2025-03-10, 2025-03-17).
       const call = filteredCalls()[0] as Record<string, unknown>
@@ -463,7 +466,7 @@ describe('executeAgendaFilters', () => {
 
       const result = await executeAgendaFilters(
         [{ dimension: 'dueDate', values: ['Overdue'] }],
-        null,
+        'SPACE_1',
       )
 
       expect(result.blocks).toHaveLength(1)
@@ -485,7 +488,7 @@ describe('executeAgendaFilters', () => {
     it('skips unknown date values entirely (no filter dispatched)', async () => {
       const result = await executeAgendaFilters(
         [{ dimension: 'dueDate', values: ['Unknown period'] }],
-        null,
+        'SPACE_1',
       )
       expect(result.blocks).toHaveLength(0)
       expect(filteredCalls()).toHaveLength(0)
@@ -522,7 +525,7 @@ describe('executeAgendaFilters', () => {
 
       const result = await executeAgendaFilters(
         [{ dimension: 'dueDate', values: ['Today', 'Overdue'] }],
-        null,
+        'SPACE_1',
       )
 
       // SQL fetches the superset `due_date < 2025-03-16` — exactly one
@@ -547,7 +550,10 @@ describe('executeAgendaFilters', () => {
       vi.useFakeTimers()
       vi.setSystemTime(new Date('2025-03-12T12:00:00')) // Wednesday
 
-      await executeAgendaFilters([{ dimension: 'dueDate', values: ['Today', 'This week'] }], null)
+      await executeAgendaFilters(
+        [{ dimension: 'dueDate', values: ['Today', 'This week'] }],
+        'SPACE_1',
+      )
 
       // Union of [03-12, 03-12] and [03-10, 03-16] = [03-10, 03-17) —
       // a single range filter, not two AND-ed filters.
@@ -580,7 +586,7 @@ describe('executeAgendaFilters', () => {
 
       const result = await executeAgendaFilters(
         [{ dimension: 'scheduledDate', values: ['Overdue', 'This week'] }],
-        null,
+        'SPACE_1',
       )
 
       const call = filteredCalls()[0] as Record<string, unknown>
@@ -616,7 +622,7 @@ describe('executeAgendaFilters', () => {
 
       const result = await executeAgendaFilters(
         [{ dimension: 'dueDate', values: ['Today', 'Overdue'] }],
-        null,
+        'SPACE_1',
       )
 
       expect(result.blocks.map((b) => b.id)).toEqual(['null-state-today'])
@@ -648,7 +654,7 @@ describe('executeAgendaFilters', () => {
 
       const result = await executeAgendaFilters(
         [{ dimension: 'dueDate', values: ['Today', 'Overdue'] }],
-        null,
+        'SPACE_1',
       )
 
       expect(filteredCalls()).toHaveLength(2)
@@ -663,7 +669,7 @@ describe('executeAgendaFilters', () => {
 
       await executeAgendaFilters(
         [{ dimension: 'completedDate', values: ['Today', 'Last 7 days'] }],
-        null,
+        'SPACE_1',
       )
 
       const call = filteredCalls()[0] as Record<string, unknown>
@@ -684,7 +690,7 @@ describe('executeAgendaFilters', () => {
           { dimension: 'status', values: ['TODO'] },
           { dimension: 'dueDate', values: ['Today', 'This week'] },
         ],
-        null,
+        'SPACE_1',
       )
 
       const call = filteredCalls()[0] as Record<string, unknown>
@@ -697,7 +703,7 @@ describe('executeAgendaFilters', () => {
     it('multi-value same-key property filters collapse to ONE valueTextIn (OR)', async () => {
       await executeAgendaFilters(
         [{ dimension: 'property', values: ['assignee:Alice', 'assignee:Bob'] }],
-        null,
+        'SPACE_1',
       )
 
       const call = filteredCalls()[0] as Record<string, unknown>
@@ -713,7 +719,7 @@ describe('executeAgendaFilters', () => {
     it('bare key subsumes valued entries for the same key (is-set OR eq = is-set)', async () => {
       await executeAgendaFilters(
         [{ dimension: 'property', values: ['assignee:Alice', 'assignee'] }],
-        null,
+        'SPACE_1',
       )
 
       const call = filteredCalls()[0] as Record<string, unknown>
@@ -735,7 +741,7 @@ describe('executeAgendaFilters', () => {
       // the desired union. Order of values must not change the outcome.
       await executeAgendaFilters(
         [{ dimension: 'property', values: ['assignee:Alice', 'assignee', 'assignee:Bob'] }],
-        null,
+        'SPACE_1',
       )
 
       const call = filteredCalls()[0] as Record<string, unknown>
@@ -761,7 +767,7 @@ describe('executeAgendaFilters', () => {
 
       const result = await executeAgendaFilters(
         [{ dimension: 'scheduledDate', values: ['Today'] }],
-        null,
+        'SPACE_1',
       )
 
       expect(result.blocks).toHaveLength(1)
@@ -783,7 +789,7 @@ describe('executeAgendaFilters', () => {
       vi.useFakeTimers()
       vi.setSystemTime(new Date('2025-03-15T12:00:00'))
 
-      await executeAgendaFilters([{ dimension: 'scheduledDate', values: ['Overdue'] }], null)
+      await executeAgendaFilters([{ dimension: 'scheduledDate', values: ['Overdue'] }], 'SPACE_1')
 
       const call = filteredCalls()[0] as Record<string, unknown>
       const propertyFilters = call['propertyFilters'] as Array<Record<string, unknown>>
@@ -813,7 +819,7 @@ describe('executeAgendaFilters', () => {
 
       const result = await executeAgendaFilters(
         [{ dimension: 'completedDate', values: ['Today'] }],
-        null,
+        'SPACE_1',
       )
 
       expect(result.blocks).toHaveLength(1)
@@ -830,7 +836,10 @@ describe('executeAgendaFilters', () => {
       vi.useFakeTimers()
       vi.setSystemTime(new Date('2025-03-15T12:00:00'))
 
-      await executeAgendaFilters([{ dimension: 'completedDate', values: ['Last 7 days'] }], null)
+      await executeAgendaFilters(
+        [{ dimension: 'completedDate', values: ['Last 7 days'] }],
+        'SPACE_1',
+      )
 
       const call = filteredCalls()[0] as Record<string, unknown>
       const propertyFilters = call['propertyFilters'] as Array<Record<string, unknown>>
@@ -845,7 +854,7 @@ describe('executeAgendaFilters', () => {
       vi.useFakeTimers()
       vi.setSystemTime(new Date('2025-01-31T12:00:00'))
 
-      await executeAgendaFilters([{ dimension: 'completedDate', values: ['Today'] }], null)
+      await executeAgendaFilters([{ dimension: 'completedDate', values: ['Today'] }], 'SPACE_1')
 
       const call = filteredCalls()[0] as Record<string, unknown>
       const propertyFilters = call['propertyFilters'] as Array<Record<string, unknown>>
@@ -857,7 +866,7 @@ describe('executeAgendaFilters', () => {
     it('skips unknown date values', async () => {
       const result = await executeAgendaFilters(
         [{ dimension: 'completedDate', values: ['Next 7 days'] }],
-        null,
+        'SPACE_1',
       )
       expect(result.blocks).toHaveLength(0)
       expect(filteredCalls()).toHaveLength(0)
@@ -876,7 +885,7 @@ describe('executeAgendaFilters', () => {
 
       const result = await executeAgendaFilters(
         [{ dimension: 'createdDate', values: ['Today'] }],
-        null,
+        'SPACE_1',
       )
 
       expect(result.blocks).toHaveLength(1)
@@ -899,7 +908,10 @@ describe('executeAgendaFilters', () => {
         filtered_blocks_query: () => page([block]),
       })
 
-      const result = await executeAgendaFilters([{ dimension: 'tag', values: ['tag-abc'] }], null)
+      const result = await executeAgendaFilters(
+        [{ dimension: 'tag', values: ['tag-abc'] }],
+        'SPACE_1',
+      )
 
       expect(result.blocks).toHaveLength(1)
       expect(mockedInvoke).toHaveBeenCalledWith(
@@ -953,7 +965,7 @@ describe('executeAgendaFilters', () => {
         },
       })
 
-      await executeAgendaFilters([{ dimension: 'tag', values: ['tag-1', 'tag-2'] }], null)
+      await executeAgendaFilters([{ dimension: 'tag', values: ['tag-1', 'tag-2'] }], 'SPACE_1')
 
       const prefixCalls = mockedInvoke.mock.calls.filter(
         ([cmd]) => cmd === 'list_tags_by_prefix',
@@ -973,7 +985,7 @@ describe('executeAgendaFilters', () => {
         },
       })
 
-      await executeAgendaFilters([{ dimension: 'tag', values: ['tag-1', 'tag-2'] }], null)
+      await executeAgendaFilters([{ dimension: 'tag', values: ['tag-1', 'tag-2'] }], 'SPACE_1')
 
       const call = filteredCalls()[0] as Record<string, unknown>
       expect(call['tagFilters']).toMatchObject({
@@ -987,7 +999,7 @@ describe('executeAgendaFilters', () => {
 
       const result = await executeAgendaFilters(
         [{ dimension: 'tag', values: ['nonexistent-tag'] }],
-        null,
+        'SPACE_1',
       )
 
       expect(result.blocks).toHaveLength(0)
@@ -1015,7 +1027,7 @@ describe('executeAgendaFilters', () => {
           { dimension: 'status', values: ['TODO'] },
           { dimension: 'tag', values: ['nonexistent-tag'] },
         ],
-        null,
+        'SPACE_1',
       )
 
       // The AND with an unsatisfiable tag dimension is empty — and the
@@ -1039,7 +1051,7 @@ describe('executeAgendaFilters', () => {
           { dimension: 'status', values: ['TODO'] },
           { dimension: 'tag', values: ['tag-ok'] },
         ],
-        null,
+        'SPACE_1',
       )
 
       expect(result.blocks.map((b) => b.id)).toEqual(['intersection-1'])
@@ -1066,7 +1078,7 @@ describe('executeAgendaFilters', () => {
           { dimension: 'status', values: ['TODO'] },
           { dimension: 'tag', values: [] },
         ],
-        null,
+        'SPACE_1',
       )
 
       expect(result.blocks.map((b) => b.id)).toEqual(['status-survives'])
@@ -1091,7 +1103,7 @@ describe('executeAgendaFilters', () => {
 
       const result = await executeAgendaFilters(
         [{ dimension: 'property', values: ['assignee:Alice'] }],
-        null,
+        'SPACE_1',
       )
 
       expect(result.blocks).toHaveLength(1)
@@ -1113,7 +1125,7 @@ describe('executeAgendaFilters', () => {
 
       const result = await executeAgendaFilters(
         [{ dimension: 'property', values: ['custom_key'] }],
-        null,
+        'SPACE_1',
       )
 
       expect(result.blocks).toHaveLength(1)
@@ -1144,7 +1156,7 @@ describe('executeAgendaFilters', () => {
           { dimension: 'status', values: ['TODO'] },
           { dimension: 'priority', values: ['1'] },
         ],
-        null,
+        'SPACE_1',
       )
 
       expect(result.blocks).toHaveLength(1)
@@ -1178,7 +1190,7 @@ describe('executeAgendaFilters', () => {
           { dimension: 'status', values: ['TODO'] },
           { dimension: 'tag', values: ['tag-x'] },
         ],
-        null,
+        'SPACE_1',
       )
 
       expect(filteredCalls()).toHaveLength(1)
@@ -1192,12 +1204,18 @@ describe('executeAgendaFilters', () => {
 
   describe('blocks with no matching properties', () => {
     it('returns empty for status filter when no blocks match', async () => {
-      const result = await executeAgendaFilters([{ dimension: 'status', values: ['TODO'] }], null)
+      const result = await executeAgendaFilters(
+        [{ dimension: 'status', values: ['TODO'] }],
+        'SPACE_1',
+      )
       expect(result.blocks).toHaveLength(0)
     })
 
     it('returns empty for priority filter when no blocks match', async () => {
-      const result = await executeAgendaFilters([{ dimension: 'priority', values: ['1'] }], null)
+      const result = await executeAgendaFilters(
+        [{ dimension: 'priority', values: ['1'] }],
+        'SPACE_1',
+      )
       expect(result.blocks).toHaveLength(0)
     })
 
@@ -1205,7 +1223,7 @@ describe('executeAgendaFilters', () => {
       stubAgenda({ list_tags_by_prefix: () => [] })
       const result = await executeAgendaFilters(
         [{ dimension: 'tag', values: ['nonexistent-tag'] }],
-        null,
+        'SPACE_1',
       )
       expect(result.blocks).toHaveLength(0)
     })
@@ -1218,7 +1236,10 @@ describe('executeAgendaFilters', () => {
         filtered_blocks_query: () => page([block], { next_cursor: 'CURSOR_NEXT', has_more: true }),
       })
 
-      const result = await executeAgendaFilters([{ dimension: 'status', values: ['TODO'] }], null)
+      const result = await executeAgendaFilters(
+        [{ dimension: 'status', values: ['TODO'] }],
+        'SPACE_1',
+      )
 
       expect(result.hasMore).toBe(true)
       expect(result.cursor).toBe('CURSOR_NEXT')
@@ -1231,20 +1252,24 @@ describe('executeAgendaFilters', () => {
         filtered_blocks_query: () => page([block]),
       })
 
-      const result = await executeAgendaFilters([{ dimension: 'status', values: ['TODO'] }], null)
+      const result = await executeAgendaFilters(
+        [{ dimension: 'status', values: ['TODO'] }],
+        'SPACE_1',
+      )
       expect(result.hasMore).toBe(false)
       expect(result.cursor).toBeNull()
     })
   })
 
   describe('spaceId normalization at the boundary (FE-L-12)', () => {
-    it('normalizes a null spaceId to "" before dispatching filtered_blocks_query', async () => {
+    // #5415 — no active space: nothing is dispatched, not even the tag lookup.
+    it('returns an empty result without dispatching when spaceId is null', async () => {
       stubAgenda({
         list_tags_by_prefix: (args) =>
           args['prefix'] === 'tag-x' ? [tagRow('TID_X', 'tag-x')] : [],
       })
 
-      await executeAgendaFilters(
+      const result = await executeAgendaFilters(
         [
           { dimension: 'status', values: ['TODO'] },
           { dimension: 'tag', values: ['tag-x'] },
@@ -1252,9 +1277,8 @@ describe('executeAgendaFilters', () => {
         null,
       )
 
-      // The filtered_blocks_query call carries the empty-string fallback.
-      const call = filteredCalls()[0] as Record<string, unknown>
-      expect(call['scope']).toEqual({ kind: 'active', space_id: '' })
+      expect(result).toEqual({ blocks: [], hasMore: false, cursor: null })
+      expect(mockedInvoke).not.toHaveBeenCalled()
     })
   })
 })
@@ -1281,7 +1305,7 @@ describe('loadMoreAgendaFilters', () => {
         { dimension: 'priority', values: ['1'] },
       ],
       'CURSOR_PAGE_2',
-      null,
+      'SPACE_1',
     )
 
     // Page 2 rides on filtered_blocks_query — the same IPC that minted
@@ -1321,7 +1345,7 @@ describe('loadMoreAgendaFilters', () => {
         { dimension: 'tag', values: ['nonexistent-tag'] },
       ],
       'CURSOR_PAGE_2',
-      null,
+      'SPACE_1',
     )
 
     expect(result.blocks).toHaveLength(0)
@@ -1348,7 +1372,7 @@ describe('loadMoreAgendaFilters', () => {
       { dimension: 'status', values: ['TODO', 'DOING'] },
       { dimension: 'priority', values: ['1'] },
     ]
-    const result = await loadMoreAgendaFilters(filters, 'CURSOR_PAGE_2', null)
+    const result = await loadMoreAgendaFilters(filters, 'CURSOR_PAGE_2', 'SPACE_1')
 
     // Every returned block satisfies every active filter — the
     // AND-intersection that page 1 established carries through.
@@ -1371,7 +1395,7 @@ describe('loadMoreAgendaFilters', () => {
         { dimension: 'tag', values: ['tag-x'] },
       ],
       'CURSOR_PAGE_2',
-      null,
+      'SPACE_1',
     )
 
     expect(filteredCalls()).toHaveLength(1)
@@ -1392,7 +1416,7 @@ describe('loadMoreAgendaFilters', () => {
         { dimension: 'tag', values: ['nonexistent-tag'] },
       ],
       'CURSOR_PAGE_2',
-      null,
+      'SPACE_1',
     )
 
     expect(result.blocks).toHaveLength(0)
@@ -1417,7 +1441,7 @@ describe('loadMoreAgendaFilters', () => {
     await loadMoreAgendaFilters(
       [{ dimension: 'dueDate', values: ['Today'] }],
       'CURSOR_PAGE_2',
-      null,
+      'SPACE_1',
       new Date('2025-03-15T12:00:00'),
     )
 
@@ -1438,7 +1462,10 @@ describe('loadMoreAgendaFilters', () => {
       filtered_blocks_query: () => page([], { has_more: true }),
     })
 
-    const result = await executeAgendaFilters([{ dimension: 'dueDate', values: ['Today'] }], null)
+    const result = await executeAgendaFilters(
+      [{ dimension: 'dueDate', values: ['Today'] }],
+      'SPACE_1',
+    )
     expect(result.today).toEqual(new Date('2025-03-15T12:00:00'))
   })
 
@@ -1463,22 +1490,28 @@ describe('loadMoreAgendaFilters', () => {
     const result = await loadMoreAgendaFilters(
       [{ dimension: 'dueDate', values: ['Today', 'Overdue'] }],
       'CURSOR_PAGE_2',
-      null,
+      'SPACE_1',
       new Date('2025-03-15T12:00:00'),
     )
 
     expect(result.blocks.map((b) => b.id)).toEqual(['p2-overdue-todo'])
   })
 
-  it('normalizes a null spaceId to "" (FE-L-12 boundary)', async () => {
+  // #5415 — no active space: the load-more dispatches nothing.
+  it('returns an empty page without dispatching when spaceId is null', async () => {
     stubAgenda({
       filtered_blocks_query: () => page([]),
     })
 
-    await loadMoreAgendaFilters([{ dimension: 'status', values: ['TODO'] }], 'CURSOR_PAGE_2', null)
+    const result = await loadMoreAgendaFilters(
+      [{ dimension: 'status', values: ['TODO'] }],
+      'CURSOR_PAGE_2',
+      null,
+    )
 
-    const call = filteredCalls()[0] as Record<string, unknown>
-    expect(call['scope']).toEqual({ kind: 'active', space_id: '' })
+    expect(result.blocks).toEqual([])
+    expect(result.hasMore).toBe(false)
+    expect(mockedInvoke).not.toHaveBeenCalled()
   })
 
   it('forwards a non-null spaceId verbatim', async () => {

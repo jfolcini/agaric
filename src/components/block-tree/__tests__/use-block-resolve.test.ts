@@ -609,42 +609,18 @@ describe('onCreateTag', () => {
     })
   })
 
-  // #3081 — with no active space the create still happens (Global scope), and
-  // `createBlock` must NOT receive a `spaceId` (the backend leaves it unscoped
-  // rather than stamping a bogus one).
-  it('omits spaceId from createBlock when there is no active space', async () => {
+  // #5415 — with no active space there is no space to create the tag in: the
+  // create is refused rather than sent space-less.
+  it('refuses to create a tag when there is no active space', async () => {
     useSpaceStore.setState({ currentSpaceId: null })
-    mockedCreateBlock.mockResolvedValueOnce({
-      id: 'NEW_TAG_NOSPACE',
-      block_type: 'tag',
-      content: 'nospace',
-      parent_id: null,
-      position: null,
-      deleted_at: null,
-      todo_state: null,
-      priority: null,
-      due_date: null,
-      scheduled_date: null,
-      page_id: null,
-      op_refs: [],
-    })
 
     const { result } = renderHook(() => useBlockResolve())
 
-    let newId = ''
     await act(async () => {
-      newId = await result.current.onCreateTag('nospace')
+      await expect(result.current.onCreateTag('nospace')).rejects.toThrow(/No active space/)
     })
 
-    expect(newId).toBe('NEW_TAG_NOSPACE')
-    expect(mockedCreateBlock).toHaveBeenCalledWith(
-      'tag',
-      'nospace',
-      null,
-      null,
-      { kind: 'global' },
-      null,
-    )
+    expect(mockedCreateBlock).not.toHaveBeenCalled()
   })
 })
 
