@@ -45,6 +45,7 @@ function ipc<T>(page: Page, cmd: string, args: Record<string, unknown>): Promise
 async function childrenOf(page: Page, parentId: string): Promise<Row[]> {
   const resp = await ipc<{ items: Row[] }>(page, 'list_blocks', {
     request: { parentId, limit: 100 },
+    scope: { kind: 'active', space_id: 'SPACE_PERSONAL' },
   })
   return resp.items
 }
@@ -61,7 +62,7 @@ async function addChild(page: Page, parentId: string, content: string): Promise<
     content,
     parentId,
     index: null,
-    scope: { kind: 'global' },
+    scope: { kind: 'active', space_id: 'SPACE_PERSONAL' },
     blockId: null,
   })
   return row.id

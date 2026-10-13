@@ -535,6 +535,7 @@ describe('createBlock', () => {
       content: 'hello',
       parentId: 'PARENT01',
       index: 3,
+      spaceId: 'SPACE_1',
     })
 
     expect(mockedInvoke).toHaveBeenCalledOnce()
@@ -543,10 +544,8 @@ describe('createBlock', () => {
       content: 'hello',
       parentId: 'PARENT01',
       index: 3,
-      // H-3a + Phase 3: every `create_block` IPC call
-      // carries the `scope` tagged-enum. For non-page block types
-      // `{ kind: 'global' }` is correct (the backend ignores it).
-      scope: { kind: 'global' },
+      // #5415 — every `create_block` IPC carries the active space.
+      scope: { kind: 'active', space_id: 'SPACE_1' },
       // #2849 PR2: `blockId` defaults to null (server mints the id) when the
       // caller does not supply a client-generated ULID for optimistic create.
       blockId: null,
@@ -564,19 +563,14 @@ describe('createBlock', () => {
       }),
     )
 
-    await createBlock({ blockType: 'page', content: 'test' })
+    await createBlock({ blockType: 'page', content: 'test', spaceId: 'SPACE_1' })
 
     expect(mockedInvoke).toHaveBeenCalledWith('create_block', {
       blockType: 'page',
       content: 'test',
       parentId: null,
       index: null,
-      // H-3a + Phase 3: in production a page-typed
-      // `createBlock` MUST pass an active scope; this unit test exercises
-      // only the wrapper's payload shape, so `{ kind: 'global' }` here
-      // documents that the wrapper forwards `undefined` → Global (the
-      // backend will then surface `Validation` for a real call).
-      scope: { kind: 'global' },
+      scope: { kind: 'active', space_id: 'SPACE_1' },
       // #2849 PR2: `blockId` defaults to null when no client id is supplied.
       blockId: null,
     })
@@ -586,7 +580,9 @@ describe('createBlock', () => {
     mockedInvoke.mockImplementation(
       mockInvokeCommands({ create_block: () => Promise.reject(new Error('Validation error')) }),
     )
-    await expect(createBlock({ blockType: 'bad', content: '' })).rejects.toThrow('Validation error')
+    await expect(
+      createBlock({ blockType: 'bad', content: '', spaceId: 'SPACE_1' }),
+    ).rejects.toThrow('Validation error')
   })
 })
 

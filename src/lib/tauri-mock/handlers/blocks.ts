@@ -35,6 +35,8 @@ import {
   restoreCohort,
   spaceRootGroup,
   validationRejection,
+  readActiveSpaceScope,
+  readSpaceScope,
 } from '@/lib/tauri-mock/handlers/shared'
 import { normalizeTagName, resolveInboundNames } from '@/lib/tauri-mock/names'
 import {
@@ -1016,6 +1018,7 @@ export const blocksHandlers = {
     // single `request` DTO (the agenda knobs flatten in as `date` /
     // `dateRange` / `source`); `scope` stays a separate top-level arg.
     const req = (a['request'] as Record<string, unknown>) ?? a
+    readActiveSpaceScope('list_blocks', a)
     const limit = listBlocksLimit(req['limit'])
     const cursor = req['cursor'] as unknown
     const active = [...blocks.values()].filter((b) => !(b['deleted_at'] as string | null))
@@ -1164,9 +1167,13 @@ export const blocksHandlers = {
     // `space = ?space_id` so subsequent space-filtered queries (backlink
     // counts, alias resolution, etc.) recognise it as belonging to that
     // space. Global scope skips the stamp (legacy unscoped behaviour).
-    const scope = a['scope'] as { kind: string; space_id?: string } | undefined
-    const spaceId = scope?.kind === 'active' ? (scope.space_id ?? null) : null
+    const spaceId = readSpaceScope(a)
     const blockType = a['blockType'] as string
+    if (blockType === 'page' && spaceId === null) {
+      throw validationRejection(
+        "page blocks require space_id: use createPageInSpace or pass the active space's ULID",
+      )
+    }
     // #763 — the block's `page_id` is the ROOT page of the parent chain, not the
     // immediate parent. The backend resolves the parent's own `page_id` (which,
     // for a content parent, already holds the root page; for a page parent, is
@@ -1862,8 +1869,7 @@ export const blocksHandlers = {
     // page) is not stamped with `space = ?spaceId`, mirroring the
     // backend's `batch_resolve_inner` space-filter. Global passes
     // everything through (legacy cross-space behaviour).
-    const scope = a['scope'] as { kind: string; space_id?: string } | undefined
-    const spaceId = scope?.kind === 'active' ? (scope.space_id ?? null) : null
+    const spaceId = readSpaceScope(a)
     return ids
       .map((id) => blocks.get(id))
       .filter(Boolean)

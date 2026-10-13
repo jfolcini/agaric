@@ -32,7 +32,7 @@ import { useEffect, useState } from 'react'
 import { commands } from '@/lib/bindings'
 import { resolveStoreTitle } from '@/lib/block-title'
 import { logger } from '@/lib/logger'
-import { toSpaceScope } from '@/lib/space-scope'
+import { requireActiveScope } from '@/lib/space-scope'
 import { useResolveStore } from '@/stores/resolve'
 import { useSpaceStore } from '@/stores/space'
 
@@ -86,7 +86,7 @@ export function useEmbedTarget(targetId: string): EmbedTargetState {
     }
 
     void (async () => {
-      const scope = toSpaceScope(spaceId)
+      const scope = requireActiveScope(spaceId)
       // The space-scoped half. This is the authority on "does this target
       // exist, in THIS space, and is it alive" — `getBlock` is not.
       let resolvedRows: Awaited<ReturnType<typeof commands.batchResolve>> | null = null

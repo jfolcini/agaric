@@ -81,6 +81,7 @@ function ipc<T>(page: import('@playwright/test').Page, cmd: string, args: unknow
 async function childrenOf(page: import('@playwright/test').Page, parentId: string) {
   const resp = await ipc<{ items: Row[] }>(page, 'list_blocks', {
     request: { parentId, limit: 100 },
+    scope: { kind: 'active', space_id: 'SPACE_PERSONAL' },
   })
   return resp.items
 }
@@ -337,7 +338,7 @@ test.describe('Copy/paste through the source grammar (#5140 Phase 3b)', () => {
       content: CHILD_TEXT,
       parentId: GS3,
       index: null,
-      scope: { kind: 'global' },
+      scope: { kind: 'active', space_id: 'SPACE_PERSONAL' },
       blockId: null,
     })
     await openPage(page, PAGE)

@@ -57,6 +57,7 @@ import { TooltipProvider } from '@/components/ui/tooltip'
 import { _resetPropertyKeysCacheForTest } from '@/hooks/usePropertyKeysCache'
 import { queryClient } from '@/lib/query-client'
 import { useNavigationStore } from '@/stores/navigation'
+import { useSpaceStore } from '@/stores/space'
 import { useTabsStore } from '@/stores/tabs'
 
 vi.mock('@/hooks/useBlockPropertyEvents', () => ({
@@ -121,6 +122,8 @@ function makeGroupedResponse() {
 }
 
 beforeEach(() => {
+  // #5415 — every space-scoped IPC carries the active space.
+  useSpaceStore.setState({ currentSpaceId: 'SPACE_1' })
   vi.clearAllMocks()
   virtualWindow.size = WINDOW_SIZE
   queryClient.clear()

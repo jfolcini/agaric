@@ -163,10 +163,13 @@ export function useJournalBlockCreation({
             useBlockStore.getState().setFocused(first.id)
           }
         } else {
+          const spaceId = useSpaceStore.getState().currentSpaceId
+          if (spaceId == null) throw new Error('No active space; cannot create block')
           const block = await createBlock({
             blockType: 'content',
             content: '',
             parentId: pageId,
+            spaceId,
           })
           await getPageStore(pageId)?.getState().load()
           // #2543 — setFocused, see comment above.
