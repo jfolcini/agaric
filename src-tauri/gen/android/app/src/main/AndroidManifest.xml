@@ -2,6 +2,10 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.CAMERA" />
+    <!-- Voice notes (#5364): wry's RustWebChromeClient requests both of these for the
+         webview's audio capture and denies the microphone unless both are granted. -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
 
     <!-- Required for sync mDNS multicast packets to reach the app on Android (BUG-39).
          Without these, Wi-Fi peers cannot discover or sync with this device. -->
@@ -19,6 +23,8 @@
 
     <!-- Camera is optional — only used for QR code scanning during sync pairing -->
     <uses-feature android:name="android.hardware.camera" android:required="false" />
+    <!-- Microphone is optional — only used for voice notes -->
+    <uses-feature android:name="android.hardware.microphone" android:required="false" />
 
     <!-- AndroidTV support -->
     <uses-feature android:name="android.software.leanback" android:required="false" />

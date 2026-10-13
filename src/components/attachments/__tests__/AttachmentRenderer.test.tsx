@@ -41,6 +41,7 @@ vi.mock('@/lib/bindings', async (importOriginal) => {
 })
 
 import { AttachmentRenderer } from '@/components/attachments/AttachmentRenderer'
+import { t } from '@/lib/i18n'
 
 const mockedSetProperty = mockSetProperty
 
@@ -541,6 +542,89 @@ describe('AttachmentRenderer', () => {
       await screen.findByTestId('markdown-attachment-body')
       const results = await axe(container)
       expect(results).toHaveNoViolations()
+    })
+  })
+
+  describe('audio attachments (#5364)', () => {
+    const audio = () =>
+      makeAttachment({
+        id: 'att-audio',
+        filename: 'voice-note.webm',
+        fs_path: 'attachments/att-audio',
+        mime_type: 'audio/webm',
+      })
+
+    async function findPlayer(container: HTMLElement): Promise<HTMLAudioElement> {
+      await waitFor(() => expect(container.querySelector('audio')).not.toBeNull())
+      return container.querySelector('audio') as HTMLAudioElement
+    }
+
+    it('plays inline from the attachment bytes, named after the file', async () => {
+      const { container } = render(<AttachmentRenderer {...baseProps} attachments={[audio()]} />)
+
+      const player = await findPlayer(container)
+      expect(player).toHaveAttribute('controls')
+      expect(player.getAttribute('src')).toBe('blob:mock/1')
+      expect(player).toHaveAttribute(
+        'aria-label',
+        t('attachment.audioLabel', { filename: 'voice-note.webm' }),
+      )
+      expect(mockedReadAttachment).toHaveBeenCalledWith('att-audio')
+      const blob = createSpy.mock.calls[0]?.[0] as Blob | undefined
+      expect(blob?.type).toBe('audio/webm')
+    })
+
+    it('revokes the blob URL on unmount', async () => {
+      const { container, unmount } = render(
+        <AttachmentRenderer {...baseProps} attachments={[audio()]} />,
+      )
+      await findPlayer(container)
+      expect(revokeSpy).not.toHaveBeenCalled()
+
+      unmount()
+      expect(revokeSpy).toHaveBeenCalledWith('blob:mock/1')
+    })
+
+    it('does not read the bytes before the player nears the viewport', () => {
+      MockIntersectionObserver.autoEnter = false
+      render(<AttachmentRenderer {...baseProps} attachments={[audio()]} />)
+
+      expect(screen.getByTestId('attachment-audio-loading')).toBeInTheDocument()
+      expect(mockedReadAttachment).not.toHaveBeenCalled()
+    })
+
+    it('falls back to the download chip when the bytes cannot be read', async () => {
+      mockedReadAttachment.mockRejectedValueOnce(new Error('boom'))
+      const { container } = render(<AttachmentRenderer {...baseProps} attachments={[audio()]} />)
+
+      expect(
+        await screen.findByRole('button', {
+          name: t('attachment.openFile', { filename: 'voice-note.webm' }),
+        }),
+      ).toBeInTheDocument()
+      expect(container.querySelector('audio')).toBeNull()
+    })
+
+    it('keeps seek-bar touches from reaching the block row', async () => {
+      const rowTouch = vi.fn()
+      const { container } = render(
+        <div onTouchStart={rowTouch} onTouchMove={rowTouch} onTouchEnd={rowTouch}>
+          <AttachmentRenderer {...baseProps} attachments={[audio()]} />
+        </div>,
+      )
+      const player = await findPlayer(container)
+
+      fireEvent.touchStart(player)
+      fireEvent.touchMove(player)
+      fireEvent.touchEnd(player)
+
+      expect(rowTouch).not.toHaveBeenCalled()
+    })
+
+    it('has no a11y violations with a loaded player', async () => {
+      const { container } = render(<AttachmentRenderer {...baseProps} attachments={[audio()]} />)
+      await findPlayer(container)
+      expect(await axe(container)).toHaveNoViolations()
     })
   })
 

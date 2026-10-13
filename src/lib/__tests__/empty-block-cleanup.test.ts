@@ -13,6 +13,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mockGetProperties = vi.fn()
 const mockListTagsForBlock = vi.fn()
+const mockListAttachments = vi.fn()
 const mockGetBacklinks = vi.fn()
 
 vi.mock('@/lib/bindings', async (importOriginal) => {
@@ -25,6 +26,8 @@ vi.mock('@/lib/bindings', async (importOriginal) => {
         mockGetProperties(...args).then((data: unknown) => ({ status: 'ok', data })),
       listTagsForBlock: (...args: unknown[]) =>
         mockListTagsForBlock(...args).then((data: unknown) => ({ status: 'ok', data })),
+      listAttachments: (...args: unknown[]) =>
+        mockListAttachments(...args).then((data: unknown) => ({ status: 'ok', data })),
       getBacklinks: (...args: unknown[]) =>
         mockGetBacklinks(...args).then((data: unknown) => ({ status: 'ok', data })),
     },
@@ -88,6 +91,7 @@ beforeEach(() => {
   // Default: the block carries nothing. Each guard test overrides one probe.
   mockGetProperties.mockReset().mockResolvedValue([])
   mockListTagsForBlock.mockReset().mockResolvedValue([])
+  mockListAttachments.mockReset().mockResolvedValue([])
   mockGetBacklinks.mockReset().mockResolvedValue({ items: [], next_cursor: null })
 })
 
@@ -202,6 +206,27 @@ describe('guard — has a tag', () => {
     mockListTagsForBlock.mockResolvedValue(['01TAG00000000000000000000'])
     const { remove } = await runCleanup(leakedPage())
     expect(remove).not.toHaveBeenCalled()
+  })
+})
+
+describe('guard — has an attachment', () => {
+  it('survives: a voice note or an /attach file is the block’s whole content (#5364)', async () => {
+    mockListAttachments.mockResolvedValue([
+      {
+        id: 'ATT',
+        block_id: 'EMPTY',
+        mime_type: 'audio/webm',
+        filename: 'voice-note.webm',
+        size_bytes: 5,
+        fs_path: 'attachments/ATT',
+        created_at: 0,
+        content_hash: null,
+      },
+    ])
+    const { remove, deleted } = await runCleanup(leakedPage())
+    expect(deleted).toBe(false)
+    expect(remove).not.toHaveBeenCalled()
+    expect(mockListAttachments).toHaveBeenCalledWith('EMPTY')
   })
 })
 
@@ -340,6 +365,7 @@ describe('deleteBlockIfLeakedEmpty — liveness and races', () => {
     await runCleanup(leakedPage({ content: 'has text' }))
     expect(mockGetProperties).not.toHaveBeenCalled()
     expect(mockListTagsForBlock).not.toHaveBeenCalled()
+    expect(mockListAttachments).not.toHaveBeenCalled()
     expect(mockGetBacklinks).not.toHaveBeenCalled()
   })
 })

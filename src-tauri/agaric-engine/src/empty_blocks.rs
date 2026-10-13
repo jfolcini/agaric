@@ -24,7 +24,8 @@
 //!    set is stripped (`JS_TRIM_WHITESPACE`; NULL counts as blank)
 //! 3. no live children
 //! 4. `todo_state`, `priority`, `due_date`, `scheduled_date` all NULL
-//! 5. no `block_properties` row
+//! 5. no `block_properties` row and no `attachments` row (a voice note or an
+//!    `/attach` file can be a block's whole content, #5364)
 //! 6. no `block_tags` row as `block_id`, no `block_tag_refs` row as `source_id`
 //! 7. not referenced by any live block's content — no `((id))`, no `[[id]]`
 //! 8. not the last live child of a PAGE (see `hold_back_last_page_children`)
@@ -269,6 +270,7 @@ async fn select_candidates(
                  WHERE k.parent_id = b.id AND k.deleted_at IS NULL
              )
              AND NOT EXISTS (SELECT 1 FROM block_properties p WHERE p.block_id = b.id)
+             AND NOT EXISTS (SELECT 1 FROM attachments a WHERE a.block_id = b.id)
              AND NOT EXISTS (SELECT 1 FROM block_tags t WHERE t.block_id = b.id)
              AND NOT EXISTS (SELECT 1 FROM block_tag_refs r WHERE r.source_id = b.id)
              AND NOT EXISTS (
@@ -738,6 +740,31 @@ mod tests {
         run_sweep(&pool).await;
 
         assert_survives(&pool, &id, "guard 5: block_properties row").await;
+    }
+
+    // Guard 5, attachments (#5364): a voice note typed into a blank block
+    // is a row in `attachments` and nothing else on the block. Attachment
+    // rows are hard-deleted, so a row's existence is its liveness.
+    #[tokio::test]
+    async fn empty_with_an_attachment_survives_and_a_bare_one_is_swept() {
+        let (pool, _tmp) = fresh_pool().await;
+        let page = page_with_a_real_block(&pool).await;
+        let with_attachment = insert_old_empty(&pool, &page, 2).await;
+        let bare = insert_old_empty(&pool, &page, 3).await;
+        sqlx::query!(
+            "INSERT INTO attachments (id, block_id, mime_type, filename, size_bytes, fs_path, created_at) \
+             VALUES ('ATT-VOICE', ?, 'audio/webm', 'voice-note.webm', 5, 'attachments/ATT-VOICE', 0)",
+            with_attachment,
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let sweep = run_sweep(&pool).await;
+
+        assert_survives(&pool, &with_attachment, "guard 5: attachments row").await;
+        assert!(deleted_at(&pool, &bare).await.is_some());
+        assert_eq!(sweep.swept.len(), 1);
     }
 
     async fn insert_tag(pool: &SqlitePool) -> String {

@@ -31,6 +31,8 @@ export interface UseBlockSlashCommandsParams {
   openEmojiPicker: () => void
   /** Open the block property drawer for value entry (#2656). */
   openPropertyDrawer: (blockId: string) => void
+  /** Open the voice-note recorder for a block (#5364). */
+  openVoiceNoteRecorder: (blockId: string) => void
 }
 
 export interface UseBlockSlashCommandsReturn {

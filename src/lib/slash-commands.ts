@@ -39,6 +39,7 @@ import {
   List,
   ListOrdered,
   MapPin,
+  Mic,
   Minus,
   Paperclip,
   Parentheses,
@@ -338,6 +339,12 @@ export const SLASH_COMMANDS: PickerItem[] = [
     label: 'ATTACH — Attach file to block',
     category: 'slashCommand.categories.references',
     icon: Paperclip,
+  },
+  {
+    id: 'voice',
+    label: 'VOICE — Record a voice note',
+    category: 'slashCommand.categories.references',
+    icon: Mic,
   },
   {
     // #286 — the browse-grid emoji picker. The inline `:` typeahead (#281)

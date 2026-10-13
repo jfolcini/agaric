@@ -597,6 +597,79 @@ function AttachmentFileChip({
   )
 }
 
+/** A swipe on the block row deletes it; scrubbing the seek bar must not count as one. */
+function stopTouchPropagation(e: React.TouchEvent): void {
+  e.stopPropagation()
+}
+
+/**
+ * Inline `<audio controls>` player for an `audio/*` attachment (#5364). Same
+ * viewport-gated byte read and blob-URL lifecycle as `AttachmentImage`; on a
+ * failed read it falls back to the file chip so the recording stays
+ * downloadable.
+ */
+function AttachmentAudio({
+  att,
+  onPdfOpen,
+}: {
+  att: Attachment
+  onPdfOpen: (url: string, filename: string, attachmentId: string) => void
+}): React.ReactElement {
+  const { t } = useTranslation()
+  const [url, setUrl] = useState<string | null>(null)
+  const [error, setError] = useState(false)
+  const [inView, viewGateRef] = useEnteredViewport<HTMLSpanElement>()
+
+  useEffect(() => {
+    if (!inView) return
+    let cancelled = false
+    let objectUrl: string | null = null
+    readAttachment(att.id)
+      .then((bytes) => {
+        if (cancelled) return
+        objectUrl = URL.createObjectURL(bytesToBlob(bytes, att.mime_type))
+        setUrl(objectUrl)
+      })
+      .catch((err) => {
+        if (cancelled) return
+        logger.warn('AttachmentRenderer', 'read audio bytes failed', { id: att.id }, err)
+        setError(true)
+      })
+    return () => {
+      cancelled = true
+      if (objectUrl) URL.revokeObjectURL(objectUrl)
+    }
+  }, [att.id, att.mime_type, inView])
+
+  if (error) return <AttachmentFileChip att={att} onPdfOpen={onPdfOpen} />
+
+  if (!url) {
+    return (
+      <span
+        ref={viewGateRef}
+        className="text-xs text-muted-foreground"
+        data-testid="attachment-audio-loading"
+      >
+        {t('attachment.loadingAudio')}
+      </span>
+    )
+  }
+
+  return (
+    // oxlint-disable-next-line jsx-a11y/media-has-caption -- a voice note has no caption track yet; its transcript is a later slice of #5364
+    <audio
+      controls
+      preload="metadata"
+      src={url}
+      aria-label={t('attachment.audioLabel', { filename: att.filename })}
+      className="max-w-full"
+      onTouchStart={stopTouchPropagation}
+      onTouchMove={stopTouchPropagation}
+      onTouchEnd={stopTouchPropagation}
+    />
+  )
+}
+
 /**
  * Inline rich-text preview for a `.md` / text attachment (#1451). Lazily reads
  * the attachment bytes over IPC (viewport-gated, mirroring `AttachmentImage`),
@@ -832,6 +905,9 @@ export function AttachmentRenderer({
               onUrlChange={handleUrlChange}
             />
           )
+        }
+        if (att.mime_type.startsWith('audio/')) {
+          return <AttachmentAudio key={att.id} att={att} onPdfOpen={onPdfOpen} />
         }
         // #1451: render `.md` / text attachments as an inline rich-text
         // preview (reusing `renderRichContent`) instead of a download-only chip.

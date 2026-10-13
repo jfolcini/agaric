@@ -1,6 +1,6 @@
 /**
  * Property-related slash commands: TODO state, priority, assignee, location,
- * effort, repeat, repeat-limit, attach.
+ * effort, repeat, repeat-limit, attach, voice.
  *
  * All handlers mutate `block_properties` (or, for the four hot-path columns
  * `todo_state` / `priority`, the column directly via `setTodoStateCmd` /
@@ -10,8 +10,8 @@
  * #4577 — every mutating handler below opens with `await flushActiveDraft()`;
  * `useSlashCommandStructural.handleListStyle`'s docblock is why. The handlers
  * that write nothing need no flush: `handleAssigneeOrLocation`, the `custom`
- * assignee/location presets and `handleAttach` open a drawer or a file dialog,
- * which moves focus out of the editor — and blur flushes.
+ * assignee/location presets, `handleAttach` and `/voice` open a drawer, a file
+ * dialog or the recorder, which moves focus out of the editor — and blur flushes.
  */
 
 import { useMemo } from 'react'
@@ -295,6 +295,7 @@ export function useSlashCommandProperty(): SlashHandlerTables {
         assignee: (ctx) => handleAssigneeOrLocation(ctx),
         location: (ctx) => handleAssigneeOrLocation(ctx),
         attach: (ctx) => handleAttach(ctx),
+        voice: (ctx) => ctx.openVoiceNoteRecorder(ctx.blockId),
       },
       prefix: [
         // Order matters: more specific prefixes (`repeat-limit-`) must be

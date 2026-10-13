@@ -188,12 +188,13 @@ export function useBlockTreeEventListeners(options: UseBlockTreeEventListenersOp
       setDatePickerOpen,
       t,
       // Not used by `applyContentEdit`/`readCurrentContent`; structural inserts
-      // never open the template picker, query builder, emoji picker, or the
-      // property drawer.
+      // never open the template picker, query builder, emoji picker, property
+      // drawer or voice-note recorder.
       openTemplatePicker: async () => {},
       openQueryBuilder: () => {},
       openEmojiPicker: () => {},
       openPropertyDrawer: () => {},
+      openVoiceNoteRecorder: () => {},
     })
 
     // #4552 slice 2 — sets the `listStyle` property instead of prepending a

@@ -49,6 +49,8 @@ export interface SlashCommandContext {
    * of persisting an empty `value_text` the real backend rejects.
    */
   openPropertyDrawer: (blockId: string) => void
+  /** Open the voice-note recorder (#5364); the recording attaches to `blockId`. */
+  openVoiceNoteRecorder: (blockId: string) => void
 }
 
 export type SlashHandler = (ctx: SlashCommandContext, item: PickerItem) => Promise<void> | void

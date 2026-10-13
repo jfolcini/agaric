@@ -112,6 +112,7 @@ export function useBlockSlashCommands({
   openQueryBuilder,
   openEmojiPicker,
   openPropertyDrawer,
+  openVoiceNoteRecorder,
 }: UseBlockSlashCommandsParams): UseBlockSlashCommandsReturn {
   const template = useSlashCommandTemplate({ focusedBlockId, rootParentId, blocks, load, t })
   const date = useSlashCommandDate()
@@ -149,6 +150,7 @@ export function useBlockSlashCommands({
     openQueryBuilder,
     openEmojiPicker,
     openPropertyDrawer,
+    openVoiceNoteRecorder,
     tables,
   })
   useLayoutEffect(() => {
@@ -164,6 +166,7 @@ export function useBlockSlashCommands({
       openQueryBuilder,
       openEmojiPicker,
       openPropertyDrawer,
+      openVoiceNoteRecorder,
       tables,
     }
   })

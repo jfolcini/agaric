@@ -24,6 +24,7 @@ export interface SyntheticCtx {
   openQueryBuilder: ReturnType<typeof vi.fn>
   openEmojiPicker: ReturnType<typeof vi.fn>
   openPropertyDrawer: ReturnType<typeof vi.fn>
+  openVoiceNoteRecorder: ReturnType<typeof vi.fn>
   mount: ReturnType<typeof vi.fn>
   t: ReturnType<typeof vi.fn>
 }
@@ -48,6 +49,7 @@ export function makeSyntheticCtx(overrides?: {
   const openQueryBuilder = vi.fn()
   const openEmojiPicker = vi.fn()
   const openPropertyDrawer = vi.fn()
+  const openVoiceNoteRecorder = vi.fn()
   const mount = vi.fn()
   const t = vi.fn((key: string, args?: Record<string, unknown>) =>
     args ? `${key}:${JSON.stringify(args)}` : key,
@@ -70,6 +72,7 @@ export function makeSyntheticCtx(overrides?: {
     openQueryBuilder,
     openEmojiPicker,
     openPropertyDrawer,
+    openVoiceNoteRecorder,
   }
 
   return {
@@ -81,6 +84,7 @@ export function makeSyntheticCtx(overrides?: {
     openQueryBuilder,
     openEmojiPicker,
     openPropertyDrawer,
+    openVoiceNoteRecorder,
     mount,
     t,
   }
