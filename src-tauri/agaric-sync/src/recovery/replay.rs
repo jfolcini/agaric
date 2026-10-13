@@ -1,7 +1,7 @@
 //! C-2b: boot-time op-log replay for unmaterialized ops.
 //!
 //! On boot, walk `op_log WHERE seq > materialized_through_seq` and
-//! enqueue it in chunks of at most [`REPLAY_CHUNK_SIZE`] as `ReplayApplyOps`
+//! enqueue it in chunks of at most `REPLAY_CHUNK_SIZE` as `ReplayApplyOps`
 //! tasks on the materializer's foreground queue. The materializer applies each
 //! chunk in one transaction, advancing the cursor with it (#5418). If the same
 //! crash recurs mid-replay, the next boot picks up where this one stopped.
