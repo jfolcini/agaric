@@ -5711,17 +5711,11 @@ async fn m26_delete_property_def_rejection_message_includes_key_and_count() {
     let result = delete_property_def_inner(&pool, "importance".into()).await;
     match result {
         Err(AppError::Validation { message: msg, .. }) => {
-            assert!(
-                msg.contains("importance"),
-                "rejection message must name the offending key, got: {msg:?}"
-            );
-            assert!(
-                msg.contains("1 block_properties"),
-                "rejection message must surface the dependent-row count and table context, got: {msg:?}"
-            );
-            assert!(
-                msg.contains("set_property"),
-                "rejection message must point users at the clean-up path, got: {msg:?}"
+            // Shown verbatim in the Settings toast, so it is user-facing copy.
+            assert_eq!(
+                msg,
+                "Can't delete 'importance': 1 block(s) still use it. Remove the property from \
+                 them first."
             );
         }
         other => panic!("expected Validation rejection, got: {other:?}"),
