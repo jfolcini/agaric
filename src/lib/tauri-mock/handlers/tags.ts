@@ -15,6 +15,7 @@ import {
   type TypedHandlers,
   refInclusiveTags,
   validationRejection,
+  readSpaceScope,
 } from '@/lib/tauri-mock/handlers/shared'
 import { blockTags, blocks, properties, pushOp } from '@/lib/tauri-mock/seed'
 
@@ -182,8 +183,7 @@ function evalTagQuery(
 ): { items: Record<string, unknown>[]; next_cursor: null; has_more: false; total_count: null } {
   const includeInherited = Boolean(a['includeInherited'])
   const blockType = (a['blockType'] as string | null) ?? null
-  const scope = a['scope'] as { kind: string; space_id?: string } | undefined
-  const spaceId = scope?.kind === 'active' ? (scope.space_id ?? null) : null
+  const spaceId = readSpaceScope(a)
 
   const prefixTagIds = (prefix: string): Set<string> => {
     const lp = foldAsciiUppercase(prefix)

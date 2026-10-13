@@ -50,7 +50,11 @@ interface ListBlocksPage {
 }
 
 function listBlocks(args: Record<string, unknown>): ListBlocksPage {
-  return dispatch('list_blocks', args) as ListBlocksPage
+  // #5415 — `list_blocks` has no cross-space form; every call names the seed space.
+  return dispatch('list_blocks', {
+    scope: { kind: 'active', space_id: 'SPACE_PERSONAL' },
+    ...args,
+  }) as ListBlocksPage
 }
 
 describe('list_blocks — a position-lead cursor missing `position` is served, not refused (#3942 review note 3)', () => {

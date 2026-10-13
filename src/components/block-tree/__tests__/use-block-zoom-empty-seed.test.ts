@@ -28,6 +28,7 @@ import { type CommandReturns, deferred, stubInvoke } from '@/__tests__/helpers/i
 import { useBlockZoomEmptySeed } from '@/components/block-tree/use-block-zoom-empty-seed'
 import { useBlockStore } from '@/stores/blocks'
 import { createPageBlockStore, type PageBlockState } from '@/stores/page-blocks'
+import { useSpaceStore } from '@/stores/space'
 
 const mockedInvoke = vi.mocked(invoke)
 
@@ -119,12 +120,43 @@ async function flushSeedPromiseChain(): Promise<void> {
 
 beforeEach(() => {
   vi.clearAllMocks()
+  // #5415 — a seed block is created in the active space.
+  useSpaceStore.setState({ currentSpaceId: 'SPACE_1' })
   pageStore = createPageBlockStore('PAGE_1')
   pageStore.setState({ loading: false })
   useBlockStore.setState({ focusedBlockId: null, selectedBlockIds: [] })
 })
 
 describe('useBlockZoomEmptySeed', () => {
+  // #5415 — no active space: no seed is created; hydration is the trigger.
+  it('creates nothing while there is no active space, then seeds once one hydrates', async () => {
+    useSpaceStore.setState({ currentSpaceId: null })
+    const leaf = makeBlock({ id: 'LEAF', position: 0, parent_id: null, depth: 0 })
+    pageStore.setState({ blocks: [leaf] })
+    stubInvoke(mockedInvoke, { create_block: () => created('CHILD', 'LEAF') })
+
+    // `t` is stable across renders here, as react-i18next's is: a fresh fn per
+    // render would re-run the effect through `t` alone and hide a missing
+    // `spaceId` dependency.
+    const t = vi.fn((key: string) => key) as unknown as TFunction
+    const { rerender } = renderHook(() => useBlockZoomEmptySeed(makeParams({ t })))
+    rerender()
+
+    expect(mockedInvoke).not.toHaveBeenCalledWith('create_block', expect.anything())
+    expect(pageStore.getState().blocks).toHaveLength(1)
+
+    act(() => {
+      useSpaceStore.setState({ currentSpaceId: 'SPACE_1' })
+    })
+    await waitFor(() => {
+      expect(pageStore.getState().blocks.map((b) => b.id)).toEqual(['LEAF', 'CHILD'])
+    })
+    expect(mockedInvoke).toHaveBeenCalledWith(
+      'create_block',
+      expect.objectContaining({ scope: { kind: 'active', space_id: 'SPACE_1' } }),
+    )
+  })
+
   it('seeds a child UNDER the zoomed leaf without clobbering the rest of the page', async () => {
     // OTHER is a sibling of LEAF; the seed must NOT remove it.
     const other = makeBlock({ id: 'OTHER', position: 0, parent_id: null, depth: 0 })
@@ -145,7 +177,7 @@ describe('useBlockZoomEmptySeed', () => {
       content: '',
       parentId: 'LEAF',
       index: null,
-      scope: { kind: 'global' },
+      scope: { kind: 'active', space_id: 'SPACE_1' },
       // #2849 PR2 — zoom-empty seed supplies no client id (null).
       blockId: null,
     })

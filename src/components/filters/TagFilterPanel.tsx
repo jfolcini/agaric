@@ -26,7 +26,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { useDebouncedCallback } from '@/hooks/useDebouncedCallback'
 import { useListKeyboardNavigation } from '@/hooks/useListKeyboardNavigation'
 import { unwrap } from '@/lib/app-error'
-import type { BlockRow, PageResponse, SpaceScope, TagExpr } from '@/lib/bindings'
+import type { BlockRow, PageResponse, TagExpr } from '@/lib/bindings'
 import { commands } from '@/lib/bindings'
 import { PAGINATION_LIMIT } from '@/lib/constants'
 import { logger } from '@/lib/logger'
@@ -246,8 +246,9 @@ async function runTagQuery(
   spaceId: string | null,
   cursor?: string,
 ): Promise<PageResponse<BlockRow>> {
-  const scope: SpaceScope =
-    spaceId == null ? { kind: 'global' } : { kind: 'active', space_id: spaceId }
+  // #5415 — no active space: nothing to list, never dispatch.
+  if (spaceId == null) return { items: [], next_cursor: null, has_more: false, total_count: null }
+  const scope = requireActiveScope(spaceId)
   const cursorArg = cursor ?? null
   if (tagExpr != null) {
     return unwrap(
@@ -468,9 +469,9 @@ export function TagFilterPanel(): React.ReactElement {
     const parentIds = [
       ...new Set(results.map((b) => b.page_id).filter((id): id is string => id != null)),
     ]
-    if (parentIds.length === 0) return
+    if (parentIds.length === 0 || currentSpaceId == null) return
     commands
-      .batchResolve(parentIds, { kind: 'global' })
+      .batchResolve(parentIds, requireActiveScope(currentSpaceId))
       .then(unwrap)
       .then((resolved) => {
         if (Array.isArray(resolved)) {
@@ -486,7 +487,7 @@ export function TagFilterPanel(): React.ReactElement {
       .catch((err) => {
         logger.warn('TagFilterPanel', 'breadcrumb resolution failed', undefined, err)
       })
-  }, [results])
+  }, [results, currentSpaceId])
 
   const handleAddTag = useCallback(
     (tag: MatchingTag) => {

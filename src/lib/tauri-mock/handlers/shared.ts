@@ -58,6 +58,25 @@ export function validationRejection(message: string): Error & AppError {
 }
 
 /**
+ * The space id a command's `scope: SpaceScope` arg names, or `null` for
+ * `{ kind: 'global' }` — and for an OMITTED scope, which the backend-authored
+ * conformance fixtures rely on: `conformance_command.rs`'s `scope` closure
+ * maps a missing key to `SpaceScope::Global`. Rejecting omission here is the
+ * backend slice of #5415 (dropping `SpaceScope`'s `Default`), not the mock's.
+ */
+export function readSpaceScope(args: Record<string, unknown>): string | null {
+  const scope = args['scope'] as { kind?: string; space_id?: string } | undefined
+  return scope?.kind === 'active' ? (scope.space_id ?? null) : null
+}
+
+/** Mirrors `SpaceScope::require_active`: the commands with no cross-space form refuse `Global`. */
+export function readActiveSpaceScope(cmd: string, args: Record<string, unknown>): string {
+  const spaceId = readSpaceScope(args)
+  if (!spaceId) throw validationRejection(`${cmd} requires an active space scope`)
+  return spaceId
+}
+
+/**
  * #4723 — the live `page` in `spaceId` titled exactly `content`, skipping
  * `excludeId` (the page being renamed). Mock twin of the backend's
  * `find_live_page_by_title`; a page's space is its `space` ref property, the
