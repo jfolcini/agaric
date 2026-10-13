@@ -47,9 +47,9 @@ describe('expandJournalTemplateVariables', () => {
     expect(
       expandJournalTemplateVariables("<% today:yyyyy %> <% time:x %> <% today:'open %>", DAY),
     ).toBe('2031-01-02 21:05 2031-01-02')
-    expect(expandJournalTemplateVariables('<% date+x %> <% date + 1 %> <% season %>', DAY)).toBe(
-      '<% date+x %> <% date + 1 %> <% season %>',
-    )
+    expect(
+      expandJournalTemplateVariables('<% date+x %> <% date + 1 %> <% date+-1 %> <% season %>', DAY),
+    ).toBe('<% date+x %> <% date + 1 %> <% date+-1 %> <% season %>')
     expect(expandJournalTemplateVariables('<% date+99999999999 %>', DAY)).toBe(
       '<% date+99999999999 %>',
     )

@@ -2532,9 +2532,9 @@ pub async fn duplicate_block_inner(
 /// copied value doesn't read back from the source grammar (a carriage return
 /// in the text) or when the copy would append more ops than one undo
 /// reverts: the caller's transaction holds nothing of the copy then, so the
-/// caller may go on without it. The op count is exact for the fresh blocks
-/// the copy creates: the block, each property, and the one stamp a task
-/// state writes (`created_at` or `completed_at`).
+/// caller may go on without it. The op count never falls short for the fresh
+/// blocks the copy creates: the block, each property, and at most one stamp a
+/// task state writes (`created_at` or `completed_at`).
 ///
 /// # Errors
 ///

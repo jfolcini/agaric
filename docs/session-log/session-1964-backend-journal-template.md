@@ -48,8 +48,8 @@ pass (201 tests).
 
 Review fix (same PR): a template the copy refuses no longer blocks the day.
 The undo-cap check moved before the first insert (the op count of a fresh
-copy is exact), so `copy_page_blocks_in_tx` refuses only before writing;
-`apply_journal_template_in_tx` turns a refusal into a `warn` and an empty
+copy never falls short), so `copy_page_blocks_in_tx` refuses only before
+writing; `apply_journal_template_in_tx` turns a refusal into a `warn` and an empty
 day in the same transaction, as a trashed template already does. Quick
 Capture and `journal_for_date` keep working with a broken template.
 

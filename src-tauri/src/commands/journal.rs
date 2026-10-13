@@ -372,11 +372,15 @@ fn expand_journal_template_variables(content: &str, day: NaiveDate, time: NaiveT
             "cursor" => Some(String::new()),
             _ => {
                 let offset = name.strip_prefix("date")?;
-                let days: i64 = match offset.as_bytes().first()? {
-                    b'+' => offset[1..].parse().ok()?,
-                    b'-' => offset.parse().ok()?,
-                    _ => return None,
+                let (sign, digits) = if let Some(digits) = offset.strip_prefix('+') {
+                    (1, digits)
+                } else {
+                    (-1, offset.strip_prefix('-')?)
                 };
+                if !digits.bytes().all(|b| b.is_ascii_digit()) {
+                    return None;
+                }
+                let days = sign * digits.parse::<i64>().ok()?;
                 let at =
                     chrono::Duration::try_days(days).and_then(|d| day.checked_add_signed(d))?;
                 Some(formatted(at, at.format("%Y-%m-%d").to_string()))
@@ -1738,8 +1742,10 @@ mod tests {
         );
         // What is not a variable stays as written.
         assert_eq!(
-            expand("<% season %> {{foo}} <% open {{ x }} <% date+x %> <% date + 1 %>"),
-            "<% season %> {{foo}} <% open {{ x }} <% date+x %> <% date + 1 %>"
+            expand(
+                "<% season %> {{foo}} <% open {{ x }} <% date+x %> <% date + 1 %> <% date+-1 %>"
+            ),
+            "<% season %> {{foo}} <% open {{ x }} <% date+x %> <% date + 1 %> <% date+-1 %>"
         );
         assert_eq!(expand("plain"), "plain");
     }
@@ -1789,8 +1795,8 @@ mod tests {
         assert_eq!(expand("<% weekday:EEE %> <% month:MM %>"), "Thu 01");
         // Quoted text is literal, as is any non-letter; `%` cannot reach chrono.
         assert_eq!(
-            expand("<% today:'Week of' d 'o''clock' 100% %>"),
-            "Week of 2 o'clock 100%"
+            expand("<% today:'Week of' d 'o''clock' 100% '5%' %>"),
+            "Week of 2 o'clock 100% 5%"
         );
         // A format with a token the table does not know, or none at all,
         // gives the default form, never a literal token in every day.
