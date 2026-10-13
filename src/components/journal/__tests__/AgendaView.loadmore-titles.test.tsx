@@ -81,6 +81,7 @@ import { makeBlock as _makeBlock } from '@/__tests__/fixtures'
 import { AgendaView } from '@/components/journal/AgendaView'
 import { executeAgendaFilters, loadMoreAgendaFilters } from '@/lib/agenda-filters'
 import { t } from '@/lib/i18n'
+import { useSpaceStore } from '@/stores/space'
 
 const mockedExecuteAgendaFilters = vi.mocked(executeAgendaFilters)
 const mockedLoadMoreAgendaFilters = vi.mocked(loadMoreAgendaFilters)
@@ -145,6 +146,8 @@ async function clickLoadMore(user: ReturnType<typeof userEvent.setup>): Promise<
 }
 
 beforeEach(() => {
+  // #5415 — every space-scoped IPC carries the active space.
+  useSpaceStore.setState({ currentSpaceId: 'SPACE_1' })
   vi.clearAllMocks()
   localStorage.clear()
   mockGetProperties.mockResolvedValue([])

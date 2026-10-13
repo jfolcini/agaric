@@ -24,6 +24,7 @@ import {
   ownerSpaceOf,
   returnEmptyPage,
   validationRejection,
+  readSpaceScope,
 } from '@/lib/tauri-mock/handlers/shared'
 import { resolveRefValue } from '@/lib/tauri-mock/names'
 import {
@@ -226,8 +227,7 @@ export const propertiesHandlers = {
     const valueText = (req['valueText'] as string | null) ?? null
     const valueDate = (req['valueDate'] as string | null) ?? null
     const operator = (req['operator'] as string | null) ?? 'eq'
-    const scope = a['scope'] as { kind: string; space_id?: string } | undefined
-    const spaceId = scope?.kind === 'active' ? (scope.space_id ?? null) : null
+    const spaceId = readSpaceScope(a)
     const excludeParentId = (req['excludeParentId'] as string | null) ?? null
     const contentNonEmpty = Boolean(req['contentNonEmpty'])
     const blockType = (req['blockType'] as string | null) ?? null
@@ -672,8 +672,7 @@ export const propertiesHandlers = {
     }
     // Honour `scope: SpaceScope` (mirrors
     // `count_agenda_batch_by_source_inner`).
-    const scope = a['scope'] as { kind: string; space_id?: string } | undefined
-    const spaceId = scope?.kind === 'active' ? (scope.space_id ?? null) : null
+    const spaceId = readSpaceScope(a)
     const result: Record<string, Record<string, number>> = {}
     for (const dateStr of dates) {
       const sources: Record<string, number> = {}

@@ -71,7 +71,7 @@ Soft-deleted pages and blocks. Deletes don't purge immediately — they land her
 Global operation log — every edit Agaric has applied, in reverse chronological order. Opened from Settings › Edit history › *Open edit history*.
 
 - **Op type icons** distinguish creates, edits, deletes, restores, properties, tags.
-- **Filter bar**: filter by op type, plus an "All spaces" scope toggle. There is no user-vs-agent or date-range filter; ops that arrived from another device are marked, but agent-authored ops are not distinguished from your own.
+- **Filter bar**: filter by op type. There is no user-vs-agent or date-range filter; ops that arrived from another device are marked, but agent-authored ops are not distinguished from your own.
 - **Multi-select** + **batch revert** — selecting a set of ops and pressing Enter reverts them all, newest first.
 - **Diff toggle**: word-level diff for edits.
 - **Restore to here**: every entry has a *"Restore to here"* button that reverts every op after that point. Use with care — it's a snapshot rollback.
@@ -93,6 +93,7 @@ Pages tagged as templates.
 A force-directed graph of pages and the links between them.
 
 - **Nodes** are pages; **edges** are `[[link]]` references.
+- **Node size** grows with the page's links on screen, in and out; the page open in the active tab is marked in the accent colour. Edges are faint hairlines that stay one pixel wide at every zoom.
 - **Filter bar** in the header: filter by tag, task status, priority, presence of a due date, presence of a scheduled date, presence of backlinks, exclude templates, and exclude journal pages (pages titled `YYYY-MM-DD`). Filters stack as removable pills; there is no date-range or content-match filter. A space with no saved graph filters starts with *Exclude journal pages*; removing it is remembered per space.
 - **Local graph**: *Focus on this page* narrows the graph to the open page's 1- or 2-hop neighbourhood. *Show in graph* in the page kebab (palette: *Show this page in graph*, `Ctrl+Shift+G`) opens it from the page; mode and depth are remembered per space, and a page the filters hide says so.
 - **Zoom / pan** with mouse / trackpad / touch.

@@ -46,6 +46,7 @@ import {
   createApplyPositions,
   DEFAULT_HEIGHT,
   DEFAULT_WIDTH,
+  markCurrentPage,
   patchGraphSelections,
   type RenderResult,
   type SimulationCtx,
@@ -59,6 +60,8 @@ export interface UseGraphSimulationArgs {
   nodes: GraphNode[]
   edges: GraphEdge[]
   navigateToPage: (id: string, label: string) => void
+  /** The page open in the active tab; its node takes the accent. */
+  currentPageId: string | null
 }
 
 export interface UseGraphSimulationResult {
@@ -98,9 +101,10 @@ export function useGraphSimulation({
   nodes,
   edges,
   navigateToPage,
+  currentPageId,
 }: UseGraphSimulationArgs): UseGraphSimulationResult {
   const { attach: attachZoom, zoomIn, zoomOut, zoomReset } = useGraphZoom(svgRef)
-  const renderElements = useGraphRenderElements({ nodes, edges, navigateToPage })
+  const renderElements = useGraphRenderElements({ nodes, edges, navigateToPage, currentPageId })
   const { workerFailed, runWorker } = useGraphWorkerSimulation()
   const runMainThread = useGraphMainThreadSim()
 
@@ -126,10 +130,12 @@ export function useGraphSimulation({
   const nodesRef = useRef(nodes)
   const edgesRef = useRef(edges)
   const navigateToPageRef = useRef(navigateToPage)
+  const currentPageIdRef = useRef(currentPageId)
   const renderElementsRef = useRef(renderElements)
   nodesRef.current = nodes
   edgesRef.current = edges
   navigateToPageRef.current = navigateToPage
+  currentPageIdRef.current = currentPageId
   renderElementsRef.current = renderElements
 
   // ── Setup effect ─────────────────────────────────────────────────
@@ -292,6 +298,7 @@ export function useGraphSimulation({
       simNodes,
       simEdges,
       navigateToPageRef.current,
+      currentPageIdRef.current,
     )
 
     const applyPositions = createApplyPositions(link, node)
@@ -348,6 +355,13 @@ export function useGraphSimulation({
     // toggles; only a cold-start branch spawns a fresh handle.
     // oxlint-disable-next-line react-hooks/exhaustive-deps -- workerFailed/runWorker/runMainThread are consumed via closure but intentionally NOT listed: when they flip, the setup effect re-fires and rebuilds everything, so the patch effect must not also fire on those changes.
   }, [nodes, edges, svgRef])
+
+  // A new active-tab page moves the accent without a patch, which would
+  // reheat the layout.
+  useEffect(() => {
+    const state = stateRef.current
+    if (state) markCurrentPage(state.rendered.node, currentPageId)
+  }, [currentPageId])
 
   return { zoomIn, zoomOut, zoomReset }
 }

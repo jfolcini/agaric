@@ -52,17 +52,20 @@ const mockedInvoke = vi.mocked(invoke)
 /** Command-keyed `invoke`; the agenda-count read resolves empty by default. */
 function stubInvoke(handlers: Readonly<TypedInvokeHandlers> = {}) {
   mockedInvoke.mockImplementation(
-    mockInvokeCommands({ count_agenda_batch_by_source: () => ({}), ...handlers }),
+    mockInvokeCommands({
+      count_agenda_batch_by_source: () => ({}),
+      list_journal_pages_in_range: () => [],
+      ...handlers,
+    }),
   )
 }
 
 beforeEach(() => {
   vi.clearAllMocks()
   __resetCalendarPageDatesForTests()
-  // No active space by default: `useCalendarPageDates` short-circuits without
-  // dispatching, so `count_agenda_batch_by_source` stays the only IPC in this
-  // file. The two highlight tests seed a space explicitly.
-  useSpaceStore.setState({ currentSpaceId: null, availableSpaces: [], isReady: true })
+  // #5415 — both reads carry the active space, so seed one; the no-space arm
+  // below clears it.
+  useSpaceStore.setState({ currentSpaceId: 'SPACE_1', availableSpaces: [], isReady: true })
   stubInvoke()
 })
 
@@ -216,6 +219,15 @@ describe('JournalCalendarDropdown', () => {
     fireEvent.keyDown(document, { key: 'Escape' })
 
     expect(onClose).toHaveBeenCalledTimes(1)
+  })
+
+  // #5415 — no active space: no count is requested.
+  it('fetches nothing while there is no active space', async () => {
+    useSpaceStore.setState({ currentSpaceId: null })
+    render(<JournalCalendarDropdown {...defaultProps} />)
+    await screen.findByRole('dialog', { name: /date picker/i })
+
+    expect(mockedInvoke).not.toHaveBeenCalledWith('count_agenda_batch_by_source', expect.anything())
   })
 
   it('fetches agenda counts on mount', async () => {

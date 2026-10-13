@@ -17,8 +17,11 @@ import { unwrap } from '@/lib/app-error'
 import type { BlockRow, ResolvedBlock } from '@/lib/bindings'
 import { commands } from '@/lib/bindings'
 import { logger } from '@/lib/logger'
+import { requireActiveScope } from '@/lib/space-scope'
+import { useSpaceStore } from '@/stores/space'
 
 export function useTrashBreadcrumbs(blocks: BlockRow[]): (block: BlockRow) => string | null {
+  const currentSpaceId = useSpaceStore((s) => s.currentSpaceId)
   const { t } = useTranslation()
   const [pageMap, setPageMap] = useState<Map<string, ResolvedBlock | null>>(new Map())
 
@@ -31,10 +34,10 @@ export function useTrashBreadcrumbs(blocks: BlockRow[]): (block: BlockRow) => st
   }, [blocks])
 
   useEffect(() => {
-    if (pageIds.length === 0) return
+    if (pageIds.length === 0 || currentSpaceId == null) return
     let cancelled = false
     commands
-      .batchResolve(pageIds, { kind: 'global' })
+      .batchResolve(pageIds, requireActiveScope(currentSpaceId))
       .then(unwrap)
       .then((resolved) => {
         if (cancelled) return
@@ -54,7 +57,7 @@ export function useTrashBreadcrumbs(blocks: BlockRow[]): (block: BlockRow) => st
     return () => {
       cancelled = true
     }
-  }, [pageIds])
+  }, [pageIds, currentSpaceId])
 
   return useCallback(
     (block: BlockRow): string | null => {

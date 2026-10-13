@@ -604,6 +604,33 @@ describe('useBlockTags handleRemoveTag', () => {
 // ---------------------------------------------------------------------------
 
 describe('useBlockTags handleCreateTag', () => {
+  // #5415 — a tag is created in the active space; the no-space arm is pinned below.
+  beforeEach(() => {
+    useSpaceStore.setState({ currentSpaceId: 'SPACE_1' })
+  })
+
+  it('refuses to create a tag and toasts when there is no active space', async () => {
+    useSpaceStore.setState({ currentSpaceId: null })
+    stubInvoke({
+      list_inherited_tags_for_block: () => [],
+      list_all_tags_in_space: () => [],
+      list_tags_for_block: () => [],
+    })
+
+    const { result } = renderHook(() => useBlockTags('BLOCK_1'), { wrapper })
+    await waitFor(() => {
+      expect(result.current.loading).toBe(false)
+    })
+
+    await act(async () => {
+      await result.current.handleCreateTag('NewTag')
+    })
+
+    expect(mockedInvoke).not.toHaveBeenCalledWith('create_block', expect.anything())
+    expect(toast.error).toHaveBeenCalled()
+    expect(result.current.allTags).toEqual([])
+  })
+
   it('creates tag block and adds tag to the block', async () => {
     const createdBlock = makeBlock({
       id: 'NEW_TAG_1',
@@ -640,7 +667,7 @@ describe('useBlockTags handleCreateTag', () => {
       content: 'NewTag',
       parentId: null,
       index: null,
-      scope: { kind: 'global' },
+      scope: { kind: 'active', space_id: 'SPACE_1' },
       // #2849 PR2 — tag creation supplies no client id; the binding sends null.
       blockId: null,
     })
@@ -691,7 +718,7 @@ describe('useBlockTags handleCreateTag', () => {
       content: 'Trimmed',
       parentId: null,
       index: null,
-      scope: { kind: 'global' },
+      scope: { kind: 'active', space_id: 'SPACE_1' },
       // #2849 PR2 — tag creation supplies no client id; the binding sends null.
       blockId: null,
     })
@@ -746,7 +773,7 @@ describe('useBlockTags handleCreateTag', () => {
       content: 'Solo',
       parentId: null,
       index: null,
-      scope: { kind: 'global' },
+      scope: { kind: 'active', space_id: 'SPACE_1' },
       // #2849 PR2 — tag creation supplies no client id; the binding sends null.
       blockId: null,
     })

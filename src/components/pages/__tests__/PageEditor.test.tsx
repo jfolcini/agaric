@@ -419,7 +419,7 @@ describe('PageEditor', () => {
           content: '',
           parentId: 'PAGE_1',
           index: 1,
-          scope: { kind: 'global' },
+          scope: { kind: 'active', space_id: TEST_SPACE_ID },
           blockId: newId,
         }),
       )
@@ -463,7 +463,7 @@ describe('PageEditor', () => {
         content: '',
         parentId: 'PAGE_1',
         index: null,
-        scope: { kind: 'global' },
+        scope: { kind: 'active', space_id: TEST_SPACE_ID },
         // #2849 PR2 — the empty-page path calls createBlock directly with no
         // client id (createBelow needs an anchor), so the binding sends null.
         blockId: null,
@@ -545,7 +545,7 @@ describe('PageEditor', () => {
           content: '',
           parentId: 'PAGE_1',
           index: 1,
-          scope: { kind: 'global' },
+          scope: { kind: 'active', space_id: TEST_SPACE_ID },
           blockId: newId,
         }),
       )
@@ -710,7 +710,7 @@ describe('PageEditor BlockTree auto-creation prop', () => {
         content: '',
         parentId: 'PAGE_1',
         index: null,
-        scope: { kind: 'global' },
+        scope: { kind: 'active', space_id: TEST_SPACE_ID },
         // #2849 PR2 — the empty-page path calls createBlock directly with no
         // client id (createBelow needs an anchor), so the binding sends null.
         blockId: null,

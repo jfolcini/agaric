@@ -234,6 +234,7 @@ function Harness({ nodes, edges, onResult, navigateToPage }: HarnessProps): Reac
     nodes,
     edges,
     navigateToPage: navigateToPage ?? ((): void => {}),
+    currentPageId: null,
   })
   React.useEffect(() => {
     onResult(result)

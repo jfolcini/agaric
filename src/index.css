@@ -194,6 +194,13 @@
   /* Ink, the parent's own color: red is the today marks and blue is focus
    * (#5332), so only the alternate themes give icons a palette color. */
   --icon: currentColor;
+  /* Graph view, inherited by every theme (#5428, #5429). Nodes are a mid tone
+   * apart from the text, 3.5:1 or more on each theme's --background; edges are
+   * that tone drawn at 0.2–0.45 opacity, so they recede; the current page is
+   * red like the today marks, and the focus ring stays blue. */
+  --graph-node: oklch(0.6 0.01 70);
+  --graph-edge: var(--graph-node);
+  --graph-accent: var(--brand);
   --chart-1: oklch(0.646 0.222 41.116);
   --chart-2: oklch(0.6 0.118 184.714);
   --chart-3: oklch(0.398 0.07 227.392);
@@ -376,6 +383,9 @@
   --input: oklch(0.3 0.007 70);
   /* 7.4:1 on --background. */
   --ring: oklch(0.72 0.13 255);
+  /* A mid tone at 0.2 opacity all but vanishes on a dark ground, so edges sit
+   * halfway between the node tone and the text. */
+  --graph-edge: color-mix(in oklab, var(--graph-node), var(--foreground));
   --chart-1: oklch(0.488 0.243 264.376);
   --chart-2: oklch(0.696 0.17 162.48);
   --chart-3: oklch(0.769 0.188 70.08);
@@ -1825,6 +1835,9 @@
   :root {
     --ring: oklch(0.5 0.2 255);
 
+    /* Graph nodes, and the edges drawn from them. */
+    --graph-node: oklch(0.4 0.01 70);
+
     /* Alerts (callouts): bg slightly darker than page, fg/border deeper. */
     --alert-info: oklch(0.94 0.06 255);
     --alert-info-foreground: oklch(0.3 0.28 266);
@@ -1891,6 +1904,9 @@
   /* Dark theme — brighter, more saturated surfaces; lifted foregrounds. */
   .dark {
     --ring: oklch(0.8 0.12 255);
+
+    /* Graph nodes, and the edges drawn from them. */
+    --graph-node: oklch(0.8 0.006 70);
 
     /* Alerts (callouts). */
     --alert-info: oklch(0.36 0.14 268);
