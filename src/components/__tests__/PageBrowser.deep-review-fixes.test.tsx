@@ -73,14 +73,14 @@ beforeEach(() => {
   // round-trip values through sessionStorage; isolate each test.
   sessionStorage.clear()
   localStorage.removeItem('page-browser-sort')
-  localStorage.removeItem('page-browser-density')
   localStorage.removeItem('starred-pages')
   // Compound-filter chips now live in a module-global per-space store that
   // persists to localStorage (#1750); reset both the in-memory slice and the
   // persisted key so chips added in one test don't leak into the next.
   localStorage.removeItem('agaric:page-browser-filters')
   localStorage.removeItem('agaric:pages:savedViews:v1')
-  usePageBrowserFiltersStore.setState({ filtersBySpace: {}, nextAddId: 0 })
+  // An empty slice, not an absent one: absent is the default journal chip (#5370).
+  usePageBrowserFiltersStore.setState({ filtersBySpace: { SPACE_TEST: [] }, nextAddId: 0 })
   // Phase 2 — PageBrowser now gates its render and page query
   // on `useSpaceStore.isReady`. Seed the store so tests exercise the
   // real code path rather than the loading skeleton.
@@ -138,7 +138,6 @@ describe('PageBrowser', () => {
           name: 'Tagged',
           createdAt: '2026-01-01T00:00:00.000Z',
           sort: 'alphabetical',
-          density: 'regular',
           filters: [
             { type: 'Tag', tag: 'TAG_HERE' },
             { type: 'Tag', tag: 'TAG_ELSEWHERE' },
@@ -191,12 +190,25 @@ describe('PageBrowser', () => {
 
         await waitFor(() => expect(appliedTagIds()).toEqual(['TAG_HERE', 'TAG_ELSEWHERE']))
       })
+
+      it('replaces the default journal chip of a space with nothing stored (#5370)', async () => {
+        usePageBrowserFiltersStore.setState({ filtersBySpace: {}, nextAddId: 0 })
+        await applyTaggedView(() =>
+          Promise.resolve([{ tag_id: 'TAG_HERE', name: 'here', usage_count: 1, updated_at: '' }]),
+        )
+
+        await waitFor(() =>
+          expect(usePageBrowserFiltersStore.getState().filtersBySpace['SPACE_TEST']).toEqual([
+            { type: 'Tag', tag: 'TAG_HERE', _addId: 1 },
+          ]),
+        )
+      })
     })
 
     // ── #3339 — saved-view delete is undoable ───────────────────────────
     // The delete button sits one row-item away from the apply target and the
     // store is localStorage-only (no Trash, no restore path), so a mis-click
-    // used to destroy the whole {name, sort, density, filters} tuple for good.
+    // used to destroy the whole {name, sort, filters} tuple for good.
     it('#3339: deleting a saved view offers an Undo that restores the tuple', async () => {
       const user = userEvent.setup()
       const savedView = {
@@ -204,7 +216,6 @@ describe('PageBrowser', () => {
         name: 'My view',
         createdAt: '2026-01-01T00:00:00.000Z',
         sort: 'alphabetical',
-        density: 'regular',
         filters: [{ type: 'Orphan' }],
       }
       localStorage.setItem(
@@ -259,7 +270,6 @@ describe('PageBrowser', () => {
       expect(restored[0]).toMatchObject({
         name: 'My view',
         sort: 'alphabetical',
-        density: 'regular',
         filters: [{ type: 'Orphan' }],
       })
     })

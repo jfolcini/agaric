@@ -1,7 +1,7 @@
 <!-- markdownlint-disable MD060 -->
 # Pages view architecture
 
-The shape of the Pages browser — the list view that fronts every page in the active space. This file documents the **data flow** behind density rows, the seven sort modes, and the per-page metadata IPC. Workflow + UI conventions live with the page-browser source under `src/components/PageBrowser/`; this file is the load-bearing contract a contributor reads before touching the surface.
+The shape of the Pages browser — the list view that fronts every page in the active space. This file documents the **data flow** behind the page rows, the seven sort modes, and the per-page metadata IPC. Workflow + UI conventions live with the page-browser source under `src/components/PageBrowser/`; this file is the load-bearing contract a contributor reads before touching the surface.
 
 ## Overview
 
@@ -9,10 +9,10 @@ The Pages view is the canonical "show me every page in this space" surface. It f
 
 Four strands of work compose here, and all of them hang off one seam — the `list_pages_with_metadata` IPC, which returns the shared metadata columns once so no consumer has to re-query for them:
 
-- **Density rows + sort modes + the metadata IPC** — the base surface (below).
+- **Page rows + sort modes + the metadata IPC** — the base surface (below).
 - **Materialised counts** — `inbound_link_count` / `child_block_count` moved into `pages_cache`, which removed the 20k-page scaling cliff on `most-linked` / `most-content`.
 - **Compound filters** — `FilterPrimitive` shared with Search and the other filter surfaces. See [`filters.md`](filters.md).
-- **Multi-select + bulk ops + saved views** (#81) — a saved view is a `{filterSet, sort, density}` triple persisted under `agaric:pages:savedViews:v1` (`src/hooks/useSavedPagesViews.ts`); the compound-filter work owns `filterSet`, the sort/density work owns the other two.
+- **Multi-select + bulk ops + saved views** (#81) — a saved view is a `{filterSet, sort}` pair persisted under `agaric:pages:savedViews:v1` (`src/hooks/useSavedPagesViews.ts`); the compound-filter work owns `filterSet`, the sort work owns `sort`. Views saved before #5372 also carry a `density` field that nothing reads.
 
 ## Data flow
 
@@ -50,17 +50,15 @@ Every Pages-view list render walks the same five stages. The IPC is the only asy
              │
              ▼
 ┌──────────────────────────┐
-│  <DensityRow>            │  Pages-specific leaf row (compact 32px / regular 44px /
-│   src/components/        │  expanded 68px). Reads typed primitive props for memoisation;
-│   PageBrowser/           │  badge set varies by density per the "Density" section below.
-│   DensityRow.tsx         │  Tree-page rows still use the recursive `PageTreeItem`; only
-│                          │  leaf rows are density-aware.
+│  <PageRow>               │  Pages-specific leaf row (see "Page rows" below). Reads
+│   src/components/        │  typed primitive props for memoisation. Tree-page rows still
+│   PageBrowser/           │  use the recursive `PageTreeItem`.
+│   PageRow.tsx            │
 └──────────────────────────┘
 ```
 
-Two side hooks orbit this pipeline without altering its shape:
+One side hook orbits this pipeline without altering its shape:
 
-- **`usePageBrowserDensity`** owns the row chrome and the virtualizer's `estimateSize`. Density never affects which rows render — only how each row paints.
 - **Alias resolver** (`src/hooks/usePageBrowserFilters.ts`) is a parallel single-row IPC for "user typed an alias in the filter box" (`resolvePageByAlias` → sets `aliasMatchId` so the matching page surfaces even when its visible title doesn't match the filter). Independent of the list query.
 
 ## Sort modes
@@ -85,26 +83,11 @@ Cursor implications:
 
 Sort comparators must not allocate per-comparison. The `sortPages` callback in `usePageBrowserSort` materialises any expensive lookup (the `getRecentPages()` `Map`, the metadata `lookupMeta` closure) **once** before `Array.sort`. The comparator body reads scalars off rows and returns an integer; no `.map`, no `new Date()`, no closure-over-row inside the comparator. Adding a sort mode follows this pattern.
 
-## Density
+## Page rows
 
-Three modes, persisted to localStorage. Default `regular` to match the existing row height and avoid a virtualizer re-measure storm on first upgrade.
+A page row shows the title + `↗ inbound_link_count` + `⊟ child_block_count` + relative time + the first matched `has-*` flag chip (if any). The virtualizer estimates every row at 44 px (`PAGE_ROW_HEIGHT`, next to `HEADER_ROW_HEIGHT` in `src/components/PageBrowser.tsx`); `measureElement` corrects it to the rendered height.
 
-Every toggle re-measures the virtualizer.
-
-| Density | Row height | Badge set |
-|---------|------------|-----------|
-| `compact` | 32 px | Title + relative time only. Inbound-link / child-count / property flags collapse into the title tooltip. |
-| `regular` | 44 px | Title + `↗ inbound_link_count` + `⊟ child_block_count` + relative time + first matched `has-*` flag chip (if any). |
-| `expanded` | 68 px | Title on line 1; full metadata row on line 2; all `has-*` flag chips render (not just the first). |
-
-Contract — load-bearing for tests and for downstream consumers:
-
-- **Storage key:** `page-browser-density`. Value is the bare mode string (`compact` / `regular` / `expanded`); not JSON-wrapped.
-- **`data-density` attribute:** Every `<DensityRow>` renders with `data-density={mode}`. Integration tests assert against this attribute; the virtualizer's `estimateSize` callback identity is keyed off the same value so density transitions invalidate the saved scroll offset.
-- **Row height source:** `DENSITY_ROW_HEIGHT` in `src/hooks/usePageBrowserDensity.ts` is the single source of truth. The virtualizer reads `rowHeight` off the hook; no other component should hardcode 32/44/68.
-- **Independence from sort:** Toggling density never changes the IPC arguments or the sort comparator. Sort + density are orthogonal preferences with separate storage keys (`page-browser-sort` and `page-browser-density`).
-
-`<DensityRow>` is **Pages-specific** and lives at `src/components/PageBrowser/DensityRow.tsx`. TrashView and HistoryView have different row shapes (`TrashRow.descendants_affected`, `HistoryEntry`'s op-log payload), so extracting prematurely couples three views to a single primitive that has to grow optional props for each one's metadata. If a second consumer needs this shape, propose an extraction PR first rather than importing across surfaces.
+`<PageRow>` is **Pages-specific** and lives at `src/components/PageBrowser/PageRow.tsx`. TrashView and HistoryView have different row shapes (`TrashRow.descendants_affected`, `HistoryEntry`'s op-log payload), so extracting prematurely couples three views to a single primitive that has to grow optional props for each one's metadata. If a second consumer needs this shape, propose an extraction PR first rather than importing across surfaces.
 
 ## Cursor v1 → v2 (the `RequiresRefresh` recovery contract)
 

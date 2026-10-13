@@ -1,6 +1,6 @@
 /**
  * Tests for `SaveViewDialog` (#2003 piece 1) — name-entry modal for saving
- * the Pages view's current `{ sort, density, filters }` tuple.
+ * the Pages view's current `{ sort, filters }` tuple.
  *
  * Mirrors `RenameDialog.test.tsx`'s structure: `sanitizeSavedViewName` /
  * `validateSavedViewName` unit coverage, render/interaction via
@@ -32,9 +32,7 @@ describe('SaveViewDialog', () => {
     render(<SaveViewDialog open onOpenChange={vi.fn()} onConfirm={vi.fn()} />)
     expect(screen.getByText('Save current view')).toBeInTheDocument()
     expect(
-      screen.getByText(
-        'Saves the current sort, density, and filters so you can reapply them later.',
-      ),
+      screen.getByText('Saves the current sort and filters so you can reapply them later.'),
     ).toBeInTheDocument()
     expect(screen.getByRole('textbox', { name: /name/i })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /save/i })).toBeInTheDocument()

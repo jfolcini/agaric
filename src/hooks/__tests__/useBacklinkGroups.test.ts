@@ -49,7 +49,7 @@ function baseParams(overrides: Partial<UseBacklinkGroupsParams> = {}): UseBackli
     sort: null,
     sourcePageIncluded: [],
     sourcePageExcluded: [],
-    spaceId: null,
+    spaceId: 'SPACE_1',
     invalidationKey: 0,
     kind: null,
     ...overrides,
@@ -351,5 +351,20 @@ describe('useBacklinkGroups', () => {
 
     expect(result.current.totalCount).toBe(40)
     expect(result.current.filteredCount).toBe(4)
+  })
+})
+
+// #5415 — the grouped-backlink query carries the active space; with none
+// known it resolves to an empty page without dispatching.
+describe('useBacklinkGroups — no active space', () => {
+  it('resolves empty without an IPC', async () => {
+    mockedInvoke.mockImplementation(mockInvokeCommands({}))
+    const { result } = renderHook(() => useBacklinkGroups(baseParams({ spaceId: null })))
+
+    await waitFor(() => {
+      expect(result.current.loading).toBe(false)
+    })
+    expect(result.current.groups).toEqual([])
+    expect(mockedInvoke).not.toHaveBeenCalled()
   })
 })

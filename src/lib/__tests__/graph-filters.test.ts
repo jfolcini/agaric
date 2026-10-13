@@ -200,6 +200,24 @@ describe('applyGraphFilters', () => {
     })
   })
 
+  describe('excludeJournal filter (#5370)', () => {
+    const ns = [
+      makeNode({ id: 'journal', is_journal: true }),
+      makeNode({ id: 'page', is_journal: false }),
+      makeNode({ id: 'unknown' }),
+    ]
+
+    it('removes nodes where is_journal === true when value is true', () => {
+      const result = applyGraphFilters(ns, [{ type: 'excludeJournal', value: true }])
+      expect(result.map((n) => n.id)).toEqual(['page', 'unknown'])
+    })
+
+    it('is a no-op when value is false', () => {
+      const result = applyGraphFilters(ns, [{ type: 'excludeJournal', value: false }])
+      expect(result).toHaveLength(3)
+    })
+  })
+
   describe('tag filter', () => {
     it('matches nodes with at least one of the selected tags (OR)', () => {
       const result = applyGraphFilters(nodes, [{ type: 'tag', tagIds: ['work'] }])
@@ -300,6 +318,10 @@ describe('getGraphFilterKey', () => {
       'excludeTemplates:true',
     )
   })
+
+  it('handles excludeJournal', () => {
+    expect(getGraphFilterKey({ type: 'excludeJournal', value: true })).toBe('excludeJournal:true')
+  })
 })
 
 describe('constants', () => {
@@ -311,7 +333,8 @@ describe('constants', () => {
     expect(GRAPH_FILTER_TYPES).toContain('hasScheduledDate')
     expect(GRAPH_FILTER_TYPES).toContain('hasBacklinks')
     expect(GRAPH_FILTER_TYPES).toContain('excludeTemplates')
-    expect(GRAPH_FILTER_TYPES).toHaveLength(7)
+    expect(GRAPH_FILTER_TYPES).toContain('excludeJournal')
+    expect(GRAPH_FILTER_TYPES).toHaveLength(8)
   })
 
   it('GRAPH_STATUS_VALUES matches the locked task cycle', () => {

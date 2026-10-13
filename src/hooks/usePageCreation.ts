@@ -132,7 +132,7 @@ export function usePageCreation({
         // at the top of the *current* result set. That only holds when no
         // compound-filter chips are active: with chips the server decides
         // membership (the new page may or may not match), and the prepended
-        // row also lacks the metadata the density rows read. When chips are
+        // row also lacks the metadata the page rows read. When chips are
         // active we refetch from page 1 instead, so the new page surfaces
         // only if it actually matches — and with full metadata. The fast
         // optimistic path is kept for the unfiltered case (the common one).

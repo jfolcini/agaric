@@ -46,7 +46,7 @@ import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
 import { PREFERENCES, readPreference } from '@/lib/preferences'
 import { listBlocksLimit, listProjectedAgendaLimit, paginationLimit } from '@/lib/safe-limit'
-import { requireActiveScope, toSpaceScope } from '@/lib/space-scope'
+import { requireActiveScope } from '@/lib/space-scope'
 import { useSpaceStore } from '@/stores/space'
 
 // ── ULID reference extraction (B-53) ──────────────────────────────────
@@ -146,9 +146,9 @@ function listBlocksForAgenda(
   sourceFilter: string | null,
   cursor: string | undefined,
   limit: number,
-  spaceId: string,
+  spaceId: string | null,
 ): Promise<PageResponse<BlockRow>> {
-  if (!spaceId) {
+  if (spaceId == null) {
     return Promise.resolve({
       items: [],
       next_cursor: null,
@@ -188,11 +188,12 @@ function listBlocksForAgenda(
  */
 export async function resolveAndMergeTitles(
   ids: string[],
+  spaceId: string | null,
   isStale: () => boolean,
   applyResolved: (resolved: ResolvedBlock[]) => void,
 ): Promise<void> {
-  if (ids.length === 0) return
-  const resolved = unwrap(await commands.batchResolve(ids, { kind: 'global' }))
+  if (ids.length === 0 || spaceId == null) return
+  const resolved = unwrap(await commands.batchResolve(ids, requireActiveScope(spaceId)))
   if (isStale()) return
   applyResolved(resolved)
 }
@@ -279,6 +280,10 @@ export function useDuePanelData({
       setOverdueBlocks([])
       return
     }
+    // #5415 — no active space: nothing to list, never dispatch.
+    const spaceId = currentSpaceId
+    if (spaceId == null) return
+    const scope = requireActiveScope(spaceId)
     let stale = false
 
     async function fetchOverdue() {
@@ -311,7 +316,7 @@ export function useDuePanelData({
               valueDateRange: ['0001-01-01', date],
               excludeTodoStates: ['DONE'],
             },
-            toSpaceScope(currentSpaceId),
+            scope,
           ),
         )
         if (stale) return
@@ -328,6 +333,7 @@ export function useDuePanelData({
         if (overdue.length > 0) {
           await resolveAndMergeTitles(
             collectResolveIds(overdue),
+            currentSpaceId,
             () => stale,
             (resolved) => {
               setPageTitles((prev) => {
@@ -360,6 +366,10 @@ export function useDuePanelData({
       setUpcomingBlocks([])
       return
     }
+    // #5415 — no active space: nothing to list, never dispatch.
+    const spaceId = currentSpaceId
+    if (spaceId == null) return
+    const scope = requireActiveScope(spaceId)
     let stale = false
 
     async function fetchUpcoming() {
@@ -401,7 +411,7 @@ export function useDuePanelData({
               valueDateRange: [tomorrowStr, endExclusive],
               excludeTodoStates: ['DONE'],
             },
-            toSpaceScope(currentSpaceId),
+            scope,
           ),
         )
         if (stale) return
@@ -420,6 +430,7 @@ export function useDuePanelData({
         if (upcoming.length > 0) {
           await resolveAndMergeTitles(
             collectResolveIds(upcoming),
+            currentSpaceId,
             () => stale,
             (resolved) => {
               setPageTitles((prev) => {
@@ -465,7 +476,7 @@ export function useDuePanelData({
       try {
         // #2248 — `listBlocksForAgenda` returns an empty page when there is
         // no active space (no cross-space listing).
-        const resp = await listBlocksForAgenda(date, sourceFilter, cursor, 50, currentSpaceId ?? '')
+        const resp = await listBlocksForAgenda(date, sourceFilter, cursor, 50, currentSpaceId)
         if (myReqId !== requestIdRef.current) return
         const nonEmptyItems = applySourceFilter(resp.items, date, sourceFilter)
         const newBlocks = cursor ? [...blocksRef.current, ...nonEmptyItems] : nonEmptyItems
@@ -479,6 +490,7 @@ export function useDuePanelData({
         ]
         await resolveAndMergeTitles(
           uniqueParentIds,
+          currentSpaceId,
           () => myReqId !== requestIdRef.current,
           (resolved) => {
             setPageTitles((prev) => {
@@ -520,13 +532,7 @@ export function useDuePanelData({
       try {
         // #2248 — `listBlocksForAgenda` returns an empty page when there is
         // no active space (no cross-space listing).
-        const resp = await listBlocksForAgenda(
-          date,
-          sourceFilter,
-          undefined,
-          50,
-          currentSpaceId ?? '',
-        )
+        const resp = await listBlocksForAgenda(date, sourceFilter, undefined, 50, currentSpaceId)
         if (cancelled) return
         const nonEmptyItems = applySourceFilter(resp.items, date, sourceFilter)
         setBlocks(nonEmptyItems)
@@ -540,6 +546,7 @@ export function useDuePanelData({
         // the parallel overdue / upcoming / projected effects.
         await resolveAndMergeTitles(
           collectResolveIds(nonEmptyItems),
+          currentSpaceId,
           () => cancelled,
           (resolved) => {
             setPageTitles((prev) => {
@@ -567,8 +574,10 @@ export function useDuePanelData({
   // Phase 4 — cache key includes the active space so two
   // spaces don't share entries.
   useEffect(() => {
+    // #5415 — no active space: nothing to project, never dispatch.
+    if (currentSpaceId == null) return
     let stale = false
-    const cacheKey = `${currentSpaceId ?? '__null__'}|${date}`
+    const cacheKey = `${currentSpaceId}|${date}`
 
     // #738 sub-3 — clear the projected cache ONLY when `invalidationKey`
     // actually changes (a property event fired since the last run), not
@@ -584,6 +593,7 @@ export function useDuePanelData({
       const idsToResolve = collectResolveIds(entries.map((entry) => entry.block))
       return resolveAndMergeTitles(
         idsToResolve,
+        currentSpaceId,
         () => stale,
         (resolved) => {
           setPageTitles((prev) => {
@@ -633,7 +643,7 @@ export function useDuePanelData({
         date,
         null,
         listProjectedAgendaLimit(20),
-        toSpaceScope(currentSpaceId),
+        requireActiveScope(currentSpaceId),
       )
       .then(unwrap)
       .then((response) => {

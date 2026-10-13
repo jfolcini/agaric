@@ -37,10 +37,11 @@
 use serde_json::Value;
 
 use super::registry::{
-    TOOL_ADD_TAG, TOOL_APPEND_BLOCK, TOOL_CREATE_PAGE, TOOL_DELETE_BLOCK, TOOL_GET_AGENDA,
-    TOOL_GET_BLOCK, TOOL_GET_PAGE, TOOL_JOURNAL_FOR_DATE, TOOL_LIST_BACKLINKS, TOOL_LIST_PAGES,
-    TOOL_LIST_PROPERTY_DEFS, TOOL_LIST_SPACES, TOOL_LIST_TAGS, TOOL_SEARCH, TOOL_SET_PROPERTY,
-    TOOL_UPDATE_BLOCK_CONTENT,
+    TOOL_ADD_TAG, TOOL_APPEND_BLOCK, TOOL_APPEND_MARKDOWN, TOOL_CREATE_PAGE, TOOL_CREATE_TAG,
+    TOOL_DELETE_BLOCK, TOOL_DELETE_PROPERTY, TOOL_GET_AGENDA, TOOL_GET_BLOCK, TOOL_GET_PAGE,
+    TOOL_GET_PAGE_MARKDOWN, TOOL_JOURNAL_FOR_DATE, TOOL_LIST_BACKLINKS, TOOL_LIST_PAGES,
+    TOOL_LIST_PROPERTY_DEFS, TOOL_LIST_SPACES, TOOL_LIST_TAGS, TOOL_MOVE_PAGE_TO_SPACE,
+    TOOL_SEARCH, TOOL_SET_PROPERTY, TOOL_UPDATE_BLOCK_CONTENT,
 };
 
 /// Number of leading characters of a ULID we expose in summary strings.
@@ -95,13 +96,18 @@ pub fn summarise(name: &str, args: &Value, result: &Value) -> String {
         TOOL_GET_AGENDA => summarise_get_agenda(args, result),
         TOOL_JOURNAL_FOR_DATE => summarise_journal_for_date(args, result),
         TOOL_LIST_SPACES => summarise_list_spaces(args, result),
+        TOOL_GET_PAGE_MARKDOWN => summarise_get_page_markdown(args, result),
         // ---- read-write (tools_rw) ----
         TOOL_APPEND_BLOCK => summarise_append_block(args, result),
+        TOOL_APPEND_MARKDOWN => summarise_append_markdown(args, result),
         TOOL_UPDATE_BLOCK_CONTENT => summarise_update_block_content(args, result),
         TOOL_SET_PROPERTY => summarise_set_property(args, result),
         TOOL_ADD_TAG => summarise_add_tag(args, result),
         TOOL_CREATE_PAGE => summarise_create_page(args, result),
         TOOL_DELETE_BLOCK => summarise_delete_block(args, result),
+        TOOL_MOVE_PAGE_TO_SPACE => summarise_move_page_to_space(args, result),
+        TOOL_CREATE_TAG => summarise_create_tag(args, result),
+        TOOL_DELETE_PROPERTY => summarise_delete_property(args, result),
         // Defensive default — keeps the activity feed working when
         // someone adds a new tool without a summariser. This is the
         // pre-existing behaviour for every entry. The privacy
@@ -246,7 +252,7 @@ pub fn summarise_list_property_defs(_args: &Value, result: &Value) -> String {
 /// `get_agenda — N entr(y|ies) (start..end)`. Dates are not user
 /// content; entry counts are structural.
 ///
-/// `list_projected_agenda_inner` is now cursor-paginated, so the
+/// `agenda_range_inner` is cursor-paginated, so the
 /// result is a `PageResponse { items, next_cursor, has_more }` rather
 /// than a top-level array. Count via `array_len(result, "items")`.
 pub fn summarise_get_agenda(args: &Value, result: &Value) -> String {
@@ -286,6 +292,19 @@ pub fn summarise_list_spaces(_args: &Value, result: &Value) -> String {
     )
 }
 
+/// `get_page_markdown — <id-prefix> (N lines)` (#5375). Never includes the
+/// markdown, which is the page's content.
+pub fn summarise_get_page_markdown(_args: &Value, result: &Value) -> String {
+    let prefix = ulid_prefix(str_field(result, "page_id").unwrap_or(""));
+    let n = str_field(result, "markdown").map_or(0, |md| md.lines().count());
+    let lines = if n == 1 { "line" } else { "lines" };
+    if prefix.is_empty() {
+        format!("get_page_markdown — {n} {lines}")
+    } else {
+        format!("get_page_markdown — {prefix} ({n} {lines})")
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Read-write summarisers
 // ---------------------------------------------------------------------------
@@ -303,6 +322,40 @@ pub fn summarise_append_block(args: &Value, result: &Value) -> String {
         (true, false) => format!("append_block — added under {parent_prefix}"),
         (true, true) => "append_block".to_string(),
     }
+}
+
+/// `append_markdown — N block(s) under <parent-prefix>`, with the pages and
+/// tags its names created counted. Never embeds the markdown, a block's
+/// content, a created page's or tag's name, or a warning (which names them).
+pub fn summarise_append_markdown(args: &Value, result: &Value) -> String {
+    let parent_prefix = ulid_prefix(str_field(args, "parent_id").unwrap_or(""));
+    let rows = result
+        .get("blocks")
+        .and_then(Value::as_array)
+        .map_or(&[][..], Vec::as_slice);
+    let count = |kind: &str| {
+        rows.iter()
+            .filter(|row| str_field(row, "block_type") == Some(kind))
+            .count()
+    };
+    let plural =
+        |n: usize, one: &str, many: &str| format!("{n} {}", if n == 1 { one } else { many });
+    let mut summary = format!(
+        "append_markdown — {}",
+        plural(count("content"), "block", "blocks")
+    );
+    if !parent_prefix.is_empty() {
+        summary.push_str(&format!(" under {parent_prefix}"));
+    }
+    let (pages, tags) = (count("page"), count("tag"));
+    if pages + tags > 0 {
+        summary.push_str(&format!(
+            " (created {}, {})",
+            plural(pages, "page", "pages"),
+            plural(tags, "tag", "tags")
+        ));
+    }
+    summary
 }
 
 /// `update_block_content — updated <id-prefix>`. Never embeds the new
@@ -417,6 +470,41 @@ pub fn summarise_delete_block(args: &Value, result: &Value) -> String {
     }
 }
 
+/// `move_page_to_space — moved <page-prefix> to <space-prefix>`.
+pub fn summarise_move_page_to_space(args: &Value, _result: &Value) -> String {
+    let page = ulid_prefix(str_field(args, "page_id").unwrap_or(""));
+    let target = ulid_prefix(str_field(args, "target_space_id").unwrap_or(""));
+    match (page.is_empty(), target.is_empty()) {
+        (false, false) => format!("move_page_to_space — moved {page} to {target}"),
+        (false, true) => format!("move_page_to_space — moved {page}"),
+        (true, false) => format!("move_page_to_space — to {target}"),
+        (true, true) => "move_page_to_space".to_string(),
+    }
+}
+
+/// `create_tag — created <id-prefix>`. Never embeds the tag name — it is
+/// user content.
+pub fn summarise_create_tag(_args: &Value, result: &Value) -> String {
+    let prefix = ulid_prefix(str_field(result, "id").unwrap_or(""));
+    if prefix.is_empty() {
+        "create_tag".to_string()
+    } else {
+        format!("create_tag — created {prefix}")
+    }
+}
+
+/// `delete_property — deleted <key> on <block-prefix>`. The key is schema.
+pub fn summarise_delete_property(args: &Value, _result: &Value) -> String {
+    let key = str_field(args, "key").unwrap_or("");
+    let block = ulid_prefix(str_field(args, "block_id").unwrap_or(""));
+    match (key.is_empty(), block.is_empty()) {
+        (false, false) => format!("delete_property — deleted {key} on {block}"),
+        (false, true) => format!("delete_property — deleted {key}"),
+        (true, false) => format!("delete_property — on {block}"),
+        (true, true) => "delete_property".to_string(),
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -443,6 +531,7 @@ mod tests {
         "SECRET_TEXT_VALUE",
         "SECRET_TAG_NAME",
         "SECRET_QUERY",
+        "SECRET_ALIAS",
     ];
 
     fn assert_no_secrets(summary: &str) {
@@ -746,6 +835,27 @@ mod tests {
     }
 
     #[test]
+    fn get_page_markdown_includes_prefix_and_line_count_only() {
+        let result = json!({
+            "page_id": ULID_A,
+            "markdown": format!(
+                "# SECRET_TITLE\n\n---\naliases: [SECRET_ALIAS]\n---\n\n- SECRET_BLOCK_CONTENT ^{ULID_B}\n"
+            ),
+        });
+        let s = summarise_get_page_markdown(&json!({"page_id": ULID_A}), &result);
+        assert_eq!(
+            s,
+            format!(
+                "get_page_markdown — {} (7 lines)",
+                &ULID_A[..ULID_PREFIX_LEN]
+            )
+        );
+        assert_no_secrets(&s);
+        assert_no_full_ulid(&s, ULID_A);
+        assert_no_full_ulid(&s, ULID_B);
+    }
+
+    #[test]
     fn journal_for_date_combines_date_and_prefix() {
         let args = json!({ "date": "2025-01-15" });
         let result = json!({ "id": ULID_A, "content": "SECRET_TITLE" });
@@ -764,6 +874,32 @@ mod tests {
     // -----------------------------------------------------------------
     // RW summarisers
     // -----------------------------------------------------------------
+
+    #[test]
+    fn append_markdown_counts_blocks_and_created_names_and_omits_their_text() {
+        let args = json!({
+            "parent_id": ULID_B,
+            "markdown": "- SECRET_BLOCK_CONTENT [[SECRET_TITLE]] #SECRET_TAG_NAME",
+        });
+        let result = json!({
+            "blocks": [
+                { "id": ULID_A, "block_type": "page", "content": "SECRET_TITLE" },
+                { "id": ULID_TAG, "block_type": "tag", "content": "SECRET_TAG_NAME" },
+                { "id": ULID_A, "block_type": "content", "content": "SECRET_BLOCK_CONTENT" },
+                { "id": ULID_A, "block_type": "content", "content": "SECRET_BLOCK_CONTENT" },
+            ],
+            "warnings": ["SECRET_TEXT_VALUE"],
+        });
+        let s = summarise_append_markdown(&args, &result);
+        assert_eq!(
+            s,
+            format!(
+                "append_markdown — 2 blocks under {} (created 1 page, 1 tag)",
+                &ULID_B[..ULID_PREFIX_LEN]
+            )
+        );
+        assert_no_secrets(&s);
+    }
 
     #[test]
     fn append_block_includes_both_prefixes_and_omits_content() {
@@ -954,6 +1090,47 @@ mod tests {
         assert!(s.ends_with("(1 descendant)"));
     }
 
+    #[test]
+    fn move_page_to_space_includes_both_prefixes() {
+        let args = json!({ "page_id": ULID_A, "space_id": ULID_REF, "target_space_id": ULID_B });
+        let result = json!({ "page_id": ULID_A, "space_id": ULID_B });
+        let s = summarise_move_page_to_space(&args, &result);
+        assert_eq!(
+            s,
+            format!(
+                "move_page_to_space — moved {} to {}",
+                &ULID_A[..ULID_PREFIX_LEN],
+                &ULID_B[..ULID_PREFIX_LEN],
+            ),
+        );
+    }
+
+    #[test]
+    fn create_tag_includes_prefix_and_omits_name() {
+        let args = json!({ "name": "SECRET_TAG_NAME", "space_id": ULID_B });
+        let result = json!({ "id": ULID_TAG, "block_type": "tag", "content": "SECRET_TAG_NAME" });
+        let s = summarise_create_tag(&args, &result);
+        assert_eq!(
+            s,
+            format!("create_tag — created {}", &ULID_TAG[..ULID_PREFIX_LEN]),
+        );
+        assert_no_secrets(&s);
+    }
+
+    #[test]
+    fn delete_property_includes_key_and_block_prefix() {
+        let args = json!({ "block_id": ULID_A, "key": "effort", "space_id": ULID_B });
+        let result = json!({ "block_id": ULID_A, "key": "effort" });
+        let s = summarise_delete_property(&args, &result);
+        assert_eq!(
+            s,
+            format!(
+                "delete_property — deleted effort on {}",
+                &ULID_A[..ULID_PREFIX_LEN]
+            ),
+        );
+    }
+
     // -----------------------------------------------------------------
     // Cross-cutting privacy guard — every public summariser must
     // refuse to leak the secret payloads regardless of how they appear
@@ -977,11 +1154,16 @@ mod tests {
             "query": "SECRET_QUERY",
             "title": "SECRET_TITLE",
             "content": "SECRET_BLOCK_CONTENT",
+            "markdown": "- SECRET_BLOCK_CONTENT [[SECRET_TITLE]] #SECRET_TAG_NAME",
             "value_text": "SECRET_TEXT_VALUE",
             "block_id": ULID_A,
             "parent_id": ULID_B,
             "tag_id": ULID_TAG,
             "page_id": ULID_A,
+            // #5378 — `create_tag` / `move_page_to_space` args.
+            "name": "SECRET_TAG_NAME",
+            "space_id": ULID_B,
+            "target_space_id": ULID_B,
             "key": "notes",
             "date": "2025-01-15",
             "start_date": "2025-01-01",
@@ -1000,8 +1182,28 @@ mod tests {
             "content": "SECRET_BLOCK_CONTENT",
             "parent_id": ULID_B,
             "items": [{ "id": ULID_A, "content": "SECRET_BLOCK_CONTENT" }],
-            "page": { "id": ULID_A, "content": "SECRET_TITLE" },
+            "page": {
+                "id": ULID_A,
+                "content": "SECRET_TITLE",
+                "properties": [{ "key": "notes", "value_text": "SECRET_TEXT_VALUE" }],
+                "tags": [ULID_TAG],
+                "aliases": ["SECRET_ALIAS"],
+            },
             "children": [{ "id": ULID_B, "content": "SECRET_BLOCK_CONTENT" }],
+            // #5377 — `get_block` carries the block's properties, tags and aliases.
+            "properties": [{ "key": "notes", "value_text": "SECRET_TEXT_VALUE" }],
+            "tags": [ULID_TAG],
+            "aliases": ["SECRET_ALIAS"],
+            // #5375 — `get_page_markdown` returns the page as text.
+            "page_id": ULID_A,
+            "markdown": "# SECRET_TITLE\n\n---\naliases: [SECRET_ALIAS]\n---\n\n- SECRET_BLOCK_CONTENT\n",
+            // #5376 — `append_markdown` returns the rows it wrote and warnings
+            // naming what stayed text.
+            "blocks": [
+                { "id": ULID_A, "block_type": "page", "content": "SECRET_TITLE" },
+                { "id": ULID_B, "block_type": "content", "content": "SECRET_BLOCK_CONTENT" }
+            ],
+            "warnings": ["SECRET_TAG_NAME", "SECRET_TEXT_VALUE"],
             "groups": [
                 { "page_id": ULID_B, "page_title": "SECRET_TITLE", "blocks": [{}] }
             ],

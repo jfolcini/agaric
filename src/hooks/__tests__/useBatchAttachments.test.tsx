@@ -22,6 +22,9 @@
  *    window; the data context value updates once per settle (the loading
  *    blip doesn't re-render data-only consumers, since it lives in a
  *    separate context).
+ *  - #5443: an answer that lands after the window moved on is kept for its
+ *    ids; an id in flight is not asked for twice; an invalidation drops what
+ *    was asked before it.
  */
 
 import { invoke } from '@tauri-apps/api/core'
@@ -429,53 +432,6 @@ describe('useBatchAttachments', () => {
       })
     }
 
-    it('clears loading when a superseded fetch is followed by an all-cached window (stranded-loading regression)', async () => {
-      // First settle: [A] resolves normally and is cached.
-      mockBatchInvoke()
-      const loadingStates: boolean[] = []
-      function LoadingProbe() {
-        loadingStates.push(useBatchAttachmentsLoading())
-        return null
-      }
-      const { rerender } = render(
-        <BatchAttachmentsProvider blockIds={['A']}>
-          <LoadingProbe />
-        </BatchAttachmentsProvider>,
-      )
-      await waitFor(() => expect(loadingStates.at(-1)).toBe(false))
-
-      // Second settle: [A, B] — only B is fetched; hold its promise open so
-      // the fetch is still in flight when the window changes again.
-      let resolveB: ((v: Record<string, AttachmentRow[]>) => void) | undefined
-      stubInvoke({
-        list_attachments_batch: () =>
-          new Promise<Record<string, AttachmentRow[]>>((res) => {
-            resolveB = res
-          }),
-      })
-      rerender(
-        <BatchAttachmentsProvider blockIds={['A', 'B']}>
-          <LoadingProbe />
-        </BatchAttachmentsProvider>,
-      )
-      await waitFor(() => expect(loadingStates.at(-1)).toBe(true))
-
-      // Third settle BEFORE B resolves: back to the fully-cached [A].
-      // idsToFetch is empty; loading must reset even though B's in-flight
-      // fetch will be stale-guarded and never call setLoading(false).
-      rerender(
-        <BatchAttachmentsProvider blockIds={['A']}>
-          <LoadingProbe />
-        </BatchAttachmentsProvider>,
-      )
-      await waitFor(() => expect(loadingStates.at(-1)).toBe(false))
-
-      // The superseded resolution must not flip loading back on.
-      resolveB?.({ B: [] })
-      await Promise.resolve()
-      expect(loadingStates.at(-1)).toBe(false)
-    })
-
     it('only fetches ids NOT already cached when the window overlaps', async () => {
       mockBatchInvoke()
 
@@ -685,6 +641,138 @@ describe('useBatchAttachments', () => {
       // that precedes the data landing does not re-render a consumer that
       // only reads `useBatchAttachments()`.
       expect(observed.length - rendersAfterRerenderCommit).toBe(1)
+    })
+  })
+
+  // -------------------------------------------------------------------------
+  // #5443 — answers that land after the window moved on
+  // -------------------------------------------------------------------------
+
+  describe('answers that land after the window moved on (#5443)', () => {
+    interface HeldCall {
+      ids: string[]
+      resolve: (record: Record<string, AttachmentRow[]>) => void
+    }
+
+    /** Every call stays unanswered until the test answers it. */
+    function holdBatchInvoke(): HeldCall[] {
+      const held: HeldCall[] = []
+      stubInvoke({
+        list_attachments_batch: (args) =>
+          new Promise<Record<string, AttachmentRow[]>>((resolve) => {
+            held.push({ ids: (args as { blockIds: string[] }).blockIds, resolve })
+          }),
+      })
+      return held
+    }
+
+    function rowsFor(ids: string[], filename: string): Record<string, AttachmentRow[]> {
+      return Object.fromEntries(
+        ids.map((id) => [id, [makeAttachment({ id: `att-${id}`, block_id: id, filename })]]),
+      )
+    }
+
+    function renderProvider(blockIds: string[]) {
+      const observed: Array<BatchAttachmentsValue | null> = []
+      const loading: boolean[] = []
+      function LoadingProbe() {
+        loading.push(useBatchAttachmentsLoading())
+        return null
+      }
+      const tree = (ids: string[]) => (
+        <BatchAttachmentsProvider blockIds={ids}>
+          <Probe onResult={(v) => observed.push(v)} />
+          <LoadingProbe />
+        </BatchAttachmentsProvider>
+      )
+      const { rerender } = render(tree(blockIds))
+      return { observed, loading, rerender: (ids: string[]) => rerender(tree(ids)) }
+    }
+
+    it('keeps an answer for its ids after the window moved on, and does not ask for them again', async () => {
+      const held = holdBatchInvoke()
+      const { observed, loading, rerender } = renderProvider(['A'])
+      await waitFor(() => expect(held).toHaveLength(1))
+
+      rerender(['B'])
+      await waitFor(() => expect(held).toHaveLength(2))
+      await act(async () => {
+        held[0]?.resolve(rowsFor(['A'], 'a.png'))
+        held[1]?.resolve(rowsFor(['B'], 'b.png'))
+      })
+
+      expect(observed.at(-1)?.get('A')?.[0]?.filename).toBe('a.png')
+      expect(observed.at(-1)?.get('B')?.[0]?.filename).toBe('b.png')
+      expect(loading.at(-1)).toBe(false)
+
+      rerender(['A', 'B'])
+      await act(async () => {})
+      expect(held.map((c) => c.ids)).toEqual([['A'], ['B']])
+    })
+
+    it('does not ask again for an id whose answer is still in flight', async () => {
+      const held = holdBatchInvoke()
+      const { observed, loading, rerender } = renderProvider(['A'])
+      await waitFor(() => expect(held).toHaveLength(1))
+
+      rerender(['A', 'B'])
+      await waitFor(() => expect(held).toHaveLength(2))
+      expect(held.map((c) => c.ids)).toEqual([['A'], ['B']])
+      expect(loading.at(-1)).toBe(true)
+
+      await act(async () => {
+        held[0]?.resolve(rowsFor(['A'], 'a.png'))
+      })
+      expect(loading.at(-1)).toBe(true)
+      await act(async () => {
+        held[1]?.resolve(rowsFor(['B'], 'b.png'))
+      })
+      expect(observed.at(-1)?.get('A')?.[0]?.filename).toBe('a.png')
+      expect(loading.at(-1)).toBe(false)
+    })
+
+    it('invalidate() asks again and drops the answer asked for before it', async () => {
+      const held = holdBatchInvoke()
+      const { observed } = renderProvider(['A'])
+      await waitFor(() => expect(held).toHaveLength(1))
+
+      act(() => {
+        observed.at(-1)?.invalidate('A')
+      })
+      await waitFor(() => expect(held).toHaveLength(2))
+      expect(held.map((c) => c.ids)).toEqual([['A'], ['A']])
+
+      await act(async () => {
+        held[1]?.resolve(rowsFor(['A'], 'renamed.png'))
+      })
+      await act(async () => {
+        held[0]?.resolve(rowsFor(['A'], 'photo.png'))
+      })
+      expect(observed.at(-1)?.get('A')?.[0]?.filename).toBe('renamed.png')
+    })
+
+    it('the invalidation bus drops what was in flight off-window, so those ids are asked for again', async () => {
+      const held = holdBatchInvoke()
+      const { observed, loading, rerender } = renderProvider(['A', 'B'])
+      await waitFor(() => expect(held).toHaveLength(1))
+
+      // Every id in view is already asked for: no new call, still loading.
+      rerender(['A'])
+      expect(loading.at(-1)).toBe(true)
+      act(() => {
+        recordAttachmentInvalidation()
+      })
+      await waitFor(() => expect(held).toHaveLength(2))
+      await act(async () => {
+        held[0]?.resolve(rowsFor(['A', 'B'], 'photo.png'))
+        held[1]?.resolve(rowsFor(['A'], 'renamed.png'))
+      })
+      expect(observed.at(-1)?.get('A')?.[0]?.filename).toBe('renamed.png')
+      expect(observed.at(-1)?.get('B')).toBeUndefined()
+
+      rerender(['A', 'B'])
+      await waitFor(() => expect(held).toHaveLength(3))
+      expect(held.map((c) => c.ids)).toEqual([['A', 'B'], ['A'], ['B']])
     })
   })
 })

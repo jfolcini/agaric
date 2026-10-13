@@ -321,7 +321,7 @@ server.**
 | Capability | Logseq | Agaric | Status |
 | --- | --- | --- | --- |
 | MCP server | **2.0 ships one** (desktop Settings → AI, or via the CLI): search, create and list pages, tags, properties, blocks, with a `pretend` dry-run mode and undo/redo integration | `agaric-mcp` stdio sidecar over a Unix socket / Windows named pipe with an owner-only DACL. Never TCP. **Two** endpoints — read-only and read-write — **both off by default**, each gated by its own marker file and toggle | Tie |
-| Tool surface | Search/create/list; editing pages, tags and properties still TODO | **10 read-only** (list_pages, get_page, search, get_block, list_backlinks, list_tags, list_property_defs, get_agenda, journal_for_date, list_spaces) + **6 read-write** (append_block, update_block_content, set_property, add_tag, create_page, delete_block) | Better |
+| Tool surface | Search/create/list; editing pages, tags and properties still TODO | **11 read-only** (list_pages, get_page, search, get_block, list_backlinks, list_tags, list_property_defs, get_agenda, journal_for_date, list_spaces, get_page_markdown) + **6 read-write** (append_block, update_block_content, set_property, add_tag, create_page, delete_block) | Better |
 | Auditability | Undo/redo integration | Every op stamped `agent:<name>` in the op log; a 100-entry **in-memory** activity ring (dies on restart, not synced) and a session-revert bounded by that ring. **The History view does not render op origin**, so once the ring rolls over nothing in the UI identifies agent edits | Partial |
 | Isolation | Graph-scoped | **`space_id` is not an isolation boundary.** Reads are vault-wide by design; a rejected write *tells the agent the target's real space*. No auth, no rate limiting, no per-agent scoping. Once RW is enabled, any local process that can open the socket has full reversible write access to the whole vault | Gap |
 | Programmable API | Plugin API (~85 methods) **plus a local HTTP server** on `127.0.0.1:12315` with bearer auth exposing the same surface | MCP only | Gap |
@@ -695,7 +695,7 @@ What this revision changes about the previous one. Grouped by severity.
 | Block refs have a "hover tooltip with full content to 300 chars" | Removed in #4228; now a native `title=` carrying the same 60-char string the chip shows |
 | Logseq import: "block ref stripping" listed as a feature | It is **data loss** — the code says so |
 | iOS blocked by "mDNS issue #522" | #522 is closed and was about manual IP entry. There is no iOS blocker; there is no iOS work |
-| MCP is "read-only by default" | Two sockets, read-only **and read-write**, 16 tools; `space_id` is not an isolation boundary |
+| MCP is "read-only by default" | Two sockets, read-only **and read-write**, 17 tools; `space_id` is not an isolation boundary |
 | Deadline warning configured "in PropertiesView" | Settings → General |
 | Recurrence projection appears in Agenda mode | Due Panel |
 | Agenda has "collapsible TODO/DOING/DONE sections" | Grouping is user-selectable and defaults to **page**; sort defaults to state |

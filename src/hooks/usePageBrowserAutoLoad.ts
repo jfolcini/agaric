@@ -27,11 +27,8 @@ import { type RefObject, useEffect, useRef } from 'react'
 
 /// Bottom-of-list proximity in CSS pixels at which the auto-load
 /// pixel-trigger fires. Picked to give ~5-7 rows of headroom at the
-/// 44px regular-density row so the next page lands before the user
-/// Hits the LoadMoreButton fallback. Phase 3 left this as a
-/// regular-density assumption: compact (32 px) gets one extra row of
-/// headroom, expanded (68 px) gets one fewer — both well inside the
-/// LoadMoreButton fallback envelope.
+/// 44px page row so the next page lands before the user hits the
+/// LoadMoreButton fallback.
 const INFINITE_SCROLL_BOTTOM_THRESHOLD_PX = 300
 
 interface UsePageBrowserAutoLoadParams {

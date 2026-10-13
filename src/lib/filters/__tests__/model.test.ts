@@ -35,6 +35,7 @@ describe('graph surface round-trip (canonical ⇄ GraphFilter)', () => {
     { name: 'hasBacklinks true', filters: [{ type: 'hasBacklinks', value: true }] },
     { name: 'hasBacklinks false', filters: [{ type: 'hasBacklinks', value: false }] },
     { name: 'excludeTemplates', filters: [{ type: 'excludeTemplates', value: true }] },
+    { name: 'excludeJournal', filters: [{ type: 'excludeJournal', value: true }] },
     { name: 'tag (single id)', filters: [{ type: 'tag', tagIds: ['t-work'] }] },
     { name: 'tag (multi id)', filters: [{ type: 'tag', tagIds: ['t-work', 't-home'] }] },
     { name: 'tag (empty)', filters: [{ type: 'tag', tagIds: [] }] },

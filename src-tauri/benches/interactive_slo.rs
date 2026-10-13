@@ -2075,6 +2075,90 @@ fn bench_list_projected_agenda(c: &mut Criterion) {
     }
 }
 
+/// `list_projected_agenda` for one PAST day — the Due panel on a past journal
+/// page (#5421). Before #5421 any `range_start < today` expanded every
+/// repeating block on the fly; the rebuild now also materializes the
+/// `BACKWARD_WINDOW_DAYS` before its reference date, so a day inside that
+/// window is the same index scan as the forward read above.
+fn bench_list_projected_agenda_past_day(c: &mut Criterion) {
+    const BUDGET_MS: f64 = 200.0;
+
+    // `seed_repeating_blocks` bases block `i` at `today - k`, `k = i % 30 + 1`,
+    // weekly. `today - 10` is an occurrence of the bases `k = 17` and `k = 24`
+    // (`k - 10` a positive multiple of 7): ~6.7K rows at 100K, so the page is
+    // full.
+    let day = (chrono::Local::now().date_naive() - chrono::Duration::days(10))
+        .format("%Y-%m-%d")
+        .to_string();
+
+    let rt = Runtime::new().unwrap();
+    let dir = TempDir::new().unwrap();
+    let pool = rt.block_on(fresh_pool(&dir, "slo_projected_agenda_past_day"));
+    rt.block_on(seed_repeating_blocks(&pool, FIXTURE_SIZE));
+    rt.block_on(async {
+        rebuild_projected_agenda_cache(&pool).await.unwrap();
+    });
+
+    rt.block_on(async {
+        let page = list_projected_agenda_inner(
+            &pool,
+            day.clone(),
+            day.clone(),
+            None,
+            Some(200),
+            &SpaceScope::Global,
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            page.items.len(),
+            200,
+            "list_projected_agenda past day @ 100K: fixture must fill the page"
+        );
+        assert!(
+            page.items.iter().all(|e| e.projected_date == day),
+            "list_projected_agenda past day @ 100K: every row must be on {day}"
+        );
+    });
+
+    let mut group = c.benchmark_group("interactive_slo");
+    group.sample_size(SAMPLE_SIZE);
+    let acc = Acc::new();
+    let acc_for_bench = acc.clone();
+
+    group.bench_function("list_projected_agenda_past_day_100000", move |b| {
+        let acc = acc_for_bench.clone();
+        let pool = pool.clone();
+        let day = day.clone();
+        b.to_async(&rt).iter_custom(move |iters| {
+            let pool = pool.clone();
+            let day = day.clone();
+            let acc = acc.clone();
+            async move {
+                let start = Instant::now();
+                for _ in 0..iters {
+                    let _ = list_projected_agenda_inner(
+                        &pool,
+                        day.clone(),
+                        day.clone(),
+                        None,
+                        Some(200),
+                        &SpaceScope::Global,
+                    )
+                    .await
+                    .unwrap();
+                }
+                let elapsed = start.elapsed();
+                acc.record(elapsed, iters);
+                elapsed
+            }
+        });
+    });
+    group.finish();
+
+    assert_under_budget("list_projected_agenda past day @ 100K", &acc, BUDGET_MS);
+}
+
 /// #2508 scope item 1 — the `DESIRED_TAGS_SQL` projection from
 /// `src/cache/tags.rs:70-87`, copied VERBATIM (that const is private to the
 /// crate's `cache::tags` module, so a bench binary — a separate crate root —
@@ -2494,6 +2578,7 @@ criterion_group!(
     // materialization makes the warm-cache read an O(window) index scan that
     // clears the 200 ms budget with margin at every fixture size.
     bench_list_projected_agenda,
+    bench_list_projected_agenda_past_day,
 );
 
 criterion_group!(

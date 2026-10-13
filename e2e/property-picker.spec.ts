@@ -1,3 +1,5 @@
+import type { Page } from '@playwright/test'
+
 import { expect, focusBlock, openPage, reopenPage, test, waitForBoot } from './helpers'
 
 /**
@@ -24,6 +26,24 @@ import { expect, focusBlock, openPage, reopenPage, test, waitForBoot } from './h
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+const GS_1 = '0000000000000000000BLOCK01'
+
+/** The block's stored properties as `key → value_text`, read from the mock backend. */
+async function storedProperties(page: Page, blockId: string): Promise<Record<string, unknown>> {
+  const rows = await page.evaluate(
+    (id) =>
+      (
+        window as unknown as {
+          __TAURI_INTERNALS__: { invoke: (c: string, a?: unknown) => Promise<unknown> }
+        }
+      ).__TAURI_INTERNALS__.invoke('get_properties', { blockId: id }) as Promise<
+        Array<{ key: string; value_text: string | null }>
+      >,
+    blockId,
+  )
+  return Object.fromEntries(rows.map((row) => [row.key, row.value_text]))
+}
 
 /** Type :: to open the property picker and wait for the popup. */
 async function openPropertyPicker(page: import('@playwright/test').Page) {
@@ -164,6 +184,10 @@ test.describe('Property picker — :: trigger', () => {
     const editor = await focusBlock(page)
     await editor.press('End')
     await editor.press('Enter')
+    const editing = page.locator('[data-testid="sortable-block"]:has([data-testid="block-editor"])')
+    await expect.poll(() => editing.getAttribute('data-block-id')).not.toBe(GS_1)
+    const blockId = await editing.getAttribute('data-block-id')
+    if (blockId === null) throw new Error('the new block has no id')
 
     // Pick `context` (a seeded free-text property) from the :: picker.
     await page.keyboard.type('::', { delay: 30 })
@@ -177,17 +201,23 @@ test.describe('Property picker — :: trigger', () => {
     await page.keyboard.press('Enter')
     await expect(popup).not.toBeVisible()
 
-    // Type the value, then blur — ArrowUp switches the roving editor, which
-    // flushes the block and runs the save-time `key:: value` parser.
+    // Type the value, then blur by clicking another block, which runs the
+    // save-time `key:: value` parser on the one being left.
     await page.keyboard.type('home', { delay: 30 })
-    await page.keyboard.press('ArrowUp')
+    await page.locator(`[data-testid="block-static"][data-block-id="${GS_1}"]`).click()
 
-    // The typed value reached the property system: a chip renders after the
-    // properties re-fetch (same reopenPage pattern as slash-command-properties).
+    // Stored before anything else could save it: reopening the page below
+    // would flush a block still being edited.
+    await expect.poll(() => storedProperties(page, blockId)).toEqual({ context: 'home' })
+
+    // The chip renders after the properties re-fetch, and the property line
+    // was stripped from the committed block text.
     await reopenPage(page, 'Getting Started')
-    const chip = page.locator('[data-testid="property-chip"]').filter({ hasText: 'home' })
-    await expect(chip).toBeVisible()
-    // …and the property line was stripped from the committed block text.
+    await expect(
+      page
+        .locator(`[data-testid="sortable-block"][data-block-id="${blockId}"]`)
+        .getByTestId('property-chip'),
+    ).toHaveText(['Context:home'])
     await expect(page.getByText('context:: home')).toHaveCount(0)
   })
 

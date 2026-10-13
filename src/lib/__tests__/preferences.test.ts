@@ -1,8 +1,7 @@
 /**
  * Tests for the preferences registry (`src/lib/preferences.ts`): the pure
  * `effectiveKey` / `readPreference` / `writePreference` helpers and the
- * `usePreference` hook. Reset conventions mirror
- * `hooks/__tests__/usePageBrowserDensity.test.ts` (localStorage.clear).
+ * `usePreference` hook.
  */
 
 import { act, renderHook } from '@testing-library/react'
@@ -10,6 +9,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { logger } from '@/lib/logger'
 import {
+  type LocalGraphPreference,
   type PreferenceDefinition,
   effectiveKey,
   hasPreference,
@@ -515,5 +515,29 @@ describe('imageCollapse (#4864)', () => {
     const keys = [imageCollapseKey('/c.png'), imageCollapseKey(HUGE_DATA_SRC)]
     writePreference(PREFERENCES.imageCollapse, keys)
     expect(readPreference(PREFERENCES.imageCollapse)).toEqual(keys)
+  })
+})
+
+// #5433 — the graph reopens in the local mode it was left in, per space.
+describe('graphLocal', () => {
+  it('round-trips mode and depth under the per-space key', () => {
+    writePreference<LocalGraphPreference>(
+      PREFERENCES.graphLocal,
+      { active: true, hops: 1 },
+      'SPACE_A',
+    )
+    expect(localStorage.getItem('agaric:graph-local:SPACE_A')).toBe('{"active":true,"hops":1}')
+    expect(readPreference(PREFERENCES.graphLocal, 'SPACE_A')).toEqual({ active: true, hops: 1 })
+    expect(readPreference(PREFERENCES.graphLocal, 'SPACE_B')).toEqual({ active: false, hops: 2 })
+  })
+
+  it.each([
+    ['a depth the control does not offer', '{"active":true,"hops":7}'],
+    ['a non-boolean mode', '{"active":"yes","hops":1}'],
+    ['a non-object', '[true,1]'],
+    ['null', 'null'],
+  ])('reads %s as off at the default depth', (_label, raw) => {
+    localStorage.setItem('agaric:graph-local:SPACE_A', raw)
+    expect(readPreference(PREFERENCES.graphLocal, 'SPACE_A')).toEqual({ active: false, hops: 2 })
   })
 })

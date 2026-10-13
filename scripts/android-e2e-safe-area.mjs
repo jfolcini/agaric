@@ -88,7 +88,7 @@ const MENU_LABEL = 'Open navigation menu'
  */
 const DRAWER_MARKERS = ['Settings', 'Bookmarks']
 /**
- * `t('gestures.coachmark.dismiss')` / `t('space.onboardingDismiss')`. A fresh
+ * `t('gestures.coachmark.dismiss')`. A fresh
  * install opens on a modal onboarding dialog, which makes everything behind it
  * inert — including the hamburger, which then does not appear in the
  * accessibility tree at all. Left unhandled the test reports "the app never

@@ -8,6 +8,7 @@ import {
   Link,
   List,
   MoreVertical,
+  Network,
   Redo2,
   Settings2,
   Smile,
@@ -45,6 +46,7 @@ export interface PageHeaderMenuProps {
   onUndo: () => void
   onRedo: () => void
   onOpenOutline: () => void
+  onShowInGraph: () => void
   onInsertEmoji: () => void
   onKebabOpenChange: (open: boolean) => void
   onAddAlias: () => void
@@ -83,6 +85,7 @@ export function PageHeaderMenu({
   onUndo,
   onRedo,
   onOpenOutline,
+  onShowInGraph,
   onInsertEmoji,
   onKebabOpenChange,
   onAddAlias,
@@ -130,6 +133,7 @@ export function PageHeaderMenu({
     'undo',
     ...(canRedo ? ['redo'] : []),
     'openOutline',
+    'showInGraph',
     'insertEmoji',
     'addAlias',
     'addTag',
@@ -286,6 +290,16 @@ export function PageHeaderMenu({
         >
           <List className="h-3.5 w-3.5" />
           {t('pageHeader.openOutline')}
+        </button>
+        <button
+          type="button"
+          className={MENU_ITEM_CLASS}
+          onClick={onShowInGraph}
+          {...menuItemProps('showInGraph')}
+        >
+          <Network className="h-3.5 w-3.5" />
+          {t('pageHeader.showInGraph')}
+          <span className={SHORTCUT_HINT_CLASS}>{shortcutHint('showPageInGraph')}</span>
         </button>
         <button
           type="button"

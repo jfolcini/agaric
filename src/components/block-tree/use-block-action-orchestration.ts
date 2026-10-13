@@ -229,7 +229,6 @@ export interface UseBlockActionOrchestrationParams {
   moveUp: (id: string) => Promise<boolean>
   moveDown: (id: string) => Promise<boolean>
   createBelow: (afterBlockId: string, content?: string) => Promise<string | null>
-  justCreatedBlockIds: RefObject<Set<string>>
   /**
    * #4729 — ids BlockTree's leaked-empty-block cleanup must skip exactly once.
    *
@@ -295,7 +294,6 @@ export function useBlockActionOrchestration({
   moveUp,
   moveDown,
   createBelow,
-  justCreatedBlockIds,
   preserveEmptyBlockIds,
   discardDraft,
   t,
@@ -1099,10 +1097,8 @@ export function useBlockActionOrchestration({
         // append a SECOND `edit_block` op that clobbers the split we just
         // committed with the old, un-split content.
         discardDraft(focusedBlockId)
-        // NOT added to justCreatedBlockIds: the new block carries real
-        // content, so Discard must not auto-delete it as an empty stub. (The
-        // SOURCE's #4729 exemption was registered above, before the awaits;
-        // this `setFocused` is what consumes it.)
+        // The SOURCE's #4729 exemption was registered above, before the
+        // awaits; this `setFocused` is what consumes it.
         setFocused(newBlockId)
         announce(t('announce.blockCreated'))
         await continueListStyle(newBlockId, listStyle)
@@ -1123,9 +1119,6 @@ export function useBlockActionOrchestration({
       if (pendingSplit) {
         const lastSplitId = await pendingSplit
         if (lastSplitId) {
-          // The last split block carries real content (the paste's final line),
-          // so — like the caret-split path — it is NOT added to
-          // justCreatedBlockIds (Discard must not auto-delete it as an empty stub).
           setFocused(lastSplitId)
           announce(t('announce.blockCreated'))
         } else {
@@ -1138,7 +1131,6 @@ export function useBlockActionOrchestration({
       }
       const newBlockId = await createBelow(focusedBlockId)
       if (newBlockId) {
-        justCreatedBlockIds.current.add(newBlockId)
         setFocused(newBlockId)
         announce(t('announce.blockCreated'))
         await continueListStyle(newBlockId, listStyle)
@@ -1157,7 +1149,6 @@ export function useBlockActionOrchestration({
     edit,
     remove,
     setFocused,
-    justCreatedBlockIds,
     preserveEmptyBlockIds,
     discardDraft,
     t,
@@ -1187,29 +1178,11 @@ export function useBlockActionOrchestration({
     if (changed !== null) {
       notify(t('blockTree.changesDiscarded'), { duration: 2000 })
     }
-    // If the block was just created and the user made no edits (changed === null),
-    // delete the empty block instead of leaving it around.
-    // #4577 companion — `changed === null` alone does not mean "untouched": any commit that
-    // ran while the block was mounted (the content debounce, or the
-    // `flushActiveDraft()` the slash commands await) rebases the delta baseline
-    // through `markCommitted`, so `unmount()` reports null for a block the user
-    // filled in. Confirm against the store, the same predicate BlockTree's
-    // focus-change cleanup uses.
-    const storeBlock = blocks.find((b) => b.id === focusedBlockId)
-    const emptyInStore = storeBlock != null && (storeBlock.content ?? '').trim() === ''
-    if (justCreatedBlockIds.current.has(focusedBlockId) && changed === null && emptyInStore) {
-      justCreatedBlockIds.current.delete(focusedBlockId)
-      remove(focusedBlockId).catch((err: unknown) => {
-        logger.warn(
-          'useBlockActionOrchestration',
-          'Failed to remove empty just-created block on discard',
-          { blockId: focusedBlockId },
-          err,
-        )
-      })
-    }
+    // An untouched stub left behind by Enter is not deleted here: unfocusing
+    // runs BlockTree's leaked-empty-block cleanup, whose guards (children,
+    // properties, tags, attachments, references) this path never had (#5412).
     setFocused(null)
-  }, [focusedBlockId, blocks, setFocused, justCreatedBlockIds, remove, discardDraft, t])
+  }, [focusedBlockId, setFocused, discardDraft, t])
 
   return {
     handleFocusPrev,

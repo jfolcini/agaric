@@ -8,10 +8,9 @@
  * Top-level orchestrator: it composes a set of cohesive hooks — data +
  * delete (`usePageBrowserData`), compound/text filters
  * (`usePageBrowserFilters`), the create-page flow (`usePageCreation`),
- * sort/grouping/density (`usePageBrowserSort` / `usePageBrowserGrouping` /
- * `usePageBrowserDensity`), and the virtualized-list concerns
- * (scroll-restoration, auto-load, keyboard) — then renders
- * `PageBrowserHeader` + `PageBrowserRowRenderer` inside a virtualized
+ * sort/grouping (`usePageBrowserSort` / `usePageBrowserGrouping`), and the
+ * virtualized-list concerns (scroll-restoration, auto-load, keyboard) — then
+ * renders `PageBrowserHeader` + `PageBrowserRowRenderer` inside a virtualized
  * List (#1263).
  */
 
@@ -37,7 +36,6 @@ import { useListKeyboardNavigation } from '@/hooks/useListKeyboardNavigation'
 import { useListMultiSelect } from '@/hooks/useListMultiSelect'
 import { usePageBrowserAutoLoad } from '@/hooks/usePageBrowserAutoLoad'
 import { usePageBrowserData } from '@/hooks/usePageBrowserData'
-import { DENSITY_ROW_HEIGHT, usePageBrowserDensity } from '@/hooks/usePageBrowserDensity'
 import { useFilterAnnouncementSettle, usePageBrowserFilters } from '@/hooks/usePageBrowserFilters'
 import { usePageBrowserGrouping } from '@/hooks/usePageBrowserGrouping'
 import { usePageBrowserKeyboard } from '@/hooks/usePageBrowserKeyboard'
@@ -52,9 +50,11 @@ import { matchesSearchFolded } from '@/lib/fold-for-search'
 import { notify } from '@/lib/notify'
 import type { SavedPagesView } from '@/lib/preferences'
 import { dropOtherSpacesTagChips, type PagesViewTuple } from '@/lib/saved-pages-views'
+import { isExcludeJournalPagesFilter } from '@/stores/pageBrowserFilters'
 import { useSpaceStore } from '@/stores/space'
 
 const HEADER_ROW_HEIGHT = 36
+const PAGE_ROW_HEIGHT = 44
 
 /**
  * Grid-role ARIA attrs for the list viewport. In the no-match state the only
@@ -106,12 +106,15 @@ interface PageBrowserProps {
 function PageBrowserSettledEmptyState({
   isError,
   isFiltering,
+  journalPagesHidden,
   isCreating,
   onRetry,
   onCreatePage,
 }: {
   isError: boolean
   isFiltering: boolean
+  /** The default journal chip is on, so the space may hold journal pages (#5370). */
+  journalPagesHidden: boolean
   isCreating: boolean
   onRetry: () => void
   onCreatePage: () => void
@@ -130,7 +133,9 @@ function PageBrowserSettledEmptyState({
   return (
     <EmptyState
       icon={FileText}
-      message={t('pageBrowser.noPages')}
+      message={
+        journalPagesHidden ? t('pageBrowser.noPagesOutsideJournal') : t('pageBrowser.noPages')
+      }
       action={
         <Button
           variant="ghost"
@@ -159,10 +164,6 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
   const currentSpaceId = useSpaceStore((s) => s.currentSpaceId)
   const spaceIsReady = useSpaceStore((s) => s.isReady)
 
-  // Phase 3 — density preference threaded to
-  // `<PageBrowserHeader>` (so the selector works) and to `estimateSize`
-  // (so the rows measure correctly per density).
-  const { density, setDensity } = usePageBrowserDensity()
   const { sortOption, setSortOption, sortPages } = usePageBrowserSort()
 
   // Compound/text filter state + the wire-shaped primitives the data
@@ -229,13 +230,13 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
   const { starredIds, isStarred, toggle: toggleStar } = useStarredPages()
 
   // Saved Pages views (#2003 piece 1) — a named snapshot of the
-  // sort/density/filters tuple. `currentViewTuple` is memoized so
+  // sort/filters tuple. `currentViewTuple` is memoized so
   // `useSavedPagesViews`'s active-view match only recomputes when the tuple
   // actually changes (`wireFilters` is itself reference-stable while its
   // contents are unchanged, see `usePageBrowserFilters`).
   const currentViewTuple = useMemo<PagesViewTuple>(
-    () => ({ sort: sortOption, density, filters: wireFilters }),
-    [sortOption, density, wireFilters],
+    () => ({ sort: sortOption, filters: wireFilters }),
+    [sortOption, wireFilters],
   )
   const {
     views: savedViews,
@@ -250,13 +251,12 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
     (view: SavedPagesView) => {
       void dropOtherSpacesTagChips(view.filters, currentSpaceId).then((viewFilters) => {
         setSortOption(view.sort)
-        setDensity(view.density)
         handleClearAllFilters()
         for (const filter of viewFilters) handleAddFilter(filter)
         notify.success(t('pageBrowser.savedViews.applied', { name: view.name }))
       })
     },
-    [currentSpaceId, setSortOption, setDensity, handleClearAllFilters, handleAddFilter, t],
+    [currentSpaceId, setSortOption, handleClearAllFilters, handleAddFilter, t],
   )
 
   const handleSaveCurrentView = useCallback(
@@ -268,7 +268,7 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
 
   // The delete button sits one row-item away from the apply target, and the
   // store is localStorage-only — no Trash, no restore path — so a mis-click
-  // used to destroy the whole {name, sort, density, filters} tuple with no way
+  // used to destroy the whole {name, sort, filters} tuple with no way
   // back (#3339). Undo re-saves the captured tuple; that mints a fresh id and
   // appends, so a restored view lands at the end of the creation-ordered
   // picker. The id is internal and the applied-view match is structural, so the
@@ -402,14 +402,10 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
     },
   })
 
-  // Reset focusedIndex when filter / sort / density changes.
-  // Density changes the row height, which moves what's visible at any
-  // given scroll offset — keeping `focusedIndex` stable across the
-  // toggle would land the focus ring on a row that's no longer where
-  // the user is looking.
+  // Reset focusedIndex when filter / sort changes.
   useEffect(() => {
     setFocusedIndex(0)
-  }, [filterText, sortOption, density, wireFiltersKey, setFocusedIndex])
+  }, [filterText, sortOption, wireFiltersKey, setFocusedIndex])
 
   // P1-F1 — append the settled result count to the pending filter
   // announcement once the refetch finishes (#1263).
@@ -422,23 +418,19 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
   })
 
   // Wrap `estimateSize` in `useCallback` so its identity is
-  // stable across re-renders that don't change `groupedRows` or
-  // density. TanStack Virtual treats option-identity changes as a
-  // re-measure trigger — that's exactly what we want on a density
-  // flip, since the row height per page changes wholesale.
+  // stable across re-renders that don't change `groupedRows`.
+  // TanStack Virtual treats option-identity changes as a re-measure
+  // trigger.
   const estimateSize = useCallback(
     (index: number) => {
       const row = groupedRows[index]
       if (row?.kind === 'header') return HEADER_ROW_HEIGHT
-      // Phase 3 — page-row height now driven by density.
-      // `tree-page` rows share the per-density leaf height (the
-      // virtualizer's `measureElement` ref handler corrects to the
-      // actual height when descendants expand the wrapper). The
-      // `regular` value (44 px) matches the pre-existing fixed height,
-      // so flag-off behaviour stays byte-identical.
-      return DENSITY_ROW_HEIGHT[density]
+      // `tree-page` rows share the leaf height (the virtualizer's
+      // `measureElement` ref handler corrects to the actual height when
+      // descendants expand the wrapper).
+      return PAGE_ROW_HEIGHT
     },
-    [groupedRows, density],
+    [groupedRows],
   )
 
   // oxlint-disable-next-line react/incompatible-library -- The Compiler skips memoizing a component that calls this API, so nothing virtualizer-derived is cached inside this component; the residual hazard the diagnostic names is such a value reaching a MEMOIZED consumer. The only virtualizer values leaving this render body are the live `VirtualItem` (`virtualRow`) and `measureElement`, both handed to `PageBrowserRowRenderer` — a plain function component, NOT `React.memo`, so there is no shallow-compare that could hold a stale window. react-virtual 3.14.10 builds the Virtualizer once (`useState(() => new Virtualizer(...))`) and virtual-core 3.17.8 assigns `measureElement` in the constructor, so the function identities the rule names never change; what does change per render is `getVirtualItems()`/`getTotalSize()`. (#4409)
@@ -456,7 +448,7 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
   // overscan (5) already limits mounted rows to near-viewport, but touch
   // devices never fire hover, so this IntersectionObserver (200px
   // rootMargin, same instance/pattern `BlockTree` uses) lets each
-  // `DensityRow` prefetch its own page as it scrolls within reach, rather
+  // `PageRow` prefetch its own page as it scrolls within reach, rather
   // than only warming on the (desktop-only) hover/focus intent.
   const viewport = useViewportObserver()
 
@@ -469,7 +461,6 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
     virtualizer,
     filterText,
     sortOption,
-    density,
     wireFiltersKey,
   })
 
@@ -557,7 +548,9 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
   // expose both booleans separately rather than the combined `isFiltering`.
   const hasTextQuery = filterText.trim().length > 0
   const hasChipFilters = filters.length > 0
-  const isFiltering = hasTextQuery || hasChipFilters
+  // The default journal chip alone (#5370) does not count: an empty space
+  // still gets the create-first state, and namespace folders still collapse.
+  const isFiltering = hasTextQuery || !filters.every(isExcludeJournalPagesFilter)
   // The list viewport shows the "No matching pages" status (instead of
   // the virtualized rows) whenever an active filter resolves to zero
   // rows. Drives both the body branch and the grid-role suppression.
@@ -600,8 +593,6 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
           onFilterTextChange={setFilterText}
           sortOption={sortOption}
           onSortChange={setSortOption}
-          density={density}
-          onDensityChange={setDensity}
           // E13 — basis-consistent denominator: server total normally,
           // loaded distinct count when a text query is active (the text
           // box only narrows loaded pages, so a server total there skews).
@@ -660,6 +651,7 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
         <PageBrowserSettledEmptyState
           isError={isError}
           isFiltering={isFiltering}
+          journalPagesHidden={hasChipFilters}
           isCreating={isCreating}
           onRetry={reload}
           onCreatePage={handleCreatePage}
@@ -734,7 +726,6 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
                     onPageSelect={onPageSelect}
                     onCreateUnder={handleCreateUnder}
                     onDeleteRequest={setDeleteTarget}
-                    density={density}
                     selectedIds={multiSelected}
                     onToggleMultiSelect={handleMultiSelectRowClick}
                     viewport={viewport}

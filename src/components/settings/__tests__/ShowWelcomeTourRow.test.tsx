@@ -6,8 +6,7 @@
  * `agaric-onboarding-done` forever — nothing in the product could bring the
  * tour, or its "Create sample pages" action, back. These tests pin:
  *  - the row renders and its button resets the WELCOME flag,
- *  - `resetOnboarding()` clears the flag (and not the unrelated
- *    spaces-onboarding flag the neighbouring ResetOnboardingRow owns),
+ *  - `resetOnboarding()` clears the flag,
  *  - and, end to end, that clicking it actually RE-OPENS the modal in the
  *    live App-shell gate (`useWelcomeGate`) — the modal derives `open` from
  *    a mount-time read of the flag, so re-showing has to remount it.
@@ -66,15 +65,6 @@ describe('resetOnboarding', () => {
 
     expect(localStorage.getItem('agaric-onboarding-done')).toBeNull()
     expect(isOnboardingDone()).toBe(false)
-  })
-
-  it('leaves the unrelated spaces-onboarding flag alone', () => {
-    markOnboardingDone()
-    localStorage.setItem('agaric:space-onboarding-seen-v1', 'true')
-
-    resetOnboarding()
-
-    expect(localStorage.getItem('agaric:space-onboarding-seen-v1')).toBe('true')
   })
 })
 

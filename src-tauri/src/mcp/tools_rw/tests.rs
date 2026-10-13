@@ -57,19 +57,14 @@ async fn settle(mat: &Materializer) {
 }
 
 // -------------------------------------------------------------------
-// list_tools — snapshot of the 6-tool wire contract
+// list_tools — snapshot of the wire contract
 // -------------------------------------------------------------------
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn list_tools_advertises_six_tools() {
+async fn list_tools_advertises_the_rw_tools() {
     let (tools, _mat, _pool, _space, _dir) = mk_tools().await;
     let descs = tools.list_tools();
     let names: Vec<&str> = descs.iter().map(|d| d.name.as_str()).collect();
-    assert_eq!(
-        names.len(),
-        7,
-        "ReadWriteTools exposes the six v2 write tools plus #2728's list_spaces"
-    );
     assert_eq!(
         names,
         vec![
@@ -80,8 +75,12 @@ async fn list_tools_advertises_six_tools() {
             "create_page",
             "delete_block",
             "list_spaces",
+            "append_markdown",
+            "move_page_to_space",
+            "create_tag",
+            "delete_property",
         ],
-        "tool order is part of the wire contract — do not re-order (list_spaces appended last)",
+        "tool order is part of the wire contract — do not re-order; new tools are appended",
     );
 }
 
@@ -263,6 +262,104 @@ async fn append_block_position_one_maps_to_first_child() {
         .expect("position 1 must succeed");
     assert_eq!(result["parent_id"], parent.id.as_str());
     assert_eq!(result["content"], "first");
+}
+
+// -------------------------------------------------------------------
+// append_markdown (#5376)
+// -------------------------------------------------------------------
+
+/// The live children of `parent`, as their content, in order.
+async fn child_contents(pool: &SqlitePool, parent: &str) -> Vec<String> {
+    sqlx::query_scalar(
+        "SELECT content FROM blocks WHERE parent_id = ? AND deleted_at IS NULL \
+         ORDER BY position, id",
+    )
+    .bind(parent)
+    .fetch_all(pool)
+    .await
+    .unwrap()
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn append_markdown_lands_the_outline_at_its_position() {
+    let (tools, mat, pool, space, emitter, _dir) = mk_tools_recording().await;
+    let page = mk_page(&pool, &mat, &space, "Page").await;
+    create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "last".into(),
+        Some(BlockId::from_trusted(&page)),
+        None,
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    let result = tools
+        .call_tool(
+            "append_markdown",
+            json!({
+                "parent_id": page.to_lowercase(),
+                "markdown": "# Head\n\n- item\n",
+                "position": 1,
+                "space_id": space,
+            }),
+            &test_ctx_agent(),
+        )
+        .await
+        .expect("happy path");
+    settle(&mat).await;
+
+    let blocks = result["blocks"].as_array().expect("blocks array");
+    assert_eq!(blocks.len(), 2, "the heading and its item, got {blocks:?}");
+    assert_eq!(blocks[0]["parent_id"], page.as_str());
+    assert_eq!(
+        blocks[1]["parent_id"], blocks[0]["id"],
+        "the item nests under the heading"
+    );
+    assert_eq!(
+        child_contents(&pool, &page).await,
+        ["# Head", "last"],
+        "position 1 lands the outline before the existing child"
+    );
+    assert_eq!(emitter.blocks_changed(), vec![vec![page.clone()]]);
+
+    let err = tools
+        .call_tool(
+            "append_markdown",
+            json!({"parent_id": page, "markdown": "- x", "position": 0, "space_id": space}),
+            &test_ctx_agent(),
+        )
+        .await
+        .expect_err("position 0 must be rejected");
+    assert!(matches!(err, AppError::Validation { .. }), "got {err:?}");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn append_markdown_cross_space_rejected() {
+    let (tools, mat, pool, space_a, _dir) = mk_tools().await;
+    let space_b = mk_space(&pool, " space B").await;
+    let page_b = mk_page(&pool, &mat, &space_b, "PageB").await;
+    settle(&mat).await;
+
+    let err = tools
+        .call_tool(
+            "append_markdown",
+            json!({"parent_id": page_b, "markdown": "- x", "space_id": space_a}),
+            &test_ctx_agent(),
+        )
+        .await
+        .expect_err("cross-space append must be denied");
+    assert!(
+        matches!(err, AppError::Validation { .. }),
+        "cross-space append must surface as Validation (→ -32602), got {err:?}",
+    );
+    assert!(
+        child_contents(&pool, &page_b).await.is_empty(),
+        "nothing was appended"
+    );
 }
 
 // -------------------------------------------------------------------
@@ -1991,4 +2088,315 @@ async fn set_property_emits_blocks_changed_and_property_changed() {
         mcp_payload, local_command_payload,
         "MCP set_property property-changed payload must equal the local command's",
     );
+}
+
+// -------------------------------------------------------------------
+// move_page_to_space / create_tag / delete_property (#5378)
+// -------------------------------------------------------------------
+
+async fn space_of(pool: &SqlitePool, block_id: &str) -> Option<String> {
+    sqlx::query_scalar("SELECT space_id FROM blocks WHERE id = ?")
+        .bind(block_id)
+        .fetch_one(pool)
+        .await
+        .unwrap()
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn move_page_to_space_moves_page_and_descendants() {
+    let (tools, mat, pool, space_a, emitter, _dir) = mk_tools_recording().await;
+    let space_b = mk_space(&pool, " space B").await;
+    let child = mk_in_space_content_block(&pool, &mat, &space_a, "child").await;
+    let page_id = child.parent_id.clone().unwrap().into_string();
+    settle(&mat).await;
+
+    let result = tools
+        .call_tool(
+            "move_page_to_space",
+            json!({"page_id": page_id.clone(), "space_id": space_a, "target_space_id": space_b}),
+            &test_ctx_agent(),
+        )
+        .await
+        .expect("happy path");
+    settle(&mat).await;
+
+    assert_eq!(
+        result,
+        json!({"page_id": page_id.clone(), "space_id": space_b.clone()})
+    );
+    assert_eq!(
+        space_of(&pool, &page_id).await.as_deref(),
+        Some(space_b.as_str())
+    );
+    assert_eq!(
+        space_of(&pool, child.id.as_str()).await.as_deref(),
+        Some(space_b.as_str()),
+        "the page's blocks move with it",
+    );
+    assert_eq!(emitter.blocks_changed(), vec![vec![page_id]]);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn move_page_to_space_cross_space_source_rejected() {
+    let (tools, mat, pool, space_a, _dir) = mk_tools().await;
+    let space_b = mk_space(&pool, " space B").await;
+    let page_b = mk_page(&pool, &mat, &space_b, "PageB").await;
+    settle(&mat).await;
+
+    let err = tools
+        .call_tool(
+            "move_page_to_space",
+            json!({"page_id": page_b.clone(), "space_id": space_a.clone(), "target_space_id": space_a}),
+            &test_ctx_agent(),
+        )
+        .await
+        .expect_err("a page of another space must not move");
+    assert!(matches!(err, AppError::Validation { .. }), "got {err:?}");
+    assert_eq!(
+        space_of(&pool, &page_b).await.as_deref(),
+        Some(space_b.as_str())
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn move_page_to_space_non_page_rejected() {
+    let (tools, mat, pool, space_a, _dir) = mk_tools().await;
+    let space_b = mk_space(&pool, " space B").await;
+    let block = mk_in_space_content_block(&pool, &mat, &space_a, "c").await;
+    let tag = create_block_inner_with_space(
+        &pool,
+        DEV,
+        &mat,
+        "tag".into(),
+        "work".into(),
+        None,
+        None,
+        &SpaceScope::Active(SpaceId::from_trusted(&space_a)),
+        None,
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    for id in [block.id.as_str(), tag.id.as_str()] {
+        let err = tools
+            .call_tool(
+                "move_page_to_space",
+                json!({"page_id": id, "space_id": space_a.clone(), "target_space_id": space_b.clone()}),
+                &test_ctx_agent(),
+            )
+            .await
+            .expect_err("only a page moves");
+        assert!(matches!(err, AppError::Validation { .. }), "got {err:?}");
+        assert_eq!(space_of(&pool, id).await.as_deref(), Some(space_a.as_str()));
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn move_page_to_space_target_not_a_live_space_rejected() {
+    let (tools, mat, pool, space_a, _dir) = mk_tools().await;
+    let page = mk_page(&pool, &mat, &space_a, "Page").await;
+    let not_a_space = mk_page(&pool, &mat, &space_a, "Other").await;
+    settle(&mat).await;
+
+    let err = tools
+        .call_tool(
+            "move_page_to_space",
+            json!({"page_id": page.clone(), "space_id": space_a.clone(), "target_space_id": not_a_space}),
+            &test_ctx_agent(),
+        )
+        .await
+        .expect_err("the target must be a live space");
+    assert!(matches!(err, AppError::Validation { .. }), "got {err:?}");
+    assert_eq!(
+        space_of(&pool, &page).await.as_deref(),
+        Some(space_a.as_str())
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn create_tag_creates_in_space_and_reuses_the_name() {
+    let (tools, mat, pool, space, emitter, _dir) = mk_tools_recording().await;
+
+    let first = tools
+        .call_tool(
+            "create_tag",
+            json!({"name": "work", "space_id": space.clone()}),
+            &test_ctx_agent(),
+        )
+        .await
+        .expect("happy path");
+    settle(&mat).await;
+    let tag_id = first["id"].as_str().unwrap().to_owned();
+    assert_eq!(first["block_type"], "tag");
+    assert_eq!(
+        space_of(&pool, &tag_id).await.as_deref(),
+        Some(space.as_str())
+    );
+
+    let again = tools
+        .call_tool(
+            "create_tag",
+            json!({"name": "work", "space_id": space}),
+            &test_ctx_agent(),
+        )
+        .await
+        .expect("same name");
+    assert_eq!(
+        again["id"],
+        tag_id.as_str(),
+        "the space's tag is returned, not a second one"
+    );
+    assert_eq!(
+        emitter.blocks_changed(),
+        Vec::<Vec<String>>::new(),
+        "a tag is on no page, so no open page reloads",
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn delete_property_cross_space_rejected() {
+    let (tools, mat, pool, space_a, _dir) = mk_tools().await;
+    let space_b = mk_space(&pool, " space B").await;
+    let block = mk_in_space_content_block(&pool, &mat, &space_b, "task").await;
+    set_property_inner(
+        &pool,
+        DEV,
+        &mat,
+        block.id.as_str().into(),
+        "assignee".into(),
+        Some("alice".into()),
+        None,
+        None,
+        None,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    let err = tools
+        .call_tool(
+            "delete_property",
+            json!({"block_id": block.id.as_str(), "key": "assignee", "space_id": space_a}),
+            &test_ctx_agent(),
+        )
+        .await
+        .expect_err("a block of another space must not lose a property");
+    assert!(matches!(err, AppError::Validation { .. }), "got {err:?}");
+    let kept: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM block_properties WHERE block_id = ? AND key = 'assignee'",
+    )
+    .bind(block.id.as_str())
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(kept, 1);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn delete_property_removes_the_property_and_notifies() {
+    let (tools, mat, pool, space, emitter, _dir) = mk_tools_recording().await;
+    let block = mk_in_space_content_block(&pool, &mat, &space, "task").await;
+    let page_id = block.parent_id.clone().unwrap().into_string();
+    set_property_inner(
+        &pool,
+        DEV,
+        &mat,
+        block.id.as_str().into(),
+        "assignee".into(),
+        Some("alice".into()),
+        None,
+        None,
+        None,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    let result = tools
+        .call_tool(
+            "delete_property",
+            json!({"block_id": block.id.as_str(), "key": "assignee", "space_id": space}),
+            &test_ctx_agent(),
+        )
+        .await
+        .expect("happy path");
+
+    assert_eq!(
+        result,
+        json!({"block_id": block.id.as_str(), "key": "assignee"})
+    );
+    let left: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM block_properties WHERE block_id = ? AND key = 'assignee'",
+    )
+    .bind(block.id.as_str())
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(left, 0);
+    assert_eq!(emitter.blocks_changed(), vec![vec![page_id]]);
+    assert_eq!(
+        emitter.property_changed(),
+        vec![(block.id.as_str().to_owned(), vec!["assignee".to_owned()])],
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn delete_property_space_key_rejected() {
+    let (tools, mat, pool, space, _dir) = mk_tools().await;
+    let page = mk_page(&pool, &mat, &space, "Page").await;
+    settle(&mat).await;
+
+    let err = tools
+        .call_tool(
+            "delete_property",
+            json!({"block_id": page.clone(), "key": "space", "space_id": space.clone()}),
+            &test_ctx_agent(),
+        )
+        .await
+        .expect_err("the reserved `space` key must be rejected");
+    assert!(matches!(err, AppError::Validation { .. }), "got {err:?}");
+    settle(&mat).await;
+    assert_eq!(
+        space_of(&pool, &page).await.as_deref(),
+        Some(space.as_str())
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn delete_property_system_managed_key_rejected() {
+    let (tools, mat, pool, space, _dir) = mk_tools().await;
+    let block = mk_in_space_content_block(&pool, &mat, &space, "task").await;
+    crate::commands::set_todo_state_inner(
+        &pool,
+        DEV,
+        &mat,
+        block.id.as_str().into(),
+        Some("DONE".into()),
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    let err = tools
+        .call_tool(
+            "delete_property",
+            json!({"block_id": block.id.as_str(), "key": "completed_at", "space_id": space}),
+            &test_ctx_agent(),
+        )
+        .await
+        .expect_err("a system-managed key must be refused");
+    assert!(matches!(err, AppError::Validation { .. }), "got {err:?}");
+    let kept: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM block_properties WHERE block_id = ? AND key = 'completed_at'",
+    )
+    .bind(block.id.as_str())
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(kept, 1);
 }

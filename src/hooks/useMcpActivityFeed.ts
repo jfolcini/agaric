@@ -42,6 +42,8 @@ import { logger } from '@/lib/logger'
  * because it mirrors the Rust `OpRef` type exposed in
  * `src/lib/bindings.ts` — the backend serialises `device_id` / `seq`
  * that way and the wrapper in `tauri.ts` forwards the same shape.
+ * `additionalOpRefs` holds the rest of a multi-op call's refs (absent when
+ * it wrote one op); undoing the entry reverts all of them.
  */
 export interface ActivityEntry {
   toolName: string
@@ -52,6 +54,7 @@ export interface ActivityEntry {
   result: { kind: 'ok' } | { kind: 'err'; message: string }
   sessionId: string
   opRef?: { device_id: string; seq: number } | undefined
+  additionalOpRefs?: Array<{ device_id: string; seq: number }> | undefined
 }
 
 export const MCP_ACTIVITY_EVENT = 'mcp:activity'
@@ -76,6 +79,7 @@ function fromRingEntry(entry: {
   result: { kind: 'ok' } | { kind: 'err'; message: string }
   sessionId: string
   opRef?: { device_id: string; seq: number } | null
+  additionalOpRefs?: Array<{ device_id: string; seq: number }>
 }): ActivityEntry {
   return {
     toolName: entry.toolName,
@@ -86,6 +90,7 @@ function fromRingEntry(entry: {
     result: entry.result,
     sessionId: entry.sessionId,
     opRef: entry.opRef ?? undefined,
+    additionalOpRefs: entry.additionalOpRefs,
   }
 }
 

@@ -1007,6 +1007,19 @@ describe('PageBlockStore', () => {
       expect(mockedInvoke).not.toHaveBeenCalled()
     })
 
+    // #5415 — no active space: the create is refused and the provisional
+    // row rolled back, instead of a block sent without a space.
+    it('returns null and rolls back when there is no active space', async () => {
+      useSpaceStore.setState({ currentSpaceId: null })
+      store.setState({ blocks: [makeBlock({ id: 'A' })] })
+
+      const result = await store.getState().createBelow('A', 'new content')
+
+      expect(result).toBeNull()
+      expect(mockedInvoke).not.toHaveBeenCalledWith('create_block', expect.anything())
+      expect(store.getState().blocks.map((b) => b.id)).toEqual(['A'])
+    })
+
     it('returns null on backend error (state unchanged)', async () => {
       const block = makeBlock({ id: 'A' })
       store.setState({ blocks: [block] })

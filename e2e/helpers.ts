@@ -476,6 +476,16 @@ export async function openAddFilter(page: Page): Promise<Locator> {
   return pop
 }
 
+/**
+ * Remove the Pages view's default "Exclude journal pages" chip (#5370), for a
+ * spec whose fixture is a journal page. Call with the Pages view open.
+ */
+export async function showJournalPages(page: Page): Promise<void> {
+  const chip = page.getByRole('group', { name: 'Filter: Exclude journal pages' })
+  await chip.getByRole('button', { name: 'Remove filter Exclude journal pages' }).click()
+  await expect(chip).toHaveCount(0)
+}
+
 /** Active Radix Sheet content (data-slot="sheet-content"). */
 export function activeSheet(page: Page): Locator {
   return page.locator('[data-slot="sheet-content"]').last()

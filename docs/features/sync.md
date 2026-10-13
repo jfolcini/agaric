@@ -61,7 +61,7 @@ If you click the Sync button before any device is paired, the **NoPeersDialog** 
 > blameless, since it was numbered out of *public* address space, and that is what
 > made the phone's VPN treat the whole subnet as internet-bound. An isolated guest
 > network, AP/client isolation and two subnets all remain untested. The run is recorded in
-> [`session-1345`](../session-log/session-1345-first-live-pair-and-what-it-cost-to-believe-the-tools.md).
+> [`session-1345`](../session-log/sessions-1301-1400.md).
 
 ## Snapshot catch-up
 

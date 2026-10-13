@@ -131,7 +131,7 @@ There is one subscriber pattern underneath — adding a fifth per-space slice me
 
 - **SpaceSwitcher** — Radix Select dropdown in `SidebarHeader`. Shows current space + alphabetical list + `Manage spaces…` entry. On a collapsed sidebar, replaced by **SpaceAccentBadge** (32 px coloured circle; click cycles to next space).
 - **SpaceTopStripe** — 3 px accent bar across the top of the window.
-- **SpaceManageDialog** — four sub-components (`SpaceRowEditor`, `SpaceAccentPicker`, `SpaceDeleteButton`, `SpaceNameEditor`, plus `SpaceOnboardingHint`). Onboarding banner shows while `availableSpaces.length ≤ 2`.
+- **SpacesTab** (Settings › Spaces) — four sub-components (`SpaceRowEditor`, `SpaceAccentPicker`, `SpaceDeleteButton`, `SpaceNameEditor`) under `settings/SpacesTab/`.
 - **Digit hotkeys** — `Ctrl+1`–`Ctrl+9` (or `⌘1`–`⌘9` on macOS) switch to the first nine spaces alphabetically. The hint chip on the first nine dropdown rows shows the binding.
 - **OS window title prefix** — `<SpaceName> · Agaric` via Tauri's window-title API. No-op on browser-dev / vitest.
 
@@ -145,7 +145,7 @@ Drafts, undo stacks (per-page, not per-space — `useUndoStore` is not space-par
 
 ### Preferences registry (device scope, not synced)
 
-`localStorage` is a SECOND persistence tier, distinct from the SQL tier and from the Zustand `persist`-backed stores above. `src/lib/preferences.ts` (#2466) is its typed, central registry of `localStorage`-backed preferences (`page-browser-density`, `page-browser-sort`, `starred-pages`, `tag-colors`, per-space recent searches/commands, per-page block-collapse state, …). `scripts/check-raw-local-storage.mjs` fails a raw `localStorage.getItem`/`setItem`/`removeItem`/`clear` call outside a small grandfathered list, so a new preference has to go through the registry.
+`localStorage` is a SECOND persistence tier, distinct from the SQL tier and from the Zustand `persist`-backed stores above. `src/lib/preferences.ts` (#2466) is its typed, central registry of `localStorage`-backed preferences (`page-browser-sort`, `starred-pages`, `tag-colors`, per-space recent searches/commands, per-page block-collapse state, …). `scripts/check-raw-local-storage.mjs` fails a raw `localStorage.getItem`/`setItem`/`removeItem`/`clear` call outside a small grandfathered list, so a new preference has to go through the registry.
 
 The contract:
 
@@ -185,7 +185,7 @@ The full inventory lives in [`docs/UI-MAP.md`](../UI-MAP.md). The architecture-r
 
 - `src/components/ui/` — shadcn-style primitives. Anything new should reuse from here first.
 - `src/components/` — domain components.
-- `src/components/<Feature>/` — per-feature sub-component directories (FormattingToolbar, SpaceManageDialog, properties/PropertyRowEditor, …).
+- `src/components/<Feature>/` — per-feature sub-component directories (FormattingToolbar, settings/SpacesTab, properties/PropertyRowEditor, …).
 
 Four of these layering rules are mechanically enforced, all as commit-blocking prek hooks: `store-layering` (`scripts/check-store-layering.mjs`, page-block stores → global focus only), `import-cycles` (`scripts/check-import-cycles.mjs`), `no-ui-store-imports` (`src/components/ui/` primitives may not import stores), and `lib-layering` (`scripts/check-lib-layering.mjs`, below). The rest are conventions upheld in review.
 

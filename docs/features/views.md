@@ -29,6 +29,7 @@ Browse every page in the active space.
 - **Tree view** (default): pages organised by `/`-delimited namespace, e.g. `Projects/Website/Backlog`. Folders show a count badge and a `+` button to create a child page inline.
 - **Flat view**: every page, no hierarchy.
 - **Sort dropdown**: Alphabetical, Recent, Created, Recently modified, Most linked, Most content.
+- **Filter chips** narrow the list ([../PAGES.md](../PAGES.md)). A space starts with *Exclude journal pages*, which hides the `YYYY-MM-DD` pages until you remove it.
 - **Virtualised list**: scrolls smoothly even with thousands of pages.
 - **Multi-select** pages with `Ctrl/Shift+Click`; **batch delete** with confirmation.
 - **Inline rename**: right-click → Rename, or click the page in the **PageEditor** and rename inline in the title. A title is unique within its space: renaming onto an existing title is refused, and creating one (including via `[[name]]`) opens the existing page.
@@ -70,7 +71,7 @@ Soft-deleted pages and blocks. Deletes don't purge immediately — they land her
 Global operation log — every edit Agaric has applied, in reverse chronological order. Opened from Settings › Edit history › *Open edit history*.
 
 - **Op type icons** distinguish creates, edits, deletes, restores, properties, tags.
-- **Filter bar**: filter by op type, plus an "All spaces" scope toggle. There is no user-vs-agent or date-range filter; ops that arrived from another device are marked, but agent-authored ops are not distinguished from your own.
+- **Filter bar**: filter by op type. There is no user-vs-agent or date-range filter; ops that arrived from another device are marked, but agent-authored ops are not distinguished from your own.
 - **Multi-select** + **batch revert** — selecting a set of ops and pressing Enter reverts them all, newest first.
 - **Diff toggle**: word-level diff for edits.
 - **Restore to here**: every entry has a *"Restore to here"* button that reverts every op after that point. Use with care — it's a snapshot rollback.
@@ -92,7 +93,9 @@ Pages tagged as templates.
 A force-directed graph of pages and the links between them.
 
 - **Nodes** are pages; **edges** are `[[link]]` references.
-- **Filter bar** in the header: filter by tag, task status, priority, presence of a due date, presence of a scheduled date, presence of backlinks, and exclude templates. Filters stack as removable pills; there is no date-range or content-match filter.
+- **Node size** grows with the page's links on screen, in and out; the page open in the active tab is marked in the accent colour. Edges are faint hairlines that stay one pixel wide at every zoom.
+- **Filter bar** in the header: filter by tag, task status, priority, presence of a due date, presence of a scheduled date, presence of backlinks, exclude templates, and exclude journal pages (pages titled `YYYY-MM-DD`). Filters stack as removable pills; there is no date-range or content-match filter. A space with no saved graph filters starts with *Exclude journal pages*; removing it is remembered per space.
+- **Local graph**: *Focus on this page* narrows the graph to the open page's 1- or 2-hop neighbourhood. *Show in graph* in the page kebab (palette: *Show this page in graph*, `Ctrl+Shift+G`) opens it from the page; mode and depth are remembered per space, and a page the filters hide says so.
 - **Zoom / pan** with mouse / trackpad / touch.
 - **Click a node** to navigate to its page.
 - **Web Worker**: the simulation runs in a worker so the main thread stays responsive on large graphs. Falls back to the main thread if Web Workers are unavailable.
@@ -112,7 +115,8 @@ Materializer + sync metrics, in Settings › App health. Useful for diagnosing s
 Tabbed configuration view. On desktop the tabs sit in a vertical rail, bucketed into four groups; on a phone a grouped picker at the top replaces the rail. Each tab is named once, by the rail: panels carry no title of their own. Settings are rows, with the label and description on the left and the control on the right (stacked on a phone).
 
 - **Workspace**
-  - **General** — deadline warning days, Quick Capture hotkey and launch-at-login (desktop), debug mode, reset spaces onboarding, show the welcome tour again.
+  - **General** — deadline warning days, Quick Capture hotkey and launch-at-login (desktop), debug mode, show the welcome tour again.
+  - **Spaces** — the space this device opens in (*Open on launch*: last used or one space), and create, rename, recolour or delete spaces (see [spaces.md](spaces.md)). The SpaceSwitcher's *Manage spaces…* opens it.
   - **Appearance** — language, theme (the palette's *Toggle theme* cycles auto / dark / light), font size, animations, tooltip delay, week start, journal date format. Font size scales note text and its row controls (checkboxes, gutter icons, chip and inline icons), not the app chrome: the sidebar, headers, toolbars and settings stay fixed.
   - **Editor** — the `:` emoji picker, *Tab indents blocks*, external images, link previews on hover.
   - **Keyboard** — full shortcut customisation (see [keyboard.md](keyboard.md)).
@@ -142,7 +146,7 @@ The view that opens when you navigate to a single page. Not a sidebar entry — 
 - **Block tree**: the editor proper. See [editor.md](editor.md).
 - **Outline** (TOC): sheet slide-out, opened from the page kebab menu, showing the page's heading hierarchy.
 - **Linked / Unlinked references** below the block tree: see [tags-and-links.md](tags-and-links.md).
-- **Page kebab menu (PageHeaderMenu)**: Undo, Redo, Open outline, Insert emoji, Move to space, Add alias, Add tag, Export as Markdown, Edit as Markdown (the page as one markdown buffer, in place of its blocks; see [editor.md](editor.md#edit-as-markdown)), Send to Trash, Toggle template.
+- **Page kebab menu (PageHeaderMenu)**: Undo, Redo, Open outline, Show in graph, Insert emoji, Move to space, Add alias, Add tag, Export as Markdown, Edit as Markdown (the page as one markdown buffer, in place of its blocks; see [editor.md](editor.md#edit-as-markdown)), Send to Trash, Toggle template.
 - **Zoom into a block** to focus on a sub-tree: breadcrumb at the top, click parts to zoom out.
 - **Image lightbox / PDF viewer**: opens for inline attachments.
 

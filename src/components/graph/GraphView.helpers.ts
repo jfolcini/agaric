@@ -10,9 +10,10 @@
 import { unwrap } from '@/lib/app-error'
 import { commands } from '@/lib/bindings'
 import type { PageHeading } from '@/lib/bindings'
+import { isDateFormattedPage } from '@/lib/date-utils'
 import type { GraphEdge, GraphFetchResult, GraphNode } from '@/lib/graph-types'
 import { t } from '@/lib/i18n'
-import { requireActiveScope, toSpaceScope } from '@/lib/space-scope'
+import { requireActiveScope } from '@/lib/space-scope'
 
 // Re-export the graph data types from their leaf home (`@/lib/graph-types`,
 // #761) so existing `from '@/components/graph/GraphView.helpers'` import sites keep working.
@@ -59,6 +60,7 @@ function buildNodes(
     due_date: p.due_date,
     scheduled_date: p.scheduled_date,
     is_template: templateIds.has(p.id),
+    is_journal: isDateFormattedPage(p.content ?? ''),
     backlink_count: backlinksTruncated ? undefined : (backlinkCounts.get(p.id) ?? 0),
   }))
 }
@@ -103,7 +105,7 @@ export async function fetchGraphData(
   const linksTagIds: string[] | null = tagFilterIds.length > 0 ? [...tagFilterIds] : null
   const [pages, linksResponse, templateIdList] = await Promise.all([
     fetchPages(tagFilterIds, spaceId),
-    commands.listPageLinks(toSpaceScope(spaceId), linksTagIds).then(unwrap),
+    commands.listPageLinks(requireActiveScope(spaceId), linksTagIds).then(unwrap),
     commands.listTemplatePageIdsInSpace(requireActiveScope(spaceId)).then(unwrap),
   ])
 

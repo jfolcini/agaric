@@ -200,12 +200,10 @@ pub use purge::purge_block_satellite_caches;
 // reach it via `crate::cache::…` — a `#[cfg(test)]` re-export is invisible
 // when the store is built as the app's dependency (#2621, wave S4c).
 pub use projected_agenda::rebuild_projected_agenda_cache_with_today;
-// Re-exported for the agenda cache/fallback parity + horizon tests; the
-// non-test code references these consts directly within `projected_agenda`.
-// `pub` (not `#[cfg(test)]`) for the same cross-crate reason as above — the
-// app's agenda command tests read `crate::cache::{HORIZON_DAYS,
-// HORIZON_OCCURRENCES}` (#2621, wave S4c).
-pub use projected_agenda::{HORIZON_DAYS, HORIZON_OCCURRENCES};
+// Re-exported for the agenda read path's routing and the cache/fallback parity
+// + horizon tests. `pub` (not `#[cfg(test)]`) for the same cross-crate reason
+// as above (#2621, wave S4c).
+pub use projected_agenda::{BACKWARD_WINDOW_DAYS, HORIZON_DAYS, HORIZON_OCCURRENCES};
 pub use tags::{rebuild_tags_cache, rebuild_tags_cache_split, refresh_tag_usage_count};
 
 // ---------------------------------------------------------------------------

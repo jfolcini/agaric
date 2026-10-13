@@ -36,7 +36,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { useIsTouch } from '@/hooks/useIsTouch'
 import type { PropertyDefinition } from '@/lib/bindings'
 import { foldForSearch, matchesSearchFolded } from '@/lib/fold-for-search'
-import { formatPropertyName } from '@/lib/property-utils'
+import { formatPropertyName, selectOptionsJson } from '@/lib/property-utils'
 
 export interface AddPropertyPopoverProps {
   /** Definitions to show in the picker. Already filtered by the parent. */
@@ -45,8 +45,11 @@ export interface AddPropertyPopoverProps {
   onAdd: (def: PropertyDefinition) => void | Promise<void>
   /** When true, show the "Create new definition" flow. */
   supportCreateDef?: boolean
-  /** Called when a new definition is created via the create flow. */
-  onCreateDef?: (key: string, valueType: string) => void | Promise<void>
+  /**
+   * Called when a new definition is created via the create flow. `options` is
+   * the select's options JSON, `null` for every other type.
+   */
+  onCreateDef?: (key: string, valueType: string, options: string | null) => void | Promise<void>
   /** Controlled open state (optional). */
   open?: boolean
   /** Controlled open-change handler (optional). */
@@ -76,6 +79,8 @@ export function AddPropertyPopover({
   const [defSearch, setDefSearch] = useState('')
   const [creatingDef, setCreatingDef] = useState(false)
   const [newDefType, setNewDefType] = useState('text')
+  const [newDefOptions, setNewDefOptions] = useState('')
+  const newDefOptionsJson = newDefType === 'select' ? selectOptionsJson(newDefOptions) : null
 
   const isControlled = controlledOpen !== undefined
   const popoverOpen = isControlled ? controlledOpen : internalOpen
@@ -113,12 +118,13 @@ export function AddPropertyPopover({
   const handleCreateDef = useCallback(async () => {
     const key = defSearch.trim()
     if (!key || !onCreateDef) return
-    await onCreateDef(key, newDefType)
+    await onCreateDef(key, newDefType, newDefOptionsJson)
     setPopoverOpen(false)
     setDefSearch('')
     setCreatingDef(false)
     setNewDefType('text')
-  }, [defSearch, newDefType, onCreateDef, setPopoverOpen])
+    setNewDefOptions('')
+  }, [defSearch, newDefType, newDefOptionsJson, onCreateDef, setPopoverOpen])
 
   const triggerButton = (
     <Button
@@ -221,7 +227,21 @@ export function AddPropertyPopover({
               <SelectItem value="url">{t('pageProperty.urlType')}</SelectItem>
             </SelectContent>
           </Select>
-          <Button size="sm" className="w-full" onClick={handleCreateDef}>
+          {newDefType === 'select' && (
+            <Input
+              value={newDefOptions}
+              onChange={(e) => setNewDefOptions(e.target.value)}
+              placeholder={t('properties.newSelectOptions')}
+              aria-label={t('properties.newSelectOptions')}
+              className="h-8"
+            />
+          )}
+          <Button
+            size="sm"
+            className="w-full"
+            onClick={handleCreateDef}
+            disabled={newDefType === 'select' && newDefOptionsJson === null}
+          >
             {t('pageProperty.createDefinitionButton')}
           </Button>
         </div>

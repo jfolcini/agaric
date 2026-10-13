@@ -11,6 +11,8 @@
  * on each boot via `refreshAvailableSpaces()` so it always reflects the
  * latest server truth. `isReady` is derived, not persisted — every boot
  * starts at `false` and flips to `true` once the first refresh resolves.
+ * The space a launch opens in is the device's default space when one is set
+ * (`PREFERENCES.defaultSpace`, Settings › Spaces), else the persisted one.
  */
 
 import { create } from 'zustand'
@@ -22,6 +24,7 @@ import { commands } from '@/lib/bindings'
 import { i18n } from '@/lib/i18n'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
+import { PREFERENCES, readPreference, removePreference } from '@/lib/preferences'
 import { safePersistStorage } from '@/lib/safe-persist-storage'
 
 const LOG_MODULE = 'stores/space'
@@ -46,7 +49,7 @@ export const LEGACY_SPACE_KEY = '__legacy__'
 /**
  * #2921 — outcome of the most recent `refreshAvailableSpaces()` call.
  * `refreshAvailableSpaces()` itself never rejects (non-boot callers —
- * `SpaceSwitcher`'s fire-and-forget mount refresh, `SpaceManageDialog`'s
+ * `SpaceSwitcher`'s fire-and-forget mount refresh, `SpacesTab`'s
  * awaited-but-uncaught refresh — rely on that contract), so a caller that
  * needs to react to a HARD failure (no usable prior snapshot: empty
  * `availableSpaces` AND `currentSpaceId === null`) reads this field
@@ -79,26 +82,32 @@ interface SpaceState {
    * [`DEFAULT_ACCENT_TOKEN`] when no space is active or the active
    * space has no explicit accent. Reads `availableSpaces` so the
    * value refreshes for free whenever `refreshAvailableSpaces()` is
-   * called (e.g. after the user recolours a space via the manage
-   * dialog). Pure selector — no side effects, no IPC.
+   * called (e.g. after the user recolours a space in Settings ›
+   * Spaces). Pure selector — no side effects, no IPC.
    */
   getCurrentAccent: () => string
 }
 
 /**
- * Reconcile a persisted `currentSpaceId` against a freshly-fetched list of
- * spaces. When the persisted id no longer exists (e.g. the space was
- * deleted on another device), fall back to the first space in the
- * alphabetical list. Returns the id to store, or `null` when no spaces
- * exist yet.
+ * Reconcile `currentSpaceId` against a freshly-fetched list of spaces. The
+ * first reconcile after launch opens the device's default space when it
+ * still exists; afterwards the current space stays. When the current space
+ * no longer exists (e.g. deleted on another device), fall back to the
+ * default space, then to the first space in the alphabetical list. Returns
+ * the id to store, or `null` when no spaces exist yet.
  */
-function reconcileCurrentSpaceId(current: string | null, available: SpaceRow[]): string | null {
-  if (available.length === 0) return null
-  if (current !== null && available.some((s) => s.id === current)) {
-    return current
-  }
-  const first = available[0]
-  return first ? first.id : null
+function reconcileCurrentSpaceId(
+  current: string | null,
+  available: SpaceRow[],
+  defaultSpace: string | null,
+  launching: boolean,
+): string | null {
+  const exists = (id: string | null): id is string =>
+    id !== null && available.some((s) => s.id === id)
+  if (launching && exists(defaultSpace)) return defaultSpace
+  if (exists(current)) return current
+  if (exists(defaultSpace)) return defaultSpace
+  return available[0]?.id ?? null
 }
 
 function sameSpaces(a: SpaceRow[], b: SpaceRow[]): boolean {
@@ -166,7 +175,17 @@ export const useSpaceStore = create<SpaceState>()(
             const prev = get().availableSpaces
             const spaces = sameSpaces(prev, raw) ? prev : raw
             const prevCurrent = get().currentSpaceId
-            const nextCurrent = reconcileCurrentSpaceId(prevCurrent, spaces)
+            const defaultSpace = readPreference(PREFERENCES.defaultSpace)
+            const nextCurrent = reconcileCurrentSpaceId(
+              prevCurrent,
+              spaces,
+              defaultSpace,
+              !get().isReady,
+            )
+            // The default space was deleted, here or on another device: back to Last used.
+            if (defaultSpace !== null && !spaces.some((s) => s.id === defaultSpace)) {
+              removePreference(PREFERENCES.defaultSpace)
+            }
             set({
               availableSpaces: spaces,
               currentSpaceId: nextCurrent,
@@ -175,12 +194,17 @@ export const useSpaceStore = create<SpaceState>()(
             })
             // When the previously-active space disappeared from the
             // server-truth list (e.g. deleted on another device and synced
-            // down) we silently fall back to the first available space. Tell
-            // the user once via a one-shot toast so they understand why the
-            // active space changed without their action. Skip on first boot
-            // (`prevCurrent === null`) and when the fallback finds no space
+            // down) we silently fall back to another space. Tell the user
+            // once via a one-shot toast so they understand why the active
+            // space changed without their action. Skip on first boot
+            // (`prevCurrent === null`), when a launch opens the default space
+            // over a still-existing one, and when the fallback finds no space
             // to switch to (`nextCurrent === null`).
-            if (prevCurrent !== null && nextCurrent !== null && prevCurrent !== nextCurrent) {
+            if (
+              prevCurrent !== null &&
+              nextCurrent !== null &&
+              !spaces.some((s) => s.id === prevCurrent)
+            ) {
               const newSpace = spaces.find((s) => s.id === nextCurrent)
               if (newSpace) {
                 notify.warning(i18n.t('space.activeDeletedNotification', { space: newSpace.name }))

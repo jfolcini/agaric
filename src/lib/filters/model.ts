@@ -139,6 +139,8 @@ export type FilterPredicate =
   | { kind: 'hasNoInboundLinks' }
   /** Exclude template pages (graph `excludeTemplates`). */
   | { kind: 'excludeTemplates' }
+  /** Exclude `YYYY-MM-DD` journal pages (graph `excludeJournal`). */
+  | { kind: 'excludeJournal' }
 
 // ---------------------------------------------------------------------------
 // Graph surface conversion (lossless, both directions) — the sole live consumer.
@@ -227,6 +229,9 @@ export function graphFilterToCanonical(filter: GraphFilter): FilterPredicate {
     case 'excludeTemplates': {
       return { kind: 'excludeTemplates' }
     }
+    case 'excludeJournal': {
+      return { kind: 'excludeJournal' }
+    }
   }
 }
 
@@ -263,6 +268,9 @@ export function canonicalToGraphFilter(predicate: FilterPredicate): GraphFilter 
     }
     case 'excludeTemplates': {
       return { type: 'excludeTemplates', value: true }
+    }
+    case 'excludeJournal': {
+      return { type: 'excludeJournal', value: true }
     }
     default: {
       return null

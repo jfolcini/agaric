@@ -381,6 +381,29 @@ describe('GraphView', () => {
     expect(svg).not.toHaveAttribute('role')
   })
 
+  it('hides journal pages by default in a space with no stored filters (#5370)', async () => {
+    localStorage.removeItem('agaric:graph-filters:SPACE_TEST')
+    mockedInvoke.mockImplementation((cmd: string) => {
+      if (cmd === 'list_all_pages_in_space')
+        return Promise.resolve([
+          { id: 'page-1', content: 'Page One', block_type: 'page' },
+          { id: 'journal', content: '2026-10-08', block_type: 'page' },
+        ])
+      if (cmd === 'list_page_links') return Promise.resolve(linksOf([]))
+      if (cmd === 'list_template_page_ids_in_space') return Promise.resolve([])
+      return Promise.resolve(null)
+    })
+
+    render(<GraphView />)
+
+    expect(
+      await screen.findByRole('group', { name: t('graph.filter.excludeJournal') }),
+    ).toBeInTheDocument()
+    expect(await screen.findByTestId('graph-filter-count')).toHaveTextContent(
+      t('graph.filter.showingCount', { filtered: 1, total: 2 }),
+    )
+  })
+
   // #2298 count-then-cap — the backend edge cap fired: the filter bar must
   // surface a "showing N of M links" notice with the TRUE total, where N is
   // the rendered (capped) edge count.

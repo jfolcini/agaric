@@ -21,7 +21,7 @@ test.describe.configure({ mode: 'serial' })
  *
  * history-revert.spec.ts covers only multi-select batch revert. This file
  * extends coverage to 'Restore to here', the word-level diff toggle, the
- * op-type filter / "All spaces" toggle, and the op-log compaction card —
+ * op-type filter, and the op-log compaction card —
  * to the extent the tauri-mock supports each.
  *
  * Mock-blocked flows (documented here, NOT faked as passing coverage):
@@ -42,9 +42,9 @@ test.describe.configure({ mode: 'serial' })
  *    IPC fired. It asserts the purge itself instead.
  *
  *  - There is no separate "user vs agent" or "date range" filter control in
- *    `HistoryFilterBar` today (only the op-type Select + the "All spaces"
- *    toggle) — a per-row `is_replicated` badge exists, but it is not
- *    wired to a filter. Nothing to test there beyond what's covered below.
+ *    `HistoryFilterBar` today (only the op-type Select) — a per-row
+ *    `is_replicated` badge exists, but it is not wired to a filter. Nothing
+ *    to test there beyond what's covered below.
  */
 
 test.describe('HistoryView — restore to here', () => {
@@ -190,22 +190,6 @@ test.describe('HistoryView — filter bar', () => {
         return calls.length > 0 ? (calls.at(-1)?.['opTypeFilter'] ?? null) : undefined
       })
       .toBe(null)
-  })
-
-  test('"All spaces" toggle switches the list_page_history scope', async ({ page }) => {
-    await navigateToView(page, 'History')
-    await expect(page.getByTestId('history-all-spaces-toggle')).toBeVisible()
-
-    await clearInvokeCalls(page)
-    await page.getByTestId('history-all-spaces-toggle').click()
-
-    await expect
-      .poll(async () => {
-        const calls = await getInvokeCalls(page, 'list_page_history')
-        const scope = calls.at(-1)?.['scope'] as { kind?: string } | undefined
-        return scope?.kind ?? null
-      })
-      .toBe('global')
   })
 })
 

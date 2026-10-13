@@ -31,183 +31,31 @@
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { useTranslation } from 'react-i18next'
 
-import { unwrap } from '@/lib/app-error'
-import { commands } from '@/lib/bindings'
+import {
+  claimSettled,
+  fetchPageMap,
+  getCalendarPageDatesEpoch,
+  makeKey,
+  mergeIntoCache,
+  samePageMap,
+  settledEntry,
+  subscribeToInvalidations,
+} from '@/lib/calendar-page-dates-cache'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
 import { useSpaceStore } from '@/stores/space'
 
-const inflightByKey = new Map<string, Promise<Map<string, string>>>()
-
-/** A settled range fetch, retained so a re-subscribe reuses it (#3626). */
-interface CachedPageMap {
-  spaceId: string
-  startDate: string
-  endDate: string
-  map: Map<string, string>
-  /** `Date.now()` at the moment the fetch settled — drives {@link PAGE_DATES_TTL_MS}. */
-  storedAt: number
-}
-
-const resultByKey = new Map<string, CachedPageMap>()
-
-/**
- * Bumped by every invalidation. A fetch that started under an older epoch
- * must not repopulate the cache when it lands, or an invalidation racing an
- * in-flight request would be undone by the stale response it was issued for.
- */
-let cacheEpoch = 0
-
-/**
- * #3626 — backstop lifetime for a cached range.
- *
- * The explicit invalidations below cover the mutations this app performs
- * itself (a journal page created through the journal's own add-block flow is
- * MERGED into the cache; a page deleted or restored through the shared
- * page-delete flow, an import, a sync or an MCP write drops it). They cannot
- * cover a journal page that appears or disappears by some other route — a
- * page titled `2025-06-15` created from the page browser. Before this cache
- * every dropdown open was fresh, so an unbounded cache would turn a redundant
- * fetch into a permanently stale indicator; the TTL bounds that regression to
- * a minute while still collapsing the open → close → reopen burst the issue
- * is about.
- */
-export const PAGE_DATES_TTL_MS = 60_000
-
-/** Reset the module-level dedupe + result cache. Test-only. */
-export function __resetCalendarPageDatesForTests(): void {
-  inflightByKey.clear()
-  resultByKey.clear()
-  cacheEpoch += 1
-}
-
-const invalidationListeners = new Set<() => void>()
-
-/**
- * Drop every cached range and re-fetch the ones on screen (#3626, #5258). Call
- * after a mutation that can add or remove a journal page — the shared
- * page-delete/restore flow, an applied sync or MCP write, an import. In-flight
- * fetches are abandoned rather than awaited: `cacheEpoch` makes their results
- * non-cacheable, so the invalidation cannot be overwritten by a response that
- * predates it.
- */
-export function invalidateCalendarPageDates(): void {
-  inflightByKey.clear()
-  resultByKey.clear()
-  cacheEpoch += 1
-  for (const listener of invalidationListeners) listener()
-}
-
-function subscribeToInvalidations(listener: () => void): () => void {
-  invalidationListeners.add(listener)
-  return () => {
-    invalidationListeners.delete(listener)
-  }
-}
+export {
+  __resetCalendarPageDatesForTests,
+  fetchPageMap,
+  invalidateCalendarPageDates,
+  PAGE_DATES_TTL_MS,
+  samePageMap,
+} from '@/lib/calendar-page-dates-cache'
 
 /** Moves on every {@link invalidateCalendarPageDates}; a mounted page map re-fetches on it. */
 export function useCalendarPageDatesEpoch(): number {
-  return useSyncExternalStore(subscribeToInvalidations, () => cacheEpoch)
-}
-
-/**
- * Whether two page maps hold the same entries. A re-fetch that changed nothing
- * keeps the old map, so the memoised day sections built from it do not re-render.
- */
-export function samePageMap(a: Map<string, string>, b: Map<string, string>): boolean {
-  if (a.size !== b.size) return false
-  for (const [dateStr, pageId] of a) if (b.get(dateStr) !== pageId) return false
-  return true
-}
-
-function makeKey(spaceId: string, startDate: string, endDate: string): string {
-  return `${spaceId}|${startDate}|${endDate}`
-}
-
-async function doFetch(
-  spaceId: string,
-  startDate: string,
-  endDate: string,
-): Promise<Map<string, string>> {
-  const rows = unwrap(
-    await commands.listJournalPagesInRange(startDate, endDate, {
-      kind: 'active',
-      space_id: spaceId,
-    }),
-  )
-  const map = new Map<string, string>()
-  for (const b of rows) {
-    if (b.content) map.set(b.content, b.id)
-  }
-  return map
-}
-
-/**
- * Merge a locally-created page into every cached range that covers its date
- * (#3626), so creating a journal page keeps the cache CORRECT instead of
- * having to throw it away. The entry is REPLACED with a fresh `Map` rather
- * than mutated: a subscriber may be holding the very same instance in React
- * state, and mutating it in place would change that state invisibly — the
- * `addPage` reducer's identity check would then see the entry already present
- * and skip the re-render that paints the new dot.
- *
- * `startDate`/`endDate` are ISO `YYYY-MM-DD`, so a lexicographic compare is
- * a chronological one.
- */
-function mergeIntoCache(spaceId: string, dateStr: string, pageId: string): void {
-  for (const [key, entry] of resultByKey) {
-    if (entry.spaceId !== spaceId) continue
-    if (dateStr < entry.startDate || dateStr > entry.endDate) continue
-    if (entry.map.get(dateStr) === pageId) continue
-    resultByKey.set(key, { ...entry, map: new Map(entry.map).set(dateStr, pageId) })
-  }
-}
-
-/**
- * Run the IPC fetch once per range — across concurrent subscribers AND across
- * successive ones (#3626).
- *
- * The in-flight map alone only ever deduped CONCURRENT subscribers: its slot
- * was cleared the moment the fetch settled, so opening the calendar dropdown,
- * closing it (which UNMOUNTS it) and reopening cost two `list_journal_pages_in_range`
- * round trips, and the `hasContent` dots blanked and repainted on every open.
- * The settled result is now retained under the same key, bounded by
- * {@link PAGE_DATES_TTL_MS} and dropped by {@link invalidateCalendarPageDates}.
- */
-function fetchPageMap(
-  spaceId: string,
-  startDate: string,
-  endDate: string,
-): Promise<Map<string, string>> {
-  const key = makeKey(spaceId, startDate, endDate)
-  const settled = resultByKey.get(key)
-  if (settled) {
-    if (Date.now() - settled.storedAt < PAGE_DATES_TTL_MS) return Promise.resolve(settled.map)
-    resultByKey.delete(key)
-  }
-  const cached = inflightByKey.get(key)
-  if (cached) return cached
-  const epoch = cacheEpoch
-  const promise = doFetch(spaceId, startDate, endDate)
-  inflightByKey.set(key, promise)
-  // Clear the inflight slot once the fetch settles, and on the fulfilled
-  // branch promote the result into the range cache. Observe both branches
-  // with a single `.then(onF, onR)` so the rejection is consumed here as well
-  // (otherwise this branch would leak as an "unhandled rejection" alongside
-  // the legitimate consumer's `.catch` in the hook body). A REJECTED fetch is
-  // deliberately not cached — the next open must retry, not memoise a failure.
-  const clear = () => {
-    if (inflightByKey.get(key) === promise) {
-      inflightByKey.delete(key)
-    }
-  }
-  promise.then((map) => {
-    clear()
-    if (cacheEpoch === epoch) {
-      resultByKey.set(key, { spaceId, startDate, endDate, map, storedAt: Date.now() })
-    }
-  }, clear)
-  return promise
+  return useSyncExternalStore(subscribeToInvalidations, getCalendarPageDatesEpoch)
 }
 
 export interface UseCalendarPageDatesOptions {
@@ -224,6 +72,19 @@ export interface UseCalendarPageDatesResult {
   highlightedDays: Date[]
   /** True until the initial fetch settles. */
   loading: boolean
+  /**
+   * #5438 — true when `pageMap` is the result of a round trip no earlier
+   * subscriber took: this mount's own fetch, or the boot prefetch. A map
+   * served from the cache a previous mount filled may predate a journal page
+   * created by another route (see {@link PAGE_DATES_TTL_MS}), so a caller
+   * that creates on absence re-probes unless this is true.
+   *
+   * Tied to the space and range it was fetched for: in the render where
+   * either changes it is already false, although `pageMap` and `loading`
+   * still describe the previous key until the effect below catches up
+   * (`JournalPage` stays mounted across a space switch).
+   */
+  fetchedThisMount: boolean
   /** Merge a locally-created page into the map without re-fetching. */
   addPage: (dateStr: string, pageId: string) => void
 }
@@ -239,20 +100,30 @@ export function useCalendarPageDates(
   const { startDate, endDate } = opts
   const { t } = useTranslation()
   const currentSpaceId = useSpaceStore((s) => s.currentSpaceId)
-  const [pageMap, setPageMap] = useState<Map<string, string>>(new Map())
-  const [loading, setLoading] = useState(true)
+  const rangeKey = `${currentSpaceId}|${startDate}|${endDate}`
+  // #5438 — a range the boot prefetch (or an earlier mount) already settled
+  // renders on the first frame instead of behind the loading skeleton.
+  const [seed] = useState(() =>
+    currentSpaceId == null ? null : settledEntry(makeKey(currentSpaceId, startDate, endDate)),
+  )
+  const [pageMap, setPageMap] = useState<Map<string, string>>(seed?.map ?? new Map())
+  const [loading, setLoading] = useState(seed == null)
+  // The key whose round trip this mount owns; compared against `rangeKey` at
+  // render time so a space or range change reads as not-fresh at once.
+  const [fetchedKey, setFetchedKey] = useState<string | null>(
+    seed != null && !seed.claimed ? rangeKey : null,
+  )
   // Track mount state so we don't setState after unmount.
   const mountedRef = useRef(true)
   const epoch = useCalendarPageDatesEpoch()
   // The range on screen. An invalidation re-fetches it in place: blanking it
   // would unmount the journal's day editors behind the loading skeleton.
-  const shownRangeRef = useRef<string | null>(null)
+  const shownRangeRef = useRef<string | null>(seed == null ? null : rangeKey)
 
   useEffect(() => {
     mountedRef.current = true
     let cancelled = false
     const start = performance.now()
-    const rangeKey = `${currentSpaceId}|${startDate}|${endDate}`
     if (shownRangeRef.current !== rangeKey) {
       shownRangeRef.current = rangeKey
       setLoading(true)
@@ -272,6 +143,7 @@ export function useCalendarPageDates(
     fetchPageMap(currentSpaceId, startDate, endDate)
       .then((map) => {
         if (cancelled || !mountedRef.current) return
+        setFetchedKey(claimSettled(currentSpaceId, startDate, endDate) ? rangeKey : null)
         setPageMap((prev) => (samePageMap(prev, map) ? prev : map))
         logger.debug('useCalendarPageDates', 'journal pages loaded', {
           pageCount: map.size,
@@ -293,7 +165,7 @@ export function useCalendarPageDates(
       cancelled = true
       mountedRef.current = false
     }
-  }, [t, currentSpaceId, startDate, endDate, epoch])
+  }, [t, currentSpaceId, startDate, endDate, rangeKey, epoch])
 
   const addPage = useCallback(
     (dateStr: string, pageId: string) => {
@@ -322,5 +194,11 @@ export function useCalendarPageDates(
     return days
   }, [pageMap])
 
-  return { pageMap, highlightedDays, loading, addPage }
+  return {
+    pageMap,
+    highlightedDays,
+    loading,
+    fetchedThisMount: fetchedKey === rangeKey,
+    addPage,
+  }
 }

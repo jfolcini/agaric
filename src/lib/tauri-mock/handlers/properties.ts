@@ -24,6 +24,7 @@ import {
   ownerSpaceOf,
   returnEmptyPage,
   validationRejection,
+  readSpaceScope,
 } from '@/lib/tauri-mock/handlers/shared'
 import { resolveRefValue } from '@/lib/tauri-mock/names'
 import {
@@ -140,8 +141,11 @@ function setReservedColumnProperty(
   // `done`) fails instead of landing raw on the column.
   assertValidReservedPropertyValue(key, channel, channelValue)
   const b = blocks.get(blockId)
+  const fromValue = (b?.[key] as string | null | undefined) ?? null
   if (b) b[key] = channelValue
   const op = pushOp('set_property', { block_id: blockId, key, from_value: null })
+  // #5394 — `set_property_inner` routes `todo_state` through `set_todo_state_inner`.
+  if (b && key === 'todo_state') writeCompletedAtTransition(blockId, fromValue, channelValue)
   return b ? { ...b, op_refs: [{ device_id: op.device_id, seq: op.seq }] } : null
 }
 
@@ -223,8 +227,7 @@ export const propertiesHandlers = {
     const valueText = (req['valueText'] as string | null) ?? null
     const valueDate = (req['valueDate'] as string | null) ?? null
     const operator = (req['operator'] as string | null) ?? 'eq'
-    const scope = a['scope'] as { kind: string; space_id?: string } | undefined
-    const spaceId = scope?.kind === 'active' ? (scope.space_id ?? null) : null
+    const spaceId = readSpaceScope(a)
     const excludeParentId = (req['excludeParentId'] as string | null) ?? null
     const contentNonEmpty = Boolean(req['contentNonEmpty'])
     const blockType = (req['blockType'] as string | null) ?? null
@@ -413,8 +416,11 @@ export const propertiesHandlers = {
     // reserved-key delete was a silent no-op that left the column set.
     if (RESERVED_PROPERTY_COLUMN[key] !== undefined) {
       const b = blocks.get(blockId)
+      const fromValue = (b?.[key] as string | null | undefined) ?? null
       if (b) b[key] = null
       const op = pushOp('delete_property', { block_id: blockId, key, from_value: null })
+      // #5378 — `delete_property_core` clears the task stamps with the state.
+      if (b && key === 'todo_state') writeCompletedAtTransition(blockId, fromValue, null)
       return {
         block_id: blockId,
         key,
@@ -666,8 +672,7 @@ export const propertiesHandlers = {
     }
     // Honour `scope: SpaceScope` (mirrors
     // `count_agenda_batch_by_source_inner`).
-    const scope = a['scope'] as { kind: string; space_id?: string } | undefined
-    const spaceId = scope?.kind === 'active' ? (scope.space_id ?? null) : null
+    const spaceId = readSpaceScope(a)
     const result: Record<string, Record<string, number>> = {}
     for (const dateStr of dates) {
       const sources: Record<string, number> = {}
@@ -771,11 +776,14 @@ export const propertiesHandlers = {
       throw validationRejection(`property key '${key}' is built in and cannot be deleted`)
     }
     // A definition still referenced by a live `block_properties` row is
-    // refused rather than orphaning the rows.
-    for (const perBlock of properties.values()) {
-      if (perBlock.has(key)) {
-        throw validationRejection(`property key '${key}' is still in use and cannot be deleted`)
-      }
+    // refused rather than orphaning the rows, in the backend's words: the
+    // Settings screen shows them.
+    const inUse = [...properties.values()].filter((perBlock) => perBlock.has(key)).length
+    if (inUse > 0) {
+      throw validationRejection(
+        `cannot delete property definition '${key}': ${inUse} block_properties row(s) reference ` +
+          'this key. Clear them first via set_property(value=None) on each affected block.',
+      )
     }
     if (!propertyDefs.has(key)) throw notFoundRejection(`property_definitions ('${key}')`)
     propertyDefs.delete(key)

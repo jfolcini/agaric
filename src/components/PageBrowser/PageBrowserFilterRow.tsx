@@ -23,6 +23,7 @@ import { Button } from '@/components/ui/button'
 import { FilterPill } from '@/components/ui/filter-pill'
 import type { DatePredicate, FilterPrimitive } from '@/lib/bindings'
 import type { PageFilterWithKey } from '@/lib/filters/page-filter-with-key'
+import { isExcludeJournalPagesFilter } from '@/stores/pageBrowserFilters'
 
 /** Soft cap above which the Add-Filter affordance warns about query cost. */
 export const MAX_PAGE_FILTERS = 8
@@ -247,6 +248,8 @@ export function pageFilterSummary(
       })
     }
     case 'PathGlob': {
+      if (isExcludeJournalPagesFilter(filter))
+        return t('pageBrowser.filter.facetExcludeJournalPages')
       // D24 ships the path-exclude toggle, so the Pages popover emits both the
       // `exclude: false` ("path") and `exclude: true` ("not path") variants.
       return filter.exclude

@@ -89,12 +89,14 @@ import { useVoiceInput } from '@/hooks/useVoiceInput'
 import { isCancellation } from '@/lib/app-error'
 import type { SearchBlockRow } from '@/lib/bindings'
 import { writeText } from '@/lib/clipboard'
+import { isDateFormattedPage } from '@/lib/date-utils'
 import { searchBlocksPartitioned } from '@/lib/ipc-helpers'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
 import { addRecentSearch, clearRecentSearches, getRecentSearches } from '@/lib/recent-searches'
 import { cn } from '@/lib/utils'
 import { useNavigationStore } from '@/stores/navigation'
+import { removeExcludeJournalPagesFilter } from '@/stores/pageBrowserFilters'
 import {
   type RecentPage,
   selectRecentPagesForSpace,
@@ -732,6 +734,7 @@ export function PaletteBody({
   // route through a single seed-and-flip call. Extracting also drops
   // PaletteBody's cognitive-complexity score below the 25 budget.
   function revealInPagesView(title: string): void {
+    if (isDateFormattedPage(title)) removeExcludeJournalPagesFilter(currentSpaceId)
     useNavigationStore.getState().setPendingPageBrowserFilter(title)
     useNavigationStore.getState().setView('pages')
     onClose()

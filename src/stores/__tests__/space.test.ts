@@ -6,6 +6,7 @@
  *  - `refreshAvailableSpaces` happy path
  *  - IPC error path — logs warn, flips `isReady`, leaves `availableSpaces`
  *  - Stale `currentSpaceId` reconciliation on rehydrate
+ *  - The device's default space on launch and as a fallback (#5362)
  *  - `setCurrentSpace` updates state + persists via middleware
  */
 
@@ -14,6 +15,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { SpaceRow } from '@/lib/bindings'
 import { logger } from '@/lib/logger'
+import { PREFERENCES, readPreference, writePreference } from '@/lib/preferences'
 import { useSpaceStore } from '@/stores/space'
 
 // #2927 phase 7 — `useSpaceStore` calls `commands.listSpaces()` from
@@ -164,7 +166,7 @@ describe('useSpaceStore', () => {
 
         // `refreshAvailableSpaces` never rejects — SpaceSwitcher's
         // fire-and-forget `void refreshAvailableSpaces()` mount refresh
-        // and SpaceManageDialog's awaited-but-uncaught refresh both rely
+        // and SpacesTab's awaited-but-uncaught refresh both rely
         // on that contract holding even on a hard failure.
         await expect(useSpaceStore.getState().refreshAvailableSpaces()).resolves.toBeUndefined()
 
@@ -259,6 +261,74 @@ describe('useSpaceStore', () => {
       expect(useSpaceStore.getState().currentSpaceId).toBeNull()
       expect(useSpaceStore.getState().availableSpaces).toEqual([])
       expect(useSpaceStore.getState().isReady).toBe(true)
+    })
+  })
+
+  describe('default space (#5362)', () => {
+    it('a launch opens the default space even though another space was last used', async () => {
+      useSpaceStore.setState({ currentSpaceId: PERSONAL.id })
+      writePreference(PREFERENCES.defaultSpace, WORK.id)
+      mockedListSpaces.mockResolvedValueOnce([PERSONAL, WORK])
+
+      await useSpaceStore.getState().refreshAvailableSpaces()
+
+      expect(useSpaceStore.getState().currentSpaceId).toBe(WORK.id)
+      // Personal still exists, so nothing was deleted to warn about.
+      expect(toast.warning).not.toHaveBeenCalled()
+    })
+
+    it('with Last used, a launch keeps the space last used', async () => {
+      useSpaceStore.setState({ currentSpaceId: WORK.id })
+      mockedListSpaces.mockResolvedValueOnce([PERSONAL, WORK])
+
+      await useSpaceStore.getState().refreshAvailableSpaces()
+
+      expect(useSpaceStore.getState().currentSpaceId).toBe(WORK.id)
+      expect(readPreference(PREFERENCES.defaultSpace)).toBeNull()
+    })
+
+    it('after launch, a refresh keeps the space switched to', async () => {
+      writePreference(PREFERENCES.defaultSpace, WORK.id)
+      mockedListSpaces.mockResolvedValueOnce([PERSONAL, WORK])
+      await useSpaceStore.getState().refreshAvailableSpaces()
+      useSpaceStore.getState().setCurrentSpace(PERSONAL.id)
+
+      mockedListSpaces.mockResolvedValueOnce([PERSONAL, WORK])
+      await useSpaceStore.getState().refreshAvailableSpaces()
+
+      expect(useSpaceStore.getState().currentSpaceId).toBe(PERSONAL.id)
+    })
+
+    it('when the current space disappears, falls back to the default before the alphabetical first', async () => {
+      useSpaceStore.setState({ currentSpaceId: 'BOGUS', isReady: true })
+      writePreference(PREFERENCES.defaultSpace, WORK.id)
+      mockedListSpaces.mockResolvedValueOnce([PERSONAL, WORK])
+
+      await useSpaceStore.getState().refreshAvailableSpaces()
+
+      expect(useSpaceStore.getState().currentSpaceId).toBe(WORK.id)
+      expect(toast.warning).toHaveBeenCalledTimes(1)
+    })
+
+    it('a deleted default falls back to the alphabetical first and resets the preference', async () => {
+      useSpaceStore.setState({ currentSpaceId: WORK.id })
+      writePreference(PREFERENCES.defaultSpace, WORK.id)
+      mockedListSpaces.mockResolvedValueOnce([PERSONAL])
+
+      await useSpaceStore.getState().refreshAvailableSpaces()
+
+      expect(useSpaceStore.getState().currentSpaceId).toBe(PERSONAL.id)
+      expect(readPreference(PREFERENCES.defaultSpace)).toBeNull()
+    })
+
+    it('keeps a default that still exists', async () => {
+      useSpaceStore.setState({ currentSpaceId: PERSONAL.id, isReady: true })
+      writePreference(PREFERENCES.defaultSpace, WORK.id)
+      mockedListSpaces.mockResolvedValueOnce([PERSONAL, WORK])
+
+      await useSpaceStore.getState().refreshAvailableSpaces()
+
+      expect(readPreference(PREFERENCES.defaultSpace)).toBe(WORK.id)
     })
   })
 

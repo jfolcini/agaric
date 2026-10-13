@@ -865,6 +865,42 @@ export function seedBlocks(): void {
 
   seedBulkPages()
   seedFacetFixturePage()
+  seedWorkSpace()
+}
+
+/**
+ * Opt-in second space "Work" (`SPACE_WORK`), for e2e that needs a second
+ * space to survive a reload: one made with the create form lives in this
+ * in-memory store, which a reload re-seeds. Gated behind
+ * `localStorage['__mockWorkSpace'] === 'true'` so the default seed keeps its
+ * one space. Empty, like a space the create form makes.
+ */
+function seedWorkSpace(): void {
+  let enabled = false
+  try {
+    enabled = globalThis.localStorage?.getItem('__mockWorkSpace') === 'true'
+  } catch {
+    enabled = false
+  }
+  if (!enabled) return
+  blocks.set('SPACE_WORK', makeBlock('SPACE_WORK', 'page', 'Work', null, 1))
+  properties.set(
+    'SPACE_WORK',
+    new Map([
+      [
+        'is_space',
+        {
+          block_id: 'SPACE_WORK',
+          key: 'is_space',
+          value_text: 'true',
+          value_num: null,
+          value_date: null,
+          value_ref: null,
+          value_bool: null,
+        },
+      ],
+    ]),
+  )
 }
 
 /**

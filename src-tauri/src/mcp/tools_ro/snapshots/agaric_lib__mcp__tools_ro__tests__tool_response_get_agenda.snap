@@ -17,7 +17,8 @@ items:
       priority: ~
       scheduled_date: ~
       todo_state: ~
-    projected_date: 2099-01-04
+    date: 2099-01-04
+    projected: true
     source: due_date
 next_cursor: ~
 total_count: ~

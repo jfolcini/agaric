@@ -21,7 +21,6 @@ const STORAGE_KEY = 'agaric:pages:savedViews:v1'
 
 const BASE_TUPLE: PagesViewTuple = {
   sort: 'alphabetical',
-  density: 'regular',
   filters: [],
 }
 

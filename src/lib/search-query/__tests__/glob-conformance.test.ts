@@ -18,6 +18,7 @@ import path from 'node:path'
 
 import { describe, expect, it } from 'vitest'
 
+import { JOURNAL_PAGE_GLOB } from '@/lib/date-utils'
 import { globToRegExp, pageGlobFilterMatches, prepareGlobs } from '@/lib/search-query/glob-validate'
 import { foldAsciiUppercase } from '@/lib/sqlite-collation'
 
@@ -70,6 +71,12 @@ describe('PathGlob cross-impl conformance', () => {
       expect(matchingIds(scenario)).toEqual(scenario.expectedMatchingIds.toSorted())
     })
   }
+
+  // #5370 — the Pages view's default chip excludes this exact pattern, so the
+  // fixture must keep exercising the pattern the app actually sends.
+  it('covers the JOURNAL_PAGE_GLOB exclude the Pages view applies by default', () => {
+    expect(vectors.scenarios.some((s) => s.pattern === JOURNAL_PAGE_GLOB && s.exclude)).toBe(true)
+  })
 
   for (const bad of vectors.invalid) {
     it(`rejects invalid glob: ${bad.name}`, () => {

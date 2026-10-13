@@ -19,7 +19,7 @@
  *   3. it has no descendants                               (local)
  *   4. no `todo_state` / `priority` / `due_date` /
  *      `scheduled_date`                                    (local)
- *   5. no block properties, no tags, no attachments          (IPC)
+ *   5. no block properties, no tags and no attachments     (IPC)
  *   6. it is not referenced by another live block —
  *      no `((id))` block-ref, no `[[id]]` link             (IPC)
  *   7. deleting it would not leave the surface the user is
@@ -42,17 +42,20 @@
  * ## Ordering
  *
  * Local guards run first and reject the overwhelming majority for free; only a
- * genuinely blank, childless, metadata-free block pays the four IPCs. Every
- * IPC failure resolves to "keep the block" — the safe direction, since the
- * backend boot sweep is the backstop for anything blur misses.
+ * genuinely blank, childless, metadata-free block pays the four IPCs, and only
+ * once any save of it that defers its text write past an IPC (a typed
+ * `key:: value` line or task marker, #5448) has landed. Every IPC failure
+ * resolves to "keep the block" — the safe direction, since the backend boot
+ * sweep is the backstop for anything blur misses.
  */
 
 import { unwrap } from '@/lib/app-error'
 import { commands } from '@/lib/bindings'
 import { logger } from '@/lib/logger'
 import { paginationLimit } from '@/lib/safe-limit'
-import { toSpaceScope } from '@/lib/space-scope'
+import { requireActiveScope } from '@/lib/space-scope'
 import { type FlatBlock, getDragDescendants } from '@/lib/tree-utils'
+import { settlePendingSaves } from '@/lib/unmount-flush'
 
 export interface EmptyBlockGuardInput {
   /** The page store's full flat tree (NOT the zoom/collapse projection). */
@@ -67,7 +70,7 @@ export interface EmptyBlockGuardInput {
  * The guards decidable from the page store alone (1-4 and 7).
  *
  * Exported for the per-guard tests and reused as the post-IPC re-check in
- * {@link deleteBlockIfLeakedEmpty}: the three metadata queries are awaited, and
+ * {@link deleteBlockIfLeakedEmpty}: the four metadata queries are awaited, and
  * the tree can change under them (a sync load, an undo, the user coming back
  * and typing), so the decision is only acted on if it still holds afterwards.
  */
@@ -121,23 +124,28 @@ export function isLeakedEmptyCandidate({
  * Guards 5 and 6 — the four metadata queries, run in parallel.
  *
  * Resolves `true` only when the block provably carries nothing: no
- * `block_properties` row, no tag, no attachment (a voice note or an `/attach`
- * file is often the block's whole content, #5364), and no live block linking
- * to it (the `block_links` table backing `get_backlinks` holds both `((id))`
+ * `block_properties` row, no tag, no attachment, and no live block linking to
+ * it (the `block_links` table backing `get_backlinks` holds both `((id))`
  * block-refs and `[[id]]` links). A rejected query resolves `false` — an
  * unknown answer must never authorise a delete.
  *
- * The backlink query uses the GLOBAL scope on purpose: a reference from
- * another space still means somebody is pointing at this block.
+ * The backlink query is scoped to the active space (#5415). A write that would
+ * introduce a cross-space link is refused, so the active space holds every
+ * referrer except one "Move to space" left behind — and that one already
+ * renders as a broken chip. No active space is an unknown answer — the block
+ * stays.
  */
-async function carriesNothing(blockId: string): Promise<boolean> {
+async function carriesNothing(blockId: string, spaceId: string | null): Promise<boolean> {
+  if (spaceId == null) return false
   try {
     const [properties, tags, attachments, backlinks] = await Promise.all([
       commands.getProperties(blockId).then(unwrap),
       commands.listTagsForBlock(blockId).then(unwrap),
       commands.listAttachments(blockId).then(unwrap),
       // limit 1 — presence is the whole question.
-      commands.getBacklinks(blockId, null, paginationLimit(1), toSpaceScope(null)).then(unwrap),
+      commands
+        .getBacklinks(blockId, null, paginationLimit(1), requireActiveScope(spaceId))
+        .then(unwrap),
     ])
     return (
       properties.length === 0 &&
@@ -156,6 +164,8 @@ export interface DeleteIfLeakedEmptyParams {
   blockId: string
   /** Active zoom root, or `null` at page level. Guard 7's second arm. */
   zoomedBlockId: string | null
+  /** The active space the backlink probe is scoped to; `null` keeps the block. */
+  spaceId: string | null
   /**
    * The page store's `remove` action (or BlockTree's verifying wrapper around
    * it). Deleting MUST go through it: it appends the `delete_block` op that
@@ -201,6 +211,7 @@ export interface DeleteIfLeakedEmptyParams {
 export async function deleteBlockIfLeakedEmpty({
   blockId,
   zoomedBlockId,
+  spaceId,
   remove,
   readBlocks,
   isPageTruncated,
@@ -219,7 +230,20 @@ export async function deleteBlockIfLeakedEmpty({
   if (isPageTruncated()) return false
 
   if (!isLeakedEmptyCandidate({ blocks: readBlocks(), blockId, zoomedBlockId })) return false
-  if (!(await carriesNothing(blockId))) return false
+
+  // #5448 — a `key:: value` line or a task marker typed into the block is
+  // saved only after its property IPC answers (`runUnmountFlush`); until then
+  // the store shows the block blank and the probe finds no property. Decide
+  // on the settled block: the kept text fails the re-check below, the stored
+  // property fails the probe.
+  try {
+    await settlePendingSaves(blockId)
+  } catch (err: unknown) {
+    logger.warn('emptyBlockCleanup', 'pending save rejected — keeping the block', { blockId }, err)
+    return false
+  }
+
+  if (!(await carriesNothing(blockId, spaceId))) return false
 
   // Re-decide on the post-await world (see `isLeakedEmptyCandidate`).
   if (!isStillBlurred()) return false

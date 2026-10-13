@@ -3,6 +3,7 @@
  *
  * Tabs:
  *  - General   -- DeadlineWarningSection + AutostartRow + QuickCaptureRow
+ *  - Spaces -- SpacesTab: open-on-launch space, create / rename / delete (#5362)
  *  - Properties -- PropertyDefinitionsList
  * Appearance -- theme selector (7 themes) + font size selector
  *  - Keyboard -- KeyboardTab
@@ -46,6 +47,7 @@ import { HelpTab } from '@/components/settings/HelpTab'
 import { IntegrityCheckSection } from '@/components/settings/IntegrityCheckSection'
 import { KeyboardTab } from '@/components/settings/KeyboardTab'
 import { NotificationsTab } from '@/components/settings/NotificationsTab'
+import { SpacesTab } from '@/components/settings/SpacesTab'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import {
@@ -73,6 +75,7 @@ const DataTab = lazy(() =>
 
 type SettingsTab =
   | 'general'
+  | 'spaces'
   | 'properties'
   | 'appearance'
   | 'editor'
@@ -87,6 +90,7 @@ type SettingsTab =
 
 const TAB_IDS: SettingsTab[] = [
   'general',
+  'spaces',
   'properties',
   'appearance',
   'editor',
@@ -123,6 +127,7 @@ function readActiveTab(): SettingsTab {
 
 const TAB_LABEL_KEYS: Record<SettingsTab, string> = {
   general: 'settings.tabGeneral',
+  spaces: 'settings.tabSpaces',
   properties: 'settings.tabProperties',
   appearance: 'settings.tabAppearance',
   editor: 'settings.tabEditor',
@@ -161,7 +166,7 @@ const TAB_GROUPS: readonly TabGroup[] = [
   {
     id: 'workspace',
     labelKey: 'settings.groupWorkspace',
-    tabs: ['general', 'appearance', 'editor', 'keyboard', 'properties'],
+    tabs: ['general', 'spaces', 'appearance', 'editor', 'keyboard', 'properties'],
   },
   {
     id: 'integrations',
@@ -249,7 +254,7 @@ export function SettingsView(): React.ReactElement {
           <SelectTrigger aria-label={t('sidebar.settings')} className="sm:hidden">
             <SelectValue />
           </SelectTrigger>
-          {/* All twelve tabs fit on a phone; the shared 24rem cap would hide the last ones. */}
+          {/* All thirteen tabs fit on a phone; the shared 24rem cap would hide the last ones. */}
           <SelectContent className="max-h-(--radix-select-content-available-height)">
             {TAB_GROUPS.map((group) => (
               <SelectGroup key={group.id}>
@@ -333,6 +338,8 @@ export function SettingsView(): React.ReactElement {
           className="min-w-0 flex-1 max-w-2xl"
         >
           {activeTab === 'general' && <GeneralTab />}
+
+          {activeTab === 'spaces' && <SpacesTab />}
 
           {activeTab === 'properties' && (
             <Card>

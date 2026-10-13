@@ -60,7 +60,12 @@ vi.mock('d3-selection', () => ({
     append: vi.fn(() => ({
       selectAll: vi.fn().mockReturnThis(),
       data: vi.fn().mockReturnThis(),
-      join: vi.fn().mockReturnThis(),
+      // Like d3, run the ENTER callback, so attributes set only on entering
+      // nodes reach this mock.
+      join: vi.fn(function (this: unknown, onEnter?: unknown) {
+        if (typeof onEnter === 'function') onEnter(this)
+        return this
+      }),
       attr: vi.fn().mockReturnThis(),
       text: vi.fn().mockReturnThis(),
       on: vi.fn().mockReturnThis(),
@@ -194,6 +199,7 @@ function makeNodes(): GraphNode[] {
       due_date: null,
       scheduled_date: null,
       is_template: false,
+      is_journal: false,
       backlink_count: 0,
     },
     {
@@ -204,6 +210,7 @@ function makeNodes(): GraphNode[] {
       due_date: null,
       scheduled_date: null,
       is_template: false,
+      is_journal: false,
       backlink_count: 0,
     },
   ]
@@ -227,6 +234,7 @@ function Harness({ nodes, edges, onResult, navigateToPage }: HarnessProps): Reac
     nodes,
     edges,
     navigateToPage: navigateToPage ?? ((): void => {}),
+    currentPageId: null,
   })
   React.useEffect(() => {
     onResult(result)
@@ -752,7 +760,7 @@ describe('useGraphSimulation', () => {
   describe('keyboard navigation pattern', () => {
     function getNodeSelectionMock(): any {
       // The select(svg) chain → append('g') returns the parent group, on
-      // which selectAll('g.node').data(simNodes).join('g').attr(...) etc.
+      // which selectAll('g.node').data(simNodes).join(...).attr(...) etc.
       // chains return the same mock via mockReturnThis. Every .attr / .on
       // call on the node selection lands on that returned object.
       const selectResult = vi.mocked(select).mock.results[0]?.value as any

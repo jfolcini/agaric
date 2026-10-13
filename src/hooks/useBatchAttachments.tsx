@@ -152,6 +152,11 @@ export function BatchAttachmentsProvider({ blockIds, children }: ProviderProps):
   // fetched" membership, read synchronously inside the effect below.
   const cacheRef = useRef<Map<string, AttachmentRow[]>>(new Map())
   const lastInvalidationTokenRef = useRef(invalidationToken)
+  // #5443 — a response is kept for its ids however far the window has moved
+  // since it was asked; only `invalidate()` (which bumps the generation)
+  // makes it stale. Ids asked for and not yet answered are not asked again.
+  const generationRef = useRef(0)
+  const inFlightRef = useRef(new Set<string>())
 
   // Sort + join produces a stable key that only changes when the
   // membership of blockIds changes. Avoids re-fetching on every render
@@ -177,6 +182,8 @@ export function BatchAttachmentsProvider({ blockIds, children }: ProviderProps):
     lastInvalidationTokenRef.current = invalidationToken
 
     if (forceRefetch) {
+      generationRef.current += 1
+      inFlightRef.current.clear()
       // `invalidate()` has no id-scoping — it's a blanket "something
       // mutated" signal, and only the CURRENT window gets refetched below.
       // A cached id currently OUTSIDE the window can no longer be trusted
@@ -197,43 +204,46 @@ export function BatchAttachmentsProvider({ blockIds, children }: ProviderProps):
       }
     }
 
-    const idsToFetch = forceRefetch ? blockIds : blockIds.filter((id) => !cacheRef.current.has(id))
+    const inFlight = inFlightRef.current
+    const idsToFetch = forceRefetch
+      ? blockIds
+      : blockIds.filter((id) => !cacheRef.current.has(id) && !inFlight.has(id))
     if (idsToFetch.length === 0) {
-      // Every windowed id is already cached (scroll within already-visited
-      // territory, or a reorder within the same set) — no IPC, no map
-      // churn. A superseded in-flight fetch may still have left
-      // loading=true behind (its stale-guarded resolution never resets
-      // it), so clear it here or previews stay suppressed until the next
-      // genuinely-new fetch resolves.
-      setLoading(false)
+      // Every windowed id is cached or already asked for (scroll within
+      // already-visited territory, or a reorder within the same set) — no
+      // IPC, no map churn. Loading stays on only while an asked-for id is
+      // still unanswered.
+      setLoading(inFlight.size > 0)
       return
     }
 
-    let stale = false
+    const generation = generationRef.current
+    for (const id of idsToFetch) inFlight.add(id)
     setLoading(true)
+    const settle = (): void => {
+      for (const id of idsToFetch) inFlight.delete(id)
+      setLoading(inFlight.size > 0)
+    }
     commands
       .listAttachmentsBatch(idsToFetch)
       .then((result) => unwrap(result))
       .then((record) => {
-        if (stale) return
+        if (generation !== generationRef.current) return
         const { map, changed } = mergeFetchedIntoCache(cacheRef.current, idsToFetch, record)
         cacheRef.current = map
         if (changed) setAttachmentsByBlock(map)
-        setLoading(false)
+        settle()
       })
       .catch((err) => {
-        if (stale) return
+        if (generation !== generationRef.current) return
         logger.warn(
           'BatchAttachmentsProvider',
           'batch attachments fetch failed',
           { count: idsToFetch.length },
           err,
         )
-        setLoading(false)
+        settle()
       })
-    return () => {
-      stale = true
-    }
     // oxlint-disable-next-line react-hooks/exhaustive-deps -- blockIds/blockIds.length are read inside the effect, but stableKey is their membership digest (intentional substitute for the array dep); depending on blockIds directly would refetch on every reallocation with identical contents. invalidationToken is a manual refresh signal.
   }, [stableKey, invalidationToken])
 

@@ -57,6 +57,7 @@ function makeNodes(): GraphNode[] {
       due_date: null,
       scheduled_date: null,
       is_template: false,
+      is_journal: false,
       backlink_count: 0,
     },
     {
@@ -67,6 +68,7 @@ function makeNodes(): GraphNode[] {
       due_date: null,
       scheduled_date: null,
       is_template: false,
+      is_journal: false,
       backlink_count: 0,
     },
   ]
@@ -97,6 +99,7 @@ describe('useGraphRenderElements', () => {
         nodes: makeNodes(),
         edges: makeEdges(),
         navigateToPage: () => {},
+        currentPageId: null,
       }),
     )
     expect(typeof result.current).toBe('function')
@@ -108,6 +111,7 @@ describe('useGraphRenderElements', () => {
         nodes: makeNodes(),
         edges: makeEdges(),
         navigateToPage: () => {},
+        currentPageId: null,
       }),
     )
     const svg = makeFakeSvg()
@@ -123,6 +127,7 @@ describe('useGraphRenderElements', () => {
         nodes: makeNodes(),
         edges: makeEdges(),
         navigateToPage: () => {},
+        currentPageId: null,
       }),
     )
     const out = result.current(makeFakeSvg())
@@ -135,7 +140,7 @@ describe('useGraphRenderElements', () => {
     const nodes = makeNodes()
     const edges = makeEdges()
     const { result } = renderHook(() =>
-      useGraphRenderElements({ nodes, edges, navigateToPage: () => {} }),
+      useGraphRenderElements({ nodes, edges, navigateToPage: () => {}, currentPageId: null }),
     )
     const out = result.current(makeFakeSvg())
     expect(out.simNodes[0]).not.toBe(nodes[0])
@@ -147,7 +152,7 @@ describe('useGraphRenderElements', () => {
     const edges = makeEdges()
     const navigateToPage = vi.fn()
     const { result, rerender } = renderHook(() =>
-      useGraphRenderElements({ nodes, edges, navigateToPage }),
+      useGraphRenderElements({ nodes, edges, navigateToPage, currentPageId: null }),
     )
     const before = result.current
     rerender()
@@ -160,6 +165,7 @@ describe('useGraphRenderElements', () => {
         nodes: makeNodes(),
         edges: makeEdges(),
         navigateToPage: () => {},
+        currentPageId: null,
       }),
     )
     const out = result.current(makeFakeSvg(1024, 768))

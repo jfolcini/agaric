@@ -112,9 +112,12 @@ pub async fn list_property_values_inner(
 /// Set (upsert) a property on a block.
 ///
 /// Thin wrapper around [`set_property_in_tx`] that manages the transaction
-/// lifecycle and dispatches background work. A `value_text` under a `ref`
-/// definition is the block its id, `[[Title]]` or title names in the block's
-/// space (#5160 D11), and is refused when it names none or two.
+/// lifecycle and dispatches background work. `todo_state` goes through
+/// [`set_todo_state_inner`] instead, so it stamps and recurs as the app's
+/// checkbox does; a clear (no value) is a clear there too. A `value_text`
+/// under a `ref` definition is the block its id, `[[Title]]` or title names
+/// in the block's space (#5160 D11), and is refused when it names none or
+/// two.
 ///
 /// `caller_context`: when `Some(name)`, the exactly-one-value
 /// invariant is enforced up-front and the resulting `AppError::Validation`
@@ -164,6 +167,33 @@ pub async fn set_property_inner(
                  value_ref / value_bool must be provided (got {provided})"
             )));
         }
+    }
+    // #5394 — a state set through the generic path (MCP `set_property`, the
+    // property drawer) owes the stamps and the next occurrence a click owes.
+    // `priority`, `due_date` and `scheduled_date` need no routing: their
+    // dedicated setters only validate what `set_property_in_tx` validates.
+    if key == "todo_state" {
+        if value_num.is_some()
+            || value_date.is_some()
+            || value_ref.is_some()
+            || value_bool.is_some()
+        {
+            return Err(AppError::validation(
+                "Property 'todo_state' requires value_text, not \
+                 value_date/value_num/value_ref/value_bool."
+                    .into(),
+            ));
+        }
+        // Boxed: inlined, it makes the `set_property` wrapper's future trip
+        // `clippy::large_futures`.
+        return Box::pin(set_todo_state_inner(
+            pool,
+            device_id,
+            materializer,
+            block_id,
+            value_text,
+        ))
+        .await;
     }
     // #3647 — validate the `repeat` recurrence grammar HERE, at the user's
     // point of entry, so a malformed rule fails where it was typed.
@@ -253,7 +283,7 @@ pub(crate) struct PriorTaskState {
 ///
 /// # Errors
 /// Returns [`AppError`] if the query fails.
-async fn prior_task_state_in_tx(
+pub(crate) async fn prior_task_state_in_tx(
     conn: &mut sqlx::SqliteConnection,
     block_id: &str,
 ) -> Result<PriorTaskState, AppError> {
@@ -1196,8 +1226,9 @@ const SYSTEM_MANAGED_PROPERTY_KEYS: [&str; 4] =
 ///
 /// Appends a `DeleteProperty` op and removes the row from `block_properties`.
 /// Deleting `repeat` also deletes the `repeat-until`, `repeat-count` and
-/// `repeat-seq` the block holds, in the same transaction. Returns every key
-/// deleted, `key` first.
+/// `repeat-seq` the block holds, in the same transaction; deleting
+/// `todo_state` clears the task's `created_at` / `completed_at` stamps, as the
+/// app's clear does. Returns `key` and the repeat bounds deleted with it.
 ///
 /// # Errors
 ///

@@ -34,7 +34,7 @@ import { subscribeToNameChanges } from '@/lib/name-change-bus'
 import { notify } from '@/lib/notify'
 import { getPageDisplayName } from '@/lib/page-display'
 import { searchBlocksLimit } from '@/lib/safe-limit'
-import { requireActiveScope, toSpaceScope } from '@/lib/space-scope'
+import { requireActiveScope } from '@/lib/space-scope'
 import { compareUtf8Bytes, foldAsciiUppercase } from '@/lib/sqlite-collation'
 import { keyFor, useResolveStore } from '@/stores/resolve'
 import { useSpaceStore } from '@/stores/space'
@@ -726,17 +726,17 @@ function populatePageResolveCache(
  *
  * Active-space scoping: the prefix command is scoped to
  * `useSpaceStore.getState().currentSpaceId` so the picker mirrors the
- * other strategies (`searchPagesViaCache` / `searchPagesViaFts`). The
- * `?? null` fallback is intentional pre-bootstrap behaviour — passing
- * `null` to the backend leaves the result set unscoped, which is fine
- * before any space has been hydrated (no aliases to surface anyway).
+ * other strategies (`searchPagesViaCache` / `searchPagesViaFts`). With no
+ * active space nothing is dispatched (#5415) — there are no aliases to
+ * surface before the store hydrates anyway.
  */
 async function mergeAliasPrefixMatches(matches: PickerItem[], q: string): Promise<void> {
   if (q.length === 0) return
   try {
     const spaceId = useSpaceStore.getState().currentSpaceId
+    if (spaceId == null) return
     const rows = unwrap(
-      await commands.listPageAliasesByPrefix(q, PAGINATION_LIMIT, toSpaceScope(spaceId ?? null)),
+      await commands.listPageAliasesByPrefix(q, PAGINATION_LIMIT, requireActiveScope(spaceId)),
     )
     if (rows.length === 0) return
 
@@ -1718,8 +1718,11 @@ export function useBlockResolve(): UseBlockResolveReturn {
       // swallow-on-failure window: a scoping failure fails the whole create and
       // surfaces via the catch below instead of silently orphaning the tag.
       const spaceId = useSpaceStore.getState().currentSpaceId
+      // #5415 — no active space means no space to create the tag in; refuse
+      // through the catch below rather than create a space-less tag.
+      if (spaceId == null) throw new Error('No active space; cannot create tag')
       const block = unwrap(
-        await commands.createBlock('tag', name, null, null, toSpaceScope(spaceId), null),
+        await commands.createBlock('tag', name, null, null, requireActiveScope(spaceId), null),
       )
       // Populate resolve cache so the tag chip shows the name immediately
       useResolveStore.getState().set(block.id, name, false)

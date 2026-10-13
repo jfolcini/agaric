@@ -37,7 +37,7 @@ import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
 import { setPriorityLevels } from '@/lib/priority-levels'
 import { LOCKED_PROPERTY_OPTIONS, NON_DELETABLE_PROPERTIES } from '@/lib/property-save-utils'
-import { formatPropertyName } from '@/lib/property-utils'
+import { formatPropertyName, selectOptionsJson } from '@/lib/property-utils'
 import { reportIpcError, reportIpcErrorWithReason } from '@/lib/report-ipc-error'
 
 const VALUE_TYPES = ['text', 'number', 'date', 'select', 'ref', 'url'] as const
@@ -53,6 +53,8 @@ export function PropertyDefinitionsList(): React.ReactElement {
   // Create form state
   const [newKey, setNewKey] = useState('')
   const [newType, setNewType] = useState<string>('text')
+  const [newOptions, setNewOptions] = useState('')
+  const newOptionsJson = newType === 'select' ? selectOptionsJson(newOptions) : null
   const [isCreating, setIsCreating] = useState(false)
 
   // Delete confirmation state
@@ -106,10 +108,11 @@ export function PropertyDefinitionsList(): React.ReactElement {
     if (!key) return
     setIsCreating(true)
     try {
-      const def = unwrap(await commands.createPropertyDef(key, newType, null))
+      const def = unwrap(await commands.createPropertyDef(key, newType, newOptionsJson))
       setDefinitions((prev) => [...prev, def])
       setNewKey('')
       setNewType('text')
+      setNewOptions('')
       notify.success(t('propertiesView.created'))
     } catch (error) {
       // See loadDefinitions above — unified error reporting, but this one
@@ -124,7 +127,7 @@ export function PropertyDefinitionsList(): React.ReactElement {
       reportIpcErrorWithReason('PropertyDefinitionsList', 'property.errorCreate', error, t, { key })
     }
     setIsCreating(false)
-  }, [newKey, newType, t])
+  }, [newKey, newType, newOptionsJson, t])
 
   const handleDelete = useCallback(
     async (key: string) => {
@@ -134,8 +137,10 @@ export function PropertyDefinitionsList(): React.ReactElement {
         setDeleteTarget(null)
         notify.success(t('propertiesView.deleted'))
       } catch (error) {
-        // See loadDefinitions above — unified error reporting.
-        reportIpcError('PropertyDefinitionsList', 'property.errorDelete', error, t, { key })
+        // The backend refuses a definition a block still uses, and says so.
+        reportIpcErrorWithReason('PropertyDefinitionsList', 'property.errorDelete', error, t, {
+          key,
+        })
       }
     },
     [t],
@@ -236,12 +241,24 @@ export function PropertyDefinitionsList(): React.ReactElement {
             ))}
           </SelectContent>
         </Select>
+        {newType === 'select' && (
+          <Input
+            value={newOptions}
+            onChange={(e) => setNewOptions(e.target.value)}
+            placeholder={t('properties.newSelectOptions')}
+            className="sm:flex-1"
+            aria-label={t('properties.newSelectOptions')}
+          />
+        )}
         {/* Default size: it shares a row with an h-9 input and select. */}
         <Button
           type="submit"
           variant="outline"
           disabled={
-            !newKey.trim() || isCreating || definitions.some((d) => d.key === newKey.trim())
+            !newKey.trim() ||
+            isCreating ||
+            definitions.some((d) => d.key === newKey.trim()) ||
+            (newType === 'select' && newOptionsJson === null)
           }
         >
           <Plus /> {t('propertiesView.create')}

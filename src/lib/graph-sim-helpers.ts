@@ -23,16 +23,22 @@ import type { NodePosition, WorkerOutboundMessage } from '@/workers/graph-worker
 
 export const DEFAULT_WIDTH = 800
 export const DEFAULT_HEIGHT = 600
+/** 44 px touch target; it already covers the largest hovered node (12 + 2). */
 const NODE_HIT_RADIUS = 22
-const NODE_RADIUS = 6
-const NODE_HOVER_RADIUS = 8
-const NODE_ACTIVE_RADIUS = 5
-const EDGE_WIDTH_MAX = 6
-const EDGE_WIDTH_BASE = 1
-const EDGE_OPACITY_BASE = 0.5
-const EDGE_OPACITY_STEP = 0.1
+const NODE_RADIUS_MIN = 3
+const NODE_RADIUS_MAX = 12
+const NODE_RADIUS_PER_SQRT_DEGREE = 1.5
+const NODE_HOVER_GROWTH = 2
+const NODE_PRESS_SHRINK = 1
+// Edges are context: a hairline that ref_count only darkens a little (#5428).
+const EDGE_WIDTH = 1
+const EDGE_OPACITY_BASE = 0.2
+const EDGE_OPACITY_STEP = 0.05
+const EDGE_OPACITY_MAX = 0.45
 const DIMMED_NODE_OPACITY = '0.3'
 const DIMMED_EDGE_OPACITY = '0.15'
+const LABEL_TRUNCATE_LEN = 20
+const LABEL_GAP = 4
 export const ZOOM_BUTTON_DURATION_MS = 200
 export const ZOOM_RESET_DURATION_MS = 300
 export const ZOOM_STEP = 1.3
@@ -88,65 +94,128 @@ export interface SimulationHandle {
 
 // ── SVG / d3 setup ───────────────────────────────────────────────────
 
-function drawEdges(g: GSel, simEdges: GraphEdge[]): LinkSel {
-  return g
-    .selectAll<SVGLineElement, GraphEdge>('line')
-    .data(simEdges)
-    .join('line')
-    .attr('stroke', 'var(--muted-foreground)')
-    .attr('stroke-opacity', (d: GraphEdge) => {
-      const count = Math.max(1, d.ref_count ?? 1)
-      return Math.min(EDGE_OPACITY_BASE + EDGE_OPACITY_STEP * count, 1)
-    })
-    .attr('stroke-width', (d: GraphEdge) => {
-      const count = Math.max(1, d.ref_count ?? 1)
-      return Math.min(EDGE_WIDTH_BASE + Math.log2(count), EDGE_WIDTH_MAX)
-    })
+/**
+ * Node radius from its link count: area tracks degree, so `r` grows with
+ * √degree, from 3 for an unlinked page up to 12 (#5429).
+ */
+export function nodeRadius(degree: number): number {
+  return Math.min(
+    NODE_RADIUS_MIN + NODE_RADIUS_PER_SQRT_DEGREE * Math.sqrt(degree),
+    NODE_RADIUS_MAX,
+  )
 }
 
-function drawNodes(g: GSel, simNodes: GraphNode[]): NodeSel {
-  const node = g
+/**
+ * Links per page among the edges on screen, in and out. Not `backlink_count`,
+ * which is inbound only and `undefined` once the edge fetch was capped.
+ */
+function countDegrees(simEdges: GraphEdge[]): Map<string, number> {
+  const degrees = new Map<string, number>()
+  for (const { source, target } of simEdges) {
+    for (const end of [source, target]) {
+      const id = typeof end === 'string' ? end : end.id
+      degrees.set(id, (degrees.get(id) ?? 0) + 1)
+    }
+  }
+  return degrees
+}
+
+/**
+ * The page open in the active tab takes the one accent; every other node is
+ * the neutral tone. `aria-current` says the same to assistive tech.
+ */
+export function markCurrentPage(node: NodeSel, currentPageId: string | null): void {
+  node.attr('aria-current', (d) => (d.id === currentPageId ? 'page' : null))
+  node
+    .select('circle:nth-child(2)')
+    .attr('fill', (d) => (d.id === currentPageId ? 'var(--graph-accent)' : 'var(--graph-node)'))
+}
+
+function drawEdges(edgeLayer: GSel, simEdges: GraphEdge[]): LinkSel {
+  return edgeLayer
+    .selectAll<SVGLineElement, GraphEdge>('line')
+    .data(simEdges, (d: GraphEdge) => {
+      const s = typeof d.source === 'string' ? d.source : (d.source as GraphNode).id
+      const t = typeof d.target === 'string' ? d.target : (d.target as GraphNode).id
+      return `${s}->${t}`
+    })
+    .join('line')
+    .attr('stroke', 'var(--graph-edge)')
+    .attr('stroke-opacity', (d: GraphEdge) => {
+      const count = Math.max(1, d.ref_count ?? 1)
+      return Math.min(EDGE_OPACITY_BASE + EDGE_OPACITY_STEP * (count - 1), EDGE_OPACITY_MAX)
+    })
+    .attr('stroke-width', EDGE_WIDTH)
+    .attr('vector-effect', 'non-scaling-stroke')
+}
+
+/**
+ * The sub-tree is built once, on ENTER, so a patch does not undo the focus or
+ * hover styling of a node it keeps. The label, accessible name, radius and
+ * fill are set on every patch, so a renamed page shows its new title and a
+ * filter that drops links shrinks the nodes that lost them; a node hovered
+ * through a patch is back at its resting radius until the pointer re-enters.
+ */
+function drawNodes(
+  nodeLayer: GSel,
+  simNodes: GraphNode[],
+  radiusOf: (d: GraphNode) => number,
+  currentPageId: string | null,
+): NodeSel {
+  const node = nodeLayer
     .selectAll<SVGGElement, GraphNode>('g.node')
-    .data(simNodes)
-    .join('g')
-    .attr('class', 'node')
-    // #1725 — roving tabindex: only ONE node is in the page tab order at a
-    // time (the first; thereafter the last-focused). All others are
-    // `tabindex="-1"` and reached via Arrow keys, so a large graph is a
-    // single Tab stop instead of hundreds. `applyRovingTabindex` sets the
-    // initial -1/0 split; `attachNodeRovingKeys` handles Arrow/Home/End.
-    .attr('role', 'button')
+    .data(simNodes, (d: GraphNode) => d.id)
+    .join((enter) => {
+      const grp = enter
+        .append('g')
+        .attr('class', 'node')
+        .attr('role', 'button')
+        .style('cursor', 'pointer')
+
+      // Hit-area circle for touch targets (44px diameter).
+      grp
+        .append('circle')
+        .attr('r', NODE_HIT_RADIUS)
+        .attr('fill', 'transparent')
+        .style('pointer-events', 'all')
+        .attr('class', 'hit-area')
+
+      grp.append('circle')
+
+      grp
+        .append('text')
+        .attr('dy', 4)
+        .attr('fill', 'var(--foreground)')
+        .attr('font-size', '12px')
+        .style('pointer-events', 'none')
+        .style('user-select', 'none')
+
+      // Native SVG <title> tooltip carries the full label so truncated
+      // names ("prefix…") are still discoverable on hover.
+      grp.append('title')
+      return grp
+    })
     // #1725 — explicit accessible name per node (don't rely solely on the
     // child <title>, whose name computation is inconsistent across screen
     // readers under role="button").
     .attr('aria-label', (d) => d.label)
-    .style('cursor', 'pointer')
 
+  node
+    .select<SVGTextElement>('text')
+    .text((d) =>
+      d.label.length > LABEL_TRUNCATE_LEN ? `${d.label.slice(0, LABEL_TRUNCATE_LEN)}…` : d.label,
+    )
+  node.select<SVGTitleElement>('title').text((d) => d.label)
+  node.select<SVGCircleElement>('circle:nth-child(2)').attr('r', radiusOf)
+  node.select<SVGTextElement>('text').attr('dx', (d) => radiusOf(d) + LABEL_GAP)
+  markCurrentPage(node, currentPageId)
+
+  // #1725 — roving tabindex: only ONE node is in the page tab order at a
+  // time (the first; thereafter the last-focused). All others are
+  // `tabindex="-1"` and reached via Arrow keys, so a large graph is a
+  // single Tab stop instead of hundreds. `applyRovingTabindex` sets the
+  // initial -1/0 split; `attachNodeRovingKeys` handles Arrow/Home/End.
   applyRovingTabindex(node)
-
-  // Hit-area circle for touch targets (44px diameter).
-  node
-    .append('circle')
-    .attr('r', NODE_HIT_RADIUS)
-    .attr('fill', 'transparent')
-    .style('pointer-events', 'all')
-    .attr('class', 'hit-area')
-
-  node.append('circle').attr('r', NODE_RADIUS).attr('fill', 'var(--primary)')
-
-  node
-    .append('text')
-    .text((d) => (d.label.length > 20 ? `${d.label.slice(0, 20)}…` : d.label))
-    .attr('dx', 10)
-    .attr('dy', 4)
-    .attr('fill', 'var(--foreground)')
-    .attr('font-size', '12px')
-    .style('pointer-events', 'none')
-    .style('user-select', 'none')
-
-  // Native SVG <title> tooltip carries the full label so truncated
-  // names ("prefix…") are still discoverable on hover.
-  node.append('title').text((d) => d.label)
 
   return node
 }
@@ -197,7 +266,7 @@ function focusRovingNode(node: NodeSel, target: SVGGElement): void {
  * Bound under the `.roving` keydown namespace so it coexists with the
  * activation handler in `attachNodeClickAndKeyboard`.
  */
-export function attachNodeRovingKeys(node: NodeSel): void {
+function attachNodeRovingKeys(node: NodeSel): void {
   node.on('keydown.roving', function (event: KeyboardEvent) {
     const keys = ['ArrowRight', 'ArrowDown', 'ArrowLeft', 'ArrowUp', 'Home', 'End']
     if (!keys.includes(event.key)) return
@@ -269,10 +338,11 @@ function attachNodeFocusStyles(node: NodeSel): void {
   })
 }
 
-function attachNodeHover(node: NodeSel, link: LinkSel): void {
-  node.on('mouseenter', function () {
+/** Hover and press radii are relative to the node's own, so hover never shrinks a hub. */
+function attachNodeHover(node: NodeSel, link: LinkSel, radiusOf: (d: GraphNode) => number): void {
+  node.on('mouseenter', function (_event, hovered) {
     const self = select(this)
-    self.select('circle:nth-child(2)').attr('r', NODE_HOVER_RADIUS)
+    self.select('circle:nth-child(2)').attr('r', radiusOf(hovered) + NODE_HOVER_GROWTH)
     self
       .select('text')
       .attr('font-size', '14px')
@@ -293,9 +363,9 @@ function attachNodeHover(node: NodeSel, link: LinkSel): void {
     })
   })
 
-  node.on('mouseleave', function () {
+  node.on('mouseleave', function (_event, d) {
     const self = select(this)
-    self.select('circle:nth-child(2)').attr('r', NODE_RADIUS)
+    self.select('circle:nth-child(2)').attr('r', radiusOf(d))
     self
       .select('text')
       .attr('font-size', '12px')
@@ -307,12 +377,49 @@ function attachNodeHover(node: NodeSel, link: LinkSel): void {
     link.style('opacity', null)
   })
 
-  node.on('pointerdown', function () {
-    select(this).select('circle:nth-child(2)').attr('r', NODE_ACTIVE_RADIUS)
+  node.on('pointerdown', function (_event, d) {
+    select(this)
+      .select('circle:nth-child(2)')
+      .attr('r', radiusOf(d) - NODE_PRESS_SHRINK)
   })
-  node.on('pointerup', function () {
-    select(this).select('circle:nth-child(2)').attr('r', NODE_HOVER_RADIUS)
+  node.on('pointerup', function (_event, d) {
+    select(this)
+      .select('circle:nth-child(2)')
+      .attr('r', radiusOf(d) + NODE_HOVER_GROWTH)
   })
+}
+
+/**
+ * The one draw path: the first render (onto empty layers) and every filter
+ * patch join `simNodes`/`simEdges` into the layer groups under `g`. Keyed
+ * joins keep the DOM of persisting nodes and edges; EXIT removes the rest.
+ * Listeners are re-bound on the merged selection so their closures see the
+ * latest `navigateToPage` and selections; d3's `.on()` replaces a handler
+ * instead of stacking it.
+ *
+ * Joins are scoped to `g.edges-layer` / `g.nodes-layer`, so an ENTERing
+ * `<line>` lands in the edge layer, which precedes the node layer, and never
+ * paints over a node (#758 item 4).
+ */
+export function patchGraphSelections(
+  g: GSel,
+  simNodes: GraphNode[],
+  simEdges: GraphEdge[],
+  navigateToPage: (id: string, label: string) => void,
+  currentPageId: string | null = null,
+): { link: LinkSel; node: NodeSel } {
+  const degrees = countDegrees(simEdges)
+  const radiusOf = (d: GraphNode): number => nodeRadius(degrees.get(d.id) ?? 0)
+
+  const link = drawEdges(g.select<SVGGElement>('g.edges-layer'), simEdges)
+  const node = drawNodes(g.select<SVGGElement>('g.nodes-layer'), simNodes, radiusOf, currentPageId)
+
+  attachNodeClickAndKeyboard(node, navigateToPage)
+  attachNodeRovingKeys(node)
+  attachNodeFocusStyles(node)
+  attachNodeHover(node, link, radiusOf)
+
+  return { link, node }
 }
 
 export function renderGraphElements(
@@ -320,6 +427,7 @@ export function renderGraphElements(
   nodes: GraphNode[],
   edges: GraphEdge[],
   navigateToPage: (id: string, label: string) => void,
+  currentPageId: string | null = null,
 ): RenderResult {
   const width = svg.clientWidth || DEFAULT_WIDTH
   const height = svg.clientHeight || DEFAULT_HEIGHT
@@ -330,11 +438,11 @@ export function renderGraphElements(
 
   // Dedicated paint layers (#758 item 4): edges always render in a group that
   // precedes the node group in document order, so SVG painter's-order keeps
-  // every edge under every node. Without the layers, a later data-join that
-  // ENTERs new <line> elements (the patch path in useGraphSimulation) would
-  // append them after the node <g>s and paint them over the nodes.
-  const edgeLayer: GSel = g.append('g').attr('class', 'edges-layer')
-  const nodeLayer: GSel = g.append('g').attr('class', 'nodes-layer')
+  // every edge under every node. Without the layers, a filter patch that
+  // ENTERs new <line> elements would append them after the node <g>s and
+  // paint them over the nodes.
+  g.append('g').attr('class', 'edges-layer')
+  g.append('g').attr('class', 'nodes-layer')
 
   // Clone nodes/edges so d3 can mutate them without React state issues.
   const simNodes: GraphNode[] = nodes.map((n) => ({ ...n }))
@@ -345,13 +453,7 @@ export function renderGraphElements(
     nodeById.set(n.id, n)
   }
 
-  const link = drawEdges(edgeLayer, simEdges)
-  const node = drawNodes(nodeLayer, simNodes)
-
-  attachNodeClickAndKeyboard(node, navigateToPage)
-  attachNodeRovingKeys(node)
-  attachNodeFocusStyles(node)
-  attachNodeHover(node, link)
+  const { link, node } = patchGraphSelections(g, simNodes, simEdges, navigateToPage, currentPageId)
 
   return { g, simNodes, simEdges, nodeById, link, node, width, height }
 }

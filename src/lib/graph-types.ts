@@ -19,6 +19,7 @@ export interface GraphNode extends SimulationNodeDatum {
   due_date: string | null
   scheduled_date: string | null
   is_template: boolean
+  is_journal: boolean
   /**
    * Inbound-link count for this node, computed from the (possibly
    * server-capped) edge list. `undefined` — rather than `0` — when the

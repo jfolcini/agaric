@@ -130,16 +130,12 @@ pub struct ActivityEntry {
     /// task-local. Serialised as `opRef`; omitted from the wire
     /// payload when `None`.
     ///
-    /// Multi-op tools surface their additional `OpRef`s on
-    /// [`ActivityEntry::additional_op_refs`] — for the
-    /// rationale (forward-compat for `move_subtree` /
-    /// `bulk_set_property` and similar future tools that append more
-    /// than one op per call).
+    /// A multi-op call surfaces the rest of its `OpRef`s on
+    /// [`ActivityEntry::additional_op_refs`].
     #[serde(skip_serializing_if = "Option::is_none")]
     pub op_ref: Option<agaric_store::op::OpRef>,
-    /// Forward-compat: any further `OpRef`s produced by the
-    /// same tool call, in append order. Empty for the (current)
-    /// single-op RW tools and for RO / failing tools. Defaults to
+    /// The rest of a multi-op call's `OpRef`s, in append order. Empty
+    /// when the call wrote one op, and for RO / failing tools. Defaults to
     /// `Vec::new()` for older clients / fixtures that don't set the
     /// field, and is omitted from the wire payload when empty so the
     /// `mcp:activity` event stays compact for the common case.
@@ -458,9 +454,8 @@ pub struct ToolCompletionEvent<'a> {
     /// Captured from the `LAST_APPEND` task-local inside the
     /// tool dispatch scope.
     pub op_ref: Option<agaric_store::op::OpRef>,
-    /// Forward-compat: any further `OpRef`s produced by the
-    /// same call, in append order. Empty for single-op tools (every
-    /// RW tool today). Captured by draining the `LAST_APPEND`
+    /// The rest of a multi-op call's `OpRef`s, in append order. Empty
+    /// when the call wrote one op. Captured by draining the `LAST_APPEND`
     /// task-local in the dispatch scope and assigning index 0 to
     /// `op_ref` and the tail here.
     pub additional_op_refs: Vec<agaric_store::op::OpRef>,

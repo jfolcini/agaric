@@ -23,7 +23,7 @@
  * the new page appears in the PageBrowser list.
  */
 
-import { expect, navigateToView, test, waitForBoot } from './helpers'
+import { expect, navigateToView, showJournalPages, test, waitForBoot } from './helpers'
 
 /** Open the Pages view via the sidebar nav button. */
 async function openPagesView(page: import('@playwright/test').Page) {
@@ -114,6 +114,7 @@ test.describe('page creation routes through create_page_in_space', () => {
 
     // Open Pages — today's journal page must appear in the list.
     await openPagesView(page)
+    await showJournalPages(page)
     // Match by exact date string in the page-list row content.
     await expect(
       page

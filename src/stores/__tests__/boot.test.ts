@@ -41,6 +41,9 @@ vi.mock('@/stores/space', () => ({
       refreshAvailableSpaces: mockRefreshAvailableSpaces,
       lastRefreshOutcome: mockOutcome,
     }),
+    // #5438 — `boot.ts` imports the journal and navigation stores, whose
+    // per-space slices subscribe to the space store at module load.
+    subscribe: () => () => {},
   },
 }))
 

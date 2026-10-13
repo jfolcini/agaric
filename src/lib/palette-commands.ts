@@ -56,6 +56,7 @@ import { createUntitledPage } from '@/lib/untitled-page'
 import { useJournalStore } from '@/stores/journal'
 import { useNavigationStore } from '@/stores/navigation'
 import { useResolveStore } from '@/stores/resolve'
+import { showPageInGraph } from '@/stores/show-page-in-graph'
 import { useSpaceStore } from '@/stores/space'
 import { selectPageStack, useTabsStore } from '@/stores/tabs'
 
@@ -126,6 +127,17 @@ export const PALETTE_COMMANDS: readonly PaletteCommandSpec[] = [
     run: ({ onClose }) => {
       useNavigationStore.getState().setView('graph')
       onClose()
+    },
+  },
+  {
+    id: 'show-page-in-graph',
+    labelKey: 'palette.cmdShowPageInGraph',
+    category: 'navigate',
+    icon: Network,
+    shortcutId: 'showPageInGraph',
+    run: ({ onClose }) => {
+      onClose()
+      showPageInGraph()
     },
   },
   {

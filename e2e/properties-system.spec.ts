@@ -1,3 +1,5 @@
+import type { Page } from '@playwright/test'
+
 import {
   activeAlertDialog,
   activeMenu,
@@ -27,6 +29,24 @@ import {
  *     context (text), project (select: alpha, beta, gamma)
  */
 
+const QUICK_NOTES = '00000000000000000000PAGE02'
+
+function ipc<T>(page: Page, cmd: string, args: unknown): Promise<T> {
+  return page.evaluate(
+    ({ c, a }) =>
+      (
+        window as unknown as {
+          __TAURI_INTERNALS__: { invoke: (c: string, a?: unknown) => Promise<unknown> }
+        }
+      ).__TAURI_INTERNALS__.invoke(c, a),
+    { c: cmd, a: args },
+  ) as Promise<T>
+}
+
+function storedDefinition(page: Page, key: string): Promise<unknown> {
+  return ipc(page, 'get_property_def', { key })
+}
+
 // ===========================================================================
 // 1. Property chips visible on blocks
 // ===========================================================================
@@ -46,23 +66,12 @@ test.describe('Property chips on blocks', () => {
     // First block (Weekly standup notes) should have property chips
     const firstBlock = blocks.first()
     await expect(firstBlock).toContainText('Weekly standup notes')
-    const firstChips = firstBlock.locator('[data-testid="property-chip"]')
-    await expect(firstChips.first()).toBeVisible()
-
-    // Verify context and project property chips are shown
-    // PropertyChip renders "key:" label + value span
-    await expect(
-      firstBlock.locator('[data-testid="property-chip"]', { hasText: 'context' }),
-    ).toBeVisible()
-    await expect(
-      firstBlock.locator('[data-testid="property-chip"]', { hasText: '@office' }),
-    ).toBeVisible()
-    await expect(
-      firstBlock.locator('[data-testid="property-chip"]', { hasText: 'project' }),
-    ).toBeVisible()
-    await expect(
-      firstBlock.locator('[data-testid="property-chip"]', { hasText: 'alpha' }),
-    ).toBeVisible()
+    // Exact text: a text (context) and a select (project) value show as
+    // stored, not as an unresolved `[[…]]` link.
+    await expect(firstBlock.locator('[data-testid="property-chip"]')).toHaveText([
+      'Context:@office',
+      'Project:alpha',
+    ])
   })
 
   test('second meeting block shows its own property values', async ({ page }) => {
@@ -71,13 +80,10 @@ test.describe('Property chips on blocks', () => {
     const secondBlock = page.locator('[data-testid="sortable-block"]').nth(1)
     await expect(secondBlock).toContainText('Design review feedback')
 
-    // Should show context: @remote and project: beta
-    await expect(
-      secondBlock.locator('[data-testid="property-chip"]', { hasText: '@remote' }),
-    ).toBeVisible()
-    await expect(
-      secondBlock.locator('[data-testid="property-chip"]', { hasText: 'beta' }),
-    ).toBeVisible()
+    await expect(secondBlock.locator('[data-testid="property-chip"]')).toHaveText([
+      'Context:@remote',
+      'Project:beta',
+    ])
   })
 })
 
@@ -321,6 +327,33 @@ test.describe('Property definitions view', () => {
     await expect(settingsPanel.locator('ul li', { hasText: 'mood' })).toBeVisible()
   })
 
+  // The backend refuses a select definition without options.
+  test('creating a select definition asks for its options', async ({ page }) => {
+    await page
+      .locator('[data-slot="sidebar"]')
+      .getByRole('button', { name: 'Settings', exact: true })
+      .click()
+    await page.getByRole('tab', { name: 'Properties' }).click()
+
+    const settingsPanel = page.locator('[data-testid="settings-panel-properties"]')
+    await settingsPanel.getByLabel('Property key').fill('size')
+    await settingsPanel.getByRole('combobox', { name: 'Type' }).click()
+    await page.getByRole('option', { name: 'select', exact: true }).click()
+    const create = settingsPanel.getByRole('button', { name: 'Create' })
+    await expect(create).toBeDisabled()
+
+    await settingsPanel
+      .getByRole('textbox', { name: 'Options, comma-separated', exact: true })
+      .fill('small, large')
+    await create.click()
+
+    await expect(settingsPanel.locator('ul > li', { hasText: 'Size' })).toContainText('select')
+    expect(await storedDefinition(page, 'size')).toMatchObject({
+      value_type: 'select',
+      options: '["small","large"]',
+    })
+  })
+
   // The type Select's default `w-full` used to take the whole row and squeeze
   // the key input to ~24px, too narrow to show its placeholder.
   test('the create row gives the key input more room than the type select', async ({ page }) => {
@@ -378,6 +411,41 @@ test.describe('Property definitions view', () => {
     // the in-use definitions are untouched
     await expect(page.locator('ul > li', { hasText: 'project' })).toBeVisible()
     await expect(page.locator('ul > li', { hasText: 'context' })).toBeVisible()
+  })
+
+  test('creating a select definition from a page asks for its options', async ({ page }) => {
+    await openPage(page, 'Quick Notes')
+    await page.getByRole('button', { name: 'Page actions', exact: true }).click()
+    await page.getByRole('menuitem', { name: 'Add property', exact: true }).click()
+    const picker = activePopover(page)
+    await picker.getByRole('textbox', { name: 'Search definitions' }).fill('size')
+    await picker.getByRole('button', { name: /^Create "size"/ }).click()
+    await picker.getByRole('combobox', { name: 'Value type' }).click()
+    await page.getByRole('option', { name: 'select', exact: true }).click()
+    const create = picker.getByRole('button', { name: 'Create definition', exact: true })
+    await expect(create).toBeDisabled()
+
+    await picker
+      .getByRole('textbox', { name: 'Options, comma-separated', exact: true })
+      .fill('small, large')
+    await create.click()
+    await expect
+      .poll(() => storedDefinition(page, 'size'))
+      .toMatchObject({ value_type: 'select', options: '["small","large"]' })
+
+    // The new property takes one of those options as its value.
+    await page.getByRole('combobox', { name: 'size value', exact: true }).click()
+    await page.getByRole('option', { name: 'large', exact: true }).click()
+    await expect
+      .poll(async () => {
+        const rows = await ipc<Array<{ key: string; value_text: string | null }>>(
+          page,
+          'get_properties',
+          { blockId: QUICK_NOTES },
+        )
+        return Object.fromEntries(rows.map((row) => [row.key, row.value_text]))
+      })
+      .toEqual({ size: 'large' })
   })
 
   test('select-type property shows Edit options button', async ({ page }) => {

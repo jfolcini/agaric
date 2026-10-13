@@ -1,13 +1,21 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 
 import type { FilterPrimitive } from '@/lib/bindings'
-import { selectPageFiltersForSpace, usePageBrowserFiltersStore } from '@/stores/pageBrowserFilters'
+import {
+  removeExcludeJournalPagesFilter,
+  selectPageFiltersForSpace,
+  usePageBrowserFiltersStore,
+} from '@/stores/pageBrowserFilters'
 import { LEGACY_SPACE_KEY } from '@/stores/space'
 
 const SPACE_A = 'SPACE_A'
 const SPACE_B = 'SPACE_B'
+/** Never seeded, so it reads as the default. */
+const SPACE_FRESH = 'SPACE_FRESH'
 const orphan: FilterPrimitive = { type: 'Orphan' }
 const tagX: FilterPrimitive = { type: 'Tag', tag: 'X' }
+const JOURNAL_GLOB = '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]'
+const journalChip = { type: 'PathGlob', pattern: JOURNAL_GLOB, exclude: true }
 
 function filtersFor(spaceId: string | null) {
   return selectPageFiltersForSpace(usePageBrowserFiltersStore.getState(), spaceId)
@@ -15,7 +23,11 @@ function filtersFor(spaceId: string | null) {
 
 describe('pageBrowserFilters store', () => {
   beforeEach(() => {
-    usePageBrowserFiltersStore.setState({ filtersBySpace: {}, nextAddId: 0 })
+    // Empty slices, so the chip tests below start without the default chip.
+    usePageBrowserFiltersStore.setState({
+      filtersBySpace: { [SPACE_A]: [], [SPACE_B]: [] },
+      nextAddId: 0,
+    })
     localStorage.clear()
   })
 
@@ -72,13 +84,87 @@ describe('pageBrowserFilters store', () => {
     expect(usePageBrowserFiltersStore.getState()).toBe(snapshot)
   })
 
-  it('maps a null space id to the legacy slot via a stable empty array', () => {
-    const first = filtersFor(null)
-    const second = filtersFor(null)
-    expect(first).toHaveLength(0)
-    expect(first).toBe(second) // referentially stable so the selector is idempotent
+  it('maps a null space id to the legacy slot', () => {
     usePageBrowserFiltersStore.getState().addFilter(LEGACY_SPACE_KEY, orphan)
-    expect(filtersFor(null)).toHaveLength(1)
+    expect(filtersFor(null)).toMatchObject([journalChip, orphan])
+  })
+
+  // #5370 — a space with nothing stored hides journal pages by default.
+  describe('default journal chip', () => {
+    it('is what a space with no stored slice reads, as a stable reference', () => {
+      const first = filtersFor(SPACE_FRESH)
+      expect(first).toEqual([{ ...journalChip, _addId: 0 }])
+      // Referentially stable so the selector is idempotent.
+      expect(filtersFor(SPACE_FRESH)).toBe(first)
+    })
+
+    it('stays first when a chip is added to an absent slice', () => {
+      usePageBrowserFiltersStore.getState().addFilter(SPACE_FRESH, orphan)
+      expect(filtersFor(SPACE_FRESH)).toEqual([
+        { ...journalChip, _addId: 0 },
+        { ...orphan, _addId: 1 },
+      ])
+    })
+
+    it('is not stacked again when re-added', () => {
+      usePageBrowserFiltersStore.getState().addFilter(SPACE_FRESH, journalChip as FilterPrimitive)
+      expect(filtersFor(SPACE_FRESH)).toHaveLength(1)
+    })
+
+    it('removing it leaves an empty slice, not the default', () => {
+      usePageBrowserFiltersStore.getState().removeFilter(SPACE_FRESH, 0)
+      expect(usePageBrowserFiltersStore.getState().filtersBySpace[SPACE_FRESH]).toEqual([])
+      expect(filtersFor(SPACE_FRESH)).toEqual([])
+    })
+
+    it('clearing an absent slice stores an empty one', () => {
+      usePageBrowserFiltersStore.getState().clearFilters(SPACE_FRESH)
+      expect(filtersFor(SPACE_FRESH)).toEqual([])
+    })
+
+    it('a removal survives a restart (the empty slice persists and rehydrates)', async () => {
+      usePageBrowserFiltersStore.getState().removeFilter(SPACE_FRESH, 0)
+      const persisted = localStorage.getItem('agaric:page-browser-filters')
+      expect(persisted).not.toBeNull()
+
+      // Restart: the in-memory state is gone, storage is what the app reads.
+      usePageBrowserFiltersStore.setState({ filtersBySpace: {}, nextAddId: 0 })
+      localStorage.setItem('agaric:page-browser-filters', persisted as string)
+      await usePageBrowserFiltersStore.persist.rehydrate()
+
+      expect(filtersFor(SPACE_FRESH)).toEqual([])
+    })
+  })
+
+  describe('removeExcludeJournalPagesFilter', () => {
+    it('drops the default chip of a space with nothing stored', () => {
+      removeExcludeJournalPagesFilter(SPACE_FRESH)
+      expect(filtersFor(SPACE_FRESH)).toEqual([])
+    })
+
+    it('drops only the journal chip from a stored list, wherever it sits', () => {
+      const { addFilter } = usePageBrowserFiltersStore.getState()
+      addFilter(SPACE_A, orphan)
+      addFilter(SPACE_A, { ...journalChip, exclude: false } as FilterPrimitive)
+      addFilter(SPACE_A, journalChip as FilterPrimitive)
+      removeExcludeJournalPagesFilter(SPACE_A)
+      expect(filtersFor(SPACE_A)).toEqual([
+        { ...orphan, _addId: 1 },
+        { ...journalChip, exclude: false, _addId: 2 },
+      ])
+    })
+
+    it('leaves a list without the journal chip untouched', () => {
+      usePageBrowserFiltersStore.getState().addFilter(SPACE_A, orphan)
+      const snapshot = usePageBrowserFiltersStore.getState()
+      removeExcludeJournalPagesFilter(SPACE_A)
+      expect(usePageBrowserFiltersStore.getState()).toBe(snapshot)
+    })
+
+    it('maps a null space id to the legacy slot', () => {
+      removeExcludeJournalPagesFilter(null)
+      expect(filtersFor(null)).toEqual([])
+    })
   })
 
   // #1750 — the chip set persists to localStorage so it has the same lifetime
@@ -153,6 +239,11 @@ describe('pageBrowserFilters store', () => {
       it('is wired into the persist options (both migrate and merge)', () => {
         expect(typeof options.migrate).toBe('function')
         expect(typeof options.merge).toBe('function')
+      })
+
+      it('keeps an empty slice: it is a removed default, not a missing one (#5370)', () => {
+        const result = mergeRun({ filtersBySpace: { [SPACE_A]: [] }, nextAddId: 0 })
+        expect(result.filtersBySpace).toEqual({ [SPACE_A]: [] })
       })
 
       it('drops a non-array slice', () => {
@@ -232,7 +323,8 @@ describe('pageBrowserFilters store', () => {
         expect(state.filtersBySpace).toEqual({ [SPACE_B]: [{ type: 'Orphan', _addId: 1 }] })
         expect(state.nextAddId).toBe(0)
         expect(() => filtersFor(SPACE_A)).not.toThrow()
-        expect(filtersFor(SPACE_A)).toHaveLength(0)
+        // The dropped slice is absent, so it reads as the default.
+        expect(filtersFor(SPACE_A)).toEqual([{ ...journalChip, _addId: 0 }])
       })
     })
   })

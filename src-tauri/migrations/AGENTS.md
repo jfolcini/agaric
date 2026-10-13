@@ -1,115 +1,57 @@
 # `src-tauri/migrations/` — SQLite schema migrations
 
-> Rules specific to this directory. Cross-cutting invariants live in the root [`AGENTS.md`](../../AGENTS.md).
+## Append-only
 
-## Append-only — never modify a shipped migration
+The migrator records each applied file's hash and refuses to start on a mismatch, so editing a shipped `.sql` breaks every existing database. Schema changes land as a new `NNNN_short_description.sql` (next integer, 4 digits). An unreleased migration may be edited until the release tag; the `migrations-immutable` hook blocks edits to any existing file.
 
-The migrator records each applied file's hash and refuses to run on a mismatch, so editing a released `.sql` breaks every existing database. Schema changes land as a new file.
+## New tables
 
-- New migration: `NNNN_short_description.sql`, where `NNNN` is the next integer, zero-padded to 4 digits.
-- An unreleased migration may be edited until the release tag.
-- Guard: the `migrations-immutable` prek hook fails the commit if any existing file here changes.
+- `STRICT`, because SQLite otherwise coerces types silently. Existing tables are not retrofitted; FTS5 virtual tables cannot be `STRICT` and the `migrations-strict-tables` hook skips them.
+- Indexes ship in the same migration as their table, so there is no unindexed window.
+- Every FK names its `ON DELETE` explicitly (`REFERENCES blocks(id) ON DELETE CASCADE` is the usual shape). Cascade rules are part of the data model; changing one is a breaking change.
 
-## `STRICT` on every new table
+## Timestamps
 
-SQLite silently coerces types (`"42"` into an INTEGER column becomes `42`); `STRICT` (3.37+) rejects it at insert time.
+New timestamp columns are `<col>_ms INTEGER NOT NULL CHECK (<col>_ms >= 0)` (#109): integer range scans need no `strftime` and have no `Z` vs `+00:00` collation hazard. Write them with `crate::db::now_ms()`, never an open-coded `chrono::Utc::now().timestamp_millis()`; `crate::now_rfc3339()` is for logs and display only.
 
-```sql
-CREATE TABLE blocks (
-  id TEXT NOT NULL PRIMARY KEY,
-  block_type TEXT NOT NULL,
-  -- …
-) STRICT;
-```
-
-Existing non-STRICT tables are not retrofitted. `CREATE VIRTUAL TABLE … USING fts5(…)` does not accept `STRICT`; the `migrations-strict-tables` hook excludes FTS5 tables automatically.
-
-## Indexes ship in the same migration as the table
-
-Splitting them across migrations leaves an unindexed window between the two.
-
-```sql
-CREATE TABLE block_links (
-  source_id TEXT NOT NULL,
-  target_id TEXT NOT NULL,
-  -- …
-) STRICT;
-
-CREATE INDEX idx_block_links_target ON block_links (target_id);
-CREATE INDEX idx_block_links_source ON block_links (source_id);
-```
-
-## Foreign keys
-
-- Every connection runs with `PRAGMA foreign_keys = ON` (set in the pool init).
-- Specify `ON DELETE` explicitly; `REFERENCES blocks(id) ON DELETE CASCADE` is the common shape.
-- Cascade rules are part of the data model; changing one is a breaking change.
-
-## Timestamps: INTEGER ms since the Unix epoch (#109)
-
-Every new timestamp column is INTEGER epoch-milliseconds, never TEXT ISO-8601: integer range scans need no `strftime` parsing and carry no `Z` vs `+00:00` collation hazard.
-
-```sql
-CREATE TABLE example (
-  id      TEXT NOT NULL PRIMARY KEY,
-  updated_at_ms INTEGER NOT NULL CHECK (updated_at_ms >= 0)
-) STRICT;
-```
-
-- Suffix `_ms`, so the encoding is visible at every read site.
-- `CHECK (… >= 0)` rejects pre-epoch values at insert time.
-- Write with `crate::db::now_ms()` (`src-tauri/agaric-store/src/db/mod.rs`); never open-code `chrono::Utc::now().timestamp_millis()`. `crate::now_rfc3339()` is for logs and display only.
-- Exception: a column that is half of an existing unsuffixed pair stays unsuffixed (`peer_refs.streamed_at` pairs with `synced_at`, 0111), because suffixing one half implies the two encodings differ. No hook enforces the suffix.
-
-The root [`AGENTS.md`](../../AGENTS.md) §Database states the rule; the legacy TEXT columns are already migrated (migrations 0074–0082).
-
-### Calendar dates stay TEXT `YYYY-MM-DD` (#588)
-
-`blocks.due_date`, `blocks.scheduled_date` and `block_properties.value_date` are dates, not instants: epoch-ms would invent a time-of-day and timezone, and `YYYY-MM-DD` sorts lexicographically for the agenda's `BETWEEN` queries. Never migrate them.
+- A column paired with an existing unsuffixed one stays unsuffixed (`peer_refs.streamed_at` beside `synced_at`, 0111), since suffixing one half implies the encodings differ.
+- Calendar dates stay TEXT `YYYY-MM-DD` (#588): `blocks.due_date`, `blocks.scheduled_date`, `block_properties.value_date`. Epoch-ms would invent a time and timezone, and the text form sorts for the agenda's `BETWEEN` queries.
 
 ## Never write `op_log` from a migration
 
-`op_log` is the event-sourcing root; a migration that backfills rows injects synthetic ops into the user's history. Backfill lazily through normal command paths or a one-time materializer task after the schema lands.
+Backfilled rows would inject synthetic ops into the user's history. Backfill through normal command paths or a one-time materializer task after the schema lands.
 
-## Table ownership (which crate may raw-write which table)
+## Table ownership
 
-The store is written from four crates: app (`src-tauri/src`), `agaric-store`, `agaric-engine` and `agaric-sync`. Each core table has one owner crate. A new raw `sqlx` write site goes in the table's owner; any other crate calls a store/owner function instead of open-coding an `INSERT`/`UPDATE`/`DELETE`, so the table's invariants (cache coherence, op-log ordering, soft-delete) stay in one place.
+Each core table has one owner crate, and new raw `sqlx` writes to it go there; other crates call an owner function, so the table's invariants (cache coherence, op-log ordering, soft-delete) stay in one place.
 
 | Table | Owner | Notes |
 |---|---|---|
-| `peer_refs` | `store` | Clean single-writer case. |
-| `pages_cache`, `tags_cache`, `agenda_cache`, `block_links`, `page_link_cache`, `projected_agenda_cache`, `block_tag_refs`, `block_tag_inherited` | `store` | Derived caches. `engine` is a sanctioned projection-time co-writer. |
-| `blocks` | `engine` | Loro→SQLite projection writer. `store` keeps the physical block primitives beneath it (page_id/space_id materialization, soft-delete, descendant cache) as owner-adjacent carve-outs. app/sync writes are known debt. |
-| `op_log` | `store` | Append primitive: `src-tauri/agaric-store/src/op_log/append.rs`. app/engine/sync writes are known debt. |
+| `peer_refs` | `store` | |
+| `pages_cache`, `tags_cache`, `agenda_cache`, `block_links`, `page_link_cache`, `projected_agenda_cache`, `block_tag_refs`, `block_tag_inherited` | `store` | `engine` is a sanctioned projection-time co-writer. |
+| `blocks` | `engine` | Loro→SQLite projection. `store` keeps the physical primitives beneath it (page_id/space_id materialization, soft-delete, descendant cache). app/sync writes are known debt. |
+| `op_log` | `store` | Append primitive in `src-tauri/agaric-store/src/op_log/append.rs`. app/engine/sync writes are known debt. |
 
-Existing cross-crate writes are grandfathered in `src-tauri/table-ownership-baseline.txt`, each line `<count> <crate> <table> [# note]` annotated as a carve-out or `# migrating: slice N`. The `check-table-ownership` hook (`scripts/check-table-ownership.py`) counts raw writes per (crate, table) across the four crates plus `diagnostics` (its `src/bin` tools and test-only modules excluded) and fails when a non-owner pair exceeds its baseline, so it blocks only new cross-crate writes. After adding a genuinely required cross-crate write, or removing one to lower the floor:
+The `check-table-ownership` hook fails when a non-owner (crate, table) raw-write count exceeds `src-tauri/table-ownership-baseline.txt`. After adding a required cross-crate write, or removing one, run `python3 scripts/check-table-ownership.py --update-baseline` (it keeps the file's annotations).
 
-```bash
-python3 scripts/check-table-ownership.py --update-baseline
-```
+## Table rebuilds
 
-It recomputes counts and preserves the header, comment blocks and inline annotations.
+When `ALTER TABLE` cannot express a change, create `_new_<table>` (prefix, not the legacy `<table>_new`), copy, `DROP` the old table, `RENAME`.
 
-## Table rebuilds (`_new_<table>` prefix)
+### `DROP TABLE` cascades immediately (#606)
 
-When `ALTER TABLE` cannot express a change (e.g. adding an `ON DELETE CASCADE` FK), create `_new_<table>`, copy, `DROP` the old table, `RENAME`. Two legacy migrations (0038, 0044) used the `<table>_new` suffix; use the prefix form.
+With `foreign_keys = ON`, `DROP TABLE <parent>` deletes every row of every `ON DELETE CASCADE` child at once. The migration transaction does not protect them, and `PRAGMA foreign_keys = OFF` is a no-op inside a transaction. Also:
 
-### `DROP TABLE` cascades immediately — preserve authoritative children (#606)
+- A non-CASCADE child with referencing rows makes the DROP abort with `FOREIGN KEY constraint failed`.
+- The `_new_<table>` DDL must point self-FKs at `_new_<table>` (0085: `parent_id TEXT REFERENCES _new_blocks(id)`) or the DROP aborts the same way; the `RENAME` rewrites them back.
 
-With `foreign_keys = ON`, `DROP TABLE <parent>` immediately deletes every row of every child holding an `ON DELETE CASCADE` FK into it. The migration transaction does not protect them, and `PRAGMA foreign_keys = OFF` is a no-op inside a transaction. Two more facts pinned by `agents_md_table_rebuild_recipe_preserves_authoritative_state_606`:
+Most cascade children of `blocks` re-materialize from the op log at boot. These do not, so a rebuild destroys them:
 
-- A non-CASCADE child still holding referencing rows makes the DROP abort with `FOREIGN KEY constraint failed`; there is no commit-time re-validation.
-- The `_new_<table>` DDL must redirect self-FKs to `_new_<table>` (0085: `parent_id TEXT REFERENCES _new_blocks(id)`) or the DROP aborts the same way; the `RENAME` rewrites them back.
+- `page_aliases`: no op_log entries.
+- `block_drafts`: device-local, never synced.
+- `spaces` and every non-NULL `blocks.space_id` (since 0089): the DROP cascades into `spaces`, and deleting a space `SET NULL`s its members.
 
-Most cascade children of `blocks` re-materialize from the op log at next boot. These do not, and the shipped rebuilds (0073, 0080, 0085) destroyed them for upgrading users:
-
-- `page_aliases` — emits no op_log entries; only the user command writes it.
-- `block_drafts` — device-local, never synced or snapshotted.
-- Since 0089: the `spaces` registry and every non-NULL `blocks.space_id`. The DROP cascades into `spaces`, and deleting a space `SET NULL`s its members' `space_id` in the replacement table.
-
-Migration 0085's header claims the rebuild is safe because the copy is a pure `INSERT … SELECT`. That is wrong for cascade children; do not copy it into a future rebuild.
-
-Every future rebuild of a table with inbound CASCADE FKs snapshots each authoritative child into a scratch table before the DROP and restores it after the RENAME. For `blocks`, copy this recipe in full (`CREATE TEMP TABLE … AS SELECT` carries no type info, so STRICT does not apply):
+0085's header calls its pure `INSERT … SELECT` rebuild safe; it is not, so do not copy it. A rebuild of a table with inbound CASCADE FKs snapshots each authoritative child before the DROP and restores it after the RENAME. For `blocks`, copy this recipe in full (`CREATE TEMP TABLE … AS SELECT` carries no types, so STRICT does not apply):
 
 ```sql
 -- Must be the migration's first statement. This defers FK violation
@@ -159,59 +101,36 @@ DROP TABLE _keep_spaces;
 DROP TABLE _keep_block_spaces;
 ```
 
-`PRAGMA defer_foreign_keys = ON` defers FK violation checks to COMMIT (needed for the circular `spaces(id) ↔ blocks.space_id`) but never defers CASCADE/SET NULL actions.
+`PRAGMA defer_foreign_keys = ON` defers violation checks to COMMIT (needed for the circular `spaces(id) ↔ blocks.space_id`) but never defers CASCADE or SET NULL actions.
 
 Guards:
 
-- `migrations-rebuild-cascade` validates the snapshot/restore statements and their order for every migration containing `DROP TABLE blocks`. The required column set is replayed from migration history and enforced on both arms: a narrowed restore (`INSERT INTO block_drafts (block_id, content, updated_at) SELECT …`) loses columns as surely as a narrowed snapshot, and `NULL AS <column>` is rejected as the default-write it is (#3438). Use `SELECT *` on both sides.
-- `migrations-rebuild-cascade-self-test` runs the `sql` block above through the guard as the next rebuild against the head schema and compares it statement-for-statement with the `recipe` executed by `agents_md_table_rebuild_recipe_preserves_authoritative_state_606` in `src-tauri/src/db/tests.rs` (modulo the `_new_blocks` DDL). Editing either copy re-runs the hook.
-- `future_blocks_rebuild_migrations_must_preserve_authoritative_state_606` seeds an owner plus membership before every post-0089 rebuild and asserts at head; `spaces_0089_backfill_preserves_satellites_and_repairs_orphans_708` covers 0089 itself.
+- `migrations-rebuild-cascade` checks the snapshot/restore statements and their order in any migration with `DROP TABLE blocks`, against the column set replayed from migration history. Use `SELECT *` on both sides: a narrowed column list or `NULL AS <column>` loses data and is rejected (#3438).
+- `migrations-rebuild-cascade-self-test` runs the block above through that guard and compares it statement by statement with the `recipe` executed by `agents_md_table_rebuild_recipe_preserves_authoritative_state_606` in `src-tauri/src/db/tests.rs`. Edit both copies together.
+- `future_blocks_rebuild_migrations_must_preserve_authoritative_state_606` seeds an owner and membership before every post-0089 rebuild and asserts at head.
 
 ### Trigger bodies: idempotency goes in `WHEN`, not `INSERT OR IGNORE`
 
-SQLite replaces a trigger body's conflict policy with the outer statement's ([lang_createtrigger](https://sqlite.org/lang_createtrigger.html)). An outer `INSERT OR REPLACE` turns a body-level `OR IGNORE` into `OR REPLACE`, which deletes and re-inserts the row and fires its `ON DELETE` actions. Guard with `WHEN NOT EXISTS (…)` so the body never hits a conflict (model: 0089 `spaces_register_is_space`).
+SQLite replaces a trigger body's conflict policy with the outer statement's ([lang_createtrigger](https://sqlite.org/lang_createtrigger.html)), so an outer `INSERT OR REPLACE` turns a body-level `OR IGNORE` into a delete-and-reinsert that fires `ON DELETE` actions. Guard with `WHEN NOT EXISTS (…)` instead (model: 0089 `spaces_register_is_space`).
+
+## Boot recovery runs before migrations
+
+`ensure_blocks_table_exists` (`src-tauri/src/db/recovery.rs`) runs before `sqlx::migrate!`, against whatever schema era the vault is at. The `query!` macros check against the head schema, so code on that path probes with `pragma_table_info` and uses dynamic `sqlx::query`. Old eras store RFC 3339 TEXT timestamps: `op_log.created_at` before 0079, `blocks.deleted_at` before 0080.
 
 ## Renaming or dropping columns and tables
 
-1. Add the new column/table.
-2. Backfill via a dual-write phase in the command handler, or a one-time task.
-3. Drop the old one only after a release in which both coexist.
-
-`ALTER TABLE … DROP COLUMN` (SQLite 3.35+) is one-way; never put it in the migration that adds the replacement.
+Add the new column or table, backfill (dual-write in the command handler, or a one-time task), and drop the old one only after a release in which both coexist. `ALTER TABLE … DROP COLUMN` is one-way; never put it in the migration that adds the replacement.
 
 ## Verifying a migration
 
-```bash
-just gen-sqlx
-```
-
-Regenerates all four offline `.sqlx/` caches; run it after any migration that adds a query-macro site. A bare `cargo sqlx prepare` silently drops leaf-crate queries. CI fails if you forget.
+Every new migration needs a test that inserts representative data and reads it back, named `<table>_<NNNN>_<what>_<issue>` (e.g. `peer_refs_0111_streamed_at_add_preserves_existing_rows_4084`), in `src-tauri/src/db/tests.rs`, `src-tauri/src/spaces/tests.rs` or `src-tauri/agaric-sync/src/snapshot/tests.rs`. The `migration-test-coverage` hook enforces this but is manual-stage, so run `node scripts/check-migration-test-coverage.mjs` before pushing; older migrations are grandfathered in `src-tauri/migrations-test-coverage-baseline.txt`. Run them all with:
 
 ```bash
-cd src-tauri && cargo nextest run -E 'test(/_(376|606|708)$|_0[0-9]{3}_/)'
+cd src-tauri && cargo nextest run --workspace -E 'test(/_(376|606|708)$|_0[0-9]{3}_/)'
 ```
 
-Runs the per-migration round-trip / data-preservation tests. These live in `db::tests` (`src-tauri/src/db/tests.rs`) and its `snapshot`/`spaces` sibling `tests.rs` files, under two naming conventions:
+The `_376`/`_606`/`_708` suffixes pin tests that predate the naming convention. The leading `0` in `_0[0-9]{3}_` keeps it off issue numbers and sizes, so revisit the filter at migration `1000`.
 
-- **Older batch, pinned by issue number.** The `_376`/`_606`/`_708` tests (round-trip + cascade harness, satellite preservation, spaces registry) predate the migration-number convention, so those three suffixes stay pinned in the filter.
-- **Current convention, matched by pattern.** `<table>_<NNNN>_<what>_<issue>`, e.g. `peer_refs_0111_streamed_at_add_preserves_existing_rows_4084`. The `_0[0-9]{3}_` half of the filter selects any name embedding a zero-padded migration number, so no filter edit is needed per migration.
-- **Ceiling: migration numbers below `1000`.** The leading literal `0` is what keeps `_0[0-9]{3}_` from matching issue numbers, years and sizes in other test names. Revisit the filter when numbers reach `1000`.
-- **Contributor rule.** Every new migration needs a test that inserts representative data and reads it back, named with its `_<NNNN>_` number. The `migration-test-coverage` hook (`scripts/check-migration-test-coverage.mjs`) fails on a migration with no such test in the three files above; pre-convention migrations are grandfathered in `src-tauri/migrations-test-coverage-baseline.txt`.
+## Mock contract
 
-There is no `migration_tests` module; the regex filter is what selects these tests.
-
-## Migration → mock: update the JS mock in the same PR (#3084)
-
-The browser/e2e Tauri mock (`src/lib/tauri-mock/`) is a hand-maintained second implementation of the schema, so a migration that changes a table or column the mock models leaves it silently modeling the old schema (the tag-space bug: the mock kept reading a retired `block_properties(key='space')` row after the tag moved to a native column). Rule: such a migration updates the mock in the same PR and adds or adjusts a `conformance/fixtures/*.json` fixture. The [`conformance-coverage.test.ts`](../../src/lib/tauri-mock/__tests__/conformance-coverage.test.ts) ratchet keeps mutating commands fixture-covered; see root [`AGENTS.md` § Testing invariants](../../AGENTS.md#testing-invariants-anti-drift).
-
-Guard: `check-migration-mock-contract` (`scripts/check-migration-mock-contract.py`) maps each backend table to the mock files that model it and fails on any new migration touching a mapped table unless a modeling mock file changed alongside it or the migration carries a literal `-- mock-unaffected: <reason>` line (for index-only / derived-cache-only changes). In CI's `--all-files` run every mock file is "changed", so there only the annotation or baseline membership exempts. After landing a migration, grandfather it:
-
-```bash
-python3 scripts/check-migration-mock-contract.py --update-baseline
-```
-
-## Cross-references
-
-- Root [`AGENTS.md`](../../AGENTS.md) §Key Architectural Invariants — invariant #1 (op log is append-only).
-- [`docs/architecture/ci-and-tooling.md`](../../docs/architecture/ci-and-tooling.md) §Migrations — high-level pipeline.
-- [`src-tauri/tests/AGENTS.md`](../tests/AGENTS.md) — test patterns for migration-touching code.
+Root [`AGENTS.md` § Testing invariants](../../AGENTS.md#testing-invariants-anti-drift) requires updating the mock with the migration. The `check-migration-mock-contract` hook fails a new migration touching a table the mock models unless a modeling mock file changed too or the migration carries a `-- mock-unaffected: <reason>` line (index-only or derived-cache-only changes). After landing a migration, grandfather it with `python3 scripts/check-migration-mock-contract.py --update-baseline`.

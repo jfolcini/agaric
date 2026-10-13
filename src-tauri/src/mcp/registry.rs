@@ -66,14 +66,19 @@ pub(crate) const TOOL_LIST_PROPERTY_DEFS: &str = "list_property_defs";
 pub(crate) const TOOL_GET_AGENDA: &str = "get_agenda";
 pub(crate) const TOOL_JOURNAL_FOR_DATE: &str = "journal_for_date";
 pub(crate) const TOOL_LIST_SPACES: &str = "list_spaces";
+pub(crate) const TOOL_GET_PAGE_MARKDOWN: &str = "get_page_markdown";
 
 // Read-write tool names (`tools_rw.rs`).
 pub(crate) const TOOL_APPEND_BLOCK: &str = "append_block";
+pub(crate) const TOOL_APPEND_MARKDOWN: &str = "append_markdown";
 pub(crate) const TOOL_UPDATE_BLOCK_CONTENT: &str = "update_block_content";
 pub(crate) const TOOL_SET_PROPERTY: &str = "set_property";
 pub(crate) const TOOL_ADD_TAG: &str = "add_tag";
 pub(crate) const TOOL_CREATE_PAGE: &str = "create_page";
 pub(crate) const TOOL_DELETE_BLOCK: &str = "delete_block";
+pub(crate) const TOOL_MOVE_PAGE_TO_SPACE: &str = "move_page_to_space";
+pub(crate) const TOOL_CREATE_TAG: &str = "create_tag";
+pub(crate) const TOOL_DELETE_PROPERTY: &str = "delete_property";
 
 /// Metadata returned by [`ToolRegistry::list_tools`] — one entry per
 /// advertised tool. The JSON shape matches MCP's `tools/list` response:

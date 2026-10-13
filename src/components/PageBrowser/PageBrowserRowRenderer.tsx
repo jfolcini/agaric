@@ -13,9 +13,8 @@ import type React from 'react'
 import { useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
 
-import { DensityRow } from '@/components/PageBrowser/DensityRow'
+import { PageRow } from '@/components/PageBrowser/PageRow'
 import { PageTreeItem } from '@/components/pages/PageTreeItem'
-import type { DensityMode } from '@/hooks/usePageBrowserDensity'
 import type { PageBrowserRow } from '@/hooks/usePageBrowserGrouping'
 import type { ViewportObserver } from '@/hooks/useViewportObserver'
 import type { PageWithMetadataRow } from '@/lib/bindings'
@@ -48,12 +47,8 @@ export interface PageBrowserRowRendererProps {
   selectedIds: ReadonlySet<string>
   onToggleMultiSelect: (pageId: string, e: React.MouseEvent) => void
   /**
-   * Phase 3 — active density mode for the `<DensityRow>` body.
-   */
-  density: DensityMode
-  /**
    * #2850 — shared viewport-intersection observer (mobile/no-hover
-   * prefetch fallback). Threaded down to `<DensityRow>` leaf rows only;
+   * prefetch fallback). Threaded down to `<PageRow>` leaf rows only;
    * header/tree-page rows ignore it.
    */
   viewport: ViewportObserver
@@ -73,11 +68,10 @@ export function PageBrowserRowRenderer(
   const { row } = props
   if (row.kind === 'header') return <HeaderRow {...props} row={row} />
   if (row.kind === 'tree-page') return <TreePageRow {...props} row={row} />
-  // Phase 3 — leaf `page` rows render via `<DensityRow>`
-  // (metadata-aware, density-aware). The density-aware row reads its
-  // metadata via a cast through `PageWithMetadataRow` (the IPC payload
-  // is a structural superset).
-  return <DensityPageRow {...props} row={row} />
+  // Leaf `page` rows render via `<PageRow>`, which reads its metadata
+  // via a cast through `PageWithMetadataRow` (the IPC payload is a
+  // structural superset).
+  return <FlatPageRow {...props} row={row} />
 }
 
 interface HeaderRowProps extends PageBrowserRowRendererProps {
@@ -206,7 +200,7 @@ function TreePageRow({
 /**
  * Phase 3 — adapter from the row-renderer's props plus the
  * `PageBrowserRow` discriminated union member to the typed primitive
- * props that `<DensityRow>` expects.
+ * props that `<PageRow>` expects.
  *
  * The `page` field is typed as `BlockRow` (the grouping hook normalises
  * to it) but the underlying payload is actually a `PageWithMetadataRow`
@@ -217,11 +211,11 @@ function TreePageRow({
  * a typed cast and fall back to safe zero defaults when the cast misses
  * (e.g. an optimistically-inserted `BlockRow` from the create form).
  */
-interface DensityPageRowProps extends PageBrowserRowRendererProps {
+interface FlatPageRowProps extends PageBrowserRowRendererProps {
   row: Extract<PageBrowserRow, { kind: 'page' }>
 }
 
-function DensityPageRow({
+function FlatPageRow({
   virtualRow,
   row,
   measureElement,
@@ -233,11 +227,10 @@ function DensityPageRow({
   toggleStar,
   onPageSelect,
   onDeleteRequest,
-  density,
   selectedIds,
   onToggleMultiSelect,
   viewport,
-}: DensityPageRowProps): React.ReactElement {
+}: FlatPageRowProps): React.ReactElement {
   const { page, pageIndex } = row
   const trimmedFilter = filterText.trim()
   const showAliasBadge =
@@ -259,11 +252,11 @@ function DensityPageRow({
   const hasDue = meta.flags?.hasDue ?? false
 
   // Phase 3 — stabilise the bridging callback so `React.memo`'s
-  // shallow compare on `<DensityRow>` hits across parent re-renders.
+  // shallow compare on `<PageRow>` hits across parent re-renders.
   // Without the `useCallback` the inline arrow allocated a fresh
   // function identity per render of every row, defeating the memo for
   // the entire visible list on any keystroke / star toggle. The signature
-  // bridge is necessary because `DensityRowProps.onSelect` requires a
+  // bridge is necessary because `PageRowProps.onSelect` requires a
   // non-optional title while `PageBrowserRowRenderer`'s `onPageSelect`
   // is optional.
   const handleSelect = useCallback(
@@ -272,11 +265,10 @@ function DensityPageRow({
   )
 
   return (
-    <DensityRow
+    <PageRow
       pageId={page.id}
       title={page.content}
       filterText={trimmedFilter}
-      density={density}
       virtualRowIndex={virtualRow.index}
       virtualRowStart={virtualRow.start}
       measureElement={measureElement}

@@ -32,7 +32,7 @@ const TAG = runScopedMarker('wdio-batch-tag')
 const PAGES = ['a', 'b', 'c'].map((suffix) => runScopedMarker(`wdio-batch-page-${suffix}`))
 
 function pageRow(title: string) {
-  // DensityRow.tsx: the row div carries `data-page-item`; the title is the
+  // PageRow.tsx: the row div carries `data-page-item`; the title is the
   // `span.page-browser-item-title` inside its button.
   return $(
     `//div[@data-page-item][.//span[contains(@class, "page-browser-item-title")][normalize-space(.)="${title}"]]`,
@@ -61,7 +61,7 @@ describe('Agaric real-backend batch add-tag (#4671)', () => {
     }
 
     // 3. Select the three rows. The checkbox is opacity-0 until the row is
-    //    hovered (DensityRow.tsx), so hover first; `data-selected` confirms.
+    //    hovered (PageRow.tsx), so hover first; `data-selected` confirms.
     await navigateTo('Pages')
     for (const title of PAGES) {
       const row = pageRow(title)

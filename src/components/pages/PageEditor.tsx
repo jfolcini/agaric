@@ -36,6 +36,7 @@ import {
   usePageBlockStore,
   usePageBlockStoreApi,
 } from '@/stores/page-blocks'
+import { useSpaceStore } from '@/stores/space'
 import { useUndoStore } from '@/stores/undo'
 import { useInPageFindStore } from '@/stores/useInPageFindStore'
 
@@ -297,11 +298,14 @@ function PageEditorInner({
       // createBelow needs an afterBlockId, so for the empty case we call
       // createBlock from the Tauri API directly.
       try {
+        const spaceId = useSpaceStore.getState().currentSpaceId
+        if (spaceId == null) throw new Error('No active space; cannot create block')
         const { createBlock } = await import('@/lib/ipc-helpers')
         const result = await createBlock({
           blockType: 'content',
           content: '',
           parentId: pageId,
+          spaceId,
         })
         // Splice the returned row into the local store
         // instead of re-fetching the full page. The backend response
@@ -356,7 +360,8 @@ function PageEditorInner({
   return (
     <div
       ref={pageRef}
-      className="page-editor flex flex-col gap-3 min-w-0 max-w-reading"
+      // `w-full`: the auto margins turn off the flex stretch, so a short page would shrink.
+      className="page-editor flex flex-col gap-3 min-w-0 w-full max-w-reading mx-auto"
       onPointerDown={handleBackgroundMouseDown}
     >
       {/* Header: back button + editable title + tag badges */}

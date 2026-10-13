@@ -11,12 +11,13 @@
  * From BlockTree.tsx for.
  */
 
-import { useEffect, useMemo } from 'react'
+import { useEffect, useMemo, useRef } from 'react'
 
 import { unwrap } from '@/lib/app-error'
 import { commands } from '@/lib/bindings'
 import { resolveStoreTitle, unresolvedBlockLabel } from '@/lib/block-title'
 import { logger } from '@/lib/logger'
+import { requireActiveScope } from '@/lib/space-scope'
 import { keyFor, useResolveStore } from '@/stores/resolve'
 import { useSpaceStore } from '@/stores/space'
 
@@ -62,26 +63,22 @@ export function collectUncachedLinkIds(
 /**
  * Batch-resolve the given ids and write results back to the resolve store.
  * Logs and swallows transport errors; honours a cancellation predicate so
- * the caller can abort on unmount without an extra flag at the call site.
+ * the caller can drop an answer that no longer applies.
  *
- * Pass `spaceId` to scope the resolve to the active space.
- * Foreign-space targets are filtered out by the backend; we mark them
- * as `deleted: true` placeholders here so the chip's `resolveStatus`
- * lookup hits a cached entry and renders via the broken-link UX
- * instead of the active default.
+ * The resolve is scoped to the active `spaceId`. Foreign-space targets are
+ * filtered out by the backend; we mark them as `deleted: true` placeholders
+ * here so the chip's `resolveStatus` lookup hits a cached entry and renders
+ * via the broken-link UX instead of the active default. With no active space
+ * (store not hydrated) nothing is dispatched (#5415).
  */
 export async function fetchAndCacheLinks(
   ids: ReadonlySet<string>,
   spaceId: string | null,
   isCancelled: () => boolean,
 ): Promise<void> {
+  if (spaceId == null) return
   try {
-    const resolved = unwrap(
-      await commands.batchResolve(
-        [...ids],
-        spaceId == null ? { kind: 'global' } : { kind: 'active', space_id: spaceId },
-      ),
-    )
+    const resolved = unwrap(await commands.batchResolve([...ids], requireActiveScope(spaceId)))
     if (isCancelled()) return
     const store = useResolveStore.getState()
     const resolvedIds = new Set(resolved.map((r) => r.id))
@@ -161,16 +158,34 @@ export function useBlockLinkResolve(
     [blocks],
   )
 
+  // #5443 — `${spaceId}::${id}` keys asked for and not yet answered, so a
+  // window that moves while they are in flight does not ask for them again.
+  const inFlightRef = useRef(new Set<string>())
+
   useEffect(() => {
-    let cancelled = false
     async function resolveUncachedLinks(): Promise<void> {
       try {
         // #5245 — these rows are live and current, so chips already showing one follow it.
         useResolveStore.getState().refreshCachedBlocks(blocks)
         const spaceId = useSpaceStore.getState().currentSpaceId
+        const inFlight = inFlightRef.current
         const uncached = collectUncachedLinkIds(blocks, spaceId)
+        for (const id of uncached) if (inFlight.has(keyFor(spaceId, id))) uncached.delete(id)
         if (uncached.size === 0) return
-        await fetchAndCacheLinks(uncached, spaceId, () => cancelled)
+        const keys = [...uncached].map((id) => keyFor(spaceId, id))
+        for (const key of keys) inFlight.add(key)
+        try {
+          // The answer stays right for its ids after the window moves or the
+          // tree unmounts; only a space switch makes it wrong, since the store
+          // writes it under the active space.
+          await fetchAndCacheLinks(
+            uncached,
+            spaceId,
+            () => useSpaceStore.getState().currentSpaceId !== spaceId,
+          )
+        } finally {
+          for (const key of keys) inFlight.delete(key)
+        }
       } catch (err) {
         logger.warn(
           'BlockTree',
@@ -181,9 +196,6 @@ export function useBlockLinkResolve(
       }
     }
     void resolveUncachedLinks()
-    return () => {
-      cancelled = true
-    }
     // oxlint-disable-next-line react-hooks/exhaustive-deps -- `blocks` is read inside the effect but keyed via `contentSignature`, which is recomputed from `blocks` in the memo above and changes iff some block's id/content changes. Depending on raw `blocks` would defeat the signature guard (#1266); a same-id/content reorder reallocation must NOT re-run the full-page scan.
   }, [contentSignature])
 }

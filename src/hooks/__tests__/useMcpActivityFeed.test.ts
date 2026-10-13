@@ -148,6 +148,25 @@ describe('useMcpActivityFeed', () => {
       expect(result.current.entries.map((e) => e.summary)).toEqual(['old-2', 'old-1'])
     })
 
+    // #5394 — Undo reverts every op the call wrote, so the backfill must keep them.
+    it('keeps every op ref of a backfilled multi-op entry', async () => {
+      const opRef = { device_id: 'dev-1', seq: 4 }
+      const additionalOpRefs = [
+        { device_id: 'dev-1', seq: 5 },
+        { device_id: 'dev-1', seq: 6 },
+      ]
+      mockGetMcpRecentActivity.mockResolvedValue({
+        status: 'ok',
+        data: [makeEntry({ opRef, additionalOpRefs })],
+      })
+      const { result } = renderHook(() => useMcpActivityFeed())
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(0)
+      })
+      expect(result.current.entries[0]?.opRef).toEqual(opRef)
+      expect(result.current.entries[0]?.additionalOpRefs).toEqual(additionalOpRefs)
+    })
+
     it('merges backfill with entries the live listener already accumulated', async () => {
       mockGetMcpRecentActivity.mockResolvedValue({
         status: 'ok',

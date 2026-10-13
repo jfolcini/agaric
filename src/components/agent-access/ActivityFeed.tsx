@@ -32,7 +32,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import type { ActivityEntry } from '@/hooks/useMcpActivityFeed'
 import { reloadChangedPageStores } from '@/hooks/useSyncEvents'
 import { isNonReversible, unwrap } from '@/lib/app-error'
-import { commands } from '@/lib/bindings'
+import { commands, type OpRef } from '@/lib/bindings'
 import { formatRelativeTime } from '@/lib/format-relative-time'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
@@ -64,12 +64,12 @@ export function ActivityFeed({ entries }: ActivityFeedProps): React.ReactElement
   // Slice 4 — per-session bulk revert.
   //
   // Confirmation target for the per-session bulk-revert flow.  The
-  // payload carries the session id + the exact opRefs we'll submit so
-  // confirm-time count matches the confirmed action.  Null when the
-  // dialog is closed.
+  // payload carries the session id + the exact op-ref groups (one per
+  // action) we'll submit so confirm-time count matches the confirmed
+  // action.  Null when the dialog is closed.
   const [pendingSessionRevert, setPendingSessionRevert] = useState<{
     sessionId: string
-    ops: Array<{ device_id: string; seq: number }>
+    ops: OpRef[][]
   } | null>(null)
   // Session ids currently in-flight — used to disable the per-session
   // button and swap its icon to a spinner.  Keyed by sessionId.
@@ -89,7 +89,7 @@ export function ActivityFeed({ entries }: ActivityFeedProps): React.ReactElement
   // pending.  On `NonReversible` we show a dedicated toast; every
   // other error falls through to the generic failure notify.
   const handleUndo = useCallback(
-    async (opRef: { device_id: string; seq: number }) => {
+    async (opRef: OpRef, additionalOpRefs: OpRef[]) => {
       const key = `${opRef.device_id}:${opRef.seq}`
       setUndoingKeys((prev) => {
         const next = new Set(prev)
@@ -97,7 +97,7 @@ export function ActivityFeed({ entries }: ActivityFeedProps): React.ReactElement
         return next
       })
       try {
-        unwrap(await commands.revertOps([opRef]))
+        unwrap(await commands.revertOps([opRef, ...additionalOpRefs]))
         // #5276 — the full reload a History revert runs.
         reloadChangedPageStores()
         notify.success(t('agentAccess.undoAgentOp.success'))
@@ -130,14 +130,15 @@ export function ActivityFeed({ entries }: ActivityFeedProps): React.ReactElement
 
   // Slice 4 — derived per-session data.
   //
-  // Walk the current entries (newest-first) and bucket the opRef of
-  // every agent+ok+opRef entry by sessionId.  Used to:
-  //   - gate the per-session t('agentAccess.revertSession.button') button on ≥ 2 ops
+  // Walk the current entries (newest-first) and bucket the op refs of
+  // every agent+ok+opRef entry by sessionId, one group per action (a
+  // multi-op call's refs revert together).  Used to:
+  //   - gate the per-session t('agentAccess.revertSession.button') button on ≥ 2 actions
   //   - collect the opRef payload when the button is clicked
   //   - decide which entry gets the session header (the first-seen
   //     of each sessionId in newest-first order)
   const undoableBySession = useMemo(() => {
-    const map = new Map<string, Array<{ device_id: string; seq: number }>>()
+    const map = new Map<string, OpRef[][]>()
     for (const entry of entries) {
       if (
         entry.actorKind === 'agent' &&
@@ -149,7 +150,7 @@ export function ActivityFeed({ entries }: ActivityFeedProps): React.ReactElement
         !revertedOpKeys.has(`${entry.opRef.device_id}:${entry.opRef.seq}`)
       ) {
         const list = map.get(entry.sessionId) ?? []
-        list.push(entry.opRef)
+        list.push([entry.opRef, ...(entry.additionalOpRefs ?? [])])
         map.set(entry.sessionId, list)
       }
     }
@@ -193,7 +194,7 @@ export function ActivityFeed({ entries }: ActivityFeedProps): React.ReactElement
       return next
     })
     try {
-      unwrap(await commands.revertOps(target.ops))
+      unwrap(await commands.revertOps(target.ops.flat()))
       reloadChangedPageStores()
       notify.success(t('agentAccess.revertSession.success', { count: target.ops.length }))
       // Mark every opRef in the batch as terminal-success so
@@ -202,7 +203,7 @@ export function ActivityFeed({ entries }: ActivityFeedProps): React.ReactElement
       // the user can retry the whole batch.
       setRevertedOpKeys((prev) => {
         const next = new Set(prev)
-        for (const op of target.ops) {
+        for (const op of target.ops.flat()) {
           next.add(`${op.device_id}:${op.seq}`)
         }
         return next
@@ -314,7 +315,9 @@ export function ActivityFeed({ entries }: ActivityFeedProps): React.ReactElement
                               size="sm"
                               className="shrink-0"
                               onClick={() => {
-                                if (entry.opRef != null) void handleUndo(entry.opRef)
+                                if (entry.opRef != null) {
+                                  void handleUndo(entry.opRef, entry.additionalOpRefs ?? [])
+                                }
                               }}
                               disabled={isUndoing}
                               aria-busy={isUndoing}

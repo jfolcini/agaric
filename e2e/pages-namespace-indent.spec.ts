@@ -5,7 +5,7 @@ import { expect, navigateToView, test, waitForBoot } from './helpers'
 /**
  * Geometry guard for the `Pages` list's two row shapes.
  *
- * The list interleaves flat top-level page rows (`DensityRow`) with
+ * The list interleaves flat top-level page rows (`PageRow`) with
  * namespace subtrees (`PageTreeItem`). Only the flat row reserves width
  * for a multi-select checkbox and a star toggle, and both keep that
  * width while invisible. A subtree that does not reserve the same run
@@ -16,7 +16,7 @@ import { expect, navigateToView, test, waitForBoot } from './helpers'
  *
  * `page-tree-gutter` (`src/index.css`) is the fix. These assertions are
  * the pin on both sides of the mirror — they redden if the utility goes
- * away, and equally if `DensityRow`'s leading affordances change size.
+ * away, and equally if `PageRow`'s leading affordances change size.
  *
  * jsdom has no layout engine, so this cannot live in a vitest file.
  */

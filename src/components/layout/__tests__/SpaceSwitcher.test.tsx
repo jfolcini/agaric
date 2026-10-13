@@ -11,14 +11,11 @@
  *  - Mounts trigger `refreshAvailableSpaces` via listSpaces mock
  *  - Options render in alphabetical order (server-sorted by list_spaces)
  *  - Selecting an option calls `setCurrentSpace` with the right id
- *  - "Manage spaces…" is enabled and opens the SpaceManageDialog
+ *  - "Manage spaces…" and "Create another space" open Settings › Spaces
  *  - a11y compliance via axe audit
  *
  * Radix Select is mocked globally via `src/test-setup.ts` (native
- * `<select>` shim) so `userEvent.selectOptions()` works in jsdom. The
- * SpaceManageDialog child is stubbed with a render-prop spy so this
- * suite stays focused on the switcher's behaviour — the dialog has its
- * own dedicated test file.
+ * `<select>` shim) so `userEvent.selectOptions()` works in jsdom.
  */
 
 import { render, screen, waitFor } from '@testing-library/react'
@@ -28,6 +25,7 @@ import { axe } from 'vitest-axe'
 
 import { SpaceSwitcher } from '@/components/layout/SpaceSwitcher'
 import type { SpaceRow } from '@/lib/bindings'
+import { useNavigationStore } from '@/stores/navigation'
 import { useSpaceStore } from '@/stores/space'
 
 // #2927 phase 7 — `useSpaceStore.refreshAvailableSpaces` calls
@@ -78,15 +76,6 @@ vi.mock('@/components/ui/select', async () => {
   return { ...actual, SelectTrigger }
 })
 
-// Stub the manage dialog so the switcher tests stay isolated. The stub
-// renders a sentinel element only when `open === true` so tests can
-// assert the dialog flipped open without exercising the real dialog's
-// emptiness-probe IPC, accent picker, etc.
-vi.mock('@/components/SpaceManageDialog', () => ({
-  SpaceManageDialog: ({ open }: { open: boolean; onOpenChange: (open: boolean) => void }) =>
-    open ? <div data-testid="space-manage-dialog-stub" /> : null,
-}))
-
 const PERSONAL: SpaceRow = { id: 'SPACE_AAAA', name: 'Personal', accent_color: null }
 const WORK: SpaceRow = { id: 'SPACE_ZZZZ', name: 'Work', accent_color: null }
 
@@ -96,6 +85,7 @@ beforeEach(() => {
     availableSpaces: [],
     isReady: false,
   })
+  useNavigationStore.setState({ currentView: 'journal', pendingSettingsTab: null })
   localStorage.clear()
   vi.clearAllMocks()
 })
@@ -155,55 +145,30 @@ describe('SpaceSwitcher', () => {
     expect(useSpaceStore.getState().currentSpaceId).toBe(WORK.id)
   })
 
-  // Phase 6 — the "Manage spaces…" entry is no longer a
-  // disabled placeholder. It is an enabled SelectItem and selecting it
-  // opens `SpaceManageDialog` instead of switching space. The dialog
-  // mount itself is asserted via the stub installed at the top of the
-  // file.
-  it('renders the Manage spaces option as enabled and opens the manage dialog when selected', async () => {
+  // "Manage spaces…" lands on Settings › Spaces (#5362) instead of
+  // switching space.
+  it('opens Settings on the Spaces tab when Manage spaces is selected', async () => {
     const user = userEvent.setup()
+    const onNavigate = vi.fn()
     mockedListSpaces.mockResolvedValueOnce([PERSONAL, WORK])
 
-    render(<SpaceSwitcher />)
+    render(<SpaceSwitcher onNavigate={onNavigate} />)
     await waitFor(() => {
       expect(useSpaceStore.getState().isReady).toBe(true)
     })
 
     const manageOption = screen.getByRole('option', { name: /Manage spaces/ })
-    expect(manageOption).toBeInTheDocument()
-    // Phase 6 — must NOT be disabled any more. The disabled placeholder
-    // was the Phase 1 stub; the dialog is now real.
     expect(manageOption).not.toBeDisabled()
-    // The dialog stub renders nothing when `open === false`.
-    expect(screen.queryByTestId('space-manage-dialog-stub')).not.toBeInTheDocument()
 
     const select = screen.getByRole('combobox', { name: /Switch space/ })
     await user.selectOptions(select, '__manage__')
 
+    const navigation = useNavigationStore.getState()
+    expect(navigation.currentView).toBe('settings')
+    expect(navigation.pendingSettingsTab).toBe('spaces')
+    expect(onNavigate).toHaveBeenCalledTimes(1)
     // The sentinel must NOT switch space — `currentSpaceId` is still
-    // the alphabetical fallback (Personal). It must, however, open the
-    // SpaceManageDialog.
-    expect(useSpaceStore.getState().currentSpaceId).toBe(PERSONAL.id)
-    expect(screen.getByTestId('space-manage-dialog-stub')).toBeInTheDocument()
-  })
-
-  it('does not update currentSpaceId when the Manage sentinel is selected', async () => {
-    const user = userEvent.setup()
-    mockedListSpaces.mockResolvedValueOnce([PERSONAL, WORK])
-
-    render(<SpaceSwitcher />)
-    await waitFor(() => {
-      expect(useSpaceStore.getState().isReady).toBe(true)
-    })
-    // Reconciliation falls back to Personal.
-    expect(useSpaceStore.getState().currentSpaceId).toBe(PERSONAL.id)
-
-    const select = screen.getByRole('combobox', { name: /Switch space/ })
-    // Selecting the Manage sentinel must not switch space — the
-    // component short-circuits the sentinel and routes the click to
-    // the dialog instead.
-    await user.selectOptions(select, '__manage__')
-
+    // the alphabetical fallback (Personal).
     expect(useSpaceStore.getState().currentSpaceId).toBe(PERSONAL.id)
   })
 
@@ -430,8 +395,8 @@ describe('SpaceSwitcher', () => {
   // the manage flow is discoverable without scanning past the row to
   // the "Manage spaces…" sentinel. #2281 — it is now a real SelectItem
   // (CREATE_SENTINEL) so it joins Radix Select's roving focus and is
-  // keyboard-reachable; selecting it opens the same `SpaceManageDialog`
-  // the MANAGE_SENTINEL route opens without switching space.
+  // keyboard-reachable; selecting it opens Settings › Spaces, as the
+  // MANAGE_SENTINEL route does, without switching space.
   it('renders the create-another-space hint as an option when there is only one space', async () => {
     mockedListSpaces.mockResolvedValueOnce([PERSONAL])
 
@@ -460,7 +425,7 @@ describe('SpaceSwitcher', () => {
     expect(screen.queryByRole('option', { name: /Create another space/ })).not.toBeInTheDocument()
   })
 
-  it('opens the SpaceManageDialog when the create-another-space hint is selected', async () => {
+  it('opens Settings on the Spaces tab when the create-another-space hint is selected', async () => {
     const user = userEvent.setup()
     mockedListSpaces.mockResolvedValueOnce([PERSONAL])
 
@@ -469,17 +434,16 @@ describe('SpaceSwitcher', () => {
       expect(useSpaceStore.getState().isReady).toBe(true)
     })
 
-    // The dialog stub renders nothing when `open === false`.
-    expect(screen.queryByTestId('space-manage-dialog-stub')).not.toBeInTheDocument()
-
     const select = screen.getByRole('combobox', { name: /Switch space/ })
     await user.selectOptions(select, '__create__')
 
     // Selecting the CREATE sentinel must NOT switch space (currentSpaceId
-    // stays at the alphabetical fallback) — it must flip the manage dialog
-    // open via the same `setManageOpen(true)` path MANAGE_SENTINEL uses.
+    // stays at the alphabetical fallback) — it lands on Settings › Spaces,
+    // as MANAGE_SENTINEL does.
     expect(useSpaceStore.getState().currentSpaceId).toBe(PERSONAL.id)
-    expect(screen.getByTestId('space-manage-dialog-stub')).toBeInTheDocument()
+    const navigation = useNavigationStore.getState()
+    expect(navigation.currentView).toBe('settings')
+    expect(navigation.pendingSettingsTab).toBe('spaces')
   })
 
   // ── tooltip lists the first 5 space digit mappings ──

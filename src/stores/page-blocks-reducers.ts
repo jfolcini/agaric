@@ -24,6 +24,7 @@ import { logger } from '@/lib/logger'
 import { notifyPageAdded, notifyTagAdded } from '@/lib/name-change-bus'
 import { notify } from '@/lib/notify'
 import { invalidatePropertyCaches } from '@/lib/property-caches'
+import { requireActiveScope } from '@/lib/space-scope'
 import {
   buildIndexById,
   getDragDescendants,
@@ -246,6 +247,9 @@ export function createReducers({
       })
 
       try {
+        // #5415 — no active space: refuse through the rollback below.
+        const spaceId = useSpaceStore.getState().currentSpaceId
+        if (spaceId == null) throw new Error('No active space; cannot create block')
         // #730 — route through the shared pool_busy retry so a transient
         // connection-pool blip doesn't surface as a create failure / lost
         // block. retryOnPoolBusy re-throws every non-pool_busy error
@@ -257,7 +261,7 @@ export function createReducers({
               content,
               parentId ?? null,
               afterSlot + 1,
-              { kind: 'global' },
+              requireActiveScope(spaceId),
               newId,
             )
             .then(unwrap),

@@ -11,5 +11,7 @@ page_id: "[ULID]"
 parent_id: ~
 position: 1
 priority: ~
+properties: []
 scheduled_date: ~
+tags: []
 todo_state: ~

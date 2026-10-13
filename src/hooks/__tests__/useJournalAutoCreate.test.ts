@@ -1,12 +1,20 @@
 import { invoke } from '@tauri-apps/api/core'
 import { act, renderHook, waitFor } from '@testing-library/react'
 import { format } from 'date-fns'
+import { useMemo } from 'react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { makePage } from '@/__tests__/fixtures'
 import { mockInvokeCommands } from '@/__tests__/helpers/invoke'
+import {
+  __resetCalendarPageDatesForTests,
+  useCalendarPageDates,
+} from '@/hooks/useCalendarPageDates'
 import { useJournalAutoCreate } from '@/hooks/useJournalAutoCreate'
 import type { BlockRow } from '@/lib/bindings'
+import { getCalendarMonthRange } from '@/lib/date-utils'
+import { useJournalStore } from '@/stores/journal'
+import { useSpaceStore } from '@/stores/space'
 
 const mockedInvoke = vi.mocked(invoke)
 
@@ -35,12 +43,246 @@ function makeOptions(overrides: Partial<Parameters<typeof useJournalAutoCreate>[
     currentDate: new Date(),
     spaceId: 'SPACE_TEST',
     createdPages: new Map<string, string>(),
+    // #5438 — a map served from an earlier mount's cache: the probe arm.
+    // The fresh-map arm sets `pageMapFetchedThisMount` explicitly.
+    pageMap: new Map<string, string>(),
+    pageMapFetchedThisMount: false,
     handleAddBlock: vi.fn(),
     ...overrides,
   }
 }
 
+function probeCalls() {
+  return mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'get_journal_page_by_date')
+}
+
 describe('useJournalAutoCreate', () => {
+  describe('page map fetched by this mount (#5438)', () => {
+    it('creates today without probing when the fresh map lacks it', async () => {
+      const opts = makeOptions({ pageMapFetchedThisMount: true })
+      renderHook(() => useJournalAutoCreate(opts))
+      await waitFor(() => {
+        expect(opts.handleAddBlock).toHaveBeenCalledWith(todayStr)
+      })
+      expect(opts.handleAddBlock).toHaveBeenCalledTimes(1)
+      expect(probeCalls()).toHaveLength(0)
+    })
+
+    it('neither probes nor creates when the fresh map already has today', async () => {
+      const opts = makeOptions({
+        pageMapFetchedThisMount: true,
+        pageMap: new Map([[todayStr, 'P_TODAY']]),
+      })
+      renderHook(() => useJournalAutoCreate(opts))
+      await Promise.resolve()
+      await Promise.resolve()
+      expect(opts.handleAddBlock).not.toHaveBeenCalled()
+      expect(probeCalls()).toHaveLength(0)
+    })
+
+    it('re-probes a map served from an earlier mount, even when it lacks today', async () => {
+      const opts = makeOptions({ pageMapFetchedThisMount: false })
+      renderHook(() => useJournalAutoCreate(opts))
+      await waitFor(() => {
+        expect(opts.handleAddBlock).toHaveBeenCalledWith(todayStr)
+      })
+      expect(probeCalls()).toHaveLength(1)
+    })
+
+    it('a create from the fresh map claims the date, so the shortcut does not create again', async () => {
+      const opts = makeOptions({ pageMapFetchedThisMount: true })
+      renderHook(() => useJournalAutoCreate(opts))
+      await waitFor(() => {
+        expect(opts.handleAddBlock).toHaveBeenCalledTimes(1)
+      })
+
+      act(() => {
+        document.dispatchEvent(new KeyboardEvent('keydown', { key: 'n', bubbles: true }))
+      })
+      // The shortcut probes (`null` = no page) and then bails on the claim.
+      await waitFor(() => {
+        expect(probeCalls()).toHaveLength(1)
+      })
+      await Promise.resolve()
+      await Promise.resolve()
+      expect(opts.handleAddBlock).toHaveBeenCalledTimes(1)
+    })
+  })
+
+  // #5460 review — `JournalPage` stays mounted across a space switch or a
+  // month change. Either lands in one render where `useCalendarPageDates`
+  // still reports the previous key's map with `loading` false; only
+  // `fetchedThisMount` says it is not the new key's.
+  describe('the page map still describes the previous space or month (#5460)', () => {
+    const today = new Date()
+    // Another day of today's month: the calendar range is keyed by month.
+    const otherDay = new Date(today.getFullYear(), today.getMonth(), today.getDate() === 1 ? 2 : 1)
+    const noPages = new Map<string, string>()
+
+    /** `useCalendarPageDates` and `useJournalAutoCreate` wired as `JournalPage` wires them. */
+    function useJournalLike(handleAddBlock: (dateStr: string) => void): void {
+      const spaceId = useSpaceStore((s) => s.currentSpaceId)
+      const currentDate = useJournalStore((s) => s.currentDate)
+      const range = useMemo(() => getCalendarMonthRange(currentDate), [currentDate])
+      const { pageMap, loading, fetchedThisMount } = useCalendarPageDates(range)
+      useJournalAutoCreate({
+        loading,
+        mode: 'daily',
+        currentDate,
+        spaceId,
+        createdPages: noPages,
+        pageMap,
+        pageMapFetchedThisMount: fetchedThisMount,
+        handleAddBlock,
+      })
+    }
+
+    /** Space A has no page for today; whether space B has one is `todayInB`. */
+    function stubSpaces(todayInB: boolean): void {
+      const spaceOf = (args: Record<string, unknown>) =>
+        (args['scope'] as { space_id: string }).space_id
+      const bPage = makePage({ id: 'P_B_TODAY', content: todayStr })
+      mockedInvoke.mockImplementation(
+        mockInvokeCommands({
+          list_journal_pages_in_range: (args) =>
+            spaceOf(args) === 'SPACE_B' && todayInB ? [bPage] : [],
+          get_journal_page_by_date: (args) =>
+            spaceOf(args) === 'SPACE_B' && todayInB ? bPage : null,
+        }),
+      )
+    }
+
+    function pageMapFetches(spaceId: string) {
+      return mockedInvoke.mock.calls.filter(
+        ([cmd, args]) =>
+          cmd === 'list_journal_pages_in_range' &&
+          (args as { scope: { space_id: string } }).scope.space_id === spaceId,
+      )
+    }
+
+    beforeEach(() => {
+      __resetCalendarPageDatesForTests()
+      // The space first: the journal store reconciles its date per space on a switch.
+      useSpaceStore.setState({ currentSpaceId: 'SPACE_A', isReady: true })
+      useJournalStore.setState({ currentDate: otherDay, currentDateBySpace: {} })
+    })
+
+    /** Mount in space A on a day other than today: nothing auto-creates, no probe runs. */
+    async function mountInSpaceA(handleAddBlock: (dateStr: string) => void): Promise<void> {
+      renderHook(() => useJournalLike(handleAddBlock))
+      await waitFor(() => {
+        expect(pageMapFetches('SPACE_A')).toHaveLength(1)
+      })
+      await act(async () => {})
+      expect(handleAddBlock).not.toHaveBeenCalled()
+      expect(probeCalls()).toHaveLength(0)
+    }
+
+    /** B has no stored date, so the journal store's switch subscriber lands it on today. */
+    function switchToSpaceB(): void {
+      act(() => {
+        useSpaceStore.setState({ currentSpaceId: 'SPACE_B' })
+      })
+      expect(useJournalStore.getState().currentDate.toDateString()).toBe(today.toDateString())
+    }
+
+    it('does not create today’s page for the new space when it already has one', async () => {
+      stubSpaces(true)
+      const handleAddBlock = vi.fn()
+      await mountInSpaceA(handleAddBlock)
+
+      switchToSpaceB()
+
+      // A's map lacks today, and it must not be read as B's answer.
+      expect(handleAddBlock).not.toHaveBeenCalled()
+      // The decision for B comes from a probe scoped to B, never from A's map.
+      await waitFor(() => {
+        expect(probeCalls()).toHaveLength(1)
+      })
+      expect(mockedInvoke).toHaveBeenCalledWith(
+        'get_journal_page_by_date',
+        expect.objectContaining({
+          date: todayStr,
+          scope: { kind: 'active', space_id: 'SPACE_B' },
+        }),
+      )
+      // B's own page map has landed and still says: nothing to create.
+      await waitFor(() => {
+        expect(pageMapFetches('SPACE_B')).toHaveLength(1)
+      })
+      await act(async () => {})
+      expect(handleAddBlock).not.toHaveBeenCalled()
+    })
+
+    it('creates today’s page once for the new space when it has none', async () => {
+      stubSpaces(false)
+      const handleAddBlock = vi.fn()
+      await mountInSpaceA(handleAddBlock)
+
+      switchToSpaceB()
+
+      await waitFor(() => {
+        expect(handleAddBlock).toHaveBeenCalledWith(todayStr)
+      })
+      // B's fresh map lands after the create: the claim keeps it to one.
+      await waitFor(() => {
+        expect(pageMapFetches('SPACE_B')).toHaveLength(1)
+      })
+      await act(async () => {})
+      expect(handleAddBlock).toHaveBeenCalledTimes(1)
+    })
+
+    it('in the same space, going to today uses the map this mount fetched, without a probe', async () => {
+      stubSpaces(false)
+      const handleAddBlock = vi.fn()
+      await mountInSpaceA(handleAddBlock)
+
+      act(() => {
+        useJournalStore.setState({ currentDate: today })
+      })
+
+      await waitFor(() => {
+        expect(handleAddBlock).toHaveBeenCalledWith(todayStr)
+      })
+      expect(handleAddBlock).toHaveBeenCalledTimes(1)
+      expect(probeCalls()).toHaveLength(0)
+    })
+
+    it('a month change onto today probes instead of reading the old month’s map', async () => {
+      // Space A holds today's page; a grid two months back never lists it.
+      const aPage = makePage({ id: 'P_A_TODAY', content: todayStr })
+      mockedInvoke.mockImplementation(
+        mockInvokeCommands({
+          list_journal_pages_in_range: (args) =>
+            String(args['startDate']) <= todayStr && todayStr <= String(args['endDate'])
+              ? [aPage]
+              : [],
+          get_journal_page_by_date: () => aPage,
+        }),
+      )
+      useJournalStore.setState({
+        currentDate: new Date(today.getFullYear(), today.getMonth() - 2, 15),
+      })
+      const handleAddBlock = vi.fn()
+      await mountInSpaceA(handleAddBlock)
+
+      act(() => {
+        useJournalStore.setState({ currentDate: today })
+      })
+
+      expect(handleAddBlock).not.toHaveBeenCalled()
+      await waitFor(() => {
+        expect(probeCalls()).toHaveLength(1)
+      })
+      // Today's month has landed and lists the page: nothing to create.
+      await waitFor(() => {
+        expect(pageMapFetches('SPACE_A')).toHaveLength(2)
+      })
+      await act(async () => {})
+      expect(handleAddBlock).not.toHaveBeenCalled()
+    })
+  })
+
   it('auto-creates page on mount in daily mode when no page exists for today', async () => {
     const opts = makeOptions()
     renderHook(() => useJournalAutoCreate(opts))

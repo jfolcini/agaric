@@ -142,6 +142,28 @@ describe('fetchGraphData', () => {
     expect(page2?.is_template).toBe(true)
   })
 
+  it('populates is_journal for pages titled exactly YYYY-MM-DD (#5370)', async () => {
+    mockedInvoke.mockImplementation((cmd: string) => {
+      if (cmd === 'list_all_pages_in_space')
+        return Promise.resolve([
+          { id: 'journal', content: '2026-10-08' },
+          { id: 'dated-note', content: '2026-10-08 notes' },
+          { id: 'untitled', content: null },
+        ])
+      if (cmd === 'list_page_links') return Promise.resolve(linksOf([]))
+      if (cmd === 'list_template_page_ids_in_space') return Promise.resolve([])
+      return Promise.resolve(null)
+    })
+
+    const result = await fetchGraphData([], SPACE_ID)
+
+    expect(result.nodes.map((n) => [n.id, n.is_journal])).toEqual([
+      ['journal', true],
+      ['dated-note', false],
+      ['untitled', false],
+    ])
+  })
+
   it('computes backlink_count by counting incoming edges between known nodes', async () => {
     mockedInvoke.mockImplementation((cmd: string) => {
       if (cmd === 'list_all_pages_in_space')

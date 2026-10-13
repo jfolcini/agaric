@@ -2,7 +2,7 @@
  * usePagePrefetchIntent — shared hover/focus intent scheduler for #2850's
  * speculative page-subtree prefetch.
  *
- * Every navigation surface (`PageLink`, `DensityRow`, `CommandPalette`,
+ * Every navigation surface (`PageLink`, `PageRow`, `CommandPalette`,
  * `LinkedReferences`) wants the same shape: debounce a dwell timer on
  * `onMouseEnter`/`onFocus`, clear it on `onMouseLeave`/`onBlur`, and — when
  * the dwell elapses — kick off `prefetchPageSubtree` for whatever the

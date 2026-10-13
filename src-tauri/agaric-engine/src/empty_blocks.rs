@@ -24,8 +24,9 @@
 //!    set is stripped (`JS_TRIM_WHITESPACE`; NULL counts as blank)
 //! 3. no live children
 //! 4. `todo_state`, `priority`, `due_date`, `scheduled_date` all NULL
-//! 5. no `block_properties` row and no `attachments` row (a voice note or an
-//!    `/attach` file can be a block's whole content, #5364)
+//! 5. no `block_properties` row and no `attachments` row (attachments are
+//!    hard-deleted, so any row is live — the frontend's `list_attachments`
+//!    probe counts the same rows)
 //! 6. no `block_tags` row as `block_id`, no `block_tag_refs` row as `source_id`
 //! 7. not referenced by any live block's content — no `((id))`, no `[[id]]`
 //! 8. not the last live child of a PAGE (see `hold_back_last_page_children`)
@@ -742,29 +743,45 @@ mod tests {
         assert_survives(&pool, &id, "guard 5: block_properties row").await;
     }
 
-    // Guard 5, attachments (#5364): a voice note typed into a blank block
-    // is a row in `attachments` and nothing else on the block. Attachment
-    // rows are hard-deleted, so a row's existence is its liveness.
-    #[tokio::test]
-    async fn empty_with_an_attachment_survives_and_a_bare_one_is_swept() {
-        let (pool, _tmp) = fresh_pool().await;
-        let page = page_with_a_real_block(&pool).await;
-        let with_attachment = insert_old_empty(&pool, &page, 2).await;
-        let bare = insert_old_empty(&pool, &page, 3).await;
+    async fn insert_attachment(pool: &SqlitePool, block_id: &str) -> String {
+        let id = old_id();
+        let fs_path = format!("attachments/{id}.webm");
         sqlx::query!(
-            "INSERT INTO attachments (id, block_id, mime_type, filename, size_bytes, fs_path, created_at) \
-             VALUES ('ATT-VOICE', ?, 'audio/webm', 'voice-note.webm', 5, 'attachments/ATT-VOICE', 0)",
-            with_attachment,
+            "INSERT INTO attachments \
+             (id, block_id, mime_type, filename, size_bytes, fs_path, created_at) \
+             VALUES (?, ?, 'audio/webm', 'voice-note.webm', 2048, ?, 0)",
+            id,
+            block_id,
+            fs_path,
         )
-        .execute(&pool)
+        .execute(pool)
         .await
         .unwrap();
+        id
+    }
 
-        let sweep = run_sweep(&pool).await;
+    // Guard 5 (#5412): an attachment is content with no text. Deleting one
+    // removes its row, so the block it left behind is blank again.
+    #[tokio::test]
+    async fn empty_holding_an_attachment_survives_until_the_attachment_is_deleted() {
+        let (pool, _tmp) = fresh_pool().await;
+        let page = page_with_a_real_block(&pool).await;
+        let holder = insert_old_empty(&pool, &page, 2).await;
+        insert_attachment(&pool, &holder).await;
+        let emptied = insert_old_empty(&pool, &page, 3).await;
+        let deleted = insert_attachment(&pool, &emptied).await;
+        sqlx::query!("DELETE FROM attachments WHERE id = ?", deleted)
+            .execute(&pool)
+            .await
+            .unwrap();
 
-        assert_survives(&pool, &with_attachment, "guard 5: attachments row").await;
-        assert!(deleted_at(&pool, &bare).await.is_some());
-        assert_eq!(sweep.swept.len(), 1);
+        run_sweep(&pool).await;
+
+        assert_survives(&pool, &holder, "guard 5: attachments row").await;
+        assert!(
+            deleted_at(&pool, &emptied).await.is_some(),
+            "guard 5: a block whose attachment was deleted is blank again and must be swept"
+        );
     }
 
     async fn insert_tag(pool: &SqlitePool) -> String {

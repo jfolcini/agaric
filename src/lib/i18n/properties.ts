@@ -256,6 +256,7 @@ export const properties: Record<string, string> = {
   'propertiesView.createKey': 'Property key',
   'propertiesView.createType': 'Type',
   'propertiesView.create': 'Create',
+  'properties.newSelectOptions': 'Options, comma-separated',
   'propertiesView.deleteConfirm': 'Delete this property definition?',
   'propertiesView.deleteDesc':
     'Blocks using this property will keep their values, but the definition will be removed.',

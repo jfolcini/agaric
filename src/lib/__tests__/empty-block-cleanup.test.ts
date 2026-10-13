@@ -34,8 +34,15 @@ vi.mock('@/lib/bindings', async (importOriginal) => {
   }
 })
 
+import { invoke } from '@tauri-apps/api/core'
+
+import { makeBlockRow, makePropertyRow, withOps } from '@/__tests__/fixtures'
+import { deferred, mockInvokeCommands } from '@/__tests__/helpers/invoke'
+import type { AttachmentRow } from '@/lib/bindings'
 import { deleteBlockIfLeakedEmpty, isLeakedEmptyCandidate } from '@/lib/empty-block-cleanup'
 import type { FlatBlock } from '@/lib/tree-utils'
+import { runUnmountFlush } from '@/lib/unmount-flush'
+import { useSpaceStore } from '@/stores/space'
 
 function makeBlock(over: Partial<FlatBlock> & { id: string }): FlatBlock {
   return {
@@ -79,6 +86,7 @@ async function runCleanup(
   const deleted = await deleteBlockIfLeakedEmpty({
     blockId,
     zoomedBlockId: opts.zoomedBlockId ?? null,
+    spaceId: useSpaceStore.getState().currentSpaceId,
     remove,
     readBlocks: () => blocks,
     isPageTruncated: () => opts.truncated ?? false,
@@ -88,6 +96,8 @@ async function runCleanup(
 }
 
 beforeEach(() => {
+  // #5415 — the backlink probe carries the active space.
+  useSpaceStore.setState({ currentSpaceId: 'SPACE_1' })
   // Default: the block carries nothing. Each guard test overrides one probe.
   mockGetProperties.mockReset().mockResolvedValue([])
   mockListTagsForBlock.mockReset().mockResolvedValue([])
@@ -210,23 +220,36 @@ describe('guard — has a tag', () => {
 })
 
 describe('guard — has an attachment', () => {
-  it('survives: a voice note or an /attach file is the block’s whole content (#5364)', async () => {
-    mockListAttachments.mockResolvedValue([
-      {
-        id: 'ATT',
-        block_id: 'EMPTY',
-        mime_type: 'audio/webm',
-        filename: 'voice-note.webm',
-        size_bytes: 5,
-        fs_path: 'attachments/ATT',
-        created_at: 0,
-        content_hash: null,
-      },
-    ])
+  const attachment: AttachmentRow = {
+    id: 'ATT',
+    block_id: 'EMPTY',
+    mime_type: 'audio/webm',
+    filename: 'voice-note.webm',
+    size_bytes: 2048,
+    fs_path: 'attachments/ATT.webm',
+    created_at: 1_735_689_600_000,
+  }
+
+  it('survives while it holds an attachment, and is cleaned up once that is deleted', async () => {
+    // `/attach` or a file drop into a blank block leaves no text: the
+    // attachment IS the content (#5412).
+    let attachments = [attachment]
+    mockListAttachments.mockImplementation(async (blockId: string) =>
+      blockId === 'EMPTY' ? attachments : [],
+    )
+    const kept = await runCleanup(leakedPage())
+    expect(kept.remove).not.toHaveBeenCalled()
+
+    attachments = []
+    const cleaned = await runCleanup(leakedPage())
+    expect(cleaned.remove).toHaveBeenCalledWith('EMPTY', { undoable: false })
+  })
+
+  it('keeps the block when the attachment probe fails', async () => {
+    mockListAttachments.mockRejectedValue(new Error('pool busy'))
     const { remove, deleted } = await runCleanup(leakedPage())
     expect(deleted).toBe(false)
     expect(remove).not.toHaveBeenCalled()
-    expect(mockListAttachments).toHaveBeenCalledWith('EMPTY')
   })
 })
 
@@ -240,9 +263,21 @@ describe('guard — referenced by another block', () => {
     expect(remove).not.toHaveBeenCalled()
   })
 
-  it('asks the backlink index globally — a ref from another space still holds', async () => {
+  it('asks the backlink index in the active space — links never cross spaces', async () => {
     await runCleanup(leakedPage())
-    expect(mockGetBacklinks).toHaveBeenCalledWith('EMPTY', null, 1, { kind: 'global' })
+    expect(mockGetBacklinks).toHaveBeenCalledWith('EMPTY', null, 1, {
+      kind: 'active',
+      space_id: 'SPACE_1',
+    })
+  })
+
+  // #5415 — no active space is an unknown answer, and an unknown answer never
+  // authorises a delete.
+  it('survives when no space is active: the probe is not even sent', async () => {
+    useSpaceStore.setState({ currentSpaceId: null })
+    const { remove } = await runCleanup(leakedPage())
+    expect(remove).not.toHaveBeenCalled()
+    expect(mockGetBacklinks).not.toHaveBeenCalled()
   })
 })
 
@@ -353,6 +388,7 @@ describe('deleteBlockIfLeakedEmpty — liveness and races', () => {
       deleteBlockIfLeakedEmpty({
         blockId: 'EMPTY',
         zoomedBlockId: null,
+        spaceId: useSpaceStore.getState().currentSpaceId,
         remove,
         readBlocks: () => blocks,
         isPageTruncated: () => false,
@@ -367,6 +403,103 @@ describe('deleteBlockIfLeakedEmpty — liveness and races', () => {
     expect(mockListTagsForBlock).not.toHaveBeenCalled()
     expect(mockListAttachments).not.toHaveBeenCalled()
     expect(mockGetBacklinks).not.toHaveBeenCalled()
+  })
+})
+
+// =========================================================================
+// #5448 — a save that writes the text only after its property IPC answers
+// =========================================================================
+
+describe('a block whose `key:: value` save is still in flight (#5448)', () => {
+  /**
+   * Escape (or any flush) on a new block holding only `context:: home`: the
+   * store still shows the block blank, and the stripped (or kept) text is
+   * written only once `set_property` has answered. `settle` answers it.
+   */
+  function flushPropertyLine(blocks: FlatBlock[], answer: 'accept' | 'refuse') {
+    let stored: ReturnType<typeof makePropertyRow>[] = []
+    const asked = deferred<undefined>()
+    const answered = deferred<undefined>()
+    vi.mocked(invoke).mockImplementation(
+      mockInvokeCommands({
+        get_property_def: () => ({
+          key: 'context',
+          value_type: 'text',
+          options: null,
+          created_at: '0',
+        }),
+        set_property: async () => {
+          asked.resolve(undefined)
+          await answered.promise
+          if (answer === 'refuse') throw new Error('refused')
+          stored = [makePropertyRow({ key: 'context', value_text: 'home' })]
+          return withOps(makeBlockRow({ id: 'EMPTY' }))
+        },
+      }),
+    )
+    mockGetProperties.mockImplementation(async () => stored)
+    const edit = vi.fn(async (blockId: string, content: string) => {
+      const idx = blocks.findIndex((b) => b.id === blockId)
+      blocks[idx] = makeBlock({ ...blocks[idx], id: blockId, content })
+      return true
+    })
+    const { outcome } = runUnmountFlush({
+      blockId: 'EMPTY',
+      loaded: '',
+      changed: 'context:: home',
+      edit,
+      splitBlock: vi.fn(),
+      rootParentId: null,
+    })
+    /** Answer `set_property` once the commit has asked, i.e. after a probe not waiting would have run. */
+    const settle = async () => {
+      await asked.promise
+      answered.resolve(undefined)
+    }
+    return { settle, edit, outcome }
+  }
+
+  it('keeps the block whose value was accepted: the probe runs after the property is stored', async () => {
+    const blocks = leakedPage({ content: '' })
+    const { settle, edit } = flushPropertyLine(blocks, 'accept')
+
+    const cleanup = runCleanup(blocks)
+    await settle()
+    // The probe was not issued while the property was not yet stored.
+    expect(mockGetProperties).not.toHaveBeenCalled()
+
+    const { remove, deleted } = await cleanup
+    expect(deleted).toBe(false)
+    expect(remove).not.toHaveBeenCalled()
+    expect(edit).toHaveBeenCalledExactlyOnceWith('EMPTY', '')
+    expect(mockGetProperties).toHaveBeenCalledTimes(1)
+  })
+
+  it('keeps the block whose value was refused: the line stays as its text', async () => {
+    const blocks = leakedPage({ content: '' })
+    const { settle, edit } = flushPropertyLine(blocks, 'refuse')
+
+    const cleanup = runCleanup(blocks)
+    await settle()
+    expect(mockGetProperties).not.toHaveBeenCalled()
+
+    const { remove, deleted } = await cleanup
+    expect(deleted).toBe(false)
+    expect(remove).not.toHaveBeenCalled()
+    expect(edit).toHaveBeenCalledExactlyOnceWith('EMPTY', 'context:: home')
+  })
+
+  it('still cleans the block once the save has landed and it is really empty', async () => {
+    const blocks = leakedPage({ content: '' })
+    const { settle, outcome } = flushPropertyLine(blocks, 'accept')
+    await settle()
+    await outcome
+    // The user then removed the property: blank text, nothing stored.
+    mockGetProperties.mockResolvedValue([])
+
+    const { remove, deleted } = await runCleanup(blocks)
+    expect(deleted).toBe(true)
+    expect(remove).toHaveBeenCalledWith('EMPTY', { undoable: false })
   })
 })
 

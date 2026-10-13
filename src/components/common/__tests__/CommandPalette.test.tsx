@@ -43,6 +43,7 @@ import { notify } from '@/lib/notify'
 import { TOGGLE_SIDEBAR_EVENT } from '@/lib/overlay-events'
 import { useJournalStore } from '@/stores/journal'
 import { useNavigationStore } from '@/stores/navigation'
+import { selectPageFiltersForSpace, usePageBrowserFiltersStore } from '@/stores/pageBrowserFilters'
 import { type PageRef, useRecentPagesStore } from '@/stores/recent-pages'
 import { useResolveStore } from '@/stores/resolve'
 import { useSpaceStore } from '@/stores/space'
@@ -448,6 +449,7 @@ describe('CommandPalette — action menu (Phase 5)', () => {
   })
 
   it('selecting "Reveal in Pages view" seeds the filter and flips the view (Phase 5 expansion)', async () => {
+    usePageBrowserFiltersStore.setState({ filtersBySpace: {}, nextAddId: 0 })
     seedRecents()
     render(<CommandPalette />)
     openPalette()
@@ -458,6 +460,27 @@ describe('CommandPalette — action menu (Phase 5)', () => {
     expect(useNavigationStore.getState().pendingPageBrowserFilter).toBe('Recent')
     expect(useNavigationStore.getState().currentView).toBe('pages')
     expect(useCommandPaletteStore.getState().open).toBe(false)
+    // Not a journal page, so the default "Exclude journal pages" chip stays.
+    expect(
+      selectPageFiltersForSpace(usePageBrowserFiltersStore.getState(), 'SPACE_TEST'),
+    ).toHaveLength(1)
+  })
+
+  it('revealing a journal page drops the "Exclude journal pages" chip so it shows (#5370)', async () => {
+    usePageBrowserFiltersStore.setState({ filtersBySpace: {}, nextAddId: 0 })
+    seedRecentPagesStore([
+      { pageId: 'PAGE_J', title: '2026-10-08', visitedAt: '2026-05-19T00:00:00Z' },
+    ])
+    render(<CommandPalette />)
+    openPalette()
+    const recentRow = await screen.findByTestId('palette-recent-PAGE_J')
+    recentRow.setAttribute('aria-selected', 'true')
+    fireEvent.keyDown(screen.getByTestId('command-palette-input'), { key: 'Tab' })
+    fireEvent.click(await screen.findByTestId('palette-action-reveal-in-pages'))
+    expect(useNavigationStore.getState().pendingPageBrowserFilter).toBe('2026-10-08')
+    expect(selectPageFiltersForSpace(usePageBrowserFiltersStore.getState(), 'SPACE_TEST')).toEqual(
+      [],
+    )
   })
 
   it('block-row menu surfaces "Copy block link" with the Roam syntax (Phase 5 expansion)', async () => {

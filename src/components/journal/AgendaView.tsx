@@ -32,6 +32,7 @@ import { commands } from '@/lib/bindings'
 import { t } from '@/lib/i18n'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
+import { requireActiveScope } from '@/lib/space-scope'
 import { useSpaceStore } from '@/stores/space'
 
 interface AgendaViewProps {
@@ -156,11 +157,12 @@ export function AgendaView({ onNavigateToPage }: AgendaViewProps): React.ReactEl
   // degrades to the "Untitled" fallback rather than failing the whole view —
   // the blocks themselves loaded fine.
   useEffect(() => {
+    if (currentSpaceId == null) return
     const pageIds = collectUniquePageIds(filteredBlocks)
     if (pageIds.length === 0) return
     let cancelled = false
     commands
-      .batchResolve(pageIds, { kind: 'global' })
+      .batchResolve(pageIds, requireActiveScope(currentSpaceId))
       .then(unwrap)
       .then((resolved) => {
         if (cancelled) return
@@ -172,7 +174,7 @@ export function AgendaView({ onNavigateToPage }: AgendaViewProps): React.ReactEl
     return () => {
       cancelled = true
     }
-  }, [filteredBlocks])
+  }, [filteredBlocks, currentSpaceId])
 
   /**
    * Load the next page of agenda results.
@@ -222,18 +224,21 @@ export function AgendaView({ onNavigateToPage }: AgendaViewProps): React.ReactEl
   return (
     <div className="agenda-view space-y-4" data-testid="agenda-view">
       <ViewHeader>
-        {/* In agenda mode JournalPage renders no heading of its own: the title
-            lives here so it sits above the filter/sort bar in the outlet. */}
-        <FeaturePageHeader title={t('sidebar.journal')} />
-        <div className="agenda-view-header">
-          <AgendaFilterBuilder filters={agendaFilters} onFiltersChange={setAgendaFilters} />
-          <div className="border-t border-border/40 my-3" aria-hidden="true" />
-          <AgendaSortGroupControls
-            groupBy={agendaGroupBy}
-            onGroupByChange={setAgendaGroupBy}
-            sortBy={agendaSortBy}
-            onSortByChange={setAgendaSortBy}
-          />
+        {/* Capped and centred like the journal column below the outlet. */}
+        <div className="max-w-reading mx-auto space-y-2">
+          {/* In agenda mode JournalPage renders no heading of its own: the title
+              lives here so it sits above the filter/sort bar in the outlet. */}
+          <FeaturePageHeader title={t('sidebar.journal')} />
+          <div className="agenda-view-header">
+            <AgendaFilterBuilder filters={agendaFilters} onFiltersChange={setAgendaFilters} />
+            <div className="border-t border-border/40 my-3" aria-hidden="true" />
+            <AgendaSortGroupControls
+              groupBy={agendaGroupBy}
+              onGroupByChange={setAgendaGroupBy}
+              sortBy={agendaSortBy}
+              onSortByChange={setAgendaSortBy}
+            />
+          </div>
         </div>
       </ViewHeader>
       <AgendaResults

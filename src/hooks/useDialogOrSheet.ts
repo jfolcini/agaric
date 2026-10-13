@@ -19,7 +19,7 @@
  *  - `'dialog'` — desktop returns the regular `Dialog` parts. Use for form-
  *    style surfaces where users can dismiss by clicking outside / pressing
  *    Escape without consequence (BugReportDialog, RenameDialog,
- *    WelcomeModal, QuickCaptureDialog, SpaceManageDialog, PdfViewerDialog).
+ *    WelcomeModal, QuickCaptureDialog, PdfViewerDialog).
  *
  * The mobile path is always `Sheet` regardless of `kind` — phones < 768 px
  * benefit from the same bottom-sheet ergonomics whether the surface is a

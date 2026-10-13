@@ -12,9 +12,7 @@
  * decode `PageMetadataBar` already does).
  *
  * Rendered ONLY on nodes/rows `buildPageTree` marked as duplicates, so
- * the overwhelmingly common unique-title row is visually unchanged, and
- * at EVERY density: this is identity, not metadata, so hiding it behind
- * a tooltip would leave the compact list ambiguous.
+ * the overwhelmingly common unique-title row is visually unchanged.
  *
  * `null` for a non-ULID id (the create form's optimistic inserts), so
  * nothing renders rather than a placeholder date that would itself

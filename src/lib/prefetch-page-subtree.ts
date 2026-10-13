@@ -60,7 +60,7 @@ export const MAX_INFLIGHT_PREFETCHES = 4
 /**
  * Shared hover/focus dwell threshold (ms) before an intent handler actually
  * calls {@link prefetchPageSubtree}. Every intent surface (`PageLink`,
- * `DensityRow`, `CommandPalette`, `LinkedReferences`) debounces on this same
+ * `PageRow`, `CommandPalette`, `LinkedReferences`) debounces on this same
  * constant via `useDebouncedCallback` so a cursor sweeping across a list (or
  * arrow-key traversal in the palette) doesn't fan out one IPC per row.
  */
@@ -149,6 +149,21 @@ export function prefetchPageSubtree(spaceId: string, pageId: string): void {
   prefetchMap.set(key, {
     promise,
     expiresAt: now + PREFETCH_TTL_MS,
+    structureChanges: getRecordedGraphStructureChanges(),
+  })
+}
+
+/**
+ * #5438 — park an already-empty subtree for a page created this instant, so
+ * the BlockTree that mounts for it skips the `load_page_subtree` round trip
+ * that would return nothing. Same single-consumption, TTL and
+ * structure-change rules as a speculative entry; not counted against the cap
+ * because it is certain to be consumed, not a guess.
+ */
+export function parkEmptyPageSubtree(spaceId: string, pageId: string): void {
+  prefetchMap.set(keyFor(spaceId, pageId), {
+    promise: Promise.resolve({ blocks: [], truncated: false, total: 0 }),
+    expiresAt: Date.now() + PREFETCH_TTL_MS,
     structureChanges: getRecordedGraphStructureChanges(),
   })
 }

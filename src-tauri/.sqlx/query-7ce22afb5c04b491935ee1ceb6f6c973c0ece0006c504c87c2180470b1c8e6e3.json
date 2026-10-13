@@ -1,0 +1,165 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT b.id AS \"id!: agaric_core::ulid::ActiveBlockId\",\n                b.block_type AS \"block_type!\", b.content AS \"content?\",\n                b.parent_id AS \"parent_id?: agaric_core::ulid::BlockId\",\n                b.position AS \"position?\", b.deleted_at AS \"deleted_at?\",\n                b.todo_state AS \"todo_state?\", b.priority AS \"priority?\",\n                b.due_date AS \"due_date?\", b.scheduled_date AS \"scheduled_date?\",\n                b.page_id AS \"page_id?: agaric_core::ulid::BlockId\",\n                d.date AS \"date!: String\", d.source AS \"source!: String\"\n         FROM (\n             SELECT id, due_date AS date, 'due_date' AS source FROM blocks\n             WHERE due_date >= ?1 AND due_date <= ?2\n             UNION ALL\n             SELECT id, scheduled_date, 'scheduled_date' FROM blocks\n             WHERE scheduled_date >= ?1 AND scheduled_date <= ?2\n         ) d\n         JOIN blocks b ON b.id = d.id\n         WHERE b.deleted_at IS NULL\n           AND (b.todo_state IS NULL OR b.todo_state != 'DONE')\n           AND NOT EXISTS (\n               SELECT 1 FROM block_properties tp\n               WHERE tp.block_id = b.page_id AND tp.key = 'template'\n           )\n           AND (?3 IS NULL OR b.space_id = ?3)\n           AND (?4 IS NULL OR (d.date > ?5\n               OR (d.date = ?5 AND d.id > ?6)\n               OR (d.date = ?5 AND d.id = ?6 AND ?7 IS NOT NULL AND d.source > ?7)))\n         ORDER BY d.date ASC, d.id ASC, d.source ASC\n         LIMIT ?8",
+  "describe": {
+    "columns": [
+      {
+        "name": "id!: agaric_core::ulid::ActiveBlockId",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "blocks",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "name": "block_type!",
+        "ordinal": 1,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "blocks",
+            "name": "block_type"
+          }
+        }
+      },
+      {
+        "name": "content?",
+        "ordinal": 2,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "blocks",
+            "name": "content"
+          }
+        }
+      },
+      {
+        "name": "parent_id?: agaric_core::ulid::BlockId",
+        "ordinal": 3,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "blocks",
+            "name": "parent_id"
+          }
+        }
+      },
+      {
+        "name": "position?",
+        "ordinal": 4,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "blocks",
+            "name": "position"
+          }
+        }
+      },
+      {
+        "name": "deleted_at?",
+        "ordinal": 5,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "blocks",
+            "name": "deleted_at"
+          }
+        }
+      },
+      {
+        "name": "todo_state?",
+        "ordinal": 6,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "blocks",
+            "name": "todo_state"
+          }
+        }
+      },
+      {
+        "name": "priority?",
+        "ordinal": 7,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "blocks",
+            "name": "priority"
+          }
+        }
+      },
+      {
+        "name": "due_date?",
+        "ordinal": 8,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "blocks",
+            "name": "due_date"
+          }
+        }
+      },
+      {
+        "name": "scheduled_date?",
+        "ordinal": 9,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "blocks",
+            "name": "scheduled_date"
+          }
+        }
+      },
+      {
+        "name": "page_id?: agaric_core::ulid::BlockId",
+        "ordinal": 10,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "blocks",
+            "name": "page_id"
+          }
+        }
+      },
+      {
+        "name": "date!: String",
+        "ordinal": 11,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "blocks",
+            "name": "scheduled_date"
+          }
+        }
+      },
+      {
+        "name": "source!: String",
+        "ordinal": 12,
+        "type_info": "Null",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Right": 8
+    },
+    "nullable": [
+      false,
+      false,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      null
+    ]
+  },
+  "hash": "7ce22afb5c04b491935ee1ceb6f6c973c0ece0006c504c87c2180470b1c8e6e3"
+}

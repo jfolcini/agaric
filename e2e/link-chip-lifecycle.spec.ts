@@ -7,6 +7,7 @@ import {
   focusBlockById,
   navigateToView,
   openPage,
+  showJournalPages,
   test,
   waitForBoot,
 } from './helpers'
@@ -193,6 +194,7 @@ test.describe('link chips follow their target', () => {
     await expect(await todaysStandup()).toBeVisible()
 
     await openPagesView(page)
+    await showJournalPages(page)
     const row = page.locator('[data-page-item]').filter({ hasText: today })
     await row.getByRole('button', { name: 'Delete page' }).click()
     await activeAlertDialog(page).getByRole('button', { name: 'Delete', exact: true }).click()
@@ -215,12 +217,11 @@ test.describe('link chips follow their target', () => {
     await page.getByRole('combobox', { name: 'Switch space', exact: true }).click()
     await page.mouse.move(0, 0)
     await page.getByRole('option', { name: 'Manage spaces…', exact: true }).click()
-    const manage = page.getByTestId('space-manage-dialog')
-    await manage.getByRole('button', { name: 'Create new space', exact: true }).click()
-    await manage.getByPlaceholder('New space name').fill('Work')
-    await manage.getByRole('button', { name: 'Create', exact: true }).click()
-    await expect(manage.getByRole('textbox', { name: 'Rename space' }).last()).toHaveValue('Work')
-    await manage.getByRole('button', { name: 'Close', exact: true }).click()
+    const spaces = page.getByTestId('settings-panel-spaces')
+    await spaces.getByRole('button', { name: 'Create new space', exact: true }).click()
+    await spaces.getByPlaceholder('New space name').fill('Work')
+    await spaces.getByRole('button', { name: 'Create', exact: true }).click()
+    await expect(spaces.getByRole('textbox', { name: 'Rename space' }).last()).toHaveValue('Work')
 
     // Warm the origin's `[[` picker, then put the text back. The tree (and the
     // picker cache it owns) stays mounted across in-editor link navigation.

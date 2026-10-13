@@ -265,6 +265,32 @@ describe('GraphFilterBar', () => {
     expect(onFiltersChange).toHaveBeenCalledWith([{ type: 'excludeTemplates', value: true }])
   })
 
+  it('adds an excludeJournal filter (#5370)', async () => {
+    const user = userEvent.setup()
+    render(<GraphFilterBar filters={[]} onFiltersChange={onFiltersChange} allTags={sampleTags} />)
+
+    const dimensionSelect = screen.getByLabelText(t('graph.filter.selectDimension'))
+    await user.selectOptions(dimensionSelect, 'excludeJournal')
+    await user.click(screen.getByRole('button', { name: t('graph.filter.apply') }))
+
+    expect(onFiltersChange).toHaveBeenCalledWith([{ type: 'excludeJournal', value: true }])
+  })
+
+  it('labels the excludeJournal pill, hides its dimension, and removes it (#5370)', async () => {
+    const user = userEvent.setup()
+    const filters: GraphFilter[] = [{ type: 'excludeJournal', value: true }]
+    const { container } = render(
+      <GraphFilterBar filters={filters} onFiltersChange={onFiltersChange} allTags={sampleTags} />,
+    )
+
+    expect(screen.getByRole('group', { name: 'Exclude journal pages' })).toBeInTheDocument()
+    expect(container.querySelector('option[value="excludeJournal"]')).toBeNull()
+    expect(await axe(container)).toHaveNoViolations()
+
+    await user.click(screen.getByRole('button', { name: 'Remove Exclude journal pages filter' }))
+    expect(onFiltersChange).toHaveBeenCalledWith([])
+  })
+
   // #2260 — Apply must stay disabled until a multi-value dimension has at
   // least one concrete value, so an empty set can't build a match-everything
   // no-op filter with a broken pill label ('Tag: 0' / 'Status: ').
@@ -834,20 +860,14 @@ describe('GraphFilterBar', () => {
       render(<StatefulHarness onChange={onChange} />)
 
       await waitFor(() => {
-        // An empty hydrated list is never dispatched (readPersistedFilters
-        // returns [] and the mount effect only dispatches non-empty lists).
-        expect(onChange).not.toHaveBeenCalled()
+        expect(onChange).toHaveBeenCalledWith([])
       })
       expect(screen.getByText(t('graph.filter.noFilters'))).toBeInTheDocument()
     })
 
-    // #3889 — when every persisted entry is invalid, the mount effect never
-    // dispatches (empty hydrated list) so the normal write-effect self-heal
-    // (persist the cleaned value once `filters` changes) never fires either.
-    // Without a dedicated fix, the wholly-corrupt value sits in storage
-    // forever and re-warns on every single mount. Assert the actual heal —
-    // the corrupt value is overwritten in place on the very first read — and
-    // that a second mount against the now-clean value does not warn again.
+    // #3889 — a wholly-corrupt value must not sit in storage re-warning on
+    // every mount: the cleaned (empty) list is persisted over it, and a
+    // second mount against the now-clean value does not warn again.
     it('self-heals a wholly-invalid persisted value in place, so a later mount does not re-warn', async () => {
       const stored = [{ kind: 'status', values: 'not-an-array' }]
       localStorage.setItem(STORAGE_KEY, JSON.stringify(stored))
@@ -879,11 +899,8 @@ describe('GraphFilterBar', () => {
       expect(logger.warn).not.toHaveBeenCalled()
     })
 
-    // PR #3913 review note 1 — the self-heal's `setItem` used to sit inside
-    // the outer read `try`, so a WRITE failure there was logged as "Failed
-    // to read persisted filters" and misattributed a write problem to a
-    // read problem. Assert the message is honest about which operation
-    // actually failed.
+    // PR #3913 review note 1 — a WRITE failure while healing must not be
+    // logged as "Failed to read persisted filters".
     it('logs a throwing self-heal write as a write failure, not a read failure', async () => {
       const stored = [{ kind: 'status', values: 'not-an-array' }]
       localStorage.setItem(STORAGE_KEY, JSON.stringify(stored))
@@ -899,7 +916,7 @@ describe('GraphFilterBar', () => {
         await waitFor(() => {
           expect(logger.warn).toHaveBeenCalledWith(
             'GraphFilterBar',
-            'Failed to persist healed (self-cleaned) filters',
+            'Failed to persist filters',
             { key: STORAGE_KEY },
             expect.any(Error),
           )
@@ -959,6 +976,61 @@ describe('GraphFilterBar', () => {
       // filter (pill label shape, not the bare word — the add-filter
       // dropdown always has a "Status" option).
       expect(screen.queryByText(/Status:/)).not.toBeInTheDocument()
+    })
+
+    // #5370 — the parent (GraphView) starts from the exclude-journal default;
+    // only a space with nothing stored keeps it.
+    describe('default excludeJournal filter', () => {
+      const DEFAULT_FILTERS: GraphFilter[] = [{ type: 'excludeJournal', value: true }]
+      const pill = () => screen.queryByRole('group', { name: 'Exclude journal pages' })
+
+      it("keeps the parent's default when nothing is stored, without writing it", async () => {
+        const onChange = vi.fn<(filters: GraphFilter[]) => void>()
+        render(<StatefulHarness initialFilters={DEFAULT_FILTERS} onChange={onChange} />)
+
+        expect(pill()).toBeInTheDocument()
+        await waitFor(() => expect(onChange).not.toHaveBeenCalled())
+        expect(localStorage.getItem(STORAGE_KEY)).toBeNull()
+      })
+
+      it('hydrates a stored [] as empty, replacing the default', async () => {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify([]))
+        render(<StatefulHarness initialFilters={DEFAULT_FILTERS} />)
+
+        await waitFor(() => expect(pill()).not.toBeInTheDocument())
+        expect(screen.getByText(t('graph.filter.noFilters'))).toBeInTheDocument()
+      })
+
+      it('a removed default stays removed on the next mount', async () => {
+        const user = userEvent.setup()
+        const first = render(<StatefulHarness initialFilters={DEFAULT_FILTERS} />)
+        await user.click(
+          screen.getByRole('button', { name: 'Remove Exclude journal pages filter' }),
+        )
+        await waitFor(() => expect(localStorage.getItem(STORAGE_KEY)).toBe(JSON.stringify([])))
+        first.unmount()
+
+        render(<StatefulHarness initialFilters={DEFAULT_FILTERS} />)
+        await waitFor(() => expect(pill()).not.toBeInTheDocument())
+      })
+
+      it('round-trips through storage when kept alongside another filter', async () => {
+        const user = userEvent.setup()
+        const first = render(<StatefulHarness initialFilters={DEFAULT_FILTERS} />)
+        await user.selectOptions(
+          screen.getByLabelText(t('graph.filter.selectDimension')),
+          'hasBacklinks',
+        )
+        await user.click(screen.getByRole('button', { name: t('graph.filter.apply') }))
+        await waitFor(() => expect(localStorage.getItem(STORAGE_KEY)).not.toBeNull())
+        first.unmount()
+
+        render(<StatefulHarness />)
+        expect(
+          await screen.findByRole('group', { name: 'Exclude journal pages' }),
+        ).toBeInTheDocument()
+        expect(screen.getByText(/Has backlinks.*Yes/)).toBeInTheDocument()
+      })
     })
 
     it('persists filter clears (writes empty array on Clear all)', async () => {

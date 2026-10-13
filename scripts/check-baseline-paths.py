@@ -116,7 +116,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 # Tracked directories deliberately not searched. Only one is needed now that
 # discovery asks git rather than the filesystem: the session-log corpus, whose
 # prose filenames legitimately contain "baseline"
-# (`session-1127-baseline-clippy-knip-e2e-cleanup.md`). Vendor and build trees
+# (`sessions-1101-1200.md` § Session 1127). Vendor and build trees
 # are excluded for free by being untracked.
 # Anchored to the directory it means, not matched as a bare path SEGMENT: a
 # baseline that ever landed under some other `session-log/` directory would

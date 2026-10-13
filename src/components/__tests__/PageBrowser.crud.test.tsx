@@ -90,7 +90,7 @@ function pageList(...items: ReturnType<typeof makePage>[]) {
  * of that were hazardous:
  *
  *  - the queue is consumed in CALL order regardless of command, and
- *    `DensityRow`'s hover/focus-intent prefetch (`prefetchPageSubtree`,
+ *    `PageRow`'s hover/focus-intent prefetch (`prefetchPageSubtree`,
  *    `PAGE_PREFETCH_DWELL_MS` = 120ms) fires a genuine `load_page_subtree`
  *    whenever a pointer dwells on a row — which `userEvent.click` does as an
  *    ordinary side effect — stealing the slot meant for the command under
@@ -131,13 +131,13 @@ beforeEach(() => {
   // round-trip values through sessionStorage; isolate each test.
   sessionStorage.clear()
   localStorage.removeItem('page-browser-sort')
-  localStorage.removeItem('page-browser-density')
   localStorage.removeItem('starred-pages')
   // Compound-filter chips now live in a module-global per-space store that
   // persists to localStorage (#1750); reset both the in-memory slice and the
   // persisted key so chips added in one test don't leak into the next.
   localStorage.removeItem('agaric:page-browser-filters')
-  usePageBrowserFiltersStore.setState({ filtersBySpace: {}, nextAddId: 0 })
+  // An empty slice, not an absent one: absent is the default journal chip (#5370).
+  usePageBrowserFiltersStore.setState({ filtersBySpace: { SPACE_TEST: [] }, nextAddId: 0 })
   useResolveStore.setState({ cache: new Map(), version: 0, _preloaded: false })
   // Phase 2 — PageBrowser now gates its render and page query
   // on `useSpaceStore.isReady`. Seed the store so tests exercise the
@@ -509,7 +509,7 @@ describe('PageBrowser', () => {
       // #3217 — route by COMMAND NAME rather than call order. A positional
       // `mockResolvedValueOnce`/`mockRejectedValueOnce` pair is consumed by
       // whichever IPC call lands next, regardless of which Tauri command it
-      // is for. `DensityRow`'s hover/focus-intent speculative prefetch
+      // is for. `PageRow`'s hover/focus-intent speculative prefetch
       // (`prefetchPageSubtree`, `PAGE_PREFETCH_DWELL_MS` = 120ms — see
       // `@/lib/prefetch-page-subtree`) fires a genuine `load_page_subtree`
       // IPC call whenever the pointer dwells on a page row for >120ms, which

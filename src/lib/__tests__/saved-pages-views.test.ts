@@ -9,6 +9,7 @@
  *  - cross-tab broadcast: every registry write dispatches a synthetic
  *    `StorageEvent` for the key (the app-wide same-tab convention, #2666)
  *  - `findMatchingSavedPagesView` / `viewMatchesTuple` structural equality
+ *  - a view saved while views still carried `density` loads and matches
  */
 
 import { invoke } from '@tauri-apps/api/core'
@@ -34,7 +35,6 @@ const TAG_FILTER: FilterPrimitive = { type: 'Tag', tag: 'work' }
 
 const BASE_TUPLE: PagesViewTuple = {
   sort: 'alphabetical',
-  density: 'regular',
   filters: [],
 }
 
@@ -83,7 +83,6 @@ describe('saved-pages-views', () => {
               name: 'Bad sort',
               createdAt: '2026-01-01T00:00:00.000Z',
               sort: 'nope',
-              density: 'regular',
               filters: [],
             },
             { id: '', name: 'Empty id', createdAt: '2026-01-01T00:00:00.000Z', ...BASE_TUPLE },
@@ -94,6 +93,27 @@ describe('saved-pages-views', () => {
       const views = getSavedPagesViews()
       expect(views).toHaveLength(1)
       expect(views[0]?.id).toBe('v1')
+    })
+
+    it('keeps a view saved with the retired `density` field and matches it as active', () => {
+      localStorage.setItem(
+        STORAGE_KEY,
+        JSON.stringify({
+          schemaVersion: 1,
+          views: [
+            {
+              id: 'legacy',
+              name: 'Legacy',
+              createdAt: '2026-01-01T00:00:00.000Z',
+              ...BASE_TUPLE,
+              density: 'compact',
+            },
+          ],
+        }),
+      )
+      const views = getSavedPagesViews()
+      expect(views.map((v) => v.id)).toEqual(['legacy'])
+      expect(findMatchingSavedPagesView(views, BASE_TUPLE)?.id).toBe('legacy')
     })
   })
 
@@ -108,7 +128,7 @@ describe('saved-pages-views', () => {
 
     it('appends to existing views without clobbering them', () => {
       const first = savePagesView('First', BASE_TUPLE)
-      const second = savePagesView('Second', { ...BASE_TUPLE, density: 'compact' })
+      const second = savePagesView('Second', { ...BASE_TUPLE, sort: 'recent' })
       expect(getSavedPagesViews()).toEqual([first, second])
     })
 
@@ -139,7 +159,7 @@ describe('saved-pages-views', () => {
   })
 
   describe('viewMatchesTuple / findMatchingSavedPagesView', () => {
-    it('matches when sort, density, and filters are all structurally equal', () => {
+    it('matches when sort and filters are both structurally equal', () => {
       const view = savePagesView('Match me', { ...BASE_TUPLE, filters: [TAG_FILTER] })
       expect(viewMatchesTuple(view, { ...BASE_TUPLE, filters: [TAG_FILTER] })).toBe(true)
     })
@@ -147,11 +167,6 @@ describe('saved-pages-views', () => {
     it('does not match when sort differs', () => {
       const view = savePagesView('View', BASE_TUPLE)
       expect(viewMatchesTuple(view, { ...BASE_TUPLE, sort: 'recent' })).toBe(false)
-    })
-
-    it('does not match when density differs', () => {
-      const view = savePagesView('View', BASE_TUPLE)
-      expect(viewMatchesTuple(view, { ...BASE_TUPLE, density: 'expanded' })).toBe(false)
     })
 
     it('does not match when filters differ in content', () => {

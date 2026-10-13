@@ -65,8 +65,9 @@ pub mod tags;
 
 // Tauri command handlers and testable _inner functions — explicitly re-exported.
 pub use agenda::{
-    count_agenda_batch_by_source, count_agenda_batch_by_source_inner, list_projected_agenda,
-    list_projected_agenda_inner, list_undated_tasks, list_undated_tasks_inner,
+    agenda_range_inner, count_agenda_batch_by_source, count_agenda_batch_by_source_inner,
+    list_projected_agenda, list_projected_agenda_inner, list_undated_tasks,
+    list_undated_tasks_inner,
 };
 // `_on_the_fly` exposed for date-clock-pinned regression tests.
 // Tests bypass the cache (which itself reads `chrono::Local::now()` and
@@ -138,18 +139,18 @@ pub use mcp::{
 pub use pages::{
     ImportBibliographyResult, MCP_PAGE_LIMIT_CAP, PAGE_LINKS_EDGE_CAP, PageBuffer, PageHeading,
     PageLinksResponse, PageSourceReport, PageSubtreeResponse, PasteInput, PasteSplice, PastedBlock,
-    PastedBlocks, SourceSaveFlags, apply_page_source, apply_page_source_inner, duplicate_block,
-    duplicate_block_inner, export_page_markdown, export_page_markdown_inner, get_blocks_source,
-    get_blocks_source_inner, get_page_aliases, get_page_aliases_inner, get_page_buffer,
-    get_page_buffer_inner, get_page_inner, get_page_source, get_page_source_inner,
-    get_page_unscoped_inner, import_bibliography, import_bibliography_inner, import_markdown,
-    import_markdown_inner, import_markdown_with_progress, list_all_pages_in_space,
-    list_all_pages_in_space_inner, list_page_aliases_by_prefix, list_page_aliases_by_prefix_inner,
-    list_page_links, list_page_links_inner, list_page_links_inner_split,
-    list_page_links_inner_split_with_cap, list_pages_inner, list_template_page_ids_in_space,
-    list_template_page_ids_in_space_inner, load_page_subtree, load_page_subtree_inner,
-    paste_blocks, paste_blocks_inner, resolve_page_by_alias, resolve_page_by_alias_inner,
-    set_page_aliases, set_page_aliases_inner,
+    PastedBlocks, SourceSaveFlags, append_markdown_inner, apply_page_source,
+    apply_page_source_inner, duplicate_block, duplicate_block_inner, export_page_markdown,
+    export_page_markdown_inner, get_blocks_source, get_blocks_source_inner, get_page_aliases,
+    get_page_aliases_inner, get_page_buffer, get_page_buffer_inner, get_page_for_agent_inner,
+    get_page_inner, get_page_source, get_page_source_inner, get_page_unscoped_inner,
+    import_bibliography, import_bibliography_inner, import_markdown, import_markdown_inner,
+    import_markdown_with_progress, list_all_pages_in_space, list_all_pages_in_space_inner,
+    list_page_aliases_by_prefix, list_page_aliases_by_prefix_inner, list_page_links,
+    list_page_links_inner, list_page_links_inner_split, list_page_links_inner_split_with_cap,
+    list_pages_inner, list_template_page_ids_in_space, list_template_page_ids_in_space_inner,
+    load_page_subtree, load_page_subtree_inner, paste_blocks, paste_blocks_inner,
+    resolve_page_by_alias, resolve_page_by_alias_inner, set_page_aliases, set_page_aliases_inner,
 };
 pub use properties::{
     create_property_def, create_property_def_in_tx, create_property_def_inner, delete_property,
@@ -843,6 +844,14 @@ async fn delete_property_core(
         )));
     }
 
+    // #5378 — read before the delete: the stamps it clears depend on the
+    // state being left.
+    let prior_task = if key == "todo_state" {
+        Some(properties::prior_task_state_in_tx(&mut tx, &block_id).await?)
+    } else {
+        None
+    };
+
     // 3. Append DeleteProperty op
     let del_payload = DeletePropertyPayload {
         block_id: BlockId::from_trusted(&block_id),
@@ -877,6 +886,17 @@ async fn delete_property_core(
     // `apply_op_tx`'s count maintenance is a no-op and the effects are empty).
     crate::materializer::apply_op_projected(&mut tx, &op_record, materializer.loro_state(), false)
         .await?;
+    if let Some(prior) = prior_task {
+        properties::write_todo_timestamp_transitions_in_tx(
+            &mut tx,
+            materializer.loro_state(),
+            device_id,
+            &block_id,
+            &prior,
+            None,
+        )
+        .await?;
+    }
     let bounds = if key == "repeat" {
         properties::delete_repeat_bounds_in_tx(
             &mut tx,

@@ -1,6 +1,7 @@
 import {
   activeAlertDialog,
   activeDialog,
+  activePopover,
   clearConsoleErrors,
   expect,
   getInvokeCalls,
@@ -34,7 +35,7 @@ import {
  * list_peer_refs: reads the peerRefs store, and advances a pending reveal
  * delete_peer_ref: removes from that same store
  * confirm_pairing: arms a pending reveal — adds NO peer synchronously
- * update_peer_name / set_peer_address: still no-ops
+ * update_peer_name / set_peer_address: write the row (#5057)
  * ```
  *
  * The reveal timing is the load-bearing part, and it is COUNTED IN READS,
@@ -62,6 +63,11 @@ import {
 
 async function openSyncSettings(page: import('@playwright/test').Page) {
   await waitForBoot(page)
+  await showSyncPanel(page)
+}
+
+/** Settings › Sync & Devices, without the reload `waitForBoot` does (which re-seeds the mock). */
+async function showSyncPanel(page: import('@playwright/test').Page) {
   await page.getByRole('button', { name: 'Settings', exact: true }).click()
   await expect(page.locator('header').getByText('Settings')).toBeVisible()
   await page.getByRole('tab', { name: /Sync.*Devices/i }).click()
@@ -312,26 +318,122 @@ test.describe('Sync pairing flows', () => {
     await expect(page.locator('[data-testid="settings-panel-sync"]')).toBeVisible()
   })
 
-  // #3469 — this skip used to claim peer management was *structurally*
-  // unreachable, because no mock handler could ever produce a peer row.
-  // That is no longer the reason: `confirm_pairing` + three
-  // `list_peer_refs` reads now produce a real row, and the pairing test
-  // above asserts it renders in DeviceManagement. `delete_peer_ref` is
-  // backed by the store too, so unpair is drivable here.
-  //
-  // #5057 — rename and manual address were the remaining half: `update_peer_name`
-  // and `set_peer_address` were no-op stubs that never touched `peerRefs`, so
-  // the row's name/address could not change whatever the UI submitted. Both are
-  // real now (they write the row, refuse an unknown peer with `NotFound`, and
-  // `set_peer_address` validates host:port), so the mock gap this skip rested on
-  // is gone and all three flows are drivable here.
-  //
-  // It stays skipped only because the body was never written — that is now a
-  // coverage decision rather than a harness limit, which is the opposite of what
-  // this comment used to say. The commands themselves are pinned against the
-  // backend by `peer_ref_writes.json`, and the UI is covered at the unit layer
-  // (DeviceManagement.test.tsx:249/829, PeerListItem.test.tsx:155).
-  test.skip('peer management (unpair / rename / manual address)', () => {
-    // Writable now; see the note above for what changed.
+  test.describe('peer management', () => {
+    interface PeerRow {
+      device_name: string | null
+      last_address: string | null
+    }
+
+    /** The peer rows as the mock backend holds them, not as the device list last rendered them. */
+    async function listPeerRows(page: import('@playwright/test').Page): Promise<PeerRow[]> {
+      return page.evaluate(async () => {
+        const invoke = (
+          window as unknown as {
+            __TAURI_INTERNALS__: { invoke: (c: string, a?: unknown) => Promise<unknown> }
+          }
+        ).__TAURI_INTERNALS__.invoke
+        const rows = (await invoke('list_peer_refs')) as PeerRow[]
+        return rows.map(({ device_name, last_address }) => ({ device_name, last_address }))
+      })
+    }
+
+    /**
+     * Pins one peer the way a completed pairing does in the mock (see the file
+     * header): `confirm_pairing` arms the reveal and a later `list_peer_refs`
+     * read materializes the row. Reading until it appears, rather than a fixed
+     * number of times, keeps the reveal count out of this file. The pairing UI
+     * that produces the row is the first test's subject; these start after it.
+     */
+    async function pairOnePeer(page: import('@playwright/test').Page) {
+      await waitForBoot(page)
+      await page.evaluate(async () => {
+        const invoke = (
+          window as unknown as {
+            __TAURI_INTERNALS__: { invoke: (c: string, a?: unknown) => Promise<unknown> }
+          }
+        ).__TAURI_INTERNALS__.invoke
+        await invoke('confirm_pairing', {
+          passphrase: 'alpha bravo charlie delta',
+          scannedPeer: null,
+        })
+      })
+      await expect.poll(async () => (await listPeerRows(page)).length).toBe(1)
+      await showSyncPanel(page)
+      const panel = page.getByTestId('settings-panel-sync')
+      await expect(panel.getByText('Paired Device', { exact: true })).toBeVisible()
+      return panel
+    }
+
+    /** Leave Settings and come back, so the device list re-fetches from the backend. */
+    async function reopenSyncPanel(page: import('@playwright/test').Page) {
+      await page
+        .locator('[data-slot="sidebar"]')
+        .getByRole('button', { name: 'Journal', exact: true })
+        .click()
+      await expect(page.getByTestId('settings-panel-sync')).toHaveCount(0)
+      await showSyncPanel(page)
+    }
+
+    test('unpairing a peer removes its row', async ({ page }) => {
+      const panel = await pairOnePeer(page)
+
+      await panel.getByRole('button', { name: 'Unpair device Paired Device', exact: true }).click()
+      const confirm = activeAlertDialog(page)
+      await expect(confirm.getByText('Unpair device?')).toBeVisible()
+      await confirm.getByRole('button', { name: 'Yes, unpair', exact: true }).click()
+
+      await expect(activeAlertDialog(page)).toHaveCount(0)
+      await expect(panel.getByTestId('device-no-peers')).toBeVisible()
+      await expect.poll(() => listPeerRows(page)).toEqual([])
+
+      await reopenSyncPanel(page)
+      await expect(page.getByTestId('device-no-peers')).toBeVisible()
+    })
+
+    test('renaming a peer persists its local name', async ({ page }) => {
+      const panel = await pairOnePeer(page)
+
+      await panel.getByRole('button', { name: 'Rename device Paired Device', exact: true }).click()
+      const dialog = activeDialog(page)
+      await dialog.getByRole('textbox', { name: 'Device name', exact: true }).fill('Work laptop')
+      await dialog.getByRole('button', { name: 'Save', exact: true }).click()
+
+      await expect(activeDialog(page)).toHaveCount(0)
+      await expect(panel.getByText('Work laptop', { exact: true })).toBeVisible()
+      await expect
+        .poll(async () => (await listPeerRows(page)).map((row) => row.device_name))
+        .toEqual(['Work laptop'])
+
+      await reopenSyncPanel(page)
+      await expect(
+        page.getByTestId('settings-panel-sync').getByText('Work laptop', { exact: true }),
+      ).toBeVisible()
+    })
+
+    test('setting a manual address persists it on the peer', async ({ page }) => {
+      const panel = await pairOnePeer(page)
+
+      await panel
+        .getByRole('button', { name: 'Edit address for Paired Device', exact: true })
+        .click()
+      const popover = activePopover(page)
+      await popover
+        .getByRole('textbox', { name: 'Address (host:port)', exact: true })
+        .fill('192.168.1.50:7000')
+      await popover.getByRole('button', { name: 'Save', exact: true }).click()
+
+      await expect(
+        page.locator('[data-sonner-toast]').getByText('Address updated', { exact: true }),
+      ).toBeVisible()
+      await expect(panel.getByText('192.168.1.50:7000', { exact: true })).toBeVisible()
+      await expect
+        .poll(async () => (await listPeerRows(page)).map((row) => row.last_address))
+        .toEqual(['192.168.1.50:7000'])
+
+      await reopenSyncPanel(page)
+      await expect(
+        page.getByTestId('settings-panel-sync').getByText('192.168.1.50:7000', { exact: true }),
+      ).toBeVisible()
+    })
   })
 })

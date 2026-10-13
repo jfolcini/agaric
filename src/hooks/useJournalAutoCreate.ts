@@ -17,6 +17,14 @@ interface UseJournalAutoCreateOptions {
   spaceId: string | null
   /** Pages this React tree just created (not yet visible to the backend index). */
   createdPages: Map<string, string>
+  /** The journal's `dateStr → pageId` map for the range on screen. */
+  pageMap: Map<string, string>
+  /**
+   * #5438 — `useCalendarPageDates().fetchedThisMount`: when the map is this
+   * mount's own round trip, it already answers the `get_journal_page_by_date`
+   * probe, so the mount path creates (or not) from it directly.
+   */
+  pageMapFetchedThisMount: boolean
   handleAddBlock: (dateStr: string) => void
 }
 
@@ -26,6 +34,8 @@ export function useJournalAutoCreate({
   currentDate,
   spaceId,
   createdPages,
+  pageMap,
+  pageMapFetchedThisMount,
   handleAddBlock,
 }: UseJournalAutoCreateOptions): (dateStr: string) => void {
   const autoCreatedRef = useRef<string | null>(null)
@@ -44,6 +54,7 @@ export function useJournalAutoCreate({
   // It is read again when the probe lands, because the user may have created
   // the page through "Add your first block" while the probe was out.
   const hasCreatedPage = useEffectEvent((dateStr: string) => createdPages.has(dateStr))
+  const freshPageMap = useEffectEvent(() => (pageMapFetchedThisMount ? pageMap : null))
   const createPage = useEffectEvent(handleAddBlock)
   useEffect(() => {
     if (loading) return
@@ -54,6 +65,14 @@ export function useJournalAutoCreate({
     if (dateStr !== formatDate(new Date())) return
     if (autoCreatedRef.current === dateStr) return
     if (hasCreatedPage(dateStr)) return
+    // #5438 — a map this mount fetched is the probe's answer; skip the round trip.
+    const fresh = freshPageMap()
+    if (fresh != null) {
+      if (fresh.has(dateStr)) return
+      autoCreatedRef.current = dateStr
+      createPage(dateStr)
+      return
+    }
     let cancelled = false
     commands
       .getJournalPageByDate(dateStr, { kind: 'active', space_id: spaceId })

@@ -196,7 +196,7 @@
     // sites #4407 could not reach — a directive there reports as unused, so
     // they stay masked. Exact counts, the unmasking
     // method, and the commands that produced all of this live in
-    // docs/session-log/session-1437-the-lint-that-was-not-run.md — kept in
+    // docs/session-log/sessions-1401-1500.md § Session 1437 — kept in
     // one place because re-measuring is a multi-step diff, not a one-line
     // grep, and three copies of a number nobody re-derives is worse than one.
     // Nothing re-runs this automatically; these are the numbers as measured,

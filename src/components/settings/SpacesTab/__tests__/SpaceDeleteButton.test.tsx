@@ -1,0 +1,323 @@
+/**
+ * Tests for SpaceDeleteButton + SpaceDeleteBlockedHint (D-2).
+ *
+ * Coverage:
+ *  - When emptiness=true and isLastSpace=false: button is enabled, click
+ *    opens confirmation, confirm calls deleteBlock, cancel closes dialog.
+ *  - When isLastSpace=true: button is disabled (last-space tooltip wins).
+ *  - When emptiness=false: button disabled with non-empty tooltip.
+ *  - When emptiness=null (probe in flight): button disabled.
+ *  - On IPC failure: toast.error fires and dialog stays open.
+ *  - SpaceDeleteBlockedHint renders only when emptiness=false &&
+ *    !isLastSpace; otherwise returns null.
+ */
+
+import { invoke } from '@tauri-apps/api/core'
+import { render, screen, waitFor } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
+import { toast } from 'sonner'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+
+import {
+  SpaceDeleteBlockedHint,
+  SpaceDeleteButton,
+} from '@/components/settings/SpacesTab/SpaceDeleteButton'
+import { TooltipProvider } from '@/components/ui/tooltip'
+import { useIsMobile } from '@/hooks/useIsMobile'
+import { t } from '@/lib/i18n'
+import { logger } from '@/lib/logger'
+
+vi.mock('@/lib/logger', () => ({
+  logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+}))
+
+vi.mock('@/hooks/useIsMobile', () => ({
+  useIsMobile: vi.fn(() => false),
+}))
+
+const mockedInvoke = vi.mocked(invoke)
+const mockedUseIsMobile = vi.mocked(useIsMobile)
+
+function renderWithProvider(ui: React.ReactNode) {
+  return render(<TooltipProvider>{ui}</TooltipProvider>)
+}
+
+beforeEach(() => {
+  vi.clearAllMocks()
+  mockedUseIsMobile.mockReturnValue(false)
+  mockedInvoke.mockImplementation(async (cmd: string) => {
+    if (cmd === 'delete_block') return { affected_count: 1 }
+    return null
+  })
+})
+
+describe('SpaceDeleteButton', () => {
+  it('button is enabled when emptiness=true and not last space', () => {
+    renderWithProvider(
+      <SpaceDeleteButton
+        spaceId="SPACE_1"
+        spaceName="Personal"
+        isLastSpace={false}
+        emptiness
+        onRefresh={() => {}}
+      />,
+    )
+    const btn = screen.getByRole('button', { name: t('space.deleteSpaceLabel') })
+    expect(btn).not.toBeDisabled()
+  })
+
+  it('button is disabled when emptiness=false (non-empty space)', () => {
+    renderWithProvider(
+      <SpaceDeleteButton
+        spaceId="SPACE_1"
+        spaceName="Personal"
+        isLastSpace={false}
+        emptiness={false}
+        onRefresh={() => {}}
+      />,
+    )
+    expect(screen.getByRole('button', { name: t('space.deleteSpaceLabel') })).toBeDisabled()
+  })
+
+  it('button is disabled when isLastSpace=true (regardless of emptiness)', () => {
+    renderWithProvider(
+      <SpaceDeleteButton
+        spaceId="SPACE_1"
+        spaceName="Personal"
+        isLastSpace
+        emptiness
+        onRefresh={() => {}}
+      />,
+    )
+    expect(screen.getByRole('button', { name: t('space.deleteSpaceLabel') })).toBeDisabled()
+  })
+
+  it('button is disabled when emptiness=null (probe in flight or failed)', () => {
+    renderWithProvider(
+      <SpaceDeleteButton
+        spaceId="SPACE_1"
+        spaceName="Personal"
+        isLastSpace={false}
+        emptiness={null}
+        onRefresh={() => {}}
+      />,
+    )
+    expect(screen.getByRole('button', { name: t('space.deleteSpaceLabel') })).toBeDisabled()
+  })
+
+  it('confirm deletes, closes before the refresh settles, and refreshes', async () => {
+    const user = userEvent.setup()
+    const onRefresh = vi.fn(() => new Promise<void>(() => {}))
+    renderWithProvider(
+      <SpaceDeleteButton
+        spaceId="SPACE_1"
+        spaceName="Personal"
+        isLastSpace={false}
+        emptiness
+        onRefresh={onRefresh}
+      />,
+    )
+
+    await user.click(screen.getByRole('button', { name: t('space.deleteSpaceLabel') }))
+    expect(
+      await screen.findByText(t('space.deleteConfirmTitle', { name: 'Personal' })),
+    ).toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: t('action.delete') }))
+
+    await waitFor(() => {
+      expect(mockedInvoke).toHaveBeenCalledWith(
+        'delete_block',
+        expect.objectContaining({ blockId: 'SPACE_1' }),
+      )
+    })
+    await waitFor(() => {
+      expect(onRefresh).toHaveBeenCalledTimes(1)
+    })
+    await waitFor(() => {
+      expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
+    })
+  })
+
+  it('a refresh that fails after a successful delete is logged, not reported as a failed delete', async () => {
+    const user = userEvent.setup()
+    const onRefresh = vi.fn(() => Promise.reject(new Error('refresh failed')))
+    renderWithProvider(
+      <SpaceDeleteButton
+        spaceId="SPACE_1"
+        spaceName="Personal"
+        isLastSpace={false}
+        emptiness
+        onRefresh={onRefresh}
+      />,
+    )
+
+    await user.click(screen.getByRole('button', { name: t('space.deleteSpaceLabel') }))
+    await user.click(await screen.findByRole('button', { name: t('action.delete') }))
+
+    await waitFor(() => {
+      expect(onRefresh).toHaveBeenCalledTimes(1)
+    })
+    await waitFor(() => {
+      expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
+    })
+    expect(vi.mocked(toast.error)).not.toHaveBeenCalled()
+    expect(vi.mocked(logger.warn)).toHaveBeenCalledWith(
+      'components/settings/SpacesTab/SpaceDeleteButton',
+      'refresh after delete failed',
+      { spaceId: 'SPACE_1' },
+      expect.any(Error),
+    )
+  })
+
+  it('on a phone the confirmation is a sheet whose Delete is destructive and still deletes', async () => {
+    mockedUseIsMobile.mockReturnValue(true)
+    const user = userEvent.setup()
+    renderWithProvider(
+      <SpaceDeleteButton
+        spaceId="SPACE_1"
+        spaceName="Personal"
+        isLastSpace={false}
+        emptiness
+        onRefresh={() => {}}
+      />,
+    )
+
+    await user.click(screen.getByRole('button', { name: t('space.deleteSpaceLabel') }))
+    await screen.findByText(t('space.deleteConfirmTitle', { name: 'Personal' }))
+
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
+    const confirm = screen.getByRole('button', { name: t('action.delete') })
+    expect(confirm).toHaveClass('bg-destructive')
+    expect(screen.getByRole('button', { name: t('space.cancelLabel') })).toHaveFocus()
+
+    await user.click(confirm)
+    await waitFor(() => {
+      expect(mockedInvoke).toHaveBeenCalledWith(
+        'delete_block',
+        expect.objectContaining({ blockId: 'SPACE_1' }),
+      )
+    })
+  })
+
+  it('cancel closes the confirmation without calling deleteBlock', async () => {
+    const user = userEvent.setup()
+    renderWithProvider(
+      <SpaceDeleteButton
+        spaceId="SPACE_1"
+        spaceName="Personal"
+        isLastSpace={false}
+        emptiness
+        onRefresh={() => {}}
+      />,
+    )
+
+    await user.click(screen.getByRole('button', { name: t('space.deleteSpaceLabel') }))
+    await screen.findByText(t('space.deleteConfirmTitle', { name: 'Personal' }))
+
+    await user.click(screen.getByRole('button', { name: t('space.cancelLabel') }))
+
+    await waitFor(() => {
+      expect(
+        screen.queryByText(t('space.deleteConfirmTitle', { name: 'Personal' })),
+      ).not.toBeInTheDocument()
+    })
+    expect(mockedInvoke).not.toHaveBeenCalledWith('delete_block', expect.anything())
+  })
+
+  it('surfaces toast.error on deleteBlock IPC failure', async () => {
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'delete_block') throw new Error('IPC offline')
+      return null
+    })
+    const user = userEvent.setup()
+    renderWithProvider(
+      <SpaceDeleteButton
+        spaceId="SPACE_1"
+        spaceName="Personal"
+        isLastSpace={false}
+        emptiness
+        onRefresh={() => {}}
+      />,
+    )
+
+    await user.click(screen.getByRole('button', { name: t('space.deleteSpaceLabel') }))
+    await screen.findByText(t('space.deleteConfirmTitle', { name: 'Personal' }))
+    await user.click(screen.getByRole('button', { name: t('action.delete') }))
+
+    await waitFor(() => {
+      expect(vi.mocked(toast.error)).toHaveBeenCalledWith(t('space.deleteFailed'))
+    })
+
+    // Contract: on IPC failure the confirmation dialog STAYS OPEN so the user
+    // can retry without reopening the flow (recoverable failure).
+    expect(screen.getByRole('alertdialog')).toBeInTheDocument()
+    expect(
+      screen.getByText(t('space.deleteConfirmTitle', { name: 'Personal' })),
+    ).toBeInTheDocument()
+  })
+
+  it('does not dispatch deleteBlock twice on a fast double-click of confirm', async () => {
+    // A slow (never-resolving until we allow it) IPC keeps the handler in its
+    // pending window so a second click must be ignored by the isPending guard.
+    let resolveDelete: (() => void) | undefined
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'delete_block') {
+        await new Promise<void>((res) => {
+          resolveDelete = res
+        })
+        return { affected_count: 1 }
+      }
+      return null
+    })
+    const user = userEvent.setup()
+    renderWithProvider(
+      <SpaceDeleteButton
+        spaceId="SPACE_1"
+        spaceName="Personal"
+        isLastSpace={false}
+        emptiness
+        onRefresh={() => {}}
+      />,
+    )
+
+    await user.click(screen.getByRole('button', { name: t('space.deleteSpaceLabel') }))
+    await screen.findByText(t('space.deleteConfirmTitle', { name: 'Personal' }))
+
+    const confirm = screen.getByRole('button', { name: t('action.delete') })
+    await user.click(confirm)
+    // Second click while the first IPC is still in flight — must be a no-op.
+    await user.click(confirm)
+
+    resolveDelete?.()
+
+    await waitFor(() => {
+      const deleteCalls = mockedInvoke.mock.calls.filter((c) => c[0] === 'delete_block')
+      expect(deleteCalls).toHaveLength(1)
+    })
+  })
+})
+
+describe('SpaceDeleteBlockedHint', () => {
+  it('renders the inline hint when emptiness=false and not last space', () => {
+    render(<SpaceDeleteBlockedHint emptiness={false} isLastSpace={false} />)
+    expect(screen.getByTestId('space-delete-blocked-hint')).toHaveTextContent(
+      t('space.deleteSpaceInlineHint'),
+    )
+  })
+
+  it('returns null when emptiness=true (delete enabled)', () => {
+    const { container } = render(<SpaceDeleteBlockedHint emptiness isLastSpace={false} />)
+    expect(container.querySelector('[data-testid="space-delete-blocked-hint"]')).toBeNull()
+  })
+
+  it('returns null when isLastSpace=true (already covered by tooltip)', () => {
+    const { container } = render(<SpaceDeleteBlockedHint emptiness={false} isLastSpace />)
+    expect(container.querySelector('[data-testid="space-delete-blocked-hint"]')).toBeNull()
+  })
+
+  it('returns null while emptiness probe is still loading (null)', () => {
+    const { container } = render(<SpaceDeleteBlockedHint emptiness={null} isLastSpace={false} />)
+    expect(container.querySelector('[data-testid="space-delete-blocked-hint"]')).toBeNull()
+  })
+})

@@ -123,6 +123,28 @@ describe('AddFilterPopover', () => {
     expect(onAddFilter).toHaveBeenCalledWith({ type: 'Orphan' })
   })
 
+  it('"Exclude journal pages" emits the exact-date PathGlob exclude chip (#5370)', async () => {
+    const user = userEvent.setup()
+    const onAddFilter = vi.fn<(f: FilterPrimitive) => void>()
+    render(<AddFilterPopover onAddFilter={onAddFilter} />)
+    await openPopover(user)
+
+    expect(screen.getByText('Hide pages titled with a date (YYYY-MM-DD).')).toBeInTheDocument()
+    await user.click(screen.getByText('Exclude journal pages'))
+    expect(onAddFilter).toHaveBeenCalledWith({
+      type: 'PathGlob',
+      pattern: '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]',
+      exclude: true,
+    })
+  })
+
+  it('does not offer "Exclude journal pages" with the Pages facets hidden', async () => {
+    const user = userEvent.setup()
+    render(<AddFilterPopover onAddFilter={vi.fn()} hidePagesFacets />)
+    await openPopover(user)
+    expect(screen.queryByText('Exclude journal pages')).not.toBeInTheDocument()
+  })
+
   it('maps the "Edited this week" bucket to Rolling { days: 7 }', async () => {
     const user = userEvent.setup()
     const onAddFilter = vi.fn<(f: FilterPrimitive) => void>()

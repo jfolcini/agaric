@@ -46,7 +46,7 @@ test.describe('Settings on a phone', () => {
     await page.getByRole('combobox', { name: 'Settings', exact: true }).click()
 
     const options = page.getByRole('option')
-    await expect(options).toHaveCount(12)
+    await expect(options).toHaveCount(13)
     for (const option of await options.all()) {
       await expect(option).toBeInViewport({ ratio: 1 })
       // Polled: the list zooms in from 95%, so an early read is a few px short.

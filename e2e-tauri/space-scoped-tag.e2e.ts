@@ -86,25 +86,23 @@ describe('Agaric real-backend space-scoped tag (#4671 / #3081)', () => {
     await waitForAppReady()
     const spaceA = await currentSpaceName()
 
-    // 1. Create space B through the manage dialog (creating does not switch).
+    // 1. Create space B in Settings › Spaces (creating does not switch).
     await chooseSelectOption(SWITCHER, 'Manage spaces')
-    const dialog = $('[data-testid="space-manage-dialog"]')
-    await dialog.waitForDisplayed({ timeout: ACTION_TIMEOUT })
-    const create = dialog.$('button[aria-label="Create new space"]')
+    const panel = $('[data-testid="settings-panel-spaces"]')
+    await panel.waitForDisplayed({ timeout: ACTION_TIMEOUT })
+    const create = panel.$('button[aria-label="Create new space"]')
     await create.waitForClickable({ timeout: ACTION_TIMEOUT })
     await create.click()
     await typeInputVerified('[aria-label="New space name"]', SPACE_B)
     await browser.keys(['Enter'])
     await browser.waitUntil(
       async () => {
-        const rows = await dialog.$$('[aria-label="Rename space"]').getElements()
+        const rows = await panel.$$('[aria-label="Rename space"]').getElements()
         const values = await rows.map((row) => row.getValue())
         return values.includes(SPACE_B)
       },
-      { timeout: ACTION_TIMEOUT, timeoutMsg: 'the new space never appeared in the manage dialog' },
+      { timeout: ACTION_TIMEOUT, timeoutMsg: 'the new space never appeared in Settings › Spaces' },
     )
-    await browser.keys(['Escape'])
-    await dialog.waitForExist({ reverse: true, timeout: ACTION_TIMEOUT })
 
     // 2. Switch to B and create the tag inline: `@name` opens the tag picker
     //    whose first item is "Create <name>" (use-block-resolve.ts

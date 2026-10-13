@@ -9,7 +9,9 @@ use tauri::State;
 
 use crate::db::ReadPool;
 use agaric_core::error::AppError;
-use agaric_store::pagination::{ActiveBlockRow, ActiveProjectedAgendaEntry, Cursor};
+use agaric_store::pagination::{
+    ActiveBlockRow, ActiveProjectedAgendaEntry, AgendaRangeEntry, Cursor,
+};
 use agaric_store::space::SpaceScope;
 
 use super::*;
@@ -185,15 +187,14 @@ async fn read_projected_agenda_horizon(
 
     // #3160 — the *lower* end of the same guarantee, plus its freshness.
     //
-    // Lower end: the rebuild projects with `range_start = today`
-    // (`cache::projected_agenda::project_block_into`), so occurrences BEFORE
-    // the rebuild's reference date are never materialized. The
-    // guaranteed-complete span is the closed interval
-    // `[rebuild_today, horizon_date]`, and `rebuild_today` is read straight
-    // off the row the rebuild wrote (migration 0105) — NOT derived as
-    // `horizon_date - HORIZON_DAYS`, which would decode stale rows to the
-    // wrong date the moment that constant is retuned, with nothing
-    // invalidating the row on upgrade.
+    // Lower end: the rebuild materializes from
+    // `today - BACKWARD_WINDOW_DAYS` (#5421), so the guaranteed-complete span
+    // is the closed interval
+    // `[rebuild_today - BACKWARD_WINDOW_DAYS, horizon_date]`, and
+    // `rebuild_today` is read straight off the row the rebuild wrote
+    // (migration 0105) — NOT derived as `horizon_date - HORIZON_DAYS`, which
+    // would decode stale rows to the wrong date the moment that constant is
+    // retuned, with nothing invalidating the row on upgrade.
     //
     // Freshness: `rebuild_today` must still BE today. Default-mode rules
     // (`daily` / `+1w` / `monthly` / …) project from the block's own base
@@ -484,12 +485,22 @@ pub async fn list_projected_agenda_inner_with_today(
         read_projected_agenda_horizon(pool, &end_date).await?;
 
     // #3260 — route on BOTH ends of the guarantee. The cache holds nothing
-    // before the rebuild's reference date, so a range that starts before
-    // today and ends inside the horizon used to be served from the cache
-    // with its past half silently missing: non-empty, `has_more: false`, and
-    // the empty-window probe below never fires. Reachable through the MCP
-    // `get_agenda` tool, which forwards its dates verbatim.
-    if !(cache_covers_range && range_start >= today) {
+    // before its backward window, so a range that starts earlier and ends
+    // inside the horizon would be served with its past part silently
+    // missing: non-empty, `has_more: false`, and the empty-window probe below
+    // never fires. Reachable through the MCP `get_agenda` tool, which
+    // forwards its dates verbatim.
+    //
+    // #5421 — the floor is the stored `rebuild_today`, not `today`: it is the
+    // date the rows were projected from, so a rebuild still pending after
+    // midnight keeps the window it actually wrote. A pre-0105 row has no
+    // `rebuild_today` and keeps the forward-only floor of `today`. A row
+    // written by a pre-#5421 binary claims a backward window it never
+    // materialized until the boot rebuild replaces it.
+    let cache_floor = rebuild_today.map_or(today, |r| {
+        r - chrono::Duration::days(agaric_store::cache::BACKWARD_WINDOW_DAYS)
+    });
+    if !(cache_covers_range && range_start >= cache_floor) {
         return list_projected_agenda_on_the_fly(
             pool,
             range_start,
@@ -900,7 +911,8 @@ fn project_repeating_block_into_map(
 ///
 /// Used as a fallback when `projected_agenda_cache` is empty (e.g. first boot
 /// before the materializer has populated the cache) OR when the query reaches
-/// past the bounded materialization horizon (#2601) — see the horizon guard
+/// past the bounded materialization horizon (#2601) or starts before its
+/// backward window (#5421) — see the horizon guard
 /// in [`list_projected_agenda_inner`]. This path applies no occurrence-count
 /// cap, so it is exhaustive within `[range_start, range_end]` for any range.
 ///
@@ -974,10 +986,7 @@ pub async fn list_projected_agenda_on_the_fly(
     // A pre-#3206 cursor carries no `source`; that page falls back to the old
     // two-term test, matching what the cache path's SQL does when it binds a
     // NULL `?8`, so the two branches stay swappable mid-pagination.
-    let cursor_key: Option<(&str, &str, Option<&str>)> = after.as_ref().map(|c| {
-        let (block_id, source) = c.projected_agenda_key();
-        (c.deleted_at.as_deref().unwrap_or(""), block_id, source)
-    });
+    let after = after.cloned();
 
     // safe: `limit` is the [1, 500]-clamped per-page cap (i64 → usize on
     // 64-bit). Captured once here so the inline cursor / cap checks below
@@ -990,22 +999,32 @@ pub async fn list_projected_agenda_on_the_fly(
     // bounded.
     let max_entries = limit_usize.saturating_add(1);
 
-    let mut entries_map: BTreeMap<(String, String, String), ActiveProjectedAgendaEntry> =
-        BTreeMap::new();
-
-    let bounds = ProjectedPageBounds {
-        cursor_key,
-        max_entries,
-    };
     let window = ProjectionWindow {
         today,
         range_start,
         range_end,
     };
 
-    for block in &rows {
-        project_repeating_block_into_map(block, &window, &bounds, &mut entries_map);
-    }
+    // #5421 — the expansion is O(repeating blocks × range) CPU work; on the
+    // async worker it would stall every other command sharing that thread.
+    let entries_map = tokio::task::spawn_blocking(move || {
+        let cursor_key: Option<(&str, &str, Option<&str>)> = after.as_ref().map(|c| {
+            let (block_id, source) = c.projected_agenda_key();
+            (c.deleted_at.as_deref().unwrap_or(""), block_id, source)
+        });
+        let bounds = ProjectedPageBounds {
+            cursor_key,
+            max_entries,
+        };
+        let mut entries_map: BTreeMap<(String, String, String), ActiveProjectedAgendaEntry> =
+            BTreeMap::new();
+        for block in &rows {
+            project_repeating_block_into_map(block, &window, &bounds, &mut entries_map);
+        }
+        entries_map
+    })
+    .await
+    .map_err(|e| AppError::Internal(format!("projected agenda expansion failed: {e}")))?;
 
     // BTreeMap iteration order is the (date, id, source) lex order — the
     // same comparator the old `entries.sort_by(...)` enforced post-hoc.
@@ -1072,6 +1091,164 @@ pub async fn list_projected_agenda(
     list_projected_agenda_inner(&pool.0, start_date, end_date, cursor, limit, &scope)
         .await
         .map_err(sanitize_internal_error)
+}
+
+/// The MCP `get_agenda` range: every live block whose `due_date` or
+/// `scheduled_date` falls in `[start_date, end_date]` (both inclusive; DONE
+/// tasks excluded, as the Due panel excludes them), plus the later
+/// occurrences [`list_projected_agenda_inner`] projects for repeating tasks.
+///
+/// Each `(date, block_id, source)` appears once. A projected occurrence can
+/// land on its block's own date (a `.+` rule whose base is `today + interval`
+/// projects exactly that date); the dated row wins.
+///
+/// Both halves sort on, and resume after, the same `(date, block_id, source)`
+/// keyset packed by [`Cursor::for_projected_agenda`], so one cursor serves
+/// both. Dates and `limit` are validated as [`list_projected_agenda_inner`]
+/// validates them.
+#[instrument(skip(pool), err)]
+pub async fn agenda_range_inner(
+    pool: &SqlitePool,
+    start_date: String,
+    end_date: String,
+    cursor: Option<String>,
+    limit: Option<i64>,
+    scope: &SpaceScope,
+) -> Result<PageResponse<AgendaRangeEntry>, AppError> {
+    let query = parse_projected_agenda_query(&start_date, &end_date, cursor.as_deref(), limit)?;
+    let dated = fetch_dated_agenda(
+        pool,
+        &start_date,
+        &end_date,
+        &projected_agenda_cursor_binds(query.after.as_ref()),
+        query.limit_i64 + 1,
+        scope.as_filter_param(),
+    )
+    .await?;
+    let projected =
+        list_projected_agenda_inner(pool, start_date, end_date, cursor, limit, scope).await?;
+    merge_agenda_halves(dated, projected, query.cap)
+}
+
+/// The dated half of [`agenda_range_inner`]: one row per date column inside
+/// the range, ordered and keyset-filtered like the projected half.
+async fn fetch_dated_agenda(
+    pool: &SqlitePool,
+    start_date: &str,
+    end_date: &str,
+    cursor: &ProjectedAgendaCursorBinds<'_>,
+    fetch_limit: i64,
+    space_id: Option<&str>,
+) -> Result<Vec<AgendaRangeEntry>, AppError> {
+    // The template and space clauses mirror `fetch_cached_projected_agenda`;
+    // `todo_state IS NULL OR` keeps dated blocks that are not tasks.
+    let rows = sqlx::query!(
+        r#"SELECT b.id AS "id!: agaric_core::ulid::ActiveBlockId",
+                b.block_type AS "block_type!", b.content AS "content?",
+                b.parent_id AS "parent_id?: agaric_core::ulid::BlockId",
+                b.position AS "position?", b.deleted_at AS "deleted_at?",
+                b.todo_state AS "todo_state?", b.priority AS "priority?",
+                b.due_date AS "due_date?", b.scheduled_date AS "scheduled_date?",
+                b.page_id AS "page_id?: agaric_core::ulid::BlockId",
+                d.date AS "date!: String", d.source AS "source!: String"
+         FROM (
+             SELECT id, due_date AS date, 'due_date' AS source FROM blocks
+             WHERE due_date >= ?1 AND due_date <= ?2
+             UNION ALL
+             SELECT id, scheduled_date, 'scheduled_date' FROM blocks
+             WHERE scheduled_date >= ?1 AND scheduled_date <= ?2
+         ) d
+         JOIN blocks b ON b.id = d.id
+         WHERE b.deleted_at IS NULL
+           AND (b.todo_state IS NULL OR b.todo_state != 'DONE')
+           AND NOT EXISTS (
+               SELECT 1 FROM block_properties tp
+               WHERE tp.block_id = b.page_id AND tp.key = 'template'
+           )
+           AND (?3 IS NULL OR b.space_id = ?3)
+           AND (?4 IS NULL OR (d.date > ?5
+               OR (d.date = ?5 AND d.id > ?6)
+               OR (d.date = ?5 AND d.id = ?6 AND ?7 IS NOT NULL AND d.source > ?7)))
+         ORDER BY d.date ASC, d.id ASC, d.source ASC
+         LIMIT ?8"#,
+        start_date,    // ?1
+        end_date,      // ?2
+        space_id,      // ?3
+        cursor.flag,   // ?4
+        cursor.date,   // ?5
+        cursor.id,     // ?6
+        cursor.source, // ?7
+        fetch_limit,   // ?8
+    )
+    .fetch_all(pool)
+    .await?;
+    Ok(rows
+        .into_iter()
+        .map(|r| AgendaRangeEntry {
+            block: ActiveBlockRow {
+                id: r.id,
+                block_type: r.block_type,
+                content: r.content,
+                parent_id: r.parent_id,
+                position: r.position,
+                deleted_at: r.deleted_at,
+                todo_state: r.todo_state,
+                priority: r.priority,
+                due_date: r.due_date,
+                scheduled_date: r.scheduled_date,
+                page_id: r.page_id,
+            },
+            date: r.date,
+            source: r.source,
+            projected: false,
+        })
+        .collect())
+}
+
+/// Merge [`agenda_range_inner`]'s two halves into one page of at most `cap`
+/// rows. Each half was read after the same cursor with at least `cap` rows,
+/// so every row of the true first `cap` is in hand.
+fn merge_agenda_halves(
+    mut dated: Vec<AgendaRangeEntry>,
+    projected: PageResponse<ActiveProjectedAgendaEntry>,
+    cap: usize,
+) -> Result<PageResponse<AgendaRangeEntry>, AppError> {
+    let dated_has_more = dated.len() > cap;
+    dated.truncate(cap);
+    let key = |e: &AgendaRangeEntry| {
+        (
+            e.date.clone(),
+            e.block.id.as_str().to_string(),
+            e.source.clone(),
+        )
+    };
+    let mut merged: BTreeMap<(String, String, String), AgendaRangeEntry> =
+        dated.into_iter().map(|e| (key(&e), e)).collect();
+    for p in projected.items {
+        let entry = AgendaRangeEntry {
+            block: p.block,
+            date: p.projected_date,
+            source: p.source,
+            projected: true,
+        };
+        merged.entry(key(&entry)).or_insert(entry);
+    }
+    let mut items: Vec<AgendaRangeEntry> = merged.into_values().collect();
+    let has_more = items.len() > cap || dated_has_more || projected.has_more;
+    items.truncate(cap);
+    let next_cursor = match items.last() {
+        Some(last) if has_more => Some(
+            Cursor::for_projected_agenda(last.block.id.as_str(), last.date.clone(), &last.source)
+                .encode()?,
+        ),
+        _ => None,
+    };
+    Ok(PageResponse {
+        items,
+        next_cursor,
+        has_more,
+        total_count: None,
+    })
 }
 
 /// List undated tasks: blocks with todo_state but no due_date and no scheduled_date.

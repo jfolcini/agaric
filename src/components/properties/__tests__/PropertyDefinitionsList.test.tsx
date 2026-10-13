@@ -169,6 +169,38 @@ describe('PropertyDefinitionsList', () => {
     expect(vi.mocked(toast.success)).toHaveBeenCalledWith('Property definition created')
   })
 
+  // #5449 — the backend refuses a select definition without options.
+  it('a select definition is created only with its options', async () => {
+    const user = userEvent.setup()
+    stubDefs(pageOf([]))
+
+    render(<PropertyDefinitionsList />)
+
+    await waitFor(() => {
+      expect(screen.getByText('No property definitions yet')).toBeInTheDocument()
+    })
+
+    stubInvoke({ create_property_def: () => makePropDef('size', 'select', '["small","large"]') })
+
+    await user.type(screen.getByPlaceholderText('Property key'), 'size')
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Type' }), 'select')
+    const createBtn = screen.getByRole('button', { name: /Create/i })
+    expect(createBtn).toBeDisabled()
+
+    await user.type(
+      screen.getByRole('textbox', { name: 'Options, comma-separated' }),
+      'small, ,large',
+    )
+    await user.click(createBtn)
+
+    expect(await screen.findByText('Size')).toBeInTheDocument()
+    expect(mockedInvoke).toHaveBeenCalledWith('create_property_def', {
+      key: 'size',
+      valueType: 'select',
+      options: '["small","large"]',
+    })
+  })
+
   it('delete button shows confirmation dialog', async () => {
     const user = userEvent.setup()
     stubDefs(pageOf([makePropDef('to-delete', 'text')]))
@@ -352,6 +384,34 @@ describe('PropertyDefinitionsList', () => {
     })
     // The definition should still be in the list
     expect(screen.getByText('To Delete')).toBeInTheDocument()
+  })
+
+  // #5449 — a definition a block still uses is refused; the user is told why.
+  it("shows the backend's reason when a definition in use is not deleted", async () => {
+    const user = userEvent.setup()
+    stubDefs(pageOf([makePropDef('project', 'text')]))
+
+    render(<PropertyDefinitionsList />)
+
+    expect(await screen.findByText('Project')).toBeInTheDocument()
+
+    const inUse: AppError = {
+      kind: 'validation',
+      code: null,
+      message:
+        "cannot delete property definition 'project': 2 block_properties row(s) reference this " +
+        'key. Clear them first via set_property(value=None) on each affected block.',
+    }
+    stubInvoke({ delete_property_def: () => Promise.reject(inUse) })
+
+    await user.click(screen.getByRole('button', { name: 'Delete property project' }))
+    await user.click(await screen.findByRole('button', { name: /^Delete$/i }))
+
+    await waitFor(() => {
+      expect(vi.mocked(toast.error)).toHaveBeenCalledWith(inUse.message)
+    })
+    expect(vi.mocked(toast.error)).toHaveBeenCalledTimes(1)
+    expect(screen.getByText('Project')).toBeInTheDocument()
   })
 
   it('shows toast error when saving options fails', async () => {

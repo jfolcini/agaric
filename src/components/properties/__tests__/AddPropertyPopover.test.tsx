@@ -407,7 +407,7 @@ describe('AddPropertyPopover', () => {
 
     await user.click(screen.getByRole('button', { name: /create definition/i }))
 
-    expect(onCreateDef).toHaveBeenCalledWith('newfield', 'text')
+    expect(onCreateDef).toHaveBeenCalledWith('newfield', 'text', null)
   })
 
   // #4710 — a `url` definition is declared from this popover; the selected
@@ -435,7 +435,7 @@ describe('AddPropertyPopover', () => {
     await user.selectOptions(await screen.findByLabelText('Value type'), 'url')
     await user.click(screen.getByRole('button', { name: /create definition/i }))
 
-    expect(onCreateDef).toHaveBeenCalledWith('homepage', 'url')
+    expect(onCreateDef).toHaveBeenCalledWith('homepage', 'url', null)
   })
 
   it('displays formatted property names', async () => {

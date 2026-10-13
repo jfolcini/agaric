@@ -35,18 +35,15 @@ Components using `usePageBlockStore` / `usePageBlockStoreApi` render inside `<Pa
 
 ## Choosing the mock layer
 
-- **`invoke` from `@tauri-apps/api/core`** — mocked globally in `src/test-setup.ts`, below both `@/lib/bindings` and the `@/lib/ipc-helpers` floor, so it catches every call. Prefer it.
-- **`vi.mock('@/lib/ipc-helpers', …)`** — catches only the hand-written floor; a store calling `commands.*` from `@/lib/bindings` directly bypasses it. Check the store's imports first.
+Prefer the global `invoke` mock, which catches every call. `vi.mock('@/lib/ipc-helpers', …)` catches only the hand-written floor: a store calling `commands.*` from `@/lib/bindings` bypasses it, so check the store's imports first.
 
 ## Conventions
 
 - Deferred promises to observe intermediate states (loading, recovering).
 - `useBootStore.subscribe()` to capture state-transition sequences.
-- Both paths: on backend error, assert state did **not** change.
-
-## Assert durable, re-queried effect — never call-shape (anti-drift)
-
-For an action that mutates backend state, `expect(invoke).toHaveBeenCalledWith(…)` is not enough — the tauri mock drifts from the real backend. Re-`load()` or read the projection afterwards and assert the resulting row / column / cleared field (several page-blocks suites drive the tauri mock's `dispatch` directly for this). Rule and enforcement: [`src/__tests__/AGENTS.md` § anti-drift](../../__tests__/AGENTS.md#assert-durable-re-queried-effect--never-call-shape-anti-drift).
+- On backend error, assert state did **not** change.
+- For a backend mutation, re-`load()` or read the projection and assert the resulting row; several page-blocks suites drive the tauri mock's `dispatch` directly for this.
+- Optimistic writers: test the race, not only the failure. Fire two calls on one block, reject the first, and assert the second's state survives the rollback (rules: [`src/stores/AGENTS.md`](../AGENTS.md)).
 
 ## Undo / redo store
 

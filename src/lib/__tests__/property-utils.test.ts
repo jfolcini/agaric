@@ -1,10 +1,11 @@
 /**
- * Tests for src/lib/property-utils.ts — formatPropertyName, BUILTIN_PROPERTY_ICONS.
+ * Tests for src/lib/property-utils.ts — formatPropertyName, selectOptionsJson,
+ * BUILTIN_PROPERTY_ICONS.
  */
 
 import { describe, expect, it } from 'vitest'
 
-import { BUILTIN_PROPERTY_ICONS, formatPropertyName } from '@/lib/property-utils'
+import { BUILTIN_PROPERTY_ICONS, formatPropertyName, selectOptionsJson } from '@/lib/property-utils'
 
 describe('formatPropertyName', () => {
   it('replaces underscores with spaces and title-cases', () => {
@@ -56,5 +57,16 @@ describe('BUILTIN_PROPERTY_ICONS', () => {
   it('returns undefined for non-iconic built-in keys', () => {
     expect(BUILTIN_PROPERTY_ICONS['todo_state']).toBeUndefined()
     expect(BUILTIN_PROPERTY_ICONS['priority']).toBeUndefined()
+  })
+})
+
+describe('selectOptionsJson', () => {
+  it('reads the trimmed, non-empty options of a comma-separated list', () => {
+    expect(selectOptionsJson(' small, ,large ,')).toBe('["small","large"]')
+  })
+
+  it('is null when the list names no option', () => {
+    expect(selectOptionsJson('')).toBeNull()
+    expect(selectOptionsJson(' , ')).toBeNull()
   })
 })

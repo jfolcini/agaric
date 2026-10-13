@@ -100,7 +100,7 @@ function isLegacyGraphFilter(value: unknown): value is GraphFilter {
 /**
  * Read the persisted filter list from localStorage. Returns `null` when no
  * value is stored, when storage is unavailable (SSR), or when the stored value
- * fails to parse.
+ * fails to parse — the cases where the parent's default list stands (#5370).
  *
  * Issue #1646 proof: the graph surface now persists its filters as CANONICAL
  * `FilterPredicate[]` (the single cross-surface model) and projects them back
@@ -121,25 +121,9 @@ function isLegacyGraphFilter(value: unknown): value is GraphFilter {
  * borrowed-from-another-variant fields. `parseFilterPredicates` runs the
  * real per-`kind` validator (`src/lib/filters/validate.ts`) over the array
  * and drops any entry that fails — including one with an unrecognised
- * `kind` — before the survivors ever reach `canonicalToGraphFilters`.
- *
- * #3889: when every entry is dropped, `predicates` is `[]`. The caller's
- * mount effect never dispatches an empty hydrated list (see below), so the
- * normal write-effect self-heal — persisting the cleaned value once
- * `filters` changes — never fires either: nothing changed from the parent's
- * point of view. Left alone, the wholly-corrupt value would sit in storage
- * forever and re-warn on every mount. So this is the one case where the read
- * path writes back itself, overwriting the corrupt value with the (empty)
- * cleaned one right here, rather than leaving it to the write effect.
- *
- * Narrow cross-version caveat: if every stored entry is actually valid for a
- * NEWER schema this validator doesn't recognise yet (e.g. after a downgrade
- * to an older build), the heal above overwrites those entries with `[]`
- * where they previously just sat there unread. Only reachable on a
- * downgrade, and the current version already ignored those entries either
- * way (it can't validate a shape it doesn't know), so nothing this version
- * does with the data changes — only what a future re-upgrade could still
- * have recovered from disk.
+ * `kind` — before the survivors ever reach `canonicalToGraphFilters`. The
+ * mount effect dispatches the cleaned list, even an empty one, so the write
+ * effect overwrites the corrupt value (#3889).
  */
 
 function readPersistedFilters(key: string): GraphFilter[] | null {
@@ -162,30 +146,6 @@ function readPersistedFilters(key: string): GraphFilter[] | null {
           key,
           droppedCount,
         })
-        if (predicates.length === 0) {
-          // Total corruption (#3889): nothing survived, so hydration below
-          // dispatches nothing and the write effect that would normally
-          // persist the cleaned value never runs. Self-heal here instead —
-          // overwrite the corrupt stored value with the (empty) cleaned one
-          // so the next mount finds a clean `[]` and stops re-warning.
-          //
-          // This write gets its own try/catch, deliberately separate from
-          // the outer read `try` below: a throw here is a WRITE failure
-          // (quota exceeded, storage revoked mid-read), not a read failure,
-          // and must not be misattributed to "Failed to read persisted
-          // filters" — the outer catch's message. The heal is best-effort;
-          // the cleaned `[]` is still returned either way.
-          try {
-            window.localStorage.setItem(key, JSON.stringify(predicates))
-          } catch (err) {
-            logger.warn(
-              'GraphFilterBar',
-              'Failed to persist healed (self-cleaned) filters',
-              { key },
-              err,
-            )
-          }
-        }
       }
       return canonicalToGraphFilters(predicates)
     }
@@ -200,23 +160,6 @@ function readPersistedFilters(key: string): GraphFilter[] | null {
         key,
         droppedCount: legacyDroppedCount,
       })
-      if (legacyFilters.length === 0) {
-        // Same total-corruption case as the canonical branch above (#3889):
-        // an empty hydrated list is never dispatched by the mount effect, so
-        // the normal write-effect self-heal never fires either. Heal here
-        // too, in its own try/catch for the same write-vs-read attribution
-        // reason as above.
-        try {
-          window.localStorage.setItem(key, JSON.stringify(legacyFilters))
-        } catch (err) {
-          logger.warn(
-            'GraphFilterBar',
-            'Failed to persist healed (self-cleaned) filters',
-            { key },
-            err,
-          )
-        }
-      }
     }
     return legacyFilters
   } catch (err) {
@@ -301,6 +244,9 @@ function filterLabel(filter: GraphFilter, t: TFunction): string {
     }
     case 'excludeTemplates': {
       return t('graph.filter.excludeTemplates')
+    }
+    case 'excludeJournal': {
+      return t('graph.filter.excludeJournal')
     }
   }
 }
@@ -398,6 +344,10 @@ function AddFilterForm({
           filter = { type: 'excludeTemplates', value: true }
           break
         }
+        case 'excludeJournal': {
+          filter = { type: 'excludeJournal', value: true }
+          break
+        }
       }
       onApply(filter)
     },
@@ -451,6 +401,9 @@ function AddFilterForm({
           )}
           {!usedTypes.has('excludeTemplates') && (
             <SelectItem value="excludeTemplates">{t('graph.filter.excludeTemplates')}</SelectItem>
+          )}
+          {!usedTypes.has('excludeJournal') && (
+            <SelectItem value="excludeJournal">{t('graph.filter.excludeJournal')}</SelectItem>
           )}
         </SelectContent>
       </Select>
@@ -557,6 +510,10 @@ function AddFilterForm({
         <p className="text-xs text-muted-foreground">{t('graph.filter.excludeTemplates')}</p>
       )}
 
+      {dimension === 'excludeJournal' && (
+        <p className="text-xs text-muted-foreground">{t('graph.filter.excludeJournal')}</p>
+      )}
+
       <div className="flex items-center justify-end gap-1.5">
         <Button
           type="button"
@@ -601,8 +558,8 @@ export function GraphFilterBar({
   // Hydrate persisted filters once on mount, then write to
   // localStorage whenever the controlled `filters` prop changes. The write
   // effect skips its very first run so it doesn't clobber the just-loaded
-  // persisted value with the parent's pre-hydration default (empty) state
-  // before the hydration dispatch has propagated through the parent.
+  // persisted value with the parent's pre-hydration default state before the
+  // hydration dispatch has propagated through the parent.
   const hasHydratedRef = useRef(false)
   // Fixed for this mount: `ViewDispatcher` remounts the graph on a space
   // switch, so one space's list is never written under another's key.
@@ -610,8 +567,9 @@ export function GraphFilterBar({
     graphFiltersStorageKey(useSpaceStore.getState().currentSpaceId),
   )
   useEffect(() => {
+    // A stored `[]` (the user removed the default) hydrates as empty (#5370).
     const persisted = readPersistedFilters(storageKey)
-    if (persisted !== null && persisted.length > 0) {
+    if (persisted !== null) {
       onFiltersChange(persisted)
     }
     // oxlint-disable-next-line react-hooks/exhaustive-deps -- mount-only hydration; onFiltersChange is intentionally excluded so the effect does not re-run when the parent recreates the callback

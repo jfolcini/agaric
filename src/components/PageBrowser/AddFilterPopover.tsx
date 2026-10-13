@@ -57,6 +57,7 @@ import type {
   PropertyValue,
 } from '@/lib/bindings'
 import { logger } from '@/lib/logger'
+import { EXCLUDE_JOURNAL_PAGES_FILTER } from '@/stores/pageBrowserFilters'
 
 export interface AddFilterPopoverProps {
   /** Emits the chosen primitive. The parent appends it to its chip set. */
@@ -584,6 +585,12 @@ export function AddFilterPopover({
                   description={t('pageBrowser.filter.facetHasNoInboundLinksDesc')}
                 >
                   {t('pageBrowser.filter.facetHasNoInboundLinks')}
+                </FilterMenuItem>
+                <FilterMenuItem
+                  onClick={() => emit(EXCLUDE_JOURNAL_PAGES_FILTER)}
+                  description={t('pageBrowser.filter.facetExcludeJournalPagesDesc')}
+                >
+                  {t('pageBrowser.filter.facetExcludeJournalPages')}
                 </FilterMenuItem>
               </FilterCategoryGroup>
             )}

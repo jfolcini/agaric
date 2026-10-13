@@ -11,9 +11,9 @@
  * total size to scroll inside of.
  *
  * Key is per-space so switching spaces and back restores each space's
- * last position independently. Filter / sort / density changes clear the
- * saved offset because the saved position is meaningless against a
- * re-ordered or re-filtered set.
+ * last position independently. Filter / sort changes clear the saved
+ * offset because the saved position is meaningless against a re-ordered
+ * or re-filtered set.
  *
  * Extracted verbatim from `PageBrowser.tsx` (#1263). Pure move — same
  * effects, same deps, same timing.
@@ -21,7 +21,6 @@
 
 import { type RefObject, useEffect, useRef } from 'react'
 
-import type { DensityMode } from '@/hooks/usePageBrowserDensity'
 import type { SortOption } from '@/hooks/usePageBrowserSort'
 
 interface VirtualizerLike {
@@ -39,7 +38,6 @@ interface UsePageBrowserScrollRestorationParams {
   virtualizer: VirtualizerLike
   filterText: string
   sortOption: SortOption
-  density: DensityMode
   wireFiltersKey: string
 }
 
@@ -50,7 +48,6 @@ export function usePageBrowserScrollRestoration({
   virtualizer,
   filterText,
   sortOption,
-  density,
   wireFiltersKey,
 }: UsePageBrowserScrollRestorationParams): void {
   const scrollStorageKey =
@@ -120,15 +117,12 @@ export function usePageBrowserScrollRestoration({
     // oxlint-disable-next-line react-hooks/exhaustive-deps -- `listRef` is a stable ref; re-attach only on storage-key (space) change
   }, [scrollStorageKey])
 
-  // Clear saved offset when filter / sort / density / space changes —
-  // the saved offset is keyed only by space, so a filter / sort /
-  // density change against the same space would otherwise restore a
-  // meaningless position the next time the user revisits this view.
-  // Density is included because the per-row pixel height changed
-  // wholesale (32 / 44 / 68 px), so the saved scrollTop no longer
-  // points at the same row index. Allow restoration again on next
-  // mount by leaving `restoredRef` intact within this mount but
-  // dropping the stored value.
+  // Clear saved offset when filter / sort / space changes — the saved
+  // offset is keyed only by space, so a filter / sort change against the
+  // same space would otherwise restore a meaningless position the next
+  // time the user revisits this view. Allow restoration again on next
+  // mount by leaving `restoredRef` intact within this mount but dropping
+  // the stored value.
   useEffect(() => {
     if (scrollStorageKey == null) return
     // Skip the very first run (mount) — that's when we want to
@@ -137,6 +131,6 @@ export function usePageBrowserScrollRestoration({
     // restoration completes, any subsequent change clears.
     if (!restoredRef.current) return
     sessionStorage.removeItem(scrollStorageKey)
-    // oxlint-disable-next-line react-hooks/exhaustive-deps -- scrollStorageKey already covers space changes; filterText, sortOption, density, and the compound-filter set are the explicit triggers
-  }, [filterText, sortOption, density, wireFiltersKey])
+    // oxlint-disable-next-line react-hooks/exhaustive-deps -- scrollStorageKey already covers space changes; filterText, sortOption, and the compound-filter set are the explicit triggers
+  }, [filterText, sortOption, wireFiltersKey])
 }

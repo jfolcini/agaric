@@ -64,9 +64,6 @@ export const common: Record<string, string> = {
   'space.notReady': 'Loading spaces…',
   'space.activeDeletedNotification':
     'Your active space was deleted on another device. Switched to {{space}}.',
-  'space.manageDialogTitle': 'Manage spaces',
-  'space.manageDialogDescription':
-    'Rename a space, pick its accent color, delete an empty space, or create a new one.',
   'space.renameLabel': 'Rename space',
   'space.accentColorLabel': 'Accent color',
   'space.accentSwatchLabel': 'Use {{color}} accent',
@@ -86,11 +83,6 @@ export const common: Record<string, string> = {
   'space.createSpaceFailed': 'Failed to create space',
   'space.newSpacePlaceholder': 'New space name',
   'space.cancelLabel': 'Cancel',
-  'space.onboardingTitle': 'What is a space?',
-  'space.onboardingBody':
-    'Spaces keep separate contexts (e.g. work, personal) physically apart. Pages, journals, tags, and links never cross between spaces. Switch with the dropdown above.',
-  'space.onboardingDismiss': 'Got it',
-  'space.onboardingSeenKey': 'agaric:space-onboarding-seen-v1',
   'space.accentBadge': '{{name}} space — click to switch',
   'space.accentBadgeTitle': '{{name}} — click to switch',
   'action.addBlock': 'Add block',

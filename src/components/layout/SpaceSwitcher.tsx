@@ -5,18 +5,15 @@
  * updates `currentSpaceId` synchronously; downstream panels (PageBrowser,
  * SearchPanel, …) re-scope their queries when `currentSpaceId` flips.
  *
- * The `t('space.manage')` entry now (Phase 6) opens
- * `SpaceManageDialog` instead of being a disabled placeholder. The
+ * The `t('space.manage')` entry opens Settings › Spaces (#5362). The
  * MANAGE_SENTINEL value is short-circuited inside `handleValueChange`
- * so selecting it does not switch space — it only flips the dialog
- * open.
+ * so selecting it does not switch space.
  */
 
 import { Plus } from 'lucide-react'
-import { useEffect, useState } from 'react'
+import { useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
 
-import { SpaceManageDialog } from '@/components/SpaceManageDialog'
 import {
   Select,
   SelectContent,
@@ -29,6 +26,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { isMac } from '@/lib/platform'
 import { accentVar } from '@/lib/space-accent'
 import { cn } from '@/lib/utils'
+import { useNavigationStore } from '@/stores/navigation'
 import { useSpaceStore } from '@/stores/space'
 
 /**
@@ -36,15 +34,15 @@ import { useSpaceStore } from '@/stores/space'
  * does not treat the click as a real space switch. `SelectItem`
  * requires a non-empty `value`, so a unique reserved string is the
  * simplest way to keep the option in the listbox; `handleValueChange`
- * then short-circuits the sentinel and opens the manage dialog
+ * then short-circuits the sentinel and opens Settings › Spaces
  * instead of calling `setCurrentSpace`.
  */
 const MANAGE_SENTINEL = '__manage__'
 
 /**
  * Sentinel value for the single-space "Create another space" hint. Like
- * MANAGE_SENTINEL it is short-circuited in `handleValueChange` (opens the
- * manage dialog, does not switch space). Rendering the hint as a real
+ * MANAGE_SENTINEL it is short-circuited in `handleValueChange` (opens
+ * Settings › Spaces, does not switch space). Rendering the hint as a real
  * SelectItem — rather than a bare `<button>` inside SelectContent — keeps it
  * in Radix Select's roving-focus/type-ahead model so keyboard users can reach
  * it (#2281).
@@ -72,7 +70,12 @@ function spaceHotkeyHint(index: number): string {
   return isMac() ? `\u2318${index + 1}` : `Ctrl+${index + 1}`
 }
 
-export function SpaceSwitcher(): React.JSX.Element {
+interface SpaceSwitcherProps {
+  /** Runs after an item has taken the user to Settings › Spaces. */
+  onNavigate?: () => void
+}
+
+export function SpaceSwitcher({ onNavigate }: SpaceSwitcherProps = {}): React.JSX.Element {
   const { t } = useTranslation()
   const currentSpaceId = useSpaceStore((s) => s.currentSpaceId)
   const availableSpaces = useSpaceStore((s) => s.availableSpaces)
@@ -95,163 +98,157 @@ export function SpaceSwitcher(): React.JSX.Element {
     void refreshAvailableSpaces()
   }, [refreshAvailableSpaces])
 
-  // Phase 6 — local dialog open state. Hoisting this above the
-  // store keeps the manage UI a pure component-local concern; the
-  // Zustand store stays focused on `currentSpaceId` + cached
-  // `availableSpaces`.
-  const [manageOpen, setManageOpen] = useState(false)
-
   const handleValueChange = (next: string) => {
     if (next === MANAGE_SENTINEL || next === CREATE_SENTINEL) {
-      setManageOpen(true)
+      const navigation = useNavigationStore.getState()
+      navigation.setPendingSettingsTab('spaces')
+      navigation.setView('settings')
+      onNavigate?.()
       return
     }
     setCurrentSpace(next)
   }
 
   return (
-    <>
-      <Select value={currentSpaceId ?? ''} onValueChange={handleValueChange}>
+    <Select value={currentSpaceId ?? ''} onValueChange={handleValueChange}>
+      {/*
+       * Surface the `Ctrl+1..9` / `⌘1..9` space-switching
+       * shortcuts via a tooltip on the trigger so users discover
+       * them without opening the `?` keyboard help dialog. The
+       * tooltip wraps a `<span>` rather than the SelectTrigger
+       * directly so the Tooltip's pointer events do not interfere
+       * with Radix Select's own trigger handling, and the tooltip
+       * still surfaces over disabled / non-button anchors.
+       */}
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <span className="block w-full">
+            <SelectTrigger
+              aria-label={t('space.switch')}
+              className={cn(
+                'w-full *:data-[slot=select-value]:flex-1',
+                // Inherit the sidebar's tight typography while preserving
+                // the 44px touch target via the Select's built-in
+                // `[@media(pointer:coarse)]:h-11` rule.
+                'text-sm font-medium',
+              )}
+            >
+              {/*
+               * Replace the previous static "Space:" text
+               * Prefix with a colour-identity dot that
+               * mirrors `SpaceTopStripe` and `SpaceAccentBadge`. The
+               * dot is decorative (`aria-hidden`) so the
+               * `aria-label={t('space.switch')}` on `SelectTrigger` is
+               * still the accessible name. Rendered as a sibling
+               * BEFORE `<SelectValue>` for the same reason the old
+               * prefix span was: Radix mirrors the active option's
+               * text into `SelectValue` and wrapping it would trip
+               * The auto-mirror warning called out in the
+               * comment below.
+               */}
+              {activeSpace != null && (
+                <span
+                  aria-hidden="true"
+                  data-testid="space-switcher-accent-dot"
+                  className="h-2 w-2 shrink-0 rounded-full"
+                  style={{ backgroundColor: accentVar(activeSpace.accent_color) }}
+                />
+              )}
+              {/*
+               * Keep the digit-hint chip scoped to the
+               * dropdown rows so it does not bleed into the trigger
+               * label. Implemented via the `endContent` slot on
+               * `SelectItem` (rendered AFTER `<SelectPrimitive.ItemText>`,
+               * outside the auto-mirror surface) — see the prop's
+               * docstring in `ui/select.tsx` for why we cannot pass
+               * children to `SelectValue` here without tripping React
+               * 19's portal/ref-children-conflict warning.
+               */}
+              <SelectValue placeholder={t('space.switch')} />
+            </SelectTrigger>
+          </span>
+        </TooltipTrigger>
         {/*
-         * Surface the `Ctrl+1..9` / `⌘1..9` space-switching
-         * shortcuts via a tooltip on the trigger so users discover
-         * them without opening the `?` keyboard help dialog. The
-         * tooltip wraps a `<span>` rather than the SelectTrigger
-         * directly so the Tooltip's pointer events do not interfere
-         * with Radix Select's own trigger handling, and the tooltip
-         * still surfaces over disabled / non-button anchors.
+         * Stack the existing shortcut hint above a list of
+         * the first five space → digit mappings so the user can see
+         * what each `Ctrl+1..5` / `⌘1..5` chord switches to without
+         * re-opening the dropdown. The dropdown rows still carry the
+         * digit-hint chip via `SelectItem`'s `endContent` slot — that
+         * Is contribution and is kept untouched.
          */}
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <span className="block w-full">
-              <SelectTrigger
-                aria-label={t('space.switch')}
-                className={cn(
-                  'w-full *:data-[slot=select-value]:flex-1',
-                  // Inherit the sidebar's tight typography while preserving
-                  // the 44px touch target via the Select's built-in
-                  // `[@media(pointer:coarse)]:h-11` rule.
-                  'text-sm font-medium',
-                )}
-              >
-                {/*
-                 * Replace the previous static "Space:" text
-                 * Prefix with a colour-identity dot that
-                 * mirrors `SpaceTopStripe` and `SpaceAccentBadge`. The
-                 * dot is decorative (`aria-hidden`) so the
-                 * `aria-label={t('space.switch')}` on `SelectTrigger` is
-                 * still the accessible name. Rendered as a sibling
-                 * BEFORE `<SelectValue>` for the same reason the old
-                 * prefix span was: Radix mirrors the active option's
-                 * text into `SelectValue` and wrapping it would trip
-                 * The auto-mirror warning called out in the
-                 * comment below.
-                 */}
-                {activeSpace != null && (
-                  <span
-                    aria-hidden="true"
-                    data-testid="space-switcher-accent-dot"
-                    className="h-2 w-2 shrink-0 rounded-full"
-                    style={{ backgroundColor: accentVar(activeSpace.accent_color) }}
-                  />
-                )}
-                {/*
-                 * Keep the digit-hint chip scoped to the
-                 * dropdown rows so it does not bleed into the trigger
-                 * label. Implemented via the `endContent` slot on
-                 * `SelectItem` (rendered AFTER `<SelectPrimitive.ItemText>`,
-                 * outside the auto-mirror surface) — see the prop's
-                 * docstring in `ui/select.tsx` for why we cannot pass
-                 * children to `SelectValue` here without tripping React
-                 * 19's portal/ref-children-conflict warning.
-                 */}
-                <SelectValue placeholder={t('space.switch')} />
-              </SelectTrigger>
-            </span>
-          </TooltipTrigger>
-          {/*
-           * Stack the existing shortcut hint above a list of
-           * the first five space → digit mappings so the user can see
-           * what each `Ctrl+1..5` / `⌘1..5` chord switches to without
-           * re-opening the dropdown. The dropdown rows still carry the
-           * digit-hint chip via `SelectItem`'s `endContent` slot — that
-           * Is contribution and is kept untouched.
-           */}
-          <TooltipContent>
-            <div className="flex flex-col gap-0.5 text-xs">
-              <span>{t('spaceSwitcher.shortcutHint')}</span>
-              {availableSpaces.slice(0, 5).map((space, idx) => (
-                <span key={space.id} className="opacity-90">
-                  {spaceHotkeyHint(idx)} {space.name}
-                </span>
-              ))}
-            </div>
-          </TooltipContent>
-        </Tooltip>
-        <SelectContent>
-          {availableSpaces.map((space, idx) => (
-            <SelectItem
-              key={space.id}
-              value={space.id}
-              endContent={
-                idx < MAX_HOTKEY_SPACES ? (
-                  /*
-                   * Right-aligned digit-hint chip (`Ctrl+1` /
-                   * `⌘1`) for the first nine spaces. Rendered via
-                   * `SelectItem`'s `endContent` slot so it stays out of
-                   * `<SelectPrimitive.ItemText>` and therefore out of
-                   * Radix's auto-mirror into the trigger label.
-                   */
-                  <span
-                    aria-hidden="true"
-                    className="ml-auto text-xs text-muted-foreground"
-                    data-testid={`space-hotkey-hint-${idx + 1}`}
-                  >
-                    {spaceHotkeyHint(idx)}
-                  </span>
-                ) : undefined
-              }
-            >
-              {space.name}
-            </SelectItem>
-          ))}
-          <SelectSeparator />
-          {/*
-           * When the user has only one space, the switcher is
-           * a visual no-op (nothing else to switch to). Surface a
-           * `t('spaceSwitcher.createAnotherHint')` hint inside the dropdown so the
-           * single-space user discovers the manage flow without having
-           * to scan past the (lone) space row to the `t('space.manage')`
-           * entry below. Rendered as a real `<SelectItem>` (CREATE_SENTINEL)
-           * so it joins Radix Select's roving-focus/type-ahead model and is
-           * keyboard-reachable (#2281); `handleValueChange` short-circuits the
-           * sentinel and opens the same `SpaceManageDialog` the MANAGE_SENTINEL
-           * route opens, so selecting it does not switch space.
-           */}
-          {availableSpaces.length === 1 ? (
-            <SelectItem
-              value={CREATE_SENTINEL}
-              className="text-muted-foreground"
-              data-testid="single-space-create-hint"
-            >
-              <span className="flex items-center gap-2">
-                <Plus className="h-3 w-3" aria-hidden="true" />
-                {t('spaceSwitcher.createAnotherHint')}
+        <TooltipContent>
+          <div className="flex flex-col gap-0.5 text-xs">
+            <span>{t('spaceSwitcher.shortcutHint')}</span>
+            {availableSpaces.slice(0, 5).map((space, idx) => (
+              <span key={space.id} className="opacity-90">
+                {spaceHotkeyHint(idx)} {space.name}
               </span>
-            </SelectItem>
-          ) : null}
-          {/*
-           * Phase 6 — the `t('space.manage')` entry is now a real,
-           * enabled action. `handleValueChange` short-circuits the
-           * sentinel and opens `SpaceManageDialog` instead of calling
-           * `setCurrentSpace`, so selecting it does not switch space.
-           */}
-          <SelectItem value={MANAGE_SENTINEL} className="text-muted-foreground">
-            {t('space.manage')}
+            ))}
+          </div>
+        </TooltipContent>
+      </Tooltip>
+      <SelectContent>
+        {availableSpaces.map((space, idx) => (
+          <SelectItem
+            key={space.id}
+            value={space.id}
+            endContent={
+              idx < MAX_HOTKEY_SPACES ? (
+                /*
+                 * Right-aligned digit-hint chip (`Ctrl+1` /
+                 * `⌘1`) for the first nine spaces. Rendered via
+                 * `SelectItem`'s `endContent` slot so it stays out of
+                 * `<SelectPrimitive.ItemText>` and therefore out of
+                 * Radix's auto-mirror into the trigger label.
+                 */
+                <span
+                  aria-hidden="true"
+                  className="ml-auto text-xs text-muted-foreground"
+                  data-testid={`space-hotkey-hint-${idx + 1}`}
+                >
+                  {spaceHotkeyHint(idx)}
+                </span>
+              ) : undefined
+            }
+          >
+            {space.name}
           </SelectItem>
-        </SelectContent>
-      </Select>
-      <SpaceManageDialog open={manageOpen} onOpenChange={setManageOpen} />
-    </>
+        ))}
+        <SelectSeparator />
+        {/*
+         * When the user has only one space, the switcher is
+         * a visual no-op (nothing else to switch to). Surface a
+         * `t('spaceSwitcher.createAnotherHint')` hint inside the dropdown so the
+         * single-space user discovers the manage flow without having
+         * to scan past the (lone) space row to the `t('space.manage')`
+         * entry below. Rendered as a real `<SelectItem>` (CREATE_SENTINEL)
+         * so it joins Radix Select's roving-focus/type-ahead model and is
+         * keyboard-reachable (#2281); `handleValueChange` short-circuits the
+         * sentinel and opens Settings › Spaces, as the MANAGE_SENTINEL
+         * route does, so selecting it does not switch space.
+         */}
+        {availableSpaces.length === 1 ? (
+          <SelectItem
+            value={CREATE_SENTINEL}
+            className="text-muted-foreground"
+            data-testid="single-space-create-hint"
+          >
+            <span className="flex items-center gap-2">
+              <Plus className="h-3 w-3" aria-hidden="true" />
+              {t('spaceSwitcher.createAnotherHint')}
+            </span>
+          </SelectItem>
+        ) : null}
+        {/*
+         * The `t('space.manage')` entry. `handleValueChange`
+         * short-circuits the sentinel and opens Settings › Spaces
+         * instead of calling `setCurrentSpace`, so selecting it does not
+         * switch space.
+         */}
+        <SelectItem value={MANAGE_SENTINEL} className="text-muted-foreground">
+          {t('space.manage')}
+        </SelectItem>
+      </SelectContent>
+    </Select>
   )
 }

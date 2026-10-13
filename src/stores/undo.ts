@@ -42,6 +42,8 @@ import { t } from '@/lib/i18n'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
 import { paginationLimit } from '@/lib/safe-limit'
+import { requireActiveScope } from '@/lib/space-scope'
+import { useSpaceStore } from '@/stores/space'
 
 export type { OpRef, UndoResult }
 
@@ -727,11 +729,15 @@ export const useUndoStore = create<UndoStore>((set, get) => {
     reloadPage: () => void | Promise<void>,
   ): Promise<void> {
     try {
+      // #5415 — the page is open in the active space; with none known the
+      // undo is refused through the catch below.
+      const spaceId = useSpaceStore.getState().currentSpaceId
+      if (spaceId == null) throw new Error('No active space; cannot undo')
       const history = unwrap(
         await commands.listPageHistory(
           pageId,
           null,
-          { kind: 'global' },
+          requireActiveScope(spaceId),
           null,
           paginationLimit(SWIPE_UNDO_HISTORY_SCAN),
         ),

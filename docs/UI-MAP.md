@@ -29,7 +29,7 @@ Names below are how we refer to each surface in conversation. They mostly match 
 | **SortableBlockWrapper** | DnD wrapper around each block. Owns the offscreen-placeholder optimisation. | `SortableBlockWrapper.tsx` |
 | **SpaceSwitcher** | Sidebar header dropdown for active space. Collapses to **SpaceAccentBadge** in icon-rail mode. | `SpaceSwitcher.tsx` |
 | **SpaceAccentBadge** | Collapsed-state space indicator; click cycles to next space. | `SpaceAccentBadge.tsx` |
-| **SpaceManageDialog** | Create / rename / delete spaces. | `SpaceManageDialog/` |
+| **SpacesTab** | Settings › Spaces: open-on-launch space; create / rename / recolour / delete spaces. | `settings/SpacesTab.tsx` + `settings/SpacesTab/` |
 | **ConfirmDialog** | Unified confirm wrapper — async-aware, swaps to bottom Sheet on mobile. | `ConfirmDialog.tsx` |
 | **MenuPopoverContent** | Canonical popover content wrapper for menu-style popovers. Use over plain `PopoverContent` for any menu-shaped surface. | `ui/menu-popover-content.tsx` |
 | **Announcer** | Singleton `aria-live="polite"` region. See `docs/UX.md` § Accessibility for the coalescing rule. | `src/lib/announcer.ts` |
@@ -71,7 +71,7 @@ App
 | **Pages** | Virtualised list of all page blocks; multi-select + delete. Its header carries the view buttons below. | Sidebar |
 | **Tags** | Tag CRUD + colour picker + filtered task panel. | Sidebar, Pages header |
 | **Query** | Advanced-query builder (`AdvancedQuery/AdvancedQueryView.tsx`); navigate to saved/ad-hoc queries. | Pages header |
-| **Settings** | Tabbed (incl. a **Properties** tab for property-definition CRUD, an **App health** tab with materializer metrics — queue depths, op counts — that polls periodically, plus the integrity check, and an **Edit history** tab that opens History); deep-linkable via the `?settings=<tab>` query string parsed inside `SettingsView` (no real router). | Sidebar footer |
+| **Settings** | Tabbed (incl. a **Spaces** tab, which the SpaceSwitcher's *Manage spaces…* opens, a **Properties** tab for property-definition CRUD, an **App health** tab with materializer metrics — queue depths, op counts — that polls periodically, plus the integrity check, and an **Edit history** tab that opens History); deep-linkable via the `?settings=<tab>` query string parsed inside `SettingsView` (no real router). | Sidebar footer |
 | **Trash** | Soft-deleted blocks; batch restore / purge; original-location breadcrumb. Its button's count badge polls periodically. | Pages header |
 | **History** | Global op log; multi-select revert; diff toggle. | Settings › Edit history |
 | **Templates** | Template-tagged pages with first-block preview. | Pages header |
@@ -127,7 +127,6 @@ All modal-style dialogs use `useDialogOrSheet`, which swaps to a bottom Sheet on
 | Dialog / popover                          | Trigger                                                                |
 | --- | --- |
 | **ConfirmDialog**                         | Generic confirm; destructive variant focuses Cancel                    |
-| **SpaceManageDialog**                     | Sidebar → SpaceSwitcher → Manage                                       |
 | **PairingDialog**                         | Sidebar Sync button (when peers missing → NoPeersDialog routes here)   |
 | **BugReportDialog**                       | Help menu / global error flow                                          |
 | **QuickCaptureDialog**                    | Global OS hotkey (default Ctrl+Alt+N)                                  |
