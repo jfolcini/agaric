@@ -1170,17 +1170,13 @@ export type ActivityEntry_Deserialize = {
 	 *  task-local. Serialised as `opRef`; omitted from the wire
 	 *  payload when `None`.
 	 * 
-	 *  Multi-op tools surface their additional `OpRef`s on
-	 *  [`ActivityEntry::additional_op_refs`] — for the
-	 *  rationale (forward-compat for `move_subtree` /
-	 *  `bulk_set_property` and similar future tools that append more
-	 *  than one op per call).
+	 *  A multi-op call surfaces the rest of its `OpRef`s on
+	 *  [`ActivityEntry::additional_op_refs`].
 	 */
 	opRef: OpRef | null,
 	/**
-	 *  Forward-compat: any further `OpRef`s produced by the
-	 *  same tool call, in append order. Empty for the (current)
-	 *  single-op RW tools and for RO / failing tools. Defaults to
+	 *  The rest of a multi-op call's `OpRef`s, in append order. Empty
+	 *  when the call wrote one op, and for RO / failing tools. Defaults to
 	 *  `Vec::new()` for older clients / fixtures that don't set the
 	 *  field, and is omitted from the wire payload when empty so the
 	 *  `mcp:activity` event stays compact for the common case.
@@ -1236,17 +1232,13 @@ export type ActivityEntry_Serialize = {
 	 *  task-local. Serialised as `opRef`; omitted from the wire
 	 *  payload when `None`.
 	 * 
-	 *  Multi-op tools surface their additional `OpRef`s on
-	 *  [`ActivityEntry::additional_op_refs`] — for the
-	 *  rationale (forward-compat for `move_subtree` /
-	 *  `bulk_set_property` and similar future tools that append more
-	 *  than one op per call).
+	 *  A multi-op call surfaces the rest of its `OpRef`s on
+	 *  [`ActivityEntry::additional_op_refs`].
 	 */
 	opRef?: OpRef | null,
 	/**
-	 *  Forward-compat: any further `OpRef`s produced by the
-	 *  same tool call, in append order. Empty for the (current)
-	 *  single-op RW tools and for RO / failing tools. Defaults to
+	 *  The rest of a multi-op call's `OpRef`s, in append order. Empty
+	 *  when the call wrote one op, and for RO / failing tools. Defaults to
 	 *  `Vec::new()` for older clients / fixtures that don't set the
 	 *  field, and is omitted from the wire payload when empty so the
 	 *  `mcp:activity` event stays compact for the common case.

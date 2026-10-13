@@ -7114,19 +7114,35 @@ async fn append_markdown_op_refs_undo_the_whole_append_with_what_it_created() {
     );
 }
 
-/// Markdown holding no block is refused, and so are 1001 bullets, one create
-/// each: one more op than one undo reverts.
+/// An unknown or trashed parent is refused, as is Markdown holding no block
+/// or one bullet past `MAX_BATCH_BLOCK_IDS` (one create each: one more op than
+/// one undo reverts).
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn append_markdown_refusals_write_nothing() {
     let (pool, _dir) = test_pool().await;
     let mat = Materializer::new(pool.clone());
     let page = dup_page(&pool, &mat, "Dest").await;
+    let elsewhere = dup_page(&pool, &mat, "Elsewhere").await;
+    let trashed = dup_child(&pool, &mat, &elsewhere, "trashed").await;
+    delete_block_inner(&pool, DEV, &mat, trashed.clone())
+        .await
+        .unwrap();
     settle(&mat).await;
     let too_many: String = (0..=pagination::MAX_BATCH_BLOCK_IDS)
         .map(|i| format!("- line {i}\n"))
         .collect();
     let before = dup_counts(&pool).await;
 
+    let unknown = append_markdown_inner(&pool, DEV, &mat, BlockId::new(), "- x", None).await;
+    assert!(
+        matches!(unknown, Err(AppError::NotFound(_))),
+        "an unknown parent is NotFound, got {unknown:?}"
+    );
+    let result = append_markdown_inner(&pool, DEV, &mat, trashed, "- x", None).await;
+    assert!(
+        matches!(result, Err(AppError::Validation { .. })),
+        "a trashed parent is refused, got {result:?}"
+    );
     for (what, markdown) in [
         ("empty", ""),
         ("blank", " \n\t\n"),

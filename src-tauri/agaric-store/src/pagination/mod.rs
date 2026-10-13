@@ -502,7 +502,7 @@ pub struct ActiveProjectedAgendaEntry {
 }
 
 /// One row of the MCP `get_agenda` range: a block's own due or scheduled
-/// date (`projected: false`) or a future occurrence of a repeating task
+/// date (`projected: false`) or a later occurrence of a repeating task
 /// (`projected: true`). Built by `commands::agenda::agenda_range_inner`.
 #[derive(Debug, Clone, Serialize, specta::Type)]
 pub struct AgendaRangeEntry {

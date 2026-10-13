@@ -1015,7 +1015,8 @@ pub fn spawn_mcp_ro_task_with_registry<R>(
 ///
 /// Mirrors [`spawn_mcp_ro_task`] but reads the RW marker
 /// ([`MCP_RW_ENABLED_MARKER`]) and builds a [`tools_rw::ReadWriteTools`]
-/// registry bound to the **writer** pool — the six RW tools all mutate.
+/// registry bound to the **writer** pool — every RW tool but `list_spaces`
+/// mutates.
 ///
 /// When the marker is absent, logs at info level and returns. When the
 /// socket is already bound by another instance, logs at warn level and

@@ -11,7 +11,7 @@ The bar for everything below is `AGENTS.md` § How we work. Three deletions and 
 
 References, loaded only when needed:
 
-- `references/pitfalls.md` — failure modes with a concrete recovery (stacked PRs, Dependabot branches, moving-ref resets, lint traps, stale `dev.db`, path-keyed guards, shell traps, `gh` in a cloud session). In a cloud session `gh pr` and `gh issue` fail with HTTP 403; use the `gh api` forms there.
+- `references/pitfalls.md` — failure modes with a concrete recovery (stacked PRs, Dependabot branches, moving-ref resets, lint traps, stale `dev.db`, path-keyed guards, shell traps, `gh` in a cloud session).
 - `references/session-log.md` — session-log numbering and format.
 - `references/codegen-and-sql.md` — `.sqlx` and specta regeneration.
 
@@ -96,7 +96,7 @@ As each build finishes, commit it in its worktree, then launch its reviewer (a d
 
 Builder output is a hypothesis: a "fixed" that is not in `git diff` is not fixed. When a reviewer names a defect, grep for the same shape across the diff and its sibling code paths before calling it fixed.
 
-When an agent dies (session limit, container restart), its edits survive in its worktree. Resume it with SendMessage, or start one continuation agent there that "reviews the inherited diff critically, fixes what is wrong, verifies in the foreground" and doubles as the reviewer. Either way, the verification still has to be run.
+When an agent dies (session limit, container restart), its edits survive in its worktree. Resume it with SendMessage, or start one continuation agent there that "reviews the inherited diff critically, fixes what is wrong, verifies in the foreground" and doubles as the reviewer. The continuation first diffs the dead agent's falsification backups (`/tmp/*.bak`, the scratchpad) against the tree: a mutation left mid-run carries no marker the stub grep matches. Either way, the verification still has to be run.
 
 Review two dimensions: technical (correctness, tests, `AGENTS.md` conventions, stays within existing abstractions) and, for user-facing changes, UX (discoverability, consistency, touch parity, empty states, keyboard). In both, a helper, option, branch, abstraction, or paragraph the fix did not need is a finding whose disposition is delete; a comment that narrates the code is delete or rename.
 

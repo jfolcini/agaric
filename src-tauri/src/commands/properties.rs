@@ -114,9 +114,10 @@ pub async fn list_property_values_inner(
 /// Thin wrapper around [`set_property_in_tx`] that manages the transaction
 /// lifecycle and dispatches background work. `todo_state` goes through
 /// [`set_todo_state_inner`] instead, so it stamps and recurs as the app's
-/// checkbox does; a clear (no value) is a clear there too. A `value_text` under a `ref`
-/// definition is the block its id, `[[Title]]` or title names in the block's
-/// space (#5160 D11), and is refused when it names none or two.
+/// checkbox does; a clear (no value) is a clear there too. A `value_text`
+/// under a `ref` definition is the block its id, `[[Title]]` or title names
+/// in the block's space (#5160 D11), and is refused when it names none or
+/// two.
 ///
 /// `caller_context`: when `Some(name)`, the exactly-one-value
 /// invariant is enforced up-front and the resulting `AppError::Validation`

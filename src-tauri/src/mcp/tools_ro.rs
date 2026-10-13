@@ -111,10 +111,10 @@ pub use crate::commands::MCP_PAGE_LIMIT_CAP as LIST_RESULT_CAP;
 pub const SEARCH_SNIPPET_CAP: usize = 512;
 
 /// Cap for `get_agenda`'s `limit` — advertised in the tool schema and
-/// Enforced strictly at the tool boundary: out-of-range values
-/// surface as [`AppError::Validation`]. The matching ceiling baked
-/// into [`agenda_range_inner`] remains as a defense-in-depth
-/// backstop for any non-MCP caller.
+/// enforced strictly at the tool boundary: out-of-range values
+/// surface as [`AppError::Validation`]. It equals the per-page ceiling
+/// `list_projected_agenda_inner` validates, which [`agenda_range_inner`]
+/// shares.
 pub const AGENDA_RESULT_CAP: i64 = 500;
 
 /// #699 — upper bound on the combined number of `search` filter terms
@@ -819,10 +819,10 @@ fn tool_desc_get_agenda() -> ToolDescription {
         name: TOOL_GET_AGENDA.to_string(),
         description:
             "Agenda for an inclusive date range: every block whose due or scheduled date falls \
-             in the range (done tasks excluded), plus each future occurrence of a repeating \
+             in the range (done tasks excluded), plus each later occurrence of a repeating \
              task in the range. One row per (date, block, source): `source` names the date \
              field (`due_date` or `scheduled_date`); `projected` is false for the block's own \
-             date and true for a future occurrence of a repeating task."
+             date and true for a later occurrence of a repeating task."
                 .to_string(),
         input_schema: json!({
             "type": "object",

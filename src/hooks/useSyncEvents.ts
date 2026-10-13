@@ -88,11 +88,12 @@ export interface SyncErrorPayload {
 
 /**
  * #2505 — payload of the `blocks:changed` event (Rust `BlocksChangedEvent`,
- * `src-tauri/agaric-sync/src/sync_events.rs`). Emitted after an out-of-band local write —
- * today an MCP read-write tool — commits, so open views reload the touched
- * pages. `changed_page_ids` carries the IDENTICAL semantics as
- * `SyncCompletePayload.changed_page_ids` (#1071), which is what lets this
- * handler reuse the exact same `reloadChangedPageStores` targeted-reload path.
+ * `src-tauri/agaric-sync/src/sync_events.rs`). Emitted after an MCP
+ * read-write tool commits, and after a sync session's post-sync cache rebuild
+ * drains, so open views reload the touched pages. `changed_page_ids` carries
+ * the IDENTICAL semantics as `SyncCompletePayload.changed_page_ids` (#1071),
+ * which is what lets this handler reuse the exact same
+ * `reloadChangedPageStores` targeted-reload path.
  * Serialize-only on the Rust side (rides the Tauri event, not specta), so this
  * hand-written shape is the single source of truth.
  */
@@ -337,14 +338,14 @@ export function useSyncEvents(): void {
   )
 
   // #2505 — `blocks:changed` is the out-of-band local-write signal. An MCP
-  // read-write tool commits and emits this event; unlike
-  // a page store's own optimistic write, no mounted store learns about it
-  // otherwise (the write is local, so `sync:complete` never fires). Route it
-  // through the SAME targeted-reload path the `sync:complete` handler uses so
-  // the affected page updates without navigation — no toast, no ops counter,
-  // just the reconciliation. #5251: the backend also sends it after a sync
-  // session once its post-sync cache rebuild has drained, so the graph and
-  // the Pages list refetch with `page_id` / `page_link_cache` current.
+  // read-write tool commits and emits this event; unlike a page store's own
+  // optimistic write, no mounted store learns about it otherwise (the write
+  // is local, so `sync:complete` never fires). Route it through the SAME
+  // targeted-reload path the `sync:complete` handler uses so the affected
+  // page updates without navigation — no toast, no ops counter, just the
+  // reconciliation. #5251: the backend also sends it after a sync session
+  // once its post-sync cache rebuild has drained, so the graph and the Pages
+  // list refetch with `page_id` / `page_link_cache` current.
   useTauriEventListener<BlocksChangedPayload>(
     'blocks:changed',
     (event) => {

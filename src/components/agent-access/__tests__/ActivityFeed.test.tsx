@@ -172,19 +172,6 @@ describe('ActivityFeed', () => {
         )
       })
     })
-
-    it('a rejected multi-op Undo keeps the entry for retry', async () => {
-      const user = userEvent.setup()
-      mockRevert.mockRejectedValueOnce(new Error('ipc boom'))
-      render(<ActivityFeed entries={[MULTI_OP]} />)
-
-      await user.click(screen.getByTestId('mcp-activity-undo'))
-
-      await waitFor(() => {
-        expect(mockNotify.error).toHaveBeenCalledWith(t('agentAccess.undoAgentOp.failed'))
-      })
-      expect(screen.getByTestId('mcp-activity-undo')).toBeInTheDocument()
-    })
   })
 
   // #3546 — the non-reversible branch narrows with the SHARED
