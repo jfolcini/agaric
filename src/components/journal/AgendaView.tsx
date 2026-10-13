@@ -3,14 +3,11 @@
  */
 
 import type React from 'react'
-import { useCallback, useEffect, useState } from 'react'
+import { lazy, Suspense, useCallback, useEffect, useState } from 'react'
 
 import type { AgendaFilter } from '@/components/agenda/AgendaFilterBuilder'
-import {
-  AgendaFilterBuilder,
-  AgendaSortGroupControls,
-} from '@/components/agenda/AgendaFilterBuilder'
 import { AgendaResults } from '@/components/agenda/AgendaResults'
+import { AgendaSortGroupControls } from '@/components/agenda/AgendaSortGroupControls'
 import {
   appendUniqueBlocks,
   buildPageTitleMap,
@@ -33,6 +30,14 @@ import { t } from '@/lib/i18n'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
 import { useSpaceStore } from '@/stores/space'
+
+// #5441 — lazy: only agenda mode renders this view, so the filter builder and its
+// value pickers stay off the boot path of every other journal mode.
+const AgendaFilterBuilder = lazy(() =>
+  import('@/components/agenda/AgendaFilterBuilder').then((m) => ({
+    default: m.AgendaFilterBuilder,
+  })),
+)
 
 interface AgendaViewProps {
   onNavigateToPage?: ((pageId: string, title?: string) => void) | undefined
@@ -228,7 +233,10 @@ export function AgendaView({ onNavigateToPage }: AgendaViewProps): React.ReactEl
               lives here so it sits above the filter/sort bar in the outlet. */}
           <FeaturePageHeader title={t('sidebar.journal')} />
           <div className="agenda-view-header">
-            <AgendaFilterBuilder filters={agendaFilters} onFiltersChange={setAgendaFilters} />
+            {/* Holds the bar's row height (its h-7 / coarse h-11 trigger) while the chunk loads. */}
+            <Suspense fallback={<div className="h-7 [@media(pointer:coarse)]:h-11" />}>
+              <AgendaFilterBuilder filters={agendaFilters} onFiltersChange={setAgendaFilters} />
+            </Suspense>
             <div className="border-t border-border/40 my-3" aria-hidden="true" />
             <AgendaSortGroupControls
               groupBy={agendaGroupBy}

@@ -74,6 +74,8 @@ vi.mock('@/lib/bindings', async (importOriginal) => {
 // these tests assert on, so it stays real.
 vi.mock('@/components/agenda/AgendaFilterBuilder', () => ({
   AgendaFilterBuilder: () => <div data-testid="agenda-filter-builder" />,
+}))
+vi.mock('@/components/agenda/AgendaSortGroupControls', () => ({
   AgendaSortGroupControls: () => <div data-testid="agenda-sort-group-controls" />,
 }))
 

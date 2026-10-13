@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync, readFileSync, statSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 
 import { describe, expect, it } from 'vitest'
@@ -71,7 +71,7 @@ function resolveLocal(spec: string, fromFile: string): string | null {
   else return null
   for (const ext of ['', '.ts', '.tsx', '.js', '.jsx', '/index.ts', '/index.tsx', '/index.js']) {
     const p = base + ext
-    if (existsSync(p) && !p.endsWith('/')) return p
+    if (existsSync(p) && statSync(p).isFile()) return p
   }
   return null
 }
@@ -123,5 +123,32 @@ describe('BlockTree lazy-editor import graph (#2939)', () => {
 
   it('sanity: the walk actually traversed a non-trivial graph', () => {
     expect(visited.size).toBeGreaterThan(30)
+  })
+})
+
+// #5441 — interaction-only dialogs and pickers load on first open, so the boot
+// entry must reach them only through `lazy(() => import(…))`.
+describe('boot import graph (#5441)', () => {
+  const { visited } = walk(join(SRC, 'main.tsx'))
+
+  it.each([
+    'components/dialogs/QueryBuilderModal.tsx',
+    'components/editor/BlockHistorySheet.tsx',
+    'components/editor/BlockPropertyDrawerSheet.tsx',
+    'components/EmojiPicker/EmojiPickerDialog.tsx',
+    'components/block-tree/BlockDatePicker.tsx',
+    'components/block-tree/TemplatePicker.tsx',
+    'components/journal/JournalCalendarDropdown.tsx',
+    'components/ui/calendar.tsx',
+    'components/backlink-filter/AddFilterRow.tsx',
+    'components/agenda/AgendaFilterBuilder.tsx',
+    'components/ui/command.tsx',
+  ])('does not statically reach %s', (rel) => {
+    expect(visited.has(join(SRC, rel))).toBe(false)
+  })
+
+  it('sanity: the walk reached the journal and block tree', () => {
+    expect(visited.has(join(SRC, 'components', 'JournalPage.tsx'))).toBe(true)
+    expect(visited.has(BLOCK_TREE)).toBe(true)
   })
 })

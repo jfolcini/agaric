@@ -28,9 +28,6 @@ import {
   dimensionLabel,
 } from '@/lib/filter-dimension-metadata'
 
-export type { AgendaSortGroupControlsProps } from '@/components/agenda/AgendaSortGroupControls'
-export { AgendaSortGroupControls } from '@/components/agenda/AgendaSortGroupControls'
-
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------

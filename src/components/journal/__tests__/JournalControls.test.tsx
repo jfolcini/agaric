@@ -157,7 +157,8 @@ describe('JournalControls', () => {
 
     await user.click(screen.getByRole('button', { name: /open calendar picker/i }))
 
-    expect(screen.getByRole('dialog', { name: /date picker/i })).toBeInTheDocument()
+    // The dropdown is lazy (#5441): it mounts once its chunk resolves.
+    expect(await screen.findByRole('dialog', { name: /date picker/i })).toBeInTheDocument()
   })
 
   // SR users need a signal that the calendar trigger opens a popover

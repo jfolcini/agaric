@@ -37,6 +37,9 @@ import { keyFor, useResolveStore } from '@/stores/resolve'
 import { useSpaceStore } from '@/stores/space'
 import { useSyncStore } from '@/stores/sync'
 import { selectPageStack, useTabsStore } from '@/stores/tabs'
+import { useCommandPaletteStore } from '@/stores/useCommandPaletteStore'
+import { useInPageFindStore } from '@/stores/useInPageFindStore'
+import { useSearchSheetStore } from '@/stores/useSearchSheetStore'
 
 // Replace `setWindowTitle` with a vitest spy so we can assert the
 // App-level effect calls it with `"<SpaceName> · Agaric"`.
@@ -76,6 +79,19 @@ vi.mock('@/components/backlinks/LinkedReferences', () => ({
 // Mock PagePropertyTable to prevent get_properties/list_property_defs IPC calls
 vi.mock('@/components/pages/PagePropertyTable', () => ({
   PagePropertyTable: () => <div data-testid="page-property-table" />,
+}))
+
+// Stub the three search overlays so a test can see whether App mounted them
+// (#5441): each renders nothing while closed, so the real ones look the same
+// mounted or not.
+vi.mock('@/components/common/CommandPalette', () => ({
+  CommandPalette: () => <div data-testid="command-palette-stub" />,
+}))
+vi.mock('@/components/query/InPageFind', () => ({
+  InPageFind: () => <div data-testid="in-page-find-stub" />,
+}))
+vi.mock('@/components/mobile/SearchSheet', () => ({
+  SearchSheet: () => <div data-testid="search-sheet-stub" />,
 }))
 
 // Mock useSyncTrigger to prevent automatic sync in tests. The `syncAll`
@@ -1453,6 +1469,49 @@ describe('App', () => {
       await waitFor(() => {
         expect(screen.getByText(t('shortcuts.title'))).toBeInTheDocument()
       })
+    })
+
+    // #5441 — same gate for the search overlays: their chunks load on first open.
+    it('mounts the search overlays only while their store is open', async () => {
+      render(<App />)
+      await waitFor(() => {
+        expect(screen.getByRole('combobox', { name: /Switch space/ })).toBeInTheDocument()
+      })
+      // Settle the lazy imports first, so an overlay mounted while closed has rendered.
+      await act(() =>
+        Promise.all([
+          import('@/components/common/CommandPalette'),
+          import('@/components/query/InPageFind'),
+          import('@/components/mobile/SearchSheet'),
+        ]),
+      )
+
+      expect(screen.queryByTestId('command-palette-stub')).not.toBeInTheDocument()
+      expect(screen.queryByTestId('in-page-find-stub')).not.toBeInTheDocument()
+      expect(screen.queryByTestId('search-sheet-stub')).not.toBeInTheDocument()
+
+      act(() => useCommandPaletteStore.getState().open$())
+      expect(await screen.findByTestId('command-palette-stub')).toBeInTheDocument()
+      act(() => useInPageFindStore.getState().open$())
+      expect(await screen.findByTestId('in-page-find-stub')).toBeInTheDocument()
+
+      // The sheet's segment hides the matching App-level overlay.
+      act(() => useSearchSheetStore.getState().open$('all-pages'))
+      expect(await screen.findByTestId('search-sheet-stub')).toBeInTheDocument()
+      expect(screen.queryByTestId('command-palette-stub')).not.toBeInTheDocument()
+      expect(screen.getByTestId('in-page-find-stub')).toBeInTheDocument()
+      act(() => useSearchSheetStore.getState().setMode('in-page'))
+      expect(screen.queryByTestId('in-page-find-stub')).not.toBeInTheDocument()
+      expect(screen.getByTestId('command-palette-stub')).toBeInTheDocument()
+
+      act(() => {
+        useSearchSheetStore.getState().close()
+        useCommandPaletteStore.getState().close()
+        useInPageFindStore.getState().close()
+      })
+      expect(screen.queryByTestId('search-sheet-stub')).not.toBeInTheDocument()
+      expect(screen.queryByTestId('command-palette-stub')).not.toBeInTheDocument()
+      expect(screen.queryByTestId('in-page-find-stub')).not.toBeInTheDocument()
     })
   })
 
