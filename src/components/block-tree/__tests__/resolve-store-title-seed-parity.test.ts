@@ -38,7 +38,7 @@ import { join, relative, resolve as resolvePath } from 'node:path'
 
 import { act, render, renderHook, waitFor } from '@testing-library/react'
 import type { TFunction } from 'i18next'
-import { createElement, useRef } from 'react'
+import { createElement, useRef, useState } from 'react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mockedSearchBlocks = vi.hoisted(() => vi.fn())
@@ -88,6 +88,7 @@ import { useBacklinkResolution } from '@/hooks/useBacklinkResolution'
 import type { BacklinkGroup, BlockRow } from '@/lib/bindings'
 import { t } from '@/lib/i18n'
 import { PREFERENCES, writePreference } from '@/lib/preferences'
+import { createPageBlockStore } from '@/stores/page-blocks'
 import { keyFor, useResolveStore } from '@/stores/resolve'
 import { useSpaceStore } from '@/stores/space'
 
@@ -233,9 +234,11 @@ function mkResolved(id: string, blockType: BlockType, content: string | null) {
 function useNavigateHarness() {
   const rovingEditorRef = useRef<RovingEditorHandle | null>(null)
   const handleFlushRef = useRef<() => string | null>(() => null)
+  const [pageStore] = useState(() => createPageBlockStore('HARNESS_PAGE'))
   return useBlockNavigateToLink({
     rovingEditorRef,
     handleFlushRef,
+    pageStore,
     load: vi.fn().mockResolvedValue(undefined),
     setFocused: vi.fn(),
     rootParentId: null,

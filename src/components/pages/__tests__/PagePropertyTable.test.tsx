@@ -76,8 +76,8 @@ import { toast } from 'sonner'
 
 import { PagePropertyTable } from '@/components/pages/PagePropertyTable'
 import { performPageUndo } from '@/hooks/useUndoShortcuts'
-import { recordBlockPropertyChange } from '@/lib/block-property-events'
 import { t } from '@/lib/i18n'
+import { invalidatePropertyCaches } from '@/lib/property-caches'
 
 const mockedToastError = vi.mocked(toast.error)
 
@@ -1898,7 +1898,7 @@ describe('PagePropertyTable create-def flow against the real tauri-mock (#2804)'
 })
 
 // #5287 — sync, MCP and undo write page properties without going through this
-// table, so it refetches on the block-property counter.
+// table, so it refetches on `invalidatePropertyCaches()`.
 describe('PagePropertyTable refetch on property changes made elsewhere (#5287)', () => {
   const PAGE_ID = SEED_IDS.PAGE_QUICK_NOTES
   const valueLabel = (key: string) => t('pageProperty.valueLabel', { key })
@@ -1953,7 +1953,7 @@ describe('PagePropertyTable refetch on property changes made elsewhere (#5287)',
       },
     })
     act(() => {
-      recordBlockPropertyChange()
+      invalidatePropertyCaches()
     })
 
     await waitFor(() => {
@@ -1975,6 +1975,22 @@ describe('PagePropertyTable refetch on property changes made elsewhere (#5287)',
     await waitFor(() => {
       expect(screen.getByLabelText(valueLabel('reviewer'))).toHaveValue('x')
     })
+    expect(screen.queryByLabelText(valueLabel('context'))).not.toBeInTheDocument()
+  })
+
+  it('drops an unsaved draft row when returning to a page whose properties are cached', async () => {
+    const OTHER = SEED_IDS.PAGE_PROJECTS
+    properties.set(OTHER, new Map([['reviewer', makeProp('reviewer', { value_text: 'x' })]]))
+    const user = userEvent.setup()
+    const { rerender } = render(<PagePropertyTable pageId={OTHER} forceExpanded />)
+    expect(await screen.findByLabelText(valueLabel('reviewer'))).toHaveValue('x')
+
+    rerender(<PagePropertyTable pageId={PAGE_ID} forceExpanded />)
+    await user.click(await screen.findByText('Context'))
+    expect(await screen.findByLabelText(valueLabel('context'))).toBeInTheDocument()
+
+    rerender(<PagePropertyTable pageId={OTHER} forceExpanded />)
+    expect(await screen.findByLabelText(valueLabel('reviewer'))).toHaveValue('x')
     expect(screen.queryByLabelText(valueLabel('context'))).not.toBeInTheDocument()
   })
 

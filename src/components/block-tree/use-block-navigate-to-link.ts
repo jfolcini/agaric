@@ -14,6 +14,7 @@
 import type { TFunction } from 'i18next'
 import type { RefObject } from 'react'
 import { useCallback, useLayoutEffect, useRef } from 'react'
+import type { StoreApi } from 'zustand'
 
 import type { RovingEditorHandle } from '@/editor/use-roving-editor'
 import { unwrap } from '@/lib/app-error'
@@ -23,6 +24,7 @@ import { resolveStoreTitle } from '@/lib/block-title'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
 import { requireActiveScope } from '@/lib/space-scope'
+import { type PageBlockState, storeOwnsBlock } from '@/stores/page-blocks'
 import { useResolveStore } from '@/stores/resolve'
 import { useSpaceStore } from '@/stores/space'
 
@@ -35,6 +37,7 @@ export interface UseBlockNavigateToLinkParams {
   /** Ref to the flush callback. Defined later in BlockTree — accessed
    *  via ref so this hook can run before `handleFlush` exists. */
   handleFlushRef: RefObject<() => string | null>
+  pageStore: StoreApi<PageBlockState>
   load: () => Promise<void>
   setFocused: (id: string | null) => void
   rootParentId: string | null
@@ -65,6 +68,7 @@ export interface UseBlockNavigateToLinkReturn {
 export function useBlockNavigateToLink({
   rovingEditorRef,
   handleFlushRef,
+  pageStore,
   load,
   setFocused,
   rootParentId,
@@ -78,7 +82,12 @@ export function useBlockNavigateToLink({
       // Flush current editor state before navigating
       handleFlushRef.current()
       try {
-        const targetBlock = unwrap(await commands.getBlock(targetId))
+        const spaceId = useSpaceStore.getState().currentSpaceId
+        const [targetResult, resolvedInSpace] = await Promise.all([
+          commands.getBlock(targetId),
+          spaceId == null ? null : commands.batchResolve([targetId], requireActiveScope(spaceId)),
+        ])
+        const targetBlock = unwrap(targetResult)
 
         // #3306 — space-scope the navigate path.
         //
@@ -103,12 +112,8 @@ export function useBlockNavigateToLink({
         // the same drop-out the picker paths already rely on. Fail closed when
         // the space store has not hydrated — mirrors the resolve store's
         // FE-H-22 policy, since an unverifiable target must not be trusted.
-        const spaceId = useSpaceStore.getState().currentSpaceId
         const inActiveSpace =
-          spaceId != null &&
-          unwrap(await commands.batchResolve([targetId], requireActiveScope(spaceId))).some(
-            (r) => r.id === targetId,
-          )
+          resolvedInSpace != null && unwrap(resolvedInSpace).some((r) => r.id === targetId)
         if (!inActiveSpace) {
           logger.warn(
             'BlockTree',
@@ -167,7 +172,7 @@ export function useBlockNavigateToLink({
         }
 
         // Same tree — navigate locally
-        await load()
+        if (!storeOwnsBlock(pageStore, targetId)) await load()
         setFocused(targetId)
         rovingEditorRef.current?.mount(targetId, targetBlock.content ?? '')
       } catch (err) {
@@ -182,7 +187,16 @@ export function useBlockNavigateToLink({
         notify.error(t('blockTree.linkTargetNotFound'))
       }
     },
-    [handleFlushRef, rovingEditorRef, load, setFocused, rootParentId, onNavigateToPage, t],
+    [
+      handleFlushRef,
+      rovingEditorRef,
+      pageStore,
+      load,
+      setFocused,
+      rootParentId,
+      onNavigateToPage,
+      t,
+    ],
   )
 
   // Keep ref in sync with the latest handleNavigate so consumers

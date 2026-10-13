@@ -36,6 +36,7 @@ import { queryClient } from '@/lib/query-client'
 import { requireActiveScope } from '@/lib/space-scope'
 import { type TagQueryParams, compileTagExpr, tagBuilderHasLeaves } from '@/lib/tagExpr'
 import { cn } from '@/lib/utils'
+import { useResolveStore } from '@/stores/resolve'
 import { useSpaceStore } from '@/stores/space'
 import { useTabsStore } from '@/stores/tabs'
 
@@ -566,10 +567,16 @@ export function TagFilterPanel(): React.ReactElement {
         return
       }
       if (block.parent_id) {
+        const resolve = useResolveStore.getState()
+        if (resolve.isResolved(block.parent_id)) {
+          navigateToPage(block.parent_id, resolve.resolveTitle(block.parent_id), block.id)
+          return
+        }
         try {
           const parent = unwrap(await commands.getBlock(block.parent_id))
           navigateToPage(block.parent_id, parent.content ?? 'Untitled', block.id)
-        } catch {
+        } catch (err) {
+          logger.warn('TagFilterPanel', 'parent lookup failed', { parentId: block.parent_id }, err)
           notify.error(t('tags.loadFailed'))
         }
       }

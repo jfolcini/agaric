@@ -34,8 +34,9 @@
 
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { EnteringIntersectionObserver } from '@/__tests__/helpers/viewport-observer-mocks'
 import { mockReactVirtual } from '@/__tests__/mocks/react-virtual'
 
 /** `null` = lay out every row. Set to a number to window. Reset per test. */
@@ -133,6 +134,8 @@ beforeEach(() => {
   // #5415 — every space-scoped IPC carries the active space.
   useSpaceStore.setState({ currentSpaceId: 'SPACE_1' })
   vi.clearAllMocks()
+  // The panel fetches once it nears the viewport (#5445); here it is always on screen.
+  vi.stubGlobal('IntersectionObserver', EnteringIntersectionObserver)
   virtualWindow.size = null
   queryClient.clear()
   _resetPropertyKeysCacheForTest()
@@ -190,6 +193,10 @@ async function applyBlockTypeFilter(user: ReturnType<typeof userEvent.setup>) {
   await user.selectOptions(screen.getByLabelText('Block type value'), 'page')
   await user.click(screen.getByRole('button', { name: /Apply filter/i }))
 }
+
+afterEach(() => {
+  vi.unstubAllGlobals()
+})
 
 describe('UnlinkedReferences — the count must agree with the rows', () => {
   // #3733 note 1.

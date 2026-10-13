@@ -81,6 +81,8 @@ export interface UseUnlinkedReferencesParams {
    * Defaults to `false`, leaving any other caller on the full page.
    */
   collapsed?: boolean | undefined
+  /** `false` holds the fetch (the panel has not neared the viewport). Defaults to `true`. */
+  enabled?: boolean | undefined
 }
 
 export interface UseUnlinkedReferencesResult {
@@ -127,7 +129,7 @@ export interface UseUnlinkedReferencesResult {
 export function useUnlinkedReferences(
   params: UseUnlinkedReferencesParams,
 ): UseUnlinkedReferencesResult {
-  const { pageId, filters, sort, spaceId, collapsed = false } = params
+  const { pageId, filters, sort, spaceId, collapsed = false, enabled = true } = params
 
   // #3316 item 2: a collapsed panel only needs the counts, so ask for a single
   // group instead of the full 20-group page. See `collapsed` on the params type
@@ -149,6 +151,7 @@ export function useUnlinkedReferences(
     useInfiniteQuery(
       {
         queryKey,
+        enabled,
         queryFn: async ({ pageParam }): Promise<GroupedBacklinkResponse> => {
           // #5415 — no active space: nothing to list, never dispatch.
           if (spaceId == null) return EMPTY_GROUPED_RESPONSE

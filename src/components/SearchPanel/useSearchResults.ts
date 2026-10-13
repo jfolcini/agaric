@@ -54,6 +54,7 @@ import {
   toRecentPage,
   useRecentPagesStore,
 } from '@/stores/recent-pages'
+import { useResolveStore } from '@/stores/resolve'
 import { useTabsStore } from '@/stores/tabs'
 
 /**
@@ -475,6 +476,13 @@ export function useSearchResults({
           return
         }
         if (block.parent_id) {
+          const resolve = useResolveStore.getState()
+          if (resolve.isResolved(block.parent_id)) {
+            const title = resolve.resolveTitle(block.parent_id)
+            addRecentPage(block.parent_id, title)
+            navigateToPage(block.parent_id, title, block.id)
+            return
+          }
           try {
             const parent = unwrap(await commands.getBlock(block.parent_id))
             // A newer click superseded this one while the parent loaded.

@@ -542,6 +542,7 @@ export function BlockTree({
   const { handleNavigate, handleNavigateRef } = useBlockNavigateToLink({
     rovingEditorRef,
     handleFlushRef: dispatch.flushRef,
+    pageStore,
     load,
     setFocused,
     rootParentId,

@@ -32,7 +32,6 @@ export interface BacklinkFilterBuilderProps {
   totalCount: number
   filteredCount: number
   propertyKeys: string[]
-  tags: Array<{ id: string; name: string }>
   tagResolver?: (id: string) => string
 }
 
@@ -121,7 +120,6 @@ export function BacklinkFilterBuilder({
   totalCount,
   filteredCount,
   propertyKeys,
-  tags,
   tagResolver,
 }: BacklinkFilterBuilderProps): React.ReactElement {
   const { t } = useTranslation()
@@ -246,7 +244,6 @@ export function BacklinkFilterBuilder({
       {showAddRow && (
         <AddFilterRow
           propertyKeys={propertyKeys}
-          tags={tags}
           onApply={handleAddFilter}
           onCancel={() => {
             setShowAddRow(false)

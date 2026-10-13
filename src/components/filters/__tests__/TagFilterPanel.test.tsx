@@ -32,6 +32,7 @@ import type { TagCacheRow } from '@/lib/bindings'
 import { t } from '@/lib/i18n'
 import { notifyTagRemoved, notifyTagRenamed } from '@/lib/name-change-bus'
 import { useNavigationStore } from '@/stores/navigation'
+import { useResolveStore } from '@/stores/resolve'
 import { useSpaceStore } from '@/stores/space'
 import { selectPageStack, useTabsStore } from '@/stores/tabs'
 
@@ -115,6 +116,7 @@ beforeEach(() => {
     activeTabIndex: 0,
   })
   useSpaceStore.setState({ currentSpaceId: 'SPACE_TEST' })
+  useResolveStore.setState({ cache: new Map(), version: 0, _preloaded: false })
 })
 
 afterEach(() => {
@@ -780,6 +782,78 @@ describe('TagFilterPanel', () => {
     expect(selectPageStack(useTabsStore.getState())[0]?.pageId).toBe('PARENT1')
     expect(selectPageStack(useTabsStore.getState())[0]?.title).toBe('Parent Page')
     expect(navState.selectedBlockId).toBe('CHILD1')
+  })
+
+  it('navigates without waiting on get_block when the parent title is cached', async () => {
+    stubTagFilter({
+      list_tags_by_prefix: () => [makeTag({ tag_id: 'T1', name: 'work', usage_count: 5 })],
+      get_block: () => deferred<CommandReturns['get_block']>().promise,
+    })
+    useResolveStore.getState().set('PARENT1', 'Cached Parent', false)
+
+    render(<TagFilterPanel />)
+    await typeAndWaitForTags(screen.getByPlaceholderText(t('tagFilter.searchPlaceholder')), 'work')
+    stubTagQuery(() => ({
+      items: [
+        makeBlock({
+          id: 'CHILD1',
+          parent_id: 'PARENT1',
+          page_id: 'PARENT1',
+          content: 'tagged content',
+          block_type: 'content',
+        }),
+      ],
+      next_cursor: null,
+      has_more: false,
+      total_count: null,
+    }))
+    await user.click(screen.getByRole('button', { name: /Add/i }))
+    await vi.advanceTimersByTimeAsync(0)
+
+    await user.click(screen.getByText('tagged content'))
+
+    const navState = useNavigationStore.getState()
+    expect(navState.currentView).toBe('page-editor')
+    expect(selectPageStack(useTabsStore.getState())[0]).toMatchObject({
+      pageId: 'PARENT1',
+      title: 'Cached Parent',
+    })
+    expect(navState.selectedBlockId).toBe('CHILD1')
+    expect(mockedInvoke).not.toHaveBeenCalledWith('get_block', expect.anything())
+  })
+
+  it('toasts and stays put when the uncached parent lookup rejects', async () => {
+    stubTagFilter({
+      list_tags_by_prefix: () => [makeTag({ tag_id: 'T1', name: 'work', usage_count: 5 })],
+      get_block: () => Promise.reject(new Error('fail')),
+    })
+
+    render(<TagFilterPanel />)
+    await typeAndWaitForTags(screen.getByPlaceholderText(t('tagFilter.searchPlaceholder')), 'work')
+    stubTagQuery(() => ({
+      items: [
+        makeBlock({
+          id: 'CHILD1',
+          parent_id: 'PARENT1',
+          page_id: 'PARENT1',
+          content: 'tagged content',
+          block_type: 'content',
+        }),
+      ],
+      next_cursor: null,
+      has_more: false,
+      total_count: null,
+    }))
+    await user.click(screen.getByRole('button', { name: /Add/i }))
+    await vi.advanceTimersByTimeAsync(0)
+
+    await user.click(screen.getByText('tagged content'))
+
+    await waitFor(() => {
+      expect(mockedToastError).toHaveBeenCalledWith(t('tags.loadFailed'))
+    })
+    expect(useNavigationStore.getState().currentView).toBe('search')
+    expect(selectPageStack(useTabsStore.getState())).toHaveLength(0)
   })
 
   it('navigates directly when clicking a page-type tag filter result', async () => {

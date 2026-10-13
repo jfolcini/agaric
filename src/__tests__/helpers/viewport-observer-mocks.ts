@@ -62,6 +62,14 @@ export class MockIntersectionObserver {
   }
 }
 
+/** Reports each target as on screen the moment it is observed. */
+export class EnteringIntersectionObserver extends MockIntersectionObserver {
+  override observe(el: Element): void {
+    super.observe(el)
+    this.trigger([{ target: el, isIntersecting: true }])
+  }
+}
+
 /**
  * Replaces `requestAnimationFrame` / `cancelAnimationFrame` with a queue the
  * test drains one frame at a time. Callbacks queued while a frame runs land in
