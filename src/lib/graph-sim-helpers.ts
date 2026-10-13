@@ -352,7 +352,8 @@ interface NeighbourhoodHighlight {
 
 /**
  * Hover wins over focus while both are set, and leaving a hovered node falls
- * back to the focused one's neighbourhood instead of clearing it. The opacity
+ * back to the focused one's neighbourhood instead of clearing it. The focused
+ * node itself is never dimmed, so its focus ring stays legible. The opacity
  * easing is a CSS transition in `index.css`, so reduced motion zeroes it.
  */
 function createNeighbourhoodHighlight(
@@ -370,7 +371,7 @@ function createNeighbourhoodHighlight(
     const touchesCentre = (d: GraphEdge): boolean =>
       endId(d.source) === centre || endId(d.target) === centre
     node.style('opacity', (d) =>
-      lit === null || d.id === centre || lit.has(d.id) ? null : DIMMED_OPACITY,
+      lit === null || d.id === centre || d.id === focused || lit.has(d.id) ? null : DIMMED_OPACITY,
     )
     link
       .style('opacity', (d) => (lit === null || touchesCentre(d) ? null : DIMMED_OPACITY))

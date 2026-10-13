@@ -11,7 +11,8 @@ their size and weight. One CSS rule eases opacity over `--duration-normal`,
 which the reduced-motion and animations-off settings already scale to 0.
 
 Decisions: an edge between two neighbours stays dimmed; only edges touching
-the centre are highlighted. Label-by-importance belongs to #5430 and was not
+the centre are highlighted. The focused node is never dimmed, even while a
+non-adjacent node is hovered, so its focus ring stays legible. Label-by-importance belongs to #5430 and was not
 built.
 
 Traps: happy-dom evaluates neither media queries nor `var()`, so the

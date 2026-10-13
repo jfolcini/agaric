@@ -324,10 +324,18 @@ describe('renderGraphElements — neighbourhood highlight on hover and focus (#5
     expect(focusedOnly['Hub']).toBe('0.15')
 
     group(svg, 'Hub').dispatchEvent(new Event('mouseenter'))
-    expect(opacities(svg)['Far']).toBe('0.15')
+    expect(opacities(svg)['B']).toBe('')
     group(svg, 'Hub').dispatchEvent(new Event('mouseleave'))
 
     expect(opacities(svg)).toEqual(focusedOnly)
+  })
+
+  it('hovering a node outside the focused neighbourhood never dims the focused node', () => {
+    const svg = render()
+    group(svg, 'Far').dispatchEvent(new Event('focus'))
+    group(svg, 'B').dispatchEvent(new Event('mouseenter'))
+
+    expect(opacities(svg)).toMatchObject({ Far: '', A: '0.15', C: '0.15' })
   })
 
   it('hover and focus leave the label size and weight alone', () => {
