@@ -1257,6 +1257,121 @@ async fn apply_op_tx_move_records_into_the_replay_sink_2896() {
     );
 }
 
+/// #5418 — the chunk arm threads the replay sink: a create inside a
+/// `ReplayApplyOps` chunk records its sibling group into the sink, the same
+/// deferral a `ReplayApplyOp` makes, and the chunk advances the cursor. Pinned
+/// here because the driver's end-of-replay reproject makes a chunk applied in
+/// `Normal` mode indistinguishable from the final `blocks` rows.
+#[tokio::test]
+async fn replay_apply_ops_chunk_records_into_the_replay_sink_5418() {
+    use crate::apply::kernel::ReplayDirtyParents;
+    use crate::materializer::MaterializeTask;
+
+    const CHUNKED: &str = "01HZ00000000000000005418C1";
+
+    let (pool, _dir) = fresh_pool_with_page().await;
+    let state = crate::loro::shared::LoroState::new();
+    seed_page_via_loro(&pool, &state).await;
+
+    let payload = OpPayload::CreateBlock(CreateBlockPayload {
+        block_id: BlockId::from_trusted(CHUNKED),
+        block_type: "content".into(),
+        parent_id: Some(BlockId::from_trusted(PAGE_ID)),
+        position: Some(1),
+        index: None,
+        content: "chunked".into(),
+    });
+    let record = agaric_store::op_log::append_local_op(&pool, DEVICE_ID, payload)
+        .await
+        .expect("append create");
+    let seq = record.seq;
+
+    let sink = ReplayDirtyParents::new();
+    let task = MaterializeTask::ReplayApplyOps(std::sync::Arc::new(vec![record]), sink.clone());
+    super::handle_foreground_task(&pool, &task, &state)
+        .await
+        .expect("apply chunk");
+
+    assert_eq!(
+        sink.drain(),
+        vec![(SPACE_ID.to_string(), Some(PAGE_ID.to_string()))],
+        "a replay chunk's create must record its touched group into the sink"
+    );
+    let cursor: i64 = sqlx::query_scalar(
+        "SELECT materialized_through_seq FROM materializer_apply_cursor WHERE id = 1",
+    )
+    .fetch_one(&pool)
+    .await
+    .expect("cursor");
+    assert_eq!(cursor, seq, "the chunk advances the cursor to its last seq");
+}
+
+/// #5418 — a chunk is one transaction: when its second op fails, the first
+/// op's row, its engine node and the cursor advance all roll back with it, so
+/// the per-op fallback starts from the pre-chunk state.
+#[tokio::test]
+async fn failed_replay_chunk_rolls_back_every_op_5418() {
+    use crate::apply::kernel::ReplayDirtyParents;
+    use crate::materializer::MaterializeTask;
+
+    const GOOD: &str = "01HZ00000000000000005418G1";
+    const BAD: &str = "01HZ00000000000000005418B1";
+
+    let (pool, _dir) = fresh_pool_with_page().await;
+    let state = crate::loro::shared::LoroState::new();
+    seed_page_via_loro(&pool, &state).await;
+    sqlx::query(
+        "CREATE TRIGGER reject_5418 BEFORE INSERT ON blocks \
+         WHEN NEW.id = '01HZ00000000000000005418B1' \
+         BEGIN SELECT RAISE(ABORT, 'injected #5418'); END",
+    )
+    .execute(&pool)
+    .await
+    .expect("trigger");
+
+    let mut records = Vec::new();
+    for (id, position) in [(GOOD, 1), (BAD, 2)] {
+        let payload = OpPayload::CreateBlock(CreateBlockPayload {
+            block_id: BlockId::from_trusted(id),
+            block_type: "content".into(),
+            parent_id: Some(BlockId::from_trusted(PAGE_ID)),
+            position: Some(position),
+            index: None,
+            content: id.into(),
+        });
+        let record = agaric_store::op_log::append_local_op(&pool, DEVICE_ID, payload)
+            .await
+            .expect("append create");
+        records.push(record);
+    }
+
+    let task =
+        MaterializeTask::ReplayApplyOps(std::sync::Arc::new(records), ReplayDirtyParents::new());
+    super::handle_foreground_task(&pool, &task, &state)
+        .await
+        .expect_err("the injected op fails the chunk");
+
+    let good_rows: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM blocks WHERE id = ?")
+        .bind(GOOD)
+        .fetch_one(&pool)
+        .await
+        .expect("count");
+    assert_eq!(good_rows, 0, "the good op's row rolls back with the chunk");
+    let cursor: i64 = sqlx::query_scalar(
+        "SELECT materialized_through_seq FROM materializer_apply_cursor WHERE id = 1",
+    )
+    .fetch_one(&pool)
+    .await
+    .expect("cursor");
+    assert_eq!(cursor, 0, "the cursor does not move past a failed chunk");
+    let space = agaric_store::space::SpaceId::from_trusted(SPACE_ID);
+    let mut guard = state.registry.for_space(&space, DEVICE_ID).expect("engine");
+    assert!(
+        !guard.engine_mut().contains_block(GOOD),
+        "the engine rewinds with the SQL"
+    );
+}
+
 /// #2896 — soundness by construction: the reprojection-suppression decision now
 /// travels per-op as an explicit `ApplyMode`, never as ambient shared state.
 ///

@@ -1,10 +1,10 @@
 //! C-2b: boot-time op-log replay for unmaterialized ops.
 //!
 //! On boot, walk `op_log WHERE seq > materialized_through_seq` and
-//! enqueue each record as an `ApplyOp` task on the materializer's
-//! foreground queue. The materializer applies them in order, advancing
-//! the cursor as it goes. If the same crash recurs mid-replay, the next
-//! boot picks up where this one stopped.
+//! enqueue it in chunks of at most [`REPLAY_CHUNK_SIZE`] as `ReplayApplyOps`
+//! tasks on the materializer's foreground queue. The materializer applies each
+//! chunk in one transaction, advancing the cursor with it (#5418). If the same
+//! crash recurs mid-replay, the next boot picks up where this one stopped.
 //!
 //! Idempotency: every op handler in `materializer/handlers.rs::apply_op_tx`
 //! already uses `INSERT OR IGNORE` / UPSERT semantics, so re-applying an
@@ -521,8 +521,21 @@ async fn fan_out_replayed_ops(
     Ok(dispatched)
 }
 
-/// Walk `op_log WHERE seq > cursor` and enqueue each row as an
-/// `ApplyOp` task on the materializer's foreground queue.
+/// How the walked ops reach the materializer. Production chunks (#5418); the
+/// per-op shape it replaced stays as the oracle the chunked replay is
+/// compared against.
+#[derive(Clone, Copy)]
+enum ReplayGranularity {
+    /// `ReplayApplyOps` chunks of at most [`REPLAY_CHUNK_SIZE`] rows, cut by
+    /// [`split_after_cascades`].
+    Chunked,
+    /// One `ReplayApplyOp` per row.
+    #[cfg(test)]
+    PerOp,
+}
+
+/// Walk `op_log WHERE seq > cursor` and enqueue it in chunks as
+/// `ReplayApplyOps` tasks on the materializer's foreground queue.
 ///
 /// Returns a [`ReplayReport`] summarising the pass. The function blocks
 /// until every enqueued op has been processed (via a foreground
@@ -538,6 +551,24 @@ async fn fan_out_replayed_ops(
 pub async fn replay_unmaterialized_ops(
     pool: &SqlitePool,
     materializer: &Materializer,
+) -> Result<ReplayReport, AppError> {
+    replay_unmaterialized_ops_with(pool, materializer, ReplayGranularity::Chunked).await
+}
+
+/// The per-op oracle for [`replay_unmaterialized_ops`] (#5418): the same walk,
+/// one `ReplayApplyOp` task per row.
+#[cfg(test)]
+pub(crate) async fn replay_unmaterialized_ops_per_op(
+    pool: &SqlitePool,
+    materializer: &Materializer,
+) -> Result<ReplayReport, AppError> {
+    replay_unmaterialized_ops_with(pool, materializer, ReplayGranularity::PerOp).await
+}
+
+async fn replay_unmaterialized_ops_with(
+    pool: &SqlitePool,
+    materializer: &Materializer,
+    granularity: ReplayGranularity,
 ) -> Result<ReplayReport, AppError> {
     let cursor = read_apply_cursor(pool).await?;
     ensure_single_device_op_log(pool).await?;
@@ -576,8 +607,8 @@ pub async fn replay_unmaterialized_ops(
     // #2896 — the EXPLICIT reprojection-deferral sink. This replaces the retired
     // ambient boot-replay suppression global on `LoroState` + its comment-enforced
     // quiescence invariant: instead of flipping a process-wide flag, we OWN this
-    // sink here and thread a clone into every op we enqueue (via
-    // `MaterializeTask::ReplayApplyOp`), so each replayed create/move records its
+    // sink here and thread a clone into every chunk we enqueue (via
+    // `MaterializeTask::ReplayApplyOps`), so each replayed create/move records its
     // touched `(space_id, parent)` group HERE instead of reprojecting inline.
     // Any op NOT dispatched by this driver (a concurrent live/remote op) carries
     // no sink and reprojects inline by construction — it can never inherit this
@@ -587,7 +618,8 @@ pub async fn replay_unmaterialized_ops(
     let dirty = agaric_engine::apply::kernel::ReplayDirtyParents::new();
 
     let (last_seen, replay_device_id) =
-        enqueue_ops_for_replay(pool, materializer, cursor, &dirty, &mut report).await?;
+        enqueue_ops_for_replay(pool, materializer, cursor, &dirty, granularity, &mut report)
+            .await?;
 
     // Drain the foreground queue via a Barrier so the caller observes
     // a fully-applied state on return. Without this, recover_at_boot's
@@ -690,9 +722,9 @@ async fn ensure_single_device_op_log(pool: &SqlitePool) -> Result<(), AppError> 
     Ok(())
 }
 
-/// Enqueue every locally-authored op past `cursor` as a `ReplayApplyOp`,
-/// carrying `dirty` so each replayed create/move defers its inline
-/// reprojection to the single end-of-replay pass.
+/// Enqueue every locally-authored op past `cursor` as `ReplayApplyOps` chunks
+/// ([`split_after_cascades`]), carrying `dirty` so each replayed create/move
+/// defers its inline reprojection to the single end-of-replay pass.
 ///
 /// Returns the highest seq the walk reached and the device id the
 /// end-of-replay reproject needs to reach the per-space engine.
@@ -701,6 +733,7 @@ async fn enqueue_ops_for_replay(
     materializer: &Materializer,
     cursor: i64,
     dirty: &agaric_engine::apply::kernel::ReplayDirtyParents,
+    granularity: ReplayGranularity,
     report: &mut ReplayReport,
 ) -> Result<(i64, Option<String>), AppError> {
     let mut last_seen: i64 = cursor;
@@ -734,17 +767,40 @@ async fn enqueue_ops_for_replay(
             break;
         }
 
-        for record in rows {
+        for record in &rows {
             last_seen = last_seen.max(record.seq);
-            // #2295: capture the device id before the record moves into the
+            // #2295: capture the device id before the records move into the
             // task — the end-of-replay reproject needs it to reach the engine.
             replay_device_id = Some(record.device_id.clone());
-            // #2896: carry a clone of the replay-owned sink on the task so the
-            // consumer applies this op in `ApplyMode::ReplaySuppressed(dirty)`.
-            let task = MaterializeTask::ReplayApplyOp(Arc::new(record), dirty.clone());
+        }
+        // #2896: carry a clone of the replay-owned sink on each task so the
+        // consumer applies its ops in `ApplyMode::ReplaySuppressed(dirty)`.
+        let tasks: Vec<(MaterializeTask, u64)> = match granularity {
+            ReplayGranularity::Chunked => split_after_cascades(rows)
+                .into_iter()
+                .map(|chunk| {
+                    let ops = chunk.len() as u64;
+                    (
+                        MaterializeTask::ReplayApplyOps(Arc::new(chunk), dirty.clone()),
+                        ops,
+                    )
+                })
+                .collect(),
+            #[cfg(test)]
+            ReplayGranularity::PerOp => rows
+                .into_iter()
+                .map(|record| {
+                    (
+                        MaterializeTask::ReplayApplyOp(Arc::new(record), dirty.clone()),
+                        1,
+                    )
+                })
+                .collect(),
+        };
+        for (task, ops) in tasks {
             match materializer.enqueue_foreground(task).await {
                 Ok(()) => {
-                    report.ops_replayed += 1;
+                    report.ops_replayed += ops;
                 }
                 Err(e) => {
                     // Enqueue failure is non-fatal — log and continue.
@@ -752,7 +808,8 @@ async fn enqueue_ops_for_replay(
                     // the cursor only advances on successful apply.
                     tracing::warn!(
                         error = %e,
-                        "replay: failed to enqueue ReplayApplyOp — will retry on next boot"
+                        ops,
+                        "replay: failed to enqueue a replay task — will retry on next boot"
                     );
                     report.replay_errors.push(format!("enqueue: {e}"));
                 }
@@ -761,6 +818,34 @@ async fn enqueue_ops_for_replay(
     }
 
     Ok((last_seen, replay_device_id))
+}
+
+/// Split one walked page into replay chunks, each ending at its first
+/// `delete_block` / `restore_block`. Those ops reach the engine's descendant
+/// cohort only after their transaction commits, so an op behind them in the
+/// same transaction would see the cohort's old `deleted_at` (a create under a
+/// restored block lands after its still-tombstoned children; a purge behind a
+/// delete removes the cohort before it is mirrored) where the per-op replay
+/// saw the new one. `move_block` has the same post-commit fan-out, but
+/// its cohort is empty for every local move (`ApplyEffects::unswept_cohort`),
+/// and replay walks local ops only.
+fn split_after_cascades(rows: Vec<OpRecord>) -> Vec<Vec<OpRecord>> {
+    use agaric_store::op::OpType;
+
+    let mut chunks = Vec::new();
+    let mut chunk = Vec::new();
+    for record in rows {
+        let cascades = record.op_type == OpType::DeleteBlock.as_str()
+            || record.op_type == OpType::RestoreBlock.as_str();
+        chunk.push(record);
+        if cascades {
+            chunks.push(std::mem::take(&mut chunk));
+        }
+    }
+    if !chunk.is_empty() {
+        chunks.push(chunk);
+    }
+    chunks
 }
 
 /// #2541: per-group failures are LOGGED + RECORDED, never propagated.

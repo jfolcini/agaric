@@ -13,6 +13,13 @@
     "reason": "ONE BODY: a single-expression delegate to import_payload_with_changed_purged_tagscope(ImportPayload::Batch(..)), the same body the single-blob path reaches with ImportPayload::Single. Everything after the doc.import* call \u2014 diff capture, no-op short-circuit, legacy-migration fallback, changed/purged/tag-scope resolution \u2014 is payload-agnostic and shared. The batch-vs-single difference lives inside loro's own import_batch (one detached append per blob, one re-attach), not in this crate"
   },
   {
+    "fn": "src-tauri/agaric-engine/src/materializer/handlers/task_handlers.rs::apply_batch",
+    "kind": "mutating",
+    "status": "covered",
+    "reason": "Applies a BatchApplyOps or ReplayApplyOps chunk in one transaction against replay's per-op path. The oracle replays the same workload chunked and per-op across a chunk boundary and compares the end state; restore-then-create and the bad-op fallback are pinned by their own #5418 tests in agaric-sync/src/recovery/tests.rs. Multi-record BatchApplyOps FTS cohorts remain the dispatch_committed_cohorts gap.",
+    "test": "chunked_replay_matches_per_op_oracle_5418"
+  },
+  {
     "fn": "src-tauri/agaric-engine/src/materializer/handlers/task_handlers.rs::dispatch_committed_cohorts",
     "kind": "read-only",
     "status": "gap",

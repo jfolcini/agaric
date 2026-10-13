@@ -151,7 +151,18 @@ pub enum MaterializeTask {
     /// suppression. A failed replay op that exhausts retries persists as a plain
     /// `ApplyOp` retry row (the sink is dropped) — a later re-apply outside the
     /// replay window correctly reprojects inline, matching the prior behaviour.
+    ///
+    /// #5418: boot replay enqueues [`ReplayApplyOps`](Self::ReplayApplyOps)
+    /// chunks; this per-op shape is what a failed chunk falls back to.
     ReplayApplyOp(Arc<OpRecord>, crate::apply::kernel::ReplayDirtyParents),
+    /// #5418 — a boot-replay chunk: [`BatchApplyOps`](Self::BatchApplyOps)
+    /// applied in `ApplyMode::ReplaySuppressed` with the replay-owned sink, so
+    /// one `BEGIN IMMEDIATE` transaction applies the whole chunk and advances
+    /// the cursor once.
+    /// The consumer re-applies a failed chunk as one
+    /// [`ReplayApplyOp`](Self::ReplayApplyOp) per record, so a bad op keeps its
+    /// per-op retry and retry-queue outcome while its siblings apply.
+    ReplayApplyOps(Arc<Vec<OpRecord>>, crate::apply::kernel::ReplayDirtyParents),
     /// The inner `Vec<OpRecord>` is wrapped in an `Arc` so that
     /// cloning the task (e.g. for the foreground/background retry arms in
     /// `consumer.rs`) is a refcount bump rather than a deep clone of a

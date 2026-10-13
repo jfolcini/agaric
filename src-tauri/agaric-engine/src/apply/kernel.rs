@@ -180,8 +180,8 @@ pub async fn advance_apply_cursor(
 /// path, so each replayed create/move would reproject its whole sibling group
 /// INLINE — an O(N²) reprojection storm across a crash-recovery boot. The
 /// replay driver instead constructs ONE `ReplayDirtyParents`, threads a clone
-/// into each op it enqueues (via `MaterializeTask::ReplayApplyOp`), and — once
-/// every op has applied — drains it to reproject each touched
+/// into each chunk it enqueues (via `MaterializeTask::ReplayApplyOps`, #5418),
+/// and — once every op has applied — drains it to reproject each touched
 /// `(space_id, parent)` group ONCE from the engine's FINAL state.
 ///
 /// ## Soundness by construction (#2896)

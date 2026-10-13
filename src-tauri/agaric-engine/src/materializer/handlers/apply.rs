@@ -11,9 +11,13 @@ use super::*;
 // unchanged `crate::materializer::handlers::…` paths.
 pub use crate::apply::kernel::{
     ApplyEffects, ApplyMode, ChunkAccumulator, UnsweptBlock, advance_apply_cursor,
-    apply_op_projected, apply_op_projected_with_mode, apply_op_tx, collect_delete_cohort,
+    apply_op_projected, apply_op_projected_with_mode, apply_op_tx_with_mode, collect_delete_cohort,
     collect_restore_cohort,
 };
+// #5418: the batch arm applies with an explicit mode, so the `Normal`-mode
+// wrapper now has only test callers in this module tree.
+#[cfg(test)]
+pub use crate::apply::kernel::apply_op_tx;
 
 /// RAII timer that records the elapsed wall-clock of one [`apply_op`] to the
 /// `agaric.materializer.op_apply.duration` histogram on drop — so every exit
@@ -55,8 +59,9 @@ pub async fn apply_op(
     apply_op_with_mode(pool, record, ApplyMode::Normal, state).await
 }
 
-/// #2896 — [`apply_op`] with an EXPLICIT [`ApplyMode`]. The boot-replay
-/// foreground task (`MaterializeTask::ReplayApplyOp`) routes through here so
+/// #2896 — [`apply_op`] with an EXPLICIT [`ApplyMode`]. The per-op boot-replay
+/// foreground task (`MaterializeTask::ReplayApplyOp`, what a failed
+/// `ReplayApplyOps` chunk falls back to, #5418) routes through here so
 /// each replayed op defers its inline reprojection into the replay-owned
 /// [`ReplayDirtyParents`] sink; the [`apply_op`] wrapper passes
 /// [`ApplyMode::Normal`]. The mode is stated per dispatch, so a concurrent

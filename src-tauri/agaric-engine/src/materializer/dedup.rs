@@ -84,6 +84,7 @@ pub(super) fn dedup_tasks(tasks: Vec<MaterializeTask>) -> Vec<MaterializeTask> {
             // would drop a whole frame's link reindex with no self-heal.
             MaterializeTask::ApplyOp(_)
             | MaterializeTask::ReplayApplyOp(..)
+            | MaterializeTask::ReplayApplyOps(..)
             | MaterializeTask::BatchApplyOps(_)
             | MaterializeTask::ReindexBlockLinksBatch { .. }
             | MaterializeTask::Barrier(_) => {

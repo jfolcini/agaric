@@ -46,39 +46,16 @@ pub async fn handle_foreground_task(
             Ok(())
         }
         MaterializeTask::BatchApplyOps(records) => {
-            // #382 — SINGLE-DEVICE-BATCH ASSUMPTION.
-            //
-            // `op_log.seq` is a PER-DEVICE counter (the PK is
-            // `(device_id, seq)`); it is NOT a global key. This arm
-            // computes a single `max_seq` across every record and
-            // advances ONE global apply cursor to it (see below). That
-            // is only correct when every record in the batch shares one
-            // `device_id` — otherwise a per-device watermark cannot be
-            // represented by a single scalar cursor.
-            //
-            // Today this holds: `BatchApplyOps` is only ever fed
-            // single-device, local-command batches (the remote/merge
-            // path applies ops one-at-a-time via `apply_op`). If a
-            // future caller mixes devices in one batch, this cursor
-            // advancement must be PARTITIONED per `device_id` (track and
-            // advance a separate watermark for each device's seq), not
-            // collapsed into one `max_seq`. Until then (#412) a mixed-device
-            // batch is rejected in ALL builds rather than silently advancing
-            // the cursor past another device's unmaterialised ops.
-            if let Some(first) = records.first()
-                && records.iter().any(|r| r.device_id != first.device_id)
-            {
-                return Err(AppError::InvalidOperation(
-                    "BatchApplyOps received a mixed-device batch; the single global \
-                         apply cursor cannot represent per-device watermarks — per-device \
-                         cursor partitioning is required (backend audit #412)"
-                        .into(),
-                ));
-            }
-            let per_record_effects = apply_records_in_one_tx(pool, records, state).await?;
-            dispatch_committed_cohorts(pool, records, &per_record_effects, state).await;
-
-            Ok(())
+            apply_batch(pool, records, ApplyMode::Normal, state).await
+        }
+        // #5418 — a boot-replay chunk: the batch arm in
+        // `ApplyMode::ReplaySuppressed`, so the whole chunk applies and advances
+        // the cursor in ONE transaction. A failed chunk is re-applied op by op
+        // by the consumer (`process_single_foreground_task`), which keeps the
+        // per-op retry and retry-queue outcome for the one bad op.
+        MaterializeTask::ReplayApplyOps(records, dirty) => {
+            let mode = ApplyMode::ReplaySuppressed(dirty.clone());
+            apply_batch(pool, records, mode, state).await
         }
         MaterializeTask::Barrier(notify) => {
             notify.notify_one();
@@ -107,12 +84,56 @@ pub async fn handle_foreground_task(
     }
 }
 
-/// Applies one `BatchApplyOps` batch inside a single transaction, advancing
-/// the apply cursor and committing. Returns the per-record effects the
-/// post-commit fan-out needs.
+/// The `BatchApplyOps` / `ReplayApplyOps` body: the single-device guard, one
+/// transaction for the whole batch, then the post-commit cohort fan-out.
+async fn apply_batch(
+    pool: &SqlitePool,
+    records: &[OpRecord],
+    mode: ApplyMode,
+    state: &crate::loro::shared::LoroState,
+) -> Result<(), AppError> {
+    // #382 — SINGLE-DEVICE-BATCH ASSUMPTION.
+    //
+    // `op_log.seq` is a PER-DEVICE counter (the PK is
+    // `(device_id, seq)`); it is NOT a global key. This arm
+    // computes a single `max_seq` across every record and
+    // advances ONE global apply cursor to it (see below). That
+    // is only correct when every record in the batch shares one
+    // `device_id` — otherwise a per-device watermark cannot be
+    // represented by a single scalar cursor.
+    //
+    // Today this holds: `BatchApplyOps` is only ever fed
+    // single-device, local-command batches (the remote/merge
+    // path applies ops one-at-a-time via `apply_op`), and boot replay's
+    // `ReplayApplyOps` walks a log `ensure_single_device_op_log` has already
+    // checked. If a future caller mixes devices in one batch, this cursor
+    // advancement must be PARTITIONED per `device_id` (track and
+    // advance a separate watermark for each device's seq), not
+    // collapsed into one `max_seq`. Until then (#412) a mixed-device
+    // batch is rejected in ALL builds rather than silently advancing
+    // the cursor past another device's unmaterialised ops.
+    if let Some(first) = records.first()
+        && records.iter().any(|r| r.device_id != first.device_id)
+    {
+        return Err(AppError::InvalidOperation(
+            "BatchApplyOps received a mixed-device batch; the single global \
+                 apply cursor cannot represent per-device watermarks — per-device \
+                 cursor partitioning is required (backend audit #412)"
+                .into(),
+        ));
+    }
+    let per_record_effects = apply_records_in_one_tx(pool, records, mode, state).await?;
+    dispatch_committed_cohorts(pool, records, &per_record_effects, state).await;
+    Ok(())
+}
+
+/// Applies one `BatchApplyOps` / `ReplayApplyOps` batch inside a single
+/// transaction, advancing the apply cursor and committing. Returns the
+/// per-record effects the post-commit fan-out needs.
 async fn apply_records_in_one_tx(
     pool: &SqlitePool,
     records: &[OpRecord],
+    mode: ApplyMode,
     state: &crate::loro::shared::LoroState,
 ) -> Result<Vec<ApplyEffects>, AppError> {
     // SQL-review route through `begin_immediate_logged`
@@ -121,6 +142,38 @@ async fn apply_records_in_one_tx(
     // `busy_timeout` stalls under SQLite's default DEFERRED
     // isolation.
     let mut tx = agaric_store::db::begin_immediate_logged(pool, "materializer_apply_batch").await?;
+    // #2604 — the batch twin of `apply_op_with_mode`'s engine-rollback scope:
+    // every op mutates its per-space engine IN PLACE inside this tx, so a
+    // failed apply or commit rewinds the engines to their pre-batch
+    // checkpoint instead of leaving them ahead of the rolled-back SQL. Armed
+    // only while the `BEGIN IMMEDIATE` lock is held (see `RevertScope::detach`).
+    let revert = crate::loro::revert::RevertScope::arm(state);
+    let applied = apply_records_in_tx(&mut tx, records, &mode, state).await;
+    let pending = revert.detach();
+    match applied {
+        Ok(effects) => match tx.commit().await {
+            Ok(()) => Ok(effects),
+            Err(e) => {
+                pending.revert();
+                Err(e.into())
+            }
+        },
+        Err(e) => {
+            drop(tx); // roll back the SQL projection before rewinding the engines
+            pending.revert();
+            Err(e)
+        }
+    }
+}
+
+/// The in-transaction half of [`apply_records_in_one_tx`]: apply every record,
+/// flush the chunk accumulator, advance the cursor. Does not commit.
+async fn apply_records_in_tx(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    records: &[OpRecord],
+    mode: &ApplyMode,
+    state: &crate::loro::shared::LoroState,
+) -> Result<Vec<ApplyEffects>, AppError> {
     // C-2b: track the highest seq across the batch so we can
     // advance the apply cursor exactly once before commit. An
     // empty batch leaves `max_seq` at None so the cursor is not
@@ -160,18 +213,24 @@ async fn apply_records_in_one_tx(
     // reproject key is additionally space-qualified so an all-create
     // batch spanning spaces cannot collide on the top-level `None`
     // key — see `ChunkAccumulator`.)
+    //
+    // #5418: boot replay (`ApplyMode::ReplaySuppressed`) has its own deferral
+    // — every create/move records its sibling group into the replay sink and
+    // the driver reprojects each group once from the engine's FINAL state —
+    // so a replay chunk passes `None` and keeps the per-op replay's exact
+    // derived writes; the accumulator would only add a second reproject per
+    // chunk.
     let all_create = records
         .iter()
         .all(|r| r.op_type == OpType::CreateBlock.as_str());
-    let mut chunk = if all_create {
+    let mut chunk = if all_create && matches!(mode, ApplyMode::Normal) {
         Some(ChunkAccumulator::default())
     } else {
         None
     };
-    // `records` is `&Arc<Vec<OpRecord>>`; `.iter()` derefs
-    // through `Arc -> Vec` to yield `&OpRecord` without copying.
-    for record in records.iter() {
-        let effects = match apply_op_tx(&mut tx, record, chunk.as_mut(), state).await {
+    for record in records {
+        let apply = apply_op_tx_with_mode(tx, record, chunk.as_mut(), state, mode.clone());
+        let effects = match apply.await {
             Ok(eff) => eff,
             Err(e) => {
                 tracing::warn!(
@@ -179,9 +238,9 @@ async fn apply_records_in_one_tx(
                     device_id = %record.device_id,
                     seq = record.seq,
                     error = %e,
-                    "failed to apply remote op in batch — rolling back"
+                    "failed to apply op in batch — rolling back"
                 );
-                // tx is dropped here, which rolls back automatically
+                // The caller drops the tx, which rolls back automatically.
                 return Err(e);
             }
         };
@@ -197,7 +256,7 @@ async fn apply_records_in_one_tx(
     // mixed-batch path (deferral gated off) — nothing was accumulated,
     // every op already reprojected/recomputed inline, so skip the flush.
     if let Some(chunk) = chunk {
-        chunk.flush(&mut tx).await?;
+        chunk.flush(tx).await?;
     }
     // C-2b: advance the cursor to the highest seq in the batch
     // inside the same tx so `apply + cursor` are atomic. Empty
@@ -206,12 +265,11 @@ async fn apply_records_in_one_tx(
     // #382: `seq` here is the max of a PER-DEVICE counter and the
     // cursor is a single global scalar — correct only under the
     // single-device-batch assumption documented (and
-    // enforced) at the top of this arm. A multi-device
+    // enforced) in `apply_batch`. A multi-device
     // batch would need this advancement partitioned per device_id.
     if let Some(seq) = max_seq {
-        advance_apply_cursor(&mut tx, seq).await?;
+        advance_apply_cursor(tx, seq).await?;
     }
-    tx.commit().await?;
     Ok(per_record_effects)
 }
 
@@ -687,7 +745,7 @@ async fn handle_background_task_inner(
         MaterializeTask::ApplyOp(record) | MaterializeTask::ReplayApplyOp(record, _) => {
             reject_apply_op_in_background_queue(record)
         }
-        MaterializeTask::BatchApplyOps(records) => {
+        MaterializeTask::BatchApplyOps(records) | MaterializeTask::ReplayApplyOps(records, _) => {
             reject_batch_apply_ops_in_background_queue(records)
         }
         MaterializeTask::Barrier(notify) => {

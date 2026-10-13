@@ -2789,7 +2789,9 @@ async fn recover_at_boot_handles_more_than_999_drafts() {
 //  3. The full `recover_at_boot` path includes replay + draft recovery
 //     in the right order.
 
-use crate::recovery::replay::replay_unmaterialized_ops;
+use crate::recovery::replay::{
+    REPLAY_CHUNK_SIZE, replay_unmaterialized_ops, replay_unmaterialized_ops_per_op,
+};
 use agaric_engine::materializer::MaterializeTask;
 use agaric_store::op_log::OpRecord;
 use std::sync::Arc as StdArc;
@@ -3314,6 +3316,504 @@ async fn replay_empty_op_log_is_noop_c2b() {
     assert!(report.replay_errors.is_empty());
     assert_eq!(read_cursor(&pool).await, 0, "cursor stays at initial 0");
     mat.shutdown();
+}
+
+/// #5418 — a space, a page under it, both in SQL and in the engine, so the
+/// ops a test appends under `page_id` take the engine path rather than the
+/// `SpaceUnresolved` SQL-only fallback.
+async fn seed_space_and_page(
+    pool: &SqlitePool,
+    state: &agaric_engine::loro::shared::LoroState,
+    device_id: &str,
+    space_id: &str,
+    page_id: &str,
+) {
+    use agaric_store::space::SpaceId;
+
+    sqlx::query(
+        "INSERT INTO blocks (id, block_type, content, parent_id, position) \
+         VALUES (?, 'tag', 'space', NULL, 0)",
+    )
+    .bind(space_id)
+    .execute(pool)
+    .await
+    .unwrap();
+    sqlx::query("INSERT OR IGNORE INTO spaces (id) VALUES (?)")
+        .bind(space_id)
+        .execute(pool)
+        .await
+        .unwrap();
+    sqlx::query(
+        "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id, space_id) \
+         VALUES (?, 'page', 'P', NULL, 0, ?, ?)",
+    )
+    .bind(page_id)
+    .bind(page_id)
+    .bind(space_id)
+    .execute(pool)
+    .await
+    .unwrap();
+    let space = SpaceId::from_trusted(space_id);
+    let mut guard = state.registry.for_space(&space, device_id).unwrap();
+    guard
+        .engine_mut()
+        .apply_create_block(page_id, "page", "P", None, 0)
+        .unwrap();
+}
+
+/// One `blocks` row as the #5418 oracle compares it: id, parent, content,
+/// position, page, space, deleted.
+type ProjectedRow = (String, String, String, i64, String, String, bool);
+
+/// #5418 — the oracle workload: `creates` children under `page_id`, a move of
+/// the first child to the end of the group, edits round-robin over the
+/// children, then a delete of the last child; `total` ops in all. Both halves
+/// of a two-chunk replay are mixed, so the chunk transaction, the replay sink
+/// and the end-of-replay reproject all take part.
+async fn seed_oracle_workload(
+    pool: &SqlitePool,
+    device_id: &str,
+    page_id: &str,
+    child_ids: &[String],
+    total: usize,
+) {
+    use agaric_store::op::{DeleteBlockPayload, MoveBlockPayload};
+
+    let creates = child_ids.len();
+    for (k, id) in child_ids.iter().enumerate() {
+        append_local_op(
+            pool,
+            device_id,
+            OpPayload::CreateBlock(CreateBlockPayload {
+                block_id: BlockId::from_trusted(id),
+                block_type: "content".into(),
+                parent_id: Some(BlockId::from_trusted(page_id)),
+                position: None,
+                index: Some(i64::try_from(k).unwrap()),
+                content: format!("c{k}"),
+            }),
+        )
+        .await
+        .unwrap();
+    }
+    append_local_op(
+        pool,
+        device_id,
+        OpPayload::MoveBlock(MoveBlockPayload {
+            block_id: BlockId::from_trusted(&child_ids[0]),
+            new_parent_id: Some(BlockId::from_trusted(page_id)),
+            new_position: i64::try_from(creates).unwrap(),
+            new_index: Some(i64::try_from(creates - 1).unwrap()),
+        }),
+    )
+    .await
+    .unwrap();
+    for e in 0..(total - creates - 2) {
+        let id = &child_ids[e % creates];
+        append_local_op(
+            pool,
+            device_id,
+            OpPayload::EditBlock(EditBlockPayload {
+                block_id: BlockId::from_trusted(id),
+                to_text: format!("edit {e} of {id}"),
+                prev_edit: None,
+            }),
+        )
+        .await
+        .unwrap();
+    }
+    append_local_op(
+        pool,
+        device_id,
+        OpPayload::DeleteBlock(DeleteBlockPayload {
+            block_id: BlockId::from_trusted(&child_ids[creates - 1]),
+        }),
+    )
+    .await
+    .unwrap();
+}
+
+/// #5418 — seed the oracle workload on a fresh vault, replay it chunked
+/// (production) or per op (the oracle), and read back the projection and
+/// the cursor.
+async fn replay_oracle_run(
+    per_op: bool,
+    device_id: &str,
+    space_id: &str,
+    page_id: &str,
+    child_ids: &[String],
+    total: usize,
+) -> (ReplayReport, Vec<ProjectedRow>, i64, std::time::Duration) {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    seed_space_and_page(&pool, mat.loro_state(), device_id, space_id, page_id).await;
+    seed_oracle_workload(&pool, device_id, page_id, child_ids, total).await;
+
+    let started = std::time::Instant::now();
+    let report = if per_op {
+        replay_unmaterialized_ops_per_op(&pool, &mat).await.unwrap()
+    } else {
+        replay_unmaterialized_ops(&pool, &mat).await.unwrap()
+    };
+    let elapsed = started.elapsed();
+
+    let rows = sqlx::query_as::<_, ProjectedRow>(
+        "SELECT id, COALESCE(parent_id, ''), content, COALESCE(position, -1), \
+                COALESCE(page_id, ''), COALESCE(space_id, ''), deleted_at IS NOT NULL \
+         FROM blocks ORDER BY id",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    let cursor = read_cursor(&pool).await;
+    mat.shutdown();
+    (report, rows, cursor, elapsed)
+}
+
+fn oracle_child_ids(creates: usize) -> Vec<String> {
+    (0..creates)
+        .map(|k| {
+            BlockId::test_id(&format!("O5418{k:05}"))
+                .as_str()
+                .to_string()
+        })
+        .collect()
+}
+
+/// #5418 — chunked replay must leave the same `blocks` projection and cursor
+/// as the per-op replay it replaced. The same workload, spanning a chunk
+/// boundary, on two vaults.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn chunked_replay_matches_per_op_oracle_5418() {
+    const SPACE: &str = "01ARZ3NDEKTSV4RRFFQ69G5FAW";
+    const PAGE_ID: &str = "01HZ00000000000000005418PG";
+    const CREATES: usize = 50;
+    let device_id = "dev-5418-oracle";
+    // 250 ops: chunks [1..=200] and [201..=250].
+    let total = usize::try_from(REPLAY_CHUNK_SIZE).unwrap() + 50;
+    let child_ids = oracle_child_ids(CREATES);
+
+    let (chunked_report, chunked, chunked_cursor, _) =
+        replay_oracle_run(false, device_id, SPACE, PAGE_ID, &child_ids, total).await;
+    let (per_op_report, per_op, per_op_cursor, _) =
+        replay_oracle_run(true, device_id, SPACE, PAGE_ID, &child_ids, total).await;
+
+    for report in [&chunked_report, &per_op_report] {
+        assert_eq!(report.ops_replayed, total as u64);
+        assert!(
+            report.replay_errors.is_empty(),
+            "{:?}",
+            report.replay_errors
+        );
+    }
+    assert_eq!(chunked_cursor, i64::try_from(total).unwrap());
+    assert_eq!(per_op_cursor, chunked_cursor);
+
+    // Absolute pins first, so an identical-but-wrong pair cannot pass: the
+    // space, the page and every child are present; the last edit of child 0
+    // (e = 150) is its content; the moved child ranks last among the live
+    // children; the last child is deleted.
+    assert_eq!(chunked.len(), CREATES + 2);
+    let row = |id: &str| chunked.iter().find(|r| r.0 == id).unwrap();
+    assert_eq!(
+        row(&child_ids[0]).2,
+        format!("edit 150 of {}", child_ids[0])
+    );
+    let live_max = chunked
+        .iter()
+        .filter(|r| r.1 == PAGE_ID && !r.6)
+        .map(|r| r.3)
+        .max()
+        .unwrap();
+    assert_eq!(row(&child_ids[0]).3, live_max);
+    assert!(row(&child_ids[CREATES - 1]).6, "last child is deleted");
+
+    assert_eq!(
+        chunked, per_op,
+        "chunked replay diverged from the per-op oracle"
+    );
+}
+
+/// #5418 — boot-replay wall clock, per op against chunked, on the oracle
+/// workload at 300 and 1,000 ops. A timing, not an assertion: run by hand with
+/// `cargo nextest run --workspace --run-ignored only --no-capture -E 'test(replay_timing_5418)'`
+/// and read the `replay_timing_5418:` lines.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "timing only (#5418); run by hand"]
+async fn replay_timing_5418() {
+    const SPACE: &str = "01ARZ3NDEKTSV4RRFFQ69G5FAW";
+    const PAGE_ID: &str = "01HZ00000000000000005418PG";
+    for total in [300usize, 1000] {
+        let child_ids = oracle_child_ids(total / 5);
+        for per_op in [true, false] {
+            let (report, _, _, elapsed) =
+                replay_oracle_run(per_op, "dev-5418-timing", SPACE, PAGE_ID, &child_ids, total)
+                    .await;
+            assert_eq!(report.ops_replayed, total as u64);
+            eprintln!("replay_timing_5418: ops={total} per_op={per_op} elapsed={elapsed:?}");
+        }
+    }
+}
+
+/// #5418 — one bad op inside a chunk. The chunk's transaction rolls back and
+/// the consumer re-applies its ops one at a time, so the bad op alone lands in
+/// the retry queue, every sibling applies, and the cursor passes all of them:
+/// the outcome one task per op produced. A chunk persisted as a batch would
+/// leave eleven retry rows; a chunk dropped whole would leave no children.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn bad_op_inside_a_chunk_keeps_the_per_op_outcome_5418() {
+    const SPACE: &str = "01ARZ3NDEKTSV4RRFFQ69G5FAW";
+    const PAGE_ID: &str = "01HZ00000000000000005418PG";
+    let device_id = "dev-5418-badop";
+
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    seed_space_and_page(&pool, mat.loro_state(), device_id, SPACE, PAGE_ID).await;
+
+    let create = |k: usize| {
+        OpPayload::CreateBlock(CreateBlockPayload {
+            block_id: BlockId::test_id(&format!("B5418{k:05}")),
+            block_type: "content".into(),
+            parent_id: Some(BlockId::from_trusted(PAGE_ID)),
+            position: None,
+            index: Some(i64::try_from(k).unwrap()),
+            content: format!("c{k}"),
+        })
+    };
+    for k in 0..5 {
+        append_local_op(&pool, device_id, create(k)).await.unwrap();
+    }
+    // seq 6: the engine takes the create, then this trigger rejects its SQL
+    // projection on every attempt.
+    sqlx::query(
+        "CREATE TRIGGER reject_5418 BEFORE INSERT ON blocks WHEN NEW.id = 'B541800099' \
+         BEGIN SELECT RAISE(ABORT, 'injected #5418'); END",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    let bad = append_local_op(&pool, device_id, create(99)).await.unwrap();
+    assert_eq!(bad.seq, 6);
+    for k in 5..10 {
+        append_local_op(&pool, device_id, create(k)).await.unwrap();
+    }
+
+    let report = replay_unmaterialized_ops(&pool, &mat).await.unwrap();
+    assert_eq!(report.ops_replayed, 11);
+    assert!(
+        report.replay_errors.is_empty(),
+        "{:?}",
+        report.replay_errors
+    );
+    assert_eq!(
+        read_cursor(&pool).await,
+        11,
+        "cursor passes the bad op (MAX)"
+    );
+
+    let children: Vec<String> = sqlx::query_scalar::<_, String>(
+        "SELECT id FROM blocks WHERE parent_id = ? ORDER BY position",
+    )
+    .bind(PAGE_ID)
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    let expected: Vec<String> = (0..10).map(|k| format!("B5418{k:05}")).collect();
+    assert_eq!(
+        children, expected,
+        "every sibling of the bad op applied, in op order"
+    );
+    let orphan_id = BlockId::test_id(&format!("B5418{:05}", 99))
+        .as_str()
+        .to_string();
+    let orphans: i64 = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM blocks WHERE id = ?")
+        .bind(&orphan_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(orphans, 0, "the bad op never lands");
+
+    // `ApplyOp:` rows only: the #3298 background fan-out for the bad record may
+    // persist its own per-block rows, and its timing is not this test's.
+    let retry_rows: Vec<String> = sqlx::query_scalar::<_, String>(
+        "SELECT task_kind FROM materializer_retry_queue WHERE task_kind LIKE 'ApplyOp:%'",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        retry_rows,
+        vec![format!("ApplyOp:6:{device_id}")],
+        "exactly the bad op is persisted for the sweeper"
+    );
+    // The failed chunk rewinds the engine with its SQL: the bad create's
+    // engine half must not outlive the rolled-back transaction.
+    let space = agaric_store::space::SpaceId::from_trusted(SPACE);
+    let mut guard = mat
+        .loro_state()
+        .registry
+        .for_space(&space, device_id)
+        .unwrap();
+    assert!(
+        !guard.engine_mut().contains_block(&orphan_id),
+        "the engine never keeps the op SQL rejected"
+    );
+    drop(guard);
+    mat.shutdown();
+}
+
+/// #5418 — a delete's descendant cohort reaches the engine only after its
+/// transaction commits. A purge behind it in the same transaction would remove
+/// the subtree first, and the delete's fan-out would then meter each child as
+/// a block missing from the engine; per op it is mirrored before the purge. So
+/// a delete ends its chunk. Counter-delta test on the process-global
+/// `sql_only_fallback` count: run under nextest.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn delete_then_purge_meters_no_fallback_5418() {
+    use agaric_store::op::{DeleteBlockPayload, PurgeBlockPayload};
+
+    const SPACE: &str = "01ARZ3NDEKTSV4RRFFQ69G5FAW";
+    const PAGE_ID: &str = "01HZ00000000000000005418PG";
+    let device_id = "dev-5418-purge";
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    seed_space_and_page(&pool, mat.loro_state(), device_id, SPACE, PAGE_ID).await;
+
+    for (id, parent) in [("D5418P", PAGE_ID), ("D5418C", "D5418P")] {
+        let create = OpPayload::CreateBlock(CreateBlockPayload {
+            block_id: BlockId::test_id(id),
+            block_type: "content".into(),
+            parent_id: Some(BlockId::test_id(parent)),
+            position: None,
+            index: Some(0),
+            content: id.into(),
+        });
+        append_local_op(&pool, device_id, create).await.unwrap();
+    }
+    let delete = OpPayload::DeleteBlock(DeleteBlockPayload {
+        block_id: BlockId::test_id("D5418P"),
+    });
+    append_local_op(&pool, device_id, delete).await.unwrap();
+    let purge = OpPayload::PurgeBlock(PurgeBlockPayload {
+        block_id: BlockId::test_id("D5418P"),
+    });
+    append_local_op(&pool, device_id, purge).await.unwrap();
+
+    let before = agaric_engine::apply::sql_only_fallback::count();
+    let report = replay_unmaterialized_ops(&pool, &mat).await.unwrap();
+    let fallbacks = agaric_engine::apply::sql_only_fallback::count() - before;
+    assert!(
+        report.replay_errors.is_empty(),
+        "{:?}",
+        report.replay_errors
+    );
+    assert_eq!(fallbacks, 0, "the delete's cohort mirrors before the purge");
+    let left: i64 = sqlx::query_scalar::<_, i64>(
+        "SELECT COUNT(*) FROM blocks WHERE id IN ('D5418P', 'D5418C')",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(left, 0, "the purge removes the subtree");
+    mat.shutdown();
+}
+
+/// #5418 — replay `P` with children `C1, C2`, padding edits up to the chunk
+/// boundary, `DeleteBlock(P)` as the last op of the first chunk, then
+/// `RestoreBlock(P)` and a create of `N` under `P` at live index 1. Returns
+/// `P`'s children ordered by `position`.
+async fn replay_restore_then_create(per_op: bool) -> Vec<String> {
+    use agaric_store::op::{DeleteBlockPayload, RestoreBlockPayload};
+
+    const SPACE: &str = "01ARZ3NDEKTSV4RRFFQ69G5FAW";
+    const PAGE_ID: &str = "01HZ00000000000000005418PG";
+    let device_id = "dev-5418-restore";
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    seed_space_and_page(&pool, mat.loro_state(), device_id, SPACE, PAGE_ID).await;
+
+    let create = |id: &str, parent: &str, index: i64| {
+        OpPayload::CreateBlock(CreateBlockPayload {
+            block_id: BlockId::test_id(id),
+            block_type: "content".into(),
+            parent_id: Some(BlockId::test_id(parent)),
+            position: None,
+            index: Some(index),
+            content: id.into(),
+        })
+    };
+    for (id, parent, index) in [("R5418P", PAGE_ID, 0), ("R5418C1", "R5418P", 0)] {
+        append_local_op(&pool, device_id, create(id, parent, index))
+            .await
+            .unwrap();
+    }
+    append_local_op(&pool, device_id, create("R5418C2", "R5418P", 1))
+        .await
+        .unwrap();
+    let mut seq = 3;
+    while seq < REPLAY_CHUNK_SIZE - 1 {
+        let edit = OpPayload::EditBlock(EditBlockPayload {
+            block_id: BlockId::test_id("R5418C1"),
+            to_text: format!("edit {seq}"),
+            prev_edit: None,
+        });
+        seq = append_local_op(&pool, device_id, edit).await.unwrap().seq;
+    }
+    let delete = OpPayload::DeleteBlock(DeleteBlockPayload {
+        block_id: BlockId::test_id("R5418P"),
+    });
+    let deleted = append_local_op(&pool, device_id, delete).await.unwrap();
+    assert_eq!(
+        deleted.seq, REPLAY_CHUNK_SIZE,
+        "the delete closes chunk one"
+    );
+    let restore = OpPayload::RestoreBlock(RestoreBlockPayload {
+        block_id: BlockId::test_id("R5418P"),
+        deleted_at_ref: deleted.created_at,
+    });
+    append_local_op(&pool, device_id, restore).await.unwrap();
+    append_local_op(&pool, device_id, create("R5418N", "R5418P", 1))
+        .await
+        .unwrap();
+
+    let report = if per_op {
+        replay_unmaterialized_ops_per_op(&pool, &mat).await.unwrap()
+    } else {
+        replay_unmaterialized_ops(&pool, &mat).await.unwrap()
+    };
+    assert!(
+        report.replay_errors.is_empty(),
+        "{:?}",
+        report.replay_errors
+    );
+    let children = sqlx::query_scalar::<_, String>(
+        "SELECT id FROM blocks WHERE parent_id = 'R5418P' AND deleted_at IS NULL \
+         ORDER BY position",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    mat.shutdown();
+    children
+}
+
+/// #5418 — a restore's descendant cohort reaches the engine only after its
+/// transaction commits. A create under the restored block in that same
+/// transaction would still see `C1, C2` tombstoned and land after both; per op
+/// it lands at live index 1, between them. So a restore ends its chunk.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn create_after_restore_matches_per_op_oracle_5418() {
+    let expected = ["R5418C1", "R5418N", "R5418C2"].map(String::from).to_vec();
+    assert_eq!(
+        replay_restore_then_create(true).await,
+        expected,
+        "per-op oracle: N lands at live index 1"
+    );
+    assert_eq!(
+        replay_restore_then_create(false).await,
+        expected,
+        "chunked replay must place N where the per-op replay does"
+    );
 }
 
 /// C-2b — `recover_at_boot` runs replay (step 1.5) before draft

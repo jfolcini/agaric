@@ -543,6 +543,45 @@ pub(super) async fn process_single_foreground_task(
         return;
     }
 
+    // #5418: a boot-replay chunk applies in one transaction. When that fails,
+    // each of its ops takes the per-op path below — its own retry and, on
+    // exhaustion, its own retry-queue row — so one bad op in a chunk ends up
+    // exactly where it did when replay enqueued one task per op, and its
+    // siblings still apply and advance the cursor.
+    if let MaterializeTask::ReplayApplyOps(records, dirty) = &task {
+        match handle_foreground_task(pool, &task, loro).await {
+            Ok(()) => {
+                metrics.fg_processed.fetch_add(1, Ordering::Relaxed);
+            }
+            Err(e) => {
+                tracing::warn!(
+                    first_seq = records.first().map_or(0, |r| r.seq),
+                    batch_size = records.len(),
+                    error = %e,
+                    "boot-replay chunk failed as one transaction — re-applying its ops \
+                     one at a time (#5418)"
+                );
+                for record in records.iter() {
+                    let per_op =
+                        MaterializeTask::ReplayApplyOp(Arc::new(record.clone()), dirty.clone());
+                    process_with_retry(pool, per_op, metrics, loro).await;
+                }
+            }
+        }
+        return;
+    }
+
+    process_with_retry(pool, task, metrics, loro).await;
+}
+
+/// One foreground task through the retry schedule, then either the durable
+/// success clear or the retry-exhausted failure record.
+async fn process_with_retry(
+    pool: &SqlitePool,
+    task: MaterializeTask,
+    metrics: &Arc<QueueMetrics>,
+    loro: &Arc<crate::loro::shared::LoroState>,
+) {
     // Foreground retry schedule: a single retry after a 100 ms constant
     // backoff. See docs/architecture/data-and-events.md § Retry semantics
     // (Foreground backoff schedule). Background uses an exponential
