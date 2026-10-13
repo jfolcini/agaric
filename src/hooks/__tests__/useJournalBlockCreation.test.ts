@@ -562,8 +562,14 @@ describe('useJournalBlockCreation — journal template page', () => {
       blockType: 'content',
       content: 'Notes for <% page title %>',
       parentId: templateId,
+      spaceId: 'SPACE_TEST',
     })
-    await createBlock({ blockType: 'content', content: 'Later', parentId: templateId })
+    await createBlock({
+      blockType: 'content',
+      content: 'Later',
+      parentId: templateId,
+      spaceId: 'SPACE_TEST',
+    })
 
     const { result } = setup()
     await act(async () => {
