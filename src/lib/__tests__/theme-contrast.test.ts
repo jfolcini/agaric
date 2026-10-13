@@ -310,7 +310,7 @@ describe('documented CSS contrast guarantees hold in src/index.css (#1684)', () 
 })
 
 // ─────────────────────────────────────────────────────────────────────────
-// Focus ring, chips and hover surfaces in every theme (#5332).
+// Focus ring, chips, hover surfaces and graph nodes in every theme (#5332, #5429).
 //
 // Each token resolves through the cascade the page sees: a `prefers-contrast:
 // more` override first (it comes later in index.css than every theme block),
@@ -345,6 +345,9 @@ function cascade(theme: Theme, highContrast: boolean): string[] {
 }
 
 function resolveToken(theme: Theme, highContrast: boolean, token: string): Oklch {
+  // A token that names another (`--graph-accent: var(--brand)`) takes its value.
+  const alias = /^var\(--([\w-]+)\)$/.exec(resolveDeclaration(theme, highContrast, token))?.[1]
+  if (alias !== undefined) return resolveToken(theme, highContrast, alias)
   for (const css of cascade(theme, highContrast)) {
     const value = findOklch(css, token)
     if (value) return value
@@ -391,6 +394,9 @@ const THEME_PAIRS = [
   },
   { pair: 'overdue due chip', fg: 'alert-error-foreground', bg: 'alert-error', min: AA_NORMAL },
   { pair: 'hover / selected surface', fg: 'accent-foreground', bg: 'accent', min: AA_NORMAL },
+  // Graph nodes are the buttons you pick out; the accent marks the current page (#5429).
+  { pair: 'graph node', fg: 'graph-node', bg: 'background', min: NON_TEXT },
+  { pair: 'graph current-page accent', fg: 'graph-accent', bg: 'background', min: NON_TEXT },
   {
     pair: 'sidebar hover / active item',
     fg: 'sidebar-accent-foreground',
@@ -413,7 +419,7 @@ const CASES = [false, true].flatMap((highContrast) =>
   ),
 )
 
-describe('focus ring, chips and hover surfaces clear WCAG in every theme (#5332)', () => {
+describe('focus ring, chips, hover surfaces and graph nodes clear WCAG in every theme', () => {
   it('the high-contrast reader finds the overrides, not the base theme', () => {
     // Without this, a parser that found nothing would re-measure the base
     // theme under every "(high contrast)" label and pass.
