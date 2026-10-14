@@ -209,3 +209,29 @@ expression: wire
       - space_id
     type: object
   name: delete_property
+- description: "Undo your own writes: pass the `op_refs` a write tool returned. They are reverted together as one action the user can undo in turn, and this call returns the `op_refs` of the revert. An op written by the user or by another agent is refused."
+  inputSchema:
+    additionalProperties: false
+    properties:
+      op_refs:
+        description: "The `op_refs` a write tool returned, as given."
+        items:
+          additionalProperties: false
+          properties:
+            device_id:
+              type: string
+            seq:
+              type: integer
+          required:
+            - device_id
+            - seq
+          type: object
+        type: array
+      space_id:
+        description: ULID of the space the agent is operating in. The undo is rejected with a Validation error if a block the ops touched lives in a different space.
+        type: string
+    required:
+      - op_refs
+      - space_id
+    type: object
+  name: undo

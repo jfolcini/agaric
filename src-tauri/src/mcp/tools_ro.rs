@@ -22,6 +22,8 @@
 //! | `journal_for_date` | [`journal_for_date_inner`] | Idempotent date → page lookup with a **bounded create carve-out (#2719)**: for `date` within today ± [`JOURNAL_CREATE_WINDOW_MONTHS`] months, creates the missing page on first call (single `CreateBlock`+`SetProperty` op pair, origin `agent:<name>`); outside that window the tool never creates — it returns an existing page as a pure read or `AppError::NotFound`. See [`ReadOnlyTools`] and `handle_journal_for_date` below. |
 //! | `list_spaces` | [`list_spaces_registry_inner`] | #633 — space discovery for agents. Returns `{ id, name, is_default }` per live space from the canonical `spaces` registry (#804). |
 //! | `get_page_markdown` | [`get_page_for_agent_inner`] | #5375 — the whole page as Markdown, ids written as names and every block with its `^ID`. No pagination, as the export. |
+//! | `page_history` | [`list_page_history_inner`] | Ops on a page's blocks, newest first: device, origin, op type, time, clipped before/after. Cursor paginated. `space_id` required. |
+//! | `block_history` | [`get_block_history_inner`] | The same rows for one block. |
 //!
 //! # Actor scoping
 //!
@@ -65,24 +67,29 @@ use serde_json::{Value, json};
 use sqlx::SqlitePool;
 
 use super::dispatch::{scoped_dispatch, unknown_tool_error};
-use super::handler_utils::{normalize_ulid_arg, parse_args, to_tool_result};
+use super::handler_utils::{
+    fetch_op_origins, normalize_ulid_arg, parse_args, to_tool_result, validate_block_in_space,
+};
 use super::registry::{
-    TOOL_GET_AGENDA, TOOL_GET_BLOCK, TOOL_GET_PAGE, TOOL_GET_PAGE_MARKDOWN, TOOL_JOURNAL_FOR_DATE,
-    TOOL_LIST_BACKLINKS, TOOL_LIST_PAGES, TOOL_LIST_PROPERTY_DEFS, TOOL_LIST_SPACES,
-    TOOL_LIST_TAGS, TOOL_SEARCH, ToolDescription, ToolRegistry,
+    TOOL_BLOCK_HISTORY, TOOL_GET_AGENDA, TOOL_GET_BLOCK, TOOL_GET_PAGE, TOOL_GET_PAGE_MARKDOWN,
+    TOOL_JOURNAL_FOR_DATE, TOOL_LIST_BACKLINKS, TOOL_LIST_PAGES, TOOL_LIST_PROPERTY_DEFS,
+    TOOL_LIST_SPACES, TOOL_LIST_TAGS, TOOL_PAGE_HISTORY, TOOL_SEARCH, ToolDescription,
+    ToolRegistry,
 };
 use super::view_notify::{NoopViewChangeEmitter, ViewChangeEmitter};
 use crate::commands::{
-    PropertyRow, agenda_range_inner, get_active_block_inner, get_journal_page_by_date_inner,
-    get_page_aliases_inner, get_page_for_agent_inner, get_page_unscoped_inner,
-    get_properties_inner, journal_for_date_inner, list_backlinks_grouped_inner, list_pages_inner,
+    PropertyRow, agenda_range_inner, get_active_block_inner, get_block_history_inner,
+    get_journal_page_by_date_inner, get_page_aliases_inner, get_page_for_agent_inner,
+    get_page_unscoped_inner, get_properties_inner, journal_for_date_inner,
+    list_backlinks_grouped_inner, list_page_history_inner, list_pages_inner,
     list_property_defs_inner, list_spaces_registry_inner, list_tags_for_block_inner,
     list_tags_inner, search_blocks_inner,
 };
 use crate::materializer::Materializer;
 use agaric_core::error::AppError;
 use agaric_core::ulid::BlockId;
-use agaric_store::pagination::BlockRow;
+use agaric_store::op::OpRef;
+use agaric_store::pagination::{BlockRow, HistoryEntry, PageResponse};
 use agaric_store::space::{SpaceId, SpaceScope};
 use agaric_store::task_locals::ActorContext;
 
@@ -313,6 +320,28 @@ struct GetPageMarkdownArgs {
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
+struct PageHistoryArgs {
+    page_id: String,
+    space_id: String,
+    #[serde(default)]
+    cursor: Option<String>,
+    #[serde(default)]
+    limit: Option<i64>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct BlockHistoryArgs {
+    block_id: String,
+    space_id: String,
+    #[serde(default)]
+    cursor: Option<String>,
+    #[serde(default)]
+    limit: Option<i64>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct ListBacklinksArgs {
     block_id: String,
     #[serde(default)]
@@ -495,6 +524,8 @@ pub(crate) fn list_tool_descriptions() -> Vec<ToolDescription> {
         tool_desc_journal_for_date(),
         tool_desc_list_spaces(),
         tool_desc_get_page_markdown(),
+        tool_desc_page_history(),
+        tool_desc_block_history(),
     ]
 }
 
@@ -555,6 +586,9 @@ impl ToolRegistry for ReadOnlyTools {
                 }
                 TOOL_LIST_SPACES => handle_list_spaces(&pool, args).await,
                 TOOL_GET_PAGE_MARKDOWN => handle_get_page_markdown(&pool, args).await,
+                // The space check takes the write lock, which the reader pool refuses.
+                TOOL_PAGE_HISTORY => handle_page_history(&pool, &writer_pool, args).await,
+                TOOL_BLOCK_HISTORY => handle_block_history(&pool, &writer_pool, args).await,
                 other => Err(unknown_tool_error(other)),
             }
         })
@@ -913,6 +947,52 @@ fn tool_desc_get_page_markdown() -> ToolDescription {
                 "page_id": { "type": "string", "description": "ULID of the page block." },
             },
         }),
+    }
+}
+
+fn history_input_schema(id_key: &str, id_description: &str) -> Value {
+    json!({
+        "type": "object",
+        "additionalProperties": false,
+        "required": [id_key, "space_id"],
+        "properties": {
+            id_key: { "type": "string", "description": id_description },
+            "space_id": {
+                "type": "string",
+                "description": format!("ULID of the space the agent is operating in. The read is rejected with a Validation error if `{id_key}` lives in a different space."),
+            },
+            "cursor": { "type": "string" },
+            "limit": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": LIST_RESULT_CAP,
+                "description": format!("Max rows per response (capped at {LIST_RESULT_CAP})."),
+            },
+        },
+    })
+}
+
+const HISTORY_ROW_DESCRIPTION: &str = "Each row has device_id, seq, origin (`user`, or \
+     `agent:<name>` for an agent's write), op_type, created_at (epoch ms), block_id, a \
+     clipped `after` (the text or property value the op wrote) and, for an edit, a clipped \
+     `before`. Newest first; cursor paginated.";
+
+fn tool_desc_page_history() -> ToolDescription {
+    ToolDescription {
+        name: TOOL_PAGE_HISTORY.to_string(),
+        description: format!(
+            "Who changed what on a page, and when: every op on the page's blocks. \
+             {HISTORY_ROW_DESCRIPTION}"
+        ),
+        input_schema: history_input_schema("page_id", "ULID of the page block."),
+    }
+}
+
+fn tool_desc_block_history() -> ToolDescription {
+    ToolDescription {
+        name: TOOL_BLOCK_HISTORY.to_string(),
+        description: format!("Who changed what on one block, and when. {HISTORY_ROW_DESCRIPTION}"),
+        input_schema: history_input_schema("block_id", "ULID of the block."),
     }
 }
 
@@ -1381,6 +1461,162 @@ async fn handle_list_spaces(pool: &SqlitePool, args: Value) -> Result<Value, App
     let _args: ListSpacesArgs = parse_args(TOOL_LIST_SPACES, args)?;
     let resp = list_spaces_registry_inner(pool).await?;
     to_tool_result(&resp)
+}
+
+async fn handle_page_history(
+    pool: &SqlitePool,
+    writer_pool: &SqlitePool,
+    args: Value,
+) -> Result<Value, AppError> {
+    let args: PageHistoryArgs = parse_args(TOOL_PAGE_HISTORY, args)?;
+    let limit = validate_limit(TOOL_PAGE_HISTORY, args.limit, LIST_RESULT_CAP)?;
+    // A strict ULID parse also refuses `__all__`, which would read every space.
+    let page_id = BlockId::from_string(&args.page_id)?;
+    let space_id = SpaceId::from_string(args.space_id)?;
+    validate_block_in_space(writer_pool, page_id.as_str(), space_id.as_str()).await?;
+    let scope = SpaceScope::Active(space_id);
+    let resp = list_page_history_inner(
+        pool,
+        page_id.into_string(),
+        None,
+        &scope,
+        args.cursor,
+        limit,
+    )
+    .await?;
+    history_result(pool, resp).await
+}
+
+async fn handle_block_history(
+    pool: &SqlitePool,
+    writer_pool: &SqlitePool,
+    args: Value,
+) -> Result<Value, AppError> {
+    let args: BlockHistoryArgs = parse_args(TOOL_BLOCK_HISTORY, args)?;
+    let limit = validate_limit(TOOL_BLOCK_HISTORY, args.limit, LIST_RESULT_CAP)?;
+    let block_id = BlockId::from_string(&args.block_id)?;
+    let space_id = SpaceId::from_string(args.space_id)?;
+    validate_block_in_space(writer_pool, block_id.as_str(), space_id.as_str()).await?;
+    let resp = get_block_history_inner(pool, block_id, None, args.cursor, limit).await?;
+    history_result(pool, resp).await
+}
+
+/// Longest before / after text a history row carries, in chars: the row
+/// describes a change, `get_block` returns the content.
+const HISTORY_TEXT_CAP: usize = 80;
+
+/// One op as `page_history` / `block_history` return it.
+#[derive(Serialize)]
+struct HistoryRow {
+    device_id: String,
+    seq: i64,
+    origin: Option<String>,
+    op_type: String,
+    created_at: i64,
+    is_replicated: bool,
+    block_id: Option<String>,
+    before: Option<String>,
+    after: Option<String>,
+}
+
+async fn history_result(
+    pool: &SqlitePool,
+    resp: PageResponse<HistoryEntry>,
+) -> Result<Value, AppError> {
+    let refs: Vec<OpRef> = resp
+        .items
+        .iter()
+        .map(|e| OpRef {
+            device_id: e.device_id.clone(),
+            seq: e.seq,
+        })
+        .collect();
+    let origins = fetch_op_origins(pool, &refs).await?;
+    let mut items = Vec::with_capacity(resp.items.len());
+    for entry in resp.items {
+        let origin = origins
+            .iter()
+            .find(|o| o.device_id == entry.device_id && o.seq == entry.seq)
+            .map(|o| o.origin.clone());
+        items.push(history_row(pool, entry, origin).await?);
+    }
+    to_tool_result(&json!({
+        "items": items,
+        "next_cursor": resp.next_cursor,
+        "has_more": resp.has_more,
+    }))
+}
+
+async fn history_row(
+    pool: &SqlitePool,
+    entry: HistoryEntry,
+    origin: Option<String>,
+) -> Result<HistoryRow, AppError> {
+    let payload: Value = serde_json::from_str(&entry.payload)?;
+    let block_id = payload
+        .get("block_id")
+        .and_then(Value::as_str)
+        .map(str::to_owned);
+    let before = match (entry.op_type.as_str(), &block_id) {
+        ("edit_block", Some(id)) => agaric_engine::reverse::find_prior_text(
+            pool,
+            id,
+            entry.created_at,
+            entry.seq,
+            &entry.device_id,
+        )
+        .await?
+        .map(|text| clip_history_text(&text)),
+        _ => None,
+    };
+    Ok(HistoryRow {
+        after: history_after(&entry.op_type, &payload),
+        device_id: entry.device_id,
+        seq: entry.seq,
+        origin,
+        op_type: entry.op_type,
+        created_at: entry.created_at,
+        is_replicated: entry.is_replicated,
+        block_id,
+        before,
+    })
+}
+
+/// The text or property value an op leaves behind, clipped.
+fn history_after(op_type: &str, payload: &Value) -> Option<String> {
+    let field = |key: &str| payload.get(key).filter(|v| !v.is_null());
+    match op_type {
+        "create_block" => field("content")?.as_str().map(clip_history_text),
+        "edit_block" => field("to_text")?.as_str().map(clip_history_text),
+        "set_property" => {
+            let key = field("key")?.as_str()?;
+            let value = [
+                "value_text",
+                "value_num",
+                "value_date",
+                "value_ref",
+                "value_bool",
+            ]
+            .iter()
+            .find_map(|k| field(k))?;
+            let value = value
+                .as_str()
+                .map_or_else(|| value.to_string(), str::to_owned);
+            Some(clip_history_text(&format!("{key}={value}")))
+        }
+        _ => None,
+    }
+}
+
+/// Clips on a char boundary, so multi-byte text never splits.
+fn clip_history_text(text: &str) -> String {
+    let mut chars = text.chars();
+    let head: String = chars.by_ref().take(HISTORY_TEXT_CAP).collect();
+    if chars.next().is_some() {
+        format!("{head}…")
+    } else {
+        head
+    }
 }
 
 // ---------------------------------------------------------------------------

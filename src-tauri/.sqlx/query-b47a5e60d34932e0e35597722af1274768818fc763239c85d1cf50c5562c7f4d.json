@@ -1,0 +1,62 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT ol.device_id AS \"device_id!\", ol.seq AS \"seq!\", ol.origin AS \"origin!\",\n                  ol.block_id\n           FROM json_each(?) AS j\n           JOIN op_log ol\n             ON ol.device_id = json_extract(j.value, '$.device_id')\n            AND ol.seq = json_extract(j.value, '$.seq')",
+  "describe": {
+    "columns": [
+      {
+        "name": "device_id!",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "op_log",
+            "name": "device_id"
+          }
+        }
+      },
+      {
+        "name": "seq!",
+        "ordinal": 1,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "op_log",
+            "name": "seq"
+          }
+        }
+      },
+      {
+        "name": "origin!",
+        "ordinal": 2,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "op_log",
+            "name": "origin"
+          }
+        }
+      },
+      {
+        "name": "block_id",
+        "ordinal": 3,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "op_log",
+            "name": "block_id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false,
+      null,
+      false,
+      true
+    ]
+  },
+  "hash": "b47a5e60d34932e0e35597722af1274768818fc763239c85d1cf50c5562c7f4d"
+}

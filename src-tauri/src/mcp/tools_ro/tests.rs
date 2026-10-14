@@ -55,19 +55,14 @@ async fn settle(mat: &Materializer) {
 }
 
 // -------------------------------------------------------------------
-// list_tools — snapshot of the 11-tool wire contract
+// list_tools — snapshot of the wire contract
 // -------------------------------------------------------------------
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn list_tools_advertises_eleven_tools() {
+async fn list_tools_advertises_the_ro_tools() {
     let (tools, _mat, _dir) = mk_tools().await;
     let descs = tools.list_tools();
     let names: Vec<&str> = descs.iter().map(|d| d.name.as_str()).collect();
-    assert_eq!(
-        names.len(),
-        11,
-        "ReadOnlyTools exposes exactly eleven tools (v1 nine + #633 list_spaces + #5375 get_page_markdown)"
-    );
     assert_eq!(
         names,
         vec![
@@ -82,6 +77,8 @@ async fn list_tools_advertises_eleven_tools() {
             "journal_for_date",
             "list_spaces",
             "get_page_markdown",
+            "page_history",
+            "block_history",
         ],
         "tool order is part of the wire contract — do not re-order (new tools append)",
     );
@@ -3387,4 +3384,187 @@ async fn get_page_markdown_on_a_content_block_is_validation_5375() {
         matches!(err, AppError::Validation { .. }),
         "a non-page must surface as AppError::Validation (→ -32602), got {err:?}",
     );
+}
+
+// -------------------------------------------------------------------
+// page_history / block_history (#5400)
+// -------------------------------------------------------------------
+
+async fn mk_page_in(tools: &ReadOnlyTools, mat: &Materializer, space: &str) -> String {
+    crate::commands::create_block_inner_with_space(
+        &tools.pool,
+        DEV,
+        mat,
+        "page".into(),
+        "History page".into(),
+        None,
+        None,
+        &SpaceScope::Active(SpaceId::from_trusted(space)),
+        None,
+    )
+    .await
+    .unwrap()
+    .id
+    .into_string()
+}
+
+async fn mk_child(tools: &ReadOnlyTools, mat: &Materializer, parent: &str, text: &str) -> String {
+    create_block_inner(
+        &tools.pool,
+        DEV,
+        mat,
+        "content".into(),
+        text.into(),
+        Some(BlockId::from_trusted(parent)),
+        None,
+    )
+    .await
+    .unwrap()
+    .id
+    .into_string()
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn page_history_pages_across_a_cursor_with_agent_and_user_ops_5400() {
+    let (tools, mat, _dir) = mk_tools().await;
+    let space = mk_space(&tools.pool, "S").await;
+    let page = mk_page_in(&tools, &mat, &space).await;
+    let user_block = mk_child(&tools, &mat, &page, "user text").await;
+    let agent_block = agaric_store::task_locals::ACTOR
+        .scope(test_ctx(), mk_child(&tools, &mat, &page, "agent text"))
+        .await;
+    settle(&mat).await;
+    let mut expected: Vec<(String, i64)> = sqlx::query_as(
+        "SELECT device_id, seq FROM op_log WHERE block_id IN (?, ?, ?) ORDER BY seq",
+    )
+    .bind(&page)
+    .bind(&user_block)
+    .bind(&agent_block)
+    .fetch_all(&tools.pool)
+    .await
+    .unwrap();
+    assert!(
+        expected.len() > 2,
+        "the page must span more than one history page"
+    );
+
+    let mut seen: Vec<(String, i64)> = Vec::new();
+    let mut origins: Vec<String> = Vec::new();
+    let mut cursor: Option<String> = None;
+    loop {
+        let mut args = json!({ "page_id": page, "space_id": space, "limit": 2 });
+        if let Some(c) = &cursor {
+            args["cursor"] = json!(c);
+        }
+        let resp = tools
+            .call_tool("page_history", args, &test_ctx())
+            .await
+            .unwrap();
+        for row in resp["items"].as_array().unwrap() {
+            seen.push((
+                row["device_id"].as_str().unwrap().into(),
+                row["seq"].as_i64().unwrap(),
+            ));
+            origins.push(row["origin"].as_str().unwrap().into());
+            if row["block_id"] == json!(agent_block) && row["op_type"] == "create_block" {
+                assert_eq!(row["after"], "agent text");
+            }
+        }
+        if resp["has_more"] != json!(true) {
+            break;
+        }
+        cursor = resp["next_cursor"].as_str().map(str::to_owned);
+    }
+    seen.sort_by_key(|(_, seq)| *seq);
+    expected.sort_by_key(|(_, seq)| *seq);
+    assert_eq!(
+        seen, expected,
+        "every op exactly once across the cursor boundary"
+    );
+    assert!(origins.iter().any(|o| o == "user"), "got {origins:?}");
+    assert!(
+        origins.iter().any(|o| o == "agent:test-agent"),
+        "got {origins:?}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn page_history_refuses_a_page_in_another_space_5400() {
+    let (tools, mat, _dir) = mk_tools().await;
+    let space = mk_space(&tools.pool, "S").await;
+    let other = mk_space(&tools.pool, "Other").await;
+    let page = mk_page_in(&tools, &mat, &space).await;
+    let err = tools
+        .call_tool(
+            "page_history",
+            json!({ "page_id": page, "space_id": other }),
+            &test_ctx(),
+        )
+        .await
+        .expect_err("a page in another space must be refused");
+    assert!(matches!(err, AppError::Validation { .. }), "got {err:?}");
+}
+
+/// `__all__` is the history reader's whole-vault sentinel.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn page_history_refuses_the_all_pages_sentinel_5400() {
+    let (tools, _mat, _dir) = mk_tools().await;
+    let space = mk_space(&tools.pool, "S").await;
+    let err = tools
+        .call_tool(
+            "page_history",
+            json!({ "page_id": "__all__", "space_id": space }),
+            &test_ctx(),
+        )
+        .await
+        .expect_err("the sentinel must be refused");
+    assert!(matches!(err, AppError::Ulid(_)), "got {err:?}");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn block_history_shows_before_and_a_clipped_after_5400() {
+    let (tools, mat, _dir) = mk_tools().await;
+    let space = mk_space(&tools.pool, "S").await;
+    let page = mk_page_in(&tools, &mat, &space).await;
+    let block = mk_child(&tools, &mat, &page, "first").await;
+    let long = "日本".repeat(60);
+    crate::commands::edit_block_inner(&tools.pool, DEV, &mat, block.clone().into(), long.clone())
+        .await
+        .unwrap();
+    settle(&mat).await;
+
+    let resp = tools
+        .call_tool(
+            "block_history",
+            json!({ "block_id": block, "space_id": space }),
+            &test_ctx(),
+        )
+        .await
+        .unwrap();
+    let items = resp["items"].as_array().unwrap();
+    let edit = &items[0];
+    assert_eq!(edit["op_type"], "edit_block");
+    assert_eq!(edit["origin"], "user");
+    assert_eq!(edit["before"], "first");
+    let after: String = long.chars().take(HISTORY_TEXT_CAP).chain(['…']).collect();
+    assert_eq!(edit["after"], after.as_str());
+    assert_eq!(items.last().unwrap()["op_type"], "create_block");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn block_history_refuses_a_block_in_another_space_5400() {
+    let (tools, mat, _dir) = mk_tools().await;
+    let space = mk_space(&tools.pool, "S").await;
+    let other = mk_space(&tools.pool, "Other").await;
+    let page = mk_page_in(&tools, &mat, &space).await;
+    let block = mk_child(&tools, &mat, &page, "text").await;
+    let err = tools
+        .call_tool(
+            "block_history",
+            json!({ "block_id": block, "space_id": other }),
+            &test_ctx(),
+        )
+        .await
+        .expect_err("a block in another space must be refused");
+    assert!(matches!(err, AppError::Validation { .. }), "got {err:?}");
 }

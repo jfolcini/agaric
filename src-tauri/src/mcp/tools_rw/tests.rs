@@ -79,6 +79,7 @@ async fn list_tools_advertises_the_rw_tools() {
             "move_page_to_space",
             "create_tag",
             "delete_property",
+            "undo",
         ],
         "tool order is part of the wire contract — do not re-order; new tools are appended",
     );
@@ -2399,4 +2400,99 @@ async fn delete_property_system_managed_key_rejected() {
     .await
     .unwrap();
     assert_eq!(kept, 1);
+}
+
+// -------------------------------------------------------------------
+// undo (#5400) — the happy path, through the op refs a write returns, is
+// `rmcp_adapter::tests::rw_undo_reverts_an_append_through_its_returned_op_refs_5400`.
+// -------------------------------------------------------------------
+
+/// The ref of the op that created `block_id`.
+async fn create_op_ref(pool: &SqlitePool, block_id: &str) -> Value {
+    let (device_id, seq): (String, i64) = sqlx::query_as(
+        "SELECT device_id, seq FROM op_log WHERE block_id = ? AND op_type = 'create_block'",
+    )
+    .bind(block_id)
+    .fetch_one(pool)
+    .await
+    .unwrap();
+    json!({ "device_id": device_id, "seq": seq })
+}
+
+async fn is_live(pool: &SqlitePool, block_id: &str) -> bool {
+    sqlx::query_scalar::<_, Option<i64>>("SELECT deleted_at FROM blocks WHERE id = ?")
+        .bind(block_id)
+        .fetch_one(pool)
+        .await
+        .unwrap()
+        .is_none()
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn undo_refuses_an_op_the_user_wrote_5400() {
+    let (tools, mat, pool, space, _dir) = mk_tools().await;
+    // Written outside any agent scope, so its origin is `user`.
+    let block = mk_in_space_content_block(&pool, &mat, &space, "mine").await;
+    settle(&mat).await;
+    let op_ref = create_op_ref(&pool, block.id.as_str()).await;
+
+    let err = tools
+        .call_tool(
+            "undo",
+            json!({ "op_refs": [op_ref], "space_id": space }),
+            &test_ctx_agent(),
+        )
+        .await
+        .expect_err("a user op must be refused");
+    assert!(
+        matches!(&err, AppError::Validation { message, .. } if message.contains("only its own ops")),
+        "got {err:?}"
+    );
+    assert!(is_live(&pool, block.id.as_str()).await);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn undo_unknown_op_ref_is_not_found_5400() {
+    let (tools, _mat, _pool, space, _dir) = mk_tools().await;
+    let err = tools
+        .call_tool(
+            "undo",
+            json!({ "op_refs": [{ "device_id": DEV, "seq": 999_999 }], "space_id": space }),
+            &test_ctx_agent(),
+        )
+        .await
+        .expect_err("an unknown ref must be refused");
+    assert!(matches!(err, AppError::NotFound(_)), "got {err:?}");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn undo_refuses_a_target_in_another_space_5400() {
+    let (tools, mat, pool, space, _dir) = mk_tools().await;
+    let other_space = mk_space(&pool, "other").await;
+    let page = mk_page(&pool, &mat, &space, "P").await;
+    settle(&mat).await;
+    let appended = tools
+        .call_tool(
+            "append_block",
+            json!({ "parent_id": page, "content": "agent text", "space_id": space }),
+            &test_ctx_agent(),
+        )
+        .await
+        .unwrap();
+    let block_id = appended["id"].as_str().unwrap();
+    let op_ref = create_op_ref(&pool, block_id).await;
+
+    let err = tools
+        .call_tool(
+            "undo",
+            json!({ "op_refs": [op_ref], "space_id": other_space }),
+            &test_ctx_agent(),
+        )
+        .await
+        .expect_err("a target in another space must be refused");
+    assert!(
+        matches!(&err, AppError::Validation { message, .. } if message.contains("cross-space")),
+        "got {err:?}"
+    );
+    assert!(is_live(&pool, block_id).await);
 }
