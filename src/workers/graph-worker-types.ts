@@ -6,20 +6,20 @@
 
 // ── Inbound messages (main → worker) ─────────────────────────────────
 
-export interface WorkerNodeInput {
-  id: string
-  label: string
-}
-
 export interface WorkerEdgeInput {
   source: string
   target: string
   ref_count: number
 }
 
+/**
+ * Start a fresh simulation. Nodes that carry a position are a kept layout
+ * coming back (#5434); `keptSettled` says it had stopped moving (`startAlpha`).
+ */
 export interface WorkerStartMessage {
   type: 'start'
-  nodes: WorkerNodeInput[]
+  nodes: WorkerNode[]
+  keptSettled: boolean
   edges: WorkerEdgeInput[]
   width: number
   height: number
@@ -47,17 +47,16 @@ export interface WorkerStopMessage {
  */
 export interface WorkerUpdateMessage {
   type: 'update'
-  nodes: WorkerNodeUpdate[]
+  nodes: WorkerNode[]
   edges: WorkerEdgeInput[]
 }
 
 /**
- * A node in an `update` payload. Unlike `WorkerNodeInput` (used by `start`,
- * which strips positions), this carries the last-known simulation state so
- * persisting nodes drift rather than re-scatter. All position fields are
+ * A node in a `start` or `update` payload, with its last-known simulation
+ * state so a node that already has a place keeps it. All position fields are
  * optional — omit them for a brand-new node so d3 seeds it.
  */
-export interface WorkerNodeUpdate {
+export interface WorkerNode {
   id: string
   label: string
   x?: number

@@ -14,11 +14,11 @@ import {
   type SimulationNodeDatum,
 } from 'd3-force'
 
-import { applyGraphForces, applyResizeForces, RESIZE_ALPHA } from '@/lib/graph-forces'
+import { applyGraphForces, applyResizeForces, RESIZE_ALPHA, startAlpha } from '@/lib/graph-forces'
 import type {
   WorkerErrorMessage,
   WorkerInboundMessage,
-  WorkerNodeUpdate,
+  WorkerNode,
 } from '@/workers/graph-worker-types'
 
 // ── Internal node / edge types (d3-mutated) ──────────────────────────
@@ -106,12 +106,12 @@ function postPositions(type: 'tick' | 'done'): void {
 }
 
 /**
- * Build a fresh `SimNode` from an `update` payload node, carrying any known
+ * Build a fresh `SimNode` from a payload node, carrying any known
  * `x`/`y`/`vx`/`vy` so persisting nodes drift rather than re-scatter. Position
  * fields are only set when present: a brand-new node (no prior position)
  * leaves them `undefined` so d3 seeds it on the next tick (#2194).
  */
-function assignUpdateNode(n: WorkerNodeUpdate): SimNode {
+function toSimNode(n: WorkerNode): SimNode {
   const node: SimNode = { id: n.id, label: n.label }
   if (n.x !== undefined) node.x = n.x
   if (n.y !== undefined) node.y = n.y
@@ -139,14 +139,14 @@ self.addEventListener('message', (event: MessageEvent<WorkerInboundMessage>) => 
         // #2273: fresh session → the first tick posts immediately (not throttled).
         lastTickEmit = Number.NEGATIVE_INFINITY
 
-        simNodes = nodes.map((n) => Object.assign({}, n))
+        simNodes = nodes.map((n) => toSimNode(n))
         const simEdges: SimEdge[] = edges.map((e) => Object.assign({}, e))
 
         simulation = applyGraphForces(forceSimulation<SimNode, SimEdge>(simNodes), {
           edges: simEdges,
           width,
           height,
-        })
+        }).alpha(startAlpha(simNodes, msg.keptSettled))
 
         simulation.on('tick', () => {
           // #2273: throttle tick emission to ~one per animation-frame interval.
@@ -171,9 +171,8 @@ self.addEventListener('message', (event: MessageEvent<WorkerInboundMessage>) => 
 
       case 'update': {
         // #2194: swap the node/edge set on the EXISTING simulation instead of
-        // tearing the worker down and re-posting `start` (which strips
-        // positions → full re-scatter + re-converge, ~300 ticks, on every
-        // filter toggle). Mirrors the `resize` philosophy: mutate the live sim
+        // tearing the worker down and re-posting `start` (a new simulation
+        // on every filter toggle). Mirrors the `resize` philosophy: mutate the live sim
         // in place, then nudge alpha so the layout DRIFTS to the new topology.
         //
         // Positions carried in `msg.nodes` (x/y/vx/vy) are applied to persisting
@@ -185,7 +184,7 @@ self.addEventListener('message', (event: MessageEvent<WorkerInboundMessage>) => 
         // #2273: new topology → let its first drift tick post immediately.
         lastTickEmit = Number.NEGATIVE_INFINITY
 
-        simNodes = msg.nodes.map((n) => assignUpdateNode(n))
+        simNodes = msg.nodes.map((n) => toSimNode(n))
 
         // Re-bind the node set. d3 assigns each node a fresh `.index` here and
         // reuses carried x/y/vx/vy from the plain objects above.
@@ -211,9 +210,8 @@ self.addEventListener('message', (event: MessageEvent<WorkerInboundMessage>) => 
 
       case 'resize': {
         // #747 item 1: update centering/bounds forces in place WITHOUT
-        // re-seeding positions. Re-posting `start` rebuilds the sim from
-        // scratch (positions stripped to {id,label}) → full re-scatter +
-        // re-converge on every container resize. Mirror the main-thread
+        // re-seeding positions. Re-posting `start` would rebuild the sim on
+        // every container resize. Mirror the main-thread
         // `applyResizeForces` path: swap center/x/y, then nudge alpha so the
         // existing layout drifts to the new center instead of restarting.
         if (!simulation) break

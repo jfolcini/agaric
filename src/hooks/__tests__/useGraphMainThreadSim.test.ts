@@ -116,6 +116,62 @@ describe('useGraphMainThreadSim', () => {
     expect(forceCenter).toHaveBeenCalledWith(400, 300)
   })
 
+  describe('start alpha from a kept layout (#5434)', () => {
+    /** The alpha the simulation was started at, for nodes placed at `kept`. */
+    function startAlpha(kept: Array<{ x: number; y: number } | null>, keptSettled: boolean) {
+      const ctx = makeCtx()
+      ctx.simNodes = kept.map((at, i) => ({ ...makeNodes()[0], id: `n${i}`, ...at }) as GraphNode)
+      ctx.keptSettled = keptSettled
+      renderHook(() => useGraphMainThreadSim()).result.current(ctx)
+      expect(lastSim?.alpha).toHaveBeenCalledTimes(1)
+      return lastSim?.alpha.mock.calls[0]?.[0]
+    }
+
+    it('starts cold with nothing kept', () => {
+      expect(startAlpha([null], false)).toBe(1)
+    })
+
+    it('starts at rest from a settled layout with every node kept', () => {
+      expect(
+        startAlpha(
+          [
+            { x: 120, y: 80 },
+            { x: 300, y: 210 },
+          ],
+          true,
+        ),
+      ).toBe(0)
+    })
+
+    it('starts warm from a layout that was still moving', () => {
+      expect(
+        startAlpha(
+          [
+            { x: 120, y: 80 },
+            { x: 300, y: 210 },
+          ],
+          false,
+        ),
+      ).toBe(0.3)
+    })
+
+    it('starts warm from a settled layout with a new node', () => {
+      expect(startAlpha([{ x: 120, y: 80 }, null], true)).toBe(0.3)
+    })
+  })
+
+  it('is settled once the simulation ends, and not while it ticks (#5434)', () => {
+    const handle = renderHook(() => useGraphMainThreadSim()).result.current(makeCtx())
+    const calls = lastSim.on.mock.calls as Array<[string, () => void]>
+    const fire = (event: string) => calls.find(([e]) => e === event)?.[1]()
+
+    expect(handle.settled()).toBe(false)
+    fire('end')
+    expect(handle.settled()).toBe(true)
+    fire('tick')
+    expect(handle.settled()).toBe(false)
+  })
+
   it('handle.cleanup stops the simulation', () => {
     const { result } = renderHook(() => useGraphMainThreadSim())
     const handle = result.current(makeCtx())

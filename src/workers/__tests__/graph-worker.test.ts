@@ -200,6 +200,35 @@ describe('graph-worker dispatcher (#747 item 1: resize updates forces in place)'
     expect(forceCenter).toHaveBeenCalledWith(400, 300)
   })
 
+  describe('start alpha from a kept layout (#5434)', () => {
+    const KEPT_A = { id: 'a', label: 'A', x: 120, y: 80 }
+    const KEPT_B = { id: 'b', label: 'B', x: 300, y: 210 }
+    function startAt(nodes: unknown[], keptSettled: boolean): FakeSim {
+      send({ type: 'start', nodes, edges: [], width: 800, height: 600, keptSettled })
+      return lastSim as unknown as FakeSim
+    }
+
+    it('starts cold with nothing kept', () => {
+      expect(startAt([{ id: 'a', label: 'A' }], false).alphaValue).toBe(1)
+    })
+
+    it('starts at rest from a settled layout with every node kept', () => {
+      const sim = startAt([KEPT_A, KEPT_B], true)
+      expect(sim.alphaValue).toBe(0)
+      expect(sim.nodeList).toEqual([KEPT_A, KEPT_B])
+    })
+
+    it('starts warm from a layout that was still moving', () => {
+      expect(startAt([KEPT_A, KEPT_B], false).alphaValue).toBe(0.3)
+    })
+
+    it('starts warm from a settled layout with a new node', () => {
+      const sim = startAt([KEPT_A, { id: 'c', label: 'C' }], true)
+      expect(sim.alphaValue).toBe(0.3)
+      expect(sim.nodeList).toEqual([KEPT_A, { id: 'c', label: 'C' }])
+    })
+  })
+
   it('`resize` swaps center/x/y forces in place WITHOUT rebuilding the sim or re-seeding positions', () => {
     send({
       type: 'start',
