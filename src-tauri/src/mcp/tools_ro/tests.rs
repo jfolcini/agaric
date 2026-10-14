@@ -3551,6 +3551,62 @@ async fn block_history_shows_before_and_a_clipped_after_5400() {
     assert_eq!(items.last().unwrap()["op_type"], "create_block");
 }
 
+/// The batched lookup must answer what the per-row `find_prior_text` it
+/// replaced answers, for every edit row on the page.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn history_prior_texts_match_find_prior_text_per_row() {
+    let (tools, mat, _dir) = mk_tools().await;
+    let space = mk_space(&tools.pool, "S").await;
+    let page = mk_page_in(&tools, &mat, &space).await;
+    let a = mk_child(&tools, &mat, &page, "a0").await;
+    let b = mk_child(&tools, &mat, &page, "b0").await;
+    for (block, text) in [(&a, "a1"), (&b, "b1"), (&a, "a2"), (&b, "b2"), (&a, "a3")] {
+        crate::commands::edit_block_inner(
+            &tools.pool,
+            DEV,
+            &mat,
+            block.clone().into(),
+            text.into(),
+        )
+        .await
+        .unwrap();
+    }
+    settle(&mat).await;
+    let scope = SpaceScope::Active(SpaceId::from_trusted(&space));
+    let resp = list_page_history_inner(&tools.pool, page, None, &scope, None, Some(100))
+        .await
+        .unwrap();
+    let payloads: Vec<Value> = resp
+        .items
+        .iter()
+        .map(|e| serde_json::from_str(&e.payload).unwrap())
+        .collect();
+
+    let batched = prior_texts(&tools.pool, &resp.items, &payloads)
+        .await
+        .unwrap();
+
+    let mut oracle = HashMap::new();
+    for (entry, payload) in resp.items.iter().zip(&payloads) {
+        if entry.op_type != "edit_block" {
+            continue;
+        }
+        let prior = agaric_engine::reverse::find_prior_text(
+            &tools.pool,
+            payload_block_id(payload).unwrap(),
+            entry.created_at,
+            entry.seq,
+            &entry.device_id,
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        oracle.insert((entry.device_id.clone(), entry.seq), prior);
+    }
+    assert_eq!(oracle.len(), 5);
+    assert_eq!(batched, oracle);
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn block_history_refuses_a_block_in_another_space_5400() {
     let (tools, mat, _dir) = mk_tools().await;

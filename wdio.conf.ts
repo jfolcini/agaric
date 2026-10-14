@@ -184,9 +184,9 @@ export interface WaitFailure {
  * CONTRACT WITH A DEPENDENCY, not a fact about our code, and every test below
  * feeds a hand-written message — so the pin is here rather than in an
  * assertion that could only agree with itself. Read verbatim out of the
- * INSTALLED `webdriverio` 9.31.1 bundle (`node_modules/webdriverio/build/
+ * INSTALLED `webdriverio` 10.0.2 bundle (`node_modules/webdriverio/build/
  * node.js`, the `waitForClickable`/`waitForDisplayed`/`waitForEnabled`/
- * `waitForExist` command bodies), against `"@wdio/cli": "^9.31.1"` in
+ * `waitForExist` command bodies), against `"@wdio/cli": "^10.0.2"` in
  * package.json:
  *
  *     `element ("${this.selector}") still ${reverse ? '' : 'not '}` +
