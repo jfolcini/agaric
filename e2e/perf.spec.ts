@@ -34,7 +34,8 @@
  *
  * The other tests are NOT opt-in: rendered-row and IPC counts are
  * deterministic, unlike the timings, so they pin the big page's initial render
- * window (#5329) and what opening each list view costs (#5366) on every PR.
+ * window (#5329) and what opening each list view (#5366) or a page (#5445)
+ * costs on every PR.
  */
 
 import { writeFileSync } from 'node:fs'
@@ -757,3 +758,82 @@ for (const view of LIST_VIEWS) {
     expect(calls.length, calls.join(', ')).toBe(view.ipcOnOpen)
   })
 }
+
+/**
+ * #5445 — opening a page from the Pages list, then following a link chip to
+ * another page. Each pins the IPC sent from the click until the page settles,
+ * as a sorted list of command names, so a duplicate fetch or one for a closed
+ * panel fails it. A deliberate change re-measures from the failure message.
+ */
+const PAGE_OPEN_IPC = [
+  'batch_resolve',
+  'get_batch_properties',
+  'get_block',
+  'get_page_aliases',
+  'get_properties',
+  'list_all_tags_in_space',
+  'list_attachments_batch',
+  'list_backlinks_grouped',
+  'list_inherited_tags_for_block',
+  'list_pages_with_metadata',
+  'list_property_defs',
+  'list_tags_for_block',
+  'list_unlinked_references',
+  'load_page_subtree',
+  'plugin:window|set_title',
+]
+/**
+ * The open set plus the chip's target lookup, minus the tag list: the header
+ * stays mounted and loads that once per space.
+ */
+const LINK_CLICK_IPC = [
+  'batch_resolve',
+  'batch_resolve',
+  'get_batch_properties',
+  'get_block',
+  'get_block',
+  'get_page_aliases',
+  'get_properties',
+  'list_attachments_batch',
+  'list_backlinks_grouped',
+  'list_inherited_tags_for_block',
+  'list_pages_with_metadata',
+  'list_property_defs',
+  'list_tags_for_block',
+  'list_unlinked_references',
+  'load_page_subtree',
+  'plugin:window|set_title',
+]
+
+test('opening a page and following a link chip pin their IPC (#5445)', async ({ page }) => {
+  const blocks = '[data-testid="block-static"]'
+  await page.addInitScript(installProbes)
+  await page.goto('/')
+  await page.locator(blocks).first().waitFor()
+  await expect
+    .poll(() => page.evaluate(() => window.__perf__?.ipc.includes('list_peer_refs')))
+    .toBe(true)
+  await navigateToView(page, 'Pages')
+  await page.locator('[id^="page-row-"]').first().waitFor()
+  await settle(page, '[id^="page-row-"]')
+
+  const measure = async (act: () => Promise<void>, title: string): Promise<string[]> => {
+    const mark = await page.evaluate(() => window.__perf__?.ipc.length ?? 0)
+    await act()
+    await page.locator('[aria-label="Page title"]', { hasText: title }).waitFor()
+    await page.locator(blocks).first().waitFor()
+    await settle(page, blocks)
+    return page.evaluate((from) => (window.__perf__?.ipc.slice(from) ?? []).toSorted(), mark)
+  }
+
+  const open = await measure(
+    () => page.getByText('Getting Started', { exact: true }).click(),
+    'Getting Started',
+  )
+  const link = await measure(
+    () => page.locator('[data-testid="block-link-chip"]', { hasText: 'Quick Notes' }).click(),
+    'Quick Notes',
+  )
+  expect.soft(open, open.join(', ')).toEqual(PAGE_OPEN_IPC)
+  expect(link, link.join(', ')).toEqual(LINK_CLICK_IPC)
+})
