@@ -377,9 +377,15 @@ pub async fn init_pools(db_path: &Path) -> Result<DbPools, agaric_core::error::A
     // for a fresh or in-memory DB. Must precede the pool connect below so a
     // fresh vault's `create_if_missing` shell isn't mistaken for real data.
     // #3062 — gated on an actually-pending migration; prunes old backups.
+    let started = std::time::Instant::now();
     backup_db_before_migration(db_path).await;
+    tracing::info!(
+        elapsed_ms = started.elapsed().as_millis(),
+        "boot: pre-migration backup check done"
+    );
 
     // --- Write pool: 2 connections — SQLite serialises at engine level ---
+    let started = std::time::Instant::now();
     let write_opts = base_connect_options(db_path);
     let write_pool = SqlitePoolOptions::new()
         .max_connections(2)
@@ -395,11 +401,20 @@ pub async fn init_pools(db_path: &Path) -> Result<DbPools, agaric_core::error::A
     // Recovery: if a prior crash left blocks missing, recreate it
     // from op_log so migrations have a target table to rebuild.
     let blocks_recovered = ensure_blocks_table_exists(&write_pool).await?;
+    tracing::info!(
+        elapsed_ms = started.elapsed().as_millis(),
+        "boot: write pool open"
+    );
 
     // Run migrations on the write pool (needs write access)
     tracing::info!("running database migrations");
+    let started = std::time::Instant::now();
     sqlx::migrate!("./migrations").run(&write_pool).await?;
-    tracing::info!("database migrations complete");
+    tracing::info!(
+        elapsed_ms = started.elapsed().as_millis(),
+        "database migrations complete"
+    );
+    let started = std::time::Instant::now();
 
     // Recovery part 2: restore properties and tags that migration 73's
     // DROP TABLE would have CASCADE-deleted. #616: gated on the positive
@@ -445,18 +460,32 @@ pub async fn init_pools(db_path: &Path) -> Result<DbPools, agaric_core::error::A
         recover_attachments_from_op_log(&write_pool).await?;
     }
 
-    // T-5: Update query planner statistics after migrations.
-    // PRAGMA optimize analyzes tables whose stats may be stale and runs
-    // ANALYZE only where beneficial. Safe, idempotent, runs in <100ms
-    // for typical personal databases.
-    sqlx::query("PRAGMA optimize").execute(&write_pool).await?;
-
     // #1575: defense-in-depth — clear any leaked op-log bypass sentinel that
     // a prior bypass transaction may have committed without removing. Must
     // run after migrations (the table exists) and before serving traffic.
     clear_leaked_bypass_sentinel(&write_pool).await?;
+    tracing::info!(
+        elapsed_ms = started.elapsed().as_millis(),
+        "boot: post-migration recovery checks done"
+    );
 
     // --- Read pool: 4 concurrent readers, query_only enforced ---
+    let started = std::time::Instant::now();
+    let read_pool = open_read_pool(db_path).await?;
+    tracing::info!(
+        elapsed_ms = started.elapsed().as_millis(),
+        "boot: read pool open"
+    );
+
+    Ok(DbPools {
+        write: write_pool,
+        read: read_pool,
+    })
+}
+
+/// [`init_pools`]'s read pool: 4 concurrent readers, `query_only` enforced
+/// and asserted.
+async fn open_read_pool(db_path: &Path) -> Result<SqlitePool, agaric_core::error::AppError> {
     let read_opts = base_connect_options(db_path).pragma("query_only", "ON");
     let read_pool = SqlitePoolOptions::new()
         .max_connections(4)
@@ -491,11 +520,7 @@ pub async fn init_pools(db_path: &Path) -> Result<DbPools, agaric_core::error::A
             .into(),
         )));
     }
-
-    Ok(DbPools {
-        write: write_pool,
-        read: read_pool,
-    })
+    Ok(read_pool)
 }
 
 /// Initialize a single combined pool — **test/bench-only fixture**.
@@ -555,9 +580,6 @@ pub async fn init_pool(db_path: &Path) -> Result<SqlitePool, agaric_core::error:
     if attachment_replay_pending {
         recover_attachments_from_op_log(&pool).await?;
     }
-
-    // Match `init_pools` — refresh planner stats after migrations.
-    sqlx::query("PRAGMA optimize").execute(&pool).await?;
 
     Ok(pool)
 }

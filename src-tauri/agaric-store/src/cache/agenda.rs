@@ -492,6 +492,58 @@ async fn rebuild_agenda_cache_split_impl(
 }
 
 // ---------------------------------------------------------------------------
+// rewrite_agenda_cache_once — the one-shot #5074 rewrite
+// ---------------------------------------------------------------------------
+
+/// `app_settings` key recording that [`rewrite_agenda_cache_once`] has run.
+const AGENDA_CACHE_REWRITE_MARKER: &str = "repair.agenda_cache_rewrite.v1";
+
+/// One-shot rewrite of `agenda_cache` for #5074, which dropped `created_at` /
+/// `completed_at` / `repeat-until` from `DESIRED_AGENDA_SQL`: only a rebuild
+/// rewrites the rows the old projection left, and every write path since
+/// maintains the new shape, so once per vault is enough.
+///
+/// The marker is written in the rewrite's own transaction, so a pass that
+/// fails or never commits leaves it unset and the next boot retries.
+/// Returns whether this pass ran — false when the marker had already retired
+/// it.
+///
+/// # Errors
+/// Returns [`AppError`] if any statement fails.
+pub async fn rewrite_agenda_cache_once(
+    write_pool: &SqlitePool,
+    read_pool: &SqlitePool,
+) -> Result<bool, AppError> {
+    let done: Option<String> = sqlx::query_scalar!(
+        "SELECT value FROM app_settings WHERE key = ?",
+        AGENDA_CACHE_REWRITE_MARKER,
+    )
+    .fetch_optional(write_pool)
+    .await?;
+    if done.is_some() {
+        return Ok(false);
+    }
+
+    let mut desired_conn = read_pool.acquire().await?;
+    let mut current_conn = read_pool.acquire().await?;
+    let mut tx = crate::db::begin_immediate_logged(write_pool, "agenda_cache_rewrite").await?;
+    let changed = apply_sort_merge_rebuild(&mut desired_conn, &mut current_conn, &mut tx).await?;
+
+    let now = crate::db::now_ms();
+    let changed = changed.to_string();
+    sqlx::query!(
+        "INSERT OR REPLACE INTO app_settings (key, value, updated_at) VALUES (?, ?, ?)",
+        AGENDA_CACHE_REWRITE_MARKER,
+        changed,
+        now,
+    )
+    .execute(&mut *tx)
+    .await?;
+    tx.commit().await?;
+    Ok(true)
+}
+
+// ---------------------------------------------------------------------------
 // M-19b sort-merge tests
 // ---------------------------------------------------------------------------
 

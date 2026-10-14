@@ -67,8 +67,9 @@
 //!   - [`tombstone_purge`] — purges expired tombstones (24 h cadence,
 //!     idle predicate, 90-day retention).
 //!   - `enqueue_cleanup_orphaned_attachments`, `enqueue_fts_idle_optimize`,
-//!     [`loro_snapshot_if_dirty`], and `projected_agenda_midnight_tick` —
-//!     the remaining materializer-enqueue / snapshot / agenda jobs.
+//!     `enqueue_rebuild_page_ids`, [`loro_snapshot_if_dirty`], and
+//!     `projected_agenda_midnight_tick` — the remaining materializer-enqueue /
+//!     snapshot / agenda jobs.
 
 use agaric_core::error::AppError;
 use chrono::Datelike;
@@ -206,6 +207,17 @@ pub async fn enqueue_cleanup_orphaned_attachments(
             AppError::Channel(format!("cleanup_orphaned_attachments enqueue failed: {e}"))
         })?;
     tracing::debug!("cleanup_orphaned_attachments tick enqueued");
+    Ok(())
+}
+
+/// #5420 — enqueue the vault-wide `RebuildPageIds` backstop.
+pub fn enqueue_rebuild_page_ids(
+    materializer: &crate::materializer::Materializer,
+) -> Result<(), AppError> {
+    materializer
+        .try_enqueue_background(crate::materializer::MaterializeTask::RebuildPageIds)
+        .map_err(|e| AppError::Channel(format!("page_ids_backstop enqueue failed: {e}")))?;
+    tracing::debug!("page_ids_backstop tick enqueued");
     Ok(())
 }
 
@@ -622,16 +634,14 @@ pub async fn loro_snapshot_if_dirty(
 /// once per UTC calendar day. The daemon's outer ticker fires every
 /// `TICK_INTERVAL` (60 s); this body keeps a "last-fired UTC
 /// day-number" in a shared atomic, compares it to today's day-number,
-/// and enqueues only when the value advances. Sentinel `i32::MIN` =
-/// "never fired" so the first tick post-boot always fires (the
-/// projected agenda may be stale if the previous session ended
-/// before its own midnight tick). CAS-on-update prevents double-
-/// enqueue under concurrent ticks racing across midnight.
+/// and enqueues whenever the two differ. Boot seeds the atomic with today
+/// (`projected_agenda_midnight_job` in `lib.rs`). CAS-on-update prevents
+/// double-enqueue under concurrent ticks racing across midnight.
 pub async fn projected_agenda_midnight_tick(
     materializer: &crate::materializer::Materializer,
     last_fired_day: &AtomicI32,
 ) -> Result<(), AppError> {
-    let today = chrono::Utc::now().date_naive().num_days_from_ce();
+    let today = utc_day_number();
     let previous = last_fired_day.load(Ordering::Acquire);
     if previous == today {
         return Ok(());
@@ -651,6 +661,12 @@ pub async fn projected_agenda_midnight_tick(
         "projected_agenda_midnight: UTC day rolled — RebuildProjectedAgendaCache enqueued"
     );
     Ok(())
+}
+
+/// Today's UTC day number, the value [`projected_agenda_midnight_tick`]
+/// compares its atomic against.
+pub fn utc_day_number() -> i32 {
+    chrono::Utc::now().date_naive().num_days_from_ce()
 }
 
 /// Spawn the maintenance daemon. Mirrors the shape of
@@ -1707,8 +1723,8 @@ mod tests {
             .expect("loro_snapshot_if_dirty must succeed on a fresh, empty registry");
     }
 
-    /// Issue #157 sub-item H — first call post-boot fires (sentinel
-    /// `i32::MIN`), and the atomic advances to today's day-number.
+    /// Issue #157 sub-item H — a never-fired atomic (`i32::MIN`) fires on
+    /// the first call, and the atomic advances to today's day-number.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn projected_agenda_midnight_fires_on_first_call_157_h() {
         let dir = tempfile::TempDir::new().unwrap();

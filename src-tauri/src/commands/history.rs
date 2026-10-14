@@ -485,11 +485,12 @@ fn reverse_attachment_filename(raw: &str, attachment_id: &str, arm: &'static str
 /// 1. `delete_attachment_inner` hard-deletes the row and — deliberately,
 ///    since #1993/#3259 — leaves the file and the `attachment_blobs` row
 ///    alone; the GC is the sole reclaimer of attachment bytes.
-/// 2. `cleanup_orphaned_attachments` runs (boot, the 24 h tick, or the
-///    post-purge enqueue). Nothing references the path any more, so the bulk
-///    prune drops the `content_hash → on_disk_path` mapping and the walk
-///    reclaims the file. Both decisions are correct: by every measure
-///    available to the GC this file *is* an orphan.
+/// 2. `cleanup_orphaned_attachments` runs (the 24 h maintenance tick, whose
+///    first run is about a minute after boot, or the post-purge enqueue).
+///    Nothing references the path any more, so the bulk prune drops the
+///    `content_hash → on_disk_path` mapping and the walk reclaims the file.
+///    Both decisions are correct: by every measure available to the GC this
+///    file *is* an orphan.
 /// 3. The undo reconstructs the original `AddAttachment` payload from the op
 ///    log and re-inserts the row with that payload's `fs_path`.
 ///

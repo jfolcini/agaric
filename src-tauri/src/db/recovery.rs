@@ -1025,26 +1025,28 @@ async fn rebuild_caches_after_engine_reproject(pool: &SqlitePool) {
     // tag-filtered reads) — recovered-but-invisible until an unrelated full
     // cache rebuild happens to run.
     //
-    // The boot fan-out (`spawn_boot_maintenance`) enqueues an unconditional
-    // full-table `RebuildPageIds`, but only rebuilds FTS when `fts_blocks` is
-    // EMPTY (a stale-but-non-empty index after a partial corruption never
-    // triggers it) and never rebuilds tag-inheritance unconditionally. So we
-    // cannot rely on it to cover the reprojected content. Rebuild the
-    // visibility-critical derived caches synchronously and deterministically
-    // here instead (the disaster path is rare, so the one-shot full rebuild
-    // cost is acceptable — and correctness/visibility beats deferral).
+    // Nothing later in boot covers that: the vault-wide `RebuildPageIds`
+    // backstop (`page_ids_backstop_job`) first runs about a minute after
+    // boot, and the boot fan-out (`spawn_boot_maintenance`) only rebuilds FTS
+    // when `fts_blocks` is EMPTY (a stale-but-non-empty index after a partial
+    // corruption never triggers it) and never rebuilds tag-inheritance
+    // unconditionally. So we cannot rely on either to cover the reprojected
+    // content. Rebuild the visibility-critical derived caches synchronously
+    // and deterministically here instead (the disaster path is rare, so the
+    // one-shot full rebuild cost is acceptable — and correctness/visibility
+    // beats deferral).
     //
     // Order: `page_id` first — the FTS and tag-inheritance rebuilds are
     // independent of it, but `page_id` is the foundation other `page_id`-scoped
-    // caches (rebuilt by the boot fan-out) consume, and rebuilding it here
-    // closes the NULL-`page_id` window without waiting for the background task.
+    // caches consume, and rebuilding it here closes the NULL-`page_id` window
+    // without waiting for the backstop job.
     // All three are full-table, idempotent, and pool-only (no engine / space
     // bootstrap dependency), so they are safe to run at init. Best-effort:
     // a rebuild failure must NOT wedge boot — the primary content is already
     // durably committed above, every read path degrades gracefully on a stale
-    // cache, and the boot fan-out + next-op incremental updates are a backstop.
+    // cache, and the backstop job + next-op incremental updates catch up.
     if let Err(e) = agaric_store::cache::rebuild_page_ids(pool).await {
-        tracing::warn!(error = %e, "recovery (#2504): page_id rebuild after engine reproject failed (non-fatal; boot fan-out retries)");
+        tracing::warn!(error = %e, "recovery (#2504): page_id rebuild after engine reproject failed (non-fatal; the page_id backstop job retries)");
     }
     if let Err(e) = agaric_store::fts::rebuild_fts_index(pool).await {
         tracing::warn!(error = %e, "recovery (#2504): FTS rebuild after engine reproject failed (non-fatal; reprojected content unsearchable until next rebuild)");
@@ -3540,6 +3542,35 @@ pub(crate) async fn recover_derived_state_from_op_log(
     pool: &SqlitePool,
     blocks_recovered_this_boot: bool,
 ) -> Result<bool, agaric_core::error::AppError> {
+    // #616: require a POSITIVE corruption signal before replaying anything.
+    //
+    // The old gate ("recover iff block_properties AND block_tags are both
+    // empty", C9/#345) assumed the two tables never empty independently of
+    // corruption. Post-0088 that premise is dead: reserved-key properties
+    // (todo_state / priority / due_date / scheduled_date / space) live on
+    // `blocks` columns and create NO `block_properties` rows, so a vault
+    // using only TODO states/dates and no tags legitimately keeps both
+    // counts at 0 forever — and the old gate re-ran the full O(op_count)
+    // op-log replay (plus a scary warn) on EVERY boot.
+    //
+    // The positive signal is "block-table recovery fired": either this very
+    // boot (`blocks_recovered_this_boot`, threaded from
+    // `ensure_blocks_table_exists`) or a prior boot that crashed before this
+    // replay completed (the durable `DERIVED_RECOVERY_PENDING_KEY` marker,
+    // written in the recovery tx and cleared by the attachment pass that
+    // follows the engine reprojection).
+    let marker_pending: i64 =
+        sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM app_settings WHERE key = ?")
+            .bind(DERIVED_RECOVERY_PENDING_KEY)
+            .fetch_one(pool)
+            .await?;
+
+    // #5420: before the op_log count, which reads the whole log: a healthy
+    // boot owes neither replay.
+    if !blocks_recovered_this_boot && marker_pending == 0 {
+        return Ok(false);
+    }
+
     // Guard: skip if op_log is empty or missing.
     //
     // R4 (#347): propagate probe errors with `?` rather than masking them
@@ -3575,35 +3606,11 @@ pub(crate) async fn recover_derived_state_from_op_log(
     .fetch_one(pool)
     .await?;
 
-    // #616: require a POSITIVE corruption signal before replaying anything.
-    //
-    // The old gate ("recover iff block_properties AND block_tags are both
-    // empty", C9/#345) assumed the two tables never empty independently of
-    // corruption. Post-0088 that premise is dead: reserved-key properties
-    // (todo_state / priority / due_date / scheduled_date / space) live on
-    // `blocks` columns and create NO `block_properties` rows, so a vault
-    // using only TODO states/dates and no tags legitimately keeps both
-    // counts at 0 forever — and the old gate re-ran the full O(op_count)
-    // op-log replay (plus a scary warn) on EVERY boot.
-    //
-    // The positive signal is "block-table recovery fired": either this very
-    // boot (`blocks_recovered_this_boot`, threaded from
-    // `ensure_blocks_table_exists`) or a prior boot that crashed before this
-    // replay completed (the durable `DERIVED_RECOVERY_PENDING_KEY` marker,
-    // written in the recovery tx and cleared by the attachment pass that
-    // follows the engine reprojection).
-    let marker_pending: i64 =
-        sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM app_settings WHERE key = ?")
-            .bind(DERIVED_RECOVERY_PENDING_KEY)
-            .fetch_one(pool)
-            .await?;
-
     // #3268 (review follow-up): "nothing to replay" must also RETIRE the
-    // marker, not just skip. Read AFTER the marker probe so a healthy vault
-    // with an empty op_log still issues no write. The filtered count reaches 0
-    // on strictly MORE vaults than the old unfiltered one — an op_log holding
-    // only replicated non-attachment rows now counts as empty here — and a
-    // marker nothing will ever clear re-trips this probe on every boot. The
+    // marker, not just skip. The filtered count reaches 0 on strictly MORE
+    // vaults than the old unfiltered one — an op_log holding only replicated
+    // non-attachment rows now counts as empty here — and a marker nothing
+    // will ever clear re-trips this probe on every boot. The
     // `prop_count > 0 || tag_count > 0` branch below already retires it in the
     // same "there is nothing left for a retry to do" situation; these two must
     // agree.
@@ -3629,10 +3636,6 @@ pub(crate) async fn recover_derived_state_from_op_log(
         if marker_pending > 0 {
             clear_derived_recovery_marker(pool).await?;
         }
-        return Ok(false);
-    }
-
-    if !blocks_recovered_this_boot && marker_pending == 0 {
         return Ok(false);
     }
 
@@ -7556,8 +7559,8 @@ mod tests {
     }
 
     /// The same early return, on a vault with NO marker: it must not write.
-    /// (The marker probe is read first precisely so a healthy boot issues no
-    /// `DELETE` on the empty-op_log path.)
+    /// (The marker is probed before the op_log count so this path issues no
+    /// `DELETE` when there is no marker to retire.)
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn derived_replay_empty_op_log_without_marker_is_a_noop_3268() {
         let (pool, _dir) = test_pool().await;
@@ -7577,6 +7580,33 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(marker, 0, "nothing to retire, nothing written");
+    }
+
+    /// #5420: a healthy boot (no this-boot signal, no marker) returns before
+    /// the op_log count, so neither the count's cost nor its failure reaches
+    /// it. Dropping `op_log` makes the count fail; the signalled call proves
+    /// it does, so the healthy `Ok(false)` is not vacuous.
+    #[tokio::test]
+    async fn derived_replay_healthy_boot_skips_the_op_log_count_5420() {
+        let (pool, _dir) = test_pool().await;
+        sqlx::query("DROP TABLE op_log")
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let healthy =
+            recover_derived_state_from_op_log(&pool, /* blocks_recovered_this_boot */ false).await;
+        assert!(
+            matches!(healthy, Ok(false)),
+            "a healthy boot must return before counting the op_log; got {healthy:?}"
+        );
+
+        let signalled =
+            recover_derived_state_from_op_log(&pool, /* blocks_recovered_this_boot */ true).await;
+        assert!(
+            signalled.is_err(),
+            "with a recovery signal the op_log count runs, and fails on the dropped table"
+        );
     }
 
     // ==================================================================

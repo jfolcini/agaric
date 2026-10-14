@@ -244,7 +244,7 @@ const STABLE_MESSAGES: &[&str] = &[
     "running database migrations",
     "database migrations complete",
     "sync endpoint identity loaded",
-    "boot count query failed; treating as 0",
+    "boot probe query failed; treating as 0",
     "PANIC",
     "failed to build Tauri application",
     "failed to bootstrap spaces — aborting boot",
@@ -254,7 +254,6 @@ const STABLE_MESSAGES: &[&str] = &[
     "failed to enqueue FTS rebuild at boot",
     "failed to enqueue block_tag_refs rebuild at boot",
     "failed to enqueue projected agenda cache rebuild at boot",
-    "failed to enqueue page_id rebuild at boot",
     // sync_daemon — protocol lifecycle.
     "incoming sync connection received, starting responder session",
     "SyncDaemon started successfully",
