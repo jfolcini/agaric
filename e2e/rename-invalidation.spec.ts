@@ -36,7 +36,7 @@ async function addBlock(page: Page, text: string): Promise<void> {
 }
 
 function graphNode(page: Page, label: string) {
-  return page.getByTestId('graph-view').getByRole('button', { name: label, exact: true })
+  return page.getByTestId('graph-view').getByRole('option', { name: label, exact: true })
 }
 
 /** The unlinked-references panel, expanded. */
