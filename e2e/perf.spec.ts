@@ -32,6 +32,10 @@
  * with no script in it is mostly paint and is not evidence of a real problem.
  * The run fails only when a journey cannot complete; it has no budgets.
  *
+ * `perf: boot JS executed share (#5441)` is opt-in too: it loads the app cold and prints how
+ * many JS files and bytes load by the first block and by first block + 2 s, and what share of
+ * them V8 ran.
+ *
  * The other tests are NOT opt-in: rendered-row and IPC counts are
  * deterministic, unlike the timings, so they pin the big page's initial render
  * window (#5329) and what opening each list view (#5366) or a page (#5445)
@@ -552,6 +556,156 @@ test('perf: first and second visit to each view', async ({ page }) => {
     }
   }
   console.table(rows)
+})
+
+interface CoverageRange {
+  startOffset: number
+  endOffset: number
+  count: number
+}
+
+/**
+ * UTF-8 bytes of `source` that V8 reports as executed. The ranges nest (a
+ * function's range holds its block ranges), so they are painted outermost
+ * first and the innermost range wins: an unexecuted `else` inside an executed
+ * function stays unexecuted. Offsets are UTF-16 code units; each is weighted
+ * by its UTF-8 size so the result is in bytes like `total`.
+ */
+function coveredBytes(
+  source: string,
+  functions: Array<{ ranges: CoverageRange[] }>,
+): { executed: number; total: number } {
+  // `toSorted` is stable, so equal spans keep V8's order (a later range is the more specific).
+  const ranges = functions
+    .flatMap((f) => f.ranges)
+    .toSorted((a, b) => a.startOffset - b.startOffset || b.endOffset - a.endOffset)
+  const executed = new Uint8Array(source.length)
+  for (const r of ranges) executed.fill(r.count > 0 ? 1 : 0, r.startOffset, r.endOffset)
+  let covered = 0
+  let total = 0
+  for (let i = 0; i < source.length; i++) {
+    const code = source.charCodeAt(i)
+    // A surrogate pair is 4 bytes in all, 2 per half.
+    const bytes = code < 0x80 ? 1 : code < 0x800 ? 2 : code >= 0xd800 && code < 0xe000 ? 2 : 3
+    total += bytes
+    if (executed[i]) covered += bytes
+  }
+  return { executed: covered, total }
+}
+
+test('coveredBytes: the innermost range wins and bytes are UTF-8', () => {
+  test.skip(!process.env['AGARIC_PERF'], 'opt-in: checks the coverage harness, AGARIC_PERF=1')
+  //            0         1         2
+  //            0123456789012345678901234
+  const source = 'f();if(a){b()}else{é()}//'
+  const executed = coveredBytes(source, [
+    // Outer range ran; the nested `else` block did not; a later nested range re-ran inside it.
+    {
+      ranges: [
+        { startOffset: 0, endOffset: 25, count: 1 },
+        { startOffset: 14, endOffset: 23, count: 0 },
+        { startOffset: 19, endOffset: 21, count: 2 },
+      ],
+    },
+  ])
+  // 25 chars, `é` is 2 bytes. Unexecuted: offsets 14-18 and 21-22 (7 chars, 7 bytes).
+  expect(executed).toEqual({ executed: 26 - 7, total: 26 })
+})
+
+/**
+ * #5441 — how much of the JS the page loads at boot actually runs. The window
+ * is the issue's: from navigation until the first block renders plus 2 s.
+ * Scripts are the module files the page fetched (entry, static imports,
+ * dynamic imports); `coverage` is V8 precise coverage over the whole window
+ * (`resetOnNavigation: false`), and a script's executed share is the bytes in
+ * ranges with a count above 0 (see `coveredBytes`). "Raw" is the decoded file
+ * size, so it does not depend on compression.
+ *
+ * Two windows are reported because main idle-preloads every view chunk (#5525)
+ * after mount: `to first block` is what boot needs, `first block + 2 s` adds
+ * what that preload fetches. Executed bytes for both are read at +2 s, so a
+ * file loaded before the first block counts what it ran by then. Scripts a
+ * `modulepreload` fetched but V8 never compiled have no coverage entry and
+ * count as fully unexecuted.
+ */
+test('perf: boot JS executed share (#5441)', async ({ page }) => {
+  test.skip(!process.env['AGARIC_PERF'], 'opt-in: AGARIC_PERF=1')
+  const WINDOW_MS = 2000
+  await page.addInitScript((): void => {
+    performance.setResourceTimingBufferSize(2000)
+    const w = window as unknown as { __firstBlock__?: number }
+    new MutationObserver((_, observer) => {
+      if (!document.querySelector('[data-testid="block-static"]')) return
+      w.__firstBlock__ = performance.now()
+      observer.disconnect()
+    }).observe(document, { childList: true, subtree: true })
+  })
+  await page.coverage.startJSCoverage({ resetOnNavigation: false })
+  await page.goto('/')
+  await page.locator('[data-testid="block-static"]').first().waitFor()
+  const loaded = await page.evaluate(async (windowMs) => {
+    const w = window as unknown as { __firstBlock__?: number }
+    const first = w.__firstBlock__ ?? performance.now()
+    await new Promise((resolve) =>
+      setTimeout(resolve, Math.max(0, first + windowMs - performance.now())),
+    )
+    return {
+      first,
+      files: performance
+        .getEntriesByType('resource')
+        .filter((e) => /\.m?js$/.test(new URL(e.name).pathname))
+        .map((e) => {
+          const r = e as PerformanceResourceTiming
+          return { url: r.name, end: r.responseEnd, raw: r.decodedBodySize }
+        }),
+    }
+  }, WINDOW_MS)
+  const coverage = await page.coverage.stopJSCoverage()
+
+  const byUrl = new Map(coverage.map((c) => [c.url, c]))
+  const files = loaded.files.map((f) => {
+    const entry = byUrl.get(f.url)
+    const sized = entry?.source ? coveredBytes(entry.source, entry.functions) : null
+    return {
+      file: new URL(f.url).pathname.split('/').pop() ?? f.url,
+      loadedMs: Math.round(f.end),
+      rawBytes: sized?.total ?? f.raw,
+      executedBytes: sized?.executed ?? 0,
+    }
+  })
+  const measure = (label: string, keep: (loadedMs: number) => boolean) => {
+    const inWindow = files.filter((f) => keep(f.loadedMs))
+    const raw = inWindow.reduce((a, f) => a + f.rawBytes, 0)
+    const executed = inWindow.reduce((a, f) => a + f.executedBytes, 0)
+    return {
+      window: label,
+      files: inWindow.length,
+      rawKB: Math.round(raw / 1024),
+      executedKB: Math.round(executed / 1024),
+      executedPct: Math.round((executed / raw) * 1000) / 10,
+    }
+  }
+  const rows = [
+    measure('to first block', (ms) => ms <= loaded.first),
+    measure('first block + 2 s', (ms) => ms <= loaded.first + WINDOW_MS),
+  ]
+  const late = files.filter((f) => f.loadedMs > loaded.first)
+  console.log(`\nboot JS (first block at ${Math.round(loaded.first)} ms)`)
+  console.table(rows)
+  console.log(
+    `loaded after the first block: ${late.map((f) => `${f.file}@${f.loadedMs}`).join(' ')}`,
+  )
+  await saveOutput(
+    'boot-js-coverage.json',
+    JSON.stringify({ firstBlockMs: loaded.first, rows, files }, null, 2),
+  )
+
+  // A harness that reports zero files, or a share outside (0, 100), measured nothing.
+  expect(rows[0]?.files ?? 0).toBeGreaterThan(0)
+  for (const row of rows) {
+    expect(row.executedPct).toBeGreaterThan(0)
+    expect(row.executedPct).toBeLessThan(100)
+  }
 })
 
 /**
