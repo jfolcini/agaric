@@ -602,7 +602,11 @@ fn limit_validation_cases() -> Vec<(&'static str, i64, Value)> {
             LIST_RESULT_CAP,
             json!({"block_id": "ANY"}),
         ),
-        (TOOL_LIST_TAGS, LIST_RESULT_CAP, json!({})),
+        (
+            TOOL_LIST_TAGS,
+            LIST_RESULT_CAP,
+            json!({"space_id": TEST_SPACE_ID}),
+        ),
         (
             TOOL_GET_AGENDA,
             AGENDA_RESULT_CAP,
@@ -1347,49 +1351,62 @@ async fn list_backlinks_global_scope_parity() {
     );
 }
 
+async fn mk_tag(pool: &SqlitePool, mat: &Materializer, space: &str, name: &str) -> String {
+    crate::commands::create_block_inner_with_space(
+        pool,
+        DEV,
+        mat,
+        "tag".into(),
+        name.into(),
+        None,
+        None,
+        &SpaceScope::Active(SpaceId::from_trusted(space)),
+        None,
+    )
+    .await
+    .unwrap()
+    .id
+    .into_string()
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn list_tags_happy_path() {
+async fn list_tags_lists_only_the_given_space() {
     let (tools, mat, _dir) = mk_tools().await;
-    create_block_inner(
-        &tools.pool,
-        DEV,
-        &mat,
-        "tag".into(),
-        "work".into(),
-        None,
-        None,
-    )
-    .await
-    .unwrap();
-    create_block_inner(
-        &tools.pool,
-        DEV,
-        &mat,
-        "tag".into(),
-        "home".into(),
-        None,
-        None,
-    )
-    .await
-    .unwrap();
+    let space = mk_space(&tools.pool, "Work").await;
+    let other = mk_space(&tools.pool, "Home").await;
+    let mut expected = vec![
+        mk_tag(&tools.pool, &mat, &space, "work").await,
+        mk_tag(&tools.pool, &mat, &space, "urgent").await,
+    ];
+    expected.sort();
+    mk_tag(&tools.pool, &mat, &other, "garden").await;
     settle(&mat).await;
 
     let result = tools
-        .call_tool("list_tags", json!({}), &test_ctx())
+        .call_tool("list_tags", json!({ "space_id": space }), &test_ctx())
         .await
         .expect("happy path");
-    // Response is a `PageResponse { items, next_cursor, has_more }`
-    // rather than a flat array.
-    let arr = result["items"].as_array().expect("tag items array");
-    assert_eq!(arr.len(), 2, "two tags returned");
+    let ids: Vec<&str> = result["items"]
+        .as_array()
+        .expect("tag items array")
+        .iter()
+        .map(|row| row["tag_id"].as_str().unwrap())
+        .collect();
+    assert_eq!(ids, expected);
+    assert!(result["next_cursor"].is_null(), "got {result:?}");
+    assert_eq!(result["has_more"], json!(false));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn list_tags_requires_space_id() {
+    let (tools, _mat, _dir) = mk_tools().await;
+    let err = tools
+        .call_tool("list_tags", json!({}), &test_ctx())
+        .await
+        .expect_err("space_id is required");
     assert!(
-        result["next_cursor"].is_null(),
-        "two-tag fixture under default limit must not paginate (got {result:?})",
-    );
-    assert_eq!(
-        result["has_more"],
-        json!(false),
-        "two-tag fixture under default limit must report has_more=false",
+        matches!(&err, AppError::Validation { message, .. } if message.contains("missing field `space_id`")),
+        "got {err:?}"
     );
 }
 
@@ -1397,7 +1414,11 @@ async fn list_tags_happy_path() {
 async fn list_tags_rejects_unknown_field() {
     let (tools, _mat, _dir) = mk_tools().await;
     let err = tools
-        .call_tool("list_tags", json!({"prefix": "w"}), &test_ctx())
+        .call_tool(
+            "list_tags",
+            json!({"space_id": TEST_SPACE_ID, "prefix": "w"}),
+            &test_ctx(),
+        )
         .await
         .expect_err("prefix is not a valid arg for list_tags");
     assert!(matches!(err, AppError::Validation { .. }), "got {err:?}");
@@ -2312,25 +2333,20 @@ async fn list_pages_cursor_pagination_roundtrip() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn list_tags_paginates_m85() {
     let (tools, mat, _dir) = mk_tools().await;
+    let space = mk_space(&tools.pool, "S").await;
     // Seed 6 tag blocks; with limit=4 the first page must overflow and
     // the wire response must expose `items` + `next_cursor` + `has_more`.
     for i in 0..6 {
-        create_block_inner(
-            &tools.pool,
-            DEV,
-            &mat,
-            "tag".into(),
-            format!("tag-m85-{i}"),
-            None,
-            None,
-        )
-        .await
-        .unwrap();
+        mk_tag(&tools.pool, &mat, &space, &format!("tag-m85-{i}")).await;
     }
     settle(&mat).await;
 
     let resp = tools
-        .call_tool("list_tags", json!({"limit": 4}), &test_ctx())
+        .call_tool(
+            "list_tags",
+            json!({"limit": 4, "space_id": space}),
+            &test_ctx(),
+        )
         .await
         .expect("list_tags wire call must succeed");
     // Wire shape — PageResponse JSON envelope.
@@ -2720,16 +2736,15 @@ async fn inner_get_page_unknown_id_not_found() {
 async fn inner_list_tags_returns_seeded_tags() {
     let (pool, _dir) = test_pool().await;
     let mat = Materializer::new(pool.clone());
-    create_block_inner(&pool, DEV, &mat, "tag".into(), "alpha".into(), None, None)
-        .await
-        .unwrap();
-    create_block_inner(&pool, DEV, &mat, "tag".into(), "beta".into(), None, None)
-        .await
-        .unwrap();
+    let space = mk_space(&pool, "S").await;
+    mk_tag(&pool, &mat, &space, "alpha").await;
+    mk_tag(&pool, &mat, &space, "beta").await;
     settle(&mat).await;
 
     // Paginated; under default limit both tags are on page 1.
-    let page = list_tags_inner(&pool, None, Some(100)).await.unwrap();
+    let page = list_tags_inner(&pool, &space, None, Some(100))
+        .await
+        .unwrap();
     assert_eq!(page.items.len(), 2);
     assert!(!page.has_more);
     assert!(page.next_cursor.is_none());
@@ -2738,7 +2753,9 @@ async fn inner_list_tags_returns_seeded_tags() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn inner_list_tags_empty_db() {
     let (pool, _dir) = test_pool().await;
-    let page = list_tags_inner(&pool, None, Some(100)).await.unwrap();
+    let page = list_tags_inner(&pool, TEST_SPACE_ID, None, Some(100))
+        .await
+        .unwrap();
     assert_eq!(page.items.len(), 0);
     assert!(!page.has_more);
     assert!(page.next_cursor.is_none());
@@ -2965,20 +2982,11 @@ async fn snapshot_list_backlinks_response_shape() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn snapshot_list_tags_response_shape() {
     let (tools, mat, _dir) = mk_tools().await;
-    create_block_inner(
-        &tools.pool,
-        DEV,
-        &mat,
-        "tag".into(),
-        "snap-tag".into(),
-        None,
-        None,
-    )
-    .await
-    .unwrap();
+    let space = mk_space(&tools.pool, "S").await;
+    mk_tag(&tools.pool, &mat, &space, "snap-tag").await;
     settle(&mat).await;
     let result = tools
-        .call_tool("list_tags", json!({}), &test_ctx())
+        .call_tool("list_tags", json!({ "space_id": space }), &test_ctx())
         .await
         .unwrap();
     insta::assert_yaml_snapshot!("tool_response_list_tags", result, {

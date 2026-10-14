@@ -136,12 +136,9 @@ async fn disconnect_signal_grants_grace_period_for_in_flight_tool_call_l113() {
         Some(false),
         "is_error must be false: {result:?}"
     );
-    let structured = result
-        .structured_content
-        .as_ref()
-        .expect("structured_content carries the slow tool's payload");
     assert_eq!(
-        structured["slept"], true,
+        crate::mcp::rmcp_adapter::tool_result_json(&result)["slept"],
+        true,
         "payload must echo the slow tool body"
     );
 

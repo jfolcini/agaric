@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT tag_id, name, usage_count, updated_at\n         FROM tags_cache\n         WHERE (?1 IS NULL OR tag_id > ?2)\n         ORDER BY tag_id ASC\n         LIMIT ?3",
+  "query": "SELECT tag_id, name, usage_count, updated_at\n         FROM tags_cache\n         WHERE tag_id IN (\n             SELECT id FROM blocks\n             WHERE block_type = 'tag' AND space_id = ?1\n         )\n           AND (?2 IS NULL OR tag_id > ?3)\n         ORDER BY tag_id ASC\n         LIMIT ?4",
   "describe": {
     "columns": [
       {
@@ -49,7 +49,7 @@
       }
     ],
     "parameters": {
-      "Right": 3
+      "Right": 4
     },
     "nullable": [
       false,
@@ -58,5 +58,5 @@
       false
     ]
   },
-  "hash": "1921bdff38da0591e069e2344a214b1a107e336ff60ce88b08fec0cc8c4e3b3a"
+  "hash": "503d0e788f7d5557bc2619512cd40efdd8b5907a40335687b688e3f9fa304ad1"
 }

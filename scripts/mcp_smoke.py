@@ -193,7 +193,7 @@ TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
     "search": PAGE_RESPONSE_SCHEMA,
     "get_block": BLOCK_ROW_SCHEMA,
     "list_backlinks": GROUPED_BACKLINK_SCHEMA,
-    "list_tags": {"type": "array"},
+    "list_tags": {"type": "object", "required": ["items", "has_more"]},
     "list_property_defs": {"type": "array", "items": PROPERTY_DEF_SCHEMA},
     "get_agenda": {"type": "object", "required": ["items", "has_more"]},
     "journal_for_date": BLOCK_ROW_SCHEMA,
@@ -208,28 +208,15 @@ TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
 
 
 def extract_payload(result: Any) -> Any:
-    """Extract the structured JSON payload from a CallToolResult.
+    """Extract the JSON payload from a CallToolResult.
 
-    MCP 1.x permits two transport shapes for structured tool output:
-
-    1. ``structuredContent`` — native dict/list on the result (new in the
-       2025-06-18 protocol revision).
-    2. A single ``text`` content block whose ``text`` field is a
-       JSON-encoded string.
-
-    Try structuredContent first, then fall back to text-block parsing.
-    Anything else (binary, embedded resource, no content at all) is a
-    protocol mismatch for the v1 read surface and raises.
+    Agaric returns each result once, as a ``text`` content block holding
+    the JSON. Anything else (binary, embedded resource, no content at all)
+    is a protocol mismatch and raises.
     """
-    structured = getattr(result, "structuredContent", None)
-    if structured is not None:
-        return structured
-
     content = getattr(result, "content", None) or []
     if not content:
-        raise ValueError(
-            "tool result has no `content` blocks and no `structuredContent`"
-        )
+        raise ValueError("tool result has no `content` blocks")
 
     text_parts: list[str] = []
     for block in content:
@@ -470,7 +457,9 @@ async def run_smoke(socket_path: Path) -> int:
                     {"query": "a", "limit": 10, "space_id": space_id},
                     failures,
                 )
-            await call_and_validate(session, "list_tags", {"limit": 10}, failures)
+                await call_and_validate(
+                    session, "list_tags", {"limit": 10, "space_id": space_id}, failures
+                )
             await call_and_validate(session, "list_property_defs", {}, failures)
             await call_and_validate(
                 session,

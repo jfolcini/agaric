@@ -53,6 +53,19 @@ use agaric_core::error::AppError;
 // Server surface (#693)
 // ---------------------------------------------------------------------------
 
+/// The id and content-token rules both surfaces' instructions share.
+macro_rules! ids_and_tokens_primer {
+    () => {
+        "Ids are 26-character ULIDs in uppercase Crockford base32 \
+         (e.g. 01HZY3V9Q8K2M4N6P7R8S9T0VW). Take them from tool results; never \
+         invent one.\n\
+         Block content refers to things by id:\n\
+         - `[[ULID]]` links a page\n\
+         - `#[ULID]` applies a tag\n\
+         - `((ULID))` references a block\n"
+    };
+}
+
 /// Which MCP surface a serve loop / adapter instance fronts.
 ///
 /// #693 — the RO and RW sockets share the accept-loop and adapter
@@ -80,19 +93,46 @@ impl McpSurface {
     }
 
     /// MCP `initialize` instructions advertised by
-    /// [`RmcpAdapter`](rmcp_adapter::RmcpAdapter)'s `ServerHandler::get_info`.
+    /// [`RmcpAdapter`](rmcp_adapter::RmcpAdapter)'s `ServerHandler::get_info`:
+    /// a short primer (`instructions_fit_the_line_cap` pins its length) so an
+    /// agent knows the id, token and space rules before its first call.
     pub fn instructions(self) -> &'static str {
         match self {
-            McpSurface::ReadOnly => {
-                "Agaric MCP read-only server. Exposes the full read-only tool \
-                 registry — use tools/list to discover available tools."
-            }
-            McpSurface::ReadWrite => {
-                "Agaric MCP read-write server. Exposes the reversible write tool \
-                 registry — use tools/list to discover available tools. Every \
-                 mutation is recorded in the user-visible activity feed and is \
-                 reversible from the app."
-            }
+            McpSurface::ReadOnly => concat!(
+                "Agaric MCP read-only server: reads a local, block-based notes vault. \
+                 Use tools/list for the tools.\n",
+                ids_and_tokens_primer!(),
+                "Where ids come from:\n\
+                 - spaces: `list_spaces`. Call it first.\n\
+                 - pages and blocks: `list_pages`, `search`, `get_page`, `get_journal`, \
+                 `list_journal`, `list_trash`.\n\
+                 - tags: `list_tags`, one space at a time.\n\
+                 Spaces: where a tool takes `space_id`, pass one from `list_spaces`; nothing \
+                 picks a space for you. `list_backlinks` and `get_agenda` span every space \
+                 when it is omitted.\n\
+                 Dates are YYYY-MM-DD; `get_journal` also takes `today` or `yesterday`, on \
+                 this device's clock.\n\
+                 History: `page_history` and `block_history` show who changed what, and \
+                 when.\n",
+            ),
+            McpSurface::ReadWrite => concat!(
+                "Agaric MCP read-write server: writes to a local, block-based notes vault. \
+                 Use tools/list for the tools. Every mutation is recorded in the \
+                 user-visible activity feed and is reversible from the app.\n",
+                ids_and_tokens_primer!(),
+                "Where ids come from:\n\
+                 - spaces: `list_spaces`. Call it first.\n\
+                 - pages, blocks and tags: the other Agaric MCP server's `list_pages`, \
+                 `search` and `list_tags`; a write that creates blocks returns them with \
+                 their ids.\n\
+                 Spaces: every tool but `list_spaces` requires `space_id`; nothing defaults \
+                 it. A write to an existing block in another space is refused.\n\
+                 Dates are YYYY-MM-DD; `capture` also takes `today` or `yesterday`, on this \
+                 device's clock.\n\
+                 Undo: a write that changed something returns `op_refs`; pass them to \
+                 `undo` to revert it. `delete_block` is a soft delete that `restore_block` \
+                 reverses.\n",
+            ),
         }
     }
 }
@@ -1136,6 +1176,14 @@ pub fn spawn_mcp_rw_task_with_registry<R>(
 mod tests {
     use super::*;
     use tempfile::TempDir;
+
+    #[test]
+    fn instructions_fit_the_line_cap() {
+        for surface in [McpSurface::ReadOnly, McpSurface::ReadWrite] {
+            let lines = surface.instructions().lines().count();
+            assert!(lines <= 40, "{surface:?} instructions run to {lines} lines");
+        }
+    }
 
     #[test]
     fn mcp_ro_enabled_returns_false_when_marker_absent() {
