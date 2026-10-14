@@ -71,6 +71,16 @@ test('returning to Pages after only reading sends no list call', async ({ page }
     el.scrollTop = 0
   })
   await openFromPages(page, 'Bulk Page 001')
+  // Switching away from the app flushes drafts, which writes nothing here.
+  for (const state of ['hidden', 'visible']) {
+    await page.evaluate((s) => {
+      Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => s })
+      document.dispatchEvent(new Event('visibilitychange'))
+    }, state)
+  }
+  await expect
+    .poll(async () => (await getInvokeCalls(page, 'flush_all_drafts')).length)
+    .toBeGreaterThan(0)
 
   await returnToPages(page)
 
