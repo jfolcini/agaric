@@ -16,11 +16,14 @@
  * everything else uses the same boot scaffolding as App.test.tsx.
  */
 
+import { invoke } from '@tauri-apps/api/core'
 import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
+import { emptyPage, makeBlockRow, withOps } from '@/__tests__/fixtures'
+import { stubInvoke } from '@/__tests__/helpers/invoke'
 import { App } from '@/App'
 import { t } from '@/lib/i18n'
 import { useBootStore } from '@/stores/boot'
@@ -62,12 +65,12 @@ vi.mock('@/lib/logger', () => ({
   },
 }))
 
-const { mockedInvoke } = vi.hoisted(() => ({ mockedInvoke: vi.fn() }))
-vi.mock('@tauri-apps/api/core', () => ({
-  invoke: (...args: unknown[]) => mockedInvoke(...args),
+vi.mock('@tauri-apps/api/core', async () => ({
+  invoke: vi.fn((await import('@/__tests__/helpers/invoke')).strictInvokeFallback),
 }))
 
-const emptyPage = { items: [], next_cursor: null, has_more: false, total_count: null }
+const mockedInvoke = vi.mocked(invoke)
+const JOURNAL_PAGE_ID = '01JOURNALPAGE0000000000000'
 
 beforeEach(() => {
   vi.clearAllMocks()
@@ -96,10 +99,41 @@ beforeEach(() => {
   document.documentElement.classList.remove('dark')
   localStorage.setItem('agaric-onboarding-done', 'true')
 
-  mockedInvoke.mockImplementation(async (cmd: unknown) => {
-    if (cmd === 'list_spaces')
-      return [{ id: 'SPACE_PERSONAL', name: 'Personal', accent_color: 'accent-emerald' }]
-    return emptyPage
+  // The commands `App` fires while mounting the shell and the journal view.
+  // Anything else reaches `strictInvokeFallback` and fails by name, so a new
+  // mount-time IPC surfaces here instead of being absorbed by a catch-all.
+  stubInvoke(mockedInvoke, {
+    batch_resolve: () => [],
+    create_block: (args) =>
+      withOps(
+        makeBlockRow({ id: 'NEW_BLOCK', content: (args['content'] as string | null) ?? null }),
+      ),
+    create_page_in_space: () => JOURNAL_PAGE_ID,
+    first_child_for_blocks: () => ({}),
+    flush_all_drafts: () => ({ flushed: 0 }),
+    flush_draft: () => null,
+    get_batch_properties: () => ({}),
+    get_journal_page_by_date: () => null,
+    get_property_def: () => null,
+    is_flatpak: () => false,
+    list_all_pages_in_space: () => [],
+    list_all_tags_in_space: () => [],
+    list_attachments_batch: () => ({}),
+    list_backlinks_grouped: () => ({
+      groups: [],
+      next_cursor: null,
+      has_more: false,
+      total_count: 0,
+      filtered_count: 0,
+      truncated: false,
+    }),
+    list_blocks: () => emptyPage,
+    list_journal_pages_in_range: () => [],
+    list_projected_agenda: () => emptyPage,
+    list_spaces: () => [{ id: 'SPACE_PERSONAL', name: 'Personal', accent_color: 'accent-emerald' }],
+    list_unfinished_tasks: () => emptyPage,
+    load_page_subtree: () => ({ blocks: [], truncated: false, total: 0 }),
+    query_by_property: () => emptyPage,
   })
 })
 

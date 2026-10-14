@@ -35,7 +35,8 @@ const mocks = vi.hoisted(() => ({
   isAndroid: vi.fn(() => true),
 }))
 
-vi.mock('@tauri-apps/api/core', () => ({
+vi.mock('@tauri-apps/api/core', async () => ({
+  invoke: vi.fn((await import('@/__tests__/helpers/invoke')).strictInvokeFallback),
   addPluginListener: mocks.addPluginListener,
 }))
 vi.mock('@tauri-apps/plugin-process', () => ({

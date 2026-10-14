@@ -20,7 +20,9 @@ import { useSpaceStore } from '@/stores/space'
 import { useTabsStore } from '@/stores/tabs'
 import { useUndoStore } from '@/stores/undo'
 
-vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn() }))
+vi.mock('@tauri-apps/api/core', async () => ({
+  invoke: vi.fn((await import('@/__tests__/helpers/invoke')).strictInvokeFallback),
+}))
 vi.mock('@/components/dialogs/QueryBuilderModal', () => ({
   QueryBuilderModal: ({
     open,
