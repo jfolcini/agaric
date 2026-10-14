@@ -88,6 +88,8 @@ export const MODULES = {
     tests: [
       'src/lib/__tests__/date-utils.test.ts',
       'src/lib/__tests__/date-utils.property.test.ts',
+      // The only test that pins JOURNAL_PAGE_GLOB (#3752).
+      'src/lib/search-query/__tests__/glob-conformance.test.ts',
     ],
   },
   'tree-utils': {
