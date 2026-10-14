@@ -10,14 +10,17 @@ import '@/index.css'
 import '@fontsource-variable/inter/opsz.css'
 import { ErrorBoundary } from '@/components/common/ErrorBoundary'
 import { TooltipProvider } from '@/components/ui/tooltip'
+import { invalidatePageBrowserData } from '@/hooks/usePageBrowserData'
 import { PrimaryFocusProvider } from '@/hooks/usePrimaryFocus'
 import { useTooltipDelay } from '@/hooks/useTooltipDelay'
+import { commands } from '@/lib/bindings'
 import { resolveLocale } from '@/lib/i18n/locales'
 // i18next initialises as a side effect of importing this module. Import
 // order here does not matter — every module that resolves a string imports
 // it too, so its body has run before any of them evaluate.
 import { setLocale } from '@/lib/i18n/set-locale'
 import { logFrontend } from '@/lib/ipc-helpers'
+import { watchLocalWrites } from '@/lib/local-write-watch'
 import { logger } from '@/lib/logger'
 import { setLogBackendSink } from '@/lib/logger-transport'
 import { initFrontendObservability } from '@/lib/observability'
@@ -109,6 +112,10 @@ async function main() {
   // wrapper layer #2927 deleted, so nothing but this call keeps frontend
   // warn/error entries reaching the Rust log file.
   setLogBackendSink(logFrontend)
+
+  // #5446 — the Pages list has no finer invalidation; any local write marks it
+  // stale, so returning to an unchanged list sends no IPC.
+  watchLocalWrites(commands, invalidatePageBrowserData)
 
   // When running in a regular browser (not Tauri webview), activate IPC mocks
   // so the UI renders for visual development/debugging.
