@@ -37,7 +37,7 @@ import {
   getBlockPropertyInvalidationKey,
   recordBlockPropertyChange,
 } from '@/lib/block-property-events'
-import type { GraphLayout } from '@/lib/graph-sim-helpers'
+import { fitTransform, type GraphLayout } from '@/lib/graph-sim-helpers'
 import {
   _resetGraphStructureEventsForTest,
   getGraphStructureKey,
@@ -135,6 +135,7 @@ vi.mock('d3-force', () => ({
   })),
   forceManyBody: vi.fn(() => ({
     strength: vi.fn().mockReturnThis(),
+    distanceMax: vi.fn().mockReturnThis(),
   })),
   forceCenter: vi.fn(),
   forceCollide: vi.fn(),
@@ -183,14 +184,14 @@ vi.mock('d3-selection', () => ({
   })),
 }))
 
-vi.mock('d3-zoom', () => ({
+vi.mock('d3-zoom', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('d3-zoom')>()),
   zoom: vi.fn(() => ({
     scaleExtent: vi.fn().mockReturnThis(),
     on: vi.fn().mockReturnThis(),
     scaleBy: vi.fn(),
     transform: vi.fn(),
   })),
-  zoomIdentity: { k: 1, x: 0, y: 0 },
   zoomTransform: vi.fn(() => ({ k: 1, x: 0, y: 0 })),
 }))
 
@@ -1485,7 +1486,7 @@ describe('GraphView', () => {
       expect(zoomInstance.scaleBy).toHaveBeenCalledWith(expect.anything(), 1 / 1.3)
     })
 
-    it('0 key resets zoom', async () => {
+    it('0 key fits the graph to the view', async () => {
       const pagesResponse = {
         items: [{ id: 'page-1', content: 'Page One', block_type: 'page' }],
         next_cursor: null,
@@ -1506,16 +1507,18 @@ describe('GraphView', () => {
         expect(screen.getByTestId('graph-view')).toBeInTheDocument()
       })
 
+      const zoomInstance = vi.mocked(zoom).mock.results[0]?.value as any
+      // MockWorker settles every node at (100, 100); the first settle fits it.
+      const fitted = fitTransform([{ x: 100, y: 100 }], 800, 600)
+      expect(zoomInstance.transform.mock.calls.map((c: unknown[]) => c[1])).toEqual([fitted])
+
       const svg = screen.getByTestId('graph-svg')
       fireEvent.keyDown(svg, { key: '0' })
 
-      const zoomInstance = vi.mocked(zoom).mock.results[0]?.value as any
-      // Production calls zoomBehavior.transform(svgSelection.transition()..., zoomIdentity).
-      // zoomIdentity is mocked as { k: 1, x: 0, y: 0 } at module top.
-      expect(zoomInstance.transform).toHaveBeenCalledWith(
-        expect.anything(),
-        expect.objectContaining({ k: 1, x: 0, y: 0 }),
-      )
+      expect(zoomInstance.transform.mock.calls.map((c: unknown[]) => c[1])).toEqual([
+        fitted,
+        fitted,
+      ])
     })
 
     // Rebinding graph zoom shortcuts via keyboard-config
@@ -2223,8 +2226,8 @@ describe('kept graph layout (#5434)', () => {
 
     await mountGraph()
     expect(startedNodes()).toEqual([
-      { id: 'page-1', label: 'Page One', x: 100, y: 100 },
-      { id: 'page-2', label: 'Page Two', x: 100, y: 100 },
+      { id: 'page-1', label: 'Page One', degree: 1, x: 100, y: 100 },
+      { id: 'page-2', label: 'Page Two', degree: 1, x: 100, y: 100 },
     ])
   })
 

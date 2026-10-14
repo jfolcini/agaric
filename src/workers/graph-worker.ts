@@ -26,6 +26,7 @@ import type {
 interface SimNode extends SimulationNodeDatum {
   id: string
   label: string
+  degree: number
 }
 
 interface SimEdge extends SimulationLinkDatum<SimNode> {
@@ -112,7 +113,7 @@ function postPositions(type: 'tick' | 'done'): void {
  * leaves them `undefined` so d3 seeds it on the next tick (#2194).
  */
 function toSimNode(n: WorkerNode): SimNode {
-  const node: SimNode = { id: n.id, label: n.label }
+  const node: SimNode = { id: n.id, label: n.label, degree: n.degree }
   if (n.x !== undefined) node.x = n.x
   if (n.y !== undefined) node.y = n.y
   if (n.vx !== undefined) node.vx = n.vx

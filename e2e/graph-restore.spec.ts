@@ -58,16 +58,23 @@ async function settledPositions(page: Page): Promise<Positions> {
   return last
 }
 
+function scale(transform: string | null): number {
+  return Number(/scale\(([\d.e-]+)\)/.exec(transform ?? '')?.[1])
+}
+
 async function graphToPageAndBack(page: Page): Promise<void> {
   await navigateToView(page, 'Graph')
   await expect(page.locator(NODES).first()).toBeVisible()
   const before = await settledPositions(page)
 
-  // Zoom in, then pan, so the kept transform is neither identity nor a pure scale.
+  // Zoom in, then pan, so the kept transform is not the one the first settle fitted (#5432).
   const svg = page.getByTestId('graph-svg')
   const g = page.locator('[data-testid="graph-svg"] > g').first()
+  const fittedScale = scale(await g.getAttribute('transform'))
   await page.getByRole('button', { name: /^Zoom in/ }).click()
-  await expect.poll(() => g.getAttribute('transform')).toMatch(/scale\(1\.3\)$/)
+  await expect
+    .poll(async () => scale(await g.getAttribute('transform')))
+    .toBeCloseTo(fittedScale * 1.3, 3)
   const box = await svg.boundingBox()
   if (!box) throw new Error('graph svg has no bounding box')
   const start = { x: box.x + 20, y: box.y + box.height - 20 }

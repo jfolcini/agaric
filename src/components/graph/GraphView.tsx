@@ -454,7 +454,7 @@ export function GraphView(): React.ReactElement {
 
   // d3-force simulation + worker lifecycle + zoom handlers.
   const showMobileChrome = useShouldShowMobileChrome()
-  const { zoomIn, zoomOut, zoomReset } = useGraphSimulation({
+  const { zoomIn, zoomOut, fitToView } = useGraphSimulation({
     svgRef,
     nodes: displayNodes,
     edges: displayEdges,
@@ -632,7 +632,7 @@ export function GraphView(): React.ReactElement {
           </IconButton>
           <IconButton
             variant="outline"
-            onClick={zoomReset}
+            onClick={fitToView}
             tooltip={t('graph.zoomReset')}
             ariaLabel={withShortcut(t('graph.zoomReset'), 'graphZoomReset')}
           >

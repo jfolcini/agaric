@@ -32,6 +32,11 @@ export interface GraphNode extends SimulationNodeDatum {
    * status.
    */
   backlink_count: number | undefined
+  /**
+   * Links on screen, in and out, stamped by `patchGraphSelections`: it sizes
+   * the node and weighs it in the layout forces.
+   */
+  degree?: number
 }
 
 export interface GraphEdge extends SimulationLinkDatum<GraphNode> {

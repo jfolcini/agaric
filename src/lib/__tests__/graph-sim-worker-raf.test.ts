@@ -20,7 +20,7 @@ import {
   type SimulationCtx,
 } from '@/lib/graph-sim-helpers'
 import type { GraphEdge, GraphNode } from '@/lib/graph-types'
-import type { WorkerOutboundMessage } from '@/workers/graph-worker-types'
+import type { WorkerNode, WorkerOutboundMessage } from '@/workers/graph-worker-types'
 
 // ── Controllable Worker stub ─────────────────────────────────────────
 
@@ -95,6 +95,7 @@ function makeCtx(): { ctx: SimulationCtx; applyPositions: ReturnType<typeof vi.f
     height: 600,
     prefersReducedMotion: false,
     keptSettled: false,
+    onSettled: vi.fn(),
   }
   return { ctx, applyPositions }
 }
@@ -270,6 +271,97 @@ describe('runWorkerSimulation — rAF tick coalescing (#747 item 2)', () => {
     handle.cleanup()
   })
 
+  it('reports the settled nodes on `done`, so the view can fit them (#5432)', () => {
+    const { ctx } = makeCtx()
+    runWorkerSimulation({ ...ctx, onWorkerFailed: () => {} })
+    const worker = lastWorker as unknown as FakeWorker
+
+    worker.emit(packed('tick', [{ x: 9, y: 9 }]))
+    expect(ctx.onSettled).not.toHaveBeenCalled()
+    worker.emit(
+      packed('done', [
+        { x: 100, y: 200 },
+        { x: 300, y: 400 },
+      ]),
+    )
+
+    expect(ctx.onSettled).toHaveBeenCalledTimes(1)
+    expect(ctx.onSettled).toHaveBeenCalledWith(ctx.simNodes)
+    expect(ctx.simNodes.map((n) => [n.x, n.y])).toEqual([
+      [100, 200],
+      [300, 400],
+    ])
+  })
+
+  it('under reduced motion, settles on the tick that stops the worker (#5432)', () => {
+    const { ctx, applyPositions } = makeCtx()
+    const handle = runWorkerSimulation({
+      ...ctx,
+      prefersReducedMotion: true,
+      onWorkerFailed: () => {},
+    })
+    const worker = lastWorker as unknown as FakeWorker
+
+    for (let i = 1; i < 300; i++) worker.emit(packed('tick', [{ x: i, y: i }]))
+    expect(ctx.onSettled).not.toHaveBeenCalled()
+    expect(worker.posted.some((m) => m.type === 'stop')).toBe(false)
+
+    worker.emit(
+      packed('tick', [
+        { x: 50, y: 60 },
+        { x: 70, y: 80 },
+      ]),
+    )
+
+    expect(worker.posted.filter((m) => m.type === 'stop')).toHaveLength(1)
+    expect(applyPositions).toHaveBeenCalledTimes(1)
+    expect(ctx.onSettled).toHaveBeenCalledTimes(1)
+    expect(ctx.simNodes.map((n) => [n.x, n.y])).toEqual([
+      [50, 60],
+      [70, 80],
+    ])
+    expect(handle.settled()).toBe(true)
+  })
+
+  it('posts each node with the degree the main-thread forces read, on start and update (#5432)', () => {
+    const hub = (): GraphNode[] => ['hub', 'a', 'b', 'c', 'orphan'].map((id) => makeNode(id, id))
+    const spokes: GraphEdge[] = ['a', 'b', 'c'].map((id) => ({
+      source: 'hub',
+      target: id,
+      ref_count: 1,
+    }))
+    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg') as SVGSVGElement
+    const rendered = renderGraphElements(svg, hub(), spokes, () => {})
+    const ctx: SimulationCtx = { ...makeCtx().ctx, ...rendered }
+    const handle = runWorkerSimulation({ ...ctx, onWorkerFailed: () => {} })
+    const worker = lastWorker as unknown as FakeWorker
+
+    const degrees = (type: string): unknown => {
+      const posted = worker.posted.find((m) => m.type === type)
+      return (posted?.['nodes'] as WorkerNode[] | undefined)?.map((n) => [n.id, n.degree])
+    }
+    const expected = [
+      ['hub', 3],
+      ['a', 1],
+      ['b', 1],
+      ['c', 1],
+      ['orphan', 0],
+    ]
+    expect(degrees('start')).toEqual(expected)
+    expect(rendered.simNodes.map((n) => [n.id, n.degree])).toEqual(expected)
+
+    // A filter drops two spokes: the hub's degree follows on the update.
+    const next = renderGraphElements(svg, hub(), spokes.slice(0, 1), () => {})
+    handle.onUpdate({ ...ctx, ...next })
+    expect(degrees('update')).toEqual([
+      ['hub', 1],
+      ['a', 1],
+      ['b', 0],
+      ['c', 0],
+      ['orphan', 0],
+    ])
+  })
+
   describe('settled (#5434)', () => {
     /** A worker simulation that has reported `done`, then a click-reheat tick. */
     function ended(): ReturnType<typeof runWorkerSimulation> {
@@ -340,6 +432,7 @@ describe('runWorkerSimulation — rAF tick coalescing (#747 item 2)', () => {
       height: 600,
       prefersReducedMotion: false,
       keptSettled: false,
+      onSettled: vi.fn(),
     }
 
     handle.onUpdate(nextCtx)

@@ -52,13 +52,15 @@ export interface WorkerUpdateMessage {
 }
 
 /**
- * A node in a `start` or `update` payload, with its last-known simulation
- * state so a node that already has a place keeps it. All position fields are
- * optional — omit them for a brand-new node so d3 seeds it.
+ * A node in a `start` or `update` payload, with its degree for the layout
+ * forces (#5432) and its last-known simulation state so a node that already
+ * has a place keeps it. All position fields are optional — omit them for a
+ * brand-new node so d3 seeds it.
  */
 export interface WorkerNode {
   id: string
   label: string
+  degree: number
   x?: number
   y?: number
   vx?: number

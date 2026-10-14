@@ -42,7 +42,7 @@ let captured: { nodes: GraphNode[]; edges: GraphEdge[] } = { nodes: [], edges: [
 vi.mock('@/hooks/useGraphSimulation', () => ({
   useGraphSimulation: (args: { nodes: GraphNode[]; edges: GraphEdge[] }) => {
     captured = { nodes: args.nodes, edges: args.edges }
-    return { zoomIn: vi.fn(), zoomOut: vi.fn(), zoomReset: vi.fn() }
+    return { zoomIn: vi.fn(), zoomOut: vi.fn(), fitToView: vi.fn() }
   },
 }))
 

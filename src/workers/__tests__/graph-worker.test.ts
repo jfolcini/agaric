@@ -44,7 +44,9 @@ function makeFakeLinkForce(): FakeLinkForce {
   return lf
 }
 const forceLink = vi.fn(() => ({ id: () => ({ distance: () => makeFakeLinkForce() }) }))
-const forceManyBody = vi.fn(() => ({ strength: () => ({ kind: 'charge' }) }))
+const forceManyBody = vi.fn(() => ({
+  strength: () => ({ distanceMax: () => ({ kind: 'charge' }) }),
+}))
 const forceCollide = vi.fn(() => ({ kind: 'collide' }))
 
 vi.mock('d3-force', () => ({
@@ -60,6 +62,7 @@ vi.mock('d3-force', () => ({
 interface FakeSimNode {
   id: string
   label: string
+  degree?: number
   x?: number
   y?: number
   fx?: number | null
@@ -575,6 +578,38 @@ describe('graph-worker dispatcher (#747 item 1: resize updates forces in place)'
     expect(sim.restarted).toBeGreaterThan(0)
     // No error posted.
     expect(posted.some((m) => m.type === 'error')).toBe(false)
+  })
+
+  it('the simulation gets each node with the degree the main thread posted, on start and update (#5432)', () => {
+    send({
+      type: 'start',
+      nodes: [
+        { id: 'hub', label: 'Hub', degree: 3 },
+        { id: 'orphan', label: 'Orphan', degree: 0 },
+      ],
+      edges: [],
+      width: 800,
+      height: 600,
+      keptSettled: false,
+    })
+    const sim = lastSim as unknown as FakeSim
+    expect(sim.nodeList.map((n) => [n.id, n.degree])).toEqual([
+      ['hub', 3],
+      ['orphan', 0],
+    ])
+
+    send({
+      type: 'update',
+      nodes: [
+        { id: 'hub', label: 'Hub', degree: 1, x: 10, y: 20 },
+        { id: 'orphan', label: 'Orphan', degree: 1 },
+      ],
+      edges: [{ source: 'hub', target: 'orphan', ref_count: 1 }],
+    })
+    expect(sim.nodeList.map((n) => [n.id, n.degree])).toEqual([
+      ['hub', 1],
+      ['orphan', 1],
+    ])
   })
 
   it('`update` before any `start` is a no-op (does not throw, builds nothing)', () => {

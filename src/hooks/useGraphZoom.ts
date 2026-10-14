@@ -2,23 +2,27 @@
  * useGraphZoom — owns the d3 zoom behavior + keyboard zoom shortcut for
  * The graph canvas. Extracted from `useGraphSimulation`.
  *
- * Returns three imperative zoom callbacks (used by GraphView's zoom
+ * Returns the imperative zoom callbacks (used by GraphView's zoom
  * buttons) plus an `attach` function the orchestrator calls inside its
  * effect to wire the zoom behavior to a freshly-rendered `g` selection.
  */
 
+import type { SimulationNodeDatum } from 'd3-force'
 import { select } from 'd3-selection'
-import { type ZoomBehavior, type ZoomTransform, zoomIdentity } from 'd3-zoom'
+import type { ZoomBehavior, ZoomTransform } from 'd3-zoom'
 import type React from 'react'
 import { useCallback, useRef } from 'react'
 
 import {
   createZoomKeyHandler,
+  DEFAULT_HEIGHT,
+  DEFAULT_WIDTH,
+  fitTransform,
   type GSel,
   reducedMotionDuration,
   setupZoomBehavior,
   ZOOM_BUTTON_DURATION_MS,
-  ZOOM_RESET_DURATION_MS,
+  ZOOM_FIT_DURATION_MS,
   ZOOM_STEP,
 } from '@/lib/graph-sim-helpers'
 
@@ -26,23 +30,29 @@ export interface UseGraphZoomResult {
   /**
    * Wire the zoom behavior + keyboard shortcut to the rendered SVG/`g`
    * selection, starting from `initial` when the view comes back (#5434).
-   * Call inside the orchestrator's effect after render and invoke the
-   * returned cleanup on effect teardown.
+   * The fit shortcut calls `fitShortcut`. Call inside the orchestrator's
+   * effect after render and invoke the returned cleanup on effect teardown.
    */
-  attach: (svg: SVGSVGElement, g: GSel, initial?: ZoomTransform) => () => void
+  attach: (
+    svg: SVGSVGElement,
+    g: GSel,
+    fitShortcut: () => void,
+    initial?: ZoomTransform,
+  ) => () => void
   zoomIn: () => void
   zoomOut: () => void
-  zoomReset: () => void
+  /** Zoom and pan so every node in `nodes` is in view. */
+  fitToView: (nodes: readonly SimulationNodeDatum[]) => void
 }
 
 export function useGraphZoom(svgRef: React.RefObject<SVGSVGElement | null>): UseGraphZoomResult {
   const zoomBehaviorRef = useRef<ZoomBehavior<SVGSVGElement, unknown> | null>(null)
 
-  const attach = useCallback((svg: SVGSVGElement, g: GSel, initial?: ZoomTransform) => {
+  const attach = useCallback<UseGraphZoomResult['attach']>((svg, g, fitShortcut, initial) => {
     const zoomBehavior = setupZoomBehavior(svg, g)
     if (initial) zoomBehavior.transform(select(svg), initial)
     zoomBehaviorRef.current = zoomBehavior
-    const handleZoomKey = createZoomKeyHandler(svg, zoomBehavior)
+    const handleZoomKey = createZoomKeyHandler(svg, zoomBehavior, fitShortcut)
     svg.addEventListener('keydown', handleZoomKey)
     return () => {
       svg.removeEventListener('keydown', handleZoomKey)
@@ -67,14 +77,17 @@ export function useGraphZoom(svgRef: React.RefObject<SVGSVGElement | null>): Use
     )
   }, [svgRef])
 
-  const zoomReset = useCallback(() => {
-    if (!svgRef.current) return
-    const svgSel = select(svgRef.current)
-    zoomBehaviorRef.current?.transform(
-      svgSel.transition().duration(reducedMotionDuration(ZOOM_RESET_DURATION_MS)),
-      zoomIdentity,
-    )
-  }, [svgRef])
+  const fitToView = useCallback<UseGraphZoomResult['fitToView']>(
+    (nodes) => {
+      const svg = svgRef.current
+      if (!svg) return
+      zoomBehaviorRef.current?.transform(
+        select(svg).transition().duration(reducedMotionDuration(ZOOM_FIT_DURATION_MS)),
+        fitTransform(nodes, svg.clientWidth || DEFAULT_WIDTH, svg.clientHeight || DEFAULT_HEIGHT),
+      )
+    },
+    [svgRef],
+  )
 
-  return { attach, zoomIn, zoomOut, zoomReset }
+  return { attach, zoomIn, zoomOut, fitToView }
 }

@@ -8,20 +8,21 @@
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 
+import { zoomIdentity } from 'd3-zoom'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
+import { nodeRadius } from '@/lib/graph-forces'
 import {
   createZoomKeyHandler,
-  nodeRadius,
+  fitTransform,
   packPositions,
   patchGraphSelections,
   reducedMotionDuration,
   renderGraphElements,
   unpackPositions,
   ZOOM_BUTTON_DURATION_MS,
-  ZOOM_RESET_DURATION_MS,
+  ZOOM_FIT_DURATION_MS,
   ZOOM_STEP,
-  zoomIdentity,
 } from '@/lib/graph-sim-helpers'
 import type { GraphEdge, GraphNode } from '@/lib/graph-types'
 import { resetAllShortcuts } from '@/lib/keyboard-config'
@@ -119,6 +120,62 @@ describe('nodeRadius — node size from link count (#5429)', () => {
     }
     // Four times the links, twice the growth: the radius grows with √degree.
     expect(nodeRadius(16) - 3).toBeCloseTo(2 * (nodeRadius(4) - 3))
+  })
+})
+
+describe('fitTransform — fit the graph to the view (#5432)', () => {
+  /** Where a graph point lands on screen under transform `t`. */
+  function onScreen(t: ReturnType<typeof fitTransform>, x: number, y: number): [number, number] {
+    return t.apply([x, y])
+  }
+
+  it('centres the bounding box and fills the tighter side up to the padding', () => {
+    const t = fitTransform(
+      [
+        { x: -100, y: -50 },
+        { x: 300, y: 150 },
+        { x: 0, y: 0 },
+      ],
+      800,
+      600,
+    )
+
+    // Width is the tighter side: (800 - 2·64) / 400.
+    expect(t.k).toBeCloseTo(1.68)
+    expect(onScreen(t, 100, 50)).toEqual([400, 300])
+    const [left, top] = onScreen(t, -100, -50)
+    const [right, bottom] = onScreen(t, 300, 150)
+    expect(left).toBeCloseTo(64)
+    expect(right).toBeCloseTo(736)
+    expect(top).toBeCloseTo(132)
+    expect(bottom).toBeCloseTo(468)
+  })
+
+  it('caps the scale at 2, so a small graph is not blown up', () => {
+    const t = fitTransform(
+      [
+        { x: 0, y: 0 },
+        { x: 10, y: 20 },
+      ],
+      800,
+      600,
+    )
+    expect(t.k).toBe(2)
+    expect(onScreen(t, 5, 10)).toEqual([400, 300])
+  })
+
+  it('centres a single node at the cap', () => {
+    const t = fitTransform([{ x: 70, y: -30 }], 800, 600)
+    expect(t.k).toBe(2)
+    expect(onScreen(t, 70, -30)).toEqual([400, 300])
+  })
+
+  it('ignores nodes without a position, and is the identity with none placed', () => {
+    expect(fitTransform([{ x: 70, y: -30 }, {}], 800, 600)).toEqual(
+      fitTransform([{ x: 70, y: -30 }], 800, 600),
+    )
+    expect(fitTransform([{}], 800, 600)).toEqual(zoomIdentity)
+    expect(fitTransform([], 800, 600)).toEqual(zoomIdentity)
   })
 })
 
@@ -492,7 +549,7 @@ describe('createZoomKeyHandler \u2014 keyboard zoom dispatch (#1172)', () => {
   function makeZoomBehavior() {
     // `scaleBy` / `transform` receive the transition selection as their first
     // arg; the handler builds that from `select(svg).transition()`. We only
-    // assert the second arg (the zoom factor / identity transform).
+    // assert the second arg (the zoom factor).
     return {
       scaleBy: vi.fn(),
       transform: vi.fn(),
@@ -506,7 +563,7 @@ describe('createZoomKeyHandler \u2014 keyboard zoom dispatch (#1172)', () => {
   it('graphZoomIn (`+`) scales by the zoom step', () => {
     const svg = makeSvg()
     const zb = makeZoomBehavior()
-    const handler = createZoomKeyHandler(svg, zb as any)
+    const handler = createZoomKeyHandler(svg, zb as any, vi.fn())
 
     press(handler, { key: '+' })
 
@@ -517,7 +574,7 @@ describe('createZoomKeyHandler \u2014 keyboard zoom dispatch (#1172)', () => {
   it('graphZoomIn also fires on the `=` alternative (`+ / =`)', () => {
     const svg = makeSvg()
     const zb = makeZoomBehavior()
-    const handler = createZoomKeyHandler(svg, zb as any)
+    const handler = createZoomKeyHandler(svg, zb as any, vi.fn())
 
     press(handler, { key: '=' })
 
@@ -528,7 +585,7 @@ describe('createZoomKeyHandler \u2014 keyboard zoom dispatch (#1172)', () => {
   it('graphZoomOut (`-`) scales by the inverse step', () => {
     const svg = makeSvg()
     const zb = makeZoomBehavior()
-    const handler = createZoomKeyHandler(svg, zb as any)
+    const handler = createZoomKeyHandler(svg, zb as any, vi.fn())
 
     press(handler, { key: '-' })
 
@@ -537,22 +594,23 @@ describe('createZoomKeyHandler \u2014 keyboard zoom dispatch (#1172)', () => {
     expect(zb.transform).not.toHaveBeenCalled()
   })
 
-  it('graphZoomReset (`0`) transforms to the identity zoom', () => {
+  it('graphZoomReset (`0`) fits the graph to the view', () => {
     const svg = makeSvg()
     const zb = makeZoomBehavior()
-    const handler = createZoomKeyHandler(svg, zb as any)
+    const fitToView = vi.fn()
+    const handler = createZoomKeyHandler(svg, zb as any, fitToView)
 
     press(handler, { key: '0' })
 
-    expect(zb.transform).toHaveBeenCalledTimes(1)
-    expect(zb.transform.mock.calls[0]?.[1]).toBe(zoomIdentity)
+    expect(fitToView).toHaveBeenCalledTimes(1)
     expect(zb.scaleBy).not.toHaveBeenCalled()
   })
 
   it('ignores the zoom keys when focus is in an editable target', () => {
     const svg = makeSvg()
     const zb = makeZoomBehavior()
-    const handler = createZoomKeyHandler(svg, zb as any)
+    const fitToView = vi.fn()
+    const handler = createZoomKeyHandler(svg, zb as any, fitToView)
 
     const input = document.createElement('input')
     document.body.append(input)
@@ -561,7 +619,7 @@ describe('createZoomKeyHandler \u2014 keyboard zoom dispatch (#1172)', () => {
       const e = new KeyboardEvent('keydown', { key: '0' })
       Object.defineProperty(e, 'target', { value: input })
       handler(e)
-      expect(zb.transform).not.toHaveBeenCalled()
+      expect(fitToView).not.toHaveBeenCalled()
       expect(zb.scaleBy).not.toHaveBeenCalled()
     } finally {
       input.remove()
@@ -571,12 +629,13 @@ describe('createZoomKeyHandler \u2014 keyboard zoom dispatch (#1172)', () => {
   it('ignores unrelated keys', () => {
     const svg = makeSvg()
     const zb = makeZoomBehavior()
-    const handler = createZoomKeyHandler(svg, zb as any)
+    const fitToView = vi.fn()
+    const handler = createZoomKeyHandler(svg, zb as any, fitToView)
 
     press(handler, { key: 'x' })
 
     expect(zb.scaleBy).not.toHaveBeenCalled()
-    expect(zb.transform).not.toHaveBeenCalled()
+    expect(fitToView).not.toHaveBeenCalled()
   })
 })
 
@@ -612,13 +671,13 @@ describe('reduced-motion graph zoom (#3308)', () => {
   it('#3308: reducedMotionDuration returns 0 when reduced motion is requested', () => {
     setReducedMotion(true)
     expect(reducedMotionDuration(ZOOM_BUTTON_DURATION_MS)).toBe(0)
-    expect(reducedMotionDuration(ZOOM_RESET_DURATION_MS)).toBe(0)
+    expect(reducedMotionDuration(ZOOM_FIT_DURATION_MS)).toBe(0)
   })
 
   it('#3308: reducedMotionDuration passes the duration through otherwise', () => {
     setReducedMotion(false)
     expect(reducedMotionDuration(ZOOM_BUTTON_DURATION_MS)).toBe(ZOOM_BUTTON_DURATION_MS)
-    expect(reducedMotionDuration(ZOOM_RESET_DURATION_MS)).toBe(ZOOM_RESET_DURATION_MS)
+    expect(reducedMotionDuration(ZOOM_FIT_DURATION_MS)).toBe(ZOOM_FIT_DURATION_MS)
   })
 
   it('#3308: reducedMotionDuration reads matchMedia at call time, not module load', () => {
@@ -629,21 +688,17 @@ describe('reduced-motion graph zoom (#3308)', () => {
     expect(reducedMotionDuration(ZOOM_BUTTON_DURATION_MS)).toBe(0)
   })
 
-  it('#3308: keyboard zoom in/out/reset transitions have duration 0 under reduced motion', () => {
+  it('#3308: keyboard zoom in/out transitions have duration 0 under reduced motion', () => {
     setReducedMotion(true)
     const svg = makeSvg()
 
     const zoomIn = makeZoomBehavior()
-    createZoomKeyHandler(svg, zoomIn as never)(new KeyboardEvent('keydown', { key: '+' }))
+    createZoomKeyHandler(svg, zoomIn as never, vi.fn())(new KeyboardEvent('keydown', { key: '+' }))
     expect(transitionDuration(zoomIn.scaleBy.mock.calls[0])).toBe(0)
 
     const zoomOut = makeZoomBehavior()
-    createZoomKeyHandler(svg, zoomOut as never)(new KeyboardEvent('keydown', { key: '-' }))
+    createZoomKeyHandler(svg, zoomOut as never, vi.fn())(new KeyboardEvent('keydown', { key: '-' }))
     expect(transitionDuration(zoomOut.scaleBy.mock.calls[0])).toBe(0)
-
-    const zoomReset = makeZoomBehavior()
-    createZoomKeyHandler(svg, zoomReset as never)(new KeyboardEvent('keydown', { key: '0' }))
-    expect(transitionDuration(zoomReset.transform.mock.calls[0])).toBe(0)
   })
 
   it('#3308: keyboard zoom transitions keep their animated durations otherwise', () => {
@@ -651,12 +706,8 @@ describe('reduced-motion graph zoom (#3308)', () => {
     const svg = makeSvg()
 
     const zoomIn = makeZoomBehavior()
-    createZoomKeyHandler(svg, zoomIn as never)(new KeyboardEvent('keydown', { key: '+' }))
+    createZoomKeyHandler(svg, zoomIn as never, vi.fn())(new KeyboardEvent('keydown', { key: '+' }))
     expect(transitionDuration(zoomIn.scaleBy.mock.calls[0])).toBe(ZOOM_BUTTON_DURATION_MS)
-
-    const zoomReset = makeZoomBehavior()
-    createZoomKeyHandler(svg, zoomReset as never)(new KeyboardEvent('keydown', { key: '0' }))
-    expect(transitionDuration(zoomReset.transform.mock.calls[0])).toBe(ZOOM_RESET_DURATION_MS)
   })
 })
 
