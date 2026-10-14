@@ -6,6 +6,7 @@
 
 import { describe, expect, it } from 'vitest'
 
+import { utf8ToBase64Url } from '@/lib/base64url'
 import type { FilterExpr } from '@/lib/bindings'
 import {
   type InlineQuerySpec,
@@ -79,6 +80,21 @@ describe('inline-query-spec', () => {
     // Sanity: the well-formed one decodes; a truncated one does not.
     expect(decodeInlineQueryPayload(`v2:${noFilter}`)).not.toBeNull()
     expect(decodeInlineQueryPayload(`v2:${noFilter.slice(0, 4)}`)).toBeNull()
+  })
+
+  it.each([
+    ['a missing filter', {}],
+    ['a null JSON value', null],
+    ['an unknown node type', { filter: { type: 'Xor', children: [] } }],
+    ['a Leaf without a primitive', { filter: { type: 'Leaf' } }],
+    ['an And without children', { filter: { type: 'And' } }],
+    [
+      'a nested malformed child',
+      { filter: { type: 'Not', child: { type: 'Or', children: [{}] } } },
+    ],
+  ])('returns null for a v2 payload with %s', (_label, body) => {
+    const payload = `v2:${utf8ToBase64Url(JSON.stringify(body))}`
+    expect(decodeInlineQueryPayload(payload)).toBeNull()
   })
 
   it('recognises the v2 marker', () => {

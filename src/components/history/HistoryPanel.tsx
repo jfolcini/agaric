@@ -37,6 +37,7 @@ import type { HistoryEntry, OpRef, PageResponse } from '@/lib/bindings'
 import { commands } from '@/lib/bindings'
 import { PAGINATION_LIMIT } from '@/lib/constants'
 import { recordGraphStructureChange } from '@/lib/graph-structure-events'
+import { parsePayloadObject } from '@/lib/history-utils'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
 import { queryClient } from '@/lib/query-client'
@@ -61,13 +62,8 @@ interface HistoryPanelProps {
  */
 function getRestorableText(entry: HistoryEntry): string | null {
   if (entry.op_type !== 'edit_block') return null
-  try {
-    const parsed = JSON.parse(entry.payload) as Record<string, unknown>
-    if (typeof parsed['to_text'] === 'string') return parsed['to_text']
-  } catch {
-    // Invalid JSON ⇒ not restorable.
-  }
-  return null
+  const parsed = parsePayloadObject(entry.payload)
+  return typeof parsed?.['to_text'] === 'string' ? parsed['to_text'] : null
 }
 
 function isRestorable(entry: HistoryEntry): boolean {

@@ -100,6 +100,27 @@ describe('usePropertyDefForEdit', () => {
     expect(mockGetPropertyDef).toHaveBeenCalledWith('severity')
   })
 
+  it.each([
+    ['an object', JSON.stringify({ a: 1 })],
+    ['an array with a non-string element', JSON.stringify(['Low', 2])],
+    ['malformed JSON', '[not json'],
+  ])('warns and clears select options when options is %s', async (_label, options) => {
+    mockGetPropertyDef.mockResolvedValue({
+      key: 'severity',
+      value_type: 'select',
+      options,
+      created_at: '2025-01-01T00:00:00Z',
+    })
+
+    const { result } = renderHook(() => usePropertyDefForEdit({ key: 'severity', value: 'Low' }))
+
+    await waitFor(() => {
+      expect(mockLoggerWarn).toHaveBeenCalled()
+    })
+    expect(mockLoggerWarn.mock.calls[0]?.[1]).toBe('failed to parse select options')
+    expect(result.current.selectOptions).toBeNull()
+  })
+
   it('loads ref pages when value_type is ref', async () => {
     // #2248 — the ref-page fetch requires an active space.
     useSpaceStore.setState({ currentSpaceId: 'SPACE_1' })

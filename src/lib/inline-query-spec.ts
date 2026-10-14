@@ -60,6 +60,22 @@ export function encodeInlineQueryPayload(spec: InlineQuerySpec): string {
 }
 
 /**
+ * True when `value` is a well-formed `FilterExpr` tree: every node is a known
+ * variant whose `primitive` / `child` / `children` field is present. Leaf
+ * primitives are only checked to be objects; the engine validates their fields.
+ */
+export function isFilterExpr(value: unknown): value is FilterExpr {
+  if (typeof value !== 'object' || value === null) return false
+  const node = value as { type?: unknown; primitive?: unknown; child?: unknown; children?: unknown }
+  if (node.type === 'Leaf') return typeof node.primitive === 'object' && node.primitive !== null
+  if (node.type === 'Not') return isFilterExpr(node.child)
+  if (node.type === 'And' || node.type === 'Or') {
+    return Array.isArray(node.children) && node.children.every(isFilterExpr)
+  }
+  return false
+}
+
+/**
  * Parse the inner payload of a `{{query …}}` block. Returns the structured spec
  * for a well-formed `v2:` payload, or `null` for anything else — a legacy text
  * query, or a corrupt/garbled `v2:` payload — so the caller falls back to the
@@ -70,9 +86,10 @@ export function decodeInlineQueryPayload(payload: string): InlineQuerySpec | nul
   if (!trimmed.startsWith(INLINE_QUERY_V2_PREFIX)) return null
   try {
     const json = base64UrlToUtf8(trimmed.slice(INLINE_QUERY_V2_PREFIX.length))
-    const parsed = JSON.parse(json) as Partial<InlineQuerySpec> | null
-    if (parsed == null || typeof parsed !== 'object' || parsed.filter == null) return null
-    return { filter: parsed.filter, table: parsed.table === true }
+    const parsed: unknown = JSON.parse(json)
+    if (typeof parsed !== 'object' || parsed === null) return null
+    const { filter, table } = parsed as { filter?: unknown; table?: unknown }
+    return isFilterExpr(filter) ? { filter, table: table === true } : null
   } catch {
     return null
   }

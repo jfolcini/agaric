@@ -467,6 +467,19 @@ describe('serializeQuerySpec / parseQuerySpec', () => {
   it('throws on malformed JSON', () => {
     expect(() => parseQuerySpec('{not json')).toThrow()
   })
+
+  it.each([
+    ['null', 'null'],
+    ['an array', '[]'],
+    ['a filter of the wrong type', JSON.stringify({ filter: 'x' })],
+    ['a filter with an unknown node type', JSON.stringify({ filter: { type: 'Xor' } })],
+    [
+      'a nested filter node without children',
+      JSON.stringify({ filter: { type: 'And', children: [{ type: 'Or' }] } }),
+    ],
+  ])('throws on a query_spec with %s', (_label, raw) => {
+    expect(() => parseQuerySpec(raw)).toThrow(/filter/)
+  })
 })
 
 describe('advancedQuery store — loadView (#1460)', () => {

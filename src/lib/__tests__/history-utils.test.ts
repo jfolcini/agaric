@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
 import type { HistoryEntry } from '@/lib/bindings'
-import { getPayloadRawContent, getPropertyPayload } from '@/lib/history-utils'
+import { getPayloadRawContent, getPropertyPayload, parsePayloadObject } from '@/lib/history-utils'
 
 function makeEntry(payload: string, opType = 'edit_block'): HistoryEntry {
   return {
@@ -225,5 +225,21 @@ describe('getPropertyPayload', () => {
   it('excludes value from the result when present but not a string', () => {
     const entry = makeEntry(JSON.stringify({ key: 'due_date', value: 42 }), 'set_property')
     expect(getPropertyPayload(entry)).toEqual({ key: 'due_date' })
+  })
+})
+
+describe('parsePayloadObject', () => {
+  it('returns the parsed object for an object payload', () => {
+    expect(parsePayloadObject('{"block_id":"B1"}')).toEqual({ block_id: 'B1' })
+  })
+
+  it.each([
+    ['invalid JSON', '{not json'],
+    ['an array', '[1,2]'],
+    ['null', 'null'],
+    ['a string', '"text"'],
+    ['a number', '3'],
+  ])('returns null for %s', (_label, payload) => {
+    expect(parsePayloadObject(payload)).toBeNull()
   })
 })

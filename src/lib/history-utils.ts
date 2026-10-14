@@ -1,5 +1,17 @@
 import type { HistoryEntry } from '@/lib/bindings'
 
+/** An op-log payload as a plain object, or `null` for invalid JSON or any non-object value. */
+export function parsePayloadObject(payload: string): Record<string, unknown> | null {
+  try {
+    const parsed: unknown = JSON.parse(payload)
+    return typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)
+      : null
+  } catch {
+    return null
+  }
+}
+
 /**
  * Extract the raw `to_text` or `content` string from an op-log payload
  * WITHOUT truncation. Truncation is handled by CSS `line-clamp` in the UI.
@@ -24,31 +36,28 @@ import type { HistoryEntry } from '@/lib/bindings'
  * field to show.
  */
 export function getPayloadRawContent(entry: HistoryEntry): string | null {
-  try {
-    const parsed = JSON.parse(entry.payload) as Record<string, unknown>
-    if (typeof parsed['to_text'] === 'string') return parsed['to_text']
-    if (typeof parsed['content'] === 'string') return parsed['content']
-    if (entry.op_type === 'delete_attachment') {
-      const filename = parsed['filename']
-      return typeof filename === 'string' && filename.length > 0 ? filename : null
-    }
-    if (entry.op_type === 'rename_attachment') {
-      const oldRaw = parsed['old_filename']
-      const newRaw = parsed['new_filename']
-      // `""` is a string, so `??` alone would let an empty `old_filename`
-      // win over a populated `new_filename` (#4335 review) — guard both
-      // with `.length > 0`, same as the `delete_attachment` arm above.
-      const oldFilename = typeof oldRaw === 'string' && oldRaw.length > 0 ? oldRaw : null
-      const newFilename = typeof newRaw === 'string' && newRaw.length > 0 ? newRaw : null
-      if (oldFilename && newFilename) return `${oldFilename} → ${newFilename}`
-      return oldFilename ?? newFilename
-    }
-    if (entry.op_type === 'add_attachment') {
-      const filename = parsed['filename']
-      return typeof filename === 'string' && filename.length > 0 ? filename : null
-    }
-  } catch {
-    // Invalid JSON
+  const parsed = parsePayloadObject(entry.payload)
+  if (parsed === null) return null
+  if (typeof parsed['to_text'] === 'string') return parsed['to_text']
+  if (typeof parsed['content'] === 'string') return parsed['content']
+  if (entry.op_type === 'delete_attachment') {
+    const filename = parsed['filename']
+    return typeof filename === 'string' && filename.length > 0 ? filename : null
+  }
+  if (entry.op_type === 'rename_attachment') {
+    const oldRaw = parsed['old_filename']
+    const newRaw = parsed['new_filename']
+    // `""` is a string, so `??` alone would let an empty `old_filename`
+    // win over a populated `new_filename` (#4335 review) — guard both
+    // with `.length > 0`, same as the `delete_attachment` arm above.
+    const oldFilename = typeof oldRaw === 'string' && oldRaw.length > 0 ? oldRaw : null
+    const newFilename = typeof newRaw === 'string' && newRaw.length > 0 ? newRaw : null
+    if (oldFilename && newFilename) return `${oldFilename} → ${newFilename}`
+    return oldFilename ?? newFilename
+  }
+  if (entry.op_type === 'add_attachment') {
+    const filename = parsed['filename']
+    return typeof filename === 'string' && filename.length > 0 ? filename : null
   }
   return null
 }
@@ -61,16 +70,12 @@ export function getPropertyPayload(entry: HistoryEntry): { key: string; value?: 
   if (entry.op_type !== 'set_property' && entry.op_type !== 'delete_property') {
     return null
   }
-  try {
-    const parsed = JSON.parse(entry.payload) as Record<string, unknown>
-    if (typeof parsed['key'] === 'string') {
-      return {
-        key: parsed['key'],
-        ...(typeof parsed['value'] === 'string' ? { value: parsed['value'] } : {}),
-      }
+  const parsed = parsePayloadObject(entry.payload)
+  if (parsed !== null && typeof parsed['key'] === 'string') {
+    return {
+      key: parsed['key'],
+      ...(typeof parsed['value'] === 'string' ? { value: parsed['value'] } : {}),
     }
-  } catch {
-    // Invalid JSON
   }
   return null
 }

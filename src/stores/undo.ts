@@ -38,6 +38,7 @@ import { announce } from '@/lib/announcer'
 import { isNonReversible, isNotFound, isValidation, unwrap } from '@/lib/app-error'
 import type { OpRef, UndoResult } from '@/lib/bindings'
 import { commands } from '@/lib/bindings'
+import { parsePayloadObject } from '@/lib/history-utils'
 import { t } from '@/lib/i18n'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
@@ -467,12 +468,8 @@ const SWIPE_UNDO_HISTORY_SCAN = 50
 
 /** Best-effort `block_id` from an op-log payload JSON string. */
 function historyEntryBlockId(payload: string): string | null {
-  try {
-    const parsed = JSON.parse(payload) as Record<string, unknown>
-    return typeof parsed['block_id'] === 'string' ? parsed['block_id'] : null
-  } catch {
-    return null
-  }
+  const blockId = parsePayloadObject(payload)?.['block_id']
+  return typeof blockId === 'string' ? blockId : null
 }
 
 function notifySwipeUndoFailed(): void {

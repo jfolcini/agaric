@@ -202,7 +202,7 @@ function readLegacyCollapsedDefault(): boolean {
  * `useLocalStoragePreference` itself (falls back to the default).
  */
 function parseGroupCollapsed(raw: string): Record<string, boolean> {
-  const parsed = JSON.parse(raw) as unknown
+  const parsed: unknown = JSON.parse(raw)
   if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) return {}
   const result: Record<string, boolean> = {}
   for (const [key, value] of Object.entries(parsed)) {
