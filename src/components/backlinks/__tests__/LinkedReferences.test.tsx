@@ -21,7 +21,7 @@
  */
 
 import { invoke } from '@tauri-apps/api/core'
-import { act, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { toast } from 'sonner'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
@@ -1783,28 +1783,34 @@ describe('LinkedReferences', () => {
     expect(toast.error).not.toHaveBeenCalledWith('Failed to load property keys')
   })
 
-  // The keys only feed the filter builder, so a page open must not pay for them;
-  // touching the builder (focus or pointer press) fetches them exactly once.
-  it('does not list property keys at mount, only once the filter builder is touched', async () => {
-    const user = userEvent.setup()
-    mockInvokeWith(oneGroupGrouped)
+  // The keys only feed the filter builder, so a page open must not pay for them.
+  // Keyboard focus and a pointer press each load them on their own: a keyboard
+  // user never presses, and Safari does not focus a button on click.
+  it.each([
+    ['keyboard focus', (el: HTMLElement) => act(() => el.focus())],
+    ['a pointer press', (el: HTMLElement) => fireEvent.pointerDown(el)],
+  ])(
+    'lists property keys on %s inside the filter builder, not at mount',
+    async (_trigger, touch) => {
+      mockInvokeWith(oneGroupGrouped)
 
-    renderLinkedReferences({ targetId: 'PAGE1' })
+      renderLinkedReferences({ targetId: 'PAGE1' })
 
-    // Positive control: the panel is fully rendered and its own read has run.
-    const clearButton = await screen.findByTestId('mock-clear-filters')
-    const countCalls = (cmd: string) => mockedInvoke.mock.calls.filter((c) => c[0] === cmd).length
-    expect(countCalls('list_backlinks_grouped')).toBe(1)
-    expect(countCalls('list_property_keys')).toBe(0)
+      // Positive control: the panel is fully rendered and its own read has run.
+      const clearButton = await screen.findByTestId('mock-clear-filters')
+      const countCalls = (cmd: string) => mockedInvoke.mock.calls.filter((c) => c[0] === cmd).length
+      expect(countCalls('list_backlinks_grouped')).toBe(1)
+      expect(countCalls('list_property_keys')).toBe(0)
 
-    await user.click(clearButton)
-    await waitFor(() => {
+      touch(clearButton)
+      await waitFor(() => {
+        expect(countCalls('list_property_keys')).toBe(1)
+      })
+
+      touch(clearButton)
       expect(countCalls('list_property_keys')).toBe(1)
-    })
-
-    await user.click(clearButton)
-    expect(countCalls('list_property_keys')).toBe(1)
-  })
+    },
+  )
 
   // 39. simultaneous failures: backlinks toast; property-keys
   // Failure is now handled silently by the shared cache.

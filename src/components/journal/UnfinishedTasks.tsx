@@ -211,20 +211,6 @@ function parseGroupCollapsed(raw: string): Record<string, boolean> {
   return result
 }
 
-/** Resolve a set of page IDs to title map. Returns empty map on failure. */
-async function resolvePageTitles(
-  parentIds: string[],
-  spaceId: string,
-): Promise<Map<string, string>> {
-  try {
-    return await resolveTitles(spaceId, parentIds)
-  } catch (err) {
-    // Non-critical: breadcrumbs will show "Untitled"
-    logger.warn('UnfinishedTasks', 'failed to resolve page titles', undefined, err)
-    return new Map()
-  }
-}
-
 /**
  * The date shown on a block's badge: `due_date`, falling back to
  * `scheduled_date`. Uses `||`, not `??` — a blank `due_date` (`''`) is a
@@ -410,9 +396,8 @@ export function UnfinishedTasks({
   // Resolve page titles for breadcrumbs once the drained blocks are in. Kept
   // SEPARATE from the item fetch (mirrors DonePanel) so a title-resolve failure
   // surfaces blocks with an "Untitled" breadcrumb rather than failing the
-  // section. `resolvePageTitles` swallows its own errors and returns an empty
-  // map on failure, so the fallback is automatic. Titles are REPLACED (not
-  // merged) so the map is rebuilt wholesale per load.
+  // section. Titles are REPLACED (not merged) so the map is rebuilt wholesale
+  // per load.
   //
   // Gated on `!loading`: unlike the old single-commit drain, `useInfiniteQuery`
   // commits each page incrementally, so `blocks` changes once per drained page.
@@ -428,11 +413,15 @@ export function UnfinishedTasks({
       return
     }
     let cancelled = false
-    // `resolvePageTitles` swallows its own errors (returns an empty map), and
-    // the handler below only sets state — nothing here can reject.
-    void resolvePageTitles(parentIds, currentSpaceId).then((titles) => {
-      if (!cancelled) setPageTitles(titles)
-    })
+    resolveTitles(currentSpaceId, parentIds)
+      .then((titles) => {
+        if (!cancelled) setPageTitles(titles)
+      })
+      .catch((err: unknown) => {
+        // Non-critical: breadcrumbs fall back to "Untitled".
+        logger.warn('UnfinishedTasks', 'failed to resolve page titles', undefined, err)
+        if (!cancelled) setPageTitles(new Map())
+      })
     return () => {
       cancelled = true
     }
