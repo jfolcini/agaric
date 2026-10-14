@@ -28,6 +28,7 @@ vi.mock('d3-force', () => {
       stop: vi.fn(),
       alpha: vi.fn().mockReturnThis(),
       alphaDecay: vi.fn().mockReturnThis(),
+      alphaTarget: vi.fn().mockReturnThis(),
       tick: vi.fn(),
       restart: vi.fn(),
       nodes: vi.fn(() => []),
@@ -38,7 +39,10 @@ vi.mock('d3-force', () => {
   return {
     forceSimulation: vi.fn(makeSim),
     forceLink: vi.fn(() => ({ id: vi.fn().mockReturnThis(), distance: vi.fn().mockReturnThis() })),
-    forceManyBody: vi.fn(() => ({ strength: vi.fn().mockReturnThis() })),
+    forceManyBody: vi.fn(() => ({
+      strength: vi.fn().mockReturnThis(),
+      distanceMax: vi.fn().mockReturnThis(),
+    })),
     forceCenter: vi.fn(),
     forceCollide: vi.fn(),
     forceX: vi.fn(() => ({ strength: vi.fn().mockReturnThis() })),
@@ -87,6 +91,7 @@ function makeCtx(prefersReducedMotion = false): SimulationCtx {
     height: 600,
     prefersReducedMotion,
     keptSettled: false,
+    onSettled: vi.fn(),
   }
 }
 
@@ -216,6 +221,56 @@ describe('useGraphMainThreadSim', () => {
     expect(lastSim?.tick).toHaveBeenCalledWith(300)
     // Tick listener is NOT registered in reduced-motion mode (animations off).
     expect(lastSim?.on).not.toHaveBeenCalledWith('tick', expect.any(Function))
+  })
+
+  it('reports the settled nodes once the simulation ends, so the view can fit them (#5432)', () => {
+    const ctx = makeCtx()
+    renderHook(() => useGraphMainThreadSim()).result.current(ctx)
+    const settledNodes = makeNodes()
+    lastSim.nodes.mockReturnValue(settledNodes)
+    expect(ctx.onSettled).not.toHaveBeenCalled()
+
+    const calls = lastSim.on.mock.calls as Array<[string, () => void]>
+    calls.find(([e]) => e === 'end')?.[1]()
+
+    expect(ctx.onSettled).toHaveBeenCalledTimes(1)
+    expect(ctx.onSettled).toHaveBeenCalledWith(settledNodes)
+  })
+
+  it('the reduced-motion path reports its settled nodes as soon as it has ticked (#5432)', () => {
+    const ctx = makeCtx(true)
+    const settledNodes = makeNodes()
+    vi.mocked(forceSimulation).mockImplementationOnce((...args) => {
+      const sim = vi.mocked(forceSimulation).getMockImplementation()?.(...args)
+      ;(sim as any).nodes.mockReturnValue(settledNodes)
+      return sim as any
+    })
+
+    renderHook(() => useGraphMainThreadSim()).result.current(ctx)
+
+    expect(ctx.onSettled).toHaveBeenCalledTimes(1)
+    expect(ctx.onSettled).toHaveBeenCalledWith(settledNodes)
+    expect(lastSim.tick.mock.invocationCallOrder[0]).toBeLessThan(
+      vi.mocked(ctx.onSettled).mock.invocationCallOrder[0] as number,
+    )
+  })
+
+  it('a drag warms the simulation toward a target, as the worker does, instead of jolting it (#5432)', () => {
+    renderHook(() => useGraphMainThreadSim()).result.current(makeCtx())
+    const behaviour = vi.mocked(drag).mock.results.at(-1)?.value as {
+      on: { mock: { calls: Array<[string, (event: unknown, d: unknown) => void]> } }
+    }
+    const handler = (name: string) => behaviour.on.mock.calls.find(([e]) => e === name)?.[1]
+    const node = { x: 1, y: 2 }
+    lastSim.alpha.mockClear()
+
+    handler('start')?.({ active: 0 }, node)
+    expect(lastSim.alphaTarget).toHaveBeenLastCalledWith(0.3)
+    expect(lastSim.restart).toHaveBeenCalledTimes(1)
+
+    handler('end')?.({ active: 0 }, node)
+    expect(lastSim.alphaTarget).toHaveBeenLastCalledWith(0)
+    expect(lastSim.alpha).not.toHaveBeenCalled()
   })
 
   it('onResize re-anchors centering forces and re-energizes the simulation', () => {

@@ -11,12 +11,13 @@
 import { act, render } from '@testing-library/react'
 import { forceSimulation } from 'd3-force'
 import { select } from 'd3-selection'
-import { zoom } from 'd3-zoom'
+import { zoom, zoomIdentity } from 'd3-zoom'
 import React from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { GraphEdge, GraphNode } from '@/components/graph/GraphView.helpers'
-import { useGraphSimulation } from '@/hooks/useGraphSimulation'
+import { type GraphLayoutStore, useGraphSimulation } from '@/hooks/useGraphSimulation'
+import { fitTransform } from '@/lib/graph-sim-helpers'
 
 vi.mock('@/lib/logger', () => ({
   logger: {
@@ -39,7 +40,10 @@ vi.mock('d3-force', () => ({
     nodes: vi.fn(() => []),
   })),
   forceLink: vi.fn(() => ({ id: vi.fn().mockReturnThis(), distance: vi.fn().mockReturnThis() })),
-  forceManyBody: vi.fn(() => ({ strength: vi.fn().mockReturnThis() })),
+  forceManyBody: vi.fn(() => ({
+    strength: vi.fn().mockReturnThis(),
+    distanceMax: vi.fn().mockReturnThis(),
+  })),
   forceCenter: vi.fn(),
   forceCollide: vi.fn(),
   forceX: vi.fn(() => ({ strength: vi.fn().mockReturnThis() })),
@@ -92,14 +96,14 @@ vi.mock('d3-selection', () => ({
   })),
 }))
 
-vi.mock('d3-zoom', () => ({
+vi.mock('d3-zoom', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('d3-zoom')>()),
   zoom: vi.fn(() => ({
     scaleExtent: vi.fn().mockReturnThis(),
     on: vi.fn().mockReturnThis(),
     scaleBy: vi.fn(),
     transform: vi.fn(),
   })),
-  zoomIdentity: { k: 1, x: 0, y: 0 },
   zoomTransform: vi.fn(() => ({ k: 1, x: 0, y: 0 })),
 }))
 
@@ -226,11 +230,18 @@ interface HarnessProps {
   edges: GraphEdge[]
   onResult: (result: any) => void
   navigateToPage?: (id: string, label: string) => void
+  layout?: GraphLayoutStore
 }
 
 const NO_LAYOUT = { read: () => null, keep: () => {} }
 
-function Harness({ nodes, edges, onResult, navigateToPage }: HarnessProps): React.ReactElement {
+function Harness({
+  nodes,
+  edges,
+  onResult,
+  navigateToPage,
+  layout,
+}: HarnessProps): React.ReactElement {
   const svgRef = React.useRef<SVGSVGElement>(null)
   const result = useGraphSimulation({
     svgRef,
@@ -238,7 +249,7 @@ function Harness({ nodes, edges, onResult, navigateToPage }: HarnessProps): Reac
     edges,
     navigateToPage: navigateToPage ?? ((): void => {}),
     currentPageId: null,
-    layout: NO_LAYOUT,
+    layout: layout ?? NO_LAYOUT,
   })
   React.useEffect(() => {
     onResult(result)
@@ -331,7 +342,7 @@ describe('useGraphSimulation', () => {
 
     latest.zoomIn()
     latest.zoomOut()
-    latest.zoomReset()
+    latest.fitToView()
 
     const zoomInstance = vi.mocked(zoom).mock.results[0]?.value as any
     expect(zoomInstance.scaleBy).toHaveBeenCalledTimes(2)
@@ -780,6 +791,154 @@ describe('useGraphSimulation', () => {
   // These regression tests pin the contract:
   //   1. node `<g>` elements get `tabindex='0'` and `role='button'`
   //   2. both 'click' and 'keydown' handlers are registered on every node
+  describe('fit to view (#5432)', () => {
+    /** Where the worker settles nodes a and b. */
+    const SETTLED = [
+      { x: -100, y: -50 },
+      { x: 300, y: 150 },
+    ]
+
+    function settleWorker(points = SETTLED): void {
+      const worker = MockWorker.instances.at(-1) as InstanceType<typeof MockWorker>
+      act(() => {
+        worker.dispatch('message', {
+          data: {
+            type: 'done',
+            positions: new Float32Array(points.flatMap((p) => [p.x, p.y])),
+            count: points.length,
+          },
+        })
+      })
+    }
+
+    /** The transforms handed to d3-zoom, in order. */
+    function transformsApplied(): unknown[] {
+      const zoomInstance = vi.mocked(zoom).mock.results[0]?.value as {
+        transform: { mock: { calls: unknown[][] } }
+      }
+      return zoomInstance.transform.mock.calls.map((c) => c[1])
+    }
+
+    /** Every `duration(...)` argument passed to a selection's transition. */
+    function durationsPassed(): number[] {
+      return vi.mocked(select).mock.results.flatMap((r) => {
+        const sel = r.value as { duration: { mock: { calls: unknown[][] } } }
+        return sel.duration.mock.calls.map((c) => c[0] as number)
+      })
+    }
+
+    function setReducedMotion(matches: boolean): void {
+      vi.spyOn(window, 'matchMedia').mockImplementation(
+        (query: string) => ({ matches, media: query }) as MediaQueryList,
+      )
+    }
+
+    afterEach(() => {
+      vi.restoreAllMocks()
+    })
+
+    it('fits the layout once, when it first settles', () => {
+      render(
+        React.createElement(Harness, {
+          nodes: makeNodes(),
+          edges: makeEdges(),
+          onResult: () => {},
+        }),
+      )
+      expect(transformsApplied()).toEqual([])
+
+      settleWorker()
+      expect(transformsApplied()).toEqual([fitTransform(SETTLED, 800, 600)])
+      expect(durationsPassed()).toEqual([300])
+
+      // A later settle (a drag, a filter) leaves the viewport to the user.
+      settleWorker([
+        { x: 0, y: 0 },
+        { x: 10, y: 10 },
+      ])
+      expect(transformsApplied()).toHaveLength(1)
+    })
+
+    it('does not fit over a viewport kept from the last visit (#5434)', () => {
+      const kept = zoomIdentity.translate(40, -25).scale(1.69)
+      const layout: GraphLayoutStore = {
+        read: () => ({
+          positions: new Map([
+            ['a', { x: 120, y: 80 }],
+            ['b', { x: 300, y: 210 }],
+          ]),
+          transform: kept,
+          settled: false,
+        }),
+        keep: () => {},
+      }
+      render(
+        React.createElement(Harness, {
+          nodes: makeNodes(),
+          edges: makeEdges(),
+          onResult: () => {},
+          layout,
+        }),
+      )
+
+      settleWorker()
+      expect(transformsApplied()).toEqual([kept])
+    })
+
+    it('Fit to view frames where the nodes are now', () => {
+      let latest: any
+      render(
+        React.createElement(Harness, {
+          nodes: makeNodes(),
+          edges: makeEdges(),
+          onResult: (r) => {
+            latest = r
+          },
+        }),
+      )
+      settleWorker()
+      latest.zoomIn()
+
+      latest.fitToView()
+
+      expect(transformsApplied()).toEqual([
+        fitTransform(SETTLED, 800, 600),
+        fitTransform(SETTLED, 800, 600),
+      ])
+    })
+
+    it('fits without animating under reduced motion', () => {
+      setReducedMotion(true)
+      render(
+        React.createElement(Harness, {
+          nodes: makeNodes(),
+          edges: makeEdges(),
+          onResult: () => {},
+        }),
+      )
+
+      settleWorker()
+
+      expect(transformsApplied()).toEqual([fitTransform(SETTLED, 800, 600)])
+      expect(durationsPassed()).toEqual([0])
+    })
+
+    it('fits the synchronous reduced-motion layout of the main-thread fallback', () => {
+      setReducedMotion(true)
+      delete (globalThis as Record<string, unknown>)['Worker']
+      render(
+        React.createElement(Harness, {
+          nodes: makeNodes(),
+          edges: makeEdges(),
+          onResult: () => {},
+        }),
+      )
+
+      expect(transformsApplied()).toHaveLength(1)
+      expect(durationsPassed()).toEqual([0])
+    })
+  })
+
   describe('keyboard navigation pattern', () => {
     function getNodeSelectionMock(): any {
       // The select(svg) chain → append('g') returns the parent group, on

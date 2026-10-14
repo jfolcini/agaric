@@ -113,6 +113,7 @@ function makeCtx(): SimulationCtx {
     height: 600,
     prefersReducedMotion: false,
     keptSettled: false,
+    onSettled: vi.fn(),
   }
 }
 

@@ -8,11 +8,17 @@
  */
 
 import { drag } from 'd3-drag'
-import { forceLink, forceSimulation, type Simulation } from 'd3-force'
+import { forceLink, forceSimulation, type Simulation, type SimulationNodeDatum } from 'd3-force'
 import { type Selection, select } from 'd3-selection'
 import { type ZoomBehavior, type ZoomTransform, zoom, zoomIdentity } from 'd3-zoom'
 
-import { applyGraphForces, applyResizeForces, RESIZE_ALPHA, startAlpha } from '@/lib/graph-forces'
+import {
+  applyGraphForces,
+  applyResizeForces,
+  nodeRadius,
+  RESIZE_ALPHA,
+  startAlpha,
+} from '@/lib/graph-forces'
 import type { GraphEdge, GraphNode } from '@/lib/graph-types'
 import { isEditableTarget, matchesShortcutBinding } from '@/lib/keyboard-config'
 import { logger } from '@/lib/logger'
@@ -25,9 +31,6 @@ export const DEFAULT_WIDTH = 800
 export const DEFAULT_HEIGHT = 600
 /** 44 px touch target; it already covers the largest hovered node (12 + 2). */
 const NODE_HIT_RADIUS = 22
-const NODE_RADIUS_MIN = 3
-const NODE_RADIUS_MAX = 12
-const NODE_RADIUS_PER_SQRT_DEGREE = 1.5
 const NODE_HOVER_GROWTH = 2
 const NODE_PRESS_SHRINK = 1
 // Edges are context: a hairline that ref_count only darkens a little (#5428).
@@ -40,7 +43,11 @@ const HIGHLIGHTED_EDGE_OPACITY = '0.8'
 const LABEL_TRUNCATE_LEN = 20
 const LABEL_GAP = 4
 export const ZOOM_BUTTON_DURATION_MS = 200
-export const ZOOM_RESET_DURATION_MS = 300
+export const ZOOM_FIT_DURATION_MS = 300
+/** Screen pixels kept clear around the graph when it is fitted to the view. */
+const FIT_PADDING = 64
+/** A fitted graph is never zoomed past this, so a handful of nodes is not blown up. */
+const FIT_MAX_SCALE = 2
 export const ZOOM_STEP = 1.3
 const REDUCED_MOTION_TICK_LIMIT = 300
 
@@ -72,6 +79,8 @@ export interface SimulationCtx {
   prefersReducedMotion: boolean
   /** The kept layout the nodes' positions come from had stopped moving (#5434). */
   keptSettled: boolean
+  /** Called with the nodes each time the layout comes to rest. */
+  onSettled: (nodes: readonly GraphNode[]) => void
 }
 
 /** Where each node settled and how the view was zoomed, kept so the graph comes back as it was left (#5434). */
@@ -105,17 +114,6 @@ export interface SimulationHandle {
 }
 
 // ── SVG / d3 setup ───────────────────────────────────────────────────
-
-/**
- * Node radius from its link count: area tracks degree, so `r` grows with
- * √degree, from 3 for an unlinked page up to 12 (#5429).
- */
-export function nodeRadius(degree: number): number {
-  return Math.min(
-    NODE_RADIUS_MIN + NODE_RADIUS_PER_SQRT_DEGREE * Math.sqrt(degree),
-    NODE_RADIUS_MAX,
-  )
-}
 
 /**
  * Links per page among the edges on screen, in and out. Not `backlink_count`,
@@ -463,6 +461,9 @@ function attachNodeHover(
  * Joins are scoped to `g.edges-layer` / `g.nodes-layer`, so an ENTERing
  * `<line>` lands in the edge layer, which precedes the node layer, and never
  * paints over a node (#758 item 4).
+ *
+ * Every simulation's nodes pass through here, so this is where each node's
+ * `degree` is stamped for the layout forces of both paths (#5432).
  */
 export function patchGraphSelections(
   g: GSel,
@@ -472,7 +473,8 @@ export function patchGraphSelections(
   currentPageId: string | null = null,
 ): { link: LinkSel; node: NodeSel } {
   const degrees = countDegrees(simEdges)
-  const radiusOf = (d: GraphNode): number => nodeRadius(degrees.get(d.id) ?? 0)
+  for (const n of simNodes) n.degree = degrees.get(n.id) ?? 0
+  const radiusOf = (d: GraphNode): number => nodeRadius(d.degree ?? 0)
 
   const link = drawEdges(g.select<SVGGElement>('g.edges-layer'), simEdges)
   const node = drawNodes(g.select<SVGGElement>('g.nodes-layer'), simNodes, radiusOf, currentPageId)
@@ -559,6 +561,7 @@ export function setupZoomBehavior(
 export function createZoomKeyHandler(
   svg: SVGSVGElement,
   zoomBehavior: ZoomBehavior<SVGSVGElement, unknown>,
+  fitToView: () => void,
 ): (e: KeyboardEvent) => void {
   return (e: KeyboardEvent) => {
     if (isEditableTarget(e.target)) return
@@ -577,16 +580,42 @@ export function createZoomKeyHandler(
       )
     } else if (matchesShortcutBinding(e, 'graphZoomReset')) {
       e.preventDefault()
-      zoomBehavior.transform(
-        svgSelection.transition().duration(reducedMotionDuration(ZOOM_RESET_DURATION_MS)),
-        zoomIdentity,
-      )
+      fitToView()
     }
   }
 }
 
-/** Re-export `zoomIdentity` for the orchestrator's zoom-reset callback. */
-export { zoomIdentity }
+/**
+ * The zoom that frames every placed node, centred, with `FIT_PADDING` screen
+ * pixels to spare and the scale capped at `FIT_MAX_SCALE`.
+ */
+export function fitTransform(
+  nodes: readonly SimulationNodeDatum[],
+  width: number,
+  height: number,
+): ZoomTransform {
+  let minX = Number.POSITIVE_INFINITY
+  let minY = Number.POSITIVE_INFINITY
+  let maxX = Number.NEGATIVE_INFINITY
+  let maxY = Number.NEGATIVE_INFINITY
+  for (const { x, y } of nodes) {
+    if (x === undefined || y === undefined) continue
+    minX = Math.min(minX, x)
+    minY = Math.min(minY, y)
+    maxX = Math.max(maxX, x)
+    maxY = Math.max(maxY, y)
+  }
+  if (minX > maxX) return zoomIdentity
+  const scale = Math.min(
+    (width - 2 * FIT_PADDING) / (maxX - minX),
+    (height - 2 * FIT_PADDING) / (maxY - minY),
+    FIT_MAX_SCALE,
+  )
+  return zoomIdentity
+    .translate(width / 2, height / 2)
+    .scale(scale)
+    .translate(-(minX + maxX) / 2, -(minY + maxY) / 2)
+}
 
 // ── Position application ─────────────────────────────────────────────
 
@@ -706,13 +735,15 @@ interface WorkerRunArgs extends SimulationCtx {
 }
 
 /**
- * A node as the worker gets it: its last-known `x`/`y`/`vx`/`vy` when it has
- * them, so it keeps its place; without, so d3 seeds a brand-new node.
+ * A node as the worker gets it: its degree for the forces, and its last-known
+ * `x`/`y`/`vx`/`vy` when it has them, so it keeps its place; without, so d3
+ * seeds a brand-new node.
  */
 function toWorkerNode(n: GraphNode): WorkerNode {
   return {
     id: n.id,
     label: n.label,
+    degree: n.degree ?? 0,
     ...(n.x !== undefined ? { x: n.x } : {}),
     ...(n.y !== undefined ? { y: n.y } : {}),
     ...(n.vx !== undefined ? { vx: n.vx } : {}),
@@ -886,25 +917,32 @@ export function runWorkerSimulation(args: WorkerRunArgs): SimulationHandle {
     rafId = requestAnimationFrame(flushPending)
   }
 
+  // Final positions: cancel any pending frame and apply now so the last frame
+  // never clobbers the converged layout.
+  const settle = (positions: Float32Array, count: number): void => {
+    settled = true
+    if (rafId !== null) {
+      cancelAnimationFrame(rafId)
+      rafId = null
+    }
+    pendingPositions = null
+    applyTick(positions, count)
+    ctx.onSettled(live.order)
+  }
+
   const handleMessage = (evt: MessageEvent<WorkerOutboundMessage>): void => {
     if (failed) return
     const msg = evt.data
     if (msg.type === 'tick') {
       tickCount++
-      scheduleFlush(msg.positions, msg.count)
       if (ctx.prefersReducedMotion && tickCount >= REDUCED_MOTION_TICK_LIMIT) {
         worker.postMessage({ type: 'stop' })
+        settle(msg.positions, msg.count)
+      } else {
+        scheduleFlush(msg.positions, msg.count)
       }
     } else if (msg.type === 'done') {
-      settled = true
-      // Final settled positions: cancel any pending frame and apply now so the
-      // last frame never clobbers the converged layout.
-      if (rafId !== null) {
-        cancelAnimationFrame(rafId)
-        rafId = null
-      }
-      pendingPositions = null
-      applyTick(msg.positions, msg.count)
+      settle(msg.positions, msg.count)
     } else if (msg.type === 'error') {
       // Structured error from the worker dispatcher's try/catch (or
       // the worker's global error/unhandledrejection handlers). Route through
@@ -990,7 +1028,7 @@ function createMainThreadDrag(
 ): ReturnType<typeof drag<SVGGElement, GraphNode>> {
   return drag<SVGGElement, GraphNode>()
     .on('start', (event, d) => {
-      if (!event.active) sim.alpha(0.3).restart()
+      if (!event.active) sim.alphaTarget(0.3).restart()
       d.fx = d.x
       d.fy = d.y
     })
@@ -999,7 +1037,7 @@ function createMainThreadDrag(
       d.fy = event.y
     })
     .on('end', (event, d) => {
-      if (!event.active) sim.alpha(0).restart()
+      if (!event.active) sim.alphaTarget(0)
       d.fx = null
       d.fy = null
     })
@@ -1043,6 +1081,7 @@ export function runMainThreadSimulation(ctx: SimulationCtx): SimulationHandle {
     sim.tick(REDUCED_MOTION_TICK_LIMIT)
     live.applyPositions()
     sim.stop()
+    ctx.onSettled(sim.nodes())
     return {
       cleanup: () => {
         sim.stop()
@@ -1080,6 +1119,7 @@ export function runMainThreadSimulation(ctx: SimulationCtx): SimulationHandle {
   })
   sim.on('end', () => {
     settled = true
+    ctx.onSettled(sim.nodes())
   })
   return {
     cleanup: () => {

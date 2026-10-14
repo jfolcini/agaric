@@ -29,11 +29,22 @@ import {
 /** Target length of each link (`forceLink.distance`). */
 export const LINK_DISTANCE = 60
 
-/** Many-body charge strength; negative = mutual repulsion (`forceManyBody.strength`). */
-export const CHARGE_STRENGTH = -100
+/**
+ * Repulsion is `-(CHARGE_BASE + CHARGE_PER_SQRT_DEGREE·√degree)`, so a hub
+ * clears room for its neighbours while an unlinked page stays close.
+ */
+const CHARGE_BASE = 60
+const CHARGE_PER_SQRT_DEGREE = 40
 
-/** Collision radius keeping node discs from overlapping (`forceCollide`). */
-export const COLLIDE_RADIUS = 20
+/** Beyond this distance nodes stop repelling, so gravity keeps separate clusters together. */
+const CHARGE_DISTANCE_MAX = 180
+
+/** Space kept clear around each node's disc (`forceCollide`). */
+const COLLIDE_PADDING = 10
+
+const NODE_RADIUS_MIN = 3
+const NODE_RADIUS_MAX = 12
+const NODE_RADIUS_PER_SQRT_DEGREE = 1.5
 
 /** Strength of the x/y forces pulling nodes toward the centre (`forceX/forceY.strength`). */
 export const GRAVITY_STRENGTH = 0.05
@@ -63,6 +74,8 @@ export function startAlpha(nodes: readonly SimulationNodeDatum[], keptSettled: b
 /** Minimum node shape the link force's `.id` accessor needs. */
 export interface ForceNode extends SimulationNodeDatum {
   id: string
+  /** Links on screen, in and out. */
+  degree?: number
 }
 
 export interface GraphForceDimensions {
@@ -73,9 +86,21 @@ export interface GraphForceDimensions {
 // ── Force builders ───────────────────────────────────────────────────
 
 /**
+ * Node radius from its link count: area tracks degree, so `r` grows with
+ * √degree, from 3 for an unlinked page up to 12 (#5429).
+ */
+export function nodeRadius(degree: number): number {
+  return Math.min(
+    NODE_RADIUS_MIN + NODE_RADIUS_PER_SQRT_DEGREE * Math.sqrt(degree),
+    NODE_RADIUS_MAX,
+  )
+}
+
+/**
  * Configure the full set of layout forces on `sim` (link, charge, centre,
- * collide, x/y gravity) using the shared tuning constants. Returns `sim` so it
- * can be chained onto a fresh `forceSimulation(...)`.
+ * collide, x/y gravity) using the shared tuning constants. Charge and
+ * collision read each node's `degree`, so both paths must carry it (#5432).
+ * Returns `sim` so it can be chained onto a fresh `forceSimulation(...)`.
  *
  * `edges` is bound to the link force with an id accessor, so string
  * `source`/`target` ids resolve against the simulation's current node array.
@@ -92,9 +117,17 @@ export function applyGraphForces<N extends ForceNode, E extends SimulationLinkDa
         .id((d) => d.id)
         .distance(LINK_DISTANCE),
     )
-    .force('charge', forceManyBody<N>().strength(CHARGE_STRENGTH))
+    .force(
+      'charge',
+      forceManyBody<N>()
+        .strength((d) => -(CHARGE_BASE + CHARGE_PER_SQRT_DEGREE * Math.sqrt(d.degree ?? 0)))
+        .distanceMax(CHARGE_DISTANCE_MAX),
+    )
     .force('center', forceCenter<N>(width / 2, height / 2))
-    .force('collide', forceCollide<N>(COLLIDE_RADIUS))
+    .force(
+      'collide',
+      forceCollide<N>((d) => nodeRadius(d.degree ?? 0) + COLLIDE_PADDING),
+    )
     .force('x', forceX<N>(width / 2).strength(GRAVITY_STRENGTH))
     .force('y', forceY<N>(height / 2).strength(GRAVITY_STRENGTH))
 }

@@ -2,7 +2,7 @@
  * Tests for useGraphZoom (split from useGraphSimulation).
  *
  * The hook owns the d3 zoom behavior + keyboard zoom listener and exposes
- * three imperative zoom callbacks plus `attach(svg, g)` for the
+ * the imperative zoom callbacks plus `attach(svg, g, fitShortcut)` for the
  * orchestrator. Tests focus on observable effects: which d3-zoom APIs the
  * callbacks invoke, that `attach` registers + cleans up the keyboard
  * listener, and that callbacks are no-ops before `attach` runs.
@@ -10,11 +10,12 @@
 
 import { renderHook } from '@testing-library/react'
 import { select } from 'd3-selection'
-import { zoom, zoomIdentity } from 'd3-zoom'
+import { zoom } from 'd3-zoom'
 import React from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { useGraphZoom } from '@/hooks/useGraphZoom'
+import { fitTransform } from '@/lib/graph-sim-helpers'
 
 vi.mock('d3-selection', () => ({
   select: vi.fn(() => ({
@@ -28,14 +29,14 @@ vi.mock('d3-selection', () => ({
   })),
 }))
 
-vi.mock('d3-zoom', () => ({
+vi.mock('d3-zoom', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('d3-zoom')>()),
   zoom: vi.fn(() => ({
     scaleExtent: vi.fn().mockReturnThis(),
     on: vi.fn().mockReturnThis(),
     scaleBy: vi.fn(),
     transform: vi.fn(),
   })),
-  zoomIdentity: { k: 1, x: 0, y: 0 },
 }))
 
 vi.mock('@/lib/keyboard-config', () => ({
@@ -64,14 +65,20 @@ afterEach(() => {
   vi.restoreAllMocks()
 })
 
+/** Two placed nodes, so a fit is not the identity. */
+const NODES = [
+  { x: -100, y: -50 },
+  { x: 300, y: 150 },
+]
+
 describe('useGraphZoom', () => {
-  it('returns attach + zoomIn/zoomOut/zoomReset callbacks', () => {
+  it('returns attach + zoomIn/zoomOut/fitToView callbacks', () => {
     const ref = React.createRef<SVGSVGElement>()
     const { result } = renderHook(() => useGraphZoom(ref))
     expect(typeof result.current.attach).toBe('function')
     expect(typeof result.current.zoomIn).toBe('function')
     expect(typeof result.current.zoomOut).toBe('function')
-    expect(typeof result.current.zoomReset).toBe('function')
+    expect(typeof result.current.fitToView).toBe('function')
   })
 
   it('zoom callbacks are no-ops before attach runs (no zoom behavior wired)', () => {
@@ -83,7 +90,7 @@ describe('useGraphZoom', () => {
     expect(() => {
       result.current.zoomIn()
       result.current.zoomOut()
-      result.current.zoomReset()
+      result.current.fitToView(NODES)
     }).not.toThrow()
     // d3-zoom factory was never invoked because attach wasn't called.
     expect(zoom).not.toHaveBeenCalled()
@@ -96,7 +103,7 @@ describe('useGraphZoom', () => {
     const fakeSvg = makeFakeSvg() as unknown as SVGSVGElement
     const fakeG = {} as any
 
-    const cleanup = result.current.attach(fakeSvg, fakeG)
+    const cleanup = result.current.attach(fakeSvg, fakeG, vi.fn())
 
     const svgMock = fakeSvg as unknown as FakeSvg
     expect(svgMock.addEventListener).toHaveBeenCalledWith('keydown', expect.any(Function))
@@ -113,7 +120,7 @@ describe('useGraphZoom', () => {
 
     const fakeSvg = makeFakeSvg() as unknown as SVGSVGElement
     const fakeG = {} as any
-    result.current.attach(fakeSvg, fakeG)
+    result.current.attach(fakeSvg, fakeG, vi.fn())
     result.current.zoomIn()
 
     const zoomInstance = vi.mocked(zoom).mock.results[0]?.value as any
@@ -122,25 +129,25 @@ describe('useGraphZoom', () => {
     expect(zoomInstance.scaleBy.mock.calls[0]?.[1]).toBeCloseTo(1.3)
   })
 
-  it('zoomOut and zoomReset invoke scaleBy / transform after attach', () => {
+  it('zoomOut and fitToView invoke scaleBy / transform after attach', () => {
     const ref = React.createRef<SVGSVGElement>()
     ;(ref as { current: SVGSVGElement | null }).current = makeFakeSvg() as unknown as SVGSVGElement
     const { result } = renderHook(() => useGraphZoom(ref))
 
     const fakeSvg = makeFakeSvg() as unknown as SVGSVGElement
     const fakeG = {} as any
-    result.current.attach(fakeSvg, fakeG)
+    result.current.attach(fakeSvg, fakeG, vi.fn())
 
     result.current.zoomOut()
-    result.current.zoomReset()
+    result.current.fitToView(NODES)
 
     const zoomInstance = vi.mocked(zoom).mock.results[0]?.value as any
     // zoomOut: scaleBy(transition, 1/1.3)
     expect(zoomInstance.scaleBy).toHaveBeenCalledTimes(1)
     expect(zoomInstance.scaleBy.mock.calls[0]?.[1]).toBeCloseTo(1 / 1.3)
-    // zoomReset: transform(transition, zoomIdentity)
+    // fitToView: transform(transition, the nodes' fit on the default canvas)
     expect(zoomInstance.transform).toHaveBeenCalledTimes(1)
-    expect(zoomInstance.transform.mock.calls[0]?.[1]).toBe(zoomIdentity)
+    expect(zoomInstance.transform.mock.calls[0]?.[1]).toEqual(fitTransform(NODES, 800, 600))
     // d3-selection's `select` was called for each zoom callback.
     expect(select).toHaveBeenCalled()
   })
@@ -168,17 +175,17 @@ describe('useGraphZoom', () => {
       ;(ref as { current: SVGSVGElement | null }).current =
         makeFakeSvg() as unknown as SVGSVGElement
       const { result } = renderHook(() => useGraphZoom(ref))
-      result.current.attach(makeFakeSvg() as unknown as SVGSVGElement, {} as any)
+      result.current.attach(makeFakeSvg() as unknown as SVGSVGElement, {} as any, vi.fn())
       return result
     }
 
-    it('#3308: zoomIn/zoomOut/zoomReset use duration 0 under reduced motion', () => {
+    it('#3308: zoomIn/zoomOut/fitToView use duration 0 under reduced motion', () => {
       setReducedMotion(true)
       const result = attachedZoom()
 
       result.current.zoomIn()
       result.current.zoomOut()
-      result.current.zoomReset()
+      result.current.fitToView(NODES)
 
       expect(durationsPassed()).toEqual([0, 0, 0])
     })
@@ -189,9 +196,9 @@ describe('useGraphZoom', () => {
 
       result.current.zoomIn()
       result.current.zoomOut()
-      result.current.zoomReset()
+      result.current.fitToView(NODES)
 
-      // ZOOM_BUTTON_DURATION_MS ×2 then ZOOM_RESET_DURATION_MS.
+      // ZOOM_BUTTON_DURATION_MS ×2 then ZOOM_FIT_DURATION_MS.
       expect(durationsPassed()).toEqual([200, 200, 300])
     })
 
@@ -217,12 +224,12 @@ describe('useGraphZoom', () => {
       attach: result.current.attach,
       zoomIn: result.current.zoomIn,
       zoomOut: result.current.zoomOut,
-      zoomReset: result.current.zoomReset,
+      fitToView: result.current.fitToView,
     }
     rerender()
     expect(result.current.attach).toBe(before.attach)
     expect(result.current.zoomIn).toBe(before.zoomIn)
     expect(result.current.zoomOut).toBe(before.zoomOut)
-    expect(result.current.zoomReset).toBe(before.zoomReset)
+    expect(result.current.fitToView).toBe(before.fitToView)
   })
 })

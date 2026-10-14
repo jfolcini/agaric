@@ -1,3 +1,5 @@
+import type { Page } from '@playwright/test'
+
 import { expect, navigateToView, openPage, test } from './helpers'
 
 /**
@@ -219,32 +221,153 @@ test.describe('Graph view', () => {
   // wheel/drag input.
   // ---------------------------------------------------------------------
   function parseScale(transform: string | null): number | null {
-    const m = transform ? /scale\(([\d.]+)\)/.exec(transform) : null
+    const m = transform ? /scale\(([\d.e-]+)\)/.exec(transform) : null
     return m?.[1] ? Number(m[1]) : null
   }
 
-  test('the zoom in/out/reset buttons change the graph transform scale', async ({ page }) => {
+  function parseTranslate(transform: string | null): [number, number] {
+    const m = /translate\(([-\d.e]+),([-\d.e]+)\)/.exec(transform ?? '')
+    return [Number(m?.[1]), Number(m?.[2])]
+  }
+
+  /**
+   * The layout's first settle fits it to the view (#5432). Waits for that
+   * transform and for it to hold still, so a test zooms from where it landed.
+   */
+  async function fittedTransform(page: Page): Promise<string> {
+    const g = page.locator('[data-testid="graph-svg"] > g').first()
+    let last: string | null = null
+    await expect
+      .poll(
+        async () => {
+          const now = await g.getAttribute('transform')
+          const still = now !== null && now === last
+          last = now
+          return still
+        },
+        { intervals: [500], timeout: 30_000 },
+      )
+      .toBe(true)
+    return last ?? ''
+  }
+
+  /** The labels of the nodes whose disc is not wholly inside the canvas. */
+  function nodesOutsideView(page: Page): Promise<string[]> {
+    return page.getByTestId('graph-svg').evaluate((svg) => {
+      const canvas = svg.getBoundingClientRect()
+      return Array.from(svg.querySelectorAll('g.node'))
+        .filter((g) => {
+          const disc = g.querySelector('circle:not(.hit-area)')?.getBoundingClientRect()
+          return (
+            !disc ||
+            disc.left < canvas.left ||
+            disc.top < canvas.top ||
+            disc.right > canvas.right ||
+            disc.bottom > canvas.bottom
+          )
+        })
+        .map((g) => g.getAttribute('aria-label') ?? '')
+    })
+  }
+
+  /**
+   * Three hubs with twenty linked pages each, a chain and some unlinked pages:
+   * on a small window, a graph that does not fit the canvas at zoom 1.
+   */
+  async function seedLinkedPages(page: Page): Promise<void> {
+    await page.evaluate(async () => {
+      const internals = (window as unknown as Record<string, unknown>)['__TAURI_INTERNALS__'] as {
+        invoke: (cmd: string, args: unknown) => Promise<unknown>
+      }
+      const createPage = async (title: string, links: string[]): Promise<string> => {
+        const id = (await internals.invoke('create_page_in_space', {
+          parentId: null,
+          content: title,
+          spaceId: 'SPACE_PERSONAL',
+        })) as string
+        if (links.length > 0) {
+          await internals.invoke('create_blocks_batch', {
+            specs: links.map((link) => ({
+              blockType: 'content',
+              content: `see [[${link}]]`,
+              parentId: id,
+              position: null,
+            })),
+          })
+        }
+        return id
+      }
+      for (const hub of ['North', 'South', 'East']) {
+        const hubId = await createPage(`${hub} hub`, [])
+        for (let i = 0; i < 20; i++) await createPage(`${hub} ${i}`, [hubId])
+      }
+      let previous: string[] = []
+      for (let i = 0; i < 10; i++) previous = [await createPage(`Chain ${i}`, previous)]
+      for (let i = 0; i < 15; i++) await createPage(`Loose ${i}`, [])
+    })
+  }
+
+  for (const reducedMotion of ['no-preference', 'reduce'] as const) {
+    test(`after the first settle every node is in view, and Fit to view returns there (reduced motion: ${reducedMotion}) (#5432)`, async ({
+      page,
+    }) => {
+      await page.emulateMedia({ reducedMotion })
+      await page.setViewportSize({ width: 900, height: 450 })
+      await seedLinkedPages(page)
+      await navigateToView(page, 'Graph')
+      await expect(page.locator('[data-testid="graph-view"] svg g.node').first()).toBeVisible()
+      const g = page.locator('[data-testid="graph-svg"] > g').first()
+
+      const fitted = await fittedTransform(page)
+      expect(await nodesOutsideView(page)).toEqual([])
+
+      // Wander off by zooming in around the centre: two steps, since the fit's padding absorbs
+      // one on a canvas this small. Not a canvas drag: at this tablet width the zoom controls
+      // can sit in the bottom-left corner.
+      const fittedScale = parseScale(fitted) ?? Number.NaN
+      for (const step of [1.3, 1.69]) {
+        await page.getByRole('button', { name: /^Zoom in/ }).click()
+        await expect
+          .poll(async () => parseScale(await g.getAttribute('transform')))
+          .toBeCloseTo(fittedScale * step, 3)
+      }
+      await expect.poll(async () => (await nodesOutsideView(page)).length).toBeGreaterThan(0)
+
+      await page.getByRole('button', { name: /^Fit to view/ }).click()
+      await expect(g).toHaveAttribute('transform', fitted)
+      // The discs' screen boxes follow the attribute on the next frame.
+      await expect.poll(() => nodesOutsideView(page)).toEqual([])
+    })
+  }
+
+  test('the zoom in/out/fit buttons change the graph transform scale', async ({ page }) => {
     await navigateToView(page, 'Graph')
     await expect(page.locator('[data-testid="graph-svg"]')).toBeVisible()
     await expect(page.locator('[data-testid="graph-view"] svg g.node').first()).toBeVisible()
 
     const g = page.locator('[data-testid="graph-svg"] > g').first()
+    const fitted = await fittedTransform(page)
+    const fittedScale = parseScale(fitted) ?? Number.NaN
 
     await page.getByRole('button', { name: /^Zoom in/ }).click()
     // ZOOM_STEP is 1.3 (`src/lib/graph-sim-helpers.ts`); the button
     // transition takes 200ms, so poll until it settles.
-    await expect.poll(async () => parseScale(await g.getAttribute('transform'))).toBe(1.3)
+    await expect
+      .poll(async () => parseScale(await g.getAttribute('transform')))
+      .toBeCloseTo(fittedScale * 1.3, 3)
 
     await page.getByRole('button', { name: /^Zoom out/ }).click()
     await expect
-      .poll(async () => {
-        const scale = parseScale(await g.getAttribute('transform'))
-        return scale !== null && scale < 1.3
-      })
-      .toBe(true)
+      .poll(async () => parseScale(await g.getAttribute('transform')))
+      .toBeCloseTo(fittedScale, 3)
+
+    await page.getByRole('button', { name: /^Zoom out/ }).click()
+    await expect
+      .poll(async () => parseScale(await g.getAttribute('transform')))
+      .toBeCloseTo(fittedScale / 1.3, 3)
 
     await page.getByRole('button', { name: /^Fit to view/ }).click()
-    await expect.poll(async () => parseScale(await g.getAttribute('transform'))).toBe(1)
+    await expect(g).toHaveAttribute('transform', fitted)
   })
 
   test('wheel-zoom over the canvas changes the graph transform scale', async ({ page }) => {
@@ -254,8 +377,7 @@ test.describe('Graph view', () => {
     await expect(page.locator('[data-testid="graph-view"] svg g.node').first()).toBeVisible()
 
     const g = page.locator('[data-testid="graph-svg"] > g').first()
-    await expect(g).toHaveCount(1)
-    const before = await g.getAttribute('transform')
+    const before = await fittedTransform(page)
 
     await svg.hover()
     // Negative deltaY == scroll up == zoom in (d3-zoom's default wheel
@@ -265,7 +387,7 @@ test.describe('Graph view', () => {
     await expect.poll(() => g.getAttribute('transform')).not.toBe(before)
     const after = parseScale(await g.getAttribute('transform'))
     expect(after).not.toBeNull()
-    expect(after as number).toBeGreaterThan(1)
+    expect(after as number).toBeGreaterThan(parseScale(before) ?? Number.NaN)
   })
 
   test('dragging empty canvas pans the graph transform', async ({ page }) => {
@@ -275,7 +397,7 @@ test.describe('Graph view', () => {
     await expect(page.locator('[data-testid="graph-view"] svg g.node').first()).toBeVisible()
 
     const g = page.locator('[data-testid="graph-svg"] > g').first()
-    const before = await g.getAttribute('transform')
+    const before = await fittedTransform(page)
 
     const svgBox = await svg.boundingBox()
     if (!svgBox) throw new Error('graph svg has no bounding box')
@@ -294,12 +416,11 @@ test.describe('Graph view', () => {
     await page.mouse.up()
 
     await expect.poll(() => g.getAttribute('transform')).not.toBe(before)
-    const after = await g.getAttribute('transform')
-    const m = /translate\(([-\d.]+),([-\d.]+)\)/.exec(after ?? '')
-    expect(m).not.toBeNull()
-    // Dragged right+up -> positive x translate, negative y translate.
-    expect(Number(m?.[1])).toBeGreaterThan(0)
-    expect(Number(m?.[2])).toBeLessThan(0)
+    const [beforeX, beforeY] = parseTranslate(before)
+    const [afterX, afterY] = parseTranslate(await g.getAttribute('transform'))
+    // Dragged right+up -> the translate moves right and up.
+    expect(afterX).toBeGreaterThan(beforeX)
+    expect(afterY).toBeLessThan(beforeY)
   })
 
   // ---------------------------------------------------------------------
@@ -327,18 +448,19 @@ test.describe('Graph view', () => {
         }),
       )
 
+    const fittedScale = parseScale(await fittedTransform(page)) ?? Number.NaN
     const before = await onScreen()
-    for (const scale of [1.3, 1.69, 2.197]) {
+    for (const step of [1.3, 1.69]) {
       await page.getByRole('button', { name: /^Zoom in/ }).click()
       await expect
         .poll(async () => parseScale(await g.getAttribute('transform')))
-        .toBeCloseTo(scale, 3)
+        .toBeCloseTo(fittedScale * step, 3)
     }
     const after = await onScreen()
 
     expect(before.length).toBeGreaterThan(0)
     expect(after).toHaveLength(before.length)
-    expect((after[0]?.scale ?? 0) / (before[0]?.scale ?? 1)).toBeCloseTo(2.197, 2)
+    expect((after[0]?.scale ?? 0) / (before[0]?.scale ?? 1)).toBeCloseTo(1.69, 2)
     expect([...before, ...after].map((edge) => edge.width)).toEqual(
       [...before, ...after].map(() => 1),
     )

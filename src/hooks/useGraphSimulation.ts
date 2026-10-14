@@ -2,7 +2,7 @@
  * useGraphSimulation — orchestrator for GraphView's d3-force simulation
  * (+). Decomposed into:
  *
- *   - `useGraphZoom` — zoom behavior + keyboard zoom + zoomIn/Out/Reset.
+ *   - `useGraphZoom` — zoom behavior + keyboard zoom + zoomIn/Out + fit to view.
  *   - `useGraphRenderElements` — d3 selections + node/edge rendering.
  *   - `useGraphWorkerSimulation` — worker path with failure recovery.
  *   - `useGraphMainThreadSim` — main-thread fallback simulation.
@@ -37,7 +37,7 @@
 
 import { zoomTransform } from 'd3-zoom'
 import type React from 'react'
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 
 import { useGraphMainThreadSim } from '@/hooks/useGraphMainThreadSim'
 import { useGraphRenderElements } from '@/hooks/useGraphRenderElements'
@@ -78,7 +78,7 @@ export interface GraphLayoutStore {
 export interface UseGraphSimulationResult {
   zoomIn: () => void
   zoomOut: () => void
-  zoomReset: () => void
+  fitToView: () => void
 }
 
 /**
@@ -115,13 +115,29 @@ export function useGraphSimulation({
   currentPageId,
   layout,
 }: UseGraphSimulationArgs): UseGraphSimulationResult {
-  const { attach: attachZoom, zoomIn, zoomOut, zoomReset } = useGraphZoom(svgRef)
+  const { attach: attachZoom, zoomIn, zoomOut, fitToView: fitNodesToView } = useGraphZoom(svgRef)
   const renderElements = useGraphRenderElements({ nodes, edges, navigateToPage, currentPageId })
   const { workerFailed, runWorker } = useGraphWorkerSimulation()
   const runMainThread = useGraphMainThreadSim()
 
   // ── Persistent state across effect runs ──────────────────────────
   const stateRef = useRef<PersistentSimState | null>(null)
+
+  const fitToView = useCallback(() => {
+    fitNodesToView(stateRef.current?.rendered.simNodes ?? [])
+  }, [fitNodesToView])
+
+  // A first layout is fitted once it settles; a kept one comes back with the
+  // viewport it was left with, which the fit must not override (#5434).
+  const fitOnSettleRef = useRef(false)
+  const fitOnFirstSettle = useCallback(
+    (settledNodes: readonly GraphNode[]) => {
+      if (!fitOnSettleRef.current) return
+      fitOnSettleRef.current = false
+      fitNodesToView(settledNodes)
+    },
+    [fitNodesToView],
+  )
 
   // `setupKey` is bumped by the patch effect when it detects that
   // setup has not yet run (initial empty-nodes render followed by
@@ -171,7 +187,9 @@ export function useGraphSimulation({
       seedPositions(rendered, kept.positions)
       applyPositions()
     }
-    const detachZoom = attachZoom(svg, rendered.g, kept?.transform)
+    const detachZoom = attachZoom(svg, rendered.g, fitToView, kept?.transform)
+    // A re-setup after a worker failure reads back the layout it kept; a fit still owed stays owed.
+    if (kept === null) fitOnSettleRef.current = true
 
     const prefersReducedMotion = shouldReduceMotion()
 
@@ -185,6 +203,7 @@ export function useGraphSimulation({
       height: rendered.height,
       prefersReducedMotion,
       keptSettled: kept?.settled ?? false,
+      onSettled: fitOnFirstSettle,
     }
 
     const useWorker = typeof Worker !== 'undefined' && !workerFailed
@@ -235,7 +254,16 @@ export function useGraphSimulation({
       detachZoom()
       stateRef.current = null
     }
-  }, [svgRef, workerFailed, attachZoom, runWorker, runMainThread, setupKey])
+  }, [
+    svgRef,
+    workerFailed,
+    attachZoom,
+    runWorker,
+    runMainThread,
+    setupKey,
+    fitToView,
+    fitOnFirstSettle,
+  ])
 
   // ── Patch effect ─────────────────────────────────────────────────
   // Runs on filter changes (any `nodes`/`edges` identity flip without
@@ -346,6 +374,7 @@ export function useGraphSimulation({
       height,
       prefersReducedMotion: state.prefersReducedMotion,
       keptSettled: false,
+      onSettled: fitOnFirstSettle,
     }
 
     // #2194: if a simulation is already LIVE, swap its node/edge set in place
@@ -395,5 +424,5 @@ export function useGraphSimulation({
     if (state) markCurrentPage(state.rendered.node, currentPageId)
   }, [currentPageId])
 
-  return { zoomIn, zoomOut, zoomReset }
+  return { zoomIn, zoomOut, fitToView }
 }
