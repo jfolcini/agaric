@@ -16,9 +16,9 @@ import {
  * idempotent and React already dedups identical state values), so this e2e is
  * the authoritative regression guard.
  *
- * The global `afterEach` in helpers.ts runs `expectNoConsoleErrors`, which
- * fails on the "Maximum update depth exceeded" React error. We also assert it
- * explicitly here so the failure message names the exact regression.
+ * The `consoleErrorGate` fixture in helpers.ts runs `expectNoConsoleErrors`,
+ * which fails on the "Maximum update depth exceeded" React error. We also
+ * assert it explicitly here so the failure message names the exact regression.
  */
 
 const PAGE = 'Getting Started'

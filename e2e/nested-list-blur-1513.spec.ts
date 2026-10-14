@@ -59,7 +59,7 @@ async function seedBlockContent(
  * single, unambiguous locator (the Pages browser's "Getting Started" row is a
  * second match, so `openPage`'s `getByText` is strict-mode-ambiguous once the
  * page is in the recents bar). The mock store persists across in-app nav (only
- * `reload()` / `__resetTauriMock__` reseed), so the edited content survives.
+ * `reload()` reseeds), so the edited content survives.
  */
 async function reopenGettingStartedAfterSeed(page: import('@playwright/test').Page): Promise<void> {
   await openPage(page, 'Quick Notes')

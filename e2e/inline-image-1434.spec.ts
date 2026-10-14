@@ -19,9 +19,7 @@
  * A tiny 1x1 transparent GIF is used as the bytes so `<img>` actually decodes
  * and stays mounted (no broken-image fallback swap).
  */
-import { expect, test } from '@playwright/test'
-
-import { focusBlock, openPage, saveBlock, waitForBoot } from './helpers'
+import { expect, focusBlock, openPage, saveBlock, test, waitForBoot } from './helpers'
 
 // 1x1 transparent GIF, as a byte array (what add_attachment_with_bytes expects).
 const GIF_1X1: number[] = [

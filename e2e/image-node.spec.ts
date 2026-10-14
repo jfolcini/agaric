@@ -18,9 +18,7 @@
  * it. `data:` is short enough to keep the per-keystroke draft-autosave serialize
  * loop cheap. The unit render test covers the broken-image fallback path.
  */
-import { expect, test } from '@playwright/test'
-
-import { focusBlock, openPage, saveBlock, waitForBoot } from './helpers'
+import { expect, focusBlock, openPage, saveBlock, test, waitForBoot } from './helpers'
 
 // A short same-origin asset the dev server serves: CSP `img-src 'self'` allows
 // it and it actually loads, so the real <img> stays mounted (no onError

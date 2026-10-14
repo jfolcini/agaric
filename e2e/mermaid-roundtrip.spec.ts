@@ -18,9 +18,8 @@
  * not how the roving editor authors code blocks.
  */
 import type { Page } from '@playwright/test'
-import { expect, test } from '@playwright/test'
 
-import { focusBlock, openPage, waitForBoot } from './helpers'
+import { expect, focusBlock, openPage, test, waitForBoot } from './helpers'
 
 /** The plain DOM node view — a bare `<pre><code>`, no React wrapper around it. */
 function plainCodeView(page: Page) {

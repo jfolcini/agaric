@@ -14,9 +14,7 @@
  * Authoring path mirrors image-node.spec.ts: type the markdown, blur to
  * serialize, and the static RichContentRenderer re-parses + renders.
  */
-import { expect, test } from '@playwright/test'
-
-import { focusBlock, openPage, saveBlock, waitForBoot } from './helpers'
+import { expect, focusBlock, openPage, saveBlock, test, waitForBoot } from './helpers'
 
 // A genuinely external host (never resolved — no <img> is mounted for it under
 // the default click policy, so nothing is fetched).
