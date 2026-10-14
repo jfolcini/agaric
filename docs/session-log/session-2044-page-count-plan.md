@@ -1,4 +1,4 @@
-# Session 2036 — Page counts walk the page's links again, not the whole space
+# Session 2044 — Page counts walk the page's links again, not the whole space
 
 The weekly `bench-slo` lane (#3394) was cancelled at its time limit:
 `reconcile_all_scale_sweep_4901` ran past nextest's 600 s timeout twice,
