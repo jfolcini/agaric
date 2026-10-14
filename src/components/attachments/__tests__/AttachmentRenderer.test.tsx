@@ -3,8 +3,8 @@ import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
-vi.mock('@tauri-apps/api/core', () => ({
-  invoke: vi.fn(),
+vi.mock('@tauri-apps/api/core', async () => ({
+  invoke: vi.fn((await import('@/__tests__/helpers/invoke')).strictInvokeFallback),
 }))
 
 // Rendering now reads raw bytes over IPC and wraps them in a

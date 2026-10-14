@@ -45,8 +45,8 @@ vi.mock('@/components/dialogs/PdfViewerDialog', () => ({
   ),
 }))
 
-vi.mock('@tauri-apps/api/core', () => ({
-  invoke: vi.fn(),
+vi.mock('@tauri-apps/api/core', async () => ({
+  invoke: vi.fn((await import('@/__tests__/helpers/invoke')).strictInvokeFallback),
   convertFileSrc: vi.fn((path: string) => `asset://localhost/${encodeURIComponent(path)}`),
 }))
 
@@ -174,6 +174,14 @@ const mockedParse = vi.mocked(parse)
 const { invoke } = await import('@tauri-apps/api/core')
 const mockedInvoke = vi.mocked(invoke)
 const { stubInvoke } = await import('@/__tests__/helpers/invoke')
+
+/** An embedded query that resolves with no rows, for tests about the wrapper, not the results. */
+function stubEmptyQuery(): void {
+  stubInvoke(mockedInvoke, {
+    list_tags_by_prefix: () => [],
+    run_advanced_query: () => ({ rows: [], nextCursor: null, hasMore: false, totalCount: null }),
+  })
+}
 
 /**
  * Every embedded-query error path below fails the one query IPC the
@@ -935,6 +943,7 @@ describe('StaticBlock', () => {
     })
 
     it('query-block variant is a plain <div> with no role and no nested button-in-button', () => {
+      stubEmptyQuery()
       // QueryResult renders its own real <button>s (chevron toggle). The
       // outer being a plain div (not a button) keeps these inner <button>s
       // valid HTML and free of the nested-interactive a11y smell.
@@ -955,6 +964,7 @@ describe('StaticBlock', () => {
     })
 
     it('query-block variant: clicking a non-interactive descendant calls onFocus', async () => {
+      stubEmptyQuery()
       // The query block's inner subtree (QueryResult + QueryResultList) is
       // densely interactive — chevron toggle, edit pencil, result items, page
       // links — and each inner handler calls stopPropagation. Without the
@@ -977,6 +987,7 @@ describe('StaticBlock', () => {
     })
 
     it('query-block variant: clicking the chevron toggle does NOT call onFocus', async () => {
+      stubEmptyQuery()
       // The capture handler must yield the click to real <button> / <a> /
       // [role="link"] targets so the chevron still toggles collapse (and so
       // the edit-pencil still opens the visual builder) without also kicking

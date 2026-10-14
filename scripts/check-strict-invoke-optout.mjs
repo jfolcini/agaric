@@ -1,30 +1,16 @@
 #!/usr/bin/env node
 // ─────────────────────────────────────────────────────────────────────
-// Strict-invoke opt-out ratchet guard (#3332).
+// Strict-invoke opt-out guard (#3332).
 //
 // `src/test-setup.ts` installs a STRICT `invoke` mock (#3225): an IPC call
 // for a command the test never stubbed REJECTS, and a global `afterEach`
-// fails the test by name. That guard exists because the previous behavior
-// — resolve `undefined` — is indistinguishable from success: `typedError`
-// wraps any resolved value as `{ status: 'ok', data }` and `unwrap`
-// branches only on `status`. In #3217 that turned a stolen positional mock
-// slot into a silent behaviour INVERSION: a "delete fails" test quietly
-// exercised the delete-SUCCEEDS path and passed.
+// fails the test by name. Resolving `undefined` instead is indistinguishable
+// from success (`typedError` wraps it as `{ status: 'ok' }`), so a missing
+// stub would silently exercise the wrong path (#3217).
 //
-// The guard is opt-OUT. A file-level
-//
-//     vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn() }))
-//
-// replaces the whole module, so neither half of the mechanism survives:
-// `strictInvokeFallback` never runs, the `afterEach` reads an empty record,
-// and the pre-#3225 hazard is back in full inside that file. The rule
-// against adding another has existed only as prose in
-// `src/__tests__/AGENTS.md` § Shared setup ("No per-file `vi.mock`"), while every other
-// invariant of comparable weight in this repo carries a committed baseline
-// (`scripts/lib-layering-baseline.json`, `src-tauri/dynamic-sql-baseline.txt`,
-// `src-tauri/unsafe-allowlist.txt`).
-// This guard is that baseline — for the mechanism that protects the
-// truthfulness of the frontend suite itself.
+// A file-level `vi.mock('@tauri-apps/api/core', …)` replaces the whole module,
+// so `strictInvokeFallback` never runs and that protection is gone inside
+// the file.
 //
 // ─── The rule ─────────────────────────────────────────────────────────
 //
@@ -32,27 +18,12 @@
 // its `invoke` mock as `vi.fn(strictInvokeFallback)` (imported from
 // `src/__tests__/helpers/invoke.ts`, which needs an `async` factory).
 // Re-mocking the module is legitimate — e.g. to add `convertFileSrc` — but
-// dropping the strict fallback is not.
+// dropping the strict fallback is not. ANY opt-out fails the guard, naming
+// file and line; there is no baseline.
 //
-// `scripts/strict-invoke-optout-baseline.json` is a committed, sorted array
-// of the test files that CURRENTLY opt out. The guard FAILS if:
-//
-//   - a file opts out but is NOT in the baseline (a NEW opt-out), or
-//   - a baseline entry no longer opts out (a STALE entry — pruning it is
-//     what makes the count ratchet DOWN; a green run against a stale
-//     baseline would hide the win and let the opt-out silently return).
-//
-// Shrink-only by construction: `--update-baseline` re-derives the set, so
-// the reviewer sees the count change in the diff.
-//
-// ─── Kill-date ────────────────────────────────────────────────────────
-//
-// REMOVE AFTER 0.17.0 (#4885, #5469). Bumped at the 0.14.0, 0.15.0 and 0.16.0 cuts;
-// burning it down is its own PR, not a release's. This baseline exists to
-// reach `[]`, and nothing but someone happening to notice has ever pressed
-// it there. At 0.17.0 `remove-after-markers` fails on this line: convert
-// the remaining opt-outs to `vi.fn(strictInvokeFallback)` and delete this
-// block, or bump the version and say in the diff why not.
+// Fails closed: a test file that cannot be read throws (non-zero exit), a
+// mock call whose parentheses never balance counts as an opt-out, and a scan
+// that finds no test files at all exits 2 rather than reporting "clean".
 //
 // ─── Known second opt-out class (NOT mechanized here) ─────────────────
 //
@@ -68,16 +39,13 @@
 // install a module mock that affects the shared setup.
 //
 // Usage: node scripts/check-strict-invoke-optout.mjs
-//        node scripts/check-strict-invoke-optout.mjs --update-baseline
-// Exit:  0 clean, 1 = drift (new opt-out or stale baseline entry),
-//        2 = repo layout failure.
+// Exit:  0 clean, 1 = opt-out found, 2 = repo layout failure.
 // ─────────────────────────────────────────────────────────────────────
 import fs from 'node:fs'
 import path from 'node:path'
 
 const ROOT = path.resolve(import.meta.dirname, '..')
 const SRC_DIR = path.join(ROOT, 'src')
-const BASELINE_FILE = path.join(ROOT, 'scripts', 'strict-invoke-optout-baseline.json')
 
 /** The module whose mock the strict-invoke mechanism lives behind. */
 const CORE_MODULE = '@tauri-apps/api/core'
@@ -194,108 +162,73 @@ export function extractCoreMockCalls(rawSource) {
         if (depth === 0) break
       }
     }
-    calls.push(source.slice(open, i + 1))
+    const line = source.slice(0, m.index).split('\n').length
+    calls.push({ text: source.slice(open, i + 1), line })
   }
   return calls
 }
 
 /**
- * Whether `source` opts out of the strict-invoke guard: it re-mocks the core
- * module without threading `strictInvokeFallback` into the `invoke` mock.
+ * The 1-based lines of every `vi.mock('@tauri-apps/api/core', …)` in `source`
+ * that does not thread `strictInvokeFallback` into the `invoke` mock.
  *
  * A bare `vi.mock('@tauri-apps/api/core')` with NO factory keeps vitest's
  * automock, which does not resolve through the shared setup either — it is
  * an opt-out too.
  */
-export function optsOutOfStrictInvoke(source) {
-  const calls = extractCoreMockCalls(source)
-  if (calls.length === 0) return false
-  return !calls.every((call) => call.includes(STRICT_FALLBACK))
+export function optOutLines(source) {
+  return extractCoreMockCalls(source)
+    .filter((call) => !call.text.includes(STRICT_FALLBACK))
+    .map((call) => call.line)
 }
 
-export function analyze({ srcDir, root, baseline }) {
-  const optOuts = listTestFiles(srcDir)
-    .filter((f) => optsOutOfStrictInvoke(fs.readFileSync(f, 'utf8')))
-    .map((f) => path.relative(root, f).replaceAll(path.sep, '/'))
-    .toSorted()
-  const baseSet = new Set(baseline)
-  const optSet = new Set(optOuts)
-  return {
-    optOuts,
-    newOptOuts: optOuts.filter((f) => !baseSet.has(f)),
-    staleBaseline: baseline.filter((f) => !optSet.has(f)).toSorted(),
+export function analyze({ srcDir, root }) {
+  const files = listTestFiles(srcDir)
+  const optOuts = []
+  for (const f of files) {
+    for (const line of optOutLines(fs.readFileSync(f, 'utf8'))) {
+      optOuts.push({ file: path.relative(root, f).replaceAll(path.sep, '/'), line })
+    }
   }
-}
-
-function readBaseline() {
-  const parsed = JSON.parse(fs.readFileSync(BASELINE_FILE, 'utf8'))
-  if (!Array.isArray(parsed)) {
-    console.error(`ERROR: ${path.relative(ROOT, BASELINE_FILE)} must contain a JSON array`)
-    process.exit(2)
-  }
-  return parsed
-}
-
-function writeBaseline(entries) {
-  fs.writeFileSync(BASELINE_FILE, `${JSON.stringify(entries.toSorted(), null, 2)}\n`)
+  optOuts.sort((a, b) => (a.file < b.file ? -1 : a.file > b.file ? 1 : a.line - b.line))
+  return { scanned: files.length, optOuts }
 }
 
 // ─── entry point ────────────────────────────────────────────────────────
 
-if (process.argv.includes('--update-baseline')) {
-  updateBaseline()
-} else {
-  runGuard()
-}
+runGuard()
 
-function updateBaseline() {
-  requireLayout()
-  const { optOuts } = analyze({ srcDir: SRC_DIR, root: ROOT, baseline: [] })
-  writeBaseline(optOuts)
-  console.log(
-    `OK: wrote baseline with ${optOuts.length} strict-invoke opt-out(s) to ${path.relative(ROOT, BASELINE_FILE)}`,
-  )
-}
-
-function requireLayout() {
+function runGuard() {
   if (!fs.existsSync(SRC_DIR)) {
     console.error(`ERROR: expected directory not found (repo layout changed?): ${SRC_DIR}`)
     process.exit(2)
   }
-}
 
-function runGuard() {
-  requireLayout()
-  if (!fs.existsSync(BASELINE_FILE)) {
-    console.error(`ERROR: baseline file not found: ${BASELINE_FILE}`)
-    console.error('Seed it with:  node scripts/check-strict-invoke-optout.mjs --update-baseline')
+  const { scanned, optOuts } = analyze({ srcDir: SRC_DIR, root: ROOT })
+  if (scanned === 0) {
+    console.error(
+      `ERROR: no test files found under ${SRC_DIR}; a scan that looked at nothing proves nothing`,
+    )
     process.exit(2)
   }
 
-  const baseline = readBaseline()
-  const { optOuts, newOptOuts, staleBaseline } = analyze({
-    srcDir: SRC_DIR,
-    root: ROOT,
-    baseline,
-  })
-
-  let failed = false
-
-  if (newOptOuts.length > 0) {
-    failed = true
+  if (optOuts.length > 0) {
     console.error(
-      `ERROR: new strict-invoke opt-out(s) — these test files vi.mock('${CORE_MODULE}')`,
+      `ERROR: ${optOuts.length} strict-invoke opt-out(s) — these vi.mock('${CORE_MODULE}')`,
     )
-    console.error('without threading the strict fallback into the `invoke` mock:')
-    for (const f of newOptOuts) console.error(`  ${f}`)
+    console.error('calls do not thread the strict fallback into the `invoke` mock:')
+    for (const { file, line } of optOuts) console.error(`  ${file}:${line}`)
     console.error('')
     console.error('Inside such a file an IPC the test never stubbed resolves `undefined`, which')
     console.error('`typedError` wraps as `{ status: "ok" }` and `unwrap` reports as SUCCESS — the')
     console.error('#3217 phantom-success hazard the #3225 guard was built to close.')
     console.error('')
-    console.error('FIX: drop the module mock and stub commands by name with `mockInvokeCommands`')
-    console.error('from `src/__tests__/helpers/invoke.ts`. If you must re-mock the module (e.g.')
-    console.error('to add `convertFileSrc`), build the invoke mock from an async factory:')
+    console.error('FIX: drop the module mock and stub commands by name with `stubInvoke` or')
+    console.error(
+      '`mockInvokeCommands` from `src/__tests__/helpers/invoke.ts`. If you must re-mock',
+    )
+    console.error('the module (e.g. to add `convertFileSrc`), build the invoke mock from an async')
+    console.error('factory:')
     console.error('')
     console.error(`    vi.mock('${CORE_MODULE}', async () => {`)
     console.error(
@@ -303,20 +236,8 @@ function runGuard() {
     )
     console.error('      return { invoke: vi.fn(strictInvokeFallback), convertFileSrc: vi.fn() }')
     console.error('    })')
+    process.exit(1)
   }
 
-  if (staleBaseline.length > 0) {
-    failed = true
-    console.error('ERROR: stale entr(ies) in the strict-invoke opt-out baseline — these files no')
-    console.error('longer opt out and must be pruned so the count ratchets down:')
-    for (const f of staleBaseline) console.error(`  ${f}`)
-    console.error('')
-    console.error('Prune them with:  node scripts/check-strict-invoke-optout.mjs --update-baseline')
-  }
-
-  if (failed) process.exit(1)
-
-  console.log(
-    `OK: ${optOuts.length} baselined strict-invoke opt-out(s), no new opt-outs, no stale entries`,
-  )
+  console.log(`OK: ${scanned} test file(s) scanned, no strict-invoke opt-outs`)
 }

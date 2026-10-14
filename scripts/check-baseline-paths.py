@@ -145,7 +145,6 @@ DATA_SOURCES: dict[str, tuple[str, str]] = {
     "scripts/json-parse-cast-baseline.json": ("json:keys", "."),
     # JSON arrays of bare path strings.
     "scripts/lib-layering-baseline.json": ("json:list", "."),
-    "scripts/strict-invoke-optout-baseline.json": ("json:list", "."),
     # `<count> <path>` text lines.
     "src-tauri/dynamic-sql-baseline.txt": ("text:count-path", "."),
     "src-tauri/space-filter-baseline.txt": ("text:count-path", "."),
