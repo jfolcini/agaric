@@ -46,7 +46,7 @@ async function reopenTheNewPage(): Promise<void> {
 }
 
 /** Save the open source buffer and wait for the block tree to come back. */
-async function saveSource(source: ReturnType<typeof $>): Promise<void> {
+async function saveSource(source: WebdriverIO.Element): Promise<void> {
   const save = pageSourceButton('Save')
   await save.waitForClickable({ timeout: ACTION_TIMEOUT })
   await save.click()
