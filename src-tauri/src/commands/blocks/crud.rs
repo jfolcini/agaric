@@ -3491,8 +3491,9 @@ pub async fn create_blocks_batch(
 /// a storage concern and not a correctness invariant: a closed background
 /// channel is warn-logged and a full one sheds the task onto `bg_dropped`
 /// (`CleanupOrphanedAttachments` is deliberately not retry-queue persisted),
-/// with the boot-time and periodic (24 h) `CleanupOrphanedAttachments`
-/// enqueues in `lib.rs` as the backstop in both cases.
+/// with the daily `cleanup_orphaned_attachments_tick` maintenance job in
+/// `lib.rs` (first tick about a minute after boot) as the backstop in both
+/// cases.
 fn enqueue_purged_attachment_gc(materializer: &Materializer, attachment_rows: u64) {
     if attachment_rows == 0 {
         return;

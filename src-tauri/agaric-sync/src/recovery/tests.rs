@@ -2496,16 +2496,15 @@ async fn perf26_draft_recovery_at_10k_ops() {
     //
     // ANALYZE first, deliberately. `EXPLAIN QUERY PLAN` never looks at bound
     // values; the plan comes from the schema plus `sqlite_stat1` alone. A
-    // fresh test DB has no usable stats — `init_pool` does run
-    // `PRAGMA optimize`, but at pool-creation time, when `op_log` is still
-    // empty — so SQLite falls back to generic row estimates and picks the
+    // fresh test DB has no usable stats — `init_pool` runs no `ANALYZE` — so
+    // SQLite falls back to generic row estimates and picks the
     // `(device_id, seq)` PRIMARY KEY autoindex, which walks every op this
     // device ever wrote. Crucially that stats-free plan is *identical* when
     // `idx_op_log_block_id` is absent, so asserting on it is a gate that
     // cannot open (verified: dropping all three block_id indexes leaves this
     // test green). ANALYZE on the seeded rows gives the planner the
-    // selectivity a populated production database has — where boot's
-    // `PRAGMA optimize` reaches the same plan — and the assertion below then
+    // selectivity a populated production database has — where the periodic
+    // `PRAGMA optimize` job reaches the same plan — and the assertion below then
     // reddens when the block-scoped index goes away.
     //
     // Both statements run on ONE pinned connection on purpose: SQLite caches

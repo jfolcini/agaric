@@ -239,8 +239,9 @@ pub async fn compact_op_log_cmd_inner(
 ///
 /// A successful compaction that actually deleted ops enqueues
 /// `CleanupOrphanedAttachments` so attachments whose owning block was
-/// just purged get swept. The complementary boot-time enqueue in
-/// `lib.rs` covers the case where the user never triggers compaction.
+/// just purged get swept. The daily `cleanup_orphaned_attachments_tick`
+/// maintenance job in `lib.rs` covers the case where the user never triggers
+/// compaction.
 #[tauri::command]
 #[specta::specta]
 pub async fn compact_op_log_cmd(

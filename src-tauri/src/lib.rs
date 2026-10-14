@@ -1456,8 +1456,7 @@ async fn boot_cache_gating(
 }
 
 /// Boot-phase 6 — best-effort boot maintenance moved off the synchronous
-/// critical path, plus the remaining synchronous boot enqueues and the
-/// post-draft-recovery cache refresh.
+/// critical path, plus the post-draft-recovery cache refresh.
 ///
 /// The off-critical-path spawn (link-metadata GC, FTS / `block_tag_refs`
 /// gating) is created first, then caches for recovered drafts are refreshed
@@ -1682,22 +1681,20 @@ fn loro_snapshot_if_dirty_job(
     }
 }
 
-/// The vault-wide `page_id` / `space_id` re-derivation (`RebuildPageIds`),
-/// daily while the app is backgrounded (#5420). Local writes derive both in
-/// their own transaction, and every delete / restore / purge and every
-/// non-empty inbound sync enqueues this task itself, so what is left for a
-/// backstop is a fan-out lost to process death: it need not run at boot.
-fn page_ids_backstop_job(
-    lifecycle: &agaric_sync::foreground::LifecycleHooks,
-    materializer: &materializer::Materializer,
-) -> maintenance::MaintenanceJob {
-    let lifecycle = lifecycle.clone();
+/// The vault-wide `page_id` / `space_id` re-derivation (`RebuildPageIds`):
+/// the daemon's first tick, about a minute after boot, then daily (#5420).
+/// Local writes derive both in their own transaction, and every delete /
+/// restore / purge and every non-empty inbound sync enqueues this task
+/// itself, so what is left for a backstop is a fan-out lost to process death
+/// (an inbound sync's is debounced in memory): it need not run in the boot
+/// burst, but it must run every session.
+fn page_ids_backstop_job(materializer: &materializer::Materializer) -> maintenance::MaintenanceJob {
     let materializer = materializer.clone();
     maintenance::MaintenanceJob {
         name: "page_ids_backstop",
         interval: std::time::Duration::from_secs(24 * 3600),
         last_run: None,
-        predicate: Box::new(move || lifecycle.is_backgrounded()),
+        predicate: Box::new(|| true),
         run: Box::new(move || {
             let mat = materializer.clone();
             Box::pin(async move { maintenance::enqueue_rebuild_page_ids(&mat) })
@@ -1713,8 +1710,11 @@ fn projected_agenda_midnight_job(
     materializer: &materializer::Materializer,
 ) -> maintenance::MaintenanceJob {
     let projected_agenda_materializer = materializer.clone();
-    let projected_agenda_last_day =
-        Arc::new(maintenance::projected_agenda_last_fired_day_at_boot());
+    // Boot enqueues its own `RebuildProjectedAgendaCache`, so the first tick
+    // waits for the next UTC day instead of rebuilding a second time (#5420).
+    let projected_agenda_last_day = Arc::new(std::sync::atomic::AtomicI32::new(
+        maintenance::utc_day_number(),
+    ));
     maintenance::MaintenanceJob {
         name: "projected_agenda_midnight",
         interval: std::time::Duration::from_secs(60),
@@ -1780,7 +1780,7 @@ fn build_maintenance_jobs(
         fts_idle_optimize_job(materializer),
         tombstone_purge_job(lifecycle, pools, device_id, materializer),
         loro_snapshot_if_dirty_job(lifecycle, pools, materializer),
-        page_ids_backstop_job(lifecycle, materializer),
+        page_ids_backstop_job(materializer),
         projected_agenda_midnight_job(materializer),
         reminders_tick_job(pools, app),
     ]
@@ -4083,10 +4083,11 @@ mod page_ids_backstop_tests {
         }
     }
 
-    /// #5420 — boot leaves a stale `page_id` alone; the maintenance job
-    /// re-derives it, and only once the app is backgrounded.
+    /// #5420 — boot leaves a stale `page_id` alone; the maintenance job's
+    /// first tick re-derives it, with nothing gating it on the app's
+    /// foreground state.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn the_page_id_backstop_runs_from_the_idle_job_not_at_boot_5420() {
+    async fn the_page_id_backstop_runs_on_the_first_tick_not_at_boot_5420() {
         let dir = tempfile::TempDir::new().unwrap();
         let pools = db::init_pools(&dir.path().join("test.db")).await.unwrap();
         for (id, block_type, parent_id, page_id) in [
@@ -4110,32 +4111,56 @@ mod page_ids_backstop_tests {
         super::spawn_boot_maintenance(&pools, &mat, &healthy_report());
         mat.flush_background()
             .await
-            .expect("drain the boot enqueues");
+            .expect("drain anything boot queued");
         assert_eq!(
             page_id_of(&pools.read, CHILD).await,
             None,
             "boot must not run the vault-wide page_id rebuild"
         );
 
-        let lifecycle = agaric_sync::foreground::LifecycleHooks::new();
-        let mut jobs = vec![page_ids_backstop_job(&lifecycle, &mat)];
+        let mut jobs = vec![page_ids_backstop_job(&mat)];
         maintenance::run_tick(&mut jobs).await;
-        mat.flush_background()
-            .await
-            .expect("drain the foreground tick");
-        assert_eq!(
-            page_id_of(&pools.read, CHILD).await,
-            None,
-            "the backstop must wait while the app is in the foreground"
-        );
-
-        lifecycle.mark_backgrounded();
-        maintenance::run_tick(&mut jobs).await;
-        mat.flush_background().await.expect("drain the backstop");
+        mat.flush_background().await.expect("drain the first tick");
         assert_eq!(
             page_id_of(&pools.read, CHILD).await.as_deref(),
             Some(PAGE),
-            "a backgrounded tick must re-derive the stale page_id"
+            "the daemon's first tick must re-derive the stale page_id"
+        );
+        mat.shutdown();
+    }
+}
+
+#[cfg(test)]
+mod projected_agenda_midnight_job_tests {
+    use super::{maintenance, materializer, projected_agenda_midnight_job};
+
+    /// #5420 — boot enqueues its own projected-agenda rebuild, so the job's
+    /// first tick, about a minute later, must not enqueue a second. Counted
+    /// via `bg_processed` minus the flush barrier.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn the_first_midnight_tick_after_boot_enqueues_no_rebuild_5420() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let pool = crate::db::init_pool(&dir.path().join("test.db"))
+            .await
+            .unwrap();
+        let mat = materializer::Materializer::new(pool);
+        let mut jobs = vec![projected_agenda_midnight_job(&mat)];
+        let load = || {
+            mat.metrics()
+                .bg_processed
+                .load(std::sync::atomic::Ordering::Relaxed)
+        };
+        mat.flush_background()
+            .await
+            .expect("drain the materializer's startup work");
+
+        let before = load();
+        maintenance::run_tick(&mut jobs).await;
+        mat.flush_background().await.expect("drain the first tick");
+        assert_eq!(
+            load() - before,
+            1,
+            "the first tick must enqueue no rebuild: only the flush barrier runs"
         );
         mat.shutdown();
     }
