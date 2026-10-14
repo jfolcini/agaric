@@ -129,12 +129,19 @@ test.describe('Ctrl+B collision routing', () => {
   })
 
   test('focus outside the editor toggles the sidebar visibility', async ({ page }) => {
-    // Take focus out of any editor by clicking a sidebar nav button.
-    await page
+    const pagesNav = page
       .locator('[data-slot="sidebar"]')
       .getByRole('button', { name: 'Pages', exact: true })
-      .click()
+    await pagesNav.click()
     await expect(page.getByTestId('header-label')).toHaveText('Pages')
+    // A view change moves focus to the view's primary element one frame later
+    // (the Pages view's new-page input), where Ctrl+B is left to the input.
+    // Let that frame pass, then put focus on a plain button.
+    await page.evaluate(
+      () => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))),
+    )
+    await pagesNav.focus()
+    await expect(pagesNav).toBeFocused()
 
     const sidebar = page.locator('[data-slot="sidebar"]')
     await expect(sidebar).toHaveAttribute('data-state', 'expanded')
