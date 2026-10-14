@@ -33,6 +33,13 @@ export function formatDate(d: Date): string {
   return format(d, 'yyyy-MM-dd')
 }
 
+/**
+ * One formatter per locale for `formatDateDisplay`: `toLocaleDateString`
+ * builds a new `Intl.DateTimeFormat` on every call, and the journal's first
+ * render formats the day several times (#5440).
+ */
+const dateDisplayFormatters = new Map<string, Intl.DateTimeFormat>()
+
 /** Format a Date as a readable string (e.g., "Mon, Jan 15 2025").
  *
  * #4555 — uses `getAppLocaleTag()` (`i18n.language`, the same source the
@@ -42,12 +49,18 @@ export function formatDate(d: Date): string {
  * (e.g. test fixtures).
  */
 export function formatDateDisplay(d: Date): string {
-  return d.toLocaleDateString(getAppLocaleTag(), {
-    weekday: 'short',
-    year: 'numeric',
-    month: 'short',
-    day: 'numeric',
-  })
+  const locale = getAppLocaleTag()
+  let formatter = dateDisplayFormatters.get(locale)
+  if (formatter === undefined) {
+    formatter = new Intl.DateTimeFormat(locale, {
+      weekday: 'short',
+      year: 'numeric',
+      month: 'short',
+      day: 'numeric',
+    })
+    dateDisplayFormatters.set(locale, formatter)
+  }
+  return formatter.format(d)
 }
 
 /**

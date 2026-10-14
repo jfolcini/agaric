@@ -78,6 +78,9 @@ vi.mock('@/components/agenda/AgendaFilterBuilder', () => ({
       </div>
     )
   },
+}))
+
+vi.mock('@/components/agenda/AgendaSortGroupControls', () => ({
   AgendaSortGroupControls: (props: {
     groupBy: string
     sortBy: string

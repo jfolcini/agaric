@@ -140,13 +140,20 @@ describe('DailyView', () => {
     expect(sections).toHaveLength(1)
   })
 
-  it('applies fade animation keyed on date', () => {
-    const { container } = render(<DailyView entry={ENTRY} onAddBlock={vi.fn()} />)
+  // #5440 — the day it mounts with paints at once; only a day change fades in.
+  it('fades in a changed day, not the day it mounts with', () => {
+    const { container, rerender } = render(<DailyView entry={ENTRY} onAddBlock={vi.fn()} />)
+    expect((container.firstElementChild as HTMLElement).className).not.toContain('animate-in')
+
+    rerender(<DailyView entry={ENTRY_NO_PAGE} onAddBlock={vi.fn()} />)
 
     const wrapper = container.firstElementChild as HTMLElement
     expect(wrapper.className).toContain('animate-in')
     expect(wrapper.className).toContain('fade-in-0')
     expect(wrapper.className).toContain('duration-normal')
+
+    rerender(<DailyView entry={ENTRY} onAddBlock={vi.fn()} />)
+    expect((container.firstElementChild as HTMLElement).className).toContain('animate-in')
   })
 
   it('has no a11y violations', async () => {

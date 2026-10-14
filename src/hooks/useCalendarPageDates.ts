@@ -47,7 +47,6 @@ import { useSpaceStore } from '@/stores/space'
 
 export {
   __resetCalendarPageDatesForTests,
-  fetchPageMap,
   invalidateCalendarPageDates,
   PAGE_DATES_TTL_MS,
   samePageMap,

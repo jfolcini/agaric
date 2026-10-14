@@ -18,27 +18,31 @@ import {
   isDateFormattedPage,
 } from '@/lib/date-utils'
 import { i18n } from '@/lib/i18n'
-import { registerDateLocale, __unregisterDateLocaleForTests } from '@/lib/i18n/locales'
+import {
+  registerDateLocale,
+  SUPPORTED_LOCALES,
+  __unregisterDateLocaleForTests,
+} from '@/lib/i18n/locales'
 
 /**
  * #3752 EQUIVALENCE LEDGER — `date-utils.ts` mutants no input can distinguish
- * (101:40 is not one of them: see 'rejects a calendar day the host timezone
+ * (114:40 is not one of them: see 'rejects a calendar day the host timezone
  * skipped' under `formatJournalTitle`).
  *
- * 80:7 [ConditionalExpression] `fmt === 'yyyy-MM-dd'` -> false — the slow path
+ * 93:7 [ConditionalExpression] `fmt === 'yyyy-MM-dd'` -> false — the slow path
  *   formats the same Date back to the identical 4-2-2 string.
- * 80:15 [StringLiteral] -> `fmt === ''` — only `''` takes the mutated fast path,
+ * 93:15 [StringLiteral] -> `fmt === ''` — only `''` takes the mutated fast path,
  *   and date-fns 4 throws on an empty format string, so the existing `catch`
  *   already returns that same `isoContent`.
- * 153:38 [ConditionalExpression] `monthIndex1 >= 1` -> true — the sole caller
+ * 166:38 [ConditionalExpression] `monthIndex1 >= 1` -> true — the sole caller
  *   `formatCompactDate` has already returned at `m < 1`.
- * 153:38 [EqualityOperator] `>=` -> `>` — differs only at exactly 1, where the
+ * 166:38 [EqualityOperator] `>=` -> `>` — differs only at exactly 1, where the
  *   ternary's fallback value is also 1. (`>=` -> `<` is killed by 'formats a
  *   same-year date compactly'.)
- * 153:58 [ConditionalExpression] `monthIndex1 <= 12` -> true — the same sole
+ * 166:58 [ConditionalExpression] `monthIndex1 <= 12` -> true — the same sole
  *   caller has already returned at `m > 12`.
- * 169:7 [ConditionalExpression] (x3), 169:7 [LogicalOperator] (x2),
- * 169:26 and 169:45 [ConditionalExpression] — the guard is already always false
+ * 182:7 [ConditionalExpression] (x3), 182:7 [LogicalOperator] (x2),
+ * 182:26 and 182:45 [ConditionalExpression] — the guard is already always false
  *   (`Number()` yields NaN, never `undefined`, for the three parts
  *   `parts.length === 3` guarantees), so no rearrangement of its operands can
  *   change a result; deleting it instead fails `npm run typecheck` with TS18048
@@ -253,6 +257,34 @@ describe('formatDateDisplay — locale tracking (#4555)', () => {
     expect(formatDateDisplay(new Date(2026, 5, 17))).toBe('mié, 17 jun 2026')
     await i18n.changeLanguage('en')
     expect(formatDateDisplay(new Date(2026, 5, 17))).toBe('Wed, Jun 17, 2026')
+  })
+
+  // #5440 — the cached formatter must print exactly what `toLocaleDateString`
+  // printed, for every day of a leap year in every shipped locale.
+  it.each(SUPPORTED_LOCALES)('prints what toLocaleDateString did, every day (%s)', async (lng) => {
+    await i18n.changeLanguage(lng)
+    for (let day = 1; day <= 366; day++) {
+      const d = new Date(2028, 0, day)
+      expect(formatDateDisplay(d)).toBe(
+        d.toLocaleDateString(lng, {
+          weekday: 'short',
+          year: 'numeric',
+          month: 'short',
+          day: 'numeric',
+        }),
+      )
+    }
+  })
+
+  it('reuses one formatter per locale (#5440)', () => {
+    formatDateDisplay(new Date(2026, 5, 17))
+    const construct = vi.spyOn(Intl, 'DateTimeFormat')
+    try {
+      for (let day = 1; day <= 5; day++) formatDateDisplay(new Date(2026, 5, day))
+      expect(construct).not.toHaveBeenCalled()
+    } finally {
+      construct.mockRestore()
+    }
   })
 })
 

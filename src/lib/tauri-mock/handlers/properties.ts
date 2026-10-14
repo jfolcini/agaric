@@ -781,8 +781,7 @@ export const propertiesHandlers = {
     const inUse = [...properties.values()].filter((perBlock) => perBlock.has(key)).length
     if (inUse > 0) {
       throw validationRejection(
-        `cannot delete property definition '${key}': ${inUse} block_properties row(s) reference ` +
-          'this key. Clear them first via set_property(value=None) on each affected block.',
+        `Can't delete '${key}': ${inUse} block(s) still use it. Remove the property from them first.`,
       )
     }
     if (!propertyDefs.has(key)) throw notFoundRejection(`property_definitions ('${key}')`)

@@ -18,6 +18,10 @@ import {
 import { mockReactVirtual } from '@/__tests__/mocks/react-virtual'
 import { PageBrowser } from '@/components/PageBrowser'
 import type { BlockRow } from '@/lib/bindings'
+import {
+  _resetPrefetchPageSubtreeForTest,
+  PAGE_PREFETCH_DWELL_MS,
+} from '@/lib/prefetch-page-subtree'
 import { usePageBrowserFiltersStore } from '@/stores/pageBrowserFilters'
 import { useSpaceStore } from '@/stores/space'
 
@@ -180,6 +184,63 @@ describe('PageBrowser', () => {
 
     expect(await screen.findByText('First page')).toBeInTheDocument()
     expect(screen.getByText('Second page')).toBeInTheDocument()
+  })
+  // #5446 — on a hover device the visible rows used to prefetch themselves on
+  // open, fill the prefetch cap, and drop the hover intent for the next 8 s.
+  it('a hover right after open prefetches the hovered page', async () => {
+    _resetPrefetchPageSubtreeForTest()
+    const user = userEvent.setup()
+    const ids = ['P1', 'P2', 'P3', 'P4', 'P5', 'P6']
+    stubInvoke({
+      list_pages_with_metadata: () =>
+        pageList(ids.map((id) => makePage({ id, content: `Page ${id}` }))),
+    })
+
+    render(<PageBrowser />)
+    await screen.findByText('Page P6')
+    // Let any visible-row dwell timer elapse before the hover.
+    await new Promise((resolve) => setTimeout(resolve, PAGE_PREFETCH_DWELL_MS * 2))
+
+    await user.hover(screen.getByText('Page P6'))
+
+    await waitFor(() => {
+      expect(mockedInvoke).toHaveBeenCalledWith('load_page_subtree', {
+        rootBlockId: 'P6',
+        scope: { kind: 'active', space_id: 'SPACE_TEST' },
+      })
+    })
+    const prefetched = mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'load_page_subtree')
+    expect(prefetched).toHaveLength(1)
+  })
+  it('on touch, a visible row prefetches its page without a hover', async () => {
+    _resetPrefetchPageSubtreeForTest()
+    vi.spyOn(window, 'matchMedia').mockImplementation(
+      (query: string) =>
+        ({
+          matches: query === '(pointer: coarse)',
+          media: query,
+          addEventListener: () => {},
+          removeEventListener: () => {},
+        }) as unknown as MediaQueryList,
+    )
+    Object.defineProperty(navigator, 'maxTouchPoints', { value: 5, configurable: true })
+    stubInvoke({
+      list_pages_with_metadata: () => pageList([makePage({ id: 'P1', content: 'Touch page' })]),
+    })
+
+    try {
+      render(<PageBrowser />)
+
+      await waitFor(() => {
+        expect(mockedInvoke).toHaveBeenCalledWith('load_page_subtree', {
+          rootBlockId: 'P1',
+          scope: { kind: 'active', space_id: 'SPACE_TEST' },
+        })
+      })
+    } finally {
+      vi.restoreAllMocks()
+      Object.defineProperty(navigator, 'maxTouchPoints', { value: 0, configurable: true })
+    }
   })
   it('renders empty state when no pages exist', async () => {
     stubInvoke({ list_pages_with_metadata: () => emptyPage })

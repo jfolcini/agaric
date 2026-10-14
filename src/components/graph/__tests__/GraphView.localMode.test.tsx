@@ -21,7 +21,12 @@ import { axe } from 'vitest-axe'
 import { clearGraphCache, GraphView } from '@/components/graph/GraphView'
 import type { GraphEdge, GraphNode } from '@/lib/graph-types'
 import { logger } from '@/lib/logger'
-import { type LocalGraphPreference, PREFERENCES, writePreference } from '@/lib/preferences'
+import {
+  type LocalGraphPreference,
+  PREFERENCES,
+  readPreference,
+  writePreference,
+} from '@/lib/preferences'
 import { useNavigationStore } from '@/stores/navigation'
 import { showPageInGraph } from '@/stores/show-page-in-graph'
 import { useSpaceStore } from '@/stores/space'
@@ -272,6 +277,35 @@ describe('GraphView local-graph mode (#1429)', () => {
     await renderGraph()
     await waitFor(() => expect(captured.nodes.length).toBe(5))
     expect(screen.getByTestId('local-graph-toggle')).toHaveAttribute('aria-pressed', 'false')
+  })
+
+  it('keeps the remembered mode when the graph opens with no page open', async () => {
+    writePreference<LocalGraphPreference>(
+      PREFERENCES.graphLocal,
+      { active: true, hops: 1 },
+      'SPACE_TEST',
+    )
+    seedTab(null)
+
+    await renderGraph()
+
+    // The #1752 reset ran, and was not written over the stored mode.
+    expect(screen.getByTestId('local-graph-toggle')).toHaveAttribute('aria-pressed', 'false')
+    expect(readPreference(PREFERENCES.graphLocal, 'SPACE_TEST')).toEqual({ active: true, hops: 1 })
+  })
+
+  it('remembers local mode turned off on a page', async () => {
+    writePreference<LocalGraphPreference>(
+      PREFERENCES.graphLocal,
+      { active: true, hops: 1 },
+      'SPACE_TEST',
+    )
+
+    await renderGraph()
+    await waitFor(() => expect(captured.nodes.map((n) => n.id).toSorted()).toEqual(['a', 'hub']))
+    fireEvent.click(screen.getByTestId('local-graph-toggle'))
+
+    expect(readPreference(PREFERENCES.graphLocal, 'SPACE_TEST')).toEqual({ active: false, hops: 1 })
   })
 
   it('falls back to the global graph with a warning when storage cannot be read (#5433)', async () => {
