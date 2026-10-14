@@ -11,9 +11,9 @@
 //!
 //! | Tool | Backing `*_inner` | Notes |
 //! |------|-------------------|-------|
-//! | `append_block` | [`append_block_resolving_names`] | `block_type` hard-coded to `"content"`. `parent_id` required. |
+//! | `append_block` | `append_block_resolving_names` | `block_type` hard-coded to `"content"`. `parent_id` required. |
 //! | `append_markdown` | [`append_markdown_inner`] | A Markdown outline under `parent_id`, read and resolved as paste does: an unmatched `[[Name]]` / `#name` creates the page or tag. |
-//! | `update_block_content` | [`edit_block_resolving_names`] | |
+//! | `update_block_content` | `edit_block_resolving_names` | |
 //! | `set_property` | [`set_property_inner`] | Exactly one of `value_*` must be provided. |
 //! | `add_tag` | [`add_tag_inner`] | Tag block must already exist in the block's space. |
 //! | `create_page` | [`create_block_inner_with_space`] | `block_type = "page"`, `parent_id = None`. |
