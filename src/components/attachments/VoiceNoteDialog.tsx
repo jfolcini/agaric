@@ -184,6 +184,7 @@ function VoiceNoteRecorder({
         : {}),
       audioBitsPerSecond: RECORDING_BITS_PER_SECOND,
     })
+    // oxlint-disable-next-line react/purity -- runs from the Record click, never during render
     const startedAt = new Date()
     const chunks: Blob[] = []
     let recordedBytes = 0
