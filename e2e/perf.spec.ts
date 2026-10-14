@@ -1,8 +1,10 @@
 /**
  * Opt-in performance run: `AGARIC_PERF=1 npx playwright test e2e/perf.spec.ts`.
  *
- * Seeds a vault through the mock's own IPC (default 500 pages × 20 blocks plus
- * one 500-block page), drives the core journeys, and prints one row per journey:
+ * Seeds a vault through the mock's own IPC (default 500 pages × 20 blocks, each
+ * page with one dated TODO and one tagged block, plus one 500-block page),
+ * drives the core journeys, and prints one row per journey. On a view journey
+ * (Pages, Search, Agenda, Tags) `wallMs` is the click to the first data row.
  *
  *  - `inp`: worst Event Timing interaction (the web-vitals INP definition).
  *  - `appLongFrames` / `worstFrame`: Long Animation Frames, minus mock time.
@@ -45,6 +47,7 @@ const CPU = Number(process.env['AGARIC_PERF_CPU'] ?? 1)
 const PAGES = Number(process.env['AGARIC_PERF_PAGES'] ?? 500)
 const BIG_BLOCKS = Number(process.env['AGARIC_PERF_BLOCKS'] ?? 500)
 const TRACE = process.env['AGARIC_PERF_TRACE'] === '1'
+const TAGS = 50
 const BIG_TITLE = 'Perf big page'
 
 interface PerfProbe {
@@ -292,10 +295,14 @@ function makeMeasure(page: Page, cdp: CDPSession, rows: Row[]) {
   }
 }
 
-/** Seed the vault through the mock's IPC. Page `i`'s blocks link to page `i - 1`. */
+/**
+ * Seed the vault through the mock's IPC. Page `i`'s blocks link to page `i - 1`;
+ * its first block is a TODO due within a month either side of today, and its
+ * second carries one of `tags` tags.
+ */
 async function seedVault(page: Page): Promise<void> {
   const pageIds = await page.evaluate(
-    async ({ pages }) => {
+    async ({ pages, tags }) => {
       const internals = (window as unknown as Record<string, unknown>)['__TAURI_INTERNALS__'] as {
         invoke: (cmd: string, args: unknown) => Promise<unknown>
       }
@@ -303,6 +310,23 @@ async function seedVault(page: Page): Promise<void> {
       const words = 'lorem ipsum dolor sit amet project meeting idea review draft notes'.split(' ')
       const sentence = (n: number) =>
         Array.from({ length: 8 + (n % 10) }, (_, k) => words[(n + k * 7) % words.length]).join(' ')
+      const isoDate = (offset: number) => {
+        const d = new Date()
+        d.setDate(d.getDate() + offset)
+        return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+      }
+      const tagIds: string[] = []
+      for (let t = 0; t < tags; t++) {
+        const tag = (await invoke('create_block', {
+          blockType: 'tag',
+          content: `perf-tag-${String(t).padStart(2, '0')}`,
+          parentId: null,
+          index: null,
+          scope: { kind: 'active', space_id: 'SPACE_PERSONAL' },
+          blockId: null,
+        })) as { id: string }
+        tagIds.push(tag.id)
+      }
       const ids: string[] = []
       for (let p = 0; p < pages; p++) {
         const title = `Perf page ${String(p).padStart(4, '0')}`
@@ -313,18 +337,25 @@ async function seedVault(page: Page): Promise<void> {
         })) as string
         const link = ids.length > 0 ? ` [[${ids.at(-1)}]]` : ''
         ids.push(id)
-        await invoke('create_blocks_batch', {
+        const { blocks } = (await invoke('create_blocks_batch', {
           specs: Array.from({ length: 20 }, (_, i) => ({
             blockType: 'content',
             content: `${sentence(p + i)}${i % 5 === 0 ? link : ''}`,
             parentId: id,
             position: null,
           })),
-        })
+        })) as { blocks: Array<{ id: string }> }
+        const [task, tagged] = blocks
+        if (task) {
+          await invoke('set_todo_state', { blockId: task.id, state: 'TODO' })
+          await invoke('set_due_date', { blockId: task.id, date: isoDate((p % 61) - 30) })
+        }
+        const tagId = tagIds[p % tags]
+        if (tagged && tagId) await invoke('add_tag', { blockId: tagged.id, tagId })
       }
       return ids
     },
-    { pages: PAGES },
+    { pages: PAGES, tags: TAGS },
   )
   await seedBigPage(page, pageIds)
 }
@@ -432,6 +463,14 @@ test('perf: core journeys on a seeded vault', async ({ page }) => {
   await measure('journal', async () => {
     await sidebar('Journal').click()
     await blocks.first().waitFor()
+  })
+  await measure('agenda view', async () => {
+    await page.getByRole('tab', { name: 'Agenda view' }).click()
+    await page.getByTestId('agenda-results-item').first().waitFor()
+  })
+  await measure('tags view', async () => {
+    await sidebar('Tags').click()
+    await page.locator('[data-testid^="tag-item-"]').first().waitFor()
   })
   await measure('open linked page', async () => {
     await openViaPalette(page, 'Perf page 0001')
