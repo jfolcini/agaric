@@ -188,7 +188,8 @@ export function useGraphSimulation({
       applyPositions()
     }
     const detachZoom = attachZoom(svg, rendered.g, fitToView, kept?.transform)
-    fitOnSettleRef.current = kept === null
+    // A re-setup after a worker failure reads back the layout it kept; a fit still owed stays owed.
+    if (kept === null) fitOnSettleRef.current = true
 
     const prefersReducedMotion = shouldReduceMotion()
 

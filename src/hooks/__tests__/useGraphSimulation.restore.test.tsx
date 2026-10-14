@@ -36,6 +36,10 @@ class RecordingWorker {
       data: { type: 'done', positions: new Float32Array(points.flat()), count: points.length },
     })
   }
+  /** The worker reports a crash, so the graph falls back to the main thread. */
+  fail(): void {
+    this.onMessage?.({ data: { type: 'error', message: 'worker crashed' } })
+  }
 }
 
 function makeNode(id: string, label: string): GraphNode {
@@ -216,6 +220,28 @@ describe('useGraphSimulation — coming back to the graph (#5434)', () => {
     })
     expect(container.querySelector('svg > g')?.getAttribute('transform')).toBe(
       KEPT.transform.toString(),
+    )
+  })
+
+  it('a worker that fails before its first settle still gets the fallback layout fitted (#5432)', async () => {
+    vi.stubGlobal('matchMedia', (query: string) => ({ matches: true, media: query }))
+    const { container } = render(<Graph nodes={[A, B]} layout={memoryLayout()} />)
+
+    act(() => RecordingWorker.last?.fail())
+
+    const placed = Object.values(paintedAt(container)).map((t) => {
+      const [x, y] =
+        /translate\(([-\d.e]+),([-\d.e]+)\)/
+          .exec(t ?? '')
+          ?.slice(1)
+          .map(Number) ?? []
+      return { x, y }
+    })
+    expect(placed).toHaveLength(2)
+    await waitFor(() =>
+      expect(container.querySelector('svg > g')?.getAttribute('transform')).toBe(
+        fitTransform(placed, 800, 600).toString(),
+      ),
     )
   })
 })

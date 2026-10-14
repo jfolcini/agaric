@@ -321,14 +321,16 @@ test.describe('Graph view', () => {
       const fitted = await fittedTransform(page)
       expect(await nodesOutsideView(page)).toEqual([])
 
-      // Wander off: pan from a corner, which the fit's padding keeps clear of nodes.
-      const svgBox = await page.getByTestId('graph-svg').boundingBox()
-      if (!svgBox) throw new Error('graph svg has no bounding box')
-      const start = { x: svgBox.x + 20, y: svgBox.y + svgBox.height - 20 }
-      await page.mouse.move(start.x, start.y)
-      await page.mouse.down()
-      for (let i = 1; i <= 10; i++) await page.mouse.move(start.x + 30 * i, start.y - 15 * i)
-      await page.mouse.up()
+      // Wander off by zooming in around the centre: two steps, since the fit's padding absorbs
+      // one on a canvas this small. Not a canvas drag: at this tablet width the zoom controls
+      // can sit in the bottom-left corner.
+      const fittedScale = parseScale(fitted) ?? Number.NaN
+      for (const step of [1.3, 1.69]) {
+        await page.getByRole('button', { name: /^Zoom in/ }).click()
+        await expect
+          .poll(async () => parseScale(await g.getAttribute('transform')))
+          .toBeCloseTo(fittedScale * step, 3)
+      }
       await expect.poll(async () => (await nodesOutsideView(page)).length).toBeGreaterThan(0)
 
       await page.getByRole('button', { name: /^Fit to view/ }).click()

@@ -75,6 +75,7 @@ async function graphToPageAndBack(page: Page): Promise<void> {
   await expect
     .poll(async () => scale(await g.getAttribute('transform')))
     .toBeCloseTo(fittedScale * 1.3, 3)
+  const zoomed = await g.getAttribute('transform')
   const box = await svg.boundingBox()
   if (!box) throw new Error('graph svg has no bounding box')
   const start = { x: box.x + 20, y: box.y + box.height - 20 }
@@ -82,7 +83,7 @@ async function graphToPageAndBack(page: Page): Promise<void> {
   await page.mouse.down()
   for (let i = 1; i <= 10; i++) await page.mouse.move(start.x + 6 * i, start.y - 4 * i)
   await page.mouse.up()
-  await expect.poll(() => g.getAttribute('transform')).not.toMatch(/^translate\(0,0\)/)
+  await expect.poll(() => g.getAttribute('transform')).not.toBe(zoomed)
   const transform = await g.getAttribute('transform')
 
   await page
