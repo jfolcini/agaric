@@ -1331,10 +1331,6 @@ async fn handle_move_blocks(
         .iter()
         .map(|id| BlockId::from_trusted(&normalize_ulid_arg(id)))
         .collect();
-    validate_block_in_space(pool, parent_id.as_str(), &space_id).await?;
-    for block_id in &block_ids {
-        validate_block_in_space(pool, block_id.as_str(), &space_id).await?;
-    }
     // The same 1-based contract and refusal as `append_block` (#1606, #400).
     if let Some(p) = args.position
         && p < 1
@@ -1342,6 +1338,10 @@ async fn handle_move_blocks(
         return Err(AppError::validation(format!(
             "tool `{TOOL_MOVE_BLOCKS}`: position must be >= 1 (1-based), got {p}"
         )));
+    }
+    validate_block_in_space(pool, parent_id.as_str(), &space_id).await?;
+    for block_id in &block_ids {
+        validate_block_in_space(pool, block_id.as_str(), &space_id).await?;
     }
     // The inner clamps an index past the last sibling to an append.
     let index = args.position.map_or(i64::MAX, |p| p - 1);

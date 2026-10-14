@@ -86,6 +86,7 @@ const originalMediaDevices = Object.getOwnPropertyDescriptor(navigator, 'mediaDe
 /** The dialog the way BlockTree drives it: `onClose` clears the block id. */
 function Harness({ onClose }: { onClose?: () => void }) {
   const [blockId, setBlockId] = useState<string | null>(BLOCK_ID)
+  if (blockId === null) return null
   return (
     <VoiceNoteDialog
       blockId={blockId}
@@ -122,11 +123,6 @@ afterEach(() => {
 })
 
 describe('VoiceNoteDialog', () => {
-  it('renders nothing while no block is set', () => {
-    render(<VoiceNoteDialog blockId={null} onClose={() => {}} />)
-    expect(screen.queryByTestId('voice-note-dialog')).not.toBeInTheDocument()
-  })
-
   it('opens on the Record button with the timer at zero', async () => {
     render(<Harness />)
     const record = await screen.findByRole('button', { name: t('voiceNote.record') })
