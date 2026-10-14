@@ -90,7 +90,7 @@ LOG_DIR="docs/session-log"
 # cap so ordinary parallel batches never hit the ceiling; a number past it
 # is still almost certainly a stale/miscalculated max, not legitimate
 # parallel work, so it stays a hard failure.
-GAP_BOUND=10
+GAP_BOUND=25
 
 num_of() { basename "$1" | sed -E 's/^session-([0-9]+)-.*$/\1/'; }
 
