@@ -46,7 +46,7 @@ const mockedBatchResolve = vi.hoisted(() => vi.fn())
 const mockedGetBlock = vi.hoisted(() => vi.fn())
 const mockedListAllTagsInSpace = vi.hoisted(() => vi.fn())
 const mockedListPageAliasesByPrefix = vi.hoisted(() => vi.fn())
-const mockedListBlocks = vi.hoisted(() => vi.fn())
+const mockedListAllPagesInSpace = vi.hoisted(() => vi.fn())
 
 vi.mock('@/lib/bindings', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/lib/bindings')>()
@@ -64,8 +64,8 @@ vi.mock('@/lib/bindings', async (importOriginal) => {
         mockedListAllTagsInSpace(...args).then((data: unknown) => ({ status: 'ok', data })),
       listPageAliasesByPrefix: (...args: unknown[]) =>
         mockedListPageAliasesByPrefix(...args).then((data: unknown) => ({ status: 'ok', data })),
-      listBlocks: (...args: unknown[]) =>
-        mockedListBlocks(...args).then((data: unknown) => ({ status: 'ok', data })),
+      listAllPagesInSpace: (...args: unknown[]) =>
+        mockedListAllPagesInSpace(...args).then((data: unknown) => ({ status: 'ok', data })),
     },
   }
 })
@@ -78,6 +78,7 @@ vi.mock('@/lib/logger', () => ({
   logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }))
 
+import { makePageHeading } from '@/__tests__/fixtures'
 import { fetchAndCacheLinks } from '@/components/block-tree/use-block-link-resolve'
 import { useBlockNavigateToLink } from '@/components/block-tree/use-block-navigate-to-link'
 import { useBlockResolve } from '@/components/block-tree/use-block-resolve'
@@ -378,15 +379,12 @@ const WRITERS: readonly Writer[] = [
     // covers the same branch.
     skip: { tag: ['null'] },
     seed: async (id, blockType, content) => {
-      // `preload` runs a PAGE half then a TAG half and a throw in either
+      // `preload` runs a PAGE half and a TAG half and a throw in either
       // aborts the whole scan silently (it logs and returns), so BOTH halves
       // have to be stubbed for every case, not just the one under test.
-      mockedListBlocks.mockResolvedValueOnce({
-        items: blockType === 'page' ? [{ id, content, deleted_at: null, block_type: 'page' }] : [],
-        next_cursor: null,
-        has_more: false,
-        total_count: null,
-      })
+      mockedListAllPagesInSpace.mockResolvedValueOnce(
+        blockType === 'page' ? [makePageHeading({ id, content })] : [],
+      )
       mockedListAllTagsInSpace.mockResolvedValueOnce(
         blockType === 'tag'
           ? [{ tag_id: id, name: content ?? '', usage_count: 0, updated_at: '2026-01-01' }]

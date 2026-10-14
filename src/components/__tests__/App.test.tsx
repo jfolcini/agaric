@@ -16,6 +16,7 @@ import { toast } from 'sonner'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
+import { makePageHeading } from '@/__tests__/fixtures'
 import { App } from '@/App'
 import { useIsMobile } from '@/hooks/useIsMobile'
 import { announce } from '@/lib/announcer'
@@ -2298,13 +2299,8 @@ describe('App', () => {
             { id: 'SPACE_B', name: 'B', accent_color: null },
           ]
         }
-        if (cmd === 'list_blocks') {
-          return {
-            items: [{ id: 'PAGE_A1', content: 'Page A1', deleted_at: null }],
-            next_cursor: null,
-            has_more: false,
-            total_count: null,
-          }
+        if (cmd === 'list_all_pages_in_space') {
+          return [makePageHeading({ id: 'PAGE_A1', content: 'Page A1' })]
         }
         if (cmd === 'list_all_tags_in_space') return []
         return emptyPage
@@ -2358,9 +2354,7 @@ describe('App', () => {
             { id: 'SPACE_B', name: 'B', accent_color: null },
           ]
         }
-        if (cmd === 'list_blocks') {
-          return { items: [], next_cursor: null, has_more: false, total_count: null }
-        }
+        if (cmd === 'list_all_pages_in_space') return []
         if (cmd === 'list_all_tags_in_space') return []
         return emptyPage
       })
