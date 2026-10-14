@@ -11,7 +11,7 @@ The bar for everything below is `AGENTS.md` § How we work. Three deletions and 
 
 References, loaded only when needed:
 
-- `references/pitfalls.md` — failure modes with a concrete recovery (stacked PRs, Dependabot branches, moving-ref resets, lint traps, stale `dev.db`, path-keyed guards, shell traps, `gh` in a cloud session).
+- `references/pitfalls.md` — failure modes with a concrete recovery (stacked PRs, Dependabot branches, moving-ref resets, lint traps, stale `dev.db`, path-keyed guards, shell traps, branches and `gh` in a cloud session).
 - `references/session-log.md` — session-log numbering and format.
 - `references/codegen-and-sql.md` — `.sqlx` and specta regeneration.
 
@@ -64,7 +64,7 @@ Unsure: one row up. A builder that keeps failing is relaunched one step up the f
 
 Split by domain or file boundary, up to 6 subagents owning at most 6 files each, launched together, each in its own worktree; Rust builders compile one at a time. Never hand "refactor X across the codebase" to one subagent.
 
-Worktree: `git worktree add ../wt-x -b <branch> origin/main && bash scripts/seed-worktree.sh` from inside it (a fresh worktree lacks `node_modules`, `src-tauri/.env`, and `dev.db`). Cut it from the branch that holds the code you build on, which is not `origin/main` when that code is still in an open PR. While builders run, do a second independent issue rather than waiting. Up to 10 PRs may be open at once.
+Worktree: `git worktree add ../wt-x -b <branch> origin/main && bash scripts/seed-worktree.sh` from inside it (a fresh worktree lacks `node_modules`, `src-tauri/.env`, and `dev.db`). Cut it from the branch that holds the code you build on, which is not `origin/main` when that code is still in an open PR. While builders run, do a second independent issue rather than waiting. Each item gets its own `claude/<issue>-<slug>` branch and PR, and up to 10 PRs may be open at once; a cloud session's designated branch is one of those branches, not a cap on how many the session opens.
 
 Builders run targeted tests, plus `npm run typecheck` for TS (vitest does not type-check). The reviewer runs the real gates once per item over the whole worktree: the full suite, `npm run typecheck`, `npm run lint`, and for Rust `cargo clippy --workspace --all-targets -- -D warnings`, which otherwise runs only at pre-push and in CI.
 
@@ -126,12 +126,12 @@ The orchestrator writes one session log per PR (`references/session-log.md`).
 
 ## 7. Open the PR, then move on
 
-`gh pr create --base main --head <branch>` with `Closes #NN` only when the PR finishes the issue; partial work says `Refs #NN` and leaves a status comment on the issue. GitHub ignores negation: "not `Closes #NN`" in a body still closes it. Write the body to `file=$(scripts/scratch-file.sh new pr-body)`, never a generic name: the scratchpad is per session, not per agent, so a shared `msg.txt` ships one PR's body on another.
+`gh pr create --base main --head <branch>`, ready for review rather than a draft, with `Closes #NN` only when the PR finishes the issue; partial work says `Refs #NN` and leaves a status comment on the issue. GitHub ignores negation: "not `Closes #NN`" in a body still closes it. Write the body to `file=$(scripts/scratch-file.sh new pr-body)`, never a generic name: the scratchpad is per session, not per agent, so a shared `msg.txt` ships one PR's body on another.
 
 Do not wait for CI. Record the PR as a task and start the next batch from the latest `origin/main`. Reconcile at the next batch boundary (or when the 10-PR cap blocks you):
 
 - A green rollup is not yet a merge signal. Confirm the checks ran on the PR's `headRefOid`, not an older push, and that the base is `main`: a stacked PR gets no CI (`references/pitfalls.md`).
-- Green and mergeable → read the full `agaric-reviewer` body and inline comments first (`gh pr view <n> --json reviews --jq '.reviews[].body'`, `gh api repos/jfolcini/agaric/pulls/<n>/comments`). A finding with a concrete failure gets a fix commit before the merge; a non-blocking note goes to the follow-up PR. Then `gh pr merge <n> --squash --delete-branch --admin`: the reviewer app's approval does not satisfy the ruleset, so an own PR is always `REVIEW_REQUIRED`; `--admin` is sanctioned once `validate-all` and `dco` are green and the reviewer body has been read.
+- Green and mergeable → read the full `agaric-reviewer` body and inline comments first (`gh pr view <n> --json reviews --jq '.reviews[].body'`, `gh api repos/jfolcini/agaric/pulls/<n>/comments`). A finding with a concrete failure gets a fix commit before the merge; a non-blocking note goes to the follow-up PR. Then `gh pr merge <n> --squash --delete-branch --admin`: the reviewer app's approval does not satisfy the ruleset, so an own PR is always `REVIEW_REQUIRED`; `--admin` is sanctioned once `validate-all` and `dco` are green and the reviewer body has been read. Marking a draft ready and merging are this loop's steps; do not hand them back to the maintainer.
 - Red → diagnose (`gh run view --log-failed`), push a fix, leave for the next sweep.
 - Running → leave it. Batch review fixes into one push per round: each push restarts `validate-all`, so pushing every fix means no run ever completes.
 - Behind `main` → rebase or `git merge --signoff origin/main` locally, never GitHub's "Update branch": its merge commit has no `Signed-off-by` and fails `dco`.

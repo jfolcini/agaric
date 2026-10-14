@@ -24,7 +24,9 @@ Worktrees share one `.git`, so `origin/main` can advance under you. Resetting on
 
 Dependabot force-pushes its branch on rebase or supersession, sometimes under a new PR number, and a human commit on it vanishes. A fix that stands alone (a test assertion, an `overrides` entry) goes in its own PR off `main`. One that cannot (a relock without the bump is meaningless) goes on the Dependabot branch: comment on the PR with what broke and what you did, verify the push by SHA, and merge with `gh pr merge <n> --squash --subject "<human commit subject>"` so the diagnosis is the headline.
 
-## `gh` in a cloud session
+## Branches and `gh` in a cloud session
+
+A cloud session is handed one designated branch. It carries at most one PR; every other item gets its own `claude/<issue>-<slug>` branch off `origin/main`, pushed and opened the same way. The repo deletes a branch when its PR merges, so a designated branch whose PR merged is restarted from `origin/main` before it carries new work.
 
 GitHub GraphQL returns 403 from a Claude Code cloud session, so every `gh pr` and `gh issue` subcommand fails there; `gh api` REST works. With `R=repos/jfolcini/agaric`:
 
@@ -34,7 +36,7 @@ GitHub GraphQL returns 403 from a Claude Code cloud session, so every `gh pr` an
 - Issue with comments: `gh api $R/issues/<n> --jq .body`, then `gh api "$R/issues/<n>/comments?per_page=100" --jq '.[].body'`.
 - Review bodies: `gh api "$R/pulls/<n>/reviews?per_page=100" --jq '.[].body'`.
 - Open a PR: `gh api $R/pulls -f base=main -f head=<branch> -f title='<title>' -F body=@"$file"`.
-- Merge: a draft first goes ready with `gh api -X POST $R/pulls/<n>/ccr/ready_for_review`, then `gh api -X PUT $R/pulls/<n>/merge -f merge_method=squash`. Leave the head branch: the repo deletes it on merge, and the proxy refuses a ref delete with 403.
+- Merge: a draft first goes ready with `gh api -X POST $R/pulls/<n>/ccr/ready_for_review`, then `gh api -X PUT $R/pulls/<n>/merge -f merge_method=squash -f sha=<head you checked>`, so a push that lands after your check is refused instead of merged unseen. Leave the head branch: the repo deletes it on merge, and the proxy refuses a ref delete with 403.
 
 ## Lint and format
 
