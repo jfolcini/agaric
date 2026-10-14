@@ -75,6 +75,7 @@ import type { BlockRow, PageResponse, ResolvedBlock } from '@/lib/bindings'
 import { t } from '@/lib/i18n'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
+import { useResolveStore } from '@/stores/resolve'
 import { useSpaceStore } from '@/stores/space'
 
 const mockedUseBlockPropertyEvents = vi.mocked(useBlockPropertyEvents)
@@ -96,6 +97,8 @@ beforeEach(() => {
   // short-circuits to empty otherwise). Seed one so the existing fetch tests
   // exercise the real listBlocks path.
   useSpaceStore.setState({ currentSpaceId: 'SPACE_1' })
+  // Titles a test resolves are written back to the shared cache.
+  useResolveStore.setState({ cache: new Map(), version: 0 })
   mockedListBlocks.mockResolvedValue(emptyResponse)
   mockedBatchResolve.mockResolvedValue([])
   mockedListProjectedAgenda.mockResolvedValue({
@@ -194,6 +197,28 @@ describe('useDuePanelData', () => {
     await waitFor(() => {
       expect(result.current.pageTitles.get('PAGE1')).toBe('Resolved Title')
     })
+    expect(mockedBatchResolve).toHaveBeenCalledTimes(1)
+    expect(mockedBatchResolve).toHaveBeenCalledWith(['PAGE1'], {
+      kind: 'active',
+      space_id: 'SPACE_1',
+    })
+  })
+
+  it('takes a page title the resolve store holds without calling batchResolve (#5439)', async () => {
+    mockedListBlocks.mockResolvedValue({
+      items: [makeBlock({ id: 'B1', parent_id: 'PAGE1', page_id: 'PAGE1' })],
+      next_cursor: null,
+      has_more: false,
+      total_count: null,
+    })
+    useResolveStore.getState().batchSet([{ id: 'PAGE1', title: 'Cached Title', deleted: false }])
+
+    const { result } = renderHook(() => useDuePanelData({ date: '2025-06-15', sourceFilter: null }))
+
+    await waitFor(() => {
+      expect(result.current.pageTitles.get('PAGE1')).toBe('Cached Title')
+    })
+    expect(mockedBatchResolve).toHaveBeenCalledTimes(0)
   })
 
   it('re-fetches when date changes', async () => {
@@ -1189,6 +1214,9 @@ describe('projected cache invalidation (#738 sub-3)', () => {
     })
     expect(mockedListProjectedAgenda).toHaveBeenCalledTimes(2)
 
+    // Drop the titles the first visit cached, so the return trip's main
+    // resolve goes to the backend and can be held open.
+    useResolveStore.setState({ cache: new Map(), version: 0 })
     returningToFirstDate = true
     rerender({ date: '2026-04-15' })
     await waitFor(() => {

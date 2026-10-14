@@ -26,7 +26,7 @@ import { toast } from 'sonner'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
-import { emptyPage, makeHistoryEntry, makePage } from '@/__tests__/fixtures'
+import { emptyPage, makeHistoryEntry, makePageHeading } from '@/__tests__/fixtures'
 import {
   type CommandReturns,
   deferred,
@@ -88,7 +88,7 @@ function stubHistory(extra: TypedInvokeHandlers = {}): void {
   // with a space active (#5415) the resolve-store preload also scans pages.
   stubInvoke(mockedInvoke, {
     list_spaces: () => useSpaceStore.getState().availableSpaces,
-    list_blocks: () => ({ items: [], next_cursor: null, has_more: false, total_count: null }),
+    list_all_pages_in_space: () => [],
     list_all_tags_in_space: () => [],
     ...historyHandlers,
   })
@@ -1932,12 +1932,7 @@ describe('HistoryView revert fan-out (#5276)', () => {
     })
     useRecentPagesStore.setState({ recentPages: held, recentPagesBySpace: { SPACE_A: held } })
     stubHistory({
-      list_blocks: () => ({
-        items: [makePage({ id: 'PAGE_P', content: 'Alpha' })],
-        next_cursor: null,
-        has_more: false,
-        total_count: null,
-      }),
+      list_all_pages_in_space: () => [makePageHeading({ id: 'PAGE_P', content: 'Alpha' })],
       list_all_tags_in_space: () => [],
       batch_resolve: () => [
         { id: 'BLOCK_B', title: 'Referenced block', block_type: 'content', deleted: false },
@@ -2031,7 +2026,7 @@ describe('HistoryView revert fan-out (#5276)', () => {
     })
     // The re-reads that would rewrite them start in the same tick as the fan-out.
     const commandsCalled = mockedInvoke.mock.calls.map(([command]) => command)
-    expect(commandsCalled).not.toContain('list_blocks')
+    expect(commandsCalled).not.toContain('list_all_pages_in_space')
     expect(commandsCalled).not.toContain('batch_resolve')
     expect(heldState()).toEqual(BEFORE)
   })

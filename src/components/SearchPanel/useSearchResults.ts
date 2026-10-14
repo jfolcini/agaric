@@ -47,7 +47,6 @@ import { queryClient } from '@/lib/query-client'
 import { reportIpcError } from '@/lib/report-ipc-error'
 import { astToFilterProjection, type SearchQueryAST } from '@/lib/search-query'
 import { ValidationCode } from '@/lib/search-query/validation-codes'
-import { requireActiveScope } from '@/lib/space-scope'
 import {
   type RecentPage,
   selectRecentPagesForSpace,
@@ -55,6 +54,7 @@ import {
   useRecentPagesStore,
 } from '@/stores/recent-pages'
 import { useResolveStore } from '@/stores/resolve'
+import { resolveTitles } from '@/stores/resolve-titles'
 import { useTabsStore } from '@/stores/tabs'
 
 /**
@@ -400,7 +400,7 @@ export function useSearchResults({
     return t('search.invalidRegex', { message: errorDetail.message })
   }, [errorDetail, t, toggles.isRegex])
 
-  // Issue #153 — every page_id ever fed into `batchResolve` for
+  // Issue #153 — every page_id ever fed into `resolveTitles` for
   // breadcrumb resolution, regardless of outcome. The breadcrumb
   // `useEffect` below consults this ref before assembling the next
   // batch, so a permanently-unresolvable id (soft-deleted parent,
@@ -411,7 +411,7 @@ export function useSearchResults({
   //
   // Issue #153 — unresolvable page_ids (soft-deleted, missing) never
   // land in `pageTitles`, so without `attemptedBreadcrumbIdsRef` the
-  // `!pageTitles.has(id)` filter below would re-fire `batchResolve` for
+  // `!pageTitles.has(id)` filter below would re-fire `resolveTitles` for
   // them on every `loadMore`.
   useEffect(() => {
     // Only resolve page ids we haven't already resolved or
@@ -425,41 +425,22 @@ export function useSearchResults({
     // result that omits some ids) cannot cause a re-fire on the next
     // `loadMore`.
     for (const id of parentIds) attemptedBreadcrumbIdsRef.current.add(id)
-    commands
-      .batchResolve(parentIds, requireActiveScope(currentSpaceId))
-      .then(unwrap)
-      .then((resolved) => {
-        if (Array.isArray(resolved)) {
-          setPageTitles((prev) => {
-            // Phase 4.P2 — stabilise Map identity so the
-            // `groupResultsByPage` memo doesn't invalidate on every
-            // batchResolve fetch. Only allocate a new Map if a title changed.
-            let changed = false
-            for (const r of resolved) {
-              const nextTitle = r.title ?? t('common.untitled')
-              if (prev.get(r.id) !== nextTitle) {
-                changed = true
-                break
-              }
-            }
-            if (!changed) return prev
-            const next = new Map(prev)
-            for (const r of resolved) {
-              next.set(r.id, r.title ?? t('common.untitled'))
-            }
-            return next
-          })
-        } else {
-          logger.warn('SearchPanel', 'breadcrumb resolve returned a non-array result', undefined)
-        }
+    resolveTitles(currentSpaceId, parentIds)
+      .then((titles) => {
+        setPageTitles((prev) => {
+          // Phase 4.P2 — stabilise Map identity so the `groupResultsByPage`
+          // memo doesn't invalidate on every resolve. Only allocate a new Map
+          // if a title changed.
+          if ([...titles].every(([id, title]) => prev.get(id) === title)) return prev
+          return new Map([...prev, ...titles])
+        })
       })
       .catch((err) => {
         logger.warn('SearchPanel', 'breadcrumb resolution failed', undefined, err)
       })
     // `pageTitles` participates so the already-resolved filter above sees the
     // latest map; the empty-`parentIds` guard makes the follow-up a no-op.
-    // `t` is referentially stable (single-locale app), listed for exhaustive-deps.
-  }, [results, pageTitles, t, currentSpaceId])
+  }, [results, pageTitles, currentSpaceId])
 
   // A monotonic "navigation generation". Each click claims the next
   // generation; only the latest may resolve the spinner / perform the

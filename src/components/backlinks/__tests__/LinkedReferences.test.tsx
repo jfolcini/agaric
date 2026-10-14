@@ -188,6 +188,15 @@ const emptyGrouped = {
   truncated: false,
 }
 
+const oneGroupGrouped = {
+  groups: [makeGroup('P1', 'Page One', [{ id: 'B1', content: 'block 1' }])],
+  next_cursor: null,
+  has_more: false,
+  total_count: 1,
+  filtered_count: 1,
+  truncated: false,
+}
+
 function mockInvokeWith(groupedResponse: unknown, extras?: Record<string, unknown>) {
   mockedInvoke.mockImplementation(async (cmd: string, _args?: any) => {
     if (cmd === 'list_backlinks_grouped') return groupedResponse
@@ -1751,16 +1760,18 @@ describe('LinkedReferences', () => {
   // and surfaces an empty `string[]`, matching the other two consumers
   // (`PropertyValuePicker`, `UnlinkedReferences`) that never toasted.)
   it('error: property keys load failure renders without crashing (no toast in shared-cache path)', async () => {
+    const user = userEvent.setup()
     mockedInvoke.mockImplementation(async (cmd: string, _args?: any) => {
       if (cmd === 'list_property_keys')
         return Promise.reject(new Error('property keys unavailable'))
-      if (cmd === 'list_backlinks_grouped') return emptyGrouped
+      if (cmd === 'list_backlinks_grouped') return oneGroupGrouped
       if (cmd === 'batch_resolve') return []
       if (cmd === 'list_tags_by_prefix') return []
       return emptyGrouped
     })
 
     renderLinkedReferences({ targetId: 'PAGE1' })
+    await user.click(await screen.findByTestId('mock-clear-filters'))
 
     // Wait for the IPC to be issued so the catch path runs.
     await waitFor(() => {
@@ -1770,6 +1781,29 @@ describe('LinkedReferences', () => {
     // The cache swallows the error to logger.warn — no `references.loadPropertiesFailed`
     // toast fires.
     expect(toast.error).not.toHaveBeenCalledWith('Failed to load property keys')
+  })
+
+  // The keys only feed the filter builder, so a page open must not pay for them;
+  // touching the builder (focus or pointer press) fetches them exactly once.
+  it('does not list property keys at mount, only once the filter builder is touched', async () => {
+    const user = userEvent.setup()
+    mockInvokeWith(oneGroupGrouped)
+
+    renderLinkedReferences({ targetId: 'PAGE1' })
+
+    // Positive control: the panel is fully rendered and its own read has run.
+    const clearButton = await screen.findByTestId('mock-clear-filters')
+    const countCalls = (cmd: string) => mockedInvoke.mock.calls.filter((c) => c[0] === cmd).length
+    expect(countCalls('list_backlinks_grouped')).toBe(1)
+    expect(countCalls('list_property_keys')).toBe(0)
+
+    await user.click(clearButton)
+    await waitFor(() => {
+      expect(countCalls('list_property_keys')).toBe(1)
+    })
+
+    await user.click(clearButton)
+    expect(countCalls('list_property_keys')).toBe(1)
   })
 
   // 39. simultaneous failures: backlinks toast; property-keys

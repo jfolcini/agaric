@@ -25,6 +25,7 @@ import { formatCompactDate } from '@/lib/date-utils'
 import { t } from '@/lib/i18n'
 import { logger } from '@/lib/logger'
 import { queryClient } from '@/lib/query-client'
+import { useResolveStore } from '@/stores/resolve'
 import { useSpaceStore } from '@/stores/space'
 
 // ── Helpers ─────────────────────────────────────────────────────────
@@ -134,6 +135,8 @@ beforeEach(() => {
   localStorage.clear()
   // #5415 — the task listing carries the active space.
   useSpaceStore.setState({ currentSpaceId: 'SPACE_1' })
+  // Titles a test resolves are written back to the shared cache.
+  useResolveStore.setState({ cache: new Map(), version: 0 })
   // The panel reads the module-level TanStack singleton, and its query key is
   // (space, day) — identical across these tests. Without a clear, a prior
   // test's cached pages satisfy the next render instantly while
@@ -565,6 +568,27 @@ describe('UnfinishedTasks', () => {
     await user.click(item.closest('li') as Element)
 
     expect(onNavigateToPage).toHaveBeenCalledWith('PAGE_1', 'My Page', 'Y1')
+    expect(mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'batch_resolve')).toEqual([
+      ['batch_resolve', { ids: ['PAGE_1'], scope: { kind: 'active', space_id: 'SPACE_1' } }],
+    ])
+  })
+
+  it('navigates with a page title the resolve store holds, without batch_resolve (#5439)', async () => {
+    const user = userEvent.setup()
+    const onNavigateToPage = vi.fn()
+    mockInvokeForBlocks([makeYesterdayBlock()])
+    useResolveStore.getState().batchSet([{ id: 'PAGE_1', title: 'Cached Page', deleted: false }])
+
+    render(<UnfinishedTasks onNavigateToPage={onNavigateToPage} />)
+
+    await waitFor(() => {
+      expect(screen.getByTestId('unfinished-tasks')).toBeInTheDocument()
+    })
+    await user.click(screen.getByRole('button', { expanded: false }))
+    await user.click(screen.getByText('Yesterday task').closest('li') as Element)
+
+    expect(onNavigateToPage).toHaveBeenCalledWith('PAGE_1', 'Cached Page', 'Y1')
+    expect(mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'batch_resolve')).toHaveLength(0)
   })
 
   it('shows priority badge when block has priority', async () => {

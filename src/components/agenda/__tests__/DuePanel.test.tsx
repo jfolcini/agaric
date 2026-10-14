@@ -106,6 +106,7 @@ import { makeBlock } from '@/__tests__/fixtures'
 import { seedAgendaListBlocks } from '@/__tests__/mocks/agenda-list-blocks'
 import { DuePanel } from '@/components/agenda/DuePanel'
 import { useNavigationStore } from '@/stores/navigation'
+import { useResolveStore } from '@/stores/resolve'
 import { useSpaceStore } from '@/stores/space'
 import { selectPageStack, useTabsStore } from '@/stores/tabs'
 
@@ -128,6 +129,8 @@ beforeEach(() => {
   // #2248 — the agenda fetch (`listBlocksForAgenda`) requires an active space
   // and short-circuits to empty otherwise; seed one so `listBlocks` runs.
   useSpaceStore.setState({ currentSpaceId: 'SPACE_1' })
+  // Titles a test resolves are written back to the shared cache.
+  useResolveStore.setState({ cache: new Map(), version: 0 })
   mockedListBlocks.mockResolvedValue(emptyResponse)
   mockedBatchResolve.mockResolvedValue([])
   mockedListProjectedAgenda.mockResolvedValue({

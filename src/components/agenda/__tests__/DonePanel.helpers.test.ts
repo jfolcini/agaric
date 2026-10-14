@@ -9,12 +9,7 @@
 import { describe, expect, it } from 'vitest'
 
 import { makeBlock } from '@/__tests__/fixtures'
-import {
-  collectUniqueParentIds,
-  groupBlocksByPage,
-  mergeResolvedTitles,
-} from '@/components/agenda/DonePanel.helpers'
-import type { ResolvedBlock } from '@/lib/bindings'
+import { collectUniqueParentIds, groupBlocksByPage } from '@/components/agenda/DonePanel.helpers'
 
 // `filterDoneBlocks` and its tests retired. The
 // empty-content / excluded-parent filters now live in SQL via
@@ -58,62 +53,6 @@ describe('collectUniqueParentIds', () => {
 
   it('returns an empty array on empty input', () => {
     expect(collectUniqueParentIds([])).toHaveLength(0)
-  })
-})
-
-// ---------------------------------------------------------------------------
-// mergeResolvedTitles
-// ---------------------------------------------------------------------------
-
-describe('mergeResolvedTitles', () => {
-  const untitled = 'Untitled'
-
-  it('merges resolved titles into the existing map', () => {
-    const prev = new Map([['P1', 'Original']])
-    const resolved: ResolvedBlock[] = [
-      { id: 'P2', title: 'New Title', block_type: 'page', deleted: false },
-    ]
-    const next = mergeResolvedTitles(prev, resolved, untitled)
-    expect(next.size).toBe(2)
-    expect(next.get('P1')).toBe('Original')
-    expect(next.get('P2')).toBe('New Title')
-  })
-
-  it('overwrites existing entries with freshly-resolved titles', () => {
-    const prev = new Map([['P1', 'Stale']])
-    const resolved: ResolvedBlock[] = [
-      { id: 'P1', title: 'Fresh', block_type: 'page', deleted: false },
-    ]
-    const next = mergeResolvedTitles(prev, resolved, untitled)
-    expect(next.size).toBe(1)
-    expect(next.get('P1')).toBe('Fresh')
-  })
-
-  it('falls back to untitledLabel when title is null', () => {
-    const resolved: ResolvedBlock[] = [
-      { id: 'P1', title: null, block_type: 'page', deleted: false },
-    ]
-    const next = mergeResolvedTitles(new Map(), resolved, untitled)
-    expect(next.size).toBe(1)
-    expect(next.get('P1')).toBe(untitled)
-  })
-
-  it('does not mutate the input map', () => {
-    const prev = new Map([['P1', 'Original']])
-    const resolved: ResolvedBlock[] = [
-      { id: 'P2', title: 'Added', block_type: 'page', deleted: false },
-    ]
-    const next = mergeResolvedTitles(prev, resolved, untitled)
-    expect(prev.size).toBe(1)
-    expect(prev.has('P2')).toBe(false)
-    expect(next).not.toBe(prev)
-  })
-
-  it('returns a fresh empty map when both inputs are empty', () => {
-    const prev = new Map<string, string>()
-    const next = mergeResolvedTitles(prev, [], untitled)
-    expect(next.size).toBe(0)
-    expect(next).not.toBe(prev)
   })
 })
 

@@ -133,8 +133,8 @@ export function UnlinkedReferences({
   const [expandedGroups, setExpandedGroups] = useState<Record<string, boolean>>({})
   const [filters, setFilters] = useState<BacklinkFilter[]>([])
   const [sort, setSort] = useState<BacklinkSort | null>(null)
-  // Shared cache replaces per-mount `commands.listPropertyKeys()` IPC.
-  const propertyKeys = usePropertyKeysCache(currentSpaceId)
+  // The keys only feed the filter builder, which renders while the panel is open.
+  const propertyKeys = usePropertyKeysCache(currentSpaceId, !collapsed)
   // The page whose panel has neared the viewport. The count is fetched only
   // then, so a page open does not pay for a panel below the fold (#5445).
   const [countRequestedFor, setCountRequestedFor] = useState<string | null>(null)

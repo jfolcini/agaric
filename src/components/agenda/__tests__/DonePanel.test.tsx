@@ -23,6 +23,7 @@ import { axe } from 'vitest-axe'
 
 import { mockReactVirtual } from '@/__tests__/mocks/react-virtual'
 import { t } from '@/lib/i18n'
+import { useResolveStore } from '@/stores/resolve'
 import { useSpaceStore } from '@/stores/space'
 
 // #4412 — `queryByProperty` / `batchResolve` retired their hand-written
@@ -153,6 +154,8 @@ beforeEach(() => {
   // An ACTIVE space, so the scope assertions below distinguish
   // `toSpaceScope(currentSpaceId)` from a hardcoded `{ kind: 'global' }`.
   useSpaceStore.setState({ currentSpaceId: 'SPACE_1' })
+  // Titles a test resolves are written back to the shared cache.
+  useResolveStore.setState({ cache: new Map(), version: 0 })
 })
 
 describe('DonePanel', () => {
@@ -332,6 +335,26 @@ describe('DonePanel', () => {
     render(<DonePanel date="2025-06-15" />)
 
     expect(await screen.findByText('→ My Page Title')).toBeInTheDocument()
+    expect(mockedBatchResolve).toHaveBeenCalledTimes(1)
+    expect(mockedBatchResolve).toHaveBeenCalledWith(['PAGE1'], {
+      kind: 'active',
+      space_id: 'SPACE_1',
+    })
+  })
+
+  it('shows a breadcrumb title the resolve store holds without calling batchResolve (#5439)', async () => {
+    mockedQueryByProperty.mockResolvedValue({
+      items: [makeBlock({ id: 'B1', parent_id: 'PAGE1', page_id: 'PAGE1' })],
+      next_cursor: null,
+      has_more: false,
+      total_count: null,
+    })
+    useResolveStore.getState().batchSet([{ id: 'PAGE1', title: 'Cached Title', deleted: false }])
+
+    render(<DonePanel date="2025-06-15" />)
+
+    expect(await screen.findByText('→ Cached Title')).toBeInTheDocument()
+    expect(mockedBatchResolve).toHaveBeenCalledTimes(0)
   })
 
   // 7. Click navigates to source page

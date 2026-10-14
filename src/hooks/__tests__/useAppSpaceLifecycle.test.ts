@@ -11,7 +11,7 @@ import { invoke, type InvokeArgs } from '@tauri-apps/api/core'
 import { act, renderHook, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { makeBlockRow } from '@/__tests__/fixtures'
+import { makePageHeading } from '@/__tests__/fixtures'
 import { mockInvokeCommands } from '@/__tests__/helpers/invoke'
 import { useAppSpaceLifecycle } from '@/hooks/useAppSpaceLifecycle'
 import { unwrap } from '@/lib/app-error'
@@ -38,15 +38,13 @@ beforeEach(() => {
   writePreference(PREFERENCES.spaceTextJournalTemplatesDeleted, true)
 
   // #3225 — the hook's mount effect runs the resolve store's real
-  // `preload(spaceId)`, which pages through `list_blocks` and then fetches
-  // `list_all_tags_in_space`. Both used to be unstubbed: they resolved
-  // `undefined`, `unwrap` reported success, and reading `.items` off it
-  // threw into `preload`'s "preload failed, using fallback" catch — so
-  // every test here silently exercised the failure path. Stub the pair
-  // with empty results so the effect completes the way production does.
+  // `preload(spaceId)`, which fetches `list_all_pages_in_space` and
+  // `list_all_tags_in_space`. Stub the pair with empty results so the effect
+  // completes the way production does instead of taking the "preload failed,
+  // using fallback" path.
   vi.mocked(invoke).mockImplementation(
     mockInvokeCommands({
-      list_blocks: () => ({ items: [], has_more: false, next_cursor: null, total_count: null }),
+      list_all_pages_in_space: () => [],
       list_all_tags_in_space: () => [],
     }),
   )
@@ -101,13 +99,11 @@ describe('useAppSpaceLifecycle — retitle on switch (#5277)', () => {
     // A peer or an MCP agent renamed it to "Beta" while Personal was active.
     vi.mocked(invoke).mockImplementation(
       mockInvokeCommands({
-        list_blocks: (args) => {
+        list_all_pages_in_space: (args) => {
           const scope = args['scope'] as { space_id?: string } | undefined
-          const items =
-            scope?.space_id === 'SPACE_WORK'
-              ? [makeBlockRow({ id: 'PAGE_A', block_type: 'page', content: 'Beta' })]
-              : []
-          return { items, has_more: false, next_cursor: null, total_count: null }
+          return scope?.space_id === 'SPACE_WORK'
+            ? [makePageHeading({ id: 'PAGE_A', content: 'Beta' })]
+            : []
         },
         list_all_tags_in_space: () => [],
       }),

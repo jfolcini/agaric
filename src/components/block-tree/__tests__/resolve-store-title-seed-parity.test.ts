@@ -46,7 +46,7 @@ const mockedBatchResolve = vi.hoisted(() => vi.fn())
 const mockedGetBlock = vi.hoisted(() => vi.fn())
 const mockedListAllTagsInSpace = vi.hoisted(() => vi.fn())
 const mockedListPageAliasesByPrefix = vi.hoisted(() => vi.fn())
-const mockedListBlocks = vi.hoisted(() => vi.fn())
+const mockedListAllPagesInSpace = vi.hoisted(() => vi.fn())
 
 vi.mock('@/lib/bindings', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/lib/bindings')>()
@@ -64,8 +64,8 @@ vi.mock('@/lib/bindings', async (importOriginal) => {
         mockedListAllTagsInSpace(...args).then((data: unknown) => ({ status: 'ok', data })),
       listPageAliasesByPrefix: (...args: unknown[]) =>
         mockedListPageAliasesByPrefix(...args).then((data: unknown) => ({ status: 'ok', data })),
-      listBlocks: (...args: unknown[]) =>
-        mockedListBlocks(...args).then((data: unknown) => ({ status: 'ok', data })),
+      listAllPagesInSpace: (...args: unknown[]) =>
+        mockedListAllPagesInSpace(...args).then((data: unknown) => ({ status: 'ok', data })),
     },
   }
 })
@@ -78,6 +78,7 @@ vi.mock('@/lib/logger', () => ({
   logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }))
 
+import { makePageHeading } from '@/__tests__/fixtures'
 import { fetchAndCacheLinks } from '@/components/block-tree/use-block-link-resolve'
 import { useBlockNavigateToLink } from '@/components/block-tree/use-block-navigate-to-link'
 import { useBlockResolve } from '@/components/block-tree/use-block-resolve'
@@ -90,6 +91,7 @@ import { t } from '@/lib/i18n'
 import { PREFERENCES, writePreference } from '@/lib/preferences'
 import { createPageBlockStore } from '@/stores/page-blocks'
 import { keyFor, useResolveStore } from '@/stores/resolve'
+import { resolveTitles } from '@/stores/resolve-titles'
 import { useSpaceStore } from '@/stores/space'
 
 const TEST_SPACE_ID = 'SPACE_TEST'
@@ -377,15 +379,12 @@ const WRITERS: readonly Writer[] = [
     // covers the same branch.
     skip: { tag: ['null'] },
     seed: async (id, blockType, content) => {
-      // `preload` runs a PAGE half then a TAG half and a throw in either
+      // `preload` runs a PAGE half and a TAG half and a throw in either
       // aborts the whole scan silently (it logs and returns), so BOTH halves
       // have to be stubbed for every case, not just the one under test.
-      mockedListBlocks.mockResolvedValueOnce({
-        items: blockType === 'page' ? [{ id, content, deleted_at: null, block_type: 'page' }] : [],
-        next_cursor: null,
-        has_more: false,
-        total_count: null,
-      })
+      mockedListAllPagesInSpace.mockResolvedValueOnce(
+        blockType === 'page' ? [makePageHeading({ id, content })] : [],
+      )
       mockedListAllTagsInSpace.mockResolvedValueOnce(
         blockType === 'tag'
           ? [{ tag_id: id, name: content ?? '', usage_count: 0, updated_at: '2026-01-01' }]
@@ -441,6 +440,17 @@ const WRITERS: readonly Writer[] = [
       mockedBatchResolve.mockResolvedValueOnce([mkResolved(id, blockType, content)])
       render(createElement(SidebarProvider, null, createElement(BookmarksSection)))
       await waitFor(() => expect(mockedBatchResolve).toHaveBeenCalled())
+    },
+  },
+  {
+    name: 'resolveTitles',
+    source: 'src/stores/resolve-titles.ts',
+    // `useDuePanelData` hands it inline `((ULID))` refs as well as page ids.
+    supports: BLOCK_TYPES,
+    cacheGated: true,
+    seed: async (id, blockType, content) => {
+      mockedBatchResolve.mockResolvedValueOnce([mkResolved(id, blockType, content)])
+      await resolveTitles(TEST_SPACE_ID, [id])
     },
   },
 ] as const
@@ -682,6 +692,11 @@ const DECLARED_WRITERS: Record<
     writes: 1,
     kind: 'echo',
     note: 'page / tag a paste just created, named as the paste wrote it (#5140)',
+  },
+  'src/stores/resolve-titles.ts': {
+    writes: 1,
+    kind: 'seed',
+    note: '#5439 — the side panels resolve breadcrumb titles the cache misses and write the rows back',
   },
   'src/stores/page-rename.ts': { writes: 1, kind: 'echo', note: 'rename just committed' },
 }

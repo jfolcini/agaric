@@ -13,7 +13,7 @@ import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
-import { makePage } from '@/__tests__/fixtures'
+import { makePageHeading } from '@/__tests__/fixtures'
 import { ActivityFeed } from '@/components/agent-access/ActivityFeed'
 import type { ActivityEntry } from '@/hooks/useMcpActivityFeed'
 import {
@@ -28,18 +28,19 @@ import { useSpaceStore } from '@/stores/space'
 import type { Tab } from '@/stores/tabs'
 import { useTabsStore } from '@/stores/tabs'
 
-const { mockRevert, mockListBlocks, mockListAllTagsInSpace, mockBatchResolve } = vi.hoisted(() => ({
-  mockRevert: vi.fn(),
-  mockListBlocks: vi.fn(),
-  mockListAllTagsInSpace: vi.fn(),
-  mockBatchResolve: vi.fn(),
-}))
+const { mockRevert, mockListAllPagesInSpace, mockListAllTagsInSpace, mockBatchResolve } =
+  vi.hoisted(() => ({
+    mockRevert: vi.fn(),
+    mockListAllPagesInSpace: vi.fn(),
+    mockListAllTagsInSpace: vi.fn(),
+    mockBatchResolve: vi.fn(),
+  }))
 
 vi.mock('@/lib/bindings', () => ({
   commands: {
     revertOps: (...args: unknown[]) => mockRevert(...args),
     // The resolve-cache re-reads a successful revert triggers (#5276).
-    listBlocks: (...args: unknown[]) => mockListBlocks(...args),
+    listAllPagesInSpace: (...args: unknown[]) => mockListAllPagesInSpace(...args),
     listAllTagsInSpace: (...args: unknown[]) => mockListAllTagsInSpace(...args),
     batchResolve: (...args: unknown[]) => mockBatchResolve(...args),
   },
@@ -248,13 +249,8 @@ describe('ActivityFeed', () => {
         activeTabIndexBySpace: { SPACE_A: 0 },
       })
       useRecentPagesStore.setState({ recentPages: held, recentPagesBySpace: { SPACE_A: held } })
-      mockListBlocks.mockResolvedValue(
-        ok({
-          items: [makePage({ id: 'PAGE_P', content: 'Alpha' })],
-          next_cursor: null,
-          has_more: false,
-          total_count: null,
-        }),
+      mockListAllPagesInSpace.mockResolvedValue(
+        ok([makePageHeading({ id: 'PAGE_P', content: 'Alpha' })]),
       )
       mockListAllTagsInSpace.mockResolvedValue(ok([]))
       mockBatchResolve.mockResolvedValue(
@@ -350,7 +346,7 @@ describe('ActivityFeed', () => {
         expect(mockNotify.error).toHaveBeenCalledWith(t(failedKey))
       })
       // The re-reads that would rewrite them start in the same tick as the fan-out.
-      expect(mockListBlocks).not.toHaveBeenCalled()
+      expect(mockListAllPagesInSpace).not.toHaveBeenCalled()
       expect(mockBatchResolve).not.toHaveBeenCalled()
       expect(heldState()).toEqual(BEFORE)
     })

@@ -28,18 +28,14 @@
  * request-id stale-guard (#1531). Left as-is by design.
  */
 
+import type { Dispatch, SetStateAction } from 'react'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { useBlockPropertyEvents } from '@/hooks/useBlockPropertyEvents'
 import { useToday } from '@/hooks/useToday'
 import { unwrap } from '@/lib/app-error'
-import type {
-  ActiveProjectedAgendaEntry,
-  BlockRow,
-  PageResponse,
-  ResolvedBlock,
-} from '@/lib/bindings'
+import type { ActiveProjectedAgendaEntry, BlockRow, PageResponse } from '@/lib/bindings'
 import { commands } from '@/lib/bindings'
 import { formatDate } from '@/lib/date-utils'
 import { logger } from '@/lib/logger'
@@ -47,6 +43,7 @@ import { notify } from '@/lib/notify'
 import { PREFERENCES, readPreference } from '@/lib/preferences'
 import { listBlocksLimit, listProjectedAgendaLimit, paginationLimit } from '@/lib/safe-limit'
 import { requireActiveScope } from '@/lib/space-scope'
+import { resolveTitles } from '@/stores/resolve-titles'
 import { useSpaceStore } from '@/stores/space'
 
 // ── ULID reference extraction (B-53) ──────────────────────────────────
@@ -110,25 +107,13 @@ export function applySourceFilter(
 }
 
 /**
- * Build a deduped list of block IDs to feed `batchResolve`: every
+ * Build a deduped list of block IDs to resolve titles for: every
  * non-null `page_id` plus every inline ULID reference found in content.
  */
 export function collectResolveIds(blocks: BlockRow[]): string[] {
   const pageIds = blocks.map((b) => b.page_id).filter((id): id is string => id != null)
   const contentRefs = blocks.flatMap((b) => (b.content ? extractUlidRefs(b.content) : []))
   return [...new Set([...pageIds, ...contentRefs])]
-}
-
-/**
- * Convert the resolver response into a title map, substituting the
- * fallback string whenever the backend returns a null/undefined title.
- */
-export function buildTitleMap(resolved: ResolvedBlock[], fallback: string): Map<string, string> {
-  const map = new Map<string, string>()
-  for (const r of resolved) {
-    map.set(r.id, r.title ?? fallback)
-  }
-  return map
 }
 
 /**
@@ -179,23 +164,20 @@ function listBlocksForAgenda(
 }
 
 /**
- * Shared tail of the four "fetch → filter → batchResolve → merge titles"
- * effects in this hook. Skips when `ids` is empty, calls `batchResolve`,
- * checks the staleness flag again after the await, and finally hands the
- * resolved rows to `applyResolved`. Each call site retains its own merge
- * semantics (replace map vs. add-with-fallback vs. add-only-truthy) via
- * the callback so wire format stays byte-equivalent across migrations.
+ * Shared tail of the four "fetch → filter → resolve → merge titles" effects
+ * in this hook: resolves `ids` and, unless `isStale()` after the await,
+ * merges the titles into the shared map.
  */
 export async function resolveAndMergeTitles(
   ids: string[],
   spaceId: string | null,
   isStale: () => boolean,
-  applyResolved: (resolved: ResolvedBlock[]) => void,
+  setPageTitles: Dispatch<SetStateAction<Map<string, string>>>,
 ): Promise<void> {
   if (ids.length === 0 || spaceId == null) return
-  const resolved = unwrap(await commands.batchResolve(ids, requireActiveScope(spaceId)))
+  const titles = await resolveTitles(spaceId, ids)
   if (isStale()) return
-  applyResolved(resolved)
+  setPageTitles((prev) => new Map([...prev, ...titles]))
 }
 
 export interface UseDuePanelDataOptions {
@@ -335,15 +317,7 @@ export function useDuePanelData({
             collectResolveIds(overdue),
             currentSpaceId,
             () => stale,
-            (resolved) => {
-              setPageTitles((prev) => {
-                const next = new Map(prev)
-                for (const r of resolved) {
-                  next.set(r.id, r.title ?? 'Untitled')
-                }
-                return next
-              })
-            },
+            setPageTitles,
           )
         }
       } catch (err) {
@@ -432,15 +406,7 @@ export function useDuePanelData({
             collectResolveIds(upcoming),
             currentSpaceId,
             () => stale,
-            (resolved) => {
-              setPageTitles((prev) => {
-                const next = new Map(prev)
-                for (const r of resolved) {
-                  if (r.title) next.set(r.id, r.title)
-                }
-                return next
-              })
-            },
+            setPageTitles,
           )
         }
       } catch (err) {
@@ -492,15 +458,7 @@ export function useDuePanelData({
           uniqueParentIds,
           currentSpaceId,
           () => myReqId !== requestIdRef.current,
-          (resolved) => {
-            setPageTitles((prev) => {
-              const next = new Map(prev)
-              for (const r of resolved) {
-                next.set(r.id, r.title ?? 'Untitled')
-              }
-              return next
-            })
-          },
+          setPageTitles,
         )
       } catch (err) {
         logger.warn('useDuePanelData', 'fetchBlocks failed', { date }, err)
@@ -548,15 +506,7 @@ export function useDuePanelData({
           collectResolveIds(nonEmptyItems),
           currentSpaceId,
           () => cancelled,
-          (resolved) => {
-            setPageTitles((prev) => {
-              const next = new Map(prev)
-              for (const [id, title] of buildTitleMap(resolved, 'Untitled')) {
-                next.set(id, title)
-              }
-              return next
-            })
-          },
+          setPageTitles,
         )
       } catch (err) {
         logger.warn('useDuePanelData', 'block fetch failed', undefined, err)
@@ -591,25 +541,14 @@ export function useDuePanelData({
 
     const resolveProjectedTitles = (entries: ActiveProjectedAgendaEntry[]) => {
       const idsToResolve = collectResolveIds(entries.map((entry) => entry.block))
-      return resolveAndMergeTitles(
-        idsToResolve,
-        currentSpaceId,
-        () => stale,
-        (resolved) => {
-          setPageTitles((prev) => {
-            const next = new Map(prev)
-            for (const r of resolved) {
-              next.set(r.id, r.title ?? 'Untitled')
-            }
-            return next
-          })
+      return resolveAndMergeTitles(idsToResolve, currentSpaceId, () => stale, setPageTitles).catch(
+        (err) => {
+          // Skip side effects (logging, toast) if the effect has unmounted.
+          if (stale) return
+          logger.warn('useDuePanelData', 'nested agenda fetch failed', undefined, err)
+          notify.error(t('duePanel.loadAgendaFailed'), { id: 'due-panel-load-failed' })
         },
-      ).catch((err) => {
-        // Skip side effects (logging, toast) if the effect has unmounted.
-        if (stale) return
-        logger.warn('useDuePanelData', 'nested agenda fetch failed', undefined, err)
-        notify.error(t('duePanel.loadAgendaFailed'), { id: 'due-panel-load-failed' })
-      })
+      )
     }
 
     // Serve cached data immediately if available
