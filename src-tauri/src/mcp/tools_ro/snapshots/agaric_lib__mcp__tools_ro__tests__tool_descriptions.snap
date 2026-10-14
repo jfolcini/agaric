@@ -404,3 +404,35 @@ expression: wire
       - space_id
     type: object
   name: resolve
+- description: "Query one space's blocks with a boolean tree of predicates, optionally sorted, grouped and aggregated; cursor paginated. Rows carry `page_title` and the properties the query reads; with `group_by` the result is `groups` of { key, title, count, aggregates } instead. Open TODOs with estimate > 3: {\"space_id\": \"<ULID>\", \"where\": {\"type\": \"And\", \"children\": [{\"type\": \"Leaf\", \"primitive\": {\"type\": \"State\", \"values\": [\"TODO\"]}}, {\"type\": \"Leaf\", \"primitive\": {\"type\": \"HasProperty\", \"key\": \"estimate\", \"predicate\": {\"type\": \"Gt\", \"value\": {\"type\": \"Num\", \"value\": 3}}}}]}}"
+  inputSchema:
+    additionalProperties: false
+    properties:
+      aggregate:
+        description: "[{op: count|sum|avg|min|max, target?: {type: Property, key} | {type: Column, name: priority|position}}], over the whole match and per group."
+        type: array
+      cursor:
+        description: Opaque pagination cursor from a prior response.
+        type: string
+      group_by:
+        description: "{type: Page|Tag|State|Priority|BlockType}, {type: Property, key} or {type: DateBucket, source: due|scheduled|created|lastEdited, unit: day|week|month}."
+        type: object
+      limit:
+        description: Max rows or groups per response (capped at 100).
+        maximum: 100
+        minimum: 1
+        type: integer
+      sort:
+        description: "[{source: {type: Column, name: created|lastEdited|position|priority|title}, desc?}]. Default: newest first."
+        type: array
+      space_id:
+        description: ULID of the space to query.
+        type: string
+      where:
+        description: "{type: And|Or, children: [...]}, {type: Not, child} or {type: Leaf, primitive}. Primitives: Tag {tag} (attached), TagOrRef {tag} (attached or inline), HasProperty {key, predicate}, State {values}, Priority {values}, BlockType {values, exclude}, DueDate {predicate}, Scheduled {predicate}, Created {after?, before?}, LastEdited {spec}, LinksTo {target}, LinkedFrom {source}, ChildOf {parent}, HasParentMatching {matcher: <where>}, PathGlob {pattern, exclude} (pages whose lower-case title matches the GLOB). Property predicate: Exists, NotExists, or Eq|Ne|Lt|Gt|Lte|Gte|Contains|StartsWith {value: {type: Text|Num|Date|Ref, value}}. Date predicate: IsNull, Before|After|OnOrBefore|OnOrAfter|On {date}, Between {from, to}. LastEdited spec: Rolling {days}, OlderThan {days}, Range {start, end}. Ids are ULIDs, dates YYYY-MM-DD."
+        type: object
+    required:
+      - space_id
+      - where
+    type: object
+  name: query

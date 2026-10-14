@@ -116,7 +116,14 @@ impl McpSurface {
                  when.\n\
                  Names: in a tool that takes `space_id`, a page or tag argument that is not \
                  a ULID is a page's title or alias, or a tag's name, in that space; \
-                 `resolve` looks many up at once.\n",
+                 `resolve` looks many up at once.\n\
+                 Query: `query` filters one space's blocks with a `where` tree (its ids are \
+                 ULIDs, not names), then sorts, groups (`group_by`) or counts (`aggregate`); \
+                 its description has the grammar. E.g. LastEdited {spec: Range {start, end}}, \
+                 DueDate {predicate: Between {from, to}}, HasProperty {key, predicate: Gt \
+                 {value: {type: Num, value: 3}}}, State {values: [TODO]} with group_by \
+                 {type: Page}. Tag matches attached tags, TagOrRef also inline #refs; neither \
+                 matches inherited ones.\n",
             ),
             McpSurface::ReadWrite => concat!(
                 "Agaric MCP read-write server: writes to a local, block-based notes vault. \

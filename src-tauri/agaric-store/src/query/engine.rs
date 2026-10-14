@@ -34,7 +34,7 @@ use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
 use std::sync::LazyLock;
 
-use crate::filters::primitive::{Bind, last_edited_ms_sql, ulid_created_ms_sql};
+use crate::filters::primitive::{Bind, FilterPrimitive, last_edited_ms_sql, ulid_created_ms_sql};
 use crate::filters::{CompileExpr, FilterExpr, SqlFragment};
 use crate::fts::sanitize_fts_query;
 use crate::pagination::ActiveBlockRow;
@@ -339,8 +339,8 @@ impl EngineRow {
 // ───────────────────────────────────────────────────────────────────────────
 
 /// Recursively gate every leaf in `expr`: the key against
-/// [`QUERY_ALLOWED_KEYS`], and a `last-edited` bound against what the compiler
-/// can parse. The first offender is rejected with [`AppError::Validation`].
+/// [`QUERY_ALLOWED_KEYS`], and every date it carries. The first offender is
+/// rejected with [`AppError::Validation`].
 fn gate_leaves(expr: &FilterExpr) -> Result<(), AppError> {
     match expr {
         FilterExpr::Leaf { primitive } => {
@@ -353,15 +353,22 @@ fn gate_leaves(expr: &FilterExpr) -> Result<(), AppError> {
             }
             // A malformed `last-edited` bound would panic in the compiler
             // (#383); reject it here like the Pages and Search surfaces do.
-            if let crate::filters::primitive::FilterPrimitive::LastEdited { spec } = primitive {
-                spec.validate()?;
+            // The compiler drops a malformed `created` bound, widening the
+            // match, and compares due/scheduled dates lexically.
+            match primitive {
+                FilterPrimitive::LastEdited { spec } => spec.validate()?,
+                FilterPrimitive::DueDate { predicate }
+                | FilterPrimitive::Scheduled { predicate } => predicate.validate()?,
+                FilterPrimitive::Created { after, before } => {
+                    crate::backlink::filters::resolve_range_bound(after.as_ref())?;
+                    crate::backlink::filters::resolve_range_bound(before.as_ref())?;
+                }
+                _ => {}
             }
             // #1455 — `has-parent-matching` carries a nested FilterExpr (the
             // parent matcher); its leaves must be gated too, or an unsupported
             // key could slip in via the sub-expression.
-            if let crate::filters::primitive::FilterPrimitive::HasParentMatching { matcher } =
-                primitive
-            {
+            if let FilterPrimitive::HasParentMatching { matcher } = primitive {
                 gate_leaves(matcher)?;
             }
             Ok(())
