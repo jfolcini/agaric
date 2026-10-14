@@ -434,6 +434,7 @@ impl<R: ToolRegistry> RmcpAdapter<R> {
             guard,
         )
         .await;
+        let result = result.map(|value| with_op_refs(value, &op_refs));
 
         self.emit_completion(&name, agent_name, &args_for_summary, &result, op_refs);
 
@@ -533,6 +534,18 @@ impl<R: ToolRegistry> ServerHandler for RmcpAdapter<R> {
             .await
             .map(Into::into)
     }
+}
+
+/// Adds the ops a call appended to its result as `op_refs`, so an agent can
+/// pass them to `undo`. Done here, once, because only the adapter holds the
+/// refs; a call that wrote nothing gets none.
+fn with_op_refs(mut value: Value, op_refs: &[agaric_store::op::OpRef]) -> Value {
+    if !op_refs.is_empty()
+        && let Value::Object(map) = &mut value
+    {
+        map.insert("op_refs".to_owned(), serde_json::json!(op_refs));
+    }
+    value
 }
 
 /// Generic wire message for the `app_error_to_rmcp` catch-all arm
@@ -1678,5 +1691,116 @@ mod tests {
         // Neither collapses to the old, indistinguishable `agent:unknown`.
         assert_ne!(origin_a, format!("agent:{anon}"));
         assert_ne!(origin_b, format!("agent:{anon}"));
+    }
+
+    /// The structured result of a call that must succeed.
+    fn structured_ok(result: Result<CallToolResult, ErrorData>) -> Value {
+        result
+            .expect("tool call succeeds")
+            .structured_content
+            .expect("structuredContent is the primary payload")
+    }
+
+    async fn deleted_at(pool: &sqlx::SqlitePool, block_id: &str) -> Option<i64> {
+        sqlx::query_scalar("SELECT deleted_at FROM blocks WHERE id = ?")
+            .bind(block_id)
+            .fetch_one(pool)
+            .await
+            .expect("block row")
+    }
+
+    /// #5400: an agent undoes its own `append_block` through the `op_refs` the
+    /// append returned; the undo lands in the activity feed, and the user can
+    /// undo that undo from its entry.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn rw_undo_reverts_an_append_through_its_returned_op_refs_5400() {
+        use crate::commands::{
+            create_block_inner_with_space, create_space_inner, revert_ops_inner,
+        };
+        use agaric_store::space::{SpaceId, SpaceScope};
+        const DEV: &str = "dev-5400";
+        let dir = tempfile::TempDir::new().unwrap();
+        let pool = crate::db::init_pool(&dir.path().join("t.db"))
+            .await
+            .unwrap();
+        let mat = crate::materializer::Materializer::new(pool.clone());
+        let space = create_space_inner(&pool, DEV, &mat, "S".into(), None)
+            .await
+            .unwrap()
+            .into_string();
+        let scope = SpaceScope::Active(SpaceId::from_trusted(&space));
+        let page = create_block_inner_with_space(
+            &pool,
+            DEV,
+            &mat,
+            "page".into(),
+            "P".into(),
+            None,
+            None,
+            &scope,
+            None,
+        )
+        .await
+        .unwrap();
+        mat.flush_background().await.unwrap();
+
+        let tools =
+            crate::mcp::tools_rw::ReadWriteTools::new(pool.clone(), mat.clone(), DEV.into());
+        let ring = Arc::new(std::sync::Mutex::new(ActivityRing::new()));
+        let activity_ctx = ActivityContext::new(ring.clone(), Arc::new(RecordingEmitter::new()));
+        let adapter = RmcpAdapter::new(Arc::new(tools), Some(activity_ctx), McpSurface::ReadWrite);
+        let call = |name: &str, args: Value| {
+            adapter.dispatch_tool_call(name.to_string(), args, "undo-agent".to_string())
+        };
+
+        let appended = structured_ok(
+            call(
+                "append_block",
+                json!({ "parent_id": page.id.as_str(), "content": "oops", "space_id": space }),
+            )
+            .await,
+        );
+        let block_id = appended["id"].as_str().unwrap().to_string();
+        assert_eq!(appended["op_refs"].as_array().map(Vec::len), Some(1));
+
+        let undone = structured_ok(
+            call(
+                "undo",
+                json!({ "op_refs": appended["op_refs"], "space_id": space }),
+            )
+            .await,
+        );
+        assert_eq!(undone["undone"].as_array().map(Vec::len), Some(1));
+        assert!(
+            deleted_at(&pool, &block_id).await.is_some(),
+            "undo removes the block"
+        );
+
+        let entry = ring
+            .lock()
+            .unwrap()
+            .entries()
+            .back()
+            .cloned()
+            .expect("the undo has an activity entry");
+        assert_eq!(entry.tool_name, "undo");
+        let undo_refs: Vec<agaric_store::op::OpRef> = entry
+            .op_ref
+            .into_iter()
+            .chain(entry.additional_op_refs)
+            .collect();
+        assert_eq!(
+            serde_json::to_value(&undo_refs).unwrap(),
+            undone["op_refs"],
+            "the undo hands back the refs its activity entry carries",
+        );
+
+        // The user's Undo on that entry, outside any agent scope.
+        revert_ops_inner(&pool, DEV, &mat, undo_refs).await.unwrap();
+        assert_eq!(
+            deleted_at(&pool, &block_id).await,
+            None,
+            "undoing the undo restores the block"
+        );
     }
 }

@@ -37,11 +37,12 @@
 use serde_json::Value;
 
 use super::registry::{
-    TOOL_ADD_TAG, TOOL_APPEND_BLOCK, TOOL_APPEND_MARKDOWN, TOOL_CREATE_PAGE, TOOL_CREATE_TAG,
-    TOOL_DELETE_BLOCK, TOOL_DELETE_PROPERTY, TOOL_GET_AGENDA, TOOL_GET_BLOCK, TOOL_GET_PAGE,
-    TOOL_GET_PAGE_MARKDOWN, TOOL_JOURNAL_FOR_DATE, TOOL_LIST_BACKLINKS, TOOL_LIST_PAGES,
-    TOOL_LIST_PROPERTY_DEFS, TOOL_LIST_SPACES, TOOL_LIST_TAGS, TOOL_MOVE_PAGE_TO_SPACE,
-    TOOL_SEARCH, TOOL_SET_PROPERTY, TOOL_UPDATE_BLOCK_CONTENT,
+    TOOL_ADD_TAG, TOOL_APPEND_BLOCK, TOOL_APPEND_MARKDOWN, TOOL_BLOCK_HISTORY, TOOL_CREATE_PAGE,
+    TOOL_CREATE_TAG, TOOL_DELETE_BLOCK, TOOL_DELETE_PROPERTY, TOOL_GET_AGENDA, TOOL_GET_BLOCK,
+    TOOL_GET_PAGE, TOOL_GET_PAGE_MARKDOWN, TOOL_JOURNAL_FOR_DATE, TOOL_LIST_BACKLINKS,
+    TOOL_LIST_PAGES, TOOL_LIST_PROPERTY_DEFS, TOOL_LIST_SPACES, TOOL_LIST_TAGS,
+    TOOL_MOVE_PAGE_TO_SPACE, TOOL_PAGE_HISTORY, TOOL_SEARCH, TOOL_SET_PROPERTY, TOOL_UNDO,
+    TOOL_UPDATE_BLOCK_CONTENT,
 };
 
 /// Number of leading characters of a ULID we expose in summary strings.
@@ -97,6 +98,8 @@ pub fn summarise(name: &str, args: &Value, result: &Value) -> String {
         TOOL_JOURNAL_FOR_DATE => summarise_journal_for_date(args, result),
         TOOL_LIST_SPACES => summarise_list_spaces(args, result),
         TOOL_GET_PAGE_MARKDOWN => summarise_get_page_markdown(args, result),
+        TOOL_PAGE_HISTORY => summarise_history(TOOL_PAGE_HISTORY, "page_id", args, result),
+        TOOL_BLOCK_HISTORY => summarise_history(TOOL_BLOCK_HISTORY, "block_id", args, result),
         // ---- read-write (tools_rw) ----
         TOOL_APPEND_BLOCK => summarise_append_block(args, result),
         TOOL_APPEND_MARKDOWN => summarise_append_markdown(args, result),
@@ -108,6 +111,7 @@ pub fn summarise(name: &str, args: &Value, result: &Value) -> String {
         TOOL_MOVE_PAGE_TO_SPACE => summarise_move_page_to_space(args, result),
         TOOL_CREATE_TAG => summarise_create_tag(args, result),
         TOOL_DELETE_PROPERTY => summarise_delete_property(args, result),
+        TOOL_UNDO => summarise_undo(args, result),
         // Defensive default — keeps the activity feed working when
         // someone adds a new tool without a summariser. This is the
         // pre-existing behaviour for every entry. The privacy
@@ -302,6 +306,20 @@ pub fn summarise_get_page_markdown(_args: &Value, result: &Value) -> String {
         format!("get_page_markdown — {n} {lines}")
     } else {
         format!("get_page_markdown — {prefix} ({n} {lines})")
+    }
+}
+
+/// `page_history — N op(s) on <id-prefix>` (`(more)` if `has_more`), and the
+/// same for `block_history`. Never the rows' before / after text.
+pub fn summarise_history(tool: &str, id_key: &str, args: &Value, result: &Value) -> String {
+    let prefix = ulid_prefix(str_field(args, id_key).unwrap_or(""));
+    let n = array_len(result, "items").unwrap_or(0);
+    let ops = if n == 1 { "op" } else { "ops" };
+    let suffix = if has_more(result) { " (more)" } else { "" };
+    if prefix.is_empty() {
+        format!("{tool} — {n} {ops}{suffix}")
+    } else {
+        format!("{tool} — {n} {ops} on {prefix}{suffix}")
     }
 }
 
@@ -503,6 +521,12 @@ pub fn summarise_delete_property(args: &Value, _result: &Value) -> String {
         (true, false) => format!("delete_property — on {block}"),
         (true, true) => "delete_property".to_string(),
     }
+}
+
+/// `undo — reverted N op(s)`.
+pub fn summarise_undo(_args: &Value, result: &Value) -> String {
+    let n = array_len(result, "undone").unwrap_or(0);
+    format!("undo — reverted {n} {}", if n == 1 { "op" } else { "ops" })
 }
 
 // ---------------------------------------------------------------------------
@@ -1131,6 +1155,37 @@ mod tests {
         );
     }
 
+    #[test]
+    fn history_counts_ops_with_target_prefix_and_omits_row_text() {
+        let result = json!({
+            "items": [
+                { "op_type": "edit_block", "before": "SECRET_TEXT_VALUE", "after": "SECRET_BLOCK_CONTENT" },
+                { "op_type": "create_block", "after": "SECRET_BLOCK_CONTENT" },
+            ],
+            "has_more": true,
+        });
+        let page = summarise(TOOL_PAGE_HISTORY, &json!({ "page_id": ULID_A }), &result);
+        assert_eq!(page, "page_history — 2 ops on 01HZTEST (more)");
+        let block = summarise(TOOL_BLOCK_HISTORY, &json!({ "block_id": ULID_B }), &result);
+        assert_eq!(block, "block_history — 2 ops on 01HZTEST (more)");
+        assert_no_secrets(&page);
+        assert_no_secrets(&block);
+    }
+
+    #[test]
+    fn undo_counts_reverted_ops() {
+        let one = json!({ "undone": [{ "reversed_op_type": "create_block" }] });
+        assert_eq!(
+            summarise(TOOL_UNDO, &json!({}), &one),
+            "undo — reverted 1 op"
+        );
+        let none = json!({ "undone": [] });
+        assert_eq!(
+            summarise(TOOL_UNDO, &json!({}), &none),
+            "undo — reverted 0 ops"
+        );
+    }
+
     // -----------------------------------------------------------------
     // Cross-cutting privacy guard — every public summariser must
     // refuse to leak the secret payloads regardless of how they appear
@@ -1181,7 +1236,24 @@ mod tests {
             "block_type": "content",
             "content": "SECRET_BLOCK_CONTENT",
             "parent_id": ULID_B,
-            "items": [{ "id": ULID_A, "content": "SECRET_BLOCK_CONTENT" }],
+            // #5400 — history rows carry a clipped before / after.
+            "items": [{
+                "id": ULID_A,
+                "content": "SECRET_BLOCK_CONTENT",
+                "block_id": ULID_A,
+                "origin": "agent:test",
+                "before": "SECRET_TEXT_VALUE",
+                "after": "SECRET_BLOCK_CONTENT",
+            }],
+            // #5400 — `undo` returns what it reverted.
+            "undone": [{
+                "reversed_op": { "device_id": ULID_B, "seq": 1 },
+                "reversed_op_type": "create_block",
+                "new_op_ref": { "device_id": ULID_B, "seq": 2 },
+                "new_op_type": "delete_block",
+                "is_redo": false,
+            }],
+            "op_refs": [{ "device_id": ULID_B, "seq": 2 }],
             "page": {
                 "id": ULID_A,
                 "content": "SECRET_TITLE",

@@ -74,7 +74,7 @@ Separate sockets let an agent connect to RO only and let the user disable RW ind
 
 ### Full-vault RO scope (no per-space isolation)
 
-The RO surface is vault-wide by design: `list_spaces` returns every space and RO readers accept any `space_id`.
+The RO surface is vault-wide by design: `list_spaces` returns every space and RO readers accept any `space_id`, except `page_history` / `block_history`, which reject a target outside it.
 
 ## Testing
 

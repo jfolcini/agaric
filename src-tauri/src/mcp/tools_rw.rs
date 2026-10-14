@@ -22,6 +22,10 @@
 //! | `move_page_to_space` | [`move_blocks_to_space_inner`] | Page blocks only: a page moves with its content blocks. |
 //! | `create_tag` | [`create_block_inner_with_space`] | `block_type = "tag"`; returns the space's same-name tag when one exists. |
 //! | `delete_property` | [`delete_property_inner`] | Rejects `space`; the inner refuses system-managed keys. |
+//! | `undo` | [`revert_ops_inner`] | Reverts `op_refs` as one op group. Refuses an op another origin wrote. |
+//!
+//! Every write tool's result carries the `op_refs` it appended, added by the
+//! adapter (`rmcp_adapter::with_op_refs`), not by these handlers.
 //!
 //! # Actor scoping
 //!
@@ -57,20 +61,21 @@ use super::handler_utils::{
 use super::registry::{
     TOOL_ADD_TAG, TOOL_APPEND_BLOCK, TOOL_APPEND_MARKDOWN, TOOL_CREATE_PAGE, TOOL_CREATE_TAG,
     TOOL_DELETE_BLOCK, TOOL_DELETE_PROPERTY, TOOL_LIST_SPACES, TOOL_MOVE_PAGE_TO_SPACE,
-    TOOL_SET_PROPERTY, TOOL_UPDATE_BLOCK_CONTENT, ToolDescription, ToolRegistry,
+    TOOL_SET_PROPERTY, TOOL_UNDO, TOOL_UPDATE_BLOCK_CONTENT, ToolDescription, ToolRegistry,
 };
 use super::view_notify::{NoopViewChangeEmitter, ViewChangeEmitter};
 use crate::commands::{
     DeletePropertyResponse, add_tag_inner, append_markdown_inner, create_block_inner,
     create_block_inner_with_space, delete_block_inner, delete_property_inner, edit_block_inner,
     get_active_block_inner, list_spaces_registry_inner, move_blocks_to_space_inner,
-    set_property_inner,
+    revert_ops_inner, set_property_inner,
 };
 use crate::materializer::Materializer;
 use agaric_core::error::AppError;
 use agaric_core::ulid::BlockId;
+use agaric_store::op::OpRef;
 use agaric_store::space::{SpaceId, SpaceScope};
-use agaric_store::task_locals::ActorContext;
+use agaric_store::task_locals::{ActorContext, current_actor};
 
 // ---------------------------------------------------------------------------
 // Typed argument structs (one per tool)
@@ -193,6 +198,13 @@ struct DeletePropertyArgs {
     space_id: String,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct UndoArgs {
+    op_refs: Vec<OpRef>,
+    space_id: String,
+}
+
 // ---------------------------------------------------------------------------
 // ReadWriteTools
 // ---------------------------------------------------------------------------
@@ -270,6 +282,7 @@ pub(crate) fn list_tool_descriptions() -> Vec<ToolDescription> {
         tool_desc_move_page_to_space(),
         tool_desc_create_tag(),
         tool_desc_delete_property(),
+        tool_desc_undo(),
     ]
 }
 
@@ -325,6 +338,7 @@ impl ToolRegistry for ReadWriteTools {
                 TOOL_DELETE_PROPERTY => {
                     handle_delete_property(&pool, &materializer, &device_id, emitter, args).await
                 }
+                TOOL_UNDO => handle_undo(&pool, &materializer, &device_id, emitter, args).await,
                 other => Err(unknown_tool_error(other)),
             }
         })
@@ -618,6 +632,41 @@ fn tool_desc_delete_property() -> ToolDescription {
     }
 }
 
+fn tool_desc_undo() -> ToolDescription {
+    ToolDescription {
+        name: TOOL_UNDO.to_string(),
+        description: "Undo your own writes: pass the `op_refs` a write tool returned. They are \
+                      reverted together as one action the user can undo in turn, and this \
+                      call returns the `op_refs` of the revert. An op written by the user or \
+                      by another agent is refused."
+            .to_string(),
+        input_schema: json!({
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["op_refs", "space_id"],
+            "properties": {
+                "op_refs": {
+                    "type": "array",
+                    "description": "The `op_refs` a write tool returned, as given.",
+                    "items": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "required": ["device_id", "seq"],
+                        "properties": {
+                            "device_id": { "type": "string" },
+                            "seq": { "type": "integer" },
+                        },
+                    },
+                },
+                "space_id": {
+                    "type": "string",
+                    "description": "ULID of the space the agent is operating in. The undo is rejected with a Validation error if a block the ops touched lives in a different space.",
+                },
+            },
+        }),
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Handler implementations
 //
@@ -643,17 +692,20 @@ async fn emit_blocks_changed_for(
     emitter: &dyn ViewChangeEmitter,
     seed: BlockId,
 ) {
-    match agaric_sync::sync_protocol::loro_sync::resolve_changed_page_ids(
-        pool,
-        std::slice::from_ref(&seed),
-    )
-    .await
-    {
+    emit_blocks_changed_for_all(pool, emitter, std::slice::from_ref(&seed)).await;
+}
+
+async fn emit_blocks_changed_for_all(
+    pool: &SqlitePool,
+    emitter: &dyn ViewChangeEmitter,
+    seeds: &[BlockId],
+) {
+    match agaric_sync::sync_protocol::loro_sync::resolve_changed_page_ids(pool, seeds).await {
         Ok(changed_page_ids) => emitter.emit_blocks_changed(changed_page_ids),
         Err(e) => tracing::warn!(
             target: "mcp",
             error = %e,
-            block_id = %seed.as_str(),
+            blocks = seeds.len(),
             "failed to resolve changed_page_ids for blocks:changed emit; \
              open views may stay stale until reload-on-mount",
         ),
@@ -1057,6 +1109,49 @@ async fn handle_delete_property(
         block_id,
         key: args.key,
     })
+}
+
+/// Reverts through the same inner as the Activity feed's Undo, so the revert
+/// is one op group the user can undo in turn.
+async fn handle_undo(
+    pool: &SqlitePool,
+    materializer: &Materializer,
+    device_id: &str,
+    emitter: &dyn ViewChangeEmitter,
+    args: Value,
+) -> Result<Value, AppError> {
+    let args: UndoArgs = parse_args(TOOL_UNDO, args)?;
+    let space_id = normalize_ulid_arg(&args.space_id);
+    let block_ids = own_op_block_ids(pool, &args.op_refs).await?;
+    for block_id in &block_ids {
+        validate_block_in_space(pool, block_id.as_str(), &space_id).await?;
+    }
+    let undone = revert_ops_inner(pool, device_id, materializer, args.op_refs).await?;
+    emit_blocks_changed_for_all(pool, emitter, &block_ids).await;
+    to_tool_result(&json!({ "undone": undone }))
+}
+
+/// The distinct blocks `refs` touch, once every known ref is an op the calling
+/// agent wrote; `revert_ops_inner` answers an unknown ref with `NotFound`.
+/// Not a security boundary (agent names are self-declared, #2957): it keeps an
+/// agent from clobbering the user's edits with a mistaken ref.
+async fn own_op_block_ids(pool: &SqlitePool, refs: &[OpRef]) -> Result<Vec<BlockId>, AppError> {
+    let caller = current_actor().origin_tag();
+    let found = super::handler_utils::fetch_op_origins(pool, refs).await?;
+    if let Some(foreign) = found.iter().find(|op| op.origin != caller) {
+        return Err(AppError::validation(format!(
+            "tool `{TOOL_UNDO}`: op ({}, {}) was written by `{}`, not by `{caller}`; \
+             an agent can undo only its own ops",
+            foreign.device_id, foreign.seq, foreign.origin
+        )));
+    }
+    let mut block_ids: Vec<String> = found.into_iter().filter_map(|op| op.block_id).collect();
+    block_ids.sort_unstable();
+    block_ids.dedup();
+    Ok(block_ids
+        .iter()
+        .map(|id| BlockId::from_trusted(id))
+        .collect())
 }
 
 // ---------------------------------------------------------------------------

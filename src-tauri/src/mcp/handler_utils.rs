@@ -201,6 +201,37 @@ pub(crate) async fn validate_block_in_space(
     }
 }
 
+/// Who wrote one op, and the block it targets.
+pub(crate) struct OpOrigin {
+    pub device_id: String,
+    pub seq: i64,
+    pub origin: String,
+    pub block_id: Option<String>,
+}
+
+/// Look up the `op_log.origin` of each ref, in one query: the history
+/// readers' rows do not carry it, and `undo` must refuse an op that is not
+/// the caller's. A ref with no op_log row is absent from the result.
+pub(crate) async fn fetch_op_origins(
+    pool: &SqlitePool,
+    refs: &[agaric_store::op::OpRef],
+) -> Result<Vec<OpOrigin>, AppError> {
+    let refs_json = serde_json::to_string(refs)?;
+    let rows = sqlx::query_as!(
+        OpOrigin,
+        r#"SELECT ol.device_id AS "device_id!", ol.seq AS "seq!", ol.origin AS "origin!",
+                  ol.block_id
+           FROM json_each(?) AS j
+           JOIN op_log ol
+             ON ol.device_id = json_extract(j.value, '$.device_id')
+            AND ol.seq = json_extract(j.value, '$.seq')"#,
+        refs_json,
+    )
+    .fetch_all(pool)
+    .await?;
+    Ok(rows)
+}
+
 /// Serialise a typed handler response into the [`serde_json::Value`] that
 /// the JSON-RPC dispatcher expects on the wire.
 ///

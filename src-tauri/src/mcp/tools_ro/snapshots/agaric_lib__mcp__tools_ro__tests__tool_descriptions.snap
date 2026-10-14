@@ -257,3 +257,47 @@ expression: wire
       - page_id
     type: object
   name: get_page_markdown
+- description: "Who changed what on a page, and when: every op on the page's blocks. Each row has device_id, seq, origin (`user`, or `agent:<name>` for an agent's write), op_type, created_at (epoch ms), block_id, a clipped `after` (the text or property value the op wrote) and, for an edit, a clipped `before`. Newest first; cursor paginated."
+  inputSchema:
+    additionalProperties: false
+    properties:
+      cursor:
+        type: string
+      limit:
+        description: Max rows per response (capped at 100).
+        maximum: 100
+        minimum: 1
+        type: integer
+      page_id:
+        description: ULID of the page block.
+        type: string
+      space_id:
+        description: "ULID of the space the agent is operating in. The read is rejected with a Validation error if `page_id` lives in a different space."
+        type: string
+    required:
+      - page_id
+      - space_id
+    type: object
+  name: page_history
+- description: "Who changed what on one block, and when. Each row has device_id, seq, origin (`user`, or `agent:<name>` for an agent's write), op_type, created_at (epoch ms), block_id, a clipped `after` (the text or property value the op wrote) and, for an edit, a clipped `before`. Newest first; cursor paginated."
+  inputSchema:
+    additionalProperties: false
+    properties:
+      block_id:
+        description: ULID of the block.
+        type: string
+      cursor:
+        type: string
+      limit:
+        description: Max rows per response (capped at 100).
+        maximum: 100
+        minimum: 1
+        type: integer
+      space_id:
+        description: "ULID of the space the agent is operating in. The read is rejected with a Validation error if `block_id` lives in a different space."
+        type: string
+    required:
+      - block_id
+      - space_id
+    type: object
+  name: block_history
