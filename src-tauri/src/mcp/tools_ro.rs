@@ -16,7 +16,7 @@
 //! | `search` | [`search_blocks_inner`] | FTS5. Result count capped at 50, snippet length at 512 chars. |
 //! | `get_block` | [`get_active_block_inner`] | Plus the block's properties, tags and, for a page, aliases (#5377). soft-deleted blocks → `NotFound`. |
 //! | `list_backlinks` | [`list_backlinks_grouped_inner`] | Grouped by source page. |
-//! | `list_tags` | [`list_tags_inner`] | Cursor paginated. Limits outside `[1, 100]` are rejected. |
+//! | `list_tags` | [`list_tags_inner`] | The tags of one space. Cursor paginated. Limits outside `[1, 100]` are rejected. `space_id` required. |
 //! | `list_property_defs` | [`list_property_defs_inner`] | Typed property schema; cursor paginated. |
 //! | `get_agenda` | [`agenda_range_inner`] | Dated blocks in the range plus projected repeats, one row each. |
 //! | `journal_for_date` | [`journal_for_date_inner`] | Idempotent date → page lookup with a **bounded create carve-out (#2719)**: for `date` within today ± [`JOURNAL_CREATE_WINDOW_MONTHS`] months, creates the missing page on first call (single `CreateBlock`+`SetProperty` op pair, origin `agent:<name>`); outside that window the tool never creates — it returns an existing page as a pure read or `AppError::NotFound`. See [`ReadOnlyTools`] and `handle_journal_for_date` below. |
@@ -371,9 +371,10 @@ struct ListBacklinksArgs {
     space_id: Option<String>,
 }
 
-#[derive(Debug, Default, Deserialize)]
+#[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ListTagsArgs {
+    space_id: String,
     #[serde(default)]
     cursor: Option<String>,
     #[serde(default)]
@@ -845,12 +846,16 @@ fn tool_desc_list_backlinks() -> ToolDescription {
 fn tool_desc_list_tags() -> ToolDescription {
     ToolDescription {
         name: TOOL_LIST_TAGS.to_string(),
-        description: "List every tag in the tag cache (no prefix filter), with cursor pagination."
-            .to_string(),
+        description: "List the tags of a space, with cursor pagination.".to_string(),
         input_schema: json!({
             "type": "object",
             "additionalProperties": false,
+            "required": ["space_id"],
             "properties": {
+                "space_id": {
+                    "type": "string",
+                    "description": "ULID of the space whose tags to list.",
+                },
                 "cursor": {
                     "type": "string",
                     "description": "Opaque pagination cursor from a prior response.",
@@ -1447,7 +1452,8 @@ async fn handle_list_backlinks(pool: &SqlitePool, args: Value) -> Result<Value, 
 async fn handle_list_tags(pool: &SqlitePool, args: Value) -> Result<Value, AppError> {
     let args: ListTagsArgs = parse_args(TOOL_LIST_TAGS, args)?;
     let limit = validate_limit(TOOL_LIST_TAGS, args.limit, LIST_RESULT_CAP)?;
-    let resp = list_tags_inner(pool, args.cursor, limit).await?;
+    let space_id = SpaceId::from_string(args.space_id)?;
+    let resp = list_tags_inner(pool, space_id.as_str(), args.cursor, limit).await?;
     to_tool_result(&resp)
 }
 

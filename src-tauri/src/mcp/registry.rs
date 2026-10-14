@@ -40,8 +40,8 @@ use agaric_store::task_locals::ActorContext;
 //   1. `ToolDescription` schema construction (`tool_desc_*` in
 //      `tools_ro.rs` / `tools_rw.rs`) — the `name:` field.
 //   2. `call_tool` match arms (in `tools_ro.rs` / `tools_rw.rs`).
-//   3. `parse_args` error-prefix string ("<tool>: invalid arguments
-// (<category>)" — see `handler_utils::parse_args`).
+//   3. `parse_args` error-prefix string ("tool `<tool>`: invalid arguments:
+//      <serde message>" — see `handler_utils::parse_args`).
 //   4. `summarise.rs` privacy-summary match.
 //
 // Tests that intentionally pin the wire-format string (snapshot ordering

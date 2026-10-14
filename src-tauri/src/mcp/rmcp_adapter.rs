@@ -39,8 +39,8 @@ use std::sync::Arc;
 use rmcp::{
     handler::server::ServerHandler,
     model::{
-        CacheScope, CallToolRequestParams, CallToolResponse, CallToolResult, ErrorData,
-        Implementation, ListToolsResult, PaginatedRequestParams, ProtocolVersion,
+        CacheScope, CallToolRequestParams, CallToolResponse, CallToolResult, ContentBlock,
+        ErrorData, Implementation, ListToolsResult, PaginatedRequestParams, ProtocolVersion,
         ServerCapabilities, ServerConfig, Tool,
     },
     service::{RequestContext, RoleServer},
@@ -439,9 +439,7 @@ impl<R: ToolRegistry> RmcpAdapter<R> {
         self.emit_completion(&name, agent_name, &args_for_summary, &result, op_refs);
 
         match result {
-            // `CallToolResult::structured` produces the MCP wire shape
-            // `{ content, structuredContent, isError: false }`.
-            Ok(value) => Ok(CallToolResult::structured(value)),
+            Ok(value) => Ok(tool_result(&value)),
             // Map AppError variants to JSON-RPC error codes:
             // NotFound → resource-not-found (-32001),
             // Validation / InvalidOperation / Ulid → invalid-params (-32602),
@@ -534,6 +532,23 @@ impl<R: ToolRegistry> ServerHandler for RmcpAdapter<R> {
             .await
             .map(Into::into)
     }
+}
+
+/// A tool's result as one compact JSON text block. No tool declares an
+/// `outputSchema`, so no `structuredContent` copy is sent: the MCP spec pairs
+/// the two, and the copy doubled every response (#5401).
+fn tool_result(value: &Value) -> CallToolResult {
+    CallToolResult::success(vec![ContentBlock::text(value.to_string())])
+}
+
+/// The JSON a [`tool_result`] carries, as a client reads it back.
+#[cfg(test)]
+pub(crate) fn tool_result_json(result: &CallToolResult) -> Value {
+    let [content] = result.content.as_slice() else {
+        panic!("a tool result is one content block: {result:?}");
+    };
+    let text = &content.as_text().expect("the block is text").text;
+    serde_json::from_str(text).expect("the text is JSON")
 }
 
 /// Adds the ops a call appended to its result as `op_refs`, so an agent can
@@ -997,8 +1012,8 @@ mod tests {
     ///        right tool name + agent name + Ok variant,
     ///    (d) the `RecordingEmitter` got a Tauri-style `mcp:activity`
     ///        event for the same entry,
-    ///    (e) the response carries the `structuredContent` envelope
-    ///        produced by `CallToolResult::structured`.
+    ///    (e) the payload arrives as one JSON text block, with no
+    ///        `structuredContent` copy.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn rmcp_adapter_search_round_trip_emits_activity_and_actor() {
         let observed = Arc::new(Mutex::new(None));
@@ -1056,13 +1071,8 @@ mod tests {
             "the default 2025-11-25 peer must receive the legacy tools/call shape",
         );
         assert_eq!(result.is_error, Some(false));
-        // Spec wire-shape: `CallToolResult::structured` produces the
-        // MCP `{ content, structuredContent, isError: false }` envelope.
-        let structured = result
-            .structured_content
-            .as_ref()
-            .expect("structuredContent is the primary payload");
-        assert_eq!(structured["echoed_query"], "spike");
+        assert_eq!(result.structured_content, None);
+        assert_eq!(tool_result_json(&result)["echoed_query"], "spike");
 
         // Tear down the client first so the server task observes EOF
         // and exits cleanly.
@@ -1301,7 +1311,7 @@ mod tests {
     //
     // These tests pin the exact JSON envelope shapes produced by the two
     // dispatch shims:
-    //   - success: `CallToolResult::structured(value)`
+    //   - success: `tool_result(value)`
     //   - failure: `ErrorData = app_error_to_rmcp(&err)`
     //
     // If the spec's wire format ever shifts, exactly one assertion fails
@@ -1315,12 +1325,10 @@ mod tests {
     /// a focused diff against a fixed reference.
     #[test]
     fn rmcp_call_tool_result_envelope_matches_canonical_wire_shape() {
-        use rmcp::model::{CallToolResult, ServerResult};
+        use rmcp::model::ServerResult;
 
         // (label, payload, expected envelope serialisation). The
-        // expected `content[0].text` is the JSON-stringified payload
-        // — what every MCP-2024-11-05 client falls back to when it
-        // cannot read `structuredContent`.
+        // payload travels once, as the compact JSON text of `content[0]`.
         let samples: &[(&str, Value, Value)] = &[
             // `serde_json::to_string` emits map keys in BTreeMap
             // order (alphabetical) for `Value::Object`, so the
@@ -1334,7 +1342,6 @@ mod tests {
                         "text": r#"{"next_cursor":null,"results":[{"id":"ABC"}]}"#,
                     }],
                     "isError": false,
-                    "structuredContent": {"results": [{"id": "ABC"}], "next_cursor": null},
                 }),
             ),
             (
@@ -1343,7 +1350,6 @@ mod tests {
                 json!({
                     "content": [{"type": "text", "text": "[1,2,3]"}],
                     "isError": false,
-                    "structuredContent": [1, 2, 3],
                 }),
             ),
             (
@@ -1352,7 +1358,6 @@ mod tests {
                 json!({
                     "content": [{"type": "text", "text": "{}"}],
                     "isError": false,
-                    "structuredContent": {},
                 }),
             ),
         ];
@@ -1361,13 +1366,12 @@ mod tests {
             // internally, then the production `ServerHandler` strips that
             // 2026-only discriminator for legacy negotiated peers before
             // serialisation. Model that authoritative wire path here.
-            let mut rmcp_envelope =
-                ServerResult::CallToolResult(CallToolResult::structured(value.clone()));
+            let mut rmcp_envelope = ServerResult::CallToolResult(tool_result(value));
             rmcp_envelope.strip_result_type_for_legacy_peer();
             let rmcp_json = serde_json::to_value(&rmcp_envelope).expect("rmcp serialise");
             assert_eq!(
                 rmcp_json, *expected,
-                "{label}: rmcp `CallToolResult::structured` diverged from the \
+                "{label}: `tool_result` diverged from the \
                  canonical MCP wire shape\n  rmcp={rmcp_json}\n  expected={expected}",
             );
         }
@@ -1693,12 +1697,9 @@ mod tests {
         assert_ne!(origin_b, format!("agent:{anon}"));
     }
 
-    /// The structured result of a call that must succeed.
-    fn structured_ok(result: Result<CallToolResult, ErrorData>) -> Value {
-        result
-            .expect("tool call succeeds")
-            .structured_content
-            .expect("structuredContent is the primary payload")
+    /// The JSON result of a call that must succeed.
+    fn result_ok(result: Result<CallToolResult, ErrorData>) -> Value {
+        tool_result_json(&result.expect("tool call succeeds"))
     }
 
     async fn deleted_at(pool: &sqlx::SqlitePool, block_id: &str) -> Option<i64> {
@@ -1753,7 +1754,7 @@ mod tests {
             adapter.dispatch_tool_call(name.to_string(), args, "undo-agent".to_string())
         };
 
-        let appended = structured_ok(
+        let appended = result_ok(
             call(
                 "append_block",
                 json!({ "parent_id": page.id.as_str(), "content": "oops", "space_id": space }),
@@ -1763,7 +1764,7 @@ mod tests {
         let block_id = appended["id"].as_str().unwrap().to_string();
         assert_eq!(appended["op_refs"].as_array().map(Vec::len), Some(1));
 
-        let undone = structured_ok(
+        let undone = result_ok(
             call(
                 "undo",
                 json!({ "op_refs": appended["op_refs"], "space_id": space }),

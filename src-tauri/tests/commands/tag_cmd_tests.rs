@@ -436,7 +436,7 @@ async fn list_tags_by_prefix_inner_respects_limit() {
 // List_tags_inner — cursor pagination
 // ======================================================================
 //
-// `list_tags_inner` migrated from a flat `Vec<TagCacheRow>` to a
+// `list_tags_inner` returns one space's tags as a
 // `PageResponse<TagCacheRow>` so the MCP `list_tags` tool exposes
 // the canonical cursor surface (AGENTS.md invariant #3). Ordered by
 // `tag_id ASC` so the keyset cursor (`Cursor::for_id(tag_id)`) is
@@ -457,6 +457,7 @@ async fn seed_m85_tags(pool: &SqlitePool, count: usize) -> Vec<String> {
         let id = format!("TAG_M85_{suffix}");
         let name = format!("tag-m85-{suffix}");
         insert_block(pool, &id, "tag", &name, None, None).await;
+        assign_to_test_space(pool, &id).await;
         insert_tag_cache(pool, &id, &name, 0).await;
         ids.push(id);
     }
@@ -470,7 +471,9 @@ async fn list_tags_returns_next_cursor_when_capped_m85() {
     // surface a cursor.
     seed_m85_tags(&pool, 8).await;
 
-    let page = list_tags_inner(&pool, None, Some(5)).await.unwrap();
+    let page = list_tags_inner(&pool, TEST_SPACE_ID, None, Some(5))
+        .await
+        .unwrap();
     assert_eq!(
         page.items.len(),
         5,
@@ -499,7 +502,9 @@ async fn list_tags_walks_pages_correctly_m85() {
     loop {
         iterations += 1;
         assert!(iterations < 10, "pagination must terminate (loop guard)");
-        let page = list_tags_inner(&pool, cursor, Some(4)).await.unwrap();
+        let page = list_tags_inner(&pool, TEST_SPACE_ID, cursor, Some(4))
+            .await
+            .unwrap();
         for row in &page.items {
             walked.push(row.tag_id.clone());
         }
@@ -548,7 +553,9 @@ async fn list_tags_with_no_cursor_returns_first_page_m85() {
     let (pool, _dir) = test_pool().await;
     let ids = seed_m85_tags(&pool, 3).await;
 
-    let page = list_tags_inner(&pool, None, None).await.unwrap();
+    let page = list_tags_inner(&pool, TEST_SPACE_ID, None, None)
+        .await
+        .unwrap();
     assert_eq!(
         page.items.len(),
         3,
@@ -566,7 +573,9 @@ async fn list_tags_empty_result_returns_no_cursor_m85() {
     let (pool, _dir) = test_pool().await;
     // No tags seeded — the result must be empty with no cursor and
     // `has_more = false`.
-    let page = list_tags_inner(&pool, None, Some(5)).await.unwrap();
+    let page = list_tags_inner(&pool, TEST_SPACE_ID, None, Some(5))
+        .await
+        .unwrap();
     assert_eq!(page.items.len(), 0, "no rows should yield an empty page");
     assert!(page.next_cursor.is_none(), "empty result must not paginate");
     assert!(!page.has_more, "empty result must report has_more=false");

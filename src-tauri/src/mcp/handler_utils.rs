@@ -27,34 +27,16 @@ use sqlx::SqlitePool;
 use crate::db::CommandTx;
 use agaric_core::error::AppError;
 
-/// Convert a serde-json deserialization error into an
-/// [`AppError::Validation`] with the tool name embedded. Used for every
-/// handler's arg parse so bad input maps to `-32602 invalid params` at
-/// the JSON-RPC layer.
-///
-/// The user-facing message is a short structured category derived
-/// from [`serde_json::error::Category`] (e.g. "data shape mismatch") rather
-/// than the verbatim `serde_json::Error::Display`. The latter embeds
-/// line/column hints that point into the MCP wire JSON — meaningless to
-/// the agent / human reading the activity feed. The verbose serde output
-/// is still preserved on a `tracing::debug!` line for daily-log debugging.
+/// Decode a tool's arguments, mapping a bad shape to
+/// [`AppError::Validation`] (`-32602 invalid params`) with serde's message,
+/// which names the unknown or missing field. Decoding from a `Value` leaves
+/// serde_json no input position, so the message carries no line or column.
 pub(crate) fn parse_args<T: serde::de::DeserializeOwned>(
     tool: &str,
     args: Value,
 ) -> Result<T, AppError> {
-    serde_json::from_value::<T>(args).map_err(|e| {
-        // `serde_json::error::Category` has exactly four variants in
-        // serde_json 1.0 — the match below is exhaustive without a
-        // fallback arm so any future variant is a compile error.
-        let category = match e.classify() {
-            serde_json::error::Category::Data => "data shape mismatch",
-            serde_json::error::Category::Syntax => "json syntax",
-            serde_json::error::Category::Eof => "json truncated",
-            serde_json::error::Category::Io => "json io",
-        };
-        tracing::debug!(tool, error = %e, "MCP parse_args failed");
-        AppError::validation(format!("tool `{tool}`: invalid arguments ({category})"))
-    })
+    serde_json::from_value::<T>(args)
+        .map_err(|e| AppError::validation(format!("tool `{tool}`: invalid arguments: {e}")))
 }
 
 /// Normalise a ULID-shaped argument string to uppercase Crockford
@@ -272,10 +254,6 @@ pub(crate) fn resolve_journal_date(
 
 #[cfg(test)]
 mod tests {
-    //! pin the user-facing `parse_args` error message format so
-    //! the activity feed stays short and structured. The verbose
-    //! `serde_json::Error::Display` (with line/column hints into the MCP
-    //! wire JSON) must NOT leak into `AppError::Validation`.
     use super::*;
     use serde::Deserialize;
     use serde_json::json;
@@ -321,44 +299,49 @@ mod tests {
         }
     }
 
-    #[test]
-    fn parse_args_missing_required_field_emits_data_shape_message() {
-        let err = parse_args::<Probe>("test_tool", json!({})).unwrap_err();
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct Strict {
+        #[expect(dead_code, reason = "only the decode outcome is asserted")]
+        space_id: String,
+    }
+
+    fn validation_message(err: AppError) -> String {
         match err {
-            AppError::Validation { message: msg, .. } => {
-                assert!(
-                    msg.contains("test_tool"),
-                    "message must include tool name: {msg}"
-                );
-                assert!(
-                    msg.contains("data shape mismatch"),
-                    "missing-field is Category::Data: {msg}"
-                );
-                assert!(
-                    !msg.contains("line"),
-                    "must NOT include serde_json line/column: {msg}"
-                );
-                assert!(
-                    !msg.contains("column"),
-                    "must NOT include serde_json line/column: {msg}"
-                );
-            }
+            AppError::Validation { message, .. } => message,
             _ => panic!("expected Validation, got {err:?}"),
         }
     }
 
     #[test]
-    fn parse_args_type_mismatch_emits_data_shape_message() {
-        // `42` is a number, but `Probe.required` is `String` —
-        // serde_json classifies this as `Category::Data`.
-        let err = parse_args::<Probe>("test_tool", json!({"required": 42})).unwrap_err();
-        match err {
-            AppError::Validation { message: msg, .. } => {
-                assert!(msg.contains("test_tool"));
-                assert!(msg.contains("data shape mismatch"));
-            }
-            _ => panic!("expected Validation, got {err:?}"),
-        }
+    fn parse_args_error_names_the_misspelt_field() {
+        let msg = validation_message(
+            parse_args::<Strict>("test_tool", json!({"spaceId": "X"})).unwrap_err(),
+        );
+        assert_eq!(
+            msg,
+            "tool `test_tool`: invalid arguments: unknown field `spaceId`, expected `space_id`"
+        );
+    }
+
+    #[test]
+    fn parse_args_error_names_the_missing_field() {
+        let msg = validation_message(parse_args::<Probe>("test_tool", json!({})).unwrap_err());
+        assert_eq!(
+            msg,
+            "tool `test_tool`: invalid arguments: missing field `required`"
+        );
+    }
+
+    #[test]
+    fn parse_args_type_mismatch_says_what_was_expected() {
+        let msg = validation_message(
+            parse_args::<Probe>("test_tool", json!({"required": 42})).unwrap_err(),
+        );
+        assert_eq!(
+            msg,
+            "tool `test_tool`: invalid arguments: invalid type: integer `42`, expected a string"
+        );
     }
 
     #[test]

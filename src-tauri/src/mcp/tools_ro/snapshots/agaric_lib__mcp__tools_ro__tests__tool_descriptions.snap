@@ -171,7 +171,7 @@ expression: wire
       - block_id
     type: object
   name: list_backlinks
-- description: "List every tag in the tag cache (no prefix filter), with cursor pagination."
+- description: "List the tags of a space, with cursor pagination."
   inputSchema:
     additionalProperties: false
     properties:
@@ -183,6 +183,11 @@ expression: wire
         maximum: 100
         minimum: 1
         type: integer
+      space_id:
+        description: ULID of the space whose tags to list.
+        type: string
+    required:
+      - space_id
     type: object
   name: list_tags
 - description: "List every property definition (typed property schema), with cursor pagination."

@@ -90,11 +90,14 @@ class McpClient {
   /** `tools/call` that rejects on a protocol or tool error, resolving the JSON result. */
   async call(name: string, args: Record<string, unknown>): Promise<unknown> {
     const reply = await this.request('tools/call', { name, arguments: args })
-    const result = reply['result'] as { isError?: boolean; structuredContent?: unknown } | undefined
-    if (result === undefined || result.isError === true) {
+    const result = reply['result'] as
+      | { isError?: boolean; content?: { type: string; text?: string }[] }
+      | undefined
+    const text = result?.content?.[0]?.text
+    if (result?.isError === true || text === undefined) {
       throw new Error(`${name} failed: ${JSON.stringify(reply)}`)
     }
-    return result.structuredContent
+    return JSON.parse(text) as unknown
   }
 
   close(): void {

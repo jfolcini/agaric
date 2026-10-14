@@ -655,7 +655,7 @@ pub async fn list_all_tags_in_space_inner(
     tag_query::list_all_tags_in_space(pool, space_id).await
 }
 
-/// List every tag in the tag cache with cursor-based pagination
+/// List the tags in `space_id` with cursor-based pagination
 /// (AGENTS.md invariant #3).
 ///
 /// Backs the MCP `list_tags` tool. Ordered by `tag_id ASC`
@@ -663,17 +663,12 @@ pub async fn list_all_tags_in_space_inner(
 /// [`pagination::Cursor::for_id`] is monotonic. A supplied `limit`
 /// outside the canonical `[1, MAX_PAGE_SIZE]` range is rejected by
 /// [`pagination::PageRequest::new`]; the MCP tool boundary applies its
-/// stricter `LIST_RESULT_CAP` validation first.
-///
-/// Previously a thin wrapper over `list_tags_by_prefix_inner("")`
-/// returning a flat `Vec<TagCacheRow>`. Now returns a
-/// [`PageResponse<TagCacheRow>`] so the tool surface is consistent with
-/// the rest of the paginated read commands. The frontend `listTags()`
-/// wrapper destructures `.items`; MCP agents thread `cursor` /
-/// `next_cursor` / `has_more`.
+/// stricter `LIST_RESULT_CAP` validation first. Space membership is the tag
+/// block's own `blocks.space_id`, as in [`list_all_tags_in_space_inner`].
 #[instrument(skip(pool), err)]
 pub async fn list_tags_inner(
     pool: &SqlitePool,
+    space_id: &str,
     cursor: Option<String>,
     limit: Option<i64>,
 ) -> Result<PageResponse<TagCacheRow>, AppError> {
@@ -687,9 +682,14 @@ pub async fn list_tags_inner(
         TagCacheRow,
         r#"SELECT tag_id, name, usage_count, updated_at
          FROM tags_cache
-         WHERE (?1 IS NULL OR tag_id > ?2)
+         WHERE tag_id IN (
+             SELECT id FROM blocks
+             WHERE block_type = 'tag' AND space_id = ?1
+         )
+           AND (?2 IS NULL OR tag_id > ?3)
          ORDER BY tag_id ASC
-         LIMIT ?3"#,
+         LIMIT ?4"#,
+        space_id,
         cursor_flag,
         cursor_id,
         fetch_limit,
