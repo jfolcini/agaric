@@ -152,6 +152,9 @@ const CURRENT_TAGS_SQL: &str =
 /// name and the *set* of cached tag rows are invariant under these ops — only
 /// the winner's `usage_count` can move. Recomputing just this one row is
 /// therefore provably identical to the full rebuild's effect for the op.
+///
+/// `+blk.space_id` keeps the planner on this tag's rows: an indexable space
+/// predicate drives a scan of every block in the space instead.
 const DESIRED_TAG_USAGE_SQL: &str =
     "SELECT b.content AS name, COALESCE(t.cnt, 0) AS cnt, b.space_id
          FROM blocks b
@@ -161,14 +164,14 @@ const DESIRED_TAG_USAGE_SQL: &str =
                  FROM block_tags bt
                  JOIN blocks blk ON blk.id = bt.block_id
                  JOIN blocks tag ON tag.id = bt.tag_id
-                 WHERE blk.deleted_at IS NULL AND blk.space_id IS tag.space_id
+                 WHERE blk.deleted_at IS NULL AND +blk.space_id IS tag.space_id
                    AND bt.tag_id = ?1
                  UNION
                  SELECT btr.source_id AS block_id
                  FROM block_tag_refs btr
                  JOIN blocks blk ON blk.id = btr.source_id
                  JOIN blocks tag ON tag.id = btr.tag_id
-                 WHERE blk.deleted_at IS NULL AND blk.space_id IS tag.space_id
+                 WHERE blk.deleted_at IS NULL AND +blk.space_id IS tag.space_id
                    AND btr.tag_id = ?1
              )
          ) t
