@@ -90,6 +90,7 @@ import { t } from '@/lib/i18n'
 import { PREFERENCES, writePreference } from '@/lib/preferences'
 import { createPageBlockStore } from '@/stores/page-blocks'
 import { keyFor, useResolveStore } from '@/stores/resolve'
+import { resolveTitles } from '@/stores/resolve-titles'
 import { useSpaceStore } from '@/stores/space'
 
 const TEST_SPACE_ID = 'SPACE_TEST'
@@ -443,6 +444,17 @@ const WRITERS: readonly Writer[] = [
       await waitFor(() => expect(mockedBatchResolve).toHaveBeenCalled())
     },
   },
+  {
+    name: 'resolveTitles',
+    source: 'src/stores/resolve-titles.ts',
+    // `useDuePanelData` hands it inline `((ULID))` refs as well as page ids.
+    supports: BLOCK_TYPES,
+    cacheGated: true,
+    seed: async (id, blockType, content) => {
+      mockedBatchResolve.mockResolvedValueOnce([mkResolved(id, blockType, content)])
+      await resolveTitles(TEST_SPACE_ID, [id])
+    },
+  },
 ] as const
 
 beforeEach(() => {
@@ -682,6 +694,11 @@ const DECLARED_WRITERS: Record<
     writes: 1,
     kind: 'echo',
     note: 'page / tag a paste just created, named as the paste wrote it (#5140)',
+  },
+  'src/stores/resolve-titles.ts': {
+    writes: 1,
+    kind: 'seed',
+    note: '#5439 — the side panels resolve breadcrumb titles the cache misses and write the rows back',
   },
   'src/stores/page-rename.ts': { writes: 1, kind: 'echo', note: 'rename just committed' },
 }

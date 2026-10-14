@@ -6,7 +6,7 @@
  * independently unit-tested in `__tests__/DonePanel.helpers.test.ts`.
  */
 
-import type { BlockRow, ResolvedBlock } from '@/lib/bindings'
+import type { BlockRow } from '@/lib/bindings'
 
 /** A single grouped-by-source-page bucket used by the DonePanel render. */
 export interface DoneBlockGroup {
@@ -23,7 +23,7 @@ export interface DoneBlockGroup {
 
 /**
  * Collect the unique, non-null `page_id`s from a list of blocks. Preserves
- * first-seen order so callers can pass the result straight to `batchResolve`.
+ * first-seen order so callers can pass the result straight to `resolveTitles`.
  */
 export function collectUniqueParentIds(blocks: readonly BlockRow[]): string[] {
   const seen = new Set<string>()
@@ -36,23 +36,6 @@ export function collectUniqueParentIds(blocks: readonly BlockRow[]): string[] {
     }
   }
   return out
-}
-
-/**
- * Merge freshly-resolved titles into an existing id→title map. Null/undefined
- * titles fall back to `untitledLabel`. Returns a new Map — the input is not
- * mutated.
- */
-export function mergeResolvedTitles(
-  prev: ReadonlyMap<string, string>,
-  resolved: readonly ResolvedBlock[],
-  untitledLabel: string,
-): Map<string, string> {
-  const next = new Map(prev)
-  for (const r of resolved) {
-    next.set(r.id, r.title ?? untitledLabel)
-  }
-  return next
 }
 
 /**

@@ -7,15 +7,7 @@
  */
 
 import type { ExecuteFiltersResult } from '@/lib/agenda-filters'
-import type { BlockRow, ResolvedBlock } from '@/lib/bindings'
-import { t } from '@/lib/i18n'
-
-/**
- * Fallback title used when batch-resolve returns a null title. Resolved
- * through the shared `common.untitled` i18n key (#2545) so every surface
- * spells the fallback the same way.
- */
-export const FALLBACK_PAGE_TITLE = t('common.untitled')
+import type { BlockRow } from '@/lib/bindings'
 
 /** Processed outcome of a filter execution, ready for state updates. */
 export interface AgendaFetchOutcome {
@@ -47,19 +39,6 @@ export function collectUniquePageIds(blocks: readonly BlockRow[]): string[] {
     }
   }
   return ordered
-}
-
-/**
- * Build an `id → title` map from a batch-resolve response. Null titles are
- * replaced with {@link FALLBACK_PAGE_TITLE} so callers can render without
- * additional null checks.
- */
-export function buildPageTitleMap(resolved: readonly ResolvedBlock[]): Map<string, string> {
-  const titleMap = new Map<string, string>()
-  for (const r of resolved) {
-    titleMap.set(r.id, r.title ?? FALLBACK_PAGE_TITLE)
-  }
-  return titleMap
 }
 
 /**

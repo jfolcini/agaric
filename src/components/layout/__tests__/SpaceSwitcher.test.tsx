@@ -8,7 +8,7 @@
  *
  * Validates:
  *  - Renders current space name from the store
- *  - Mounts trigger `refreshAvailableSpaces` via listSpaces mock
+ *  - Mounting issues no `list_spaces` IPC (boot already hydrated the store)
  *  - Options render in alphabetical order (server-sorted by list_spaces)
  *  - Selecting an option calls `setCurrentSpace` with the right id
  *  - "Manage spaces…" and "Create another space" open Settings › Spaces
@@ -18,7 +18,7 @@
  * `<select>` shim) so `userEvent.selectOptions()` works in jsdom.
  */
 
-import { render, screen, waitFor } from '@testing-library/react'
+import { act, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
@@ -28,11 +28,12 @@ import type { SpaceRow } from '@/lib/bindings'
 import { useNavigationStore } from '@/stores/navigation'
 import { useSpaceStore } from '@/stores/space'
 
-// #2927 phase 7 — `useSpaceStore.refreshAvailableSpaces` calls
-// `commands.listSpaces()` from `@/lib/bindings` directly. The spy keeps
-// resolving/rejecting with the bare `SpaceRow[]`; the shim wraps a
-// fulfilment in the `{ status: 'ok', data }` envelope `unwrap` expects.
-const mockedListSpaces = vi.hoisted(() => vi.fn())
+// Boot hydrates the space store, so mounting must not call `commands.listSpaces`.
+// The spy resolves an empty list so a regression fails the call-count assertion
+// rather than throwing inside the component.
+const mockedListSpaces = vi.hoisted(() =>
+  vi.fn(async () => ({ status: 'ok' as const, data: [] as unknown[] })),
+)
 
 vi.mock('@/lib/bindings', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/lib/bindings')>()
@@ -40,8 +41,7 @@ vi.mock('@/lib/bindings', async (importOriginal) => {
     ...actual,
     commands: {
       ...actual.commands,
-      listSpaces: (...args: unknown[]) =>
-        mockedListSpaces(...args).then((data: unknown) => ({ status: 'ok', data })),
+      listSpaces: () => mockedListSpaces(),
     },
   }
 })
@@ -79,6 +79,15 @@ vi.mock('@/components/ui/select', async () => {
 const PERSONAL: SpaceRow = { id: 'SPACE_AAAA', name: 'Personal', accent_color: null }
 const WORK: SpaceRow = { id: 'SPACE_ZZZZ', name: 'Work', accent_color: null }
 
+/** Put the store in the state boot leaves it in: spaces loaded, first one active. */
+function seedSpaces(spaces: SpaceRow[]): void {
+  useSpaceStore.setState({
+    currentSpaceId: spaces[0]?.id ?? null,
+    availableSpaces: spaces,
+    isReady: true,
+  })
+}
+
 beforeEach(() => {
   useSpaceStore.setState({
     currentSpaceId: null,
@@ -91,34 +100,24 @@ beforeEach(() => {
 })
 
 describe('SpaceSwitcher', () => {
-  it('calls refreshAvailableSpaces on mount and renders the current space', async () => {
-    mockedListSpaces.mockResolvedValueOnce([PERSONAL, WORK])
+  it('renders the current space without re-fetching list_spaces on mount', async () => {
+    seedSpaces([PERSONAL, WORK])
 
     render(<SpaceSwitcher />)
 
-    // `refreshAvailableSpaces` runs in the mount effect; wait for the
-    // store to flip `isReady` (and thus `availableSpaces` to populate).
-    await waitFor(() => {
-      expect(mockedListSpaces).toHaveBeenCalledTimes(1)
-    })
-    await waitFor(() => {
-      expect(useSpaceStore.getState().isReady).toBe(true)
-    })
-
     const select = screen.getByRole('combobox', { name: /Switch space/ })
-    expect(select).toBeInTheDocument()
-    // With no prior persisted id, reconciliation falls back to the
-    // first alphabetical entry (Personal).
     expect(select).toHaveValue(PERSONAL.id)
+    // Let any mount effect settle before asserting nothing was issued.
+    await act(async () => {
+      await Promise.resolve()
+    })
+    expect(mockedListSpaces).toHaveBeenCalledTimes(0)
   })
 
   it('renders both seeded spaces in alphabetical order', async () => {
-    mockedListSpaces.mockResolvedValueOnce([PERSONAL, WORK])
+    seedSpaces([PERSONAL, WORK])
 
     render(<SpaceSwitcher />)
-    await waitFor(() => {
-      expect(useSpaceStore.getState().isReady).toBe(true)
-    })
 
     const select = screen.getByRole('combobox', { name: /Switch space/ })
     const options = select.querySelectorAll('option')
@@ -132,12 +131,9 @@ describe('SpaceSwitcher', () => {
 
   it('calls setCurrentSpace with the selected id when the user switches', async () => {
     const user = userEvent.setup()
-    mockedListSpaces.mockResolvedValueOnce([PERSONAL, WORK])
+    seedSpaces([PERSONAL, WORK])
 
     render(<SpaceSwitcher />)
-    await waitFor(() => {
-      expect(useSpaceStore.getState().isReady).toBe(true)
-    })
 
     const select = screen.getByRole('combobox', { name: /Switch space/ })
     await user.selectOptions(select, WORK.id)
@@ -150,12 +146,9 @@ describe('SpaceSwitcher', () => {
   it('opens Settings on the Spaces tab when Manage spaces is selected', async () => {
     const user = userEvent.setup()
     const onNavigate = vi.fn()
-    mockedListSpaces.mockResolvedValueOnce([PERSONAL, WORK])
+    seedSpaces([PERSONAL, WORK])
 
     render(<SpaceSwitcher onNavigate={onNavigate} />)
-    await waitFor(() => {
-      expect(useSpaceStore.getState().isReady).toBe(true)
-    })
 
     const manageOption = screen.getByRole('option', { name: /Manage spaces/ })
     expect(manageOption).not.toBeDisabled()
@@ -172,28 +165,10 @@ describe('SpaceSwitcher', () => {
     expect(useSpaceStore.getState().currentSpaceId).toBe(PERSONAL.id)
   })
 
-  it('renders even when listSpaces rejects — store logs warn and stays usable', async () => {
-    mockedListSpaces.mockRejectedValueOnce(new Error('fail'))
-
-    render(<SpaceSwitcher />)
-
-    await waitFor(() => {
-      expect(useSpaceStore.getState().isReady).toBe(true)
-    })
-    // No space rows means the combobox still renders but has no real
-    // options — the Manage sentinel is still present.
-    const select = screen.getByRole('combobox', { name: /Switch space/ })
-    expect(select).toBeInTheDocument()
-    expect(useSpaceStore.getState().availableSpaces).toEqual([])
-  })
-
   it('has no a11y violations', async () => {
-    mockedListSpaces.mockResolvedValueOnce([PERSONAL, WORK])
+    seedSpaces([PERSONAL, WORK])
 
     const { container } = render(<SpaceSwitcher />)
-    await waitFor(() => {
-      expect(useSpaceStore.getState().isReady).toBe(true)
-    })
 
     await waitFor(
       async () => {
@@ -207,12 +182,9 @@ describe('SpaceSwitcher', () => {
   // ── shortcut hint tooltip on the trigger ──
   it('renders a shortcut-hint tooltip on the trigger', async () => {
     const user = userEvent.setup()
-    mockedListSpaces.mockResolvedValueOnce([PERSONAL, WORK])
+    seedSpaces([PERSONAL, WORK])
 
     render(<SpaceSwitcher />)
-    await waitFor(() => {
-      expect(useSpaceStore.getState().isReady).toBe(true)
-    })
 
     // The Tooltip wraps the SelectTrigger via a `<span>` so the hint
     // surfaces even though Radix Select owns the underlying combobox
@@ -244,12 +216,9 @@ describe('SpaceSwitcher', () => {
   // placeholder must NOT carry a chip — it isn't bound to a hotkey
   // And its row is owned by.
   it('renders a hint chip on each space row in alphabetical order', async () => {
-    mockedListSpaces.mockResolvedValueOnce([PERSONAL, WORK])
+    seedSpaces([PERSONAL, WORK])
 
     render(<SpaceSwitcher />)
-    await waitFor(() => {
-      expect(useSpaceStore.getState().isReady).toBe(true)
-    })
 
     // jsdom's UA does not match macOS, so `isMac()` returns false and
     // the chip text is the spelled-out modifier (`Ctrl+N`). This keeps
@@ -295,12 +264,9 @@ describe('SpaceSwitcher', () => {
   // (presence + colour + fallback) AND the regression carve-out
   // (no "Space:" text in the trigger anymore, `aria-label` still set).
   it('renders an accent-coloured dot before the active space name', async () => {
-    mockedListSpaces.mockResolvedValueOnce([{ ...PERSONAL, accent_color: 'accent-emerald' }, WORK])
+    seedSpaces([{ ...PERSONAL, accent_color: 'accent-emerald' }, WORK])
 
     render(<SpaceSwitcher />)
-    await waitFor(() => {
-      expect(useSpaceStore.getState().isReady).toBe(true)
-    })
 
     const dot = await screen.findByTestId('space-switcher-accent-dot')
     expect(dot).toBeInTheDocument()
@@ -314,15 +280,12 @@ describe('SpaceSwitcher', () => {
   })
 
   it("dot's colour follows the active space when the user switches", async () => {
-    mockedListSpaces.mockResolvedValueOnce([
+    seedSpaces([
       { ...PERSONAL, accent_color: 'accent-emerald' },
       { ...WORK, accent_color: 'accent-violet' },
     ])
 
     render(<SpaceSwitcher />)
-    await waitFor(() => {
-      expect(useSpaceStore.getState().isReady).toBe(true)
-    })
 
     // Initially Personal is active → emerald dot.
     let dot = (await screen.findByTestId('space-switcher-accent-dot')) as HTMLElement
@@ -345,24 +308,18 @@ describe('SpaceSwitcher', () => {
   it('falls back to var(--accent-current) when accent_color is null', async () => {
     // Mirrors the SpaceAccentBadge fallback test — a synced peer with
     // a null accent_color must still produce a non-blank dot.
-    mockedListSpaces.mockResolvedValueOnce([{ ...PERSONAL, accent_color: null }])
+    seedSpaces([{ ...PERSONAL, accent_color: null }])
 
     render(<SpaceSwitcher />)
-    await waitFor(() => {
-      expect(useSpaceStore.getState().isReady).toBe(true)
-    })
 
     const dot = (await screen.findByTestId('space-switcher-accent-dot')) as HTMLElement
     expect(dot.style.backgroundColor).toContain('var(--accent-current')
   })
 
   it('does NOT render the legacy "Space:" prefix in the trigger', async () => {
-    mockedListSpaces.mockResolvedValueOnce([PERSONAL, WORK])
+    seedSpaces([PERSONAL, WORK])
 
     render(<SpaceSwitcher />)
-    await waitFor(() => {
-      expect(useSpaceStore.getState().isReady).toBe(true)
-    })
 
     // The per-file mock override renders SelectTrigger's children
     // into a sibling `<div data-slot="select-trigger-children">`.
@@ -377,12 +334,9 @@ describe('SpaceSwitcher', () => {
     // The dot is decorative + `aria-hidden`. The accessible name on
     // the trigger must still be the i18n `space.switch` string so SR
     // users hear "Switch space" rather than the bare option text.
-    mockedListSpaces.mockResolvedValueOnce([PERSONAL, WORK])
+    seedSpaces([PERSONAL, WORK])
 
     render(<SpaceSwitcher />)
-    await waitFor(() => {
-      expect(useSpaceStore.getState().isReady).toBe(true)
-    })
 
     const trigger = screen.getByRole('combobox', { name: /Switch space/ })
     expect(trigger).toBeInTheDocument()
@@ -398,12 +352,9 @@ describe('SpaceSwitcher', () => {
   // keyboard-reachable; selecting it opens Settings › Spaces, as the
   // MANAGE_SENTINEL route does, without switching space.
   it('renders the create-another-space hint as an option when there is only one space', async () => {
-    mockedListSpaces.mockResolvedValueOnce([PERSONAL])
+    seedSpaces([PERSONAL])
 
     render(<SpaceSwitcher />)
-    await waitFor(() => {
-      expect(useSpaceStore.getState().isReady).toBe(true)
-    })
     expect(useSpaceStore.getState().availableSpaces).toHaveLength(1)
 
     // Now a SelectItem → native <option> in the test mock, so it is
@@ -414,12 +365,9 @@ describe('SpaceSwitcher', () => {
   })
 
   it('does NOT render the create-another-space hint when there is more than one space', async () => {
-    mockedListSpaces.mockResolvedValueOnce([PERSONAL, WORK])
+    seedSpaces([PERSONAL, WORK])
 
     render(<SpaceSwitcher />)
-    await waitFor(() => {
-      expect(useSpaceStore.getState().isReady).toBe(true)
-    })
     expect(useSpaceStore.getState().availableSpaces).toHaveLength(2)
 
     expect(screen.queryByRole('option', { name: /Create another space/ })).not.toBeInTheDocument()
@@ -427,12 +375,9 @@ describe('SpaceSwitcher', () => {
 
   it('opens Settings on the Spaces tab when the create-another-space hint is selected', async () => {
     const user = userEvent.setup()
-    mockedListSpaces.mockResolvedValueOnce([PERSONAL])
+    seedSpaces([PERSONAL])
 
     render(<SpaceSwitcher />)
-    await waitFor(() => {
-      expect(useSpaceStore.getState().isReady).toBe(true)
-    })
 
     const select = screen.getByRole('combobox', { name: /Switch space/ })
     await user.selectOptions(select, '__create__')
@@ -454,12 +399,9 @@ describe('SpaceSwitcher', () => {
   // mappings stay discoverable on hover.
   it('lists the first 5 space digit mappings in the trigger tooltip', async () => {
     const user = userEvent.setup()
-    mockedListSpaces.mockResolvedValueOnce([PERSONAL, WORK])
+    seedSpaces([PERSONAL, WORK])
 
     render(<SpaceSwitcher />)
-    await waitFor(() => {
-      expect(useSpaceStore.getState().isReady).toBe(true)
-    })
 
     const tooltipTrigger = document.querySelector(
       '[data-slot="tooltip-trigger"]',

@@ -48,8 +48,11 @@ const EMPTY: string[] = []
  * with the same `spaceId` reuse the cached array; different
  * `spaceId`s fetch independently. Returns the stable empty array
  * before the first fetch resolves.
+ *
+ * `enabled: false` defers the fetch (a consumer whose keys are only needed once
+ * the user interacts); keys already cached are still returned.
  */
-export function usePropertyKeysCache(spaceId: string | null): string[] {
+export function usePropertyKeysCache(spaceId: string | null, enabled = true): string[] {
   const spaceKey = spaceId ?? PROPERTY_KEYS_GLOBAL_KEY
 
   // Wire up the event → invalidate listener. Idempotent and process-lifetime.
@@ -62,6 +65,7 @@ export function usePropertyKeysCache(spaceId: string | null): string[] {
       queryKey: propertyKeysQueryKey(spaceKey),
       queryFn: propertyKeysQueryFn,
       staleTime: Number.POSITIVE_INFINITY,
+      enabled,
     },
     queryClient,
   )

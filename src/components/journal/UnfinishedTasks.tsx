@@ -24,11 +24,11 @@ import { unwrap } from '@/lib/app-error'
 import { commands } from '@/lib/bindings'
 import type { BlockRow, PageResponse } from '@/lib/bindings'
 import type { NavigateToPageFn } from '@/lib/block-events'
-import { t as translate } from '@/lib/i18n'
 import { logger } from '@/lib/logger'
 import { queryClient } from '@/lib/query-client'
 import { paginationLimit } from '@/lib/safe-limit'
 import { requireActiveScope } from '@/lib/space-scope'
+import { resolveTitles } from '@/stores/resolve-titles'
 import { useSpaceStore } from '@/stores/space'
 
 // ── Constants ──────────────────────────────────────────────────────────
@@ -216,17 +216,13 @@ async function resolvePageTitles(
   parentIds: string[],
   spaceId: string,
 ): Promise<Map<string, string>> {
-  const titles = new Map<string, string>()
-  if (parentIds.length === 0) return titles
   try {
-    const resolved = unwrap(await commands.batchResolve(parentIds, requireActiveScope(spaceId)))
-    for (const r of resolved) {
-      titles.set(r.id, r.title ?? translate('common.untitled'))
-    }
-  } catch {
+    return await resolveTitles(spaceId, parentIds)
+  } catch (err) {
     // Non-critical: breadcrumbs will show "Untitled"
+    logger.warn('UnfinishedTasks', 'failed to resolve page titles', undefined, err)
+    return new Map()
   }
-  return titles
 }
 
 /**

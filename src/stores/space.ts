@@ -49,7 +49,7 @@ export const LEGACY_SPACE_KEY = '__legacy__'
 /**
  * #2921 — outcome of the most recent `refreshAvailableSpaces()` call.
  * `refreshAvailableSpaces()` itself never rejects (non-boot callers —
- * `SpaceSwitcher`'s fire-and-forget mount refresh, `SpacesTab`'s
+ * `useSyncEvents`' fire-and-forget refresh after a sync, `SpacesTab`'s
  * awaited-but-uncaught refresh — rely on that contract), so a caller that
  * needs to react to a HARD failure (no usable prior snapshot: empty
  * `availableSpaces` AND `currentSpaceId === null`) reads this field

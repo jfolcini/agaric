@@ -10,7 +10,6 @@ import { AgendaResults } from '@/components/agenda/AgendaResults'
 import { AgendaSortGroupControls } from '@/components/agenda/AgendaSortGroupControls'
 import {
   appendUniqueBlocks,
-  buildPageTitleMap,
   collectUniquePageIds,
   processFilterResult,
 } from '@/components/journal/AgendaView.helpers'
@@ -23,13 +22,11 @@ import {
   loadMoreAgendaFilters,
   loadMoreUnfilteredAgenda,
 } from '@/lib/agenda-filters'
-import { unwrap } from '@/lib/app-error'
 import type { BlockRow } from '@/lib/bindings'
-import { commands } from '@/lib/bindings'
 import { t } from '@/lib/i18n'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
-import { requireActiveScope } from '@/lib/space-scope'
+import { resolveTitles } from '@/stores/resolve-titles'
 import { useSpaceStore } from '@/stores/space'
 
 // #5441 — lazy: only agenda mode renders this view, so the filter builder and its
@@ -166,12 +163,10 @@ export function AgendaView({ onNavigateToPage }: AgendaViewProps): React.ReactEl
     const pageIds = collectUniquePageIds(filteredBlocks)
     if (pageIds.length === 0) return
     let cancelled = false
-    commands
-      .batchResolve(pageIds, requireActiveScope(currentSpaceId))
-      .then(unwrap)
-      .then((resolved) => {
+    resolveTitles(currentSpaceId, pageIds)
+      .then((titles) => {
         if (cancelled) return
-        setAgendaPageTitles((prev) => new Map([...prev, ...buildPageTitleMap(resolved)]))
+        setAgendaPageTitles((prev) => new Map([...prev, ...titles]))
       })
       .catch((err: unknown) => {
         logger.warn('AgendaView', 'Failed to resolve agenda page titles', undefined, err)

@@ -83,6 +83,7 @@ import { makeBlock as _makeBlock } from '@/__tests__/fixtures'
 import { AgendaView } from '@/components/journal/AgendaView'
 import { executeAgendaFilters, loadMoreAgendaFilters } from '@/lib/agenda-filters'
 import { t } from '@/lib/i18n'
+import { useResolveStore } from '@/stores/resolve'
 import { useSpaceStore } from '@/stores/space'
 
 const mockedExecuteAgendaFilters = vi.mocked(executeAgendaFilters)
@@ -150,6 +151,8 @@ async function clickLoadMore(user: ReturnType<typeof userEvent.setup>): Promise<
 beforeEach(() => {
   // #5415 — every space-scoped IPC carries the active space.
   useSpaceStore.setState({ currentSpaceId: 'SPACE_1' })
+  // Titles a test resolves are written back to the shared cache.
+  useResolveStore.setState({ cache: new Map(), version: 0 })
   vi.clearAllMocks()
   localStorage.clear()
   mockGetProperties.mockResolvedValue([])
@@ -195,6 +198,29 @@ describe('AgendaView load-more page titles (#3340)', () => {
       expect(breadcrumbOf('appended task')).toContain(TITLE_APPENDED)
     })
     expect(breadcrumbOf('appended task')).not.toContain(t('agenda.untitled'))
+    // The first page's title is cached by then, so load-more asks only for the new one.
+    expect(mockBatchResolve.mock.calls).toEqual([
+      [[PAGE_FIRST], { kind: 'active', space_id: 'SPACE_1' }],
+      [[PAGE_APPENDED], { kind: 'active', space_id: 'SPACE_1' }],
+    ])
+  })
+
+  it('takes titles the resolve store holds without calling batchResolve (#5439)', async () => {
+    const user = userEvent.setup()
+    useResolveStore.getState().batchSet([
+      { id: PAGE_FIRST, title: 'Cached First', deleted: false },
+      { id: PAGE_APPENDED, title: 'Cached Appended', deleted: false },
+    ])
+    render(<AgendaView />)
+
+    await waitFor(() => {
+      expect(breadcrumbOf('initial task')).toContain('Cached First')
+    })
+    await clickLoadMore(user)
+    await waitFor(() => {
+      expect(breadcrumbOf('appended task')).toContain('Cached Appended')
+    })
+    expect(mockBatchResolve).toHaveBeenCalledTimes(0)
   })
 
   it('labels and orders the appended group by its title, never by its ULID', async () => {
@@ -229,8 +255,10 @@ describe('AgendaView load-more page titles (#3340)', () => {
     })
 
     // The load-more resolve comes back empty (partial backend response). The
-    // merge must not drop the title already resolved for the first page.
+    // merge must not drop the title already resolved for the first page, so
+    // the cache that would answer for it again is emptied first.
     mockBatchResolve.mockResolvedValue([])
+    useResolveStore.setState({ cache: new Map(), version: 0 })
 
     await clickLoadMore(user)
 

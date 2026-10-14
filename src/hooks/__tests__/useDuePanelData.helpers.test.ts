@@ -9,13 +9,7 @@
 import { describe, expect, it } from 'vitest'
 
 import { makeBlock } from '@/__tests__/fixtures'
-import {
-  applySourceFilter,
-  buildTitleMap,
-  collectResolveIds,
-  extractUlidRefs,
-} from '@/hooks/useDuePanelData'
-import type { ResolvedBlock } from '@/lib/bindings'
+import { applySourceFilter, collectResolveIds, extractUlidRefs } from '@/hooks/useDuePanelData'
 
 describe('applySourceFilter', () => {
   const date = '2025-06-15'
@@ -155,53 +149,6 @@ describe('collectResolveIds', () => {
 
   it('returns an empty array when given no blocks', () => {
     expect(collectResolveIds([])).toHaveLength(0)
-  })
-})
-
-describe('buildTitleMap', () => {
-  it('maps resolved id → title directly when title is present', () => {
-    const resolved: ResolvedBlock[] = [
-      { id: 'PAGE1', title: 'First', block_type: 'page', deleted: false },
-      { id: 'PAGE2', title: 'Second', block_type: 'page', deleted: false },
-    ]
-    const map = buildTitleMap(resolved, 'Untitled')
-    expect(map.size).toBe(2)
-    expect(map.get('PAGE1')).toBe('First')
-    expect(map.get('PAGE2')).toBe('Second')
-  })
-
-  it('applies the fallback when resolved title is null', () => {
-    const resolved: ResolvedBlock[] = [
-      { id: 'PAGE1', title: null, block_type: 'page', deleted: false },
-      { id: 'PAGE2', title: 'Real Title', block_type: 'page', deleted: false },
-    ]
-    const map = buildTitleMap(resolved, 'Untitled')
-    expect(map.size).toBe(2)
-    expect(map.get('PAGE1')).toBe('Untitled')
-    expect(map.get('PAGE2')).toBe('Real Title')
-  })
-
-  it('respects a custom fallback string', () => {
-    const resolved: ResolvedBlock[] = [
-      { id: 'PAGE1', title: null, block_type: 'page', deleted: false },
-    ]
-    const map = buildTitleMap(resolved, 'No Title')
-    expect(map.get('PAGE1')).toBe('No Title')
-  })
-
-  it('returns an empty map for an empty input', () => {
-    const map = buildTitleMap([], 'Untitled')
-    expect(map.size).toBe(0)
-  })
-
-  it('later entries overwrite earlier ones for duplicate ids', () => {
-    const resolved: ResolvedBlock[] = [
-      { id: 'PAGE1', title: 'First', block_type: 'page', deleted: false },
-      { id: 'PAGE1', title: 'Second', block_type: 'page', deleted: false },
-    ]
-    const map = buildTitleMap(resolved, 'Untitled')
-    expect(map.size).toBe(1)
-    expect(map.get('PAGE1')).toBe('Second')
   })
 })
 
