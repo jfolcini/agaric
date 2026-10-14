@@ -81,6 +81,7 @@ async fn list_tools_advertises_the_ro_tools() {
             "block_history",
             "get_journal",
             "list_journal",
+            "list_trash",
         ],
         "tool order is part of the wire contract — do not re-order (new tools append)",
     );
@@ -3812,4 +3813,74 @@ async fn list_journal_pages_every_day_once_across_cursors_5396() {
             "{args}: {err:?}"
         );
     }
+}
+
+// -------------------------------------------------------------------
+// list_trash (#5399)
+// -------------------------------------------------------------------
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn list_trash_pages_one_space_across_a_cursor_5399() {
+    let (tools, mat, _dir) = mk_tools().await;
+    let space = mk_space(&tools.pool, "S").await;
+    let other = mk_space(&tools.pool, "Other").await;
+    let page = mk_page_in(&tools, &mat, &space).await;
+    let other_page = mk_page_in(&tools, &mat, &other).await;
+    let parent = mk_child(&tools, &mat, &page, "parent").await;
+    mk_child(&tools, &mat, &parent, "deleted with its parent").await;
+    let mut roots = vec![parent];
+    for text in ["a", "b"] {
+        roots.push(mk_child(&tools, &mat, &page, text).await);
+    }
+    let foreign = mk_child(&tools, &mat, &other_page, "other space").await;
+    for id in roots.iter().chain([&foreign]) {
+        crate::commands::delete_block_inner(&tools.pool, DEV, &mat, BlockId::from_trusted(id))
+            .await
+            .unwrap();
+    }
+    settle(&mat).await;
+
+    let first = tools
+        .call_tool(
+            "list_trash",
+            json!({ "space_id": space, "limit": 2 }),
+            &test_ctx(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(first["has_more"], json!(true));
+    let second = tools
+        .call_tool(
+            "list_trash",
+            json!({ "space_id": space, "limit": 2, "cursor": first["next_cursor"] }),
+            &test_ctx(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(second["has_more"], json!(false));
+    let rows: Vec<&Value> = [&first, &second]
+        .iter()
+        .flat_map(|page| page["items"].as_array().unwrap())
+        .collect();
+    assert!(
+        rows.iter().all(|row| row["deleted_at"].is_i64()),
+        "restore_block needs it"
+    );
+    let mut seen: Vec<String> = rows
+        .iter()
+        .map(|row| row["id"].as_str().unwrap().to_owned())
+        .collect();
+    seen.sort();
+    roots.sort();
+    assert_eq!(seen, roots, "each deletion root of the space exactly once");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn list_trash_refuses_a_space_id_that_is_not_a_ulid_5399() {
+    let (tools, _mat, _dir) = mk_tools().await;
+    let err = tools
+        .call_tool("list_trash", json!({ "space_id": "__all__" }), &test_ctx())
+        .await
+        .expect_err("the space must be named");
+    assert!(matches!(err, AppError::Ulid(_)), "got {err:?}");
 }

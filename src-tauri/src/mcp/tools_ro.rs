@@ -26,6 +26,7 @@
 //! | `block_history` | [`get_block_history_inner`] | The same rows for one block. |
 //! | `get_journal` | [`get_journal_page_by_date_inner`] + [`get_page_for_agent_inner`] | #5396 — a day as `get_page_markdown` renders it; `date` is `today` (default), `yesterday` or `YYYY-MM-DD` on the device's clock. Never creates: a missing day is an empty `markdown`. |
 //! | `list_journal` | [`list_journal_days_inner`] | #5396 — the days in `[from, to]` with their block counts. Cursor paginated. |
+//! | `list_trash` | [`list_trash_inner`] | Deleted blocks of one space (deletion roots), newest first. Cursor paginated. `space_id` required. |
 //!
 //! # Actor scoping
 //!
@@ -77,8 +78,8 @@ use super::handler_utils::{
 use super::registry::{
     TOOL_BLOCK_HISTORY, TOOL_GET_AGENDA, TOOL_GET_BLOCK, TOOL_GET_JOURNAL, TOOL_GET_PAGE,
     TOOL_GET_PAGE_MARKDOWN, TOOL_JOURNAL_FOR_DATE, TOOL_LIST_BACKLINKS, TOOL_LIST_JOURNAL,
-    TOOL_LIST_PAGES, TOOL_LIST_PROPERTY_DEFS, TOOL_LIST_SPACES, TOOL_LIST_TAGS, TOOL_PAGE_HISTORY,
-    TOOL_SEARCH, ToolDescription, ToolRegistry,
+    TOOL_LIST_PAGES, TOOL_LIST_PROPERTY_DEFS, TOOL_LIST_SPACES, TOOL_LIST_TAGS, TOOL_LIST_TRASH,
+    TOOL_PAGE_HISTORY, TOOL_SEARCH, ToolDescription, ToolRegistry,
 };
 use super::view_notify::{NoopViewChangeEmitter, ViewChangeEmitter};
 use crate::commands::{
@@ -87,7 +88,7 @@ use crate::commands::{
     get_page_unscoped_inner, get_properties_inner, journal_for_date_inner,
     list_backlinks_grouped_inner, list_journal_days_inner, list_page_history_inner,
     list_pages_inner, list_property_defs_inner, list_spaces_registry_inner,
-    list_tags_for_block_inner, list_tags_inner, search_blocks_inner,
+    list_tags_for_block_inner, list_tags_inner, list_trash_inner, search_blocks_inner,
 };
 use crate::materializer::Materializer;
 use agaric_core::error::AppError;
@@ -324,6 +325,16 @@ struct GetPageMarkdownArgs {
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
+struct ListTrashArgs {
+    space_id: String,
+    #[serde(default)]
+    cursor: Option<String>,
+    #[serde(default)]
+    limit: Option<i64>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct PageHistoryArgs {
     page_id: String,
     space_id: String,
@@ -552,6 +563,7 @@ pub(crate) fn list_tool_descriptions() -> Vec<ToolDescription> {
         tool_desc_block_history(),
         tool_desc_get_journal(),
         tool_desc_list_journal(),
+        tool_desc_list_trash(),
     ]
 }
 
@@ -619,6 +631,7 @@ impl ToolRegistry for ReadOnlyTools {
                     handle_get_journal(&pool, args, chrono::Local::now().date_naive()).await
                 }
                 TOOL_LIST_JOURNAL => handle_list_journal(&pool, args).await,
+                TOOL_LIST_TRASH => handle_list_trash(&pool, args).await,
                 other => Err(unknown_tool_error(other)),
             }
         })
@@ -1068,6 +1081,31 @@ fn tool_desc_list_journal() -> ToolDescription {
                     "minimum": 1,
                     "maximum": LIST_RESULT_CAP,
                     "description": format!("Max days per response (capped at {LIST_RESULT_CAP})."),
+                },
+            },
+        }),
+    }
+}
+
+fn tool_desc_list_trash() -> ToolDescription {
+    ToolDescription {
+        name: TOOL_LIST_TRASH.to_string(),
+        description: "List the soft-deleted blocks of a space, newest deletion first, with \
+                      cursor pagination. A block deleted with its parent is not listed: restoring \
+                      the parent restores it. Pass a row's id and deleted_at to restore_block."
+            .to_string(),
+        input_schema: json!({
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["space_id"],
+            "properties": {
+                "space_id": { "type": "string", "description": "ULID of the space whose trash to list." },
+                "cursor": { "type": "string", "description": "Opaque pagination cursor from a prior response." },
+                "limit": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": LIST_RESULT_CAP,
+                    "description": format!("Max blocks per response (capped at {LIST_RESULT_CAP})."),
                 },
             },
         }),
@@ -1603,6 +1641,14 @@ async fn handle_block_history(
     validate_block_in_space(writer_pool, block_id.as_str(), space_id.as_str()).await?;
     let resp = get_block_history_inner(pool, block_id, None, args.cursor, limit).await?;
     history_result(pool, resp).await
+}
+
+async fn handle_list_trash(pool: &SqlitePool, args: Value) -> Result<Value, AppError> {
+    let args: ListTrashArgs = parse_args(TOOL_LIST_TRASH, args)?;
+    let limit = validate_limit(TOOL_LIST_TRASH, args.limit, LIST_RESULT_CAP)?;
+    let space_id = SpaceId::from_string(args.space_id)?;
+    let resp = list_trash_inner(pool, args.cursor, limit, space_id.as_str().to_owned()).await?;
+    to_tool_result(&resp)
 }
 
 /// Longest before / after text a history row carries, in chars: the row
