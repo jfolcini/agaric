@@ -55,6 +55,30 @@ export interface UseJournalBlockCreationResult {
   forgetCreatedPage: (dateStr: string) => void
 }
 
+/**
+ * The day's last block when it is blank, childless and unfocused: "Add block"
+ * puts the caret there, because a second blank block would strand it. The
+ * blur cleanup only looks at the block focus leaves, so it never revisits this
+ * one; a focused blank tail it drops when the new block takes focus. The flat
+ * tree's tail is a direct child of the page only when it is childless.
+ */
+function unfocusedBlankTail(pageId: string): string | null {
+  const last = getPageStore(pageId)?.getState().blocks.at(-1)
+  if (
+    last?.parent_id === pageId &&
+    last.id !== useBlockStore.getState().focusedBlockId &&
+    last.block_type === 'content' &&
+    (last.content ?? '').trim() === '' &&
+    last.todo_state === null &&
+    last.priority === null &&
+    last.due_date === null &&
+    last.scheduled_date === null
+  ) {
+    return last.id
+  }
+  return null
+}
+
 export function useJournalBlockCreation({
   pageMap,
   onPageCreated,
@@ -163,6 +187,11 @@ export function useJournalBlockCreation({
             useBlockStore.getState().setFocused(first.id)
           }
         } else {
+          const blankTail = unfocusedBlankTail(pageId)
+          if (blankTail !== null) {
+            useBlockStore.getState().setFocused(blankTail)
+            return
+          }
           const spaceId = useSpaceStore.getState().currentSpaceId
           if (spaceId == null) throw new Error('No active space; cannot create block')
           const block = await createBlock({
