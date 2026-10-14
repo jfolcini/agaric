@@ -153,12 +153,15 @@ export function useGraphSimulation({
   }, [])
 
   // A first layout is fitted once it settles; a kept one comes back with the
-  // viewport it was left with, which the fit must not override (#5434).
+  // viewport it was left with, which the fit must not override (#5434). The
+  // fit's zoom end chooses the labels, so none flash in at the pre-fit zoom.
   const fitOnSettleRef = useRef(false)
   const onSettled = useCallback(
     (settledNodes: readonly GraphNode[]) => {
-      placeLabels()
-      if (!fitOnSettleRef.current) return
+      if (!fitOnSettleRef.current) {
+        placeLabels()
+        return
+      }
       fitOnSettleRef.current = false
       fitNodesToView(settledNodes)
     },

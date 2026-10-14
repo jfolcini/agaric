@@ -98,7 +98,7 @@ afterEach(() => {
 })
 
 describe('useGraphSimulation — when labels are chosen (#5430)', () => {
-  it('chooses labels when the layout settles and when the fit that follows ends, never per tick', async () => {
+  it('chooses labels when the fit after the first settle ends and on every later settle, never per tick', async () => {
     const { container } = render(<Graph />)
     const worker = RecordingWorker.last as RecordingWorker
     const atMount = vi.mocked(visibleLabels).mock.calls.length
@@ -122,18 +122,22 @@ describe('useGraphSimulation — when labels are chosen (#5430)', () => {
       [100, 60],
       [90, 200],
     ]
+    // Not at the pre-fit zoom: the fit's end chooses them at the zoom it lands on.
     act(() => worker.emit('done', settled))
-    expect(visibleLabels).toHaveBeenCalledTimes(atMount + 1)
+    expect(visibleLabels).toHaveBeenCalledTimes(atMount)
 
     const fitted = fitTransform(
       settled.map(([x, y]) => ({ x, y })),
       800,
       600,
     )
-    await waitFor(() => expect(visibleLabels).toHaveBeenCalledTimes(atMount + 2))
+    await waitFor(() => expect(visibleLabels).toHaveBeenCalledTimes(atMount + 1))
     expect(vi.mocked(visibleLabels).mock.lastCall?.[1]).toBeCloseTo(fitted.k)
     expect(Number(container.querySelector('g.nodes-layer')?.getAttribute('font-size'))).toBeCloseTo(
       12 / fitted.k,
     )
+
+    act(() => worker.emit('done', settled))
+    expect(visibleLabels).toHaveBeenCalledTimes(atMount + 2)
   })
 })
