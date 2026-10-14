@@ -2109,6 +2109,7 @@ mod tests {
         match t {
             MaterializeTask::ApplyOp(_) => "ApplyOp".into(),
             MaterializeTask::ReplayApplyOp(..) => "ReplayApplyOp".into(),
+            MaterializeTask::ReplayApplyOps(..) => "ReplayApplyOps".into(),
             MaterializeTask::BatchApplyOps(_) => "BatchApplyOps".into(),
             MaterializeTask::RebuildTagsCache => "RebuildTagsCache".into(),
             MaterializeTask::RefreshTagUsageCount { tag_id } => {
