@@ -489,6 +489,70 @@ test('perf: core journeys on a seeded vault', async ({ page }) => {
   console.table(rows)
 })
 
+/** Milliseconds from the last click or key press in `act` until `selector` is in the DOM. */
+async function timeToReady(
+  page: Page,
+  selector: string,
+  act: () => Promise<void>,
+): Promise<number> {
+  await page.evaluate((sel) => {
+    let t0 = 0
+    const mark = (): void => {
+      t0 = performance.now()
+    }
+    addEventListener('click', mark, true)
+    addEventListener('keydown', mark, true)
+    Object.assign(window, {
+      __ready__: new Promise<number>((resolve) => {
+        new MutationObserver((_, observer) => {
+          if (t0 === 0 || !document.querySelector(sel)) return
+          observer.disconnect()
+          removeEventListener('click', mark, true)
+          removeEventListener('keydown', mark, true)
+          resolve(performance.now() - t0)
+        }).observe(document, { childList: true, subtree: true })
+      }),
+    })
+  }, selector)
+  await act()
+  return Math.round(
+    await page.evaluate(() => (window as unknown as { __ready__: number }).__ready__),
+  )
+}
+
+/**
+ * #5444 — the first visit to a view against later ones. A view whose first
+ * render suspends shows `ViewFallback`, and React holds the view back until
+ * 300 ms after it; the idle preload lets the first visit render without
+ * suspending. Times are in-page: Playwright's `waitFor` polls on a backoff
+ * that rounds a 300 ms wait up to about 800 ms of wall time.
+ */
+test('perf: first and second visit to each view', async ({ page }) => {
+  test.skip(!process.env['AGARIC_PERF'], 'opt-in: AGARIC_PERF=1')
+  const blocks = page.locator('[data-testid="block-static"]')
+  const visits: Array<[view: string, ready: string, open: () => Promise<void>]> = [
+    ['Pages', '[id^="page-row-"]', () => navigateToView(page, 'Pages')],
+    ['Search', 'input[placeholder="Search blocks..."]', () => navigateToView(page, 'Search')],
+    ['Tags', '[data-testid^="tag-item-"]', () => navigateToView(page, 'Tags')],
+    ['Settings', '[data-testid="settings-tab-rail"]', () => navigateToView(page, 'Settings')],
+    ['Graph', '[data-testid="graph-view"]', () => navigateToView(page, 'Graph')],
+    ['page', '[aria-label="Page title"]', () => openViaPalette(page, 'Getting Started')],
+  ]
+  await page.goto('/')
+  await blocks.first().waitFor()
+  // The preload runs at idle after boot, before a user's first click.
+  await page.waitForLoadState('networkidle')
+  const rows: Array<{ visit: string; view: string; ms: number }> = []
+  for (const visit of ['first', 'second']) {
+    for (const [view, ready, open] of visits) {
+      await navigateToView(page, 'Journal')
+      await blocks.first().waitFor()
+      rows.push({ visit, view, ms: await timeToReady(page, ready, open) })
+    }
+  }
+  console.table(rows)
+})
+
 /**
  * #5329 — the initial render window. Before it, opening the big page rendered
  * every one of its blocks in full once (`peakBlocks` 500, a 1.2 s frame) and
