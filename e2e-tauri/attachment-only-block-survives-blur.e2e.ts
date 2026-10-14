@@ -87,11 +87,64 @@ describe('Agaric real-backend attachment-only block (#5412)', () => {
   it('control: the same sequence cleans up a blank block holding nothing', async () => {
     await waitForAppReady()
     await markedBlockThenBlankSibling(CONTROL_MARKER)
+    // TEMP (#5457): record document.hasFocus() at each focusout.
+    await browser.execute(() => {
+      const w = window as unknown as { diagFocus: boolean[] }
+      w.diagFocus = []
+      document.addEventListener('focusout', () => w.diagFocus.push(document.hasFocus()), true)
+    })
     await leaveBlankBlockFor(CONTROL_MARKER)
 
     // The cleanup's delete is optimistic, so the row leaves the DOM as soon as
     // the metadata probes resolve; wait for that before the round-trip, or
     // the navigation could unmount the tree under the probes.
+    // TEMP (#5457): dump the cleanup's inputs to find the guard that holds.
+    await browser.pause(3000)
+    const diag = await browser.execute(async (sel: string) => {
+      const w = window as unknown as {
+        diagFocus: boolean[]
+        __TAURI_INTERNALS__: { invoke: (c: string, a?: object) => Promise<unknown> }
+      }
+      const inv = w.__TAURI_INTERNALS__.invoke
+      const ids = [...document.querySelectorAll(sel)].map(
+        (el) => el.closest('[data-block-id]')?.getAttribute('data-block-id') ?? null,
+      )
+      const allIds = [...document.querySelectorAll('[data-block-id]')].map((el) =>
+        el.getAttribute('data-block-id'),
+      )
+      const blockId = ids[0]
+      const out: Record<string, unknown> = {
+        hasFocus: document.hasFocus(),
+        focusouts: w.diagFocus,
+        ids,
+        allIds,
+      }
+      if (!blockId) return out
+      const safe = (p: Promise<unknown>) =>
+        p.then(
+          (v) => v,
+          (e: unknown) => ({ err: JSON.stringify(e) }),
+        )
+      {
+        const spaces = (await safe(inv('list_spaces'))) as Array<{ id: string }>
+        out.spaces = spaces
+        const space = Array.isArray(spaces) ? (spaces[0]?.id ?? '') : ''
+        out.props = await safe(inv('get_properties', { blockId }))
+        out.tags = await safe(inv('list_tags_for_block', { blockId }))
+        out.atts = await safe(inv('list_attachments', { blockId }))
+        out.backlinks = await safe(
+          inv('get_backlinks', {
+            blockId,
+            cursor: null,
+            limit: 1,
+            scope: { kind: 'active', space_id: space },
+          }),
+        )
+        out.block = await safe(inv('get_block', { blockId }))
+      }
+      return out
+    }, BLANK_STATIC)
+    console.warn(`[#5457 diag] ${JSON.stringify(diag)}`)
     await expectAbsent(BLANK_STATIC, 'the blank control block')
 
     await navigateTo('Pages')
