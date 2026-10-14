@@ -347,21 +347,66 @@ function nearestInDirection(
   return best
 }
 
+/** Characters typed further apart than this start a new type-ahead search. */
+const TYPEAHEAD_RESET_MS = 500
+/** Keys that stay shortcuts while a node is focused, so typing a name never takes them. */
+const TYPEAHEAD_YIELDS_TO = ['graphZoomIn', 'graphZoomOut', 'graphZoomReset', 'showShortcuts']
+
+function isTypeAheadKey(event: KeyboardEvent): boolean {
+  return (
+    event.key.length === 1 &&
+    event.key !== ' ' &&
+    !event.ctrlKey &&
+    !event.metaKey &&
+    !event.altKey &&
+    !TYPEAHEAD_YIELDS_TO.some((id) => matchesShortcutBinding(event, id))
+  )
+}
+
+/**
+ * The index of the node whose label starts with `typed`, ignoring case, or
+ * `-1`. One letter, or the same letter repeated, searches from the node after
+ * `from`, wrapping, so it cycles the nodes starting with it; a longer string
+ * searches from `from` itself, so each further character narrows the match in
+ * place.
+ */
+function matchTypedPrefix(nodes: readonly GraphNode[], from: number, typed: string): number {
+  const first = typed.slice(0, 1)
+  const cycling = first.repeat(typed.length) === typed
+  const prefix = (cycling ? first : typed).toLocaleLowerCase()
+  const start = cycling ? 1 : 0
+  for (let step = start; step < nodes.length + start; step++) {
+    const i = (from + step) % nodes.length
+    if (nodes[i]?.label.toLocaleLowerCase().startsWith(prefix)) return i
+  }
+  return -1
+}
+
 /**
  * Arrow keys move to the nearest node in that direction on screen; Home and
- * End go to the first and last node. The node moved to is panned into view; a
- * node focused by a click is already on screen. Bound under the `.roving`
- * keydown namespace so it coexists with the handler in `attachNodeActions`.
+ * End go to the first and last node; typing a name moves to the node it starts
+ * (the listbox type-ahead), which reaches nodes no arrow leads to. The node
+ * moved to is panned into view; a node focused by a click is already on
+ * screen. Bound under the `.roving` keydown namespace so it coexists with the
+ * handler in `attachNodeActions`.
  */
 function attachNodeRovingKeys(node: NodeSel, reveal: NodeActions['reveal']): void {
+  let typed = ''
+  let typedAt = 0
   node.on('keydown.roving', (event: KeyboardEvent, d) => {
     const direction = ARROW_DIRECTIONS[event.key]
-    if (direction === undefined && event.key !== 'Home' && event.key !== 'End') return
+    const typing = isTypeAheadKey(event)
+    if (!typing && direction === undefined && event.key !== 'Home' && event.key !== 'End') return
     event.preventDefault()
     const all = node.nodes()
     const data = node.data()
     let next: number
-    if (direction !== undefined) next = nearestInDirection(data, d, direction)
+    if (typing) {
+      const now = Date.now()
+      typed = now - typedAt > TYPEAHEAD_RESET_MS ? event.key : typed + event.key
+      typedAt = now
+      next = matchTypedPrefix(data, data.indexOf(d), typed)
+    } else if (direction !== undefined) next = nearestInDirection(data, d, direction)
     else next = event.key === 'Home' ? 0 : all.length - 1
     const target = all[next]
     const targetDatum = data[next]

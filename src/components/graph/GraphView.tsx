@@ -43,7 +43,7 @@ import { commands } from '@/lib/bindings'
 import { applyGraphFilters, type GraphFilter } from '@/lib/graph-filters'
 import { computeLocalGraph, type LocalGraphHops } from '@/lib/graph-neighborhood'
 import type { GraphLayout } from '@/lib/graph-sim-helpers'
-import { getShortcutKeys } from '@/lib/keyboard-config'
+import { getShortcutKeys, matchesShortcutBinding } from '@/lib/keyboard-config'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
 import { PREFERENCES, readPreference, writePreference } from '@/lib/preferences'
@@ -416,8 +416,10 @@ export function GraphView(): React.ReactElement {
   }, [])
 
   const localActive = localMode && seedPageId !== null
+  // A page deleted or filtered out on the server since it was selected is no selection.
+  const selectedId = nodes.some((n) => n.id === selectedPageId) ? selectedPageId : null
   // `null` outside local mode, so a selection there does not re-filter and reheat the layout.
-  const localSeedId = localActive ? (selectedPageId ?? seedPageId) : null
+  const localSeedId = localActive ? (selectedId ?? seedPageId) : null
 
   // Client-side filtering (status, priority, has-date, has-backlinks, exclude-templates).
   // Tag filter is pass-through here because tag_ids is not populated on nodes
@@ -489,7 +491,8 @@ export function GraphView(): React.ReactElement {
     edges: displayEdges,
     actions: pageActions,
     currentPageId: seedPageId,
-    selectedPageId,
+    // Off screen, a selection would dim every node and take the current page's accent.
+    selectedPageId: displayNodes.some((n) => n.id === selectedId) ? selectedId : null,
     layout,
   })
 
@@ -606,7 +609,13 @@ export function GraphView(): React.ReactElement {
           role="listbox"
           aria-label={t('graph.title')}
           aria-describedby="graph-keyboard-hint"
+          tabIndex={0}
           data-testid="graph-svg"
+          onKeyDown={(e) => {
+            if (selectedId === null || !matchesShortcutBinding(e, 'listClearSelection')) return
+            e.preventDefault()
+            setSelectedPageId(null)
+          }}
         />
         {/*
          * BUG #746: when a filter combination matches no pages, the SVG is

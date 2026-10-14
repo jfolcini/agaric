@@ -13,6 +13,7 @@ import { axe } from 'vitest-axe'
 
 import { clearGraphCache, GraphView } from '@/components/graph/GraphView'
 import { __resetAnnouncerForTests } from '@/lib/announcer'
+import { recordGraphStructureChange } from '@/lib/graph-structure-events'
 import { useNavigationStore } from '@/stores/navigation'
 import { useSpaceStore } from '@/stores/space'
 import { useTabsStore } from '@/stores/tabs'
@@ -220,5 +221,114 @@ describe('GraphView — walking the local graph (#5435)', () => {
       'Showing neighbors of "Hub"',
     )
     expect(screen.queryByTestId('local-graph-back')).not.toBeInTheDocument()
+  })
+})
+
+describe('GraphView — a selection the graph loses, and clearing it (#5435)', () => {
+  const opacity = (container: HTMLElement, label: string): string =>
+    node(container, label).style.opacity
+  const fill = (container: HTMLElement, label: string): string | null | undefined =>
+    node(container, label).querySelector('circle:nth-child(2)')?.getAttribute('fill')
+
+  function refetch(pages: typeof PAGES, links: typeof LINKS): void {
+    vi.mocked(invoke).mockImplementation((cmd: string) => {
+      if (cmd === 'list_all_pages_in_space') return Promise.resolve(pages)
+      if (cmd === 'list_page_links')
+        return Promise.resolve({ edges: links, total: links.length, truncated: false })
+      if (cmd === 'list_template_page_ids_in_space') return Promise.resolve([])
+      if (cmd === 'list_all_tags_in_space') return Promise.resolve([])
+      return Promise.resolve(null)
+    })
+    act(() => {
+      recordGraphStructureChange()
+    })
+  }
+
+  const deleteAlpha = (): void =>
+    refetch(
+      PAGES.filter((p) => p.id !== 'a'),
+      LINKS.filter((l) => l.source_id !== 'a' && l.target_id !== 'a'),
+    )
+
+  it('a deleted selected page leaves no graph dimmed and gives the accent back to the current page', async () => {
+    const container = await renderGraph()
+    fireEvent.click(node(container, 'Alpha'))
+    expect([opacity(container, 'Island'), fill(container, 'Hub')]).toEqual([
+      '0.15',
+      'var(--graph-node)',
+    ])
+
+    deleteAlpha()
+
+    await waitFor(() => expect(container.querySelectorAll('g.node')).toHaveLength(4))
+    expect(['Hub', 'Bravo', 'Charlie', 'Island'].map((l) => opacity(container, l))).toEqual([
+      '',
+      '',
+      '',
+      '',
+    ])
+    expect(fill(container, 'Hub')).toBe('var(--graph-accent)')
+  })
+
+  it('a selected page the filters now hide leaves no graph dimmed', async () => {
+    const container = await renderGraph()
+    fireEvent.click(node(container, 'Alpha'))
+
+    // Retitled as a date, the default "Exclude journal pages" filter hides it.
+    refetch(
+      PAGES.map((p) => (p.id === 'a' ? { id: 'a', content: '2026-10-08', block_type: 'page' } : p)),
+      LINKS,
+    )
+
+    await waitFor(() => expect(container.querySelectorAll('g.node')).toHaveLength(4))
+    expect(['Hub', 'Bravo', 'Charlie', 'Island'].map((l) => opacity(container, l))).toEqual([
+      '',
+      '',
+      '',
+      '',
+    ])
+    expect(fill(container, 'Hub')).toBe('var(--graph-accent)')
+  })
+
+  it('a local walk whose page is deleted falls back to the starting page, not a dead toggle', async () => {
+    const container = await renderGraph()
+    fireEvent.click(screen.getByTestId('local-graph-toggle'))
+    fireEvent.click(screen.getByRole('radio', { name: '1 hop' }))
+    await waitFor(() => expect(container.querySelectorAll('g.node')).toHaveLength(2))
+    fireEvent.click(node(container, 'Alpha'))
+    await waitFor(() => expect(container.querySelectorAll('g.node')).toHaveLength(3))
+
+    deleteAlpha()
+
+    await waitFor(() =>
+      expect(screen.getByTestId('local-graph-seed-label')).toHaveTextContent(
+        'Showing neighbors of "Hub"',
+      ),
+    )
+    expect(screen.getByTestId('local-graph-toggle')).toBeEnabled()
+  })
+
+  it('Escape clears the selection, which gives the accent back and lights the whole graph', async () => {
+    const container = await renderGraph()
+    fireEvent.click(node(container, 'Alpha'))
+
+    const escape = new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })
+    fireEvent(node(container, 'Alpha'), escape)
+
+    expect(container.querySelectorAll('g.node[aria-selected="true"]')).toHaveLength(0)
+    expect([opacity(container, 'Island'), fill(container, 'Hub')]).toEqual([
+      '',
+      'var(--graph-accent)',
+    ])
+    expect(escape.defaultPrevented).toBe(true)
+  })
+
+  it('Escape with nothing selected leaves the key alone', async () => {
+    const container = await renderGraph()
+
+    const escape = new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })
+    fireEvent(node(container, 'Alpha'), escape)
+
+    expect(escape.defaultPrevented).toBe(false)
   })
 })

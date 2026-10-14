@@ -653,6 +653,118 @@ describe('renderGraphElements — select, then open on purpose (#5435)', () => {
   })
 })
 
+describe('renderGraphElements — type a name to move to a node (#5435)', () => {
+  afterEach(() => {
+    vi.useRealTimers()
+    document.body.replaceChildren()
+  })
+
+  function setup(nodes: GraphNode[]) {
+    vi.useFakeTimers()
+    const svg = makeSvg()
+    document.body.append(svg)
+    const actions = { select: vi.fn(), open: vi.fn(), openInNewTab: vi.fn(), reveal: vi.fn() }
+    renderGraphElements(svg, nodes, [], actions)
+    const group = (label: string): SVGGElement =>
+      svg.querySelector(`g.node[aria-label="${label}"]`) as SVGGElement
+    const press = (key: string, init: KeyboardEventInit = {}): KeyboardEvent => {
+      const event = new KeyboardEvent('keydown', { key, cancelable: true, ...init })
+      document.activeElement?.dispatchEvent(event)
+      return event
+    }
+    const focused = (): string | null | undefined =>
+      document.activeElement?.getAttribute('aria-label')
+    const revealed = (): string[] => actions.reveal.mock.calls.map(([d]) => (d as GraphNode).label)
+    return { actions, group, press, focused, revealed }
+  }
+
+  it('typing a prefix focuses the first node after the focused one that starts with it, and reveals it', () => {
+    const { group, press, focused, revealed } = setup(
+      ['Alpha', 'Bravo', 'Beta', 'Charlie'].map((l) => makeNode(l, l)),
+    )
+    group('Alpha').focus()
+
+    press('b')
+    press('E')
+    expect([focused(), revealed()]).toEqual(['Beta', ['Bravo', 'Beta']])
+    expect(group('Beta').getAttribute('tabindex')).toBe('0')
+
+    // A pause starts a new search instead of looking for "bec".
+    vi.advanceTimersByTime(600)
+    press('c')
+    expect(focused()).toBe('Charlie')
+  })
+
+  it('typing the same letter again cycles through the nodes starting with it', () => {
+    const { group, press, focused } = setup(
+      ['Bravo', 'Alpha', 'Beta', 'Bob'].map((l) => makeNode(l, l)),
+    )
+    group('Alpha').focus()
+
+    const landing = ['b', 'b', 'b', 'b'].map((key) => {
+      press(key)
+      return focused()
+    })
+
+    expect(landing).toEqual(['Beta', 'Bob', 'Bravo', 'Beta'])
+  })
+
+  it('reaches a node that no arrow key leads to', () => {
+    const at = (label: string, x: number, y: number): GraphNode => ({
+      ...makeNode(label, label),
+      x,
+      y,
+    })
+    const nodes = [
+      at('Ash', 20, 50),
+      at('Birch', 70, 50),
+      at('Cedar', 10, 90),
+      at('Hidden', 40, 70),
+      at('Elm', 60, 90),
+    ]
+    const { group, press, focused } = setup(nodes)
+
+    const byArrows = new Set<string | null | undefined>()
+    for (const { label } of nodes) {
+      for (const key of ['ArrowRight', 'ArrowLeft', 'ArrowDown', 'ArrowUp', 'Home', 'End']) {
+        group(label).focus()
+        press(key)
+        byArrows.add(focused())
+      }
+    }
+    expect(byArrows.has('Hidden')).toBe(false)
+
+    group('Ash').focus()
+    press('h')
+    expect(focused()).toBe('Hidden')
+  })
+
+  it('leaves keys with Ctrl, Cmd or Alt, Space, and the zoom shortcuts alone', () => {
+    resetAllShortcuts()
+    const { actions, group, press, focused } = setup(
+      ['Alpha', 'Bravo', '0 Inbox'].map((l) => makeNode(l, l)),
+    )
+    group('Alpha').focus()
+
+    const ignored = [
+      press('b', { ctrlKey: true }),
+      press('b', { metaKey: true }),
+      press('b', { altKey: true }),
+      press('0'),
+    ]
+    expect(ignored.map((e) => e.defaultPrevented)).toEqual([false, false, false, false])
+    expect(focused()).toBe('Alpha')
+    expect(actions.reveal).not.toHaveBeenCalled()
+
+    press(' ')
+    expect(focused()).toBe('Alpha')
+    expect(actions.select.mock.calls).toEqual([['Alpha', 'Alpha']])
+
+    press('b')
+    expect(focused()).toBe('Bravo')
+  })
+})
+
 describe('revealTransform — pan a focused node into view (#5435)', () => {
   const zoomed = zoomIdentity.translate(50, 20).scale(1.5)
 

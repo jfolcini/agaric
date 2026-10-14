@@ -107,7 +107,7 @@ export const references: Record<string, string> = {
   'graph.tagsLoadFailed': 'Failed to load tags for the filter',
   'graph.title': 'Page Relationships',
   'graph.keyboardHint':
-    'Use Tab to enter the graph and Arrow keys to move between nodes. Space or a click selects a node; Enter or a second click opens its page.',
+    'Use Tab to enter the graph, then Arrow keys or typing a name to move between nodes. Space or a click selects a node; Enter or a second click opens its page; Escape clears the selection.',
   'graph.selected': 'Selected "{{page}}"',
   'graph.zoomIn': 'Zoom in',
   'graph.zoomOut': 'Zoom out',

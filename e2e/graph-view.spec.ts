@@ -91,6 +91,16 @@ test.describe('Graph view', () => {
     await expect(page.locator('[aria-label="Page title"]')).toBeVisible()
   })
 
+  test('Escape clears a selection made with a click', async ({ page }) => {
+    const { nodeGroup, dot } = await gettingStartedNode(page)
+
+    await dot.click()
+    await expect(nodeGroup).toHaveAttribute('aria-selected', 'true')
+    await page.keyboard.press('Escape')
+
+    await expect(nodeGroup).toHaveAttribute('aria-selected', 'false')
+  })
+
   test('a Ctrl/Cmd-click on a node opens its page in a new tab', async ({ page }) => {
     const { dot } = await gettingStartedNode(page)
 
