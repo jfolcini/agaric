@@ -900,7 +900,7 @@ async fn seed_unlinked_panel_fixture(pool: &SqlitePool) {
         UNLINKED_PANEL_TARGET,
         UNLINKED_PANEL_TITLE,
         &|_: usize, c: usize| {
-            let content = if c % UNLINKED_PANEL_MENTION_STRIDE == 0 {
+            let content = if c.is_multiple_of(UNLINKED_PANEL_MENTION_STRIDE) {
                 format!("Meeting {UNLINKED_PANEL_TITLE} item {c}")
             } else {
                 format!("Seeded child {c} with placeholder content.")
@@ -918,7 +918,8 @@ async fn seed_linked_panel_fixture(pool: &SqlitePool) {
         LINKED_PANEL_TARGET,
         "Linked Target",
         &|p: usize, c: usize| {
-            if p % LINKED_PANEL_SOURCE_PAGE_STRIDE == 0 && c < LINKED_PANEL_PER_SOURCE_PAGE {
+            if p.is_multiple_of(LINKED_PANEL_SOURCE_PAGE_STRIDE) && c < LINKED_PANEL_PER_SOURCE_PAGE
+            {
                 (
                     format!("See [[{LINKED_PANEL_TARGET}]] from child {c}"),
                     true,
