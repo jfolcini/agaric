@@ -2,6 +2,25 @@ use sqlx::{Sqlite, SqlitePool};
 use std::sync::Arc;
 
 use super::begin_immediate_logged;
+use agaric_core::error::AppError;
+
+#[cfg(test)]
+tokio::task_local! {
+    static COMMAND_TX_OPENS: std::cell::Cell<usize>;
+}
+
+/// `future`'s output, and how many [`CommandTx`]s it opened.
+#[cfg(test)]
+pub(crate) async fn count_command_tx_opens<F: std::future::Future>(
+    future: F,
+) -> (F::Output, usize) {
+    COMMAND_TX_OPENS
+        .scope(std::cell::Cell::new(0), async {
+            let output = future.await;
+            (output, COMMAND_TX_OPENS.with(std::cell::Cell::get))
+        })
+        .await
+}
 
 /// Command-layer transaction wrapper that couples a `BEGIN IMMEDIATE`
 /// SQLite transaction to the materializer-dispatch calls that must fire
@@ -174,11 +193,14 @@ impl CommandTx {
     /// `label` mirrors [`begin_immediate_logged`] — a stable,
     /// human-readable tag like `"undo_page_op"` so slow writes can be
     /// filtered per-command in the tracing output.
-    pub async fn begin_immediate(
-        pool: &SqlitePool,
-        label: &'static str,
-    ) -> Result<Self, sqlx::Error> {
-        let inner = begin_immediate_logged(pool, label).await?;
+    ///
+    /// Inside an MCP write tool's `with_space_guard`, the tool's space check
+    /// runs here, in this transaction (#5402).
+    pub async fn begin_immediate(pool: &SqlitePool, label: &'static str) -> Result<Self, AppError> {
+        let mut inner = begin_immediate_logged(pool, label).await?;
+        #[cfg(test)]
+        let _ = COMMAND_TX_OPENS.try_with(|count| count.set(count.get() + 1));
+        crate::mcp::handler_utils::check_space_guard(&mut inner).await?;
         Ok(Self {
             inner: Some(inner),
             pending: Vec::new(),
@@ -725,7 +747,9 @@ mod tests {
         // the async block, dropping the CommandTx uncommitted — exactly what
         // a real command does when a projected-state write fails.
         let result: Result<(), sqlx::Error> = async {
-            let mut tx = CommandTx::begin_immediate(&pool, "test_delete_rollback").await?;
+            let mut tx = CommandTx::begin_immediate(&pool, "test_delete_rollback")
+                .await
+                .expect("begin");
 
             sqlx::query(
                 "INSERT INTO op_log (seq, device_id, op_type, payload, created_at, hash) \

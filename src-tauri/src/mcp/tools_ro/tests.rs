@@ -4831,3 +4831,222 @@ async fn query_rejects_a_limit_out_of_range_5398() {
         .expect_err("rejected, not clamped");
     assert!(matches!(err, AppError::Validation { .. }), "{err:?}");
 }
+
+// -------------------------------------------------------------------
+// #5402 — byte caps: a large read stops early and continues from a cursor
+// -------------------------------------------------------------------
+
+/// More content than one response carries, alone.
+const OVER_CAP: usize = RESPONSE_BYTES_CAP + 1;
+/// Two of these fit one response, with room for each block's ids.
+const HALF_CAP: usize = RESPONSE_BYTES_CAP / 2 - 64;
+
+/// A page titled `title` whose children hold `sizes` bytes of content each,
+/// in order. Returns the page id and the child ids.
+async fn mk_page_of_sizes(
+    tools: &ReadOnlyTools,
+    mat: &Materializer,
+    title: &str,
+    sizes: &[usize],
+) -> (String, Vec<String>) {
+    let page = create_block_inner(
+        &tools.pool,
+        DEV,
+        mat,
+        "page".into(),
+        title.into(),
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    let mut children = Vec::new();
+    for size in sizes {
+        let child = create_block_inner(
+            &tools.pool,
+            DEV,
+            mat,
+            "content".into(),
+            "x".repeat(*size),
+            Some(page.id.clone()),
+            None,
+        )
+        .await
+        .unwrap();
+        children.push(child.id.into_string());
+    }
+    (page.id.into_string(), children)
+}
+
+/// Each response of `tool` from the first, following `next_cursor` while
+/// `has_more`; `args` without the cursor.
+async fn read_all(tools: &ReadOnlyTools, tool: &str, args: &Value) -> Vec<Value> {
+    let mut responses: Vec<Value> = Vec::new();
+    for _ in 0..4 {
+        let mut args = args.clone();
+        if let Some(last) = responses.last() {
+            if last["has_more"] != json!(true) {
+                return responses;
+            }
+            args["cursor"] = last["next_cursor"].clone();
+        }
+        responses.push(tools.call_tool(tool, args, &test_ctx()).await.unwrap());
+    }
+    panic!("{tool} did not finish in 4 responses: {responses:?}");
+}
+
+/// A child larger than the cap comes back alone; the two after it share the
+/// next response; every child comes back once, in order.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn get_page_stops_at_the_byte_cap_and_continues_5402() {
+    let (tools, mat, _dir) = mk_tools().await;
+    let (page, children) =
+        mk_page_of_sizes(&tools, &mat, "Big", &[OVER_CAP, HALF_CAP, HALF_CAP]).await;
+    settle(&mat).await;
+    crate::commands::tests::common::assign_all_to_test_space(&tools.pool).await;
+
+    let responses = read_all(
+        &tools,
+        "get_page",
+        &json!({"page_id": page, "space_id": TEST_SPACE_ID}),
+    )
+    .await;
+    let pages: Vec<(Vec<String>, Value)> = responses
+        .iter()
+        .map(|r| {
+            let ids: Vec<String> = r["children"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|c| c["id"].as_str().unwrap().to_owned())
+                .collect();
+            (ids, r["truncated"].clone())
+        })
+        .collect();
+    assert_eq!(
+        pages,
+        vec![
+            (vec![children[0].clone()], json!(true)),
+            (vec![children[1].clone(), children[2].clone()], json!(false)),
+        ]
+    );
+}
+
+/// Whole groups up to the cap, the group cursor resuming after the last one
+/// kept.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn list_backlinks_stops_at_the_byte_cap_and_continues_5402() {
+    let (tools, mat, _dir) = mk_tools().await;
+    let target = create_block_inner(
+        &tools.pool,
+        DEV,
+        &mat,
+        "page".into(),
+        "Target".into(),
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    let link = format!("[[{}]] ", target.id.as_str());
+    let mut sources = Vec::new();
+    for (title, size) in [("A", OVER_CAP), ("B", HALF_CAP), ("C", HALF_CAP)] {
+        let page = create_block_inner(
+            &tools.pool,
+            DEV,
+            &mat,
+            "page".into(),
+            title.into(),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        create_block_inner(
+            &tools.pool,
+            DEV,
+            &mat,
+            "content".into(),
+            format!("{link}{}", "x".repeat(size)),
+            Some(page.id.clone()),
+            None,
+        )
+        .await
+        .unwrap();
+        sources.push(page.id.into_string());
+    }
+    settle(&mat).await;
+    crate::commands::tests::common::assign_all_to_test_space(&tools.pool).await;
+
+    let responses = read_all(
+        &tools,
+        "list_backlinks",
+        &json!({"block_id": target.id, "space_id": TEST_SPACE_ID}),
+    )
+    .await;
+    let pages: Vec<(Vec<String>, Value)> = responses
+        .iter()
+        .map(|r| {
+            let ids: Vec<String> = r["groups"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|g| g["page_id"].as_str().unwrap().to_owned())
+                .collect();
+            (ids, r["truncated"].clone())
+        })
+        .collect();
+    assert_eq!(
+        pages,
+        vec![
+            (vec![sources[0].clone()], json!(true)),
+            (vec![sources[1].clone(), sources[2].clone()], json!(false)),
+        ]
+    );
+}
+
+/// Read in turn, the stretches are the whole page; the first carries the
+/// title with its block; a cursor whose block left the page is refused.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn get_page_markdown_stops_at_the_byte_cap_and_continues_5402() {
+    let (tools, mat, _dir) = mk_tools().await;
+    let (page, children) =
+        mk_page_of_sizes(&tools, &mat, "Big", &[OVER_CAP, HALF_CAP, HALF_CAP]).await;
+    settle(&mat).await;
+    crate::commands::tests::common::assign_all_to_test_space(&tools.pool).await;
+    let whole = get_page_for_agent_inner(&tools.pool, &page).await.unwrap();
+
+    let args = json!({"page_id": page, "space_id": TEST_SPACE_ID});
+    let first = tools
+        .call_tool("get_page_markdown", args.clone(), &test_ctx())
+        .await
+        .unwrap();
+    let mut rest_args = args.clone();
+    rest_args["cursor"] = first["next_cursor"].clone();
+    let rest = tools
+        .call_tool("get_page_markdown", rest_args, &test_ctx())
+        .await
+        .unwrap();
+    assert_eq!(
+        [&first["truncated"], &first["next_cursor"]],
+        [&json!(true), &json!(children[1])]
+    );
+    assert_eq!(
+        [&rest["truncated"], &rest["next_cursor"]],
+        [&json!(false), &Value::Null]
+    );
+    let first_md = first["markdown"].as_str().unwrap();
+    assert!(first_md.starts_with("# Big\n"), "got {first_md:.40}");
+    assert_eq!(
+        format!("{first_md}{}", rest["markdown"].as_str().unwrap()),
+        whole
+    );
+
+    let mut gone = args;
+    gone["cursor"] = json!(BlockId::new().into_string());
+    let err = tools
+        .call_tool("get_page_markdown", gone, &test_ctx())
+        .await
+        .expect_err("a cursor naming no block of the page is refused");
+    assert!(matches!(err, AppError::Validation { .. }), "got {err:?}");
+}

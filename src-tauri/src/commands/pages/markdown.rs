@@ -1426,18 +1426,69 @@ fn render_page_source(data: &PageExportData) -> String {
 /// The page as an MCP agent reads it (#5375): `# Title`, the export's front
 /// matter, then the block tree in [`RenderMode::Agent`].
 fn render_page_for_agent(data: &PageExportData) -> String {
+    render_page_for_agent_spans(data).0
+}
+
+/// [`render_page_for_agent`], with each block's id and the byte offset its
+/// text starts at, in render order.
+fn render_page_for_agent_spans(data: &PageExportData) -> (String, Vec<(String, usize)>) {
     let title = data.page.content.as_deref().unwrap_or("Untitled");
     let mut output = format!("# {title}\n\n");
     render_frontmatter(&mut output, data);
-    render_block_tree(&mut output, data.page.id.as_str(), data, RenderMode::Agent);
-    output
+    let starts = render_block_tree(&mut output, data.page.id.as_str(), data, RenderMode::Agent);
+    (output, starts)
+}
+
+/// The stretch of `markdown` that starts at `cursor`'s block, or at the top,
+/// and ends at the last block start that keeps it within `max_bytes`, never
+/// short of one block; with the id of the block the next stretch starts at,
+/// or `None` when this one reaches the end (#5402). `starts` is each block's
+/// id and start offset, in order. Read in turn, the stretches are `markdown`.
+fn agent_markdown_stretch(
+    markdown: &str,
+    starts: &[(String, usize)],
+    cursor: Option<&str>,
+    max_bytes: usize,
+) -> Result<(String, Option<String>), AppError> {
+    let begin = match cursor {
+        None => 0,
+        Some(cursor) => starts
+            .iter()
+            .find(|(id, _)| id == cursor)
+            .map(|(_, start)| *start)
+            .ok_or_else(|| {
+                AppError::validation(format!(
+                    "cursor '{cursor}' names no block on this page any more; read the page \
+                     again without a cursor"
+                ))
+            })?,
+    };
+    // A stretch stops where a block starts, never before the first block:
+    // the title and front matter come with it.
+    let mut stops = starts
+        .iter()
+        .skip(1)
+        .filter(|(_, start)| *start > begin)
+        .map(|(id, start)| (Some(id), *start))
+        .chain(std::iter::once((None, markdown.len())));
+    let mut stop = stops.next().expect("the end of the page is always a stop");
+    for next in stops {
+        if next.1 - begin > max_bytes {
+            break;
+        }
+        stop = next;
+    }
+    Ok((markdown[begin..stop.1].to_owned(), stop.0.cloned()))
 }
 
 /// [`render_page_source`], with the ids of the blocks it holds in order.
 fn render_page_source_ids(data: &PageExportData) -> (String, Vec<String>) {
     let mut output = String::new();
     render_frontmatter(&mut output, data);
-    let ids = render_block_tree(&mut output, data.page.id.as_str(), data, RenderMode::Source);
+    let ids = render_block_tree(&mut output, data.page.id.as_str(), data, RenderMode::Source)
+        .into_iter()
+        .map(|(id, _)| id)
+        .collect();
     (output, ids)
 }
 
@@ -1484,13 +1535,14 @@ pub fn anchor_free(source: &str) -> (String, Vec<Option<String>>) {
 }
 
 /// Every descendant of `page_id`, depth-first in sibling order, each through
-/// [`render_block`]. Returns the ids it rendered, in render order.
+/// [`render_block`]. Returns the ids it rendered, in render order, each with
+/// the byte offset in `output` its text starts at.
 fn render_block_tree(
     output: &mut String,
     page_id: &str,
     data: &PageExportData,
     mode: RenderMode,
-) -> Vec<String> {
+) -> Vec<(String, usize)> {
     let children_by_parent = group_children_by_parent(page_id, &data.descendants);
     // #4552 slice 4 — positional ordinals for `ordered` blocks. Computed HERE,
     // once `children_by_parent` is grouped and sibling-sorted, because an
@@ -1511,7 +1563,7 @@ fn render_block_tree(
         data,
         mode,
     );
-    let visited: HashSet<String> = rendered.iter().cloned().collect();
+    let visited: HashSet<String> = rendered.iter().map(|(id, _)| id.clone()).collect();
 
     // Safety net: any descendant NOT reachable by DFS from the page root
     // (e.g. an orphan whose `parent_id` points outside this subtree while its
@@ -1523,15 +1575,16 @@ fn render_block_tree(
         if visited.contains(&id) {
             continue;
         }
+        let start = output.len();
         render_block(output, block, 0, data, &list_ordinals, mode);
-        rendered.push(id);
+        rendered.push((id, start));
     }
     rendered
 }
 
 /// `roots` at depth 0 and everything under them, depth-first in sibling
 /// order, each through [`render_block`]. Returns the ids it rendered, in
-/// render order.
+/// render order, each with the byte offset in `output` its text starts at.
 fn render_subtrees<'a>(
     output: &mut String,
     roots: &[&'a BlockRow],
@@ -1539,7 +1592,7 @@ fn render_subtrees<'a>(
     list_ordinals: &HashMap<String, usize>,
     data: &PageExportData,
     mode: RenderMode,
-) -> Vec<String> {
+) -> Vec<(String, usize)> {
     // Iterative DFS pre-order. A visited set guards against a pathological
     // parent cycle (a block whose ancestor chain loops back) so export can
     // never infinite-loop on corrupt data.
@@ -1552,8 +1605,8 @@ fn render_subtrees<'a>(
         if !visited.insert(id.clone()) {
             continue;
         }
+        rendered.push((id.clone(), output.len()));
         render_block(output, block, depth, data, list_ordinals, mode);
-        rendered.push(id.clone());
 
         // Push this block's children (reversed so they pop in sibling order)
         // at depth + 1.
@@ -1582,7 +1635,10 @@ fn render_subtree_source(data: &PageExportData, root: &BlockRow) -> (String, Vec
         &list_ordinals,
         data,
         RenderMode::Source,
-    );
+    )
+    .into_iter()
+    .map(|(id, _)| id)
+    .collect();
     (output, ids)
 }
 
@@ -2330,6 +2386,31 @@ pub async fn get_page_for_agent_inner(
     Ok(render_page_for_agent(&data))
 }
 
+/// [`get_page_for_agent_inner`] a stretch at a time (#5402): the Markdown from
+/// `cursor`'s block, or from the top, cut at a block boundary within
+/// `max_bytes` but never short of one block, and the cursor the next stretch
+/// starts at, `None` at the end of the page.
+///
+/// # Errors
+///
+/// As [`export_page_markdown_inner`], and [`AppError::Validation`] for a
+/// cursor whose block is no longer on the page, rather than skipping the
+/// blocks after it.
+#[instrument(skip(pool), err)]
+pub async fn get_page_for_agent_paged_inner(
+    pool: &SqlitePool,
+    page_id: &str,
+    cursor: Option<&str>,
+    max_bytes: usize,
+) -> Result<(String, Option<String>), AppError> {
+    BlockId::from_string(page_id)?;
+    let mut tx = pool.begin().await?;
+    let data = load_page_export_data(&mut tx, page_id, PageRead::Export).await?;
+    tx.commit().await?;
+    let (markdown, starts) = render_page_for_agent_spans(&data);
+    agent_markdown_stretch(&markdown, &starts, cursor, max_bytes)
+}
+
 /// A page's source buffer as the ids-beside-the-text editor reads it (#5160
 /// A): the anchored `source`, which a save sends back as its `base_source`,
 /// and the same buffer as `text`, its anchors removed, with the id each line
@@ -2551,7 +2632,11 @@ pub(crate) async fn copy_page_blocks_in_tx(
 ) -> Result<Result<Vec<BlockRow>, String>, AppError> {
     let data = load_page_export_data(tx, source_page_id, PageRead::Duplicate).await?;
     let mut source = String::new();
-    let ids = render_block_tree(&mut source, source_page_id, &data, RenderMode::Source);
+    let ids: Vec<String> =
+        render_block_tree(&mut source, source_page_id, &data, RenderMode::Source)
+            .into_iter()
+            .map(|(id, _)| id)
+            .collect();
     if ids.is_empty() {
         return Ok(Ok(Vec::new()));
     }

@@ -61,7 +61,7 @@ use sqlx::SqlitePool;
 use super::dispatch::{scoped_dispatch, unknown_tool_error};
 use super::handler_utils::{
     Named, normalize_ulid_arg, parse_args, resolve_id_arg, resolve_journal_date, to_tool_result,
-    validate_block_in_space,
+    with_space_guard,
 };
 use super::registry::{
     TOOL_ADD_TAG, TOOL_APPEND_BLOCK, TOOL_APPEND_MARKDOWN, TOOL_CAPTURE, TOOL_CREATE_PAGE,
@@ -91,9 +91,9 @@ use agaric_store::task_locals::{ActorContext, current_actor};
 
 // +C2 — every rw tool that targets a block carries a required
 // `space_id` field. For tools that take a block ID input (`parent_id` /
-// `block_id`), the handler runs `validate_block_in_space` before
-// delegating to `*_inner`, so an agent scoped to space A cannot mutate
-// content owned by space B by knowing a Work-side ULID. For
+// `block_id`), the handler wraps its `*_inner` in `with_space_guard`, which
+// checks the target inside the write's own transaction, so an agent scoped to
+// space A cannot mutate content owned by space B by knowing a Work-side ULID. For
 // `create_page`, `space_id` is threaded into
 // `create_block_inner_with_space` so the page lands with its `space`
 // Property in a single `BEGIN IMMEDIATE` transaction.
@@ -252,16 +252,17 @@ struct RestoreBlockArgs {
 // ReadWriteTools
 // ---------------------------------------------------------------------------
 
-/// Read-write MCP tool registry. Holds the **write pool**, a
-/// [`Materializer`] handle, and this device's `device_id` so every
-/// mutation lands with the correct attribution.
+/// Read-write MCP tool registry. Holds the **write pool**, the reader pool
+/// for `list_spaces`, a [`Materializer`] handle, and this device's
+/// `device_id` so every mutation lands with the correct attribution.
 ///
 /// The struct shape mirrors [`crate::mcp::tools_ro::ReadOnlyTools`] so the
-/// wiring in `mod.rs` can share helpers. The only material difference is
-/// the pool the caller passes in: RW must receive the writer pool, never
-/// the reader pool.
+/// wiring in `mod.rs` can share helpers.
 pub struct ReadWriteTools {
     pool: SqlitePool,
+    /// The reader pool: `list_spaces` reads here, so it never waits for a
+    /// writer connection (#5402).
+    read_pool: SqlitePool,
     materializer: Materializer,
     device_id: String,
     /// #2505: emits `blocks:changed` / `block:properties-changed` on the Tauri
@@ -273,16 +274,21 @@ pub struct ReadWriteTools {
 
 impl ReadWriteTools {
     /// Construct a read-write registry. `pool` must be the *writer* pool
-    /// — every tool but `list_spaces` mutates. (`list_spaces` is a pure
-    /// read — see `handle_list_spaces` — but still runs against this same
-    /// pool for simplicity; it issues no writes.)
+    /// — every tool but `list_spaces` mutates — and `read_pool` the reader
+    /// pool `list_spaces` reads.
     ///
     /// The view-change emitter defaults to a no-op; production callers chain
     /// [`with_view_emitter`](Self::with_view_emitter) to route change
     /// notifications onto the Tauri event bus.
-    pub fn new(pool: SqlitePool, materializer: Materializer, device_id: String) -> Self {
+    pub fn new(
+        pool: SqlitePool,
+        read_pool: SqlitePool,
+        materializer: Materializer,
+        device_id: String,
+    ) -> Self {
         Self {
             pool,
+            read_pool,
             materializer,
             device_id,
             view_emitter: Arc::new(NoopViewChangeEmitter),
@@ -347,6 +353,7 @@ impl ToolRegistry for ReadWriteTools {
         // ACTOR scope + name-clone boilerplate is
         // shared with `tools_ro` via `super::dispatch::scoped_dispatch`.
         let pool = self.pool.clone();
+        let read_pool = self.read_pool.clone();
         let materializer = self.materializer.clone();
         let device_id = self.device_id.clone();
         let emitter = self.view_emitter.clone();
@@ -372,9 +379,8 @@ impl ToolRegistry for ReadWriteTools {
                 TOOL_DELETE_BLOCK => {
                     handle_delete_block(&pool, &materializer, &device_id, emitter, args).await
                 }
-                // #2728 — pure read, no mutation: takes only `&pool`, unlike
-                // every other arm above.
-                TOOL_LIST_SPACES => handle_list_spaces(&pool, args).await,
+                // #2728 — pure read, on the reader pool (#5402).
+                TOOL_LIST_SPACES => handle_list_spaces(&read_pool, args).await,
                 TOOL_APPEND_MARKDOWN => {
                     handle_append_markdown(&pool, &materializer, &device_id, emitter, args).await
                 }
@@ -604,7 +610,7 @@ fn tool_desc_delete_block() -> ToolDescription {
 /// existed ONLY on the read-only registry (`tools_ro.rs`). Since the RO and
 /// RW gates are independent (an operator may run RW-only), an agent
 /// connected solely to the RW socket had no in-band way to learn a valid
-/// `space_id` — every call would fail `validate_block_in_space` /
+/// `space_id` — every call would fail the space check /
 /// `SpaceId::from_string`, and the RO tool's own description ("call this
 /// first to discover one") pointed at a tool the RW-only agent cannot see.
 ///
@@ -891,9 +897,6 @@ async fn handle_append_block(
         &space_id,
     )
     .await?;
-    // Refuse cross-space writes at the MCP boundary
-    // before opening the BEGIN IMMEDIATE in `append_block_resolving_names`.
-    validate_block_in_space(pool, &parent_id, &space_id).await?;
     // #1606: the JSON schema declares `position` `minimum: 1`, but serde does
     // not enforce JSON-Schema constraints, so an out-of-range `position` (0 or
     // negative) used to be silently clamped to the first child. That violated
@@ -916,13 +919,12 @@ async fn handle_append_block(
     // i64::MIN from an LLM agent) can never underflow even if a future caller
     // bypasses the check above.
     let index = args.position.map(|p| p.max(1).saturating_sub(1));
-    let (block, warnings) = append_block_resolving_names(
-        pool,
-        device_id,
-        materializer,
-        &BlockId::from_trusted(&parent_id),
-        args.content,
-        index,
+    let parent = BlockId::from_trusted(&parent_id);
+    // Refuses a parent in another space inside the append's own transaction.
+    let (block, warnings) = with_space_guard(
+        &space_id,
+        vec![parent_id],
+        append_block_resolving_names(pool, device_id, materializer, &parent, args.content, index),
     )
     .await?;
     // The appended block shares its parent's owning page, so resolve from the
@@ -962,7 +964,6 @@ async fn handle_append_markdown(
         &space_id,
     )
     .await?;
-    validate_block_in_space(pool, &parent_id, &space_id).await?;
     // The same 1-based contract and refusal as `append_block` (#1606, #400).
     if let Some(p) = args.position
         && p < 1
@@ -973,13 +974,17 @@ async fn handle_append_markdown(
     }
     let index = args.position.map(|p| p - 1);
     let parent = BlockId::from_trusted(&parent_id);
-    let resp = append_markdown_inner(
-        pool,
-        device_id,
-        materializer,
-        parent.clone(),
-        &args.markdown,
-        index,
+    let resp = with_space_guard(
+        &space_id,
+        vec![parent_id],
+        append_markdown_inner(
+            pool,
+            device_id,
+            materializer,
+            parent.clone(),
+            &args.markdown,
+            index,
+        ),
     )
     .await?;
     emit_blocks_changed_for(pool, emitter, parent).await;
@@ -997,11 +1002,14 @@ async fn handle_update_block_content(
     // Normalise ULID-shaped IDs to uppercase at the MCP boundary.
     let block_id = normalize_ulid_arg(&args.block_id);
     let space_id = normalize_ulid_arg(&args.space_id);
-    // Refuse cross-space writes at the MCP boundary.
-    validate_block_in_space(pool, &block_id, &space_id).await?;
+    let guarded = vec![block_id.clone()];
     let block_id = BlockId::from_trusted(&block_id);
-    let (block, warnings) =
-        edit_block_resolving_names(pool, device_id, materializer, &block_id, args.content).await?;
+    let (block, warnings) = with_space_guard(
+        &space_id,
+        guarded,
+        edit_block_resolving_names(pool, device_id, materializer, &block_id, args.content),
+    )
+    .await?;
     emit_blocks_changed_for(pool, emitter, block_id).await;
     with_warnings(&block, &warnings)
 }
@@ -1017,8 +1025,8 @@ async fn handle_set_property(
     // #3301 — `space` is not a content property: it is the column-backed
     // space-membership key, and writing it runs the canonical cross-space
     // move (`UPDATE blocks SET space_id = ? WHERE id = ? OR page_id = ?`),
-    // re-homing the page and every descendant. `validate_block_in_space`
-    // below checks only where the block is *now*, so it cannot catch this.
+    // re-homing the page and every descendant. The space guard below checks
+    // only where the block is *now*, so it cannot catch this.
     if args.key == agaric_store::op::SPACE_PROPERTY_KEY {
         return Err(AppError::validation(format!(
             "tool `{TOOL_SET_PROPERTY}`: `{}` is space membership, not a content property, \
@@ -1051,12 +1059,11 @@ async fn handle_set_property(
         .map(BlockId::from_string)
         .transpose()?
         .map(BlockId::into_string);
-    // Refuse cross-space writes at the MCP boundary. We
+    // The space guard below checks `block_id` only. We
     // intentionally do NOT validate `value_ref` against `space_id`: a
     // ref-typed property may legitimately point at a global block
     // (a tag, a space, etc.). hardens cross-space *references*
     // separately at the op boundary.
-    validate_block_in_space(pool, &block_id, &space_id).await?;
     // The exactly-one-value invariant is enforced inside
     // `set_property_inner` when a `caller_context` is supplied — passing
     // `Some(TOOL_SET_PROPERTY)` keeps the agent-facing error message
@@ -1067,20 +1074,24 @@ async fn handle_set_property(
     // Clone the key for the property-changed emit below — `set_property_inner`
     // takes it by value.
     let key_for_emit = args.key.clone();
-    let resp = set_property_inner(
-        pool,
-        device_id,
-        materializer,
-        active_id,
-        args.key,
-        args.value_text,
-        args.value_num,
-        args.value_date,
-        value_ref,
-        // #697 — thread the boolean slot through; the schema and the
-        // Error message now agree on the five accepted slots.
-        args.value_bool,
-        Some(TOOL_SET_PROPERTY),
+    let resp = with_space_guard(
+        &space_id,
+        vec![block_id.clone()],
+        set_property_inner(
+            pool,
+            device_id,
+            materializer,
+            active_id,
+            args.key,
+            args.value_text,
+            args.value_num,
+            args.value_date,
+            value_ref,
+            // #697 — thread the boolean slot through; the schema and the
+            // Error message now agree on the five accepted slots.
+            args.value_bool,
+            Some(TOOL_SET_PROPERTY),
+        ),
     )
     .await?;
     // #2505: a property write touches the block's page (a visible todo
@@ -1114,17 +1125,19 @@ async fn handle_add_tag(
         &space_id,
     )
     .await?;
-    // Refuse cross-space writes at the MCP boundary. We
-    // validate only the target `block_id`: `add_tag_inner` itself rejects
-    // a tag of another space and adopts a space-less one, which
-    // `validate_block_in_space` would refuse.
-    validate_block_in_space(pool, &block_id, &space_id).await?;
-    let resp = add_tag_inner(
-        pool,
-        device_id,
-        materializer,
-        agaric_core::ulid::BlockId::from(block_id.clone()),
-        agaric_core::ulid::BlockId::from(tag_id),
+    // The guard checks only the target `block_id`: `add_tag_inner` itself
+    // rejects a tag of another space and adopts a space-less one, which the
+    // guard would refuse.
+    let resp = with_space_guard(
+        &space_id,
+        vec![block_id.clone()],
+        add_tag_inner(
+            pool,
+            device_id,
+            materializer,
+            agaric_core::ulid::BlockId::from(block_id.clone()),
+            agaric_core::ulid::BlockId::from(tag_id),
+        ),
     )
     .await?;
     // The tagged block's page re-renders (a tag chip appears on the block).
@@ -1180,9 +1193,12 @@ async fn handle_delete_block(
     // Normalise ULID-shaped IDs to uppercase at the MCP boundary.
     let block_id = normalize_ulid_arg(&args.block_id);
     let space_id = normalize_ulid_arg(&args.space_id);
-    // Refuse cross-space writes at the MCP boundary.
-    validate_block_in_space(pool, &block_id, &space_id).await?;
-    let resp = delete_block_inner(pool, device_id, materializer, block_id.clone().into()).await?;
+    let resp = with_space_guard(
+        &space_id,
+        vec![block_id.clone()],
+        delete_block_inner(pool, device_id, materializer, block_id.clone().into()),
+    )
+    .await?;
     // Soft-delete leaves the row (and its `parent_id` chain) intact, so the
     // owning page still resolves — the page must reload to drop the block from
     // its rendered tree.
@@ -1195,15 +1211,13 @@ async fn handle_delete_block(
 /// Pure read against the canonical `spaces` registry — reuses
 /// [`list_spaces_registry_inner`], the exact same data function the RO
 /// surface's `handle_list_spaces` calls, so there is no duplicated query
-/// logic between the two registries. Takes only `&pool` (no
-/// `materializer` / `device_id` / `emitter`) and performs no write: it
-/// does not call `validate_block_in_space`, does not open a
-/// `BEGIN IMMEDIATE` transaction, and emits no `blocks:changed` /
+/// logic between the two registries. Runs on the reader pool (#5402) and
+/// performs no write: no `BEGIN IMMEDIATE` and no `blocks:changed` /
 /// `block:properties-changed` notification, unlike every other handler in
 /// this file.
-async fn handle_list_spaces(pool: &SqlitePool, args: Value) -> Result<Value, AppError> {
+async fn handle_list_spaces(read_pool: &SqlitePool, args: Value) -> Result<Value, AppError> {
     let _args: ListSpacesArgs = parse_args(TOOL_LIST_SPACES, args)?;
-    let resp = list_spaces_registry_inner(pool).await?;
+    let resp = list_spaces_registry_inner(read_pool).await?;
     to_tool_result(&resp)
 }
 
@@ -1228,7 +1242,6 @@ async fn handle_move_page_to_space(
         .await?,
     );
     let target_space_id = SpaceId::from_string(args.target_space_id)?;
-    validate_block_in_space(pool, page_id.as_str(), &space_id).await?;
     // The engine refuses `space` on a content block; a top-level tag would
     // pass it, and moving one strands the blocks of the old space it tags.
     let page = get_active_block_inner(pool, page_id.clone()).await?;
@@ -1239,12 +1252,16 @@ async fn handle_move_page_to_space(
             page.block_type,
         )));
     }
-    move_blocks_to_space_inner(
-        pool,
-        device_id,
-        materializer,
-        vec![page_id.clone()],
-        target_space_id.as_str().to_owned(),
+    with_space_guard(
+        &space_id,
+        vec![page_id.as_str().to_owned()],
+        move_blocks_to_space_inner(
+            pool,
+            device_id,
+            materializer,
+            vec![page_id.clone()],
+            target_space_id.as_str().to_owned(),
+        ),
     )
     .await?;
     emit_blocks_changed_for(pool, emitter, page_id.clone()).await;
@@ -1299,10 +1316,13 @@ async fn handle_delete_property(
     }
     let block_id = normalize_ulid_arg(&args.block_id);
     let space_id = normalize_ulid_arg(&args.space_id);
-    validate_block_in_space(pool, &block_id, &space_id).await?;
     let active_id = crate::ulid::verify_active(pool, &BlockId::from_trusted(&block_id)).await?;
-    let deleted_keys =
-        delete_property_inner(pool, device_id, materializer, active_id, args.key.clone()).await?;
+    let deleted_keys = with_space_guard(
+        &space_id,
+        vec![block_id.clone()],
+        delete_property_inner(pool, device_id, materializer, active_id, args.key.clone()),
+    )
+    .await?;
     // Same `block:properties-changed` payload as the local `delete_property`.
     emit_blocks_changed_for(pool, emitter, BlockId::from_trusted(&block_id)).await;
     emitter.emit_property_changed(block_id.clone(), deleted_keys);
@@ -1324,10 +1344,13 @@ async fn handle_undo(
     let args: UndoArgs = parse_args(TOOL_UNDO, args)?;
     let space_id = normalize_ulid_arg(&args.space_id);
     let block_ids = own_op_block_ids(pool, &args.op_refs).await?;
-    for block_id in &block_ids {
-        validate_block_in_space(pool, block_id.as_str(), &space_id).await?;
-    }
-    let undone = revert_ops_inner(pool, device_id, materializer, args.op_refs).await?;
+    let guarded: Vec<String> = block_ids.iter().map(|id| id.as_str().to_owned()).collect();
+    let undone = with_space_guard(
+        &space_id,
+        guarded,
+        revert_ops_inner(pool, device_id, materializer, args.op_refs),
+    )
+    .await?;
     emit_blocks_changed_for_all(pool, emitter, &block_ids).await;
     to_tool_result(&json!({ "undone": undone }))
 }
@@ -1390,22 +1413,26 @@ async fn handle_move_blocks(
             "tool `{TOOL_MOVE_BLOCKS}`: position must be >= 1 (1-based), got {p}"
         )));
     }
-    validate_block_in_space(pool, parent_id.as_str(), &space_id).await?;
-    for block_id in &block_ids {
-        validate_block_in_space(pool, block_id.as_str(), &space_id).await?;
-    }
     // The inner clamps an index past the last sibling to an append.
     let index = args.position.map_or(i64::MAX, |p| p - 1);
     // Resolved before the move: the blocks leave these pages, which reload too.
     let old_pages =
         agaric_sync::sync_protocol::loro_sync::resolve_changed_page_ids(pool, &block_ids).await?;
-    let moves = move_blocks_batch_inner(
-        pool,
-        device_id,
-        materializer,
-        block_ids,
-        Some(parent_id.clone()),
-        index,
+    let guarded: Vec<String> = std::iter::once(&parent_id)
+        .chain(&block_ids)
+        .map(|id| id.as_str().to_owned())
+        .collect();
+    let moves = with_space_guard(
+        &space_id,
+        guarded,
+        move_blocks_batch_inner(
+            pool,
+            device_id,
+            materializer,
+            block_ids,
+            Some(parent_id.clone()),
+            index,
+        ),
     )
     .await?;
     let mut seeds: Vec<BlockId> = old_pages
@@ -1438,8 +1465,12 @@ async fn handle_remove_tag(
         )
         .await?,
     );
-    validate_block_in_space(pool, block_id.as_str(), &space_id).await?;
-    let resp = remove_tag_inner(pool, device_id, materializer, block_id.clone(), tag_id).await?;
+    let resp = with_space_guard(
+        &space_id,
+        vec![block_id.as_str().to_owned()],
+        remove_tag_inner(pool, device_id, materializer, block_id.clone(), tag_id),
+    )
+    .await?;
     emit_blocks_changed_for(pool, emitter, block_id).await;
     to_tool_result(&resp)
 }
@@ -1454,13 +1485,16 @@ async fn handle_restore_block(
     let args: RestoreBlockArgs = parse_args(TOOL_RESTORE_BLOCK, args)?;
     let block_id = BlockId::from_trusted(&normalize_ulid_arg(&args.block_id));
     let space_id = normalize_ulid_arg(&args.space_id);
-    validate_block_in_space(pool, block_id.as_str(), &space_id).await?;
-    let resp = restore_block_inner(
-        pool,
-        device_id,
-        materializer,
-        block_id.clone(),
-        args.deleted_at,
+    let resp = with_space_guard(
+        &space_id,
+        vec![block_id.as_str().to_owned()],
+        restore_block_inner(
+            pool,
+            device_id,
+            materializer,
+            block_id.clone(),
+            args.deleted_at,
+        ),
     )
     .await?;
     emit_blocks_changed_for(pool, emitter, block_id).await;

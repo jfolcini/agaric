@@ -1745,8 +1745,12 @@ mod tests {
         .unwrap();
         mat.flush_background().await.unwrap();
 
-        let tools =
-            crate::mcp::tools_rw::ReadWriteTools::new(pool.clone(), mat.clone(), DEV.into());
+        let tools = crate::mcp::tools_rw::ReadWriteTools::new(
+            pool.clone(),
+            pool.clone(),
+            mat.clone(),
+            DEV.into(),
+        );
         let ring = Arc::new(std::sync::Mutex::new(ActivityRing::new()));
         let activity_ctx = ActivityContext::new(ring.clone(), Arc::new(RecordingEmitter::new()));
         let adapter = RmcpAdapter::new(Arc::new(tools), Some(activity_ctx), McpSurface::ReadWrite);

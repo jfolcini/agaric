@@ -47,7 +47,7 @@ async fn mk_space(pool: &SqlitePool, name: &str) -> String {
 async fn mk_tools() -> (ReadWriteTools, Materializer, SqlitePool, String, TempDir) {
     let (pool, dir) = test_pool().await;
     let mat = Materializer::new(pool.clone());
-    let tools = ReadWriteTools::new(pool.clone(), mat.clone(), DEV.to_string());
+    let tools = ReadWriteTools::new(pool.clone(), pool.clone(), mat.clone(), DEV.to_string());
     let space_id = mk_space(&pool, " test space").await;
     (tools, mat, pool, space_id, dir)
 }
@@ -1074,7 +1074,7 @@ async fn list_spaces_happy_path_returns_spaces_with_default_flag() {
     // test exactly.
     let (pool, _dir) = test_pool().await;
     let mat = Materializer::new(pool.clone());
-    let tools = ReadWriteTools::new(pool.clone(), mat.clone(), DEV.to_string());
+    let tools = ReadWriteTools::new(pool.clone(), pool.clone(), mat.clone(), DEV.to_string());
     crate::spaces::bootstrap_spaces_for_test(&pool, DEV)
         .await
         .unwrap();
@@ -1846,7 +1846,7 @@ async fn mk_tools_recording() -> (
     let (pool, dir) = test_pool().await;
     let mat = Materializer::new(pool.clone());
     let emitter = Arc::new(RecordingViewChangeEmitter::new());
-    let tools = ReadWriteTools::new(pool.clone(), mat.clone(), DEV.to_string())
+    let tools = ReadWriteTools::new(pool.clone(), pool.clone(), mat.clone(), DEV.to_string())
         .with_view_emitter(emitter.clone());
     let space_id = mk_space(&pool, " test space").await;
     (tools, mat, pool, space_id, emitter, dir)
@@ -3296,4 +3296,154 @@ async fn a_lowercase_ulid_argument_is_still_the_id_5397() {
         .expect_err("a page of another space is refused");
     assert!(matches!(err, AppError::Validation { .. }), "got {err:?}");
     assert!(child_contents(&pool, &elsewhere).await.is_empty());
+}
+
+// -------------------------------------------------------------------
+// One transaction per write (#5402)
+// -------------------------------------------------------------------
+
+/// `name`'s result, and how many `CommandTx`s the call opened.
+async fn command_txs_of(tools: &ReadWriteTools, name: &str, args: Value) -> (Value, usize) {
+    let (result, opened) =
+        crate::db::count_command_tx_opens(tools.call_tool(name, args, &test_ctx_agent())).await;
+    (
+        result.unwrap_or_else(|e| panic!("{name} must succeed: {e:?}")),
+        opened,
+    )
+}
+
+/// Every write tool that addresses an existing block checks its space inside
+/// the write's own transaction, so a call opens exactly one.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn each_write_tool_opens_one_command_transaction_5402() {
+    let (tools, mat, pool, space, _dir) = mk_tools().await;
+    let target_space = mk_space(&pool, "target").await;
+    let page = mk_page(&pool, &mat, &space, "P").await;
+    let other_page = mk_page(&pool, &mat, &space, "Q").await;
+    let block = mk_child_of(&pool, &mat, &page, "x").await;
+    let tag = mk_tag_in(&pool, &mat, &space).await;
+    settle(&mat).await;
+
+    let mut opened = Vec::new();
+    let (appended, n) = command_txs_of(
+        &tools,
+        "append_block",
+        json!({ "parent_id": page, "content": "a", "space_id": space }),
+    )
+    .await;
+    opened.push(("append_block", n));
+    let deleted_at = {
+        let calls = [
+            (
+                "append_markdown",
+                json!({ "parent_id": page, "markdown": "- m", "space_id": space }),
+            ),
+            (
+                "update_block_content",
+                json!({ "block_id": block, "content": "y", "space_id": space }),
+            ),
+            (
+                "set_property",
+                json!({ "block_id": block, "key": "assignee", "value_text": "alice", "space_id": space }),
+            ),
+            (
+                "delete_property",
+                json!({ "block_id": block, "key": "assignee", "space_id": space }),
+            ),
+            (
+                "add_tag",
+                json!({ "block_id": block, "tag_id": tag, "space_id": space }),
+            ),
+            (
+                "remove_tag",
+                json!({ "block_id": block, "tag_id": tag, "space_id": space }),
+            ),
+            (
+                "move_blocks",
+                json!({ "block_ids": [block], "parent_id": other_page, "space_id": space }),
+            ),
+            (
+                "delete_block",
+                json!({ "block_id": block, "space_id": space }),
+            ),
+        ];
+        let mut last = Value::Null;
+        for (name, args) in calls {
+            let (result, n) = command_txs_of(&tools, name, args).await;
+            opened.push((name, n));
+            last = result;
+        }
+        last["deleted_at"].clone()
+    };
+    let op_ref = create_op_ref(&pool, appended["id"].as_str().unwrap()).await;
+    let calls = [
+        (
+            "restore_block",
+            json!({ "block_id": block, "deleted_at": deleted_at, "space_id": space }),
+        ),
+        ("undo", json!({ "op_refs": [op_ref], "space_id": space })),
+        (
+            "move_page_to_space",
+            json!({ "page_id": other_page, "space_id": space, "target_space_id": target_space }),
+        ),
+    ];
+    for (name, args) in calls {
+        let (_, n) = command_txs_of(&tools, name, args).await;
+        opened.push((name, n));
+    }
+
+    assert_eq!(
+        opened,
+        [
+            ("append_block", 1),
+            ("append_markdown", 1),
+            ("update_block_content", 1),
+            ("set_property", 1),
+            ("delete_property", 1),
+            ("add_tag", 1),
+            ("remove_tag", 1),
+            ("move_blocks", 1),
+            ("delete_block", 1),
+            ("restore_block", 1),
+            ("undo", 1),
+            ("move_page_to_space", 1),
+        ],
+        "each write opens one transaction, its space check inside it"
+    );
+}
+
+/// `list_spaces` reads the reader pool, so it answers while every writer
+/// connection is taken.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn list_spaces_answers_while_the_writers_are_busy_5402() {
+    let dir = TempDir::new().unwrap();
+    let pools = crate::db::init_pools(&dir.path().join("split.db"))
+        .await
+        .unwrap();
+    let mat = Materializer::with_read_pool(pools.write.clone(), pools.read.clone());
+    let tools = ReadWriteTools::new(
+        pools.write.clone(),
+        pools.read.clone(),
+        mat.clone(),
+        DEV.to_string(),
+    );
+    let space = mk_space(&pools.write, "Readable").await;
+    settle(&mat).await;
+
+    let _first = pools.write.acquire().await.unwrap();
+    let _second = pools.write.acquire().await.unwrap();
+    let spaces = tokio::time::timeout(
+        std::time::Duration::from_secs(2),
+        tools.call_tool("list_spaces", json!({}), &test_ctx_agent()),
+    )
+    .await
+    .expect("list_spaces waited for a writer connection")
+    .expect("list_spaces must succeed");
+    let ids: Vec<&str> = spaces
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|s| s["id"].as_str().unwrap())
+        .collect();
+    assert!(ids.contains(&space.as_str()), "got {spaces}");
 }
