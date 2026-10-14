@@ -25,9 +25,11 @@ import { axe } from 'vitest-axe'
 import {
   clearGraphCache,
   getGraphCacheEntry,
+  getGraphLayoutEntry,
   GRAPH_CACHE_MAX_ENTRIES,
   GraphView,
   setGraphCacheEntry,
+  setGraphLayoutEntry,
 } from '@/components/graph/GraphView'
 import { useShouldShowMobileChrome } from '@/hooks/useShouldShowMobileChrome'
 import {
@@ -35,6 +37,7 @@ import {
   getBlockPropertyInvalidationKey,
   recordBlockPropertyChange,
 } from '@/lib/block-property-events'
+import type { GraphLayout } from '@/lib/graph-sim-helpers'
 import {
   _resetGraphStructureEventsForTest,
   getGraphStructureKey,
@@ -188,6 +191,7 @@ vi.mock('d3-zoom', () => ({
     transform: vi.fn(),
   })),
   zoomIdentity: { k: 1, x: 0, y: 0 },
+  zoomTransform: vi.fn(() => ({ k: 1, x: 0, y: 0 })),
 }))
 
 vi.mock('d3-drag', () => ({
@@ -2168,5 +2172,78 @@ describe('graph cache LRU (#758 item 4)', () => {
       expect(getGraphCacheEntry(`k${i}`)).toEqual(makeEntry(i))
     }
     expect(getGraphCacheEntry('k0')).toEqual(makeEntry(100))
+  })
+})
+
+// ── #5434: coming back to the graph restores its layout ─────────────
+describe('kept graph layout (#5434)', () => {
+  // d3-zoom is mocked in this file, so a transform is its plain fields.
+  function layoutAt(x: number): GraphLayout {
+    const transform = { k: 1, x, y: 0 } as GraphLayout['transform']
+    return { positions: new Map([['page-1', { x, y: 0 }]]), transform, settled: false }
+  }
+
+  /** The node list of the newest worker's `start`. */
+  function startedNodes(): Array<Record<string, unknown>> {
+    const worker = MockWorker.instances.at(-1)
+    return worker?.postMessageCalls.find((m) => m.type === 'start')?.nodes ?? []
+  }
+
+  async function mountGraph() {
+    const view = render(<GraphView />)
+    await waitFor(() => {
+      expect(startedNodes().map((n) => n['id'])).toEqual(['page-1', 'page-2'])
+    })
+    // The mock worker settles every node at (100, 100) on the next microtask.
+    await act(async () => {
+      await Promise.resolve()
+    })
+    return view
+  }
+
+  beforeEach(() => {
+    mockedInvoke.mockImplementation((cmd: string) => {
+      if (cmd === 'list_all_pages_in_space')
+        return Promise.resolve([
+          { id: 'page-1', content: 'Page One', block_type: 'page' },
+          { id: 'page-2', content: 'Page Two', block_type: 'page' },
+        ])
+      if (cmd === 'list_page_links')
+        return Promise.resolve(linksOf([{ source_id: 'page-1', target_id: 'page-2' }]))
+      if (cmd === 'list_all_tags_in_space') return Promise.resolve([])
+      if (cmd === 'list_template_page_ids_in_space') return Promise.resolve([])
+      return Promise.resolve(null)
+    })
+  })
+
+  it('a remount in the same space starts from where the nodes settled', async () => {
+    const first = await mountGraph()
+    expect(startedNodes().some((n) => 'x' in n)).toBe(false)
+    first.unmount()
+
+    await mountGraph()
+    expect(startedNodes()).toEqual([
+      { id: 'page-1', label: 'Page One', x: 100, y: 100 },
+      { id: 'page-2', label: 'Page Two', x: 100, y: 100 },
+    ])
+  })
+
+  it("another space never starts from this space's layout", async () => {
+    const first = await mountGraph()
+    first.unmount()
+
+    useSpaceStore.setState({ currentSpaceId: 'SPACE_OTHER' })
+    await mountGraph()
+    expect(startedNodes().some((n) => 'x' in n)).toBe(false)
+    expect(getGraphLayoutEntry('SPACE_TEST')?.positions.get('page-1')).toEqual({ x: 100, y: 100 })
+  })
+
+  it('keeps one layout per space, evicting the least recently used beyond the cap', () => {
+    for (let i = 0; i <= GRAPH_CACHE_MAX_ENTRIES; i++) setGraphLayoutEntry(`s${i}`, layoutAt(i))
+
+    expect(getGraphLayoutEntry('s0')).toBeNull()
+    for (let i = 1; i <= GRAPH_CACHE_MAX_ENTRIES; i++) {
+      expect(getGraphLayoutEntry(`s${i}`)).toEqual(layoutAt(i))
+    }
   })
 })

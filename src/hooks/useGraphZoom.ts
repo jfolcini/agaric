@@ -8,7 +8,7 @@
  */
 
 import { select } from 'd3-selection'
-import { type ZoomBehavior, zoomIdentity } from 'd3-zoom'
+import { type ZoomBehavior, type ZoomTransform, zoomIdentity } from 'd3-zoom'
 import type React from 'react'
 import { useCallback, useRef } from 'react'
 
@@ -25,10 +25,11 @@ import {
 export interface UseGraphZoomResult {
   /**
    * Wire the zoom behavior + keyboard shortcut to the rendered SVG/`g`
-   * selection. Call inside the orchestrator's effect after render and
-   * invoke the returned cleanup on effect teardown.
+   * selection, starting from `initial` when the view comes back (#5434).
+   * Call inside the orchestrator's effect after render and invoke the
+   * returned cleanup on effect teardown.
    */
-  attach: (svg: SVGSVGElement, g: GSel) => () => void
+  attach: (svg: SVGSVGElement, g: GSel, initial?: ZoomTransform) => () => void
   zoomIn: () => void
   zoomOut: () => void
   zoomReset: () => void
@@ -37,8 +38,9 @@ export interface UseGraphZoomResult {
 export function useGraphZoom(svgRef: React.RefObject<SVGSVGElement | null>): UseGraphZoomResult {
   const zoomBehaviorRef = useRef<ZoomBehavior<SVGSVGElement, unknown> | null>(null)
 
-  const attach = useCallback((svg: SVGSVGElement, g: GSel) => {
+  const attach = useCallback((svg: SVGSVGElement, g: GSel, initial?: ZoomTransform) => {
     const zoomBehavior = setupZoomBehavior(svg, g)
+    if (initial) zoomBehavior.transform(select(svg), initial)
     zoomBehaviorRef.current = zoomBehavior
     const handleZoomKey = createZoomKeyHandler(svg, zoomBehavior)
     svg.addEventListener('keydown', handleZoomKey)

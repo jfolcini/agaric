@@ -35,6 +35,7 @@
  * rebuilding them all (visible as flicker on every filter click).
  */
 
+import { zoomTransform } from 'd3-zoom'
 import type React from 'react'
 import { useEffect, useRef, useState } from 'react'
 
@@ -46,9 +47,12 @@ import {
   createApplyPositions,
   DEFAULT_HEIGHT,
   DEFAULT_WIDTH,
+  type GraphLayout,
+  keptPositions,
   markCurrentPage,
   patchGraphSelections,
   type RenderResult,
+  seedPositions,
   type SimulationCtx,
   type SimulationHandle,
 } from '@/lib/graph-sim-helpers'
@@ -62,6 +66,13 @@ export interface UseGraphSimulationArgs {
   navigateToPage: (id: string, label: string) => void
   /** The page open in the active tab; its node takes the accent. */
   currentPageId: string | null
+  /** Where the graph's layout is kept while it is unmounted (#5434). */
+  layout: GraphLayoutStore
+}
+
+export interface GraphLayoutStore {
+  read: () => GraphLayout | null
+  keep: (layout: GraphLayout) => void
 }
 
 export interface UseGraphSimulationResult {
@@ -102,6 +113,7 @@ export function useGraphSimulation({
   edges,
   navigateToPage,
   currentPageId,
+  layout,
 }: UseGraphSimulationArgs): UseGraphSimulationResult {
   const { attach: attachZoom, zoomIn, zoomOut, zoomReset } = useGraphZoom(svgRef)
   const renderElements = useGraphRenderElements({ nodes, edges, navigateToPage, currentPageId })
@@ -132,11 +144,13 @@ export function useGraphSimulation({
   const navigateToPageRef = useRef(navigateToPage)
   const currentPageIdRef = useRef(currentPageId)
   const renderElementsRef = useRef(renderElements)
+  const layoutRef = useRef(layout)
   nodesRef.current = nodes
   edgesRef.current = edges
   navigateToPageRef.current = navigateToPage
   currentPageIdRef.current = currentPageId
   renderElementsRef.current = renderElements
+  layoutRef.current = layout
 
   // ── Setup effect ─────────────────────────────────────────────────
   // Runs only when the simulation *kind* changes (mount, worker
@@ -151,7 +165,13 @@ export function useGraphSimulation({
 
     const rendered = renderElementsRef.current(svg)
     const applyPositions = createApplyPositions(rendered.link, rendered.node)
-    const detachZoom = attachZoom(svg, rendered.g)
+    const layoutStore = layoutRef.current
+    const kept = layoutStore.read()
+    if (kept) {
+      seedPositions(rendered, kept.positions)
+      applyPositions()
+    }
+    const detachZoom = attachZoom(svg, rendered.g, kept?.transform)
 
     const prefersReducedMotion = shouldReduceMotion()
 
@@ -164,6 +184,7 @@ export function useGraphSimulation({
       width: rendered.width,
       height: rendered.height,
       prefersReducedMotion,
+      keptSettled: kept?.settled ?? false,
     }
 
     const useWorker = typeof Worker !== 'undefined' && !workerFailed
@@ -183,10 +204,10 @@ export function useGraphSimulation({
     let resizeObserver: ResizeObserver | null = null
     if (typeof ResizeObserver !== 'undefined') {
       resizeObserver = new ResizeObserver(() => {
-        const width = svg.clientWidth || DEFAULT_WIDTH
-        const height = svg.clientHeight || DEFAULT_HEIGHT
-        const current = stateRef.current
-        if (current) current.handle.onResize(width, height)
+        // Leaving the view hides the canvas first; re-centring on its zero
+        // size would move the layout the graph is about to keep (#5434).
+        if (svg.clientWidth === 0 || svg.clientHeight === 0) return
+        stateRef.current?.handle.onResize(svg.clientWidth, svg.clientHeight)
       })
       resizeObserver.observe(svg)
     }
@@ -204,6 +225,11 @@ export function useGraphSimulation({
       resizeObserver?.disconnect()
       const current = stateRef.current
       if (current) {
+        layoutStore.keep({
+          positions: keptPositions(current.rendered.simNodes),
+          transform: zoomTransform(svg),
+          settled: current.handle.settled(),
+        })
         current.handle.cleanup()
       }
       detachZoom()
@@ -247,7 +273,12 @@ export function useGraphSimulation({
       if (state && (state.handledNodes.length > 0 || state.handledEdges.length > 0)) {
         patchGraphSelections(state.rendered.g, [], [], navigateToPageRef.current)
         state.handle.cleanup()
-        state.handle = { cleanup: () => {}, onResize: () => {}, onUpdate: () => {} }
+        state.handle = {
+          cleanup: () => {},
+          onResize: () => {},
+          onUpdate: () => {},
+          settled: () => false,
+        }
         state.simActive = false
         state.rendered = {
           ...state.rendered,
@@ -314,6 +345,7 @@ export function useGraphSimulation({
       width,
       height,
       prefersReducedMotion: state.prefersReducedMotion,
+      keptSettled: false,
     }
 
     // #2194: if a simulation is already LIVE, swap its node/edge set in place

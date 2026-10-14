@@ -100,6 +100,7 @@ vi.mock('d3-zoom', () => ({
     transform: vi.fn(),
   })),
   zoomIdentity: { k: 1, x: 0, y: 0 },
+  zoomTransform: vi.fn(() => ({ k: 1, x: 0, y: 0 })),
 }))
 
 vi.mock('d3-drag', () => ({
@@ -227,6 +228,8 @@ interface HarnessProps {
   navigateToPage?: (id: string, label: string) => void
 }
 
+const NO_LAYOUT = { read: () => null, keep: () => {} }
+
 function Harness({ nodes, edges, onResult, navigateToPage }: HarnessProps): React.ReactElement {
   const svgRef = React.useRef<SVGSVGElement>(null)
   const result = useGraphSimulation({
@@ -235,6 +238,7 @@ function Harness({ nodes, edges, onResult, navigateToPage }: HarnessProps): Reac
     edges,
     navigateToPage: navigateToPage ?? ((): void => {}),
     currentPageId: null,
+    layout: NO_LAYOUT,
   })
   React.useEffect(() => {
     onResult(result)
@@ -438,6 +442,25 @@ describe('useGraphSimulation', () => {
     )
     expect(resizeCalls).toHaveLength(1)
     expect(resizeCalls[0]).toMatchObject({ type: 'resize', width: 1200, height: 800 })
+  })
+
+  it('posts no resize for a canvas that measures zero, as on leaving the view (#5434)', () => {
+    render(
+      React.createElement(Harness, {
+        nodes: makeNodes(),
+        edges: makeEdges(),
+        onResult: () => {},
+      }),
+    )
+    const observer = MockResizeObserver.instances[0] as InstanceType<typeof MockResizeObserver>
+    const observedSvg = observer.observed[0] as SVGSVGElement
+    Object.defineProperty(observedSvg, 'clientWidth', { configurable: true, value: 0 })
+    Object.defineProperty(observedSvg, 'clientHeight', { configurable: true, value: 0 })
+
+    observer.fire()
+
+    const worker = MockWorker.instances[0] as InstanceType<typeof MockWorker>
+    expect(worker.postMessageCalls.map((m: { type?: string }) => m.type)).toEqual(['start'])
   })
 
   it('disconnects the ResizeObserver on unmount', () => {

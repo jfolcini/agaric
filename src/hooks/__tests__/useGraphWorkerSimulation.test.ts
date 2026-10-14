@@ -112,6 +112,7 @@ function makeCtx(): SimulationCtx {
     width: 800,
     height: 600,
     prefersReducedMotion: false,
+    keptSettled: false,
   }
 }
 

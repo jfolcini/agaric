@@ -39,6 +39,7 @@ function makeNode(id: string, label: string): GraphNode {
 
 const NODES = [makeNode('a', 'Alpha'), makeNode('b', 'Beta'), makeNode('c', 'Gamma')]
 const EDGES: GraphEdge[] = [{ source: 'a', target: 'b', ref_count: 1 }]
+const NO_LAYOUT = { read: () => null, keep: () => {} }
 
 function Graph({
   currentPageId,
@@ -54,6 +55,7 @@ function Graph({
     edges: EDGES,
     navigateToPage: () => {},
     currentPageId,
+    layout: NO_LAYOUT,
   })
   return <svg ref={svgRef} aria-label="Graph" />
 }

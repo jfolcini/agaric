@@ -94,6 +94,7 @@ function makeCtx(): { ctx: SimulationCtx; applyPositions: ReturnType<typeof vi.f
     width: 800,
     height: 600,
     prefersReducedMotion: false,
+    keptSettled: false,
   }
   return { ctx, applyPositions }
 }
@@ -269,6 +270,51 @@ describe('runWorkerSimulation — rAF tick coalescing (#747 item 2)', () => {
     handle.cleanup()
   })
 
+  describe('settled (#5434)', () => {
+    /** A worker simulation that has reported `done`, then a click-reheat tick. */
+    function ended(): ReturnType<typeof runWorkerSimulation> {
+      const handle = runWorkerSimulation({ ...makeCtx().ctx, onWorkerFailed: () => {} })
+      const worker = lastWorker as unknown as FakeWorker
+      expect(handle.settled()).toBe(false)
+      worker.emit(
+        packed('done', [
+          { x: 1, y: 2 },
+          { x: 3, y: 4 },
+        ]),
+      )
+      worker.emit(
+        packed('tick', [
+          { x: 5, y: 6 },
+          { x: 7, y: 8 },
+        ]),
+      )
+      return handle
+    }
+
+    it('is settled once the worker is done, and a tick (a click reheat) keeps it so', () => {
+      expect(ended().settled()).toBe(true)
+    })
+
+    it('a resize unsettles it', () => {
+      const handle = ended()
+      handle.onResize(1000, 400)
+      expect(handle.settled()).toBe(false)
+    })
+
+    it('an update unsettles it', () => {
+      const handle = ended()
+      handle.onUpdate(makeCtx().ctx)
+      expect(handle.settled()).toBe(false)
+    })
+
+    it('starts settled when a settled, fully kept layout starts at rest', () => {
+      const { ctx } = makeCtx()
+      for (const n of ctx.simNodes) Object.assign(n, { x: 120, y: 80 })
+      const handle = runWorkerSimulation({ ...ctx, keptSettled: true, onWorkerFailed: () => {} })
+      expect(handle.settled()).toBe(true)
+    })
+  })
+
   it('onUpdate posts an `update` message (not terminate + respawn) and re-points the tick order (#2194)', () => {
     const { ctx } = makeCtx()
     const handle = runWorkerSimulation({ ...ctx, onWorkerFailed: () => {} })
@@ -293,6 +339,7 @@ describe('runWorkerSimulation — rAF tick coalescing (#747 item 2)', () => {
       width: 800,
       height: 600,
       prefersReducedMotion: false,
+      keptSettled: false,
     }
 
     handle.onUpdate(nextCtx)

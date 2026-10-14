@@ -15,7 +15,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { GraphEdge, GraphNode } from '@/components/graph/GraphView.helpers'
 import { useGraphMainThreadSim } from '@/hooks/useGraphMainThreadSim'
-import type { SimulationCtx } from '@/lib/graph-sim-helpers'
+import type { SimulationCtx, SimulationHandle } from '@/lib/graph-sim-helpers'
 
 // Capture the simulation mock so individual tests can assert on it.
 let lastSim: any = null
@@ -86,6 +86,7 @@ function makeCtx(prefersReducedMotion = false): SimulationCtx {
     width: 800,
     height: 600,
     prefersReducedMotion,
+    keptSettled: false,
   }
 }
 
@@ -114,6 +115,90 @@ describe('useGraphMainThreadSim', () => {
     expect(forceSimulation).toHaveBeenCalledTimes(1)
     expect(drag).toHaveBeenCalled()
     expect(forceCenter).toHaveBeenCalledWith(400, 300)
+  })
+
+  describe('start alpha from a kept layout (#5434)', () => {
+    /** The alpha the simulation was started at, for nodes placed at `kept`. */
+    function startAlpha(kept: Array<{ x: number; y: number } | null>, keptSettled: boolean) {
+      const ctx = makeCtx()
+      ctx.simNodes = kept.map((at, i) => ({ ...makeNodes()[0], id: `n${i}`, ...at }) as GraphNode)
+      ctx.keptSettled = keptSettled
+      renderHook(() => useGraphMainThreadSim()).result.current(ctx)
+      expect(lastSim?.alpha).toHaveBeenCalledTimes(1)
+      return lastSim?.alpha.mock.calls[0]?.[0]
+    }
+
+    it('starts cold with nothing kept', () => {
+      expect(startAlpha([null], false)).toBe(1)
+    })
+
+    it('starts at rest from a settled layout with every node kept', () => {
+      expect(
+        startAlpha(
+          [
+            { x: 120, y: 80 },
+            { x: 300, y: 210 },
+          ],
+          true,
+        ),
+      ).toBe(0)
+    })
+
+    it('starts warm from a layout that was still moving', () => {
+      expect(
+        startAlpha(
+          [
+            { x: 120, y: 80 },
+            { x: 300, y: 210 },
+          ],
+          false,
+        ),
+      ).toBe(0.3)
+    })
+
+    it('starts warm from a settled layout with a new node', () => {
+      expect(startAlpha([{ x: 120, y: 80 }, null], true)).toBe(0.3)
+    })
+  })
+
+  describe('settled (#5434)', () => {
+    /** A started simulation whose d3 `end` has fired. */
+    function ended(): SimulationHandle {
+      const handle = renderHook(() => useGraphMainThreadSim()).result.current(makeCtx())
+      const calls = lastSim.on.mock.calls as Array<[string, () => void]>
+      const fire = (event: string) => calls.find(([e]) => e === event)?.[1]()
+      expect(handle.settled()).toBe(false)
+      fire('end')
+      fire('tick')
+      return handle
+    }
+
+    it('is settled once the simulation ends, and a tick (a click reheat) keeps it so', () => {
+      expect(ended().settled()).toBe(true)
+    })
+
+    it('a resize unsettles it', () => {
+      const handle = ended()
+      handle.onResize(1024, 768)
+      expect(handle.settled()).toBe(false)
+    })
+
+    it('an update unsettles it', () => {
+      const handle = ended()
+      handle.onUpdate(makeCtx())
+      expect(handle.settled()).toBe(false)
+    })
+
+    it('starts settled when a settled, fully kept layout starts at rest', () => {
+      const ctx = makeCtx()
+      Object.assign(ctx.simNodes[0] as GraphNode, { x: 120, y: 80 })
+      ctx.keptSettled = true
+      expect(
+        renderHook(() => useGraphMainThreadSim())
+          .result.current(ctx)
+          .settled(),
+      ).toBe(true)
+    })
   })
 
   it('handle.cleanup stops the simulation', () => {

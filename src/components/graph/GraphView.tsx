@@ -29,13 +29,14 @@ import { LoadingSkeleton } from '@/components/rendering/LoadingSkeleton'
 import { Button } from '@/components/ui/button'
 import { IconButton } from '@/components/ui/icon-button'
 import { useBlockPropertyEvents } from '@/hooks/useBlockPropertyEvents'
-import { useGraphSimulation } from '@/hooks/useGraphSimulation'
+import { type GraphLayoutStore, useGraphSimulation } from '@/hooks/useGraphSimulation'
 import { useGraphStructureEvents } from '@/hooks/useGraphStructureEvents'
 import { useShouldShowMobileChrome } from '@/hooks/useShouldShowMobileChrome'
 import { unwrap } from '@/lib/app-error'
 import { commands } from '@/lib/bindings'
 import { applyGraphFilters, type GraphFilter } from '@/lib/graph-filters'
 import { computeLocalGraph, type LocalGraphHops } from '@/lib/graph-neighborhood'
+import type { GraphLayout } from '@/lib/graph-sim-helpers'
 import { getShortcutKeys } from '@/lib/keyboard-config'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
@@ -90,31 +91,55 @@ export const GRAPH_CACHE_MAX_ENTRIES = 8
 const graphCacheMap = new Map<string, GraphCache>()
 
 /**
+ * Per space, for this session only: a new session lays the graph out from
+ * scratch (#5434).
+ */
+const graphLayoutMap = new Map<string, GraphLayout>()
+
+/**
  * LRU read: refresh the entry's recency (Map preserves insertion order, so
  * delete + re-set moves it to the back of the eviction queue).
- * @internal exported for tests.
  */
-export function getGraphCacheEntry(key: string): GraphCache | null {
-  const entry = graphCacheMap.get(key)
-  if (!entry) return null
-  graphCacheMap.delete(key)
-  graphCacheMap.set(key, entry)
+function lruGet<T>(map: Map<string, T>, key: string): T | null {
+  const entry = map.get(key)
+  if (entry === undefined) return null
+  map.delete(key)
+  map.set(key, entry)
   return entry
 }
 
 /**
  * LRU write: insert as most-recent and evict the least-recently-used
  * entries beyond `GRAPH_CACHE_MAX_ENTRIES`.
- * @internal exported for tests.
  */
-export function setGraphCacheEntry(key: string, entry: GraphCache): void {
-  graphCacheMap.delete(key)
-  graphCacheMap.set(key, entry)
-  while (graphCacheMap.size > GRAPH_CACHE_MAX_ENTRIES) {
-    const oldest = graphCacheMap.keys().next().value
+function lruSet<T>(map: Map<string, T>, key: string, entry: T): void {
+  map.delete(key)
+  map.set(key, entry)
+  while (map.size > GRAPH_CACHE_MAX_ENTRIES) {
+    const oldest = map.keys().next().value
     if (oldest === undefined) break
-    graphCacheMap.delete(oldest)
+    map.delete(oldest)
   }
+}
+
+/** @internal exported for tests. */
+export function getGraphCacheEntry(key: string): GraphCache | null {
+  return lruGet(graphCacheMap, key)
+}
+
+/** @internal exported for tests. */
+export function setGraphCacheEntry(key: string, entry: GraphCache): void {
+  lruSet(graphCacheMap, key, entry)
+}
+
+/** @internal exported for tests. */
+export function getGraphLayoutEntry(spaceKey: string): GraphLayout | null {
+  return lruGet(graphLayoutMap, spaceKey)
+}
+
+/** @internal exported for tests. */
+export function setGraphLayoutEntry(spaceKey: string, layout: GraphLayout): void {
+  lruSet(graphLayoutMap, spaceKey, layout)
 }
 
 /** Sentinel value for "all pages" (no tag filter). */
@@ -133,6 +158,7 @@ function getCacheKey(tagIds: readonly string[]): string {
 /** @internal — exported for test isolation only. */
 export function clearGraphCache(): void {
   graphCacheMap.clear()
+  graphLayoutMap.clear()
 }
 
 /**
@@ -225,9 +251,17 @@ export function GraphView(): React.ReactElement {
   // Stable-ish key to trigger refetch when the tag set or active space
   // changes — the cache is keyed by (spaceId, tagIds) so switching
   // spaces doesn't show the wrong space's nodes from cache.
+  const spaceKey = currentSpaceId ?? '__null__'
   const tagCacheKey = useMemo(
-    () => `${currentSpaceId ?? '__null__'}|${getCacheKey(tagFilterIds)}`,
-    [currentSpaceId, tagFilterIds],
+    () => `${spaceKey}|${getCacheKey(tagFilterIds)}`,
+    [spaceKey, tagFilterIds],
+  )
+  const layout = useMemo<GraphLayoutStore>(
+    () => ({
+      read: () => getGraphLayoutEntry(spaceKey),
+      keep: (kept) => setGraphLayoutEntry(spaceKey, kept),
+    }),
+    [spaceKey],
   )
 
   // Fetch the active space's tags, again on every space switch. The filter
@@ -426,6 +460,7 @@ export function GraphView(): React.ReactElement {
     edges: displayEdges,
     navigateToPage,
     currentPageId: seedPageId,
+    layout,
   })
 
   if (loading)

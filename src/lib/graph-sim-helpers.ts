@@ -10,14 +10,14 @@
 import { drag } from 'd3-drag'
 import { forceLink, forceSimulation, type Simulation } from 'd3-force'
 import { type Selection, select } from 'd3-selection'
-import { type ZoomBehavior, zoom, zoomIdentity } from 'd3-zoom'
+import { type ZoomBehavior, type ZoomTransform, zoom, zoomIdentity } from 'd3-zoom'
 
-import { applyGraphForces, applyResizeForces, RESIZE_ALPHA } from '@/lib/graph-forces'
+import { applyGraphForces, applyResizeForces, RESIZE_ALPHA, startAlpha } from '@/lib/graph-forces'
 import type { GraphEdge, GraphNode } from '@/lib/graph-types'
 import { isEditableTarget, matchesShortcutBinding } from '@/lib/keyboard-config'
 import { logger } from '@/lib/logger'
 import { shouldReduceMotion } from '@/lib/preferences'
-import type { NodePosition, WorkerOutboundMessage } from '@/workers/graph-worker-types'
+import type { NodePosition, WorkerNode, WorkerOutboundMessage } from '@/workers/graph-worker-types'
 
 // ── Constants ────────────────────────────────────────────────────────
 
@@ -70,6 +70,16 @@ export interface SimulationCtx {
   width: number
   height: number
   prefersReducedMotion: boolean
+  /** The kept layout the nodes' positions come from had stopped moving (#5434). */
+  keptSettled: boolean
+}
+
+/** Where each node settled and how the view was zoomed, kept so the graph comes back as it was left (#5434). */
+export interface GraphLayout {
+  positions: ReadonlyMap<string, { x: number; y: number }>
+  transform: ZoomTransform
+  /** The simulation had stopped moving when the layout was kept. */
+  settled: boolean
 }
 
 /**
@@ -90,6 +100,8 @@ export interface SimulationHandle {
   cleanup: () => void
   onResize: (width: number, height: number) => void
   onUpdate: (ctx: SimulationCtx) => void
+  /** Whether the simulation has stopped moving, so its layout is settled (#5434). */
+  settled: () => boolean
 }
 
 // ── SVG / d3 setup ───────────────────────────────────────────────────
@@ -658,16 +670,60 @@ export function createApplyPositions(link: LinkSel, node: NodeSel): () => void {
   }
 }
 
+/** The position of every node the simulation has placed, by id. */
+export function keptPositions(
+  simNodes: readonly GraphNode[],
+): Map<string, { x: number; y: number }> {
+  const positions = new Map<string, { x: number; y: number }>()
+  for (const n of simNodes) {
+    if (n.x !== undefined && n.y !== undefined) positions.set(n.id, { x: n.x, y: n.y })
+  }
+  return positions
+}
+
+/**
+ * Put every node with a kept position back in place, and resolve the edges to
+ * their nodes so the first paint draws the kept layout before any tick lands.
+ */
+export function seedPositions(
+  rendered: Pick<RenderResult, 'simNodes' | 'simEdges' | 'nodeById'>,
+  positions: GraphLayout['positions'],
+): void {
+  for (const n of rendered.simNodes) {
+    const kept = positions.get(n.id)
+    if (kept) {
+      n.x = kept.x
+      n.y = kept.y
+    }
+  }
+  resolveEdgeEndpoints(rendered.simEdges, rendered.nodeById)
+}
+
 // ── Worker simulation ────────────────────────────────────────────────
 
 interface WorkerRunArgs extends SimulationCtx {
   onWorkerFailed: () => void
 }
 
+/**
+ * A node as the worker gets it: its last-known `x`/`y`/`vx`/`vy` when it has
+ * them, so it keeps its place; without, so d3 seeds a brand-new node.
+ */
+function toWorkerNode(n: GraphNode): WorkerNode {
+  return {
+    id: n.id,
+    label: n.label,
+    ...(n.x !== undefined ? { x: n.x } : {}),
+    ...(n.y !== undefined ? { y: n.y } : {}),
+    ...(n.vx !== undefined ? { vx: n.vx } : {}),
+    ...(n.vy !== undefined ? { vy: n.vy } : {}),
+  }
+}
+
 function postWorkerStart(worker: Worker, ctx: SimulationCtx): void {
   worker.postMessage({
     type: 'start',
-    nodes: ctx.simNodes.map((n) => ({ id: n.id, label: n.label })),
+    nodes: ctx.simNodes.map(toWorkerNode),
     edges: ctx.simEdges.map((e) => ({
       source: typeof e.source === 'string' ? e.source : (e.source as GraphNode).id,
       target: typeof e.target === 'string' ? e.target : (e.target as GraphNode).id,
@@ -675,28 +731,20 @@ function postWorkerStart(worker: Worker, ctx: SimulationCtx): void {
     })),
     width: ctx.width,
     height: ctx.height,
+    keptSettled: ctx.keptSettled,
   })
 }
 
 /**
  * Post an `update` message (#2194) that swaps the worker simulation's
- * node/edge set in place. Carries each node's last-known `x`/`y`/`vx`/`vy`
- * (when present) so persisting nodes drift instead of re-scattering; a
- * brand-new node with undefined coords is sent without position fields so the
- * worker leaves d3 to seed it. Node order matches `ctx.simNodes`, which the
- * main thread also uses as the tick index→id mapping.
+ * node/edge set in place, so persisting nodes drift instead of re-scattering.
+ * Node order matches `ctx.simNodes`, which the main thread also uses as the
+ * tick index→id mapping.
  */
 function postWorkerUpdate(worker: Worker, ctx: SimulationCtx): void {
   worker.postMessage({
     type: 'update',
-    nodes: ctx.simNodes.map((n) => ({
-      id: n.id,
-      label: n.label,
-      ...(n.x !== undefined ? { x: n.x } : {}),
-      ...(n.y !== undefined ? { y: n.y } : {}),
-      ...(n.vx !== undefined ? { vx: n.vx } : {}),
-      ...(n.vy !== undefined ? { vy: n.vy } : {}),
-    })),
+    nodes: ctx.simNodes.map(toWorkerNode),
     edges: ctx.simEdges.map((e) => ({
       source: typeof e.source === 'string' ? e.source : (e.source as GraphNode).id,
       target: typeof e.target === 'string' ? e.target : (e.target as GraphNode).id,
@@ -783,9 +831,13 @@ export function runWorkerSimulation(args: WorkerRunArgs): SimulationHandle {
   }
 
   const worker = instantiateWorker((err) => reportFailure('construction', err))
-  if (!worker) return { cleanup: noop, onResize: noop, onUpdate: noop }
+  if (!worker) return { cleanup: noop, onResize: noop, onUpdate: noop, settled: () => false }
 
   let tickCount = 0
+  // Only a new topology or canvas size unsettles a layout. A click on a node is
+  // a drag without motion: it reheats the worker, and its ticks can land before
+  // the click navigates away, so a tick must not unsettle a layout that ended.
+  let settled = startAlpha(ctx.simNodes, ctx.keptSettled) === 0
 
   // Mutable ctx: `onUpdate` (#2194) swaps the live node/edge set in place
   // rather than tearing the worker down and respawning. The tick handler,
@@ -844,6 +896,7 @@ export function runWorkerSimulation(args: WorkerRunArgs): SimulationHandle {
         worker.postMessage({ type: 'stop' })
       }
     } else if (msg.type === 'done') {
+      settled = true
       // Final settled positions: cancel any pending frame and apply now so the
       // last frame never clobbers the converged layout.
       if (rafId !== null) {
@@ -899,6 +952,7 @@ export function runWorkerSimulation(args: WorkerRunArgs): SimulationHandle {
       if (width === current.width && height === current.height) return
       current.width = width
       current.height = height
+      settled = false
       worker.postMessage({ type: 'resize', width, height })
     },
     onUpdate: (nextCtx) => {
@@ -912,6 +966,7 @@ export function runWorkerSimulation(args: WorkerRunArgs): SimulationHandle {
         rafId = null
       }
       pendingPositions = null
+      settled = false
 
       postWorkerUpdate(worker, nextCtx)
 
@@ -924,6 +979,7 @@ export function runWorkerSimulation(args: WorkerRunArgs): SimulationHandle {
       live.node = nextCtx.node
       nextCtx.node.call(createWorkerDrag(worker))
     },
+    settled: () => settled,
   }
 }
 
@@ -954,7 +1010,7 @@ function buildMainThreadSim(ctx: SimulationCtx): Simulation<GraphNode, GraphEdge
     edges: ctx.simEdges,
     width: ctx.width,
     height: ctx.height,
-  })
+  }).alpha(startAlpha(ctx.simNodes, ctx.keptSettled))
 }
 
 /**
@@ -1012,11 +1068,18 @@ export function runMainThreadSimulation(ctx: SimulationCtx): SimulationHandle {
         live.applyPositions()
         sim.stop()
       },
+      settled: () => true,
     }
   }
 
+  // Only a new topology or canvas size unsettles a layout; a click on a node
+  // reheats the simulation through d3-drag, so a tick must not.
+  let settled = startAlpha(ctx.simNodes, ctx.keptSettled) === 0
   sim.on('tick', () => {
     live.applyPositions()
+  })
+  sim.on('end', () => {
+    settled = true
   })
   return {
     cleanup: () => {
@@ -1026,13 +1089,16 @@ export function runMainThreadSimulation(ctx: SimulationCtx): SimulationHandle {
       if (width === current.width && height === current.height) return
       current.width = width
       current.height = height
+      settled = false
       applyResizeForces(sim, { width, height })
       sim.alpha(RESIZE_ALPHA).restart()
     },
     onUpdate: (next) => {
+      settled = false
       live.applyPositions = next.applyPositions
       next.node.call(createMainThreadDrag(sim))
       applyMainThreadUpdate(sim, next)
     },
+    settled: () => settled,
   }
 }
