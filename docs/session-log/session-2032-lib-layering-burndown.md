@@ -1,4 +1,4 @@
-# Session 2028 — Lib-layering violations burned down, baseline deleted
+# Session 2032 — Lib-layering violations burned down, baseline deleted
 
 Closes #5469, after the strict-invoke (#5521) and `JSON.parse` cast (#5522)
 burn-downs. The frontend tiers are lib < stores < hooks < components; the
