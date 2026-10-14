@@ -9,9 +9,7 @@
  * focusing the page title (a save, not a discard), and asserts the rendered
  * (view-mode) table is still visible.
  */
-import { expect, test } from '@playwright/test'
-
-import { focusBlock, openPage, typeSlashCommand, waitForBoot } from './helpers'
+import { expect, focusBlock, openPage, test, typeSlashCommand, waitForBoot } from './helpers'
 
 test.describe('Table view-mode rendering (#215)', () => {
   test.beforeEach(async ({ page }) => {

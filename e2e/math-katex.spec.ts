@@ -11,9 +11,7 @@
  * (blur) drives the full parse→serialize→static-render round-trip. The static
  * block renders the math via the lazy `KatexMath` component (`.katex`).
  */
-import { expect, test } from '@playwright/test'
-
-import { focusBlock, openPage, saveBlock, waitForBoot } from './helpers'
+import { expect, focusBlock, openPage, saveBlock, test, waitForBoot } from './helpers'
 
 test.describe('KaTeX math round-trip (#1437)', () => {
   test.beforeEach(async ({ page }) => {

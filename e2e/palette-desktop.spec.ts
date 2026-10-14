@@ -13,23 +13,11 @@
  * do not duplicate it here.
  */
 
-import { expect, test } from '@playwright/test'
-
-import {
-  expectNoConsoleErrors,
-  openPage,
-  registerConsoleErrorWatcher,
-  waitForBoot,
-} from './helpers'
+import { expect, openPage, test, waitForBoot } from './helpers'
 
 test.describe('desktop palette (Phase 5.T2)', () => {
   test.beforeEach(async ({ page }) => {
-    registerConsoleErrorWatcher(page)
     await waitForBoot(page)
-  })
-
-  test.afterEach(({ page }) => {
-    expectNoConsoleErrors(page)
   })
 
   test('Ctrl+K opens, query → page result, Enter navigates', async ({ page }) => {

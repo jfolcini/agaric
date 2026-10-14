@@ -36,28 +36,6 @@ export function resetMock(): void {
   seedBlocks()
 }
 
-/**
- * Fully reset the mock's module-scoped in-memory state back to the
- * canonical seed. Safe to call between Playwright tests to avoid parallel
- * Mock-state collision (). Idempotent.
- *
- * Resets:
- *   - `blocks`, `properties`, `blockTags`, `propertyDefs`, `pageAliases`,
- *     `attachments` (cleared + reseeded by `seedBlocks()`)
- *   - `opLog` + its seq counter (cleared + reset by `seedBlocks()`)
- *   - `fakeId()` counter (reset by `seedBlocks()`)
- *   - Error-injection map (via `clearMockErrors()`)
- *
- * Does NOT touch:
- *   - `window.localStorage` (handled by Playwright `storageState` / test options)
- *   - Zustand stores (React component state lives in the page context)
- *   - Any browser navigation state (tests call `page.goto('/')` as needed)
- */
-export function __resetTauriMock__(): void {
-  clearMockErrors()
-  seedBlocks()
-}
-
 export function setupMock(): void {
   // Fake the window label so getCurrent() works
   mockWindows('main')
@@ -119,10 +97,6 @@ export function setupMock(): void {
 
   // Expose bulk agenda-item seeding to E2E tests (#548 virtualization spec).
   w['__addMockAgendaItems'] = addMockAgendaItems
-
-  // Expose the full reset hook to E2E tests. Wired into a global
-  // beforeEach in `e2e/helpers.ts` so every spec starts from seed state.
-  w['__resetTauriMock__'] = __resetTauriMock__
 
   // #2683 — expose a way for E2E tests to fire a backend event. Goes
   // through the REAL `@tauri-apps/api/event` `emit()`, so it exercises the

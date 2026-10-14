@@ -1,35 +1,11 @@
 import { test as baseTest, expect, type Locator, type Page } from '@playwright/test'
 
 // ---------------------------------------------------------------------------
-// Custom `test` export with a global mock-state reset baked in.
-//
-// Every spec file should `import { expect, test } from './helpers'` instead
-// of `@playwright/test`. The `beforeEach` below issues a best-effort reset
-// of the Tauri mock's module-scoped in-memory state (blocks, tags, op log,
-// error-injection map, attachments, property defs, aliases) so that one
-// test's mutations cannot bleed into the next.
-//
-// Optional chaining on the window lookup: if the page hasn't been navigated
-// yet (first test that calls `page.goto` inside its body), the hook is a
-// no-op — the subsequent page load runs `setupMock()` which seeds fresh.
-// For subsequent tests within the same worker/context, the mock module is
-// already loaded, so the reset actively wipes and re-seeds state.
-// ---------------------------------------------------------------------------
-
-declare global {
-  interface Window {
-    __resetTauriMock__?: () => void
-  }
-}
-
-export const test = baseTest
-
-// ---------------------------------------------------------------------------
 // Console-error watcher.
 //
-// Every spec gets a `page.on('console', ...)` + `page.on('pageerror', ...)`
-// listener registered automatically by the global `beforeEach` below, and
-// the global `afterEach` asserts no errors leaked through. The smoke spec
+// Every spec that imports `test` from here gets a `page.on('console', ...)` +
+// `page.on('pageerror', ...)` listener and a no-errors assertion at teardown,
+// through the auto fixture `consoleErrorGate` below. The smoke spec
 // pioneered the pattern; this lifts it to every spec for free so backend
 // failures, IPC handler crashes, error-boundary fall-throughs, and
 // unhandled rejections cannot pass silently in any E2E suite.
@@ -38,7 +14,7 @@ export const test = baseTest
 // (e.g. `error-scenarios.spec.ts` injects backend failures via the mock):
 //   - `getConsoleErrors(page)` returns the live captured array. The test
 //     may inspect it and then call `clearConsoleErrors(page)` before the
-//     global afterEach runs so the deliberate noise does not fail the
+//     fixture's teardown runs so the deliberate noise does not fail the
 //     suite.
 //
 // Whitelist patterns are deliberately conservative — favicon noise only.
@@ -55,7 +31,7 @@ const IGNORED_CONSOLE_ERROR_PATTERNS: RegExp[] = [
   // 404 on every page load. We match the literal chromium message so any
   // OTHER 4xx/5xx (broken `<img src>`, missing fonts, dropped attachment
   // URLs, mock 404s, backend 4xx in production) surfaces through the
-  // afterEach `expectNoConsoleErrors` gate as a real test failure.
+  // `expectNoConsoleErrors` gate as a real test failure.
   /Failed to load resource:.*\/favicon\.ico/,
 ]
 
@@ -66,15 +42,13 @@ function isIgnoredConsoleError(text: string): boolean {
 }
 
 /**
- * Register the per-page console + pageerror listeners. Called automatically
- * by the global `beforeEach`; safe to call again (no-ops on the second call
- * for the same page).
+ * Register the per-page console + pageerror listeners. Called by
+ * `consoleErrorGate`.
  *
  * Listeners are attached *before* any `page.goto()` in the test body so
  * pre-load errors (e.g. early script-tag failures) are captured.
  */
-export function registerConsoleErrorWatcher(page: Page): void {
-  if (consoleErrorsByPage.has(page)) return
+function registerConsoleErrorWatcher(page: Page): void {
   const errors: string[] = []
   consoleErrorsByPage.set(page, errors)
 
@@ -95,7 +69,7 @@ export function registerConsoleErrorWatcher(page: Page): void {
 /**
  * Get the live array of console errors captured for this page. Mutating
  * the returned array (e.g. `.length = 0`) clears the buffer for the
- * global afterEach assertion.
+ * teardown assertion.
  */
 export function getConsoleErrors(page: Page): string[] {
   return consoleErrorsByPage.get(page) ?? []
@@ -109,9 +83,9 @@ export function clearConsoleErrors(page: Page): void {
 
 /**
  * Assert no unexpected console errors were captured. Invoked automatically
- * by the global afterEach below.
+ * by `consoleErrorGate`'s teardown.
  */
-export function expectNoConsoleErrors(page: Page): void {
+function expectNoConsoleErrors(page: Page): void {
   const errors = consoleErrorsByPage.get(page) ?? []
   expect(
     errors,
@@ -119,18 +93,18 @@ export function expectNoConsoleErrors(page: Page): void {
   ).toEqual([])
 }
 
-test.beforeEach(async ({ page }) => {
-  // Register the console-error watcher BEFORE any page activity so the
-  // mock-reset evaluate (and any subsequent goto in the test body) are
-  // covered.
-  registerConsoleErrorWatcher(page)
-  // Best-effort: the page may or may not have navigated yet. When it has,
-  // this re-seeds the mock. When it hasn't, the optional chain no-ops.
-  await page.evaluate(() => window.__resetTauriMock__?.()).catch(() => {})
-})
-
-test.afterEach(({ page }) => {
-  expectNoConsoleErrors(page)
+// An auto fixture, not module-level `beforeEach` / `afterEach`: a worker loads
+// this module once, so module-level hooks attach only to the first spec file
+// it runs and every later file in that worker goes ungated.
+export const test = baseTest.extend<{ consoleErrorGate: void }>({
+  consoleErrorGate: [
+    async ({ page }, use) => {
+      registerConsoleErrorWatcher(page)
+      await use()
+      expectNoConsoleErrors(page)
+    },
+    { auto: true },
+  ],
 })
 
 export { expect }

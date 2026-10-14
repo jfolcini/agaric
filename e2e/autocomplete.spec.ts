@@ -9,9 +9,7 @@
  * that don't surface in happy-dom.
  */
 
-import { expect, test } from '@playwright/test'
-
-import { waitForBoot } from './helpers'
+import { expect, test, waitForBoot } from './helpers'
 
 test.describe('Autocomplete', () => {
   test.beforeEach(async ({ page }) => {
