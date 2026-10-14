@@ -20,6 +20,7 @@ import { create } from 'zustand'
 
 import type { AggregateSpec, FilterExpr, FilterPrimitive, GroupSpec, SortKey } from '@/lib/bindings'
 import type { PageFilterWithKey } from '@/lib/filters/page-filter-with-key'
+import { isFilterExpr } from '@/lib/inline-query-spec'
 import { LEGACY_SPACE_KEY } from '@/stores/space'
 
 /**
@@ -196,16 +197,20 @@ export function serializeQuerySpec(
  * surface a load error toast rather than hydrate a half-built view.
  */
 export function parseQuerySpec(raw: string): SavedQuerySpec {
-  const parsed = JSON.parse(raw) as Partial<SavedQuerySpec>
-  if (parsed == null || typeof parsed !== 'object' || parsed.filter == null) {
-    throw new Error('saved view query_spec is missing its filter expression')
+  const parsed: unknown = JSON.parse(raw)
+  const spec = (
+    typeof parsed === 'object' && parsed !== null ? parsed : {}
+  ) as Partial<SavedQuerySpec>
+  const { filter } = spec
+  if (!isFilterExpr(filter)) {
+    throw new Error('saved view query_spec is missing a valid filter expression')
   }
   return {
-    filter: parsed.filter,
-    sort: Array.isArray(parsed.sort) ? parsed.sort : [],
-    fulltext: typeof parsed.fulltext === 'string' ? parsed.fulltext : '',
-    group_by: parsed.group_by ?? null,
-    aggregates: Array.isArray(parsed.aggregates) ? parsed.aggregates : [],
+    filter,
+    sort: Array.isArray(spec.sort) ? spec.sort : [],
+    fulltext: typeof spec.fulltext === 'string' ? spec.fulltext : '',
+    group_by: spec.group_by ?? null,
+    aggregates: Array.isArray(spec.aggregates) ? spec.aggregates : [],
   }
 }
 

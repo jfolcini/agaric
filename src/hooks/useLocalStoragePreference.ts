@@ -38,8 +38,8 @@
  *
  * ## Shape validation (#3881)
  *
- * `parse` runs on `unknown` data fresh out of storage — `JSON.parse(raw) as
- * T` (the default) type-asserts, it doesn't check. A stale entry from an
+ * `parse` runs on `unknown` data fresh out of storage — a cast to `T`
+ * type-asserts, it doesn't check; the default `parse` only checks `typeof`. A stale entry from an
  * older schema, a hand-edited devtools value, or a future migration can
  * produce a well-formed value of the WRONG shape, which then flows to every
  * consumer as if it were a valid `T`. Callers whose `T` is more than a bare
@@ -93,7 +93,20 @@ export interface LocalStoragePreferenceOptions<T> {
   source?: string
 }
 
-const DEFAULT_PARSE = <T>(raw: string): T => JSON.parse(raw) as T
+/**
+ * Default `parse`: JSON whose `typeof` matches `defaultValue`'s. That is the
+ * whole check, so it covers primitive `T` only; a richer `T` supplies its own
+ * `parse` or `validate`.
+ */
+const defaultParse =
+  <T>(defaultValue: T) =>
+  (raw: string): T => {
+    const parsed: unknown = JSON.parse(raw)
+    if (typeof parsed !== typeof defaultValue) {
+      throw new Error(`stored value is not a ${typeof defaultValue}`)
+    }
+    return parsed as T
+  }
 const DEFAULT_SERIALIZE = <T>(value: T): string => JSON.stringify(value)
 
 // ── Shared same-tab broadcast: one module-level emitter ────────────────────
@@ -175,7 +188,7 @@ export function useLocalStoragePreference<T>(
   // keep one identity so the "key absent" snapshot stays referentially
   // stable across renders.
   const optsRef = useRef({
-    parse: options.parse ?? DEFAULT_PARSE<T>,
+    parse: options.parse ?? defaultParse(defaultValue),
     serialize: options.serialize ?? DEFAULT_SERIALIZE<T>,
     validate: options.validate,
     source: options.source ?? 'useLocalStoragePreference',

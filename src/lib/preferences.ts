@@ -599,7 +599,7 @@ const EMOJI_PICKER_ENABLED_PREFERENCE: PreferenceDefinition<boolean> = {
   scope: 'device',
   version: 1,
   defaultValue: true,
-  parse: (raw) => (JSON.parse(raw) as unknown) !== false,
+  parse: (raw) => raw !== 'false',
   serialize: jsonSerialize<boolean>,
 }
 
@@ -631,7 +631,7 @@ const TAB_INDENTS_BLOCKS_PREFERENCE: PreferenceDefinition<boolean> = {
   scope: 'device',
   version: 1,
   defaultValue: true,
-  parse: (raw) => (JSON.parse(raw) as unknown) !== false,
+  parse: (raw) => raw !== 'false',
   serialize: jsonSerialize<boolean>,
 }
 
@@ -1144,9 +1144,11 @@ const GRAPH_LOCAL_PREFERENCE: PreferenceDefinition<LocalGraphPreference> = {
   version: 1,
   defaultValue: { active: false, hops: DEFAULT_LOCAL_GRAPH_HOPS },
   parse: (raw) => {
-    const parsed = (JSON.parse(raw) ?? {}) as Record<string, unknown>
-    const active = parsed['active']
-    const hops = LOCAL_GRAPH_HOP_OPTIONS.find((option) => option === parsed['hops'])
+    const parsed: unknown = JSON.parse(raw)
+    const { active, hops: storedHops } = (
+      typeof parsed === 'object' && parsed !== null ? parsed : {}
+    ) as { active?: unknown; hops?: unknown }
+    const hops = LOCAL_GRAPH_HOP_OPTIONS.find((option) => option === storedHops)
     if (typeof active !== 'boolean' || hops === undefined) {
       throw new Error('invalid local-graph preference')
     }

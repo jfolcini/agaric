@@ -371,6 +371,21 @@ describe('useLocalStoragePreference', () => {
     expect(captured).toEqual({ count: 0 })
   })
 
+  it('falls back to default when the stored JSON type differs from the default value type', () => {
+    localStorage.setItem('test:default-parse-type', JSON.stringify('yes'))
+    let captured: boolean | null = null
+    render(
+      <Harness
+        storageKey="test:default-parse-type"
+        defaultValue={false}
+        onState={(v) => {
+          captured = v
+        }}
+      />,
+    )
+    expect(captured).toBe(false)
+  })
+
   it('uses the parsed value when validate confirms the shape', () => {
     localStorage.setItem('test:validate-accept', JSON.stringify({ count: 7 }))
     let captured: { count: number } | null = null

@@ -141,8 +141,6 @@ DATA_SOURCES: dict[str, tuple[str, str]] = {
     # a `ref` that no longer resolves is the very thing this baseline
     # grandfathers, so asserting it here would fail on the file's purpose.
     "scripts/doc-code-paths-baseline.json": ("json:file", "."),
-    # JSON object; the keys are paths.
-    "scripts/json-parse-cast-baseline.json": ("json:keys", "."),
     # JSON arrays of bare path strings.
     "scripts/lib-layering-baseline.json": ("json:list", "."),
     # `<count> <path>` text lines.

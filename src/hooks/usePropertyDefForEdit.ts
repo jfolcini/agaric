@@ -115,7 +115,11 @@ export function usePropertyDefForEdit(
         setResolvedType({ key, spaceId, valueType: def?.value_type ?? 'text' })
         if (def?.value_type === 'select' && def.options) {
           try {
-            setSelectOptions(JSON.parse(def.options) as string[])
+            const parsed: unknown = JSON.parse(def.options)
+            if (!Array.isArray(parsed) || !parsed.every((o) => typeof o === 'string')) {
+              throw new Error('select options are not a string array')
+            }
+            setSelectOptions(parsed)
           } catch (err) {
             logger.warn(
               'SortableBlock',

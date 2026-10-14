@@ -908,30 +908,18 @@ pass_filenames = false
 files = "^scripts/(check-wdio-driver-gate|lib/js-scanner)\\.mjs$"
 stages = ["manual"]
 
-# json-parse-cast ratchet (#3881): `JSON.parse(...) as T` type-ASSERTS the
-# shape of a value fresh out of storage instead of checking it — a stale
-# schema, a hand-edited devtools value, or a future migration produces a
-# well-formed-looking value of the WRONG shape that the cast waves through
-# unchecked. #3913 hardened the two generic primitives this pattern flows
-# through (`useLocalStoragePreference`'s `validate` option,
-# `preferences.ts`'s per-preference `parse` functions); this ratchet is the
-# class-level guard #3881 asked for (item 3) so a NEW bare cast cannot land
-# at a feature call site even though the primitives are now safe to use
-# correctly. Keyed to scripts/json-parse-cast-baseline.json, fails on a NEW
-# occurrence (count went up) AND a STALE baseline entry (count must ratchet
-# down as call sites gain a real validator — model: src/lib/filters/
-# validate.ts, #3791). `src/lib/tauri-mock/**` is excluded by path
-# (test/mock-only, per #3881); test files are excluded like the sibling
-# set-property-args guard. pass_filenames=false — the script does its own
-# scoped walk of src/.
-# WHY: `JSON.parse(x) as T` asserts a shape nothing validates — #3881 ratchet (#3913, #3791)
+# json-parse-cast (#3881): `JSON.parse(...) as T` type-ASSERTS the shape of a
+# value fresh out of storage instead of checking it, so a stale or hand-edited
+# value reaches every consumer as a valid `T`. Zero occurrences allowed in
+# src/ (tauri-mock and test files excluded); the script walks src/ itself.
+# WHY: `JSON.parse(x) as T` asserts a shape nothing validates — #3881 (#3913, #3791)
 [[repos.hooks]]
-id = "json-parse-cast-baseline"
-name = "No new JSON.parse(...) as <Type> casts (ratchet)"
+id = "json-parse-cast"
+name = "No JSON.parse(...) as <Type> casts"
 entry = "node scripts/check-json-parse-cast.mjs"
 language = "system"
 pass_filenames = false
-files = "^(src/.*\\.(ts|tsx)|scripts/(json-parse-cast-baseline\\.json|check-json-parse-cast\\.mjs|lib/js-scanner\\.mjs))$"
+files = "^(src/.*\\.(ts|tsx)|scripts/(check-json-parse-cast|lib/js-scanner)\\.mjs)$"
 stages = ["pre-commit"]
 
 # check-set-property-args (#3127): `commands.setProperty`'s third arg

@@ -1,82 +1,13 @@
 #!/usr/bin/env node
 // ─────────────────────────────────────────────────────────────────────
-// JSON.parse-then-cast ratchet guard (#3881).
+// No `JSON.parse(...) as <Type>` in app code (#3881).
 //
-// `JSON.parse` returns `any` in this repo — lib.es5.d.ts's own signature,
-// unmodified: there is no ts-reset (or equivalent) narrowing it to
-// `unknown`, and none of the four `.d.ts` files under `src/` augment
-// `JSON`. TypeScript's structural typing only enforces the shape of values
-// the program itself constructs — it cannot, and does not, re-check a value
-// that came back out of storage. `JSON.parse(raw) as T` (or `(JSON.parse(
-// raw) as unknown) !== false`, or any other spelling that immediately casts
-// the call's result) type-ASSERTS the shape instead of checking it: a stale
-// entry from an older schema, a hand-edited devtools value, or a future
-// migration produces a well-formed-looking JS value of the WRONG shape, and
-// the cast waves it through to every consumer typed as a valid `T`.
-//
-// #3791 fixed the first instance of this (`GraphFilterBar.readPersistedFilters`)
-// with a real per-`kind` validator (`src/lib/filters/validate.ts`). #3881
-// found the pattern repeated across the frontend and, in #3913, hardened the
-// two generic primitives that back most of it: `useLocalStoragePreference`'s
-// `parse`/`validate` contract and `src/lib/preferences.ts`'s per-preference
-// `parse` functions. Fixing the *primitives* stops new callers from
-// inheriting the hazard for free, but it does nothing to stop a NEW bare
-// `JSON.parse(...) as Foo` from being written directly at a feature call
-// site — this guard is that ratchet: the class, not today's instances,
-// which is the half that keeps paying (#3881's suggested shape, item 3).
-//
-// ─── How it works ───────────────────────────────────────────────────
-//
-// `scripts/json-parse-cast-baseline.json` is a committed JSON object
-// mapping every non-test, non-excluded file that CURRENTLY contains at
-// least one `JSON.parse(...) as` occurrence to the EXACT COUNT of
-// occurrences it contains. On each run the guard recomputes the live
-// per-file occurrence counts and FAILS if:
-//
-//   - a file's live count is HIGHER than its baselined count — including a
-//     file not in the baseline at all (baseline count 0) — a NEW occurrence
-//     (the count went up), or
-//   - a file's live count is LOWER than its baselined count — including a
-//     baseline entry whose file no longer contains the pattern at all (live
-//     count 0) — a STALE entry that must be pruned/updated so the count
-//     ratchets DOWN as call sites gain a real validator — a green run
-//     against a stale baseline would otherwise hide the win and let the
-//     pattern silently creep back in.
-//
-// Baselining is occurrence-COUNT-granular, deliberately NOT file-granular
-// like the sibling `check-lib-layering.mjs` ratchet (or the retired
-// `tauri-import-baseline` one, #2927): those track a single per-file boolean
-// fact ("does this file have an upward import at all") where the unit of fix
-// is inherently the whole file, so presence-only baselining loses nothing. Here, each
-// `JSON.parse(...) as` site is an INDEPENDENT hazard — two casts in one
-// file are two unrelated bugs, one may be fixed while the other lands
-// brand new in the same commit — so a file-presence baseline would let an
-// already-baselined file (exactly the busy, multi-site files this ratchet
-// exists for: `preferences.ts`, `advancedQuery.ts`) accumulate unlimited
-// NEW casts forever with the guard staying green. Count-granularity closes
-// that hole: any per-file INCREASE trips the guard even for an
-// already-baselined file. Fixing (or adding a validator to) one site in a
-// multi-site file is still worth doing before all sites are gone —
-// `--update-baseline` re-derives every file's live count, so the reviewer
-// sees the recorded count shrink (not just the file disappear) as sites
-// are fixed one at a time.
-//
-// When you replace a call site's bare cast with a real validator (model:
-// `src/lib/filters/validate.ts`, #3791) or route it through
-// `useLocalStoragePreference`'s `validate` option, update (or remove) the
-// file's baseline count (or run `--update-baseline`). When a new call site
-// genuinely cannot be validated yet, run `--update-baseline` and say why in
-// the commit — same discipline as the sibling ratchets, no separate
-// allowlist.
-//
-// ─── Kill-date ────────────────────────────────────────────────────────
-//
-// REMOVE AFTER 0.17.0 (#4885, #5469). Bumped at the 0.14.0, 0.15.0 and 0.16.0 cuts;
-// burning it down is its own PR, not a release's. This baseline exists to
-// reach `{}`, and nothing but someone happening to notice has ever pressed
-// it there. At 0.17.0 `remove-after-markers` fails on this line: give the
-// remaining sites a real validator and delete this block, or bump the
-// version and say in the diff why not.
+// `JSON.parse` returns `any` here, so a cast type-ASSERTS the shape of a
+// value fresh out of storage instead of checking it: a stale schema or a
+// hand-edited value becomes a wrong-shaped `T` for every consumer. Parse into
+// `unknown` and validate before use — model: `src/lib/filters/validate.ts`,
+// or a `validate:` on `useLocalStoragePreference`. Zero occurrences are
+// allowed; there is no baseline.
 //
 // ─── Detection ────────────────────────────────────────────────────────
 //
@@ -162,24 +93,9 @@
 // encoded moments earlier, which is the fixture-trust argument above, not
 // the localStorage-corruption argument this guard exists for.
 //
-// `src/lib/history-utils.ts`, `src/components/history/HistoryPanel.tsx`, and
-// `src/stores/undo.ts` are DELIBERATELY NOT path-excluded, even though
-// #3881 itself flags them as a different trust boundary (they decode a
-// backend op-log payload delivered over IPC, not a value a user can hand-edit
-// in devtools — the #3913 audit confirmed that boundary "may well be
-// adequate"). They stay IN the baseline instead: excluding a file by path
-// would exempt it from ever being checked again, including for an unrelated
-// FUTURE localStorage-backed feature landing in the same file, whereas a
-// baseline entry only grandfathers the sites that exist today and still
-// reddens the guard if a new site is added anywhere else in the file. The
-// weaker trust argument for their *existing* sites is a reason not to spend
-// #3881's per-feature triage budget on them yet (item 2, which stays out of
-// scope here) — it is not a reason to blind the ratchet to that file forever.
 //
 // Usage: node scripts/check-json-parse-cast.mjs
-//        node scripts/check-json-parse-cast.mjs --update-baseline
-// Exit:  0 = clean, 1 = drift (new occurrence or stale baseline entry),
-//        2 = repo layout failure.
+// Exit:  0 = clean, 1 = an occurrence or an unscannable file, 2 = repo layout failure.
 // ─────────────────────────────────────────────────────────────────────
 
 import fs from 'node:fs'
@@ -194,7 +110,6 @@ import {
 
 const ROOT = path.resolve(import.meta.dirname, '..')
 const SRC_DIR = path.join(ROOT, 'src')
-const BASELINE_FILE = path.join(ROOT, 'scripts', 'json-parse-cast-baseline.json')
 
 /** Directory (relative to `src/`) excluded entirely — see the Scope header. */
 const EXCLUDED_DIR = 'lib/tauri-mock'
@@ -324,29 +239,14 @@ export function analyzeSource(rawSrc) {
 // ─── analysis ─────────────────────────────────────────────────────────
 
 /**
- * Compute the live per-file `JSON.parse(...) as` occurrence counts and diff
- * them against `baseline` (a plain object mapping POSIX repo-relative path
- * -> occurrence count — the on-disk baseline schema). Pure over the
- * filesystem: `root`/`srcDir` are parameters, not globals.
- * Returns `{ offenders, details, newOffenders, staleBaseline, scanned,
- * skippedCount, scanErrors }`, where `details` maps an offender's
- * repo-relative path to its hit lines (message only, not baseline schema),
- * `newOffenders` is every file whose LIVE count exceeds its baselined count
- * (0 if absent — this also catches an ALREADY-baselined file that gained an
- * additional, brand-new cast, not just a file appearing for the first
- * time), and `staleBaseline` is every baseline entry whose live count is
- * LOWER than recorded (including a fully-fixed file at live count 0).
+ * Compute the live per-file `JSON.parse(...) as` occurrences. Pure over the
+ * filesystem: `root`/`srcDir` are parameters, not globals. Returns
+ * `{ offenders, details, scanned, skippedCount, scanErrors }`, where
+ * `details` maps an offender's repo-relative path to its hit lines and
  * `scanErrors` is `{ file, message }` for files the shared scanner could not
- * lex unambiguously. A file in `scanErrors` is EXCLUDED from both
- * `newOffenders` (already true, since it's never added to `offenders`) and
- * `staleBaseline` (explicitly, below) — otherwise a baselined file that
- * becomes unlexable would be reported twice: once as a `scanError`, and
- * again as a spurious "stale, live count 0" entry whose advised
- * `--update-baseline` fix would itself refuse (exit 2) while the
- * `scanError` still stands.
+ * lex unambiguously.
  */
-export function analyze({ root, srcDir, baseline }) {
-  const baselineCounts = baseline ?? {}
+export function analyze({ root, srcDir }) {
   /** @type {string[]} */
   const offenders = []
   const details = new Map()
@@ -374,37 +274,7 @@ export function analyze({ root, srcDir, baseline }) {
   }
 
   offenders.sort()
-  const scanErrorFiles = new Set(scanErrors.map((e) => e.file))
-  const newOffenders = offenders.filter((f) => details.get(f).length > (baselineCounts[f] ?? 0))
-  const staleBaseline = Object.keys(baselineCounts)
-    .filter((f) => !scanErrorFiles.has(f) && (details.get(f)?.length ?? 0) < baselineCounts[f])
-    .toSorted()
-  return { offenders, details, newOffenders, staleBaseline, scanned, skippedCount, scanErrors }
-}
-
-function readBaseline() {
-  if (!fs.existsSync(BASELINE_FILE)) return {}
-  const raw = JSON.parse(fs.readFileSync(BASELINE_FILE, 'utf8'))
-  if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) {
-    throw new Error(
-      `baseline file is not a JSON object mapping file -> occurrence count: ${BASELINE_FILE}`,
-    )
-  }
-  for (const [file, count] of Object.entries(raw)) {
-    if (!Number.isInteger(count) || count <= 0) {
-      throw new Error(
-        `baseline entry for ${file} is not a positive integer count: ${BASELINE_FILE}`,
-      )
-    }
-  }
-  return raw
-}
-
-/** @param {string[]} offenders already sorted by `analyze`; the baseline file keeps that order */
-function writeBaseline(offenders, details) {
-  const obj = {}
-  for (const f of offenders) obj[f] = details.get(f).length
-  fs.writeFileSync(BASELINE_FILE, `${JSON.stringify(obj, null, 2)}\n`)
+  return { offenders, details, scanned, skippedCount, scanErrors }
 }
 
 // ─── entry point ────────────────────────────────────────────────────────
@@ -428,11 +298,7 @@ const isMainModule = (() => {
 })()
 
 if (isMainModule) {
-  if (process.argv.includes('--update-baseline')) {
-    updateBaseline()
-  } else {
-    runGuard()
-  }
+  runGuard()
 }
 
 function requireLayout() {
@@ -442,40 +308,16 @@ function requireLayout() {
   }
 }
 
-function updateBaseline() {
-  requireLayout()
-  const { offenders, details, scanErrors } = analyze({ root: ROOT, srcDir: SRC_DIR, baseline: {} })
-  if (scanErrors.length > 0) {
-    console.error('ERROR: file(s) could not be scanned unambiguously; refusing to write a baseline')
-    console.error('computed from an incomplete scan:')
-    console.error('')
-    for (const e of scanErrors) console.error(`  ${e.file} — ${e.message}`)
-    console.error('')
-    console.error('The shared scanner (scripts/lib/js-scanner.mjs) fails closed rather than')
-    console.error('guessing. Fix the construct it names, or extend the scanner.')
-    process.exit(2)
-  }
-  writeBaseline(offenders, details)
-  const totalOccurrences = offenders.reduce((sum, f) => sum + details.get(f).length, 0)
-  console.log(
-    `OK: wrote baseline with ${offenders.length} file(s), ${totalOccurrences} JSON.parse(...)-as-cast occurrence(s) total, to ${path.relative(ROOT, BASELINE_FILE)}`,
-  )
-}
-
 function runGuard() {
   requireLayout()
-  if (!fs.existsSync(BASELINE_FILE)) {
-    console.error(`ERROR: baseline file not found: ${BASELINE_FILE}`)
-    console.error('Seed it with:  node scripts/check-json-parse-cast.mjs --update-baseline')
-    process.exit(2)
-  }
-
-  const baseline = readBaseline()
-  const { offenders, details, newOffenders, staleBaseline, skippedCount, scanErrors } = analyze({
+  const { offenders, details, scanned, skippedCount, scanErrors } = analyze({
     root: ROOT,
     srcDir: SRC_DIR,
-    baseline,
   })
+  if (scanned === 0) {
+    console.error(`ERROR: no source files found under ${SRC_DIR}; the scan checked nothing`)
+    process.exit(2)
+  }
 
   let failed = false
 
@@ -491,47 +333,24 @@ function runGuard() {
     console.error('')
   }
 
-  if (newOffenders.length > 0) {
+  if (offenders.length > 0) {
     failed = true
-    console.error('ERROR: new JSON.parse(...) as <Type> occurrence(s) (#3881) — a value fresh out')
+    console.error('ERROR: JSON.parse(...) as <Type> occurrence(s) (#3881) — a value fresh out')
     console.error('of JSON.parse is type-ASSERTED, not checked. A stale entry from an older')
     console.error('schema, a hand-edited devtools value, or a future migration produces a')
     console.error('well-formed value of the WRONG shape, and the cast waves it through unchecked:')
     console.error('')
-    for (const f of newOffenders) {
-      const lines = details.get(f)?.join(', ') ?? '?'
-      const baselineCount = baseline[f] ?? 0
-      const liveCount = details.get(f)?.length ?? 0
-      console.error(`  ${f}  (line ${lines}; baseline had ${baselineCount}, now ${liveCount})`)
-    }
+    for (const f of offenders) console.error(`  ${f}  (line ${details.get(f).join(', ')})`)
     console.error('')
-    console.error('FIX: validate the parsed value before trusting its shape. Model:')
+    console.error('FIX: parse into `unknown` and validate the shape before trusting it. Model:')
     console.error('src/lib/filters/validate.ts (#3791) for a rich per-kind union, or thread a')
     console.error('`validate:` into `useLocalStoragePreference` (#3913) for a localStorage-backed')
     console.error('preference.')
-    console.error('')
-    console.error('If this call site genuinely cannot be validated yet, run `--update-baseline`')
-    console.error('and say why in the commit — same discipline as the sibling ratchets.')
-  }
-
-  if (staleBaseline.length > 0) {
-    failed = true
-    console.error(
-      'ERROR: stale entr(ies) in the JSON.parse-cast baseline — the live count is LOWER',
-    )
-    console.error('than baselined, so the baseline must be pruned/updated to ratchet down:')
-    for (const f of staleBaseline) {
-      const liveCount = details.get(f)?.length ?? 0
-      console.error(`  ${f}  (baseline has ${baseline[f]}, now ${liveCount})`)
-    }
-    console.error('')
-    console.error('Update them with:  node scripts/check-json-parse-cast.mjs --update-baseline')
   }
 
   if (failed) process.exit(1)
 
   console.log(
-    `OK: ${offenders.length} baselined JSON.parse(...)-as-cast offender(s), no new occurrences, ` +
-      `no stale entries (${skippedCount} call site(s) skipped: unbalanced parens)`,
+    `OK: no JSON.parse(...)-as-cast occurrences in ${scanned} file(s) (${skippedCount} call site(s) skipped: unbalanced parens)`,
   )
 }
