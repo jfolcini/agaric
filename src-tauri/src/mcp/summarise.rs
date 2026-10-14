@@ -37,12 +37,12 @@
 use serde_json::Value;
 
 use super::registry::{
-    TOOL_ADD_TAG, TOOL_APPEND_BLOCK, TOOL_APPEND_MARKDOWN, TOOL_BLOCK_HISTORY, TOOL_CREATE_PAGE,
-    TOOL_CREATE_TAG, TOOL_DELETE_BLOCK, TOOL_DELETE_PROPERTY, TOOL_GET_AGENDA, TOOL_GET_BLOCK,
-    TOOL_GET_PAGE, TOOL_GET_PAGE_MARKDOWN, TOOL_JOURNAL_FOR_DATE, TOOL_LIST_BACKLINKS,
-    TOOL_LIST_PAGES, TOOL_LIST_PROPERTY_DEFS, TOOL_LIST_SPACES, TOOL_LIST_TAGS,
-    TOOL_MOVE_PAGE_TO_SPACE, TOOL_PAGE_HISTORY, TOOL_SEARCH, TOOL_SET_PROPERTY, TOOL_UNDO,
-    TOOL_UPDATE_BLOCK_CONTENT,
+    TOOL_ADD_TAG, TOOL_APPEND_BLOCK, TOOL_APPEND_MARKDOWN, TOOL_BLOCK_HISTORY, TOOL_CAPTURE,
+    TOOL_CREATE_PAGE, TOOL_CREATE_TAG, TOOL_DELETE_BLOCK, TOOL_DELETE_PROPERTY, TOOL_GET_AGENDA,
+    TOOL_GET_BLOCK, TOOL_GET_JOURNAL, TOOL_GET_PAGE, TOOL_GET_PAGE_MARKDOWN, TOOL_JOURNAL_FOR_DATE,
+    TOOL_LIST_BACKLINKS, TOOL_LIST_JOURNAL, TOOL_LIST_PAGES, TOOL_LIST_PROPERTY_DEFS,
+    TOOL_LIST_SPACES, TOOL_LIST_TAGS, TOOL_MOVE_PAGE_TO_SPACE, TOOL_PAGE_HISTORY, TOOL_SEARCH,
+    TOOL_SET_PROPERTY, TOOL_UNDO, TOOL_UPDATE_BLOCK_CONTENT,
 };
 
 /// Number of leading characters of a ULID we expose in summary strings.
@@ -100,6 +100,8 @@ pub fn summarise(name: &str, args: &Value, result: &Value) -> String {
         TOOL_GET_PAGE_MARKDOWN => summarise_get_page_markdown(args, result),
         TOOL_PAGE_HISTORY => summarise_history(TOOL_PAGE_HISTORY, "page_id", args, result),
         TOOL_BLOCK_HISTORY => summarise_history(TOOL_BLOCK_HISTORY, "block_id", args, result),
+        TOOL_GET_JOURNAL => summarise_get_journal(args, result),
+        TOOL_LIST_JOURNAL => summarise_list_journal(args, result),
         // ---- read-write (tools_rw) ----
         TOOL_APPEND_BLOCK => summarise_append_block(args, result),
         TOOL_APPEND_MARKDOWN => summarise_append_markdown(args, result),
@@ -112,6 +114,7 @@ pub fn summarise(name: &str, args: &Value, result: &Value) -> String {
         TOOL_CREATE_TAG => summarise_create_tag(args, result),
         TOOL_DELETE_PROPERTY => summarise_delete_property(args, result),
         TOOL_UNDO => summarise_undo(args, result),
+        TOOL_CAPTURE => summarise_capture(args, result),
         // Defensive default — keeps the activity feed working when
         // someone adds a new tool without a summariser. This is the
         // pre-existing behaviour for every entry. The privacy
@@ -323,6 +326,34 @@ pub fn summarise_history(tool: &str, id_key: &str, args: &Value, result: &Value)
     }
 }
 
+/// `get_journal — <date> (N lines)`, or `(no page)` for a missing day
+/// (#5396). The date is the argument as given; never the markdown.
+pub fn summarise_get_journal(args: &Value, result: &Value) -> String {
+    let date = str_field(args, "date").unwrap_or("today");
+    match str_field(result, "markdown").filter(|md| !md.is_empty()) {
+        Some(md) => {
+            let n = md.lines().count();
+            format!(
+                "get_journal — {date} ({n} {})",
+                if n == 1 { "line" } else { "lines" }
+            )
+        }
+        None => format!("get_journal — {date} (no page)"),
+    }
+}
+
+/// `list_journal — N day(s) (from..to)` (`(more)` if `has_more`) (#5396).
+pub fn summarise_list_journal(args: &Value, result: &Value) -> String {
+    let n = array_len(result, "items").unwrap_or(0);
+    let from = str_field(args, "from").unwrap_or("");
+    let to = str_field(args, "to").unwrap_or("");
+    let suffix = if has_more(result) { " (more)" } else { "" };
+    format!(
+        "list_journal — {n} {} ({from}..{to}){suffix}",
+        if n == 1 { "day" } else { "days" }
+    )
+}
+
 // ---------------------------------------------------------------------------
 // Read-write summarisers
 // ---------------------------------------------------------------------------
@@ -347,6 +378,24 @@ pub fn summarise_append_block(args: &Value, result: &Value) -> String {
 /// content, a created page's or tag's name, or a warning (which names them).
 pub fn summarise_append_markdown(args: &Value, result: &Value) -> String {
     let parent_prefix = ulid_prefix(str_field(args, "parent_id").unwrap_or(""));
+    let place = if parent_prefix.is_empty() {
+        String::new()
+    } else {
+        format!(" under {parent_prefix}")
+    };
+    summarise_outline(TOOL_APPEND_MARKDOWN, &place, result)
+}
+
+/// `capture — N block(s) on <date>` (#5396), counted as `append_markdown`
+/// counts. The date is the argument as given.
+pub fn summarise_capture(args: &Value, result: &Value) -> String {
+    let date = str_field(args, "date").unwrap_or("today");
+    summarise_outline(TOOL_CAPTURE, &format!(" on {date}"), result)
+}
+
+/// `<tool> — N block(s)<place>`, then the pages and tags created, from the
+/// `blocks` rows an outline append returns.
+fn summarise_outline(tool: &str, place: &str, result: &Value) -> String {
     let rows = result
         .get("blocks")
         .and_then(Value::as_array)
@@ -359,12 +408,9 @@ pub fn summarise_append_markdown(args: &Value, result: &Value) -> String {
     let plural =
         |n: usize, one: &str, many: &str| format!("{n} {}", if n == 1 { one } else { many });
     let mut summary = format!(
-        "append_markdown — {}",
+        "{tool} — {}{place}",
         plural(count("content"), "block", "blocks")
     );
-    if !parent_prefix.is_empty() {
-        summary.push_str(&format!(" under {parent_prefix}"));
-    }
     let (pages, tags) = (count("page"), count("tag"));
     if pages + tags > 0 {
         summary.push_str(&format!(
@@ -900,6 +946,46 @@ mod tests {
     // -----------------------------------------------------------------
 
     #[test]
+    fn journal_tools_count_and_omit_content_5396() {
+        let rows = json!({
+            "page": { "id": ULID_A, "block_type": "page", "content": "2025-01-15" },
+            "blocks": [
+                { "id": ULID_A, "block_type": "page", "content": "SECRET_TITLE" },
+                { "id": ULID_B, "block_type": "content", "content": "SECRET_BLOCK_CONTENT" },
+            ],
+            "warnings": ["SECRET_TEXT_VALUE"],
+        });
+        let capture = summarise(
+            TOOL_CAPTURE,
+            &json!({ "content": "SECRET_BLOCK_CONTENT" }),
+            &rows,
+        );
+        assert_eq!(
+            capture,
+            "capture — 1 block on today (created 1 page, 0 tags)"
+        );
+        let day = json!({
+            "date": "2025-01-15",
+            "page_id": ULID_A,
+            "markdown": "# 2025-01-15\n\n- SECRET_BLOCK_CONTENT\n",
+        });
+        let get = summarise(TOOL_GET_JOURNAL, &json!({ "date": "2025-01-15" }), &day);
+        assert_eq!(get, "get_journal — 2025-01-15 (3 lines)");
+        let missing = json!({ "date": "2025-01-16", "page_id": null, "markdown": "" });
+        let none = summarise(TOOL_GET_JOURNAL, &json!({ "date": "yesterday" }), &missing);
+        assert_eq!(none, "get_journal — yesterday (no page)");
+        let list = summarise(
+            TOOL_LIST_JOURNAL,
+            &json!({ "from": "2025-01-01", "to": "2025-01-31" }),
+            &json!({ "items": [{ "date": "2025-01-15", "block_count": 2 }], "has_more": true }),
+        );
+        assert_eq!(list, "list_journal — 1 day (2025-01-01..2025-01-31) (more)");
+        for s in [capture, get, none, list] {
+            assert_no_secrets(&s);
+        }
+    }
+
+    #[test]
     fn append_markdown_counts_blocks_and_created_names_and_omits_their_text() {
         let args = json!({
             "parent_id": ULID_B,
@@ -1223,6 +1309,9 @@ mod tests {
             "date": "2025-01-15",
             "start_date": "2025-01-01",
             "end_date": "2025-01-31",
+            // #5396 — `list_journal`'s range.
+            "from": "2025-01-01",
+            "to": "2025-01-31",
         });
 
         // Per-tool result shapes. Some summarisers expect a result

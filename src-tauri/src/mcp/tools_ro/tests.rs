@@ -79,6 +79,8 @@ async fn list_tools_advertises_the_ro_tools() {
             "get_page_markdown",
             "page_history",
             "block_history",
+            "get_journal",
+            "list_journal",
         ],
         "tool order is part of the wire contract — do not re-order (new tools append)",
     );
@@ -3567,4 +3569,191 @@ async fn block_history_refuses_a_block_in_another_space_5400() {
         .await
         .expect_err("a block in another space must be refused");
     assert!(matches!(err, AppError::Validation { .. }), "got {err:?}");
+}
+
+// -------------------------------------------------------------------
+// get_journal / list_journal (#5396)
+// -------------------------------------------------------------------
+
+fn day(s: &str) -> chrono::NaiveDate {
+    chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d").unwrap()
+}
+
+/// The journal page for `date` in `space` with `blocks` children.
+async fn mk_day(
+    tools: &ReadOnlyTools,
+    mat: &Materializer,
+    space: &str,
+    date: &str,
+    blocks: usize,
+) -> BlockId {
+    let page = journal_for_date_inner(&tools.pool, DEV, mat, day(date), space)
+        .await
+        .unwrap()
+        .id;
+    for i in 0..blocks {
+        create_block_inner(
+            &tools.pool,
+            DEV,
+            mat,
+            "content".into(),
+            format!("note {i}"),
+            Some(page.clone()),
+            None,
+        )
+        .await
+        .unwrap();
+    }
+    page
+}
+
+async fn op_count(pool: &SqlitePool) -> i64 {
+    sqlx::query_scalar("SELECT COUNT(*) FROM op_log")
+        .fetch_one(pool)
+        .await
+        .unwrap()
+}
+
+/// A day reads as `get_page_markdown` renders it, `today` and `yesterday`
+/// resolve against the date the handler is given, and a missing day is an
+/// empty result that writes nothing.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn get_journal_reads_a_day_and_never_creates_one_5396() {
+    let (tools, mat, _dir) = mk_tools().await;
+    let space = mk_space(&tools.pool, "S").await;
+    let page = mk_day(&tools, &mat, &space, "2026-03-01", 1).await;
+    settle(&mat).await;
+    let markdown = get_page_for_agent_inner(&tools.pool, page.as_str())
+        .await
+        .unwrap();
+    assert!(markdown.contains("- note 0 ^"), "got {markdown:?}");
+
+    for (date, today) in [(None, "2026-03-01"), (Some("yesterday"), "2026-03-02")] {
+        let mut args = json!({ "space_id": space.to_lowercase() });
+        if let Some(date) = date {
+            args["date"] = json!(date);
+        }
+        let result = handle_get_journal(&tools.pool, args, day(today))
+            .await
+            .unwrap();
+        assert_eq!(
+            result,
+            json!({ "date": "2026-03-01", "page_id": page.as_str(), "markdown": markdown }),
+            "{date:?} read from {today}"
+        );
+    }
+
+    let before = op_count(&tools.pool).await;
+    let result = handle_get_journal(
+        &tools.pool,
+        json!({ "space_id": space, "date": "2026-03-02" }),
+        day("2026-03-01"),
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        result,
+        json!({ "date": "2026-03-02", "page_id": null, "markdown": "" })
+    );
+    settle(&mat).await;
+    assert_eq!(
+        op_count(&tools.pool).await,
+        before,
+        "a missing day writes nothing"
+    );
+    assert!(
+        get_journal_page_by_date_inner(&tools.pool, "2026-03-02", &space)
+            .await
+            .unwrap()
+            .is_none()
+    );
+
+    let err = tools
+        .call_tool(
+            "get_journal",
+            json!({ "space_id": space, "date": "2026-02-30" }),
+            &test_ctx(),
+        )
+        .await
+        .expect_err("a bad date is refused");
+    assert!(matches!(err, AppError::Validation { .. }), "got {err:?}");
+    let err = tools
+        .call_tool("get_journal", json!({ "space_id": "nope" }), &test_ctx())
+        .await
+        .expect_err("a malformed space is refused");
+    assert!(matches!(err, AppError::Ulid(_)), "got {err:?}");
+}
+
+/// Paged two at a time, every day in the range comes back once, in order,
+/// with its block count; a day outside the range or the space never does.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn list_journal_pages_every_day_once_across_cursors_5396() {
+    let (tools, mat, _dir) = mk_tools().await;
+    let space = mk_space(&tools.pool, "S").await;
+    let other = mk_space(&tools.pool, "Other").await;
+    for (date, blocks) in [
+        ("2026-03-03", 2),
+        ("2026-03-01", 0),
+        ("2026-03-04", 1),
+        ("2026-03-02", 3),
+        ("2026-03-05", 1),
+        ("2026-02-28", 1),
+    ] {
+        mk_day(&tools, &mat, &space, date, blocks).await;
+    }
+    mk_day(&tools, &mat, &other, "2026-03-02", 1).await;
+    settle(&mat).await;
+
+    let mut days = Vec::new();
+    let mut cursor: Option<String> = None;
+    let mut calls = 0;
+    loop {
+        let mut args =
+            json!({ "space_id": space, "from": "2026-03-01", "to": "2026-03-05", "limit": 2 });
+        if let Some(c) = &cursor {
+            args["cursor"] = json!(c);
+        }
+        let resp = tools
+            .call_tool("list_journal", args, &test_ctx())
+            .await
+            .unwrap();
+        calls += 1;
+        for item in resp["items"].as_array().unwrap() {
+            days.push((
+                item["date"].as_str().unwrap().to_owned(),
+                item["block_count"].as_i64().unwrap(),
+            ));
+        }
+        match resp["next_cursor"].as_str() {
+            Some(c) => cursor = Some(c.to_owned()),
+            None => break,
+        }
+    }
+    let want: Vec<(String, i64)> = [
+        ("2026-03-01", 0),
+        ("2026-03-02", 3),
+        ("2026-03-03", 2),
+        ("2026-03-04", 1),
+        ("2026-03-05", 1),
+    ]
+    .into_iter()
+    .map(|(d, n)| (d.to_owned(), n))
+    .collect();
+    assert_eq!(days, want);
+    assert_eq!(calls, 3);
+
+    for args in [
+        json!({ "space_id": space, "from": "2026-03-05", "to": "2026-03-01" }),
+        json!({ "space_id": space, "from": "2026-03-01", "to": "2026-03-05", "limit": 101 }),
+        json!({ "space_id": space, "from": "March", "to": "2026-03-05" }),
+    ] {
+        let err = tools
+            .call_tool("list_journal", args.clone(), &test_ctx())
+            .await
+            .expect_err("refused");
+        assert!(
+            matches!(err, AppError::Validation { .. }),
+            "{args}: {err:?}"
+        );
+    }
 }

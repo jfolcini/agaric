@@ -1,0 +1,45 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT b.id as \"page_id!: String\", b.content as \"date!: String\",\n                  (SELECT COUNT(*) FROM blocks c\n                    WHERE c.page_id = b.id AND c.id <> b.id AND c.deleted_at IS NULL)\n                    as \"block_count!: i64\"\n           FROM blocks b\n           WHERE b.block_type = 'page'\n             AND b.deleted_at IS NULL\n             -- The same index-driving LIKE and digit GLOB as\n             -- `list_journal_pages_in_range_inner`.\n             AND b.content LIKE '____-__-__'\n             AND b.content GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]'\n             AND b.content >= ?1\n             AND b.content <= ?2\n             AND b.space_id = ?3\n             AND (?4 IS NULL OR b.content > ?4 OR (b.content = ?4 AND b.id > ?5))\n           ORDER BY b.content ASC, b.id ASC\n           LIMIT ?6",
+  "describe": {
+    "columns": [
+      {
+        "name": "page_id!: String",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "blocks",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "name": "date!: String",
+        "ordinal": 1,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "blocks",
+            "name": "content"
+          }
+        }
+      },
+      {
+        "name": "block_count!: i64",
+        "ordinal": 2,
+        "type_info": "Integer",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Right": 6
+    },
+    "nullable": [
+      false,
+      true,
+      false
+    ]
+  },
+  "hash": "05e9d78ef276da80efa6cc60d450e315f35e71263f34cc9e9e186b3543a1c3ef"
+}

@@ -235,3 +235,21 @@ expression: wire
       - space_id
     type: object
   name: undo
+- description: "Capture a thought into a day's journal in one call, as one undo: the Markdown outline lands at the end of the day's page, read as append_markdown reads it, and a missing day is created with the space's journal template first."
+  inputSchema:
+    additionalProperties: false
+    properties:
+      content:
+        description: The Markdown outline to capture.
+        type: string
+      date:
+        description: "`today` (the default), `yesterday`, or YYYY-MM-DD, on this device's clock."
+        type: string
+      space_id:
+        description: ULID of the space the journal belongs to.
+        type: string
+    required:
+      - content
+      - space_id
+    type: object
+  name: capture

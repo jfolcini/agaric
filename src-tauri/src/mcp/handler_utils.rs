@@ -248,6 +248,28 @@ pub(crate) fn to_tool_result<T: serde::Serialize>(value: &T) -> Result<Value, Ap
     Ok(serde_json::to_value(value)?)
 }
 
+/// A journal tool's `date` (#5396): `"today"` (also when omitted),
+/// `"yesterday"` or `YYYY-MM-DD`, read against `today`, the device's local
+/// date, which the caller passes so a test can fix it.
+pub(crate) fn resolve_journal_date(
+    tool: &str,
+    date: Option<&str>,
+    today: chrono::NaiveDate,
+) -> Result<chrono::NaiveDate, AppError> {
+    match date.unwrap_or("today") {
+        "today" => Ok(today),
+        "yesterday" => today
+            .pred_opt()
+            .ok_or_else(|| AppError::validation(format!("tool `{tool}`: no day before {today}"))),
+        other => chrono::NaiveDate::parse_from_str(other, "%Y-%m-%d").map_err(|e| {
+            AppError::validation(format!(
+                "tool `{tool}`: `date` must be `today`, `yesterday` or YYYY-MM-DD, got \
+                 '{other}' — {e}"
+            ))
+        }),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     //! pin the user-facing `parse_args` error message format so
@@ -261,6 +283,42 @@ mod tests {
     #[derive(Debug, Deserialize)]
     struct Probe {
         required: String,
+    }
+
+    #[test]
+    fn journal_date_resolves_against_the_given_day_5396() {
+        let day = |s: &str| chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d").unwrap();
+        // The clock's date before and after a midnight that is also a year
+        // and a leap-day boundary.
+        let before_midnight = day("2024-12-31");
+        let after_midnight = day("2025-01-01");
+        assert_eq!(
+            resolve_journal_date("t", None, before_midnight).unwrap(),
+            before_midnight
+        );
+        assert_eq!(
+            resolve_journal_date("t", Some("today"), after_midnight).unwrap(),
+            after_midnight
+        );
+        assert_eq!(
+            resolve_journal_date("t", Some("yesterday"), after_midnight).unwrap(),
+            before_midnight
+        );
+        assert_eq!(
+            resolve_journal_date("t", Some("yesterday"), day("2024-03-01")).unwrap(),
+            day("2024-02-29")
+        );
+        assert_eq!(
+            resolve_journal_date("t", Some("2023-07-04"), after_midnight).unwrap(),
+            day("2023-07-04")
+        );
+        for bad in ["Today", "2025-13-01", "tomorrow", ""] {
+            let err = resolve_journal_date("t", Some(bad), after_midnight).unwrap_err();
+            assert!(
+                matches!(err, AppError::Validation { .. }),
+                "{bad:?} must be refused as Validation, got {err:?}"
+            );
+        }
     }
 
     #[test]
