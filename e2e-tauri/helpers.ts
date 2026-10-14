@@ -87,6 +87,13 @@ export async function waitForAppReady(): Promise<void> {
   await dismissWelcomeModalIfPresent()
   const journalNav = sidebarNavButton('Journal')
   await journalNav.waitForDisplayed({ timeout: NAV_TIMEOUT })
+  // Focus-gated behaviour (the empty-block cleanup) is a silent no-op in an
+  // unfocused window, so a lane without focus must fail here, not pass those
+  // specs vacuously (#5457).
+  await browser.waitUntil(() => browser.execute(() => document.hasFocus()), {
+    timeout: NAV_TIMEOUT,
+    timeoutMsg: 'document.hasFocus() is false: run the lane under a window manager (#5457)',
+  })
 }
 
 /**
@@ -424,6 +431,28 @@ export async function ctrlClick(element: ReturnType<typeof $>): Promise<void> {
       .down()
       .up(),
   ])
+}
+
+/**
+ * The id of the block the roving editor is in, asserting the editor is blank.
+ * A control that proves the empty-block cleanup fires must target the block it
+ * leaves: the journal can hold a seeded blank block of its own that no focus
+ * change ever visits.
+ */
+export async function focusedBlankBlockId(): Promise<string> {
+  const editor = '[data-testid="block-editor"] [contenteditable="true"]'
+  await $(editor).waitForDisplayed({ timeout: ACTION_TIMEOUT })
+  const focused = await browser.execute((sel: string) => {
+    const el = document.querySelector(sel)
+    return {
+      id: el?.closest('[data-block-id]')?.getAttribute('data-block-id') ?? null,
+      text: el?.textContent ?? null,
+    }
+  }, editor)
+  if (focused.id === null || focused.text !== '') {
+    throw new Error(`expected the editor in a blank block, got ${JSON.stringify(focused)}`)
+  }
+  return focused.id
 }
 
 /**
