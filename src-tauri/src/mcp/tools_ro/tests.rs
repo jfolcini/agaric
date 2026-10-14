@@ -608,7 +608,7 @@ fn limit_validation_cases() -> Vec<(&'static str, i64, Value)> {
         (
             TOOL_LIST_BACKLINKS,
             LIST_RESULT_CAP,
-            json!({"block_id": "ANY"}),
+            json!({"block_id": "ANY", "space_id": TEST_SPACE_ID}),
         ),
         (
             TOOL_LIST_TAGS,
@@ -618,7 +618,7 @@ fn limit_validation_cases() -> Vec<(&'static str, i64, Value)> {
         (
             TOOL_GET_AGENDA,
             AGENDA_RESULT_CAP,
-            json!({"start_date": "2025-01-01", "end_date": "2025-01-02"}),
+            json!({"start_date": "2025-01-01", "end_date": "2025-01-02", "space_id": TEST_SPACE_ID}),
         ),
     ]
 }

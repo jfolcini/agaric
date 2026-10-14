@@ -364,10 +364,8 @@ struct ListBacklinksArgs {
     cursor: Option<String>,
     #[serde(default)]
     limit: Option<i64>,
-    /// Required: backlinks are restricted to source blocks in this space.
-    /// Optional here only so `required_space_scope` can name it when absent.
-    #[serde(default)]
-    space_id: Option<String>,
+    /// Backlinks are restricted to source blocks in this space.
+    space_id: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -398,10 +396,8 @@ struct GetAgendaArgs {
     cursor: Option<String>,
     #[serde(default)]
     limit: Option<i64>,
-    /// Required: the agenda is restricted to blocks in this space.
-    /// Optional here only so `required_space_scope` can name it when absent.
-    #[serde(default)]
-    space_id: Option<String>,
+    /// The agenda is restricted to blocks in this space.
+    space_id: String,
 }
 
 /// #633 — `list_spaces` takes no arguments; the empty struct (with
@@ -1424,19 +1420,6 @@ async fn handle_get_block(pool: &SqlitePool, args: Value) -> Result<Value, AppEr
     to_tool_result(&with_metadata(pool, block).await?)
 }
 
-/// The `space_id` a tool requires, as the scope its command takes.
-///
-/// The arg deserializes as optional so an omitted one is refused here with
-/// an error naming the field; `parse_args` reports only the error category.
-fn required_space_scope(tool: &str, space_id: Option<String>) -> Result<SpaceScope, AppError> {
-    let space_id = space_id.ok_or_else(|| {
-        AppError::validation(format!(
-            "tool `{tool}`: missing required argument `space_id`"
-        ))
-    })?;
-    Ok(SpaceScope::Active(SpaceId::from_string(space_id)?))
-}
-
 async fn handle_list_backlinks(pool: &SqlitePool, args: Value) -> Result<Value, AppError> {
     let args: ListBacklinksArgs = parse_args(TOOL_LIST_BACKLINKS, args)?;
     let limit = validate_limit(TOOL_LIST_BACKLINKS, args.limit, LIST_RESULT_CAP)?;
@@ -1445,7 +1428,7 @@ async fn handle_list_backlinks(pool: &SqlitePool, args: Value) -> Result<Value, 
     // matches nothing and comes back as an empty grouped response, which an
     // agent reads as "this block has no backlinks" and does not retry.
     let block_id = BlockId::from_string(args.block_id)?;
-    let scope = required_space_scope(TOOL_LIST_BACKLINKS, args.space_id)?;
+    let scope = SpaceScope::Active(SpaceId::from_string(args.space_id)?);
     let resp =
         list_backlinks_grouped_inner(pool, block_id, None, None, args.cursor, limit, &scope, None)
             .await?;
@@ -1470,7 +1453,7 @@ async fn handle_list_property_defs(pool: &SqlitePool, args: Value) -> Result<Val
 async fn handle_get_agenda(pool: &SqlitePool, args: Value) -> Result<Value, AppError> {
     let args: GetAgendaArgs = parse_args(TOOL_GET_AGENDA, args)?;
     let limit = validate_limit(TOOL_GET_AGENDA, args.limit, AGENDA_RESULT_CAP)?;
-    let scope = required_space_scope(TOOL_GET_AGENDA, args.space_id)?;
+    let scope = SpaceScope::Active(SpaceId::from_string(args.space_id)?);
     let resp = agenda_range_inner(
         pool,
         args.start_date,
