@@ -65,6 +65,14 @@ function scale(transform: string | null): number {
 async function graphToPageAndBack(page: Page): Promise<void> {
   await navigateToView(page, 'Graph')
   await expect(page.locator(NODES).first()).toBeVisible()
+  // A click selects the node (#5435) and the second opens it. The visible dot:
+  // Playwright would see it intercept a click on the hit-area under it.
+  // Human-length presses: d3-drag reheats the simulation on mousedown, so the
+  // layout is read once the select press has settled.
+  const gettingStarted = page.locator(NODES).filter({ hasText: 'Getting Started' })
+  const dot = gettingStarted.locator('circle:not(.hit-area)')
+  await dot.click({ delay: 120 })
+  await expect(gettingStarted).toHaveAttribute('aria-selected', 'true')
   const before = await settledPositions(page)
 
   // Zoom in, then pan, so the kept transform is not the one the first settle fitted (#5432).
@@ -86,12 +94,7 @@ async function graphToPageAndBack(page: Page): Promise<void> {
   await expect.poll(() => g.getAttribute('transform')).not.toBe(zoomed)
   const transform = await g.getAttribute('transform')
 
-  await page
-    .locator(NODES)
-    .filter({ hasText: 'Getting Started' })
-    .locator('circle.hit-area')
-    // A human-length press: d3-drag reheats the simulation on mousedown.
-    .click({ delay: 120 })
+  await dot.click({ delay: 120 })
   await expect(page.locator('[aria-label="Page title"]')).toHaveText('Getting Started')
   await page.locator('header').first().getByRole('button', { name: 'Back', exact: true }).click()
 

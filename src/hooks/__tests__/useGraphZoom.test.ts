@@ -10,7 +10,7 @@
 
 import { renderHook } from '@testing-library/react'
 import { select } from 'd3-selection'
-import { zoom } from 'd3-zoom'
+import { zoom, type ZoomTransform } from 'd3-zoom'
 import React from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -212,6 +212,21 @@ describe('useGraphZoom', () => {
       result.current.zoomIn()
 
       expect(durationsPassed()).toEqual([200, 0])
+    })
+
+    it('#5435: reveal pans a focused node into view, instantly under reduced motion', () => {
+      setReducedMotion(true)
+      const result = attachedZoom()
+      const offScreen = { x: 2000, y: 300 }
+
+      result.current.reveal({ x: 400, y: 300 })
+      result.current.reveal(offScreen)
+
+      const zoomInstance = vi.mocked(zoom).mock.results[0]?.value as any
+      expect(zoomInstance.transform).toHaveBeenCalledTimes(1)
+      const target = zoomInstance.transform.mock.calls[0]?.[1] as ZoomTransform | null
+      expect(target?.apply([offScreen.x, offScreen.y])).toEqual([400, 300])
+      expect(durationsPassed()).toEqual([0])
     })
   })
 

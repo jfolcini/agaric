@@ -37,7 +37,7 @@
 
 import { zoomTransform } from 'd3-zoom'
 import type React from 'react'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import { useGraphMainThreadSim } from '@/hooks/useGraphMainThreadSim'
 import { useGraphRenderElements } from '@/hooks/useGraphRenderElements'
@@ -49,7 +49,9 @@ import {
   DEFAULT_WIDTH,
   type GraphLayout,
   keptPositions,
-  markCurrentPage,
+  markNodes,
+  type NodeActions,
+  type NodeMarks,
   patchGraphSelections,
   type RenderResult,
   seedPositions,
@@ -64,12 +66,16 @@ export interface UseGraphSimulationArgs {
   svgRef: React.RefObject<SVGSVGElement | null>
   nodes: GraphNode[]
   edges: GraphEdge[]
-  navigateToPage: (id: string, label: string) => void
-  /** The page open in the active tab; its node takes the accent. */
+  actions: GraphPageActions
+  /** The page open in the active tab; its node takes the accent unless another is selected. */
   currentPageId: string | null
+  selectedPageId: string | null
   /** Where the graph's layout is kept while it is unmounted (#5434). */
   layout: GraphLayoutStore
 }
+
+/** What selecting or opening a node does to the page it stands for. */
+export type GraphPageActions = Omit<NodeActions, 'reveal'>
 
 export interface GraphLayoutStore {
   read: () => GraphLayout | null
@@ -112,12 +118,24 @@ export function useGraphSimulation({
   svgRef,
   nodes,
   edges,
-  navigateToPage,
+  actions,
   currentPageId,
+  selectedPageId,
   layout,
 }: UseGraphSimulationArgs): UseGraphSimulationResult {
-  const { attach: attachZoom, zoomIn, zoomOut, fitToView: fitNodesToView } = useGraphZoom(svgRef)
-  const renderElements = useGraphRenderElements({ nodes, edges, navigateToPage, currentPageId })
+  const {
+    attach: attachZoom,
+    zoomIn,
+    zoomOut,
+    fitToView: fitNodesToView,
+    reveal,
+  } = useGraphZoom(svgRef)
+  const nodeActions = useMemo<NodeActions>(() => ({ ...actions, reveal }), [actions, reveal])
+  const marks = useMemo<NodeMarks>(
+    () => ({ currentPageId, selectedId: selectedPageId }),
+    [currentPageId, selectedPageId],
+  )
+  const renderElements = useGraphRenderElements({ nodes, edges, actions: nodeActions, marks })
   const { workerFailed, runWorker } = useGraphWorkerSimulation()
   const runMainThread = useGraphMainThreadSim()
 
@@ -149,23 +167,23 @@ export function useGraphSimulation({
   // would re-fire on every filter toggle).
   const [setupKey, setSetupKey] = useState(0)
 
-  // Refs for the latest data + nav callback + renderElements so the
+  // Refs for the latest data + node actions + renderElements so the
   // setup effect can build the simulation context without listing
   // them in its deps. Filter-induced identity flips of `nodes`/
-  // `edges`/`navigateToPage` propagate into `renderElements`'s
+  // `edges`/`actions` propagate into `renderElements`'s
   // useCallback identity — listing `renderElements` in the setup
   // effect's deps would re-fire setup on every filter toggle (which
   // is precisely what PERF-Tier2 item 8 is fixing).
   const nodesRef = useRef(nodes)
   const edgesRef = useRef(edges)
-  const navigateToPageRef = useRef(navigateToPage)
-  const currentPageIdRef = useRef(currentPageId)
+  const nodeActionsRef = useRef(nodeActions)
+  const marksRef = useRef(marks)
   const renderElementsRef = useRef(renderElements)
   const layoutRef = useRef(layout)
   nodesRef.current = nodes
   edgesRef.current = edges
-  navigateToPageRef.current = navigateToPage
-  currentPageIdRef.current = currentPageId
+  nodeActionsRef.current = nodeActions
+  marksRef.current = marks
   renderElementsRef.current = renderElements
   layoutRef.current = layout
 
@@ -173,7 +191,7 @@ export function useGraphSimulation({
   // Runs only when the simulation *kind* changes (mount, worker
   // failure flip, or a zoom/runner callback identity change). Reads
   // the latest data + renderElements via refs so filter toggles do
-  // not re-fire this effect. (nodes/edges/navigateToPage/renderElements
+  // not re-fire this effect. (nodes/edges/actions/renderElements
   // are intentionally consumed via refs; the exhaustive-deps directive
   // lives on the deps array below where oxlint anchors the diagnostic.)
   useEffect(() => {
@@ -301,7 +319,7 @@ export function useGraphSimulation({
       // behavior, and ResizeObserver stay attached so a later non-empty
       // filter re-populates without rebuilding the SVG layer.
       if (state && (state.handledNodes.length > 0 || state.handledEdges.length > 0)) {
-        patchGraphSelections(state.rendered.g, [], [], navigateToPageRef.current)
+        patchGraphSelections(state.rendered.g, [], [], nodeActionsRef.current)
         state.handle.cleanup()
         state.handle = {
           cleanup: () => {},
@@ -358,12 +376,12 @@ export function useGraphSimulation({
     }
 
     // Patch SVG selections in place via .data(...).join(...).
-    const { link, node } = patchGraphSelections(
+    const { link, node, highlight } = patchGraphSelections(
       state.rendered.g,
       simNodes,
       simEdges,
-      navigateToPageRef.current,
-      currentPageIdRef.current,
+      nodeActionsRef.current,
+      marksRef.current,
     )
 
     const applyPositions = createApplyPositions(link, node)
@@ -407,6 +425,7 @@ export function useGraphSimulation({
       nodeById,
       link,
       node,
+      highlight,
       width,
       height,
     }
@@ -421,12 +440,14 @@ export function useGraphSimulation({
     // oxlint-disable-next-line react-hooks/exhaustive-deps -- workerFailed/runWorker/runMainThread are consumed via closure but intentionally NOT listed: when they flip, the setup effect re-fires and rebuilds everything, so the patch effect must not also fire on those changes.
   }, [nodes, edges, svgRef])
 
-  // A new active-tab page moves the accent without a patch, which would
-  // reheat the layout.
+  // A new active-tab page or selection moves the accent without a patch, which
+  // would reheat the layout.
   useEffect(() => {
     const state = stateRef.current
-    if (state) markCurrentPage(state.rendered.node, currentPageId)
-  }, [currentPageId])
+    if (!state) return
+    markNodes(state.rendered.node, marks)
+    state.rendered.highlight.select(marks.selectedId)
+  }, [marks])
 
   return { zoomIn, zoomOut, fitToView }
 }

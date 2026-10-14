@@ -29,15 +29,21 @@ import { LoadingSkeleton } from '@/components/rendering/LoadingSkeleton'
 import { Button } from '@/components/ui/button'
 import { IconButton } from '@/components/ui/icon-button'
 import { useBlockPropertyEvents } from '@/hooks/useBlockPropertyEvents'
-import { type GraphLayoutStore, useGraphSimulation } from '@/hooks/useGraphSimulation'
+import {
+  type GraphLayoutStore,
+  type GraphPageActions,
+  useGraphSimulation,
+} from '@/hooks/useGraphSimulation'
 import { useGraphStructureEvents } from '@/hooks/useGraphStructureEvents'
+import { useIsMobile } from '@/hooks/useIsMobile'
 import { useShouldShowMobileChrome } from '@/hooks/useShouldShowMobileChrome'
+import { announce } from '@/lib/announcer'
 import { unwrap } from '@/lib/app-error'
 import { commands } from '@/lib/bindings'
 import { applyGraphFilters, type GraphFilter } from '@/lib/graph-filters'
 import { computeLocalGraph, type LocalGraphHops } from '@/lib/graph-neighborhood'
 import type { GraphLayout } from '@/lib/graph-sim-helpers'
-import { getShortcutKeys } from '@/lib/keyboard-config'
+import { getShortcutKeys, matchesShortcutBinding } from '@/lib/keyboard-config'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
 import { PREFERENCES, readPreference, writePreference } from '@/lib/preferences'
@@ -190,6 +196,9 @@ export function GraphView(): React.ReactElement {
   const { structureKey } = useGraphStructureEvents()
   const invalidationKey = propertyKey + structureKey
   const navigateToPage = useTabsStore((s) => s.navigateToPage)
+  const openInNewTab = useTabsStore((s) => s.openInNewTab)
+  // The tab bar is desktop-only, so on mobile a new tab would open out of sight.
+  const isMobile = useIsMobile()
   const currentSpaceId = useSpaceStore((s) => s.currentSpaceId)
   const svgRef = useRef<SVGSVGElement>(null)
   // #1530: remember the last combined `invalidationKey` applied to a fetch so a
@@ -240,6 +249,20 @@ export function GraphView(): React.ReactElement {
   const pageStack = useTabsStore(selectPageStack)
   const seedEntry = pageStack.length > 0 ? pageStack.at(-1) : null
   const seedPageId = seedEntry?.pageId ?? null
+
+  // A click or Space selects a node; in local mode the graph re-centres on it.
+  const [selectedPageId, setSelectedPageId] = useState<string | null>(null)
+  const pageActions = useMemo<GraphPageActions>(
+    () => ({
+      select: (id, label) => {
+        setSelectedPageId(id)
+        announce(t('graph.selected', { page: label }))
+      },
+      open: navigateToPage,
+      openInNewTab: isMobile ? navigateToPage : openInNewTab,
+    }),
+    [t, navigateToPage, openInNewTab, isMobile],
+  )
 
   // Extract the tag filter's tagIds — these drive server-side fetching.
   // Every other filter is applied client-side via `applyGraphFilters`.
@@ -393,6 +416,10 @@ export function GraphView(): React.ReactElement {
   }, [])
 
   const localActive = localMode && seedPageId !== null
+  // A page deleted or filtered out on the server since it was selected is no selection.
+  const selectedId = nodes.some((n) => n.id === selectedPageId) ? selectedPageId : null
+  // `null` outside local mode, so a selection there does not re-filter and reheat the layout.
+  const localSeedId = localActive ? (selectedId ?? seedPageId) : null
 
   // Client-side filtering (status, priority, has-date, has-backlinks, exclude-templates).
   // Tag filter is pass-through here because tag_ids is not populated on nodes
@@ -401,11 +428,11 @@ export function GraphView(): React.ReactElement {
   // drop the seed, and local mode would fall back to the whole graph (#5370).
   const filteredNodes = useMemo(() => {
     const kept = applyGraphFilters(nodes, filters)
-    const seed = localActive ? nodes.find((n) => n.id === seedPageId) : undefined
+    const seed = nodes.find((n) => n.id === localSeedId)
     if (seed === undefined || kept.includes(seed)) return kept
     const seedFilters = filters.filter((f) => f.type !== 'excludeJournal')
     return applyGraphFilters([seed], seedFilters).length > 0 ? [...kept, seed] : kept
-  }, [nodes, filters, localActive, seedPageId])
+  }, [nodes, filters, localSeedId])
   const filteredEdges = useMemo(() => {
     if (filteredNodes.length === nodes.length) return edges
     const visibleIds = new Set(filteredNodes.map((n) => n.id))
@@ -424,9 +451,13 @@ export function GraphView(): React.ReactElement {
     if (seedPageId === null) return null
     return nodes.find((n) => n.id === seedPageId)?.label ?? seedEntry?.title ?? null
   }, [nodes, seedPageId, seedEntry])
+  const walkedFromSeed = localSeedId !== null && localSeedId !== seedPageId
+  const localSeedLabel = walkedFromSeed
+    ? (nodes.find((n) => n.id === localSeedId)?.label ?? null)
+    : seedLabel
 
   // A tag opens in the page editor too, but the graph's nodes are pages only.
-  const seedIsTag = tags.some((tag) => tag.tag_id === seedPageId)
+  const seedIsTag = tags.some((tag) => tag.tag_id === localSeedId)
 
   // #1752: when the active tab loses its page (seed becomes `null`), clear
   // local-graph mode in state. Otherwise the boolean lingers as `true` —
@@ -445,12 +476,12 @@ export function GraphView(): React.ReactElement {
   }, [currentSpaceId, seedPageId, localMode, localHops])
 
   const { displayNodes, displayEdges } = useMemo(() => {
-    if (!localActive || seedPageId === null) {
+    if (localSeedId === null) {
       return { displayNodes: filteredNodes, displayEdges: filteredEdges }
     }
-    const local = computeLocalGraph(filteredNodes, filteredEdges, seedPageId, localHops)
+    const local = computeLocalGraph(filteredNodes, filteredEdges, localSeedId, localHops)
     return { displayNodes: local.nodes, displayEdges: local.edges }
-  }, [localActive, seedPageId, localHops, filteredNodes, filteredEdges])
+  }, [localSeedId, localHops, filteredNodes, filteredEdges])
 
   // d3-force simulation + worker lifecycle + zoom handlers.
   const showMobileChrome = useShouldShowMobileChrome()
@@ -458,8 +489,10 @@ export function GraphView(): React.ReactElement {
     svgRef,
     nodes: displayNodes,
     edges: displayEdges,
-    navigateToPage,
+    actions: pageActions,
     currentPageId: seedPageId,
+    // Off screen, a selection would dim every node and take the current page's accent.
+    selectedPageId: displayNodes.some((n) => n.id === selectedId) ? selectedId : null,
     layout,
   })
 
@@ -540,7 +573,9 @@ export function GraphView(): React.ReactElement {
             onToggle={setLocalMode}
             hops={localHops}
             onHopsChange={setLocalHops}
-            seedLabel={seedLabel}
+            seedLabel={seedPageId === null ? null : localSeedLabel}
+            originLabel={walkedFromSeed ? seedLabel : null}
+            onReturnToOrigin={() => setSelectedPageId(null)}
           />
         </div>
         {/*
@@ -555,13 +590,8 @@ export function GraphView(): React.ReactElement {
          * overlays after → above).
          */}
         {/*
-         * Dropped `role="img"` from the SVG wrapper. The graph's nodes
-         * are interactive (`role="button"` + `tabindex=0` + Enter/Space handlers
-         * via `useGraphSimulation`), and `role="img"` on a container of
-         * interactive descendants is incorrect — ATs treat it as one opaque
-         * graphic and hide the buttons. The accessible name lives on the
-         * `aria-label`, which still gives the SVG a label when ATs surface it
-         * via its default graphics role.
+         * The nodes are the `option`s of this listbox: Space selects one and
+         * Enter opens it, which a `button` could not tell apart.
          */}
         {/*
          * Pair the SVG with a visually-hidden hint so keyboard users
@@ -575,9 +605,17 @@ export function GraphView(): React.ReactElement {
         <svg
           ref={svgRef}
           className="absolute inset-0 h-full w-full"
+          // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- the listbox is the SVG canvas whose d3-drawn node groups are its options; a <select> cannot draw a graph
+          role="listbox"
           aria-label={t('graph.title')}
           aria-describedby="graph-keyboard-hint"
+          tabIndex={0}
           data-testid="graph-svg"
+          onKeyDown={(e) => {
+            if (selectedId === null || !matchesShortcutBinding(e, 'listClearSelection')) return
+            e.preventDefault()
+            setSelectedPageId(null)
+          }}
         />
         {/*
          * BUG #746: when a filter combination matches no pages, the SVG is
@@ -599,7 +637,7 @@ export function GraphView(): React.ReactElement {
               message={
                 localActive
                   ? t(seedIsTag ? 'graph.local.seedIsTag' : 'graph.local.seedHidden', {
-                      page: seedLabel,
+                      page: localSeedLabel,
                     })
                   : t('graph.noMatches')
               }

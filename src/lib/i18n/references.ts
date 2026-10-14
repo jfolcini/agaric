@@ -107,7 +107,8 @@ export const references: Record<string, string> = {
   'graph.tagsLoadFailed': 'Failed to load tags for the filter',
   'graph.title': 'Page Relationships',
   'graph.keyboardHint':
-    'Use Tab to enter the graph, Arrow keys to move between nodes, then Enter or Space to open the page.',
+    'Use Tab to enter the graph, then Arrow keys or typing a name to move between nodes. Space or a click selects a node; Enter or a second click opens its page; Escape clears the selection.',
+  'graph.selected': 'Selected "{{page}}"',
   'graph.zoomIn': 'Zoom in',
   'graph.zoomOut': 'Zoom out',
   'graph.zoomReset': 'Fit to view',
@@ -117,6 +118,7 @@ export const references: Record<string, string> = {
   'graph.local.focus': 'Focus on this page',
   'graph.local.exit': 'Exit focus',
   'graph.local.active': 'Showing neighbors of "{{page}}"',
+  'graph.local.back': 'Back to "{{page}}"',
   'graph.local.noPage': 'Open a page to focus the graph on it',
   'graph.local.seedHidden': '"{{page}}" is hidden by the active filters',
   'graph.local.seedIsTag': '"{{page}}" is a tag, and the graph shows only pages',

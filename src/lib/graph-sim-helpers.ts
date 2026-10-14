@@ -44,7 +44,7 @@ const LABEL_TRUNCATE_LEN = 20
 const LABEL_GAP = 4
 export const ZOOM_BUTTON_DURATION_MS = 200
 export const ZOOM_FIT_DURATION_MS = 300
-/** Screen pixels kept clear around the graph when it is fitted to the view. */
+/** Screen pixels kept clear around the graph when it is fitted, and around a node panned into view. */
 const FIT_PADDING = 64
 /** A fitted graph is never zoomed past this, so a handful of nodes is not blown up. */
 const FIT_MAX_SCALE = 2
@@ -64,9 +64,27 @@ export interface RenderResult {
   nodeById: Map<string, GraphNode>
   link: LinkSel
   node: NodeSel
+  highlight: NeighbourhoodHighlight
   width: number
   height: number
 }
+
+/** What a node does when it is selected, opened, or reached by the keyboard. */
+export interface NodeActions {
+  select: (id: string, label: string) => void
+  open: (id: string, label: string) => void
+  openInNewTab: (id: string, label: string) => void
+  /** Pan so a node reached by the keyboard is in view. */
+  reveal: (node: GraphNode) => void
+}
+
+/** The page open in the active tab, and the node the user selected. */
+export interface NodeMarks {
+  currentPageId: string | null
+  selectedId: string | null
+}
+
+const NO_MARKS: NodeMarks = { currentPageId: null, selectedId: null }
 
 export interface SimulationCtx {
   simNodes: GraphNode[]
@@ -149,14 +167,24 @@ function buildAdjacency(simEdges: GraphEdge[]): Map<string, Set<string>> {
 }
 
 /**
- * The page open in the active tab takes the one accent; every other node is
- * the neutral tone. `aria-current` says the same to assistive tech.
+ * The selected node, else the page open in the active tab, takes the one
+ * accent; every other node is the neutral tone. Only the selected node shows
+ * its full title.
  */
-export function markCurrentPage(node: NodeSel, currentPageId: string | null): void {
+export function markNodes(node: NodeSel, { currentPageId, selectedId }: NodeMarks): void {
+  const accented = selectedId ?? currentPageId
   node.attr('aria-current', (d) => (d.id === currentPageId ? 'page' : null))
+  node.attr('aria-selected', (d) => String(d.id === selectedId))
   node
     .select('circle:nth-child(2)')
-    .attr('fill', (d) => (d.id === currentPageId ? 'var(--graph-accent)' : 'var(--graph-node)'))
+    .attr('fill', (d) => (d.id === accented ? 'var(--graph-accent)' : 'var(--graph-node)'))
+  node
+    .select<SVGTextElement>('text')
+    .text((d) =>
+      d.id !== selectedId && d.label.length > LABEL_TRUNCATE_LEN
+        ? `${d.label.slice(0, LABEL_TRUNCATE_LEN)}…`
+        : d.label,
+    )
 }
 
 function drawEdges(edgeLayer: GSel, simEdges: GraphEdge[]): LinkSel {
@@ -188,7 +216,7 @@ function drawNodes(
   nodeLayer: GSel,
   simNodes: GraphNode[],
   radiusOf: (d: GraphNode) => number,
-  currentPageId: string | null,
+  marks: NodeMarks,
 ): NodeSel {
   const node = nodeLayer
     .selectAll<SVGGElement, GraphNode>('g.node')
@@ -197,7 +225,7 @@ function drawNodes(
       const grp = enter
         .append('g')
         .attr('class', 'node')
-        .attr('role', 'button')
+        .attr('role', 'option')
         .style('cursor', 'pointer')
 
       // Hit-area circle for touch targets (44px diameter).
@@ -225,18 +253,13 @@ function drawNodes(
     })
     // #1725 — explicit accessible name per node (don't rely solely on the
     // child <title>, whose name computation is inconsistent across screen
-    // readers under role="button").
+    // readers).
     .attr('aria-label', (d) => d.label)
 
-  node
-    .select<SVGTextElement>('text')
-    .text((d) =>
-      d.label.length > LABEL_TRUNCATE_LEN ? `${d.label.slice(0, LABEL_TRUNCATE_LEN)}…` : d.label,
-    )
   node.select<SVGTitleElement>('title').text((d) => d.label)
   node.select<SVGCircleElement>('circle:nth-child(2)').attr('r', radiusOf)
   node.select<SVGTextElement>('text').attr('dx', (d) => radiusOf(d) + LABEL_GAP)
-  markCurrentPage(node, currentPageId)
+  markNodes(node, marks)
 
   // #1725 — roving tabindex: only ONE node is in the page tab order at a
   // time (the first; thereafter the last-focused). All others are
@@ -289,68 +312,142 @@ function focusRovingNode(node: NodeSel, target: SVGGElement): void {
   target.focus()
 }
 
+/** Screen direction of each arrow key; the zoom transform never rotates, so it holds in graph space too. */
+const ARROW_DIRECTIONS: Readonly<Record<string, readonly [number, number]>> = {
+  ArrowRight: [1, 0],
+  ArrowLeft: [-1, 0],
+  ArrowDown: [0, 1],
+  ArrowUp: [0, -1],
+}
+
 /**
- * Arrow/Home/End navigation across the node selection (roving tabindex).
- * Bound under the `.roving` keydown namespace so it coexists with the
- * activation handler in `attachNodeClickAndKeyboard`.
+ * The index of the node nearest to `from` on the arrow's side of it, or `-1`.
+ * Distance off the arrow's axis weighs extra, so a node straight ahead beats a
+ * nearer one far to the side.
  */
-function attachNodeRovingKeys(node: NodeSel): void {
-  node.on('keydown.roving', function (event: KeyboardEvent) {
-    const keys = ['ArrowRight', 'ArrowDown', 'ArrowLeft', 'ArrowUp', 'Home', 'End']
-    if (!keys.includes(event.key)) return
-    const all = node.nodes()
-    if (all.length === 0) return
-    const current = all.indexOf(this as SVGGElement)
-    if (current === -1) return
-    event.preventDefault()
-    let next = current
-    switch (event.key) {
-      case 'ArrowRight':
-      case 'ArrowDown': {
-        next = (current + 1) % all.length
-        break
-      }
-      case 'ArrowLeft':
-      case 'ArrowUp': {
-        next = (current - 1 + all.length) % all.length
-        break
-      }
-      case 'Home': {
-        next = 0
-        break
-      }
-      case 'End': {
-        next = all.length - 1
-        break
-      }
+function nearestInDirection(
+  nodes: readonly GraphNode[],
+  from: GraphNode,
+  [dx, dy]: readonly [number, number],
+): number {
+  let best = -1
+  let bestScore = Number.POSITIVE_INFINITY
+  nodes.forEach((n, i) => {
+    const x = (n.x ?? 0) - (from.x ?? 0)
+    const y = (n.y ?? 0) - (from.y ?? 0)
+    const ahead = x * dx + y * dy
+    if (ahead <= 0) return
+    const aside = Math.abs(x * dy - y * dx)
+    const score = Math.hypot(ahead, aside) + 2 * aside
+    if (score < bestScore) {
+      best = i
+      bestScore = score
     }
+  })
+  return best
+}
+
+/** Characters typed further apart than this start a new type-ahead search. */
+const TYPEAHEAD_RESET_MS = 500
+/** Keys that stay shortcuts while a node is focused, so typing a name never takes them. */
+const TYPEAHEAD_YIELDS_TO = ['graphZoomIn', 'graphZoomOut', 'graphZoomReset', 'showShortcuts']
+
+function isTypeAheadKey(event: KeyboardEvent): boolean {
+  return (
+    event.key.length === 1 &&
+    event.key !== ' ' &&
+    !event.ctrlKey &&
+    !event.metaKey &&
+    !event.altKey &&
+    !TYPEAHEAD_YIELDS_TO.some((id) => matchesShortcutBinding(event, id))
+  )
+}
+
+/**
+ * The index of the node whose label starts with `typed`, ignoring case, or
+ * `-1`. One letter, or the same letter repeated, searches from the node after
+ * `from`, wrapping, so it cycles the nodes starting with it; a longer string
+ * searches from `from` itself, so each further character narrows the match in
+ * place.
+ */
+function matchTypedPrefix(nodes: readonly GraphNode[], from: number, typed: string): number {
+  const first = typed.slice(0, 1)
+  const cycling = first.repeat(typed.length) === typed
+  const prefix = (cycling ? first : typed).toLocaleLowerCase()
+  const start = cycling ? 1 : 0
+  for (let step = start; step < nodes.length + start; step++) {
+    const i = (from + step) % nodes.length
+    if (nodes[i]?.label.toLocaleLowerCase().startsWith(prefix)) return i
+  }
+  return -1
+}
+
+/**
+ * Arrow keys move to the nearest node in that direction on screen; Home and
+ * End go to the first and last node; typing a name moves to the node it starts
+ * (the listbox type-ahead), which reaches nodes no arrow leads to. The node
+ * moved to is panned into view; a node focused by a click is already on
+ * screen. Bound under the `.roving` keydown namespace so it coexists with the
+ * handler in `attachNodeActions`.
+ */
+function attachNodeRovingKeys(node: NodeSel, reveal: NodeActions['reveal']): void {
+  let typed = ''
+  let typedAt = 0
+  node.on('keydown.roving', (event: KeyboardEvent, d) => {
+    const direction = ARROW_DIRECTIONS[event.key]
+    const typing = isTypeAheadKey(event)
+    if (!typing && direction === undefined && event.key !== 'Home' && event.key !== 'End') return
+    event.preventDefault()
+    const all = node.nodes()
+    const data = node.data()
+    let next: number
+    if (typing) {
+      const now = Date.now()
+      typed = now - typedAt > TYPEAHEAD_RESET_MS ? event.key : typed + event.key
+      typedAt = now
+      next = matchTypedPrefix(data, data.indexOf(d), typed)
+    } else if (direction !== undefined) next = nearestInDirection(data, d, direction)
+    else next = event.key === 'Home' ? 0 : all.length - 1
     const target = all[next]
-    if (target) focusRovingNode(node, target)
+    const targetDatum = data[next]
+    if (!target || !targetDatum) return
+    focusRovingNode(node, target)
+    reveal(targetDatum)
   })
 }
 
 /**
- * Attach click + keyboard activation to graph nodes.
- *
- * Each node `<g>` has `role="button"` (set in `drawNodes`) and a roving
- * `tabindex` (#1725). This handler mirrors the native button activation
- * contract: Enter and Space both navigate to the underlying page (with
- * `preventDefault` on Space to suppress page-scroll). Click parity comes
- * from the `click` listener so pointer + keyboard paths converge on
- * `navigateToPage`.
+ * A click selects a node and a click on the selected node opens it; Space
+ * selects and Enter opens. Ctrl/Cmd-click and middle-click open a new tab.
+ * Whether a node is selected is read from the DOM, which `markNodes` keeps in
+ * step with the selection between patches. A double-click is two clicks that
+ * open the node, so it must not also reach d3-zoom's double-click zoom, which
+ * would change the view the graph is kept with.
  */
-function attachNodeClickAndKeyboard(
-  node: NodeSel,
-  navigateToPage: (id: string, label: string) => void,
-): void {
-  node.on('click', (_event, d) => {
-    navigateToPage(d.id, d.label)
+function attachNodeActions(node: NodeSel, actions: NodeActions): void {
+  node.on('click', function (event: MouseEvent, d) {
+    if (event.ctrlKey || event.metaKey) actions.openInNewTab(d.id, d.label)
+    else if (this.getAttribute('aria-selected') === 'true') actions.open(d.id, d.label)
+    else actions.select(d.id, d.label)
   })
 
-  node.on('keydown', (event, d) => {
-    if (event.key === 'Enter' || event.key === ' ') {
+  node.on('dblclick', (event: MouseEvent) => {
+    event.stopPropagation()
+  })
+
+  node.on('auxclick', (event: MouseEvent, d) => {
+    if (event.button !== 1) return
+    event.preventDefault()
+    actions.openInNewTab(d.id, d.label)
+  })
+
+  node.on('keydown', (event: KeyboardEvent, d) => {
+    if (event.key === 'Enter') {
       event.preventDefault()
-      navigateToPage(d.id, d.label)
+      actions.open(d.id, d.label)
+    } else if (event.key === ' ') {
+      event.preventDefault()
+      actions.select(d.id, d.label)
     }
   })
 }
@@ -358,30 +455,36 @@ function attachNodeClickAndKeyboard(
 interface NeighbourhoodHighlight {
   hover: (id: string | null) => void
   focus: (id: string | null) => void
+  select: (id: string | null) => void
 }
 
 /**
- * Hover wins over focus while both are set, and leaving a hovered node falls
- * back to the focused one's neighbourhood instead of clearing it. The focused
- * node itself is never dimmed, so its focus ring stays legible. The opacity
- * easing is a CSS transition in `index.css`, so reduced motion zeroes it.
+ * Hover wins over focus, and focus over the selection; leaving a hovered or
+ * focused node falls back to the next one's neighbourhood instead of clearing
+ * it. The focused and selected nodes are never dimmed, so the focus ring and
+ * the accent stay legible. The opacity easing is a CSS transition in
+ * `index.css`, so reduced motion zeroes it.
  */
 function createNeighbourhoodHighlight(
   node: NodeSel,
   link: LinkSel,
   simEdges: GraphEdge[],
+  selectedId: string | null,
 ): NeighbourhoodHighlight {
   const neighbours = buildAdjacency(simEdges)
   let hovered: string | null = null
   let focused: string | null = null
+  let selected = selectedId
 
   const apply = (): void => {
-    const centre = hovered ?? focused
+    const centre = hovered ?? focused ?? selected
     const lit = centre === null ? null : (neighbours.get(centre) ?? new Set<string>())
     const touchesCentre = (d: GraphEdge): boolean =>
       endId(d.source) === centre || endId(d.target) === centre
     node.style('opacity', (d) =>
-      lit === null || d.id === centre || d.id === focused || lit.has(d.id) ? null : DIMMED_OPACITY,
+      lit === null || d.id === centre || d.id === focused || d.id === selected || lit.has(d.id)
+        ? null
+        : DIMMED_OPACITY,
     )
     link
       .style('opacity', (d) => (lit === null || touchesCentre(d) ? null : DIMMED_OPACITY))
@@ -389,6 +492,7 @@ function createNeighbourhoodHighlight(
         lit !== null && touchesCentre(d) ? HIGHLIGHTED_EDGE_OPACITY : null,
       )
   }
+  if (selected !== null) apply()
 
   return {
     hover: (id) => {
@@ -397,6 +501,10 @@ function createNeighbourhoodHighlight(
     },
     focus: (id) => {
       focused = id
+      apply()
+    },
+    select: (id) => {
+      selected = id
       apply()
     },
   }
@@ -455,8 +563,8 @@ function attachNodeHover(
  * patch join `simNodes`/`simEdges` into the layer groups under `g`. Keyed
  * joins keep the DOM of persisting nodes and edges; EXIT removes the rest.
  * Listeners are re-bound on the merged selection so their closures see the
- * latest `navigateToPage` and selections; d3's `.on()` replaces a handler
- * instead of stacking it.
+ * latest `actions` and selections; d3's `.on()` replaces a handler instead of
+ * stacking it.
  *
  * Joins are scoped to `g.edges-layer` / `g.nodes-layer`, so an ENTERing
  * `<line>` lands in the edge layer, which precedes the node layer, and never
@@ -469,31 +577,31 @@ export function patchGraphSelections(
   g: GSel,
   simNodes: GraphNode[],
   simEdges: GraphEdge[],
-  navigateToPage: (id: string, label: string) => void,
-  currentPageId: string | null = null,
-): { link: LinkSel; node: NodeSel } {
+  actions: NodeActions,
+  marks: NodeMarks = NO_MARKS,
+): Pick<RenderResult, 'link' | 'node' | 'highlight'> {
   const degrees = countDegrees(simEdges)
   for (const n of simNodes) n.degree = degrees.get(n.id) ?? 0
   const radiusOf = (d: GraphNode): number => nodeRadius(d.degree ?? 0)
 
   const link = drawEdges(g.select<SVGGElement>('g.edges-layer'), simEdges)
-  const node = drawNodes(g.select<SVGGElement>('g.nodes-layer'), simNodes, radiusOf, currentPageId)
+  const node = drawNodes(g.select<SVGGElement>('g.nodes-layer'), simNodes, radiusOf, marks)
 
-  attachNodeClickAndKeyboard(node, navigateToPage)
-  attachNodeRovingKeys(node)
-  const highlight = createNeighbourhoodHighlight(node, link, simEdges)
+  attachNodeActions(node, actions)
+  attachNodeRovingKeys(node, actions.reveal)
+  const highlight = createNeighbourhoodHighlight(node, link, simEdges, marks.selectedId)
   attachNodeFocusStyles(node, highlight)
   attachNodeHover(node, highlight, radiusOf)
 
-  return { link, node }
+  return { link, node, highlight }
 }
 
 export function renderGraphElements(
   svg: SVGSVGElement,
   nodes: GraphNode[],
   edges: GraphEdge[],
-  navigateToPage: (id: string, label: string) => void,
-  currentPageId: string | null = null,
+  actions: NodeActions,
+  marks: NodeMarks = NO_MARKS,
 ): RenderResult {
   const width = svg.clientWidth || DEFAULT_WIDTH
   const height = svg.clientHeight || DEFAULT_HEIGHT
@@ -519,9 +627,9 @@ export function renderGraphElements(
     nodeById.set(n.id, n)
   }
 
-  const { link, node } = patchGraphSelections(g, simNodes, simEdges, navigateToPage, currentPageId)
+  const { link, node, highlight } = patchGraphSelections(g, simNodes, simEdges, actions, marks)
 
-  return { g, simNodes, simEdges, nodeById, link, node, width, height }
+  return { g, simNodes, simEdges, nodeById, link, node, highlight, width, height }
 }
 
 // ── Zoom + keyboard zoom ─────────────────────────────────────────────
@@ -615,6 +723,31 @@ export function fitTransform(
     .translate(width / 2, height / 2)
     .scale(scale)
     .translate(-(minX + maxX) / 2, -(minY + maxY) / 2)
+}
+
+/**
+ * The zoom that centres `point` at the current scale, or `null` when the point
+ * is already on screen with `FIT_PADDING` pixels to spare.
+ */
+export function revealTransform(
+  transform: ZoomTransform,
+  point: SimulationNodeDatum,
+  width: number,
+  height: number,
+): ZoomTransform | null {
+  const x = point.x ?? 0
+  const y = point.y ?? 0
+  const [screenX, screenY] = transform.apply([x, y])
+  const inView =
+    screenX >= FIT_PADDING &&
+    screenX <= width - FIT_PADDING &&
+    screenY >= FIT_PADDING &&
+    screenY <= height - FIT_PADDING
+  if (inView) return null
+  return zoomIdentity
+    .translate(width / 2, height / 2)
+    .scale(transform.k)
+    .translate(-x, -y)
 }
 
 // ── Position application ─────────────────────────────────────────────

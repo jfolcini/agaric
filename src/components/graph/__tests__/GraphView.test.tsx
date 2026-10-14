@@ -378,12 +378,10 @@ describe('GraphView', () => {
       expect(graphView).toBeInTheDocument()
     })
 
-    // SVG no longer has role="img"; query by data-testid instead.
     const svg = screen.getByTestId('graph-svg')
     expect(svg).toBeInTheDocument()
     expect(svg.tagName).toBe('svg')
     expect(svg).toHaveAttribute('aria-label', 'Page Relationships')
-    expect(svg).not.toHaveAttribute('role')
   })
 
   it('hides journal pages by default in a space with no stored filters (#5370)', async () => {
@@ -961,13 +959,9 @@ describe('GraphView', () => {
   // SVG inside the `.graph-view` (relative) ancestor so it fills the full
   // available height regardless of the percentage-height resolution quirk.
   // Class-list regression — do not weaken.
-  // Dropping `role="img"` from the SVG. The graph's nodes are
-  // interactive (`role="button"` + Enter/Space activation in
-  // useGraphSimulation), and `role="img"` on a container of interactive
-  // elements is incorrect — ATs treat the whole region as one opaque
-  // graphic. The accessible name remains via `aria-label`, but no wrapper
-  // role is set so the descendants surface naturally.
-  it('SVG has no wrapper role (interactive descendants)', async () => {
+  // The nodes are `option`s (#5435), so the SVG is their named listbox, not an
+  // opaque `img`.
+  it('SVG is the named listbox that owns the nodes', async () => {
     const pagesResponse = {
       items: [{ id: 'page-1', content: 'Page One', block_type: 'page' }],
       next_cursor: null,
@@ -989,7 +983,7 @@ describe('GraphView', () => {
     })
 
     const svg = screen.getByTestId('graph-svg')
-    expect(svg).not.toHaveAttribute('role')
+    expect(svg).toHaveAttribute('role', 'listbox')
     expect(svg).toHaveAttribute('aria-label', 'Page Relationships')
   })
 

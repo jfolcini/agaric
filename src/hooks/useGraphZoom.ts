@@ -9,7 +9,7 @@
 
 import type { SimulationNodeDatum } from 'd3-force'
 import { select } from 'd3-selection'
-import type { ZoomBehavior, ZoomTransform } from 'd3-zoom'
+import { type ZoomBehavior, type ZoomTransform, zoomTransform } from 'd3-zoom'
 import type React from 'react'
 import { useCallback, useRef } from 'react'
 
@@ -20,6 +20,7 @@ import {
   fitTransform,
   type GSel,
   reducedMotionDuration,
+  revealTransform,
   setupZoomBehavior,
   ZOOM_BUTTON_DURATION_MS,
   ZOOM_FIT_DURATION_MS,
@@ -43,6 +44,8 @@ export interface UseGraphZoomResult {
   zoomOut: () => void
   /** Zoom and pan so every node in `nodes` is in view. */
   fitToView: (nodes: readonly SimulationNodeDatum[]) => void
+  /** Pan, at the current scale, to centre `node` when it is off screen. */
+  reveal: (node: SimulationNodeDatum) => void
 }
 
 export function useGraphZoom(svgRef: React.RefObject<SVGSVGElement | null>): UseGraphZoomResult {
@@ -89,5 +92,24 @@ export function useGraphZoom(svgRef: React.RefObject<SVGSVGElement | null>): Use
     [svgRef],
   )
 
-  return { attach, zoomIn, zoomOut, fitToView }
+  const reveal = useCallback<UseGraphZoomResult['reveal']>(
+    (node) => {
+      const svg = svgRef.current
+      if (!svg) return
+      const target = revealTransform(
+        zoomTransform(svg),
+        node,
+        svg.clientWidth || DEFAULT_WIDTH,
+        svg.clientHeight || DEFAULT_HEIGHT,
+      )
+      if (target === null) return
+      zoomBehaviorRef.current?.transform(
+        select(svg).transition().duration(reducedMotionDuration(ZOOM_BUTTON_DURATION_MS)),
+        target,
+      )
+    },
+    [svgRef],
+  )
+
+  return { attach, zoomIn, zoomOut, fitToView, reveal }
 }

@@ -61,6 +61,7 @@ const B = makeNode('b', 'Beta')
 const C = makeNode('c', 'Gamma')
 const D = makeNode('d', 'Delta')
 const EDGES: GraphEdge[] = [{ source: 'a', target: 'b', ref_count: 1 }]
+const NO_ACTIONS = { select() {}, open() {}, openInNewTab() {} }
 
 function memoryLayout(initial: GraphLayout | null = null): GraphLayoutStore & {
   kept: GraphLayout | null
@@ -87,11 +88,13 @@ function Graph({
     svgRef,
     nodes,
     edges: EDGES,
-    navigateToPage: () => {},
+    actions: NO_ACTIONS,
     currentPageId: null,
+    selectedPageId: null,
     layout,
   })
-  return <svg ref={svgRef} aria-label="Graph" />
+  // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- GraphView's canvas: the d3-drawn nodes are its options
+  return <svg ref={svgRef} role="listbox" aria-label="Graph" />
 }
 
 function startMessage(): WorkerStartMessage {

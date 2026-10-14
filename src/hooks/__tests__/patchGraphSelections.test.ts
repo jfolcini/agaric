@@ -18,9 +18,16 @@ import { describe, expect, it, vi } from 'vitest'
 import type { GraphEdge, GraphNode } from '@/components/graph/GraphView.helpers'
 import {
   applyRovingTabindex,
+  type NodeActions,
   patchGraphSelections,
   renderGraphElements,
 } from '@/lib/graph-sim-helpers'
+
+const NO_ACTIONS: NodeActions = { select() {}, open() {}, openInNewTab() {}, reveal() {} }
+
+function recordingActions() {
+  return { select: vi.fn(), open: vi.fn(), openInNewTab: vi.fn(), reveal: vi.fn() }
+}
 
 function makeSvg(): SVGSVGElement {
   return document.createElementNS('http://www.w3.org/2000/svg', 'svg') as SVGSVGElement
@@ -46,7 +53,7 @@ describe('patchGraphSelections — edge z-order (#758 item 4)', () => {
     const nodes = [makeNode('a', 'A'), makeNode('b', 'B'), makeNode('c', 'C')]
     const edges: GraphEdge[] = [{ source: 'a', target: 'b', ref_count: 1 }]
 
-    const rendered = renderGraphElements(svg, nodes, edges, () => {})
+    const rendered = renderGraphElements(svg, nodes, edges, NO_ACTIONS)
 
     // Patch with one EXISTING edge plus one NEW edge (e.g. a filter was
     // cleared and a previously hidden edge re-enters).
@@ -58,7 +65,7 @@ describe('patchGraphSelections — edge z-order (#758 item 4)', () => {
       rendered.g,
       nodes.map((n) => Object.assign({}, n)),
       patchedEdges,
-      () => {},
+      NO_ACTIONS,
     )
 
     // Both lines (including the entering one) live inside the edge layer.
@@ -84,10 +91,10 @@ describe('patchGraphSelections — edge z-order (#758 item 4)', () => {
     const nodes = [makeNode('a', 'A'), makeNode('b', 'B')]
     const edges: GraphEdge[] = [{ source: 'a', target: 'b', ref_count: 1 }]
 
-    const rendered = renderGraphElements(svg, nodes, edges, () => {})
+    const rendered = renderGraphElements(svg, nodes, edges, NO_ACTIONS)
 
     // Patch to a different node set: 'b' removed, 'c' added.
-    patchGraphSelections(rendered.g, [makeNode('a', 'A'), makeNode('c', 'C')], [], () => {})
+    patchGraphSelections(rendered.g, [makeNode('a', 'A'), makeNode('c', 'C')], [], NO_ACTIONS)
 
     const nodeLayer = svg.querySelector('g.nodes-layer') as Element
     const labels = Array.from(nodeLayer.querySelectorAll('g.node > title')).map(
@@ -106,11 +113,11 @@ describe('patchGraphSelections — edge z-order (#758 item 4)', () => {
 describe('patchGraphSelections — #1725 accessible name on the filter-toggle path', () => {
   it('sets aria-label on ENTERing nodes and applyRovingTabindex yields one tab stop', () => {
     const svg = makeSvg()
-    const rendered = renderGraphElements(svg, [makeNode('a', 'Alpha')], [], () => {})
+    const rendered = renderGraphElements(svg, [makeNode('a', 'Alpha')], [], NO_ACTIONS)
 
     // Filter toggle reveals two more pages.
     const patchedNodes = [makeNode('a', 'Alpha'), makeNode('b', 'Beta'), makeNode('c', 'Gamma')]
-    const { node } = patchGraphSelections(rendered.g, patchedNodes, [], () => {})
+    const { node } = patchGraphSelections(rendered.g, patchedNodes, [], NO_ACTIONS)
 
     const labels = Array.from(svg.querySelectorAll('g.node')).map((g) =>
       g.getAttribute('aria-label'),
@@ -127,9 +134,9 @@ describe('patchGraphSelections — #1725 accessible name on the filter-toggle pa
 
   it('refreshes aria-label for renamed pages on UPDATE', () => {
     const svg = makeSvg()
-    const rendered = renderGraphElements(svg, [makeNode('a', 'Old name')], [], () => {})
+    const rendered = renderGraphElements(svg, [makeNode('a', 'Old name')], [], NO_ACTIONS)
 
-    patchGraphSelections(rendered.g, [makeNode('a', 'New name')], [], () => {})
+    patchGraphSelections(rendered.g, [makeNode('a', 'New name')], [], NO_ACTIONS)
 
     expect(svg.querySelector('g.node')?.getAttribute('aria-label')).toBe('New name')
   })
@@ -139,16 +146,16 @@ describe('patchGraphSelections — one draw path for the first render and patche
   it('a node and edge ENTERed by a patch match the first render, in markup and in every listener', () => {
     const nodes = [makeNode('a', 'Alpha'), makeNode('b', 'A page title longer than twenty')]
     const edges: GraphEdge[] = [{ source: 'a', target: 'b', ref_count: 3 }]
-    const firstNavigate = vi.fn()
-    const patchNavigate = vi.fn()
+    const firstActions = recordingActions()
+    const patchActions = recordingActions()
 
     const first = makeSvg()
-    renderGraphElements(first, nodes, edges, firstNavigate)
+    renderGraphElements(first, nodes, edges, firstActions)
 
     // 'b' and the edge are absent from the first render and ENTER via the patch.
     const patched = makeSvg()
-    const rendered = renderGraphElements(patched, [makeNode('a', 'Alpha')], [], patchNavigate)
-    patchGraphSelections(rendered.g, nodes, edges, patchNavigate)
+    const rendered = renderGraphElements(patched, [makeNode('a', 'Alpha')], [], patchActions)
+    patchGraphSelections(rendered.g, nodes, edges, patchActions)
 
     expect(patched.innerHTML).toBe(first.innerHTML)
 
@@ -176,29 +183,35 @@ describe('patchGraphSelections — one draw path for the first render and patche
       nodeB(svg).dispatchEvent(new Event('click'))
       nodeB(svg).dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', cancelable: true }))
     }
-    const opened = ['b', 'A page title longer than twenty']
-    expect(firstNavigate.mock.calls).toEqual([opened, opened])
-    expect(patchNavigate.mock.calls).toEqual([opened, opened])
+    const b = ['b', 'A page title longer than twenty']
+    for (const actions of [firstActions, patchActions]) {
+      expect(actions.select.mock.calls).toEqual([b])
+      expect(actions.open.mock.calls).toEqual([b])
+    }
   })
 
-  it('every patch re-binds a kept node to the latest navigate, without stacking listeners', () => {
+  it('every patch re-binds a kept node to the latest actions, without stacking listeners', () => {
     const svg = makeSvg()
     const nodes = [makeNode('a', 'Alpha')]
-    const [renderNavigate, patchNavigate, latestNavigate] = [vi.fn(), vi.fn(), vi.fn()]
+    const [renderActions, patchActions, latestActions] = [
+      recordingActions(),
+      recordingActions(),
+      recordingActions(),
+    ]
 
-    const rendered = renderGraphElements(svg, nodes, [], renderNavigate)
-    patchGraphSelections(rendered.g, nodes, [], patchNavigate)
-    patchGraphSelections(rendered.g, nodes, [], latestNavigate)
+    const rendered = renderGraphElements(svg, nodes, [], renderActions)
+    patchGraphSelections(rendered.g, nodes, [], patchActions)
+    patchGraphSelections(rendered.g, nodes, [], latestActions)
 
     const nodeA = svg.querySelector('g.node') as Element
     nodeA.dispatchEvent(new Event('click'))
     nodeA.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', cancelable: true }))
 
-    expect(renderNavigate).not.toHaveBeenCalled()
-    expect(patchNavigate).not.toHaveBeenCalled()
-    expect(latestNavigate.mock.calls).toEqual([
-      ['a', 'Alpha'],
-      ['a', 'Alpha'],
-    ])
+    for (const stale of [renderActions, patchActions]) {
+      expect(stale.select).not.toHaveBeenCalled()
+      expect(stale.open).not.toHaveBeenCalled()
+    }
+    expect(latestActions.select.mock.calls).toEqual([['a', 'Alpha']])
+    expect(latestActions.open.mock.calls).toEqual([['a', 'Alpha']])
   })
 })

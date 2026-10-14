@@ -10,14 +10,19 @@
 
 import { useCallback } from 'react'
 
-import { type RenderResult, renderGraphElements } from '@/lib/graph-sim-helpers'
+import {
+  type NodeActions,
+  type NodeMarks,
+  type RenderResult,
+  renderGraphElements,
+} from '@/lib/graph-sim-helpers'
 import type { GraphEdge, GraphNode } from '@/lib/graph-types'
 
 export interface UseGraphRenderElementsArgs {
   nodes: GraphNode[]
   edges: GraphEdge[]
-  navigateToPage: (id: string, label: string) => void
-  currentPageId: string | null
+  actions: NodeActions
+  marks: NodeMarks
 }
 
 export type RenderGraphFn = (svg: SVGSVGElement) => RenderResult
@@ -25,11 +30,11 @@ export type RenderGraphFn = (svg: SVGSVGElement) => RenderResult
 export function useGraphRenderElements({
   nodes,
   edges,
-  navigateToPage,
-  currentPageId,
+  actions,
+  marks,
 }: UseGraphRenderElementsArgs): RenderGraphFn {
   return useCallback(
-    (svg: SVGSVGElement) => renderGraphElements(svg, nodes, edges, navigateToPage, currentPageId),
-    [nodes, edges, navigateToPage, currentPageId],
+    (svg: SVGSVGElement) => renderGraphElements(svg, nodes, edges, actions, marks),
+    [nodes, edges, actions, marks],
   )
 }

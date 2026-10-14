@@ -93,12 +93,13 @@ Pages tagged as templates.
 A force-directed graph of pages and the links between them.
 
 - **Nodes** are pages; **edges** are `[[link]]` references.
-- **Node size** grows with the page's links on screen, in and out; the page open in the active tab is marked in the accent colour. Edges are faint hairlines that stay one pixel wide at every zoom.
+- **Node size** grows with the page's links on screen, in and out; the selected node, else the page open in the active tab, is marked in the accent colour. Edges are faint hairlines that stay one pixel wide at every zoom.
 - **Layout**: a well-linked page pushes its neighbours further out than an unlinked one, and separate clusters stay close together instead of drifting apart.
 - **Filter bar** in the header: filter by tag, task status, priority, presence of a due date, presence of a scheduled date, presence of backlinks, exclude templates, and exclude journal pages (pages titled `YYYY-MM-DD`). Filters stack as removable pills; there is no date-range or content-match filter. A space with no saved graph filters starts with *Exclude journal pages*; removing it is remembered per space.
-- **Local graph**: *Focus on this page* narrows the graph to the open page's 1- or 2-hop neighbourhood. *Show in graph* in the page kebab (palette: *Show this page in graph*, `Ctrl+Shift+G`) opens it from the page; mode and depth are remembered per space, and a page the filters hide says so. Coming back to the graph shows the layout and zoom as they were left, for the session.
+- **Local graph**: *Focus on this page* narrows the graph to the open page's 1- or 2-hop neighbourhood. Selecting a node re-centres the neighbourhood on it, so you can walk the graph hop by hop; nodes that stay keep their place, and *Back to "…"* returns to the page you started from. *Show in graph* in the page kebab (palette: *Show this page in graph*, `Ctrl+Shift+G`) opens it from the page; mode and depth are remembered per space, and a page the filters hide says so. Coming back to the graph shows the layout and zoom as they were left, for the session.
 - **Zoom / pan** with mouse / trackpad / touch. A fresh layout is fitted to the view once it settles; *Fit to view* (`0`) frames every node again.
-- **Click a node** to navigate to its page.
+- **Select, then open**: a click or tap selects a node, which takes the accent, keeps its neighbourhood highlighted and shows its full title. A second click on the selected node opens it in place; Ctrl/Cmd-click or middle-click opens it in a new tab (on mobile, in place).
+- **Keyboard**: Tab enters the graph; the arrow keys move to the nearest node in that direction on screen, and typing moves to the next node whose name starts with what was typed; the node moved to pans into view. Space selects, Enter opens, and Escape clears the selection. The nodes are the options of a listbox, and a selection is announced.
 - **Web Worker**: the simulation runs in a worker so the main thread stays responsive on large graphs. Falls back to the main thread if Web Workers are unavailable.
 - **Reduced motion**: the simulation honours `prefers-reduced-motion` and skips the layout animation.
 

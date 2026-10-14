@@ -16,7 +16,11 @@ import React from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { GraphEdge, GraphNode } from '@/components/graph/GraphView.helpers'
-import { type GraphLayoutStore, useGraphSimulation } from '@/hooks/useGraphSimulation'
+import {
+  type GraphLayoutStore,
+  type GraphPageActions,
+  useGraphSimulation,
+} from '@/hooks/useGraphSimulation'
 import { fitTransform } from '@/lib/graph-sim-helpers'
 
 vi.mock('@/lib/logger', () => ({
@@ -229,26 +233,22 @@ interface HarnessProps {
   nodes: GraphNode[]
   edges: GraphEdge[]
   onResult: (result: any) => void
-  navigateToPage?: (id: string, label: string) => void
+  actions?: GraphPageActions
   layout?: GraphLayoutStore
 }
 
 const NO_LAYOUT = { read: () => null, keep: () => {} }
+const NO_ACTIONS: GraphPageActions = { select() {}, open() {}, openInNewTab() {} }
 
-function Harness({
-  nodes,
-  edges,
-  onResult,
-  navigateToPage,
-  layout,
-}: HarnessProps): React.ReactElement {
+function Harness({ nodes, edges, onResult, actions, layout }: HarnessProps): React.ReactElement {
   const svgRef = React.useRef<SVGSVGElement>(null)
   const result = useGraphSimulation({
     svgRef,
     nodes,
     edges,
-    navigateToPage: navigateToPage ?? ((): void => {}),
+    actions: actions ?? NO_ACTIONS,
     currentPageId: null,
+    selectedPageId: null,
     layout: layout ?? NO_LAYOUT,
   })
   React.useEffect(() => {
@@ -495,11 +495,11 @@ describe('useGraphSimulation', () => {
   // Post-fix the setup-only side-effects (ResizeObserver construction,
   // zoom keydown listener attach) fire ONCE per mount; the patch effect
   // handles the data delta in place. The fixture below mirrors
-  // production where `navigateToPage` is a stable zustand selector —
-  // re-creating that arrow per render would defeat the split by
+  // production where `actions` is memoised —
+  // re-creating it per render would defeat the split by
   // flipping `renderElements`'s useCallback identity.
   describe('keeps simulation infrastructure alive across filter changes (PERF-Tier2-8)', () => {
-    const stableNavigate = (): void => {}
+    const stableActions: GraphPageActions = { select() {}, open() {}, openInNewTab() {} }
 
     it('does not construct a new ResizeObserver when `nodes` identity changes', () => {
       const { rerender } = render(
@@ -507,7 +507,7 @@ describe('useGraphSimulation', () => {
           nodes: makeNodes(),
           edges: makeEdges(),
           onResult: () => {},
-          navigateToPage: stableNavigate,
+          actions: stableActions,
         }),
       )
       expect(MockResizeObserver.instances).toHaveLength(1)
@@ -518,7 +518,7 @@ describe('useGraphSimulation', () => {
           nodes: makeNodes(),
           edges: makeEdges(),
           onResult: () => {},
-          navigateToPage: stableNavigate,
+          actions: stableActions,
         }),
       )
       // Still exactly one ResizeObserver — setup didn't re-run.
@@ -534,7 +534,7 @@ describe('useGraphSimulation', () => {
           nodes: makeNodes(),
           edges: makeEdges(),
           onResult: () => {},
-          navigateToPage: stableNavigate,
+          actions: stableActions,
         }),
       )
       // Setup attached zoom exactly once.
@@ -546,7 +546,7 @@ describe('useGraphSimulation', () => {
           nodes: makeNodes(),
           edges: makeEdges(),
           onResult: () => {},
-          navigateToPage: stableNavigate,
+          actions: stableActions,
         }),
       )
       // No new zoom() call — the patch effect re-uses the existing
@@ -563,7 +563,7 @@ describe('useGraphSimulation', () => {
           nodes: makeNodes(),
           edges: makeEdges(),
           onResult: () => {},
-          navigateToPage: stableNavigate,
+          actions: stableActions,
         }),
       )
       expect(MockWorker.instances).toHaveLength(1)
@@ -576,7 +576,7 @@ describe('useGraphSimulation', () => {
           nodes: nextNodes,
           edges: [],
           onResult: () => {},
-          navigateToPage: stableNavigate,
+          actions: stableActions,
         }),
       )
 
@@ -615,7 +615,7 @@ describe('useGraphSimulation', () => {
           nodes: makeNodes(),
           edges: makeEdges(),
           onResult: () => {},
-          navigateToPage: stableNavigate,
+          actions: stableActions,
         }),
       )
       expect(forceSimulation).toHaveBeenCalledTimes(1)
@@ -625,7 +625,7 @@ describe('useGraphSimulation', () => {
           nodes: makeNodes().slice(0, 1),
           edges: [],
           onResult: () => {},
-          navigateToPage: stableNavigate,
+          actions: stableActions,
         }),
       )
 
@@ -642,7 +642,7 @@ describe('useGraphSimulation', () => {
   // painted with the old worker/main-thread sim still ticking. Re-populating
   // (filter widened again) must restart a fresh simulation.
   describe('filtering to zero nodes (#746)', () => {
-    const stableNavigate = (): void => {}
+    const stableActions: GraphPageActions = { select() {}, open() {}, openInNewTab() {} }
 
     it('terminates the worker when nodes filter down to zero', () => {
       const { rerender } = render(
@@ -650,7 +650,7 @@ describe('useGraphSimulation', () => {
           nodes: makeNodes(),
           edges: makeEdges(),
           onResult: () => {},
-          navigateToPage: stableNavigate,
+          actions: stableActions,
         }),
       )
       expect(MockWorker.instances).toHaveLength(1)
@@ -663,7 +663,7 @@ describe('useGraphSimulation', () => {
           nodes: [],
           edges: [],
           onResult: () => {},
-          navigateToPage: stableNavigate,
+          actions: stableActions,
         }),
       )
 
@@ -679,7 +679,7 @@ describe('useGraphSimulation', () => {
           nodes: makeNodes(),
           edges: makeEdges(),
           onResult: () => {},
-          navigateToPage: stableNavigate,
+          actions: stableActions,
         }),
       )
 
@@ -694,7 +694,7 @@ describe('useGraphSimulation', () => {
           nodes: [],
           edges: [],
           onResult: () => {},
-          navigateToPage: stableNavigate,
+          actions: stableActions,
         }),
       )
 
@@ -725,7 +725,7 @@ describe('useGraphSimulation', () => {
           nodes: makeNodes(),
           edges: makeEdges(),
           onResult: () => {},
-          navigateToPage: stableNavigate,
+          actions: stableActions,
         }),
       )
       expect(forceSimulation).toHaveBeenCalledTimes(1)
@@ -736,7 +736,7 @@ describe('useGraphSimulation', () => {
           nodes: [],
           edges: [],
           onResult: () => {},
-          navigateToPage: stableNavigate,
+          actions: stableActions,
         }),
       )
 
@@ -752,7 +752,7 @@ describe('useGraphSimulation', () => {
           nodes: makeNodes(),
           edges: makeEdges(),
           onResult: () => {},
-          navigateToPage: stableNavigate,
+          actions: stableActions,
         }),
       )
       expect(MockWorker.instances).toHaveLength(1)
@@ -763,7 +763,7 @@ describe('useGraphSimulation', () => {
           nodes: [],
           edges: [],
           onResult: () => {},
-          navigateToPage: stableNavigate,
+          actions: stableActions,
         }),
       )
       expect(MockWorker.instances).toHaveLength(1)
@@ -774,7 +774,7 @@ describe('useGraphSimulation', () => {
           nodes: makeNodes(),
           edges: makeEdges(),
           onResult: () => {},
-          navigateToPage: stableNavigate,
+          actions: stableActions,
         }),
       )
 
@@ -786,11 +786,6 @@ describe('useGraphSimulation', () => {
     })
   })
 
-  // The keyboard-navigation pattern (tabindex=0 + role=button +
-  // Enter/Space activation) is now documented in `attachNodeClickAndKeyboard`.
-  // These regression tests pin the contract:
-  //   1. node `<g>` elements get `tabindex='0'` and `role='button'`
-  //   2. both 'click' and 'keydown' handlers are registered on every node
   describe('fit to view (#5432)', () => {
     /** Where the worker settles nodes a and b. */
     const SETTLED = [
@@ -950,7 +945,7 @@ describe('useGraphSimulation', () => {
       return selectResult.append.mock.results[0]?.value
     }
 
-    it('marks node groups with role=button + an explicit aria-label, and roving tabindex (#1725)', () => {
+    it('marks node groups with role=option + an explicit aria-label, and roving tabindex (#1725)', () => {
       render(
         React.createElement(Harness, {
           nodes: makeNodes(),
@@ -959,7 +954,7 @@ describe('useGraphSimulation', () => {
         }),
       )
       const nodeSel = getNodeSelectionMock()
-      expect(nodeSel.attr).toHaveBeenCalledWith('role', 'button')
+      expect(nodeSel.attr).toHaveBeenCalledWith('role', 'option')
       // #1725 — explicit accessible name per node (not only the child <title>).
       expect(nodeSel.attr).toHaveBeenCalledWith('aria-label', expect.any(Function))
       // #1725 — tabindex is now set via the roving helper as a value FUNCTION
