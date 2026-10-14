@@ -57,6 +57,8 @@ Every Pages-view list render walks the same five stages. The IPC is the only asy
 └──────────────────────────┘
 ```
 
+Returning to the view refetches only a stale list (#5446). Any local command that can write notes marks it stale (`watchLocalWrites` in `src/lib/local-write-watch.ts`, installed in `main.tsx`), and so does an out-of-band change (`invalidatePageBrowserData` from `useSyncEvents`). A stale list refetches every loaded page in order from page 1; a sort, filter or space change refetches as before.
+
 One side hook orbits this pipeline without altering its shape:
 
 - **Alias resolver** (`src/components/PageBrowser/usePageBrowserFilters.ts`) is a parallel single-row IPC for "user typed an alias in the filter box" (`resolvePageByAlias` → sets `aliasMatchId` so the matching page surfaces even when its visible title doesn't match the filter). Independent of the list query.

@@ -11,17 +11,17 @@
 //!
 //! | Tool | Backing `*_inner` | Notes |
 //! |------|-------------------|-------|
-//! | `list_pages` | [`list_pages_inner`] | Cursor paginated. Limits outside `[1, 100]` are rejected. |
-//! | `get_page` | [`get_page_inner`](crate::commands::get_page_inner) | Composes `get_active_block_inner` + paginated subtree via `page_id`; `page` carries its properties, tags and aliases (#5377). soft-deleted pages → `NotFound`. |
+//! | `list_pages` | [`list_pages_inner`] | The pages of one space. Cursor paginated. Limits outside `[1, 100]` are rejected. `space_id` required. |
+//! | `get_page` | [`get_page_inner`] | Composes `get_active_block_inner` + paginated subtree via `page_id`; `page` carries its properties, tags and aliases (#5377). soft-deleted pages → `NotFound`. `space_id` required; a page in another space is rejected. |
 //! | `search` | [`search_blocks_inner`] | FTS5. Result count capped at 50, snippet length at 512 chars. |
-//! | `get_block` | [`get_active_block_inner`] | Plus the block's properties, tags and, for a page, aliases (#5377). soft-deleted blocks → `NotFound`. |
+//! | `get_block` | [`get_active_block_inner`] | Plus the block's properties, tags and, for a page, aliases (#5377). soft-deleted blocks → `NotFound`. `space_id` required; a block in another space is rejected. |
 //! | `list_backlinks` | [`list_backlinks_grouped_inner`] | Grouped by source page. `space_id` required. |
 //! | `list_tags` | [`list_tags_inner`] | The tags of one space. Cursor paginated. Limits outside `[1, 100]` are rejected. `space_id` required. |
-//! | `list_property_defs` | [`list_property_defs_inner`] | Typed property schema; cursor paginated. |
+//! | `list_property_defs` | [`list_property_defs_inner`] | Typed property schema; cursor paginated. No `space_id`: property definitions are vault-wide. |
 //! | `get_agenda` | [`agenda_range_inner`] | Dated blocks in the range plus projected repeats, one row each. `space_id` required. |
 //! | `journal_for_date` | [`journal_for_date_inner`] | Idempotent date → page lookup with a **bounded create carve-out (#2719)**: for `date` within today ± [`JOURNAL_CREATE_WINDOW_MONTHS`] months, creates the missing page on first call (single `CreateBlock`+`SetProperty` op pair, origin `agent:<name>`); outside that window the tool never creates — it returns an existing page as a pure read or `AppError::NotFound`. See [`ReadOnlyTools`] and `handle_journal_for_date` below. |
 //! | `list_spaces` | [`list_spaces_registry_inner`] | #633 — space discovery for agents. Returns `{ id, name, is_default }` per live space from the canonical `spaces` registry (#804). |
-//! | `get_page_markdown` | [`get_page_for_agent_inner`] | #5375 — the whole page as Markdown, ids written as names and every block with its `^ID`. No pagination, as the export. |
+//! | `get_page_markdown` | [`get_page_for_agent_inner`] | #5375 — the whole page as Markdown, ids written as names and every block with its `^ID`. No pagination, as the export. `space_id` required; a page in another space is rejected. |
 //! | `page_history` | [`list_page_history_inner`] | Ops on a page's blocks, newest first: device, origin, op type, time, clipped before/after. Cursor paginated. `space_id` required. |
 //! | `block_history` | [`get_block_history_inner`] | The same rows for one block. |
 //! | `get_journal` | [`get_journal_page_by_date_inner`] + [`get_page_for_agent_inner`] | #5396 — a day as `get_page_markdown` renders it; `date` is `today` (default), `yesterday` or `YYYY-MM-DD` on the device's clock. Never creates: a missing day is an empty `markdown`. |
@@ -87,9 +87,9 @@ use crate::commands::pages::markdown::{NameMatch, match_page_names, match_tag_na
 use crate::commands::{
     PropertyRow, agenda_range_inner, batch_resolve_inner, get_active_block_inner,
     get_batch_properties_inner, get_block_history_inner, get_journal_page_by_date_inner,
-    get_page_aliases_inner, get_page_for_agent_inner, get_page_unscoped_inner,
-    get_properties_inner, journal_for_date_inner, list_backlinks_grouped_inner,
-    list_journal_days_inner, list_page_history_inner, list_pages_inner, list_property_defs_inner,
+    get_page_aliases_inner, get_page_for_agent_inner, get_page_inner, get_properties_inner,
+    journal_for_date_inner, list_backlinks_grouped_inner, list_journal_days_inner,
+    list_page_history_inner, list_pages_inner, list_property_defs_inner,
     list_spaces_registry_inner, list_tags_for_block_inner, list_tags_inner, list_trash_inner,
     search_blocks_inner,
 };
@@ -119,7 +119,7 @@ pub const SEARCH_RESULT_CAP: i64 = 50;
 /// Default for list-style tools (`list_pages`, `list_tags`,
 /// `list_backlinks`). Re-exported from
 /// [`crate::commands::MCP_PAGE_LIMIT_CAP`] so the tool boundary and the
-/// [`list_pages_inner`] / [`get_page_inner`](crate::commands::get_page_inner) internal strict validation
+/// [`list_pages_inner`] / [`get_page_inner`] internal strict validation
 /// share a single source of truth.
 pub use crate::commands::MCP_PAGE_LIMIT_CAP as LIST_RESULT_CAP;
 
@@ -231,9 +231,10 @@ fn within_journal_create_window(date: chrono::NaiveDate) -> bool {
 // silently ignored. Every field is `Option<T>` unless the tool requires it.
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Default, Deserialize)]
+#[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ListPagesArgs {
+    space_id: String,
     #[serde(default)]
     cursor: Option<String>,
     #[serde(default)]
@@ -244,6 +245,7 @@ struct ListPagesArgs {
 #[serde(deny_unknown_fields)]
 struct GetPageArgs {
     page_id: String,
+    space_id: String,
     #[serde(default)]
     cursor: Option<String>,
     #[serde(default)]
@@ -264,9 +266,8 @@ struct SearchArgs {
     tag_ids: Option<Vec<String>>,
     /// The active space's ULID. Required: every search runs
     /// inside a single space and the FTS5 hits are restricted to blocks
-    /// whose owning page carries `space = ?space_id`. Agents that do not
-    /// yet track a "current space" must pick one explicitly (typically
-    /// the `is_default` space surfaced via the `list_spaces` tool, #633).
+    /// whose owning page carries `space = ?space_id`. Agents discover
+    /// space ids with the `list_spaces` tool (#633).
     space_id: String,
     /// Optional structured filter set mirroring the
     /// `SearchFilter` user-facing surface. Omitted = the agent runs a
@@ -324,12 +325,14 @@ struct SearchFilterArgs {
 #[serde(deny_unknown_fields)]
 struct GetBlockArgs {
     block_id: String,
+    space_id: String,
 }
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct GetPageMarkdownArgs {
     page_id: String,
+    space_id: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -440,9 +443,8 @@ struct ListSpacesArgs {}
 struct JournalForDateArgs {
     date: String,
     /// The active space's ULID. Required: every journal page
-    /// belongs to a space. Agents that do not yet track a "current
-    /// space" must pick one explicitly (typically the `is_default`
-    /// space surfaced via the `list_spaces` tool, #633).
+    /// belongs to a space. Agents discover space ids with the
+    /// `list_spaces` tool (#633).
     space_id: String,
 }
 
@@ -493,9 +495,9 @@ struct ListJournalArgs {
 /// `within_journal_create_window` / #2719). The reader pool sets
 /// `PRAGMA query_only = ON`, so feeding it to the create path raises
 /// `SQLITE_READONLY`. The struct therefore carries **both** pools: `pool`
-/// (reader) is used by the eight pure-read tools, `list_spaces`, and the
-/// out-of-window / lookup branches of `journal_for_date`; `writer_pool` is
-/// used only for the in-window create branch of `journal_for_date`.
+/// (reader) backs every read; `writer_pool` backs the in-window create
+/// branch of `journal_for_date` and the space checks
+/// (`validate_block_in_space` takes the write lock).
 ///
 /// Because of the carve-out, **enabling the read-only MCP server
 /// implicitly grants the agent permission to append a single
@@ -517,10 +519,8 @@ struct ListJournalArgs {
 /// tool surface.
 pub struct ReadOnlyTools {
     pool: SqlitePool,
-    /// Writer pool from `DbPools::write` — used exclusively by
-    /// `journal_for_date` when it needs to create a missing journal
-    /// page. The other eight RO tools continue to use `pool` (reader)
-    /// So the read/write capacity split is preserved. (.)
+    /// Writer pool from `DbPools::write`: `journal_for_date`'s create
+    /// branch and the space checks only; every read stays on `pool`.
     writer_pool: SqlitePool,
     materializer: Materializer,
     /// Local-device id used when a tool has to write (today only
@@ -626,7 +626,6 @@ impl ToolRegistry for ReadOnlyTools {
                 TOOL_LIST_PAGES => handle_list_pages(&pool, args).await,
                 TOOL_GET_PAGE => handle_get_page(&pool, args).await,
                 TOOL_SEARCH => handle_search(&pool, args).await,
-                TOOL_GET_BLOCK => handle_get_block(&pool, args).await,
                 TOOL_LIST_BACKLINKS => handle_list_backlinks(&pool, args).await,
                 TOOL_LIST_TAGS => handle_list_tags(&pool, args).await,
                 TOOL_LIST_PROPERTY_DEFS => handle_list_property_defs(&pool, args).await,
@@ -641,8 +640,7 @@ impl ToolRegistry for ReadOnlyTools {
                     // page AND falls inside the bounded create window. The
                     // reader pool's `PRAGMA query_only = ON` rejects that
                     // INSERT path with `SQLITE_READONLY`, so the create
-                    // branch must stay on the writer pool. The other eight
-                    // tools stay on the reader pool only.
+                    // branch must stay on the writer pool.
                     handle_journal_for_date(
                         &pool,
                         &writer_pool,
@@ -654,8 +652,9 @@ impl ToolRegistry for ReadOnlyTools {
                     .await
                 }
                 TOOL_LIST_SPACES => handle_list_spaces(&pool, args).await,
-                TOOL_GET_PAGE_MARKDOWN => handle_get_page_markdown(&pool, args).await,
                 // The space check takes the write lock, which the reader pool refuses.
+                TOOL_GET_BLOCK => handle_get_block(&pool, &writer_pool, args).await,
+                TOOL_GET_PAGE_MARKDOWN => handle_get_page_markdown(&pool, &writer_pool, args).await,
                 TOOL_PAGE_HISTORY => handle_page_history(&pool, &writer_pool, args).await,
                 TOOL_BLOCK_HISTORY => handle_block_history(&pool, &writer_pool, args).await,
                 TOOL_GET_JOURNAL => {
@@ -706,11 +705,16 @@ fn tool_desc_resolve() -> ToolDescription {
 fn tool_desc_list_pages() -> ToolDescription {
     ToolDescription {
         name: TOOL_LIST_PAGES.to_string(),
-        description: "List all pages with cursor pagination.".to_string(),
+        description: "List the pages of a space, with cursor pagination.".to_string(),
         input_schema: json!({
             "type": "object",
             "additionalProperties": false,
+            "required": ["space_id"],
             "properties": {
+                "space_id": {
+                    "type": "string",
+                    "description": "ULID of the space whose pages to list.",
+                },
                 "cursor": { "type": "string", "description": "Opaque pagination cursor from a prior response." },
                 "limit": {
                     "type": "integer",
@@ -734,9 +738,13 @@ fn tool_desc_get_page() -> ToolDescription {
         input_schema: json!({
             "type": "object",
             "additionalProperties": false,
-            "required": ["page_id"],
+            "required": ["page_id", "space_id"],
             "properties": {
                 "page_id": { "type": "string", "description": "ULID of the page block." },
+                "space_id": {
+                    "type": "string",
+                    "description": "ULID of the space the page belongs to. A page in another space is rejected with a Validation error.",
+                },
                 "cursor": { "type": "string", "description": "Opaque cursor for the children page." },
                 "limit": {
                     "type": "integer",
@@ -869,9 +877,13 @@ fn tool_desc_get_block() -> ToolDescription {
         input_schema: json!({
             "type": "object",
             "additionalProperties": false,
-            "required": ["block_id"],
+            "required": ["block_id", "space_id"],
             "properties": {
                 "block_id": { "type": "string", "description": "ULID of the block." },
+                "space_id": {
+                    "type": "string",
+                    "description": "ULID of the space the block belongs to. A block in another space is rejected with a Validation error.",
+                },
             },
         }),
     }
@@ -1024,10 +1036,9 @@ fn tool_desc_journal_for_date() -> ToolDescription {
 fn tool_desc_list_spaces() -> ToolDescription {
     ToolDescription {
         name: TOOL_LIST_SPACES.to_string(),
-        description: "List every space as { id, name, is_default }. Every read-write tool (and \
-             search / journal_for_date) requires a space_id — call this first to discover \
-             one. is_default marks the seeded Personal space, the sensible fallback when \
-             no space has been chosen."
+        description: "List every space as { id, name, is_default }. Every other tool except \
+             list_property_defs requires a space_id — call this first to discover one. \
+             is_default marks the seeded Personal space."
             .to_string(),
         input_schema: json!({
             "type": "object",
@@ -1050,9 +1061,13 @@ fn tool_desc_get_page_markdown() -> ToolDescription {
         input_schema: json!({
             "type": "object",
             "additionalProperties": false,
-            "required": ["page_id"],
+            "required": ["page_id", "space_id"],
             "properties": {
                 "page_id": { "type": "string", "description": "ULID of the page block." },
+                "space_id": {
+                    "type": "string",
+                    "description": "ULID of the space the page belongs to. A page in another space is rejected with a Validation error.",
+                },
             },
         }),
     }
@@ -1291,7 +1306,8 @@ fn validate_limit(tool: &str, limit: Option<i64>, cap: i64) -> Result<Option<i64
 async fn handle_list_pages(pool: &SqlitePool, args: Value) -> Result<Value, AppError> {
     let args: ListPagesArgs = parse_args(TOOL_LIST_PAGES, args)?;
     let limit = validate_limit(TOOL_LIST_PAGES, args.limit, LIST_RESULT_CAP)?;
-    let resp = list_pages_inner(pool, args.cursor, limit).await?;
+    let space_id = SpaceId::from_string(args.space_id)?;
+    let resp = list_pages_inner(pool, space_id.as_str(), args.cursor, limit).await?;
     to_tool_result(&resp)
 }
 
@@ -1300,13 +1316,9 @@ async fn handle_get_page(pool: &SqlitePool, args: Value) -> Result<Value, AppErr
     let limit = validate_limit(TOOL_GET_PAGE, args.limit, LIST_RESULT_CAP)?;
     // Normalise ULID-shaped IDs to uppercase at the MCP boundary.
     let page_id = normalize_ulid_arg(&args.page_id);
-    // The Phase 7 space-membership lookup lives
-    // inside `get_page_unscoped_inner` so this module stays a thin
-    // wrapper around `*_inner`. MCP agents are intentionally unscoped
-    // — every page they can name belongs to its own space by
-    // construction, and the helper preserves the
-    // unknown-id / wrong-type / unscoped error categories.
-    let resp = get_page_unscoped_inner(pool, &page_id, args.cursor, limit).await?;
+    let space_id = SpaceId::from_string(args.space_id)?;
+    // `get_page_inner` rejects a page outside `space_id` (Validation).
+    let resp = get_page_inner(pool, &page_id, space_id.as_str(), args.cursor, limit).await?;
     let page = with_metadata(pool, resp.page.clone()).await?;
     let mut result = to_tool_result(&resp)?;
     result["page"] = to_tool_result(&page)?;
@@ -1342,9 +1354,15 @@ async fn with_metadata(pool: &SqlitePool, block: BlockRow) -> Result<BlockWithMe
     })
 }
 
-async fn handle_get_page_markdown(pool: &SqlitePool, args: Value) -> Result<Value, AppError> {
+async fn handle_get_page_markdown(
+    pool: &SqlitePool,
+    writer_pool: &SqlitePool,
+    args: Value,
+) -> Result<Value, AppError> {
     let args: GetPageMarkdownArgs = parse_args(TOOL_GET_PAGE_MARKDOWN, args)?;
     let page_id = normalize_ulid_arg(&args.page_id);
+    let space_id = SpaceId::from_string(args.space_id)?;
+    validate_block_in_space(writer_pool, &page_id, space_id.as_str()).await?;
     let markdown = get_page_for_agent_inner(pool, &page_id).await?;
     Ok(json!({ "page_id": page_id, "markdown": markdown }))
 }
@@ -1557,10 +1575,16 @@ async fn handle_search(pool: &SqlitePool, args: Value) -> Result<Value, AppError
     to_tool_result(&resp)
 }
 
-async fn handle_get_block(pool: &SqlitePool, args: Value) -> Result<Value, AppError> {
+async fn handle_get_block(
+    pool: &SqlitePool,
+    writer_pool: &SqlitePool,
+    args: Value,
+) -> Result<Value, AppError> {
     let args: GetBlockArgs = parse_args(TOOL_GET_BLOCK, args)?;
     // Normalise ULID-shaped IDs to uppercase at the MCP boundary.
     let block_id = normalize_ulid_arg(&args.block_id);
+    let space_id = SpaceId::from_string(args.space_id)?;
+    validate_block_in_space(writer_pool, &block_id, space_id.as_str()).await?;
     // `get_active_block_inner` (not `get_block_inner`) so an
     // agent cannot fetch tombstoned rows. The MCP read surface
     // mirrors the Tauri IPC `get_block` command's contract.
@@ -1729,8 +1753,8 @@ async fn handle_list_journal(pool: &SqlitePool, args: Value) -> Result<Value, Ap
 /// Handle the `list_spaces` MCP tool call (#633).
 ///
 /// Pure read against the canonical `spaces` registry (#804). This is
-/// the discovery entry point for the `space_id` argument every RW tool
-/// (plus `search` / `journal_for_date`) requires — without it an agent
+/// the discovery entry point for the `space_id` argument every other tool
+/// but `list_property_defs` requires — without it an agent
 /// with no out-of-band configuration could not legally call any of
 /// them. Returns a JSON array of `{ id, name, is_default }` rows.
 async fn handle_list_spaces(pool: &SqlitePool, args: Value) -> Result<Value, AppError> {
