@@ -27,6 +27,7 @@ import {
   NAV_TIMEOUT,
   blockStaticByMarker,
   expectAbsent,
+  focusedBlankBlockId,
   navigateTo,
   openJournalBlockEditor,
   pasteFileIntoFocusedBlock,
@@ -42,9 +43,6 @@ const FILENAME = 'wdio-note.txt'
 // "agaric" — a text file stays a block attachment; an image would be inlined
 // into the block's text and make it non-blank.
 const TXT_BASE64 = 'YWdhcmlj'
-// A committed blank block renders StaticBlock's placeholder span in place of
-// content (StaticBlock.tsx); a block with text never does.
-const BLANK_STATIC = '[data-testid="block-static"] .block-placeholder'
 
 /** Every attachment badge on screen, with the block row it sits in. */
 async function attachmentBadges(): Promise<
@@ -66,8 +64,6 @@ async function markedBlockThenBlankSibling(marker: string): Promise<void> {
   await navigateTo('Journal')
   await openJournalBlockEditor()
   await typeMarkerVerified(marker)
-  // Enter splits at the caret, and a split at the line START keeps the source
-  // blank on purpose (the cleanup skips it), so the caret must be at the end.
   await browser.keys(['End'])
   await browser.keys(['Enter'])
 }
@@ -90,18 +86,19 @@ describe('Agaric real-backend attachment-only block (#5412)', () => {
   it('control: the same sequence cleans up a blank block holding nothing', async () => {
     await waitForAppReady()
     await markedBlockThenBlankSibling(CONTROL_MARKER)
+    const blank = `[data-block-id="${await focusedBlankBlockId()}"]`
     await leaveBlankBlockFor(CONTROL_MARKER)
 
     // The cleanup's delete is optimistic, so the row leaves the DOM as soon as
     // the metadata probes resolve; wait for that before the round-trip, or
     // the navigation could unmount the tree under the probes.
-    await expectAbsent(BLANK_STATIC, 'the blank control block')
+    await expectAbsent(blank, 'the blank control block')
 
     await navigateTo('Pages')
     await navigateTo('Journal')
 
     await blockStaticByMarker(CONTROL_MARKER).waitForDisplayed({ timeout: NAV_TIMEOUT })
-    await expectAbsent(BLANK_STATIC, 'the blank control block')
+    await expectAbsent(blank, 'the blank control block')
   })
 
   it('keeps a blank block holding an attachment after focus leaves it', async () => {

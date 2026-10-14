@@ -16,10 +16,12 @@ A `/batch-issues` batch, built while the #5387 and #5399 builders ran.
     specs vacuously.
   - Both specs are re-enabled.
 - **The second cause.** With focus fixed, both controls still failed. A one-run
-  diagnostic showed focus true and all four metadata probes empty, and the
-  blank block was the OLDER id: the caret sat at the line start when the spec
-  pressed Enter, so the split kept the source blank, which the cleanup skips by
-  design (`preserveEmptyBlockIds`). Both controls now press End before Enter.
+  diagnostic showed focus true and all four metadata probes empty for the
+  surviving blank block, which was OLDER than the marked block: a blank block
+  the journal holds that no focus change visits, so the cleanup never looks at
+  it. The controls asserted "no blank block anywhere"; they now record the id
+  of the blank block Enter put the editor in (`focusedBlankBlockId`, which
+  also fails if the editor is not blank) and assert that block is gone.
 
 ### Verified
 

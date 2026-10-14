@@ -434,6 +434,28 @@ export async function ctrlClick(element: ReturnType<typeof $>): Promise<void> {
 }
 
 /**
+ * The id of the block the roving editor is in, asserting the editor is blank.
+ * A control that proves the empty-block cleanup fires must target the block it
+ * leaves: the journal can hold a seeded blank block of its own that no focus
+ * change ever visits.
+ */
+export async function focusedBlankBlockId(): Promise<string> {
+  const editor = '[data-testid="block-editor"] [contenteditable="true"]'
+  await $(editor).waitForDisplayed({ timeout: ACTION_TIMEOUT })
+  const focused = await browser.execute((sel: string) => {
+    const el = document.querySelector(sel)
+    return {
+      id: el?.closest('[data-block-id]')?.getAttribute('data-block-id') ?? null,
+      text: el?.textContent ?? null,
+    }
+  }, editor)
+  if (focused.id === null || focused.text !== '') {
+    throw new Error(`expected the editor in a blank block, got ${JSON.stringify(focused)}`)
+  }
+  return focused.id
+}
+
+/**
  * Assert that nothing matching `selector` is in the DOM, after a nav
  * round-trip re-queried the backend. A reverse `waitForExist` alone would pass
  * on a page that has not finished rendering yet, so callers put it AFTER the
