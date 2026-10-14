@@ -937,6 +937,25 @@ pub(crate) async fn delete_block_in_tx(
     })
 }
 
+/// The post-commit fan-out [`delete_block_inner`] runs, per delete, for a
+/// caller that ran [`delete_block_in_tx`] in its own transaction.
+pub(crate) async fn dispatch_deletes(
+    pool: &SqlitePool,
+    materializer: &Materializer,
+    deletes: &[DeleteInTx],
+) {
+    for deleted in deletes {
+        crate::materializer::dispatch_delete_descendants(
+            &deleted.op_record,
+            &deleted.effects.deleted_cohort,
+            deleted.effects.delete_space_id.as_ref(),
+            materializer.loro_state(),
+        )
+        .await;
+        crate::materializer::remove_deleted_cohort_fts(pool, &deleted.effects.deleted_cohort).await;
+    }
+}
+
 /// [`delete_blocks_by_ids_inner`]'s validation phase, inside its IMMEDIATE
 /// tx: resolve the live root set and refuse the batch if any root is a
 /// non-empty space. Returns `(id, block_type)` per live root.
