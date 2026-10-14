@@ -54,11 +54,12 @@ carry `b.space_id` reads):
 
 Explicit exceptions (NOT canonical-fragment sites, by design):
 
-  * `agaric-store/src/pagination/history.rs` — the op-log filter intersects
-    on the op-log payload's block id via a sub-select `... ol.block_id IN (SELECT id
-    FROM blocks WHERE space_id = ?7)`. The inner `space_id = ?7` carries
-    NO `b.` alias, so the `b.space_id` regex never matches it; it
-    contributes 0 to the canonical count and needs no allowlisting.
+  * `agaric-store/src/pagination/history.rs` — the op-log filter is
+    `(?2 IS NULL OR (EXISTS (SELECT 1 FROM blocks sb WHERE sb.id =
+    ol.block_id AND sb.space_id = ?2) OR …))`, which resolves each op's
+    block through a correlated sub-select. That is not the guarded
+    `(?N IS NULL OR b.space_id = ?N)` shape, so GUARD_RE never matches it;
+    it contributes 0 to the canonical count and needs no allowlisting.
   * `space_filter_canonical.rs` — holds `SPACE_FILTER_CANONICAL` itself
     plus the hand-written single-line `alternate` in its parity test;
     policing it here would be circular. Excluded via DENY_FILES.

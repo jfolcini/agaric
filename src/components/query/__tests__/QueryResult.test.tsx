@@ -47,7 +47,9 @@ vi.mock('@/components/dialogs/QueryBuilderModal', () => ({
           Cancel
         </button>
       </div>
-    ) : null,
+    ) : (
+      <span data-testid="query-builder-closed" />
+    ),
 }))
 import { stubInvoke } from '@/__tests__/helpers/invoke'
 
@@ -2099,13 +2101,15 @@ describe('QueryResult – Edit Query button', () => {
       expect(screen.getByRole('button', { name: 'Edit query' })).toBeInTheDocument()
     })
 
-    // Modal should not be open initially
+    // Not mounted until first opened, so its lazy chunk is not fetched (#5441).
+    await act(() => import('@/components/dialogs/QueryBuilderModal'))
+    expect(screen.queryByTestId('query-builder-closed')).not.toBeInTheDocument()
     expect(screen.queryByTestId('query-builder-modal')).not.toBeInTheDocument()
 
     await user.click(screen.getByRole('button', { name: 'Edit query' }))
 
-    // Modal should now be open with the initial expression
-    expect(screen.getByTestId('query-builder-modal')).toBeInTheDocument()
+    // Modal should now be open with the initial expression (lazy, #5441)
+    expect(await screen.findByTestId('query-builder-modal')).toBeInTheDocument()
     expect(screen.getByTestId('modal-initial-expression')).toHaveTextContent(
       'type:tag expr:project',
     )
@@ -2139,7 +2143,7 @@ describe('QueryResult – Edit Query button', () => {
 
     // Open the modal
     await user.click(screen.getByRole('button', { name: 'Edit query' }))
-    expect(screen.getByTestId('query-builder-modal')).toBeInTheDocument()
+    expect(await screen.findByTestId('query-builder-modal')).toBeInTheDocument()
 
     // Click save
     await user.click(screen.getByTestId('modal-save-button'))
@@ -2195,7 +2199,7 @@ describe('QueryResult – Edit Query button', () => {
       })
 
       await user.click(screen.getByRole('button', { name: 'Edit query' }))
-      await user.click(screen.getByTestId('modal-save-button'))
+      await user.click(await screen.findByTestId('modal-save-button'))
 
       // The store — not just the IPC call — carries the NEW expression, so
       // the next render of this block (via the store-driven `expression`
@@ -2238,7 +2242,7 @@ describe('QueryResult – Edit Query button', () => {
       })
 
       await user.click(screen.getByRole('button', { name: 'Edit query' }))
-      await user.click(screen.getByTestId('modal-save-button'))
+      await user.click(await screen.findByTestId('modal-save-button'))
 
       await waitFor(() => {
         expect(onNewAction).toHaveBeenCalledWith('PAGE1', expect.anything(), 'edit:BLOCK1')
@@ -2272,7 +2276,7 @@ describe('QueryResult – Edit Query button', () => {
 
     // Open modal and save
     await user.click(screen.getByRole('button', { name: 'Edit query' }))
-    await user.click(screen.getByTestId('modal-save-button'))
+    await user.click(await screen.findByTestId('modal-save-button'))
 
     // Toast error should be shown
     await waitFor(() => {

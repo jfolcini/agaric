@@ -11,14 +11,20 @@
 
 import { Calendar as CalendarIcon } from 'lucide-react'
 import type React from 'react'
-import { useState } from 'react'
+import { lazy, Suspense, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useShallow } from 'zustand/react/shallow'
 
-import { JournalCalendarDropdown } from '@/components/journal/JournalCalendarDropdown'
 import { Button } from '@/components/ui/button'
 import { useJournalStore } from '@/stores/journal'
 import { useNavigationStore, type View } from '@/stores/navigation'
+
+// #5441 — lazy: the calendar (react-day-picker) loads when it is first opened.
+const JournalCalendarDropdown = lazy(() =>
+  import('@/components/journal/JournalCalendarDropdown').then((m) => ({
+    default: m.JournalCalendarDropdown,
+  })),
+)
 
 const DATE_CONTROL_VIEWS: ReadonlySet<View> = new Set<View>(['pages', 'search', 'tags', 'query'])
 
@@ -94,13 +100,15 @@ export function GlobalDateControls(): React.ReactElement {
               <CalendarIcon className="h-4 w-4" />
             </Button>
             {calendarOpen && (
-              <JournalCalendarDropdown
-                currentDate={currentDate}
-                onSelectDate={handleSelectDate}
-                onSelectWeek={handleSelectWeek}
-                onSelectMonth={handleSelectMonth}
-                onClose={() => setCalendarOpen(false)}
-              />
+              <Suspense fallback={null}>
+                <JournalCalendarDropdown
+                  currentDate={currentDate}
+                  onSelectDate={handleSelectDate}
+                  onSelectWeek={handleSelectWeek}
+                  onSelectMonth={handleSelectMonth}
+                  onClose={() => setCalendarOpen(false)}
+                />
+              </Suspense>
             )}
           </div>
         </>

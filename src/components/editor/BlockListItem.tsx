@@ -13,7 +13,7 @@
 
 import { AlertCircle, CalendarDays, CheckCircle2 } from 'lucide-react'
 import type React from 'react'
-import { memo, useCallback, useMemo, useState } from 'react'
+import { lazy, memo, Suspense, useCallback, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { DependencyIndicator } from '@/components/common/DependencyIndicator'
@@ -21,7 +21,6 @@ import { PageLink } from '@/components/pages/PageLink'
 import { DateChipEditor } from '@/components/properties/DateChipEditor'
 import { renderRichContent } from '@/components/RichContentRenderer'
 import { Badge } from '@/components/ui/badge'
-import { Calendar } from '@/components/ui/calendar'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import {
   Sheet,
@@ -43,6 +42,12 @@ import { priorityColor } from '@/lib/priority-color'
 import { reportIpcError } from '@/lib/report-ipc-error'
 import { cn } from '@/lib/utils'
 import { useResolveStore } from '@/stores/resolve'
+
+// #5441 — lazy: react-day-picker loads when a reschedule popover first opens,
+// not with every agenda/due-panel row.
+const Calendar = lazy(() =>
+  import('@/components/ui/calendar').then((m) => ({ default: m.Calendar })),
+)
 
 /** Variant of the priority badge rendering used in the metadata row. */
 export type PriorityBadgeVariant = 'default' | 'agenda'
@@ -529,14 +534,21 @@ function BlockListItemInner({
               <CalendarDays className="h-4 w-4" />
             </button>
           </PopoverTrigger>
-          <PopoverContent
-            align="end"
-            className="w-auto p-0"
-            onClick={(e) => e.stopPropagation()}
-            onKeyDown={(e) => e.stopPropagation()}
-          >
-            <Calendar mode="single" onSelect={handleDateSelect} data-testid="reschedule-calendar" />
-          </PopoverContent>
+          {/* Outside the content so the popover shell and calendar appear together. */}
+          <Suspense fallback={null}>
+            <PopoverContent
+              align="end"
+              className="w-auto p-0"
+              onClick={(e) => e.stopPropagation()}
+              onKeyDown={(e) => e.stopPropagation()}
+            >
+              <Calendar
+                mode="single"
+                onSelect={handleDateSelect}
+                data-testid="reschedule-calendar"
+              />
+            </PopoverContent>
+          </Suspense>
         </Popover>
       )}
     </li>
