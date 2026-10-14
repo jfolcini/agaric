@@ -702,16 +702,14 @@ impl FilterPrimitive {
     ///   correlated `MAX(created_at)` subquery over `op_log`, served
     ///   per-row via `idx_op_log_block_id` — not an index anti-join, so it
     ///   ranks below the genuine index-backed primitives).
-    /// - **2 (full scan, GLOB):** `PathGlob`, always. It compiles to
+    /// - **2 (GLOB):** `PathGlob`, always. It compiles to
     ///   `LOWER(title) GLOB ?` (#1320-A — the SAME dialect as Search;
-    ///   `GLOB` + brace + `[class]` semantics). SQLite's `GLOB` uses BINARY
-    ///   collation against the `LOWER(title)` expression, so it cannot use
-    ///   `idx_pages_cache_title_nocase` — every `PathGlob` is a true
-    ///   `pages_cache.title` scan regardless of anchoring. That scan is
-    ///   cheap in practice — `pages_cache` holds one row per page
-    ///   (hundreds–low thousands) — so `PathGlob` is simply ranked last
-    ///   among the SQL primitives so it never runs before a SARGable
-    ///   clause.
+    ///   `GLOB` + brace + `[class]` semantics). On Pages a pattern with a
+    ///   literal head adds a range on `idx_pages_cache_title_nocase`
+    ///   (#5426), but an unanchored one (every bare word, which
+    ///   `prepare_globs` wraps as `*word*`) and every Search pattern still
+    ///   scan `pages_cache`, so `PathGlob` ranks last among the SQL
+    ///   primitives and never runs before a SARGable clause.
     /// - **3 (post-filter / correlated-subquery / non-SQL):** `Orphan`
     ///   plus the Search-only toggles (`Regex`, `CaseSensitive`,
     ///   `WholeWord`, `Snippet`). `Orphan`'s *inbound* half reads the
@@ -765,10 +763,9 @@ impl FilterPrimitive {
             | FilterPrimitive::LinksTo { .. }
             | FilterPrimitive::LinkedFrom { .. }
             | FilterPrimitive::BlockType { .. } => 1,
-            // `PathGlob` is always a full `pages_cache.title` scan:
-            // `LOWER(title) GLOB ?` (#1320-A) uses BINARY collation against
-            // an expression, so no index applies and anchoring buys
-            // nothing. Ranked highest among the SQL primitives.
+            // `PathGlob` scans `pages_cache` unless its pattern has a
+            // literal head (see the doc above). Ranked highest among the SQL
+            // primitives.
             FilterPrimitive::PathGlob { .. } => 2,
             // `Orphan`'s outbound half is a 3-table correlated subquery with
             // No materialised counterpart — expensive tier,
@@ -1006,6 +1003,20 @@ fn pages_date_predicate(predicate: &DatePredicate, column: &str) -> WhereClause 
     }
 }
 
+/// `[lo, hi)` bounds on `title COLLATE NOCASE` holding every title whose
+/// `LOWER(title)` matches the GLOB `pattern`. NOCASE folds ASCII only, as
+/// `LOWER()` does, so a match's NOCASE key starts with the pattern's literal
+/// head `lo`; UTF-8 byte order is code-point order, so it sorts below `hi`,
+/// `lo` with its last char bumped by one (NOCASE folding `hi` only raises
+/// it). `None` when there is no head to bound: the pattern opens with `*`,
+/// `?` or `[`, or the head's last char has no successor.
+fn glob_literal_prefix_range(pattern: &str) -> Option<(String, String)> {
+    let lo = &pattern[..pattern.find(['*', '?', '[']).unwrap_or(pattern.len())];
+    let (last_at, last) = lo.char_indices().next_back()?;
+    let bumped = char::from_u32(u32::from(last) + 1)?;
+    Some((lo.to_owned(), format!("{}{bumped}", &lo[..last_at])))
+}
+
 // ── Allowed-keys constants ───────────────────────────────────────────────
 
 /// Pages-surface allowed tokens. Shared + Pages-only.
@@ -1083,13 +1094,28 @@ impl Projection for PagesProjection {
         // fragments this method emits. The `pattern` is therefore bound
         // VERBATIM (`Bind::Text(pattern.to_string())`, NO `glob_to_like`).
         //
-        // Pages keeps the `b.id` alias (Search uses `b.page_id`); only the
-        // alias differs between the two surfaces.
+        // Pages keeps the `b.id` alias (Search uses `b.page_id`). A pattern
+        // with a literal head also gets a `title COLLATE NOCASE` range, so
+        // the sub-select searches `idx_pages_cache_title_nocase` instead of
+        // scanning `pages_cache` (#5426); the GLOB stays the predicate.
         let op = if exclude { "NOT IN" } else { "IN" };
-        WhereClause::new(
-            format!("{alias}.id {op} (SELECT page_id FROM pages_cache WHERE LOWER(title) GLOB ?)"),
-            vec![Bind::Text(pattern.to_string())],
-        )
+        let glob = Bind::Text(pattern.to_string());
+        match glob_literal_prefix_range(pattern) {
+            Some((lo, hi)) => WhereClause::new(
+                format!(
+                    "{alias}.id {op} (SELECT page_id FROM pages_cache \
+                     WHERE title COLLATE NOCASE >= ? AND title COLLATE NOCASE < ? \
+                     AND LOWER(title) GLOB ?)"
+                ),
+                vec![Bind::Text(lo), Bind::Text(hi), glob],
+            ),
+            None => WhereClause::new(
+                format!(
+                    "{alias}.id {op} (SELECT page_id FROM pages_cache WHERE LOWER(title) GLOB ?)"
+                ),
+                vec![glob],
+            ),
+        }
     }
     fn compile_has_property(
         &self,
@@ -1487,8 +1513,8 @@ impl Projection for SearchProjection {
         // and AND-joins the exclude fragments to reproduce the legacy
         // set-union / set-difference semantics.
         //
-        // Pages (`PagesProjection::compile_path_glob`) is INTENTIONALLY
-        // different (`COLLATE NOCASE LIKE`) and is NOT touched here.
+        // Pages (`PagesProjection::compile_path_glob`) adds a title range
+        // (#5426); Search does not.
         let op = if exclude { "NOT IN" } else { "IN" };
         WhereClause::new(
             format!(
@@ -2258,10 +2284,9 @@ mod tests {
             .cost_hint(),
             1
         );
-        // Every `PathGlob` is a full `pages_cache.title` scan (2):
-        // SQLite won't use a NOCASE index for a case-insensitive `LIKE`,
-        // so anchoring (`foo*`), a leading wildcard (`*foo*`), and a bare
-        // substring word (`alpha` → `%alpha%`) all rank the same.
+        // Every `PathGlob` ranks 2 whatever its anchoring: the rank is per
+        // primitive, and a leading wildcard (`*foo*`) or a bare word
+        // (`alpha` → `*alpha*`) still scans `pages_cache`.
         assert_eq!(
             FilterPrimitive::PathGlob {
                 pattern: "foo*".into(),
@@ -3062,6 +3087,177 @@ mod explain_query_plan_tests {
         assert!(
             plan.to_lowercase().contains("pages_cache"),
             "PathGlob plan must reference pages_cache; got:\n{plan}"
+        );
+    }
+
+    /// The pre-#5426 `PagesProjection::compile_path_glob`: the GLOB alone,
+    /// scanning `pages_cache`. The oracle the title-range form must agree with.
+    fn compile_path_glob_scan_oracle(pattern: &str, exclude: bool, alias: &str) -> WhereClause {
+        let op = if exclude { "NOT IN" } else { "IN" };
+        WhereClause::new(
+            format!("{alias}.id {op} (SELECT page_id FROM pages_cache WHERE LOWER(title) GLOB ?)"),
+            vec![Bind::Text(pattern.to_string())],
+        )
+    }
+
+    async fn page_ids_where(pool: &SqlitePool, wc: &WhereClause) -> Vec<String> {
+        let sql = format!(
+            "SELECT b.id FROM blocks b WHERE b.block_type = 'page' AND {} ORDER BY b.id",
+            wc.sql
+        );
+        let mut query = sqlx::query_scalar::<_, String>(sqlx::AssertSqlSafe(sql.as_str()));
+        for bind in &wc.binds {
+            let Bind::Text(text) = bind else {
+                panic!("PathGlob binds are text; got {bind:?}");
+            };
+            query = query.bind(text.clone());
+        }
+        query.fetch_all(pool).await.unwrap()
+    }
+
+    #[test]
+    fn glob_literal_prefix_range_bumps_the_last_literal_char() {
+        let range = |lo: &str, hi: &str| Some((lo.to_owned(), hi.to_owned()));
+        assert_eq!(
+            glob_literal_prefix_range("notes/*"),
+            range("notes/", "notes0")
+        );
+        assert_eq!(glob_literal_prefix_range("proj?x"), range("proj", "prok"));
+        assert_eq!(glob_literal_prefix_range("café*"), range("café", "cafê"));
+        assert_eq!(
+            glob_literal_prefix_range("del\u{7f}*"),
+            range("del\u{7f}", "del\u{80}")
+        );
+        assert_eq!(glob_literal_prefix_range("*notes*"), None);
+        assert_eq!(glob_literal_prefix_range("[pp]roj*"), None);
+        // U+D7FF + 1 is a surrogate, not a char.
+        assert_eq!(glob_literal_prefix_range("\u{d7ff}*"), None);
+    }
+
+    /// #5426 — the `title COLLATE NOCASE` range never changes the page set:
+    /// over a corpus mixing ASCII case, `@`/`A`/`a` around a bumped char,
+    /// non-ASCII case (`é`/`É`), DEL, emoji and a literal `[`, every pattern
+    /// selects the same pages as the scan oracle, included and excluded.
+    /// Each raw pattern is checked as `prepare_globs` emits it (the Pages
+    /// path) and verbatim (the advanced-query path delegates here without
+    /// preparing).
+    #[tokio::test]
+    async fn pages_path_glob_title_range_matches_scan_oracle() {
+        const TITLES: &[&str] = &[
+            "Notes/child",
+            "NOTES/Upper",
+            "Notes/",
+            "notes",
+            "Notes0",
+            "notes.x",
+            "Projects",
+            "proj-x",
+            "alpha/x",
+            "beta/y",
+            "Café/menu",
+            "CAFÉ/menu",
+            "café",
+            "É/acute",
+            "é/acute",
+            "at@/a",
+            "atA/a",
+            "ata/a",
+            "del\u{7f}/a",
+            "del\u{80}/a",
+            "emoji\u{1F600}/a",
+            "emoji\u{1F601}/a",
+            "[lit]/a",
+            "Meeting notes/x",
+            "\u{d7ff}x",
+            "\u{e000}x",
+            "",
+        ];
+        const PATTERNS: &[&str] = &[
+            "Notes/*",
+            "NOTES/Upper",
+            "notes*",
+            "{alpha,beta}/*",
+            "[pP]roj*",
+            "proj?x",
+            "Café/*",
+            "CAFÉ/*",
+            "É*",
+            "é/*",
+            "at@*",
+            "del\u{7f}*",
+            "emoji\u{1F600}*",
+            "\u{d7ff}*",
+            "Meeting?notes/*",
+            "notes",
+            "*/a",
+            "notes/child",
+        ];
+        let (pool, _dir) = test_pool().await;
+        ensure_test_space(&pool).await;
+        let mut ids = Vec::with_capacity(TITLES.len());
+        for (i, title) in TITLES.iter().enumerate() {
+            let id = format!("01PAGE00000000000000GL{i:04}");
+            sqlx::query(
+                "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id, space_id) \
+                 VALUES (?, 'page', ?, NULL, ?, ?, ?)",
+            )
+            .bind(&id)
+            .bind(*title)
+            .bind(i64::try_from(i).unwrap())
+            .bind(&id)
+            .bind(TEST_SPACE_ID)
+            .execute(&pool)
+            .await
+            .unwrap();
+            sqlx::query(
+                "INSERT INTO pages_cache \
+                     (page_id, title, updated_at, inbound_link_count, child_block_count) \
+                 VALUES (?, ?, 1735689600000, 0, 0)",
+            )
+            .bind(&id)
+            .bind(*title)
+            .execute(&pool)
+            .await
+            .unwrap();
+            ids.push(id);
+        }
+
+        let mut narrowed = 0;
+        for raw in PATTERNS {
+            let mut candidates =
+                crate::fts::glob_filter::prepare_globs(&[(*raw).to_string()]).unwrap();
+            candidates.push((*raw).to_string());
+            for pattern in &candidates {
+                if glob_literal_prefix_range(pattern).is_some() {
+                    narrowed += 1;
+                }
+                for exclude in [false, true] {
+                    let got = page_ids_where(
+                        &pool,
+                        &PagesProjection.compile_path_glob(pattern, exclude, "b"),
+                    )
+                    .await;
+                    let want = page_ids_where(
+                        &pool,
+                        &compile_path_glob_scan_oracle(pattern, exclude, "b"),
+                    )
+                    .await;
+                    assert_eq!(got, want, "pattern {pattern:?} (exclude={exclude})");
+                }
+            }
+        }
+        // Every candidate but those opening with a metacharacter or ending
+        // on U+D7FF is narrowed. Without this the parity above passes
+        // vacuously if the range never fires.
+        assert_eq!(narrowed, 28);
+        assert_eq!(
+            page_ids_where(
+                &pool,
+                &PagesProjection.compile_path_glob("notes/*", false, "b")
+            )
+            .await,
+            ids[..3].to_vec(),
+            "`notes/*` must match Notes/child, NOTES/Upper and Notes/ (ASCII case folds)"
         );
     }
 

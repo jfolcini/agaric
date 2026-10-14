@@ -712,7 +712,8 @@ fn validate_pages_filters(filters: &[FilterPrimitive]) -> Result<(), AppError> {
 /// OR-joins (include) / AND-joins (exclude) a per-pattern
 /// `PagesProjection::compile_path_glob` sub-select. The SELECT body is
 /// single-sourced through that method so the two surfaces stay in
-/// lockstep on everything but the `b.id` vs `b.page_id` alias.
+/// lockstep on the GLOB; Pages differs by the `b.id` alias and its
+/// title-range narrowing (#5426).
 ///
 /// `None` means the raw pattern reduced to zero prepared globs
 /// (whitespace-only / fully stripped), so it constrains no rows and
