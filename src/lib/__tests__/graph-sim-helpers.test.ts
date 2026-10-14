@@ -5,6 +5,9 @@
  * `<text>` tree directly.
  */
 
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
+
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import {
@@ -226,6 +229,152 @@ describe('renderGraphElements — node size and the current-page accent (#5429)'
     })
 
     expect(radii).toEqual([at + 2, at - 1, at + 2, at])
+  })
+})
+
+describe('renderGraphElements — neighbourhood highlight on hover and focus (#5431)', () => {
+  // Hub's neighbours are A, B and C; Far hangs off A, so it is two hops from Hub.
+  const nodes = [
+    makeNode('hub', 'Hub'),
+    makeNode('a', 'A'),
+    makeNode('b', 'B'),
+    makeNode('c', 'C'),
+    makeNode('far', 'Far'),
+  ]
+  const edges: GraphEdge[] = [
+    { source: 'hub', target: 'a', ref_count: 1 },
+    { source: 'hub', target: 'b', ref_count: 1 },
+    { source: 'c', target: 'hub', ref_count: 1 },
+    { source: 'a', target: 'far', ref_count: 1 },
+  ]
+  const edgeNames = ['hub-a', 'hub-b', 'c-hub', 'a-far']
+
+  function render(): SVGSVGElement {
+    const svg = makeSvg()
+    renderGraphElements(svg, nodes, edges, () => {})
+    return svg
+  }
+
+  const group = (svg: SVGSVGElement, label: string): Element =>
+    svg.querySelector(`g.node[aria-label="${label}"]`) as Element
+
+  /** Inline opacity per node and per edge; '' is undimmed. */
+  function opacities(svg: SVGSVGElement): Record<string, string> {
+    const out: Record<string, string> = {}
+    for (const g of svg.querySelectorAll<SVGGElement>('g.node')) {
+      out[g.getAttribute('aria-label') as string] = g.style.opacity
+    }
+    svg.querySelectorAll<SVGLineElement>('line').forEach((line, i) => {
+      out[edgeNames[i] as string] = line.style.opacity
+    })
+    return out
+  }
+
+  const strokeOpacities = (svg: SVGSVGElement): string[] =>
+    Array.from(svg.querySelectorAll<SVGLineElement>('line')).map((l) => l.style.strokeOpacity)
+
+  const RESTING = {
+    Hub: '',
+    A: '',
+    B: '',
+    C: '',
+    Far: '',
+    'hub-a': '',
+    'hub-b': '',
+    'c-hub': '',
+    'a-far': '',
+  }
+
+  it('hovering a node leaves exactly it, its neighbours and their edges undimmed; leaving restores all', () => {
+    const svg = render()
+
+    group(svg, 'Hub').dispatchEvent(new Event('mouseenter'))
+    expect(opacities(svg)).toEqual({ ...RESTING, Far: '0.15', 'a-far': '0.15' })
+    expect(strokeOpacities(svg)).toEqual(['0.8', '0.8', '0.8', ''])
+
+    group(svg, 'Hub').dispatchEvent(new Event('mouseleave'))
+    expect(opacities(svg)).toEqual(RESTING)
+    expect(strokeOpacities(svg)).toEqual(['', '', '', ''])
+  })
+
+  it('focusing a node highlights its neighbourhood the same way; blur restores all', () => {
+    const svg = render()
+
+    group(svg, 'Far').dispatchEvent(new Event('focus'))
+    expect(opacities(svg)).toEqual({
+      ...RESTING,
+      Hub: '0.15',
+      B: '0.15',
+      C: '0.15',
+      'hub-a': '0.15',
+      'hub-b': '0.15',
+      'c-hub': '0.15',
+    })
+    expect(strokeOpacities(svg)).toEqual(['', '', '', '0.8'])
+
+    group(svg, 'Far').dispatchEvent(new Event('blur'))
+    expect(opacities(svg)).toEqual(RESTING)
+    expect(strokeOpacities(svg)).toEqual(['', '', '', ''])
+  })
+
+  it('leaving a hovered node falls back to the focused node instead of clearing', () => {
+    const svg = render()
+    group(svg, 'Far').dispatchEvent(new Event('focus'))
+    const focusedOnly = opacities(svg)
+    expect(focusedOnly['Hub']).toBe('0.15')
+
+    group(svg, 'Hub').dispatchEvent(new Event('mouseenter'))
+    expect(opacities(svg)['B']).toBe('')
+    group(svg, 'Hub').dispatchEvent(new Event('mouseleave'))
+
+    expect(opacities(svg)).toEqual(focusedOnly)
+  })
+
+  it('hovering a node outside the focused neighbourhood never dims the focused node', () => {
+    const svg = render()
+    group(svg, 'Far').dispatchEvent(new Event('focus'))
+    group(svg, 'B').dispatchEvent(new Event('mouseenter'))
+
+    expect(opacities(svg)).toMatchObject({ Far: '', A: '0.15', C: '0.15' })
+  })
+
+  it('hover and focus leave the label size and weight alone', () => {
+    const svg = render()
+    const label = group(svg, 'Hub').querySelector('text') as SVGTextElement
+    const typography = (): Array<string | null> => [
+      label.getAttribute('font-size'),
+      label.getAttribute('font-weight'),
+      label.style.fontSize,
+      label.style.fontWeight,
+    ]
+    const resting = typography()
+
+    group(svg, 'Hub').dispatchEvent(new Event('focus'))
+    expect(typography()).toEqual(resting)
+    group(svg, 'Hub').dispatchEvent(new Event('mouseenter'))
+    expect(typography()).toEqual(resting)
+  })
+
+  // happy-dom evaluates neither `@media (prefers-reduced-motion)` nor `var()`,
+  // so this pins the stylesheet instead: the transition rule matches the
+  // rendered nodes and edges, and its duration is a token that reduced motion
+  // scales to zero.
+  it('eases opacity with a token duration that reduced motion zeroes', () => {
+    const css = readFileSync(resolve(process.cwd(), 'src/index.css'), 'utf8')
+    const rule = /([^{}]+)\{([^}]*transition-property:\s*opacity[^}]*)\}/.exec(css)
+    if (!rule) throw new Error('no opacity transition rule in index.css')
+    const [, rawSelector, body] = rule as unknown as [string, string, string]
+    const selector = rawSelector.replace(/\/\*[\s\S]*?\*\//g, '').trim()
+    const svg = render()
+
+    expect(group(svg, 'Hub').matches(selector)).toBe(true)
+    expect(svg.querySelector('line')?.matches(selector)).toBe(true)
+    const token = /transition-duration:\s*var\((--duration-[a-z]+)\)/.exec(body)?.[1]
+    expect(token).toBeDefined()
+    expect(css).toMatch(new RegExp(`${token}:\\s*calc\\([^;]*var\\(--motion-scale`))
+    expect(css).toMatch(
+      /@media \(prefers-reduced-motion: reduce\)\s*\{\s*:root\s*\{\s*--motion-scale:\s*0;/,
+    )
   })
 })
 
