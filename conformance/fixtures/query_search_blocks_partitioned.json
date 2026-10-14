@@ -295,8 +295,8 @@
         "blockLimit": 10,
         "filter": {
           "scope": {
-            "kind": "active",
-            "space_id": "$SPACE"
+            "kind": "spaces",
+            "space_ids": ["$SPACE"]
           }
         },
         "pageLimit": 10,
@@ -311,8 +311,8 @@
         "blockLimit": 10,
         "filter": {
           "scope": {
-            "kind": "active",
-            "space_id": "$SPACE"
+            "kind": "spaces",
+            "space_ids": ["$SPACE"]
           }
         },
         "pageLimit": 1,
@@ -327,8 +327,8 @@
         "blockLimit": 2,
         "filter": {
           "scope": {
-            "kind": "active",
-            "space_id": "$SPACE"
+            "kind": "spaces",
+            "space_ids": ["$SPACE"]
           }
         },
         "pageLimit": 10,
@@ -343,8 +343,8 @@
         "blockLimit": 0,
         "filter": {
           "scope": {
-            "kind": "active",
-            "space_id": "$SPACE"
+            "kind": "spaces",
+            "space_ids": ["$SPACE"]
           }
         },
         "pageLimit": 0,
@@ -359,8 +359,8 @@
         "blockLimit": 10,
         "filter": {
           "scope": {
-            "kind": "active",
-            "space_id": "$SPACE"
+            "kind": "spaces",
+            "space_ids": ["$SPACE"]
           }
         },
         "pageLimit": 101,
@@ -376,8 +376,8 @@
         "blockLimit": 10,
         "filter": {
           "scope": {
-            "kind": "active",
-            "space_id": "$SPACE"
+            "kind": "spaces",
+            "space_ids": ["$SPACE"]
           }
         },
         "pageLimit": 10,
@@ -393,8 +393,8 @@
         "filter": {
           "parentId": "S1",
           "scope": {
-            "kind": "active",
-            "space_id": "$SPACE"
+            "kind": "spaces",
+            "space_ids": ["$SPACE"]
           }
         },
         "pageLimit": 10,

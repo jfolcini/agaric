@@ -352,6 +352,10 @@ mod tests {
     use super::*;
     use crate::search_types::{NamedDateRange, SearchFilter, SearchPropertyFilter};
 
+    fn unfiltered() -> SearchFilter {
+        serde_json::from_value(serde_json::json!({ "scope": { "kind": "all_spaces" } })).unwrap()
+    }
+
     fn fixed_today() -> NaiveDate {
         // 2026-05-18 is a Monday — pinned so `this-week` math is stable.
         NaiveDate::from_ymd_opt(2026, 5, 18).unwrap()
@@ -366,16 +370,19 @@ mod tests {
 
     #[test]
     fn empty_filter_yields_empty_predicates() {
-        let f = SearchFilter::default();
+        let f = unfiltered();
         let m = prepare_metadata_with_today(&f, fixed_today()).unwrap();
-        assert!(m.is_empty(), "default filter must be empty");
+        assert!(
+            m.is_empty(),
+            "an unfiltered search must yield no predicates"
+        );
     }
 
     #[test]
     fn state_none_routes_to_is_null() {
         let f = SearchFilter {
             state_filter: vec!["TODO".into(), "none".into()],
-            ..Default::default()
+            ..unfiltered()
         };
         let m = prepare_metadata_with_today(&f, fixed_today()).unwrap();
         assert_eq!(m.state_values, vec!["TODO".to_string()]);
@@ -391,7 +398,7 @@ mod tests {
                 start: "not-a-date".into(),
                 end: "2026-03-01".into(),
             }),
-            ..Default::default()
+            ..unfiltered()
         };
         match prepare_metadata_with_today(&f, fixed_today()) {
             Err(AppError::Validation { code, message }) => {
@@ -406,7 +413,7 @@ mod tests {
     fn priority_case_insensitive_none() {
         let f = SearchFilter {
             priority_filter: vec!["NONE".into()],
-            ..Default::default()
+            ..unfiltered()
         };
         let m = prepare_metadata_with_today(&f, fixed_today()).unwrap();
         assert!(m.priority_is_null);
@@ -417,7 +424,7 @@ mod tests {
     fn due_named_today_resolves_to_range() {
         let f = SearchFilter {
             due_filter: Some(DateFilter::Named(NamedDateRange::Today)),
-            ..Default::default()
+            ..unfiltered()
         };
         let m = prepare_metadata_with_today(&f, fixed_today()).unwrap();
         assert_eq!(
@@ -433,7 +440,7 @@ mod tests {
     fn due_overdue_resolves_to_lt_today() {
         let f = SearchFilter {
             due_filter: Some(DateFilter::Named(NamedDateRange::Overdue)),
-            ..Default::default()
+            ..unfiltered()
         };
         let m = prepare_metadata_with_today(&f, fixed_today()).unwrap();
         assert_eq!(
@@ -449,7 +456,7 @@ mod tests {
     fn due_this_week_mon_sun_range() {
         let f = SearchFilter {
             due_filter: Some(DateFilter::Named(NamedDateRange::ThisWeek)),
-            ..Default::default()
+            ..unfiltered()
         };
         // 2026-05-18 is a Monday — start of the week.
         let m = prepare_metadata_with_today(&f, fixed_today()).unwrap();
@@ -466,7 +473,7 @@ mod tests {
     fn due_this_week_mid_week_still_resolves_to_mon_sun() {
         let f = SearchFilter {
             due_filter: Some(DateFilter::Named(NamedDateRange::ThisWeek)),
-            ..Default::default()
+            ..unfiltered()
         };
         // 2026-05-20 is a Wednesday.
         let wed = NaiveDate::from_ymd_opt(2026, 5, 20).unwrap();
@@ -484,7 +491,7 @@ mod tests {
     fn due_this_month_resolves_to_first_last() {
         let f = SearchFilter {
             due_filter: Some(DateFilter::Named(NamedDateRange::ThisMonth)),
-            ..Default::default()
+            ..unfiltered()
         };
         let m = prepare_metadata_with_today(&f, fixed_today()).unwrap();
         assert_eq!(
@@ -500,7 +507,7 @@ mod tests {
     fn due_this_month_december_rolls_over_year() {
         let f = SearchFilter {
             due_filter: Some(DateFilter::Named(NamedDateRange::ThisMonth)),
-            ..Default::default()
+            ..unfiltered()
         };
         let dec31 = NaiveDate::from_ymd_opt(2026, 12, 31).unwrap();
         let m = prepare_metadata_with_today(&f, dec31).unwrap();
@@ -520,7 +527,7 @@ mod tests {
                 op: DateOp::Gte,
                 date: "2026-01-01".into(),
             }),
-            ..Default::default()
+            ..unfiltered()
         };
         let m = prepare_metadata_with_today(&f, fixed_today()).unwrap();
         assert_eq!(
@@ -539,7 +546,7 @@ mod tests {
                 op: DateOp::Eq,
                 date: "2026-13-99".into(),
             }),
-            ..Default::default()
+            ..unfiltered()
         };
         let err = prepare_metadata_with_today(&f, fixed_today()).unwrap_err();
         match err {
@@ -558,7 +565,7 @@ mod tests {
     fn scheduled_named_none_routes_to_is_null() {
         let f = SearchFilter {
             scheduled_filter: Some(DateFilter::Named(NamedDateRange::None)),
-            ..Default::default()
+            ..unfiltered()
         };
         let m = prepare_metadata_with_today(&f, fixed_today()).unwrap();
         assert_eq!(m.scheduled, Some(DatePredicate::IsNull));
@@ -575,7 +582,7 @@ mod tests {
                 key: "archived".into(),
                 value: "true".into(),
             }],
-            ..Default::default()
+            ..unfiltered()
         };
         let m = prepare_metadata_with_today(&f, fixed_today()).unwrap();
         assert_eq!(m.property_includes.len(), 1);
@@ -595,7 +602,7 @@ mod tests {
                 key: String::new(),
                 value: "x".into(),
             }],
-            ..Default::default()
+            ..unfiltered()
         };
         assert!(
             matches!(
@@ -611,7 +618,7 @@ mod tests {
                 key: "   ".into(),
                 value: "x".into(),
             }],
-            ..Default::default()
+            ..unfiltered()
         };
         assert!(
             matches!(
@@ -630,7 +637,7 @@ mod tests {
     fn excluded_state_values_route_to_predicate() {
         let f = SearchFilter {
             excluded_state_filter: vec!["DONE".into(), "CANCELLED".into()],
-            ..Default::default()
+            ..unfiltered()
         };
         let m = prepare_metadata_with_today(&f, fixed_today()).unwrap();
         assert_eq!(
@@ -645,7 +652,7 @@ mod tests {
     fn excluded_state_none_sentinel_flips_to_not_null() {
         let f = SearchFilter {
             excluded_state_filter: vec!["none".into(), "TODO".into()],
-            ..Default::default()
+            ..unfiltered()
         };
         let m = prepare_metadata_with_today(&f, fixed_today()).unwrap();
         assert!(m.excluded_state_not_null);
@@ -656,7 +663,7 @@ mod tests {
     fn excluded_priority_case_insensitive_none() {
         let f = SearchFilter {
             excluded_priority_filter: vec!["NONE".into()],
-            ..Default::default()
+            ..unfiltered()
         };
         let m = prepare_metadata_with_today(&f, fixed_today()).unwrap();
         assert!(m.excluded_priority_not_null);

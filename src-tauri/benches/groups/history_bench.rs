@@ -230,7 +230,8 @@ fn bench_list_page_history(c: &mut Criterion) {
                             &pool,
                             page_id,
                             None,
-                            &SpaceScope::Global,
+                            // Per-page mode ignores the scope.
+                            &SpaceScope::Active(SpaceId::from_trusted(SPACE_A)),
                             None,
                             Some(50),
                         )
@@ -490,10 +491,7 @@ fn bench_list_global_history(c: &mut Criterion) {
         let pool = rt.block_on(fresh_pool(&dir, &format!("hist_global_{total_ops}")));
         rt.block_on(seed_global_history(&pool, total_ops));
 
-        let scopes = [
-            ("active", SpaceScope::Active(SpaceId::from_trusted(SPACE_A))),
-            ("global", SpaceScope::Global),
-        ];
+        let scopes = [("active", SpaceScope::Active(SpaceId::from_trusted(SPACE_A)))];
         for (label, scope) in &scopes {
             // Shape probe (benches/AGENTS.md): every page up to the tenth is
             // full, so a filter drift cannot pass as a speedup.

@@ -297,8 +297,8 @@
       "args": {
         "filter": {
           "scope": {
-            "kind": "active",
-            "space_id": "$SPACE"
+            "kind": "spaces",
+            "space_ids": ["$SPACE"]
           }
         },
         "limit": 50,
@@ -313,8 +313,8 @@
         "filter": {
           "parentId": "S1",
           "scope": {
-            "kind": "active",
-            "space_id": "$SPACE"
+            "kind": "spaces",
+            "space_ids": ["$SPACE"]
           }
         },
         "limit": 50,
@@ -328,8 +328,8 @@
       "args": {
         "filter": {
           "scope": {
-            "kind": "active",
-            "space_id": "$SPACE"
+            "kind": "spaces",
+            "space_ids": ["$SPACE"]
           }
         },
         "limit": 50,
@@ -345,8 +345,8 @@
         "filter": {
           "isRegex": true,
           "scope": {
-            "kind": "active",
-            "space_id": "$SPACE"
+            "kind": "spaces",
+            "space_ids": ["$SPACE"]
           }
         },
         "limit": 50,
@@ -361,8 +361,8 @@
         "filter": {
           "caseSensitive": true,
           "scope": {
-            "kind": "active",
-            "space_id": "$SPACE"
+            "kind": "spaces",
+            "space_ids": ["$SPACE"]
           }
         },
         "limit": 50,
@@ -376,8 +376,8 @@
       "args": {
         "filter": {
           "scope": {
-            "kind": "active",
-            "space_id": "$SPACE"
+            "kind": "spaces",
+            "space_ids": ["$SPACE"]
           },
           "wholeWord": true
         },
@@ -404,8 +404,8 @@
       "args": {
         "filter": {
           "scope": {
-            "kind": "active",
-            "space_id": "$SPACE"
+            "kind": "spaces",
+            "space_ids": ["$SPACE"]
           }
         },
         "limit": 50,
@@ -419,8 +419,8 @@
       "args": {
         "filter": {
           "scope": {
-            "kind": "active",
-            "space_id": "$SPACE"
+            "kind": "spaces",
+            "space_ids": ["$SPACE"]
           }
         },
         "limit": 1,
@@ -434,8 +434,8 @@
       "args": {
         "filter": {
           "scope": {
-            "kind": "active",
-            "space_id": "$SPACE"
+            "kind": "spaces",
+            "space_ids": ["$SPACE"]
           }
         },
         "limit": 1,
@@ -450,8 +450,8 @@
       "args": {
         "filter": {
           "scope": {
-            "kind": "active",
-            "space_id": "$SPACE"
+            "kind": "spaces",
+            "space_ids": ["$SPACE"]
           }
         },
         "limit": 0,

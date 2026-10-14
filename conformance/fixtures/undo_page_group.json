@@ -104,7 +104,11 @@
         "blockType": "content",
         "content": "created then undone",
         "index": 1,
-        "parentId": "S1"
+        "parentId": "S1",
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
       },
       "command": "create_block",
       "comment": "The older op in the group. Undoing a create is always reversible, unlike an edit, which needs a prior text row in the op log."

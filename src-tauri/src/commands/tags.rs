@@ -499,10 +499,8 @@ pub(crate) async fn remove_tag_in_tx(
 /// `mode` is `"and"` for intersection, anything else defaults to `"or"` (union).
 /// Returns an empty page when no tag IDs or prefixes are supplied.
 ///
-/// `scope` — [`SpaceScope::Active`] restricts the result
-/// set to blocks whose owning page carries `space = ?space_id`.
-/// [`SpaceScope::Global`] is the unscoped (pre-) behaviour
-/// preserved for callsites that span every space.
+/// `scope` restricts the result set to blocks whose owning page carries
+/// `space = ?space_id`.
 ///
 /// `block_type` — when `Some`, restricts results to
 /// blocks whose `block_type` equals the supplied value. `None` is the
@@ -568,7 +566,7 @@ pub async fn query_by_tags_inner(
         &expr,
         &page,
         include_inherited.unwrap_or(false),
-        scope.as_filter_param(),
+        Some(scope.space_id().as_str()),
         block_type.as_deref(),
     )
     .await
@@ -618,7 +616,7 @@ pub async fn query_by_tag_expr_inner(
         &expr,
         &page,
         include_inherited.unwrap_or(false),
-        scope.as_filter_param(),
+        Some(scope.space_id().as_str()),
         block_type.as_deref(),
     )
     .await
@@ -1084,10 +1082,6 @@ pub async fn query_by_tag_expr(
 
 /// Tauri command: list the active space's tags matching a name prefix.
 /// Delegates to [`list_tags_by_prefix_inner`].
-///
-/// `scope` is a required-active [`SpaceScope`]: a tag name is unique per
-/// space, so an unscoped scan answers one row per space for a shared name.
-/// [`SpaceScope::Global`] is rejected by [`SpaceScope::require_active`].
 #[tauri::command]
 #[specta::specta]
 pub async fn list_tags_by_prefix(
@@ -1096,7 +1090,7 @@ pub async fn list_tags_by_prefix(
     limit: Option<i64>,
     scope: SpaceScope,
 ) -> Result<Vec<TagCacheRow>, AppError> {
-    let space_id = scope.require_active()?;
+    let space_id = scope.space_id();
     list_tags_by_prefix_inner(&pool.0, space_id.as_str(), prefix, limit)
         .await
         .map_err(sanitize_internal_error)
@@ -1130,18 +1124,13 @@ pub async fn list_inherited_tags_for_block(
 /// Tauri command: list every tag in the active space as
 /// `TagCacheRow[]`. No pagination, no clamp.  Delegates to
 /// [`list_all_tags_in_space_inner`].
-///
-/// `scope` is a required-active [`SpaceScope`] (b1 migration);
-/// [`SpaceScope::Global`] is rejected by [`SpaceScope::require_active`].
-/// The frontend short-circuits locally to an empty list when there is no
-/// active space rather than dispatching a `Global` scope.
 #[tauri::command]
 #[specta::specta]
 pub async fn list_all_tags_in_space(
     pool: State<'_, ReadPool>,
     scope: SpaceScope,
 ) -> Result<Vec<TagCacheRow>, AppError> {
-    let space_id = scope.require_active()?;
+    let space_id = scope.space_id();
     list_all_tags_in_space_inner(&pool.0, space_id.as_str())
         .await
         .map_err(sanitize_internal_error)

@@ -62,22 +62,16 @@ export function validationRejection(message: string): Error & AppError {
 }
 
 /**
- * The space id a command's `scope: SpaceScope` arg names, or `null` for
- * `{ kind: 'global' }` — and for an OMITTED scope, which the backend-authored
- * conformance fixtures rely on: `conformance_command.rs`'s `scope` closure
- * maps a missing key to `SpaceScope::Global`. Rejecting omission here is the
- * backend slice of #5415 (dropping `SpaceScope`'s `Default`), not the mock's.
+ * The space id a command's `scope: SpaceScope` arg names. The backend fails
+ * to deserialize anything but `{ kind: 'active', space_id }`, an omitted scope
+ * included (#5415), so the mock refuses the same calls.
  */
-export function readSpaceScope(args: Record<string, unknown>): string | null {
-  const scope = args['scope'] as { kind?: string; space_id?: string } | undefined
-  return scope?.kind === 'active' ? (scope.space_id ?? null) : null
-}
-
-/** Mirrors `SpaceScope::require_active`: the commands with no cross-space form refuse `Global`. */
 export function readActiveSpaceScope(cmd: string, args: Record<string, unknown>): string {
-  const spaceId = readSpaceScope(args)
-  if (!spaceId) throw validationRejection(`${cmd} requires an active space scope`)
-  return spaceId
+  const scope = args['scope'] as { kind?: string; space_id?: string } | undefined
+  if (scope?.kind !== 'active' || !scope.space_id) {
+    throw validationRejection(`${cmd} requires an active space scope`)
+  }
+  return scope.space_id
 }
 
 /**
@@ -650,12 +644,9 @@ export function ownerSpaceOf(b: Record<string, unknown>): string | null {
   return (properties.get(ownerId)?.get('space')?.['value_ref'] as string | null) ?? null
 }
 
-/**
- * `SpaceScope` predicate for a link SOURCE block. `spaceId === null` is the
- * `Global` (unfiltered, legacy cross-space) scope.
- */
-export function inSpaceScope(b: Record<string, unknown>, spaceId: string | null): boolean {
-  return spaceId === null || ownerSpaceOf(b) === spaceId
+/** `SpaceScope` predicate for a link SOURCE block. */
+export function inSpaceScope(b: Record<string, unknown>, spaceId: string): boolean {
+  return ownerSpaceOf(b) === spaceId
 }
 
 /**
@@ -1785,8 +1776,7 @@ export function fbqTagFilterMatches(
 }
 
 /** Space-scope gate (mirrors `filtered_blocks_query_inner`). */
-export function fbqInSpace(b: Record<string, unknown>, spaceId: string | null): boolean {
-  if (spaceId === null) return true
+export function fbqInSpace(b: Record<string, unknown>, spaceId: string): boolean {
   const ownerId = (b['page_id'] as string | null) ?? (b['id'] as string)
   const ownerSpace = properties.get(ownerId)?.get('space')?.['value_ref'] ?? null
   return ownerSpace === spaceId

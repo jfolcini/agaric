@@ -15,10 +15,10 @@
 //! | `get_page` | [`get_page_inner`](crate::commands::get_page_inner) | Composes `get_active_block_inner` + paginated subtree via `page_id`; `page` carries its properties, tags and aliases (#5377). soft-deleted pages → `NotFound`. |
 //! | `search` | [`search_blocks_inner`] | FTS5. Result count capped at 50, snippet length at 512 chars. |
 //! | `get_block` | [`get_active_block_inner`] | Plus the block's properties, tags and, for a page, aliases (#5377). soft-deleted blocks → `NotFound`. |
-//! | `list_backlinks` | [`list_backlinks_grouped_inner`] | Grouped by source page. |
+//! | `list_backlinks` | [`list_backlinks_grouped_inner`] | Grouped by source page. `space_id` required. |
 //! | `list_tags` | [`list_tags_inner`] | The tags of one space. Cursor paginated. Limits outside `[1, 100]` are rejected. `space_id` required. |
 //! | `list_property_defs` | [`list_property_defs_inner`] | Typed property schema; cursor paginated. |
-//! | `get_agenda` | [`agenda_range_inner`] | Dated blocks in the range plus projected repeats, one row each. |
+//! | `get_agenda` | [`agenda_range_inner`] | Dated blocks in the range plus projected repeats, one row each. `space_id` required. |
 //! | `journal_for_date` | [`journal_for_date_inner`] | Idempotent date → page lookup with a **bounded create carve-out (#2719)**: for `date` within today ± [`JOURNAL_CREATE_WINDOW_MONTHS`] months, creates the missing page on first call (single `CreateBlock`+`SetProperty` op pair, origin `agent:<name>`); outside that window the tool never creates — it returns an existing page as a pure read or `AppError::NotFound`. See [`ReadOnlyTools`] and `handle_journal_for_date` below. |
 //! | `list_spaces` | [`list_spaces_registry_inner`] | #633 — space discovery for agents. Returns `{ id, name, is_default }` per live space from the canonical `spaces` registry (#804). |
 //! | `get_page_markdown` | [`get_page_for_agent_inner`] | #5375 — the whole page as Markdown, ids written as names and every block with its `^ID`. No pagination, as the export. |
@@ -95,6 +95,7 @@ use agaric_core::error::AppError;
 use agaric_core::ulid::BlockId;
 use agaric_store::op::OpRef;
 use agaric_store::pagination::{BlockRow, HistoryEntry, PageResponse};
+use agaric_store::search_types::SearchScope;
 use agaric_store::space::{SpaceId, SpaceScope};
 use agaric_store::task_locals::ActorContext;
 
@@ -363,12 +364,8 @@ struct ListBacklinksArgs {
     cursor: Option<String>,
     #[serde(default)]
     limit: Option<i64>,
-    /// When supplied, restrict backlinks to source blocks
-    /// whose owning page lives in this space. Optional: omitting the
-    /// field returns the unscoped (cross-space) view kept for callers
-    /// that have not migrated.
-    #[serde(default)]
-    space_id: Option<String>,
+    /// Backlinks are restricted to source blocks in this space.
+    space_id: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -399,12 +396,8 @@ struct GetAgendaArgs {
     cursor: Option<String>,
     #[serde(default)]
     limit: Option<i64>,
-    /// When supplied, restrict the agenda to blocks whose
-    /// owning page lives in this space. Optional: omitting the field
-    /// returns the unscoped (cross-space) view kept for callers that
-    /// have not migrated.
-    #[serde(default)]
-    space_id: Option<String>,
+    /// The agenda is restricted to blocks in this space.
+    space_id: String,
 }
 
 /// #633 — `list_spaces` takes no arguments; the empty struct (with
@@ -824,7 +817,7 @@ fn tool_desc_list_backlinks() -> ToolDescription {
         input_schema: json!({
             "type": "object",
             "additionalProperties": false,
-            "required": ["block_id"],
+            "required": ["block_id", "space_id"],
             "properties": {
                 "block_id": { "type": "string", "description": "ULID of the target block/page." },
                 "cursor": { "type": "string" },
@@ -836,7 +829,7 @@ fn tool_desc_list_backlinks() -> ToolDescription {
                 },
                 "space_id": {
                     "type": "string",
-                    "description": "Optional ULID of the space to scope backlinks to. Omit for the unscoped (cross-space) view."
+                    "description": "ULID of the space to scope backlinks to."
                 },
             },
         }),
@@ -909,7 +902,7 @@ fn tool_desc_get_agenda() -> ToolDescription {
         input_schema: json!({
             "type": "object",
             "additionalProperties": false,
-            "required": ["start_date", "end_date"],
+            "required": ["start_date", "end_date", "space_id"],
             "properties": {
                 "start_date": { "type": "string", "description": "Inclusive YYYY-MM-DD lower bound." },
                 "end_date":   { "type": "string", "description": "Inclusive YYYY-MM-DD upper bound." },
@@ -925,7 +918,7 @@ fn tool_desc_get_agenda() -> ToolDescription {
                 },
                 "space_id": {
                     "type": "string",
-                    "description": "Optional ULID of the space to scope the agenda to. Omit for the unscoped (cross-space) view."
+                    "description": "ULID of the space to scope the agenda to."
                 },
             },
         }),
@@ -1367,17 +1360,16 @@ async fn handle_search(pool: &SqlitePool, args: Value) -> Result<Value, AppError
         crate::commands::SearchFilter {
             parent_id,
             tag_ids,
-            // #2248 c — `SearchFilter` now carries a `SpaceScope`. The MCP
-            // `search` tool is always space-scoped, so wrap the (required)
-            // arg as `Active`.
+            // The MCP `search` tool searches the one space its required arg
+            // names.
             // #2956 — validate the id via the strict `from_string` constructor
             // like every sibling tool (`list_backlinks`, `list_property_defs`,
             // `create_page`): a malformed / truncated / empty `space_id` must
             // error (`AppError::Ulid`, which `app_error_to_rmcp` maps to
             // JSON-RPC -32602 invalid-params, #3301) rather than silently
-            // become an `Active` id that matches nothing (which would make an
+            // become an id that matches nothing (which would make an
             // agent wrongly conclude the vault is empty).
-            scope: SpaceScope::Active(SpaceId::from_string(args.space_id.as_str())?),
+            scope: SearchScope::Spaces(vec![SpaceId::from_string(args.space_id.as_str())?]),
             include_page_globs: f.include_page_globs,
             exclude_page_globs: f.exclude_page_globs,
             case_sensitive: f.case_sensitive,
@@ -1436,13 +1428,7 @@ async fn handle_list_backlinks(pool: &SqlitePool, args: Value) -> Result<Value, 
     // matches nothing and comes back as an empty grouped response, which an
     // agent reads as "this block has no backlinks" and does not retry.
     let block_id = BlockId::from_string(args.block_id)?;
-    // Phase 2 — translate the JSON-side `space_id: Option<String>`
-    // into a `SpaceScope` before crossing into `_inner`. The wire shape
-    // stays the same; the type-system gate moves to the call boundary.
-    let scope = match args.space_id {
-        Some(id) => SpaceScope::Active(SpaceId::from_string(id)?),
-        None => SpaceScope::Global,
-    };
+    let scope = SpaceScope::Active(SpaceId::from_string(args.space_id)?);
     let resp =
         list_backlinks_grouped_inner(pool, block_id, None, None, args.cursor, limit, &scope, None)
             .await?;
@@ -1467,13 +1453,7 @@ async fn handle_list_property_defs(pool: &SqlitePool, args: Value) -> Result<Val
 async fn handle_get_agenda(pool: &SqlitePool, args: Value) -> Result<Value, AppError> {
     let args: GetAgendaArgs = parse_args(TOOL_GET_AGENDA, args)?;
     let limit = validate_limit(TOOL_GET_AGENDA, args.limit, AGENDA_RESULT_CAP)?;
-    // Phase 2 — translate the JSON-side `space_id: Option<String>`
-    // into a `SpaceScope` before crossing into `_inner`. The wire shape
-    // stays the same; the type-system gate moves to the call boundary.
-    let scope = match args.space_id {
-        Some(id) => SpaceScope::Active(SpaceId::from_string(id)?),
-        None => SpaceScope::Global,
-    };
+    let scope = SpaceScope::Active(SpaceId::from_string(args.space_id)?);
     let resp = agenda_range_inner(
         pool,
         args.start_date,

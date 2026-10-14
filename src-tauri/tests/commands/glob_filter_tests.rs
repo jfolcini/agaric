@@ -10,6 +10,7 @@
 //! block content for each row so `search_blocks` actually returns
 //! matching rows.
 
+use crate::prelude::{SearchScope, search_filter};
 use agaric_lib::commands::queries::{SearchFilter, search_blocks_inner};
 use agaric_lib::db::init_pool;
 use sqlx::SqlitePool;
@@ -116,7 +117,7 @@ async fn empty_include_and_exclude_returns_all_matches() {
         "alpha".into(),
         None,
         Some(50),
-        SearchFilter::default(),
+        search_filter(SearchScope::AllSpaces),
         None,
     )
     .await
@@ -136,7 +137,7 @@ async fn include_glob_prefix_anchored() {
         Some(50),
         SearchFilter {
             include_page_globs: vec!["Journal/*".into()],
-            ..Default::default()
+            ..search_filter(SearchScope::AllSpaces)
         },
         None,
     )
@@ -168,7 +169,7 @@ async fn include_glob_case_insensitive() {
         Some(50),
         SearchFilter {
             include_page_globs: vec!["journal/*".into()],
-            ..Default::default()
+            ..search_filter(SearchScope::AllSpaces)
         },
         None,
     )
@@ -189,7 +190,7 @@ async fn include_glob_substring_default() {
         Some(50),
         SearchFilter {
             include_page_globs: vec!["meeting".into()],
-            ..Default::default()
+            ..search_filter(SearchScope::AllSpaces)
         },
         None,
     )
@@ -210,7 +211,7 @@ async fn brace_expansion_unions() {
         Some(50),
         SearchFilter {
             include_page_globs: vec!["{Journal,Archive}/*".into()],
-            ..Default::default()
+            ..search_filter(SearchScope::AllSpaces)
         },
         None,
     )
@@ -231,7 +232,7 @@ async fn comma_separated_unions() {
         Some(50),
         SearchFilter {
             include_page_globs: vec!["Journal/*,Meeting*".into()],
-            ..Default::default()
+            ..search_filter(SearchScope::AllSpaces)
         },
         None,
     )
@@ -252,7 +253,7 @@ async fn include_and_exclude_compose_with_and_intersection() {
         SearchFilter {
             include_page_globs: vec!["Journal/*".into()],
             exclude_page_globs: vec!["*2025*".into()],
-            ..Default::default()
+            ..search_filter(SearchScope::AllSpaces)
         },
         None,
     )
@@ -278,7 +279,7 @@ async fn brace_nesting_returns_validation_error() {
         Some(50),
         SearchFilter {
             include_page_globs: vec!["{a,{b,c}}".into()],
-            ..Default::default()
+            ..search_filter(SearchScope::AllSpaces)
         },
         None,
     )
@@ -303,7 +304,7 @@ async fn unbalanced_bracket_returns_validation_error() {
         Some(50),
         SearchFilter {
             include_page_globs: vec!["[unclosed".into()],
-            ..Default::default()
+            ..search_filter(SearchScope::AllSpaces)
         },
         None,
     )
@@ -332,7 +333,7 @@ async fn legacy_tag_and_filter_still_works() {
         Some(50),
         SearchFilter {
             tag_ids: vec![],
-            ..Default::default()
+            ..search_filter(SearchScope::AllSpaces)
         },
         None,
     )

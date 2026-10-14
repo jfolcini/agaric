@@ -411,7 +411,11 @@
         "blockType": "content",
         "content": "Notes for <% page title %>",
         "index": 0,
-        "parentId": "C2"
+        "parentId": "C2",
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
       },
       "command": "create_block",
       "comment": "First top-level template block, `C3`."
@@ -421,7 +425,11 @@
         "blockType": "content",
         "content": "On <% today %>, {{date}}{{cursor}}",
         "index": 0,
-        "parentId": "C3"
+        "parentId": "C3",
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
       },
       "command": "create_block",
       "comment": "Nested under `C3`, `C4`: the copy must keep the nesting (#5373) and expand both grammars against the day."
@@ -431,7 +439,11 @@
         "blockType": "content",
         "content": "Later {{title}}",
         "index": 1,
-        "parentId": "C2"
+        "parentId": "C2",
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
       },
       "command": "create_block",
       "comment": "Second top-level template block, `C5`."
@@ -441,7 +453,11 @@
         "blockType": "content",
         "content": "<% today:EEEE, MMMM d, yyyy %> | <% today:DD/MM/YYYY %> | {{date:YYYY/MM/DD}}",
         "index": 2,
-        "parentId": "C2"
+        "parentId": "C2",
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
       },
       "command": "create_block",
       "comment": "Third top-level template block, `C6`: a `:FORMAT` on the day in the date-fns tokens the backend maps to chrono."
@@ -451,7 +467,11 @@
         "blockType": "content",
         "content": "<% date+1 %> <% date-2 %> <% date+30:MMM d %>",
         "index": 3,
-        "parentId": "C2"
+        "parentId": "C2",
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
       },
       "command": "create_block",
       "comment": "`C7`: offsets count from the day, across the month and year boundaries."
@@ -461,7 +481,11 @@
         "blockType": "content",
         "content": "<% weekday %> <% month %> <% isoweek %> <% weekday:EEE %>",
         "index": 4,
-        "parentId": "C2"
+        "parentId": "C2",
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
       },
       "command": "create_block",
       "comment": "`C8`: the names the Templates view lists, in English on both stacks."
@@ -471,7 +495,11 @@
         "blockType": "content",
         "content": "<% today:ooooo %> <% today: %> <% date+x %>",
         "index": 5,
-        "parentId": "C2"
+        "parentId": "C2",
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
       },
       "command": "create_block",
       "comment": "`C9`: a format with a token neither stack knows, and an empty one, give the default form; `date+x` is no variable and stays."

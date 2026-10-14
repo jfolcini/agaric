@@ -5,8 +5,8 @@
 //! These tests guard the JSON shape that tauri-specta generates for the
 //! frontend bindings (`src/lib/bindings.ts`). Specifically:
 //!
-//! - `SearchFilter` must deserialise from `{}` with every field
-//!   defaulted, so follow-up plans (55/53) can append fields
+//! - `SearchFilter` requires `scope` and defaults every other field, so
+//!   follow-up plans (55/53) can append fields
 //!   with `#[serde(default)]` without ever requiring the frontend to
 //!   send them.
 //! - `SearchBlockRow.snippet` must serialise as JSON `null` when
@@ -15,9 +15,10 @@
 //!   React nodes (never `dangerouslySetInnerHTML`) and the MCP search
 //!   tool converts them back to `<mark>` / `</mark>`.
 
+use crate::prelude::{SearchScope, search_filter};
 use agaric_core::ulid::ActiveBlockId;
 use agaric_lib::commands::{MatchOffset, SearchBlockRow, SearchFilter};
-use agaric_store::space::{SpaceId, SpaceScope};
+use agaric_store::space::SpaceId;
 use serde_json::json;
 
 // ---------------------------------------------------------------------
@@ -25,33 +26,17 @@ use serde_json::json;
 // ---------------------------------------------------------------------
 
 #[test]
-fn search_filter_deserialises_from_empty_object_with_defaults() {
-    // The frontend wrapper for a no-filter call sends `{}` — every
-    // field must be optional and default to the same value as
-    // `SearchFilter::default()`.
-    let filter: SearchFilter = serde_json::from_value(json!({})).unwrap();
-    assert!(filter.parent_id.is_none(), "default parent_id must be None");
-    assert!(
-        filter.tag_ids.is_empty(),
-        "default tag_ids must be empty vec"
-    );
-    assert!(
-        matches!(filter.scope, SpaceScope::Global),
-        "default space_id must be None"
-    );
-}
-
-#[test]
 fn search_filter_deserialises_with_partial_fields() {
-    // The wrapper for "only tags supplied" sends just `tagIds`. Every
-    // other field must default to its `Default` value.
+    // The wrapper for "only tags supplied" sends just the scope and
+    // `tagIds`. Every other field must default to its empty value.
     let filter: SearchFilter = serde_json::from_value(json!({
+        "scope": { "kind": "all_spaces" },
         "tagIds": ["TAG_A", "TAG_B"],
     }))
     .unwrap();
     assert!(filter.parent_id.is_none());
     assert_eq!(filter.tag_ids, vec!["TAG_A".to_string(), "TAG_B".into()]);
-    assert!(matches!(filter.scope, SpaceScope::Global));
+    assert_eq!(filter.scope, SearchScope::AllSpaces);
 }
 
 #[test]
@@ -61,7 +46,7 @@ fn search_filter_roundtrip_serialise_deserialise_is_identity() {
     let original = SearchFilter {
         parent_id: Some("PAGE_X".into()),
         tag_ids: vec!["TAG_1".into(), "TAG_2".into()],
-        scope: SpaceScope::Active(SpaceId::from_trusted("01TESTSPACE000000000000001")),
+        scope: SearchScope::Spaces(vec![SpaceId::from_trusted("01TESTSPACE000000000000001")]),
         include_page_globs: vec!["Journal/*".into()],
         exclude_page_globs: vec!["Archive/**".into()],
         //
@@ -70,8 +55,7 @@ fn search_filter_roundtrip_serialise_deserialise_is_identity() {
         is_regex: false,
         //
         block_type_filter: Some("page".into()),
-        // Additive wire compat; defaults left at empty.
-        ..Default::default()
+        ..search_filter(SearchScope::AllSpaces)
     };
     let json = serde_json::to_value(&original).unwrap();
     let decoded: SearchFilter = serde_json::from_value(json).unwrap();
@@ -90,7 +74,8 @@ fn search_filter_roundtrip_serialise_deserialise_is_identity() {
 fn search_filter_toggle_fields_default_to_false() {
     // Additive wire compat. Old frontends that don't send
     // these fields must observe today's behaviour (all toggles off).
-    let filter: SearchFilter = serde_json::from_value(json!({})).unwrap();
+    let filter: SearchFilter =
+        serde_json::from_value(json!({ "scope": { "kind": "all_spaces" } })).unwrap();
     assert!(!filter.case_sensitive, "case_sensitive defaults to false");
     assert!(!filter.whole_word, "whole_word defaults to false");
     assert!(!filter.is_regex, "is_regex defaults to false");
@@ -101,7 +86,8 @@ fn search_filter_glob_fields_default_to_empty_vec() {
     // Include/exclude page globs MUST default to empty
     // (the wire shape is "absent → no filter applied"); old
     // frontends that don't know about the fields keep working.
-    let filter: SearchFilter = serde_json::from_value(json!({})).unwrap();
+    let filter: SearchFilter =
+        serde_json::from_value(json!({ "scope": { "kind": "all_spaces" } })).unwrap();
     assert!(filter.include_page_globs.is_empty());
     assert!(filter.exclude_page_globs.is_empty());
 }
@@ -225,7 +211,8 @@ fn search_block_row_match_offsets_defaults_to_empty_vec() {
 fn search_filter_pend53_fields_default_to_empty() {
     // Old frontends that don't know about the new fields keep working;
     // Every field carries `#[serde(default)]`.
-    let filter: SearchFilter = serde_json::from_value(json!({})).unwrap();
+    let filter: SearchFilter =
+        serde_json::from_value(json!({ "scope": { "kind": "all_spaces" } })).unwrap();
     assert!(filter.state_filter.is_empty());
     assert!(filter.priority_filter.is_empty());
     assert!(filter.due_filter.is_none());
@@ -237,6 +224,7 @@ fn search_filter_pend53_fields_default_to_empty() {
 #[test]
 fn search_filter_pend53_state_priority_roundtrip() {
     let filter: SearchFilter = serde_json::from_value(json!({
+        "scope": { "kind": "all_spaces" },
         "stateFilter": ["TODO", "DOING"],
         "priorityFilter": ["1", "none"],
     }))
@@ -251,6 +239,7 @@ fn search_filter_pend53_state_priority_roundtrip() {
 #[test]
 fn search_filter_pend53_due_filter_named_today() {
     let filter: SearchFilter = serde_json::from_value(json!({
+        "scope": { "kind": "all_spaces" },
         "dueFilter": { "named": "today" },
     }))
     .unwrap();
@@ -265,6 +254,7 @@ fn search_filter_pend53_due_filter_named_today() {
 #[test]
 fn search_filter_pend53_due_filter_op_form() {
     let filter: SearchFilter = serde_json::from_value(json!({
+        "scope": { "kind": "all_spaces" },
         "dueFilter": { "op": { "op": "gte", "date": "2026-01-01" } },
     }))
     .unwrap();
@@ -282,6 +272,7 @@ fn search_filter_pend53_due_filter_op_form() {
 #[test]
 fn search_filter_pend53_property_filters_roundtrip() {
     let filter: SearchFilter = serde_json::from_value(json!({
+        "scope": { "kind": "all_spaces" },
         "propertyFilters": [
             { "key": "status", "value": "done" },
         ],

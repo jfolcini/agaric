@@ -77,9 +77,14 @@ async fn resolve_page_by_alias() {
         .unwrap();
 
     // Resolve by alias
-    let resolved = resolve_page_by_alias_inner(&pool, "my-alias", &SpaceScope::Global)
-        .await
-        .unwrap();
+    assign_all_to_test_space(&pool).await;
+    let resolved = resolve_page_by_alias_inner(
+        &pool,
+        "my-alias",
+        &SpaceScope::Active(SpaceId::from_trusted(TEST_SPACE_ID)),
+    )
+    .await
+    .unwrap();
     assert!(resolved.is_some(), "alias must resolve to a page");
 
     let (resolved_id, resolved_title) = resolved.unwrap();
@@ -91,9 +96,13 @@ async fn resolve_page_by_alias() {
     );
 
     // Non-existent alias returns None
-    let missing = resolve_page_by_alias_inner(&pool, "no-such-alias", &SpaceScope::Global)
-        .await
-        .unwrap();
+    let missing = resolve_page_by_alias_inner(
+        &pool,
+        "no-such-alias",
+        &SpaceScope::Active(SpaceId::from_trusted(TEST_SPACE_ID)),
+    )
+    .await
+    .unwrap();
     assert!(missing.is_none(), "unknown alias must return None");
 }
 
@@ -148,9 +157,14 @@ async fn alias_collision_returns_error() {
     );
 
     // The alias still resolves to page A
-    let resolved = resolve_page_by_alias_inner(&pool, "shared-alias", &SpaceScope::Global)
-        .await
-        .unwrap();
+    assign_all_to_test_space(&pool).await;
+    let resolved = resolve_page_by_alias_inner(
+        &pool,
+        "shared-alias",
+        &SpaceScope::Active(SpaceId::from_trusted(TEST_SPACE_ID)),
+    )
+    .await
+    .unwrap();
     assert!(resolved.is_some(), "alias must still resolve");
     assert_eq!(
         resolved.unwrap().0,
@@ -997,10 +1011,15 @@ async fn list_page_links_returns_empty_with_no_links() {
     .unwrap();
     settle(&mat).await;
 
-    let links = list_page_links_inner(&pool, &SpaceScope::Global, None)
-        .await
-        .unwrap()
-        .edges;
+    assign_all_to_test_space(&pool).await;
+    let links = list_page_links_inner(
+        &pool,
+        &SpaceScope::Active(SpaceId::from_trusted(TEST_SPACE_ID)),
+        None,
+    )
+    .await
+    .unwrap()
+    .edges;
     assert!(
         links.is_empty(),
         "should return empty vec when no block_links exist"
@@ -1063,10 +1082,15 @@ async fn list_page_links_rolls_up_content_block_links_to_pages() {
         .await
         .unwrap();
 
-    let links = list_page_links_inner(&pool, &SpaceScope::Global, None)
-        .await
-        .unwrap()
-        .edges;
+    assign_all_to_test_space(&pool).await;
+    let links = list_page_links_inner(
+        &pool,
+        &SpaceScope::Active(SpaceId::from_trusted(TEST_SPACE_ID)),
+        None,
+    )
+    .await
+    .unwrap()
+    .edges;
 
     // Assert result has link with source_id = P1.id, target_id = P2.id (rolled up)
     let p1_to_p2 = links
@@ -1139,10 +1163,15 @@ async fn list_page_links_excludes_deleted_blocks() {
         .unwrap();
     settle(&mat).await;
 
-    let links = list_page_links_inner(&pool, &SpaceScope::Global, None)
-        .await
-        .unwrap()
-        .edges;
+    assign_all_to_test_space(&pool).await;
+    let links = list_page_links_inner(
+        &pool,
+        &SpaceScope::Active(SpaceId::from_trusted(TEST_SPACE_ID)),
+        None,
+    )
+    .await
+    .unwrap()
+    .edges;
     let has_link = links
         .iter()
         .any(|l| l.source_id.as_str() == p1.id.as_str() && l.target_id.as_str() == p2.id.as_str());
@@ -1194,10 +1223,15 @@ async fn list_page_links_excludes_self_links() {
         .await
         .unwrap();
 
-    let links = list_page_links_inner(&pool, &SpaceScope::Global, None)
-        .await
-        .unwrap()
-        .edges;
+    assign_all_to_test_space(&pool).await;
+    let links = list_page_links_inner(
+        &pool,
+        &SpaceScope::Active(SpaceId::from_trusted(TEST_SPACE_ID)),
+        None,
+    )
+    .await
+    .unwrap()
+    .edges;
     let self_link = links.iter().find(|l| l.source_id == l.target_id);
     assert!(
         self_link.is_none(),
@@ -1280,10 +1314,15 @@ async fn list_page_links_deduplicates() {
         .await
         .unwrap();
 
-    let links = list_page_links_inner(&pool, &SpaceScope::Global, None)
-        .await
-        .unwrap()
-        .edges;
+    assign_all_to_test_space(&pool).await;
+    let links = list_page_links_inner(
+        &pool,
+        &SpaceScope::Active(SpaceId::from_trusted(TEST_SPACE_ID)),
+        None,
+    )
+    .await
+    .unwrap()
+    .edges;
 
     // Both b1 and b2 roll up to P1 → P2; DISTINCT should collapse to 1 edge
     let p1_to_p2_count = links

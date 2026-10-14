@@ -13,11 +13,12 @@ import { compareUtf8Bytes, foldAsciiUppercase } from '@/lib/sqlite-collation'
 import {
   type TagExprNode,
   type TypedHandlers,
+  ownerSpaceOf,
   refInclusiveTags,
   validationRejection,
-  readSpaceScope,
+  readActiveSpaceScope,
 } from '@/lib/tauri-mock/handlers/shared'
-import { blockTags, blocks, properties, pushOp } from '@/lib/tauri-mock/seed'
+import { blockTags, blocks, pushOp } from '@/lib/tauri-mock/seed'
 
 // ---------------------------------------------------------------------------
 // #3871 — tag inheritance (`block_tag_inherited`)
@@ -178,12 +179,13 @@ function inheritedTagIds(blockId: string): string[] {
  * applies the space scope and `blockType`, then orders `b.id ASC`.
  */
 function evalTagQuery(
+  cmd: 'query_by_tags' | 'query_by_tag_expr',
   expr: TagExprNode,
   a: Record<string, unknown>,
 ): { items: Record<string, unknown>[]; next_cursor: null; has_more: false; total_count: null } {
   const includeInherited = Boolean(a['includeInherited'])
   const blockType = (a['blockType'] as string | null) ?? null
-  const spaceId = readSpaceScope(a)
+  const spaceId = readActiveSpaceScope(cmd, a)
 
   const prefixTagIds = (prefix: string): Set<string> => {
     const lp = foldAsciiUppercase(prefix)
@@ -233,11 +235,7 @@ function evalTagQuery(
   const items = [...blocks.values()].filter((b) => {
     if (b['deleted_at']) return false
     if (blockType !== null && b['block_type'] !== blockType) return false
-    if (spaceId !== null) {
-      const ownerId = (b['page_id'] as string | null) ?? (b['id'] as string)
-      const ownerSpace = properties.get(ownerId)?.get('space')?.['value_ref'] ?? null
-      if (ownerSpace !== spaceId) return false
-    }
+    if (ownerSpaceOf(b) !== spaceId) return false
     return matches(b['id'] as string, expr)
   })
   items.sort((x, y) => String(x['id']).localeCompare(String(y['id'])))
@@ -336,13 +334,13 @@ export const tagsHandlers = {
         : mode === 'not'
           ? { type: 'Not', value: { type: 'Or', value: leaves } }
           : { type: 'Or', value: leaves }
-    return evalTagQuery(expr, a)
+    return evalTagQuery('query_by_tags', expr, a)
   },
 
   // #1472 — nested boolean tag expression `(A AND B) OR (NOT C)` over IPC.
   query_by_tag_expr: (args) => {
     const a = args as Record<string, unknown>
-    return evalTagQuery(a['expr'] as TagExprNode, a)
+    return evalTagQuery('query_by_tag_expr', a['expr'] as TagExprNode, a)
   },
 
   // `tags_cache` prefix scan over one space's tags: `name LIKE ?1 ESCAPE '\\'
@@ -350,15 +348,10 @@ export const tagsHandlers = {
   // ASCII case, the prefix is a literal (`escape_like`), the limit is validated
   // to `[1, MAX_TAGS_PREFIX]` and defaults to the cap, and #768 splices the
   // exact (case-insensitive) match into name order when the LIMIT page left it
-  // out. The space filter is `list_all_tags_in_space`'s, and so is the refusal
-  // of a `Global` scope.
+  // out. The space filter is `list_all_tags_in_space`'s.
   list_tags_by_prefix: (args) => {
     const a = args as Record<string, unknown>
-    const scope = a['scope'] as { kind: string; space_id?: string } | undefined
-    if (scope?.kind !== 'active' || !scope.space_id) {
-      throw validationRejection('list_tags_by_prefix requires an active space scope')
-    }
-    const spaceId = scope.space_id
+    const spaceId = readActiveSpaceScope('list_tags_by_prefix', a)
     const prefix = (a['prefix'] as string | undefined) ?? ''
     const limit = (a['limit'] as number | null | undefined) ?? null
     if (limit !== null && (limit < 1 || limit > MAX_TAGS_PREFIX)) {
@@ -394,15 +387,10 @@ export const tagsHandlers = {
   // filter is the tag block's own `blocks.space_id` column (the SOLE source
   // of truth since #533), NOT a retired `block_properties(key='space')` row;
   // the atomic create-tag path stamps it directly, so a freshly created tag
-  // is returned here immediately and durably. A `Global` scope is refused as
-  // `require_active` refuses it.
+  // is returned here immediately and durably.
   list_all_tags_in_space: (args) => {
     const a = args as Record<string, unknown>
-    const scope = a['scope'] as { kind: string; space_id?: string } | undefined
-    if (scope?.kind !== 'active' || !scope.space_id) {
-      throw validationRejection('list_all_tags_in_space requires an active space scope')
-    }
-    const spaceId = scope.space_id
+    const spaceId = readActiveSpaceScope('list_all_tags_in_space', a)
     return tagCacheRows().filter((r) => blocks.get(r.tag_id)?.['space_id'] === spaceId)
   },
 

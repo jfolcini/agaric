@@ -586,8 +586,7 @@ async fn list_tags_empty_result_returns_no_cursor_m85() {
 // ======================================================================
 //
 // Asserts that `query_by_tags_inner` honours the `&SpaceScope` boundary:
-// `Global` returns the union across spaces, `Active(SpaceId)` returns
-// only the named space's subset.
+// each space sees only its own block.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn pend18_query_by_tags_scope_parity() {
     use agaric_store::space::{SpaceId, SpaceScope};
@@ -615,25 +614,6 @@ async fn pend18_query_by_tags_scope_parity() {
     assign_to_space(&pool, "P18_TG_A", TEST_SPACE_ID).await;
     assign_to_space(&pool, "P18_TG_B", TEST_SPACE_B_ID).await;
 
-    let global = query_by_tags_inner(
-        &pool,
-        vec!["P18_TG_T".into()],
-        vec![],
-        "or".into(),
-        None,
-        None,
-        None,
-        &SpaceScope::Global,
-        None,
-    )
-    .await
-    .unwrap();
-    assert_eq!(
-        global.items.len(),
-        2,
-        "Global must surface both spaces' blocks; got {global:?}"
-    );
-
     let active_a = query_by_tags_inner(
         &pool,
         vec!["P18_TG_T".into()],
@@ -653,6 +633,28 @@ async fn pend18_query_by_tags_scope_parity() {
         "Active(TEST_SPACE_ID) must surface only space A's block; got {active_a:?}"
     );
     assert_eq!(active_a.items[0].id, "P18_TG_A");
+
+    let active_b = query_by_tags_inner(
+        &pool,
+        vec!["P18_TG_T".into()],
+        vec![],
+        "or".into(),
+        None,
+        None,
+        None,
+        &SpaceScope::Active(SpaceId::from_trusted(TEST_SPACE_B_ID)),
+        None,
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        active_b
+            .items
+            .iter()
+            .map(|r| r.id.as_str())
+            .collect::<Vec<_>>(),
+        vec!["P18_TG_B"]
+    );
 }
 
 // ======================================================================
@@ -665,7 +667,6 @@ async fn pend18_query_by_tags_scope_parity() {
 /// resolved (not silently flattened).
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn query_by_tag_expr_resolves_nested_and_or_not() {
-    use agaric_store::space::SpaceScope;
     use agaric_store::tag_query::TagExpr;
     let (pool, _dir) = test_pool().await;
 
@@ -708,6 +709,7 @@ async fn query_by_tag_expr_resolves_nested_and_or_not() {
     assoc("QTE_ABC", "QTE_TA").await;
     assoc("QTE_ABC", "QTE_TB").await;
     assoc("QTE_ABC", "QTE_TC").await;
+    assign_all_to_test_space(&pool).await;
 
     // (A AND B) OR (NOT C)
     let expr = TagExpr::Or(vec![
@@ -724,7 +726,7 @@ async fn query_by_tag_expr_resolves_nested_and_or_not() {
         None,
         None,
         Some(100),
-        &SpaceScope::Global,
+        &test_space_scope(),
         None,
     )
     .await
@@ -768,7 +770,6 @@ async fn query_by_tag_expr_resolves_nested_and_or_not() {
 /// error BEFORE any resolution — the untrusted-input depth gate (#1472).
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn query_by_tag_expr_rejects_over_max_depth() {
-    use agaric_store::space::SpaceScope;
     use agaric_store::tag_query::TagExpr;
     let (pool, _dir) = test_pool().await;
     insert_block(&pool, "QTE_DEEP", "tag", "deep", None, None).await;
@@ -779,7 +780,7 @@ async fn query_by_tag_expr_rejects_over_max_depth() {
         expr = TagExpr::Not(Box::new(expr));
     }
 
-    let err = query_by_tag_expr_inner(&pool, expr, None, None, Some(10), &SpaceScope::Global, None)
+    let err = query_by_tag_expr_inner(&pool, expr, None, None, Some(10), &test_space_scope(), None)
         .await
         .expect_err("over-MAX_DEPTH tree must be rejected");
     assert!(

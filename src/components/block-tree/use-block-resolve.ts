@@ -34,7 +34,7 @@ import { subscribeToNameChanges } from '@/lib/name-change-bus'
 import { notify } from '@/lib/notify'
 import { getPageDisplayName } from '@/lib/page-display'
 import { searchBlocksLimit } from '@/lib/safe-limit'
-import { requireActiveScope } from '@/lib/space-scope'
+import { requireActiveScope, requireActiveSearchScope } from '@/lib/space-scope'
 import { compareUtf8Bytes, foldAsciiUppercase } from '@/lib/sqlite-collation'
 import { keyFor, useResolveStore } from '@/stores/resolve'
 import { useSpaceStore } from '@/stores/space'
@@ -585,7 +585,7 @@ async function searchPagesViaFts(q: string, pagesListRef: PagesListRef): Promise
     await commands.searchBlocks(q, null, searchBlocksLimit(20), {
       parentId: null,
       tagIds: [],
-      scope: requireActiveScope(spaceId),
+      scope: requireActiveSearchScope(spaceId),
       includePageGlobs: [],
       excludePageGlobs: [],
       caseSensitive: false,
@@ -1584,7 +1584,7 @@ export function useBlockResolve(): UseBlockResolveReturn {
         await commands.searchBlocks(q, null, searchBlocksLimit(20), {
           parentId: null,
           tagIds: [],
-          scope: requireActiveScope(spaceId),
+          scope: requireActiveSearchScope(spaceId),
           includePageGlobs: [],
           excludePageGlobs: [],
           caseSensitive: false,

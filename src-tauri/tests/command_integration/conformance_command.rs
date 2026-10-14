@@ -419,7 +419,7 @@ pub(super) async fn apply_op_via_command(
     };
     // #5236 — a `SpaceScope` arg as the wire spells it. The `space_id` inside
     // is a label like `spaceId` (`C<n>`, `S<n>`), or `$SPACE` for the harness
-    // space; an absent or `global` scope is `Global`. TS twin: `expandOpArgs`.
+    // space; any other shape is a fixture error. TS twin: `expandOpArgs`.
     let scope = |k: &str| match arg(k) {
         Some(Value::Object(scope))
             if scope.get("kind").and_then(Value::as_str) == Some("active") =>
@@ -437,7 +437,7 @@ pub(super) async fn apply_op_via_command(
             };
             SpaceScope::Active(SpaceId::from_trusted(&id))
         }
-        _ => SpaceScope::Global,
+        other => panic!("conformance op '{command}': arg '{k}' is not an active scope: {other:?}"),
     };
 
     match command {

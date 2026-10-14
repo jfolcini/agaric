@@ -49,7 +49,7 @@
 //! | File | Why structurally different |
 //! |---|---|
 //! | `pagination/history.rs` (op-log filter) | `?N IS NULL OR (EXISTS (SELECT 1 FROM blocks sb WHERE sb.id = ol.block_id AND sb.space_id = ?N) OR …)` — operates on op-log rows, resolving each to its `blocks` row via a correlated sub-select, so the guard never wraps a bare `b.space_id = ?N`. |
-//! | `fts/search.rs` / `fts/toggle_filter.rs` (dynamic SQL) | Bare `b.space_id = ?N` with no `?N IS NULL OR` guard — the filter is conditionally appended only when `space_id.is_some()`, so the inline shape is fundamentally different. |
+//! | `fts/filter_builder.rs` (dynamic SQL) | `b.space_id IN (SELECT value FROM json_each(?N))` with no `?N IS NULL OR` guard — the filter is appended only for a `SearchScope::Spaces` list, so the inline shape is fundamentally different. |
 //!
 //! All production space filters read the first-class `blocks.space_id`
 //! column (#533, migration 0086); the structurally-different sites above

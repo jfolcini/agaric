@@ -31,7 +31,7 @@
 
 import { beforeEach, describe, expect, it } from 'vitest'
 
-import { clearMock, id } from '@/lib/tauri-mock/__tests__/mock-store-helpers'
+import { clearMock, id, setSpace } from '@/lib/tauri-mock/__tests__/mock-store-helpers'
 import { dispatch } from '@/lib/tauri-mock/handlers'
 import { blocks, makeBlock, pageAliases } from '@/lib/tauri-mock/seed'
 
@@ -51,15 +51,30 @@ interface GroupedResponse {
   groups: Array<{ page_id: string; page_title: string | null; blocks: Array<{ id: string }> }>
 }
 
+/** Every search below runs over all spaces; the fixtures do not place blocks in one. */
+function withAllSpaces(args: Record<string, unknown>): Record<string, unknown> {
+  return {
+    ...args,
+    filter: {
+      scope: { kind: 'all_spaces' },
+      ...(args['filter'] as Record<string, unknown> | undefined),
+    },
+  }
+}
+
 function search(args: Record<string, unknown>): SearchResponse {
-  return dispatch('search_blocks', { cursor: null, limit: null, ...args }) as SearchResponse
+  return dispatch('search_blocks', {
+    cursor: null,
+    limit: null,
+    ...withAllSpaces(args),
+  }) as SearchResponse
 }
 
 function partitioned(args: Record<string, unknown>): PartitionedResponse {
   return dispatch('search_blocks_partitioned', {
     pageLimit: 10,
     blockLimit: 10,
-    ...args,
+    ...withAllSpaces(args),
   }) as PartitionedResponse
 }
 
@@ -255,11 +270,12 @@ describe('list_unlinked_references — item 3: title lookup guard (#4159)', () =
   const PLAIN = id('ULRN')
   const IMPOSTOR = id('ULRC')
   const DELETED = id('ULRD')
+  const SPACE = id('ULRS')
 
   function unlinked(pageId: string): GroupedResponse {
     return dispatch('list_unlinked_references', {
       pageId,
-      scope: { kind: 'global' },
+      scope: { kind: 'active', space_id: SPACE },
     }) as GroupedResponse
   }
 
@@ -271,6 +287,7 @@ describe('list_unlinked_references — item 3: title lookup guard (#4159)', () =
     clearMock()
     blocks.set(TARGET, makeBlock(TARGET, 'page', 'Zebrafish', null, 0))
     blocks.set(OTHER, makeBlock(OTHER, 'page', 'Lab Notes', null, 0))
+    setSpace(OTHER, SPACE)
     blocks.set(MENTION, makeBlock(MENTION, 'content', 'notes on zebrafish habitat', OTHER, 1))
     blocks.set(PLAIN, makeBlock(PLAIN, 'content', 'a second zebrafish sighting', OTHER, 2))
     // A CONTENT block whose text happens to read like the page title — the

@@ -26,14 +26,18 @@
 
 import { beforeEach, describe, expect, it } from 'vitest'
 
-import { clearMock, id } from '@/lib/tauri-mock/__tests__/mock-store-helpers'
+import { clearMock, id, setSpace } from '@/lib/tauri-mock/__tests__/mock-store-helpers'
 import { dispatch } from '@/lib/tauri-mock/handlers'
 import { blocks, makeBlock, pageAliases } from '@/lib/tauri-mock/seed'
 
-/** Insert a block of `type` under `parent`, returning its id. */
+const SPACE = id('BSPACE')
+const SCOPE = { kind: 'active', space_id: SPACE }
+
+/** Insert a block of `type` under `parent` in {@link SPACE}, returning its id. */
 function put(blockId: string, type: string, content: string, parent: string | null): string {
   const b = makeBlock(blockId, type, content, parent, 1)
   blocks.set(blockId, b)
+  setSpace(blockId, SPACE)
   return blockId
 }
 
@@ -47,13 +51,14 @@ function containsIds(targetId: string, query: string): string[] {
   const res = dispatch('list_backlinks_grouped', {
     blockId: targetId,
     filters: [{ type: 'Contains', query }],
+    scope: SCOPE,
   }) as GroupedResponse
   return res.groups.flatMap((g) => g.blocks.map((b) => b['id'] as string)).toSorted()
 }
 
 /** Every block id in an unlinked-references answer, sorted. */
 function unlinkedIds(pageId: string): string[] {
-  const res = dispatch('list_unlinked_references', { pageId }) as GroupedResponse
+  const res = dispatch('list_unlinked_references', { pageId, scope: SCOPE }) as GroupedResponse
   return res.groups.flatMap((g) => g.blocks.map((b) => b['id'] as string)).toSorted()
 }
 

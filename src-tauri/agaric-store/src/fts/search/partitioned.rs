@@ -5,7 +5,7 @@
 use sqlx::SqlitePool;
 
 use crate::cancellation::CancellationToken;
-use crate::search_types::SearchBlockRow;
+use crate::search_types::{SearchBlockRow, SearchScope};
 use agaric_core::error::AppError;
 
 use super::super::metadata_filter::MetadataPredicates;
@@ -77,7 +77,7 @@ pub struct FtsPartitionedScan {
 /// Both scans use a `limit + 1` probe so the caller can signal accurate
 /// Per-partition `has_more` (resolves Open Q3).
 ///
-/// All other filters — `parent_id`, `tag_ids`, `space_id`, page-name
+/// All other filters — `parent_id`, `tag_ids`, `scope`, page-name
 /// globs, metadata predicates — are honoured identically on both
 /// scans.
 ///
@@ -109,7 +109,7 @@ pub(crate) async fn search_fts_partitioned(
     block_limit: u32,
     parent_id: Option<&str>,
     tag_ids: Option<&[String]>,
-    space_id: Option<&str>,
+    scope: &SearchScope,
     include_page_globs: &[String],
     exclude_page_globs: &[String],
     metadata: &MetadataPredicates,
@@ -149,7 +149,7 @@ pub(crate) async fn search_fts_partitioned(
         pages_fetch_limit,
         parent_id,
         tag_ids,
-        space_id,
+        scope,
         include_page_globs,
         exclude_page_globs,
         Some("page"), // page-only pre-filter at SQL
@@ -175,7 +175,7 @@ pub(crate) async fn search_fts_partitioned(
         blocks_fetch_limit,
         parent_id,
         tag_ids,
-        space_id,
+        scope,
         include_page_globs,
         exclude_page_globs,
         None, // unrestricted

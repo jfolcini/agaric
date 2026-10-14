@@ -93,7 +93,7 @@ fn bench_search_fts(c: &mut Criterion) {
                     &page,
                     None,
                     None,
-                    None,
+                    &agaric_store::search_types::SearchScope::AllSpaces,
                     &[],
                     &[],
                     None,

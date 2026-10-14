@@ -248,6 +248,7 @@ describe('QuickCaptureDialog', () => {
         blockType: 'content',
         content: 'written elsewhere',
         parentId: SEED_IDS.PAGE_DAILY,
+        scope: { kind: 'active', space_id: 'SPACE_PERSONAL' },
       })
       const epoch = renderHook(() => useCalendarPageDatesEpoch())
       const epochBefore = epoch.result.current

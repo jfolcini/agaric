@@ -1,5 +1,5 @@
 {
-  "description": "#4667 — READ-command differential over `get_backlinks`, the one of the three backlink candidates the #3347 allowlist labelled 'fixture candidate: not written yet' that the row projection can express (the two GROUPED siblings answer under `groups[].blocks`; see their allowlist entries). The backend reads the materialized `block_links` table and answers `ORDER BY bl.source_id ASC` under an `{id}` keyset (`agaric-store/src/pagination/links.rs`); the mock rescans block CONTENT for `[[ULID]]` tokens (`handlers/links.ts`). Three decisions have to agree for the two to land on the same page: which edges exist (S5 linked and then stopped, so a stale edge set serves it), the source-id ordering, and the `limit` + cursor keyset. Every linking block is a SEED block edited by an op, so its id is byte-identical on both stacks and the sort order is comparable; the link TOKENS arrive via `edit_block` because the seed insert bypasses the materializer and would leave `block_links` empty on the backend. NOT pinned, and deliberately: (a) the space filter — the harness has one space, so `active` and `global` select the same rows and `backlinks_global_scope` pins only that `Global` is served unscoped rather than refused the way `list_trash` refuses it; and (b) nothing else — the `b.deleted_at IS NULL` join filter was the other gap and #4848 closed it. B8 is the state it needs: a block that links to B1 and is then soft-deleted. `DeleteBlock` enqueues no `ReindexBlockLinks` (`src/reconciliation_oracle.rs`), so its `block_links` row survives the tombstone by design — it is in `page_links` below — and every reader drops it at query time instead. `backlinks_all_in_source_id_order` is where that is asserted: B8 sorts last, so a `get_backlinks` that skipped the join filter would serve it as a fourth source. The mock used to skip deleted sources inside `deriveLinkEdges`, which made the SNAPSHOT leg red on this exact state; it now mirrors the table, with the count-time `src.deleted_at IS NULL` moved to `pageLinkStats` (`handlers/shared.ts`), the one place both counting consumers reach it through. #4853 is the mirror image: B10 links to page B9, then B9 — the TARGET — is soft-deleted, and the surviving `B10 -> B9` row in `page_links` below is what pins it. B10 and B9 are new seeds rather than a second token on an existing pair, so the surviving edge is interesting for exactly one reason and none of the `get_backlinks` steps above move. Derivation in `session-1602`.",
+  "description": "#4667 — READ-command differential over `get_backlinks`, the one of the three backlink candidates the #3347 allowlist labelled 'fixture candidate: not written yet' that the row projection can express (the two GROUPED siblings answer under `groups[].blocks`; see their allowlist entries). The backend reads the materialized `block_links` table and answers `ORDER BY bl.source_id ASC` under an `{id}` keyset (`agaric-store/src/pagination/links.rs`); the mock rescans block CONTENT for `[[ULID]]` tokens (`handlers/links.ts`). Three decisions have to agree for the two to land on the same page: which edges exist (S5 linked and then stopped, so a stale edge set serves it), the source-id ordering, and the `limit` + cursor keyset. Every linking block is a SEED block edited by an op, so its id is byte-identical on both stacks and the sort order is comparable; the link TOKENS arrive via `edit_block` because the seed insert bypasses the materializer and would leave `block_links` empty on the backend. NOT pinned, and deliberately: (a) the space filter — the harness has one space; and (b) nothing else — the `b.deleted_at IS NULL` join filter was the other gap and #4848 closed it. B8 is the state it needs: a block that links to B1 and is then soft-deleted. `DeleteBlock` enqueues no `ReindexBlockLinks` (`src/reconciliation_oracle.rs`), so its `block_links` row survives the tombstone by design — it is in `page_links` below — and every reader drops it at query time instead. `backlinks_all_in_source_id_order` is where that is asserted: B8 sorts last, so a `get_backlinks` that skipped the join filter would serve it as a fourth source. The mock used to skip deleted sources inside `deriveLinkEdges`, which made the SNAPSHOT leg red on this exact state; it now mirrors the table, with the count-time `src.deleted_at IS NULL` moved to `pageLinkStats` (`handlers/shared.ts`), the one place both counting consumers reach it through. #4853 is the mirror image: B10 links to page B9, then B9 — the TARGET — is soft-deleted, and the surviving `B10 -> B9` row in `page_links` below is what pins it. B10 and B9 are new seeds rather than a second token on an existing pair, so the surviving edge is interesting for exactly one reason and none of the `get_backlinks` steps above move. Derivation in `session-1602`.",
   "expected": {
     "block_tags": [],
     "blocks": [
@@ -243,28 +243,8 @@
     {
       "cursor": null,
       "error": null,
-      "has_more": false,
-      "name": "backlinks_global_scope",
-      "rows": [
-        "B3#parent_id=B2#page_id=B2#position=1#deleted_at=null",
-        "B4#parent_id=B2#page_id=B2#position=2#deleted_at=null",
-        "B7#parent_id=B6#page_id=B6#position=1#deleted_at=null"
-      ],
-      "total_count": null
-    },
-    {
-      "cursor": null,
-      "error": null,
       "has_more": null,
       "name": "backlink_counts_per_page",
-      "rows": ["B1#count=3", "B9#count=1"],
-      "total_count": null
-    },
-    {
-      "cursor": null,
-      "error": null,
-      "has_more": null,
-      "name": "backlink_counts_global_scope",
       "rows": ["B1#count=3", "B9#count=1"],
       "total_count": null
     }
@@ -390,18 +370,6 @@
     },
     {
       "args": {
-        "blockId": "S1",
-        "limit": 10,
-        "scope": {
-          "kind": "global"
-        }
-      },
-      "command": "get_backlinks",
-      "comment": "`Global` is the unscoped cross-space listing (`scope.as_filter_param()` binds NULL), not a refusal — unlike `list_trash`, which rejects it. One space in the harness, so the ROWS cannot tell scoped from unscoped; what this pins is that the request is served at all.",
-      "name": "backlinks_global_scope"
-    },
-    {
-      "args": {
         "pageIds": ["S1", "S9", "S6"],
         "scope": {
           "kind": "active",
@@ -411,17 +379,6 @@
       "command": "count_backlinks_batch",
       "comment": "The badge counts beside the listing above, over the SAME edges (#3830). Three per key, and each is a different decision: S1 counts THREE (S3, S4, S7) — S5 unlinked and S8's edge survives its tombstone in `page_links` but its source is dropped by `b.deleted_at IS NULL`, so a mock counting the raw edge set answers four; S9 counts ONE even though S9 itself is deleted, because the filter is on the SOURCE block and not the target (#4853); and S6 is ABSENT rather than zero — the map is a `GROUP BY`, so a key nobody links to never appears. A mock that seeds every requested id with 0 projects a third token here.",
       "name": "backlink_counts_per_page"
-    },
-    {
-      "args": {
-        "pageIds": ["S1", "S9", "S6"],
-        "scope": {
-          "kind": "global"
-        }
-      },
-      "command": "count_backlinks_batch",
-      "comment": "Mirrors `backlinks_global_scope` one command over: the harness has one space, so `Global` selects the same source blocks and the counts are unchanged. What it pins is that `count_backlinks_batch` SERVES `Global` unscoped (`?2 IS NULL`) rather than refusing it the way `count_trash` does — the two count commands answer the same-shaped question with opposite scope contracts.",
-      "name": "backlink_counts_global_scope"
     }
   ],
   "seed": {

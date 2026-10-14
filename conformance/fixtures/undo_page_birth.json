@@ -147,7 +147,11 @@
         "blockType": "content",
         "content": "typed",
         "index": 0,
-        "parentId": "C2"
+        "parentId": "C2",
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
       },
       "command": "create_block",
       "comment": "What the user typed after creating the page — the only op a Ctrl+Z should reach."

@@ -34,18 +34,21 @@ import { blocks, makeBlock, opLog, pageAliases, peerRefs, todayDate } from '@/li
 /**
  * Helper — call the captured IPC handler as if invoke() were called.
  *
- * #5415 — `list_blocks` and a page `create_block` have no cross-space form
- * (`require_active`), so a call that names no scope is sent in the seed space
- * every row in this file belongs to.
+ * #5415 — every command takes its space explicitly, so a call that names no
+ * scope is sent in the seed space every row in this file belongs to, and a
+ * search that names none covers all spaces. A command without a `scope` arg
+ * ignores the extra key.
  */
 function invoke(cmd: string, args: Record<string, unknown> = {}): unknown {
   if (!ipcHandler) throw new Error('setupMock() was not called — no IPC handler captured')
-  const needsSpace =
-    cmd === 'list_blocks' || (cmd === 'create_block' && args['blockType'] === 'page')
   const scoped =
-    needsSpace && args['scope'] === undefined
+    args['scope'] === undefined
       ? { ...args, scope: { kind: 'active', space_id: 'SPACE_PERSONAL' } }
       : args
+  if (cmd === 'search_blocks' || cmd === 'search_blocks_partitioned') {
+    const filter = (scoped['filter'] as Record<string, unknown> | undefined) ?? {}
+    scoped['filter'] = { scope: { kind: 'all_spaces' }, ...filter }
+  }
   return ipcHandler(cmd, scoped)
 }
 
@@ -438,13 +441,13 @@ describe('list_all_tags_in_space (#3081)', () => {
     expect(found?.['name']).toBe('urgent')
   })
 
-  it('a tag created with GLOBAL scope is NOT listed in the active space', () => {
+  it('a tag created in another space is NOT listed in the active space', () => {
     const created = invoke('create_block', {
       blockType: 'tag',
-      content: 'unscoped',
+      content: 'elsewhere',
       parentId: null,
       index: null,
-      scope: { kind: 'global' },
+      scope: { kind: 'active', space_id: 'SPACE_OTHER_TEST' },
       blockId: null,
     }) as Record<string, unknown>
 
@@ -3809,9 +3812,8 @@ describe('quick_capture_block', () => {
 // Setup: create a single "foreign" page in `SPACE_OTHER` with one
 // content block. The seed canonical pages all live in `SPACE_PERSONAL`,
 // so invoking each handler with `scope = { kind: 'active', space_id:
-// 'SPACE_PERSONAL' }` should EXCLUDE the foreign block; invoking with
-// `scope = { kind: 'global' }` (or omitting scope, which the mock
-// treats as global) should INCLUDE it.
+// 'SPACE_PERSONAL' }` should EXCLUDE the foreign block; invoking it in
+// `SPACE_OTHER` should INCLUDE it.
 // ---------------------------------------------------------------------------
 
 describe('scope-filter parity', () => {
@@ -3882,10 +3884,11 @@ describe('scope-filter parity', () => {
   it('batch_resolve filters foreign-space ids under active scope', () => {
     const { pageId: foreignPageId } = seedForeignFixture({})
     const ids = [SEED_IDS.PAGE_GETTING_STARTED, foreignPageId]
-    const globalResult = invoke('batch_resolve', { ids }) as Array<Record<string, unknown>>
-    expect(globalResult.map((r) => r['id'])).toEqual(
-      expect.arrayContaining([SEED_IDS.PAGE_GETTING_STARTED, foreignPageId]),
-    )
+    const foreignResult = invoke('batch_resolve', {
+      ids,
+      scope: { kind: 'active', space_id: SPACE_OTHER },
+    }) as Array<Record<string, unknown>>
+    expect(foreignResult.map((r) => r['id'])).toEqual([foreignPageId])
     const activeResult = invoke('batch_resolve', {
       ids,
       scope: { kind: 'active', space_id: 'SPACE_PERSONAL' },
@@ -3907,12 +3910,12 @@ describe('scope-filter parity', () => {
       scope: { kind: 'active', space_id: 'SPACE_PERSONAL' },
     }) as { items: Array<Record<string, unknown>> }
     expect(activeResult.items.map((b) => b['id'])).not.toContain(foreignBlockId)
-    // Sanity: global scope still sees it.
-    const globalResult = invoke('get_backlinks', {
+    // Sanity: its own space still sees it.
+    const foreignResult = invoke('get_backlinks', {
       blockId: SEED_IDS.PAGE_GETTING_STARTED,
-      scope: { kind: 'global' },
+      scope: { kind: 'active', space_id: SPACE_OTHER },
     }) as { items: Array<Record<string, unknown>> }
-    expect(globalResult.items.map((b) => b['id'])).toContain(foreignBlockId)
+    expect(foreignResult.items.map((b) => b['id'])).toContain(foreignBlockId)
   })
 
   // -------------------------------------------------------------------------
@@ -4031,7 +4034,7 @@ describe('scope-filter parity', () => {
     const result = invoke('filtered_blocks_query', {
       propertyFilters: [{ key: 'owner', valueText: 'alice', operator: 'neq' }],
       tagFilters: null,
-      scope: { kind: 'global' },
+      scope: { kind: 'active', space_id: 'SPACE_PERSONAL' },
     }) as { items: Array<Record<string, unknown>> }
     const ids = new Set(result.items.map((b) => b['id']))
 
@@ -4081,7 +4084,7 @@ describe('scope-filter parity', () => {
     const result = invoke('filtered_blocks_query', {
       propertyFilters: [{ key: 'reviewed', valueDate: '2026-01-01', operator: 'neq' }],
       tagFilters: null,
-      scope: { kind: 'global' },
+      scope: { kind: 'active', space_id: 'SPACE_PERSONAL' },
     }) as { items: Array<Record<string, unknown>> }
     const ids = new Set(result.items.map((b) => b['id']))
 
@@ -4100,7 +4103,7 @@ describe('scope-filter parity', () => {
     const result = invoke('filtered_blocks_query', {
       propertyFilters: [{ key: 'todo_state', valueText: 'DONE', operator: 'neq' }],
       tagFilters: null,
-      scope: { kind: 'global' },
+      scope: { kind: 'active', space_id: 'SPACE_PERSONAL' },
     }) as { items: Array<Record<string, unknown>> }
 
     expect(result.items.map((b) => b['id'])).not.toContain(noStatus['id'])
@@ -4143,18 +4146,17 @@ describe('scope-filter parity', () => {
   // count_agenda_batch_by_source (backend: count_agenda_batch_by_source)
   // -------------------------------------------------------------------------
   it('count_agenda_batch_by_source honours active scope', () => {
+    const dueCount = (spaceId: string): number =>
+      (
+        invoke('count_agenda_batch_by_source', {
+          dates: ['2026-04-21'],
+          scope: { kind: 'active', space_id: spaceId },
+        }) as Record<string, Record<string, number>>
+      )['2026-04-21']?.['column:due_date'] ?? 0
+    const activeBefore = dueCount('SPACE_PERSONAL')
     seedForeignFixture({ asTask: { todo_state: 'TODO', due_date: '2026-04-21' } })
-    const globalResult = invoke('count_agenda_batch_by_source', {
-      dates: ['2026-04-21'],
-      scope: { kind: 'global' },
-    }) as Record<string, Record<string, number>>
-    const activeResult = invoke('count_agenda_batch_by_source', {
-      dates: ['2026-04-21'],
-      scope: { kind: 'active', space_id: 'SPACE_PERSONAL' },
-    }) as Record<string, Record<string, number>>
-    const globalDueCount = globalResult['2026-04-21']?.['column:due_date'] ?? 0
-    const activeDueCount = activeResult['2026-04-21']?.['column:due_date'] ?? 0
-    expect(globalDueCount).toBeGreaterThan(activeDueCount)
+    expect(dueCount(SPACE_OTHER)).toBe(1)
+    expect(dueCount('SPACE_PERSONAL')).toBe(activeBefore)
   })
 
   // -------------------------------------------------------------------------
@@ -4241,13 +4243,16 @@ describe('scope-filter parity', () => {
       pageIds: [SEED_IDS.PAGE_GETTING_STARTED],
       scope: { kind: 'active', space_id: 'SPACE_PERSONAL' },
     }) as Record<string, number>
-    const countsGlobal = invoke('count_backlinks_batch', {
+    const countsForeign = invoke('count_backlinks_batch', {
       pageIds: [SEED_IDS.PAGE_GETTING_STARTED],
-      scope: { kind: 'global' },
+      scope: { kind: 'active', space_id: SPACE_OTHER },
     }) as Record<string, number>
-    // Foreign backlink is excluded under active.
-    expect(countsGlobal[SEED_IDS.PAGE_GETTING_STARTED]).toBeGreaterThan(
-      counts[SEED_IDS.PAGE_GETTING_STARTED] ?? 0,
+    // The foreign backlink counts in its own space and is excluded under active.
+    expect(countsForeign[SEED_IDS.PAGE_GETTING_STARTED]).toBe(1)
+    expect(counts[SEED_IDS.PAGE_GETTING_STARTED] ?? 0).toBe(
+      deriveLinkEdges(blocks).filter(
+        (e) => e.targetId === SEED_IDS.PAGE_GETTING_STARTED && e.sourceId !== foreignBlockId,
+      ).length,
     )
     // Alias resolution under active scope returns null (foreign alias).
     const resolved = invoke('resolve_page_by_alias', {
@@ -4648,12 +4653,12 @@ describe('list_pages_with_metadata — inbound same-page exclusion', () => {
 })
 
 // ---------------------------------------------------------------------------
-// #5415 — `list_blocks` has no cross-space form: the backend rejects a global
-// scope via `require_active`, and the mock refuses the same call instead of
+// #5415 — `list_blocks` has no cross-space form: the backend fails to
+// deserialize a global scope, and the mock refuses the same call instead of
 // widening.
 // ---------------------------------------------------------------------------
 describe('list_blocks scope', () => {
-  it('refuses a global scope, mirroring require_active', () => {
+  it('refuses a global scope, as the backend does', () => {
     expect(() =>
       invoke('list_blocks', {
         request: { parentId: SEED_IDS.PAGE_GETTING_STARTED, limit: 10 },

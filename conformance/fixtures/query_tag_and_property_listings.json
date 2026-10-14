@@ -374,14 +374,6 @@
     },
     {
       "cursor": null,
-      "error": "validation",
-      "has_more": null,
-      "name": "tags_in_space_rejects_global_scope",
-      "rows": [],
-      "total_count": null
-    },
-    {
-      "cursor": null,
       "error": null,
       "has_more": null,
       "name": "tags_prefix_is_case_insensitive",
@@ -444,14 +436,6 @@
       "error": "validation",
       "has_more": null,
       "name": "tags_prefix_limit_over_cap_rejected",
-      "rows": [],
-      "total_count": null
-    },
-    {
-      "cursor": null,
-      "error": "validation",
-      "has_more": null,
-      "name": "tags_prefix_rejects_global_scope",
       "rows": [],
       "total_count": null
     },
@@ -696,17 +680,6 @@
     },
     {
       "args": {
-        "scope": {
-          "kind": "global"
-        }
-      },
-      "command": "list_all_tags_in_space",
-      "comment": "`require_active`: a `Global` scope is refused with `validation`, not widened into every tag.",
-      "expect_error": "validation",
-      "name": "tags_in_space_rejects_global_scope"
-    },
-    {
-      "args": {
         "prefix": "ze",
         "scope": {
           "kind": "active",
@@ -793,18 +766,6 @@
       "comment": "…and so is anything above `MAX_TAGS_PREFIX` (200).",
       "expect_error": "validation",
       "name": "tags_prefix_limit_over_cap_rejected"
-    },
-    {
-      "args": {
-        "prefix": "",
-        "scope": {
-          "kind": "global"
-        }
-      },
-      "command": "list_tags_by_prefix",
-      "comment": "`require_active`: a `Global` scope is refused with `validation`, not widened into every space's tags (#5274).",
-      "expect_error": "validation",
-      "name": "tags_prefix_rejects_global_scope"
     },
     {
       "args": {},

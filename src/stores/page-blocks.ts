@@ -408,9 +408,7 @@ export function createPageBlockStore(pageId: string): StoreApi<PageBlockState> {
         // PageHeader.handleMoveToSpace). #2810 — key the heal on the
         // structured `PageNotInSpace` code rather than the generic
         // `kind: 'validation'` (message-regexing was retired in #2251): a
-        // malformed id is `kind: 'ulid'` (`BlockId::from_string`), the
-        // `require_active` Global-scope rejection can't fire because
-        // `requireActiveScope` always dispatches an active scope, and any
+        // malformed id is `kind: 'ulid'` (`BlockId::from_string`), and any
         // future uncoded/differently-coded validation on this command path
         // must NOT silently reroute into this heal. A well-formed id that
         // matches NO row (page hard-purged) surfaces the same

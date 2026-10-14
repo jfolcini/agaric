@@ -13,6 +13,7 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 
 import type { PageSourceReport } from '@/lib/bindings'
+import { setSpace } from '@/lib/tauri-mock/__tests__/mock-store-helpers'
 import { dispatch } from '@/lib/tauri-mock/handlers'
 import {
   blockTags,
@@ -25,6 +26,8 @@ import {
 } from '@/lib/tauri-mock/seed'
 
 const id = (label: string): string => label.padStart(26, '0')
+const SPACE = id('SPACE')
+const SCOPE = { kind: 'active', space_id: SPACE }
 const PAGE = id('PAGE')
 const OTHER_PAGE = id('OTHERPAGE')
 const A = id('A')
@@ -62,6 +65,7 @@ function put(
   const row = makeBlock(blockId, type, content, parent, position)
   row['page_id'] = pageId
   blocks.set(blockId, row)
+  if (type === 'page') setSpace(blockId, SPACE)
   return row
 }
 
@@ -116,7 +120,7 @@ function refusal(args: { source: string; pageId?: string; baseSource?: string })
 function children(parentId: string): Row[] {
   const page = dispatch('list_blocks', {
     request: { parentId, limit: 100 },
-    scope: { kind: 'active', space_id: 'SPACE_PERSONAL' },
+    scope: SCOPE,
   }) as { items: Row[] }
   return page.items
 }
@@ -541,6 +545,7 @@ describe('tauri-mock apply_page_source with merge (#5140 Phase 5)', () => {
       content: 'added there',
       parentId: PAGE,
       index: 1,
+      scope: SCOPE,
     })
 
     const report = merge(INITIAL.replace(`- bravo ^${B}`, `- added here\n- bravo ^${B}`))
@@ -754,7 +759,6 @@ describe('tauri-mock get_page_buffer and apply_page_source by line ids (#5160 A)
 })
 
 describe('tauri-mock apply_page_source front matter (#5160 S8)', () => {
-  const SPACE = id('SPACE')
   const WORK = id('WORK')
   const HEAD = '---\naliases: [Home base]\ntags: [work]\nstage: open\n---\n\n'
   const BODY = `- alpha ^${A}\n`
@@ -778,9 +782,12 @@ describe('tauri-mock apply_page_source front matter (#5160 S8)', () => {
     return null
   }
 
+  // `space` is the mock's space-membership row, not a property the page shows.
   const pageKeys = (): Record<string, unknown> =>
     Object.fromEntries(
-      [...(properties.get(PAGE) ?? [])].map(([key, row]) => [key, row['value_text']]),
+      [...(properties.get(PAGE) ?? [])]
+        .filter(([key]) => key !== 'space')
+        .map(([key, row]) => [key, row['value_text']]),
     )
   const pageTags = (): unknown[] =>
     [...(blockTags.get(PAGE) ?? [])].map((tagId) => blocks.get(tagId)?.['content'])
@@ -802,6 +809,7 @@ describe('tauri-mock apply_page_source front matter (#5160 S8)', () => {
         ['template', textRow('template', 'x')],
       ]),
     )
+    setSpace(PAGE, SPACE)
     pageAliases.set(PAGE, ['Home base'])
     blockTags.set(PAGE, new Set([WORK]))
   })

@@ -8,7 +8,7 @@ use criterion::{BenchmarkId, Criterion, Throughput, criterion_group};
 
 use agaric_lib::commands::list_page_links_inner;
 use agaric_lib::db::init_pool;
-use agaric_store::space::SpaceScope;
+use agaric_store::space::{SpaceId, SpaceScope};
 
 use sqlx::SqlitePool;
 use tempfile::TempDir;
@@ -22,6 +22,25 @@ use tokio::runtime::Runtime;
 async fn fresh_pool(dir: &TempDir, name: &str) -> SqlitePool {
     let db_path = dir.path().join(format!("{name}.db"));
     init_pool(&db_path).await.unwrap()
+}
+
+/// The space every block the scoped benches read lives in.
+const BENCH_SPACE_ID: &str = "01BENCHSPACE00000000000001";
+
+/// Register [`BENCH_SPACE_ID`] and move every seeded block into it.
+async fn put_every_block_in_bench_space(pool: &SqlitePool) {
+    for sql in [
+        "INSERT OR IGNORE INTO blocks (id, block_type, content, page_id) \
+         VALUES (?1, 'page', 'Bench', ?1)",
+        "INSERT OR IGNORE INTO spaces (id) VALUES (?1)",
+        "UPDATE blocks SET space_id = ?1 WHERE id <> ?1",
+    ] {
+        sqlx::query(sql)
+            .bind(BENCH_SPACE_ID)
+            .execute(pool)
+            .await
+            .unwrap();
+    }
 }
 
 /// Seed `n` page blocks, each with one child content block, and insert ~3
@@ -98,6 +117,7 @@ fn bench_list_page_links(c: &mut Criterion) {
         let dir = TempDir::new().unwrap();
         let pool = rt.block_on(fresh_pool(&dir, &format!("graph_{n_pages}")));
         rt.block_on(seed_pages_with_links(&pool, n_pages));
+        rt.block_on(put_every_block_in_bench_space(&pool));
 
         group.throughput(Throughput::Elements(n_pages as u64));
         group.bench_with_input(
@@ -107,9 +127,13 @@ fn bench_list_page_links(c: &mut Criterion) {
                 b.to_async(&rt).iter(|| {
                     let pool = pool.clone();
                     async move {
-                        list_page_links_inner(&pool, &SpaceScope::Global, None)
-                            .await
-                            .unwrap()
+                        list_page_links_inner(
+                            &pool,
+                            &SpaceScope::Active(SpaceId::from_trusted(BENCH_SPACE_ID)),
+                            None,
+                        )
+                        .await
+                        .unwrap()
                     }
                 });
             },

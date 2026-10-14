@@ -35,6 +35,8 @@ import {
 } from '@/lib/tauri-mock/seed'
 
 const PAGE = '00000000000000000000PAGEZZ'
+/** Content creates ignore the space, but the command still requires one. */
+const SCOPE = { kind: 'active', space_id: '00000000000000000000SPACEZ' }
 const A = '0000000000000000000000BL_A'
 const B = '0000000000000000000000BL_B'
 const TAG = '000000000000000000000TAGZZ'
@@ -148,7 +150,7 @@ describe('#4870 — reverse rows carry a real reverse payload', () => {
   })
 
   it('create_block: the reverse is a delete_block naming the block alone', () => {
-    dispatch('create_block', { content: 'fresh', parentId: PAGE, position: 3 })
+    dispatch('create_block', { content: 'fresh', parentId: PAGE, position: 3, scope: SCOPE })
     const created = payloadOf(opLog.at(-1) as MockOpLogEntry)['block_id'] as string
 
     dispatch('undo_page_op', { pageId: PAGE, undoDepth: 0 })

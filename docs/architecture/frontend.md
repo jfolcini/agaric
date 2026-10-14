@@ -112,7 +112,7 @@ Page membership lives in the native, indexed `blocks.space_id` column (migration
 
 ### Scoping rules
 
-- **Tauri commands.** Every list / search / agenda / backlink / history command takes a `SpaceScope` argument: `Active(SpaceId)` (filter) or `Global` (unscoped — used by MCP).
+- **Tauri commands.** Every list / agenda / backlink / history command takes a `SpaceScope` naming exactly one space (`{ kind: 'active', space_id }`); there is no unscoped form. Search takes `SearchFilter.scope`, a required `SearchScope`: an explicit list of spaces or every space.
 - **SQL.** The canonical space-filter clause is pinned by `SPACE_FILTER_CANONICAL` constant + a parity test (`space_filter_canonical.rs`) that ensures the same predicate appears at every read site.
 - **Cross-space links.** Three enforcement points: `edit_block`'s content scan, `set_property`'s ref-type validation, `add_tag`'s space check. A `[[ULID]]` to a foreign-space target is rejected at write time AND rendered as a broken-link chip at render time.
 - **`create_block` IPC tightening.** Pages without a `space_id` are rejected at the IPC boundary. The four legacy FE bypass call sites (JournalPage daily / TemplatesView / WelcomeModal / `useBlockDatePicker`) all route through `createPageInSpace`.
@@ -125,7 +125,7 @@ There is one subscriber pattern underneath — adding a fifth per-space slice me
 
 ### Resolve cache
 
-`useResolveStore` uses composite cache keys: `${spaceId}::${ulid}`. The sentinel `__global__` is used when the resolver runs in `Global` scope (cross-space view lookups). On space switch, `clearAllForSpace(prevSpaceId)` fires before the new space takes effect — prevents stale chip titles flashing across the switch.
+`useResolveStore` uses composite cache keys: `${spaceId}::${ulid}`. The sentinel `__global__` keys entries made while no space is active. On space switch, `clearAllForSpace(prevSpaceId)` fires before the new space takes effect — prevents stale chip titles flashing across the switch.
 
 ### Frontend integration surfaces
 
@@ -177,7 +177,7 @@ A second round (#3391) closed nine further shapes an adversarial reviewer constr
 
 `src/lib/bindings.ts` is the specta-generated, checked-in, CI-enforced binding surface, and every call site uses it: `unwrap(await commands.someCommand(…))`, with `unwrap` from `src/lib/app-error.ts`. The hand-written per-domain wrapper layer that used to sit on top of it is gone (#2927), and so is the `tauri-import-baseline` ratchet that shrank it. A `no-raw-invoke` prek hook keeps bare `invoke()` out of app code.
 
-What remains is a small permanent floor in `src/lib/ipc-helpers.ts`: `Channel<T>` progress plumbing (`importMarkdown`, `startSync`), a client-side abort bridge (`cancelledError`/`withAbort`), a chunked cursor-drain (`restoreAllDeletedInSpace`/`purgeAllDeletedInSpace`), the two search wrappers whose `scope` default is `requireActiveScope` where the wire's is `Global` (`searchBlocks`, `searchBlocksPartitioned`), `createBlock`'s explicit-null coercion (Tauri rejects `undefined` over the wire), `logFrontend` (the backend log sink `main.tsx` registers at boot), and the one sanctioned raw-`invoke` seam (`readAttachment`, whose raw-response command can't carry a `specta::Type`). Each is there because the generated binding cannot express what it does — nothing else belongs in that file.
+What remains is a small permanent floor in `src/lib/ipc-helpers.ts`: `Channel<T>` progress plumbing (`importMarkdown`, `startSync`), a client-side abort bridge (`cancelledError`/`withAbort`), a chunked cursor-drain (`restoreAllDeletedInSpace`/`purgeAllDeletedInSpace`), the two search wrappers that derive the required `scope` from the active space (`searchBlocks`, `searchBlocksPartitioned`), `createBlock`'s explicit-null coercion (Tauri rejects `undefined` over the wire), `logFrontend` (the backend log sink `main.tsx` registers at boot), and the one sanctioned raw-`invoke` seam (`readAttachment`, whose raw-response command can't carry a `specta::Type`). Each is there because the generated binding cannot express what it does — nothing else belongs in that file.
 
 ## Component inventory
 

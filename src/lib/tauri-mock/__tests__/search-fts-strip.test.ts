@@ -57,9 +57,9 @@ import { blocks, makeBlock } from '@/lib/tauri-mock/seed'
 
 const SPACE = 'SPACE_S'.padStart(26, '0')
 
-/** The `SpaceScope::Active` every step below runs under — not a user filter
+/** The `SearchScope` every step below runs under — not a user filter
  *  (`has_filters` excludes it), so a `filter` carrying only this is "unfiltered". */
-const SCOPE = { kind: 'active', space_id: SPACE }
+const SCOPE = { kind: 'spaces', space_ids: [SPACE] }
 
 interface SearchResponse {
   items: Array<Record<string, unknown>>
@@ -70,7 +70,7 @@ interface SearchResponse {
 
 function search(args: Record<string, unknown>): SearchResponse {
   return dispatch('search_blocks', {
-    filter: { scope: { kind: 'active', space_id: SPACE } },
+    filter: { scope: SCOPE },
     limit: 50,
     ...args,
   }) as SearchResponse
@@ -269,7 +269,7 @@ describe('search_blocks — the FTS arms match the stripped text (#3938)', () =>
   const PLAIN = id('SPLAIN')
   const REFERRER = id('SREF')
   const ACCENT = id('SACC')
-  const FILTER_REGEX = { scope: { kind: 'active', space_id: SPACE }, isRegex: true }
+  const FILTER_REGEX = { scope: SCOPE, isRegex: true }
 
   beforeEach(() => {
     clearMock()
@@ -342,7 +342,7 @@ describe('search_blocks — the FTS arms match the stripped text (#3938)', () =>
       ids(
         search({
           query: 'gadget',
-          filter: { scope: { kind: 'active', space_id: SPACE }, caseSensitive: true },
+          filter: { scope: SCOPE, caseSensitive: true },
         }),
       ),
     ).toEqual([PLAIN])
@@ -351,7 +351,7 @@ describe('search_blocks — the FTS arms match the stripped text (#3938)', () =>
       ids(
         search({
           query: 'gadget',
-          filter: { scope: { kind: 'active', space_id: SPACE }, wholeWord: true },
+          filter: { scope: SCOPE, wholeWord: true },
         }),
       ),
     ).toEqual([PLAIN])
@@ -376,6 +376,7 @@ describe('search_blocks_partitioned — same stripped haystack as search_blocks 
       query: 'gadget',
       pageLimit: 10,
       blockLimit: 10,
+      filter: { scope: SCOPE },
     }) as { blocks: SearchResponse }
     expect(ids(res.blocks)).toEqual([MARKUP])
 
@@ -383,6 +384,7 @@ describe('search_blocks_partitioned — same stripped haystack as search_blocks 
       query: 'naive',
       pageLimit: 10,
       blockLimit: 10,
+      filter: { scope: SCOPE },
     }) as { blocks: SearchResponse }
     expect(ids(folded.blocks)).toEqual([])
   })
@@ -441,6 +443,7 @@ describe('search_blocks_partitioned — both partitions are (rank, id)-ordered (
       query: 'gizmo',
       pageLimit: 10,
       blockLimit: 10,
+      filter: { scope: SCOPE },
       ...args,
     }) as { pages: SearchResponse; blocks: SearchResponse }
   }
@@ -577,7 +580,7 @@ describe('search_blocks — the FTS arm mints a resumable (rank, id) cursor (#39
     const res = search({
       query: '',
       limit: 2,
-      filter: { scope: { kind: 'active', space_id: SPACE }, parentId: PAGE },
+      filter: { scope: SCOPE, parentId: PAGE },
     })
     expect(res.has_more).toBe(true)
     expect(decodeCursorSlots(res.next_cursor as string).slots).toEqual(['id'])
@@ -589,10 +592,7 @@ describe('search_blocks — the FTS arm mints a resumable (rank, id) cursor (#39
   // be `true` + `null`.
   it.each([
     ['fts', { query: 'gizmo' }],
-    [
-      'filter-only',
-      { query: '', filter: { scope: { kind: 'active', space_id: SPACE }, parentId: PAGE } },
-    ],
+    ['filter-only', { query: '', filter: { scope: SCOPE, parentId: PAGE } }],
   ])('%s arm: has_more is true exactly when a cursor was minted', (_label, extra) => {
     for (const limit of [1, 2, 3, 4, 5]) {
       const res = search({ limit, ...extra })
@@ -615,10 +615,7 @@ describe('search_blocks — the FTS arm mints a resumable (rank, id) cursor (#39
   // leave the other free to grow its own lenient copy back.
   const ARMS: Array<[string, Record<string, unknown>]> = [
     ['fts', { query: 'gizmo' }],
-    [
-      'filter-only',
-      { query: '', filter: { scope: { kind: 'active', space_id: SPACE }, parentId: PAGE } },
-    ],
+    ['filter-only', { query: '', filter: { scope: SCOPE, parentId: PAGE } }],
   ]
 
   /** URL-safe unpadded base64 of `bytes`, however malformed. */

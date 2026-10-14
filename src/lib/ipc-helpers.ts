@@ -15,8 +15,8 @@
  *    plumbing), not simple request/response.
  *  - `createBlock` — the six-positional-argument `?? null` coercion Tauri's
  *    explicit-null-over-the-wire contract needs.
- *  - `searchBlocks` / `searchBlocksPartitioned` — a scope default that is the
- *    opposite of the wire's; see their doc comments.
+ *  - `searchBlocks` / `searchBlocksPartitioned` — the flat-params-to-
+ *    `SearchFilter` marshalling, with the active space as the search scope.
  *  - `logFrontend` — the backend log sink `src/main.tsx` registers at boot.
  *  - `readAttachment` — the sanctioned raw-`invoke` seam: a raw-response
  *    Tauri command can't carry a `specta::Type`, so it has no generated
@@ -46,7 +46,7 @@ import type {
 } from '@/lib/bindings'
 import { PAGINATION_LIMIT } from '@/lib/constants'
 import type { SafeLimit } from '@/lib/safe-limit'
-import { requireActiveScope } from '@/lib/space-scope'
+import { requireActiveScope, requireActiveSearchScope } from '@/lib/space-scope'
 
 // ---------------------------------------------------------------------------
 // Client-side abort plumbing (no IPC)
@@ -373,23 +373,15 @@ export async function createBlock(params: {
 }
 
 // ---------------------------------------------------------------------------
-// Search (scope default is the safety)
+// Search
 // ---------------------------------------------------------------------------
 
 /** Full-text search across all blocks, paginated by relevance.
  *
- * KEPT (#4412). `SearchFilter.scope` is `#[serde(default)]` over a
- * `SpaceScope` whose `Default` is `Global`
- * (`src-tauri/agaric-store/src/space.rs:216-223`), so an omitted `scope` silently
- * searches EVERY space; this wrapper's default is `requireActiveScope`, the
- * opposite. Deleting it would make the cross-space leak a missing object key
- * rather than a compile error.
- *
- * `spaceId` — required. Restricts matches to blocks whose owning page carries
- * `space = <spaceId>`. Callers must resolve the active `currentSpaceId` (from
- * `useSpaceStore`) before invoking; pre-bootstrap callers should pass `''`
- * (empty string), which the backend treats as a no-match (returns an empty
- * page) rather than crashing on a runtime null deref.
+ * `spaceId` — required: the search covers that one space, sent as a
+ * one-element `spaces` scope. Callers resolve the active `currentSpaceId`
+ * (from `useSpaceStore`) first; with no space known the wrapper throws
+ * instead of dispatching ({@link requireActiveSearchScope}).
  *
  * `parentId`, `tagIds`, `spaceId` and the filter flags are marshalled into
  * the backend's `SearchFilter` struct at the IPC boundary, so the public API
@@ -464,7 +456,7 @@ export async function searchBlocks(
       commands.searchBlocks(params.query, params.cursor ?? null, params.limit ?? null, {
         parentId: params.parentId ?? null,
         tagIds: params.tagIds ?? [],
-        scope: requireActiveScope(params.spaceId),
+        scope: requireActiveSearchScope(params.spaceId),
         includePageGlobs: params.includePageGlobs ?? [],
         excludePageGlobs: params.excludePageGlobs ?? [],
         caseSensitive: params.caseSensitive ?? false,
@@ -486,11 +478,7 @@ export async function searchBlocks(
 }
 
 /**
- * Partitioned full-text search.
- *
- * KEPT (#4412) for the same `SearchFilter.scope` reason as
- * {@link searchBlocks}: the wire default is `Global`, this wrapper's is
- * `requireActiveScope`.
+ * Partitioned full-text search, scoped to `spaceId` as {@link searchBlocks} is.
  *
  * Returns `pages` (rows where `block_type='page'`) and `blocks`
  * (unrestricted rank-ordered set; may include pages alongside content)
@@ -525,7 +513,7 @@ export async function searchBlocksPartitioned(params: {
     await commands.searchBlocksPartitioned(params.query, params.pageLimit, params.blockLimit, {
       parentId: params.parentId ?? null,
       tagIds: params.tagIds ?? [],
-      scope: requireActiveScope(params.spaceId),
+      scope: requireActiveSearchScope(params.spaceId),
       includePageGlobs: params.includePageGlobs ?? [],
       excludePageGlobs: params.excludePageGlobs ?? [],
       caseSensitive: params.caseSensitive ?? false,

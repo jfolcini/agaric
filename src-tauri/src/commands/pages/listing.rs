@@ -419,12 +419,6 @@ pub async fn list_all_pages_in_space_inner(
 /// Tauri command: list every page in the active space as
 /// `{ id, content }`, optionally restricted to pages carrying at least
 /// one of `tag_ids`. Delegates to [`list_all_pages_in_space_inner`].
-///
-/// `scope` is a required-active [`SpaceScope`] (b1 migration): the
-/// listing has no cross-space form, so [`SpaceScope::Global`] is
-/// rejected by [`SpaceScope::require_active`]. The frontend must
-/// short-circuit locally to an empty list when there is no active space
-/// rather than dispatching a `Global` scope.
 #[tauri::command]
 #[specta::specta]
 pub async fn list_all_pages_in_space(
@@ -432,7 +426,7 @@ pub async fn list_all_pages_in_space(
     scope: SpaceScope,
     tag_ids: Option<Vec<String>>,
 ) -> Result<Vec<PageHeading>, AppError> {
-    let space_id = scope.require_active()?;
+    let space_id = scope.space_id();
     list_all_pages_in_space_inner(&pool.0, space_id.as_str(), tag_ids.as_deref())
         .await
         .map_err(sanitize_internal_error)
@@ -466,16 +460,13 @@ pub async fn list_template_page_ids_in_space_inner(
 
 /// Tauri command: list template page IDs in the active space.
 /// Delegates to [`list_template_page_ids_in_space_inner`].
-///
-/// `scope` is a required-active [`SpaceScope`] (b1 migration);
-/// [`SpaceScope::Global`] is rejected by [`SpaceScope::require_active`].
 #[tauri::command]
 #[specta::specta]
 pub async fn list_template_page_ids_in_space(
     pool: State<'_, ReadPool>,
     scope: SpaceScope,
 ) -> Result<Vec<String>, AppError> {
-    let space_id = scope.require_active()?;
+    let space_id = scope.space_id();
     list_template_page_ids_in_space_inner(&pool.0, space_id.as_str())
         .await
         .map_err(sanitize_internal_error)
@@ -632,11 +623,6 @@ pub async fn load_page_subtree_inner(
 
 /// Tauri command: load every active descendant under `root_block_id`
 /// in the active space.  Delegates to [`load_page_subtree_inner`].
-///
-/// `scope` is a required-active [`SpaceScope`] (b1 migration);
-/// [`SpaceScope::Global`] is rejected by [`SpaceScope::require_active`].
-/// The frontend short-circuits (returns an empty subtree) when there is
-/// no active space rather than dispatching a `Global` scope.
 #[tauri::command]
 #[specta::specta]
 pub async fn load_page_subtree(
@@ -644,7 +630,7 @@ pub async fn load_page_subtree(
     root_block_id: BlockId,
     scope: SpaceScope,
 ) -> Result<PageSubtree, AppError> {
-    let space_id = scope.require_active()?;
+    let space_id = scope.space_id();
     load_page_subtree_inner(&pool.0, root_block_id.as_str(), space_id.as_str())
         .await
         .map_err(sanitize_internal_error)

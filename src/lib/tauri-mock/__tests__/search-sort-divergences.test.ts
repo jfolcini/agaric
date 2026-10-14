@@ -55,8 +55,14 @@ function row(rowId: string, content: string): PageMetaRow {
   } as PageMetaRow
 }
 
+const ALL_SPACES = { kind: 'all_spaces' }
+
 function search(args: Record<string, unknown>): SearchResponse {
-  return dispatch('search_blocks', { limit: 50, filter: {}, ...args }) as SearchResponse
+  return dispatch('search_blocks', {
+    limit: 50,
+    ...args,
+    filter: { scope: ALL_SPACES, ...(args['filter'] as Record<string, unknown> | undefined) },
+  }) as SearchResponse
 }
 
 // ---------------------------------------------------------------------------
@@ -191,7 +197,7 @@ describe('search regex arms — zero-width matches are dropped (#3939 item 3)', 
       query: '(?:)',
       pageLimit: 10,
       blockLimit: 10,
-      filter: { isRegex: true },
+      filter: { scope: ALL_SPACES, isRegex: true },
     }) as { pages: SearchResponse; blocks: SearchResponse }
     expect(res.blocks.items).toEqual([])
     expect(res.pages.items).toEqual([])

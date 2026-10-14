@@ -44,7 +44,7 @@ use criterion::{BenchmarkId, Criterion, Throughput, criterion_group};
 use agaric_lib::commands::list_projected_agenda_inner;
 use agaric_lib::db::init_pool;
 use agaric_lib::materializer::Materializer;
-use agaric_store::space::SpaceScope;
+use agaric_store::space::{SpaceId, SpaceScope};
 
 use sqlx::SqlitePool;
 use tempfile::TempDir;
@@ -58,6 +58,25 @@ use tokio::runtime::Runtime;
 async fn fresh_pool(dir: &TempDir, name: &str) -> SqlitePool {
     let db_path = dir.path().join(format!("{name}.db"));
     init_pool(&db_path).await.unwrap()
+}
+
+/// The space every block the scoped benches read lives in.
+const BENCH_SPACE_ID: &str = "01BENCHSPACE00000000000001";
+
+/// Register [`BENCH_SPACE_ID`] and move every seeded block into it.
+async fn put_every_block_in_bench_space(pool: &SqlitePool) {
+    for sql in [
+        "INSERT OR IGNORE INTO blocks (id, block_type, content, page_id) \
+         VALUES (?1, 'page', 'Bench', ?1)",
+        "INSERT OR IGNORE INTO spaces (id) VALUES (?1)",
+        "UPDATE blocks SET space_id = ?1 WHERE id <> ?1",
+    ] {
+        sqlx::query(sql)
+            .bind(BENCH_SPACE_ID)
+            .execute(pool)
+            .await
+            .unwrap();
+    }
 }
 
 /// Seed `n` blocks with repeating-task properties for
@@ -133,6 +152,7 @@ fn bench_agenda_expansion(c: &mut Criterion) {
         let pool = rt.block_on(fresh_pool(&dir, &format!("agenda_expansion_{m}")));
         let materializer = rt.block_on(async { Materializer::new(pool.clone()) });
         rt.block_on(seed_repeating_blocks(&pool, m));
+        rt.block_on(put_every_block_in_bench_space(&pool));
 
         group.throughput(Throughput::Elements(m as u64));
         group.bench_with_input(
@@ -148,7 +168,7 @@ fn bench_agenda_expansion(c: &mut Criterion) {
                             end_date.into(),
                             None,
                             Some(200),
-                            &SpaceScope::Global,
+                            &SpaceScope::Active(SpaceId::from_trusted(BENCH_SPACE_ID)),
                         )
                         .await
                         .unwrap()

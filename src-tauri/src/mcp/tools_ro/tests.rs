@@ -54,6 +54,14 @@ async fn settle(mat: &Materializer) {
     mat.flush_background().await.unwrap();
 }
 
+/// A search over [`TEST_SPACE_ID`] with no other predicate.
+fn test_space_search_filter() -> crate::commands::SearchFilter {
+    serde_json::from_value(json!({
+        "scope": SearchScope::Spaces(vec![SpaceId::from_trusted(TEST_SPACE_ID)]),
+    }))
+    .unwrap()
+}
+
 // -------------------------------------------------------------------
 // list_tools — snapshot of the wire contract
 // -------------------------------------------------------------------
@@ -600,7 +608,7 @@ fn limit_validation_cases() -> Vec<(&'static str, i64, Value)> {
         (
             TOOL_LIST_BACKLINKS,
             LIST_RESULT_CAP,
-            json!({"block_id": "ANY"}),
+            json!({"block_id": "ANY", "space_id": TEST_SPACE_ID}),
         ),
         (
             TOOL_LIST_TAGS,
@@ -610,7 +618,7 @@ fn limit_validation_cases() -> Vec<(&'static str, i64, Value)> {
         (
             TOOL_GET_AGENDA,
             AGENDA_RESULT_CAP,
-            json!({"start_date": "2025-01-01", "end_date": "2025-01-02"}),
+            json!({"start_date": "2025-01-01", "end_date": "2025-01-02", "space_id": TEST_SPACE_ID}),
         ),
     ]
 }
@@ -763,10 +771,7 @@ async fn search_snippet_len_truncates_mcp_but_not_fe_path() {
         "needle".into(),
         None,
         Some(SEARCH_RESULT_CAP),
-        crate::commands::SearchFilter {
-            scope: SpaceScope::Active(SpaceId::from_trusted(TEST_SPACE_ID)),
-            ..Default::default()
-        },
+        test_space_search_filter(),
         None,
     )
     .await
@@ -1172,7 +1177,7 @@ async fn list_backlinks_happy_path() {
     let result = tools
         .call_tool(
             "list_backlinks",
-            json!({"block_id": target.id}),
+            json!({"block_id": target.id, "space_id": TEST_SPACE_ID}),
             &test_ctx(),
         )
         .await
@@ -1232,7 +1237,11 @@ async fn list_backlinks_malformed_block_id_errors_rather_than_empty() {
 
     for bad in ["NOT-A-VALID-ULID", "01ARZ3NDEKTSV4RRFFQ69G5FA", ""] {
         let err = tools
-            .call_tool("list_backlinks", json!({"block_id": bad}), &test_ctx())
+            .call_tool(
+                "list_backlinks",
+                json!({"block_id": bad, "space_id": TEST_SPACE_ID}),
+                &test_ctx(),
+            )
             .await
             .unwrap_err();
         assert!(
@@ -1247,13 +1256,17 @@ async fn list_backlinks_malformed_block_id_errors_rather_than_empty() {
     let lower = target.id.as_str().to_lowercase();
     assert_ne!(lower, target.id.as_str(), "test setup: id has letters");
     let via_lower = tools
-        .call_tool("list_backlinks", json!({"block_id": lower}), &test_ctx())
+        .call_tool(
+            "list_backlinks",
+            json!({"block_id": lower, "space_id": TEST_SPACE_ID}),
+            &test_ctx(),
+        )
         .await
         .expect("a lowercase ULID must still be accepted");
     let via_upper = tools
         .call_tool(
             "list_backlinks",
-            json!({"block_id": target.id}),
+            json!({"block_id": target.id, "space_id": TEST_SPACE_ID}),
             &test_ctx(),
         )
         .await
@@ -1268,87 +1281,14 @@ async fn list_backlinks_malformed_block_id_errors_rather_than_empty() {
 async fn list_backlinks_missing_block_id_validation() {
     let (tools, _mat, _dir) = mk_tools().await;
     let err = tools
-        .call_tool("list_backlinks", json!({}), &test_ctx())
+        .call_tool(
+            "list_backlinks",
+            json!({"space_id": TEST_SPACE_ID}),
+            &test_ctx(),
+        )
         .await
         .expect_err("missing block_id");
     assert!(matches!(err, AppError::Validation { .. }), "got {err:?}");
-}
-
-/// Phase 2 parity test: the post-migration handler builds
-/// [`SpaceScope::Global`] from the JSON-side `space_id: null` (or omitted).
-/// Asserts that calling the MCP `list_backlinks` tool with that input
-/// returns the same `GroupedBacklinkResponse` envelope as a direct call to
-/// the migrated [`list_backlinks_grouped_inner`] passing
-/// [`SpaceScope::Global`] explicitly. Pre-migration the handler passed
-/// `None` for the `Option<String>` parameter; post-migration it passes
-/// `&SpaceScope::Global`. Both encode "no space filter" — this test
-/// pins behavioural parity across the migration boundary.
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn list_backlinks_global_scope_parity() {
-    use crate::commands::list_backlinks_grouped_inner;
-    use agaric_store::space::SpaceScope;
-
-    let (tools, mat, _dir) = mk_tools().await;
-    let target = create_block_inner(
-        &tools.pool,
-        DEV,
-        &mat,
-        "page".into(),
-        "Target".into(),
-        None,
-        Some(1),
-    )
-    .await
-    .unwrap();
-    settle(&mat).await;
-
-    // Path A: through the MCP handler with `space_id: null` — the
-    // handler builds `SpaceScope::Global` internally.
-    let via_handler = tools
-        .call_tool(
-            "list_backlinks",
-            json!({"block_id": target.id, "space_id": null}),
-            &test_ctx(),
-        )
-        .await
-        .expect("handler call must succeed");
-
-    // Path B: direct call to the migrated `_inner` with the same scope.
-    let via_inner = list_backlinks_grouped_inner(
-        &tools.pool,
-        target.id.clone(),
-        None,
-        None,
-        None,
-        None,
-        &SpaceScope::Global,
-        None,
-    )
-    .await
-    .expect("inner call must succeed");
-    let via_inner_json = serde_json::to_value(&via_inner).expect("inner serialises");
-
-    assert_eq!(
-        via_handler, via_inner_json,
-        "handler `space_id: null` must produce the same envelope as a direct \
-         `&SpaceScope::Global` call to `list_backlinks_grouped_inner`"
-    );
-
-    // Path C: omitted `space_id` defaults to `None` → `SpaceScope::Global`
-    // by the same handler match. Re-checks the parity for the "field absent"
-    // wire shape.
-    let via_handler_omitted = tools
-        .call_tool(
-            "list_backlinks",
-            json!({"block_id": target.id}),
-            &test_ctx(),
-        )
-        .await
-        .expect("handler call must succeed (space_id omitted)");
-    assert_eq!(
-        via_handler_omitted, via_inner_json,
-        "handler with omitted `space_id` must match `&SpaceScope::Global` parity"
-    );
 }
 
 async fn mk_tag(pool: &SqlitePool, mat: &Materializer, space: &str, name: &str) -> String {
@@ -1497,7 +1437,7 @@ async fn get_agenda_happy_path() {
     let result = tools
         .call_tool(
             "get_agenda",
-            json!({"start_date": "2025-01-01", "end_date": "2025-01-31"}),
+            json!({"start_date": "2025-01-01", "end_date": "2025-01-31", "space_id": TEST_SPACE_ID}),
             &test_ctx(),
         )
         .await
@@ -1517,12 +1457,14 @@ async fn get_agenda_returns_dated_and_projected_rows() {
     let (tools, _mat, _dir) = mk_tools().await;
     // Raw inserts keep the projected cache empty, so the on-the-fly
     // projector answers from the base dates alone.
+    crate::commands::tests::common::ensure_test_space(&tools.pool).await;
     sqlx::query(
-        "INSERT INTO blocks (id, block_type, content, todo_state, due_date, scheduled_date) VALUES
-         ('GA_ONEOFF', 'content', 'one-off', 'TODO', '2025-01-10', NULL),
-         ('GA_WEEKLY', 'content', 'weekly', 'TODO', '2025-01-20', NULL),
-         ('GA_SCHED', 'content', 'scheduled', NULL, NULL, '2025-01-15')",
+        "INSERT INTO blocks (id, block_type, content, todo_state, due_date, scheduled_date, space_id) VALUES
+         ('GA_ONEOFF', 'content', 'one-off', 'TODO', '2025-01-10', NULL, ?1),
+         ('GA_WEEKLY', 'content', 'weekly', 'TODO', '2025-01-20', NULL, ?1),
+         ('GA_SCHED', 'content', 'scheduled', NULL, NULL, '2025-01-15', ?1)",
     )
+    .bind(TEST_SPACE_ID)
     .execute(&tools.pool)
     .await
     .unwrap();
@@ -1536,7 +1478,7 @@ async fn get_agenda_returns_dated_and_projected_rows() {
     let result = tools
         .call_tool(
             "get_agenda",
-            json!({"start_date": "2025-01-01", "end_date": "2025-01-31"}),
+            json!({"start_date": "2025-01-01", "end_date": "2025-01-31", "space_id": TEST_SPACE_ID}),
             &test_ctx(),
         )
         .await
@@ -1574,12 +1516,157 @@ async fn get_agenda_invalid_date_returns_validation() {
     let err = tools
         .call_tool(
             "get_agenda",
-            json!({"start_date": "not-a-date", "end_date": "2025-01-31"}),
+            json!({"start_date": "not-a-date", "end_date": "2025-01-31", "space_id": TEST_SPACE_ID}),
             &test_ctx(),
         )
         .await
         .expect_err("invalid date");
     assert!(matches!(err, AppError::Validation { .. }), "got {err:?}");
+}
+
+/// The `list_backlinks` / `get_agenda` error for an omitted `space_id`:
+/// a validation error that names the field.
+fn assert_missing_space_id(err: &AppError) {
+    match err {
+        AppError::Validation { message, .. } => assert!(
+            message.contains("`space_id`"),
+            "the error must name `space_id`, got {message:?}"
+        ),
+        other => panic!("expected AppError::Validation, got {other:?}"),
+    }
+}
+
+/// Seed one block row; `parent` doubles as the owning page.
+async fn insert_spaced_block(
+    pool: &SqlitePool,
+    id: &str,
+    block_type: &str,
+    parent: Option<&str>,
+    space_id: &str,
+    due_date: Option<&str>,
+) {
+    sqlx::query(
+        "INSERT INTO blocks (id, block_type, content, parent_id, page_id, position, space_id, due_date) \
+         VALUES (?1, ?2, ?1, ?3, COALESCE(?3, ?1), 1, ?4, ?5)",
+    )
+    .bind(id)
+    .bind(block_type)
+    .bind(parent)
+    .bind(space_id)
+    .bind(due_date)
+    .execute(pool)
+    .await
+    .unwrap();
+}
+
+/// #5415 — `list_backlinks` takes a required `space_id`: without it the call
+/// is refused rather than answered across every space, and with it only the
+/// named space's sources come back.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn list_backlinks_requires_space_id_and_returns_only_that_space() {
+    use crate::commands::tests::common::{TEST_SPACE_B_ID, ensure_test_space, ensure_test_space_b};
+
+    let (tools, _mat, _dir) = mk_tools().await;
+    ensure_test_space(&tools.pool).await;
+    ensure_test_space_b(&tools.pool).await;
+    let target = BlockId::new().to_string();
+    insert_spaced_block(&tools.pool, &target, "page", None, TEST_SPACE_ID, None).await;
+    let mut source_in = Vec::new();
+    for space in [TEST_SPACE_ID, TEST_SPACE_B_ID] {
+        let page = BlockId::new().to_string();
+        let source = BlockId::new().to_string();
+        insert_spaced_block(&tools.pool, &page, "page", None, space, None).await;
+        insert_spaced_block(&tools.pool, &source, "content", Some(&page), space, None).await;
+        sqlx::query("INSERT INTO block_links (source_id, target_id) VALUES (?, ?)")
+            .bind(&source)
+            .bind(&target)
+            .execute(&tools.pool)
+            .await
+            .unwrap();
+        source_in.push((space, source));
+    }
+
+    let err = tools
+        .call_tool("list_backlinks", json!({"block_id": target}), &test_ctx())
+        .await
+        .expect_err("an omitted space_id must be refused");
+    assert_missing_space_id(&err);
+
+    for (space, source) in source_in {
+        let result = tools
+            .call_tool(
+                "list_backlinks",
+                json!({"block_id": target, "space_id": space}),
+                &test_ctx(),
+            )
+            .await
+            .expect("a scoped call must succeed");
+        let ids: Vec<&str> = result["groups"]
+            .as_array()
+            .expect("groups array")
+            .iter()
+            .flat_map(|g| g["blocks"].as_array().expect("blocks array"))
+            .map(|b| b["id"].as_str().expect("block id"))
+            .collect();
+        assert_eq!(
+            ids,
+            vec![source.as_str()],
+            "space {space} must see only its own source"
+        );
+    }
+}
+
+/// #5415 — `get_agenda` takes a required `space_id`: without it the call is
+/// refused rather than answered across every space, and with it only the
+/// named space's dated blocks come back.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn get_agenda_requires_space_id_and_returns_only_that_space() {
+    use crate::commands::tests::common::{TEST_SPACE_B_ID, ensure_test_space, ensure_test_space_b};
+
+    let (tools, _mat, _dir) = mk_tools().await;
+    ensure_test_space(&tools.pool).await;
+    ensure_test_space_b(&tools.pool).await;
+    let mut task_in = Vec::new();
+    for space in [TEST_SPACE_ID, TEST_SPACE_B_ID] {
+        let task = BlockId::new().to_string();
+        insert_spaced_block(
+            &tools.pool,
+            &task,
+            "content",
+            None,
+            space,
+            Some("2025-01-10"),
+        )
+        .await;
+        task_in.push((space, task));
+    }
+    let range = json!({"start_date": "2025-01-01", "end_date": "2025-01-31"});
+
+    let err = tools
+        .call_tool("get_agenda", range.clone(), &test_ctx())
+        .await
+        .expect_err("an omitted space_id must be refused");
+    assert_missing_space_id(&err);
+
+    for (space, task) in task_in {
+        let mut args = range.clone();
+        args["space_id"] = json!(space);
+        let result = tools
+            .call_tool("get_agenda", args, &test_ctx())
+            .await
+            .expect("a scoped call must succeed");
+        let ids: Vec<&str> = result["items"]
+            .as_array()
+            .expect("agenda items array")
+            .iter()
+            .map(|e| e["block"]["id"].as_str().expect("block id"))
+            .collect();
+        assert_eq!(
+            ids,
+            vec![task.as_str()],
+            "space {space} must see only its own task"
+        );
+    }
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -2481,10 +2568,7 @@ proptest::proptest! {
                 query.clone(),
                 None,
                 Some(SEARCH_RESULT_CAP),
-                crate::commands::SearchFilter {
-                    scope: SpaceScope::Active(SpaceId::from_trusted(TEST_SPACE_ID)),
-                    ..Default::default()
-                },
+                test_space_search_filter(),
                 None,
             )
             .await
@@ -2566,7 +2650,11 @@ async fn concurrent_clients_exact_success_count() {
                 let d = tools
                     .call_tool(
                         "get_agenda",
-                        json!({"start_date": "2025-01-01", "end_date": "2025-01-02"}),
+                        json!({
+                            "start_date": "2025-01-01",
+                            "end_date": "2025-01-02",
+                            "space_id": TEST_SPACE_ID,
+                        }),
                         &ctx,
                     )
                     .await;
@@ -2969,7 +3057,7 @@ async fn snapshot_list_backlinks_response_shape() {
     let result = tools
         .call_tool(
             "list_backlinks",
-            json!({"block_id": target.id}),
+            json!({"block_id": target.id, "space_id": TEST_SPACE_ID}),
             &test_ctx(),
         )
         .await
@@ -3063,11 +3151,14 @@ async fn snapshot_get_agenda_response_shape() {
         .execute(&tools.pool)
         .await
         .unwrap();
+    crate::commands::tests::common::ensure_test_space(&tools.pool).await;
+    crate::commands::tests::common::assign_to_space(&tools.pool, task.id.as_str(), TEST_SPACE_ID)
+        .await;
 
     let result = tools
         .call_tool(
             "get_agenda",
-            json!({"start_date": "2099-01-04", "end_date": "2099-01-04"}),
+            json!({"start_date": "2099-01-04", "end_date": "2099-01-04", "space_id": TEST_SPACE_ID}),
             &test_ctx(),
         )
         .await

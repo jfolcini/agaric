@@ -370,8 +370,9 @@ async def run_smoke(socket_path: Path) -> int:
             today = datetime.date.today().isoformat()
 
             # Space discovery (#633) ---------------------------------------
-            # `search` / `journal_for_date` require a `space_id`;
-            # `list_spaces` is the in-band way an agent discovers one.
+            # `search` / `journal_for_date` / `list_backlinks` / `get_agenda`
+            # require a `space_id`; `list_spaces` is the in-band way an agent
+            # discovers one.
             spaces_payload = await call_and_validate(
                 session, "list_spaces", {}, failures
             )
@@ -431,12 +432,13 @@ async def run_smoke(socket_path: Path) -> int:
                 await call_and_validate(
                     session, "get_page_markdown", {"page_id": seed_id}, failures
                 )
-                await call_and_validate(
-                    session,
-                    "list_backlinks",
-                    {"block_id": seed_id, "limit": 10},
-                    failures,
-                )
+                if space_id is not None:
+                    await call_and_validate(
+                        session,
+                        "list_backlinks",
+                        {"block_id": seed_id, "limit": 10, "space_id": space_id},
+                        failures,
+                    )
             else:
                 for dep in ("get_page", "get_block", "get_page_markdown", "list_backlinks"):
                     failures.append(
@@ -461,12 +463,13 @@ async def run_smoke(socket_path: Path) -> int:
                     session, "list_tags", {"limit": 10, "space_id": space_id}, failures
                 )
             await call_and_validate(session, "list_property_defs", {}, failures)
-            await call_and_validate(
-                session,
-                "get_agenda",
-                {"start_date": today, "end_date": today},
-                failures,
-            )
+            if space_id is not None:
+                await call_and_validate(
+                    session,
+                    "get_agenda",
+                    {"start_date": today, "end_date": today, "space_id": space_id},
+                    failures,
+                )
             if not journal_called and space_id is not None:
                 await call_and_validate(
                     session,

@@ -24,7 +24,7 @@ import {
   ownerSpaceOf,
   returnEmptyPage,
   validationRejection,
-  readSpaceScope,
+  readActiveSpaceScope,
 } from '@/lib/tauri-mock/handlers/shared'
 import { resolveRefValue } from '@/lib/tauri-mock/names'
 import {
@@ -227,7 +227,7 @@ export const propertiesHandlers = {
     const valueText = (req['valueText'] as string | null) ?? null
     const valueDate = (req['valueDate'] as string | null) ?? null
     const operator = (req['operator'] as string | null) ?? 'eq'
-    const spaceId = readSpaceScope(a)
+    const spaceId = readActiveSpaceScope('query_by_property', a)
     const excludeParentId = (req['excludeParentId'] as string | null) ?? null
     const contentNonEmpty = Boolean(req['contentNonEmpty'])
     const blockType = (req['blockType'] as string | null) ?? null
@@ -281,11 +281,7 @@ export const propertiesHandlers = {
     }
     const blockPredicates = (b: Record<string, unknown>): boolean => {
       if (b['deleted_at']) return false
-      if (spaceId !== null) {
-        const ownerId = (b['page_id'] as string | null) ?? (b['id'] as string)
-        const ownerSpace = properties.get(ownerId)?.get('space')?.['value_ref'] ?? null
-        if (ownerSpace !== spaceId) return false
-      }
+      if (ownerSpaceOf(b) !== spaceId) return false
       if (excludeParentId !== null && b['parent_id'] === excludeParentId) return false
       if (contentNonEmpty) {
         const content = b['content'] as string | null | undefined
@@ -672,17 +668,13 @@ export const propertiesHandlers = {
     }
     // Honour `scope: SpaceScope` (mirrors
     // `count_agenda_batch_by_source_inner`).
-    const spaceId = readSpaceScope(a)
+    const spaceId = readActiveSpaceScope('count_agenda_batch_by_source', a)
     const result: Record<string, Record<string, number>> = {}
     for (const dateStr of dates) {
       const sources: Record<string, number> = {}
       for (const b of blocks.values()) {
         if (b['deleted_at'] as string | null) continue
-        if (spaceId !== null) {
-          const ownerId = (b['page_id'] as string | null) ?? (b['id'] as string)
-          const ownerSpace = properties.get(ownerId)?.get('space')?.['value_ref'] ?? null
-          if (ownerSpace !== spaceId) continue
-        }
+        if (ownerSpaceOf(b) !== spaceId) continue
         // #3830 — ONE source per (date, block): `agenda_cache`'s PK is
         // `(date, block_id)` and `column:due_date` outranks `column:scheduled_date`
         // in `DESIRED_AGENDA_SQL`. Only those two column sources are modelled

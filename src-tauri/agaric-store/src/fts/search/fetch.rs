@@ -12,6 +12,7 @@ use std::time::{Duration, Instant};
 
 use crate::cancellation::CancellationToken;
 use crate::db::search_pool_acquire_logged;
+use crate::search_types::SearchScope;
 use agaric_core::error::AppError;
 
 use super::super::metadata_filter::MetadataPredicates;
@@ -62,7 +63,7 @@ pub(super) async fn fts_fetch_rows(
     fetch_limit: i64,
     parent_id: Option<&str>,
     tag_ids: Option<&[String]>,
-    space_id: Option<&str>,
+    scope: &SearchScope,
     include_page_globs: &[String],
     exclude_page_globs: &[String],
     block_type_filter: Option<&str>,
@@ -80,7 +81,7 @@ pub(super) async fn fts_fetch_rows(
     let prepared = build_fts_fetch(
         parent_id,
         tag_ids,
-        space_id,
+        scope,
         include_page_globs,
         exclude_page_globs,
         block_type_filter,
@@ -123,7 +124,7 @@ pub(super) struct PreparedFtsFetch {
 pub(super) fn build_fts_fetch(
     parent_id: Option<&str>,
     tag_ids: Option<&[String]>,
-    space_id: Option<&str>,
+    scope: &SearchScope,
     include_page_globs: &[String],
     exclude_page_globs: &[String],
     block_type_filter: Option<&str>,
@@ -134,7 +135,7 @@ pub(super) fn build_fts_fetch(
     // Build dynamic SQL with optional filter clauses.
     // Base parameters: ?1=query, ?2=cursor_flag, ?3=cursor_rank, ?4=cursor_id, ?5=limit
     // Additional parameters are appended after ?5 for parent_id, tag_ids,
-    // and (Phase 2) space_id.
+    // and the space scope.
     // Phase 1 — `snippet()` carries #828 PUA sentinel boundaries
     // (U+E000 open / U+E001 close, see SNIPPET_SQL_PROJECTION) around each
     // match span. Column index 1 = the `stripped`
@@ -235,27 +236,11 @@ pub(super) fn build_fts_fetch(
     // routes tags through `add_tags_via_projection`.
     fb.add_tags_via_projection(PREFIX, &active_tag_ids);
 
-    // Phase 2 — optional space-id filter. Filters on the
-    // first-class `b.space_id` column directly (#533, migration 0086 — the
-    // former `b.page_id IN (SELECT … block_properties WHERE key = 'space')`
-    // sub-select is gone). Appends the bare `b.space_id = ?N` form (no
-    // `?N IS NULL OR` guard — this fragment is only appended when a space
-    // is active, so the NULL short-circuit of the pagination helpers'
-    // `crate::space_filter_canonical::SPACE_FILTER_CANONICAL` is
-    // unnecessary here). Kept inline (via the builder) because the
-    // dynamic-SQL shape of this query (varying param indices for parent /
-    // tag / space filters) prevents the compile-time sqlx macro from being
-    // applied.
-    //
-    // #1320 the space-id fragment is now compiled through
-    // `SearchProjection` (the cross-surface filter compiler) rather than
-    // inline. `compile_space` emits the identical `b.space_id = ?` shape
-    // with one text bind, so the net SQL + binds are byte-identical to the
-    // former `fb.add_space(...)` call (proved by the `projection_space_parity`
-    // test). This is the projection's first production call site. Only
-    // `Space` is routed — Tag (`COUNT(DISTINCT)` ALL-semantics) and property
-    // (`prop:` four-column OR) diverge from the projection and stay legacy.
-    fb.add_space_via_projection(PREFIX, space_id);
+    // Space filter on the first-class `b.space_id` column (#533, migration
+    // 0086). Kept inline (via the builder) because the dynamic-SQL shape of
+    // this query (varying param indices for parent / tag / space filters)
+    // prevents the compile-time sqlx macro from being applied.
+    fb.add_space(PREFIX, scope);
 
     // Page-name glob include / exclude filters. Each entry
     // has already been brace-expanded, lowercased and substring-
@@ -436,7 +421,7 @@ pub(crate) fn fts_select_prefix_for_test(with_snippet: bool) -> String {
     build_fts_fetch(
         None,
         None,
-        None,
+        &SearchScope::AllSpaces,
         &[],
         &[],
         None,

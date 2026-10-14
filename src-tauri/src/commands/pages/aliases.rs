@@ -118,22 +118,17 @@ pub async fn get_page_aliases_inner(
 
 /// Look up a page by one of its aliases. Returns `(page_id, title)` if found.
 ///
-/// `scope` — [`SpaceScope::Active`] restricts the
-/// match to aliases pointing at pages whose `b.space_id` equals the
-/// wrapped [`SpaceId`](agaric_store::space::SpaceId) (#533, migration 0086 — `space_id` is a first-class
-/// column). Mirrors the
-/// `(?N IS NULL OR b.space_id = ?N)` short-circuit
-/// already used by [`list_page_aliases_by_prefix_inner`] so the alias
-/// resolver and the prefix picker apply the same scoping rule.
-/// [`SpaceScope::Global`] keeps the cross-space behaviour for callers
-/// (e.g. agent / MCP tools) that span every space.
+/// `scope` restricts the match to aliases pointing at pages whose
+/// `b.space_id` equals the scope's [`SpaceId`](agaric_store::space::SpaceId)
+/// (#533, migration 0086 — `space_id` is a first-class column), the same
+/// scoping rule [`list_page_aliases_by_prefix_inner`] applies.
 #[instrument(skip(pool), err)]
 pub async fn resolve_page_by_alias_inner(
     pool: &SqlitePool,
     alias: &str,
     scope: &SpaceScope,
 ) -> Result<Option<(String, Option<String>)>, AppError> {
-    let space_filter = scope.as_filter_param();
+    let space_filter = scope.space_id().as_str();
     let result = sqlx::query!(
         r#"SELECT pa.page_id AS "page_id!", b.content
          FROM page_aliases pa
@@ -182,12 +177,9 @@ struct PageAliasPrefixRow {
 /// Bounded by `MAX_PAGE_ALIASES_PREFIX` to keep the popup responsive
 /// even if a user has hundreds of substring-matched aliases.
 ///
-/// `scope` — [`SpaceScope::Active`] restricts the
-/// result set to aliases pointing at pages whose `blocks.space_id`
-/// column equals the wrapped [`SpaceId`](agaric_store::space::SpaceId). Mirrors the
-/// `(?N IS NULL OR ... IN (...))` short-circuit pattern used by
-/// `pagination::list_by_tag` and friends. [`SpaceScope::Global`] keeps
-/// the cross-space behaviour for callers that span every space.
+/// `scope` restricts the result set to aliases pointing at pages whose
+/// `blocks.space_id` column equals the scope's
+/// [`SpaceId`](agaric_store::space::SpaceId).
 ///
 /// Ordering: `length(alias), alias` puts the shortest match at the
 /// top (so a typed-in-full exact alias bubbles up over longer
@@ -215,7 +207,7 @@ pub async fn list_page_aliases_by_prefix_inner(
         }
         None => MAX_PAGE_ALIASES_PREFIX,
     };
-    let space_filter = scope.as_filter_param();
+    let space_filter = scope.space_id().as_str();
     let rows = sqlx::query_as!(
         PageAliasPrefixRow,
         r#"SELECT pa.page_id AS "page_id!: PageId", pa.alias AS "alias!", b.content AS "title?"

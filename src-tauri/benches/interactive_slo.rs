@@ -1334,6 +1334,7 @@ fn bench_count_agenda_batch_by_source(c: &mut Criterion) {
     let dir = TempDir::new().unwrap();
     let pool = rt.block_on(fresh_pool(&dir, "slo_count_agenda"));
     rt.block_on(seed_agenda_blocks(&pool, FIXTURE_SIZE));
+    rt.block_on(assign_all_to_slo_space(&pool));
 
     // The probed week starts at the seeding window's first day, so the date at
     // index `k` is exactly the day of seeding bucket `k` — the correspondence
@@ -1349,7 +1350,7 @@ fn bench_count_agenda_batch_by_source(c: &mut Criterion) {
         .block_on(count_agenda_batch_by_source_inner(
             &pool,
             dates.clone(),
-            &SpaceScope::Global,
+            &SpaceScope::Active(SpaceId::from_trusted(SLO_SPACE_ID)),
         ))
         .unwrap()
         .into_iter()
@@ -1406,7 +1407,7 @@ fn bench_count_agenda_batch_by_source(c: &mut Criterion) {
                     let _ = count_agenda_batch_by_source_inner(
                         &pool,
                         dates.clone(),
-                        &SpaceScope::Global,
+                        &SpaceScope::Active(SpaceId::from_trusted(SLO_SPACE_ID)),
                     )
                     .await
                     .unwrap();
@@ -1430,6 +1431,7 @@ fn bench_count_backlinks_batch(c: &mut Criterion) {
     let dir = TempDir::new().unwrap();
     let pool = rt.block_on(fresh_pool(&dir, "slo_backlinks_batch"));
     rt.block_on(seed_backlinks_for_batch(&pool, FIXTURE_SIZE));
+    rt.block_on(assign_all_to_slo_space(&pool));
 
     let page_ids: Vec<String> = (0..10).map(|p| format!("BLP{p:021}")).collect();
 
@@ -1441,7 +1443,7 @@ fn bench_count_backlinks_batch(c: &mut Criterion) {
                 .into_iter()
                 .map(Into::into)
                 .collect::<Vec<agaric_core::ulid::PageId>>(),
-            &SpaceScope::Global,
+            &SpaceScope::Active(SpaceId::from_trusted(SLO_SPACE_ID)),
         ))
         .unwrap();
     assert_eq!(
@@ -1481,7 +1483,7 @@ fn bench_count_backlinks_batch(c: &mut Criterion) {
                             .into_iter()
                             .map(Into::into)
                             .collect::<Vec<agaric_core::ulid::PageId>>(),
-                        &SpaceScope::Global,
+                        &SpaceScope::Active(SpaceId::from_trusted(SLO_SPACE_ID)),
                     )
                     .await
                     .unwrap();
@@ -1858,21 +1860,10 @@ fn bench_revert_ops_50op_at_100k(c: &mut Criterion) {
     assert_under_budget("revert_ops (50op) @ 100K", &acc, BUDGET_MS);
 }
 
-/// `list_page_links` — graph-view roll-up. Green tier since #2178; the
-/// history below records the problem-tier era. A warm pre-cap measurement
-/// was ~530 ms at 100K, ~2.6× over
-/// the 200 ms budget (3-JOIN superlinearity; see docs/architecture/operations.md
-/// § Product SLO known-exceeds-budget note). The SQL-review §H-2 `page_link_cache`
-/// rollup (migration 0065) helped but did NOT bring it under budget — this was
-/// never verified because the bench was never actually run until now (#1233).
-///
-/// #2070: migration 0096 denormalised the residual `deleted_at` /
-/// `block_type = 'page'` predicates into the cache flags so the unscoped read
-/// is now a single `idx_page_link_cache_live` scan with ZERO `blocks` joins.
-/// #2178: CONFIRMED on the nightly lane after the #2529 20K count-then-cap
-/// (dispatch 29122903173, main@66e4e1e): 84.14 ms @ 100K against the 200 ms
-/// budget (pre-cap samples: 557-635 ms). Promoted to the green tier; the
-/// history above records why it spent time gated.
+/// `list_page_links` — graph-view roll-up, read for one space: the only form
+/// the graph sends, and since #5415 the only one the command has. The 84 ms
+/// @ 100K that promoted it to the green tier (#2178) was the unscoped read;
+/// the scoped read materialises the space's members, whose cost #5426 tracks.
 fn bench_list_page_links(c: &mut Criterion) {
     const BUDGET_MS: f64 = 200.0;
 
@@ -1880,6 +1871,7 @@ fn bench_list_page_links(c: &mut Criterion) {
     let dir = TempDir::new().unwrap();
     let pool = rt.block_on(fresh_pool(&dir, "slo_page_links"));
     rt.block_on(seed_pages_with_links(&pool, FIXTURE_SIZE));
+    rt.block_on(assign_all_to_slo_space(&pool));
     // SQL-review §H-2: the fixture seeds `block_links` directly,
     // bypassing the materializer's per-`ReindexBlockLinks` rollup. Run
     // a single `rebuild_page_link_cache` so the read path can hit the
@@ -1890,7 +1882,11 @@ fn bench_list_page_links(c: &mut Criterion) {
         .unwrap();
 
     let observed = rt
-        .block_on(list_page_links_inner(&pool, &SpaceScope::Global, None))
+        .block_on(list_page_links_inner(
+            &pool,
+            &SpaceScope::Active(SpaceId::from_trusted(SLO_SPACE_ID)),
+            None,
+        ))
         .unwrap();
     assert_eq!(
         observed.edges.len(),
@@ -1924,9 +1920,13 @@ fn bench_list_page_links(c: &mut Criterion) {
                     // #2298: returns `PageLinksResponse` — the edge set is
                     // capped at PAGE_LINKS_EDGE_CAP (count-then-cap), so at
                     // 100K this measures the capped read + true-total COUNT.
-                    let _ = list_page_links_inner(&pool, &SpaceScope::Global, None)
-                        .await
-                        .unwrap();
+                    let _ = list_page_links_inner(
+                        &pool,
+                        &SpaceScope::Active(SpaceId::from_trusted(SLO_SPACE_ID)),
+                        None,
+                    )
+                    .await
+                    .unwrap();
                 }
                 let elapsed = start.elapsed();
                 acc.record(elapsed, iters);
@@ -1997,6 +1997,7 @@ fn bench_list_projected_agenda(c: &mut Criterion) {
         let dir = TempDir::new().unwrap();
         let pool = rt.block_on(fresh_pool(&dir, "slo_projected_agenda"));
         rt.block_on(seed_repeating_blocks(&pool, size));
+        rt.block_on(assign_all_to_slo_space(&pool));
         // Warm the cache — recurrence expansion happens HERE, off the read
         // path — so the timed loop below is a pure index scan.
         rt.block_on(async {
@@ -2019,7 +2020,7 @@ fn bench_list_projected_agenda(c: &mut Criterion) {
                 end_str.clone(),
                 None,
                 Some(200),
-                &SpaceScope::Global,
+                &SpaceScope::Active(SpaceId::from_trusted(SLO_SPACE_ID)),
             )
             .await
             .unwrap();
@@ -2058,7 +2059,7 @@ fn bench_list_projected_agenda(c: &mut Criterion) {
                             end_str.clone(),
                             None,
                             Some(200),
-                            &SpaceScope::Global,
+                            &SpaceScope::Active(SpaceId::from_trusted(SLO_SPACE_ID)),
                         )
                         .await
                         .unwrap();
@@ -2094,6 +2095,7 @@ fn bench_list_projected_agenda_past_day(c: &mut Criterion) {
     let dir = TempDir::new().unwrap();
     let pool = rt.block_on(fresh_pool(&dir, "slo_projected_agenda_past_day"));
     rt.block_on(seed_repeating_blocks(&pool, FIXTURE_SIZE));
+    rt.block_on(assign_all_to_slo_space(&pool));
     rt.block_on(async {
         rebuild_projected_agenda_cache(&pool).await.unwrap();
     });
@@ -2105,7 +2107,7 @@ fn bench_list_projected_agenda_past_day(c: &mut Criterion) {
             day.clone(),
             None,
             Some(200),
-            &SpaceScope::Global,
+            &SpaceScope::Active(SpaceId::from_trusted(SLO_SPACE_ID)),
         )
         .await
         .unwrap();
@@ -2142,7 +2144,7 @@ fn bench_list_projected_agenda_past_day(c: &mut Criterion) {
                         day.clone(),
                         None,
                         Some(200),
-                        &SpaceScope::Global,
+                        &SpaceScope::Active(SpaceId::from_trusted(SLO_SPACE_ID)),
                     )
                     .await
                     .unwrap();

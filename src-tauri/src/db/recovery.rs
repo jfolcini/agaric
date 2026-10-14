@@ -5398,7 +5398,10 @@ mod tests {
             MARKER.to_string(),
             None,
             None,
-            agaric_store::search_types::SearchFilter::default(),
+            serde_json::from_value(serde_json::json!({
+                "scope": agaric_store::search_types::SearchScope::AllSpaces,
+            }))
+            .unwrap(),
             None,
         )
         .await
@@ -5601,7 +5604,10 @@ mod tests {
             MARKER.to_string(),
             None,
             None,
-            agaric_store::search_types::SearchFilter::default(),
+            serde_json::from_value(serde_json::json!({
+                "scope": agaric_store::search_types::SearchScope::AllSpaces,
+            }))
+            .unwrap(),
             None,
         )
         .await

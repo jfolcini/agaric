@@ -112,7 +112,11 @@
         "blockType": "content",
         "content": "placeholder",
         "index": 0,
-        "parentId": "S2"
+        "parentId": "S2",
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
       },
       "command": "create_block"
     },
@@ -121,7 +125,11 @@
         "blockType": "content",
         "content": "same-page anchor",
         "index": 0,
-        "parentId": "S1"
+        "parentId": "S1",
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
       },
       "command": "create_block"
     },
@@ -130,7 +138,11 @@
         "blockType": "content",
         "content": "placeholder",
         "index": 1,
-        "parentId": "S1"
+        "parentId": "S1",
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
       },
       "command": "create_block"
     },

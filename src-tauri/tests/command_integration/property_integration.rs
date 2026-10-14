@@ -923,6 +923,7 @@ async fn query_by_property_happy_path() {
     settle(&mat).await;
 
     // Query all blocks with 'todo' property (any value)
+    assign_all_to_test_space(&pool).await;
     let result = query_by_property_inner(
         &pool,
         "todo".into(),
@@ -931,7 +932,7 @@ async fn query_by_property_happy_path() {
         None,
         None,
         None,
-        &SpaceScope::Global,
+        &SpaceScope::Active(SpaceId::from_trusted(TEST_SPACE_ID)),
         None,
         false,
         None,
@@ -953,7 +954,7 @@ async fn query_by_property_happy_path() {
         None,
         None,
         None,
-        &SpaceScope::Global,
+        &SpaceScope::Active(SpaceId::from_trusted(TEST_SPACE_ID)),
         None,
         false,
         None,
@@ -976,7 +977,7 @@ async fn query_by_property_happy_path() {
         None,
         None,
         None,
-        &SpaceScope::Global,
+        &SpaceScope::Active(SpaceId::from_trusted(TEST_SPACE_ID)),
         None,
         false,
         None,
@@ -1296,6 +1297,7 @@ async fn query_by_property_finds_reserved_key_in_blocks_column() {
     settle(&mat).await;
 
     // Query by reserved key — should find the block via blocks.todo_state column
+    assign_all_to_test_space(&pool).await;
     let result = query_by_property_inner(
         &pool,
         "todo_state".into(),
@@ -1304,7 +1306,7 @@ async fn query_by_property_finds_reserved_key_in_blocks_column() {
         None,
         None,
         None,
-        &SpaceScope::Global,
+        &SpaceScope::Active(SpaceId::from_trusted(TEST_SPACE_ID)),
         None,
         false,
         None,
@@ -1412,6 +1414,7 @@ async fn set_todo_state_then_query_by_property_returns_match() {
     .unwrap();
     settle(&mat).await;
 
+    assign_all_to_test_space(&pool).await;
     let result = query_by_property_inner(
         &pool,
         "todo_state".into(),
@@ -1420,7 +1423,7 @@ async fn set_todo_state_then_query_by_property_returns_match() {
         None,
         None,
         None,
-        &SpaceScope::Global,
+        &SpaceScope::Active(SpaceId::from_trusted(TEST_SPACE_ID)),
         None,
         false,
         None,
@@ -1469,6 +1472,7 @@ async fn set_due_date_then_query_by_property_returns_match() {
     .unwrap();
     settle(&mat).await;
 
+    assign_all_to_test_space(&pool).await;
     let result = query_by_property_inner(
         &pool,
         "due_date".into(),
@@ -1477,7 +1481,7 @@ async fn set_due_date_then_query_by_property_returns_match() {
         None,
         None,
         None,
-        &SpaceScope::Global,
+        &SpaceScope::Active(SpaceId::from_trusted(TEST_SPACE_ID)),
         None,
         false,
         None,

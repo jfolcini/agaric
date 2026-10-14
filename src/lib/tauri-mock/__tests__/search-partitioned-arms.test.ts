@@ -41,6 +41,7 @@ import { dispatch } from '@/lib/tauri-mock/handlers'
 import { blocks, makeBlock } from '@/lib/tauri-mock/seed'
 
 const SPACE = id('SPACEP')
+const SCOPE = { kind: 'spaces', space_ids: [SPACE] }
 
 interface SearchResponse {
   items: Array<Record<string, unknown>>
@@ -59,6 +60,7 @@ function partitioned(args: Record<string, unknown>): PartitionedResponse {
     pageLimit: 10,
     blockLimit: 10,
     ...args,
+    filter: { scope: SCOPE, ...(args['filter'] as Record<string, unknown> | undefined) },
   }) as PartitionedResponse
 }
 
@@ -113,7 +115,7 @@ describe('search_blocks_partitioned — blank query with a structural filter (#4
   })
 
   it('still answers two empty partitions when no user filter is present', () => {
-    const res = partitioned({ query: '', filter: { scope: { kind: 'active', space_id: SPACE } } })
+    const res = partitioned({ query: '', filter: { scope: SCOPE } })
     expect(ids(res.pages)).toEqual([])
     expect(ids(res.blocks)).toEqual([])
     // `space_id` is always supplied by the backend, so it is not a USER filter
@@ -130,7 +132,7 @@ describe('search_blocks_partitioned — blank query with a structural filter (#4
 
     const flat = dispatch('search_blocks', {
       query: '',
-      filter: { blockTypeFilter: 'page' },
+      filter: { scope: SCOPE, blockTypeFilter: 'page' },
       limit: 50,
     }) as SearchResponse
     expect(flat.items.map((b) => b['id'])).toEqual([OTHER, PARENT])

@@ -332,14 +332,8 @@ pub async fn get_active_block_inner(
 /// - [`AppError::Validation`] — `ids.len()` >
 ///   [`agaric_store::pagination::MAX_BATCH_BLOCK_IDS`]
 ///
-/// `scope` — [`SpaceScope::Active`] restricts the result set
-/// To the named space ('s broken-chip rendering for foreign-space
-/// `[[ULID]]` targets). [`SpaceScope::Global`] keeps the cross-space
-/// behaviour used by legacy surfaces like trash / search / agenda views
-/// that have not yet been promoted to per-space scoping — tracked under
-/// The `Option<String>` shape this replaces mirrored
-/// `list_page_history`'s pattern; both migrated together in
-/// Phase 2.
+/// `scope` restricts the result set to the named space (the broken-chip
+/// rendering for foreign-space `[[ULID]]` targets).
 #[instrument(skip(pool, ids), err)]
 pub async fn batch_resolve_inner(
     pool: &SqlitePool,
@@ -354,16 +348,13 @@ pub async fn batch_resolve_inner(
     // #107: re-derive owned String form for the JSON membership probe below.
     let ids: Vec<String> = ids.into_iter().map(BlockId::into_string).collect();
     let ids_json = serde_json::to_string(&ids)?;
-    let space_filter = scope.as_filter_param();
+    let space_filter = scope.space_id().as_str();
 
     // Phase 7: scope to the current space using the canonical
     // `b.space_id = ?` filter (#533, migration 0086 — `space_id` is now a
     // first-class column; matches the pattern shipped in
-    // `pagination/{hierarchy,trash}.rs` and `fts/search.rs`).
-    // The `?2 IS NULL OR …` shape lets cross-space callers
-    // ([`SpaceScope::Global`]) bypass the filter entirely while
-    // space-scoped callers ([`SpaceScope::Active`]) get the
-    // foreign-target-drops-out behaviour the spec demands.
+    // `pagination/{hierarchy,trash}.rs`), so a foreign-space target drops
+    // out.
     //
     // Soft-deleted rows are excluded via the `deleted_at IS NOT NULL`
     // surfacing in the result row; the resolver itself does not need
@@ -407,17 +398,8 @@ pub async fn batch_resolve_inner(
 /// field there. The TS call site keeps its own flat shape and builds the
 /// request only at the IPC boundary.
 ///
-/// # Scope (#2248)
-///
 /// The orthogonal [`SpaceScope`] stays a separate argument rather than a
-/// request field. Block listing is inherently per-space (each active block
-/// belongs to exactly one space) and the old bare-string API had no
-/// cross-space mode, so [`SpaceScope::Global`] is rejected via
-/// [`SpaceScope::require_active`] instead of silently widening into a
-/// cross-space listing. The frontend wrapper keeps a required
-/// `spaceId: string` and threads it through `requireActiveScope`, which
-/// throws on an empty string, so `Active` is the only shape it can produce
-/// and callers must short-circuit locally when there is no active space.
+/// request field.
 #[tauri::command]
 #[specta::specta]
 pub async fn list_blocks(
@@ -425,7 +407,7 @@ pub async fn list_blocks(
     request: ListBlocksRequest,
     scope: SpaceScope,
 ) -> Result<PageResponse<BlockRow>, AppError> {
-    let space_id = scope.require_active()?.as_str().to_owned();
+    let space_id = scope.space_id().as_str().to_owned();
     let ListBlocksRequest {
         parent_id,
         block_type,
@@ -499,16 +481,6 @@ pub async fn list_trash_inner(
 }
 
 /// Tauri command: paginate soft-deleted blocks. Delegates to [`list_trash_inner`].
-///
-/// # Scope (#2248)
-///
-/// Takes the canonical [`SpaceScope`] rather than a bare `space_id: String`.
-/// Trash is inherently per-space (each space owns its own deletion set) and
-/// the old bare-string API had no cross-space mode, so [`SpaceScope::Global`]
-/// is rejected via [`SpaceScope::require_active`] instead of silently widening
-/// into a cross-space listing. The frontend wrapper keeps a required
-/// `spaceId: string` and threads it through `toSpaceScope`, so `Active` is the
-/// only shape it can produce.
 #[tauri::command]
 #[specta::specta]
 pub async fn list_trash(
@@ -517,7 +489,7 @@ pub async fn list_trash(
     limit: Option<i64>,
     scope: SpaceScope,
 ) -> Result<PageResponse<BlockRow>, AppError> {
-    let space_id = scope.require_active()?.as_str().to_owned();
+    let space_id = scope.space_id().as_str().to_owned();
     list_trash_inner(&pool.0, cursor, limit, space_id)
         .await
         .map_err(sanitize_internal_error)
@@ -720,18 +692,10 @@ pub async fn count_trash_inner(pool: &SqlitePool, space_id: &str) -> Result<i64,
 
 /// Tauri command: count soft-deleted blocks in a space. Delegates to
 /// [`count_trash_inner`].
-///
-/// # Scope (#2248)
-///
-/// Takes the canonical [`SpaceScope`]. The backing SQL is a strict
-/// `b.space_id = ?1` equality with no cross-space bypass, so
-/// [`SpaceScope::Global`] is rejected via [`SpaceScope::require_active`] —
-/// there is no "count trash across every space" operation, and the old bare
-/// `space_id: String` API never offered one.
 #[tauri::command]
 #[specta::specta]
 pub async fn count_trash(pool: State<'_, ReadPool>, scope: SpaceScope) -> Result<i64, AppError> {
-    let space_id = scope.require_active()?;
+    let space_id = scope.space_id();
     count_trash_inner(&pool.0, space_id.as_str())
         .await
         .map_err(sanitize_internal_error)

@@ -1,7 +1,7 @@
 /**
  * Tests for src/lib/ipc-helpers.ts — the permanent floor under `bindings.ts`
  * (#2927): functions that carry real logic (Channel plumbing, a chunked
- * drain, a client-side abort bridge, a scope default the wire does not have,
+ * drain, a client-side abort bridge, the search filter marshalling,
  * the explicit-null coercion, the sanctioned raw-`invoke` seam) and so can't
  * collapse to a bare `commands.*` call site.
  *
@@ -31,10 +31,14 @@ import {
   readAttachment,
   restoreAllDeletedInSpace,
   searchBlocks,
+  searchBlocksPartitioned,
   startSync,
   withAbort,
 } from '@/lib/ipc-helpers'
-import { paginationLimit } from '@/lib/safe-limit'
+import { paginationLimit, searchBlocksLimit } from '@/lib/safe-limit'
+import { clearMock, id as ulid, setSpace } from '@/lib/tauri-mock/__tests__/mock-store-helpers'
+import { dispatch } from '@/lib/tauri-mock/handlers'
+import { blocks, makeBlock } from '@/lib/tauri-mock/seed'
 
 const mockedInvoke = vi.mocked(invoke)
 
@@ -587,7 +591,7 @@ describe('createBlock', () => {
 })
 
 // ---------------------------------------------------------------------------
-// searchBlocks (scope default)
+// searchBlocks / searchBlocksPartitioned
 // ---------------------------------------------------------------------------
 
 describe('searchBlocks', () => {
@@ -610,8 +614,8 @@ describe('searchBlocks', () => {
       filter: {
         parentId: null,
         tagIds: [],
-        // #2248 c — the filter carries a `scope: SpaceScope`, not a bare id.
-        scope: { kind: 'active', space_id: 'TEST_SPACE_01' },
+        // #5415 — the active space as a one-element `SearchScope`.
+        scope: { kind: 'spaces', space_ids: ['TEST_SPACE_01'] },
         // Additive fields default to empty arrays.
         includePageGlobs: [],
         excludePageGlobs: [],
@@ -673,8 +677,8 @@ describe('searchBlocks', () => {
       filter: {
         parentId: null,
         tagIds: [],
-        // #2248 c — the filter carries a `scope: SpaceScope`, not a bare id.
-        scope: { kind: 'active', space_id: 'TEST_SPACE_01' },
+        // #5415 — the active space as a one-element `SearchScope`.
+        scope: { kind: 'spaces', space_ids: ['TEST_SPACE_01'] },
         // Additive fields default to empty arrays.
         includePageGlobs: [],
         excludePageGlobs: [],
@@ -698,14 +702,6 @@ describe('searchBlocks', () => {
     expect(result).toEqual(pageResp)
   })
 
-  it('wraps spaceId into an active scope inside `filter` (#2248 c)', async () => {
-    mockedInvoke.mockImplementation(mockInvokeCommands({ search_blocks: () => emptyPage }))
-    await searchBlocks({ query: 'q', spaceId: 'SPACE_42' })
-    const args = (mockedInvoke.mock.calls[0] as unknown[])[1] as Record<string, unknown>
-    const filter = args['filter'] as Record<string, unknown>
-    expect(filter['scope']).toEqual({ kind: 'active', space_id: 'SPACE_42' })
-  })
-
   it('marshals parentId and tagIds into the filter struct', async () => {
     mockedInvoke.mockImplementation(mockInvokeCommands({ search_blocks: () => emptyPage }))
     await searchBlocks({
@@ -721,8 +717,8 @@ describe('searchBlocks', () => {
       filter: {
         parentId: 'PAGE1',
         tagIds: ['TAG1', 'TAG2'],
-        // #2248 c — the filter carries a `scope: SpaceScope`, not a bare id.
-        scope: { kind: 'active', space_id: 'SPACE_42' },
+        // #5415 — the active space as a one-element `SearchScope`.
+        scope: { kind: 'spaces', space_ids: ['SPACE_42'] },
         // Additive fields default to empty arrays.
         includePageGlobs: [],
         excludePageGlobs: [],
@@ -743,6 +739,60 @@ describe('searchBlocks', () => {
         excludedPriorityFilter: [],
       },
     })
+  })
+})
+
+describe('search wrappers scope to the active space (#5415)', () => {
+  const ACTIVE = ulid('ACTIVESPACE')
+  const OTHER = ulid('OTHERSPACE')
+  const IN_ACTIVE = ulid('INACTIVE')
+  const IN_OTHER = ulid('INOTHER')
+
+  beforeEach(() => {
+    clearMock()
+    for (const [page, space] of [
+      [IN_ACTIVE, ACTIVE],
+      [IN_OTHER, OTHER],
+    ] as const) {
+      blocks.set(page, makeBlock(page, 'page', 'Gizmo notes', null, 0))
+      setSpace(page, space)
+    }
+    mockedInvoke.mockImplementation((cmd: string, args?: unknown) => {
+      try {
+        return Promise.resolve(dispatch(cmd, args)) as Promise<never>
+      } catch (err) {
+        return Promise.reject(err) as Promise<never>
+      }
+    })
+  })
+
+  it('searchBlocks finds the active space’s blocks and no other space’s', async () => {
+    const res = await searchBlocks({ query: 'gizmo', spaceId: ACTIVE })
+    expect(res.items.map((b) => b.id)).toEqual([IN_ACTIVE])
+  })
+
+  it('searchBlocksPartitioned finds the active space’s blocks and no other space’s', async () => {
+    const res = await searchBlocksPartitioned({
+      query: 'gizmo',
+      pageLimit: searchBlocksLimit(10),
+      blockLimit: searchBlocksLimit(10),
+      spaceId: ACTIVE,
+    })
+    expect(res.pages.items.map((b) => b.id)).toEqual([IN_ACTIVE])
+    expect(res.blocks.items.map((b) => b.id)).toEqual([IN_ACTIVE])
+  })
+
+  it('refuses to search while no space is active, dispatching nothing', async () => {
+    await expect(searchBlocks({ query: 'gizmo', spaceId: '' })).rejects.toThrow(/empty space id/)
+    await expect(
+      searchBlocksPartitioned({
+        query: 'gizmo',
+        pageLimit: searchBlocksLimit(10),
+        blockLimit: searchBlocksLimit(10),
+        spaceId: '',
+      }),
+    ).rejects.toThrow(/empty space id/)
+    expect(mockedInvoke).not.toHaveBeenCalled()
   })
 })
 
