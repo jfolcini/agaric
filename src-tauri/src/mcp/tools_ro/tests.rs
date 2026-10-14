@@ -90,6 +90,7 @@ async fn list_tools_advertises_the_ro_tools() {
             "get_journal",
             "list_journal",
             "list_trash",
+            "resolve",
         ],
         "tool order is part of the wire contract — do not re-order (new tools append)",
     );
@@ -529,7 +530,8 @@ async fn search_malformed_ids_error_rather_than_empty() {
     );
 
     // #3301 — `parent_id`: only `normalize_ulid_arg`-ed before the fix, so a
-    // non-ULID bound a string that matched nothing.
+    // non-ULID bound a string that matched nothing. Since #5397 it names a
+    // page, and no page has that name.
     let err = tools
         .call_tool(
             "search",
@@ -543,8 +545,8 @@ async fn search_malformed_ids_error_rather_than_empty() {
         .await
         .expect_err("a malformed parent_id must be rejected, not return empty results");
     assert!(
-        matches!(err, AppError::Ulid(_)),
-        "malformed parent_id must surface as AppError::Ulid, got {err:?}"
+        matches!(err, AppError::Validation { .. }),
+        "malformed parent_id must surface as Validation, got {err:?}"
     );
 
     // #3301 — `tag_ids`: a truncated (25-char) tag ULID, the realistic
@@ -562,8 +564,8 @@ async fn search_malformed_ids_error_rather_than_empty() {
         .await
         .expect_err("a malformed tag_ids entry must be rejected, not return empty results");
     assert!(
-        matches!(err, AppError::Ulid(_)),
-        "malformed tag_ids entry must surface as AppError::Ulid, got {err:?}"
+        matches!(err, AppError::Validation { .. }),
+        "malformed tag_ids entry must surface as Validation, got {err:?}"
     );
 
     // Control: the SAME query under the VALID space still returns the hit —
@@ -3620,7 +3622,7 @@ async fn page_history_refuses_the_all_pages_sentinel_5400() {
         )
         .await
         .expect_err("the sentinel must be refused");
-    assert!(matches!(err, AppError::Ulid(_)), "got {err:?}");
+    assert!(matches!(err, AppError::Validation { .. }), "got {err:?}");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -3982,4 +3984,212 @@ async fn list_trash_refuses_a_space_id_that_is_not_a_ulid_5399() {
         .await
         .expect_err("the space must be named");
     assert!(matches!(err, AppError::Ulid(_)), "got {err:?}");
+}
+
+// -------------------------------------------------------------------
+// Names in place of ids (#5397)
+// -------------------------------------------------------------------
+
+async fn mk_named(
+    tools: &ReadOnlyTools,
+    mat: &Materializer,
+    space: &str,
+    block_type: &str,
+    name: &str,
+) -> String {
+    crate::commands::create_block_inner_with_space(
+        &tools.pool,
+        DEV,
+        mat,
+        block_type.into(),
+        name.into(),
+        None,
+        None,
+        &SpaceScope::Active(SpaceId::from_trusted(space)),
+        None,
+    )
+    .await
+    .unwrap()
+    .id
+    .into_string()
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn resolve_matches_a_title_in_any_case_an_alias_and_a_tag_5397() {
+    let (tools, mat, _dir) = mk_tools().await;
+    let space = mk_space(&tools.pool, "S").await;
+    let other = mk_space(&tools.pool, "Other").await;
+    let page = mk_named(&tools, &mat, &space, "page", "Project X").await;
+    mk_named(&tools, &mat, &other, "page", "Elsewhere").await;
+    crate::commands::set_page_aliases_inner(&tools.pool, &page, vec!["px".into()])
+        .await
+        .unwrap();
+    let tag = mk_named(&tools, &mat, &space, "tag", "work").await;
+    settle(&mat).await;
+
+    let result = tools
+        .call_tool(
+            "resolve",
+            json!({
+                "names": ["Project X", "project x", " PX ", " Work ", "Elsewhere", "nothing"],
+                "space_id": space,
+            }),
+            &test_ctx(),
+        )
+        .await
+        .expect("happy path");
+    let page_ids: Vec<&Value> = result
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|a| &a["page_id"])
+        .collect();
+    assert_eq!(
+        page_ids,
+        [
+            &json!(page),
+            &json!(page),
+            &json!(page),
+            &Value::Null,
+            &Value::Null,
+            &Value::Null
+        ],
+        "exact title, another case and an alias name the page; another space's page is not \
+         matched; got {result}"
+    );
+    let tag_ids: Vec<&Value> = result
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|a| &a["tag_id"])
+        .collect();
+    assert_eq!(
+        tag_ids,
+        [
+            &Value::Null,
+            &Value::Null,
+            &Value::Null,
+            &json!(tag),
+            &Value::Null,
+            &Value::Null
+        ],
+        "got {result}"
+    );
+    assert_eq!(result[3]["name"], " Work ", "each answer echoes its name");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn resolve_lists_the_pages_a_name_ties_between_5397() {
+    let (tools, mat, _dir) = mk_tools().await;
+    let space = mk_space(&tools.pool, "S").await;
+    let a = mk_named(&tools, &mat, &space, "page", "Dup").await;
+    let b = mk_named(&tools, &mat, &space, "page", "DUP").await;
+    settle(&mat).await;
+
+    let result = tools
+        .call_tool(
+            "resolve",
+            json!({ "names": ["dup", "Dup"], "space_id": space }),
+            &test_ctx(),
+        )
+        .await
+        .expect("happy path");
+    assert_eq!(
+        result,
+        json!([
+            {
+                "name": "dup",
+                "page_id": null,
+                "page_candidates": [{ "id": a, "title": "Dup" }, { "id": b, "title": "DUP" }],
+                "tag_id": null,
+            },
+            { "name": "Dup", "page_id": a, "tag_id": null },
+        ]),
+        "a case tie lists both; the exact title wins it",
+    );
+
+    let err = tools
+        .call_tool(
+            "resolve",
+            json!({ "names": ["dup"], "space_id": "__all__" }),
+            &test_ctx(),
+        )
+        .await
+        .expect_err("the space must be named");
+    assert!(matches!(err, AppError::Ulid(_)), "got {err:?}");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn search_takes_a_parent_page_and_tags_by_name_5397() {
+    let (tools, mat, _dir) = mk_tools().await;
+    let space = mk_space(&tools.pool, "S").await;
+    let page = mk_named(&tools, &mat, &space, "page", "Inbox").await;
+    let tag = mk_named(&tools, &mat, &space, "tag", "work").await;
+    let hit = create_block_inner(
+        &tools.pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "needle tagged".into(),
+        Some(BlockId::from_trusted(&page)),
+        None,
+    )
+    .await
+    .unwrap();
+    crate::commands::add_tag_inner(
+        &tools.pool,
+        DEV,
+        &mat,
+        hit.id.clone(),
+        BlockId::from_trusted(&tag),
+    )
+    .await
+    .unwrap();
+    create_block_inner(
+        &tools.pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "needle untagged".into(),
+        Some(BlockId::from_trusted(&page)),
+        None,
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    let result = tools
+        .call_tool(
+            "search",
+            json!({
+                "query": "needle",
+                "space_id": space,
+                "parent_id": "inbox",
+                "tag_ids": ["WORK"],
+            }),
+            &test_ctx(),
+        )
+        .await
+        .expect("happy path");
+    let ids: Vec<&str> = result["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|row| row["id"].as_str().unwrap())
+        .collect();
+    assert_eq!(ids, [hit.id.as_str()]);
+
+    let err = tools
+        .call_tool(
+            "search",
+            json!({ "query": "needle", "space_id": space, "tag_ids": ["nope"] }),
+            &test_ctx(),
+        )
+        .await
+        .expect_err("an unknown tag name must be refused");
+    let message = err.to_string();
+    assert!(
+        matches!(err, AppError::Validation { .. }) && message.contains("`tag_ids` 'nope'"),
+        "got {message}"
+    );
 }

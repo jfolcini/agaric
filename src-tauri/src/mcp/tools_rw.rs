@@ -11,12 +11,12 @@
 //!
 //! | Tool | Backing `*_inner` | Notes |
 //! |------|-------------------|-------|
-//! | `append_block` | [`create_block_inner`] | `block_type` hard-coded to `"content"`. `parent_id` required. |
+//! | `append_block` | [`append_block_resolving_names`] | `block_type` hard-coded to `"content"`. `parent_id` required. |
 //! | `append_markdown` | [`append_markdown_inner`] | A Markdown outline under `parent_id`, read and resolved as paste does: an unmatched `[[Name]]` / `#name` creates the page or tag. |
-//! | `update_block_content` | [`edit_block_inner`] | |
+//! | `update_block_content` | [`edit_block_resolving_names`] | |
 //! | `set_property` | [`set_property_inner`] | Exactly one of `value_*` must be provided. |
 //! | `add_tag` | [`add_tag_inner`] | Tag block must already exist in the block's space. |
-//! | `create_page` | [`create_block_inner`] | `block_type = "page"`, `parent_id = None`. |
+//! | `create_page` | [`create_block_inner_with_space`] | `block_type = "page"`, `parent_id = None`. |
 //! | `delete_block` | [`delete_block_inner`] | Soft delete. Reversible via `reverse.rs`. |
 //! | `list_spaces` | [`list_spaces_registry_inner`] | #2728 — pure read, no `*_inner` mutation. Registered here too (mirroring `tools_ro.rs`) so an RW-only agent can discover the `space_id` every tool above requires. |
 //! | `move_page_to_space` | [`move_blocks_to_space_inner`] | Page blocks only: a page moves with its content blocks. |
@@ -60,7 +60,8 @@ use sqlx::SqlitePool;
 
 use super::dispatch::{scoped_dispatch, unknown_tool_error};
 use super::handler_utils::{
-    normalize_ulid_arg, parse_args, resolve_journal_date, to_tool_result, validate_block_in_space,
+    Named, normalize_ulid_arg, parse_args, resolve_id_arg, resolve_journal_date, to_tool_result,
+    validate_block_in_space,
 };
 use super::registry::{
     TOOL_ADD_TAG, TOOL_APPEND_BLOCK, TOOL_APPEND_MARKDOWN, TOOL_CAPTURE, TOOL_CREATE_PAGE,
@@ -69,12 +70,13 @@ use super::registry::{
     TOOL_UPDATE_BLOCK_CONTENT, ToolDescription, ToolRegistry,
 };
 use super::view_notify::{NoopViewChangeEmitter, ViewChangeEmitter};
+use crate::commands::pages::markdown::{append_block_resolving_names, edit_block_resolving_names};
 use crate::commands::{
     DeletePropertyResponse, MovedBlocks, add_tag_inner, append_markdown_inner,
-    capture_to_journal_inner, create_block_inner, create_block_inner_with_space,
-    delete_block_inner, delete_property_inner, edit_block_inner, get_active_block_inner,
-    list_spaces_registry_inner, move_blocks_batch_inner, move_blocks_to_space_inner,
-    remove_tag_inner, restore_block_inner, revert_ops_inner, set_property_inner,
+    capture_to_journal_inner, create_block_inner_with_space, delete_block_inner,
+    delete_property_inner, get_active_block_inner, list_spaces_registry_inner,
+    move_blocks_batch_inner, move_blocks_to_space_inner, remove_tag_inner, restore_block_inner,
+    revert_ops_inner, set_property_inner,
 };
 use crate::materializer::Materializer;
 use agaric_core::error::AppError;
@@ -420,11 +422,11 @@ fn tool_desc_append_block() -> ToolDescription {
             "properties": {
                 "parent_id": {
                     "type": "string",
-                    "description": "ULID of the parent block (required — no orphan blocks).",
+                    "description": "ULID of the parent block, or a page's title or alias (required — no orphan blocks).",
                 },
                 "content": {
                     "type": "string",
-                    "description": "Markdown content for the new block.",
+                    "description": "Markdown content for the new block. A `[[Name]]` or `#name` links the page or tag of that name in the space, creating it when none matches.",
                 },
                 "position": {
                     "type": "integer",
@@ -459,7 +461,7 @@ fn tool_desc_append_markdown() -> ToolDescription {
             "properties": {
                 "parent_id": {
                     "type": "string",
-                    "description": "ULID of the parent block or page the outline lands under.",
+                    "description": "ULID of the parent block or page the outline lands under, or the page's title or alias.",
                 },
                 "markdown": {
                     "type": "string",
@@ -490,7 +492,7 @@ fn tool_desc_update_block_content() -> ToolDescription {
             "required": ["block_id", "content", "space_id"],
             "properties": {
                 "block_id": { "type": "string", "description": "ULID of the block to edit." },
-                "content": { "type": "string", "description": "New Markdown content." },
+                "content": { "type": "string", "description": "New Markdown content. In a content block, a `[[Name]]` or `#name` links the page or tag of that name in the space, creating it when none matches." },
                 "space_id": {
                     "type": "string",
                     "description": "ULID of the space the agent is operating in. The edit is rejected with a Validation error if `block_id`'s owning page lives in a different space.",
@@ -542,7 +544,7 @@ fn tool_desc_add_tag() -> ToolDescription {
             "required": ["block_id", "tag_id", "space_id"],
             "properties": {
                 "block_id": { "type": "string", "description": "ULID of the block to tag." },
-                "tag_id":   { "type": "string", "description": "ULID of an existing tag block." },
+                "tag_id":   { "type": "string", "description": "ULID or name of an existing tag block." },
                 "space_id": {
                     "type": "string",
                     "description": "ULID of the space the agent is operating in. The tag application is rejected with a Validation error if `block_id`'s owning page lives in a different space. `tag_id` must be a tag of the same space.",
@@ -637,7 +639,7 @@ fn tool_desc_move_page_to_space() -> ToolDescription {
             "additionalProperties": false,
             "required": ["page_id", "space_id", "target_space_id"],
             "properties": {
-                "page_id": { "type": "string", "description": "ULID of the page to move. Only page blocks move; a content block stays with its page." },
+                "page_id": { "type": "string", "description": "ULID, title or alias of the page to move. Only page blocks move; a content block stays with its page." },
                 "space_id": {
                     "type": "string",
                     "description": "ULID of the space the agent is operating in. The move is rejected with a Validation error if `page_id` lives in a different space.",
@@ -767,7 +769,7 @@ fn tool_desc_move_blocks() -> ToolDescription {
                     "maxItems": agaric_store::pagination::MAX_BATCH_BLOCK_IDS,
                     "description": "ULIDs of the blocks to move, in the order they should land.",
                 },
-                "parent_id": { "type": "string", "description": "ULID of the new parent block or page." },
+                "parent_id": { "type": "string", "description": "ULID of the new parent block or page, or the page's title or alias." },
                 "position": {
                     "type": "integer",
                     "minimum": 1,
@@ -792,7 +794,7 @@ fn tool_desc_remove_tag() -> ToolDescription {
             "required": ["block_id", "tag_id", "space_id"],
             "properties": {
                 "block_id": { "type": "string", "description": "ULID of the tagged block." },
-                "tag_id":   { "type": "string", "description": "ULID of the tag to remove." },
+                "tag_id":   { "type": "string", "description": "ULID or name of the tag to remove." },
                 "space_id": {
                     "type": "string",
                     "description": "ULID of the space the agent is operating in. The removal is rejected with a Validation error if `block_id`'s owning page lives in a different space.",
@@ -880,11 +882,18 @@ async fn handle_append_block(
     args: Value,
 ) -> Result<Value, AppError> {
     let args: AppendBlockArgs = parse_args(TOOL_APPEND_BLOCK, args)?;
-    // Normalise ULID-shaped IDs to uppercase at the MCP boundary.
-    let parent_id = normalize_ulid_arg(&args.parent_id);
     let space_id = normalize_ulid_arg(&args.space_id);
+    let parent_id = resolve_id_arg(
+        pool,
+        TOOL_APPEND_BLOCK,
+        "parent_id",
+        &args.parent_id,
+        Named::Page,
+        &space_id,
+    )
+    .await?;
     // Refuse cross-space writes at the MCP boundary
-    // before opening the BEGIN IMMEDIATE in `create_block_inner`.
+    // before opening the BEGIN IMMEDIATE in `append_block_resolving_names`.
     validate_block_in_space(pool, &parent_id, &space_id).await?;
     // #1606: the JSON schema declares `position` `minimum: 1`, but serde does
     // not enforce JSON-Schema constraints, so an out-of-range `position` (0 or
@@ -900,7 +909,7 @@ async fn handle_append_block(
         )));
     }
     // #400: the MCP tool keeps its stable agent-facing **1-based** `position`
-    // contract; `create_block_inner` now takes a 0-based sibling `index`, so
+    // contract; `create_block_in_tx` takes a 0-based sibling `index`, so
     // convert here (position 1 → index 0 = first child). `None` still appends.
     // The `position < 1` rejection above is the primary guard; the
     // `max(1).saturating_sub(1)` here is retained as a defense-in-depth
@@ -908,20 +917,32 @@ async fn handle_append_block(
     // i64::MIN from an LLM agent) can never underflow even if a future caller
     // bypasses the check above.
     let index = args.position.map(|p| p.max(1).saturating_sub(1));
-    let resp = create_block_inner(
+    let (block, warnings) = append_block_resolving_names(
         pool,
         device_id,
         materializer,
-        "content".to_string(),
+        &BlockId::from_trusted(&parent_id),
         args.content,
-        Some(parent_id.into()),
         index,
     )
     .await?;
     // The appended block shares its parent's owning page, so resolve from the
     // freshly-created block id (BlockRow.id).
-    emit_blocks_changed_for(pool, emitter, resp.id.clone()).await;
-    to_tool_result(&resp)
+    emit_blocks_changed_for(pool, emitter, block.id.clone()).await;
+    with_warnings(&block, &warnings)
+}
+
+/// `block` as a write tool returns it, with the warnings naming a `[[Name]]`
+/// or `#name` its content left as text, when there are any.
+fn with_warnings(
+    block: &agaric_store::pagination::BlockRow,
+    warnings: &[String],
+) -> Result<Value, AppError> {
+    let mut result = to_tool_result(block)?;
+    if !warnings.is_empty() {
+        result["warnings"] = json!(warnings);
+    }
+    Ok(result)
 }
 
 async fn handle_append_markdown(
@@ -932,8 +953,16 @@ async fn handle_append_markdown(
     args: Value,
 ) -> Result<Value, AppError> {
     let args: AppendMarkdownArgs = parse_args(TOOL_APPEND_MARKDOWN, args)?;
-    let parent_id = normalize_ulid_arg(&args.parent_id);
     let space_id = normalize_ulid_arg(&args.space_id);
+    let parent_id = resolve_id_arg(
+        pool,
+        TOOL_APPEND_MARKDOWN,
+        "parent_id",
+        &args.parent_id,
+        Named::Page,
+        &space_id,
+    )
+    .await?;
     validate_block_in_space(pool, &parent_id, &space_id).await?;
     // The same 1-based contract and refusal as `append_block` (#1606, #400).
     if let Some(p) = args.position
@@ -971,16 +1000,11 @@ async fn handle_update_block_content(
     let space_id = normalize_ulid_arg(&args.space_id);
     // Refuse cross-space writes at the MCP boundary.
     validate_block_in_space(pool, &block_id, &space_id).await?;
-    let resp = edit_block_inner(
-        pool,
-        device_id,
-        materializer,
-        block_id.clone().into(),
-        args.content,
-    )
-    .await?;
-    emit_blocks_changed_for(pool, emitter, BlockId::from_trusted(&block_id)).await;
-    to_tool_result(&resp)
+    let block_id = BlockId::from_trusted(&block_id);
+    let (block, warnings) =
+        edit_block_resolving_names(pool, device_id, materializer, &block_id, args.content).await?;
+    emit_blocks_changed_for(pool, emitter, block_id).await;
+    with_warnings(&block, &warnings)
 }
 
 async fn handle_set_property(
@@ -1081,8 +1105,16 @@ async fn handle_add_tag(
     let args: AddTagArgs = parse_args(TOOL_ADD_TAG, args)?;
     // Normalise ULID-shaped IDs to uppercase at the MCP boundary.
     let block_id = normalize_ulid_arg(&args.block_id);
-    let tag_id = normalize_ulid_arg(&args.tag_id);
     let space_id = normalize_ulid_arg(&args.space_id);
+    let tag_id = resolve_id_arg(
+        pool,
+        TOOL_ADD_TAG,
+        "tag_id",
+        &args.tag_id,
+        Named::Tag,
+        &space_id,
+    )
+    .await?;
     // Refuse cross-space writes at the MCP boundary. We
     // validate only the target `block_id`: `add_tag_inner` itself rejects
     // a tag of another space and adopts a space-less one, which
@@ -1184,8 +1216,18 @@ async fn handle_move_page_to_space(
     args: Value,
 ) -> Result<Value, AppError> {
     let args: MovePageToSpaceArgs = parse_args(TOOL_MOVE_PAGE_TO_SPACE, args)?;
-    let page_id = BlockId::from_string(&args.page_id)?;
     let space_id = normalize_ulid_arg(&args.space_id);
+    let page_id = BlockId::from_trusted(
+        &resolve_id_arg(
+            pool,
+            TOOL_MOVE_PAGE_TO_SPACE,
+            "page_id",
+            &args.page_id,
+            Named::Page,
+            &space_id,
+        )
+        .await?,
+    );
     let target_space_id = SpaceId::from_string(args.target_space_id)?;
     validate_block_in_space(pool, page_id.as_str(), &space_id).await?;
     // The engine refuses `space` on a content block; a top-level tag would
@@ -1324,8 +1366,18 @@ async fn handle_move_blocks(
     args: Value,
 ) -> Result<Value, AppError> {
     let args: MoveBlocksArgs = parse_args(TOOL_MOVE_BLOCKS, args)?;
-    let parent_id = BlockId::from_trusted(&normalize_ulid_arg(&args.parent_id));
     let space_id = normalize_ulid_arg(&args.space_id);
+    let parent_id = BlockId::from_trusted(
+        &resolve_id_arg(
+            pool,
+            TOOL_MOVE_BLOCKS,
+            "parent_id",
+            &args.parent_id,
+            Named::Page,
+            &space_id,
+        )
+        .await?,
+    );
     let block_ids: Vec<BlockId> = args
         .block_ids
         .iter()
@@ -1375,8 +1427,18 @@ async fn handle_remove_tag(
 ) -> Result<Value, AppError> {
     let args: RemoveTagArgs = parse_args(TOOL_REMOVE_TAG, args)?;
     let block_id = BlockId::from_trusted(&normalize_ulid_arg(&args.block_id));
-    let tag_id = BlockId::from_trusted(&normalize_ulid_arg(&args.tag_id));
     let space_id = normalize_ulid_arg(&args.space_id);
+    let tag_id = BlockId::from_trusted(
+        &resolve_id_arg(
+            pool,
+            TOOL_REMOVE_TAG,
+            "tag_id",
+            &args.tag_id,
+            Named::Tag,
+            &space_id,
+        )
+        .await?,
+    );
     validate_block_in_space(pool, block_id.as_str(), &space_id).await?;
     let resp = remove_tag_inner(pool, device_id, materializer, block_id.clone(), tag_id).await?;
     emit_blocks_changed_for(pool, emitter, block_id).await;

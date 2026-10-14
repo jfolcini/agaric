@@ -36,13 +36,19 @@ To give an agent the write tools, add a second server entry pointing `AGARIC_MCP
 
 The MCP surface is split into:
 
-- **Read-only tools** (always available when MCP is enabled): list pages, get page, read a page as Markdown, search, get block, list backlinks, list tags, list property definitions, get agenda, list spaces, fetch a journal page by date, page history, block history, get journal, list journal, list trash. One carve-out: `journal_for_date` **creates** the journal page if it doesn't exist yet and the date is near today — the only read-registry tool with a write side effect. A day it creates gets the space's journal template, as a day the journal creates does.
+- **Read-only tools** (always available when MCP is enabled): list pages, get page, read a page as Markdown, search, get block, list backlinks, list tags, list property definitions, get agenda, list spaces, fetch a journal page by date, page history, block history, get journal, list journal, list trash, resolve names. One carve-out: `journal_for_date` **creates** the journal page if it doesn't exist yet and the date is near today — the only read-registry tool with a write side effect. A day it creates gets the space's journal template, as a day the journal creates does.
 - **Read-write tools**: append block, append markdown, update block content, set property, add tag, create page, delete block, move page to space, create tag, delete property, undo, capture, move blocks, remove tag, restore block. Move blocks reparents or reorders blocks in one call and one transaction, keeping their ids, so links to them and their history survive. Append markdown lands a whole Markdown outline under a parent in one call and one undo, exactly as a paste in the app does: list items nest, headings own what follows them, `key:: value` lines become properties, and a `[[Page]]` or `#tag` that matches nothing in the parent's space creates that page or tag there. Separate from read-only so you can disable writes while keeping reads on.
 
 What the page reads return:
 
 - `get_block` returns the block's row plus `properties` (every property row, raw, `template` included), `tags` (tag ULIDs; `list_tags` maps them to names) and, for a page, `aliases`. `get_page` adds the same three to its `page`; its children are plain rows. A block with none of them gets empty arrays.
-- `get_page_markdown` returns `{ page_id, markdown }`: the whole page, unpaginated, as `# Title`, YAML front matter (aliases, tags, properties), then the block outline with each block's `key:: value` properties. Links, tags and ref-typed values are written as names, for reading; a name can be ambiguous, so an agent writes links by ULID. Every block ends with its `^ULID`, the id `update_block_content` takes.
+- `get_page_markdown` returns `{ page_id, markdown }`: the whole page, unpaginated, as `# Title`, YAML front matter (aliases, tags, properties), then the block outline with each block's `key:: value` properties. Links, tags and ref-typed values are written as names, for reading; a name two pages share stays text when written back, so an agent writes such a link by ULID. Every block ends with its `^ULID`, the id `update_block_content` takes.
+
+Names in place of ids:
+
+- Wherever a tool takes a page, tag or parent id (`parent_id`, `page_id`, `tag_id`, `tag_ids`), a value that is not a ULID is a name in the call's `space_id`: a page by exact title, else by its one case-insensitive title, else by alias; a tag by name, ignoring case. A name two pages share is refused with a validation error listing them with their ids, and a name nothing has is refused too. Block ids stay ULIDs: blocks have no names. `get_page` and `get_page_markdown` take no `space_id` yet, so they take ids only.
+- `append_block` and `update_block_content` write a `[[Name]]` or `#name` as the app's paste does: linked by id, creating the page or tag in the space when nothing matches. A name two pages share stays text, and the result lists it under `warnings`. A page's title and a tag's name are kept as written.
+- `resolve { names, space_id }` looks up many names in one call and answers each with `page_id` and `tag_id` (null when nothing matches), or `page_candidates` when pages share the name.
 
 The journal in one call:
 
@@ -73,7 +79,7 @@ The read-only and read-write surfaces treat spaces differently **by design**, an
 
   | Pattern | Read-only tools | Behaviour |
   | --- | --- | --- |
-  | **`space_id` required** | `search`, `journal_for_date`, `page_history`, `block_history`, `get_journal`, `list_journal`, `list_trash`, `list_tags`, `list_backlinks`, `get_agenda` | The call runs inside the named space; results are confined to that space. The history tools reject a target in another space. |
+  | **`space_id` required** | `search`, `journal_for_date`, `page_history`, `block_history`, `get_journal`, `list_journal`, `list_trash`, `list_tags`, `list_backlinks`, `get_agenda`, `resolve` | The call runs inside the named space; results are confined to that space. The history tools reject a target in another space. |
   | **`space_id` absent** | `list_pages`, `get_page`, `get_page_markdown`, `get_block`, `list_property_defs`, `list_spaces` | No space argument exists; these tools always span every space. Fetch-by-ULID (`get_page` / `get_page_markdown` / `get_block`) and enumeration (`list_pages`) therefore reach **any** space's data. |
 
 ### Security implication

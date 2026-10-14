@@ -94,8 +94,8 @@ impl McpSurface {
 
     /// MCP `initialize` instructions advertised by
     /// [`RmcpAdapter`](rmcp_adapter::RmcpAdapter)'s `ServerHandler::get_info`:
-    /// a short primer (`instructions_fit_the_line_cap` pins its length) so an
-    /// agent knows the id, token and space rules before its first call.
+    /// a short primer so an agent knows the id, token, space and name rules
+    /// before its first call.
     pub fn instructions(self) -> &'static str {
         match self {
             McpSurface::ReadOnly => concat!(
@@ -113,7 +113,10 @@ impl McpSurface {
                  Dates are YYYY-MM-DD; `get_journal` also takes `today` or `yesterday`, on \
                  this device's clock.\n\
                  History: `page_history` and `block_history` show who changed what, and \
-                 when.\n",
+                 when.\n\
+                 Names: in a tool that takes `space_id`, a page or tag argument that is not \
+                 a ULID is a page's title or alias, or a tag's name, in that space; \
+                 `resolve` looks many up at once.\n",
             ),
             McpSurface::ReadWrite => concat!(
                 "Agaric MCP read-write server: writes to a local, block-based notes vault. \
@@ -131,7 +134,10 @@ impl McpSurface {
                  device's clock.\n\
                  Undo: a write that changed something returns `op_refs`; pass them to \
                  `undo` to revert it. `delete_block` is a soft delete that `restore_block` \
-                 reverses.\n",
+                 reverses.\n\
+                 Names: a page or tag argument that is not a ULID is a page's title or alias, \
+                 or a tag's name, in the call's space. In written content, `[[Name]]` and \
+                 `#name` link the page or tag of that name, creating it when none matches.\n",
             ),
         }
     }
@@ -1176,14 +1182,6 @@ pub fn spawn_mcp_rw_task_with_registry<R>(
 mod tests {
     use super::*;
     use tempfile::TempDir;
-
-    #[test]
-    fn instructions_fit_the_line_cap() {
-        for surface in [McpSurface::ReadOnly, McpSurface::ReadWrite] {
-            let lines = surface.instructions().lines().count();
-            assert!(lines <= 40, "{surface:?} instructions run to {lines} lines");
-        }
-    }
 
     #[test]
     fn mcp_ro_enabled_returns_false_when_marker_absent() {

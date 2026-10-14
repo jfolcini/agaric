@@ -72,16 +72,17 @@ use sqlx::SqlitePool;
 
 use super::dispatch::{scoped_dispatch, unknown_tool_error};
 use super::handler_utils::{
-    fetch_op_origins, normalize_ulid_arg, parse_args, resolve_journal_date, to_tool_result,
-    validate_block_in_space,
+    Named, fetch_op_origins, normalize_ulid_arg, parse_args, resolve_id_arg, resolve_id_args,
+    resolve_journal_date, to_tool_result, validate_block_in_space,
 };
 use super::registry::{
     TOOL_BLOCK_HISTORY, TOOL_GET_AGENDA, TOOL_GET_BLOCK, TOOL_GET_JOURNAL, TOOL_GET_PAGE,
     TOOL_GET_PAGE_MARKDOWN, TOOL_JOURNAL_FOR_DATE, TOOL_LIST_BACKLINKS, TOOL_LIST_JOURNAL,
     TOOL_LIST_PAGES, TOOL_LIST_PROPERTY_DEFS, TOOL_LIST_SPACES, TOOL_LIST_TAGS, TOOL_LIST_TRASH,
-    TOOL_PAGE_HISTORY, TOOL_SEARCH, ToolDescription, ToolRegistry,
+    TOOL_PAGE_HISTORY, TOOL_RESOLVE, TOOL_SEARCH, ToolDescription, ToolRegistry,
 };
 use super::view_notify::{NoopViewChangeEmitter, ViewChangeEmitter};
+use crate::commands::pages::markdown::{NameMatch, match_page_names, match_tag_names};
 use crate::commands::{
     PropertyRow, agenda_range_inner, get_active_block_inner, get_block_history_inner,
     get_journal_page_by_date_inner, get_page_aliases_inner, get_page_for_agent_inner,
@@ -428,6 +429,13 @@ struct GetJournalArgs {
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
+struct ResolveArgs {
+    names: Vec<String>,
+    space_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct ListJournalArgs {
     space_id: String,
     from: String,
@@ -558,6 +566,7 @@ pub(crate) fn list_tool_descriptions() -> Vec<ToolDescription> {
         tool_desc_get_journal(),
         tool_desc_list_journal(),
         tool_desc_list_trash(),
+        tool_desc_resolve(),
     ]
 }
 
@@ -626,6 +635,7 @@ impl ToolRegistry for ReadOnlyTools {
                 }
                 TOOL_LIST_JOURNAL => handle_list_journal(&pool, args).await,
                 TOOL_LIST_TRASH => handle_list_trash(&pool, args).await,
+                TOOL_RESOLVE => handle_resolve(&pool, args).await,
                 other => Err(unknown_tool_error(other)),
             }
         })
@@ -635,6 +645,34 @@ impl ToolRegistry for ReadOnlyTools {
 // ---------------------------------------------------------------------------
 // Tool descriptions (static metadata)
 // ---------------------------------------------------------------------------
+
+fn tool_desc_resolve() -> ToolDescription {
+    ToolDescription {
+        name: TOOL_RESOLVE.to_string(),
+        description: "Look up page and tag names in a space, many in one call, as a written \
+             `[[Name]]` / `#name` is matched: a page by exact title, else by one \
+             case-insensitive title, else by alias; a tag by name, ignoring case. Each name \
+             answers `page_id` and `tag_id`, null when nothing matches; a name several pages \
+             share answers `page_candidates` instead. Tools that take a page or tag id take \
+             its name too, so this is only for ids up front."
+            .to_string(),
+        input_schema: json!({
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["names", "space_id"],
+            "properties": {
+                "names": {
+                    "type": "array",
+                    "items": { "type": "string" },
+                    "minItems": 1,
+                    "maxItems": agaric_store::pagination::MAX_BATCH_BLOCK_IDS,
+                    "description": "The page or tag names to look up.",
+                },
+                "space_id": { "type": "string", "description": "ULID of the space to look in." },
+            },
+        }),
+    }
+}
 
 fn tool_desc_list_pages() -> ToolDescription {
     ToolDescription {
@@ -776,11 +814,11 @@ fn tool_desc_search() -> ToolDescription {
                     "maximum": SEARCH_RESULT_CAP,
                     "description": format!("Max results per response (capped at {SEARCH_RESULT_CAP})."),
                 },
-                "parent_id": { "type": "string", "description": "Optional parent ULID to scope the search." },
+                "parent_id": { "type": "string", "description": "Optional parent ULID, or a page's title or alias, to scope the search." },
                 "tag_ids": {
                     "type": "array",
                     "items": { "type": "string" },
-                    "description": "Optional list of tag ULIDs to intersect the result set with.",
+                    "description": "Optional list of tag ULIDs or names to intersect the result set with.",
                 },
                 "space_id": {
                     "type": "string",
@@ -1025,7 +1063,10 @@ fn tool_desc_page_history() -> ToolDescription {
             "Who changed what on a page, and when: every op on the page's blocks. \
              {HISTORY_ROW_DESCRIPTION}"
         ),
-        input_schema: history_input_schema("page_id", "ULID of the page block."),
+        input_schema: history_input_schema(
+            "page_id",
+            "ULID of the page block, or its title or alias.",
+        ),
     }
 }
 
@@ -1321,24 +1362,35 @@ async fn handle_search(pool: &SqlitePool, args: Value) -> Result<Value, AppError
     // each of them is.
     validate_search_term_count(&args)?;
     validate_search_term_bytes(&args)?;
-    // #3301 — PARSE the ULID-shaped ids, as `space_id` has always done: a
-    // malformed or truncated one must error rather than bind a string that
-    // matches nothing, which an agent reads as "no block carries that tag"
-    // and does not retry. No normalise step ahead of this — `canonical_ulid`
-    // compares against the uppercased input, so `from_string` already accepts
-    // any case. Runs after the two budget checks so an oversized vector still
-    // gets its own actionable message.
-    let parent_id = args
-        .parent_id
-        .as_deref()
-        .map(|s| BlockId::from_string(s).map(BlockId::into_string))
-        .transpose()?;
-    let tag_ids = args
-        .tag_ids
-        .unwrap_or_default()
-        .iter()
-        .map(|s| BlockId::from_string(s).map(BlockId::into_string))
-        .collect::<Result<Vec<String>, AppError>>()?;
+    // #3301 — every id resolves to a real one or errors: a string that matches
+    // nothing reads to an agent as "no block carries that tag", and it does
+    // not retry. A non-ULID names a page or tag in the space (#5397). Runs
+    // after the two budget checks so an oversized vector still gets its own
+    // actionable message.
+    let space_id = SpaceId::from_string(args.space_id.as_str())?;
+    let parent_id = match args.parent_id.as_deref() {
+        Some(parent) => Some(
+            resolve_id_arg(
+                pool,
+                TOOL_SEARCH,
+                "parent_id",
+                parent,
+                Named::Page,
+                space_id.as_str(),
+            )
+            .await?,
+        ),
+        None => None,
+    };
+    let tag_ids = resolve_id_args(
+        pool,
+        TOOL_SEARCH,
+        "tag_ids",
+        &args.tag_ids.unwrap_or_default(),
+        Named::Tag,
+        space_id.as_str(),
+    )
+    .await?;
     // Fold the optional structured `filter` arg into the
     // `SearchFilter` passed to `search_blocks_inner`. Omitting `filter`
     // Preserves the pre-existing contract (no metadata / glob / toggle
@@ -1369,7 +1421,7 @@ async fn handle_search(pool: &SqlitePool, args: Value) -> Result<Value, AppError
             // JSON-RPC -32602 invalid-params, #3301) rather than silently
             // become an id that matches nothing (which would make an
             // agent wrongly conclude the vault is empty).
-            scope: SearchScope::Spaces(vec![SpaceId::from_string(args.space_id.as_str())?]),
+            scope: SearchScope::Spaces(vec![space_id]),
             include_page_globs: f.include_page_globs,
             exclude_page_globs: f.exclude_page_globs,
             case_sensitive: f.case_sensitive,
@@ -1598,20 +1650,21 @@ async fn handle_page_history(
 ) -> Result<Value, AppError> {
     let args: PageHistoryArgs = parse_args(TOOL_PAGE_HISTORY, args)?;
     let limit = validate_limit(TOOL_PAGE_HISTORY, args.limit, LIST_RESULT_CAP)?;
-    // A strict ULID parse also refuses `__all__`, which would read every space.
-    let page_id = BlockId::from_string(&args.page_id)?;
     let space_id = SpaceId::from_string(args.space_id)?;
-    validate_block_in_space(writer_pool, page_id.as_str(), space_id.as_str()).await?;
-    let scope = SpaceScope::Active(space_id);
-    let resp = list_page_history_inner(
+    // Resolves to a live block's id, so never to `__all__`, which would read
+    // every space.
+    let page_id = resolve_id_arg(
         pool,
-        page_id.into_string(),
-        None,
-        &scope,
-        args.cursor,
-        limit,
+        TOOL_PAGE_HISTORY,
+        "page_id",
+        &args.page_id,
+        Named::Page,
+        space_id.as_str(),
     )
     .await?;
+    validate_block_in_space(writer_pool, &page_id, space_id.as_str()).await?;
+    let scope = SpaceScope::Active(space_id);
+    let resp = list_page_history_inner(pool, page_id, None, &scope, args.cursor, limit).await?;
     history_result(pool, resp).await
 }
 
@@ -1635,6 +1688,60 @@ async fn handle_list_trash(pool: &SqlitePool, args: Value) -> Result<Value, AppE
     let space_id = SpaceId::from_string(args.space_id)?;
     let resp = list_trash_inner(pool, args.cursor, limit, space_id.as_str().to_owned()).await?;
     to_tool_result(&resp)
+}
+
+/// One name as `resolve` answers it.
+#[derive(Serialize)]
+struct ResolvedName {
+    name: String,
+    page_id: Option<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    page_candidates: Vec<PageCandidate>,
+    tag_id: Option<String>,
+}
+
+#[derive(Serialize)]
+struct PageCandidate {
+    id: String,
+    title: String,
+}
+
+async fn handle_resolve(pool: &SqlitePool, args: Value) -> Result<Value, AppError> {
+    let args: ResolveArgs = parse_args(TOOL_RESOLVE, args)?;
+    agaric_store::pagination::ensure_batch_within_cap("names", args.names.len())?;
+    let space_id = SpaceId::from_string(args.space_id)?;
+    let mut conn = pool.acquire().await?;
+    let pages = match_page_names(&mut conn, space_id.as_str(), &args.names).await?;
+    let tags = match_tag_names(&mut conn, space_id.as_str(), &args.names).await?;
+    let answers: Vec<ResolvedName> = args
+        .names
+        .into_iter()
+        .zip(pages)
+        .zip(tags)
+        .map(|((name, page), tag)| {
+            let (page_id, page_candidates) = match page {
+                NameMatch::Id(id) => (Some(id), Vec::new()),
+                NameMatch::Tie(ties) => (
+                    None,
+                    ties.into_iter()
+                        .map(|(id, title)| PageCandidate { id, title })
+                        .collect(),
+                ),
+                NameMatch::Unknown => (None, Vec::new()),
+            };
+            let tag_id = match tag {
+                NameMatch::Id(id) => Some(id),
+                NameMatch::Tie(_) | NameMatch::Unknown => None,
+            };
+            ResolvedName {
+                name,
+                page_id,
+                page_candidates,
+                tag_id,
+            }
+        })
+        .collect();
+    to_tool_result(&answers)
 }
 
 /// Longest before / after text a history row carries, in chars: the row

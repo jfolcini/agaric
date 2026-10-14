@@ -152,7 +152,7 @@ async fn append_block_missing_parent_id_returns_not_found() {
     let err = tools
         .call_tool(
             "append_block",
-            json!({"parent_id": "NONEXISTENT_PARENT_ULID", "content": "x", "space_id": space}),
+            json!({"parent_id": "01ARZ3NDEKTSV4RRFFQ69G5FAV", "content": "x", "space_id": space}),
             &test_ctx_agent(),
         )
         .await
@@ -797,7 +797,7 @@ async fn add_tag_missing_tag_returns_not_found() {
     let err = tools
         .call_tool(
             "add_tag",
-            json!({"block_id": block.id, "tag_id": "NONEXISTENT_TAG", "space_id": space}),
+            json!({"block_id": block.id, "tag_id": "01ARZ3NDEKTSV4RRFFQ69G5FAV", "space_id": space}),
             &test_ctx_agent(),
         )
         .await
@@ -3027,4 +3027,273 @@ async fn restore_block_cross_space_rejected_5399() {
         .expect_err("a block of another space must be refused");
     assert!(matches!(err, AppError::Validation { .. }), "got {err:?}");
     assert!(!is_live(&pool, block_b.id.as_str()).await);
+}
+
+// -------------------------------------------------------------------
+// Names in place of ids, and in written content (#5397)
+// -------------------------------------------------------------------
+
+async fn tag_named(pool: &SqlitePool, space: &str, name: &str) -> Vec<String> {
+    sqlx::query_scalar(
+        "SELECT id FROM blocks WHERE block_type = 'tag' AND content = ? AND space_id = ? \
+         AND deleted_at IS NULL",
+    )
+    .bind(name)
+    .bind(space)
+    .fetch_all(pool)
+    .await
+    .unwrap()
+}
+
+async fn backlink_sources(pool: &SqlitePool, space: &str, target: &str) -> Vec<String> {
+    crate::commands::list_backlinks_grouped_inner(
+        pool,
+        BlockId::from_trusted(target),
+        None,
+        None,
+        None,
+        None,
+        &SpaceScope::Active(SpaceId::from_trusted(space)),
+        None,
+    )
+    .await
+    .unwrap()
+    .groups
+    .iter()
+    .flat_map(|g| g.blocks.iter().map(|b| b.id.as_str().to_owned()))
+    .collect()
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn append_block_takes_its_parent_page_by_name_5397() {
+    let (tools, mat, pool, space, _dir) = mk_tools().await;
+    let page = mk_page(&pool, &mat, &space, "Project X").await;
+    let dup_a = mk_page(&pool, &mat, &space, "Dup").await;
+    let dup_b = mk_page(&pool, &mat, &space, "DUP").await;
+    settle(&mat).await;
+
+    let result = tools
+        .call_tool(
+            "append_block",
+            json!({"parent_id": "project x", "content": "hello", "space_id": space}),
+            &test_ctx_agent(),
+        )
+        .await
+        .expect("a title in another case names the page");
+    assert_eq!(result["parent_id"], page.as_str());
+    assert!(result.get("warnings").is_none(), "no warnings, no key");
+
+    let result = tools
+        .call_tool(
+            "append_block",
+            json!({"parent_id": page, "content": "see [[dup]]", "space_id": space}),
+            &test_ctx_agent(),
+        )
+        .await
+        .expect("a tie in content is kept as text");
+    assert_eq!(result["content"], "see [[dup]]");
+    assert_eq!(
+        result["warnings"],
+        json!(["wiki-link '[[dup]]' matches multiple pages in this space; left as plain text"]),
+    );
+
+    let err = tools
+        .call_tool(
+            "append_block",
+            json!({"parent_id": "dup", "content": "x", "space_id": space}),
+            &test_ctx_agent(),
+        )
+        .await
+        .expect_err("a tie must be refused");
+    let message = err.to_string();
+    assert!(
+        matches!(err, AppError::Validation { .. })
+            && message.contains(&format!("{dup_a} (Dup)"))
+            && message.contains(&format!("{dup_b} (DUP)")),
+        "the error names each candidate with its id, got {message}"
+    );
+
+    let err = tools
+        .call_tool(
+            "append_block",
+            json!({"parent_id": "Nowhere", "content": "x", "space_id": space}),
+            &test_ctx_agent(),
+        )
+        .await
+        .expect_err("an unknown name must be refused");
+    assert!(matches!(err, AppError::Validation { .. }), "got {err:?}");
+    assert!(child_contents(&pool, &dup_a).await.is_empty());
+    assert!(child_contents(&pool, &dup_b).await.is_empty());
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn append_block_links_the_names_its_content_writes_5397() {
+    let (tools, mat, pool, space, _dir) = mk_tools().await;
+    let target = mk_page(&pool, &mat, &space, "Existing page").await;
+    let inbox = mk_page(&pool, &mat, &space, "Inbox").await;
+    settle(&mat).await;
+
+    let result = tools
+        .call_tool(
+            "append_block",
+            json!({
+                "parent_id": inbox,
+                "content": "see [[Existing page]] and #newtag",
+                "space_id": space,
+            }),
+            &test_ctx_agent(),
+        )
+        .await
+        .expect("happy path");
+    settle(&mat).await;
+
+    let tag = tag_named(&pool, &space, "newtag").await;
+    assert_eq!(tag.len(), 1, "the tag is created once, in the space");
+    let block = result["id"].as_str().unwrap().to_owned();
+    assert_eq!(
+        result["content"],
+        format!("see [[{target}]] and #[{}]", tag[0]),
+    );
+    assert_eq!(
+        backlink_sources(&pool, &space, &target).await,
+        [block.as_str()]
+    );
+    let refs: Vec<String> =
+        sqlx::query_scalar("SELECT tag_id FROM block_tag_refs WHERE source_id = ?")
+            .bind(&block)
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+    assert_eq!(refs, tag, "the tag is attached as an inline ref");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn update_block_content_links_names_but_keeps_a_title_as_written_5397() {
+    let (tools, mat, pool, space, _dir) = mk_tools().await;
+    let target = mk_page(&pool, &mat, &space, "Existing page").await;
+    let block = mk_child_of(&pool, &mat, &target, "draft").await;
+    let ideas = mk_page(&pool, &mat, &space, "Ideas").await;
+    settle(&mat).await;
+
+    let result = tools
+        .call_tool(
+            "update_block_content",
+            json!({"block_id": block, "content": "about [[existing PAGE]]", "space_id": space}),
+            &test_ctx_agent(),
+        )
+        .await
+        .expect("happy path");
+    assert_eq!(result["content"], format!("about [[{target}]]"));
+
+    let result = tools
+        .call_tool(
+            "update_block_content",
+            json!({"block_id": ideas, "content": "Ideas #later", "space_id": space}),
+            &test_ctx_agent(),
+        )
+        .await
+        .expect("a page renames");
+    assert_eq!(result["content"], "Ideas #later");
+    assert!(tag_named(&pool, &space, "later").await.is_empty());
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn tag_tools_take_a_tag_by_name_5397() {
+    let (tools, mat, pool, space, _dir) = mk_tools().await;
+    let block = mk_in_space_content_block(&pool, &mat, &space, "c").await;
+    let tag = mk_tag_in(&pool, &mat, &space).await;
+    settle(&mat).await;
+    let block = block.id.into_string();
+
+    tools
+        .call_tool(
+            "add_tag",
+            json!({"block_id": block, "tag_id": "Work", "space_id": space}),
+            &test_ctx_agent(),
+        )
+        .await
+        .expect("add by name");
+    assert_eq!(tags_of(&pool, &block).await, [tag]);
+
+    tools
+        .call_tool(
+            "remove_tag",
+            json!({"block_id": block, "tag_id": "work", "space_id": space}),
+            &test_ctx_agent(),
+        )
+        .await
+        .expect("remove by name");
+    assert!(tags_of(&pool, &block).await.is_empty());
+
+    let err = tools
+        .call_tool(
+            "add_tag",
+            json!({"block_id": block, "tag_id": "play", "space_id": space}),
+            &test_ctx_agent(),
+        )
+        .await
+        .expect_err("an unknown tag name must be refused");
+    assert!(matches!(err, AppError::Validation { .. }), "got {err:?}");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn move_tools_take_pages_by_name_5397() {
+    let (tools, mat, pool, space, _dir) = mk_tools().await;
+    let other = mk_space(&pool, " other").await;
+    let from = mk_page(&pool, &mat, &space, "From").await;
+    let to = mk_page(&pool, &mat, &space, "To").await;
+    let x = mk_child_of(&pool, &mat, &from, "x").await;
+    settle(&mat).await;
+
+    tools
+        .call_tool(
+            "move_blocks",
+            json!({"block_ids": [x], "parent_id": "to", "space_id": space}),
+            &test_ctx_agent(),
+        )
+        .await
+        .expect("move under a page by name");
+    assert_eq!(live_children(&pool, &to).await, [x]);
+
+    let result = tools
+        .call_tool(
+            "move_page_to_space",
+            json!({"page_id": "From", "space_id": space, "target_space_id": other}),
+            &test_ctx_agent(),
+        )
+        .await
+        .expect("move a page by name");
+    assert_eq!(result["page_id"], from.as_str());
+}
+
+/// A ULID argument stays an id in any case, so the space check sees the block
+/// the write lands under.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_lowercase_ulid_argument_is_still_the_id_5397() {
+    let (tools, mat, pool, space, _dir) = mk_tools().await;
+    let other = mk_space(&pool, " other").await;
+    let page = mk_page(&pool, &mat, &space, "Here").await;
+    let elsewhere = mk_page(&pool, &mat, &other, "There").await;
+    settle(&mat).await;
+
+    let result = tools
+        .call_tool(
+            "append_block",
+            json!({"parent_id": page.to_lowercase(), "content": "x", "space_id": space}),
+            &test_ctx_agent(),
+        )
+        .await
+        .expect("happy path");
+    assert_eq!(result["parent_id"], page.as_str());
+
+    let err = tools
+        .call_tool(
+            "append_block",
+            json!({"parent_id": elsewhere.to_lowercase(), "content": "x", "space_id": space}),
+            &test_ctx_agent(),
+        )
+        .await
+        .expect_err("a page of another space is refused");
+    assert!(matches!(err, AppError::Validation { .. }), "got {err:?}");
+    assert!(child_contents(&pool, &elsewhere).await.is_empty());
 }
