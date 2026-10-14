@@ -5924,6 +5924,494 @@ mod tests_p8 {
 }
 
 // ====================================================================
+// #5424 — the History view seeks `idx_op_log_created`
+// ====================================================================
+
+mod global_history_keyset_5424 {
+    use super::super::*;
+    use super::{
+        SPACE_A_ID, SPACE_B_ID, assign_to_space, insert_attachment_row, insert_block,
+        insert_space_block, test_pool,
+    };
+    use sqlx::SqlitePool;
+
+    /// The `__all__` query before #5424: an OR-chain keyset behind a
+    /// `?2 IS NULL` switch, and the space as an `IN` list. Kept as the oracle
+    /// the rewrite must agree with (AGENTS.md § Performance Conventions).
+    const ORACLE_SQL: &str = "SELECT ol.device_id, ol.seq, ol.op_type, ol.payload, ol.created_at, \
+                ol.is_replicated \
+         FROM op_log ol \
+         WHERE (?1 IS NULL OR ol.op_type = ?1) \
+           AND (?2 IS NULL OR ( \
+                ol.created_at < ?3 \
+                OR (ol.created_at = ?3 AND ol.seq < ?4) \
+                OR (ol.created_at = ?3 AND ol.seq = ?4 AND ol.device_id < ?6))) \
+           AND (?7 IS NULL OR ( \
+                ol.block_id IN (SELECT id FROM blocks WHERE space_id = ?7) \
+                OR ( \
+                    ol.op_type IN ('delete_attachment', 'rename_attachment') \
+                    AND ( \
+                        EXISTS ( \
+                            SELECT 1 FROM attachments a \
+                            WHERE a.id = json_extract(ol.payload, '$.attachment_id') \
+                            AND a.block_id IN (SELECT id FROM blocks WHERE space_id = ?7) \
+                        ) \
+                        OR ( \
+                            ol.op_type = 'delete_attachment' \
+                            AND EXISTS ( \
+                                SELECT 1 FROM op_log src_add \
+                                WHERE src_add.op_type = 'add_attachment' \
+                                AND src_add.attachment_id = json_extract(ol.payload, '$.attachment_id') \
+                                AND src_add.block_id IN (SELECT id FROM blocks WHERE space_id = ?7) \
+                            ) \
+                        ) \
+                    ) \
+                ) \
+            )) \
+         ORDER BY ol.created_at DESC, ol.seq DESC, ol.device_id DESC \
+         LIMIT ?5";
+
+    async fn list_global_history_oracle(
+        pool: &SqlitePool,
+        op_type_filter: Option<&str>,
+        space_id: Option<&str>,
+        page: &PageRequest,
+    ) -> PageResponse<HistoryEntry> {
+        let (cursor_flag, created_at, seq, device_id): (Option<i64>, i64, i64, &str) =
+            match page.after.as_ref() {
+                Some(c) => (
+                    Some(1),
+                    c.deleted_at.as_deref().unwrap().parse().unwrap(),
+                    c.seq.unwrap_or(0),
+                    &c.id,
+                ),
+                None => (None, 0, 0, ""),
+            };
+        let rows = sqlx::query_as::<_, HistoryEntry>(ORACLE_SQL)
+            .bind(op_type_filter)
+            .bind(cursor_flag)
+            .bind(created_at)
+            .bind(seq)
+            .bind(page.limit + 1)
+            .bind(device_id)
+            .bind(space_id)
+            .fetch_all(pool)
+            .await
+            .unwrap();
+        build_page_response(rows, page.limit, |last| {
+            Cursor::for_history_full(
+                last.device_id.clone(),
+                last.created_at.to_string(),
+                last.seq,
+            )
+        })
+        .unwrap()
+    }
+
+    async fn insert_op(
+        pool: &SqlitePool,
+        device_id: &str,
+        seq: i64,
+        op_type: &str,
+        block_id: Option<&str>,
+        attachment_id: Option<&str>,
+        created_at: i64,
+    ) {
+        let payload =
+            serde_json::json!({ "block_id": block_id, "attachment_id": attachment_id }).to_string();
+        sqlx::query(
+            "INSERT INTO op_log \
+                 (device_id, seq, hash, op_type, payload, created_at, block_id, attachment_id) \
+             VALUES (?, ?, 'h', ?, ?, ?, ?, ?)",
+        )
+        .bind(device_id)
+        .bind(seq)
+        .bind(op_type)
+        .bind(payload)
+        .bind(created_at)
+        .bind(block_id)
+        .bind(attachment_id)
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+
+    const DEVICES: [&str; 3] = ["dev-a", "dev-b", "dev-c"];
+    /// Op targets: blocks in space A, in space B, in no space, and one that
+    /// is not in `blocks` at all.
+    const BLOCKS: [&str; 12] = [
+        "PG_A", "A_1", "A_2", "A_3", "PG_B", "B_1", "B_2", "B_3", "PG_N", "N_1", "N_2", "GHOST",
+    ];
+    /// Live in A, deleted in A, live in B, deleted in B, never added.
+    const ATTACHMENTS: [&str; 5] = [
+        "ATT_A_LIVE",
+        "ATT_A_GONE",
+        "ATT_B_LIVE",
+        "ATT_B_GONE",
+        "ATT_X",
+    ];
+    const RANDOM_OPS: usize = 180;
+    /// Four seeded `add_attachment` rows, the random ops, a three-device tie.
+    const TOTAL_OPS: usize = 4 + RANDOM_OPS + 3;
+
+    /// Two spaces, an unspaced page, attachments live and deleted in each
+    /// space, and ops from three devices whose `created_at` repeats often, so
+    /// a page boundary lands inside a tie group on every level of the keyset.
+    async fn seed(pool: &SqlitePool) {
+        insert_space_block(pool, SPACE_A_ID, "A").await;
+        insert_space_block(pool, SPACE_B_ID, "B").await;
+        for (page, children) in [
+            ("PG_A", ["A_1", "A_2", "A_3"]),
+            ("PG_B", ["B_1", "B_2", "B_3"]),
+            ("PG_N", ["N_1", "N_2", "N_3"]),
+        ] {
+            insert_block(pool, page, "page", page, None, Some(1)).await;
+            for child in children {
+                insert_block(pool, child, "content", child, Some(page), Some(1)).await;
+            }
+        }
+        assign_to_space(pool, "PG_A", SPACE_A_ID).await;
+        assign_to_space(pool, "PG_B", SPACE_B_ID).await;
+        insert_attachment_row(pool, "ATT_A_LIVE", "A_1", "a.png").await;
+        insert_attachment_row(pool, "ATT_B_LIVE", "B_1", "b.png").await;
+
+        let mut created_at = 1_000_i64;
+        let mut seqs = [0_i64; 3];
+        for (i, (attachment, block)) in [
+            ("ATT_A_LIVE", "A_1"),
+            ("ATT_A_GONE", "A_2"),
+            ("ATT_B_LIVE", "B_1"),
+            ("ATT_B_GONE", "B_2"),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            seqs[i % 3] += 1;
+            let device = DEVICES[i % 3];
+            insert_op(
+                pool,
+                device,
+                seqs[i % 3],
+                "add_attachment",
+                Some(block),
+                Some(attachment),
+                created_at,
+            )
+            .await;
+        }
+
+        // Fixed-seed LCG: the fixture is the same on every run.
+        let mut state = 5424_u64;
+        let mut pick = |n: usize| {
+            state = state
+                .wrapping_mul(6_364_136_223_846_793_005)
+                .wrapping_add(1_442_695_040_888_963_407);
+            usize::try_from(state >> 33).unwrap() % n
+        };
+        for _ in 0..RANDOM_OPS {
+            let d = pick(3);
+            seqs[d] += 1;
+            created_at += [0, 0, 1, 3][pick(4)];
+            let block = BLOCKS[pick(BLOCKS.len())];
+            let attachment = ATTACHMENTS[pick(ATTACHMENTS.len())];
+            let (op_type, block, attachment) = match pick(10) {
+                0..=4 => ("edit_block", Some(block), None),
+                5 => ("create_block", Some(block), None),
+                6 => ("set_property", Some(block), None),
+                7 => ("add_attachment", Some(block), Some(attachment)),
+                8 => ("rename_attachment", None, Some(attachment)),
+                _ => ("delete_attachment", None, Some(attachment)),
+            };
+            insert_op(
+                pool, DEVICES[d], seqs[d], op_type, block, attachment, created_at,
+            )
+            .await;
+        }
+
+        // Equal `(created_at, seq)` on three devices: only `device_id` orders them.
+        for (device, block) in DEVICES.into_iter().zip(["A_1", "B_1", "N_1"]) {
+            insert_op(
+                pool,
+                device,
+                1_000,
+                "edit_block",
+                Some(block),
+                None,
+                created_at + 1,
+            )
+            .await;
+        }
+    }
+
+    /// Walk the production query and the oracle side by side, page by page,
+    /// and return how many rows the walk visited.
+    async fn assert_walks_agree(
+        pool: &SqlitePool,
+        op_type: Option<&str>,
+        space: Option<&str>,
+        limit: i64,
+    ) -> usize {
+        let mut cursor = None;
+        let mut seen = 0;
+        loop {
+            let page = PageRequest::new(cursor, Some(limit)).unwrap();
+            let new = list_page_history(pool, "__all__", op_type, space, &page)
+                .await
+                .unwrap();
+            let old = list_global_history_oracle(pool, op_type, space, &page).await;
+            let keys = |r: &PageResponse<HistoryEntry>| {
+                r.items
+                    .iter()
+                    .map(|e| (e.device_id.clone(), e.seq))
+                    .collect::<Vec<_>>()
+            };
+            let label =
+                format!("op_type={op_type:?} space={space:?} limit={limit} after {seen} rows");
+            assert_eq!(keys(&new), keys(&old), "{label}: page rows differ");
+            assert_eq!(new.has_more, old.has_more, "{label}: has_more differs");
+            assert_eq!(new.next_cursor, old.next_cursor, "{label}: cursor differs");
+            seen += new.items.len();
+            assert!(seen <= TOTAL_OPS, "{label}: the walk revisits rows");
+            if !new.has_more {
+                return seen;
+            }
+            cursor = new.next_cursor;
+        }
+    }
+
+    /// Every filter combination, walked at page sizes that put a boundary
+    /// between every pair of rows (1) and inside tie groups (2, 3), returns
+    /// the oracle's rows in the oracle's order with the oracle's cursors.
+    #[tokio::test]
+    async fn global_history_matches_pre_5424_oracle() {
+        let (pool, _dir) = test_pool().await;
+        seed(&pool).await;
+
+        let op_types = [
+            None,
+            Some("edit_block"),
+            Some("delete_attachment"),
+            Some("rename_attachment"),
+        ];
+        let spaces = [
+            None,
+            Some(SPACE_A_ID),
+            Some(SPACE_B_ID),
+            Some("NO_SUCH_SPACE"),
+        ];
+        let mut counts = Vec::new();
+        for op_type in op_types {
+            for space in spaces {
+                let mut walked = Vec::new();
+                for limit in [1, 2, 3, 50] {
+                    walked.push(assert_walks_agree(&pool, op_type, space, limit).await);
+                }
+                assert!(
+                    walked.windows(2).all(|w| w[0] == w[1]),
+                    "op_type={op_type:?} space={space:?}: page size changed the row count {walked:?}"
+                );
+                counts.push(walked[0]);
+            }
+        }
+        // Rows per (op_type, space), in loop order: the unfiltered walk sees
+        // the whole fixture, and every filter but the unknown space keeps rows.
+        assert_eq!(
+            counts,
+            vec![
+                TOTAL_OPS, 77, 61, 0, 88, 30, 23, 0, 22, 22, 15, 0, 17, 4, 3, 0
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn global_history_rejects_cursor_without_integer_created_at_5424() {
+        let (pool, _dir) = test_pool().await;
+        for (deleted_at, expected) in [
+            (None, "cursor missing created_at"),
+            (Some("x".to_owned()), "cursor created_at not an integer"),
+        ] {
+            let cursor = Cursor {
+                id: "dev-a".into(),
+                position: None,
+                deleted_at,
+                seq: Some(1),
+                rank: None,
+            }
+            .encode()
+            .unwrap();
+            let page = PageRequest::new(Some(cursor), Some(10)).unwrap();
+            let err = list_page_history(&pool, "__all__", None, None, &page)
+                .await
+                .unwrap_err();
+            assert!(
+                matches!(err, AppError::Validation { .. }) && err.to_string().contains(expected),
+                "expected {expected:?}, got: {err}"
+            );
+        }
+    }
+
+    /// Production SQL of `list_global_history`, pinned to `history.rs` by
+    /// `pinned_global_history_sql_is_production_5424`.
+    const FIRST_PAGE_SQL: &str = "SELECT ol.device_id, ol.seq, ol.op_type, ol.payload, ol.created_at, \
+            ol.is_replicated AS \"is_replicated!: bool\" \
+     FROM op_log ol \
+     WHERE (?1 IS NULL OR ol.op_type = ?1) \
+       AND (?2 IS NULL OR ( \
+            EXISTS (SELECT 1 FROM blocks sb WHERE sb.id = ol.block_id AND sb.space_id = ?2) \
+            OR ( \
+                ol.op_type IN ('delete_attachment', 'rename_attachment') \
+                AND ( \
+                    EXISTS ( \
+                        SELECT 1 FROM attachments a JOIN blocks sb ON sb.id = a.block_id \
+                        WHERE a.id = json_extract(ol.payload, '$.attachment_id') \
+                        AND sb.space_id = ?2 \
+                    ) \
+                    OR ( \
+                        ol.op_type = 'delete_attachment' \
+                        AND EXISTS ( \
+                            SELECT 1 FROM op_log src_add JOIN blocks sb ON sb.id = src_add.block_id \
+                            WHERE src_add.op_type = 'add_attachment' \
+                            AND src_add.attachment_id = json_extract(ol.payload, '$.attachment_id') \
+                            AND sb.space_id = ?2 \
+                        ) \
+                    ) \
+                ) \
+            ) \
+        )) \
+     ORDER BY ol.created_at DESC, ol.seq DESC, ol.device_id DESC \
+     LIMIT ?3";
+    const CURSOR_PAGE_SQL: &str = "SELECT ol.device_id, ol.seq, ol.op_type, ol.payload, ol.created_at, \
+            ol.is_replicated AS \"is_replicated!: bool\" \
+     FROM op_log ol \
+     WHERE (ol.created_at, ol.seq, ol.device_id) < (?4, ?5, ?6) \
+       AND (?1 IS NULL OR ol.op_type = ?1) \
+       AND (?2 IS NULL OR ( \
+            EXISTS (SELECT 1 FROM blocks sb WHERE sb.id = ol.block_id AND sb.space_id = ?2) \
+            OR ( \
+                ol.op_type IN ('delete_attachment', 'rename_attachment') \
+                AND ( \
+                    EXISTS ( \
+                        SELECT 1 FROM attachments a JOIN blocks sb ON sb.id = a.block_id \
+                        WHERE a.id = json_extract(ol.payload, '$.attachment_id') \
+                        AND sb.space_id = ?2 \
+                    ) \
+                    OR ( \
+                        ol.op_type = 'delete_attachment' \
+                        AND EXISTS ( \
+                            SELECT 1 FROM op_log src_add JOIN blocks sb ON sb.id = src_add.block_id \
+                            WHERE src_add.op_type = 'add_attachment' \
+                            AND src_add.attachment_id = json_extract(ol.payload, '$.attachment_id') \
+                            AND sb.space_id = ?2 \
+                        ) \
+                    ) \
+                ) \
+            ) \
+        )) \
+     ORDER BY ol.created_at DESC, ol.seq DESC, ol.device_id DESC \
+     LIMIT ?3";
+
+    fn squash(s: &str) -> String {
+        s.chars()
+            .filter(|c| !c.is_whitespace() && *c != '\\' && *c != '"')
+            .collect()
+    }
+
+    #[test]
+    fn pinned_global_history_sql_is_production_5424() {
+        let source = squash(include_str!("history.rs"));
+        for (label, sql) in [
+            ("first page", FIRST_PAGE_SQL),
+            ("cursor page", CURSOR_PAGE_SQL),
+        ] {
+            assert!(
+                source.contains(&squash(sql)),
+                "the {label} SQL pinned here is not the SQL in history.rs; copy it over \
+                 and re-check the plan assertions"
+            );
+        }
+    }
+
+    async fn plan(
+        pool: &SqlitePool,
+        sql: &str,
+        op_type: Option<&str>,
+        space: Option<&str>,
+        cursor: bool,
+    ) -> Vec<String> {
+        let mut query = sqlx::query_as::<_, (i64, i64, i64, String)>(sqlx::AssertSqlSafe(format!(
+            "EXPLAIN QUERY PLAN {sql}"
+        )))
+        .bind(op_type)
+        .bind(space)
+        .bind(51_i64);
+        if cursor {
+            query = query.bind(1_000_i64).bind(7_i64).bind("dev-b");
+        }
+        query
+            .fetch_all(pool)
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|(_, _, _, detail)| detail)
+            .collect()
+    }
+
+    /// Both pages walk `idx_op_log_created` newest-first, the cursor page as a
+    /// range seek, so `LIMIT` stops the walk; nothing sorts the whole result
+    /// and nothing materialises the space's block ids. `LAST 2 TERMS OF ORDER BY`
+    /// sorts one `created_at` tie group at a time (the index does not carry
+    /// `seq, device_id`), which `LIMIT` still cuts short.
+    #[tokio::test]
+    async fn global_history_plan_seeks_created_at_index_5424() {
+        let (pool, _dir) = test_pool().await;
+        for analyzed in [false, true] {
+            if analyzed {
+                sqlx::query(
+                    "WITH RECURSIVE n(i) AS (SELECT 0 UNION ALL SELECT i + 1 FROM n WHERE i < 19999) \
+                     INSERT INTO op_log (device_id, seq, hash, op_type, payload, created_at, block_id) \
+                     SELECT 'dev-' || (i % 3), i + 1, 'h', 'edit_block', '{}', 1000 + i / 2, 'B' || (i % 500) \
+                     FROM n",
+                )
+                .execute(&pool)
+                .await
+                .unwrap();
+                sqlx::query("ANALYZE").execute(&pool).await.unwrap();
+            }
+            for op_type in [None, Some("edit_block")] {
+                for space in [None, Some(SPACE_A_ID)] {
+                    for (sql, cursor, walk) in [
+                        (
+                            FIRST_PAGE_SQL,
+                            false,
+                            "SCAN ol USING INDEX idx_op_log_created",
+                        ),
+                        (
+                            CURSOR_PAGE_SQL,
+                            true,
+                            "SEARCH ol USING INDEX idx_op_log_created (created_at<?)",
+                        ),
+                    ] {
+                        let lines = plan(&pool, sql, op_type, space, cursor).await;
+                        let label = format!(
+                            "analyzed={analyzed} op_type={op_type:?} space={space:?} cursor={cursor}"
+                        );
+                        assert!(lines.iter().any(|l| l == walk), "{label}: {lines:#?}");
+                        assert!(
+                            !lines.iter().any(|l| l == "USE TEMP B-TREE FOR ORDER BY"),
+                            "{label}: {lines:#?}"
+                        );
+                        assert!(
+                            !lines.iter().any(|l| l.contains("LIST SUBQUERY")),
+                            "{label}: {lines:#?}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+}
+
+// ====================================================================
 // Proptest tests
 // ====================================================================
 

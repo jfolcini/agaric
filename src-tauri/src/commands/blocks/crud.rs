@@ -223,14 +223,17 @@ pub async fn create_block_inner_with_space(
         // + loop is gone because the op records never leave the
         // transaction scope.
         let _index = index;
-        let new_page_id = crate::commands::create_page_in_space_inner(
+        // Boxed: inline, the page's future (its journal template included,
+        // #5395) makes `create_block`'s too large for the stack
+        // (`clippy::large_futures`).
+        let new_page_id = Box::pin(crate::commands::create_page_in_space_inner(
             pool,
             device_id,
             materializer,
             parent_id.map(BlockId::into_string),
             content,
             sid.as_str().to_owned(),
-        )
+        ))
         .await?;
 
         // Re-fetch the materialized BlockRow so the caller (Tauri IPC)
