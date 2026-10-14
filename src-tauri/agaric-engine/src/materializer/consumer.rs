@@ -551,6 +551,21 @@ pub(super) async fn process_single_foreground_task(
     if let MaterializeTask::ReplayApplyOps(records, dirty) = &task {
         match handle_foreground_task(pool, &task, loro).await {
             Ok(()) => {
+                // A replayed op may carry a retry row from the previous boot;
+                // left behind, the sweeper would re-apply it out of order.
+                for record in records.iter() {
+                    let per_op =
+                        MaterializeTask::ReplayApplyOp(Arc::new(record.clone()), dirty.clone());
+                    if let Err(e) =
+                        super::retry_queue::clear_on_success(pool, &per_op, metrics).await
+                    {
+                        tracing::warn!(
+                            error = %e,
+                            "issue #378: failed to clear retry-queue row after durable fg \
+                             success; row will be re-leased and re-cleared on the next sweep"
+                        );
+                    }
+                }
                 metrics.fg_processed.fetch_add(1, Ordering::Relaxed);
             }
             Err(e) => {

@@ -1372,6 +1372,57 @@ async fn failed_replay_chunk_rolls_back_every_op_5418() {
     );
 }
 
+/// #5418 — a chunk that applies clears each op's retry row left by the
+/// previous boot; a surviving row would make the sweeper re-apply the op after
+/// every op that followed it.
+#[tokio::test]
+async fn successful_replay_chunk_clears_its_ops_retry_rows_5418() {
+    use crate::apply::kernel::ReplayDirtyParents;
+    use crate::materializer::MaterializeTask;
+    use std::sync::Arc;
+
+    const CHUNKED: &str = "01HZ00000000000000005418R1";
+
+    let (pool, _dir) = fresh_pool_with_page().await;
+    let state = Arc::new(crate::loro::shared::LoroState::new());
+    seed_page_via_loro(&pool, &state).await;
+
+    let payload = OpPayload::CreateBlock(CreateBlockPayload {
+        block_id: BlockId::from_trusted(CHUNKED),
+        block_type: "content".into(),
+        parent_id: Some(BlockId::from_trusted(PAGE_ID)),
+        position: Some(1),
+        index: None,
+        content: "chunked".into(),
+    });
+    let record = agaric_store::op_log::append_local_op(&pool, DEVICE_ID, payload)
+        .await
+        .expect("append create");
+
+    let metrics = Arc::new(crate::materializer::QueueMetrics::default());
+    let dirty = ReplayDirtyParents::new();
+    let failed = MaterializeTask::ReplayApplyOp(Arc::new(record.clone()), dirty.clone());
+    crate::materializer::retry_queue::record_failure(&pool, &failed, "previous boot", &metrics)
+        .await
+        .expect("seed retry row");
+
+    let task = MaterializeTask::ReplayApplyOps(Arc::new(vec![record]), dirty);
+    crate::materializer::consumer::process_single_foreground_task(&pool, task, &metrics, &state)
+        .await;
+
+    let blocks: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM blocks WHERE id = ?")
+        .bind(CHUNKED)
+        .fetch_one(&pool)
+        .await
+        .expect("count blocks");
+    assert_eq!(blocks, 1, "the chunk applies");
+    let rows: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM materializer_retry_queue")
+        .fetch_one(&pool)
+        .await
+        .expect("count retry rows");
+    assert_eq!(rows, 0, "a chunk that applies clears its ops' retry rows");
+}
+
 /// #2896 — soundness by construction: the reprojection-suppression decision now
 /// travels per-op as an explicit `ApplyMode`, never as ambient shared state.
 ///
