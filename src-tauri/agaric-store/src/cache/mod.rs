@@ -162,7 +162,7 @@ where
 // Re-exports — preserve the public API surface
 // ---------------------------------------------------------------------------
 
-pub use agenda::{rebuild_agenda_cache, rebuild_agenda_cache_split};
+pub use agenda::{rebuild_agenda_cache, rebuild_agenda_cache_split, rewrite_agenda_cache_once};
 #[cfg(test)]
 pub(crate) use block_links::rebuild_block_links_unresolved_conn;
 pub use block_links::{

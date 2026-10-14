@@ -67,8 +67,9 @@
 //!   - [`tombstone_purge`] — purges expired tombstones (24 h cadence,
 //!     idle predicate, 90-day retention).
 //!   - `enqueue_cleanup_orphaned_attachments`, `enqueue_fts_idle_optimize`,
-//!     [`loro_snapshot_if_dirty`], and `projected_agenda_midnight_tick` —
-//!     the remaining materializer-enqueue / snapshot / agenda jobs.
+//!     `enqueue_rebuild_page_ids`, [`loro_snapshot_if_dirty`], and
+//!     `projected_agenda_midnight_tick` — the remaining materializer-enqueue /
+//!     snapshot / agenda jobs.
 
 use agaric_core::error::AppError;
 use chrono::Datelike;
@@ -206,6 +207,17 @@ pub async fn enqueue_cleanup_orphaned_attachments(
             AppError::Channel(format!("cleanup_orphaned_attachments enqueue failed: {e}"))
         })?;
     tracing::debug!("cleanup_orphaned_attachments tick enqueued");
+    Ok(())
+}
+
+/// #5420 — enqueue the vault-wide `RebuildPageIds` backstop.
+pub fn enqueue_rebuild_page_ids(
+    materializer: &crate::materializer::Materializer,
+) -> Result<(), AppError> {
+    materializer
+        .try_enqueue_background(crate::materializer::MaterializeTask::RebuildPageIds)
+        .map_err(|e| AppError::Channel(format!("page_ids_backstop enqueue failed: {e}")))?;
+    tracing::debug!("page_ids_backstop tick enqueued");
     Ok(())
 }
 

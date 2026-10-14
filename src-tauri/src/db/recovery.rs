@@ -1025,14 +1025,15 @@ async fn rebuild_caches_after_engine_reproject(pool: &SqlitePool) {
     // tag-filtered reads) — recovered-but-invisible until an unrelated full
     // cache rebuild happens to run.
     //
-    // The boot fan-out (`spawn_boot_maintenance`) enqueues an unconditional
-    // full-table `RebuildPageIds`, but only rebuilds FTS when `fts_blocks` is
-    // EMPTY (a stale-but-non-empty index after a partial corruption never
-    // triggers it) and never rebuilds tag-inheritance unconditionally. So we
-    // cannot rely on it to cover the reprojected content. Rebuild the
-    // visibility-critical derived caches synchronously and deterministically
-    // here instead (the disaster path is rare, so the one-shot full rebuild
-    // cost is acceptable — and correctness/visibility beats deferral).
+    // The boot fan-out (`spawn_boot_maintenance`) runs no `RebuildPageIds`
+    // (that backstop waits for the app to go idle), only rebuilds FTS when
+    // `fts_blocks` is EMPTY (a stale-but-non-empty index after a partial
+    // corruption never triggers it) and never rebuilds tag-inheritance
+    // unconditionally. So we cannot rely on it to cover the reprojected
+    // content. Rebuild the visibility-critical derived caches synchronously
+    // and deterministically here instead (the disaster path is rare, so the
+    // one-shot full rebuild cost is acceptable — and correctness/visibility
+    // beats deferral).
     //
     // Order: `page_id` first — the FTS and tag-inheritance rebuilds are
     // independent of it, but `page_id` is the foundation other `page_id`-scoped
@@ -1044,7 +1045,7 @@ async fn rebuild_caches_after_engine_reproject(pool: &SqlitePool) {
     // durably committed above, every read path degrades gracefully on a stale
     // cache, and the boot fan-out + next-op incremental updates are a backstop.
     if let Err(e) = agaric_store::cache::rebuild_page_ids(pool).await {
-        tracing::warn!(error = %e, "recovery (#2504): page_id rebuild after engine reproject failed (non-fatal; boot fan-out retries)");
+        tracing::warn!(error = %e, "recovery (#2504): page_id rebuild after engine reproject failed (non-fatal; the idle page_id backstop retries)");
     }
     if let Err(e) = agaric_store::fts::rebuild_fts_index(pool).await {
         tracing::warn!(error = %e, "recovery (#2504): FTS rebuild after engine reproject failed (non-fatal; reprojected content unsearchable until next rebuild)");
