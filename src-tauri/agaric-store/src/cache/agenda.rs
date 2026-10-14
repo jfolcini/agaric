@@ -503,8 +503,9 @@ const AGENDA_CACHE_REWRITE_MARKER: &str = "repair.agenda_cache_rewrite.v1";
 /// rewrites the rows the old projection left, and every write path since
 /// maintains the new shape, so once per vault is enough.
 ///
-/// The marker is written in the rewrite's own transaction, so a pass that
-/// fails or never commits leaves it unset and the next boot retries.
+/// The marker is written only after the rewrite commits, so a pass that fails
+/// leaves it unset and the next boot retries; the rewrite is idempotent, so a
+/// crash between the two only reruns it.
 /// Returns whether this pass ran — false when the marker had already retired
 /// it.
 ///
@@ -524,22 +525,18 @@ pub async fn rewrite_agenda_cache_once(
         return Ok(false);
     }
 
-    let mut desired_conn = read_pool.acquire().await?;
-    let mut current_conn = read_pool.acquire().await?;
-    let mut tx = crate::db::begin_immediate_logged(write_pool, "agenda_cache_rewrite").await?;
-    let changed = apply_sort_merge_rebuild(&mut desired_conn, &mut current_conn, &mut tx).await?;
-
+    let changed = rebuild_agenda_cache_split_impl(write_pool, read_pool)
+        .await?
+        .to_string();
     let now = crate::db::now_ms();
-    let changed = changed.to_string();
     sqlx::query!(
         "INSERT OR REPLACE INTO app_settings (key, value, updated_at) VALUES (?, ?, ?)",
         AGENDA_CACHE_REWRITE_MARKER,
         changed,
         now,
     )
-    .execute(&mut *tx)
+    .execute(write_pool)
     .await?;
-    tx.commit().await?;
     Ok(true)
 }
 

@@ -8,6 +8,7 @@
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 
+import { select } from 'd3-selection'
 import { zoomIdentity } from 'd3-zoom'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
@@ -21,6 +22,7 @@ import {
   reducedMotionDuration,
   renderGraphElements,
   revealTransform,
+  setupZoomBehavior,
   unpackPositions,
   ZOOM_BUTTON_DURATION_MS,
   ZOOM_FIT_DURATION_MS,
@@ -421,7 +423,7 @@ describe('renderGraphElements — neighbourhood highlight on hover and focus (#5
     group(svg, 'B').dispatchEvent(new Event('mouseleave'))
     expect(opacities(svg)).toEqual(selectedOnly)
 
-    rendered.highlight.select(null)
+    rendered.highlight.mark({ currentPageId: null, selectedId: null })
     expect(opacities(svg)).toEqual(RESTING)
   })
 
@@ -462,6 +464,94 @@ describe('renderGraphElements — neighbourhood highlight on hover and focus (#5
     expect(css).toMatch(
       /@media \(prefers-reduced-motion: reduce\)\s*\{\s*:root\s*\{\s*--motion-scale:\s*0;/,
     )
+  })
+})
+
+describe('labels — one size on screen, haloed, chosen by importance (#5430)', () => {
+  afterEach(() => {
+    document.body.replaceChildren()
+  })
+
+  it('scales the label size and halo as 1/k on every zoom, and reports each zoom end', () => {
+    const svg = makeSvg()
+    document.body.append(svg)
+    const { g } = renderGraphElements(svg, [makeNode('a', 'Alpha')], [], NO_ACTIONS)
+    const onZoomEnd = vi.fn()
+    const zoomBehavior = setupZoomBehavior(svg, g, onZoomEnd)
+    const layer = svg.querySelector('g.nodes-layer') as SVGGElement
+    const text = svg.querySelector('g.node > text') as SVGTextElement
+
+    const sizes = [0.1, 1, 4].map((k) => {
+      zoomBehavior.transform(select(svg), zoomIdentity.scale(k))
+      return [Number(layer.getAttribute('font-size')), Number(layer.getAttribute('stroke-width'))]
+    })
+
+    expect(sizes[0]?.[0]).toBeCloseTo(120)
+    expect(sizes[0]?.[1]).toBeCloseTo(30)
+    expect(sizes[1]).toEqual([12, 3])
+    expect(sizes[2]).toEqual([3, 0.75])
+    // The label inherits both from the layer.
+    expect([text.getAttribute('font-size'), text.getAttribute('stroke-width')]).toEqual([
+      null,
+      null,
+    ])
+    expect(onZoomEnd).toHaveBeenCalledTimes(3)
+  })
+
+  it('haloes every label in the canvas colour, hovered or not', () => {
+    const svg = makeSvg()
+    renderGraphElements(svg, [makeNode('a', 'Alpha'), makeNode('b', 'Beta')], [], NO_ACTIONS)
+
+    const halos = Array.from(svg.querySelectorAll<SVGTextElement>('g.node > text')).map((t) => [
+      t.getAttribute('stroke'),
+      t.style.paintOrder,
+    ])
+    expect(halos).toEqual([
+      ['var(--background)', 'stroke'],
+      ['var(--background)', 'stroke'],
+    ])
+  })
+
+  // Every node sits on one point and is too small to be labelled by zoom, so a
+  // label shows only because it is pinned.
+  const nodes = ['hub', 'a', 'b', 'far', 'current', 'selected', 'lone'].map((id) =>
+    Object.assign(makeNode(id, id), { x: 0, y: 0 }),
+  )
+  const edges: GraphEdge[] = [
+    { source: 'hub', target: 'a', ref_count: 1 },
+    { source: 'b', target: 'hub', ref_count: 1 },
+    { source: 'a', target: 'far', ref_count: 1 },
+  ]
+
+  function labelled(svg: SVGSVGElement): string[] {
+    return Array.from(svg.querySelectorAll('g.node'))
+      .filter((g) => g.querySelector('text')?.getAttribute('display') !== 'none')
+      .map((g) => g.getAttribute('aria-label') as string)
+  }
+
+  it('labels the hovered or focused node and its neighbours, the current page and the selection, whatever they cover', () => {
+    const svg = makeSvg()
+    const rendered = renderGraphElements(svg, nodes, edges, NO_ACTIONS, {
+      currentPageId: 'current',
+      selectedId: 'selected',
+    })
+    const group = (id: string): Element =>
+      svg.querySelector(`g.node[aria-label="${id}"]`) as Element
+
+    rendered.highlight.placeLabels()
+    expect(labelled(svg)).toEqual(['current', 'selected'])
+
+    group('hub').dispatchEvent(new Event('mouseenter'))
+    expect(labelled(svg)).toEqual(['hub', 'a', 'b', 'current', 'selected'])
+    group('hub').dispatchEvent(new Event('mouseleave'))
+    expect(labelled(svg)).toEqual(['current', 'selected'])
+
+    group('far').dispatchEvent(new Event('focus'))
+    expect(labelled(svg)).toEqual(['a', 'far', 'current', 'selected'])
+    group('far').dispatchEvent(new Event('blur'))
+
+    rendered.highlight.mark({ currentPageId: null, selectedId: 'hub' })
+    expect(labelled(svg)).toEqual(['hub', 'a', 'b'])
   })
 })
 

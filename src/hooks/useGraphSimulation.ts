@@ -146,16 +146,26 @@ export function useGraphSimulation({
     fitNodesToView(stateRef.current?.rendered.simNodes ?? [])
   }, [fitNodesToView])
 
+  // Labels are chosen again where the layout or the zoom comes to rest, never
+  // per tick or per zoom frame (#5430).
+  const placeLabels = useCallback(() => {
+    stateRef.current?.rendered.highlight.placeLabels()
+  }, [])
+
   // A first layout is fitted once it settles; a kept one comes back with the
-  // viewport it was left with, which the fit must not override (#5434).
+  // viewport it was left with, which the fit must not override (#5434). The
+  // fit's zoom end chooses the labels, so none flash in at the pre-fit zoom.
   const fitOnSettleRef = useRef(false)
-  const fitOnFirstSettle = useCallback(
+  const onSettled = useCallback(
     (settledNodes: readonly GraphNode[]) => {
-      if (!fitOnSettleRef.current) return
+      if (!fitOnSettleRef.current) {
+        placeLabels()
+        return
+      }
       fitOnSettleRef.current = false
       fitNodesToView(settledNodes)
     },
-    [fitNodesToView],
+    [fitNodesToView, placeLabels],
   )
 
   // `setupKey` is bumped by the patch effect when it detects that
@@ -207,7 +217,7 @@ export function useGraphSimulation({
       keptSettled = seedPositions(rendered, kept.positions) && kept.settled
       applyPositions()
     }
-    const detachZoom = attachZoom(svg, rendered.g, fitToView, kept?.transform)
+    const detachZoom = attachZoom(svg, rendered.g, fitToView, placeLabels, kept?.transform)
     // A re-setup after a worker failure reads back the layout it kept; a fit still owed stays owed.
     if (kept === null) fitOnSettleRef.current = true
 
@@ -223,7 +233,7 @@ export function useGraphSimulation({
       height: rendered.height,
       prefersReducedMotion,
       keptSettled,
-      onSettled: fitOnFirstSettle,
+      onSettled,
     }
 
     const useWorker = typeof Worker !== 'undefined' && !workerFailed
@@ -259,6 +269,7 @@ export function useGraphSimulation({
       handledEdges: edgesRef.current,
       simActive: true,
     }
+    rendered.highlight.placeLabels()
 
     return () => {
       resizeObserver?.disconnect()
@@ -282,7 +293,8 @@ export function useGraphSimulation({
     runMainThread,
     setupKey,
     fitToView,
-    fitOnFirstSettle,
+    placeLabels,
+    onSettled,
   ])
 
   // ── Patch effect ─────────────────────────────────────────────────
@@ -396,7 +408,7 @@ export function useGraphSimulation({
       height,
       prefersReducedMotion: state.prefersReducedMotion,
       keptSettled: false,
-      onSettled: fitOnFirstSettle,
+      onSettled,
     }
 
     // #2194: if a simulation is already LIVE, swap its node/edge set in place
@@ -431,6 +443,7 @@ export function useGraphSimulation({
     }
     state.handledNodes = nodes
     state.handledEdges = edges
+    highlight.placeLabels()
 
     // No cleanup return — disposal of `state.handle` happens in the
     // setup effect's cleanup (on unmount or simulation-kind change).
@@ -446,7 +459,7 @@ export function useGraphSimulation({
     const state = stateRef.current
     if (!state) return
     markNodes(state.rendered.node, marks)
-    state.rendered.highlight.select(marks.selectedId)
+    state.rendered.highlight.mark(marks)
   }, [marks])
 
   return { zoomIn, zoomOut, fitToView }
