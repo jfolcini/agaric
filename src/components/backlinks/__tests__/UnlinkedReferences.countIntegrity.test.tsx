@@ -189,7 +189,8 @@ async function expand(user: ReturnType<typeof userEvent.setup>) {
 /** Drive the REAL BacklinkFilterBuilder to apply a BlockType filter. */
 async function applyBlockTypeFilter(user: ReturnType<typeof userEvent.setup>) {
   await user.click(await screen.findByRole('button', { name: /Add filter/i }))
-  await user.selectOptions(screen.getByLabelText('Filter category'), 'type')
+  // The add-filter row is lazy (#5441).
+  await user.selectOptions(await screen.findByLabelText('Filter category'), 'type')
   await user.selectOptions(screen.getByLabelText('Block type value'), 'page')
   await user.click(screen.getByRole('button', { name: /Apply filter/i }))
 }

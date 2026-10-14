@@ -1,6 +1,6 @@
 //! Journal command handlers — daily page navigation.
 
-use chrono::NaiveDate;
+use chrono::{Datelike, NaiveDate, NaiveTime};
 use sqlx::SqlitePool;
 use tauri::State;
 use tracing::instrument;
@@ -99,7 +99,9 @@ pub async fn journal_for_date_inner(
 /// `CreateBlock` + `SetProperty(space)` pattern as
 /// [`crate::commands::create_page_in_space_inner`] so the new page
 /// never exists in the op log without its `space` property — the
-/// Invariant "nothing outside of spaces".
+/// Invariant "nothing outside of spaces" — then copies the space's journal
+/// template under it in the same transaction
+/// ([`apply_journal_template_in_tx`], #5395).
 ///
 /// # TOCTOU race fix
 ///
@@ -217,19 +219,284 @@ async fn resolve_or_create_journal_page(
     // Commit + fire-and-forget dispatch for the create op (mirrors the
     // post-commit dispatch in `create_page_in_space`).
     tx.enqueue_background(page_op_record);
+    apply_journal_template_in_tx(
+        &mut tx,
+        materializer,
+        device_id,
+        block.id.as_str(),
+        date,
+        space_id,
+    )
+    .await?;
     tx.commit_and_dispatch(materializer).await?;
 
     Ok(block)
 }
 
+/// The journal template of `space_id`, as the journal's *Configure journal
+/// template* button finds it: the live page flagged `journal-template = true`
+/// with the smallest id. A second live one is logged and ignored; a template
+/// in the trash is logged and counts as none, so the day is created either
+/// way.
+async fn find_journal_template_in_tx(
+    tx: &mut CommandTx,
+    space_id: &str,
+) -> Result<Option<String>, AppError> {
+    let rows = sqlx::query!(
+        r#"SELECT b.id as "id!: String", b.deleted_at IS NOT NULL as "trashed!: bool"
+           FROM blocks b
+           JOIN block_properties bp
+             ON bp.block_id = b.id
+            AND bp.key = 'journal-template'
+            AND bp.value_text = 'true'
+           WHERE b.block_type = 'page'
+             AND b.space_id = ?1
+           ORDER BY b.id ASC"#,
+        space_id,
+    )
+    .fetch_all(&mut ***tx)
+    .await?;
+    let mut live = rows.iter().filter(|row| !row.trashed);
+    let Some(first) = live.next() else {
+        if let Some(trashed) = rows.first() {
+            tracing::warn!(
+                target: "journal",
+                template_id = %trashed.id,
+                space_id,
+                "the journal template is in the trash; creating an empty day"
+            );
+        }
+        return Ok(None);
+    };
+    if live.next().is_some() {
+        tracing::warn!(
+            target: "journal",
+            template_id = %first.id,
+            space_id,
+            "several pages are flagged journal-template; using the first"
+        );
+    }
+    Ok(Some(first.id.clone()))
+}
+
+/// Copy the space's journal template under the day page `page_id` (#5395),
+/// in the caller's transaction, so the day and its template land or roll back
+/// together and one undo reverts both. No template, one in the trash, or one
+/// the copy refuses (a value that does not read back from the source grammar,
+/// a copy over the undo-op cap) leaves the day empty with a warning: the day
+/// is what Quick Capture and `journal_for_date` need, and a template that
+/// blocked it would block every day until it was fixed. The copy refuses
+/// before its first insert, so an empty day never carries part of the
+/// template. Every creator of a day page calls this: the journal view and the
+/// date picker through [`crate::commands::create_page_in_space_inner`], Quick
+/// Capture and the MCP `journal_for_date` tool through
+/// [`resolve_or_create_journal_page`].
+///
+/// The variables expand against `date`, the day being created, not the
+/// clock: `<% today %>` and `<% page title %>` are the day. `<% time %>` is
+/// the clock, since a day has no time of its own, and `<% datetime %>` is
+/// both. Returns the copied rows, depth-first.
+pub(crate) async fn apply_journal_template_in_tx(
+    tx: &mut CommandTx,
+    materializer: &Materializer,
+    device_id: &str,
+    page_id: &str,
+    date: &str,
+    space_id: &str,
+) -> Result<Vec<BlockRow>, AppError> {
+    let Some(template_id) = find_journal_template_in_tx(tx, space_id).await? else {
+        return Ok(Vec::new());
+    };
+    let day = NaiveDate::parse_from_str(date, "%Y-%m-%d")
+        .map_err(|_| AppError::validation(format!("expected YYYY-MM-DD, got '{date}'")))?;
+    let time = chrono::Local::now().time();
+    let copied = crate::commands::pages::copy_page_blocks_in_tx(
+        tx,
+        materializer,
+        device_id,
+        &template_id,
+        page_id,
+        |content| expand_journal_template_variables(content, day, time),
+    )
+    .await?;
+    Ok(copied.unwrap_or_else(|why| {
+        tracing::warn!(
+            target: "journal",
+            template_id = %template_id,
+            space_id,
+            why,
+            "the journal template cannot be copied; creating an empty day"
+        );
+        Vec::new()
+    }))
+}
+
+/// Expand one block's template variables for the day `day` (#5395), the
+/// names the Templates view lists: `<% today %>`, `<% time %>`,
+/// `<% datetime %>`, `<% page title %>`, `<% weekday %>`, `<% month %>`,
+/// `<% isoweek %>` and `<% date+N %>` / `<% date-N %>`, N days from the day;
+/// the `{{date}}`, `{{time}}` and `{{title}}` spellings of the `/template`
+/// grammar take the same names, and `{{cursor}}` is stripped. A name is
+/// case-insensitive and its inner whitespace collapses. A date or time name
+/// takes a `:FORMAT` suffix in the date-fns tokens [`format_date_fns`] knows
+/// (`<% today:EEEE, MMMM d %>`); a format with a token it does not know gives
+/// the default form, never a literal token in every new day. Day and month
+/// names are English. Any other token stays as written.
+fn expand_journal_template_variables(content: &str, day: NaiveDate, time: NaiveTime) -> String {
+    let resolve = |body: &str| -> Option<String> {
+        let (head, format) = match body.split_once(':') {
+            Some((head, format)) => (head, Some(format.trim())),
+            None => (body, None),
+        };
+        let name = head
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ")
+            .to_ascii_lowercase();
+        let format = format.filter(|format| !format.is_empty());
+        let formatted = |at: NaiveDate, default: String| {
+            format
+                .and_then(|format| format_date_fns(at.and_time(time), format))
+                .unwrap_or(default)
+        };
+        let date = day.format("%Y-%m-%d").to_string();
+        let clock = time.format("%H:%M").to_string();
+        match name.as_str() {
+            "today" | "date" => Some(formatted(day, date)),
+            "time" => Some(formatted(day, clock)),
+            "datetime" => Some(formatted(day, format!("{date} {clock}"))),
+            "page title" | "title" => Some(date),
+            "weekday" => Some(formatted(day, day.format("%A").to_string())),
+            "month" => Some(formatted(day, day.format("%B").to_string())),
+            "isoweek" => Some(day.iso_week().week().to_string()),
+            "cursor" => Some(String::new()),
+            _ => {
+                let offset = name.strip_prefix("date")?;
+                let (sign, digits) = if let Some(digits) = offset.strip_prefix('+') {
+                    (1, digits)
+                } else {
+                    (-1, offset.strip_prefix('-')?)
+                };
+                if !digits.bytes().all(|b| b.is_ascii_digit()) {
+                    return None;
+                }
+                let days = sign * digits.parse::<i64>().ok()?;
+                let at =
+                    chrono::Duration::try_days(days).and_then(|d| day.checked_add_signed(d))?;
+                Some(formatted(at, at.format("%Y-%m-%d").to_string()))
+            }
+        }
+    };
+    let expanded = expand_tokens(content, "<%", "%>", resolve);
+    expand_tokens(&expanded, "{{", "}}", resolve)
+}
+
+/// Format `at` with a date-fns pattern, the tokens the Templates view's
+/// examples and the `/template` path's tests use, each mapped to its chrono
+/// twin: `yyyy` / `YYYY` and `yy` (year), `MMMM`, `MMM`, `MM` and `M` (month
+/// name, short name, padded and plain number), `dd` / `DD` and `d` (day),
+/// `EEEE` and `E`–`EEE` (weekday name and short name), `HH` / `H`, `hh` / `h`
+/// (24- and 12-hour), `mm` / `m`, `ss` / `s` and `a` (AM/PM). Text in single
+/// quotes and any other non-letter is literal, as in date-fns. `None` for a
+/// run of letters that is none of these: the caller then takes the default
+/// form rather than guessing.
+fn format_date_fns(at: chrono::NaiveDateTime, pattern: &str) -> Option<String> {
+    let mut spec = String::with_capacity(pattern.len() * 2);
+    let mut chars = pattern.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '\'' {
+            loop {
+                match chars.next()? {
+                    '\'' if chars.peek() == Some(&'\'') => {
+                        chars.next();
+                        spec.push('\'');
+                    }
+                    '\'' => break,
+                    '%' => spec.push_str("%%"),
+                    literal => spec.push(literal),
+                }
+            }
+            continue;
+        }
+        if !c.is_ascii_alphabetic() {
+            if c == '%' {
+                spec.push('%');
+            }
+            spec.push(c);
+            continue;
+        }
+        let mut run = 1;
+        while chars.peek() == Some(&c) {
+            chars.next();
+            run += 1;
+        }
+        spec.push_str(match (c, run) {
+            ('y' | 'Y', 4) => "%Y",
+            ('y', 2) => "%y",
+            ('M', 4) => "%B",
+            ('M', 3) => "%b",
+            ('M', 2) => "%m",
+            ('M', 1) => "%-m",
+            ('d' | 'D', 2) => "%d",
+            ('d', 1) => "%-d",
+            ('E', 4) => "%A",
+            ('E', 1..=3) => "%a",
+            ('H', 2) => "%H",
+            ('H', 1) => "%-H",
+            ('h', 2) => "%I",
+            ('h', 1) => "%-I",
+            ('m', 2) => "%M",
+            ('m', 1) => "%-M",
+            ('s', 2) => "%S",
+            ('s', 1) => "%-S",
+            ('a', 1) => "%p",
+            _ => return None,
+        });
+    }
+    Some(at.format(&spec).to_string())
+}
+
+/// Replace each `open`…`close` token in `content` by what `resolve` makes of
+/// its body, leaving a token it declines, and an `open` nothing closes, as
+/// written.
+fn expand_tokens(
+    content: &str,
+    open: &str,
+    close: &str,
+    resolve: impl Fn(&str) -> Option<String> + Copy,
+) -> String {
+    let mut out = String::with_capacity(content.len());
+    let mut rest = content;
+    while let Some(start) = rest.find(open) {
+        out.push_str(&rest[..start]);
+        let after = &rest[start + open.len()..];
+        let Some(end) = after.find(close) else {
+            out.push_str(open);
+            rest = after;
+            continue;
+        };
+        let body = &after[..end];
+        if let Some(value) = resolve(body) {
+            out.push_str(&value);
+        } else {
+            out.push_str(open);
+            out.push_str(body);
+            out.push_str(close);
+        }
+        rest = &after[end + close.len()..];
+    }
+    out.push_str(rest);
+    out
+}
+
 /// Quick-capture a single content block onto today's journal page.
 ///
-/// Resolves today's journal page in `space_id` (creating it if it doesn't
-/// exist via [`today_journal_inner`]) and then appends a new `content`
-/// block as a child of that page. Used by the global-shortcut quick-
-/// capture flow: the user fires the OS hotkey from anywhere, types into a
-/// small modal, and the captured line lands at the bottom of today's
-/// journal in the active space — no navigation, no clicks.
+/// Resolves today's journal page in `space_id` (creating it, journal
+/// template included, if it doesn't exist via [`today_journal_inner`]) and
+/// then appends a new `content` block as a child of that page. Used by the
+/// global-shortcut quick-capture flow: the user fires the OS hotkey from
+/// anywhere, types into a small modal, and the captured line lands at the
+/// bottom of today's journal in the active space — no navigation, no clicks.
 ///
 /// Calling this twice on the same day appends two distinct blocks (matches
 /// the existing `create_block` semantic). The function is idempotent at
@@ -1064,5 +1331,487 @@ mod tests {
             .await
             .expect_err("non-YYYY-MM-DD start must be rejected");
         assert!(matches!(err, AppError::Validation { .. }));
+    }
+
+    // ------------------------------------------------------------------
+    // #5395 — the journal template lands with the day, whoever creates it
+    // ------------------------------------------------------------------
+
+    use crate::commands::{
+        create_block_inner, create_page_in_space_inner, delete_block_inner, set_property_inner,
+    };
+    use agaric_core::ulid::{ActiveBlockId, BlockId};
+
+    const DAY: &str = "2031-01-02";
+
+    async fn flag(pool: &SqlitePool, mat: &Materializer, page_id: &str, key: &str) {
+        set_property_inner(
+            pool,
+            DEV,
+            mat,
+            ActiveBlockId::from(page_id.to_owned()),
+            key.into(),
+            Some("true".into()),
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+        .await
+        .expect("flag must be set");
+    }
+
+    async fn child(pool: &SqlitePool, mat: &Materializer, parent: &str, content: &str) -> String {
+        create_block_inner(
+            pool,
+            DEV,
+            mat,
+            "content".into(),
+            content.into(),
+            Some(BlockId::from_trusted(parent)),
+            None,
+        )
+        .await
+        .expect("block must be created")
+        .id
+        .into_string()
+    }
+
+    /// A journal template page in `space`: `Notes for <% page title %>` with
+    /// `On <% today %> at <% time %>, {{date}}{{cursor}}` nested under it, then
+    /// `Second {{title}}`. Returns the template's id.
+    async fn seed_template(pool: &SqlitePool, mat: &Materializer, space: &str) -> String {
+        let template =
+            create_page_in_space_inner(pool, DEV, mat, None, "Daily template".into(), space.into())
+                .await
+                .expect("template page")
+                .into_string();
+        flag(pool, mat, &template, "template").await;
+        flag(pool, mat, &template, "journal-template").await;
+        let notes = child(pool, mat, &template, "Notes for <% page title %>").await;
+        child(
+            pool,
+            mat,
+            &notes,
+            "On <% today %> at <% time %>, {{date}}{{cursor}}",
+        )
+        .await;
+        child(pool, mat, &template, "Second {{title}}").await;
+        template
+    }
+
+    /// `(content, parent_id, position)` of every live block on `page_id`, in
+    /// `(parent_id, position)` order.
+    async fn page_blocks(pool: &SqlitePool, page_id: &str) -> Vec<(String, String, i64)> {
+        sqlx::query!(
+            r#"SELECT content as "content!: String", parent_id as "parent_id!: String",
+                      position as "position!: i64"
+               FROM blocks
+               WHERE page_id = ?1 AND id != ?1 AND deleted_at IS NULL
+               ORDER BY parent_id, position"#,
+            page_id,
+        )
+        .fetch_all(pool)
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|r| (r.content, r.parent_id, r.position))
+        .collect()
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn journal_for_date_copies_the_template_with_nesting_and_variables() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+        let space = mk_space(&pool, "Personal").await;
+        seed_template(&pool, &mat, &space).await;
+
+        let day = NaiveDate::parse_from_str(DAY, "%Y-%m-%d").unwrap();
+        let page = journal_for_date_inner(&pool, DEV, &mat, day, &space)
+            .await
+            .unwrap();
+        mat.flush_background().await.unwrap();
+
+        let page_id = page.id.into_string();
+        let blocks = page_blocks(&pool, &page_id).await;
+        assert_eq!(
+            blocks.len(),
+            3,
+            "two top-level blocks and one nested: {blocks:?}"
+        );
+        let notes = blocks
+            .iter()
+            .find(|(content, _, _)| content == "Notes for 2031-01-02")
+            .expect("`<% page title %>` is the day");
+        assert_eq!(notes.1, page_id);
+        assert_eq!(notes.2, 1);
+        let second = blocks
+            .iter()
+            .find(|(content, _, _)| content == "Second 2031-01-02")
+            .expect("`{{title}}` is the day");
+        assert_eq!(second.1, page_id);
+        assert_eq!(second.2, 2);
+        let nested = blocks
+            .iter()
+            .find(|(_, parent, _)| parent != &page_id)
+            .expect("the nested block keeps its nesting");
+        let notes_id: String = sqlx::query_scalar!(
+            r#"SELECT id as "id!: String" FROM blocks WHERE page_id = ?1 AND content = ?2"#,
+            page_id,
+            "Notes for 2031-01-02",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(nested.1, notes_id, "nested under the copied Notes block");
+        let (prefix, rest) = nested.0.split_at("On 2031-01-02 at ".len());
+        assert_eq!(prefix, "On 2031-01-02 at ");
+        let (clock, tail) = rest.split_at(5);
+        assert!(
+            clock.as_bytes()[2] == b':' && clock.bytes().filter(u8::is_ascii_digit).count() == 4,
+            "`<% time %>` is HH:MM, got {clock:?}"
+        );
+        assert_eq!(
+            tail, ", 2031-01-02",
+            "`{{{{date}}}}` is the day and `{{{{cursor}}}}` goes"
+        );
+
+        // One transaction: the page's own two ops and the three copies are
+        // one contiguous seq range, so one undo group holds them all.
+        let seqs: Vec<i64> = sqlx::query_scalar!(
+            r#"SELECT seq as "seq!: i64" FROM op_log
+               WHERE json_extract(payload, '$.content') LIKE '%2031-01-02%'
+                  OR (op_type = 'set_property' AND block_id = ?1)
+               ORDER BY seq"#,
+            page_id,
+        )
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert_eq!(seqs.len(), 5, "page create, space, three copies: {seqs:?}");
+        assert_eq!(seqs[4] - seqs[0], 4, "contiguous: {seqs:?}");
+
+        mat.shutdown();
+    }
+
+    /// The day exists, empty, and Quick Capture lands on today's: a template
+    /// the copy refuses never blocks a day.
+    async fn assert_refused_template_gives_empty_days(
+        pool: &SqlitePool,
+        mat: &Materializer,
+        space: &str,
+    ) {
+        let day = NaiveDate::parse_from_str(DAY, "%Y-%m-%d").unwrap();
+        let page = journal_for_date_inner(pool, DEV, mat, day, space)
+            .await
+            .expect("a refused template never blocks the day");
+        let captured = quick_capture_block_inner(pool, DEV, mat, "captured".into(), space)
+            .await
+            .expect("nor Quick Capture");
+        mat.flush_background().await.unwrap();
+
+        assert_eq!(page_blocks(pool, page.id.as_str()).await, vec![]);
+        assert_eq!(
+            count_journal_pages_for_date_in_space(pool, DAY, space).await,
+            1
+        );
+        let today_page = captured.parent_id.unwrap().into_string();
+        assert_eq!(
+            page_blocks(pool, &today_page).await,
+            vec![("captured".to_owned(), today_page.clone(), 1)],
+            "the capture is the only block of today's page"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_template_the_copy_refuses_creates_an_empty_day() {
+        // A carriage return does not read back from the source grammar, so
+        // the copy refuses; the refusal comes before its first insert, so the
+        // day commits without it.
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+        let space = mk_space(&pool, "Personal").await;
+        let template = seed_template(&pool, &mat, &space).await;
+        child(&pool, &mat, &template, "one\r- two").await;
+
+        assert_refused_template_gives_empty_days(&pool, &mat, &space).await;
+
+        mat.shutdown();
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_template_over_the_op_cap_creates_an_empty_day() {
+        // The three seeded blocks plus a thousand more exceed what one undo
+        // reverts; the copy counts its ops before the first insert, so the
+        // day commits without any of them rather than a thousand of them.
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+        let space = mk_space(&pool, "Personal").await;
+        let template = seed_template(&pool, &mat, &space).await;
+        let specs = (0..agaric_store::pagination::MAX_BATCH_BLOCK_IDS)
+            .map(|i| crate::commands::CreateBlockSpec {
+                block_type: "content".into(),
+                content: format!("line {i}"),
+                parent_id: Some(BlockId::from_trusted(&template)),
+                position: None,
+                properties: std::collections::HashMap::new(),
+            })
+            .collect();
+        crate::commands::create_blocks_batch_inner(&pool, DEV, &mat, specs)
+            .await
+            .expect("a batch at the cap is within it");
+
+        assert_refused_template_gives_empty_days(&pool, &mat, &space).await;
+
+        mat.shutdown();
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn quick_capture_lands_under_the_templated_day() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+        let space = mk_space(&pool, "Personal").await;
+        seed_template(&pool, &mat, &space).await;
+
+        let captured = quick_capture_block_inner(&pool, DEV, &mat, "captured".into(), &space)
+            .await
+            .unwrap();
+        mat.flush_background().await.unwrap();
+
+        let page_id = captured.parent_id.unwrap().into_string();
+        let top: Vec<(String, i64)> = page_blocks(&pool, &page_id)
+            .await
+            .into_iter()
+            .filter(|(_, parent, _)| parent == &page_id)
+            .map(|(content, _, position)| (content, position))
+            .collect();
+        let today = chrono::Local::now().format("%Y-%m-%d").to_string();
+        assert_eq!(
+            top,
+            vec![
+                (format!("Notes for {today}"), 1),
+                (format!("Second {today}"), 2),
+                ("captured".to_owned(), 3),
+            ],
+            "the template first, the capture after it"
+        );
+
+        // The day exists now: a second capture appends, re-inserting nothing.
+        quick_capture_block_inner(&pool, DEV, &mat, "again".into(), &space)
+            .await
+            .unwrap();
+        mat.flush_background().await.unwrap();
+        assert_eq!(page_blocks(&pool, &page_id).await.len(), 5);
+
+        mat.shutdown();
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_space_without_a_template_creates_an_empty_day() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+        let space = mk_space(&pool, "Personal").await;
+        // A page template that is not the journal's does not apply.
+        let other =
+            create_page_in_space_inner(&pool, DEV, &mat, None, "Meeting".into(), space.clone())
+                .await
+                .unwrap()
+                .into_string();
+        flag(&pool, &mat, &other, "template").await;
+        child(&pool, &mat, &other, "Attendees").await;
+
+        let day = NaiveDate::parse_from_str(DAY, "%Y-%m-%d").unwrap();
+        let page = journal_for_date_inner(&pool, DEV, &mat, day, &space)
+            .await
+            .unwrap();
+        mat.flush_background().await.unwrap();
+
+        assert_eq!(page_blocks(&pool, page.id.as_str()).await, vec![]);
+
+        mat.shutdown();
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_trashed_template_creates_an_empty_day() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+        let space = mk_space(&pool, "Personal").await;
+        let template = seed_template(&pool, &mat, &space).await;
+        delete_block_inner(&pool, DEV, &mat, BlockId::from_trusted(&template))
+            .await
+            .unwrap();
+        mat.flush_background().await.unwrap();
+
+        let day = NaiveDate::parse_from_str(DAY, "%Y-%m-%d").unwrap();
+        let page = journal_for_date_inner(&pool, DEV, &mat, day, &space)
+            .await
+            .expect("a trashed template never blocks the day");
+        mat.flush_background().await.unwrap();
+
+        assert_eq!(page_blocks(&pool, page.id.as_str()).await, vec![]);
+        assert_eq!(
+            count_journal_pages_for_date_in_space(&pool, DAY, &space).await,
+            1
+        );
+
+        mat.shutdown();
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn an_existing_day_is_not_templated_again() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+        let space = mk_space(&pool, "Personal").await;
+        seed_template(&pool, &mat, &space).await;
+
+        let first = resolve_or_create_journal_page(&pool, DEV, &mat, DAY, &space)
+            .await
+            .unwrap();
+        let again = resolve_or_create_journal_page(&pool, DEV, &mat, DAY, &space)
+            .await
+            .unwrap();
+        // The frontend's own creator resolves a taken title to the page too.
+        let via_page =
+            create_page_in_space_inner(&pool, DEV, &mat, None, DAY.into(), space.clone())
+                .await
+                .unwrap();
+        mat.flush_background().await.unwrap();
+
+        assert_eq!(first.id, again.id);
+        assert_eq!(first.id, via_page);
+        assert_eq!(page_blocks(&pool, first.id.as_str()).await.len(), 3);
+
+        mat.shutdown();
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn create_page_in_space_templates_a_date_title_and_only_that() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+        let space = mk_space(&pool, "Personal").await;
+        seed_template(&pool, &mat, &space).await;
+
+        let day = create_page_in_space_inner(&pool, DEV, &mat, None, DAY.into(), space.clone())
+            .await
+            .unwrap();
+        let plain =
+            create_page_in_space_inner(&pool, DEV, &mat, None, "Project".into(), space.clone())
+                .await
+                .unwrap();
+        mat.flush_background().await.unwrap();
+
+        let day_blocks = page_blocks(&pool, day.as_str()).await;
+        assert_eq!(day_blocks.len(), 3, "{day_blocks:?}");
+        assert!(
+            day_blocks
+                .iter()
+                .any(|(c, _, _)| c == "Notes for 2031-01-02")
+        );
+        assert_eq!(page_blocks(&pool, plain.as_str()).await, vec![]);
+        // The journal finds the page the frontend created as the day.
+        let found = get_journal_page_by_date_inner(&pool, DAY, &space)
+            .await
+            .unwrap()
+            .expect("a date-titled page is the day");
+        assert_eq!(found.id, day);
+
+        mat.shutdown();
+    }
+
+    #[test]
+    fn journal_template_variables_expand_against_the_day() {
+        let day = NaiveDate::from_ymd_opt(2031, 1, 2).unwrap();
+        let time = NaiveTime::from_hms_opt(9, 5, 0).unwrap();
+        let expand = |s: &str| expand_journal_template_variables(s, day, time);
+        assert_eq!(
+            expand("<% today %>|<% time %>|<% datetime %>"),
+            "2031-01-02|09:05|2031-01-02 09:05"
+        );
+        assert_eq!(
+            expand("<% page title %> / <%PAGE  TITLE%>"),
+            "2031-01-02 / 2031-01-02"
+        );
+        assert_eq!(
+            expand("{{date}} {{ time }} {{title}}x{{cursor}}"),
+            "2031-01-02 09:05 2031-01-02x"
+        );
+        assert_eq!(
+            expand("<% weekday %> <% month %> <% isoweek %> <% WEEKDAY %>"),
+            "Thursday January 1 Thursday"
+        );
+        // What is not a variable stays as written.
+        assert_eq!(
+            expand(
+                "<% season %> {{foo}} <% open {{ x }} <% date+x %> <% date + 1 %> <% date+-1 %>"
+            ),
+            "<% season %> {{foo}} <% open {{ x }} <% date+x %> <% date + 1 %> <% date+-1 %>"
+        );
+        assert_eq!(expand("plain"), "plain");
+    }
+
+    #[test]
+    fn journal_template_offsets_count_from_the_day() {
+        let day = NaiveDate::from_ymd_opt(2031, 1, 2).unwrap();
+        let time = NaiveTime::from_hms_opt(9, 5, 0).unwrap();
+        let expand = |s: &str| expand_journal_template_variables(s, day, time);
+        assert_eq!(expand("<% date+1 %>"), "2031-01-03");
+        assert_eq!(expand("<% date+30 %>"), "2031-02-01");
+        assert_eq!(expand("<% date-1 %>"), "2031-01-01");
+        assert_eq!(expand("<% date-2 %>"), "2030-12-31");
+        assert_eq!(expand("<% date-0 %>|{{ DATE+7 }}"), "2031-01-02|2031-01-09");
+        assert_eq!(expand("<% date+7:EEEE %>"), "Thursday");
+        // An offset no calendar holds is not a variable.
+        assert_eq!(expand("<% date+99999999999 %>"), "<% date+99999999999 %>");
+    }
+
+    #[test]
+    fn journal_template_formats_take_date_fns_tokens() {
+        let day = NaiveDate::from_ymd_opt(2031, 1, 2).unwrap();
+        let time = NaiveTime::from_hms_opt(21, 5, 7).unwrap();
+        let expand = |s: &str| expand_journal_template_variables(s, day, time);
+        // Each token the table knows, against the day being created.
+        assert_eq!(expand("<% today:yyyy|YYYY|yy %>"), "2031|2031|31");
+        assert_eq!(expand("<% today:MMMM|MMM|MM|M %>"), "January|Jan|01|1");
+        assert_eq!(expand("<% today:dd|DD|d %>"), "02|02|2");
+        assert_eq!(expand("<% today:EEEE|EEE|EE|E %>"), "Thursday|Thu|Thu|Thu");
+        assert_eq!(
+            expand("<% time:HH|H|hh|h|mm|m|ss|s|a %>"),
+            "21|21|09|9|05|5|07|7|PM"
+        );
+        // The Templates view's examples and the shapes the old path's tests
+        // pinned, on today, time, datetime and the `{{ }}` spelling.
+        assert_eq!(expand("<% today:DD/MM/YYYY %>"), "02/01/2031");
+        assert_eq!(expand("<% today: MMMM d, yyyy %>"), "January 2, 2031");
+        assert_eq!(expand("<% time:HH:mm %>"), "21:05");
+        assert_eq!(
+            expand("<% datetime:yyyy-MM-dd HH:mm %>"),
+            "2031-01-02 21:05"
+        );
+        assert_eq!(
+            expand("{{date:YYYY/MM/DD}} {{date:MMM d, yyyy}}"),
+            "2031/01/02 Jan 2, 2031"
+        );
+        assert_eq!(expand("<% weekday:EEE %> <% month:MM %>"), "Thu 01");
+        // Quoted text is literal, as is any non-letter; `%` cannot reach chrono.
+        assert_eq!(
+            expand("<% today:'Week of' d 'o''clock' 100% '5%' %>"),
+            "Week of 2 o'clock 100% 5%"
+        );
+        // A format with a token the table does not know, or none at all,
+        // gives the default form, never a literal token in every day.
+        assert_eq!(expand("<% today:ooooo %>"), "2031-01-02");
+        assert_eq!(expand("<% today:yyyyy %>"), "2031-01-02");
+        assert_eq!(expand("<% today:'unterminated %>"), "2031-01-02");
+        assert_eq!(
+            expand("<% time:x %> <% datetime:Q %>"),
+            "21:05 2031-01-02 21:05"
+        );
+        assert_eq!(expand("<% today: %> {{date:}}"), "2031-01-02 2031-01-02");
+        // A format on a name that takes none is ignored.
+        assert_eq!(
+            expand("<% isoweek:yyyy %> <% page title:d %>"),
+            "1 2031-01-02"
+        );
     }
 }

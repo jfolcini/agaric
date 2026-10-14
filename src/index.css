@@ -2215,6 +2215,14 @@
   transition: transform var(--duration-fast) ease;
 }
 
+/* #5431: the graph's neighbourhood highlight eases in and out. */
+.nodes-layer > .node,
+.edges-layer > line {
+  transition-property: opacity, stroke-opacity;
+  transition-duration: var(--duration-normal);
+  transition-timing-function: var(--ease-out);
+}
+
 /* ── Accessibility / preference: no motion ─────────────────────────────
  *
  * Two triggers collapse motion to zero and share the same reset:

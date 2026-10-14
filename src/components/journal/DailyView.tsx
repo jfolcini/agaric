@@ -3,12 +3,14 @@
  */
 
 import type React from 'react'
+import { useState } from 'react'
 
 import { DaySection } from '@/components/journal/DaySection'
 import { UnfinishedTasks } from '@/components/journal/UnfinishedTasks'
 import { useScrollToFocus } from '@/hooks/useScrollToFocus'
 import { useToday } from '@/hooks/useToday'
 import type { DayEntry } from '@/lib/date-utils'
+import { cn } from '@/lib/utils'
 import { useBlockStore } from '@/stores/blocks'
 import { useNavigationStore } from '@/stores/navigation'
 
@@ -26,6 +28,11 @@ export function DailyView({
   onPageDeleted,
 }: DailyViewProps): React.ReactElement {
   const isToday = entry.dateStr === useToday()
+  // The day the view mounts with replaces the loading skeleton and paints at
+  // once, so boot does not ramp the journal up from transparent (#5440).
+  // Every day navigated to after that fades in.
+  const [mountDay, setMountDay] = useState<string | null>(entry.dateStr)
+  if (mountDay !== null && entry.dateStr !== mountDay) setMountDay(null)
 
   // When navigating into a date-titled page with a target
   // selectedBlockId (search result, breadcrumb, graph node click, …),
@@ -49,7 +56,10 @@ export function DailyView({
   })
 
   return (
-    <div key={entry.dateStr} className="space-y-4 animate-in fade-in-0 duration-normal">
+    <div
+      key={entry.dateStr}
+      className={cn('space-y-4', mountDay === null && 'animate-in fade-in-0 duration-normal')}
+    >
       {isToday && <UnfinishedTasks onNavigateToPage={onNavigateToPage} />}
       <DaySection
         entry={entry}

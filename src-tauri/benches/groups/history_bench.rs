@@ -24,6 +24,10 @@
 //! 50-op revert at 100K lives in `interactive_slo.rs` (Phase 1 file)
 //! per Phase 2's "each new bench gets a row in interactive_slo.rs"
 //! convention.
+//!
+//! `list_global_history` (#5424) covers the History view itself
+//! (`page_id = "__all__"`): pages 1 and 10 at 100K and 1M op-log rows, in
+//! the active space (what the view opens with) and across all spaces.
 
 use criterion::{BenchmarkId, Criterion, criterion_group};
 
@@ -33,7 +37,7 @@ use agaric_lib::commands::{
 use agaric_lib::db::init_pool;
 use agaric_lib::materializer::Materializer;
 use agaric_store::op::OpRef;
-use agaric_store::space::SpaceScope;
+use agaric_store::space::{SpaceId, SpaceScope};
 
 use sqlx::SqlitePool;
 use tempfile::TempDir;
@@ -397,10 +401,136 @@ fn bench_redo_page_op(c: &mut Criterion) {
     group.finish();
 }
 
+// ===========================================================================
+// Bench 5: list_page_history_inner("__all__") — the History view (#5424)
+// ===========================================================================
+
+/// Op-log sizes for the History view sweep.
+const GLOBAL_SWEEP_SIZES: [i64; 2] = [100_000, 1_000_000];
+
+/// Content blocks the History view fixture spreads its ops over.
+const GLOBAL_BLOCKS: i64 = 10_000;
+
+const SPACE_A: &str = "01JBENCHSPACEA000000000000";
+const SPACE_B: &str = "01JBENCHSPACEB000000000000";
+
+/// Seed two spaces of `GLOBAL_BLOCKS / 2` content blocks each, and
+/// `total_ops` op-log rows from two devices. Consecutive ops alternate
+/// device, every pair shares one `created_at` (so the `device_id`
+/// tie-break is exercised), and every pair targets the next block, so each
+/// space holds half the ops.
+async fn seed_global_history(pool: &SqlitePool, total_ops: i64) {
+    let mut tx = pool.begin().await.unwrap();
+    for space in [SPACE_A, SPACE_B] {
+        sqlx::query("INSERT INTO blocks (id, block_type, content, page_id) VALUES (?1, 'page', 'Space', ?1)")
+            .bind(space)
+            .execute(&mut *tx)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO spaces (id) VALUES (?)")
+            .bind(space)
+            .execute(&mut *tx)
+            .await
+            .unwrap();
+        sqlx::query("UPDATE blocks SET space_id = ?1 WHERE id = ?1")
+            .bind(space)
+            .execute(&mut *tx)
+            .await
+            .unwrap();
+    }
+    sqlx::query(
+        "WITH RECURSIVE n(k) AS (SELECT 0 UNION ALL SELECT k + 1 FROM n WHERE k + 1 < ?3) \
+         INSERT INTO blocks (id, block_type, content, parent_id, page_id, space_id) \
+         SELECT printf('01JBENCHBK%016d', k), 'content', 'c', \
+                iif(k % 2 = 0, ?1, ?2), iif(k % 2 = 0, ?1, ?2), iif(k % 2 = 0, ?1, ?2) \
+         FROM n",
+    )
+    .bind(SPACE_A)
+    .bind(SPACE_B)
+    .bind(GLOBAL_BLOCKS)
+    .execute(&mut *tx)
+    .await
+    .unwrap();
+    sqlx::query(
+        "WITH RECURSIVE n(i) AS (SELECT 0 UNION ALL SELECT i + 1 FROM n WHERE i + 1 < ?1) \
+         INSERT INTO op_log (device_id, seq, hash, op_type, payload, created_at, block_id) \
+         SELECT iif(i % 2 = 0, 'bench-device-a', 'bench-device-b'), i / 2 + 1, 'fakehash', \
+                iif(i % 10 = 0, 'set_property', 'edit_block'), \
+                json_object('block_id', printf('01JBENCHBK%016d', (i / 2) % ?2)), \
+                ?3 + i / 2, printf('01JBENCHBK%016d', (i / 2) % ?2) \
+         FROM n",
+    )
+    .bind(total_ops)
+    .bind(GLOBAL_BLOCKS)
+    .bind(BASE_TS_MS)
+    .execute(&mut *tx)
+    .await
+    .unwrap();
+    tx.commit().await.unwrap();
+}
+
+async fn global_history_page(
+    pool: &SqlitePool,
+    scope: &SpaceScope,
+    cursor: Option<String>,
+) -> agaric_store::pagination::PageResponse<agaric_store::pagination::HistoryEntry> {
+    list_page_history_inner(pool, "__all__".into(), None, scope, cursor, Some(50))
+        .await
+        .unwrap()
+}
+
+/// `list_page_history_inner("__all__")` — the History view's first page and
+/// its tenth (nine "Load more" clicks in), at 100K and 1M op-log rows.
+fn bench_list_global_history(c: &mut Criterion) {
+    let mut group = c.benchmark_group("list_global_history");
+
+    for &total_ops in &GLOBAL_SWEEP_SIZES {
+        let rt = Runtime::new().unwrap();
+        let dir = TempDir::new().unwrap();
+        let pool = rt.block_on(fresh_pool(&dir, &format!("hist_global_{total_ops}")));
+        rt.block_on(seed_global_history(&pool, total_ops));
+
+        let scopes = [
+            ("active", SpaceScope::Active(SpaceId::from_trusted(SPACE_A))),
+            ("global", SpaceScope::Global),
+        ];
+        for (label, scope) in &scopes {
+            // Shape probe (benches/AGENTS.md): every page up to the tenth is
+            // full, so a filter drift cannot pass as a speedup.
+            let page_10_cursor = rt.block_on(async {
+                let mut cursor = None;
+                for _ in 0..9 {
+                    let resp = global_history_page(&pool, scope, cursor).await;
+                    assert_eq!(resp.items.len(), 50, "{label} @ {total_ops}: page not full");
+                    assert!(resp.has_more, "{label} @ {total_ops}: walk ended early");
+                    cursor = resp.next_cursor;
+                }
+                cursor
+            });
+
+            for (page, cursor) in [(1, None), (10, page_10_cursor)] {
+                group.bench_with_input(
+                    BenchmarkId::new(format!("{label}/p{page}"), total_ops),
+                    &total_ops,
+                    |b, _| {
+                        b.to_async(&rt).iter(|| {
+                            let pool = pool.clone();
+                            let cursor = cursor.clone();
+                            async move { global_history_page(&pool, scope, cursor).await }
+                        });
+                    },
+                );
+            }
+        }
+    }
+    group.finish();
+}
+
 criterion_group!(
     benches,
     bench_list_page_history,
     bench_revert_ops_50op,
     bench_undo_page_op,
     bench_redo_page_op,
+    bench_list_global_history,
 );

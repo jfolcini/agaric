@@ -19,6 +19,7 @@ import { DuplicateTitleCue } from '@/components/common/DuplicateTitleCue'
 import { HighlightMatch } from '@/components/common/HighlightMatch'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
+import { useIsTouch } from '@/hooks/useIsTouch'
 import { usePagePrefetchIntent } from '@/hooks/usePagePrefetchIntent'
 import type { ViewportObserver } from '@/hooks/useViewportObserver'
 import { cn } from '@/lib/utils'
@@ -106,9 +107,9 @@ export interface PageRowProps {
   // ── Prefetch (#2850) ─────────────────────────────────────────────────
   /**
    * Shared viewport-intersection observer instantiated once by the parent
-   * list. Drives the mobile/no-hover prefetch fallback — this row schedules
+   * list. Drives the touch-only prefetch fallback — this row schedules
    * a speculative prefetch as it scrolls within `rootMargin` of the
-   * viewport, alongside the desktop hover/focus intent.
+   * viewport, in place of the hover intent touch devices never fire.
    */
   viewport: ViewportObserver
 }
@@ -250,12 +251,16 @@ function PageRowInner(props: PageRowProps): React.ReactElement {
   // this row's page comes within `rootMargin` of the viewport, schedule the
   // dwell-debounced prefetch; leaving the margin cancels a still-pending one
   // (a fast scroll-past must not fire N prefetches for rows never lingered
-  // on).
+  // on). Touch only (#5446): on a hover device the visible rows would fill
+  // the prefetch cap on every open and drop the hover intent that predicts
+  // the click.
+  const isTouch = useIsTouch()
   const offscreen = useSyncExternalStore(
     useCallback((onChange) => viewport.subscribe(pageId, onChange), [viewport, pageId]),
     () => viewport.isOffscreen(pageId),
   )
   useEffect(() => {
+    if (!isTouch) return
     if (offscreen) {
       prefetchIntent.cancel()
     } else {
@@ -266,7 +271,7 @@ function PageRowInner(props: PageRowProps): React.ReactElement {
     // so this only needs to re-run when the offscreen membership or the
     // page id actually changes.
     // oxlint-disable-next-line react-hooks/exhaustive-deps
-  }, [offscreen, pageId])
+  }, [isTouch, offscreen, pageId])
 
   const observeRef = useCallback(
     (el: HTMLElement | null) => {

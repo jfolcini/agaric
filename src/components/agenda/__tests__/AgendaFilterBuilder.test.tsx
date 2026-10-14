@@ -31,14 +31,12 @@ import {
 import type {
   AgendaFilter,
   AgendaFilterBuilderProps,
-  AgendaSortGroupControlsProps,
 } from '@/components/agenda/AgendaFilterBuilder'
 // Radix Select is mocked globally via the shared mock in src/test-setup.ts
 // (see src/__tests__/mocks/ui-select.tsx).
-import {
-  AgendaFilterBuilder,
-  AgendaSortGroupControls,
-} from '@/components/agenda/AgendaFilterBuilder'
+import { AgendaFilterBuilder } from '@/components/agenda/AgendaFilterBuilder'
+import type { AgendaSortGroupControlsProps } from '@/components/agenda/AgendaSortGroupControls'
+import { AgendaSortGroupControls } from '@/components/agenda/AgendaSortGroupControls'
 import { _resetPropertyKeysCacheForTest } from '@/hooks/usePropertyKeysCache'
 import { getTaskStates } from '@/lib/filter-dimension-metadata'
 import { t } from '@/lib/i18n'

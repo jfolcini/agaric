@@ -172,6 +172,8 @@ export function JournalPage({
     [setFindContainer],
   )
 
+  const dailyEntry = mode === 'daily' ? makeDayEntry(currentDate) : null
+
   // ── Main render ─────────────────────────────────────────────────────
 
   return (
@@ -200,7 +202,7 @@ export function JournalPage({
           the only `<h1>` there. */}
       {mode !== 'agenda' && (
         <FeaturePageHeader
-          title={mode === 'daily' ? makeDayEntry(currentDate).displayDate : t('sidebar.journal')}
+          title={dailyEntry?.displayDate ?? t('sidebar.journal')}
           className="journal-page-header"
           {...(!loading &&
             onNavigateToPage != null && {
@@ -222,9 +224,9 @@ export function JournalPage({
         {loading && (
           <LoadingSkeleton count={3} height="h-10" loading data-testid="loading-skeleton" />
         )}
-        {!loading && mode === 'daily' && (
+        {!loading && dailyEntry != null && (
           <DailyView
-            entry={makeDayEntry(currentDate)}
+            entry={dailyEntry}
             onNavigateToPage={onNavigateToPage}
             onAddBlock={handleAddBlock}
             onPageDeleted={forgetDeletedPage}
