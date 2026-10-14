@@ -547,4 +547,99 @@ test.describe('Graph view', () => {
       expect(Object.values(nodes).filter((fill) => fill === accent)).toHaveLength(1)
     }
   })
+
+  // ---------------------------------------------------------------------
+  // Labels (#5430): one size on screen at every zoom, never overlapping, and
+  // the hovered node's neighbourhood always labelled.
+  // ---------------------------------------------------------------------
+  interface LabelBox {
+    label: string
+    left: number
+    right: number
+    top: number
+    bottom: number
+  }
+
+  /** The screen box of every label on show. */
+  function visibleLabelBoxes(page: Page): Promise<LabelBox[]> {
+    return page.getByTestId('graph-svg').evaluate((svg) =>
+      Array.from(svg.querySelectorAll('g.node > text'))
+        .filter((text) => getComputedStyle(text).display !== 'none')
+        .map((text) => {
+          const { left, right, top, bottom } = text.getBoundingClientRect()
+          return { label: text.textContent ?? '', left, right, top, bottom }
+        }),
+    )
+  }
+
+  function overlappingPairs(boxes: LabelBox[]): string[] {
+    return boxes.flatMap((a, i) =>
+      boxes
+        .slice(i + 1)
+        .filter((b) => a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom)
+        .map((b) => `${a.label} / ${b.label}`),
+    )
+  }
+
+  test('after the first settle no two visible labels overlap (#5430)', async ({ page }) => {
+    await navigateToView(page, 'Graph')
+    await expect(page.locator('[data-testid="graph-view"] svg g.node').first()).toBeVisible()
+    await fittedTransform(page)
+
+    const boxes = await visibleLabelBoxes(page)
+    expect(boxes.length).toBeGreaterThan(1)
+    expect(overlappingPairs(boxes)).toEqual([])
+  })
+
+  test('a label is the same height on screen at three zoom levels (#5430)', async ({ page }) => {
+    // The selected node is always labelled, so its label shows at every zoom.
+    const { nodeGroup, dot } = await gettingStartedNode(page)
+    const g = page.locator('[data-testid="graph-svg"] > g').first()
+    const fittedScale = parseScale(await fittedTransform(page)) ?? Number.NaN
+    await dot.click()
+    await expect(nodeGroup).toHaveAttribute('aria-selected', 'true')
+    const label = nodeGroup.locator('text')
+    const height = async () => (await label.boundingBox())?.height ?? Number.NaN
+    const zoom = async (button: 'in' | 'out', step: number) => {
+      await page.getByRole('button', { name: new RegExp(`^Zoom ${button}`) }).click()
+      await expect
+        .poll(async () => parseScale(await g.getAttribute('transform')))
+        .toBeCloseTo(fittedScale * step, 3)
+    }
+
+    const heights = [await height()]
+    await zoom('in', 1.3)
+    await zoom('in', 1.69)
+    heights.push(await height())
+    for (const step of [1.3, 1, 1 / 1.3, 1 / 1.69]) await zoom('out', step)
+    heights.push(await height())
+
+    expect(heights[0]).toBeGreaterThan(10)
+    expect(Math.max(...heights) - Math.min(...heights)).toBeLessThan(1)
+  })
+
+  test('hovering a node labels it and every neighbour (#5430)', async ({ page }) => {
+    await page.setViewportSize({ width: 900, height: 450 })
+    await seedLinkedPages(page)
+    await navigateToView(page, 'Graph')
+    await expect(page.locator('[data-testid="graph-view"] svg g.node').first()).toBeVisible()
+    await fittedTransform(page)
+
+    const north = Array.from({ length: 20 }, (_, i) => `North ${i}`)
+    const labelOf = (name: string) =>
+      page.getByRole('option', { name, exact: true }).locator('text')
+    const hidden = async () => {
+      const shown = await Promise.all(north.map((name) => labelOf(name).isVisible()))
+      return north.filter((_, i) => !shown[i])
+    }
+    expect((await hidden()).length).toBeGreaterThan(0)
+
+    await page
+      .getByRole('option', { name: 'North hub', exact: true })
+      .locator('circle:not(.hit-area)')
+      .hover()
+
+    await expect(labelOf('North hub')).toBeVisible()
+    await expect.poll(hidden).toEqual([])
+  })
 })

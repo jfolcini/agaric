@@ -2,7 +2,7 @@
  * Tests for useGraphZoom (split from useGraphSimulation).
  *
  * The hook owns the d3 zoom behavior + keyboard zoom listener and exposes
- * the imperative zoom callbacks plus `attach(svg, g, fitShortcut)` for the
+ * the imperative zoom callbacks plus `attach(svg, g, fitShortcut, onZoomEnd)` for the
  * orchestrator. Tests focus on observable effects: which d3-zoom APIs the
  * callbacks invoke, that `attach` registers + cleans up the keyboard
  * listener, and that callbacks are no-ops before `attach` runs.
@@ -103,7 +103,7 @@ describe('useGraphZoom', () => {
     const fakeSvg = makeFakeSvg() as unknown as SVGSVGElement
     const fakeG = {} as any
 
-    const cleanup = result.current.attach(fakeSvg, fakeG, vi.fn())
+    const cleanup = result.current.attach(fakeSvg, fakeG, vi.fn(), vi.fn())
 
     const svgMock = fakeSvg as unknown as FakeSvg
     expect(svgMock.addEventListener).toHaveBeenCalledWith('keydown', expect.any(Function))
@@ -120,7 +120,7 @@ describe('useGraphZoom', () => {
 
     const fakeSvg = makeFakeSvg() as unknown as SVGSVGElement
     const fakeG = {} as any
-    result.current.attach(fakeSvg, fakeG, vi.fn())
+    result.current.attach(fakeSvg, fakeG, vi.fn(), vi.fn())
     result.current.zoomIn()
 
     const zoomInstance = vi.mocked(zoom).mock.results[0]?.value as any
@@ -136,7 +136,7 @@ describe('useGraphZoom', () => {
 
     const fakeSvg = makeFakeSvg() as unknown as SVGSVGElement
     const fakeG = {} as any
-    result.current.attach(fakeSvg, fakeG, vi.fn())
+    result.current.attach(fakeSvg, fakeG, vi.fn(), vi.fn())
 
     result.current.zoomOut()
     result.current.fitToView(NODES)
@@ -175,7 +175,7 @@ describe('useGraphZoom', () => {
       ;(ref as { current: SVGSVGElement | null }).current =
         makeFakeSvg() as unknown as SVGSVGElement
       const { result } = renderHook(() => useGraphZoom(ref))
-      result.current.attach(makeFakeSvg() as unknown as SVGSVGElement, {} as any, vi.fn())
+      result.current.attach(makeFakeSvg() as unknown as SVGSVGElement, {} as any, vi.fn(), vi.fn())
       return result
     }
 

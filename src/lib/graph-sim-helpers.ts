@@ -10,7 +10,7 @@
 import { drag } from 'd3-drag'
 import { forceLink, forceSimulation, type Simulation, type SimulationNodeDatum } from 'd3-force'
 import { type Selection, select } from 'd3-selection'
-import { type ZoomBehavior, type ZoomTransform, zoom, zoomIdentity } from 'd3-zoom'
+import { type ZoomBehavior, type ZoomTransform, zoom, zoomIdentity, zoomTransform } from 'd3-zoom'
 
 import {
   applyGraphForces,
@@ -19,6 +19,7 @@ import {
   RESIZE_ALPHA,
   startAlpha,
 } from '@/lib/graph-forces'
+import { LABEL_FONT_PX, LABEL_GAP, LABEL_HALO_PX, visibleLabels } from '@/lib/graph-labels'
 import type { GraphEdge, GraphNode } from '@/lib/graph-types'
 import { isEditableTarget, matchesShortcutBinding } from '@/lib/keyboard-config'
 import { logger } from '@/lib/logger'
@@ -41,7 +42,6 @@ const EDGE_OPACITY_MAX = 0.45
 const DIMMED_OPACITY = '0.15'
 const HIGHLIGHTED_EDGE_OPACITY = '0.8'
 const LABEL_TRUNCATE_LEN = 20
-const LABEL_GAP = 4
 export const ZOOM_BUTTON_DURATION_MS = 200
 export const ZOOM_FIT_DURATION_MS = 300
 /** Screen pixels kept clear around the graph when it is fitted, and around a node panned into view. */
@@ -166,10 +166,16 @@ function buildAdjacency(simEdges: GraphEdge[]): Map<string, Set<string>> {
   return neighbours
 }
 
+/** Only the selected node shows its full title. */
+function labelText(d: GraphNode, selectedId: string | null): string {
+  return d.id !== selectedId && d.label.length > LABEL_TRUNCATE_LEN
+    ? `${d.label.slice(0, LABEL_TRUNCATE_LEN)}…`
+    : d.label
+}
+
 /**
  * The selected node, else the page open in the active tab, takes the one
- * accent; every other node is the neutral tone. Only the selected node shows
- * its full title.
+ * accent; every other node is the neutral tone.
  */
 export function markNodes(node: NodeSel, { currentPageId, selectedId }: NodeMarks): void {
   const accented = selectedId ?? currentPageId
@@ -178,13 +184,17 @@ export function markNodes(node: NodeSel, { currentPageId, selectedId }: NodeMark
   node
     .select('circle:nth-child(2)')
     .attr('fill', (d) => (d.id === accented ? 'var(--graph-accent)' : 'var(--graph-node)'))
-  node
-    .select<SVGTextElement>('text')
-    .text((d) =>
-      d.id !== selectedId && d.label.length > LABEL_TRUNCATE_LEN
-        ? `${d.label.slice(0, LABEL_TRUNCATE_LEN)}…`
-        : d.label,
-    )
+  node.select<SVGTextElement>('text').text((d) => labelText(d, selectedId))
+}
+
+/**
+ * Labels keep one size on screen at zoom `k`: the node layer's font size and
+ * halo width, which every label inherits, shrink as the zoom grows.
+ */
+function scaleLabels(g: GSel, k: number): void {
+  g.select('g.nodes-layer')
+    .attr('font-size', LABEL_FONT_PX / k)
+    .attr('stroke-width', LABEL_HALO_PX / k)
 }
 
 function drawEdges(edgeLayer: GSel, simEdges: GraphEdge[]): LinkSel {
@@ -238,11 +248,14 @@ function drawNodes(
 
       grp.append('circle')
 
+      // The halo, in the canvas colour, keeps a label legible over edges.
       grp
         .append('text')
-        .attr('dy', 4)
+        .attr('dy', '0.35em')
         .attr('fill', 'var(--foreground)')
-        .attr('font-size', '12px')
+        .attr('stroke', 'var(--background)')
+        .attr('stroke-linejoin', 'round')
+        .style('paint-order', 'stroke')
         .style('pointer-events', 'none')
         .style('user-select', 'none')
 
@@ -455,7 +468,9 @@ function attachNodeActions(node: NodeSel, actions: NodeActions): void {
 interface NeighbourhoodHighlight {
   hover: (id: string | null) => void
   focus: (id: string | null) => void
-  select: (id: string | null) => void
+  mark: (marks: NodeMarks) => void
+  /** Show the labels `visibleLabels` picks at the current zoom and hide the rest. */
+  placeLabels: () => void
 }
 
 /**
@@ -464,17 +479,40 @@ interface NeighbourhoodHighlight {
  * it. The focused and selected nodes are never dimmed, so the focus ring and
  * the accent stay legible. The opacity easing is a CSS transition in
  * `index.css`, so reduced motion zeroes it.
+ *
+ * The current page and the hovered, focused and selected nodes are always
+ * labelled, with their neighbours (#5430).
  */
 function createNeighbourhoodHighlight(
   node: NodeSel,
   link: LinkSel,
   simEdges: GraphEdge[],
-  selectedId: string | null,
+  marks: NodeMarks,
 ): NeighbourhoodHighlight {
   const neighbours = buildAdjacency(simEdges)
   let hovered: string | null = null
   let focused: string | null = null
-  let selected = selectedId
+  let selected = marks.selectedId
+  let current = marks.currentPageId
+
+  const pinnedLabels = (): Set<string> => {
+    const pinned = new Set<string>()
+    for (const id of [current, hovered, focused, selected]) {
+      if (id === null) continue
+      pinned.add(id)
+      for (const neighbour of neighbours.get(id) ?? []) pinned.add(neighbour)
+    }
+    return pinned
+  }
+
+  const placeLabels = (): void => {
+    const first = node.node()
+    if (!first) return
+    const shown = visibleLabels(node.data(), zoomTransform(first).k, pinnedLabels(), (d) =>
+      labelText(d, selected),
+    )
+    node.select('text').attr('display', (d) => (shown.has(d.id) ? null : 'none'))
+  }
 
   const apply = (): void => {
     const centre = hovered ?? focused ?? selected
@@ -498,15 +536,20 @@ function createNeighbourhoodHighlight(
     hover: (id) => {
       hovered = id
       apply()
+      placeLabels()
     },
     focus: (id) => {
       focused = id
       apply()
+      placeLabels()
     },
-    select: (id) => {
-      selected = id
+    mark: (next) => {
+      selected = next.selectedId
+      current = next.currentPageId
       apply()
+      placeLabels()
     },
+    placeLabels,
   }
 }
 
@@ -531,18 +574,11 @@ function attachNodeHover(
   node.on('mouseenter', function (_event, hovered) {
     const self = select(this)
     self.select('circle:nth-child(2)').attr('r', radiusOf(hovered) + NODE_HOVER_GROWTH)
-    self
-      .select('text')
-      .style('paint-order', 'stroke')
-      .attr('stroke', 'var(--background)')
-      .attr('stroke-width', '3px')
     highlight.hover(hovered.id)
   })
 
   node.on('mouseleave', function (_event, d) {
-    const self = select(this)
-    self.select('circle:nth-child(2)').attr('r', radiusOf(d))
-    self.select('text').style('paint-order', null).attr('stroke', null).attr('stroke-width', null)
+    select(this).select('circle:nth-child(2)').attr('r', radiusOf(d))
     highlight.hover(null)
   })
 
@@ -589,7 +625,7 @@ export function patchGraphSelections(
 
   attachNodeActions(node, actions)
   attachNodeRovingKeys(node, actions.reveal)
-  const highlight = createNeighbourhoodHighlight(node, link, simEdges, marks.selectedId)
+  const highlight = createNeighbourhoodHighlight(node, link, simEdges, marks)
   attachNodeFocusStyles(node, highlight)
   attachNodeHover(node, highlight, radiusOf)
 
@@ -617,6 +653,7 @@ export function renderGraphElements(
   // paint them over the nodes.
   g.append('g').attr('class', 'edges-layer')
   g.append('g').attr('class', 'nodes-layer')
+  scaleLabels(g, zoomIdentity.k)
 
   // Clone nodes/edges so d3 can mutate them without React state issues.
   const simNodes: GraphNode[] = nodes.map((n) => ({ ...n }))
@@ -651,16 +688,23 @@ export function reducedMotionDuration(ms: number): number {
   return shouldReduceMotion() ? 0 : ms
 }
 
+/**
+ * Labels are rescaled on every zoom event, and chosen again only once a zoom
+ * gesture or transition ends (`onZoomEnd`), never per frame.
+ */
 export function setupZoomBehavior(
   svg: SVGSVGElement,
   g: GSel,
+  onZoomEnd: () => void,
 ): ZoomBehavior<SVGSVGElement, unknown> {
   const svgSel = select(svg)
   const zoomBehavior: ZoomBehavior<SVGSVGElement, unknown> = zoom<SVGSVGElement, unknown>()
     .scaleExtent([0.1, 4])
     .on('zoom', (event) => {
       g.attr('transform', event.transform)
+      scaleLabels(g, event.transform.k)
     })
+    .on('end', onZoomEnd)
   svgSel.call(zoomBehavior)
   svg.setAttribute('tabindex', '0')
   return zoomBehavior
