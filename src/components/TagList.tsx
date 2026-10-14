@@ -55,6 +55,13 @@ const estimateTagRowHeight = (): number => 40
 /** The `space-y-2` spacing, which absolutely positioned rows cannot use. */
 const TAG_ROW_GAP = 8
 
+/** The virtualizer asks only for indices below its `count`, which is `tags.length`. */
+function tagAt(tags: readonly TagCacheRow[], index: number): TagCacheRow {
+  const tag = tags[index]
+  if (tag === undefined) throw new Error(`TagList: no tag at index ${index}`)
+  return tag
+}
+
 interface TagListProps {
   /** Called when a tag name is clicked. */
   onTagClick?: (tagId: string, tagName: string) => void
@@ -86,7 +93,7 @@ export function TagList({ onTagClick }: TagListProps): React.ReactElement {
     estimateSize: estimateTagRowHeight,
     gap: TAG_ROW_GAP,
     overscan: 5,
-    getItemKey: (index) => tags[index]?.tag_id ?? index,
+    getItemKey: (index) => tagAt(tags, index).tag_id,
   })
 
   const loadTags = useCallback(async () => {
@@ -327,8 +334,7 @@ export function TagList({ onTagClick }: TagListProps): React.ReactElement {
           >
             <ul className="relative w-full" style={{ height: `${virtualizer.getTotalSize()}px` }}>
               {virtualizer.getVirtualItems().map((virtualRow) => {
-                const tag = items[virtualRow.index]
-                if (!tag) return null
+                const tag = tagAt(items, virtualRow.index)
                 const color = tagColors[tag.tag_id]
                 return (
                   <ListItem

@@ -1,0 +1,515 @@
+{
+  "description": "#5395 — a journal day is born with the space's journal template, whoever creates it. The frontend used to copy the template itself, and only when the journal view created the day; a day Quick Capture or the MCP `journal_for_date` tool created first stayed empty, and opening it later added nothing because the page already existed. The copy now lives in the backend: `create_page_in_space` on a date title (the journal view's and the date picker's creator) and `resolve_or_create_journal_page` (Quick Capture, `journal_for_date`) both call `apply_journal_template_in_tx` inside the page's own transaction, so one undo reverts the day and its template together.\n\nThe template is the live page flagged `journal-template = true` with the smallest id, copied as Duplicate copies a subtree: content with nesting, the block's own ops in order (`create_block` per block, properties after it). The variables expand against the DAY being created, not the clock: `<% today %>`, `<% page title %>`, `{{date}}` and `{{title}}` are the day, `{{cursor}}` goes. A `:FORMAT` suffix (`<% today:EEEE, MMMM d, yyyy %>`) takes the date-fns tokens the backend maps to chrono, `<% date+N %>` / `<% date-N %>` count from the day, and `<% weekday %>`, `<% month %>` and `<% isoweek %>` are the day's; a format with a token the table does not know gives the default form. `<% time %>` is the clock and so cannot be pinned here; `quick_capture_block` stays waived for the same reason (the local date names the page).\n\nThe title gate is pinned by the last op: a page named `Project` in the same space is born empty. What the mock approximates: it copies content and nesting only, where the backend carries properties and task stamps too; the template here has none.",
+  "expected": {
+    "block_tags": [],
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Elsewhere",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B1",
+        "page_id": "B1",
+        "parent_id": null,
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "page",
+        "content": "Work",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B2",
+        "page_id": "B2",
+        "parent_id": null,
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "page",
+        "content": "Daily template",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B3",
+        "page_id": "B3",
+        "parent_id": null,
+        "position": 2,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "Notes for <% page title %>",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B4",
+        "page_id": "B3",
+        "parent_id": "B3",
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "On <% today %>, {{date}}{{cursor}}",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B5",
+        "page_id": "B3",
+        "parent_id": "B4",
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "Later {{title}}",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B6",
+        "page_id": "B3",
+        "parent_id": "B3",
+        "position": 2,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "<% today:EEEE, MMMM d, yyyy %> | <% today:DD/MM/YYYY %> | {{date:YYYY/MM/DD}}",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B7",
+        "page_id": "B3",
+        "parent_id": "B3",
+        "position": 3,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "<% date+1 %> <% date-2 %> <% date+30:MMM d %>",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B8",
+        "page_id": "B3",
+        "parent_id": "B3",
+        "position": 4,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "<% weekday %> <% month %> <% isoweek %> <% weekday:EEE %>",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B9",
+        "page_id": "B3",
+        "parent_id": "B3",
+        "position": 5,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "<% today:ooooo %> <% today: %> <% date+x %>",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B10",
+        "page_id": "B3",
+        "parent_id": "B3",
+        "position": 6,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "page",
+        "content": "2031-01-02",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B11",
+        "page_id": "B11",
+        "parent_id": null,
+        "position": 3,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "Notes for 2031-01-02",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B12",
+        "page_id": "B11",
+        "parent_id": "B11",
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "On 2031-01-02, 2031-01-02",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B13",
+        "page_id": "B11",
+        "parent_id": "B12",
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "Later 2031-01-02",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B14",
+        "page_id": "B11",
+        "parent_id": "B11",
+        "position": 2,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "Thursday, January 2, 2031 | 02/01/2031 | 2031/01/02",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B15",
+        "page_id": "B11",
+        "parent_id": "B11",
+        "position": 3,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "2031-01-03 2030-12-31 Feb 1",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B16",
+        "page_id": "B11",
+        "parent_id": "B11",
+        "position": 4,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "Thursday January 1 Thu",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B17",
+        "page_id": "B11",
+        "parent_id": "B11",
+        "position": 5,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "2031-01-02 2031-01-02 <% date+x %>",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B18",
+        "page_id": "B11",
+        "parent_id": "B11",
+        "position": 6,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "page",
+        "content": "Project",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B19",
+        "page_id": "B19",
+        "parent_id": null,
+        "position": 4,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      }
+    ],
+    "op_log_digest": {
+      "count": 23,
+      "ops": [
+        {
+          "op_type": "create_block"
+        },
+        {
+          "key": "is_space",
+          "op_type": "set_property"
+        },
+        {
+          "op_type": "create_block"
+        },
+        {
+          "key": "space",
+          "op_type": "set_property"
+        },
+        {
+          "key": "journal-template",
+          "op_type": "set_property"
+        },
+        {
+          "op_type": "create_block"
+        },
+        {
+          "op_type": "create_block"
+        },
+        {
+          "op_type": "create_block"
+        },
+        {
+          "op_type": "create_block"
+        },
+        {
+          "op_type": "create_block"
+        },
+        {
+          "op_type": "create_block"
+        },
+        {
+          "op_type": "create_block"
+        },
+        {
+          "op_type": "create_block"
+        },
+        {
+          "key": "space",
+          "op_type": "set_property"
+        },
+        {
+          "op_type": "create_block"
+        },
+        {
+          "op_type": "create_block"
+        },
+        {
+          "op_type": "create_block"
+        },
+        {
+          "op_type": "create_block"
+        },
+        {
+          "op_type": "create_block"
+        },
+        {
+          "op_type": "create_block"
+        },
+        {
+          "op_type": "create_block"
+        },
+        {
+          "op_type": "create_block"
+        },
+        {
+          "key": "space",
+          "op_type": "set_property"
+        }
+      ]
+    },
+    "page_links": [],
+    "properties": [
+      {
+        "block_id": "B2",
+        "key": "is_space",
+        "value": "true",
+        "value_type": "Text"
+      },
+      {
+        "block_id": "B3",
+        "key": "journal-template",
+        "value": "true",
+        "value_type": "Text"
+      }
+    ]
+  },
+  "expected_ops": [
+    {
+      "code": null,
+      "error": null,
+      "name": "a_space_with_a_journal_template",
+      "returns": ["create_space#space_id=B2"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "the_template_page",
+      "returns": ["create_page_in_space#page_id=B3"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "a_day_born_with_the_template",
+      "returns": ["create_page_in_space#page_id=B11"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "a_plain_page_stays_empty",
+      "returns": ["create_page_in_space#page_id=B19"]
+    }
+  ],
+  "name": "journal_template_day",
+  "ops": [
+    {
+      "args": {
+        "accentColor": null,
+        "name": "Work"
+      },
+      "command": "create_space",
+      "comment": "The space whose journal template the days below inherit, `C1`.",
+      "name": "a_space_with_a_journal_template",
+      "via": "command"
+    },
+    {
+      "args": {
+        "content": "Daily template",
+        "parentId": null,
+        "spaceId": "C1"
+      },
+      "command": "create_page_in_space",
+      "comment": "The template page, `C2`. Its title is no date, so it is born empty.",
+      "name": "the_template_page",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockId": "C2",
+        "key": "journal-template",
+        "value": {
+          "value_text": "true"
+        }
+      },
+      "command": "set_property",
+      "comment": "What makes `C2` the space's journal template: the flag the journal's *Configure journal template* button sets."
+    },
+    {
+      "args": {
+        "blockType": "content",
+        "content": "Notes for <% page title %>",
+        "index": 0,
+        "parentId": "C2"
+      },
+      "command": "create_block",
+      "comment": "First top-level template block, `C3`."
+    },
+    {
+      "args": {
+        "blockType": "content",
+        "content": "On <% today %>, {{date}}{{cursor}}",
+        "index": 0,
+        "parentId": "C3"
+      },
+      "command": "create_block",
+      "comment": "Nested under `C3`, `C4`: the copy must keep the nesting (#5373) and expand both grammars against the day."
+    },
+    {
+      "args": {
+        "blockType": "content",
+        "content": "Later {{title}}",
+        "index": 1,
+        "parentId": "C2"
+      },
+      "command": "create_block",
+      "comment": "Second top-level template block, `C5`."
+    },
+    {
+      "args": {
+        "blockType": "content",
+        "content": "<% today:EEEE, MMMM d, yyyy %> | <% today:DD/MM/YYYY %> | {{date:YYYY/MM/DD}}",
+        "index": 2,
+        "parentId": "C2"
+      },
+      "command": "create_block",
+      "comment": "Third top-level template block, `C6`: a `:FORMAT` on the day in the date-fns tokens the backend maps to chrono."
+    },
+    {
+      "args": {
+        "blockType": "content",
+        "content": "<% date+1 %> <% date-2 %> <% date+30:MMM d %>",
+        "index": 3,
+        "parentId": "C2"
+      },
+      "command": "create_block",
+      "comment": "`C7`: offsets count from the day, across the month and year boundaries."
+    },
+    {
+      "args": {
+        "blockType": "content",
+        "content": "<% weekday %> <% month %> <% isoweek %> <% weekday:EEE %>",
+        "index": 4,
+        "parentId": "C2"
+      },
+      "command": "create_block",
+      "comment": "`C8`: the names the Templates view lists, in English on both stacks."
+    },
+    {
+      "args": {
+        "blockType": "content",
+        "content": "<% today:ooooo %> <% today: %> <% date+x %>",
+        "index": 5,
+        "parentId": "C2"
+      },
+      "command": "create_block",
+      "comment": "`C9`: a format with a token neither stack knows, and an empty one, give the default form; `date+x` is no variable and stays."
+    },
+    {
+      "args": {
+        "content": "2031-01-02",
+        "parentId": null,
+        "spaceId": "C1"
+      },
+      "command": "create_page_in_space",
+      "comment": "The day, `C10`, born with seven copies under it: `C11` (Notes for 2031-01-02), `C12` nested under it (On 2031-01-02, 2031-01-02), `C13` (Later 2031-01-02), then the four variable blocks `C14`–`C17`.",
+      "name": "a_day_born_with_the_template",
+      "via": "command"
+    },
+    {
+      "args": {
+        "content": "Project",
+        "parentId": null,
+        "spaceId": "C1"
+      },
+      "command": "create_page_in_space",
+      "comment": "No date in the title, no template: `C18` stays empty.",
+      "name": "a_plain_page_stays_empty",
+      "via": "command"
+    }
+  ],
+  "seed": {
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Elsewhere",
+        "id": "S1",
+        "parent_id": null,
+        "position": 1
+      }
+    ],
+    "properties": [],
+    "tags": []
+  }
+}

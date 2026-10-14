@@ -169,8 +169,52 @@ describe('useAppSpaceLifecycle — visual identity', () => {
 
     renderHook(() => useAppSpaceLifecycle())
     await waitFor(() => {
-      expect(vi.mocked(setWindowTitle)).toHaveBeenCalledWith('Agaric')
+      expect(vi.mocked(setWindowTitle)).toHaveBeenLastCalledWith('Agaric')
     })
+  })
+
+  // #5442 — boot writes the bare title, then the full one once the spaces
+  // load. The two IPC writes can finish in either order, so the second must
+  // not start until the first has landed.
+  it('lands the full title last when the spaces load during the bare-title write', async () => {
+    let windowTitle = 'Agaric'
+    const inFlight: { title: string; land: () => void }[] = []
+    vi.mocked(setWindowTitle).mockImplementation(
+      (title) =>
+        new Promise<void>((resolve) => {
+          inFlight.push({
+            title,
+            land: () => {
+              windowTitle = title
+              resolve()
+            },
+          })
+        }),
+    )
+    try {
+      useSpaceStore.setState({ availableSpaces: [] })
+      renderHook(() => useAppSpaceLifecycle())
+      act(() => {
+        useSpaceStore.setState({
+          availableSpaces: [
+            { id: 'SPACE_PERSONAL', name: 'Personal', accent_color: 'accent-emerald' },
+          ],
+        })
+      })
+
+      // Land the newest write in flight first, as the transport may.
+      await waitFor(() => {
+        inFlight.pop()?.land()
+        expect(inFlight).toHaveLength(0)
+        expect(windowTitle).toBe('Journal \u00B7 Personal \u00B7 Agaric')
+      })
+      expect(vi.mocked(setWindowTitle).mock.calls.map(([title]) => title)).toEqual([
+        'Agaric',
+        'Journal \u00B7 Personal \u00B7 Agaric',
+      ])
+    } finally {
+      vi.mocked(setWindowTitle).mockResolvedValue(undefined)
+    }
   })
 
   it('re-stamps the title and accent when the active space changes', async () => {

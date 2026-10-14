@@ -27,6 +27,8 @@ import {
 } from '@dnd-kit/core'
 import type React from 'react'
 import {
+  lazy,
+  Suspense,
   useCallback,
   useEffect,
   useLayoutEffect,
@@ -39,9 +41,7 @@ import { useTranslation } from 'react-i18next'
 import { useShallow } from 'zustand/react/shallow'
 
 import { BlockBatchActionMenu } from '@/components/block-tree/BlockBatchActionMenu'
-import { BlockDatePicker } from '@/components/block-tree/BlockDatePicker'
 import { BlockDndOverlay } from '@/components/block-tree/BlockDndOverlay'
-import { TemplatePicker } from '@/components/block-tree/TemplatePicker'
 import { useBlockActionOrchestration } from '@/components/block-tree/use-block-action-orchestration'
 import { BlockActionsProvider } from '@/components/block-tree/use-block-actions'
 import { useBlockAutoCreateFirstBlock } from '@/components/block-tree/use-block-auto-create-first-block'
@@ -100,6 +100,15 @@ import { mountedScopedIds } from '@/lib/zoom-scope'
 import { useBlockStore } from '@/stores/blocks'
 import { storeOwnsBlock, usePageBlockStore, usePageBlockStoreApi } from '@/stores/page-blocks'
 import { useSpaceStore } from '@/stores/space'
+
+// #5441 — the slash-command pickers mount only while open; lazy so the date
+// picker's react-day-picker and the template list load on first use, not boot.
+const BlockDatePicker = lazy(() =>
+  import('@/components/block-tree/BlockDatePicker').then((m) => ({ default: m.BlockDatePicker })),
+)
+const TemplatePicker = lazy(() =>
+  import('@/components/block-tree/TemplatePicker').then((m) => ({ default: m.TemplatePicker })),
+)
 
 /**
  * Stable DnD measuring config — module-level to avoid re-creation per render.
@@ -1551,19 +1560,23 @@ export function BlockTree({
 
             {/* Floating date picker for /DATE slash command */}
             {datePickerOpen && (
-              <BlockDatePicker
-                onSelect={(day) => day && handleDatePick(day)}
-                onClose={() => setDatePickerOpen(false)}
-              />
+              <Suspense fallback={null}>
+                <BlockDatePicker
+                  onSelect={(day) => day && handleDatePick(day)}
+                  onClose={() => setDatePickerOpen(false)}
+                />
+              </Suspense>
             )}
 
             {/* Floating template picker for /TEMPLATE slash command */}
             {templatePickerOpen && (
-              <TemplatePicker
-                templatePages={templatePages}
-                onSelect={handleTemplateSelect}
-                onClose={() => setTemplatePickerOpen(false)}
-              />
+              <Suspense fallback={null}>
+                <TemplatePicker
+                  templatePages={templatePages}
+                  onSelect={handleTemplateSelect}
+                  onClose={() => setTemplatePickerOpen(false)}
+                />
+              </Suspense>
             )}
 
             {/* Block-level dialog mounts: query builder (#215), emoji picker

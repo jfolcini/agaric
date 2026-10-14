@@ -12,6 +12,7 @@
 import { invoke } from '@tauri-apps/api/core'
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { useEffect } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 import type { StoreApi } from 'zustand'
@@ -345,6 +346,14 @@ vi.mock('@/components/dialogs/QueryBuilderModal', async () => {
     }) => {
       capturedQuerySave = props.onSave
       capturedQueryOpen = props.open
+      // #5441 — BlockTreeDialogs unmounts the dialog on close instead of
+      // re-rendering it with `open={false}`, so record the unmount as closed.
+      useEffect(
+        () => () => {
+          capturedQueryOpen = false
+        },
+        [],
+      )
       return <actual.QueryBuilderModal {...props} />
     },
   }

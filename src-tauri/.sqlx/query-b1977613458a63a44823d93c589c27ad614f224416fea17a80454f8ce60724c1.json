@@ -1,0 +1,50 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT content as \"content!: String\", parent_id as \"parent_id!: String\",\n                      position as \"position!: i64\"\n               FROM blocks\n               WHERE page_id = ?1 AND id != ?1 AND deleted_at IS NULL\n               ORDER BY parent_id, position",
+  "describe": {
+    "columns": [
+      {
+        "name": "content!: String",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "blocks",
+            "name": "content"
+          }
+        }
+      },
+      {
+        "name": "parent_id!: String",
+        "ordinal": 1,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "blocks",
+            "name": "parent_id"
+          }
+        }
+      },
+      {
+        "name": "position!: i64",
+        "ordinal": 2,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "blocks",
+            "name": "position"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      true,
+      true,
+      true
+    ]
+  },
+  "hash": "b1977613458a63a44823d93c589c27ad614f224416fea17a80454f8ce60724c1"
+}

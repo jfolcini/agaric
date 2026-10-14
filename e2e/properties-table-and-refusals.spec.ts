@@ -286,8 +286,7 @@ test.describe('Select definition options and in-use delete', () => {
 
     await openPage(page, 'Meetings')
     const block = page.locator(`[data-testid="sortable-block"][data-block-id="${MTG_1}"]`)
-    // By prefix: the chip shows a plain value as an unresolved link, `[[alpha...]]`.
-    await block.getByRole('button', { name: /^Project: / }).click()
+    await block.getByRole('button', { name: 'Project: alpha', exact: true }).click()
     const offered = page.getByRole('listbox', { name: 'Edit property' }).getByRole('option')
     await expect(offered).toHaveText(['alpha', 'beta', 'delta'])
   })
@@ -303,7 +302,10 @@ test.describe('Select definition options and in-use delete', () => {
     await confirm.getByRole('button', { name: 'Delete', exact: true }).click()
 
     await expect(
-      toasts(page, "cannot delete property definition 'project': 2 block_properties row(s)"),
+      toasts(
+        page,
+        "Can't delete 'project': 2 block(s) still use it. Remove the property from them first.",
+      ),
     ).toBeVisible()
     await expect(projectRow(page)).toBeVisible()
     expect(await storedOptions(page, 'project')).toEqual(['alpha', 'beta', 'gamma'])
