@@ -17,7 +17,7 @@
  * This batch is a pure code move: behaviour is preserved verbatim.
  */
 
-import { lazy, type ReactElement, Suspense } from 'react'
+import { type ComponentType, lazy, type ReactElement, Suspense, useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { EmptyState } from '@/components/common/EmptyState'
@@ -25,6 +25,8 @@ import { FeatureErrorBoundary } from '@/components/common/FeatureErrorBoundary'
 import { JournalPage } from '@/components/JournalPage'
 import { LoadingSkeleton } from '@/components/rendering/LoadingSkeleton'
 import { Button } from '@/components/ui/button'
+import { scheduleIdle } from '@/hooks/useLazyRovingEditor'
+import { logger } from '@/lib/logger'
 import { NAV_ITEMS } from '@/lib/nav-items'
 import { useNavigationStore, type View } from '@/stores/navigation'
 import { useSpaceStore } from '@/stores/space'
@@ -36,43 +38,94 @@ import { type PageEntry, selectPageStack, useTabsStore } from '@/stores/tabs'
 //
 // Only the journal (default view) and the sidebar/header shell are in the
 // entry chunk. Every other top-level view is split into its own chunk and
-// loaded on demand. Keeps the initial parse budget small — especially on
-// Android / low-end hardware — without touching page-editor UX (the user
-// always clicks _into_ a page, giving us a natural Suspense moment).
+// loaded at idle after boot (`preloadViews`), or on demand when visited
+// sooner. Keeps the initial parse budget small — especially on Android /
+// low-end hardware.
 //
 // Each lazy() import automatically becomes its own Rollup chunk. The
 // Suspense fallback uses `LoadingSkeleton` (the shared primitive) so the
 // transient state matches the rest of the app visually.
-const AdvancedQueryView = lazy(() =>
+
+/**
+ * `lazy()` plus a `preload()` that fetches the chunk before the view first renders.
+ *
+ * Once preloaded, the factory hands React the module through a thenable that
+ * resolves synchronously, so the first render does not suspend. A render that
+ * suspends commits `ViewFallback`, and React then holds the view back until
+ * 300 ms after that fallback (its Suspense fallback throttle), however fast the
+ * chunk arrived (#5444).
+ */
+function lazyView<T extends ComponentType<any>>(load: () => Promise<{ default: T }>) {
+  let loaded: { default: T } | undefined
+  const preload = () =>
+    load().then((module) => {
+      loaded = module
+      return module
+    })
+  const factory = () => {
+    const module = loaded
+    if (!module) return preload()
+    // oxlint-disable-next-line unicorn/no-thenable -- lazy() reads a synchronous thenable without suspending; a resolved Promise still settles a microtask late
+    const resolved = { then: (resolve: (m: typeof module) => void) => resolve(module) }
+    return resolved as unknown as Promise<typeof module>
+  }
+  return Object.assign(lazy(factory), { preload })
+}
+
+const AdvancedQueryView = lazyView(() =>
   import('@/components/AdvancedQuery/AdvancedQueryView').then((m) => ({
     default: m.AdvancedQueryView,
   })),
 )
-const GraphView = lazy(() =>
+const GraphView = lazyView(() =>
   import('@/components/graph/GraphView').then((m) => ({ default: m.GraphView })),
 )
-const HistoryView = lazy(() =>
+const HistoryView = lazyView(() =>
   import('@/components/history/HistoryView').then((m) => ({ default: m.HistoryView })),
 )
-const PageBrowser = lazy(() =>
+const PageBrowser = lazyView(() =>
   import('@/components/PageBrowser').then((m) => ({ default: m.PageBrowser })),
 )
-const PageEditor = lazy(() =>
+const PageEditor = lazyView(() =>
   import('@/components/pages/PageEditor').then((m) => ({ default: m.PageEditor })),
 )
-const SearchPanel = lazy(() =>
+const SearchPanel = lazyView(() =>
   import('@/components/SearchPanel').then((m) => ({ default: m.SearchPanel })),
 )
-const SettingsView = lazy(() =>
+const SettingsView = lazyView(() =>
   import('@/components/pages/SettingsView').then((m) => ({ default: m.SettingsView })),
 )
-const TagsView = lazy(() => import('@/components/TagsView').then((m) => ({ default: m.TagsView })))
-const TemplatesView = lazy(() =>
+const TagsView = lazyView(() =>
+  import('@/components/TagsView').then((m) => ({ default: m.TagsView })),
+)
+const TemplatesView = lazyView(() =>
   import('@/components/templates/TemplatesView').then((m) => ({ default: m.TemplatesView })),
 )
-const TrashView = lazy(() =>
+const TrashView = lazyView(() =>
   import('@/components/TrashView').then((m) => ({ default: m.TrashView })),
 )
+
+const LAZY_VIEWS = [
+  AdvancedQueryView,
+  GraphView,
+  HistoryView,
+  PageBrowser,
+  PageEditor,
+  SearchPanel,
+  SettingsView,
+  TagsView,
+  TemplatesView,
+  TrashView,
+]
+
+/** Loads every view chunk so the first visit to a view does not wait on it. */
+function preloadViews(): void {
+  for (const view of LAZY_VIEWS) {
+    view.preload().catch((err: unknown) => {
+      logger.warn('ViewDispatcher', 'view preload failed', undefined, err)
+    })
+  }
+}
 
 /**
  * #3308 — single owner of the per-view level-1 heading.
@@ -213,6 +266,7 @@ export function ViewDispatcher({
   // this level is zero re-renders.
   const goBack = useTabsStore((s) => s.goBack)
   const currentSpaceId = useSpaceStore((s) => s.currentSpaceId)
+  useEffect(() => scheduleIdle(preloadViews), [])
   switch (currentView) {
     case 'journal': {
       return (

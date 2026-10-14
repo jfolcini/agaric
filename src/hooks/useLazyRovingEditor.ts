@@ -65,7 +65,7 @@ interface PendingMount {
  * to `setTimeout` where unavailable (jsdom/older webviews). Returns a disposer.
  * (Mirrors the pattern in `RichContentRenderer/marks/code.tsx`.)
  */
-function scheduleIdle(cb: () => void): () => void {
+export function scheduleIdle(cb: () => void): () => void {
   if (typeof requestIdleCallback === 'function') {
     const id = requestIdleCallback(cb)
     return () => {
