@@ -710,22 +710,50 @@ export function keptPositions(
   return positions
 }
 
+const SEED_SPACING = 10
+const GOLDEN_ANGLE = Math.PI * (3 - Math.sqrt(5))
+
 /**
- * Put every node with a kept position back in place, and resolve the edges to
- * their nodes so the first paint draws the kept layout before any tick lands.
+ * In a layout with nodes already placed, start each node without a position on
+ * d3's seed spiral, but from the centre rather than the corner. Not all on one
+ * point: d3's charge kicks coincident nodes apart in proportion to how many
+ * there are. With nothing placed, d3's own cold start lays every node out.
+ */
+export function seedUnplaced(nodes: readonly GraphNode[], width: number, height: number): void {
+  if (nodes.every((n) => n.x === undefined)) return
+  let i = 0
+  for (const n of nodes) {
+    if (n.x !== undefined) continue
+    const radius = SEED_SPACING * Math.sqrt(i)
+    n.x = width / 2 + radius * Math.cos(i * GOLDEN_ANGLE)
+    n.y = height / 2 + radius * Math.sin(i * GOLDEN_ANGLE)
+    i++
+  }
+}
+
+/**
+ * Put every node back where the kept layout had it and start a node new since
+ * then from the centre (`seedUnplaced`), then resolve the edges to their nodes so
+ * the first paint draws the layout before any tick lands. Returns whether every
+ * node was kept.
  */
 export function seedPositions(
-  rendered: Pick<RenderResult, 'simNodes' | 'simEdges' | 'nodeById'>,
+  rendered: Pick<RenderResult, 'simNodes' | 'simEdges' | 'nodeById' | 'width' | 'height'>,
   positions: GraphLayout['positions'],
-): void {
+): boolean {
+  let everyKept = true
   for (const n of rendered.simNodes) {
     const kept = positions.get(n.id)
-    if (kept) {
-      n.x = kept.x
-      n.y = kept.y
+    if (!kept) {
+      everyKept = false
+      continue
     }
+    n.x = kept.x
+    n.y = kept.y
   }
+  seedUnplaced(rendered.simNodes, rendered.width, rendered.height)
   resolveEdgeEndpoints(rendered.simEdges, rendered.nodeById)
+  return everyKept
 }
 
 // ── Worker simulation ────────────────────────────────────────────────

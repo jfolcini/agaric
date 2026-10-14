@@ -13,7 +13,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { type GraphLayoutStore, useGraphSimulation } from '@/hooks/useGraphSimulation'
 import { fitTransform, type GraphLayout } from '@/lib/graph-sim-helpers'
 import type { GraphEdge, GraphNode } from '@/lib/graph-types'
-import type { WorkerStartMessage } from '@/workers/graph-worker-types'
+import type { WorkerStartMessage, WorkerUpdateMessage } from '@/workers/graph-worker-types'
 
 class RecordingWorker {
   static last: RecordingWorker | null = null
@@ -59,6 +59,7 @@ function makeNode(id: string, label: string): GraphNode {
 const A = makeNode('a', 'Alpha')
 const B = makeNode('b', 'Beta')
 const C = makeNode('c', 'Gamma')
+const D = makeNode('d', 'Delta')
 const EDGES: GraphEdge[] = [{ source: 'a', target: 'b', ref_count: 1 }]
 
 function memoryLayout(initial: GraphLayout | null = null): GraphLayoutStore & {
@@ -97,6 +98,12 @@ function startMessage(): WorkerStartMessage {
   const start = RecordingWorker.last?.posted.find((m) => m.type === 'start')
   if (!start) throw new Error('no start posted')
   return start as WorkerStartMessage
+}
+
+function updateMessage(): WorkerUpdateMessage {
+  const update = RecordingWorker.last?.posted.findLast((m) => m.type === 'update')
+  if (!update) throw new Error('no update posted')
+  return update as WorkerUpdateMessage
 }
 
 function paintedAt(container: HTMLElement): Record<string, string | null> {
@@ -199,12 +206,54 @@ describe('useGraphSimulation — coming back to the graph (#5434)', () => {
     expect(layout.kept?.transform).toEqual(KEPT.transform)
   })
 
-  it('a node added in between arrives without a position, so only it drifts in', () => {
-    render(<Graph nodes={[A, B, C]} layout={memoryLayout(KEPT)} />)
+  it('a node added in between starts and is painted at the centre, not the corner, so the layout starts warm', () => {
+    const { container } = render(
+      <Graph nodes={[A, B, C]} layout={memoryLayout({ ...KEPT, settled: true })} />,
+    )
 
     expect(startMessage().nodes).toEqual([
       { id: 'a', label: 'Alpha', degree: 1, x: 120, y: 80 },
       { id: 'b', label: 'Beta', degree: 1, x: 300, y: 210 },
+      { id: 'c', label: 'Gamma', degree: 0, x: 400, y: 300 },
+    ])
+    expect(startMessage().keptSettled).toBe(false)
+    expect(paintedAt(container)).toEqual({
+      Alpha: 'translate(120,80)',
+      Beta: 'translate(300,210)',
+      Gamma: 'translate(400,300)',
+    })
+  })
+
+  it('a kept layout that placed none of the nodes on screen lays them out from scratch', () => {
+    render(<Graph nodes={[A, B]} layout={memoryLayout({ ...KEPT, positions: new Map() })} />)
+
+    expect(startMessage().nodes).toEqual([
+      { id: 'a', label: 'Alpha', degree: 1 },
+      { id: 'b', label: 'Beta', degree: 1 },
+    ])
+  })
+
+  it('a filter that brings back nodes never placed starts them around the centre, not the corner', () => {
+    const { rerender } = render(<Graph nodes={[A, B]} layout={memoryLayout(KEPT)} />)
+    rerender(<Graph nodes={[A, B, C, D]} layout={memoryLayout(KEPT)} />)
+
+    const [a, b, c, d] = updateMessage().nodes
+    expect([a, b, c]).toEqual([
+      { id: 'a', label: 'Alpha', degree: 1, x: 120, y: 80 },
+      { id: 'b', label: 'Beta', degree: 1, x: 300, y: 210 },
+      { id: 'c', label: 'Gamma', degree: 0, x: 400, y: 300 },
+    ])
+    // Not on Gamma: d3 kicks coincident nodes apart harder the more there are.
+    expect(Math.hypot((d?.x ?? 0) - 400, (d?.y ?? 0) - 300)).toBeCloseTo(10)
+  })
+
+  it('a filter before anything is placed leaves every node for d3 to lay out', () => {
+    const { rerender } = render(<Graph nodes={[A, B]} layout={memoryLayout()} />)
+    rerender(<Graph nodes={[A, B, C]} layout={memoryLayout()} />)
+
+    expect(updateMessage().nodes).toEqual([
+      { id: 'a', label: 'Alpha', degree: 1 },
+      { id: 'b', label: 'Beta', degree: 1 },
       { id: 'c', label: 'Gamma', degree: 0 },
     ])
   })

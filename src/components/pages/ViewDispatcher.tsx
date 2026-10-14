@@ -1,20 +1,12 @@
 /**
- * ViewDispatcher — extracted from App.tsx (final).
- *
- * Owns:
- * - The `currentView`-based switch over view components (was the
- *   `ViewRouter` function in App.tsx).
+ * ViewDispatcher owns:
+ * - The `currentView`-based switch over view components.
  * - The `lazy()` imports for each top-level view component
  *   (Settings, Trash, etc.). `KeyboardShortcuts` and
  *   `WelcomeModal` stay lazy-imported in App.tsx because they render
  *   OUTSIDE this switch (top-level overlays).
  * - The shared `<ViewFallback>` Suspense skeleton.
- * - `useHeaderLabel` — used by the App shell header, exported so
- *   App.tsx can keep its existing import.
- *
- * Last of the four originally-planned extractions
- * (after `useAppKeyboardShortcuts`, `<AppSidebar>`, `useAppDialogs`).
- * This batch is a pure code move: behaviour is preserved verbatim.
+ * - `useHeaderLabel` — used by the App shell header.
  */
 
 import { type ComponentType, lazy, type ReactElement, Suspense, useEffect } from 'react'
