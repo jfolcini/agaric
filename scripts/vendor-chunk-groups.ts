@@ -9,7 +9,7 @@
  * and critical-path parse size.
  *
  * Each `test` runs against a module's absolute id; the highest-priority match
- * wins. Anything unmatched (lucide icons, match-sorter, sonner, date-fns,
+ * wins. Anything unmatched (lucide icons, match-sorter, sonner,
  * @tanstack/react-virtual, zustand, and similar small/startup dependencies)
  * stays with the entry/default split.
  *
@@ -60,6 +60,10 @@ export const VENDOR_CHUNK_GROUPS = [
   },
   // Drag-and-drop — only exercised in block trees and sortable lists.
   { name: 'dnd' as const, test: /[\\/]node_modules[\\/]@dnd-kit[\\/]/, priority: 30 },
+  // date-fns — shared by startup date utils and the lazy date picker; MUST
+  // outrank `datepicker`, which otherwise captures it as a dependency and the
+  // startup import drags react-day-picker onto the cold-start path (#5441).
+  { name: 'date-fns' as const, test: /[\\/]node_modules[\\/]date-fns[\\/]/, priority: 35 },
   // Date picker (calendar popover) — date properties + journal date selection.
   {
     name: 'datepicker' as const,

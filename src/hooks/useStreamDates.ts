@@ -13,12 +13,12 @@
  * Design notes:
  *  - Dates descend from `today` (index 0) to `oldest` (last). Rendering
  *    today first keeps it pinned at the top with no scroll-anchoring math.
- *  - `pageMap` (`dateStr → pageId`) is fetched once per window growth. We
- *    fetch the FULL current window each time rather than diffing batches:
- *    `list_journal_pages_in_range` is bounded + cheap, the dedupe cache in
- *    `useCalendarPageDates` is range-keyed (different range each grow, so
- *    it wouldn't help here), and a single full-window map sidesteps merge
- *    bugs when a page is created mid-window.
+ *  - `pageMap` (`dateStr → pageId`): a window growth fetches only the newly
+ *    revealed days and merges them in (#5446 — refetching from today made
+ *    the work grow quadratically with scroll depth). The first fetch, a
+ *    space switch and a calendar invalidation fetch the full window and
+ *    replace the map; a page created mid-window arrives through `addPage`
+ *    or that invalidation.
  *  - `MIN_JOURNAL_DATE` caps how far back the stream can load, matching the
  *    navigable horizon of the other journal surfaces.
  */
@@ -118,6 +118,9 @@ export function useStreamDates(): UseStreamDatesResult {
   // invalidation re-fetches the window in place, with neither spinner.
   const epoch = useCalendarPageDatesEpoch()
   const fetchedWindowRef = useRef<string | null>(null)
+  // The basis and oldest offset whose page map last landed, so a growth on
+  // the same basis fetches only the days past it.
+  const loadedRef = useRef<{ basis: string; oldestOffset: number } | null>(null)
 
   const startDate = formatDate(subtractDays(today, oldestOffset))
   const endDate = formatDate(today)
@@ -138,6 +141,7 @@ export function useStreamDates(): UseStreamDatesResult {
     if (currentSpaceId == null) {
       // oxlint-disable-next-line react/set-state-in-effect -- empties the journal page map when no space is active, since `listJournalPagesInRange` is required-active and never runs; see #4407
       setPageMap(new Map())
+      loadedRef.current = null
       setLoading(false)
       setLoadingOlder(false)
       firstFetchRef.current = false
@@ -146,8 +150,13 @@ export function useStreamDates(): UseStreamDatesResult {
       }
     }
 
+    const basis = `${currentSpaceId}|${endDate}|${epoch}`
+    const loaded = loadedRef.current
+    const growOnly = loaded?.basis === basis && oldestOffset > loaded.oldestOffset
+    const fetchEnd = growOnly ? formatDate(subtractDays(today, loaded.oldestOffset + 1)) : endDate
+
     commands
-      .listJournalPagesInRange(startDate, endDate, {
+      .listJournalPagesInRange(startDate, fetchEnd, {
         kind: 'active',
         space_id: currentSpaceId,
       })
@@ -158,7 +167,12 @@ export function useStreamDates(): UseStreamDatesResult {
         for (const b of rows) {
           if (b.content) map.set(b.content, b.id)
         }
-        setPageMap((prev) => (samePageMap(prev, map) ? prev : map))
+        loadedRef.current = { basis, oldestOffset }
+        if (growOnly) {
+          if (map.size > 0) setPageMap((prev) => new Map([...prev, ...map]))
+        } else {
+          setPageMap((prev) => (samePageMap(prev, map) ? prev : map))
+        }
       })
       .catch((err) => {
         if (cancelled || !mountedRef.current) return
@@ -176,7 +190,7 @@ export function useStreamDates(): UseStreamDatesResult {
       cancelled = true
       mountedRef.current = false
     }
-  }, [t, currentSpaceId, startDate, endDate, epoch])
+  }, [t, currentSpaceId, startDate, endDate, epoch, today, oldestOffset])
 
   const addPage = useCallback((dateStr: string, pageId: string) => {
     setPageMap((prev) => {

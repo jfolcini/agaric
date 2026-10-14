@@ -53,6 +53,8 @@ import { useNavigationStore } from '@/stores/navigation'
 import { useResolveStore } from '@/stores/resolve'
 import { useSpaceStore } from '@/stores/space'
 import { selectPageStack, useTabsStore } from '@/stores/tabs'
+import { useCommandPaletteStore } from '@/stores/useCommandPaletteStore'
+import { useInPageFindStore } from '@/stores/useInPageFindStore'
 import { useSearchSheetStore } from '@/stores/useSearchSheetStore'
 
 // `KeyboardShortcuts` and `WelcomeModal` are top-level overlays mounted
@@ -90,28 +92,26 @@ const QuickCaptureDialog = lazy(() =>
 const NoPeersDialog = lazy(() =>
   import('@/components/dialogs/NoPeersDialog').then((m) => ({ default: m.NoPeersDialog })),
 )
-// In-page find toolbar; lazy so the matcher + highlight code
-// only ships when the user actually opens it (Ctrl+F). It self-renders
-// nothing when the store flag is closed, so the lazy boundary is also
-// the rendering gate.
-const InPageFind = lazy(() =>
-  import('@/components/query/InPageFind').then((m) => ({ default: m.InPageFind })),
-)
-// Cmd/Ctrl+K command palette (successor to
-// SearchPalette). Same lazy-render-gate pattern: the component
-// self-renders nothing when its `useCommandPaletteStore.open` flag
-// is `false`.
-const CommandPalette = lazy(() =>
-  import('@/components/common/CommandPalette').then((m) => ({ default: m.CommandPalette })),
-)
-// Mobile unified search sheet. Same lazy-render-gate pattern as the
-// overlays above: renders nothing when its store flag is closed.
-// Mounted at App level so its sheet floats above every view. The
-// header trigger (`<SearchSheetTrigger />`) is the touch-only entry
-// point; keyboard users still go through Ctrl+F / Cmd+K / Ctrl+Shift+F.
-const SearchSheet = lazy(() =>
-  import('@/components/mobile/SearchSheet').then((m) => ({ default: m.SearchSheet })),
-)
+// The three search overlays (`SearchOverlays` below mounts them): the
+// in-page find toolbar (Ctrl+F), the Cmd/Ctrl+K command palette, and the
+// mobile unified search sheet. The sheet's header trigger
+// (`<SearchSheetTrigger />`) is the touch-only entry point; keyboard users
+// still go through Ctrl+F / Cmd+K / Ctrl+Shift+F.
+const loadInPageFind = () => import('@/components/query/InPageFind')
+const loadCommandPalette = () => import('@/components/common/CommandPalette')
+const loadSearchSheet = () => import('@/components/mobile/SearchSheet')
+const InPageFind = lazy(() => loadInPageFind().then((m) => ({ default: m.InPageFind })))
+const CommandPalette = lazy(() => loadCommandPalette().then((m) => ({ default: m.CommandPalette })))
+const SearchSheet = lazy(() => loadSearchSheet().then((m) => ({ default: m.SearchSheet })))
+
+/** Loads the overlay chunks so the first open renders without waiting on them. */
+function preloadSearchOverlays(): void {
+  for (const load of [loadInPageFind, loadCommandPalette, loadSearchSheet]) {
+    load().catch((err: unknown) => {
+      logger.warn('App', 'search overlay preload failed', undefined, err)
+    })
+  }
+}
 
 /**
  * The mobile entry point to the nav sidebar.
@@ -142,6 +142,56 @@ function MobileSidebarTrigger(): ReactElement | null {
       // wrapper re-centres a single-row header against it.
       className="-ml-2 shrink-0 self-start sm:self-center"
     />
+  )
+}
+
+/**
+ * The App-level search overlays, each mounted only while its store's `open`
+ * flag is set — the `KeyboardShortcuts` gate (#5441). All three render nothing
+ * while closed, so mounting them at boot fetched and evaluated their chunks on
+ * the boot path. They load on the first idle period instead, so the first
+ * Cmd+K or sheet tap does not wait on the chunk.
+ *
+ * Mutual exclusion: when the mobile search sheet shows a segment it mounts that
+ * segment's body itself, so the matching App-level overlay hides rather than
+ * run the matcher / debounced IPC twice. Reading the sheet state here keeps the
+ * leaves (`InPageFind`, `CommandPalette`) decoupled from the sheet.
+ *
+ * Its own component so these subscriptions re-render this leaf, not the shell,
+ * and because App sits at its cyclomatic-complexity ceiling.
+ */
+function SearchOverlays(): ReactElement {
+  const findOpen = useInPageFindStore((s) => s.open)
+  const paletteOpen = useCommandPaletteStore((s) => s.open)
+  const sheetSegment = useSearchSheetStore((s) => (s.open ? s.mode : null))
+  useEffect(() => {
+    if (typeof requestIdleCallback === 'function') requestIdleCallback(preloadSearchOverlays)
+    else setTimeout(preloadSearchOverlays, 0)
+  }, [])
+  return (
+    <>
+      {findOpen && sheetSegment !== 'in-page' && (
+        <FeatureErrorBoundary name="Find in page" nameKey="errorBoundary.section.findInPage">
+          <Suspense fallback={null}>
+            <InPageFind />
+          </Suspense>
+        </FeatureErrorBoundary>
+      )}
+      {paletteOpen && sheetSegment !== 'all-pages' && (
+        <FeatureErrorBoundary name="Command palette" nameKey="errorBoundary.section.commandPalette">
+          <Suspense fallback={null}>
+            <CommandPalette />
+          </Suspense>
+        </FeatureErrorBoundary>
+      )}
+      {sheetSegment !== null && (
+        <FeatureErrorBoundary name="Search sheet" nameKey="errorBoundary.section.searchSheet">
+          <Suspense fallback={null}>
+            <SearchSheet />
+          </Suspense>
+        </FeatureErrorBoundary>
+      )}
+    </>
   )
 }
 
@@ -210,15 +260,6 @@ function App() {
   // a change made in ANOTHER window, where no Settings tab is mounted.
   useLanguage()
   const { syncing, syncAll } = useSyncTrigger()
-  // Mutual-exclusion gates for the App-level search overlays. When
-  // the mobile search sheet is showing a given segment it mounts the
-  // same body inside its sheet, so the App-level overlay must hide
-  // to avoid running the matcher / debounced IPC twice. Reading
-  // sheet state here keeps the leaves (`InPageFind`, `CommandPalette`)
-  // decoupled from the sheet. Boolean-name-as-action so the use site
-  // reads `{!hideFindOverlay && <InPageFind />}` (positive guard).
-  const hideFindOverlay = useSearchSheetStore((s) => s.open && s.mode === 'in-page')
-  const hidePaletteOverlay = useSearchSheetStore((s) => s.open && s.mode === 'all-pages')
   const isOnline = useOnlineStatus()
   const isMobile = useIsMobile()
   const shouldShowMobileChrome = useShouldShowMobileChrome()
@@ -664,37 +705,9 @@ function App() {
           </ViewHeaderOutletProvider>
         </SidebarInset>
       </SidebarProvider>
-      {/* In-page find toolbar — mounted at App level so the overlay
-          floats above every view without each view having to
-          participate. Self-renders nothing when its store flag is
-          closed; the keyboard handler in `useAppKeyboardShortcuts`
-          flips it. Yields to the mobile sheet when the sheet is
-          showing its in-page segment — the sheet mounts the same
-          toolbar inside its body. */}
-      {!hideFindOverlay && (
-        <FeatureErrorBoundary name="Find in page" nameKey="errorBoundary.section.findInPage">
-          <Suspense fallback={null}>
-            <InPageFind />
-          </Suspense>
-        </FeatureErrorBoundary>
-      )}
-      {/* Cmd/Ctrl+K command palette — same overlay shape, same yield
-          rule for the sheet's all-pages segment. */}
-      {!hidePaletteOverlay && (
-        <FeatureErrorBoundary name="Command palette" nameKey="errorBoundary.section.commandPalette">
-          <Suspense fallback={null}>
-            <CommandPalette />
-          </Suspense>
-        </FeatureErrorBoundary>
-      )}
-      {/* Mobile unified search sheet — opened via the header trigger
-          on mobile viewports. Mounts the InPageFind toolbar or
-          PaletteBody inside its body depending on the active segment. */}
-      <FeatureErrorBoundary name="Search sheet" nameKey="errorBoundary.section.searchSheet">
-        <Suspense fallback={null}>
-          <SearchSheet />
-        </Suspense>
-      </FeatureErrorBoundary>
+      {/* Find, palette and search sheet — mounted at App level so they
+          float above every view without each view having to participate. */}
+      <SearchOverlays />
       {/* #754 — both overlays are gate-mounted so their lazy chunks stay
           off the boot path. The `?` / palette open path lives in
           `useAppDialogs` (the sheet can't open itself while unmounted);

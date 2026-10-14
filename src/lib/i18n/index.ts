@@ -68,6 +68,10 @@ void i18n.use(initReactI18next).init({
   resources,
   lng: DEFAULT_LOCALE,
   fallbackLng: DEFAULT_LOCALE,
+  // Every catalog key is flat (`journal.today` is one key, not a path), so a
+  // lookup must not split on '.': the default walks a nested path that never
+  // exists and then searches the flat keys, on every `t()` call (#5440).
+  keySeparator: false,
   interpolation: {
     escapeValue: false, // React already escapes
   },

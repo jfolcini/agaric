@@ -11,18 +11,25 @@ use agaric_core::ulid::BlockId;
 /// against the INTEGER epoch-ms column. The `seq = 0` sentinel in the
 /// no-cursor branch is safe because `op_log.seq` starts at 1.
 fn history_cursor_binds(page: &PageRequest) -> Result<(Option<i64>, i64, i64, &str), AppError> {
-    match page.after.as_ref() {
-        Some(c) => {
-            let created_at_str = c.deleted_at.as_deref().ok_or_else(|| {
-                AppError::validation("cursor missing created_at for history query".into())
-            })?;
-            let created_at = created_at_str.parse::<i64>().map_err(|e| {
-                AppError::validation(format!("cursor created_at not an integer: {e}"))
-            })?;
-            Ok((Some(1), created_at, c.seq.unwrap_or(0), &c.id))
-        }
-        None => Ok((None, 0, 0, "")),
-    }
+    Ok(match history_cursor_key(page)? {
+        Some((created_at, seq, device_id)) => (Some(1), created_at, seq, device_id),
+        None => (None, 0, 0, ""),
+    })
+}
+
+/// The `(created_at, seq, device_id)` of the last row the caller saw, or
+/// `None` on the first page.
+fn history_cursor_key(page: &PageRequest) -> Result<Option<(i64, i64, &str)>, AppError> {
+    let Some(c) = page.after.as_ref() else {
+        return Ok(None);
+    };
+    let created_at_str = c.deleted_at.as_deref().ok_or_else(|| {
+        AppError::validation("cursor missing created_at for history query".into())
+    })?;
+    let created_at = created_at_str
+        .parse::<i64>()
+        .map_err(|e| AppError::validation(format!("cursor created_at not an integer: {e}")))?;
+    Ok(Some((created_at, c.seq.unwrap_or(0), &c.id)))
 }
 
 fn history_cursor(last: &HistoryEntry) -> Cursor {
@@ -261,6 +268,19 @@ pub async fn list_page_history(
 /// space. No page-scoping CTE, and `space_id` is the only structural filter —
 /// which is why this branch and [`list_single_page_history`] share their
 /// cursor shape and nothing else.
+///
+/// #5424 — both statements walk `idx_op_log_created` newest-first and stop
+/// once `LIMIT` rows match, so a page costs the rows it passes over, not the
+/// size of the op log. The keyset is a range seek only as a bare row value:
+/// behind a `cursor IS NULL OR` switch, or spelled as the equivalent OR-chain,
+/// every page re-walked the log from its newest row, hence one statement per
+/// case. The space filter is a correlated `EXISTS` per walked row; an `IN`
+/// list materialised every block id of the space on every call. The
+/// `?N IS NULL` switches on the two filters stay: neither has an index to
+/// lose. `idx_op_log_created` holds `created_at` alone, so rows that share a
+/// millisecond still sort in a temp B-tree, one tie group at a time
+/// (`LAST 2 TERMS OF ORDER BY`). `pagination::tests::global_history_keyset_5424`
+/// pins both plans, and keeps the pre-#5424 query as the oracle for the rows.
 async fn list_global_history(
     pool: &SqlitePool,
     op_type_filter: Option<&str>,
@@ -268,82 +288,106 @@ async fn list_global_history(
     page: &PageRequest,
 ) -> Result<PageResponse<HistoryEntry>, AppError> {
     let fetch_limit = page.limit + 1;
-    let (cursor_flag, cursor_created_at, cursor_seq, cursor_device_id) =
-        history_cursor_binds(page)?;
+    let rows = match history_cursor_key(page)? {
+        None => global_history_first_page(pool, op_type_filter, space_id, fetch_limit).await?,
+        Some(after) => {
+            global_history_after(pool, op_type_filter, space_id, fetch_limit, after).await?
+        }
+    };
+    build_page_response(rows, page.limit, history_cursor)
+}
 
-    // Phase 8 — when `space_id` is `Some`, narrow to ops whose
-    // `payload.block_id` belongs to the requested space (matching the
-    // pattern used in `pagination/hierarchy.rs:113-134`).
-    //
-    // Compile-time SQL check via `query_as!` (AGENTS.md
-    // invariant #6). The previous dynamic `query_as::<_, _>` form
-    // bypassed `cargo sqlx prepare` validation; this branch is
-    // entirely static SQL with `?N IS NULL` short-circuits, so the
-    // macro form fits without losing any flexibility.
-    //
-    // IX2 (#349) — EQP-verified (5 000-row op_log seed, ANALYZE'd):
-    // a candidate composite `idx_op_log(created_at, seq)` was NOT
-    // added, and no migration ships in this group. The `ORDER BY
-    // ol.created_at DESC, ol.seq DESC, ol.device_id DESC` here plans
-    // as `SCAN ol` + `USE TEMP B-TREE FOR ORDER BY` today. With the
-    // candidate index it became `SCAN ol USING INDEX
-    // idx_op_log_created_seq` + `USE TEMP B-TREE FOR LAST TERM OF
-    // ORDER BY` — i.e. it is STILL a full scan (the keyset
-    // `created_at < ?3 OR (… seq < ?4) OR (…)` OR-chain is not a
-    // bounded range the planner can seek, and the no-cursor branch
-    // binds NULL sentinels) and STILL needs a temp B-tree (only the
-    // trailing `device_id` term is removed from it). The win is
-    // marginal — one fewer sort key on an already-small LIMIT 51
-    // page — while the index adds write amplification on the
-    // hot-path op_log insert. The existing single-column
-    // `idx_op_log_created` already covers the per-`created_at`
-    // lookups that matter. Conclusion: not worth it; left out.
-    let rows = sqlx::query_as!(
+async fn global_history_first_page(
+    pool: &SqlitePool,
+    op_type_filter: Option<&str>,
+    space_id: Option<&str>,
+    fetch_limit: i64,
+) -> Result<Vec<HistoryEntry>, AppError> {
+    Ok(sqlx::query_as!(
         HistoryEntry,
         "SELECT ol.device_id, ol.seq, ol.op_type, ol.payload, ol.created_at, \
                 ol.is_replicated AS \"is_replicated!: bool\" \
          FROM op_log ol \
          WHERE (?1 IS NULL OR ol.op_type = ?1) \
            AND (?2 IS NULL OR ( \
-                ol.created_at < ?3 \
-                OR (ol.created_at = ?3 AND ol.seq < ?4) \
-                OR (ol.created_at = ?3 AND ol.seq = ?4 AND ol.device_id < ?6))) \
-           AND (?7 IS NULL OR ( \
-                ol.block_id IN (SELECT id FROM blocks WHERE space_id = ?7) \
+                EXISTS (SELECT 1 FROM blocks sb WHERE sb.id = ol.block_id AND sb.space_id = ?2) \
                 OR ( \
                     ol.op_type IN ('delete_attachment', 'rename_attachment') \
                     AND ( \
                         EXISTS ( \
-                            SELECT 1 FROM attachments a \
+                            SELECT 1 FROM attachments a JOIN blocks sb ON sb.id = a.block_id \
                             WHERE a.id = json_extract(ol.payload, '$.attachment_id') \
-                            AND a.block_id IN (SELECT id FROM blocks WHERE space_id = ?7) \
+                            AND sb.space_id = ?2 \
                         ) \
                         OR ( \
                             ol.op_type = 'delete_attachment' \
                             AND EXISTS ( \
-                                SELECT 1 FROM op_log src_add \
+                                SELECT 1 FROM op_log src_add JOIN blocks sb ON sb.id = src_add.block_id \
                                 WHERE src_add.op_type = 'add_attachment' \
                                 AND src_add.attachment_id = json_extract(ol.payload, '$.attachment_id') \
-                                AND src_add.block_id IN (SELECT id FROM blocks WHERE space_id = ?7) \
+                                AND sb.space_id = ?2 \
                             ) \
                         ) \
                     ) \
                 ) \
             )) \
          ORDER BY ol.created_at DESC, ol.seq DESC, ol.device_id DESC \
-         LIMIT ?5",
-        op_type_filter,    // ?1
-        cursor_flag,       // ?2
-        cursor_created_at, // ?3
-        cursor_seq,        // ?4
-        fetch_limit,       // ?5
-        cursor_device_id,  // ?6
-        space_id,          // ?7
+         LIMIT ?3",
+        op_type_filter, // ?1
+        space_id,       // ?2
+        fetch_limit,    // ?3
     )
     .fetch_all(pool)
-    .await?;
+    .await?)
+}
 
-    build_page_response(rows, page.limit, history_cursor)
+async fn global_history_after(
+    pool: &SqlitePool,
+    op_type_filter: Option<&str>,
+    space_id: Option<&str>,
+    fetch_limit: i64,
+    (created_at, seq, device_id): (i64, i64, &str),
+) -> Result<Vec<HistoryEntry>, AppError> {
+    Ok(sqlx::query_as!(
+        HistoryEntry,
+        "SELECT ol.device_id, ol.seq, ol.op_type, ol.payload, ol.created_at, \
+                ol.is_replicated AS \"is_replicated!: bool\" \
+         FROM op_log ol \
+         WHERE (ol.created_at, ol.seq, ol.device_id) < (?4, ?5, ?6) \
+           AND (?1 IS NULL OR ol.op_type = ?1) \
+           AND (?2 IS NULL OR ( \
+                EXISTS (SELECT 1 FROM blocks sb WHERE sb.id = ol.block_id AND sb.space_id = ?2) \
+                OR ( \
+                    ol.op_type IN ('delete_attachment', 'rename_attachment') \
+                    AND ( \
+                        EXISTS ( \
+                            SELECT 1 FROM attachments a JOIN blocks sb ON sb.id = a.block_id \
+                            WHERE a.id = json_extract(ol.payload, '$.attachment_id') \
+                            AND sb.space_id = ?2 \
+                        ) \
+                        OR ( \
+                            ol.op_type = 'delete_attachment' \
+                            AND EXISTS ( \
+                                SELECT 1 FROM op_log src_add JOIN blocks sb ON sb.id = src_add.block_id \
+                                WHERE src_add.op_type = 'add_attachment' \
+                                AND src_add.attachment_id = json_extract(ol.payload, '$.attachment_id') \
+                                AND sb.space_id = ?2 \
+                            ) \
+                        ) \
+                    ) \
+                ) \
+            )) \
+         ORDER BY ol.created_at DESC, ol.seq DESC, ol.device_id DESC \
+         LIMIT ?3",
+        op_type_filter, // ?1
+        space_id,       // ?2
+        fetch_limit,    // ?3
+        created_at,     // ?4
+        seq,            // ?5
+        device_id,      // ?6
+    )
+    .fetch_all(pool)
+    .await?)
 }
 
 /// One page's sheet: the ops against the page's own block subtree, plus the

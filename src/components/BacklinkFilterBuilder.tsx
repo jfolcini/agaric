@@ -10,15 +10,20 @@
 
 import { Filter, X } from 'lucide-react'
 import type React from 'react'
-import { useCallback, useRef, useState } from 'react'
+import { lazy, Suspense, useCallback, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
-import { AddFilterRow } from '@/components/backlink-filter/AddFilterRow'
 import { FilterPillRow, type FilterWithKey } from '@/components/filters/FilterPillRow'
 import { FilterSortControls } from '@/components/filters/FilterSortControls'
 import { Button } from '@/components/ui/button'
 import type { BacklinkFilter, BacklinkSort, SortDir } from '@/lib/bindings'
 import { notify } from '@/lib/notify'
+
+// #5441 — lazy: the add-filter row (its category forms and cmdk) only renders after
+// "Add filter" is clicked, so it loads then instead of with every references panel.
+const AddFilterRow = lazy(() =>
+  import('@/components/backlink-filter/AddFilterRow').then((m) => ({ default: m.AddFilterRow })),
+)
 
 // ---------------------------------------------------------------------------
 // Types
@@ -244,15 +249,17 @@ export function BacklinkFilterBuilder({
 
       {/* Add filter row */}
       {showAddRow && (
-        <AddFilterRow
-          propertyKeys={propertyKeys}
-          tags={tags}
-          onApply={handleAddFilter}
-          onCancel={() => {
-            setShowAddRow(false)
-            requestAnimationFrame(() => addFilterButtonRef.current?.focus())
-          }}
-        />
+        <Suspense fallback={null}>
+          <AddFilterRow
+            propertyKeys={propertyKeys}
+            tags={tags}
+            onApply={handleAddFilter}
+            onCancel={() => {
+              setShowAddRow(false)
+              requestAnimationFrame(() => addFilterButtonRef.current?.focus())
+            }}
+          />
+        </Suspense>
       )}
 
       {/* Count display */}

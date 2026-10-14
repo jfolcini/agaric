@@ -5,7 +5,7 @@
  * Validates:
  * 1. Initial window: today first, descending, STREAM_INITIAL_DAYS long.
  * 2. `loadOlder()` extends the window by STREAM_BATCH_DAYS into the past
- *    and refetches the page map for the wider span.
+ *    and fetches the page map for only the newly revealed days.
  * 3. The page map is built from `list_journal_pages_in_range` rows.
  * 4. `reachedEnd` flips true once the window reaches MIN_JOURNAL_DATE
  *    (and `loadOlder` then clamps).
@@ -90,23 +90,47 @@ describe('useStreamDates', () => {
     expect(result.current.pageMap.has('2026-06-19')).toBe(false)
   })
 
-  it('loadOlder extends the window by STREAM_BATCH_DAYS and refetches', async () => {
+  // #5446 — each growth fetches only the revealed days, not the span from today.
+  it('loadOlder fetches only the newly revealed days and merges them', async () => {
+    listJournalPagesInRange.mockResolvedValueOnce([{ id: 'p-20', content: '2026-06-20' }])
+    const { result } = renderHook(() => useStreamDates())
+    await waitFor(() => expect(result.current.pageMap.get('2026-06-20')).toBe('p-20'))
+    const initialLen = result.current.dates.length
+
+    listJournalPagesInRange.mockResolvedValueOnce([{ id: 'p-01', content: '2026-06-01' }])
+    act(() => result.current.loadOlder())
+    await waitFor(() => expect(result.current.pageMap.get('2026-06-01')).toBe('p-01'))
+    listJournalPagesInRange.mockResolvedValueOnce([])
+    act(() => result.current.loadOlder())
+    await waitFor(() => expect(result.current.loadingOlder).toBe(false))
+
+    expect(result.current.dates).toHaveLength(initialLen + 2 * STREAM_BATCH_DAYS)
+    // Wire args are positional: `(startDate, endDate, scope)`.
+    const scope = { kind: 'active', space_id: 'space-1' }
+    expect(listJournalPagesInRange.mock.calls).toEqual([
+      ['2026-06-07', '2026-06-20', scope],
+      ['2026-05-24', '2026-06-06', scope],
+      ['2026-05-10', '2026-05-23', scope],
+    ])
+    expect(formatDate(result.current.dates.at(-1) as Date)).toBe('2026-05-10')
+    expect(result.current.pageMap.get('2026-06-20')).toBe('p-20')
+    expect(result.current.pageMap.get('2026-06-01')).toBe('p-01')
+  })
+
+  it('a growth that coincides with an invalidation re-fetches the whole window', async () => {
     const { result } = renderHook(() => useStreamDates())
     await waitFor(() => expect(result.current.loading).toBe(false))
-    const initialLen = result.current.dates.length
-    const callsBefore = listJournalPagesInRange.mock.calls.length
 
-    act(() => result.current.loadOlder())
-    await waitFor(() => expect(result.current.dates.length).toBe(initialLen + STREAM_BATCH_DAYS))
-    // A wider range was refetched.
-    expect(listJournalPagesInRange.mock.calls.length).toBe(callsBefore + 1)
-    // Wire args are positional: `(startDate, endDate, scope)`.
-    const lastCall = listJournalPagesInRange.mock.calls.at(-1) as [string, string, unknown]
-    expect(lastCall[1]).toBe('2026-06-20')
-    expect(lastCall[2]).toEqual({ kind: 'active', space_id: 'space-1' })
-    // Oldest day moved further back.
-    const oldest = result.current.dates.at(-1) as Date
-    expect(formatDate(oldest)).toBe(lastCall[0])
+    act(() => {
+      invalidateCalendarPageDates()
+      result.current.loadOlder()
+    })
+
+    await waitFor(() => expect(listJournalPagesInRange).toHaveBeenCalledTimes(2))
+    expect(listJournalPagesInRange.mock.calls.at(-1)?.slice(0, 2)).toEqual([
+      '2026-05-24',
+      '2026-06-20',
+    ])
   })
 
   it('addPage merges a created page without an extra fetch', async () => {
