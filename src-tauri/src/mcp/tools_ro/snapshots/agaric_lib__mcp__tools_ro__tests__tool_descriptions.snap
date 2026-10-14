@@ -301,3 +301,44 @@ expression: wire
       - space_id
     type: object
   name: block_history
+- description: "Read a day's journal page as Markdown, returned as { date, page_id, markdown } in the shape get_page_markdown returns. Never creates the day: a missing one returns `page_id: null` and empty `markdown`."
+  inputSchema:
+    additionalProperties: false
+    properties:
+      date:
+        description: "`today` (the default), `yesterday`, or YYYY-MM-DD, on this device's clock."
+        type: string
+      space_id:
+        description: ULID of the space the journal belongs to.
+        type: string
+    required:
+      - space_id
+    type: object
+  name: get_journal
+- description: "List the journal days of a space from `from` to `to` (inclusive), oldest first, each as { page_id, date, block_count }. Cursor paginated."
+  inputSchema:
+    additionalProperties: false
+    properties:
+      cursor:
+        description: Opaque pagination cursor from a prior response.
+        type: string
+      from:
+        description: "First day, YYYY-MM-DD."
+        type: string
+      limit:
+        description: Max days per response (capped at 100).
+        maximum: 100
+        minimum: 1
+        type: integer
+      space_id:
+        description: ULID of the space the journal belongs to.
+        type: string
+      to:
+        description: "Last day, YYYY-MM-DD."
+        type: string
+    required:
+      - space_id
+      - from
+      - to
+    type: object
+  name: list_journal

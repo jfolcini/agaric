@@ -2848,13 +2848,37 @@ pub async fn append_markdown_inner(
     index: Option<i64>,
 ) -> Result<PastedBlocks, AppError> {
     let parent_id = BlockId::from_string(parent_id.into_string())?;
+    let mut tx = CommandTx::begin_immediate(pool, "append_markdown").await?;
+    // #2604 — rollback-safe engine apply (rewind on tx abort).
+    tx.arm_engine_rollback(materializer.loro_state());
+    let (tx, appended) = Box::pin(append_markdown_in_tx(
+        tx,
+        materializer,
+        device_id,
+        &parent_id,
+        markdown,
+        index,
+    ))
+    .await?;
+    tx.commit_and_dispatch(materializer).await?;
+    Ok(appended)
+}
+
+/// [`append_markdown_inner`] inside the caller's rollback-armed transaction,
+/// for a caller that writes the parent in the same transaction (MCP
+/// `capture`, #5396).
+pub(crate) async fn append_markdown_in_tx(
+    mut tx: CommandTx,
+    materializer: &Materializer,
+    device_id: &str,
+    parent_id: &BlockId,
+    markdown: &str,
+    index: Option<i64>,
+) -> Result<(CommandTx, PastedBlocks), AppError> {
     let mut blocks = import::parse_pasted_text(markdown);
     if blocks.is_empty() {
         return Err(AppError::validation("there is nothing to append".into()));
     }
-    let mut tx = CommandTx::begin_immediate(pool, "append_markdown").await?;
-    // #2604 — rollback-safe engine apply (rewind on tx abort).
-    tx.arm_engine_rollback(materializer.loro_state());
     let parent =
         agaric_engine::block_ops::fetch_live_block_in_tx(&mut tx, parent_id.as_str()).await?;
     let (mut tx, lines, warnings, mut created) = Box::pin(read_pasted_blocks(
@@ -2869,18 +2893,20 @@ pub async fn append_markdown_inner(
         &mut tx,
         materializer,
         device_id,
-        Some(parent_id.into_string()),
+        Some(parent_id.as_str().to_owned()),
         index,
         &blocks,
         &lines,
     ))
     .await?;
-    tx.commit_and_dispatch(materializer).await?;
     created.extend(appended);
-    Ok(PastedBlocks {
-        blocks: created,
-        warnings,
-    })
+    Ok((
+        tx,
+        PastedBlocks {
+            blocks: created,
+            warnings,
+        },
+    ))
 }
 
 /// Read the property lines of `blocks` and resolve the names they write, in

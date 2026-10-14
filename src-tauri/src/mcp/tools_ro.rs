@@ -24,6 +24,8 @@
 //! | `get_page_markdown` | [`get_page_for_agent_inner`] | #5375 — the whole page as Markdown, ids written as names and every block with its `^ID`. No pagination, as the export. |
 //! | `page_history` | [`list_page_history_inner`] | Ops on a page's blocks, newest first: device, origin, op type, time, clipped before/after. Cursor paginated. `space_id` required. |
 //! | `block_history` | [`get_block_history_inner`] | The same rows for one block. |
+//! | `get_journal` | [`get_journal_page_by_date_inner`] + [`get_page_for_agent_inner`] | #5396 — a day as `get_page_markdown` renders it; `date` is `today` (default), `yesterday` or `YYYY-MM-DD` on the device's clock. Never creates: a missing day is an empty `markdown`. |
+//! | `list_journal` | [`list_journal_days_inner`] | #5396 — the days in `[from, to]` with their block counts. Cursor paginated. |
 //!
 //! # Actor scoping
 //!
@@ -69,22 +71,23 @@ use sqlx::SqlitePool;
 
 use super::dispatch::{scoped_dispatch, unknown_tool_error};
 use super::handler_utils::{
-    fetch_op_origins, normalize_ulid_arg, parse_args, to_tool_result, validate_block_in_space,
+    fetch_op_origins, normalize_ulid_arg, parse_args, resolve_journal_date, to_tool_result,
+    validate_block_in_space,
 };
 use super::registry::{
-    TOOL_BLOCK_HISTORY, TOOL_GET_AGENDA, TOOL_GET_BLOCK, TOOL_GET_PAGE, TOOL_GET_PAGE_MARKDOWN,
-    TOOL_JOURNAL_FOR_DATE, TOOL_LIST_BACKLINKS, TOOL_LIST_PAGES, TOOL_LIST_PROPERTY_DEFS,
-    TOOL_LIST_SPACES, TOOL_LIST_TAGS, TOOL_PAGE_HISTORY, TOOL_SEARCH, ToolDescription,
-    ToolRegistry,
+    TOOL_BLOCK_HISTORY, TOOL_GET_AGENDA, TOOL_GET_BLOCK, TOOL_GET_JOURNAL, TOOL_GET_PAGE,
+    TOOL_GET_PAGE_MARKDOWN, TOOL_JOURNAL_FOR_DATE, TOOL_LIST_BACKLINKS, TOOL_LIST_JOURNAL,
+    TOOL_LIST_PAGES, TOOL_LIST_PROPERTY_DEFS, TOOL_LIST_SPACES, TOOL_LIST_TAGS, TOOL_PAGE_HISTORY,
+    TOOL_SEARCH, ToolDescription, ToolRegistry,
 };
 use super::view_notify::{NoopViewChangeEmitter, ViewChangeEmitter};
 use crate::commands::{
     PropertyRow, agenda_range_inner, get_active_block_inner, get_block_history_inner,
     get_journal_page_by_date_inner, get_page_aliases_inner, get_page_for_agent_inner,
     get_page_unscoped_inner, get_properties_inner, journal_for_date_inner,
-    list_backlinks_grouped_inner, list_page_history_inner, list_pages_inner,
-    list_property_defs_inner, list_spaces_registry_inner, list_tags_for_block_inner,
-    list_tags_inner, search_blocks_inner,
+    list_backlinks_grouped_inner, list_journal_days_inner, list_page_history_inner,
+    list_pages_inner, list_property_defs_inner, list_spaces_registry_inner,
+    list_tags_for_block_inner, list_tags_inner, search_blocks_inner,
 };
 use crate::materializer::Materializer;
 use agaric_core::error::AppError;
@@ -410,6 +413,26 @@ struct JournalForDateArgs {
     space_id: String,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct GetJournalArgs {
+    space_id: String,
+    #[serde(default)]
+    date: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ListJournalArgs {
+    space_id: String,
+    from: String,
+    to: String,
+    #[serde(default)]
+    cursor: Option<String>,
+    #[serde(default)]
+    limit: Option<i64>,
+}
+
 // ---------------------------------------------------------------------------
 // ReadOnlyTools
 // ---------------------------------------------------------------------------
@@ -527,6 +550,8 @@ pub(crate) fn list_tool_descriptions() -> Vec<ToolDescription> {
         tool_desc_get_page_markdown(),
         tool_desc_page_history(),
         tool_desc_block_history(),
+        tool_desc_get_journal(),
+        tool_desc_list_journal(),
     ]
 }
 
@@ -590,6 +615,10 @@ impl ToolRegistry for ReadOnlyTools {
                 // The space check takes the write lock, which the reader pool refuses.
                 TOOL_PAGE_HISTORY => handle_page_history(&pool, &writer_pool, args).await,
                 TOOL_BLOCK_HISTORY => handle_block_history(&pool, &writer_pool, args).await,
+                TOOL_GET_JOURNAL => {
+                    handle_get_journal(&pool, args, chrono::Local::now().date_naive()).await
+                }
+                TOOL_LIST_JOURNAL => handle_list_journal(&pool, args).await,
                 other => Err(unknown_tool_error(other)),
             }
         })
@@ -997,6 +1026,54 @@ fn tool_desc_block_history() -> ToolDescription {
     }
 }
 
+fn tool_desc_get_journal() -> ToolDescription {
+    ToolDescription {
+        name: TOOL_GET_JOURNAL.to_string(),
+        description: "Read a day's journal page as Markdown, returned as { date, page_id, \
+             markdown } in the shape get_page_markdown returns. Never creates the day: a \
+             missing one returns `page_id: null` and empty `markdown`."
+            .to_string(),
+        input_schema: json!({
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["space_id"],
+            "properties": {
+                "space_id": { "type": "string", "description": "ULID of the space the journal belongs to." },
+                "date": {
+                    "type": "string",
+                    "description": "`today` (the default), `yesterday`, or YYYY-MM-DD, on this device's clock.",
+                },
+            },
+        }),
+    }
+}
+
+fn tool_desc_list_journal() -> ToolDescription {
+    ToolDescription {
+        name: TOOL_LIST_JOURNAL.to_string(),
+        description: "List the journal days of a space from `from` to `to` (inclusive), oldest \
+             first, each as { page_id, date, block_count }. Cursor paginated."
+            .to_string(),
+        input_schema: json!({
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["space_id", "from", "to"],
+            "properties": {
+                "space_id": { "type": "string", "description": "ULID of the space the journal belongs to." },
+                "from": { "type": "string", "description": "First day, YYYY-MM-DD." },
+                "to": { "type": "string", "description": "Last day, YYYY-MM-DD." },
+                "cursor": { "type": "string", "description": "Opaque pagination cursor from a prior response." },
+                "limit": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": LIST_RESULT_CAP,
+                    "description": format!("Max days per response (capped at {LIST_RESULT_CAP})."),
+                },
+            },
+        }),
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Handler implementations
 //
@@ -1381,12 +1458,9 @@ async fn handle_get_agenda(pool: &SqlitePool, args: Value) -> Result<Value, AppE
 ///   [`journal_for_date_inner`] on the writer pool. Idempotent per
 ///   `(space_id, date)` — only the first call in the window creates;
 ///   later calls are pure lookups.
-/// - **In-window + existing:** pure lookup, no write (same
-///   `journal_for_date_inner` call — the lookup branch inside
-///   `resolve_or_create_journal_page` short-circuits before the create).
-/// - **Out-of-window + existing:** pure lookup via
-///   [`get_journal_page_by_date_inner`] on the reader pool — no write,
-///   regardless of how far the date is from today.
+/// - **Existing, in or out of the window:** pure lookup via
+///   [`get_journal_page_by_date_inner`] on the reader pool — no write and no
+///   writer lock (#5396).
 /// - **Out-of-window + missing:** returns [`AppError::NotFound`]. The RO
 ///   surface never creates a page for an arbitrary far-future or
 ///   far-past date — that was the unbounded-mutation path #2719 closes
@@ -1419,36 +1493,65 @@ async fn handle_journal_for_date(
     let space_id = normalize_ulid_arg(&args.space_id);
     let formatted = date.format("%Y-%m-%d").to_string();
 
-    if within_journal_create_window(date) {
-        // #5314 — a page this call creates must reach open views, as every
-        // RW tool's write does. A lost race to another creator only costs an
-        // extra reload.
-        let existed = get_journal_page_by_date_inner(read_pool, &formatted, &space_id)
-            .await?
-            .is_some();
-        // In-window: preserve the pre-#2719 behaviour exactly — lookup
-        // or create, idempotent per (space_id, date), on the writer pool
-        // (required for the create branch; the lookup branch tolerates
-        // the writer pool fine too, it just doesn't need `query_only`).
-        let resp =
-            journal_for_date_inner(write_pool, device_id, materializer, date, &space_id).await?;
-        if !existed {
-            view_emitter.emit_blocks_changed(vec![resp.id.as_str().to_owned()]);
-        }
-        return to_tool_result(&resp);
+    // A day that exists is a pure read on the reader pool: no writer lock.
+    if let Some(row) = get_journal_page_by_date_inner(read_pool, &formatted, &space_id).await? {
+        return to_tool_result(&row);
     }
-
-    // #2719 — out-of-window: this tool may NEVER create here. Fall back
-    // to a pure read on the reader pool: return the page if it already
-    // exists, otherwise NotFound rather than creating one.
-    match get_journal_page_by_date_inner(read_pool, &formatted, &space_id).await? {
-        Some(row) => to_tool_result(&row),
-        None => Err(AppError::NotFound(format!(
+    // #2719 — out-of-window: this tool may NEVER create here.
+    if !within_journal_create_window(date) {
+        return Err(AppError::NotFound(format!(
             "tool `{TOOL_JOURNAL_FOR_DATE}`: no journal page exists for '{formatted}' in space \
              '{space_id}', and '{formatted}' is outside the {JOURNAL_CREATE_WINDOW_MONTHS}-month \
              window around today in which this read-only tool is permitted to create one"
-        ))),
+        )));
     }
+    // In-window miss: lookup or create, idempotent per (space_id, date), on
+    // the writer pool. #5314 — the page reaches open views as every RW
+    // tool's write does; a lost race to another creator only costs an extra
+    // reload.
+    let resp = journal_for_date_inner(write_pool, device_id, materializer, date, &space_id).await?;
+    view_emitter.emit_blocks_changed(vec![resp.id.as_str().to_owned()]);
+    to_tool_result(&resp)
+}
+
+/// A day's journal page through the `get_page_markdown` renderer (#5396).
+/// `today` is the device's date, passed in so a test can fix it.
+async fn handle_get_journal(
+    pool: &SqlitePool,
+    args: Value,
+    today: chrono::NaiveDate,
+) -> Result<Value, AppError> {
+    let args: GetJournalArgs = parse_args(TOOL_GET_JOURNAL, args)?;
+    let date = resolve_journal_date(TOOL_GET_JOURNAL, args.date.as_deref(), today)?
+        .format("%Y-%m-%d")
+        .to_string();
+    let space_id = SpaceId::from_string(args.space_id)?;
+    let page = get_journal_page_by_date_inner(pool, &date, space_id.as_str()).await?;
+    let markdown = match &page {
+        Some(page) => get_page_for_agent_inner(pool, page.id.as_str()).await?,
+        None => String::new(),
+    };
+    Ok(json!({
+        "date": date,
+        "page_id": page.map(|page| page.id),
+        "markdown": markdown,
+    }))
+}
+
+async fn handle_list_journal(pool: &SqlitePool, args: Value) -> Result<Value, AppError> {
+    let args: ListJournalArgs = parse_args(TOOL_LIST_JOURNAL, args)?;
+    let limit = validate_limit(TOOL_LIST_JOURNAL, args.limit, LIST_RESULT_CAP)?;
+    let space_id = SpaceId::from_string(args.space_id)?;
+    let resp = list_journal_days_inner(
+        pool,
+        space_id.as_str(),
+        &args.from,
+        &args.to,
+        args.cursor,
+        limit,
+    )
+    .await?;
+    to_tool_result(&resp)
 }
 
 /// Handle the `list_spaces` MCP tool call (#633).
@@ -1798,15 +1901,11 @@ mod tests_m82 {
     /// Sanity check that the lookup branch of `journal_for_date` works
     /// across pool wirings: idempotency on a date that already has a
     /// page must succeed whether the registry is wired with the
-    /// Production split (reader pool + writer pool, fix) or the
-    /// legacy combined `init_pool` wiring used by the in-tree test
-    /// fixture (`mk_tools()`). The lookup-then-return path inside
-    /// `journal_for_date_inner` uses `BEGIN IMMEDIATE` to keep the
-    /// SELECT-then-INSERT pair atomic against concurrent callers; the
-    /// transaction commits without inserting when the page exists, so
-    /// any pool that can acquire the writer lock is sufficient. With
-    /// The fix applied, both wirings use the writer pool for this
-    /// path and resolve to the same `BlockRow.id`.
+    /// Production split (reader pool + writer pool) or the legacy
+    /// combined `init_pool` wiring used by the in-tree test fixture
+    /// (`mk_tools()`). An existing day is read on the reader pool without
+    /// the writer lock (#5396), so the split lookup runs while another
+    /// connection holds that lock.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn journal_for_date_finds_existing_page_via_either_pool() {
         // ── Wiring A — production split via init_pools() ──────────────
@@ -1834,29 +1933,30 @@ mod tests_m82 {
             .and_then(|v| v.as_str())
             .expect("response must include an `id`")
             .to_string();
-        // Drain twice: the first flush catches the create dispatch, the
-        // second catches any Phase-4 cache-rebuild fanout
-        // (RebuildPageLinkCache / RebuildPageIds) the first dispatch
-        // queued. Without the second drain, those rebuilders can hold the
-        // writer lock when the second `call_tool` opens its
-        // BEGIN IMMEDIATE, causing the lookup branch to wait through the
-        // 5s busy_timeout and the whole test to drift to ~30s/retry —
-        // Surfaced as a 1-in-3 flake during the hygiene sweep.
         mat_split.flush_background().await.unwrap();
         mat_split.flush_background().await.unwrap();
 
-        // Second call finds the same page via the lookup branch — no
-        // INSERT runs, the BEGIN IMMEDIATE transaction commits empty.
-        let second = tools_split
-            .call_tool(
+        // Second call finds the same page via the lookup branch while
+        // another connection holds the writer lock: a lookup that took it
+        // would wait out the busy timeout and fail.
+        let mut holder = tools_split.writer_pool.acquire().await.unwrap();
+        sqlx::query("BEGIN IMMEDIATE")
+            .execute(&mut *holder)
+            .await
+            .unwrap();
+        let second = tokio::time::timeout(
+            std::time::Duration::from_secs(2),
+            tools_split.call_tool(
                 "journal_for_date",
                 json!({"date": date, "space_id": space_split}),
                 &test_ctx(),
-            )
-            .await
-            .expect(
-                "lookup branch must succeed on the production split wiring when the page exists",
-            );
+            ),
+        )
+        .await
+        .expect("an existing day is read without waiting for the writer lock")
+        .expect("lookup branch must succeed on the production split wiring when the page exists");
+        sqlx::query("ROLLBACK").execute(&mut *holder).await.unwrap();
+        drop(holder);
         assert_eq!(
             second.get("id").and_then(|v| v.as_str()),
             Some(first_id.as_str()),

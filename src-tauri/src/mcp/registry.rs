@@ -69,6 +69,8 @@ pub(crate) const TOOL_LIST_SPACES: &str = "list_spaces";
 pub(crate) const TOOL_GET_PAGE_MARKDOWN: &str = "get_page_markdown";
 pub(crate) const TOOL_PAGE_HISTORY: &str = "page_history";
 pub(crate) const TOOL_BLOCK_HISTORY: &str = "block_history";
+pub(crate) const TOOL_GET_JOURNAL: &str = "get_journal";
+pub(crate) const TOOL_LIST_JOURNAL: &str = "list_journal";
 
 // Read-write tool names (`tools_rw.rs`).
 pub(crate) const TOOL_APPEND_BLOCK: &str = "append_block";
@@ -82,6 +84,7 @@ pub(crate) const TOOL_MOVE_PAGE_TO_SPACE: &str = "move_page_to_space";
 pub(crate) const TOOL_CREATE_TAG: &str = "create_tag";
 pub(crate) const TOOL_DELETE_PROPERTY: &str = "delete_property";
 pub(crate) const TOOL_UNDO: &str = "undo";
+pub(crate) const TOOL_CAPTURE: &str = "capture";
 
 /// Metadata returned by [`ToolRegistry::list_tools`] — one entry per
 /// advertised tool. The JSON shape matches MCP's `tools/list` response:

@@ -10,6 +10,7 @@ use crate::materializer::Materializer;
 use agaric_core::error::AppError;
 use agaric_store::pagination::BlockRow;
 use agaric_store::space::{SpaceId, SpaceScope};
+use serde::Serialize;
 
 use super::sanitize_internal_error;
 use super::*;
@@ -141,7 +142,23 @@ async fn resolve_or_create_journal_page(
     let mut tx = CommandTx::begin_immediate(pool, "resolve_or_create_journal_page").await?;
     // #2604 — rollback-safe engine apply (rewind on tx abort).
     tx.arm_engine_rollback(materializer.loro_state());
+    let page =
+        resolve_or_create_journal_page_in_tx(&mut tx, device_id, materializer, date, space_id)
+            .await?;
+    tx.commit_and_dispatch(materializer).await?;
+    Ok(page)
+}
 
+/// [`resolve_or_create_journal_page`] inside the caller's rollback-armed
+/// transaction, for a caller that writes under the day in the same
+/// transaction (MCP `capture`, #5396). `date` is already `YYYY-MM-DD`.
+async fn resolve_or_create_journal_page_in_tx(
+    tx: &mut CommandTx,
+    device_id: &str,
+    materializer: &Materializer,
+    date: &str,
+    space_id: &str,
+) -> Result<BlockRow, AppError> {
     // Look for an existing page whose content matches the date
     // exactly AND whose `space` ref property points at the requested
     // space. Two spaces with the same date keep distinct daily notes.
@@ -162,24 +179,20 @@ async fn resolve_or_create_journal_page(
         date,
         space_id,
     )
-    .fetch_optional(&mut **tx)
+    .fetch_optional(&mut ***tx)
     .await?;
 
     if let Some(row) = existing {
-        // Found it — release the writer lock and return without creating.
-        // No op_records enqueued, so `commit_without_dispatch` is the
-        // semantic match.
-        tx.commit_without_dispatch().await?;
         return Ok(row);
     }
 
-    crate::commands::spaces::require_live_space_in_tx(&mut tx, space_id).await?;
+    crate::commands::spaces::require_live_space_in_tx(tx, space_id).await?;
 
     // No existing page — create one inside the SAME transaction so the
     // SELECT + INSERT pair is atomic. Concurrent callers that lost the
-    // race will block on `BEGIN IMMEDIATE` above; once we commit, their
-    // SELECT will observe this new page and they will fall through the
-    // `if let Some(row)` branch above instead of inserting a duplicate.
+    // race will block on `BEGIN IMMEDIATE`; once we commit, their
+    // SELECT will observe this new page and they will return it
+    // instead of inserting a duplicate.
     //
     // Emit the same `CreateBlock` + `SetProperty(space=<sid>)`
     // op pair as `create_page_in_space_inner` so a sync peer materializes
@@ -188,7 +201,7 @@ async fn resolve_or_create_journal_page(
     // because that helper opens its own `BEGIN IMMEDIATE` and we must
     // keep the SELECT + INSERT pair atomic in *this* transaction.
     let (block, page_op_record) = create_block_in_tx(
-        &mut tx,
+        tx,
         materializer.loro_state(),
         device_id,
         "page".into(),
@@ -203,7 +216,7 @@ async fn resolve_or_create_journal_page(
     // The space op is not dispatched: a fresh block has nothing to re-scope
     // (#5275, the `space` arm of `push_property_op_invalidations`).
     let (_block_after_prop, _space_op_record) = set_property_in_tx(
-        &mut tx,
+        tx,
         materializer.loro_state(),
         device_id,
         block.id.clone().into_string(),
@@ -216,11 +229,11 @@ async fn resolve_or_create_journal_page(
     )
     .await?;
 
-    // Commit + fire-and-forget dispatch for the create op (mirrors the
-    // post-commit dispatch in `create_page_in_space`).
+    // Dispatched on commit (mirrors the post-commit dispatch in
+    // `create_page_in_space`).
     tx.enqueue_background(page_op_record);
     apply_journal_template_in_tx(
-        &mut tx,
+        tx,
         materializer,
         device_id,
         block.id.as_str(),
@@ -228,7 +241,6 @@ async fn resolve_or_create_journal_page(
         space_id,
     )
     .await?;
-    tx.commit_and_dispatch(materializer).await?;
 
     Ok(block)
 }
@@ -558,6 +570,132 @@ pub async fn quick_capture_block(
     )
     .await
     .map_err(sanitize_internal_error)
+}
+
+/// What [`capture_to_journal_inner`] wrote: the day page, then the pages and
+/// tags the outline's names created and the appended blocks, as
+/// [`append_markdown_inner`] returns them.
+#[derive(Debug, Clone, Serialize)]
+pub struct JournalCapture {
+    pub page: BlockRow,
+    #[serde(flatten)]
+    pub appended: PastedBlocks,
+}
+
+/// Append the Markdown outline `markdown` at the end of the journal page for
+/// `date` in `space_id` (MCP `capture`, #5396), creating the day with its
+/// journal template when it is missing. The day and the outline land in one
+/// transaction, so one undo of the returned ops reverts both.
+///
+/// # Errors
+///
+/// - [`AppError::Validation`] — `space_id` is not a live space and the day is
+///   missing, the markdown holds no block, or the append would write more ops
+///   than one undo reverts; nothing is written, not even the day
+#[instrument(skip(pool, device_id, materializer, markdown), err)]
+pub async fn capture_to_journal_inner(
+    pool: &SqlitePool,
+    device_id: &str,
+    materializer: &Materializer,
+    space_id: &str,
+    date: NaiveDate,
+    markdown: &str,
+) -> Result<JournalCapture, AppError> {
+    let date = date.format("%Y-%m-%d").to_string();
+    let mut tx = CommandTx::begin_immediate(pool, "capture_to_journal").await?;
+    // #2604 — rollback-safe engine apply (rewind on tx abort).
+    tx.arm_engine_rollback(materializer.loro_state());
+    let page =
+        resolve_or_create_journal_page_in_tx(&mut tx, device_id, materializer, &date, space_id)
+            .await?;
+    let (tx, appended) = Box::pin(crate::commands::pages::markdown::append_markdown_in_tx(
+        tx,
+        materializer,
+        device_id,
+        &page.id,
+        markdown,
+        None,
+    ))
+    .await?;
+    tx.commit_and_dispatch(materializer).await?;
+    Ok(JournalCapture { page, appended })
+}
+
+/// One day [`list_journal_days_inner`] returns: the journal page, its date,
+/// and how many live blocks it holds.
+#[derive(Debug, Clone, Serialize, specta::Type)]
+pub struct JournalDay {
+    pub page_id: String,
+    pub date: String,
+    pub block_count: i64,
+}
+
+/// The journal days of `space_id` in the inclusive `[start_date, end_date]`
+/// range, oldest first, each with its live block count, cursor paginated on
+/// `(date, page id)` (MCP `list_journal`, #5396).
+///
+/// # Errors
+///
+/// - [`AppError::Validation`] — a date is not `YYYY-MM-DD`, the range is
+///   inverted, `limit` is out of range, or the cursor is malformed
+#[instrument(skip(pool), err)]
+pub async fn list_journal_days_inner(
+    pool: &SqlitePool,
+    space_id: &str,
+    start_date: &str,
+    end_date: &str,
+    cursor: Option<String>,
+    limit: Option<i64>,
+) -> Result<agaric_store::pagination::PageResponse<JournalDay>, AppError> {
+    validate_date_format(start_date)?;
+    validate_date_format(end_date)?;
+    if start_date > end_date {
+        return Err(AppError::validation(
+            "start_date must be <= end_date".to_string(),
+        ));
+    }
+    let page = agaric_store::pagination::PageRequest::new(cursor, limit)?;
+    // The keyset is `(content, id)`: the cursor carries the date in its
+    // `deleted_at` slot, as the agenda range's does.
+    let (after_date, after_id) = match &page.after {
+        Some(c) => (c.deleted_at.clone(), Some(c.id.clone())),
+        None => (None, None),
+    };
+    let fetch = page.limit + 1;
+    let rows = sqlx::query_as!(
+        JournalDay,
+        r#"SELECT b.id as "page_id!: String", b.content as "date!: String",
+                  (SELECT COUNT(*) FROM blocks c
+                    WHERE c.page_id = b.id AND c.id <> b.id AND c.deleted_at IS NULL)
+                    as "block_count!: i64"
+           FROM blocks b
+           WHERE b.block_type = 'page'
+             AND b.deleted_at IS NULL
+             -- The same index-driving LIKE and digit GLOB as
+             -- `list_journal_pages_in_range_inner`.
+             AND b.content LIKE '____-__-__'
+             AND b.content GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]'
+             AND b.content >= ?1
+             AND b.content <= ?2
+             AND b.space_id = ?3
+             AND (?4 IS NULL OR b.content > ?4 OR (b.content = ?4 AND b.id > ?5))
+           ORDER BY b.content ASC, b.id ASC
+           LIMIT ?6"#,
+        start_date,
+        end_date,
+        space_id,
+        after_date,
+        after_id,
+        fetch,
+    )
+    .fetch_all(pool)
+    .await?;
+    agaric_store::pagination::build_page_response(rows, page.limit, |last| {
+        agaric_store::pagination::Cursor::for_id_and_deleted_at(
+            last.page_id.clone(),
+            Some(last.date.clone()),
+        )
+    })
 }
 
 // ---------------------------------------------------------------------------

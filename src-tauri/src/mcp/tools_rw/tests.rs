@@ -80,6 +80,7 @@ async fn list_tools_advertises_the_rw_tools() {
             "create_tag",
             "delete_property",
             "undo",
+            "capture",
         ],
         "tool order is part of the wire contract — do not re-order; new tools are appended",
     );
@@ -2495,4 +2496,239 @@ async fn undo_refuses_a_target_in_another_space_5400() {
         "got {err:?}"
     );
     assert!(is_live(&pool, block_id).await);
+}
+
+// -------------------------------------------------------------------
+// capture (#5396)
+// -------------------------------------------------------------------
+
+fn day(s: &str) -> chrono::NaiveDate {
+    chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d").unwrap()
+}
+
+/// The live journal page for `date` in `space`, if any.
+async fn day_page(pool: &SqlitePool, space: &str, date: &str) -> Option<String> {
+    sqlx::query_scalar(
+        "SELECT id FROM blocks WHERE block_type = 'page' AND content = ? AND space_id = ? \
+         AND deleted_at IS NULL",
+    )
+    .bind(date)
+    .bind(space)
+    .fetch_optional(pool)
+    .await
+    .unwrap()
+}
+
+async fn op_count(pool: &SqlitePool) -> i64 {
+    sqlx::query_scalar("SELECT COUNT(*) FROM op_log")
+        .fetch_one(pool)
+        .await
+        .unwrap()
+}
+
+/// A journal template in `space` holding one line.
+async fn seed_journal_template(pool: &SqlitePool, mat: &Materializer, space: &str) {
+    let template = mk_page(pool, mat, space, "Daily template").await;
+    crate::commands::set_property_inner(
+        pool,
+        DEV,
+        mat,
+        agaric_core::ulid::ActiveBlockId::from(template.clone()),
+        "journal-template".into(),
+        Some("true".into()),
+        None,
+        None,
+        None,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    create_block_inner(
+        pool,
+        DEV,
+        mat,
+        "content".into(),
+        "Template line".into(),
+        Some(BlockId::from_trusted(&template)),
+        None,
+    )
+    .await
+    .unwrap();
+}
+
+/// A missing day is created with its template, the outline lands after the
+/// template, a name creates its page in the day's space, and the call's op
+/// refs, one activity entry's worth, undo all of it at once.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn capture_creates_a_missing_day_with_its_template_in_one_undo_5396() {
+    use agaric_store::task_locals::{LAST_APPEND, take_appends};
+    use std::cell::RefCell;
+
+    let (tools, mat, pool, space, _dir) = mk_tools().await;
+    seed_journal_template(&pool, &mat, &space).await;
+    settle(&mat).await;
+
+    let (result, op_refs) = LAST_APPEND
+        .scope(RefCell::new(Vec::new()), async {
+            let result = tools
+                .call_tool(
+                    "capture",
+                    json!({
+                        "content": "- thought on [[Fresh idea]]",
+                        "date": "2026-03-01",
+                        "space_id": space.to_lowercase(),
+                    }),
+                    &test_ctx_agent(),
+                )
+                .await
+                .expect("capture into a new day");
+            (result, take_appends())
+        })
+        .await;
+    settle(&mat).await;
+
+    let page = day_page(&pool, &space, "2026-03-01")
+        .await
+        .expect("the day was created");
+    assert_eq!(result["page"]["id"], page.as_str());
+    let fresh = result["blocks"][0]["id"].as_str().unwrap().to_owned();
+    assert_eq!(
+        child_contents(&pool, &page).await,
+        [
+            "Template line".to_owned(),
+            format!("thought on [[{fresh}]]")
+        ],
+        "the template first, the capture after it"
+    );
+    let fresh_space: Option<String> =
+        sqlx::query_scalar("SELECT space_id FROM blocks WHERE id = ?")
+            .bind(&fresh)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(fresh_space.as_deref(), Some(space.as_str()));
+
+    let refs: Vec<Value> = op_refs
+        .iter()
+        .map(|r| json!({ "device_id": r.device_id, "seq": r.seq }))
+        .collect();
+    tools
+        .call_tool(
+            "undo",
+            json!({ "op_refs": refs, "space_id": space }),
+            &test_ctx_agent(),
+        )
+        .await
+        .expect("the capture's own ops undo");
+    settle(&mat).await;
+    assert_eq!(
+        day_page(&pool, &space, "2026-03-01").await,
+        None,
+        "one undo removes the day"
+    );
+    let live: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM blocks WHERE (id = ?1 OR parent_id = ?1 OR id = ?2) \
+         AND deleted_at IS NULL",
+    )
+    .bind(&page)
+    .bind(&fresh)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        live, 0,
+        "and with it the template copy, the capture and the page it created"
+    );
+}
+
+/// An existing day gains the outline at its end; `today` and `yesterday`
+/// resolve against the date the handler is given.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn capture_appends_at_the_end_of_an_existing_day_5396() {
+    let (_tools, mat, pool, space, _dir) = mk_tools().await;
+    let page = crate::commands::journal_for_date_inner(&pool, DEV, &mat, day("2026-03-01"), &space)
+        .await
+        .unwrap()
+        .id;
+    create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "first".into(),
+        Some(page.clone()),
+        None,
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    let emitter = NoopViewChangeEmitter;
+    for (args, today) in [
+        (
+            json!({ "content": "- second\n- third", "space_id": space }),
+            "2026-03-01",
+        ),
+        (
+            json!({ "content": "fourth", "date": "yesterday", "space_id": space }),
+            "2026-03-02",
+        ),
+    ] {
+        handle_capture(&pool, &mat, DEV, &emitter, args, day(today))
+            .await
+            .expect("capture into the existing day");
+    }
+    settle(&mat).await;
+
+    assert_eq!(
+        child_contents(&pool, page.as_str()).await,
+        ["first", "second", "third", "fourth"],
+        "each capture lands at the end of the one day"
+    );
+    assert_eq!(
+        day_page(&pool, &space, "2026-03-02").await,
+        None,
+        "`yesterday` read from 2026-03-02 is 2026-03-01, not the clock's day"
+    );
+}
+
+/// A bad date, an unknown space, and an outline refused after the day would
+/// have been created all write nothing, the day included.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn capture_refusals_write_nothing_5396() {
+    let (tools, mat, pool, space, _dir) = mk_tools().await;
+    settle(&mat).await;
+    let too_many: String = (0..=agaric_store::pagination::MAX_BATCH_BLOCK_IDS)
+        .map(|i| format!("- line {i}\n"))
+        .collect();
+    let before = op_count(&pool).await;
+
+    let unknown_space = BlockId::new().into_string();
+    for (what, args) in [
+        (
+            "bad date",
+            json!({ "content": "x", "date": "2026-02-30", "space_id": space }),
+        ),
+        (
+            "unknown space",
+            json!({ "content": "x", "date": "2026-03-01", "space_id": unknown_space }),
+        ),
+        (
+            "over the op cap",
+            json!({ "content": too_many, "date": "2026-03-01", "space_id": space }),
+        ),
+    ] {
+        let err = tools
+            .call_tool("capture", args, &test_ctx_agent())
+            .await
+            .expect_err(what);
+        assert!(
+            matches!(err, AppError::Validation { .. }),
+            "{what} must be Validation, got {err:?}"
+        );
+    }
+    settle(&mat).await;
+    assert_eq!(op_count(&pool).await, before, "no op was written");
+    assert_eq!(day_page(&pool, &space, "2026-03-01").await, None);
 }

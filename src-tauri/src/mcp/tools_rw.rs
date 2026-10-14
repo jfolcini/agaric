@@ -23,6 +23,7 @@
 //! | `create_tag` | [`create_block_inner_with_space`] | `block_type = "tag"`; returns the space's same-name tag when one exists. |
 //! | `delete_property` | [`delete_property_inner`] | Rejects `space`; the inner refuses system-managed keys. |
 //! | `undo` | [`revert_ops_inner`] | Reverts `op_refs` as one op group. Refuses an op another origin wrote. |
+//! | `capture` | [`capture_to_journal_inner`] | #5396 — a Markdown outline at the end of a day's journal page, creating the day with its template, in one transaction. `date` is `today` (default), `yesterday` or `YYYY-MM-DD` on the device's clock. |
 //!
 //! Every write tool's result carries the `op_refs` it appended, added by the
 //! adapter (`rmcp_adapter::with_op_refs`), not by these handlers.
@@ -56,19 +57,20 @@ use sqlx::SqlitePool;
 
 use super::dispatch::{scoped_dispatch, unknown_tool_error};
 use super::handler_utils::{
-    normalize_ulid_arg, parse_args, to_tool_result, validate_block_in_space,
+    normalize_ulid_arg, parse_args, resolve_journal_date, to_tool_result, validate_block_in_space,
 };
 use super::registry::{
-    TOOL_ADD_TAG, TOOL_APPEND_BLOCK, TOOL_APPEND_MARKDOWN, TOOL_CREATE_PAGE, TOOL_CREATE_TAG,
-    TOOL_DELETE_BLOCK, TOOL_DELETE_PROPERTY, TOOL_LIST_SPACES, TOOL_MOVE_PAGE_TO_SPACE,
-    TOOL_SET_PROPERTY, TOOL_UNDO, TOOL_UPDATE_BLOCK_CONTENT, ToolDescription, ToolRegistry,
+    TOOL_ADD_TAG, TOOL_APPEND_BLOCK, TOOL_APPEND_MARKDOWN, TOOL_CAPTURE, TOOL_CREATE_PAGE,
+    TOOL_CREATE_TAG, TOOL_DELETE_BLOCK, TOOL_DELETE_PROPERTY, TOOL_LIST_SPACES,
+    TOOL_MOVE_PAGE_TO_SPACE, TOOL_SET_PROPERTY, TOOL_UNDO, TOOL_UPDATE_BLOCK_CONTENT,
+    ToolDescription, ToolRegistry,
 };
 use super::view_notify::{NoopViewChangeEmitter, ViewChangeEmitter};
 use crate::commands::{
-    DeletePropertyResponse, add_tag_inner, append_markdown_inner, create_block_inner,
-    create_block_inner_with_space, delete_block_inner, delete_property_inner, edit_block_inner,
-    get_active_block_inner, list_spaces_registry_inner, move_blocks_to_space_inner,
-    revert_ops_inner, set_property_inner,
+    DeletePropertyResponse, add_tag_inner, append_markdown_inner, capture_to_journal_inner,
+    create_block_inner, create_block_inner_with_space, delete_block_inner, delete_property_inner,
+    edit_block_inner, get_active_block_inner, list_spaces_registry_inner,
+    move_blocks_to_space_inner, revert_ops_inner, set_property_inner,
 };
 use crate::materializer::Materializer;
 use agaric_core::error::AppError;
@@ -205,6 +207,15 @@ struct UndoArgs {
     space_id: String,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CaptureArgs {
+    content: String,
+    space_id: String,
+    #[serde(default)]
+    date: Option<String>,
+}
+
 // ---------------------------------------------------------------------------
 // ReadWriteTools
 // ---------------------------------------------------------------------------
@@ -283,6 +294,7 @@ pub(crate) fn list_tool_descriptions() -> Vec<ToolDescription> {
         tool_desc_create_tag(),
         tool_desc_delete_property(),
         tool_desc_undo(),
+        tool_desc_capture(),
     ]
 }
 
@@ -339,6 +351,10 @@ impl ToolRegistry for ReadWriteTools {
                     handle_delete_property(&pool, &materializer, &device_id, emitter, args).await
                 }
                 TOOL_UNDO => handle_undo(&pool, &materializer, &device_id, emitter, args).await,
+                TOOL_CAPTURE => {
+                    let today = chrono::Local::now().date_naive();
+                    handle_capture(&pool, &materializer, &device_id, emitter, args, today).await
+                }
                 other => Err(unknown_tool_error(other)),
             }
         })
@@ -661,6 +677,29 @@ fn tool_desc_undo() -> ToolDescription {
                 "space_id": {
                     "type": "string",
                     "description": "ULID of the space the agent is operating in. The undo is rejected with a Validation error if a block the ops touched lives in a different space.",
+                },
+            },
+        }),
+    }
+}
+
+fn tool_desc_capture() -> ToolDescription {
+    ToolDescription {
+        name: TOOL_CAPTURE.to_string(),
+        description: "Capture a thought into a day's journal in one call, as one undo: the \
+             Markdown outline lands at the end of the day's page, read as append_markdown reads \
+             it, and a missing day is created with the space's journal template first."
+            .to_string(),
+        input_schema: json!({
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["content", "space_id"],
+            "properties": {
+                "content": { "type": "string", "description": "The Markdown outline to capture." },
+                "space_id": { "type": "string", "description": "ULID of the space the journal belongs to." },
+                "date": {
+                    "type": "string",
+                    "description": "`today` (the default), `yesterday`, or YYYY-MM-DD, on this device's clock.",
                 },
             },
         }),
@@ -1129,6 +1168,31 @@ async fn handle_undo(
     let undone = revert_ops_inner(pool, device_id, materializer, args.op_refs).await?;
     emit_blocks_changed_for_all(pool, emitter, &block_ids).await;
     to_tool_result(&json!({ "undone": undone }))
+}
+
+/// `today` is the device's date, passed in so a test can fix it.
+async fn handle_capture(
+    pool: &SqlitePool,
+    materializer: &Materializer,
+    device_id: &str,
+    emitter: &dyn ViewChangeEmitter,
+    args: Value,
+    today: chrono::NaiveDate,
+) -> Result<Value, AppError> {
+    let args: CaptureArgs = parse_args(TOOL_CAPTURE, args)?;
+    let date = resolve_journal_date(TOOL_CAPTURE, args.date.as_deref(), today)?;
+    let space_id = SpaceId::from_string(args.space_id)?;
+    let resp = capture_to_journal_inner(
+        pool,
+        device_id,
+        materializer,
+        space_id.as_str(),
+        date,
+        &args.content,
+    )
+    .await?;
+    emit_blocks_changed_for(pool, emitter, resp.page.id.clone()).await;
+    to_tool_result(&resp)
 }
 
 /// The distinct blocks `refs` touch, once every known ref is an op the calling

@@ -122,9 +122,10 @@ pub use history::{
     undo_page_group_inner, undo_page_op, undo_page_op_inner,
 };
 pub use journal::{
-    get_journal_page_by_date, get_journal_page_by_date_inner, journal_for_date_inner,
-    list_journal_pages_in_range, list_journal_pages_in_range_inner, navigate_journal_inner,
-    quick_capture_block, quick_capture_block_inner, today_journal_inner,
+    capture_to_journal_inner, get_journal_page_by_date, get_journal_page_by_date_inner,
+    journal_for_date_inner, list_journal_days_inner, list_journal_pages_in_range,
+    list_journal_pages_in_range_inner, navigate_journal_inner, quick_capture_block,
+    quick_capture_block_inner, today_journal_inner,
 };
 pub use link_metadata::{
     fetch_link_metadata, fetch_link_metadata_inner, get_link_metadata, get_link_metadata_inner,
