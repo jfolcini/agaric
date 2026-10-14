@@ -133,7 +133,7 @@
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
     "@types/turndown": "^5.0.6",
-    "@vitejs/plugin-react": "^6.1.1",
+    "@vitejs/plugin-react": "^6.1.2",
     "@vitest/coverage-v8": "^5.0.1",
     "@wdio/cli": "^9.32.0",
     "@wdio/globals": "^9.31.3",
