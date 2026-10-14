@@ -160,10 +160,6 @@ describe('useGraphMainThreadSim', () => {
         ),
       ).toBe(0.3)
     })
-
-    it('starts warm from a settled layout with a new node', () => {
-      expect(startAlpha([{ x: 120, y: 80 }, null], true)).toBe(0.3)
-    })
   })
 
   describe('settled (#5434)', () => {

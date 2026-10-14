@@ -711,21 +711,24 @@ export function keptPositions(
 }
 
 /**
- * Put every node with a kept position back in place, and resolve the edges to
- * their nodes so the first paint draws the kept layout before any tick lands.
+ * Put every node back where the kept layout had it, and a node new since then at
+ * the centre rather than the corner, then resolve the edges to their nodes so the
+ * first paint draws the layout before any tick lands. Returns whether every node
+ * was kept.
  */
 export function seedPositions(
-  rendered: Pick<RenderResult, 'simNodes' | 'simEdges' | 'nodeById'>,
+  rendered: Pick<RenderResult, 'simNodes' | 'simEdges' | 'nodeById' | 'width' | 'height'>,
   positions: GraphLayout['positions'],
-): void {
+): boolean {
+  let everyKept = true
   for (const n of rendered.simNodes) {
     const kept = positions.get(n.id)
-    if (kept) {
-      n.x = kept.x
-      n.y = kept.y
-    }
+    if (!kept) everyKept = false
+    n.x = kept?.x ?? rendered.width / 2
+    n.y = kept?.y ?? rendered.height / 2
   }
   resolveEdgeEndpoints(rendered.simEdges, rendered.nodeById)
+  return everyKept
 }
 
 // ── Worker simulation ────────────────────────────────────────────────

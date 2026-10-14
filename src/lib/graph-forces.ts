@@ -61,11 +61,12 @@ export const RESIZE_ALPHA = 0.3
 /**
  * Alpha a fresh simulation starts at. Nodes that arrive with positions are a
  * kept layout coming back (#5434): one that had stopped, with nothing new in
- * it, starts at rest; otherwise it starts warm, so it appears settled and only
- * new nodes drift in. With no positions, d3's full-strength start lays it out.
+ * it (`keptSettled`), starts at rest; otherwise it starts warm, so it appears
+ * settled and only new nodes drift in. With no positions, d3's full-strength
+ * start lays it out.
  */
 export function startAlpha(nodes: readonly SimulationNodeDatum[], keptSettled: boolean): number {
-  if (keptSettled && nodes.every((n) => n.x !== undefined)) return 0
+  if (keptSettled) return 0
   return nodes.some((n) => n.x !== undefined) ? RESIZE_ALPHA : 1
 }
 

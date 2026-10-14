@@ -183,8 +183,9 @@ export function useGraphSimulation({
     const applyPositions = createApplyPositions(rendered.link, rendered.node)
     const layoutStore = layoutRef.current
     const kept = layoutStore.read()
+    let keptSettled = false
     if (kept) {
-      seedPositions(rendered, kept.positions)
+      keptSettled = seedPositions(rendered, kept.positions) && kept.settled
       applyPositions()
     }
     const detachZoom = attachZoom(svg, rendered.g, fitToView, kept?.transform)
@@ -202,7 +203,7 @@ export function useGraphSimulation({
       width: rendered.width,
       height: rendered.height,
       prefersReducedMotion,
-      keptSettled: kept?.settled ?? false,
+      keptSettled,
       onSettled: fitOnFirstSettle,
     }
 
@@ -335,6 +336,9 @@ export function useGraphSimulation({
 
     const svg = svgRef.current
 
+    const width = svg.clientWidth || DEFAULT_WIDTH
+    const height = svg.clientHeight || DEFAULT_HEIGHT
+
     // Build fresh simNodes/simEdges (cloned so d3-force can mutate
     // them without React state issues — same convention as
     // `renderGraphElements`). Preserve x/y/vx/vy from the existing
@@ -345,6 +349,14 @@ export function useGraphSimulation({
       const prev = prevById.get(n.id)
       return prev ? { ...n, x: prev.x, y: prev.y, vx: prev.vx, vy: prev.vy } : { ...n }
     })
+    // A node new to a placed layout starts at the centre, not the corner; with
+    // nothing placed yet, d3 lays every node out from scratch.
+    if (simNodes.some((n) => n.x !== undefined)) {
+      for (const n of simNodes) {
+        n.x ??= width / 2
+        n.y ??= height / 2
+      }
+    }
     const simEdges: GraphEdge[] = edges.map((e) => ({ ...e }))
     const nodeById = new Map<string, GraphNode>()
     for (const n of simNodes) {
@@ -361,8 +373,6 @@ export function useGraphSimulation({
     )
 
     const applyPositions = createApplyPositions(link, node)
-    const width = svg.clientWidth || DEFAULT_WIDTH
-    const height = svg.clientHeight || DEFAULT_HEIGHT
 
     const ctx: SimulationCtx = {
       simNodes,

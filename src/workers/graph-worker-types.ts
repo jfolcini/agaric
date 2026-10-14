@@ -14,7 +14,8 @@ export interface WorkerEdgeInput {
 
 /**
  * Start a fresh simulation. Nodes that carry a position are a kept layout
- * coming back (#5434); `keptSettled` says it had stopped moving (`startAlpha`).
+ * coming back (#5434); `keptSettled` says it had stopped moving with nothing new
+ * in it (`startAlpha`).
  */
 export interface WorkerStartMessage {
   type: 'start'

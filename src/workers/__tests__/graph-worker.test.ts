@@ -224,12 +224,6 @@ describe('graph-worker dispatcher (#747 item 1: resize updates forces in place)'
     it('starts warm from a layout that was still moving', () => {
       expect(startAt([KEPT_A, KEPT_B], false).alphaValue).toBe(0.3)
     })
-
-    it('starts warm from a settled layout with a new node', () => {
-      const sim = startAt([KEPT_A, { id: 'c', label: 'C' }], true)
-      expect(sim.alphaValue).toBe(0.3)
-      expect(sim.nodeList).toEqual([KEPT_A, { id: 'c', label: 'C' }])
-    })
   })
 
   it('`resize` swaps center/x/y forces in place WITHOUT rebuilding the sim or re-seeding positions', () => {
