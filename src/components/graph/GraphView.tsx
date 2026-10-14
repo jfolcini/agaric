@@ -573,7 +573,7 @@ export function GraphView(): React.ReactElement {
             onToggle={setLocalMode}
             hops={localHops}
             onHopsChange={setLocalHops}
-            seedLabel={seedPageId === null ? null : localSeedLabel}
+            seedLabel={localSeedLabel}
             originLabel={walkedFromSeed ? seedLabel : null}
             onReturnToOrigin={() => setSelectedPageId(null)}
           />

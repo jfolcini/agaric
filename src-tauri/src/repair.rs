@@ -553,7 +553,7 @@ mod tests {
         );
     }
 
-    /// #5420 — the marker commits with the rewrite or not at all: a rewrite
+    /// #5420 — the marker is written only once the rewrite commits: a rewrite
     /// that fails leaves it unset, and the next boot runs the rewrite.
     #[tokio::test]
     async fn a_failed_agenda_rewrite_is_retried_by_the_next_boot() {
