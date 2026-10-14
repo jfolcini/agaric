@@ -417,16 +417,16 @@ mod reconciliation_oracle;
 // five `*_app_tests` modules left this crate for the `commands`,
 // `command_integration` and `app_tests` binaries under `src-tauri/tests/`.
 
-/// Wrap a boot-time `SELECT COUNT(*)` result so DB errors get a tracing
+/// Wrap a boot-time `SELECT EXISTS …` probe result so DB errors get a tracing
 /// breadcrumb instead of being silently coerced to `0`. The fall-through
 /// behaviour is unchanged — callers still see `0` on error — but operators
 /// now have a chance of noticing when boot scheduling is being skipped
-/// because a count query failed.
+/// because a probe failed.
 fn log_or_zero(r: Result<i64, sqlx::Error>, ctx: &str) -> i64 {
     match r {
         Ok(n) => n,
         Err(e) => {
-            tracing::warn!(error = %e, ctx, "boot count query failed; treating as 0");
+            tracing::warn!(error = %e, ctx, "boot probe query failed; treating as 0");
             0
         }
     }
@@ -1342,33 +1342,33 @@ fn surface_recovery_status<R: tauri::Runtime>(
     });
 }
 
-/// [`spawn_boot_cache_gating`]'s FTS check. An empty index with rows to index
+/// [`boot_cache_gating`]'s FTS check. An empty index with rows to index
 /// is the post-migration-0006 state, not a fresh install.
 async fn schedule_fts_rebuild_if_empty(
-    write_pool: &sqlx::SqlitePool,
+    read_pool: &sqlx::SqlitePool,
     materializer_handle: &materializer::Materializer,
 ) {
     use materializer::MaterializeTask;
 
     // Rebuild FTS index if the table is empty (post-migration 0006).
-    let fts_count: i64 = log_or_zero(
-        sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM fts_blocks")
-            .fetch_one(write_pool)
+    let fts_empty = log_or_zero(
+        sqlx::query_scalar::<_, i64>("SELECT EXISTS (SELECT 1 FROM fts_blocks)")
+            .fetch_one(read_pool)
             .await,
-        "fts_blocks_count",
-    );
-    if fts_count == 0 {
-        let block_count: i64 = log_or_zero(
+        "fts_blocks_exists",
+    ) == 0;
+    if fts_empty {
+        let indexable = log_or_zero(
             sqlx::query_scalar::<_, i64>(
-                "SELECT COUNT(*) FROM blocks WHERE deleted_at IS NULL \
-                 AND content IS NOT NULL",
+                "SELECT EXISTS (SELECT 1 FROM blocks WHERE deleted_at IS NULL \
+                 AND content IS NOT NULL)",
             )
-            .fetch_one(write_pool)
+            .fetch_one(read_pool)
             .await,
-            "fts_indexable_block_count",
-        );
-        if block_count > 0 {
-            tracing::info!(blocks = block_count, "FTS index empty — scheduling rebuild");
+            "fts_indexable_block_exists",
+        ) != 0;
+        if indexable {
+            tracing::info!("FTS index empty — scheduling rebuild");
             if let Err(e) =
                 materializer_handle.try_enqueue_background(MaterializeTask::RebuildFtsIndex)
             {
@@ -1381,10 +1381,10 @@ async fn schedule_fts_rebuild_if_empty(
     }
 }
 
-/// [`spawn_boot_cache_gating`]'s `block_tag_refs` check. An empty table with
+/// [`boot_cache_gating`]'s `block_tag_refs` check. An empty table with
 /// rows to scan is the post-migration state, not a fresh install.
 async fn schedule_block_tag_refs_rebuild_if_empty(
-    write_pool: &sqlx::SqlitePool,
+    read_pool: &sqlx::SqlitePool,
     materializer_handle: &materializer::Materializer,
 ) {
     use materializer::MaterializeTask;
@@ -1393,25 +1393,24 @@ async fn schedule_block_tag_refs_rebuild_if_empty(
     // but there is content to scan. Migration 0034 creates
     // the table but intentionally does not SQL-backfill
     // (SQLite lacks the regex support we need).
-    let btr_count: i64 = log_or_zero(
-        sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM block_tag_refs")
-            .fetch_one(write_pool)
+    let btr_empty = log_or_zero(
+        sqlx::query_scalar::<_, i64>("SELECT EXISTS (SELECT 1 FROM block_tag_refs)")
+            .fetch_one(read_pool)
             .await,
-        "block_tag_refs_count",
-    );
-    if btr_count == 0 {
-        let block_count: i64 = log_or_zero(
+        "block_tag_refs_exists",
+    ) == 0;
+    if btr_empty {
+        let scannable = log_or_zero(
             sqlx::query_scalar::<_, i64>(
-                "SELECT COUNT(*) FROM blocks WHERE deleted_at IS NULL \
-                 AND content IS NOT NULL",
+                "SELECT EXISTS (SELECT 1 FROM blocks WHERE deleted_at IS NULL \
+                 AND content IS NOT NULL)",
             )
-            .fetch_one(write_pool)
+            .fetch_one(read_pool)
             .await,
-            "btr_indexable_block_count",
-        );
-        if block_count > 0 {
+            "btr_scannable_block_exists",
+        ) != 0;
+        if scannable {
             tracing::info!(
-                blocks = block_count,
                 "block_tag_refs empty (migration 0034 backfill) — scheduling \
                  rebuild",
             );
@@ -1427,28 +1426,28 @@ async fn schedule_block_tag_refs_rebuild_if_empty(
     }
 }
 
-/// [`spawn_boot_maintenance`]'s off-critical-path spawn: link-metadata GC,
-/// then the FTS and `block_tag_refs` empty-table gating, in that order.
-fn spawn_boot_cache_gating(
+/// [`spawn_boot_maintenance`]'s off-critical-path work: link-metadata GC on
+/// the writer, then the FTS and `block_tag_refs` empty-table gating on the
+/// reader, in that order.
+async fn boot_cache_gating(
     write_pool: sqlx::SqlitePool,
+    read_pool: sqlx::SqlitePool,
     materializer_handle: materializer::Materializer,
 ) {
-    tauri::async_runtime::spawn(async move {
-        // Clean up stale link metadata entries (>30 days, non-auth).
-        match agaric_store::link_metadata::cleanup_stale(&write_pool, 30).await {
-            Ok(deleted) => {
-                if deleted > 0 {
-                    tracing::info!(deleted, "cleaned up stale link metadata entries");
-                }
-            }
-            Err(e) => {
-                tracing::warn!(error = %e, "failed to clean up stale link metadata");
+    // Clean up stale link metadata entries (>30 days, non-auth).
+    match agaric_store::link_metadata::cleanup_stale(&write_pool, 30).await {
+        Ok(deleted) => {
+            if deleted > 0 {
+                tracing::info!(deleted, "cleaned up stale link metadata entries");
             }
         }
+        Err(e) => {
+            tracing::warn!(error = %e, "failed to clean up stale link metadata");
+        }
+    }
 
-        schedule_fts_rebuild_if_empty(&write_pool, &materializer_handle).await;
-        schedule_block_tag_refs_rebuild_if_empty(&write_pool, &materializer_handle).await;
-    });
+    schedule_fts_rebuild_if_empty(&read_pool, &materializer_handle).await;
+    schedule_block_tag_refs_rebuild_if_empty(&read_pool, &materializer_handle).await;
 }
 
 /// Boot-phase 6 — best-effort boot maintenance moved off the synchronous
@@ -1481,7 +1480,11 @@ fn spawn_boot_maintenance(
     // `bootstrap_spaces`. That migration is deleted, so the ordering
     // constraint it imposed on this spawn is gone with it — nothing
     // here depends on `bootstrap_spaces` any more.
-    spawn_boot_cache_gating(pools.write.clone(), materializer.clone());
+    tauri::async_runtime::spawn(boot_cache_gating(
+        pools.write.clone(),
+        pools.read.clone(),
+        materializer.clone(),
+    ));
 
     // Rebuild page_id column at boot to ensure consistency.
     if let Err(e) = materializer.try_enqueue_background(MaterializeTask::RebuildPageIds) {
@@ -1569,7 +1572,9 @@ fn op_log_compact_job(
     }
 }
 
-/// Issue #157 sub-item G — periodic PRAGMA optimize.
+/// Issue #157 sub-item G — periodic PRAGMA optimize. Boot runs none of its
+/// own (#5420): `last_run: None` makes the daemon's first tick, a minute
+/// after boot, the post-migration planner-stats refresh.
 fn pragma_optimize_tick_job(pools: &db::DbPools) -> maintenance::MaintenanceJob {
     let optimize_write_pool = pools.write.clone();
     maintenance::MaintenanceJob {
@@ -1698,12 +1703,8 @@ fn projected_agenda_midnight_job(
     materializer: &materializer::Materializer,
 ) -> maintenance::MaintenanceJob {
     let projected_agenda_materializer = materializer.clone();
-    // Issue #157 sub-item H — shared "last fired UTC day"
-    // sentinel for the projected_agenda_midnight job.
-    // `i32::MIN` = "never fired"; the first tick post-boot
-    // enqueues a rebuild, then subsequent ticks only enqueue
-    // when the UTC day number advances.
-    let projected_agenda_last_day = Arc::new(std::sync::atomic::AtomicI32::new(i32::MIN));
+    let projected_agenda_last_day =
+        Arc::new(maintenance::projected_agenda_last_fired_day_at_boot());
     maintenance::MaintenanceJob {
         name: "projected_agenda_midnight",
         interval: std::time::Duration::from_secs(60),
@@ -3927,5 +3928,73 @@ mod log_or_zero_tests {
     fn log_or_zero_returns_zero_on_err() {
         let err = sqlx::Error::PoolTimedOut;
         assert_eq!(log_or_zero(Err(err), "test_ctx"), 0);
+    }
+}
+
+#[cfg(test)]
+mod boot_cache_gating_tests {
+    use super::{boot_cache_gating, db, materializer};
+
+    const TAG: &str = "0000000000000000000TAG5420";
+    const SOURCE: &str = "0000000000000000000BLK5420";
+
+    async fn count(pool: &sqlx::SqlitePool, sql: &'static str) -> i64 {
+        sqlx::query_scalar(sql).fetch_one(pool).await.unwrap()
+    }
+
+    /// #5420 — the FTS and `block_tag_refs` emptiness probes read through the
+    /// read pool. The writer handed in is closed: a probe on it errors, reads
+    /// as "no indexable blocks", and schedules nothing. A second boot over the
+    /// rebuilt tables schedules nothing either.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn boot_cache_gating_probes_through_the_read_pool_5420() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let pools = db::init_pools(&dir.path().join("test.db")).await.unwrap();
+        for (id, block_type, content) in [
+            (TAG, "tag", "tag-name".to_owned()),
+            (SOURCE, "content", format!("note #[{TAG}]")),
+        ] {
+            sqlx::query("INSERT INTO blocks (id, block_type, content) VALUES (?, ?, ?)")
+                .bind(id)
+                .bind(block_type)
+                .bind(content)
+                .execute(&pools.write)
+                .await
+                .unwrap();
+        }
+        let mat =
+            materializer::Materializer::with_read_pool(pools.write.clone(), pools.read.clone());
+        let closed_writer = sqlx::SqlitePool::connect_lazy("sqlite::memory:").unwrap();
+        closed_writer.close().await;
+
+        boot_cache_gating(closed_writer.clone(), pools.read.clone(), mat.clone()).await;
+        mat.flush_background()
+            .await
+            .expect("drain the boot rebuilds");
+        assert_eq!(
+            count(&pools.read, "SELECT COUNT(*) FROM fts_blocks").await,
+            2,
+            "an empty FTS index must be rebuilt over both blocks"
+        );
+        assert_eq!(
+            count(&pools.read, "SELECT COUNT(*) FROM block_tag_refs").await,
+            1,
+            "an empty block_tag_refs must be rebuilt from the inline tag ref"
+        );
+
+        let load = || {
+            mat.metrics()
+                .bg_processed
+                .load(std::sync::atomic::Ordering::Relaxed)
+        };
+        let before = load();
+        boot_cache_gating(closed_writer, pools.read.clone(), mat.clone()).await;
+        mat.flush_background().await.expect("drain the second boot");
+        assert_eq!(
+            load() - before,
+            1,
+            "populated tables must schedule no rebuild: only the flush barrier runs"
+        );
+        mat.shutdown();
     }
 }

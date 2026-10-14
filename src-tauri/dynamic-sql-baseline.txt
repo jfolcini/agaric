@@ -59,7 +59,7 @@
 2 src-tauri/src/commands/pages/metadata.rs
 3 src-tauri/src/commands/properties.rs
 2 src-tauri/src/commands/queries.rs
-5 src-tauri/src/db/pool.rs
+3 src-tauri/src/db/pool.rs
 54 src-tauri/src/db/recovery.rs
 4 src-tauri/src/lib.rs
 2 src-tauri/src/maintenance.rs

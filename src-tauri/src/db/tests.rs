@@ -297,21 +297,6 @@ async fn init_pool_with_invalid_path_returns_error() {
     );
 }
 
-// Legacy `init_pool` should run `PRAGMA optimize` after migrations,
-// matching production `init_pools`. Real coverage: the call doesn't fail
-// and the pool is usable for a SELECT afterwards.
-#[tokio::test]
-async fn init_pool_runs_pragma_optimize() {
-    let dir = TempDir::new().unwrap();
-    let db_path = dir.path().join("test.db");
-    let pool = init_pool(&db_path).await.expect("init_pool should succeed");
-    let count: i64 = sqlx::query_scalar!("SELECT COUNT(*) FROM blocks")
-        .fetch_one(&pool)
-        .await
-        .expect("post-init SELECT should succeed");
-    assert_eq!(count, 0, "fresh DB should have zero blocks");
-}
-
 /// Regression: migrations 0073 and 0080 rebuild `blocks` by
 /// creating `_new_blocks`, copying data, then `DROP TABLE blocks`.
 /// The original SQL declared `parent_id REFERENCES blocks(id)` and
@@ -751,17 +736,6 @@ async fn block_links_source_lookup_uses_pk_autoindex() {
         "WHERE source_id = ? must use the PK autoindex after migration 0072 \
              dropped idx_block_links_source; got plan:\n{plan_text}"
     );
-}
-
-// ======================================================================
-// T-5: PRAGMA optimize test
-// ======================================================================
-
-#[tokio::test]
-async fn pragma_optimize_runs_without_error() {
-    let (pool, _dir) = test_pool().await;
-    let result = sqlx::query("PRAGMA optimize").execute(&pool).await;
-    assert!(result.is_ok(), "PRAGMA optimize should succeed");
 }
 
 // ======================================================================

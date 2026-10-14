@@ -622,16 +622,14 @@ pub async fn loro_snapshot_if_dirty(
 /// once per UTC calendar day. The daemon's outer ticker fires every
 /// `TICK_INTERVAL` (60 s); this body keeps a "last-fired UTC
 /// day-number" in a shared atomic, compares it to today's day-number,
-/// and enqueues only when the value advances. Sentinel `i32::MIN` =
-/// "never fired" so the first tick post-boot always fires (the
-/// projected agenda may be stale if the previous session ended
-/// before its own midnight tick). CAS-on-update prevents double-
-/// enqueue under concurrent ticks racing across midnight.
+/// and enqueues whenever the two differ. Boot seeds the atomic with
+/// [`projected_agenda_last_fired_day_at_boot`]. CAS-on-update prevents
+/// double-enqueue under concurrent ticks racing across midnight.
 pub async fn projected_agenda_midnight_tick(
     materializer: &crate::materializer::Materializer,
     last_fired_day: &AtomicI32,
 ) -> Result<(), AppError> {
-    let today = chrono::Utc::now().date_naive().num_days_from_ce();
+    let today = utc_day_number();
     let previous = last_fired_day.load(Ordering::Acquire);
     if previous == today {
         return Ok(());
@@ -651,6 +649,17 @@ pub async fn projected_agenda_midnight_tick(
         "projected_agenda_midnight: UTC day rolled — RebuildProjectedAgendaCache enqueued"
     );
     Ok(())
+}
+
+/// [`projected_agenda_midnight_tick`]'s atomic at boot: today, because boot
+/// already enqueues its own `RebuildProjectedAgendaCache`, so the first tick
+/// waits for the next UTC day instead of rebuilding a second time (#5420).
+pub fn projected_agenda_last_fired_day_at_boot() -> AtomicI32 {
+    AtomicI32::new(utc_day_number())
+}
+
+fn utc_day_number() -> i32 {
+    chrono::Utc::now().date_naive().num_days_from_ce()
 }
 
 /// Spawn the maintenance daemon. Mirrors the shape of
@@ -1707,8 +1716,8 @@ mod tests {
             .expect("loro_snapshot_if_dirty must succeed on a fresh, empty registry");
     }
 
-    /// Issue #157 sub-item H — first call post-boot fires (sentinel
-    /// `i32::MIN`), and the atomic advances to today's day-number.
+    /// Issue #157 sub-item H — a never-fired atomic (`i32::MIN`) fires on
+    /// the first call, and the atomic advances to today's day-number.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn projected_agenda_midnight_fires_on_first_call_157_h() {
         let dir = tempfile::TempDir::new().unwrap();
@@ -1887,6 +1896,59 @@ mod tests {
         assert_eq!(
             rebuilds, 1,
             "EXACTLY ONE RebuildProjectedAgendaCache must land despite {N} concurrent ticks (CAS)"
+        );
+        mat.shutdown();
+    }
+
+    /// #5420 — boot already enqueued a rebuild, so with the boot seed the
+    /// first tick enqueues nothing; a real UTC-day rollover still enqueues
+    /// exactly one. Counted via `bg_processed` minus the flush barrier, as in
+    /// `projected_agenda_midnight_enqueues_exactly_one_rebuild_2051`.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn projected_agenda_boot_seed_skips_the_boot_day_5420() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let pool = crate::db::init_pool(&dir.path().join("test.db"))
+            .await
+            .unwrap();
+        let mat = crate::materializer::Materializer::new(pool);
+        let last_day = projected_agenda_last_fired_day_at_boot();
+
+        let load = || {
+            mat.metrics()
+                .bg_processed
+                .load(std::sync::atomic::Ordering::Relaxed)
+        };
+        let c0 = load();
+        mat.flush_background().await.expect("control drain");
+        let barrier_cost = load() - c0;
+        assert_eq!(barrier_cost, 1, "a flush barrier must count as one bg task");
+
+        let before = load();
+        projected_agenda_midnight_tick(&mat, &last_day)
+            .await
+            .expect("first tick must succeed");
+        mat.flush_background()
+            .await
+            .expect("drain after first tick");
+        assert_eq!(
+            (load() - before) - barrier_cost,
+            0,
+            "the first tick after boot must not repeat the boot rebuild"
+        );
+
+        // The boot day is now yesterday.
+        last_day.fetch_sub(1, Ordering::AcqRel);
+        let before = load();
+        projected_agenda_midnight_tick(&mat, &last_day)
+            .await
+            .expect("rollover tick must succeed");
+        mat.flush_background()
+            .await
+            .expect("drain after rollover tick");
+        assert_eq!(
+            (load() - before) - barrier_cost,
+            1,
+            "a UTC-day rollover must still enqueue exactly one rebuild"
         );
         mat.shutdown();
     }

@@ -445,12 +445,6 @@ pub async fn init_pools(db_path: &Path) -> Result<DbPools, agaric_core::error::A
         recover_attachments_from_op_log(&write_pool).await?;
     }
 
-    // T-5: Update query planner statistics after migrations.
-    // PRAGMA optimize analyzes tables whose stats may be stale and runs
-    // ANALYZE only where beneficial. Safe, idempotent, runs in <100ms
-    // for typical personal databases.
-    sqlx::query("PRAGMA optimize").execute(&write_pool).await?;
-
     // #1575: defense-in-depth — clear any leaked op-log bypass sentinel that
     // a prior bypass transaction may have committed without removing. Must
     // run after migrations (the table exists) and before serving traffic.
@@ -555,9 +549,6 @@ pub async fn init_pool(db_path: &Path) -> Result<SqlitePool, agaric_core::error:
     if attachment_replay_pending {
         recover_attachments_from_op_log(&pool).await?;
     }
-
-    // Match `init_pools` — refresh planner stats after migrations.
-    sqlx::query("PRAGMA optimize").execute(&pool).await?;
 
     Ok(pool)
 }
