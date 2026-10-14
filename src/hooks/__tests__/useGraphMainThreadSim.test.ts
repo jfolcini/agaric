@@ -15,7 +15,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { GraphEdge, GraphNode } from '@/components/graph/GraphView.helpers'
 import { useGraphMainThreadSim } from '@/hooks/useGraphMainThreadSim'
-import type { SimulationCtx } from '@/lib/graph-sim-helpers'
+import type { SimulationCtx, SimulationHandle } from '@/lib/graph-sim-helpers'
 
 // Capture the simulation mock so individual tests can assert on it.
 let lastSim: any = null
@@ -86,6 +86,7 @@ function makeCtx(prefersReducedMotion = false): SimulationCtx {
     width: 800,
     height: 600,
     prefersReducedMotion,
+    keptSettled: false,
   }
 }
 
@@ -160,16 +161,44 @@ describe('useGraphMainThreadSim', () => {
     })
   })
 
-  it('is settled once the simulation ends, and not while it ticks (#5434)', () => {
-    const handle = renderHook(() => useGraphMainThreadSim()).result.current(makeCtx())
-    const calls = lastSim.on.mock.calls as Array<[string, () => void]>
-    const fire = (event: string) => calls.find(([e]) => e === event)?.[1]()
+  describe('settled (#5434)', () => {
+    /** A started simulation whose d3 `end` has fired. */
+    function ended(): SimulationHandle {
+      const handle = renderHook(() => useGraphMainThreadSim()).result.current(makeCtx())
+      const calls = lastSim.on.mock.calls as Array<[string, () => void]>
+      const fire = (event: string) => calls.find(([e]) => e === event)?.[1]()
+      expect(handle.settled()).toBe(false)
+      fire('end')
+      fire('tick')
+      return handle
+    }
 
-    expect(handle.settled()).toBe(false)
-    fire('end')
-    expect(handle.settled()).toBe(true)
-    fire('tick')
-    expect(handle.settled()).toBe(false)
+    it('is settled once the simulation ends, and a tick (a click reheat) keeps it so', () => {
+      expect(ended().settled()).toBe(true)
+    })
+
+    it('a resize unsettles it', () => {
+      const handle = ended()
+      handle.onResize(1024, 768)
+      expect(handle.settled()).toBe(false)
+    })
+
+    it('an update unsettles it', () => {
+      const handle = ended()
+      handle.onUpdate(makeCtx())
+      expect(handle.settled()).toBe(false)
+    })
+
+    it('starts settled when a settled, fully kept layout starts at rest', () => {
+      const ctx = makeCtx()
+      Object.assign(ctx.simNodes[0] as GraphNode, { x: 120, y: 80 })
+      ctx.keptSettled = true
+      expect(
+        renderHook(() => useGraphMainThreadSim())
+          .result.current(ctx)
+          .settled(),
+      ).toBe(true)
+    })
   })
 
   it('handle.cleanup stops the simulation', () => {

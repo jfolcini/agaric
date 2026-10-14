@@ -82,7 +82,8 @@ async function graphToPageAndBack(page: Page): Promise<void> {
     .locator(NODES)
     .filter({ hasText: 'Getting Started' })
     .locator('circle.hit-area')
-    .click()
+    // A human-length press: d3-drag reheats the simulation on mousedown.
+    .click({ delay: 120 })
   await expect(page.locator('[aria-label="Page title"]')).toHaveText('Getting Started')
   await page.locator('header').first().getByRole('button', { name: 'Back', exact: true }).click()
 
@@ -102,7 +103,7 @@ test.describe('Graph → page → Back restores the graph (#5434)', () => {
   test('on the worker path', async ({ page }) => {
     await waitForBoot(page)
     await graphToPageAndBack(page)
-    expect(page.workers().length).toBeGreaterThan(0)
+    expect(page.workers()).toHaveLength(1)
   })
 
   test('on the main-thread fallback', async ({ page }) => {

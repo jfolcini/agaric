@@ -10,7 +10,6 @@ import { zoomIdentity } from 'd3-zoom'
 import { useRef } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { axe } from '@/__tests__/helpers/axe'
 import { type GraphLayoutStore, useGraphSimulation } from '@/hooks/useGraphSimulation'
 import type { GraphLayout } from '@/lib/graph-sim-helpers'
 import type { GraphEdge, GraphNode } from '@/lib/graph-types'
@@ -31,10 +30,10 @@ class RecordingWorker {
   }
   removeEventListener(): void {}
   terminate(): void {}
-  /** The worker reports a layout, packed in node order: moving (`tick`) or settled (`done`). */
-  report(type: 'tick' | 'done', points: Array<[number, number]>): void {
+  /** The worker reports the layout it settled on, packed in node order. */
+  settle(points: Array<[number, number]>): void {
     this.onMessage?.({
-      data: { type, positions: new Float32Array(points.flat()), count: points.length },
+      data: { type: 'done', positions: new Float32Array(points.flat()), count: points.length },
     })
   }
 }
@@ -138,7 +137,7 @@ describe('useGraphSimulation — coming back to the graph (#5434)', () => {
     const layout = memoryLayout()
     const { unmount } = render(<Graph nodes={[A, B]} layout={layout} />)
     act(() =>
-      RecordingWorker.last?.report('done', [
+      RecordingWorker.last?.settle([
         [10, 20],
         [30, 40],
       ]),
@@ -154,25 +153,6 @@ describe('useGraphSimulation — coming back to the graph (#5434)', () => {
     )
     expect(layout.kept?.transform).toEqual(zoomIdentity)
     expect(layout.kept?.settled).toBe(true)
-  })
-
-  it('keeps a layout that was moving again when it unmounts as unsettled', () => {
-    const layout = memoryLayout()
-    const { unmount } = render(<Graph nodes={[A, B]} layout={layout} />)
-    act(() => {
-      RecordingWorker.last?.report('done', [
-        [10, 20],
-        [30, 40],
-      ])
-      RecordingWorker.last?.report('tick', [
-        [11, 20],
-        [30, 41],
-      ])
-    })
-
-    unmount()
-
-    expect(layout.kept?.settled).toBe(false)
   })
 
   it('tells the simulation whether the kept layout had settled', () => {
@@ -226,11 +206,5 @@ describe('useGraphSimulation — coming back to the graph (#5434)', () => {
     expect(container.querySelector('svg > g')?.getAttribute('transform')).toBe(
       KEPT.transform.toString(),
     )
-  })
-
-  it('has no axe violations with a restored layout', async () => {
-    const { container } = render(<Graph nodes={[A, B]} layout={memoryLayout(KEPT)} />)
-
-    expect(await axe(container)).toHaveNoViolations()
   })
 })

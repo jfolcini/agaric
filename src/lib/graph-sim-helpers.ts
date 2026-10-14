@@ -71,7 +71,7 @@ export interface SimulationCtx {
   height: number
   prefersReducedMotion: boolean
   /** The kept layout the nodes' positions come from had stopped moving (#5434). */
-  keptSettled?: boolean
+  keptSettled: boolean
 }
 
 /** Where each node settled and how the view was zoomed, kept so the graph comes back as it was left (#5434). */
@@ -731,7 +731,7 @@ function postWorkerStart(worker: Worker, ctx: SimulationCtx): void {
     })),
     width: ctx.width,
     height: ctx.height,
-    keptSettled: ctx.keptSettled ?? false,
+    keptSettled: ctx.keptSettled,
   })
 }
 
@@ -834,9 +834,10 @@ export function runWorkerSimulation(args: WorkerRunArgs): SimulationHandle {
   if (!worker) return { cleanup: noop, onResize: noop, onUpdate: noop, settled: () => false }
 
   let tickCount = 0
-  // A click is a drag without motion: it reheats the worker, but its ticks
-  // land after the click has navigated away, so a settled layout stays so.
-  let settled = false
+  // Only a new topology or canvas size unsettles a layout. A click on a node is
+  // a drag without motion: it reheats the worker, and its ticks can land before
+  // the click navigates away, so a tick must not unsettle a layout that ended.
+  let settled = startAlpha(ctx.simNodes, ctx.keptSettled) === 0
 
   // Mutable ctx: `onUpdate` (#2194) swaps the live node/edge set in place
   // rather than tearing the worker down and respawning. The tick handler,
@@ -889,7 +890,6 @@ export function runWorkerSimulation(args: WorkerRunArgs): SimulationHandle {
     if (failed) return
     const msg = evt.data
     if (msg.type === 'tick') {
-      settled = false
       tickCount++
       scheduleFlush(msg.positions, msg.count)
       if (ctx.prefersReducedMotion && tickCount >= REDUCED_MOTION_TICK_LIMIT) {
@@ -1010,7 +1010,7 @@ function buildMainThreadSim(ctx: SimulationCtx): Simulation<GraphNode, GraphEdge
     edges: ctx.simEdges,
     width: ctx.width,
     height: ctx.height,
-  }).alpha(startAlpha(ctx.simNodes, ctx.keptSettled ?? false))
+  }).alpha(startAlpha(ctx.simNodes, ctx.keptSettled))
 }
 
 /**
@@ -1072,11 +1072,10 @@ export function runMainThreadSimulation(ctx: SimulationCtx): SimulationHandle {
     }
   }
 
-  // A click is a drag without motion: its reheat ticks only after the click
-  // has navigated away, so a settled layout stays so.
-  let settled = false
+  // Only a new topology or canvas size unsettles a layout; a click on a node
+  // reheats the simulation through d3-drag, so a tick must not.
+  let settled = startAlpha(ctx.simNodes, ctx.keptSettled) === 0
   sim.on('tick', () => {
-    settled = false
     live.applyPositions()
   })
   sim.on('end', () => {

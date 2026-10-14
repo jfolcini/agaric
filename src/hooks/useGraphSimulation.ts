@@ -345,6 +345,7 @@ export function useGraphSimulation({
       width,
       height,
       prefersReducedMotion: state.prefersReducedMotion,
+      keptSettled: false,
     }
 
     // #2194: if a simulation is already LIVE, swap its node/edge set in place
