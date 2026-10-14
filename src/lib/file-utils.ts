@@ -68,7 +68,7 @@ export const MAX_ATTACHMENT_BYTES = 52_428_800
  *
  * Prefix entries (ending in `/`) match any subtype under that top-level type.
  */
-const ALLOWED_MIME_PREFIXES = ['image/', 'text/'] as const
+const ALLOWED_MIME_PREFIXES = ['image/', 'audio/', 'text/'] as const
 const ALLOWED_MIME_EXACT = [
   'application/pdf',
   'application/json',

@@ -515,8 +515,9 @@ export function BlockTree({
 
   // ── Block-level dialog surfaces (#2930) ────────────────────────────
   // State + open/close/act handlers for the block-history sheet, property
-  // drawer, visual query builder (#215) and emoji picker (#286). The MOUNTS
-  // render in <BlockTreeDialogs/> below, fed by this hook's returned values.
+  // drawer, visual query builder (#215), emoji picker (#286) and voice-note
+  // recorder (#5364). The MOUNTS render in <BlockTreeDialogs/> below, fed by
+  // this hook's returned values.
   const {
     historyBlockId,
     setHistoryBlockId,
@@ -526,10 +527,13 @@ export function BlockTree({
     setQueryBuilderOpen,
     emojiPickerOpen,
     setEmojiPickerOpen,
+    voiceNoteBlockId,
+    setVoiceNoteBlockId,
     handleShowHistory,
     handleShowProperties,
     openQueryBuilder,
     openEmojiPicker,
+    openVoiceNoteRecorder,
     handleEmojiSelect,
     handleQuerySave,
   } = useBlockDialogs({ focusedBlockId, pageStore, load, preserveEmptyBlockIds })
@@ -699,6 +703,7 @@ export function BlockTree({
     openQueryBuilder,
     openEmojiPicker,
     openPropertyDrawer: handleShowProperties,
+    openVoiceNoteRecorder,
   })
 
   // ── Multi-select hook ──────────────────────────────────────────────
@@ -1584,6 +1589,8 @@ export function BlockTree({
               emojiPickerOpen={emojiPickerOpen}
               setEmojiPickerOpen={setEmojiPickerOpen}
               handleEmojiSelect={handleEmojiSelect}
+              voiceNoteBlockId={voiceNoteBlockId}
+              setVoiceNoteBlockId={setVoiceNoteBlockId}
               historyBlockId={historyBlockId}
               setHistoryBlockId={setHistoryBlockId}
               propertyDrawerBlockId={propertyDrawerBlockId}

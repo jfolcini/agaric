@@ -1,8 +1,9 @@
 /**
- * BlockTreeDialogs — the four block-level dialog MOUNTS extracted from BlockTree
- * (#2930): visual query builder (#215), emoji picker (#286), block-history
- * sheet and property drawer. State + handlers live in `useBlockDialogs`; this is
- * a pure presentational child fed entirely by props.
+ * BlockTreeDialogs — the block-level dialog MOUNTS extracted from BlockTree
+ * (#2930): visual query builder (#215), emoji picker (#286), voice-note
+ * recorder (#5364), block-history sheet and property drawer. State + handlers
+ * live in `useBlockDialogs`; this is a pure presentational child fed entirely
+ * by props.
  *
  * #5441 — each dialog is lazy and mounted only while open, so its chunk loads on
  * first use instead of riding every BlockTree onto the boot path.
@@ -19,6 +20,11 @@ const QueryBuilderModal = lazy(() =>
 const EmojiPickerDialog = lazy(() =>
   import('@/components/EmojiPicker/EmojiPickerDialog').then((m) => ({
     default: m.EmojiPickerDialog,
+  })),
+)
+const VoiceNoteDialog = lazy(() =>
+  import('@/components/attachments/VoiceNoteDialog').then((m) => ({
+    default: m.VoiceNoteDialog,
   })),
 )
 const BlockHistorySheet = lazy(() =>
@@ -39,6 +45,8 @@ interface BlockTreeDialogsProps {
   emojiPickerOpen: boolean
   setEmojiPickerOpen: Dispatch<SetStateAction<boolean>>
   handleEmojiSelect: (char: string) => void
+  voiceNoteBlockId: string | null
+  setVoiceNoteBlockId: Dispatch<SetStateAction<string | null>>
   historyBlockId: string | null
   setHistoryBlockId: Dispatch<SetStateAction<string | null>>
   propertyDrawerBlockId: string | null
@@ -52,6 +60,8 @@ export function BlockTreeDialogs({
   emojiPickerOpen,
   setEmojiPickerOpen,
   handleEmojiSelect,
+  voiceNoteBlockId,
+  setVoiceNoteBlockId,
   historyBlockId,
   setHistoryBlockId,
   propertyDrawerBlockId,
@@ -78,6 +88,13 @@ export function BlockTreeDialogs({
             onOpenChange={setEmojiPickerOpen}
             onSelect={handleEmojiSelect}
           />
+        </Suspense>
+      )}
+
+      {/* Microphone recorder for the /voice slash command (#5364) */}
+      {voiceNoteBlockId && (
+        <Suspense fallback={null}>
+          <VoiceNoteDialog blockId={voiceNoteBlockId} onClose={() => setVoiceNoteBlockId(null)} />
         </Suspense>
       )}
 

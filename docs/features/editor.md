@@ -106,6 +106,7 @@ Page kebab → *Edit as Markdown* swaps the page's blocks for a plain-text edito
 - **Click** an image in the editor to open the **ImageLightbox** (full-screen viewer with keyboard navigation).
 - **Drag the corner handle** of an image to resize.
 - **PDF attachments** open in the **PdfViewerDialog**.
+- **Audio attachments** play inline. `/voice` records a voice note from the microphone and attaches it to the block; recording stops on its own just before the 50 MB attachment limit.
 - Files render with type-specific icons (PDF, Word, Excel, image, generic).
 
 ## Drafts (autosave)

@@ -15,6 +15,11 @@ vi.mock('@/components/dialogs/QueryBuilderModal', () => ({
 vi.mock('@/components/EmojiPicker/EmojiPickerDialog', () => ({
   EmojiPickerDialog: () => <div data-testid="emoji-picker-stub" />,
 }))
+vi.mock('@/components/attachments/VoiceNoteDialog', () => ({
+  VoiceNoteDialog: ({ blockId }: { blockId: string }) => (
+    <div data-testid="voice-note-stub">{blockId}</div>
+  ),
+}))
 vi.mock('@/components/editor/BlockHistorySheet', () => ({
   BlockHistorySheet: ({ blockId }: { blockId: string }) => (
     <div data-testid="history-sheet-stub">{blockId}</div>
@@ -29,6 +34,7 @@ vi.mock('@/components/editor/BlockPropertyDrawerSheet', () => ({
 const STUBS = [
   'query-builder-stub',
   'emoji-picker-stub',
+  'voice-note-stub',
   'history-sheet-stub',
   'property-drawer-stub',
 ]
@@ -36,6 +42,7 @@ const STUBS = [
 function renderDialogs(open: {
   queryBuilderOpen?: boolean
   emojiPickerOpen?: boolean
+  voiceNoteBlockId?: string | null
   historyBlockId?: string | null
   propertyDrawerBlockId?: string | null
 }) {
@@ -47,6 +54,8 @@ function renderDialogs(open: {
       emojiPickerOpen={open.emojiPickerOpen ?? false}
       setEmojiPickerOpen={vi.fn()}
       handleEmojiSelect={vi.fn()}
+      voiceNoteBlockId={open.voiceNoteBlockId ?? null}
+      setVoiceNoteBlockId={vi.fn()}
       historyBlockId={open.historyBlockId ?? null}
       setHistoryBlockId={vi.fn()}
       propertyDrawerBlockId={open.propertyDrawerBlockId ?? null}
@@ -63,6 +72,7 @@ describe('BlockTreeDialogs', () => {
       Promise.all([
         import('@/components/dialogs/QueryBuilderModal'),
         import('@/components/EmojiPicker/EmojiPickerDialog'),
+        import('@/components/attachments/VoiceNoteDialog'),
         import('@/components/editor/BlockHistorySheet'),
         import('@/components/editor/BlockPropertyDrawerSheet'),
       ]),
@@ -74,11 +84,13 @@ describe('BlockTreeDialogs', () => {
     renderDialogs({
       queryBuilderOpen: true,
       emojiPickerOpen: true,
+      voiceNoteBlockId: 'BLOCK_V',
       historyBlockId: 'BLOCK_H',
       propertyDrawerBlockId: 'BLOCK_P',
     })
     expect(await screen.findByTestId('query-builder-stub')).toBeInTheDocument()
     expect(await screen.findByTestId('emoji-picker-stub')).toBeInTheDocument()
+    expect(await screen.findByTestId('voice-note-stub')).toHaveTextContent('BLOCK_V')
     expect(await screen.findByTestId('history-sheet-stub')).toHaveTextContent('BLOCK_H')
     expect(await screen.findByTestId('property-drawer-stub')).toHaveTextContent('BLOCK_P')
   })

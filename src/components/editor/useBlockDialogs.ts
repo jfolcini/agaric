@@ -1,10 +1,11 @@
 /**
  * useBlockDialogs — owns the STATE + open/close/act handlers for BlockTree's
- * four block-level dialog surfaces:
+ * block-level dialog surfaces:
  *   - block-history sheet
  *   - property drawer
  *   - visual query builder (#215)
  *   - emoji picker (#286)
+ *   - voice-note recorder (#5364)
  *
  * Extracted verbatim from BlockTree (#2930) — a mechanical move with zero
  * behavior change. The dialog MOUNTS themselves render in `<BlockTreeDialogs/>`,
@@ -14,16 +15,17 @@
  *
  * A slash command DELETES its trigger text before dispatching (see
  * `slash-command.ts`), and so does the `{{` query picker. So `/query`,
- * `/emoji` and `/assignee` on a block that held nothing else leave that block
- * EMPTY, and the modal they open then takes focus — which blurs the editor,
- * clears `focusedBlockId`, and hands the drop-on-blur cleanup a blank block to
- * delete. The dialog's write-back (the `{{query …}}` expression, the picked
- * emoji, the property value) then has no block left to land in.
+ * `/emoji`, `/assignee` and `/voice` on a block that held nothing else leave
+ * that block EMPTY, and the modal they open then takes focus — which blurs the
+ * editor, clears `focusedBlockId`, and hands the drop-on-blur cleanup a blank
+ * block to delete. The dialog's write-back (the `{{query …}}` expression, the
+ * picked emoji, the property value, the recording) then has no block left to
+ * land in.
  *
  * The overlays that DON'T have this problem — the date picker, the template
  * picker, the block context menu, the formatting toolbar — are spared by
  * `data-editor-portal` (see `useEditorBlur`): their blur never fires at all,
- * so focus never leaves and the cleanup never runs. The four dialogs here
+ * so focus never leaves and the cleanup never runs. The dialogs here
  * deliberately do not carry that tag; they WANT the blur, because the editor
  * must flush and unmount while a full modal owns the screen. So they take the
  * other route: register the block in `preserveEmptyBlockIds` — the same
@@ -69,10 +71,13 @@ export interface UseBlockDialogsResult {
   setQueryBuilderOpen: Dispatch<SetStateAction<boolean>>
   emojiPickerOpen: boolean
   setEmojiPickerOpen: Dispatch<SetStateAction<boolean>>
+  voiceNoteBlockId: string | null
+  setVoiceNoteBlockId: Dispatch<SetStateAction<string | null>>
   handleShowHistory: (blockId: string) => void
   handleShowProperties: (blockId: string) => void
   openQueryBuilder: () => void
   openEmojiPicker: () => void
+  openVoiceNoteRecorder: (blockId: string) => void
   handleEmojiSelect: (char: string) => void
   handleQuerySave: (expression: string) => Promise<void>
 }
@@ -97,6 +102,10 @@ export function useBlockDialogs({
   // ── Emoji picker (#286): /emoji opens the browse-grid dialog; on select we
   // insert the chosen native emoji at the caret of the focused block editor. ─
   const [emojiPickerOpen, setEmojiPickerOpen] = useState(false)
+
+  // ── Voice note (#5364): /voice records an audio attachment onto the block
+  // it was opened for. ──────────────────────────────────────────────────────
+  const [voiceNoteBlockId, setVoiceNoteBlockId] = useState<string | null>(null)
 
   /**
    * #4729 — exempt `blockId` from the ONE focus-leave that opening a dialog
@@ -166,6 +175,15 @@ export function useBlockDialogs({
     preserveEmptyBlock(focusedBlockId)
     startTransition(() => setEmojiPickerOpen(true))
   }
+  const openVoiceNoteRecorder = useCallback(
+    (blockId: string) => {
+      // #4729 — the recording is attached to this block once it is saved.
+      preserveEmptyBlock(blockId)
+      // A transition for the same reason as the query builder.
+      startTransition(() => setVoiceNoteBlockId(blockId))
+    },
+    [preserveEmptyBlock],
+  )
   // Insert the chosen native emoji at the caret via the active roving editor.
   // The dialog dismisses itself on select (closeOnSelect default).
   const handleEmojiSelect = useCallback((char: string) => {
@@ -199,10 +217,13 @@ export function useBlockDialogs({
     setQueryBuilderOpen,
     emojiPickerOpen,
     setEmojiPickerOpen,
+    voiceNoteBlockId,
+    setVoiceNoteBlockId,
     handleShowHistory,
     handleShowProperties,
     openQueryBuilder,
     openEmojiPicker,
+    openVoiceNoteRecorder,
     handleEmojiSelect,
     handleQuerySave,
   }

@@ -1,6 +1,6 @@
 /**
  * Property-related slash commands: TODO state, priority, assignee/location
- * (exact + presets), effort, repeat, repeat-limit, attach.
+ * (exact + presets), effort, repeat, repeat-limit, attach, voice.
  */
 
 import { invoke } from '@tauri-apps/api/core'
@@ -680,6 +680,16 @@ describe('useSlashCommandProperty — attach', () => {
   })
 })
 
+describe('useSlashCommandProperty — voice', () => {
+  it('/voice opens the recorder for the block it ran in, writing nothing itself', async () => {
+    const { result } = renderHook(() => useSlashCommandProperty())
+    const { ctx, openVoiceNoteRecorder } = makeSyntheticCtx({ blockId: 'VOICE_BLOCK' })
+    await result.current.exact['voice']?.(ctx, { id: 'voice', label: 'VOICE' })
+    expect(openVoiceNoteRecorder).toHaveBeenCalledExactlyOnceWith('VOICE_BLOCK')
+    expect(mockedInvoke).not.toHaveBeenCalled()
+  })
+})
+
 describe('useSlashCommandProperty — table identity', () => {
   it('returns a stable table identity across rerenders', () => {
     const { result, rerender } = renderHook(() => useSlashCommandProperty())
@@ -702,6 +712,7 @@ describe('useSlashCommandProperty — table identity', () => {
         'assignee',
         'location',
         'attach',
+        'voice',
       ].toSorted(),
     )
     expect(result.current.prefix.map(([p]) => p)).toEqual([

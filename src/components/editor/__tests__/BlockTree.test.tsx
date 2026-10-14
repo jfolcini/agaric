@@ -455,12 +455,12 @@ const BLOCK_TREE_DEFAULTS: TypedInvokeHandlers = {
   list_all_tags_in_space: () => [],
   list_blocks: () => emptyPage,
   list_page_aliases_by_prefix: () => [],
+  list_attachments: () => [],
   list_attachments_batch: () => ({}),
   get_batch_properties: () => ({}),
   get_properties: () => [],
   list_property_defs: () => emptyPage,
   list_tags_for_block: () => [],
-  list_attachments: () => [],
   first_child_for_blocks: () => ({}),
   batch_resolve: () => [],
   search_blocks: () => emptyPage,
@@ -1502,7 +1502,7 @@ describe('BlockTree slash command wiring', () => {
 
     const results = await capturedSearchSlashCommands?.('')
 
-    expect(results).toHaveLength(34)
+    expect(results).toHaveLength(35)
     expect(results?.map((r) => r.id)).toEqual([
       'todo',
       'doing',
@@ -1538,6 +1538,7 @@ describe('BlockTree slash command wiring', () => {
       // #4550 — `/embed` sits directly below `/query` and mirrors it.
       'embed',
       'attach',
+      'voice',
       'emoji',
     ])
   })
@@ -5867,6 +5868,33 @@ describe('BlockTree leaked-empty-block cleanup', () => {
 
     // `insertEmojiIntoActiveEditor` targets the block's editor; a deleted
     // block has none, and the picked emoji is silently dropped.
+    expect(mockedInvoke).not.toHaveBeenCalledWith('delete_block', { blockId: 'TARGET' })
+    expect(pageStore.getState().blocksById.has('TARGET')).toBe(true)
+  })
+
+  it('opens the voice-note recorder and keeps the block it will attach to', async () => {
+    pageStore.setState({
+      blocks: [
+        makeBlock({ id: 'A', content: 'before', position: 0 }),
+        makeBlock({ id: 'TARGET', content: '', position: 1 }),
+      ],
+      loading: false,
+    })
+    useBlockStore.setState({ focusedBlockId: 'TARGET' })
+
+    renderBlockTree()
+    await waitFor(() => expect(capturedOnSlashCommand).toBeDefined())
+
+    await act(async () => {
+      capturedOnSlashCommand?.({ id: 'voice', label: 'VOICE' })
+    })
+    expect(await screen.findByTestId('voice-note-dialog')).toBeInTheDocument()
+    await act(async () => {
+      useBlockStore.setState({ focusedBlockId: null })
+    })
+    await act(async () => {})
+
+    // The recording is saved onto TARGET after the dialog took focus.
     expect(mockedInvoke).not.toHaveBeenCalledWith('delete_block', { blockId: 'TARGET' })
     expect(pageStore.getState().blocksById.has('TARGET')).toBe(true)
   })

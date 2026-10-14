@@ -267,6 +267,7 @@ pub const MAX_ATTACHMENT_FILE_COUNT: usize = 10_000;
 /// Patterns ending with `/*` match any subtype under that top-level type.
 const ALLOWED_MIME_PATTERNS: &[&str] = &[
     "image/*",
+    "audio/*",
     "application/pdf",
     "text/*",
     "application/json",
@@ -682,6 +683,13 @@ mod is_mime_allowed_tests {
         assert!(is_mime_allowed("image/png"));
         assert!(is_mime_allowed("image/jpeg"));
         assert!(is_mime_allowed("text/plain"));
+    }
+
+    #[test]
+    fn audio_wildcard_accepts_recordings_and_dropped_files() {
+        assert!(is_mime_allowed("audio/webm"));
+        assert!(is_mime_allowed("audio/ogg"));
+        assert!(is_mime_allowed("audio/mpeg"));
     }
 
     #[test]

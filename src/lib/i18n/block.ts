@@ -187,7 +187,7 @@ export const block: Record<string, string> = {
   'blockTree.attachedFileMessage': 'Attached "{{filename}}"',
   'blockTree.attachFileFailed': 'Failed to attach file',
   'blockTree.attachmentTypeNotAllowed':
-    '{{type}} cannot be attached — allowed: images, text, PDF, JSON, ZIP, TAR',
+    '{{type}} cannot be attached — allowed: images, audio, text, PDF, JSON, ZIP, TAR',
   'blockTree.attachmentTooLarge': 'File is {{size}} — max is 50 MB',
   'blockTree.cannotDeleteLastBlock': 'Cannot delete the last block on a page',
   'blockTree.cannotDeleteParentAtTop':

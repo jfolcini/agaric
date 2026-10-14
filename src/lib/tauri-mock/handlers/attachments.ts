@@ -46,6 +46,7 @@ const MAX_ATTACHMENT_FILENAME_BYTES = 255
  */
 const ALLOWED_MIME_PATTERNS = [
   'image/*',
+  'audio/*',
   'application/pdf',
   'text/*',
   'application/json',

@@ -328,7 +328,7 @@ test.describe('/attach through the file chooser', () => {
     await expect(
       toast(
         page,
-        'application/x-msdownload cannot be attached — allowed: images, text, PDF, JSON, ZIP, TAR',
+        'application/x-msdownload cannot be attached — allowed: images, audio, text, PDF, JSON, ZIP, TAR',
       ),
     ).toBeVisible()
     await expectOnlyALaterAllowedAttachLands(page)

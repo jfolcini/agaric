@@ -113,6 +113,11 @@ describe('isAttachmentAllowed', () => {
     expect(isAttachmentAllowed('text/markdown', 1024)).toEqual({ ok: true })
   })
 
+  it('accepts audio/* subtypes', () => {
+    expect(isAttachmentAllowed('audio/mpeg', 1024)).toEqual({ ok: true })
+    expect(isAttachmentAllowed('audio/webm', 1024)).toEqual({ ok: true })
+  })
+
   it('accepts the exact application allow-list', () => {
     expect(isAttachmentAllowed('application/pdf', 1024)).toEqual({ ok: true })
     expect(isAttachmentAllowed('application/json', 1024)).toEqual({ ok: true })
@@ -133,7 +138,6 @@ describe('isAttachmentAllowed', () => {
   it('rejects other disallowed application subtypes', () => {
     expect(isAttachmentAllowed('application/x-msdownload', 1024).ok).toBe(false)
     expect(isAttachmentAllowed('video/mp4', 1024).ok).toBe(false)
-    expect(isAttachmentAllowed('audio/mpeg', 1024).ok).toBe(false)
   })
 
   it('accepts a file exactly at the size cap', () => {
