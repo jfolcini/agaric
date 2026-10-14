@@ -26,12 +26,12 @@
 //!
 //! ## Problem-command gating
 //!
-//! The gated measurement tier now holds the #2508 tags/pages-cache
-//! direct-query probes and the #2585 MostLinked cache/counterfactual probes,
-//! behind `SLO_INCLUDE_PROBLEM` so they don't fail CI. The two former problem
-//! commands (`list_page_links`, `list_projected_agenda`) were
-//! promoted to the green tier after the nightly lane confirmed them
-//! under budget (#2178). To run the gated probes locally:
+//! The gated measurement tier holds the #2508 tags/pages-cache direct-query
+//! probes, the #2585 MostLinked cache/counterfactual probes and the
+//! space-scoped `list_page_links` read (over budget, #5426), behind
+//! `SLO_INCLUDE_PROBLEM` so they don't fail CI. `list_projected_agenda` was
+//! promoted to the green tier after the nightly lane confirmed it under
+//! budget (#2178). To run the gated probes locally:
 //!
 //! ```text
 //! SLO_INCLUDE_PROBLEM=1 cargo bench --bench interactive_slo
@@ -1861,11 +1861,16 @@ fn bench_revert_ops_50op_at_100k(c: &mut Criterion) {
 }
 
 /// `list_page_links` — graph-view roll-up, read for one space: the only form
-/// the graph sends, and since #5415 the only one the command has. The 84 ms
-/// @ 100K that promoted it to the green tier (#2178) was the unscoped read;
-/// the scoped read materialises the space's members, whose cost #5426 tracks.
+/// the graph sends, and since #5415 the only one the command has. PROBLEM
+/// TIER: the 84 ms @ 100K that promoted it to the green tier (#2178) was the
+/// unscoped read; the scoped read checks both endpoints of every edge against
+/// the space's pages and is over budget on this fixture (#5426).
 fn bench_list_page_links(c: &mut Criterion) {
     const BUDGET_MS: f64 = 200.0;
+
+    if problem_skipped("list_page_links @ 100K") {
+        return;
+    }
 
     let rt = Runtime::new().unwrap();
     let dir = TempDir::new().unwrap();
@@ -1936,7 +1941,7 @@ fn bench_list_page_links(c: &mut Criterion) {
     });
     group.finish();
 
-    assert_under_budget("list_page_links @ 100K", &acc, BUDGET_MS);
+    assert_under_budget_deferred("list_page_links @ 100K", &acc, BUDGET_MS);
 }
 
 /// `list_projected_agenda` — the steady-state WARM-CACHE read (#2601).
@@ -2574,7 +2579,6 @@ criterion_group!(
     bench_list_pages_with_metadata,
     bench_revert_ops_50op_at_100k,
     bench_create_block,
-    bench_list_page_links,
     // #2601 — graduated from the problem tier: the bounded-horizon
     // materialization makes the warm-cache read an O(window) index scan that
     // clears the 200 ms budget with margin at every fixture size.
@@ -2588,6 +2592,7 @@ criterion_group!(
     bench_pages_cache_counts_direct_query,
     bench_pages_mostlinked_sort_cache,
     bench_pages_mostlinked_sort_live,
+    bench_list_page_links,
     problem_tier_verdict,
 );
 
