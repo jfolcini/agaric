@@ -184,6 +184,8 @@ export function JournalControls(): React.ReactElement {
     return format(currentDate, 'MMM yyyy', { locale })
   }
 
+  const dateDisplay = getDateDisplay()
+
   const navLabels = {
     prev:
       mode === 'daily'
@@ -332,7 +334,7 @@ export function JournalControls(): React.ReactElement {
               // horizontal overflow" structural instead of a pixel budget
               // that a longer locale string could blow.
               className="min-w-0 shrink gap-1 text-sm font-medium max-sm:px-0.5!"
-              aria-label={`${getDateDisplay()} · ${t('journal.openCalendar')}`}
+              aria-label={`${dateDisplay} · ${t('journal.openCalendar')}`}
               aria-expanded={calendarOpen}
               aria-haspopup="dialog"
               onClick={() => setCalendarOpen((o) => !o)}
@@ -342,7 +344,7 @@ export function JournalControls(): React.ReactElement {
                 className="truncate max-sm:hidden lg:min-w-[100px] text-center"
                 data-testid="date-display"
               >
-                {getDateDisplay()}
+                {dateDisplay}
               </span>
               {/* Phone-width label. `aria-hidden` keeps it out of the
                   accessible name (the `aria-label` above already carries the
@@ -442,7 +444,7 @@ export function JournalControls(): React.ReactElement {
       {/* Agenda mode: show title in place of date nav */}
       {mode === 'agenda' && (
         <span className="text-sm font-medium" data-testid="date-display">
-          {getDateDisplay()}
+          {dateDisplay}
         </span>
       )}
     </div>
