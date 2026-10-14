@@ -61,30 +61,43 @@ test.describe('Graph view', () => {
     expect(edgeCount).toBeGreaterThan(0)
   })
 
-  test('clicking a node navigates to that page', async ({ page }) => {
+  /**
+   * The "Getting Started" node and its visible dot. Not a date-titled page:
+   * `navigateToPage` routes YYYY-MM-DD titles into the Journal view, which has
+   * no `aria-label="Page title"` element. The dot is clicked rather than the
+   * `<g class="node">`, whose bounding-box centre falls on the label text
+   * (`pointer-events: none`), so a click there would pass through to the
+   * `<svg>`; nor the hit-area under the dot, which Playwright would see the dot
+   * intercept.
+   */
+  async function gettingStartedNode(page: Page) {
     await navigateToView(page, 'Graph')
     await expect(page.locator('[data-testid="graph-svg"]')).toBeVisible()
-
-    // Target a non-date-titled page. `tabsStore.navigateToPage` routes
-    // YYYY-MM-DD page titles into the Journal view, which has no
-    // `aria-label="Page title"` element. The seeded daily page uses
-    // today's date as its title, so `.first()` is non-deterministic in
-    // that regard — pick "Getting Started" explicitly.
-    const nodeGroup = page
-      .locator('[data-testid="graph-view"] svg g.node')
-      .filter({ hasText: 'Getting Started' })
+    const nodeGroup = page.getByRole('option', { name: 'Getting Started', exact: true })
     await expect(nodeGroup).toBeVisible()
+    return { nodeGroup, dot: nodeGroup.locator('circle:not(.hit-area)') }
+  }
 
-    // Click the hit-area circle (44px target, `pointer-events: all`) rather than
-    // the `<g class="node">` group. The group's bounding-box center falls on the
-    // label text (drawn right of the node, with `pointer-events: none`), so a
-    // default-centered click there passes through to the `<svg>`. The hit-area
-    // circle is centered at the node origin, so its bbox center is hittable.
-    const hitArea = nodeGroup.locator('circle.hit-area')
-    await hitArea.click()
+  // #5435 — a click selects, so the graph can be read before leaving it.
+  test('clicking a node selects it, and a second click opens its page', async ({ page }) => {
+    const { nodeGroup, dot } = await gettingStartedNode(page)
 
-    // After clicking, the app navigates to the page editor — page title should be visible
+    await dot.click()
+    await expect(nodeGroup).toHaveAttribute('aria-selected', 'true')
+    await expect(page.locator('[data-testid="graph-svg"]')).toBeVisible()
+    await expect(page.locator('[aria-label="Page title"]')).toHaveCount(0)
+
+    await dot.click()
     await expect(page.locator('[aria-label="Page title"]')).toBeVisible()
+  })
+
+  test('a Ctrl/Cmd-click on a node opens its page in a new tab', async ({ page }) => {
+    const { dot } = await gettingStartedNode(page)
+
+    await dot.click({ modifiers: ['ControlOrMeta'] })
+
+    await expect(page.locator('[aria-label="Page title"]')).toBeVisible()
+    await expect(page.locator('[role="tab"][title="Getting Started"]')).toBeVisible()
   })
 
   // #5433 — one action from a page lands on its local graph. The seed links

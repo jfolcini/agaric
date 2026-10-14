@@ -39,6 +39,7 @@ function makeNode(id: string, label: string): GraphNode {
 
 const NODES = [makeNode('a', 'Alpha'), makeNode('b', 'Beta'), makeNode('c', 'Gamma')]
 const EDGES: GraphEdge[] = [{ source: 'a', target: 'b', ref_count: 1 }]
+const NO_ACTIONS = { select() {}, open() {}, openInNewTab() {} }
 const NO_LAYOUT = { read: () => null, keep: () => {} }
 
 function Graph({
@@ -53,11 +54,13 @@ function Graph({
     svgRef,
     nodes,
     edges: EDGES,
-    navigateToPage: () => {},
+    actions: NO_ACTIONS,
     currentPageId,
+    selectedPageId: null,
     layout: NO_LAYOUT,
   })
-  return <svg ref={svgRef} aria-label="Graph" />
+  // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- GraphView's canvas: the d3-drawn nodes are its options
+  return <svg ref={svgRef} role="listbox" aria-label="Graph" />
 }
 
 function paint(container: HTMLElement): Array<[string | null, string | null]> {

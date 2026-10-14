@@ -9,7 +9,7 @@
  * toggle is off (this view defaults to off).
  */
 
-import { Focus, X } from 'lucide-react'
+import { ArrowLeft, Focus, X } from 'lucide-react'
 import type React from 'react'
 import { useTranslation } from 'react-i18next'
 
@@ -31,6 +31,10 @@ export interface LocalGraphControlProps {
    * is open in the active tab — the toggle is then disabled with a hint.
    */
   seedLabel: string | null
+  /** Label of the page the walk started from, once the graph is centred elsewhere. */
+  originLabel: string | null
+  /** Centre the graph on the page the walk started from again. */
+  onReturnToOrigin: () => void
 }
 
 export function LocalGraphControl({
@@ -39,6 +43,8 @@ export function LocalGraphControl({
   hops,
   onHopsChange,
   seedLabel,
+  originLabel,
+  onReturnToOrigin,
 }: LocalGraphControlProps): React.ReactElement {
   const { t } = useTranslation()
   const hasSeed = seedLabel !== null
@@ -75,6 +81,18 @@ export function LocalGraphControl({
           >
             {t('graph.local.active', { page: seedLabel })}
           </span>
+          {originLabel !== null && (
+            <Button
+              variant="ghost"
+              size="xs"
+              className="h-7 gap-1 text-xs"
+              onClick={onReturnToOrigin}
+              data-testid="local-graph-back"
+            >
+              <ArrowLeft className="h-3 w-3" aria-hidden="true" />
+              {t('graph.local.back', { page: originLabel })}
+            </Button>
+          )}
           <ToggleGroup
             type="single"
             value={String(hops)}

@@ -13,6 +13,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { GraphEdge, GraphNode } from '@/components/graph/GraphView.helpers'
 import { useGraphRenderElements } from '@/hooks/useGraphRenderElements'
+import type { NodeActions, NodeMarks } from '@/lib/graph-sim-helpers'
+
+const NO_ACTIONS: NodeActions = { select() {}, open() {}, openInNewTab() {}, reveal() {} }
+const NO_MARKS: NodeMarks = { currentPageId: null, selectedId: null }
 
 vi.mock('d3-selection', () => ({
   select: vi.fn(() => ({
@@ -98,8 +102,8 @@ describe('useGraphRenderElements', () => {
       useGraphRenderElements({
         nodes: makeNodes(),
         edges: makeEdges(),
-        navigateToPage: () => {},
-        currentPageId: null,
+        actions: NO_ACTIONS,
+        marks: NO_MARKS,
       }),
     )
     expect(typeof result.current).toBe('function')
@@ -110,8 +114,8 @@ describe('useGraphRenderElements', () => {
       useGraphRenderElements({
         nodes: makeNodes(),
         edges: makeEdges(),
-        navigateToPage: () => {},
-        currentPageId: null,
+        actions: NO_ACTIONS,
+        marks: NO_MARKS,
       }),
     )
     const svg = makeFakeSvg()
@@ -126,8 +130,8 @@ describe('useGraphRenderElements', () => {
       useGraphRenderElements({
         nodes: makeNodes(),
         edges: makeEdges(),
-        navigateToPage: () => {},
-        currentPageId: null,
+        actions: NO_ACTIONS,
+        marks: NO_MARKS,
       }),
     )
     const out = result.current(makeFakeSvg())
@@ -140,19 +144,18 @@ describe('useGraphRenderElements', () => {
     const nodes = makeNodes()
     const edges = makeEdges()
     const { result } = renderHook(() =>
-      useGraphRenderElements({ nodes, edges, navigateToPage: () => {}, currentPageId: null }),
+      useGraphRenderElements({ nodes, edges, actions: NO_ACTIONS, marks: NO_MARKS }),
     )
     const out = result.current(makeFakeSvg())
     expect(out.simNodes[0]).not.toBe(nodes[0])
     expect(out.simEdges[0]).not.toBe(edges[0])
   })
 
-  it('returns the same callback identity when nodes/edges/navigate are stable', () => {
+  it('returns the same callback identity when nodes/edges/actions/marks are stable', () => {
     const nodes = makeNodes()
     const edges = makeEdges()
-    const navigateToPage = vi.fn()
     const { result, rerender } = renderHook(() =>
-      useGraphRenderElements({ nodes, edges, navigateToPage, currentPageId: null }),
+      useGraphRenderElements({ nodes, edges, actions: NO_ACTIONS, marks: NO_MARKS }),
     )
     const before = result.current
     rerender()
@@ -164,8 +167,8 @@ describe('useGraphRenderElements', () => {
       useGraphRenderElements({
         nodes: makeNodes(),
         edges: makeEdges(),
-        navigateToPage: () => {},
-        currentPageId: null,
+        actions: NO_ACTIONS,
+        marks: NO_MARKS,
       }),
     )
     const out = result.current(makeFakeSvg(1024, 768))

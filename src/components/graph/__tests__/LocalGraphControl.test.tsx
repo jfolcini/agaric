@@ -16,6 +16,8 @@ function setup(overrides: Partial<React.ComponentProps<typeof LocalGraphControl>
     hops: 2,
     onHopsChange: vi.fn(),
     seedLabel: 'My Page',
+    originLabel: null,
+    onReturnToOrigin: vi.fn(),
     ...overrides,
   }
   const utils = render(<LocalGraphControl {...props} />)
@@ -68,6 +70,21 @@ describe('LocalGraphControl', () => {
     const { props } = setup({ active: true, hops: 2 })
     fireEvent.click(screen.getByRole('radio', { name: '1 hop' }))
     expect(props.onHopsChange).toHaveBeenCalledWith(1)
+  })
+
+  it('offers a way back to the starting page only once the walk has left it (#5435)', () => {
+    const { props, rerender } = setup({ active: true })
+    expect(screen.queryByTestId('local-graph-back')).not.toBeInTheDocument()
+
+    rerender(<LocalGraphControl {...props} seedLabel="Neighbour" originLabel="My Page" />)
+    fireEvent.click(screen.getByRole('button', { name: 'Back to "My Page"' }))
+
+    expect(props.onReturnToOrigin).toHaveBeenCalledTimes(1)
+  })
+
+  it('has no a11y violations with the way back shown', async () => {
+    const { container } = setup({ active: true, seedLabel: 'Neighbour', originLabel: 'My Page' })
+    expect(await axe(container)).toHaveNoViolations()
   })
 
   it('has no a11y violations (inactive)', async () => {

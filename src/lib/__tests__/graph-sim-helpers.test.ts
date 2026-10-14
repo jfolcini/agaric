@@ -15,10 +15,12 @@ import { nodeRadius } from '@/lib/graph-forces'
 import {
   createZoomKeyHandler,
   fitTransform,
+  type NodeActions,
   packPositions,
   patchGraphSelections,
   reducedMotionDuration,
   renderGraphElements,
+  revealTransform,
   unpackPositions,
   ZOOM_BUTTON_DURATION_MS,
   ZOOM_FIT_DURATION_MS,
@@ -26,6 +28,8 @@ import {
 } from '@/lib/graph-sim-helpers'
 import type { GraphEdge, GraphNode } from '@/lib/graph-types'
 import { resetAllShortcuts } from '@/lib/keyboard-config'
+
+const NO_ACTIONS: NodeActions = { select() {}, open() {}, openInNewTab() {}, reveal() {} }
 
 function makeSvg(): SVGSVGElement {
   return document.createElementNS('http://www.w3.org/2000/svg', 'svg') as SVGSVGElement
@@ -51,7 +55,7 @@ describe('renderGraphElements — dedicated paint layers (#758 item 4)', () => {
     const nodes: GraphNode[] = [makeNode('a', 'A'), makeNode('b', 'B')]
     const edges: GraphEdge[] = [{ source: 'a', target: 'b', ref_count: 1 }]
 
-    renderGraphElements(svg, nodes, edges, () => {})
+    renderGraphElements(svg, nodes, edges, NO_ACTIONS)
 
     const edgeLayer = svg.querySelector('g.edges-layer')
     const nodeLayer = svg.querySelector('g.nodes-layer')
@@ -83,7 +87,7 @@ describe('renderGraphElements — edges recede (#5428)', () => {
 
   it('draws every edge as a 1 px hairline that zooming does not thicken', () => {
     const svg = makeSvg()
-    renderGraphElements(svg, nodes, edges, () => {})
+    renderGraphElements(svg, nodes, edges, NO_ACTIONS)
 
     const lines = Array.from(svg.querySelectorAll('line'))
     expect(lines).toHaveLength(5)
@@ -96,7 +100,7 @@ describe('renderGraphElements — edges recede (#5428)', () => {
 
   it('starts faint and lets ref_count darken an edge a little, capped at 0.45', () => {
     const svg = makeSvg()
-    renderGraphElements(svg, nodes, edges, () => {})
+    renderGraphElements(svg, nodes, edges, NO_ACTIONS)
 
     const opacities = Array.from(svg.querySelectorAll('line')).map((line) =>
       Number(line.getAttribute('stroke-opacity')),
@@ -213,7 +217,7 @@ describe('renderGraphElements — node size and the current-page accent (#5429)'
 
   it('sizes each node by the links it has on screen, in and out', () => {
     const svg = makeSvg()
-    renderGraphElements(svg, nodes, edges, () => {})
+    renderGraphElements(svg, nodes, edges, NO_ACTIONS)
 
     expect(radius(svg, 'Hub')).toBe(nodeRadius(3))
     expect(radius(svg, 'A')).toBe(nodeRadius(1))
@@ -223,16 +227,16 @@ describe('renderGraphElements — node size and the current-page accent (#5429)'
 
   it('a patch that drops links shrinks the nodes that lost them', () => {
     const svg = makeSvg()
-    const rendered = renderGraphElements(svg, nodes, edges, () => {})
+    const rendered = renderGraphElements(svg, nodes, edges, NO_ACTIONS)
 
-    patchGraphSelections(rendered.g, nodes, [], () => {})
+    patchGraphSelections(rendered.g, nodes, [], NO_ACTIONS)
 
     expect(radius(svg, 'Hub')).toBe(nodeRadius(0))
   })
 
   it('gives the current page the accent and every other node the neutral tone', () => {
     const svg = makeSvg()
-    renderGraphElements(svg, nodes, edges, () => {}, 'a')
+    renderGraphElements(svg, nodes, edges, NO_ACTIONS, { currentPageId: 'a', selectedId: null })
 
     expect(paint(svg)).toEqual([
       ['Hub', 'var(--graph-node)', null],
@@ -245,7 +249,7 @@ describe('renderGraphElements — node size and the current-page accent (#5429)'
 
   it('accents no node when the active tab has no page open', () => {
     const svg = makeSvg()
-    renderGraphElements(svg, nodes, edges, () => {}, null)
+    renderGraphElements(svg, nodes, edges, NO_ACTIONS)
 
     expect(paint(svg).map(([, fill, current]) => [fill, current])).toEqual(
       nodes.map(() => ['var(--graph-node)', null]),
@@ -260,7 +264,7 @@ describe('renderGraphElements — node size and the current-page accent (#5429)'
       ref_count: 1,
     }))
     const svg = makeSvg()
-    renderGraphElements(svg, [makeNode('hub', 'Hub'), ...leaves], spokes, () => {})
+    renderGraphElements(svg, [makeNode('hub', 'Hub'), ...leaves], spokes, NO_ACTIONS)
 
     const label = svg.querySelector('g.node[aria-label="Hub"] > text')
     expect(radius(svg, 'Hub')).toBe(12)
@@ -275,7 +279,7 @@ describe('renderGraphElements — node size and the current-page accent (#5429)'
       ref_count: 1,
     }))
     const svg = makeSvg()
-    renderGraphElements(svg, [makeNode('hub', 'Hub'), ...leaves], spokes, () => {})
+    renderGraphElements(svg, [makeNode('hub', 'Hub'), ...leaves], spokes, NO_ACTIONS)
     const hub = svg.querySelector('g.node[aria-label="Hub"]') as Element
     const at = nodeRadius(16)
     expect(at).toBeGreaterThan(8)
@@ -308,7 +312,7 @@ describe('renderGraphElements — neighbourhood highlight on hover and focus (#5
 
   function render(): SVGSVGElement {
     const svg = makeSvg()
-    renderGraphElements(svg, nodes, edges, () => {})
+    renderGraphElements(svg, nodes, edges, NO_ACTIONS)
     return svg
   }
 
@@ -395,6 +399,32 @@ describe('renderGraphElements — neighbourhood highlight on hover and focus (#5
     expect(opacities(svg)).toMatchObject({ Far: '', A: '0.15', C: '0.15' })
   })
 
+  it('a selection keeps its neighbourhood lit; hovering elsewhere and leaving falls back to it', () => {
+    const svg = makeSvg()
+    const rendered = renderGraphElements(svg, nodes, edges, NO_ACTIONS, {
+      currentPageId: null,
+      selectedId: 'far',
+    })
+    const selectedOnly = {
+      ...RESTING,
+      Hub: '0.15',
+      B: '0.15',
+      C: '0.15',
+      'hub-a': '0.15',
+      'hub-b': '0.15',
+      'c-hub': '0.15',
+    }
+    expect(opacities(svg)).toEqual(selectedOnly)
+
+    group(svg, 'B').dispatchEvent(new Event('mouseenter'))
+    expect(opacities(svg)).toMatchObject({ B: '', Hub: '', Far: '', A: '0.15' })
+    group(svg, 'B').dispatchEvent(new Event('mouseleave'))
+    expect(opacities(svg)).toEqual(selectedOnly)
+
+    rendered.highlight.select(null)
+    expect(opacities(svg)).toEqual(RESTING)
+  })
+
   it('hover and focus leave the label size and weight alone', () => {
     const svg = render()
     const label = group(svg, 'Hub').querySelector('text') as SVGTextElement
@@ -442,7 +472,7 @@ describe('renderGraphElements —  native SVG <title> tooltip', () => {
     const nodes: GraphNode[] = [makeNode('a', 'Short'), makeNode('b', longLabel)]
     const edges: GraphEdge[] = []
 
-    renderGraphElements(svg, nodes, edges, () => {})
+    renderGraphElements(svg, nodes, edges, NO_ACTIONS)
 
     const groups = svg.querySelectorAll('g.node')
     expect(groups).toHaveLength(2)
@@ -458,7 +488,7 @@ describe('renderGraphElements —  native SVG <title> tooltip', () => {
     const longLabel = 'This particular page has a very long title beyond twenty chars'
     const nodes: GraphNode[] = [makeNode('a', longLabel)]
 
-    renderGraphElements(svg, nodes, [], () => {})
+    renderGraphElements(svg, nodes, [], NO_ACTIONS)
 
     const text = svg.querySelector('g.node > text')
     const title = svg.querySelector('g.node > title')
@@ -472,7 +502,7 @@ describe('renderGraphElements \u2014 #1725 accessible name + roving tabindex', (
     const svg = makeSvg()
     const nodes: GraphNode[] = [makeNode('a', 'Alpha'), makeNode('b', 'Beta')]
 
-    renderGraphElements(svg, nodes, [], () => {})
+    renderGraphElements(svg, nodes, [], NO_ACTIONS)
 
     const labels = Array.from(svg.querySelectorAll('g.node')).map((g) =>
       g.getAttribute('aria-label'),
@@ -484,7 +514,7 @@ describe('renderGraphElements \u2014 #1725 accessible name + roving tabindex', (
     const svg = makeSvg()
     const nodes: GraphNode[] = [makeNode('a', 'A'), makeNode('b', 'B'), makeNode('c', 'C')]
 
-    renderGraphElements(svg, nodes, [], () => {})
+    renderGraphElements(svg, nodes, [], NO_ACTIONS)
 
     const tabindexes = Array.from(svg.querySelectorAll('g.node')).map((g) =>
       g.getAttribute('tabindex'),
@@ -493,41 +523,152 @@ describe('renderGraphElements \u2014 #1725 accessible name + roving tabindex', (
     expect(tabindexes).toEqual(['0', '-1', '-1'])
   })
 
-  it('ArrowDown moves the roving tabindex to the next node', () => {
+  it('arrow keys move to the nearest node in that direction on screen, not in array order', () => {
     const svg = makeSvg()
-    // Attach to the document so .focus() / dispatchEvent behave.
     document.body.append(svg)
-    const nodes: GraphNode[] = [makeNode('a', 'A'), makeNode('b', 'B'), makeNode('c', 'C')]
+    const at = (id: string, x: number, y: number): GraphNode => ({ ...makeNode(id, id), x, y })
+    // Array order is unrelated to the picture. Side sits nearer to Origin than
+    // Right does, but far off the horizontal, so ArrowRight skips it. Nothing
+    // is above Origin, so ArrowUp stays put.
+    const nodes = [
+      at('Origin', 0, 0),
+      at('Below', 10, 100),
+      at('FarRight', 300, 5),
+      at('Left', -100, 5),
+      at('Side', 40, 60),
+      at('Right', 100, 0),
+    ]
+    renderGraphElements(svg, nodes, [], NO_ACTIONS)
+    const group = (label: string): SVGGElement =>
+      svg.querySelector(`g.node[aria-label="${label}"]`) as SVGGElement
 
-    renderGraphElements(svg, nodes, [], () => {})
+    const landing = ['ArrowRight', 'ArrowLeft', 'ArrowDown', 'ArrowUp'].map((key) => {
+      group('Origin').focus()
+      group('Origin').dispatchEvent(new KeyboardEvent('keydown', { key, cancelable: true }))
+      return document.activeElement?.getAttribute('aria-label')
+    })
 
-    const groups = Array.from(svg.querySelectorAll('g.node')) as SVGGElement[]
-    groups[0]?.dispatchEvent(
-      new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true, cancelable: true }),
-    )
-
-    expect(groups.map((g) => g.getAttribute('tabindex'))).toEqual(['-1', '0', '-1'])
-    expect(document.activeElement).toBe(groups[1])
+    expect(landing).toEqual(['Right', 'Left', 'Below', 'Origin'])
+    expect(svg.querySelectorAll('g.node[tabindex="0"]')).toHaveLength(1)
 
     svg.remove()
   })
+})
 
-  it('ArrowUp from the first node wraps to the last (roving)', () => {
+describe('renderGraphElements — select, then open on purpose (#5435)', () => {
+  const nodes = [makeNode('a', 'Alpha'), makeNode('b', 'A page title longer than twenty')]
+
+  function setup(selectedId: string | null = null) {
     const svg = makeSvg()
     document.body.append(svg)
-    const nodes: GraphNode[] = [makeNode('a', 'A'), makeNode('b', 'B'), makeNode('c', 'C')]
+    const actions = { select: vi.fn(), open: vi.fn(), openInNewTab: vi.fn(), reveal: vi.fn() }
+    renderGraphElements(svg, nodes, [], actions, { currentPageId: 'a', selectedId })
+    const group = (id: string): SVGGElement =>
+      svg.querySelectorAll<SVGGElement>('g.node')[id === 'a' ? 0 : 1] as SVGGElement
+    return { svg, actions, group }
+  }
 
-    renderGraphElements(svg, nodes, [], () => {})
+  afterEach(() => {
+    document.body.replaceChildren()
+  })
 
-    const groups = Array.from(svg.querySelectorAll('g.node')) as SVGGElement[]
-    groups[0]?.dispatchEvent(
-      new KeyboardEvent('keydown', { key: 'ArrowUp', bubbles: true, cancelable: true }),
-    )
+  it('a click selects a node without opening it; a click on the selected node opens it', () => {
+    const { actions, group } = setup('a')
 
-    expect(groups.map((g) => g.getAttribute('tabindex'))).toEqual(['-1', '-1', '0'])
-    expect(document.activeElement).toBe(groups[2])
+    group('b').dispatchEvent(new MouseEvent('click'))
+    expect(actions.select.mock.calls).toEqual([['b', 'A page title longer than twenty']])
+    expect(actions.open).not.toHaveBeenCalled()
 
-    svg.remove()
+    group('a').dispatchEvent(new MouseEvent('click'))
+    expect(actions.open.mock.calls).toEqual([['a', 'Alpha']])
+    expect(actions.select).toHaveBeenCalledTimes(1)
+  })
+
+  it('Ctrl-, Cmd- and middle-click open a new tab; a right-button auxclick does nothing', () => {
+    const { actions, group } = setup()
+    const middle = new MouseEvent('auxclick', { button: 1, cancelable: true })
+
+    group('a').dispatchEvent(new MouseEvent('click', { ctrlKey: true }))
+    group('a').dispatchEvent(new MouseEvent('click', { metaKey: true }))
+    group('b').dispatchEvent(middle)
+    group('b').dispatchEvent(new MouseEvent('auxclick', { button: 2 }))
+
+    expect(actions.openInNewTab.mock.calls).toEqual([
+      ['a', 'Alpha'],
+      ['a', 'Alpha'],
+      ['b', 'A page title longer than twenty'],
+    ])
+    expect(middle.defaultPrevented).toBe(true)
+    expect(actions.select).not.toHaveBeenCalled()
+    expect(actions.open).not.toHaveBeenCalled()
+  })
+
+  it('Space selects and Enter opens, each without the default action', () => {
+    const { actions, group } = setup()
+    const space = new KeyboardEvent('keydown', { key: ' ', cancelable: true })
+    const enter = new KeyboardEvent('keydown', { key: 'Enter', cancelable: true })
+
+    group('b').dispatchEvent(space)
+    group('b').dispatchEvent(enter)
+
+    expect(actions.select.mock.calls).toEqual([['b', 'A page title longer than twenty']])
+    expect(actions.open.mock.calls).toEqual([['b', 'A page title longer than twenty']])
+    expect([space.defaultPrevented, enter.defaultPrevented]).toEqual([true, true])
+  })
+
+  it('the selected node is the one option selected, takes the accent and shows its full title', () => {
+    const { svg } = setup('b')
+
+    const marks = Array.from(svg.querySelectorAll('g.node')).map((g) => [
+      g.getAttribute('role'),
+      g.getAttribute('aria-selected'),
+      g.getAttribute('aria-current'),
+      g.querySelector('circle:nth-child(2)')?.getAttribute('fill'),
+      g.querySelector('text')?.textContent,
+    ])
+    expect(marks).toEqual([
+      ['option', 'false', 'page', 'var(--graph-node)', 'Alpha'],
+      ['option', 'true', null, 'var(--graph-accent)', 'A page title longer than twenty'],
+    ])
+  })
+
+  it('reveals the node an arrow key moves to, not one focused by a click', () => {
+    const { actions, group } = setup()
+
+    group('a').focus()
+    group('a').dispatchEvent(new KeyboardEvent('keydown', { key: 'End', cancelable: true }))
+
+    expect(document.activeElement).toBe(group('b'))
+    expect(actions.reveal.mock.calls.map(([d]) => (d as GraphNode).id)).toEqual(['b'])
+  })
+
+  it('a double-click on a node never reaches the zoom behind it', () => {
+    const { svg, group } = setup()
+    const zoomedOnDoubleClick = vi.fn()
+    svg.addEventListener('dblclick', zoomedOnDoubleClick)
+
+    group('a').dispatchEvent(new MouseEvent('dblclick', { bubbles: true }))
+
+    expect(zoomedOnDoubleClick).not.toHaveBeenCalled()
+  })
+})
+
+describe('revealTransform — pan a focused node into view (#5435)', () => {
+  const zoomed = zoomIdentity.translate(50, 20).scale(1.5)
+
+  it('centres an off-screen node at the current scale', () => {
+    const node = { x: 900, y: -300 }
+    expect(zoomed.apply([node.x, node.y])[0]).toBeGreaterThan(800)
+
+    const target = revealTransform(zoomed, node, 800, 600)
+
+    expect(target?.k).toBe(1.5)
+    expect(target?.apply([node.x, node.y])).toEqual([400, 300])
+  })
+
+  it('leaves the view alone while the node is on screen with padding to spare', () => {
+    expect(revealTransform(zoomed, { x: 100, y: 100 }, 800, 600)).toBeNull()
+    expect(revealTransform(zoomed, { x: 480, y: 100 }, 800, 600)).not.toBeNull()
   })
 })
 

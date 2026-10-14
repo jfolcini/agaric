@@ -15,12 +15,15 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import {
+  type NodeActions,
   renderGraphElements,
   runWorkerSimulation,
   type SimulationCtx,
 } from '@/lib/graph-sim-helpers'
 import type { GraphEdge, GraphNode } from '@/lib/graph-types'
 import type { WorkerNode, WorkerOutboundMessage } from '@/workers/graph-worker-types'
+
+const NO_ACTIONS: NodeActions = { select() {}, open() {}, openInNewTab() {}, reveal() {} }
 
 // ── Controllable Worker stub ─────────────────────────────────────────
 
@@ -83,7 +86,7 @@ function makeCtx(): { ctx: SimulationCtx; applyPositions: ReturnType<typeof vi.f
   const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg') as SVGSVGElement
   const nodes: GraphNode[] = [makeNode('a', 'A'), makeNode('b', 'B')]
   const edges: GraphEdge[] = [{ source: 'a', target: 'b', ref_count: 1 }]
-  const rendered = renderGraphElements(svg, nodes, edges, () => {})
+  const rendered = renderGraphElements(svg, nodes, edges, NO_ACTIONS)
   const applyPositions = vi.fn()
   const ctx: SimulationCtx = {
     simNodes: rendered.simNodes,
@@ -331,7 +334,7 @@ describe('runWorkerSimulation — rAF tick coalescing (#747 item 2)', () => {
       ref_count: 1,
     }))
     const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg') as SVGSVGElement
-    const rendered = renderGraphElements(svg, hub(), spokes, () => {})
+    const rendered = renderGraphElements(svg, hub(), spokes, NO_ACTIONS)
     const ctx: SimulationCtx = { ...makeCtx().ctx, ...rendered }
     const handle = runWorkerSimulation({ ...ctx, onWorkerFailed: () => {} })
     const worker = lastWorker as unknown as FakeWorker
@@ -351,7 +354,7 @@ describe('runWorkerSimulation — rAF tick coalescing (#747 item 2)', () => {
     expect(rendered.simNodes.map((n) => [n.id, n.degree])).toEqual(expected)
 
     // A filter drops two spokes: the hub's degree follows on the update.
-    const next = renderGraphElements(svg, hub(), spokes.slice(0, 1), () => {})
+    const next = renderGraphElements(svg, hub(), spokes.slice(0, 1), NO_ACTIONS)
     handle.onUpdate({ ...ctx, ...next })
     expect(degrees('update')).toEqual([
       ['hub', 1],
@@ -420,7 +423,7 @@ describe('runWorkerSimulation — rAF tick coalescing (#747 item 2)', () => {
     nodeA.y = 222
     const nextNodes: GraphNode[] = [nodeA, makeNode('c', 'C')]
     const nextEdges: GraphEdge[] = [{ source: 'a', target: 'c', ref_count: 2 }]
-    const rendered2 = renderGraphElements(svg2, nextNodes, nextEdges, () => {})
+    const rendered2 = renderGraphElements(svg2, nextNodes, nextEdges, NO_ACTIONS)
     const applyPositions2 = vi.fn()
     const nextCtx: SimulationCtx = {
       simNodes: rendered2.simNodes,
