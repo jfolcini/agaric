@@ -19,11 +19,10 @@ import {
 } from 'date-fns'
 import { Calendar as CalendarIcon, ChevronLeft, ChevronRight, House } from 'lucide-react'
 import type React from 'react'
-import { useEffect, useRef, useState } from 'react'
+import { lazy, Suspense, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useShallow } from 'zustand/react/shallow'
 
-import { JournalCalendarDropdown } from '@/components/journal/JournalCalendarDropdown'
 import { JournalModeMenu } from '@/components/journal/JournalModeMenu'
 import { Button } from '@/components/ui/button'
 import { IconButton } from '@/components/ui/icon-button'
@@ -39,6 +38,13 @@ import {
 } from '@/lib/date-utils'
 import { getShortcutKeys, toAriaKeyshortcuts } from '@/lib/keyboard-config'
 import { useJournalStore } from '@/stores/journal'
+
+// #5441 — lazy: the calendar (react-day-picker) loads when it is first opened.
+const JournalCalendarDropdown = lazy(() =>
+  import('@/components/journal/JournalCalendarDropdown').then((m) => ({
+    default: m.JournalCalendarDropdown,
+  })),
+)
 
 // Shared by the roving-tabindex keyboard handler and the `.map` below so the
 // arrow-key navigation order always matches the rendered tab order.
@@ -420,24 +426,26 @@ export function JournalControls(): React.ReactElement {
           </IconButton>
         )}
         {calendarOpen && (
-          <JournalCalendarDropdown
-            currentDate={currentDate}
-            onSelectDate={(day) => {
-              navigateToDate(day, 'daily')
-              setCalendarOpen(false)
-            }}
-            onSelectWeek={(dates) => {
-              if (dates.length > 0) {
-                navigateToDate(dates[0] as Date, 'weekly')
+          <Suspense fallback={null}>
+            <JournalCalendarDropdown
+              currentDate={currentDate}
+              onSelectDate={(day) => {
+                navigateToDate(day, 'daily')
                 setCalendarOpen(false)
-              }
-            }}
-            onSelectMonth={(month) => {
-              navigateToDate(month, 'monthly')
-              setCalendarOpen(false)
-            }}
-            onClose={() => setCalendarOpen(false)}
-          />
+              }}
+              onSelectWeek={(dates) => {
+                if (dates.length > 0) {
+                  navigateToDate(dates[0] as Date, 'weekly')
+                  setCalendarOpen(false)
+                }
+              }}
+              onSelectMonth={(month) => {
+                navigateToDate(month, 'monthly')
+                setCalendarOpen(false)
+              }}
+              onClose={() => setCalendarOpen(false)}
+            />
+          </Suspense>
         )}
       </div>
 
