@@ -87,6 +87,13 @@ export async function waitForAppReady(): Promise<void> {
   await dismissWelcomeModalIfPresent()
   const journalNav = sidebarNavButton('Journal')
   await journalNav.waitForDisplayed({ timeout: NAV_TIMEOUT })
+  // Focus-gated behaviour (the empty-block cleanup) is a silent no-op in an
+  // unfocused window, so a lane without focus must fail here, not pass those
+  // specs vacuously (#5457).
+  await browser.waitUntil(() => browser.execute(() => document.hasFocus()), {
+    timeout: NAV_TIMEOUT,
+    timeoutMsg: 'document.hasFocus() is false: run the lane under a window manager (#5457)',
+  })
 }
 
 /**
