@@ -48,6 +48,7 @@ import { useDayMountWindow } from '@/hooks/useDayMountWindow'
 import { useJournalBlockCreation } from '@/hooks/useJournalBlockCreation'
 import { useJournalDateFormat } from '@/hooks/useJournalDateFormat'
 import { STREAM_BATCH_DAYS, useStreamDates } from '@/hooks/useStreamDates'
+import { useToday } from '@/hooks/useToday'
 import type { DayEntry } from '@/lib/date-utils'
 import { formatDate, formatJournalTitle } from '@/lib/date-utils'
 
@@ -100,7 +101,7 @@ export function StreamView({ onNavigateToPage }: StreamViewProps): React.ReactEl
   )
 
   const entries = useMemo(() => dates.map(makeDayEntry), [dates, makeDayEntry])
-  const todayStr = formatDate(new Date())
+  const todayStr = useToday()
 
   // ── Infinite-scroll sentinel ──────────────────────────────────────
   // A zero-height marker just below the last rendered day. When it enters

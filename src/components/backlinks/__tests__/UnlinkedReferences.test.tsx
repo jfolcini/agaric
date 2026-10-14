@@ -18,9 +18,13 @@
 
 import { act, render, renderHook, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
+import {
+  EnteringIntersectionObserver,
+  MockIntersectionObserver,
+} from '@/__tests__/helpers/viewport-observer-mocks'
 import { mockReactVirtual } from '@/__tests__/mocks/react-virtual'
 
 // #3316 item 3 — the reference panels now window each expanded group's rows
@@ -52,13 +56,11 @@ const {
   mockBatchResolve,
   mockGetPageAliases,
   mockListPropertyKeys,
-  mockListTagsByPrefix,
   mockListUnlinkedReferences,
   mockEditBlock,
   mockSetPageAliases,
 } = vi.hoisted(() => ({
   mockListPropertyKeys: vi.fn(),
-  mockListTagsByPrefix: vi.fn(),
   mockListUnlinkedReferences: vi.fn(),
   mockGetPageAliases: vi.fn(),
   mockBatchResolve: vi.fn(),
@@ -73,8 +75,6 @@ vi.mock('@/lib/bindings', async () => {
     commands: {
       ...actual.commands,
       listPropertyKeys: mockListPropertyKeys,
-      listTagsByPrefix: (...args: unknown[]) =>
-        mockListTagsByPrefix(...args).then((data: unknown) => ({ status: 'ok', data })),
       listUnlinkedReferences: (...args: unknown[]) =>
         mockListUnlinkedReferences(...args).then((data: unknown) => ({ status: 'ok', data })),
       getPageAliases: (...args: unknown[]) =>
@@ -168,7 +168,6 @@ import { useSpaceStore } from '@/stores/space'
 
 const mockedListUnlinked = mockListUnlinkedReferences
 const mockedEditBlock = mockEditBlock
-const mockedListTagsByPrefix = mockListTagsByPrefix
 const mockedListPropertyKeys = mockListPropertyKeys
 const mockedGetPageAliases = mockGetPageAliases
 const mockedBatchResolve = mockBatchResolve
@@ -208,6 +207,8 @@ const emptyResponse = {
 
 beforeEach(() => {
   vi.clearAllMocks()
+  MockIntersectionObserver.instances = []
+  vi.stubGlobal('IntersectionObserver', EnteringIntersectionObserver)
   mockNavigateToPage.mockClear()
   // The read path now runs through the module-singleton TanStack query client
   // (gcTime: Infinity). Clear cached pages between tests so each case fetches
@@ -233,12 +234,15 @@ beforeEach(() => {
     // #2468 — editBlock resolves WithOps<BlockRow>.
     op_refs: [],
   })
-  mockedListTagsByPrefix.mockResolvedValue([])
   mockedListPropertyKeys.mockResolvedValue({ status: 'ok', data: [] } as never)
   // Legacy tests don't care about aliases — default to none.
   mockedGetPageAliases.mockResolvedValue([])
   // #5415 — every space-scoped IPC carries the active space.
   useSpaceStore.setState({ currentSpaceId: 'SPACE_1' })
+})
+
+afterEach(() => {
+  vi.unstubAllGlobals()
 })
 
 /** Wrap UnlinkedReferences in TooltipProvider (required for filter icon button). */
@@ -1316,8 +1320,7 @@ describe('UnlinkedReferences', () => {
     })
   })
 
-  // Loads tags and property keys on mount
-  it('loads tags and property keys on mount', async () => {
+  it('loads property keys on mount', async () => {
     const resp = {
       groups: [makeGroup('P1', 'Page One', [{ id: 'B1', content: 'mention text' }])],
       next_cursor: null,
@@ -1332,10 +1335,6 @@ describe('UnlinkedReferences', () => {
     renderUnlinkedReferences({ pageId: 'PAGE1', pageTitle: 'My Page' })
 
     await waitFor(() => {
-      expect(mockedListTagsByPrefix).toHaveBeenCalledWith('', null, {
-        kind: 'active',
-        space_id: 'SPACE_TEST',
-      })
       expect(mockedListPropertyKeys).toHaveBeenCalled() // no-args by contract
     })
   })
@@ -1657,50 +1656,6 @@ describe('UnlinkedReferences', () => {
     })
   })
 
-  // ---------------------------------------------------------------------------
-  // B-6: cancellation flag on the `listTagsByPrefix` effect
-  // ---------------------------------------------------------------------------
-
-  it('cancels the listTagsByPrefix promise on unmount (B-6)', async () => {
-    let rejectTags!: (err: unknown) => void
-    mockedListTagsByPrefix.mockImplementation(
-      () =>
-        new Promise((_, reject) => {
-          rejectTags = reject
-        }),
-    )
-    useSpaceStore.setState({ currentSpaceId: 'SPACE_TEST' })
-
-    const { unmount } = renderUnlinkedReferences({ pageId: 'PAGE1', pageTitle: 'My Page' })
-
-    // Wait until the tag-load effect has fired the IPC call.
-    await waitFor(() => {
-      expect(mockedListTagsByPrefix).toHaveBeenCalledWith('', null, {
-        kind: 'active',
-        space_id: 'SPACE_TEST',
-      })
-    })
-
-    // Unmount before the promise settles — cleanup sets cancelled=true.
-    unmount()
-
-    // Reject the still-pending promise post-unmount and let the
-    // microtask chain settle inside an `act(async)` boundary so React
-    // would surface any setState-on-unmounted warning.
-    await act(async () => {
-      rejectTags(new Error('post-unmount rejection'))
-    })
-
-    // Cancellation flag short-circuits the catch — no logger.error is
-    // emitted for the dead component.
-    expect(vi.mocked(logger.error)).not.toHaveBeenCalledWith(
-      'UnlinkedReferences',
-      'Failed to load tags',
-      undefined,
-      expect.any(Error),
-    )
-  })
-
   // ── alias fallback in handleLinkIt ──────────────────────────────
   //
   // The backend's `eval_unlinked_references` OR-joins the page title and
@@ -1711,8 +1666,8 @@ describe('UnlinkedReferences', () => {
   // the user it had "linked".
   // The four cases below pin: alias-only match rewrites, title takes
   // priority when both present, the no-match guard surfaces a toast and
-  // skips the optimistic removal, and aliases follow the page when
-  // `pageId` changes.
+  // skips the optimistic removal, and aliases are read for the clicked
+  // page at the click, never at page open (#5445).
 
   it('"Link it" rewrites an alias-only mention into [[pageId]]', async () => {
     const user = userEvent.setup()
@@ -1734,11 +1689,6 @@ describe('UnlinkedReferences', () => {
     renderUnlinkedReferences({ pageId: 'PAGE_ALPHA', pageTitle: 'Project Alpha' })
 
     await user.click(await screen.findByRole('button', { name: /unlinked references/i }))
-
-    // Wait for aliases load + the block to render.
-    await waitFor(() => {
-      expect(mockedGetPageAliases).toHaveBeenCalledWith('PAGE_ALPHA')
-    })
 
     const linkBtn = await screen.findByRole('button', {
       name: /Link it: See ProjAlpha for more info/i,
@@ -1773,9 +1723,6 @@ describe('UnlinkedReferences', () => {
     renderUnlinkedReferences({ pageId: 'PAGE_ALPHA', pageTitle: 'Project Alpha' })
 
     await user.click(await screen.findByRole('button', { name: /unlinked references/i }))
-    await waitFor(() => {
-      expect(mockedGetPageAliases).toHaveBeenCalledWith('PAGE_ALPHA')
-    })
 
     await user.click(
       await screen.findByRole('button', {
@@ -1817,9 +1764,6 @@ describe('UnlinkedReferences', () => {
     renderUnlinkedReferences({ pageId: 'PAGE_ALPHA', pageTitle: 'Project Alpha' })
 
     await user.click(await screen.findByRole('button', { name: /unlinked references/i }))
-    await waitFor(() => {
-      expect(mockedGetPageAliases).toHaveBeenCalledWith('PAGE_ALPHA')
-    })
 
     const linkBtn = await screen.findByRole('button', {
       name: /Link it: No literal match for the title here/i,
@@ -1839,31 +1783,66 @@ describe('UnlinkedReferences', () => {
     )
   })
 
-  it('"Link it" reloads aliases when pageId changes', async () => {
-    // Two consecutive renders with different pageIds — the alias fetch
-    // must fire for each, otherwise switching pages would carry the
-    // previous page's aliases into the new context.
-    mockedGetPageAliases.mockResolvedValue([])
-    mockedListUnlinked.mockResolvedValue(emptyResponse)
-
-    const { rerender } = renderUnlinkedReferences({
-      pageId: 'PAGE_ALPHA',
-      pageTitle: 'Project Alpha',
-    })
-    await waitFor(() => {
-      expect(mockedGetPageAliases).toHaveBeenCalledWith('PAGE_ALPHA')
+  it('"Link it" reads the aliases at the click, not at page open (#5445)', async () => {
+    const user = userEvent.setup()
+    mockedGetPageAliases.mockResolvedValue(['ProjBeta'])
+    mockedListUnlinked.mockResolvedValue({
+      groups: [makeGroup('SOURCE', 'Source Page', [{ id: 'B1', content: 'See ProjBeta' }])],
+      next_cursor: null,
+      has_more: false,
+      total_count: 1,
+      filtered_count: 1,
+      truncated: false,
     })
 
+    const { rerender } = renderUnlinkedReferences({ pageId: 'PAGE_ALPHA', pageTitle: 'Alpha' })
     rerender(
       <TooltipProvider>
-        <UnlinkedReferences pageId="PAGE_BETA" pageTitle="Project Beta" />
+        <UnlinkedReferences pageId="PAGE_BETA" pageTitle="Beta" />
       </TooltipProvider>,
     )
+    await user.click(await screen.findByRole('button', { name: /unlinked reference/i }))
+    const linkBtn = await screen.findByRole('button', { name: /Link it: See ProjBeta/i })
+    expect(mockedGetPageAliases).not.toHaveBeenCalled()
+
+    await user.click(linkBtn)
 
     await waitFor(() => {
-      expect(mockedGetPageAliases).toHaveBeenCalledWith('PAGE_BETA')
+      expect(mockedEditBlock).toHaveBeenCalledWith('B1', 'See [[PAGE_BETA]]')
     })
-    expect(mockedGetPageAliases).toHaveBeenCalledTimes(2)
+    expect(mockedGetPageAliases).toHaveBeenCalledTimes(1)
+    expect(mockedGetPageAliases).toHaveBeenCalledWith('PAGE_BETA')
+  })
+
+  it('"Link it" writes nothing and says so when the aliases fail to load', async () => {
+    const { toast } = await import('sonner')
+    const user = userEvent.setup()
+    const error = new Error('aliases down')
+    mockedGetPageAliases.mockRejectedValue(error)
+    mockedListUnlinked.mockResolvedValue({
+      groups: [makeGroup('SOURCE', 'Source Page', [{ id: 'B1', content: 'See Alpha here' }])],
+      next_cursor: null,
+      has_more: false,
+      total_count: 1,
+      filtered_count: 1,
+      truncated: false,
+    })
+
+    renderUnlinkedReferences({ pageId: 'PAGE_ALPHA', pageTitle: 'Alpha' })
+    await user.click(await screen.findByRole('button', { name: /unlinked reference/i }))
+    await user.click(await screen.findByRole('button', { name: /Link it: See Alpha here/i }))
+
+    await waitFor(() => {
+      expect(vi.mocked(logger.error)).toHaveBeenCalledWith(
+        'UnlinkedReferences',
+        'Failed to load aliases',
+        { pageId: 'PAGE_ALPHA' },
+        error,
+      )
+    })
+    expect(toast.error).toHaveBeenCalledWith(t('unlinkedRefs.linkFailed'))
+    expect(mockedEditBlock).not.toHaveBeenCalled()
+    expect(screen.getByText('See Alpha here')).toBeInTheDocument()
   })
 
   // ── #3313: unanchored substring corruption ──────────────────────────
@@ -1979,9 +1958,6 @@ describe('UnlinkedReferences', () => {
 
     renderUnlinkedReferences({ pageId: 'PAGE1', pageTitle: 'Note' })
     await user.click(screen.getByRole('button', { name: /unlinked references/i }))
-    await waitFor(() => {
-      expect(mockedGetPageAliases).toHaveBeenCalledWith('PAGE1')
-    })
     await screen.findByText('Notebook app, aka Reminder, is handy')
 
     await user.click(screen.getByRole('button', { name: /link it/i }))
@@ -2099,5 +2075,63 @@ describe('UnlinkedReferences — title and alias writes (#5249)', () => {
     await waitFor(() => {
       expect(mockedEditBlock).toHaveBeenCalledWith('B_BAZ', 'A note about [[PAGE_FOO]]')
     })
+  })
+})
+
+// #5445 — the panel sits below the page, so its count is fetched only once the
+// panel nears the viewport, never at page open.
+describe('UnlinkedReferences — count waits for the viewport (#5445)', () => {
+  const SCOPE = { kind: 'active', space_id: 'SPACE_1' }
+
+  beforeEach(() => {
+    vi.stubGlobal('IntersectionObserver', MockIntersectionObserver)
+    mockedListUnlinked.mockResolvedValue({
+      groups: [makeGroup('P1', 'Page One', [{ id: 'B1', content: 'mention' }])],
+      next_cursor: null,
+      has_more: false,
+      total_count: 3,
+      filtered_count: 3,
+      truncated: false,
+    })
+  })
+
+  function scrollIntoView() {
+    act(() => {
+      for (const observer of MockIntersectionObserver.instances) observer.reportAll(true)
+    })
+  }
+
+  it('is not fetched at page open, and is fetched once the panel scrolls into view', async () => {
+    renderUnlinkedReferences({ pageId: 'PAGE1', pageTitle: 'My Page' })
+    expect(mockedListUnlinked).not.toHaveBeenCalled()
+    expect(screen.queryByTestId('unlinked-references')).not.toBeInTheDocument()
+
+    scrollIntoView()
+
+    expect(await screen.findByText('3 Unlinked References')).toBeInTheDocument()
+    expect(mockedListUnlinked).toHaveBeenCalledTimes(1)
+    expect(mockedListUnlinked).toHaveBeenCalledWith('PAGE1', null, null, null, 1, SCOPE)
+  })
+
+  it('waits again for the next page, which reuses the same mounted panel', async () => {
+    const { rerender } = renderUnlinkedReferences({ pageId: 'PAGE1', pageTitle: 'My Page' })
+    scrollIntoView()
+    await screen.findByText('3 Unlinked References')
+    mockedListUnlinked.mockClear()
+
+    rerender(
+      <TooltipProvider>
+        <UnlinkedReferences pageId="PAGE2" pageTitle="Other Page" />
+      </TooltipProvider>,
+    )
+    expect(screen.queryByTestId('unlinked-references')).not.toBeInTheDocument()
+    expect(mockedListUnlinked).not.toHaveBeenCalled()
+
+    scrollIntoView()
+
+    await waitFor(() => {
+      expect(mockedListUnlinked).toHaveBeenCalledWith('PAGE2', null, null, null, 1, SCOPE)
+    })
+    expect(mockedListUnlinked).toHaveBeenCalledTimes(1)
   })
 })

@@ -14,13 +14,16 @@
  * without forcing each handler into its own micro-component.
  */
 
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo } from 'react'
 
-import { useBlockPropertyEvents } from '@/hooks/useBlockPropertyEvents'
+import { usePageProperties } from '@/hooks/usePageProperties'
 import { unwrap } from '@/lib/app-error'
+import type { PropertyRow } from '@/lib/bindings'
 import { commands } from '@/lib/bindings'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
+import { pagePropertiesQueryKey } from '@/lib/property-caches'
+import { queryClient } from '@/lib/query-client'
 
 export interface UsePageTemplateMetaReturn {
   isTemplate: boolean
@@ -31,6 +34,9 @@ export interface UsePageTemplateMetaReturn {
   /** Toggle `journal-template=true`; flips the local flag + persists. */
   handleToggleJournalTemplate: () => Promise<void>
 }
+
+const isTrue = (props: PropertyRow[] | undefined, key: string): boolean =>
+  props?.some((p) => p.key === key && p.value_text === 'true') ?? false
 
 /**
  * `onAfterToggle` runs after every successful (or failed) template
@@ -43,44 +49,16 @@ export function usePageTemplateMeta(
   t: (key: string) => string,
   onAfterToggle: () => void,
 ): UsePageTemplateMetaReturn {
-  const [isTemplate, setIsTemplate] = useState(false)
-  const [isJournalTemplate, setIsJournalTemplate] = useState(false)
+  const { data: props, error } = usePageProperties(pageId)
+  const isTemplate = isTrue(props, 'template')
+  const isJournalTemplate = isTrue(props, 'journal-template')
   // `t('space.moveTo')` is hidden on a space block: spaces cannot be
-  // moved into other spaces. Refreshed when the page or (#5287: sync, MCP,
-  // undo) its properties change.
-  const [isSpaceBlock, setIsSpaceBlock] = useState(false)
-  const { invalidationKey } = useBlockPropertyEvents()
+  // moved into other spaces.
+  const isSpaceBlock = isTrue(props, 'is_space')
 
   useEffect(() => {
-    if (!pageId) return
-    // A property event can start this load just before a page switch; the
-    // older page's answer must not set the new page's flags.
-    let active = true
-    commands
-      .getProperties(pageId)
-      .then(unwrap)
-      .then((props) => {
-        if (!active) return
-        setIsTemplate(props.some((p) => p.key === 'template' && p.value_text === 'true'))
-        setIsJournalTemplate(
-          props.some((p) => p.key === 'journal-template' && p.value_text === 'true'),
-        )
-        setIsSpaceBlock(props.some((p) => p.key === 'is_space' && p.value_text === 'true'))
-      })
-      .catch((err: unknown) => {
-        logger.warn(
-          'PageHeader',
-          'Failed to load template properties',
-          {
-            pageId,
-          },
-          err,
-        )
-      })
-    return () => {
-      active = false
-    }
-  }, [pageId, invalidationKey])
+    if (error) logger.warn('PageHeader', 'Failed to load template properties', { pageId }, error)
+  }, [error, pageId])
 
   // The factory was previously a plain function expression inside the
   // component body. Moving it under `useMemo` keyed on `pageId/t` keeps
@@ -91,7 +69,6 @@ export function usePageTemplateMeta(
       (
         key: string,
         currentState: boolean,
-        setState: (v: boolean) => void,
         removedKey: string,
         savedKey: string,
         failedKey: string,
@@ -100,7 +77,7 @@ export function usePageTemplateMeta(
         try {
           if (currentState) {
             unwrap(await commands.deleteProperty(pageId, key))
-            setState(false)
+            setStoredFlag(pageId, key, false)
             notify.success(t(removedKey))
           } else {
             unwrap(
@@ -112,7 +89,7 @@ export function usePageTemplateMeta(
                 value_bool: null,
               }),
             )
-            setState(true)
+            setStoredFlag(pageId, key, true)
             notify.success(t(savedKey))
           }
         } catch (err) {
@@ -137,7 +114,6 @@ export function usePageTemplateMeta(
       createTemplateToggle(
         'template',
         isTemplate,
-        setIsTemplate,
         'pageHeader.templateRemoved',
         'pageHeader.templateSaved',
         'pageHeader.templateFailed',
@@ -150,7 +126,6 @@ export function usePageTemplateMeta(
       createTemplateToggle(
         'journal-template',
         isJournalTemplate,
-        setIsJournalTemplate,
         'pageHeader.journalTemplateRemoved',
         'pageHeader.journalTemplateSaved',
         'pageHeader.journalTemplateFailed',
@@ -165,4 +140,23 @@ export function usePageTemplateMeta(
     handleToggleTemplate,
     handleToggleJournalTemplate,
   }
+}
+
+/** Mirror a confirmed flag write into the shared page-properties cache. */
+function setStoredFlag(pageId: string, key: string, on: boolean): void {
+  queryClient.setQueryData<PropertyRow[]>(pagePropertiesQueryKey(pageId), (rows = []) => {
+    const others = rows.filter((p) => p.key !== key)
+    if (!on) return others
+    return [
+      ...others,
+      {
+        key,
+        value_text: 'true',
+        value_num: null,
+        value_date: null,
+        value_ref: null,
+        value_bool: null,
+      },
+    ]
+  })
 }

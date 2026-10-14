@@ -26,6 +26,7 @@ import { emptyPage, makeBlockRow } from '@/__tests__/fixtures'
 import {
   type CommandReturns,
   type TypedInvokeHandlers,
+  deferred,
   mockInvokeCommands,
 } from '@/__tests__/helpers/invoke'
 import { mockReactVirtual } from '@/__tests__/mocks/react-virtual'
@@ -35,6 +36,7 @@ import { __resetPriorityLevelsForTests, setPriorityLevels } from '@/lib/priority
 import { queryClient } from '@/lib/query-client'
 import { useNavigationStore } from '@/stores/navigation'
 import { type PageRef, useRecentPagesStore } from '@/stores/recent-pages'
+import { useResolveStore } from '@/stores/resolve'
 import { useSearchHistoryStore } from '@/stores/search-history'
 import { useSpaceStore } from '@/stores/space'
 import { selectPageStack, useTabsStore } from '@/stores/tabs'
@@ -124,6 +126,7 @@ beforeEach(() => {
   // copy). Reset it so a prior test's searches don't render the history
   // dropdown over an auto-focused empty input.
   useSearchHistoryStore.setState({ bySpace: {}, historyEnabled: true })
+  useResolveStore.setState({ cache: new Map(), version: 0, _preloaded: false })
   // #1149 — recent-pages is now the single zustand store source of truth
   // (was `lib/recent-pages` raw localStorage). Reset its in-memory state so
   // a prior test's slices don't leak; `rawKeysMerged: true` skips the
@@ -717,6 +720,39 @@ describe('SearchPanel', () => {
     expect(selectPageStack(useTabsStore.getState())[0]?.pageId).toBe('PARENT1')
     expect(selectPageStack(useTabsStore.getState())[0]?.title).toBe('Parent Page Title')
     expect(navState.selectedBlockId).toBe('CHILD1')
+  })
+
+  it('navigates without waiting on get_block when the parent title is cached', async () => {
+    const user = userEvent.setup()
+    stubInvoke({
+      search_blocks: () =>
+        searchPage([
+          makeSearchResult({
+            id: 'CHILD1',
+            parent_id: 'PARENT1',
+            page_id: 'PARENT1',
+            content: 'child content',
+            block_type: 'content',
+          }),
+        ]),
+      get_block: () => deferred<CommandReturns['get_block']>().promise,
+      batch_resolve: () => [],
+    })
+    useResolveStore.getState().set('PARENT1', 'Cached Parent', false)
+
+    render(<SearchPanel />)
+    typeAndSubmit(screen.getByPlaceholderText(t('search.searchPlaceholder')), 'child')
+    await user.click(await screen.findByText(textContent('child content')))
+
+    const navState = useNavigationStore.getState()
+    expect(navState.currentView).toBe('page-editor')
+    expect(selectPageStack(useTabsStore.getState())[0]).toMatchObject({
+      pageId: 'PARENT1',
+      title: 'Cached Parent',
+    })
+    expect(navState.selectedBlockId).toBe('CHILD1')
+    expect(readRecentPages()).toEqual([{ id: 'PARENT1', title: 'Cached Parent' }])
+    expect(mockedInvoke).not.toHaveBeenCalledWith('get_block', expect.anything())
   })
 
   it('navigates directly when clicking a page-type result', async () => {

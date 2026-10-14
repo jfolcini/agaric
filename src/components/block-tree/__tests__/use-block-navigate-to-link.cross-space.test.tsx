@@ -29,7 +29,7 @@
 import { invoke } from '@tauri-apps/api/core'
 import { act, renderHook } from '@testing-library/react'
 import type { TFunction } from 'i18next'
-import { useRef } from 'react'
+import { useRef, useState } from 'react'
 import { toast } from 'sonner'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -39,6 +39,7 @@ import { t as translate } from '@/lib/i18n'
 import { SEED_IDS } from '@/lib/tauri-mock'
 import { dispatch } from '@/lib/tauri-mock/handlers'
 import { seedBlocks } from '@/lib/tauri-mock/seed'
+import { createPageBlockStore } from '@/stores/page-blocks'
 import { keyFor, useResolveStore } from '@/stores/resolve'
 import { useSpaceStore } from '@/stores/space'
 
@@ -54,10 +55,12 @@ interface HarnessParams {
 function useHarness(params: HarnessParams) {
   const rovingEditorRef = useRef<RovingEditorHandle | null>(null)
   const handleFlushRef = useRef<() => string | null>(() => null)
+  const [pageStore] = useState(() => createPageBlockStore('SOME_OTHER_ROOT'))
 
   return useBlockNavigateToLink({
     rovingEditorRef,
     handleFlushRef,
+    pageStore,
     load: params.load,
     setFocused: params.setFocused,
     rootParentId: 'SOME_OTHER_ROOT',

@@ -167,12 +167,11 @@ const makeCaptionLabel = (
 ): CustomComponents['CaptionLabel'] => {
   const CaptionLabel: CustomComponents['CaptionLabel'] = ({ children }) => {
     const { months } = useDayPicker()
-    const displayedMonth = months[0]?.date ?? new Date()
     return (
       <button
         type="button"
         className="text-sm font-medium cursor-pointer rounded-md px-2 py-1 hover:bg-accent hover:text-accent-foreground transition-colors focus-ring-visible"
-        onClick={() => onMonthClick(displayedMonth)}
+        onClick={() => onMonthClick(months[0]?.date ?? new Date())}
         aria-label={i18n.t('journal.monthlyViewButtonLabel')}
       >
         {children}

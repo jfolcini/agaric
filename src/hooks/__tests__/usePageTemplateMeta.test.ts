@@ -61,7 +61,7 @@ vi.mock('sonner', () => ({
 }))
 
 import { usePageTemplateMeta } from '@/hooks/usePageTemplateMeta'
-import { recordBlockPropertyChange } from '@/lib/block-property-events'
+import { invalidatePropertyCaches } from '@/lib/property-caches'
 import { dispatch } from '@/lib/tauri-mock/handlers'
 import { SEED_IDS, seedBlocks } from '@/lib/tauri-mock/seed'
 
@@ -147,7 +147,9 @@ describe('usePageTemplateMeta — toggle handlers', () => {
 
     expect(mockedDelete).toHaveBeenCalledWith('page-1', 'template')
     expect(mockedSet).not.toHaveBeenCalled()
-    expect(result.current.isTemplate).toBe(false)
+    await waitFor(() => {
+      expect(result.current.isTemplate).toBe(false)
+    })
     expect(onAfterToggle).toHaveBeenCalledTimes(1)
   })
 
@@ -171,7 +173,9 @@ describe('usePageTemplateMeta — toggle handlers', () => {
       value_bool: null,
     })
     expect(mockedDelete).not.toHaveBeenCalled()
-    expect(result.current.isTemplate).toBe(true)
+    await waitFor(() => {
+      expect(result.current.isTemplate).toBe(true)
+    })
     expect(onAfterToggle).toHaveBeenCalledTimes(1)
   })
 
@@ -194,7 +198,9 @@ describe('usePageTemplateMeta — toggle handlers', () => {
       value_ref: null,
       value_bool: null,
     })
-    expect(result.current.isJournalTemplate).toBe(true)
+    await waitFor(() => {
+      expect(result.current.isJournalTemplate).toBe(true)
+    })
   })
 
   it('still invokes `onAfterToggle` when the IPC fails', async () => {
@@ -246,7 +252,7 @@ describe('usePageTemplateMeta — property changes made elsewhere', () => {
       },
     })
     act(() => {
-      recordBlockPropertyChange()
+      invalidatePropertyCaches()
     })
 
     await waitFor(() => {

@@ -24,8 +24,8 @@ import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
 import { useBacklinkResolution } from '@/hooks/useBacklinkResolution'
 import { useBlockNavigation } from '@/hooks/useBlockNavigation'
+import { useEnteredViewport } from '@/hooks/useEnteredViewport'
 import { useFocusedRowEffect } from '@/hooks/useFocusedRowEffect'
-import { useGraphStructureEvents } from '@/hooks/useGraphStructureEvents'
 import { useListKeyboardNavigation } from '@/hooks/useListKeyboardNavigation'
 import { usePropertyKeysCache } from '@/hooks/usePropertyKeysCache'
 import { useUnlinkedReferences } from '@/hooks/useUnlinkedReferences'
@@ -43,7 +43,6 @@ import { recordGraphStructureChange } from '@/lib/graph-structure-events'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
 import { queryClient } from '@/lib/query-client'
-import { requireActiveScope } from '@/lib/space-scope'
 import { cn } from '@/lib/utils'
 import { useResolveStore } from '@/stores/resolve'
 import { useSpaceStore } from '@/stores/space'
@@ -114,6 +113,15 @@ function firstMentionOutsideLinks(content: string, term: string): RegExpExecArra
   return null
 }
 
+/** Reports once it nears the viewport. */
+function ViewportSentinel({ onEnter }: { onEnter: () => void }): React.ReactElement {
+  const [entered, ref] = useEnteredViewport<HTMLDivElement>()
+  useEffect(() => {
+    if (entered) onEnter()
+  }, [entered, onEnter])
+  return <div ref={ref} />
+}
+
 export function UnlinkedReferences({
   pageId,
   pageTitle,
@@ -125,16 +133,12 @@ export function UnlinkedReferences({
   const [expandedGroups, setExpandedGroups] = useState<Record<string, boolean>>({})
   const [filters, setFilters] = useState<BacklinkFilter[]>([])
   const [sort, setSort] = useState<BacklinkSort | null>(null)
-  // `eval_unlinked_references` (backend) OR-joins title +
-  // aliases into the FTS query, so a block that mentions ONLY an alias
-  // surfaces here. The FE-side `handleLinkIt` then needs to know the
-  // same alias set to perform the literal-text rewrite, otherwise the
-  // regex compiled from `pageTitle` alone misses and the user is told
-  // "linked" while the block silently reappears on the next refetch.
-  const [aliases, setAliases] = useState<string[]>([])
   // Shared cache replaces per-mount `commands.listPropertyKeys()` IPC.
   const propertyKeys = usePropertyKeysCache(currentSpaceId)
-  const [tags, setTags] = useState<Array<{ id: string; name: string }>>([])
+  // The page whose panel has neared the viewport. The count is fetched only
+  // then, so a page open does not pay for a panel below the fold (#5445).
+  const [countRequestedFor, setCountRequestedFor] = useState<string | null>(null)
+  const countRequested = countRequestedFor === pageId
 
   // Page-scoped panel state, reset by a render-phase adjust rather than an
   // effect, whose late commit fired the 20-group fetch `collapsed` gates
@@ -165,7 +169,14 @@ export function UnlinkedReferences({
     // #3316 item 2 — `collapsed` gates the fetch size: while the panel is shut
     // it asks for one group instead of twenty, which is all the header count
     // needs. Expanding re-keys the query and pulls the full page.
-  } = useUnlinkedReferences({ pageId, filters, sort, spaceId: currentSpaceId, collapsed })
+  } = useUnlinkedReferences({
+    pageId,
+    filters,
+    sort,
+    spaceId: currentSpaceId,
+    collapsed,
+    enabled: countRequested,
+  })
 
   // Resolve the `[[ULID]]` / `((ULID))` / `#[ULID]` tokens INSIDE the matched
   // block content. The rows used to print `block.content` verbatim, so a
@@ -229,55 +240,18 @@ export function UnlinkedReferences({
     setExpandedGroups({})
   }
 
-  // Load the active space's tags, again on every space switch (B-6:
-  // cancellation flag avoids React 19 strict-mode "state update on unmounted
-  // component" warnings on rapid mount/unmount, and drops a superseded space's
-  // reply).
-  useEffect(() => {
-    if (currentSpaceId == null) return
-    let cancelled = false
-    commands
-      .listTagsByPrefix('', null, requireActiveScope(currentSpaceId))
-      .then(unwrap)
-      .then((result) => {
-        if (cancelled) return
-        setTags((result ?? []).map((tag) => ({ id: tag.tag_id, name: tag.name })))
-      })
-      .catch((e) => {
-        if (cancelled) return
-        logger.error('UnlinkedReferences', 'Failed to load tags', undefined, e)
-      })
-    return () => {
-      cancelled = true
-    }
-  }, [currentSpaceId])
-
-  // Load the page's aliases alongside the title so
-  // `handleLinkIt` can rewrite alias-only mentions. Mirrors the
-  // `getPageAliases(pageId)` pattern already used by `PageHeader`.
-  // Reloaded on the structure counter, which alias writes bump (#5249): the
-  // backend searches the live aliases, so a stale set here fails "Link it".
-  const { structureKey } = useGraphStructureEvents()
-  useEffect(() => {
-    let cancelled = false
-    commands
-      .getPageAliases(pageId)
-      .then(unwrap)
-      .then((rows) => {
-        if (cancelled) return
-        setAliases(rows ?? [])
-      })
-      .catch((err) => {
-        if (cancelled) return
-        logger.error('UnlinkedReferences', 'Failed to load aliases', { pageId }, err)
-      })
-    return () => {
-      cancelled = true
-    }
-  }, [pageId, structureKey])
-
   const handleLinkIt = useCallback(
     async (blockId: string, content: string) => {
+      // Aliases read live at the click: a stale set fails "Link it" on
+      // alias-only rows (#5249).
+      let aliases: string[]
+      try {
+        aliases = unwrap(await commands.getPageAliases(pageId)) ?? []
+      } catch (err) {
+        logger.error('UnlinkedReferences', 'Failed to load aliases', { pageId }, err)
+        notify.error(t('unlinkedRefs.linkFailed'))
+        return
+      }
       // Try the canonical title first, then each alias in
       // declared order. The backend OR-joins title+aliases into the
       // FTS query so an alias-only mention surfaces here; without the
@@ -391,7 +365,7 @@ export function UnlinkedReferences({
         notify.error(t('unlinkedRefs.linkFailed'))
       }
     },
-    [pageId, pageTitle, aliases, t, queryKeyPrefix],
+    [pageId, pageTitle, t, queryKeyPrefix],
   )
 
   const toggleCollapsed = useCallback(() => {
@@ -488,6 +462,9 @@ export function UnlinkedReferences({
   // visible so the user can clear/adjust filters — otherwise the filter
   // controls vanish. The loading branch below still renders so nothing flashes
   // mid-fetch.
+  if (!countRequested) {
+    return <ViewportSentinel onEnter={() => setCountRequestedFor(pageId)} />
+  }
   if (!loading && totalCount === 0 && groups.length === 0 && filters.length === 0) {
     return null
   }
@@ -528,7 +505,6 @@ export function UnlinkedReferences({
             totalCount={totalCount}
             filteredCount={filteredCount}
             propertyKeys={propertyKeys}
-            tags={tags}
           />
         </div>
       )}

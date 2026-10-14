@@ -26,13 +26,9 @@ import { useBlockPropertyEvents } from '@/hooks/useBlockPropertyEvents'
 import { useFocusedRowEffect } from '@/hooks/useFocusedRowEffect'
 import { useListKeyboardNavigation } from '@/hooks/useListKeyboardNavigation'
 import { usePropertyKeysCache } from '@/hooks/usePropertyKeysCache'
-import { unwrap } from '@/lib/app-error'
 import type { BacklinkFilter, BacklinkSort, LinkKind } from '@/lib/bindings'
-import { commands } from '@/lib/bindings'
 import type { NavigateToPageFn } from '@/lib/block-events'
-import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
-import { requireActiveScope } from '@/lib/space-scope'
 import { useSpaceStore } from '@/stores/space'
 
 const BACKLINK_FOCUS_CLASSES = ['list-cursor'] as const
@@ -75,7 +71,6 @@ export function LinkedReferences({
   const [kind, setKind] = useState<LinkKind | null>(null)
   // Shared cache replaces per-mount `commands.listPropertyKeys()` IPC.
   const propertyKeys = usePropertyKeysCache(currentSpaceId)
-  const [tags, setTags] = useState<Array<{ id: string; name: string }>>([])
 
   // Page-scoped filter/sort/source-page, reset by a render-phase adjust rather
   // than an effect (#4407). Comparing the PREVIOUS pageId forgets; storing the
@@ -192,30 +187,6 @@ export function LinkedReferences({
   useEffect(() => {
     clearCache()
   }, [queryIdentity, invalidationKey, clearCache])
-
-  // Load the active space's tags, again on every space switch (B-6:
-  // cancellation flag avoids React 19 strict-mode "state update on unmounted
-  // component" warnings on rapid mount/unmount, and drops a superseded space's
-  // reply).
-  useEffect(() => {
-    if (currentSpaceId == null) return
-    let cancelled = false
-    commands
-      .listTagsByPrefix('', null, requireActiveScope(currentSpaceId))
-      .then(unwrap)
-      .then((result) => {
-        if (cancelled) return
-        setTags((result ?? []).map((tag) => ({ id: tag.tag_id, name: tag.name })))
-      })
-      .catch((e) => {
-        if (cancelled) return
-        logger.error('LinkedReferences', 'Failed to load tags', undefined, e)
-        notify.error(t('references.loadTagsFailed'), { id: 'references-load-tags-failed' })
-      })
-    return () => {
-      cancelled = true
-    }
-  }, [currentSpaceId, t])
 
   const toggleExpanded = useCallback(() => {
     setExpanded((prev) => !prev)
@@ -424,7 +395,6 @@ export function LinkedReferences({
                   totalCount={totalCount}
                   filteredCount={filteredCount}
                   propertyKeys={propertyKeys}
-                  tags={tags}
                   tagResolver={resolveTagName}
                 />
               </div>

@@ -24,7 +24,9 @@ export function BootGate({ children }: { children: React.ReactNode }) {
       `Error: ${error}`,
       `User-Agent: ${ua}`,
       `Platform: ${platform}`,
+      /* oxlint-disable react/purity -- the report is stamped once per error, not per render */
       `Time: ${new Date().toISOString()}`,
+      /* oxlint-enable react/purity */
     ].join('\n')
   }, [error])
 
