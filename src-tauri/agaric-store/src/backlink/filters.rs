@@ -1228,7 +1228,7 @@ async fn fetch_descendants_of(
 /// input loudly with an `InvalidDateFilter`-coded validation error; this mirrors
 /// that contract. `None` (bound absent) stays `Ok(None)`; only a present,
 /// non-parseable string is an error.
-fn resolve_range_bound(bound: Option<&String>) -> Result<Option<String>, AppError> {
+pub(crate) fn resolve_range_bound(bound: Option<&String>) -> Result<Option<String>, AppError> {
     match bound {
         None => Ok(None),
         Some(raw) => match parse_iso_to_ms(raw) {

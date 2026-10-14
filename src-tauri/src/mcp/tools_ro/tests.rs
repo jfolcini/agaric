@@ -91,6 +91,7 @@ async fn list_tools_advertises_the_ro_tools() {
             "list_journal",
             "list_trash",
             "resolve",
+            "query",
         ],
         "tool order is part of the wire contract — do not re-order (new tools append)",
     );
@@ -4192,4 +4193,405 @@ async fn search_takes_a_parent_page_and_tags_by_name_5397() {
         matches!(err, AppError::Validation { .. }) && message.contains("`tag_ids` 'nope'"),
         "got {message}"
     );
+}
+
+// -------------------------------------------------------------------
+// query (#5398)
+// -------------------------------------------------------------------
+
+/// A block created in 2016 (its ULID's time) with no op, so it was last
+/// edited then: commands stamp every block they write with now.
+const OLD_BLOCK: &str = "01ARZ3NDEKTSV4RRFFQ69G5FAV";
+
+/// The vault the `query` tests ask their questions of. Another space holds an
+/// open block with estimate 9 due 2026-10-12, so each answer also shows it
+/// stays out.
+struct QueryVault {
+    tools: ReadOnlyTools,
+    _mat: Materializer,
+    _dir: TempDir,
+    space: String,
+    alpha: String,
+    beta: String,
+    target: String,
+    tag: String,
+    /// Links the target page, open, estimate 5, owner `me`, due 2026-10-12.
+    /// On `alpha`, which carries `tag`.
+    a1: String,
+    /// Open, estimate 2, due 2026-10-25. On `alpha`.
+    a2: String,
+    /// Links the target page, done, due 2026-10-15. On `beta`.
+    b1: String,
+    /// Open, estimate 4. On `beta`.
+    b2: String,
+}
+
+async fn mk_titled_page(
+    tools: &ReadOnlyTools,
+    mat: &Materializer,
+    space: &str,
+    title: &str,
+) -> String {
+    crate::commands::create_block_inner_with_space(
+        &tools.pool,
+        DEV,
+        mat,
+        "page".into(),
+        title.into(),
+        None,
+        None,
+        &SpaceScope::Active(SpaceId::from_trusted(space)),
+        None,
+    )
+    .await
+    .unwrap()
+    .id
+    .into_string()
+}
+
+async fn mk_task(
+    tools: &ReadOnlyTools,
+    mat: &Materializer,
+    page: &str,
+    content: &str,
+    state: &str,
+    estimate: Option<f64>,
+    due: Option<&str>,
+) -> String {
+    let id = mk_child(tools, mat, page, content).await;
+    crate::commands::set_todo_state_inner(
+        &tools.pool,
+        DEV,
+        mat,
+        id.as_str().into(),
+        Some(state.into()),
+    )
+    .await
+    .unwrap();
+    if let Some(estimate) = estimate {
+        crate::commands::set_property_inner(
+            &tools.pool,
+            DEV,
+            mat,
+            id.as_str().into(),
+            "estimate".into(),
+            None,
+            Some(estimate),
+            None,
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+    }
+    if let Some(due) = due {
+        crate::commands::set_due_date_inner(
+            &tools.pool,
+            DEV,
+            mat,
+            id.as_str().into(),
+            Some(due.into()),
+        )
+        .await
+        .unwrap();
+    }
+    id
+}
+
+async fn mk_query_vault() -> QueryVault {
+    let (tools, mat, dir) = mk_tools().await;
+    let space = mk_space(&tools.pool, "S").await;
+    let other = mk_space(&tools.pool, "Other").await;
+    let alpha = mk_titled_page(&tools, &mat, &space, "Alpha").await;
+    let beta = mk_titled_page(&tools, &mat, &space, "Beta").await;
+    let target = mk_titled_page(&tools, &mat, &space, "Target").await;
+    let tag = mk_tag(&tools.pool, &mat, &space, "project").await;
+    crate::commands::add_tag_inner(
+        &tools.pool,
+        DEV,
+        &mat,
+        BlockId::from_trusted(&alpha),
+        BlockId::from_trusted(&tag),
+    )
+    .await
+    .unwrap();
+    let link = format!("see [[{target}]]");
+    let a1 = mk_task(
+        &tools,
+        &mat,
+        &alpha,
+        &link,
+        "TODO",
+        Some(5.0),
+        Some("2026-10-12"),
+    )
+    .await;
+    crate::commands::set_property_inner(
+        &tools.pool,
+        DEV,
+        &mat,
+        a1.as_str().into(),
+        "owner".into(),
+        Some("me".into()),
+        None,
+        None,
+        None,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    let a2 = mk_task(
+        &tools,
+        &mat,
+        &alpha,
+        "plain",
+        "TODO",
+        Some(2.0),
+        Some("2026-10-25"),
+    )
+    .await;
+    let b1 = mk_task(&tools, &mat, &beta, &link, "DONE", None, Some("2026-10-15")).await;
+    let b2 = mk_task(&tools, &mat, &beta, "sized", "TODO", Some(4.0), None).await;
+    sqlx::query(
+        "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id, space_id) \
+         VALUES (?, 'content', 'old note', ?, 9, ?, ?)",
+    )
+    .bind(OLD_BLOCK)
+    .bind(&alpha)
+    .bind(&alpha)
+    .bind(&space)
+    .execute(&tools.pool)
+    .await
+    .unwrap();
+    let elsewhere = mk_titled_page(&tools, &mat, &other, "Elsewhere").await;
+    mk_task(
+        &tools,
+        &mat,
+        &elsewhere,
+        "elsewhere",
+        "TODO",
+        Some(9.0),
+        Some("2026-10-12"),
+    )
+    .await;
+    settle(&mat).await;
+    QueryVault {
+        tools,
+        _mat: mat,
+        _dir: dir,
+        space,
+        alpha,
+        beta,
+        target,
+        tag,
+        a1,
+        a2,
+        b1,
+        b2,
+    }
+}
+
+fn leaf(primitive: Value) -> Value {
+    let mut leaf = json!({ "type": "Leaf" });
+    leaf["primitive"] = primitive;
+    leaf
+}
+
+fn and(children: Vec<Value>) -> Value {
+    json!({ "type": "And", "children": Value::Array(children) })
+}
+
+impl QueryVault {
+    async fn query(&self, mut args: Value) -> Result<Value, AppError> {
+        args["space_id"] = json!(self.space);
+        self.tools.call_tool("query", args, &test_ctx()).await
+    }
+
+    async fn ids(&self, filter: Value) -> Vec<String> {
+        let result = self.query(json!({ "where": filter })).await.unwrap();
+        let mut ids: Vec<String> = result["rows"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|row| row["id"].as_str().unwrap().to_owned())
+            .collect();
+        ids.sort();
+        ids
+    }
+}
+
+fn sorted(ids: &[&String]) -> Vec<String> {
+    let mut ids: Vec<String> = ids.iter().map(|id| (*id).clone()).collect();
+    ids.sort();
+    ids
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn query_what_was_edited_since_a_date_5398() {
+    let v = mk_query_vault().await;
+    let ids = v
+        .ids(and(vec![
+            leaf(json!({ "type": "BlockType", "values": ["content"], "exclude": false })),
+            leaf(json!({ "type": "LastEdited", "spec": { "type": "Range", "start": "2020-01-01", "end": "2999-12-31" } })),
+        ]))
+        .await;
+    assert_eq!(
+        ids,
+        sorted(&[&v.a1, &v.a2, &v.b1, &v.b2]),
+        "not the 2016 block"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn query_a_numeric_property_above_a_bound_5398() {
+    let v = mk_query_vault().await;
+    let result = v
+        .query(json!({ "where": leaf(json!({
+            "type": "HasProperty",
+            "key": "estimate",
+            "predicate": { "type": "Gt", "value": { "type": "Num", "value": 3 } },
+        })), "sort": [{ "source": { "type": "Column", "name": "created" } }] }))
+        .await
+        .unwrap();
+    let rows = result["rows"].as_array().unwrap();
+    let ids: Vec<&str> = rows.iter().map(|r| r["id"].as_str().unwrap()).collect();
+    assert_eq!(ids, vec![v.a1.as_str(), v.b2.as_str()]);
+    assert_eq!(rows[0]["page_title"], json!("Alpha"));
+    assert_eq!(rows[1]["page_title"], json!("Beta"));
+    let properties = rows[0]["properties"].as_array().unwrap();
+    assert_eq!(
+        properties.len(),
+        1,
+        "only the property `where` reads: {properties:?}"
+    );
+    assert_eq!(properties[0]["key"], json!("estimate"));
+    assert_eq!(properties[0]["value_num"], json!(5.0));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn query_due_between_two_dates_5398() {
+    let v = mk_query_vault().await;
+    let ids = v
+        .ids(leaf(json!({
+            "type": "DueDate",
+            "predicate": { "type": "Between", "from": "2026-10-10", "to": "2026-10-20" },
+        })))
+        .await;
+    assert_eq!(ids, sorted(&[&v.a1, &v.b1]));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn query_blocks_linking_a_page_on_pages_with_a_tag_5398() {
+    let v = mk_query_vault().await;
+    let result = v
+        .query(json!({ "where": and(vec![
+            leaf(json!({ "type": "LinksTo", "target": v.target })),
+            leaf(json!({ "type": "HasParentMatching", "matcher": leaf(json!({ "type": "Tag", "tag": v.tag })) })),
+        ]) }))
+        .await
+        .unwrap();
+    let rows = result["rows"].as_array().unwrap();
+    assert_eq!(rows.len(), 1, "{rows:?}");
+    assert_eq!(rows[0]["id"], json!(v.a1));
+    assert_eq!(rows[0]["page_id"], json!(v.alpha));
+    assert_eq!(rows[0]["page_title"], json!("Alpha"));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn query_counts_open_todos_per_page_5398() {
+    let v = mk_query_vault().await;
+    let result = v
+        .query(json!({
+            "where": leaf(json!({ "type": "State", "values": ["TODO"] })),
+            "group_by": { "type": "Page" },
+            "aggregate": [{ "op": "count" }],
+        }))
+        .await
+        .unwrap();
+    assert_eq!(result["rows"], json!([]));
+    assert_eq!(result["aggregates"][0]["count"], json!(3), "{result}");
+    let mut groups: Vec<Value> = result["groups"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|g| json!([g["key"], g["title"], g["count"]]))
+        .collect();
+    groups.sort_by_key(|g| g[0].as_str().unwrap().to_owned());
+    let mut expected = vec![json!([v.alpha, "Alpha", 2]), json!([v.beta, "Beta", 1])];
+    expected.sort_by_key(|g| g[0].as_str().unwrap().to_owned());
+    assert_eq!(groups, expected);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn query_pages_one_space_across_a_cursor_5398() {
+    let v = mk_query_vault().await;
+    let content = leaf(json!({ "type": "BlockType", "values": ["content"], "exclude": false }));
+    let first = v
+        .query(json!({ "where": content, "limit": 3 }))
+        .await
+        .unwrap();
+    assert_eq!(first["has_more"], json!(true));
+    assert_eq!(first["total_count"], json!(5));
+    let second = v
+        .query(json!({ "where": content, "limit": 3, "cursor": first["next_cursor"] }))
+        .await
+        .unwrap();
+    assert_eq!(second["has_more"], json!(false));
+    let mut ids: Vec<String> = [&first, &second]
+        .iter()
+        .flat_map(|page| page["rows"].as_array().unwrap())
+        .map(|row| row["id"].as_str().unwrap().to_owned())
+        .collect();
+    ids.sort();
+    let old = OLD_BLOCK.to_owned();
+    assert_eq!(
+        ids,
+        sorted(&[&v.a1, &v.a2, &v.b1, &v.b2, &old]),
+        "each of the space's blocks once"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn query_names_an_unknown_predicate_5398() {
+    let v = mk_query_vault().await;
+    let err = v
+        .query(json!({ "where": leaf(json!({ "type": "Estimate", "above": 3 })) }))
+        .await
+        .expect_err("no such predicate");
+    assert!(
+        matches!(&err, AppError::Validation { .. }) && err.to_string().contains("`Estimate`"),
+        "{err:?}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn query_rejects_a_bad_date_range_5398() {
+    let v = mk_query_vault().await;
+    let due = |from: &str, to: &str| json!({ "type": "DueDate", "predicate": { "type": "Between", "from": from, "to": to } });
+    for primitive in [
+        due("2026-10-20", "2026-10-10"),
+        due("2026-10-1", "2026-10-20"),
+        json!({ "type": "Created", "after": "last week" }),
+    ] {
+        let err = v
+            .query(json!({ "where": leaf(primitive.clone()) }))
+            .await
+            .expect_err("a range that cannot match as written");
+        assert!(
+            matches!(err, AppError::Validation { .. }),
+            "{primitive}: {err:?}"
+        );
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn query_rejects_a_limit_out_of_range_5398() {
+    let v = mk_query_vault().await;
+    let err = v
+        .query(json!({ "where": and(vec![]), "limit": LIST_RESULT_CAP + 1 }))
+        .await
+        .expect_err("rejected, not clamped");
+    assert!(matches!(err, AppError::Validation { .. }), "{err:?}");
 }
