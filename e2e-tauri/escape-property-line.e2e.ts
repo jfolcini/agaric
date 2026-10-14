@@ -28,6 +28,7 @@ import {
   NAV_TIMEOUT,
   blockStaticByMarker,
   expectAbsent,
+  focusedBlankBlockId,
   navigateTo,
   openJournalBlockEditor,
   runScopedMarker,
@@ -40,36 +41,32 @@ const CONTROL_MARKER = runScopedMarker('wdio-blank-escape')
 // backend accepts as typed. The value is the run-scoped marker.
 const VALUE = runScopedMarker('wdio-escape-prop')
 const LINE = `wdiokey:: ${VALUE}`
-// A committed blank block renders StaticBlock's placeholder span in place of
-// content (StaticBlock.tsx); a block with text never does.
-const BLANK_STATIC = '[data-testid="block-static"] .block-placeholder'
 // Property chips render in the block's metadata row (BlockMetadataRow), outside
 // its `block-static` text, so a chip holding VALUE and no static text holding it
 // is "stripped and stored".
 const VALUE_CHIP = `[data-testid="property-chip"]*=${VALUE}`
 
-// Skipped until the lane's window has focus (#5457): the cleanup is gated on
-// `document.hasFocus()`, which is false here, so the control case cannot pass and
-// the survive case would pass without the cleanup ever running.
-describe.skip('Agaric real-backend Escape on a property-only block (#5448)', () => {
+describe('Agaric real-backend Escape on a property-only block (#5448)', () => {
   it('control: Escape on a blank block an Enter created cleans it up', async () => {
     await waitForAppReady()
     await navigateTo('Journal')
     await openJournalBlockEditor()
     await typeMarkerVerified(CONTROL_MARKER)
+    await browser.keys(['End'])
     await browser.keys(['Enter'])
+    const blank = `[data-block-id="${await focusedBlankBlockId()}"]`
     await browser.keys(['Escape'])
 
     // The cleanup's delete is optimistic, so the row leaves the DOM as soon as
     // the metadata probes resolve; wait for that before the round-trip, or
     // the navigation could unmount the tree under the probes.
-    await expectAbsent(BLANK_STATIC, 'the blank control block')
+    await expectAbsent(blank, 'the blank control block')
 
     await navigateTo('Pages')
     await navigateTo('Journal')
 
     await blockStaticByMarker(CONTROL_MARKER).waitForDisplayed({ timeout: NAV_TIMEOUT })
-    await expectAbsent(BLANK_STATIC, 'the blank control block')
+    await expectAbsent(blank, 'the blank control block')
   })
 
   it('keeps a block whose only text was a key:: value line, as the property', async () => {

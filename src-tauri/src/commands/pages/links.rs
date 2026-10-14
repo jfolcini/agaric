@@ -69,7 +69,7 @@ pub struct PageLinksResponse {
 ///
 /// `scope` restricts the result set to edges where **both** the source
 /// page (`COALESCE(sb.parent_id, bl.source_id)`) and the target page
-/// (`bl.target_id`) carry `space = ?space_id`. This is the policy
+/// (`bl.target_id`) are live pages in `scope`'s space. This is the policy
 /// enforcement point for "no live links between spaces, ever" in the graph
 /// view: an edge crossing space boundaries must not surface in either
 /// space's Graph.
@@ -223,10 +223,15 @@ pub async fn list_page_links_inner_split_with_cap(
     // `[[ULID]]` token only ever resolves to a page in the markdown
     // serializer).
     //
-    // The space filter checks both endpoints. Cross-space rows cannot exist
-    // in `page_link_cache` (the underlying `block_links` rows are write-time
-    // filtered to same-space pairs, `cache::block_links::reindex_block_links`);
-    // the filter defends against legacy rows written before that.
+    // The space filter checks both endpoints against the space's live pages
+    // (a range of `idx_blocks_space_type`; every rendered endpoint is a page).
+    // The unary `+` keeps both `IN` lists filters on the cache scan: as index
+    // seek keys, a planner without `sqlite_stat1` probes every (page, page)
+    // pair.
+    // Cross-space rows cannot exist in `page_link_cache` (the underlying
+    // `block_links` rows are write-time filtered to same-space pairs,
+    // `cache::block_links::reindex_block_links`); the filter defends against
+    // legacy rows written before that.
     //
     // F (preserved) — the `space_members` CTE is materialised
     // Once and reused for both endpoints. (preserved)
@@ -299,7 +304,7 @@ async fn fetch_page_link_edges(
         PageLink,
         r#"WITH space_members AS MATERIALIZED (
              SELECT id AS block_id FROM blocks
-             WHERE space_id = ?1
+             WHERE space_id = ?1 AND block_type = 'page' AND deleted_at IS NULL
          )
          SELECT
             plc.source_page_id AS "source_id!: agaric_core::ulid::UlidInline",
@@ -310,10 +315,8 @@ async fn fetch_page_link_edges(
              AND plc.src_deleted = 0
              AND plc.tgt_deleted = 0
              AND plc.tgt_is_page = 1
-             AND (?1 IS NULL OR (
-                 plc.source_page_id IN (SELECT block_id FROM space_members)
-                 AND plc.target_page_id IN (SELECT block_id FROM space_members)
-             ))
+             AND +plc.source_page_id IN (SELECT block_id FROM space_members)
+             AND +plc.target_page_id IN (SELECT block_id FROM space_members)
              AND (?2 IS NULL OR EXISTS (
                  SELECT 1 FROM block_tags bt
                  WHERE bt.block_id = plc.target_page_id
@@ -348,7 +351,7 @@ async fn count_page_link_edges(
     Ok(sqlx::query_scalar!(
         r#"WITH space_members AS MATERIALIZED (
                  SELECT id AS block_id FROM blocks
-                 WHERE space_id = ?1
+                 WHERE space_id = ?1 AND block_type = 'page' AND deleted_at IS NULL
              )
              SELECT COUNT(*) AS "total!: i64"
              FROM page_link_cache plc
@@ -356,10 +359,8 @@ async fn count_page_link_edges(
                  AND plc.src_deleted = 0
                  AND plc.tgt_deleted = 0
                  AND plc.tgt_is_page = 1
-                 AND (?1 IS NULL OR (
-                     plc.source_page_id IN (SELECT block_id FROM space_members)
-                     AND plc.target_page_id IN (SELECT block_id FROM space_members)
-                 ))
+                 AND +plc.source_page_id IN (SELECT block_id FROM space_members)
+                 AND +plc.target_page_id IN (SELECT block_id FROM space_members)
                  AND (?2 IS NULL OR EXISTS (
                      SELECT 1 FROM block_tags bt
                      WHERE bt.block_id = plc.target_page_id
@@ -403,4 +404,230 @@ pub async fn list_page_links(
     list_page_links_inner_split(&write_pool.0, &read_pool.0, &scope, tag_ids.as_deref())
         .await
         .map_err(sanitize_internal_error)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::commands::tests::common::{
+        FIXED_TS, TEST_SPACE_B_ID, TEST_SPACE_ID, assign_to_space, ensure_test_space,
+        ensure_test_space_b, insert_block, test_pool,
+    };
+    use agaric_store::space::SpaceId;
+
+    /// The pre-#5426 edge read, whose `space_members` held every block in the
+    /// space. Oracle for [`fetch_page_link_edges`].
+    async fn oracle_fetch_page_link_edges(
+        pool: &SqlitePool,
+        scope: &SpaceScope,
+        tag_ids_json: Option<&str>,
+        cap_param: i64,
+    ) -> Vec<PageLink> {
+        sqlx::query_as!(
+            PageLink,
+            r#"WITH space_members AS MATERIALIZED (
+                 SELECT id AS block_id FROM blocks
+                 WHERE space_id = ?1
+             )
+             SELECT
+                plc.source_page_id AS "source_id!: agaric_core::ulid::UlidInline",
+                plc.target_page_id AS "target_id!: agaric_core::ulid::UlidInline",
+                plc.edge_count AS "ref_count!: i64"
+             FROM page_link_cache plc
+             WHERE plc.source_page_id != plc.target_page_id
+                 AND plc.src_deleted = 0
+                 AND plc.tgt_deleted = 0
+                 AND plc.tgt_is_page = 1
+                 AND (?1 IS NULL OR (
+                     plc.source_page_id IN (SELECT block_id FROM space_members)
+                     AND plc.target_page_id IN (SELECT block_id FROM space_members)
+                 ))
+                 AND (?2 IS NULL OR EXISTS (
+                     SELECT 1 FROM block_tags bt
+                     WHERE bt.block_id = plc.target_page_id
+                       AND bt.tag_id IN (SELECT value FROM json_each(?2))
+                     UNION ALL
+                     SELECT 1 FROM block_tag_inherited bti
+                     WHERE bti.block_id = plc.target_page_id
+                       AND bti.tag_id IN (SELECT value FROM json_each(?2))
+                     UNION ALL
+                     SELECT 1 FROM block_tag_refs btr
+                     WHERE btr.source_id = plc.target_page_id
+                       AND btr.tag_id IN (SELECT value FROM json_each(?2))
+                 ))
+             ORDER BY plc.edge_count DESC, plc.source_page_id ASC,
+                 plc.target_page_id ASC
+             LIMIT ?3"#,
+            scope.space_id().as_str(),
+            tag_ids_json,
+            cap_param,
+        )
+        .fetch_all(pool)
+        .await
+        .unwrap()
+    }
+
+    /// The pre-#5426 edge count. Oracle for [`count_page_link_edges`].
+    async fn oracle_count_page_link_edges(
+        pool: &SqlitePool,
+        scope: &SpaceScope,
+        tag_ids_json: Option<&str>,
+    ) -> i64 {
+        sqlx::query_scalar!(
+            r#"WITH space_members AS MATERIALIZED (
+                     SELECT id AS block_id FROM blocks
+                     WHERE space_id = ?1
+                 )
+                 SELECT COUNT(*) AS "total!: i64"
+                 FROM page_link_cache plc
+                 WHERE plc.source_page_id != plc.target_page_id
+                     AND plc.src_deleted = 0
+                     AND plc.tgt_deleted = 0
+                     AND plc.tgt_is_page = 1
+                     AND (?1 IS NULL OR (
+                         plc.source_page_id IN (SELECT block_id FROM space_members)
+                         AND plc.target_page_id IN (SELECT block_id FROM space_members)
+                     ))
+                     AND (?2 IS NULL OR EXISTS (
+                         SELECT 1 FROM block_tags bt
+                         WHERE bt.block_id = plc.target_page_id
+                           AND bt.tag_id IN (SELECT value FROM json_each(?2))
+                         UNION ALL
+                         SELECT 1 FROM block_tag_inherited bti
+                         WHERE bti.block_id = plc.target_page_id
+                           AND bti.tag_id IN (SELECT value FROM json_each(?2))
+                         UNION ALL
+                         SELECT 1 FROM block_tag_refs btr
+                         WHERE btr.source_id = plc.target_page_id
+                           AND btr.tag_id IN (SELECT value FROM json_each(?2))
+                     ))"#,
+            scope.space_id().as_str(),
+            tag_ids_json,
+        )
+        .fetch_one(pool)
+        .await
+        .unwrap()
+    }
+
+    const PA1: &str = "01HZ0000000000000000000A01";
+    const PA2: &str = "01HZ0000000000000000000A02";
+    const PA3: &str = "01HZ0000000000000000000A03";
+    const PA_DEL: &str = "01HZ0000000000000000000A04";
+    const PB1: &str = "01HZ0000000000000000000B01";
+    const PB2: &str = "01HZ0000000000000000000B02";
+    const TAG: &str = "01HZ0000000000000000000T01";
+
+    async fn link(pool: &SqlitePool, source: &str, target: &str) {
+        sqlx::query("INSERT INTO block_links (source_id, target_id) VALUES (?, ?)")
+            .bind(source)
+            .bind(target)
+            .execute(pool)
+            .await
+            .unwrap();
+    }
+
+    async fn soft_delete(pool: &SqlitePool, id: &str) {
+        sqlx::query("UPDATE blocks SET deleted_at = ? WHERE id = ?")
+            .bind(FIXED_TS)
+            .bind(id)
+            .execute(pool)
+            .await
+            .unwrap();
+    }
+
+    /// Two spaces of pages with content children: page-rolled-up links, a
+    /// multi-ref edge, a self-link, cross-space links, a soft-deleted source
+    /// block, a soft-deleted target page and a soft-deleted source page whose
+    /// child is still live; tags via `block_tags` and `block_tag_refs`.
+    async fn seed(pool: &SqlitePool) {
+        ensure_test_space(pool).await;
+        ensure_test_space_b(pool).await;
+        let pages = [
+            (PA1, TEST_SPACE_ID),
+            (PA2, TEST_SPACE_ID),
+            (PA3, TEST_SPACE_ID),
+            (PA_DEL, TEST_SPACE_ID),
+            (PB1, TEST_SPACE_B_ID),
+            (PB2, TEST_SPACE_B_ID),
+        ];
+        for (page, _) in pages {
+            insert_block(pool, page, "page", page, None, Some(1)).await;
+        }
+        for (page, space) in pages {
+            // (content id, target ids) per child.
+            let children: &[(&str, &[&str])] = match page {
+                PA1 => &[
+                    ("01HZ000000000000000000CA11", &[PA2, PA3]),
+                    ("01HZ000000000000000000CA12", &[PA2]),
+                ],
+                PA2 => &[("01HZ000000000000000000CA21", &[PA1, PA2, PB1])],
+                PA3 => &[
+                    ("01HZ000000000000000000CA31", &[PA1]),
+                    ("01HZ000000000000000000CA32", &[PA_DEL, PA2]),
+                ],
+                PA_DEL => &[("01HZ000000000000000000CA41", &[PA1])],
+                PB1 => &[("01HZ000000000000000000CB11", &[PB2, PA1])],
+                _ => &[("01HZ000000000000000000CB21", &[PB1])],
+            };
+            for (i, (child, targets)) in children.iter().enumerate() {
+                let pos = i64::try_from(i).unwrap() + 1;
+                insert_block(pool, child, "content", "body", Some(page), Some(pos)).await;
+                for target in *targets {
+                    link(pool, child, target).await;
+                }
+            }
+            assign_to_space(pool, page, space).await;
+        }
+        insert_block(pool, TAG, "tag", "project", None, None).await;
+        assign_to_space(pool, TAG, TEST_SPACE_ID).await;
+        sqlx::query("INSERT INTO block_tags (block_id, tag_id) VALUES (?, ?)")
+            .bind(PA2)
+            .bind(TAG)
+            .execute(pool)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO block_tag_refs (source_id, tag_id) VALUES (?, ?)")
+            .bind(PA1)
+            .bind(TAG)
+            .execute(pool)
+            .await
+            .unwrap();
+        soft_delete(pool, "01HZ000000000000000000CA31").await;
+        soft_delete(pool, PA_DEL).await;
+        agaric_store::cache::rebuild_page_link_cache(pool)
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn scoped_page_link_reads_match_the_all_blocks_oracle() {
+        let (pool, _dir) = test_pool().await;
+        seed(&pool).await;
+        let tag_json = serde_json::to_string(&[TAG]).unwrap();
+        for space in [TEST_SPACE_ID, TEST_SPACE_B_ID] {
+            let scope = SpaceScope::Active(SpaceId::from_trusted(space));
+            for tags in [None, Some(tag_json.as_str())] {
+                for cap in [2, 100] {
+                    assert_eq!(
+                        fetch_page_link_edges(&pool, &scope, tags, cap)
+                            .await
+                            .unwrap(),
+                        oracle_fetch_page_link_edges(&pool, &scope, tags, cap).await,
+                        "edges must match the oracle (space {space}, tags {tags:?}, cap {cap})"
+                    );
+                }
+                assert_eq!(
+                    count_page_link_edges(&pool, &scope, tags).await.unwrap(),
+                    oracle_count_page_link_edges(&pool, &scope, tags).await,
+                    "count must match the oracle (space {space}, tags {tags:?})"
+                );
+            }
+        }
+        let scope_a = SpaceScope::Active(SpaceId::from_trusted(TEST_SPACE_ID));
+        assert_eq!(
+            count_page_link_edges(&pool, &scope_a, None).await.unwrap(),
+            4,
+            "space A keeps PA1->PA2 (2 refs), PA1->PA3, PA2->PA1, PA3->PA2"
+        );
+    }
 }
