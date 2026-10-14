@@ -26,6 +26,8 @@ use sqlx::SqlitePool;
 
 use crate::db::CommandTx;
 use agaric_core::error::AppError;
+use agaric_core::ulid::BlockId;
+use agaric_store::space::SpaceId;
 
 /// Decode a tool's arguments, mapping a bad shape to
 /// [`AppError::Validation`] (`-32602 invalid params`) with serde's message,
@@ -75,6 +77,90 @@ pub(crate) fn normalize_ulid_arg(s: &str) -> String {
     } else {
         s.to_owned()
     }
+}
+
+/// What an id-or-name argument names when it is a name (#5397).
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum Named {
+    /// A page, by title or alias.
+    Page,
+    /// A tag, by name.
+    Tag,
+}
+
+/// Each of `args` as an id (#5397): one that parses as a ULID is that id, as it
+/// always was; any other names a page or tag in `space_id`, matched as a
+/// pasted `[[Name]]` or `#name` is. A name that ties or matches nothing is a
+/// Validation error naming `field` and the candidates.
+pub(crate) async fn resolve_id_args(
+    pool: &SqlitePool,
+    tool: &str,
+    field: &str,
+    args: &[String],
+    named: Named,
+    space_id: &str,
+) -> Result<Vec<String>, AppError> {
+    use crate::commands::pages::markdown::{NameMatch, match_page_names, match_tag_names};
+    let names: Vec<String> = args
+        .iter()
+        .filter(|arg| BlockId::from_string(arg.as_str()).is_err())
+        .cloned()
+        .collect();
+    let mut matches = Vec::new();
+    if !names.is_empty() {
+        let space_id = SpaceId::from_string(space_id)?;
+        let mut conn = pool.acquire().await?;
+        matches = match named {
+            Named::Page => match_page_names(&mut conn, space_id.as_str(), &names).await?,
+            Named::Tag => match_tag_names(&mut conn, space_id.as_str(), &names).await?,
+        };
+    }
+    let mut matches = names.iter().zip(matches);
+    args.iter()
+        .map(|arg| {
+            if let Ok(id) = BlockId::from_string(arg.as_str()) {
+                return Ok(id.into_string());
+            }
+            let (name, found) = matches.next().expect("one match per name");
+            match found {
+                NameMatch::Id(id) => Ok(id),
+                NameMatch::Tie(pages) => {
+                    let listed: Vec<String> = pages
+                        .iter()
+                        .map(|(id, title)| format!("{id} ({title})"))
+                        .collect();
+                    Err(AppError::validation(format!(
+                        "tool `{tool}`: `{field}` '{name}' matches more than one page in space \
+                         '{space_id}': {}; pass the id",
+                        listed.join(", "),
+                    )))
+                }
+                NameMatch::Unknown => {
+                    let what = match named {
+                        Named::Page => "page has that title or alias",
+                        Named::Tag => "tag has that name",
+                    };
+                    Err(AppError::validation(format!(
+                        "tool `{tool}`: `{field}` '{name}' is not a ULID, and no {what} in \
+                         space '{space_id}'"
+                    )))
+                }
+            }
+        })
+        .collect()
+}
+
+/// [`resolve_id_args`] for one argument.
+pub(crate) async fn resolve_id_arg(
+    pool: &SqlitePool,
+    tool: &str,
+    field: &str,
+    arg: &str,
+    named: Named,
+    space_id: &str,
+) -> Result<String, AppError> {
+    let mut ids = resolve_id_args(pool, tool, field, &[arg.to_owned()], named, space_id).await?;
+    Ok(ids.remove(0))
 }
 
 /// Validate that `block_id`'s owning page lives in

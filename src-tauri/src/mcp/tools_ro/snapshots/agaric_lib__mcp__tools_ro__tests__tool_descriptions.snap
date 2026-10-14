@@ -121,7 +121,7 @@ expression: wire
         minimum: 1
         type: integer
       parent_id:
-        description: Optional parent ULID to scope the search.
+        description: "Optional parent ULID, or a page's title or alias, to scope the search."
         type: string
       query:
         description: FTS5 MATCH query string.
@@ -130,7 +130,7 @@ expression: wire
         description: "ULID of the space the search runs inside. Required: every FTS5 hit is restricted to blocks whose owning page carries `space = ?space_id`."
         type: string
       tag_ids:
-        description: Optional list of tag ULIDs to intersect the result set with.
+        description: Optional list of tag ULIDs or names to intersect the result set with.
         items:
           type: string
         type: array
@@ -276,7 +276,7 @@ expression: wire
         minimum: 1
         type: integer
       page_id:
-        description: ULID of the page block.
+        description: "ULID of the page block, or its title or alias."
         type: string
       space_id:
         description: "ULID of the space the agent is operating in. The read is rejected with a Validation error if `page_id` lives in a different space."
@@ -368,3 +368,22 @@ expression: wire
       - space_id
     type: object
   name: list_trash
+- description: "Look up page and tag names in a space, many in one call, as a written `[[Name]]` / `#name` is matched: a page by exact title, else by one case-insensitive title, else by alias; a tag by name, ignoring case. Each name answers `page_id` and `tag_id`, null when nothing matches; a name several pages share answers `page_candidates` instead. Tools that take a page or tag id take its name too, so this is only for ids up front."
+  inputSchema:
+    additionalProperties: false
+    properties:
+      names:
+        description: The page or tag names to look up.
+        items:
+          type: string
+        maxItems: 1000
+        minItems: 1
+        type: array
+      space_id:
+        description: ULID of the space to look in.
+        type: string
+    required:
+      - names
+      - space_id
+    type: object
+  name: resolve

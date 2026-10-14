@@ -7,10 +7,10 @@ expression: wire
     additionalProperties: false
     properties:
       content:
-        description: Markdown content for the new block.
+        description: "Markdown content for the new block. A `[[Name]]` or `#name` links the page or tag of that name in the space, creating it when none matches."
         type: string
       parent_id:
-        description: ULID of the parent block (required — no orphan blocks).
+        description: "ULID of the parent block, or a page's title or alias (required — no orphan blocks)."
         type: string
       position:
         description: Optional 1-based sibling position. Defaults to append (end).
@@ -33,7 +33,7 @@ expression: wire
         description: ULID of the block to edit.
         type: string
       content:
-        description: New Markdown content.
+        description: "New Markdown content. In a content block, a `[[Name]]` or `#name` links the page or tag of that name in the space, creating it when none matches."
         type: string
       space_id:
         description: "ULID of the space the agent is operating in. The edit is rejected with a Validation error if `block_id`'s owning page lives in a different space."
@@ -89,7 +89,7 @@ expression: wire
         description: "ULID of the space the agent is operating in. The tag application is rejected with a Validation error if `block_id`'s owning page lives in a different space. `tag_id` must be a tag of the same space."
         type: string
       tag_id:
-        description: ULID of an existing tag block.
+        description: ULID or name of an existing tag block.
         type: string
     required:
       - block_id
@@ -141,7 +141,7 @@ expression: wire
         description: The Markdown outline to append.
         type: string
       parent_id:
-        description: ULID of the parent block or page the outline lands under.
+        description: "ULID of the parent block or page the outline lands under, or the page's title or alias."
         type: string
       position:
         description: Optional 1-based sibling position of the first top-level block. Defaults to append (end).
@@ -161,7 +161,7 @@ expression: wire
     additionalProperties: false
     properties:
       page_id:
-        description: ULID of the page to move. Only page blocks move; a content block stays with its page.
+        description: "ULID, title or alias of the page to move. Only page blocks move; a content block stays with its page."
         type: string
       space_id:
         description: "ULID of the space the agent is operating in. The move is rejected with a Validation error if `page_id` lives in a different space."
@@ -265,7 +265,7 @@ expression: wire
         minItems: 1
         type: array
       parent_id:
-        description: ULID of the new parent block or page.
+        description: "ULID of the new parent block or page, or the page's title or alias."
         type: string
       position:
         description: "Optional 1-based position among the parent's other children. Defaults to append (end)."
@@ -291,7 +291,7 @@ expression: wire
         description: "ULID of the space the agent is operating in. The removal is rejected with a Validation error if `block_id`'s owning page lives in a different space."
         type: string
       tag_id:
-        description: ULID of the tag to remove.
+        description: ULID or name of the tag to remove.
         type: string
     required:
       - block_id

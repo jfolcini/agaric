@@ -2909,6 +2909,116 @@ pub(crate) async fn append_markdown_in_tx(
     ))
 }
 
+/// A content block holding `content` appended under `parent_id` at the 0-based
+/// `index`, or at the end with none, as one transaction (MCP `append_block`,
+/// #5397). Its `[[Name]]` and `#name` are resolved in the parent's space as a
+/// paste resolves them, creating the page or tag no name there matches; the
+/// rest stays as written. Returns the block and the warnings naming a name
+/// left as text.
+pub(crate) async fn append_block_resolving_names(
+    pool: &SqlitePool,
+    device_id: &str,
+    materializer: &Materializer,
+    parent_id: &BlockId,
+    content: String,
+    index: Option<i64>,
+) -> Result<(BlockRow, Vec<String>), AppError> {
+    let mut tx = CommandTx::begin_immediate(pool, "append_block").await?;
+    // #2604 — rollback-safe engine apply (rewind on tx abort).
+    tx.arm_engine_rollback(materializer.loro_state());
+    let (mut tx, content, warnings) = Box::pin(resolve_block_names(
+        tx,
+        materializer,
+        device_id,
+        parent_id,
+        content,
+    ))
+    .await?;
+    let (block, op) = create_block_in_tx(
+        &mut tx,
+        materializer.loro_state(),
+        device_id,
+        "content".into(),
+        content,
+        Some(parent_id.as_str().to_owned()),
+        index,
+        None,
+    )
+    .await?;
+    tx.enqueue_background(op);
+    tx.commit_and_dispatch(materializer).await?;
+    Ok((block, warnings))
+}
+
+/// Replace `block_id`'s content, as one transaction (MCP
+/// `update_block_content`, #5397). A content block's `[[Name]]` and `#name`
+/// are resolved as [`append_block_resolving_names`] resolves them; a page's
+/// title and a tag's name are kept as written. Returns the block and the
+/// warnings naming a name left as text.
+pub(crate) async fn edit_block_resolving_names(
+    pool: &SqlitePool,
+    device_id: &str,
+    materializer: &Materializer,
+    block_id: &BlockId,
+    content: String,
+) -> Result<(BlockRow, Vec<String>), AppError> {
+    let mut tx = CommandTx::begin_immediate(pool, "edit_block").await?;
+    // #2604 — rollback-safe engine apply (rewind on tx abort).
+    tx.arm_engine_rollback(materializer.loro_state());
+    // A missing or deleted block is left to `edit_block_in_tx`, which refuses
+    // it as the edit always has.
+    let is_content = matches!(
+        agaric_engine::block_ops::fetch_live_block_in_tx(&mut tx, block_id.as_str()).await,
+        Ok(block) if block.block_type == "content"
+    );
+    let (mut tx, content, warnings) = if is_content {
+        Box::pin(resolve_block_names(
+            tx,
+            materializer,
+            device_id,
+            block_id,
+            content,
+        ))
+        .await?
+    } else {
+        (tx, content, Vec::new())
+    };
+    let row = super::super::blocks::crud::edit_block_in_tx(
+        &mut tx,
+        materializer.loro_state(),
+        device_id,
+        block_id.as_str().to_owned(),
+        content,
+    )
+    .await?;
+    tx.commit_and_dispatch(materializer).await?;
+    Ok((row, warnings))
+}
+
+/// `content`, one block's text, with the names it writes resolved in
+/// `anchor`'s space by [`resolve_pasted_names`], and the warnings it gave.
+async fn resolve_block_names(
+    tx: CommandTx,
+    materializer: &Materializer,
+    device_id: &str,
+    anchor: &BlockId,
+    content: String,
+) -> Result<(CommandTx, String, Vec<String>), AppError> {
+    let mut blocks = [import::verbatim_block(content, 0)];
+    let mut warnings = Vec::new();
+    let (tx, _created) = Box::pin(resolve_pasted_names(
+        tx,
+        materializer,
+        device_id,
+        anchor,
+        &mut blocks,
+        &mut warnings,
+    ))
+    .await?;
+    let [block] = blocks;
+    Ok((tx, block.content, warnings))
+}
+
 /// Read the property lines of `blocks` and resolve the names they write, in
 /// `placement`'s space: the lines, the warnings naming what stayed text, and
 /// the pages and tags created.
@@ -2925,7 +3035,7 @@ async fn read_pasted_blocks(
         tx,
         materializer,
         device_id,
-        placement,
+        &placement.id,
         blocks,
         &mut warnings,
     ))
@@ -3020,11 +3130,11 @@ async fn resolve_pasted_names(
     mut tx: CommandTx,
     materializer: &Materializer,
     device_id: &str,
-    anchor: &BlockRow,
+    anchor: &BlockId,
     blocks: &mut [import::ParsedBlock],
     warnings: &mut Vec<String>,
 ) -> Result<(CommandTx, Vec<BlockRow>), AppError> {
-    let Some(space) = agaric_store::space::resolve_block_space(&mut **tx, &anchor.id).await? else {
+    let Some(space) = agaric_store::space::resolve_block_space(&mut **tx, anchor).await? else {
         return Ok((tx, Vec::new()));
     };
     let mut names = NameCtx {
@@ -4463,9 +4573,10 @@ fn deferred_anchor(
 
 /// The in-space pages a set of link names may resolve to, read once for the
 /// whole pass (#2200: one query per map, never one per name). Each map keeps
-/// at most the two smallest ids per key (`ORDER BY id ASC`), since only "one"
-/// or "more" drives the branch. The importing page (created in this tx) is
-/// visible, so a self-reference resolves to it.
+/// at most the [`MAX_NAME_CANDIDATES`] smallest ids per key (`ORDER BY id
+/// ASC`): a link needs only "one" or "more", an MCP name tie lists them. The
+/// importing page (created in this tx) is visible, so a self-reference
+/// resolves to it.
 #[derive(Default)]
 struct LinkMatches {
     /// Exact title → ids.
@@ -4488,7 +4599,7 @@ enum LinkMatch {
 impl LinkMatches {
     fn push(map: &mut HashMap<String, Vec<String>>, key: String, id: String) {
         let ids = map.entry(key).or_default();
-        if ids.len() < 2 {
+        if ids.len() < MAX_NAME_CANDIDATES {
             ids.push(id);
         }
     }
@@ -4508,6 +4619,16 @@ impl LinkMatches {
     /// case-insensitive title, else a unique alias, else none. A case tie is
     /// never guessed. Titles are compared whole, namespace included.
     fn find(&self, name: &str) -> Option<LinkMatch> {
+        match self.first_rule_ids(name) {
+            [] => None,
+            [single] => Some(LinkMatch::Unique(single.clone())),
+            _ => Some(LinkMatch::Ambiguous),
+        }
+    }
+
+    /// The ids the first rule of [`Self::find`] that matches `name` finds;
+    /// empty when none does.
+    fn first_rule_ids(&self, name: &str) -> &[String] {
         let folded = name.to_ascii_lowercase();
         [
             self.exact.get(name),
@@ -4515,11 +4636,10 @@ impl LinkMatches {
             self.aliases.get(&folded),
         ]
         .into_iter()
-        .find_map(|ids| match ids.map(Vec::as_slice) {
-            None | Some([]) => None,
-            Some([single]) => Some(LinkMatch::Unique(single.clone())),
-            Some(_) => Some(LinkMatch::Ambiguous),
-        })
+        .flatten()
+        .map(Vec::as_slice)
+        .find(|ids| !ids.is_empty())
+        .unwrap_or_default()
     }
 }
 
@@ -4540,6 +4660,64 @@ fn link_lookup_names(link_names: &[String]) -> Vec<String> {
         set.insert(base.to_string());
     }
     set.into_iter().collect()
+}
+
+/// The most pages a name tie lists to an MCP agent (#5397).
+const MAX_NAME_CANDIDATES: usize = 5;
+
+/// What a name an MCP agent writes in place of an id resolves to in one space
+/// (#5397).
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum NameMatch {
+    Id(String),
+    /// The pages the name ties between, up to [`MAX_NAME_CANDIDATES`], as
+    /// `(id, title)`.
+    Tie(Vec<(String, String)>),
+    Unknown,
+}
+
+/// Resolve `names` to pages of `space_id` by the rule a pasted `[[Name]]`
+/// follows ([`LinkMatches::find`]), in one snapshot: one answer per name, in
+/// order.
+pub(crate) async fn match_page_names(
+    conn: &mut sqlx::SqliteConnection,
+    space_id: &str,
+    names: &[String],
+) -> Result<Vec<NameMatch>, AppError> {
+    let names: Vec<String> = names.iter().map(|name| name.trim().to_owned()).collect();
+    let matches = snapshot_page_link_matches(conn, space_id, &names).await?;
+    let answer = |name: &String| match matches.first_rule_ids(name) {
+        [] => NameMatch::Unknown,
+        [single] => NameMatch::Id(single.clone()),
+        ids => NameMatch::Tie(
+            ids.iter()
+                .map(|id| {
+                    let title = matches.titles.get(id).cloned().unwrap_or_default();
+                    (id.clone(), title)
+                })
+                .collect(),
+        ),
+    };
+    Ok(names.iter().map(answer).collect())
+}
+
+/// Resolve `names` to tags of `space_id` by the rule a pasted `#name` follows
+/// (the normalised name): one answer per name, in order. A tag name never
+/// ties.
+pub(crate) async fn match_tag_names(
+    conn: &mut sqlx::SqliteConnection,
+    space_id: &str,
+    names: &[String],
+) -> Result<Vec<NameMatch>, AppError> {
+    let tags = snapshot_tags_by_norm(conn, space_id).await?;
+    Ok(names
+        .iter()
+        .map(|name| {
+            let norm = agaric_core::tag_norm::normalize_tag_name(name.trim());
+            tags.get(&norm)
+                .map_or(NameMatch::Unknown, |id| NameMatch::Id(id.clone()))
+        })
+        .collect())
 }
 
 /// Read the [`LinkMatches`] for `link_names` in `space_id`: the live pages

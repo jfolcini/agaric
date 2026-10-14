@@ -72,6 +72,7 @@ pub(crate) const TOOL_BLOCK_HISTORY: &str = "block_history";
 pub(crate) const TOOL_GET_JOURNAL: &str = "get_journal";
 pub(crate) const TOOL_LIST_JOURNAL: &str = "list_journal";
 pub(crate) const TOOL_LIST_TRASH: &str = "list_trash";
+pub(crate) const TOOL_RESOLVE: &str = "resolve";
 
 // Read-write tool names (`tools_rw.rs`).
 pub(crate) const TOOL_APPEND_BLOCK: &str = "append_block";

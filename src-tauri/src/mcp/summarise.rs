@@ -42,8 +42,8 @@ use super::registry::{
     TOOL_GET_BLOCK, TOOL_GET_JOURNAL, TOOL_GET_PAGE, TOOL_GET_PAGE_MARKDOWN, TOOL_JOURNAL_FOR_DATE,
     TOOL_LIST_BACKLINKS, TOOL_LIST_JOURNAL, TOOL_LIST_PAGES, TOOL_LIST_PROPERTY_DEFS,
     TOOL_LIST_SPACES, TOOL_LIST_TAGS, TOOL_LIST_TRASH, TOOL_MOVE_BLOCKS, TOOL_MOVE_PAGE_TO_SPACE,
-    TOOL_PAGE_HISTORY, TOOL_REMOVE_TAG, TOOL_RESTORE_BLOCK, TOOL_SEARCH, TOOL_SET_PROPERTY,
-    TOOL_UNDO, TOOL_UPDATE_BLOCK_CONTENT,
+    TOOL_PAGE_HISTORY, TOOL_REMOVE_TAG, TOOL_RESOLVE, TOOL_RESTORE_BLOCK, TOOL_SEARCH,
+    TOOL_SET_PROPERTY, TOOL_UNDO, TOOL_UPDATE_BLOCK_CONTENT,
 };
 
 /// Number of leading characters of a ULID we expose in summary strings.
@@ -104,6 +104,7 @@ pub fn summarise(name: &str, args: &Value, result: &Value) -> String {
         TOOL_GET_JOURNAL => summarise_get_journal(args, result),
         TOOL_LIST_JOURNAL => summarise_list_journal(args, result),
         TOOL_LIST_TRASH => summarise_list_trash(args, result),
+        TOOL_RESOLVE => summarise_resolve(args, result),
         // ---- read-write (tools_rw) ----
         TOOL_APPEND_BLOCK => summarise_append_block(args, result),
         TOOL_APPEND_MARKDOWN => summarise_append_markdown(args, result),
@@ -251,6 +252,21 @@ pub fn summarise_list_trash(_args: &Value, result: &Value) -> String {
     format!(
         "list_trash — {n} {}{suffix}",
         if n == 1 { "block" } else { "blocks" }
+    )
+}
+
+/// `resolve — N name(s), M matched` (#5397). Never the names, which are page
+/// titles and tag names.
+pub fn summarise_resolve(_args: &Value, result: &Value) -> String {
+    let answers = result.as_array().map_or(&[][..], Vec::as_slice);
+    let matched = answers
+        .iter()
+        .filter(|a| !a["page_id"].is_null() || !a["tag_id"].is_null())
+        .count();
+    let n = answers.len();
+    format!(
+        "resolve — {n} {}, {matched} matched",
+        if n == 1 { "name" } else { "names" }
     )
 }
 
@@ -1331,6 +1347,21 @@ mod tests {
                 "restore_block — restored {} (3 blocks)",
                 &ULID_A[..ULID_PREFIX_LEN]
             ),
+        );
+    }
+
+    #[test]
+    fn resolve_counts_names_and_matches_but_never_names_them_5397() {
+        let result = json!([
+            { "name": "Secret plan", "page_id": "01ARZ3NDEKTSV4RRFFQ69G5FAV", "tag_id": null },
+            { "name": "work", "page_id": null, "tag_id": "01ARZ3NDEKTSV4RRFFQ69G5FAW" },
+            { "name": "nothing", "page_id": null, "tag_id": null },
+        ]);
+        let s = summarise_resolve(&json!({}), &result);
+        assert_eq!(s, "resolve — 3 names, 2 matched");
+        assert_eq!(
+            summarise(TOOL_RESOLVE, &json!({}), &Value::Null),
+            "resolve — 0 names, 0 matched"
         );
     }
 
