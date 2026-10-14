@@ -3,7 +3,7 @@
 // load, empty/skeleton states, and cursor-based pagination.
 
 import { invoke } from '@tauri-apps/api/core'
-import { render, screen, waitFor } from '@testing-library/react'
+import { act, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
@@ -189,28 +189,38 @@ describe('PageBrowser', () => {
   // open, fill the prefetch cap, and drop the hover intent for the next 8 s.
   it('a hover right after open prefetches the hovered page', async () => {
     _resetPrefetchPageSubtreeForTest()
-    const user = userEvent.setup()
+    // Fake from before render so a visible-row dwell timer scheduled on mount
+    // is one `advanceTimersByTime` can fire.
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime })
     const ids = ['P1', 'P2', 'P3', 'P4', 'P5', 'P6']
     stubInvoke({
       list_pages_with_metadata: () =>
         pageList(ids.map((id) => makePage({ id, content: `Page ${id}` }))),
     })
 
-    render(<PageBrowser />)
-    await screen.findByText('Page P6')
-    // Let any visible-row dwell timer elapse before the hover.
-    await new Promise((resolve) => setTimeout(resolve, PAGE_PREFETCH_DWELL_MS * 2))
+    try {
+      render(<PageBrowser />)
+      await screen.findByText('Page P6')
+      // Let any visible-row dwell timer elapse before the hover.
+      await act(async () => {
+        vi.advanceTimersByTime(PAGE_PREFETCH_DWELL_MS * 2)
+      })
 
-    await user.hover(screen.getByText('Page P6'))
+      await user.hover(screen.getByText('Page P6'))
+      await act(async () => {
+        vi.advanceTimersByTime(PAGE_PREFETCH_DWELL_MS)
+      })
 
-    await waitFor(() => {
       expect(mockedInvoke).toHaveBeenCalledWith('load_page_subtree', {
         rootBlockId: 'P6',
         scope: { kind: 'active', space_id: 'SPACE_TEST' },
       })
-    })
-    const prefetched = mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'load_page_subtree')
-    expect(prefetched).toHaveLength(1)
+      const prefetched = mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'load_page_subtree')
+      expect(prefetched).toHaveLength(1)
+    } finally {
+      vi.useRealTimers()
+    }
   })
   it('on touch, a visible row prefetches its page without a hover', async () => {
     _resetPrefetchPageSubtreeForTest()

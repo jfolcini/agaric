@@ -30,34 +30,23 @@ const invalidateChangedPage: PropertyChangeTarget = (payload) => {
   })
 }
 
-// One registration however many consumers are mounted: a second target would
-// cancel the first one's refetch and send the IPC twice.
-let mountedConsumers = 0
-let unregisterTarget: (() => void) | null = null
-
-function retainInvalidationTarget(): () => void {
-  if (mountedConsumers === 0) unregisterTarget = registerPropertyChangeTarget(invalidateChangedPage)
-  mountedConsumers += 1
+// The dispatcher keeps its targets in a Set, so every mount re-adding this one
+// function is still a single registration; it stays registered for the
+// process, like the dispatcher's own listener.
+function listenForPropertyChanges(): void {
+  registerPropertyChangeTarget(invalidateChangedPage)
   ensurePropertyChangeDispatch((err) => {
     logger.warn('usePageProperties', 'Failed to listen for property change events', {}, err)
   })
-  return () => {
-    mountedConsumers -= 1
-    if (mountedConsumers === 0) {
-      unregisterTarget?.()
-      unregisterTarget = null
-    }
-  }
 }
 
 export function usePageProperties(pageId: string) {
-  useEffect(retainInvalidationTarget, [])
+  useEffect(listenForPropertyChanges, [])
 
   return useQuery(
     {
       queryKey: pagePropertiesQueryKey(pageId),
       queryFn: async (): Promise<PropertyRow[]> => unwrap(await commands.getProperties(pageId)),
-      enabled: pageId !== '',
       refetchOnMount: 'always',
       // `PagePropertyTable` edits a local copy and adopts each fetch by
       // reference, so an answer equal to the cached one must still be new.

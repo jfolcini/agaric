@@ -11,7 +11,6 @@
  */
 
 import { Plus } from 'lucide-react'
-import { useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import {
@@ -80,23 +79,11 @@ export function SpaceSwitcher({ onNavigate }: SpaceSwitcherProps = {}): React.JS
   const currentSpaceId = useSpaceStore((s) => s.currentSpaceId)
   const availableSpaces = useSpaceStore((s) => s.availableSpaces)
   const setCurrentSpace = useSpaceStore((s) => s.setCurrentSpace)
-  const refreshAvailableSpaces = useSpaceStore((s) => s.refreshAvailableSpaces)
 
   // Colour identity in the trigger. The dot inherits the
   // active space's accent so the user reads the same colour signal
   // here that `SpaceTopStripe` paints across the top of the viewport.
   const activeSpace = availableSpaces.find((s) => s.id === currentSpaceId)
-
-  useEffect(() => {
-    // Fire-and-forget refresh on mount. #2921 — `refreshAvailableSpaces`
-    // never rejects (a HARD failure is recorded on `lastRefreshOutcome`
-    // instead of thrown, so this fire-and-forget call can never produce
-    // an unhandled rejection). By the time SpaceSwitcher mounts, boot has
-    // already succeeded and the app always keeps at least one space, so
-    // `availableSpaces` is non-empty and any refresh error here takes the
-    // SOFT path anyway (logged + toasted, `isReady` stays flipped).
-    void refreshAvailableSpaces()
-  }, [refreshAvailableSpaces])
 
   const handleValueChange = (next: string) => {
     if (next === MANAGE_SENTINEL || next === CREATE_SENTINEL) {

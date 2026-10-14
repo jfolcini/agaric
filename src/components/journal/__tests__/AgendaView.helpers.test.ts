@@ -3,9 +3,8 @@
  *
  * Covers:
  *  1. collectUniquePageIds — dedup, null filtering, order preservation, empty
- *  2. buildPageTitleMap — null title fallback, duplicate last-wins, empty
- *  3. processFilterResult — no truncation (#721), hasMore/cursor pass-through
- *  4. appendUniqueBlocks — load-more dedupe across merged source windows (#721)
+ *  2. processFilterResult — no truncation (#721), hasMore/cursor pass-through
+ *  3. appendUniqueBlocks — load-more dedupe across merged source windows (#721)
  */
 
 import { describe, expect, it } from 'vitest'
@@ -13,13 +12,10 @@ import { describe, expect, it } from 'vitest'
 import { makeBlock } from '@/__tests__/fixtures'
 import {
   appendUniqueBlocks,
-  buildPageTitleMap,
   collectUniquePageIds,
-  FALLBACK_PAGE_TITLE,
   processFilterResult,
 } from '@/components/journal/AgendaView.helpers'
 import type { ExecuteFiltersResult } from '@/lib/agenda-filters'
-import type { ResolvedBlock } from '@/lib/bindings'
 
 describe('collectUniquePageIds', () => {
   it('returns an empty array for no blocks', () => {
@@ -69,43 +65,6 @@ describe('collectUniquePageIds', () => {
     const snapshot = JSON.stringify(blocks)
     collectUniquePageIds(blocks)
     expect(JSON.stringify(blocks)).toBe(snapshot)
-  })
-})
-
-describe('buildPageTitleMap', () => {
-  it('returns an empty map for no resolved entries', () => {
-    const map = buildPageTitleMap([])
-    expect(map.size).toBe(0)
-  })
-
-  it('builds an id → title map from resolved entries', () => {
-    const resolved: ResolvedBlock[] = [
-      { id: 'PAGE_A', title: 'Alpha', block_type: 'page', deleted: false },
-      { id: 'PAGE_B', title: 'Beta', block_type: 'page', deleted: false },
-    ]
-    const map = buildPageTitleMap(resolved)
-    expect(map.size).toBe(2)
-    expect(map.get('PAGE_A')).toBe('Alpha')
-    expect(map.get('PAGE_B')).toBe('Beta')
-  })
-
-  it('substitutes the fallback title when title is null', () => {
-    const resolved: ResolvedBlock[] = [
-      { id: 'PAGE_A', title: null, block_type: 'page', deleted: false },
-    ]
-    const map = buildPageTitleMap(resolved)
-    expect(map.get('PAGE_A')).toBe(FALLBACK_PAGE_TITLE)
-    expect(FALLBACK_PAGE_TITLE).toBe('Untitled')
-  })
-
-  it('keeps the last title on duplicate ids', () => {
-    const resolved: ResolvedBlock[] = [
-      { id: 'PAGE_A', title: 'First', block_type: 'page', deleted: false },
-      { id: 'PAGE_A', title: 'Second', block_type: 'page', deleted: false },
-    ]
-    const map = buildPageTitleMap(resolved)
-    expect(map.size).toBe(1)
-    expect(map.get('PAGE_A')).toBe('Second')
   })
 })
 

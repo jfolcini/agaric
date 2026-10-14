@@ -116,7 +116,7 @@ async fn apply_batch(
         && records.iter().any(|r| r.device_id != first.device_id)
     {
         return Err(AppError::InvalidOperation(
-            "BatchApplyOps received a mixed-device batch; the single global \
+            "BatchApplyOps / ReplayApplyOps received a mixed-device batch; the single global \
                  apply cursor cannot represent per-device watermarks — per-device \
                  cursor partitioning is required (backend audit #412)"
                 .into(),

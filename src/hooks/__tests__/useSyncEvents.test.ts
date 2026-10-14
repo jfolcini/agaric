@@ -579,7 +579,7 @@ describe('useSyncEvents', () => {
       // sync-events hook reads currentSpaceId from useSpaceStore (mocked
       // to 'SPACE_TEST' above) and forwards forceRefresh=true. This payload
       // carries NO `changed_page_ids`, so the third argument is `undefined`
-      // and the resolve store runs its full pages+tags walk (#3321).
+      // and the resolve store runs its full pages+tags scan (#3321).
       expect(mockPreload).toHaveBeenCalledWith('SPACE_TEST', true, undefined)
 
       unmount()

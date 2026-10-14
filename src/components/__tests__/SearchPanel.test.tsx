@@ -1552,6 +1552,31 @@ describe('SearchPanel', () => {
     expect(selectPageStack(useTabsStore.getState())).toHaveLength(1)
     expect(selectPageStack(useTabsStore.getState())[0]?.pageId).toBe('PARENT1')
     expect(selectPageStack(useTabsStore.getState())[0]?.title).toBe('Breadcrumb Page')
+    expect(mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'batch_resolve')).toEqual([
+      ['batch_resolve', { ids: ['PARENT1'], scope: { kind: 'active', space_id: 'SPACE_TEST' } }],
+    ])
+  })
+
+  it('shows a breadcrumb title the resolve store holds without batch_resolve (#5439)', async () => {
+    stubInvoke({
+      search_blocks: () =>
+        searchPage([
+          makeSearchResult({
+            id: 'CHILD1',
+            parent_id: 'PARENT1',
+            page_id: 'PARENT1',
+            content: 'child with breadcrumb',
+            block_type: 'content',
+          }),
+        ]),
+    })
+    useResolveStore.getState().set('PARENT1', 'Cached Breadcrumb', false)
+
+    render(<SearchPanel />)
+    typeAndSubmit(screen.getByPlaceholderText(t('search.searchPlaceholder')), 'child')
+
+    expect(await screen.findByRole('link', { name: 'Cached Breadcrumb' })).toBeInTheDocument()
+    expect(mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'batch_resolve')).toHaveLength(0)
   })
 
   // FE-H-20: SearchPanel must dedupe parentIds before invoking

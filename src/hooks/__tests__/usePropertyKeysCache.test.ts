@@ -8,7 +8,9 @@
  *      query so the active consumer refetches (#2596: the TanStack-backed
  *      cache invalidates + refetches rather than dropping to an empty
  *      snapshot, but the observable "consumer sees fresh data" intent holds),
- *  (d) a consumer mounted after invalidation sees the refreshed data.
+ *  (d) a consumer mounted after invalidation sees the refreshed data,
+ *  (e) `enabled: false` issues no IPC until it flips to true, and still
+ *      serves keys another consumer already cached.
  */
 
 import { invoke } from '@tauri-apps/api/core'
@@ -223,6 +225,39 @@ describe('usePropertyKeysCache', () => {
     })
 
     expect(listPropertyKeysInvocationCount()).toBe(2)
+  })
+
+  // ------------------------------------------------------------------
+  // (e) `enabled` defers the fetch
+  // ------------------------------------------------------------------
+  it('issues no IPC while disabled and fetches once when enabled flips on', async () => {
+    const { result, rerender } = renderHook(({ on }) => usePropertyKeysCache('SPACE_A', on), {
+      initialProps: { on: false },
+    })
+
+    // Positive control: the hook's effects have run (the listener is wired).
+    await waitFor(() => {
+      expect(eventListeners.has('block:properties-changed')).toBe(true)
+    })
+    expect(result.current).toEqual([])
+    expect(listPropertyKeysInvocationCount()).toBe(0)
+
+    rerender({ on: true })
+    await waitFor(() => {
+      expect(result.current).toEqual(['project', 'effort'])
+    })
+    expect(listPropertyKeysInvocationCount()).toBe(1)
+  })
+
+  it('serves keys another consumer cached while disabled, without its own IPC', async () => {
+    const { result: active } = renderHook(() => usePropertyKeysCache('SPACE_A'))
+    await waitFor(() => {
+      expect(active.current).toEqual(['project', 'effort'])
+    })
+
+    const { result: deferred } = renderHook(() => usePropertyKeysCache('SPACE_A', false))
+    expect(deferred.current).toEqual(['project', 'effort'])
+    expect(listPropertyKeysInvocationCount()).toBe(1)
   })
 
   // ------------------------------------------------------------------

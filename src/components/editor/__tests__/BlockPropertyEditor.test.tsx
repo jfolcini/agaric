@@ -1050,7 +1050,7 @@ describe('BlockPropertyEditor', () => {
         if (keysInUse.includes(key))
           return Promise.resolve({
             status: 'error',
-            error: `cannot delete property definition '${key}': 1 block_properties row(s) reference this key.`,
+            error: `Can't delete '${key}': 1 block(s) still use it. Remove the property from them first.`,
           })
         if (!defs.has(key))
           return Promise.resolve({ status: 'error', error: `property definition '${key}'` })

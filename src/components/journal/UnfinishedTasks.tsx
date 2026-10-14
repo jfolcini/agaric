@@ -24,11 +24,11 @@ import { unwrap } from '@/lib/app-error'
 import { commands } from '@/lib/bindings'
 import type { BlockRow, PageResponse } from '@/lib/bindings'
 import type { NavigateToPageFn } from '@/lib/block-events'
-import { t as translate } from '@/lib/i18n'
 import { logger } from '@/lib/logger'
 import { queryClient } from '@/lib/query-client'
 import { paginationLimit } from '@/lib/safe-limit'
 import { requireActiveScope } from '@/lib/space-scope'
+import { resolveTitles } from '@/stores/resolve-titles'
 import { useSpaceStore } from '@/stores/space'
 
 // ── Constants ──────────────────────────────────────────────────────────
@@ -209,24 +209,6 @@ function parseGroupCollapsed(raw: string): Record<string, boolean> {
     if (typeof value === 'boolean') result[key] = value
   }
   return result
-}
-
-/** Resolve a set of page IDs to title map. Returns empty map on failure. */
-async function resolvePageTitles(
-  parentIds: string[],
-  spaceId: string,
-): Promise<Map<string, string>> {
-  const titles = new Map<string, string>()
-  if (parentIds.length === 0) return titles
-  try {
-    const resolved = unwrap(await commands.batchResolve(parentIds, requireActiveScope(spaceId)))
-    for (const r of resolved) {
-      titles.set(r.id, r.title ?? translate('common.untitled'))
-    }
-  } catch {
-    // Non-critical: breadcrumbs will show "Untitled"
-  }
-  return titles
 }
 
 /**
@@ -414,9 +396,8 @@ export function UnfinishedTasks({
   // Resolve page titles for breadcrumbs once the drained blocks are in. Kept
   // SEPARATE from the item fetch (mirrors DonePanel) so a title-resolve failure
   // surfaces blocks with an "Untitled" breadcrumb rather than failing the
-  // section. `resolvePageTitles` swallows its own errors and returns an empty
-  // map on failure, so the fallback is automatic. Titles are REPLACED (not
-  // merged) so the map is rebuilt wholesale per load.
+  // section. Titles are REPLACED (not merged) so the map is rebuilt wholesale
+  // per load.
   //
   // Gated on `!loading`: unlike the old single-commit drain, `useInfiniteQuery`
   // commits each page incrementally, so `blocks` changes once per drained page.
@@ -432,11 +413,15 @@ export function UnfinishedTasks({
       return
     }
     let cancelled = false
-    // `resolvePageTitles` swallows its own errors (returns an empty map), and
-    // the handler below only sets state — nothing here can reject.
-    void resolvePageTitles(parentIds, currentSpaceId).then((titles) => {
-      if (!cancelled) setPageTitles(titles)
-    })
+    resolveTitles(currentSpaceId, parentIds)
+      .then((titles) => {
+        if (!cancelled) setPageTitles(titles)
+      })
+      .catch((err: unknown) => {
+        // Non-critical: breadcrumbs fall back to "Untitled".
+        logger.warn('UnfinishedTasks', 'failed to resolve page titles', undefined, err)
+        if (!cancelled) setPageTitles(new Map())
+      })
     return () => {
       cancelled = true
     }

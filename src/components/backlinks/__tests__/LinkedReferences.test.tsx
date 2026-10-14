@@ -21,7 +21,7 @@
  */
 
 import { invoke } from '@tauri-apps/api/core'
-import { act, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { toast } from 'sonner'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
@@ -185,6 +185,15 @@ const emptyGrouped = {
   has_more: false,
   total_count: 0,
   filtered_count: 0,
+  truncated: false,
+}
+
+const oneGroupGrouped = {
+  groups: [makeGroup('P1', 'Page One', [{ id: 'B1', content: 'block 1' }])],
+  next_cursor: null,
+  has_more: false,
+  total_count: 1,
+  filtered_count: 1,
   truncated: false,
 }
 
@@ -1751,16 +1760,18 @@ describe('LinkedReferences', () => {
   // and surfaces an empty `string[]`, matching the other two consumers
   // (`PropertyValuePicker`, `UnlinkedReferences`) that never toasted.)
   it('error: property keys load failure renders without crashing (no toast in shared-cache path)', async () => {
+    const user = userEvent.setup()
     mockedInvoke.mockImplementation(async (cmd: string, _args?: any) => {
       if (cmd === 'list_property_keys')
         return Promise.reject(new Error('property keys unavailable'))
-      if (cmd === 'list_backlinks_grouped') return emptyGrouped
+      if (cmd === 'list_backlinks_grouped') return oneGroupGrouped
       if (cmd === 'batch_resolve') return []
       if (cmd === 'list_tags_by_prefix') return []
       return emptyGrouped
     })
 
     renderLinkedReferences({ targetId: 'PAGE1' })
+    await user.click(await screen.findByTestId('mock-clear-filters'))
 
     // Wait for the IPC to be issued so the catch path runs.
     await waitFor(() => {
@@ -1771,6 +1782,35 @@ describe('LinkedReferences', () => {
     // toast fires.
     expect(toast.error).not.toHaveBeenCalledWith('Failed to load property keys')
   })
+
+  // The keys only feed the filter builder, so a page open must not pay for them.
+  // Keyboard focus and a pointer press each load them on their own: a keyboard
+  // user never presses, and Safari does not focus a button on click.
+  it.each([
+    ['keyboard focus', (el: HTMLElement) => act(() => el.focus())],
+    ['a pointer press', (el: HTMLElement) => fireEvent.pointerDown(el)],
+  ])(
+    'lists property keys on %s inside the filter builder, not at mount',
+    async (_trigger, touch) => {
+      mockInvokeWith(oneGroupGrouped)
+
+      renderLinkedReferences({ targetId: 'PAGE1' })
+
+      // Positive control: the panel is fully rendered and its own read has run.
+      const clearButton = await screen.findByTestId('mock-clear-filters')
+      const countCalls = (cmd: string) => mockedInvoke.mock.calls.filter((c) => c[0] === cmd).length
+      expect(countCalls('list_backlinks_grouped')).toBe(1)
+      expect(countCalls('list_property_keys')).toBe(0)
+
+      touch(clearButton)
+      await waitFor(() => {
+        expect(countCalls('list_property_keys')).toBe(1)
+      })
+
+      touch(clearButton)
+      expect(countCalls('list_property_keys')).toBe(1)
+    },
+  )
 
   // 39. simultaneous failures: backlinks toast; property-keys
   // Failure is now handled silently by the shared cache.

@@ -39,7 +39,6 @@ import { unwrap } from '@/lib/app-error'
 import { commands } from '@/lib/bindings'
 import { resolveStoreTitle, unresolvedBlockLabel } from '@/lib/block-title'
 import { logger } from '@/lib/logger'
-import { listBlocksLimit } from '@/lib/safe-limit'
 import { requireActiveScope } from '@/lib/space-scope'
 import { useSpaceStore } from '@/stores/space'
 
@@ -54,7 +53,7 @@ const MAX_CACHE_SIZE = 10_000
  * #3321 — it is also the point where a TARGETED preload rescan stops being
  * worth attempting: above the cap the IPC rejects outright, and a changed set
  * that large means the inbound sync touched most of the vault anyway, so the
- * paginated full walk is both correct and no more expensive. Falling back is
+ * full scan is both correct and no more expensive. Falling back is
  * always safe — a full scan is a superset of any targeted one.
  */
 const TARGETED_PRELOAD_MAX_IDS = 1000
@@ -122,8 +121,8 @@ function unresolvedEntry(id: string): ResolveEntry {
 
 /**
  * Outcome of one preload scan. `pageHalfFailed` distinguishes a page-half
- * failure (worth escalating a targeted scan to the full walk) from a tag-half
- * failure (not worth it — the walk re-runs the same failing tag IPC).
+ * failure (worth escalating a targeted scan to the full scan) from a tag-half
+ * failure (not worth it — the full scan re-runs the same failing tag IPC).
  */
 interface PreloadScanResult {
   applied: boolean
@@ -238,12 +237,12 @@ interface ResolveStore {
    * `changedPageIds` (#3321) — the owning-page id set an out-of-band write
    * touched, as already computed by `reloadChangedPageStores`. When present
    * (and within {@link TARGETED_PRELOAD_MAX_IDS}) the PAGE half of the scan
-   * collapses from a paginated walk of the whole space into ONE
-   * `batchResolve` of those ids plus the cached blocks no walk named (#5245).
+   * collapses from a listing of the whole space into ONE
+   * `batchResolve` of those ids plus the cached blocks no full scan named (#5245).
    * The TAG half is unconditional either
    * way: tags carry no changed-id signal, so skipping them would leave a
    * remotely-renamed tag rendering its old name until the next space switch.
-   * Absent / empty / oversize sets fall back to the full walk — the same
+   * Absent / empty / oversize sets fall back to the full scan — the same
    * fallback shape the page-store reload uses, and always a superset of the
    * targeted result.
    */
@@ -369,7 +368,7 @@ interface ResolveStore {
 /**
  * One in-flight preload scan, plus the ONE trailing re-scan it may owe.
  *
- * `currentFull` — whether the scan actually running is the full space walk.
+ * `currentFull` — whether the scan actually running is the full space scan.
  * `trailingForce` — a caller arrived mid-scan and needs a re-scan afterwards.
  * `trailingIds` — what that re-scan must cover: a page-id set for a targeted
  * re-scan, or `null` for a full one. Only meaningful while `trailingForce`.
@@ -383,7 +382,7 @@ interface PreloadEntry {
 
 /**
  * Decide whether a caller's `changedPageIds` can drive a targeted rescan.
- * Returns the id array to `batchResolve`, or `null` meaning "full walk"
+ * Returns the id array to `batchResolve`, or `null` meaning "full scan"
  * (absent set, empty set, or one past {@link TARGETED_PRELOAD_MAX_IDS}).
  */
 function narrowToTargetedIds(changedPageIds: ReadonlySet<string> | undefined): string[] | null {
@@ -435,10 +434,10 @@ export const useResolveStore = create<ResolveStore>((set, get) => {
   const inflightPreloads = new Map<string, PreloadEntry>()
 
   /**
-   * #5245 — per space, the page ids the last full walk listed plus the tag ids the last tag
+   * #5245 — per space, the page ids the last full scan listed plus the tag ids the last tag
    * list returned. Any other entry cached for the space (a content block, a trashed page) is one a
    * page-id rescan cannot name, so a targeted rescan re-resolves those alongside, and a full
-   * walk re-resolves every entry it no longer names (#5289).
+   * scan re-resolves every entry it no longer names (#5289).
    */
   const namedIds = new Map<string, Set<string>>()
 
@@ -496,12 +495,51 @@ export const useResolveStore = create<ResolveStore>((set, get) => {
   }
 
   /**
+   * The page half of a preload scan, written into `into`. `targetedIds` non-null re-resolves
+   * those page ids (plus the cached entries no full scan named); null lists every live page in
+   * the space in one call.
+   */
+  async function scanPages(
+    spaceId: string,
+    targetedIds: string[] | null,
+    into: Map<string, ResolveEntry>,
+  ): Promise<void> {
+    if (targetedIds) {
+      // #3321 — targeted page half. `batch_resolve` is space-scoped exactly
+      // like the full listing it replaces (foreign-space ids drop out
+      // of the response, so the no-cross-space-links barrier holds) and it
+      // INCLUDES soft-deleted rows with `deleted: true`, which is what keeps
+      // a remotely-trashed page's chip rendering as deleted.
+      const targeted = new Set(targetedIds)
+      const known = namedIds.get(spaceId)
+      const cachedBlockIds = cachedIds(
+        spaceId,
+        TARGETED_PRELOAD_MAX_IDS - targetedIds.length,
+        (id, entry) => entry.resolved && !targeted.has(id) && known?.has(id) !== true,
+      )
+      await batchResolveInto(spaceId, [...targetedIds, ...cachedBlockIds], into)
+      return
+    }
+    const pages = unwrap(await commands.listAllPagesInSpace(requireActiveScope(spaceId), null))
+    for (const p of pages) {
+      into.set(keyFor(spaceId, p.id), {
+        // #4239 — see the targeted half above. The listing returns live pages
+        // only, so the `'page'` literal is exact and no row is deleted.
+        title: resolveStoreTitle('page', p.content),
+        deleted: false,
+        resolved: true,
+      })
+    }
+    namedIds.set(spaceId, new Set(pages.map((p) => p.id)))
+  }
+
+  /**
    * One pages+tags scan for `spaceId`. Never rejects (logs instead); resolves
    * `false` when the scan threw and applied nothing, `true` otherwise.
    *
    * `targetedIds` — non-null to re-resolve only those page ids (one
-   * `batchResolve` round-trip) instead of walking the whole space; null for
-   * the full paginated walk. See {@link narrowToTargetedIds}.
+   * `batchResolve` round-trip) instead of listing the whole space; null for
+   * the full scan. See {@link narrowToTargetedIds}.
    */
   async function runPreloadScan(
     spaceId: string,
@@ -510,76 +548,27 @@ export const useResolveStore = create<ResolveStore>((set, get) => {
     let pageHalfSucceeded = false
     try {
       const fetchedPages = new Map<string, ResolveEntry>()
-      if (targetedIds) {
-        // #3321 — targeted page half. `batch_resolve` is space-scoped exactly
-        // like the `list_blocks` walk it replaces (foreign-space ids drop out
-        // of the response, so the no-cross-space-links barrier holds) and it
-        // INCLUDES soft-deleted rows with `deleted: true`, which is what keeps
-        // a remotely-trashed page's chip rendering as deleted.
-        const targeted = new Set(targetedIds)
-        const known = namedIds.get(spaceId)
-        const cachedBlockIds = cachedIds(
-          spaceId,
-          TARGETED_PRELOAD_MAX_IDS - targetedIds.length,
-          (id, entry) => entry.resolved && !targeted.has(id) && known?.has(id) !== true,
-        )
-        await batchResolveInto(spaceId, [...targetedIds, ...cachedBlockIds], fetchedPages)
-      } else {
-        // Fetch all pages with cursor-based pagination, scoped to the
-        // Active space.
-        const walked = new Set<string>()
-        let cursor: string | undefined
-        let hasMore = true
-        while (hasMore) {
-          const pagesResp = unwrap(
-            await commands.listBlocks(
-              {
-                parentId: null,
-                blockType: 'page',
-                tagId: null,
-                date: null,
-                dateRange: null,
-                source: null,
-                excludeTodoStates: null,
-                cursor: cursor ?? null,
-                limit: listBlocksLimit(100),
-              },
-              requireActiveScope(spaceId),
-            ),
-          )
-          for (const p of pagesResp.items) {
-            walked.add(p.id)
-            fetchedPages.set(keyFor(spaceId, p.id), {
-              // #4239 — see the targeted half above. `blockType: 'page'`
-              // scopes this walk, so the `'page'` literal is exact.
-              title: resolveStoreTitle('page', p.content),
-              deleted: p.deleted_at !== null,
-              resolved: true,
-            })
-          }
-          hasMore = pagesResp.has_more
-          cursor = pagesResp.next_cursor ?? undefined
-        }
-        namedIds.set(spaceId, walked)
-      }
-
-      // Fetch all tags in the active space. #1343 — `listAllTagsInSpace`
-      // is the no-clamp IPC; `listTagsByPrefix({ prefix: '' })` silently
-      // truncated to `MAX_TAGS_PREFIX = 200`, so chips beyond the first
+      // Fetch all tags in the active space alongside the page half. #1343 —
+      // `listAllTagsInSpace` is the no-clamp IPC; `listTagsByPrefix({ prefix: '' })`
+      // silently truncated to `MAX_TAGS_PREFIX = 200`, so chips beyond the first
       // 200 tags rendered broken in large vaults. We key the rows under
       // `spaceId` so a `clearAllForSpace` flush wipes them too — the next
       // preload re-fetches them under the new space's prefix.
-      // #3321 — the page half is done; anything that throws from here on is
-      // the TAG half. Recorded so the escalate-to-full-walk retry below can
+      const [pageHalf, tagHalf] = await Promise.allSettled([
+        scanPages(spaceId, targetedIds, fetchedPages),
+        commands.listAllTagsInSpace(requireActiveScope(spaceId)).then(unwrap),
+      ])
+      // #3321 — each half settles on its own, so a failure is attributed to the
+      // half that threw. Recorded so the escalate-to-full-scan retry below can
       // tell the two apart: that retry exists only for pages, and escalating
-      // on a tag failure re-runs the same failing tag IPC inside a
-      // 30-round-trip walk — ~33 IPCs where this change exists to spend 2.
-      // The abort semantics are unchanged (a tag failure still aborts the
-      // scan and leaves `_preloaded` false, per the pre-existing contract);
-      // only the escalation decision is now aware of which half failed.
+      // on a tag failure only re-runs the same failing tag IPC. A tag failure
+      // still aborts the scan and leaves `_preloaded` false; only the
+      // escalation decision is aware of which half failed.
+      if (pageHalf.status === 'rejected') throw pageHalf.reason
       pageHalfSucceeded = true
+      if (tagHalf.status === 'rejected') throw tagHalf.reason
+      const tags = tagHalf.value
 
-      const tags = unwrap(await commands.listAllTagsInSpace(requireActiveScope(spaceId)))
       const fetchedTags = new Map<string, ResolveEntry>()
       const named = namedIds.get(spaceId) ?? new Set<string>()
       namedIds.set(spaceId, named)
@@ -596,9 +585,9 @@ export const useResolveStore = create<ResolveStore>((set, get) => {
         })
       }
 
-      // #5289 — the walk and the tag list name live rows only, so an entry they no longer name
+      // #5289 — the page and tag lists name live rows only, so an entry they no longer name
       // (a page or tag a peer or a revert trashed, purged or moved out, or a content block) is
-      // re-resolved instead of left rendering as it was. A targeted scan walks no pages, so for it
+      // re-resolved instead of left rendering as it was. A targeted scan lists no pages, so for it
       // that is the tags that dropped out of the list; unnamed, later targeted scans re-resolve
       // them as they do a trashed page.
       const freshTagIds = new Set(tags.map((t) => t.tag_id))
@@ -711,7 +700,7 @@ export const useResolveStore = create<ResolveStore>((set, get) => {
         } else if (!inflight.currentFull) {
           // #3321 — a PLAIN caller (boot / space switch) wants the whole space
           // warmed. The scan it would have joined is targeted and refreshes a
-          // handful of ids, so schedule the full walk as the trailing scan
+          // handful of ids, so schedule the full scan as the trailing scan
           // rather than resolving this caller against a partial cache.
           foldIntoTrailing(inflight, undefined)
         }
@@ -728,19 +717,18 @@ export const useResolveStore = create<ResolveStore>((set, get) => {
       entry.promise = (async () => {
         try {
           // #3321 — a scan that THREW consumed its scope without applying it.
-          // A full walk self-heals (the next one re-reads the whole space), but
+          // A full scan self-heals (the next one re-reads the whole space), but
           // a targeted scan's ids are the ONLY thing that would ever have
           // re-resolved those pages: later ticks carry the NEXT write's ids, so
           // one transient `batch_resolve` failure would leave a peer-renamed
           // page rendering its old title until a space switch. Escalate the
-          // failure to the full walk (a superset) exactly once — a failing full
-          // walk does not re-escalate, so the chain is bounded at one retry.
+          // failure to the full scan (a superset) exactly once — a failing full
+          // scan does not re-escalate, so the chain is bounded at one retry.
           let scanIds = leadingIds
           let result = await runPreloadScan(spaceId, scanIds)
           // Escalate ONLY when the page half is what failed (see
-          // `runPreloadScan`): a tag failure would otherwise turn a 2-IPC
-          // targeted rescan into a ~33-IPC walk that re-runs the same
-          // failing tag call.
+          // `runPreloadScan`): a tag failure would otherwise only re-run the
+          // same failing tag call inside a full scan.
           if (result.pageHalfFailed && scanIds !== null) foldIntoTrailing(entry, undefined)
           while (entry.trailingForce) {
             scanIds = narrowToTargetedIds(entry.trailingIds ?? undefined)

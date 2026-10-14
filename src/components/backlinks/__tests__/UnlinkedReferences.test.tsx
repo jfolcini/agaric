@@ -294,6 +294,32 @@ describe('UnlinkedReferences', () => {
     expect(document.querySelector('.unlinked-references-content')).not.toBeInTheDocument()
   })
 
+  // #5439 — the keys feed only the filter builder, which renders while the panel
+  // is open, so a page open with the panel collapsed must not list them.
+  it('lists property keys only once the panel is expanded', async () => {
+    const user = userEvent.setup()
+    mockedListUnlinked.mockResolvedValue({
+      groups: [makeGroup('P1', 'Page One', [{ id: 'B1', content: 'mention text' }])],
+      next_cursor: null,
+      has_more: false,
+      total_count: 1,
+      filtered_count: 1,
+      truncated: false,
+    })
+
+    renderUnlinkedReferences({ pageId: 'PAGE1', pageTitle: 'My Page' })
+    await waitFor(() => {
+      expect(mockedListUnlinked).toHaveBeenCalledTimes(1)
+    })
+    expect(mockedListPropertyKeys).toHaveBeenCalledTimes(0)
+
+    await user.click(screen.getByRole('button', { name: /unlinked reference/i }))
+    await screen.findByTestId('backlink-filter-builder')
+    await waitFor(() => {
+      expect(mockedListPropertyKeys).toHaveBeenCalledTimes(1)
+    })
+  })
+
   // 2. Shows total count in header after expanding
   it('shows total count in header', async () => {
     const user = userEvent.setup()
@@ -1317,25 +1343,6 @@ describe('UnlinkedReferences', () => {
     // Filter builder should be gone (panel collapsed by default).
     await waitFor(() => {
       expect(screen.queryByTestId('backlink-filter-builder')).not.toBeInTheDocument()
-    })
-  })
-
-  it('loads property keys on mount', async () => {
-    const resp = {
-      groups: [makeGroup('P1', 'Page One', [{ id: 'B1', content: 'mention text' }])],
-      next_cursor: null,
-      has_more: false,
-      total_count: 1,
-      filtered_count: 1,
-      truncated: false,
-    }
-    mockedListUnlinked.mockResolvedValue(resp)
-    useSpaceStore.setState({ currentSpaceId: 'SPACE_TEST' })
-
-    renderUnlinkedReferences({ pageId: 'PAGE1', pageTitle: 'My Page' })
-
-    await waitFor(() => {
-      expect(mockedListPropertyKeys).toHaveBeenCalled() // no-args by contract
     })
   })
 

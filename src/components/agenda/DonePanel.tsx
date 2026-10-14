@@ -2,7 +2,7 @@
  * DonePanel -- shows blocks completed on a given date, grouped by source page.
  *
  * Renders on JournalPage below LinkedReferences. Groups blocks by parent page
- * (resolved via batchResolve). Within each group, sorts blocks by ID descending
+ * (titles via `resolveTitles`). Within each group, sorts blocks by ID descending
  * (ULID ≈ most recently created first). Uses cursor-based pagination with
  * a `t('donePanel.loadMore')` button.
  */
@@ -12,11 +12,7 @@ import type React from 'react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
-import {
-  collectUniqueParentIds,
-  groupBlocksByPage,
-  mergeResolvedTitles,
-} from '@/components/agenda/DonePanel.helpers'
+import { collectUniqueParentIds, groupBlocksByPage } from '@/components/agenda/DonePanel.helpers'
 import { CollapsiblePanelHeader } from '@/components/common/CollapsiblePanelHeader'
 import { ListViewState } from '@/components/common/ListViewState'
 import { LoadMoreButton } from '@/components/common/LoadMoreButton'
@@ -38,6 +34,7 @@ import { PAGINATION_LIMIT } from '@/lib/constants'
 import { logger } from '@/lib/logger'
 import { queryClient } from '@/lib/query-client'
 import { requireActiveScope } from '@/lib/space-scope'
+import { resolveTitles } from '@/stores/resolve-titles'
 import { useSpaceStore } from '@/stores/space'
 
 export interface DonePanelProps {
@@ -164,7 +161,7 @@ export function DonePanel({
 
   // Resolve parent-page titles for the loaded blocks. Kept SEPARATE from the
   // item fetch so a title-resolve failure surfaces blocks with an "Untitled"
-  // group header rather than failing the whole panel (the batchResolve rejection
+  // group header rather than failing the whole panel (the resolve rejection
   // must not propagate into the paginated-query error state). Titles are MERGED
   // (never rebuilt) so a later partial/failed resolve can't drop a title already
   // resolved for a still-visible page from an earlier cursor page.
@@ -173,12 +170,10 @@ export function DonePanel({
     const uniqueParentIds = collectUniqueParentIds(blocks)
     if (uniqueParentIds.length === 0) return
     let cancelled = false
-    commands
-      .batchResolve(uniqueParentIds, requireActiveScope(currentSpaceId))
-      .then(unwrap)
-      .then((resolved) => {
+    resolveTitles(currentSpaceId, uniqueParentIds)
+      .then((titles) => {
         if (cancelled) return
-        setPageTitles((prev) => mergeResolvedTitles(prev, resolved, t('donePanel.untitled')))
+        setPageTitles((prev) => new Map([...prev, ...titles]))
       })
       .catch((err) => {
         // Non-critical: breadcrumbs / group headers fall back to "Untitled".
@@ -187,7 +182,7 @@ export function DonePanel({
     return () => {
       cancelled = true
     }
-  }, [blocks, t, currentSpaceId])
+  }, [blocks, currentSpaceId])
 
   // Re-expand the panel for a new day / space / filter. A block-property change
   // keeps the user's choice (#5445).

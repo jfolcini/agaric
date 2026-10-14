@@ -69,8 +69,10 @@ export function LinkedReferences({
   const [sourcePageIncluded, setSourcePageIncluded] = useState<string[]>([])
   const [sourcePageExcluded, setSourcePageExcluded] = useState<string[]>([])
   const [kind, setKind] = useState<LinkKind | null>(null)
-  // Shared cache replaces per-mount `commands.listPropertyKeys()` IPC.
-  const propertyKeys = usePropertyKeysCache(currentSpaceId)
+  // The keys only feed the filter builder's add-filter row and sort menu, so they
+  // load on the first touch of the builder instead of at every page open.
+  const [filterBuilderTouched, setFilterBuilderTouched] = useState(false)
+  const propertyKeys = usePropertyKeysCache(currentSpaceId, filterBuilderTouched)
 
   // Page-scoped filter/sort/source-page, reset by a render-phase adjust rather
   // than an effect (#4407). Comparing the PREVIOUS pageId forgets; storing the
@@ -386,7 +388,12 @@ export function LinkedReferences({
         >
           {() => (
             <div className="linked-references-content mt-1 space-y-2">
-              <div className="linked-references-advanced-filters px-2">
+              <div
+                className="linked-references-advanced-filters px-2"
+                onFocusCapture={() => setFilterBuilderTouched(true)}
+                // Safari does not focus a button on click, so focus alone misses a mouse press.
+                onPointerDownCapture={() => setFilterBuilderTouched(true)}
+              >
                 <BacklinkFilterBuilder
                   filters={filters}
                   sort={sort}
