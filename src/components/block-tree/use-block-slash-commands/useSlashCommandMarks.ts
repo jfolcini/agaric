@@ -7,7 +7,7 @@
  * Behaviour per command:
  *   - With a non-empty selection → toggle the mark on the selection, reusing
  *     the canonical `createMarkToggles` action so the TipTap command stays a
- *     single source of truth (`src/lib/toolbar-config.ts`).
+ *     single source of truth (`src/components/FormattingToolbar/toolbar-config.ts`).
  *   - With no selection → insert the Markdown delimiter pair and park the
  *     caret between the delimiters, so the next keystrokes land inside.
  *
@@ -21,7 +21,7 @@ import type {
   SlashCommandContext,
   SlashHandlerTables,
 } from '@/components/block-tree/use-block-slash-commands/types'
-import { createMarkToggles } from '@/lib/toolbar-config'
+import { createMarkToggles } from '@/components/FormattingToolbar/toolbar-config'
 
 interface MarkSpec {
   /** `activeKey` of the matching `createMarkToggles` entry (the TipTap toggle). */

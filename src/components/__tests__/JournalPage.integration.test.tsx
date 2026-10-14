@@ -40,7 +40,7 @@ import { emptyPage, makeBlock } from '@/__tests__/fixtures'
 
 // #2939 — BlockTree consumes the roving editor via the lazy `useLazyRovingEditor`
 // facade; return a stub handle with a null host/surface (no real editor mounts).
-vi.mock('@/hooks/useLazyRovingEditor', () => ({
+vi.mock('@/components/editor/useLazyRovingEditor', () => ({
   useLazyRovingEditor: () => ({
     rovingEditor: {
       editor: null,

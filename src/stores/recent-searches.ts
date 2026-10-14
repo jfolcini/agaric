@@ -19,8 +19,8 @@
  * a single entry, preserving the most-recent casing).
  */
 
-import { activeSpaceKey } from '@/lib/active-space'
 import { PREFERENCES, readPreference, removePreference, writePreference } from '@/lib/preferences'
+import { activeSpaceKey } from '@/stores/active-space'
 
 const MAX_RECENT_SEARCHES = 8
 

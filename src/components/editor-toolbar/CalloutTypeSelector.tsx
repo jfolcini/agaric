@@ -27,7 +27,7 @@ import {
   useInlinePickerKeyboard,
 } from '@/components/editor-toolbar/InlinePicker'
 import { CALLOUT_CONFIG } from '@/components/RichContentRenderer/context'
-import { dispatchBlockEvent } from '@/lib/block-events'
+import { dispatchBlockCommand } from '@/stores/block-command-bus'
 
 const CALLOUT_TYPES = ['info', 'warning', 'tip', 'error', 'note'] as const
 
@@ -57,7 +57,7 @@ export function CalloutTypeSelector({ onClose }: CalloutTypeSelectorProps): Reac
   )
 
   function applyType(type: string): void {
-    dispatchBlockEvent('INSERT_CALLOUT', { type })
+    dispatchBlockCommand('INSERT_CALLOUT', { type })
     onClose()
   }
 

@@ -26,10 +26,10 @@ import { extractFileInfo, isAttachmentAllowed, readFileBytes } from '@/lib/file-
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
 import { reportIpcError } from '@/lib/report-ipc-error'
-import { runUnmountFlush } from '@/lib/unmount-flush'
 import { cn } from '@/lib/utils'
 import { useBlockStore } from '@/stores/blocks'
 import { type PageBlockState, usePageBlockStore, usePageBlockStoreApi } from '@/stores/page-blocks'
+import { runUnmountFlush } from '@/stores/unmount-flush'
 
 /**
  * Unmount the roving editor from the given block and persist its content.

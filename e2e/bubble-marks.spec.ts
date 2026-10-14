@@ -67,7 +67,7 @@ interface MarkCase {
 
 /**
  * One row per bubble mark toggle (the order createMarkToggles emits them in,
- * src/lib/toolbar-config.ts). Bold is included for parity with the reference
+ * src/components/FormattingToolbar/toolbar-config.ts). Bold is included for parity with the reference
  * pattern even though selection-bubble.spec.ts already covers its click; the
  * value add here is the reopen step.
  */

@@ -2,9 +2,7 @@
  * Tests for src/lib/guarded-storage.ts — the notify-free leaf that guards
  * `localStorage` access for zustand's `persist` middleware (#2925).
  *
- * `guardedPersistStorage` is used by stores that cannot import `notify`
- * without closing an import cycle (e.g. `useDebugStore`, which `error-display`
- * reads `getDebugMode` from). It must still swallow + log a `setItem` throw,
+ * With no `onWriteError` it must still swallow + log a `setItem` throw,
  * but — unlike `safePersistStorage` — must NOT reach into `notify`.
  *
  * The real global `localStorage` is stubbed per-test via `vi.stubGlobal`
@@ -23,7 +21,7 @@ vi.mock('@/lib/logger', () => ({
   },
 }))
 
-import { createGuardedStorage, guardedPersistStorage } from '@/lib/guarded-storage'
+import { createGuardedStorage } from '@/lib/guarded-storage'
 import { logger } from '@/lib/logger'
 
 /** Minimal in-memory `Storage`-shaped mock so tests control failure per-call. */
@@ -41,7 +39,7 @@ function makeMockStorage() {
   }
 }
 
-describe('guardedPersistStorage', () => {
+describe('createGuardedStorage', () => {
   let mockStorage: ReturnType<typeof makeMockStorage>
 
   beforeEach(() => {
@@ -60,7 +58,7 @@ describe('guardedPersistStorage', () => {
     })
 
     expect(() => {
-      guardedPersistStorage?.setItem('agaric:debug', { state: { debugMode: true }, version: 1 })
+      createGuardedStorage()?.setItem('agaric:debug', { state: { debugMode: true }, version: 1 })
     }).not.toThrow()
     expect(logger.warn).toHaveBeenCalledTimes(1)
     expect(logger.warn).toHaveBeenCalledWith(
@@ -72,7 +70,7 @@ describe('guardedPersistStorage', () => {
   })
 
   it('setItem writes through to localStorage on success', () => {
-    guardedPersistStorage?.setItem('agaric:debug', { state: { debugMode: true }, version: 1 })
+    createGuardedStorage()?.setItem('agaric:debug', { state: { debugMode: true }, version: 1 })
 
     expect(mockStorage.backing.get('agaric:debug')).toBe(
       JSON.stringify({ state: { debugMode: true }, version: 1 }),
@@ -87,7 +85,7 @@ describe('guardedPersistStorage', () => {
 
     let result: unknown
     expect(() => {
-      result = guardedPersistStorage?.getItem('agaric:debug')
+      result = createGuardedStorage()?.getItem('agaric:debug')
     }).not.toThrow()
     expect(result).toBeNull()
     expect(logger.warn).toHaveBeenCalledTimes(1)

@@ -127,7 +127,7 @@ describe('SLASH_COMMANDS catalog', () => {
   })
 
   it('searchSlashCommands surfaces /duplicate for a "duplicate" query', () => {
-    const ids = searchSlashCommands('duplicate').map((r) => r.id)
+    const ids = searchSlashCommands('duplicate', []).map((r) => r.id)
     expect(ids).toContain('duplicate')
   })
 })
@@ -155,7 +155,7 @@ describe('TURN_INTO commands (#264)', () => {
   })
 
   it('searchSlashCommands surfaces the parent + expanded options for a /turn query', () => {
-    const ids = searchSlashCommands('turn').map((r) => r.id)
+    const ids = searchSlashCommands('turn', []).map((r) => r.id)
     expect(ids).toContain('turn')
     expect(ids).toContain('turn-paragraph')
     expect(ids).toContain('turn-h1')
@@ -164,7 +164,7 @@ describe('TURN_INTO commands (#264)', () => {
   })
 
   it('does not surface turn options for an unrelated query', () => {
-    const ids = searchSlashCommands('priority').map((r) => r.id)
+    const ids = searchSlashCommands('priority', []).map((r) => r.id)
     expect(ids).not.toContain('turn-paragraph')
   })
 
@@ -175,7 +175,7 @@ describe('TURN_INTO commands (#264)', () => {
   it.each(['heading', 'quote', 'code'])(
     'does not surface turn options for the type-name query %p',
     (query) => {
-      const ids = searchSlashCommands(query).map((r) => r.id)
+      const ids = searchSlashCommands(query, []).map((r) => r.id)
       expect(ids.some((id) => id.startsWith('turn-'))).toBe(false)
     },
   )
@@ -196,7 +196,7 @@ describe('Repeat sub-grouping (#1106)', () => {
   function repeatItems() {
     // matchSorter against "repeat" surfaces every repeat-labelled option from
     // all three sources (base, REPEAT_COMMANDS, REPEAT_END_COMMANDS).
-    return searchSlashCommands('repeat').filter(
+    return searchSlashCommands('repeat', []).filter(
       (r) => r.id === 'repeat' || r.id.startsWith('repeat-'),
     )
   }

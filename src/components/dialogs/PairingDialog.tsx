@@ -45,7 +45,7 @@ import { LoadingSkeleton } from '@/components/rendering/LoadingSkeleton'
 import { Button } from '@/components/ui/button'
 import { DialogBody } from '@/components/ui/dialog'
 import { SheetBody } from '@/components/ui/sheet'
-import { useDialogOrSheet } from '@/hooks/useDialogOrSheet'
+import { useDialogOrSheet } from '@/components/ui/use-dialog-or-sheet'
 import { useIpcCommand } from '@/hooks/useIpcCommand'
 // #3852 — the OS's own report that it is dropping this app's packets, and the
 // wake lock that stops it happening in the first place. See each hook's docs;

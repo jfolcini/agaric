@@ -28,7 +28,7 @@ export type { FlatBlock }
  * user never asked for and did not see happen.
  *
  * The only caller is the leaked-empty-block cleanup that fires on focus-leave
- * (`src/lib/empty-block-cleanup.ts`). Every user-initiated delete —
+ * (`src/stores/empty-block-cleanup.ts`). Every user-initiated delete —
  * `handleDeleteBlock`, the merge paths, Escape-cancel, swipe-delete — keeps
  * the default and stays undoable.
  */

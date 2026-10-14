@@ -22,7 +22,7 @@
  */
 
 import { isAppError } from '@/lib/app-error'
-import { getDebugMode } from '@/stores/useDebugStore'
+import { PREFERENCES, readPreference } from '@/lib/preferences'
 
 /**
  * Leading `AppError` Display prefixes (mirrors the `#[error("… : {0}")]`
@@ -54,8 +54,8 @@ function stripErrorPrefix(message: string): string {
 
 export interface FormatErrorOptions {
   /**
-   * Override the debug flag (tests, or callers that already read the
-   * store). Defaults to the live `getDebugMode()` value.
+   * Override the debug flag (tests, or callers that already read it).
+   * Defaults to the stored `PREFERENCES.debugMode` value.
    */
   debug?: boolean
   /**
@@ -88,7 +88,7 @@ export function formatErrorForDisplay(err: unknown, opts: FormatErrorOptions = {
     return opts.fallback ?? String(err)
   }
 
-  const debug = opts.debug ?? getDebugMode()
+  const debug = opts.debug ?? readPreference(PREFERENCES.debugMode)
   const base = stripErrorPrefix(message)
   if (!debug || !kind) return base
   return `${base} · code: ${kind}`

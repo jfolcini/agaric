@@ -9,6 +9,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { withOps } from '@/__tests__/fixtures'
 import { mockInvokeCommands, type TypedInvokeHandlers } from '@/__tests__/helpers/invoke'
 import { useBlockResolve } from '@/components/block-tree/use-block-resolve'
+import { ConfirmDialog } from '@/components/dialogs/ConfirmDialog'
 import { usePageDeleteAction } from '@/hooks/usePageDeleteAction'
 import {
   _resetGraphStructureEventsForTest,
@@ -28,7 +29,7 @@ function stubInvoke(overrides: Readonly<TypedInvokeHandlers>): void {
 function Harness({ onReady }: { onReady: (api: ReturnType<typeof usePageDeleteAction>) => void }) {
   const api = usePageDeleteAction()
   onReady(api)
-  return <>{api.confirmDialog}</>
+  return <ConfirmDialog {...api.confirmDialogProps} />
 }
 
 function renderHarness(): { api: ReturnType<typeof usePageDeleteAction> } {

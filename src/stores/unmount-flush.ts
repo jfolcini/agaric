@@ -55,16 +55,16 @@
 import { shouldSplitOnBlur } from '@/editor/content-delta'
 import { parse } from '@/editor/markdown-parse'
 import { processCheckboxSyntax } from '@/lib/block-utils'
+import { type InlinePropertyLine, parseInlineProperties } from '@/lib/inline-property-parse'
+import { scanNameTokens, type TagToken } from '@/lib/name-tokens'
+import type { TodoState } from '@/lib/task-states'
 import {
   bumpFlushSeq,
   commitCheckboxState,
   commitInlineProperties,
   commitTypedTags,
   type PageBlockStoreLike,
-} from '@/lib/inline-property-commit'
-import { type InlinePropertyLine, parseInlineProperties } from '@/lib/inline-property-parse'
-import { scanNameTokens, type TagToken } from '@/lib/name-tokens'
-import type { TodoState } from '@/lib/task-states'
+} from '@/stores/inline-property-commit'
 
 // #5448 — the saves whose text write lands only after an IPC answers (the
 // checkbox and property branches), keyed by block id. Until that write lands

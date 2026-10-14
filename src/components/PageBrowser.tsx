@@ -23,10 +23,15 @@ import { useTranslation } from 'react-i18next'
 import { EmptyState } from '@/components/common/EmptyState'
 import { ListErrorState } from '@/components/common/ListViewState'
 import { LoadMoreButton } from '@/components/common/LoadMoreButton'
+import { ConfirmDialog } from '@/components/dialogs/ConfirmDialog'
 import { ViewHeader } from '@/components/layout/ViewHeader'
 import { PageBrowserFilterRow } from '@/components/PageBrowser/PageBrowserFilterRow'
 import { PageBrowserHeader } from '@/components/PageBrowser/PageBrowserHeader'
 import { PageBrowserRowRenderer } from '@/components/PageBrowser/PageBrowserRowRenderer'
+import {
+  useFilterAnnouncementSettle,
+  usePageBrowserFilters,
+} from '@/components/PageBrowser/usePageBrowserFilters'
 import { PageBrowserBatchToolbar } from '@/components/pages/PageBrowserBatchToolbar'
 import { LoadingSkeleton } from '@/components/rendering/LoadingSkeleton'
 import { Button } from '@/components/ui/button'
@@ -36,7 +41,6 @@ import { useListKeyboardNavigation } from '@/hooks/useListKeyboardNavigation'
 import { useListMultiSelect } from '@/hooks/useListMultiSelect'
 import { usePageBrowserAutoLoad } from '@/hooks/usePageBrowserAutoLoad'
 import { usePageBrowserData } from '@/hooks/usePageBrowserData'
-import { useFilterAnnouncementSettle, usePageBrowserFilters } from '@/hooks/usePageBrowserFilters'
 import { usePageBrowserGrouping } from '@/hooks/usePageBrowserGrouping'
 import { usePageBrowserKeyboard } from '@/hooks/usePageBrowserKeyboard'
 import { usePageBrowserScrollRestoration } from '@/hooks/usePageBrowserScrollRestoration'
@@ -201,7 +205,7 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
     setDisplayTotalCount,
     deletingId,
     setDeleteTarget,
-    deleteConfirmDialog,
+    deleteConfirmDialogProps,
   } = usePageBrowserData({
     currentSpaceId,
     spaceIsReady,
@@ -780,7 +784,7 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
         {filterAnnouncement}
       </output>
 
-      {deleteConfirmDialog}
+      <ConfirmDialog {...deleteConfirmDialogProps} />
     </div>
   )
 }

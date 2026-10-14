@@ -45,7 +45,7 @@ import { useSlashCommandTemplate } from '@/components/block-tree/use-block-slash
 import type { PickerItem } from '@/editor/SuggestionList'
 import { useCheckboxSyntax } from '@/hooks/useCheckboxSyntax'
 import { useListStyleSyntax } from '@/hooks/useListStyleSyntax'
-import { addRecentCommand, RECENT_SLASH_PREFIX } from '@/lib/recent-commands'
+import { addRecentCommand, RECENT_SLASH_PREFIX } from '@/stores/recent-commands'
 
 export type {
   UseBlockSlashCommandsParams,

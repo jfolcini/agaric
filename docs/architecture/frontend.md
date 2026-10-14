@@ -119,7 +119,7 @@ Page membership lives in the native, indexed `blocks.space_id` column (migration
 
 ### Per-space store partitioning
 
-Four stores carry per-space slices: `tabs.tabsBySpace`, `navigation.currentViewBySpace`, `journal.currentDateBySpace` (+ `modeBySpace`), `recent-pages.recentPagesBySpace`. Three of them (`tabs`, `navigation`, `recent-pages`) are built with the higher-level `createPerSpaceSlice` primitive (`src/stores/createPerSpaceSlice.ts`), introduced in #2253 to kill the flat-mirror bug class; `journal` still consumes the lower-level `createSpaceSubscriber` (`src/lib/createSpaceSubscriber.ts`) directly. `createPerSpaceSlice` wires its reconciliation through `createSpaceSubscriber` under the hood, so both are keyed via `activeSpaceKey()` (`src/lib/active-space.ts`) with `LEGACY_SPACE_KEY = '__legacy__'` for pre-bootstrap state.
+Four stores carry per-space slices: `tabs.tabsBySpace`, `navigation.currentViewBySpace`, `journal.currentDateBySpace` (+ `modeBySpace`), `recent-pages.recentPagesBySpace`. Three of them (`tabs`, `navigation`, `recent-pages`) are built with the higher-level `createPerSpaceSlice` primitive (`src/stores/createPerSpaceSlice.ts`), introduced in #2253 to kill the flat-mirror bug class; `journal` still consumes the lower-level `createSpaceSubscriber` (`src/stores/createSpaceSubscriber.ts`) directly. `createPerSpaceSlice` wires its reconciliation through `createSpaceSubscriber` under the hood, so both are keyed via `activeSpaceKey()` (`src/stores/active-space.ts`) with `LEGACY_SPACE_KEY = '__legacy__'` for pre-bootstrap state.
 
 There is one subscriber pattern underneath — adding a fifth per-space slice means building it with `createPerSpaceSlice`.
 
@@ -157,7 +157,7 @@ The contract:
 - **`hasPreference` vs. equality.** Distinguishes "never stored" from "stored, and happens to equal the default" (e.g. an explicitly-persisted empty array) — `useBlockCollapse` needs this to tell a page's genuinely-empty scoped collapse list apart from "no scoped entry yet, fall back to the legacy global key".
 - **Multi-window coherence is a separate concern.** The registry itself does not broadcast writes across windows — a real `localStorage` write already fires a native `storage` event in every OTHER window. A caller that needs same-tab reactivity (the tab that made the write) still owns its own `useSyncExternalStore` + synthetic `StorageEvent` dispatch, same as before the registry existed (`useTheme`, `useWeekStart`, `useJournalDateFormat`, `useExternalImagePolicy` — these are exactly the guard's grandfathered exemptions, see the script's `EXEMPT_FILES` for the full per-file rationale).
 
-Consume via `usePreference` (which wraps `useLocalStoragePreference`) or the pure `readPreference` / `writePreference` / `hasPreference` / `removePreference` helpers. New preference keys MUST be added to the registry rather than reaching into `localStorage` ad hoc, so all preferences stay discoverable with one naming/versioning/migration contract. Migration off raw `localStorage` calls was opportunistic — Zustand-`persist`-backed stores (`tabs.ts`, `navigation.ts`, `journal.ts`, `recent-pages.ts`, `search-history.ts`, `pageBrowserFilters.ts`, `useDebugStore.ts`) are explicitly OUT of the registry's scope: they already carry their own versioned envelope and migrate function via `persist` middleware.
+Consume via `usePreference` (which wraps `useLocalStoragePreference`) or the pure `readPreference` / `writePreference` / `hasPreference` / `removePreference` helpers. New preference keys MUST be added to the registry rather than reaching into `localStorage` ad hoc, so all preferences stay discoverable with one naming/versioning/migration contract. Migration off raw `localStorage` calls was opportunistic — Zustand-`persist`-backed stores (`tabs.ts`, `navigation.ts`, `journal.ts`, `recent-pages.ts`, `search-history.ts`, `pageBrowserFilters.ts`) are explicitly OUT of the registry's scope: they already carry their own versioned envelope and migrate function via `persist` middleware.
 
 ## Reduced motion + a11y
 
@@ -189,7 +189,7 @@ The full inventory lives in [`docs/UI-MAP.md`](../UI-MAP.md). The architecture-r
 
 Four of these layering rules are mechanically enforced, all as commit-blocking prek hooks: `store-layering` (`scripts/check-store-layering.mjs`, page-block stores → global focus only), `import-cycles` (`scripts/check-import-cycles.mjs`), `no-ui-store-imports` (`src/components/ui/` primitives may not import stores), and `lib-layering` (`scripts/check-lib-layering.mjs`, below). The rest are conventions upheld in review.
 
-### `lib-layering` — the frontend tier ratchet (#3121)
+### `lib-layering` — the frontend tier guard (#3121)
 
 `lib-layering` names four ranked tiers and forbids a lower one importing a higher one:
 
@@ -200,10 +200,8 @@ lib (0)  ←  stores (1)  ←  hooks (2)  ←  components (3)
 Read the arrow as "is depended on by": `src/lib/` may depend only on itself and external packages, `src/stores/` may add `lib/`, `src/hooks/` may add `stores/`, and `src/components/` may depend on all three. This is a strictly different property from the two hooks above — `import-cycles` only proves the graph has no *loop* (a pure util importing a store is perfectly acyclic and still a layering break), and `store-layering` only covers store-to-store edges.
 
 - **Scope.** Only those four directories. `src/editor/`, `src/workers/`, `src/types/` and everything else are out of scope in *both* directions — the guard neither scans them as importers nor treats importing them as a violation, so `src/editor/` is a legal path around the tiers.
-- **Ratchet, not an allowlist.** `scripts/lib-layering-baseline.json` freezes the files that currently violate the rule. The hook fails on a **new** upward import (a file not in the baseline) *and* on a **stale** baseline entry (an entry whose violation is gone) — the count may only go down. Unlike `check-store-layering.mjs` there is no per-edge allowlist.
-- **When you hit it.** Fixing the import is the intended move; removing the file's baseline entry (or `--update-baseline`) is how you record a fix. Adding an entry for a genuinely new, intentional upward edge also goes through `--update-baseline`, and must be justified in the commit message — appending to the baseline to unblock a commit is exactly what the ratchet exists to prevent.
-
-Step 2 of #3121 — splitting `src/lib/` by concern to burn the baseline down and carving out a `lib/ipc` leaf — is deliberately not part of this guard; it moves no files.
+- **No baseline, no allowlist.** Any upward import fails the hook, reported as file, line and specifier.
+- **When you hit it.** Move the shared code down to the importing tier, or move the importing file up to the tier it actually belongs to (a `src/lib/` module that reads a store is a `src/stores/` module).
 
 The decomposition pattern (a "god component" with an `oxlint-disable-next-line eslint/complexity` suppression → orchestrator + per-concern children + a containing hook) is documented in `docs/UX.md § UI primitives`.
 
@@ -405,7 +403,7 @@ nonetheless correct. Five buckets were accepted:
   cannot wait, because the consumer runs before this component's own effects:
   `src/editor/use-editor-event-dispatch.ts` (the per-render staging slot,
   published into the backing refs by a post-commit `useLayoutEffect`) and
-  `src/hooks/useLazyRovingEditor.ts`'s `liveHandleRef` (read by a DESCENDANT's
+  `src/components/editor/useLazyRovingEditor.ts`'s `liveHandleRef` (read by a DESCENDANT's
   layout effect, which runs before this hook's would).
 - **React's documented lazy-ref-init idiom** (`if (!ref.current) ref.current =
   new Thing()`), including the widening that re-inits on a key change:
@@ -417,7 +415,7 @@ nonetheless correct. Five buckets were accepted:
   `src/components/editor/BlockContextMenu.tsx`,
   `src/components/AdvancedQuery/HasParentMatchingEditor.tsx`,
   `src/components/PageBrowser/AddFilterPopover.tsx`,
-  `src/hooks/useLazyRovingEditor.ts`.
+  `src/components/editor/useLazyRovingEditor.ts`.
 - **A ref chosen deliberately so a value does not force a re-render**:
   `src/components/journal/DaySection.tsx`'s measured placeholder height.
 
@@ -431,7 +429,7 @@ documented at that site: the store is external and idempotent, and rows
 rendering in the same pass must read it.
 
 Anything outside these buckets is a real finding: fix it, and prove the fix with
-the e2e, not with vitest. `src/hooks/useLocalStoragePreference.ts` was one. Its
+the e2e, not with vitest. `src/lib/local-storage-preference.ts` was one. Its
 returned value read `failedWriteRef.current` during render, so the hook's
 rendering output depended on a mutation React does not track: any consumer that
 skips a re-render holds the pre-failure value, and the read is unsafe under

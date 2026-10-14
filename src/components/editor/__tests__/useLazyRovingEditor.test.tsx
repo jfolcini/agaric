@@ -13,8 +13,8 @@ import type { ReactNode } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { EditorSurfaceProps } from '@/components/editor/editor-surface-context'
+import { useLazyRovingEditor } from '@/components/editor/useLazyRovingEditor'
 import type { RovingEditorHandle } from '@/editor/use-roving-editor'
-import { useLazyRovingEditor } from '@/hooks/useLazyRovingEditor'
 
 // The lazy editor-runtime chunk is mocked: its host captures the `onReady`
 // callback so the test can hand over a "live" editor on demand, exactly as the

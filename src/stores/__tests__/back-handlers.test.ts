@@ -18,7 +18,7 @@
 
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { navigationBackHandler, overlayBackHandler } from '@/lib/back-handlers'
+import { navigationBackHandler, overlayBackHandler } from '@/stores/back-handlers'
 import { useNavigationStore } from '@/stores/navigation'
 import { useResolveStore } from '@/stores/resolve'
 import { DEFAULT_PAGE_EXIT_VIEW, resetTabIdCounter, useTabsStore } from '@/stores/tabs'

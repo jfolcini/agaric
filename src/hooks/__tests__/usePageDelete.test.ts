@@ -7,7 +7,7 @@ import { usePageDelete } from '@/hooks/usePageDelete'
 
 const { requestDelete, sharedDialog } = vi.hoisted(() => ({
   requestDelete: vi.fn(),
-  sharedDialog: { type: 'shared-confirm-dialog' },
+  sharedDialog: { open: false },
 }))
 
 vi.mock('@/hooks/usePageDeleteAction', () => ({
@@ -15,7 +15,7 @@ vi.mock('@/hooks/usePageDeleteAction', () => ({
     requestDelete,
     deletingId: 'PENDING_PAGE',
     isDeleting: true,
-    confirmDialog: sharedDialog,
+    confirmDialogProps: sharedDialog,
   }),
 }))
 
@@ -28,7 +28,7 @@ describe('usePageDelete', () => {
     const { result } = renderHook(() => usePageDelete(vi.fn(), vi.fn()))
 
     expect(result.current.deletingId).toBe('PENDING_PAGE')
-    expect(result.current.confirmDialog).toBe(sharedDialog)
+    expect(result.current.confirmDialogProps).toBe(sharedDialog)
   })
 
   it('ignores a null row target', () => {

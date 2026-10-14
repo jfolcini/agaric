@@ -78,8 +78,8 @@ import {
   CommandList,
   CommandSeparator,
 } from '@/components/ui/command'
+import { useDialogOrSheet } from '@/components/ui/use-dialog-or-sheet'
 import { useDebouncedCallback } from '@/hooks/useDebouncedCallback'
-import { useDialogOrSheet } from '@/hooks/useDialogOrSheet'
 import { useFailedOnce } from '@/hooks/useFailedOnce'
 import { useGenerationGuard } from '@/hooks/useGenerationGuard'
 import { useIsMobile } from '@/hooks/useIsMobile'
@@ -93,7 +93,6 @@ import { isDateFormattedPage } from '@/lib/date-utils'
 import { searchBlocksPartitioned } from '@/lib/ipc-helpers'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
-import { addRecentSearch, clearRecentSearches, getRecentSearches } from '@/lib/recent-searches'
 import { cn } from '@/lib/utils'
 import { useNavigationStore } from '@/stores/navigation'
 import { removeExcludeJournalPagesFilter } from '@/stores/pageBrowserFilters'
@@ -103,6 +102,7 @@ import {
   toRecentPage,
   useRecentPagesStore,
 } from '@/stores/recent-pages'
+import { addRecentSearch, clearRecentSearches, getRecentSearches } from '@/stores/recent-searches'
 import { useSpaceStore } from '@/stores/space'
 import { useTabsStore } from '@/stores/tabs'
 import { useCommandPaletteStore } from '@/stores/useCommandPaletteStore'

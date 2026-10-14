@@ -20,7 +20,7 @@
 import { act, render } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { useLocalStoragePreference } from '@/hooks/useLocalStoragePreference'
+import { useLocalStoragePreference } from '@/lib/local-storage-preference'
 import { logger } from '@/lib/logger'
 
 // The one `useState(null)` call in useLocalStoragePreference is the

@@ -8,11 +8,12 @@ import { ChevronToggle } from '@/components/ui/chevron-toggle'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { useIsMobile } from '@/hooks/useIsMobile'
 import { useIsTouch } from '@/hooks/useIsTouch'
-import { type BLOCK_EVENTS, dispatchBlockEvent } from '@/lib/block-events'
+import type { BLOCK_EVENTS } from '@/lib/block-events'
 import { dueDateColor, formatCompactDate } from '@/lib/date-utils'
 import { priorityColor } from '@/lib/priority-color'
 import { formatRepeatLabel } from '@/lib/repeat-utils'
 import { cn } from '@/lib/utils'
+import { dispatchBlockCommand } from '@/stores/block-command-bus'
 import { useBlockStore } from '@/stores/blocks'
 
 /**
@@ -70,7 +71,7 @@ export function DateChip({
       // collapse-toggle note in BlockInlineControls for the full rationale.
       onMouseDown={(e) => e.preventDefault()}
       onClick={() => {
-        dispatchBlockEvent(eventName)
+        dispatchBlockCommand(eventName)
       }}
     >
       {/* The chips pin text-xs, where 1em stays 12px at every font size, so
@@ -430,7 +431,7 @@ function InlineProperties({
               onMouseDown={(e) => e.preventDefault()}
               onClick={(e) => {
                 e.stopPropagation()
-                dispatchBlockEvent('OPEN_BLOCK_PROPERTIES')
+                dispatchBlockCommand('OPEN_BLOCK_PROPERTIES')
               }}
             >
               +{filteredProperties.length - inlinePropLimit}

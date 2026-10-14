@@ -88,7 +88,7 @@ pub const SWEEP_MIN_AGE: std::time::Duration = std::time::Duration::from_secs(7 
 /// The characters JavaScript's `String.prototype.trim` strips (ECMA-262
 /// WhiteSpace + LineTerminator), bound as `TRIM(content, ?)`'s second
 /// argument so guard 2 gives the same verdict as the frontend half's
-/// `content.trim() === ''` (`src/lib/empty-block-cleanup.ts`). SQLite's
+/// `content.trim() === ''` (`src/stores/empty-block-cleanup.ts`). SQLite's
 /// one-argument `TRIM` strips only U+0020, so a block holding a lone `\n`
 /// or NBSP would be "empty" on blur and "not empty" here — two verdicts for
 /// one block.

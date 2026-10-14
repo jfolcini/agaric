@@ -19,7 +19,6 @@
  * has no pin concept (deferred to Phase 4).
  */
 
-import { activeSpaceKey } from '@/lib/active-space'
 import {
   PREFERENCES,
   type PreferenceDefinition,
@@ -27,6 +26,7 @@ import {
   type RecentCommand,
   writePreference,
 } from '@/lib/preferences'
+import { activeSpaceKey } from '@/stores/active-space'
 
 export type { RecentCommand } from '@/lib/preferences'
 

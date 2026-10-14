@@ -35,6 +35,16 @@ import {
   Tip,
   toolbarPressHandlers,
 } from '@/components/FormattingToolbar/shared'
+import {
+  createHistoryButtons,
+  createMarkToggles,
+  createMetadataButtons,
+  createRefsAndBlocks,
+  createStructureButtons,
+  toolbarActiveClass,
+  toolbarMenuRowClass,
+  type ToolbarButtonConfig,
+} from '@/components/FormattingToolbar/toolbar-config'
 import { ToolbarFrame } from '@/components/FormattingToolbar/ToolbarFrame'
 import {
   SOURCE_MARKS,
@@ -63,16 +73,6 @@ import type { ToolbarItem } from '@/hooks/useToolbarOverflow'
 import type { BlockTypeToken } from '@/lib/block-type-convert'
 import { formatDate } from '@/lib/date-utils'
 import { TURN_INTO_OPTIONS, turnIntoTypeKey } from '@/lib/slash-commands'
-import {
-  createHistoryButtons,
-  createMarkToggles,
-  createMetadataButtons,
-  createRefsAndBlocks,
-  createStructureButtons,
-  toolbarActiveClass,
-  toolbarMenuRowClass,
-  type ToolbarButtonConfig,
-} from '@/lib/toolbar-config'
 import { cn } from '@/lib/utils'
 
 const BLOCK_MENU = 'pageSource.blockMenu'

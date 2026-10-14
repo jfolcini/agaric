@@ -10,6 +10,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { FeatureErrorBoundary } from '@/components/common/FeatureErrorBoundary'
+import { ConfirmDialog } from '@/components/dialogs/ConfirmDialog'
 import { EmojiPickerDialog } from '@/components/EmojiPicker'
 import { ViewHeader } from '@/components/layout/ViewHeader'
 import { PageAliasSection } from '@/components/pages/PageAliasSection'
@@ -66,7 +67,7 @@ export function PageHeader({ pageId, title, onBack, onEditSource, kebabRef }: Pa
   // `usePageDeleteAction` owns the confirm dialog + success-toast-with-
   // Undo wiring; the kebab "Delete page" item routes through
   // `requestDelete()`.
-  const { requestDelete, confirmDialog: deleteConfirmDialog } = usePageDeleteAction()
+  const { requestDelete, confirmDialogProps: deleteConfirmDialogProps } = usePageDeleteAction()
 
   // --- Breadcrumb navigation for namespaced pages ---
   const navigateToNamespace = useCallback(() => {
@@ -624,7 +625,7 @@ export function PageHeader({ pageId, title, onBack, onEditSource, kebabRef }: Pa
         </div>
       </ViewHeader>
 
-      {deleteConfirmDialog}
+      <ConfirmDialog {...deleteConfirmDialogProps} />
 
       <PageOutline
         open={outlineOpen}

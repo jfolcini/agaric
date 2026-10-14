@@ -335,7 +335,7 @@ describe('AtTagPicker real-editor chain result', () => {
 
 // ── #2998: toolbar @ button opens the picker ──────────────────────────
 //
-// The toolbar "insert tag" button (see `lib/toolbar-config.ts` →
+// The toolbar "insert tag" button (see `components/FormattingToolbar/toolbar-config.ts` →
 // `createRefsAndBlocks`) inserts the `@` trigger (prepending a space when the
 // caret is not already after whitespace, since the picker's
 // `allowedPrefixes: [' ', '\u00A0', '\n']` gate would otherwise ignore a

@@ -11,14 +11,14 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { StoreApi } from 'zustand'
 
+import { BLOCK_EVENTS } from '@/lib/block-events'
 import {
   __resetBlockCommandBus,
   type BlockCommandName,
   dispatchBlockCommand,
   registerBlockCommandTarget,
   registeredBlockCommandTargetCount,
-} from '@/lib/block-command-bus'
-import { BLOCK_EVENTS } from '@/lib/block-events'
+} from '@/stores/block-command-bus'
 import { useBlockStore } from '@/stores/blocks'
 import type { PageBlockState } from '@/stores/page-blocks'
 

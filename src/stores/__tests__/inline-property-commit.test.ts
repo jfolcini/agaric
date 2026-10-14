@@ -14,14 +14,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { makeBlock, makeBlockRow, makePropertyRow } from '@/__tests__/fixtures'
 import { type TypedInvokeHandlers, stubInvoke } from '@/__tests__/helpers/invoke'
 import type { BlockRow, PropertyRow } from '@/lib/bindings'
+import { parseInlineProperties } from '@/lib/inline-property-parse'
+import { dispatch } from '@/lib/tauri-mock/handlers'
+import { SEED_IDS, seedBlocks } from '@/lib/tauri-mock/seed'
 import {
   bumpFlushSeq,
   commitCheckboxState,
   commitInlineProperties,
-} from '@/lib/inline-property-commit'
-import { parseInlineProperties } from '@/lib/inline-property-parse'
-import { dispatch } from '@/lib/tauri-mock/handlers'
-import { SEED_IDS, seedBlocks } from '@/lib/tauri-mock/seed'
+} from '@/stores/inline-property-commit'
 import { createPageBlockStore } from '@/stores/page-blocks'
 import { useSpaceStore } from '@/stores/space'
 

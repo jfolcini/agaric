@@ -15,6 +15,7 @@ import { DuePanel } from '@/components/agenda/DuePanel'
 import { LinkedReferences } from '@/components/backlinks/LinkedReferences'
 import { BlockRefPeek } from '@/components/BlockRefPeek'
 import { EmptyState } from '@/components/common/EmptyState'
+import { ConfirmDialog } from '@/components/dialogs/ConfirmDialog'
 import { AddBlockButton } from '@/components/editor/AddBlockButton'
 import { BlockTree } from '@/components/editor/BlockTree'
 import { PageQuickActions } from '@/components/pages/PageQuickActions'
@@ -172,7 +173,11 @@ function DaySectionInner({
   // toast with Undo). The journal uses higher-stakes copy
   // ("Delete the note for {{date}}?") because a daily note is a
   // distinguished entry, not just another page.
-  const { requestDelete, deletingId, confirmDialog: deleteConfirmDialog } = usePageDeleteAction()
+  const {
+    requestDelete,
+    deletingId,
+    confirmDialogProps: deleteConfirmDialogProps,
+  } = usePageDeleteAction()
   const dayPageId = entry.pageId
   const isDeletingThisDay = dayPageId != null && deletingId === dayPageId
 
@@ -395,7 +400,7 @@ function DaySectionInner({
       )}
       {/* Single delete-confirm dialog (Part A) — both header
           branches above route through `usePageDeleteAction.requestDelete`. */}
-      {deleteConfirmDialog}
+      <ConfirmDialog {...deleteConfirmDialogProps} />
 
       {entry.pageId &&
         (shouldLazyMount && !hasEntered ? (

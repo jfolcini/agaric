@@ -100,7 +100,7 @@
 //
 // ─── No baseline ────────────────────────────────────────────────────
 //
-// Unlike `check-lib-layering.mjs`, this is not a ratchet: `src/types/`
+// This is not a ratchet: `src/types/`
 // is required to be type-only at ALL times, so the population this
 // guard tolerates is always exactly zero. As of #4226 the tree already
 // has zero violations (the three files the #4006 burndown moved here —

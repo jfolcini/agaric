@@ -541,3 +541,26 @@ describe('graphLocal', () => {
     expect(readPreference(PREFERENCES.graphLocal, 'SPACE_A')).toEqual({ active: false, hops: 2 })
   })
 })
+
+describe('debugMode', () => {
+  it('reads and writes the persist envelope already on disk', () => {
+    const envelope = JSON.stringify({ state: { debugMode: true }, version: 1 })
+    localStorage.setItem('agaric:debug', envelope)
+    expect(readPreference(PREFERENCES.debugMode)).toBe(true)
+
+    writePreference(PREFERENCES.debugMode, false)
+    expect(localStorage.getItem('agaric:debug')).toBe(
+      JSON.stringify({ state: { debugMode: false }, version: 1 }),
+    )
+    writePreference(PREFERENCES.debugMode, true)
+    expect(localStorage.getItem('agaric:debug')).toBe(envelope)
+  })
+
+  it.each([['true'], ['{"state":{}}'], ['{"state":{"debugMode":"yes"}}'], ['null']])(
+    'reads %s as off',
+    (raw) => {
+      localStorage.setItem('agaric:debug', raw)
+      expect(readPreference(PREFERENCES.debugMode)).toBe(false)
+    },
+  )
+})

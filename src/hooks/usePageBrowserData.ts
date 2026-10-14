@@ -144,7 +144,7 @@ interface UsePageBrowserDataResult {
   setDisplayTotalCount: Dispatch<SetStateAction<number | undefined>>
   deletingId: ReturnType<typeof usePageDelete>['deletingId']
   setDeleteTarget: ReturnType<typeof usePageDelete>['setDeleteTarget']
-  deleteConfirmDialog: ReturnType<typeof usePageDelete>['confirmDialog']
+  deleteConfirmDialogProps: ReturnType<typeof usePageDelete>['confirmDialogProps']
 }
 
 export function usePageBrowserData({
@@ -498,7 +498,7 @@ export function usePageBrowserData({
   const {
     deletingId,
     setDeleteTarget,
-    confirmDialog: deleteConfirmDialog,
+    confirmDialogProps: deleteConfirmDialogProps,
   } = usePageDelete(setPagesForDelete, reload)
 
   return {
@@ -513,6 +513,6 @@ export function usePageBrowserData({
     setDisplayTotalCount,
     deletingId,
     setDeleteTarget,
-    deleteConfirmDialog,
+    deleteConfirmDialogProps,
   }
 }

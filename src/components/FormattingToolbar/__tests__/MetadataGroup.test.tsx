@@ -12,11 +12,11 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
 import { renderCyclePriority } from '@/components/FormattingToolbar/MetadataGroup'
-import { dispatchBlockEvent } from '@/lib/block-events'
 import { t } from '@/lib/i18n'
+import { dispatchBlockCommand } from '@/stores/block-command-bus'
 
-vi.mock('@/lib/block-events', () => ({
-  dispatchBlockEvent: vi.fn(),
+vi.mock('@/stores/block-command-bus', () => ({
+  dispatchBlockCommand: vi.fn(),
 }))
 
 vi.mock('@/components/ui/tooltip', () => ({
@@ -30,7 +30,7 @@ vi.mock('@/components/ui/tooltip', () => ({
   ),
 }))
 
-const mockedDispatch = vi.mocked(dispatchBlockEvent)
+const mockedDispatch = vi.mocked(dispatchBlockCommand)
 
 function renderPriority(mode: 'inline' | 'overflow', onAfterOverflowAction = vi.fn()) {
   render(

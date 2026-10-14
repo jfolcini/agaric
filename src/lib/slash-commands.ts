@@ -61,8 +61,8 @@ import { matchSorter } from 'match-sorter'
 
 import type { PickerItem } from '@/editor/SuggestionList'
 import { matchesSearchFolded } from '@/lib/fold-for-search'
+import type { RecentCommand } from '@/lib/preferences'
 import { getPropertyKeys } from '@/lib/property-keys-cache'
-import { getRecentCommands, RECENT_SLASH_PREFIX } from '@/lib/recent-commands'
 import type { TodoState } from '@/lib/task-states'
 
 /**
@@ -82,9 +82,9 @@ export const RECENT_SLASH_CATEGORY = 'slashCommand.categories.recent'
  * surfaced — expanded sub-options (`turn-*`, `priority-*`, …) are reachable
  * by typing, not via the recents band. #1105.
  */
-function recentSlashCommands(): PickerItem[] {
+function recentSlashCommands(recents: readonly RecentCommand[]): PickerItem[] {
   const byId = new Map(SLASH_COMMANDS.map((c) => [c.id, c]))
-  return getRecentCommands(RECENT_SLASH_PREFIX)
+  return recents
     .map((r) => byId.get(r.id))
     .filter((c): c is PickerItem => c != null)
     .map((c) => Object.assign({}, c, { category: RECENT_SLASH_CATEGORY }))
@@ -682,7 +682,11 @@ export const TURN_INTO_COMMANDS: PickerItem[] = TURN_INTO_OPTIONS.map((o) => ({
   icon: o.icon,
 }))
 
-export function searchSlashCommands(query: string): PickerItem[] {
+/** `recents` is the slash MRU (`getRecentCommands(RECENT_SLASH_PREFIX)`), shown on an empty query. */
+export function searchSlashCommands(
+  query: string,
+  recents: readonly RecentCommand[],
+): PickerItem[] {
   const q = query.toLowerCase()
   const baseResults = q ? matchSorter(SLASH_COMMANDS, q, { keys: ['label'] }) : SLASH_COMMANDS
   if (!q) {
@@ -691,8 +695,8 @@ export function searchSlashCommands(query: string): PickerItem[] {
     // progressively disclosed instead of dumping all commands flat. The full
     // list still follows below, so everything stays reachable; typing a query
     // bypasses the band entirely (the branch below).
-    const recents = recentSlashCommands()
-    return recents.length > 0 ? [...recents, ...baseResults] : baseResults
+    const recentBand = recentSlashCommands(recents)
+    return recentBand.length > 0 ? [...recentBand, ...baseResults] : baseResults
   }
   const priorityResults = matchSorter(PRIORITY_COMMANDS, q, { keys: ['label'] })
   const headingResults = matchSorter(HEADING_COMMANDS, q, { keys: ['label'] })

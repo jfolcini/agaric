@@ -28,8 +28,8 @@ import {
   PickerRow,
   useInlinePickerKeyboard,
 } from '@/components/editor-toolbar/InlinePicker'
+import { CODE_LANGUAGES } from '@/components/FormattingToolbar/toolbar-config'
 import { toggleCodeBlockSafely } from '@/editor/toggle-code-block-safely'
-import { CODE_LANGUAGES } from '@/lib/toolbar-config'
 
 export interface CodeLanguageSelectorProps {
   editor: Editor

@@ -15,10 +15,10 @@ import { FormatMenu } from '@/components/editor-toolbar/FormatMenu'
 import { TablePicker } from '@/components/editor-toolbar/TablePicker'
 import { TurnIntoMenu } from '@/components/editor-toolbar/TurnIntoMenu'
 import { type RenderMode, Tip, toolbarPressHandlers } from '@/components/FormattingToolbar/shared'
+import { toolbarMenuRowClass } from '@/components/FormattingToolbar/toolbar-config'
 import { TableOpsSelector } from '@/components/TableOpsSelector'
 import { Button } from '@/components/ui/button'
 import { Popover, PopoverAnchor, PopoverContent } from '@/components/ui/popover'
-import { toolbarMenuRowClass } from '@/lib/toolbar-config'
 
 interface FormatButtonProps {
   editor: Editor

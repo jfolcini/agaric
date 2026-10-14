@@ -19,8 +19,8 @@
 
 import { format } from 'date-fns'
 
-import { activeSpaceKey } from '@/lib/active-space'
 import { getWeekRange } from '@/lib/date-utils'
+import { activeSpaceKey } from '@/stores/active-space'
 import { type JournalMode, parseISODate, useJournalStore } from '@/stores/journal'
 import {
   MAX_NAV_HISTORY,

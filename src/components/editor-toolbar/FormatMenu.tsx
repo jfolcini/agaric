@@ -38,14 +38,14 @@ import { useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { toolbarPressHandlers } from '@/components/FormattingToolbar/shared'
-import { Button } from '@/components/ui/button'
-import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import {
   createMarkToggles,
   MARK_TOGGLE_SHORTCUT_IDS,
   toolbarActiveClass,
   withShortcutHint,
-} from '@/lib/toolbar-config'
+} from '@/components/FormattingToolbar/toolbar-config'
+import { Button } from '@/components/ui/button'
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
 
 interface FormatMenuProps {

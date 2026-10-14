@@ -4,10 +4,10 @@
  * ## Why this exists
  *
  * Toolbar buttons, inline controls, and the roving editor used to drive
- * per-block commands by dispatching a `CustomEvent` on `document`
- * (`dispatchBlockEvent` in block-events.ts). EVERY mounted `BlockTree`
- * subscribed at the document level, so a journal week/month view (one tree per
- * day) installed N × ~13 document listeners, each one re-checking ownership via
+ * per-block commands by dispatching a `CustomEvent` on `document`. EVERY
+ * mounted `BlockTree` subscribed at the document level, so a journal
+ * week/month view (one tree per day) installed N × ~13 document listeners,
+ * each one re-checking ownership via
  * `storeOwnsBlock(pageStore, focusedBlockId)` on every command. Only the single
  * tree whose page store owned the GLOBAL `focusedBlockId` (blocks.ts — exactly
  * one focused block app-wide) ever acted; the rest were pure overhead and the

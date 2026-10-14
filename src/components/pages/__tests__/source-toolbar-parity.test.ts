@@ -16,6 +16,13 @@ import {
 } from '@/components/editor/block-context-menu/types'
 import { buildToolbarItems } from '@/components/FormattingToolbar/items'
 import {
+  createHistoryButtons,
+  createMarkToggles,
+  createMetadataButtons,
+  createRefsAndBlocks,
+  createStructureButtons,
+} from '@/components/FormattingToolbar/toolbar-config'
+import {
   SOURCE_MARKS,
   SOURCE_MENU_EXCLUDED,
   SOURCE_MENU_ROWS,
@@ -23,13 +30,6 @@ import {
   SOURCE_TOOLBAR_EXCLUDED,
   SOURCE_TOOLBAR_MENUS,
 } from '@/components/pages/source-toolbar-actions'
-import {
-  createHistoryButtons,
-  createMarkToggles,
-  createMetadataButtons,
-  createRefsAndBlocks,
-  createStructureButtons,
-} from '@/lib/toolbar-config'
 
 // The config only closes over the editor; no button is pressed here.
 const editor = {} as Editor

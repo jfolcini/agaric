@@ -16,7 +16,7 @@
  * #1250 — these no longer install ~13 `document` CustomEvent listeners per
  * mounted BlockTree. Instead each tree registers its handler set ONCE with the
  * focus-keyed block command bus (`registerBlockCommandTarget`). A producer's
- * `dispatchBlockEvent` routes the command DIRECTLY to the single tree whose
+ * `dispatchBlockCommand` routes the command DIRECTLY to the single tree whose
  * page store owns the global `focusedBlockId`, so the bus already performed the
  * old `storeOwnsBlock(pageStore, focusedBlockId)` gate — the resolved owning
  * `blockId` is handed to each handler. This removes the per-tree listener
@@ -40,7 +40,6 @@ import type { SlashCommandContext } from '@/components/block-tree/use-block-slas
 import type { RovingEditorHandle } from '@/editor/use-roving-editor'
 import { unwrap } from '@/lib/app-error'
 import { commands } from '@/lib/bindings'
-import { type BlockCommandHandler, registerBlockCommandTarget } from '@/lib/block-command-bus'
 import {
   type BlockTypeToken,
   convertBlockContent,
@@ -49,6 +48,7 @@ import {
 import { listStyleForBlockType, setListStyle } from '@/lib/list-style'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
+import { type BlockCommandHandler, registerBlockCommandTarget } from '@/stores/block-command-bus'
 import type { PageBlockState } from '@/stores/page-blocks'
 import { useUndoStore } from '@/stores/undo'
 

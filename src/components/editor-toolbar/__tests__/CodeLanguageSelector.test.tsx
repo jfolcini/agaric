@@ -21,8 +21,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
 import { CodeLanguageSelector } from '@/components/editor-toolbar/CodeLanguageSelector'
+import { CODE_LANGUAGES } from '@/components/FormattingToolbar/toolbar-config'
 import { t } from '@/lib/i18n'
-import { CODE_LANGUAGES } from '@/lib/toolbar-config'
 
 // ── TipTap editor chain mock ──────────────────────────────────────────────
 // The component invokes one of two paths:

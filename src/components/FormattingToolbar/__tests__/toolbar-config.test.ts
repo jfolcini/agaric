@@ -11,7 +11,7 @@
 
 import { describe, expect, it, vi } from 'vitest'
 
-import type { ToolbarButtonConfig } from '@/lib/toolbar-config'
+import type { ToolbarButtonConfig } from '@/components/FormattingToolbar/toolbar-config'
 import {
   CODE_LANGUAGES,
   createHistoryButtons,
@@ -22,18 +22,19 @@ import {
   LANG_SHORT,
   MARK_TOGGLE_SHORTCUT_IDS,
   toolbarActiveClass,
-} from '@/lib/toolbar-config'
+} from '@/components/FormattingToolbar/toolbar-config'
 
-// #2222: `dispatchBlockEvent` no longer broadcasts a legacy document
+// #2222: `dispatchBlockCommand` no longer broadcasts a legacy document
 // CustomEvent (the broadcast had zero production listeners; the focus-keyed
 // command bus is the only delivery path). These tests observe producer
 // dispatches as document events, so shim the bus back onto `document`: the
 // existing assertions keep pinning the producer contract — typed
 // BLOCK_EVENTS key mapped to the expected event name, plus the detail
 // payload — and fail if a producer stops dispatching or changes its detail.
-vi.mock('@/lib/block-command-bus', async () => {
-  const actual =
-    await vi.importActual<typeof import('@/lib/block-command-bus')>('@/lib/block-command-bus')
+vi.mock('@/stores/block-command-bus', async () => {
+  const actual = await vi.importActual<typeof import('@/stores/block-command-bus')>(
+    '@/stores/block-command-bus',
+  )
   const { BLOCK_EVENTS } =
     await vi.importActual<typeof import('@/lib/block-event-names')>('@/lib/block-event-names')
   return {

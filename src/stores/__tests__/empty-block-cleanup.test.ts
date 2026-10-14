@@ -39,10 +39,10 @@ import { invoke } from '@tauri-apps/api/core'
 import { makeBlockRow, makePropertyRow, withOps } from '@/__tests__/fixtures'
 import { deferred, mockInvokeCommands } from '@/__tests__/helpers/invoke'
 import type { AttachmentRow } from '@/lib/bindings'
-import { deleteBlockIfLeakedEmpty, isLeakedEmptyCandidate } from '@/lib/empty-block-cleanup'
 import type { FlatBlock } from '@/lib/tree-utils'
-import { runUnmountFlush } from '@/lib/unmount-flush'
+import { deleteBlockIfLeakedEmpty, isLeakedEmptyCandidate } from '@/stores/empty-block-cleanup'
 import { useSpaceStore } from '@/stores/space'
+import { runUnmountFlush } from '@/stores/unmount-flush'
 
 function makeBlock(over: Partial<FlatBlock> & { id: string }): FlatBlock {
   return {

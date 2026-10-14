@@ -34,8 +34,8 @@ import type { RefObject } from 'react'
 import { useCallback } from 'react'
 
 import type { RovingEditorHandle } from '@/editor/use-roving-editor'
-import { runUnmountFlush } from '@/lib/unmount-flush'
 import { storeOwnsBlock, type usePageBlockStoreApi } from '@/stores/page-blocks'
+import { runUnmountFlush } from '@/stores/unmount-flush'
 
 // #2914 — cross-callback handoff of an in-flight multi-block split.
 //

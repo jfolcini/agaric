@@ -3,7 +3,7 @@
  *
  * #1250 — the hook no longer installs document listeners; it registers this
  * tree's handlers with the focus-keyed block command bus. A producer's
- * `dispatchBlockEvent` routes through the bus to the single tree whose page
+ * `dispatchBlockCommand` routes through the bus to the single tree whose page
  * store owns the GLOBAL `focusedBlockId` (`useBlockStore`). These tests set
  * that global focus and assert each command reaches the correct callback, fires
  * exactly once (in the owning tree only), and is torn down on unmount.
@@ -22,9 +22,8 @@ import type { UseBlockTreeEventListenersOptions } from '@/components/block-tree/
 import { useBlockTreeEventListeners } from '@/components/block-tree/use-block-tree-event-listeners'
 import type { RovingEditorHandle } from '@/editor/use-roving-editor'
 import type { PasteInput } from '@/lib/bindings'
-import { __resetBlockCommandBus } from '@/lib/block-command-bus'
-import { dispatchBlockEvent } from '@/lib/block-events'
 import { setListStyle } from '@/lib/list-style'
+import { __resetBlockCommandBus, dispatchBlockCommand } from '@/stores/block-command-bus'
 import { useBlockStore } from '@/stores/blocks'
 import { createPageBlockStore, PageBlockContext } from '@/stores/page-blocks'
 
@@ -127,7 +126,7 @@ describe('useBlockTreeEventListeners', () => {
       const opts = makeOptions()
       renderHook(() => useBlockTreeEventListeners(opts))
 
-      dispatchBlockEvent('DISCARD_BLOCK_EDIT')
+      dispatchBlockCommand('DISCARD_BLOCK_EDIT')
 
       expect(opts.handleDiscard).toHaveBeenCalledTimes(1)
     })
@@ -137,7 +136,7 @@ describe('useBlockTreeEventListeners', () => {
       const opts = makeOptions({ focusedBlockId: null })
       renderHook(() => useBlockTreeEventListeners(opts))
 
-      dispatchBlockEvent('DISCARD_BLOCK_EDIT')
+      dispatchBlockCommand('DISCARD_BLOCK_EDIT')
 
       expect(opts.handleDiscard).not.toHaveBeenCalled()
     })
@@ -148,7 +147,7 @@ describe('useBlockTreeEventListeners', () => {
       const opts = makeOptions()
       renderHook(() => useBlockTreeEventListeners(opts))
 
-      dispatchBlockEvent('CYCLE_PRIORITY')
+      dispatchBlockCommand('CYCLE_PRIORITY')
 
       expect(opts.handleTogglePriority).toHaveBeenCalledWith('BLOCK_1')
     })
@@ -158,7 +157,7 @@ describe('useBlockTreeEventListeners', () => {
       const opts = makeOptions({ focusedBlockId: null })
       renderHook(() => useBlockTreeEventListeners(opts))
 
-      dispatchBlockEvent('CYCLE_PRIORITY')
+      dispatchBlockCommand('CYCLE_PRIORITY')
 
       expect(opts.handleTogglePriority).not.toHaveBeenCalled()
     })
@@ -169,7 +168,7 @@ describe('useBlockTreeEventListeners', () => {
       const opts = makeOptions()
       renderHook(() => useBlockTreeEventListeners(opts))
 
-      dispatchBlockEvent('SET_PRIORITY_1')
+      dispatchBlockCommand('SET_PRIORITY_1')
 
       // The handler is async — wait for it
       await vi.waitFor(() => {
@@ -185,7 +184,7 @@ describe('useBlockTreeEventListeners', () => {
       const opts = makeOptions({ focusedBlockId: null })
       renderHook(() => useBlockTreeEventListeners(opts))
 
-      dispatchBlockEvent('SET_PRIORITY_1')
+      dispatchBlockCommand('SET_PRIORITY_1')
 
       // The bus is a no-op when nothing is focused, so the async handler never
       // runs. Flush one microtask for defensive determinism, then assert
@@ -204,7 +203,7 @@ describe('useBlockTreeEventListeners', () => {
       const opts = makeOptions()
       renderHook(() => useBlockTreeEventListeners(opts))
 
-      dispatchBlockEvent('OPEN_DATE_PICKER')
+      dispatchBlockCommand('OPEN_DATE_PICKER')
 
       expect(opts.setDatePickerMode).toHaveBeenCalledWith('date')
       expect(opts.setDatePickerOpen).toHaveBeenCalledWith(true)
@@ -215,7 +214,7 @@ describe('useBlockTreeEventListeners', () => {
       const opts = makeOptions({ focusedBlockId: null })
       renderHook(() => useBlockTreeEventListeners(opts))
 
-      dispatchBlockEvent('OPEN_DATE_PICKER')
+      dispatchBlockCommand('OPEN_DATE_PICKER')
 
       expect(opts.setDatePickerOpen).not.toHaveBeenCalled()
     })
@@ -243,7 +242,7 @@ describe('useBlockTreeEventListeners', () => {
       const opts = makeOptions()
       renderHook(() => useBlockTreeEventListeners(opts))
 
-      dispatchBlockEvent('OPEN_DUE_DATE_PICKER')
+      dispatchBlockCommand('OPEN_DUE_DATE_PICKER')
 
       expect(opts.setDatePickerMode).toHaveBeenCalledWith('due')
       expect(opts.setDatePickerOpen).toHaveBeenCalledWith(true)
@@ -255,7 +254,7 @@ describe('useBlockTreeEventListeners', () => {
       const opts = makeOptions()
       renderHook(() => useBlockTreeEventListeners(opts))
 
-      dispatchBlockEvent('OPEN_SCHEDULED_DATE_PICKER')
+      dispatchBlockCommand('OPEN_SCHEDULED_DATE_PICKER')
 
       expect(opts.setDatePickerMode).toHaveBeenCalledWith('schedule')
       expect(opts.setDatePickerOpen).toHaveBeenCalledWith(true)
@@ -267,7 +266,7 @@ describe('useBlockTreeEventListeners', () => {
       const opts = makeOptions()
       renderHook(() => useBlockTreeEventListeners(opts))
 
-      dispatchBlockEvent('TOGGLE_TODO_STATE')
+      dispatchBlockCommand('TOGGLE_TODO_STATE')
 
       expect(opts.handleToggleTodo).toHaveBeenCalledWith('BLOCK_1')
     })
@@ -277,7 +276,7 @@ describe('useBlockTreeEventListeners', () => {
       const opts = makeOptions({ focusedBlockId: null })
       renderHook(() => useBlockTreeEventListeners(opts))
 
-      dispatchBlockEvent('TOGGLE_TODO_STATE')
+      dispatchBlockCommand('TOGGLE_TODO_STATE')
 
       expect(opts.handleToggleTodo).not.toHaveBeenCalled()
     })
@@ -288,7 +287,7 @@ describe('useBlockTreeEventListeners', () => {
       const opts = makeOptions()
       renderHook(() => useBlockTreeEventListeners(opts))
 
-      dispatchBlockEvent('OPEN_BLOCK_PROPERTIES')
+      dispatchBlockCommand('OPEN_BLOCK_PROPERTIES')
 
       expect(opts.handleShowProperties).toHaveBeenCalledWith('BLOCK_1')
     })
@@ -298,7 +297,7 @@ describe('useBlockTreeEventListeners', () => {
       const opts = makeOptions({ focusedBlockId: null })
       renderHook(() => useBlockTreeEventListeners(opts))
 
-      dispatchBlockEvent('OPEN_BLOCK_PROPERTIES')
+      dispatchBlockCommand('OPEN_BLOCK_PROPERTIES')
 
       expect(opts.handleShowProperties).not.toHaveBeenCalled()
     })
@@ -312,10 +311,10 @@ describe('useBlockTreeEventListeners', () => {
       unmount()
 
       // After unmount, commands should not trigger callbacks
-      dispatchBlockEvent('DISCARD_BLOCK_EDIT')
-      dispatchBlockEvent('CYCLE_PRIORITY')
-      dispatchBlockEvent('TOGGLE_TODO_STATE')
-      dispatchBlockEvent('OPEN_BLOCK_PROPERTIES')
+      dispatchBlockCommand('DISCARD_BLOCK_EDIT')
+      dispatchBlockCommand('CYCLE_PRIORITY')
+      dispatchBlockCommand('TOGGLE_TODO_STATE')
+      dispatchBlockCommand('OPEN_BLOCK_PROPERTIES')
 
       expect(opts.handleDiscard).not.toHaveBeenCalled()
       expect(opts.handleTogglePriority).not.toHaveBeenCalled()
@@ -348,7 +347,7 @@ describe('useBlockTreeEventListeners', () => {
       const { opts, mount } = structuralOpts('hello')
       renderHook(() => useBlockTreeEventListeners(opts))
 
-      dispatchBlockEvent(event)
+      dispatchBlockCommand(event)
 
       await vi.waitFor(() =>
         expect(mockedInvoke).toHaveBeenCalledWith('edit_block', { blockId: 'BLOCK_1', toText }),
@@ -364,7 +363,7 @@ describe('useBlockTreeEventListeners', () => {
       const { opts } = structuralOpts('hello')
       renderHook(() => useBlockTreeEventListeners(opts))
 
-      dispatchBlockEvent('INSERT_ORDERED_LIST')
+      dispatchBlockCommand('INSERT_ORDERED_LIST')
 
       await vi.waitFor(() =>
         expect(vi.mocked(setListStyle)).toHaveBeenCalledWith('BLOCK_1', 'ordered'),
@@ -381,7 +380,7 @@ describe('useBlockTreeEventListeners', () => {
       const { opts } = structuralOpts('hello')
       renderHook(() => useBlockTreeEventListeners(opts))
 
-      dispatchBlockEvent('TURN_INTO_BLOCK', { type: 'numbered-list' })
+      dispatchBlockCommand('TURN_INTO_BLOCK', { type: 'numbered-list' })
 
       await vi.waitFor(() =>
         expect(mockedInvoke).toHaveBeenCalledWith('edit_block', {
@@ -402,7 +401,7 @@ describe('useBlockTreeEventListeners', () => {
       const { opts } = structuralOpts('hello')
       renderHook(() => useBlockTreeEventListeners(opts))
 
-      dispatchBlockEvent('INSERT_CALLOUT', { type })
+      dispatchBlockCommand('INSERT_CALLOUT', { type })
 
       await vi.waitFor(() =>
         expect(mockedInvoke).toHaveBeenCalledWith('edit_block', { blockId: 'BLOCK_1', toText }),
@@ -414,7 +413,7 @@ describe('useBlockTreeEventListeners', () => {
       const { opts } = structuralOpts('hello')
       renderHook(() => useBlockTreeEventListeners({ ...opts, focusedBlockId: null }))
 
-      dispatchBlockEvent('INSERT_DIVIDER')
+      dispatchBlockCommand('INSERT_DIVIDER')
 
       expect(mockedInvoke).not.toHaveBeenCalledWith('edit_block', expect.anything())
     })
@@ -425,7 +424,7 @@ describe('useBlockTreeEventListeners', () => {
       unmount()
       mockedInvoke.mockClear()
 
-      dispatchBlockEvent('INSERT_DIVIDER')
+      dispatchBlockCommand('INSERT_DIVIDER')
 
       expect(mockedInvoke).not.toHaveBeenCalledWith('edit_block', expect.anything())
     })
@@ -458,7 +457,7 @@ describe('useBlockTreeEventListeners', () => {
       renderHook(() => useBlockTreeEventListeners(opts))
       const splice = { before: 'a', after: 'b' }
 
-      dispatchBlockEvent('PASTE_BLOCKS', { input: INPUT, targetBlockId: 'BLOCK_1', splice })
+      dispatchBlockCommand('PASTE_BLOCKS', { input: INPUT, targetBlockId: 'BLOCK_1', splice })
 
       await vi.waitFor(() =>
         expect(pasteBlocks).toHaveBeenCalledWith('BLOCK_1', INPUT, splice, expect.any(Function)),
@@ -470,7 +469,7 @@ describe('useBlockTreeEventListeners', () => {
       renderHook(() => useBlockTreeEventListeners(opts))
 
       // Paste was claimed while OTHER_BLOCK was focused, but focus is now BLOCK_1.
-      dispatchBlockEvent('PASTE_BLOCKS', { input: INPUT, targetBlockId: 'OTHER_BLOCK' })
+      dispatchBlockCommand('PASTE_BLOCKS', { input: INPUT, targetBlockId: 'OTHER_BLOCK' })
       await Promise.resolve()
 
       expect(pasteBlocks).not.toHaveBeenCalled()
@@ -480,7 +479,7 @@ describe('useBlockTreeEventListeners', () => {
       const { opts, pasteBlocks } = pasteOpts()
       renderHook(() => useBlockTreeEventListeners(opts))
 
-      dispatchBlockEvent('PASTE_BLOCKS', { input: INPUT, targetBlockId: null })
+      dispatchBlockCommand('PASTE_BLOCKS', { input: INPUT, targetBlockId: null })
 
       await vi.waitFor(() =>
         expect(pasteBlocks).toHaveBeenCalledWith('BLOCK_1', INPUT, undefined, expect.any(Function)),
@@ -512,7 +511,7 @@ describe('useBlockTreeEventListeners', () => {
     it('TOGGLE_TODO_STATE fires exactly once, in the owning tree only', () => {
       const { treeA, treeB } = renderTwoTrees()
 
-      dispatchBlockEvent('TOGGLE_TODO_STATE')
+      dispatchBlockCommand('TOGGLE_TODO_STATE')
 
       expect(treeA.handleToggleTodo).toHaveBeenCalledTimes(1)
       expect(treeA.handleToggleTodo).toHaveBeenCalledWith('BLOCK_A')
@@ -522,7 +521,7 @@ describe('useBlockTreeEventListeners', () => {
     it('CYCLE_PRIORITY fires exactly once, in the owning tree only', () => {
       const { treeA, treeB } = renderTwoTrees()
 
-      dispatchBlockEvent('CYCLE_PRIORITY')
+      dispatchBlockCommand('CYCLE_PRIORITY')
 
       expect(treeA.handleTogglePriority).toHaveBeenCalledTimes(1)
       expect(treeA.handleTogglePriority).toHaveBeenCalledWith('BLOCK_A')
@@ -532,7 +531,7 @@ describe('useBlockTreeEventListeners', () => {
     it('SET_PRIORITY_1 issues exactly ONE set_priority IPC and only updates the owning store', async () => {
       const { treeA, treeB } = renderTwoTrees()
 
-      dispatchBlockEvent('SET_PRIORITY_1')
+      dispatchBlockCommand('SET_PRIORITY_1')
 
       await vi.waitFor(() => {
         const calls = mockedInvoke.mock.calls.filter((c: unknown[]) => c[0] === 'set_priority')
@@ -547,7 +546,7 @@ describe('useBlockTreeEventListeners', () => {
     it('OPEN_DATE_PICKER opens exactly one picker, in the owning tree only', () => {
       const { treeA, treeB } = renderTwoTrees()
 
-      dispatchBlockEvent('OPEN_DATE_PICKER')
+      dispatchBlockCommand('OPEN_DATE_PICKER')
 
       expect(treeA.setDatePickerOpen).toHaveBeenCalledTimes(1)
       expect(treeA.setDatePickerOpen).toHaveBeenCalledWith(true)
@@ -557,7 +556,7 @@ describe('useBlockTreeEventListeners', () => {
     it('INSERT_DIVIDER edits the block exactly once, via the owning tree only', async () => {
       renderTwoTrees()
 
-      dispatchBlockEvent('INSERT_DIVIDER')
+      dispatchBlockCommand('INSERT_DIVIDER')
 
       await vi.waitFor(() => {
         const calls = mockedInvoke.mock.calls.filter((c: unknown[]) => c[0] === 'edit_block')
@@ -575,15 +574,15 @@ describe('useBlockTreeEventListeners', () => {
       })
       renderHook(() => useBlockTreeEventListeners(opts))
 
-      dispatchBlockEvent('DISCARD_BLOCK_EDIT')
-      dispatchBlockEvent('CYCLE_PRIORITY')
-      dispatchBlockEvent('SET_PRIORITY_1')
-      dispatchBlockEvent('OPEN_DATE_PICKER')
-      dispatchBlockEvent('OPEN_DUE_DATE_PICKER')
-      dispatchBlockEvent('OPEN_SCHEDULED_DATE_PICKER')
-      dispatchBlockEvent('TOGGLE_TODO_STATE')
-      dispatchBlockEvent('OPEN_BLOCK_PROPERTIES')
-      dispatchBlockEvent('INSERT_DIVIDER')
+      dispatchBlockCommand('DISCARD_BLOCK_EDIT')
+      dispatchBlockCommand('CYCLE_PRIORITY')
+      dispatchBlockCommand('SET_PRIORITY_1')
+      dispatchBlockCommand('OPEN_DATE_PICKER')
+      dispatchBlockCommand('OPEN_DUE_DATE_PICKER')
+      dispatchBlockCommand('OPEN_SCHEDULED_DATE_PICKER')
+      dispatchBlockCommand('TOGGLE_TODO_STATE')
+      dispatchBlockCommand('OPEN_BLOCK_PROPERTIES')
+      dispatchBlockCommand('INSERT_DIVIDER')
 
       // Flush any async microtasks.
       await Promise.resolve()
@@ -631,7 +630,7 @@ describe('useBlockTreeEventListeners', () => {
       renderTree(storeA)
       renderTree(storeB)
 
-      dispatchBlockEvent('TOGGLE_TODO_STATE')
+      dispatchBlockCommand('TOGGLE_TODO_STATE')
 
       await vi.waitFor(() => {
         const calls = mockedInvoke.mock.calls.filter((c: unknown[]) => c[0] === 'set_todo_state')

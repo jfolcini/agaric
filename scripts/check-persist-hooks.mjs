@@ -25,12 +25,11 @@
 //
 // ─── What counts as "non-scalar" (structural, not an allowlist) ───────
 //
-// Two stores legitimately persist a bare scalar and are fine without
-// either hook: `space.ts` (`currentSpaceId: string | null`, re-validated
-// against server truth by `reconcileCurrentSpaceId`) and
-// `useDebugStore.ts` (`debugMode: boolean`). Hardcoding those two
-// filenames would rot the moment a third scalar store appears, so this
-// guard instead derives "non-scalar" from the STATE INTERFACE:
+// A store that persists a bare scalar is fine without either hook:
+// `space.ts` (`currentSpaceId: string | null`, re-validated against server
+// truth by `reconcileCurrentSpaceId`). Hardcoding that filename would rot
+// the moment a second scalar store appears, so this guard instead derives
+// "non-scalar" from the STATE INTERFACE:
 //
 //   1. Find the state type from `create<TypeName>()(...)` and locate
 //      `interface TypeName { ... }` (or `type TypeName = { ... }`) in
@@ -60,11 +59,10 @@
 // sits alongside `currentViewBySpace: Record<string, View>`, which is
 // non-scalar on its own regardless of `View`'s resolution).
 //
-// This structural rule reproduces both exemptions from the interface
-// declarations alone (`currentSpaceId: string | null` and `debugMode:
-// boolean` are the ONLY all-scalar `partialize` shapes in the tree today)
-// — nothing references `space.ts` or `useDebugStore.ts` by name anywhere
-// in this file.
+// This structural rule reproduces the exemption from the interface
+// declaration alone (`currentSpaceId: string | null` is the ONLY all-scalar
+// `partialize` shape in the tree today) — nothing references `space.ts` by
+// name anywhere in this file.
 //
 // ─── Escape hatch ───────────────────────────────────────────────────
 //
@@ -751,7 +749,7 @@ function runSelfTest() {
       ].join('\n'),
     )
 
-    // 6. Single boolean field, no hooks → clean (mirrors useDebugStore.ts).
+    // 6. Single boolean field, no hooks → clean.
     w(
       'scalarBoolean.ts',
       [
