@@ -32,9 +32,9 @@ use super::*;
 /// Mirrors the per-call shape of [`query_by_property_inner`] so a caller
 /// migrating from the JS-side AND-intersection (`Promise.all` over N
 /// `query_by_property` IPCs) can replay each sub-filter unchanged. Each
-/// instance becomes ONE `EXISTS (SELECT 1 FROM block_properties bp …)`
-/// subquery in the composed SQL — the AND-intersection is the
-/// structural conjunction of the EXISTS clauses (no JS post-filter, no
+/// instance becomes ONE `b.id IN (SELECT block_id FROM block_properties …)`
+/// id set in the composed SQL — the AND-intersection is the
+/// structural conjunction of those id sets (no JS post-filter, no
 /// silent row cap).
 ///
 /// At most one of `value_text` / `value_text_in` / `value_date` /
@@ -68,8 +68,8 @@ pub struct PropertyFilter {
 ///
 /// Mirrors the [`query_by_tags_inner`] arg shape. When `mode = "and"`
 /// every supplied tag (id or prefix) must match; `"or"` (default) is
-/// the union. The predicate is composed into ONE `AND EXISTS (…)`
-/// subquery in the parent SQL — the JS-side AND-intersection between
+/// the union. The predicate is composed into `b.id IN (…)` id sets in
+/// the parent SQL — the JS-side AND-intersection between
 /// property and tag sub-results disappears.
 #[derive(Debug, Clone, Deserialize, Serialize, Type)]
 #[serde(rename_all = "camelCase")]
@@ -1023,29 +1023,22 @@ pub async fn count_backlinks_batch(
 // `filtered_blocks_query`
 // ---------------------------------------------------------------------------
 //
-// AND-intersection of property + tag predicates resolved entirely in
-// SQL via composed `EXISTS` subqueries. Replaces the FE `useQueryExecution.
-// fetchFilteredQuery` shape that issued one IPC per sub-filter (each
-// capped at `FILTERED_SUBQUERY_LIMIT = 200`) and intersected the result
-// IDs in JS — silently dropping any AND-set member outside the top-200
-// of any one sub-query. The new shape pushes the entire predicate to
-// SQLite so the SQL planner walks the full universe and the result set
-// has no implicit row cap beyond the requested page limit.
+// AND-intersection of property + tag predicates resolved entirely in SQL, so
+// the only row cap is the requested page limit. The FE used to intersect
+// per-filter IPC results, each capped at 200, in JS and silently dropped
+// matches outside any one cap.
 //
-// The AND between sub-filters is structural: every property filter
-// becomes one `AND EXISTS (SELECT 1 FROM block_properties bp WHERE
-// bp.block_id = b.id AND bp.key = ? AND <value predicate>)`, every tag
-// filter becomes one `AND EXISTS (SELECT 1 FROM block_tags bt …)`. The
-// SQL composition pattern mirrors `BacklinkFilter::And` in
-// `backlink/filters.rs`, the audit-cited "working template" — except
-// instead of materialising candidate sets per leaf and intersecting in
-// Rust, we let SQLite do the join.
+// Every non-reserved property filter and every tag clause becomes a
+// `b.id IN (<id set>)` candidate set; a reserved key is a predicate on its
+// `blocks` column. Candidate sets let SQLite look up only the matching ids,
+// where a correlated per-row `EXISTS` walked every block in the space in id
+// order until the page filled (#5426).
 
 /// Build the value-predicate SQL fragment for one property filter.
 ///
 /// Returns `(fragment, binds)` where `fragment` is the SQL clause to
-/// AND into the parent EXISTS subquery (empty string if no value
-/// predicate is supplied — the EXISTS is then satisfied by mere key
+/// AND into the property-row subquery (empty string if no value
+/// predicate is supplied — the subquery then matches mere key
 /// presence) and `binds` is the ordered list of values to bind into
 /// the next free placeholder slots (the caller substitutes `?N`
 /// numbering at composition time).
@@ -1132,7 +1125,7 @@ fn property_value_predicate_sql(
             " AND {bp_alias}.value_date >= ?{p_from} AND {bp_alias}.value_date < ?{p_to}"
         ));
     }
-    // No value predicate — EXISTS just checks key presence.
+    // No value predicate: key presence alone matches.
     Ok(String::new())
 }
 
@@ -1177,82 +1170,16 @@ pub async fn filtered_blocks_query_inner(
     }
 
     let page = PageRequest::new(cursor, limit)?;
-    let fetch_limit = page.limit + 1;
-    let (cursor_flag, cursor_id): (Option<i64>, &str) = match page.after.as_ref() {
-        Some(c) => (Some(1), c.id.as_str()),
-        None => (None, ""),
-    };
-
-    // ----- Compose dynamic SQL ------------------------------------------------
-    //
-    // Reserved bind slots:
-    //   ?1  cursor_flag      (Option<i64>; NULL ⇒ no cursor)
-    //   ?2  cursor_id        (String; only consulted when ?1 IS NOT NULL)
-    //   ?3  fetch_limit      (i64; page.limit + 1)
-    //   ?4  space_id         (Option<&str>; NULL ⇒ unscoped)
-    //   ?5  block_type       (Option<String>; NULL ⇒ unfiltered)
-    //
-    // EXISTS-subquery slots are appended starting at ?6.
-    let mut sql = String::from(
-        "SELECT b.id, b.block_type, b.content, b.parent_id, b.position, \
-                b.deleted_at, \
-                b.todo_state, b.priority, b.due_date, b.scheduled_date, \
-                b.page_id \
-         FROM blocks b \
-         WHERE b.deleted_at IS NULL \
-           AND (?1 IS NULL OR b.id > ?2) \
-           AND (?4 IS NULL OR b.space_id = ?4) \
-           AND (?5 IS NULL OR b.block_type = ?5)",
-    );
-
-    let mut next_param: usize = 6;
-    let mut prop_binds: Vec<String> = Vec::new();
-
-    let property_sql = property_filters_sql(&property_filters, &mut next_param, &mut prop_binds)?;
-    sql.push_str(&property_sql);
-
-    // Tag filter — one `AND EXISTS (…)` chain. The inner SQL UNIONs
-    // `block_tags`, `block_tag_refs` (always), and `block_tag_inherited`
-    // (when `include_inherited`) — same union semantics as
-    // `tag_query::resolve_tag_leaves`.
-    let mut tag_binds: Vec<String> = Vec::new();
-    if let Some(tf) = &tag_filters
-        && (!tf.tag_ids.is_empty() || !tf.prefixes.is_empty())
-    {
-        sql.push_str(&tag_filter_sql(tf, &mut next_param, &mut tag_binds));
-    }
-
-    sql.push_str(" ORDER BY b.id ASC LIMIT ?3");
-
-    // M3 (#348) — drift guard: the running `?N` placeholder index must
-    // stay in lockstep with the dynamic bind sequence. `next_param`
-    // started at 6 (placeholders `?1..?5` are the five fixed binds
-    // below; `?3` is reused for LIMIT), so every increment past 6 must
-    // correspond to exactly one pushed value across `prop_binds` +
-    // `tag_binds`. An off-by-one in the hand-tracked index would
-    // silently misbind and return wrong rows, so this fails in every
-    // build.
-    assert_eq!(
-        next_param - 6,
-        prop_binds.len() + tag_binds.len(),
-        "filtered_blocks_query placeholder index ({next_param}) drifted \
-         from the dynamic bind count (prop={}, tag={}); the `?N` numbering \
-         and the bind sequence are out of sync",
-        prop_binds.len(),
-        tag_binds.len(),
-    );
-
-    // ----- Bind in declared param order (?1..?N) -----------------------------
+    let (sql, binds) = filtered_blocks_sql(
+        &property_filters,
+        tag_filters.as_ref(),
+        block_type.as_deref(),
+        page.after.as_ref().map(|c| c.id.as_str()),
+    )?;
     let mut q = sqlx::query_as::<_, BlockRow>(sqlx::AssertSqlSafe(sql.as_str()))
-        .bind(cursor_flag) // ?1
-        .bind(cursor_id) // ?2
-        .bind(fetch_limit) // ?3
-        .bind(scope.space_id().as_str()) // ?4
-        .bind(block_type.as_deref()); // ?5
-    for v in &prop_binds {
-        q = q.bind(v);
-    }
-    for v in &tag_binds {
+        .bind(scope.space_id().as_str()) // ?1
+        .bind(page.limit + 1); // ?2
+    for v in &binds {
         q = q.bind(v);
     }
     let rows = q.fetch_all(pool).await?;
@@ -1260,6 +1187,59 @@ pub async fn filtered_blocks_query_inner(
     pagination::build_page_response(rows, page.limit, |last| {
         Cursor::for_id(last.id.clone().into_string())
     })
+}
+
+/// The statement [`filtered_blocks_query_inner`] runs, with its text binds in
+/// placeholder order from `?3`. `?1` is the space id and `?2` the fetch limit.
+fn filtered_blocks_sql(
+    property_filters: &[PropertyFilter],
+    tag_filters: Option<&TagFilterExpr>,
+    block_type: Option<&str>,
+    after_id: Option<&str>,
+) -> Result<(String, Vec<String>), AppError> {
+    let mut next_param: usize = 3;
+    let mut binds: Vec<String> = Vec::new();
+    // The unary `+` keeps `idx_blocks_space_type` out of the plan: without
+    // `sqlite_stat1` the planner rates that index above the candidate sets,
+    // then reads and sorts every block in the space.
+    let mut sql = String::from(
+        "SELECT b.id, b.block_type, b.content, b.parent_id, b.position, \
+                b.deleted_at, \
+                b.todo_state, b.priority, b.due_date, b.scheduled_date, \
+                b.page_id \
+         FROM blocks b \
+         WHERE b.deleted_at IS NULL \
+           AND +b.space_id = ?1",
+    );
+    if let Some(id) = after_id {
+        sql.push_str(&format!(" AND b.id > ?{next_param}"));
+        next_param += 1;
+        binds.push(id.to_owned());
+    }
+    if let Some(bt) = block_type {
+        sql.push_str(&format!(" AND b.block_type = ?{next_param}"));
+        next_param += 1;
+        binds.push(bt.to_owned());
+    }
+    sql.push_str(&property_filters_sql(
+        property_filters,
+        &mut next_param,
+        &mut binds,
+    )?);
+    if let Some(tf) = tag_filters.filter(|t| !t.tag_ids.is_empty() || !t.prefixes.is_empty()) {
+        sql.push_str(&tag_filter_sql(tf, &mut next_param, &mut binds));
+    }
+    sql.push_str(" ORDER BY b.id ASC LIMIT ?2");
+
+    // An off-by-one in the hand-tracked `?N` index would silently misbind and
+    // return wrong rows, so this fails in every build.
+    assert_eq!(
+        next_param - 3,
+        binds.len(),
+        "filtered_blocks_query placeholder index ({next_param}) drifted from \
+         the bind count; the `?N` numbering and the bind sequence are out of sync",
+    );
+    Ok((sql, binds))
 }
 
 /// The per-property-filter fragment chain of [`filtered_blocks_query_inner`]:
@@ -1277,9 +1257,9 @@ fn property_filters_sql(
             ));
         }
         // Reserved keys live as columns on `blocks`, not in
-        // `block_properties` — collapse the EXISTS into a direct column
-        // predicate on `b.<col>` so `priority:1` style filters resolve
-        // without a subquery.
+        // `block_properties` — emit a direct column predicate on
+        // `b.<col>` so `priority:1` style filters resolve without a
+        // subquery.
         let reserved_col = if is_reserved_property_key(&pf.key) {
             match pf.key.as_str() {
                 "todo_state" => Some("todo_state"),
@@ -1302,8 +1282,6 @@ fn property_filters_sql(
             continue;
         }
 
-        // Non-reserved: one `AND EXISTS (SELECT 1 FROM block_properties
-        // bp WHERE bp.block_id = b.id AND bp.key = ?N <value preds>)`.
         let key_param = *next_param;
         *next_param += 1;
         binds.push(pf.key.clone());
@@ -1311,16 +1289,15 @@ fn property_filters_sql(
         let value_pred = property_value_predicate_sql(pf, "bp", next_param, binds)?;
 
         frag.push_str(&format!(
-            " AND EXISTS (SELECT 1 FROM block_properties bp \
-                          WHERE bp.block_id = b.id \
-                            AND bp.key = ?{key_param}{value_pred})",
+            " AND b.id IN (SELECT bp.block_id FROM block_properties bp \
+                           WHERE bp.key = ?{key_param}{value_pred})",
         ));
     }
     Ok(frag)
 }
 
 /// The reserved-key arm of [`property_filters_sql`], emitting a direct
-/// predicate on `b.{col}` instead of a `block_properties` EXISTS.
+/// predicate on `b.{col}` instead of a `block_properties` id set.
 fn reserved_column_predicate_sql(
     pf: &PropertyFilter,
     col: &str,
@@ -1378,60 +1355,63 @@ fn reserved_column_predicate_sql(
     Ok(frag)
 }
 
-/// The tag-filter fragment of [`filtered_blocks_query_inner`]. Callers gate on
-/// a non-empty `tag_ids` / `prefixes` set.
+/// The tag-filter fragment of [`filtered_blocks_query_inner`]: one id set per
+/// tag id or name prefix, each the union of direct tags, inline tag refs and,
+/// with `include_inherited`, inherited tags. Mode `"and"` requires every set;
+/// any other mode matches their union. Callers gate on a non-empty `tag_ids` /
+/// `prefixes` set.
 fn tag_filter_sql(tf: &TagFilterExpr, next_param: &mut usize, binds: &mut Vec<String>) -> String {
-    let mode = tf.mode.to_lowercase();
-    let conjunction = if mode == "and" { " AND " } else { " OR " };
-
-    // Build per-tag/per-prefix subquery fragments.
-    let mut clauses: Vec<String> = Vec::new();
+    let mut id_sets: Vec<String> = Vec::new();
     for tag_id in &tf.tag_ids {
         let p = *next_param;
         *next_param += 1;
         binds.push(tag_id.clone());
-        let mut union_arms = vec![
-            format!("SELECT 1 FROM block_tags bt WHERE bt.block_id = b.id AND bt.tag_id = ?{p}"),
-            format!(
-                "SELECT 1 FROM block_tag_refs btr WHERE btr.source_id = b.id AND btr.tag_id = ?{p}"
-            ),
+        let mut arms = vec![
+            format!("SELECT block_id FROM block_tags WHERE tag_id = ?{p}"),
+            format!("SELECT source_id FROM block_tag_refs WHERE tag_id = ?{p}"),
         ];
         if tf.include_inherited {
-            union_arms.push(format!(
-                    "SELECT 1 FROM block_tag_inherited bti WHERE bti.block_id = b.id AND bti.tag_id = ?{p}"
-                ));
+            arms.push(format!(
+                "SELECT block_id FROM block_tag_inherited WHERE tag_id = ?{p}"
+            ));
         }
-        clauses.push(format!("EXISTS ({})", union_arms.join(" UNION ALL ")));
+        id_sets.push(arms.join(" UNION ALL "));
     }
     for prefix in &tf.prefixes {
         let p = *next_param;
         *next_param += 1;
         // LIKE-escape the user-supplied prefix and append `%` —
         // mirrors `tag_query::resolve_tag_prefix_leaves`.
-        let escaped = format!("{}%", agaric_core::sql_utils::escape_like(prefix));
-        binds.push(escaped);
-        let mut union_arms = vec![
+        binds.push(format!("{}%", agaric_core::sql_utils::escape_like(prefix)));
+        let mut arms = vec![
             format!(
-                "SELECT 1 FROM tags_cache tc \
+                "SELECT bt.block_id FROM tags_cache tc \
                      JOIN block_tags bt ON bt.tag_id = tc.tag_id \
-                     WHERE bt.block_id = b.id AND tc.name LIKE ?{p} ESCAPE '\\'"
+                     WHERE tc.name LIKE ?{p} ESCAPE '\\'"
             ),
             format!(
-                "SELECT 1 FROM tags_cache tc \
+                "SELECT btr.source_id FROM tags_cache tc \
                      JOIN block_tag_refs btr ON btr.tag_id = tc.tag_id \
-                     WHERE btr.source_id = b.id AND tc.name LIKE ?{p} ESCAPE '\\'"
+                     WHERE tc.name LIKE ?{p} ESCAPE '\\'"
             ),
         ];
         if tf.include_inherited {
-            union_arms.push(format!(
-                "SELECT 1 FROM tags_cache tc \
+            arms.push(format!(
+                "SELECT bti.block_id FROM tags_cache tc \
                      JOIN block_tag_inherited bti ON bti.tag_id = tc.tag_id \
-                     WHERE bti.block_id = b.id AND tc.name LIKE ?{p} ESCAPE '\\'"
+                     WHERE tc.name LIKE ?{p} ESCAPE '\\'"
             ));
         }
-        clauses.push(format!("EXISTS ({})", union_arms.join(" UNION ALL ")));
+        id_sets.push(arms.join(" UNION ALL "));
     }
-    format!(" AND ({})", clauses.join(conjunction))
+    if tf.mode.to_lowercase() == "and" {
+        id_sets
+            .iter()
+            .map(|set| format!(" AND b.id IN ({set})"))
+            .collect()
+    } else {
+        format!(" AND b.id IN ({})", id_sets.join(" UNION ALL "))
+    }
 }
 
 /// Tauri command: AND-intersect property + tag predicates in SQL.
@@ -1439,7 +1419,7 @@ fn tag_filter_sql(tf: &TagFilterExpr, next_param: &mut usize, binds: &mut Vec<St
 ///
 /// Replaces the FE pattern of fan-out IPCs (one `query_by_property` /
 /// `query_by_tags` per sub-filter, each capped at 200 rows) followed by
-/// JS-side intersection capped at 50 rows. The composed-EXISTS shape
+/// JS-side intersection capped at 50 rows. The SQL-side intersection
 /// fixes the silent-cap regression where any AND-set member outside
 /// the top-200 of any one sub-query was dropped before the
 /// intersection ran.
@@ -1467,3 +1447,7 @@ pub async fn filtered_blocks_query(
     .await
     .map_err(sanitize_internal_error)
 }
+
+#[cfg(test)]
+#[path = "queries_filtered_blocks_tests.rs"]
+mod filtered_blocks_tests;

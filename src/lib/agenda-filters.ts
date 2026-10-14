@@ -9,7 +9,7 @@
  * The previous implementation fanned out one IPC per dimension (each
  * capped at 200 rows by `PageRequest::new`) and intersected the result
  * sets in JS — any AND-set member outside the top-200 of any sub-query
- * was silently dropped before the intersection ran. The composed-EXISTS
+ * was silently dropped before the intersection ran. The composed id-set
  * shape on the backend evaluates the full predicate set in a single SQL
  * round-trip with cursor-paginated, correctness-preserving output.
  */
@@ -310,7 +310,7 @@ function toHalfOpenRange(range: { start: string; end: string }): [string, string
 /**
  * Client-side residual predicate applied to every page returned by
  * `filtered_blocks_query`. Used only where a within-dimension OR cannot
- * ride the backend's AND-only composed-EXISTS shape (#720: Overdue
+ * ride the backend's AND-only composed id-set shape (#720: Overdue
  * combined with other date presets). Pages may shrink after filtering;
  * `hasMore` / `cursor` stay valid because the backend keyset walks the
  * SQL superset.
@@ -467,7 +467,7 @@ function appendPastDateDimension(
  * same-key valued entries collapse into one `valueTextIn` filter, and a
  * bare key (is-set) subsumes any valued entries for that key. Distinct
  * keys still AND together — OR across different property keys is not
- * expressible in the composed-EXISTS shape.
+ * expressible in the composed id-set shape.
  */
 function appendCustomPropertyDimension(values: string[], out: TranslatedFilters): void {
   const byKey = new Map<string, { isSet: boolean; texts: string[] }>()
@@ -669,7 +669,7 @@ async function resolveTagFilters(
  *   (#721) — the remainder is surfaced via `hasMore` + a composite
  *   cursor consumed by `loadMoreUnfilteredAgenda`.
  * - Non-empty → ONE `filtered_blocks_query` IPC. Property filters AND
- *   together server-side via composed-EXISTS; values WITHIN a dimension
+ *   together server-side; values WITHIN a dimension
  *   OR together (#720); tag filters union via `mode: 'or'` across
  *   resolved tag IDs.
  *
