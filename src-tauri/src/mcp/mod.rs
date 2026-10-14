@@ -107,9 +107,9 @@ impl McpSurface {
                  - pages and blocks: `list_pages`, `search`, `get_page`, `get_journal`, \
                  `list_journal`, `list_trash`.\n\
                  - tags: `list_tags`, one space at a time.\n\
-                 Spaces: where a tool takes `space_id`, pass one from `list_spaces`; nothing \
-                 picks a space for you. `list_backlinks` and `get_agenda` span every space \
-                 when it is omitted.\n\
+                 Spaces: every tool but `list_spaces` and `list_property_defs` requires \
+                 `space_id`; nothing defaults it. A read of a block or page in another space \
+                 is refused.\n\
                  Dates are YYYY-MM-DD; `get_journal` also takes `today` or `yesterday`, on \
                  this device's clock.\n\
                  History: `page_history` and `block_history` show who changed what, and \

@@ -423,8 +423,7 @@ async def run_smoke(socket_path: Path) -> int:
                 journal_called = True
 
             # Dependent calls --------------------------------------------
-            # A seed only comes from a call that had a `space_id`.
-            if seed_id is not None and space_id is not None:
+            if seed_id is not None:
                 await call_and_validate(
                     session, "get_page", {"page_id": seed_id, "space_id": space_id}, failures
                 )

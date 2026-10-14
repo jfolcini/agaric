@@ -2495,7 +2495,7 @@ async fn undo_refuses_a_target_in_another_space_5400() {
         .await
         .expect_err("a target in another space must be refused");
     assert!(
-        matches!(&err, AppError::Validation { message, .. } if message.contains("cross-space")),
+        matches!(&err, AppError::Validation { message, .. } if message.contains("belongs to space")),
         "got {err:?}"
     );
     assert!(is_live(&pool, block_id).await);
@@ -2914,7 +2914,7 @@ async fn move_blocks_cross_space_rejected_5399() {
             .await
             .expect_err("a block or parent of another space must be refused");
         assert!(
-            matches!(&err, AppError::Validation { message, .. } if message.contains("cross-space")),
+            matches!(&err, AppError::Validation { message, .. } if message.contains("belongs to space")),
             "got {err:?}"
         );
     }
