@@ -8679,6 +8679,16 @@ async fn resolve_page_by_alias_active_scope_excludes_other_spaces() {
 // list_page_links (F-33)
 // ======================================================================
 
+/// [`assign_all_to_test_space`] for a graph fixture whose links are already
+/// cached: the raw space stamp skips the `RebuildPageLinkCache` a `space` op
+/// dispatches, and the graph read filters on the cached `space_id` (#5426).
+async fn assign_all_to_test_space_for_graph(pool: &SqlitePool) {
+    assign_all_to_test_space(pool).await;
+    agaric_store::cache::rebuild_page_link_cache(pool)
+        .await
+        .unwrap();
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn list_page_links_returns_edges_between_pages() {
     let (pool, _dir) = test_pool().await;
@@ -8732,7 +8742,7 @@ async fn list_page_links_returns_edges_between_pages() {
         .await
         .unwrap();
 
-    assign_all_to_test_space(&pool).await;
+    assign_all_to_test_space_for_graph(&pool).await;
     let links = list_page_links_inner(&pool, &test_space_scope(), None)
         .await
         .unwrap()
@@ -8807,7 +8817,7 @@ async fn list_page_links_excludes_deleted_pages() {
         .unwrap();
     mat.flush_background().await.unwrap();
 
-    assign_all_to_test_space(&pool).await;
+    assign_all_to_test_space_for_graph(&pool).await;
     let links = list_page_links_inner(&pool, &test_space_scope(), None)
         .await
         .unwrap()
@@ -8936,7 +8946,7 @@ async fn list_page_links_excludes_self_links() {
         .await
         .unwrap();
 
-    assign_all_to_test_space(&pool).await;
+    assign_all_to_test_space_for_graph(&pool).await;
     let links = list_page_links_inner(&pool, &test_space_scope(), None)
         .await
         .unwrap()
@@ -9032,7 +9042,7 @@ async fn list_page_links_deduplicates_multiple_content_links() {
         .await
         .unwrap();
 
-    assign_all_to_test_space(&pool).await;
+    assign_all_to_test_space_for_graph(&pool).await;
     let links = list_page_links_inner(&pool, &test_space_scope(), None)
         .await
         .unwrap()
@@ -9110,7 +9120,7 @@ async fn list_page_links_single_link_has_ref_count_one() {
         .await
         .unwrap();
 
-    assign_all_to_test_space(&pool).await;
+    assign_all_to_test_space_for_graph(&pool).await;
     let links = list_page_links_inner(&pool, &test_space_scope(), None)
         .await
         .unwrap()
@@ -9181,7 +9191,7 @@ async fn list_page_links_excludes_links_with_deleted_parent_page() {
         .unwrap();
 
     // Verify link exists before deletion
-    assign_all_to_test_space(&pool).await;
+    assign_all_to_test_space_for_graph(&pool).await;
     let links_before = list_page_links_inner(&pool, &test_space_scope(), None)
         .await
         .unwrap()
@@ -9392,13 +9402,14 @@ async fn list_page_links_optimized_matches_oracle() {
     // With creates now maintaining the roll-up, the cache is non-empty, the lazy
     // path correctly does not fire, and the fixture has to settle its own
     // hand-written edges instead of relying on a bug to do it.
+    // The space goes on first: the rebuild copies it into each edge (#5426).
+    assign_all_to_test_space(&pool).await;
     mat.enqueue_background(agaric_lib::materializer::MaterializeTask::RebuildPageLinkCache)
         .await
         .unwrap();
     mat.flush_background().await.unwrap();
 
     // -- Compare optimized vs oracle --
-    assign_all_to_test_space(&pool).await;
     let mut optimized = list_page_links_inner(&pool, &test_space_scope(), None)
         .await
         .unwrap()
@@ -9588,7 +9599,7 @@ async fn list_page_links_filters_by_tag_ids() {
 
     // Filter by TAG_A — only the edge to p_a should remain.
     let tag_ids = vec![tag_a.id.to_string()];
-    assign_all_to_test_space(&pool).await;
+    assign_all_to_test_space_for_graph(&pool).await;
     let links = list_page_links_inner(&pool, &test_space_scope(), Some(&tag_ids))
         .await
         .unwrap()
@@ -9691,7 +9702,7 @@ async fn list_page_links_no_tag_filter_returns_all() {
         .await
         .unwrap();
 
-    assign_all_to_test_space(&pool).await;
+    assign_all_to_test_space_for_graph(&pool).await;
     let links_none = list_page_links_inner(&pool, &test_space_scope(), None)
         .await
         .unwrap()

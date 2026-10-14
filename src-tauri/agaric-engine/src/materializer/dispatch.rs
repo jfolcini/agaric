@@ -1858,11 +1858,12 @@ fn push_property_op_invalidations(
     tasks: &mut Vec<MaterializeTask>,
 ) {
     // Narrow invalidation by design: only the agenda caches depend on
-    // property values (plus the two space-scoped roll-ups on a `space`
-    // op, below). Property values live in
+    // property values (plus the space-scoped roll-ups on a `space` op,
+    // below). Property values live in
     // `block_properties.value_text` / `value_ref` and are never scanned
     // for link tokens, FTS text, or tag refs — that graph derives solely
-    // from `blocks.content` — so no link/FTS/tag-ref rebuild is enqueued.
+    // from `blocks.content` — so no other key enqueues a link/FTS/tag-ref
+    // rebuild.
     //
     // #2037: narrow FURTHER by the property key/value so an ordinary
     // property edit (status, colour, text, ref…) enqueues neither agenda
@@ -1895,14 +1896,17 @@ fn push_property_op_invalidations(
             // #5275: `space` re-homes the block's whole page group
             // (`blocks.space_id`), and both roll-ups count only same-space
             // sources, so the group's old links and tags must stop counting
-            // in the origin space. No per-page / per-tag task fits: the
-            // affected pages and tags are only known from the DB. A create
-            // stamps `space` too but does not dispatch that op (nothing to
-            // re-scope), so this arm fires only for a move, its undo, or
-            // boot's placement of a space-less block.
+            // in the origin space. #5426: `page_link_cache.space_id` is each
+            // edge's shared space, so the group's edges in both directions
+            // move too. No per-page / per-tag task fits: the affected pages
+            // and tags are only known from the DB. A create stamps `space`
+            // too but does not dispatch that op (nothing to re-scope), so this
+            // arm fires only for a move, its undo, or boot's placement of a
+            // space-less block.
             if key == SPACE_PROPERTY_KEY {
                 tasks.push(MaterializeTask::RebuildTagsCache);
                 tasks.push(MaterializeTask::RebuildPagesCacheCounts);
+                tasks.push(MaterializeTask::RebuildPageLinkCache);
             }
         }
         Err(e) => {
@@ -3105,7 +3109,8 @@ mod tests {
     }
 
     /// #5275: a `space` set re-homes the page group, so the space-scoped
-    /// link and tag roll-ups are rebuilt; it is not an agenda key.
+    /// link and tag roll-ups are rebuilt, and (#5426) the page-link cache
+    /// whose `space_id` the graph read filters on; it is not an agenda key.
     #[test]
     fn invalidations_for_op_set_property_space_rebuilds_link_and_tag_counts_5275() {
         let r = make_record(
@@ -3116,7 +3121,11 @@ mod tests {
         let tasks = invalidations_for_op(&r, None, None).unwrap();
         assert_eq!(
             labels(&tasks),
-            vec!["RebuildTagsCache", "RebuildPagesCacheCounts"],
+            vec![
+                "RebuildTagsCache",
+                "RebuildPagesCacheCounts",
+                "RebuildPageLinkCache"
+            ],
         );
     }
 
@@ -3135,7 +3144,8 @@ mod tests {
             vec![
                 "RebuildAgendaCache",
                 "RebuildTagsCache",
-                "RebuildPagesCacheCounts"
+                "RebuildPagesCacheCounts",
+                "RebuildPageLinkCache"
             ],
         );
     }

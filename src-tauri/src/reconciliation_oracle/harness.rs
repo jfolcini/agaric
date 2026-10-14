@@ -307,8 +307,8 @@ pub async fn settle_deferred_pages_cache_counts(pool: &SqlitePool) -> Result<(),
 
 /// Run production's whole-table `page_link_cache` recompute — the
 /// `RebuildPageLinkCache` task, a member of every lifecycle rebuild set
-/// (delete / restore / purge), of the cross-page `MoveBlock` arm, and of the
-/// inbound-sync / snapshot-restore sets.
+/// (delete / restore / purge), of the cross-page `MoveBlock` arm, of the
+/// `space` property arm, and of the inbound-sync / snapshot-restore sets.
 ///
 /// For a driver that writes `block_links` WITHOUT an op (a fixture, or the
 /// in-tx arm of a path whose op is not modelled), this is the only maintainer

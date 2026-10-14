@@ -5204,6 +5204,12 @@ async fn upgraded_vault_page_links_survive_a_disarmed_lazy_rebuild_3839() {
     let (pool, _dir) = unmigrated_pool().await;
     apply_migrations_through(&pool, 0, 109).await;
     seed_pre_0110_vault(&pool, page_a, page_b, child).await;
+    // The vault's pages carry their space before the upgrade (0086), which is
+    // what 0122 copies into the rolled-up edge for the scoped read.
+    let space = crate::commands::tests::common::TEST_SPACE_ID;
+    for page in [page_a, page_b] {
+        crate::commands::tests::common::assign_to_test_space(&pool, page).await;
+    }
     apply_migrations_to_head(&pool, 109).await;
 
     // An unrelated edge maintained incrementally AFTER the upgrade — this is
@@ -5242,10 +5248,6 @@ async fn upgraded_vault_page_links_survive_a_disarmed_lazy_rebuild_3839() {
          to say anything about the migration"
     );
 
-    let space = crate::commands::tests::common::TEST_SPACE_ID;
-    for page in [page_a, page_b] {
-        crate::commands::tests::common::assign_to_test_space(&pool, page).await;
-    }
     let response = crate::commands::pages::links::list_page_links_inner(
         &pool,
         &agaric_store::space::SpaceScope::Active(agaric_store::space::SpaceId::from_trusted(space)),
@@ -6840,4 +6842,174 @@ async fn tags_cache_0121_unique_per_space_recomputes_rows_5237() {
     .execute(&pool)
     .await
     .expect_err("0121 keeps a name unique WITHIN a space");
+}
+
+/// #5426 — 0122 adds `page_link_cache.space_id` and backfills it on an
+/// upgrading vault's rows with the writers' rule: the space both pages share,
+/// NULL for an edge between spaces, an edge with a space-less end, or an end
+/// that is not a page (a tag source, a content target). Edge counts survive,
+/// the scoped read's index replaces the unscoped one, and the read itself
+/// finds the same-space edge.
+#[tokio::test]
+async fn page_link_cache_0122_space_id_backfills_the_shared_space_5426() {
+    let (pool, _dir) = unmigrated_pool().await;
+    apply_migrations_through(&pool, 0, 121).await;
+
+    let space_a = "01HZ00000000000000000SPA0A";
+    let space_b = "01HZ00000000000000000SPA0B";
+    for space in [space_a, space_b] {
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, page_id) VALUES (?, 'page', 'space', ?)",
+        )
+        .bind(space)
+        .bind(space)
+        .execute(&pool)
+        .await
+        .expect("seed space page");
+        sqlx::query("INSERT INTO spaces (id) VALUES (?)")
+            .bind(space)
+            .execute(&pool)
+            .await
+            .expect("register space");
+    }
+    let a1 = "01HZ0000000000000000PAGEA1";
+    let a2 = "01HZ0000000000000000PAGEA2";
+    let b1 = "01HZ0000000000000000PAGEB1";
+    let spaceless = "01HZ0000000000000000PAGENS";
+    for (page, space) in [
+        (a1, Some(space_a)),
+        (a2, Some(space_a)),
+        (b1, Some(space_b)),
+        (spaceless, None),
+    ] {
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, page_id, space_id) \
+             VALUES (?, 'page', 'page', ?, ?)",
+        )
+        .bind(page)
+        .bind(page)
+        .bind(space)
+        .execute(&pool)
+        .await
+        .expect("seed page");
+    }
+    let tag = "01HZ0000000000000000TAGSRC";
+    sqlx::query(
+        "INSERT INTO blocks (id, block_type, content, space_id) VALUES (?, 'tag', 'tag', ?)",
+    )
+    .bind(tag)
+    .bind(space_a)
+    .execute(&pool)
+    .await
+    .expect("seed tag");
+    let note = "01HZ0000000000000000NOTEA2";
+    sqlx::query(
+        "INSERT INTO blocks (id, block_type, content, parent_id, page_id, space_id) \
+         VALUES (?, 'content', 'note', ?, ?, ?)",
+    )
+    .bind(note)
+    .bind(a2)
+    .bind(a2)
+    .bind(space_a)
+    .execute(&pool)
+    .await
+    .expect("seed content target");
+    for (source, target, edge_count, tgt_is_page) in [
+        (a1, a2, 2_i64, 1_i64),
+        (a1, b1, 1, 1),
+        (b1, a1, 1, 1),
+        (a1, spaceless, 1, 1),
+        (spaceless, a1, 1, 1),
+        (tag, a2, 1, 1),
+        (a1, note, 1, 0),
+    ] {
+        sqlx::query(
+            "INSERT INTO page_link_cache \
+                 (source_page_id, target_page_id, edge_count, src_deleted, tgt_deleted, \
+                  tgt_is_page) \
+             VALUES (?, ?, ?, 0, 0, ?)",
+        )
+        .bind(source)
+        .bind(target)
+        .bind(edge_count)
+        .bind(tgt_is_page)
+        .execute(&pool)
+        .await
+        .expect("seed pre-0122 cache row");
+    }
+
+    apply_migrations_through(&pool, 121, 122).await;
+
+    let rows: Vec<(String, String, i64, Option<String>)> = sqlx::query_as(
+        "SELECT source_page_id, target_page_id, edge_count, space_id \
+         FROM page_link_cache ORDER BY source_page_id, target_page_id",
+    )
+    .fetch_all(&pool)
+    .await
+    .expect("read backfilled rows");
+    let row = |source: &str, target: &str, edge_count: i64, space: Option<&str>| {
+        (
+            source.to_owned(),
+            target.to_owned(),
+            edge_count,
+            space.map(str::to_owned),
+        )
+    };
+    assert_eq!(
+        rows,
+        vec![
+            row(a1, note, 1, None),
+            row(a1, a2, 2, Some(space_a)),
+            row(a1, b1, 1, None),
+            row(a1, spaceless, 1, None),
+            row(b1, a1, 1, None),
+            row(spaceless, a1, 1, None),
+            row(tag, a2, 1, None),
+        ],
+        "only the page-to-page edge inside one space carries that space"
+    );
+
+    let indexes: Vec<String> = sqlx::query_scalar(
+        "SELECT name FROM sqlite_master \
+         WHERE type = 'index' AND tbl_name = 'page_link_cache' AND name LIKE 'idx_%' \
+         ORDER BY name",
+    )
+    .fetch_all(&pool)
+    .await
+    .expect("list page_link_cache indexes");
+    assert_eq!(
+        indexes,
+        vec![
+            "idx_page_link_cache_space".to_owned(),
+            "idx_page_link_cache_target".to_owned()
+        ],
+        "0122 adds the space index and drops the unscoped read's"
+    );
+
+    apply_migrations_to_head(&pool, 122).await;
+    let response = crate::commands::pages::links::list_page_links_inner(
+        &pool,
+        &agaric_store::space::SpaceScope::Active(agaric_store::space::SpaceId::from_trusted(
+            space_a,
+        )),
+        None,
+    )
+    .await
+    .expect("scoped read after the upgrade");
+    let edges: Vec<(String, String, i64)> = response
+        .edges
+        .iter()
+        .map(|e| {
+            (
+                e.source_id.as_str().to_owned(),
+                e.target_id.as_str().to_owned(),
+                e.ref_count,
+            )
+        })
+        .collect();
+    assert_eq!(
+        edges,
+        vec![(a1.to_owned(), a2.to_owned(), 2)],
+        "the scoped read must find the backfilled same-space edge and nothing else"
+    );
 }
