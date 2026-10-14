@@ -31,6 +31,8 @@ import path from 'node:path'
 
 import { describe, expect, it } from 'vitest'
 
+import { isReadOnlyCommand } from '@/lib/local-write-watch'
+
 // ---------------------------------------------------------------------------
 // Command extraction (mirrors handlers-drift.test.ts)
 // ---------------------------------------------------------------------------
@@ -131,7 +133,8 @@ function takesWriteHandle(signature: string): boolean {
 
 /**
  * A command is READ-ONLY (has no backend-observable persistent effect) when its
- * name begins with one of these query verbs. Everything NOT matched here is a
+ * name begins with a query verb (`isReadOnlyCommand`, shared with the Pages
+ * list's local-write watch). Everything NOT matched there is a
  * MUTATING candidate and must be covered by a fixture or allowlisted below —
  * so a new command with a mutating-shaped name is caught automatically.
  *
@@ -155,34 +158,7 @@ function takesWriteHandle(signature: string): boolean {
  * because of its verb. It is now a mutating candidate carrying an explicit
  * waiver in `NO_FIXTURE_ALLOWLIST`.
  */
-const READ_ONLY_PREFIXES: readonly string[] = [
-  'get_',
-  'list_',
-  'query_',
-  'search_',
-  'count_',
-  'read_',
-  'find_',
-  'compute_',
-  'resolve_',
-  'load_',
-  'is_',
-  'collect_',
-  'export_',
-]
-
-/** Read-only commands whose names don't carry a query-verb prefix. */
-const READ_ONLY_EXACT: ReadonlySet<string> = new Set<string>([
-  'batch_resolve',
-  'first_child_for_blocks',
-  'trash_descendant_counts',
-  'filtered_blocks_query',
-  'run_advanced_query',
-])
-
-function isReadOnly(command: string): boolean {
-  return READ_ONLY_PREFIXES.some((p) => command.startsWith(p)) || READ_ONLY_EXACT.has(command)
-}
+const isReadOnly = isReadOnlyCommand
 
 /**
  * #3332 — commands that DO take a Rust write handle yet stay classified

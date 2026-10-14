@@ -27,6 +27,7 @@
 //! | `get_journal` | [`get_journal_page_by_date_inner`] + [`get_page_for_agent_inner`] | #5396 — a day as `get_page_markdown` renders it; `date` is `today` (default), `yesterday` or `YYYY-MM-DD` on the device's clock. Never creates: a missing day is an empty `markdown`. |
 //! | `list_journal` | [`list_journal_days_inner`] | #5396 — the days in `[from, to]` with their block counts. Cursor paginated. |
 //! | `list_trash` | [`list_trash_inner`] | Deleted blocks of one space (deletion roots), newest first. Cursor paginated. `space_id` required. |
+//! | `query` | [`compile_and_run`] | #5398 — the advanced-query engine over one space: a `FilterExpr` tree, sort, group, aggregate. Rows add the page title and the properties the query reads. Cursor paginated. `space_id` required. |
 //!
 //! # Actor scoping
 //!
@@ -62,7 +63,7 @@
 //!   such a query could never execute anyway; the boundary check turns
 //!   the failure into an actionable `-32602`.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::future::Future;
 use std::sync::Arc;
 
@@ -79,23 +80,29 @@ use super::registry::{
     TOOL_BLOCK_HISTORY, TOOL_GET_AGENDA, TOOL_GET_BLOCK, TOOL_GET_JOURNAL, TOOL_GET_PAGE,
     TOOL_GET_PAGE_MARKDOWN, TOOL_JOURNAL_FOR_DATE, TOOL_LIST_BACKLINKS, TOOL_LIST_JOURNAL,
     TOOL_LIST_PAGES, TOOL_LIST_PROPERTY_DEFS, TOOL_LIST_SPACES, TOOL_LIST_TAGS, TOOL_LIST_TRASH,
-    TOOL_PAGE_HISTORY, TOOL_RESOLVE, TOOL_SEARCH, ToolDescription, ToolRegistry,
+    TOOL_PAGE_HISTORY, TOOL_QUERY, TOOL_RESOLVE, TOOL_SEARCH, ToolDescription, ToolRegistry,
 };
 use super::view_notify::{NoopViewChangeEmitter, ViewChangeEmitter};
 use crate::commands::pages::markdown::{NameMatch, match_page_names, match_tag_names};
 use crate::commands::{
-    PropertyRow, agenda_range_inner, get_active_block_inner, get_block_history_inner,
-    get_journal_page_by_date_inner, get_page_aliases_inner, get_page_for_agent_inner,
-    get_page_unscoped_inner, get_properties_inner, journal_for_date_inner,
-    list_backlinks_grouped_inner, list_journal_days_inner, list_page_history_inner,
-    list_pages_inner, list_property_defs_inner, list_spaces_registry_inner,
-    list_tags_for_block_inner, list_tags_inner, list_trash_inner, search_blocks_inner,
+    PropertyRow, agenda_range_inner, batch_resolve_inner, get_active_block_inner,
+    get_batch_properties_inner, get_block_history_inner, get_journal_page_by_date_inner,
+    get_page_aliases_inner, get_page_for_agent_inner, get_page_unscoped_inner,
+    get_properties_inner, journal_for_date_inner, list_backlinks_grouped_inner,
+    list_journal_days_inner, list_page_history_inner, list_pages_inner, list_property_defs_inner,
+    list_spaces_registry_inner, list_tags_for_block_inner, list_tags_inner, list_trash_inner,
+    search_blocks_inner,
 };
 use crate::materializer::Materializer;
 use agaric_core::error::AppError;
 use agaric_core::ulid::BlockId;
+use agaric_store::filters::{FilterExpr, FilterPrimitive};
 use agaric_store::op::OpRef;
-use agaric_store::pagination::{BlockRow, HistoryEntry, PageResponse};
+use agaric_store::pagination::{ActiveBlockRow, BlockRow, HistoryEntry, PageResponse};
+use agaric_store::query::{
+    AdvancedQueryRequest, AdvancedQueryResponse, AggregateResult, AggregateSpec, AggregateTarget,
+    GroupKey, GroupSpec, SortKey, compile_and_run,
+};
 use agaric_store::search_types::SearchScope;
 use agaric_store::space::{SpaceId, SpaceScope};
 use agaric_store::task_locals::ActorContext;
@@ -335,6 +342,26 @@ struct ListTrashArgs {
     limit: Option<i64>,
 }
 
+/// `where`, `sort`, `group_by` and `aggregate` are the advanced-query engine's
+/// own wire types, so the tool and the app's query builder share one grammar.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct QueryArgs {
+    space_id: String,
+    #[serde(rename = "where")]
+    filter: FilterExpr,
+    #[serde(default)]
+    sort: Vec<SortKey>,
+    #[serde(default)]
+    group_by: Option<GroupKey>,
+    #[serde(default)]
+    aggregate: Vec<AggregateSpec>,
+    #[serde(default)]
+    cursor: Option<String>,
+    #[serde(default)]
+    limit: Option<i64>,
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct PageHistoryArgs {
@@ -567,6 +594,7 @@ pub(crate) fn list_tool_descriptions() -> Vec<ToolDescription> {
         tool_desc_list_journal(),
         tool_desc_list_trash(),
         tool_desc_resolve(),
+        tool_desc_query(),
     ]
 }
 
@@ -636,6 +664,7 @@ impl ToolRegistry for ReadOnlyTools {
                 TOOL_LIST_JOURNAL => handle_list_journal(&pool, args).await,
                 TOOL_LIST_TRASH => handle_list_trash(&pool, args).await,
                 TOOL_RESOLVE => handle_resolve(&pool, args).await,
+                TOOL_QUERY => handle_query(&pool, args).await,
                 other => Err(unknown_tool_error(other)),
             }
         })
@@ -1120,6 +1149,73 @@ fn tool_desc_list_journal() -> ToolDescription {
                     "minimum": 1,
                     "maximum": LIST_RESULT_CAP,
                     "description": format!("Max days per response (capped at {LIST_RESULT_CAP})."),
+                },
+            },
+        }),
+    }
+}
+
+fn tool_desc_query() -> ToolDescription {
+    ToolDescription {
+        name: TOOL_QUERY.to_string(),
+        description: "Query one space's blocks with a boolean tree of predicates, optionally \
+                      sorted, grouped and aggregated; cursor paginated. Rows carry `page_title` \
+                      and the properties the query reads; with `group_by` the result is `groups` \
+                      of { key, title, count, aggregates } instead. Open TODOs with \
+                      estimate > 3: {\"space_id\": \"<ULID>\", \"where\": {\"type\": \"And\", \
+                      \"children\": [{\"type\": \"Leaf\", \"primitive\": {\"type\": \"State\", \
+                      \"values\": [\"TODO\"]}}, {\"type\": \"Leaf\", \"primitive\": {\"type\": \
+                      \"HasProperty\", \"key\": \"estimate\", \"predicate\": {\"type\": \"Gt\", \
+                      \"value\": {\"type\": \"Num\", \"value\": 3}}}}]}}"
+            .to_string(),
+        input_schema: json!({
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["space_id", "where"],
+            "properties": {
+                "space_id": { "type": "string", "description": "ULID of the space to query." },
+                "where": {
+                    "type": "object",
+                    "description": "{type: And|Or, children: [...]}, {type: Not, child} or \
+                                    {type: Leaf, primitive}. Primitives: Tag {tag} (attached), \
+                                    TagOrRef {tag} (attached or inline), HasProperty {key, \
+                                    predicate}, State {values}, Priority {values}, BlockType \
+                                    {values, exclude}, DueDate {predicate}, Scheduled \
+                                    {predicate}, Created {after?, before?}, LastEdited {spec}, \
+                                    LinksTo {target}, LinkedFrom {source}, ChildOf {parent}, \
+                                    HasParentMatching {matcher: <where>}, PathGlob {pattern, \
+                                    exclude} (pages whose lower-case title matches the GLOB). \
+                                    Property predicate: Exists, \
+                                    NotExists, or Eq|Ne|Lt|Gt|Lte|Gte|Contains|StartsWith \
+                                    {value: {type: Text|Num|Date|Ref, value}}. Date predicate: \
+                                    IsNull, Before|After|OnOrBefore|OnOrAfter|On {date}, \
+                                    Between {from, to}. LastEdited spec: Rolling {days}, \
+                                    OlderThan {days}, Range {start, end}. Ids are ULIDs, \
+                                    dates YYYY-MM-DD.",
+                },
+                "sort": {
+                    "type": "array",
+                    "description": "[{source: {type: Column, name: created|lastEdited|position|\
+                                    priority|title}, desc?}]. Default: newest first.",
+                },
+                "group_by": {
+                    "type": "object",
+                    "description": "{type: Page|Tag|State|Priority|BlockType}, {type: Property, \
+                                    key} or {type: DateBucket, source: due|scheduled|created|\
+                                    lastEdited, unit: day|week|month}.",
+                },
+                "aggregate": {
+                    "type": "array",
+                    "description": "[{op: count|sum|avg|min|max, target?: {type: Property, key} \
+                                    | {type: Column, name: priority|position}}], over the whole \
+                                    match and per group.",
+                },
+                "cursor": { "type": "string", "description": "Opaque pagination cursor from a prior response." },
+                "limit": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": LIST_RESULT_CAP,
+                    "description": format!("Max rows or groups per response (capped at {LIST_RESULT_CAP})."),
                 },
             },
         }),
@@ -1742,6 +1838,187 @@ async fn handle_resolve(pool: &SqlitePool, args: Value) -> Result<Value, AppErro
         })
         .collect();
     to_tool_result(&answers)
+}
+
+async fn handle_query(pool: &SqlitePool, args: Value) -> Result<Value, AppError> {
+    let args: QueryArgs = parse_args(TOOL_QUERY, args)?;
+    let limit = validate_limit(TOOL_QUERY, args.limit, LIST_RESULT_CAP)?;
+    let space_id = SpaceId::from_string(args.space_id)?;
+    let property_keys =
+        touched_property_keys(&args.filter, args.group_by.as_ref(), &args.aggregate);
+    let groups_name_blocks = matches!(args.group_by, Some(GroupKey::Page | GroupKey::Tag));
+    let resp = compile_and_run(
+        pool,
+        AdvancedQueryRequest {
+            space_id: space_id.as_str().to_owned(),
+            filter: args.filter,
+            sort: args.sort,
+            cursor: args.cursor,
+            limit,
+            fulltext: None,
+            group_by: args.group_by.map(|key| GroupSpec { key }),
+            aggregates: args.aggregate,
+        },
+    )
+    .await?;
+    let titles = query_titles(pool, &resp, groups_name_blocks, space_id).await?;
+    let mut properties = if property_keys.is_empty() {
+        HashMap::new()
+    } else {
+        let ids = resp
+            .rows
+            .iter()
+            .map(|r| BlockId::from(r.block.id.clone()))
+            .collect();
+        get_batch_properties_inner(pool, ids).await?
+    };
+    let title_of = |id: &str| titles.get(id).cloned().flatten();
+    let rows = resp
+        .rows
+        .into_iter()
+        .map(|r| {
+            let mut props = properties.remove(r.block.id.as_str()).unwrap_or_default();
+            props.retain(|p| property_keys.contains(&p.key));
+            QueryRow::new(r.block, props, title_of)
+        })
+        .collect();
+    let groups = resp
+        .groups
+        .into_iter()
+        .map(|g| QueryGroupRow {
+            title: title_of(&g.key),
+            key: g.key,
+            count: g.count,
+            aggregates: g.aggregates,
+        })
+        .collect();
+    to_tool_result(&QueryResult {
+        rows,
+        groups,
+        aggregates: resp.aggregates,
+        next_cursor: resp.next_cursor,
+        has_more: resp.has_more,
+        total_count: resp.total_count,
+    })
+}
+
+/// The property keys a query reads off its own rows: `HasProperty` leaves
+/// (not those inside `HasParentMatching`, which test the parent), a property
+/// group key and property aggregate targets.
+fn touched_property_keys(
+    filter: &FilterExpr,
+    group_by: Option<&GroupKey>,
+    aggregates: &[AggregateSpec],
+) -> HashSet<String> {
+    fn walk(expr: &FilterExpr, keys: &mut HashSet<String>) {
+        match expr {
+            FilterExpr::Leaf {
+                primitive: FilterPrimitive::HasProperty { key, .. },
+            } => {
+                keys.insert(key.clone());
+            }
+            FilterExpr::Leaf { .. } => {}
+            FilterExpr::And { children } | FilterExpr::Or { children } => {
+                for child in children {
+                    walk(child, keys);
+                }
+            }
+            FilterExpr::Not { child } => walk(child, keys),
+        }
+    }
+    let mut keys = HashSet::new();
+    walk(filter, &mut keys);
+    if let Some(GroupKey::Property { key }) = group_by {
+        keys.insert(key.clone());
+    }
+    for spec in aggregates {
+        if let Some(AggregateTarget::Property { key }) = &spec.target {
+            keys.insert(key.clone());
+        }
+    }
+    keys
+}
+
+/// Titles for the rows' pages and, when the groups are keyed by page or tag
+/// id, for the group keys, in one lookup.
+async fn query_titles(
+    pool: &SqlitePool,
+    resp: &AdvancedQueryResponse,
+    groups_name_blocks: bool,
+    space_id: SpaceId,
+) -> Result<HashMap<String, Option<String>>, AppError> {
+    let mut ids: HashSet<String> = resp
+        .rows
+        .iter()
+        .filter_map(|r| r.block.page_id.as_ref().map(|id| id.as_str().to_owned()))
+        .collect();
+    if groups_name_blocks {
+        // The `none` bucket is not an id.
+        ids.extend(
+            resp.groups
+                .iter()
+                .filter_map(|g| BlockId::from_string(&g.key).ok().map(BlockId::into_string)),
+        );
+    }
+    let ids = ids.iter().map(|id| BlockId::from_trusted(id)).collect();
+    let resolved = batch_resolve_inner(pool, ids, &SpaceScope::Active(space_id)).await?;
+    Ok(resolved.into_iter().map(|r| (r.id, r.title)).collect())
+}
+
+/// One `query` row: the block, its page's title and the touched properties.
+#[derive(Serialize)]
+struct QueryRow {
+    id: String,
+    page_id: Option<String>,
+    page_title: Option<String>,
+    content: Option<String>,
+    block_type: String,
+    todo_state: Option<String>,
+    priority: Option<String>,
+    due_date: Option<String>,
+    scheduled_date: Option<String>,
+    properties: Vec<PropertyRow>,
+}
+
+impl QueryRow {
+    fn new(
+        b: ActiveBlockRow,
+        properties: Vec<PropertyRow>,
+        title_of: impl Fn(&str) -> Option<String>,
+    ) -> Self {
+        let page_id = b.page_id.map(BlockId::into_string);
+        Self {
+            page_title: page_id.as_deref().and_then(title_of),
+            id: b.id.as_str().to_owned(),
+            page_id,
+            content: b.content,
+            block_type: b.block_type,
+            todo_state: b.todo_state,
+            priority: b.priority,
+            due_date: b.due_date,
+            scheduled_date: b.scheduled_date,
+            properties,
+        }
+    }
+}
+
+/// One `query` group. `title` names a page or tag key.
+#[derive(Serialize)]
+struct QueryGroupRow {
+    key: String,
+    title: Option<String>,
+    count: i64,
+    aggregates: Vec<AggregateResult>,
+}
+
+#[derive(Serialize)]
+struct QueryResult {
+    rows: Vec<QueryRow>,
+    groups: Vec<QueryGroupRow>,
+    aggregates: Vec<AggregateResult>,
+    next_cursor: Option<String>,
+    has_more: bool,
+    total_count: Option<i64>,
 }
 
 /// Longest before / after text a history row carries, in chars: the row

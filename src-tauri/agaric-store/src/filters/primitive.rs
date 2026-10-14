@@ -332,6 +332,35 @@ impl LastEditedSpec {
     }
 }
 
+impl DatePredicate {
+    /// Reject a date the lexical compare would misorder (`2026-1-5` sorts after
+    /// `2026-10-01`) and a `Between` whose `from` is after its `to`, so a bad
+    /// range is an error rather than a silent empty or wrong result.
+    pub fn validate(&self) -> Result<(), AppError> {
+        let dates = match self {
+            Self::IsNull => Vec::new(),
+            Self::Before { date }
+            | Self::After { date }
+            | Self::OnOrBefore { date }
+            | Self::OnOrAfter { date }
+            | Self::On { date } => vec![date],
+            Self::Between { from, to } => vec![from, to],
+        };
+        for date in dates {
+            agaric_core::date_validation::validate_date_format(date)?;
+        }
+        if let Self::Between { from, to } = self
+            && from > to
+        {
+            return Err(AppError::validation_coded(
+                ValidationCode::InvalidDateFilter,
+                format!("date range from '{from}' is after to '{to}'"),
+            ));
+        }
+        Ok(())
+    }
+}
+
 /// Time-of-day appended to a bare-date `start` bound: midnight, at or before
 /// any same-day edit.
 const DAY_START: &str = "T00:00:00Z";
