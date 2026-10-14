@@ -127,6 +127,9 @@ pub(crate) async fn recompute_all_pages_cache_counts(
     // change-guard WHERE). SQLite does not CSE correlated subqueries
     // across SET and WHERE, so the pre-CTE form ran 4 subquery
     // evaluations per row instead of 2.
+    // `+src.space_id`: the unary `+` keeps the planner from driving the inbound
+    // count off `idx_blocks_space_type`, a scan of the whole space per page
+    // (quadratic in the vault) instead of a walk of the page's own links.
     let counts = sqlx::query!(
         "WITH computed(page_id, new_inbound, new_child) AS ( \
              SELECT p.page_id, \
@@ -140,7 +143,7 @@ pub(crate) async fn recompute_all_pages_cache_counts(
                            AND src.deleted_at IS NULL \
                            AND src.page_id IS NOT NULL \
                            AND src.page_id != p.page_id \
-                           AND src.space_id IS page.space_id \
+                           AND +src.space_id IS page.space_id \
                  ), \
                  ( \
                      SELECT COUNT(*) FROM blocks descendant \
