@@ -108,6 +108,12 @@ export const VERIFIED_PAIRS = [
     evidence:
       '#5185: embeds the same typescript-go commit as 7.0.2001 (tag typescript/v7.0.2); `npx oxlint --type-aware` with OXLINT_TSGOLINT_PATH at 7.0.2002 and at 7.0.2001 gave identical findings (64 over 1982 files), and both flagged all four configured type-aware rules in a canary',
   },
+  {
+    typescript: '7.0.2',
+    tsgolint: '7.0.2003',
+    evidence:
+      '#5499: oxlint 1.87 requires oxlint-tsgolint >=7.0.2003; `npx oxlint --type-aware` with OXLINT_TSGOLINT_PATH at 7.0.2003 and at 7.0.2002 gave identical findings (73 over the whole tree), and both flagged all four configured type-aware rules in a canary',
+  },
 ]
 
 /** Thrown when the guard cannot reach a verdict at all (exit 3, never 2). */

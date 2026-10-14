@@ -22,10 +22,10 @@ import { useTranslation } from 'react-i18next'
 
 import { MonthlyDayCell } from '@/components/journal/MonthlyDayCell'
 import { useBatchCounts } from '@/hooks/useBatchCounts'
+import { useToday } from '@/hooks/useToday'
 import { useWeekStart } from '@/hooks/useWeekStart'
 import { getDateLocale } from '@/lib/date-locale'
 import type { DayEntry } from '@/lib/date-utils'
-import { formatDate } from '@/lib/date-utils'
 import { useJournalStore } from '@/stores/journal'
 
 interface MonthlyViewProps {
@@ -37,7 +37,7 @@ export function MonthlyView({ makeDayEntry }: MonthlyViewProps): React.ReactElem
   const currentDate = useJournalStore((s) => s.currentDate)
   const navigateToDate = useJournalStore((s) => s.navigateToDate)
   const { weekStartsOn } = useWeekStart()
-  const todayStr = formatDate(new Date())
+  const todayStr = useToday()
 
   // Compute all days to display, including padding days from adjacent months
   const entries = useMemo(() => {
@@ -62,12 +62,12 @@ export function MonthlyView({ makeDayEntry }: MonthlyViewProps): React.ReactElem
   const dateLocale = getDateLocale()
   const dayHeaders = useMemo(() => {
     const headers: string[] = []
-    const refDate = startOfWeek(new Date(), { weekStartsOn })
+    const refDate = startOfWeek(currentDate, { weekStartsOn })
     for (let i = 0; i < 7; i++) {
       headers.push(format(addDays(refDate, i), 'EEE', { locale: dateLocale }))
     }
     return headers
-  }, [weekStartsOn, dateLocale])
+  }, [currentDate, weekStartsOn, dateLocale])
 
   // Split entries into weeks (rows of 7)
   const weeks = useMemo(() => {

@@ -16,6 +16,7 @@ import { AlertListRow } from '@/components/ui/alert-list-row'
 import { Badge } from '@/components/ui/badge'
 import { SectionTitle, type SectionTitleColor } from '@/components/ui/section-title'
 import { useRichContentCallbacks } from '@/hooks/useRichContentCallbacks'
+import { useToday } from '@/hooks/useToday'
 import type { BlockRow } from '@/lib/bindings'
 import type { NavigateToPageFn } from '@/lib/block-events'
 import { formatCompactDate } from '@/lib/date-utils'
@@ -109,8 +110,7 @@ export function AlertSection({
   const { t } = useTranslation()
   const config = variantConfig[variant]
 
-  const today = new Date()
-  today.setHours(0, 0, 0, 0)
+  const today = new Date(`${useToday()}T00:00:00`)
 
   if (blocks.length === 0) return null
 

@@ -313,7 +313,6 @@ export function useUnlinkedReferences(
     void refetch()
   }, [refetch])
 
-  // oxlint-disable-next-line react/refs -- the returned counts are derived from the same-render `carriedRef` read above and carry its finding by construction; see #4406
   return {
     groups,
     totalCount,

@@ -77,11 +77,11 @@ export function useStreamDates(): UseStreamDatesResult {
   // Anchor `today` once per mount so the column doesn't reshuffle if the
   // wall clock ticks past midnight mid-session (the daily surfaces have a
   // dedicated `useToday` for that; the stream re-anchors on remount).
-  const today = useMemo(() => {
+  const [today] = useState(() => {
     const d = new Date()
     d.setHours(0, 0, 0, 0)
     return d
-  }, [])
+  })
 
   // `oldestOffset` = how many days before today the window currently
   // extends. Grows by STREAM_BATCH_DAYS per `loadOlder`, clamped so the
