@@ -370,9 +370,8 @@ async def run_smoke(socket_path: Path) -> int:
             today = datetime.date.today().isoformat()
 
             # Space discovery (#633) ---------------------------------------
-            # `search` / `journal_for_date` / `list_backlinks` / `get_agenda`
-            # require a `space_id`; `list_spaces` is the in-band way an agent
-            # discovers one.
+            # Every tool but `list_spaces` and `list_property_defs` requires a
+            # `space_id`; `list_spaces` is the in-band way an agent discovers one.
             spaces_payload = await call_and_validate(
                 session, "list_spaces", {}, failures
             )
@@ -402,9 +401,11 @@ async def run_smoke(socket_path: Path) -> int:
             # creates a page for today and is therefore always available
             # as a source of a valid block id.
 
-            pages_payload = await call_and_validate(
-                session, "list_pages", {"limit": 10}, failures
-            )
+            pages_payload = None
+            if space_id is not None:
+                pages_payload = await call_and_validate(
+                    session, "list_pages", {"limit": 10, "space_id": space_id}, failures
+                )
             seed_id = _first_page_id(pages_payload)
 
             journal_called = False
@@ -422,23 +423,26 @@ async def run_smoke(socket_path: Path) -> int:
                 journal_called = True
 
             # Dependent calls --------------------------------------------
-            if seed_id is not None:
+            # A seed only comes from a call that had a `space_id`.
+            if seed_id is not None and space_id is not None:
                 await call_and_validate(
-                    session, "get_page", {"page_id": seed_id}, failures
+                    session, "get_page", {"page_id": seed_id, "space_id": space_id}, failures
                 )
                 await call_and_validate(
-                    session, "get_block", {"block_id": seed_id}, failures
+                    session, "get_block", {"block_id": seed_id, "space_id": space_id}, failures
                 )
                 await call_and_validate(
-                    session, "get_page_markdown", {"page_id": seed_id}, failures
+                    session,
+                    "get_page_markdown",
+                    {"page_id": seed_id, "space_id": space_id},
+                    failures,
                 )
-                if space_id is not None:
-                    await call_and_validate(
-                        session,
-                        "list_backlinks",
-                        {"block_id": seed_id, "limit": 10, "space_id": space_id},
-                        failures,
-                    )
+                await call_and_validate(
+                    session,
+                    "list_backlinks",
+                    {"block_id": seed_id, "limit": 10, "space_id": space_id},
+                    failures,
+                )
             else:
                 for dep in ("get_page", "get_block", "get_page_markdown", "list_backlinks"):
                     failures.append(

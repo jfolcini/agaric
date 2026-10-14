@@ -2,7 +2,7 @@
 source: src/mcp/tools_ro/tests.rs
 expression: wire
 ---
-- description: List all pages with cursor pagination.
+- description: "List the pages of a space, with cursor pagination."
   inputSchema:
     additionalProperties: false
     properties:
@@ -14,6 +14,11 @@ expression: wire
         maximum: 100
         minimum: 1
         type: integer
+      space_id:
+        description: ULID of the space whose pages to list.
+        type: string
+    required:
+      - space_id
     type: object
   name: list_pages
 - description: "Fetch a page and a paginated slice of its non-conflict subtree (grandchildren included). `page` also carries `properties` (every property row, raw), `tags` (tag ULIDs; `list_tags` names them) and `aliases`; the children are plain rows."
@@ -31,8 +36,12 @@ expression: wire
       page_id:
         description: ULID of the page block.
         type: string
+      space_id:
+        description: ULID of the space the page belongs to. A page in another space is rejected with a Validation error.
+        type: string
     required:
       - page_id
+      - space_id
     type: object
   name: get_page
 - description: "Full-text search across block content (FTS5). Returns BlockRow records; content is truncated to 512 chars per result. pass `filter` for structured narrowing (state / priority / due / scheduled / property / page-name globs / block-type / case-sensitive / whole-word / regex toggles)."
@@ -146,8 +155,12 @@ expression: wire
       block_id:
         description: ULID of the block.
         type: string
+      space_id:
+        description: ULID of the space the block belongs to. A block in another space is rejected with a Validation error.
+        type: string
     required:
       - block_id
+      - space_id
     type: object
   name: get_block
 - description: "List backlinks for a block, grouped by source page."
@@ -247,7 +260,7 @@ expression: wire
       - space_id
     type: object
   name: journal_for_date
-- description: "List every space as { id, name, is_default }. Every read-write tool (and search / journal_for_date) requires a space_id — call this first to discover one. is_default marks the seeded Personal space, the sensible fallback when no space has been chosen."
+- description: "List every space as { id, name, is_default }. Every other tool except list_property_defs requires a space_id — call this first to discover one. is_default marks the seeded Personal space."
   inputSchema:
     additionalProperties: false
     properties: {}
@@ -260,8 +273,12 @@ expression: wire
       page_id:
         description: ULID of the page block.
         type: string
+      space_id:
+        description: ULID of the space the page belongs to. A page in another space is rejected with a Validation error.
+        type: string
     required:
       - page_id
+      - space_id
     type: object
   name: get_page_markdown
 - description: "Who changed what on a page, and when: every op on the page's blocks. Each row has device_id, seq, origin (`user`, or `agent:<name>` for an agent's write), op_type, created_at (epoch ms), block_id, a clipped `after` (the text or property value the op wrote) and, for an edit, a clipped `before`. Newest first; cursor paginated."

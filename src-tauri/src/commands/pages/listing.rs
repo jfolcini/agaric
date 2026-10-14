@@ -1,6 +1,6 @@
 //! Page listing / lookup command handlers (#644 split).
 //!
-//! `list_pages_inner`, `get_page(_unscoped)_inner`, `list_all_pages_in_space`,
+//! `list_pages_inner`, `get_page_inner`, `list_all_pages_in_space`,
 //! `list_template_page_ids_in_space`, `load_page_subtree` and their cores,
 //! plus the response/heading shapes and the MCP page-limit cap.
 
@@ -30,10 +30,10 @@ use super::super::*;
 /// tool-surface cap.
 pub const MCP_PAGE_LIMIT_CAP: i64 = 100;
 
-/// List all pages in the database with cursor pagination.
+/// List the pages of one space with cursor pagination.
 ///
-/// Returns non-deleted, non-conflict blocks with `block_type = 'page'`,
-/// ordered by `id ASC` (ULID ≈ chronological). A supplied `limit`
+/// Returns non-deleted, non-conflict blocks with `block_type = 'page'`
+/// in `space_id`, ordered by `id ASC` (ULID ≈ chronological). A supplied `limit`
 /// outside `[1, MCP_PAGE_LIMIT_CAP]` is rejected with
 /// [`AppError::Validation`]; callers can still fetch all pages via the
 /// returned cursor.
@@ -44,6 +44,7 @@ pub const MCP_PAGE_LIMIT_CAP: i64 = 100;
 #[instrument(skip(pool), err)]
 pub async fn list_pages_inner(
     pool: &SqlitePool,
+    space_id: &str,
     cursor: Option<String>,
     limit: Option<i64>,
 ) -> Result<PageResponse<BlockRow>, AppError> {
@@ -61,12 +62,9 @@ pub async fn list_pages_inner(
         )));
     }
     let page = PageRequest::new(cursor, limit)?;
-    // Phase 2: `list_pages` is the MCP (agent) page enumeration
-    // and stays unscoped — agents see every space. Frontend-facing page
-    // lookups go through `list_blocks_inner` which threads `space_id`.
     // Downcast at the MCP-facing boundary to keep the tool's wire shape
     // stable; the active-typing invariant lives inside `list_by_type`.
-    let resp = pagination::list_by_type(pool, "page", &page, None).await?;
+    let resp = pagination::list_by_type(pool, "page", &page, Some(space_id)).await?;
     Ok(PageResponse {
         items: resp.items.into_iter().map(BlockRow::from).collect(),
         next_cursor: resp.next_cursor,
@@ -248,72 +246,6 @@ pub async fn get_page_inner(
         next_cursor: page_info.next_cursor,
         has_more: page_info.has_more,
     })
-}
-
-/// Fetch a page + paginated subtree without a caller-supplied
-/// `space_id`. Looks up the page's own `space` property and feeds it
-/// Into [`get_page_inner`], so the Phase 7 membership check is
-/// trivially satisfied.
-///
-/// Used by the MCP `get_page` tool (`crate::mcp::tools_ro`) where the
-/// agent is intentionally unscoped — every page the agent can name
-/// belongs to its own space by construction. Frontend callers always
-/// know their `space_id` and call [`get_page_inner`] directly; this
-/// helper exists so the tool layer stays a "thin wrapper" instead of
-/// owning a sibling `block_properties` query.
-///
-/// Error contract preserves the pre-Phase-7 MCP behaviour:
-///
-/// - unknown id → [`AppError::NotFound`]
-/// - block_type ≠ `"page"` → [`AppError::Validation`]
-///   (via [`get_page_inner`])
-/// - page exists but has no `space` property → [`AppError::Validation`]
-///   (so agents can distinguish "no such page" from "exists but
-///   unscoped" via the error category).
-///
-/// Pulled out of `mcp::tools_ro::handle_get_page` so
-/// `mcp::tools_ro` no longer carries direct SQL — the module header
-/// invariant is "thin wrapper around `*_inner`".
-#[instrument(skip(pool), err)]
-pub async fn get_page_unscoped_inner(
-    pool: &SqlitePool,
-    page_id: &str,
-    cursor: Option<String>,
-    limit: Option<i64>,
-) -> Result<PageSubtreeResponse, AppError> {
-    // Look up the page's own space via `blocks.space_id` (Phase 2 — the
-    // column is the sole source of truth for membership). `fetch_optional`
-    // distinguishes "no row" (page may not exist) from "row with NULL
-    // space_id" (defensive — every block carries a space, so this should
-    // not occur); both fall through to the unscoped branch below.
-    let space_id: Option<String> = sqlx::query_scalar!(
-        r#"SELECT space_id FROM blocks
-           WHERE id = ?"#,
-        page_id,
-    )
-    .fetch_optional(pool)
-    .await?
-    .flatten();
-    let Some(space_id) = space_id else {
-        // No space property — distinguish "unknown id" (NotFound) from
-        // "exists but unscoped" (Validation) by hitting
-        // `get_active_block_inner` first; it returns `NotFound` for
-        // unknown ids. If the block exists and is active but has no
-        // space, fall through to `Validation` so the error category
-        // matches what an MCP agent would have seen pre-Phase-7.
-        //
-        // Switched from `get_block_inner` to
-        // `get_active_block_inner` so a soft-deleted page surfaces as
-        // `NotFound` to the MCP read tool. Agents must not be able to
-        // discover tombstoned pages via this surface; the only
-        // legitimate path to soft-deleted rows is the (frontend-only)
-        // trash UI.
-        get_active_block_inner(pool, page_id.into()).await?;
-        return Err(AppError::validation(format!(
-            "page '{page_id}' has no space property"
-        )));
-    };
-    get_page_inner(pool, page_id, &space_id, cursor, limit).await
 }
 
 /// Page header for callers that need every page in a space without
