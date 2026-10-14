@@ -12,7 +12,7 @@
 //! | Tool | Backing `*_inner` | Notes |
 //! |------|-------------------|-------|
 //! | `list_pages` | [`list_pages_inner`] | The pages of one space. Cursor paginated. Limits outside `[1, 100]` are rejected. `space_id` required. |
-//! | `get_page` | [`get_page_inner`](crate::commands::get_page_inner) | Composes `get_active_block_inner` + paginated subtree via `page_id`; `page` carries its properties, tags and aliases (#5377). soft-deleted pages → `NotFound`. `space_id` required; a page in another space is rejected. |
+//! | `get_page` | [`get_page_inner`] | Composes `get_active_block_inner` + paginated subtree via `page_id`; `page` carries its properties, tags and aliases (#5377). soft-deleted pages → `NotFound`. `space_id` required; a page in another space is rejected. |
 //! | `search` | [`search_blocks_inner`] | FTS5. Result count capped at 50, snippet length at 512 chars. |
 //! | `get_block` | [`get_active_block_inner`] | Plus the block's properties, tags and, for a page, aliases (#5377). soft-deleted blocks → `NotFound`. `space_id` required; a block in another space is rejected. |
 //! | `list_backlinks` | [`list_backlinks_grouped_inner`] | Grouped by source page. `space_id` required. |
@@ -119,7 +119,7 @@ pub const SEARCH_RESULT_CAP: i64 = 50;
 /// Default for list-style tools (`list_pages`, `list_tags`,
 /// `list_backlinks`). Re-exported from
 /// [`crate::commands::MCP_PAGE_LIMIT_CAP`] so the tool boundary and the
-/// [`list_pages_inner`] / [`get_page_inner`](crate::commands::get_page_inner) internal strict validation
+/// [`list_pages_inner`] / [`get_page_inner`] internal strict validation
 /// share a single source of truth.
 pub use crate::commands::MCP_PAGE_LIMIT_CAP as LIST_RESULT_CAP;
 
