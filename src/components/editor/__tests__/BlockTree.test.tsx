@@ -516,6 +516,14 @@ const BLOCK_TREE_DEFAULTS: TypedInvokeHandlers = {
 /** A successful, empty `load_page_subtree`. */
 const emptySubtree = { blocks: [], truncated: false, total: 0 }
 
+/** A page that holds `id`, before and after the mount-time load: a tree acts
+ *  only on a focused block its own store holds. */
+function seedPageWith(id: string): void {
+  const block = makeBlock({ id, parent_id: 'PAGE_1' })
+  pageStore.setState({ blocks: [block], loading: false })
+  stubBlockTree({ load_page_subtree: () => ({ blocks: [block], truncated: false, total: 1 }) })
+}
+
 /**
  * Install {@link BLOCK_TREE_DEFAULTS} with this test's overrides on top.
  * Overrides ACCUMULATE within a test, so a second call mid-test refines the
@@ -1779,7 +1787,7 @@ describe('BlockTree slash command wiring', () => {
   })
 
   it('onSlashCommand for /table with no dimensions inserts 3x3 table', async () => {
-    stubBlockTree({ load_page_subtree: () => emptySubtree })
+    seedPageWith('BLOCK_01')
     useMockEditor = true
 
     renderBlockTree({ autoCreateFirstBlock: false })
@@ -1798,7 +1806,7 @@ describe('BlockTree slash command wiring', () => {
   })
 
   it('onSlashCommand for /table 4x6 inserts 4x6 table', async () => {
-    stubBlockTree({ load_page_subtree: () => emptySubtree })
+    seedPageWith('BLOCK_01')
     useMockEditor = true
 
     renderBlockTree({ autoCreateFirstBlock: false })
@@ -1817,7 +1825,7 @@ describe('BlockTree slash command wiring', () => {
   })
 
   it('onSlashCommand for /table 10x2 inserts 10x2 table', async () => {
-    stubBlockTree({ load_page_subtree: () => emptySubtree })
+    seedPageWith('BLOCK_01')
     useMockEditor = true
 
     renderBlockTree({ autoCreateFirstBlock: false })
@@ -1839,7 +1847,7 @@ describe('BlockTree slash command wiring', () => {
   })
 
   it('slash command dialog uses standard max-sm breakpoint', async () => {
-    stubBlockTree({ load_page_subtree: () => emptySubtree })
+    seedPageWith('BLOCK_01')
     useMockEditor = true
 
     renderBlockTree({ autoCreateFirstBlock: false })
@@ -1886,7 +1894,7 @@ describe('BlockTree slash command wiring', () => {
   })
 
   it('slash command dialog has responsive max-width', async () => {
-    stubBlockTree({ load_page_subtree: () => emptySubtree })
+    seedPageWith('BLOCK_01')
     useMockEditor = true
 
     renderBlockTree({ autoCreateFirstBlock: false })
@@ -2027,7 +2035,11 @@ describe('BlockTree query builder save (#1016)', () => {
     stubBlockTree({
       load_page_subtree: () => {
         loadCalls += 1
-        return emptySubtree
+        return {
+          blocks: [makeBlock({ id: 'BLOCK_A', parent_id: 'PAGE_1' })],
+          truncated: false,
+          total: 1,
+        }
       },
       edit_block: () =>
         withOps(makeBlockRow({ id: 'BLOCK_A', content: '{{query status = "done"}}' })),
