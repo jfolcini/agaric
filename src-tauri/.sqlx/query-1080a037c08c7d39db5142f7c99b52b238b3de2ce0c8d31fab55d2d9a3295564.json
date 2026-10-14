@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT seq as \"seq!: i64\" FROM op_log\n               WHERE json_extract(payload, '$.content') LIKE '%2031-01-02%'\n                  OR (op_type = 'set_property' AND block_id = ?1)\n               ORDER BY seq",
+  "describe": {
+    "columns": [
+      {
+        "name": "seq!: i64",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "op_log",
+            "name": "seq"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "1080a037c08c7d39db5142f7c99b52b238b3de2ce0c8d31fab55d2d9a3295564"
+}

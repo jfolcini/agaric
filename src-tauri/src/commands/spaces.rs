@@ -193,6 +193,10 @@ pub(crate) async fn require_live_space_in_tx(
 /// (nothing created, no op appended): page titles are unique per space
 /// (#4723).
 ///
+/// A `content` in `YYYY-MM-DD` form names a journal day, so the space's
+/// journal template is copied under the new page in the same transaction
+/// (#5395), as it is for a day Quick Capture or an agent creates.
+///
 /// Returns the new page's `BlockId`. The Tauri wrapper serialises that
 /// via `BlockId`'s transparent `Serialize` impl — the frontend receives
 /// a plain string.
@@ -233,43 +237,8 @@ pub async fn create_page_in_space_inner(
     // 1. Validate `space_id` upfront inside the tx.
     require_live_space_in_tx(&mut tx, &space_id).await?;
 
-    // When a parent is supplied, enforce that it belongs to the
-    // SAME space as `space_id`. Otherwise a frontend bug (e.g. resolving
-    // `parent_id` from another space's tree but passing the current
-    // `space_id`) could land a page whose `parent_id` walks across a
-    // Space boundary, breaking the "page sets are disjoint"
-    // invariant. The check happens inside the tx so it is TOCTOU-safe
-    // against a concurrent move. Phase 2: a block's space membership
-    // lives in `blocks.space_id` (the SOLE source of truth), so we read
-    // the parent's own `space_id` rather than a `block_properties`
-    // `space` row. A `NULL` column (or a missing parent row) is treated
-    // the same as the old "no `space` property" case below.
-    if let Some(parent) = parent_id.as_ref() {
-        let parent_space: Option<String> = sqlx::query_scalar!(
-            r#"SELECT space_id as "space?: String"
-               FROM blocks
-               WHERE id = ?"#,
-            parent,
-        )
-        .fetch_optional(&mut **tx)
-        .await?
-        .flatten();
-        match parent_space {
-            Some(s) if s == space_id => {} // OK — same space
-            Some(other) => {
-                return Err(AppError::validation(format!(
-                    "parent_id '{parent}' belongs to space '{other}'; cannot create child in space '{space_id}'"
-                )));
-            }
-            None => {
-                // Parent has no `space_id` (NULL column or missing row) —
-                // refuse rather than allow a cross-space orphan or invent
-                // a default.
-                return Err(AppError::validation(format!(
-                    "parent_id '{parent}' has no space membership; cannot create child in space '{space_id}'"
-                )));
-            }
-        }
+    if let Some(parent) = parent_id.as_deref() {
+        require_parent_in_space_in_tx(&mut tx, parent, &space_id).await?;
     }
 
     // #4723 — a title is unique among live pages of one space, and a caller
@@ -279,6 +248,13 @@ pub async fn create_page_in_space_inner(
         tx.commit_without_dispatch().await?;
         return Ok(BlockId::from_trusted(&existing));
     }
+
+    // #5395 — a page titled as a date IS that day's journal page (the journal
+    // looks a day up by its title), so it is born with the space's journal
+    // template as a day the journal or Quick Capture creates is.
+    let journal_day = crate::commands::validate_date_format(&content)
+        .is_ok()
+        .then(|| content.clone());
 
     // 2. Create the page block. `create_block_in_tx` generates the ULID,
     //    appends a `CreateBlock` op, and inserts the materialized row.
@@ -313,13 +289,59 @@ pub async fn create_page_in_space_inner(
         None,
         None,
         None,
-        Some(space_id),
+        Some(space_id.clone()),
         None,
     )
     .await?;
 
+    if let Some(date) = journal_day {
+        // Boxed: inline, the template's future makes `create_block`'s too
+        // large for the stack (`clippy::large_futures`).
+        Box::pin(crate::commands::journal::apply_journal_template_in_tx(
+            &mut tx,
+            materializer,
+            device_id,
+            new_page_id.as_str(),
+            &date,
+            &space_id,
+        ))
+        .await?;
+    }
+
     tx.commit_and_dispatch(materializer).await?;
     Ok(new_page_id)
+}
+
+/// Refuse a `parent_id` outside `space_id`: a frontend bug (a parent resolved
+/// from another space's tree, the current `space_id` passed along) would land
+/// a page whose `parent_id` walks across a space boundary, breaking the "page
+/// sets are disjoint" invariant. Runs inside the tx so it is TOCTOU-safe
+/// against a concurrent move. A block's space membership is `blocks.space_id`
+/// (the sole source of truth); a `NULL` column or a missing row is refused
+/// rather than defaulted.
+async fn require_parent_in_space_in_tx(
+    tx: &mut CommandTx,
+    parent: &str,
+    space_id: &str,
+) -> Result<(), AppError> {
+    let parent_space: Option<String> = sqlx::query_scalar!(
+        r#"SELECT space_id as "space?: String"
+               FROM blocks
+               WHERE id = ?"#,
+        parent,
+    )
+    .fetch_optional(&mut ***tx)
+    .await?
+    .flatten();
+    match parent_space {
+        Some(s) if s == space_id => Ok(()),
+        Some(other) => Err(AppError::validation(format!(
+            "parent_id '{parent}' belongs to space '{other}'; cannot create child in space '{space_id}'"
+        ))),
+        None => Err(AppError::validation(format!(
+            "parent_id '{parent}' has no space membership; cannot create child in space '{space_id}'"
+        ))),
+    }
 }
 
 /// The live page in `space_id` titled exactly `title` (the comparison
