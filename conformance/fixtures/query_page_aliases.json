@@ -130,14 +130,6 @@
       "cursor": null,
       "error": null,
       "has_more": null,
-      "name": "resolve_global_scope",
-      "rows": ["B1#title=Planning"],
-      "total_count": null
-    },
-    {
-      "cursor": null,
-      "error": null,
-      "has_more": null,
       "name": "resolve_tombstoned_page_misses",
       "rows": [],
       "total_count": null
@@ -175,7 +167,7 @@
       "cursor": null,
       "error": null,
       "has_more": null,
-      "name": "prefix_global_scope_case_folded",
+      "name": "prefix_lowercase_query_case_folded",
       "rows": ["B1#alias=Roadmap#title=Planning"],
       "total_count": null
     },
@@ -285,17 +277,6 @@
     },
     {
       "args": {
-        "alias": "plan",
-        "scope": {
-          "kind": "global"
-        }
-      },
-      "command": "resolve_page_by_alias",
-      "comment": "`Global` applies no space filter and finds the same page through a different alias. Pinned on the same data as the active step because the seed cannot express a second space.",
-      "name": "resolve_global_scope"
-    },
-    {
-      "args": {
         "alias": "old-plan",
         "scope": {
           "kind": "active",
@@ -311,7 +292,8 @@
       "args": {
         "alias": "nothing",
         "scope": {
-          "kind": "global"
+          "kind": "active",
+          "space_id": "$SPACE"
         }
       },
       "command": "resolve_page_by_alias",
@@ -348,12 +330,13 @@
       "args": {
         "prefix": "road",
         "scope": {
-          "kind": "global"
+          "kind": "active",
+          "space_id": "$SPACE"
         }
       },
       "command": "list_page_aliases_by_prefix",
-      "comment": "`road` matches the alias stored as `Roadmap` under `Global`: the LIKE is case-insensitive in the other direction too (lowercase query, capitalized row), and the unscoped branch answers the same rows the seed's one space holds.",
-      "name": "prefix_global_scope_case_folded"
+      "comment": "`road` matches the alias stored as `Roadmap`: the LIKE is case-insensitive in the other direction too (lowercase query, capitalized row).",
+      "name": "prefix_lowercase_query_case_folded"
     },
     {
       "args": {
@@ -367,7 +350,8 @@
       "args": {
         "alias": "Ärger",
         "scope": {
-          "kind": "global"
+          "kind": "active",
+          "space_id": "$SPACE"
         }
       },
       "command": "resolve_page_by_alias",
@@ -378,7 +362,8 @@
       "args": {
         "alias": "ärger",
         "scope": {
-          "kind": "global"
+          "kind": "active",
+          "space_id": "$SPACE"
         }
       },
       "command": "resolve_page_by_alias",
@@ -389,7 +374,8 @@
       "args": {
         "prefix": "Ärg",
         "scope": {
-          "kind": "global"
+          "kind": "active",
+          "space_id": "$SPACE"
         }
       },
       "command": "list_page_aliases_by_prefix",
@@ -400,7 +386,8 @@
       "args": {
         "prefix": "ärg",
         "scope": {
-          "kind": "global"
+          "kind": "active",
+          "space_id": "$SPACE"
         }
       },
       "command": "list_page_aliases_by_prefix",
@@ -411,7 +398,8 @@
       "args": {
         "prefix": "q-",
         "scope": {
-          "kind": "global"
+          "kind": "active",
+          "space_id": "$SPACE"
         }
       },
       "command": "list_page_aliases_by_prefix",
@@ -422,7 +410,8 @@
       "args": {
         "prefix": "z-",
         "scope": {
-          "kind": "global"
+          "kind": "active",
+          "space_id": "$SPACE"
         }
       },
       "command": "list_page_aliases_by_prefix",

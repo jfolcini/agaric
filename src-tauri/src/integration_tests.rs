@@ -41,6 +41,7 @@ use agaric_engine::draft;
 use agaric_store::op::{CreateBlockPayload, EditBlockPayload, OpPayload};
 use agaric_store::op_log;
 use agaric_store::pagination::BlockRow;
+use agaric_store::search_types::SearchScope;
 use agaric_store::space::{SpaceId, SpaceScope};
 use sqlx::SqlitePool;
 use std::collections::HashSet;
@@ -102,6 +103,14 @@ async fn create_content(
         position,
     )
     .await
+    .unwrap()
+}
+
+/// A search over [`TEST_SPACE_ID`] with no other predicate.
+fn test_space_search_filter() -> SearchFilter {
+    serde_json::from_value(serde_json::json!({
+        "scope": SearchScope::Spaces(vec![SpaceId::from_trusted(TEST_SPACE_ID)]),
+    }))
     .unwrap()
 }
 
@@ -1538,10 +1547,7 @@ async fn fts_search_reflects_edits_through_materializer_pipeline() {
         "quantum".into(),
         None,
         None,
-        crate::commands::SearchFilter {
-            scope: SpaceScope::Active(SpaceId::from_trusted(TEST_SPACE_ID)),
-            ..Default::default()
-        },
+        test_space_search_filter(),
         None,
     )
     .await
@@ -1575,10 +1581,7 @@ async fn fts_search_reflects_edits_through_materializer_pipeline() {
         "quantum".into(),
         None,
         None,
-        crate::commands::SearchFilter {
-            scope: SpaceScope::Active(SpaceId::from_trusted(TEST_SPACE_ID)),
-            ..Default::default()
-        },
+        test_space_search_filter(),
         None,
     )
     .await
@@ -1594,10 +1597,7 @@ async fn fts_search_reflects_edits_through_materializer_pipeline() {
         "classical".into(),
         None,
         None,
-        crate::commands::SearchFilter {
-            scope: SpaceScope::Active(SpaceId::from_trusted(TEST_SPACE_ID)),
-            ..Default::default()
-        },
+        test_space_search_filter(),
         None,
     )
     .await
@@ -1686,6 +1686,7 @@ async fn tag_prefix_query_returns_hierarchy_matches_only() {
     add_tag_inner(&pool, DEV, &mat, blk_email.id.clone(), tag_email.id.clone())
         .await
         .unwrap();
+    assign_all_to_test_space(&pool).await;
 
     // Query with prefix "work/" — should match "work/meeting" and
     // "work/email" but NOT "work" (exact match without slash suffix)
@@ -1697,7 +1698,7 @@ async fn tag_prefix_query_returns_hierarchy_matches_only() {
         None,
         None,
         None,
-        &SpaceScope::Global,
+        &SpaceScope::Active(SpaceId::from_trusted(TEST_SPACE_ID)),
         None,
     )
     .await
@@ -1732,7 +1733,7 @@ async fn tag_prefix_query_returns_hierarchy_matches_only() {
         None,
         None,
         None,
-        &SpaceScope::Global,
+        &SpaceScope::Active(SpaceId::from_trusted(TEST_SPACE_ID)),
         None,
     )
     .await

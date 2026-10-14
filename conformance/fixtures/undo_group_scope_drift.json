@@ -115,7 +115,11 @@
         "blockType": "content",
         "content": "x",
         "index": 0,
-        "parentId": "S3"
+        "parentId": "S3",
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
       },
       "command": "create_block",
       "comment": "C1 is born under BETA, and born from an OP carrying an `index`: a move's reverse reconstructs the prior placement from the newest earlier `move_block` / `create_block` row for that block (`find_prior_position`), and a create payload with neither `index` nor `position` is `NonReversible` rather than a guessed slot. A SEEDED block has no such row at all."

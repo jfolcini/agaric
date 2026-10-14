@@ -27,6 +27,25 @@ async fn fresh_pool(dir: &TempDir, name: &str) -> SqlitePool {
     init_pool(&db_path).await.unwrap()
 }
 
+/// The space every block the scoped benches read lives in.
+const BENCH_SPACE_ID: &str = "01BENCHSPACE00000000000001";
+
+/// Register [`BENCH_SPACE_ID`] and move every seeded block into it.
+async fn put_every_block_in_bench_space(pool: &SqlitePool) {
+    for sql in [
+        "INSERT OR IGNORE INTO blocks (id, block_type, content, page_id) \
+         VALUES (?1, 'page', 'Bench', ?1)",
+        "INSERT OR IGNORE INTO spaces (id) VALUES (?1)",
+        "UPDATE blocks SET space_id = ?1 WHERE id <> ?1",
+    ] {
+        sqlx::query(sql)
+            .bind(BENCH_SPACE_ID)
+            .execute(pool)
+            .await
+            .unwrap();
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Seed helpers — raw SQL in transactions for speed
 // ---------------------------------------------------------------------------
@@ -643,10 +662,14 @@ fn bench_count_backlinks_batch(c: &mut Criterion) {
         let dir = TempDir::new().unwrap();
         let pool = rt.block_on(fresh_pool(&dir, &format!("batch_{count}")));
         rt.block_on(seed_backlinks_for_batch(&pool, count));
+        rt.block_on(put_every_block_in_bench_space(&pool));
 
         let page_ids: Vec<String> = (0..10).map(|p| format!("PAGE{p:020}")).collect();
 
         group.bench_with_input(BenchmarkId::from_parameter(count), &count, |b, _| {
+            let scope = agaric_store::space::SpaceScope::Active(
+                agaric_store::space::SpaceId::from_trusted(BENCH_SPACE_ID),
+            );
             b.to_async(&rt).iter(|| {
                 count_backlinks_batch_inner(
                     &pool,
@@ -655,7 +678,7 @@ fn bench_count_backlinks_batch(c: &mut Criterion) {
                         .into_iter()
                         .map(Into::into)
                         .collect::<Vec<agaric_core::ulid::PageId>>(),
-                    &agaric_store::space::SpaceScope::Global,
+                    &scope,
                 )
             });
         });
@@ -721,12 +744,12 @@ fn bench_list_unlinked_references(c: &mut Criterion) {
         let dir = TempDir::new().unwrap();
         let pool = rt.block_on(fresh_pool(&dir, &format!("unlinked_{count}")));
         rt.block_on(seed_unlinked_refs(&pool, count));
+        rt.block_on(put_every_block_in_bench_space(&pool));
 
         group.bench_with_input(BenchmarkId::from_parameter(count), &count, |b, _| {
-            // Phase 2 / `list_unlinked_references_inner`
-            // takes `&SpaceScope`. The bench query is content-addressed by
-            // page id with no space-scope filter, so use `Global`.
-            let scope = agaric_store::space::SpaceScope::Global;
+            let scope = agaric_store::space::SpaceScope::Active(
+                agaric_store::space::SpaceId::from_trusted(BENCH_SPACE_ID),
+            );
             let target = agaric_core::ulid::PageId::from("UNLINK_TARGET_0000000000");
             b.to_async(&rt).iter(|| {
                 list_unlinked_references_inner(&pool, &target, None, None, None, Some(50), &scope)

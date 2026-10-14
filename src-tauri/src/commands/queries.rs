@@ -93,10 +93,8 @@ pub struct TagFilterExpr {
 
 /// List blocks that link to the given block (backlinks), with cursor pagination.
 ///
-/// `scope` — [`SpaceScope::Active`] restricts the result set
-/// to source blocks whose owning page carries `space = ?space_id`.
-/// [`SpaceScope::Global`] is the unscoped (pre-) behaviour
-/// preserved for callsites that span every space.
+/// `scope` restricts the result set to source blocks whose owning page
+/// carries `space = ?space_id`.
 #[instrument(skip(pool), err)]
 pub async fn get_backlinks_inner(
     pool: &SqlitePool,
@@ -106,7 +104,13 @@ pub async fn get_backlinks_inner(
     scope: &SpaceScope,
 ) -> Result<PageResponse<ActiveBlockRow>, AppError> {
     let page = pagination::PageRequest::new(cursor, limit)?;
-    pagination::list_backlinks(pool, block_id.as_str(), &page, scope.as_filter_param()).await
+    pagination::list_backlinks(
+        pool,
+        block_id.as_str(),
+        &page,
+        Some(scope.space_id().as_str()),
+    )
+    .await
 }
 
 /// Return current materializer queue metrics and system status.
@@ -198,17 +202,13 @@ fn prepare_search_filter(filter: &SearchFilter) -> Result<PreparedSearchFilter, 
 /// [`fts::search_fts`] with cursor pagination.
 ///
 /// Phase 0 — the previous positional `parent_id` / `tag_ids` /
-/// `space_id` args are bundled into [`SearchFilter`]. A
-/// Default-constructed `SearchFilter` reproduces the pre-
-/// "no filter" behaviour (apart from `space_id`, which the
-/// path still requires the caller to supply).
+/// `space_id` args are bundled into [`SearchFilter`].
 ///
-/// Phase 4 — `filter.space_id` is required (not optional). The
-/// filter is threaded through `fts::search_fts` so the FTS5 hits are
-/// restricted to blocks whose owning page carries `space =
-/// ?space_id`. The MCP path (`mcp::tools_ro::handle_search`) requires
-/// the agent to thread its active space too — see the `search` tool's
-/// input schema.
+/// `filter.scope` is required: the FTS5 hits are restricted to blocks in
+/// the spaces it names, or span every space for
+/// [`SearchScope::AllSpaces`](agaric_store::search_types::SearchScope::AllSpaces).
+/// The MCP path (`mcp::tools_ro::handle_search`) scopes to the one space
+/// its required `space_id` names.
 /// P4 (#346) — `snippet_len`: when `Some(n)`, each returned row's
 /// `content` is truncated to the first `n` codepoints at the DATABASE
 /// (`substr(b.content, 1, n)` on the non-matching paths; after regex
@@ -259,18 +259,13 @@ pub async fn search_blocks_inner(
     // shared helper so the cursor and partitioned paths stay in lockstep.
     let prepared = prepare_search_filter(&filter)?;
 
-    // #2248 c — the space filter now rides on `SearchFilter::scope`.
-    // `Active(id)` scopes to that space; `Global` maps to `None` (unscoped).
-    // The FE wrappers (`requireActiveScope`) and the MCP `search` tool only
-    // ever send `Active`, so `Global` here is the deliberate cross-space form,
-    // not a `''`=no-match footgun.
     fts::search_with_toggles(
         pool,
         &query,
         &page,
         filter.parent_id.as_deref(),
         tag_ids_slice,
-        filter.scope.as_filter_param(),
+        &filter.scope,
         &prepared.include_globs,
         &prepared.exclude_globs,
         prepared.toggles,
@@ -287,10 +282,8 @@ pub async fn search_blocks_inner(
 /// When `value_text` is provided, only blocks whose property value matches are returned.
 /// Results are paginated using cursor-based pagination (by block_id).
 ///
-/// `scope` — [`SpaceScope::Active`] restricts the result set
-/// to blocks whose owning page carries `space = ?space_id`.
-/// [`SpaceScope::Global`] is the unscoped (pre-) behaviour
-/// preserved for callsites that span every space.
+/// `scope` restricts the result set to blocks whose owning page carries
+/// `space = ?space_id`.
 ///
 /// `exclude_parent_id` / `content_non_empty` push the
 /// DonePanel's two post-filters down into SQL so cursor pagination,
@@ -345,7 +338,7 @@ pub async fn query_by_property_inner(
         value_date.as_deref(),
         op,
         &page,
-        scope.as_filter_param(),
+        Some(scope.space_id().as_str()),
         exclude_parent_id.as_deref(),
         content_non_empty,
         block_type.as_deref(),
@@ -376,18 +369,17 @@ pub async fn list_unfinished_tasks_inner(
         &before_date,
         &todo_states,
         &page,
-        scope.as_filter_param(),
+        Some(scope.space_id().as_str()),
     )
     .await
 }
 
 /// Query backlinks grouped by source page.
 ///
-/// `scope` — [`SpaceScope::Active`] restricts the result set
-/// to source blocks whose owning page carries `space = ?space_id`. The
-/// filter is applied at the base-set step so `total_count` and
-/// `filtered_count` reflect the post-space-filter universe.
-/// [`SpaceScope::Global`] is the unscoped (pre-) behaviour.
+/// `scope` restricts the result set to source blocks whose owning page
+/// carries `space = ?space_id`. The filter is applied at the base-set step
+/// so `total_count` and `filtered_count` reflect the post-space-filter
+/// universe.
 ///
 /// `kind` — #4551. `Some` narrows the result to one link shape (`[[ULID]]`
 /// page links or `((ULID))` block references); `None` is every shape, the
@@ -417,7 +409,7 @@ pub async fn list_backlinks_grouped_inner(
         filters,
         sort,
         &page,
-        scope.as_filter_param(),
+        Some(scope.space_id().as_str()),
         kind,
     )
     .await
@@ -433,11 +425,10 @@ pub async fn list_backlinks_grouped_inner(
 /// `total_count` and `filtered_count` both reflect the post-filter,
 /// post-self-reference-exclusion block count (AGENTS.md pattern #4).
 ///
-/// `scope` — [`SpaceScope::Active`] restricts FTS-matched
-/// blocks to those whose owning page carries `space = ?space_id`. The
-/// filter is applied at the base-set step so `total_count` and
-/// `filtered_count` reflect the post-space-filter universe.
-/// [`SpaceScope::Global`] is the unscoped (pre-) behaviour.
+/// `scope` restricts FTS-matched blocks to those whose owning page carries
+/// `space = ?space_id`. The filter is applied at the base-set step so
+/// `total_count` and `filtered_count` reflect the post-space-filter
+/// universe.
 ///
 /// # Errors
 /// - [`AppError::Validation`] — `page_id` is empty
@@ -461,7 +452,7 @@ pub async fn list_unlinked_references_inner(
         filters,
         sort,
         &page,
-        scope.as_filter_param(),
+        Some(scope.space_id().as_str()),
     )
     .await
 }
@@ -471,14 +462,12 @@ pub async fn list_unlinked_references_inner(
 /// Returns a `HashMap<page_id, count>` for pages that have at least one
 /// incoming link whose source block is not soft-deleted and is not a conflict.
 ///
-/// `scope` — [`SpaceScope::Active`] restricts the
-/// counted source blocks to those whose owning page carries
-/// `space = ?space_id`. Mirrors the `(?N IS NULL OR b.page_id IN (...))`
-/// clause used by every sibling backlink query (see
+/// `scope` restricts the counted source blocks to those whose owning page
+/// carries `space = ?space_id`. Mirrors the space clause used by every
+/// sibling backlink query (see
 /// `agaric_store::backlink::query::eval_backlink_query`). Without this clause
 /// a page in space A could surface a non-zero badge count whose source
 /// blocks live in space B — backlinks the user can't actually see.
-/// [`SpaceScope::Global`] preserves the pre-spaces unscoped count.
 ///
 /// # Errors
 ///
@@ -498,8 +487,7 @@ pub async fn count_backlinks_batch_inner(
     // `json_each(?1)` binds a JSON array of the canonical id strings.
     let id_strings: Vec<&str> = page_ids.iter().map(PageId::as_str).collect();
     let ids_json = serde_json::to_string(&id_strings)?;
-    // `?2` carries the active space id (or NULL for
-    // [`SpaceScope::Global`]). The shape mirrors
+    // `?2` carries the active space id. The shape mirrors
     // `agaric_store::backlink::query::eval_backlink_query`:
     //   `(?N IS NULL OR b.space_id = ?N)`
     // (#533, migration 0086 — `space_id` is a first-class column)
@@ -514,7 +502,7 @@ pub async fn count_backlinks_batch_inner(
          GROUP BY bl.target_id";
     let rows = sqlx::query_as::<_, (String, i64)>(sql)
         .bind(ids_json)
-        .bind(scope.as_filter_param())
+        .bind(scope.space_id().as_str())
         .fetch_all(pool)
         .await?;
     Ok(rows
@@ -724,9 +712,6 @@ pub async fn search_blocks_partitioned_inner(
     // helper (same path the cursor `search_blocks_inner` uses).
     let prepared = prepare_search_filter(&filter)?;
 
-    // #2248 c — space filter rides on `scope`; `Global` → `None` (unscoped),
-    // mirroring `search_blocks_inner`.
-    //
     // `search_with_toggles_partitioned` runs the two
     // scans in parallel under `tokio::try_join!` and returns each
     // partition's `has_more` from a `limit + 1` probe. No further
@@ -738,7 +723,7 @@ pub async fn search_blocks_partitioned_inner(
         block_limit,
         filter.parent_id.as_deref(),
         tag_ids_slice,
-        filter.scope.as_filter_param(),
+        &filter.scope,
         &prepared.include_globs,
         &prepared.exclude_globs,
         prepared.toggles,
@@ -1262,7 +1247,7 @@ pub async fn filtered_blocks_query_inner(
         .bind(cursor_flag) // ?1
         .bind(cursor_id) // ?2
         .bind(fetch_limit) // ?3
-        .bind(scope.as_filter_param()) // ?4
+        .bind(scope.space_id().as_str()) // ?4
         .bind(block_type.as_deref()); // ?5
     for v in &prop_binds {
         q = q.bind(v);

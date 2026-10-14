@@ -13,7 +13,8 @@
 
 use agaric_core::error::AppError;
 use agaric_store::fts::{MAX_SEARCH_RESULTS, rebuild_fts_index};
-use agaric_store::space::{SpaceId, SpaceScope};
+use agaric_store::search_types::SearchScope;
+use agaric_store::space::SpaceId;
 use sqlx::SqlitePool;
 use tempfile::TempDir;
 
@@ -43,6 +44,11 @@ const PT_BLOCK_IDS: [&str; 5] = [
 // -- Helpers (copied verbatim from the pre-move fts/tests.rs) --
 
 // ── Helpers ──────────────────────────────────────────────────────────
+
+/// A vault-wide search with no other predicate.
+fn all_spaces_filter() -> agaric_store::search_types::SearchFilter {
+    serde_json::from_value(serde_json::json!({ "scope": { "kind": "all_spaces" } })).unwrap()
+}
 
 async fn test_pool() -> (SqlitePool, TempDir) {
     let dir = TempDir::new().unwrap();
@@ -311,7 +317,7 @@ async fn partitioned_happy_path_pages_and_blocks_within_caps() {
         "partitioned".to_string(),
         2,
         3,
-        agaric_store::search_types::SearchFilter::default(),
+        all_spaces_filter(),
         None,
     )
     .await
@@ -352,7 +358,7 @@ async fn partitioned_pages_partition_is_page_typed_only_with_mixed_types() {
         "partitioned".to_string(),
         10,
         10,
-        agaric_store::search_types::SearchFilter::default(),
+        all_spaces_filter(),
         None,
     )
     .await
@@ -382,7 +388,7 @@ async fn partitioned_blocks_partition_is_unrestricted() {
         "partitioned".to_string(),
         10,
         10,
-        agaric_store::search_types::SearchFilter::default(),
+        all_spaces_filter(),
         None,
     )
     .await
@@ -423,7 +429,7 @@ async fn partitioned_caps_honour_each_partition_limit() {
         "partitioned".to_string(),
         1,
         1,
-        agaric_store::search_types::SearchFilter::default(),
+        all_spaces_filter(),
         None,
     )
     .await
@@ -446,7 +452,7 @@ async fn partitioned_has_more_flags_reflect_partition_overflow() {
         "partitioned".to_string(),
         2,
         3,
-        agaric_store::search_types::SearchFilter::default(),
+        all_spaces_filter(),
         None,
     )
     .await
@@ -467,7 +473,7 @@ async fn partitioned_has_more_flags_reflect_partition_overflow() {
         "partitioned".to_string(),
         20,
         20,
-        agaric_store::search_types::SearchFilter::default(),
+        all_spaces_filter(),
         None,
     )
     .await
@@ -493,7 +499,7 @@ async fn partitioned_empty_query_returns_empty_partitions() {
             q.to_string(),
             10,
             10,
-            agaric_store::search_types::SearchFilter::default(),
+            all_spaces_filter(),
             None,
         )
         .await
@@ -524,8 +530,8 @@ async fn partitioned_empty_query_returns_empty_partitions() {
         10,
         10,
         agaric_store::search_types::SearchFilter {
-            scope: SpaceScope::Active(SpaceId::from_trusted(FTS_SPACE_A_ID)),
-            ..Default::default()
+            scope: SearchScope::Spaces(vec![SpaceId::from_trusted(FTS_SPACE_A_ID)]),
+            ..all_spaces_filter()
         },
         None,
     )
@@ -559,7 +565,7 @@ async fn partitioned_ignores_block_type_filter_in_filter_struct() {
         "partitioned".to_string(),
         10,
         10,
-        agaric_store::search_types::SearchFilter::default(),
+        all_spaces_filter(),
         None,
     )
     .await
@@ -574,7 +580,7 @@ async fn partitioned_ignores_block_type_filter_in_filter_struct() {
             // Phase 1: this field MUST be ignored — partitioning
             // by block_type is what the IPC does.
             block_type_filter: Some("page".to_string()),
-            ..Default::default()
+            ..all_spaces_filter()
         },
         None,
     )
@@ -646,8 +652,8 @@ async fn partitioned_space_filter_excludes_other_spaces_from_both_partitions() {
         10,
         10,
         agaric_store::search_types::SearchFilter {
-            scope: SpaceScope::Active(SpaceId::from_trusted(FTS_SPACE_A_ID)),
-            ..Default::default()
+            scope: SearchScope::Spaces(vec![SpaceId::from_trusted(FTS_SPACE_A_ID)]),
+            ..all_spaces_filter()
         },
         None,
     )
@@ -690,7 +696,7 @@ async fn partitioned_regex_mode_routes_through_partitioned_dispatch() {
         10,
         agaric_store::search_types::SearchFilter {
             is_regex: true,
-            ..Default::default()
+            ..all_spaces_filter()
         },
         None,
     )
@@ -730,7 +736,7 @@ async fn partitioned_zero_limits_yield_empty_partitions_and_no_has_more() {
         "partitioned".to_string(),
         0,
         0,
-        agaric_store::search_types::SearchFilter::default(),
+        all_spaces_filter(),
         None,
     )
     .await
@@ -795,7 +801,7 @@ async fn partitioned_max_search_results_ceiling_propagates_to_has_more() {
         "partitioned".to_string(),
         50,
         50,
-        agaric_store::search_types::SearchFilter::default(),
+        all_spaces_filter(),
         None,
     )
     .await
@@ -839,7 +845,7 @@ async fn concurrent_partitioned_searches_do_not_deadlock_or_starve() {
         "partitioned".to_string(),
         8,
         40,
-        agaric_store::search_types::SearchFilter::default(),
+        all_spaces_filter(),
         None,
     );
     let fut1 = agaric_lib::commands::queries::search_blocks_partitioned_inner(
@@ -847,7 +853,7 @@ async fn concurrent_partitioned_searches_do_not_deadlock_or_starve() {
         "partitioned".to_string(),
         8,
         40,
-        agaric_store::search_types::SearchFilter::default(),
+        all_spaces_filter(),
         None,
     );
     let fut2 = agaric_lib::commands::queries::search_blocks_partitioned_inner(
@@ -855,7 +861,7 @@ async fn concurrent_partitioned_searches_do_not_deadlock_or_starve() {
         "partitioned".to_string(),
         8,
         40,
-        agaric_store::search_types::SearchFilter::default(),
+        all_spaces_filter(),
         None,
     );
     let fut3 = agaric_lib::commands::queries::search_blocks_partitioned_inner(
@@ -863,7 +869,7 @@ async fn concurrent_partitioned_searches_do_not_deadlock_or_starve() {
         "partitioned".to_string(),
         8,
         40,
-        agaric_store::search_types::SearchFilter::default(),
+        all_spaces_filter(),
         None,
     );
     let fut4 = agaric_lib::commands::queries::search_blocks_partitioned_inner(
@@ -871,7 +877,7 @@ async fn concurrent_partitioned_searches_do_not_deadlock_or_starve() {
         "partitioned".to_string(),
         8,
         40,
-        agaric_store::search_types::SearchFilter::default(),
+        all_spaces_filter(),
         None,
     );
 
@@ -954,7 +960,7 @@ async fn concurrent_pool_starvation_bound_500ms() {
             "partitioned".to_string(),
             10,
             10,
-            agaric_store::search_types::SearchFilter::default(),
+            all_spaces_filter(),
             None,
         )
         .await;
@@ -967,7 +973,7 @@ async fn concurrent_pool_starvation_bound_500ms() {
             "partitioned".to_string(),
             10,
             10,
-            agaric_store::search_types::SearchFilter::default(),
+            all_spaces_filter(),
             None,
         )
         .await;
@@ -980,7 +986,7 @@ async fn concurrent_pool_starvation_bound_500ms() {
             "partitioned".to_string(),
             10,
             10,
-            agaric_store::search_types::SearchFilter::default(),
+            all_spaces_filter(),
             None,
         )
         .await;
@@ -993,7 +999,7 @@ async fn concurrent_pool_starvation_bound_500ms() {
             "partitioned".to_string(),
             10,
             10,
-            agaric_store::search_types::SearchFilter::default(),
+            all_spaces_filter(),
             None,
         )
         .await;
@@ -1006,7 +1012,7 @@ async fn concurrent_pool_starvation_bound_500ms() {
             "partitioned".to_string(),
             10,
             10,
-            agaric_store::search_types::SearchFilter::default(),
+            all_spaces_filter(),
             None,
         )
         .await;
@@ -1052,7 +1058,7 @@ async fn partitioned_over_long_query_is_rejected() {
         huge,
         10,
         10,
-        agaric_store::search_types::SearchFilter::default(),
+        all_spaces_filter(),
         None,
     )
     .await
@@ -1086,7 +1092,7 @@ async fn partitioned_sub_trigram_only_under_cap_short_circuits() {
         short,
         10,
         10,
-        agaric_store::search_types::SearchFilter::default(),
+        all_spaces_filter(),
         None,
     )
     .await
@@ -1132,7 +1138,7 @@ async fn partitioned_all_filters_populated_executes_cleanly() {
     let filter = agaric_store::search_types::SearchFilter {
         parent_id: Some(PT_PAGE_IDS[0].to_string()),
         tag_ids: vec!["01HQTAG000000000000000TAG1".to_string()],
-        scope: SpaceScope::Active(SpaceId::from_trusted(FTS_SPACE_A_ID)),
+        scope: SearchScope::Spaces(vec![SpaceId::from_trusted(FTS_SPACE_A_ID)]),
         include_page_globs: vec!["*page*".to_string()],
         exclude_page_globs: vec!["*never*".to_string()],
         case_sensitive: true,
@@ -1207,7 +1213,7 @@ async fn partitioned_empty_space_returns_empty_partitions() {
         "partitioned".to_string(),
         10,
         10,
-        agaric_store::search_types::SearchFilter::default(),
+        all_spaces_filter(),
         None,
     )
     .await
@@ -1272,7 +1278,7 @@ async fn partitioned_giant_space_completes_within_1s() {
         "partitioned".to_string(),
         10,
         10,
-        agaric_store::search_types::SearchFilter::default(),
+        all_spaces_filter(),
         None,
     )
     .await;
@@ -1283,7 +1289,7 @@ async fn partitioned_giant_space_completes_within_1s() {
         "partitioned".to_string(),
         10,
         10,
-        agaric_store::search_types::SearchFilter::default(),
+        all_spaces_filter(),
         None,
     )
     .await
@@ -1377,7 +1383,7 @@ async fn partitioned_case_sensitive_with_or_preserves_case() {
         10,
         agaric_store::search_types::SearchFilter {
             case_sensitive: true,
-            ..Default::default()
+            ..all_spaces_filter()
         },
         None,
     )
@@ -1467,7 +1473,7 @@ async fn partitioned_whole_word_with_and_combines_terms() {
         10,
         agaric_store::search_types::SearchFilter {
             whole_word: true,
-            ..Default::default()
+            ..all_spaces_filter()
         },
         None,
     )
@@ -1545,7 +1551,7 @@ async fn partitioned_regex_alternation_matches_both() {
         10,
         agaric_store::search_types::SearchFilter {
             is_regex: true,
-            ..Default::default()
+            ..all_spaces_filter()
         },
         None,
     )
@@ -1611,7 +1617,7 @@ async fn partitioned_nfc_query_matches_nfd_content() {
         nfc_query.to_string(),
         10,
         10,
-        agaric_store::search_types::SearchFilter::default(),
+        all_spaces_filter(),
         None,
     )
     .await
@@ -1666,7 +1672,7 @@ async fn partitioned_regex_bare_alternation_matches_both_arms_under_case_flag() 
         agaric_store::search_types::SearchFilter {
             is_regex: true,
             case_sensitive: false,
-            ..Default::default()
+            ..all_spaces_filter()
         },
         None,
     )
@@ -1701,7 +1707,7 @@ async fn partitioned_regex_invalid_pattern_returns_validation_error() {
         10,
         agaric_store::search_types::SearchFilter {
             is_regex: true,
-            ..Default::default()
+            ..all_spaces_filter()
         },
         None,
     )
@@ -1767,7 +1773,7 @@ async fn partitioned_scan_returns_pages_when_blocks_outrank_them() {
         "partitioned".to_string(),
         5,  // page_limit
         20, // block_limit
-        agaric_store::search_types::SearchFilter::default(),
+        all_spaces_filter(),
         None,
     )
     .await
@@ -1841,7 +1847,7 @@ async fn partitioned_regex_page_filter_returns_pages_when_content_dominates() {
         20,
         agaric_store::search_types::SearchFilter {
             is_regex: true,
-            ..Default::default()
+            ..all_spaces_filter()
         },
         None,
     )
@@ -1886,7 +1892,7 @@ async fn cancellation_drops_in_flight_query() {
         "partitioned".to_string(),
         50,
         50,
-        agaric_store::search_types::SearchFilter::default(),
+        all_spaces_filter(),
         Some(token),
     )
     .await;
@@ -1915,7 +1921,7 @@ async fn cancellation_drops_in_flight_query() {
             "partitioned".to_string(),
             50,
             50,
-            agaric_store::search_types::SearchFilter::default(),
+            all_spaces_filter(),
             Some(token2),
         )
         .await;
@@ -2023,7 +2029,7 @@ async fn slow_acquire_logs_warning() {
             "partitioned".to_string(),
             10,
             10,
-            agaric_store::search_types::SearchFilter::default(),
+            all_spaces_filter(),
             None,
         )
         .await
@@ -2066,7 +2072,7 @@ async fn cancellation_does_not_lose_in_flight_results() {
             "partitioned".to_string(),
             10,
             10,
-            agaric_store::search_types::SearchFilter::default(),
+            all_spaces_filter(),
             Some(token_a),
         )
         .await
@@ -2081,7 +2087,7 @@ async fn cancellation_does_not_lose_in_flight_results() {
             "partitioned".to_string(),
             10,
             10,
-            agaric_store::search_types::SearchFilter::default(),
+            all_spaces_filter(),
             Some(token_b),
         )
         .await
@@ -2163,7 +2169,7 @@ async fn rapid_fire_burst_pattern_does_not_starve_pool() {
                 "partitioned".to_string(),
                 10,
                 10,
-                agaric_store::search_types::SearchFilter::default(),
+                all_spaces_filter(),
                 Some(token),
             )
             .await
@@ -2240,7 +2246,7 @@ async fn partitioned_regex_pre_cancelled_token_returns_cancelled() {
         10,
         agaric_store::search_types::SearchFilter {
             is_regex: true,
-            ..Default::default()
+            ..all_spaces_filter()
         },
         Some(token),
     )
@@ -2288,7 +2294,7 @@ async fn partitioned_has_more_is_true_at_exactly_the_cap() {
         "capboundary".to_string(),
         100,
         100,
-        agaric_store::search_types::SearchFilter::default(),
+        all_spaces_filter(),
         None,
     )
     .await
@@ -2319,7 +2325,7 @@ async fn partitioned_over_limit_is_rejected() {
         "partitioned".to_string(),
         101,
         10,
-        agaric_store::search_types::SearchFilter::default(),
+        all_spaces_filter(),
         None,
     )
     .await
@@ -2335,7 +2341,7 @@ async fn partitioned_over_limit_is_rejected() {
         "partitioned".to_string(),
         10,
         101,
-        agaric_store::search_types::SearchFilter::default(),
+        all_spaces_filter(),
         None,
     )
     .await
@@ -2357,7 +2363,7 @@ async fn partitioned_limits_at_exactly_the_cap_are_accepted() {
         "partitioned".to_string(),
         100,
         100,
-        agaric_store::search_types::SearchFilter::default(),
+        all_spaces_filter(),
         None,
     )
     .await;
@@ -2382,7 +2388,7 @@ async fn partitioned_invalid_regex_fails_fast_with_validation() {
         10,
         agaric_store::search_types::SearchFilter {
             is_regex: true,
-            ..Default::default()
+            ..all_spaces_filter()
         },
         None,
     )
@@ -2412,7 +2418,7 @@ async fn partitioned_pre_cancelled_token_returns_cancelled() {
         "partitioned".to_string(),
         10,
         10,
-        agaric_store::search_types::SearchFilter::default(),
+        all_spaces_filter(),
         Some(token),
     )
     .await;
@@ -2440,7 +2446,7 @@ async fn search_empty_property_key_is_rejected() {
                 key: "   ".to_string(),
                 value: "x".to_string(),
             }],
-            ..Default::default()
+            ..all_spaces_filter()
         },
         None,
     )
@@ -2471,8 +2477,8 @@ async fn search_empty_space_id_matches_nothing() {
         10,
         10,
         agaric_store::search_types::SearchFilter {
-            scope: SpaceScope::Active(SpaceId::from_trusted("")),
-            ..Default::default()
+            scope: SearchScope::Spaces(vec![SpaceId::from_trusted("")]),
+            ..all_spaces_filter()
         },
         None,
     )
@@ -2526,7 +2532,7 @@ async fn be_a10_sqla2_partitioned_regex_has_more_at_cap() {
         cap,
         agaric_store::search_types::SearchFilter {
             is_regex: true,
-            ..Default::default()
+            ..all_spaces_filter()
         },
         None,
     )
@@ -2561,7 +2567,7 @@ async fn be_a10_sqla1_cursor_rejects_over_cap_limit() {
         "sqla1".to_string(),
         None,
         Some(over),
-        agaric_store::search_types::SearchFilter::default(),
+        all_spaces_filter(),
         None,
     )
     .await
@@ -2577,7 +2583,7 @@ async fn be_a10_sqla1_cursor_rejects_over_cap_limit() {
         "sqla1".to_string(),
         None,
         Some(MAX_SEARCH_RESULTS),
-        agaric_store::search_types::SearchFilter::default(),
+        all_spaces_filter(),
         None,
     )
     .await;
@@ -2599,7 +2605,7 @@ async fn be_a10_sqla1_cursor_rejects_over_cap_limit() {
         "sqla1".to_string(),
         None,
         None,
-        agaric_store::search_types::SearchFilter::default(),
+        all_spaces_filter(),
         None,
     )
     .await;

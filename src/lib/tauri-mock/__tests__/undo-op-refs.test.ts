@@ -34,6 +34,8 @@ import {
 } from '@/lib/tauri-mock/seed'
 
 const PAGE = '00000000000000000000PAGEZZ'
+/** Content creates ignore the space, but the command still requires one. */
+const SCOPE = { kind: 'active', space_id: '00000000000000000000SPACEZ' }
 const TAG = '000000000000000000000TAGZZ'
 
 interface Ref {
@@ -98,6 +100,7 @@ describe('#2468 — op_refs capture on migrated mutation handlers', () => {
       content: 'new',
       parentId: PAGE,
       index: 0,
+      scope: SCOPE,
     }) as WithOpsResp & { id: string }
 
     expect(resp.op_refs).toHaveLength(1)

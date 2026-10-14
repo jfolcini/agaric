@@ -43,7 +43,7 @@ import { blockTags, blocks, makeBlock, properties } from '@/lib/tauri-mock/seed'
 import { clearMock, id, setSpace } from './mock-store-helpers'
 
 const SPACE = id('SPACE')
-const GLOBAL = { kind: 'global' }
+const SCOPE = { kind: 'active', space_id: SPACE }
 
 /** U+FF71 HALFWIDTH KATAKANA LETTER A — 3 UTF-8 bytes, code unit FF71. */
 const KATAKANA = 'ｱ'
@@ -82,6 +82,7 @@ describe('LIKE folds ASCII only', () => {
   it('a filtered_blocks_query tag prefix does not reach Ärger from är', () => {
     tag(id('T1'), 'Ärger')
     blocks.set(id('B1'), makeBlock(id('B1'), 'text', 'holder', null, 1))
+    setSpace(id('B1'), SPACE)
     blockTags.set(id('B1'), new Set([id('T1')]))
 
     const ids = (prefix: string) =>
@@ -90,7 +91,7 @@ describe('LIKE folds ASCII only', () => {
           propertyFilters: [],
           tagFilters: { tagIds: [], prefixes: [prefix], mode: 'or' },
           blockType: null,
-          scope: GLOBAL,
+          scope: SCOPE,
         }) as { items: Array<Record<string, unknown>> }
       ).items.map((b) => b['id'])
 
@@ -112,7 +113,7 @@ describe('LIKE folds ASCII only', () => {
       (
         dispatch('list_backlinks_grouped', {
           blockId: target,
-          scope: GLOBAL,
+          scope: SCOPE,
           filters: [{ type: 'PropertyText', key: 'note', value, op: 'Contains' }],
         }) as { filtered_count: number }
       ).filtered_count

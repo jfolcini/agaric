@@ -39,6 +39,8 @@ import { blocks, makeBlock } from '@/lib/tauri-mock/seed'
 
 const SPACE_A = id('SPACEA')
 const SPACE_B = id('SPACEB')
+const SPACE_C = id('SPACEC')
+const ALL_SPACES = { kind: 'all_spaces' }
 
 interface SearchResponse {
   items: Array<Record<string, unknown>>
@@ -57,6 +59,7 @@ function partitioned(args: Record<string, unknown>): PartitionedResponse {
     pageLimit: 10,
     blockLimit: 10,
     ...args,
+    filter: { scope: ALL_SPACES, ...(args['filter'] as Record<string, unknown> | undefined) },
   }) as PartitionedResponse
 }
 
@@ -84,7 +87,7 @@ describe('search_blocks_partitioned — item 1: honours `filter` (#4065)', () =>
   it('scopes the scan to the active space, like search_blocks does', () => {
     const res = partitioned({
       query: 'gizmo',
-      filter: { scope: { kind: 'active', space_id: SPACE_A } },
+      filter: { scope: { kind: 'spaces', space_ids: [SPACE_A] } },
     })
     expect(ids(res.pages)).toEqual([PAGE_A])
     expect(ids(res.blocks)).toEqual([PAGE_A])
@@ -103,6 +106,62 @@ describe('search_blocks_partitioned — item 1: honours `filter` (#4065)', () =>
     const res = partitioned({ query: 'gizmo', filter: { parentId: PAGE_A } })
     expect(ids(res.blocks)).toEqual([CHILD])
   })
+})
+
+// ---------------------------------------------------------------------------
+// #5415 — `SearchScope`: an explicit list of spaces, or all of them; never omitted
+// ---------------------------------------------------------------------------
+
+describe('search_blocks — the scope is an explicit choice (#5415)', () => {
+  const PAGE_A = id('QSS1')
+  const PAGE_B = id('QSS2')
+  const PAGE_C = id('QSS3')
+
+  beforeEach(() => {
+    clearMock()
+    for (const [page, space] of [
+      [PAGE_A, SPACE_A],
+      [PAGE_B, SPACE_B],
+      [PAGE_C, SPACE_C],
+    ] as const) {
+      blocks.set(page, makeBlock(page, 'page', 'Gizmo Roadmap', null, 0))
+      setSpace(page, space)
+    }
+  })
+
+  function search(filter: Record<string, unknown>): SearchResponse {
+    return dispatch('search_blocks', { query: 'gizmo', limit: 50, filter }) as SearchResponse
+  }
+
+  it('covers exactly the listed spaces', () => {
+    const res = search({ scope: { kind: 'spaces', space_ids: [SPACE_A, SPACE_B] } })
+    expect(ids(res).toSorted()).toEqual([PAGE_A, PAGE_B].toSorted())
+  })
+
+  it('covers every space on all_spaces', () => {
+    const res = search({ scope: ALL_SPACES })
+    expect(ids(res).toSorted()).toEqual([PAGE_A, PAGE_B, PAGE_C].toSorted())
+  })
+
+  it.each([
+    ['an omitted scope', {}],
+    ['an empty spaces list', { scope: { kind: 'spaces', space_ids: [] } }],
+    ['a SpaceScope', { scope: { kind: 'active', space_id: SPACE_A } }],
+  ])('refuses %s with a validation error, as the backend fails to deserialize it', (_, filter) => {
+    expect(() => search(filter)).toThrow(expect.objectContaining({ kind: 'validation' }))
+    expect(() => partitionedWithFilter(filter)).toThrow(
+      expect.objectContaining({ kind: 'validation' }),
+    )
+  })
+
+  function partitionedWithFilter(filter: Record<string, unknown>): PartitionedResponse {
+    return dispatch('search_blocks_partitioned', {
+      query: 'gizmo',
+      pageLimit: 10,
+      blockLimit: 10,
+      filter,
+    }) as PartitionedResponse
+  }
 })
 
 // ---------------------------------------------------------------------------

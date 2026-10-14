@@ -21,10 +21,8 @@ use super::*;
 /// Returns a nested map: `date -> source -> count`. Only includes entries
 /// whose owning block is not soft-deleted.
 ///
-/// `scope` — [`SpaceScope::Active`] restricts the count to
-/// blocks whose owning page carries `space = ?space_id`.
-/// [`SpaceScope::Global`] is the unscoped (pre-) behaviour
-/// preserved for callsites that span every space.
+/// `scope` restricts the count to blocks whose owning page carries
+/// `space = ?space_id`.
 ///
 /// # Errors
 ///
@@ -45,7 +43,7 @@ pub async fn count_agenda_batch_by_source_inner(
         validate_date_format(d)?;
     }
     let dates_json = serde_json::to_string(&dates)?;
-    let scope_param = scope.as_filter_param();
+    let scope_param = scope.space_id().as_str();
     // ?2 (space filter) drives the shared space-filter clause.
     // The literal mirrors
     // [`agaric_store::space_filter_canonical::SPACE_FILTER_CANONICAL`] and filters
@@ -508,7 +506,7 @@ pub async fn list_projected_agenda_inner_with_today(
             limit_i64,
             today,
             after.as_ref(),
-            scope.as_filter_param(),
+            Some(scope.space_id().as_str()),
         )
         .await;
     }
@@ -528,7 +526,7 @@ pub async fn list_projected_agenda_inner_with_today(
         &end_date,
         &cursor_binds,
         fetch_limit,
-        scope.as_filter_param(),
+        Some(scope.space_id().as_str()),
     )
     .await?;
 
@@ -577,7 +575,7 @@ pub async fn list_projected_agenda_inner_with_today(
             limit_i64,
             today,
             after.as_ref(),
-            scope.as_filter_param(),
+            Some(scope.space_id().as_str()),
         )
         .await;
     }
@@ -1122,7 +1120,7 @@ pub async fn agenda_range_inner(
         &end_date,
         &projected_agenda_cursor_binds(query.after.as_ref()),
         query.limit_i64 + 1,
-        scope.as_filter_param(),
+        Some(scope.space_id().as_str()),
     )
     .await?;
     let projected =
@@ -1254,10 +1252,8 @@ fn merge_agenda_halves(
 /// List undated tasks: blocks with todo_state but no due_date and no scheduled_date.
 /// Cursor-paginated.
 ///
-/// `scope` — [`SpaceScope::Active`] restricts the result set
-/// to blocks whose owning page carries `space = ?space_id`.
-/// [`SpaceScope::Global`] is the unscoped (pre-) behaviour
-/// preserved for callsites that span every space.
+/// `scope` restricts the result set to blocks whose owning page carries
+/// `space = ?space_id`.
 #[instrument(skip(pool), err)]
 pub async fn list_undated_tasks_inner(
     pool: &SqlitePool,
@@ -1267,7 +1263,7 @@ pub async fn list_undated_tasks_inner(
 ) -> Result<PageResponse<BlockRow>, AppError> {
     use agaric_store::pagination;
     let page_req = pagination::PageRequest::new(cursor, limit)?;
-    pagination::list_undated_tasks(pool, &page_req, scope.as_filter_param()).await
+    pagination::list_undated_tasks(pool, &page_req, Some(scope.space_id().as_str())).await
 }
 
 /// Tauri command: list undated tasks. Delegates to [`list_undated_tasks_inner`].

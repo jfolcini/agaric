@@ -4,14 +4,8 @@
 //! wire / DB layers see a plain string while Rust call sites get the named
 //! type.
 //!
-//! [`SpaceScope::Global`] applies no `block_properties.space` filter at the
-//! SQL level — results span every space (pre-spaces behaviour, plus journal
-//! / settings views that intentionally span all spaces).
-//! [`SpaceScope::Active`] restricts results to blocks belonging to the
-//! wrapped [`SpaceId`].
-//!
-//! Wire format: specta emits `SpaceScope` as the discriminated union
-//! `{ kind: "global" } | { kind: "active"; space_id: SpaceId }`.
+//! [`SpaceScope`] names the one space a command runs in; specta emits it as
+//! `{ kind: "active"; space_id: SpaceId }`.
 
 use serde::{Deserialize, Serialize};
 use std::fmt;
@@ -184,43 +178,26 @@ impl PartialEq<SpaceId> for &str {
     }
 }
 
-/// The space scope a list / search query runs under.
-///
-/// `Global` — no `block_properties.space` filter is applied (pre-
-/// behaviour, plus journal / settings views that intentionally span all
-/// spaces). `Active(SpaceId)` — restrict results to blocks belonging to
-/// the given space.
+/// The one space a command runs in.
 ///
 /// # Wire format
 ///
-/// Adjacently-tagged via `#[serde(tag = "kind", content = "space_id")]`:
+/// Adjacently tagged via `#[serde(tag = "kind", content = "space_id")]`:
+/// `{"kind":"active","space_id":"<ULID>"}`, which specta emits as
+/// `{ kind: "active"; space_id: SpaceId }`. A missing scope or any other
+/// `kind` fails to deserialize.
 ///
-/// - `SpaceScope::Global`              → `{"kind":"global"}`
-/// - `SpaceScope::Active(SpaceId(id))` → `{"kind":"active","space_id":"<ULID>"}`
+/// # Deserialize validates the id shape (issue #1588)
 ///
-/// Specta emits this as a TS discriminated union
-/// (`{ kind: "global" } | { kind: "active"; space_id: SpaceId }`).
-///
-/// # Deserialize validates the `Active` id shape (issue #1588)
-///
-/// The wire/SQL layers treat the inner `SpaceId` as a trusted-shape string —
-/// [`SpaceId`]'s `Deserialize` impl only uppercase-normalises (mirroring `BlockId`),
-/// so without a guard a malformed `space_id` from the frontend / MCP / sync
-/// would bind a never-matching SQL filter param and silently return empty
-/// results. The hand-written `Deserialize` impl below deserialises through the
-/// same adjacently-tagged shape and then runs the lightweight ULID-shape check
-/// ([`SpaceScope::validate`]), so this IPC boundary rejects a malformed space
-/// id up front. `Global` and the seeded sentinel spaces are unaffected.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, specta::Type)]
+/// [`SpaceId`]'s `Deserialize` impl only uppercase-normalises (mirroring
+/// `BlockId`), so without a guard a malformed `space_id` from the frontend /
+/// MCP / sync would bind a never-matching SQL filter param and silently return
+/// empty results. The hand-written `Deserialize` impl below runs
+/// [`SpaceId::validate_shape`], so this IPC boundary rejects a malformed space
+/// id up front.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, specta::Type)]
 #[serde(tag = "kind", content = "space_id")]
 pub enum SpaceScope {
-    /// The unscoped default — no `block_properties.space` filter. Chosen as
-    /// `Default` so a struct field of type `SpaceScope` carrying
-    /// `#[serde(default)]` (e.g. `SearchFilter::scope`) deserialises a
-    /// missing key to the widest, pre-existing "no filter" behaviour.
-    #[serde(rename = "global")]
-    #[default]
-    Global,
     #[serde(rename = "active")]
     Active(SpaceId),
 }
@@ -230,83 +207,26 @@ impl<'de> Deserialize<'de> for SpaceScope {
     where
         D: serde::Deserializer<'de>,
     {
-        // Reuse the derived adjacently-tagged shape via a private shim with an
-        // identical `#[serde(...)]` contract, then validate the `Active` id
-        // shape at this boundary. Keeping the shim's layout byte-identical to
-        // the public enum preserves the wire format / specta output.
+        // A private shim with the identical `#[serde(...)]` contract keeps the
+        // derived wire shape while the id is validated here.
         #[derive(Deserialize)]
         #[serde(tag = "kind", content = "space_id")]
         enum Shim {
-            #[serde(rename = "global")]
-            Global,
             #[serde(rename = "active")]
             Active(SpaceId),
         }
 
-        let scope = match Shim::deserialize(deserializer)? {
-            Shim::Global => SpaceScope::Global,
-            Shim::Active(id) => SpaceScope::Active(id),
-        };
-        scope.validate().map_err(serde::de::Error::custom)?;
-        Ok(scope)
+        let Shim::Active(id) = Shim::deserialize(deserializer)?;
+        id.validate_shape().map_err(serde::de::Error::custom)?;
+        Ok(SpaceScope::Active(id))
     }
 }
 
 impl SpaceScope {
-    /// Adapter for the SQL bind site. Every list query takes a single
-    /// `Option<&str>` "space filter" parameter that maps directly onto
-    /// the existing `?N IS NULL OR …` SQL idiom; this helper returns
-    /// the same shape so Phase 2 callsite migrations don't have to
-    /// touch any SQL. Mirror of the soon-to-be-removed
-    /// `space_id: Option<String>` parameter.
-    pub fn as_filter_param(&self) -> Option<&str> {
-        match self {
-            SpaceScope::Global => None,
-            SpaceScope::Active(id) => Some(id.as_str()),
-        }
-    }
-
-    /// Resolve to the wrapped [`SpaceId`], rejecting [`SpaceScope::Global`].
-    ///
-    /// For commands that are *inherently* space-scoped — the trash views
-    /// (`list_trash` / `count_trash`), per-space listings, etc. — a
-    /// cross-space (`Global`) query is not a supported operation. These
-    /// commands were, before the `SpaceScope` unification (#2248), typed as
-    /// a bare **required** `space_id: String`: there was never a
-    /// cross-space mode, and passing an empty string bound a
-    /// never-matching SQL filter (a silent empty result). Under
-    /// `SpaceScope` that empty-string footgun is already gone — `''`
-    /// deserialises to `Active("")` and is rejected by [`Self::validate`] —
-    /// but `Global` is now *representable*, so these commands must reject it
-    /// explicitly rather than let it fall through [`Self::as_filter_param`]
-    /// (`None`) and silently widen into a cross-space leak (the class of bug
-    /// #2248 tracks). Preserves the old contract exactly: no input yields a
-    /// cross-space result; `Global` is a loud [`AppError::Validation`].
-    pub fn require_active(&self) -> Result<&SpaceId, AppError> {
-        match self {
-            SpaceScope::Active(id) => Ok(id),
-            SpaceScope::Global => Err(AppError::validation(
-                "this command requires an active space scope; global scope is not supported"
-                    .to_string(),
-            )),
-        }
-    }
-
-    /// Validate that an `Active` scope wraps a well-formed space ULID.
-    ///
-    /// `Global` is always valid (it applies no filter). `Active(id)` is
-    /// validated via [`SpaceId::validate_shape`] so a malformed id arriving
-    /// through the lenient serde `Deserialize` path at an IPC / MCP / sync
-    /// boundary is rejected with a clear [`AppError::Validation`] rather than
-    /// silently binding a never-matching SQL filter param and returning empty
-    /// results (issue #1588). The seeded sentinel spaces
-    /// (`SPACE_PERSONAL_ULID` / `SPACE_WORK_ULID`) are canonical ULIDs and
-    /// pass unchanged.
-    pub fn validate(&self) -> Result<(), AppError> {
-        match self {
-            SpaceScope::Global => Ok(()),
-            SpaceScope::Active(id) => id.validate_shape(),
-        }
+    /// The space this scope names.
+    pub fn space_id(&self) -> &SpaceId {
+        let SpaceScope::Active(id) = self;
+        id
     }
 }
 
@@ -338,15 +258,6 @@ impl SpaceScope {
 ///   being soft-deleted (`deleted_at IS NOT NULL`).
 /// - `Err(AppError::Database)` — DB error (rare; would propagate
 ///   from the same `query!` macros every other helper uses).
-///
-/// # Why `Option<SpaceId>` and not `SpaceScope`
-///
-/// The caller's enforcement decision is shape-dependent — same-
-/// space rejection compares `Option<SpaceId>` directly. Wrapping
-/// in `SpaceScope::Global`/`Active` would force the caller to
-/// destructure for the comparison, adding boilerplate. Future
-/// callers can convert via `space.map_or(SpaceScope::Global,
-/// SpaceScope::Active)` if they need the tagged form.
 ///
 /// # SQL
 ///
@@ -562,20 +473,6 @@ mod tests {
     // --- SpaceScope serde round-trip ---
 
     #[test]
-    fn space_scope_global_serialises_to_kind_only() {
-        let json = serde_json::to_value(SpaceScope::Global).unwrap();
-        assert_eq!(json, serde_json::json!({ "kind": "global" }));
-    }
-
-    #[test]
-    fn space_scope_global_round_trips_through_serde_json() {
-        let original = SpaceScope::Global;
-        let json = serde_json::to_string(&original).unwrap();
-        let decoded: SpaceScope = serde_json::from_str(&json).unwrap();
-        assert_eq!(decoded, original);
-    }
-
-    #[test]
     fn space_scope_active_serialises_to_kind_and_space_id() {
         let scope = SpaceScope::Active(SpaceId::from_trusted(FIXTURE_ULID));
         let json = serde_json::to_value(&scope).unwrap();
@@ -606,7 +503,7 @@ mod tests {
         );
     }
 
-    // --- SpaceScope::validate / SpaceId::validate_shape (issue #1588) ---
+    // --- SpaceId::validate_shape (issue #1588) ---
 
     #[test]
     fn validate_shape_accepts_valid_ulid() {
@@ -623,39 +520,6 @@ mod tests {
             .validate_shape()
             .expect_err("malformed space id must reject");
         assert!(matches!(err, AppError::Validation { .. }));
-    }
-
-    #[test]
-    fn space_scope_validate_global_is_ok() {
-        assert!(SpaceScope::Global.validate().is_ok());
-    }
-
-    #[test]
-    fn space_scope_validate_active_valid_ulid_ok() {
-        let scope = SpaceScope::Active(SpaceId::from_trusted(FIXTURE_ULID));
-        assert!(scope.validate().is_ok());
-    }
-
-    #[test]
-    fn space_scope_validate_active_malformed_is_validation_error() {
-        let scope = SpaceScope::Active(SpaceId::from_trusted("DOES_NOT_EXIST"));
-        let err = scope
-            .validate()
-            .expect_err("malformed active scope must reject");
-        assert!(matches!(err, AppError::Validation { .. }));
-    }
-
-    #[test]
-    fn space_scope_validate_seeded_sentinels_pass() {
-        // Guard against over-rejection: the seeded sentinel spaces are
-        // canonical ULIDs and must pass the shape check unchanged.
-        for sentinel in [SPACE_PERSONAL_ULID, SPACE_WORK_ULID] {
-            let scope = SpaceScope::Active(SpaceId::from_trusted(sentinel));
-            assert!(
-                scope.validate().is_ok(),
-                "sentinel space {sentinel} must pass shape validation"
-            );
-        }
     }
 
     #[test]
@@ -692,41 +556,33 @@ mod tests {
         }
     }
 
-    // --- SpaceScope::as_filter_param ---
+    // --- SpaceScope rejects anything but an active space ---
 
     #[test]
-    fn as_filter_param_global_is_none() {
-        assert_eq!(SpaceScope::Global.as_filter_param(), None);
+    fn space_scope_deserialize_rejects_global() {
+        let result: Result<SpaceScope, _> =
+            serde_json::from_value(serde_json::json!({ "kind": "global" }));
+        assert!(result.is_err(), "a global scope must not deserialize");
     }
 
     #[test]
-    fn as_filter_param_active_is_some_inner_str() {
+    fn space_scope_deserialize_rejects_a_missing_scope() {
+        #[derive(Debug, Deserialize)]
+        struct Args {
+            #[expect(dead_code, reason = "only deserialization is under test")]
+            scope: SpaceScope,
+        }
+        let result: Result<Args, _> = serde_json::from_value(serde_json::json!({}));
+        assert!(
+            result.is_err(),
+            "arguments without a scope must not deserialize, got {result:?}"
+        );
+    }
+
+    #[test]
+    fn space_id_returns_the_active_space() {
         let scope = SpaceScope::Active(SpaceId::from_trusted(FIXTURE_ULID));
-        assert_eq!(scope.as_filter_param(), Some(FIXTURE_ULID));
-    }
-
-    // --- SpaceScope::require_active (#2248 — inherently-scoped commands) ---
-
-    #[test]
-    fn require_active_returns_inner_id_for_active_scope() {
-        let scope = SpaceScope::Active(SpaceId::from_trusted(FIXTURE_ULID));
-        let id = scope
-            .require_active()
-            .expect("Active scope must resolve to its inner SpaceId");
-        assert_eq!(id.as_str(), FIXTURE_ULID);
-    }
-
-    #[test]
-    fn require_active_rejects_global_with_validation_error() {
-        // The crux (#2248): an inherently space-scoped command (trash views)
-        // must NOT silently widen `Global` into a cross-space result. The old
-        // bare `space_id: String` API had no cross-space mode; `require_active`
-        // preserves that by making `Global` a loud validation error rather than
-        // a `None` filter that spans every space.
-        let err = SpaceScope::Global
-            .require_active()
-            .expect_err("Global scope must be rejected by require_active");
-        assert!(matches!(err, AppError::Validation { .. }));
+        assert_eq!(scope.space_id().as_str(), FIXTURE_ULID);
     }
 
     // --- sqlx column-cast probe ---

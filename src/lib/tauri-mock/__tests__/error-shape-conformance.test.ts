@@ -202,6 +202,23 @@ describe('tauri-mock error-shape conformance (#2463)', () => {
         cmd: 'set_todo_state_batch',
         args: { blockIds: [], state: 'TODO' },
       },
+      // #5415 — a scope is never defaulted: the backend fails to deserialize
+      // the call, the mock refuses it.
+      {
+        name: 'get_backlinks (no scope)',
+        cmd: 'get_backlinks',
+        args: { blockId: PAGE, cursor: null, limit: null },
+      },
+      {
+        name: 'create_block (no scope)',
+        cmd: 'create_block',
+        args: { blockType: 'content', content: '', parentId: PAGE, index: null, blockId: null },
+      },
+      {
+        name: 'search_blocks (no scope)',
+        cmd: 'search_blocks',
+        args: { query: 'x', cursor: null, limit: null, filter: {} },
+      },
       {
         name: 'load_page_subtree (foreign space)',
         cmd: 'load_page_subtree',
@@ -215,7 +232,7 @@ describe('tauri-mock error-shape conformance (#2463)', () => {
           content: '',
           parentId: TAG,
           index: null,
-          scope: { kind: 'global' },
+          scope: { kind: 'active', space_id: SPACE },
           blockId: null,
         },
       },

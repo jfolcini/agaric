@@ -8,9 +8,7 @@ export const commands = {
 	/**
 	 *  Tauri command: create a new block. Delegates to
 	 *  [`create_block_inner_with_space`] which enforces the
-	 *  "every page has a space" invariant at the IPC boundary
-	 *  The optional `space_id` is required when
-	 *  `block_type == "page"` and ignored otherwise.
+	 *  "every page and tag has a space" invariant at the IPC boundary.
 	 * 
 	 *  #2468: the response carries the produced op ref(s) (`WithOps` — a
 	 *  flattened, strict superset of the previous `BlockRow` shape) so the
@@ -123,32 +121,11 @@ export const commands = {
 	 *  field there. The TS call site keeps its own flat shape and builds the
 	 *  request only at the IPC boundary.
 	 * 
-	 *  # Scope (#2248)
-	 * 
 	 *  The orthogonal [`SpaceScope`] stays a separate argument rather than a
-	 *  request field. Block listing is inherently per-space (each active block
-	 *  belongs to exactly one space) and the old bare-string API had no
-	 *  cross-space mode, so [`SpaceScope::Global`] is rejected via
-	 *  [`SpaceScope::require_active`] instead of silently widening into a
-	 *  cross-space listing. The frontend wrapper keeps a required
-	 *  `spaceId: string` and threads it through `requireActiveScope`, which
-	 *  throws on an empty string, so `Active` is the only shape it can produce
-	 *  and callers must short-circuit locally when there is no active space.
+	 *  request field.
 	 */
 	listBlocks: (request: ListBlocksRequest, scope: SpaceScope) => typedError<PageResponse<BlockRow>, AppError>(__TAURI_INVOKE("list_blocks", { request, scope })),
-	/**
-	 *  Tauri command: paginate soft-deleted blocks. Delegates to [`list_trash_inner`].
-	 * 
-	 *  # Scope (#2248)
-	 * 
-	 *  Takes the canonical [`SpaceScope`] rather than a bare `space_id: String`.
-	 *  Trash is inherently per-space (each space owns its own deletion set) and
-	 *  the old bare-string API had no cross-space mode, so [`SpaceScope::Global`]
-	 *  is rejected via [`SpaceScope::require_active`] instead of silently widening
-	 *  into a cross-space listing. The frontend wrapper keeps a required
-	 *  `spaceId: string` and threads it through `toSpaceScope`, so `Active` is the
-	 *  only shape it can produce.
-	 */
+	/**  Tauri command: paginate soft-deleted blocks. Delegates to [`list_trash_inner`]. */
 	listTrash: (cursor: string | null, limit: number | null, scope: SpaceScope) => typedError<PageResponse<BlockRow>, AppError>(__TAURI_INVOKE("list_trash", { cursor, limit, scope })),
 	/**
 	 *  Tauri command: fetch a single block by ID. Delegates to
@@ -290,21 +267,12 @@ export const commands = {
 	/**
 	 *  Tauri command: list the active space's tags matching a name prefix.
 	 *  Delegates to [`list_tags_by_prefix_inner`].
-	 * 
-	 *  `scope` is a required-active [`SpaceScope`]: a tag name is unique per
-	 *  space, so an unscoped scan answers one row per space for a shared name.
-	 *  [`SpaceScope::Global`] is rejected by [`SpaceScope::require_active`].
 	 */
 	listTagsByPrefix: (prefix: string, limit: number | null, scope: SpaceScope) => typedError<TagCacheRow[], AppError>(__TAURI_INVOKE("list_tags_by_prefix", { prefix, limit, scope })),
 	/**
 	 *  Tauri command: list every tag in the active space as
 	 *  `TagCacheRow[]`. No pagination, no clamp.  Delegates to
 	 *  [`list_all_tags_in_space_inner`].
-	 * 
-	 *  `scope` is a required-active [`SpaceScope`] (b1 migration);
-	 *  [`SpaceScope::Global`] is rejected by [`SpaceScope::require_active`].
-	 *  The frontend short-circuits locally to an empty list when there is no
-	 *  active space rather than dispatching a `Global` scope.
 	 */
 	listAllTagsInSpace: (scope: SpaceScope) => typedError<TagCacheRow[], AppError>(__TAURI_INVOKE("list_all_tags_in_space", { scope })),
 	/**  Tauri command: list tag IDs for a block. Delegates to [`list_tags_for_block_inner`]. */
@@ -771,14 +739,6 @@ export const commands = {
 	/**
 	 *  Tauri command: count soft-deleted blocks in a space. Delegates to
 	 *  [`count_trash_inner`].
-	 * 
-	 *  # Scope (#2248)
-	 * 
-	 *  Takes the canonical [`SpaceScope`]. The backing SQL is a strict
-	 *  `b.space_id = ?1` equality with no cross-space bypass, so
-	 *  [`SpaceScope::Global`] is rejected via [`SpaceScope::require_active`] —
-	 *  there is no "count trash across every space" operation, and the old bare
-	 *  `space_id: String` API never offered one.
 	 */
 	countTrash: (scope: SpaceScope) => typedError<number, AppError>(__TAURI_INVOKE("count_trash", { scope })),
 	/**
@@ -939,12 +899,6 @@ export const commands = {
 	/**
 	 *  Tauri command: look up a journal page by date. Delegates to
 	 *  [`get_journal_page_by_date_inner`].
-	 * 
-	 *  `scope` is a required-active [`SpaceScope`] (b1 migration): the
-	 *  per-space journal lookup has no cross-space form, so
-	 *  [`SpaceScope::Global`] is rejected by [`SpaceScope::require_active`].
-	 *  The frontend skips the probe (no auto-create) when there is no active
-	 *  space rather than dispatching a `Global` scope.
 	 */
 	getJournalPageByDate: (date: string, scope: SpaceScope) => typedError<{
 	id: BlockId,
@@ -963,41 +917,22 @@ export const commands = {
 	/**
 	 *  Tauri command: list date-formatted journal pages in `[start_date,
 	 *  end_date]`. Delegates to [`list_journal_pages_in_range_inner`].
-	 * 
-	 *  `scope` is a required-active [`SpaceScope`] (b1 migration);
-	 *  [`SpaceScope::Global`] is rejected by [`SpaceScope::require_active`].
-	 *  The frontend short-circuits locally to an empty page map when there
-	 *  is no active space rather than dispatching a `Global` scope.
 	 */
 	listJournalPagesInRange: (startDate: string, endDate: string, scope: SpaceScope) => typedError<BlockRow[], AppError>(__TAURI_INVOKE("list_journal_pages_in_range", { startDate, endDate, scope })),
 	/**
 	 *  Tauri command: list every page in the active space as
 	 *  `{ id, content }`, optionally restricted to pages carrying at least
 	 *  one of `tag_ids`. Delegates to [`list_all_pages_in_space_inner`].
-	 * 
-	 *  `scope` is a required-active [`SpaceScope`] (b1 migration): the
-	 *  listing has no cross-space form, so [`SpaceScope::Global`] is
-	 *  rejected by [`SpaceScope::require_active`]. The frontend must
-	 *  short-circuit locally to an empty list when there is no active space
-	 *  rather than dispatching a `Global` scope.
 	 */
 	listAllPagesInSpace: (scope: SpaceScope, tagIds: string[] | null) => typedError<PageHeading[], AppError>(__TAURI_INVOKE("list_all_pages_in_space", { scope, tagIds })),
 	/**
 	 *  Tauri command: list template page IDs in the active space.
 	 *  Delegates to [`list_template_page_ids_in_space_inner`].
-	 * 
-	 *  `scope` is a required-active [`SpaceScope`] (b1 migration);
-	 *  [`SpaceScope::Global`] is rejected by [`SpaceScope::require_active`].
 	 */
 	listTemplatePageIdsInSpace: (scope: SpaceScope) => typedError<string[], AppError>(__TAURI_INVOKE("list_template_page_ids_in_space", { scope })),
 	/**
 	 *  Tauri command: load every active descendant under `root_block_id`
 	 *  in the active space.  Delegates to [`load_page_subtree_inner`].
-	 * 
-	 *  `scope` is a required-active [`SpaceScope`] (b1 migration);
-	 *  [`SpaceScope::Global`] is rejected by [`SpaceScope::require_active`].
-	 *  The frontend short-circuits (returns an empty subtree) when there is
-	 *  no active space rather than dispatching a `Global` scope.
 	 */
 	loadPageSubtree: (rootBlockId: BlockId, scope: SpaceScope) => typedError<PageSubtree, AppError>(__TAURI_INVOKE("load_page_subtree", { rootBlockId, scope })),
 	/**
@@ -3745,13 +3680,13 @@ export type SearchBlockRow = {
 };
 
 /**
- *  Optional filter bundle for `search_blocks_inner`.
+ *  Filter bundle for `search_blocks_inner`.
  * 
  *  Phase 0 collapses the previous positional `parent_id` /
  *  `tag_ids` / `space_id` args into a single struct so the `tauri-specta`
  *  10-arg ceiling stays comfortable as follow-up plans append filter
- *  fields. Every field carries `#[serde(default)]` — a missing key on
- *  the wire deserialises to the field's `Default`, which preserves
+ *  fields. Every field but `scope` carries `#[serde(default)]` — a missing
+ *  key on the wire deserialises to the field's `Default`, which preserves
  *  today's "no filter" behaviour. Follow-up plans append new fields the
  *  same way; they MUST NOT add positional args.
  * 
@@ -3772,18 +3707,10 @@ export type SearchFilter = {
 	 */
 	tagIds?: string[],
 	/**
-	 *  Space scope for the search (#2248 group c). Mapped to the FTS layer
-	 *  via [`SpaceScope::as_filter_param`]: `Active(id)` restricts matches to
-	 *  blocks whose owning page lives in that space; `Global` applies no
-	 *  space filter (the deliberate cross-space form). This replaces the
-	 *  prior `space_id: Option<String>` whose `Some("")` silently meant
-	 *  "match nothing" — the un-typed footgun the arch sweep flagged. Every
-	 *  real caller (the FE search wrappers via `requireActiveScope`, and the
-	 *  MCP `search` tool) sends `Active`, so `Global` only arises from an
-	 *  omitted key (the `#[serde(default)]`) and yields today's unscoped
-	 *  behaviour rather than a never-matching empty filter.
+	 *  The spaces the search covers. Required: an omitted scope fails to
+	 *  deserialize instead of widening the search.
 	 */
-	scope?: SpaceScope,
+	scope: SearchScope,
 	/**
 	 *  Page-name glob include list. Each entry may use
 	 *  SQLite `GLOB` syntax (`*`, `?`, `[...]`) and `{a,b}` brace
@@ -3932,6 +3859,16 @@ export type SearchPropertyFilter = {
 	 */
 	value: string,
 };
+
+/**
+ *  The spaces a search covers: an explicit, non-empty list of spaces, or
+ *  every space.
+ * 
+ *  Adjacently tagged: `{"kind":"spaces","space_ids":["<ULID>", …]}` or
+ *  `{"kind":"all_spaces"}`. Deserialize rejects an empty list and a malformed
+ *  id, so a search never covers a space its caller did not choose.
+ */
+export type SearchScope = { kind: "spaces"; space_ids: SpaceId[] } | { kind: "all_spaces" };
 
 /**
  *  Input bundle for the `set_property` Tauri command — collects all
@@ -4092,42 +4029,25 @@ export type SpaceRow = {
 };
 
 /**
- *  The space scope a list / search query runs under.
- * 
- *  `Global` — no `block_properties.space` filter is applied (pre-
- *  behaviour, plus journal / settings views that intentionally span all
- *  spaces). `Active(SpaceId)` — restrict results to blocks belonging to
- *  the given space.
+ *  The one space a command runs in.
  * 
  *  # Wire format
  * 
- *  Adjacently-tagged via `#[serde(tag = "kind", content = "space_id")]`:
+ *  Adjacently tagged via `#[serde(tag = "kind", content = "space_id")]`:
+ *  `{"kind":"active","space_id":"<ULID>"}`, which specta emits as
+ *  `{ kind: "active"; space_id: SpaceId }`. A missing scope or any other
+ *  `kind` fails to deserialize.
  * 
- *  - `SpaceScope::Global`              → `{"kind":"global"}`
- *  - `SpaceScope::Active(SpaceId(id))` → `{"kind":"active","space_id":"<ULID>"}`
+ *  # Deserialize validates the id shape (issue #1588)
  * 
- *  Specta emits this as a TS discriminated union
- *  (`{ kind: "global" } | { kind: "active"; space_id: SpaceId }`).
- * 
- *  # Deserialize validates the `Active` id shape (issue #1588)
- * 
- *  The wire/SQL layers treat the inner `SpaceId` as a trusted-shape string —
- *  [`SpaceId`]'s `Deserialize` impl only uppercase-normalises (mirroring `BlockId`),
- *  so without a guard a malformed `space_id` from the frontend / MCP / sync
- *  would bind a never-matching SQL filter param and silently return empty
- *  results. The hand-written `Deserialize` impl below deserialises through the
- *  same adjacently-tagged shape and then runs the lightweight ULID-shape check
- *  ([`SpaceScope::validate`]), so this IPC boundary rejects a malformed space
- *  id up front. `Global` and the seeded sentinel spaces are unaffected.
+ *  [`SpaceId`]'s `Deserialize` impl only uppercase-normalises (mirroring
+ *  `BlockId`), so without a guard a malformed `space_id` from the frontend /
+ *  MCP / sync would bind a never-matching SQL filter param and silently return
+ *  empty results. The hand-written `Deserialize` impl below runs
+ *  [`SpaceId::validate_shape`], so this IPC boundary rejects a malformed space
+ *  id up front.
  */
-export type SpaceScope = 
-/**
- *  The unscoped default — no `block_properties.space` filter. Chosen as
- *  `Default` so a struct field of type `SpaceScope` carrying
- *  `#[serde(default)]` (e.g. `SearchFilter::scope`) deserialises a
- *  missing key to the widest, pre-existing "no filter" behaviour.
- */
-{ kind: "global" } | { kind: "active"; space_id: SpaceId };
+export type SpaceScope = { kind: "active"; space_id: SpaceId };
 
 /**
  *  Snapshot of materializer + sync observability fields exposed to the

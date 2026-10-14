@@ -28,6 +28,7 @@ import {
 
 const PAGE = '00000000000000000000PAGEZZ'
 const SPACE = 'SPACE_PERSONAL'
+const SCOPE = { kind: 'active', space_id: SPACE }
 
 /** Reset every relevant mock store and seed a page with `n` root children. */
 function seedPage(childIds: string[]): void {
@@ -65,7 +66,7 @@ function loadedRootOrder(): string[] {
   // #1258 — `load_page_subtree` now returns `{ blocks, truncated, total }`.
   const { blocks: rows } = dispatch('load_page_subtree', {
     rootBlockId: PAGE,
-    scope: { kind: 'active', space_id: SPACE },
+    scope: SCOPE,
   }) as { blocks: Array<Record<string, unknown>> }
   return rows
     .filter((r) => (r['parent_id'] as string | null) === PAGE)
@@ -166,7 +167,9 @@ describe('#958 — reorder/reparent undo reverts in place', () => {
     // exercised and not merely present (#957 — a moved subtree's descendants
     // must carry the new page root; the backend's reverse arm re-derives the
     // whole subtree via `rederive_page_and_space_ids`).
-    const KID = (dispatch('create_block', { parentId: B, content: 'kid' }) as { id: string }).id
+    const KID = (
+      dispatch('create_block', { parentId: B, content: 'kid', scope: SCOPE }) as { id: string }
+    ).id
 
     dispatch('delete_block', { blockId: A })
     dispatch('move_block', { blockId: B, newParentId: OTHER, newIndex: 0 })
@@ -236,6 +239,7 @@ describe('#958 — reorder/reparent undo reverts in place', () => {
       content: 'made then unmade',
       parentId: PAGE,
       index: 0,
+      scope: SCOPE,
     }) as { id: string }
     expect(created.id).toBeTruthy()
 
@@ -285,7 +289,7 @@ describe('#958 — reorder/reparent undo reverts in place', () => {
     const gs2Children = (
       dispatch('load_page_subtree', {
         rootBlockId: PAGE,
-        scope: { kind: 'active', space_id: SPACE },
+        scope: SCOPE,
       }) as {
         blocks: Array<Record<string, unknown>>
       }

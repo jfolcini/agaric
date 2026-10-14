@@ -36,7 +36,6 @@ import {
   spaceRootGroup,
   validationRejection,
   readActiveSpaceScope,
-  readSpaceScope,
 } from '@/lib/tauri-mock/handlers/shared'
 import { normalizeTagName, resolveInboundNames } from '@/lib/tauri-mock/names'
 import {
@@ -1129,14 +1128,10 @@ export const blocksHandlers = {
   // DIFFERENT cohort (`NOT EXISTS (parent p WHERE p.deleted_at = b.deleted_at)`),
   // so a cascade lists once, under its root, while a child deleted on its own
   // before its parent keeps its own row (#3818). Ordered `deleted_at DESC, id
-  // ASC` on a `{deleted_at, id}` keyset; `Global` is refused (#2248).
+  // ASC` on a `{deleted_at, id}` keyset.
   list_trash: (args) => {
     const a = (args ?? {}) as Record<string, unknown>
-    const scope = a['scope'] as { kind: string; space_id?: string } | undefined
-    if (scope?.kind !== 'active' || !scope.space_id) {
-      throw validationRejection('list_trash requires an active space scope')
-    }
-    const spaceId = scope.space_id
+    const spaceId = readActiveSpaceScope('list_trash', a)
     const limit = listBlocksLimit(a['limit'])
     const roots = [...blocks.values()].filter((b) => {
       if (!b['deleted_at']) return false
@@ -1162,18 +1157,12 @@ export const blocksHandlers = {
     const id = (a['blockId'] as string | null | undefined) ?? fakeId()
     const parentId = (a['parentId'] as string) ?? null
     // `scope: SpaceScope` mirrors the backend
-    // `create_block_inner_with_space` semantics: when `kind === 'active'`
-    // and the new block is a page, the page is stamped with
-    // `space = ?space_id` so subsequent space-filtered queries (backlink
-    // counts, alias resolution, etc.) recognise it as belonging to that
-    // space. Global scope skips the stamp (legacy unscoped behaviour).
-    const spaceId = readSpaceScope(a)
+    // `create_block_inner_with_space` semantics: a new page or tag is
+    // stamped with `space = ?space_id` so subsequent space-filtered queries
+    // (backlink counts, alias resolution, etc.) recognise it as belonging to
+    // that space.
+    const spaceId = readActiveSpaceScope('create_block', a)
     const blockType = a['blockType'] as string
-    if (blockType === 'page' && spaceId === null) {
-      throw validationRejection(
-        "page blocks require space_id: use createPageInSpace or pass the active space's ULID",
-      )
-    }
     // #763 — the block's `page_id` is the ROOT page of the parent chain, not the
     // immediate parent. The backend resolves the parent's own `page_id` (which,
     // for a content parent, already holds the root page; for a page parent, is
@@ -1190,7 +1179,7 @@ export const blocksHandlers = {
     // its own row back, nothing created, no op appended. The match is the
     // engine's normalized identity (`find_live_tag_by_name_in_tx`), smallest
     // id first, so a case variant resolves too.
-    if (blockType === 'tag' && spaceId !== null) {
+    if (blockType === 'tag') {
       const wanted = normalizeTagName((a['content'] as string) ?? '')
       const existing = [...blocks.values()]
         .filter(
@@ -1214,8 +1203,7 @@ export const blocksHandlers = {
     // the space in the same transaction (`create_page_in_space_inner`,
     // `create_tag_in_space_inner`) and projects the block as a root of that
     // space — its own page, ranked in the space's root group.
-    const scopedRoot =
-      spaceId !== null && parentId === null && (blockType === 'page' || blockType === 'tag')
+    const scopedRoot = parentId === null && (blockType === 'page' || blockType === 'tag')
     const createPageId =
       blockType === 'page' || scopedRoot
         ? id
@@ -1243,7 +1231,7 @@ export const blocksHandlers = {
       // path) carry the active space here; `content` blocks derive theirs from
       // their owning page and are left null (not modelled by this mock). This
       // is the column `list_all_tags_in_space` filters on.
-      space_id: (blockType === 'page' || blockType === 'tag') && spaceId !== null ? spaceId : null,
+      space_id: blockType === 'page' || blockType === 'tag' ? spaceId : null,
     }
     // The root group is per space (`spaceRootGroup`); the global
     // `parent_id = null` renumber below would rank a scoped root among every
@@ -1268,7 +1256,7 @@ export const blocksHandlers = {
     // dual-written here (property + the `blocks.space_id` column stamped above),
     // mirroring the seed tags, so a freshly-created tag's page loads via
     // `load_page_subtree` (property-scoped) instead of throwing PageNotInSpace.
-    if ((blockType === 'page' || blockType === 'tag') && spaceId !== null) {
+    if (blockType === 'page' || blockType === 'tag') {
       if (!properties.has(id)) properties.set(id, new Map())
       properties.get(id)?.set('space', {
         block_id: id,
@@ -1289,7 +1277,7 @@ export const blocksHandlers = {
     })
     // The space stamp is a `set_property` op in the same transaction, so the
     // backend's op log carries two ops for a scoped page or tag.
-    if ((blockType === 'page' || blockType === 'tag') && spaceId !== null) {
+    if (blockType === 'page' || blockType === 'tag') {
       pushOp('set_property', { block_id: id, key: 'space', from_value: null })
     }
     // #2468 — `WithOps<BlockRow>`: echo the appended op's ref so FE tests
@@ -1864,17 +1852,15 @@ export const blocksHandlers = {
   batch_resolve: (args) => {
     const a = args as Record<string, unknown>
     const ids = a['ids'] as string[]
-    // Honour `scope: SpaceScope`. Active scope drops blocks
-    // whose owning page (`page_id`, or the block's own id if it IS a
-    // page) is not stamped with `space = ?spaceId`, mirroring the
-    // backend's `batch_resolve_inner` space-filter. Global passes
-    // everything through (legacy cross-space behaviour).
-    const spaceId = readSpaceScope(a)
+    // Honour `scope: SpaceScope`: drop blocks whose owning page (`page_id`,
+    // or the block's own id if it IS a page) is not stamped with
+    // `space = ?spaceId`, mirroring the backend's `batch_resolve_inner`
+    // space-filter.
+    const spaceId = readActiveSpaceScope('batch_resolve', a)
     return ids
       .map((id) => blocks.get(id))
       .filter(Boolean)
       .filter((b) => {
-        if (spaceId === null) return true
         const ownerId = (b?.['page_id'] as string | null) ?? (b?.['id'] as string)
         const ownerSpace = properties.get(ownerId)?.get('space')?.['value_ref'] ?? null
         return ownerSpace === spaceId
@@ -2209,15 +2195,8 @@ export const blocksHandlers = {
     // page carries `space = <space_id>`.  The page-owner resolution
     // is the same `COALESCE(page_id, id)` lookup as
     // `count_backlinks_batch` above.
-    // #2248 — the IPC now carries `scope: SpaceScope`. Trash is inherently
-    // per-space, so only an `active` scope produces a count; `global` is
-    // refused by `require_active`, exactly as `list_trash` refuses it.
     const a = args as Record<string, unknown>
-    const scope = a['scope'] as { kind: string; space_id?: string } | undefined
-    if (scope?.kind !== 'active' || !scope.space_id) {
-      throw validationRejection('count_trash requires an active space scope')
-    }
-    const spaceId = scope.space_id
+    const spaceId = readActiveSpaceScope('count_trash', a)
     let count = 0
     for (const b of blocks.values()) {
       if (!b['deleted_at']) continue

@@ -27,6 +27,25 @@ async fn fresh_pool(dir: &TempDir, name: &str) -> SqlitePool {
     init_pool(&db_path).await.unwrap()
 }
 
+/// The space every block the scoped benches read lives in.
+const BENCH_SPACE_ID: &str = "01BENCHSPACE00000000000001";
+
+/// Register [`BENCH_SPACE_ID`] and move every seeded block into it.
+async fn put_every_block_in_bench_space(pool: &SqlitePool) {
+    for sql in [
+        "INSERT OR IGNORE INTO blocks (id, block_type, content, page_id) \
+         VALUES (?1, 'page', 'Bench', ?1)",
+        "INSERT OR IGNORE INTO spaces (id) VALUES (?1)",
+        "UPDATE blocks SET space_id = ?1 WHERE id <> ?1",
+    ] {
+        sqlx::query(sql)
+            .bind(BENCH_SPACE_ID)
+            .execute(pool)
+            .await
+            .unwrap();
+    }
+}
+
 /// Seed `n` page blocks via direct SQL and assign 3 aliases per page.
 ///
 /// Returns the list of page IDs that were created.
@@ -189,6 +208,7 @@ fn bench_resolve_page_by_alias(c: &mut Criterion) {
         let dir = TempDir::new().unwrap();
         let pool = rt.block_on(fresh_pool(&dir, &format!("resolve_{total_aliases}")));
         rt.block_on(seed_pages_with_aliases(&pool, n_pages));
+        rt.block_on(put_every_block_in_bench_space(&pool));
 
         // Pick an alias in the middle of the dataset
         let target_alias = format!("alias-{}-1", n_pages / 2);
@@ -205,7 +225,9 @@ fn bench_resolve_page_by_alias(c: &mut Criterion) {
                         resolve_page_by_alias_inner(
                             &pool,
                             &alias,
-                            &agaric_store::space::SpaceScope::Global,
+                            &agaric_store::space::SpaceScope::Active(
+                                agaric_store::space::SpaceId::from_trusted(BENCH_SPACE_ID),
+                            ),
                         )
                         .await
                         .unwrap()

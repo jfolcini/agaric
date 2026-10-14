@@ -42,17 +42,17 @@ For page-title-only hits (block with no content body), `snippet()` may return `N
 The Tauri command `search_blocks` takes a typed request struct and returns a typed response page. Both shapes are defined in `src-tauri/agaric-store/src/search_types.rs` (and re-exported from `src-tauri/src/commands/queries.rs`, which owns `search_blocks_inner`); they round-trip through `tauri-specta` into `src/lib/bindings.ts`:
 
 ```rust
-// Request — appended to, never re-shaped. Every field carries
+// Request — appended to, never re-shaped. Every field but `scope` carries
 // #[serde(default)] so the tauri-specta-regenerated frontend wrappers stay
 // compatible when a follow-up field lands ahead of its consumer. Only the
 // base fields are shown; later filter dimensions append more.
 pub struct SearchFilter {
     pub parent_id: Option<String>,
     pub tag_ids: Vec<String>,
-    // Typed space scope (#2248 group c): SpaceScope::Active(id) restricts to
-    // one space, Global applies no space filter. Replaced the prior
-    // space_id: Option<String>, whose Some("") silently meant "match nothing".
-    pub scope: SpaceScope,
+    // Required (#5415): an explicit non-empty list of spaces
+    // ({"kind":"spaces","space_ids":[…]}) or every space ({"kind":"all_spaces"}).
+    // An omitted scope or an empty list fails to deserialize.
+    pub scope: SearchScope,
     // Follow-up plans append fields here, each with #[serde(default)].
 }
 
@@ -161,7 +161,7 @@ A search whose free-text is blank/whitespace but which carries at least one stru
 
 - The cursor path (`fts_fetch_filter_only_page`) paginates on a strictly-less `b.id < ?cursor` predicate (id-only `Cursor::for_id`), derives `has_more` from a `limit + 1` probe, and keys `next_cursor` on the last *returned* (post-truncate) row.
 - The partitioned path (`fts_fetch_filter_only_partitioned`) runs the pages partition (`block_type = 'page'`) and the unrestricted blocks partition, each with its own `limit + 1` probe; the palette doesn't paginate, so no cursor is emitted.
-- The space `scope` does NOT count as a user filter — under `SpaceScope::Active` a blank query scoped only to a space still returns empty, never the whole space; `SpaceScope::Global` simply applies no space filter.
+- The space `scope` does NOT count as a user filter — a blank query with only a scope still returns empty, never the whole space; `SearchScope::AllSpaces` simply applies no space filter.
 
 ### Caps (all locked-in via module constants)
 

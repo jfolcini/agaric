@@ -1,5 +1,7 @@
 use super::*;
 use crate::pagination::{Cursor, PageRequest};
+use crate::search_types::SearchScope;
+use crate::space::SpaceId;
 use agaric_core::error::AppError;
 use sqlx::SqlitePool;
 use std::collections::HashMap;
@@ -349,7 +351,7 @@ async fn update_fts_indexes_block_and_search_finds_it() {
         &page,
         None,
         None,
-        None,
+        &SearchScope::AllSpaces,
         &[],
         &[],
         None,
@@ -400,7 +402,7 @@ async fn update_fts_after_edit_finds_new_content() {
         &page,
         None,
         None,
-        None,
+        &SearchScope::AllSpaces,
         &[],
         &[],
         None,
@@ -422,7 +424,7 @@ async fn update_fts_after_edit_finds_new_content() {
         &page,
         None,
         None,
-        None,
+        &SearchScope::AllSpaces,
         &[],
         &[],
         None,
@@ -459,7 +461,7 @@ async fn update_fts_deleted_block_removes_from_index() {
         &page,
         None,
         None,
-        None,
+        &SearchScope::AllSpaces,
         &[],
         &[],
         None,
@@ -530,7 +532,7 @@ async fn remove_fts_makes_block_unsearchable() {
         &page,
         None,
         None,
-        None,
+        &SearchScope::AllSpaces,
         &[],
         &[],
         None,
@@ -577,7 +579,7 @@ async fn rebuild_indexes_all_active_blocks() {
         &page,
         None,
         None,
-        None,
+        &SearchScope::AllSpaces,
         &[],
         &[],
         None,
@@ -595,7 +597,7 @@ async fn rebuild_indexes_all_active_blocks() {
         &page,
         None,
         None,
-        None,
+        &SearchScope::AllSpaces,
         &[],
         &[],
         None,
@@ -613,7 +615,7 @@ async fn rebuild_indexes_all_active_blocks() {
         &page,
         None,
         None,
-        None,
+        &SearchScope::AllSpaces,
         &[],
         &[],
         None,
@@ -642,7 +644,7 @@ async fn rebuild_excludes_deleted_blocks() {
         &page,
         None,
         None,
-        None,
+        &SearchScope::AllSpaces,
         &[],
         &[],
         None,
@@ -663,7 +665,7 @@ async fn rebuild_excludes_deleted_blocks() {
         &page,
         None,
         None,
-        None,
+        &SearchScope::AllSpaces,
         &[],
         &[],
         None,
@@ -711,7 +713,7 @@ async fn rebuild_clears_stale_entries() {
         &page,
         None,
         None,
-        None,
+        &SearchScope::AllSpaces,
         &[],
         &[],
         None,
@@ -748,7 +750,7 @@ async fn rebuild_resolves_tag_and_page_refs() {
         &page,
         None,
         None,
-        None,
+        &SearchScope::AllSpaces,
         &[],
         &[],
         None,
@@ -769,7 +771,7 @@ async fn rebuild_resolves_tag_and_page_refs() {
         &page,
         None,
         None,
-        None,
+        &SearchScope::AllSpaces,
         &[],
         &[],
         None,
@@ -836,7 +838,7 @@ async fn fts_optimize_succeeds_and_search_still_works() {
         &page,
         None,
         None,
-        None,
+        &SearchScope::AllSpaces,
         &[],
         &[],
         None,
@@ -895,7 +897,7 @@ async fn search_basic_finds_correct_block() {
         &page,
         None,
         None,
-        None,
+        &SearchScope::AllSpaces,
         &[],
         &[],
         None,
@@ -928,7 +930,7 @@ async fn search_no_results() {
         &page,
         None,
         None,
-        None,
+        &SearchScope::AllSpaces,
         &[],
         &[],
         None,
@@ -965,7 +967,7 @@ async fn search_empty_query_returns_empty() {
         &page,
         None,
         None,
-        None,
+        &SearchScope::AllSpaces,
         &[],
         &[],
         None,
@@ -998,7 +1000,7 @@ async fn search_whitespace_query_returns_empty() {
         &page,
         None,
         None,
-        None,
+        &SearchScope::AllSpaces,
         &[],
         &[],
         None,
@@ -1037,7 +1039,7 @@ async fn search_sub_trigram_query_returns_empty() {
         &page,
         None,
         None,
-        None,
+        &SearchScope::AllSpaces,
         &[],
         &[],
         None,
@@ -1066,7 +1068,7 @@ async fn search_sub_trigram_query_returns_empty() {
         &page,
         None,
         None,
-        None,
+        &SearchScope::AllSpaces,
         &[],
         &[],
         None,
@@ -1115,7 +1117,7 @@ async fn search_deleted_blocks_excluded() {
         &page,
         None,
         None,
-        None,
+        &SearchScope::AllSpaces,
         &[],
         &[],
         None,
@@ -1187,7 +1189,7 @@ async fn search_pagination_works() {
         &page1,
         None,
         None,
-        None,
+        &SearchScope::AllSpaces,
         &[],
         &[],
         None,
@@ -1211,7 +1213,7 @@ async fn search_pagination_works() {
         &page2,
         None,
         None,
-        None,
+        &SearchScope::AllSpaces,
         &[],
         &[],
         None,
@@ -1262,7 +1264,7 @@ async fn search_fts5_syntax_error_returns_validation() {
         &page,
         None,
         None,
-        None,
+        &SearchScope::AllSpaces,
         &[],
         &[],
         None,
@@ -1308,7 +1310,7 @@ async fn search_multiple_terms_matches() {
         &page,
         None,
         None,
-        None,
+        &SearchScope::AllSpaces,
         &[],
         &[],
         None,
@@ -1330,7 +1332,7 @@ async fn search_multiple_terms_matches() {
         &page,
         None,
         None,
-        None,
+        &SearchScope::AllSpaces,
         &[],
         &[],
         None,
@@ -1384,7 +1386,7 @@ async fn search_sql_injection_attempt_no_crash() {
             &page,
             None,
             None,
-            None,
+            &SearchScope::AllSpaces,
             &[],
             &[],
             None,
@@ -1405,7 +1407,7 @@ async fn search_sql_injection_attempt_no_crash() {
         &page,
         None,
         None,
-        None,
+        &SearchScope::AllSpaces,
         &[],
         &[],
         None,
@@ -1437,7 +1439,7 @@ async fn search_fts5_operators_are_sanitized() {
         &page,
         None,
         None,
-        None,
+        &SearchScope::AllSpaces,
         &[],
         &[],
         None,
@@ -1456,7 +1458,7 @@ async fn search_fts5_operators_are_sanitized() {
         &page,
         None,
         None,
-        None,
+        &SearchScope::AllSpaces,
         &[],
         &[],
         None,
@@ -1476,7 +1478,7 @@ async fn search_fts5_operators_are_sanitized() {
         &page,
         None,
         None,
-        None,
+        &SearchScope::AllSpaces,
         &[],
         &[],
         None,
@@ -1519,7 +1521,7 @@ async fn search_special_fts5_characters_no_crash() {
             &page,
             None,
             None,
-            None,
+            &SearchScope::AllSpaces,
             &[],
             &[],
             None,
@@ -1549,7 +1551,7 @@ async fn search_unmatched_quotes_no_crash() {
         &page,
         None,
         None,
-        None,
+        &SearchScope::AllSpaces,
         &[],
         &[],
         None,
@@ -1678,7 +1680,7 @@ async fn search_excludes_soft_deleted_blocks_after_index() {
         &page,
         None,
         None,
-        None,
+        &SearchScope::AllSpaces,
         &[],
         &[],
         None,
@@ -1724,7 +1726,7 @@ async fn search_respects_max_results_cap() {
         &page,
         None,
         None,
-        None,
+        &SearchScope::AllSpaces,
         &[],
         &[],
         None,
@@ -2134,7 +2136,7 @@ async fn search_pagination_identical_ranks_no_duplicates_no_skips() {
             &page,
             None,
             None,
-            None,
+            &SearchScope::AllSpaces,
             &[],
             &[],
             None,
@@ -2213,7 +2215,7 @@ async fn search_cursor_round_trip_with_float_rank() {
         &page1,
         None,
         None,
-        None,
+        &SearchScope::AllSpaces,
         &[],
         &[],
         None,
@@ -2251,7 +2253,7 @@ async fn search_cursor_round_trip_with_float_rank() {
         &page2,
         None,
         None,
-        None,
+        &SearchScope::AllSpaces,
         &[],
         &[],
         None,
@@ -2276,7 +2278,7 @@ async fn search_cursor_round_trip_with_float_rank() {
         &page3,
         None,
         None,
-        None,
+        &SearchScope::AllSpaces,
         &[],
         &[],
         None,
@@ -2351,7 +2353,7 @@ async fn search_pagination_close_ranks_epsilon_boundary() {
             &page,
             None,
             None,
-            None,
+            &SearchScope::AllSpaces,
             &[],
             &[],
             None,
@@ -2415,7 +2417,7 @@ async fn search_pagination_equal_ranks_id_tiebreak() {
             &page,
             None,
             None,
-            None,
+            &SearchScope::AllSpaces,
             &[],
             &[],
             None,
@@ -2599,7 +2601,7 @@ async fn search_fts_sanitizer_protects_against_fts5_operators() {
             &page,
             None,
             None,
-            None,
+            &SearchScope::AllSpaces,
             &[],
             &[],
             None,
@@ -2658,7 +2660,7 @@ async fn reindex_fts_references_batches_correctly() {
         &page,
         None,
         None,
-        None,
+        &SearchScope::AllSpaces,
         &[],
         &[],
         None,
@@ -2691,7 +2693,7 @@ async fn reindex_fts_references_batches_correctly() {
         &page,
         None,
         None,
-        None,
+        &SearchScope::AllSpaces,
         &[],
         &[],
         None,
@@ -2725,7 +2727,7 @@ async fn reindex_fts_references_batches_correctly() {
         &page,
         None,
         None,
-        None,
+        &SearchScope::AllSpaces,
         &[],
         &[],
         None,
@@ -2785,7 +2787,7 @@ async fn reindex_fts_references_updates_tag_refs() {
         &crate::pagination::PageRequest::new(None, Some(10)).unwrap(),
         None,
         None,
-        None, //  Phase 2: space_id unscoped
+        &SearchScope::AllSpaces,
         &[],
         &[],
         None,
@@ -2816,7 +2818,7 @@ async fn reindex_fts_references_updates_tag_refs() {
         &crate::pagination::PageRequest::new(None, Some(10)).unwrap(),
         None,
         None,
-        None, //  Phase 2: space_id unscoped
+        &SearchScope::AllSpaces,
         &[],
         &[],
         None,
@@ -2885,7 +2887,7 @@ async fn reindex_fts_references_batch_50_blocks() {
         &page,
         None,
         None,
-        None,
+        &SearchScope::AllSpaces,
         &[],
         &[],
         None,
@@ -2921,7 +2923,7 @@ async fn reindex_fts_references_batch_50_blocks() {
         &page,
         None,
         None,
-        None,
+        &SearchScope::AllSpaces,
         &[],
         &[],
         None,
@@ -2956,7 +2958,7 @@ async fn reindex_fts_references_batch_50_blocks() {
         &page,
         None,
         None,
-        None,
+        &SearchScope::AllSpaces,
         &[],
         &[],
         None,
@@ -3025,7 +3027,7 @@ async fn reindex_fts_references_updates_inline_only_referencing_block() {
         &page,
         None,
         None,
-        None,
+        &SearchScope::AllSpaces,
         &[],
         &[],
         None,
@@ -3057,7 +3059,7 @@ async fn reindex_fts_references_updates_inline_only_referencing_block() {
         &page,
         None,
         None,
-        None,
+        &SearchScope::AllSpaces,
         &[],
         &[],
         None,
@@ -3076,7 +3078,7 @@ async fn reindex_fts_references_updates_inline_only_referencing_block() {
         &page,
         None,
         None,
-        None,
+        &SearchScope::AllSpaces,
         &[],
         &[],
         None,
@@ -3356,7 +3358,7 @@ async fn rebuild_fts_index_split_indexes_all_active_blocks() {
         &page,
         None,
         None,
-        None,
+        &SearchScope::AllSpaces,
         &[],
         &[],
         None,
@@ -3377,7 +3379,7 @@ async fn rebuild_fts_index_split_indexes_all_active_blocks() {
         &page,
         None,
         None,
-        None,
+        &SearchScope::AllSpaces,
         &[],
         &[],
         None,
@@ -3398,7 +3400,7 @@ async fn rebuild_fts_index_split_indexes_all_active_blocks() {
         &page,
         None,
         None,
-        None,
+        &SearchScope::AllSpaces,
         &[],
         &[],
         None,
@@ -3430,7 +3432,7 @@ async fn rebuild_fts_index_split_excludes_deleted() {
         &page,
         None,
         None,
-        None,
+        &SearchScope::AllSpaces,
         &[],
         &[],
         None,
@@ -3451,7 +3453,7 @@ async fn rebuild_fts_index_split_excludes_deleted() {
         &page,
         None,
         None,
-        None,
+        &SearchScope::AllSpaces,
         &[],
         &[],
         None,
@@ -3487,7 +3489,7 @@ async fn rebuild_fts_index_split_resolves_refs() {
         &page,
         None,
         None,
-        None,
+        &SearchScope::AllSpaces,
         &[],
         &[],
         None,
@@ -3508,7 +3510,7 @@ async fn rebuild_fts_index_split_resolves_refs() {
         &page,
         None,
         None,
-        None,
+        &SearchScope::AllSpaces,
         &[],
         &[],
         None,
@@ -3545,7 +3547,7 @@ async fn rebuild_fts_index_split_clears_stale_entries() {
         &page,
         None,
         None,
-        None,
+        &SearchScope::AllSpaces,
         &[],
         &[],
         None,
@@ -3589,7 +3591,7 @@ async fn update_fts_for_block_split_indexes_active_block() {
         &page,
         None,
         None,
-        None,
+        &SearchScope::AllSpaces,
         &[],
         &[],
         None,
@@ -3639,7 +3641,7 @@ async fn update_fts_for_block_split_removes_deleted_block() {
         &page,
         None,
         None,
-        None,
+        &SearchScope::AllSpaces,
         &[],
         &[],
         None,
@@ -3682,7 +3684,7 @@ async fn update_fts_for_block_split_handles_null_content() {
         &page,
         None,
         None,
-        None,
+        &SearchScope::AllSpaces,
         &[],
         &[],
         None,
@@ -3699,14 +3701,13 @@ async fn update_fts_for_block_split_handles_null_content() {
 }
 
 // ======================================================================
-// Phase 2 — space filtering in search_fts
+// Space scoping in search_fts
 // ======================================================================
 //
-// `search_fts` honours `space_id` by intersecting the result set with
-// the materialised `block_properties(key = 'space', value_ref = ?)`
-// table via `COALESCE(b.page_id, b.id)`. These tests exercise the
-// `Some(space_id)` path end-to-end so a regression in the dynamic-SQL
-// filter is caught — the rest of the module only passes `None`.
+// `search_fts` restricts matches to the spaces a `SearchScope::Spaces`
+// names (`b.space_id IN json_each(?)`) and applies no space filter for
+// `SearchScope::AllSpaces`. These tests exercise both end-to-end so a
+// regression in the dynamic-SQL filter is caught.
 
 /// ID of the synthetic `SPACE_A` space block used by the space-filter
 /// tests below. Valid block_id (the column is TEXT — no ULID format
@@ -3714,6 +3715,8 @@ async fn update_fts_for_block_split_handles_null_content() {
 const FTS_SPACE_A_ID: &str = "FTS_SPC_A";
 /// ID of the synthetic `SPACE_B` space block.
 const FTS_SPACE_B_ID: &str = "FTS_SPC_B";
+/// ID of the synthetic `SPACE_C` space block.
+const FTS_SPACE_C_ID: &str = "FTS_SPC_C";
 
 /// Insert a space block (a page carrying `is_space = 'true'`). Required
 /// so the FK on `blocks.space_id` validates when the tests assign a page
@@ -3752,50 +3755,20 @@ async fn assign_to_space_for_fts(pool: &SqlitePool, block_id: &str, space_id: &s
         .unwrap();
 }
 
-#[tokio::test]
-async fn search_fts_filters_by_space() {
-    let (pool, _dir) = test_pool().await;
-    insert_space_block_for_fts(&pool, FTS_SPACE_A_ID, "Personal").await;
-    insert_space_block_for_fts(&pool, FTS_SPACE_B_ID, "Work").await;
+fn fts_spaces(ids: &[&str]) -> SearchScope {
+    SearchScope::Spaces(ids.iter().map(|id| SpaceId::from_trusted(id)).collect())
+}
 
-    // Two pages with the same searchable keyword, one per space.
-    // `page_id` on page blocks is the block's own id (COALESCE resolves
-    // to `b.id`), so the `space` property lookup in `search_fts` applies
-    // directly to each page.
-    insert_block(
-        &pool,
-        BLOCK_A,
-        "page",
-        "the shared keyword lives here in A",
-        None,
-        Some(1),
-    )
-    .await;
-    assign_to_space_for_fts(&pool, BLOCK_A, FTS_SPACE_A_ID).await;
-
-    insert_block(
-        &pool,
-        BLOCK_B,
-        "page",
-        "the shared keyword lives here in B",
-        None,
-        Some(2),
-    )
-    .await;
-    assign_to_space_for_fts(&pool, BLOCK_B, FTS_SPACE_B_ID).await;
-
-    rebuild_fts_index(&pool).await.unwrap();
-
+/// Search "shared" under `scope` and return the matching block ids.
+async fn shared_hits(pool: &SqlitePool, scope: &SearchScope) -> std::collections::BTreeSet<String> {
     let page = PageRequest::new(None, Some(50)).unwrap();
-
-    // SPACE_A: exactly the SPACE_A page.
-    let resp_a = search_fts(
-        &pool,
+    search_fts(
+        pool,
         "shared",
         &page,
         None,
         None,
-        Some(FTS_SPACE_A_ID),
+        scope,
         &[],
         &[],
         None,
@@ -3803,57 +3776,53 @@ async fn search_fts_filters_by_space() {
         None,
     )
     .await
-    .unwrap();
+    .unwrap()
+    .items
+    .into_iter()
+    .map(|r| r.id.as_str().to_string())
+    .collect()
+}
+
+#[tokio::test]
+async fn search_fts_space_scope_returns_exactly_the_named_spaces() {
+    let (pool, _dir) = test_pool().await;
+    // One page with the same searchable keyword in each of three spaces.
+    for (block, space, name) in [
+        (BLOCK_A, FTS_SPACE_A_ID, "Personal"),
+        (BLOCK_B, FTS_SPACE_B_ID, "Work"),
+        (BLOCK_C, FTS_SPACE_C_ID, "Hobby"),
+    ] {
+        insert_space_block_for_fts(&pool, space, name).await;
+        insert_block(
+            &pool,
+            block,
+            "page",
+            &format!("the shared keyword lives here in {name}"),
+            None,
+            Some(1),
+        )
+        .await;
+        assign_to_space_for_fts(&pool, block, space).await;
+    }
+    rebuild_fts_index(&pool).await.unwrap();
+    let ids = |blocks: &[&str]| -> std::collections::BTreeSet<String> {
+        blocks.iter().map(|b| (*b).to_string()).collect()
+    };
+
     assert_eq!(
-        resp_a.items.len(),
-        1,
-        "SPACE_A filter must return exactly the SPACE_A page"
+        shared_hits(&pool, &fts_spaces(&[FTS_SPACE_A_ID, FTS_SPACE_B_ID])).await,
+        ids(&[BLOCK_A, BLOCK_B]),
+        "Spaces([a, b]) must return the a and b pages and not the c page"
     );
-    assert_eq!(resp_a.items[0].id, BLOCK_A, "SPACE_A hit must be BLOCK_A");
-
-    // SPACE_B: exactly the SPACE_B page.
-    let resp_b = search_fts(
-        &pool,
-        "shared",
-        &page,
-        None,
-        None,
-        Some(FTS_SPACE_B_ID),
-        &[],
-        &[],
-        None,
-        &crate::fts::metadata_filter::MetadataPredicates::default(),
-        None,
-    )
-    .await
-    .unwrap();
     assert_eq!(
-        resp_b.items.len(),
-        1,
-        "SPACE_B filter must return exactly the SPACE_B page"
+        shared_hits(&pool, &SearchScope::AllSpaces).await,
+        ids(&[BLOCK_A, BLOCK_B, BLOCK_C]),
+        "AllSpaces must return the page from every space"
     );
-    assert_eq!(resp_b.items[0].id, BLOCK_B, "SPACE_B hit must be BLOCK_B");
-
-    // None: both pages (unscoped behaviour preserved).
-    let resp_all = search_fts(
-        &pool,
-        "shared",
-        &page,
-        None,
-        None,
-        None,
-        &[],
-        &[],
-        None,
-        &crate::fts::metadata_filter::MetadataPredicates::default(),
-        None,
-    )
-    .await
-    .unwrap();
     assert_eq!(
-        resp_all.items.len(),
-        2,
-        "None space_id must surface both pages — existing unscoped behaviour"
+        shared_hits(&pool, &fts_spaces(&[FTS_SPACE_A_ID])).await,
+        ids(&[BLOCK_A]),
+        "Spaces([a]) must return only the a page"
     );
 }
 
@@ -3880,7 +3849,7 @@ async fn search_fts_nonexistent_space_returns_empty() {
         &page,
         None,
         None,
-        Some("NOPE"),
+        &fts_spaces(&["NOPE"]),
         &[],
         &[],
         None,
@@ -3966,7 +3935,7 @@ async fn search_last_edited_rolling_returns_only_in_window_blocks() {
         &page,
         None,
         None,
-        None,
+        &SearchScope::AllSpaces,
         &[],
         &[],
         None,
@@ -3985,7 +3954,7 @@ async fn search_last_edited_rolling_returns_only_in_window_blocks() {
         &page,
         None,
         None,
-        None,
+        &SearchScope::AllSpaces,
         &[],
         &[],
         None,
@@ -4009,7 +3978,7 @@ async fn search_last_edited_rolling_returns_only_in_window_blocks() {
         &page,
         None,
         None,
-        None,
+        &SearchScope::AllSpaces,
         &[],
         &[],
         None,
@@ -4045,7 +4014,7 @@ async fn search_last_edited_older_than_returns_only_stale_blocks() {
         &page,
         None,
         None,
-        None,
+        &SearchScope::AllSpaces,
         &[],
         &[],
         None,
@@ -4090,7 +4059,7 @@ async fn search_last_edited_range_returns_only_blocks_inside_window() {
         &page,
         None,
         None,
-        None,
+        &SearchScope::AllSpaces,
         &[],
         &[],
         None,
@@ -4127,7 +4096,7 @@ async fn search_last_edited_no_op_log_block_excluded_from_rolling() {
         &page,
         None,
         None,
-        None,
+        &SearchScope::AllSpaces,
         &[],
         &[],
         None,
@@ -4150,7 +4119,7 @@ async fn search_last_edited_no_op_log_block_excluded_from_rolling() {
         &page,
         None,
         None,
-        None,
+        &SearchScope::AllSpaces,
         &[],
         &[],
         None,
@@ -4247,7 +4216,7 @@ async fn rebuild_fts_index_chunked_indexes_all_blocks() {
             &page,
             None,
             None,
-            None,
+            &SearchScope::AllSpaces,
             &[],
             &[],
             None,
@@ -4323,7 +4292,7 @@ async fn update_fts_for_block_with_maps_matches_wrapper_output() {
         &page,
         None,
         None,
-        None,
+        &SearchScope::AllSpaces,
         &[],
         &[],
         None,
@@ -4668,7 +4637,7 @@ async fn snippet_returns_paired_mark_boundaries_on_content_match() {
         &page,
         None,
         None,
-        None,
+        &SearchScope::AllSpaces,
         &[],
         &[],
         None,
@@ -4719,7 +4688,7 @@ async fn snippet_for_null_content_block_renders_no_match_span() {
         &page,
         None,
         None,
-        None,
+        &SearchScope::AllSpaces,
         &[],
         &[],
         None,
@@ -4758,7 +4727,7 @@ async fn snippet_preserves_literal_lt_and_amp_in_source_content() {
         &page,
         None,
         None,
-        None,
+        &SearchScope::AllSpaces,
         &[],
         &[],
         None,
@@ -4801,7 +4770,7 @@ async fn snippet_for_long_content_returns_windowed_output() {
         &page,
         None,
         None,
-        None,
+        &SearchScope::AllSpaces,
         &[],
         &[],
         None,
@@ -4850,7 +4819,7 @@ async fn snippet_with_multiple_matches_contains_at_least_one_pair() {
         &page,
         None,
         None,
-        None,
+        &SearchScope::AllSpaces,
         &[],
         &[],
         None,
@@ -4906,7 +4875,7 @@ async fn snippet_window_constant_produces_readable_output_on_representative_samp
         &page,
         None,
         None,
-        None,
+        &SearchScope::AllSpaces,
         &[],
         &[],
         None,
@@ -4991,7 +4960,7 @@ async fn partitioned_content_is_capped_to_preview_prefix_snippet_and_order_uncha
         10,
         None,
         None,
-        None,
+        &SearchScope::AllSpaces,
         &[],
         &[],
         &crate::fts::metadata_filter::MetadataPredicates::default(),
@@ -5121,7 +5090,7 @@ async fn partition_has_more_is_measured_against_each_partitions_own_limit() {
         3, // block_limit
         None,
         None,
-        None,
+        &SearchScope::AllSpaces,
         &[],
         &[],
         &crate::fts::metadata_filter::MetadataPredicates::default(),
@@ -5191,7 +5160,7 @@ async fn toggle_on_post_filter_keeps_match_beyond_preview_cap() {
         10,
         None,
         None,
-        None,
+        &SearchScope::AllSpaces,
         &[],
         &[],
         SearchToggles {
@@ -5390,7 +5359,7 @@ async fn fts_duplicate_tag_ids_do_not_zero_out_all_tags_filter() {
         &page,
         None,
         Some(&dup_tags),
-        None,
+        &SearchScope::AllSpaces,
         &[],
         &[],
         None,
@@ -5440,7 +5409,7 @@ async fn regex_duplicate_tag_ids_do_not_zero_out_all_tags_filter() {
         &page,
         None,
         Some(&dup_tags),
-        None,
+        &SearchScope::AllSpaces,
         &[],
         &[],
         SearchToggles {
@@ -5503,7 +5472,7 @@ async fn regex_mixed_case_duplicate_tag_ids_dedup_so_all_tags_predicate_matches(
         &page,
         None,
         Some(&mixed),
-        None,
+        &SearchScope::AllSpaces,
         &[],
         &[],
         SearchToggles {
@@ -5559,7 +5528,7 @@ async fn fts_mixed_case_duplicate_tag_ids_dedup_so_all_tags_predicate_matches() 
         &page,
         None,
         Some(&mixed),
-        None,
+        &SearchScope::AllSpaces,
         &[],
         &[],
         None,
@@ -5596,7 +5565,7 @@ async fn regex_over_long_raw_pattern_is_rejected() {
         &page,
         None,
         None,
-        None,
+        &SearchScope::AllSpaces,
         &[],
         &[],
         SearchToggles {
@@ -5665,7 +5634,7 @@ async fn regex_path_applies_tag_filter() {
         &page,
         None,
         Some(&tags),
-        None,
+        &SearchScope::AllSpaces,
         &[],
         &[],
         SearchToggles {
@@ -5725,7 +5694,7 @@ async fn regex_path_without_tag_filter_matches_all() {
         &page,
         None,
         None, // no tag filter
-        None,
+        &SearchScope::AllSpaces,
         &[],
         &[],
         SearchToggles {
@@ -5765,7 +5734,7 @@ async fn fts_over_long_query_is_rejected() {
         &page,
         None,
         None,
-        None,
+        &SearchScope::AllSpaces,
         &[],
         &[],
         None,
@@ -5796,7 +5765,7 @@ async fn fts_query_at_exactly_the_cap_is_accepted() {
         &page,
         None,
         None,
-        None,
+        &SearchScope::AllSpaces,
         &[],
         &[],
         None,
@@ -5856,7 +5825,7 @@ async fn be_a10_sqla3_cursor_pagination_full_pages_no_drops_no_dupes() {
             &page,
             None,
             None,
-            None,
+            &SearchScope::AllSpaces,
             &[],
             &[],
             SearchToggles {
@@ -5964,7 +5933,7 @@ async fn be_a10_sqla3_boundary_survivors_equal_limit_no_more() {
         &page,
         None,
         None,
-        None,
+        &SearchScope::AllSpaces,
         &[],
         &[],
         SearchToggles {
@@ -6044,7 +6013,7 @@ async fn be_a10_sqla3_multi_window_fill_finds_sparse_survivors() {
         &page,
         None,
         None,
-        None,
+        &SearchScope::AllSpaces,
         &[],
         &[],
         SearchToggles {
@@ -6108,7 +6077,7 @@ async fn be_a10_fts_plain_has_more_at_exactly_max_search_results() {
         &page,
         None,
         None,
-        None,
+        &SearchScope::AllSpaces,
         &[],
         &[],
         None,
@@ -6169,7 +6138,7 @@ async fn be_a10_post_filter_max_windows_bound_stops_without_hanging() {
             &page,
             None,
             None,
-            None,
+            &SearchScope::AllSpaces,
             &[],
             &[],
             SearchToggles {
@@ -6293,7 +6262,7 @@ async fn new3_filter_only_by_tag_returns_tagged_excludes_untagged() {
         &page,
         None,
         Some(&tags),
-        None,
+        &SearchScope::AllSpaces,
         &[],
         &[],
         new3_toggles_off(),
@@ -6353,7 +6322,7 @@ async fn new3_filter_only_includes_null_content_block_674() {
         &page,
         None,
         Some(&tags),
-        None,
+        &SearchScope::AllSpaces,
         &[],
         &[],
         new3_toggles_off(),
@@ -6389,7 +6358,7 @@ async fn new3_empty_query_no_filter_returns_empty_cursor() {
         &page,
         None,
         None,
-        Some("01HQSPACE0000000000000SP01"), // space_id is NOT a user filter
+        &fts_spaces(&["01HQSPACE0000000000000SP01"]), // the scope is NOT a user filter
         &[],
         &[],
         new3_toggles_off(),
@@ -6409,7 +6378,7 @@ async fn new3_empty_query_no_filter_returns_empty_cursor() {
 }
 
 /// NEW-3 (2b) — blank query + NO filter → two empty partitions
-/// (preserved), partitioned path. `space_id` supplied is not a filter.
+/// (preserved), partitioned path. The scope supplied is not a filter.
 #[tokio::test]
 async fn new3_empty_query_no_filter_returns_empty_partitioned() {
     let (pool, _dir) = test_pool().await;
@@ -6423,7 +6392,7 @@ async fn new3_empty_query_no_filter_returns_empty_partitioned() {
         50,
         None,
         None,
-        Some("01HQSPACE0000000000000SP01"),
+        &fts_spaces(&["01HQSPACE0000000000000SP01"]),
         &[],
         &[],
         new3_toggles_off(),
@@ -6485,7 +6454,7 @@ async fn new3_cursor_pagination_no_drops_no_dupes() {
             &page,
             None,
             Some(&tags),
-            None,
+            &SearchScope::AllSpaces,
             &[],
             &[],
             new3_toggles_off(),
@@ -6596,7 +6565,7 @@ async fn new3_cursor_exact_multiple_final_full_page_has_no_more() {
         &page1,
         None,
         Some(&tags),
-        None,
+        &SearchScope::AllSpaces,
         &[],
         &[],
         new3_toggles_off(),
@@ -6619,7 +6588,7 @@ async fn new3_cursor_exact_multiple_final_full_page_has_no_more() {
         &page2,
         None,
         Some(&tags),
-        None,
+        &SearchScope::AllSpaces,
         &[],
         &[],
         new3_toggles_off(),
@@ -6686,7 +6655,7 @@ async fn new3_ordering_is_id_desc() {
         &page,
         None,
         Some(&tags),
-        None,
+        &SearchScope::AllSpaces,
         &[],
         &[],
         new3_toggles_off(),
@@ -6744,7 +6713,7 @@ async fn new3_respects_parent_id() {
         &page,
         Some(&parent),
         None,
-        None,
+        &SearchScope::AllSpaces,
         &[],
         &[],
         new3_toggles_off(),
@@ -6780,7 +6749,7 @@ async fn new3_respects_block_type_filter() {
         &page,
         None,
         None,
-        None,
+        &SearchScope::AllSpaces,
         &[],
         &[],
         new3_toggles_off(),
@@ -6837,7 +6806,7 @@ async fn new3_respects_metadata_state_predicate() {
         &page,
         None,
         None,
-        None,
+        &SearchScope::AllSpaces,
         &[],
         &[],
         new3_toggles_off(),
@@ -6878,7 +6847,7 @@ async fn new3_mode_independent_regex_toggle() {
         &page,
         None,
         Some(&tags),
-        None,
+        &SearchScope::AllSpaces,
         &[],
         &[],
         SearchToggles {
@@ -6920,7 +6889,7 @@ async fn new3_mode_independent_case_sensitive_toggle() {
         &page,
         None,
         Some(&tags),
-        None,
+        &SearchScope::AllSpaces,
         &[],
         &[],
         SearchToggles {
@@ -6993,7 +6962,7 @@ async fn new3_partitioned_filter_only_partitions_and_has_more() {
         50,
         None,
         Some(&tags),
-        None,
+        &SearchScope::AllSpaces,
         &[],
         &[],
         new3_toggles_off(),
@@ -7071,7 +7040,7 @@ async fn new3_partitioned_blocks_has_more_probe() {
         3, // block_limit < 5 matching → has_more
         None,
         Some(&tags),
-        None,
+        &SearchScope::AllSpaces,
         &[],
         &[],
         new3_toggles_off(),
@@ -7821,11 +7790,13 @@ async fn b2_search_fts_end_to_end_state_due_block_type() {
     }
 
     let today = chrono::NaiveDate::from_ymd_opt(2026, 5, 18).unwrap();
+    let unfiltered: SearchFilter =
+        serde_json::from_value(serde_json::json!({ "scope": { "kind": "all_spaces" } })).unwrap();
 
     // state:TODO,DOING — expect the TODO + DOING content rows.
     let f = SearchFilter {
         state_filter: vec!["TODO".into(), "DOING".into()],
-        ..Default::default()
+        ..unfiltered.clone()
     };
     let meta = crate::fts::metadata_filter::prepare_metadata_with_today(&f, today).unwrap();
     let page = PageRequest::new(None, Some(50)).unwrap();
@@ -7835,7 +7806,7 @@ async fn b2_search_fts_end_to_end_state_due_block_type() {
         &page,
         None,
         None,
-        None,
+        &SearchScope::AllSpaces,
         &[],
         &[],
         None,
@@ -7861,7 +7832,7 @@ async fn b2_search_fts_end_to_end_state_due_block_type() {
             op: DateOp::Eq,
             date: "2026-05-18".into(),
         }),
-        ..Default::default()
+        ..unfiltered.clone()
     };
     let meta = crate::fts::metadata_filter::prepare_metadata_with_today(&f, today).unwrap();
     let res = search_fts(
@@ -7870,7 +7841,7 @@ async fn b2_search_fts_end_to_end_state_due_block_type() {
         &page,
         None,
         None,
-        None,
+        &SearchScope::AllSpaces,
         &[],
         &[],
         None,
@@ -7897,7 +7868,7 @@ async fn b2_search_fts_end_to_end_state_due_block_type() {
         &page,
         None,
         None,
-        None,
+        &SearchScope::AllSpaces,
         &[],
         &[],
         Some("page"),

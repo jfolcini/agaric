@@ -1,4 +1,4 @@
-import type { SpaceScope } from '@/lib/bindings'
+import type { SearchScope, SpaceScope } from '@/lib/bindings'
 
 /**
  * The one way the frontend builds a `SpaceScope` (#5415): every IPC carries
@@ -19,4 +19,9 @@ export function requireActiveScope(spaceId: string): SpaceScope {
     )
   }
   return { kind: 'active', space_id: spaceId }
+}
+
+/** The search scope for the active space alone, failing closed like {@link requireActiveScope}. */
+export function requireActiveSearchScope(spaceId: string): SearchScope {
+  return { kind: 'spaces', space_ids: [requireActiveScope(spaceId).space_id] }
 }

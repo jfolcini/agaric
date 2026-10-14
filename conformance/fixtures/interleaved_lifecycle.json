@@ -144,7 +144,11 @@
         "blockType": "content",
         "content": "note",
         "index": 1,
-        "parentId": "S3"
+        "parentId": "S3",
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
       },
       "command": "create_block"
     }

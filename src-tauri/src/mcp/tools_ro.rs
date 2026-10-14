@@ -95,6 +95,7 @@ use agaric_core::error::AppError;
 use agaric_core::ulid::BlockId;
 use agaric_store::op::OpRef;
 use agaric_store::pagination::{BlockRow, HistoryEntry, PageResponse};
+use agaric_store::search_types::SearchScope;
 use agaric_store::space::{SpaceId, SpaceScope};
 use agaric_store::task_locals::ActorContext;
 
@@ -363,10 +364,8 @@ struct ListBacklinksArgs {
     cursor: Option<String>,
     #[serde(default)]
     limit: Option<i64>,
-    /// When supplied, restrict backlinks to source blocks
-    /// whose owning page lives in this space. Optional: omitting the
-    /// field returns the unscoped (cross-space) view kept for callers
-    /// that have not migrated.
+    /// Required: backlinks are restricted to source blocks in this space.
+    /// Optional here only so `required_space_scope` can name it when absent.
     #[serde(default)]
     space_id: Option<String>,
 }
@@ -399,10 +398,8 @@ struct GetAgendaArgs {
     cursor: Option<String>,
     #[serde(default)]
     limit: Option<i64>,
-    /// When supplied, restrict the agenda to blocks whose
-    /// owning page lives in this space. Optional: omitting the field
-    /// returns the unscoped (cross-space) view kept for callers that
-    /// have not migrated.
+    /// Required: the agenda is restricted to blocks in this space.
+    /// Optional here only so `required_space_scope` can name it when absent.
     #[serde(default)]
     space_id: Option<String>,
 }
@@ -824,7 +821,7 @@ fn tool_desc_list_backlinks() -> ToolDescription {
         input_schema: json!({
             "type": "object",
             "additionalProperties": false,
-            "required": ["block_id"],
+            "required": ["block_id", "space_id"],
             "properties": {
                 "block_id": { "type": "string", "description": "ULID of the target block/page." },
                 "cursor": { "type": "string" },
@@ -836,7 +833,7 @@ fn tool_desc_list_backlinks() -> ToolDescription {
                 },
                 "space_id": {
                     "type": "string",
-                    "description": "Optional ULID of the space to scope backlinks to. Omit for the unscoped (cross-space) view."
+                    "description": "ULID of the space to scope backlinks to."
                 },
             },
         }),
@@ -909,7 +906,7 @@ fn tool_desc_get_agenda() -> ToolDescription {
         input_schema: json!({
             "type": "object",
             "additionalProperties": false,
-            "required": ["start_date", "end_date"],
+            "required": ["start_date", "end_date", "space_id"],
             "properties": {
                 "start_date": { "type": "string", "description": "Inclusive YYYY-MM-DD lower bound." },
                 "end_date":   { "type": "string", "description": "Inclusive YYYY-MM-DD upper bound." },
@@ -925,7 +922,7 @@ fn tool_desc_get_agenda() -> ToolDescription {
                 },
                 "space_id": {
                     "type": "string",
-                    "description": "Optional ULID of the space to scope the agenda to. Omit for the unscoped (cross-space) view."
+                    "description": "ULID of the space to scope the agenda to."
                 },
             },
         }),
@@ -1367,17 +1364,16 @@ async fn handle_search(pool: &SqlitePool, args: Value) -> Result<Value, AppError
         crate::commands::SearchFilter {
             parent_id,
             tag_ids,
-            // #2248 c — `SearchFilter` now carries a `SpaceScope`. The MCP
-            // `search` tool is always space-scoped, so wrap the (required)
-            // arg as `Active`.
+            // The MCP `search` tool searches the one space its required arg
+            // names.
             // #2956 — validate the id via the strict `from_string` constructor
             // like every sibling tool (`list_backlinks`, `list_property_defs`,
             // `create_page`): a malformed / truncated / empty `space_id` must
             // error (`AppError::Ulid`, which `app_error_to_rmcp` maps to
             // JSON-RPC -32602 invalid-params, #3301) rather than silently
-            // become an `Active` id that matches nothing (which would make an
+            // become an id that matches nothing (which would make an
             // agent wrongly conclude the vault is empty).
-            scope: SpaceScope::Active(SpaceId::from_string(args.space_id.as_str())?),
+            scope: SearchScope::Spaces(vec![SpaceId::from_string(args.space_id.as_str())?]),
             include_page_globs: f.include_page_globs,
             exclude_page_globs: f.exclude_page_globs,
             case_sensitive: f.case_sensitive,
@@ -1428,6 +1424,19 @@ async fn handle_get_block(pool: &SqlitePool, args: Value) -> Result<Value, AppEr
     to_tool_result(&with_metadata(pool, block).await?)
 }
 
+/// The `space_id` a tool requires, as the scope its command takes.
+///
+/// The arg deserializes as optional so an omitted one is refused here with
+/// an error naming the field; `parse_args` reports only the error category.
+fn required_space_scope(tool: &str, space_id: Option<String>) -> Result<SpaceScope, AppError> {
+    let space_id = space_id.ok_or_else(|| {
+        AppError::validation(format!(
+            "tool `{tool}`: missing required argument `space_id`"
+        ))
+    })?;
+    Ok(SpaceScope::Active(SpaceId::from_string(space_id)?))
+}
+
 async fn handle_list_backlinks(pool: &SqlitePool, args: Value) -> Result<Value, AppError> {
     let args: ListBacklinksArgs = parse_args(TOOL_LIST_BACKLINKS, args)?;
     let limit = validate_limit(TOOL_LIST_BACKLINKS, args.limit, LIST_RESULT_CAP)?;
@@ -1436,13 +1445,7 @@ async fn handle_list_backlinks(pool: &SqlitePool, args: Value) -> Result<Value, 
     // matches nothing and comes back as an empty grouped response, which an
     // agent reads as "this block has no backlinks" and does not retry.
     let block_id = BlockId::from_string(args.block_id)?;
-    // Phase 2 — translate the JSON-side `space_id: Option<String>`
-    // into a `SpaceScope` before crossing into `_inner`. The wire shape
-    // stays the same; the type-system gate moves to the call boundary.
-    let scope = match args.space_id {
-        Some(id) => SpaceScope::Active(SpaceId::from_string(id)?),
-        None => SpaceScope::Global,
-    };
+    let scope = required_space_scope(TOOL_LIST_BACKLINKS, args.space_id)?;
     let resp =
         list_backlinks_grouped_inner(pool, block_id, None, None, args.cursor, limit, &scope, None)
             .await?;
@@ -1467,13 +1470,7 @@ async fn handle_list_property_defs(pool: &SqlitePool, args: Value) -> Result<Val
 async fn handle_get_agenda(pool: &SqlitePool, args: Value) -> Result<Value, AppError> {
     let args: GetAgendaArgs = parse_args(TOOL_GET_AGENDA, args)?;
     let limit = validate_limit(TOOL_GET_AGENDA, args.limit, AGENDA_RESULT_CAP)?;
-    // Phase 2 — translate the JSON-side `space_id: Option<String>`
-    // into a `SpaceScope` before crossing into `_inner`. The wire shape
-    // stays the same; the type-system gate moves to the call boundary.
-    let scope = match args.space_id {
-        Some(id) => SpaceScope::Active(SpaceId::from_string(id)?),
-        None => SpaceScope::Global,
-    };
+    let scope = required_space_scope(TOOL_GET_AGENDA, args.space_id)?;
     let resp = agenda_range_inner(
         pool,
         args.start_date,

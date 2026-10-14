@@ -33,7 +33,8 @@ use crate::filters::primitive::{
     Bind, DatePredicate, FilterPrimitive, LastEditedSpec, Projection, PropertyPredicate,
     PropertyValue, SearchProjection,
 };
-use crate::search_types::{DateOp, SearchPropertyFilter};
+use crate::search_types::{DateOp, SearchPropertyFilter, SearchScope};
+use crate::space::SpaceId;
 
 /// Dedupe + canonical-UPPERCASE-normalise a caller's `tag_ids` before they are
 /// bound into an ALL-tags predicate. Shared by the three structural-filter
@@ -214,17 +215,23 @@ impl StructuralFilterBuilder {
         }
     }
 
-    /// `AND b.space_id = ?N` when `Some`.
+    /// `AND b.space_id IN (SELECT value FROM json_each(?N))` over the spaces a
+    /// [`SearchScope::Spaces`] names; nothing for [`SearchScope::AllSpaces`].
     ///
     /// The fragment is identical across all three builders; only the
     /// leading `prefix` glue differs by builder indentation.
-    pub(super) fn add_space(&mut self, prefix: &str, space_id: Option<&str>) {
-        if let Some(sid) = space_id {
-            let i = self.next_param;
-            self.sql.push_str(&format!("{prefix}b.space_id = ?{i}"));
-            self.next_param += 1;
-            self.binds.push(ScalarBind::Str(sid.to_string()));
-        }
+    pub(super) fn add_space(&mut self, prefix: &str, scope: &SearchScope) {
+        let SearchScope::Spaces(space_ids) = scope else {
+            return;
+        };
+        let i = self.next_param;
+        self.sql.push_str(&format!(
+            "{prefix}b.space_id IN (SELECT value FROM json_each(?{i}))"
+        ));
+        self.next_param += 1;
+        let ids: Vec<&str> = space_ids.iter().map(SpaceId::as_str).collect();
+        self.binds
+            .push(ScalarBind::Str(serde_json::Value::from(ids).to_string()));
     }
 
     /// #1320 append a pre-compiled [`crate::filters::primitive::WhereClause`]
@@ -232,11 +239,9 @@ impl StructuralFilterBuilder {
     /// renumbering each `?` to the running `?N` index in left-to-right order
     /// and recording the matching scalar binds in declaration order.
     ///
-    /// This is the single splice point through which the
-    /// [`SearchProjection`]-routed subset (currently `Space` only — see
-    /// [`add_space_via_projection`](Self::add_space_via_projection) /
-    /// `fts_fetch_rows`) enters the dynamic FTS WHERE clause. The projection
-    /// emits bare `?`; this method
+    /// This is the single splice point through which every
+    /// [`SearchProjection`]-routed filter enters the dynamic FTS WHERE
+    /// clause. The projection emits bare `?`; this method
     /// is the only place that maps them onto the builder's `?N` slots, so
     /// the placeholder/bind invariant the builder guarantees still holds.
     ///
@@ -260,38 +265,14 @@ impl StructuralFilterBuilder {
         }
     }
 
-    /// #1320 space-id filter routed through [`SearchProjection`]
-    /// instead of the inline [`add_space`](Self::add_space) fragment. The
-    /// projection's `compile_space` emits `b.space_id = ?` with one text
-    /// bind — byte-identical (modulo placeholder numbering) to the legacy
-    /// `add_space` fragment, so this is a zero-behaviour-change cutover and
-    /// gives `SearchProjection` its first production call site. No-op when
-    /// `space_id` is `None` (mirrors `add_space`).
-    ///
-    /// Only `Space` is routed here: the legacy Tag (`COUNT(DISTINCT)`
-    /// ALL-semantics) and property (`prop:` four-column OR) fragments are
-    /// NOT byte-identical to their `SearchProjection` counterparts and stay
-    /// on the legacy path — see the `projection_space_parity` test for the
-    /// proof.
-    pub(super) fn add_space_via_projection(&mut self, prefix: &str, space_id: Option<&str>) {
-        let Some(sid) = space_id else { return };
-        let prims = vec![FilterPrimitive::Space {
-            space_id: sid.to_string(),
-        }];
-        for prim in &prims {
-            let wc = SearchProjection.compile(prim);
-            self.add_projection_clause(prefix, &wc.sql, &wc.binds);
-        }
-    }
-
     /// #1320-C — `last-edited:` window filter routed through
     /// [`SearchProjection`] (`compile_last_edited`, which delegates to
     /// `PagesProjection`). The projection emits a
     /// `COALESCE(<last_edited_ms_sql(b.id)>, 0) <op> ?` comparison against
     /// the block's last-edit epoch-ms — so it
     /// references the block table via the hardcoded `b.` alias the three FTS
-    /// builders use. Mirrors [`add_space_via_projection`]: build one
-    /// [`FilterPrimitive::LastEdited`], compile it, and splice the
+    /// builders use. Builds one
+    /// [`FilterPrimitive::LastEdited`], compiles it, and splices the
     /// bare-`?` fragment + ordered binds through
     /// [`add_projection_clause`](Self::add_projection_clause). The caller
     /// only invokes this when the spec is present (see
@@ -771,12 +752,33 @@ mod tests {
         assert_eq!(fb.bind_count(), 0);
     }
 
+    fn spaces(ids: &[&str]) -> SearchScope {
+        SearchScope::Spaces(ids.iter().map(|id| SpaceId::from_trusted(id)).collect())
+    }
+
     #[test]
-    fn space_fragment_matches_canonical_inner() {
+    fn space_fragment_binds_the_named_spaces_as_one_json_array() {
         let mut fb = StructuralFilterBuilder::new(6);
-        fb.add_space(FTS_PREFIX, Some("space1"));
-        assert_eq!(fb.sql(), "\n           AND b.space_id = ?6");
+        fb.add_space(FTS_PREFIX, &spaces(&["01SPACE0001", "01SPACE0002"]));
+        assert_eq!(
+            fb.sql(),
+            "\n           AND b.space_id IN (SELECT value FROM json_each(?6))"
+        );
         assert_eq!(fb.next_param(), 7);
+        assert_eq!(fb.bind_count(), 1);
+        assert!(matches!(
+            fb.binds.first(),
+            Some(ScalarBind::Str(s)) if s == r#"["01SPACE0001","01SPACE0002"]"#
+        ));
+    }
+
+    #[test]
+    fn space_all_spaces_is_noop() {
+        let mut fb = StructuralFilterBuilder::new(6);
+        fb.add_space(FTS_PREFIX, &SearchScope::AllSpaces);
+        assert_eq!(fb.sql(), "");
+        assert_eq!(fb.next_param(), 6);
+        assert_eq!(fb.bind_count(), 0);
     }
 
     // ── #1320 SearchProjection cutover parity ──────────────────
@@ -786,59 +788,6 @@ mod tests {
     // inline fragment, OR the predicate stays on the legacy path. These
     // tests prove which predicates are byte-identical (cut over) and which
     // are NOT (excluded, kept legacy). Modeled on `backlink/tests::parity_p1`.
-
-    /// Space IS byte-identical between the legacy `add_space` fragment and
-    /// the `SearchProjection`-routed `add_space_via_projection` — so it is
-    /// the predicate we cut over in `fts_fetch_rows`. SQL string + bind
-    /// sequence (and the consumed placeholder index) must match exactly.
-    #[test]
-    fn projection_space_parity() {
-        // Legacy path.
-        let mut legacy = StructuralFilterBuilder::new(6);
-        legacy.add_space(FTS_PREFIX, Some("01SPACE0001"));
-
-        // Projection-routed path (the production cutover).
-        let mut routed = StructuralFilterBuilder::new(6);
-        routed.add_space_via_projection(FTS_PREFIX, Some("01SPACE0001"));
-
-        assert_eq!(
-            routed.sql(),
-            legacy.sql(),
-            "Space fragment must be byte-identical via SearchProjection"
-        );
-        assert_eq!(
-            routed.sql(),
-            "\n           AND b.space_id = ?6",
-            "Space fragment snapshot"
-        );
-        assert_eq!(
-            routed.next_param(),
-            legacy.next_param(),
-            "Space must consume the same number of placeholders"
-        );
-        assert_eq!(routed.next_param(), 7);
-        assert_eq!(
-            routed.bind_count(),
-            legacy.bind_count(),
-            "Space must record the same bind count"
-        );
-        assert_eq!(routed.bind_count(), 1);
-        // Bind value parity.
-        assert!(matches!(
-            routed.binds.first(),
-            Some(ScalarBind::Str(s)) if s == "01SPACE0001"
-        ));
-    }
-
-    /// `add_space_via_projection(None)` is a no-op, mirroring `add_space`.
-    #[test]
-    fn projection_space_none_is_noop() {
-        let mut fb = StructuralFilterBuilder::new(6);
-        fb.add_space_via_projection(FTS_PREFIX, None);
-        assert_eq!(fb.sql(), "");
-        assert_eq!(fb.next_param(), 6);
-        assert_eq!(fb.bind_count(), 0);
-    }
 
     /// Tag filtering is ROUTED through `SearchProjection` in
     /// `fts_fetch_rows` (`add_tags_via_projection`, #1320); the projection
@@ -1110,9 +1059,9 @@ mod tests {
         // Both builders must produce the SAME sub-select body — only the
         // leading prefix differs.
         let mut a = StructuralFilterBuilder::new(2);
-        a.add_space(FTS_PREFIX, Some("s"));
+        a.add_space(FTS_PREFIX, &spaces(&["S"]));
         let mut b = StructuralFilterBuilder::new(2);
-        b.add_space(TOGGLE_PREFIX, Some("s"));
+        b.add_space(TOGGLE_PREFIX, &spaces(&["S"]));
         let strip_prefix = |s: &str| s.trim_start().to_string();
         assert_eq!(strip_prefix(a.sql()), strip_prefix(b.sql()));
     }
@@ -1326,7 +1275,7 @@ mod tests {
         let mut fb = StructuralFilterBuilder::new(1);
         fb.add_parent(TOGGLE_PREFIX, Some("p")); // ?1
         fb.add_tags_via_projection(TOGGLE_PREFIX, &["T".to_string()]); // ?2
-        fb.add_space(TOGGLE_PREFIX, Some("s")); // ?3
+        fb.add_space(TOGGLE_PREFIX, &spaces(&["S"])); // ?3
         fb.add_page_globs_via_projection(TOGGLE_PREFIX, false, &["*g*".to_string()]); // ?4
         fb.add_block_type_via_projection(TOGGLE_PREFIX, Some("page")); // ?5
         assert_eq!(fb.next_param(), 6);
@@ -1393,7 +1342,7 @@ mod tests {
         let mut fb = StructuralFilterBuilder::new(6);
         fb.add_parent(FTS_PREFIX, Some("PARENT01"));
         fb.add_tags_via_projection(FTS_PREFIX, &["TAGA".to_string(), "TAGB".to_string()]);
-        fb.add_space_via_projection(FTS_PREFIX, Some("01SPACE0001"));
+        fb.add_space(FTS_PREFIX, &spaces(&["01SPACE0001"]));
         fb.add_page_globs_via_projection(
             FTS_PREFIX,
             false,
@@ -1414,7 +1363,7 @@ mod tests {
             "b.parent_id = ?6",
             "b.id IN (SELECT block_id FROM block_tags WHERE tag_id = ?7)",
             "b.id IN (SELECT block_id FROM block_tags WHERE tag_id = ?8)",
-            "b.space_id = ?9",
+            "b.space_id IN (SELECT value FROM json_each(?9))",
             "(b.page_id IN (SELECT page_id FROM pages_cache WHERE LOWER(title) GLOB ?10) OR b.page_id IN (SELECT page_id FROM pages_cache WHERE LOWER(title) GLOB ?11))",
             "b.page_id NOT IN (SELECT page_id FROM pages_cache WHERE LOWER(title) GLOB ?12)",
             "b.block_type IN (?13)",
@@ -1453,7 +1402,7 @@ mod tests {
             "S:PARENT01",
             "S:TAGA",
             "S:TAGB",
-            "S:01SPACE0001",
+            r#"S:["01SPACE0001"]"#,
             "S:*proj*",
             "S:*docs*",
             "S:*trash*",

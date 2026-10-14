@@ -575,63 +575,6 @@ async fn move_block_huge_index_clamps_below_sentinel() {
 // callsite) cannot leak unscoped pages into the materialized state.
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn create_block_rejects_page_without_space_id() {
-    let (pool, _dir) = test_pool().await;
-    let mat = Materializer::new(pool.clone());
-    agaric_lib::spaces::bootstrap_spaces_for_test(&pool, DEV)
-        .await
-        .unwrap();
-
-    let before_ops: i64 = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM op_log")
-        .fetch_one(&pool)
-        .await
-        .unwrap();
-
-    // `block_type = "page"` AND `scope == Global` → Validation error.
-    // The page must NEVER be created, never appended to op_log.
-    let result = create_block_inner_with_space(
-        &pool,
-        DEV,
-        &mat,
-        "page".into(),
-        "Untitled leak".into(),
-        None,
-        None,
-        &SpaceScope::Global, // <-- no space_id
-        // #2849 PR2: server-generated id (test).
-        None,
-    )
-    .await;
-
-    assert!(
-        matches!(result, Err(AppError::Validation { message: ref msg, .. })
-            if msg.contains("page") && msg.contains("space")),
-        "page block without space_id must yield Validation, got {result:?}"
-    );
-
-    let after_ops: i64 = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM op_log")
-        .fetch_one(&pool)
-        .await
-        .unwrap();
-    assert_eq!(
-        after_ops, before_ops,
-        "validation guard returns before any DB write: op_log must be empty"
-    );
-
-    // No `page` row must have been materialized either.
-    let leaked_pages: i64 = sqlx::query_scalar::<_, i64>(
-        "SELECT COUNT(*) FROM blocks WHERE block_type = 'page' AND content = 'Untitled leak'",
-    )
-    .fetch_one(&pool)
-    .await
-    .unwrap();
-    assert_eq!(
-        leaked_pages, 0,
-        "no page row must be inserted when validation fails"
-    );
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn create_block_with_page_and_space_id_emits_two_ops_atomically() {
     let (pool, _dir) = test_pool().await;
     let mat = Materializer::new(pool.clone());
@@ -764,8 +707,7 @@ async fn create_block_non_page_ignores_space_id() {
     .await
     .unwrap();
 
-    // Content blocks are unaffected by the `scope` parameter — pass
-    // Global or Active, behavior is identical.
+    // Content blocks ignore `scope`.
     let block = create_block_inner_with_space(
         &pool,
         DEV,
@@ -774,12 +716,12 @@ async fn create_block_non_page_ignores_space_id() {
         "child".into(),
         Some(page.id.clone()),
         None,
-        &SpaceScope::Global,
+        &test_space_scope(),
         // #2849 PR2: server-generated id (test).
         None,
     )
     .await
-    .expect("content block create must succeed without space_id");
+    .expect("content block create must succeed");
     assert_eq!(block.block_type, "content");
     assert_eq!(block.content.as_deref(), Some("child"));
 }
@@ -7416,9 +7358,8 @@ async fn flush_all_drafts_skips_oversized_draft_and_flushes_the_rest_3262() {
 // ======================================================================
 //
 // Asserts that `batch_resolve_inner` honours the `&SpaceScope` boundary:
-// `Global` returns the union across spaces (cross-space behaviour),
-// while `Active(SpaceId)` drops foreign-space targets so the frontend's
-// resolve store renders them via the broken-link branch.
+// each space drops the other's targets so the frontend's resolve store
+// renders them via the broken-link branch.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn pend18_batch_resolve_scope_parity() {
     let (pool, _dir) = test_pool().await;
@@ -7429,19 +7370,6 @@ async fn pend18_batch_resolve_scope_parity() {
     insert_block(&pool, "P18_BR_B", "page", "Page B", None, None).await;
     assign_to_space(&pool, "P18_BR_A", TEST_SPACE_ID).await;
     assign_to_space(&pool, "P18_BR_B", TEST_SPACE_B_ID).await;
-
-    let global = batch_resolve_inner(
-        &pool,
-        vec!["P18_BR_A".into(), "P18_BR_B".into()],
-        &SpaceScope::Global,
-    )
-    .await
-    .unwrap();
-    assert_eq!(
-        global.len(),
-        2,
-        "Global must resolve both spaces' pages; got {global:?}"
-    );
 
     let active_a = batch_resolve_inner(
         &pool,
@@ -7456,6 +7384,18 @@ async fn pend18_batch_resolve_scope_parity() {
         "Active(TEST_SPACE_ID) must drop the foreign-space target; got {active_a:?}"
     );
     assert_eq!(active_a[0].id, "P18_BR_A");
+
+    let active_b = batch_resolve_inner(
+        &pool,
+        vec!["P18_BR_A".into(), "P18_BR_B".into()],
+        &SpaceScope::Active(SpaceId::from_trusted(TEST_SPACE_B_ID)),
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        active_b.iter().map(|r| r.id.as_str()).collect::<Vec<_>>(),
+        vec!["P18_BR_B"]
+    );
 }
 
 // ======================================================================

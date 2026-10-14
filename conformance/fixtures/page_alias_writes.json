@@ -229,11 +229,12 @@
       "args": {
         "alias": "orphan",
         "scope": {
-          "kind": "global"
+          "kind": "active",
+          "space_id": "$SPACE"
         }
       },
       "command": "resolve_page_by_alias",
-      "comment": "`orphan` resolves to nothing: the refused op wrote no row anywhere, not merely none S4 can be read back through. `Global` applies no space filter, so a miss here is a miss everywhere.",
+      "comment": "`orphan` resolves to nothing: the refused op wrote no row anywhere, not merely none S4 can be read back through. The harness has one space, so a miss here is a miss everywhere.",
       "expect_empty": true,
       "name": "refused_alias_reached_no_page"
     },
@@ -241,7 +242,8 @@
       "args": {
         "alias": "SPACED",
         "scope": {
-          "kind": "global"
+          "kind": "active",
+          "space_id": "$SPACE"
         }
       },
       "command": "resolve_page_by_alias",

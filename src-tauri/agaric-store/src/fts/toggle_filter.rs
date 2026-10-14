@@ -51,7 +51,7 @@
 //! rendered. See [`byte_to_utf16_offsets`].
 
 use crate::pagination::{PageRequest, PageResponse};
-use crate::search_types::{MatchOffset, SearchBlockRow};
+use crate::search_types::{MatchOffset, SearchBlockRow, SearchScope};
 use agaric_core::error::AppError;
 use agaric_core::error::ValidationCode;
 use regex::{Regex, RegexBuilder};
@@ -127,7 +127,7 @@ async fn fts_page_with_toggles(
     page: &PageRequest,
     parent_id: Option<&str>,
     tag_ids: Option<&[String]>,
-    space_id: Option<&str>,
+    scope: &SearchScope,
     include_page_globs: &[String],
     exclude_page_globs: &[String],
     toggles: SearchToggles,
@@ -143,7 +143,7 @@ async fn fts_page_with_toggles(
             page,
             parent_id,
             tag_ids,
-            space_id,
+            scope,
             include_page_globs,
             exclude_page_globs,
             block_type_filter,
@@ -170,7 +170,7 @@ async fn fts_page_with_toggles(
         page,
         parent_id,
         tag_ids,
-        space_id,
+        scope,
         include_page_globs,
         exclude_page_globs,
         block_type_filter,
@@ -198,7 +198,7 @@ pub async fn search_with_toggles(
     page: &PageRequest,
     parent_id: Option<&str>,
     tag_ids: Option<&[String]>,
-    space_id: Option<&str>,
+    scope: &SearchScope,
     include_page_globs: &[String],
     exclude_page_globs: &[String],
     toggles: SearchToggles,
@@ -218,7 +218,7 @@ pub async fn search_with_toggles(
     // mode branch: with at least one STRUCTURAL filter, return the
     // structurally-filtered blocks recency-ordered (mode-independent);
     // with NO filter, preserve the prior behaviour of returning empty
-    // (never the whole DB). `space_id` is always supplied so
+    // (never the whole DB). `scope` is always supplied so
     // it is NOT a user filter and is excluded from `has_filters`.
     if query.trim().is_empty() {
         let has_filters = parent_id.is_some()
@@ -240,7 +240,7 @@ pub async fn search_with_toggles(
             page,
             parent_id,
             tag_ids,
-            space_id,
+            scope,
             include_page_globs,
             exclude_page_globs,
             block_type_filter,
@@ -262,7 +262,7 @@ pub async fn search_with_toggles(
             page,
             parent_id,
             tag_ids,
-            space_id,
+            scope,
             include_page_globs,
             exclude_page_globs,
             toggles,
@@ -279,7 +279,7 @@ pub async fn search_with_toggles(
         page,
         parent_id,
         tag_ids,
-        space_id,
+        scope,
         include_page_globs,
         exclude_page_globs,
         toggles,
@@ -321,7 +321,7 @@ async fn regex_partitioned_scan(
     block_limit: u32,
     parent_id: Option<&str>,
     tag_ids: Option<&[String]>,
-    space_id: Option<&str>,
+    scope: &SearchScope,
     include_page_globs: &[String],
     exclude_page_globs: &[String],
     toggles: SearchToggles,
@@ -349,7 +349,7 @@ async fn regex_partitioned_scan(
         &pages_page,
         parent_id,
         tag_ids,
-        space_id,
+        scope,
         include_page_globs,
         exclude_page_globs,
         toggles,
@@ -364,7 +364,7 @@ async fn regex_partitioned_scan(
         &blocks_page,
         parent_id,
         tag_ids,
-        space_id,
+        scope,
         include_page_globs,
         exclude_page_globs,
         toggles,
@@ -430,7 +430,7 @@ async fn fts_partitioned_with_toggles(
     block_limit: u32,
     parent_id: Option<&str>,
     tag_ids: Option<&[String]>,
-    space_id: Option<&str>,
+    scope: &SearchScope,
     include_page_globs: &[String],
     exclude_page_globs: &[String],
     toggles: SearchToggles,
@@ -447,7 +447,7 @@ async fn fts_partitioned_with_toggles(
             block_limit,
             parent_id,
             tag_ids,
-            space_id,
+            scope,
             include_page_globs,
             exclude_page_globs,
             metadata,
@@ -499,7 +499,7 @@ async fn fts_partitioned_with_toggles(
         overfetch,
         parent_id,
         tag_ids,
-        space_id,
+        scope,
         include_page_globs,
         exclude_page_globs,
         metadata,
@@ -564,7 +564,7 @@ pub async fn search_with_toggles_partitioned(
     block_limit: u32,
     parent_id: Option<&str>,
     tag_ids: Option<&[String]>,
-    space_id: Option<&str>,
+    scope: &SearchScope,
     include_page_globs: &[String],
     exclude_page_globs: &[String],
     toggles: SearchToggles,
@@ -574,7 +574,7 @@ pub async fn search_with_toggles_partitioned(
     // NEW-3 — blank free-text query dispatch (mode-independent),
     // mirroring `search_with_toggles`. This path has NO `block_type_filter`
     // param (partitioning handles block_type), so it is excluded from
-    // `has_filters`; `space_id` is always supplied and excluded
+    // `has_filters`; `scope` is always supplied and excluded
     // too. With NO user filter, preserve the prior empty-partitions
     // behaviour; with at least one filter, return the structurally-
     // filtered partitions recency-ordered.
@@ -603,7 +603,7 @@ pub async fn search_with_toggles_partitioned(
             block_limit,
             parent_id,
             tag_ids,
-            space_id,
+            scope,
             include_page_globs,
             exclude_page_globs,
             metadata,
@@ -619,7 +619,7 @@ pub async fn search_with_toggles_partitioned(
             block_limit,
             parent_id,
             tag_ids,
-            space_id,
+            scope,
             include_page_globs,
             exclude_page_globs,
             toggles,
@@ -636,7 +636,7 @@ pub async fn search_with_toggles_partitioned(
         block_limit,
         parent_id,
         tag_ids,
-        space_id,
+        scope,
         include_page_globs,
         exclude_page_globs,
         toggles,
@@ -939,7 +939,7 @@ async fn regex_mode_query(
     page: &PageRequest,
     parent_id: Option<&str>,
     tag_ids: Option<&[String]>,
-    space_id: Option<&str>,
+    scope: &SearchScope,
     include_page_globs: &[String],
     exclude_page_globs: &[String],
     toggles: SearchToggles,
@@ -1007,7 +1007,7 @@ async fn regex_mode_query(
         &StructuralFilterInputs {
             parent_id,
             tag_ids,
-            space_id,
+            scope,
             include_page_globs,
             exclude_page_globs,
             block_type_filter,
@@ -1121,7 +1121,7 @@ impl RegexScanRow {
 struct StructuralFilterInputs<'a> {
     parent_id: Option<&'a str>,
     tag_ids: Option<&'a [String]>,
-    space_id: Option<&'a str>,
+    scope: &'a SearchScope,
     include_page_globs: &'a [String],
     exclude_page_globs: &'a [String],
     block_type_filter: Option<&'a str>,
@@ -1151,7 +1151,7 @@ fn apply_structural_filters(
     let tag_ids_active = super::filter_builder::normalize_tag_ids(inputs.tag_ids);
     fb.add_tags_via_projection(prefix, &tag_ids_active);
 
-    fb.add_space(prefix, inputs.space_id);
+    fb.add_space(prefix, inputs.scope);
 
     // P2 (#346) — shared page-glob sub-select helper (via the builder).
     fb.add_page_globs_via_projection(prefix, false, inputs.include_page_globs);
@@ -1175,7 +1175,7 @@ fn apply_structural_filters(
 /// metadata predicate), the intent is "give me the blocks that match
 /// those filters", recency-ordered. This helper builds the SAME
 /// structural-filter SQL as [`regex_mode_query`] (deduped/UPPERCASE tag
-/// ids AND-joined per tag via `add_tags_via_projection`, space_id,
+/// ids AND-joined per tag via `add_tags_via_projection`, space scope,
 /// include/exclude page globs, metadata predicates via `add_metadata`,
 /// optional `block_type`) but:
 ///
@@ -1195,7 +1195,7 @@ async fn filter_only_scan(
     pool: &SqlitePool,
     parent_id: Option<&str>,
     tag_ids: Option<&[String]>,
-    space_id: Option<&str>,
+    scope: &SearchScope,
     include_page_globs: &[String],
     exclude_page_globs: &[String],
     block_type_filter: Option<&str>,
@@ -1241,7 +1241,7 @@ async fn filter_only_scan(
         &StructuralFilterInputs {
             parent_id,
             tag_ids,
-            space_id,
+            scope,
             include_page_globs,
             exclude_page_globs,
             block_type_filter,
@@ -1290,7 +1290,7 @@ pub(crate) async fn fts_fetch_filter_only_page(
     page: &PageRequest,
     parent_id: Option<&str>,
     tag_ids: Option<&[String]>,
-    space_id: Option<&str>,
+    scope: &SearchScope,
     include_page_globs: &[String],
     exclude_page_globs: &[String],
     block_type_filter: Option<&str>,
@@ -1306,7 +1306,7 @@ pub(crate) async fn fts_fetch_filter_only_page(
         pool,
         parent_id,
         tag_ids,
-        space_id,
+        scope,
         include_page_globs,
         exclude_page_globs,
         block_type_filter,
@@ -1354,7 +1354,7 @@ pub(crate) async fn fts_fetch_filter_only_partitioned(
     block_limit: u32,
     parent_id: Option<&str>,
     tag_ids: Option<&[String]>,
-    space_id: Option<&str>,
+    scope: &SearchScope,
     include_page_globs: &[String],
     exclude_page_globs: &[String],
     metadata: &MetadataPredicates,
@@ -1363,7 +1363,7 @@ pub(crate) async fn fts_fetch_filter_only_partitioned(
         pool,
         parent_id,
         tag_ids,
-        space_id,
+        scope,
         include_page_globs,
         exclude_page_globs,
         Some("page"),
@@ -1378,7 +1378,7 @@ pub(crate) async fn fts_fetch_filter_only_partitioned(
         pool,
         parent_id,
         tag_ids,
-        space_id,
+        scope,
         include_page_globs,
         exclude_page_globs,
         None,

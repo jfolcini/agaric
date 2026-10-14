@@ -986,7 +986,7 @@ async fn run_step(pool: &SqlitePool, args: &StepArgs<'_>) -> Result<RawResult, A
                 arg_req(args, "query"),
                 opt_arg(args, "cursor").and_then(|v| v.as_str().map(str::to_owned)),
                 opt_arg(args, "limit").and_then(|v| v.as_i64()),
-                arg_or(args, "filter"),
+                arg_req(args, "filter"),
                 None,
             )
             .await?;
@@ -998,7 +998,7 @@ async fn run_step(pool: &SqlitePool, args: &StepArgs<'_>) -> Result<RawResult, A
                 arg_req(args, "query"),
                 arg_req(args, "pageLimit"),
                 arg_req(args, "blockLimit"),
-                arg_or(args, "filter"),
+                arg_req(args, "filter"),
                 None,
             )
             .await?;
@@ -1184,7 +1184,7 @@ async fn run_step(pool: &SqlitePool, args: &StepArgs<'_>) -> Result<RawResult, A
         // `total_count` are structurally absent and project as `None`.
         "get_journal_page_by_date" => {
             let scope: SpaceScope = arg_req(args, "scope");
-            let space_id = scope.require_active()?;
+            let space_id = scope.space_id();
             let row = get_journal_page_by_date_inner(
                 pool,
                 &arg_req::<String>(args, "date"),
@@ -1207,7 +1207,7 @@ async fn run_step(pool: &SqlitePool, args: &StepArgs<'_>) -> Result<RawResult, A
         }
         "list_journal_pages_in_range" => {
             let scope: SpaceScope = arg_req(args, "scope");
-            let space_id = scope.require_active()?;
+            let space_id = scope.space_id();
             let rows = list_journal_pages_in_range_inner(
                 pool,
                 &arg_req::<String>(args, "startDate"),
@@ -1250,7 +1250,7 @@ async fn run_step(pool: &SqlitePool, args: &StepArgs<'_>) -> Result<RawResult, A
         // ── Trash roots and the unpaginated page listings (#3829) ──
         "list_trash" => {
             let scope: SpaceScope = arg_req(args, "scope");
-            let space_id = scope.require_active()?.as_str().to_owned();
+            let space_id = scope.space_id().as_str().to_owned();
             let resp = list_trash_inner(
                 pool,
                 opt_arg(args, "cursor").and_then(|v| v.as_str().map(str::to_owned)),
@@ -1267,7 +1267,7 @@ async fn run_step(pool: &SqlitePool, args: &StepArgs<'_>) -> Result<RawResult, A
         }
         "count_trash" => {
             let scope: SpaceScope = arg_req(args, "scope");
-            let space_id = scope.require_active()?;
+            let space_id = scope.space_id();
             let count = count_trash_inner(pool, space_id.as_str()).await?;
             // A bare `i64`: no row identity to hang a token on, so the whole
             // answer IS the token. Rendered through [`attr_value`] rather than
@@ -1299,7 +1299,7 @@ async fn run_step(pool: &SqlitePool, args: &StepArgs<'_>) -> Result<RawResult, A
         }
         "list_all_pages_in_space" => {
             let scope: SpaceScope = arg_req(args, "scope");
-            let space_id = scope.require_active()?;
+            let space_id = scope.space_id();
             let tag_ids: Option<Vec<String>> = opt_arg_as(args, "tagIds");
             let rows =
                 list_all_pages_in_space_inner(pool, space_id.as_str(), tag_ids.as_deref()).await?;
@@ -1314,7 +1314,7 @@ async fn run_step(pool: &SqlitePool, args: &StepArgs<'_>) -> Result<RawResult, A
         }
         "list_template_page_ids_in_space" => {
             let scope: SpaceScope = arg_req(args, "scope");
-            let space_id = scope.require_active()?;
+            let space_id = scope.space_id();
             let rows = list_template_page_ids_in_space_inner(pool, space_id.as_str()).await?;
             bare_scalars(&rows)
         }
@@ -1370,14 +1370,14 @@ async fn run_step(pool: &SqlitePool, args: &StepArgs<'_>) -> Result<RawResult, A
         // ── Tag and property listings (#3827, the four listing commands) ──
         "list_all_tags_in_space" => {
             let scope: SpaceScope = arg_req(args, "scope");
-            let space_id = scope.require_active()?;
+            let space_id = scope.space_id();
             tag_rows(&list_all_tags_in_space_inner(pool, space_id.as_str()).await?)
         }
         "list_tags_by_prefix" => {
             let prefix: String = arg_or(args, "prefix");
             let limit: Option<i64> = opt_arg_as(args, "limit");
             let scope: SpaceScope = arg_req(args, "scope");
-            let space_id = scope.require_active()?;
+            let space_id = scope.space_id();
             tag_rows(&list_tags_by_prefix_inner(pool, space_id.as_str(), prefix, limit).await?)
         }
         "list_property_keys" => bare_scalars(&list_property_keys_inner(pool).await?),
@@ -1686,7 +1686,7 @@ async fn run_step(pool: &SqlitePool, args: &StepArgs<'_>) -> Result<RawResult, A
             let field = |k: &str| request.get(k).filter(|v| !v.is_null()).cloned();
             let text = |k: &str| field(k).and_then(|v| v.as_str().map(str::to_owned));
             let scope: SpaceScope = arg_req(args, "scope");
-            let space_id = scope.require_active()?;
+            let space_id = scope.space_id();
             let range = field("dateRange");
             let range_end = |k: &str| {
                 range
@@ -1842,7 +1842,7 @@ async fn run_step(pool: &SqlitePool, args: &StepArgs<'_>) -> Result<RawResult, A
         }
         "load_page_subtree" => {
             let scope: SpaceScope = arg_req(args, "scope");
-            let space_id = scope.require_active()?;
+            let space_id = scope.space_id();
             let subtree = load_page_subtree_inner(
                 pool,
                 &arg_req::<String>(args, "rootBlockId"),
@@ -2632,15 +2632,9 @@ pub(super) mod reader_delegation_tests {
     ///   2. `load_page_subtree` types `rootBlockId` as `String`; the command
     ///      takes a `BlockId` and calls `.as_str()`, so the same
     ///      canonicalisation is skipped here too.
-    ///   3. `arg_or` DEFAULTS `filter` / `todoStates` when a fixture omits
-    ///      them. The real IPC surface makes those required args, so a
-    ///      fixture can reach a combination Tauri would have rejected.
-    ///      (`scope` used to be in this list too — #3833 item 4 switched
-    ///      every `arg_or::<SpaceScope>(args, "scope")` call to `arg_req`,
-    ///      since a mistyped `scope` key used to fail OPEN to
-    ///      `SpaceScope::default() == Global`, silently WIDENING the query
-    ///      instead of failing loudly. Every fixture already passes `scope`
-    ///      explicitly, so this cost nothing.)
+    ///   3. `arg_or` DEFAULTS `todoStates` when a fixture omits it. The real
+    ///      IPC surface makes it a required arg, so a fixture can reach a
+    ///      combination Tauri would have rejected.
     ///
     /// Each is a fixture-authoring hazard rather than a live divergence (no
     /// current fixture supplies a non-canonical id or omits a required arg), so
@@ -4029,9 +4023,9 @@ mod query_runner_context_tests {
         let fixture = json!({
             "name": "writing_reader",
             "queries": [{
-                "name": "page_links_global",
+                "name": "page_links_in_space",
                 "command": "list_page_links",
-                "args": { "scope": { "kind": "global" } },
+                "args": { "scope": { "kind": "active", "space_id": TEST_SPACE_ID } },
             }],
         });
         let _ = run_query_steps(&pool, &fixture, &BTreeMap::new()).await;
@@ -4098,12 +4092,12 @@ mod query_runner_context_tests {
         let fixture = json!({
             "name": "clean_reader",
             "queries": [{
-                "name": "page_links_global",
+                "name": "page_links_in_space",
                 "command": "list_page_links",
-                "args": { "scope": { "kind": "global" } },
+                "args": { "scope": { "kind": "active", "space_id": TEST_SPACE_ID } },
             }],
         });
         let out = run_query_steps(&pool, &fixture, &BTreeMap::new()).await;
-        assert_eq!(out[0]["name"], json!("page_links_global"));
+        assert_eq!(out[0]["name"], json!("page_links_in_space"));
     }
 }

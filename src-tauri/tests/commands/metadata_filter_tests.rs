@@ -7,6 +7,7 @@
 //! Tests the SQL emission, not the resolver math (that lives in
 //! `metadata_filter`'s own unit tests).
 
+use crate::prelude::{SearchScope, search_filter};
 use agaric_lib::commands::queries::{
     DateFilter, DateOp, NamedDateRange, SearchFilter, SearchPropertyFilter, search_blocks_inner,
 };
@@ -187,7 +188,7 @@ async fn state_filter_in_list() {
         Some(50),
         SearchFilter {
             state_filter: vec!["TODO".into(), "DOING".into()],
-            ..Default::default()
+            ..search_filter(SearchScope::AllSpaces)
         },
         None,
     )
@@ -212,7 +213,7 @@ async fn state_filter_none_matches_is_null() {
         Some(50),
         SearchFilter {
             state_filter: vec!["none".into()],
-            ..Default::default()
+            ..search_filter(SearchScope::AllSpaces)
         },
         None,
     )
@@ -234,7 +235,7 @@ async fn state_and_priority_filter_compose() {
         SearchFilter {
             state_filter: vec!["TODO".into(), "DOING".into()],
             priority_filter: vec!["1".into()],
-            ..Default::default()
+            ..search_filter(SearchScope::AllSpaces)
         },
         None,
     )
@@ -261,7 +262,7 @@ async fn due_filter_op_form_lt() {
                 op: DateOp::Lt,
                 date: "2026-05-15".into(),
             }),
-            ..Default::default()
+            ..search_filter(SearchScope::AllSpaces)
         },
         None,
     )
@@ -288,7 +289,7 @@ async fn due_filter_named_none_routes_to_is_null() {
         Some(50),
         SearchFilter {
             due_filter: Some(DateFilter::Named(NamedDateRange::None)),
-            ..Default::default()
+            ..search_filter(SearchScope::AllSpaces)
         },
         None,
     )
@@ -312,7 +313,7 @@ async fn property_filter_include_value_text() {
                 key: "status".into(),
                 value: "blocked".into(),
             }],
-            ..Default::default()
+            ..search_filter(SearchScope::AllSpaces)
         },
         None,
     )
@@ -339,7 +340,7 @@ async fn property_filter_include_empty_value_matches_key_presence() {
                 key: "status".into(),
                 value: String::new(), // any value
             }],
-            ..Default::default()
+            ..search_filter(SearchScope::AllSpaces)
         },
         None,
     )
@@ -368,7 +369,7 @@ async fn property_filter_exclude_routes_to_not_exists() {
                 key: "archived".into(),
                 value: "true".into(),
             }],
-            ..Default::default()
+            ..search_filter(SearchScope::AllSpaces)
         },
         None,
     )
@@ -403,7 +404,7 @@ async fn property_filter_and_compose_across_keys() {
                     value: "alice".into(),
                 },
             ],
-            ..Default::default()
+            ..search_filter(SearchScope::AllSpaces)
         },
         None,
     )
@@ -430,7 +431,7 @@ async fn compound_filter_state_priority_property() {
                 key: "status".into(),
                 value: "blocked".into(),
             }],
-            ..Default::default()
+            ..search_filter(SearchScope::AllSpaces)
         },
         None,
     )
@@ -455,7 +456,7 @@ async fn unknown_property_key_returns_zero_results() {
                 key: "nonexistent_key".into(),
                 value: "x".into(),
             }],
-            ..Default::default()
+            ..search_filter(SearchScope::AllSpaces)
         },
         None,
     )
@@ -484,7 +485,7 @@ async fn excluded_state_filter_includes_no_state_rows() {
         Some(50),
         SearchFilter {
             excluded_state_filter: vec!["DONE".into()],
-            ..Default::default()
+            ..search_filter(SearchScope::AllSpaces)
         },
         None,
     )
@@ -516,7 +517,7 @@ async fn excluded_state_none_sentinel_excludes_null_state() {
         Some(50),
         SearchFilter {
             excluded_state_filter: vec!["none".into()],
-            ..Default::default()
+            ..search_filter(SearchScope::AllSpaces)
         },
         None,
     )
@@ -542,7 +543,7 @@ async fn excluded_state_combines_with_state_filter() {
         SearchFilter {
             state_filter: vec!["TODO".into()],
             excluded_state_filter: vec!["DONE".into()],
-            ..Default::default()
+            ..search_filter(SearchScope::AllSpaces)
         },
         None,
     )
@@ -567,7 +568,7 @@ async fn excluded_priority_inverts_priority_values() {
         Some(50),
         SearchFilter {
             excluded_priority_filter: vec!["1".into()],
-            ..Default::default()
+            ..search_filter(SearchScope::AllSpaces)
         },
         None,
     )
@@ -613,7 +614,7 @@ async fn prop_filter_matches_value_num_column() {
                 key: "score".into(),
                 value: "1".into(),
             }],
-            ..Default::default()
+            ..search_filter(SearchScope::AllSpaces)
         },
         None,
     )
@@ -645,7 +646,7 @@ async fn prop_filter_matches_value_date_column() {
                 key: "deadline".into(),
                 value: "2026-05-17".into(),
             }],
-            ..Default::default()
+            ..search_filter(SearchScope::AllSpaces)
         },
         None,
     )
@@ -680,7 +681,7 @@ async fn prop_value_ref_is_not_auto_inferred_typed() {
                 key: "author".into(),
                 value: target.to_ascii_lowercase(),
             }],
-            ..Default::default()
+            ..search_filter(SearchScope::AllSpaces)
         },
         None,
     )
@@ -710,7 +711,7 @@ async fn prop_filter_text_value_still_matches_value_text() {
                 key: "status".into(),
                 value: "blocked".into(),
             }],
-            ..Default::default()
+            ..search_filter(SearchScope::AllSpaces)
         },
         None,
     )
@@ -740,7 +741,7 @@ async fn prop_filter_numeric_value_does_not_match_text_column() {
                 key: "status".into(),
                 value: "1".into(),
             }],
-            ..Default::default()
+            ..search_filter(SearchScope::AllSpaces)
         },
         None,
     )
@@ -766,7 +767,7 @@ async fn invalid_due_filter_surfaces_typed_error() {
                 op: DateOp::Eq,
                 date: "2026-13-99".into(),
             }),
-            ..Default::default()
+            ..search_filter(SearchScope::AllSpaces)
         },
         None,
     )

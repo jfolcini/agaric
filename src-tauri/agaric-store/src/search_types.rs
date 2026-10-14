@@ -16,13 +16,13 @@ use serde::{Deserialize, Serialize};
 use specta::Type;
 
 use crate::filters::primitive::LastEditedSpec;
-use crate::space::SpaceScope;
+use crate::space::SpaceId;
 
 // The self-contained leaf date-filter enums moved DOWN into `agaric-core`
 // (#2633): `DateFilter` / `NamedDateRange` / `DateOp` derive only
 // `serde` + `specta::Type` and reference no store/engine type, so they belong
 // at the bottom of the DAG. The composite `SearchFilter` below stays here
-// because it couples to `SpaceScope` (engine) and `LastEditedSpec`. Re-exported
+// because it couples to `SpaceId` and `LastEditedSpec`. Re-exported
 // so every `crate::search_types::DateFilter` / `agaric_store::search_types::…`
 // / `crate::commands::queries::…` call site — and the `tauri-specta`
 // collection — resolves unchanged, and the generated TS bindings stay
@@ -52,13 +52,54 @@ pub struct SearchPropertyFilter {
     pub value: String,
 }
 
-/// Optional filter bundle for `search_blocks_inner`.
+/// The spaces a search covers: an explicit, non-empty list of spaces, or
+/// every space.
+///
+/// Adjacently tagged: `{"kind":"spaces","space_ids":["<ULID>", …]}` or
+/// `{"kind":"all_spaces"}`. Deserialize rejects an empty list and a malformed
+/// id, so a search never covers a space its caller did not choose.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Type)]
+#[serde(tag = "kind", content = "space_ids", rename_all = "snake_case")]
+pub enum SearchScope {
+    Spaces(Vec<SpaceId>),
+    AllSpaces,
+}
+
+impl<'de> Deserialize<'de> for SearchScope {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        #[serde(tag = "kind", content = "space_ids", rename_all = "snake_case")]
+        enum Shim {
+            Spaces(Vec<SpaceId>),
+            AllSpaces,
+        }
+
+        let ids = match Shim::deserialize(deserializer)? {
+            Shim::AllSpaces => return Ok(SearchScope::AllSpaces),
+            Shim::Spaces(ids) => ids,
+        };
+        if ids.is_empty() {
+            return Err(serde::de::Error::custom(
+                "search scope `spaces` must name at least one space",
+            ));
+        }
+        for id in &ids {
+            id.validate_shape().map_err(serde::de::Error::custom)?;
+        }
+        Ok(SearchScope::Spaces(ids))
+    }
+}
+
+/// Filter bundle for `search_blocks_inner`.
 ///
 /// Phase 0 collapses the previous positional `parent_id` /
 /// `tag_ids` / `space_id` args into a single struct so the `tauri-specta`
 /// 10-arg ceiling stays comfortable as follow-up plans append filter
-/// fields. Every field carries `#[serde(default)]` — a missing key on
-/// the wire deserialises to the field's `Default`, which preserves
+/// fields. Every field but `scope` carries `#[serde(default)]` — a missing
+/// key on the wire deserialises to the field's `Default`, which preserves
 /// today's "no filter" behaviour. Follow-up plans append new fields the
 /// same way; they MUST NOT add positional args.
 ///
@@ -69,7 +110,7 @@ pub struct SearchPropertyFilter {
 /// `block_type_filter` (`Option<String>`).
 /// `state_filter`, `priority_filter`, `due_filter`,
 ///   `scheduled_filter`, `property_filters`, `excluded_property_filters`.
-#[derive(Debug, Clone, Default, Deserialize, Serialize, Type)]
+#[derive(Debug, Clone, Deserialize, Serialize, Type)]
 #[serde(rename_all = "camelCase")]
 pub struct SearchFilter {
     /// Restrict results to direct children of this parent block.
@@ -79,18 +120,9 @@ pub struct SearchFilter {
     /// (`ALL` semantics — see `fts::search_fts`).
     #[serde(default)]
     pub tag_ids: Vec<String>,
-    /// Space scope for the search (#2248 group c). Mapped to the FTS layer
-    /// via [`SpaceScope::as_filter_param`]: `Active(id)` restricts matches to
-    /// blocks whose owning page lives in that space; `Global` applies no
-    /// space filter (the deliberate cross-space form). This replaces the
-    /// prior `space_id: Option<String>` whose `Some("")` silently meant
-    /// "match nothing" — the un-typed footgun the arch sweep flagged. Every
-    /// real caller (the FE search wrappers via `requireActiveScope`, and the
-    /// MCP `search` tool) sends `Active`, so `Global` only arises from an
-    /// omitted key (the `#[serde(default)]`) and yields today's unscoped
-    /// behaviour rather than a never-matching empty filter.
-    #[serde(default)]
-    pub scope: SpaceScope,
+    /// The spaces the search covers. Required: an omitted scope fails to
+    /// deserialize instead of widening the search.
+    pub scope: SearchScope,
     /// Page-name glob include list. Each entry may use
     /// SQLite `GLOB` syntax (`*`, `?`, `[...]`) and `{a,b}` brace
     /// expansion. Bare tokens are wrapped with `*…*` for a
@@ -275,4 +307,61 @@ pub struct SearchBlockRow {
     /// pathological patterns (e.g. `.` against a long block).
     #[serde(default)]
     pub match_offsets: Vec<MatchOffset>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    const SPACE_A: &str = "01ARZ3NDEKTSV4RRFFQ69G5FAV";
+    const SPACE_B: &str = "01BX5ZZKBKACTAV9WEVGEMMVRZ";
+
+    fn filter(scope: &serde_json::Value) -> Result<SearchFilter, serde_json::Error> {
+        serde_json::from_value(json!({ "scope": scope }))
+    }
+
+    #[test]
+    fn search_filter_without_scope_fails_to_deserialize() {
+        let result: Result<SearchFilter, _> = serde_json::from_value(json!({}));
+        assert!(
+            result.is_err(),
+            "a search without a scope must not deserialize"
+        );
+    }
+
+    #[test]
+    fn spaces_scope_with_an_empty_list_fails_to_deserialize() {
+        let result = filter(&json!({ "kind": "spaces", "space_ids": [] }));
+        assert!(result.is_err(), "an empty space list must not deserialize");
+    }
+
+    #[test]
+    fn spaces_scope_with_a_malformed_id_fails_to_deserialize() {
+        let result = filter(&json!({ "kind": "spaces", "space_ids": [SPACE_A, "not-a-ulid"] }));
+        assert!(result.is_err(), "a malformed space id must not deserialize");
+    }
+
+    #[test]
+    fn spaces_and_all_spaces_round_trip() {
+        for scope in [
+            SearchScope::Spaces(vec![
+                SpaceId::from_trusted(SPACE_A),
+                SpaceId::from_trusted(SPACE_B),
+            ]),
+            SearchScope::AllSpaces,
+        ] {
+            let wire = serde_json::to_value(&scope).unwrap();
+            assert_eq!(filter(&wire).unwrap().scope, scope);
+        }
+        assert_eq!(
+            serde_json::to_value(SearchScope::AllSpaces).unwrap(),
+            json!({ "kind": "all_spaces" })
+        );
+        assert_eq!(
+            serde_json::to_value(SearchScope::Spaces(vec![SpaceId::from_trusted(SPACE_A)]))
+                .unwrap(),
+            json!({ "kind": "spaces", "space_ids": [SPACE_A] })
+        );
+    }
 }

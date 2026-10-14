@@ -1,5 +1,5 @@
 {
-  "description": "#3829 — READ-command differential over `list_trash`, `list_all_pages_in_space` and `list_template_page_ids_in_space`. The trash half is the multi-cohort shape #3818 turns on: S5 is deleted on its own, THEN its parent S4 (a separate cohort, so S5 keeps its own tombstone and stays a trash ROOT), while S6's delete cascades over S7 in ONE cohort (so S7 is NOT a root). The backend's root predicate is `parent_id IS NULL OR NOT EXISTS (parent p WHERE p.deleted_at = b.deleted_at)`, ordered `deleted_at DESC, id ASC`, space-scoped; a mock that lists every tombstone, orders on anything but `deleted_at DESC`, or accepts a `Global` scope diverges here. NOT pinned: the space filter (the harness has one space, so every tombstone is in it) and the `id ASC` tiebreak (every delete mints its own cohort on both stacks, so no two roots share a `deleted_at`). The pages half pins the deleted-page exclusion (S3 is a template page that is deleted, so it is in neither listing), the tag filter (`tagIds: [S8]` keeps only S2; an EMPTY list is unfiltered on both stacks) and the case-insensitive content sort.",
+  "description": "#3829 — READ-command differential over `list_trash`, `list_all_pages_in_space` and `list_template_page_ids_in_space`. The trash half is the multi-cohort shape #3818 turns on: S5 is deleted on its own, THEN its parent S4 (a separate cohort, so S5 keeps its own tombstone and stays a trash ROOT), while S6's delete cascades over S7 in ONE cohort (so S7 is NOT a root). The backend's root predicate is `parent_id IS NULL OR NOT EXISTS (parent p WHERE p.deleted_at = b.deleted_at)`, ordered `deleted_at DESC, id ASC`, space-scoped; a mock that lists every tombstone, or orders on anything but `deleted_at DESC` diverges here. NOT pinned: the space filter (the harness has one space, so every tombstone is in it) and the `id ASC` tiebreak (every delete mints its own cohort on both stacks, so no two roots share a `deleted_at`). The pages half pins the deleted-page exclusion (S3 is a template page that is deleted, so it is in neither listing), the tag filter (`tagIds: [S8]` keeps only S2; an EMPTY list is unfiltered on both stacks) and the case-insensitive content sort.",
   "expected": {
     "block_tags": [
       {
@@ -260,26 +260,10 @@
     },
     {
       "cursor": null,
-      "error": "validation",
-      "has_more": null,
-      "name": "trash_rejects_global_scope",
-      "rows": [],
-      "total_count": null
-    },
-    {
-      "cursor": null,
       "error": null,
       "has_more": null,
       "name": "trash_count_is_every_tombstone",
       "rows": ["count_trash#value=5"],
-      "total_count": null
-    },
-    {
-      "cursor": null,
-      "error": "validation",
-      "has_more": null,
-      "name": "trash_count_rejects_global_scope",
-      "rows": [],
       "total_count": null
     },
     {
@@ -409,18 +393,6 @@
     },
     {
       "args": {
-        "limit": 10,
-        "scope": {
-          "kind": "global"
-        }
-      },
-      "command": "list_trash",
-      "comment": "Trash is per-space (#2248): `Global` is refused by `require_active`, never widened into a cross-space listing.",
-      "expect_error": "validation",
-      "name": "trash_rejects_global_scope"
-    },
-    {
-      "args": {
         "scope": {
           "kind": "active",
           "space_id": "$SPACE"
@@ -429,17 +401,6 @@
       "command": "count_trash",
       "comment": "Five, not the four ROOTS the listing above returns: `count_trash_inner` counts every soft-deleted ROW in the space. S3, S4, S5, S6 and S7 are all tombstoned (S7 through S6's cascade); S1, S2 and S8 are live. A mock that counted roots instead of rows, or that lost the cascade child, differs here.",
       "name": "trash_count_is_every_tombstone"
-    },
-    {
-      "args": {
-        "scope": {
-          "kind": "global"
-        }
-      },
-      "command": "count_trash",
-      "comment": "Mirrors `trash_rejects_global_scope` one command over: `count_trash` refuses `Global` through the same `require_active`, so the badge's count has no cross-space form either.",
-      "expect_error": "validation",
-      "name": "trash_count_rejects_global_scope"
     },
     {
       "args": {

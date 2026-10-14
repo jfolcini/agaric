@@ -42,3 +42,34 @@ pub use agaric_engine::block_ops::{
     MAX_BLOCK_DEPTH, MAX_CONTENT_LENGTH, create_block_in_tx, is_valid_iso_date, set_property_in_tx,
     validate_date_format,
 };
+
+pub use agaric_store::search_types::SearchScope;
+
+/// The scope of the fixture's [`TEST_SPACE_ID`].
+pub fn test_space_scope() -> SpaceScope {
+    SpaceScope::Active(SpaceId::from_trusted(TEST_SPACE_ID))
+}
+
+/// A [`SearchFilter`] over `scope` that filters on nothing else.
+pub fn search_filter(scope: SearchScope) -> SearchFilter {
+    SearchFilter {
+        parent_id: None,
+        tag_ids: Vec::new(),
+        scope,
+        include_page_globs: Vec::new(),
+        exclude_page_globs: Vec::new(),
+        case_sensitive: false,
+        whole_word: false,
+        is_regex: false,
+        block_type_filter: None,
+        state_filter: Vec::new(),
+        priority_filter: Vec::new(),
+        due_filter: None,
+        scheduled_filter: None,
+        property_filters: Vec::new(),
+        excluded_property_filters: Vec::new(),
+        excluded_state_filter: Vec::new(),
+        excluded_priority_filter: Vec::new(),
+        last_edited: None,
+    }
+}

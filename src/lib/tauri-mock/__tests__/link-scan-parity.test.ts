@@ -25,6 +25,7 @@ import path from 'node:path'
 
 import { beforeEach, describe, expect, it } from 'vitest'
 
+import { setSpace } from '@/lib/tauri-mock/__tests__/mock-store-helpers'
 import { dispatch } from '@/lib/tauri-mock/handlers'
 import { classifyLinkKind, deriveLinkEdges } from '@/lib/tauri-mock/link-scan'
 import {
@@ -79,6 +80,8 @@ describe('#3332 — the [[ULID]] link scan has a single owner', () => {
     const A2 = 'AA2'.padStart(26, '0')
     const B1 = 'BB1'.padStart(26, '0')
     const GONE = 'GONE'.padStart(26, '0')
+    const SPACE = 'SPACE'.padStart(26, '0')
+    const scope = { kind: 'active', space_id: SPACE }
 
     beforeEach(() => {
       blocks.clear()
@@ -89,6 +92,8 @@ describe('#3332 — the [[ULID]] link scan has a single owner', () => {
 
       blocks.set(PAGE_A, makeBlock(PAGE_A, 'page', 'Page A', null, 1))
       blocks.set(PAGE_B, makeBlock(PAGE_B, 'page', 'Page B', null, 2))
+      setSpace(PAGE_A, SPACE)
+      setSpace(PAGE_B, SPACE)
       // Two blocks on A linking to B, one of them twice; one block on B linking
       // back to A; one tombstoned block whose link must never surface.
       blocks.set(A1, makeBlock(A1, 'content', `see [[${PAGE_B}]] and [[${PAGE_B}]]`, PAGE_A, 1))
@@ -117,7 +122,7 @@ describe('#3332 — the [[ULID]] link scan has a single owner', () => {
     }
 
     it('get_backlinks', () => {
-      const res = dispatch('get_backlinks', { blockId: PAGE_B }) as {
+      const res = dispatch('get_backlinks', { blockId: PAGE_B, scope }) as {
         items: Array<Record<string, unknown>>
       }
       expect(res.items.map((b) => b['id'] as string).toSorted()).toEqual(expectedSources(PAGE_B))
@@ -126,7 +131,7 @@ describe('#3332 — the [[ULID]] link scan has a single owner', () => {
     })
 
     it('list_backlinks_grouped', () => {
-      const res = dispatch('list_backlinks_grouped', { blockId: PAGE_A }) as {
+      const res = dispatch('list_backlinks_grouped', { blockId: PAGE_A, scope }) as {
         groups: Array<{ blocks: Array<Record<string, unknown>> }>
       }
       const ids = res.groups.flatMap((g) => g.blocks.map((b) => b['id'] as string)).toSorted()
@@ -134,7 +139,7 @@ describe('#3332 — the [[ULID]] link scan has a single owner', () => {
     })
 
     it('count_backlinks_batch', () => {
-      const res = dispatch('count_backlinks_batch', { pageIds: [PAGE_A, PAGE_B] }) as Record<
+      const res = dispatch('count_backlinks_batch', { pageIds: [PAGE_A, PAGE_B], scope }) as Record<
         string,
         number
       >
@@ -153,7 +158,7 @@ describe('#3332 — the [[ULID]] link scan has a single owner', () => {
       const LBL = 'LBL'.padStart(26, '0')
       blocks.set(LBL, makeBlock(LBL, 'content', `see [[${PAGE_B}|page b]] here`, PAGE_A, 5))
 
-      const res = dispatch('get_backlinks', { blockId: PAGE_B }) as {
+      const res = dispatch('get_backlinks', { blockId: PAGE_B, scope }) as {
         items: Array<Record<string, unknown>>
       }
       expect(res.items.map((b) => b['id'] as string).toSorted()).toEqual(expectedSources(PAGE_B))
@@ -165,7 +170,7 @@ describe('#3332 — the [[ULID]] link scan has a single owner', () => {
       const BREF = 'BREF'.padStart(26, '0')
       blocks.set(BREF, makeBlock(BREF, 'content', `see ((${PAGE_B})) for detail`, PAGE_A, 4))
 
-      const res = dispatch('get_backlinks', { blockId: PAGE_B }) as {
+      const res = dispatch('get_backlinks', { blockId: PAGE_B, scope }) as {
         items: Array<Record<string, unknown>>
       }
       expect(res.items.map((b) => b['id'] as string).toSorted()).toEqual(expectedSources(PAGE_B))

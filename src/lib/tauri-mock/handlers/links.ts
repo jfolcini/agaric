@@ -26,7 +26,7 @@ import {
   inSpaceScope,
   pageRequestLimit,
   scanLinkTargets,
-  readSpaceScope,
+  readActiveSpaceScope,
 } from '@/lib/tauri-mock/handlers/shared'
 import { blockTags, blocks, linkMetadata, pageAliases, properties } from '@/lib/tauri-mock/seed'
 
@@ -216,10 +216,9 @@ export const linksHandlers = {
     const a = args as Record<string, unknown>
     const targetId = a['blockId'] as string
     // Honour `scope: SpaceScope` the same way the backend's
-    // `get_backlinks_inner` does. Active scope drops source blocks whose
-    // owning page (`page_id`, or own id if itself a page) lives in a
-    // different space. Global is unfiltered (legacy cross-space view).
-    const spaceId = readSpaceScope(a)
+    // `get_backlinks_inner` does: drop source blocks whose owning page
+    // (`page_id`, or own id if itself a page) lives in a different space.
+    const spaceId = readActiveSpaceScope('get_backlinks', a)
     // Scan all blocks for [[ULID]] tokens matching the target (#3332: the scan
     // itself is `contentLinksTo`, the single owner of the token grammar).
     const backlinkItems = [...blocks.values()].filter(
@@ -242,10 +241,8 @@ export const linksHandlers = {
     const pageIds = a['pageIds'] as string[]
     // Honour `scope` so mock-mode FE tests can
     // observe space-scoped badge counts the same way the real backend
-    // produces them. The shape mirrors `list_page_aliases_by_prefix`
-    // above: pull the active spaceId out of `{ kind, space_id }`,
-    // fall back to `null` (cross-space, legacy) for `Global`.
-    const spaceId = readSpaceScope(a)
+    // produces them.
+    const spaceId = readActiveSpaceScope('count_backlinks_batch', a)
     const result: Record<string, number> = {}
     for (const pid of pageIds) {
       // Active-space scoping (`inSpaceScope`) drops source blocks whose owning
@@ -271,7 +268,7 @@ export const linksHandlers = {
     const limit = pageRequestLimit(a['limit'])
     // Honour `scope: SpaceScope` (mirrors
     // `list_backlinks_grouped_inner`).
-    const spaceId = readSpaceScope(a)
+    const spaceId = readActiveSpaceScope('list_backlinks_grouped', a)
     // #4551 — `AND (? IS NULL OR bl.kind = ?)`. The backend classifies the
     // pair once at reindex time and stores it; the mock derives `block_links`
     // from content on every read, so it classifies here from the same rule.
@@ -297,7 +294,7 @@ export const linksHandlers = {
     const limit = pageRequestLimit(a['limit'])
     // Honour `scope: SpaceScope` (mirrors
     // `list_unlinked_references_inner`).
-    const spaceId = readSpaceScope(a)
+    const spaceId = readActiveSpaceScope('list_unlinked_references', a)
     // #4159 item 3 — the TITLE lookup is guarded:
     // `SELECT content FROM blocks WHERE id = ?1 AND block_type = 'page' AND
     // deleted_at IS NULL` (`agaric-store/src/backlink/grouped.rs:588-591`),
@@ -396,10 +393,9 @@ export const linksHandlers = {
     const rawTagIds = a['tagIds'] as string[] | null | undefined
     const tagFilter = rawTagIds && rawTagIds.length > 0 ? new Set(rawTagIds) : null
     // Honour `scope: SpaceScope` (mirrors `list_page_links_inner`).
-    // Both endpoints of an edge must live in the active space; global is
-    // unfiltered. Matches the backend's `b1.space = ?` AND `b2.space = ?`
-    // join predicate.
-    const spaceId = readSpaceScope(a)
+    // Both endpoints of an edge must live in the active space. Matches the
+    // backend's `b1.space = ?` AND `b2.space = ?` join predicate.
+    const spaceId = readActiveSpaceScope('list_page_links', a)
     const pageSpace = (pid: string): string | null =>
       (properties.get(pid)?.get('space')?.['value_ref'] as string | null) ?? null
     const linkSet = new Set<string>()
@@ -412,7 +408,7 @@ export const linksHandlers = {
       const parentBlock = blocks.get(parentId)
       if (!parentBlock || parentBlock['block_type'] !== 'page') continue
       // Active-scope filter on source page.
-      if (spaceId !== null && pageSpace(parentId) !== spaceId) continue
+      if (pageSpace(parentId) !== spaceId) continue
       const content = (b['content'] as string) ?? ''
       for (const targetPageId of scanLinkTargets(content)) {
         // Ensure target is an existing non-deleted page
@@ -421,7 +417,7 @@ export const linksHandlers = {
           continue
         // Active-scope filter on target page (mirrors the
         // backend's `b2.space = ?` predicate).
-        if (spaceId !== null && pageSpace(targetPageId) !== spaceId) continue
+        if (pageSpace(targetPageId) !== spaceId) continue
         // Apply target-side tag filter.
         if (tagFilter) {
           const targetTags = blockTags.get(targetPageId)

@@ -5242,9 +5242,13 @@ async fn upgraded_vault_page_links_survive_a_disarmed_lazy_rebuild_3839() {
          to say anything about the migration"
     );
 
+    let space = crate::commands::tests::common::TEST_SPACE_ID;
+    for page in [page_a, page_b] {
+        crate::commands::tests::common::assign_to_test_space(&pool, page).await;
+    }
     let response = crate::commands::pages::links::list_page_links_inner(
         &pool,
-        &agaric_store::space::SpaceScope::Global,
+        &agaric_store::space::SpaceScope::Active(agaric_store::space::SpaceId::from_trusted(space)),
         None,
     )
     .await

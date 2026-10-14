@@ -6,7 +6,7 @@
 use sqlx::SqlitePool;
 
 use crate::pagination::{Cursor, PageRequest, PageResponse};
-use crate::search_types::SearchBlockRow;
+use crate::search_types::{SearchBlockRow, SearchScope};
 use agaric_core::error::AppError;
 
 use super::super::metadata_filter::MetadataPredicates;
@@ -91,7 +91,7 @@ pub(in crate::fts) async fn fts_fetch_post_filtered_page<F>(
     page: &PageRequest,
     parent_id: Option<&str>,
     tag_ids: Option<&[String]>,
-    space_id: Option<&str>,
+    scope: &SearchScope,
     include_page_globs: &[String],
     exclude_page_globs: &[String],
     block_type_filter: Option<&str>,
@@ -141,7 +141,7 @@ where
     let prepared = build_fts_fetch(
         parent_id,
         tag_ids,
-        space_id,
+        scope,
         include_page_globs,
         exclude_page_globs,
         block_type_filter,

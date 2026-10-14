@@ -38,6 +38,8 @@ import {
 } from '@/lib/tauri-mock/seed'
 
 const PAGE = '00000000000000000000PAGEZZ'
+/** Content creates ignore the space, but the command still requires one. */
+const SCOPE = { kind: 'active', space_id: '00000000000000000000SPACEZ' }
 const P = '0000000000000000000000000P'
 const A = '0000000000000000000000000A'
 const B = '0000000000000000000000000B'
@@ -142,6 +144,7 @@ describe('#3331 — soft-delete lifecycle reversal walks the cohort', () => {
       parentId: PAGE,
       content: 'X',
       blockType: 'content',
+      scope: SCOPE,
     }) as WithOpsResp
     const x = created['id'] as string
     dispatch('move_block', { blockId: P, newParentId: x, newIndex: 0 })

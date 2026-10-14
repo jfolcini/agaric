@@ -17,6 +17,9 @@ use tempfile::TempDir;
 
 const FIXED_DELETED_AT: i64 = 1_736_942_400_000;
 
+/// The one space the page-link fixtures live in.
+const LINK_SPACE_ID: &str = "01SPACE0000000000000000001";
+
 // -- Helpers (copied verbatim from the pre-move `cache/tests.rs`) ----------
 
 /// Create a fresh SQLite pool with migrations applied (temp directory).
@@ -109,6 +112,30 @@ async fn insert_repeating_block(
     }
 }
 
+/// Register [`LINK_SPACE_ID`] and put every other block in it, so the
+/// space-scoped `list_page_links` read sees the whole vault the legacy oracle
+/// reads.
+async fn put_every_block_in_link_space(pool: &SqlitePool) {
+    sqlx::query(
+        "INSERT OR IGNORE INTO blocks (id, block_type, content, page_id) \
+         VALUES (?1, 'page', 'Links', ?1)",
+    )
+    .bind(LINK_SPACE_ID)
+    .execute(pool)
+    .await
+    .unwrap();
+    sqlx::query("INSERT OR IGNORE INTO spaces (id) VALUES (?)")
+        .bind(LINK_SPACE_ID)
+        .execute(pool)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE blocks SET space_id = ?1 WHERE id <> ?1")
+        .bind(LINK_SPACE_ID)
+        .execute(pool)
+        .await
+        .unwrap();
+}
+
 async fn seed_page_link_fixture(
     pool: &SqlitePool,
     page_a: &str,
@@ -148,6 +175,7 @@ async fn seed_page_link_fixture(
             .unwrap();
         children.push(child_id);
     }
+    put_every_block_in_link_space(pool).await;
     children
 }
 
@@ -192,7 +220,9 @@ async fn legacy_page_link_oracle(pool: &SqlitePool) -> Vec<(String, String, i64)
 async fn read_page_links_sorted(pool: &SqlitePool) -> Vec<(String, String, i64)> {
     let mut rows: Vec<(String, String, i64)> = agaric_lib::commands::list_page_links_inner(
         pool,
-        &agaric_store::space::SpaceScope::Global,
+        &agaric_store::space::SpaceScope::Active(agaric_store::space::SpaceId::from_trusted(
+            LINK_SPACE_ID,
+        )),
         None,
     )
     .await
@@ -373,7 +403,9 @@ async fn page_link_cache_read_path_matches_legacy_query() {
     // order for the positional zip below.
     let mut new_rows = agaric_lib::commands::list_page_links_inner(
         &pool,
-        &agaric_store::space::SpaceScope::Global,
+        &agaric_store::space::SpaceScope::Active(agaric_store::space::SpaceId::from_trusted(
+            LINK_SPACE_ID,
+        )),
         None,
     )
     .await
@@ -531,6 +563,7 @@ async fn page_link_cache_denormalized_flags_match_legacy_after_mutation() {
             .execute(&pool)
             .await
             .unwrap();
+        put_every_block_in_link_space(&pool).await;
         rebuild_page_link_cache(&pool).await.unwrap();
         let oracle = legacy_page_link_oracle(&pool).await;
         assert!(oracle.is_empty(), "oracle: non-page target masks the edge");

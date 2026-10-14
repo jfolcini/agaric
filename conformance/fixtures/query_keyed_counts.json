@@ -218,18 +218,6 @@
     },
     {
       "cursor": null,
-      "error": null,
-      "has_more": null,
-      "name": "agenda_counts_global_scope",
-      "rows": [
-        "2026-07-01->column:due_date#count=2",
-        "2026-07-01->column:scheduled_date#count=1",
-        "2026-07-02->column:due_date#count=1"
-      ],
-      "total_count": null
-    },
-    {
-      "cursor": null,
       "error": "validation",
       "has_more": null,
       "name": "agenda_rejects_malformed_date",
@@ -319,17 +307,6 @@
       "command": "count_agenda_batch_by_source",
       "comment": "The nested map, one token per (date, source). 2026-07-01 holds TWO `column:due_date` rows (S9, S10) and ONE `column:scheduled_date` (S11) — differing counts under one key. 2026-07-02 holds ONE: S12 is both due and scheduled that day, and `agenda_cache`'s PK is `(date, block_id)`, so `DESIRED_AGENDA_SQL`'s priority order keeps the higher-precedence `column:due_date` row and drops the scheduled one — a mock that counts the two columns independently answers a second source here. 2026-07-03 is absent: a date with no rows is omitted, not carried as an empty map.",
       "name": "agenda_counts_by_date_and_source"
-    },
-    {
-      "args": {
-        "dates": ["2026-07-01", "2026-07-02"],
-        "scope": {
-          "kind": "global"
-        }
-      },
-      "command": "count_agenda_batch_by_source",
-      "comment": "The harness has one space, so `Global` (`?2 IS NULL`) selects the same rows and the counts are unchanged. What it pins is that this command SERVES `Global` unscoped rather than refusing it the way `count_trash` does.",
-      "name": "agenda_counts_global_scope"
     },
     {
       "args": {

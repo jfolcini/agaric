@@ -27,9 +27,10 @@ import {
   type PageMetaRow,
   type TypedHandlers,
   validationRejection,
-  readSpaceScope,
+  ownerSpaceOf,
+  readActiveSpaceScope,
 } from '@/lib/tauri-mock/handlers/shared'
-import { blockTags, blocks, properties } from '@/lib/tauri-mock/seed'
+import { blockTags, blocks } from '@/lib/tauri-mock/seed'
 
 // ---------------------------------------------------------------------------
 // #3938 — the `fts_blocks.stripped` stand-in
@@ -1435,6 +1436,20 @@ function searchPagesCacheTitle(pageId: string): string | null {
 }
 
 /**
+ * The spaces `SearchFilter.scope` names, or `null` for `all_spaces`. Mirrors
+ * the backend's `SearchScope` deserializer, which refuses an omitted scope and
+ * an empty `spaces` list (#5415).
+ */
+function readSearchScope(filter: Record<string, unknown>): string[] | null {
+  const scope = filter['scope'] as { kind?: string; space_ids?: string[] } | undefined
+  if (scope?.kind === 'all_spaces') return null
+  if (scope?.kind !== 'spaces' || !scope.space_ids?.length) {
+    throw validationRejection('search scope must be `all_spaces` or a non-empty `spaces` list')
+  }
+  return scope.space_ids
+}
+
+/**
  * The structurally-filtered, live block set every arm draws its candidates
  * from — the mock's stand-in for `apply_structural_filters`'s WHERE clauses
  * (`src-tauri/agaric-store/src/fts/toggle_filter.rs:1021-1049`), now covering every one of them.
@@ -1461,10 +1476,7 @@ function searchStructuralCandidates(
   filter: Record<string, unknown>,
   honourBlockType = true,
 ): Record<string, unknown>[] {
-  const scope = filter['scope'] as { kind?: string; space_id?: string } | undefined
-  // An omitted `scope` deserialises to `SpaceScope::default()` = `Global`,
-  // which applies NO space filter — not a never-matching empty one.
-  const spaceId = scope?.kind === 'active' ? (scope.space_id ?? null) : null
+  const spaceIds = readSearchScope(filter)
   const parentId = (filter['parentId'] as string | null | undefined) ?? null
   const blockTypeFilter = honourBlockType
     ? ((filter['blockTypeFilter'] as string | null | undefined) ?? null)
@@ -1480,7 +1492,7 @@ function searchStructuralCandidates(
   const needsLastEdited = metadata.some((p) => p['type'] === 'LastEdited')
   return [...blocks.values()].filter((b) => {
     if (b['deleted_at']) return false
-    if (!fbqInSpace(b, spaceId)) return false
+    if (spaceIds !== null && !spaceIds.some((id) => fbqInSpace(b, id))) return false
     if (parentId !== null && ((b['parent_id'] as string | null) ?? null) !== parentId) return false
     if (blockTypeFilter !== null && b['block_type'] !== blockTypeFilter) return false
     if (tagIds.length > 0) {
@@ -2616,21 +2628,13 @@ export const searchHandlers = {
     const beforeDate = a['beforeDate'] as string
     const todoStates = a['todoStates'] as string[]
     const limit = (a['limit'] as number | null) ?? 200
-    // Honour `scope: SpaceScope`. The previous mock read
-    // `a['spaceId']`, which was the legacy IPC arg shape; the backend
-    // now takes `scope: SpaceScope`, so callers in `tauri.ts` pass
-    // `toSpaceScope(spaceId)` and the literal `spaceId` arg is no
-    // longer present. Active scope: drop blocks whose owning page does
-    // not carry `space = ?spaceId`. Global: unfiltered.
-    const spaceId = readSpaceScope(a)
+    // Honour `scope: SpaceScope`: drop blocks whose owning page does not
+    // carry `space = ?spaceId`.
+    const spaceId = readActiveSpaceScope('list_unfinished_tasks', a)
 
     const items = Array.from(blocks.values()).filter((b) => {
       if (b['deleted_at']) return false
-      if (spaceId !== null) {
-        const ownerId = (b['page_id'] as string | null) ?? (b['id'] as string)
-        const ownerSpace = properties.get(ownerId)?.get('space')?.['value_ref'] ?? null
-        if (ownerSpace !== spaceId) return false
-      }
+      if (ownerSpaceOf(b) !== spaceId) return false
       if (!todoStates.includes((b['todo_state'] as string) ?? '')) return false
       const date = b['due_date'] ?? b['scheduled_date']
       if (!date || date >= beforeDate) return false
@@ -2664,7 +2668,7 @@ export const searchHandlers = {
     const tagFilters = (a['tagFilters'] as Record<string, unknown> | null) ?? null
     const blockType = (a['blockType'] as string | null) ?? null
     // Honour `scope: SpaceScope` (mirrors `filtered_blocks_query_inner`).
-    const spaceId = readSpaceScope(a)
+    const spaceId = readActiveSpaceScope('filtered_blocks_query', a)
 
     const items = [...blocks.values()].filter((b) => {
       if (b['deleted_at']) return false

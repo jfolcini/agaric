@@ -134,22 +134,18 @@ pub async fn create_block_inner_with_id(
 
 /// IPC-tightened `create_block`.
 ///
-/// Wraps [`create_block_inner`] with the invariant
-/// "every page belongs to a space". When `block_type == "page"`:
+/// Wraps [`create_block_inner`] with the invariant "every page and every
+/// tag belongs to a space":
 ///
-/// * `scope == SpaceScope::Global` → return [`AppError::Validation`];
-///   the caller must use [`create_page_in_space_inner`] semantics or
-///   pass the active space's ULID through this IPC. No op is appended,
-///   the page is rejected at the IPC boundary so a misbehaving frontend
-///   (e.g. a stale `createBlock({ blockType: 'page' })` callsite)
-///   cannot leak unscoped pages into the materialized state.
-/// * `scope == SpaceScope::Active(sid)` → delegates to
+/// * `block_type == "page"` delegates to
 ///   [`crate::commands::spaces::create_page_in_space_inner`] which
 ///   emits `CreateBlock` + `SetProperty(space=<sid>)` inside a single
 ///   `BEGIN IMMEDIATE` transaction.
+/// * `block_type == "tag"` delegates to `create_tag_in_space_inner`, the
+///   same two ops for a tag.
 ///
-/// Other block types (`content`, `tag`) ignore the parameter and
-/// pass through to [`create_block_inner`] unchanged.
+/// Other block types (`content`) ignore `scope` and pass through to
+/// [`create_block_inner`] unchanged.
 ///
 /// Returns a [`BlockRow`] for the new block — for the page path, the
 /// row is re-fetched after the transaction commits so it carries the
@@ -157,10 +153,8 @@ pub async fn create_block_inner_with_id(
 ///
 /// # Errors
 ///
-/// - [`AppError::Validation`] — `block_type == "page"` AND
-///   `scope == SpaceScope::Global`, or the wrapped [`SpaceId`] does
-///   not refer to a live space block (propagated from
-///   `create_page_in_space_inner`).
+/// - [`AppError::Validation`] — `block_type` is `"page"` or `"tag"` and
+///   the scope's [`SpaceId`] does not refer to a live space block.
 /// - All errors from [`create_block_inner`] propagate unchanged for
 ///   non-page block types.
 // 8 args (one over the clippy threshold of 7) — adding `scope` to the
@@ -199,15 +193,8 @@ pub async fn create_block_inner_with_space(
     // path routes through `create_page_in_space_inner`, which mints its own id.
     client_id: Option<BlockId>,
 ) -> Result<BlockRow, AppError> {
+    let sid = scope.space_id();
     if block_type == "page" {
-        let SpaceScope::Active(sid) = scope else {
-            return Err(AppError::validation(
-                "page blocks require space_id: \
-                 use createPageInSpace or pass the active space's ULID"
-                    .to_owned(),
-            ));
-        };
-
         // Delegate to the atomic 2-op helper. It emits `CreateBlock` +
         // `SetProperty(space = <sid>)` inside a single
         // `BEGIN IMMEDIATE` transaction so a page never exists without
@@ -249,22 +236,16 @@ pub async fn create_block_inner_with_space(
         return get_active_block_inner(pool, new_page_id).await;
     }
 
-    // #3081 — a `tag` block created under an ACTIVE space is stamped with its
-    // space membership ATOMICALLY (CreateBlock + SetProperty(space) in one
-    // `BEGIN IMMEDIATE` transaction), mirroring the page path above. This
+    // #3081 — a `tag` block is stamped with its space membership ATOMICALLY
+    // (CreateBlock + SetProperty(space) in one `BEGIN IMMEDIATE`
+    // transaction), mirroring the page path above. This
     // replaces the old frontend pattern of a bare `createBlock` followed by a
     // best-effort, catch-swallowed `setProperty({ key: 'space' })`: when that
     // second, separate op failed (or was skipped by the #708 registration
     // gate), the tag was left with `blocks.space_id = NULL` — an ORPHAN that
     // `list_all_tags_in_space` (WHERE `space_id = ?`) hides, so a freshly
     // created tag vanished on the next visit to the Tags view.
-    //
-    // `SpaceScope::Global` for a tag (no active space) falls through to the
-    // legacy create below: nothing to stamp, so the tag is still created and
-    // can be adopted into a space on first apply.
-    if block_type == "tag"
-        && let SpaceScope::Active(sid) = scope
-    {
+    if block_type == "tag" {
         return create_tag_in_space_inner(
             pool,
             device_id,
@@ -278,10 +259,9 @@ pub async fn create_block_inner_with_space(
         .await;
     }
 
-    // Other non-page block types (`content`) ignore `scope` and follow the
+    // Other block types (`content`) ignore `scope` and follow the
     // legacy path — their space membership is denormalized from their owning
     // page, not stamped on the block directly.
-    let _ignore_scope = scope;
     create_block_inner_with_id(
         pool,
         device_id,
@@ -3114,9 +3094,7 @@ pub(crate) async fn delete_property_in_tx(
 
 /// Tauri command: create a new block. Delegates to
 /// [`create_block_inner_with_space`] which enforces the
-/// "every page has a space" invariant at the IPC boundary
-/// The optional `space_id` is required when
-/// `block_type == "page"` and ignored otherwise.
+/// "every page and tag has a space" invariant at the IPC boundary.
 ///
 /// #2468: the response carries the produced op ref(s) (`WithOps` — a
 /// flattened, strict superset of the previous `BlockRow` shape) so the

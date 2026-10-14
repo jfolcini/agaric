@@ -757,4 +757,87 @@ mod tests {
 
         mat.shutdown();
     }
+
+    /// #5415 — boot and post-sync placement of space-less blocks stays only
+    /// while it is fast: on a vault with nothing to place, each selector must
+    /// be an `idx_blocks_space_type` lookup, never a scan of `blocks`. The SQL
+    /// is copied from the probe in [`place_space_less_blocks`] and the two
+    /// selectors behind [`backfill_space_less_in_tx`] (`pages_without_space`,
+    /// `migrate_orphan_tags_to_space`); keep the copies in step.
+    #[tokio::test]
+    async fn space_less_placement_selectors_are_index_lookups_5415() {
+        let tmp = TempDir::new().unwrap();
+        let pool = init_pool(&tmp.path().join("test.db")).await.unwrap();
+        let is_space_lookup = [
+            "CORRELATED SCALAR SUBQUERY 1",
+            "SEARCH block_properties USING INDEX sqlite_autoindex_block_properties_1 \
+             (block_id=? AND key=?)",
+        ];
+        let cases: [(&str, &'static str, Vec<&str>); 3] = [
+            (
+                "post-sync probe",
+                "EXPLAIN QUERY PLAN SELECT 1 FROM blocks b
+                 WHERE b.space_id IS NULL
+                   AND b.deleted_at IS NULL
+                   AND (
+                       b.block_type = 'tag'
+                       OR (
+                           b.block_type = 'page'
+                           AND NOT EXISTS (
+                               SELECT 1 FROM block_properties
+                               WHERE block_id = b.id
+                                 AND key = 'is_space'
+                                 AND value_text = 'true'
+                           )
+                       )
+                   )
+                 LIMIT 1",
+                [
+                    vec!["SEARCH b USING COVERING INDEX idx_blocks_space_type (space_id=?)"],
+                    is_space_lookup.to_vec(),
+                ]
+                .concat(),
+            ),
+            (
+                "pages_without_space",
+                "EXPLAIN QUERY PLAN SELECT id FROM blocks b
+                 WHERE b.block_type = 'page'
+                   AND b.deleted_at IS NULL
+                   AND b.space_id IS NULL
+                   AND NOT EXISTS (
+                       SELECT 1 FROM block_properties
+                       WHERE block_id = b.id
+                         AND key = 'is_space'
+                         AND value_text = 'true'
+                   )
+                 ORDER BY b.id",
+                [
+                    vec![
+                        "SEARCH b USING COVERING INDEX idx_blocks_space_type \
+                         (space_id=? AND block_type=? AND deleted_at=?)",
+                    ],
+                    is_space_lookup.to_vec(),
+                ]
+                .concat(),
+            ),
+            (
+                "orphan tags",
+                "EXPLAIN QUERY PLAN SELECT b.id FROM blocks b
+                 WHERE b.block_type = 'tag'
+                   AND b.deleted_at IS NULL
+                   AND b.space_id IS NULL
+                 ORDER BY b.id",
+                vec![
+                    "SEARCH b USING COVERING INDEX idx_blocks_space_type \
+                     (space_id=? AND block_type=? AND deleted_at=?)",
+                ],
+            ),
+        ];
+        for (name, sql, expected) in cases {
+            let plan: Vec<(i64, i64, i64, String)> =
+                sqlx::query_as(sql).fetch_all(&pool).await.unwrap();
+            let details: Vec<&str> = plan.iter().map(|(_, _, _, d)| d.as_str()).collect();
+            assert_eq!(details, expected, "{name} must be an index lookup");
+        }
+    }
 }

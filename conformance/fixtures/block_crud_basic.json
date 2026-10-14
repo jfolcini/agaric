@@ -80,7 +80,11 @@
         "blockType": "content",
         "content": "second",
         "index": 1,
-        "parentId": "S1"
+        "parentId": "S1",
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
       },
       "command": "create_block"
     },
@@ -89,7 +93,11 @@
         "blockType": "content",
         "content": "third",
         "index": 2,
-        "parentId": "S1"
+        "parentId": "S1",
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
       },
       "command": "create_block"
     },

@@ -1165,7 +1165,7 @@ describe('searchPages — long query (>2 chars)', () => {
     expect(mockedSearchBlocks).toHaveBeenCalledWith('meeting', null, 20, {
       parentId: null,
       tagIds: [],
-      scope: { kind: 'active', space_id: 'SPACE_TEST' },
+      scope: { kind: 'spaces', space_ids: ['SPACE_TEST'] },
       includePageGlobs: [],
       excludePageGlobs: [],
       caseSensitive: false,
@@ -2105,7 +2105,7 @@ describe('searchPages — trailing bracket stripping (#586)', () => {
     expect(mockedSearchBlocks).toHaveBeenCalledWith('text', null, 20, {
       parentId: null,
       tagIds: [],
-      scope: { kind: 'active', space_id: 'SPACE_TEST' },
+      scope: { kind: 'spaces', space_ids: ['SPACE_TEST'] },
       includePageGlobs: [],
       excludePageGlobs: [],
       caseSensitive: false,
@@ -2157,7 +2157,7 @@ describe('searchPages — trailing bracket stripping (#586)', () => {
     expect(mockedSearchBlocks).toHaveBeenCalledWith('test', null, 20, {
       parentId: null,
       tagIds: [],
-      scope: { kind: 'active', space_id: 'SPACE_TEST' },
+      scope: { kind: 'spaces', space_ids: ['SPACE_TEST'] },
       includePageGlobs: [],
       excludePageGlobs: [],
       caseSensitive: false,
@@ -2249,7 +2249,7 @@ describe('searchPages — trailing bracket stripping (#586)', () => {
     expect(mockedSearchBlocks).toHaveBeenCalledWith('meeting', null, 20, {
       parentId: null,
       tagIds: [],
-      scope: { kind: 'active', space_id: 'SPACE_TEST' },
+      scope: { kind: 'spaces', space_ids: ['SPACE_TEST'] },
       includePageGlobs: [],
       excludePageGlobs: [],
       caseSensitive: false,

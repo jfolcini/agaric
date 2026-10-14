@@ -36,7 +36,6 @@ import {
   sortDiscriminator,
   validationRejection,
   readActiveSpaceScope,
-  readSpaceScope,
 } from '@/lib/tauri-mock/handlers/shared'
 import { tagsHandlers } from '@/lib/tauri-mock/handlers/tags'
 import {
@@ -811,6 +810,9 @@ function placeSourceBullets(
     open.push(bullet)
   }
   const opRefs: OpRefs = []
+  // The backend creates these content blocks below the command layer, with no
+  // scope; the mock reuses the `create_block` command, so it hands it the page's.
+  const scope = { kind: 'active', space_id: ownerSpaceOf({ id: pageId }) }
   const place = (parentId: string, list: SourceBullet[]): void => {
     const rank = new Map(liveChildren(parentId).map((row, i) => [row['id'] as string, i]))
     const kept = longestInOrderRun(
@@ -830,6 +832,7 @@ function placeSourceBullets(
             content: bullet.content,
             parentId,
             index,
+            scope,
           })
           id = row.id
           opRefs.push(...row.op_refs)
@@ -1124,17 +1127,13 @@ export const pagesHandlers = {
     // Honour `scope: SpaceScope` (mirrors
     // `list_undated_tasks_inner`).
     const a = (args ?? {}) as Record<string, unknown>
-    const spaceId = readSpaceScope(a)
+    const spaceId = readActiveSpaceScope('list_undated_tasks', a)
     const items = [...blocks.values()].filter((b) => {
       if (b['deleted_at']) return false
       if (b['todo_state'] === null) return false
       if (b['due_date'] !== null) return false
       if (b['scheduled_date'] !== null) return false
-      if (spaceId !== null) {
-        const ownerId = (b['page_id'] as string | null) ?? (b['id'] as string)
-        const ownerSpace = properties.get(ownerId)?.get('space')?.['value_ref'] ?? null
-        if (ownerSpace !== spaceId) return false
-      }
+      if (ownerSpaceOf(b) !== spaceId) return false
       return true
     })
     return { items, next_cursor: null, has_more: false, total_count: null }
@@ -1317,10 +1316,8 @@ export const pagesHandlers = {
     const alias = foldAsciiUppercase(a['alias'] as string)
     // Backend now takes `scope: SpaceScope`. Mirror
     // the `list_page_aliases_by_prefix` mock (sibling below) so an
-    // alias pointing at a foreign-space page does not surface when the
-    // caller is scoped to the active space. Global keeps the
-    // cross-space lookup so the MCP / agent surfaces don't regress.
-    const spaceId = readSpaceScope(a)
+    // alias pointing at a foreign-space page does not surface.
+    const spaceId = readActiveSpaceScope('resolve_page_by_alias', a)
     for (const [pid, aliases] of pageAliases.entries()) {
       if (aliases.some((al) => foldAsciiUppercase(al) === alias)) {
         const page = blocks.get(pid)
@@ -1330,7 +1327,7 @@ export const pagesHandlers = {
         if (page['deleted_at']) continue
         // `b.space_id = ?`, the #533 column — not the `space` property row
         // migrations 0087/0088 retired (#3081).
-        if (spaceId !== null && page['space_id'] !== spaceId) continue
+        if (page['space_id'] !== spaceId) continue
         return [pid, (page['content'] as string) ?? null]
       }
     }
@@ -1350,9 +1347,7 @@ export const pagesHandlers = {
     const a = args as Record<string, unknown>
     const query = foldAsciiUppercase((a['prefix'] as string) ?? '')
     const limit = (a['limit'] as number | null) ?? 50
-    // Phase 3 — IPC arg shape: `scope: SpaceScope`. Recover the
-    // legacy `spaceId | null` shape for the active-space-scoping branch.
-    const spaceId = readSpaceScope(a)
+    const spaceId = readActiveSpaceScope('list_page_aliases_by_prefix', a)
 
     const rows: Array<[string, string, string | null]> = []
     for (const [pid, aliases] of pageAliases.entries()) {
@@ -1361,7 +1356,7 @@ export const pagesHandlers = {
       if (page['deleted_at']) continue
       // `b.space_id = ?`, the #533 column — not the `space` property row
       // migrations 0087/0088 retired (#3081).
-      if (spaceId !== null && page['space_id'] !== spaceId) continue
+      if (page['space_id'] !== spaceId) continue
       const title = (page['content'] as string | null) ?? null
       for (const alias of aliases) {
         if (foldAsciiUppercase(alias).includes(query)) {

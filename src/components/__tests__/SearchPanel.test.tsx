@@ -238,7 +238,7 @@ describe('SearchPanel', () => {
         filter: {
           parentId: null,
           tagIds: [],
-          scope: { kind: 'active', space_id: 'SPACE_TEST' },
+          scope: { kind: 'spaces', space_ids: ['SPACE_TEST'] },
           includePageGlobs: [],
           excludePageGlobs: [],
           caseSensitive: false,
@@ -285,7 +285,7 @@ describe('SearchPanel', () => {
         filter: {
           parentId: null,
           tagIds: [],
-          scope: { kind: 'active', space_id: 'SPACE_TEST' },
+          scope: { kind: 'spaces', space_ids: ['SPACE_TEST'] },
           includePageGlobs: [],
           excludePageGlobs: [],
           caseSensitive: false,
@@ -377,7 +377,7 @@ describe('SearchPanel', () => {
         filter: {
           parentId: null,
           tagIds: [],
-          scope: { kind: 'active', space_id: 'SPACE_TEST' },
+          scope: { kind: 'spaces', space_ids: ['SPACE_TEST'] },
           includePageGlobs: [],
           excludePageGlobs: [],
           caseSensitive: false,
@@ -433,7 +433,7 @@ describe('SearchPanel', () => {
       filter: {
         parentId: null,
         tagIds: [],
-        scope: { kind: 'active', space_id: 'SPACE_TEST' },
+        scope: { kind: 'spaces', space_ids: ['SPACE_TEST'] },
         includePageGlobs: [],
         excludePageGlobs: [],
         caseSensitive: false,
@@ -1002,7 +1002,7 @@ describe('SearchPanel', () => {
         filter: {
           parentId: null,
           tagIds: [],
-          scope: { kind: 'active', space_id: 'SPACE_TEST' },
+          scope: { kind: 'spaces', space_ids: ['SPACE_TEST'] },
           includePageGlobs: [],
           excludePageGlobs: [],
           caseSensitive: false,
@@ -1042,7 +1042,7 @@ describe('SearchPanel', () => {
         filter: {
           parentId: null,
           tagIds: [],
-          scope: { kind: 'active', space_id: 'SPACE_TEST' },
+          scope: { kind: 'spaces', space_ids: ['SPACE_TEST'] },
           includePageGlobs: [],
           excludePageGlobs: [],
           caseSensitive: false,
@@ -1100,7 +1100,7 @@ describe('SearchPanel', () => {
       filter: {
         parentId: null,
         tagIds: [],
-        scope: { kind: 'active', space_id: 'SPACE_TEST' },
+        scope: { kind: 'spaces', space_ids: ['SPACE_TEST'] },
         includePageGlobs: [],
         excludePageGlobs: [],
         caseSensitive: false,
@@ -1996,9 +1996,10 @@ describe('SearchPanel', () => {
           'search_blocks',
           expect.objectContaining({
             query: 'scoped',
-            // #2248 c — the search filter now carries a `scope: SpaceScope`
-            // (was a bare `spaceId` string).
-            filter: expect.objectContaining({ scope: { kind: 'active', space_id: 'SPACE_WORK' } }),
+            // #5415 — the active space as a one-element `SearchScope`.
+            filter: expect.objectContaining({
+              scope: { kind: 'spaces', space_ids: ['SPACE_WORK'] },
+            }),
           }),
         )
       })

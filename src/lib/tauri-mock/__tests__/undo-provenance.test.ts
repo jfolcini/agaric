@@ -33,6 +33,8 @@ import {
 } from '@/lib/tauri-mock/seed'
 
 const PAGE = '00000000000000000000PAGEZZ'
+/** Content creates and per-page history ignore the space, but each command requires one. */
+const SCOPE = { kind: 'active', space_id: '00000000000000000000SPACEZ' }
 const A = '0000000000000000000000BL_A'
 
 interface Ref {
@@ -89,7 +91,11 @@ describe('#4868 — undo provenance is is_undo, not an op_type prefix', () => {
     dispatch('edit_block', { blockId: A, toText: 'edited once' })
     dispatch('undo_page_op', { pageId: PAGE, undoDepth: 0 })
 
-    const pageRows = dispatch('list_page_history', { pageId: PAGE, limit: 50 }) as Paged
+    const pageRows = dispatch('list_page_history', {
+      pageId: PAGE,
+      limit: 50,
+      scope: SCOPE,
+    }) as Paged
     const blockRows = dispatch('get_block_history', { blockId: A, limit: 50 }) as Paged
 
     // Two ops now, and BOTH are scoped to the page and to the block: the
@@ -121,6 +127,7 @@ describe('#4868 — undo provenance is is_undo, not an op_type prefix', () => {
       content: 'fresh',
       parentId: PAGE,
       position: 2,
+      scope: SCOPE,
     }) as { op_refs: Ref[] }
     expect(created.op_refs).toHaveLength(1)
 
@@ -142,6 +149,7 @@ describe('#4868 — undo provenance is is_undo, not an op_type prefix', () => {
       content: 'fresh',
       parentId: PAGE,
       position: 2,
+      scope: SCOPE,
     }) as { op_refs: Ref[] }
     expect(created.op_refs).toHaveLength(1)
 

@@ -45,10 +45,10 @@ Splitting by R/W lets users disable writes while keeping reads on.
 6. Refresh the matching `tool_descriptions` insta snapshot and add or refresh the tool's response
    snapshot when its test pins a response envelope.
 
-Read-only tools follow three `space_id` patterns: it is required by `search`, `journal_for_date`,
-`list_tags` and the history, journal and trash tools, optional for `list_backlinks` and
-`get_agenda`, and absent from `list_pages`, `get_page`, `get_page_markdown`, `get_block`,
-`list_property_defs`, and `list_spaces`. Every mutating
+Read-only tools follow two `space_id` patterns: it is required by `search`, `journal_for_date`,
+`list_tags`, `list_backlinks`, `get_agenda` and the history, journal and trash tools, and absent
+from `list_pages`, `get_page`, `get_page_markdown`, `get_block`, `list_property_defs`, and
+`list_spaces`. Every mutating
 read-write tool requires an agent-supplied `space_id`: existing-block mutations validate that the
 target belongs to the claimed space, while `create_page` uses it to select the destination space.
 Neither use is an authorization boundary. See [Agent Access → Space scoping](../features/agent-access.md#space-scoping-reads-are-vault-wide-writes-are-space-scoped)

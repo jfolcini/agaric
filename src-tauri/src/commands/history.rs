@@ -1492,9 +1492,7 @@ async fn apply_reverse_add_attachment(
 /// and optional op_type filter.
 ///
 /// Phase 8 — `scope` narrows the global (`page_id == "__all__"`)
-/// query. [`SpaceScope::Active`] restricts the result set to ops whose
-/// `payload.block_id` belongs to the named space.
-/// [`SpaceScope::Global`] is the unscoped (cross-space) view.
+/// query to ops whose `payload.block_id` belongs to the named space.
 /// The `scope` is ignored in per-page mode (a real ULID `page_id` is
 /// already space-bound).
 #[instrument(skip_all, fields(page_id, limit), err)]
@@ -1511,7 +1509,7 @@ pub async fn list_page_history_inner(
         pool,
         &page_id,
         op_type_filter.as_deref(),
-        scope.as_filter_param(),
+        Some(scope.space_id().as_str()),
         &page,
     )
     .await
@@ -5316,7 +5314,9 @@ mod tests {
             &pool,
             page_id.to_string(),
             None,
-            &SpaceScope::Global,
+            &SpaceScope::Active(agaric_store::space::SpaceId::from_trusted(
+                crate::commands::tests::common::TEST_SPACE_ID,
+            )),
             None,
             Some(50),
         )

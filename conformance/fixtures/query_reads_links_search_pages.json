@@ -126,7 +126,7 @@
       "cursor": null,
       "error": null,
       "has_more": false,
-      "name": "page_links_global",
+      "name": "page_links_in_space",
       "rows": ["B2->B1"],
       "total_count": 1
     },
@@ -206,12 +206,13 @@
     {
       "args": {
         "scope": {
-          "kind": "global"
+          "kind": "active",
+          "space_id": "$SPACE"
         }
       },
       "command": "list_page_links",
       "comment": "Page-to-page edge rolled up from the linking CONTENT block to its owning page: S3 (on page S2) links to page S1, so the edge is B2->B1.",
-      "name": "page_links_global"
+      "name": "page_links_in_space"
     },
     {
       "args": {
@@ -235,8 +236,8 @@
       "args": {
         "filter": {
           "scope": {
-            "kind": "active",
-            "space_id": "$SPACE"
+            "kind": "spaces",
+            "space_ids": ["$SPACE"]
           }
         },
         "limit": 50,

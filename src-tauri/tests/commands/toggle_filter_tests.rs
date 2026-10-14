@@ -22,33 +22,26 @@
 //!   tokens never see a boundary.
 //! - UTF-16 offset correctness for CJK + emoji content.
 
+use crate::prelude::{SearchScope, search_filter};
 use agaric_core::error::AppError;
 use agaric_lib::commands::tests::common::{
     TEST_SPACE_ID, assign_all_to_test_space, ensure_test_space, insert_block, test_pool,
 };
 use agaric_lib::commands::{MatchOffset, SearchFilter, search_blocks_inner};
 use agaric_store::fts::rebuild_fts_index;
-use agaric_store::space::{SpaceId, SpaceScope};
+use agaric_store::space::SpaceId;
 
 /// Helper: build a default `SearchFilter` scoped to the test space, with
 /// the toggle flags applied per `case_sensitive` / `whole_word` /
 /// `is_regex`.
 fn filter_with(case_sensitive: bool, whole_word: bool, is_regex: bool) -> SearchFilter {
     SearchFilter {
-        parent_id: None,
-        tag_ids: vec![],
-        scope: SpaceScope::Active(SpaceId::from_trusted(TEST_SPACE_ID)),
-        include_page_globs: vec![],
-        exclude_page_globs: vec![],
         case_sensitive,
         whole_word,
         is_regex,
-        // Toggle tests don't exercise block-type filtering;
-        // `None` preserves the pre-existing candidate set semantics.
-        block_type_filter: None,
-        // Toggle tests don't exercise metadata filters either;
-        // Defaults preserve the pre- "no metadata filter" shape.
-        ..Default::default()
+        ..search_filter(SearchScope::Spaces(vec![SpaceId::from_trusted(
+            TEST_SPACE_ID,
+        )]))
     }
 }
 

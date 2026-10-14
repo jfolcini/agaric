@@ -443,7 +443,7 @@ async fn list_blocks_date_range_with_source_filter() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn count_agenda_batch_by_source_empty_dates_returns_empty() {
     let (pool, _dir) = test_pool().await;
-    let result = count_agenda_batch_by_source_inner(&pool, vec![], &SpaceScope::Global)
+    let result = count_agenda_batch_by_source_inner(&pool, vec![], &test_space_scope())
         .await
         .unwrap();
     assert!(
@@ -462,7 +462,7 @@ async fn count_agenda_batch_by_source_rejects_oversize() {
     let oversize: Vec<String> = (0..=agaric_store::pagination::MAX_BATCH_BLOCK_IDS)
         .map(|i| format!("2025-06-{i:02}"))
         .collect();
-    let big = count_agenda_batch_by_source_inner(&pool, oversize, &SpaceScope::Global).await;
+    let big = count_agenda_batch_by_source_inner(&pool, oversize, &test_space_scope()).await;
     assert!(
         matches!(big, Err(agaric_core::error::AppError::Validation { .. })),
         "oversize input must reject with Validation"
@@ -499,8 +499,9 @@ async fn count_agenda_batch_by_source_returns_correct_breakdown() {
         .await
         .unwrap();
 
+    assign_all_to_test_space(&pool).await;
     let result =
-        count_agenda_batch_by_source_inner(&pool, vec!["2025-09-01".into()], &SpaceScope::Global)
+        count_agenda_batch_by_source_inner(&pool, vec!["2025-09-01".into()], &test_space_scope())
             .await
             .unwrap();
 
@@ -549,8 +550,9 @@ async fn count_agenda_batch_by_source_excludes_deleted() {
         .await
         .unwrap();
 
+    assign_all_to_test_space(&pool).await;
     let result =
-        count_agenda_batch_by_source_inner(&pool, vec!["2025-09-02".into()], &SpaceScope::Global)
+        count_agenda_batch_by_source_inner(&pool, vec!["2025-09-02".into()], &test_space_scope())
             .await
             .unwrap();
 
@@ -585,8 +587,9 @@ async fn count_agenda_batch_by_source_single_date_returns_expected_counts() {
         .await
         .unwrap();
 
+    assign_all_to_test_space(&pool).await;
     let result =
-        count_agenda_batch_by_source_inner(&pool, vec!["2025-10-01".into()], &SpaceScope::Global)
+        count_agenda_batch_by_source_inner(&pool, vec!["2025-10-01".into()], &test_space_scope())
             .await
             .unwrap();
 
@@ -614,6 +617,7 @@ async fn count_agenda_batch_by_source_missing_dates_not_in_result() {
         .await
         .unwrap();
 
+    assign_all_to_test_space(&pool).await;
     let result = count_agenda_batch_by_source_inner(
         &pool,
         vec![
@@ -621,7 +625,7 @@ async fn count_agenda_batch_by_source_missing_dates_not_in_result() {
             "2025-11-02".into(),
             "2025-11-03".into(),
         ],
-        &SpaceScope::Global,
+        &test_space_scope(),
     )
     .await
     .unwrap();
@@ -678,7 +682,8 @@ async fn count_agenda_batch_by_source_large_input_beyond_sqlite_param_limit() {
     dates.push("2025-12-25".into());
     dates.push("2025-12-26".into());
 
-    let result = count_agenda_batch_by_source_inner(&pool, dates, &SpaceScope::Global)
+    assign_all_to_test_space(&pool).await;
+    let result = count_agenda_batch_by_source_inner(&pool, dates, &test_space_scope())
         .await
         .unwrap();
 
@@ -768,7 +773,8 @@ async fn projected_agenda_returns_future_weekly_occurrences() {
     let end = (today + chrono::Duration::days(28))
         .format("%Y-%m-%d")
         .to_string();
-    let entries = list_projected_agenda_inner(&pool, start, end, None, None, &SpaceScope::Global)
+    assign_all_to_test_space(&pool).await;
+    let entries = list_projected_agenda_inner(&pool, start, end, None, None, &test_space_scope())
         .await
         .unwrap()
         .items;
@@ -903,7 +909,8 @@ async fn projected_agenda_respects_repeat_until_end_condition() {
     let end = (today + chrono::Duration::days(60))
         .format("%Y-%m-%d")
         .to_string();
-    let entries = list_projected_agenda_inner(&pool, start, end, None, None, &SpaceScope::Global)
+    assign_all_to_test_space(&pool).await;
+    let entries = list_projected_agenda_inner(&pool, start, end, None, None, &test_space_scope())
         .await
         .unwrap()
         .items;
@@ -1126,7 +1133,7 @@ async fn projected_agenda_skips_done_blocks() {
         "2026-05-04".into(),
         None,
         None,
-        &SpaceScope::Global,
+        &test_space_scope(),
     )
     .await
     .unwrap()
@@ -1157,7 +1164,7 @@ async fn projected_agenda_validates_date_range() {
         "2026-04-30".into(),
         None,
         None,
-        &SpaceScope::Global,
+        &test_space_scope(),
     )
     .await;
     assert!(
@@ -1172,7 +1179,7 @@ async fn projected_agenda_validates_date_range() {
         "2026-04-01".into(),
         None,
         None,
-        &SpaceScope::Global,
+        &test_space_scope(),
     )
     .await;
     assert!(
@@ -1191,7 +1198,7 @@ async fn projected_agenda_empty_when_no_repeating_blocks() {
         "2026-04-30".into(),
         None,
         None,
-        &SpaceScope::Global,
+        &test_space_scope(),
     )
     .await
     .unwrap()
@@ -1269,7 +1276,8 @@ async fn projected_agenda_dot_plus_mode_projects_from_today() {
         .format("%Y-%m-%d")
         .to_string();
 
-    let entries = list_projected_agenda_inner(&pool, start, end, None, None, &SpaceScope::Global)
+    assign_all_to_test_space(&pool).await;
+    let entries = list_projected_agenda_inner(&pool, start, end, None, None, &test_space_scope())
         .await
         .unwrap()
         .items;
@@ -1352,7 +1360,8 @@ async fn projected_agenda_plus_plus_mode_catches_up_to_today() {
         .format("%Y-%m-%d")
         .to_string();
 
-    let entries = list_projected_agenda_inner(&pool, start, end, None, None, &SpaceScope::Global)
+    assign_all_to_test_space(&pool).await;
+    let entries = list_projected_agenda_inner(&pool, start, end, None, None, &test_space_scope())
         .await
         .unwrap()
         .items;
@@ -1443,13 +1452,14 @@ async fn projected_agenda_both_date_columns_produce_separate_entries() {
     .unwrap();
     mat.flush_background().await.unwrap();
 
+    assign_all_to_test_space(&pool).await;
     let entries = list_projected_agenda_inner(
         &pool,
         "2026-04-07".into(),
         "2026-04-20".into(),
         None,
         None,
-        &SpaceScope::Global,
+        &test_space_scope(),
     )
     .await
     .unwrap()
@@ -1592,7 +1602,7 @@ async fn projected_agenda_exhausted_count_returns_zero() {
         "2026-04-30".into(),
         None,
         None,
-        &SpaceScope::Global,
+        &test_space_scope(),
     )
     .await
     .unwrap()
@@ -1668,13 +1678,14 @@ async fn projected_agenda_limit_caps_results() {
     mat.flush_background().await.unwrap();
 
     // Request 365 days of daily projections but limit to 5
+    assign_all_to_test_space(&pool).await;
     let entries = list_projected_agenda_inner(
         &pool,
         "2026-04-07".into(),
         "2027-04-06".into(),
         None,
         Some(5),
-        &SpaceScope::Global,
+        &test_space_scope(),
     )
     .await
     .unwrap()
@@ -1937,7 +1948,7 @@ async fn list_projected_agenda_excludes_blocks_under_template_page() {
         "2026-04-14".into(),
         None,
         None,
-        &SpaceScope::Global,
+        &test_space_scope(),
     )
     .await
     .unwrap()
@@ -1960,7 +1971,7 @@ async fn list_projected_agenda_excludes_blocks_under_template_page() {
         "2026-04-14".into(),
         None,
         None,
-        &SpaceScope::Global,
+        &test_space_scope(),
     )
     .await
     .unwrap()
@@ -2059,13 +2070,14 @@ async fn list_projected_agenda_includes_block_after_template_property_removed() 
     mat.flush_background().await.unwrap();
 
     // Sanity: with the template property set, the task is filtered out.
+    assign_all_to_test_space(&pool).await;
     let filtered = list_projected_agenda_inner(
         &pool,
         "2026-04-07".into(),
         "2026-04-10".into(),
         None,
         None,
-        &SpaceScope::Global,
+        &test_space_scope(),
     )
     .await
     .unwrap()
@@ -2090,7 +2102,7 @@ async fn list_projected_agenda_includes_block_after_template_property_removed() 
         "2026-04-10".into(),
         None,
         None,
-        &SpaceScope::Global,
+        &test_space_scope(),
     )
     .await
     .unwrap()
@@ -2149,7 +2161,8 @@ async fn list_undated_tasks_returns_tasks_without_dates() {
     .await
     .unwrap();
 
-    let resp = list_undated_tasks_inner(&pool, None, None, &SpaceScope::Global)
+    assign_all_to_test_space(&pool).await;
+    let resp = list_undated_tasks_inner(&pool, None, None, &test_space_scope())
         .await
         .unwrap();
     assert_eq!(
@@ -2206,7 +2219,7 @@ async fn list_undated_tasks_excludes_dated_tasks() {
     .await
     .unwrap();
 
-    let resp = list_undated_tasks_inner(&pool, None, None, &SpaceScope::Global)
+    let resp = list_undated_tasks_inner(&pool, None, None, &test_space_scope())
         .await
         .unwrap();
     assert!(
@@ -2246,7 +2259,7 @@ async fn list_undated_tasks_excludes_deleted() {
         .await
         .unwrap();
 
-    let resp = list_undated_tasks_inner(&pool, None, None, &SpaceScope::Global)
+    let resp = list_undated_tasks_inner(&pool, None, None, &test_space_scope())
         .await
         .unwrap();
     assert!(resp.items.is_empty(), "deleted blocks should be excluded");
@@ -2284,7 +2297,8 @@ async fn list_undated_tasks_pagination() {
     }
 
     // Page 1: limit = 2
-    let page1 = list_undated_tasks_inner(&pool, None, Some(2), &SpaceScope::Global)
+    assign_all_to_test_space(&pool).await;
+    let page1 = list_undated_tasks_inner(&pool, None, Some(2), &test_space_scope())
         .await
         .unwrap();
     assert_eq!(page1.items.len(), 2, "first page should contain 2 items");
@@ -2298,7 +2312,7 @@ async fn list_undated_tasks_pagination() {
     );
 
     // Page 2: use cursor
-    let page2 = list_undated_tasks_inner(&pool, page1.next_cursor, Some(2), &SpaceScope::Global)
+    let page2 = list_undated_tasks_inner(&pool, page1.next_cursor, Some(2), &test_space_scope())
         .await
         .unwrap();
     assert_eq!(
@@ -2400,7 +2414,8 @@ async fn list_projected_agenda_returns_next_cursor_when_capped_m25() {
         .format("%Y-%m-%d")
         .to_string();
 
-    let page1 = list_projected_agenda_inner(&pool, start, end, None, Some(5), &SpaceScope::Global)
+    assign_all_to_test_space(&pool).await;
+    let page1 = list_projected_agenda_inner(&pool, start, end, None, Some(5), &test_space_scope())
         .await
         .unwrap();
     assert_eq!(
@@ -2443,6 +2458,7 @@ async fn list_projected_agenda_walks_pages_correctly_m25() {
     let mut walked: Vec<(String, String, String)> = Vec::new();
     let mut cursor: Option<String> = None;
     let mut iterations = 0;
+    assign_all_to_test_space(&pool).await;
     loop {
         iterations += 1;
         assert!(iterations < 10, "pagination must terminate (loop guard)");
@@ -2452,7 +2468,7 @@ async fn list_projected_agenda_walks_pages_correctly_m25() {
             end.clone(),
             cursor,
             Some(page_size),
-            &SpaceScope::Global,
+            &test_space_scope(),
         )
         .await
         .unwrap();
@@ -2578,33 +2594,6 @@ async fn list_undated_tasks_returns_only_current_space_blocks_feat3p4() {
         ids,
         vec!["U_A1"],
         "space A filter must return exactly the A task; got {ids:?}"
-    );
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn list_undated_tasks_with_none_space_id_returns_all_feat3p4() {
-    let (pool, _dir) = test_pool().await;
-    seed_two_space_blocks(&pool, &["U_A1"], &["U_B1"], async |pool, id| {
-        insert_block(pool, id, "content", "task", None, None).await;
-        sqlx::query("UPDATE blocks SET todo_state = 'TODO' WHERE id = ?")
-            .bind(id)
-            .execute(pool)
-            .await
-            .unwrap();
-    })
-    .await;
-
-    let resp = list_undated_tasks_inner(&pool, None, None, &SpaceScope::Global)
-        .await
-        .unwrap();
-    let ids: std::collections::HashSet<&str> = resp.items.iter().map(|b| b.id.as_str()).collect();
-    assert!(
-        ids.contains("U_A1"),
-        "None must surface A task; got {ids:?}"
-    );
-    assert!(
-        ids.contains("U_B1"),
-        "None must surface B task; got {ids:?}"
     );
 }
 
@@ -2754,30 +2743,6 @@ async fn list_projected_agenda_returns_only_current_space_blocks_feat3p4() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn list_projected_agenda_with_none_space_id_returns_all_feat3p4() {
-    let (pool, _dir) = test_pool().await;
-    seed_two_space_blocks(&pool, &["P_A1"], &["P_B1"], async |pool, id| {
-        seed_repeating_task(pool, id, "2026-04-07").await;
-    })
-    .await;
-
-    let resp = list_projected_agenda_inner(
-        &pool,
-        "2026-04-07".into(),
-        "2026-04-09".into(),
-        None,
-        Some(50),
-        &SpaceScope::Global,
-    )
-    .await
-    .unwrap();
-    let ids: std::collections::HashSet<&str> =
-        resp.items.iter().map(|e| e.block.id.as_str()).collect();
-    assert!(ids.contains("P_A1"), "None must include P_A1; got {ids:?}");
-    assert!(ids.contains("P_B1"), "None must include P_B1; got {ids:?}");
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn list_projected_agenda_with_nonexistent_space_id_returns_empty_feat3p4() {
     let (pool, _dir) = test_pool().await;
     seed_two_space_blocks(&pool, &["P_A1"], &[], async |pool, id| {
@@ -2889,23 +2854,6 @@ async fn count_agenda_batch_by_source_returns_only_current_space_blocks_feat3p4(
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn count_agenda_batch_by_source_with_none_space_id_returns_all_feat3p4() {
-    let (pool, _dir) = test_pool().await;
-    seed_two_space_blocks(&pool, &["CAS_A1"], &["CAS_B1"], async |pool, id| {
-        insert_block(pool, id, "content", "x", None, None).await;
-        insert_agenda_cache_row_with_source(pool, "2025-09-15", id, "property:due_date").await;
-    })
-    .await;
-
-    let result =
-        count_agenda_batch_by_source_inner(&pool, vec!["2025-09-15".into()], &SpaceScope::Global)
-            .await
-            .unwrap();
-    let inner = result.get("2025-09-15").unwrap();
-    assert_eq!(inner.get("property:due_date"), Some(&2));
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn count_agenda_batch_by_source_with_nonexistent_space_id_returns_empty_feat3p4() {
     let (pool, _dir) = test_pool().await;
     seed_two_space_blocks(&pool, &["CAS_A1"], &[], async |pool, id| {
@@ -2948,17 +2896,13 @@ async fn count_agenda_batch_by_source_disjointness_feat3p4() {
     .unwrap();
     let b = count_agenda_batch_by_source_inner(
         &pool,
-        dates.clone(),
+        dates,
         &SpaceScope::Active(SpaceId::from_trusted(TEST_SPACE_B_ID)),
     )
     .await
     .unwrap();
-    let unscoped = count_agenda_batch_by_source_inner(&pool, dates, &SpaceScope::Global)
-        .await
-        .unwrap();
     assert_eq!(a["2025-09-16"]["property:due_date"], 3);
     assert_eq!(b["2025-09-16"]["property:due_date"], 2);
-    assert_eq!(unscoped["2025-09-16"]["property:due_date"], 5);
 }
 
 // ======================================================================
@@ -3286,6 +3230,7 @@ async fn projected_agenda_cached_equals_on_the_fly() {
     let range_end_str = range_end.format("%Y-%m-%d").to_string();
     let mut cached_results = Vec::new();
     let mut cursor: Option<String> = None;
+    assign_all_to_test_space(&pool).await;
     loop {
         let page = list_projected_agenda_inner(
             &pool,
@@ -3293,7 +3238,7 @@ async fn projected_agenda_cached_equals_on_the_fly() {
             range_end_str.clone(),
             cursor.clone(),
             Some(500),
-            &SpaceScope::Global,
+            &test_space_scope(),
         )
         .await
         .unwrap();
@@ -3431,6 +3376,7 @@ async fn projected_agenda_beyond_horizon_falls_back_to_on_the_fly() {
 
     let mut via_inner: Vec<(String, String, String)> = Vec::new();
     let mut cursor: Option<String> = None;
+    assign_all_to_test_space(&pool).await;
     loop {
         let page = list_projected_agenda_inner(
             &pool,
@@ -3438,7 +3384,7 @@ async fn projected_agenda_beyond_horizon_falls_back_to_on_the_fly() {
             far_end.clone(),
             cursor.clone(),
             Some(500),
-            &SpaceScope::Global,
+            &test_space_scope(),
         )
         .await
         .unwrap();
@@ -3587,7 +3533,7 @@ async fn projected_agenda_empty_window_inside_horizon_does_not_expand() {
         day.clone(),
         None,
         Some(200),
-        &SpaceScope::Global,
+        &test_space_scope(),
         pinned_today,
     )
     .await
@@ -3617,13 +3563,14 @@ async fn projected_agenda_range_straddling_rebuild_today_keeps_the_past_half_326
     seed_daily_repeater_and_rebuild(&pool, "PA3260A0000000000000000000", base, pinned_today).await;
 
     // Three days before today, three after: seven daily occurrences.
+    assign_all_to_test_space(&pool).await;
     let page = list_projected_agenda_inner_with_today(
         &pool,
         "2050-04-03".to_owned(),
         "2050-04-09".to_owned(),
         None,
         Some(200),
-        &SpaceScope::Global,
+        &test_space_scope(),
         pinned_today,
     )
     .await
@@ -3785,6 +3732,7 @@ async fn projected_agenda_past_window_is_read_from_the_cache_5421() {
     let (start, end) = (ago(window), ago(1));
     let mut cached: Vec<(String, String, String)> = Vec::new();
     let mut cursor: Option<String> = None;
+    assign_all_to_test_space(&pool).await;
     loop {
         let page = list_projected_agenda_inner_with_today(
             &pool,
@@ -3792,7 +3740,7 @@ async fn projected_agenda_past_window_is_read_from_the_cache_5421() {
             ymd(end),
             cursor.clone(),
             Some(7),
-            &SpaceScope::Global,
+            &test_space_scope(),
             today,
         )
         .await
@@ -3850,7 +3798,7 @@ async fn projected_agenda_past_window_is_read_from_the_cache_5421() {
         ymd(start),
         None,
         Some(200),
-        &SpaceScope::Global,
+        &test_space_scope(),
         today,
     )
     .await
@@ -3889,13 +3837,14 @@ async fn projected_agenda_range_before_the_backward_window_still_expands_5421() 
     .unwrap();
     assert_eq!(cached, 4, "fixture: every day but the first is cached");
 
+    assign_all_to_test_space(&pool).await;
     let page = list_projected_agenda_inner_with_today(
         &pool,
         start,
         end,
         None,
         Some(200),
-        &SpaceScope::Global,
+        &test_space_scope(),
         pinned_today,
     )
     .await
@@ -3948,13 +3897,14 @@ async fn projected_agenda_backward_window_follows_the_rebuild_date_5421() {
         "fixture: the rebuild must have materialized {floor}"
     );
 
+    assign_all_to_test_space(&pool).await;
     let page = list_projected_agenda_inner_with_today(
         &pool,
         ymd(floor),
         ymd(next),
         None,
         Some(200),
-        &SpaceScope::Global,
+        &test_space_scope(),
         read_today,
     )
     .await
@@ -4005,13 +3955,14 @@ async fn projected_agenda_empty_window_with_stale_rebuild_today_still_expands() 
         "fixture: the rebuild must have materialized {day}"
     );
 
+    assign_all_to_test_space(&pool).await;
     let page = list_projected_agenda_inner_with_today(
         &pool,
         day.clone(),
         day.clone(),
         None,
         Some(200),
-        &SpaceScope::Global,
+        &test_space_scope(),
         read_today,
     )
     .await
@@ -4056,13 +4007,14 @@ async fn projected_agenda_empty_window_with_null_rebuild_today_still_expands() {
         .await
         .unwrap();
 
+    assign_all_to_test_space(&pool).await;
     let page = list_projected_agenda_inner_with_today(
         &pool,
         day.clone(),
         day.clone(),
         None,
         Some(200),
-        &SpaceScope::Global,
+        &test_space_scope(),
         pinned_today,
     )
     .await
@@ -4226,6 +4178,7 @@ async fn projected_agenda_prefilter_is_superset_2069() {
         .unwrap();
     let mut cached_results = Vec::new();
     let mut cursor: Option<String> = None;
+    assign_all_to_test_space(&pool).await;
     loop {
         let page = list_projected_agenda_inner_with_today(
             &pool,
@@ -4233,7 +4186,7 @@ async fn projected_agenda_prefilter_is_superset_2069() {
             range_end_str.clone(),
             cursor.clone(),
             Some(500),
-            &SpaceScope::Global,
+            &test_space_scope(),
             pinned_today,
         )
         .await
@@ -4865,13 +4818,14 @@ async fn projected_agenda_cursor_keeps_duplicate_source_rows_3206() {
 
     // Reference: the whole window in one page (limit 200 > 6 rows, so no
     // cursor is involved and the keyset predicate never runs).
+    assign_all_to_test_space(&pool).await;
     let full = list_projected_agenda_inner_with_today(
         &pool,
         day.clone(),
         day.clone(),
         None,
         Some(200),
-        &SpaceScope::Global,
+        &test_space_scope(),
         pinned_today,
     )
     .await
@@ -4899,7 +4853,7 @@ async fn projected_agenda_cursor_keeps_duplicate_source_rows_3206() {
                 day.clone(),
                 cursor.clone(),
                 Some(page_size),
-                &SpaceScope::Global,
+                &test_space_scope(),
                 pinned_today,
             )
             .await
@@ -4952,7 +4906,7 @@ async fn projected_agenda_cursor_keeps_duplicate_source_rows_3206() {
             day.clone(),
             Some(past_end),
             Some(page_size),
-            &SpaceScope::Global,
+            &test_space_scope(),
             pinned_today,
         )
         .await
@@ -5103,13 +5057,14 @@ async fn projected_agenda_pre_3206_cursor_still_decodes() {
     .encode()
     .unwrap();
 
+    assign_all_to_test_space(&pool).await;
     let page = list_projected_agenda_inner_with_today(
         &pool,
         day.clone(),
         day.clone(),
         Some(legacy),
         Some(200),
-        &SpaceScope::Global,
+        &test_space_scope(),
         pinned_today,
     )
     .await
@@ -5153,7 +5108,7 @@ async fn projected_agenda_pre_3206_cursor_still_decodes() {
         day.clone(),
         None,
         Some(1),
-        &SpaceScope::Global,
+        &test_space_scope(),
         pinned_today,
     )
     .await
@@ -5204,13 +5159,14 @@ async fn projected_agenda_cursor_is_portable_across_both_branches_3206() {
 
     // Both branches must agree on the unpaginated window before the
     // cross-branch paging assertion means anything.
+    assign_all_to_test_space(&pool).await;
     let cache_full = list_projected_agenda_inner_with_today(
         &pool,
         day.clone(),
         day.clone(),
         None,
         Some(200),
-        &SpaceScope::Global,
+        &test_space_scope(),
         pinned_today,
     )
     .await
@@ -5245,7 +5201,7 @@ async fn projected_agenda_cursor_is_portable_across_both_branches_3206() {
                         day.clone(),
                         cursor.clone(),
                         Some(page_size),
-                        &SpaceScope::Global,
+                        &test_space_scope(),
                         pinned_today,
                     )
                     .await
@@ -5328,7 +5284,7 @@ async fn projected_agenda_rejects_or_survives_hostile_cursors_3206() {
                 day,
                 cursor,
                 Some(2),
-                &SpaceScope::Global,
+                &test_space_scope(),
                 pinned_today,
             )
             .await
@@ -5679,13 +5635,14 @@ async fn agenda_range_returns_dated_and_projected_rows_once_5393() {
     .await
     .unwrap();
 
+    assign_all_to_test_space(&pool).await;
     let page = agenda_range_inner(
         &pool,
         "2026-03-02".into(),
         "2026-03-15".into(),
         None,
         None,
-        &SpaceScope::Global,
+        &test_space_scope(),
     )
     .await
     .unwrap();
@@ -5719,7 +5676,8 @@ async fn agenda_range_dot_plus_base_date_appears_once_5393() {
     insert_dated_block(&pool, "AR_DOTPLUS", Some("TODO"), Some(&day(7)), None).await;
     insert_repeat_rule(&pool, "AR_DOTPLUS", ".+1w").await;
 
-    let page = agenda_range_inner(&pool, day(0), day(14), None, None, &SpaceScope::Global)
+    assign_all_to_test_space(&pool).await;
+    let page = agenda_range_inner(&pool, day(0), day(14), None, None, &test_space_scope())
         .await
         .unwrap();
 
@@ -5741,7 +5699,7 @@ async fn agenda_range_rejects_end_before_start_5393() {
         "2026-04-30".into(),
         None,
         None,
-        &SpaceScope::Global,
+        &test_space_scope(),
     )
     .await
     .expect_err("end < start");
@@ -5780,13 +5738,14 @@ async fn agenda_range_cursor_walk_matches_single_page_5393() {
     insert_dated_block(&pool, "PG_F", None, None, Some("2026-03-04")).await;
 
     let (start, end) = ("2026-03-01", "2026-03-04");
+    assign_all_to_test_space(&pool).await;
     let whole = agenda_range_inner(
         &pool,
         start.into(),
         end.into(),
         None,
         Some(500),
-        &SpaceScope::Global,
+        &test_space_scope(),
     )
     .await
     .unwrap();
@@ -5822,7 +5781,7 @@ async fn agenda_range_cursor_walk_matches_single_page_5393() {
                 end.into(),
                 cursor,
                 Some(i64::try_from(limit).unwrap()),
-                &SpaceScope::Global,
+                &test_space_scope(),
             )
             .await
             .unwrap();

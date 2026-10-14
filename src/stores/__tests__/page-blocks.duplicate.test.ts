@@ -51,7 +51,7 @@ describe('page-blocks duplicateBlock (#5140 Phase 3a)', () => {
       content: 'nested under GS_1',
       parentId: BLOCK_GS_1,
       index: null,
-      scope: { kind: 'global' },
+      scope: { kind: 'active', space_id: 'SPACE_PERSONAL' },
       blockId: null,
     }) as { id: string }
     dispatch('set_todo_state', { blockId: BLOCK_GS_1, state: 'TODO' })

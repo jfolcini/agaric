@@ -374,9 +374,16 @@ async fn get_backlinks_returns_linking_blocks() {
     .unwrap();
     settle(&mat).await;
 
-    let resp = get_backlinks_inner(&pool, target.id.clone(), None, None, &SpaceScope::Global)
-        .await
-        .unwrap();
+    assign_all_to_test_space(&pool).await;
+    let resp = get_backlinks_inner(
+        &pool,
+        target.id.clone(),
+        None,
+        None,
+        &SpaceScope::Active(SpaceId::from_trusted(TEST_SPACE_ID)),
+    )
+    .await
+    .unwrap();
 
     assert_eq!(resp.items.len(), 1, "one backlink expected");
     assert_eq!(
@@ -400,9 +407,16 @@ async fn get_backlinks_empty_when_no_links() {
     )
     .await;
 
-    let resp = get_backlinks_inner(&pool, "BL_ORPHAN".into(), None, None, &SpaceScope::Global)
-        .await
-        .unwrap();
+    assign_all_to_test_space(&pool).await;
+    let resp = get_backlinks_inner(
+        &pool,
+        "BL_ORPHAN".into(),
+        None,
+        None,
+        &SpaceScope::Active(SpaceId::from_trusted(TEST_SPACE_ID)),
+    )
+    .await
+    .unwrap();
 
     assert!(
         resp.items.is_empty(),
@@ -591,6 +605,7 @@ async fn grouped_backlinks_returns_groups_by_source_page() {
     .unwrap();
     settle(&mat).await;
 
+    assign_all_to_test_space(&pool).await;
     let resp = list_backlinks_grouped_inner(
         &pool,
         target.id.clone(),
@@ -598,7 +613,7 @@ async fn grouped_backlinks_returns_groups_by_source_page() {
         None,
         None,
         None,
-        &SpaceScope::Global,
+        &SpaceScope::Active(SpaceId::from_trusted(TEST_SPACE_ID)),
         None,
     )
     .await
@@ -641,6 +656,7 @@ async fn grouped_backlinks_empty_for_no_links() {
     .unwrap();
     settle(&mat).await;
 
+    assign_all_to_test_space(&pool).await;
     let resp = list_backlinks_grouped_inner(
         &pool,
         target.id.clone(),
@@ -648,7 +664,7 @@ async fn grouped_backlinks_empty_for_no_links() {
         None,
         None,
         None,
-        &SpaceScope::Global,
+        &SpaceScope::Active(SpaceId::from_trusted(TEST_SPACE_ID)),
         None,
     )
     .await
@@ -668,6 +684,7 @@ async fn grouped_backlinks_empty_for_no_links() {
 async fn grouped_backlinks_empty_block_id_returns_error() {
     let (pool, _dir) = test_pool().await;
 
+    assign_all_to_test_space(&pool).await;
     let result = list_backlinks_grouped_inner(
         &pool,
         "".into(),
@@ -675,7 +692,7 @@ async fn grouped_backlinks_empty_block_id_returns_error() {
         None,
         None,
         None,
-        &SpaceScope::Global,
+        &SpaceScope::Active(SpaceId::from_trusted(TEST_SPACE_ID)),
         None,
     )
     .await;
@@ -741,6 +758,7 @@ async fn grouped_backlinks_single_block_page() {
     .unwrap();
     settle(&mat).await;
 
+    assign_all_to_test_space(&pool).await;
     let resp = list_backlinks_grouped_inner(
         &pool,
         target.id.clone(),
@@ -748,7 +766,7 @@ async fn grouped_backlinks_single_block_page() {
         None,
         None,
         None,
-        &SpaceScope::Global,
+        &SpaceScope::Active(SpaceId::from_trusted(TEST_SPACE_ID)),
         None,
     )
     .await
@@ -811,6 +829,16 @@ async fn grouped_backlinks_orphan_blocks_excluded_from_groups() {
     .unwrap();
     settle(&mat).await;
 
+    // Stamp the orphan into the scoped space without giving it a page, so
+    // only the orphan rule can drop it, not the space filter.
+    ensure_test_space(&pool).await;
+    sqlx::query("UPDATE blocks SET space_id = ? WHERE id IN (?, ?)")
+        .bind(TEST_SPACE_ID)
+        .bind(target.id.as_str())
+        .bind(orphan.id.as_str())
+        .execute(&pool)
+        .await
+        .unwrap();
     let resp = list_backlinks_grouped_inner(
         &pool,
         target.id.clone(),
@@ -818,7 +846,7 @@ async fn grouped_backlinks_orphan_blocks_excluded_from_groups() {
         None,
         None,
         None,
-        &SpaceScope::Global,
+        &SpaceScope::Active(SpaceId::from_trusted(TEST_SPACE_ID)),
         None,
     )
     .await
@@ -894,6 +922,7 @@ async fn grouped_backlinks_excludes_deleted() {
     settle(&mat).await;
 
     // Verify it appears before deletion
+    assign_all_to_test_space(&pool).await;
     let before = list_backlinks_grouped_inner(
         &pool,
         target.id.clone(),
@@ -901,7 +930,7 @@ async fn grouped_backlinks_excludes_deleted() {
         None,
         None,
         None,
-        &SpaceScope::Global,
+        &SpaceScope::Active(SpaceId::from_trusted(TEST_SPACE_ID)),
         None,
     )
     .await
@@ -921,7 +950,7 @@ async fn grouped_backlinks_excludes_deleted() {
         None,
         None,
         None,
-        &SpaceScope::Global,
+        &SpaceScope::Active(SpaceId::from_trusted(TEST_SPACE_ID)),
         None,
     )
     .await
@@ -996,6 +1025,7 @@ async fn grouped_backlinks_pagination() {
     }
 
     // Request limit=1
+    assign_all_to_test_space(&pool).await;
     let resp1 = list_backlinks_grouped_inner(
         &pool,
         target.id.clone(),
@@ -1003,7 +1033,7 @@ async fn grouped_backlinks_pagination() {
         None,
         None,
         Some(1),
-        &SpaceScope::Global,
+        &SpaceScope::Active(SpaceId::from_trusted(TEST_SPACE_ID)),
         None,
     )
     .await
@@ -1021,7 +1051,7 @@ async fn grouped_backlinks_pagination() {
         None,
         resp1.next_cursor.clone(),
         Some(1),
-        &SpaceScope::Global,
+        &SpaceScope::Active(SpaceId::from_trusted(TEST_SPACE_ID)),
         None,
     )
     .await
@@ -1042,7 +1072,7 @@ async fn grouped_backlinks_pagination() {
         None,
         resp2.next_cursor.clone(),
         Some(1),
-        &SpaceScope::Global,
+        &SpaceScope::Active(SpaceId::from_trusted(TEST_SPACE_ID)),
         None,
     )
     .await
@@ -1159,6 +1189,7 @@ async fn grouped_backlinks_total_and_filtered_count() {
     settle(&mat).await;
 
     // Without filter
+    assign_all_to_test_space(&pool).await;
     let resp = list_backlinks_grouped_inner(
         &pool,
         target.id.clone(),
@@ -1166,7 +1197,7 @@ async fn grouped_backlinks_total_and_filtered_count() {
         None,
         None,
         None,
-        &SpaceScope::Global,
+        &SpaceScope::Active(SpaceId::from_trusted(TEST_SPACE_ID)),
         None,
     )
     .await
@@ -1189,7 +1220,7 @@ async fn grouped_backlinks_total_and_filtered_count() {
         None,
         None,
         None,
-        &SpaceScope::Global,
+        &SpaceScope::Active(SpaceId::from_trusted(TEST_SPACE_ID)),
         None,
     )
     .await
@@ -1275,6 +1306,7 @@ async fn grouped_backlinks_with_source_page_include_filter() {
         excluded: vec![],
     }];
 
+    assign_all_to_test_space(&pool).await;
     let resp = list_backlinks_grouped_inner(
         &pool,
         target.id.clone(),
@@ -1282,7 +1314,7 @@ async fn grouped_backlinks_with_source_page_include_filter() {
         None,
         None,
         None,
-        &SpaceScope::Global,
+        &SpaceScope::Active(SpaceId::from_trusted(TEST_SPACE_ID)),
         None,
     )
     .await
@@ -1367,6 +1399,7 @@ async fn grouped_backlinks_with_source_page_exclude_filter() {
         excluded: vec![pages[1].id.clone().into_string()],
     }];
 
+    assign_all_to_test_space(&pool).await;
     let resp = list_backlinks_grouped_inner(
         &pool,
         target.id.clone(),
@@ -1374,7 +1407,7 @@ async fn grouped_backlinks_with_source_page_exclude_filter() {
         None,
         None,
         None,
-        &SpaceScope::Global,
+        &SpaceScope::Active(SpaceId::from_trusted(TEST_SPACE_ID)),
         None,
     )
     .await
@@ -1470,6 +1503,7 @@ async fn grouped_backlinks_with_source_page_include_and_exclude() {
         excluded: vec![pages[1].id.clone().into_string()],
     }];
 
+    assign_all_to_test_space(&pool).await;
     let resp = list_backlinks_grouped_inner(
         &pool,
         target.id.clone(),
@@ -1477,7 +1511,7 @@ async fn grouped_backlinks_with_source_page_include_and_exclude() {
         None,
         None,
         None,
-        &SpaceScope::Global,
+        &SpaceScope::Active(SpaceId::from_trusted(TEST_SPACE_ID)),
         None,
     )
     .await
@@ -1618,6 +1652,7 @@ async fn grouped_backlinks_with_contains_filter() {
         query: "alpha".into(),
     }];
 
+    assign_all_to_test_space(&pool).await;
     let resp = list_backlinks_grouped_inner(
         &pool,
         target.id.clone(),
@@ -1625,7 +1660,7 @@ async fn grouped_backlinks_with_contains_filter() {
         None,
         None,
         None,
-        &SpaceScope::Global,
+        &SpaceScope::Active(SpaceId::from_trusted(TEST_SPACE_ID)),
         None,
     )
     .await

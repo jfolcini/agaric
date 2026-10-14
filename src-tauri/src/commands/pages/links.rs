@@ -67,14 +67,12 @@ pub struct PageLinksResponse {
 /// [`PAGE_LINKS_EDGE_CAP`] (strongest edges first) and the response
 /// carries the true total plus a `truncated` flag.
 ///
-/// `scope` — [`SpaceScope::Active`] restricts the result set
-/// to edges where **both** the source page (`COALESCE(sb.parent_id,
-/// bl.source_id)`) and the target page (`bl.target_id`) carry
-/// `space = ?space_id`. This is the policy enforcement point for
-/// "no live links between spaces, ever" in the graph view: an edge
-/// crossing space boundaries must not surface in either space's
-/// Graph. [`SpaceScope::Global`] keeps the pre-spaces cross-space
-/// behaviour for callers that span every space.
+/// `scope` restricts the result set to edges where **both** the source
+/// page (`COALESCE(sb.parent_id, bl.source_id)`) and the target page
+/// (`bl.target_id`) carry `space = ?space_id`. This is the policy
+/// enforcement point for "no live links between spaces, ever" in the graph
+/// view: an edge crossing space boundaries must not surface in either
+/// space's Graph.
 ///
 /// `tag_ids` — when `Some(non-empty)`, restricts
 /// edges to those whose **target page** carries at least one of the
@@ -210,10 +208,9 @@ pub async fn list_page_links_inner_split_with_cap(
     // roll-up; the issue's "titles" premise is stale). Migration 0096
     // denormalises those three predicates into the cache as
     // `src_deleted` / `tgt_deleted` / `tgt_is_page` flags (kept current
-    // by the rebuild + incremental reindex below), so the unscoped
-    // (`SpaceScope::Global`) hot path — the one the SLO bench measures —
-    // is now a single covering-index scan (`idx_page_link_cache_live`)
-    // with ZERO `blocks` joins.
+    // by the rebuild + incremental reindex below), so the cache scan reads
+    // them from the covering index (`idx_page_link_cache_live`) with no
+    // `blocks` join.
     //
     // The cache mirrors the legacy query's semantics ("source page =
     // COALESCE(parent_id, source_id), target page = target_id, drop
@@ -336,7 +333,7 @@ async fn fetch_page_link_edges(
          ORDER BY plc.edge_count DESC, plc.source_page_id ASC,
              plc.target_page_id ASC
          LIMIT ?3"#,
-        scope.as_filter_param(),
+        scope.space_id().as_str(),
         tag_ids_json,
         cap_param,
     )
@@ -379,7 +376,7 @@ async fn count_page_link_edges(
                      WHERE btr.source_id = plc.target_page_id
                        AND btr.tag_id IN (SELECT value FROM json_each(?2))
                  ))"#,
-        scope.as_filter_param(),
+        scope.space_id().as_str(),
         tag_ids_json,
     )
     .fetch_one(pool)
